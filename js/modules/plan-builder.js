@@ -1071,7 +1071,7 @@ ${CATCHES.length?`
 }
 
 
-function renderPlanStats(){
+export function renderPlanStats(){
   document.getElementById('planWpts').textContent=DATA.waypoints.length;
   document.getElementById('planTrks').textContent=DATA.tracks.length;
   const pts=DATA.tracks.reduce((a,t)=>a+t.pts.length,0);
@@ -1193,7 +1193,7 @@ function setLakeOnlyFieldsVisible(show){
   const btn=document.getElementById('syncDukeBtn');
   if(btn) btn.textContent = show ? '⚡ Live Utility Sync' : '⚡ Live River Sync';
 }
-function populatePlanLakeDropdown(){
+export function populatePlanLakeDropdown(){
   const sel = document.getElementById('planLake');
   if(!sel) return;
   const current = sel.value;
@@ -1219,7 +1219,7 @@ function populatePlanLakeDropdown(){
   setLakeOnlyFieldsVisible(!isPlanRiverValue(sel.value));
 }
 
-function populatePlanRampDropdown(waterbodyName){
+export function populatePlanRampDropdown(waterbodyName){
   const sel = document.getElementById('planRamp');
   if(!sel) return;
   const current = sel.value;

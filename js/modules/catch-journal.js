@@ -50,7 +50,7 @@ async function saveCatches() {
   } catch (_) {}
 }
 
-async function loadCatches() {
+export async function loadCatches() {
   if (!window.DB?.db) return;
   try {
     const r = await window.DB.get('journal', 'catches');

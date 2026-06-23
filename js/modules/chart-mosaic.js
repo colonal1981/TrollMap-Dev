@@ -254,7 +254,7 @@ async function persistCharts() {
   }
 }
 
-async function restoreCharts() {
+export async function restoreCharts() {
   if (!window.DB?.db) return;
   try {
     const rec = await window.DB.get('charts', '__all__');

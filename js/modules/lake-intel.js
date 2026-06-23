@@ -4,7 +4,11 @@
  * Writes results into the Plan tab textareas and the callout boxes.
  */
 
-window.syncLakeIntelData = async function syncLakeIntelData(){
+import { state } from '../core/state.js';
+import { esc } from '../utils/escape.js';
+
+/* Lake Intel: species, forage, habitat, hazards, seasonal patterns */
+export async function syncLakeIntelData() {
   const lakeSel = document.getElementById('planLake');
   const statusEl = document.getElementById('lakeIntelStatus');
   const btn = document.getElementById('syncLakeIntelBtn');
@@ -82,14 +86,10 @@ Manual checklist: species, forage, stocking, invasive/spotted bass, bottom compo
   } finally {
     if(btn){ btn.disabled=false; btn.textContent='⚡ Build Lake Intel'; }
   }
-};
+}
 
-setTimeout(()=>{
-  document.getElementById('syncLakeIntelBtn')?.addEventListener('click', ()=>window.syncLakeIntelData?.());
-}, 800);
-
-
-window.syncClarityIntelData = async function syncClarityIntelData(){
+/* Clarity Forecast: zone-based clarity + lure recommendations */
+export async function syncClarityIntelData() {
   const lakeSel = document.getElementById('planLake');
   const statusEl = document.getElementById('clarityIntelStatus');
   const btn = document.getElementById('syncClarityIntelBtn');
@@ -135,22 +135,13 @@ window.syncClarityIntelData = async function syncClarityIntelData(){
   } finally {
     if(btn){ btn.disabled=false; btn.textContent='⚡ Build Clarity Forecast'; }
   }
-};
+}
 
-setTimeout(()=>{
-  document.getElementById('syncClarityIntelBtn')?.addEventListener('click', ()=>window.syncClarityIntelData?.());
-}, 900);
+setTimeout(() => {
+  document.getElementById('syncLakeIntelBtn')?.addEventListener('click', () => syncLakeIntelData?.());
+  document.getElementById('syncClarityIntelBtn')?.addEventListener('click', () => syncClarityIntelData?.());
+}, 800);
 
-
-document.getElementById('autoNameBtn')?.addEventListener('click',()=>{
-  const lake = document.getElementById('planLake').value.split(',')[0] || 'Lake';
-  const ramp = document.getElementById('planRamp').value.split(' ')[0] || '';
-  const date = document.getElementById('planDate').value;
-  const time = document.getElementById('planLaunchTime').value;
-  const hour = time ? parseInt(time.split(':')[0]) : 6;
-  const session = hour < 10 ? 'AM' : hour < 14 ? 'MID' : 'PM';
-  const dateShort = date ? new Date(date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '';
-  document.getElementById('planName').value = `${lake}${ramp?' – '+ramp:''} ${session} Troll${dateShort?' '+dateShort:''}`;
-});
-
-/* ---------- Saved spreads ---------- */
+// Expose for tab-switcher and other legacy window.X callers
+window.syncLakeIntelData = syncLakeIntelData;
+window.syncClarityIntelData = syncClarityIntelData;

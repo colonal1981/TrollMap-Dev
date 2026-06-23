@@ -249,7 +249,7 @@ async function renderLayerList() {
   host.innerHTML = html;
 }
 
-async function loadAllLayers() {
+export async function loadAllLayers() {
   let all = [];
   if (window.DB?.db) {
     try { all = await window.DB.getAll('layers'); console.log('[IDB] layers found:', all.length); }
