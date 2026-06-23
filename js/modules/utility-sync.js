@@ -159,6 +159,7 @@ export async function syncUtilityData() {
               break;
             }
           }
+        }
       } catch (_) {}
     }
 
