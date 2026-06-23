@@ -1,0 +1,1041 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0b1623">
+<title>🎣 TrollMap GPX Studio v8 Carolinas Master Edition</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+<style>
+  :root {
+    --bg: #0b1623; 
+    --panel: #121f2e; 
+    --panel2: #1a2b40; 
+    --line: #1e3a5f;
+    --accent: #00e5ff; 
+    --accent2: #76ff03; 
+    --warn: #ffb703; 
+    --bad: #ff5252; 
+    --gps: #00e5ff;
+    --text: #e7eef6; 
+    --muted: #8aa3bd;
+    --topH: 52px; 
+    --navH: 60px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    height: 100%; margin: 0; 
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: var(--bg); color: var(--text); overflow: hidden;
+  }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+
+  /* Top bar */
+  #topbar {
+    position: fixed; top: 0; left: 0; right: 0; height: var(--topH);
+    background: var(--panel); border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 6px; padding: 0 10px;
+    z-index: 1000; font-size: 13px; flex-wrap: wrap;
+  }
+  #topbar h1 { margin: 0; font-size: 15px; color: var(--accent); white-space: nowrap; }
+  #topbar .file {
+    flex: 1; min-width: 80px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; color: var(--muted); font-size: 12px;
+  }
+  button {
+    cursor: pointer; border: none; border-radius: 8px; font-size: 13px;
+    font-weight: 700; padding: 8px 12px; background: var(--panel2);
+    color: var(--text); border: 1px solid var(--line); touch-action: manipulation;
+  }
+  button.primary { background: var(--accent2); color: #062d00; border: none; }
+  button.warn { background: var(--bad); color: #fff; border: none; }
+  button.ghost { background: transparent; border-color: var(--line);}
+  button:active { transform: translateY(1px); }
+  button.small { padding:4px 8px; font-size:12px;}
+  input, select, textarea {
+    padding: 7px 9px; border-radius: 7px; border: 1px solid var(--line);
+    background: var(--panel2); color: var(--text); font-size: 13px;
+  }
+  textarea { width:100%; min-height:70px; resize:vertical; font-family: inherit;}
+  label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 3px; }
+
+  /* Main / panels */
+  #main { position: fixed; top: var(--topH); bottom: var(--navH); left: 0; right: 0; overflow: hidden; }
+  .panel { position: absolute; inset: 0; overflow: auto; background: var(--bg); display: none; padding-bottom: 20px; }
+  .panel.active { display: block; }
+  #panel-map { overflow: hidden; padding-bottom: 0; }
+  #panel-map.active { display: flex; flex-direction: column; }
+  .pad { padding: 12px; max-width: 1100px; margin: 0 auto; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 14px; margin-bottom: 12px;
+  }
+  .card h3 { margin: 0 0 8px; font-size: 14px; color: var(--accent); }
+  .muted { color: var(--muted); font-size: 12px; }
+  .okbox {
+    background: rgba(118,255,3,.10); border: 1px solid var(--accent2);
+    color: #bdffa0; border-radius: 8px; padding: 10px; font-size: 13px; margin: 10px 0;
+  }
+  .warnbox {
+    background: rgba(255,183,3,.12); border: 1px solid var(--warn);
+    color: #ffd77a; border-radius: 8px; padding: 10px; font-size: 13px; margin: 10px 0;
+  }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+  .big { font-size: 22px; font-weight: 800; color: var(--accent2); }
+  .filebox {
+    border: 2px dashed var(--line); border-radius: 10px; padding: 20px;
+    text-align: center; color: var(--muted); cursor: pointer; margin: 8px 0;
+  }
+  .filebox.ok { border-color: var(--accent2); color: var(--accent2); }
+  .hidden { display: none !important; }
+
+  /* Bottom nav */
+  #bottomNav {
+    position: fixed; bottom: 0; left: 0; right: 0; height: var(--navH);
+    background: var(--panel); border-top: 1px solid var(--line);
+    display: flex; justify-content: space-around; align-items: center; z-index: 1000;
+  }
+  #bottomNav button {
+    flex: 1; height: 100%; background: transparent; border: none; color: var(--muted);
+    font-size: 11px; line-height: 1.1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 2px; padding: 4px;
+  }
+  #bottomNav button .ico { font-size: 18px; }
+  #bottomNav button.active { color: var(--accent); box-shadow: inset 0 2px 0 0 var(--accent); }
+
+  /* Map panel layout */
+  #map { flex: 1; background: #060f1a; position: relative; min-height: 0; }
+  #mapToolBar { flex-shrink: 0; }
+  .map-control {
+    position: absolute; z-index: 500; background: rgba(11,22,35,.9);
+    border: 1px solid var(--line); border-radius: 10px; padding: 6px;
+    display: flex; gap: 6px; align-items: center;
+  }
+  .map-control button { padding: 7px 10px; font-size: 13px; }
+  .map-control.tl { top: 8px; left: 8px; flex-direction: column; align-items: stretch; }
+  .map-control.tr { top: 8px; right: 8px; flex-wrap: wrap; max-width: 260px; justify-content: flex-end; }
+  .map-control.br { z-index: 1000; bottom: 8px; right: 8px; font-size: 11px; font-family: monospace; color: var(--accent2); padding: 5px 9px; }
+  .map-control.bl { bottom: 8px; left: 8px; flex-direction: column; align-items: stretch; }
+  #georefBanner {
+    position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+    z-index: 600; background: #b06a00; color: #fff; border-radius: 8px;
+    padding: 8px 16px; font-size: 14px; font-weight: 700; display: none; pointer-events: none;
+  }
+  #recordBtn.recording { animation: pulse 1s infinite; background: var(--bad); }
+  @keyframes pulse { 0%{opacity:1} 50%{opacity:.5} 100%{opacity:1} }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; vertical-align:middle; margin-right:4px; }
+  /* Measure tool */
+  #measureTooltip { background:rgba(11,22,35,.92); color:var(--accent2); border:1px solid var(--line); border-radius:8px; padding:6px 10px; font-size:12px; font-family:monospace; white-space:nowrap; }
+  /* Catch markers */
+  .catch-icon { font-size:18px; line-height:1; cursor:pointer; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--line); }
+  th { color: var(--accent); position: sticky; top: 0; background: var(--panel); }
+  tr:hover td { background: var(--panel2); }
+  td input, td select {
+    width: 100%; padding: 4px 6px; font-size: 12px; background: var(--panel2);
+    border: 1px solid var(--line); color: var(--text); border-radius: 4px;
+  }
+  .spread-table td { padding:4px 4px; }
+  .spread-table input, .spread-table select { font-size:12px; padding:4px 5px;}
+
+  /* Plan builder */
+  .plan-section { margin-bottom:14px; }
+  .plan-section h4 { margin:0 0 8px; color:var(--accent2); font-size:13px; text-transform:uppercase; letter-spacing:.04em;}
+  .pill { display:inline-block; background:var(--panel2); border:1px solid var(--line); border-radius:999px; padding:3px 9px; margin:2px; font-size:12px;}
+  .subtabs { display:flex; gap:6px; border-bottom:1px solid var(--line); margin-bottom:10px;}
+  .subtabs button { background:transparent; border:none; border-bottom:2px solid transparent; border-radius:0; padding:8px 12px; color:var(--muted);}
+  .subtabs button.active { color:var(--accent); border-bottom-color:var(--accent);}
+  .plan-preview { background:#fff; color:#111; border-radius:10px; padding:22px; font-family: system-ui, Segoe UI, Roboto, sans-serif; }
+  .plan-preview h2 { margin:0 0 4px; }
+  .plan-preview table { color:#111; }
+  .plan-preview th { background:#f2f4f7; color:#334; }
+  .plan-preview td, .plan-preview th { border-bottom:1px solid #ddd; }
+  .rod-side-port { color:#1e88e5; font-weight:700;}
+  .rod-side-starboard { color:#d32f2f; font-weight:700;}
+  .rod-side-center { color:#2e7d32; font-weight:700;}
+
+  /* Desktop: left nav */
+  @media (min-width: 950px) {
+    #bottomNav {
+      top: var(--topH); bottom: 0; left: 0; right: auto; width: 74px; height: auto;
+      flex-direction: column; border-top: none; border-right: 1px solid var(--line);
+    }
+    #bottomNav button { flex: none; height: auto; padding: 14px 4px; }
+    #bottomNav button.active { box-shadow: inset 2px 0 0 0 var(--accent); }
+    #main { left: 74px; }
+  }
+
+  /* Print plan/report only — do NOT print every app tab. */
+  @media print {
+    #topbar, #bottomNav, .no-print { display: none !important; }
+    html, body { height:auto !important; overflow:visible !important; background:#fff !important; color:#000 !important; }
+    #main { position: static !important; overflow:visible !important; inset:auto !important; }
+    .panel { display:none !important; position:static !important; overflow:visible !important; background:#fff !important; }
+    #panel-plan { display:block !important; }
+    #panel-plan .pad { max-width:none !important; padding:0 !important; margin:0 !important; }
+    #panel-plan .subtabs, #plan-builder, #plan-library { display:none !important; }
+    #plan-preview { display:block !important; }
+    #plan-preview .card { border:none !important; background:#fff !important; padding:0 !important; margin:0 !important; }
+    #planPreviewHtml { background:#fff !important; color:#000 !important; }
+    .plan-preview { padding:0 !important; border-radius:0 !important; }
+    .card { border:1px solid #ccc; background:#fff;}
+  }
+
+  /* ── Plan Report styles ── */
+  :root {
+    --p-blue:#0d4f8b; --p-teal:#0e7c7b; --p-green:#1f7a3d;
+    --p-amber:#b06a00; --p-red:#b3261e;
+    --p-bgband:#eef4fa; --p-bgwarn:#fff4e0; --p-bggood:#e9f6ee;
+  }
+  .report-page { max-width:900px; margin:0 auto; background:#fff; color:#13202e;
+    font-family:"Segoe UI",system-ui,Roboto,Arial,sans-serif; font-size:14px; line-height:1.45; }
+  .report-page header { background:linear-gradient(135deg,var(--p-blue),var(--p-teal)); color:#fff; padding:26px 34px; }
+  .report-page header h1 { margin:0; font-size:24px; color:#fff; }
+  .report-page header .rp-sub { margin-top:6px; font-size:14px; opacity:.95; }
+  .report-page header .rp-meta { margin-top:10px; font-size:13px; opacity:.92; display:flex; flex-wrap:wrap; gap:6px 18px; }
+  .report-body { padding:6px 34px; }
+  .report-body h2 { color:var(--p-blue); font-size:16px; border-bottom:2px solid #d6e0ea; padding-bottom:4px; margin:22px 0 8px; }
+  .report-body h3 { color:var(--p-teal); font-size:13px; margin:14px 0 5px; text-transform:uppercase; letter-spacing:.5px; }
+  .report-body p { margin:6px 0; }
+  .report-body table { width:100%; border-collapse:collapse; margin:8px 0; font-size:13px; }
+  .report-body th, .report-body td { border:1px solid #d6e0ea; padding:6px 8px; text-align:left; vertical-align:top; }
+  .report-body th { background:#eef4fa; color:var(--p-blue); font-weight:700; }
+  .report-body tr:nth-child(even) td { background:#f8fbfd; }
+  .rp-callout { border-left:5px solid; border-radius:6px; padding:10px 13px; margin:12px 0; }
+  .rp-callout b { display:block; margin-bottom:3px; }
+  .rp-good  { background:var(--p-bggood); border-color:var(--p-green); color:#13202e; }
+  .rp-warn  { background:var(--p-bgwarn); border-color:var(--p-amber); color:#13202e; }
+  .rp-info  { background:var(--p-bgband); border-color:var(--p-blue);  color:#13202e; }
+  .rp-pill  { display:inline-block; border-radius:12px; padding:1px 9px; font-size:11px; font-weight:700; color:#fff; }
+  .rp-best   { background:var(--p-green); }
+  .rp-strong { background:var(--p-blue); }
+  .rp-good-p { background:var(--p-teal); }
+  .rp-grid2 { display:flex; gap:16px; flex-wrap:wrap; }
+  .rp-grid2 > div { flex:1 1 240px; }
+  .rp-small { font-size:12px; color:#5b6b7b; }
+  .rp-lure  { font-weight:700; color:var(--p-teal); }
+  .rp-footer { padding:14px 34px; color:#5b6b7b; font-size:12px; border-top:1px solid #d6e0ea; margin-top:20px; }
+  @media print {
+    .report-page { box-shadow:none; }
+    h2 { break-after:avoid; }
+    tr { break-inside:avoid; }
+    .rp-callout { break-inside:avoid; }
+    .no-print { display:none; }
+  }
+
+  /* ── Search modal ── */
+  #searchModal { display:none; position:fixed; inset:0; z-index:3000;
+    background:rgba(0,0,0,.65); align-items:center; justify-content:center; }
+  #searchModal.open { display:flex; }
+  .search-box { background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    padding:18px; width:min(94vw,420px); display:flex; flex-direction:column; gap:10px; }
+  .search-box label { font-size:12px; color:var(--muted); display:block; margin-bottom:3px; }
+  #searchResults { max-height:160px; overflow-y:auto; display:none; margin-top:4px; }
+  .search-result-item { padding:7px 8px; cursor:pointer; border-bottom:1px solid var(--line);
+    font-size:13px; }
+  .search-result-item:hover { background:var(--panel2); }
+
+  /* ── v5 Ultimate Wide Layout & Smart Select Styles ── */
+  #panel-plan .pad { max-width: 98% !important; padding: 16px 26px; }
+  
+  #spreadTable { width: 100%; table-layout: auto; border-collapse: collapse; }
+  #spreadTable th, #spreadTable td { padding: 6px 8px; vertical-align: middle; }
+  
+  .spread-select {
+    width: 100%;
+    padding: 5px 8px;
+    font-size: 12.5px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: var(--panel2);
+    color: var(--text);
+  }
+  .spread-input {
+    width: 100%;
+    padding: 5px 8px;
+    font-size: 12.5px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: var(--panel2);
+    color: var(--accent2);
+    font-weight: 700;
+    text-align: center;
+  }
+  
+  .btn-label {
+    cursor: pointer; border-radius: 8px; font-size: 13px; font-weight: 700;
+    padding: 8px 12px; background: var(--panel2); color: var(--text);
+    border: 1px solid var(--line); touch-action: manipulation;
+    display: inline-block; text-align: center; line-height: 1.2;
+  }
+  .btn-label.ghost { background: transparent; }
+  .btn-label:active { transform: translateY(1px); }
+  
+  .topbar-select, .topbar-input {
+    padding: 6px 8px; font-size: 12px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--panel2); color: var(--text);
+  }
+  .map-toolbar {
+    background: var(--panel); border-top: 1px solid var(--line);
+    min-height: 52px; padding: 6px 12px; display: flex; flex-wrap: wrap; gap: 8px;
+    align-items: center; justify-content: space-between; z-index: 1000;
+  }
+  .toolbar-select {
+    padding: 4px 6px; font-size: 12px; border-radius: 6px; height: 28px;
+    border: 1px solid var(--line); background: var(--panel2); color: var(--text);
+  }
+  .toolbar-readout {
+    font-family: monospace; font-size: 12px; color: var(--accent2);
+    background: var(--panel2); border: 1px solid var(--line); padding: 4px 8px;
+    border-radius: 6px; min-width: 130px; text-align: center; font-weight: 700;
+  }
+  .image-work-console { background: rgba(0,229,255,0.08); padding: 3px 8px; border-radius: 8px; }
+  </style>
+  <link rel="manifest" href="./manifest.json">
+  <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%230b1623'/><text x='50' y='60' font-size='50' text-anchor='middle' fill='%2300e5ff'>🎣</text></svg>">
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <div style="display:flex;align-items:center;gap:8px">
+      <h1>🎣 TrollMap v8 Master Edition</h1>
+      <span class="file" id="fileLabel">No file loaded</span>
+    </div>
+
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+      <select id="lakeSelect" class="topbar-select" style="width:140px" title="Select Lake Database">
+        <option value="">-- Lake Database --</option>
+      </select>
+      <select id="rampSelect" class="topbar-select" style="width:150px" title="Select Boat Launch" disabled>
+        <option value="">-- Boat Ramp Launch --</option>
+      </select>
+      <button id="topSearchBtn" class="small" title="Jump to coordinates">🔍 Jump</button>
+    </div>
+
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+      <label id="loadBtnLabel" class="btn-label" title="Load GPX, KML, GeoJSON">📂 Load<input id="fileInput" type="file" accept=".gpx,.txt,.xml,.geojson,.json,.kml" class="hidden"></label>
+      <button id="newBtn" class="small">New</button>
+      <button id="saveBtn" class="small primary">⬇ Save GPX</button>
+      <!-- batchImportInput used programmatically by cloud chartpacks module -->
+      <input id="batchImportInput" type="file" accept=".png,.json" multiple class="hidden">
+    </div>
+  </div>
+  <!-- ===== SEARCH / JUMP MODAL ===== -->
+  <div id="searchModal">
+    <div class="search-box">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <b style="color:var(--accent);font-size:15px">🔍 Search / Jump to Location</b>
+        <button id="searchClose" style="background:none;border:none;color:var(--muted);font-size:18px;padding:2px 8px;cursor:pointer">✕</button>
+      </div>
+      <div>
+        <label>Murray quick picks</label>
+        <select id="quickPick" style="width:100%">
+          <option value="">— select landmark or ramp —</option>
+          <optgroup label="Boat Ramps">
+            <option value="34.09421,-81.32882,16">Hilton Recreation Area ✅</option>
+            <option value="34.1380,-81.2812,15">Larry Koon / Shull Island</option>
+            <option value="34.0539,-81.2559,15">Lake Murray Dam (Irmo)</option>
+            <option value="34.0875,-81.4322,15">Billy Dreher Island SP</option>
+            <option value="34.1521,-81.2218,15">Rocky Point Landing</option>
+            <option value="34.0310,-81.5208,15">SCE&G Riverbend (#4)</option>
+          </optgroup>
+          <optgroup label="Landmarks">
+            <option value="34.0858,-81.3431,13">Bomb Island (striper staging)</option>
+            <option value="34.0831,-81.2571,14">Saluda Dam</option>
+            <option value="34.08,-81.30,11">Lake Murray overview</option>
+          </optgroup>
+        </select>
+      </div>
+      <div>
+        <label>Search by name (OSM)</label>
+        <div style="display:flex;gap:6px">
+          <input id="searchInput" placeholder="e.g. Hilton Recreation Area SC" style="flex:1" />
+          <button id="searchGo" class="primary" style="white-space:nowrap">Go</button>
+        </div>
+        <div id="searchResults"></div>
+      </div>
+      <div>
+        <label>Jump to coordinates</label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input id="coordLat" placeholder="Lat  34.09421" style="flex:1" />
+          <input id="coordLon" placeholder="Lon  -81.32882" style="flex:1" />
+          <button id="coordGo" style="white-space:nowrap">Jump</button>
+        </div>
+      </div>
+      <p id="searchStatus" style="color:var(--muted);font-size:12px;margin:0;min-height:16px"></p>
+    </div>
+  </div>
+
+  <div id="main">
+    <!-- ===== MAP ===== -->
+    <section class="panel active" id="panel-map">
+      <div id="map" style="flex: 1; width: 100%; background: #060f1a; position: relative; min-height: 0;"></div>
+
+      <!-- TL floating map buttons -->
+      <div class="map-control tl">
+        <button id="btnGps" title="Center on device GPS">📍</button>
+        <button id="btnFollow" title="Follow device GPS">🔒</button>
+        <button id="recordBtn" title="Record track from GPS">⏺</button>
+        <button id="dropWptBtn" title="Drop GPS Waypoint">📍+</button>
+      </div>
+
+      <!-- Chart layers popup manager -->
+      <div id="chartLayersWrap" style="display:none;position:absolute;top:8px;left:58px;z-index:500;background:rgba(11,22,35,.95);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:12px;max-width:280px;max-height:50vh;overflow-y:auto">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span style="color:var(--accent);font-weight:700">📐 Chart Layers</span>
+          <button id="closeChartLayersBtn" style="background:none;border:none;color:var(--muted);font-size:14px;padding:0 4px;cursor:pointer">✕</button>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 8px">
+          <button id="chartShowAllBtn" class="small" style="padding:3px 7px;font-size:11px">☑ Show all</button>
+          <button id="chartHideAllBtn" class="small" style="padding:3px 7px;font-size:11px">☐ Hide all</button>
+          <button id="chartDeleteHiddenBtn" class="small" style="padding:3px 7px;font-size:11px;color:var(--warn)">🧹 Delete hidden</button>
+          <button id="chartDeleteAllBtn" class="small" style="padding:3px 7px;font-size:11px;color:var(--bad)">💣 Delete all</button>
+        </div>
+        <div id="chartLayers"></div>
+        <p class="muted" style="margin:6px 0 0;font-size:11px">☑ show/hide · 🗑 removes · ✥ re-nudge · slider = opacity</p>
+      </div>
+
+      <div id="georefBanner" style="position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:600;background:#b06a00;color:#fff;border-radius:8px;padding:6px 16px;font-size:13px;font-weight:700;display:none;pointer-events:none"></div>
+
+      <!-- Georef coord input popup -->
+      <div id="georefCoordBox" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:700;background:var(--panel);border:2px solid var(--accent);border-radius:12px;padding:16px 20px;min-width:300px;box-shadow:0 4px 20px rgba(0,0,0,.6)">
+        <div style="color:var(--accent);font-weight:700;margin-bottom:10px;font-size:14px">📍 Enter coords for Point <span id="georefCoordStep">1</span></div>
+        <div style="color:var(--muted);font-size:12px;margin-bottom:10px">Type the lat/lon of the spot you clicked on the image, or click the satellite map instead.</div>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <div style="flex:1"><label>Latitude</label><input id="georefLatIn" placeholder="34.09421" style="width:100%"></div>
+          <div style="flex:1"><label>Longitude</label><input id="georefLonIn" placeholder="-81.32882" style="width:100%"></div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button id="georefCoordOk" class="primary" style="flex:1">✓ Use these coords</button>
+          <button id="georefCoordCancel" style="flex:1">Cancel georef</button>
+        </div>
+      </div>
+
+      <!-- ── CLOUD CHARTPACKS LIBRARY PANEL ── -->
+      <div id="cloudChartpacksPanel" style="display:none;position:absolute;top:60px;right:8px;z-index:650;background:rgba(11,22,35,.95);border:1px solid var(--accent);border-radius:10px;padding:10px 12px;font-size:12px;max-width:360px;max-height:80vh;overflow-y:auto;box-shadow:0 4px 16px rgba(0,0,0,.6)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="color:var(--accent);font-weight:700">📚 Cloud Chartpacks</span>
+          <div style="display:flex;gap:4px;align-items:center">
+            <button id="cloudChartpacksRefresh" style="background:none;border:1px solid var(--line);color:var(--accent);font-size:11px;padding:2px 8px;border-radius:4px;cursor:pointer" title="Refresh list from worker">↻</button>
+            <button id="cloudChartpacksClose" style="background:none;border:none;color:var(--muted);font-size:14px;padding:0 4px;cursor:pointer">✕</button>
+          </div>
+        </div>
+        <div style="color:var(--muted);font-size:11px;margin-bottom:8px;line-height:1.4">Pulled from your Cloudflare R2 chartpack library. Tap a lake to import its tiles into TrollMap.</div>
+        <div id="cloudChartpacksStatus" style="color:var(--muted);font-size:11px;margin-bottom:6px">Loading…</div>
+        <div id="cloudChartpacksList"></div>
+      </div>
+
+      <!-- ── CONTOUR JOB EXPORT PANEL ── -->
+      <div id="contourJobPanel" style="display:none;position:absolute;top:60px;right:8px;z-index:650;background:rgba(11,22,35,.95);border:1px solid var(--accent);border-radius:10px;padding:10px 12px;font-size:12px;max-width:340px;box-shadow:0 4px 16px rgba(0,0,0,.6)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span style="color:var(--accent);font-weight:700">✏️ Contour Capture</span>
+          <button id="contourJobClose" style="background:none;border:none;color:var(--muted);font-size:14px;padding:0 4px;cursor:pointer">✕</button>
+        </div>
+
+        <!-- Current polygon info -->
+        <div id="contourJobInfo" style="color:var(--text);margin-bottom:8px;line-height:1.5"></div>
+
+        <!-- Job name + save row -->
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
+          <input id="contourJobName" placeholder="area name e.g. wateree_clearwater" style="flex:1;min-width:120px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:4px 6px;font-size:11px">
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+          <button id="contourJobSave" class="small primary" style="flex:1">💾 Save job.json</button>
+          <button id="contourJobQueue" class="small" style="flex:1;color:var(--accent2);border-color:var(--accent2)">➕ Add to Queue</button>
+          <button id="contourJobDiscard" class="small" style="color:var(--bad);border-color:var(--bad)">🗑</button>
+        </div>
+
+        <!-- Server status -->
+        <div id="contourJobServerRow" style="display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:11px">
+          <span id="contourServerDot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#888"></span>
+          <span id="contourServerStatus" style="color:var(--muted)">Server: checking…</span>
+        </div>
+
+        <!-- Current job status -->
+        <div id="contourJobStatusRow" style="display:none;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin-bottom:6px;font-size:11px;line-height:1.5"></div>
+
+        <!-- Run / Cancel -->
+        <div id="contourJobRunRow" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
+          <button id="contourJobRun" class="small primary" style="flex:1;background:var(--accent2);color:#000;font-weight:700">🚀 Run capture now</button>
+          <button id="contourJobCancel" class="small" style="color:var(--bad);border-color:var(--bad);display:none">✕ Cancel</button>
+        </div>
+
+        <!-- Import when done -->
+        <div id="contourJobImportRow" style="display:none;margin-bottom:6px">
+          <button id="contourJobImport" class="small primary" style="width:100%;background:var(--accent2);color:#000;font-weight:700">📥 Import chartpack</button>
+        </div>
+
+        <!-- Queue section -->
+        <div style="border-top:1px solid var(--line);margin-top:6px;padding-top:8px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <span style="color:var(--accent);font-size:11px;font-weight:700">📋 Job Queue</span>
+            <label class="small" style="cursor:pointer;padding:2px 8px;border:1px solid var(--accent);border-radius:4px;font-size:10px;color:var(--accent)">📂 Load JSONs<input id="contourQueueFileInput" type="file" accept=".json" multiple style="display:none"></label>
+          </div>
+          <div id="contourQueueList" style="font-size:11px;color:var(--muted);min-height:20px">Queue empty — draw polygons or load job JSONs</div>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button id="contourQueueRun" class="small primary" style="flex:1;background:var(--accent2);color:#000;font-weight:700;display:none">▶ Run Queue</button>
+            <button id="contourQueueClear" class="small" style="color:var(--bad);border-color:var(--bad);display:none">🗑 Clear Queue</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── PERSISTENT BOTTOM MAP CONTROL TOOLBAR ── -->
+      <div id="mapToolBar" class="map-toolbar no-print">
+        
+        <!-- Core tools -->
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <button id="mapSearchBtn" class="small" title="Search / Jump to location">🔍 Search</button>
+          <button id="btnRamps" class="small" title="Toggle 1,288 concrete boat launch ramps">⛵ Ramps</button>
+          <button id="btnBankPier" class="small" title="Toggle 1,466 Bank &amp; Pier fishing locations">🎣 Bank/Pier</button>
+          <button id="btnPaddle" class="small" title="Toggle 873 Kayak &amp; Paddle launch slides">🛶 Kayak</button>
+          <button id="btnAttractors" class="small" style="color:#00e5ff;border-color:#00e5ff" title="Toggle 3,532 Submerged Sunk Attractors &amp; PVC Habitats">📍 Attractors</button>
+          <button id="btnChartLayers" class="small" title="Show saved chart layers">📐 Charts</button>
+          <button id="btnMeasure" class="small" title="Measure exact Distance and Bearing">📏 Measure</button>
+          <button id="btnShowCatches" class="small" title="Plot Catch Journal on Map">🐟 Catches</button>
+          <button id="btnQuickdrawKey" class="small" style="color:#ffb703;border-color:#ffb703" title="Toggle Garmin ActiveCaptain 8-Band Tactical Color Depth Key">🌈 Quickdraw Key</button>
+          <button id="btnCastingRings" class="small" title="Draw professional 60ft casting approach rings around Waypoints">⭕ Casting Rings</button>
+          <button id="btnDrawContour" class="small" style="color:#76ff03;border-color:#76ff03" title="Draw a polygon outlining the lake area you want depth contours for. Click to add points, double-click (or click first point) to finish. Saves a job.json for the TrollMap build-contours pipeline.">✏️ Contour Area</button>
+          <button id="btnCloudChartpacks" class="small" style="color:#00e5ff;border-color:#00e5ff" title="Browse depth-contour chartpacks stored in your cloud library (R2 via Cloudflare Worker). Tap any lake to import its tiles into TrollMap.">📚 Cloud Chartpacks</button>
+          <button id="btnTrackReverse" class="small" title="Toggle continuous loop — reverses selected track for return trolling pass">🔄 Loop Track</button>
+          <button id="btnCustomVectors" class="small" title="Load private GeoJSON structure layer — brush piles, road beds, creek mouths">🗂 My Structure</button>
+          <button id="btnFetchOsm" class="small" style="color:#76ff03;border-color:#76ff03" title="Direct browser pull from OpenStreetMap Overpass API — fetches submerged roadbeds, old bridges, historic foundations, and original river centerlines">🌐 Live OSM Structure</button>
+          <label id="btnGarminParser" class="small" style="cursor:pointer;display:inline-flex;align-items:center;gap:4px" title="Import Garmin GPX — auto-extracts FISH/CATCH waypoints into catch journal">📥 Import GPX Catches<input type="file" id="garminParserInput" accept=".gpx" class="hidden"></label>
+          <input type="file" id="customVectorInput" accept=".geojson,.json" class="hidden">
+        </div>
+
+        <!-- Basemap & Mode -->
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <select id="basemap" class="toolbar-select" style="width: 140px;background:var(--panel2);color:var(--accent);font-weight:700">
+            <option value="sat">Satellite</option>
+            <option value="street">Street</option>
+          </select>
+          <select id="editMode" class="toolbar-select" style="width: 80px;">
+            <option value="view">View</option>
+            <option value="add">+ WPT</option>
+            <option value="delete">Del</option>
+          </select>
+          <button id="fitBtn" class="small" title="Fit map to tracking routes">⤢ Fit</button>
+          <span id="zoomIndicator" class="small" title="Current map zoom — this is the zoom the i-Boating contour capture will use" style="background:var(--panel2);color:var(--accent);font-weight:700;padding:4px 8px;border-radius:4px;font-family:monospace;font-size:12px;min-width:54px;text-align:center">z —</span>
+          <span id="storageIndicator" class="small" title="Click for storage details" style="background:var(--panel2);color:var(--accent2);font-weight:700;padding:4px 8px;border-radius:4px;font-family:monospace;font-size:12px;cursor:pointer">storage —</span>
+        </div>
+
+        <div style="flex:1"></div>
+        <div id="coordReadout2" class="toolbar-readout">-- , --</div>
+      </div>
+    </section>
+    <!-- ===== CONTOURS ===== -->
+    <!-- ===== GENERATE ===== -->
+    <section class="panel" id="panel-generate">
+      <div class="pad">
+        <div class="card">
+          <h3>🌀 Trolling Lane Generator</h3>
+          <p class="muted">Build parallel lanes, S-curves, or zigzags. Preview before committing.</p>
+          <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">
+            <div><label>Lake code</label><input id="gLake" placeholder="MUR" value="MUR"></div>
+            <div><label>Start lat</label><input id="gLat1" placeholder="34.0900"></div>
+            <div><label>Start lon</label><input id="gLon1" placeholder="-81.3200"></div>
+            <div><label>End lat</label><input id="gLat2" placeholder="34.1000"></div>
+            <div><label>End lon</label><input id="gLon2" placeholder="-81.3100"></div>
+            <div><label>Lanes</label><input id="gLanes" type="number" value="4" min="1"></div>
+            <div><label>Spacing (ft)</label><input id="gSpacing" type="number" value="150" min="10"></div>
+            <div><label>Points / lane</label><input id="gPts" type="number" value="40" min="5"></div>
+            <div><label>Pattern</label>
+              <select id="gPattern">
+                <option value="straight">Straight — follow waypoint lane</option>
+                <option value="s-curve">S-Curve — weave between waypoint points</option>
+                <option value="zigzag">Zigzag — hard turns between waypoint points</option>
+                <option value="s-straight">S-Curve + Straight Shots</option>
+                <option value="z-straight">Zigzag + Straight Shots</option>
+              </select>
+            </div>
+            <div><label>S amplitude (ft)</label><input id="gAmp" type="number" value="30" min="0"></div>
+            <div><label>S wavelength (ft)</label><input id="gWave" type="number" value="300" min="10"></div>
+            <div><label>Straight shot length (ft)</label><input id="gStraight" type="number" value="350" min="25"></div>
+            <div><label>Connect lanes?</label><select id="gConnect"><option value="no">Separate tracks</option><option value="yes">1 connected track</option></select></div>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <button id="gPickStart">🎯 Pick start</button>
+            <button id="gPickEnd">🎯 Pick end</button>
+            <span style="flex:1"></span>
+            <button id="gPreview">👁 Preview start/end</button>
+            <button id="gPreviewWpt">👁 Preview waypoint lanes</button>
+            <button id="gClearPreview">Clear</button>
+            <button id="gCommit">➕ Commit start/end</button>
+            <button id="gCommitWpt" class="primary">➕ Commit waypoint lanes</button>
+          </div>
+          <div id="gMsg"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== EDIT ===== -->
+    <section class="panel" id="panel-edit">
+      <div class="pad">
+        <div class="row" style="gap:8px;margin-bottom:10px">
+          <button id="bulkPrefixBtn">🔤 Bulk rename</button>
+          <button id="dedupeBtn">🧹 De-dupe</button>
+          <button id="selectAllWptBtn">☑ Select all waypoints</button>
+          <button id="deselectAllWptBtn">☐ Deselect all</button>
+          <button id="delSelBtn">🗑️ Delete selected</button>
+          <button id="recoverBtn">🔄 Recover centerline</button>
+        </div>
+        <div class="card" id="recoverCard" style="display:none">
+          <h3>Recover centerline from S-curve waypoints</h3>
+          <div class="row">
+            <label>Lake code filter</label><input id="recCode" placeholder="e.g. MUR" style="width:100px">
+            <label>Smooth</label><input id="recWindow" type="number" value="3" min="1" style="width:70px">
+            <label>Keep</label><input id="recKeep" type="number" value="0.45" step="0.05" min="0.1" max="1" style="width:80px">
+            <button id="runRecoverBtn" class="primary">Recover → new track</button>
+          </div>
+          <div id="recoverMsg"></div>
+        </div>
+        <div id="editTables"><p class="muted">Load or generate data to edit.</p></div>
+      </div>
+    </section>
+
+    <!-- ===== PLAN ===== -->
+    <section class="panel" id="panel-plan">
+      <div class="pad">
+        <div class="subtabs">
+          <button data-plansub="builder" class="active">🛠 Builder</button>
+          <button data-plansub="preview">📄 Preview / Print</button>
+          <button data-plansub="library">📚 Saved Plans</button>
+        </div>
+
+        <!-- BUILDER -->
+        <div id="plan-builder" class="plan-sub">
+
+          <!-- Stats bar -->
+          <div class="grid" style="grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
+            <div class="card" style="text-align:center;padding:10px">
+              <div class="muted" style="font-size:11px">WAYPOINTS</div>
+              <div class="big" id="planWpts">0</div>
+            </div>
+            <div class="card" style="text-align:center;padding:10px">
+              <div class="muted" style="font-size:11px">TRACKS</div>
+              <div class="big" id="planTrks">0</div>
+            </div>
+            <div class="card" style="text-align:center;padding:10px">
+              <div class="muted" style="font-size:11px">TRACK PTS</div>
+              <div class="big" id="planPts">0</div>
+            </div>
+            <div class="card" style="text-align:center;padding:10px">
+              <div class="muted" style="font-size:11px">DIST (nm)</div>
+              <div class="big" id="planDist">0</div>
+            </div>
+          </div>
+
+          <!-- Section 1: Trip Details -->
+          <div class="card plan-section">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+              <h4 style="margin:0">📅 Trip Details</h4>
+              <div style="display:flex;gap:6px;align-items:center">
+                <input id="planName" placeholder="Plan name" style="width:220px">
+                <button id="autoNameBtn" class="small" title="Auto-generate name">⚡ Auto-name</button>
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+              <div>
+                <label>Waterbody</label>
+                <select id="planLake" style="width:100%">
+                  <option value="">— select lake or river —</option>
+                </select>
+              </div>
+              <div>
+                <label>Ramp / Launch Site</label>
+                <select id="planRamp" style="width:100%">
+                  <option value="">— select ramp —</option>
+                </select>
+              </div>
+              <div><label>Trip Date</label><input type="date" id="planDate" style="width:100%"></div>
+              <div><label>Launch Time</label><input type="time" id="planLaunchTime" value="06:00" style="width:100%"></div>
+              <div><label>Return Time</label><input type="time" id="planReturnTime" value="12:00" style="width:100%"></div>
+              
+            </div>
+            <div style="margin-top:10px">
+              <label>Target Species</label>
+              <div id="planSpeciesChecks" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:4px">
+                <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="Striped Bass" checked> Striped Bass</label>
+                <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="Hybrid"> Hybrid Striper</label>
+                <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="Largemouth Bass"> Largemouth</label>
+                <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="Catfish"> Catfish</label>
+                <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="Crappie"> Crappie</label>
+                <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="White Bass"> White Bass</label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 2: Conditions & Live Utility Pool Level -->
+          <div class="card plan-section" id="conditionsCard">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px">
+              <h4 style="margin:0">🌊 Live Water Conditions &amp; Pool Elevation</h4>
+              <div style="display:flex;gap:6px;align-items:center">
+                <button id="syncDukeBtn" class="small primary" title="Direct browser pull from live utility / USGS stream files">
+                  ⚡ Live Utility Sync
+                </button>
+                <span id="utilitySyncStatus" style="font-size:11px;color:var(--muted);font-family:monospace">Ready</span>
+              </div>
+            </div>
+
+            <!-- Utility Assessment Callout Box -->
+            <div id="utilityAssessmentBox" style="display:none;background:rgba(0,229,255,0.08);border-left:4px solid var(--accent);padding:10px 14px;border-radius:0 8px 8px 0;margin-bottom:12px;font-size:12.5px;line-height:1.4">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <b id="uTitle" style="color:var(--accent);font-size:13.5px">Utility Management System</b>
+                <span id="uMode" style="background:var(--panel2);color:var(--accent2);padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700">Direct Browser Pull</span>
+              </div>
+              <div id="uDesc" style="margin-top:4px;color:var(--fg)">
+                Connects directly to live clean stream data files and utility curves.
+              </div>
+              <div id="uManualVerify" style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.1)">
+                <a id="uLink" href="https://waterdata.usgs.gov/" target="_blank" style="color:var(--warn);text-decoration:none;font-weight:700">
+                  ⚠ Verify Real-Time Utility Operation Dashboard in a new tab ↗
+                </a>
+              </div>
+            </div>
+
+            <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px">
+              <div>
+                <label>Water Temp °F</label>
+                <input id="planWaterTemp" placeholder="Auto e.g. 72.5">
+              </div>
+              <div>
+                <label>Target Full Pool</label>
+                <input id="planFullPool" placeholder="Auto / E.g. 100.0">
+              </div>
+              <div>
+                <label>Current Live Level</label>
+                <input id="planPoolLevel" placeholder="Auto e.g. 97.4">
+              </div>
+              <div>
+                <label>Air / Weather</label>
+                <input id="planWeather" placeholder="Auto from Open-Meteo">
+              </div>
+              <div>
+                <label>Water Clarity</label>
+                <select id="planClarity" style="width:100%">
+                  <option value="Clear">Clear — natural colors, fluoro critical</option>
+                  <option value="Stained">Stained — high contrast, vibration</option>
+                  <option value="Muddy">Muddy — dark silhouettes, rattles</option>
+                </select>
+              </div>
+              <div>
+                <label>Solunar Window</label>
+                <input id="planSolunar" placeholder="Auto Major e.g. 7:15 AM">
+              </div>
+            </div>
+
+            <!-- River-only live fields (shown automatically when a river is selected above) -->
+            <div id="planRiverFields" style="display:none;margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px">
+                <h4 style="margin:0;color:#ffb703">🌊 Live River / Dam Release Intel</h4>
+                <span class="muted" style="font-size:11px">uses the same Cloudflare <code>/river</code> endpoint already in the worker</span>
+              </div>
+              <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px">
+                <div><label>Kayak Go / No-Go</label><input id="planRiverSafety" readonly placeholder="Auto"></div>
+                <div><label>Streamflow</label><input id="planRiverFlow" readonly placeholder="Auto cfs"></div>
+                <div><label>Gauge Height</label><input id="planRiverGauge" readonly placeholder="Auto ft"></div>
+                <div><label>Water Temp</label><input id="planRiverTemp" readonly placeholder="Auto °F"></div>
+                <div><label>Rate of Rise</label><input id="planRiverRise" readonly placeholder="Auto ft/hr"></div>
+                <div><label>Surge ETA @ selected launch</label><input id="planRiverSurgeEta" readonly placeholder="Select ramp + sync"></div>
+              </div>
+              <div style="margin-top:8px">
+                <label>Dam Schedule / Safety Reasons</label>
+                <textarea id="planRiverSchedule" rows="4" readonly placeholder="Live dam schedule, surge timing, and kayak safety reasons will populate here."></textarea>
+                <textarea id="planRiverSummary" class="hidden"></textarea>
+              </div>
+            </div>
+          </div>
+
+
+          <!-- Section 2a: Lake Intelligence -->
+          <div class="card plan-section" id="lakeIntelCard">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px">
+              <h4 style="margin:0">🧠 Lake Intelligence Briefing</h4>
+              <div style="display:flex;gap:6px;align-items:center">
+                <button id="syncLakeIntelBtn" class="small primary" title="Build a fisherman-focused lake briefing from curated profile + worker-scraped fishing reports">⚡ Build Lake Intel</button>
+                <span id="lakeIntelStatus" style="font-size:11px;color:var(--muted);font-family:monospace">Ready</span>
+              </div>
+            </div>
+            <p class="muted" style="margin-top:0;line-height:1.4">
+              Generates a lake-specific fisherman report: primary sport fish, stocking notes, invasive/spotted bass pressure, bottom and cover, hazards, seasonal patterns, ramps/strategy, and latest fishing-report scrape when available.
+            </p>
+            <div id="lakeIntelSummary" style="display:none;background:rgba(0,229,255,0.08);border-left:4px solid var(--accent);padding:10px 14px;border-radius:0 8px 8px 0;margin-bottom:10px;font-size:12.5px;line-height:1.45"></div>
+            <textarea id="planLakeIntel" rows="8" placeholder="Click Build Lake Intel after selecting a lake. This text is saved with the plan and included in the preview." style="font-size:12.5px"></textarea>
+          </div>
+
+          <!-- Section 2a2: Clarity & Runoff Intelligence -->
+          <div class="card plan-section" id="clarityIntelCard">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px">
+              <h4 style="margin:0">🌦 Clarity &amp; Runoff Intelligence</h4>
+              <div style="display:flex;gap:6px;align-items:center">
+                <button id="syncClarityIntelBtn" class="small primary" title="Predict clarity by lake zone from recent/forecast rain, wind, and lake profile">⚡ Build Clarity Forecast</button>
+                <span id="clarityIntelStatus" style="font-size:11px;color:var(--muted);font-family:monospace">Ready</span>
+              </div>
+            </div>
+            <p class="muted" style="margin-top:0;line-height:1.4">Predicts which lake zones will be clear/stained/muddy, recommends lure colors, and suggests ramps/zones. This is a model — verify water color at the ramp.</p>
+            <div id="clarityIntelSummary" style="display:none;background:rgba(255,183,3,0.10);border-left:4px solid var(--warn);padding:10px 14px;border-radius:0 8px 8px 0;margin-bottom:10px;font-size:12.5px;line-height:1.45"></div>
+            <textarea id="planClarityIntel" rows="7" placeholder="Click Build Clarity Forecast after selecting a lake and trip date. Included in the preview and used to update Water Clarity." style="font-size:12.5px"></textarea>
+          </div>
+
+
+          <!-- Section 2b: Coastal Tides (saltwater trips) -->
+          <div class="card plan-section" id="tidesCard">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px">
+              <h4 style="margin:0">🌊 Coastal Saltwater Tides <span class="muted" style="font-weight:normal;font-size:11px">— freshwater trips: leave blank</span></h4>
+              <div style="display:flex;gap:6px;align-items:center">
+                <button id="syncTidesBtn" class="small primary">⚡ Fetch Tides</button>
+                <span id="tideSyncStatus" style="font-size:11px;color:var(--muted);font-family:monospace">Offline</span>
+              </div>
+            </div>
+            <div class="row" style="gap:10px;margin-bottom:10px">
+              <div style="flex:1;min-width:200px">
+                <label>Coastal Reference Station</label>
+                <select id="noaaStationSelect" style="width:100%">
+                  <option value="">— freshwater / non-tidal trip —</option>
+                  <optgroup label="South Carolina Coast">
+                    <option value="8665530">Charleston Harbor ✅</option>
+                    <option value="8668103">Beaufort River (Dispensary Creek)</option>
+                    <option value="8662245">Georgetown (Winyah Bay)</option>
+                    <option value="8661070">Myrtle Beach (Springmaid Pier)</option>
+                    <option value="8662915">Murrells Inlet (Captain Dick's)</option>
+                    <option value="8669968">Hilton Head (Calibogue Sound)</option>
+                  </optgroup>
+                  <optgroup label="North Carolina Coast">
+                    <option value="8658120">Wilmington (Cape Fear River)</option>
+                    <option value="8656483">Beaufort NC (Duke Marine Lab)</option>
+                    <option value="8652587">Oregon Inlet Marina</option>
+                  </optgroup>
+                  <optgroup label="Georgia Coast">
+                    <option value="8670870">Fort Pulaski (Savannah River)</option>
+                    <option value="8677344">St. Simons Island</option>
+                  </optgroup>
+                </select>
+              </div>
+              <div style="width:160px">
+                <label>Live Water Stage</label>
+                <input id="liveTideStageReadout" placeholder="Incoming / Flood" readonly style="font-weight:700;color:var(--accent)">
+              </div>
+            </div>
+            <div id="tidesAssessmentTableWrap" style="display:none;margin-top:8px;overflow-x:auto">
+              <table id="tidesAssessmentTable" style="width:100%;border-collapse:collapse;font-size:12.5px">
+                <thead>
+                  <tr style="background:var(--panel2);color:var(--accent)">
+                    <th>Event</th><th>Time</th><th>Level (MLLW)</th><th>Tactical Impact</th>
+                  </tr>
+                </thead>
+                <tbody id="tidesAssessmentBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Section 3: Gear -->
+          <div class="card plan-section">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px">
+              <h4 style="margin:0">⚙️ Advanced Gear &amp; Live BLE Motor Hub</h4>
+              <div style="display:flex;gap:6px;align-items:center">
+                <button id="btnEmbedPairBle" class="small primary" style="background:var(--accent2);color:#000;font-weight:900;font-family:monospace;box-shadow:0 2px 8px rgba(118,255,3,0.3)" title="Flawlessly pair Web Bluetooth API directly inside TrollMap with XZNY / Smart BMS LiFePO4 battery">
+                  <span>⚡</span> Live Web Bluetooth Pair
+                </button>
+                <!-- Separate app removed - embedded is now primary -->
+              </div>
+            </div>
+            <!-- Live Active Web Bluetooth Telemetry Callout Box -->
+            <div id="embedBleAssessmentBox" style="display:none;background:#0f172a;border-left:4px solid var(--accent2);padding:10px 14px;border-radius:0 8px 8px 0;margin-bottom:12px;font-size:12.5px;line-height:1.4">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <b id="ebName" style="color:var(--accent2);font-size:13.5px">XZNY 24V LiFePO4 Battery Active Feed</b>
+                <span id="ebSoc" style="background:var(--panel2);color:var(--accent);padding:1px 6px;border-radius:4px;font-size:11px;font-weight:700">100% SOC</span>
+              </div>
+              <div style="margin-top:4px;display:flex;gap:14px;flex-wrap:wrap">
+                <span id="ebVolts" style="font-family:monospace;color:#fff">26.4V</span>
+                <span id="ebAmps" style="font-family:monospace;color:var(--warn)">Active Active Load: 0.0A (0W)</span>
+                <span id="ebRemAh" style="font-family:monospace;color:#00e5ff">Remaining Usable Active: 100.0 Ah</span>
+              </div>
+              <div id="ebSprintTime" style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.1);color:var(--accent2);font-weight:700">
+                ⚡ Full Throttle Sprint Runtime Usable: Infinite (Standby)
+              </div>
+            </div>
+            <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">
+              <div><label>Motor / Battery</label><input id="planMotor" value="NK180 Pro 24V, 100Ah LiFePO4" placeholder="Personal Motor Profile"></div>
+              <div><label>Sonar Unit</label><input id="planSonar" value="Garmin ECHOMAP UHD2 93sv" placeholder="Personal Sonar Profile"></div>
+              <div><label>Troll Speed (mph)</label><input id="planSpeed" value="2.4" type="number" step="0.1"></div>
+              <div><label>Target Depth (ft)</label><input id="planTargetDepth" placeholder="25-35"></div>
+              <div>
+                <label>Troll Pattern</label>
+                <select id="planPattern" style="width:100%">
+                  <option>S-curves</option>
+                  <option>Straight lanes</option>
+                  <option>Zigzag</option>
+                  <option>Contour follow</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 4: Spread -->
+          <div class="card plan-section">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+              <h4 style="margin:0">🎣 Trolling Spread</h4>
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                <select id="savedSpreadsSelect" style="min-width:160px">
+                  <option value="">— load saved spread —</option>
+                </select>
+                <button id="saveSpreadBtn" class="small">💾 Save spread</button>
+                <button id="delSpreadBtn" class="small">🗑</button>
+                <button class="small" id="addRodBtn">+ Add rod</button>
+                <button class="small" id="fillDefaultSpreadBtn">⚡ Default</button>
+              </div>
+            </div>
+            <div style="overflow-x:auto">
+              <table class="spread-table" id="spreadTable">
+                <thead><tr>
+                  <th>#</th><th>Side</th><th>Position</th><th>Rod</th>
+                  <th>Reel / Line</th><th>Lure / Bait</th><th>Color</th>
+                  <th>Depth ft</th><th>Lead ft</th><th>Notes</th><th></th>
+                </tr></thead>
+                <tbody id="spreadBody"></tbody>
+              </table>
+            </div>
+            <p class="muted" style="font-size:11px;margin-top:6px">Port = left · Starboard = right · Position: Bow / Mid / Stern</p>
+          </div>
+
+          <!-- Section 5: Structure & Lanes -->
+          <div class="card plan-section">
+            <h4>🗺 Structure Notes & Lane Intel</h4>
+            <textarea id="planStructure" rows="4" placeholder="LN1: 25-35ft channel edge, old road bed at 32ft&#10;LN2: hump top 22ft, drops to 40ft east side&#10;LN3: creek channel, max 45ft&#10;(auto-populates run times from GPX tracks)"></textarea>
+            <div style="margin-top:8px">
+              <label class="muted" style="font-size:11px">Waypoints / Tracks loaded (from map)</label>
+              <div id="planGroups" style="min-height:20px;font-size:12px"></div>
+            </div>
+          </div>
+
+          <!-- Section 6: Checklists side by side -->
+          <div class="grid" style="grid-template-columns:1fr 1fr;gap:12px">
+            <div class="card plan-section">
+              <h4>🎒 Tackle Checklist</h4>
+              <textarea id="planTackle" rows="10">A-rigs x2-3 (light + medium)
+Crankbaits (Flicker Minnow 11, Deep Hit Stick)
+Flutter spoon (silver)
+Swimbaits 3.8" + 4.6" (natural pearl / blueback herring)
+Inline weights 2oz x2
+Jigheads 1/4oz + 3/4oz
+Fluoro leaders 20lb
+Snap swivels, split rings
+Net / lip grippers
+Pliers + hook remover</textarea>
+            </div>
+            <div class="card plan-section">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px">
+                <h4 style="margin:0">🦺 Active Live Threat Safety Checklist</h4>
+                <button id="autoCompileSafetyBtn" class="small primary" title="Autonomous AI compilation from weather forecast and live water temperatures">
+                  ⚡ Auto-Compile from Weather
+                </button>
+              </div>
+              <textarea id="planSafety" rows="10">PFD on at all times
+Phone charged + dry bag
+Float plan filed (ramp, return time, contact)
+Check radar before launch
+Whistle + light clipped to PFD
+Anchor + 30ft rope
+First aid kit
+Water 3L minimum
+Sunscreen SPF50+ / UV shirt / hat
+Battery check (NK180 Bluetooth app)
+Trolling motor prop clear
+First thunder → nearest shore immediately</textarea>
+            </div>
+          </div>
+
+          <!-- Section 7: Notes -->
+          <div class="card plan-section">
+            <h4>📝 Notes / Backup Spots / Intel</h4>
+            <textarea id="planNotes" rows="3" placeholder="Backup ramps, hot spots from last trip, buddy reports, tide/flow notes..."></textarea>
+          </div>
+
+          <!-- Section 8: Catch Journal -->
+          <div class="card plan-section">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <h4 style="margin:0">📓 Catch Journal</h4>
+              <button class="small primary" id="addCatchBtn">+ Log Catch</button>
+            </div>
+            <div id="catchLog" style="margin-top:8px"></div>
+            <div id="catchForm" style="display:none;margin-top:10px;padding:10px;background:var(--panel2);border-radius:8px;border:1px solid var(--line)">
+              <div class="grid" style="grid-template-columns:repeat(3,1fr);gap:8px;font-size:12px">
+                <div><label>Species</label><input id="cSpecies" placeholder="Striper"></div>
+                <div><label>Length (in)</label><input id="cLength" type="number" placeholder="28"></div>
+                <div><label>Time</label><input id="cTime" placeholder="7:45 AM"></div>
+                <div><label>Depth (ft)</label><input id="cDepth" placeholder="32"></div>
+                <div><label>Lure / Color</label><input id="cLure" placeholder="A-rig, pearl"></div>
+                <div><label>Lead (ft)</label><input id="cLead" placeholder="90"></div>
+                <div style="grid-column:1 / -1; margin-top:4px"><label>📷 Verification Photo / Sonar Screenshot</label><input type="file" id="cPhoto" accept="image/*" style="width:100%;background:var(--panel2);color:var(--accent2);padding:5px;border-radius:6px;border:1px solid var(--line)"></div>
+              </div>
+              <textarea id="cNotes" placeholder="Structure, conditions, what triggered the bite..." rows="2" style="margin-top:8px;width:100%"></textarea>
+              <div style="display:flex;gap:6px;margin-top:8px">
+                <button id="saveCatchBtn" class="primary small">💾 Save</button>
+                <button id="cancelCatchBtn" class="small">Cancel</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Action buttons -->
+          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;padding-bottom:20px">
+            <button id="savePlanBtn" class="primary">💾 Save Plan</button>
+            <button id="buildPreviewBtn" class="primary">📄 Build Preview</button>
+            <button id="printPlanBtn">🖨 Print Plan</button>
+            <button id="exportPlanHtmlBtn">⬇ HTML</button>
+            <button id="exportPlanJsonBtn">⬇ JSON</button>
+          </div>
+
+        </div><!-- /builder -->
+
+        <!-- PREVIEW -->
+        <div id="plan-preview" class="plan-sub hidden">
+          <div class="card">
+            <div class="row no-print" style="justify-content:flex-end">
+              <button id="backToBuilderBtn" class="ghost small">← Back to Builder</button>
+              <button onclick="window.print()" class="primary small">🖨 Print</button>
+            </div>
+            <div id="planPreviewHtml" class="plan-preview">
+              <p class="muted">Click "Build Preview" in the Builder tab.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- LIBRARY -->
+        <div id="plan-library" class="plan-sub hidden">
+          <div class="card">
+            <h3>Saved Fishing Plans</h3>
+            <div id="planLibraryList"><p class="muted">No saved plans yet.</p></div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+  </div>
+
+  <nav id="bottomNav">
+    <button data-tab="map" class="active"><span class="ico">🗺️</span>Map</button>
+    <button data-tab="generate"><span class="ico">🌀</span>Generate</button>
+    <button data-tab="edit"><span class="ico">✏️</span>Edit</button>
+    <button data-tab="plan"><span class="ico">🎣</span>Plan</button>
+  </nav>
+</div>
+
+
+<!-- Leaflet (CDN) -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+<script src="./js/lazy-data.js"></script>
+
+<!-- TrollMap modular build — loads 39 ES modules + wires the app -->
+<script type="module" src="./js/main.js"></script>
+
+<!-- Cloudflare analytics beacon -->
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+
+</body>
+</html>
