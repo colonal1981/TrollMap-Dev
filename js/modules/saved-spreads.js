@@ -11,7 +11,7 @@ import { renderSpread } from './spread-builder.js';
 // Module-level cache mirroring what's in IndexedDB.
 let SAVED_SPREADS = {};
 
-async function loadSavedSpreads() {
+export async function loadSavedSpreads() {
   if (!window.DB?.db) return;
   try {
     const all = await window.DB.getAll('spreads');
