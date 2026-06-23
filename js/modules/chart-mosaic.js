@@ -18,7 +18,7 @@ import { esc } from '../utils/escape.js';
 import { setBanner } from '../core/map-init.js';
 
 // Exposed so chart-overlay.js and others can push to the saved list.
-function addChartLayer(name, img, bounds, opacity, rotation) {
+export function addChartLayer(name, img, bounds, opacity, rotation) {
   const rot = rotation || 0;
   const ov = L.imageOverlay(img, [[bounds.north, bounds.west], [bounds.south, bounds.east]], {
     opacity: opacity != null ? opacity : 0.75,
@@ -36,7 +36,7 @@ function addChartLayer(name, img, bounds, opacity, rotation) {
   renderChartList();
 }
 
-function addAffineChartLayer(name, img, natSize, pts, opacity) {
+export function addAffineChartLayer(name, img, natSize, pts, opacity) {
   // Lazy-load the affine helper from chart-overlay (avoids circular import).
   const aff = window.createAffineImageOverlayForMosaic
     ? window.createAffineImageOverlayForMosaic(img, natSize, pts, opacity != null ? opacity : 0.75)
@@ -254,7 +254,7 @@ async function persistCharts() {
   }
 }
 
-async function restoreCharts() {
+export async function restoreCharts() {
   if (!window.DB?.db) return;
   try {
     const rec = await window.DB.get('charts', '__all__');
