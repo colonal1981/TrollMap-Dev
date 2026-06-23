@@ -303,6 +303,90 @@ window.clearAllLayers = clearAllLayers;
 
 // ── Wire drop zone / file input ──────────────────────────────────────────
 
+// ── Batch sidecar import ────────────────────────────────────────────────────
+// Accepts any number of PNG + .georef.json pairs. Each pair is placed as a
+// named chart layer using the bounds from the sidecar — no manual alignment.
+// Triggered by:
+//   - File picker via the button  → not currently in DOM
+//   - Cloud Chartpacks module    → sets input.files programmatically + dispatches change
+document.getElementById('batchImportInput')?.addEventListener('change', (e) => {
+  const files = Array.from(e.target.files);
+  if (!files.length) return;
+
+  // Group files by stem (filename without .png or .georef.json extension)
+  const pngs = {}, jsons = {};
+  files.forEach((f) => {
+    const base = f.name.replace(/\.georef\.json$/i, '').replace(/\.png$/i, '');
+    if (/\.georef\.json$/i.test(f.name)) jsons[base] = f;
+    else if (/\.png$/i.test(f.name)) pngs[base] = f;
+  });
+
+  const matched = Object.keys(jsons).filter((k) => pngs[k]);
+  if (!matched.length) {
+    alert('No matching PNG + .georef.json pairs found.\nSelect both the PNG files and their .georef.json sidecars together.');
+    return;
+  }
+
+  let loaded = 0;
+  const total = matched.length;
+  setBanner(`Loading ${total} chart tiles...`);
+
+  matched.forEach((base) => {
+    const jr = new FileReader();
+    jr.onload = (jev) => {
+      let georef;
+      try { georef = JSON.parse(jev.target.result); }
+      catch (err) {
+        console.error('Bad georef JSON for', base, err);
+        loaded++;
+        return;
+      }
+
+      // Support both {north,south,east,west} at root or nested under {bounds:{...}}
+      const b = georef.bounds || georef;
+      if (b.north == null || b.south == null || b.east == null || b.west == null) {
+        console.warn('Missing bounds in', base, georef);
+        loaded++;
+        return;
+      }
+
+      const pr = new FileReader();
+      pr.onload = async (pev) => {
+        const bounds = { north: b.north, south: b.south, east: b.east, west: b.west };
+        addChartLayer(base, pev.target.result, bounds, 0.75, 0);
+        loaded++;
+        if (loaded === total) {
+          setBanner(`✅ Imported ${total} chart tiles`);
+          setTimeout(() => setBanner(''), 3000);
+          // Persist to IndexedDB so contours survive a page refresh.
+          try { await persistCharts(); } catch (_) {}
+          // Fit map to imported tiles
+          const lats = [], lons = [];
+          state.CHARTS.slice(-total).forEach((c) => {
+            lats.push(c.bounds.north, c.bounds.south);
+            lons.push(c.bounds.west, c.bounds.east);
+          });
+          if (lats.length && state.MAP) {
+            state.MAP.fitBounds([
+              [Math.min(...lats), Math.min(...lons)],
+              [Math.max(...lats), Math.max(...lons)],
+            ]);
+          }
+          const wrap = document.getElementById('chartLayersWrap');
+          if (wrap) wrap.style.display = 'block';
+        } else {
+          setBanner(`Loading tiles... ${loaded}/${total}`);
+        }
+      };
+      pr.readAsDataURL(pngs[base]);
+    };
+    jr.readAsText(jsons[base]);
+  });
+
+  e.target.value = ''; // reset so same files can be re-imported if needed
+});
+// ────────────────────────────────────────────────────────────────────────────
+
 function wireImportUI() {
   const dropZone = document.getElementById('dropZone');
   const layerFile = document.getElementById('layerFile');
