@@ -305,3 +305,4 @@ import { TRISTATE_MASTER_RAMPS } from "../data/ramps.js";
 
   console.log('[trollmap_fishing_index] loaded — ' + Object.keys(FISHING_SYSTEMS).length
     + ' fishing systems, ' + Object.keys(SCDNR_OVERRIDES).length + ' SCDNR overrides');
+})();
