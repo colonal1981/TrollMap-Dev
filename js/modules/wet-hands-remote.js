@@ -7,6 +7,9 @@
  *   - Gamepad buttons 0/12/13 → waypoint / zoom
  */
 
+import { state } from '../core/state.js';
+import { setBanner } from '../core/map-init.js';
+
 /* ── Autonomous "Wet Hands" Bluetooth Media Remote & Gamepad Hub (Module J) ── */
 (function initWetHandsRemoteHub(){
   setTimeout(() => {
@@ -15,7 +18,7 @@
 
     // Standard Keyboard Media Clicker Interceptor
     window.addEventListener('keydown', (event) => {
-      if(!window.WET_HANDS_ACTIVE || !MAP_OK) return;
+      if(!window.WET_HANDS_ACTIVE || !state.MAP_OK) return;
       if(document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
 
       const key = event.key;
@@ -23,12 +26,12 @@
 
       // 1. Zoom In (Media / Clicker Up)
       if(key === '+' || key === '=' || code === 'VolumeUp' || code === 'MediaTrackNext'){
-        MAP.zoomIn();
+        state.MAP.zoomIn();
         event.preventDefault();
       }
       // 2. Zoom Out (Media / Clicker Down)
       else if(key === '-' || key === '_' || code === 'VolumeDown' || code === 'MediaTrackPrevious'){
-        MAP.zoomOut();
+        state.MAP.zoomOut();
         event.preventDefault();
       }
       // 3. Drop Catch Waypoint exactly at current GPS (Play / Pause / Space)
@@ -36,13 +39,13 @@
         const wptBtn = document.getElementById('dropWptBtn');
         if(wptBtn){
           wptBtn.click();
-          say('✓ Wet Hands Remote: Dropped Waypoint @ Active GPS', false);
+          window.setBanner?.('✓ Dropped Waypoint @ GPS');
         } else {
           // Explicitly drop WPT at map center if GPS or button missing
-          const C = MAP.getCenter();
+          const C = state.MAP.getCenter();
           const name = 'WPT_' + new Date().toISOString().slice(11,19).replace(/[:.]/g,'_');
-          DATA.waypoints.push({ lat: C.lat, lon: C.lng, name: name, sym: 'Waypoint' });
-          if(typeof renderAll === 'function') renderAll();
+          state.DATA.waypoints.push({ lat: C.lat, lon: C.lng, name: name, sym: 'Waypoint' });
+          window.renderAll?.();
           alert('✓ Flawlessly Paired Wet Hands Bluetooth Remote!\n\nDropped Waypoint exactly at active location: ' + name);
         }
         event.preventDefault();
@@ -57,7 +60,7 @@
 
     // Integrated Javascript Gamepad API Auto-Scanner
     function pollGamepads(){
-      if(!window.WET_HANDS_ACTIVE || !MAP_OK) return;
+      if(!window.WET_HANDS_ACTIVE || !state.MAP_OK) return;
       const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
       for(let gp of gamepads){
         if(!gp) continue;
@@ -75,7 +78,7 @@
           if(!gp._up_locked){
             gp._up_locked = true;
             setTimeout(() => gp._up_locked = false, 400);
-            MAP.zoomIn();
+            state.MAP.zoomIn();
           }
         }
         // Button 13 (D-pad Down / Volume Down)
@@ -83,7 +86,7 @@
           if(!gp._down_locked){
             gp._down_locked = true;
             setTimeout(() => gp._down_locked = false, 400);
-            MAP.zoomOut();
+            state.MAP.zoomOut();
           }
         }
       }
