@@ -137,7 +137,14 @@ async function boot() {
         const lake = document.getElementById('planLake')?.value;
         if (lake) populatePlanRampDropdown(lake);
       } catch (e) { console.warn('Plan ramp dropdown:', e); }
-    });
+      // Re-run ramp population after a short delay in case restoreWorkingData
+      // hasn't finished setting planLake value yet
+      setTimeout(() => {
+        try {
+          const lake = document.getElementById('planLake')?.value;
+          if (lake) populatePlanRampDropdown(lake);
+        } catch (e) {}
+      }, 1000);
 
     // Initialize the Leaflet map (this populates state.MAP and renders base tiles)
     initMap();
