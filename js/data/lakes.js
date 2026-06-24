@@ -69,6 +69,7 @@ export const LAKE_DB = {
     // We only request temperature (00010) from USGS. 00065 (river stage) is deliberately excluded.
     usgs: {site:"02148000", params:"00010"}, 
     ramps: {
+      "Clearwater Cove Marina": [34.39880, -80.65930],
       "Lake Wateree State Park": [34.4363, -80.8641],
       "SCDNR Beaver Creek Access": [34.4328, -80.8584],
       "Taylor Creek Access": [34.4375, -80.8758],
