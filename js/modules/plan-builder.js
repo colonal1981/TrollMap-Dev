@@ -53,16 +53,16 @@ function collectPlan(){
       targetDepth: document.getElementById('planTargetDepth').value,
       pattern: document.getElementById('planPattern').value,
     },
-    spread: SPREAD.slice(),
+    spread: state.SPREAD.slice(),
     tackle: document.getElementById('planTackle').value,
     safety: document.getElementById('planSafety').value,
     notes: document.getElementById('planNotes').value,
     gpx: {
-      waypoints: DATA.waypoints.length,
-      tracks: DATA.tracks.length,
-      trackPoints: DATA.tracks.reduce((a,t)=>a+t.pts.length,0),
-      waypointList: DATA.waypoints.map(w=>({name:w.name, lat:w.lat, lon:w.lon})),
-      trackList: DATA.tracks.map(t=>({name:t.name, points:t.pts.length}))
+      waypoints: state.DATA.waypoints.length,
+      tracks: state.DATA.tracks.length,
+      trackPoints: state.DATA.tracks.reduce((a,t)=>a+t.pts.length,0),
+      waypointList: state.DATA.waypoints.map(w=>({name:w.name, lat:w.lat, lon:w.lon})),
+      trackList: state.DATA.tracks.map(t=>({name:t.name, points:t.pts.length}))
     },
     savedAt: new Date().toISOString()
   };
@@ -108,7 +108,7 @@ function loadPlanIntoForm(p){
     document.getElementById('planTargetDepth').value = p.trolling.targetDepth||'';
     document.getElementById('planPattern').value = p.trolling.pattern||'Straight lanes';
   }
-  SPREAD = (p.spread||[]).map(r=>newRodRow(r));
+  state.SPREAD = (p.spread||[]).map(r=>newRodRow(r));
   renderSpread();
   document.getElementById('planTackle').value = p.tackle||'';
   document.getElementById('planSafety').value = p.safety||'';
@@ -928,7 +928,7 @@ ${twilightHtml?`<h2>4 · Light &amp; Bite Feed Triggers</h2>${twilightHtml}`:''}
   <div style="background:#f7f9fb;border:1px solid #e1e7ed;border-radius:8px;padding:14px">
     <h3 style="color:#0d4f8b;margin:0 0 8px 0;font-size:15px;display:flex;align-items:center;gap:6px">🌬️ Vector Wind Exposure Scoring Engine</h3>
     <div style="font-size:13px;color:#333;display:flex;flex-direction:column;gap:6px">
-      ${DATA.tracks && DATA.tracks.length > 0 ? DATA.tracks.map((t, i) => {
+      ${state.DATA.tracks && state.DATA.tracks.length > 0 ? state.DATA.tracks.map((t, i) => {
         let score = i === 0 ? 2 : i === 1 ? 7 : 9;
         let label = i === 0 ? 'Lee Shore Cover' : i === 1 ? 'Open Fetch Wind Chop' : 'Direct Squall Funnel';
         let col   = i === 0 ? '#2e7d32' : i === 1 ? '#c62828' : '#bf360c';
@@ -1072,17 +1072,17 @@ ${CATCHES.length?`
 
 
 export function renderPlanStats(){
-  document.getElementById('planWpts').textContent=DATA.waypoints.length;
-  document.getElementById('planTrks').textContent=DATA.tracks.length;
-  const pts=DATA.tracks.reduce((a,t)=>a+t.pts.length,0);
+  document.getElementById('planWpts').textContent=state.DATA.waypoints.length;
+  document.getElementById('planTrks').textContent=state.DATA.tracks.length;
+  const pts=state.DATA.tracks.reduce((a,t)=>a+t.pts.length,0);
   document.getElementById('planPts').textContent=pts;
   let dist=0;
-  DATA.tracks.forEach(t=>{ 
+  state.DATA.tracks.forEach(t=>{ 
     for(let i=1;i<t.pts.length;i++) dist+=distFt(t.pts[i-1],t.pts[i]); 
   });
   document.getElementById('planDist').textContent=(dist/6076.12).toFixed(2);
   const groups={};
-  DATA.waypoints.forEach(w=>{ 
+  state.DATA.waypoints.forEach(w=>{ 
     const k=(w.name||'').replace(/\d.*$/,'').trim()||'(other)'; 
     groups[k]=(groups[k]||0)+1; 
   });
