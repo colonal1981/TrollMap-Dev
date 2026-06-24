@@ -126,7 +126,6 @@ async function boot() {
     await dbReady(async () => {
       // Restore persisted state from IndexedDB
       try { await restoreWorkingData(); } catch (e) { console.warn('Working data restore failed:', e); }
-      try { await restoreCharts(); } catch (e) { console.warn('Charts restore failed:', e); }
       try { await loadAllLayers(); } catch (e) { console.warn('Layers restore failed:', e); }
       try { await loadSavedSpreads(); } catch (e) { console.warn('Spreads restore failed:', e); }
       try { await loadCatches(); } catch (e) { console.warn('Catches restore failed:', e); }
@@ -149,6 +148,9 @@ async function boot() {
 
     // Initialize the Leaflet map (this populates state.MAP and renders base tiles)
     initMap();
+
+    // Restore charts AFTER map is ready so Leaflet layers can be added
+    try { await restoreCharts(); } catch (e) { console.warn('Charts restore failed:', e); }
 
     // Seed default 6-rod spread on first run (when SPREAD is empty)
     if (!state.SPREAD || state.SPREAD.length === 0) {
