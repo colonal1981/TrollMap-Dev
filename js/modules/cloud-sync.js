@@ -33,7 +33,7 @@ const STORE_BY_TYPE = {
   plan: 'plans',
   spread: 'spreads',
   catch: 'journal',
-  chart: 'charts',
+  // chart: 'charts',  // charts live in R2 — excluded from D1 sync
   layer: 'layers',
 };
 
@@ -119,6 +119,8 @@ async function queueForLater(type, id, payload) {
  */
 export function pushItemOnSave(type, id, data) {
   if (!type || id == null) return;
+  // Charts live in R2 via the capture pipeline — never sync to D1
+  if (type === 'chart') return;
   const payload = { ...data, lastModified: new Date().toISOString() };
 
   fetch(`${CF_WORKER_URL}/sync/item/${type}/${encodeURIComponent(id)}`, {
@@ -272,7 +274,7 @@ export async function pullUpdatesOnLoad() {
  */
 export async function pushAllLocalToCloud() {
   if (!window.DB?.db) return;
-  const stores = ['plans', 'spreads', 'journal', 'charts', 'layers'];
+  const stores = ['plans', 'spreads', 'journal', 'layers']; // charts live in R2, not D1
   let count = 0;
   for (const store of stores) {
     try {
