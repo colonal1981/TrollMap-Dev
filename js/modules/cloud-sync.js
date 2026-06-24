@@ -164,7 +164,10 @@ export async function pullUpdatesOnLoad() {
     const listUrl = localLastSync
       ? `${CF_WORKER_URL}/sync/list-updates?since=${localLastSync}`
       : `${CF_WORKER_URL}/sync/list-updates`;
-    const res = await fetch(listUrl);
+    const res = await fetch(listUrl, {
+      headers: { 'X-Sync-Token': SYNC_TOKEN },
+      cache: 'no-store',
+    });
     if (!res.ok) {
       console.warn('Cloud list-updates returned', res.status);
       setStatus('Cloud unavailable', true);
@@ -189,7 +192,9 @@ export async function pullUpdatesOnLoad() {
     //    expose /sync/batch-pull so this is one round-trip).
     for (const meta of serverItems) {
       try {
-        const itemRes = await fetch(`${CF_WORKER_URL}/sync/item/${meta.key}`);
+        const itemRes = await fetch(`${CF_WORKER_URL}/sync/item/${meta.key}`, {
+          headers: { 'X-Sync-Token': SYNC_TOKEN },
+        });
         if (!itemRes.ok) continue;
         const data = await itemRes.json();
 
