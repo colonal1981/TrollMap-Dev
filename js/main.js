@@ -78,6 +78,9 @@ import './modules/catch-photo.js';
 import './modules/osm-structure.js';
 import './modules/quickdraw-key.js';
 import './modules/sw-register.js';
+import { pullUpdatesOnLoad, pushAllLocalToCloud } from './modules/cloud-sync.js';
+import './modules/smart-route.js';
+import './modules/pinch-point-finder.js';
 
 // ── Plan-tab dropdown helpers are exposed on `window` so the ──
 //    tab switcher in core/tabs.js can invoke them by name.        ──
@@ -104,6 +107,7 @@ window.restoreCharts = restoreCharts;
 window.loadAllLayers = loadAllLayers;
 window.renderEditTables = renderEditTables;
 window.renderPlanStats = renderPlanStats;
+window.pushAllLocalToCloud = pushAllLocalToCloud;
 window.isPlanRiverValue = isPlanRiverValue;
 window.getPlanRiverDef = getPlanRiverDef;
 
@@ -151,6 +155,9 @@ async function boot() {
 
     // Restore charts AFTER map is ready so Leaflet layers can be added
     try { await restoreCharts(); } catch (e) { console.warn('Charts restore failed:', e); }
+
+    // Pull cloud updates (non-blocking — fires after local restore is done)
+    pullUpdatesOnLoad().catch((e) => console.warn('Cloud pull failed:', e));
 
     // Seed default 6-rod spread on first run (when SPREAD is empty)
     if (!state.SPREAD || state.SPREAD.length === 0) {
