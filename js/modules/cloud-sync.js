@@ -244,7 +244,20 @@ export async function pullUpdatesOnLoad() {
             await window.DB.put('charts', { name: '__all__', charts: arr2, savedAt: new Date().toISOString() });
           } else {
             // plans, spreads, layers — keyed by id/name
-            await window.DB.put(store, record);
+            // For plans: check if a record with same name already exists locally
+            // to avoid duplicates when the cloud key differs from local auto-increment id
+            if (store === 'plans' && local.meta?.name) {
+              const existing = await window.DB.getAll('plans').catch(() => []);
+              const match = existing.find(p => (p.meta?.name || p.name) === local.meta.name);
+              if (match) {
+                // Update existing record in place rather than creating a new one
+                await window.DB.put(store, { ...match, ...local, _syncedAt: Date.now() });
+              } else {
+                await window.DB.put(store, record);
+              }
+            } else {
+              await window.DB.put(store, record);
+            }
           }
           merged.push({ type, id, deleted: false });
         }
