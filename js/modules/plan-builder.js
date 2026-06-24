@@ -12,6 +12,7 @@ import { state } from "../core/state.js";
 import { esc } from "../utils/escape.js";
 import { LAKE_DB } from "../data/lakes.js";
 import { renderSpread } from "./spread-builder.js";
+import { newRodRow } from "../utils/rod-row.js";
 import { getFilename, setFilename } from "../core/map-init.js";
 
 // ─────────────────────────────────────────────────────────────
@@ -1519,6 +1520,125 @@ async function refreshPlanLibrary() {
     <div class="row" style="justify-content:space-between;border-bottom:1px solid var(--line);padding:6px 0">
       <div><b>${esc(p.meta?.name || 'Unnamed')}</b> <span class="muted">${esc(p.meta?.lake || '')} • ${esc(p.meta?.date || '')}</span><br>
       <span class="muted">${(p.spread || []).length} rods • ${p.gpx?.waypoints || 0} wpts</span></div>
+      <div>
+        <button class="small" onclick="window.loadPlanById(${p.id})">Load</button>
+        <button class="small" onclick="window.deletePlanById(${p.id})">Delete</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+window.loadPlanById = async function (id) {
+  if (!window.DB?.db) return;
+  const p = await window.DB.get('plans', id);
+  if (p) {
+    loadPlanIntoForm(p);
+    document.querySelector('#panel-plan .subtabs button[data-plansub="builder"]')?.click();
+    alert('Plan loaded.');
+  }
+};
+
+window.deletePlanById = async function (id) {
+  if (!confirm('Delete plan?')) return;
+  await window.DB.del('plans', id);
+  refreshPlanLibrary();
+};
+
+// ── Expose river helpers for cross-module use ────────────────────────────────
+window.isPlanRiverValue = isPlanRiverValue;
+window.getPlanRiverDef = getPlanRiverDef;
+
+// ── Button wiring ─────────────────────────────────────────────────────────────
+
+document.getElementById('autoNameBtn')?.addEventListener('click', () => {
+  const lake = document.getElementById('planLake')?.value.split(',')[0] || 'Lake';
+  const ramp = document.getElementById('planRamp')?.value.split(' ')[0] || '';
+  const date = document.getElementById('planDate')?.value;
+  const time = document.getElementById('planLaunchTime')?.value;
+  const hour = time ? parseInt(time.split(':')[0]) : 6;
+  const session = hour < 10 ? 'AM' : hour < 14 ? 'MID' : 'PM';
+  const dateShort = date ? new Date(date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+  const el = document.getElementById('planName');
+  if (el) el.value = `${lake}${ramp ? ' – ' + ramp : ''} ${session} Troll${dateShort ? ' ' + dateShort : ''}`;
+});
+
+document.getElementById('buildPreviewBtn')?.addEventListener('click', async () => {
+  const p = collectPlan();
+  const previewEl = document.getElementById('planPreviewHtml');
+  if (previewEl) previewEl.innerHTML = '<p style="color:#888;padding:20px">⏳ Building preview…</p>';
+  document.querySelector('#panel-plan .subtabs button[data-plansub="preview"]')?.click();
+  if (previewEl) previewEl.innerHTML = await buildPlanPreviewHtml(p);
+  if (state.MAP) setTimeout(() => state.MAP.invalidateSize(), 50);
+});
+
+document.getElementById('printPlanBtn')?.addEventListener('click', async () => {
+  const p = collectPlan();
+  const previewEl = document.getElementById('planPreviewHtml');
+  if (previewEl) previewEl.innerHTML = '<p style="color:#888;padding:20px">⏳ Building preview…</p>';
+  document.querySelector('#panel-plan .subtabs button[data-plansub="preview"]')?.click();
+  if (previewEl) previewEl.innerHTML = await buildPlanPreviewHtml(p);
+  setTimeout(() => window.print(), 400);
+});
+
+document.getElementById('exportPlanHtmlBtn')?.addEventListener('click', async () => {
+  const p = collectPlan();
+  const inner = await buildPlanPreviewHtml(p);
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(p.meta.name)}</title></head><body style="background:#f3f6f9;margin:0;padding:20px">${inner}</body></html>`;
+  const blob = new Blob([html], { type: 'text/html' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (p.meta.name || 'fishing_plan').replace(/\s+/g, '_') + '.html';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+document.getElementById('exportPlanJsonBtn')?.addEventListener('click', () => {
+  const p = collectPlan();
+  const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (p.meta.name || 'fishing_plan').replace(/\s+/g, '_') + '.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+document.getElementById('importPlanFile')?.addEventListener('change', (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = (ev) => {
+    try {
+      const p = JSON.parse(ev.target.result);
+      loadPlanIntoForm(p);
+      alert('Plan imported.');
+    } catch (err) { alert('Invalid JSON: ' + err.message); }
+  };
+  r.readAsText(f);
+  e.target.value = '';
+});
+
+document.getElementById('savePlanBtn')?.addEventListener('click', async () => {
+  const p = collectPlan();
+  if (!p.meta.name) { alert('Give the plan a name first.'); return; }
+  try {
+    await window.DB.put('plans', p);
+    alert('Plan saved.');
+    refreshPlanLibrary();
+    if (window.pushItemOnSave) window.pushItemOnSave('plan', p.meta.name + '_' + Date.now(), p);
+  } catch (e) { alert('Save failed: ' + e); }
+});
+
+async function refreshPlanLibrary() {
+  const host = document.getElementById('planLibraryList');
+  if (!host) return;
+  let plans = [];
+  if (window.DB?.db) { try { plans = await window.DB.getAll('plans'); } catch (_) {} }
+  if (!plans.length) { host.innerHTML = '<p class="muted">No saved plans yet.</p>'; return; }
+  plans.reverse();
+  host.innerHTML = plans.map((p) => `
+    <div class="row" style="justify-content:space-between;border-bottom:1px solid var(--line);padding:6px 0">
+      <div><b>${esc(p.meta?.name || 'Unnamed')}</b> <span class="muted">${esc(p.meta?.lake || '')} • ${esc(p.meta?.date || '')}</span><br>
+      <span class="muted">${(p.spread || []).length} rods</span></div>
       <div>
         <button class="small" onclick="window.loadPlanById(${p.id})">Load</button>
         <button class="small" onclick="window.deletePlanById(${p.id})">Delete</button>
