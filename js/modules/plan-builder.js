@@ -1542,7 +1542,18 @@ window.loadPlanById = async function (id) {
 
 window.deletePlanById = async function (id) {
   if (!confirm('Delete plan?')) return;
+  // Get plan name for stable key before deleting
+  const p = await window.DB.get('plans', id).catch(() => null);
   await window.DB.del('plans', id);
+  // Tombstone in D1 so it doesn't come back on next pull
+  if (p && window.pushItemOnSave) {
+    const planKey = (p.meta?.name || p.name || String(id)).replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    // Send tombstone via DELETE to worker
+    fetch(`${window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev'}/sync/item/plan/${encodeURIComponent(planKey)}`, {
+      method: 'DELETE',
+      headers: { 'X-Sync-Token': 'trollmap-sync-9a8b7c6d5e' },
+    }).catch(() => {});
+  }
   refreshPlanLibrary();
 };
 
