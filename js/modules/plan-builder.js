@@ -1091,11 +1091,11 @@ ${p.notes?`
 <h2>📝 Notes</h2>
 <div style="background:#f7f9fb;padding:10px;border-radius:6px;white-space:pre-wrap;font-size:13px">${esc(p.notes)}</div>`:''}
 
-${CATCHES.length?`
-<h2>📓 Catch Journal (${CATCHES.length} entries)</h2>
+${state.CATCHES.length?`
+<h2>📓 Catch Journal (${state.CATCHES.length} entries)</h2>
 <table>
   <thead><tr style="background:#eef4fa"><th>Time</th><th>Species</th><th>Size</th><th>Depth</th><th>Lure / Color</th><th>Lead</th><th>Notes</th></tr></thead>
-  <tbody>${CATCHES.filter(c=>!p.meta.date||c.date===p.meta.date).map(c=>`<tr>
+  <tbody>${state.CATCHES.filter(c=>!p.meta.date||c.date===p.meta.date).map(c=>`<tr>
     <td>${esc(c.time||'')}</td>
     <td><b>${esc(c.species||'')}</b></td>
     <td>${c.length?c.length+'"':''}</td>
