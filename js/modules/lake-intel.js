@@ -15,11 +15,11 @@ export async function syncLakeIntelData() {
   const out = document.getElementById('planLakeIntel');
   const summary = document.getElementById('lakeIntelSummary');
   const lakeVal = lakeSel?.value || '';
-  const label = isPlanRiverValue(lakeVal) ? (getPlanRiverDef(lakeVal)?.label || lakeVal) : lakeVal;
+  const label = window.isPlanRiverValue?.(lakeVal) ? (window.getPlanRiverDef?.(lakeVal)?.label || lakeVal) : lakeVal;
   const worker = (typeof CF_WORKER_URL !== 'undefined' ? CF_WORKER_URL : (window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev'));
   function say(msg, bad){ if(statusEl){ statusEl.textContent=msg; statusEl.style.color=bad?'var(--bad)':'var(--accent2)'; } }
   if(!label){ say('Select waterbody first', true); return null; }
-  if(isPlanRiverValue(lakeVal)){
+  if(window.isPlanRiverValue?.(lakeVal)){
     say('Lake intel is lake-focused', true);
     if(out) out.value = `River selected: ${label}
 Use the river fields above for live dam schedule, streamflow, surge ETA, and kayak Go/No-Go. Lake Intelligence is currently focused on lakes/reservoirs.`;
@@ -96,7 +96,7 @@ export async function syncClarityIntelData() {
   const out = document.getElementById('planClarityIntel');
   const summary = document.getElementById('clarityIntelSummary');
   const lakeVal = lakeSel?.value || '';
-  const label = isPlanRiverValue(lakeVal) ? (getPlanRiverDef(lakeVal)?.lakeKey || getPlanRiverDef(lakeVal)?.label || lakeVal) : lakeVal;
+  const label = window.isPlanRiverValue?.(lakeVal) ? (window.getPlanRiverDef?.(lakeVal)?.lakeKey || window.getPlanRiverDef?.(lakeVal)?.label || lakeVal) : lakeVal;
   const date = document.getElementById('planDate')?.value || new Date().toISOString().slice(0,10);
   const worker = (typeof CF_WORKER_URL !== 'undefined' ? CF_WORKER_URL : (window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev'));
   function say(msg,bad){ if(statusEl){ statusEl.textContent=msg; statusEl.style.color=bad?'var(--bad)':'var(--accent2)'; } }

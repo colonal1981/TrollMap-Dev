@@ -1151,8 +1151,8 @@ const PLAN_RIVERS = [
   ]},
 ];
 window.PLAN_RIVERS = PLAN_RIVERS;
-function isPlanRiverValue(v){ return String(v||'').startsWith('river:'); }
-function getPlanRiverDef(v){ const key=String(v||'').replace(/^river:/,''); return PLAN_RIVERS.find(r=>r.key===key||r.worker===key); }
+export function isPlanRiverValue(v){ return String(v||'').startsWith('river:'); }
+export function getPlanRiverDef(v){ const key=String(v||'').replace(/^river:/,''); return PLAN_RIVERS.find(r=>r.key===key||r.worker===key); }
 function isDukePlanLakeName(v){ const clean=String(v||'').split(',')[0].trim().toLowerCase(); return ['lake wateree','lake wylie','lake norman','lake keowee','lake jocassee','lake hickory','lake james','lake rhodhiss','mountain island'].some(k=>clean.includes(k)||k.includes(clean)); }
 function getPlanLakeLevelUnit(){ return isDukePlanLakeName(document.getElementById('planLake')?.value) ? '% full pond' : 'ft'; }
 function getPlanRiverRamps(def){
@@ -1251,12 +1251,12 @@ document.getElementById('planLake')?.addEventListener('change', e=>{
   if(isRiver){
     ['planFullPool','planPoolLevel'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
     const def=getPlanRiverDef(v);
-    if(def && MAP_OK) MAP.setView([def.center[0], def.center[1]], def.center[2]||11);
+    if(def && state.MAP_OK) state.MAP.setView([def.center[0], def.center[1]], def.center[2]||11);
     if(window.syncPlanRiverData) window.syncPlanRiverData();
   } else {
     ['planRiverSafety','planRiverFlow','planRiverGauge','planRiverTemp','planRiverRise','planRiverSurgeEta','planRiverSchedule','planRiverSummary'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
     const lk = LAKE_DB[v];
-    if(lk && MAP_OK) MAP.setView([lk.center[0], lk.center[1]], lk.center[2]||11);
+    if(lk && state.MAP_OK) state.MAP.setView([lk.center[0], lk.center[1]], lk.center[2]||11);
     // Trigger utility sync (Duke/USGS lake levels) when lake changes
     if(window.syncUtilityData) {
       setTimeout(window.syncUtilityData, 300);
@@ -1274,13 +1274,13 @@ document.getElementById('planRamp')?.addEventListener('change', e=>{
   const rampName = e.target.value;
   if(isPlanRiverValue(waterbodyName)){
     const ramp = getSelectedPlanRiverRamp();
-    if(ramp && MAP_OK) MAP.setView([ramp.lat, ramp.lon], 15);
+    if(ramp && state.MAP_OK) state.MAP.setView([ramp.lat, ramp.lon], 15);
     if(window.syncPlanRiverData) window.syncPlanRiverData();
     return;
   }
   if(!waterbodyName || !rampName || !LAKE_DB[waterbodyName]) return;
   const coords = LAKE_DB[waterbodyName].ramps[rampName];
-  if(coords && MAP_OK) MAP.setView(coords, 15);
+  if(coords && state.MAP_OK) state.MAP.setView(coords, 15);
 });
 
 window.syncPlanRiverData = async function syncPlanRiverData(){
@@ -1378,3 +1378,8 @@ window.syncPlanRiverData = async function syncPlanRiverData(){
     if(btn) setTimeout(()=>{ btn.style.background=''; btn.style.color=''; }, 1000);
   }
 };
+
+
+// Expose river helpers for cross-module use
+window.isPlanRiverValue = isPlanRiverValue;
+window.getPlanRiverDef = getPlanRiverDef;

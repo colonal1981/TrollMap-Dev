@@ -11,9 +11,9 @@
     const sonarEl = document.getElementById('planSonar');
     if(!motorEl || !sonarEl) return;
     // Load saved profile
-    if(DB?.db){
+    if(window.DB?.db){
       try {
-        const saved = await DB.get('settings', 'personal_gear_profile');
+        const saved = await window.DB.get('settings', 'personal_gear_profile');
         if(saved){
           if(saved.motor) motorEl.value = saved.motor;
           if(saved.sonar) sonarEl.value = saved.sonar;
@@ -22,9 +22,9 @@
     }
     // Save on any change
     async function saveGear(){
-      if(!DB?.db) return;
+      if(!window.DB?.db) return;
       try {
-        await DB.put('settings', {
+        await window.DB.put('settings', {
           key: 'personal_gear_profile',
           motor: motorEl.value,
           sonar: sonarEl.value,

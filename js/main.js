@@ -81,7 +81,7 @@ import './modules/sw-register.js';
 
 // ── Plan-tab dropdown helpers are exposed on `window` so the ──
 //    tab switcher in core/tabs.js can invoke them by name.        ──
-import { populatePlanLakeDropdown, populatePlanRampDropdown } from './modules/plan-builder.js';
+import { populatePlanLakeDropdown, populatePlanRampDropdown, isPlanRiverValue, getPlanRiverDef } from './modules/plan-builder.js';
 import { syncLakeIntelData, syncClarityIntelData } from './modules/lake-intel.js';
 import { syncUtilityData } from './modules/utility-sync.js';
 import { renderSpread } from './modules/spread-builder.js';
@@ -104,6 +104,8 @@ window.restoreCharts = restoreCharts;
 window.loadAllLayers = loadAllLayers;
 window.renderEditTables = renderEditTables;
 window.renderPlanStats = renderPlanStats;
+window.isPlanRiverValue = isPlanRiverValue;
+window.getPlanRiverDef = getPlanRiverDef;
 
 // ── DB legacy alias — some older modules reference window.DB ──
 //    instead of importing { put, get, ... } from utils/db.js. ──

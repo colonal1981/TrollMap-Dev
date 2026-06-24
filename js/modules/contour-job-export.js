@@ -8,6 +8,10 @@
  * resulting chartpack tiles back into TrollMap.
  */
 
+import { state } from '../core/state.js';
+import { setBanner } from '../core/map-init.js';
+
+
 (function initContourJobExport() {
   if (!window.MAP || !window.L) {
     setTimeout(initContourJobExport, 200);
