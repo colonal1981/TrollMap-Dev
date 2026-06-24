@@ -34,8 +34,8 @@ import './utils/parsers.js';
 import './utils/geo.js';
 import './utils/dedupe.js';
 import './utils/rod-row.js';
-import './data/ramps.js';
-import './data/lakes.js';
+import { TRISTATE_MASTER_RAMPS } from './data/ramps.js';
+import { LAKE_DB } from './data/lakes.js';
 
 // Feature modules (each wires its own button handlers on import)
 import './modules/gps.js';
@@ -103,6 +103,10 @@ window.restoreCharts = restoreCharts;
 window.loadAllLayers = loadAllLayers;
 window.renderEditTables = renderEditTables;
 window.renderPlanStats = renderPlanStats;
+
+// ── Data globals — expose for modules that reference these by name ──
+window.LAKE_DB = LAKE_DB;
+window.TRISTATE_MASTER_RAMPS = TRISTATE_MASTER_RAMPS;
 
 // ── DB legacy alias — some older modules reference window.DB ──
 //    instead of importing { put, get, ... } from utils/db.js. ──
