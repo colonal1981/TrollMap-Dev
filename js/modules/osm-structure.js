@@ -15,12 +15,12 @@
     // Once fetched, the button becomes a simple show/hide toggle. Hold Shift while clicking to refresh/re-query.
     if(osmLayerNames.length && !event.shiftKey){
       if(osmVisible){
-        osmLayerNames.forEach(n => window.CUSTOM_VECTOR_LAYERS?.[n] && MAP.removeLayer(window.CUSTOM_VECTOR_LAYERS[n]));
+        osmLayerNames.forEach(n => window.CUSTOM_VECTOR_LAYERS?.[n] && state.MAP.removeLayer(window.CUSTOM_VECTOR_LAYERS[n]));
         osmVisible = false;
         btn.textContent = '🌐 Show OSM Structure';
         btn.style.background = ''; btn.style.color = '';
       } else {
-        osmLayerNames.forEach(n => window.CUSTOM_VECTOR_LAYERS?.[n] && window.CUSTOM_VECTOR_LAYERS[n].addTo(MAP));
+        osmLayerNames.forEach(n => window.CUSTOM_VECTOR_LAYERS?.[n] && window.CUSTOM_VECTOR_LAYERS[n].addTo(state.MAP));
         osmVisible = true;
         btn.textContent = '🙈 Hide OSM Structure';
         btn.style.background = 'var(--accent)'; btn.style.color = '#000';
@@ -29,12 +29,12 @@
     }
 
   
-    if(!MAP_OK) return;
+    if(!state.MAP_OK) return;
     const lakeName = document.getElementById('lakeSelect')?.value || document.getElementById('planLake')?.value || 'Active Bounding Area';
     const cleanLake = lakeName.split(',')[0].trim();
     
     // Get exact current Leaflet map view bounds
-    const bounds = MAP.getBounds();
+    const bounds = state.MAP.getBounds();
     const s = bounds.getSouth().toFixed(4);
     const n = bounds.getNorth().toFixed(4);
     const w = bounds.getWest().toFixed(4);
@@ -152,7 +152,7 @@ out skel qt;`;
         // Direct fallback if addCustomVectorLayer not available
         L.geoJSON(geojsonFC, {
           style: f => ({ color: f.properties?.color || '#00e5ff', weight: f.properties?.weight || 3, dashArray: f.properties?.dash, opacity: 0.9 })
-        }).addTo(MAP);
+        }).addTo(state.MAP);
       }
 
       osmLayerNames = [layerName];
