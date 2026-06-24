@@ -14,6 +14,47 @@ import { LAKE_DB } from "../data/lakes.js";
 import { renderSpread } from "./spread-builder.js";
 import { getFilename, setFilename } from "../core/map-init.js";
 
+// ─────────────────────────────────────────────────────────────
+// FIX: calcTrollTimes was referenced but never defined (the exact
+// error you saw: "calcTrollTimes is not defined" at buildPlanPreviewHtml).
+// Safe self-contained version using loaded tracks.
+function calcTrollTimes() {
+  try {
+    const tracks = (state && state.DATA && state.DATA.tracks) || [];
+    if (!tracks.length) return [];
+
+    const speedMph = parseFloat(document.getElementById('planSpeed')?.value) || 2.4;
+
+    return tracks.map((t, i) => {
+      const pts = t.pts || [];
+      let distMi = 1.2;
+
+      if (pts.length > 1) {
+        let totalFt = 0;
+        for (let j = 1; j < pts.length; j++) {
+          const a = pts[j - 1];
+          const b = pts[j];
+          const dLat = (b.lat - a.lat) * 69;
+          const dLon = (b.lon - a.lon) * 69;
+          totalFt += Math.hypot(dLat, dLon) * 5280;
+        }
+        distMi = totalFt / 6076.12;
+      }
+
+      const mins = Math.max(4, Math.round((distMi / Math.max(0.8, speedMph)) * 60));
+      return {
+        name: t.name || `Lane ${i + 1}`,
+        distMi: distMi.toFixed(1),
+        mins
+      };
+    });
+  } catch (e) {
+    console.warn('[plan-builder] calcTrollTimes fallback:', e);
+    return [];
+  }
+}
+// ─────────────────────────────────────────────────────────────
+
 function collectPlan(){
   const species = [...document.querySelectorAll('#planSpeciesChecks input:checked')].map(c=>c.value);
   return {
@@ -353,6 +394,7 @@ async function buildPlanPreviewHtml(p){
   // (populated below after weather fetch section)
 
   // ── Troll lane time calculator ────────────────────────────────────────────
+  // Uses the top-level safe implementation (defined above)
   const trollTimes = calcTrollTimes();
   let trollTimeRows = '';
   if(trollTimes && trollTimes.length){

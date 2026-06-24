@@ -119,8 +119,11 @@ async function queueForLater(type, id, payload) {
  */
 export function pushItemOnSave(type, id, data) {
   if (!type || id == null) return;
+
   // Charts live in R2 via the capture pipeline — never sync to D1
-  if (type === 'chart') return;
+  // Also skip any chart-related sync that the worker does not implement
+  if (type === 'chart' || type === 'charts') return;
+
   const payload = { ...data, lastModified: new Date().toISOString() };
 
   fetch(`${CF_WORKER_URL}/sync/item/${type}/${encodeURIComponent(id)}`, {
@@ -131,16 +134,21 @@ export function pushItemOnSave(type, id, data) {
     .then((r) => {
       if (r.ok) {
         setStatus('☁️ Saved to cloud');
-        // Opportunistically drain anything queued
         drainPendingQueue().catch((_) => {});
       } else {
-        setStatus('☁️ Save queued (offline?)', true);
+        // Don't spam the console on expected missing routes (e.g. /sync/item/chart)
+        if (type !== 'chart' && type !== 'charts') {
+          setStatus('☁️ Save queued (offline?)', true);
+        }
         queueForLater(type, id, data);
       }
     })
     .catch((err) => {
-      console.warn(`Cloud push for ${type}/${id} failed:`, err);
-      setStatus('☁️ Save queued (offline?)', true);
+      // Suppress noisy errors for chart sync (worker does not have /sync routes yet)
+      if (type !== 'chart' && type !== 'charts') {
+        console.warn(`Cloud push for ${type}/${id} failed:`, err);
+        setStatus('☁️ Save queued (offline?)', true);
+      }
       queueForLater(type, id, data);
     });
 }
