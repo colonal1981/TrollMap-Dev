@@ -1628,37 +1628,4 @@ document.getElementById('savePlanBtn')?.addEventListener('click', async () => {
   } catch (e) { alert('Save failed: ' + e); }
 });
 
-async function refreshPlanLibrary() {
-  const host = document.getElementById('planLibraryList');
-  if (!host) return;
-  let plans = [];
-  if (window.DB?.db) { try { plans = await window.DB.getAll('plans'); } catch (_) {} }
-  if (!plans.length) { host.innerHTML = '<p class="muted">No saved plans yet.</p>'; return; }
-  plans.reverse();
-  host.innerHTML = plans.map((p) => `
-    <div class="row" style="justify-content:space-between;border-bottom:1px solid var(--line);padding:6px 0">
-      <div><b>${esc(p.meta?.name || 'Unnamed')}</b> <span class="muted">${esc(p.meta?.lake || '')} • ${esc(p.meta?.date || '')}</span><br>
-      <span class="muted">${(p.spread || []).length} rods</span></div>
-      <div>
-        <button class="small" onclick="window.loadPlanById(${p.id})">Load</button>
-        <button class="small" onclick="window.deletePlanById(${p.id})">Delete</button>
-      </div>
-    </div>
-  `).join('');
-}
 
-window.loadPlanById = async function (id) {
-  if (!window.DB?.db) return;
-  const p = await window.DB.get('plans', id);
-  if (p) {
-    loadPlanIntoForm(p);
-    document.querySelector('#panel-plan .subtabs button[data-plansub="builder"]')?.click();
-    alert('Plan loaded.');
-  }
-};
-
-window.deletePlanById = async function (id) {
-  if (!confirm('Delete plan?')) return;
-  await window.DB.del('plans', id);
-  refreshPlanLibrary();
-};
