@@ -145,6 +145,7 @@ async function boot() {
           if (lake) populatePlanRampDropdown(lake);
         } catch (e) {}
       }, 1000);
+    });
 
     // Initialize the Leaflet map (this populates state.MAP and renders base tiles)
     initMap();
