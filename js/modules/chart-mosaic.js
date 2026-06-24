@@ -229,7 +229,7 @@ function onChartAction(el) {
 
 // ── Persistence (IndexedDB) ───────────────────────────────────────────────
 
-async function persistCharts() {
+export async function persistCharts() {
   if (!window.DB?.db) return;
   try {
     // Strip Leaflet layer objects — only persist the data.

@@ -20,6 +20,8 @@ import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { depthColor, simplifyLine, guessDepthProp } from '../utils/geo.js';
 import { parseKML, kmlToGeoJSON, parseGPX, geoJSONToLines } from '../utils/parsers.js';
+import { addChartLayer, persistCharts } from './chart-mosaic.js';
+import { setBanner } from '../core/map-init.js';
 
 const CONTOUR_LAYERS = {};
 
