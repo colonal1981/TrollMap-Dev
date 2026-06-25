@@ -150,7 +150,12 @@ function loadPlanIntoForm(p){
     document.getElementById('planTargetDepth').value = p.trolling.targetDepth||'';
     document.getElementById('planPattern').value = p.trolling.pattern||'Straight lanes';
   }
-  state.SPREAD = (p.spread||[]).map(r=>newRodRow(r));
+  // Robust load using the fixed newRodRow (which now includes rod + trailerSize + arigWeight + jigWeight)
+  // This ensures swimbait trailer profile, full A-rig rows, and rod selections persist.
+  state.SPREAD = (p.spread || []).map(r => {
+    const base = newRodRow(r);
+    return { ...base, ...r };   // keep every extra field the saved data / UI set
+  });
   renderSpread();
   document.getElementById('planTackle').value = p.tackle||'';
   document.getElementById('planSafety').value = p.safety||'';
