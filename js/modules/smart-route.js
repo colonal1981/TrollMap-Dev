@@ -295,14 +295,101 @@ function depthBandInfo(depthFt) {
   return QUICKDRAW_BANDS.find((b) => d >= b.min && d < b.max) || QUICKDRAW_BANDS[QUICKDRAW_BANDS.length - 1];
 }
 
+function geojsonBBox(geojson) {
+  const feats = geojson?.features || [];
+  let minLon = Infinity, minLat = Infinity, maxLon = -Infinity, maxLat = -Infinity;
+  for (const f of feats) {
+    for (const [lon, lat] of (f.geometry?.coordinates || [])) {
+      if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+      if (lon < minLon) minLon = lon;
+      if (lon > maxLon) maxLon = lon;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    }
+  }
+  if (!Number.isFinite(minLon)) return null;
+  return { west: minLon, south: minLat, east: maxLon, north: maxLat };
+}
+
+function ringBBox(ring, swap = false) {
+  let minLon = Infinity, minLat = Infinity, maxLon = -Infinity, maxLat = -Infinity;
+  for (const pt of ring || []) {
+    if (!Array.isArray(pt) || pt.length < 2) continue;
+    const lon = swap ? Number(pt[1]) : Number(pt[0]);
+    const lat = swap ? Number(pt[0]) : Number(pt[1]);
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+    if (lon < minLon) minLon = lon;
+    if (lon > maxLon) maxLon = lon;
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+  }
+  if (!Number.isFinite(minLon)) return null;
+  return { west: minLon, south: minLat, east: maxLon, north: maxLat };
+}
+
+function bboxOverlapScore(a, b) {
+  if (!a || !b) return -Infinity;
+  const west = Math.max(a.west, b.west);
+  const east = Math.min(a.east, b.east);
+  const south = Math.max(a.south, b.south);
+  const north = Math.min(a.north, b.north);
+  const w = east - west;
+  const h = north - south;
+  if (w <= 0 || h <= 0) return -Infinity;
+  return w * h;
+}
+
+function bboxToPolygonFeature(bbox, source = 'capture_bbox') {
+  if (!bbox) return null;
+  return {
+    type: 'Feature',
+    properties: { source },
+    geometry: {
+      type: 'Polygon',
+      coordinates: [[
+        [bbox.west, bbox.south],
+        [bbox.east, bbox.south],
+        [bbox.east, bbox.north],
+        [bbox.west, bbox.north],
+        [bbox.west, bbox.south],
+      ]],
+    },
+  };
+}
+
+function normalizeCapturePolygon(meta, geojson) {
+  const ring = meta?.polygon;
+  if (!Array.isArray(ring) || !ring.length) return null;
+  const targetBBox = geojsonBBox(geojson) || meta?.bbox || null;
+
+  const asIsBBox = ringBBox(ring, false);
+  const swappedBBox = ringBBox(ring, true);
+  const asIsScore = bboxOverlapScore(asIsBBox, targetBBox);
+  const swappedScore = bboxOverlapScore(swappedBBox, targetBBox);
+  const useSwapped = swappedScore > asIsScore;
+
+  const coords = ring.map((pt) => {
+    if (!Array.isArray(pt) || pt.length < 2) return pt;
+    return useSwapped ? [Number(pt[1]), Number(pt[0])] : [Number(pt[0]), Number(pt[1])];
+  });
+
+  return {
+    type: 'Feature',
+    properties: { source: useSwapped ? 'capture_polygon_swapped' : 'capture_polygon' },
+    geometry: { type: 'Polygon', coordinates: [coords] },
+  };
+}
+
 function getActiveClipPolygon() {
   if (clipPolygon) return clipPolygon;
-  if (document.getElementById('srClipCapture')?.checked && activeContourMeta?.polygon) {
-    return {
-      type: 'Feature',
-      geometry: { type: 'Polygon', coordinates: [activeContourMeta.polygon] },
-      properties: { source: 'capture_polygon' },
-    };
+  if (!document.getElementById('srClipCapture')?.checked || !activeContourMeta) return null;
+
+  const poly = normalizeCapturePolygon(activeContourMeta, activeGeoJSON);
+  if (poly) return poly;
+
+  const bbox = activeContourMeta?.bbox;
+  if (bbox?.north != null && bbox?.south != null && bbox?.west != null && bbox?.east != null) {
+    return bboxToPolygonFeature(bbox, 'capture_bbox');
   }
   return null;
 }
@@ -311,15 +398,12 @@ function featureTouchesPolygon(feat, poly) {
   if (!poly) return true;
   try {
     const T = turf();
+    if (T.booleanIntersects && T.booleanIntersects(feat, poly)) return true;
     const coords = feat?.geometry?.coordinates || [];
     if (!coords.length) return false;
-    const step = Math.max(1, Math.floor(coords.length / 12));
-    for (let i = 0; i < coords.length; i += step) {
-      if (T.booleanPointInPolygon(T.point(coords[i]), poly)) return true;
+    for (const pt of coords) {
+      if (T.booleanPointInPolygon(T.point(pt), poly)) return true;
     }
-    if (T.booleanPointInPolygon(T.point(coords[coords.length - 1]), poly)) return true;
-    const mid = coords[Math.floor(coords.length / 2)];
-    if (mid && T.booleanPointInPolygon(T.point(mid), poly)) return true;
   } catch (_) {}
   return false;
 }
@@ -328,13 +412,28 @@ function getPreviewFeatureCollection() {
   if (!activeGeoJSON) return { type: 'FeatureCollection', features: [] };
   const showUnknown = !!document.getElementById('srShowUnknown')?.checked;
   const capturePoly = getActiveClipPolygon();
-  const features = (activeGeoJSON.features || []).filter((f) => {
+  const baseFeatures = (activeGeoJSON.features || []).filter((f) => {
     const depth = f.properties?.depth_ft;
     if (!showUnknown && (depth == null || !Number.isFinite(Number(depth)))) return false;
-    if (capturePoly && !featureTouchesPolygon(f, capturePoly)) return false;
     return true;
   });
-  return { type: 'FeatureCollection', features };
+
+  if (!capturePoly) return { type: 'FeatureCollection', features: baseFeatures };
+
+  const clipped = baseFeatures.filter((f) => featureTouchesPolygon(f, capturePoly));
+  if (clipped.length > 0) {
+    return { type: 'FeatureCollection', features: clipped };
+  }
+
+  // Fallback: if polygon metadata exists but clips everything away, fall back to bbox if available.
+  const bbox = activeContourMeta?.bbox;
+  if (bbox?.north != null && bbox?.south != null && bbox?.west != null && bbox?.east != null) {
+    const bboxPoly = bboxToPolygonFeature(bbox, 'capture_bbox_fallback');
+    const bboxClipped = baseFeatures.filter((f) => featureTouchesPolygon(f, bboxPoly));
+    if (bboxClipped.length > 0) return { type: 'FeatureCollection', features: bboxClipped };
+  }
+
+  return { type: 'FeatureCollection', features: baseFeatures };
 }
 
 function renderContourPreview() {
