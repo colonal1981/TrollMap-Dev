@@ -1,4 +1,23 @@
 /**
+ * TrollMap Cloudflare Worker — v11 (2026-06-24)
+ * ─────────────────────────────────────────────────────────────────
+ * New in v11:
+ *   D1 cross-device sync routes:
+ *     POST /sync/item/:type/:id   — push one item
+ *     GET  /sync/list-updates     — delta list since timestamp
+ *     GET  /sync/item/:key        — fetch one item
+ *     POST /sync/migrate          — bulk push all local data
+ *     DELETE /sync/item/:type/:id — tombstone an item
+ *
+ *   Vectorized contour routes:
+ *     GET  /contours/:lake/geojson  — serve vectorized contours.geojson
+ *     POST /contours/:lake/geojson  — upload vectorized contours.geojson
+ *
+ * D1 binding: DB (database name: trollmap_sync)
+ * R2 binding: R2_TROLLMAP_CHARTPACKS (existing)
+ * ───────────────────────────────────────────────────────────────── */
+
+/**
  * TrollMap Cloudflare Worker — v10 (2026-06-17)
  * ─────────────────────────────────────────────────────────────────
  * Fixes:
@@ -23,7 +42,7 @@
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, X-Sync-Token',
 };
 
@@ -1872,6 +1891,143 @@ async function resolveLake(lakeName) {
 function round2(n){ return Math.round(n*100)/100; }
 
 /* ───────── main fetch handler ───────── */
+
+// ═══════════════════════════════════════════════════════════════════
+// D1 SYNC ROUTES
+// ═══════════════════════════════════════════════════════════════════
+
+const SYNC_STORES = ['plan', 'spread', 'catch', 'chart', 'layer'];
+
+async function ensureSyncSchema(db) {
+  try {
+    await db.exec("CREATE TABLE IF NOT EXISTS sync_items (id TEXT NOT NULL, type TEXT NOT NULL, payload TEXT NOT NULL, lastModified TEXT NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (type, id))");
+  } catch (e) {
+    if (!String(e).includes('already exists') && !String(e).includes('SQLITE_ERROR')) throw e;
+  }
+  try {
+    await db.exec("CREATE INDEX IF NOT EXISTS idx_sync_modified ON sync_items(lastModified)");
+  } catch (e) {
+    if (!String(e).includes('already exists') && !String(e).includes('SQLITE_ERROR')) throw e;
+  }
+}
+
+async function handleSyncPush(request, env, type, id) {
+  if (!SYNC_STORES.includes(type)) {
+    return new Response(JSON.stringify({ error: `unknown type: ${type}` }), { headers: JSON_HEADERS, status: 400 });
+  }
+  const body = await request.json();
+  const { lastModified = new Date().toISOString(), deleted = false, ...data } = body;
+  await ensureSyncSchema(env.DB);
+  await env.DB.prepare(
+    `INSERT INTO sync_items (id, type, payload, lastModified, deleted)
+     VALUES (?1, ?2, ?3, ?4, ?5)
+     ON CONFLICT(type, id) DO UPDATE SET
+       payload=excluded.payload,
+       lastModified=excluded.lastModified,
+       deleted=excluded.deleted`
+  ).bind(id, type, JSON.stringify(data), lastModified, deleted ? 1 : 0).run();
+  return new Response(JSON.stringify({ ok: true, type, id, lastModified }), { headers: JSON_HEADERS });
+}
+
+async function handleSyncListUpdates(url, env) {
+  await ensureSyncSchema(env.DB);
+  const since = url.searchParams.get('since');
+  let rows;
+  if (since) {
+    rows = await env.DB.prepare(
+      `SELECT type, id, lastModified, deleted FROM sync_items WHERE lastModified > ?1 ORDER BY lastModified ASC LIMIT 500`
+    ).bind(since).all();
+  } else {
+    rows = await env.DB.prepare(
+      `SELECT type, id, lastModified, deleted FROM sync_items ORDER BY lastModified ASC LIMIT 500`
+    ).all();
+  }
+  const items = (rows.results || []).map(r => ({
+    key: `${r.type}/${r.id}`,
+    lastModified: r.lastModified,
+    deleted: r.deleted === 1,
+  }));
+  return new Response(JSON.stringify({ items, count: items.length }), { headers: JSON_HEADERS });
+}
+
+async function handleSyncGet(env, type, id) {
+  await ensureSyncSchema(env.DB);
+  const row = await env.DB.prepare(
+    `SELECT payload, lastModified, deleted FROM sync_items WHERE type=?1 AND id=?2`
+  ).bind(type, id).first();
+  if (!row) return new Response(JSON.stringify({ error: 'not found' }), { headers: JSON_HEADERS, status: 404 });
+  const data = JSON.parse(row.payload);
+  return new Response(JSON.stringify({
+    ...data,
+    lastModified: row.lastModified,
+    deleted: row.deleted === 1,
+  }), { headers: JSON_HEADERS });
+}
+
+async function handleSyncDelete(env, type, id) {
+  await ensureSyncSchema(env.DB);
+  await env.DB.prepare(
+    `INSERT INTO sync_items (id, type, payload, lastModified, deleted)
+     VALUES (?1, ?2, '{}', ?3, 1)
+     ON CONFLICT(type, id) DO UPDATE SET deleted=1, lastModified=excluded.lastModified`
+  ).bind(id, type, new Date().toISOString()).run();
+  return new Response(JSON.stringify({ ok: true, tombstoned: `${type}/${id}` }), { headers: JSON_HEADERS });
+}
+
+async function handleSyncMigrate(request, env) {
+  await ensureSyncSchema(env.DB);
+  const body = await request.json();
+  const items = body.items || [];
+  let count = 0;
+  const errors = [];
+  for (const item of items) {
+    try {
+      const { type, id, lastModified = new Date().toISOString(), ...data } = item;
+      if (!SYNC_STORES.includes(type) || !id) continue;
+      await env.DB.prepare(
+        `INSERT INTO sync_items (id, type, payload, lastModified, deleted)
+         VALUES (?1, ?2, ?3, ?4, 0)
+         ON CONFLICT(type, id) DO UPDATE SET
+           payload=excluded.payload,
+           lastModified=excluded.lastModified,
+           deleted=0`
+      ).bind(String(id), type, JSON.stringify(data), lastModified).run();
+      count++;
+    } catch (e) {
+      errors.push({ item, error: e.message });
+    }
+  }
+  return new Response(JSON.stringify({ ok: true, imported: count, errors }), { headers: JSON_HEADERS });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// VECTORIZED CONTOUR ROUTES (GeoJSON stored in R2)
+// ═══════════════════════════════════════════════════════════════════
+
+function contourGeojsonKey(lake) {
+  return `${lake.toLowerCase().replace(/[^a-z0-9_-]/g, '_')}/vectors/contours.geojson`;
+}
+
+async function handleContourGeojsonGet(env, lake) {
+  const key = contourGeojsonKey(lake);
+  const obj = await env.R2_TROLLMAP_CHARTPACKS.get(key);
+  if (!obj) return new Response(JSON.stringify({ error: 'no vectorized contours for this lake yet' }), { headers: JSON_HEADERS, status: 404 });
+  return new Response(obj.body, { headers: { ...CORS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+}
+
+async function handleContourGeojsonPut(request, env, lake) {
+  const body = await request.arrayBuffer();
+  if (!body || body.byteLength === 0) {
+    return new Response(JSON.stringify({ error: 'empty body' }), { headers: JSON_HEADERS, status: 400 });
+  }
+  const key = contourGeojsonKey(lake);
+  await env.R2_TROLLMAP_CHARTPACKS.put(key, body, {
+    httpMetadata: { contentType: 'application/json', cacheControl: 'no-store' },
+  });
+  return new Response(JSON.stringify({ ok: true, key, bytes: body.byteLength }), { headers: JSON_HEADERS });
+}
+
+
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
@@ -1988,6 +2144,71 @@ export default {
         return new Response(JSON.stringify(result, null, 2), { headers: JSON_HEADERS });
       }
 
+
+      // ── D1 Sync routes ──────────────────────────────────────────
+      if (path.startsWith('/sync')) {
+        if (!env.DB) return new Response(JSON.stringify({ error: 'D1 not configured' }), { headers: JSON_HEADERS, status: 503 });
+        if (!(await isAuthorized(request, env))) {
+          return new Response(JSON.stringify({ error: 'unauthorized' }), { headers: JSON_HEADERS, status: 401 });
+        }
+        try {
+
+        // POST /sync/migrate — bulk import
+        if (path === '/sync/migrate' && request.method === 'POST') {
+          return handleSyncMigrate(request, env);
+        }
+
+        // DELETE /sync/purge-type/:type — delete all records of a type (admin cleanup)
+        const purgeMatch = path.match(/^\/sync\/purge-type\/([^\/]+)$/);
+        if (purgeMatch && request.method === 'DELETE') {
+          const pType = purgeMatch[1];
+          await ensureSyncSchema(env.DB);
+          await env.DB.prepare('DELETE FROM sync_items WHERE type = ?1').bind(pType).run();
+          return new Response(JSON.stringify({ ok: true, purged: pType }), { headers: JSON_HEADERS });
+        }
+
+        // GET /sync/list-updates
+        if (path === '/sync/list-updates' && request.method === 'GET') {
+          return handleSyncListUpdates(url, env);
+        }
+
+        // /sync/item/:type/:id
+        const itemMatch = path.match(/^\/sync\/item\/([^\/]+)\/(.+)$/);
+        if (itemMatch) {
+          const [, type, id] = itemMatch;
+          if (request.method === 'POST') return handleSyncPush(request, env, type, id);
+          if (request.method === 'GET')  return handleSyncGet(env, type, id);
+          if (request.method === 'DELETE') return handleSyncDelete(env, type, id);
+        }
+
+        // GET /sync/item/:key (key = "type/id")
+        const keyMatch = path.match(/^\/sync\/item\/(.+)$/);
+        if (keyMatch && request.method === 'GET') {
+          const parts = keyMatch[1].split('/');
+          const type = parts[0];
+          const id = parts.slice(1).join('/');
+          return handleSyncGet(env, type, id);
+        }
+
+        return new Response(JSON.stringify({ error: 'unknown sync route' }), { headers: JSON_HEADERS, status: 404 });
+        } catch (syncErr) {
+          return new Response(JSON.stringify({ error: `sync error: ${syncErr.message}` }), { headers: JSON_HEADERS, status: 500 });
+        }
+      }
+
+      // ── Vectorized contour GeoJSON routes ───────────────────────
+      const contourMatch = path.match(/^\/contours\/([^\/]+)\/geojson$/);
+      if (contourMatch) {
+        const lakeArg = contourMatch[1];
+        if (request.method === 'GET') return handleContourGeojsonGet(env, lakeArg);
+        if (request.method === 'POST' || request.method === 'PUT') {
+          if (!(await isAuthorized(request, env))) {
+            return new Response(JSON.stringify({ error: 'unauthorized' }), { headers: JSON_HEADERS, status: 401 });
+          }
+          return handleContourGeojsonPut(request, env, lakeArg);
+        }
+      }
+
       // --- Chartpack library routes (R2-backed) ---
       if (path === '/chartpacks/list') {
         const data = await handleChartpackList(env);
@@ -2062,6 +2283,10 @@ export default {
         worker: 'trollmap-worker',
         version: 13,
         routes: [
+          '/sync/item/:type/:id               — push/get/delete a sync item (auth required)',
+          '/sync/list-updates?since=<ts>      — delta list for cross-device sync (auth required)',
+          '/sync/migrate                      — bulk import all local data (auth required)',
+          '/contours/:lake/geojson            — serve/upload vectorized contour GeoJSON',
           '/duke?basin=1|2|3                      — raw Duke lake levels',
           '/lake?lake=wateree                     — unified lake JSON',
           '/lake-clarity?lake=wateree&date=YYYY-MM-DD — runoff clarity/ramp/lure forecast',
