@@ -52,7 +52,7 @@ function buildPanel() {
       <label style="color:var(--muted);font-size:10px;display:block;margin-bottom:3px">CONTOUR SOURCE</label>
       <div style="display:flex;gap:4px">
         <select id="srLakeSelect" style="flex:1;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:4px;font-size:11px">
-          <option value="">-- pick lake --</option>
+          <option value="">-- pick cloud contour dataset --</option>
         </select>
         <button id="srLoadCloud" class="small primary" style="white-space:nowrap">☁️ Load</button>
       </div>
@@ -129,13 +129,108 @@ function setStatus(msg, isErr = false) {
   if (el) { el.textContent = msg; el.style.color = isErr ? 'var(--bad)' : 'var(--muted)'; }
 }
 
-async function loadContoursFromCloud(lakeName) {
-  setStatus('Loading contours from cloud...');
-  const slug = lakeName.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
-  const url = `${CF_WORKER_URL}/contours/${encodeURIComponent(slug)}/geojson?v=${Date.now()}`;
-  const r = await fetch(url, { cache: 'no-store' });
-  if (!r.ok) throw new Error(`Worker returned ${r.status} — contours not uploaded yet for this lake`);
-  return r.json();
+function normalizeContourSlug(name = '') {
+  return String(name)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function lakeWorkerKeyFromName(lakeName = '') {
+  const normalized = String(lakeName)
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const aliases = {
+    wateree: 'wateree',
+    murray: 'murray',
+    marion: 'marion',
+    moultrie: 'moultrie',
+    keowee: 'keowee',
+    jocassee: 'jocassee',
+    hartwell: 'hartwell',
+    thurmond: 'thurmond',
+    'clarks hill': 'thurmond',
+    'clark hill': 'thurmond',
+    russell: 'russell',
+    wylie: 'wylie',
+    norman: 'norman',
+  };
+
+  for (const [frag, key] of Object.entries(aliases)) {
+    if (normalized.includes(frag)) return key;
+  }
+
+  return normalizeContourSlug(normalized.split(' ')[0] || '');
+}
+
+function buildContourLookupCandidates({ key = '', displayName = '' } = {}) {
+  const raw = String(displayName || '').trim();
+  const noState = raw.replace(/,\s*[A-Z]{2}$/i, '').trim();
+  const noLakePrefix = noState.replace(/^lake\s+/i, '').trim();
+  const candidates = new Set();
+
+  if (key) candidates.add(normalizeContourSlug(key));
+  if (raw) candidates.add(normalizeContourSlug(raw));
+  if (noState) candidates.add(normalizeContourSlug(noState));
+  if (noLakePrefix) candidates.add(normalizeContourSlug(noLakePrefix));
+  const derived = lakeWorkerKeyFromName(raw || key);
+  if (derived) candidates.add(derived);
+
+  return [...candidates].filter(Boolean);
+}
+
+async function loadContoursFromCloud(lakeRef) {
+  const displayName = typeof lakeRef === 'string' ? lakeRef : (lakeRef?.displayName || lakeRef?.key || 'selected lake');
+  setStatus(`Loading contours for ${displayName}...`);
+
+  const tried = [];
+  const candidates = buildContourLookupCandidates(
+    typeof lakeRef === 'string' ? { displayName: lakeRef } : lakeRef,
+  );
+
+  for (const key of candidates) {
+    const urls = [
+      `${CF_WORKER_URL}/chartpacks/${encodeURIComponent(key)}/contours.geojson?v=${Date.now()}`,
+      `${CF_WORKER_URL}/contours/${encodeURIComponent(key)}/geojson?v=${Date.now()}`,
+    ];
+
+    for (const url of urls) {
+      tried.push(url);
+      const r = await fetch(url, { cache: 'no-store' });
+      if (r.ok) return r.json();
+      if (r.status !== 404) {
+        throw new Error(`Worker returned ${r.status} while loading contours for ${displayName}`);
+      }
+    }
+  }
+
+  throw new Error(`No contour file found for ${displayName}. Tried keys: ${candidates.join(', ')}`);
+}
+
+async function fetchCloudContourDatasets() {
+  const r = await fetch(`${CF_WORKER_URL}/chartpacks/list?v=${Date.now()}`, { cache: 'no-store' });
+  if (!r.ok) throw new Error(`Worker returned ${r.status} while listing chartpacks`);
+  const data = await r.json();
+  return (data.chartpacks || [])
+    .filter((cp) => (cp.files || []).some((f) => f === 'vectors/contours.geojson' || f === 'contours.geojson'))
+    .map((cp) => {
+      const tileCount = (cp.files || []).filter((f) => /_contours\.png$/i.test(f)).length;
+      const hasLegacyVector = (cp.files || []).includes('vectors/contours.geojson');
+      const hasRootVector = (cp.files || []).includes('contours.geojson');
+      return {
+        key: cp.name,
+        label: cp.name.replace(/_/g, ' '),
+        tileCount,
+        hasLegacyVector,
+        hasRootVector,
+      };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label));
 }
 
 function loadContoursFromFile(file) {
@@ -422,50 +517,37 @@ function clearClip() {
 
 // ── Populate lake dropdown ────────────────────────────────────────────────────
 
-function populateLakeDropdown() {
+async function populateLakeDropdown() {
   const sel = document.getElementById('srLakeSelect');
   if (!sel) return;
 
-  // Robust lake source: prefer imported LAKE_DB (from data/lakes.js),
-  // fall back to window.LAKE_DB (set elsewhere), or empty array.
-  const lakeSource = (typeof IMPORTED_LAKE_DB !== 'undefined' && IMPORTED_LAKE_DB)
-    ? IMPORTED_LAKE_DB
-    : (window.LAKE_DB || {});
+  sel.innerHTML = '<option value="">Loading cloud contour datasets...</option>';
 
-  // Clear previous options (except the placeholder)
-  sel.innerHTML = '<option value="">-- pick lake --</option>';
+  try {
+    const datasets = await fetchCloudContourDatasets();
+    sel.innerHTML = '<option value="">-- pick cloud contour dataset --</option>';
 
-  const keys = Object.keys(lakeSource).sort();
-  if (keys.length === 0) {
-    // Fallback common lakes so the UI is never completely empty
-    const fallbacks = [
-      'Lake Wateree, SC',
-      'Lake Murray, SC',
-      'Lake Marion, SC',
-      'Lake Moultrie, SC',
-      'Lake Norman, NC'
-    ];
-    fallbacks.forEach(name => {
+    if (!datasets.length) {
+      sel.innerHTML = '<option value="">-- no cloud contour datasets found --</option>';
+      setStatus('No uploaded cloud contour datasets with vector GeoJSON were found.', true);
+      return;
+    }
+
+    datasets.forEach((ds) => {
       const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = name;
+      opt.value = ds.key;
+      opt.textContent = `${ds.label} (${ds.tileCount} tiles)`;
+      opt.dataset.displayName = ds.label;
+      opt.dataset.contourKey = ds.key;
+      opt.dataset.vectorLayout = ds.hasRootVector ? 'root' : (ds.hasLegacyVector ? 'legacy' : 'unknown');
       sel.appendChild(opt);
     });
-    // Also expose a global for other modules if missing
-    if (!window.LAKE_DB) window.LAKE_DB = {};
-    return;
-  }
 
-  keys.forEach(name => {
-    const opt = document.createElement('option');
-    opt.value = name;
-    opt.textContent = name;
-    sel.appendChild(opt);
-  });
-
-  // Make sure other parts of the app can find it
-  if (!window.LAKE_DB || Object.keys(window.LAKE_DB).length === 0) {
-    window.LAKE_DB = lakeSource;
+    setStatus(`Loaded ${datasets.length} cloud contour dataset${datasets.length === 1 ? '' : 's'}.`);
+  } catch (e) {
+    console.warn('[smart-route] cloud contour dataset list failed', e);
+    sel.innerHTML = '<option value="">-- cloud list unavailable; use local file --</option>';
+    setStatus(`Could not list cloud contour datasets: ${e.message}`, true);
   }
 }
 
@@ -484,10 +566,13 @@ function init() {
   });
 
   document.getElementById('srLoadCloud')?.addEventListener('click', async () => {
-    const lake = document.getElementById('srLakeSelect')?.value;
-    if (!lake) { setStatus('Select a lake first', true); return; }
+    const sel = document.getElementById('srLakeSelect');
+    const selected = sel?.options?.[sel.selectedIndex];
+    const contourKey = selected?.dataset?.contourKey || sel?.value;
+    const displayName = selected?.dataset?.displayName || selected?.textContent || sel?.value;
+    if (!contourKey) { setStatus('Select a lake first', true); return; }
     try {
-      const geojson = await loadContoursFromCloud(lake);
+      const geojson = await loadContoursFromCloud({ key: contourKey, displayName });
       applyGeoJSON(geojson);
     } catch (e) {
       setStatus(e.message, true);
