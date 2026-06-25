@@ -17,6 +17,7 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { setBanner } from '../core/map-init.js';
+import { LAKE_DB as IMPORTED_LAKE_DB } from '../data/lakes.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -423,13 +424,49 @@ function clearClip() {
 
 function populateLakeDropdown() {
   const sel = document.getElementById('srLakeSelect');
-  if (!sel || !window.LAKE_DB) return;
-  Object.keys(window.LAKE_DB).forEach(name => {
+  if (!sel) return;
+
+  // Robust lake source: prefer imported LAKE_DB (from data/lakes.js),
+  // fall back to window.LAKE_DB (set elsewhere), or empty array.
+  const lakeSource = (typeof IMPORTED_LAKE_DB !== 'undefined' && IMPORTED_LAKE_DB)
+    ? IMPORTED_LAKE_DB
+    : (window.LAKE_DB || {});
+
+  // Clear previous options (except the placeholder)
+  sel.innerHTML = '<option value="">-- pick lake --</option>';
+
+  const keys = Object.keys(lakeSource).sort();
+  if (keys.length === 0) {
+    // Fallback common lakes so the UI is never completely empty
+    const fallbacks = [
+      'Lake Wateree, SC',
+      'Lake Murray, SC',
+      'Lake Marion, SC',
+      'Lake Moultrie, SC',
+      'Lake Norman, NC'
+    ];
+    fallbacks.forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      sel.appendChild(opt);
+    });
+    // Also expose a global for other modules if missing
+    if (!window.LAKE_DB) window.LAKE_DB = {};
+    return;
+  }
+
+  keys.forEach(name => {
     const opt = document.createElement('option');
     opt.value = name;
     opt.textContent = name;
     sel.appendChild(opt);
   });
+
+  // Make sure other parts of the app can find it
+  if (!window.LAKE_DB || Object.keys(window.LAKE_DB).length === 0) {
+    window.LAKE_DB = lakeSource;
+  }
 }
 
 // ── Wire everything ───────────────────────────────────────────────────────────
