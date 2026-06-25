@@ -1,39 +1,66 @@
 /**
- * lazy-data.js — on-demand loader for the optional GIS data files
- * (bank/pier spots, kayak launches, fish attractors). The files
- * live under data/ and aren't pre-cached; this loader is called by
- * gis-toggles.js when the user first clicks one of those toggles.
- *
- * If you don't have these data files, the toggles will simply show
- * an empty layer (which is fine — they're optional).
+ * lazy-data.js — on-demand loader for optional GIS data files.
+ * Normalizes arrays, FeatureCollections, and common wrapped shapes
+ * into a plain array of records with:
+ *   { name, type, latitude, longitude, ... }
  */
+
+function normalizeRows(value) {
+  if (Array.isArray(value)) return value;
+
+  if (Array.isArray(value?.items)) return value.items;
+  if (Array.isArray(value?.rows)) return value.rows;
+  if (Array.isArray(value?.data)) return value.data;
+
+  if (Array.isArray(value?.features)) {
+    return value.features.map((f) => {
+      const p = f?.properties || {};
+      const coords = f?.geometry?.coordinates || [];
+
+      return {
+        ...p,
+        name:
+          p.name ?? p.Name ?? p.NAME ??
+          f?.name ?? 'Unnamed',
+        type:
+          p.type ?? p.Type ?? p.TYPE ??
+          f?.type ?? '',
+        latitude:
+          p.latitude ?? p.lat ?? p.LATITUDE ?? p.LAT ??
+          f?.latitude ?? f?.lat ??
+          coords[1],
+        longitude:
+          p.longitude ?? p.lon ?? p.lng ?? p.LONGITUDE ?? p.LON ?? p.LNG ??
+          f?.longitude ?? f?.lon ?? f?.lng ??
+          coords[0],
+      };
+    });
+  }
+
+  return [];
+}
+
+async function loadJsonRows(path) {
+  try {
+    const res = await fetch(path, { cache: 'no-store' });
+    if (!res.ok) return [];
+    const raw = await res.json();
+    return normalizeRows(raw);
+  } catch (_) {
+    return [];
+  }
+}
 
 window.TrollMapData = {
   async loadBankPier() {
-    try {
-      const res = await fetch('./data/tristate-bank-pier.json');
-      if (!res.ok) return [];
-      return await res.json();
-    } catch (_) {
-      return [];
-    }
+    return await loadJsonRows('./data/tristate-bank-pier.json');
   },
+
   async loadPaddle() {
-    try {
-      const res = await fetch('./data/tristate-paddle.json');
-      if (!res.ok) return [];
-      return await res.json();
-    } catch (_) {
-      return [];
-    }
+    return await loadJsonRows('./data/tristate-paddle.json');
   },
+
   async loadHotspots() {
-    try {
-      const res = await fetch('./data/tristate-hotspots.json');
-      if (!res.ok) return [];
-      return await res.json();
-    } catch (_) {
-      return [];
-    }
+    return await loadJsonRows('./data/tristate-hotspots.json');
   },
 };
