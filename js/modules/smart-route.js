@@ -25,7 +25,8 @@ let smartRouteLayer   = null;   // Leaflet layer showing generated routes
 let contourPreviewLayer = null; // Leaflet layer showing loaded contours
 let activeGeoJSON     = null;   // loaded FeatureCollection
 let drawingClipPoly   = null;   // L.Draw polygon for clip area
-let clipPolygon       = null;   // GeoJSON polygon for clipping
+let clipPolygon       = null;   // user-drawn GeoJSON polygon for clipping
+let activeContourMeta = null;   // metadata for currently loaded contour dataset
 
 // ── Panel HTML ────────────────────────────────────────────────────────────────
 
@@ -107,7 +108,15 @@ function buildPanel() {
     <div style="margin-bottom:10px">
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--text);font-size:11px">
         <input type="checkbox" id="srShowContours" checked>
-        Show depth contours on map
+        Show smart contours on map
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--muted);font-size:10px;margin-top:4px">
+        <input type="checkbox" id="srShowUnknown">
+        Show unclassified / null contours
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--muted);font-size:10px;margin-top:4px">
+        <input type="checkbox" id="srClipCapture" checked>
+        Clip to captured area when metadata exists
       </label>
     </div>
 
@@ -184,11 +193,20 @@ function buildContourLookupCandidates({ key = '', displayName = '' } = {}) {
   return [...candidates].filter(Boolean);
 }
 
+async function fetchContourMetadata(contourKey) {
+  try {
+    const r = await fetch(`${CF_WORKER_URL}/chartpacks/${encodeURIComponent(contourKey)}/chartpack.json?v=${Date.now()}`, { cache: 'no-store' });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (_) {
+    return null;
+  }
+}
+
 async function loadContoursFromCloud(lakeRef) {
   const displayName = typeof lakeRef === 'string' ? lakeRef : (lakeRef?.displayName || lakeRef?.key || 'selected lake');
   setStatus(`Loading contours for ${displayName}...`);
 
-  const tried = [];
   const candidates = buildContourLookupCandidates(
     typeof lakeRef === 'string' ? { displayName: lakeRef } : lakeRef,
   );
@@ -200,9 +218,12 @@ async function loadContoursFromCloud(lakeRef) {
     ];
 
     for (const url of urls) {
-      tried.push(url);
       const r = await fetch(url, { cache: 'no-store' });
-      if (r.ok) return r.json();
+      if (r.ok) {
+        const geojson = await r.json();
+        const meta = await fetchContourMetadata(key);
+        return { geojson, meta, contourKey: key, displayName };
+      }
       if (r.status !== 404) {
         throw new Error(`Worker returned ${r.status} while loading contours for ${displayName}`);
       }
@@ -245,36 +266,100 @@ function loadContoursFromFile(file) {
   });
 }
 
-function applyGeoJSON(geojson) {
+function applyGeoJSON(geojson, meta = null) {
   activeGeoJSON = geojson;
+  activeContourMeta = meta || null;
   const count = geojson.features?.length || 0;
-  const depths = [...new Set(geojson.features?.map(f => f.properties?.depth_ft).filter(Boolean))].sort((a,b)=>a-b);
-  setStatus(`✅ ${count} contour lines loaded. Depths: ${depths.join(', ')} ft`);
+  const depths = [...new Set(geojson.features?.map(f => f.properties?.depth_ft).filter(v => v != null))].sort((a,b)=>a-b);
+  const captureHint = meta?.polygon ? ' capture polygon available' : (meta?.bbox ? ' bbox available' : '');
+  setStatus(`✅ ${count} contour lines loaded.${captureHint} Depths: ${depths.join(', ')} ft`);
   if (document.getElementById('srShowContours')?.checked) renderContourPreview();
 }
 
 // ── Contour preview on map ────────────────────────────────────────────────────
 
-const DEPTH_COLORS_CSS = {
-  5: '#ef5350', 10: '#f57c00', 15: '#fbc02d', 20: '#c6d400',
-  25: '#66bb6a', 30: '#388e3c', 36: '#1b5e20', 45: '#0288d1',
-  55: '#1565c0', 65: '#6a1b9a', 80: '#4a148c',
-};
+const QUICKDRAW_BANDS = [
+  { min: 0,  max: 10, color: '#d32f2f', label: '0-10 ft' },
+  { min: 10, max: 20, color: '#f57c00', label: '10-20 ft' },
+  { min: 20, max: 28, color: '#fbc02d', label: '20-28 ft' },
+  { min: 28, max: 36, color: '#388e3c', label: '28-36 ft' },
+  { min: 36, max: 45, color: '#0288d1', label: '36-45 ft' },
+  { min: 45, max: 55, color: '#1565c0', label: '45-55 ft' },
+  { min: 55, max: 65, color: '#6a1b9a', label: '55-65 ft' },
+  { min: 65, max: Infinity, color: '#f5f5f5', label: '>65 ft' },
+];
+
+function depthBandInfo(depthFt) {
+  if (depthFt == null || !Number.isFinite(Number(depthFt))) return null;
+  const d = Number(depthFt);
+  return QUICKDRAW_BANDS.find((b) => d >= b.min && d < b.max) || QUICKDRAW_BANDS[QUICKDRAW_BANDS.length - 1];
+}
+
+function getActiveClipPolygon() {
+  if (clipPolygon) return clipPolygon;
+  if (document.getElementById('srClipCapture')?.checked && activeContourMeta?.polygon) {
+    return {
+      type: 'Feature',
+      geometry: { type: 'Polygon', coordinates: [activeContourMeta.polygon] },
+      properties: { source: 'capture_polygon' },
+    };
+  }
+  return null;
+}
+
+function featureTouchesPolygon(feat, poly) {
+  if (!poly) return true;
+  try {
+    const T = turf();
+    const coords = feat?.geometry?.coordinates || [];
+    if (!coords.length) return false;
+    const step = Math.max(1, Math.floor(coords.length / 12));
+    for (let i = 0; i < coords.length; i += step) {
+      if (T.booleanPointInPolygon(T.point(coords[i]), poly)) return true;
+    }
+    if (T.booleanPointInPolygon(T.point(coords[coords.length - 1]), poly)) return true;
+    const mid = coords[Math.floor(coords.length / 2)];
+    if (mid && T.booleanPointInPolygon(T.point(mid), poly)) return true;
+  } catch (_) {}
+  return false;
+}
+
+function getPreviewFeatureCollection() {
+  if (!activeGeoJSON) return { type: 'FeatureCollection', features: [] };
+  const showUnknown = !!document.getElementById('srShowUnknown')?.checked;
+  const capturePoly = getActiveClipPolygon();
+  const features = (activeGeoJSON.features || []).filter((f) => {
+    const depth = f.properties?.depth_ft;
+    if (!showUnknown && (depth == null || !Number.isFinite(Number(depth)))) return false;
+    if (capturePoly && !featureTouchesPolygon(f, capturePoly)) return false;
+    return true;
+  });
+  return { type: 'FeatureCollection', features };
+}
 
 function renderContourPreview() {
   if (!state.MAP_OK || !activeGeoJSON) return;
   if (contourPreviewLayer) state.MAP.removeLayer(contourPreviewLayer);
 
-  contourPreviewLayer = L.geoJSON(activeGeoJSON, {
+  const previewGeo = getPreviewFeatureCollection();
+  contourPreviewLayer = L.geoJSON(previewGeo, {
     style: (feat) => {
-      const d = feat.properties?.depth_ft;
-      const color = DEPTH_COLORS_CSS[d] || '#ffffff';
-      return { color, weight: 1.5, opacity: 0.7, dashArray: null };
+      const depth = feat.properties?.depth_ft;
+      const band = depthBandInfo(depth);
+      if (!band) {
+        return { color: '#90a4ae', weight: 1.0, opacity: 0.18, dashArray: '4 6' };
+      }
+      return { color: band.color, weight: 2.1, opacity: 0.92, dashArray: null };
     },
     onEachFeature: (feat, layer) => {
-      const d = feat.properties?.depth_ft;
-      const src = feat.properties?.source;
-      layer.bindTooltip(`${d}ft ${src === 'ocr_confirmed' ? '✓ OCR' : '(color)'}`, { sticky: true });
+      const depth = feat.properties?.depth_ft;
+      const band = depthBandInfo(depth);
+      const src = feat.properties?.source || 'unknown';
+      const conf = feat.properties?.ocr_conf != null ? ` conf ${feat.properties.ocr_conf}` : '';
+      const text = band
+        ? `${depth} ft • ${band.label}${conf}`
+        : `Unclassified contour (${src})`;
+      layer.bindTooltip(text, { sticky: true });
     },
   }).addTo(state.MAP);
 }
@@ -298,14 +383,12 @@ function filterByDepth(geojson, minFt, maxFt) {
 
 function clipToPolygon(geojson, clipPoly) {
   if (!clipPoly) return geojson;
-  const T = turf();
   const clipped = [];
   for (const feat of geojson.features) {
     try {
-      const c = T.lineIntersect ? T.booleanWithin(feat, clipPoly) ? feat : null : feat;
-      if (c) clipped.push(c);
+      if (featureTouchesPolygon(feat, clipPoly)) clipped.push(feat);
     } catch (_) {
-      clipped.push(feat); // keep if clip fails
+      clipped.push(feat);
     }
   }
   return { type: 'FeatureCollection', features: clipped };
@@ -422,7 +505,8 @@ function generateSmartRoutes() {
 
   try {
     let filtered = filterByDepth(activeGeoJSON, minFt, maxFt);
-    if (clipPolygon) filtered = clipToPolygon(filtered, clipPolygon);
+    const activeClipPoly = getActiveClipPolygon();
+    if (activeClipPoly) filtered = clipToPolygon(filtered, activeClipPoly);
 
     if (!filtered.features.length) {
       setStatus(`No contour lines found in ${minFt}-${maxFt}ft range`, true);
@@ -454,7 +538,7 @@ function generateSmartRoutes() {
     smartRouteLayer = L.layerGroup();
     tracks.forEach((t, i) => {
       const depth = t.depth_ft || minFt;
-      const color = DEPTH_COLORS_CSS[depth] || '#76ff03';
+      const color = depthBandInfo(depth)?.color || '#76ff03';
       L.polyline(t.pts, { color, weight: 2.5, dashArray: '8 4', opacity: 0.9 })
         .bindTooltip(`${t.name} (${depth}ft)`, { sticky: true })
         .addTo(smartRouteLayer);
@@ -572,8 +656,8 @@ function init() {
     const displayName = selected?.dataset?.displayName || selected?.textContent || sel?.value;
     if (!contourKey) { setStatus('Select a lake first', true); return; }
     try {
-      const geojson = await loadContoursFromCloud({ key: contourKey, displayName });
-      applyGeoJSON(geojson);
+      const loaded = await loadContoursFromCloud({ key: contourKey, displayName });
+      applyGeoJSON(loaded.geojson, loaded.meta);
     } catch (e) {
       setStatus(e.message, true);
     }
@@ -584,7 +668,7 @@ function init() {
     if (!file) return;
     try {
       const geojson = await loadContoursFromFile(file);
-      applyGeoJSON(geojson);
+      applyGeoJSON(geojson, null);
     } catch (e) {
       setStatus(e.message, true);
     }
@@ -596,6 +680,14 @@ function init() {
     } else {
       if (contourPreviewLayer) { state.MAP?.removeLayer(contourPreviewLayer); contourPreviewLayer = null; }
     }
+  });
+
+  document.getElementById('srShowUnknown')?.addEventListener('change', () => {
+    if (document.getElementById('srShowContours')?.checked) renderContourPreview();
+  });
+
+  document.getElementById('srClipCapture')?.addEventListener('change', () => {
+    if (document.getElementById('srShowContours')?.checked) renderContourPreview();
   });
 
   document.getElementById('srGenerate')?.addEventListener('click', generateSmartRoutes);
