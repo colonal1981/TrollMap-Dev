@@ -1,20 +1,58 @@
-// CORRECTED VERSION of gis-toggles.js
-
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 
-let BANK_LAYER = null, BANK_VISIBLE = false;
-let PADDLE_LAYER = null, PADDLE_VISIBLE = false;
-let ATTRACTOR_LAYER = null, ATTRACTOR_VISIBLE = false;
+let BANK_LAYER = null;
+let BANK_VISIBLE = false;
+let PADDLE_LAYER = null;
+let PADDLE_VISIBLE = false;
+let ATTRACTOR_LAYER = null;
+let ATTRACTOR_VISIBLE = false;
 
-let _bankData = null, _paddleData = null, _attractorData = null;
+let _bankData = null;
+let _paddleData = null;
+let _attractorData = null;
+
+function getMap() {
+  return state?.MAP || window.MAP || null;
+}
+
+function mapReady() {
+  return !!(state?.MAP_OK && getMap());
+}
+
+function normalizeList(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function getLatLng(rec) {
+  const lat = rec?.latitude ?? rec?.lat ?? rec?.Latitude ?? rec?.LAT;
+  const lon = rec?.longitude ?? rec?.lon ?? rec?.lng ?? rec?.Longitude ?? rec?.LON ?? rec?.LNG;
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return [Number(lat), Number(lon)];
+}
+
+function spotPopup(name, type, lat, lon, icon, accent) {
+  const safeName = esc(name || 'Unnamed').replace(/'/g, "\\'");
+  const typeHtml = type ? `<div style="color:${accent};font-size:12px">${esc(type)}</div>` : '';
+  const repositionBtn = window.enableSpotRepositioning
+    ? `<button onclick="window.enableSpotRepositioning(this, '${safeName}')" class="small warn" style="margin-top:8px">✥ Re-Position This Spot</button>`
+    : '';
+  return `
+    <div style="font-family:system-ui,sans-serif;font-size:13px;color:#111;min-width:210px">
+      <b>${icon} ${esc(name || 'Unnamed')}</b><br>
+      <span style="font-family:monospace;font-size:11px">${lat.toFixed(5)}, ${lon.toFixed(5)}</span>
+      ${typeHtml}
+      ${repositionBtn}
+    </div>
+  `;
+}
 
 async function loadBankPier() {
   if (_bankData) return _bankData;
   if (window.TrollMapData?.loadBankPier) {
-    _bankData = await window.TrollMapData.loadBankPier();
+    _bankData = normalizeList(await window.TrollMapData.loadBankPier());
   } else {
-    _bankData = window.TRISTATE_MASTER_BANK_PIER || [];
+    _bankData = normalizeList(window.TRISTATE_MASTER_BANK_PIER);
   }
   return _bankData;
 }
@@ -22,9 +60,9 @@ async function loadBankPier() {
 async function loadPaddle() {
   if (_paddleData) return _paddleData;
   if (window.TrollMapData?.loadPaddle) {
-    _paddleData = await window.TrollMapData.loadPaddle();
+    _paddleData = normalizeList(await window.TrollMapData.loadPaddle());
   } else {
-    _paddleData = window.TRISTATE_MASTER_PADDLE || [];
+    _paddleData = normalizeList(window.TRISTATE_MASTER_PADDLE);
   }
   return _paddleData;
 }
@@ -32,103 +70,133 @@ async function loadPaddle() {
 async function loadHotspots() {
   if (_attractorData) return _attractorData;
   if (window.TrollMapData?.loadHotspots) {
-    _attractorData = await window.TrollMapData.loadHotspots();
+    _attractorData = normalizeList(await window.TrollMapData.loadHotspots());
   } else {
-    _attractorData = window.TRISTATE_MASTER_HOTSPOTS || [];
+    _attractorData = normalizeList(window.TRISTATE_MASTER_HOTSPOTS);
   }
   return _attractorData;
 }
 
-// ── Bank / Pier ───────────────────────────────────────────────────────────
-
 async function buildBankLayer() {
-  if (BANK_LAYER) return;
+  if (BANK_LAYER) return BANK_LAYER;
   BANK_LAYER = L.layerGroup();
   const data = await loadBankPier();
+
   data.forEach((b) => {
-    const isPier = (b.type || '').toUpperCase().includes('PIER');
-    const ico = isPier ? '🎣' : '🌲';
-    const bgCol = isPier ? '#0e7c7b' : '#2e7d32';
-    // --- FIX: Use b.latitude and b.longitude ---
-    const marker = L.marker([b.latitude, b.longitude], {
+    const ll = getLatLng(b);
+    if (!ll) return;
+    const [lat, lon] = ll;
+    const type = b.type || b.TYPE || '';
+    const isPier = String(type).toUpperCase().includes('PIER');
+    const icon = isPier ? '🎣' : '🌲';
+    const bg = isPier ? '#0e7c7b' : '#2e7d32';
+    const label = esc(b.name || b.NAME || 'Bank/Pier').split(' (')[0];
+
+    const marker = L.marker([lat, lon], {
       icon: L.divIcon({
         className: 'custom-gis-marker',
-        html: `<div style="background:${bgCol};color:#fff;font-size:11px;font-weight:700;padding:2px 6px;border-radius:4px;border:1px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5);white-space:nowrap;display:inline-block;cursor:pointer">${ico} ${esc(b.name).split(' (')[0]}</div>`,
+        html: `<div style="background:${bg};color:#fff;font-size:11px;font-weight:700;padding:2px 6px;border-radius:4px;border:1px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5);white-space:nowrap;display:inline-block;cursor:pointer">${icon} ${label}</div>`,
         iconAnchor: [0, 8],
       }),
     });
-    marker.bindPopup(`<b>${ico} ${esc(b.name)}</b><br><span style="font-family:monospace;font-size:11px">${b.latitude.toFixed(5)}, ${b.longitude.toFixed(5)}</span><br><span style="color:#aed581;font-size:12px">${b.type}</span><br><button onclick="window.enableSpotRepositioning(this, '${esc(b.name).replace(/'/g, "\\'")}')" class="small warn" style="margin-top:8px">✥ Re-Position This Spot</button>`);
+
+    marker.bindPopup(spotPopup(b.name || b.NAME || 'Bank/Pier', type, lat, lon, icon, '#aed581'));
     BANK_LAYER.addLayer(marker);
   });
-}
 
-// ── Kayak / Paddle ────────────────────────────────────────────────────────
+  return BANK_LAYER;
+}
 
 async function buildPaddleLayer() {
-  if (PADDLE_LAYER) return;
+  if (PADDLE_LAYER) return PADDLE_LAYER;
   PADDLE_LAYER = L.layerGroup();
   const data = await loadPaddle();
+
   data.forEach((p) => {
-    // --- FIX: Use p.latitude and p.longitude ---
-    const marker = L.marker([p.latitude, p.longitude], {
+    const ll = getLatLng(p);
+    if (!ll) return;
+    const [lat, lon] = ll;
+    const type = p.type || p.TYPE || '';
+    const label = esc(p.name || p.NAME || 'Paddle Launch').split(' (')[0];
+
+    const marker = L.marker([lat, lon], {
       icon: L.divIcon({
         className: 'custom-gis-marker',
-        html: `<div style="background:#ffb703;color:#000;font-size:11px;font-weight:700;padding:2px 6px;border-radius:4px;border:1px solid #b06a00;box-shadow:0 1px 4px rgba(0,0,0,.5);white-space:nowrap;display:inline-block;cursor:pointer">🛶 ${esc(p.name).split(' (')[0]}</div>`,
+        html: `<div style="background:#ffb703;color:#000;font-size:11px;font-weight:700;padding:2px 6px;border-radius:4px;border:1px solid #b06a00;box-shadow:0 1px 4px rgba(0,0,0,.5);white-space:nowrap;display:inline-block;cursor:pointer">🛶 ${label}</div>`,
         iconAnchor: [0, 8],
       }),
     });
-    marker.bindPopup(`<b>🛶 ${esc(p.name)}</b><br><span style="font-family:monospace;font-size:11px">${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)}</span><br><span style="color:#ffb703;font-size:12px">${p.type}</span><br><button onclick="window.enableSpotRepositioning(this, '${esc(p.name).replace(/'/g, "\\'")}')" class="small warn" style="margin-top:8px">✥ Re-Position This Spot</button>`);
+
+    marker.bindPopup(spotPopup(p.name || p.NAME || 'Paddle Launch', type, lat, lon, '🛶', '#ffb703'));
     PADDLE_LAYER.addLayer(marker);
   });
+
+  return PADDLE_LAYER;
 }
 
-// ── Submerged Attractors (PVC trees, brush piles) ────────────────────────
-
 async function buildAttractorLayer() {
-  if (ATTRACTOR_LAYER) return;
+  if (ATTRACTOR_LAYER) return ATTRACTOR_LAYER;
   ATTRACTOR_LAYER = L.layerGroup();
   const data = await loadHotspots();
+
   data.forEach((h) => {
-    const isTree = (h.type || '').toUpperCase().includes('PVC') || (h.type || '').toUpperCase().includes('TREE');
-    const ico = isTree ? '🎯' : '📍';
-    const bgCol = isTree ? '#00e5ff' : '#ef5350';
-    const fgCol = isTree ? '#000' : '#fff';
-    // --- FIX: Use h.latitude and h.longitude ---
-    const marker = L.marker([h.latitude, h.longitude], {
+    const ll = getLatLng(h);
+    if (!ll) return;
+    const [lat, lon] = ll;
+    const type = h.type || h.TYPE || 'Hardwood Brush Pile / Sunk PVC Tree Habitat';
+    const isTree = /PVC|TREE/i.test(String(type));
+    const icon = isTree ? '🎯' : '📍';
+    const bg = isTree ? '#00e5ff' : '#ef5350';
+    const fg = isTree ? '#000' : '#fff';
+    const label = esc(h.name || h.NAME || 'Attractor').split(' (')[0];
+
+    const marker = L.marker([lat, lon], {
       icon: L.divIcon({
         className: 'custom-gis-marker',
-        html: `<div style="background:${bgCol};color:${fgCol};font-size:11px;font-weight:800;padding:2px 6px;border-radius:4px;border:1px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.6);white-space:nowrap;display:inline-block;cursor:pointer">${ico} ${esc(h.name).split(' (')[0]}</div>`,
+        html: `<div style="background:${bg};color:${fg};font-size:11px;font-weight:800;padding:2px 6px;border-radius:4px;border:1px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.6);white-space:nowrap;display:inline-block;cursor:pointer">${icon} ${label}</div>`,
         iconAnchor: [0, 8],
       }),
     });
-    const notesStr = h.type || 'Hardwood Brush Pile / Sunk PVC Tree Habitat';
-    marker.bindPopup(`<b>${ico} ${esc(h.name)}</b><br><span style="color:var(--accent2);font-size:12px;font-weight:700">${notesStr}</span><br><span style="font-family:monospace;font-size:11px;color:var(--muted)">${h.latitude.toFixed(5)}, ${h.longitude.toFixed(5)}</span><br><button onclick="window.enableSpotRepositioning(this, '${esc(h.name).replace(/'/g, "\\'")}')" class="small warn" style="margin-top:8px">✥ Re-Position This Spot</button>`);
+
+    marker.bindPopup(spotPopup(h.name || h.NAME || 'Attractor', type, lat, lon, icon, 'var(--accent2)'));
     ATTRACTOR_LAYER.addLayer(marker);
   });
+
+  return ATTRACTOR_LAYER;
 }
 
-// ── Wire buttons ──────────────────────────────────────────────────────────
-
-function wireButton(btn, layer, getVisible, setVisible, buildFn) {
+function wireToggleButton(btn, getLayer, getVisible, setVisible, buildFn, activeBg = 'var(--accent)', activeColor = '#000') {
   btn?.addEventListener('click', async () => {
-    if (!state.MAP_OK) return;
-    await buildFn();
+    if (!mapReady()) return;
+    const map = getMap();
+    const layer = await buildFn();
+    if (!layer) return;
+
     if (getVisible()) {
-      state.MAP.removeLayer(layer);
+      if (map.hasLayer(layer)) map.removeLayer(layer);
       setVisible(false);
       btn.style.background = '';
       btn.style.color = '';
     } else {
-      layer.addTo(state.MAP);
+      layer.addTo(map);
       setVisible(true);
-      btn.style.background = 'var(--accent)';
-      btn.style.color = '#000';
+      btn.style.background = activeBg;
+      btn.style.color = activeColor;
     }
   });
 }
 
-setTimeout(() => {
-  wireButton(document.getElementById('btnBankPier'), BANK_LAYER, () => BANK_VISIBLE, (v) => { BANK_VISIBLE = v; }, buildBankLayer);
-  wireButton(document.getElementById('btnPaddle'), PADDLE_LAYER, () => PADDLE_VISIBLE, (v) => { PADDLE_VISIBLE = v; }, buildPaddleLayer);
-  wireButton(document.getElementById('btnAttractors'), ATTRACTOR_LAYER, () => ATTRACTOR_VISIBLE, (v) => { ATTRACTOR_VISIBLE = v; }, buildAttractorLayer);
-}, 1000);
+function init() {
+  if (!document.getElementById('btnBankPier') || !document.getElementById('btnPaddle') || !document.getElementById('btnAttractors')) {
+    setTimeout(init, 250);
+    return;
+  }
+
+  wireToggleButton(document.getElementById('btnBankPier'), () => BANK_LAYER, () => BANK_VISIBLE, (v) => { BANK_VISIBLE = v; }, buildBankLayer);
+  wireToggleButton(document.getElementById('btnPaddle'), () => PADDLE_LAYER, () => PADDLE_VISIBLE, (v) => { PADDLE_VISIBLE = v; }, buildPaddleLayer);
+  wireToggleButton(document.getElementById('btnAttractors'), () => ATTRACTOR_LAYER, () => ATTRACTOR_VISIBLE, (v) => { ATTRACTOR_VISIBLE = v; }, buildAttractorLayer);
+
+  console.log('✓ GIS toggles module armed');
+}
+
+init();
