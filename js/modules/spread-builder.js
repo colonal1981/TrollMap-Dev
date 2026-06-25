@@ -249,6 +249,22 @@ export function renderSpread() {
     }
   });
 
+  // Post-render explicit value sync for trailer/arig/jig selects.
+  // The 'selected' attrs in arigDetailRow HTML sometimes don't take for the
+  // dynamically appended detail <tr> after loadPlanIntoForm/renderSpread.
+  // This guarantees the swimbait trailer profile (and A-rig weights) survive
+  // load/save and appear correctly in the editable table.
+  state.SPREAD.forEach((rod, i) => {
+    const trailerSel = tbody.querySelector(`select[data-f="trailerSize"][data-i="${i}"]`);
+    if (trailerSel) trailerSel.value = rod.trailerSize || '';
+
+    const arigSel = tbody.querySelector(`select[data-f="arigWeight"][data-i="${i}"]`);
+    if (arigSel) arigSel.value = rod.arigWeight || '';
+
+    const jigSel = tbody.querySelector(`select[data-f="jigWeight"][data-i="${i}"]`);
+    if (jigSel) jigSel.value = rod.jigWeight || '';
+  });
+
   // Wire change handlers
   tbody.querySelectorAll('input,select').forEach((el) => {
     el.addEventListener('change', (e) => {
