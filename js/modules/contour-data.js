@@ -97,8 +97,18 @@ async function showRawTileOverlay(key) {
           reader.onload = () => res(reader.result);
           reader.readAsDataURL(blob);
         });
+        // addChartLayer expects {north,south,east,west} object directly
         const b = georef.bounds || georef;
-        const bounds = [[b.south, b.west], [b.north, b.east]];
+        const bounds = {
+          north: b.north ?? b.bounds?.north,
+          south: b.south ?? b.bounds?.south,
+          east:  b.east  ?? b.bounds?.east,
+          west:  b.west  ?? b.bounds?.west,
+        };
+        if (!bounds.north || !bounds.south) {
+          console.warn('[contour-data] bad bounds in georef for', stem, georef);
+          continue;
+        }
         addChartLayer(`${RAW_TILE_PREFIX}${stem}`, dataUrl, bounds, 0.75, 0);
       } catch (e) {
         console.warn('[contour-data] failed to load tile', stem, e);
