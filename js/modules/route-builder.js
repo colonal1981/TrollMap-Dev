@@ -58,29 +58,52 @@ function genStraight(p1, p2, cfg) {
 }
 
 function genSine(p1, p2, cfg) {
+  // Direct port of the original Kayak Troll Generator genSine — the version that
+  // actually worked. Adds: configurable points-per-wave, dynamic amplitude (fatter
+  // in the middle of each leg, softer at the ends), asymmetric depth bias (push
+  // the curve harder toward the deep/contour side), and minimum-spacing thinning.
   const [dist, brng] = distBearing(p1[0], p1[1], p2[0], p2[1]);
   if (dist < 1) return [];
+  const wave = Math.max(20, cfg.wave || 300);
+  const ppw  = Math.max(6, cfg.ppw || 16);
+  const n    = Math.max(Math.floor((dist / wave) * ppw), ppw);
   const perp = (brng + 90) % 360;
-  const n = Math.max(8, Math.ceil((dist / Math.max(20, cfg.wave)) * 16));
-  return Array.from({length: n+1}, (_, i) => {
+  const minSpacing = cfg.minSpacing || 0;
+  const pts = [];
+  let prev = null;
+  for (let i = 0; i <= n; i++) {
     const t = i / n;
-    const c = destination(p1[0], p1[1], brng, dist*t);
-    const off = Math.sin(2*Math.PI*dist*t / Math.max(20, cfg.wave)) * cfg.amplitude;
-    return destination(c[0], c[1], perp, off);
-  });
+    const c = destination(p1[0], p1[1], brng, dist * t);
+    let amp = cfg.amplitude;
+    if (cfg.dynamic) amp *= 0.65 + 0.35 * Math.sin(Math.PI * t);  // bulge in middle
+    let offset = Math.sin((2 * Math.PI * dist * t) / wave) * amp;
+    if (cfg.bias > 0 && offset > 0) offset *= (1 + cfg.bias);     // lean deep side
+    const f = destination(c[0], c[1], perp, offset);
+    if (prev && minSpacing > 0) {
+      const [d] = distBearing(prev[0], prev[1], f[0], f[1]);
+      if (d < minSpacing) continue;                              // thin dense points
+    }
+    pts.push(f);
+    prev = f;
+  }
+  return pts;
 }
 
 function genZigzag(p1, p2, cfg) {
+  // Port of the original genZigzag: wave_ft/2 step, min_turns floor.
   const [dist, brng] = distBearing(p1[0], p1[1], p2[0], p2[1]);
   if (dist < 1) return [];
   const perp = (brng + 90) % 360;
-  const step = Math.max(20, cfg.wave / 2);
-  const n = Math.max(1, Math.ceil(dist / step));
+  const step = Math.max(20, (cfg.wave || 300) / 2);
+  const n = Math.max(cfg.minTurns || 1, Math.floor(dist / step));
+  const spacing = dist / n;
   const pts = [p1];
   let dir = 1;
   for (let i = 1; i < n; i++) {
-    const c = destination(p1[0], p1[1], brng, dist*i/n);
-    pts.push(destination(c[0], c[1], perp, cfg.amplitude * dir));
+    const c = destination(p1[0], p1[1], brng, i * spacing);
+    let amp = cfg.amplitude;
+    if (cfg.bias > 0 && dir > 0) amp *= (1 + cfg.bias); // lean deep side
+    pts.push(destination(c[0], c[1], perp, amp * dir));
     dir *= -1;
   }
   pts.push(p2);
@@ -90,17 +113,31 @@ function genZigzag(p1, p2, cfg) {
 function genMixed(p1, p2, cfg, curveFn) {
   const [dist, brng] = distBearing(p1[0], p1[1], p2[0], p2[1]);
   if (dist < 1) return [];
+
+  const wave = Math.max(20, cfg.wave || 300);
+  let straightFt = cfg.straightFt || 350;
+
+  // Adaptive straight length: on SHORT segments (e.g. close waypoints ~150ft) a
+  // fixed 350ft straight swallows the whole segment and you never see a curve.
+  // Cap the straight run so it's at most ~40% of the segment and always leaves
+  // room for at least one full wave of curve.
+  if (dist < straightFt + wave) {
+    straightFt = Math.min(straightFt, dist * 0.4);
+  }
+  // If the segment is too short to hold any curve at all, just go straight.
+  if (dist < wave * 0.75) return genStraight(p1, p2, cfg);
+
   const pts = [p1];
   let cursor = 0;
-  const straightFt = cfg.straightFt || 350;
-  while (cursor < dist) {
+  let guard = 0;
+  while (cursor < dist - 1 && guard++ < 1000) {
     const endS = Math.min(cursor + straightFt, dist);
     const s = destination(p1[0], p1[1], brng, cursor);
     const e = destination(p1[0], p1[1], brng, endS);
     pts.push(...genStraight(s, e, cfg).slice(1));
     cursor = endS;
-    if (cursor >= dist) break;
-    const endC = Math.min(cursor + cfg.wave, dist);
+    if (cursor >= dist - 1) break;
+    const endC = Math.min(cursor + wave, dist);
     const cs = destination(p1[0], p1[1], brng, cursor);
     const ce = destination(p1[0], p1[1], brng, endC);
     pts.push(...curveFn(cs, ce, cfg).slice(1));
@@ -217,18 +254,42 @@ function patternAlongSpine(waypoints, cfg) {
 // Keep generated points on the water: if a clip polygon is set, pull any point
 // that strays outside it back onto the nearest spine waypoint. This prevents
 // the sine swing from throwing the route over land.
-function clampToClip(pts, spine) {
+// Keep generated points on the water. Rather than SNAP out-of-polygon points to a
+// far spine vertex (which created huge fold-backs / triangles), we simply DROP the
+// points that fall outside the clip polygon and keep the largest contiguous run
+// that stays inside. This trims the route to the box cleanly without teleporting.
+function clampToClip(pts) {
   if (!clipPolygon || !pts.length) return pts;
-  return pts.map(p => {
-    if (pointInPolygon(p, clipPolygon)) return p;
-    // Snap to nearest spine waypoint (which is by construction a real contour pt)
-    let best = spine[0], bestD = Infinity;
-    for (const s of spine) {
-      const [d] = distBearing(p[0], p[1], s[0], s[1]);
-      if (d < bestD) { bestD = d; best = s; }
+  // Split into runs of consecutive in-polygon points; return the longest run.
+  let best = [], cur = [];
+  for (const p of pts) {
+    if (pointInPolygon(p, clipPolygon)) {
+      cur.push(p);
+    } else {
+      if (cur.length > best.length) best = cur;
+      cur = [];
     }
-    return best;
-  });
+  }
+  if (cur.length > best.length) best = cur;
+  return best;
+}
+
+// Trim a spine (array of [lat,lon]) to the largest contiguous portion that lies
+// inside the clip polygon. Done BEFORE patterning so the sine develops only over
+// the in-box stretch and never has to be snapped back.
+function trimSpineToClip(spine) {
+  if (!clipPolygon || spine.length < 2) return spine;
+  let best = [], cur = [];
+  for (const p of spine) {
+    if (pointInPolygon(p, clipPolygon)) {
+      cur.push(p);
+    } else {
+      if (cur.length > best.length) best = cur;
+      cur = [];
+    }
+  }
+  if (cur.length > best.length) best = cur;
+  return best;
 }
 
 // Shortest distance (ft) from a [lat,lon] point to the nearest VERTEX of any
@@ -268,10 +329,33 @@ function isContourStub(coords) {
 }
 
 // Greedily chain [lon,lat] fragments whose endpoints fall within TOL feet.
-function stitchFragments(fragments, TOL = 18) {
-  const segs = fragments.filter(c => c.length >= 2 && !isContourStub(c));
+function angleDiff(a, b) {
+  let d = Math.abs(a - b) % 360;
+  return d > 180 ? 360 - d : d;
+}
+
+// Bearing of the last/first short segment of a chain, in the direction of travel
+// AT that endpoint (tail = outgoing, head = incoming).
+function endBearing(coordsLL, atTail) {
+  // coordsLL: [lat,lon][]; return bearing of travel leaving the tail / entering head.
+  if (coordsLL.length < 2) return 0;
+  if (atTail) {
+    const a = coordsLL[coordsLL.length - 2], b = coordsLL[coordsLL.length - 1];
+    return distBearing(a[0], a[1], b[0], b[1])[1];
+  } else {
+    const a = coordsLL[1], b = coordsLL[0];
+    return distBearing(a[0], a[1], b[0], b[1])[1];
+  }
+}
+
+function stitchFragments(fragments, TOL = 18, MAX_TURN = 45) {
+  // Work in [lat,lon] internally for bearing math; inputs/outputs are [lon,lat].
+  const segs = fragments
+    .filter(c => c.length >= 2 && !isContourStub(c))
+    .map(c => c.map(([lo, la]) => [la, lo]));      // -> [lat,lon]
   const used = new Array(segs.length).fill(false);
   const chains = [];
+
   for (let s = 0; s < segs.length; s++) {
     if (used[s]) continue;
     used[s] = true;
@@ -280,29 +364,48 @@ function stitchFragments(fragments, TOL = 18) {
     while (grew) {
       grew = false;
       const head = chain[0], tail = chain[chain.length - 1];
-      let bestI = -1, bestD = TOL, mode = null;
+      const tailBrng = endBearing(chain, true);      // direction leaving tail
+      const headBrng = endBearing(chain, false);     // direction leaving head (backwards)
+
+      let bestJ = -1, bestScore = Infinity, bestOp = null;
       for (let j = 0; j < segs.length; j++) {
         if (used[j]) continue;
-        const c = segs[j], a = c[0], b = c[c.length - 1];
-        const dTA = distBearing(tail[1], tail[0], a[1], a[0])[0];
-        const dTB = distBearing(tail[1], tail[0], b[1], b[0])[0];
-        const dHA = distBearing(head[1], head[0], a[1], a[0])[0];
-        const dHB = distBearing(head[1], head[0], b[1], b[0])[0];
-        const m = Math.min(dTA, dTB, dHA, dHB);
-        if (m < bestD) {
-          bestD = m; bestI = j;
-          mode = (m === dTA) ? 'TA' : (m === dTB) ? 'TB' : (m === dHA) ? 'HA' : 'HB';
+        const c = segs[j];
+        const a = c[0], b = c[c.length - 1];
+        // For each way of attaching, require: endpoint within TOL AND the join
+        // continues roughly straight (turn angle <= MAX_TURN). Score = dist +
+        // turn penalty so we prefer the most natural continuation.
+        const cands = [
+          // append c forward to tail: tail->a, then travel a->... must match tailBrng
+          { d: distBearing(tail[0], tail[1], a[0], a[1])[0], op: 'TA',
+            turn: angleDiff(tailBrng, distBearing(a[0], a[1], c[1][0], c[1][1])[1]) },
+          // append c reversed to tail: tail->b
+          { d: distBearing(tail[0], tail[1], b[0], b[1])[0], op: 'TB',
+            turn: angleDiff(tailBrng, distBearing(b[0], b[1], c[c.length-2][0], c[c.length-2][1])[1]) },
+          // prepend c reversed to head: head<-a  (head travels backwards along headBrng)
+          { d: distBearing(head[0], head[1], a[0], a[1])[0], op: 'HA',
+            turn: angleDiff(headBrng, distBearing(a[0], a[1], c[1][0], c[1][1])[1]) },
+          // prepend c forward to head: head<-b
+          { d: distBearing(head[0], head[1], b[0], b[1])[0], op: 'HB',
+            turn: angleDiff(headBrng, distBearing(b[0], b[1], c[c.length-2][0], c[c.length-2][1])[1]) },
+        ];
+        for (const cand of cands) {
+          if (cand.d > TOL || cand.turn > MAX_TURN) continue;
+          const score = cand.d + cand.turn * 2; // ft + weighted degrees
+          if (score < bestScore) { bestScore = score; bestJ = j; bestOp = cand.op; }
         }
       }
-      if (bestI >= 0) {
-        const c = segs[bestI].slice(); used[bestI] = true; grew = true;
-        if (mode === 'TA') chain = chain.concat(c);
-        else if (mode === 'TB') chain = chain.concat(c.reverse());
-        else if (mode === 'HA') chain = c.reverse().concat(chain);
+
+      if (bestJ >= 0) {
+        const c = segs[bestJ].slice(); used[bestJ] = true; grew = true;
+        if (bestOp === 'TA') chain = chain.concat(c);
+        else if (bestOp === 'TB') chain = chain.concat(c.reverse());
+        else if (bestOp === 'HA') chain = c.reverse().concat(chain);
         else chain = c.concat(chain);
       }
     }
-    chains.push(chain);
+    // back to [lon,lat]
+    chains.push(chain.map(([la, lo]) => [lo, la]));
   }
   return chains;
 }
@@ -407,7 +510,10 @@ function generateContourRoutes(cfg) {
     }
     if (!widths.length) return amplitude;
     widths.sort((a, b) => a - b);
-    return widths[Math.floor(widths.length / 2)] / 2; // half-width = amplitude basis
+    // Use the 70th percentile (not median) so the swing reaches into the wider
+    // parts of the band rather than being held down by the tightest pinch points.
+    const p70 = widths[Math.min(widths.length - 1, Math.floor(widths.length * 0.7))];
+    return p70 / 2; // half-width = amplitude basis
   }
 
   // The amplitude input now acts as a MULTIPLIER on the measured band half-width
@@ -441,6 +547,9 @@ function generateContourRoutes(cfg) {
   for (let i = 0; i < chosen.length; i++) {
     const src = chosen[i];
     let spine = resampleContour(src.coords, waveFt);
+    // Trim the spine to the part inside the area box BEFORE patterning, so the
+    // route runs only over the in-box stretch (no fold-backs from snapping).
+    spine = trimSpineToClip(spine);
     if (spine.length < 2) continue;
 
     // True local band half-width for THIS spine, scaled by the amplitude input.
@@ -456,7 +565,8 @@ function generateContourRoutes(cfg) {
     let pts = patternAlongSpine(spine, {
       pattern, amplitude: passAmplitude, wave: waveFt, straightFt, spacing,
     });
-    pts = clampToClip(pts, spine);
+    // Drop any swing points that poke outside the box (keep longest in-box run).
+    pts = clampToClip(pts);
     if (pts.length < 2) continue;
 
     tracks.push({
@@ -526,16 +636,29 @@ function generateFollowRoutes(cfg) {
 
   for (const { feat, coords } of kept) {
     const depth = feat.properties.depth_ft;
-    const waypoints = resampleContour(coords, RESAMPLE_FT);
+    let waypoints = resampleContour(coords, RESAMPLE_FT);
+    // Trim to the in-box stretch before patterning (no fold-backs).
+    waypoints = trimSpineToClip(waypoints);
     if (waypoints.length < 2) continue;
 
     let allPts = patternAlongSpine(waypoints, { pattern, amplitude, wave, straightFt, spacing });
-    allPts = clampToClip(allPts, waypoints);
-    if (allPts.length > 1) {
+    allPts = clampToClip(allPts);
+    // After trimming, only keep routes that are still a useful length.
+    if (allPts.length > 1 && trackLengthFt(allPts) >= MIN_LEN_FT * 0.6) {
       tracks.push({ name: `Follow_${depth}ft`, pts: allPts, depth });
     }
   }
   return tracks;
+}
+
+// Arc length of a [lat,lon] point list, in feet.
+function trackLengthFt(pts) {
+  let l = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const [d] = distBearing(pts[i-1][0], pts[i-1][1], pts[i][0], pts[i][1]);
+    l += d;
+  }
+  return l;
 }
 
 
@@ -598,18 +721,20 @@ function getSavedWaypoints() {
 
 function generateWaypointRoute(cfg) {
   if (manualWaypoints.length < 2) return [];
-  const { pattern, amplitude, wave, straightFt, spacing } = cfg;
+  const { pattern, amplitude, wave, straightFt, spacing, closeLoop } = cfg;
+  // Optionally append the first waypoint to the end to close the loop back to start.
+  const seq = closeLoop ? [...manualWaypoints, manualWaypoints[0]] : manualWaypoints;
   const allPts = [];
-  for (let i = 0; i < manualWaypoints.length - 1; i++) {
-    const p1 = manualWaypoints[i];
-    const p2 = manualWaypoints[i + 1];
+  for (let i = 0; i < seq.length - 1; i++) {
+    const p1 = seq[i];
+    const p2 = seq[i + 1];
     const [segDist] = distBearing(p1[0], p1[1], p2[0], p2[1]);
     if (segDist < 5) continue;
     const pts = applyPattern(p1, p2, { pattern, amplitude, wave, straightFt, spacing });
-    if (i === 0) allPts.push(...pts);
+    if (allPts.length === 0) allPts.push(...pts);
     else allPts.push(...pts.slice(1));
   }
-  return allPts.length > 1 ? [{ name: 'Waypoint Route', pts: allPts }] : [];
+  return allPts.length > 1 ? [{ name: closeLoop ? 'Waypoint Loop' : 'Waypoint Route', pts: allPts }] : [];
 }
 
 function renderWaypointMarkers() {
@@ -622,10 +747,12 @@ function renderWaypointMarkers() {
     m.bindTooltip(`WP${i+1}`, { permanent: false, direction: 'top' });
     waypointMarkers.push(m);
   });
-  // Draw connecting line preview
+  // Draw connecting line preview (closing back to WP1 if close-loop is checked)
   if (waypointMarkers._previewLine) state.MAP?.removeLayer(waypointMarkers._previewLine);
   if (manualWaypoints.length > 1) {
-    waypointMarkers._previewLine = L.polyline(manualWaypoints, {
+    const closeLoop = document.getElementById('rbCloseLoop')?.checked;
+    const previewPts = closeLoop ? [...manualWaypoints, manualWaypoints[0]] : manualWaypoints;
+    waypointMarkers._previewLine = L.polyline(previewPts, {
       color: '#00e5ff', weight: 1, opacity: 0.4, dashArray: '4 4'
     }).addTo(state.MAP);
     waypointMarkers.push(waypointMarkers._previewLine);
@@ -737,6 +864,10 @@ export function buildRouteBuilderPanel(container) {
       <div id="rbWptList" style="max-height:120px;overflow-y:auto;background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:4px 6px;margin-bottom:6px">
         <div style="color:var(--muted);font-size:10px;text-align:center;padding:4px">No waypoints — click Add waypoint then click the map</div>
       </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text);margin-bottom:4px">
+        <input type="checkbox" id="rbCloseLoop" style="accent-color:var(--accent)">
+        Close loop (return to first waypoint)
+      </label>
     </div>
 
     <!-- Pattern -->
@@ -759,6 +890,55 @@ export function buildRouteBuilderPanel(container) {
           <input id="rbAmplitude" type="number" value="30" min="5" max="200" style="width:100%;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;box-sizing:border-box">
         </div>
       </div>
+      <!-- Wave cycle + straight stretch (ported from original generator) -->
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <div style="flex:1">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:3px">Weave cycle</div>
+          <select id="rbWave" style="width:100%;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;box-sizing:border-box">
+            <option value="200">Tight — every 200 ft</option>
+            <option value="350" selected>Normal — every 350 ft</option>
+            <option value="528">Loose — every 528 ft</option>
+            <option value="800">Very loose — 800 ft</option>
+          </select>
+        </div>
+        <div style="flex:1" id="rbStraightWrap">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:3px">Straight stretch</div>
+          <select id="rbStraight" style="width:100%;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;box-sizing:border-box">
+            <option value="200">200 ft</option>
+            <option value="350">350 ft</option>
+            <option value="500" selected>500 ft</option>
+          </select>
+        </div>
+      </div>
+      <!-- Advanced curve quality (collapsible) -->
+      <details style="margin-top:8px">
+        <summary style="font-size:10px;color:var(--muted);cursor:pointer;user-select:none">Advanced curve quality</summary>
+        <div style="margin-top:6px;display:flex;flex-direction:column;gap:6px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text)">
+            <input type="checkbox" id="rbDynamic" style="accent-color:var(--accent)">
+            Dynamic weave (wider in middle of each leg)
+          </label>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-size:11px;color:var(--muted);flex:1">Lean toward deep side</span>
+            <select id="rbBias" style="padding:3px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:11px">
+              <option value="0" selected>None</option>
+              <option value="0.1">Slight 10%</option>
+              <option value="0.2">Medium 20%</option>
+              <option value="0.35">Strong 35%</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:8px">
+            <div style="flex:1">
+              <div style="font-size:10px;color:var(--muted);margin-bottom:3px">Detail (pts/weave)</div>
+              <input id="rbPpw" type="number" value="16" min="6" max="40" style="width:100%;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;box-sizing:border-box">
+            </div>
+            <div style="flex:1">
+              <div style="font-size:10px;color:var(--muted);margin-bottom:3px">Min spacing (ft)</div>
+              <input id="rbMinSpacing" type="number" value="25" min="1" style="width:100%;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;box-sizing:border-box">
+            </div>
+          </div>
+        </div>
+      </details>
     </div>
 
     <!-- Area filter -->
@@ -792,15 +972,26 @@ export function buildRouteBuilderPanel(container) {
 }
 
 function readCfg() {
+  const num = (id, def) => {
+    const v = parseFloat(document.getElementById(id)?.value);
+    return Number.isFinite(v) ? v : def;
+  };
   return {
     depthMin:   parseInt(document.getElementById('rbDepthMin')?.value)   || 18,
     depthMax:   parseInt(document.getElementById('rbDepthMax')?.value)   || 28,
     pattern:    document.getElementById('rbPattern')?.value || 'sine+straight',
-    spacing:    parseFloat(document.getElementById('rbSpacing')?.value)   || 150,
-    amplitude:  parseFloat(document.getElementById('rbAmplitude')?.value) || 30,
+    spacing:    num('rbSpacing', 150),
+    amplitude:  num('rbAmplitude', 30),
     lanes:      parseInt(document.getElementById('rbLanes')?.value)        || 1,
-    wave:       300,
-    straightFt: 350,
+    closeLoop:  document.getElementById('rbCloseLoop')?.checked || false,
+    // Wave cycle + straight-stretch defaults from the original generator.
+    wave:       num('rbWave', 350),
+    straightFt: num('rbStraight', 500),
+    // Advanced curve-quality knobs (ported from the original that worked).
+    ppw:        parseInt(document.getElementById('rbPpw')?.value) || 16,
+    dynamic:    document.getElementById('rbDynamic')?.checked || false,
+    bias:       num('rbBias', 0),
+    minSpacing: num('rbMinSpacing', 25),
   };
 }
 
@@ -929,6 +1120,9 @@ function wireRouteBuilder() {
     manualWaypoints.splice(idx, 1);
     renderWaypointMarkers();
   };
+
+  // Re-draw preview when close-loop toggles
+  document.getElementById('rbCloseLoop')?.addEventListener('change', renderWaypointMarkers);
 
   // Single map click handler for all pick modes
   const handleMapClick = (e) => {
