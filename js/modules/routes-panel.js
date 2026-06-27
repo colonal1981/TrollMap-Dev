@@ -150,18 +150,36 @@ function init() {
   document.getElementById('btnCloudChartpacks')?.addEventListener('click', () => openPanel(shell, 'contourData'));
   document.getElementById('btnPinchFinder')?.addEventListener('click', () => openPanel(shell, 'routeBuilder'));
 
-  // GPS popup
+  // GPS popup — position above the GPS button
   const gpsPopup = document.getElementById('gpsPanelPopup');
   const gpsBtn = document.getElementById('btnGpsPanel');
-  gpsBtn?.addEventListener('click', () => {
+  gpsBtn?.addEventListener('click', (e) => {
     if (!gpsPopup) return;
-    const open = gpsPopup.classList.toggle('open');
-    gpsBtn.style.background = open ? 'var(--accent)' : '';
-    gpsBtn.style.color = open ? '#000' : '';
+    const rect = gpsBtn.getBoundingClientRect();
+    gpsPopup.style.display = gpsPopup.style.display === 'none' ? 'block' : 'none';
+    if (gpsPopup.style.display === 'block') {
+      gpsPopup.style.left = rect.left + 'px';
+      gpsPopup.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
+      gpsPopup.style.right = 'auto';
+      gpsPopup.style.top = 'auto';
+      gpsBtn.style.borderColor = 'var(--accent)';
+      gpsBtn.style.color = 'var(--accent)';
+    } else {
+      gpsBtn.style.borderColor = '';
+      gpsBtn.style.color = '';
+    }
   });
   document.getElementById('gpsPopupClose')?.addEventListener('click', () => {
-    gpsPopup?.classList.remove('open');
-    if (gpsBtn) { gpsBtn.style.background = ''; gpsBtn.style.color = ''; }
+    if (gpsPopup) gpsPopup.style.display = 'none';
+    if (gpsBtn) { gpsBtn.style.borderColor = ''; gpsBtn.style.color = ''; }
+  });
+  // Close GPS popup when clicking outside
+  document.addEventListener('click', (e) => {
+    if (gpsPopup && gpsPopup.style.display === 'block' &&
+        !gpsPopup.contains(e.target) && e.target !== gpsBtn) {
+      gpsPopup.style.display = 'none';
+      if (gpsBtn) { gpsBtn.style.borderColor = ''; gpsBtn.style.color = ''; }
+    }
   });
 
   // Wire data-active-color buttons for consistent toggle appearance
