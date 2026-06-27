@@ -213,6 +213,7 @@ async function loadContoursFromCloud(lakeRef) {
 
   for (const key of candidates) {
     const urls = [
+      `${CF_WORKER_URL}/chartpacks/${encodeURIComponent(key)}/contours.smart.geojson?v=${Date.now()}`,
       `${CF_WORKER_URL}/chartpacks/${encodeURIComponent(key)}/contours.geojson?v=${Date.now()}`,
       `${CF_WORKER_URL}/contours/${encodeURIComponent(key)}/geojson?v=${Date.now()}`,
     ];
@@ -238,7 +239,7 @@ async function fetchCloudContourDatasets() {
   if (!r.ok) throw new Error(`Worker returned ${r.status} while listing chartpacks`);
   const data = await r.json();
   return (data.chartpacks || [])
-    .filter((cp) => (cp.files || []).some((f) => f === 'vectors/contours.geojson' || f === 'contours.geojson'))
+    .filter((cp) => (cp.files || []).some((f) => f === 'vectors/contours.geojson' || f === 'contours.geojson' || f === 'contours.smart.geojson'))
     .map((cp) => {
       const tileCount = (cp.files || []).filter((f) => /_contours\.png$/i.test(f)).length;
       const hasLegacyVector = (cp.files || []).includes('vectors/contours.geojson');
