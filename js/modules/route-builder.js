@@ -231,20 +231,44 @@ function clampToClip(pts, spine) {
   });
 }
 
+// Shortest distance (ft) from a [lat,lon] point to the nearest VERTEX of any
+// contour in `others`. Vertices are dense enough on these datasets that nearest-
+// vertex is a good proxy for nearest-point and far cheaper. Returns Infinity if
+// no others. Used to measure true band width = distance across the gradient.
+function nearestContourDistFt([lat, lon], others) {
+  let best = Infinity;
+  for (const o of others) {
+    const cs = o.coords;
+    // Sample coarsely (every ~4th vertex) — we only need an approximate width.
+    const step = Math.max(1, Math.floor(cs.length / 24));
+    for (let i = 0; i < cs.length; i += step) {
+      const [d] = distBearing(lat, lon, cs[i][1], cs[i][0]);
+      if (d < best) best = d;
+    }
+  }
+  return best;
+}
+
 // ── Contour mode: follow depth band ──────────────────────────────────────────
 
 function generateContourRoutes(cfg) {
   // SWEEP mode: run ALONG the depth band, sine oscillating ACROSS it so you
   // weave between depthMin and depthMax. Direction of travel is PARALLEL to the
   // contours — and the only reliable source of "parallel to the contours" is
-  // the contour geometry itself. So we anchor the route to a REAL contour line
-  // (the longest one in the band) and oscillate perpendicular to it, rather than
-  // synthesising a straight centreline from the bbox (which flew over land).
+  // the contour geometry itself. So we anchor each pass to a REAL contour line
+  // and oscillate perpendicular to it, rather than synthesising a straight
+  // centreline from the bbox (which flew over land).
+  //
+  // Multi-pass ("lanes"): when cfg.lanes > 1 we use the N longest DISTINCT
+  // contours in the band as parallel spines — a lawnmower pattern that still
+  // hugs real water the whole way. Passes are stitched end-to-start (boustro-
+  // phedon) so the route flows continuously without big dead-runs across land.
   const contour = getActiveContour();
   const gj = contour?.smart || contour?.raw;
   if (!gj?.features?.length) return [];
 
   const { depthMin, depthMax, spacing, pattern, amplitude, wave, straightFt } = cfg;
+  const lanes = Math.max(1, Math.min(12, cfg.lanes || 1));
 
   const inRange = gj.features.filter(f => {
     const d = f.properties?.depth_ft;
@@ -252,58 +276,115 @@ function generateContourRoutes(cfg) {
   });
   if (!inRange.length) return [];
 
-  const candidates = (clipPolygon ? inRange.filter(featureIntersectsClip) : inRange)
+  let candidates = (clipPolygon ? inRange.filter(featureIntersectsClip) : inRange)
     .map(f => {
       const coords = f.geometry?.coordinates;
       if (!coords || coords.length < 2) return null;
-      return { feat: f, coords, len: contourArcLength(coords) };
+      const mid = coords[Math.floor(coords.length / 2)];
+      return { feat: f, coords, len: contourArcLength(coords), mid };
     })
     .filter(Boolean)
     .filter(c => c.len >= 300)
     .sort((a, b) => b.len - a.len);
   if (!candidates.length) return [];
 
-  // The spine = the longest contour inside the band/clip area. It already runs
-  // parallel to the contours and stays on the water by definition.
-  const spineSrc = candidates[0];
-
-  // Estimate band width (across the gradient) so the sine reaches both edges of
-  // the band. Measure the median perpendicular distance from the spine to the
-  // nearest point on the *other-depth* contours in range.
-  const spineDepth = spineSrc.feat.properties.depth_ft;
-  const midSpine = [spineSrc.coords[Math.floor(spineSrc.coords.length/2)][1],
-                    spineSrc.coords[Math.floor(spineSrc.coords.length/2)][0]];
-  let bandWidthFt = 0, samples = 0;
+  // Pick up to `lanes` DISTINCT spines: greedily take the longest, then skip any
+  // whose midpoint is within DEDUP ft of an already-chosen spine (kills tile
+  // seams and near-duplicate stacked contours so passes are genuinely separate).
+  const DEDUP = Math.max(spacing * 0.6, 150);
+  const chosen = [];
   for (const c of candidates) {
-    if (c === spineSrc) continue;
-    const m = c.coords[Math.floor(c.coords.length/2)];
-    const [d] = distBearing(midSpine[0], midSpine[1], m[1], m[0]);
-    if (d > 30 && d < 1500) { bandWidthFt += d; samples++; }
+    const dup = chosen.some(k => distBearing(c.mid[1], c.mid[0], k.mid[1], k.mid[0])[0] < DEDUP);
+    if (!dup) chosen.push(c);
+    if (chosen.length >= lanes) break;
   }
-  bandWidthFt = samples ? bandWidthFt / samples : 0;
+  if (!chosen.length) return [];
 
-  // Sweep amplitude: half the band width so peaks ride the band edges, but never
-  // wilder than the band itself and floored by the user's amplitude setting.
-  const autoAmplitude = Math.min(
-    Math.max(amplitude, bandWidthFt * 0.5),
-    Math.max(amplitude, bandWidthFt || amplitude)
-  );
+  // ── TRUE band width (across the depth gradient) ──────────────────────────────
+  // The amplitude must carry you from the shallow edge of the band (depthMin) to
+  // the deep edge (depthMax). Measure that by taking the shallowest-depth and
+  // deepest-depth contours in range as the band EDGES, then sampling, at points
+  // along the spine, the perpendicular distance from the spine out to each edge.
+  // Median of those samples = real band half-width. This is what was missing —
+  // the old midpoint-to-midpoint measure was along-contour, not across it.
+  const depthOf = c => c.feat.properties?.depth_ft;
+  const minD = Math.min(...candidates.map(depthOf));
+  const maxD = Math.max(...candidates.map(depthOf));
+  const shallowEdge = candidates.filter(c => depthOf(c) <= minD + 1);
+  const deepEdge    = candidates.filter(c => depthOf(c) >= maxD - 1);
 
+  function bandHalfWidthForSpine(spineCoords) {
+    const samp = resampleContour(spineCoords, 250); // sample the spine every 250ft
+    const widths = [];
+    for (const pt of samp) {
+      const toShallow = nearestContourDistFt(pt, shallowEdge);
+      const toDeep    = nearestContourDistFt(pt, deepEdge);
+      // Full local band width ≈ distance to shallow edge + distance to deep edge.
+      // (Spine sits somewhere inside the band; summing both reaches edge-to-edge.)
+      const w = (isFinite(toShallow) ? toShallow : 0) + (isFinite(toDeep) ? toDeep : 0);
+      if (w > 0 && w < 4000) widths.push(w);
+    }
+    if (!widths.length) return amplitude;
+    widths.sort((a, b) => a - b);
+    return widths[Math.floor(widths.length / 2)] / 2; // half-width = amplitude basis
+  }
+
+  // The amplitude input now acts as a MULTIPLIER on the measured band half-width
+  // (default 30 → ~1.0x; treat the slider's 30 as the neutral "fill the band"
+  // value). Users can dial it down to stay nearer the centre or up to overshoot.
+  const ampScale = (amplitude || 30) / 30;
   const waveFt = Math.max(wave || 300, 150);
-  const spine = resampleContour(spineSrc.coords, waveFt);
-  if (spine.length < 2) return [];
 
-  let pts = patternAlongSpine(spine, {
-    pattern, amplitude: autoAmplitude, wave: waveFt, straightFt, spacing,
+  // Order passes by position ALONG the band so the lawnmower runs in sequence
+  // rather than jumping around. Project each spine midpoint onto the dominant
+  // contour bearing and sort by that scalar.
+  let sinSum = 0, cosSum = 0;
+  for (const c of chosen) {
+    for (let i = 1; i < c.coords.length; i++) {
+      const [segLen, brng] = distBearing(c.coords[i-1][1], c.coords[i-1][0], c.coords[i][1], c.coords[i][0]);
+      if (segLen < 5) continue;
+      const r = ((brng % 180) * 2) * Math.PI / 180;
+      sinSum += Math.sin(r) * segLen; cosSum += Math.cos(r) * segLen;
+    }
+  }
+  const acrossBrng = (((Math.atan2(sinSum, cosSum) * 180 / Math.PI / 2) + 180) % 180 + 90) % 360;
+  const ref = chosen[0].mid; // [lon,lat]
+  chosen.forEach(c => {
+    const [d, b] = distBearing(ref[1], ref[0], c.mid[1], c.mid[0]);
+    c.acrossProj = d * Math.cos(((b - acrossBrng + 540) % 360 - 180) * Math.PI / 180);
   });
-  pts = clampToClip(pts, spine);
+  chosen.sort((a, b) => a.acrossProj - b.acrossProj);
 
-  if (pts.length < 2) return [];
-  return [{
-    name: `Sweep_${depthMin}-${depthMax}ft`,
-    pts,
-    depth: (depthMin + depthMax) / 2,
-  }];
+  const tracks = [];
+  let flip = false;
+  for (let i = 0; i < chosen.length; i++) {
+    const src = chosen[i];
+    let spine = resampleContour(src.coords, waveFt);
+    if (spine.length < 2) continue;
+
+    // True local band half-width for THIS spine, scaled by the amplitude input.
+    // Floored at the raw amplitude so a degenerate measurement never collapses
+    // the swing to nothing.
+    const halfWidth = bandHalfWidthForSpine(src.coords);
+    const passAmplitude = Math.max(amplitude, halfWidth * ampScale);
+
+    // Boustrophedon: reverse every other pass so the lawnmower flows continuously
+    if (flip) spine = spine.slice().reverse();
+    flip = !flip;
+
+    let pts = patternAlongSpine(spine, {
+      pattern, amplitude: passAmplitude, wave: waveFt, straightFt, spacing,
+    });
+    pts = clampToClip(pts, spine);
+    if (pts.length < 2) continue;
+
+    tracks.push({
+      name: lanes > 1 ? `Sweep_${depthMin}-${depthMax}ft_L${i+1}` : `Sweep_${depthMin}-${depthMax}ft`,
+      pts,
+      depth: (depthMin + depthMax) / 2,
+    });
+  }
+  return tracks;
 }
 
 
@@ -331,33 +412,40 @@ function generateFollowRoutes(cfg) {
     : inRange;
   if (!candidates.length) return [];
 
-  // Compute true path length; drop stubs under 300ft
+  // Tunables: with an area box drawn the user has explicitly scoped things, so we
+  // can relax. Without one (whole-lake), be aggressive about culling tiny stubs
+  // and capping output — otherwise a big reservoir sprays dozens of unusable
+  // fragments (the "lanes everywhere" problem).
+  const MIN_LEN_FT = clipPolygon ? 400 : 800;   // drop short fragments
+  const MAX_ROUTES = clipPolygon ? 12  : 6;      // cap total emitted routes
+
+  // Compute true path length; drop stubs under the length floor.
   const withLen = candidates.map(f => {
     const coords = f.geometry?.coordinates;
     if (!coords || coords.length < 2) return null;
-    let len = 0;
-    for (let i = 1; i < coords.length; i++) {
-      const [d] = distBearing(coords[i-1][1], coords[i-1][0], coords[i][1], coords[i][0]);
-      len += d;
-    }
-    return len >= 300 ? { feat: f, coords, pathLen: len } : null;
+    const len = contourArcLength(coords);
+    return len >= MIN_LEN_FT ? { feat: f, coords, pathLen: len } : null;
   }).filter(Boolean);
   if (!withLen.length) return [];
 
-  // Dedup tile-seam copies at the same depth
-  const DEDUP = Math.max(spacing * 0.6, 150);
+  // Dedup near-duplicate contours (tile seams + stacked lines). Compare across
+  // ALL depths now (not just same depth) and sample several points along each
+  // line so a route that overlaps another for most of its length is dropped.
+  const DEDUP = Math.max(spacing, 200);
   withLen.sort((a, b) => b.pathLen - a.pathLen);
   const kept = [];
   for (const item of withLen) {
-    const depth = item.feat.properties.depth_ft;
-    const mid = item.coords[Math.floor(item.coords.length / 2)];
+    const sample = resampleContour(item.coords, 300);
     const isDup = kept.some(k => {
-      if (k.feat.properties.depth_ft !== depth) return false;
-      const km = k.coords[Math.floor(k.coords.length / 2)];
-      const [d] = distBearing(mid[1], mid[0], km[1], km[0]);
-      return d < DEDUP;
+      // Count how many of this item's sample points are within DEDUP of k.
+      let near = 0;
+      for (const p of sample) {
+        if (nearestContourDistFt(p, [k]) < DEDUP) near++;
+      }
+      return near / sample.length > 0.6; // >60% overlap → duplicate
     });
     if (!isDup) kept.push(item);
+    if (kept.length >= MAX_ROUTES) break;
   }
 
   // For each kept contour: resample to wave-length intervals, apply pattern
@@ -379,6 +467,61 @@ function generateFollowRoutes(cfg) {
   return tracks;
 }
 
+
+// ── Existing saved waypoints (auto-detected from state.DATA) ──────────────────
+
+// Field names we'll look for, in priority order. Each should hold an array of
+// objects with some flavour of lat/lon (lat/lon, lat/lng, latitude/longitude)
+// or a [lon,lat]/[lat,lon] coords pair.
+const WPT_FIELDS = ['waypoints', 'wpts', 'marks', 'markers', 'catches', 'points', 'pins'];
+
+function coerceLatLon(o) {
+  if (!o) return null;
+  // Direct lat/lon-ish properties
+  const lat = o.lat ?? o.latitude ?? o.y;
+  const lon = o.lon ?? o.lng ?? o.long ?? o.longitude ?? o.x;
+  if (typeof lat === 'number' && typeof lon === 'number') {
+    return { lat, lon, name: o.name || o.label || o.title || '' };
+  }
+  const name = o.name || o.label || o.title || '';
+
+  // True GeoJSON geometry is ALWAYS [lon, lat] by spec — handle explicitly so we
+  // never mis-swap when both values happen to be < 90 (e.g. SC: lon ~-81, lat ~34).
+  const gjc = o.geometry?.coordinates;
+  if (Array.isArray(gjc) && gjc.length >= 2 && typeof gjc[0] === 'number' && typeof gjc[1] === 'number') {
+    return { lat: gjc[1], lon: gjc[0], name };
+  }
+
+  // Leaflet LatLng array convention is [lat, lon].
+  if (Array.isArray(o.latlng) && o.latlng.length >= 2) {
+    return { lat: o.latlng[0], lon: o.latlng[1], name };
+  }
+
+  // Generic coords/coordinates pair of unknown order — use magnitude heuristic
+  // (longitude in the continental US has |v| > 90; latitude does not).
+  const c = o.coords || o.coordinates;
+  if (Array.isArray(c) && c.length >= 2 && typeof c[0] === 'number' && typeof c[1] === 'number') {
+    const [a, b] = c;
+    if (Math.abs(a) > 90 && Math.abs(b) <= 90) return { lat: b, lon: a, name }; // [lon,lat]
+    if (Math.abs(b) > 90 && Math.abs(a) <= 90) return { lat: a, lon: b, name }; // [lat,lon]
+    return { lat: a, lon: b, name }; // ambiguous → assume [lat,lon]
+  }
+  return null;
+}
+
+// Returns [{lat,lon,name}, ...] from whichever DATA field holds waypoints.
+function getSavedWaypoints() {
+  const D = state.DATA;
+  if (!D) return [];
+  for (const field of WPT_FIELDS) {
+    const arr = D[field];
+    if (Array.isArray(arr) && arr.length) {
+      const out = arr.map(coerceLatLon).filter(Boolean);
+      if (out.length) return out;
+    }
+  }
+  return [];
+}
 
 // ── Waypoint manual mode: connect clicked points with pattern ─────────────────
 
@@ -497,6 +640,12 @@ export function buildRouteBuilderPanel(container) {
         <input id="rbDepthMax" type="number" value="28" min="0" max="200" style="width:55px;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;text-align:center">
         <span style="color:var(--muted);font-size:11px">ft</span>
       </div>
+      <!-- Sweep lanes (lawnmower passes) — only meaningful in sweep mode -->
+      <div id="rbLanesRow" style="display:flex;align-items:center;gap:6px;margin-top:8px">
+        <span style="color:var(--muted);font-size:11px">Passes</span>
+        <input id="rbLanes" type="number" value="1" min="1" max="12" style="width:50px;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;text-align:center">
+        <span style="color:var(--muted);font-size:10px;flex:1">parallel passes across the band (lawnmower)</span>
+      </div>
     </div>
 
     <!-- Manual/waypoint mode -->
@@ -505,6 +654,14 @@ export function buildRouteBuilderPanel(container) {
       <div style="display:flex;gap:5px;margin-bottom:6px">
         <button id="rbAddWpt" style="flex:1;height:28px;font-size:11px;border:1px solid var(--accent);background:rgba(0,229,255,.08);color:var(--accent);border-radius:5px;cursor:pointer;font-weight:600">📍 Add waypoint</button>
         <button id="rbClearWpts" style="height:28px;padding:0 10px;font-size:11px;border:1px solid var(--bad);background:transparent;color:var(--bad);border-radius:5px;cursor:pointer">Clear all</button>
+      </div>
+      <!-- Add from existing saved waypoints -->
+      <div style="display:flex;gap:5px;margin-bottom:6px">
+        <select id="rbSavedWptSelect" style="flex:1;min-width:0;height:28px;font-size:11px;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:5px;padding:0 6px">
+          <option value="">— saved waypoints —</option>
+        </select>
+        <button id="rbAddSavedWpt" style="height:28px;padding:0 10px;font-size:11px;border:1px solid var(--accent);background:rgba(0,229,255,.08);color:var(--accent);border-radius:5px;cursor:pointer;font-weight:600">➕ Add</button>
+        <button id="rbAddAllSaved" title="Add all saved waypoints in order" style="height:28px;padding:0 8px;font-size:11px;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:5px;cursor:pointer">All</button>
       </div>
       <div id="rbWptList" style="max-height:120px;overflow-y:auto;background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:4px 6px;margin-bottom:6px">
         <div style="color:var(--muted);font-size:10px;text-align:center;padding:4px">No waypoints — click Add waypoint then click the map</div>
@@ -527,7 +684,7 @@ export function buildRouteBuilderPanel(container) {
           <input id="rbSpacing" type="number" value="150" min="50" max="500" style="width:100%;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;box-sizing:border-box">
         </div>
         <div style="flex:1">
-          <div style="font-size:10px;color:var(--muted);margin-bottom:3px">Amplitude (ft)</div>
+          <div style="font-size:10px;color:var(--muted);margin-bottom:3px" title="Sweep mode: 30 = fill the band edge-to-edge. Lower = stay nearer centre, higher = overshoot. Follow mode: literal feet of swing.">Amplitude (ft) <span style="opacity:.6">ⓘ</span></div>
           <input id="rbAmplitude" type="number" value="30" min="5" max="200" style="width:100%;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;box-sizing:border-box">
         </div>
       </div>
@@ -570,6 +727,7 @@ function readCfg() {
     pattern:    document.getElementById('rbPattern')?.value || 'sine+straight',
     spacing:    parseFloat(document.getElementById('rbSpacing')?.value)   || 150,
     amplitude:  parseFloat(document.getElementById('rbAmplitude')?.value) || 30,
+    lanes:      parseInt(document.getElementById('rbLanes')?.value)        || 1,
     wave:       300,
     straightFt: 350,
   };
@@ -605,6 +763,7 @@ function wireRouteBuilder() {
       document.getElementById('rbContourInfo').style.display  = isContour ? 'block' : 'none';
       document.getElementById('rbDepthSection').style.display = isContour ? 'block' : 'none';
       document.getElementById('rbManualSection').style.display = isContour ? 'none' : 'block';
+      if (!isContour) refreshSavedWptDropdown();
     });
   });
 
@@ -617,6 +776,9 @@ function wireRouteBuilder() {
       if (lbl) lbl.textContent = isFollow
         ? 'Target depth (ft) — narrow band recommended (e.g. 28–30)'
         : 'Depth band (ft) — sweep generates lanes across this range';
+      // Lanes/passes only apply to sweep mode
+      const lanesRow = document.getElementById('rbLanesRow');
+      if (lanesRow) lanesRow.style.display = isFollow ? 'none' : 'flex';
       // Style the border of the active sub-mode label
       document.querySelectorAll('input[name="rbContourMode"]').forEach(r => {
         const lel = r.closest('label');
@@ -640,6 +802,56 @@ function wireRouteBuilder() {
     renderWaypointMarkers();
     window._rbPickMode = null;
     setBanner('');
+  });
+
+  // Populate the saved-waypoints dropdown from state.DATA (auto-detected field)
+  const refreshSavedWptDropdown = () => {
+    const sel = document.getElementById('rbSavedWptSelect');
+    if (!sel) return;
+    const saved = getSavedWaypoints();
+    if (!saved.length) {
+      sel.innerHTML = '<option value="">— no saved waypoints —</option>';
+      sel.disabled = true;
+      const addBtn = document.getElementById('rbAddSavedWpt');
+      const allBtn = document.getElementById('rbAddAllSaved');
+      if (addBtn) addBtn.disabled = true;
+      if (allBtn) allBtn.disabled = true;
+      return;
+    }
+    sel.disabled = false;
+    document.getElementById('rbAddSavedWpt') && (document.getElementById('rbAddSavedWpt').disabled = false);
+    document.getElementById('rbAddAllSaved') && (document.getElementById('rbAddAllSaved').disabled = false);
+    sel.innerHTML = '<option value="">— saved waypoints —</option>' + saved.map((w, i) => {
+      const label = w.name ? esc(w.name) : `${w.lat.toFixed(4)}, ${w.lon.toFixed(4)}`;
+      return `<option value="${i}">${label}</option>`;
+    }).join('');
+    window._rbSavedWptCache = saved;
+  };
+
+  // Refresh dropdown whenever the user switches to Waypoints source
+  document.getElementById('rbSrcManual')?.addEventListener('change', refreshSavedWptDropdown);
+  refreshSavedWptDropdown();
+
+  document.getElementById('rbAddSavedWpt')?.addEventListener('click', () => {
+    const sel = document.getElementById('rbSavedWptSelect');
+    const idx = parseInt(sel?.value);
+    const saved = window._rbSavedWptCache || getSavedWaypoints();
+    if (Number.isNaN(idx) || !saved[idx]) {
+      setStatus('Pick a saved waypoint from the list first.', 'var(--muted)');
+      return;
+    }
+    const w = saved[idx];
+    manualWaypoints.push([w.lat, w.lon]);
+    renderWaypointMarkers();
+    setStatus(`Added "${w.name || 'waypoint'}" to route sequence.`, 'var(--accent2)');
+  });
+
+  document.getElementById('rbAddAllSaved')?.addEventListener('click', () => {
+    const saved = window._rbSavedWptCache || getSavedWaypoints();
+    if (!saved.length) return;
+    saved.forEach(w => manualWaypoints.push([w.lat, w.lon]));
+    renderWaypointMarkers();
+    setStatus(`Added all ${saved.length} saved waypoints to route sequence.`, 'var(--accent2)');
   });
 
   window._rbRemoveWpt = (idx) => {
@@ -712,7 +924,12 @@ function wireRouteBuilder() {
 
     pendingTracks = tracks;
     renderRoutes(tracks);
-    setStatus(`Generated ${tracks.length} route(s). Commit to add to plan.`, 'var(--accent2)');
+    let msg = `Generated ${tracks.length} route(s). Commit to add to plan.`;
+    // Nudge toward the area box when follow mode emits a lot of routes whole-lake.
+    if (isContour && isFollow && tracks.length >= 5 && !clipPolygon) {
+      msg += ' Tip: Draw area to focus on one spot.';
+    }
+    setStatus(msg, 'var(--accent2)');
     document.getElementById('rbCommit').style.display = '';
     document.getElementById('rbReverse').style.display = '';
   });
