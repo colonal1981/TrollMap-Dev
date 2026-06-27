@@ -424,16 +424,7 @@
     <!-- ===== MAP ===== -->
     <section class="panel active" id="panel-map">
       <div id="map" style="flex: 1; width: 100%; background: #060f1a; position: relative; min-height: 0;"></div>
-
-      <!-- TL floating map buttons -->
-      <div class="map-control tl">
-        <button id="btnGps" title="Center on device GPS">📍</button>
-        <button id="btnFollow" title="Follow device GPS">🔒</button>
-        <button id="recordBtn" title="Record track from GPS">⏺</button>
-        <button id="dropWptBtn" title="Drop GPS Waypoint">📍+</button>
-      </div>
-
-      <!-- Chart layers popup manager -->
+<!-- Chart layers popup manager -->
       <div id="chartLayersWrap" style="display:none;position:absolute;top:8px;left:58px;z-index:500;background:rgba(11,22,35,.95);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:12px;max-width:280px;max-height:50vh;overflow-y:auto">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
           <span style="color:var(--accent);font-weight:700">📐 Chart Layers</span>
@@ -544,7 +535,7 @@
         <button id="btnCustomVectors" title="Load custom GeoJSON structure layer">🗂 Structure</button>
         <button id="btnFetchOsm" style="color:#76ff03;border-color:#76ff03" title="Fetch OSM waterways and historic structures">🌐 OSM</button>
         <button id="btnShowCatches" title="Plot catch journal on map">🐟 Catches</button>
-        <label id="btnGarminParser" style="cursor:pointer" title="Import Garmin GPX catch waypoints">📥 GPX Catches<input type="file" id="garminParserInput" accept=".gpx" class="hidden"></label>
+        <label id="btnGarminParser" style="cursor:pointer;height:30px;font-size:11px;font-weight:600;border:1px solid var(--line);border-radius:5px;background:var(--panel2);color:var(--text);display:inline-flex;align-items:center;padding:0 10px;gap:4px;white-space:nowrap;box-sizing:border-box;flex-shrink:0" title="Import Garmin GPX catch waypoints">📥 GPX Catches<input type="file" id="garminParserInput" accept=".gpx" class="hidden"></label>
         <button id="btnQuickdrawKey" style="color:#ffb703;border-color:#ffb703" title="Toggle depth color key">🌈 Depth Key</button>
         <button id="btnCastingRings" title="Draw casting rings around waypoints">⭕ Cast Rings</button>
 
