@@ -295,6 +295,41 @@
     border-radius: 6px; min-width: 130px; text-align: center; font-weight: 700;
   }
   .image-work-console { background: rgba(0,229,255,0.08); padding: 3px 8px; border-radius: 8px; }
+
+  /* ── Uniform control heights across topbar and toolbar ── */
+  #topbar button, #topbar .btn-label {
+    height: 30px; padding: 0 12px; font-size: 12px; font-weight: 700;
+    border-radius: 6px; display: inline-flex; align-items: center; gap: 4px;
+    white-space: nowrap; box-sizing: border-box;
+  }
+  .topbar-select {
+    height: 30px; padding: 0 8px; font-size: 12px; font-weight: 600;
+    border-radius: 6px; border: 1px solid var(--line);
+    background: var(--panel2); color: var(--text); box-sizing: border-box;
+  }
+  .map-toolbar button, .map-toolbar .btn-label {
+    height: 30px; padding: 0 10px; font-size: 11px; font-weight: 700;
+    border-radius: 6px; white-space: nowrap; flex-shrink: 0;
+    display: inline-flex; align-items: center; gap: 3px; box-sizing: border-box;
+  }
+  .toolbar-select { height: 30px; box-sizing: border-box; }
+  .map-toolbar { flex-wrap: nowrap; overflow-x: auto; min-height: 44px; padding: 4px 10px; }
+
+  /* Crosshair cursor on map */
+  #map, #map .leaflet-container, #map .leaflet-grab { cursor: crosshair !important; }
+  .leaflet-dragging #map .leaflet-grab { cursor: grabbing !important; }
+
+  /* GPS popup */
+  #gpsPanelPopup {
+    display: none; position: absolute; bottom: 56px; right: 8px; z-index: 700;
+    background: rgba(11,22,35,.97); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 14px; min-width: 190px; box-shadow: 0 4px 16px rgba(0,0,0,.6);
+  }
+  #gpsPanelPopup.open { display: block; }
+  #gpsPanelPopup .gps-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px;
+  }
+  #gpsPanelPopup .gps-grid button { height: 34px; font-size: 11px; }
   </style>
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%230b1623'/><text x='50' y='60' font-size='50' text-anchor='middle' fill='%2300e5ff'>🎣</text></svg>">
@@ -302,28 +337,19 @@
 <body>
 <div id="app">
   <div id="topbar">
-    <div style="display:flex;align-items:center;gap:8px">
-      <h1>🎣 TrollMap v8 Master Edition</h1>
-      <span class="file" id="fileLabel">No file loaded</span>
-    </div>
-
-    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-      <select id="lakeSelect" class="topbar-select" style="width:140px" title="Select Lake Database">
-        <option value="">-- Lake Database --</option>
-      </select>
-      <select id="rampSelect" class="topbar-select" style="width:150px" title="Select Boat Launch" disabled>
-        <option value="">-- Boat Ramp Launch --</option>
-      </select>
-      <button id="topSearchBtn" class="small" title="Jump to coordinates">🔍 Jump</button>
-    </div>
-
-    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-      <label id="loadBtnLabel" class="btn-label" title="Load GPX, KML, GeoJSON">📂 Load<input id="fileInput" type="file" accept=".gpx,.txt,.xml,.geojson,.json,.kml" class="hidden"></label>
-      <button id="newBtn" class="small">New</button>
-      <button id="saveBtn" class="small primary">⬇ Save GPX</button>
-      <!-- batchImportInput used programmatically by cloud chartpacks module -->
-      <input id="batchImportInput" type="file" accept=".png,.json" multiple class="hidden">
-    </div>
+    <h1>🎣 TrollMap</h1>
+    <span class="file" id="fileLabel" style="flex:1;min-width:60px;max-width:200px"></span>
+    <select id="lakeSelect" class="topbar-select" style="width:150px" title="Select Lake Database">
+      <option value="">-- Lake Database --</option>
+    </select>
+    <select id="rampSelect" class="topbar-select" style="width:160px" title="Select Boat Launch" disabled>
+      <option value="">-- Boat Ramp Launch --</option>
+    </select>
+    <button id="topSearchBtn" title="Jump to coordinates or search location">🔍 Jump</button>
+    <label id="loadBtnLabel" class="btn-label" title="Load GPX, KML, GeoJSON">📂 Load<input id="fileInput" type="file" accept=".gpx,.txt,.xml,.geojson,.json,.kml" class="hidden"></label>
+    <button id="newBtn">New</button>
+    <button id="saveBtn" class="primary">⬇ Save GPX</button>
+    <input id="batchImportInput" type="file" accept=".png,.json" multiple class="hidden">
   </div>
   <!-- ===== SEARCH / JUMP MODAL ===== -->
   <div id="searchModal">
@@ -484,50 +510,60 @@
         </div>
       </div>
 
-      <!-- ── PERSISTENT BOTTOM MAP CONTROL TOOLBAR ── -->
+      <!-- ── MAP TOOLBAR — single row, uniform buttons ── -->
       <div id="mapToolBar" class="map-toolbar no-print">
-        
-        <!-- Core tools -->
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          <button id="mapSearchBtn" class="small" title="Search / Jump to location">🔍 Search</button>
-          <button id="btnRamps" class="small" title="Toggle 1,288 concrete boat launch ramps">⛵ Ramps</button>
-          <button id="btnBankPier" class="small" title="Toggle 1,466 Bank &amp; Pier fishing locations">🎣 Bank/Pier</button>
-          <button id="btnPaddle" class="small" title="Toggle 873 Kayak &amp; Paddle launch slides">🛶 Kayak</button>
-          <button id="btnAttractors" class="small" style="color:#00e5ff;border-color:#00e5ff" title="Toggle 3,532 Submerged Sunk Attractors &amp; PVC Habitats">📍 Attractors</button>
-          <button id="btnChartLayers" class="small" title="Show saved chart layers">📐 Charts</button>
-          <button id="btnMeasure" class="small" title="Measure exact Distance and Bearing">📏 Measure</button>
-          <button id="btnShowCatches" class="small" title="Plot Catch Journal on Map">🐟 Catches</button>
-          <button id="btnQuickdrawKey" class="small" style="color:#ffb703;border-color:#ffb703" title="Toggle Garmin ActiveCaptain 8-Band Tactical Color Depth Key">🌈 Quickdraw Key</button>
-          <button id="btnCastingRings" class="small" title="Draw professional 60ft casting approach rings around Waypoints">⭕ Casting Rings</button>
-          <button id="btnDrawContour" class="small" style="color:#76ff03;border-color:#76ff03" title="Draw a polygon outlining the lake area you want depth contours for. Click to add points, double-click (or click first point) to finish. Saves a job.json for the TrollMap build-contours pipeline.">✏️ Contour Area</button>
-          <button id="btnCloudChartpacks" class="small" style="color:#00e5ff;border-color:#00e5ff" title="Browse depth-contour chartpacks stored in your cloud library (R2 via Cloudflare Worker). Tap any lake to import its tiles into TrollMap.">📚 Cloud Chartpacks</button>
-          <button id="btnTrackReverse" class="small" title="Toggle continuous loop — reverses selected track for return trolling pass">🔄 Loop Track</button>
-          <button id="btnCustomVectors" class="small" title="Load private GeoJSON structure layer — brush piles, road beds, creek mouths">🗂 My Structure</button>
-          <button id="btnFetchOsm" class="small" style="color:#76ff03;border-color:#76ff03" title="Direct browser pull from OpenStreetMap Overpass API — fetches submerged roadbeds, old bridges, historic foundations, and original river centerlines">🌐 Live OSM Structure</button>
-          <button id="btnSmartRoute" class="small" style="color:var(--accent2);border-color:var(--accent2)" title="Smart Route Generator — auto-generate trolling passes along vectorized depth contours">🧠 Smart Route</button>
-          <button id="btnPinchFinder" class="small" style="color:#76ff03;border-color:#76ff03" title="Pinch Point Finder — locate underwater saddles and ambush zones from depth contours">🎯 Pinch Points</button>
-          <label id="btnGarminParser" class="small" style="cursor:pointer;display:inline-flex;align-items:center;gap:4px" title="Import Garmin GPX — auto-extracts FISH/CATCH waypoints into catch journal">📥 Import GPX Catches<input type="file" id="garminParserInput" accept=".gpx" class="hidden"></label>
-          <input type="file" id="customVectorInput" accept=".geojson,.json" class="hidden">
-        </div>
 
-        <!-- Basemap & Mode -->
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          <select id="basemap" class="toolbar-select" style="width: 140px;background:var(--panel2);color:var(--accent);font-weight:700">
-            <option value="sat">Satellite</option>
-            <option value="street">Street</option>
-          </select>
-          <select id="editMode" class="toolbar-select" style="width: 80px;">
-            <option value="view">View</option>
-            <option value="add">+ WPT</option>
-            <option value="delete">Del</option>
-          </select>
-          <button id="fitBtn" class="small" title="Fit map to tracking routes">⤢ Fit</button>
-          <span id="zoomIndicator" class="small" title="Current map zoom — this is the zoom the i-Boating contour capture will use" style="background:var(--panel2);color:var(--accent);font-weight:700;padding:4px 8px;border-radius:4px;font-family:monospace;font-size:12px;min-width:54px;text-align:center">z —</span>
-          <span id="storageIndicator" class="small" title="Click for storage details" style="background:var(--panel2);color:var(--accent2);font-weight:700;padding:4px 8px;border-radius:4px;font-family:monospace;font-size:12px;cursor:pointer">storage —</span>
-        </div>
+        <!-- Layer toggles -->
+        <button id="btnRamps" title="Toggle boat launch ramps">⛵ Ramps</button>
+        <button id="btnBankPier" title="Toggle bank &amp; pier fishing locations">🎣 Bank/Pier</button>
+        <button id="btnPaddle" title="Toggle kayak launches">🛶 Kayak</button>
+        <button id="btnAttractors" style="color:#00e5ff;border-color:#00e5ff" title="Toggle submerged attractors">📍 Attractors</button>
+        <button id="btnCustomVectors" title="Load custom GeoJSON structure layer">🗂 Structure</button>
+        <button id="btnFetchOsm" style="color:#76ff03;border-color:#76ff03" title="Fetch OSM waterways and historic structures">🌐 OSM</button>
+        <button id="btnShowCatches" title="Plot catch journal on map">🐟 Catches</button>
+        <label id="btnGarminParser" style="cursor:pointer" title="Import Garmin GPX catch waypoints">📥 GPX Catches<input type="file" id="garminParserInput" accept=".gpx" class="hidden"></label>
+        <button id="btnQuickdrawKey" style="color:#ffb703;border-color:#ffb703" title="Toggle depth color key">🌈 Depth Key</button>
+        <button id="btnCastingRings" title="Draw casting rings around waypoints">⭕ Cast Rings</button>
 
-        <div style="flex:1"></div>
-        <div id="coordReadout2" class="toolbar-readout">-- , --</div>
+        <div style="flex:1;min-width:6px"></div>
+
+        <!-- GPS popup -->
+        <button id="btnGpsPanel" title="GPS controls">📡 GPS</button>
+
+        <!-- Contours & Routes — opens the right slide panel -->
+        <button id="btnContourRoutes" style="color:var(--accent2);border-color:var(--accent2)" title="Contours, Smart Route, Troll Generator, Capture">🗺️ Contours &amp; Routes</button>
+
+        <div style="width:1px;background:var(--line);height:20px;margin:0 4px;flex-shrink:0"></div>
+
+        <!-- Basemap, edit mode, readouts -->
+        <select id="basemap" class="toolbar-select" style="width:110px;height:30px;font-weight:700;color:var(--accent)">
+          <option value="sat">Satellite</option>
+          <option value="street">Street</option>
+        </select>
+        <select id="editMode" class="toolbar-select" style="width:80px;height:30px">
+          <option value="view">View</option>
+          <option value="add">+ WPT</option>
+          <option value="delete">Del</option>
+        </select>
+        <span id="zoomIndicator" title="Current map zoom" style="background:var(--panel2);color:var(--accent);font-weight:700;padding:0 8px;border-radius:6px;font-family:monospace;font-size:12px;height:30px;display:inline-flex;align-items:center;min-width:50px;justify-content:center;border:1px solid var(--line);flex-shrink:0">z —</span>
+        <span id="storageIndicator" title="Storage" style="background:var(--panel2);color:var(--accent2);font-weight:700;padding:0 8px;border-radius:6px;font-family:monospace;font-size:11px;height:30px;display:inline-flex;align-items:center;cursor:pointer;border:1px solid var(--line);flex-shrink:0">— MB</span>
+        <div id="coordReadout2" class="toolbar-readout" style="height:30px;display:inline-flex;align-items:center;flex-shrink:0">-- , --</div>
+
+        <input type="file" id="customVectorInput" accept=".geojson,.json" class="hidden">
+      </div>
+
+      <!-- ── GPS POPUP ── -->
+      <div id="gpsPanelPopup">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span style="color:var(--accent);font-weight:700;font-size:12px">📡 GPS</span>
+          <button id="gpsPopupClose" style="background:none;border:none;color:var(--muted);font-size:14px;cursor:pointer;padding:0 4px">✕</button>
+        </div>
+        <div class="gps-grid">
+          <button id="btnGps" title="Center on GPS position">📍 Center</button>
+          <button id="btnFollow" title="Follow GPS position">🔒 Follow</button>
+          <button id="recordBtn" title="Record GPS track">⏺ Record</button>
+          <button id="btnGpsDrop" title="Drop waypoint at GPS position" style="display:none">📌 Drop WPT</button>
+        </div>
       </div>
     </section>
     <!-- ===== CONTOURS ===== -->
@@ -1021,7 +1057,7 @@ First thunder → nearest shore immediately</textarea>
 
   <nav id="bottomNav">
     <button data-tab="map" class="active"><span class="ico">🗺️</span>Map</button>
-    <button data-tab="generate"><span class="ico">🌀</span>Generate</button>
+    
     <button data-tab="edit"><span class="ico">✏️</span>Edit</button>
     <button data-tab="plan"><span class="ico">🎣</span>Plan</button>
   </nav>

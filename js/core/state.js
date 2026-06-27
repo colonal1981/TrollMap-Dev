@@ -46,6 +46,12 @@ export const state = {
   CHARTS: [],            // committed depth-contour overlay layers
   ACTIVE_CHART: -1,     // -1 = working overlay; >=0 = index into CHARTS
 
+  // ── Contour datasets ──
+  CONTOUR_DATASETS: [],    // [{ key, lake_name, area_name, zoom, bounds, depthRange, hasSmart, hasRaw }]
+  ACTIVE_CONTOUR: null,    // { smart: FeatureCollection|null, raw: FeatureCollection|null }
+  ACTIVE_CONTOUR_KEY: null, // dataset key string
+  CONTOUR_LAYER: null,     // Leaflet layer group for contour rendering
+
   // ── GPS / live tracking ──
   GPS_WATCH: null,       // navigator.geolocation.watchPosition ID
   GPS_MARKER: null,      // Leaflet marker for current location

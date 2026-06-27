@@ -57,11 +57,12 @@ import './modules/duke-energy.js';
 import './modules/utility-sync.js';
 import './modules/lake-intel.js';
 import './modules/plan-builder.js';
-import './modules/troll-generator.js';
 import './modules/edit.js';
 import './modules/track-reverse.js';
-import './modules/cloud-chartpacks.js';
-import './modules/contour-job-export.js';
+import './modules/contour-data.js';
+import './modules/capture-panel.js';
+import './modules/route-builder.js';
+import './modules/routes-panel.js';
 import './modules/fishing-index.js';
 import './modules/measure-tool.js';
 import './modules/catch-plot.js';
@@ -79,8 +80,7 @@ import './modules/osm-structure.js';
 import './modules/quickdraw-key.js';
 import './modules/sw-register.js';
 import { pullUpdatesOnLoad, pushAllLocalToCloud } from './modules/cloud-sync.js';
-import './modules/smart-route.js';
-import './modules/pinch-point-finder.js';
+import './modules/pinch-point-finder.js'; // still used by route-builder.js
 
 // ── Plan-tab dropdown helpers are exposed on `window` so the ──
 //    tab switcher in core/tabs.js can invoke them by name.        ──
@@ -171,7 +171,7 @@ async function boot() {
     // Wire up the bottom-nav tab switcher
     initTabs();
 
-    console.log('✓ TrollMap modular build loaded — 39 modules');
+    console.log('✓ TrollMap modular build loaded');
   } catch (e) {
     console.error('TrollMap boot failed:', e);
     document.body.insertAdjacentHTML(
