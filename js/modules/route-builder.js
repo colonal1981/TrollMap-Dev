@@ -195,25 +195,18 @@ function generateContourRoutes(cfg) {
     ? inRange.filter(f => featureIntersectsClip(f))
     : inRange;
 
-  // 3. Compute path length AND linearity ratio, drop stubs and cove-loops.
-  //    Linearity = straight-line span / path length.
-  //    A tight cove loop has high path length but tiny span → low linearity → not trollable.
-  const MIN_LENGTH_FT   = 500;  // minimum useful troll run
-  const MIN_LINEARITY   = 0.35; // span must be ≥35% of path length; tune up to kill more cove routes
+  // 3. Compute true path length and drop stubs under MIN_LENGTH_FT.
+  //    Reservoir contours naturally have low linearity (they follow winding shorelines),
+  //    so we do NOT filter on span/length ratio here. Use the Draw Area clip polygon
+  //    to manually exclude specific coves or unwanted sections instead.
+  const MIN_LENGTH_FT = 500;
 
   const withLen = candidates.map(f => {
     const coords = f.geometry?.coordinates;
     if (!coords || coords.length < 2) return null;
     const pathLen = contourPathLength(coords);
     if (pathLen < MIN_LENGTH_FT) return null;
-
-    // Straight-line distance from first to last coordinate
-    const [span] = distBearing(coords[0][1], coords[0][0],
-                               coords[coords.length-1][1], coords[coords.length-1][0]);
-    const linearity = span / pathLen;
-    if (linearity < MIN_LINEARITY) return null;
-
-    return { feat: f, coords, pathLen, linearity };
+    return { feat: f, coords, pathLen };
   }).filter(Boolean);
 
   if (!withLen.length) return [];
