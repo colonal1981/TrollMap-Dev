@@ -142,6 +142,35 @@ function generateManualLanes(cfg) {
   return tracks;
 }
 
+// ── Clip polygon helpers ──────────────────────────────────────────────────────
+
+function featureIntersectsClip(feat) {
+  if (!clipPolygon) return true;
+  const coords = feat.geometry?.coordinates;
+  if (!coords?.length) return false;
+  // Sample up to 9 evenly-spaced points — a long contour may cross the clip
+  // polygon without its midpoint being inside it.
+  const step = Math.max(1, Math.floor(coords.length / 8));
+  for (let i = 0; i < coords.length; i += step) {
+    if (pointInPolygon([coords[i][1], coords[i][0]], clipPolygon)) return true;
+  }
+  const last = coords[coords.length - 1];
+  return pointInPolygon([last[1], last[0]], clipPolygon);
+}
+
+function pointInPolygon([lat, lon], polygon) {
+  let inside = false;
+  const pts = polygon;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [yi, xi] = pts[i];
+    const [yj, xj] = pts[j];
+    if (((yi > lat) !== (yj > lat)) && (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
 // ── Contour mode: follow depth band ──────────────────────────────────────────
 
 function generateContourRoutes(cfg) {
