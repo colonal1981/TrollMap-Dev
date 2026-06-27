@@ -26,6 +26,8 @@ let clipPolygon = null;
 let clipLayer   = null;
 let pendingTracks = [];
 let pickingMode = null;  // 'start' | 'end' | 'clip'
+let manualWaypoints = [];   // [[lat,lon], ...] for waypoint manual mode
+let waypointMarkers = [];   // Leaflet markers for waypoints
 
 // ── Math helpers (from troll-generator.js) ────────────────────────────────────
 
@@ -170,7 +172,9 @@ function generateContourRoutes(cfg) {
   if (allCoords.length < 2) return [];
 
   let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
-  for (const [lon, lat] of allCoords) {
+  // If a clip polygon is drawn use its bounds — prevents lanes extending over land
+  const bboxSrc = clipPolygon?.length ? clipPolygon.map(p => [p[1], p[0]]) : allCoords;
+  for (const [lon, lat] of bboxSrc) {
     if (lat < minLat) minLat = lat;
     if (lat > maxLat) maxLat = lat;
     if (lon < minLon) minLon = lon;
@@ -432,23 +436,17 @@ export function buildRouteBuilderPanel(container) {
       </div>
     </div>
 
-    <!-- Manual mode: start/end -->
+    <!-- Manual mode: waypoint builder -->
     <div id="rbManualSection" style="margin-bottom:10px;display:none">
-      <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Start / end points</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:4px">
-        <input id="rbLat1" placeholder="Start lat" style="padding:4px 5px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:11px;width:100%;box-sizing:border-box">
-        <input id="rbLon1" placeholder="Start lon" style="padding:4px 5px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:11px;width:100%;box-sizing:border-box">
+      <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Waypoints</div>
+      <div style="display:flex;gap:5px;margin-bottom:6px">
+        <button id="rbAddWpt" style="flex:1;height:28px;font-size:11px;border:1px solid var(--accent);background:rgba(0,229,255,.08);color:var(--accent);border-radius:5px;cursor:pointer;font-weight:600">📍 Add waypoint</button>
+        <button id="rbClearWpts" style="height:28px;padding:0 10px;font-size:11px;border:1px solid var(--bad);background:transparent;color:var(--bad);border-radius:5px;cursor:pointer">Clear all</button>
       </div>
-      <button id="rbPickStart" style="width:100%;height:26px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:11px;cursor:pointer;margin-bottom:6px">📍 Pick start on map</button>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:4px">
-        <input id="rbLat2" placeholder="End lat" style="padding:4px 5px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:11px;width:100%;box-sizing:border-box">
-        <input id="rbLon2" placeholder="End lon" style="padding:4px 5px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:11px;width:100%;box-sizing:border-box">
+      <div id="rbWptList" style="max-height:120px;overflow-y:auto;background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:4px 6px;margin-bottom:6px">
+        <div style="color:var(--muted);font-size:10px;text-align:center;padding:4px">No waypoints yet — click map to add</div>
       </div>
-      <button id="rbPickEnd" style="width:100%;height:26px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:11px;cursor:pointer;margin-bottom:6px">🏁 Pick end on map</button>
-      <div style="display:flex;align-items:center;gap:6px">
-        <label style="font-size:11px;color:var(--muted);white-space:nowrap">Lanes</label>
-        <input id="rbLanes" type="number" value="4" min="1" max="20" style="width:55px;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;text-align:center">
-      </div>
+      <div style="font-size:10px;color:var(--muted)">Click <b>Add waypoint</b>, then click the map to place points in order. Generate stitches them with the selected pattern.</div>
     </div>
 
     <!-- Pattern (both modes) -->
@@ -538,6 +536,61 @@ function updateContourInfo() {
   el.innerHTML = `<span style="font-weight:600">${esc(key)}</span><br><span style="color:var(--muted)">${type} · ${count} features</span>`;
 }
 
+// ── Waypoint manual mode: connect clicked points with pattern ─────────────────
+
+function generateWaypointRoute(cfg) {
+  if (manualWaypoints.length < 2) return [];
+  const { pattern, amplitude, wave, straightFt, spacing } = cfg;
+  const allPts = [];
+  for (let i = 0; i < manualWaypoints.length - 1; i++) {
+    const p1 = manualWaypoints[i];
+    const p2 = manualWaypoints[i + 1];
+    const [segDist] = distBearing(p1[0], p1[1], p2[0], p2[1]);
+    if (segDist < 5) continue;
+    const pts = applyPattern(p1, p2, { pattern, amplitude, wave, straightFt, spacing });
+    if (i === 0) allPts.push(...pts);
+    else allPts.push(...pts.slice(1));
+  }
+  return allPts.length > 1 ? [{ name: 'Waypoint Route', pts: allPts }] : [];
+}
+
+function renderWaypointMarkers() {
+  waypointMarkers.forEach(m => state.MAP?.removeLayer(m));
+  waypointMarkers = [];
+  manualWaypoints.forEach(([lat, lon], i) => {
+    const m = L.circleMarker([lat, lon], {
+      radius: 5, color: '#00e5ff', fillColor: '#00e5ff', fillOpacity: 1, weight: 2
+    }).addTo(state.MAP);
+    m.bindTooltip(`WP${i+1}`, { permanent: false, direction: 'top' });
+    waypointMarkers.push(m);
+  });
+  // Draw connecting line preview
+  if (waypointMarkers._previewLine) state.MAP?.removeLayer(waypointMarkers._previewLine);
+  if (manualWaypoints.length > 1) {
+    waypointMarkers._previewLine = L.polyline(manualWaypoints, {
+      color: '#00e5ff', weight: 1, opacity: 0.4, dashArray: '4 4'
+    }).addTo(state.MAP);
+    waypointMarkers.push(waypointMarkers._previewLine);
+  }
+  renderWaypointList();
+}
+
+function renderWaypointList() {
+  const el = document.getElementById('rbWptList');
+  if (!el) return;
+  if (!manualWaypoints.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:10px;text-align:center;padding:4px">No waypoints yet — click map to add</div>';
+    return;
+  }
+  el.innerHTML = manualWaypoints.map(([lat, lon], i) => `
+    <div style="display:flex;align-items:center;gap:4px;padding:2px 0;border-bottom:1px solid var(--line)">
+      <span style="font-size:10px;color:var(--accent);font-weight:600;min-width:22px">WP${i+1}</span>
+      <span style="font-size:10px;color:var(--muted);flex:1">${lat.toFixed(5)}, ${lon.toFixed(5)}</span>
+      <button onclick="window._rbRemoveWpt(${i})" style="height:18px;padding:0 5px;font-size:10px;border:1px solid var(--bad);background:transparent;color:var(--bad);border-radius:3px;cursor:pointer">✕</button>
+    </div>`).join('');
+}
+
+
 function wireRouteBuilder() {
   // Source toggle
   document.querySelectorAll('input[name="rbSrc"]').forEach(radio => {
@@ -570,55 +623,41 @@ function wireRouteBuilder() {
     });
   });
 
-  // Map point picking
-  document.getElementById('rbPickStart')?.addEventListener('click', () => {
-    pickingMode = 'start';
-    setBanner('📍 Click map to set START point');
-    window._rbPickMode = 'start';
-  });
-  document.getElementById('rbPickEnd')?.addEventListener('click', () => {
-    pickingMode = 'end';
-    setBanner('🏁 Click map to set END point');
-    window._rbPickMode = 'end';
+  // Waypoint manual mode
+  document.getElementById('rbAddWpt')?.addEventListener('click', () => {
+    window._rbPickMode = 'waypoint';
+    setBanner('📍 Click map to add waypoint — click Add again when done');
   });
 
-  // Hook into map click for point picking
-  // We do this by checking window._rbPickMode in a listener
+  document.getElementById('rbClearWpts')?.addEventListener('click', () => {
+    manualWaypoints = [];
+    renderWaypointMarkers();
+    window._rbPickMode = null;
+    setBanner('');
+  });
+
+  window._rbRemoveWpt = (idx) => {
+    manualWaypoints.splice(idx, 1);
+    renderWaypointMarkers();
+  };
+
+  // Single map click handler for all pick modes
+  const handleMapClick = (e) => {
+    if (!window._rbPickMode) return;
+    const { lat, lng } = e.latlng;
+    if (window._rbPickMode === 'waypoint') {
+      manualWaypoints.push([lat, lng]);
+      renderWaypointMarkers();
+      // Stay in waypoint mode so user can keep clicking
+    } else if (window._rbPickMode === 'clip') {
+      // handled by L.Draw
+    }
+  };
+
   if (state.MAP) {
-    state.MAP.on('click', (e) => {
-      if (!window._rbPickMode) return;
-      const { lat, lng } = e.latlng;
-      if (window._rbPickMode === 'start') {
-        const l1 = document.getElementById('rbLat1');
-        const o1 = document.getElementById('rbLon1');
-        if (l1) l1.value = lat.toFixed(5);
-        if (o1) o1.value = lng.toFixed(5);
-      } else if (window._rbPickMode === 'end') {
-        const l2 = document.getElementById('rbLat2');
-        const o2 = document.getElementById('rbLon2');
-        if (l2) l2.value = lat.toFixed(5);
-        if (o2) o2.value = lng.toFixed(5);
-      }
-      window._rbPickMode = null;
-      setBanner('');
-    });
+    state.MAP.on('click', handleMapClick);
   } else {
-    // Map not ready yet, try again after init
-    setTimeout(() => {
-      state.MAP?.on('click', (e) => {
-        if (!window._rbPickMode) return;
-        const { lat, lng } = e.latlng;
-        if (window._rbPickMode === 'start') {
-          if (document.getElementById('rbLat1')) document.getElementById('rbLat1').value = lat.toFixed(5);
-          if (document.getElementById('rbLon1')) document.getElementById('rbLon1').value = lng.toFixed(5);
-        } else {
-          if (document.getElementById('rbLat2')) document.getElementById('rbLat2').value = lat.toFixed(5);
-          if (document.getElementById('rbLon2')) document.getElementById('rbLon2').value = lng.toFixed(5);
-        }
-        window._rbPickMode = null;
-        setBanner('');
-      });
-    }, 2000);
+    setTimeout(() => state.MAP?.on('click', handleMapClick), 2000);
   }
 
   // Clip drawing
@@ -658,11 +697,11 @@ function wireRouteBuilder() {
         return;
       }
     } else {
-      if (isNaN(cfg.start[0]) || isNaN(cfg.end[0])) {
-        setStatus('Set start and end points first.', 'var(--bad)');
+      if (manualWaypoints.length < 2) {
+        setStatus('Add at least 2 waypoints on the map first.', 'var(--bad)');
         return;
       }
-      tracks = generateManualLanes(cfg);
+      tracks = generateWaypointRoute(cfg);
     }
 
     pendingTracks = tracks;
@@ -701,16 +740,10 @@ function wireRouteBuilder() {
     }
   });
 
-  // Expose for waypoint popup "Set as Start/End Spot" buttons
+  // Expose for waypoint popup — appends to waypoint list and switches to manual mode
   window.sendWptToRouteBuilder = (lat, lon, role) => {
-    if (role === 'start') {
-      const l = document.getElementById('rbLat1'); const o = document.getElementById('rbLon1');
-      if (l) l.value = lat.toFixed(5); if (o) o.value = lon.toFixed(5);
-    } else {
-      const l = document.getElementById('rbLat2'); const o = document.getElementById('rbLon2');
-      if (l) l.value = lat.toFixed(5); if (o) o.value = lon.toFixed(5);
-    }
-    // Switch to manual mode
+    manualWaypoints.push([lat, lon]);
+    renderWaypointMarkers();
     const manual = document.getElementById('rbSrcManual');
     if (manual) { manual.checked = true; manual.dispatchEvent(new Event('change')); }
   };
