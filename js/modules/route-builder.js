@@ -249,6 +249,91 @@ function nearestContourDistFt([lat, lon], others) {
   return best;
 }
 
+// ── Contour stitching ─────────────────────────────────────────────────────────
+//
+// The smart GeoJSON is OCR-traced per map TILE, so a single physical depth line
+// is shattered into many short fragments (median ~120ft on Monticello) whose
+// endpoints nearly touch across tile seams. Generating a route per-fragment gives
+// dozens of unusable 100ft stubs (and a too-short sweep spine). Stitching merges
+// same-depth fragments end-to-end into long continuous polylines first.
+
+// A "there-and-back" stub: <=3 coords whose start ≈ end. Pure OCR noise.
+function isContourStub(coords) {
+  if (coords.length <= 3) {
+    const [d] = distBearing(coords[0][1], coords[0][0],
+                            coords[coords.length-1][1], coords[coords.length-1][0]);
+    if (d < 30) return true;
+  }
+  return false;
+}
+
+// Greedily chain [lon,lat] fragments whose endpoints fall within TOL feet.
+function stitchFragments(fragments, TOL = 18) {
+  const segs = fragments.filter(c => c.length >= 2 && !isContourStub(c));
+  const used = new Array(segs.length).fill(false);
+  const chains = [];
+  for (let s = 0; s < segs.length; s++) {
+    if (used[s]) continue;
+    used[s] = true;
+    let chain = segs[s].slice();
+    let grew = true;
+    while (grew) {
+      grew = false;
+      const head = chain[0], tail = chain[chain.length - 1];
+      let bestI = -1, bestD = TOL, mode = null;
+      for (let j = 0; j < segs.length; j++) {
+        if (used[j]) continue;
+        const c = segs[j], a = c[0], b = c[c.length - 1];
+        const dTA = distBearing(tail[1], tail[0], a[1], a[0])[0];
+        const dTB = distBearing(tail[1], tail[0], b[1], b[0])[0];
+        const dHA = distBearing(head[1], head[0], a[1], a[0])[0];
+        const dHB = distBearing(head[1], head[0], b[1], b[0])[0];
+        const m = Math.min(dTA, dTB, dHA, dHB);
+        if (m < bestD) {
+          bestD = m; bestI = j;
+          mode = (m === dTA) ? 'TA' : (m === dTB) ? 'TB' : (m === dHA) ? 'HA' : 'HB';
+        }
+      }
+      if (bestI >= 0) {
+        const c = segs[bestI].slice(); used[bestI] = true; grew = true;
+        if (mode === 'TA') chain = chain.concat(c);
+        else if (mode === 'TB') chain = chain.concat(c.reverse());
+        else if (mode === 'HA') chain = c.reverse().concat(chain);
+        else chain = c.concat(chain);
+      }
+    }
+    chains.push(chain);
+  }
+  return chains;
+}
+
+// Build stitched, length-tagged spines for a set of features, grouped by depth.
+// Returns [{ coords:[lon,lat][], len, depth, mid:[lon,lat] }] sorted longest-first.
+function buildStitchedSpines(features) {
+  const byDepth = new Map();
+  for (const f of features) {
+    const d = f.properties?.depth_ft;
+    const c = f.geometry?.coordinates;
+    if (d == null || !c || c.length < 2) continue;
+    if (!byDepth.has(d)) byDepth.set(d, []);
+    byDepth.get(d).push(c);
+  }
+  const spines = [];
+  for (const [depth, frags] of byDepth) {
+    for (const chain of stitchFragments(frags)) {
+      if (chain.length < 2) continue;
+      spines.push({
+        coords: chain,
+        len: contourArcLength(chain),
+        depth,
+        mid: chain[Math.floor(chain.length / 2)],
+      });
+    }
+  }
+  spines.sort((a, b) => b.len - a.len);
+  return spines;
+}
+
 // ── Contour mode: follow depth band ──────────────────────────────────────────
 
 function generateContourRoutes(cfg) {
@@ -276,16 +361,13 @@ function generateContourRoutes(cfg) {
   });
   if (!inRange.length) return [];
 
-  let candidates = (clipPolygon ? inRange.filter(featureIntersectsClip) : inRange)
-    .map(f => {
-      const coords = f.geometry?.coordinates;
-      if (!coords || coords.length < 2) return null;
-      const mid = coords[Math.floor(coords.length / 2)];
-      return { feat: f, coords, len: contourArcLength(coords), mid };
-    })
-    .filter(Boolean)
-    .filter(c => c.len >= 300)
-    .sort((a, b) => b.len - a.len);
+  // Stitch fragmented same-depth contours into long continuous spines first, then
+  // keep those long enough to be useful. (On Monticello raw fragments are ~120ft;
+  // stitched chains reach 1500-2000ft.)
+  const scoped = clipPolygon ? inRange.filter(featureIntersectsClip) : inRange;
+  let candidates = buildStitchedSpines(scoped)
+    .map(s => ({ ...s, coords: s.coords, mid: s.mid }))
+    .filter(s => s.len >= 250);
   if (!candidates.length) return [];
 
   // Pick up to `lanes` DISTINCT spines: greedily take the longest, then skip any
@@ -307,11 +389,10 @@ function generateContourRoutes(cfg) {
   // along the spine, the perpendicular distance from the spine out to each edge.
   // Median of those samples = real band half-width. This is what was missing —
   // the old midpoint-to-midpoint measure was along-contour, not across it.
-  const depthOf = c => c.feat.properties?.depth_ft;
-  const minD = Math.min(...candidates.map(depthOf));
-  const maxD = Math.max(...candidates.map(depthOf));
-  const shallowEdge = candidates.filter(c => depthOf(c) <= minD + 1);
-  const deepEdge    = candidates.filter(c => depthOf(c) >= maxD - 1);
+  const minD = Math.min(...candidates.map(c => c.depth));
+  const maxD = Math.max(...candidates.map(c => c.depth));
+  const shallowEdge = candidates.filter(c => c.depth <= minD + 1);
+  const deepEdge    = candidates.filter(c => c.depth >= maxD - 1);
 
   function bandHalfWidthForSpine(spineCoords) {
     const samp = resampleContour(spineCoords, 250); // sample the spine every 250ft
@@ -407,46 +488,36 @@ function generateFollowRoutes(cfg) {
   });
   if (!inRange.length) return [];
 
-  const candidates = clipPolygon
-    ? inRange.filter(f => featureIntersectsClip(f))
-    : inRange;
-  if (!candidates.length) return [];
+  const scoped = clipPolygon ? inRange.filter(f => featureIntersectsClip(f)) : inRange;
+  if (!scoped.length) return [];
 
   // Tunables: with an area box drawn the user has explicitly scoped things, so we
-  // can relax. Without one (whole-lake), be aggressive about culling tiny stubs
-  // and capping output — otherwise a big reservoir sprays dozens of unusable
-  // fragments (the "lanes everywhere" problem).
-  const MIN_LEN_FT = clipPolygon ? 400 : 800;   // drop short fragments
+  // can relax. Without one, be more selective and cap output — otherwise the lake
+  // sprays many short fragments (the "lanes everywhere" problem).
+  const MIN_LEN_FT = clipPolygon ? 250 : 500;   // drop short stitched chains
   const MAX_ROUTES = clipPolygon ? 12  : 6;      // cap total emitted routes
 
-  // Compute true path length; drop stubs under the length floor.
-  const withLen = candidates.map(f => {
-    const coords = f.geometry?.coordinates;
-    if (!coords || coords.length < 2) return null;
-    const len = contourArcLength(coords);
-    return len >= MIN_LEN_FT ? { feat: f, coords, pathLen: len } : null;
-  }).filter(Boolean);
-  if (!withLen.length) return [];
+  // Stitch same-depth fragments into long chains, then keep the longest usable
+  // ones. Stitching is what turns dozens of 120ft stubs into a handful of real
+  // 1000ft+ contours.
+  const spines = buildStitchedSpines(scoped).filter(s => s.len >= MIN_LEN_FT);
+  if (!spines.length) return [];
 
-  // Dedup near-duplicate contours (tile seams + stacked lines). Compare across
-  // ALL depths now (not just same depth) and sample several points along each
-  // line so a route that overlaps another for most of its length is dropped.
+  // Dedup near-duplicate chains (stacked / overlapping lines). Sample points and
+  // drop any chain that overlaps an already-kept one for most of its length.
   const DEDUP = Math.max(spacing, 200);
-  withLen.sort((a, b) => b.pathLen - a.pathLen);
-  const kept = [];
-  for (const item of withLen) {
-    const sample = resampleContour(item.coords, 300);
-    const isDup = kept.some(k => {
-      // Count how many of this item's sample points are within DEDUP of k.
+  const keptSpines = [];
+  for (const sp of spines) {
+    const sample = resampleContour(sp.coords, 300);
+    const dup = keptSpines.some(k => {
       let near = 0;
-      for (const p of sample) {
-        if (nearestContourDistFt(p, [k]) < DEDUP) near++;
-      }
-      return near / sample.length > 0.6; // >60% overlap → duplicate
+      for (const p of sample) if (nearestContourDistFt(p, [{ coords: k.coords }]) < DEDUP) near++;
+      return near / sample.length > 0.6;
     });
-    if (!isDup) kept.push(item);
-    if (kept.length >= MAX_ROUTES) break;
+    if (!dup) keptSpines.push(sp);
+    if (keptSpines.length >= MAX_ROUTES) break;
   }
+  const kept = keptSpines.map(s => ({ feat: { properties: { depth_ft: s.depth } }, coords: s.coords, pathLen: s.len }));
 
   // For each kept contour: resample to wave-length intervals, apply pattern
   // between consecutive waypoints so sine has room to develop along the contour.
