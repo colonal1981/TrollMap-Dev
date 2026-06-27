@@ -142,40 +142,6 @@ function generateManualLanes(cfg) {
 
 // ── Contour mode: follow depth band ──────────────────────────────────────────
 
-// Compute true geographic path length (ft) along all coordinates of a feature
-function contourPathLength(coords) {
-  let len = 0;
-  for (let i = 1; i < coords.length; i++) {
-    const [d] = distBearing(coords[i-1][1], coords[i-1][0], coords[i][1], coords[i][0]);
-    len += d;
-  }
-  return len;
-}
-
-// Resample dense contour coordinates to evenly-spaced waypoints ~intervalFt apart.
-// This gives the pattern generator room to express sine/zigzag oscillations.
-function resampleContour(coords, intervalFt) {
-  const pts = [[coords[0][1], coords[0][0]]];
-  let carry = 0;
-  for (let i = 1; i < coords.length; i++) {
-    const prev = coords[i-1], curr = coords[i];
-    const [segDist, brng] = distBearing(prev[1], prev[0], curr[1], curr[0]);
-    carry += segDist;
-    if (carry >= intervalFt) {
-      pts.push([curr[1], curr[0]]);
-      carry = 0;
-    }
-  }
-  const last = coords[coords.length - 1];
-  const tail = [last[1], last[0]];
-  // Only add tail if it's not a duplicate of the last pushed point
-  const prev = pts[pts.length - 1];
-  if (Math.abs(tail[0] - prev[0]) > 1e-7 || Math.abs(tail[1] - prev[1]) > 1e-7) {
-    pts.push(tail);
-  }
-  return pts;
-}
-
 function generateContourRoutes(cfg) {
   const contour = getActiveContour();
   const gj = contour?.smart || contour?.raw;
@@ -194,77 +160,184 @@ function generateContourRoutes(cfg) {
   const candidates = clipPolygon
     ? inRange.filter(f => featureIntersectsClip(f))
     : inRange;
+  if (!candidates.length) return [];
 
-  // 3. Compute true path length and drop stubs under MIN_LENGTH_FT.
-  //    Reservoir contours naturally have low linearity (they follow winding shorelines),
-  //    so we do NOT filter on span/length ratio here. Use the Draw Area clip polygon
-  //    to manually exclude specific coves or unwanted sections instead.
-  const MIN_LENGTH_FT = 500;
+  // 3. Collect all coordinates in the depth band and compute bbox
+  const allCoords = [];
+  for (const f of candidates) {
+    for (const c of (f.geometry?.coordinates || [])) allCoords.push(c);
+  }
+  if (allCoords.length < 2) return [];
 
+  let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+  for (const [lon, lat] of allCoords) {
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+    if (lon < minLon) minLon = lon;
+    if (lon > maxLon) maxLon = lon;
+  }
+  const centerLat = (minLat + maxLat) / 2;
+  const centerLon = (minLon + maxLon) / 2;
+
+  // 4. Compute dominant bearing of the contours using weighted circular mean.
+  //    Normalize each bearing to [0,180) to treat opposing directions as equal,
+  //    weight by segment length so long contours dominate.
+  let sinSum = 0, cosSum = 0;
+  for (const f of candidates) {
+    const coords = f.geometry?.coordinates;
+    if (!coords || coords.length < 2) continue;
+    for (let i = 1; i < coords.length; i++) {
+      const [segLen, brng] = distBearing(coords[i-1][1], coords[i-1][0], coords[i][1], coords[i][0]);
+      if (segLen < 5) continue;
+      const bRad = ((brng % 180) * 2) * Math.PI / 180;
+      sinSum += Math.sin(bRad) * segLen;
+      cosSum += Math.cos(bRad) * segLen;
+    }
+  }
+  const dominantBrng = ((Math.atan2(sinSum, cosSum) * 180 / Math.PI / 2) + 180) % 180;
+
+  // Troll lanes run PERPENDICULAR to the contours (across the depth gradient)
+  const trollBrng = (dominantBrng + 90) % 360;
+  const stepBrng  = dominantBrng; // step along the contour direction
+
+  // 5. Project bbox corners onto both axes to get lane length and band width
+  const corners = [
+    [minLat, minLon], [minLat, maxLon],
+    [maxLat, minLon], [maxLat, maxLon],
+  ];
+  let minTroll = Infinity, maxTroll = -Infinity;
+  let minStep  = Infinity, maxStep  = -Infinity;
+  for (const [lat, lon] of corners) {
+    const [d, b] = distBearing(centerLat, centerLon, lat, lon);
+    const trollProj = d * Math.cos(((b - trollBrng + 180 + 360) % 360 - 180) * Math.PI / 180);
+    const stepProj  = d * Math.cos(((b - stepBrng  + 180 + 360) % 360 - 180) * Math.PI / 180);
+    if (trollProj < minTroll) minTroll = trollProj;
+    if (trollProj > maxTroll) maxTroll = trollProj;
+    if (stepProj  < minStep)  minStep  = stepProj;
+    if (stepProj  > maxStep)  maxStep  = stepProj;
+  }
+
+  // 6. Generate parallel lanes sweeping across the depth band.
+  //    Each lane runs the full bbox length along the troll bearing.
+  //    Lanes alternate direction (boustrophedon) so the track connects end-to-end.
+  const tracks = [];
+  let offset = minStep;
+  let laneIdx = 0;
+
+  while (offset <= maxStep + spacing * 0.1) {
+    const laneCenter = destination(centerLat, centerLon, stepBrng, offset);
+    let p1 = destination(laneCenter[0], laneCenter[1], trollBrng, minTroll);
+    let p2 = destination(laneCenter[0], laneCenter[1], trollBrng, maxTroll);
+    if (laneIdx % 2 === 1) [p1, p2] = [p2, p1]; // alternate direction
+
+    const pts = applyPattern(p1, p2, { pattern, amplitude, wave, straightFt, spacing });
+    if (pts.length > 1) {
+      tracks.push({
+        name: `Lane${laneIdx + 1}_${depthMin}-${depthMax}ft`,
+        pts,
+        depth: (depthMin + depthMax) / 2,
+      });
+    }
+    offset += spacing;
+    laneIdx++;
+  }
+
+  return tracks;
+}
+// ── Follow mode: trace a specific contour with pattern applied along its shape ─
+
+function generateFollowRoutes(cfg) {
+  const contour = getActiveContour();
+  const gj = contour?.smart || contour?.raw;
+  if (!gj?.features?.length) return [];
+
+  const { depthMin, depthMax, spacing, pattern, amplitude, wave, straightFt } = cfg;
+
+  // Filter by depth range (use a narrow band — ideally 2-4ft for follow mode)
+  const inRange = gj.features.filter(f => {
+    const d = f.properties?.depth_ft;
+    return d != null && d >= depthMin && d <= depthMax;
+  });
+  if (!inRange.length) return [];
+
+  const candidates = clipPolygon
+    ? inRange.filter(f => featureIntersectsClip(f))
+    : inRange;
+  if (!candidates.length) return [];
+
+  // Compute true path length for each feature
   const withLen = candidates.map(f => {
     const coords = f.geometry?.coordinates;
     if (!coords || coords.length < 2) return null;
-    const pathLen = contourPathLength(coords);
-    if (pathLen < MIN_LENGTH_FT) return null;
-    return { feat: f, coords, pathLen };
+    let len = 0;
+    for (let i = 1; i < coords.length; i++) {
+      const [d] = distBearing(coords[i-1][1], coords[i-1][0], coords[i][1], coords[i][0]);
+      len += d;
+    }
+    return len >= 300 ? { feat: f, coords, pathLen: len } : null;
   }).filter(Boolean);
 
   if (!withLen.length) return [];
 
-  // 4. Deduplicate: for segments at the same depth whose midpoints are within
-  //    DEDUP_RADIUS_FT of each other, keep only the longest.
-  //    This kills tile-seam duplicates (same contour in two adjacent tiles).
-  const DEDUP_RADIUS_FT = Math.max(spacing * 0.75, 200);
-  withLen.sort((a, b) => b.pathLen - a.pathLen); // longest-first so winners survive
-
+  // Deduplicate tile-seam duplicates: same depth, midpoints within spacing/2
+  const DEDUP_RADIUS = Math.max(spacing * 0.6, 150);
+  withLen.sort((a, b) => b.pathLen - a.pathLen);
   const kept = [];
   for (const item of withLen) {
     const depth = item.feat.properties.depth_ft;
-    const mid   = item.coords[Math.floor(item.coords.length / 2)];
-    const midLat = mid[1], midLon = mid[0];
-
+    const mid = item.coords[Math.floor(item.coords.length / 2)];
     const isDup = kept.some(k => {
       if (k.feat.properties.depth_ft !== depth) return false;
       const km = k.coords[Math.floor(k.coords.length / 2)];
-      const [d] = distBearing(midLat, midLon, km[1], km[0]);
-      return d < DEDUP_RADIUS_FT;
+      const [d] = distBearing(mid[1], mid[0], km[1], km[0]);
+      return d < DEDUP_RADIUS;
     });
-
     if (!isDup) kept.push(item);
   }
 
-  // 5. Build route by:
-  //    a) Resampling the dense contour to waypoints spaced ~wave ft apart so the
-  //       pattern generator has room to express sine/zigzag oscillations.
-  //    b) Applying the pattern between each pair of consecutive resampled waypoints
-  //       and stitching the segments into one continuous track.
-  const RESAMPLE_INTERVAL = Math.max(wave || 300, 200);
+  // For each kept contour, resample to wave-length intervals then apply pattern
+  // between consecutive waypoints so the sine/zigzag has room to develop.
+  const RESAMPLE_FT = Math.max(wave || 300, 150);
   const tracks = [];
 
   for (const { feat, coords } of kept) {
     const depth = feat.properties.depth_ft;
-    const waypoints = resampleContour(coords, RESAMPLE_INTERVAL);
+
+    // Resample: one waypoint every RESAMPLE_FT of actual path distance
+    const waypoints = [[coords[0][1], coords[0][0]]];
+    let carry = 0;
+    for (let i = 1; i < coords.length; i++) {
+      const [d] = distBearing(coords[i-1][1], coords[i-1][0], coords[i][1], coords[i][0]);
+      carry += d;
+      if (carry >= RESAMPLE_FT) {
+        waypoints.push([coords[i][1], coords[i][0]]);
+        carry = 0;
+      }
+    }
+    const last = coords[coords.length - 1];
+    waypoints.push([last[1], last[0]]);
+
     if (waypoints.length < 2) continue;
 
+    // Apply pattern between each pair of resampled waypoints and stitch together
     const allPts = [];
     for (let i = 0; i < waypoints.length - 1; i++) {
-      const p1 = waypoints[i];
-      const p2 = waypoints[i + 1];
+      const p1 = waypoints[i], p2 = waypoints[i + 1];
       const [segDist] = distBearing(p1[0], p1[1], p2[0], p2[1]);
       if (segDist < 20) continue;
-
       const pts = applyPattern(p1, p2, { pattern, amplitude, wave, straightFt, spacing });
       if (i === 0) allPts.push(...pts);
-      else allPts.push(...pts.slice(1)); // avoid duplicate junction
+      else allPts.push(...pts.slice(1));
     }
 
     if (allPts.length > 1) {
-      tracks.push({ name: `${depth}ft`, pts: allPts, depth });
+      tracks.push({ name: `Follow_${depth}ft`, pts: allPts, depth });
     }
   }
 
   return tracks;
 }
+
 
 function featureIntersectsClip(feat) {
   if (!clipPolygon) return true;
@@ -337,12 +410,23 @@ export function buildRouteBuilderPanel(container) {
       <div id="rbContourInfoText" style="color:var(--muted)">No contour dataset loaded — go to Contour Data tab</div>
     </div>
 
-    <!-- Contour mode: depth range -->
+    <!-- Contour mode: sub-mode toggle + depth range -->
     <div id="rbDepthSection" style="margin-bottom:10px">
-      <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Target depth (ft)</div>
+      <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Contour mode</div>
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <label style="flex:1;display:flex;align-items:center;gap:5px;padding:5px 8px;border:1px solid var(--accent);border-radius:6px;background:rgba(0,229,255,.08);cursor:pointer">
+          <input type="radio" name="rbContourMode" value="sweep" id="rbModeSweep" checked style="accent-color:var(--accent)">
+          <span style="font-size:11px;color:var(--accent);font-weight:600">↔ Sweep band</span>
+        </label>
+        <label style="flex:1;display:flex;align-items:center;gap:5px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;cursor:pointer">
+          <input type="radio" name="rbContourMode" value="follow" id="rbModeFollow" style="accent-color:var(--accent)">
+          <span style="font-size:11px;color:var(--text)">〰 Follow line</span>
+        </label>
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-bottom:5px" id="rbDepthLabel">Depth band (ft)</div>
       <div style="display:flex;align-items:center;gap:6px">
         <input id="rbDepthMin" type="number" value="18" min="0" max="200" style="width:55px;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;text-align:center">
-        <span style="color:var(--muted);font-size:11px">to</span>
+        <span style="color:var(--muted);font-size:11px" id="rbDepthToLabel">to</span>
         <input id="rbDepthMax" type="number" value="28" min="0" max="200" style="width:55px;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;text-align:center">
         <span style="color:var(--muted);font-size:11px">ft</span>
       </div>
@@ -465,6 +549,27 @@ function wireRouteBuilder() {
     });
   });
 
+  // Contour sub-mode toggle: update depth label hint
+  document.querySelectorAll('input[name="rbContourMode"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      const isFollow = document.getElementById('rbModeFollow')?.checked;
+      const lbl = document.getElementById('rbDepthLabel');
+      const toLbl = document.getElementById('rbDepthToLabel');
+      if (lbl) lbl.textContent = isFollow
+        ? 'Target depth (ft) — narrow band recommended (e.g. 28–30)'
+        : 'Depth band (ft) — sweep generates lanes across this range';
+      // Style the border of the active sub-mode label
+      document.querySelectorAll('input[name="rbContourMode"]').forEach(r => {
+        const lel = r.closest('label');
+        if (!lel) return;
+        const active = r.checked;
+        lel.style.border = active ? '1px solid var(--accent)' : '1px solid var(--line)';
+        lel.style.background = active ? 'rgba(0,229,255,.08)' : '';
+        r.nextElementSibling.style.color = active ? 'var(--accent)' : 'var(--text)';
+      });
+    });
+  });
+
   // Map point picking
   document.getElementById('rbPickStart')?.addEventListener('click', () => {
     pickingMode = 'start';
@@ -543,10 +648,11 @@ function wireRouteBuilder() {
   document.getElementById('rbGenerate')?.addEventListener('click', () => {
     const cfg = readCfg();
     const isContour = document.getElementById('rbSrcContour')?.checked;
+    const isFollow  = document.getElementById('rbModeFollow')?.checked;
     let tracks = [];
 
     if (isContour) {
-      tracks = generateContourRoutes(cfg);
+      tracks = isFollow ? generateFollowRoutes(cfg) : generateContourRoutes(cfg);
       if (!tracks.length) {
         setStatus('No contours found in depth range. Try adjusting range or loading a dataset.', 'var(--bad)');
         return;
