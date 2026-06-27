@@ -142,6 +142,16 @@ function generateManualLanes(cfg) {
 
 // ── Contour mode: follow depth band ──────────────────────────────────────────
 
+// Compute true geographic path length (ft) along all coordinates of a feature
+function contourPathLength(coords) {
+  let len = 0;
+  for (let i = 1; i < coords.length; i++) {
+    const [d] = distBearing(coords[i-1][1], coords[i-1][0], coords[i][1], coords[i][0]);
+    len += d;
+  }
+  return len;
+}
+
 function generateContourRoutes(cfg) {
   const contour = getActiveContour();
   const gj = contour?.smart || contour?.raw;
@@ -149,39 +159,74 @@ function generateContourRoutes(cfg) {
 
   const { depthMin, depthMax, spacing, pattern, amplitude, wave, straightFt } = cfg;
 
-  // Filter features in depth range
+  // 1. Filter by depth range
   const inRange = gj.features.filter(f => {
     const d = f.properties?.depth_ft;
     return d != null && d >= depthMin && d <= depthMax;
   });
-
   if (!inRange.length) return [];
 
-  // Apply clip polygon if set
-  const features = clipPolygon
+  // 2. Apply clip polygon if set
+  const candidates = clipPolygon
     ? inRange.filter(f => featureIntersectsClip(f))
     : inRange;
 
-  // For each contour segment, generate a pattern pass
+  // 3. Compute true path length and drop stubs under MIN_LENGTH_FT
+  //    Using actual arc length (not just start→end straight line) catches
+  //    curved segments that span real distance but have close endpoints.
+  const MIN_LENGTH_FT = 500;
+  const withLen = candidates.map(f => {
+    const coords = f.geometry?.coordinates;
+    if (!coords || coords.length < 2) return null;
+    const pathLen = contourPathLength(coords);
+    return pathLen >= MIN_LENGTH_FT ? { feat: f, coords, pathLen } : null;
+  }).filter(Boolean);
+
+  if (!withLen.length) return [];
+
+  // 4. Deduplicate: for segments at the same depth whose midpoints are within
+  //    DEDUP_RADIUS_FT of each other, keep only the longest.
+  //    This kills tile-seam duplicates (same contour captured in two adjacent tiles).
+  const DEDUP_RADIUS_FT = Math.max(spacing * 0.75, 200);
+  withLen.sort((a, b) => b.pathLen - a.pathLen); // longest-first so winners survive
+
+  const kept = [];
+  for (const item of withLen) {
+    const depth = item.feat.properties.depth_ft;
+    const mid   = item.coords[Math.floor(item.coords.length / 2)];
+    const midLat = mid[1], midLon = mid[0];
+
+    const isDup = kept.some(k => {
+      if (k.feat.properties.depth_ft !== depth) return false;
+      const km = k.coords[Math.floor(k.coords.length / 2)];
+      const [d] = distBearing(midLat, midLon, km[1], km[0]);
+      return d < DEDUP_RADIUS_FT;
+    });
+
+    if (!isDup) kept.push(item);
+  }
+
+  // 5. Build route for each kept segment by following the actual contour shape.
+  //    We walk coordinate-by-coordinate and stitch pattern segments together,
+  //    rather than blindly connecting only the first and last point.
   const tracks = [];
-  for (const feat of features) {
-    const coords = feat.geometry?.coordinates;
-    if (!coords || coords.length < 2) continue;
+  for (const { feat, coords } of kept) {
+    const depth = feat.properties.depth_ft;
+    const allPts = [];
 
-    // Build perpendicular offset passes at spacing intervals
-    // Simple approach: for short segments, one pass; for long segments, multiple
-    const p1 = [coords[0][1], coords[0][0]];
-    const p2 = [coords[coords.length-1][1], coords[coords.length-1][0]];
-    const [dist] = distBearing(p1[0], p1[1], p2[0], p2[1]);
-    if (dist < 50) continue;  // too short
+    for (let i = 0; i < coords.length - 1; i++) {
+      const p1 = [coords[i][1],   coords[i][0]];
+      const p2 = [coords[i+1][1], coords[i+1][0]];
+      const [segDist] = distBearing(p1[0], p1[1], p2[0], p2[1]);
+      if (segDist < 10) continue; // skip degenerate micro-segments
 
-    const pts = applyPattern(p1, p2, { pattern, amplitude, wave, straightFt, spacing });
-    if (pts.length > 1) {
-      tracks.push({
-        name: `${feat.properties.depth_ft}ft`,
-        pts,
-        depth: feat.properties.depth_ft,
-      });
+      const pts = applyPattern(p1, p2, { pattern, amplitude, wave, straightFt, spacing });
+      if (i === 0) allPts.push(...pts);
+      else allPts.push(...pts.slice(1)); // skip duplicate junction point
+    }
+
+    if (allPts.length > 1) {
+      tracks.push({ name: `${depth}ft`, pts: allPts, depth });
     }
   }
 
