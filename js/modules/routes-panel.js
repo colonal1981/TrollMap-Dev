@@ -164,6 +164,28 @@ function init() {
     if (gpsBtn) { gpsBtn.style.background = ''; gpsBtn.style.color = ''; }
   });
 
+  // Wire data-active-color buttons for consistent toggle appearance
+  document.querySelectorAll('.map-toolbar button[data-active-color]').forEach(btn => {
+    const color = btn.dataset.activeColor;
+    btn._origColor = '';
+    btn._origBorder = '';
+    btn.addEventListener('trollmap:activate', () => {
+      btn.style.color = color;
+      btn.style.borderColor = color;
+      btn.style.background = color + '18';
+    });
+    btn.addEventListener('trollmap:deactivate', () => {
+      btn.style.color = '';
+      btn.style.borderColor = '';
+      btn.style.background = '';
+    });
+  });
+
+  // Mark Contours & Routes button as open/closed
+  const crBtn = document.getElementById('btnContourRoutes');
+  const origOpen = openPanel;
+  const origClose = closePanel;
+
   console.log('[routes-panel] shell ready');
 }
 

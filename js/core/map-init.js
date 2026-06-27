@@ -160,14 +160,14 @@ export function setBase(kind) {
   const t = TILES[kind] || TILES.sat;
   state.BASE = L.tileLayer(t.url, {
     attribution: t.attr,
-    maxZoom: 19,
+    maxZoom: 22,
   }).addTo(state.MAP);
   state.BASE.setZIndex(0);
 
   if (kind === 'sat') {
     state.BASE_LABELS = L.tileLayer(TILES.satLabels.url, {
       attribution: TILES.satLabels.attr,
-      maxZoom: 19,
+      maxZoom: 22,
       pane: 'overlayPane',
     }).addTo(state.MAP);
     state.BASE_LABELS.setZIndex(1);
