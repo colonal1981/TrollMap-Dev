@@ -145,26 +145,26 @@ function generateManualLanes(cfg) {
 // ── Contour mode: follow depth band ──────────────────────────────────────────
 
 function generateContourRoutes(cfg) {
+  // SWEEP mode: one route running ALONG the depth band axis, sine oscillating
+  // across the band width so you weave between depthMin and depthMax contours.
   const contour = getActiveContour();
   const gj = contour?.smart || contour?.raw;
   if (!gj?.features?.length) return [];
 
   const { depthMin, depthMax, spacing, pattern, amplitude, wave, straightFt } = cfg;
 
-  // 1. Filter by depth range
   const inRange = gj.features.filter(f => {
     const d = f.properties?.depth_ft;
     return d != null && d >= depthMin && d <= depthMax;
   });
   if (!inRange.length) return [];
 
-  // 2. Apply clip polygon if set
   const candidates = clipPolygon
     ? inRange.filter(f => featureIntersectsClip(f))
     : inRange;
   if (!candidates.length) return [];
 
-  // 3. Collect all coordinates in the depth band and compute bbox
+  // Collect all coords; use clip polygon bbox if set to keep route in drawn area
   const allCoords = [];
   for (const f of candidates) {
     for (const c of (f.geometry?.coordinates || [])) allCoords.push(c);
@@ -172,7 +172,6 @@ function generateContourRoutes(cfg) {
   if (allCoords.length < 2) return [];
 
   let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
-  // If a clip polygon is drawn use its bounds — prevents lanes extending over land
   const bboxSrc = clipPolygon?.length ? clipPolygon.map(p => [p[1], p[0]]) : allCoords;
   for (const [lon, lat] of bboxSrc) {
     if (lat < minLat) minLat = lat;
@@ -183,9 +182,7 @@ function generateContourRoutes(cfg) {
   const centerLat = (minLat + maxLat) / 2;
   const centerLon = (minLon + maxLon) / 2;
 
-  // 4. Compute dominant bearing of the contours using weighted circular mean.
-  //    Normalize each bearing to [0,180) to treat opposing directions as equal,
-  //    weight by segment length so long contours dominate.
+  // Dominant bearing = direction the contours RUN (travel direction for sweep)
   let sinSum = 0, cosSum = 0;
   for (const f of candidates) {
     const coords = f.geometry?.coordinates;
@@ -198,66 +195,57 @@ function generateContourRoutes(cfg) {
       cosSum += Math.cos(bRad) * segLen;
     }
   }
-  const dominantBrng = ((Math.atan2(sinSum, cosSum) * 180 / Math.PI / 2) + 180) % 180;
+  const alongBrng = ((Math.atan2(sinSum, cosSum) * 180 / Math.PI / 2) + 180) % 180;
+  const acrossBrng = (alongBrng + 90) % 360; // perpendicular = across the depth gradient
 
-  // Troll lanes run PERPENDICULAR to the contours (across the depth gradient)
-  const trollBrng = (dominantBrng + 90) % 360;
-  const stepBrng  = dominantBrng; // step along the contour direction
-
-  // 5. Project bbox corners onto both axes to get lane length and band width
+  // Project bbox corners to find route length (along) and band width (across)
   const corners = [
     [minLat, minLon], [minLat, maxLon],
     [maxLat, minLon], [maxLat, maxLon],
   ];
-  let minTroll = Infinity, maxTroll = -Infinity;
-  let minStep  = Infinity, maxStep  = -Infinity;
+  let minAlong = Infinity, maxAlong = -Infinity;
+  let minAcross = Infinity, maxAcross = -Infinity;
   for (const [lat, lon] of corners) {
     const [d, b] = distBearing(centerLat, centerLon, lat, lon);
-    const trollProj = d * Math.cos(((b - trollBrng + 180 + 360) % 360 - 180) * Math.PI / 180);
-    const stepProj  = d * Math.cos(((b - stepBrng  + 180 + 360) % 360 - 180) * Math.PI / 180);
-    if (trollProj < minTroll) minTroll = trollProj;
-    if (trollProj > maxTroll) maxTroll = trollProj;
-    if (stepProj  < minStep)  minStep  = stepProj;
-    if (stepProj  > maxStep)  maxStep  = stepProj;
+    const aProj = d * Math.cos(((b - alongBrng  + 180 + 360) % 360 - 180) * Math.PI / 180);
+    const xProj = d * Math.cos(((b - acrossBrng + 180 + 360) % 360 - 180) * Math.PI / 180);
+    if (aProj < minAlong)  minAlong  = aProj;
+    if (aProj > maxAlong)  maxAlong  = aProj;
+    if (xProj < minAcross) minAcross = xProj;
+    if (xProj > maxAcross) maxAcross = xProj;
   }
 
-  // 6. Generate parallel lanes sweeping across the depth band.
-  //    Each lane runs the full bbox length along the troll bearing.
-  //    Lanes alternate direction (boustrophedon) so the track connects end-to-end.
-  const tracks = [];
-  let offset = minStep;
-  let laneIdx = 0;
+  // Band width in feet — use as basis for amplitude so sine reaches both edges.
+  // User amplitude slider scales this (default 30 → use computed; higher = wider swing).
+  const bandWidthFt = Math.abs(maxAcross - minAcross);
+  const autoAmplitude = Math.max(amplitude, bandWidthFt * 0.45);
 
-  while (offset <= maxStep + spacing * 0.1) {
-    const laneCenter = destination(centerLat, centerLon, stepBrng, offset);
-    let p1 = destination(laneCenter[0], laneCenter[1], trollBrng, minTroll);
-    let p2 = destination(laneCenter[0], laneCenter[1], trollBrng, maxTroll);
-    if (laneIdx % 2 === 1) [p1, p2] = [p2, p1]; // alternate direction
+  // Route runs along the band centerline from one end of the bbox to the other
+  const p1 = destination(centerLat, centerLon, alongBrng,  minAlong);
+  const p2 = destination(centerLat, centerLon, alongBrng,  maxAlong);
 
-    const pts = applyPattern(p1, p2, { pattern, amplitude, wave, straightFt, spacing });
-    if (pts.length > 1) {
-      tracks.push({
-        name: `Lane${laneIdx + 1}_${depthMin}-${depthMax}ft`,
-        pts,
-        depth: (depthMin + depthMax) / 2,
-      });
-    }
-    offset += spacing;
-    laneIdx++;
-  }
+  const pts = applyPattern(p1, p2, {
+    pattern, amplitude: autoAmplitude, wave, straightFt, spacing
+  });
 
-  return tracks;
+  if (pts.length < 2) return [];
+  return [{ name: `Sweep_${depthMin}-${depthMax}ft`, pts, depth: (depthMin + depthMax) / 2 }];
 }
+
+
 // ── Follow mode: trace a specific contour with pattern applied along its shape ─
 
 function generateFollowRoutes(cfg) {
+  // FOLLOW mode: spine = the target contour line itself.
+  // Sine oscillates perpendicular to direction of travel, naturally crossing
+  // into neighbouring depths (17/19ft when targeting 18ft) based on local
+  // contour spacing — tight contours = small depth swing, wide = larger swing.
   const contour = getActiveContour();
   const gj = contour?.smart || contour?.raw;
   if (!gj?.features?.length) return [];
 
   const { depthMin, depthMax, spacing, pattern, amplitude, wave, straightFt } = cfg;
 
-  // Filter by depth range (use a narrow band — ideally 2-4ft for follow mode)
   const inRange = gj.features.filter(f => {
     const d = f.properties?.depth_ft;
     return d != null && d >= depthMin && d <= depthMax;
@@ -269,7 +257,7 @@ function generateFollowRoutes(cfg) {
     : inRange;
   if (!candidates.length) return [];
 
-  // Compute true path length for each feature
+  // Compute true path length; drop stubs under 300ft
   const withLen = candidates.map(f => {
     const coords = f.geometry?.coordinates;
     if (!coords || coords.length < 2) return null;
@@ -280,11 +268,10 @@ function generateFollowRoutes(cfg) {
     }
     return len >= 300 ? { feat: f, coords, pathLen: len } : null;
   }).filter(Boolean);
-
   if (!withLen.length) return [];
 
-  // Deduplicate tile-seam duplicates: same depth, midpoints within spacing/2
-  const DEDUP_RADIUS = Math.max(spacing * 0.6, 150);
+  // Dedup tile-seam copies at the same depth
+  const DEDUP = Math.max(spacing * 0.6, 150);
   withLen.sort((a, b) => b.pathLen - a.pathLen);
   const kept = [];
   for (const item of withLen) {
@@ -294,20 +281,18 @@ function generateFollowRoutes(cfg) {
       if (k.feat.properties.depth_ft !== depth) return false;
       const km = k.coords[Math.floor(k.coords.length / 2)];
       const [d] = distBearing(mid[1], mid[0], km[1], km[0]);
-      return d < DEDUP_RADIUS;
+      return d < DEDUP;
     });
     if (!isDup) kept.push(item);
   }
 
-  // For each kept contour, resample to wave-length intervals then apply pattern
-  // between consecutive waypoints so the sine/zigzag has room to develop.
+  // For each kept contour: resample to wave-length intervals, apply pattern
+  // between consecutive waypoints so sine has room to develop along the contour.
   const RESAMPLE_FT = Math.max(wave || 300, 150);
   const tracks = [];
 
   for (const { feat, coords } of kept) {
     const depth = feat.properties.depth_ft;
-
-    // Resample: one waypoint every RESAMPLE_FT of actual path distance
     const waypoints = [[coords[0][1], coords[0][0]]];
     let carry = 0;
     for (let i = 1; i < coords.length; i++) {
@@ -320,10 +305,8 @@ function generateFollowRoutes(cfg) {
     }
     const last = coords[coords.length - 1];
     waypoints.push([last[1], last[0]]);
-
     if (waypoints.length < 2) continue;
 
-    // Apply pattern between each pair of resampled waypoints and stitch together
     const allPts = [];
     for (let i = 0; i < waypoints.length - 1; i++) {
       const p1 = waypoints[i], p2 = waypoints[i + 1];
@@ -333,208 +316,13 @@ function generateFollowRoutes(cfg) {
       if (i === 0) allPts.push(...pts);
       else allPts.push(...pts.slice(1));
     }
-
     if (allPts.length > 1) {
       tracks.push({ name: `Follow_${depth}ft`, pts: allPts, depth });
     }
   }
-
   return tracks;
 }
 
-
-function featureIntersectsClip(feat) {
-  if (!clipPolygon) return true;
-  const coords = feat.geometry?.coordinates;
-  if (!coords?.length) return false;
-  // Sample up to 9 evenly-spaced points along the feature.
-  // A long contour may cross the clip polygon without its midpoint being inside.
-  const step = Math.max(1, Math.floor(coords.length / 8));
-  for (let i = 0; i < coords.length; i += step) {
-    if (pointInPolygon([coords[i][1], coords[i][0]], clipPolygon)) return true;
-  }
-  const last = coords[coords.length - 1];
-  return pointInPolygon([last[1], last[0]], clipPolygon);
-}
-
-function pointInPolygon([lat, lon], polygon) {
-  let inside = false;
-  const pts = polygon;
-  for (let i = 0, j = pts.length-1; i < pts.length; j = i++) {
-    const [yi, xi] = pts[i];
-    const [yj, xj] = pts[j];
-    if (((yi > lat) !== (yj > lat)) && (lon < (xj-xi)*(lat-yi)/(yj-yi)+xi)) {
-      inside = !inside;
-    }
-  }
-  return inside;
-}
-
-// ── Render generated routes ───────────────────────────────────────────────────
-
-function renderRoutes(tracks) {
-  if (!state.MAP_OK) return;
-  if (routeLayer) state.MAP.removeLayer(routeLayer);
-  routeLayer = L.layerGroup();
-
-  for (const t of tracks) {
-    if (t.pts.length < 2) continue;
-    L.polyline(t.pts, { color: '#000', weight: 5, opacity: 0.4 }).addTo(routeLayer);
-    L.polyline(t.pts, { color: '#ff00e6', weight: 2, opacity: 1 }).addTo(routeLayer);
-  }
-  routeLayer.addTo(state.MAP);
-
-  if (tracks.length) {
-    const allPts = tracks.flatMap(t => t.pts);
-    state.MAP.fitBounds(allPts, { padding: [40, 40] });
-  }
-}
-
-// ── Panel UI ──────────────────────────────────────────────────────────────────
-
-export function buildRouteBuilderPanel(container) {
-  container.innerHTML = `
-    <!-- Path source -->
-    <div style="margin-bottom:12px">
-      <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Path source</div>
-      <div style="display:flex;gap:6px">
-        <label id="rbSrcContourLabel" style="flex:1;display:flex;align-items:center;gap:5px;padding:6px 8px;border:1px solid var(--accent);border-radius:6px;background:rgba(0,229,255,.08);cursor:pointer">
-          <input type="radio" name="rbSrc" value="contour" id="rbSrcContour" checked style="accent-color:var(--accent)">
-          <span style="font-size:11px;color:var(--accent);font-weight:600">Contour</span>
-        </label>
-        <label id="rbSrcManualLabel" style="flex:1;display:flex;align-items:center;gap:5px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;cursor:pointer">
-          <input type="radio" name="rbSrc" value="manual" id="rbSrcManual" style="accent-color:var(--accent)">
-          <span style="font-size:11px;color:var(--text)">Manual</span>
-        </label>
-      </div>
-    </div>
-
-    <!-- Active contour info (contour mode) -->
-    <div id="rbContourInfo" style="margin-bottom:10px;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-size:11px">
-      <div id="rbContourInfoText" style="color:var(--muted)">No contour dataset loaded — go to Contour Data tab</div>
-    </div>
-
-    <!-- Contour mode: sub-mode toggle + depth range -->
-    <div id="rbDepthSection" style="margin-bottom:10px">
-      <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Contour mode</div>
-      <div style="display:flex;gap:6px;margin-bottom:8px">
-        <label style="flex:1;display:flex;align-items:center;gap:5px;padding:5px 8px;border:1px solid var(--accent);border-radius:6px;background:rgba(0,229,255,.08);cursor:pointer">
-          <input type="radio" name="rbContourMode" value="sweep" id="rbModeSweep" checked style="accent-color:var(--accent)">
-          <span style="font-size:11px;color:var(--accent);font-weight:600">↔ Sweep band</span>
-        </label>
-        <label style="flex:1;display:flex;align-items:center;gap:5px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;cursor:pointer">
-          <input type="radio" name="rbContourMode" value="follow" id="rbModeFollow" style="accent-color:var(--accent)">
-          <span style="font-size:11px;color:var(--text)">〰 Follow line</span>
-        </label>
-      </div>
-      <div style="font-size:10px;color:var(--muted);margin-bottom:5px" id="rbDepthLabel">Depth band (ft)</div>
-      <div style="display:flex;align-items:center;gap:6px">
-        <input id="rbDepthMin" type="number" value="18" min="0" max="200" style="width:55px;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;text-align:center">
-        <span style="color:var(--muted);font-size:11px" id="rbDepthToLabel">to</span>
-        <input id="rbDepthMax" type="number" value="28" min="0" max="200" style="width:55px;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;text-align:center">
-        <span style="color:var(--muted);font-size:11px">ft</span>
-      </div>
-    </div>
-
-    <!-- Manual mode: waypoint builder -->
-    <div id="rbManualSection" style="margin-bottom:10px;display:none">
-      <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Waypoints</div>
-      <div style="display:flex;gap:5px;margin-bottom:6px">
-        <button id="rbAddWpt" style="flex:1;height:28px;font-size:11px;border:1px solid var(--accent);background:rgba(0,229,255,.08);color:var(--accent);border-radius:5px;cursor:pointer;font-weight:600">📍 Add waypoint</button>
-        <button id="rbClearWpts" style="height:28px;padding:0 10px;font-size:11px;border:1px solid var(--bad);background:transparent;color:var(--bad);border-radius:5px;cursor:pointer">Clear all</button>
-      </div>
-      <div id="rbWptList" style="max-height:120px;overflow-y:auto;background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:4px 6px;margin-bottom:6px">
-        <div style="color:var(--muted);font-size:10px;text-align:center;padding:4px">No waypoints yet — click map to add</div>
-      </div>
-      <div style="font-size:10px;color:var(--muted)">Click <b>Add waypoint</b>, then click the map to place points in order. Generate stitches them with the selected pattern.</div>
-    </div>
-
-    <!-- Pattern (both modes) -->
-    <div style="margin-bottom:10px">
-      <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Pattern</div>
-      <select id="rbPattern" style="width:100%;padding:5px 7px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;margin-bottom:8px">
-        <option value="sine+straight">Sine + straight (recommended)</option>
-        <option value="sine">Sine S-curves</option>
-        <option value="straight">Straight</option>
-        <option value="zigzag">Zigzag</option>
-        <option value="zigzag+straight">Zigzag + straight</option>
-      </select>
-      <div style="display:flex;gap:8px">
-        <div style="flex:1">
-          <div style="font-size:10px;color:var(--muted);margin-bottom:3px">Spacing (ft)</div>
-          <input id="rbSpacing" type="number" value="150" min="50" max="500" style="width:100%;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;box-sizing:border-box">
-        </div>
-        <div style="flex:1">
-          <div style="font-size:10px;color:var(--muted);margin-bottom:3px">Amplitude (ft)</div>
-          <input id="rbAmplitude" type="number" value="30" min="5" max="200" style="width:100%;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;box-sizing:border-box">
-        </div>
-      </div>
-    </div>
-
-    <!-- Area filter -->
-    <div style="margin-bottom:12px">
-      <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Area filter (optional)</div>
-      <div style="display:flex;gap:6px">
-        <button id="rbDrawClip" style="flex:1;height:28px;font-size:11px;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:5px;cursor:pointer">✏️ Draw area</button>
-        <button id="rbClearClip" style="height:28px;padding:0 10px;font-size:11px;border:1px solid var(--bad);background:transparent;color:var(--bad);border-radius:5px;cursor:pointer">✕</button>
-      </div>
-      <div id="rbClipStatus" style="font-size:10px;color:var(--muted);margin-top:3px"></div>
-    </div>
-
-    <!-- Generate -->
-    <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:5px;padding-top:8px;border-top:1px solid var(--line)">
-      <button id="rbGenerate" style="height:32px;font-size:11px;font-weight:700;border:1px solid var(--line);border-radius:5px;background:var(--panel2);color:var(--text);cursor:pointer">⚡ Generate</button>
-      <button id="rbCommit" style="height:32px;font-size:11px;font-weight:700;border:1px solid var(--line);border-radius:5px;background:var(--panel2);color:var(--text);cursor:pointer;display:none">✅ Commit</button>
-      <button id="rbClear" style="height:32px;width:32px;font-size:12px;border:1px solid var(--line);background:var(--panel2);color:var(--muted);border-radius:5px;cursor:pointer">✕</button>
-    </div>
-    <div id="rbStatus" style="margin-top:6px;font-size:11px;color:var(--muted)"></div>
-
-    <!-- Pinch points -->
-    <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">
-      <button id="rbPinch" style="width:100%;height:28px;font-size:11px;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:5px;cursor:pointer">🎯 Find Pinch Points</button>
-    </div>
-  `;
-
-  wireRouteBuilder();
-  updateContourInfo();
-  onContourChange(updateContourInfo);
-}
-
-function readCfg() {
-  return {
-    depthMin:   parseInt(document.getElementById('rbDepthMin')?.value)   || 18,
-    depthMax:   parseInt(document.getElementById('rbDepthMax')?.value)   || 28,
-    pattern:    document.getElementById('rbPattern')?.value || 'sine+straight',
-    spacing:    parseFloat(document.getElementById('rbSpacing')?.value)   || 150,
-    amplitude:  parseFloat(document.getElementById('rbAmplitude')?.value) || 30,
-    wave:       300,
-    straightFt: 350,
-    lanes:      parseInt(document.getElementById('rbLanes')?.value) || 4,
-    start:      [parseFloat(document.getElementById('rbLat1')?.value), parseFloat(document.getElementById('rbLon1')?.value)],
-    end:        [parseFloat(document.getElementById('rbLat2')?.value), parseFloat(document.getElementById('rbLon2')?.value)],
-  };
-}
-
-function setStatus(msg, color) {
-  const el = document.getElementById('rbStatus');
-  if (el) { el.textContent = msg; el.style.color = color || 'var(--muted)'; }
-}
-
-function updateContourInfo() {
-  const el = document.getElementById('rbContourInfoText');
-  if (!el) return;
-  const c = getActiveContour();
-  const key = state.ACTIVE_CONTOUR_KEY;
-  if (!key || (!c?.smart && !c?.raw)) {
-    el.style.color = 'var(--muted)';
-    el.textContent = 'No contour dataset loaded — go to Contour Data tab';
-    return;
-  }
-  const count = (c.smart?.features?.length || c.raw?.features?.length || 0).toLocaleString();
-  const type = c.smart ? 'Smart' : 'Raw';
-  el.style.color = 'var(--accent)';
-  el.innerHTML = `<span style="font-weight:600">${esc(key)}</span><br><span style="color:var(--muted)">${type} · ${count} features</span>`;
-}
 
 // ── Waypoint manual mode: connect clicked points with pattern ─────────────────
 
@@ -588,6 +376,168 @@ function renderWaypointList() {
       <span style="font-size:10px;color:var(--muted);flex:1">${lat.toFixed(5)}, ${lon.toFixed(5)}</span>
       <button onclick="window._rbRemoveWpt(${i})" style="height:18px;padding:0 5px;font-size:10px;border:1px solid var(--bad);background:transparent;color:var(--bad);border-radius:3px;cursor:pointer">✕</button>
     </div>`).join('');
+}
+
+
+// ── Render generated routes ───────────────────────────────────────────────────
+
+function renderRoutes(tracks) {
+  if (!state.MAP_OK) return;
+  if (routeLayer) state.MAP.removeLayer(routeLayer);
+  routeLayer = L.layerGroup();
+  for (const t of tracks) {
+    if (t.pts.length < 2) continue;
+    L.polyline(t.pts, { color: '#000', weight: 5, opacity: 0.4 }).addTo(routeLayer);
+    L.polyline(t.pts, { color: '#ff00e6', weight: 2, opacity: 1 }).addTo(routeLayer);
+  }
+  routeLayer.addTo(state.MAP);
+  if (tracks.length) {
+    const allPts = tracks.flatMap(t => t.pts);
+    state.MAP.fitBounds(allPts, { padding: [40, 40] });
+  }
+}
+
+// ── Panel UI ──────────────────────────────────────────────────────────────────
+
+export function buildRouteBuilderPanel(container) {
+  container.innerHTML = `
+    <!-- Path source -->
+    <div style="margin-bottom:12px">
+      <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Path source</div>
+      <div style="display:flex;gap:6px">
+        <label style="flex:1;display:flex;align-items:center;gap:5px;padding:6px 8px;border:1px solid var(--accent);border-radius:6px;background:rgba(0,229,255,.08);cursor:pointer">
+          <input type="radio" name="rbSrc" value="contour" id="rbSrcContour" checked style="accent-color:var(--accent)">
+          <span style="font-size:11px;color:var(--accent);font-weight:600">Contour</span>
+        </label>
+        <label style="flex:1;display:flex;align-items:center;gap:5px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;cursor:pointer">
+          <input type="radio" name="rbSrc" value="manual" id="rbSrcManual" style="accent-color:var(--accent)">
+          <span style="font-size:11px;color:var(--text)">Waypoints</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Active contour info -->
+    <div id="rbContourInfo" style="margin-bottom:10px;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-size:11px">
+      <div id="rbContourInfoText" style="color:var(--muted)">No contour dataset loaded — go to Contour Data tab</div>
+    </div>
+
+    <!-- Contour mode: sub-mode toggle + depth range -->
+    <div id="rbDepthSection" style="margin-bottom:10px">
+      <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Contour mode</div>
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <label style="flex:1;display:flex;align-items:center;gap:5px;padding:5px 8px;border:1px solid var(--accent);border-radius:6px;background:rgba(0,229,255,.08);cursor:pointer" id="rbSweepLabel">
+          <input type="radio" name="rbContourMode" value="sweep" id="rbModeSweep" checked style="accent-color:var(--accent)">
+          <span style="font-size:11px;color:var(--accent);font-weight:600">↔ Sweep band</span>
+        </label>
+        <label style="flex:1;display:flex;align-items:center;gap:5px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;cursor:pointer" id="rbFollowLabel">
+          <input type="radio" name="rbContourMode" value="follow" id="rbModeFollow" style="accent-color:var(--accent)">
+          <span style="font-size:11px;color:var(--text)">〰 Follow line</span>
+        </label>
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-bottom:5px" id="rbDepthLabel">Depth band (ft) — route runs along band, sine oscillates across it</div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <input id="rbDepthMin" type="number" value="18" min="0" max="200" style="width:55px;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;text-align:center">
+        <span style="color:var(--muted);font-size:11px">to</span>
+        <input id="rbDepthMax" type="number" value="28" min="0" max="200" style="width:55px;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;text-align:center">
+        <span style="color:var(--muted);font-size:11px">ft</span>
+      </div>
+    </div>
+
+    <!-- Manual/waypoint mode -->
+    <div id="rbManualSection" style="margin-bottom:10px;display:none">
+      <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Waypoints</div>
+      <div style="display:flex;gap:5px;margin-bottom:6px">
+        <button id="rbAddWpt" style="flex:1;height:28px;font-size:11px;border:1px solid var(--accent);background:rgba(0,229,255,.08);color:var(--accent);border-radius:5px;cursor:pointer;font-weight:600">📍 Add waypoint</button>
+        <button id="rbClearWpts" style="height:28px;padding:0 10px;font-size:11px;border:1px solid var(--bad);background:transparent;color:var(--bad);border-radius:5px;cursor:pointer">Clear all</button>
+      </div>
+      <div id="rbWptList" style="max-height:120px;overflow-y:auto;background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:4px 6px;margin-bottom:6px">
+        <div style="color:var(--muted);font-size:10px;text-align:center;padding:4px">No waypoints — click Add waypoint then click the map</div>
+      </div>
+    </div>
+
+    <!-- Pattern -->
+    <div style="margin-bottom:10px">
+      <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Pattern</div>
+      <select id="rbPattern" style="width:100%;padding:5px 7px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;margin-bottom:8px">
+        <option value="sine+straight">Sine + straight (recommended)</option>
+        <option value="sine">Sine S-curves only</option>
+        <option value="straight">Straight</option>
+        <option value="zigzag">Zigzag</option>
+        <option value="zigzag+straight">Zigzag + straight</option>
+      </select>
+      <div style="display:flex;gap:8px">
+        <div style="flex:1">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:3px">Spacing (ft)</div>
+          <input id="rbSpacing" type="number" value="150" min="50" max="500" style="width:100%;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;box-sizing:border-box">
+        </div>
+        <div style="flex:1">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:3px">Amplitude (ft)</div>
+          <input id="rbAmplitude" type="number" value="30" min="5" max="200" style="width:100%;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;box-sizing:border-box">
+        </div>
+      </div>
+    </div>
+
+    <!-- Area filter -->
+    <div style="margin-bottom:12px">
+      <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Area filter (optional)</div>
+      <div style="display:flex;gap:6px">
+        <button id="rbDrawClip" style="flex:1;height:28px;font-size:11px;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:5px;cursor:pointer">✏️ Draw area</button>
+        <button id="rbClearClip" style="height:28px;padding:0 10px;font-size:11px;border:1px solid var(--bad);background:transparent;color:var(--bad);border-radius:5px;cursor:pointer">✕</button>
+      </div>
+      <div id="rbClipStatus" style="font-size:10px;color:var(--muted);margin-top:3px"></div>
+    </div>
+
+    <!-- Generate / Commit / Reverse / Clear -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:5px;padding-top:8px;border-top:1px solid var(--line)">
+      <button id="rbGenerate" style="height:32px;font-size:11px;font-weight:700;border:1px solid var(--line);border-radius:5px;background:var(--panel2);color:var(--text);cursor:pointer">⚡ Generate</button>
+      <button id="rbCommit" style="height:32px;font-size:11px;font-weight:700;border:1px solid var(--line);border-radius:5px;background:var(--panel2);color:var(--text);cursor:pointer;display:none">✅ Commit</button>
+      <button id="rbReverse" style="height:32px;font-size:11px;border:1px solid var(--line);border-radius:5px;background:var(--panel2);color:var(--muted);cursor:pointer;display:none">🔄 Reverse</button>
+      <button id="rbClear" style="height:32px;width:32px;font-size:12px;border:1px solid var(--line);background:var(--panel2);color:var(--muted);border-radius:5px;cursor:pointer">✕</button>
+    </div>
+    <div id="rbStatus" style="margin-top:6px;font-size:11px;color:var(--muted)"></div>
+
+    <!-- Pinch points -->
+    <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">
+      <button id="rbPinch" style="width:100%;height:28px;font-size:11px;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:5px;cursor:pointer">🎯 Find Pinch Points</button>
+    </div>
+  `;
+
+  wireRouteBuilder();
+  updateContourInfo();
+  onContourChange(updateContourInfo);
+}
+
+function readCfg() {
+  return {
+    depthMin:   parseInt(document.getElementById('rbDepthMin')?.value)   || 18,
+    depthMax:   parseInt(document.getElementById('rbDepthMax')?.value)   || 28,
+    pattern:    document.getElementById('rbPattern')?.value || 'sine+straight',
+    spacing:    parseFloat(document.getElementById('rbSpacing')?.value)   || 150,
+    amplitude:  parseFloat(document.getElementById('rbAmplitude')?.value) || 30,
+    wave:       300,
+    straightFt: 350,
+  };
+}
+
+function setStatus(msg, color) {
+  const el = document.getElementById('rbStatus');
+  if (el) { el.textContent = msg; el.style.color = color || 'var(--muted)'; }
+}
+
+function updateContourInfo() {
+  const el = document.getElementById('rbContourInfoText');
+  if (!el) return;
+  const c = getActiveContour();
+  const key = state.ACTIVE_CONTOUR_KEY;
+  if (!key || (!c?.smart && !c?.raw)) {
+    el.style.color = 'var(--muted)';
+    el.textContent = 'No contour dataset loaded — go to Contour Data tab';
+    return;
+  }
+  const count = (c.smart?.features?.length || c.raw?.features?.length || 0).toLocaleString();
+  const type = c.smart ? 'Smart' : 'Raw';
+  el.style.color = 'var(--accent)';
+  el.innerHTML = `<span style="font-weight:600">\${esc(key)}</span><br><span style="color:var(--muted)">\${type} · \${count} features</span>`;
 }
 
 
@@ -708,6 +658,7 @@ function wireRouteBuilder() {
     renderRoutes(tracks);
     setStatus(`Generated ${tracks.length} route(s). Commit to add to plan.`, 'var(--accent2)');
     document.getElementById('rbCommit').style.display = '';
+    document.getElementById('rbReverse').style.display = '';
   });
 
   // Commit
@@ -725,7 +676,16 @@ function wireRouteBuilder() {
     if (routeLayer) { state.MAP?.removeLayer(routeLayer); routeLayer = null; }
     pendingTracks = [];
     document.getElementById('rbCommit').style.display = 'none';
+    document.getElementById('rbReverse').style.display = 'none';
     setStatus('');
+  });
+
+  // Reverse — flip direction of all pending tracks and re-render
+  document.getElementById('rbReverse')?.addEventListener('click', () => {
+    if (!pendingTracks.length) return;
+    pendingTracks = pendingTracks.map(t => ({ ...t, pts: [...t.pts].reverse() }));
+    renderRoutes(pendingTracks);
+    setStatus('Route reversed. Commit to add to plan.', 'var(--accent2)');
   });
 
   // Pinch points
