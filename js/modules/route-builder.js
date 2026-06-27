@@ -152,6 +152,30 @@ function contourPathLength(coords) {
   return len;
 }
 
+// Resample dense contour coordinates to evenly-spaced waypoints ~intervalFt apart.
+// This gives the pattern generator room to express sine/zigzag oscillations.
+function resampleContour(coords, intervalFt) {
+  const pts = [[coords[0][1], coords[0][0]]];
+  let carry = 0;
+  for (let i = 1; i < coords.length; i++) {
+    const prev = coords[i-1], curr = coords[i];
+    const [segDist, brng] = distBearing(prev[1], prev[0], curr[1], curr[0]);
+    carry += segDist;
+    if (carry >= intervalFt) {
+      pts.push([curr[1], curr[0]]);
+      carry = 0;
+    }
+  }
+  const last = coords[coords.length - 1];
+  const tail = [last[1], last[0]];
+  // Only add tail if it's not a duplicate of the last pushed point
+  const prev = pts[pts.length - 1];
+  if (Math.abs(tail[0] - prev[0]) > 1e-7 || Math.abs(tail[1] - prev[1]) > 1e-7) {
+    pts.push(tail);
+  }
+  return pts;
+}
+
 function generateContourRoutes(cfg) {
   const contour = getActiveContour();
   const gj = contour?.smart || contour?.raw;
@@ -171,22 +195,32 @@ function generateContourRoutes(cfg) {
     ? inRange.filter(f => featureIntersectsClip(f))
     : inRange;
 
-  // 3. Compute true path length and drop stubs under MIN_LENGTH_FT
-  //    Using actual arc length (not just start→end straight line) catches
-  //    curved segments that span real distance but have close endpoints.
-  const MIN_LENGTH_FT = 500;
+  // 3. Compute path length AND linearity ratio, drop stubs and cove-loops.
+  //    Linearity = straight-line span / path length.
+  //    A tight cove loop has high path length but tiny span → low linearity → not trollable.
+  const MIN_LENGTH_FT   = 500;  // minimum useful troll run
+  const MIN_LINEARITY   = 0.35; // span must be ≥35% of path length; tune up to kill more cove routes
+
   const withLen = candidates.map(f => {
     const coords = f.geometry?.coordinates;
     if (!coords || coords.length < 2) return null;
     const pathLen = contourPathLength(coords);
-    return pathLen >= MIN_LENGTH_FT ? { feat: f, coords, pathLen } : null;
+    if (pathLen < MIN_LENGTH_FT) return null;
+
+    // Straight-line distance from first to last coordinate
+    const [span] = distBearing(coords[0][1], coords[0][0],
+                               coords[coords.length-1][1], coords[coords.length-1][0]);
+    const linearity = span / pathLen;
+    if (linearity < MIN_LINEARITY) return null;
+
+    return { feat: f, coords, pathLen, linearity };
   }).filter(Boolean);
 
   if (!withLen.length) return [];
 
   // 4. Deduplicate: for segments at the same depth whose midpoints are within
   //    DEDUP_RADIUS_FT of each other, keep only the longest.
-  //    This kills tile-seam duplicates (same contour captured in two adjacent tiles).
+  //    This kills tile-seam duplicates (same contour in two adjacent tiles).
   const DEDUP_RADIUS_FT = Math.max(spacing * 0.75, 200);
   withLen.sort((a, b) => b.pathLen - a.pathLen); // longest-first so winners survive
 
@@ -206,23 +240,29 @@ function generateContourRoutes(cfg) {
     if (!isDup) kept.push(item);
   }
 
-  // 5. Build route for each kept segment by following the actual contour shape.
-  //    We walk coordinate-by-coordinate and stitch pattern segments together,
-  //    rather than blindly connecting only the first and last point.
+  // 5. Build route by:
+  //    a) Resampling the dense contour to waypoints spaced ~wave ft apart so the
+  //       pattern generator has room to express sine/zigzag oscillations.
+  //    b) Applying the pattern between each pair of consecutive resampled waypoints
+  //       and stitching the segments into one continuous track.
+  const RESAMPLE_INTERVAL = Math.max(wave || 300, 200);
   const tracks = [];
+
   for (const { feat, coords } of kept) {
     const depth = feat.properties.depth_ft;
-    const allPts = [];
+    const waypoints = resampleContour(coords, RESAMPLE_INTERVAL);
+    if (waypoints.length < 2) continue;
 
-    for (let i = 0; i < coords.length - 1; i++) {
-      const p1 = [coords[i][1],   coords[i][0]];
-      const p2 = [coords[i+1][1], coords[i+1][0]];
+    const allPts = [];
+    for (let i = 0; i < waypoints.length - 1; i++) {
+      const p1 = waypoints[i];
+      const p2 = waypoints[i + 1];
       const [segDist] = distBearing(p1[0], p1[1], p2[0], p2[1]);
-      if (segDist < 10) continue; // skip degenerate micro-segments
+      if (segDist < 20) continue;
 
       const pts = applyPattern(p1, p2, { pattern, amplitude, wave, straightFt, spacing });
       if (i === 0) allPts.push(...pts);
-      else allPts.push(...pts.slice(1)); // skip duplicate junction point
+      else allPts.push(...pts.slice(1)); // avoid duplicate junction
     }
 
     if (allPts.length > 1) {
