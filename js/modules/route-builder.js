@@ -268,16 +268,16 @@ export function buildRouteBuilderPanel(container) {
     <!-- Manual mode: start/end -->
     <div id="rbManualSection" style="margin-bottom:10px;display:none">
       <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Start / end points</div>
-      <div style="display:flex;gap:4px;margin-bottom:4px">
-        <input id="rbLat1" placeholder="Start lat" style="flex:1;padding:4px 5px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:11px">
-        <input id="rbLon1" placeholder="Start lon" style="flex:1;padding:4px 5px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:11px">
-        <button id="rbPickStart" style="width:32px;height:28px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:14px;cursor:pointer;flex-shrink:0" title="Pick start on map">📍</button>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:4px">
+        <input id="rbLat1" placeholder="Start lat" style="padding:4px 5px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:11px;width:100%;box-sizing:border-box">
+        <input id="rbLon1" placeholder="Start lon" style="padding:4px 5px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:11px;width:100%;box-sizing:border-box">
       </div>
-      <div style="display:flex;gap:4px;margin-bottom:6px">
-        <input id="rbLat2" placeholder="End lat" style="flex:1;padding:4px 5px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:11px">
-        <input id="rbLon2" placeholder="End lon" style="flex:1;padding:4px 5px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:11px">
-        <button id="rbPickEnd" style="width:32px;height:28px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:14px;cursor:pointer;flex-shrink:0" title="Pick end on map">🏁</button>
+      <button id="rbPickStart" style="width:100%;height:26px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:11px;cursor:pointer;margin-bottom:6px">📍 Pick start on map</button>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:4px">
+        <input id="rbLat2" placeholder="End lat" style="padding:4px 5px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:11px;width:100%;box-sizing:border-box">
+        <input id="rbLon2" placeholder="End lon" style="padding:4px 5px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:11px;width:100%;box-sizing:border-box">
       </div>
+      <button id="rbPickEnd" style="width:100%;height:26px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:11px;cursor:pointer;margin-bottom:6px">🏁 Pick end on map</button>
       <div style="display:flex;align-items:center;gap:6px">
         <label style="font-size:11px;color:var(--muted);white-space:nowrap">Lanes</label>
         <input id="rbLanes" type="number" value="4" min="1" max="20" style="width:55px;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;text-align:center">
@@ -317,16 +317,16 @@ export function buildRouteBuilderPanel(container) {
     </div>
 
     <!-- Generate -->
-    <div style="display:flex;gap:6px;padding-top:8px;border-top:1px solid var(--line)">
-      <button id="rbGenerate" style="flex:1;height:34px;font-size:12px;font-weight:700;border:none;border-radius:6px;background:var(--accent2);color:#000;cursor:pointer">⚡ Generate</button>
-      <button id="rbCommit" style="flex:1;height:34px;font-size:12px;font-weight:700;border:none;border-radius:6px;background:#2a9d8f;color:#fff;cursor:pointer;display:none">✅ Commit</button>
-      <button id="rbClear" style="height:34px;padding:0 10px;font-size:11px;border:1px solid var(--line);background:var(--panel2);color:var(--muted);border-radius:6px;cursor:pointer">✕</button>
+    <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:5px;padding-top:8px;border-top:1px solid var(--line)">
+      <button id="rbGenerate" style="height:32px;font-size:11px;font-weight:700;border:1px solid var(--line);border-radius:5px;background:var(--panel2);color:var(--text);cursor:pointer">⚡ Generate</button>
+      <button id="rbCommit" style="height:32px;font-size:11px;font-weight:700;border:1px solid var(--line);border-radius:5px;background:var(--panel2);color:var(--text);cursor:pointer;display:none">✅ Commit</button>
+      <button id="rbClear" style="height:32px;width:32px;font-size:12px;border:1px solid var(--line);background:var(--panel2);color:var(--muted);border-radius:5px;cursor:pointer">✕</button>
     </div>
     <div id="rbStatus" style="margin-top:6px;font-size:11px;color:var(--muted)"></div>
 
     <!-- Pinch points -->
     <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">
-      <button id="rbPinch" style="width:100%;height:28px;font-size:11px;border:1px solid #76ff03;background:transparent;color:#76ff03;border-radius:5px;cursor:pointer">🎯 Find Pinch Points</button>
+      <button id="rbPinch" style="width:100%;height:28px;font-size:11px;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:5px;cursor:pointer">🎯 Find Pinch Points</button>
     </div>
   `;
 

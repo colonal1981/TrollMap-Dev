@@ -315,20 +315,63 @@
   .toolbar-select { height: 30px; box-sizing: border-box; }
   .map-toolbar { flex-wrap: nowrap; overflow-x: auto; min-height: 44px; padding: 4px 10px; }
 
-  /* Uniform toolbar button active states */
-  .map-toolbar button[data-active-color].active,
-  .map-toolbar button[data-active-color].toggled {
-    /* JS sets color dynamically based on data-active-color */
+  /* Uniform buttons inside Contours & Routes panel */
+  #routesPanelShell button {
+    height: 30px;
+    font-size: 11px;
+    font-weight: 600;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--panel2);
+    color: var(--text);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 0 10px;
+    box-sizing: border-box;
+    white-space: nowrap;
   }
-  /* Primary action button — always accented */
-  .map-toolbar .btn-primary-action {
-    color: var(--accent2) !important;
-    border-color: var(--accent2) !important;
+  #routesPanelShell button:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  #routesPanelShell button.active,
+  #routesPanelShell button.toggled {
+    border-color: var(--accent2);
+    color: var(--accent2);
+    background: rgba(118,255,3,.08);
+  }
+  #routesPanelShell input[type="number"],
+  #routesPanelShell input[type="text"],
+  #routesPanelShell input[type="file"],
+  #routesPanelShell select {
+    height: 30px;
+    font-size: 11px;
+    padding: 0 7px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--panel2);
+    color: var(--text);
+    box-sizing: border-box;
+  }
+  #routesPanelShell label {
+    font-size: 10px;
+    color: var(--muted);
+    display: block;
+    margin-bottom: 3px;
+  }
+  /* Section headings inside panel */
+  #routesPanelShell .cr-heading {
+    font-size: 10px;
     font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    margin-bottom: 6px;
   }
-  .map-toolbar .btn-primary-action.open {
-    background: rgba(118,255,3,.12) !important;
-  }
+
   /* Crosshair cursor on map */
   #map, #map .leaflet-container, #map .leaflet-grab { cursor: crosshair !important; }
   .leaflet-dragging #map .leaflet-grab { cursor: grabbing !important; }
@@ -416,7 +459,13 @@
     <section class="panel active" id="panel-map">
       <div id="map" style="flex: 1; width: 100%; background: #060f1a; position: relative; min-height: 0;"></div>
 
-
+      <!-- TL floating map buttons -->
+      <div class="map-control tl">
+        <button id="btnGps" title="Center on device GPS">📍</button>
+        <button id="btnFollow" title="Follow device GPS">🔒</button>
+        <button id="recordBtn" title="Record track from GPS">⏺</button>
+        <button id="dropWptBtn" title="Drop GPS Waypoint">📍+</button>
+      </div>
 
       <!-- Chart layers popup manager -->
       <div id="chartLayersWrap" style="display:none;position:absolute;top:8px;left:58px;z-index:500;background:rgba(11,22,35,.95);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:12px;max-width:280px;max-height:50vh;overflow-y:auto">
@@ -525,26 +574,26 @@
         <button id="btnRamps" title="Toggle boat launch ramps">⛵ Ramps</button>
         <button id="btnBankPier" title="Toggle bank &amp; pier fishing locations">🎣 Bank/Pier</button>
         <button id="btnPaddle" title="Toggle kayak launches">🛶 Kayak</button>
-        <button id="btnAttractors" title="Toggle submerged attractors" data-active-color="#00e5ff">📍 Attractors</button>
+        <button id="btnAttractors" style="color:#00e5ff;border-color:#00e5ff" title="Toggle submerged attractors">📍 Attractors</button>
         <button id="btnCustomVectors" title="Load custom GeoJSON structure layer">🗂 Structure</button>
-        <button id="btnFetchOsm" title="Fetch OSM waterways and historic structures" data-active-color="#76ff03">🌐 OSM</button>
+        <button id="btnFetchOsm" style="color:#76ff03;border-color:#76ff03" title="Fetch OSM waterways and historic structures">🌐 OSM</button>
         <button id="btnShowCatches" title="Plot catch journal on map">🐟 Catches</button>
         <label id="btnGarminParser" style="cursor:pointer" title="Import Garmin GPX catch waypoints">📥 GPX Catches<input type="file" id="garminParserInput" accept=".gpx" class="hidden"></label>
-        <button id="btnQuickdrawKey" title="Toggle depth color key" data-active-color="#ffb703">🌈 Depth Key</button>
+        <button id="btnQuickdrawKey" style="color:#ffb703;border-color:#ffb703" title="Toggle depth color key">🌈 Depth Key</button>
         <button id="btnCastingRings" title="Draw casting rings around waypoints">⭕ Cast Rings</button>
 
-        <div style="flex:0 0 12px"></div>
+        <div style="flex:1;min-width:6px"></div>
 
         <!-- GPS popup -->
         <button id="btnGpsPanel" title="GPS controls">📡 GPS</button>
 
         <!-- Contours & Routes — opens the right slide panel -->
-        <button id="btnContourRoutes" class="btn-primary-action" title="Open Contours &amp; Routes panel">🗺️ Contours &amp; Routes</button>
+        <button id="btnContourRoutes" style="color:var(--accent2);border-color:var(--accent2)" title="Contours, Smart Route, Troll Generator, Capture">🗺️ Contours &amp; Routes</button>
 
         <div style="width:1px;background:var(--line);height:20px;margin:0 4px;flex-shrink:0"></div>
 
         <!-- Basemap, edit mode, readouts -->
-        <select id="basemap" class="toolbar-select" style="width:110px;height:30px;font-weight:700;color:var(--accent)">
+        <select id="basemap" class="toolbar-select" style="width:110px;height:30px;">
           <option value="sat">Satellite</option>
           <option value="street">Street</option>
         </select>
@@ -553,8 +602,8 @@
           <option value="add">+ WPT</option>
           <option value="delete">Del</option>
         </select>
-        <span id="zoomIndicator" title="Current map zoom" style="background:var(--panel2);color:var(--accent);font-weight:700;padding:0 8px;border-radius:6px;font-family:monospace;font-size:12px;height:30px;display:inline-flex;align-items:center;min-width:50px;justify-content:center;border:1px solid var(--line);flex-shrink:0">z —</span>
-        <span id="storageIndicator" title="Storage" style="background:var(--panel2);color:var(--accent2);font-weight:700;padding:0 8px;border-radius:6px;font-family:monospace;font-size:11px;height:30px;display:inline-flex;align-items:center;cursor:pointer;border:1px solid var(--line);flex-shrink:0">— MB</span>
+        <span id="zoomIndicator" title="Current map zoom" style="background:var(--panel2);color:var(--text);padding:0 8px;border-radius:6px;font-family:monospace;font-size:12px;height:30px;display:inline-flex;align-items:center;min-width:50px;justify-content:center;border:1px solid var(--line);flex-shrink:0">z —</span>
+        <span id="storageIndicator" title="Storage" style="background:var(--panel2);color:var(--text);padding:0 8px;border-radius:6px;font-family:monospace;font-size:11px;height:30px;display:inline-flex;align-items:center;cursor:pointer;border:1px solid var(--line);flex-shrink:0">— MB</span>
         <div id="coordReadout2" class="toolbar-readout" style="height:30px;display:inline-flex;align-items:center;flex-shrink:0">-- , --</div>
 
         <input type="file" id="customVectorInput" accept=".geojson,.json" class="hidden">
@@ -570,7 +619,7 @@
           <button id="btnGps" title="Center on GPS position">📍 Center</button>
           <button id="btnFollow" title="Follow GPS position">🔒 Follow</button>
           <button id="recordBtn" title="Record GPS track">⏺ Record</button>
-          <button id="btnGpsDrop" title="Drop waypoint at GPS position">📌 Drop WPT</button>
+          <button id="btnGpsDrop" title="Drop waypoint at GPS position" style="display:none">📌 Drop WPT</button>
         </div>
       </div>
     </section>

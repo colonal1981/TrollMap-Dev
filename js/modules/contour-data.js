@@ -157,7 +157,7 @@ export function buildContourDataPanel(container) {
     <div style="margin-bottom:10px">
       <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Cloud datasets</div>
       <div id="cdDatasetList" style="font-size:11px;color:var(--muted)">Loading...</div>
-      <button id="cdRefresh" style="margin-top:8px;width:100%;height:28px;font-size:11px;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:5px;cursor:pointer">↻ Refresh list</button>
+      <button id="cdRefresh" style="margin-top:6px;width:100%;height:28px;font-size:11px;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:5px;cursor:pointer">↻ Refresh list</button>
     </div>
 
     <div style="border-top:1px solid var(--line);padding-top:10px;margin-top:4px">
@@ -181,8 +181,8 @@ export function buildContourDataPanel(container) {
     <div style="border-top:1px solid var(--line);padding-top:10px;margin-top:10px">
       <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Load local file</div>
       <label style="display:block;width:100%;cursor:pointer">
-        <div style="width:100%;height:28px;font-size:11px;border:1px dashed var(--line);background:var(--panel2);color:var(--muted);border-radius:5px;display:flex;align-items:center;justify-content:center;cursor:pointer;box-sizing:border-box">
-          📂 Load contours.geojson
+        <div style="width:100%;height:28px;font-size:11px;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:5px;display:flex;align-items:center;justify-content:center;cursor:pointer;box-sizing:border-box">
+          📂 Load local contours.geojson
         </div>
         <input type="file" id="cdLocalFile" accept=".geojson,.json" style="display:none">
       </label>
@@ -214,10 +214,21 @@ export function buildContourDataPanel(container) {
   refreshDatasetList(container);
 }
 
-function redrawIfVisible() {
+async function redrawIfVisible() {
   const showLayer = document.getElementById('cdShowContourLayer')?.checked !== false;
   const showSmart = document.getElementById('cdShowSmart')?.checked !== false;
   const showRaw   = document.getElementById('cdShowRaw')?.checked || false;
+
+  // If raw requested but not yet loaded, fetch it
+  if (showRaw && state.ACTIVE_CONTOUR_KEY) {
+    const cache = datasetCache[state.ACTIVE_CONTOUR_KEY];
+    if (cache && !cache.raw) {
+      const gj = await fetchContourGeoJSON(state.ACTIVE_CONTOUR_KEY, 'raw');
+      cache.raw = gj;
+      if (state.ACTIVE_CONTOUR) state.ACTIVE_CONTOUR.raw = gj;
+    }
+  }
+
   if (showLayer) {
     renderContourLayer(showSmart, showRaw);
   } else {

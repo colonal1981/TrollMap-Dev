@@ -50,11 +50,11 @@ export function buildCapturePanel(container) {
 
     <!-- Draw area -->
     <div id="cpPolyInfo" style="font-size:11px;color:var(--muted);margin-bottom:8px;min-height:16px"></div>
-    <div style="display:flex;gap:6px;margin-bottom:10px">
-      <button id="cpDraw" style="flex:1;height:30px;font-size:11px;border:1px solid #76ff03;background:transparent;color:#76ff03;border-radius:5px;cursor:pointer">✏️ Draw area</button>
-      <button id="cpSaveJson" style="flex:1;height:30px;font-size:11px;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:5px;cursor:pointer">💾 Save JSON</button>
-      <button id="cpAddQueue" style="flex:1;height:30px;font-size:11px;border:1px solid var(--accent2);background:transparent;color:var(--accent2);border-radius:5px;cursor:pointer">➕ Queue</button>
-      <button id="cpDiscard" style="height:30px;padding:0 10px;font-size:13px;border:1px solid var(--bad);background:transparent;color:var(--bad);border-radius:5px;cursor:pointer">🗑</button>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:5px;margin-bottom:10px">
+      <button id="cpDraw" style="height:30px;font-size:11px;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:5px;cursor:pointer">✏️ Draw</button>
+      <button id="cpSaveJson" style="height:30px;font-size:11px;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:5px;cursor:pointer">💾 Save</button>
+      <button id="cpAddQueue" style="height:30px;font-size:11px;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:5px;cursor:pointer">➕ Queue</button>
+      <button id="cpDiscard" style="height:30px;width:30px;font-size:13px;border:1px solid var(--line);background:var(--panel2);color:var(--muted);border-radius:5px;cursor:pointer">🗑</button>
     </div>
 
     <!-- Server status -->
