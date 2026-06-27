@@ -270,9 +270,14 @@ function featureIntersectsClip(feat) {
   if (!clipPolygon) return true;
   const coords = feat.geometry?.coordinates;
   if (!coords?.length) return false;
-  // Simple centroid-in-polygon check
-  const mid = coords[Math.floor(coords.length/2)];
-  return pointInPolygon([mid[1], mid[0]], clipPolygon);
+  // Sample up to 9 evenly-spaced points along the feature.
+  // A long contour may cross the clip polygon without its midpoint being inside.
+  const step = Math.max(1, Math.floor(coords.length / 8));
+  for (let i = 0; i < coords.length; i += step) {
+    if (pointInPolygon([coords[i][1], coords[i][0]], clipPolygon)) return true;
+  }
+  const last = coords[coords.length - 1];
+  return pointInPolygon([last[1], last[0]], clipPolygon);
 }
 
 function pointInPolygon([lat, lon], polygon) {
