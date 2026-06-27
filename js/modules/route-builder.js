@@ -171,11 +171,75 @@ function pointInPolygon([lat, lon], polygon) {
   return inside;
 }
 
+// ── Geometry helpers shared by contour route generators ───────────────────────
+
+// Total arc length of a LineString feature (coords are [lon,lat]).
+function contourArcLength(coords) {
+  let len = 0;
+  for (let i = 1; i < coords.length; i++) {
+    const [d] = distBearing(coords[i-1][1], coords[i-1][0], coords[i][1], coords[i][0]);
+    len += d;
+  }
+  return len;
+}
+
+// Resample a [lon,lat] LineString into evenly spaced [lat,lon] waypoints.
+function resampleContour(coords, intervalFt) {
+  const wp = [[coords[0][1], coords[0][0]]];
+  let carry = 0;
+  for (let i = 1; i < coords.length; i++) {
+    const [d] = distBearing(coords[i-1][1], coords[i-1][0], coords[i][1], coords[i][0]);
+    carry += d;
+    if (carry >= intervalFt) { wp.push([coords[i][1], coords[i][0]]); carry = 0; }
+  }
+  const last = coords[coords.length - 1];
+  const lastLL = [last[1], last[0]];
+  const prev = wp[wp.length - 1];
+  if (prev[0] !== lastLL[0] || prev[1] !== lastLL[1]) wp.push(lastLL);
+  return wp;
+}
+
+// Apply the chosen pattern along a sequence of spine waypoints, returning a
+// single continuous point list. Pattern oscillates perpendicular to travel.
+function patternAlongSpine(waypoints, cfg) {
+  const out = [];
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    const p1 = waypoints[i], p2 = waypoints[i + 1];
+    const [segDist] = distBearing(p1[0], p1[1], p2[0], p2[1]);
+    if (segDist < 20) continue;
+    const pts = applyPattern(p1, p2, cfg);
+    if (!out.length) out.push(...pts);
+    else out.push(...pts.slice(1));
+  }
+  return out;
+}
+
+// Keep generated points on the water: if a clip polygon is set, pull any point
+// that strays outside it back onto the nearest spine waypoint. This prevents
+// the sine swing from throwing the route over land.
+function clampToClip(pts, spine) {
+  if (!clipPolygon || !pts.length) return pts;
+  return pts.map(p => {
+    if (pointInPolygon(p, clipPolygon)) return p;
+    // Snap to nearest spine waypoint (which is by construction a real contour pt)
+    let best = spine[0], bestD = Infinity;
+    for (const s of spine) {
+      const [d] = distBearing(p[0], p[1], s[0], s[1]);
+      if (d < bestD) { bestD = d; best = s; }
+    }
+    return best;
+  });
+}
+
 // ── Contour mode: follow depth band ──────────────────────────────────────────
 
 function generateContourRoutes(cfg) {
-  // SWEEP mode: one route running ALONG the depth band axis, sine oscillating
-  // across the band width so you weave between depthMin and depthMax contours.
+  // SWEEP mode: run ALONG the depth band, sine oscillating ACROSS it so you
+  // weave between depthMin and depthMax. Direction of travel is PARALLEL to the
+  // contours — and the only reliable source of "parallel to the contours" is
+  // the contour geometry itself. So we anchor the route to a REAL contour line
+  // (the longest one in the band) and oscillate perpendicular to it, rather than
+  // synthesising a straight centreline from the bbox (which flew over land).
   const contour = getActiveContour();
   const gj = contour?.smart || contour?.raw;
   if (!gj?.features?.length) return [];
@@ -188,77 +252,58 @@ function generateContourRoutes(cfg) {
   });
   if (!inRange.length) return [];
 
-  const candidates = clipPolygon
-    ? inRange.filter(f => featureIntersectsClip(f))
-    : inRange;
+  const candidates = (clipPolygon ? inRange.filter(featureIntersectsClip) : inRange)
+    .map(f => {
+      const coords = f.geometry?.coordinates;
+      if (!coords || coords.length < 2) return null;
+      return { feat: f, coords, len: contourArcLength(coords) };
+    })
+    .filter(Boolean)
+    .filter(c => c.len >= 300)
+    .sort((a, b) => b.len - a.len);
   if (!candidates.length) return [];
 
-  // Collect all coords; use clip polygon bbox if set to keep route in drawn area
-  const allCoords = [];
-  for (const f of candidates) {
-    for (const c of (f.geometry?.coordinates || [])) allCoords.push(c);
+  // The spine = the longest contour inside the band/clip area. It already runs
+  // parallel to the contours and stays on the water by definition.
+  const spineSrc = candidates[0];
+
+  // Estimate band width (across the gradient) so the sine reaches both edges of
+  // the band. Measure the median perpendicular distance from the spine to the
+  // nearest point on the *other-depth* contours in range.
+  const spineDepth = spineSrc.feat.properties.depth_ft;
+  const midSpine = [spineSrc.coords[Math.floor(spineSrc.coords.length/2)][1],
+                    spineSrc.coords[Math.floor(spineSrc.coords.length/2)][0]];
+  let bandWidthFt = 0, samples = 0;
+  for (const c of candidates) {
+    if (c === spineSrc) continue;
+    const m = c.coords[Math.floor(c.coords.length/2)];
+    const [d] = distBearing(midSpine[0], midSpine[1], m[1], m[0]);
+    if (d > 30 && d < 1500) { bandWidthFt += d; samples++; }
   }
-  if (allCoords.length < 2) return [];
+  bandWidthFt = samples ? bandWidthFt / samples : 0;
 
-  let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
-  const bboxSrc = clipPolygon?.length ? clipPolygon.map(p => [p[1], p[0]]) : allCoords;
-  for (const [lon, lat] of bboxSrc) {
-    if (lat < minLat) minLat = lat;
-    if (lat > maxLat) maxLat = lat;
-    if (lon < minLon) minLon = lon;
-    if (lon > maxLon) maxLon = lon;
-  }
-  const centerLat = (minLat + maxLat) / 2;
-  const centerLon = (minLon + maxLon) / 2;
+  // Sweep amplitude: half the band width so peaks ride the band edges, but never
+  // wilder than the band itself and floored by the user's amplitude setting.
+  const autoAmplitude = Math.min(
+    Math.max(amplitude, bandWidthFt * 0.5),
+    Math.max(amplitude, bandWidthFt || amplitude)
+  );
 
-  // Dominant bearing = direction the contours RUN (travel direction for sweep)
-  let sinSum = 0, cosSum = 0;
-  for (const f of candidates) {
-    const coords = f.geometry?.coordinates;
-    if (!coords || coords.length < 2) continue;
-    for (let i = 1; i < coords.length; i++) {
-      const [segLen, brng] = distBearing(coords[i-1][1], coords[i-1][0], coords[i][1], coords[i][0]);
-      if (segLen < 5) continue;
-      const bRad = ((brng % 180) * 2) * Math.PI / 180;
-      sinSum += Math.sin(bRad) * segLen;
-      cosSum += Math.cos(bRad) * segLen;
-    }
-  }
-  const alongBrng = ((Math.atan2(sinSum, cosSum) * 180 / Math.PI / 2) + 180) % 180;
-  const acrossBrng = (alongBrng + 90) % 360; // perpendicular = across the depth gradient
+  const waveFt = Math.max(wave || 300, 150);
+  const spine = resampleContour(spineSrc.coords, waveFt);
+  if (spine.length < 2) return [];
 
-  // Project bbox corners to find route length (along) and band width (across)
-  const corners = [
-    [minLat, minLon], [minLat, maxLon],
-    [maxLat, minLon], [maxLat, maxLon],
-  ];
-  let minAlong = Infinity, maxAlong = -Infinity;
-  let minAcross = Infinity, maxAcross = -Infinity;
-  for (const [lat, lon] of corners) {
-    const [d, b] = distBearing(centerLat, centerLon, lat, lon);
-    const aProj = d * Math.cos(((b - alongBrng  + 180 + 360) % 360 - 180) * Math.PI / 180);
-    const xProj = d * Math.cos(((b - acrossBrng + 180 + 360) % 360 - 180) * Math.PI / 180);
-    if (aProj < minAlong)  minAlong  = aProj;
-    if (aProj > maxAlong)  maxAlong  = aProj;
-    if (xProj < minAcross) minAcross = xProj;
-    if (xProj > maxAcross) maxAcross = xProj;
-  }
-
-  // Band width in feet — use as basis for amplitude so sine reaches both edges.
-  // User amplitude slider scales this (default 30 → use computed; higher = wider swing).
-  const bandWidthFt = Math.abs(maxAcross - minAcross);
-  const autoAmplitude = Math.max(amplitude, bandWidthFt * 0.45);
-
-  // Route runs along the band centerline from one end of the bbox to the other
-  const p1 = destination(centerLat, centerLon, alongBrng,  minAlong);
-  const p2 = destination(centerLat, centerLon, alongBrng,  maxAlong);
-
-  const pts = applyPattern(p1, p2, {
-    pattern, amplitude: autoAmplitude, wave, straightFt, spacing
+  let pts = patternAlongSpine(spine, {
+    pattern, amplitude: autoAmplitude, wave: waveFt, straightFt, spacing,
   });
+  pts = clampToClip(pts, spine);
 
   if (pts.length < 2) return [];
-  return [{ name: `Sweep_${depthMin}-${depthMax}ft`, pts, depth: (depthMin + depthMax) / 2 }];
+  return [{
+    name: `Sweep_${depthMin}-${depthMax}ft`,
+    pts,
+    depth: (depthMin + depthMax) / 2,
+  }];
 }
 
 
@@ -322,29 +367,11 @@ function generateFollowRoutes(cfg) {
 
   for (const { feat, coords } of kept) {
     const depth = feat.properties.depth_ft;
-    const waypoints = [[coords[0][1], coords[0][0]]];
-    let carry = 0;
-    for (let i = 1; i < coords.length; i++) {
-      const [d] = distBearing(coords[i-1][1], coords[i-1][0], coords[i][1], coords[i][0]);
-      carry += d;
-      if (carry >= RESAMPLE_FT) {
-        waypoints.push([coords[i][1], coords[i][0]]);
-        carry = 0;
-      }
-    }
-    const last = coords[coords.length - 1];
-    waypoints.push([last[1], last[0]]);
+    const waypoints = resampleContour(coords, RESAMPLE_FT);
     if (waypoints.length < 2) continue;
 
-    const allPts = [];
-    for (let i = 0; i < waypoints.length - 1; i++) {
-      const p1 = waypoints[i], p2 = waypoints[i + 1];
-      const [segDist] = distBearing(p1[0], p1[1], p2[0], p2[1]);
-      if (segDist < 20) continue;
-      const pts = applyPattern(p1, p2, { pattern, amplitude, wave, straightFt, spacing });
-      if (i === 0) allPts.push(...pts);
-      else allPts.push(...pts.slice(1));
-    }
+    let allPts = patternAlongSpine(waypoints, { pattern, amplitude, wave, straightFt, spacing });
+    allPts = clampToClip(allPts, waypoints);
     if (allPts.length > 1) {
       tracks.push({ name: `Follow_${depth}ft`, pts: allPts, depth });
     }
@@ -566,7 +593,7 @@ function updateContourInfo() {
   const count = (c.smart?.features?.length || c.raw?.features?.length || 0).toLocaleString();
   const type = c.smart ? 'Smart' : 'Raw';
   el.style.color = 'var(--accent)';
-  el.innerHTML = `<span style="font-weight:600">\${esc(key)}</span><br><span style="color:var(--muted)">\${type} · \${count} features</span>`;
+  el.innerHTML = `<span style="font-weight:600">${esc(key)}</span><br><span style="color:var(--muted)">${esc(type)} · ${esc(count)} features</span>`;
 }
 
 
