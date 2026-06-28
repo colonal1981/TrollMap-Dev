@@ -160,44 +160,75 @@ function wireCapturePanel() {
   // Draw button
   document.getElementById('cpDraw')?.addEventListener('click', () => {
     if (!state.MAP_OK) return;
-    drawingMode = !drawingMode;
     const btn = document.getElementById('cpDraw');
-    if (drawingMode) {
-      setBanner('Click to add polygon points. Double-click to finish.');
+
+    if (!drawingMode) {
+      // ── Start drawing ──
+      drawingMode = true;
       btn.textContent = '⏹ Stop drawing';
       btn.style.background = 'rgba(118,255,3,.15)';
-      // Simple click-to-draw using Leaflet
+      setBanner('Click to add polygon points. Double-click to finish.');
+
+      // Disable map double-click zoom so dblclick can close the polygon
+      state.MAP.doubleClickZoom.disable();
+
       const pts = [];
       let previewLayer = null;
+      let pendingDbl = false;  // guard: ignore the click fired just before dblclick
+
+      const finishDraw = () => {
+        state.MAP.off('click', clickHandler);
+        state.MAP.off('dblclick', dblHandler);
+        state.MAP.doubleClickZoom.enable();
+        drawingMode = false;
+        btn.textContent = '✏️ Draw';
+        btn.style.background = '';
+        setBanner('');
+        if (previewLayer) { state.MAP.removeLayer(previewLayer); previewLayer = null; }
+
+        // dblclick fires two clicks first — drop the last two spurious pts
+        const cleanPts = pts.length >= 2 ? pts.slice(0, -2) : pts;
+
+        if (cleanPts.length >= 3) {
+          currentLatLngs = cleanPts;
+          if (contourLayer) state.MAP.removeLayer(contourLayer);
+          contourLayer = L.polygon(cleanPts, { color: '#76ff03', weight: 2, fillOpacity: 0.1 }).addTo(state.MAP);
+          const [cLat, cLon] = polygonCentroid(cleanPts);
+          const info = document.getElementById('cpPolyInfo');
+          if (info) info.textContent = `${cleanPts.length} points · centroid ${cLat.toFixed(4)}, ${cLon.toFixed(4)}`;
+        } else {
+          const info = document.getElementById('cpPolyInfo');
+          if (info) info.textContent = 'Need at least 3 points — try again';
+        }
+      };
+
       const clickHandler = (e) => {
+        if (pendingDbl) return;  // swallow the phantom click from a dblclick
         pts.push(e.latlng);
         if (previewLayer) state.MAP.removeLayer(previewLayer);
         if (pts.length > 1) {
           previewLayer = L.polygon(pts, { color: '#76ff03', weight: 2, fillOpacity: 0.1 }).addTo(state.MAP);
         }
       };
+
       const dblHandler = (e) => {
-        state.MAP.off('click', clickHandler);
-        state.MAP.off('dblclick', dblHandler);
-        drawingMode = false;
-        btn.textContent = '✏️ Draw area';
-        btn.style.background = '';
-        setBanner('');
-        if (pts.length >= 3) {
-          currentLatLngs = pts;
-          if (contourLayer) state.MAP.removeLayer(contourLayer);
-          contourLayer = L.polygon(pts, { color: '#76ff03', weight: 2, fillOpacity: 0.1 }).addTo(state.MAP);
-          const [cLat, cLon] = polygonCentroid(pts);
-          const info = document.getElementById('cpPolyInfo');
-          if (info) info.textContent = `${pts.length} points · centroid ${cLat.toFixed(4)}, ${cLon.toFixed(4)}`;
-        }
+        L.DomEvent.stop(e);  // prevent any map zoom / propagation
+        pendingDbl = true;
+        finishDraw();
       };
+
       state.MAP.on('click', clickHandler);
       state.MAP.on('dblclick', dblHandler);
+
+      // Also let the "Stop drawing" re-click finalize with whatever pts exist
+      btn._finishDraw = finishDraw;
+
     } else {
-      btn.textContent = '✏️ Draw area';
-      btn.style.background = '';
-      setBanner('');
+      // ── Stop drawing (button re-clicked manually) ──
+      if (typeof btn._finishDraw === 'function') {
+        btn._finishDraw();
+        delete btn._finishDraw;
+      }
     }
   });
 
