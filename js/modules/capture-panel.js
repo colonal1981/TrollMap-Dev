@@ -303,6 +303,14 @@ function wireCapturePanel() {
     e.target.value = '';
   });
 
+  // Cancel running job
+  document.getElementById('cpCancel')?.addEventListener('click', async () => {
+    try {
+      await fetch(`${LOCAL_SERVER}/cancel`, { method: 'POST' });
+      setJobStatus('Cancelling…');
+    } catch (_) {}
+  });
+
   // Import after capture
   document.getElementById('cpImport')?.addEventListener('click', async () => {
     if (!currentJobId) return;
@@ -321,15 +329,15 @@ async function runJob(job) {
   document.getElementById('cpImportRow').style.display = 'none';
 
   try {
-    const r = await fetch(`${LOCAL_SERVER}/run`, {
+    const r = await fetch(`${LOCAL_SERVER}/capture`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(job),
     });
     if (!r.ok) throw new Error(`Server error: HTTP ${r.status}`);
-    const { job_id } = await r.json();
-    currentJobId = job_id;
-    pollJobStatus(job_id);
+    const data = await r.json();
+    currentJobId = data.job_name || job.name;
+    pollJobStatus();
   } catch (err) {
     setJobStatus(`Error: ${err.message}`);
     if (runBtn) runBtn.style.display = '';
@@ -337,21 +345,38 @@ async function runJob(job) {
   }
 }
 
-function pollJobStatus(jobId) {
+function pollJobStatus() {
   if (serverPollTimer) clearInterval(serverPollTimer);
   serverPollTimer = setInterval(async () => {
     try {
       const r = await fetch(`${LOCAL_SERVER}/status`);
       const data = await r.json();
-      if (!data.job || data.job.job_id !== jobId) {
+
+      if (data.status === 'error') {
         clearInterval(serverPollTimer);
-        setJobStatus('✅ Capture complete!');
+        setJobStatus(`❌ Error: ${data.error || 'unknown'}`);
+        document.getElementById('cpRun').style.display = '';
+        document.getElementById('cpCancel').style.display = 'none';
+        return;
+      }
+
+      if (data.status === 'done') {
+        clearInterval(serverPollTimer);
+        setJobStatus(`✅ Capture complete! ${data.tiles_saved || 0} tiles saved.`);
         document.getElementById('cpRun').style.display = '';
         document.getElementById('cpCancel').style.display = 'none';
         document.getElementById('cpImportRow').style.display = 'block';
         return;
       }
-      setJobStatus(`${data.job.stage || 'Running'} — ${data.job.progress || ''}%`);
+
+      if (data.status === 'running' || data.status === 'uploading') {
+        const stage = data.status === 'uploading'
+          ? `Uploading ${data.upload_tiles || 0}/${data.upload_total || '?'} files`
+          : `Capturing — ${data.tiles_saved || 0} tiles`;
+        const tile = data.current_tile ? ` · ${data.current_tile}` : '';
+        const elapsed = data.elapsed_seconds ? ` · ${data.elapsed_seconds}s` : '';
+        setJobStatus(`${stage}${tile}${elapsed}`);
+      }
     } catch (_) {
       clearInterval(serverPollTimer);
       setJobStatus('Lost connection to server');
