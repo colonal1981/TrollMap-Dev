@@ -80,6 +80,7 @@ import './modules/osm-structure.js';
 import './modules/quickdraw-key.js';
 import './modules/sw-register.js';
 import { pullUpdatesOnLoad, pushAllLocalToCloud } from './modules/cloud-sync.js';
+import { loadAllContoursOnStartup } from './modules/contour-data.js';
 import './modules/pinch-point-finder.js'; // still used by route-builder.js
 
 // ── Plan-tab dropdown helpers are exposed on `window` so the ──
@@ -155,6 +156,10 @@ async function boot() {
 
     // Restore charts AFTER map is ready so Leaflet layers can be added
     try { await restoreCharts(); } catch (e) { console.warn('Charts restore failed:', e); }
+
+    // Auto-load all available contour datasets so depth data is visible on
+    // open without the user having to pick a lake from Contour Data first.
+    loadAllContoursOnStartup().catch((e) => console.warn('Contour auto-load failed:', e));
 
     // Pull cloud updates (non-blocking — fires after local restore is done)
     pullUpdatesOnLoad().catch((e) => console.warn('Cloud pull failed:', e));
