@@ -723,14 +723,14 @@
                 </div>
               </div>
               <div>
-                <button id="runSmartPlanBtn" type="button" style="background:#ff9800; color:white; font-weight:bold; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">⚡ Generate Smart Plan</button>
+                <button id="runSmartPlanBtn" type="button" class="small primary" title="Compute target depth, lures, speed, and regulation check for the checked species at this lake/date/time" style="width:100%;height:32px;font-size:12px">⚡ Generate Smart Plan</button>
               </div>
             </div>
             
             <!-- Output container for the rationale text -->
             <div style="margin-top:15px;">
-              <span id="smartPlanStatus" style="font-size: 12px; font-weight: 600; display:block; margin-bottom:4px;"></span>
-              <textarea id="planSmartPlanOutput" readonly placeholder="Smart Plan rationale will appear here..." style="width:100%; height:60px; background:#f9f9f9; border:1px solid #ddd; resize:none; font-family:monospace; font-size:11px; padding:6px;"></textarea>
+              <span id="smartPlanStatus" style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;color:var(--muted)"></span>
+              <textarea id="planSmartPlanOutput" readonly placeholder="Smart Plan rationale will appear here..." rows="8" style="width:100%;font-size:11.5px;font-family:monospace"></textarea>
             </div>
           </div>
           <!-- Section 2: Conditions & Live Utility Pool Level -->
