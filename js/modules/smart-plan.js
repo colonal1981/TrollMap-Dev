@@ -164,27 +164,38 @@ function readPlanInputs() {
  * evenly across the suggested lure list. Does not touch rows the user has
  * already manually configured (non-empty lure field).
  */
+// Kayak rig: 2 lines in the water max, no planer boards, no downriggers.
+// Depth control is lead-length only (already how spread-builder.js works —
+// autoCalculateLead() computes line-out by lure type + speed, no hardware
+// needed). This constant exists so it's a one-line change if Ryan ever
+// adds a second rod holder or fishes from a boat with more capacity.
+const MAX_RODS = 2;
+
 function applyToSpread(rec) {
   if (!rec.ok || !rec.lures.length) return;
   const lures = rec.lures.filter((l) => l); // keep all, including live-bait entries
 
-  // Use existing empty rows first, then add new ones up to 6 total rods
-  // if the spread is currently empty or sparse.
-  const targetRodCount = Math.max(state.SPREAD.length, Math.min(6, lures.length * 2));
+  // Cap at MAX_RODS (2 for kayak) — never auto-add more rods than the
+  // platform can actually fish. Use existing rows first; only add new
+  // ones if the spread is currently empty/sparse, and never exceed the cap.
+  const targetRodCount = Math.min(MAX_RODS, Math.max(state.SPREAD.length, 1));
   while (state.SPREAD.length < targetRodCount) {
     state.SPREAD.push(newRodRow());
   }
+  // If somehow more rows exist than the kayak can fish (e.g. leftover from
+  // a previous boat-spread plan), leave the extras alone rather than
+  // deleting user data — just don't populate beyond MAX_RODS with new picks.
 
   const sides = ['Port', 'Starboard'];
-  const positions = ['Bow', 'Mid', 'Stern'];
+  const positions = ['Mid']; // kayak: one practical rod position, not Bow/Mid/Stern zones
   let lureIdx = 0;
 
-  state.SPREAD.forEach((rod, i) => {
+  state.SPREAD.slice(0, MAX_RODS).forEach((rod, i) => {
     if (rod.lure && rod.lure.trim()) return; // don't overwrite user's manual picks
     const lure = lures[lureIdx % lures.length];
     lureIdx++;
-    rod.side = rod.side || sides[i % 2];
-    rod.position = rod.position || positions[Math.floor(i / 2) % 3];
+    rod.side = rod.side || sides[i % 2]; // one port, one starboard
+    rod.position = rod.position || positions[0];
     rod.depth = String(Math.round((rec.depthMin + rec.depthMax) / 2));
     if (lure && LURE_COLOR_DEFAULTS[lure] !== undefined) {
       // Only set lure/color if it maps to an actual spread-builder preset.

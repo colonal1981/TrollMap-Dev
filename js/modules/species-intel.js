@@ -14,6 +14,14 @@
  * Data is intentionally conservative: when real intel doesn't exist for a
  * lake/species/season combo, the orchestrator falls back to general advice
  * rather than fabricating false precision.
+ *
+ * PLATFORM CONSTRAINT: Ryan fishes from a kayak (2023 Native Watersports
+ * Slayer Propel Max 12.5, pedal drive) with a maximum of 2 rods in the
+ * water at once. No planer boards, no downriggers. Depth control is via
+ * lead-length only (see spread-builder.js autoCalculateLead()). Lure
+ * entries in this file should stick to techniques fishable from 1-2 rods
+ * off a kayak — avoid recommending planer boards, outriggers, or spreads
+ * that assume 4+ simultaneous presentations.
  */
 
 // ── Regulations ────────────────────────────────────────────────────────────
@@ -158,8 +166,8 @@ export const SPECIES_BEHAVIOR = {
           return [28, 36];
         },
         timeOfDay: {
-          [DAWN]: { depthShift: -4, lures: ['Live herring free-line', 'Planer board live bait'], speed: 1.0,
-            notes: 'Fish may only be 12-15ft deep early, get progressively deeper through morning. Free-lines and planer boards from surface to 10-12ft.' },
+          [DAWN]: { depthShift: -4, lures: ['Live herring free-line', 'Choppo 90'], speed: 1.0,
+            notes: 'Fish may only be 12-15ft deep early, get progressively deeper through morning. Free-line one rod, work topwater on the other — both fishable from a kayak with no planer board needed.' },
           [DAY]: { depthShift: 0, lures: ['Down-line live herring', 'Umbrella rig', 'Lead-core trolling'], speed: 1.5,
             notes: 'Thermocline ~30ft in lower lake (Dreher Island to dam). One group suspends near 30ft, another holds bottom in 70-100ft near the dam (low O2, harder to catch). Down-rodding with line counters recommended.' },
           [DUSK]: { depthShift: -4, lures: ['Free-line live herring'], speed: 1.0, notes: 'Evening shallow push similar to dawn.' },
@@ -189,7 +197,7 @@ export const SPECIES_BEHAVIOR = {
         timeOfDay: {
           [DAWN]: { depthShift: -2, lures: ['Plugs', 'Flukes', 'Free-line herring'], speed: 1.5,
             notes: 'Fish in backs of creeks, shallow points. Mouths of Buffalo/Rocky Creek key in April-May herring spawn.' },
-          [DAY]: { depthShift: 0, lures: ['Casting plugs', 'Planer boards'], speed: 1.8, notes: '' },
+          [DAY]: { depthShift: 0, lures: ['Casting plugs', 'A-Rig Light'], speed: 1.8, notes: 'Cast one rod to cover while trolling the other on lead-length depth control.' },
           [DUSK]: { depthShift: -2, lures: ['Topwater'], speed: 1.5, notes: '' },
         },
         sources: ['Brad Taylor guide interview, AHQ Spring report'],
