@@ -817,7 +817,7 @@ export function buildRouteBuilderPanel(container) {
 
     <!-- Active contour info -->
     <div id="rbContourInfo" style="margin-bottom:10px;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-size:11px">
-      <div id="rbContourInfoText" style="color:var(--muted)">No contour dataset loaded — go to Contour Data tab</div>
+      <div id="rbContourInfoText" style="color:var(--muted)">Loading contour data...</div>
     </div>
 
     <!-- Contour mode: sub-mode toggle + depth range -->
@@ -1006,16 +1006,20 @@ function updateContourInfo() {
   const el = document.getElementById('rbContourInfoText');
   if (!el) return;
   const c = getActiveContour();
-  const key = state.ACTIVE_CONTOUR_KEY;
-  if (!key || (!c?.smart && !c?.raw)) {
+  const lakes = state.ACTIVE_CONTOUR_LAKES;
+  const count = (c?.smart?.features?.length || c?.raw?.features?.length || 0);
+  if (!count) {
     el.style.color = 'var(--muted)';
-    el.textContent = 'No contour dataset loaded — go to Contour Data tab';
+    el.textContent = 'No contour data loaded yet — check Contour Data tab';
     return;
   }
-  const count = (c.smart?.features?.length || c.raw?.features?.length || 0).toLocaleString();
-  const type = c.smart ? 'Smart' : 'Raw';
   el.style.color = 'var(--accent)';
-  el.innerHTML = `<span style="font-weight:600">${esc(key)}</span><br><span style="color:var(--muted)">${esc(type)} · ${esc(count)} features</span>`;
+  if (Array.isArray(lakes) && lakes.length) {
+    const lakeNames = lakes.map(l => l.replace(/^lake_/, '').replace(/_/g, ' ')).join(', ');
+    el.innerHTML = `<span style="font-weight:600">${esc(lakeNames)}</span><br><span style="color:var(--muted)">${esc(count.toLocaleString())} features</span>`;
+  } else {
+    el.innerHTML = `<span style="font-weight:600">${esc(state.ACTIVE_CONTOUR_KEY || 'Loaded data')}</span><br><span style="color:var(--muted)">${esc(count.toLocaleString())} features</span>`;
+  }
 }
 
 
@@ -1201,13 +1205,19 @@ function wireRouteBuilder() {
     document.getElementById('rbReverse').style.display = '';
   });
 
-  // Commit
-  document.getElementById('rbCommit')?.addEventListener('click', () => {
-    if (!pendingTracks.length) return;
+  // Commit — guard against double-clicks creating duplicate tracks.
+  // Disable immediately on click rather than waiting for pendingTracks to
+  // clear, since a fast double-click can fire both handlers before the
+  // first one finishes hiding the button.
+  document.getElementById('rbCommit')?.addEventListener('click', (e) => {
+    const btn = e.currentTarget;
+    if (btn.disabled || !pendingTracks.length) return;
+    btn.disabled = true;
     state.DATA.tracks.push(...pendingTracks);
     pendingTracks = [];
     renderAll();
-    document.getElementById('rbCommit').style.display = 'none';
+    btn.style.display = 'none';
+    btn.disabled = false; // reset for next generate/commit cycle
     setStatus(`✅ ${state.DATA.tracks.length} track(s) in plan.`, 'var(--accent2)');
   });
 

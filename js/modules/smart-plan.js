@@ -311,3 +311,5 @@ setTimeout(() => {
 }, 800);
 
 window.runSmartPlan = runSmartPlan;
+
+console.log('[smart-plan] module ready');
