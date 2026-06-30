@@ -976,26 +976,62 @@ ${twilightHtml?`<h2>4 · Light &amp; Bite Feed Triggers</h2>${twilightHtml}`:''}
   <div style="background:#f7f9fb;border:1px solid #e1e7ed;border-radius:8px;padding:14px">
     <h3 style="color:#0d4f8b;margin:0 0 8px 0;font-size:15px;display:flex;align-items:center;gap:6px">🌬️ Vector Wind Exposure Scoring Engine</h3>
     <div style="font-size:13px;color:#333;display:flex;flex-direction:column;gap:6px">
-      ${state.DATA.tracks && state.DATA.tracks.length > 0 ? state.DATA.tracks.map((t, i) => {
-        let score = i === 0 ? 2 : i === 1 ? 7 : 9;
-        let label = i === 0 ? 'Lee Shore Cover' : i === 1 ? 'Open Fetch Wind Chop' : 'Direct Squall Funnel';
-        let col   = i === 0 ? '#2e7d32' : i === 1 ? '#c62828' : '#bf360c';
-        let bg    = i === 0 ? '#e8f5e9' : '#ffebee';
-        return `<span>• <b>${esc(t.name || 'Lane '+(i+1))}</b>: <b style="color:${col}">${score}/10 Exposure Score</b> <span style="background:${bg};color:${col};padding:1px 6px;border-radius:4px;font-weight:700;font-size:11px">${label}</span></span>`;
-      }).join('') : `
-      <span>• <b>Lane 1 (Bow Protected Drop-Off)</b>: <b style="color:#2e7d32">2/10 Exposure Score</b> <span style="background:#e8f5e9;color:#2e7d32;padding:1px 6px;border-radius:4px;font-weight:700;font-size:11px">Lee Shore Cover</span></span>
-      <span>• <b>Lane 2 (Mid-Reservoir Track)</b>: <b style="color:#b3261e">7/10 Exposure Score</b> <span style="background:#ffebee;color:#c62828;padding:1px 6px;border-radius:4px;font-weight:700;font-size:11px">Open Fetch Wind Chop</span></span>
-      <span>• <b>Lane 3 (River Corridor Swing)</b>: <b style="color:#bf360c">9/10 Exposure Score</b> <span style="background:#ffebee;color:#c62828;padding:1px 6px;border-radius:4px;font-weight:700;font-size:11px">Direct Squall Funnel</span></span>
-      `}
+      ${(() => {
+        // Real exposure scoring: compare each track's actual run bearing
+        // against the parsed wind compass direction. A track running
+        // perpendicular to the wind gets minimal exposure (boat shields
+        // the line, less chop pushes you off pattern); a track running
+        // parallel/into the wind gets maximal exposure. This replaces the
+        // previous placeholder (score = i===0?2:i===1?7:9 regardless of
+        // actual geometry) with a genuine bearing-vs-wind comparison.
+        const windCompass = { N:0, NNE:22.5, NE:45, ENE:67.5, E:90, ESE:112.5, SE:135, SSE:157.5,
+                               S:180, SSW:202.5, SW:225, WSW:247.5, W:270, WNW:292.5, NW:315, NNW:337.5 };
+        const wMatch = String(p.meta.weather||'').match(/\b(N|NNE|NE|ENE|E|ESE|SE|SSE|S|SSW|SW|WSW|W|WNW|NW|NNW)\b/);
+        const windDeg = wMatch ? windCompass[wMatch[1]] : null;
+
+        function trackBearingDeg(t) {
+          const pts = t.pts || [];
+          if (pts.length < 2) return null;
+          const a = pts[0], b = pts[pts.length - 1];
+          const dLat = b.lat - a.lat, dLon = (b.lon - a.lon) * Math.cos(a.lat * Math.PI / 180);
+          let brng = Math.atan2(dLon, dLat) * 180 / Math.PI;
+          return (brng + 360) % 360;
+        }
+
+        function exposureScore(trackDeg, wDeg) {
+          if (trackDeg == null || wDeg == null) return null;
+          // Angle between track heading and wind source direction, folded to 0-90
+          let diff = Math.abs(trackDeg - wDeg) % 180;
+          if (diff > 90) diff = 180 - diff;
+          // 0deg (parallel/into wind) = max exposure, 90deg (perpendicular) = min exposure
+          return Math.round((1 - diff / 90) * 8 + 1); // 1-9 scale
+        }
+
+        const tracks = (state.DATA.tracks && state.DATA.tracks.length) ? state.DATA.tracks : null;
+        if (!tracks) {
+          return `<span style="color:#666">No tracks loaded yet — generate or import a route to see wind exposure per lane.</span>`;
+        }
+        return tracks.map((t, i) => {
+          const tDeg = trackBearingDeg(t);
+          const score = exposureScore(tDeg, windDeg);
+          if (score == null) {
+            return `<span>• <b>${esc(t.name || 'Lane '+(i+1))}</b>: <span style="color:#666">Exposure unknown — need wind direction + 2+ track points</span></span>`;
+          }
+          const label = score <= 3 ? 'Lee Shore Cover' : score <= 6 ? 'Partial Fetch' : 'Open Fetch Wind Chop';
+          const col   = score <= 3 ? '#2e7d32' : score <= 6 ? '#e65100' : '#c62828';
+          const bg    = score <= 3 ? '#e8f5e9' : '#ffebee';
+          return `<span>• <b>${esc(t.name || 'Lane '+(i+1))}</b>: <b style="color:${col}">${score}/10 Exposure Score</b> <span style="background:${bg};color:${col};padding:1px 6px;border-radius:4px;font-weight:700;font-size:11px">${label}</span></span>`;
+        }).join('');
+      })()}
     </div>
   </div>
 
   <div style="background:#f7f9fb;border:1px solid #e1e7ed;border-radius:8px;padding:14px">
-    <h3 style="color:#0d4f8b;margin:0 0 8px 0;font-size:15px;display:flex;align-items:center;gap:6px">⛵ Autonomous Ramp Recommendation Engine</h3>
+    <h3 style="color:#0d4f8b;margin:0 0 8px 0;font-size:15px;display:flex;align-items:center;gap:6px">⛵ Launch Ramp Status</h3>
     <div style="font-size:13px;color:#333;display:flex;flex-direction:column;gap:6px">
-      <span>• <b>Evaluated Physical Wind</b>: ${esc(p.meta.weather||'SW 11 mph')}</span>
-      <span>• <b>Autonomously Recommended Ramp Match</b>: <b style="color:#0d4f8b">${esc(p.meta.ramp||'Dutchman Creek Launch')}</b></span>
-      <span>• <b>Strategic Target Reasoning</b>: <b style="color:#2e7d32">Protected sheltered un-docking cove. Shortest paddling distance to primary 28ft river ledge channel. Bypasses 100% of open main-lake fetch chop.</b></span>
+      <span>• <b>Evaluated Physical Wind</b>: ${esc(p.meta.weather||'No wind data synced')}</span>
+      <span>• <b>Selected Ramp</b>: <b style="color:#0d4f8b">${esc(p.meta.ramp||'No ramp selected yet')}</b></span>
+      <span>• <b>Note</b>: ${p.meta.ramp ? '<span style="color:#94a3b8">Ramp was manually selected on the Plan tab. TrollMap does not yet auto-recommend a ramp based on wind/fetch — verify shelter and launch conditions yourself before committing.</span>' : '<span style="color:#c62828">No ramp selected — choose one on the Plan tab.</span>'}</span>
     </div>
   </div>
 </div>
