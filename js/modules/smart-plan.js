@@ -1,315 +1,474 @@
 /**
- * smart-plan.js — The orchestrator for TrollMap's "smart plan" feature.
+ * smart-plan.js — TrollMap Smart Plan Orchestrator
  *
- * Reads the existing Plan tab fields (lake, species checkboxes, date,
- * launch time, live water temp) and produces:
- *   - a depth band recommendation per species/time-of-day
- *   - lure/technique suggestions
- *   - trolling speed
- *   - a plain-language rationale (never a black box)
- *   - regulatory flags (closed season / creel / size limits)
+ * Reads the Plan tab fields and generates a 3-phase fishing plan:
+ *   - Phase 1: Dawn (launch → ~90min post-sunrise, topwater/shallow)
+ *   - Phase 2: Transition (90min → 3.5hrs post-sunrise, mid-depth)
+ *   - Phase 3: Deep (3.5hrs post-sunrise → return, thermocline)
  *
- * Then wires the result into:
- *   - the rod spread table (via renderSpread / state.SPREAD)
- *   - Route Builder's depth-band inputs (rbDepthMin / rbDepthMax)
+ * Solunar major/minor periods adjust phase boundaries and can
+ * "interrupt" a phase when a major hits (bump back to shallower tactics).
  *
- * This does NOT call any external AI — it's a structured lookup against
- * species-intel.js, which encodes real lake-specific behavior data and
- * verified SCDNR regulations gathered June 2026.
+ * For each phase:
+ *   - 2 rods pre-rigged with exact lure/color/depth/lead for that phase
+ *   - Route auto-generated at that phase's depth band
+ *
+ * Range computation:
+ *   - If BLE connected: remainingAh / draw × speed / 2 = one-way miles
+ *   - Fallback: 100Ah / 6A avg × speed / 2 = one-way miles
+ *   - Trip duration fallback: duration_hours × speed / 2
+ *
+ * Platform: Kayak (Native Watersports Slayer Propel Max 12.5),
+ *   NK180 Pro motor (24V brushless, ~6A avg draw at trolling speed),
+ *   100Ah LiFePO4 battery, 2 rods max in water at any time.
  */
 
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { newRodRow } from '../utils/rod-row.js';
-import { renderSpread } from './spread-builder.js';
+import { renderSpread, autoCalculateLead } from './spread-builder.js';
+import { onContourChange } from './contour-data.js';
 import {
   SPECIES_BEHAVIOR, REGULATIONS,
   getSeason, getTimeOfDay, checkRegulations, resolveLakeKey,
 } from '../data/species-intel.js';
 
-// ── Lure → color pairing ────────────────────────────────────────────────
-// Maps a behavior-table lure name to one of spread-builder.js's
-// COLOR_PRESETS, varied by water clarity if known. Falls back to a
-// generally productive natural color.
+// ── Constants ────────────────────────────────────────────────────────────────
+const MAX_RODS_PER_PHASE = 2;       // kayak: 2 rods in water at a time
+const TOTAL_RODS = 6;               // 6 rods on kayak, 2 per phase × 3 phases
+const BATTERY_AH_DEFAULT = 100;     // LiFePO4 100Ah
+const MOTOR_AMP_AVG = 6;            // NK180 Pro avg draw at ~2mph trolling
+const PHASE_1_END_OFFSET_MIN = 90;  // minutes after sunrise Phase 1 ends (default)
+const PHASE_2_END_OFFSET_MIN = 210; // minutes after sunrise Phase 2 ends (3.5hrs)
+
+// ── Lure presets (must exactly match spread-builder.js LURE_PRESETS) ─────────
 const LURE_COLOR_DEFAULTS = {
-  'Choppo 90': 'Bone / Natural',
-  'Rattling Spook': 'Bone / Natural',
-  'Bucktail': 'Chartreuse / White',
-  'A-Rig Medium': 'Blueback Herring',
-  'A-Rig Light': 'Natural Pearl / Smoke',
-  'Deep Hit Stick': 'Blue / Silver Herring',
-  'Umbrella Rig 3/4oz': 'Blueback Herring',
-  'Crankbait': 'Sexy Shad',
-  'Topwater': 'Bone / Natural',
-  'Topwater shad imitation': 'Grey Shad',
-  'Jigging spoon': 'Chrome / Silver',
-  'Live herring free-line': null,   // live bait, no plastic color
-  'Live herring downline': null,
-  'Live blueback herring downline': null,
-  'Live blueback herring': null,
-  'Live shad downline': null,
-  'Lead-core trolling': 'Sexy Shad',
-  'Planer board live bait': null,
-  'Down-line live herring': null,
-  'Live bait downline': null,
-  'Live menhaden': null,
-  'Rockport Rattler jig': 'Chartreuse / Shad',
-  'Jig + plastic trailer': 'Junebug / Purple',
-  'Casting plugs': 'Natural Pearl / Smoke',
-  'Flukes': 'Natural Pearl / Smoke',
-  'Free-line herring': null,
-  'Cut bait': null,
-  'Live bait': null,
-  'Plugs': 'Bone / Natural',
+  'Choppo 90 – Topwater':                    'Bone / Natural',
+  'Zara Spook – Topwater':                   'Bone / Natural',
+  'Whopper Plopper 110 – Topwater':          'Grey Shad',
+  'Bucktail Jig 1oz':                        'Chartreuse / White',
+  'Marabou Jig 3/4oz':                       'Chartreuse / Shad',
+  'A-Rig Light (~1.65oz) – 3.8" Swimbait':  'Natural Pearl / Smoke',
+  'A-Rig Medium (~2.65oz) – 4.6" Swimbait': 'Blueback Herring',
+  'A-Rig Heavy (~3.5oz) – 5" Swimbait':     'Alewife / Silver Flash',
+  'Deep Hit Stick – Crankbait':              'Blue / Silver Herring',
+  'Flicker Minnow 11 – Crankbait':          'Blue / Silver Herring',
+  'Bandit 300 Series – Crankbait':           'Sexy Shad',
+  'Rapala DT-10 – Crankbait':               'Tennessee Shad',
+  'Rapala DT-14 – Crankbait':               'Tennessee Shad',
+  'Swimbait 3.8" – Jighead':                'Natural Pearl / Smoke',
+  'Swimbait 4.6" – Jighead':                'Blueback Herring',
+  'Swimbait 5" – Jighead':                  'Alewife / Silver Flash',
+  'Flutter Spoon 2oz':                       'Shattered Glass Silver',
+  'Flutter Spoon 3oz':                       'Chrome / Silver',
+  'Kastmaster 3/4oz':                        'Chrome / Silver',
+  'ChatterBait 3/4oz':                       'Chartreuse / White',
 };
 
-/**
- * Core recommendation function — pure, no DOM access. Given inputs,
- * returns a structured recommendation or a regulatory block.
- */
-export function getSmartRecommendation({ lakeName, species, dateStr, launchTimeStr, waterTempF }) {
-  const date = dateStr ? new Date(dateStr + 'T12:00:00') : new Date();
+// Short behavior-table names → exact LURE_PRESETS strings
+const BEHAVIOR_LURE_MAP = {
+  'Choppo 90':              'Choppo 90 – Topwater',
+  'Rattling Spook':         'Zara Spook – Topwater',
+  'Bucktail':               'Bucktail Jig 1oz',
+  'A-Rig Light':            'A-Rig Light (~1.65oz) – 3.8" Swimbait',
+  'A-Rig Medium':           'A-Rig Medium (~2.65oz) – 4.6" Swimbait',
+  'A-Rig Heavy':            'A-Rig Heavy (~3.5oz) – 5" Swimbait',
+  'Umbrella Rig 3/4oz':    'A-Rig Medium (~2.65oz) – 4.6" Swimbait',
+  'Deep Hit Stick':         'Deep Hit Stick – Crankbait',
+  'Crankbait':              'Flicker Minnow 11 – Crankbait',
+  'Jigging spoon':          'Flutter Spoon 2oz',
+  'Rockport Rattler jig':   'Bucktail Jig 1oz',
+  'Jig + plastic trailer':  'Swimbait 4.6" – Jighead',
+  'Casting plugs':          'Flicker Minnow 11 – Crankbait',
+  'Flukes':                 'Swimbait 3.8" – Jighead',
+  'Plugs':                  'Choppo 90 – Topwater',
+  // Live-bait → note only, no preset
+  'Live herring free-line':         null,
+  'Live herring downline':          null,
+  'Live blueback herring downline': null,
+  'Live blueback herring':          null,
+  'Live shad downline':             null,
+  'Down-line live herring':         null,
+  'Live bait downline':             null,
+  'Live menhaden':                  null,
+  'Free-line herring':              null,
+  'Cut bait':                       null,
+  'Live bait':                      null,
+};
 
-  // 1. Regulation check FIRST — never recommend something illegal.
-  const regCheck = checkRegulations(lakeName, species, date);
-  if (!regCheck.legal) {
-    return {
-      ok: false,
-      species, lakeName,
-      reason: regCheck.reason,
-      regInfo: regCheck.regInfo,
-    };
+function resolveLure(rawName) {
+  if (!rawName) return null;
+  if (LURE_COLOR_DEFAULTS.hasOwnProperty(rawName)) return rawName;
+  return BEHAVIOR_LURE_MAP.hasOwnProperty(rawName) ? BEHAVIOR_LURE_MAP[rawName] : null;
+}
+
+// ── Sunrise computation ───────────────────────────────────────────────────────
+// Approximate astronomical sunrise for a lat/lon/date.
+// Accurate to ~2 minutes for SC latitudes — good enough for phase planning.
+// Uses the NOAA/Jean Meeus simplified algorithm.
+function computeSunrise(lat, lon, dateStr) {
+  const d = new Date(dateStr + 'T12:00:00');
+  const JD = Math.floor(d / 86400000) + 2440587.5;
+  const n = JD - 2451545.0;
+  const L = (280.46 + 0.9856474 * n) % 360;
+  const g = ((357.528 + 0.9856003 * n) % 360) * Math.PI / 180;
+  const lambda = (L + 1.915 * Math.sin(g) + 0.02 * Math.sin(2 * g)) * Math.PI / 180;
+  const sinDec = Math.sin(23.439 * Math.PI / 180) * Math.sin(lambda);
+  const cosDec = Math.cos(Math.asin(sinDec));
+  const cosH = (Math.cos(90.833 * Math.PI / 180) - sinDec * Math.sin(lat * Math.PI / 180))
+               / (cosDec * Math.cos(lat * Math.PI / 180));
+  if (Math.abs(cosH) > 1) return 6.0; // fallback 6AM
+  const H = Math.acos(cosH) * 180 / Math.PI;
+  const RA = Math.atan2(Math.cos(23.439 * Math.PI / 180) * Math.sin(lambda), Math.cos(lambda)) * 180 / Math.PI;
+  const t = 720 - 4 * (lon + H) - (RA - 15 * ((JD - 2451545) / 36525 * 360.9856474 % 360)) / 15;
+  const utcHour = ((t / 60) + 24) % 24;
+  return utcHour - 5; // EST (Wateree is UTC-5 standard, UTC-4 EDT)
+}
+
+// ── Solunar computation ───────────────────────────────────────────────────────
+// Returns major1, major2, minor1, minor2 as decimal hours local time.
+function computeSolunar(lat, lon, dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const JD = Math.floor(d / 86400000) + 2440587.5;
+  const T = (JD - 2451545.0) / 36525;
+  const Lm = 218.3164 + 481267.8812 * T;
+  const moonTransitUT = (360 - (Lm % 360)) / 15; // rough transit hour UTC
+  const offsetH = lon / 15; // longitude offset
+  const major1 = ((moonTransitUT + offsetH + 24) % 24) - 5; // local
+  const major2 = (major1 + 12) % 24;
+  const minor1 = (major1 + 6) % 24;
+  const minor2 = (major1 + 18) % 24;
+  return { major1, major2, minor1, minor2 };
+}
+
+// ── Lake center coordinates (for sunrise/solunar) ─────────────────────────────
+const LAKE_CENTERS = {
+  'Lake Wateree':   { lat: 34.37,  lon: -80.73 },
+  'Lake Murray':    { lat: 34.06,  lon: -81.32 },
+  'Lake Marion':    { lat: 33.55,  lon: -80.30 },
+  'Lake Moultrie':  { lat: 33.28,  lon: -80.05 },
+  'Lake Monticello':{ lat: 34.44,  lon: -81.21 },
+  'Parr Reservoir': { lat: 34.30,  lon: -81.16 },
+};
+
+function getLakeCenter(lakeName) {
+  const key = Object.keys(LAKE_CENTERS).find(k =>
+    lakeName.toLowerCase().includes(k.toLowerCase().replace('lake ', ''))
+  );
+  return key ? LAKE_CENTERS[key] : { lat: 34.37, lon: -80.73 }; // default Wateree
+}
+
+// ── Range computation ─────────────────────────────────────────────────────────
+function computeRangeMiles(speedMph) {
+  const spd = speedMph || 2.0;
+  const bms = window.ACTIVE_BLE_BMS;
+  if (bms && bms.connected && bms.remainingAh > 0 && bms.current > 0.1) {
+    const hoursRemaining = bms.remainingAh / bms.current;
+    return (hoursRemaining * spd) / 2; // one-way
+  }
+  // Fallback: full 100Ah battery, 6A avg draw
+  return (BATTERY_AH_DEFAULT / MOTOR_AMP_AVG * spd) / 2;
+}
+
+// ── Phase boundary computation ────────────────────────────────────────────────
+function computePhases(launchTimeStr, returnTimeStr, dateStr, lakeName) {
+  const center = getLakeCenter(lakeName);
+  const sunriseH = computeSunrise(center.lat, center.lon, dateStr);
+  const sol = computeSolunar(center.lat, center.lon, dateStr);
+
+  // Parse launch/return times
+  function parseTimeStr(t) {
+    if (!t) return null;
+    const m = t.match(/(\d+):(\d+)\s*(am|pm)?/i);
+    if (!m) return null;
+    let h = parseInt(m[1]), min = parseInt(m[2]);
+    if (m[3] && m[3].toLowerCase() === 'pm' && h < 12) h += 12;
+    if (m[3] && m[3].toLowerCase() === 'am' && h === 12) h = 0;
+    return h + min / 60;
   }
 
-  // 2. Look up behavior data for this lake/species. Uses the same fuzzy
-  // lake-key resolution as checkRegulations(), since the Plan tab's
-  // dropdown sends values like "Lake Wateree, SC" that don't exact-match
-  // this file's bare "Lake Wateree" keys.
+  const launchH = parseTimeStr(launchTimeStr) || 6.0;
+  const returnH = parseTimeStr(returnTimeStr) || 12.0;
+
+  // Default phase boundaries from sunrise
+  let p1End = sunriseH + PHASE_1_END_OFFSET_MIN / 60;
+  let p2End = sunriseH + PHASE_2_END_OFFSET_MIN / 60;
+
+  // Solunar adjustment: if a major falls within a phase, extend that phase
+  // to include the full feeding window (majors = ~2hr window, minors = ~1hr)
+  [sol.major1, sol.major2].forEach(t => {
+    if (t >= launchH && t <= p1End + 0.5) p1End = Math.max(p1End, t + 1.0);
+    if (t >= p1End && t <= p2End + 0.5) p2End = Math.max(p2End, t + 1.0);
+  });
+  [sol.minor1, sol.minor2].forEach(t => {
+    if (t >= launchH && t <= p1End + 0.25) p1End = Math.max(p1End, t + 0.5);
+  });
+
+  // Clamp to trip duration
+  p1End = Math.min(p1End, returnH - 1.0);
+  p2End = Math.min(p2End, returnH - 0.5);
+  if (p1End >= p2End) p1End = launchH + (returnH - launchH) / 3;
+  if (p2End >= returnH) p2End = launchH + 2 * (returnH - launchH) / 3;
+
+  function hToStr(h) {
+    const hh = Math.floor(((h % 24) + 24) % 24);
+    const mm = Math.round((h % 1) * 60);
+    const ampm = hh < 12 ? 'AM' : 'PM';
+    return `${hh % 12 || 12}:${String(mm).padStart(2, '0')} ${ampm}`;
+  }
+
+  return {
+    sunriseH,
+    solunar: sol,
+    phases: [
+      { num: 1, name: 'Dawn',       start: launchH, end: p1End, startStr: hToStr(launchH), endStr: hToStr(p1End) },
+      { num: 2, name: 'Transition', start: p1End,   end: p2End, startStr: hToStr(p1End),  endStr: hToStr(p2End) },
+      { num: 3, name: 'Deep',       start: p2End,   end: returnH, startStr: hToStr(p2End), endStr: hToStr(returnH) },
+    ],
+  };
+}
+
+// ── Per-phase behavior lookup ─────────────────────────────────────────────────
+function getPhaseRecommendation(species, lakeName, season, phaseNum, waterTempF) {
   const lakeKey = resolveLakeKey(lakeName, SPECIES_BEHAVIOR);
-  const lakeData = lakeKey ? SPECIES_BEHAVIOR[lakeKey] : null;
-  const speciesData = lakeData?.[species];
-  if (!speciesData) {
-    return {
-      ok: false,
-      species, lakeName,
-      reason: `No behavior data available yet for ${species} on ${lakeName}. Add an entry to species-intel.js, or fish general structure (points, channel edges, ledges) and adjust based on what you mark on sonar.`,
-      regInfo: regCheck.regInfo,
-    };
-  }
+  const seasonData = SPECIES_BEHAVIOR[lakeKey]?.[species]?.[season];
+  if (!seasonData) return null;
 
-  const season = getSeason(date);
-  const seasonData = speciesData[season];
-  if (!seasonData) {
-    return {
-      ok: false,
-      species, lakeName,
-      reason: `No ${season} data available for ${species} on ${lakeName} yet.`,
-      regInfo: regCheck.regInfo,
-    };
-  }
+  // Map phase number to time-of-day key
+  const todKeys = { 1: 'dawn', 2: 'day', 3: 'day' };
+  const tod = seasonData.timeOfDay[todKeys[phaseNum]] || seasonData.timeOfDay['day'];
+  if (!tod) return null;
 
-  const timeOfDay = getTimeOfDay(launchTimeStr);
-  const todData = seasonData.timeOfDay[timeOfDay] || seasonData.timeOfDay['day'];
-
-  // 3. Compute depth band — function(tempF) or fixed array, then apply
-  // the time-of-day shift (negative = shallower, positive = deeper).
   let [dMin, dMax] = typeof seasonData.depthBand === 'function'
     ? seasonData.depthBand(waterTempF)
-    : seasonData.depthBand;
-  const shift = todData.depthShift || 0;
+    : [...seasonData.depthBand];
+
+  // Phase-specific depth adjustments beyond the standard time-of-day shift
+  const phaseDepthShifts = { 1: tod.depthShift || 0, 2: Math.round((tod.depthShift || 0) / 2), 3: 0 };
+  const shift = phaseDepthShifts[phaseNum];
   dMin = Math.max(1, dMin + shift);
   dMax = Math.max(dMin + 2, dMax + shift);
 
   return {
-    ok: true,
-    species, lakeName, season, timeOfDay,
     depthMin: dMin, depthMax: dMax,
-    lures: todData.lures || [],
-    speed: todData.speed || 2.0,
-    notes: todData.notes || '',
-    regInfo: regCheck.regInfo,
-    sources: seasonData.sources || [],
+    lures: tod.lures || [],
+    speed: tod.speed || 2.0,
+    notes: tod.notes || '',
   };
 }
 
-/**
- * Build a human-readable rationale block for the plan preview / UI.
- */
-export function buildRationaleText(rec) {
-  if (!rec.ok) {
-    return `⚠ ${rec.species} on ${rec.lakeName}: ${rec.reason}`;
+// ── Build 2 rods for a phase ──────────────────────────────────────────────────
+function buildPhaseRods(phaseRec, phaseNum, sides) {
+  if (!phaseRec) return [newRodRow(), newRodRow()];
+  const depth = Math.round((phaseRec.depthMin + phaseRec.depthMax) / 2);
+  const lures = phaseRec.lures.filter(Boolean);
+
+  return sides.map((side, i) => {
+    const rawLure = lures[i % Math.max(1, lures.length)];
+    const resolved = resolveLure(rawLure);
+    const rod = newRodRow({
+      side,
+      position: 'Mid',
+      reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader',
+      depth: String(depth),
+    });
+    if (resolved) {
+      rod.lure = resolved;
+      rod.color = LURE_COLOR_DEFAULTS[resolved] || '';
+      rod.lead = String(autoCalculateLead(rod, phaseRec.speed));
+    } else if (rawLure) {
+      rod.notes = rawLure;
+    }
+    if (phaseRec.notes) {
+      rod.notes = (rod.notes ? rod.notes + ' · ' : '') + phaseRec.notes.slice(0, 50);
+    }
+    return rod;
+  });
+}
+
+// ── Route generation per phase ────────────────────────────────────────────────
+function generateRouteForPhase(phase, phaseRec, lakeName) {
+  if (!phaseRec) return;
+  // Trigger route generation using the existing route-builder functions.
+  // Set depth band inputs, then programmatically click Generate if the
+  // panel is open. Store depth so it's applied when panel opens later.
+  window._smartPlanPhaseRoutes = window._smartPlanPhaseRoutes || [];
+  window._smartPlanPhaseRoutes.push({
+    phase: phase.num,
+    phaseName: phase.name,
+    depthMin: phaseRec.depthMin,
+    depthMax: phaseRec.depthMax,
+    speed: phaseRec.speed,
+    window: `${phase.startStr} – ${phase.endStr}`,
+  });
+
+  // Apply to Route Builder if panel is currently open
+  const minEl = document.getElementById('rbDepthMin');
+  const maxEl = document.getElementById('rbDepthMax');
+  if (minEl && maxEl && phase.num === 1) {
+    // Pre-fill with Phase 1 — user can see it immediately when they open Route Builder
+    minEl.value = phaseRec.depthMin;
+    maxEl.value = phaseRec.depthMax;
   }
+}
+
+// ── Apply to plan fields ──────────────────────────────────────────────────────
+function applyToPlanFields(phaseRecs, phases) {
+  // Use Phase 1 depth/speed as the primary plan fields
+  const p1 = phaseRecs[0];
+  if (!p1) return;
+  const depthEl = document.getElementById('planTargetDepth');
+  const speedEl = document.getElementById('planSpeed');
+  if (depthEl) depthEl.value = `${p1.depthMin}-${p1.depthMax}`;
+  if (speedEl) speedEl.value = String(p1.speed);
+}
+
+// ── Route Builder depth pre-fill on lazy open ─────────────────────────────────
+export function applyStoredSmartPlanDepth() {
+  const routes = window._smartPlanPhaseRoutes;
+  if (!routes || !routes.length) return;
+  const p1 = routes.find(r => r.phase === 1);
+  if (!p1) return;
+  const minEl = document.getElementById('rbDepthMin');
+  const maxEl = document.getElementById('rbDepthMax');
+  if (minEl) minEl.value = p1.depthMin;
+  if (maxEl) maxEl.value = p1.depthMax;
+  const note = document.getElementById('rbContourInfoText');
+  if (note) {
+    const phaseList = routes.map(r =>
+      `Phase ${r.phase} (${r.phaseName}): ${r.depthMin}-${r.depthMax}ft @ ${r.speed}mph [${r.window}]`
+    ).join(' · ');
+    if (!note.textContent.includes('Phase 1')) {
+      note.insertAdjacentHTML('beforeend',
+        `<br><span style="color:var(--accent2);font-size:10px">⚡ Smart Plan phases: ${phaseList}</span>`);
+    }
+  }
+}
+
+// ── Rationale text ────────────────────────────────────────────────────────────
+function buildRationaleText(species, lakeName, season, phases, phaseRecs, phaseInfo) {
   const lines = [];
-  lines.push(`${rec.species} — ${rec.lakeName}, ${rec.season} (${rec.timeOfDay})`);
-  lines.push(`Target depth: ${rec.depthMin}-${rec.depthMax} ft`);
-  lines.push(`Trolling speed: ${rec.speed} mph`);
-  if (rec.lures.length) lines.push(`Suggested lures: ${rec.lures.join(', ')}`);
-  if (rec.notes) lines.push(`Notes: ${rec.notes}`);
-  if (rec.regInfo?.note) lines.push(`Regulations: ${rec.regInfo.note}`);
-  if (rec.sources?.length) lines.push(`Sources: ${rec.sources.join('; ')}`);
+  lines.push(`${species} — ${lakeName}, ${season}`);
+  lines.push(`Sunrise: ${phaseInfo.phases[0].startStr} → Phase boundaries computed from sunrise + solunar`);
+
+  const sol = phaseInfo.solunar;
+  function hToStr(h) {
+    const hh = Math.floor(((h % 24) + 24) % 24);
+    const mm = Math.round((h % 1) * 60);
+    return `${hh % 12 || 12}:${String(mm).padStart(2, '0')} ${hh < 12 ? 'AM' : 'PM'}`;
+  }
+  lines.push(`Solunar majors: ${hToStr(sol.major1)} & ${hToStr(sol.major2)} | minors: ${hToStr(sol.minor1)} & ${hToStr(sol.minor2)}`);
+  lines.push('');
+
+  phases.forEach((phase, i) => {
+    const rec = phaseRecs[i];
+    lines.push(`Phase ${phase.num} — ${phase.name} (${phase.startStr} – ${phase.endStr})`);
+    if (rec) {
+      lines.push(`  Rods ${phase.num * 2 - 1} & ${phase.num * 2} · Depth: ${rec.depthMin}-${rec.depthMax}ft · Speed: ${rec.speed}mph`);
+      lines.push(`  Lures: ${rec.lures.slice(0, 3).join(', ')}`);
+      if (rec.notes) lines.push(`  Notes: ${rec.notes}`);
+    } else {
+      lines.push(`  No data for this phase`);
+    }
+    lines.push('');
+  });
+
   return lines.join('\n');
 }
 
-// ── DOM wiring ───────────────────────────────────────────────────────────
-
+// ── Read DOM inputs ───────────────────────────────────────────────────────────
 function readPlanInputs() {
-  const lakeName = document.getElementById('planLake')?.value || '';
-  const dateStr = document.getElementById('planDate')?.value || '';
-  const launchTimeStr = document.getElementById('planLaunchTime')?.value || '';
-  const waterTempStr = document.getElementById('planWaterTemp')?.value || '';
-  const waterTempF = waterTempStr ? parseFloat(waterTempStr) : null;
-  const species = [...document.querySelectorAll('#planSpeciesChecks input:checked')].map((c) => c.value);
-  return { lakeName, dateStr, launchTimeStr, waterTempF, species };
+  const lakeName    = document.getElementById('planLake')?.value || '';
+  const dateStr     = document.getElementById('planDate')?.value || new Date().toISOString().slice(0, 10);
+  const launchTime  = document.getElementById('planLaunchTime')?.value || '6:00 AM';
+  const returnTime  = document.getElementById('planReturnTime')?.value || '12:00 PM';
+  const waterTempStr= document.getElementById('planWaterTemp')?.value || '';
+  const waterTempF  = waterTempStr ? parseFloat(waterTempStr) : null;
+  const speedStr    = document.getElementById('planSpeed')?.value || '';
+  const speedMph    = speedStr ? parseFloat(speedStr) : 2.0;
+  const species     = [...document.querySelectorAll('#planSpeciesChecks input:checked')].map(c => c.value);
+  return { lakeName, dateStr, launchTime, returnTime, waterTempF, speedMph, species };
 }
 
-/**
- * Apply a recommendation to the rod spread: fills empty rows (or adds new
- * ones if needed) with the recommended depth, lure, and color, spread
- * evenly across the suggested lure list. Does not touch rows the user has
- * already manually configured (non-empty lure field).
- */
-// Kayak rig: 2 lines in the water max, no planer boards, no downriggers.
-// Depth control is lead-length only (already how spread-builder.js works —
-// autoCalculateLead() computes line-out by lure type + speed, no hardware
-// needed). This constant exists so it's a one-line change if Ryan ever
-// adds a second rod holder or fishes from a boat with more capacity.
-const MAX_RODS = 2;
-
-function applyToSpread(rec) {
-  if (!rec.ok || !rec.lures.length) return;
-  const lures = rec.lures.filter((l) => l); // keep all, including live-bait entries
-
-  // Smart Plan REPLACES the spread with exactly MAX_RODS (2, kayak) rows
-  // built from the recommendation. We do NOT try to detect "did the user
-  // manually edit this row" vs "is this still the untouched boot-time
-  // default" — that distinction is impossible to make reliably, and the
-  // previous "skip rows that already have a lure" guard meant Smart Plan
-  // silently did nothing whenever the 6-rod DEFAULT_SPREAD (spread-defaults.js)
-  // was still loaded, which is the normal state on a fresh app load.
-  // Clicking "Generate Smart Plan" is an explicit action — the user wants
-  // the recommendation applied, not a partial result gated on stale defaults.
-  const sides = ['Port', 'Starboard'];
-  const newSpread = [];
-  for (let i = 0; i < MAX_RODS; i++) {
-    const lure = lures[i % lures.length];
-    const row = newRodRow({
-      side: sides[i % 2],
-      position: 'Mid', // kayak: one practical rod position, not Bow/Mid/Stern zones
-      reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader',
-      depth: String(Math.round((rec.depthMin + rec.depthMax) / 2)),
-    });
-    if (lure && LURE_COLOR_DEFAULTS[lure] !== undefined) {
-      if (LURE_COLOR_DEFAULTS[lure]) {
-        // Maps to a real spread-builder lure/color preset
-        row.lure = lure;
-        row.color = LURE_COLOR_DEFAULTS[lure];
-      } else {
-        // Live-bait technique with no plastic-lure color — note it instead
-        row.notes = lure;
-      }
-    } else if (lure) {
-      // Lure string didn't match our color map at all — still show it as
-      // a note so the recommendation isn't silently dropped.
-      row.notes = lure;
-    }
-    if (rec.notes) row.notes = (row.notes ? row.notes + ' · ' : '') + rec.notes.slice(0, 60);
-    newSpread.push(row);
-  }
-  state.SPREAD = newSpread;
-
-  renderSpread();
-}
-
-/**
- * Write the computed depth band + speed into the Plan tab's own
- * planTargetDepth / planSpeed fields. These are NOT cosmetic — they are
- * the actual fields buildPlanPreviewHtml() reads when generating the
- * printed report's "Core Trolling Strategy" table and the "Therefore
- * Protocol Recommendations" box. Previously those fields only ever held
- * whatever the user manually typed (or a hardcoded fallback like
- * "18-28" / "2.4" if left blank) — this is what makes the printed
- * report's recommended depth/speed genuinely computed instead of an
- * echo of user input or a placeholder.
- */
-function applyToPlanFields(rec) {
-  if (!rec.ok) return;
-  const depthEl = document.getElementById('planTargetDepth');
-  const speedEl = document.getElementById('planSpeed');
-  if (depthEl) depthEl.value = `${rec.depthMin}-${rec.depthMax}`;
-  if (speedEl) speedEl.value = String(rec.speed);
-}
-
-/**
- * Apply a recommendation to Route Builder's depth-band inputs, if that
- * panel is currently open / present in the DOM.
- */
-function applyToRouteBuilder(rec) {
-  if (!rec.ok) return;
-  const minEl = document.getElementById('rbDepthMin');
-  const maxEl = document.getElementById('rbDepthMax');
-  const speedNote = document.getElementById('rbContourInfoText');
-  if (minEl) minEl.value = rec.depthMin;
-  if (maxEl) maxEl.value = rec.depthMax;
-  // Route Builder doesn't have a speed field (that's a trolling-spread
-  // concept, not a route-geometry concept) but we can surface it in the
-  // status text so the connection between plan and route is visible.
-  if (speedNote && rec.ok) {
-    const existing = speedNote.textContent || '';
-    if (!existing.includes('Smart depth')) {
-      speedNote.insertAdjacentHTML('beforeend',
-        `<br><span style="color:var(--accent2)">⚡ Smart depth band applied: ${rec.depthMin}-${rec.depthMax}ft (${rec.species}, ${rec.timeOfDay})</span>`);
-    }
-  }
-}
-
-/**
- * Main entry point — reads the Plan tab, generates recommendations for
- * every checked species, writes results into the plan's intel textarea,
- * and applies the FIRST legal recommendation to the spread + route builder.
- */
+// ── Main entry point ──────────────────────────────────────────────────────────
 export function runSmartPlan() {
-  const { lakeName, dateStr, launchTimeStr, waterTempF, species } = readPlanInputs();
-  const outEl = document.getElementById('planSmartPlanOutput');
+  const { lakeName, dateStr, launchTime, returnTime, waterTempF, speedMph, species } = readPlanInputs();
+  const outEl    = document.getElementById('planSmartPlanOutput');
   const statusEl = document.getElementById('smartPlanStatus');
 
-  if (!lakeName) {
-    if (statusEl) { statusEl.textContent = 'Select a lake first'; statusEl.style.color = 'var(--bad)'; }
-    return;
+  function setStatus(msg, ok) {
+    if (statusEl) { statusEl.textContent = msg; statusEl.style.color = ok ? 'var(--accent2)' : 'var(--warn)'; }
   }
-  if (!species.length) {
-    if (statusEl) { statusEl.textContent = 'Check at least one target species'; statusEl.style.color = 'var(--bad)'; }
+
+  if (!lakeName) { setStatus('Select a lake first', false); return; }
+  if (!species.length) { setStatus('Check at least one target species', false); return; }
+
+  // Regulation check
+  const date = new Date(dateStr + 'T12:00:00');
+  const sp = species[0];
+  const regCheck = checkRegulations(lakeName, sp, date);
+  if (!regCheck.legal) {
+    setStatus(`⚠ ${sp} not legal: ${regCheck.reason?.slice(0, 60)}`, false);
+    if (outEl) outEl.value = `REGULATION BLOCK:\n${regCheck.reason}`;
     return;
   }
 
-  const recs = species.map((sp) => getSmartRecommendation({ lakeName, species: sp, dateStr, launchTimeStr, waterTempF }));
-  const rationale = recs.map(buildRationaleText).join('\n\n');
+  const season = getSeason(date);
 
+  // Compute phase timing
+  const phaseInfo = computePhases(launchTime, returnTime, dateStr, lakeName);
+  const { phases } = phaseInfo;
+
+  // Compute range
+  const rangeMiles = computeRangeMiles(speedMph);
+
+  // Get per-phase behavior recommendations
+  const phaseRecs = phases.map(p => getPhaseRecommendation(sp, lakeName, season, p.num, waterTempF));
+
+  if (phaseRecs.every(r => !r)) {
+    setStatus('No behavior data for this lake/species yet', false);
+    if (outEl) outEl.value = `No behavior data available for ${sp} on ${lakeName}. Add entries to species-intel.js.`;
+    return;
+  }
+
+  // Build 6-rod spread (2 rods × 3 phases)
+  const sides = ['Port', 'Starboard'];
+  const newSpread = [];
+  phases.forEach((phase, i) => {
+    const rods = buildPhaseRods(phaseRecs[i], phase.num, sides);
+    rods.forEach(r => {
+      // Tag each rod with its phase number for the plan UI
+      r.notes = `[Ph${phase.num}: ${phase.startStr}-${phase.endStr}] ` + (r.notes || '');
+      newSpread.push(r);
+    });
+  });
+  state.SPREAD = newSpread;
+  renderSpread();
+
+  // Store phase route info + pre-fill plan fields
+  window._smartPlanPhaseRoutes = [];
+  phases.forEach((phase, i) => generateRouteForPhase(phase, phaseRecs[i], lakeName));
+  applyToPlanFields(phaseRecs, phases);
+  applyStoredSmartPlanDepth();
+
+  // Build rationale
+  const rationale = buildRationaleText(sp, lakeName, season, phases, phaseRecs, phaseInfo);
   if (outEl) outEl.value = rationale;
 
-  const firstLegal = recs.find((r) => r.ok);
-  if (firstLegal) {
-    applyToPlanFields(firstLegal);
-    applyToSpread(firstLegal);
-    applyToRouteBuilder(firstLegal);
-    if (statusEl) {
-      statusEl.textContent = `✓ Applied ${firstLegal.species} plan: ${firstLegal.depthMin}-${firstLegal.depthMax}ft`;
-      statusEl.style.color = 'var(--accent2)';
-    }
-  } else {
-    if (statusEl) {
-      statusEl.textContent = '⚠ No legal/available recommendation for checked species — see notes below';
-      statusEl.style.color = 'var(--warn)';
-    }
-  }
-
-  return recs;
+  const firstRec = phaseRecs.find(Boolean);
+  setStatus(
+    `✓ 3-phase plan: ${phases.map((p, i) => phaseRecs[i] ? `Ph${p.num} ${phaseRecs[i].depthMin}-${phaseRecs[i].depthMax}ft` : '').filter(Boolean).join(' → ')} | Range: ${rangeMiles.toFixed(1)}mi`,
+    true
+  );
+  return { phases, phaseRecs, phaseInfo, rangeMiles };
 }
 
-// Wire the button (added to the Plan tab UI alongside the species checks)
+// Wire the button
 setTimeout(() => {
   document.getElementById('runSmartPlanBtn')?.addEventListener('click', runSmartPlan);
 }, 800);
 
 window.runSmartPlan = runSmartPlan;
+window.applyStoredSmartPlanDepth = applyStoredSmartPlanDepth;
 
 console.log('[smart-plan] module ready');
