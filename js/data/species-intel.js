@@ -323,8 +323,32 @@ export function getTimeOfDay(launchTimeStr) {
  * Check whether a species is legal to target right now on a given lake.
  * Returns { legal: bool, reason: string|null, regInfo: object|null }
  */
+/**
+ * Normalize a lake-dropdown value (e.g. "Lake Wateree, SC" or
+ * "river:wateree-tailrace") against this file's REGULATIONS/SPECIES_BEHAVIOR
+ * keys (e.g. "Lake Wateree"). The Plan tab's dropdown values come from
+ * LAKE_DB keys in data/lakes.js, which include a ", SC" suffix and other
+ * variations that don't exact-match the bare lake names used here.
+ * Exact match first, then strip a trailing ", XX" state suffix and retry,
+ * then fall back to substring containment in either direction (same
+ * tolerant pattern utility-sync.js already uses for this exact problem).
+ */
+export function resolveLakeKey(lakeName, table) {
+  if (!lakeName) return null;
+  if (table[lakeName]) return lakeName;
+  const stripped = lakeName.replace(/,\s*[A-Za-z]{2}$/, '').trim();
+  if (table[stripped]) return stripped;
+  const lower = stripped.toLowerCase();
+  const found = Object.keys(table).find((k) => {
+    const kl = k.toLowerCase();
+    return lower.includes(kl) || kl.includes(lower);
+  });
+  return found || null;
+}
+
 export function checkRegulations(lakeName, species, date) {
-  const lakeRegs = REGULATIONS[lakeName];
+  const key = resolveLakeKey(lakeName, REGULATIONS);
+  const lakeRegs = key ? REGULATIONS[key] : null;
   if (!lakeRegs || !lakeRegs[species]) {
     return { legal: true, reason: null, regInfo: null, note: 'No specific regulation data available — verify locally before fishing.' };
   }
