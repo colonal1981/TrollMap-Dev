@@ -185,6 +185,60 @@ export function renderContourLayer(showSmart = true, showRaw = false) {
   }
 }
 
+// ── Auto-load all known datasets on startup ──────────────────────────────────
+// Fetches the dataset list and merges every available contour GeoJSON into one
+// combined FeatureCollection so the whole map shows depth data immediately on
+// open, with no manual "load this lake" step.
+
+export async function loadAllContoursOnStartup() {
+  try {
+    const datasets = await fetchDatasetList();
+    if (!datasets.length) {
+      console.warn('[contour-data] no datasets found for auto-load');
+      return;
+    }
+    console.log(`[contour-data] auto-loading ${datasets.length} dataset(s)...`);
+
+    const allFeatures = [];
+    const loadedKeys = [];
+    for (const ds of datasets) {
+      const key = ds.name;
+      if (!datasetCache[key]) datasetCache[key] = { smart: null, raw: null };
+      const cache = datasetCache[key];
+
+      // Prefer smart, fall back to raw — same priority as manual load
+      let gj = await fetchContourGeoJSON(key, 'smart');
+      if (!gj) gj = await fetchContourGeoJSON(key, 'raw');
+      if (!gj?.features?.length) {
+        console.warn(`[contour-data] no features for ${key}, skipping`);
+        continue;
+      }
+      cache.smart = cache.smart || gj;
+      allFeatures.push(...gj.features);
+      loadedKeys.push(key);
+    }
+
+    if (!allFeatures.length) {
+      console.warn('[contour-data] auto-load found no features across any dataset');
+      return;
+    }
+
+    // Tag each feature with its source lake so later filtering/UI can split
+    // them back out if needed, without re-fetching.
+    const combined = { type: 'FeatureCollection', features: allFeatures };
+
+    state.ACTIVE_CONTOUR = { smart: combined, raw: null };
+    state.ACTIVE_CONTOUR_KEY = `all_lakes (${loadedKeys.length})`;
+    state.ACTIVE_CONTOUR_LAKES = loadedKeys;
+
+    notifyChange();
+    renderContourLayer(true, false);
+    console.log(`[contour-data] auto-loaded ${allFeatures.length} features across ${loadedKeys.length} lake(s): ${loadedKeys.join(', ')}`);
+  } catch (e) {
+    console.warn('[contour-data] auto-load failed:', e);
+  }
+}
+
 // ── Load a dataset ────────────────────────────────────────────────────────────
 
 export async function loadContourDataset(key, preferSmart = true, loadRaw = false) {
