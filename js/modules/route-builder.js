@@ -555,8 +555,10 @@ function generateContourRoutes(cfg) {
     // True local band half-width for THIS spine, scaled by the amplitude input.
     // Floored at the raw amplitude so a degenerate measurement never collapses
     // the swing to nothing.
-    const halfWidth = bandHalfWidthForSpine(src.coords);
-    const passAmplitude = Math.max(amplitude, halfWidth * ampScale);
+    // Use the user's amplitude setting directly.
+    // The auto-measured band half-width was overriding user input with huge values
+    // on narrow water bodies like creeks, causing routes to swing over land.
+    const passAmplitude = amplitude;
 
     // Boustrophedon: reverse every other pass so the lawnmower flows continuously
     if (flip) spine = spine.slice().reverse();
