@@ -682,7 +682,7 @@
             </div>
           </div>
 
-          <!-- Section 1: Trip Details -->
+            <!-- Section 1: Trip Details -->
           <div class="card plan-section">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
               <h4 style="margin:0">📅 Trip Details</h4>
@@ -691,6 +691,7 @@
                 <button id="autoNameBtn" class="small" title="Auto-generate name">⚡ Auto-name</button>
               </div>
             </div>
+            
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
               <div>
                 <label>Waterbody</label>
@@ -707,21 +708,31 @@
               <div><label>Trip Date</label><input type="date" id="planDate" style="width:100%"></div>
               <div><label>Launch Time</label><input type="time" id="planLaunchTime" value="06:00" style="width:100%"></div>
               <div><label>Return Time</label><input type="time" id="planReturnTime" value="12:00" style="width:100%"></div>
-              
             </div>
-            <div style="margin-top:10px">
-              <label>Target Species</label>
-              <div id="planSpeciesChecks" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:4px">
-                <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="Striped Bass" checked> Striped Bass</label>
-                <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="Hybrid"> Hybrid Striper</label>
-                <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="Largemouth Bass"> Largemouth</label>
-                <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="Catfish"> Catfish</label>
-                <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="Crappie"> Crappie</label>
-                <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="White Bass"> White Bass</label>
+            
+            <div style="margin-top:15px; display:flex; justify-content:space-between; align-items:flex-end;">
+              <div style="flex-grow: 1;">
+                <label>Target Species</label>
+                <div id="planSpeciesChecks" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:4px">
+                  <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="Striped Bass" checked> Striped Bass</label>
+                  <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="Hybrid"> Hybrid Striper</label>
+                  <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="Largemouth Bass"> Largemouth</label>
+                  <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="Catfish"> Catfish</label>
+                  <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="Crappie"> Crappie</label>
+                  <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="White Bass"> White Bass</label>
+                </div>
+              </div>
+              <div>
+                <button id="runSmartPlanBtn" type="button" style="background:#ff9800; color:white; font-weight:bold; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">⚡ Generate Smart Plan</button>
               </div>
             </div>
+            
+            <!-- Output container for the rationale text -->
+            <div style="margin-top:15px;">
+              <span id="smartPlanStatus" style="font-size: 12px; font-weight: 600; display:block; margin-bottom:4px;"></span>
+              <textarea id="planSmartPlanOutput" readonly placeholder="Smart Plan rationale will appear here..." style="width:100%; height:60px; background:#f9f9f9; border:1px solid #ddd; resize:none; font-family:monospace; font-size:11px; padding:6px;"></textarea>
+            </div>
           </div>
-
           <!-- Section 2: Conditions & Live Utility Pool Level -->
           <div class="card plan-section" id="conditionsCard">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px">
