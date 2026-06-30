@@ -24,7 +24,7 @@ import { newRodRow } from '../utils/rod-row.js';
 import { renderSpread } from './spread-builder.js';
 import {
   SPECIES_BEHAVIOR, REGULATIONS,
-  getSeason, getTimeOfDay, checkRegulations,
+  getSeason, getTimeOfDay, checkRegulations, resolveLakeKey,
 } from '../data/species-intel.js';
 
 // ── Lure → color pairing ────────────────────────────────────────────────
@@ -81,8 +81,12 @@ export function getSmartRecommendation({ lakeName, species, dateStr, launchTimeS
     };
   }
 
-  // 2. Look up behavior data for this lake/species.
-  const lakeData = SPECIES_BEHAVIOR[lakeName];
+  // 2. Look up behavior data for this lake/species. Uses the same fuzzy
+  // lake-key resolution as checkRegulations(), since the Plan tab's
+  // dropdown sends values like "Lake Wateree, SC" that don't exact-match
+  // this file's bare "Lake Wateree" keys.
+  const lakeKey = resolveLakeKey(lakeName, SPECIES_BEHAVIOR);
+  const lakeData = lakeKey ? SPECIES_BEHAVIOR[lakeKey] : null;
   const speciesData = lakeData?.[species];
   if (!speciesData) {
     return {
