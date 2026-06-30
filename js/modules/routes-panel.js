@@ -6,12 +6,10 @@
  * sub-module to populate its tab.
  */
 
-import { buildCapturePanel }     from './capture-panel.js';
 import { buildContourDataPanel }  from './contour-data.js';
 import { buildRouteBuilderPanel } from './route-builder.js';
 
 const TABS = [
-  { id: 'capture',      label: '📡 Capture'       },
   { id: 'contourData',  label: '🗂 Contour Data'   },
   { id: 'routeBuilder', label: '🗺️ Route Builder'  },
 ];
@@ -103,7 +101,6 @@ function openPanel(shell, tabId) {
   if (!tabsPopulated[tabId]) {
     const pane = document.getElementById(`rpPane-${tabId}`);
     if (pane) {
-      if (tabId === 'capture')      buildCapturePanel(pane);
       if (tabId === 'contourData')  buildContourDataPanel(pane);
       if (tabId === 'routeBuilder') buildRouteBuilderPanel(pane);
     }
@@ -134,7 +131,7 @@ function init() {
   // Toolbar button
   document.getElementById('btnContourRoutes')?.addEventListener('click', () => {
     if (panelOpen) closePanel(shell);
-    else openPanel(shell, 'capture');
+    else openPanel(shell, 'contourData');
   });
 
   // Close button

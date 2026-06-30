@@ -16,7 +16,6 @@
  */
 
 import { state, CF_WORKER_URL } from '../core/state.js';
-import { addChartLayer } from './chart-mosaic.js';
 
 // ── Internal state ────────────────────────────────────────────────────────────
 
@@ -64,72 +63,6 @@ async function fetchContourGeoJSON(key, type) {
     return await r.json();
   } catch (_) {
     return null;
-  }
-}
-
-// ── Raw tile PNG overlay (for QA comparison) ────────────────────────────────
-
-const RAW_TILE_PREFIX = '__raw_contour_tile__';
-
-async function showRawTileOverlay(key) {
-  // Fetch the index to get tile stems
-  try {
-    const CB = `?v=${Date.now()}`;
-    const idxResp = await fetch(`${CF_WORKER_URL}/chartpacks/${key}/index.json${CB}`, { cache: 'no-store' });
-    if (!idxResp.ok) { console.warn('[contour-data] no index.json for', key); return; }
-    const idx = await idxResp.json();
-    const stems = idx.tiles || [];
-    if (!stems.length) return;
-
-    for (const stem of stems) {
-      const pngUrl = `${CF_WORKER_URL}/chartpacks/${key}/contours/${stem}_contours.png${CB}`;
-      const georefUrl = `${CF_WORKER_URL}/chartpacks/${key}/contours/${stem}_contours.georef.json${CB}`;
-      try {
-        const [pngResp, georefResp] = await Promise.all([
-          fetch(pngUrl, { cache: 'no-store' }),
-          fetch(georefUrl, { cache: 'no-store' }),
-        ]);
-        if (!pngResp.ok || !georefResp.ok) continue;
-        const georef = await georefResp.json();
-        const blob = await pngResp.blob();
-        const dataUrl = await new Promise((res) => {
-          const reader = new FileReader();
-          reader.onload = () => res(reader.result);
-          reader.readAsDataURL(blob);
-        });
-        // addChartLayer expects {north,south,east,west} object directly
-        const b = georef.bounds || georef;
-        const bounds = {
-          north: b.north ?? b.bounds?.north,
-          south: b.south ?? b.bounds?.south,
-          east:  b.east  ?? b.bounds?.east,
-          west:  b.west  ?? b.bounds?.west,
-        };
-        if (!bounds.north || !bounds.south) {
-          console.warn('[contour-data] bad bounds in georef for', stem, georef);
-          continue;
-        }
-        addChartLayer(`${RAW_TILE_PREFIX}${stem}`, dataUrl, bounds, 0.75, 0);
-      } catch (e) {
-        console.warn('[contour-data] failed to load tile', stem, e);
-      }
-    }
-    console.log(`[contour-data] raw tile overlay loaded for ${key}`);
-  } catch (e) {
-    console.warn('[contour-data] showRawTileOverlay failed:', e);
-  }
-}
-
-function hideRawTileOverlay() {
-  // Remove all chart layers that were added as raw tile overlays
-  const toRemove = state.CHARTS?.filter(c => c.name?.startsWith(RAW_TILE_PREFIX)) || [];
-  toRemove.forEach(c => {
-    if (c.layer && state.MAP) state.MAP.removeLayer(c.layer);
-  });
-  if (state.CHARTS) {
-    state.CHARTS.splice(0, state.CHARTS.length,
-      ...state.CHARTS.filter(c => !c.name?.startsWith(RAW_TILE_PREFIX))
-    );
   }
 }
 
@@ -286,26 +219,19 @@ export async function loadContourDataset(key, preferSmart = true, loadRaw = fals
 export function buildContourDataPanel(container) {
   container.innerHTML = `
     <div style="margin-bottom:10px">
-      <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Cloud datasets</div>
-      <div id="cdDatasetList" style="font-size:11px;color:var(--muted)">Loading...</div>
-      <button id="cdRefresh" style="margin-top:6px;width:100%;height:28px;font-size:11px;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:5px;cursor:pointer">↻ Refresh list</button>
-    </div>
-
-    <div style="border-top:1px solid var(--line);padding-top:10px;margin-top:4px">
-      <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Active dataset</div>
-      <div id="cdActiveInfo" style="font-size:11px;color:var(--muted);background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:8px">No dataset loaded</div>
+      <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Loaded lakes</div>
+      <div id="cdActiveInfo" style="font-size:11px;color:var(--muted);background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:8px">No data loaded</div>
+      <button id="cdReloadAll" style="margin-top:6px;width:100%;height:28px;font-size:11px;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:5px;cursor:pointer">↻ Reload all lakes</button>
     </div>
 
     <div style="border-top:1px solid var(--line);padding-top:10px;margin-top:10px">
-      <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Display options</div>
-      <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:11px;color:var(--text)">
-        <input type="checkbox" id="cdShowSmart" checked> Show smart contours
-      </label>
-      <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:11px;color:var(--text)">
-        <input type="checkbox" id="cdShowRaw"> Show raw contours
-      </label>
+      <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Individual lakes</div>
+      <div id="cdDatasetList" style="font-size:11px;color:var(--muted)">Loading...</div>
+    </div>
+
+    <div style="border-top:1px solid var(--line);padding-top:10px;margin-top:10px">
       <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text)">
-        <input type="checkbox" id="cdShowContourLayer" checked> Show on map
+        <input type="checkbox" id="cdShowContourLayer" checked> Show contours on map
       </label>
     </div>
 
@@ -321,7 +247,17 @@ export function buildContourDataPanel(container) {
   `;
 
   // Wire events
-  document.getElementById('cdRefresh')?.addEventListener('click', () => refreshDatasetList(container));
+  document.getElementById('cdReloadAll')?.addEventListener('click', async () => {
+    const btn = document.getElementById('cdReloadAll');
+    btn.textContent = 'Reloading...';
+    btn.disabled = true;
+    await loadAllContoursOnStartup();
+    updateActiveInfo();
+    refreshDatasetList(container);
+    btn.textContent = '↻ Reload all lakes';
+    btn.disabled = false;
+  });
+
   document.getElementById('cdLocalFile')?.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -338,47 +274,46 @@ export function buildContourDataPanel(container) {
     e.target.value = '';
   });
 
-  ['cdShowSmart', 'cdShowRaw', 'cdShowContourLayer'].forEach(id => {
-    document.getElementById(id)?.addEventListener('change', redrawIfVisible);
-  });
+  document.getElementById('cdShowContourLayer')?.addEventListener('change', redrawIfVisible);
 
   refreshDatasetList(container);
+  updateActiveInfo();
 }
 
-async function redrawIfVisible() {
+function redrawIfVisible() {
   const showLayer = document.getElementById('cdShowContourLayer')?.checked !== false;
-  const showSmart = document.getElementById('cdShowSmart')?.checked !== false;
-  const showRaw   = document.getElementById('cdShowRaw')?.checked || false;
-
-  // Smart vector contours
   if (showLayer) {
-    renderContourLayer(showSmart, false);
-  } else {
-    if (state.CONTOUR_LAYER) state.MAP?.removeLayer(state.CONTOUR_LAYER);
-  }
-
-  // Raw tile PNG overlay (i-Boating chart tiles for QA comparison)
-  if (showRaw && state.ACTIVE_CONTOUR_KEY) {
-    await showRawTileOverlay(state.ACTIVE_CONTOUR_KEY);
-  } else {
-    hideRawTileOverlay();
+    renderContourLayer(true, false);
+  } else if (state.CONTOUR_LAYER) {
+    state.MAP?.removeLayer(state.CONTOUR_LAYER);
   }
 }
 
 function updateActiveInfo() {
   const el = document.getElementById('cdActiveInfo');
   if (!el) return;
-  const key = state.ACTIVE_CONTOUR_KEY;
   const c = state.ACTIVE_CONTOUR;
-  if (!key || !c) { el.textContent = 'No dataset loaded'; return; }
-  const smartCount = c.smart?.features?.length || 0;
-  const rawCount   = c.raw?.features?.length   || 0;
-  el.innerHTML = `
-    <div style="color:var(--accent);font-weight:600;margin-bottom:3px">${key}</div>
-    ${smartCount ? `<div>Smart: ${smartCount.toLocaleString()} features</div>` : ''}
-    ${rawCount   ? `<div>Raw: ${rawCount.toLocaleString()} features</div>`   : ''}
-    ${!smartCount && !rawCount ? '<div style="color:var(--muted)">No features loaded</div>' : ''}
-  `;
+  const lakes = state.ACTIVE_CONTOUR_LAKES;
+  const featureCount = c?.smart?.features?.length || c?.raw?.features?.length || 0;
+
+  if (!featureCount) {
+    el.innerHTML = '<div style="color:var(--muted)">No contour data loaded</div>';
+    return;
+  }
+
+  if (Array.isArray(lakes) && lakes.length) {
+    const lakeNames = lakes.map(l => l.replace(/^lake_/, '').replace(/_/g, ' ')).join(', ');
+    el.innerHTML = `
+      <div style="color:var(--accent);font-weight:600;margin-bottom:3px">${lakes.length} lake(s) loaded</div>
+      <div>${lakeNames}</div>
+      <div style="color:var(--muted);margin-top:3px">${featureCount.toLocaleString()} total features</div>
+    `;
+  } else {
+    el.innerHTML = `
+      <div style="color:var(--accent);font-weight:600;margin-bottom:3px">${state.ACTIVE_CONTOUR_KEY || 'Local file'}</div>
+      <div>${featureCount.toLocaleString()} features</div>
+    `;
+  }
 }
 
 async function refreshDatasetList(container) {
