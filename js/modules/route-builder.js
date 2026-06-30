@@ -971,6 +971,12 @@ export function buildRouteBuilderPanel(container) {
   wireRouteBuilder();
   updateContourInfo();
   onContourChange(updateContourInfo);
+  // Apply any Smart Plan depth recommendation that was set before this
+  // panel was opened (the panel is lazy-loaded on first open, so the
+  // inputs didn't exist when Smart Plan ran).
+  if (typeof window.applyStoredSmartPlanDepth === 'function') {
+    window.applyStoredSmartPlanDepth();
+  }
 }
 
 function readCfg() {
