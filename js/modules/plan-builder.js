@@ -14,6 +14,7 @@ import { LAKE_DB } from "../data/lakes.js";
 import { renderSpread } from "./spread-builder.js";
 import { newRodRow } from "../utils/rod-row.js";
 import { getFilename, setFilename } from "../core/map-init.js";
+import { runSmartPlan } from './smart-plan.js';
 
 // ─────────────────────────────────────────────────────────────
 // FIX: calcTrollTimes was referenced but never defined (the exact
