@@ -179,40 +179,43 @@ function applyToSpread(rec) {
   if (!rec.ok || !rec.lures.length) return;
   const lures = rec.lures.filter((l) => l); // keep all, including live-bait entries
 
-  // Cap at MAX_RODS (2 for kayak) — never auto-add more rods than the
-  // platform can actually fish. Use existing rows first; only add new
-  // ones if the spread is currently empty/sparse, and never exceed the cap.
-  const targetRodCount = Math.min(MAX_RODS, Math.max(state.SPREAD.length, 1));
-  while (state.SPREAD.length < targetRodCount) {
-    state.SPREAD.push(newRodRow());
-  }
-  // If somehow more rows exist than the kayak can fish (e.g. leftover from
-  // a previous boat-spread plan), leave the extras alone rather than
-  // deleting user data — just don't populate beyond MAX_RODS with new picks.
-
+  // Smart Plan REPLACES the spread with exactly MAX_RODS (2, kayak) rows
+  // built from the recommendation. We do NOT try to detect "did the user
+  // manually edit this row" vs "is this still the untouched boot-time
+  // default" — that distinction is impossible to make reliably, and the
+  // previous "skip rows that already have a lure" guard meant Smart Plan
+  // silently did nothing whenever the 6-rod DEFAULT_SPREAD (spread-defaults.js)
+  // was still loaded, which is the normal state on a fresh app load.
+  // Clicking "Generate Smart Plan" is an explicit action — the user wants
+  // the recommendation applied, not a partial result gated on stale defaults.
   const sides = ['Port', 'Starboard'];
-  const positions = ['Mid']; // kayak: one practical rod position, not Bow/Mid/Stern zones
-  let lureIdx = 0;
-
-  state.SPREAD.slice(0, MAX_RODS).forEach((rod, i) => {
-    if (rod.lure && rod.lure.trim()) return; // don't overwrite user's manual picks
-    const lure = lures[lureIdx % lures.length];
-    lureIdx++;
-    rod.side = rod.side || sides[i % 2]; // one port, one starboard
-    rod.position = rod.position || positions[0];
-    rod.depth = String(Math.round((rec.depthMin + rec.depthMax) / 2));
+  const newSpread = [];
+  for (let i = 0; i < MAX_RODS; i++) {
+    const lure = lures[i % lures.length];
+    const row = newRodRow({
+      side: sides[i % 2],
+      position: 'Mid', // kayak: one practical rod position, not Bow/Mid/Stern zones
+      reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader',
+      depth: String(Math.round((rec.depthMin + rec.depthMax) / 2)),
+    });
     if (lure && LURE_COLOR_DEFAULTS[lure] !== undefined) {
-      // Only set lure/color if it maps to an actual spread-builder preset.
-      // Live-bait entries (color=null) get a notes annotation instead.
       if (LURE_COLOR_DEFAULTS[lure]) {
-        rod.lure = lure;
-        rod.color = LURE_COLOR_DEFAULTS[lure];
+        // Maps to a real spread-builder lure/color preset
+        row.lure = lure;
+        row.color = LURE_COLOR_DEFAULTS[lure];
       } else {
-        rod.notes = (rod.notes ? rod.notes + ' · ' : '') + lure;
+        // Live-bait technique with no plastic-lure color — note it instead
+        row.notes = lure;
       }
+    } else if (lure) {
+      // Lure string didn't match our color map at all — still show it as
+      // a note so the recommendation isn't silently dropped.
+      row.notes = lure;
     }
-    rod.notes = rod.notes || rec.notes?.slice(0, 60) || '';
-  });
+    if (rec.notes) row.notes = (row.notes ? row.notes + ' · ' : '') + rec.notes.slice(0, 60);
+    newSpread.push(row);
+  }
+  state.SPREAD = newSpread;
 
   renderSpread();
 }

@@ -14,7 +14,6 @@ import { LAKE_DB } from "../data/lakes.js";
 import { renderSpread } from "./spread-builder.js";
 import { newRodRow } from "../utils/rod-row.js";
 import { getFilename, setFilename } from "../core/map-init.js";
-import { runSmartPlan } from './smart-plan.js';
 
 // ─────────────────────────────────────────────────────────────
 // FIX: calcTrollTimes was referenced but never defined (the exact
@@ -36,11 +35,21 @@ function calcTrollTimes() {
         for (let j = 1; j < pts.length; j++) {
           const a = pts[j - 1];
           const b = pts[j];
-          const dLat = (b.lat - a.lat) * 69;
-          const dLon = (b.lon - a.lon) * 69;
+          // Track points are stored as plain [lat, lon] arrays (see
+          // utils/parsers.js pts.push([lat, lon])), NOT {lat, lon} objects.
+          // The previous a.lat/a.lon access was always undefined, which is
+          // why every Lane Telemetry row showed "NaN mi / NaN min".
+          const aLat = Array.isArray(a) ? a[0] : a.lat;
+          const aLon = Array.isArray(a) ? a[1] : a.lon;
+          const bLat = Array.isArray(b) ? b[0] : b.lat;
+          const bLon = Array.isArray(b) ? b[1] : b.lon;
+          const dLat = (bLat - aLat) * 69;
+          const dLon = (bLon - aLon) * 69;
           totalFt += Math.hypot(dLat, dLon) * 5280;
         }
-        distMi = totalFt / 6076.12;
+        // Statute miles (5280 ft/mi) — was previously dividing by 6076.12
+        // (the nautical-mile conversion), which under-reported distance.
+        distMi = totalFt / 5280;
       }
 
       const mins = Math.max(4, Math.round((distMi / Math.max(0.8, speedMph)) * 60));
