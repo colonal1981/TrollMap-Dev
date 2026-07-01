@@ -55,7 +55,6 @@ async function loadBankPier() {
   BANK_DATA = window.TrollMapData?.loadBankPier
     ? normalizeRows(await window.TrollMapData.loadBankPier())
     : normalizeRows(window.TRISTATE_MASTER_BANK_PIER);
-  console.log('[gis] bank/pier rows:', BANK_DATA.length, BANK_DATA[0]);
   return BANK_DATA;
 }
 
@@ -64,7 +63,6 @@ async function loadPaddle() {
   PADDLE_DATA = window.TrollMapData?.loadPaddle
     ? normalizeRows(await window.TrollMapData.loadPaddle())
     : normalizeRows(window.TRISTATE_MASTER_PADDLE);
-  console.log('[gis] paddle rows:', PADDLE_DATA.length, PADDLE_DATA[0]);
   return PADDLE_DATA;
 }
 
@@ -73,25 +71,17 @@ async function loadHotspots() {
   ATTRACTOR_DATA = window.TrollMapData?.loadHotspots
     ? normalizeRows(await window.TrollMapData.loadHotspots())
     : normalizeRows(window.TRISTATE_MASTER_HOTSPOTS);
-  console.log('[gis] attractor rows:', ATTRACTOR_DATA.length, ATTRACTOR_DATA[0]);
   return ATTRACTOR_DATA;
 }
 
-async function buildBankLayer() {
-  if (BANK_LAYER) return BANK_LAYER;
-
-  const data = await loadBankPier();
-  BANK_LAYER = L.layerGroup();
-
-  if (!data.length) {
-    setBanner('No Bank/Pier records were returned from the data file.');
-    setTimeout(() => setBanner(''), 2500);
-    return BANK_LAYER;
-  }
-
-  data.forEach((b) => {
+function updateBankMarkers() {
+  if (!mapReady() || !BANK_LAYER || !BANK_VISIBLE || !BANK_DATA) return;
+  BANK_LAYER.clearLayers();
+  const bounds = getMap().getBounds().pad(0.5);
+  
+  BANK_DATA.forEach((b) => {
     const ll = getLatLng(b);
-    if (!ll) return;
+    if (!ll || !bounds.contains(ll)) return;
 
     const [lat, lon] = ll;
     const type = b.type || '';
@@ -106,31 +96,19 @@ async function buildBankLayer() {
         iconAnchor: [0, 8],
       }),
     });
-
     marker.bindPopup(buildPopup(b.name || 'Bank/Pier', type, lat, lon, ico, '#aed581'));
     BANK_LAYER.addLayer(marker);
   });
-
-  setBanner(`Loaded ${data.length} bank/pier spots`);
-  setTimeout(() => setBanner(''), 1800);
-  return BANK_LAYER;
 }
 
-async function buildPaddleLayer() {
-  if (PADDLE_LAYER) return PADDLE_LAYER;
+function updatePaddleMarkers() {
+  if (!mapReady() || !PADDLE_LAYER || !PADDLE_VISIBLE || !PADDLE_DATA) return;
+  PADDLE_LAYER.clearLayers();
+  const bounds = getMap().getBounds().pad(0.5);
 
-  const data = await loadPaddle();
-  PADDLE_LAYER = L.layerGroup();
-
-  if (!data.length) {
-    setBanner('No Kayak/Paddle records were returned from the data file.');
-    setTimeout(() => setBanner(''), 2500);
-    return PADDLE_LAYER;
-  }
-
-  data.forEach((p) => {
+  PADDLE_DATA.forEach((p) => {
     const ll = getLatLng(p);
-    if (!ll) return;
+    if (!ll || !bounds.contains(ll)) return;
 
     const [lat, lon] = ll;
     const type = p.type || '';
@@ -142,31 +120,19 @@ async function buildPaddleLayer() {
         iconAnchor: [0, 8],
       }),
     });
-
     marker.bindPopup(buildPopup(p.name || 'Paddle Launch', type, lat, lon, '🛶', '#ffb703'));
     PADDLE_LAYER.addLayer(marker);
   });
-
-  setBanner(`Loaded ${data.length} kayak/paddle spots`);
-  setTimeout(() => setBanner(''), 1800);
-  return PADDLE_LAYER;
 }
 
-async function buildAttractorLayer() {
-  if (ATTRACTOR_LAYER) return ATTRACTOR_LAYER;
+function updateAttractorMarkers() {
+  if (!mapReady() || !ATTRACTOR_LAYER || !ATTRACTOR_VISIBLE || !ATTRACTOR_DATA) return;
+  ATTRACTOR_LAYER.clearLayers();
+  const bounds = getMap().getBounds().pad(0.5);
 
-  const data = await loadHotspots();
-  ATTRACTOR_LAYER = L.layerGroup();
-
-  if (!data.length) {
-    setBanner('No fish attractor records were returned from the data file.');
-    setTimeout(() => setBanner(''), 2500);
-    return ATTRACTOR_LAYER;
-  }
-
-  data.forEach((h) => {
+  ATTRACTOR_DATA.forEach((h) => {
     const ll = getLatLng(h);
-    if (!ll) return;
+    if (!ll || !bounds.contains(ll)) return;
 
     const [lat, lon] = ll;
     const type = h.type || 'Hardwood Brush Pile / Sunk PVC Tree Habitat';
@@ -181,23 +147,37 @@ async function buildAttractorLayer() {
       fillColor: color,
       fillOpacity: 0.95,
     });
-
-    marker.bindTooltip(`${ico} ${esc(h.name || 'Attractor')}`, {
-      sticky: true,
-      direction: 'top',
-      opacity: 0.95,
-    });
-
+    marker.bindTooltip(`${ico} ${esc(h.name || 'Attractor')}`, { sticky: true, direction: 'top', opacity: 0.95 });
     marker.bindPopup(buildPopup(h.name || 'Attractor', type, lat, lon, ico, color));
     ATTRACTOR_LAYER.addLayer(marker);
   });
+}
 
-  setBanner(`Loaded ${data.length} fish attractors`);
-  setTimeout(() => setBanner(''), 1800);
+async function buildBankLayer() {
+  if (BANK_LAYER) return BANK_LAYER;
+  await loadBankPier();
+  BANK_LAYER = L.layerGroup();
+  getMap().on('moveend', updateBankMarkers);
+  return BANK_LAYER;
+}
+
+async function buildPaddleLayer() {
+  if (PADDLE_LAYER) return PADDLE_LAYER;
+  await loadPaddle();
+  PADDLE_LAYER = L.layerGroup();
+  getMap().on('moveend', updatePaddleMarkers);
+  return PADDLE_LAYER;
+}
+
+async function buildAttractorLayer() {
+  if (ATTRACTOR_LAYER) return ATTRACTOR_LAYER;
+  await loadHotspots();
+  ATTRACTOR_LAYER = L.layerGroup();
+  getMap().on('moveend', updateAttractorMarkers);
   return ATTRACTOR_LAYER;
 }
 
-function wireToggleButton(btn, getVisible, setVisible, buildFn, activeBg = 'var(--accent)', activeColor = '#000') {
+function wireToggleButton(btn, getVisible, setVisible, buildFn, updateFn, activeBg = 'var(--accent)', activeColor = '#000') {
   btn?.addEventListener('click', async () => {
     if (!mapReady()) return;
 
@@ -206,13 +186,14 @@ function wireToggleButton(btn, getVisible, setVisible, buildFn, activeBg = 'var(
     if (!layer) return;
 
     if (getVisible()) {
-      if (map.hasLayer(layer)) map.removeLayer(layer);
+      map.removeLayer(layer);
       setVisible(false);
       btn.style.background = '';
       btn.style.color = '';
     } else {
       layer.addTo(map);
       setVisible(true);
+      updateFn(); // Immediately draw visible markers
       btn.style.background = activeBg;
       btn.style.color = activeColor;
     }
@@ -229,11 +210,11 @@ function init() {
     return;
   }
 
-  wireToggleButton(btnBank, () => BANK_VISIBLE, (v) => { BANK_VISIBLE = v; }, buildBankLayer);
-  wireToggleButton(btnPad, () => PADDLE_VISIBLE, (v) => { PADDLE_VISIBLE = v; }, buildPaddleLayer);
-  wireToggleButton(btnAttr, () => ATTRACTOR_VISIBLE, (v) => { ATTRACTOR_VISIBLE = v; }, buildAttractorLayer);
+  wireToggleButton(btnBank, () => BANK_VISIBLE, (v) => { BANK_VISIBLE = v; }, buildBankLayer, updateBankMarkers);
+  wireToggleButton(btnPad, () => PADDLE_VISIBLE, (v) => { PADDLE_VISIBLE = v; }, buildPaddleLayer, updatePaddleMarkers);
+  wireToggleButton(btnAttr, () => ATTRACTOR_VISIBLE, (v) => { ATTRACTOR_VISIBLE = v; }, buildAttractorLayer, updateAttractorMarkers);
 
-  console.log('✓ GIS toggles module armed');
+  console.log('✓ GIS toggles module armed (Bounds-Filtered)');
 }
 
 init();
