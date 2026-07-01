@@ -237,8 +237,13 @@ function spatialLookup(lat, lon) {
       let closestDist = Infinity;
       const cosLat = Math.cos(lat * Math.PI / 180);
 
-      // Pre-filter with a generous bounding box (~1 mile) before doing
-      // per-point distance math — avoids iterating all 121k features fully
+      // Diagnostic — visible on screen (temporary)
+      const sample = features[0];
+      const diagEl = document.getElementById('cImportStatus');
+      const diag1 = `Features: ${features.length} | Type: ${sample?.geometry?.type} | Props: ${Object.keys(sample?.properties||{}).join(',')} | bbox: ${!!sample?.bbox}`;
+      if (diagEl) diagEl.textContent = diag1;
+
+      // Pre-filter with a generous bounding box (~1 mile)
       const boxDeg = 1 / 69;
       const candidates = features.filter(feat => {
         const bbox = feat.bbox;
@@ -246,27 +251,38 @@ function spatialLookup(lat, lon) {
           return bbox[0] - boxDeg <= lon && lon <= bbox[2] + boxDeg &&
                  bbox[1] - boxDeg <= lat && lat <= bbox[3] + boxDeg;
         }
-        // No bbox — include it and let the point loop handle it
         return true;
       });
 
+      if (diagEl) diagEl.textContent += ` | Candidates: ${candidates.length}`;
+
       for (const feat of candidates) {
-        const depth = feat.properties?.depth ?? feat.properties?.DEPTH;
+        const depth = feat.properties?.depth ?? feat.properties?.DEPTH ?? feat.properties?.depth_ft;
         if (depth == null) continue;
         const coords = feat.geometry?.coordinates;
         if (!coords) continue;
-        const pts = feat.geometry.type === 'LineString' ? coords : coords.flat(1);
+        const gtype = feat.geometry.type;
+        const pts = gtype === 'LineString' ? coords
+          : gtype === 'MultiLineString' ? coords.flat(1)
+          : gtype === 'Polygon' ? coords[0]
+          : coords.flat(2);
         for (const pt of pts) {
-          const [cLon, cLat] = Array.isArray(pt[0]) ? pt[0] : pt;
+          const cLon = Array.isArray(pt[0]) ? pt[0][0] : pt[0];
+          const cLat = Array.isArray(pt[0]) ? pt[0][1] : pt[1];
+          if (!isFinite(cLat) || !isFinite(cLon)) continue;
           const d = Math.hypot((lat - cLat) * 69, (lon - cLon) * 69 * cosLat);
           if (d < closestDist) { closestDist = d; closestDepth = depth; }
         }
       }
 
-      // Accept up to 1 mile — contour lines are sparse so 0.25mi was too tight
+      if (diagEl) diagEl.textContent += ` | Closest: ${closestDepth}ft @ ${closestDist.toFixed(4)}mi`;
+
       if (closestDepth != null && closestDist < 1.0) {
         depthBand = `~${closestDepth}ft contour (${closestDist < 0.1 ? 'on' : closestDist < 0.25 ? 'near' : `~${(closestDist * 5280).toFixed(0)}ft from`} contour)`;
       }
+    } else {
+      const diagEl2 = document.getElementById('cImportStatus');
+      if (diagEl2) diagEl2.textContent = `Spatial lookup skipped — features: ${features.length} lat: ${lat} lon: ${lon}`;
     }
 
     return { lakeName, depthBand };
