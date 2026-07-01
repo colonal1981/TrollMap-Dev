@@ -128,83 +128,50 @@ async function saveNewCatch() {
   document.getElementById('catchForm').style.display = 'none';
 }
 
-// ── EXIF extraction (native browser — no CDN library) ─────────────────────────
-// Parses the bare minimum of EXIF tags from a JPEG ArrayBuffer.
-// Handles GPS (IFD GPS), DateTimeOriginal (IFD EXIF), and basic offsets.
-function parseEXIF(buffer) {
-  const view = new DataView(buffer);
-  if (view.getUint16(0) !== 0xFFD8) return null; // not JPEG
+// ── EXIF extraction via exifr ────────────────────────────────────────────────
+// exifr is a well-tested, actively maintained EXIF library available as a
+// pure ES module — no build step, no CDN script tag, proper GPS parsing.
+// Docs: https://github.com/MikeKovarik/exifr
+let _exifr = null;
+async function loadExifr() {
+  if (_exifr) return _exifr;
+  const mod = await import('https://cdn.jsdelivr.net/npm/exifr/dist/full.esm.js');
+  _exifr = mod.default || mod;
+  return _exifr;
+}
 
-  let offset = 2;
-  while (offset < view.byteLength - 2) {
-    const marker = view.getUint16(offset);
-    offset += 2;
-    if (marker === 0xFFE1) break; // APP1 — EXIF
-    if ((marker & 0xFF00) !== 0xFF00) break;
-    offset += view.getUint16(offset); // skip this segment
-  }
-  if (offset >= view.byteLength) return null;
+async function parseEXIF(file) {
+  try {
+    const exifr = await loadExifr();
+    const result = await exifr.parse(file, {
+      gps: true,
+      exif: true,
+      tiff: true,
+      mergeOutput: false,
+    });
+    if (!result) return null;
 
-  const segLen = view.getUint16(offset);
-  const app1 = new DataView(buffer, offset + 2, segLen - 2);
-  if (app1.getUint32(0) !== 0x45786966) return null; // 'Exif'
+    const gps  = result.gps  || {};
+    const exif = result.exif || {};
+    const tiff = result.tiff || {};
 
-  const tiffOffset = 6;
-  const little = app1.getUint16(tiffOffset) === 0x4949;
-  const get16 = o => app1.getUint16(tiffOffset + o, little);
-  const get32 = o => app1.getUint32(tiffOffset + o, little);
+    const lat = gps.latitude  ?? null;
+    const lon = gps.longitude ?? null;
+    const dateStr = exif.DateTimeOriginal || tiff.DateTime || null;
 
-  function readIFD(ifdOffset) {
-    const tags = {};
-    const count = get16(ifdOffset);
-    for (let i = 0; i < count; i++) {
-      const base = ifdOffset + 2 + i * 12;
-      const tag  = get16(base);
-      const type = get16(base + 2);
-      const num  = get32(base + 4);
-      const valOffset = base + 8;
-      if (type === 2) { // ASCII
-        const strOffset = num > 4 ? get32(valOffset) : valOffset;
-        let str = '';
-        for (let j = 0; j < num - 1; j++) str += String.fromCharCode(app1.getUint8(tiffOffset + strOffset + j));
-        tags[tag] = str;
-      } else if (type === 5) { // RATIONAL
-        const rOff = get32(valOffset);
-        const vals = [];
-        for (let j = 0; j < num; j++) {
-          const n = get32(tiffOffset + rOff + j * 8);
-          const d = get32(tiffOffset + rOff + j * 8 + 4);
-          vals.push(d ? n / d : 0);
-        }
-        tags[tag] = num === 1 ? vals[0] : vals;
-      } else if (type === 3 && num === 1) {
-        tags[tag] = get16(valOffset);
-      } else if (type === 4 && num === 1) {
-        tags[tag] = get32(valOffset);
-      }
+    // exifr returns DateTimeOriginal as a real Date object or string
+    let isoDateStr = null;
+    if (dateStr instanceof Date) {
+      isoDateStr = dateStr.toISOString().slice(0, 19).replace('T', ' ');
+    } else if (typeof dateStr === 'string') {
+      isoDateStr = dateStr; // "YYYY:MM:DD HH:MM:SS" format
     }
-    return tags;
+
+    return { lat, lon, dateStr: isoDateStr };
+  } catch (e) {
+    console.warn('[catch-journal] exifr parse failed:', e);
+    return null;
   }
-
-  const ifd0 = readIFD(get32(4));
-  const exifIFD = ifd0[0x8769] ? readIFD(ifd0[0x8769]) : {};
-  const gpsIFD  = ifd0[0x8825] ? readIFD(ifd0[0x8825]) : {};
-
-  // Parse GPS rational arrays → decimal degrees
-  let lat = null, lon = null;
-  if (gpsIFD[0x0002] && gpsIFD[0x0004]) {
-    const la = gpsIFD[0x0002];
-    const lo = gpsIFD[0x0004];
-    lat = la[0] + la[1] / 60 + la[2] / 3600;
-    lon = lo[0] + lo[1] / 60 + lo[2] / 3600;
-    if (gpsIFD[0x0001] === 'S') lat = -lat;
-    if (gpsIFD[0x0003] === 'W') lon = -lon;
-  }
-
-  // DateTimeOriginal tag 0x9003 → "YYYY:MM:DD HH:MM:SS"
-  const dateStr = exifIFD[0x9003] || ifd0[0x0132] || null;
-
-  return { lat, lon, dateStr };
 }
 
 // ── Moon phase (pure math, no API) ───────────────────────────────────────────
@@ -329,8 +296,7 @@ async function processCatchPhoto(file) {
 
   setImportStatus('Reading photo metadata...', 'var(--muted)');
 
-  const buffer = await file.arrayBuffer();
-  const exif = parseEXIF(buffer);
+  const exif = await parseEXIF(file);
 
   if (!exif) {
     setImportStatus('No EXIF data found in photo', 'var(--warn)');
