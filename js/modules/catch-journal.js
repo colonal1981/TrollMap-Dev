@@ -89,12 +89,18 @@ async function saveNewCatch() {
     lead:    document.getElementById('cLead')?.value    || '',
     time:    document.getElementById('cTime')?.value    || '',
     notes:   document.getElementById('cNotes')?.value   || '',
-    photo:   photoDataUrl,
+    photo:   window._pendingCatchPhotoBase64 || photoDataUrl,
     date:    new Date().toISOString().slice(0, 10),
     lake:    document.getElementById('planLake')?.value || '',
-    lat:     '',
-    lon:     '',
+    lat:     window._pendingCatchLat || '',
+    lon:     window._pendingCatchLon || '',
   });
+
+  // Clear pending data
+  window._pendingCatchPhotoBase64 = null;
+  window._pendingCatchLat = null;
+  window._pendingCatchLon = null;
+
 
   renderCatchLog();
   await saveCatches();
@@ -120,3 +126,141 @@ function wireButtons() {
 }
 
 wireButtons();
+
+
+// ── EXIF Catch Importer (Zero-Friction Phase 1) ───────────────────────
+
+// 1. Load EXIF library
+const exifScript = document.createElement('script');
+exifScript.src = 'https://cdn.jsdelivr.net/npm/exif-js';
+document.head.appendChild(exifScript);
+
+// 2. Global Dropzone UI
+const dropOverlay = document.createElement('div');
+dropOverlay.innerHTML = `<div style="pointer-events:none; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; border: 4px dashed #00e5ff; border-radius: 20px; background: rgba(11, 22, 35, 0.95);">
+    <span style="font-size: 60px;">📸</span>
+    <h2 style="color:white; margin-top:20px;">Drop Catch Photo to Import</h2>
+    <p style="color:#aaa;">Extracts Time & GPS -> Fetches Weather -> Auto-Fills Form</p>
+</div>`;
+Object.assign(dropOverlay.style, {
+    position: 'fixed', top: '10px', left: '10px', right: '10px', bottom: '10px',
+    zIndex: '999999', display: 'none', backdropFilter: 'blur(5px)', transition: 'all 0.2s'
+});
+document.body.appendChild(dropOverlay);
+
+let dragCounter = 0;
+document.body.addEventListener('dragenter', (e) => { e.preventDefault(); });
+document.body.addEventListener('dragover', (e) => { e.preventDefault(); });
+document.body.addEventListener('dragenter', () => {
+    dragCounter++;
+    dropOverlay.style.display = 'block';
+});
+document.body.addEventListener('dragleave', () => {
+    dragCounter--;
+    if (dragCounter === 0) dropOverlay.style.display = 'none';
+});
+document.body.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    dragCounter = 0;
+    dropOverlay.style.display = 'none';
+    
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        processCatchPhoto(e.dataTransfer.files[0]);
+    }
+});
+
+// Temporary storage for the dropped photo so saveNewCatch can use it
+window._pendingCatchPhotoBase64 = null;
+window._pendingCatchLat = null;
+window._pendingCatchLon = null;
+
+function processCatchPhoto(file) {
+    if (!window.EXIF) {
+        alert("EXIF library is still loading. Try again in 2 seconds.");
+        return;
+    }
+    
+    // Switch to the Catch tab automatically
+    document.querySelector('#bottomNav button[data-tab="catch"]')?.click();
+    
+    // Open the form
+    const catchForm = document.getElementById('catchForm');
+    if (catchForm) catchForm.style.display = 'block';
+    
+    const notesEl = document.getElementById('cNotes');
+    const timeEl = document.getElementById('cTime');
+    
+    if (notesEl) notesEl.value = "Analyzing Photo Metadata...";
+
+    EXIF.getData(file, function() {
+        try {
+            let latDec = null, lonDec = null;
+            let dateStr = EXIF.getTag(this, "DateTimeOriginal"); // "YYYY:MM:DD HH:MM:SS"
+            
+            let lat = EXIF.getTag(this, "GPSLatitude");
+            let lon = EXIF.getTag(this, "GPSLongitude");
+            let latRef = EXIF.getTag(this, "GPSLatitudeRef");
+            let lonRef = EXIF.getTag(this, "GPSLongitudeRef");
+            
+            if (lat && lon) {
+                latDec = lat[0] + (lat[1]/60) + (lat[2]/3600);
+                lonDec = lon[0] + (lon[1]/60) + (lon[2]/3600);
+                if (latRef === "S") latDec = -latDec;
+                if (lonRef === "W") lonDec = -lonDec;
+            }
+
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                window._pendingCatchPhotoBase64 = e.target.result;
+                window._pendingCatchLat = latDec;
+                window._pendingCatchLon = lonDec;
+                
+                let isoDate = null;
+                let displayTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                
+                if (dateStr) {
+                    const parts = dateStr.split(" ");
+                    if (parts.length === 2) {
+                        isoDate = `${parts[0].replace(/:/g, '-')}T${parts[1]}`;
+                        displayTime = new Date(isoDate).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                    }
+                }
+                
+                if (timeEl) timeEl.value = displayTime;
+
+                // Fetch Weather if we have GPS and Time
+                let weatherStr = "No GPS found on photo (Android stripped it).";
+                if (latDec && isoDate) {
+                    if (notesEl) notesEl.value = "Fetching historical weather...";
+                    try {
+                        const dateOnly = isoDate.split('T')[0];
+                        const hour = parseInt(isoDate.split('T')[1].split(':')[0]);
+                        const url = `https://api.open-meteo.com/v1/forecast?latitude=${latDec}&longitude=${lonDec}&start_date=${dateOnly}&end_date=${dateOnly}&hourly=temperature_2m,surface_pressure,cloudcover,windspeed_10m&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto`;
+                        
+                        const wResp = await fetch(url);
+                        if (wResp.ok) {
+                            const wData = await wResp.json();
+                            const temp = wData.hourly.temperature_2m[hour];
+                            const press = wData.hourly.surface_pressure[hour];
+                            const cloud = wData.hourly.cloudcover[hour];
+                            const wind = wData.hourly.windspeed_10m[hour];
+                            weatherStr = `${temp}°F | ${press} hPa | Wind: ${wind}mph | ${cloud}% Cloud`;
+                        } else {
+                            weatherStr = "Weather API failed.";
+                        }
+                    } catch (e) {
+                        weatherStr = "Weather fetch error.";
+                    }
+                }
+                
+                if (notesEl) notesEl.value = weatherStr;
+                alert(`Photo Analyzed!\n\nTime: ${displayTime}\nGPS: ${latDec ? 'Found!' : 'Missing'}\nWeather: ${weatherStr}\n\nFill out Species/Length and click Save.`);
+
+            };
+            reader.readAsDataURL(file);
+
+        } catch (err) {
+            if (notesEl) notesEl.value = `Error parsing EXIF: ${err.message}`;
+        }
+    });
+}
