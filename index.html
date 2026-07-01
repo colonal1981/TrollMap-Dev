@@ -670,9 +670,14 @@
                 <div><label>Depth (ft)</label><input id="cDepth" placeholder="32"></div>
                 <div><label>Lure / Color</label><input id="cLure" placeholder="A-rig, pearl"></div>
                 <div><label>Lead (ft)</label><input id="cLead" placeholder="90"></div>
-                <div style="grid-column:1 / -1; margin-top:4px"><label>📷 Verification Photo / Sonar Screenshot</label><input type="file" id="cPhoto" accept="image/*" style="width:100%;background:var(--panel2);color:var(--accent2);padding:5px;border-radius:6px;border:1px solid var(--line)"></div>
+                <div style="grid-column:1 / -1; margin-top:4px">
+                  <label>📷 Drop or select a catch photo to auto-fill — data only, photo not stored</label>
+                  <input type="file" id="cPhoto" accept="image/*" style="width:100%;background:var(--panel2);color:var(--accent2);padding:5px;border-radius:6px;border:1px solid var(--line)">
+                  <div id="cImportStatus" style="font-size:11px;margin-top:4px;color:var(--accent2)"></div>
+                  <img id="cPhotoThumb" src="" alt="" style="display:none;max-height:80px;max-width:100%;border-radius:6px;margin-top:6px;object-fit:cover;border:1px solid var(--line)">
+                </div>
               </div>
-              <textarea id="cNotes" placeholder="Structure, conditions, what triggered the bite..." rows="2" style="margin-top:8px;width:100%"></textarea>
+              <textarea id="cNotes" placeholder="Structure, conditions, what triggered the bite... (auto-filled from photo)" rows="2" style="margin-top:8px;width:100%"></textarea>
               <div style="display:flex;gap:6px;margin-top:8px">
                 <button id="saveCatchBtn" class="primary small">💾 Save</button>
                 <button id="cancelCatchBtn" class="small">Cancel</button>
