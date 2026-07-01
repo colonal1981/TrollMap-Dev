@@ -139,9 +139,8 @@ export async function loadAllContoursOnStartup() {
       if (!datasetCache[key]) datasetCache[key] = { smart: null, raw: null };
       const cache = datasetCache[key];
 
-      // Prefer smart, fall back to raw — same priority as manual load
-      let gj = await fetchContourGeoJSON(key, 'smart');
-      if (!gj) gj = await fetchContourGeoJSON(key, 'raw');
+      // NOTE: PBF pipeline replaced the smart post-processor. Only load raw contours.geojson
+      let gj = await fetchContourGeoJSON(key, 'raw');
       if (!gj?.features?.length) {
         console.warn(`[contour-data] no features for ${key}, skipping`);
         continue;
