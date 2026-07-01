@@ -34,14 +34,16 @@ let accessIndex = {
 // ── Worker URL helpers ──────────────────────────────────────────────────
 
 function getWorkerBase() {
-  // Prefer an app-provided worker URL if one exists. Fall back to same-origin,
-  // which works when the worker is reverse-proxied under the app domain.
+  // Prefer an app-provided worker URL if one exists. On GitHub Pages there is
+  // no same-origin /ramps route, so same-origin gives 404s like:
+  //   https://colonal1981.github.io/TrollMap-Dev/ramps?state=SC
+  // Default to the deployed Cloudflare Worker instead.
   const explicit =
     window.TROLLMAP_WORKER_URL ||
     window.TROLLMAP_WORKER_BASE ||
     window.WORKER_URL ||
     window.API_BASE ||
-    '';
+    'https://trollmap-worker.colonal1981.workers.dev';
   return String(explicit || '').replace(/\/$/, '');
 }
 
