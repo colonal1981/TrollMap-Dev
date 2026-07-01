@@ -346,10 +346,12 @@ export function applyStoredSmartPlanDepth() {
 }
 
 // ── Rationale text ────────────────────────────────────────────────────────────
-function buildRationaleText(species, lakeName, season, phases, phaseRecs, phaseInfo) {
+function buildRationaleText(species, lakeName, season, phases, phaseRecs, phaseInfo, totalRoutes) {
   const lines = [];
   lines.push(`${species} — ${lakeName}, ${season}`);
   lines.push(`Sunrise: ${phaseInfo.phases[0].startStr} → Phase boundaries computed from sunrise + solunar`);
+  if (totalRoutes > 0) lines.push(`Routes: ${totalRoutes} auto-generated and committed to plan`);
+  else lines.push(`Routes: No contour data loaded — open Contour Data tab first`);
 
   const sol = phaseInfo.solunar;
   function hToStr(h) {
@@ -367,6 +369,11 @@ function buildRationaleText(species, lakeName, season, phases, phaseRecs, phaseI
       lines.push(`  Rods ${phase.num * 2 - 1} & ${phase.num * 2} · Depth: ${rec.depthMin}-${rec.depthMax}ft · Speed: ${rec.speed}mph`);
       lines.push(`  Lures: ${rec.lures.slice(0, 3).join(', ')}`);
       if (rec.notes) lines.push(`  Notes: ${rec.notes}`);
+      const routeCfg = getRouteConfigForPhase(rec, phase.num);
+      if (routeCfg) {
+        lines.push(`  Route: ${routeCfg.pattern} · amplitude ${routeCfg.amplitude}ft · spacing ${routeCfg.spacing}ft · ${routeCfg.lanes} lane(s)`);
+        lines.push(`  Why: ${routeCfg.rationale}`);
+      }
     } else {
       lines.push(`  No data for this phase`);
     }
@@ -485,7 +492,8 @@ export async function runSmartPlan() {
   applyStoredSmartPlanDepth();
 
   // Build rationale
-  let rationale = buildRationaleText(sp, lakeName, season, phases, phaseRecs, phaseInfo);
+  const totalRoutes = routeCounts.flat().length;
+  let rationale = buildRationaleText(sp, lakeName, season, phases, phaseRecs, phaseInfo, totalRoutes);
 
   // Ramp evaluation — check if selected ramp is optimal
   const weatherStr = document.getElementById('planWeather')?.value || '';

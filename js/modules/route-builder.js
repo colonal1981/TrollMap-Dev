@@ -798,6 +798,58 @@ function renderRoutes(tracks) {
 
 // ── Panel UI ──────────────────────────────────────────────────────────────────
 
+/**
+ * generateAndCommitRoute(overrides) — callable by Smart Plan to auto-generate
+ * and immediately commit a contour sweep route for a given phase.
+ *
+ * Merges phase-specific overrides (depthMin, depthMax, trackName) with
+ * whatever settings are currently in the Route Builder panel UI (pattern,
+ * spacing, amplitude, etc.) so the user's preferred settings are respected.
+ *
+ * Returns the committed tracks array (may be empty if no contours found).
+ */
+export function generateAndCommitRoute(overrides = {}) {
+  // Read current panel settings as base config — falls back to defaults
+  // if panel hasn't been opened yet (inputs don't exist in DOM)
+  const cfg = {
+    depthMin:   overrides.depthMin   ?? parseInt(document.getElementById('rbDepthMin')?.value)   || 18,
+    depthMax:   overrides.depthMax   ?? parseInt(document.getElementById('rbDepthMax')?.value)   || 28,
+    pattern:    overrides.pattern    ?? document.getElementById('rbPattern')?.value              || 'sine+straight',
+    spacing:    overrides.spacing    ?? parseFloat(document.getElementById('rbSpacing')?.value)  || 150,
+    amplitude:  overrides.amplitude  ?? parseFloat(document.getElementById('rbAmplitude')?.value)|| 30,
+    lanes:      overrides.lanes      ?? parseInt(document.getElementById('rbLanes')?.value)       || 1,
+    closeLoop:  false,
+    wave:       parseFloat(document.getElementById('rbWave')?.value)      || 350,
+    straightFt: parseFloat(document.getElementById('rbStraight')?.value)  || 500,
+    ppw:        parseInt(document.getElementById('rbPpw')?.value)          || 16,
+    dynamic:    document.getElementById('rbDynamic')?.checked             || false,
+    bias:       parseFloat(document.getElementById('rbBias')?.value)      || 0,
+    minSpacing: parseFloat(document.getElementById('rbMinSpacing')?.value)|| 25,
+  };
+
+  // Always use contour sweep mode for Smart Plan routes
+  let tracks = generateContourRoutes(cfg);
+
+  if (!tracks.length) {
+    console.warn(`[route-builder] generateAndCommitRoute: no contours found in ${cfg.depthMin}-${cfg.depthMax}ft range`);
+    return [];
+  }
+
+  // Name each track by phase so it's identifiable in the plan/GPX export
+  const prefix = overrides.trackName || `Smart Plan ${cfg.depthMin}-${cfg.depthMax}ft`;
+  tracks = tracks.map((t, i) => ({
+    ...t,
+    name: tracks.length > 1 ? `${prefix} (${i + 1})` : prefix,
+  }));
+
+  // Commit directly to plan — no pending/confirm step needed for auto-routes
+  state.DATA.tracks.push(...tracks);
+  renderAll();
+
+  console.log(`[route-builder] auto-committed ${tracks.length} track(s): ${prefix}`);
+  return tracks;
+}
+
 export function buildRouteBuilderPanel(container) {
   container.innerHTML = `
     <!-- Path source -->
