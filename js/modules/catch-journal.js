@@ -432,4 +432,3 @@ function wireButtons() {
 }
 
 wireButtons();
-```
