@@ -812,12 +812,12 @@ export function generateAndCommitRoute(overrides = {}) {
   // Read current panel settings as base config — falls back to defaults
   // if panel hasn't been opened yet (inputs don't exist in DOM)
   const cfg = {
-    depthMin:   overrides.depthMin   ?? parseInt(document.getElementById('rbDepthMin')?.value)   || 18,
-    depthMax:   overrides.depthMax   ?? parseInt(document.getElementById('rbDepthMax')?.value)   || 28,
-    pattern:    overrides.pattern    ?? document.getElementById('rbPattern')?.value              || 'sine+straight',
-    spacing:    overrides.spacing    ?? parseFloat(document.getElementById('rbSpacing')?.value)  || 150,
-    amplitude:  overrides.amplitude  ?? parseFloat(document.getElementById('rbAmplitude')?.value)|| 30,
-    lanes:      overrides.lanes      ?? parseInt(document.getElementById('rbLanes')?.value)       || 1,
+    depthMin:   overrides.depthMin   != null ? overrides.depthMin   : (parseInt(document.getElementById('rbDepthMin')?.value)    || 18),
+    depthMax:   overrides.depthMax   != null ? overrides.depthMax   : (parseInt(document.getElementById('rbDepthMax')?.value)    || 28),
+    pattern:    overrides.pattern    != null ? overrides.pattern    : (document.getElementById('rbPattern')?.value               || 'sine+straight'),
+    spacing:    overrides.spacing    != null ? overrides.spacing    : (parseFloat(document.getElementById('rbSpacing')?.value)   || 150),
+    amplitude:  overrides.amplitude  != null ? overrides.amplitude  : (parseFloat(document.getElementById('rbAmplitude')?.value) || 30),
+    lanes:      overrides.lanes      != null ? overrides.lanes      : (parseInt(document.getElementById('rbLanes')?.value)       || 1),
     closeLoop:  false,
     wave:       parseFloat(document.getElementById('rbWave')?.value)      || 350,
     straightFt: parseFloat(document.getElementById('rbStraight')?.value)  || 500,
