@@ -1,15 +1,3 @@
-Okay, if you caught the fish at 1:10 PM EST, and TrollMap is actively displaying "6:10 PM", then I know *exactly* what is happening.
-
-JavaScript determines the local time by reading your browser's internal timezone. Some work computers, VPNs, and privacy extensions (like Brave or Chrome's anti-fingerprinting) intentionally mask your real timezone and tell the browser it is located in "UTC" to prevent tracking!
-
-Because your browser thinks it's in Greenwich, London, it refuses to subtract the 5 hours for South Carolina, so it just displays the raw UTC time from Google Takeout.
-
-**The Fix:**
-I am going to hardcode the time parsing logic to explicitly target the `America/New_York` timezone, completely ignoring what your browser thinks its timezone is!
-
-Here is the fully patched `catch-journal.js` (including the dual-drag logic so you don't need ExifTool). Just copy and paste this entire block over your existing file:
-
-```javascript
 /**
  * catch-journal.js — Catch Journal with Zero-Friction Photo Import
  *
@@ -311,6 +299,25 @@ async function processCatchPhoto(imgFile, jsonFile = null) {
       thumb.style.display = 'block';
       thumb.onload = () => URL.revokeObjectURL(url);
     }
+
+    // Gemini fish ID — runs in parallel with spatial lookup + weather
+    setImportStatus('Identifying fish with AI...', 'var(--muted)');
+    identifyFishWithGemini(imgFile).then(ai => {
+      if (!ai) {
+        setImportStatus('AI identification unavailable — fill in species/length manually', 'var(--warn)');
+        return;
+      }
+      const speciesEl = document.getElementById('cSpecies');
+      if (speciesEl && !speciesEl.value) speciesEl.value = ai.species || '';
+      const lengthEl = document.getElementById('cLength');
+      if (lengthEl && !lengthEl.value && ai.lengthInches) lengthEl.value = ai.lengthInches;
+      const confColor = ai.confidence === 'high' ? 'var(--accent2)' : ai.confidence === 'medium' ? 'var(--warn)' : 'var(--bad)';
+      const confLabel = ai.confidence === 'high' ? '✓' : ai.confidence === 'medium' ? '~' : '?';
+      setImportStatus(
+        `${confLabel} AI: ${ai.species} · ${ai.lengthInches}" (${ai.confidence} confidence)${ai.notes ? ' · ' + ai.notes : ''}`,
+        confColor
+      );
+    });
   }
 
   if (lat && lon) {
