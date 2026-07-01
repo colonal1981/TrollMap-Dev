@@ -80,6 +80,7 @@ import './modules/catch-photo.js';
 import './modules/osm-structure.js';
 import './modules/quickdraw-key.js';
 import './modules/sw-register.js';
+import './modules/catch-importer.js';
 import { pullUpdatesOnLoad, pushAllLocalToCloud } from './modules/cloud-sync.js';
 import { loadAllContoursOnStartup } from './modules/contour-data.js';
 import './modules/pinch-point-finder.js'; // still used by route-builder.js
