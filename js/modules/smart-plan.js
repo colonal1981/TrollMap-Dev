@@ -376,6 +376,39 @@ function buildRationaleText(species, lakeName, season, phases, phaseRecs, phaseI
   return lines.join('\n');
 }
 
+// ── Ramp rationale text ──────────────────────────────────────────────────────
+function buildRampRationaleText(eval_) {
+  if (!eval_) return '';
+  const lines = ['', '── Ramp Evaluation ──'];
+
+  if (eval_.shouldSwitch) {
+    lines.push(`⚠ RAMP RECOMMENDATION: Consider switching to ${eval_.best.name}`);
+    lines.push(`  Your selected ramp scores ${eval_.currentScore}/100 vs ${eval_.best.name} at ${eval_.bestScore}/100 (+${eval_.switchDelta} points)`);
+    lines.push(`  Reasons to switch:`);
+    const current = eval_.current;
+    if (current) {
+      const currentEntry = eval_.ranked.find(r => r.ramp.key === current.key);
+      (currentEntry?.reasons || []).forEach(r => lines.push(`    • ${r}`));
+    }
+    lines.push(`  Why ${eval_.best.name} is better:`);
+    const bestEntry = eval_.ranked[0];
+    (bestEntry?.positives || []).forEach(r => lines.push(`    + ${r}`));
+    lines.push(`  ${eval_.best.notes}`);
+  } else if (eval_.current) {
+    lines.push(`✓ ${eval_.current.name} is a good choice for these conditions (score: ${eval_.currentScore}/100)`);
+    const currentEntry = eval_.ranked.find(r => r.ramp.key === eval_.current.key);
+    (currentEntry?.positives || []).forEach(r => lines.push(`  + ${r}`));
+    if (currentEntry?.reasons?.length) {
+      lines.push(`  Minor considerations:`);
+      (currentEntry.reasons || []).forEach(r => lines.push(`    • ${r}`));
+    }
+  } else {
+    lines.push(`Best ramp for these conditions: ${eval_.best?.name || 'unknown'}`);
+  }
+
+  return lines.join('\n');
+}
+
 // ── Read DOM inputs ───────────────────────────────────────────────────────────
 function readPlanInputs() {
   const lakeName    = document.getElementById('planLake')?.value || '';
@@ -391,7 +424,7 @@ function readPlanInputs() {
 }
 
 // ── Main entry point ──────────────────────────────────────────────────────────
-export function runSmartPlan() {
+export async function runSmartPlan() {
   const { lakeName, dateStr, launchTime, returnTime, waterTempF, speedMph, species } = readPlanInputs();
   const outEl    = document.getElementById('planSmartPlanOutput');
   const statusEl = document.getElementById('smartPlanStatus');
@@ -452,7 +485,20 @@ export function runSmartPlan() {
   applyStoredSmartPlanDepth();
 
   // Build rationale
-  const rationale = buildRationaleText(sp, lakeName, season, phases, phaseRecs, phaseInfo);
+  let rationale = buildRationaleText(sp, lakeName, season, phases, phaseRecs, phaseInfo);
+
+  // Ramp evaluation — check if selected ramp is optimal
+  const weatherStr = document.getElementById('planWeather')?.value || '';
+  // Rough weather = wind > 15mph or plan is marked CAUTION/NO-GO
+  const windMatch = weatherStr.match(/(\d+)\s*mph/i);
+  const windMph = windMatch ? parseInt(windMatch[1]) : 0;
+  const roughWeather = windMph > 15;
+  const rampEval = await getRampEvaluation(lakeName, sp, season, phaseRecs, weatherStr, roughWeather);
+
+  if (rampEval) {
+    rationale += buildRampRationaleText(rampEval);
+  }
+
   if (outEl) outEl.value = rationale;
 
   const firstRec = phaseRecs.find(Boolean);
@@ -460,7 +506,7 @@ export function runSmartPlan() {
     `✓ 3-phase plan: ${phases.map((p, i) => phaseRecs[i] ? `Ph${p.num} ${phaseRecs[i].depthMin}-${phaseRecs[i].depthMax}ft` : '').filter(Boolean).join(' → ')} | Range: ${rangeMiles.toFixed(1)}mi`,
     true
   );
-  return { phases, phaseRecs, phaseInfo, rangeMiles };
+  return { phases, phaseRecs, phaseInfo, rangeMiles, rampEval };
 }
 
 // Wire the button
@@ -472,3 +518,37 @@ window.runSmartPlan = runSmartPlan;
 window.applyStoredSmartPlanDepth = applyStoredSmartPlanDepth;
 
 console.log('[smart-plan] module ready');
+
+// ── Ramp evaluation integration ───────────────────────────────────────────────
+// Imported lazily so wateree-ramps.js only loads when needed
+async function getRampEvaluation(lakeName, species, season, phaseRecs, weatherStr, roughWeather) {
+  const { evaluateRamps, parseWindDeg } = await import('../data/ryan-ramps.js');
+
+  // Determine target zones from phase recommendations
+  const targetZones = [];
+  phaseRecs.forEach((rec, i) => {
+    if (!rec) return;
+    if (rec.depthMin < 18) targetZones.push('shallow_flats', 'clearwater_cove');
+    if (rec.depthMin >= 18 && rec.depthMin < 26) targetZones.push('channel_ledges', 'mid_channel');
+    if (rec.depthMin >= 26) targetZones.push('channel_ledges', 'mid_channel');
+  });
+  // Remove duplicates
+  const uniqueZones = [...new Set(targetZones)];
+
+  const windDeg = parseWindDeg(weatherStr);
+  const speedMph = parseFloat(document.getElementById('planSpeed')?.value) || 2.0;
+  const rangeMiles = computeRangeMiles(speedMph);
+
+  // Get current ramp from plan form
+  const rampEl = document.getElementById('planRamp');
+  const currentRampKey = rampEl?.value || '';
+
+  return evaluateRamps({
+    lakeName,
+    currentRampKey,
+    targetZones: uniqueZones,
+    windDeg,
+    rangeMiles,
+    roughWeather,
+  });
+}
