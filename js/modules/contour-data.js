@@ -46,7 +46,9 @@ async function fetchDatasetList() {
     const r = await fetch(`${CF_WORKER_URL}/chartpacks/list${CB()}`, { cache: 'no-store' });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();
-    return (data.chartpacks || []);
+    const packs = data.chartpacks || [];
+    const ignores = ['ramps', 'paddle', 'bankpier', 'attractors'];
+    return packs.filter(p => !ignores.includes(p.key) && !ignores.includes(p.name));
   } catch (e) {
     console.warn('[contour-data] fetch list failed:', e);
     return [];
