@@ -92,7 +92,7 @@ async function saveNewCatch() {
     lead:      document.getElementById('cLead')?.value    || '',
     time:      document.getElementById('cTime')?.value    || '',
     notes:     document.getElementById('cNotes')?.value   || '',
-    date:      new Date().toISOString().slice(0, 10),
+    date:      document.getElementById('cDate')?.value || new Date().toISOString().slice(0, 10),
     lake:      document.getElementById('planLake')?.value || '',
     lat:       pending.lat || '',
     lon:       pending.lon || '',
@@ -107,17 +107,19 @@ async function saveNewCatch() {
   pending.structure = null;
   pending.photoThumb = null;
 
-  // Clear thumbnail preview
+  // Clear thumbnail preview and coords display
   const thumb = document.getElementById('cPhotoThumb');
   if (thumb) { thumb.src = ''; thumb.style.display = 'none'; }
   const status = document.getElementById('cImportStatus');
   if (status) status.textContent = '';
+  const coordEl4 = document.getElementById('cCoords');
+  if (coordEl4) coordEl4.value = '';
 
   renderCatchLog();
   await saveCatches();
 
   // Reset form fields
-  ['cSpecies','cLength','cDepth','cLure','cLead','cNotes'].forEach(id => {
+  ['cSpecies','cLength','cDepth','cLure','cLead','cNotes','cDate'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
@@ -266,20 +268,37 @@ function spatialLookup(lat, lon) {
     if (features.length && lat && lon) {
       let closestDepth = null;
       let closestDist = Infinity;
-      for (const feat of features) {
+      const cosLat = Math.cos(lat * Math.PI / 180);
+
+      // Pre-filter with a generous bounding box (~1 mile) before doing
+      // per-point distance math — avoids iterating all 121k features fully
+      const boxDeg = 1 / 69;
+      const candidates = features.filter(feat => {
+        const bbox = feat.bbox;
+        if (bbox) {
+          return bbox[0] - boxDeg <= lon && lon <= bbox[2] + boxDeg &&
+                 bbox[1] - boxDeg <= lat && lat <= bbox[3] + boxDeg;
+        }
+        // No bbox — include it and let the point loop handle it
+        return true;
+      });
+
+      for (const feat of candidates) {
         const depth = feat.properties?.depth ?? feat.properties?.DEPTH;
         if (depth == null) continue;
         const coords = feat.geometry?.coordinates;
         if (!coords) continue;
-        // For LineString — find closest point on the contour line
-        const pts = feat.geometry.type === 'LineString' ? coords : coords.flat();
-        for (const [cLon, cLat] of pts) {
-          const d = Math.hypot((lat - cLat) * 69, (lon - cLon) * 69 * Math.cos(lat * Math.PI / 180));
+        const pts = feat.geometry.type === 'LineString' ? coords : coords.flat(1);
+        for (const pt of pts) {
+          const [cLon, cLat] = Array.isArray(pt[0]) ? pt[0] : pt;
+          const d = Math.hypot((lat - cLat) * 69, (lon - cLon) * 69 * cosLat);
           if (d < closestDist) { closestDist = d; closestDepth = depth; }
         }
       }
-      if (closestDepth != null && closestDist < 0.25) { // within ~0.25 miles
-        depthBand = `~${closestDepth}ft contour (${closestDist < 0.1 ? 'on' : 'near'} contour)`;
+
+      // Accept up to 1 mile — contour lines are sparse so 0.25mi was too tight
+      if (closestDepth != null && closestDist < 1.0) {
+        depthBand = `~${closestDepth}ft contour (${closestDist < 0.1 ? 'on' : closestDist < 0.25 ? 'near' : `~${(closestDist * 5280).toFixed(0)}ft from`} contour)`;
       }
     }
 
@@ -331,9 +350,11 @@ async function processCatchPhoto(file) {
     }
   }
 
-  // Set time field immediately
+  // Set date + time fields from EXIF
   const timeEl = document.getElementById('cTime');
   if (timeEl) timeEl.value = displayTime;
+  const dateEl = document.getElementById('cDate');
+  if (dateEl) dateEl.value = isoDateTime ? isoDateTime.slice(0, 10) : new Date().toISOString().slice(0, 10);
 
   // Store GPS
   pending.lat = lat;
@@ -360,10 +381,11 @@ async function processCatchPhoto(file) {
     if (spatial.depthBand) {
       const depthEl = document.getElementById('cDepth');
       if (depthEl && !depthEl.value) {
-        // Extract numeric depth from "~18ft contour..." string
         const m = spatial.depthBand.match(/~?(\d+)/);
         if (m) depthEl.value = m[1];
       }
+      // Show depth source in status immediately — don't wait for weather
+      setImportStatus(`GPS found · depth ~${spatial.depthBand.match(/~?(\d+)/)?.[1] || '?'}ft from contour · fetching weather...`, 'var(--muted)');
     }
   }
 
@@ -375,14 +397,20 @@ async function processCatchPhoto(file) {
       pending.weather = weather;
       // Show weather summary in notes as a starting point
       const notesEl = document.getElementById('cNotes');
+      const pressStr = weather.pressureHpa > 0 ? `${weather.pressureHpa}hPa · ` : '';
       if (notesEl && !notesEl.value) {
-        notesEl.value = `${weather.tempF}°F · ${weather.pressureHpa}hPa · Wind ${weather.windMph}mph · ${weather.cloudPct}% cloud · ${weather.moonPhase}`;
+        notesEl.value = `${weather.tempF}°F · ${pressStr}Wind ${weather.windMph}mph · ${weather.cloudPct}% cloud · ${weather.moonPhase}`;
       }
+      // Show lat/lon in the GPS coords display field
+      const coordEl = document.getElementById('cCoords');
+      if (coordEl && lat) coordEl.value = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
       setImportStatus(
-        `✓ ${lat ? 'GPS found' : 'No GPS'} · ${weather.tempF}°F · ${weather.pressureHpa}hPa · ${weather.moonPhase}`,
+        `✓ GPS found · ${weather.tempF}°F · ${pressStr}${weather.moonPhase}`,
         'var(--accent2)'
       );
     } catch (e) {
+      const coordEl2 = document.getElementById('cCoords');
+      if (coordEl2 && lat) coordEl2.value = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
       setImportStatus(`GPS found · Weather unavailable (${e.message})`, 'var(--warn)');
     }
   } else if (!lat) {
@@ -434,6 +462,8 @@ function wireButtons() {
     if (timeEl && !timeEl.value) {
       timeEl.value = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     }
+    const dateEl2 = document.getElementById('cDate');
+    if (dateEl2 && !dateEl2.value) dateEl2.value = new Date().toISOString().slice(0, 10);
   });
 
   document.getElementById('cancelCatchBtn')?.addEventListener('click', () => {
@@ -443,6 +473,8 @@ function wireButtons() {
     pending.weather = null; pending.structure = null; pending.photoThumb = null;
     const thumb = document.getElementById('cPhotoThumb');
     if (thumb) { thumb.src = ''; thumb.style.display = 'none'; }
+    const coordEl3 = document.getElementById('cCoords');
+    if (coordEl3) coordEl3.value = '';
     setImportStatus('');
   });
 
