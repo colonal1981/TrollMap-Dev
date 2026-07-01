@@ -21,8 +21,8 @@ const STATES = ['SC', 'NC', 'GA'];
 const ACCESS_SOURCES = [
   { path: '/ramps', label: 'Boat ramp', marker: '🛥️' },
   { path: '/paddle', label: 'Kayak / paddle launch', marker: '🛶' },
-  { path: '/bank-pier', label: 'Bank / pier fishing', marker: '🎣' },
-  { path: '/attractors', label: 'Fish attractor', marker: '◆' },
+  { path: '/bank-pier', label: 'Bank / pier fishing', marker: '🎣' }
+  // NOTE: /attractors removed because we don't want Christmas trees showing up as boat ramps!
 ];
 
 let accessIndexPromise = null;
