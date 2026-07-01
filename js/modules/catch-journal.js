@@ -115,9 +115,21 @@ async function saveNewCatch() {
 }
 
 function wireButtons() {
+  // Hook the manual file input to the EXIF processor too!
+  const photoInput = document.getElementById('cPhoto');
+  if (photoInput) {
+    photoInput.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) {
+        processCatchPhoto(e.target.files[0]);
+      }
+    });
+  }
+
   document.getElementById('addCatchBtn')?.addEventListener('click', () => {
     document.getElementById('catchForm').style.display = 'block';
-    document.getElementById('cTime').value = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    if (!document.getElementById('cTime').value) {
+      document.getElementById('cTime').value = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    }
   });
   document.getElementById('cancelCatchBtn')?.addEventListener('click', () => {
     document.getElementById('catchForm').style.display = 'none';
