@@ -17,12 +17,9 @@ function prepareRampData() {
   if (RAMP_DATA) return RAMP_DATA;
   
   const merged = {};
-  for (const [lk, data] of Object.entries(LAKE_DB || {})) {
-    if (!data?.ramps) continue;
-    for (const [rName, c] of Object.entries(data.ramps)) {
-      merged[`${rName} [ ${lk} ]`] = c;
-    }
-  }
+
+  // NOTE: LAKE_DB hardcoded ramps have been removed to prevent duplicate/ghost pins.
+  // The map now exclusively relies on the live, official State DNR coordinates.
 
   for (const st of ['SC', 'NC', 'GA']) {
     const stateRamps = TRISTATE_MASTER_RAMPS?.[st] || {};
