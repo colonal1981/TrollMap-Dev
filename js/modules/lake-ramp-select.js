@@ -8,7 +8,7 @@
 
 import { state } from '../core/state.js';
 import { LAKE_DB } from '../data/lakes.js';
-import { TRISTATE_MASTER_RAMPS, rampsReady } from '../data/ramps.js';
+import { TRISTATE_MASTER_RAMPS } from '../data/ramps.js';
 import { dedupeLaunchesList } from '../utils/dedupe.js';
 
 // ── Build the merged lake name list ─────────────────────────────────────
@@ -126,11 +126,9 @@ function onRampChange(selOpt) {
 
 // ── Wire everything ──────────────────────────────────────────────────────
 
-async function wire() {
-  // Wait for the async worker fetch to complete before populating the dropdown
-  await rampsReady;
-  
-  populateLakeSelect();
+function wire() {
+  // Try to populate immediately, and set a tiny timeout to catch the async fetch if needed
+  setTimeout(populateLakeSelect, 500);
 
   document.getElementById('lakeSelect')?.addEventListener('change', (e) => {
     onLakeChange(e.target.value);
