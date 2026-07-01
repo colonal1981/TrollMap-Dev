@@ -666,10 +666,12 @@
               <div class="grid" style="grid-template-columns:repeat(3,1fr);gap:8px;font-size:12px">
                 <div><label>Species</label><input id="cSpecies" placeholder="Striper"></div>
                 <div><label>Length (in)</label><input id="cLength" type="number" placeholder="28"></div>
+                <div><label>Date</label><input id="cDate" placeholder="2026-07-01"></div>
                 <div><label>Time</label><input id="cTime" placeholder="7:45 AM"></div>
                 <div><label>Depth (ft)</label><input id="cDepth" placeholder="32"></div>
                 <div><label>Lure / Color</label><input id="cLure" placeholder="A-rig, pearl"></div>
                 <div><label>Lead (ft)</label><input id="cLead" placeholder="90"></div>
+                <div style="grid-column:1 / -1"><label>📍 GPS Coordinates (auto-filled from photo)</label><input id="cCoords" readonly placeholder="Lat, Lon — populated from photo EXIF" style="color:var(--accent2);font-size:11px"></div>
                 <div style="grid-column:1 / -1; margin-top:4px">
                   <label>📷 Drop or select a catch photo to auto-fill — data only, photo not stored</label>
                   <input type="file" id="cPhoto" accept="image/*" style="width:100%;background:var(--panel2);color:var(--accent2);padding:5px;border-radius:6px;border:1px solid var(--line)">
