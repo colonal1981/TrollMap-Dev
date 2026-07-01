@@ -1287,14 +1287,29 @@ function setLakeOnlyFieldsVisible(show){
   const btn=document.getElementById('syncDukeBtn');
   if(btn) btn.textContent = show ? '⚡ Live Utility Sync' : '⚡ Live River Sync';
 }
-export function populatePlanLakeDropdown(){
+export async function populatePlanLakeDropdown(){
   const sel = document.getElementById('planLake');
   if(!sel) return;
   const current = sel.value;
   sel.innerHTML = '<option value="">— choose lake or river —</option>';
   const lakesGroup = document.createElement('optgroup');
   lakesGroup.label = 'Lakes / Reservoirs';
-  const lakeNames = window.getUniversalLakeNames ? window.getUniversalLakeNames() : Object.keys(LAKE_DB).sort();
+  
+  // Wait for the async worker fetch to populate the global index before asking for the names!
+  let lakeNames = [];
+  if (window.getUniversalLakeNamesAsync) {
+    lakeNames = await window.getUniversalLakeNamesAsync();
+  } else if (window.getUniversalLakeNames) {
+    lakeNames = window.getUniversalLakeNames();
+  } else {
+    lakeNames = Object.keys(LAKE_DB).sort();
+  }
+  
+  // If it's somehow still empty, fallback to LAKE_DB just in case so it's never blank
+  if (lakeNames.length === 0) {
+    lakeNames = Object.keys(LAKE_DB).sort();
+  }
+
   lakeNames.forEach(lakeName => {
     const opt = document.createElement('option');
     opt.value = lakeName; opt.textContent = lakeName;
