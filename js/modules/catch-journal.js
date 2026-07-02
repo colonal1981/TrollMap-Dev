@@ -437,6 +437,172 @@ document.body.addEventListener('drop', async e => {
   if (imgFile || jsonFile) processCatchPhoto(imgFile, jsonFile);
 });
 
+// ── CSV bulk importer ────────────────────────────────────────────────────────
+// Reads fish_sort_results_v2.csv from the fish sorter pipeline and bulk-creates
+// catch journal entries. Fetches historical weather for each catch using GPS +
+// timestamp. Only imports rows where on_bump_board = true.
+
+async function fetchWeatherForCatch(lat, lon, isoDateTime) {
+  try {
+    const dateOnly = isoDateTime.slice(0, 10);
+    const hour = parseInt(isoDateTime.slice(11, 13));
+    const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=${dateOnly}&end_date=${dateOnly}&hourly=temperature_2m,surface_pressure,cloudcover,windspeed_10m&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto`;
+    const resp = await fetch(url);
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const h = data.hourly;
+    return {
+      tempF:       Math.round(h.temperature_2m[hour] * 10) / 10,
+      pressureHpa: Math.round(h.surface_pressure[hour]),
+      cloudPct:    h.cloudcover[hour],
+      windMph:     Math.round(h.windspeed_10m[hour] * 10) / 10,
+      moonPhase:   getMoonPhase(isoDateTime),
+    };
+  } catch { return null; }
+}
+
+function getMoonPhase(isoDate) {
+  const d = new Date(isoDate);
+  const JD = d / 86400000 + 2440587.5;
+  const phase = ((JD - 2451550.1) / 29.530588) % 1;
+  const p = phase < 0 ? phase + 1 : phase;
+  if (p < 0.03 || p > 0.97) return 'New Moon';
+  if (p < 0.22) return 'Waxing Crescent';
+  if (p < 0.28) return 'First Quarter';
+  if (p < 0.47) return 'Waxing Gibbous';
+  if (p < 0.53) return 'Full Moon';
+  if (p < 0.72) return 'Waning Gibbous';
+  if (p < 0.78) return 'Last Quarter';
+  return 'Waning Crescent';
+}
+
+function parseCsv(text) {
+  const lines = text.split('\n');
+  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+  return lines.slice(1).filter(l => l.trim()).map(line => {
+    // Handle quoted fields with commas
+    const fields = [];
+    let inQuote = false, field = '';
+    for (const ch of line) {
+      if (ch === '"') { inQuote = !inQuote; }
+      else if (ch === ',' && !inQuote) { fields.push(field.trim()); field = ''; }
+      else { field += ch; }
+    }
+    fields.push(field.trim());
+    return Object.fromEntries(headers.map((h, i) => [h, fields[i] || '']));
+  });
+}
+
+async function importFromCsv(file) {
+  const statusEl = document.getElementById('csvImportStatus');
+  const setStatus = (msg, color) => {
+    if (statusEl) { statusEl.textContent = msg; statusEl.style.color = color || 'var(--accent2)'; }
+  };
+
+  setStatus('Reading CSV...', 'var(--muted)');
+  const text = await file.text();
+  const rows = parseCsv(text);
+
+  // Filter to board fish only
+  const boardFish = rows.filter(r =>
+    r.on_bump_board?.toLowerCase() === 'true' &&
+    r.stage2_species && r.stage2_species !== 'ERROR'
+  );
+
+  if (!boardFish.length) {
+    setStatus('No board fish found in CSV — check on_bump_board column', 'var(--warn)');
+    return;
+  }
+
+  setStatus(`Found ${boardFish.length} board fish — importing...`, 'var(--muted)');
+
+  const catches = getCatches();
+  let imported = 0;
+  let skipped = 0;
+
+  for (let i = 0; i < boardFish.length; i++) {
+    const row = boardFish[i];
+    setStatus(`Importing ${i + 1}/${boardFish.length}: ${row.stage2_species} ${row.length_inches}"...`, 'var(--muted)');
+
+    // Skip if already imported (same filename)
+    if (catches.some(c => c.sourceFile === row.filename)) {
+      skipped++;
+      continue;
+    }
+
+    const lat = parseFloat(row.lat) || null;
+    const lon = parseFloat(row.lon) || null;
+    const isoDateTime = row.datetime || null;
+
+    // Fetch weather if we have GPS + time
+    let weather = null;
+    if (lat && lon && isoDateTime) {
+      weather = await fetchWeatherForCatch(lat, lon, isoDateTime);
+    }
+
+    // Parse time for display
+    let displayTime = '';
+    let displayDate = '';
+    if (isoDateTime) {
+      const d = new Date(isoDateTime);
+      displayTime = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+      displayDate = isoDateTime.slice(0, 10);
+    }
+
+    // Derive lake from GPS if possible
+    let lakeName = '';
+    if (lat && lon) {
+      const LAKE_CENTERS = {
+        'Lake Wateree':  { lat: 34.37, lon: -80.73, r: 0.15 },
+        'Lake Murray':   { lat: 34.06, lon: -81.32, r: 0.25 },
+        'Lake Marion':   { lat: 33.55, lon: -80.30, r: 0.35 },
+        'Lake Moultrie': { lat: 33.28, lon: -80.05, r: 0.20 },
+        'Lake Monticello':{ lat: 34.44, lon: -81.21, r: 0.10 },
+      };
+      for (const [name, info] of Object.entries(LAKE_CENTERS)) {
+        const d = Math.sqrt(Math.pow((lat - info.lat) * 69, 2) + Math.pow((lon - info.lon) * 69, 2));
+        if (d < info.r * 69) { lakeName = name; break; }
+      }
+    }
+
+    const weatherStr = weather
+      ? `${weather.tempF}°F · ${weather.pressureHpa > 0 ? weather.pressureHpa + 'hPa · ' : ''}Wind ${weather.windMph}mph · ${weather.cloudPct}% cloud · ${weather.moonPhase}`
+      : '';
+
+    catches.unshift({
+      species:   row.stage2_species || '',
+      length:    row.length_inches  || '',
+      depth:     '',
+      lure:      '',
+      lead:      '',
+      time:      displayTime,
+      notes:     [row.stage2_notes, weatherStr].filter(Boolean).join(' · ').slice(0, 200),
+      date:      displayDate,
+      lake:      lakeName,
+      lat:       lat || '',
+      lon:       lon || '',
+      weather:   weather || null,
+      structure: null,
+      sourceFile: row.filename,  // track source to prevent duplicate imports
+      importedFrom: 'csv',
+    });
+
+    imported++;
+
+    // Small delay to avoid hammering Open-Meteo
+    if (i < boardFish.length - 1) await new Promise(r => setTimeout(r, 300));
+  }
+
+  setCatches(catches);
+  renderCatchLog();
+  await saveCatches();
+
+  setStatus(
+    `✓ Imported ${imported} catches${skipped ? ` · ${skipped} already existed` : ''}`,
+    'var(--accent2)'
+  );
+}
+
 function wireButtons() {
   const photoInput = document.getElementById('cPhoto');
   if (photoInput) {
@@ -472,6 +638,16 @@ function wireButtons() {
   });
 
   document.getElementById('saveCatchBtn')?.addEventListener('click', saveNewCatch);
+
+  // CSV import
+  const csvBtn = document.getElementById('importCsvBtn');
+  const csvInput = document.getElementById('csvFileInput');
+  if (csvBtn && csvInput) {
+    csvBtn.addEventListener('click', () => csvInput.click());
+    csvInput.addEventListener('change', e => {
+      if (e.target.files?.[0]) importFromCsv(e.target.files[0]);
+    });
+  }
 }
 
 wireButtons();
