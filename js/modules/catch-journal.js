@@ -24,6 +24,8 @@ function setQueue(arr) { state.CATCH_IMPORT_QUEUE = arr || []; }
 
 let selectedQueueId = null;
 let currentSubtab = 'review';
+const localPhotoUrls = new Map(); // filename(lower) -> object URL from folder picker
+const localPhotoFiles = new Map();
 
 const SPECIES = [
   '', 'Striped Bass', 'White Bass / Hybrid', 'Largemouth Bass', 'Spotted Bass', 'Smallmouth Bass',
@@ -193,13 +195,14 @@ function helperBase() {
   return document.getElementById('catchHelperUrl')?.value?.trim() || localStorage.getItem('trollmapCatchHelperUrl') || DEFAULT_HELPER;
 }
 function imageUrl(item) {
-  if (!item?.sourcePath) return '';
+  if (!item) return '';
+  const key = String(item.filename || '').toLowerCase();
+  if (key && localPhotoUrls.has(key)) return localPhotoUrls.get(key);
+  // HTTP localhost images are blocked when TrollMap is served over HTTPS; folder picker is preferred.
+  if (!item.sourcePath) return '';
   return `${helperBase().replace(/\/$/, '')}/image?path=${encodeURIComponent(item.sourcePath)}`;
 }
-function thumbUrl(item) {
-  if (!item?.sourcePath) return '';
-  return `${helperBase().replace(/\/$/, '')}/image?path=${encodeURIComponent(item.sourcePath)}`;
-}
+function thumbUrl(item) { return imageUrl(item); }
 
 function catchPanelHost() {
   const panel = document.querySelector('#panel-catch .pad');
@@ -287,8 +290,14 @@ function renderImport(body) {
         <div id="csvImportStatus" class="muted" style="margin-top:8px"></div>
       </div>
       <div class="card" style="margin:0">
-        <h3>🖥 Local photo helper</h3>
-        <p class="muted">Run the helper server so TrollMap can show large local images from the CSV path column.</p>
+        <h3>🖼 Photo folder for review</h3>
+        <p class="muted">Recommended: choose the same Google Photos year folder as the CSV. TrollMap will match by filename and show large photos without localhost/mixed-content issues.</p>
+        <button id="pickPhotoFolderBtn" class="primary small">📂 Select Photo Folder</button>
+        <input id="catchPhotoFolderInput" type="file" webkitdirectory directory multiple class="hidden">
+        <div id="photoFolderStatus" class="muted" style="margin-top:8px">No folder selected.</div>
+        <hr style="border:0;border-top:1px solid var(--line);margin:12px 0">
+        <h3>🖥 Optional local helper</h3>
+        <p class="muted">Only needed if you do not use folder picker. HTTPS GitHub Pages may block HTTP helper images.</p>
         <label>Helper URL</label>
         <input id="catchHelperUrl" value="${esc(localStorage.getItem('trollmapCatchHelperUrl') || DEFAULT_HELPER)}" style="width:100%">
         <div class="row" style="margin-top:8px"><button id="saveHelperUrlBtn" class="small">Save URL</button><button id="testHelperBtn" class="small">Test</button></div>
@@ -305,6 +314,8 @@ function renderImport(body) {
     importCsvFiles([...e.dataTransfer.files].filter(f => f.name.toLowerCase().endsWith('.csv')));
   });
   input.addEventListener('change', e => importCsvFiles([...e.target.files]));
+  body.querySelector('#pickPhotoFolderBtn')?.addEventListener('click', () => body.querySelector('#catchPhotoFolderInput')?.click());
+  body.querySelector('#catchPhotoFolderInput')?.addEventListener('change', e => indexPhotoFolder([...e.target.files], body));
   body.querySelector('#saveHelperUrlBtn')?.addEventListener('click', () => {
     localStorage.setItem('trollmapCatchHelperUrl', body.querySelector('#catchHelperUrl').value.trim() || DEFAULT_HELPER);
     body.querySelector('#helperStatus').textContent = 'Saved.';
@@ -507,6 +518,25 @@ async function importCsvFiles(files) {
   currentSubtab = 'review'; selectedQueueId = getQueue().find(q => q.status === 'pending')?.id || getQueue()[0]?.id || null;
   setTimeout(renderCatchCenter, 700);
 }
+function indexPhotoFolder(files, body) {
+  let count = 0;
+  const imageRe = /\.(jpe?g|png|webp|gif|bmp)$/i;
+  for (const f of files) {
+    if (!imageRe.test(f.name)) continue;
+    const key = f.name.toLowerCase();
+    if (localPhotoUrls.has(key)) URL.revokeObjectURL(localPhotoUrls.get(key));
+    localPhotoFiles.set(key, f);
+    localPhotoUrls.set(key, URL.createObjectURL(f));
+    count++;
+  }
+  const status = body?.querySelector('#photoFolderStatus') || document.getElementById('photoFolderStatus');
+  if (status) {
+    status.textContent = `Indexed ${count} image(s). Review Queue photos will load from selected folder by filename.`;
+    status.style.color = 'var(--accent2)';
+  }
+  renderCatchSubtab();
+}
+
 async function testHelper() {
   const out = document.getElementById('helperStatus');
   const url = helperBase().replace(/\/$/, '') + '/health';
