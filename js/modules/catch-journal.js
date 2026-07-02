@@ -26,6 +26,8 @@ let selectedQueueId = null;
 let currentSubtab = 'review';
 const localPhotoUrls = new Map(); // filename(lower) -> object URL from folder picker
 const localPhotoFiles = new Map();
+window.TM_CATCH_PHOTO_URLS = localPhotoUrls;
+window.TM_CATCH_PHOTO_FILES = localPhotoFiles;
 
 const SPECIES = [
   '', 'Striped Bass', 'White Bass / Hybrid', 'Largemouth Bass', 'Spotted Bass', 'Smallmouth Bass',
@@ -194,13 +196,16 @@ export async function loadCatches() {
 function helperBase() {
   return document.getElementById('catchHelperUrl')?.value?.trim() || localStorage.getItem('trollmapCatchHelperUrl') || DEFAULT_HELPER;
 }
+function baseName(p) {
+  return String(p || '').split(/[\\/]/).pop().toLowerCase();
+}
 function imageUrl(item) {
   if (!item) return '';
-  const key = String(item.filename || '').toLowerCase();
-  if (key && localPhotoUrls.has(key)) return localPhotoUrls.get(key);
-  // HTTP localhost images are blocked when TrollMap is served over HTTPS; folder picker is preferred.
-  if (!item.sourcePath) return '';
-  return `${helperBase().replace(/\/$/, '')}/image?path=${encodeURIComponent(item.sourcePath)}`;
+  const keys = [item.filename, baseName(item.sourcePath)].map(x => String(x || '').toLowerCase()).filter(Boolean);
+  for (const key of keys) if (localPhotoUrls.has(key)) return localPhotoUrls.get(key);
+  // Do NOT fall back to http://localhost from an HTTPS GitHub Pages app; Chrome blocks it as mixed content.
+  // If no folder-picked file matches, show a no-photo warning instead of causing console spam.
+  return '';
 }
 function thumbUrl(item) { return imageUrl(item); }
 
@@ -384,7 +389,7 @@ function renderQueueDetail(el, q) {
       <div><h3 style="margin:0 0 4px">${esc(q.filename)}</h3><div class="muted">${esc(q.datetime || '')} · ${esc(q.sourcePath || 'no source path')}</div></div>
       <div class="row"><button id="prevQueueBtn" class="small">←</button><button id="nextQueueBtn" class="small">→</button></div>
     </div>
-    ${img ? `<div style="margin:10px 0;background:#050b12;border:1px solid var(--line);border-radius:10px;padding:8px;text-align:center"><img id="reviewPhoto" src="${esc(img)}" style="max-width:100%;max-height:72vh;border-radius:8px;object-fit:contain" onerror="this.insertAdjacentHTML('afterend','<div class=&quot;warnbox&quot;>Image unavailable. Start local helper server or check CSV path.</div>');this.style.display='none';"></div>` : `<div class="warnbox">No photo path in CSV row.</div>`}
+    ${img ? `<div style="margin:10px 0;background:#050b12;border:1px solid var(--line);border-radius:10px;padding:8px;text-align:center"><img id="reviewPhoto" src="${esc(img)}" style="max-width:100%;max-height:72vh;border-radius:8px;object-fit:contain" onerror="this.insertAdjacentHTML('afterend','<div class=&quot;warnbox&quot;>Image failed to load from selected folder.</div>');this.style.display='none';"></div>` : `<div class="warnbox">No matching local photo selected. Go to Import CSV → Select Photo Folder for this year. Looking for: ${esc(q.filename || baseName(q.sourcePath) || 'unknown')}</div>`}
     <div class="grid" style="grid-template-columns:repeat(4,minmax(120px,1fr));gap:8px">
       <div><label>Verified species</label><select id="rvSpecies">${speciesOptions(q.verified?.species || '')}</select></div>
       <div><label>Verified length in</label><input id="rvLength" value="${esc(q.verified?.length || '')}" placeholder="look at photo"></div>
@@ -530,9 +535,14 @@ function indexPhotoFolder(files, body) {
     count++;
   }
   const status = body?.querySelector('#photoFolderStatus') || document.getElementById('photoFolderStatus');
+  const q = getQueue();
+  const matched = q.filter(item => {
+    const keys = [item.filename, baseName(item.sourcePath)].map(x => String(x || '').toLowerCase()).filter(Boolean);
+    return keys.some(k => localPhotoUrls.has(k));
+  }).length;
   if (status) {
-    status.textContent = `Indexed ${count} image(s). Review Queue photos will load from selected folder by filename.`;
-    status.style.color = 'var(--accent2)';
+    status.textContent = `Indexed ${count} image(s). Matched ${matched}/${q.length} current queue item(s) by filename.`;
+    status.style.color = matched || !q.length ? 'var(--accent2)' : 'var(--warn)';
   }
   renderCatchSubtab();
 }
