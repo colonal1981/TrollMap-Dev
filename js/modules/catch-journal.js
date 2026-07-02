@@ -1,669 +1,568 @@
 /**
- * catch-journal.js — Catch Journal with Zero-Friction Photo Import
+ * catch-journal.js — TrollMap Catch Center
  *
- * Stores structured catch data only — NO photos in IndexedDB.
- * Photos are used transiently to extract EXIF metadata, then discarded.
+ * Drop-in replacement for js/modules/catch-journal.js.
+ * Adds:
+ *   - CSV import into a human review queue
+ *   - support for old v2 recovered CSVs and newer v3 sorter CSVs
+ *   - large local photo preview via local helper server
+ *   - verified species/length fields before approving to journal
+ *   - export of cleaned candidates CSV
  */
 
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 
-function getCatches() { return state.CATCHES; }
-function setCatches(arr) { state.CATCHES = arr; }
+const DEFAULT_HELPER = 'http://127.0.0.1:8787';
+const QUEUE_DB_KEY = 'catch_import_queue';
+const CATCHES_DB_KEY = 'catches';
 
-const pending = { lat: null, lon: null, weather: null, structure: null, photoThumb: null };
+function getCatches() { return state.CATCHES || (state.CATCHES = []); }
+function setCatches(arr) { state.CATCHES = arr || []; }
+function getQueue() { return state.CATCH_IMPORT_QUEUE || (state.CATCH_IMPORT_QUEUE = []); }
+function setQueue(arr) { state.CATCH_IMPORT_QUEUE = arr || []; }
+
+let selectedQueueId = null;
+let currentSubtab = 'review';
+
+const SPECIES = [
+  '', 'Striped Bass', 'White Bass / Hybrid', 'Largemouth Bass', 'Spotted Bass', 'Smallmouth Bass',
+  'Crappie', 'Black Crappie', 'White Crappie', 'Catfish', 'Blue Catfish', 'Channel Catfish', 'Flathead Catfish',
+  'Bowfin', 'Chain Pickerel', 'Bluegill', 'Sunfish (Panfish)', 'Redear Sunfish (Shellcracker)',
+  'Yellow Perch', 'Gar', 'Longnose Gar', 'Red Drum (Redfish)', 'Speckled Trout (Spotted Seatrout)',
+  'Flounder', 'Other Fish', 'Not Fish'
+];
+
+function parseBool(v) {
+  const s = String(v ?? '').trim().toLowerCase();
+  return ['true', '1', 'yes', 'y'].includes(s);
+}
+function cleanSpecies(s) {
+  s = String(s || '').trim();
+  const map = {
+    'White Bass/Hybrid': 'White Bass / Hybrid',
+    'Hybrid': 'White Bass / Hybrid',
+    'Striper': 'Striped Bass',
+    'Black Bass': 'Largemouth Bass',
+    'Sunfish': 'Sunfish (Panfish)',
+    'No Fish': 'Not Fish',
+    'None': ''
+  };
+  return map[s] || s;
+}
+function inferSpeciesFromNotes(species, notes) {
+  const raw = cleanSpecies(species);
+  if (raw && !['other fish', 'unknown', 'not fish', 'no fish'].includes(raw.toLowerCase())) {
+    return { species: raw, flag: '' };
+  }
+  const n = String(notes || '').toLowerCase();
+  const patterns = [
+    ['Striped Bass', /\b(striped bass|striper)\b/],
+    ['Largemouth Bass', /\b(largemouth|large mouth|black bass)\b/],
+    ['Smallmouth Bass', /\bsmallmouth\b/],
+    ['Spotted Bass', /\bspotted bass\b/],
+    ['Crappie', /\b(crappie|black crappie|white crappie)\b/],
+    ['Catfish', /\b(catfish|blue cat|channel cat|flathead|barbels)\b/],
+    ['Bowfin', /\b(bowfin|mudfish)\b/],
+    ['Chain Pickerel', /\b(chain pickerel|pickerel)\b/],
+    ['Bluegill', /\bbluegill\b/],
+    ['Sunfish (Panfish)', /\b(sunfish|panfish|shellcracker|redear|redbreast)\b/],
+    ['Gar', /\bgar\b/],
+    ['Yellow Perch', /\byellow perch\b/],
+    ['White Bass / Hybrid', /\b(white bass|hybrid)\b/],
+    ['Red Drum (Redfish)', /\b(redfish|red drum)\b/],
+    ['Speckled Trout (Spotted Seatrout)', /\b(speckled trout|spotted seatrout)\b/],
+    ['Flounder', /\bflounder\b/]
+  ];
+  for (const [sp, re] of patterns) if (re.test(n)) return { species: sp, flag: 'inferred_from_notes' };
+  return { species: raw, flag: '' };
+}
+function stableId(obj) {
+  const key = [obj.sha256, obj.filename, obj.datetime, obj.sourcePath].filter(Boolean).join('|');
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return 'cq_' + (h >>> 0).toString(16);
+}
+function splitDateTime(dt) {
+  dt = String(dt || '').trim();
+  if (!dt) return { date: '', time: '' };
+  if (dt.includes('T')) {
+    const [d, t] = dt.split('T');
+    return { date: d, time: (t || '').slice(0, 8) };
+  }
+  if (dt.includes(' ')) {
+    const [d, t] = dt.split(' ');
+    return { date: d.replaceAll(':', '-'), time: (t || '').slice(0, 8) };
+  }
+  return { date: dt.slice(0, 10), time: '' };
+}
+function displayTime(t) {
+  t = String(t || '').trim();
+  if (!t) return '';
+  const m = t.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return t;
+  let h = +m[1]; const min = m[2]; const ap = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${h}:${min} ${ap}`;
+}
+function normalizeCsvRow(row, importedFrom = 'csv') {
+  const filename = row.filename || row.file || row.name || '';
+  const datetime = row.datetime || row.date_time || row.timestamp || '';
+  const { date, time } = splitDateTime(datetime);
+  const notes = row.notes || row.stage2_notes || row.ai_notes || '';
+  const rawSpecies = cleanSpecies(row.verified_species || row.species || row.stage2_species || row.ai_species || row.stage1_species || '');
+  const inferred = inferSpeciesFromNotes(rawSpecies, notes);
+  const hasFish = parseBool(row.has_fish) || parseBool(row.stage1_fish) || !!(rawSpecies && !['Not Fish', 'No Fish'].includes(rawSpecies));
+  const onBoard = parseBool(row.on_bump_board);
+  const aiLen = String(row.length_inches || row.ai_length || row.aiLength || '').trim();
+  const conf = row.confidence || row.stage2_confidence || row.stage1_confidence || '';
+  const flags = [];
+  if (!hasFish) flags.push('not_fish_or_rejected');
+  if (onBoard) flags.push('verify_board_length_from_photo');
+  if (onBoard && !aiLen) flags.push('board_missing_length');
+  if (!inferred.species || ['Other Fish', 'Unknown'].includes(inferred.species)) flags.push('species_needs_review');
+  if (inferred.flag) flags.push(inferred.flag);
+  if (String(conf).toLowerCase().includes('low')) flags.push('low_confidence');
+  if (rawSpecies !== inferred.species && inferred.species) flags.push('species_normalized');
+
+  const item = {
+    id: '',
+    status: hasFish ? 'pending' : 'rejected_candidate',
+    reviewFlags: [...new Set(flags)],
+    filename,
+    sourcePath: row.source_path || row.path || row.local_path || '',
+    sha256: row.sha256 || '',
+    datetime, date, time,
+    lat: row.lat || '', lon: row.lon || '', lake: row.lake || '', depth: row.depth || '',
+    ai: {
+      hasFish, onBoard,
+      species: rawSpecies,
+      inferredSpecies: inferred.species,
+      length: aiLen,
+      confidence: conf,
+      model: row.source_model || row.stage2_model || row.model || '',
+      notes
+    },
+    verified: {
+      hasFish,
+      onBoard,
+      species: row.verified_species || inferred.species || rawSpecies || '',
+      length: row.verified_length_inches || row.verified_length || '',
+      lengthVerified: parseBool(row.length_verified),
+      reviewed: false
+    },
+    importedFrom,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    raw: row
+  };
+  item.id = row.id || stableId(item);
+  return item;
+}
 
 async function saveCatches() {
-  if (!window.DB?.db) return;
-  try { await window.DB.put('journal', { name: 'catches', data: getCatches() }); } catch (_) {}
+  try { await window.DB?.put('journal', { name: CATCHES_DB_KEY, data: getCatches() }); } catch (_) {}
 }
-
+async function saveQueue() {
+  try { await window.DB?.put('journal', { name: QUEUE_DB_KEY, data: getQueue() }); } catch (_) {}
+}
 export async function loadCatches() {
-  if (!window.DB?.db) return;
   try {
-    const r = await window.DB.get('journal', 'catches');
+    const r = await window.DB?.get('journal', CATCHES_DB_KEY);
     if (r) setCatches(r.data || []);
-    renderCatchLog();
+    const q = await window.DB?.get('journal', QUEUE_DB_KEY);
+    if (q) setQueue(q.data || []);
   } catch (_) {}
+  renderCatchCenter();
 }
 
-export function renderCatchLog() {
-  const host = document.getElementById('catchLog');
+function helperBase() {
+  return document.getElementById('catchHelperUrl')?.value?.trim() || localStorage.getItem('trollmapCatchHelperUrl') || DEFAULT_HELPER;
+}
+function imageUrl(item) {
+  if (!item?.sourcePath) return '';
+  return `${helperBase().replace(/\/$/, '')}/image?path=${encodeURIComponent(item.sourcePath)}`;
+}
+function thumbUrl(item) {
+  if (!item?.sourcePath) return '';
+  return `${helperBase().replace(/\/$/, '')}/image?path=${encodeURIComponent(item.sourcePath)}`;
+}
+
+function catchPanelHost() {
+  const panel = document.querySelector('#panel-catch .pad');
+  return panel || document.getElementById('panel-catch');
+}
+
+export function renderCatchLog() { renderJournalOnly(); }
+
+function renderCatchCenter() {
+  const host = catchPanelHost();
   if (!host) return;
-  const catches = getCatches();
-  if (!catches.length) {
-    host.innerHTML = '<p class="muted" style="font-size:12px">No catches logged yet.</p>';
-    return;
-  }
-  host.innerHTML = catches.map((c, i) => `
-    <div style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:12px">
-      <span style="font-size:16px">🐟</span>
-      <div style="flex:1;min-width:0">
-        <div><b>${esc(c.species || 'Fish')}</b>${c.length ? ' · ' + c.length + '"' : ''} · ${esc(c.time || '')} · ${esc(c.lake || '')}</div>
-        <div style="color:var(--muted);font-size:11px;margin-top:2px">
-          ${c.depth ? 'Depth: ' + c.depth + 'ft' : ''} ${c.lure ? ' · ' + esc(c.lure) : ''} ${c.lead ? ' · Lead: ' + c.lead + 'ft' : ''}
-        </div>
-        ${c.weather ? `<br>${c.weather.tempF}°F · ${c.weather.pressureHpa} hPa · Wind ${c.weather.windMph}mph · ${c.weather.cloudPct}% cloud · ${esc(c.weather.moonPhase || '')}` : ''}
-        ${c.structure?.depthBand ? `<br>📍 ${esc(c.structure.depthBand)}` : ''}
-        ${c.notes ? `<br>${esc(c.notes)}` : ''}
+  host.innerHTML = `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <h3 style="margin:0">🐟 Catch Center</h3>
+        <div class="muted">AI candidates → human verified journal</div>
       </div>
-      <button data-ci="${i}" style="padding:1px 6px;font-size:11px;flex-shrink:0">🗑</button>
-    </div>
-  `).join('');
-
-  host.querySelectorAll('[data-ci]').forEach(el => {
-    el.addEventListener('click', async e => {
-      const catches = getCatches();
-      catches.splice(+e.currentTarget.dataset.ci, 1);
-      renderCatchLog();
-      await saveCatches();
-    });
+      <div class="subtabs" style="margin-top:10px">
+        <button data-catchsub="journal">📓 Journal</button>
+        <button data-catchsub="import">📥 Import CSV</button>
+        <button data-catchsub="review">✅ Review Queue</button>
+        <button data-catchsub="analytics">📊 Analytics</button>
+      </div>
+      <div id="catchCenterBody"></div>
+    </div>`;
+  host.querySelectorAll('[data-catchsub]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.catchsub === currentSubtab);
+    btn.addEventListener('click', () => { currentSubtab = btn.dataset.catchsub; renderCatchCenter(); });
   });
+  renderCatchSubtab();
 }
 
-async function saveNewCatch() {
+function renderCatchSubtab() {
+  const body = document.getElementById('catchCenterBody');
+  if (!body) return;
+  if (currentSubtab === 'journal') renderJournalOnly(body);
+  else if (currentSubtab === 'import') renderImport(body);
+  else if (currentSubtab === 'analytics') renderAnalytics(body);
+  else renderReview(body);
+}
+
+function renderJournalOnly(body = document.getElementById('catchCenterBody')) {
   const catches = getCatches();
-  const form = document.getElementById('catchForm');
-  const editIndex = form?.dataset.editIndex !== undefined && form.dataset.editIndex !== ''
-    ? parseInt(form.dataset.editIndex) : -1;
+  if (!body) return;
+  body.innerHTML = `
+    <div class="row">
+      <button id="manualCatchBtn" class="primary small">+ Manual Catch</button>
+      <button id="exportJournalBtn" class="small">⬇ Export Journal CSV</button>
+      <span class="muted">${catches.length} confirmed catches</span>
+    </div>
+    <div id="catchLogList"></div>`;
+  const list = body.querySelector('#catchLogList');
+  if (!catches.length) {
+    list.innerHTML = '<p class="muted">No confirmed catches yet. Import CSV rows into the review queue, then approve them.</p>';
+  } else {
+    list.innerHTML = catches.map((c, i) => `
+      <div style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12px">
+        <span style="font-size:18px">🐟</span>
+        <div style="flex:1;min-width:0">
+          <div><b>${esc(c.species || 'Fish')}</b>${c.length ? ` · ${esc(c.length)}"` : ''} · ${esc(c.date || '')} ${esc(c.time || '')} · ${esc(c.lake || '')}</div>
+          <div class="muted">${c.depth ? `Depth: ${esc(c.depth)}ft` : ''}${c.sourceFile ? ` · ${esc(c.sourceFile)}` : ''}${c.verification?.length ? ` · length: ${esc(c.verification.length)}` : ''}</div>
+          ${c.notes ? `<div style="margin-top:2px">${esc(c.notes)}</div>` : ''}
+        </div>
+        <button data-delcatch="${i}" class="small">🗑</button>
+      </div>`).join('');
+  }
+  body.querySelector('#manualCatchBtn')?.addEventListener('click', () => addManualCatch());
+  body.querySelector('#exportJournalBtn')?.addEventListener('click', exportJournalCsv);
+  body.querySelectorAll('[data-delcatch]').forEach(btn => btn.addEventListener('click', async () => {
+    getCatches().splice(+btn.dataset.delcatch, 1);
+    await saveCatches(); renderJournalOnly(body);
+  }));
+}
 
+function renderImport(body) {
+  body.innerHTML = `
+    <div class="grid" style="grid-template-columns:minmax(280px,1fr) minmax(280px,1fr);gap:12px">
+      <div class="card" style="margin:0">
+        <h3>📥 Import sorter CSV</h3>
+        <p class="muted">Supports recovered v2 CSVs from 2023–2025 and the newer v3 2026 CSV.</p>
+        <div class="filebox" id="csvDropBox">Drop CSV here or click to choose</div>
+        <input id="catchCsvInput" type="file" accept=".csv" multiple class="hidden">
+        <label style="display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="importRejectedRows"> include not-fish/rejected rows in queue</label>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" id="replaceQueueOnImport"> replace current queue</label>
+        <div id="csvImportStatus" class="muted" style="margin-top:8px"></div>
+      </div>
+      <div class="card" style="margin:0">
+        <h3>🖥 Local photo helper</h3>
+        <p class="muted">Run the helper server so TrollMap can show large local images from the CSV path column.</p>
+        <label>Helper URL</label>
+        <input id="catchHelperUrl" value="${esc(localStorage.getItem('trollmapCatchHelperUrl') || DEFAULT_HELPER)}" style="width:100%">
+        <div class="row" style="margin-top:8px"><button id="saveHelperUrlBtn" class="small">Save URL</button><button id="testHelperBtn" class="small">Test</button></div>
+        <div id="helperStatus" class="muted"></div>
+      </div>
+    </div>`;
+  const input = body.querySelector('#catchCsvInput');
+  const box = body.querySelector('#csvDropBox');
+  box.addEventListener('click', () => input.click());
+  box.addEventListener('dragover', e => { e.preventDefault(); box.classList.add('ok'); });
+  box.addEventListener('dragleave', () => box.classList.remove('ok'));
+  box.addEventListener('drop', e => {
+    e.preventDefault(); box.classList.remove('ok');
+    importCsvFiles([...e.dataTransfer.files].filter(f => f.name.toLowerCase().endsWith('.csv')));
+  });
+  input.addEventListener('change', e => importCsvFiles([...e.target.files]));
+  body.querySelector('#saveHelperUrlBtn')?.addEventListener('click', () => {
+    localStorage.setItem('trollmapCatchHelperUrl', body.querySelector('#catchHelperUrl').value.trim() || DEFAULT_HELPER);
+    body.querySelector('#helperStatus').textContent = 'Saved.';
+  });
+  body.querySelector('#testHelperBtn')?.addEventListener('click', testHelper);
+}
+
+function renderReview(body) {
+  const queue = getQueue();
+  if (!selectedQueueId && queue.length) selectedQueueId = queue.find(q => q.status === 'pending')?.id || queue[0].id;
+  const selected = queue.find(q => q.id === selectedQueueId) || null;
+  const counts = {
+    total: queue.length,
+    pending: queue.filter(q => q.status === 'pending').length,
+    approved: queue.filter(q => q.status === 'approved' || q.status === 'imported').length,
+    rejected: queue.filter(q => String(q.status).includes('reject')).length,
+    board: queue.filter(q => q.verified?.onBoard || q.ai?.onBoard).length
+  };
+  body.innerHTML = `
+    <div class="row">
+      <button id="reviewPendingBtn" class="small">Pending ${counts.pending}</button>
+      <button id="exportQueueBtn" class="small">⬇ Export Cleaned CSV</button>
+      <button id="clearImportedBtn" class="small">Clear imported/approved</button>
+      <span class="muted">Total ${counts.total} · Board ${counts.board} · Approved ${counts.approved} · Rejected ${counts.rejected}</span>
+    </div>
+    <div style="display:grid;grid-template-columns:320px minmax(500px,1fr);gap:12px;align-items:start">
+      <div class="card" style="margin:0;max-height:72vh;overflow:auto;padding:8px" id="queueList"></div>
+      <div class="card" style="margin:0" id="queueDetail"></div>
+    </div>`;
+  renderQueueList(body.querySelector('#queueList'), queue);
+  renderQueueDetail(body.querySelector('#queueDetail'), selected);
+  body.querySelector('#exportQueueBtn')?.addEventListener('click', exportQueueCsv);
+  body.querySelector('#reviewPendingBtn')?.addEventListener('click', () => { selectedQueueId = queue.find(q => q.status === 'pending')?.id || selectedQueueId; renderReview(body); });
+  body.querySelector('#clearImportedBtn')?.addEventListener('click', async () => {
+    setQueue(getQueue().filter(q => !['approved', 'imported'].includes(q.status)));
+    await saveQueue(); renderReview(body);
+  });
+}
+
+function renderQueueList(el, queue) {
+  if (!queue.length) { el.innerHTML = '<p class="muted">No queue yet. Import a CSV first.</p>'; return; }
+  el.innerHTML = queue.map(q => {
+    const sp = q.verified?.species || q.ai?.inferredSpecies || q.ai?.species || 'Fish';
+    const len = q.verified?.length || q.ai?.length || '';
+    const active = q.id === selectedQueueId;
+    const flag = q.reviewFlags?.includes('verify_board_length_from_photo') ? '📏' : q.verified?.hasFish ? '🐟' : '🚫';
+    const statusColor = q.status === 'pending' ? 'var(--warn)' : q.status === 'imported' || q.status === 'approved' ? 'var(--accent2)' : 'var(--bad)';
+    return `<div data-qid="${esc(q.id)}" style="cursor:pointer;padding:8px;border:1px solid ${active ? 'var(--accent)' : 'var(--line)'};border-radius:8px;margin-bottom:6px;background:${active ? 'rgba(0,229,255,.08)' : 'var(--panel2)'}">
+      <div style="display:flex;justify-content:space-between;gap:8px"><b>${flag} ${esc(sp)}</b><span style="color:${statusColor};font-size:11px">${esc(q.status)}</span></div>
+      <div class="muted">${esc(q.filename)}${len ? ` · ${esc(len)}"` : ''}</div>
+      <div class="muted">${esc(q.date || '')} ${esc(displayTime(q.time))}</div>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('[data-qid]').forEach(row => row.addEventListener('click', () => { selectedQueueId = row.dataset.qid; renderCatchSubtab(); }));
+}
+function speciesOptions(current) {
+  const all = SPECIES.includes(current) ? SPECIES : [current, ...SPECIES];
+  return all.map(s => `<option value="${esc(s)}" ${s === current ? 'selected' : ''}>${esc(s || '— select —')}</option>`).join('');
+}
+function renderQueueDetail(el, q) {
+  if (!q) { el.innerHTML = '<p class="muted">Select a queue item.</p>'; return; }
+  const img = imageUrl(q);
+  const flags = q.reviewFlags || [];
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+      <div><h3 style="margin:0 0 4px">${esc(q.filename)}</h3><div class="muted">${esc(q.datetime || '')} · ${esc(q.sourcePath || 'no source path')}</div></div>
+      <div class="row"><button id="prevQueueBtn" class="small">←</button><button id="nextQueueBtn" class="small">→</button></div>
+    </div>
+    ${img ? `<div style="margin:10px 0;background:#050b12;border:1px solid var(--line);border-radius:10px;padding:8px;text-align:center"><img id="reviewPhoto" src="${esc(img)}" style="max-width:100%;max-height:72vh;border-radius:8px;object-fit:contain" onerror="this.insertAdjacentHTML('afterend','<div class=&quot;warnbox&quot;>Image unavailable. Start local helper server or check CSV path.</div>');this.style.display='none';"></div>` : `<div class="warnbox">No photo path in CSV row.</div>`}
+    <div class="grid" style="grid-template-columns:repeat(4,minmax(120px,1fr));gap:8px">
+      <div><label>Verified species</label><select id="rvSpecies">${speciesOptions(q.verified?.species || '')}</select></div>
+      <div><label>Verified length in</label><input id="rvLength" value="${esc(q.verified?.length || '')}" placeholder="look at photo"></div>
+      <div><label>AI length</label><input value="${esc(q.ai?.length || '')}" readonly></div>
+      <div><label>Confidence</label><input value="${esc(q.ai?.confidence || '')}" readonly></div>
+      <div><label>Date</label><input id="rvDate" value="${esc(q.date || '')}"></div>
+      <div><label>Time</label><input id="rvTime" value="${esc(q.time || '')}"></div>
+      <div><label>Lake</label><input id="rvLake" value="${esc(q.lake || '')}"></div>
+      <div><label>Depth ft</label><input id="rvDepth" value="${esc(q.depth || '')}"></div>
+      <div><label>Latitude</label><input id="rvLat" value="${esc(q.lat || '')}"></div>
+      <div><label>Longitude</label><input id="rvLon" value="${esc(q.lon || '')}"></div>
+      <div><label>Has fish</label><select id="rvHasFish"><option value="true" ${q.verified?.hasFish ? 'selected' : ''}>Yes</option><option value="false" ${!q.verified?.hasFish ? 'selected' : ''}>No</option></select></div>
+      <div><label>On board</label><select id="rvOnBoard"><option value="true" ${q.verified?.onBoard ? 'selected' : ''}>Yes</option><option value="false" ${!q.verified?.onBoard ? 'selected' : ''}>No</option></select></div>
+    </div>
+    <div style="margin-top:8px"><label>Notes</label><textarea id="rvNotes" rows="4">${esc(q.ai?.notes || '')}</textarea></div>
+    <div class="muted" style="margin-top:6px">AI species: ${esc(q.ai?.species || '')}${q.ai?.inferredSpecies && q.ai.inferredSpecies !== q.ai.species ? ` → ${esc(q.ai.inferredSpecies)}` : ''} · Model: ${esc(q.ai?.model || '')} · Flags: ${esc(flags.join(', ') || 'none')}</div>
+    <div class="row" style="margin-top:10px">
+      <button id="saveQueueEditsBtn" class="small">💾 Save edits</button>
+      <button id="approveCatchBtn" class="primary small">✅ Approve to Journal</button>
+      <button id="rejectCatchBtn" class="warn small">🚫 Reject</button>
+      <button id="markPendingBtn" class="small">↩ Pending</button>
+    </div>`;
+  el.querySelector('#saveQueueEditsBtn')?.addEventListener('click', async () => { applyDetailEdits(q); await saveQueue(); renderCatchSubtab(); });
+  el.querySelector('#approveCatchBtn')?.addEventListener('click', async () => { applyDetailEdits(q); await approveQueueItem(q); moveNext(); renderCatchSubtab(); });
+  el.querySelector('#rejectCatchBtn')?.addEventListener('click', async () => { q.status = 'rejected'; q.updatedAt = new Date().toISOString(); await saveQueue(); moveNext(); renderCatchSubtab(); });
+  el.querySelector('#markPendingBtn')?.addEventListener('click', async () => { q.status = 'pending'; q.updatedAt = new Date().toISOString(); await saveQueue(); renderCatchSubtab(); });
+  el.querySelector('#prevQueueBtn')?.addEventListener('click', () => { moveRelative(-1); renderCatchSubtab(); });
+  el.querySelector('#nextQueueBtn')?.addEventListener('click', () => { moveRelative(1); renderCatchSubtab(); });
+}
+function applyDetailEdits(q) {
+  q.verified = q.verified || {};
+  q.verified.species = document.getElementById('rvSpecies')?.value || '';
+  q.verified.length = document.getElementById('rvLength')?.value || '';
+  q.verified.lengthVerified = !!q.verified.length && !!q.verified.onBoard;
+  q.verified.hasFish = document.getElementById('rvHasFish')?.value === 'true';
+  q.verified.onBoard = document.getElementById('rvOnBoard')?.value === 'true';
+  q.date = document.getElementById('rvDate')?.value || '';
+  q.time = document.getElementById('rvTime')?.value || '';
+  q.lake = document.getElementById('rvLake')?.value || '';
+  q.depth = document.getElementById('rvDepth')?.value || '';
+  q.lat = document.getElementById('rvLat')?.value || '';
+  q.lon = document.getElementById('rvLon')?.value || '';
+  q.ai.notes = document.getElementById('rvNotes')?.value || '';
+  q.verified.reviewed = true;
+  q.updatedAt = new Date().toISOString();
+}
+function queueIndex() { return Math.max(0, getQueue().findIndex(q => q.id === selectedQueueId)); }
+function moveRelative(delta) {
+  const q = getQueue(); if (!q.length) return;
+  const ix = queueIndex(); selectedQueueId = q[Math.max(0, Math.min(q.length - 1, ix + delta))]?.id || selectedQueueId;
+}
+function moveNext() {
+  const q = getQueue();
+  const next = q.find(x => x.status === 'pending' && x.id !== selectedQueueId);
+  if (next) selectedQueueId = next.id; else moveRelative(1);
+}
+
+async function approveQueueItem(q) {
+  if (!q.verified?.hasFish) { q.status = 'rejected'; await saveQueue(); return; }
+  const catches = getCatches();
+  const sourceFile = q.filename;
+  const existingIx = catches.findIndex(c => c.sourceFile === sourceFile && sourceFile);
   const entry = {
-    species: document.getElementById('cSpecies')?.value || '',
-    length: document.getElementById('cLength')?.value || '',
-    depth: document.getElementById('cDepth')?.value || '',
-    lure: document.getElementById('cLure')?.value || '',
-    lead: document.getElementById('cLead')?.value || '',
-    time: document.getElementById('cTime')?.value || '',
-    notes: document.getElementById('cNotes')?.value || '',
-    date: document.getElementById('cDate')?.value || window._pendingCatchDate || new Date().toISOString().slice(0, 10),
-    lake: document.getElementById('planLake')?.value || '',
-    lat: pending.lat || (editIndex >= 0 ? catches[editIndex]?.lat : '') || '',
-    lon: pending.lon || (editIndex >= 0 ? catches[editIndex]?.lon : '') || '',
-    weather: pending.weather || (editIndex >= 0 ? catches[editIndex]?.weather : null) || null,
-    structure: pending.structure || (editIndex >= 0 ? catches[editIndex]?.structure : null) || null,
-    sourceFile: editIndex >= 0 ? catches[editIndex]?.sourceFile : undefined,
-    importedFrom: editIndex >= 0 ? catches[editIndex]?.importedFrom : undefined,
+    species: q.verified.species || q.ai?.inferredSpecies || q.ai?.species || '',
+    length: q.verified.length || q.ai?.length || '',
+    depth: q.depth || '',
+    lure: '', lead: '',
+    time: displayTime(q.time),
+    date: q.date || '',
+    lake: q.lake || '',
+    lat: q.lat || '', lon: q.lon || '',
+    notes: q.ai?.notes || '',
+    weather: null,
+    structure: null,
+    sourceFile,
+    sourcePath: q.sourcePath || '',
+    importedFrom: q.importedFrom || 'review-queue',
+    verification: {
+      reviewed: true,
+      species: q.verified.species ? 'human-reviewed' : 'ai',
+      length: q.verified.length ? 'human-visual' : 'ai-unverified',
+      onBoard: q.verified.onBoard,
+      sourceModel: q.ai?.model || '',
+      approvedAt: new Date().toISOString()
+    }
   };
-
-  if (editIndex >= 0) {
-    catches[editIndex] = entry;
-  } else {
-    catches.unshift(entry);
-  }
-
-  // Reset edit mode
-  if (form) { delete form.dataset.editIndex; }
-  const saveBtn = document.getElementById('saveCatchBtn');
-  if (saveBtn) saveBtn.textContent = '💾 Save';
-
-  pending.lat = null; pending.lon = null; pending.weather = null; pending.structure = null; pending.photoThumb = null;
-  window._pendingCatchDate = null;
-
-  const thumb = document.getElementById('cPhotoThumb');
-  if (thumb) { thumb.src = ''; thumb.style.display = 'none'; }
-  const status = document.getElementById('cImportStatus');
-  if (status) status.textContent = '';
-  const coordEl4 = document.getElementById('cCoords');
-  if (coordEl4) coordEl4.value = '';
-
-  renderCatchLog();
-  await saveCatches();
-
-  ['cSpecies','cLength','cDepth','cLure','cLead','cNotes','cDate'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.value = '';
-  });
-  
-  const photoInput = document.getElementById('cPhoto');
-  if (photoInput) photoInput.value = '';
-  document.getElementById('catchForm').style.display = 'none';
-}
-
-let _exifr = null;
-async function loadExifr() {
-  if (_exifr) return _exifr;
-  const mod = await import('https://cdn.jsdelivr.net/npm/exifr/dist/full.esm.js');
-  _exifr = mod.default || mod;
-  return _exifr;
-}
-
-async function parseEXIF(file) {
-  try {
-    const exifr = await loadExifr();
-    const result = await exifr.parse(file, { gps: true, exif: true, tiff: true, mergeOutput: false });
-    if (!result) return null;
-    const gps = result.gps || {};
-    const exif = result.exif || {};
-    const tiff = result.tiff || {};
-    const lat = gps.latitude ?? null;
-    const lon = gps.longitude ?? null;
-    const dateStr = exif.DateTimeOriginal || tiff.DateTime || null;
-    
-    let isoDateStr = null;
-    if (dateStr instanceof Date) {
-      isoDateStr = dateStr.toISOString().slice(0, 19).replace('T', ' ');
-    } else if (typeof dateStr === 'string') {
-      isoDateStr = dateStr; 
-    }
-    return { lat, lon, dateStr: isoDateStr };
-  } catch (e) { return null; }
-}
-
-function moonPhaseLabel(isoDate) {
-  const d = new Date(isoDate);
-  const JD = d / 86400000 + 2440587.5;
-  const phase = ((JD - 2451550.1) / 29.530588) % 1;
-  const p = phase < 0 ? phase + 1 : phase;
-  if (p < 0.03 || p > 0.97) return 'New Moon';
-  if (p < 0.22) return 'Waxing Crescent';
-  if (p < 0.28) return 'First Quarter';
-  if (p < 0.47) return 'Waxing Gibbous';
-  if (p < 0.53) return 'Full Moon';
-  if (p < 0.72) return 'Waning Gibbous';
-  if (p < 0.78) return 'Last Quarter';
-  return 'Waning Crescent';
-}
-
-async function fetchHistoricalWeather(lat, lon, isoDateTime) {
-  const dateOnly = isoDateTime.slice(0, 10);
-  const hour = parseInt(isoDateTime.slice(11, 13));
-  const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=${dateOnly}&end_date=${dateOnly}&hourly=temperature_2m,surface_pressure,cloudcover,windspeed_10m,winddirection_10m&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=America%2FNew_York`;
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`Weather API ${resp.status}`);
-  const data = await resp.json();
-  const h = data.hourly;
-  return {
-    tempF: Math.round(h.temperature_2m[hour] * 10) / 10,
-    pressureHpa: Math.round(h.surface_pressure[hour]),
-    cloudPct: h.cloudcover[hour],
-    windMph: Math.round(h.windspeed_10m[hour] * 10) / 10,
-    windDir: h.winddirection_10m[hour],
-    moonPhase: moonPhaseLabel(isoDateTime),
-  };
-}
-
-function spatialLookup(lat, lon) {
-  try {
-    const LAKE_DB = window.LAKE_DB || {};
-    let lakeName = null;
-    let bestDist = Infinity;
-    for (const [name, info] of Object.entries(LAKE_DB)) {
-      if (!info.center) continue;
-      const dLat = (lat - info.center[0]) * 69;
-      const dLon = (lon - info.center[1]) * 69 * Math.cos(lat * Math.PI / 180);
-      const dist = Math.sqrt(dLat * dLat + dLon * dLon);
-      if (dist < bestDist && dist < (info.radiusMi || 15)) { bestDist = dist; lakeName = name; }
-    }
-    let depthBand = null;
-    const contourData = state.ACTIVE_CONTOUR;
-    const features = contourData?.smart?.features || contourData?.raw?.features || [];
-    if (features.length && lat && lon) {
-      let closestDepth = null;
-      let closestDist = Infinity;
-      const cosLat = Math.cos(lat * Math.PI / 180);
-      const boxDeg = 1 / 69;
-      const candidates = features.filter(feat => {
-        const bbox = feat.bbox;
-        if (bbox) return bbox[0] - boxDeg <= lon && lon <= bbox[2] + boxDeg && bbox[1] - boxDeg <= lat && lat <= bbox[3] + boxDeg;
-        return true;
-      });
-      for (const feat of candidates) {
-        const depth = feat.properties?.depth ?? feat.properties?.DEPTH ?? feat.properties?.depth_ft;
-        if (depth == null) continue;
-        const coords = feat.geometry?.coordinates;
-        if (!coords) continue;
-        const gtype = feat.geometry.type;
-        const pts = gtype === 'LineString' ? coords : gtype === 'MultiLineString' ? coords.flat(1) : gtype === 'Polygon' ? coords[0] : coords.flat(2);
-        for (const pt of pts) {
-          const cLon = Array.isArray(pt[0]) ? pt[0][0] : pt[0];
-          const cLat = Array.isArray(pt[0]) ? pt[0][1] : pt[1];
-          if (!isFinite(cLat) || !isFinite(cLon)) continue;
-          const d = Math.hypot((lat - cLat) * 69, (lon - cLon) * 69 * cosLat);
-          if (d < closestDist) { closestDist = d; closestDepth = depth; }
-        }
-      }
-      if (closestDepth != null && closestDist < 1.0) {
-        depthBand = `~${closestDepth}ft contour (${closestDist < 0.1 ? 'on' : closestDist < 0.25 ? 'near' : 'near'} contour)`;
-      }
-    }
-    return { lakeName, depthBand };
-  } catch (e) { return { lakeName: null, depthBand: null }; }
-}
-
-function setImportStatus(msg, color) {
-  const el = document.getElementById('cImportStatus');
-  if (el) { el.textContent = msg; el.style.color = color || 'var(--accent2)'; }
-}
-
-// ── Gemini fish identification ───────────────────────────────────────────────
-async function resizeForGemini(imgFile, maxPx = 1024) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    const url = URL.createObjectURL(imgFile);
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
-      const w = Math.round(img.width * scale);
-      const h = Math.round(img.height * scale);
-      const canvas = document.createElement('canvas');
-      canvas.width = w; canvas.height = h;
-      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      canvas.toBlob(blob => resolve(blob || imgFile), 'image/jpeg', 0.85);
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); resolve(imgFile); };
-    img.src = url;
-  });
-}
-
-async function identifyFishWithGemini(imgFile) {
-  try {
-    // Resize to 1024px max before sending — full res photos crash the worker
-    const resized = await resizeForGemini(imgFile, 1024);
-    const mimeType = 'image/jpeg';
-    const resp = await fetch('https://trollmap-worker.colonal1981.workers.dev/identify-catch', {
-      method: 'POST',
-      headers: {
-        'Content-Type': mimeType,
-        'X-Image-Type': mimeType,
-      },
-      body: resized,
-    });
-    if (!resp.ok) throw new Error(`Worker ${resp.status}`);
-    const data = await resp.json();
-    if (!data.success) throw new Error(data.error || 'Unknown error');
-    return data.analysis;
-  } catch (e) {
-    console.warn('[catch-journal] Gemini ID failed:', e.message);
-    return null;
-  }
-}
-
-async function processCatchPhoto(imgFile, jsonFile = null) {
-  if (!imgFile && !jsonFile) return;
-  
-  document.querySelector('#bottomNav button[data-tab="catch"]')?.click();
-  const catchForm = document.getElementById('catchForm');
-  if (catchForm) catchForm.style.display = 'block';
-  
-  setImportStatus('Reading photo metadata...', 'var(--muted)');
-  let lat = null, lon = null, dateStr = null;
-
-  if (jsonFile) {
-    setImportStatus('Parsing Google Takeout JSON sidecar...', 'var(--muted)');
-    const text = await jsonFile.text();
-    try {
-      const payload = JSON.parse(text);
-      if (payload.geoData && payload.geoData.latitude !== 0.0) {
-        lat = payload.geoData.latitude;
-        lon = payload.geoData.longitude;
-      }
-      if (payload.photoTakenTime && payload.photoTakenTime.timestamp) {
-        const utcMs = parseInt(payload.photoTakenTime.timestamp) * 1000;
-        const formatter = new Intl.DateTimeFormat('en-US', {
-            timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
-            hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
-        });
-        const parts = formatter.formatToParts(new Date(utcMs));
-        const p = {};
-        parts.forEach(({ type, value }) => { p[type] = value; });
-        dateStr = `${p.year}:${p.month}:${p.day} ${p.hour === '24' ? '00' : p.hour}:${p.minute}:${p.second}`;
-      }
-    } catch(e) {}
-  }
-
-  if (!lat || !dateStr) {
-    if (imgFile) {
-      const exif = await parseEXIF(imgFile);
-      if (exif) {
-        if (!lat) lat = exif.lat;
-        if (!lon) lon = exif.lon;
-        if (!dateStr) dateStr = exif.dateStr;
-      }
-    }
-  }
-
-  if (!dateStr) {
-    setImportStatus('No EXIF or JSON data found', 'var(--warn)');
-    return;
-  }
-
-  let isoDateTime = null;
-  let displayTime = '';
-  if (dateStr) {
-    const [datePart, timePart] = dateStr.split(' ');
-    if (datePart && timePart) {
-      isoDateTime = `${datePart.replace(/:/g, '-')}T${timePart}`;
-      window._pendingCatchDate = datePart.replace(/:/g, '-');
-      let [h, m, s] = timePart.split(':');
-      let hr = parseInt(h);
-      let ampm = hr >= 12 ? 'PM' : 'AM';
-      hr = hr % 12;
-      hr = hr ? hr : 12; 
-      displayTime = `${hr}:${m} ${ampm}`;
-    }
-  }
-
-  const timeEl = document.getElementById('cTime');
-  if (timeEl) timeEl.value = displayTime;
-  const dateEl = document.getElementById('cDate');
-  if (dateEl) dateEl.value = isoDateTime ? isoDateTime.slice(0, 10) : new Date().toISOString().slice(0, 10);
-
-  pending.lat = lat; pending.lon = lon;
-
-  if (imgFile) {
-    const thumb = document.getElementById('cPhotoThumb');
-    if (thumb) {
-      const url = URL.createObjectURL(imgFile);
-      thumb.src = url;
-      thumb.style.display = 'block';
-      thumb.onload = () => URL.revokeObjectURL(url);
-    }
-
-    // Gemini fish ID — runs in parallel with spatial lookup + weather
-    setImportStatus('Identifying fish with AI...', 'var(--muted)');
-    identifyFishWithGemini(imgFile).then(ai => {
-      if (!ai) {
-        setImportStatus('AI identification unavailable — fill in species/length manually', 'var(--warn)');
-        return;
-      }
-      const speciesEl = document.getElementById('cSpecies');
-      if (speciesEl && !speciesEl.value) speciesEl.value = ai.species || '';
-      const lengthEl = document.getElementById('cLength');
-      if (lengthEl && !lengthEl.value && ai.lengthInches) lengthEl.value = ai.lengthInches;
-      const confColor = ai.confidence === 'high' ? 'var(--accent2)' : ai.confidence === 'medium' ? 'var(--warn)' : 'var(--bad)';
-      const confLabel = ai.confidence === 'high' ? '✓' : ai.confidence === 'medium' ? '~' : '?';
-      setImportStatus(
-        `${confLabel} AI: ${ai.species} · ${ai.lengthInches}" (${ai.confidence} confidence)${ai.notes ? ' · ' + ai.notes : ''}`,
-        confColor
-      );
-    });
-  }
-
-  if (lat && lon) {
-    const spatial = spatialLookup(lat, lon);
-    pending.structure = spatial;
-    if (spatial.lakeName) {
-      const lakeEl = document.getElementById('planLake');
-      if (lakeEl && !lakeEl.value) lakeEl.value = spatial.lakeName;
-    }
-    if (spatial.depthBand) {
-      const depthEl = document.getElementById('cDepth');
-      if (depthEl && !depthEl.value) {
-        const m = spatial.depthBand.match(/~?(\d+)/);
-        if (m) depthEl.value = m[1];
-      }
-      setImportStatus(`GPS found · depth ~${spatial.depthBand.match(/~?(\d+)/)?.[1] || '?'}ft from contour · fetching weather...`, 'var(--muted)');
-    }
-  }
-
-  if (lat && lon && isoDateTime) {
-    setImportStatus('Fetching historical weather...', 'var(--muted)');
-    try {
-      const weather = await fetchHistoricalWeather(lat, lon, isoDateTime);
-      pending.weather = weather;
-      const notesEl = document.getElementById('cNotes');
-      const pressStr = weather.pressureHpa > 0 ? `${weather.pressureHpa}hPa · ` : '';
-      if (notesEl && !notesEl.value) {
-        notesEl.value = `${weather.tempF}°F · ${pressStr}Wind ${weather.windMph}mph · ${weather.cloudPct}% cloud · ${weather.moonPhase}`;
-      }
-      const coordEl = document.getElementById('cCoords');
-      if (coordEl && lat) coordEl.value = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
-      setImportStatus(`✓ GPS found · ${weather.tempF}°F · Wind ${weather.windMph}mph · ${weather.moonPhase}`, 'var(--accent2)');
-    } catch (e) {
-      const coordEl2 = document.getElementById('cCoords');
-      if (coordEl2 && lat) coordEl2.value = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
-      setImportStatus(`GPS found · Weather unavailable (${e.message})`, 'var(--warn)');
-    }
-  } else if (!lat) {
-    setImportStatus('⚠ No GPS in photo — fill in location manually', 'var(--warn)');
-  } else {
-    setImportStatus('⚠ No timestamp in photo', 'var(--warn)');
-  }
-}
-
-const dropOverlay = document.createElement('div');
-dropOverlay.id = 'catchDropOverlay';
-dropOverlay.innerHTML = `
-  <div style="pointer-events:none;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;border:3px dashed var(--accent2);border-radius:16px;background:rgba(10,20,30,0.95)">
-    <span style="font-size:48px">📸</span>
-    <div style="color:var(--accent2);font-size:18px;font-weight:700;margin-top:12px">Drop Catch Photo (and JSON) to Import</div>
-    <div style="color:var(--muted);font-size:12px;margin-top:6px">Extracts GPS · Time · Weather · Depth</div>
-    <div style="color:var(--muted);font-size:11px;margin-top:4px">Photo is not stored — only the data</div>
-  </div>
-`;
-Object.assign(dropOverlay.style, {
-  position: 'fixed', top: '12px', left: '12px', right: '12px', bottom: '60px',
-  zIndex: '99999', display: 'none', backdropFilter: 'blur(4px)',
-});
-document.body.appendChild(dropOverlay);
-
-let dragCounter = 0;
-document.body.addEventListener('dragenter', e => { e.preventDefault(); dragCounter++; dropOverlay.style.display = 'block'; });
-document.body.addEventListener('dragleave', () => { if (--dragCounter <= 0) { dragCounter = 0; dropOverlay.style.display = 'none'; } });
-document.body.addEventListener('dragover', e => e.preventDefault());
-document.body.addEventListener('drop', async e => {
-  e.preventDefault(); dragCounter = 0; dropOverlay.style.display = 'none';
-  const files = e.dataTransfer.files;
-  if (!files || files.length === 0) return;
-  let imgFile = null, jsonFile = null;
-  for (let i = 0; i < files.length; i++) {
-    if (files[i].name.endsWith('.json')) jsonFile = files[i];
-    else if (files[i].type.startsWith('image/')) imgFile = files[i];
-  }
-  if (imgFile || jsonFile) processCatchPhoto(imgFile, jsonFile);
-});
-
-// ── CSV bulk importer ────────────────────────────────────────────────────────
-// Reads fish_sort_results_v2.csv from the fish sorter pipeline and bulk-creates
-// catch journal entries. Fetches historical weather for each catch using GPS +
-// timestamp. Only imports rows where on_bump_board = true.
-
-async function fetchWeatherForCatch(lat, lon, isoDateTime) {
-  try {
-    const dateOnly = isoDateTime.slice(0, 10);
-    const hour = parseInt(isoDateTime.slice(11, 13));
-    const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=${dateOnly}&end_date=${dateOnly}&hourly=temperature_2m,surface_pressure,cloudcover,windspeed_10m&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto`;
-    const resp = await fetch(url);
-    if (!resp.ok) return null;
-    const data = await resp.json();
-    const h = data.hourly;
-    return {
-      tempF:       Math.round(h.temperature_2m[hour] * 10) / 10,
-      pressureHpa: Math.round(h.surface_pressure[hour]),
-      cloudPct:    h.cloudcover[hour],
-      windMph:     Math.round(h.windspeed_10m[hour] * 10) / 10,
-      moonPhase:   getMoonPhase(isoDateTime),
-    };
-  } catch { return null; }
-}
-
-function getMoonPhase(isoDate) {
-  const d = new Date(isoDate);
-  const JD = d / 86400000 + 2440587.5;
-  const phase = ((JD - 2451550.1) / 29.530588) % 1;
-  const p = phase < 0 ? phase + 1 : phase;
-  if (p < 0.03 || p > 0.97) return 'New Moon';
-  if (p < 0.22) return 'Waxing Crescent';
-  if (p < 0.28) return 'First Quarter';
-  if (p < 0.47) return 'Waxing Gibbous';
-  if (p < 0.53) return 'Full Moon';
-  if (p < 0.72) return 'Waning Gibbous';
-  if (p < 0.78) return 'Last Quarter';
-  return 'Waning Crescent';
+  if (existingIx >= 0) catches[existingIx] = entry; else catches.unshift(entry);
+  q.status = 'imported'; q.updatedAt = new Date().toISOString();
+  await saveCatches(); await saveQueue();
 }
 
 function parseCsv(text) {
-  const lines = text.split('\n');
-  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
-  return lines.slice(1).filter(l => l.trim()).map(line => {
-    // Handle quoted fields with commas
-    const fields = [];
-    let inQuote = false, field = '';
-    for (const ch of line) {
-      if (ch === '"') { inQuote = !inQuote; }
-      else if (ch === ',' && !inQuote) { fields.push(field.trim()); field = ''; }
-      else { field += ch; }
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i], next = text[i + 1];
+    if (ch === '"') {
+      if (inQuotes && next === '"') { field += '"'; i++; }
+      else inQuotes = !inQuotes;
+    } else if (ch === ',' && !inQuotes) { row.push(field); field = ''; }
+    else if ((ch === '\n' || ch === '\r') && !inQuotes) {
+      if (ch === '\r' && next === '\n') i++;
+      row.push(field); field = '';
+      if (row.some(x => String(x).trim() !== '')) rows.push(row);
+      row = [];
+    } else field += ch;
+  }
+  row.push(field); if (row.some(x => String(x).trim() !== '')) rows.push(row);
+  if (!rows.length) return [];
+  const headers = rows[0].map(h => h.trim().replace(/^\uFEFF/, ''));
+  return rows.slice(1).map(r => Object.fromEntries(headers.map((h, i) => [h, r[i] ?? ''])));
+}
+async function importCsvFiles(files) {
+  const status = document.getElementById('csvImportStatus');
+  const includeRejected = document.getElementById('importRejectedRows')?.checked;
+  const replace = document.getElementById('replaceQueueOnImport')?.checked;
+  if (replace) setQueue([]);
+  let added = 0, skipped = 0;
+  for (const file of files) {
+    const text = await file.text();
+    const rows = parseCsv(text);
+    for (const row of rows) {
+      const item = normalizeCsvRow(row, file.name);
+      if (!includeRejected && !item.verified.hasFish) { skipped++; continue; }
+      if (getQueue().some(q => q.id === item.id)) { skipped++; continue; }
+      getQueue().push(item); added++;
     }
-    fields.push(field.trim());
-    return Object.fromEntries(headers.map((h, i) => [h, fields[i] || '']));
-  });
+  }
+  await saveQueue();
+  if (status) status.textContent = `Imported ${added} queue items${skipped ? ` · skipped ${skipped}` : ''}.`;
+  currentSubtab = 'review'; selectedQueueId = getQueue().find(q => q.status === 'pending')?.id || getQueue()[0]?.id || null;
+  setTimeout(renderCatchCenter, 700);
+}
+async function testHelper() {
+  const out = document.getElementById('helperStatus');
+  const url = helperBase().replace(/\/$/, '') + '/health';
+  try {
+    const r = await fetch(url); const j = await r.json();
+    out.textContent = j.ok ? `✓ Helper online (${j.name || 'TrollMap helper'})` : 'Helper responded but not OK';
+    out.style.color = j.ok ? 'var(--accent2)' : 'var(--warn)';
+  } catch (e) { out.textContent = `Not reachable: ${e.message}`; out.style.color = 'var(--bad)'; }
 }
 
-async function importFromCsv(file) {
-  const statusEl = document.getElementById('csvImportStatus');
-  const setStatus = (msg, color) => {
-    if (statusEl) { statusEl.textContent = msg; statusEl.style.color = color || 'var(--accent2)'; }
-  };
+function csvEscape(v) {
+  v = String(v ?? '');
+  return /[",\n\r]/.test(v) ? `"${v.replaceAll('"', '""')}"` : v;
+}
+function downloadCsv(name, rows) {
+  if (!rows.length) return;
+  const headers = Object.keys(rows[0]);
+  const text = [headers.join(','), ...rows.map(r => headers.map(h => csvEscape(r[h])).join(','))].join('\n');
+  const blob = new Blob([text], { type: 'text/csv' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function exportQueueCsv() {
+  const rows = getQueue().map(q => ({
+    review_status: q.status, review_flags: (q.reviewFlags || []).join('|'), filename: q.filename,
+    datetime: q.datetime, date: q.date, time: q.time, lat: q.lat, lon: q.lon, lake: q.lake, depth: q.depth,
+    has_fish: q.verified?.hasFish, on_bump_board: q.verified?.onBoard,
+    species: q.verified?.species || q.ai?.inferredSpecies || q.ai?.species,
+    verified_length_inches: q.verified?.length || '', ai_length_inches: q.ai?.length || '',
+    length_verified: !!q.verified?.length,
+    confidence: q.ai?.confidence || '', source_model: q.ai?.model || '', notes: q.ai?.notes || '',
+    sha256: q.sha256 || '', source_path: q.sourcePath || '', imported_from: q.importedFrom || ''
+  }));
+  downloadCsv('trollmap_catch_review_queue_cleaned.csv', rows);
+}
+function exportJournalCsv() {
+  const rows = getCatches().map(c => ({
+    species: c.species, length: c.length, date: c.date, time: c.time, lake: c.lake, depth: c.depth,
+    lat: c.lat, lon: c.lon, lure: c.lure, lead: c.lead, notes: c.notes,
+    sourceFile: c.sourceFile, sourcePath: c.sourcePath, importedFrom: c.importedFrom,
+    lengthVerification: c.verification?.length || '', speciesVerification: c.verification?.species || ''
+  }));
+  downloadCsv('trollmap_catch_journal.csv', rows);
+}
 
-  setStatus('Reading CSV...', 'var(--muted)');
-  const text = await file.text();
-  const rows = parseCsv(text);
-
-  // Filter to board fish only
-  const boardFish = rows.filter(r =>
-    r.on_bump_board?.toLowerCase() === 'true' &&
-    r.stage2_species && r.stage2_species !== 'ERROR'
-  );
-
-  if (!boardFish.length) {
-    setStatus('No board fish found in CSV — check on_bump_board column', 'var(--warn)');
-    return;
-  }
-
-  setStatus(`Found ${boardFish.length} board fish — importing...`, 'var(--muted)');
-
+function renderAnalytics(body) {
   const catches = getCatches();
-  let imported = 0;
-  let skipped = 0;
-
-  for (let i = 0; i < boardFish.length; i++) {
-    const row = boardFish[i];
-    setStatus(`Importing ${i + 1}/${boardFish.length}: ${row.stage2_species} ${row.length_inches}"...`, 'var(--muted)');
-
-    // Skip if already imported (same filename)
-    if (catches.some(c => c.sourceFile === row.filename)) {
-      skipped++;
-      continue;
-    }
-
-    const lat = parseFloat(row.lat) || null;
-    const lon = parseFloat(row.lon) || null;
-    const isoDateTime = row.datetime || null;
-
-    // Fetch weather if we have GPS + time
-    let weather = null;
-    if (lat && lon && isoDateTime) {
-      weather = await fetchWeatherForCatch(lat, lon, isoDateTime);
-    }
-
-    // Parse time for display
-    let displayTime = '';
-    let displayDate = '';
-    if (isoDateTime) {
-      const d = new Date(isoDateTime);
-      displayTime = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-      displayDate = isoDateTime.slice(0, 10);
-    }
-
-    // Derive lake from GPS if possible
-    let lakeName = '';
-    if (lat && lon) {
-      const LAKE_CENTERS = {
-        'Lake Wateree':  { lat: 34.37, lon: -80.73, r: 0.15 },
-        'Lake Murray':   { lat: 34.06, lon: -81.32, r: 0.25 },
-        'Lake Marion':   { lat: 33.55, lon: -80.30, r: 0.35 },
-        'Lake Moultrie': { lat: 33.28, lon: -80.05, r: 0.20 },
-        'Lake Monticello':{ lat: 34.44, lon: -81.21, r: 0.10 },
-      };
-      for (const [name, info] of Object.entries(LAKE_CENTERS)) {
-        const d = Math.sqrt(Math.pow((lat - info.lat) * 69, 2) + Math.pow((lon - info.lon) * 69, 2));
-        if (d < info.r * 69) { lakeName = name; break; }
-      }
-    }
-
-    const weatherStr = weather
-      ? `${weather.tempF}°F · ${weather.pressureHpa > 0 ? weather.pressureHpa + 'hPa · ' : ''}Wind ${weather.windMph}mph · ${weather.cloudPct}% cloud · ${weather.moonPhase}`
-      : '';
-
-    catches.unshift({
-      species:   row.stage2_species || '',
-      length:    row.length_inches  || '',
-      depth:     '',
-      lure:      '',
-      lead:      '',
-      time:      displayTime,
-      notes:     [row.stage2_notes, weatherStr].filter(Boolean).join(' · ').slice(0, 200),
-      date:      displayDate,
-      lake:      lakeName,
-      lat:       lat || '',
-      lon:       lon || '',
-      weather:   weather || null,
-      structure: null,
-      sourceFile: row.filename,  // track source to prevent duplicate imports
-      importedFrom: 'csv',
-    });
-
-    imported++;
-
-    // Small delay to avoid hammering Open-Meteo
-    if (i < boardFish.length - 1) await new Promise(r => setTimeout(r, 300));
-  }
-
-  setCatches(catches);
-  renderCatchLog();
-  await saveCatches();
-
-  setStatus(
-    `✓ Imported ${imported} catches${skipped ? ` · ${skipped} already existed` : ''}`,
-    'var(--accent2)'
-  );
+  const queue = getQueue();
+  const bySpecies = {};
+  catches.forEach(c => { const s = c.species || 'Unknown'; bySpecies[s] = (bySpecies[s] || 0) + 1; });
+  body.innerHTML = `
+    <div class="grid" style="grid-template-columns:repeat(4,1fr);gap:8px">
+      <div class="card"><div class="muted">Confirmed</div><div class="big">${catches.length}</div></div>
+      <div class="card"><div class="muted">Queue</div><div class="big">${queue.length}</div></div>
+      <div class="card"><div class="muted">Pending</div><div class="big">${queue.filter(q => q.status === 'pending').length}</div></div>
+      <div class="card"><div class="muted">Board queue</div><div class="big">${queue.filter(q => q.verified?.onBoard || q.ai?.onBoard).length}</div></div>
+    </div>
+    <div class="card"><h3>Species</h3>${Object.entries(bySpecies).sort((a,b)=>b[1]-a[1]).map(([s,n]) => `<div>${esc(s)}: <b>${n}</b></div>`).join('') || '<p class="muted">No catches yet.</p>'}</div>`;
+}
+async function addManualCatch() {
+  const species = prompt('Species?'); if (species === null) return;
+  const length = prompt('Length inches?') || '';
+  getCatches().unshift({ species, length, date: new Date().toISOString().slice(0,10), time: new Date().toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'}), notes: '', importedFrom: 'manual' });
+  await saveCatches(); renderCatchSubtab();
 }
 
+// Legacy buttons may exist before render override; wire defensively.
 function wireButtons() {
-  const photoInput = document.getElementById('cPhoto');
-  if (photoInput) {
-    if (!photoInput.hasAttribute('multiple')) photoInput.setAttribute('multiple', 'multiple');
-    photoInput.addEventListener('change', e => {
-      const files = e.target.files;
-      if (!files || files.length === 0) return;
-      let imgFile = null, jsonFile = null;
-      for (let i = 0; i < files.length; i++) {
-        if (files[i].name.endsWith('.json')) jsonFile = files[i];
-        else if (files[i].type.startsWith('image/')) imgFile = files[i];
-      }
-      if (imgFile || jsonFile) processCatchPhoto(imgFile, jsonFile);
-    });
-  }
-
-  document.getElementById('addCatchBtn')?.addEventListener('click', () => {
-    document.getElementById('catchForm').style.display = 'block';
-    const timeEl = document.getElementById('cTime');
-    if (timeEl && !timeEl.value) timeEl.value = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-    const dateEl2 = document.getElementById('cDate');
-    if (dateEl2 && !dateEl2.value) dateEl2.value = new Date().toISOString().slice(0, 10);
-  });
-
-  document.getElementById('cancelCatchBtn')?.addEventListener('click', () => {
-    document.getElementById('catchForm').style.display = 'none';
-    pending.lat = null; pending.lon = null; pending.weather = null; pending.structure = null; pending.photoThumb = null;
-    const thumb = document.getElementById('cPhotoThumb');
-    if (thumb) { thumb.src = ''; thumb.style.display = 'none'; }
-    const coordEl3 = document.getElementById('cCoords');
-    if (coordEl3) coordEl3.value = '';
-    setImportStatus('');
-  });
-
-  document.getElementById('saveCatchBtn')?.addEventListener('click', saveNewCatch);
-
-  // CSV import
-  const csvBtn = document.getElementById('importCsvBtn');
-  const csvInput = document.getElementById('csvFileInput');
-  if (csvBtn && csvInput) {
-    csvBtn.addEventListener('click', () => csvInput.click());
-    csvInput.addEventListener('change', e => {
-      if (e.target.files?.[0]) importFromCsv(e.target.files[0]);
-    });
-  }
+  renderCatchCenter();
 }
 
 wireButtons();
