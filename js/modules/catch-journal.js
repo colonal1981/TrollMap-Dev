@@ -109,6 +109,137 @@ function displayTime(t) {
   h = h % 12 || 12;
   return `${h}:${min} ${ap}`;
 }
+
+function moonPhaseLabel(isoDate) {
+  const d = new Date(isoDate);
+  if (Number.isNaN(+d)) return '';
+  const JD = d / 86400000 + 2440587.5;
+  const phase = ((JD - 2451550.1) / 29.530588) % 1;
+  const p = phase < 0 ? phase + 1 : phase;
+  if (p < 0.03 || p > 0.97) return 'New Moon';
+  if (p < 0.22) return 'Waxing Crescent';
+  if (p < 0.28) return 'First Quarter';
+  if (p < 0.47) return 'Waxing Gibbous';
+  if (p < 0.53) return 'Full Moon';
+  if (p < 0.72) return 'Waning Gibbous';
+  if (p < 0.78) return 'Last Quarter';
+  return 'Waning Crescent';
+}
+
+function itemIsoDateTime(item) {
+  if (item?.datetime) return String(item.datetime).replace(' ', 'T');
+  if (item?.date) return `${item.date}T${item.time || '12:00:00'}`;
+  return '';
+}
+
+async function fetchHistoricalWeatherForItem(item) {
+  const lat = parseFloat(item?.lat), lon = parseFloat(item?.lon);
+  const iso = itemIsoDateTime(item);
+  if (!isFinite(lat) || !isFinite(lon) || !iso) return null;
+  const dateOnly = iso.slice(0, 10);
+  let hour = parseInt((iso.split('T')[1] || '12:00').slice(0, 2), 10);
+  if (!isFinite(hour) || hour < 0 || hour > 23) hour = 12;
+  const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=${dateOnly}&end_date=${dateOnly}&hourly=temperature_2m,surface_pressure,cloudcover,windspeed_10m,winddirection_10m&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=America%2FNew_York`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`Open-Meteo ${resp.status}`);
+  const data = await resp.json();
+  const h = data.hourly || {};
+  return {
+    tempF: h.temperature_2m?.[hour] != null ? Math.round(h.temperature_2m[hour] * 10) / 10 : null,
+    pressureHpa: h.surface_pressure?.[hour] != null ? Math.round(h.surface_pressure[hour]) : null,
+    cloudPct: h.cloudcover?.[hour] ?? null,
+    windMph: h.windspeed_10m?.[hour] != null ? Math.round(h.windspeed_10m[hour] * 10) / 10 : null,
+    windDir: h.winddirection_10m?.[hour] ?? null,
+    moonPhase: moonPhaseLabel(iso),
+    source: 'open-meteo-archive',
+    fetchedAt: new Date().toISOString()
+  };
+}
+
+function nearestLakeAndContour(latRaw, lonRaw) {
+  const lat = parseFloat(latRaw), lon = parseFloat(lonRaw);
+  const out = { lake: '', depth: '', depthBand: '', contourDistanceMi: null };
+  if (!isFinite(lat) || !isFinite(lon)) return out;
+
+  // Lake name from curated DB if available.
+  try {
+    const db = window.LAKE_DB || {};
+    let bestName = '', bestDist = Infinity;
+    for (const [name, info] of Object.entries(db)) {
+      if (!info?.center) continue;
+      const cLat = Array.isArray(info.center) ? info.center[0] : info.center.lat;
+      const cLon = Array.isArray(info.center) ? info.center[1] : info.center.lon;
+      if (!isFinite(cLat) || !isFinite(cLon)) continue;
+      const d = Math.hypot((lat - cLat) * 69, (lon - cLon) * 69 * Math.cos(lat * Math.PI / 180));
+      const radius = info.radiusMi || info.radius || 20;
+      if (d < bestDist && d <= radius) { bestDist = d; bestName = name; }
+    }
+    out.lake = bestName;
+  } catch (_) {}
+
+  // Nearest loaded contour from TrollMap contour layer.
+  try {
+    const contourData = state.ACTIVE_CONTOUR;
+    const features = contourData?.smart?.features || contourData?.raw?.features || [];
+    if (!features.length) return out;
+    const cosLat = Math.cos(lat * Math.PI / 180);
+    const boxDeg = 1 / 69; // 1 mile prefilter
+    let closestDepth = null, closestDist = Infinity;
+    const candidates = features.filter(feat => {
+      const b = feat.bbox;
+      if (!b) return true;
+      return b[0] - boxDeg <= lon && lon <= b[2] + boxDeg && b[1] - boxDeg <= lat && lat <= b[3] + boxDeg;
+    });
+    for (const feat of candidates) {
+      const depth = feat.properties?.depth ?? feat.properties?.DEPTH ?? feat.properties?.depth_ft ?? feat.properties?.Depth;
+      if (depth == null || depth === '') continue;
+      const geom = feat.geometry;
+      const coords = geom?.coordinates;
+      if (!coords) continue;
+      let lines = [];
+      if (geom.type === 'LineString') lines = [coords];
+      else if (geom.type === 'MultiLineString') lines = coords;
+      else if (geom.type === 'Polygon') lines = coords;
+      else if (geom.type === 'MultiPolygon') lines = coords.flat(1);
+      else continue;
+      for (const line of lines) {
+        for (const pt of line) {
+          if (!Array.isArray(pt) || pt.length < 2) continue;
+          const cLon = Number(pt[0]), cLat = Number(pt[1]);
+          if (!isFinite(cLat) || !isFinite(cLon)) continue;
+          const d = Math.hypot((lat - cLat) * 69, (lon - cLon) * 69 * cosLat);
+          if (d < closestDist) { closestDist = d; closestDepth = depth; }
+        }
+      }
+    }
+    if (closestDepth != null && closestDist <= 1.0) {
+      out.depth = String(closestDepth);
+      out.contourDistanceMi = closestDist;
+      const relation = closestDist < 0.10 ? 'on' : closestDist < 0.25 ? 'near' : 'near';
+      out.depthBand = `~${closestDepth}ft contour (${relation}, ${closestDist.toFixed(2)} mi)`;
+    }
+  } catch (_) {}
+  return out;
+}
+
+function enrichItemFromGps(item) {
+  if (!item) return item;
+  const spatial = nearestLakeAndContour(item.lat, item.lon);
+  if (!item.lake && spatial.lake) item.lake = spatial.lake;
+  if (!item.depth && spatial.depth) item.depth = spatial.depth;
+  if (spatial.depthBand) {
+    item.structure = { depthBand: spatial.depthBand, contourDistanceMi: spatial.contourDistanceMi };
+    const note = `Depth lookup: ${spatial.depthBand}`;
+    if (!String(item.ai?.notes || '').includes('Depth lookup:')) {
+      item.ai.notes = [item.ai?.notes || '', note].filter(Boolean).join(' | ');
+    }
+    if (!item.reviewFlags.includes('depth_from_contours')) item.reviewFlags.push('depth_from_contours');
+  } else if (item.lat && item.lon && !item.reviewFlags.includes('depth_not_found')) {
+    item.reviewFlags.push('depth_not_found');
+  }
+  return item;
+}
+
 function normalizeCsvRow(row, importedFrom = 'csv') {
   const filename = row.filename || row.file || row.name || '';
   const datetime = row.datetime || row.date_time || row.timestamp || '';
@@ -168,6 +299,8 @@ function normalizeCsvRow(row, importedFrom = 'csv') {
       lengthVerified: parseBool(row.length_verified),
       reviewed: false
     },
+    weather: null,
+    structure: null,
     importedFrom,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -353,10 +486,12 @@ function renderReview(body) {
     <div class="row">
       <button id="reviewPendingBtn" class="small">Pending ${counts.pending}</button>
       <button id="exportQueueBtn" class="small">⬇ Export Cleaned CSV</button>
+      <button id="enrichQueueBtn" class="small">🌦 Check Missing History</button>
       <button id="clearImportedBtn" class="small">Clear imported/approved</button>
       <button id="clearQueueBtn" class="warn small">🗑 Clear Queue</button>
       <span class="muted">Total ${counts.total} · Board ${counts.board} · Approved ${counts.approved} · Rejected ${counts.rejected}</span>
     </div>
+    <div id="queueEnrichStatus" class="muted" style="margin:4px 0 8px"></div>
     <div style="display:grid;grid-template-columns:320px minmax(500px,1fr);gap:12px;align-items:start">
       <div class="card" style="margin:0;max-height:72vh;overflow:auto;padding:8px" id="queueList"></div>
       <div class="card" style="margin:0" id="queueDetail"></div>
@@ -364,6 +499,7 @@ function renderReview(body) {
   renderQueueList(body.querySelector('#queueList'), queue);
   renderQueueDetail(body.querySelector('#queueDetail'), selected);
   body.querySelector('#exportQueueBtn')?.addEventListener('click', exportQueueCsv);
+  body.querySelector('#enrichQueueBtn')?.addEventListener('click', () => enrichMissingHistoricalData(body));
   body.querySelector('#reviewPendingBtn')?.addEventListener('click', () => { selectedQueueId = queue.find(q => q.status === 'pending')?.id || selectedQueueId; renderReview(body); });
   body.querySelector('#clearImportedBtn')?.addEventListener('click', async () => {
     setQueue(getQueue().filter(q => !['approved', 'imported'].includes(q.status)));
@@ -424,6 +560,7 @@ function renderQueueDetail(el, q) {
     </div>
     <div style="margin-top:8px"><label>Notes</label><textarea id="rvNotes" rows="4">${esc(q.ai?.notes || '')}</textarea></div>
     <div class="muted" style="margin-top:6px">AI species: ${esc(q.ai?.species || '')}${q.ai?.inferredSpecies && q.ai.inferredSpecies !== q.ai.species ? ` → ${esc(q.ai.inferredSpecies)}` : ''} · Model: ${esc(q.ai?.model || '')} · Flags: ${esc(flags.join(', ') || 'none')}</div>
+    ${q.weather ? `<div class="okbox" style="font-size:12px">🌦 ${q.weather.tempF ?? '?'}°F · Wind ${q.weather.windMph ?? '?'}mph · ${q.weather.cloudPct ?? '?'}% cloud · ${q.weather.pressureHpa ?? '?'} hPa · ${esc(q.weather.moonPhase || '')}</div>` : `<div class="warnbox" style="font-size:12px">Historical weather/moon not loaded yet. Use “Check Missing History”.</div>`}
     <div class="row" style="margin-top:10px">
       <button id="saveQueueEditsBtn" class="small">💾 Save edits</button>
       <button id="approveCatchBtn" class="primary small">✅ Approve to Journal</button>
@@ -480,8 +617,8 @@ async function approveQueueItem(q) {
     lake: q.lake || '',
     lat: q.lat || '', lon: q.lon || '',
     notes: q.ai?.notes || '',
-    weather: null,
-    structure: null,
+    weather: q.weather || null,
+    structure: q.structure || null,
     sourceFile,
     sourcePath: q.sourcePath || '',
     importedFrom: q.importedFrom || 'review-queue',
@@ -497,6 +634,45 @@ async function approveQueueItem(q) {
   if (existingIx >= 0) catches[existingIx] = entry; else catches.unshift(entry);
   q.status = 'imported'; q.updatedAt = new Date().toISOString();
   await saveCatches(); await saveQueue();
+}
+
+
+async function enrichMissingHistoricalData(body = document.getElementById('catchCenterBody')) {
+  const status = body?.querySelector('#queueEnrichStatus') || document.getElementById('queueEnrichStatus');
+  const queue = getQueue();
+  if (!queue.length) { if (status) status.textContent = 'No queue items to check.'; return; }
+  let depthUpdated = 0, weatherUpdated = 0, failed = 0;
+  const targets = queue.filter(q => q.status !== 'rejected' && q.status !== 'rejected_candidate');
+  for (let i = 0; i < targets.length; i++) {
+    const item = targets[i];
+    if (status) status.textContent = `Checking historical data ${i + 1}/${targets.length}: ${item.filename}`;
+    const beforeDepth = item.depth;
+    enrichItemFromGps(item);
+    if (!beforeDepth && item.depth) depthUpdated++;
+    if (!item.weather && item.lat && item.lon && (item.datetime || item.date)) {
+      try {
+        item.weather = await fetchHistoricalWeatherForItem(item);
+        if (item.weather) {
+          weatherUpdated++;
+          if (!item.reviewFlags.includes('weather_from_archive')) item.reviewFlags.push('weather_from_archive');
+        }
+        // avoid hammering Open-Meteo
+        await new Promise(r => setTimeout(r, 250));
+      } catch (e) {
+        failed++;
+        if (!item.reviewFlags.includes('weather_lookup_failed')) item.reviewFlags.push('weather_lookup_failed');
+      }
+    } else if (!item.weather && (item.datetime || item.date)) {
+      if (!item.reviewFlags.includes('weather_missing_gps')) item.reviewFlags.push('weather_missing_gps');
+    }
+    item.updatedAt = new Date().toISOString();
+  }
+  await saveQueue();
+  if (status) {
+    status.textContent = `✓ Historical check complete: depth filled ${depthUpdated}, weather/moon filled ${weatherUpdated}${failed ? `, weather failures ${failed}` : ''}.`;
+    status.style.color = 'var(--accent2)';
+  }
+  renderCatchSubtab();
 }
 
 function parseCsv(text) {
@@ -531,7 +707,7 @@ async function importCsvFiles(files) {
     const text = await file.text();
     const rows = parseCsv(text);
     for (const row of rows) {
-      const item = normalizeCsvRow(row, file.name);
+      const item = enrichItemFromGps(normalizeCsvRow(row, file.name));
       if (!includeRejected && !item.verified.hasFish) { skipped++; continue; }
       if (boardOnly && !item.verified.onBoard) { skippedHandheld++; continue; }
       if (getQueue().some(q => q.id === item.id)) { skipped++; continue; }
@@ -598,6 +774,7 @@ function exportQueueCsv() {
     verified_length_inches: q.verified?.length || '', ai_length_inches: q.ai?.length || '',
     length_verified: !!q.verified?.length,
     confidence: q.ai?.confidence || '', source_model: q.ai?.model || '', notes: q.ai?.notes || '',
+    tempF: q.weather?.tempF ?? '', windMph: q.weather?.windMph ?? '', windDir: q.weather?.windDir ?? '', cloudPct: q.weather?.cloudPct ?? '', pressureHpa: q.weather?.pressureHpa ?? '', moonPhase: q.weather?.moonPhase || '',
     sha256: q.sha256 || '', source_path: q.sourcePath || '', imported_from: q.importedFrom || ''
   }));
   downloadCsv('trollmap_catch_review_queue_cleaned.csv', rows);
@@ -606,6 +783,7 @@ function exportJournalCsv() {
   const rows = getCatches().map(c => ({
     species: c.species, length: c.length, date: c.date, time: c.time, lake: c.lake, depth: c.depth,
     lat: c.lat, lon: c.lon, lure: c.lure, lead: c.lead, notes: c.notes,
+    tempF: c.weather?.tempF ?? '', windMph: c.weather?.windMph ?? '', windDir: c.weather?.windDir ?? '', cloudPct: c.weather?.cloudPct ?? '', pressureHpa: c.weather?.pressureHpa ?? '', moonPhase: c.weather?.moonPhase || '',
     sourceFile: c.sourceFile, sourcePath: c.sourcePath, importedFrom: c.importedFrom,
     lengthVerification: c.verification?.length || '', speciesVerification: c.verification?.species || ''
   }));
