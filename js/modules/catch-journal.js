@@ -219,6 +219,28 @@ function setImportStatus(msg, color) {
   if (el) { el.textContent = msg; el.style.color = color || 'var(--accent2)'; }
 }
 
+// ── Gemini fish identification ───────────────────────────────────────────────
+async function identifyFishWithGemini(imgFile) {
+  try {
+    const mimeType = imgFile.type || 'image/jpeg';
+    const resp = await fetch('https://trollmap-worker.colonal1981.workers.dev/identify-catch', {
+      method: 'POST',
+      headers: {
+        'Content-Type': mimeType,
+        'X-Image-Type': mimeType,
+      },
+      body: imgFile,
+    });
+    if (!resp.ok) throw new Error(`Worker ${resp.status}`);
+    const data = await resp.json();
+    if (!data.success) throw new Error(data.error || 'Unknown error');
+    return data.analysis; // { species, lengthInches, confidence, notes }
+  } catch (e) {
+    console.warn('[catch-journal] Gemini ID failed:', e.message);
+    return null;
+  }
+}
+
 async function processCatchPhoto(imgFile, jsonFile = null) {
   if (!imgFile && !jsonFile) return;
   
