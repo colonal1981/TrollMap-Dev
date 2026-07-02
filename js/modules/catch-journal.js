@@ -112,7 +112,20 @@ function normalizeCsvRow(row, importedFrom = 'csv') {
   const notes = row.notes || row.stage2_notes || row.ai_notes || '';
   const rawSpecies = cleanSpecies(row.verified_species || row.species || row.stage2_species || row.ai_species || row.stage1_species || '');
   const inferred = inferSpeciesFromNotes(rawSpecies, notes);
-  const hasFish = parseBool(row.has_fish) || parseBool(row.stage1_fish) || !!(rawSpecies && !['Not Fish', 'No Fish'].includes(rawSpecies));
+
+  // IMPORTANT: Do not treat stage1_species alone as proof of a fish.
+  // The recovered v2 CSVs often have stage1_fish=False while stage1_species says
+  // "Other Fish" or another guess. Those should NOT enter the review queue unless
+  // stage1_fish is explicitly true, stage2 produced a real species, or v3 has_fish=true.
+  const hasFishFieldPresent = Object.prototype.hasOwnProperty.call(row, 'has_fish') && String(row.has_fish || '').trim() !== '';
+  const stage1FishFieldPresent = Object.prototype.hasOwnProperty.call(row, 'stage1_fish') && String(row.stage1_fish || '').trim() !== '';
+  const finalSpecies = cleanSpecies(row.verified_species || row.species || row.stage2_species || row.ai_species || '');
+  const finalSpeciesSaysFish = !!finalSpecies && !['not fish', 'no fish', 'error', 'none'].includes(finalSpecies.toLowerCase());
+  let hasFish = false;
+  if (hasFishFieldPresent) hasFish = parseBool(row.has_fish);
+  else if (stage1FishFieldPresent) hasFish = parseBool(row.stage1_fish) || finalSpeciesSaysFish;
+  else hasFish = finalSpeciesSaysFish;
+
   const onBoard = parseBool(row.on_bump_board);
   const aiLen = String(row.length_inches || row.ai_length || row.aiLength || '').trim();
   const conf = row.confidence || row.stage2_confidence || row.stage1_confidence || '';
