@@ -63,7 +63,11 @@ export function renderCatchLog() {
 
 async function saveNewCatch() {
   const catches = getCatches();
-  catches.unshift({
+  const form = document.getElementById('catchForm');
+  const editIndex = form?.dataset.editIndex !== undefined && form.dataset.editIndex !== ''
+    ? parseInt(form.dataset.editIndex) : -1;
+
+  const entry = {
     species: document.getElementById('cSpecies')?.value || '',
     length: document.getElementById('cLength')?.value || '',
     depth: document.getElementById('cDepth')?.value || '',
@@ -71,14 +75,26 @@ async function saveNewCatch() {
     lead: document.getElementById('cLead')?.value || '',
     time: document.getElementById('cTime')?.value || '',
     notes: document.getElementById('cNotes')?.value || '',
-    photo: null, 
-    date: window._pendingCatchDate || new Date().toISOString().slice(0, 10),
+    date: document.getElementById('cDate')?.value || window._pendingCatchDate || new Date().toISOString().slice(0, 10),
     lake: document.getElementById('planLake')?.value || '',
-    lat: pending.lat || '',
-    lon: pending.lon || '',
-    weather: pending.weather || null,
-    structure: pending.structure || null,
-  });
+    lat: pending.lat || (editIndex >= 0 ? catches[editIndex]?.lat : '') || '',
+    lon: pending.lon || (editIndex >= 0 ? catches[editIndex]?.lon : '') || '',
+    weather: pending.weather || (editIndex >= 0 ? catches[editIndex]?.weather : null) || null,
+    structure: pending.structure || (editIndex >= 0 ? catches[editIndex]?.structure : null) || null,
+    sourceFile: editIndex >= 0 ? catches[editIndex]?.sourceFile : undefined,
+    importedFrom: editIndex >= 0 ? catches[editIndex]?.importedFrom : undefined,
+  };
+
+  if (editIndex >= 0) {
+    catches[editIndex] = entry;
+  } else {
+    catches.unshift(entry);
+  }
+
+  // Reset edit mode
+  if (form) { delete form.dataset.editIndex; }
+  const saveBtn = document.getElementById('saveCatchBtn');
+  if (saveBtn) saveBtn.textContent = '💾 Save';
 
   pending.lat = null; pending.lon = null; pending.weather = null; pending.structure = null; pending.photoThumb = null;
   window._pendingCatchDate = null;
