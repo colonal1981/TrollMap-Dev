@@ -256,6 +256,7 @@ function renderJournalOnly(body = document.getElementById('catchCenterBody')) {
     <div class="row">
       <button id="manualCatchBtn" class="primary small">+ Manual Catch</button>
       <button id="exportJournalBtn" class="small">⬇ Export Journal CSV</button>
+      <button id="deleteAllJournalBtn" class="warn small">🗑 Delete ALL Journal Catches</button>
       <span class="muted">${catches.length} confirmed catches</span>
     </div>
     <div id="catchLogList"></div>`;
@@ -276,6 +277,14 @@ function renderJournalOnly(body = document.getElementById('catchCenterBody')) {
   }
   body.querySelector('#manualCatchBtn')?.addEventListener('click', () => addManualCatch());
   body.querySelector('#exportJournalBtn')?.addEventListener('click', exportJournalCsv);
+  body.querySelector('#deleteAllJournalBtn')?.addEventListener('click', async () => {
+    const n = getCatches().length;
+    if (!n) return;
+    if (!confirm(`Delete ALL ${n} confirmed journal catches? This does not delete the review queue or photos.`)) return;
+    setCatches([]);
+    await saveCatches();
+    renderJournalOnly(body);
+  });
   body.querySelectorAll('[data-delcatch]').forEach(btn => btn.addEventListener('click', async () => {
     getCatches().splice(+btn.dataset.delcatch, 1);
     await saveCatches(); renderJournalOnly(body);
@@ -290,7 +299,8 @@ function renderImport(body) {
         <p class="muted">Supports recovered v2 CSVs from 2023–2025 and the newer v3 2026 CSV.</p>
         <div class="filebox" id="csvDropBox">Drop CSV here or click to choose</div>
         <input id="catchCsvInput" type="file" accept=".csv" multiple class="hidden">
-        <label style="display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="importRejectedRows"> include not-fish/rejected rows in queue</label>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="boardOnlyImport" checked> board fish only / skip handheld fish</label>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" id="importRejectedRows"> include not-fish/rejected rows in queue</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" id="replaceQueueOnImport"> replace current queue</label>
         <div id="csvImportStatus" class="muted" style="margin-top:8px"></div>
       </div>
@@ -344,6 +354,7 @@ function renderReview(body) {
       <button id="reviewPendingBtn" class="small">Pending ${counts.pending}</button>
       <button id="exportQueueBtn" class="small">⬇ Export Cleaned CSV</button>
       <button id="clearImportedBtn" class="small">Clear imported/approved</button>
+      <button id="clearQueueBtn" class="warn small">🗑 Clear Queue</button>
       <span class="muted">Total ${counts.total} · Board ${counts.board} · Approved ${counts.approved} · Rejected ${counts.rejected}</span>
     </div>
     <div style="display:grid;grid-template-columns:320px minmax(500px,1fr);gap:12px;align-items:start">
@@ -356,6 +367,13 @@ function renderReview(body) {
   body.querySelector('#reviewPendingBtn')?.addEventListener('click', () => { selectedQueueId = queue.find(q => q.status === 'pending')?.id || selectedQueueId; renderReview(body); });
   body.querySelector('#clearImportedBtn')?.addEventListener('click', async () => {
     setQueue(getQueue().filter(q => !['approved', 'imported'].includes(q.status)));
+    await saveQueue(); renderReview(body);
+  });
+  body.querySelector('#clearQueueBtn')?.addEventListener('click', async () => {
+    const n = getQueue().length;
+    if (!n) return;
+    if (!confirm(`Clear ALL ${n} review queue item(s)? This does not delete confirmed journal catches or photos.`)) return;
+    setQueue([]); selectedQueueId = null;
     await saveQueue(); renderReview(body);
   });
 }
@@ -505,21 +523,23 @@ function parseCsv(text) {
 async function importCsvFiles(files) {
   const status = document.getElementById('csvImportStatus');
   const includeRejected = document.getElementById('importRejectedRows')?.checked;
+  const boardOnly = document.getElementById('boardOnlyImport')?.checked !== false; // default true
   const replace = document.getElementById('replaceQueueOnImport')?.checked;
   if (replace) setQueue([]);
-  let added = 0, skipped = 0;
+  let added = 0, skipped = 0, skippedHandheld = 0;
   for (const file of files) {
     const text = await file.text();
     const rows = parseCsv(text);
     for (const row of rows) {
       const item = normalizeCsvRow(row, file.name);
       if (!includeRejected && !item.verified.hasFish) { skipped++; continue; }
+      if (boardOnly && !item.verified.onBoard) { skippedHandheld++; continue; }
       if (getQueue().some(q => q.id === item.id)) { skipped++; continue; }
       getQueue().push(item); added++;
     }
   }
   await saveQueue();
-  if (status) status.textContent = `Imported ${added} queue items${skipped ? ` · skipped ${skipped}` : ''}.`;
+  if (status) status.textContent = `Imported ${added} queue item(s)${skippedHandheld ? ` · skipped ${skippedHandheld} handheld/non-board` : ''}${skipped ? ` · skipped ${skipped} other/duplicate` : ''}.`;
   currentSubtab = 'review'; selectedQueueId = getQueue().find(q => q.status === 'pending')?.id || getQueue()[0]?.id || null;
   setTimeout(renderCatchCenter, 700);
 }
