@@ -220,21 +220,42 @@ function setImportStatus(msg, color) {
 }
 
 // ── Gemini fish identification ───────────────────────────────────────────────
+async function resizeForGemini(imgFile, maxPx = 1024) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(imgFile);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      canvas.toBlob(blob => resolve(blob || imgFile), 'image/jpeg', 0.85);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(imgFile); };
+    img.src = url;
+  });
+}
+
 async function identifyFishWithGemini(imgFile) {
   try {
-    const mimeType = imgFile.type || 'image/jpeg';
+    // Resize to 1024px max before sending — full res photos crash the worker
+    const resized = await resizeForGemini(imgFile, 1024);
+    const mimeType = 'image/jpeg';
     const resp = await fetch('https://trollmap-worker.colonal1981.workers.dev/identify-catch', {
       method: 'POST',
       headers: {
         'Content-Type': mimeType,
         'X-Image-Type': mimeType,
       },
-      body: imgFile,
+      body: resized,
     });
     if (!resp.ok) throw new Error(`Worker ${resp.status}`);
     const data = await resp.json();
     if (!data.success) throw new Error(data.error || 'Unknown error');
-    return data.analysis; // { species, lengthInches, confidence, notes }
+    return data.analysis;
   } catch (e) {
     console.warn('[catch-journal] Gemini ID failed:', e.message);
     return null;
