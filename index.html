@@ -659,27 +659,25 @@
           <div class="card plan-section">
             <div style="display:flex;justify-content:space-between;align-items:center">
               <h4 style="margin:0">📓 Catch Journal</h4>
-              <button class="small primary" id="addCatchBtn">+ Log Catch</button>
+              <div style="display:flex;gap:6px">
+                <button class="small" id="importCsvBtn" title="Bulk import catches from fish_sort_results_v2.csv">📥 Import CSV</button>
+                <input type="file" id="csvFileInput" accept=".csv" style="display:none">
+                <button class="small primary" id="addCatchBtn">+ Log Catch</button>
+              </div>
             </div>
+            <div id="csvImportStatus" style="font-size:11px;color:var(--muted);margin-top:4px"></div>
             <div id="catchLog" style="margin-top:8px"></div>
             <div id="catchForm" style="display:none;margin-top:10px;padding:10px;background:var(--panel2);border-radius:8px;border:1px solid var(--line)">
               <div class="grid" style="grid-template-columns:repeat(3,1fr);gap:8px;font-size:12px">
                 <div><label>Species</label><input id="cSpecies" placeholder="Striper"></div>
                 <div><label>Length (in)</label><input id="cLength" type="number" placeholder="28"></div>
-                <div><label>Date</label><input id="cDate" placeholder="2026-07-01"></div>
                 <div><label>Time</label><input id="cTime" placeholder="7:45 AM"></div>
                 <div><label>Depth (ft)</label><input id="cDepth" placeholder="32"></div>
                 <div><label>Lure / Color</label><input id="cLure" placeholder="A-rig, pearl"></div>
                 <div><label>Lead (ft)</label><input id="cLead" placeholder="90"></div>
-                <div style="grid-column:1 / -1"><label>📍 GPS Coordinates (auto-filled from photo)</label><input id="cCoords" readonly placeholder="Lat, Lon — populated from photo EXIF" style="color:var(--accent2);font-size:11px"></div>
-                <div style="grid-column:1 / -1; margin-top:4px">
-                  <label>📷 Drop or select a catch photo to auto-fill — data only, photo not stored</label>
-                  <input type="file" id="cPhoto" accept="image/*" style="width:100%;background:var(--panel2);color:var(--accent2);padding:5px;border-radius:6px;border:1px solid var(--line)">
-                  <div id="cImportStatus" style="font-size:11px;margin-top:4px;color:var(--accent2)"></div>
-                  <img id="cPhotoThumb" src="" alt="" style="display:none;max-height:80px;max-width:100%;border-radius:6px;margin-top:6px;object-fit:cover;border:1px solid var(--line)">
-                </div>
+                <div style="grid-column:1 / -1; margin-top:4px"><label>📷 Verification Photo / Sonar Screenshot</label><input type="file" id="cPhoto" accept="image/*" style="width:100%;background:var(--panel2);color:var(--accent2);padding:5px;border-radius:6px;border:1px solid var(--line)"></div>
               </div>
-              <textarea id="cNotes" placeholder="Structure, conditions, what triggered the bite... (auto-filled from photo)" rows="2" style="margin-top:8px;width:100%"></textarea>
+              <textarea id="cNotes" placeholder="Structure, conditions, what triggered the bite..." rows="2" style="margin-top:8px;width:100%"></textarea>
               <div style="display:flex;gap:6px;margin-top:8px">
                 <button id="saveCatchBtn" class="primary small">💾 Save</button>
                 <button id="cancelCatchBtn" class="small">Cancel</button>
