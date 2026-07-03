@@ -13,6 +13,7 @@
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { LAKE_DB } from '../data/lakes.js';
+import { loadAccessIndex, nearestLakeByAccessPoint } from '../data/access-index.js';
 
 const DEFAULT_HELPER = 'http://127.0.0.1:8787';
 const QUEUE_DB_KEY = 'catch_import_queue';
@@ -169,20 +170,36 @@ function nearestLakeAndContour(latRaw, lonRaw) {
   const out = { lake: '', depth: '', depthBand: '', contourDistanceMi: null };
   if (!isFinite(lat) || !isFinite(lon)) return out;
 
-  // Lake name from curated DB if available.
+  // Lake name: prefer the worker-backed access index (hundreds of real
+  // DNR-known waterbodies, matched by distance to an actual access point)
+  // over the curated LAKE_DB (~40 lakes, matched by distance to a guessed
+  // centroid within a flat 20mi fallback radius). Falls back to LAKE_DB
+  // only if the access index has nothing within range — e.g. before the
+  // worker fetch has resolved, or the worker is briefly unreachable.
   try {
-    const db = LAKE_DB || {};
-    let bestName = '', bestDist = Infinity;
-    for (const [name, info] of Object.entries(db)) {
-      if (!info?.center) continue;
-      const cLat = Array.isArray(info.center) ? info.center[0] : info.center.lat;
-      const cLon = Array.isArray(info.center) ? info.center[1] : info.center.lon;
-      if (!isFinite(cLat) || !isFinite(cLon)) continue;
-      const d = Math.hypot((lat - cLat) * 69, (lon - cLon) * 69 * Math.cos(lat * Math.PI / 180));
-      const radius = info.radiusMi || info.radius || 20;
-      if (d < bestDist && d <= radius) { bestDist = d; bestName = name; }
+    const accessMatch = nearestLakeByAccessPoint(lat, lon, 2.0);
+    if (accessMatch.lake) {
+      out.lake = accessMatch.lake;
+      out.lakeSource = 'access-index';
+      out.lakeMatchDistanceMi = accessMatch.distanceMi;
+    } else {
+      const db = LAKE_DB || {};
+      let bestName = '', bestDist = Infinity;
+      for (const [name, info] of Object.entries(db)) {
+        if (!info?.center) continue;
+        const cLat = Array.isArray(info.center) ? info.center[0] : info.center.lat;
+        const cLon = Array.isArray(info.center) ? info.center[1] : info.center.lon;
+        if (!isFinite(cLat) || !isFinite(cLon)) continue;
+        const d = Math.hypot((lat - cLat) * 69, (lon - cLon) * 69 * Math.cos(lat * Math.PI / 180));
+        const radius = info.radiusMi || info.radius || 20;
+        if (d < bestDist && d <= radius) { bestDist = d; bestName = name; }
+      }
+      if (bestName) {
+        out.lake = bestName;
+        out.lakeSource = 'lake-db-fallback';
+        out.lakeMatchDistanceMi = bestDist;
+      }
     }
-    out.lake = bestName;
   } catch (_) {}
 
   // Nearest loaded contour from TrollMap contour layer.
@@ -650,6 +667,10 @@ async function enrichMissingHistoricalData(body = document.getElementById('catch
   const status = body?.querySelector('#queueEnrichStatus') || document.getElementById('queueEnrichStatus');
   const queue = getQueue();
   if (!queue.length) { if (status) status.textContent = 'No queue items to check.'; return; }
+  // Make sure the worker-backed lake index has resolved at least once before
+  // running lake lookups on a batch, so early items in the batch don't get
+  // pushed into the LAKE_DB fallback just because the fetch hadn't finished.
+  try { await loadAccessIndex(); } catch (_) {}
   let depthUpdated = 0, weatherUpdated = 0, failed = 0;
   const targets = queue.filter(q => q.status !== 'rejected' && q.status !== 'rejected_candidate');
   for (let i = 0; i < targets.length; i++) {
@@ -711,6 +732,10 @@ async function importCsvFiles(files) {
   const boardOnly = document.getElementById('boardOnlyImport')?.checked !== false; // default true
   const replace = document.getElementById('replaceQueueOnImport')?.checked;
   if (replace) setQueue([]);
+  // Same reasoning as enrichMissingHistoricalData: make sure the worker-backed
+  // lake index has resolved at least once before running lookups on rows
+  // that are about to be enriched from GPS.
+  try { await loadAccessIndex(); } catch (_) {}
   let added = 0, skipped = 0, skippedHandheld = 0;
   for (const file of files) {
     const text = await file.text();
