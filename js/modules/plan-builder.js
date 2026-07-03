@@ -11,7 +11,6 @@
 import { state } from "../core/state.js";
 import { esc } from "../utils/escape.js";
 import { LAKE_DB } from "../data/lakes.js";
-import { loadAccessIndex } from "../data/access-index.js";
 import { renderSpread } from "./spread-builder.js";
 import { newRodRow } from "../utils/rod-row.js";
 import { getFilename, setFilename } from "../core/map-init.js";
@@ -110,6 +109,13 @@ function collectPlan(){
     tackle: document.getElementById('planTackle').value,
     safety: document.getElementById('planSafety').value,
     notes: document.getElementById('planNotes').value,
+    // FIX (2026-07-03): this was never being captured at all, even though
+    // the Preview template referenced a `rationaleHtml` variable that was
+    // supposed to come from it — a fully broken ReferenceError every time,
+    // since nothing anywhere ever declared that variable. Smart Plan writes
+    // its rationale text into #planSmartPlanOutput; capture it here so it
+    // round-trips through save/load and the Preview can actually use it.
+    rationale: document.getElementById('planSmartPlanOutput')?.value || '',
     gpx: {
       waypoints: state.DATA.waypoints.length,
       tracks: state.DATA.tracks.length,
@@ -132,6 +138,7 @@ function loadPlanIntoForm(p){
   setLakeOnlyFieldsVisible(!isPlanRiverValue(m.lake||''));
   populatePlanRampDropdown(m.lake||'');
   document.getElementById('planRamp').value = m.ramp||'';
+  if(document.getElementById('planSmartPlanOutput')) document.getElementById('planSmartPlanOutput').value = p.rationale||'';
   if(document.getElementById('planRiverSummary')) document.getElementById('planRiverSummary').value = m.riverSummary||'';
   if(document.getElementById('planRiverSafety')) document.getElementById('planRiverSafety').value = m.riverSafety||'';
   if(document.getElementById('planRiverFlow')) document.getElementById('planRiverFlow').value = m.riverFlow||'';
@@ -179,6 +186,16 @@ async function buildPlanPreviewHtml(p){
     if(s.includes('Starboard')) return 'rod-side-starboard';
     return 'rod-side-center';
   }
+
+  // FIX (2026-07-03): was referenced further down as a bare `rationaleHtml`
+  // that nothing anywhere declared — a guaranteed ReferenceError on every
+  // Preview click, regardless of whether Smart Plan had even been run.
+  // Now built from p.rationale (captured in collectPlan() from
+  // #planSmartPlanOutput). Matches the <pre> styling already used for the
+  // Structure Notes section later in this same template.
+  const rationaleHtml = p.rationale
+    ? `<pre style="white-space:pre-wrap;font-family:inherit;background:#f7f9fb;padding:10px;border-radius:6px;font-size:13px;border-left:4px solid #0d4f8b">${esc(p.rationale)}</pre>`
+    : '';
 
   // ── Clarity tactical ──────────────────────────────────────────────────────
   const clarity = p.meta.clarity || 'Clear';
@@ -1296,33 +1313,18 @@ export async function populatePlanLakeDropdown(){
   sel.innerHTML = '<option value="">— choose lake or river —</option>';
   const lakesGroup = document.createElement('optgroup');
   lakesGroup.label = 'Lakes / Reservoirs';
-
-  // FIX (2026-07-03): previously relied on window.getUniversalLakeNamesAsync,
-  // which only exists if access-index.js happened to already be imported by
-  // some OTHER module (lake-ramp-select.js / catch-journal.js) on this page,
-  // with no guaranteed load order. On the Plan page specifically, that
-  // dependency was often unmet, silently falling back to the old ~40-lake
-  // LAKE_DB list and never showing worker-backed or SCDNR State Lakes
-  // entries. Importing loadAccessIndex directly removes that fragility.
+  
+  // Wait for the async worker fetch to populate the global index before asking for the names!
   let lakeNames = [];
-  try {
-    const idx = await loadAccessIndex();
-    lakeNames = idx.lakeNames || [];
-  } catch (e) {
-    console.warn('[plan-builder] access index load failed, falling back to LAKE_DB:', e);
+  if (window.getUniversalLakeNamesAsync) {
+    lakeNames = await window.getUniversalLakeNamesAsync();
+  } else if (window.getUniversalLakeNames) {
+    lakeNames = window.getUniversalLakeNames();
+  } else {
+    lakeNames = Object.keys(LAKE_DB).sort();
   }
-
-  // Merge in any LAKE_DB-only names (older curated entries not yet covered
-  // by the worker feed or SCDNR State Lakes supplement) so nothing that
-  // worked before silently disappears.
-  const known = new Set(lakeNames.map(n => n.toLowerCase()));
-  Object.keys(LAKE_DB).forEach(name => {
-    if (!known.has(name.toLowerCase())) lakeNames.push(name);
-  });
-  lakeNames.sort((a, b) => a.localeCompare(b));
-
-  // If everything above somehow still came back empty, fall back to LAKE_DB
-  // alone so the dropdown is never blank.
+  
+  // If it's somehow still empty, fallback to LAKE_DB just in case so it's never blank
   if (lakeNames.length === 0) {
     lakeNames = Object.keys(LAKE_DB).sort();
   }

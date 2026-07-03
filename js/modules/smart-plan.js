@@ -399,10 +399,22 @@ function buildRationaleText(species, lakeName, season, phases, phaseRecs, phaseI
       lines.push(`  Rods ${phase.num * 2 - 1} & ${phase.num * 2} · Depth: ${rec.depthMin}-${rec.depthMax}ft · Speed: ${rec.speed}mph`);
       lines.push(`  Lures: ${rec.lures.slice(0, 3).join(', ')}`);
       if (rec.notes) lines.push(`  Notes: ${rec.notes}`);
-      const routeCfg = getRouteConfigForPhase(rec, phase.num);
-      if (routeCfg) {
-        lines.push(`  Route: ${routeCfg.pattern} · amplitude ${routeCfg.amplitude}ft · spacing ${routeCfg.spacing}ft · ${routeCfg.lanes} lane(s)`);
-        lines.push(`  Why: ${routeCfg.rationale}`);
+      // FIX (2026-07-03): getRouteConfigForPhase is not defined anywhere in
+      // this codebase — no local function, no import. This was crashing
+      // buildRationaleText entirely (ReferenceError), which in turn left
+      // plan-builder.js's rationaleHtml undefined and crashed the whole
+      // plan preview render, even though route generation itself had
+      // already succeeded. Guarded so a missing optional line can't take
+      // down the rest of the plan. TODO: restore real per-phase route
+      // config (pattern/amplitude/spacing/lanes) once the intended source
+      // of this function is found — it may have been renamed/removed in
+      // route-builder.js during a prior refactor.
+      if (typeof getRouteConfigForPhase === 'function') {
+        const routeCfg = getRouteConfigForPhase(rec, phase.num);
+        if (routeCfg) {
+          lines.push(`  Route: ${routeCfg.pattern} · amplitude ${routeCfg.amplitude}ft · spacing ${routeCfg.spacing}ft · ${routeCfg.lanes} lane(s)`);
+          lines.push(`  Why: ${routeCfg.rationale}`);
+        }
       }
     } else {
       lines.push(`  No data for this phase`);
@@ -526,13 +538,29 @@ export async function runSmartPlan() {
       'lake murray': MURRAY_RAMPS, 'murray': MURRAY_RAMPS,
       'lake monticello': MONTICELLO_RAMPS, 'monticello': MONTICELLO_RAMPS,
     };
-    const rampList = lakeRampMap[lakeName.toLowerCase()] || [];
+    // FIX (2026-07-03): this used to be an exact match against lakeName.toLowerCase().
+    // Now that #planLake is populated from the worker-backed access index,
+    // values look like "Lake Wateree, SC" or "Lake Wateree (Fairfield Co, SC)"
+    // instead of the bare "Lake Wateree" LAKE_DB used to produce — the exact
+    // match silently failed for ALL FIVE of these lakes, not just new ones,
+    // leaving rampLat/rampLon null and skipping setClipFromRamp() entirely.
+    // That's what let a sweep run with zero clip and hit the 44k+ point cap.
+    const cleanLakeName = String(lakeName || '')
+      .toLowerCase()
+      .replace(/\([^)]*\)/g, ' ')   // strip "(County Co, ST)"
+      .replace(/,.*$/, '')          // strip ", ST" suffix
+      .trim();
+    const rampList = lakeRampMap[cleanLakeName]
+      || Object.entries(lakeRampMap).find(([k]) => cleanLakeName.includes(k) || k.includes(cleanLakeName))?.[1]
+      || [];
     const selectedRampKey = document.getElementById('planRamp')?.value || '';
     const selectedRamp = rampList.find(r => r.key === selectedRampKey) || rampList[0];
     if (selectedRamp) {
       rampLat = selectedRamp.lat;
       rampLon = selectedRamp.lon;
       console.log(`[smart-plan] Using ramp: ${selectedRamp.name} (${rampLat}, ${rampLon})`);
+    } else {
+      console.warn(`[smart-plan] No ramp coords found for "${lakeName}" (normalized: "${cleanLakeName}") — route will generate with NO clip box unless one is already set. This will likely blow the point-count safety cap.`);
     }
   } catch (e) {
     console.warn('[smart-plan] Could not load ramp coords:', e.message);
