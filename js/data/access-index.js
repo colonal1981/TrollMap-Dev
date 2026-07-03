@@ -20,6 +20,7 @@
 
 import { state } from '../core/state.js';
 import { SCDNR_STATE_LAKES } from './scdnr-state-lakes.js';
+import { USER_KNOWN_LAKES } from './user-known-lakes.js';
 
 const STATES = ['SC', 'NC', 'GA'];
 const ACCESS_SOURCES = [
@@ -206,6 +207,23 @@ async function buildAccessIndex() {
       meta: { acres: lake.acres, county: lake.county },
     });
   }
+
+  // Merge in angler-flagged lakes not covered by any official feed — see
+  // user-known-lakes.js header for per-lake sourcing.
+  for (const lake of USER_KNOWN_LAKES) {
+    const lakeName = `${lake.name} (${lake.county} Co, ${lake.state})`;
+    addAccessItem(index, lakeName, {
+      name: lake.name,
+      lat: lake.lat,
+      lon: lake.lon,
+      typeLabel: 'User-known lake',
+      sourcePath: 'user-known-lakes',
+      sourceState: lake.state,
+      marker: '📍',
+      meta: { county: lake.county, note: lake.note },
+    });
+  }
+
   index.lakeNames = [...index.byLake.keys()].sort((a, b) => a.localeCompare(b));
 
   if (failures.length) {

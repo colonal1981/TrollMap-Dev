@@ -1,210 +1,19 @@
 /**
  * Worker-backed Lake / Access dropdowns in the map toolbar.
  *
- * Populates #lakeSelect and #rampSelect from the Cloudflare Worker access-data
- * routes instead of the legacy hard-coded LAKE_DB / TRISTATE_MASTER_RAMPS files.
+ * Populates #lakeSelect and #rampSelect from the shared access-index module
+ * (data/access-index.js), which pulls from the Cloudflare Worker access-data
+ * routes instead of the legacy hard-coded LAKE_DB / TRISTATE_MASTER_RAMPS
+ * files.
  *
- * Sources pulled from the worker:
- *   /ramps       — boat ramps
- *   /paddle      — kayak / paddle launches
- *   /bank-pier   — bank and pier fishing access
- *   /attractors  — fish attractors
- *
- * This module intentionally does NOT import ../data/lakes.js or ../data/ramps.js.
- * Mixing those old curated/static lists with the worker data was causing duplicate
- * lake and launch entries after the worker routes became authoritative.
+ * REFACTORED 2026-07-03: the worker-fetch/build/dedupe logic that used to
+ * live in this file was pulled out into data/access-index.js so that
+ * catch-journal.js's nearest-lake lookup could share the same live index
+ * instead of the worker being queried twice.
  */
 
 import { state } from '../core/state.js';
-
-const STATES = ['SC', 'NC', 'GA'];
-const ACCESS_SOURCES = [
-  { path: '/ramps', label: 'Boat ramp', marker: '🛥️' }
-];
-
-let accessIndexPromise = null;
-let accessIndex = {
-  lakeNames: [],
-  byLake: new Map(),
-};
-
-// ── Worker URL helpers ──────────────────────────────────────────────────
-
-function getWorkerBase() {
-  // Prefer an app-provided worker URL if one exists. On GitHub Pages there is
-  // no same-origin /ramps route, so same-origin gives 404s like:
-  //   https://colonal1981.github.io/TrollMap-Dev/ramps?state=SC
-  // Default to the deployed Cloudflare Worker instead.
-  const explicit =
-    window.TROLLMAP_WORKER_URL ||
-    window.TROLLMAP_WORKER_BASE ||
-    window.WORKER_URL ||
-    window.API_BASE ||
-    'https://trollmap-worker.colonal1981.workers.dev';
-  return String(explicit || '').replace(/\/$/, '');
-}
-
-function workerUrl(path, stateCode) {
-  return `${getWorkerBase()}${path}?state=${encodeURIComponent(stateCode)}`;
-}
-
-// ── Normalization / dedupe helpers ───────────────────────────────────────
-
-function normalizeWaterbodyName(name) {
-  return String(name || '')
-    .replace(/\s+/g, ' ')
-    .replace(/\b(reservoir|lake)\s+lake\b/ig, 'Lake')
-    .trim();
-}
-
-function displayLakeName(rawName, stateCode) {
-  const name = normalizeWaterbodyName(rawName);
-  if (!name || /^unknown/i.test(name)) return '';
-
-  // If the official data already carries state context, keep it as-is.
-  if (/\b(SC|NC|GA|AL|VA)\b/.test(name)) return name;
-
-  // Do not force state suffixes for rivers/coastal waterways; for lakes, a
-  // suffix helps distinguish same-named waterbodies while remaining readable.
-  if (/\blake\b|\breservoir\b/i.test(name)) return `${name}, ${stateCode}`;
-  return name;
-}
-
-function normalizeNameKey(name) {
-  return String(name || '')
-    .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\b(boat ramp|ramp|landing|access area|access|launch|public|the)\b/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function coordKey(lat, lon) {
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return '';
-  // ~35-40 ft buckets: tight enough to merge the same site from different
-  // layers without collapsing genuinely separate access points in one park.
-  return `${lat.toFixed(4)},${lon.toFixed(4)}`;
-}
-
-function accessDedupeKey(item) {
-  const cKey = coordKey(item.lat, item.lon);
-  const nKey = normalizeNameKey(item.name);
-  if (cKey && nKey) return `${cKey}|${nKey}`;
-  return cKey || nKey;
-}
-
-function formatAccessLabel(item) {
-  const prefix = item.marker ? `${item.marker} ` : '';
-  return `${prefix}${item.name}${item.typeLabel ? ` — ${item.typeLabel}` : ''}`;
-}
-
-function addAccessItem(index, lakeName, item) {
-  if (!lakeName || !item || !Number.isFinite(item.lat) || !Number.isFinite(item.lon)) return;
-
-  if (!index.byLake.has(lakeName)) index.byLake.set(lakeName, []);
-  const list = index.byLake.get(lakeName);
-  const nextKey = accessDedupeKey(item);
-
-  const existing = list.find((x) => accessDedupeKey(x) === nextKey);
-  if (existing) {
-    // Preserve all source categories if a spot appears in more than one worker
-    // route, but keep only one dropdown entry.
-    const labels = new Set([...(existing.sourceLabels || [existing.typeLabel]), item.typeLabel].filter(Boolean));
-    existing.sourceLabels = [...labels];
-    existing.typeLabel = existing.sourceLabels.join(' / ');
-    return;
-  }
-
-  list.push(item);
-}
-
-// ── Worker data load ─────────────────────────────────────────────────────
-
-async function fetchAccessSource(source, stateCode) {
-  const res = await fetch(workerUrl(source.path, stateCode), { cache: 'no-store' });
-  if (!res.ok) throw new Error(`${source.path}?state=${stateCode} returned HTTP ${res.status}`);
-  const data = await res.json();
-  return { source, stateCode, data };
-}
-
-async function buildAccessIndex() {
-  const index = { lakeNames: [], byLake: new Map() };
-
-  const jobs = [];
-  ACCESS_SOURCES.forEach((source) => {
-    STATES.forEach((stateCode) => jobs.push(fetchAccessSource(source, stateCode)));
-  });
-
-  const results = await Promise.allSettled(jobs);
-  const failures = [];
-
-  results.forEach((result) => {
-    if (result.status === 'rejected') {
-      failures.push(result.reason?.message || String(result.reason));
-      return;
-    }
-
-    const { source, stateCode, data } = result.value;
-    const waterbodies = data?.waterbodies || {};
-
-    Object.entries(waterbodies).forEach(([rawWaterbody, items]) => {
-      const lakeName = displayLakeName(rawWaterbody, stateCode);
-      if (!lakeName || !Array.isArray(items)) return;
-
-      items.forEach((raw) => {
-        const lat = Number(raw.lat);
-        const lon = Number(raw.lon);
-        const name = String(raw.name || 'Unnamed access point').trim();
-        if (!name || !Number.isFinite(lat) || !Number.isFinite(lon)) return;
-
-        addAccessItem(index, lakeName, {
-          name,
-          lat,
-          lon,
-          typeLabel: source.label,
-          sourcePath: source.path,
-          sourceState: stateCode,
-          marker: source.marker,
-          meta: raw.meta || {},
-          raw,
-        });
-      });
-    });
-  });
-
-  index.lakeNames = [...index.byLake.keys()].sort((a, b) => a.localeCompare(b));
-  for (const list of index.byLake.values()) {
-    list.sort((a, b) => formatAccessLabel(a).localeCompare(formatAccessLabel(b)));
-  }
-
-  if (failures.length) {
-    console.warn('[lake-ramp-select] Some worker access feeds failed:', failures);
-  }
-
-  return index;
-}
-
-function loadAccessIndex() {
-  if (!accessIndexPromise) {
-    accessIndexPromise = buildAccessIndex().then((idx) => {
-      accessIndex = idx;
-      return idx;
-    });
-  }
-  return accessIndexPromise;
-}
-
-// Keep the old global helper name synchronous for legacy callers. It returns
-// the latest loaded worker-backed lake list; callers that need to force the
-// first async load can use getUniversalLakeNamesAsync.
-window.getUniversalLakeNames = function getUniversalLakeNames() {
-  return accessIndex.lakeNames;
-};
-window.getUniversalLakeNamesAsync = async function getUniversalLakeNamesAsync() {
-  const idx = await loadAccessIndex();
-  return idx.lakeNames;
-};
+import { loadAccessIndex } from '../data/access-index.js';
 
 // ── Populate lake dropdown ───────────────────────────────────────────────
 
@@ -231,6 +40,11 @@ async function populateLakeSelect() {
 }
 
 // ── Lake change handler ──────────────────────────────────────────────────
+
+function formatAccessLabel(item) {
+  const prefix = item.marker ? `${item.marker} ` : '';
+  return `${prefix}${item.name}${item.typeLabel ? ` — ${item.typeLabel}` : ''}`;
+}
 
 async function onLakeChange(selLakeName) {
   const rampSel = document.getElementById('rampSelect');

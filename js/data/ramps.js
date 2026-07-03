@@ -198,3 +198,22 @@ initRamps().catch(e => {
 });
 
 console.log('[ramps] module ready');
+
+// ── Dev helper: force a full refresh past both IDB and (implicitly) the
+// worker's R2 cache is NOT bypassed by this alone — combine with ?refresh=1
+// on the worker if you also need to bypass R2. This only clears the local
+// IndexedDB cache and re-fetches from the worker.
+window.forceRefreshRamps = async function forceRefreshRamps() {
+  console.log('[ramps] forceRefreshRamps: clearing IDB cache...');
+  try {
+    await new Promise((resolve) => {
+      const req = indexedDB.deleteDatabase('TrollMapRamps');
+      req.onsuccess = () => resolve();
+      req.onerror = () => resolve();
+      req.onblocked = () => resolve();
+    });
+  } catch (e) {
+    console.warn('[ramps] IDB delete failed:', e);
+  }
+  console.log('[ramps] IDB cleared. Reload the page to re-fetch all states fresh.');
+};

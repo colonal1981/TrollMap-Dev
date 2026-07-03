@@ -2145,22 +2145,32 @@ export default {
           },
           GA: {
             url: 'https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/WRD_Water_Access_Points/FeatureServer/0/query',
-            filter: p => String(p.Ramp||'').toLowerCase() === 'yes' && !['closed','inactive'].includes(String(p.Status||'').toLowerCase()),
+            idField: 'FID', // GA's objectIdFieldName is FID, not OBJECTID — using OBJECTID in orderByFields causes a 400 from ArcGIS, silently zeroing out results
+            // Real schema confirmed 2026-07-03 via outFields=* query — field
+            // names (Name/Waterbody/Latitude/Longitude/Status) were already
+            // correct, but Ramp/Fee are single-letter "Y"/"N" booleans, not
+            // the strings "yes"/"no" this filter was checking for. Every
+            // record failed the check, so GA returned 0 waterbodies/0 ramps
+            // regardless of cache state.
+            filter: p => String(p.Ramp||'').toUpperCase() === 'Y' && !['closed','inactive'].includes(String(p.Status||'').toLowerCase()),
             name: p => p.Name,
             wb: p => p.Waterbody,
             lat: p => p.Latitude,
             lon: p => p.Longitude,
-            meta: p => ({ lanes: p.NumLanes, dock: p.Dock, fee: String(p.Fee||'').toLowerCase() === 'yes', county: p.County, owner: p.Owner, motorRestrictions: p.MotorRest }),
+            meta: p => ({ lanes: p.NumLanes, dock: p.Dock, fee: String(p.Fee||'').toUpperCase() === 'Y', county: p.County, owner: p.Owner, motorRestrictions: p.MotorRest }),
             label: 'Georgia DNR WRD Water Access Points',
           },
           NC: {
             url: 'https://services1.arcgis.com/YfqBAUM5nWR3yhGP/arcgis/rest/services/NCWRC_Boating_Access_Areas_view/FeatureServer/0/query',
-            filter: p => String(p.STATUS||p.Status||'open').toLowerCase() !== 'closed',
-            name: p => p.SITE_NAME || p.SiteName || p.Name || p.name,
-            wb: p => p.WATER_BODY || p.WaterBody || p.Waterbody || p.waterbody,
-            lat: p => p.LATITUDE || p.Latitude || p.lat,
-            lon: p => p.LONGITUDE || p.Longitude || p.lon,
-            meta: p => ({ lanes: p.NUM_LANES || p.NumLanes, dock: p.COURTESY_DOCK || p.CourtesyDock, fee: false, county: p.COUNTY || p.County }),
+            // Real schema confirmed 2026-07-03 via outFields=* query — NC WRC does NOT
+            // use STATUS/SITE_NAME/WATER_BODY like SC/GA. Every prior field guess missed,
+            // so all 267 records collapsed into a single "Unknown" waterbody bucket.
+            filter: p => !String(p.Site_Status || 'OPEN').toUpperCase().includes('CLOSED'),
+            name: p => p.BAA_Name,
+            wb: p => p.Water_Access || p.BAA_Alias,
+            lat: p => p.Latitude,
+            lon: p => p.Longitude,
+            meta: p => ({ lanes: p.Launch_Lane_No, dock: p.Courtesy_Dock_No || p.Fix_Dock_No, fee: false, county: p.County, owner: p.Owner, motorRestrictions: p.Motorboats_Restricted }),
             label: 'NC Wildlife Resources Commission Boating Access Areas',
           },
         };
@@ -2187,12 +2197,12 @@ export default {
         }
 
         // Fetch from state ArcGIS service with pagination
-        async function fetchAllRampFeatures(baseUrl) {
+        async function fetchAllRampFeatures(baseUrl, idField = 'OBJECTID') {
           const allFeatures = [];
           let offset = 0;
           const pageSize = 1000;
           while (true) {
-            const params = new URLSearchParams({ outFields: '*', where: '1=1', f: 'geojson', resultOffset: offset, resultRecordCount: pageSize, orderByFields: 'OBJECTID' });
+            const params = new URLSearchParams({ outFields: '*', where: '1=1', f: 'geojson', resultOffset: offset, resultRecordCount: pageSize, orderByFields: idField });
             const resp = await fetch(`${baseUrl}?${params}`, {
               headers: { 'User-Agent': 'TrollMap/1.0 (Cloudflare Worker)', 'Accept': 'application/json' },
               cf: { cacheTtl: 0 },
@@ -2208,7 +2218,7 @@ export default {
         }
 
         try {
-          const features = await fetchAllRampFeatures(source.url);
+          const features = await fetchAllRampFeatures(source.url, source.idField);
           const waterbodies = {};
 
           for (const feat of features) {
@@ -2280,6 +2290,7 @@ export default {
           },
           GA: {
             url: 'https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/WRD_Water_Access_Points/FeatureServer/0/query',
+            idField: 'FID', // GA's objectIdFieldName is FID, not OBJECTID
             filter: p => String(p.CanoeAcc||'').toLowerCase() === 'y' && !['closed','inactive'].includes(String(p.Status||'').toLowerCase()),
             name: p => p.Name,
             wb: p => p.Waterbody,
@@ -2314,8 +2325,9 @@ export default {
         try {
           let allFeatures = [];
           let offset = 0;
+          const idField = source.idField || 'OBJECTID';
           while (true) {
-            const params = new URLSearchParams({ outFields: '*', where: '1=1', f: 'geojson', resultOffset: offset, resultRecordCount: 1000, orderByFields: 'OBJECTID' });
+            const params = new URLSearchParams({ outFields: '*', where: '1=1', f: 'geojson', resultOffset: offset, resultRecordCount: 1000, orderByFields: idField });
             const resp = await fetch(`${source.url}?${params.toString()}`);
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
@@ -2365,6 +2377,7 @@ export default {
           },
           GA: {
             url: 'https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/WRD_Water_Access_Points/FeatureServer/0/query',
+            idField: 'FID', // GA's objectIdFieldName is FID, not OBJECTID
             filter: p => (String(p.BankFish||'').toLowerCase() === 'y' || String(p.PierFish||'').toLowerCase() === 'y') && !['closed','inactive'].includes(String(p.Status||'').toLowerCase()),
             name: p => p.Name,
             wb: p => p.Waterbody,
@@ -2399,8 +2412,9 @@ export default {
         try {
           let allFeatures = [];
           let offset = 0;
+          const idField = source.idField || 'OBJECTID';
           while (true) {
-            const params = new URLSearchParams({ outFields: '*', where: '1=1', f: 'geojson', resultOffset: offset, resultRecordCount: 1000, orderByFields: 'OBJECTID' });
+            const params = new URLSearchParams({ outFields: '*', where: '1=1', f: 'geojson', resultOffset: offset, resultRecordCount: 1000, orderByFields: idField });
             const resp = await fetch(`${source.url}?${params.toString()}`);
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
@@ -2452,6 +2466,12 @@ export default {
           },
           GA: {
             url: 'https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/Fish_Attractors_for_Download/FeatureServer/0/query',
+            // NOTE: different GA feature service than /ramps, /paddle, /bank-pier
+            // (which all use WRD_Water_Access_Points, confirmed idField: FID).
+            // This one hasn't been checked against its own schema — don't assume
+            // FID applies here too. If this route also returns 0 for GA, query
+            // this service's outFields=* first to confirm its real
+            // objectIdFieldName before guessing at an idField override.
             filter: p => true,
             name: p => p.note,
             wb: p => p.waterbody,
@@ -2638,7 +2658,7 @@ export default {
 
         // POST /sync/migrate — bulk import
         if (path === '/sync/migrate' && request.method === 'POST') {
-          return handleSyncMigrate(request, env);
+          return await handleSyncMigrate(request, env);
         }
 
         // DELETE /sync/purge-type/:type — delete all records of a type (admin cleanup)
@@ -2652,16 +2672,16 @@ export default {
 
         // GET /sync/list-updates
         if (path === '/sync/list-updates' && request.method === 'GET') {
-          return handleSyncListUpdates(url, env);
+          return await handleSyncListUpdates(url, env);
         }
 
         // /sync/item/:type/:id
         const itemMatch = path.match(/^\/sync\/item\/([^\/]+)\/(.+)$/);
         if (itemMatch) {
           const [, type, id] = itemMatch;
-          if (request.method === 'POST') return handleSyncPush(request, env, type, id);
-          if (request.method === 'GET')  return handleSyncGet(env, type, id);
-          if (request.method === 'DELETE') return handleSyncDelete(env, type, id);
+          if (request.method === 'POST') return await handleSyncPush(request, env, type, id);
+          if (request.method === 'GET')  return await handleSyncGet(env, type, id);
+          if (request.method === 'DELETE') return await handleSyncDelete(env, type, id);
         }
 
         // GET /sync/item/:key (key = "type/id")
@@ -2670,7 +2690,7 @@ export default {
           const parts = keyMatch[1].split('/');
           const type = parts[0];
           const id = parts.slice(1).join('/');
-          return handleSyncGet(env, type, id);
+          return await handleSyncGet(env, type, id);
         }
 
         return new Response(JSON.stringify({ error: 'unknown sync route' }), { headers: JSON_HEADERS, status: 404 });

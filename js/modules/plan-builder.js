@@ -11,6 +11,7 @@
 import { state } from "../core/state.js";
 import { esc } from "../utils/escape.js";
 import { LAKE_DB } from "../data/lakes.js";
+import { loadAccessIndex } from "../data/access-index.js";
 import { renderSpread } from "./spread-builder.js";
 import { newRodRow } from "../utils/rod-row.js";
 import { getFilename, setFilename } from "../core/map-init.js";
@@ -1295,18 +1296,33 @@ export async function populatePlanLakeDropdown(){
   sel.innerHTML = '<option value="">— choose lake or river —</option>';
   const lakesGroup = document.createElement('optgroup');
   lakesGroup.label = 'Lakes / Reservoirs';
-  
-  // Wait for the async worker fetch to populate the global index before asking for the names!
+
+  // FIX (2026-07-03): previously relied on window.getUniversalLakeNamesAsync,
+  // which only exists if access-index.js happened to already be imported by
+  // some OTHER module (lake-ramp-select.js / catch-journal.js) on this page,
+  // with no guaranteed load order. On the Plan page specifically, that
+  // dependency was often unmet, silently falling back to the old ~40-lake
+  // LAKE_DB list and never showing worker-backed or SCDNR State Lakes
+  // entries. Importing loadAccessIndex directly removes that fragility.
   let lakeNames = [];
-  if (window.getUniversalLakeNamesAsync) {
-    lakeNames = await window.getUniversalLakeNamesAsync();
-  } else if (window.getUniversalLakeNames) {
-    lakeNames = window.getUniversalLakeNames();
-  } else {
-    lakeNames = Object.keys(LAKE_DB).sort();
+  try {
+    const idx = await loadAccessIndex();
+    lakeNames = idx.lakeNames || [];
+  } catch (e) {
+    console.warn('[plan-builder] access index load failed, falling back to LAKE_DB:', e);
   }
-  
-  // If it's somehow still empty, fallback to LAKE_DB just in case so it's never blank
+
+  // Merge in any LAKE_DB-only names (older curated entries not yet covered
+  // by the worker feed or SCDNR State Lakes supplement) so nothing that
+  // worked before silently disappears.
+  const known = new Set(lakeNames.map(n => n.toLowerCase()));
+  Object.keys(LAKE_DB).forEach(name => {
+    if (!known.has(name.toLowerCase())) lakeNames.push(name);
+  });
+  lakeNames.sort((a, b) => a.localeCompare(b));
+
+  // If everything above somehow still came back empty, fall back to LAKE_DB
+  // alone so the dropdown is never blank.
   if (lakeNames.length === 0) {
     lakeNames = Object.keys(LAKE_DB).sort();
   }
