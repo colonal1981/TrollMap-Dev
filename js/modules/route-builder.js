@@ -572,6 +572,16 @@ function generateContourRoutes(cfg) {
     pts = clampToClip(pts);
     if (pts.length < 2) continue;
 
+    // Safety net: a single sweep pass for a kayak trolling route should never
+    // need more than a few thousand points. If upstream clip/stitch logic ever
+    // regresses (e.g. bbox too large again), truncate rather than silently
+    // emitting a 40k+ point track that hangs the map/GPX export.
+    const MAX_PTS_PER_TRACK = 3000;
+    if (pts.length > MAX_PTS_PER_TRACK) {
+      console.warn(`[route-builder] Sweep_${depthMin}-${depthMax}ft: ${pts.length} pts exceeds safety cap, truncating to ${MAX_PTS_PER_TRACK}. This usually means the clip box is too large — check ramp range.`);
+      pts = pts.slice(0, MAX_PTS_PER_TRACK);
+    }
+
     tracks.push({
       name: lanes > 1 ? `Sweep_${depthMin}-${depthMax}ft_L${i+1}` : `Sweep_${depthMin}-${depthMax}ft`,
       pts,
@@ -816,9 +826,21 @@ export function setClipFromRamp(rampLat, rampLon, rangeMiles) {
     window._routeBuilderClipActive = false;
     return;
   }
+  // Cap the clip radius. computeRangeMiles() falls back to full-battery range
+  // (~16.7mi) when BLE isn't connected, which produces a bbox wider than most
+  // SC lakes — the clip filter then admits every contour fragment and stitched
+  // spines span the whole lake (see July 2 handoff known issue). A fishing
+  // route has no business being a 33-mile-wide box regardless of how much
+  // battery is theoretically left, so clamp to a sane planning radius.
+  const MAX_CLIP_RADIUS_MI = 5.0;
+  const MIN_CLIP_RADIUS_MI = 0.5;
+  const clippedRangeMiles = Math.min(MAX_CLIP_RADIUS_MI, Math.max(MIN_CLIP_RADIUS_MI, rangeMiles));
+  if (clippedRangeMiles !== rangeMiles) {
+    console.warn(`[route-builder] clip radius ${rangeMiles.toFixed(1)}mi exceeds cap — using ${clippedRangeMiles}mi instead`);
+  }
   // Convert range miles to degrees (approximate)
-  const latDeg = rangeMiles / 69.0;
-  const lonDeg = rangeMiles / (69.0 * Math.cos(rampLat * Math.PI / 180));
+  const latDeg = clippedRangeMiles / 69.0;
+  const lonDeg = clippedRangeMiles / (69.0 * Math.cos(rampLat * Math.PI / 180));
   // Create a rectangular bounding box around the ramp
   clipPolygon = [
     [rampLat - latDeg, rampLon - lonDeg],
