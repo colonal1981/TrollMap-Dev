@@ -170,9 +170,17 @@ function loadPlanIntoForm(p){
   }
   // Robust load using the fixed newRodRow (which now includes rod + trailerSize + arigWeight + jigWeight)
   // This ensures swimbait trailer profile, full A-rig rows, and rod selections persist.
+  // FIX (2026-07-03): plans saved while the rod-row default bug was live have
+  // rod:'' explicitly stored. Since {...base, ...r} spreads the saved row
+  // last, that stored empty string was clobbering the now-restored default
+  // right back to blank on every load — old broken saves would stay broken
+  // forever even after the underlying bug was fixed. Only let a saved row
+  // override rod if it actually has a real (non-empty) value.
   state.SPREAD = (p.spread || []).map(r => {
     const base = newRodRow(r);
-    return { ...base, ...r };   // keep every extra field the saved data / UI set
+    const merged = { ...base, ...r };
+    if (!merged.rod && base.rod) merged.rod = base.rod;
+    return merged;
   });
   renderSpread();
   document.getElementById('planTackle').value = p.tackle||'';

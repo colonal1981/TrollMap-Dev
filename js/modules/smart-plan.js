@@ -273,6 +273,12 @@ function buildPhaseRods(phaseRec, phaseNum, sides) {
     const rod = newRodRow({
       side,
       position: 'Mid',
+      // FIX (2026-07-03): previously set rod: '' here explicitly, overriding
+      // newRodRow()'s default with a blank value — combined with newRodRow's
+      // own default having been blanked out too, this is what caused the
+      // Rod Architecture column to always be empty on Smart Plan output.
+      // Both are now fixed (see rod-row.js); no override needed here, the
+      // real default carries through automatically like it used to.
       reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader',
       depth: String(depth),
     });
@@ -294,7 +300,16 @@ function buildPhaseRods(phaseRec, phaseNum, sides) {
       rod.notes = rawLure;
     }
     if (phaseRec.notes) {
-      rod.notes = (rod.notes ? rod.notes + ' · ' : '') + phaseRec.notes.slice(0, 50);
+      // FIX (2026-07-03): this was .slice(0, 50) with no ellipsis, cutting
+      // tactical notes off mid-word ("shallower than mid-") in the final
+      // plan output. Raised to a much more reasonable length and added an
+      // ellipsis so a genuine cutoff is at least visible as intentional
+      // rather than looking like broken/missing text.
+      const NOTE_CHAR_LIMIT = 220;
+      const trimmedNote = phaseRec.notes.length > NOTE_CHAR_LIMIT
+        ? phaseRec.notes.slice(0, NOTE_CHAR_LIMIT).replace(/\s+\S*$/, '') + '…'
+        : phaseRec.notes;
+      rod.notes = (rod.notes ? rod.notes + ' · ' : '') + trimmedNote;
     }
     return rod;
   });
