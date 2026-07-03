@@ -244,10 +244,14 @@ function getPhaseRecommendation(species, lakeName, season, phaseNum, waterTempF)
     : [...seasonData.depthBand];
 
   // Phase-specific depth adjustments beyond the standard time-of-day shift
-  const phaseDepthShifts = { 1: tod.depthShift || 0, 2: Math.round((tod.depthShift || 0) / 2), 3: 0 };
+  // Phase 1: Dawn — shallow (positive shift = shallower)
+  // Phase 2: Transition — mid depth
+  // Phase 3: Deep — push 4-6ft deeper than base band (fish thermocline/channel)
+  const baseShift = tod.depthShift || 0;
+  const phaseDepthShifts = { 1: baseShift, 2: Math.round(baseShift / 2), 3: -5 };
   const shift = phaseDepthShifts[phaseNum];
   dMin = Math.max(1, dMin + shift);
-  dMax = Math.max(dMin + 2, dMax + shift);
+  dMax = Math.max(dMin + 4, dMax + shift);
 
   return {
     depthMin: dMin, depthMax: dMax,
@@ -276,6 +280,16 @@ function buildPhaseRods(phaseRec, phaseNum, sides) {
       rod.lure = resolved;
       rod.color = LURE_COLOR_DEFAULTS[resolved] || '';
       rod.lead = String(autoCalculateLead(rod, phaseRec.speed));
+
+      // Auto-populate A-Rig trailer and jig weight fields for build page display
+      if (resolved.includes('A-Rig')) {
+        const isLight  = resolved.includes('Light')  || resolved.includes('1.65');
+        const isMedium = resolved.includes('Medium') || resolved.includes('2.65');
+        const isHeavy  = resolved.includes('Heavy')  || resolved.includes('3.5oz');
+        rod.arigWeight  = isLight ? '~1.65oz Framework' : isMedium ? '~2.65oz Framework' : '~3.5oz Framework';
+        rod.trailerSize = isLight ? '3.8" swimbait' : isMedium ? '4.6" swimbait' : '5" swimbait';
+        rod.jigWeight   = isLight ? '1/8oz × 5 (Uniform)' : isMedium ? '3/16oz × 5 (Uniform)' : '1/4oz × 5 (Uniform)';
+      }
     } else if (rawLure) {
       rod.notes = rawLure;
     }
@@ -290,7 +304,6 @@ function buildPhaseRods(phaseRec, phaseNum, sides) {
 async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon) {
   if (!phaseRec) return;
 
-  // Store phase info for UI display
   window._smartPlanPhaseRoutes = window._smartPlanPhaseRoutes || [];
   window._smartPlanPhaseRoutes.push({
     phase: phase.num,
@@ -301,13 +314,11 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
     window: `${phase.startStr} – ${phase.endStr}`,
   });
 
-  // Pre-fill Route Builder UI inputs
   const minEl = document.getElementById('rbDepthMin');
   const maxEl = document.getElementById('rbDepthMax');
   if (minEl) minEl.value = phaseRec.depthMin;
   if (maxEl) maxEl.value = phaseRec.depthMax;
 
-  // Auto-generate route for this phase using route-builder
   try {
     const { generateAndCommitRoute } = await import('./route-builder.js');
     const routeConfig = getRouteConfigForPhase(phaseRec, phase.num);
@@ -321,8 +332,6 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
     });
     if (tracks?.length) {
       console.log(`[smart-plan] Phase ${phase.num} ${phase.name}: generated ${tracks.length} route(s) at ${phaseRec.depthMin}-${phaseRec.depthMax}ft`);
-    } else {
-      console.warn(`[smart-plan] Phase ${phase.num}: no contours found in ${phaseRec.depthMin}-${phaseRec.depthMax}ft range`);
     }
   } catch (e) {
     console.warn('[smart-plan] Route generation failed:', e.message);
@@ -525,7 +534,7 @@ export async function runSmartPlan() {
     console.warn('[smart-plan] Could not load ramp coords:', e.message);
   }
 
-  // Generate routes for each phase — oriented toward the selected ramp
+  // Generate routes for each phase oriented toward selected ramp
   window._smartPlanPhaseRoutes = [];
   for (let i = 0; i < phases.length; i++) {
     await generateRouteForPhase(phases[i], phaseRecs[i], lakeName, rampLat, rampLon);
