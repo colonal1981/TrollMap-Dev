@@ -407,6 +407,53 @@ function renderCatchSubtab() {
   else renderReview(body);
 }
 
+async function recheckJournalLakes(body = document.getElementById('catchCenterBody')) {
+  const status = body?.querySelector('#journalRecheckStatus');
+  const catches = getCatches();
+  if (!catches.length) { if (status) status.textContent = 'No confirmed catches to check.'; return; }
+
+  if (status) status.textContent = 'Loading lake database…';
+  try { await loadAccessIndex(); } catch (_) {}
+
+  let filled = 0, changed = 0, noGps = 0, stillBlank = 0;
+  catches.forEach((c) => {
+    if (!c.lat || !c.lon) { noGps++; return; }
+    const spatial = nearestLakeAndContour(c.lat, c.lon);
+    if (!spatial.lake) { stillBlank++; return; }
+    if (!c.lake) {
+      // Was blank — fill it in. This is the main case: catches imported
+      // before a lake existed in LAKE_DB / the access index / the SCDNR
+      // State Lakes supplement now resolve correctly.
+      c.lake = spatial.lake;
+      c.lakeSource = spatial.lakeSource;
+      c.lakeMatchDistanceMi = spatial.lakeMatchDistanceMi;
+      filled++;
+    } else if (c.lake !== spatial.lake) {
+      // Already had a value that disagrees with the current best match.
+      // Deliberately NOT overwritten — a manually-entered or previously
+      // correct lake name shouldn't be silently replaced. Flagged instead
+      // so it can be reviewed.
+      if (!c.reviewFlags) c.reviewFlags = [];
+      if (!c.reviewFlags.includes('lake_mismatch_on_recheck')) {
+        c.reviewFlags.push('lake_mismatch_on_recheck');
+      }
+      c.lakeRecheckSuggestion = spatial.lake;
+      changed++;
+    }
+  });
+
+  await saveCatches();
+  renderJournalOnly(body);
+  const newStatus = body?.querySelector('#journalRecheckStatus');
+  if (newStatus) {
+    newStatus.textContent =
+      `Filled in ${filled} blank lake${filled === 1 ? '' : 's'}.` +
+      (changed ? ` ${changed} existing entr${changed === 1 ? 'y' : 'ies'} disagreed with the current match — flagged for review, not overwritten.` : '') +
+      (stillBlank ? ` ${stillBlank} still unmatched (no known lake within range).` : '') +
+      (noGps ? ` ${noGps} skipped (no GPS on the catch).` : '');
+  }
+}
+
 function renderJournalOnly(body = document.getElementById('catchCenterBody')) {
   const catches = getCatches();
   if (!body) return;
@@ -414,9 +461,11 @@ function renderJournalOnly(body = document.getElementById('catchCenterBody')) {
     <div class="row">
       <button id="manualCatchBtn" class="primary small">+ Manual Catch</button>
       <button id="exportJournalBtn" class="small">⬇ Export Journal CSV</button>
+      <button id="recheckLakesBtn" class="small">📍 Re-check Lakes (GPS)</button>
       <button id="deleteAllJournalBtn" class="warn small">🗑 Delete ALL Journal Catches</button>
       <span class="muted">${catches.length} confirmed catches</span>
     </div>
+    <div id="journalRecheckStatus" class="muted" style="margin:4px 0;font-size:12px"></div>
     <div id="catchLogList"></div>`;
   const list = body.querySelector('#catchLogList');
   if (!catches.length) {
@@ -426,7 +475,7 @@ function renderJournalOnly(body = document.getElementById('catchCenterBody')) {
       <div style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12px">
         <span style="font-size:18px">🐟</span>
         <div style="flex:1;min-width:0">
-          <div><b>${esc(c.species || 'Fish')}</b>${c.length ? ` · ${esc(c.length)}"` : ''} · ${esc(c.date || '')} ${esc(c.time || '')} · ${esc(c.lake || '')}</div>
+          <div><b>${esc(c.species || 'Fish')}</b>${c.length ? ` · ${esc(c.length)}"` : ''} · ${esc(c.date || '')} ${esc(c.time || '')} · ${esc(c.lake || '')}${c.reviewFlags?.includes('lake_mismatch_on_recheck') ? ` <span style="color:#e0a030">⚠ suggested: ${esc(c.lakeRecheckSuggestion || '')}</span>` : ''}</div>
           <div class="muted">${c.depth ? `Depth: ${esc(c.depth)}ft` : ''}${c.sourceFile ? ` · ${esc(c.sourceFile)}` : ''}${c.verification?.length ? ` · length: ${esc(c.verification.length)}` : ''}</div>
           ${c.notes ? `<div style="margin-top:2px">${esc(c.notes)}</div>` : ''}
         </div>
@@ -435,6 +484,7 @@ function renderJournalOnly(body = document.getElementById('catchCenterBody')) {
   }
   body.querySelector('#manualCatchBtn')?.addEventListener('click', () => addManualCatch());
   body.querySelector('#exportJournalBtn')?.addEventListener('click', exportJournalCsv);
+  body.querySelector('#recheckLakesBtn')?.addEventListener('click', () => recheckJournalLakes(body));
   body.querySelector('#deleteAllJournalBtn')?.addEventListener('click', async () => {
     const n = getCatches().length;
     if (!n) return;
