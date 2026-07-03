@@ -12,6 +12,7 @@
 
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
+import { LAKE_DB } from '../data/lakes.js';
 
 const DEFAULT_HELPER = 'http://127.0.0.1:8787';
 const QUEUE_DB_KEY = 'catch_import_queue';
@@ -170,7 +171,7 @@ function nearestLakeAndContour(latRaw, lonRaw) {
 
   // Lake name from curated DB if available.
   try {
-    const db = window.LAKE_DB || {};
+    const db = LAKE_DB || {};
     let bestName = '', bestDist = Infinity;
     for (const [name, info] of Object.entries(db)) {
       if (!info?.center) continue;
