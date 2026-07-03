@@ -321,9 +321,7 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
 
   try {
     const { generateAndCommitRoute } = await import('./route-builder.js');
-    const routeConfig = getRouteConfigForPhase(phaseRec, phase.num);
     const tracks = generateAndCommitRoute({
-      ...routeConfig,
       depthMin:  phaseRec.depthMin,
       depthMax:  phaseRec.depthMax,
       trackName: `Phase ${phase.num} ${phase.name} (${phase.startStr}–${phase.endStr})`,
@@ -514,7 +512,7 @@ export async function runSmartPlan() {
   // Get ramp coordinates for route orientation
   let rampLat = null, rampLon = null;
   try {
-    const { WATEREE_RAMPS, MARION_RAMPS, MOULTRIE_RAMPS, MURRAY_RAMPS, MONTICELLO_RAMPS } = await import('../data/ryan-ramps.js');
+    const { WATEREE_RAMPS, MARION_RAMPS, MOULTRIE_RAMPS, MURRAY_RAMPS, MONTICELLO_RAMPS } = await import('./ryan-ramps.js');
     const lakeRampMap = {
       'lake wateree': WATEREE_RAMPS, 'wateree': WATEREE_RAMPS,
       'lake marion': MARION_RAMPS, 'marion': MARION_RAMPS,
@@ -543,7 +541,7 @@ export async function runSmartPlan() {
   applyStoredSmartPlanDepth();
 
   // Build rationale
-  const totalRoutes = routeCounts.flat().length;
+  const totalRoutes = 0; // routes auto-generated per phase above
   let rationale = buildRationaleText(sp, lakeName, season, phases, phaseRecs, phaseInfo, totalRoutes);
 
   // Ramp evaluation — check if selected ramp is optimal
