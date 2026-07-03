@@ -23,6 +23,7 @@ import { getActiveContour, onContourChange } from './contour-data.js';
 
 let routeLayer = null;
 let clipPolygon = null;
+window._routeBuilderClipActive = false;
 let clipLayer   = null;
 let pendingTracks = [];
 let pickingMode = null;  // 'start' | 'end' | 'clip'
@@ -808,6 +809,28 @@ function renderRoutes(tracks) {
  *
  * Returns the committed tracks array (may be empty if no contours found).
  */
+// ── Set clip polygon from ramp coords + range (called by Smart Plan) ──────────
+export function setClipFromRamp(rampLat, rampLon, rangeMiles) {
+  if (!rampLat || !rampLon || !rangeMiles) {
+    clipPolygon = null;
+    window._routeBuilderClipActive = false;
+    return;
+  }
+  // Convert range miles to degrees (approximate)
+  const latDeg = rangeMiles / 69.0;
+  const lonDeg = rangeMiles / (69.0 * Math.cos(rampLat * Math.PI / 180));
+  // Create a rectangular bounding box around the ramp
+  clipPolygon = [
+    [rampLat - latDeg, rampLon - lonDeg],
+    [rampLat + latDeg, rampLon - lonDeg],
+    [rampLat + latDeg, rampLon + lonDeg],
+    [rampLat - latDeg, rampLon + lonDeg],
+    [rampLat - latDeg, rampLon - lonDeg],
+  ];
+  window._routeBuilderClipActive = true;
+  console.log(`[route-builder] clip set: ${rangeMiles.toFixed(1)}mi radius around ramp (${rampLat.toFixed(4)}, ${rampLon.toFixed(4)})`);
+}
+
 export function generateAndCommitRoute(overrides = {}) {
   // Read current panel settings as base config — falls back to defaults
   // if panel hasn't been opened yet (inputs don't exist in DOM)
@@ -1239,6 +1262,7 @@ function wireRouteBuilder() {
       if (clipLayer) state.MAP.removeLayer(clipLayer);
       clipLayer = e.layer.addTo(state.MAP);
       clipPolygon = e.layer.getLatLngs()[0].map(ll => [ll.lat, ll.lng]);
+      window._routeBuilderClipActive = true;
       const el = document.getElementById('rbClipStatus');
       if (el) el.textContent = `Area set (${clipPolygon.length} points)`;
       setBanner('');
@@ -1248,6 +1272,7 @@ function wireRouteBuilder() {
   document.getElementById('rbClearClip')?.addEventListener('click', () => {
     if (clipLayer) { state.MAP?.removeLayer(clipLayer); clipLayer = null; }
     clipPolygon = null;
+    window._routeBuilderClipActive = false;
     const el = document.getElementById('rbClipStatus');
     if (el) el.textContent = '';
   });

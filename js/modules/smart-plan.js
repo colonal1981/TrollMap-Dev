@@ -301,7 +301,7 @@ function buildPhaseRods(phaseRec, phaseNum, sides) {
 }
 
 // ── Route generation per phase ────────────────────────────────────────────────
-async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon) {
+async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon, rangeMiles) {
   if (!phaseRec) return;
 
   window._smartPlanPhaseRoutes = window._smartPlanPhaseRoutes || [];
@@ -320,7 +320,13 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
   if (maxEl) maxEl.value = phaseRec.depthMax;
 
   try {
-    const { generateAndCommitRoute } = await import('./route-builder.js');
+    const { generateAndCommitRoute, setClipFromRamp } = await import('./route-builder.js');
+    // Auto-set clip bbox from ramp + battery range — no manual drawing needed
+    if (rampLat && rampLon && rangeMiles) {
+      setClipFromRamp(rampLat, rampLon, rangeMiles);
+    } else {
+      console.warn(`[smart-plan] Phase ${phase.num}: no ramp coords or range — using existing clip if any`);
+    }
     const tracks = generateAndCommitRoute({
       depthMin:  phaseRec.depthMin,
       depthMax:  phaseRec.depthMax,
@@ -535,7 +541,7 @@ export async function runSmartPlan() {
   // Generate routes for each phase oriented toward selected ramp
   window._smartPlanPhaseRoutes = [];
   for (let i = 0; i < phases.length; i++) {
-    await generateRouteForPhase(phases[i], phaseRecs[i], lakeName, rampLat, rampLon);
+    await generateRouteForPhase(phases[i], phaseRecs[i], lakeName, rampLat, rampLon, rangeMiles);
   }
   applyToPlanFields(phaseRecs, phases);
   applyStoredSmartPlanDepth();
