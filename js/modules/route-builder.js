@@ -850,7 +850,7 @@ export function setClipFromRamp(rampLat, rampLon, rangeMiles) {
     [rampLat - latDeg, rampLon - lonDeg],
   ];
   window._routeBuilderClipActive = true;
-  console.log(`[route-builder] clip set: ${rangeMiles.toFixed(1)}mi radius around ramp (${rampLat.toFixed(4)}, ${rampLon.toFixed(4)})`);
+  console.log(`[route-builder] clip set: ${clippedRangeMiles.toFixed(1)}mi radius around ramp (${rampLat.toFixed(4)}, ${rampLon.toFixed(4)})`);
 }
 
 export function generateAndCommitRoute(overrides = {}) {

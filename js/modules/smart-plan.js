@@ -613,7 +613,14 @@ console.log('[smart-plan] module ready');
 // ── Ramp evaluation integration ───────────────────────────────────────────────
 // Imported lazily so wateree-ramps.js only loads when needed
 async function getRampEvaluation(lakeName, species, season, phaseRecs, weatherStr, roughWeather) {
-  const { evaluateRamps, parseWindDeg } = await import('../data/ryan-ramps.js');
+  // FIX (2026-07-03): this was importing from '../data/ryan-ramps.js', which
+  // doesn't exist and 404s — the real file lives alongside this module and
+  // is already imported correctly elsewhere in this file (see the ramp
+  // lookup in runSmartPlan) as './ryan-ramps.js'. The wrong path here was
+  // crashing runSmartPlan at the ramp-evaluation step, after routes had
+  // already generated successfully, aborting before the rationale text and
+  // status line ever got written.
+  const { evaluateRamps, parseWindDeg } = await import('./ryan-ramps.js');
 
   // Determine target zones from phase recommendations
   const targetZones = [];
