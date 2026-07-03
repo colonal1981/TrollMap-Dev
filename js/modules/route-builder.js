@@ -811,6 +811,11 @@ function renderRoutes(tracks) {
 export function generateAndCommitRoute(overrides = {}) {
   // Read current panel settings as base config — falls back to defaults
   // if panel hasn't been opened yet (inputs don't exist in DOM)
+
+  // Ramp start point — if provided, orient route so it starts nearest the ramp
+  const rampLat = overrides.rampLat ?? null;
+  const rampLon = overrides.rampLon ?? null;
+
   const cfg = {
     depthMin:   overrides.depthMin   != null ? overrides.depthMin   : (parseInt(document.getElementById('rbDepthMin')?.value)    || 18),
     depthMax:   overrides.depthMax   != null ? overrides.depthMax   : (parseInt(document.getElementById('rbDepthMax')?.value)    || 28),
@@ -841,6 +846,23 @@ export function generateAndCommitRoute(overrides = {}) {
     ...t,
     name: tracks.length > 1 ? `${prefix} (${i + 1})` : prefix,
   }));
+
+  // Orient each track so it starts at the end nearest the ramp launch point
+  if (rampLat != null && rampLon != null) {
+    tracks = tracks.map(track => {
+      if (!track.pts || track.pts.length < 2) return track;
+      const first = track.pts[0];   // [lon, lat]
+      const last  = track.pts[track.pts.length - 1];
+      const dFirst = distBearing(rampLat, rampLon, first[1], first[0])[0];
+      const dLast  = distBearing(rampLat, rampLon, last[1],  last[0])[0];
+      // If the last point is closer to the ramp than the first, reverse the track
+      if (dLast < dFirst) {
+        return { ...track, pts: track.pts.slice().reverse() };
+      }
+      return track;
+    });
+    console.log(`[route-builder] oriented ${tracks.length} track(s) toward ramp (${rampLat.toFixed(4)}, ${rampLon.toFixed(4)})`);
+  }
 
   // Commit directly to plan — no pending/confirm step needed for auto-routes
   state.DATA.tracks.push(...tracks);

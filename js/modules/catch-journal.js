@@ -48,6 +48,13 @@ function cleanSpecies(s) {
     'Hybrid': 'White Bass / Hybrid',
     'Striper': 'Striped Bass',
     'Black Bass': 'Largemouth Bass',
+    'Bowfin (Mudfish)': 'Bowfin',
+    'Mudfish': 'Bowfin',
+    'Bowfin Mudfish': 'Bowfin',
+    'Black Crappie': 'Crappie',
+    'White Crappie': 'Crappie',
+    'Red Drum (Redfish)': 'Red Drum (Redfish)',
+    'Speckled Trout (Spotted Seatrout)': 'Speckled Trout (Spotted Seatrout)',
     'Sunfish': 'Sunfish (Panfish)',
     'No Fish': 'Not Fish',
     'None': ''
@@ -568,6 +575,7 @@ function renderQueueDetail(el, q) {
       <button id="markPendingBtn" class="small">↩ Pending</button>
     </div>`;
   el.querySelector('#saveQueueEditsBtn')?.addEventListener('click', async () => { applyDetailEdits(q); await saveQueue(); renderCatchSubtab(); });
+  setTimeout(attachPhotoZoom, 100);
   el.querySelector('#approveCatchBtn')?.addEventListener('click', async () => { applyDetailEdits(q); await approveQueueItem(q); moveNext(); renderCatchSubtab(); });
   el.querySelector('#rejectCatchBtn')?.addEventListener('click', async () => { q.status = 'rejected'; q.updatedAt = new Date().toISOString(); await saveQueue(); moveNext(); renderCatchSubtab(); });
   el.querySelector('#markPendingBtn')?.addEventListener('click', async () => { q.status = 'pending'; q.updatedAt = new Date().toISOString(); await saveQueue(); renderCatchSubtab(); });
@@ -812,8 +820,78 @@ async function addManualCatch() {
 }
 
 // Legacy buttons may exist before render override; wire defensively.
+// ── Gemini fish identification (for single photo drop) ───────────────────────
+async function resizeForGemini(imgFile, maxPx = 1344) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(imgFile);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      canvas.toBlob(blob => resolve(blob || imgFile), 'image/jpeg', 0.88);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(imgFile); };
+    img.src = url;
+  });
+}
+
+async function identifyFishWithGemini(imgFile) {
+  try {
+    const resized = await resizeForGemini(imgFile, 1344);
+    const resp = await fetch('https://trollmap-worker.colonal1981.workers.dev/identify-catch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'image/jpeg', 'X-Image-Type': 'image/jpeg' },
+      body: resized,
+    });
+    if (!resp.ok) throw new Error(`Worker ${resp.status}`);
+    const data = await resp.json();
+    if (!data.success) throw new Error(data.error || 'Unknown error');
+    return data.analysis;
+  } catch (e) {
+    console.warn('[catch-journal] Gemini ID failed:', e.message);
+    return null;
+  }
+}
+
+// ── Photo zoom overlay ────────────────────────────────────────────────────────
+function initPhotoZoom() {
+  if (document.getElementById('photoZoomOverlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'photoZoomOverlay';
+  overlay.style.cssText = 'display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.92);cursor:zoom-out;align-items:center;justify-content:center;';
+  overlay.innerHTML = '<img id="photoZoomImg" style="max-width:96vw;max-height:96vh;object-fit:contain;border-radius:8px;">';
+  overlay.addEventListener('click', () => { overlay.style.display = 'none'; });
+  document.body.appendChild(overlay);
+}
+
+function zoomPhoto(src) {
+  initPhotoZoom();
+  const overlay = document.getElementById('photoZoomOverlay');
+  const img = document.getElementById('photoZoomImg');
+  img.src = src;
+  overlay.style.display = 'flex';
+}
+
+// Add zoom to review photo after render
+function attachPhotoZoom() {
+  const photo = document.getElementById('reviewPhoto');
+  if (photo && !photo._zoomWired) {
+    photo._zoomWired = true;
+    photo.style.cursor = 'zoom-in';
+    photo.title = 'Click to zoom';
+    photo.addEventListener('click', () => zoomPhoto(photo.src));
+  }
+}
+
 function wireButtons() {
   renderCatchCenter();
+  // Attach zoom after render
+  setTimeout(attachPhotoZoom, 500);
 }
 
 wireButtons();

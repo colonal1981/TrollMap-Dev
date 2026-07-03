@@ -287,11 +287,10 @@ function buildPhaseRods(phaseRec, phaseNum, sides) {
 }
 
 // ── Route generation per phase ────────────────────────────────────────────────
-function generateRouteForPhase(phase, phaseRec, lakeName) {
+async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon) {
   if (!phaseRec) return;
-  // Trigger route generation using the existing route-builder functions.
-  // Set depth band inputs, then programmatically click Generate if the
-  // panel is open. Store depth so it's applied when panel opens later.
+
+  // Store phase info for UI display
   window._smartPlanPhaseRoutes = window._smartPlanPhaseRoutes || [];
   window._smartPlanPhaseRoutes.push({
     phase: phase.num,
@@ -302,13 +301,31 @@ function generateRouteForPhase(phase, phaseRec, lakeName) {
     window: `${phase.startStr} – ${phase.endStr}`,
   });
 
-  // Apply to Route Builder if panel is currently open
+  // Pre-fill Route Builder UI inputs
   const minEl = document.getElementById('rbDepthMin');
   const maxEl = document.getElementById('rbDepthMax');
-  if (minEl && maxEl && phase.num === 1) {
-    // Pre-fill with Phase 1 — user can see it immediately when they open Route Builder
-    minEl.value = phaseRec.depthMin;
-    maxEl.value = phaseRec.depthMax;
+  if (minEl) minEl.value = phaseRec.depthMin;
+  if (maxEl) maxEl.value = phaseRec.depthMax;
+
+  // Auto-generate route for this phase using route-builder
+  try {
+    const { generateAndCommitRoute } = await import('./route-builder.js');
+    const routeConfig = getRouteConfigForPhase(phaseRec, phase.num);
+    const tracks = generateAndCommitRoute({
+      ...routeConfig,
+      depthMin:  phaseRec.depthMin,
+      depthMax:  phaseRec.depthMax,
+      trackName: `Phase ${phase.num} ${phase.name} (${phase.startStr}–${phase.endStr})`,
+      rampLat:   rampLat ?? null,
+      rampLon:   rampLon ?? null,
+    });
+    if (tracks?.length) {
+      console.log(`[smart-plan] Phase ${phase.num} ${phase.name}: generated ${tracks.length} route(s) at ${phaseRec.depthMin}-${phaseRec.depthMax}ft`);
+    } else {
+      console.warn(`[smart-plan] Phase ${phase.num}: no contours found in ${phaseRec.depthMin}-${phaseRec.depthMax}ft range`);
+    }
+  } catch (e) {
+    console.warn('[smart-plan] Route generation failed:', e.message);
   }
 }
 
@@ -485,9 +502,34 @@ export async function runSmartPlan() {
   state.SPREAD = newSpread;
   renderSpread();
 
-  // Store phase route info + pre-fill plan fields
+  // Get ramp coordinates for route orientation
+  let rampLat = null, rampLon = null;
+  try {
+    const { WATEREE_RAMPS, MARION_RAMPS, MOULTRIE_RAMPS, MURRAY_RAMPS, MONTICELLO_RAMPS } = await import('../data/ryan-ramps.js');
+    const lakeRampMap = {
+      'lake wateree': WATEREE_RAMPS, 'wateree': WATEREE_RAMPS,
+      'lake marion': MARION_RAMPS, 'marion': MARION_RAMPS,
+      'lake moultrie': MOULTRIE_RAMPS, 'moultrie': MOULTRIE_RAMPS,
+      'lake murray': MURRAY_RAMPS, 'murray': MURRAY_RAMPS,
+      'lake monticello': MONTICELLO_RAMPS, 'monticello': MONTICELLO_RAMPS,
+    };
+    const rampList = lakeRampMap[lakeName.toLowerCase()] || [];
+    const selectedRampKey = document.getElementById('planRamp')?.value || '';
+    const selectedRamp = rampList.find(r => r.key === selectedRampKey) || rampList[0];
+    if (selectedRamp) {
+      rampLat = selectedRamp.lat;
+      rampLon = selectedRamp.lon;
+      console.log(`[smart-plan] Using ramp: ${selectedRamp.name} (${rampLat}, ${rampLon})`);
+    }
+  } catch (e) {
+    console.warn('[smart-plan] Could not load ramp coords:', e.message);
+  }
+
+  // Generate routes for each phase — oriented toward the selected ramp
   window._smartPlanPhaseRoutes = [];
-  phases.forEach((phase, i) => generateRouteForPhase(phase, phaseRecs[i], lakeName));
+  for (let i = 0; i < phases.length; i++) {
+    await generateRouteForPhase(phases[i], phaseRecs[i], lakeName, rampLat, rampLon);
+  }
   applyToPlanFields(phaseRecs, phases);
   applyStoredSmartPlanDepth();
 
