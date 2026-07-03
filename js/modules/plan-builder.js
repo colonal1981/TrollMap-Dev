@@ -1509,20 +1509,6 @@ document.getElementById('autoNameBtn')?.addEventListener('click', () => {
   if (el) el.value = `${lake}${ramp ? ' – ' + ramp : ''} ${session} Troll${dateShort ? ' ' + dateShort : ''}`;
 });
 
-// Auto-refresh preview when switching to preview tab
-document.querySelectorAll('#panel-plan .subtabs button[data-plansub]').forEach(btn => {
-  btn.addEventListener('click', async () => {
-    if (btn.dataset.plansub === 'preview') {
-      const p = collectPlan();
-      const previewEl = document.getElementById('planPreviewHtml');
-      if (previewEl && (!previewEl.innerHTML || previewEl.innerHTML.includes('No plan'))) {
-        previewEl.innerHTML = '<p style="color:#888;padding:20px">⏳ Building preview…</p>';
-        previewEl.innerHTML = await buildPlanPreviewHtml(p);
-      }
-    }
-  });
-});
-
 document.getElementById('buildPreviewBtn')?.addEventListener('click', async () => {
   const p = collectPlan();
   const previewEl = document.getElementById('planPreviewHtml');
