@@ -92,6 +92,39 @@ function normalizeNameKey(name) {
     .trim();
 }
 
+// Separate, looser key used only for detecting "is this the same LAKE under a
+// different naming convention" — e.g. worker-derived "Wee Tee Lake, SC" vs.
+// our supplemental "Wee Tee Lake (Williamsburg Co, SC)". Strips parentheticals
+// and anything after a comma so county/state suffixes don't block a match.
+function lakeNameDedupKey(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/,.*$/, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+// Look for an existing lake in the index (typically worker-derived) whose
+// name matches a supplemental lake we're about to add, so we merge into it
+// instead of creating a visually-duplicate second dropdown entry. A loose
+// distance sanity check guards against merging two different lakes that
+// happen to share a name in different regions.
+function findExistingLakeKey(index, plainName, lat, lon, maxMiles = 15) {
+  const targetKey = lakeNameDedupKey(plainName);
+  if (!targetKey) return null;
+  for (const existingName of index.byLake.keys()) {
+    if (lakeNameDedupKey(existingName) !== targetKey) continue;
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      const pts = index.byLake.get(existingName) || [];
+      const anyClose = pts.some(p => approxMiles(lat, lon, p.lat, p.lon) <= maxMiles);
+      if (!anyClose) continue; // same name, too far away — different lake, keep separate
+    }
+    return existingName;
+  }
+  return null;
+}
+
 function coordKey(lat, lon) {
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return '';
   // ~35-40 ft buckets: tight enough to merge the same site from different
@@ -195,7 +228,8 @@ async function buildAccessIndex() {
   // scdnr-state-lakes.js header). County kept in the display name to avoid
   // silently colliding with an unrelated same-named waterbody elsewhere.
   for (const lake of SCDNR_STATE_LAKES) {
-    const lakeName = `${lake.name} (${lake.county} Co, ${lake.state})`;
+    const existingKey = findExistingLakeKey(index, lake.name, lake.lat, lake.lon);
+    const lakeName = existingKey || `${lake.name} (${lake.county} Co, ${lake.state})`;
     addAccessItem(index, lakeName, {
       name: lake.name,
       lat: lake.lat,
@@ -211,7 +245,8 @@ async function buildAccessIndex() {
   // Merge in angler-flagged lakes not covered by any official feed — see
   // user-known-lakes.js header for per-lake sourcing.
   for (const lake of USER_KNOWN_LAKES) {
-    const lakeName = `${lake.name} (${lake.county} Co, ${lake.state})`;
+    const existingKey = findExistingLakeKey(index, lake.name, lake.lat, lake.lon);
+    const lakeName = existingKey || `${lake.name} (${lake.county} Co, ${lake.state})`;
     addAccessItem(index, lakeName, {
       name: lake.name,
       lat: lake.lat,
