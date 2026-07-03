@@ -1050,6 +1050,7 @@ ${twilightHtml?`<h2>4 · Light &amp; Bite Feed Triggers</h2>${twilightHtml}`:''}
   Stripers feed up. A bait a few feet over their heads gets slammed; dragging bottom exactly just snags. <b>A snag = shorten line next pass.</b>
 </div>
 
+${rationaleHtml ? `<h2>5.5 · Smart Plan Rationale</h2>${rationaleHtml}` : ''}
 <h2>6 · The Professional Spread — Rod by Rod</h2>
 <table>
   <thead><tr style="background:#eef4fa">
@@ -1506,6 +1507,20 @@ document.getElementById('autoNameBtn')?.addEventListener('click', () => {
   const dateShort = date ? new Date(date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
   const el = document.getElementById('planName');
   if (el) el.value = `${lake}${ramp ? ' – ' + ramp : ''} ${session} Troll${dateShort ? ' ' + dateShort : ''}`;
+});
+
+// Auto-refresh preview when switching to preview tab
+document.querySelectorAll('#panel-plan .subtabs button[data-plansub]').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    if (btn.dataset.plansub === 'preview') {
+      const p = collectPlan();
+      const previewEl = document.getElementById('planPreviewHtml');
+      if (previewEl && (!previewEl.innerHTML || previewEl.innerHTML.includes('No plan'))) {
+        previewEl.innerHTML = '<p style="color:#888;padding:20px">⏳ Building preview…</p>';
+        previewEl.innerHTML = await buildPlanPreviewHtml(p);
+      }
+    }
+  });
 });
 
 document.getElementById('buildPreviewBtn')?.addEventListener('click', async () => {
