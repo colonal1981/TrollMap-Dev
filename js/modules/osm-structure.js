@@ -41,35 +41,41 @@ import { setBanner } from '../core/map-init.js';
   function getMap() { return state?.MAP || window.MAP || null; }
   function mapReady() { return !!(state?.MAP_OK && getMap()); }
 
-  // Load html2canvas on demand — avoids CORS taint issues that happen when
-  // drawing cross-origin tile images directly onto a canvas with toDataURL().
-  function loadHtml2Canvas() {
-    return new Promise((resolve, reject) => {
-      if (window.html2canvas) return resolve(window.html2canvas);
-      const s = document.createElement('script');
-      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
-      s.onload = () => resolve(window.html2canvas);
-      s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
-
+  // Fetch a satellite image of the current viewport directly from ESRI's
+  // export endpoint — much faster and cleaner than trying to screenshot the
+  // DOM with html2canvas (which re-fetches every tile through CORS and times
+  // out on ESRI's servers). Returns { base64, width, height, bounds }.
   async function captureViewport() {
     const map = getMap();
-    const container = map.getContainer();
-    const html2canvas = await loadHtml2Canvas();
-    const canvas = await html2canvas(container, {
-      useCORS: true,
-      allowTaint: false,
-      scale: 1,
-      logging: false,
-      imageTimeout: 8000,
+    const bounds = map.getBounds();
+    const size = map.getSize();
+    const W = Math.min(size.x, 1280);
+    const H = Math.min(size.y, 720);
+
+    const bbox = [
+      bounds.getWest(), bounds.getSouth(),
+      bounds.getEast(), bounds.getNorth()
+    ].join(',');
+
+    // ESRI World Imagery export — same source as the basemap tile layer
+    const url = `https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?` +
+      `bbox=${encodeURIComponent(bbox)}` +
+      `&bboxSR=4326&imageSR=4326` +
+      `&size=${W},${H}` +
+      `&format=jpg&transparent=false&f=image`;
+
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`ESRI export HTTP ${resp.status}`);
+    const blob = await resp.blob();
+
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
     });
-    return {
-      base64: canvas.toDataURL('image/jpeg', 0.82).split(',')[1],
-      width: canvas.width,
-      height: canvas.height,
-    };
+
+    return { base64, width: W, height: H };
   }
 
   async function detectAndDraw() {
