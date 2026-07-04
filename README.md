@@ -1,130 +1,120 @@
-# TrollMap GPX Studio — Modular Build
+# TrollMap — Kayak Fishing Intelligence Platform
 
-This is the **modular ES-modules version** of TrollMap. The original
-single-file build is preserved in `legacy/` for reference.
+A full-suite fishing application built for trolling-first kayak anglers in South Carolina (and expanding). Started as a trolling lane generator, now a modular ES-modules web app with AI-assisted fish ID, Smart Plan route generation, catch journaling, live lake intelligence, and satellite structure detection.
 
-## File structure
+**Live app:** `https://trollmap-dev.pages.dev`
+**API worker:** `https://trollmap-worker.colonal1981.workers.dev`
+
+---
+
+## What it does
+
+- **Smart Plan** — AI-generated multi-phase trolling plans per species/lake/season. Produces GPX routes, rod spread recommendations with lead lengths, and a Groq/Llama 3.3 plan audit with scored categories (depth, lure, speed, battery, safety)
+- **Catch Journal** — nightly photo upload workflow with Gemini vision AI for species ID and length measurement, fish/lure photo pairing, GPS lake matching against full DNR access-point database (SC/NC/GA)
+- **Live Lake Intelligence** — water level (Duke Energy, USGS), dam flow, clarity forecast, solunar timing, species-specific tactical notes
+- **Contour Routes** — depth-contour-following sine-sweep trolling lanes loaded from GeoJSON datasets (Lake Wateree, Marion, Moultrie, Murray, Monticello/Parr)
+- **Structure Detection** — Groq Llama 4 Scout vision AI detects docks, piers, boat ramps, and timber from the satellite basemap viewport
+- **Ramp Database** — live SC/NC/GA DNR boat ramp data via Cloudflare Worker (ArcGIS REST APIs), per-state IDB cache with independent TTLs
+- **Plan Builder** — full fishing trip plan with rod spread, tackle notes, safety checklist, preview, and PDF export
+- **GIS Layers** — SCDNR fish attractors/brush piles, bank/pier access, paddle launches, ramps, catch plot, pinch point finder
+- **Garmin Integration** — GPX import/export with Garmin extensions, Quickdraw depth key overlay
+
+---
+
+## Architecture
 
 ```
-trollmap-modular/
-├── index.html                # Thin shell — markup + CSS + one <script type="module">
-├── sw.js                     # Service worker (v15 — pre-caches all 53 modules)
-├── manifest.json             # PWA metadata (unchanged)
-├── icons/                    # PWA icons (192, 512)
-│
+trollmap-dev (Cloudflare Pages — auto-deploys from GitHub)
+├── index.html                # App shell
+├── sw.js                     # Service worker v16 — minimal core asset cache
+├── manifest.json             # PWA metadata
 ├── js/
-│   ├── main.js               # Entry point — imports every module + boots the app
-│   ├── lazy-data.js          # Loader for optional bank/pier/paddle/attractor JSON
-│   │
-│   ├── utils/                # 6 pure-function utility modules
-│   │   ├── escape.js         #   esc() HTML-escape
-│   │   ├── dedupe.js         #   Ramp deduplication
-│   │   ├── rod-row.js        #   newRodRow() builder
-│   │   ├── db.js             #   IndexedDB layer
-│   │   ├── geo.js            #   9 pure geo helpers (distFt, simplifyLine, …)
-│   │   └── parsers.js        #   GPX / KML / GeoJSON parsers + GPX builder
-│   │
-│   ├── data/                 # 3 pure-data modules
-│   │   ├── ramps.js          #   1,288+ SC/NC/GA boat ramps
-│   │   ├── lakes.js          #   LAKE_DB with USGS/Duke mappings
-│   │   └── spread-defaults.js#   Default 6-rod trolling spread
-│   │
-│   ├── core/                 # 3 application-core modules
-│   │   ├── state.js          #   Shared mutable state singleton (state.MAP, state.DATA, …)
-│   │   ├── tabs.js           #   Bottom-nav tab switcher
-│   │   └── map-init.js       #   Leaflet map + base layers + renderMap/renderAll/fitMap
-│   │
-│   └── modules/              # 39 feature modules
-│       ├── gps.js            #   GPS tracking + recording
-│       ├── ramps.js          #   1,288 ramp layer
-│       ├── chart-overlay.js  #   Single-image georef workflow
-│       ├── chart-mosaic.js   #   Multi-chart saved layers
-│       ├── chart-import.js   #   KML/GPX/GeoJSON layer import
-│       ├── custom-vectors.js #   Private GeoJSON structure layers
-│       ├── spread-builder.js #   Rod spread table UI + auto-lead calculation
-│       ├── saved-spreads.js  #   Named spread persistence
-│       ├── catch-journal.js  #   Catch log + photos
-│       ├── garmin-parser.js  #   Import GPX catches from Garmin
-│       ├── garmin-export.js  #   Export GPX with Garmin extensions
-│       ├── file-io.js        #   Top-bar Load / New / Save GPX
-│       ├── topbar.js         #   Basemap selector + fit + edit-mode
-│       ├── noaa-tides.js     #   NOAA CO-OPS tide predictions
-│       ├── duke-energy.js    #   Duke dashboard scraper (via worker)
-│       ├── utility-sync.js   #   Live pool elevation + water temp sync
-│       ├── lake-intel.js     #   Lake Intelligence briefing from worker
-│       ├── plan-builder.js   #   Plan tab form collection + preview/save
-│       ├── troll-generator.js # Trolling lane generator
-│       ├── edit.js           #   Edit-tab tables + bulk operations
-│       ├── track-reverse.js  #   Loop trolling (reversed track)
-│       ├── cloud-chartpacks.js # Browse + import cloud-stored chartpacks
-│       ├── contour-job-export.js # Drive i-Boating capture pipeline
-│       ├── fishing-index.js   #   Fisherman-friendly ramp groupings
-│       ├── measure-tool.js    #   Click-to-measure distance + bearing
-│       ├── catch-plot.js     #   Toggle catch markers on the map
-│       ├── waypoint-to-generator.js # Send wpt → Generate tab
-│       ├── spot-repositioning.js # Drag markers to correct positions
-│       ├── safety-checklist.js # Auto-compile safety briefing
-│       ├── gis-toggles.js    #   Bank/pier/paddle/attractor toggles
-│       ├── ble-motor.js      #   Web Bluetooth XZNY/JBD BMS pairing
-│       ├── wet-hands-remote.js #  Keyboard + gamepad shortcuts
-│       ├── gear-autopilot.js #   Auto-fill NK180/93sv profile
-│       ├── auto-crop.js      #   Strip phone status bar from screenshots
-│       ├── casting-rings.js  #   60ft casting approach circles
-│       ├── catch-photo.js    #   Full-screen photo lightbox
-│       ├── osm-structure.js  #   OSM Overpass pre-impoundment structures
-│       ├── quickdraw-key.js  #   Floating depth-color legend
-│       └── sw-register.js    #   Service worker registration
-│
-├── data/                     # Optional GIS JSON files (lazily loaded)
-│   ├── tristate-bank-pier.json
-│   ├── tristate-paddle.json
-│   └── tristate-hotspots.json
-│
-└── backend/                  # Python capture pipeline + Cloudflare worker
-    ├── trollmap-worker.js
-    ├── trollmap_build_contours.py
-    └── trollmap_capture_server.py
+│   ├── main.js               # Entry point
+│   ├── lazy-data.js          # Optional GIS JSON loader
+│   ├── utils/                # escape, dedupe, rod-row, db, geo, parsers
+│   ├── data/                 # ramps, lakes, access-index, species-intel,
+│   │                         # species-intel-v2, fishing-style-profile,
+│   │                         # scdnr-state-lakes, user-known-lakes,
+│   │                         # spread-defaults
+│   ├── core/                 # state, tabs, map-init
+│   └── modules/              # ~40 feature modules (see below)
+└── data/                     # Contour GeoJSON datasets (5 lakes)
+
+trollmap-worker (Cloudflare Worker — deployed via wrangler)
+├── /ramps, /paddle, /bank-pier, /attractors  — DNR access data (SC/NC/GA)
+├── /lake, /duke, /usgs, /river               — live water level/flow
+├── /lake-intel, /lake-clarity                — lake intelligence + runoff
+├── /identify-catch, /identify-catch-v2      — Gemini vision fish ID
+├── /audit-plan                               — Groq plan audit (Llama 3.3 70B)
+├── /detect-structure                         — Groq vision structure detection (Llama 4 Scout)
+├── /sync/*                                   — Cloud sync (D1 + R2)
+└── /chartpacks/*                             — Contour chartpack hosting (R2)
 ```
 
-## How the modules talk to each other
+---
 
-1. **Shared mutable state** lives in `js/core/state.js` as a singleton
-   (`state.MAP`, `state.DATA`, `state.SPREAD`, `state.CHARTS`, …).
-   Every module imports `state` and mutates its properties.
+## Key modules
 
-2. **DOM helpers** that popup buttons invoke across modules are exposed
-   on `window` by their owning module — e.g. `window.sendWptToGenerator`,
-   `window.enableSpotRepositioning`, `window.showCatchPhoto`. Popup
-   HTML in map markers calls them via inline `onclick`.
+| Module | What it does |
+|---|---|
+| `smart-plan.js` | Multi-phase route planning, species-intel-v2 brain, Groq audit |
+| `route-builder.js` | Contour-following sine-sweep GPX route generator |
+| `plan-builder.js` | Plan form, preview, PDF export |
+| `catch-journal.js` | Photo upload, AI ID queue, nightly workflow |
+| `lake-intel.js` | Lake intelligence + clarity forecast |
+| `species-intel-v2.js` | Trolling-first multi-species recommendation brain |
+| `fishing-style-profile.js` | Angler gear/style constraints (spinning only, no live bait FW) |
+| `access-index.js` | Shared worker-backed lake/ramp index (SC/NC/GA DNR) |
+| `osm-structure.js` | Groq vision dock/structure detection from satellite imagery |
+| `gis-toggles.js` | Attractor/ramp/bank-pier/paddle layer toggles |
+| `spread-builder.js` | Rod spread table, lure catalog, auto lead-length calculation |
+| `duke-energy.js` | Duke Energy lake level dashboard scraper (via worker proxy) |
+| `pinch-point-finder.js` | Depth-contour saddle/funnel detection |
+| `ble-motor.js` | Web Bluetooth NK180/BMS integration |
 
-3. **Cross-module function references** in `core/tabs.js` and
-   `core/map-init.js` use `window.X?.()` defensive lookups so a tab
-   click that triggers `renderEditTables()` works even before that
-   module has finished wiring its handlers.
+---
 
-## How to deploy
+## Species coverage (species-intel-v2.js)
 
-1. Push the entire `trollmap-modular/` folder to your GitHub Pages
-   repo (any subdirectory works — `trollmap-modular/` recommended so
-   the old monolithic build can live alongside it).
+Striped Bass, Largemouth Bass, White Bass/Hybrid, Crappie, Blue Catfish, Channel Catfish, Flathead Catfish, Bowfin, Chain Pickerel, Red Drum (Redfish), Speckled Trout, Bluegill, Redear Sunfish (Shellcracker)
 
-2. The path the worker expects:
-   - `https://yourname.github.io/yourrepo/trollmap-modular/` is the
-     app's base URL.
+All entries are trolling-first, spinning-gear-only, freshwater-live-bait-unavailable by default. See `fishing-style-profile.js` for the full angler constraint profile.
 
-3. The Cloudflare worker (in `backend/`) is deployed separately —
-   see its comments for the route mapping.
+---
 
-## Service worker
+## Worker bindings
 
-`sw.js` cache name is `trollmap-v15-modular-2026-06-23`. Bump this and
-re-deploy whenever you add a new module — old caches will auto-prune.
+| Binding | Type | Purpose |
+|---|---|---|
+| `DB` | D1 | Cloud sync database |
+| `R2_TROLLMAP_CHARTPACKS` | R2 | Contour chartpack storage |
+| `GEMINI_API_KEY` | Secret | Fish ID vision AI |
+| `GROQ_API_KEY` | Secret | Plan audit + structure detection |
+| `SYNC_TOKEN` | Var | Cloud sync auth |
 
-## Adding a new module
+---
 
-1. Create `js/modules/your-feature.js` and `export` whatever you need.
-2. Add `import './js/modules/your-feature.js';` to `js/main.js`.
-3. Add the new module to `CORE_ASSETS` in `sw.js` (and bump the cache
-   version).
-4. Done — the app will load it on next visit.
+## Deployment
 
+**Frontend (automatic):** Push to GitHub → Cloudflare Pages auto-deploys within ~60 seconds.
+
+**Worker (manual):** 
+```powershell
+cd F:\TrollMap-Dev-main
+wrangler deploy
+```
+
+`wrangler.toml` in the project root declares all bindings. Secrets set separately:
+```powershell
+wrangler secret put GEMINI_API_KEY
+wrangler secret put GROQ_API_KEY
+```
+
+---
+
+## Platform
+
+- **Watercraft:** Native Watersports Slayer Propel Max 12.5 + NK180 bow-mount trolling motor
+- **Sonar:** Garmin ECHOMAP UHD2 93sv
+- **Rods:** Spinning only — no lead-core, no conventional reels, no planer boards
+- **Primary waters:** Lake Wateree, Marion, Moultrie, Murray, Monticello (SC freshwater) + SC inshore saltwater
