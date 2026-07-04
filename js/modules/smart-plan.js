@@ -463,7 +463,7 @@ function buildPhaseRods(phaseRec, phaseNum, sides) {
 }
 
 // ── Route generation per phase ────────────────────────────────────────────────
-async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon, rangeMiles, targetLengthFt = null, startLat = null, startLon = null, endLat = null, endLon = null) {
+async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon, rangeMiles, targetLengthFt = null, startLat = null, startLon = null, endLat = null, endLon = null, isReturnPass = false) {
   if (!phaseRec) return;
 
   window._smartPlanPhaseRoutes = window._smartPlanPhaseRoutes || [];
@@ -521,6 +521,7 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
       endLat:         endLat ?? null,
       endLon:         endLon ?? null,
       targetLengthFt: targetLengthFt || null,
+      isReturnPass:   isReturnPass,
     });
     if (tracks?.length) {
       console.log(`[smart-plan] Phase ${phase.num} ${phase.name}: generated ${tracks.length} route(s) at ${phaseRec.depthMin}-${phaseRec.depthMax}ft`);
@@ -833,16 +834,14 @@ export async function runSmartPlan() {
   for (let i = 0; i < phases.length; i++) {
     const durHrs = calcDurHrs(phases[i].startStr, phases[i].endStr);
     const spd = phaseRecs[i]?.speed || 2.2;
-    // Calculate active trolling distance (assuming 80% active forward progress at speed)
     const targetFt = Math.round(durHrs * spd * 5280 * 0.80);
     const isLastPhase = (i === phases.length - 1);
     
     await generateRouteForPhase(
       phases[i], phaseRecs[i], lakeName, rampLat, rampLon, rangeMiles,
-      targetFt, curLat, curLon, isLastPhase ? rampLat : null, isLastPhase ? rampLon : null
+      targetFt, curLat, curLon, isLastPhase ? rampLat : null, isLastPhase ? rampLon : null, isLastPhase
     );
 
-    // Update curLat/curLon to the end of the generated track so the next phase starts where this one left off
     const generated = state.DATA?.tracks;
     if (generated && generated.length > 0) {
       const lastTrk = generated[generated.length - 1];

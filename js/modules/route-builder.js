@@ -589,33 +589,42 @@ function generateContourRoutes(cfg) {
     // on narrow water bodies like creeks, causing routes to swing over land.
     const passAmplitude = amplitude;
 
-    // SMART OUT-AND-BACK CIRCUIT SHAPING:
-    // When generating a long trolling phase (e.g. 18,000 to 40,000 ft for a 2-4 hour window),
-    // following 1 contour line one-way forever runs the kayak 5 miles down the lake away from the ramp!
-    // Instead, size the outbound leg to half the target distance (~1.5 to 3 miles out), and create
-    // a return leg along the adjacent depth contour so the route forms a natural out-and-back fishing loop!
-    const targetPassFt = cfg.targetLengthFt || 12000;
-    const outboundMaxFt = Math.round(targetPassFt / 2);
+    // SMART ONE-WAY CONTINUOUS CIRCUIT SHAPING:
+    // Phase 1 starts at ramp and meanders OUT in one direction along shallow structure.
+    // Phase 2 starts where Phase 1 ended and meanders OUT along mid-depth structure.
+    // Phase 3 starts where Phase 2 ended and meanders BACK toward the launch ramp along deep structure!
+    const targetPassFt = cfg.targetLengthFt || 15000;
 
-    // Find the closest point on the spine to the phase start position
-    let centerIdx = 0;
+    // Find the closest point on the spine to the phase start coordinate
+    let startIdx = 0;
     const sLat = cfg.startLat != null ? cfg.startLat : cfg.rampLat;
     const sLon = cfg.startLon != null ? cfg.startLon : cfg.rampLon;
     if (sLat != null && sLon != null) {
       let minDist = Infinity;
       for (let j = 0; j < spine.length; j++) {
         const [d] = distBearing(sLat, sLon, spine[j][1], spine[j][0]);
-        if (d < minDist) { minDist = d; centerIdx = j; }
+        if (d < minDist) { minDist = d; startIdx = j; }
       }
     }
 
-    // Orient spine so it flows away from the start position along structure
-    if (centerIdx > 0) {
-      spine = spine.slice(centerIdx);
+    // Orient spine direction: if Phase 3 (return pass), orient toward ramp. Else orient away along structure.
+    if (cfg.isReturnPass && cfg.endLat != null && cfg.endLon != null && spine.length >= 2) {
+      const [dFirst] = distBearing(cfg.endLat, cfg.endLon, spine[0][1], spine[0][0]);
+      const [dLast]  = distBearing(cfg.endLat, cfg.endLon, spine[spine.length-1][1], spine[spine.length-1][0]);
+      if (dLast > dFirst) spine = spine.slice().reverse();
+    } else if (spine.length >= 2 && sLat != null && sLon != null) {
+      const [dFirst] = distBearing(sLat, sLon, spine[0][1], spine[0][0]);
+      const [dLast]  = distBearing(sLat, sLon, spine[spine.length-1][1], spine[spine.length-1][0]);
+      if (dLast < dFirst) spine = spine.slice().reverse();
     }
-    if (spine.length >= 2 && trackLengthFt(spine) > outboundMaxFt) {
+
+    // Slice spine starting from the start coordinate for the target distance
+    if (startIdx > 0 && startIdx < spine.length - 2) {
+      spine = spine.slice(startIdx);
+    }
+    if (spine.length >= 2 && trackLengthFt(spine) > targetPassFt) {
       const stepFt = Math.max(50, waveFt);
-      const keepPts = Math.max(10, Math.floor(outboundMaxFt / stepFt));
+      const keepPts = Math.max(10, Math.floor(targetPassFt / stepFt));
       spine = spine.slice(0, keepPts);
     }
 
@@ -624,15 +633,6 @@ function generateContourRoutes(cfg) {
     });
     pts = clampToClip(pts);
     if (pts.length < 2) continue;
-
-    // Create the Return Leg of the loop slightly offset toward deeper/shallower water
-    if (cfg.targetLengthFt && pts.length >= 10) {
-      const returnPts = [...pts].reverse().map(pt => {
-        // Offset return leg ~40 ft perpendicular so you fish a parallel depth contour coming back
-        return destination(pt[0], pt[1], 90, 40);
-      });
-      pts = pts.concat(returnPts);
-    }
 
     const MAX_PTS_PER_TRACK = 3000;
     if (pts.length > MAX_PTS_PER_TRACK) {
@@ -926,6 +926,7 @@ export function generateAndCommitRoute(overrides = {}) {
     endLat:         overrides.endLat ?? null,
     endLon:         overrides.endLon ?? null,
     targetLengthFt: overrides.targetLengthFt ?? null,
+    isReturnPass:   overrides.isReturnPass ?? false,
     depthMin:       overrides.depthMin   != null ? overrides.depthMin   : (parseInt(document.getElementById('rbDepthMin')?.value)    || 18),
     depthMax:   overrides.depthMax   != null ? overrides.depthMax   : (parseInt(document.getElementById('rbDepthMax')?.value)    || 28),
     pattern:    overrides.pattern    != null ? overrides.pattern    : (document.getElementById('rbPattern')?.value               || 'sine+straight'),
