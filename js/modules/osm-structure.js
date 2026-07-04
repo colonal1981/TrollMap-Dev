@@ -69,13 +69,24 @@ import { setBanner } from '../core/map-init.js';
       const resp = await fetch(url, { signal: controller.signal });
       if (!resp.ok) throw new Error(`ESRI export HTTP ${resp.status}`);
       const blob = await resp.blob();
+
+      // Verify actual image dimensions match what we requested
+      const actualDims = await new Promise(resolve => {
+        const img = new Image();
+        const objUrl = URL.createObjectURL(blob);
+        img.onload = () => { URL.revokeObjectURL(objUrl); resolve({ w: img.naturalWidth, h: img.naturalHeight }); };
+        img.onerror = () => { URL.revokeObjectURL(objUrl); resolve({ w: W, h: H }); };
+        img.src = objUrl;
+      });
+      console.log(`[structure] ESRI image: requested ${W}x${H}, got ${actualDims.w}x${actualDims.h}`);
+
       const base64 = await new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result.split(',')[1]);
         reader.onerror = reject;
         reader.readAsDataURL(blob);
       });
-      return { base64, width: W, height: H };
+      return { base64, width: actualDims.w, height: actualDims.h };
     } finally {
       clearTimeout(timeout);
     }
@@ -119,6 +130,8 @@ import { setBanner } from '../core/map-init.js';
     try {
       const bounds = map.getBounds();
       const { base64, width, height } = await captureViewport();
+
+      console.log(`[structure] Sending to worker: ${width}x${height}, bounds N=${bounds.getNorth().toFixed(5)} S=${bounds.getSouth().toFixed(5)} E=${bounds.getEast().toFixed(5)} W=${bounds.getWest().toFixed(5)}`);
 
       const resp = await fetch(`${WORKER_URL}/detect-structure`, {
         method: 'POST',
