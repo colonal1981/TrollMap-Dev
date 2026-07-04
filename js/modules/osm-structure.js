@@ -98,6 +98,24 @@ import { setBanner } from '../core/map-init.js';
     btn.style.color = '#000';
     setBanner('Fetching satellite image and running Groq vision analysis — allow up to 30 seconds...');
 
+    // Hide overlays so Groq sees clean satellite imagery only
+    const hiddenLayers = [];
+    if (state.CONTOUR_LAYER && map.hasLayer(state.CONTOUR_LAYER)) {
+      map.removeLayer(state.CONTOUR_LAYER);
+      hiddenLayers.push({ type: 'layer', layer: state.CONTOUR_LAYER });
+    }
+    const overlayPanes = ['markerPane', 'overlayPane', 'shadowPane'];
+    const hiddenPanes = [];
+    overlayPanes.forEach(pane => {
+      const el = map.getPane(pane);
+      if (el) { hiddenPanes.push({ el, prev: el.style.display }); el.style.display = 'none'; }
+    });
+
+    const restoreLayers = () => {
+      hiddenLayers.forEach(h => { if (h.type === 'layer') map.addLayer(h.layer); });
+      hiddenPanes.forEach(h => { h.el.style.display = h.prev; });
+    };
+
     try {
       const bounds = map.getBounds();
       const { base64, width, height } = await captureViewport();
@@ -158,7 +176,7 @@ import { setBanner } from '../core/map-init.js';
 
       structureLayer = L.layerGroup(markers).addTo(map);
       visible = true;
-
+      restoreLayers();
       setBanner(`Found ${features.length} structure${features.length === 1 ? '' : 's'}. ${data.image_notes || ''}`);
       btn.textContent = '🏗 Hide Structure';
       btn.style.background = '#4CAF50';
@@ -166,6 +184,7 @@ import { setBanner } from '../core/map-init.js';
 
     } catch (e) {
       console.error('[structure-detection]', e);
+      restoreLayers();
       setBanner(`Structure detection failed: ${e.message}`);
       btn.textContent = '🏗 Structure';
       btn.style.background = '';
