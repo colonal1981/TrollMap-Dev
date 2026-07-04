@@ -49,33 +49,36 @@ import { setBanner } from '../core/map-init.js';
     const map = getMap();
     const bounds = map.getBounds();
     const size = map.getSize();
-    const W = Math.min(size.x, 1280);
-    const H = Math.min(size.y, 720);
+    const W = Math.min(size.x, 800);
+    const H = Math.min(size.y, 600);
 
     const bbox = [
       bounds.getWest(), bounds.getSouth(),
       bounds.getEast(), bounds.getNorth()
     ].join(',');
 
-    // ESRI World Imagery export — same source as the basemap tile layer
     const url = `https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?` +
       `bbox=${encodeURIComponent(bbox)}` +
       `&bboxSR=4326&imageSR=4326` +
       `&size=${W},${H}` +
       `&format=jpg&transparent=false&f=image`;
 
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`ESRI export HTTP ${resp.status}`);
-    const blob = await resp.blob();
-
-    const base64 = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result.split(',')[1]);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-
-    return { base64, width: W, height: H };
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      const resp = await fetch(url, { signal: controller.signal });
+      if (!resp.ok) throw new Error(`ESRI export HTTP ${resp.status}`);
+      const blob = await resp.blob();
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      return { base64, width: W, height: H };
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   async function detectAndDraw() {
@@ -93,7 +96,7 @@ import { setBanner } from '../core/map-init.js';
     btn.textContent = '⏳ Detecting...';
     btn.style.background = 'var(--accent)';
     btn.style.color = '#000';
-    setBanner('Capturing map view and running Grok vision — this may take 5-10 seconds...');
+    setBanner('Fetching satellite image and running Groq vision analysis — allow up to 30 seconds...');
 
     try {
       const bounds = map.getBounds();
