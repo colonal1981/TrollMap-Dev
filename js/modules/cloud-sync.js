@@ -25,7 +25,7 @@ import { state, CF_WORKER_URL } from '../core/state.js';
 
 // Per-install secret token. Regenerate if compromised. For multi-tenant,
 // move to Cloudflare Access auth header instead.
-const SYNC_TOKEN = 'trollmap-sync-9a8b7c6d5e';
+const SYNC_TOKEN = 'trollmap2026';
 
 // Map item type → IndexedDB store name. Don't pluralize by string
 // manipulation — `'catch' + 's' = 'catchs'` is wrong.
