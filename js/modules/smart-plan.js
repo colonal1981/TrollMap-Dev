@@ -787,11 +787,25 @@ export async function runSmartPlan() {
       || Object.entries(lakeRampMap).find(([k]) => cleanLakeName.includes(k) || k.includes(cleanLakeName))?.[1]
       || [];
     const selectedRampKey = document.getElementById('planRamp')?.value || '';
-    const selectedRamp = rampList.find(r => r.key === selectedRampKey || r.name === selectedRampKey || String(r.name).toLowerCase() === String(selectedRampKey).toLowerCase() || String(r.name).toLowerCase().includes(String(selectedRampKey).toLowerCase())) || rampList[0];
-    if (selectedRamp) {
-      rampLat = selectedRamp.lat;
-      rampLon = selectedRamp.lon;
-      console.log(`[smart-plan] Using ramp: ${selectedRamp.name} (${rampLat}, ${rampLon})`);
+    // Check LAKE_DB first since that is what populated the #planRamp dropdown!
+    if (typeof LAKE_DB !== 'undefined') {
+      const dbEntry = LAKE_DB[lakeName] || LAKE_DB[cleanLakeName] || Object.entries(LAKE_DB).find(([k]) => cleanLakeName.includes(k.toLowerCase()))?.[1];
+      if (dbEntry?.ramps) {
+        const coords = dbEntry.ramps[selectedRampKey] || Object.entries(dbEntry.ramps).find(([k]) => k.toLowerCase() === selectedRampKey.toLowerCase() || k.toLowerCase().includes(selectedRampKey.toLowerCase()))?.[1];
+        if (coords && Array.isArray(coords) && coords.length >= 2) {
+          rampLat = coords[0];
+          rampLon = coords[1];
+          console.log(`[smart-plan] Using LAKE_DB ramp: "${selectedRampKey}" (${rampLat}, ${rampLon})`);
+        }
+      }
+    }
+    if (rampLat == null || rampLon == null) {
+      const selectedRamp = rampList.find(r => r.key === selectedRampKey || r.name === selectedRampKey || String(r.name).toLowerCase() === String(selectedRampKey).toLowerCase() || String(r.name).toLowerCase().includes(String(selectedRampKey).toLowerCase())) || rampList[0];
+      if (selectedRamp) {
+        rampLat = selectedRamp.lat;
+        rampLon = selectedRamp.lon;
+        console.log(`[smart-plan] Using ryan-ramps ramp: ${selectedRamp.name} (${rampLat}, ${rampLon})`);
+      }
     } else {
       console.warn(`[smart-plan] No ramp coords found for "${lakeName}" (normalized: "${cleanLakeName}") — route will generate with NO clip box unless one is already set. This will likely blow the point-count safety cap.`);
     }

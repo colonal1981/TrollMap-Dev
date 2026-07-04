@@ -589,51 +589,53 @@ function generateContourRoutes(cfg) {
     // on narrow water bodies like creeks, causing routes to swing over land.
     const passAmplitude = amplitude;
 
-    // SMART DURATION SHAPING:
-    // Dynamically size trolling pass to match the duration of this phase!
-    // For a 2.5 hour phase at 2.2 mph, targetLengthFt will be ~23,000 ft (~4.3 miles).
+    // SMART OUT-AND-BACK CIRCUIT SHAPING:
+    // When generating a long trolling phase (e.g. 18,000 to 40,000 ft for a 2-4 hour window),
+    // following 1 contour line one-way forever runs the kayak 5 miles down the lake away from the ramp!
+    // Instead, size the outbound leg to half the target distance (~1.5 to 3 miles out), and create
+    // a return leg along the adjacent depth contour so the route forms a natural out-and-back fishing loop!
     const targetPassFt = cfg.targetLengthFt || 12000;
-    if (trackLengthFt(spine) > targetPassFt) {
-      let centerIdx = Math.floor(spine.length / 2);
-      const sLat = cfg.startLat != null ? cfg.startLat : cfg.rampLat;
-      const sLon = cfg.startLon != null ? cfg.startLon : cfg.rampLon;
-      if (sLat != null && sLon != null) {
-        let minDist = Infinity;
-        for (let j = 0; j < spine.length; j++) {
-          const [d] = distBearing(sLat, sLon, spine[j][1], spine[j][0]);
-          if (d < minDist) { minDist = d; centerIdx = j; }
-        }
+    const outboundMaxFt = Math.round(targetPassFt / 2);
+
+    // Find the closest point on the spine to the phase start position
+    let centerIdx = 0;
+    const sLat = cfg.startLat != null ? cfg.startLat : cfg.rampLat;
+    const sLon = cfg.startLon != null ? cfg.startLon : cfg.rampLon;
+    if (sLat != null && sLon != null) {
+      let minDist = Infinity;
+      for (let j = 0; j < spine.length; j++) {
+        const [d] = distBearing(sLat, sLon, spine[j][1], spine[j][0]);
+        if (d < minDist) { minDist = d; centerIdx = j; }
       }
+    }
+
+    // Orient spine so it flows away from the start position along structure
+    if (centerIdx > 0) {
+      spine = spine.slice(centerIdx);
+    }
+    if (spine.length >= 2 && trackLengthFt(spine) > outboundMaxFt) {
       const stepFt = Math.max(50, waveFt);
-      const halfPts = Math.max(4, Math.floor((targetPassFt / stepFt) / 2));
-      const startIdx = Math.max(0, Math.min(spine.length - (halfPts * 2), centerIdx - halfPts));
-      spine = spine.slice(startIdx, startIdx + (halfPts * 2));
+      const keepPts = Math.max(10, Math.floor(outboundMaxFt / stepFt));
+      spine = spine.slice(0, keepPts);
     }
-
-    // Orient pass so it flows naturally from start position toward end position
-    if (spine.length >= 2 && cfg.startLat != null && cfg.startLon != null) {
-      const [dFirst] = distBearing(cfg.startLat, cfg.startLon, spine[0][1], spine[0][0]);
-      const [dLast]  = distBearing(cfg.startLat, cfg.startLon, spine[spine.length-1][1], spine[spine.length-1][0]);
-      if (dLast < dFirst) spine = spine.slice().reverse();
-    }
-
-    if (flip && lanes > 1) spine = spine.slice().reverse();
-    flip = !flip;
 
     let pts = patternAlongSpine(spine, {
       pattern, amplitude: passAmplitude, wave: waveFt, straightFt, spacing,
     });
-    // Drop any swing points that poke outside the box (keep longest in-box run).
     pts = clampToClip(pts);
     if (pts.length < 2) continue;
 
-    // Safety net: a single sweep pass for a kayak trolling route should never
-    // need more than a few thousand points. If upstream clip/stitch logic ever
-    // regresses (e.g. bbox too large again), truncate rather than silently
-    // emitting a 40k+ point track that hangs the map/GPX export.
+    // Create the Return Leg of the loop slightly offset toward deeper/shallower water
+    if (cfg.targetLengthFt && pts.length >= 10) {
+      const returnPts = [...pts].reverse().map(pt => {
+        // Offset return leg ~40 ft perpendicular so you fish a parallel depth contour coming back
+        return destination(pt[0], pt[1], 90, 40);
+      });
+      pts = pts.concat(returnPts);
+    }
+
     const MAX_PTS_PER_TRACK = 3000;
     if (pts.length > MAX_PTS_PER_TRACK) {
-      console.warn(`[route-builder] Sweep_${depthMin}-${depthMax}ft: ${pts.length} pts exceeds safety cap, truncating to ${MAX_PTS_PER_TRACK}. This usually means the clip box is too large — check ramp range.`);
       pts = pts.slice(0, MAX_PTS_PER_TRACK);
     }
 
