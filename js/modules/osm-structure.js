@@ -1,204 +1,206 @@
+/**
+ * osm-structure.js — Structure Detection via Grok Vision
+ *
+ * Replaces the original OSM Overpass query approach (which returned unusable
+ * state-wide stream networks). Instead captures the current map viewport as
+ * a canvas screenshot and sends it to the /detect-structure worker route
+ * (Grok grok-2-vision-1212) to identify docks, piers, boat ramps, timber,
+ * and fish attractors visible in the satellite imagery.
+ *
+ * The worker converts pixel coordinates back to lat/lon using the bounds
+ * passed with the request. Results are dropped as interactive markers on
+ * the map and cached by viewport quadkey in R2 so repeat views don't
+ * re-charge the API.
+ */
+
 import { state } from '../core/state.js';
 import { setBanner } from '../core/map-init.js';
 
-(function initOsmStructureModule() {
+(function initStructureDetectionModule() {
   const btn = document.getElementById('btnFetchOsm');
   if (!btn) return;
 
-  let osmLayer = null;
-  let osmVisible = false;
+  const WORKER_URL = (typeof CF_WORKER_URL !== 'undefined'
+    ? CF_WORKER_URL
+    : (window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev'));
+
+  const STRUCTURE_ICONS = {
+    dock:          { emoji: '🪵', color: '#03A9F4', label: 'Dock' },
+    pier:          { emoji: '🛟', color: '#03A9F4', label: 'Pier' },
+    boat_ramp:     { emoji: '🛥️',  color: '#4CAF50', label: 'Boat Ramp' },
+    boathouse:     { emoji: '🏠', color: '#FF9800', label: 'Boathouse' },
+    fish_attractor:{ emoji: '🎣', color: '#E91E63', label: 'Fish Attractor' },
+    timber:        { emoji: '🪵', color: '#795548', label: 'Timber/Log' },
+    unknown:       { emoji: '📍', color: '#9E9E9E', label: 'Structure' },
+  };
+
+  let structureLayer = null;
+  let visible = false;
   let loading = false;
 
-  function getMap() {
-    return state?.MAP || window.MAP || null;
-  }
+  function getMap() { return state?.MAP || window.MAP || null; }
+  function mapReady() { return !!(state?.MAP_OK && getMap()); }
 
-  function mapReady() {
-    return !!(state?.MAP_OK && getMap());
-  }
-
-  async function fetchAndDrawOsmStructure() {
+  // Capture the current map viewport as a JPEG base64 string.
+  // Leaflet renders via multiple <img> tile elements — we composite them
+  // onto a canvas to get a screenshot of what's visible.
+  async function captureViewport() {
     const map = getMap();
-    if (!mapReady() || !map) { alert('Map is not ready.'); return; }
+    const container = map.getContainer();
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+
+    // Draw all visible tile images
+    const imgs = container.querySelectorAll('.leaflet-tile-container img.leaflet-tile');
+    const promises = [...imgs].map(img => new Promise(resolve => {
+      if (img.complete && img.naturalWidth) {
+        try {
+          const r = img.getBoundingClientRect();
+          const cr = container.getBoundingClientRect();
+          ctx.drawImage(img, r.left - cr.left, r.top - cr.top, r.width, r.height);
+        } catch (_) {}
+        resolve();
+      } else {
+        img.onload = () => {
+          try {
+            const r = img.getBoundingClientRect();
+            const cr = container.getBoundingClientRect();
+            ctx.drawImage(img, r.left - cr.left, r.top - cr.top, r.width, r.height);
+          } catch (_) {}
+          resolve();
+        };
+        img.onerror = resolve;
+      }
+    }));
+    await Promise.all(promises);
+
+    // Return base64 JPEG (compressed — Grok vision doesn't need full quality)
+    return {
+      base64: canvas.toDataURL('image/jpeg', 0.82).split(',')[1],
+      width: w,
+      height: h,
+    };
+  }
+
+  async function detectAndDraw() {
+    const map = getMap();
+    if (!mapReady() || !map) { alert('Map not ready.'); return; }
     if (loading) return;
 
     const zoom = map.getZoom();
-    if (zoom < 13) {
-      alert('Zoom in closer before loading OSM structure (zoom 13 or higher). At this scale OSM returns too much data to be useful.');
+    if (zoom < 15) {
+      alert('Zoom in to at least level 15 before running structure detection. Docks aren\'t clearly visible at this scale.');
       return;
     }
 
     loading = true;
-    const bounds = map.getBounds();
-    const bbox = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
-
-    // Waterways removed — rivers/streams at any zoom just reproduce the
-    // drainage network pattern which isn't useful fishing structure data.
-    // Keeping: piers/docks (primary target), historic ruins/bridges (secondary).
-    const query = `
-      [out:json][timeout:25][bbox:${bbox}];
-      (
-        way["man_made"="pier"];
-        node["man_made"="pier"];
-        way["leisure"="marina"];
-        node["amenity"="boat_rental"];
-        way["historic"~"ruins|bridge"];
-        node["historic"~"ruins|bridge"];
-      );
-      out geom;
-    `;
-
-    btn.textContent = '⏳ Querying OSM...';
+    btn.textContent = '⏳ Detecting...';
     btn.style.background = 'var(--accent)';
     btn.style.color = '#000';
-    setBanner('Fetching structure and waterways from OpenStreetMap...');
+    setBanner('Capturing map view and running Grok vision — this may take 5-10 seconds...');
 
     try {
-      const response = await fetch('https://overpass-api.de/api/interpreter', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'data=' + encodeURIComponent(query),
-      });
-      if (!response.ok) {
-        throw new Error(`Overpass API returned status ${response.status}`);
-      }
+      const bounds = map.getBounds();
+      const { base64, width, height } = await captureViewport();
 
-      const osmData = await response.json();
-      const geojsonData = osmtogeojsonFallback(osmData);
-      if (!geojsonData.features.length) {
-        alert('No relevant OSM features were found in the current map view.');
-        osmVisible = false;
+      const resp = await fetch(`${WORKER_URL}/detect-structure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image_base64: base64,
+          mime_type: 'image/jpeg',
+          bounds: {
+            north: bounds.getNorth(),
+            south: bounds.getSouth(),
+            east: bounds.getEast(),
+            west: bounds.getWest(),
+          },
+          image_width: width,
+          image_height: height,
+        }),
+      });
+
+      if (!resp.ok) throw new Error(`Worker ${resp.status}`);
+      const data = await resp.json();
+      if (!data.success) throw new Error(data.error || 'Unknown error');
+
+      const features = data.features || [];
+
+      // Remove previous layer
+      if (structureLayer) { map.removeLayer(structureLayer); structureLayer = null; }
+
+      if (!features.length) {
+        setBanner(`No structures detected. ${data.image_notes || ''}`);
+        btn.textContent = '🏗 Structure';
+        btn.style.background = '';
+        btn.style.color = '';
+        loading = false;
         return;
       }
 
-      if (osmLayer) {
-        map.removeLayer(osmLayer);
-      }
-
-      osmLayer = L.geoJSON(geojsonData, {
-        style(feature) {
-          let color = '#FFC107';
-          const props = feature.properties || {};
-          if (props.man_made === 'pier') color = '#03A9F4';
-          if (props.historic) color = '#E91E63';
-          if (props.waterway) color = '#FFFFFF';
-          return { color, weight: 3, opacity: 0.8, fillOpacity: props.waterway ? 0 : 0.1 };
-        },
-        pointToLayer(feature, latlng) {
-          const props = feature.properties || {};
-          let emoji = '📍';
-          let color = '#FFC107';
-          if (props.man_made === 'pier') { emoji = '🛥️'; color = '#03A9F4'; }
-          if (props.historic) { emoji = '🏚️'; color = '#E91E63'; }
-          return L.circleMarker(latlng, {
-            radius: 6,
-            color,
-            fillColor: color,
-            fillOpacity: 0.9,
-            weight: 2,
-          }).bindPopup(buildPopup(props, emoji));
-        },
-        onEachFeature(feature, layer) {
-          if (layer.getPopup && layer.getPopup()) return;
-          const props = feature.properties || {};
-          layer.bindPopup(buildPopup(props, '🧭'));
-        },
-      }).addTo(map);
-
-      osmVisible = true;
-      btn.textContent = '🙈 Hide OSM';
-      setBanner(`✅ Loaded ${geojsonData.features.length} OSM features.`);
-      setTimeout(() => setBanner(''), 3000);
-    } catch (err) {
-      alert('OSM Fetch Error: ' + err.message);
-      console.error('OSM Fetch Error:', err);
-      osmVisible = false;
-    } finally {
-      loading = false;
-      if (!osmVisible) {
-        btn.textContent = '🌐 Live OSM Structure';
-        btn.style.background = '';
-        btn.style.color = '';
-      }
-    }
-  }
-
-  function buildPopup(props, emoji) {
-    const rows = [];
-    if (props.name) rows.push(`<div><b>Name:</b> ${props.name}</div>`);
-    if (props.historic) rows.push(`<div><b>Historic:</b> ${props.historic}</div>`);
-    if (props.man_made) rows.push(`<div><b>Man-made:</b> ${props.man_made}</div>`);
-    if (props.waterway) rows.push(`<div><b>Waterway:</b> ${props.waterway}</div>`);
-    return `<div style="font-family:system-ui,sans-serif;font-size:13px;color:#111;min-width:180px"><b>${emoji} OSM Structure</b>${rows.join('')}</div>`;
-  }
-
-  btn.addEventListener('click', () => {
-    const map = getMap();
-    if (!mapReady() || !map) return;
-
-    if (osmLayer) {
-      if (osmVisible) {
-        if (map.hasLayer(osmLayer)) map.removeLayer(osmLayer);
-        osmVisible = false;
-        btn.textContent = '🌐 Show OSM';
-        btn.style.background = '';
-        btn.style.color = '';
-      } else {
-        map.addLayer(osmLayer);
-        osmVisible = true;
-        btn.textContent = '🙈 Hide OSM';
-        btn.style.background = 'var(--accent)';
-        btn.style.color = '#000';
-      }
-      return;
-    }
-
-    fetchAndDrawOsmStructure();
-  });
-
-  function osmtogeojsonFallback(osm) {
-    if (window.osmtogeojson) {
-      return window.osmtogeojson(osm);
-    }
-
-    const features = [];
-    const nodes = {};
-
-    for (const el of osm.elements || []) {
-      if (el.type === 'node') {
-        nodes[el.id] = [el.lon, el.lat];
-      }
-    }
-
-    for (const el of osm.elements || []) {
-      if (el.type === 'way') {
-        let coords;
-        if (Array.isArray(el.geometry)) {
-          // out geom format — geometry comes inline as [{lat,lon}]
-          coords = el.geometry.map(p => [p.lon, p.lat]).filter(p => p[0] != null);
-        } else if (Array.isArray(el.nodes)) {
-          // out body + > format — resolve node ids from nodes dict
-          coords = el.nodes.map((nid) => nodes[nid]).filter(Boolean);
-        }
-        if (coords && coords.length >= 2) {
-          features.push({
-            type: 'Feature',
-            geometry: { type: 'LineString', coordinates: coords },
-            properties: el.tags || {},
-          });
-        }
-      } else if (el.type === 'node' && el.tags && Object.keys(el.tags).length) {
-        // only render tagged nodes as points, not bare geometry nodes
-        features.push({
-          type: 'Feature',
-          geometry: { type: 'Point', coordinates: [el.lon, el.lat] },
-          properties: el.tags || {},
+      const markers = features.map(f => {
+        const icon = STRUCTURE_ICONS[f.type] || STRUCTURE_ICONS.unknown;
+        const conf = Math.round((f.confidence || 0) * 100);
+        const marker = L.circleMarker([f.lat, f.lon], {
+          radius: 8,
+          color: icon.color,
+          fillColor: icon.color,
+          fillOpacity: 0.75,
+          weight: 2,
         });
-      }
+        marker.bindPopup(`
+          <b>${icon.emoji} ${icon.label}</b><br>
+          ${f.description || ''}<br>
+          <i>Confidence: ${conf}%</i><br>
+          <span style="color:#888;font-size:11px">${f.fishing_notes || ''}</span>
+        `);
+        return marker;
+      });
+
+      structureLayer = L.layerGroup(markers).addTo(map);
+      visible = true;
+
+      setBanner(`Found ${features.length} structure${features.length === 1 ? '' : 's'}. ${data.image_notes || ''}`);
+      btn.textContent = '🏗 Hide Structure';
+      btn.style.background = '#4CAF50';
+      btn.style.color = '#fff';
+
+    } catch (e) {
+      console.error('[structure-detection]', e);
+      setBanner(`Structure detection failed: ${e.message}`);
+      btn.textContent = '🏗 Structure';
+      btn.style.background = '';
+      btn.style.color = '';
     }
 
-    return { type: 'FeatureCollection', features };
+    loading = false;
   }
 
-  console.log('✓ OSM structure module armed');
+  function toggle() {
+    const map = getMap();
+    if (!map) return;
+    if (visible && structureLayer) {
+      map.removeLayer(structureLayer);
+      visible = false;
+      btn.textContent = '🏗 Structure';
+      btn.style.background = '';
+      btn.style.color = '';
+    } else if (structureLayer && !visible) {
+      structureLayer.addTo(map);
+      visible = true;
+      btn.textContent = '🏗 Hide Structure';
+      btn.style.background = '#4CAF50';
+      btn.style.color = '#fff';
+    } else {
+      detectAndDraw();
+    }
+  }
+
+  btn.addEventListener('click', toggle);
+  console.log('✓ Structure Detection module armed (Grok Vision)');
 })();

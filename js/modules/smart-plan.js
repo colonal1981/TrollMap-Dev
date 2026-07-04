@@ -32,6 +32,7 @@ import {
   SPECIES_BEHAVIOR, REGULATIONS,
   getSeason, getTimeOfDay, checkRegulations, resolveLakeKey,
 } from '../data/species-intel.js';
+import { LAKE_DB } from '../data/lakes.js';
 // v2 multi-species brain — if present, use it; fall back to v1 for legacy lakes
 import * as IntelV2 from '../data/species-intel-v2.js';
 import { isLiveBaitAvailable } from '../data/fishing-style-profile.js';
@@ -788,18 +789,42 @@ export async function runSmartPlan() {
       || Object.entries(lakeRampMap).find(([k]) => cleanLakeName.includes(k) || k.includes(cleanLakeName))?.[1]
       || [];
     const selectedRampKey = document.getElementById('planRamp')?.value || '';
-    // Check LAKE_DB first since that is what populated the #planRamp dropdown!
-    if (typeof LAKE_DB !== 'undefined') {
-      const dbEntry = LAKE_DB[lakeName] || LAKE_DB[cleanLakeName] || Object.entries(LAKE_DB).find(([k]) => cleanLakeName.includes(k.toLowerCase()))?.[1];
-      if (dbEntry?.ramps) {
-        const coords = dbEntry.ramps[selectedRampKey] || Object.entries(dbEntry.ramps).find(([k]) => k.toLowerCase() === selectedRampKey.toLowerCase() || k.toLowerCase().includes(selectedRampKey.toLowerCase()))?.[1];
-        if (coords && Array.isArray(coords) && coords.length >= 2) {
-          rampLat = coords[0];
-          rampLon = coords[1];
-          console.log(`[smart-plan] Using LAKE_DB ramp: "${selectedRampKey}" (${rampLat}, ${rampLon})`);
+    const GUARANTEED_SC_RAMPS = {
+      'clearwater cove': [34.37927, -80.72881],
+      'clearwater cove marina': [34.37927, -80.72881],
+      'clearwater': [34.37927, -80.72881],
+      'colonel creek': [34.36885, -80.79724],
+      'colonel creek landing': [34.36885, -80.79724],
+      'taylor creek': [34.3830, -80.7374],
+      'taylor creek boat ramp': [34.3830, -80.7374],
+      'lake wateree state park': [34.3830, -80.7374],
+      'beaver creek': [34.4199, -80.7989],
+      'wateree creek': [34.4800, -80.8800]
+    };
+    const normRampKey = String(selectedRampKey || '').trim().toLowerCase();
+    for (const [k, coords] of Object.entries(GUARANTEED_SC_RAMPS)) {
+      if (normRampKey === k || normRampKey.includes(k) || k.includes(normRampKey)) {
+        rampLat = coords[0];
+        rampLon = coords[1];
+        console.log(`[smart-plan] Using guaranteed GPS coords for "${selectedRampKey}": (${rampLat}, ${rampLon})`);
+        break;
+      }
+    }
+
+    if (rampLat == null || rampLon == null) {
+      if (typeof LAKE_DB !== 'undefined') {
+        const dbEntry = LAKE_DB[lakeName] || LAKE_DB[cleanLakeName] || Object.entries(LAKE_DB).find(([k]) => cleanLakeName.includes(k.toLowerCase()))?.[1];
+        if (dbEntry?.ramps) {
+          const coords = dbEntry.ramps[selectedRampKey] || Object.entries(dbEntry.ramps).find(([k]) => k.toLowerCase() === selectedRampKey.toLowerCase() || k.toLowerCase().includes(selectedRampKey.toLowerCase()))?.[1];
+          if (coords) {
+            rampLat = Array.isArray(coords) ? coords[0] : coords.lat;
+            rampLon = Array.isArray(coords) ? coords[1] : (coords.lon || coords.lng);
+            console.log(`[smart-plan] Using LAKE_DB ramp: "${selectedRampKey}" (${rampLat}, ${rampLon})`);
+          }
         }
       }
     }
+
     if (rampLat == null || rampLon == null) {
       const selectedRamp = rampList.find(r => r.key === selectedRampKey || r.name === selectedRampKey || String(r.name).toLowerCase() === String(selectedRampKey).toLowerCase() || String(r.name).toLowerCase().includes(String(selectedRampKey).toLowerCase())) || rampList[0];
       if (selectedRamp) {
@@ -878,6 +903,67 @@ export async function runSmartPlan() {
   }
 
   if (outEl) outEl.value = rationale;
+
+  // ── Groq plan audit — async, non-blocking, appends to rationale when done ──
+  // Fires after the plan is already visible so it doesn't slow down the main flow.
+  const auditPayload = {
+    plan: {
+      lake: lakeName, species: sp, season, date: document.getElementById('planDate')?.value || '',
+      ramp: document.getElementById('planRamp')?.value || '',
+      rangeMiles: rangeMiles.toFixed(1),
+      phases: phases.map((phase, i) => {
+        const rec = phaseRecs[i];
+        return {
+          name: phase.name, window: `${phase.startStr}-${phase.endStr}`,
+          depthMin: rec?.depthMin, depthMax: rec?.depthMax,
+          speed: rec?.speed, lures: getEffectiveLures(rec).slice(0, 3),
+          notes: rec?.notes || '',
+        };
+      }),
+      weather: document.getElementById('planWeather')?.value || '',
+      tackle: document.getElementById('planTackle')?.value || '',
+      safety: document.getElementById('planSafety')?.value || '',
+    }
+  };
+
+  const WORKER_URL = (typeof CF_WORKER_URL !== 'undefined' ? CF_WORKER_URL : window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev');
+  if (outEl) outEl.value = rationale + '\n\n⏳ Groq plan audit running...';
+
+  fetch(`${WORKER_URL}/audit-plan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(auditPayload),
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (!data.success || !data.audit) return;
+      const a = data.audit;
+      const scoreBar = (n) => n >= 8 ? '🟢' : n >= 5 ? '🟡' : '🔴';
+      const auditBlock = [
+        '',
+        '══════════ GROQ PLAN AUDIT ══════════',
+        `Overall: ${scoreBar(a.overall_score)} ${a.overall_score}/10 · ${a.confidence?.toUpperCase() || ''} confidence`,
+        `Verdict: ${a.verdict || ''}`,
+        '',
+        `Depth alignment: ${scoreBar(a.scores?.depth_alignment)} ${a.scores?.depth_alignment}/10`,
+        `Lure selection:  ${scoreBar(a.scores?.lure_selection)} ${a.scores?.lure_selection}/10`,
+        `Speed/cadence:   ${scoreBar(a.scores?.speed_cadence)} ${a.scores?.speed_cadence}/10`,
+        `Battery mgmt:    ${scoreBar(a.scores?.battery_management)} ${a.scores?.battery_management}/10`,
+        `Safety:          ${scoreBar(a.scores?.safety)} ${a.scores?.safety}/10`,
+        '',
+        a.flags?.length ? `⚠ FLAGS:\n${a.flags.map(f => `  · ${f}`).join('\n')}` : '',
+        a.fixes?.length ? `🔧 FIXES:\n${a.fixes.map(f => `  · ${f}`).join('\n')}` : '',
+        a.keeper_moves?.length ? `✅ SOLID MOVES:\n${a.keeper_moves.map(f => `  · ${f}`).join('\n')}` : '',
+        a.local_intel ? `💡 LOCAL INTEL: ${a.local_intel}` : '',
+        '═════════════════════════════════════',
+      ].filter(Boolean).join('\n');
+
+      if (outEl) outEl.value = rationale + auditBlock;
+      if (document.getElementById('catchCenterBody')) renderCatchSubtab?.();
+    })
+    .catch(e => {
+      if (outEl) outEl.value = rationale + `\n\n⚠ Groq audit failed: ${e.message}`;
+    });
 
   const firstRec = phaseRecs.find(Boolean);
   setStatus(
