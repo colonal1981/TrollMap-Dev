@@ -19,22 +19,31 @@ import { setBanner } from '../core/map-init.js';
 
   async function fetchAndDrawOsmStructure() {
     const map = getMap();
-    if (!mapReady() || !map) {
-      alert('Map is not ready.');
+    if (!mapReady() || !map) { alert('Map is not ready.'); return; }
+    if (loading) return;
+
+    const zoom = map.getZoom();
+    if (zoom < 13) {
+      alert('Zoom in closer before loading OSM structure (zoom 13 or higher). At this scale OSM returns too much data to be useful.');
       return;
     }
-    if (loading) return;
-    loading = true;
 
+    loading = true;
     const bounds = map.getBounds();
     const bbox = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
 
+    // Waterways removed — rivers/streams at any zoom just reproduce the
+    // drainage network pattern which isn't useful fishing structure data.
+    // Keeping: piers/docks (primary target), historic ruins/bridges (secondary).
     const query = `
       [out:json][timeout:25][bbox:${bbox}];
       (
         way["man_made"="pier"];
-        way["waterway"~"river|stream|canal"];
+        node["man_made"="pier"];
+        way["leisure"="marina"];
+        node["amenity"="boat_rental"];
         way["historic"~"ruins|bridge"];
+        node["historic"~"ruins|bridge"];
       );
       out geom;
     `;
