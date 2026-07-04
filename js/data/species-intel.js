@@ -168,8 +168,8 @@ export const SPECIES_BEHAVIOR = {
         timeOfDay: {
           [DAWN]: { depthShift: -4, lures: ['Live herring free-line', 'Choppo 90'], speed: 1.0,
             notes: 'Fish may only be 12-15ft deep early, get progressively deeper through morning. Free-line one rod, work topwater on the other — both fishable from a kayak with no planer board needed.' },
-          [DAY]: { depthShift: 0, lures: ['Down-line live herring', 'Umbrella rig', 'Lead-core trolling'], speed: 1.5,
-            notes: 'Thermocline ~30ft in lower lake (Dreher Island to dam). One group suspends near 30ft, another holds bottom in 70-100ft near the dam (low O2, harder to catch). Down-rodding with line counters recommended.' },
+          [DAY]: { depthShift: 0, lures: ['Down-line live herring', 'Umbrella rig'], speed: 1.5,
+            notes: 'Thermocline ~30ft in lower lake (Dreher Island to dam). One group suspends near 30ft, another holds bottom in 70-100ft near the dam (low O2, harder to catch). Use umbrella rig lead-length or inline trolling weight for depth control (spinning gear — no lead-core/line-counter reels).' },
           [DUSK]: { depthShift: -4, lures: ['Free-line live herring'], speed: 1.0, notes: 'Evening shallow push similar to dawn.' },
         },
         sources: ['William Attaway guide interview, Carolina Sportsman 2021', 'AHQ Lake Murray Summer 2021 report', 'Bouknight guide interview, Fish of Dreams'],
