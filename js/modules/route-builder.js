@@ -483,6 +483,19 @@ function generateContourRoutes(cfg) {
     .filter(s => s.len >= 250);
   if (!candidates.length) return [];
 
+  // SMART TROLLING BRAIN (2026-07-04):
+  // Score candidates by proximity to boat ramp and structure quality rather than
+  // blindly taking whichever contour line happens to be longest across the lake.
+  if (cfg.rampLat != null && cfg.rampLon != null) {
+    candidates.forEach(s => {
+      const [distToRampFt] = distBearing(cfg.rampLat, cfg.rampLon, s.mid[1], s.mid[0]);
+      const proxScore = Math.max(0, 12000 - distToRampFt);
+      const lenScore  = Math.min(s.len, 5000);
+      s.trollScore = (proxScore * 2.0) + (lenScore * 0.5);
+    });
+    candidates.sort((a, b) => (b.trollScore || 0) - (a.trollScore || 0));
+  }
+
   // Pick up to `lanes` DISTINCT spines: greedily take the longest, then skip any
   // whose midpoint is within DEDUP ft of an already-chosen spine (kills tile
   // seams and near-duplicate stacked contours so passes are genuinely separate).
@@ -576,6 +589,25 @@ function generateContourRoutes(cfg) {
     // The auto-measured band half-width was overriding user input with huge values
     // on narrow water bodies like creeks, causing routes to swing over land.
     const passAmplitude = amplitude;
+
+    // SMART PASS SHAPING (2026-07-04): Cap trolling run length to ~4,500 ft (~0.85 miles).
+    // A kayak angler trolling at 2.0 mph wants a focused, productive trolling pass
+    // along prime structure nearest their launch ramp, not an 8-mile lake sweep.
+    const MAX_TROLL_PASS_FT = 4500;
+    if (trackLengthFt(spine) > MAX_TROLL_PASS_FT) {
+      let centerIdx = Math.floor(spine.length / 2);
+      if (cfg.rampLat != null && cfg.rampLon != null) {
+        let minDist = Infinity;
+        for (let j = 0; j < spine.length; j++) {
+          const [d] = distBearing(cfg.rampLat, cfg.rampLon, spine[j][1], spine[j][0]);
+          if (d < minDist) { minDist = d; centerIdx = j; }
+        }
+      }
+      const stepFt = Math.max(50, waveFt);
+      const halfPts = Math.max(4, Math.floor((MAX_TROLL_PASS_FT / stepFt) / 2));
+      const startIdx = Math.max(0, Math.min(spine.length - (halfPts * 2), centerIdx - halfPts));
+      spine = spine.slice(startIdx, startIdx + (halfPts * 2));
+    }
 
     // Boustrophedon: reverse every other pass so the lawnmower flows continuously
     if (flip) spine = spine.slice().reverse();
@@ -848,7 +880,7 @@ export function setClipFromRamp(rampLat, rampLon, rangeMiles) {
   // spines span the whole lake (see July 2 handoff known issue). A fishing
   // route has no business being a 33-mile-wide box regardless of how much
   // battery is theoretically left, so clamp to a sane planning radius.
-  const MAX_CLIP_RADIUS_MI = 5.0;
+  const MAX_CLIP_RADIUS_MI = 1.5; // Upgraded for Smart Trolling Brain: caps auto-box to 1.5mi around ramp
   const MIN_CLIP_RADIUS_MI = 0.5;
   const clippedRangeMiles = Math.min(MAX_CLIP_RADIUS_MI, Math.max(MIN_CLIP_RADIUS_MI, rangeMiles));
   if (clippedRangeMiles !== rangeMiles) {
