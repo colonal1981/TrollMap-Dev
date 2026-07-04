@@ -67,48 +67,51 @@ function calcTrollTimes() {
 // ─────────────────────────────────────────────────────────────
 
 function collectPlan(){
+  function gV(id, fb = '') { const el = document.getElementById(id); return el ? el.value : fb; }
   const species = [...document.querySelectorAll('#planSpeciesChecks input:checked')].map(c=>c.value);
+  const lakeVal = gV('planLake');
+  const isRiv = isPlanRiverValue(lakeVal);
   return {
     meta:{
-      name: document.getElementById('planName').value || 'Fishing Plan',
-      date: document.getElementById('planDate').value,
-      lake: document.getElementById('planLake').value,
-      waterbodyType: isPlanRiverValue(document.getElementById('planLake').value) ? 'river' : 'lake',
-      waterbodyLabel: isPlanRiverValue(document.getElementById('planLake').value) ? (getPlanRiverDef(document.getElementById('planLake').value)?.label || document.getElementById('planLake').value) : document.getElementById('planLake').value,
-      ramp: document.getElementById('planRamp').value,
-      riverSummary: document.getElementById('planRiverSummary')?.value || '',
-      riverSafety: document.getElementById('planRiverSafety')?.value || '',
-      riverFlow: document.getElementById('planRiverFlow')?.value || '',
-      riverGauge: document.getElementById('planRiverGauge')?.value || '',
-      riverTemp: document.getElementById('planRiverTemp')?.value || '',
-      riverRise: document.getElementById('planRiverRise')?.value || '',
-      riverSurgeEta: document.getElementById('planRiverSurgeEta')?.value || '',
-      riverSchedule: document.getElementById('planRiverSchedule')?.value || '',
-      launchTime: document.getElementById('planLaunchTime').value,
-      returnTime: document.getElementById('planReturnTime').value,
-      waterTemp: document.getElementById('planWaterTemp').value,
-      fullPool: isPlanRiverValue(document.getElementById('planLake').value) ? '' : (document.getElementById('planFullPool')?.value || ''),
-      poolLevel: isPlanRiverValue(document.getElementById('planLake').value) ? '' : (document.getElementById('planPoolLevel')?.value || ''),
-      poolUnit: isPlanRiverValue(document.getElementById('planLake').value) ? '' : (typeof getPlanLakeLevelUnit === 'function' ? getPlanLakeLevelUnit() : 'ft'),
-      weather: document.getElementById('planWeather').value,
-      clarity: document.getElementById('planClarity').value,
-      motor: document.getElementById('planMotor').value,
-      sonar: document.getElementById('planSonar').value,
-      solunar: document.getElementById('planSolunar').value,
-      structure: document.getElementById('planStructure').value,
-      lakeIntel: document.getElementById('planLakeIntel')?.value || '',
-      clarityIntel: document.getElementById('planClarityIntel')?.value || '',
+      name: gV('planName', 'Fishing Plan'),
+      date: gV('planDate'),
+      lake: lakeVal,
+      waterbodyType: isRiv ? 'river' : 'lake',
+      waterbodyLabel: isRiv ? (getPlanRiverDef(lakeVal)?.label || lakeVal) : lakeVal,
+      ramp: gV('planRamp'),
+      riverSummary: gV('planRiverSummary'),
+      riverSafety: gV('planRiverSafety'),
+      riverFlow: gV('planRiverFlow'),
+      riverGauge: gV('planRiverGauge'),
+      riverTemp: gV('planRiverTemp'),
+      riverRise: gV('planRiverRise'),
+      riverSurgeEta: gV('planRiverSurgeEta'),
+      riverSchedule: gV('planRiverSchedule'),
+      launchTime: gV('planLaunchTime', '06:00'),
+      returnTime: gV('planReturnTime', '12:00'),
+      waterTemp: gV('planWaterTemp'),
+      fullPool: isRiv ? '' : gV('planFullPool'),
+      poolLevel: isRiv ? '' : gV('planPoolLevel'),
+      poolUnit: isRiv ? '' : (typeof getPlanLakeLevelUnit === 'function' ? getPlanLakeLevelUnit() : 'ft'),
+      weather: gV('planWeather'),
+      clarity: gV('planClarity', 'Clear'),
+      motor: gV('planMotor', 'NK180 Pro 24V, 100Ah LiFePO4'),
+      sonar: gV('planSonar', 'Garmin ECHOMAP UHD2 93sv'),
+      solunar: gV('planSolunar'),
+      structure: gV('planStructure'),
+      lakeIntel: gV('planLakeIntel'),
+      clarityIntel: gV('planClarityIntel'),
       species,
     },
     trolling:{
-      speed: document.getElementById('planSpeed').value,
-      targetDepth: document.getElementById('planTargetDepth').value,
-      pattern: document.getElementById('planPattern').value,
+      speed: gV('planSpeed', '2.4'),
+      targetDepth: gV('planTargetDepth'),
+      pattern: gV('planPattern', 'Straight lanes'),
     },
-    spread: state.SPREAD.slice(),
-    tackle: document.getElementById('planTackle').value,
-    safety: document.getElementById('planSafety').value,
-    notes: document.getElementById('planNotes').value,
+    spread: (state.SPREAD || []).slice(),
+    tackle: gV('planTackle'),
+    safety: gV('planSafety'),
+    notes: gV('planNotes'),
     // FIX (2026-07-03): this was never being captured at all, even though
     // the Preview template referenced a `rationaleHtml` variable that was
     // supposed to come from it — a fully broken ReferenceError every time,
@@ -130,43 +133,42 @@ function collectPlan(){
 
 function loadPlanIntoForm(p){
   if(!p) return;
+  function sV(id, val) { const el = document.getElementById(id); if (el) el.value = val ?? ''; }
   const m=p.meta||{};
-  document.getElementById('planName').value = m.name||'';
-  document.getElementById('planDate').value = m.date||'';
+  sV('planName', m.name);
+  sV('planDate', m.date);
   populatePlanLakeDropdown();
-  document.getElementById('planLake').value = m.lake||'';
+  sV('planLake', m.lake);
   setLakeOnlyFieldsVisible(!isPlanRiverValue(m.lake||''));
   populatePlanRampDropdown(m.lake||'');
-  document.getElementById('planRamp').value = m.ramp||'';
-  if(document.getElementById('planSmartPlanOutput')) document.getElementById('planSmartPlanOutput').value = p.rationale||'';
-  if(document.getElementById('planRiverSummary')) document.getElementById('planRiverSummary').value = m.riverSummary||'';
-  if(document.getElementById('planRiverSafety')) document.getElementById('planRiverSafety').value = m.riverSafety||'';
-  if(document.getElementById('planRiverFlow')) document.getElementById('planRiverFlow').value = m.riverFlow||'';
-  if(document.getElementById('planRiverGauge')) document.getElementById('planRiverGauge').value = m.riverGauge||'';
-  if(document.getElementById('planRiverTemp')) document.getElementById('planRiverTemp').value = m.riverTemp||'';
-  if(document.getElementById('planRiverRise')) document.getElementById('planRiverRise').value = m.riverRise||'';
-  if(document.getElementById('planRiverSurgeEta')) document.getElementById('planRiverSurgeEta').value = m.riverSurgeEta||'';
-  if(document.getElementById('planRiverSchedule')) document.getElementById('planRiverSchedule').value = m.riverSchedule||'';
-  document.getElementById('planLaunchTime').value = m.launchTime||'06:00';
-  document.getElementById('planReturnTime').value = m.returnTime||'12:00';
-  document.getElementById('planWaterTemp').value = m.waterTemp||'';
-  const fPoolEl = document.getElementById('planFullPool');
-  if(fPoolEl) fPoolEl.value = m.fullPool||'';
-  const pLevelEl = document.getElementById('planPoolLevel');
-  if(pLevelEl) pLevelEl.value = m.poolLevel||'';
-  document.getElementById('planWeather').value = m.weather||'';
-  if(m.clarity) document.getElementById('planClarity').value = m.clarity;
-  document.getElementById('planMotor').value = m.motor || 'NK180 Pro 24V, 100Ah LiFePO4';
-  document.getElementById('planSonar').value = m.sonar || 'Garmin ECHOMAP UHD2 93sv';
-  document.getElementById('planSolunar').value = m.solunar||'';
-  if(document.getElementById('planStructure')) document.getElementById('planStructure').value = m.structure||'';
-  if(document.getElementById('planLakeIntel')) document.getElementById('planLakeIntel').value = m.lakeIntel||'';
-  if(document.getElementById('planClarityIntel')) document.getElementById('planClarityIntel').value = m.clarityIntel||'';
+  sV('planRamp', m.ramp);
+  sV('planSmartPlanOutput', p.rationale);
+  sV('planRiverSummary', m.riverSummary);
+  sV('planRiverSafety', m.riverSafety);
+  sV('planRiverFlow', m.riverFlow);
+  sV('planRiverGauge', m.riverGauge);
+  sV('planRiverTemp', m.riverTemp);
+  sV('planRiverRise', m.riverRise);
+  sV('planRiverSurgeEta', m.riverSurgeEta);
+  sV('planRiverSchedule', m.riverSchedule);
+  sV('planLaunchTime', m.launchTime || '06:00');
+  sV('planReturnTime', m.returnTime || '12:00');
+  sV('planWaterTemp', m.waterTemp);
+  sV('planFullPool', m.fullPool);
+  sV('planPoolLevel', m.poolLevel);
+  sV('planWeather', m.weather);
+  if(m.clarity) sV('planClarity', m.clarity);
+  sV('planMotor', m.motor || 'NK180 Pro 24V, 100Ah LiFePO4');
+  sV('planSonar', m.sonar || 'Garmin ECHOMAP UHD2 93sv');
+  sV('planSolunar', m.solunar);
+  sV('planStructure', m.structure);
+  sV('planLakeIntel', m.lakeIntel);
+  sV('planClarityIntel', m.clarityIntel);
   document.querySelectorAll('#planSpeciesChecks input').forEach(c=> c.checked = (m.species||[]).includes(c.value));
   if(p.trolling){
-    document.getElementById('planSpeed').value = p.trolling.speed||'2.4';
-    document.getElementById('planTargetDepth').value = p.trolling.targetDepth||'';
-    document.getElementById('planPattern').value = p.trolling.pattern||'Straight lanes';
+    sV('planSpeed', p.trolling.speed || '2.4');
+    sV('planTargetDepth', p.trolling.targetDepth);
+    sV('planPattern', p.trolling.pattern || 'Straight lanes');
   }
   // Robust load using the fixed newRodRow (which now includes rod + trailerSize + arigWeight + jigWeight)
   // This ensures swimbait trailer profile, full A-rig rows, and rod selections persist.
@@ -183,9 +185,10 @@ function loadPlanIntoForm(p){
     return merged;
   });
   renderSpread();
-  document.getElementById('planTackle').value = p.tackle||'';
-  document.getElementById('planSafety').value = p.safety||'';
-  document.getElementById('planNotes').value = p.notes||'';
+  const sVBot = (id, v) => { const e = document.getElementById(id); if(e) e.value = v || ''; };
+  sVBot('planTackle', p.tackle);
+  sVBot('planSafety', p.safety);
+  sVBot('planNotes', p.notes);
 }
 
 async function buildPlanPreviewHtml(p){

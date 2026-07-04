@@ -483,22 +483,21 @@ function generateContourRoutes(cfg) {
     .filter(s => s.len >= 250);
   if (!candidates.length) return [];
 
-  // SMART TROLLING BRAIN (2026-07-04):
-  // Score candidates by proximity to boat ramp and structure quality rather than
-  // blindly taking whichever contour line happens to be longest across the lake.
-  if (cfg.rampLat != null && cfg.rampLon != null) {
+  // SMART TROLLING CIRCUIT BRAIN:
+  // Prioritize contour spines closest to the phase start point (where boat currently is).
+  const refLat = cfg.startLat != null ? cfg.startLat : cfg.rampLat;
+  const refLon = cfg.startLon != null ? cfg.startLon : cfg.rampLon;
+  if (refLat != null && refLon != null) {
     candidates.forEach(s => {
-      const [distToRampFt] = distBearing(cfg.rampLat, cfg.rampLon, s.mid[1], s.mid[0]);
-      const proxScore = Math.max(0, 12000 - distToRampFt);
-      const lenScore  = Math.min(s.len, 5000);
-      s.trollScore = (proxScore * 2.0) + (lenScore * 0.5);
+      const [distToStartFt] = distBearing(refLat, refLon, s.mid[1], s.mid[0]);
+      // Score balances proximity to start position against contour length
+      const proxScore = Math.max(0, 25000 - distToStartFt);
+      const lenScore  = Math.min(s.len, cfg.targetLengthFt || 15000);
+      s.trollScore = (proxScore * 2.0) + (lenScore * 0.7);
     });
     candidates.sort((a, b) => (b.trollScore || 0) - (a.trollScore || 0));
   }
 
-  // Pick up to `lanes` DISTINCT spines: greedily take the longest, then skip any
-  // whose midpoint is within DEDUP ft of an already-chosen spine (kills tile
-  // seams and near-duplicate stacked contours so passes are genuinely separate).
   const DEDUP = Math.max(spacing * 0.6, 150);
   const chosen = [];
   for (const c of candidates) {
@@ -590,27 +589,35 @@ function generateContourRoutes(cfg) {
     // on narrow water bodies like creeks, causing routes to swing over land.
     const passAmplitude = amplitude;
 
-    // SMART PASS SHAPING (2026-07-04): Cap trolling run length to ~4,500 ft (~0.85 miles).
-    // A kayak angler trolling at 2.0 mph wants a focused, productive trolling pass
-    // along prime structure nearest their launch ramp, not an 8-mile lake sweep.
-    const MAX_TROLL_PASS_FT = 4500;
-    if (trackLengthFt(spine) > MAX_TROLL_PASS_FT) {
+    // SMART DURATION SHAPING:
+    // Dynamically size trolling pass to match the duration of this phase!
+    // For a 2.5 hour phase at 2.2 mph, targetLengthFt will be ~23,000 ft (~4.3 miles).
+    const targetPassFt = cfg.targetLengthFt || 12000;
+    if (trackLengthFt(spine) > targetPassFt) {
       let centerIdx = Math.floor(spine.length / 2);
-      if (cfg.rampLat != null && cfg.rampLon != null) {
+      const sLat = cfg.startLat != null ? cfg.startLat : cfg.rampLat;
+      const sLon = cfg.startLon != null ? cfg.startLon : cfg.rampLon;
+      if (sLat != null && sLon != null) {
         let minDist = Infinity;
         for (let j = 0; j < spine.length; j++) {
-          const [d] = distBearing(cfg.rampLat, cfg.rampLon, spine[j][1], spine[j][0]);
+          const [d] = distBearing(sLat, sLon, spine[j][1], spine[j][0]);
           if (d < minDist) { minDist = d; centerIdx = j; }
         }
       }
       const stepFt = Math.max(50, waveFt);
-      const halfPts = Math.max(4, Math.floor((MAX_TROLL_PASS_FT / stepFt) / 2));
+      const halfPts = Math.max(4, Math.floor((targetPassFt / stepFt) / 2));
       const startIdx = Math.max(0, Math.min(spine.length - (halfPts * 2), centerIdx - halfPts));
       spine = spine.slice(startIdx, startIdx + (halfPts * 2));
     }
 
-    // Boustrophedon: reverse every other pass so the lawnmower flows continuously
-    if (flip) spine = spine.slice().reverse();
+    // Orient pass so it flows naturally from start position toward end position
+    if (spine.length >= 2 && cfg.startLat != null && cfg.startLon != null) {
+      const [dFirst] = distBearing(cfg.startLat, cfg.startLon, spine[0][1], spine[0][0]);
+      const [dLast]  = distBearing(cfg.startLat, cfg.startLon, spine[spine.length-1][1], spine[spine.length-1][0]);
+      if (dLast < dFirst) spine = spine.slice().reverse();
+    }
+
+    if (flip && lanes > 1) spine = spine.slice().reverse();
     flip = !flip;
 
     let pts = patternAlongSpine(spine, {
@@ -880,7 +887,7 @@ export function setClipFromRamp(rampLat, rampLon, rangeMiles) {
   // spines span the whole lake (see July 2 handoff known issue). A fishing
   // route has no business being a 33-mile-wide box regardless of how much
   // battery is theoretically left, so clamp to a sane planning radius.
-  const MAX_CLIP_RADIUS_MI = 1.5; // Upgraded for Smart Trolling Brain: caps auto-box to 1.5mi around ramp
+  const MAX_CLIP_RADIUS_MI = 4.0; // Upgraded: 4.0mi planning box allows full day 9-hour trolling circuits around ramp
   const MIN_CLIP_RADIUS_MI = 0.5;
   const clippedRangeMiles = Math.min(MAX_CLIP_RADIUS_MI, Math.max(MIN_CLIP_RADIUS_MI, rangeMiles));
   if (clippedRangeMiles !== rangeMiles) {
@@ -910,7 +917,14 @@ export function generateAndCommitRoute(overrides = {}) {
   const rampLon = overrides.rampLon ?? null;
 
   const cfg = {
-    depthMin:   overrides.depthMin   != null ? overrides.depthMin   : (parseInt(document.getElementById('rbDepthMin')?.value)    || 18),
+    rampLat:        rampLat,
+    rampLon:        rampLon,
+    startLat:       overrides.startLat ?? rampLat,
+    startLon:       overrides.startLon ?? rampLon,
+    endLat:         overrides.endLat ?? null,
+    endLon:         overrides.endLon ?? null,
+    targetLengthFt: overrides.targetLengthFt ?? null,
+    depthMin:       overrides.depthMin   != null ? overrides.depthMin   : (parseInt(document.getElementById('rbDepthMin')?.value)    || 18),
     depthMax:   overrides.depthMax   != null ? overrides.depthMax   : (parseInt(document.getElementById('rbDepthMax')?.value)    || 28),
     pattern:    overrides.pattern    != null ? overrides.pattern    : (document.getElementById('rbPattern')?.value               || 'sine+straight'),
     spacing:    overrides.spacing    != null ? overrides.spacing    : (parseFloat(document.getElementById('rbSpacing')?.value)   || 150),

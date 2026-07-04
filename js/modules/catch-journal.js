@@ -899,7 +899,6 @@ function indexPhotoFolder(files, body) {
     count++;
   }
   const status = body?.querySelector('#photoFolderStatus') || document.getElementById('photoFolderStatus');
-  const q = getQueue();
   const matched = q.filter(item => {
     const keys = [item.filename, baseName(item.sourcePath)].map(x => String(x || '').toLowerCase()).filter(Boolean);
     return keys.some(k => localPhotoUrls.has(k));

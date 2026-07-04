@@ -245,8 +245,10 @@ export function renderSpread() {
   const tbody = document.getElementById('spreadBody');
   if (!tbody) return;
   tbody.innerHTML = '';
+  if (!state.SPREAD || !Array.isArray(state.SPREAD)) state.SPREAD = [];
 
   state.SPREAD.forEach((rod, i) => {
+    if (!rod) return;
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td style="text-align:center">${i + 1}</td>
