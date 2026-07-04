@@ -41,49 +41,34 @@ import { setBanner } from '../core/map-init.js';
   function getMap() { return state?.MAP || window.MAP || null; }
   function mapReady() { return !!(state?.MAP_OK && getMap()); }
 
-  // Capture the current map viewport as a JPEG base64 string.
-  // Leaflet renders via multiple <img> tile elements — we composite them
-  // onto a canvas to get a screenshot of what's visible.
+  // Load html2canvas on demand — avoids CORS taint issues that happen when
+  // drawing cross-origin tile images directly onto a canvas with toDataURL().
+  function loadHtml2Canvas() {
+    return new Promise((resolve, reject) => {
+      if (window.html2canvas) return resolve(window.html2canvas);
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+      s.onload = () => resolve(window.html2canvas);
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+
   async function captureViewport() {
     const map = getMap();
     const container = map.getContainer();
-    const w = container.clientWidth;
-    const h = container.clientHeight;
-
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
-
-    // Draw all visible tile images
-    const imgs = container.querySelectorAll('.leaflet-tile-container img.leaflet-tile');
-    const promises = [...imgs].map(img => new Promise(resolve => {
-      if (img.complete && img.naturalWidth) {
-        try {
-          const r = img.getBoundingClientRect();
-          const cr = container.getBoundingClientRect();
-          ctx.drawImage(img, r.left - cr.left, r.top - cr.top, r.width, r.height);
-        } catch (_) {}
-        resolve();
-      } else {
-        img.onload = () => {
-          try {
-            const r = img.getBoundingClientRect();
-            const cr = container.getBoundingClientRect();
-            ctx.drawImage(img, r.left - cr.left, r.top - cr.top, r.width, r.height);
-          } catch (_) {}
-          resolve();
-        };
-        img.onerror = resolve;
-      }
-    }));
-    await Promise.all(promises);
-
-    // Return base64 JPEG (compressed — Grok vision doesn't need full quality)
+    const html2canvas = await loadHtml2Canvas();
+    const canvas = await html2canvas(container, {
+      useCORS: true,
+      allowTaint: false,
+      scale: 1,
+      logging: false,
+      imageTimeout: 8000,
+    });
     return {
       base64: canvas.toDataURL('image/jpeg', 0.82).split(',')[1],
-      width: w,
-      height: h,
+      width: canvas.width,
+      height: canvas.height,
     };
   }
 
