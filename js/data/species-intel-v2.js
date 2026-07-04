@@ -441,8 +441,8 @@ export function getBehaviorV1Compat(species, lake, season, timeOfDay){
 }
 
 // Re-export v1 helpers for drop-in compat
-export { getSeason, getTimeOfDay, resolveLakeKey } from './species-intel.js'; // or inline copy
-// NOTE: in production, copy checkRegulations() fully from v1 – stub above is placeholder
+// NOTE: getSeason, getTimeOfDay, resolveLakeKey are defined above in this file.
+// Do NOT re-export them from species-intel.js here — that causes a duplicate export error.
 
 // ── Bluegill / Redear Sunfish (Shellcracker) ───────────────────────────────
 // Confirmed trolling targets at SC small ponds (Prestwood Lake etc.) on
