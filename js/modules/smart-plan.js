@@ -787,7 +787,7 @@ export async function runSmartPlan() {
       || Object.entries(lakeRampMap).find(([k]) => cleanLakeName.includes(k) || k.includes(cleanLakeName))?.[1]
       || [];
     const selectedRampKey = document.getElementById('planRamp')?.value || '';
-    const selectedRamp = rampList.find(r => r.key === selectedRampKey) || rampList[0];
+    const selectedRamp = rampList.find(r => r.key === selectedRampKey || r.name === selectedRampKey || String(r.name).toLowerCase() === String(selectedRampKey).toLowerCase() || String(r.name).toLowerCase().includes(String(selectedRampKey).toLowerCase())) || rampList[0];
     if (selectedRamp) {
       rampLat = selectedRamp.lat;
       rampLon = selectedRamp.lon;
