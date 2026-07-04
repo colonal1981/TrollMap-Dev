@@ -30,15 +30,13 @@ import { setBanner } from '../core/map-init.js';
     const bbox = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
 
     const query = `
-      [out:json][timeout:30][bbox:${bbox}];
+      [out:json][timeout:25][bbox:${bbox}];
       (
         way["man_made"="pier"];
         way["waterway"~"river|stream|canal"];
         way["historic"~"ruins|bridge"];
       );
-      out body;
-      >;
-      out skel qt;
+      out geom;
     `;
 
     btn.textContent = '⏳ Querying OSM...';
@@ -164,16 +162,24 @@ import { setBanner } from '../core/map-init.js';
     }
 
     for (const el of osm.elements || []) {
-      if (el.type === 'way' && Array.isArray(el.nodes)) {
-        const coords = el.nodes.map((nid) => nodes[nid]).filter(Boolean);
-        if (coords.length >= 2) {
+      if (el.type === 'way') {
+        let coords;
+        if (Array.isArray(el.geometry)) {
+          // out geom format — geometry comes inline as [{lat,lon}]
+          coords = el.geometry.map(p => [p.lon, p.lat]).filter(p => p[0] != null);
+        } else if (Array.isArray(el.nodes)) {
+          // out body + > format — resolve node ids from nodes dict
+          coords = el.nodes.map((nid) => nodes[nid]).filter(Boolean);
+        }
+        if (coords && coords.length >= 2) {
           features.push({
             type: 'Feature',
             geometry: { type: 'LineString', coordinates: coords },
             properties: el.tags || {},
           });
         }
-      } else if (el.type === 'node' && el.tags) {
+      } else if (el.type === 'node' && el.tags && Object.keys(el.tags).length) {
+        // only render tagged nodes as points, not bare geometry nodes
         features.push({
           type: 'Feature',
           geometry: { type: 'Point', coordinates: [el.lon, el.lat] },
