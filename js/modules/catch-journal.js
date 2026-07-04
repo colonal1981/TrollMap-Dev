@@ -273,28 +273,27 @@ function enrichItemFromGps(item) {
 
 function normalizeCsvRow(row, importedFrom = 'csv') {
   const filename = row.filename || row.file || row.name || '';
-  const datetime = row.datetime || row.date_time || row.timestamp || '';
+  const datetime = row.master_datetime || row.datetime || row.datetime_v3 || row.datetime_v2 || row.date_time || row.timestamp || '';
   const { date, time } = splitDateTime(datetime);
-  const notes = row.notes || row.stage2_notes || row.ai_notes || '';
-  const rawSpecies = cleanSpecies(row.verified_species || row.species || row.stage2_species || row.ai_species || row.stage1_species || '');
+  const notes = row.master_notes || row.notes || row.stage2_notes || row.ai_notes || '';
+  const rawSpecies = cleanSpecies(row.master_species || row.verified_species || row.species || row.stage2_species || row.ai_species || row.stage1_species || '');
   const inferred = inferSpeciesFromNotes(rawSpecies, notes);
 
-  // IMPORTANT: Do not treat stage1_species alone as proof of a fish.
-  // The recovered v2 CSVs often have stage1_fish=False while stage1_species says
-  // "Other Fish" or another guess. Those should NOT enter the review queue unless
-  // stage1_fish is explicitly true, stage2 produced a real species, or v3 has_fish=true.
+  const masterFishPresent = Object.prototype.hasOwnProperty.call(row, 'master_has_fish') && String(row.master_has_fish || '').trim() !== '';
   const hasFishFieldPresent = Object.prototype.hasOwnProperty.call(row, 'has_fish') && String(row.has_fish || '').trim() !== '';
   const stage1FishFieldPresent = Object.prototype.hasOwnProperty.call(row, 'stage1_fish') && String(row.stage1_fish || '').trim() !== '';
-  const finalSpecies = cleanSpecies(row.verified_species || row.species || row.stage2_species || row.ai_species || '');
-  const finalSpeciesSaysFish = !!finalSpecies && !['not fish', 'no fish', 'error', 'none'].includes(finalSpecies.toLowerCase());
+  const finalSpecies = cleanSpecies(row.master_species || row.verified_species || row.species || row.stage2_species || row.ai_species || '');
+  const finalSpeciesSaysFish = !!finalSpecies && !['not fish', 'no fish', 'error', 'none', 'unknown'].includes(finalSpecies.toLowerCase());
+  
   let hasFish = false;
-  if (hasFishFieldPresent) hasFish = parseBool(row.has_fish);
+  if (masterFishPresent) hasFish = parseBool(row.master_has_fish);
+  else if (hasFishFieldPresent) hasFish = parseBool(row.has_fish);
   else if (stage1FishFieldPresent) hasFish = parseBool(row.stage1_fish) || finalSpeciesSaysFish;
   else hasFish = finalSpeciesSaysFish;
 
-  const onBoard = parseBool(row.on_bump_board);
-  const aiLen = String(row.length_inches || row.ai_length || row.aiLength || '').trim();
-  const conf = row.confidence || row.stage2_confidence || row.stage1_confidence || '';
+  const onBoard = parseBool(row.master_on_bump_board || row.on_bump_board || row.on_bump_board_v3 || row.on_bump_board_v2);
+  const aiLen = String(row.master_length_inches || row.length_inches || row.length_inches_v3 || row.length_inches_v2 || row.ai_length || row.aiLength || '').trim();
+  const conf = row.master_confidence || row.confidence || row.stage2_confidence || row.stage1_confidence || '';
   const flags = [];
   if (!hasFish) flags.push('not_fish_or_rejected');
   if (onBoard) flags.push('verify_board_length_from_photo');
@@ -312,22 +311,22 @@ function normalizeCsvRow(row, importedFrom = 'csv') {
     sourcePath: row.source_path || row.path || row.local_path || '',
     sha256: row.sha256 || '',
     datetime, date, time,
-    lat: row.lat || '', lon: row.lon || '', lake: row.lake || '', depth: row.depth || '',
+    lat: row.master_lat || row.lat || row.lat_v3 || row.lat_v2 || '', lon: row.master_lon || row.lon || row.lon_v3 || row.lon_v2 || '', lake: row.lake || '', depth: row.depth || '',
     ai: {
       hasFish, onBoard,
       species: rawSpecies,
       inferredSpecies: inferred.species,
       length: aiLen,
       confidence: conf,
-      model: row.source_model || row.stage2_model || row.model || '',
+      model: row.source_model || row.stage2_model || row.model || 'master_catalog',
       notes
     },
     verified: {
       hasFish,
       onBoard,
       species: row.verified_species || inferred.species || rawSpecies || '',
-      length: row.verified_length_inches || row.verified_length || '',
-      lengthVerified: parseBool(row.length_verified),
+      length: row.verified_length_inches || row.verified_length || (onBoard ? aiLen : ''),
+      lengthVerified: parseBool(row.length_verified) || !!(onBoard && aiLen),
       reviewed: false
     },
     weather: null,
@@ -531,6 +530,7 @@ function renderImport(body) {
         <p class="muted">Recommended: choose the same Google Photos year folder as the CSV. TrollMap will match by filename and show large photos without localhost/mixed-content issues.</p>
         <button id="pickPhotoFolderBtn" class="primary small">📂 Select Photo Folder</button>
         <input id="catchPhotoFolderInput" type="file" webkitdirectory directory multiple class="hidden">
+        <label style="display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="filterPhotosByCsv" checked> only import photos listed in CSV/queue (recommended for root Takeout folders)</label>
         <div id="photoFolderStatus" class="muted" style="margin-top:8px">No folder selected.</div>
         <hr style="border:0;border-top:1px solid var(--line);margin:12px 0">
         <h3>🖥 Optional local helper</h3>
@@ -873,10 +873,26 @@ async function importCsvFiles(files) {
 }
 function indexPhotoFolder(files, body) {
   let count = 0;
+  let skippedFilter = 0;
+  const filterActive = document.getElementById('filterPhotosByCsv')?.checked !== false;
+  const q = getQueue();
+  const c = getCatches();
+  const allowedKeys = new Set();
+  if (filterActive && (q.length > 0 || c.length > 0)) {
+    [...q, ...c].forEach(item => {
+      if (item.filename) allowedKeys.add(String(item.filename).trim().toLowerCase());
+      if (item.sourcePath) allowedKeys.add(String(baseName(item.sourcePath)).trim().toLowerCase());
+    });
+  }
+
   const imageRe = /\.(jpe?g|png|webp|gif|bmp)$/i;
   for (const f of files) {
     if (!imageRe.test(f.name)) continue;
     const key = f.name.toLowerCase();
+    if (allowedKeys.size > 0 && !allowedKeys.has(key)) {
+      skippedFilter++;
+      continue;
+    }
     if (localPhotoUrls.has(key)) URL.revokeObjectURL(localPhotoUrls.get(key));
     localPhotoFiles.set(key, f);
     localPhotoUrls.set(key, URL.createObjectURL(f));
@@ -889,7 +905,8 @@ function indexPhotoFolder(files, body) {
     return keys.some(k => localPhotoUrls.has(k));
   }).length;
   if (status) {
-    status.textContent = `Indexed ${count} image(s). Matched ${matched}/${q.length} current queue item(s) by filename.`;
+    const filterMsg = skippedFilter ? ` (filtered out ${skippedFilter.toLocaleString()} non-CSV photos)` : '';
+    status.textContent = `Indexed ${count.toLocaleString()} image(s)${filterMsg}. Matched ${matched}/${q.length} current queue item(s).`;
     status.style.color = matched || !q.length ? 'var(--accent2)' : 'var(--warn)';
   }
   renderCatchSubtab();
