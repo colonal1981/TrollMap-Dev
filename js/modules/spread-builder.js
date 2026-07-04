@@ -24,6 +24,11 @@ export const ROD_PRESETS = [
 export const REEL_PRESETS = [
   'Spinning / 30lb 8-strand braid + 20lb fluoro leader',
   'Spinning / 30lb 8-strand braid directly tied to swivel snap',
+  // Added 2026-07-03: 2oz inline trolling weight rig — 5ft fluoro leader,
+  // swivel snap, any lure (spoon/bucktail/swimbait) tied on. Different
+  // sink/depth behavior than a jighead-weighted A-Rig — see
+  // autoCalculateLead() in smart-plan.js for the lead-length formula.
+  'Spinning / 30lb braid + 2oz inline trolling weight + 5ft fluoro leader + swivel snap',
 ];
 
 export const LURE_PRESETS = [
@@ -35,8 +40,9 @@ export const LURE_PRESETS = [
   'Flicker Minnow 11 – Crankbait',
   'Deep Hit Stick – Crankbait',
   'Bandit 300 Series – Crankbait',
-  'Rapala DT-10 – Crankbait',
-  'Rapala DT-14 – Crankbait',
+  'Rapala DT-10 – Crankbait (shallow/medium, ~10ft)',
+  'Rapala DT-14 – Crankbait (medium/deep, ~14ft)',
+  'Lipless Crankbait 1/2oz',
   '— Swimbaits —',
   'Swimbait 3.8" – Jighead',
   'Swimbait 4.6" – Jighead',
@@ -49,10 +55,14 @@ export const LURE_PRESETS = [
   'Choppo 90 – Topwater',
   'Zara Spook – Topwater',
   'Whopper Plopper 110 – Topwater',
-  '— Jigs —',
+  'Buzzbait 1/2oz – Topwater',
+  '— Popping Cork (troll or cast) —',
+  'Popping Cork',
+  '— Jigs / Reaction —',
   'ChatterBait 3/4oz',
   'Bucktail Jig 1oz',
   'Marabou Jig 3/4oz',
+  'Spinnerbait 1/2oz',
 ];
 
 export const COLOR_PRESETS = [
@@ -186,16 +196,35 @@ function arigDetailRow(rod, i) {
 export function autoCalculateLead(rod, speedMph) {
   const depth = parseFloat(rod.depth);
   const lure = (rod.lure || '').toLowerCase();
+  const reel = (rod.reel || '').toLowerCase();
   if (depth <= 0 || lure.includes('topwater') || lure.includes('plopper') || lure.includes('wake') || lure.includes('buzz') || lure.includes('spook')) {
     return 80;  // professional flat-line topwater setback
   }
   if (isNaN(depth)) return rod.lead || '';
 
   const spd = speedMph || 2.4;
+
+  // Added 2026-07-03: 2oz inline trolling weight rig. This is a fixed known
+  // weight independent of which lure is tied to the swivel snap, so check
+  // the reel/rig field rather than the lure field. Inline weight dive depth
+  // is meaningfully speed-sensitive (unlike the fixed-ratio formulas below,
+  // which don't currently account for speed at all) — faster trolling needs
+  // more line out for the same depth, based on standard 2oz inline weight
+  // trolling charts (~1.5mph baseline, roughly -8% line-out efficiency per
+  // +0.5mph above that).
+  if (reel.includes('inline') && reel.includes('weight')) {
+    const baseMultiplier = 3.6; // ft of line per ft of depth at ~1.5mph
+    const speedPenalty = 1 + Math.max(0, (spd - 1.5)) * 0.16;
+    return Math.round(depth * baseMultiplier * speedPenalty);
+  }
+
   if (lure.includes('light') || lure.includes('1.65')) return Math.round(depth * 4.5);
   if (lure.includes('medium') || lure.includes('2.65')) return Math.round(depth * 3.8);
   if (lure.includes('heavy') || lure.includes('3.5')) return Math.round(depth * 3.2);
   if (lure.includes('spoon') || lure.includes('flutter')) return Math.round(depth * 3.5);
+  if (lure.includes('lipless')) return Math.round(depth * 3.3); // denser/faster-sinking than a standard crank
+  if (lure.includes('spinnerbait')) return Math.round(depth * 4.8); // blade lift keeps it running shallower for a given lead
+  if (lure.includes('popping cork')) return 90; // surface presentation, short flat-line lead regardless of depth input — same logic as topwater
   if (lure.includes('flicker minnow 11') || lure.includes('crankbait')) {
     if (depth <= 12) return Math.round(depth * 3.0);
     if (depth <= 20) return Math.round(depth * 3.8);

@@ -14,6 +14,7 @@ import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { LAKE_DB } from '../data/lakes.js';
 import { loadAccessIndex, nearestLakeByAccessPoint } from '../data/access-index.js';
+import { LURE_PRESETS } from './spread-builder.js';
 
 const DEFAULT_HELPER = 'http://127.0.0.1:8787';
 const QUEUE_DB_KEY = 'catch_import_queue';
@@ -36,7 +37,7 @@ const SPECIES = [
   'Crappie', 'Black Crappie', 'White Crappie', 'Catfish', 'Blue Catfish', 'Channel Catfish', 'Flathead Catfish',
   'Bowfin', 'Chain Pickerel', 'Bluegill', 'Sunfish (Panfish)', 'Redear Sunfish (Shellcracker)',
   'Yellow Perch', 'Gar', 'Longnose Gar', 'Red Drum (Redfish)', 'Speckled Trout (Spotted Seatrout)',
-  'Flounder', 'Other Fish', 'Not Fish'
+  'Flounder', 'American Shad', 'Other Fish', 'Not Fish'
 ];
 
 function parseBool(v) {
@@ -58,6 +59,11 @@ function cleanSpecies(s) {
     'Red Drum (Redfish)': 'Red Drum (Redfish)',
     'Speckled Trout (Spotted Seatrout)': 'Speckled Trout (Spotted Seatrout)',
     'Sunfish': 'Sunfish (Panfish)',
+    // FIX (2026-07-03): Shad was dropped from SPECIES at some point — 2
+    // existing catches logged under the plain 'Shad' string were left
+    // orphaned. Restored as 'American Shad' to match SCDNR's own
+    // terminology; this mapping normalizes any pre-existing rows.
+    'Shad': 'American Shad',
     'No Fish': 'Not Fish',
     'None': ''
   };
@@ -359,6 +365,7 @@ function baseName(p) {
 }
 function imageUrl(item) {
   if (!item) return '';
+  if (item.photoDataUrl) return item.photoDataUrl; // live nightly upload — stored directly, no folder needed
   const keys = [item.filename, baseName(item.sourcePath)].map(x => String(x || '').toLowerCase()).filter(Boolean);
   for (const key of keys) if (localPhotoUrls.has(key)) return localPhotoUrls.get(key);
   // Do NOT fall back to http://localhost from an HTTPS GitHub Pages app; Chrome blocks it as mixed content.
@@ -501,6 +508,13 @@ function renderJournalOnly(body = document.getElementById('catchCenterBody')) {
 
 function renderImport(body) {
   body.innerHTML = `
+    <div class="card" style="margin:0 0 12px 0;border-color:var(--accent)">
+      <h3>🌙 Nightly Catch Upload — live AI ID, no offline script needed</h3>
+      <p class="muted">Drop tonight's photos straight in. For each catch: shoot the <b>fish-on-board photo first</b>, then the <b>lure photo second</b>, within about 90 seconds of each other — TrollMap pairs them by timestamp automatically (swap button in review if it guesses wrong). AI only runs on the fish photo (species + length); the lure photo is never sent to AI — you just pick the lure yourself while looking at it, free.</p>
+      <div class="filebox" id="nightlyDropBox">Drop tonight's photos here or click to choose (select all of them at once)</div>
+      <input id="nightlyPhotoInput" type="file" accept="image/*" multiple class="hidden">
+      <div id="nightlyUploadStatus" class="muted" style="margin-top:8px"></div>
+    </div>
     <div class="grid" style="grid-template-columns:minmax(280px,1fr) minmax(280px,1fr);gap:12px">
       <div class="card" style="margin:0">
         <h3>📥 Import sorter CSV</h3>
@@ -527,6 +541,16 @@ function renderImport(body) {
         <div id="helperStatus" class="muted"></div>
       </div>
     </div>`;
+  const nightlyInput = body.querySelector('#nightlyPhotoInput');
+  const nightlyBox = body.querySelector('#nightlyDropBox');
+  nightlyBox.addEventListener('click', () => nightlyInput.click());
+  nightlyBox.addEventListener('dragover', e => { e.preventDefault(); nightlyBox.classList.add('ok'); });
+  nightlyBox.addEventListener('dragleave', () => nightlyBox.classList.remove('ok'));
+  nightlyBox.addEventListener('drop', e => {
+    e.preventDefault(); nightlyBox.classList.remove('ok');
+    handleNightlyPhotoUpload([...e.dataTransfer.files].filter(f => f.type.startsWith('image/')), body);
+  });
+  nightlyInput.addEventListener('change', e => handleNightlyPhotoUpload([...e.target.files], body));
   const input = body.querySelector('#catchCsvInput');
   const box = body.querySelector('#csvDropBox');
   box.addEventListener('click', () => input.click());
@@ -612,13 +636,21 @@ function speciesOptions(current) {
 function renderQueueDetail(el, q) {
   if (!q) { el.innerHTML = '<p class="muted">Select a queue item.</p>'; return; }
   const img = imageUrl(q);
+  const lureImg = q.lurePhotoDataUrl || '';
   const flags = q.reviewFlags || [];
   el.innerHTML = `
     <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
       <div><h3 style="margin:0 0 4px">${esc(q.filename)}</h3><div class="muted">${esc(q.datetime || '')} · ${esc(q.sourcePath || 'no source path')}</div></div>
       <div class="row"><button id="prevQueueBtn" class="small">←</button><button id="nextQueueBtn" class="small">→</button></div>
     </div>
-    ${img ? `<div style="margin:10px 0;background:#050b12;border:1px solid var(--line);border-radius:10px;padding:8px;text-align:center"><img id="reviewPhoto" src="${esc(img)}" style="max-width:100%;max-height:72vh;border-radius:8px;object-fit:contain" onerror="this.insertAdjacentHTML('afterend','<div class=&quot;warnbox&quot;>Image failed to load from selected folder.</div>');this.style.display='none';"></div>` : `<div class="warnbox">No matching local photo selected. Go to Import CSV → Select Photo Folder for this year. Looking for: ${esc(q.filename || baseName(q.sourcePath) || 'unknown')}</div>`}
+    <div style="display:flex;gap:10px;align-items:flex-start;margin:10px 0">
+      ${img ? `<div style="flex:1;background:#050b12;border:1px solid var(--line);border-radius:10px;padding:8px;text-align:center"><img id="reviewPhoto" src="${esc(img)}" style="max-width:100%;max-height:72vh;border-radius:8px;object-fit:contain" onerror="this.insertAdjacentHTML('afterend','<div class=&quot;warnbox&quot;>Image failed to load from selected folder.</div>');this.style.display='none';"></div>` : `<div class="warnbox" style="flex:1">No matching local photo selected. Go to Import CSV → Select Photo Folder for this year. Looking for: ${esc(q.filename || baseName(q.sourcePath) || 'unknown')}</div>`}
+      ${lureImg ? `<div style="width:160px;flex-shrink:0;background:#050b12;border:1px solid var(--line);border-radius:10px;padding:8px;text-align:center">
+        <div class="muted" style="font-size:11px;margin-bottom:4px">🎣 Lure photo</div>
+        <img id="lurePhoto" src="${esc(lureImg)}" style="max-width:100%;max-height:200px;border-radius:6px;object-fit:contain;cursor:zoom-in">
+        <button id="swapPhotosBtn" class="small" style="width:100%;margin-top:6px" title="If TrollMap guessed fish/lure backwards for this catch, swap them">🔄 Swap fish/lure</button>
+      </div>` : ''}
+    </div>
     <div class="grid" style="grid-template-columns:repeat(4,minmax(120px,1fr));gap:8px">
       <div><label>Verified species</label><select id="rvSpecies">${speciesOptions(q.verified?.species || '')}</select></div>
       <div><label>Verified length in</label><input id="rvLength" value="${esc(q.verified?.length || '')}" placeholder="look at photo"></div>
@@ -632,6 +664,7 @@ function renderQueueDetail(el, q) {
       <div><label>Longitude</label><input id="rvLon" value="${esc(q.lon || '')}"></div>
       <div><label>Has fish</label><select id="rvHasFish"><option value="true" ${q.verified?.hasFish ? 'selected' : ''}>Yes</option><option value="false" ${!q.verified?.hasFish ? 'selected' : ''}>No</option></select></div>
       <div><label>On board</label><select id="rvOnBoard"><option value="true" ${q.verified?.onBoard ? 'selected' : ''}>Yes</option><option value="false" ${!q.verified?.onBoard ? 'selected' : ''}>No</option></select></div>
+      <div><label>Lure ${lureImg ? '' : '(no paired photo — type freely)'}</label>${lureOptions(q.lure || '')}</div>
     </div>
     <div style="margin-top:8px"><label>Notes</label><textarea id="rvNotes" rows="4">${esc(q.ai?.notes || '')}</textarea></div>
     <div class="muted" style="margin-top:6px">AI species: ${esc(q.ai?.species || '')}${q.ai?.inferredSpecies && q.ai.inferredSpecies !== q.ai.species ? ` → ${esc(q.ai.inferredSpecies)}` : ''} · Model: ${esc(q.ai?.model || '')} · Flags: ${esc(flags.join(', ') || 'none')}</div>
@@ -644,11 +677,35 @@ function renderQueueDetail(el, q) {
     </div>`;
   el.querySelector('#saveQueueEditsBtn')?.addEventListener('click', async () => { applyDetailEdits(q); await saveQueue(); renderCatchSubtab(); });
   setTimeout(attachPhotoZoom, 100);
+  el.querySelector('#lurePhoto')?.addEventListener('click', () => zoomPhoto(lureImg));
+  el.querySelector('#swapPhotosBtn')?.addEventListener('click', async () => {
+    // Swap: the "fish" photo becomes the lure reference, and vice versa.
+    // AI results/species stay attached to whichever slot is now the fish
+    // photo is ambiguous after a swap (we never re-ran AI on the other
+    // photo), so clear AI fields and flag for manual re-entry rather than
+    // showing stale species/length that may not match the new fish photo.
+    const oldFish = q.photoDataUrl, oldFishFilename = q.filename;
+    q.photoDataUrl = q.lurePhotoDataUrl;
+    q.filename = q.lureFilename || q.filename;
+    q.lurePhotoDataUrl = oldFish;
+    q.lureFilename = oldFishFilename;
+    q.ai = { species: '', length: '', confidence: '', notes: 'Swapped fish/lure — AI was run on the other photo, re-verify species/length manually.', model: '' };
+    if (!q.reviewFlags) q.reviewFlags = [];
+    if (!q.reviewFlags.includes('photos_swapped')) q.reviewFlags.push('photos_swapped');
+    await saveQueue();
+    renderCatchSubtab();
+  });
   el.querySelector('#approveCatchBtn')?.addEventListener('click', async () => { applyDetailEdits(q); await approveQueueItem(q); moveNext(); renderCatchSubtab(); });
   el.querySelector('#rejectCatchBtn')?.addEventListener('click', async () => { q.status = 'rejected'; q.updatedAt = new Date().toISOString(); await saveQueue(); moveNext(); renderCatchSubtab(); });
   el.querySelector('#markPendingBtn')?.addEventListener('click', async () => { q.status = 'pending'; q.updatedAt = new Date().toISOString(); await saveQueue(); renderCatchSubtab(); });
   el.querySelector('#prevQueueBtn')?.addEventListener('click', () => { moveRelative(-1); renderCatchSubtab(); });
   el.querySelector('#nextQueueBtn')?.addEventListener('click', () => { moveRelative(1); renderCatchSubtab(); });
+}
+function lureOptions(current) {
+  // Free-text input backed by a datalist so any lure preset can be picked
+  // quickly, but a lure that isn't in the catalog can still be typed.
+  const options = LURE_PRESETS.filter(l => !l.startsWith('—')).map(l => `<option value="${esc(l)}">`).join('');
+  return `<input id="rvLure" list="rvLureList" value="${esc(current)}" placeholder="type or pick lure"><datalist id="rvLureList">${options}</datalist>`;
 }
 function applyDetailEdits(q) {
   q.verified = q.verified || {};
@@ -663,6 +720,7 @@ function applyDetailEdits(q) {
   q.depth = document.getElementById('rvDepth')?.value || '';
   q.lat = document.getElementById('rvLat')?.value || '';
   q.lon = document.getElementById('rvLon')?.value || '';
+  q.lure = document.getElementById('rvLure')?.value || '';
   q.ai.notes = document.getElementById('rvNotes')?.value || '';
   q.verified.reviewed = true;
   q.updatedAt = new Date().toISOString();
@@ -687,7 +745,11 @@ async function approveQueueItem(q) {
     species: q.verified.species || q.ai?.inferredSpecies || q.ai?.species || '',
     length: q.verified.length || q.ai?.length || '',
     depth: q.depth || '',
-    lure: '', lead: '',
+    // FIX (2026-07-03): this was hardcoded to '' unconditionally, silently
+    // discarding any lure tag on every single approval — the root cause of
+    // the lure field always being blank on approved catches, going back to
+    // whenever this line was first written.
+    lure: q.lure || '', lead: '',
     time: displayTime(q.time),
     date: q.date || '',
     lake: q.lake || '',
@@ -704,8 +766,14 @@ async function approveQueueItem(q) {
       length: q.verified.length ? 'human-visual' : 'ai-unverified',
       onBoard: q.verified.onBoard,
       sourceModel: q.ai?.model || '',
-      approvedAt: new Date().toISOString()
-    }
+      approvedAt: new Date().toISOString(),
+      // v2 extended
+      length_source: q.ai?.length_source || '',
+      board_detected: q.ai?.board_detected || false,
+      data_quality: q.ai?.data_quality || null,
+    },
+    data_generation: q.importedFrom === 'nightly_upload' ? 'gen2_instrumented' : 'gen1_historical',
+    trollmap_tags: q.ai?.trollmap_tags || [],
   };
   if (existingIx >= 0) catches[existingIx] = entry; else catches.unshift(entry);
   q.status = 'imported'; q.updatedAt = new Date().toISOString();
@@ -896,6 +964,210 @@ async function addManualCatch() {
 }
 
 // Legacy buttons may exist before render override; wire defensively.
+// ── Nightly Catch Upload — live multi-photo intake with fish/lure pairing ────
+// Convention: shoot the fish-on-board photo FIRST, then the lure photo
+// SECOND, within PAIR_WINDOW_S of each other. Photos are grouped by EXIF
+// timestamp; earlier photo in a pair = fish (gets sent to AI), later = lure
+// (never sent to AI — user tags it manually in review, since that's free
+// and just as fast as trying to get AI to guess correctly). A cluster of
+// exactly 2 is treated as a pair; anything else (1, or 3+) is treated as
+// individual unpaired fish photos rather than guessing at a grouping.
+const PAIR_WINDOW_S = 90;
+
+// Load exif-js ourselves — don't depend on catch_importer.js having already
+// injected it, since module load order isn't guaranteed.
+if (!document.querySelector('script[src*="exif-js"]')) {
+  const exifScript = document.createElement('script');
+  exifScript.src = 'https://cdn.jsdelivr.net/npm/exif-js';
+  document.head.appendChild(exifScript);
+}
+
+function ensureExifLoaded() {
+  return new Promise((resolve) => {
+    if (window.EXIF) return resolve();
+    const check = setInterval(() => {
+      if (window.EXIF) { clearInterval(check); resolve(); }
+    }, 200);
+    setTimeout(() => { clearInterval(check); resolve(); }, 5000); // give up after 5s, proceed without EXIF
+  });
+}
+
+function extractExif(file) {
+  return new Promise((resolve) => {
+    if (!window.EXIF) return resolve({ file, timestamp: null, isoDatetime: null, lat: null, lon: null });
+    window.EXIF.getData(file, function () {
+      let lat = null, lon = null;
+      const rawLat = window.EXIF.getTag(this, 'GPSLatitude');
+      const rawLon = window.EXIF.getTag(this, 'GPSLongitude');
+      const latRef = window.EXIF.getTag(this, 'GPSLatitudeRef');
+      const lonRef = window.EXIF.getTag(this, 'GPSLongitudeRef');
+      if (rawLat && rawLon) {
+        lat = rawLat[0] + rawLat[1] / 60 + rawLat[2] / 3600;
+        lon = rawLon[0] + rawLon[1] / 60 + rawLon[2] / 3600;
+        if (latRef === 'S') lat = -lat;
+        if (lonRef === 'W') lon = -lon;
+      }
+      const dateStr = window.EXIF.getTag(this, 'DateTimeOriginal'); // "YYYY:MM:DD HH:MM:SS"
+      let isoDatetime = null, timestamp = null;
+      if (dateStr) {
+        const parts = dateStr.split(' ');
+        if (parts.length === 2) {
+          isoDatetime = `${parts[0].replace(/:/g, '-')}T${parts[1]}`;
+          timestamp = new Date(isoDatetime).getTime() / 1000;
+        }
+      }
+      if (timestamp == null) timestamp = file.lastModified / 1000; // fallback: file mtime
+      resolve({ file, timestamp, isoDatetime, lat, lon });
+    });
+  });
+}
+
+// Group photos into clusters by timestamp proximity. Returns array of
+// arrays (each inner array is a cluster of photos taken within
+// PAIR_WINDOW_S of the previous one).
+function clusterByTimestamp(items) {
+  const sorted = [...items].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+  const clusters = [];
+  for (const item of sorted) {
+    const last = clusters[clusters.length - 1];
+    if (last && item.timestamp != null && last[last.length - 1].timestamp != null
+        && (item.timestamp - last[last.length - 1].timestamp) <= PAIR_WINDOW_S) {
+      last.push(item);
+    } else {
+      clusters.push([item]);
+    }
+  }
+  return clusters;
+}
+
+function fileToDataUrl(file, maxPx = 1024) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(''); };
+    img.src = url;
+  });
+}
+
+async function handleNightlyPhotoUpload(files, body) {
+  const status = body?.querySelector('#nightlyUploadStatus') || document.getElementById('nightlyUploadStatus');
+  if (!files.length) return;
+  if (status) status.textContent = `Reading ${files.length} photo(s)...`;
+  await ensureExifLoaded();
+
+  const withExif = await Promise.all(files.map(extractExif));
+  const clusters = clusterByTimestamp(withExif);
+
+  let created = 0, aiCalled = 0, aiFailed = 0;
+  const queue = getQueue();
+
+  for (let i = 0; i < clusters.length; i++) {
+    const cluster = clusters[i];
+    if (status) status.textContent = `Processing catch ${i + 1} of ${clusters.length}...`;
+
+    // Exactly 2 in a cluster = fish+lure pair (earlier = fish, later = lure).
+    // Anything else = treat each photo as its own unpaired fish photo rather
+    // than guessing at a grouping.
+    const isPair = cluster.length === 2;
+    const fishItems = isPair ? [cluster[0]] : cluster;
+    const lureItem = isPair ? cluster[1] : null;
+
+    for (const fishItem of fishItems) {
+      const [photoDataUrl, lureDataUrl] = await Promise.all([
+        fileToDataUrl(fishItem.file, 1024),
+        lureItem ? fileToDataUrl(lureItem.file, 640) : Promise.resolve(''),
+      ]);
+
+      let ai = null;
+      try {
+        ai = await identifyFishWithGemini(fishItem.file, {
+          lake: document.getElementById('planLake')?.value || '',
+          date: dt.split('T')[0],
+          lat: fishItem.lat,
+          lon: fishItem.lon,
+        });
+        aiCalled++;
+      } catch (e) {
+        aiFailed++;
+        console.warn('[catch-journal] Nightly AI ID failed:', e.message);
+      }
+
+      const dt = fishItem.isoDatetime || new Date(fishItem.timestamp * 1000).toISOString();
+      const { date, time } = splitDateTime(dt.replace('T', ' '));
+
+      const item = {
+        id: `nightly_${fishItem.timestamp}_${Math.random().toString(36).slice(2, 8)}`,
+        filename: fishItem.file.name,
+        sourcePath: '',
+        datetime: dt, date, time,
+        lat: fishItem.lat ?? '', lon: fishItem.lon ?? '',
+        lake: '', depth: '',
+        photoDataUrl,
+        lurePhotoDataUrl: lureDataUrl,
+        lureFilename: lureItem?.file?.name || '',
+        lure: '', // filled in manually during review — never sent to AI
+        // NOTE: /identify-catch's actual response shape is
+        // {species, lengthInches, confidence, notes} — no has_fish or
+        // on_bump_board fields exist. This endpoint's species classification
+        // is also hard-restricted to Striped Bass/Largemouth/Smallmouth/
+        // Crappie/Catfish/White Bass-Hybrid only; other species (bowfin,
+        // bream, gar, pickerel, redfish, trout, flounder, shad) will come
+        // back misclassified into one of those 6 until that prompt is
+        // widened — always human-review species on those catches.
+        ai: ai ? {
+          species: ai.species || '', length: ai.lengthInches ?? '', confidence: ai.confidence || '',
+          notes: ai.notes || '', model: 'Gemini 2.5-flash v13 (SC trolling taxonomy)',
+          inferredSpecies: ai.species || '',
+          // v2 extended fields — stored on the item, displayed in review, ignored by old code safely
+          has_fish: ai.has_fish ?? true,
+          on_bump_board: ai.on_bump_board ?? true,
+          length_source: ai.length_source || '',
+          board_detected: !!ai.board_detected,
+          board_type: ai.board_type || '',
+          measurement_confidence: ai.measurement_confidence || ai.confidence || '',
+          species_confidence: ai.species_confidence ?? null,
+          alt_species: ai.alt_species || [],
+          id_features: ai.id_features || [],
+          data_quality: ai.data_quality || null,
+          trollmap_tags: ai.trollmap_tags || [],
+        } : { species: '', length: '', confidence: '', notes: 'AI call failed — enter manually.', model: '' },
+        verified: {
+          species: ai?.species || '', length: ai?.lengthInches ?? '',
+          // has_fish/on_bump_board don't exist in this endpoint's response —
+          // default true, since a nightly-uploaded fish photo is a catch by
+          // definition of this workflow; correct manually if wrong.
+          hasFish: true, onBoard: true,
+          reviewed: false,
+        },
+        weather: null,
+        reviewFlags: ai === null ? ['ai_call_failed'] : [],
+        status: 'pending',
+        importedFrom: 'nightly_upload',
+        updatedAt: new Date().toISOString(),
+      };
+      queue.unshift(item);
+      created++;
+    }
+  }
+
+  setQueue(queue);
+  await saveQueue();
+  if (status) {
+    status.textContent = `✓ Added ${created} catch(es) to review queue. AI ID ran on ${aiCalled}${aiFailed ? ` (${aiFailed} failed — check flagged items)` : ''}. Review below.`;
+  }
+  renderCatchSubtab();
+}
+
 // ── Gemini fish identification (for single photo drop) ───────────────────────
 async function resizeForGemini(imgFile, maxPx = 1344) {
   return new Promise((resolve) => {
@@ -916,18 +1188,73 @@ async function resizeForGemini(imgFile, maxPx = 1344) {
   });
 }
 
-async function identifyFishWithGemini(imgFile) {
+// ── helper: blob → base64 ─────────────────────────────────────────────────────
+async function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1] || '');
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
+}
+
+// Context-aware Gemini ID — sends lake/date/GPS/species_hint to /identify-catch-v2.
+// Falls back to the legacy binary endpoint if v2 fails.
+async function identifyFishWithGemini(imgFile, context = {}) {
+  const WORKER_URL = (typeof CF_WORKER_URL !== 'undefined' ? CF_WORKER_URL : (window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev'));
   try {
     const resized = await resizeForGemini(imgFile, 1344);
-    const resp = await fetch('https://trollmap-worker.colonal1981.workers.dev/identify-catch', {
+    const b64 = await blobToBase64(resized);
+
+    const lakeEl = document.getElementById('planLake');
+    const ctx = {
+      lake: context.lake || lakeEl?.value || '',
+      date: context.date || new Date().toISOString().slice(0, 10),
+      lat: context.lat ?? null,
+      lon: context.lon ?? null,
+      species_hint: context.species_hint || SPECIES.filter(s => s && s !== 'Not Fish'),
+      trolling_session: true,
+      assume_board: true, // nightly upload workflow is always board photos
+      ...context
+    };
+
+    // Try v2 JSON endpoint first
+    const resp = await fetch(`${WORKER_URL}/identify-catch-v2`, {
       method: 'POST',
-      headers: { 'Content-Type': 'image/jpeg', 'X-Image-Type': 'image/jpeg' },
-      body: resized,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image_base64: b64, mime_type: 'image/jpeg', context: ctx })
     });
-    if (!resp.ok) throw new Error(`Worker ${resp.status}`);
-    const data = await resp.json();
-    if (!data.success) throw new Error(data.error || 'Unknown error');
-    return data.analysis;
+
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.success && data.analysis) {
+        const a = data.analysis;
+        // Ensure back-compat fields exist
+        a.species = a.species || 'Other Fish';
+        a.lengthInches = a.lengthInches ?? a.length_inches ?? null;
+        a.confidence = a.confidence || (a.species_confidence >= 0.85 ? 'high' : a.species_confidence >= 0.6 ? 'medium' : 'low');
+        return a;
+      }
+    }
+
+    // Fallback → legacy binary endpoint
+    const resp2 = await fetch(`${WORKER_URL}/identify-catch`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'image/jpeg', 'X-Image-Type': 'image/jpeg',
+        'X-Lake': ctx.lake || '', 'X-Date': ctx.date || '',
+        'X-Lat': ctx.lat != null ? String(ctx.lat) : '',
+        'X-Lon': ctx.lon != null ? String(ctx.lon) : '',
+        'X-Species-Hint': (ctx.species_hint || []).join(','),
+        'X-Assume-Board': 'true'
+      },
+      body: resized
+    });
+    if (!resp2.ok) throw new Error(`Worker ${resp2.status}`);
+    const data2 = await resp2.json();
+    if (!data2.success) throw new Error(data2.error || 'Unknown');
+    return data2.analysis;
+
   } catch (e) {
     console.warn('[catch-journal] Gemini ID failed:', e.message);
     return null;

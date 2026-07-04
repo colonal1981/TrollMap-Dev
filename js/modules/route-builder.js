@@ -465,6 +465,15 @@ function generateContourRoutes(cfg) {
   });
   if (!inRange.length) return [];
 
+  // DIAGNOSTIC (2026-07-03): added after three different requested depth
+  // bands (e.g. 8-16ft, 14-22ft, 9-17ft) produced byte-identical output
+  // tracks. This logs the actual distinct depth values found for THIS
+  // band's filter, so we can tell whether that's because the contour data
+  // in the clip area is genuinely dominated by one depth value that
+  // satisfies all three overlapping ranges, or something else is stale.
+  const distinctDepths = [...new Set(inRange.map(f => f.properties?.depth_ft))].sort((a, b) => a - b);
+  console.log(`[route-builder] depth band ${depthMin}-${depthMax}ft: ${inRange.length} features, distinct depths found: [${distinctDepths.join(', ')}]`);
+
   // Stitch fragmented same-depth contours into long continuous spines first, then
   // keep those long enough to be useful. (On Monticello raw fragments are ~120ft;
   // stitched chains reach 1500-2000ft.)
@@ -485,6 +494,13 @@ function generateContourRoutes(cfg) {
     if (chosen.length >= lanes) break;
   }
   if (!chosen.length) return [];
+
+  // DIAGNOSTIC (2026-07-03): part of the same investigation above — logs
+  // which physical spine(s) actually got selected after stitching/dedup,
+  // so we can tell if different depth bands are landing on the exact same
+  // contour line (which would explain identical output even with a
+  // correctly-varying depth filter upstream).
+  console.log(`[route-builder] depth band ${depthMin}-${depthMax}ft: chose ${chosen.length} spine(s) — ${chosen.map(c => `depth=${c.depth}ft@[${c.mid[1].toFixed(4)},${c.mid[0].toFixed(4)}] len=${Math.round(c.len)}ft`).join(' | ')}`);
 
   // ── TRUE band width (across the depth gradient) ──────────────────────────────
   // The amplitude must carry you from the shallow edge of the band (depthMin) to

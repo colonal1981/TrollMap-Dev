@@ -35,8 +35,6 @@ import { setBanner } from '../core/map-init.js';
         way["man_made"="pier"];
         way["waterway"~"river|stream|canal"];
         way["historic"~"ruins|bridge"];
-        relation["waterway"~"river|stream|canal"];
-        relation["historic"~"ruins|bridge"];
       );
       out body;
       >;
@@ -77,7 +75,7 @@ import { setBanner } from '../core/map-init.js';
           if (props.man_made === 'pier') color = '#03A9F4';
           if (props.historic) color = '#E91E63';
           if (props.waterway) color = '#FFFFFF';
-          return { color, weight: 3, opacity: 0.8 };
+          return { color, weight: 3, opacity: 0.8, fillOpacity: props.waterway ? 0 : 0.1 };
         },
         pointToLayer(feature, latlng) {
           const props = feature.properties || {};
