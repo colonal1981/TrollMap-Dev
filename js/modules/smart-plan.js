@@ -269,7 +269,109 @@ function computeRangeMiles(speedMph) {
   return (BATTERY_AH_DEFAULT / MOTOR_AMP_AVG * spd) / 2;
 }
 
-// ── Phase boundary computation ────────────────────────────────────────────────
+// ── Structure context for Smart Plan ─────────────────────────────────────────
+// Pulls fish attractors from the worker (live DNR data) and pinned structures
+// from custom-vectors.js (My Structures layer), filters both to within the
+// trip's range clip, and returns a structured summary for the rationale and
+// Groq audit prompt.
+async function gatherStructureContext(lakeName, rampLat, rampLon, rangeMiles) {
+  const WORKER_URL = (typeof CF_WORKER_URL !== 'undefined' ? CF_WORKER_URL : window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev');
+
+  // Haversine distance in miles
+  function distMi(lat1, lon1, lat2, lon2) {
+    const R = 3958.8;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
+    return R * 2 * Math.asin(Math.sqrt(a));
+  }
+
+  const inRange = (lat, lon) => {
+    if (!rampLat || !rampLon) return true; // no clip, include all
+    return distMi(rampLat, rampLon, lat, lon) <= rangeMiles;
+  };
+
+  const cleanLake = String(lakeName || '').toLowerCase()
+    .replace(/\([^)]*\)/g, ' ').replace(/,.*$/, '').trim();
+
+  // ── 1. Fish attractors from DNR API via worker ──
+  const attractors = [];
+  try {
+    const resp = await fetch(`${WORKER_URL}/attractors?state=SC`, { cache: 'no-store' });
+    if (resp.ok) {
+      const data = await resp.json();
+      // Match lake name loosely against waterbody keys
+      const wbs = data.waterbodies || {};
+      const matchKey = Object.keys(wbs).find(k =>
+        k.toLowerCase().includes(cleanLake.replace('lake ', '')) ||
+        cleanLake.includes(k.toLowerCase().replace('lake ', ''))
+      );
+      if (matchKey) {
+        (wbs[matchKey] || []).forEach(a => {
+          if (inRange(a.lat, a.lon)) {
+            attractors.push({ name: a.name, type: a.type, lat: a.lat, lon: a.lon, source: 'DNR' });
+          }
+        });
+      }
+    }
+  } catch (_) {}
+
+  // ── 2. Pinned structures from My Structures layer ──
+  const pinned = [];
+  if (typeof window.getMyStructures === 'function') {
+    window.getMyStructures().forEach(s => {
+      if (inRange(s.lat, s.lon)) pinned.push(s);
+    });
+  }
+
+  return { attractors, pinned };
+}
+
+// Format structure context for rationale text
+function buildStructureContextText(ctx) {
+  if (!ctx) return '';
+  const lines = ['', '── Structure Intel ──'];
+
+  if (ctx.attractors?.length) {
+    lines.push(`Fish Attractors within range (DNR): ${ctx.attractors.length}`);
+    // Group by type
+    const byType = {};
+    ctx.attractors.forEach(a => {
+      const t = a.type || 'Unknown';
+      if (!byType[t]) byType[t] = 0;
+      byType[t]++;
+    });
+    Object.entries(byType).forEach(([t, n]) => lines.push(`  · ${n}x ${t}`));
+    lines.push(`  → Work these in Phase 2 (transition) for crappie/bass holding on structure`);
+  } else {
+    lines.push(`Fish Attractors: none found within range for this lake`);
+  }
+
+  if (ctx.pinned?.length) {
+    lines.push(`Pinned Structures: ${ctx.pinned.length}`);
+    const typeGroups = {};
+    ctx.pinned.forEach(s => {
+      const t = s.type || 'unknown';
+      if (!typeGroups[t]) typeGroups[t] = [];
+      typeGroups[t].push(s.name);
+    });
+    Object.entries(typeGroups).forEach(([t, names]) => {
+      lines.push(`  · ${names.length}x ${t}: ${names.slice(0, 3).join(', ')}${names.length > 3 ? '…' : ''}`);
+    });
+
+    // Phase-specific structure guidance
+    const docks = ctx.pinned.filter(s => s.type === 'dock');
+    const brushPiles = ctx.pinned.filter(s => s.type === 'brush_pile');
+    const points = ctx.pinned.filter(s => s.type === 'point');
+    const dropoffs = ctx.pinned.filter(s => s.type === 'drop_off');
+    if (docks.length) lines.push(`  → Docks: prime Ph1 dawn bass ambush, Ph2 crappie/bass cover`);
+    if (brushPiles.length) lines.push(`  → Brush piles: Ph2-Ph3 crappie concentration zones — slow down through these`);
+    if (points.length) lines.push(`  → Points: route should swing across these in Ph1 dawn pass`);
+    if (dropoffs.length) lines.push(`  → Drop-offs: Ph3 deep transition edges, prime striper holding`);
+  }
+
+  return lines.join('\n');
+}
 function computePhases(launchTimeStr, returnTimeStr, dateStr, lakeName) {
   const center = getLakeCenter(lakeName);
   const sunriseH = computeSunrise(center.lat, center.lon, dateStr);
@@ -880,15 +982,15 @@ export async function runSmartPlan() {
   applyStoredSmartPlanDepth();
 
   // Build rationale
-  // FIX (2026-07-03): this was hardcoded to 0 unconditionally, so the
-  // rationale header always said "No contour data loaded" even when routes
-  // had genuinely just been generated above. Now reflects the real count,
-  // and separately reports how many phases were static-technique (no route
-  // expected) so the summary line is accurate either way.
   const generatedRoutes = (window._smartPlanPhaseRoutes || []).filter(r => !r.staticTechnique).length;
   const staticPhaseCount = (window._smartPlanPhaseRoutes || []).filter(r => r.staticTechnique).length;
   const totalRoutes = generatedRoutes;
+
+  // Gather structure context (attractors + pinned structures within range)
+  const structureCtx = await gatherStructureContext(lakeName, rampLat, rampLon, rangeMiles);
+
   let rationale = buildRationaleText(sp, lakeName, season, phases, phaseRecs, phaseInfo, totalRoutes, staticPhaseCount);
+  rationale += buildStructureContextText(structureCtx);
 
   // Ramp evaluation — check if selected ramp is optimal
   const weatherStr = document.getElementById('planWeather')?.value || '';
@@ -923,6 +1025,12 @@ export async function runSmartPlan() {
       weather: document.getElementById('planWeather')?.value || '',
       tackle: document.getElementById('planTackle')?.value || '',
       safety: document.getElementById('planSafety')?.value || '',
+      structureIntel: {
+        attractorsInRange: structureCtx.attractors.length,
+        attractorTypes: [...new Set(structureCtx.attractors.map(a => a.type))].slice(0, 5),
+        pinnedStructures: structureCtx.pinned.length,
+        pinnedTypes: [...new Set(structureCtx.pinned.map(s => s.type))],
+      },
     }
   };
 
