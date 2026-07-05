@@ -273,7 +273,8 @@ import { setBanner } from '../core/map-init.js';
           <b>${icon.emoji} ${icon.label}</b><br>
           ${f.description || ''}<br>
           <i>Confidence: ${conf}%</i><br>
-          <span style="color:#888;font-size:11px">${f.fishing_notes || ''}</span>
+          <span style="color:#888;font-size:11px">${f.fishing_notes || ''}</span><br>
+          <span style="color:#aaa;font-size:10px;font-family:monospace">grid: ${f.col}${f.row} ${f.position || ''} → ${f.lat?.toFixed(5)}, ${f.lon?.toFixed(5)}</span>
         `);
         return marker;
       });
