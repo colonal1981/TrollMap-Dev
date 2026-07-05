@@ -138,10 +138,10 @@ import { setBanner } from '../core/map-init.js';
     const cosLat = Math.cos((bounds.getCenter().lat) * Math.PI / 180);
     const geoAspect = (lonRange * cosLat) / latRange; // geographic width:height ratio
 
-    // Fixed square image — gives Gemini consistently large, readable grid cells
-    // regardless of viewport aspect ratio. 600x600 → 75x75px per cell at 8x8 grid.
+    // Match geographic aspect ratio so grid cells map correctly to lat/lon,
+    // but enforce a minimum height so row labels are never cramped.
     const W = 600;
-    const H = 600;
+    const H = Math.max(400, Math.round(W / geoAspect));
     console.log(`[structure] Geographic aspect ratio: ${geoAspect.toFixed(3)}, requesting ${W}x${H}`);
 
     const bbox = [
