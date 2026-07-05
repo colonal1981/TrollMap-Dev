@@ -43,8 +43,8 @@ import { setBanner } from '../core/map-init.js';
 
   // How fine the grid is. 16x12 on an 800px-wide image → ~50x50px per cell,
   // which is plenty for Gemini to read the labels clearly.
-  const GRID_COLS = 16; // A..P
-  const GRID_ROWS = 12; // 1..12
+  const GRID_COLS = 12; // A..L
+  const GRID_ROWS = 9;  // 1..9
 
   function colLetter(i) {
     let s = '';
@@ -139,7 +139,7 @@ import { setBanner } from '../core/map-init.js';
     const geoAspect = (lonRange * cosLat) / latRange; // geographic width:height ratio
 
     // Fix width at 800, calculate height to match geographic ratio
-    const W = 800;
+    const W = 600;
     const H = Math.round(W / geoAspect);
     console.log(`[structure] Geographic aspect ratio: ${geoAspect.toFixed(3)}, requesting ${W}x${H}`);
 
