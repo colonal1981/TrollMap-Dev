@@ -959,7 +959,18 @@ export async function runSmartPlan() {
       ].filter(Boolean).join('\n');
 
       if (outEl) outEl.value = rationale + auditBlock;
-      if (document.getElementById('catchCenterBody')) renderCatchSubtab?.();
+      // Catch Center auto-refresh (if the module is loaded)
+      // was: renderCatchSubtab?.()  — this throws ReferenceError if renderCatchSubtab
+      // is not declared at all (optional chaining only guards null/undefined, not
+      // undeclared identifiers). Guard with typeof instead.
+      try {
+        const catchEl = document.getElementById('catchCenterBody');
+        if (catchEl && typeof renderCatchSubtab === 'function') {
+          renderCatchSubtab();
+        }
+      } catch (uiErr) {
+        console.warn('[smart-plan] catch subtab refresh failed:', uiErr);
+      }
     })
     .catch(e => {
       if (outEl) outEl.value = rationale + `\n\n⚠ Groq audit failed: ${e.message}`;
