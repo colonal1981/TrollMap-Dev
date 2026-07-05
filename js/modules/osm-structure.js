@@ -43,8 +43,8 @@ import { setBanner } from '../core/map-init.js';
 
   // How fine the grid is. 16x12 on an 800px-wide image → ~50x50px per cell,
   // which is plenty for Gemini to read the labels clearly.
-  const GRID_COLS = 12; // A..L
-  const GRID_ROWS = 9;  // 1..9
+  const GRID_COLS = 8; // A..H  — fewer, larger cells = easier for Gemini to read
+  const GRID_ROWS = 8; // 1..8
 
   function colLetter(i) {
     let s = '';
@@ -92,7 +92,7 @@ import { setBanner } from '../core/map-init.js';
 
     // Column letters along the top, row numbers along the left. Dark backing
     // box behind each label so it reads over bright imagery.
-    ctx.font = 'bold 13px monospace';
+    ctx.font = 'bold 16px monospace';
     ctx.textBaseline = 'top';
     for (let c = 0; c < GRID_COLS; c++) {
       const label = colLetter(c);
@@ -138,9 +138,10 @@ import { setBanner } from '../core/map-init.js';
     const cosLat = Math.cos((bounds.getCenter().lat) * Math.PI / 180);
     const geoAspect = (lonRange * cosLat) / latRange; // geographic width:height ratio
 
-    // Fix width at 800, calculate height to match geographic ratio
+    // Fixed square image — gives Gemini consistently large, readable grid cells
+    // regardless of viewport aspect ratio. 600x600 → 75x75px per cell at 8x8 grid.
     const W = 600;
-    const H = Math.round(W / geoAspect);
+    const H = 600;
     console.log(`[structure] Geographic aspect ratio: ${geoAspect.toFixed(3)}, requesting ${W}x${H}`);
 
     const bbox = [
