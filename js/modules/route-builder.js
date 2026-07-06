@@ -59,6 +59,14 @@ function genStraight(p1, p2, cfg) {
 }
 
 function genSine(p1, p2, cfg) {
+  // Minimum turn radius for kayak trolling with A-rigs: ~40ft arc radius.
+  // A sine wave with amplitude A and half-period H has min radius ≈ H²/(π²·A).
+  // Enforce: wave >= π * sqrt(amplitude * MIN_RADIUS) so turns stay fishable.
+  const MIN_TURN_RADIUS_FT = 35;
+  if (cfg.amplitude > 0 && cfg.wave > 0) {
+    const minWave = Math.PI * Math.sqrt(cfg.amplitude * MIN_TURN_RADIUS_FT);
+    if (cfg.wave < minWave) cfg = { ...cfg, wave: Math.ceil(minWave) };
+  }
   // Direct port of the original Kayak Troll Generator genSine — the version that
   // actually worked. Adds: configurable points-per-wave, dynamic amplitude (fatter
   // in the middle of each leg, softer at the ends), asymmetric depth bias (push
@@ -634,16 +642,34 @@ function generateContourRoutes(cfg) {
     pts = clampToClip(pts);
     if (pts.length < 2) continue;
 
-    const MAX_PTS_PER_TRACK = 3000;
-    if (pts.length > MAX_PTS_PER_TRACK) {
-      pts = pts.slice(0, MAX_PTS_PER_TRACK);
+    // ── Max-gap split: if two consecutive points are more than MAX_GAP_FT apart
+    // it means the route jumped across a gap (dry land, contour break, etc).
+    // Split into separate track segments rather than drawing a line across land.
+    const MAX_GAP_FT = 400;
+    const segments = [];
+    let seg = [pts[0]];
+    for (let k = 1; k < pts.length; k++) {
+      const [gapFt] = distBearing(pts[k-1][0], pts[k-1][1], pts[k][0], pts[k][1]);
+      if (gapFt > MAX_GAP_FT) {
+        if (seg.length >= 2) segments.push(seg);
+        seg = [pts[k]];
+      } else {
+        seg.push(pts[k]);
+      }
     }
+    if (seg.length >= 2) segments.push(seg);
 
-    tracks.push({
-      name: lanes > 1 ? `Sweep_${depthMin}-${depthMax}ft_L${i+1}` : `Sweep_${depthMin}-${depthMax}ft`,
-      pts,
-      depth: (depthMin + depthMax) / 2,
-    });
+    const MAX_PTS_PER_TRACK = 3000;
+    const baseName = lanes > 1 ? `Sweep_${depthMin}-${depthMax}ft_L${i+1}` : `Sweep_${depthMin}-${depthMax}ft`;
+    for (let si = 0; si < segments.length; si++) {
+      let segPts = segments[si];
+      if (segPts.length > MAX_PTS_PER_TRACK) segPts = segPts.slice(0, MAX_PTS_PER_TRACK);
+      tracks.push({
+        name: segments.length > 1 ? `${baseName}_S${si+1}` : baseName,
+        pts: segPts,
+        depth: (depthMin + depthMax) / 2,
+      });
+    }
   }
   return tracks;
 }
@@ -715,7 +741,17 @@ function generateFollowRoutes(cfg) {
     allPts = clampToClip(allPts);
     // After trimming, only keep routes that are still a useful length.
     if (allPts.length > 1 && trackLengthFt(allPts) >= MIN_LEN_FT * 0.6) {
-      tracks.push({ name: `Follow_${depth}ft`, pts: allPts, depth });
+      // Max-gap split: don't draw lines across land gaps
+      const MAX_GAP_FT = 400;
+      let seg = [allPts[0]];
+      for (let k = 1; k < allPts.length; k++) {
+        const [gapFt] = distBearing(allPts[k-1][0], allPts[k-1][1], allPts[k][0], allPts[k][1]);
+        if (gapFt > MAX_GAP_FT) {
+          if (seg.length >= 2) tracks.push({ name: `Follow_${depth}ft`, pts: seg, depth });
+          seg = [allPts[k]];
+        } else { seg.push(allPts[k]); }
+      }
+      if (seg.length >= 2) tracks.push({ name: `Follow_${depth}ft`, pts: seg, depth });
     }
   }
   return tracks;
