@@ -106,32 +106,32 @@ export const TRAILER_SIZES = [
  * weightPerFoot: approximate ft of depth per oz of inline weight added
  */
 export const LURE_DIVE_DEPTHS = {
-  // A-Rigs — depth controlled entirely by lead length + jighead weight
-  'A-Rig Light (~1.65oz) – 3.8" Swimbait':  { minDive: 2,  maxDive: 40, needsWeight: false },
-  'A-Rig Medium (~2.65oz) – 4.6" Swimbait': { minDive: 2,  maxDive: 45, needsWeight: false },
-  'A-Rig Heavy (~3.5oz) – 5" Swimbait':     { minDive: 2,  maxDive: 50, needsWeight: false },
-  // Crankbaits — fixed dive curve, lead shortens but doesn't shorten below minDive
+  // A-Rigs — Tactically, these are for suspended schools; rarely useful above 10ft
+  'A-Rig Light (~1.65oz) – 3.8" Swimbait':  { minDive: 10, maxDive: 40, needsWeight: false },
+  'A-Rig Medium (~2.65oz) – 4.6" Swimbait': { minDive: 10, maxDive: 45, needsWeight: false },
+  'A-Rig Heavy (~3.5oz) – 5" Swimbait':     { minDive: 12, maxDive: 50, needsWeight: false },
+  // Crankbaits
   'Flicker Minnow 11 – Crankbait':           { minDive: 4,  maxDive: 14, needsWeight: true  },
   'Deep Hit Stick – Crankbait':              { minDive: 12, maxDive: 22, needsWeight: true  },
   'Bandit 300 Series – Crankbait':           { minDive: 8,  maxDive: 14, needsWeight: true  },
-  'Rapala DT-10 – Crankbait':               { minDive: 8,  maxDive: 12, needsWeight: true  },
+  'Rapala DT-10 – Crankbait':               { minDive: 6,  maxDive: 12, needsWeight: true  },
   'Rapala DT-14 – Crankbait':               { minDive: 10, maxDive: 16, needsWeight: true  },
-  // Swimbaits on jighead — fully depth-controlled by lead + jig weight
-  'Swimbait 3.8" – Jighead':                { minDive: 2,  maxDive: 30, needsWeight: false },
-  'Swimbait 4.6" – Jighead':                { minDive: 2,  maxDive: 35, needsWeight: false },
-  'Swimbait 5" – Jighead':                  { minDive: 2,  maxDive: 40, needsWeight: false },
-  // Spoons — sink rate controlled by speed/lead
-  'Flutter Spoon 2oz':                       { minDive: 4,  maxDive: 45, needsWeight: false },
-  'Flutter Spoon 3oz':                       { minDive: 6,  maxDive: 55, needsWeight: false },
-  'Kastmaster 3/4oz':                        { minDive: 2,  maxDive: 30, needsWeight: false },
+  // Swimbaits on jighead
+  'Swimbait 3.8" – Jighead':                { minDive: 4,  maxDive: 30, needsWeight: false },
+  'Swimbait 4.6" – Jighead':                { minDive: 6,  maxDive: 35, needsWeight: false },
+  'Swimbait 5" – Jighead':                  { minDive: 8,  maxDive: 40, needsWeight: false },
+  // Spoons
+  'Flutter Spoon 2oz':                       { minDive: 8,  maxDive: 45, needsWeight: false },
+  'Flutter Spoon 3oz':                       { minDive: 10, maxDive: 55, needsWeight: false },
+  'Kastmaster 3/4oz':                        { minDive: 4,  maxDive: 30, needsWeight: false },
   // Topwater — surface only
   'Choppo 90 – Topwater':                   { minDive: 0,  maxDive: 1,  needsWeight: false },
   'Zara Spook – Topwater':                  { minDive: 0,  maxDive: 1,  needsWeight: false },
   'Whopper Plopper 110 – Topwater':         { minDive: 0,  maxDive: 1,  needsWeight: false },
   // Jigs
-  'ChatterBait 3/4oz':                       { minDive: 1,  maxDive: 20, needsWeight: false },
-  'Bucktail Jig 1oz':                        { minDive: 2,  maxDive: 35, needsWeight: false },
-  'Marabou Jig 3/4oz':                       { minDive: 2,  maxDive: 30, needsWeight: false },
+  'ChatterBait 3/4oz':                       { minDive: 2,  maxDive: 20, needsWeight: false },
+  'Bucktail Jig 1oz':                        { minDive: 4,  maxDive: 35, needsWeight: false },
+  'Marabou Jig 3/4oz':                       { minDive: 4,  maxDive: 30, needsWeight: false },
 };
 
 // ── Per-row select builders (return HTML strings) ─────────────────────────
