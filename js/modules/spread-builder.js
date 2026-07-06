@@ -228,9 +228,13 @@ export function autoCalculateLead(rod, speedMph) {
   if (isNaN(depth)) return rod.lead || '';
 
   const spd = speedMph || 2.4;
-  if (lure.includes('light') || lure.includes('1.65')) return Math.round(depth * 4.5);
-  if (lure.includes('medium') || lure.includes('2.65')) return Math.round(depth * 3.8);
-  if (lure.includes('heavy') || lure.includes('3.5')) return Math.round(depth * 3.2);
+  // A-Rig lead calc: 5-wire umbrella rigs have massive drag at trolling speed.
+  // At 1.8mph, 3/16oz jigs: ~7.5ft of lead per foot of depth for light, ~6.5 for medium, ~5.5 for heavy.
+  // These are calibrated for 1.8-2.0mph. At higher speeds lures run shallower — add lead.
+  const speedFactor = spd > 2.2 ? 1.15 : spd < 1.6 ? 0.88 : 1.0;
+  if (lure.includes('light') || lure.includes('1.65')) return Math.round(depth * 7.5 * speedFactor);
+  if (lure.includes('medium') || lure.includes('2.65')) return Math.round(depth * 6.5 * speedFactor);
+  if (lure.includes('heavy') || lure.includes('3.5')) return Math.round(depth * 5.5 * speedFactor);
   if (lure.includes('spoon') || lure.includes('flutter')) return Math.round(depth * 3.5);
   if (lure.includes('flicker minnow 11') || lure.includes('crankbait')) {
     if (depth <= 12) return Math.round(depth * 3.0);
