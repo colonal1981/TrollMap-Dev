@@ -630,7 +630,7 @@ function buildRationaleText(species, lakeName, season, phases, phaseRecs, phaseI
     const rec = phaseRecs[i];
     lines.push(`Phase ${phase.num} — ${phase.name} (${phase.startStr} – ${phase.endStr})`);
     if (rec) {
-      lines.push(`  Rods ${phase.num * 2 - 1} & ${phase.num * 2} · Depth: ${rec.depthMin}-${rec.depthMax}ft · Speed: ${rec.speed}mph`);
+      lines.push(`  Rod setup (Phase ${phase.num}) · Port + Stbd · Depth: ${rec.depthMin}-${rec.depthMax}ft · Speed: ${rec.speed}mph`);
       lines.push(`  Lures: ${rec.lures.slice(0, 3).join(', ')}`);
       // FIX (2026-07-03): Smart Plan used to generate a trolling sweep route
       // for every phase, including phases whose primary technique is
@@ -969,13 +969,19 @@ export async function runSmartPlan() {
           notes: rec?.notes || '',
         };
       }),
-      waterTemp: document.getElementById('planWaterTemp')?.value ? document.getElementById('planWaterTemp').value + 'F' : null,
+      // FIX: use computed vars directly, not DOM reads (DOM may not be written yet)
+      waterTemp: waterTempF ? `${waterTempF}°F` : null,
       poolLevel: document.getElementById('planPoolLevel')?.value || null,
-      solunar: document.getElementById('planSolunar')?.value || '',
+      // FIX: use the solunarStr we just computed, not the DOM element
+      solunar: solunarStr,
       clarity: document.getElementById('planClarity')?.value || '',
       weather: document.getElementById('planWeather')?.value || '',
       tackle: document.getElementById('planTackle')?.value || '',
       safety: document.getElementById('planSafety')?.value || '',
+      // FIX: include rationale so Groq can read solunar/temp/conditions from it as a fallback
+      rationale: rationale.slice(0, 2000),
+    }
+  };
     }
   };
 
