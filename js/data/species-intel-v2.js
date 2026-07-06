@@ -122,7 +122,7 @@ export const SPECIES_BEHAVIOR_V2 = {
         preferredPresentation:['umbrella_rig_medium','deep_diving_crankbait','flutter_spoon','bucktail'],
         lureFamilies:['A-Rig','Deep Crankbait','Flutter Spoon','Bucktail'],
         preferredColors:['Blueback Herring','Pearl','Sexy Shad','Chrome'],
-        preferredDepth: (tempF)=> tempF>84 ? [18,24] : [14,22],
+        preferredDepth: (tempF)=> tempF>84 ? [14,16] : [10,16],
         preferredSpeed:[1.8,2.5],
         leadDistance:[45,80],
         reactionStrike:true,
