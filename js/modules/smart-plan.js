@@ -336,6 +336,29 @@ function appendConnectorThenTracks(out, fromLat, fromLon, tracks, labelFrom, lab
   return last ? { lat: last[0], lon: last[1] } : { lat: fromLat, lon: fromLon };
 }
 
+function buildRetraceReturnTrack(existingTracks, rampLat, rampLon, name = 'Retrace return to launch') {
+  // Last-resort safety: if a direct return line would cut across land, retrace
+  // already-generated water route points back to the point nearest the ramp.
+  const flat = [];
+  for (const t of existingTracks || []) {
+    for (const p of (t.pts || [])) {
+      const last = flat[flat.length - 1];
+      if (!last || geoDistanceFt(last[0], last[1], p[0], p[1]) > 3) flat.push(p);
+    }
+  }
+  if (flat.length < 2) return null;
+  let bestIdx = 0, bestFt = Infinity;
+  for (let i = 0; i < flat.length; i++) {
+    const d = geoDistanceFt(rampLat, rampLon, flat[i][0], flat[i][1]);
+    if (d < bestFt) { bestFt = d; bestIdx = i; }
+  }
+  const pts = flat.slice(bestIdx).reverse();
+  const last = pts[pts.length - 1];
+  if (geoDistanceFt(last[0], last[1], rampLat, rampLon) > 25) pts.push([rampLat, rampLon]);
+  else pts[pts.length - 1] = [rampLat, rampLon];
+  return { name, pts, role: 'return_retrace', connector: true, smartPlan: true, lengthFt: trackLengthFtFromPts(pts) };
+}
+
 function trackLengthFtFromPts(pts) {
   if (!pts?.length) return 0;
   let total = 0;
@@ -728,8 +751,8 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
       rampLon:        rampLon ?? null,
       startLat:       startLat ?? rampLat ?? null,
       startLon:       startLon ?? rampLon ?? null,
-      endLat:         null,
-      endLon:         null,
+      endLat:         endLat ?? null,
+      endLon:         endLon ?? null,
       targetLengthFt: targetLengthFt || null,
       isReturnPass:   isReturnPass,
       lockedBearing:  lockedBearing,
@@ -1109,7 +1132,7 @@ export async function runSmartPlan() {
     const phaseTracks = await generateRouteForPhase(
       phases[i], phaseRecs[i], lakeName, rampLat, rampLon, rangeMiles,
       targetFt, curLat, curLon,
-      null, null,
+      isLastPhase ? rampLat : null, isLastPhase ? rampLon : null,
       isLastPhase,
       lockedBearing
     );
@@ -1132,17 +1155,27 @@ export async function runSmartPlan() {
     }
   }
 
-  // Hard return-to-ramp rule. If the final fishing track does not end at the
-  // launch, add an explicit return connector.
+  // Hard return-to-ramp rule. Prefer a short direct connector only. If the
+  // final point is still far from launch, do NOT draw a long overland line;
+  // retrace known water route points back toward the ramp instead.
   if (assembledSmartPlanTracks.length && Number.isFinite(rampLat) && Number.isFinite(rampLon)) {
-    const ret = buildSmartPlanConnectorTrack(
-      `Connector: Phase ${phases[phases.length - 1].num} ${phases[phases.length - 1].name} → ${selectedRampKey || 'Launch ramp'}`,
-      curLat, curLon, rampLat, rampLon, 'return_connector'
-    );
-    if (ret) assembledSmartPlanTracks.push(ret);
-    else {
+    const directReturnFt = geoDistanceFt(curLat, curLon, rampLat, rampLon);
+    const MAX_DIRECT_RETURN_FT = 1200; // about 0.23mi — longer lines often cross points/land
+    if (directReturnFt <= 25) {
       const lastTrack = assembledSmartPlanTracks[assembledSmartPlanTracks.length - 1];
       if (lastTrack?.pts?.length) lastTrack.pts[lastTrack.pts.length - 1] = [rampLat, rampLon];
+    } else if (directReturnFt <= MAX_DIRECT_RETURN_FT) {
+      const ret = buildSmartPlanConnectorTrack(
+        `Connector: Phase ${phases[phases.length - 1].num} ${phases[phases.length - 1].name} → ${selectedRampKey || 'Launch ramp'}`,
+        curLat, curLon, rampLat, rampLon, 'return_connector'
+      );
+      if (ret) assembledSmartPlanTracks.push(ret);
+    } else {
+      const ret = buildRetraceReturnTrack(
+        assembledSmartPlanTracks, rampLat, rampLon,
+        `Retrace Return: Phase ${phases[phases.length - 1].num} ${phases[phases.length - 1].name} → ${selectedRampKey || 'Launch ramp'}`
+      );
+      if (ret) assembledSmartPlanTracks.push(ret);
     }
   }
 

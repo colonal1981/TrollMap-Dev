@@ -76,13 +76,13 @@ async function onLakeChange(selLakeName) {
     planLakeEl.dispatchEvent(new Event('change'));
   }
 
-  // Load contours for this lake
+// Load contours for this lake
   loadContourForLake(selLakeName);
+  window.loadSupplementalForLake?.(selLakeName);
 
   // Populate access dropdown
   if (!rampSel) return;
   rampSel.disabled = false;
-
   if (accessPoints.length) {
     accessPoints.forEach((point) => {
       const opt = document.createElement('option');
@@ -101,7 +101,6 @@ async function onLakeChange(selLakeName) {
     rampSel.appendChild(opt);
   }
 }
-
 // ── Ramp / access change handler ─────────────────────────────────────────
 
 function onRampChange(selOpt) {
