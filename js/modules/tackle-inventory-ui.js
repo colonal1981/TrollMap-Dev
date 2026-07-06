@@ -6,7 +6,6 @@
 
 import { getInventory, saveInventory } from '../data/tackle-inventory.js';
 import { LURE_KNOWLEDGE } from '../data/lure-knowledge.js';
-import { LURE_KNOWLEDGE } from '../data/lure-knowledge.js';
 
 const TYPE_LABELS = {
   crankbait_squarebill: 'Squarebill',
