@@ -601,11 +601,7 @@ if (sNode) {
 }
 
 // ── Tactical Lure Matcher ──────────────────────────────────────────────────
-function getTacticallyAlignedLure(targetDepth, preferredLures) {
-  const depth = parseFloat(targetDepth);
-  if (isNaN(depth)) return null;
-
-  function getTacticallyAlignedLure(targetDepth, preferredLures, slotIndex = 0) {
+function getTacticallyAlignedLure(targetDepth, preferredLures, slotIndex = 0) {
   const depth = parseFloat(targetDepth);
   if (isNaN(depth)) return null;
 
@@ -621,12 +617,10 @@ function getTacticallyAlignedLure(targetDepth, preferredLures) {
   }
 
   // slotIndex 0 = port (first valid lure), slotIndex 1 = starboard (second distinct lure)
-  // This ensures port and starboard run different lures for a contrasting spread.
   if (validMatches.length > slotIndex) return validMatches[slotIndex];
-  if (validMatches.length > 0) return validMatches[0]; // fallback if only one match
+  if (validMatches.length > 0) return validMatches[0];
 
-  // 2. Tactical Fallback: Use the full gear catalog based on depth bands
-  // This ensures we use Spoons, Jigs, and Lipless instead of just A-Rigs
+  // Tactical fallback by depth band
   if (depth < 5) {
     const shallows = ['Choppo 90 – Topwater', 'Zara Spook – Topwater', 'Whopper Plopper 110 – Topwater', 'ChatterBait 3/4oz'];
     return shallows[Math.floor(Math.random() * shallows.length)];
@@ -645,25 +639,22 @@ function getTacticallyAlignedLure(targetDepth, preferredLures) {
 // ── Build 2 rods for a phase ──────────────────────────────────────────────────
 function buildPhaseRods(phaseRec, phaseNum, sides) {
   if (!phaseRec) return [newRodRow(), newRodRow()];
-  
-// Target depth: run lures within the phase depth band, not shallower than it.
-  // Port (rod 1) runs slightly shallower in the band — covers the upper zone.
-  // Starboard (rod 2) runs toward the deeper end — covers the lower zone.
-  // This gives a vertical spread across the fish's depth range.
+
+  // Target depth: run lures within the phase depth band, not shallower than it.
+  // Port runs upper half of band, starboard runs lower half — vertical spread.
   const dMin = phaseRec.depthMin || 10;
   const dMax = phaseRec.depthMax || 18;
   const bandMid = (dMin + dMax) / 2;
-  const rod1Depth = Math.round(((dMin + bandMid) / 2) * 2) / 2;  // upper half midpoint
-  const rod2Depth = Math.round(((bandMid + dMax) / 2) * 2) / 2;  // lower half midpoint
+  const rod1Depth = Math.round(((dMin + bandMid) / 2) * 2) / 2;
+  const rod2Depth = Math.round(((bandMid + dMax) / 2) * 2) / 2;
 
   const lures = getEffectiveLures(phaseRec);
   const wasSubstituted = phaseRec.lures?.some(l => !isLiveBaitAvailable(l));
 
   return sides.map((side, i) => {
-    const targetLureDepth = (i === 0) ?
-    
-    // Port (i=0) gets first lure from list that fits depth; Starboard (i=1) gets second distinct lure.
-    // This creates a contrasting spread — e.g. A-Rig port, crankbait starboard.
+    const targetLureDepth = i === 0 ? rod1Depth : rod2Depth;
+
+    // Port gets first depth-matched lure, starboard gets second — contrasting spread
     const resolved = getTacticallyAlignedLure(targetLureDepth, lures, i);
     
     const rod = newRodRow({
