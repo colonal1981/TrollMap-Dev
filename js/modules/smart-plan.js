@@ -30,8 +30,10 @@ import { newRodRow } from '../utils/rod-row.js';
 import { renderSpread, autoCalculateLead, LURE_DIVE_DEPTHS } from './spread-builder.js';
 import { onContourChange } from './contour-data.js';
 import { selectBestLure, getRecommendedSpeed } from '../data/tackle-inventory.js';
-import { getLureColor, getJigheadForDepth } from '../data/lure-knowledge.js';
-import { buildLureContext, getPhaseDepth, getStrategyNotes, getStrategySpeed } from '../data/species-strategies.js';
+import { getLureColor } from '../data/lure-knowledge.js';
+import { getPhaseDepth, getStrategySpeed, normalizeSpecies, getPresentationPriority } from '../data/species-strategies.js';
+import { buildFishingContext, buildGroqCoachPayload } from './smart-plan-context.js';
+import { startCoachSession } from './groq-coach.js';
 import {
   SPECIES_BEHAVIOR, REGULATIONS,
   getSeason, getTimeOfDay, checkRegulations, resolveLakeKey,
@@ -535,33 +537,28 @@ function getPhaseRecommendation(species, lakeName, season, phaseNum, waterTempF)
       : (v2sp[lakeName] ? lakeName : 'default_SC_reservoir'));
     const lakeNode = v2sp[lakeKeyV2] || v2sp['default_SC_reservoir'] || v2sp['Coastal SC Inshore'];
     const sNode = lakeNode?.[season];
-if (sNode) {
-  let [dMin, dMax] = typeof sNode.preferredDepth === 'function'
-    ? sNode.preferredDepth(waterTempF)
-    : (sNode.preferredDepth || [5, 15]);
+    if (sNode) {
+      let [dMin, dMax] = typeof sNode.preferredDepth === 'function'
+        ? sNode.preferredDepth(waterTempF)
+        : (sNode.preferredDepth || [5, 15]);
 
-  // Phase-aware depth progression:
-  // Phase 1 (Dawn)       → shallower third of the band, fish are active and higher
-  // Phase 2 (Transition) → middle of the band as fish drop with rising light/temp  
-  // Phase 3 (Deep)       → deeper third of the band, fish pushed down by heat/light
-  const bandSpread = dMax - dMin;
-  if (phaseNum === 1) {
-    // Dawn: run the top 40% of the depth band
-    dMax = Math.round(dMin + bandSpread * 0.45);
-  } else if (phaseNum === 2) {
-    // Transition: run the middle
-    dMin = Math.round(dMin + bandSpread * 0.25);
-    dMax = Math.round(dMin + bandSpread * 0.5);
-  } else {
-    // Deep: run the bottom 40% of the band
-    dMin = Math.round(dMin + bandSpread * 0.55);
-  }
+      // Phase-aware depth from species-strategies (authoritative)
+      try {
+        const sd = getPhaseDepth(species, season, phaseNum);
+        if (sd) [dMin, dMax] = sd;
+      } catch (_) {
+        // Fallback band split
+        const spread = dMax - dMin;
+        if (phaseNum === 1)      { dMax = Math.round(dMin + spread * 0.45); }
+        else if (phaseNum === 2) { dMin = Math.round(dMin + spread * 0.25); dMax = Math.round(dMin + spread * 0.5); }
+        else                     { dMin = Math.round(dMin + spread * 0.55); }
+      }
 
-  const speed = Array.isArray(sNode.preferredSpeed)
-    ? sNode.preferredSpeed[0]
-    : (sNode.preferredSpeed || 2.0);
+      let speed = Array.isArray(sNode.preferredSpeed) ? sNode.preferredSpeed[0] : (sNode.preferredSpeed || 1.8);
+      try { const ss = getStrategySpeed(species, season); if (ss?.ideal) speed = ss.ideal; } catch (_) {}
+
       return {
-        depthMin: dMin, depthMax: dMax,
+        depthMin: Math.round(dMin), depthMax: Math.round(dMax),
         lures: sNode.preferredPresentation || [],
         speed,
         notes: Array.isArray(sNode.notes) ? sNode.notes.join(' · ') : (sNode.notes || ''),
@@ -580,7 +577,7 @@ if (sNode) {
     }
   }
 
-  // Fallback → v1 species-intel.js (Striped Bass legacy entries)
+  // Fallback → v1 species-intel.js
   const lakeKey = resolveLakeKey(lakeName, SPECIES_BEHAVIOR);
   const seasonData = SPECIES_BEHAVIOR[lakeKey]?.[species]?.[season];
   if (!seasonData) return null;
@@ -590,13 +587,12 @@ if (sNode) {
   if (!tod) return null;
 
   let [dMin, dMax] = typeof seasonData.depthBand === 'function'
-    ? seasonData.depthBand(waterTempF)
-    : [...seasonData.depthBand];
+    ? seasonData.depthBand(waterTempF) : [...seasonData.depthBand];
 
-  // REMOVED phaseDepthShifts. Let the tactical matcher handle it.
-  
+  try { const sd = getPhaseDepth(species, season, phaseNum); if (sd) [dMin, dMax] = sd; } catch (_) {}
+
   return {
-    depthMin: dMin, depthMax: dMax,
+    depthMin: Math.round(dMin), depthMax: Math.round(dMax),
     lures: tod.lures || [],
     speed: tod.speed || 2.0,
     notes: tod.notes || '',
@@ -640,66 +636,112 @@ function getTacticallyAlignedLure(targetDepth, preferredLures, slotIndex = 0) {
 }
 
 // ── Build 2 rods for a phase ──────────────────────────────────────────────────
-function buildPhaseRods(phaseRec, phaseNum, sides) {
+async function buildPhaseRods(phaseRec, phaseNum, sides, fishingContext) {
   if (!phaseRec) return [newRodRow(), newRodRow()];
 
-  // Target depth: run lures within the phase depth band, not shallower than it.
-  // Port runs upper half of band, starboard runs lower half — vertical spread.
-  const dMin = phaseRec.depthMin || 10;
-  const dMax = phaseRec.depthMax || 18;
+  const dMin    = phaseRec.depthMin || 10;
+  const dMax    = phaseRec.depthMax || 18;
   const bandMid = (dMin + dMax) / 2;
   const rod1Depth = Math.round(((dMin + bandMid) / 2) * 2) / 2;
   const rod2Depth = Math.round(((bandMid + dMax) / 2) * 2) / 2;
 
-  const lures = getEffectiveLures(phaseRec);
-  const wasSubstituted = phaseRec.lures?.some(l => !isLiveBaitAvailable(l));
+  const clarity    = document.getElementById('planClarity')?.value || 'Clear';
+  const clarityKey = clarity.toLowerCase().includes('mud') ? 'muddy'
+    : clarity.toLowerCase().includes('stain') ? 'stained' : 'clear';
+  const speedMph   = parseFloat(document.getElementById('planSpeed')?.value) || phaseRec.speed || 1.8;
+  const speciesNorm = normalizeSpecies(fishingContext?.species || '');
+  const season      = fishingContext?.season || 'summer';
+  const structure   = fishingContext?.structureTypes || [];
 
-  return sides.map((side, i) => {
-    const targetLureDepth = i === 0 ? rod1Depth : rod2Depth;
+  // Get presentation priority from species-strategies
+  let preferredTypes = [];
+  try {
+    const timePhase = phaseNum === 1 ? 'dawn' : phaseNum === 3 ? 'deep' : 'morning';
+    preferredTypes  = getPresentationPriority(speciesNorm, season, { timeOfDay: timePhase, clarityKey });
+  } catch (_) {}
 
-    // Port gets first depth-matched lure, starboard gets second — contrasting spread
-    const resolved = getTacticallyAlignedLure(targetLureDepth, lures, i);
-    
+  const results = [];
+  for (let i = 0; i < sides.length; i++) {
+    const side        = sides[i];
+    const targetDepth = i === 0 ? rod1Depth : rod2Depth;
+    let selectedLure  = null;
+    let scoreResult   = null;
+
+    // Try inventory-based selection first
+    try {
+      const result = await selectBestLure({
+        species: speciesNorm, season, clarity, clarityKey,
+        targetDepthFt: targetDepth, depthMin: dMin, depthMax: dMax,
+        speedMph, structure, preferredTypes, slotIndex: i,
+      });
+      selectedLure = result?.lure || null;
+      scoreResult  = result?.scoreResult || null;
+    } catch (_) {}
+
+    // Fallback to old tactical matcher if inventory select fails
+    if (!selectedLure) {
+      const lures   = getEffectiveLures(phaseRec);
+      const rawLure = getTacticallyAlignedLure(targetDepth, lures, i);
+      if (rawLure) selectedLure = { name: rawLure, type: null };
+    }
+
     const rod = newRodRow({
       side,
       position: 'Mid',
-      rod: '7\' M Mod-Fast Spinning (Ugly Stik Lite Pro)',
+      rod: "7' M Mod-Fast Spinning (Ugly Stik Lite Pro)",
       reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader',
-      depth: String(targetLureDepth),
+      depth: String(targetDepth),
     });
 
-    if (resolved) {
-      rod.lure = resolved;
-      rod.color = LURE_COLOR_DEFAULTS[resolved] || '';
-      rod.lead = String(autoCalculateLead(rod, phaseRec.speed));
+    if (selectedLure) {
+      rod.lure  = selectedLure.name || selectedLure;
+      rod.color = getLureColor(selectedLure, clarityKey);
+      rod.lead  = String(autoCalculateLead({ ...rod, lure: rod.lure }, speedMph));
 
-      if (resolved.includes('A-Rig')) {
-        const isLight  = resolved.includes('Light')  || resolved.includes('1.65');
-        const isMedium = resolved.includes('Medium') || resolved.includes('2.65');
-        const isHeavy  = resolved.includes('Heavy')  || resolved.includes('3.5oz');
-        rod.arigWeight  = isLight ? '~1.65oz (5-wire light)' : isMedium ? '~2.65oz (5-wire medium)' : '~3.5oz (5-wire heavy)';
-        rod.trailerSize = isLight ? '3.8" swimbait' : isMedium ? '4.6" swimbait' : '5" swimbait';
-        rod.jigWeight   = isLight ? '1/8oz × 5 (Uniform)' : isMedium ? '3/16oz × 5 (Uniform)' : '1/4oz × 5 (Uniform)';
+      // Jighead for A-rigs and swimbaits
+      if (selectedLure.jigWeights?.length) {
+        try {
+          const { getJigheadForDepth: getJighead } = await import('../data/lure-knowledge.js');
+          const jigOz = getJighead(selectedLure.jigWeights, targetDepth, speedMph);
+          if (jigOz) {
+            rod.jigWeight   = `${jigOz}oz`;
+            rod.arigWeight  = selectedLure.weightOz ? `~${selectedLure.weightOz}oz` : '';
+            rod.trailerSize = selectedLure.sizes?.[0] || '';
+          }
+        } catch (_) {
+          // Fallback A-rig labels from name string
+          if (rod.lure?.includes('A-Rig')) {
+            const isLight  = rod.lure.includes('Light')  || rod.lure.includes('1.65');
+            const isMedium = rod.lure.includes('Medium') || rod.lure.includes('2.65');
+            rod.arigWeight  = isLight ? '~1.65oz (5-wire light)' : isMedium ? '~2.65oz (5-wire medium)' : '~3.5oz (5-wire heavy)';
+            rod.trailerSize = isLight ? '3.8" swimbait' : isMedium ? '4.6" swimbait' : '5" swimbait';
+            rod.jigWeight   = isLight ? '1/8oz × 5' : isMedium ? '3/16oz × 5' : '1/4oz × 5';
+          }
+        }
       }
+      rod._scoreResult = scoreResult;
     }
 
     if (phaseRec.notes) {
-      const NOTE_CHAR_LIMIT = 220;
-      const trimmedNote = phaseRec.notes.length > NOTE_CHAR_LIMIT
-        ? phaseRec.notes.slice(0, NOTE_CHAR_LIMIT).replace(/\s+\S*$/, '') + '…'
+      const trimmed = phaseRec.notes.length > 220
+        ? phaseRec.notes.slice(0, 220).replace(/\s+\S*$/, '') + '…'
         : phaseRec.notes;
-      rod.notes = (rod.notes ? rod.notes + ' · ' : '') + trimmedNote;
+      rod.notes = (rod.notes ? rod.notes + ' · ' : '') + trimmed;
     }
-    if (wasSubstituted) {
-      rod.notes = (rod.notes ? rod.notes + ' · ' : '') + '⚠ Swapped from original live-bait rec (freshwater live bait not assumed available — see fishing-style-profile.js)';
+
+    if (scoreResult?.confidence) {
+      const pct = Math.round(scoreResult.confidence * 100);
+      rod.notes = (rod.notes ? rod.notes + ' · ' : '') + `Confidence: ${pct}%`;
+      if (scoreResult.warnings?.length) rod.notes += ` ⚠ ${scoreResult.warnings[0]}`;
     }
+
     const v2 = phaseRec._v2meta;
-    if (v2?.structure?.length) rod.notes = (rod.notes ? rod.notes + ' · ' : '') + 'Structure: ' + v2.structure.slice(0, 3).join(', ');
-    if (v2?.lureFamilies?.length) rod.notes = (rod.notes ? rod.notes + ' · ' : '') + 'Families: ' + v2.lureFamilies.slice(0, 3).join(', ');
-    if (v2?.colors?.length) rod.notes = (rod.notes ? rod.notes + ' · ' : '') + 'Colors: ' + v2.colors.slice(0, 2).join(', ');
-    if (v2?.confidence?.source) rod.notes = (rod.notes ? rod.notes + ' · ' : '') + v2.confidence.source;
-    return rod;
-  });
+    if (v2?.structure?.length) rod.notes = (rod.notes ? rod.notes + ' · ' : '') + 'Structure: ' + v2.structure.slice(0, 2).join(', ');
+    if (v2?.lureFamilies?.length) rod.notes = (rod.notes ? rod.notes + ' · ' : '') + 'Families: ' + v2.lureFamilies.slice(0, 2).join(', ');
+
+    results.push(rod);
+  }
+  return results;
 }
 
 // ── Route generation per phase ────────────────────────────────────────────────
@@ -1018,17 +1060,25 @@ export async function runSmartPlan() {
     return;
   }
 
-  // Build 6-rod spread (2 rods × 3 phases)
+  // Build fishing context — gathers structures, catches, attractors for lure scoring
+  const fishingContext = await buildFishingContext({
+    species: sp, lakeName, season,
+    clarity:    document.getElementById('planClarity')?.value || 'Clear',
+    waterTempF, speedMph, dateStr, launchTime,
+    rampLat: null, rampLon: null, // ramp coords locked below, context builds with map center
+  });
+
+  // Build 6-rod spread (2 rods × 3 phases) — now async via inventory pipeline
   const sides = ['Port', 'Starboard'];
   const newSpread = [];
-  phases.forEach((phase, i) => {
-    const rods = buildPhaseRods(phaseRecs[i], phase.num, sides);
+  for (const phase of phases) {
+    const i    = phases.indexOf(phase);
+    const rods = await buildPhaseRods(phaseRecs[i], phase.num, sides, fishingContext);
     rods.forEach(r => {
-      // Tag each rod with its phase number for the plan UI
       r.notes = `[Ph${phase.num}: ${phase.startStr}-${phase.endStr}] ` + (r.notes || '');
       newSpread.push(r);
     });
-  });
+  }
   state.SPREAD = newSpread;
   renderSpread();
 
@@ -1260,74 +1310,25 @@ export async function runSmartPlan() {
     if (recStructures.length) structureEl.value = recStructures[0].replace(/structure[:\s]+/i, '').trim();
   }
 
-  // ── Groq plan audit — async, non-blocking, appends to rationale when done ──
-  // Fires after the plan is already visible so it doesn't slow down the main flow.
-  const auditPayload = {
-    plan: {
-      lake: lakeName, species: sp, season, date: document.getElementById('planDate')?.value || '',
-      ramp: document.getElementById('planRamp')?.value || '',
-      rangeMiles: rangeMiles.toFixed(1),
-      phases: phases.map((phase, i) => {
-        const rec = phaseRecs[i];
-        return {
-          name: phase.name, window: `${phase.startStr}-${phase.endStr}`,
-          depthMin: rec?.depthMin, depthMax: rec?.depthMax,
-          speed: rec?.speed, lures: getEffectiveLures(rec).slice(0, 3),
-          notes: rec?.notes || '',
-        };
-      }),
-      // FIX: use computed vars directly, not DOM reads (DOM may not be written yet)
-      waterTemp: waterTempF ? `${waterTempF}°F` : null,
+  // ── Groq iterative coach — replaces one-shot audit ───────────────────────────
+  // Builds rich context payload and starts the coaching session as a floating panel.
+  // Non-blocking — plan is already visible before coach starts.
+  try {
+    const coachPayload = buildGroqCoachPayload(fishingContext, {
+      phases,
+      phaseRecs,
+      spread:    state.SPREAD,
+      solunarStr,
       poolLevel: document.getElementById('planPoolLevel')?.value || null,
-      // FIX: use the solunarStr we just computed, not the DOM element
-      solunar: solunarStr,
-      clarity: document.getElementById('planClarity')?.value || '',
-      weather: document.getElementById('planWeather')?.value || '',
-      tackle: document.getElementById('planTackle')?.value || '',
-      safety: document.getElementById('planSafety')?.value || '',
-      // FIX: include rationale so Groq can read solunar/temp/conditions from it as a fallback
-      rationale: rationale.slice(0, 2000),
-    }
-  };
-
-  const WORKER_URL = (typeof CF_WORKER_URL !== 'undefined' ? CF_WORKER_URL : window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev');
-  if (outEl) outEl.value = rationale + '\n\n⏳ Groq plan audit running...';
-
-  fetch(`${WORKER_URL}/audit-plan`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(auditPayload),
-  })
-    .then(r => r.json())
-    .then(data => {
-      if (!data.success || !data.audit) return;
-      const a = data.audit;
-      const scoreBar = (n) => n >= 8 ? '🟢' : n >= 5 ? '🟡' : '🔴';
-      const auditBlock = [
-        '',
-        '══════════ GROQ PLAN AUDIT ══════════',
-        `Overall: ${scoreBar(a.overall_score)} ${a.overall_score}/10 · ${a.confidence?.toUpperCase() || ''} confidence`,
-        `Verdict: ${a.verdict || ''}`,
-        '',
-        `Depth alignment: ${scoreBar(a.scores?.depth_alignment)} ${a.scores?.depth_alignment}/10`,
-        `Lure selection:  ${scoreBar(a.scores?.lure_selection)} ${a.scores?.lure_selection}/10`,
-        `Speed/cadence:   ${scoreBar(a.scores?.speed_cadence)} ${a.scores?.speed_cadence}/10`,
-        `Battery mgmt:    ${scoreBar(a.scores?.battery_management)} ${a.scores?.battery_management}/10`,
-        `Safety:          ${scoreBar(a.scores?.safety)} ${a.scores?.safety}/10`,
-        '',
-        a.flags?.length ? `⚠ FLAGS:\n${a.flags.map(f => `  · ${f}`).join('\n')}` : '',
-        a.fixes?.length ? `🔧 FIXES:\n${a.fixes.map(f => `  · ${f}`).join('\n')}` : '',
-        a.keeper_moves?.length ? `✅ SOLID MOVES:\n${a.keeper_moves.map(f => `  · ${f}`).join('\n')}` : '',
-        a.local_intel ? `💡 LOCAL INTEL: ${a.local_intel}` : '',
-        '═════════════════════════════════════',
-      ].filter(Boolean).join('\n');
-
-      if (outEl) outEl.value = rationale + auditBlock;
-      if (document.getElementById('catchCenterBody')) window.renderCatchSubtab?.();
-    })
-    .catch(e => {
-      if (outEl) outEl.value = rationale + `\n\n⚠ Groq audit failed: ${e.message}`;
+      weather:   document.getElementById('planWeather')?.value || '',
+      rationale: rationale.slice(0, 1500),
+      rampName:  selectedRampKey || document.getElementById('planRamp')?.value || '',
+      rangeMiles,
     });
+    startCoachSession(coachPayload);
+  } catch (e) {
+    console.warn('[smart-plan] Coach session failed to start:', e.message);
+  }
 
   const firstRec = phaseRecs.find(Boolean);
   setStatus(
