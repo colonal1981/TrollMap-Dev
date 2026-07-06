@@ -29,6 +29,9 @@ import { esc } from '../utils/escape.js';
 import { newRodRow } from '../utils/rod-row.js';
 import { renderSpread, autoCalculateLead, LURE_DIVE_DEPTHS } from './spread-builder.js';
 import { onContourChange } from './contour-data.js';
+import { selectBestLure, getRecommendedSpeed } from '../data/tackle-inventory.js';
+import { getLureColor, getJigheadForDepth, getSeason } from '../data/lure-knowledge.js';
+import { buildLureContext, getPhaseDepth, getStrategyNotes, getStrategySpeed } from '../data/species-strategies.js';
 import {
   SPECIES_BEHAVIOR, REGULATIONS,
   getSeason, getTimeOfDay, checkRegulations, resolveLakeKey,
