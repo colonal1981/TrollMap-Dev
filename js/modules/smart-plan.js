@@ -26,7 +26,7 @@
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { newRodRow } from '../utils/rod-row.js';
-import { renderSpread, autoCalculateLead } from './spread-builder.js';
+import { renderSpread, autoCalculateLead, LURE_DIVE_DEPTHS } from './spread-builder.js';
 import { onContourChange } from './contour-data.js';
 import {
   SPECIES_BEHAVIOR, REGULATIONS,
@@ -352,10 +352,10 @@ function getPhaseRecommendation(species, lakeName, season, phaseNum, waterTempF)
       let [dMin, dMax] = typeof sNode.preferredDepth === 'function'
         ? sNode.preferredDepth(waterTempF)
         : (sNode.preferredDepth || [5, 15]);
-      const phaseShifts = { 1: -4, 2: 0, 3: 4 }; // dawn shallower, deep push phase3
-      const shift = phaseShifts[phaseNum] || 0;
-      dMin = Math.max(1, dMin + shift);
-      dMax = Math.max(dMin + 4, dMax + shift);
+      
+      // REMOVED aggressive phaseShifts that pushed A-Rigs into 3-7ft range.
+      // Now we use the base preferred depth and let the lure-matcher handle the tactical fit.
+      
       const speed = Array.isArray(sNode.preferredSpeed)
         ? sNode.preferredSpeed[0]
         : (sNode.preferredSpeed || 2.0);
@@ -392,12 +392,8 @@ function getPhaseRecommendation(species, lakeName, season, phaseNum, waterTempF)
     ? seasonData.depthBand(waterTempF)
     : [...seasonData.depthBand];
 
-  const baseShift = tod.depthShift || 0;
-  const phaseDepthShifts = { 1: baseShift, 2: Math.round(baseShift / 2), 3: -5 };
-  const shift = phaseDepthShifts[phaseNum];
-  dMin = Math.max(1, dMin + shift);
-  dMax = Math.max(dMin + 4, dMax + shift);
-
+  // REMOVED phaseDepthShifts. Let the tactical matcher handle it.
+  
   return {
     depthMin: dMin, depthMax: dMax,
     lures: tod.lures || [],
@@ -406,26 +402,51 @@ function getPhaseRecommendation(species, lakeName, season, phaseNum, waterTempF)
   };
 }
 
+// ── Tactical Lure Matcher ──────────────────────────────────────────────────
+function getTacticallyAlignedLure(targetDepth, preferredLures) {
+  const depth = parseFloat(targetDepth);
+  if (isNaN(depth)) return null;
+
+  // 1. Try to find a match in the preferred list that fits this depth tactically
+  for (const rawLure of preferredLures) {
+    const resolved = resolveLure(rawLure);
+    if (!resolved) continue;
+    const dive = LURE_DIVE_DEPTHS[resolved];
+    if (dive && depth >= dive.minDive && depth <= dive.maxDive) {
+      return resolved;
+    }
+  }
+
+  // 2. Fallback: If nothing in the preferred list fits, pick a tactically sound lure for this depth
+  if (depth < 8) {
+    return 'Choppo 90 – Topwater'; // Ultra shallow
+  } else if (depth < 12) {
+    return 'Rapala DT-10 – Crankbait'; // Shallow/Medium
+  } else if (depth < 18) {
+    return 'A-Rig Medium (~2.65oz) – 4.6" Swimbait'; // Mid-depth schooler
+  } else {
+    return 'Deep Hit Stick – Crankbait'; // Deep
+  }
+}
+
 // ── Build 2 rods for a phase ──────────────────────────────────────────────────
 function buildPhaseRods(phaseRec, phaseNum, sides) {
   if (!phaseRec) return [newRodRow(), newRodRow()];
-  // ZERO-SNAG LURE RUNNING DEPTH RULE (2026-07-04):
-  // Never set target lure depth below the shallowest inward swing of the contour route!
-  // If route crosses depthMin (e.g. 14ft flat or point lip), setting lure depth to 18ft
-  // drags a $20 A-Rig or deep crankbait into bottom timber/rocks.
-  // Rod 1 (Inside Shallow Rod): patrols 2.5 ft above shallowest breakline lip.
-  // Rod 2 (Outside Deep Ledge Rod): patrols 1.0 ft above shallowest breakline lip.
+  
+  // Zero-Snag Rule: Set target lure depth slightly above the shallowest breakline
   const shallowLip = phaseRec.depthMin || 12;
   const rod1Depth = Math.max(2.5, Math.round((shallowLip - 2.5) * 2) / 2);
   const rod2Depth = Math.max(3.5, Math.round((shallowLip - 1.0) * 2) / 2);
+  
   const lures = getEffectiveLures(phaseRec);
-  // Was any originally-recommended lure dropped for unavailable live bait?
   const wasSubstituted = phaseRec.lures?.some(l => !isLiveBaitAvailable(l));
 
   return sides.map((side, i) => {
-    const rawLure = lures[i % Math.max(1, lures.length)];
-    const resolved = resolveLure(rawLure);
     const targetLureDepth = (i === 0) ? rod1Depth : rod2Depth;
+    
+    // FIX: Instead of picking the next lure in the list, find one that actually fits this depth
+    const resolved = getTacticallyAlignedLure(targetLureDepth, lures);
+    
     const rod = newRodRow({
       side,
       position: 'Mid',
@@ -433,12 +454,12 @@ function buildPhaseRods(phaseRec, phaseNum, sides) {
       reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader',
       depth: String(targetLureDepth),
     });
+
     if (resolved) {
       rod.lure = resolved;
       rod.color = LURE_COLOR_DEFAULTS[resolved] || '';
       rod.lead = String(autoCalculateLead(rod, phaseRec.speed));
 
-      // Auto-populate A-Rig trailer and jig weight fields for build page display
       if (resolved.includes('A-Rig')) {
         const isLight  = resolved.includes('Light')  || resolved.includes('1.65');
         const isMedium = resolved.includes('Medium') || resolved.includes('2.65');
@@ -447,15 +468,9 @@ function buildPhaseRods(phaseRec, phaseNum, sides) {
         rod.trailerSize = isLight ? '3.8" swimbait' : isMedium ? '4.6" swimbait' : '5" swimbait';
         rod.jigWeight   = isLight ? '1/8oz × 5 (Uniform)' : isMedium ? '3/16oz × 5 (Uniform)' : '1/4oz × 5 (Uniform)';
       }
-    } else if (rawLure) {
-      rod.notes = rawLure;
     }
+
     if (phaseRec.notes) {
-      // FIX (2026-07-03): this was .slice(0, 50) with no ellipsis, cutting
-      // tactical notes off mid-word ("shallower than mid-") in the final
-      // plan output. Raised to a much more reasonable length and added an
-      // ellipsis so a genuine cutoff is at least visible as intentional
-      // rather than looking like broken/missing text.
       const NOTE_CHAR_LIMIT = 220;
       const trimmedNote = phaseRec.notes.length > NOTE_CHAR_LIMIT
         ? phaseRec.notes.slice(0, NOTE_CHAR_LIMIT).replace(/\s+\S*$/, '') + '…'
@@ -465,7 +480,6 @@ function buildPhaseRods(phaseRec, phaseNum, sides) {
     if (wasSubstituted) {
       rod.notes = (rod.notes ? rod.notes + ' · ' : '') + '⚠ Swapped from original live-bait rec (freshwater live bait not assumed available — see fishing-style-profile.js)';
     }
-    // Surface v2 metadata if available — structure priorities, lure families, confidence source
     const v2 = phaseRec._v2meta;
     if (v2?.structure?.length) rod.notes = (rod.notes ? rod.notes + ' · ' : '') + 'Structure: ' + v2.structure.slice(0, 3).join(', ');
     if (v2?.lureFamilies?.length) rod.notes = (rod.notes ? rod.notes + ' · ' : '') + 'Families: ' + v2.lureFamilies.slice(0, 3).join(', ');
