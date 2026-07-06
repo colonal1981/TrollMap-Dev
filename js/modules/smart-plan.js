@@ -26,12 +26,16 @@
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { newRodRow } from '../utils/rod-row.js';
-import { renderSpread, autoCalculateLead, LURE_DIVE_DEPTHS } from './spread-builder.js';
+import { renderSpread, autoCalculateLead } from './spread-builder.js';
 import { onContourChange } from './contour-data.js';
 import {
   SPECIES_BEHAVIOR, REGULATIONS,
   getSeason, getTimeOfDay, checkRegulations, resolveLakeKey,
 } from '../data/species-intel.js';
+import { LAKE_DB } from '../data/lakes.js';
+// v2 multi-species brain — if present, use it; fall back to v1 for legacy lakes
+import * as IntelV2 from '../data/species-intel-v2.js';
+import { isLiveBaitAvailable } from '../data/fishing-style-profile.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const MAX_RODS_PER_PHASE = 2;       // kayak: 2 rods in water at a time
@@ -42,27 +46,38 @@ const PHASE_1_END_OFFSET_MIN = 90;  // minutes after sunrise Phase 1 ends (defau
 const PHASE_2_END_OFFSET_MIN = 210; // minutes after sunrise Phase 2 ends (3.5hrs)
 
 // ── Lure presets (must exactly match spread-builder.js LURE_PRESETS) ─────────
+// FIX (2026-07-03): generalized to broad categories (matching the
+// COLOR_PRESETS group headers in spread-builder.js: Natural, Bright, Dark,
+// Metallic) instead of ultra-specific named patterns like "Blueback
+// Herring" or "Sexy Shad". This app doesn't know exactly which specific
+// colorway of a lure the angler owns — a general steer ("Natural" vs
+// "Bright") is honest about that; a hyper-specific name implies a
+// precision the recommendation doesn't actually have.
 const LURE_COLOR_DEFAULTS = {
-  'Choppo 90 – Topwater':                    'Bone / Natural',
-  'Zara Spook – Topwater':                   'Bone / Natural',
-  'Whopper Plopper 110 – Topwater':          'Grey Shad',
-  'Bucktail Jig 1oz':                        'Chartreuse / White',
-  'Marabou Jig 3/4oz':                       'Chartreuse / Shad',
-  'A-Rig Light (~1.65oz) – 3.8" Swimbait':  'Natural Pearl / Smoke',
-  'A-Rig Medium (~2.65oz) – 4.6" Swimbait': 'Blueback Herring',
-  'A-Rig Heavy (~3.5oz) – 5" Swimbait':     'Alewife / Silver Flash',
-  'Deep Hit Stick – Crankbait':              'Blue / Silver Herring',
-  'Flicker Minnow 11 – Crankbait':          'Blue / Silver Herring',
-  'Bandit 300 Series – Crankbait':           'Sexy Shad',
-  'Rapala DT-10 – Crankbait':               'Tennessee Shad',
-  'Rapala DT-14 – Crankbait':               'Tennessee Shad',
-  'Swimbait 3.8" – Jighead':                'Natural Pearl / Smoke',
-  'Swimbait 4.6" – Jighead':                'Blueback Herring',
-  'Swimbait 5" – Jighead':                  'Alewife / Silver Flash',
-  'Flutter Spoon 2oz':                       'Shattered Glass Silver',
-  'Flutter Spoon 3oz':                       'Chrome / Silver',
-  'Kastmaster 3/4oz':                        'Chrome / Silver',
-  'ChatterBait 3/4oz':                       'Chartreuse / White',
+  'Choppo 90 – Topwater':                    'Natural',
+  'Zara Spook – Topwater':                   'Natural',
+  'Whopper Plopper 110 – Topwater':          'Natural',
+  'Buzzbait 1/2oz – Topwater':                'Bright',
+  'Popping Cork':                             'Natural',
+  'Bucktail Jig 1oz':                        'Bright',
+  'Marabou Jig 3/4oz':                       'Bright',
+  'A-Rig Light (~1.65oz) – 3.8" Swimbait':  'Natural',
+  'A-Rig Medium (~2.65oz) – 4.6" Swimbait': 'Natural',
+  'A-Rig Heavy (~3.5oz) – 5" Swimbait':     'Natural',
+  'Deep Hit Stick – Crankbait':              'Natural',
+  'Flicker Minnow 11 – Crankbait':          'Natural',
+  'Bandit 300 Series – Crankbait':           'Bright',
+  'Rapala DT-10 – Crankbait (shallow/medium, ~10ft)': 'Natural',
+  'Rapala DT-14 – Crankbait (medium/deep, ~14ft)':    'Natural',
+  'Lipless Crankbait 1/2oz':                 'Bright',
+  'Spinnerbait 1/2oz':                       'Bright',
+  'Swimbait 3.8" – Jighead':                'Natural',
+  'Swimbait 4.6" – Jighead':                'Natural',
+  'Swimbait 5" – Jighead':                  'Natural',
+  'Flutter Spoon 2oz':                       'Metallic',
+  'Flutter Spoon 3oz':                       'Metallic',
+  'Kastmaster 3/4oz':                        'Metallic',
+  'ChatterBait 3/4oz':                       'Bright',
 };
 
 // Short behavior-table names → exact LURE_PRESETS strings
@@ -82,6 +97,33 @@ const BEHAVIOR_LURE_MAP = {
   'Casting plugs':          'Flicker Minnow 11 – Crankbait',
   'Flukes':                 'Swimbait 3.8" – Jighead',
   'Plugs':                  'Choppo 90 – Topwater',
+  // Added 2026-07-03: matches the gear the angler actually owns/fishes.
+  'Spinnerbait':            'Spinnerbait 1/2oz',
+  'Lipless crankbait':      'Lipless Crankbait 1/2oz',
+  'Lipless Crankbait':      'Lipless Crankbait 1/2oz',
+  'ChatterBait':            'ChatterBait 3/4oz',
+  'Buzzbait':               'Buzzbait 1/2oz – Topwater',
+  'Shallow crankbait':      'Rapala DT-10 – Crankbait (shallow/medium, ~10ft)',
+  'Medium crankbait':       'Rapala DT-14 – Crankbait (medium/deep, ~14ft)',
+  'Swimbait on jighead':    'Swimbait 4.6" – Jighead',
+  // v2 species-intel-v2.js presentation keys
+  'medium_diving_crankbait': 'Rapala DT-14 – Crankbait (medium/deep, ~14ft)',
+  'deep_diving_crankbait':   'Deep Hit Stick – Crankbait',
+  'spinnerbait':             'Spinnerbait 1/2oz',
+  'chatterbait':             'ChatterBait 3/4oz',
+  'paddle_tail':             'Swimbait 4.6" – Jighead',
+  'swim_jig':                'Swimbait 4.6" – Jighead',
+  'lipless_crankbait':       'Lipless Crankbait 1/2oz',
+  'road_runner':             'Marabou Jig 3/4oz',
+  'hair_jig':                'Marabou Jig 3/4oz',
+  'inline_spinner':          'Spinnerbait 1/2oz',
+  'gold_spoon':              'Kastmaster 3/4oz',
+  'topwater_walker':         'Zara Spook – Topwater',
+  'topwater_frog_casting':   'Buzzbait 1/2oz – Topwater',
+  'squarebill':              'Rapala DT-10 – Crankbait (shallow/medium, ~10ft)',
+  'flutter_spoon':           'Flutter Spoon 2oz',
+  'bucktail':                'Bucktail Jig 1oz',
+  'umbrella_rig':            'A-Rig Medium (~2.65oz) – 4.6" Swimbait',
   // Live-bait → note only, no preset
   'Live herring free-line':         null,
   'Live herring downline':          null,
@@ -100,6 +142,63 @@ function resolveLure(rawName) {
   if (!rawName) return null;
   if (LURE_COLOR_DEFAULTS.hasOwnProperty(rawName)) return rawName;
   return BEHAVIOR_LURE_MAP.hasOwnProperty(rawName) ? BEHAVIOR_LURE_MAP[rawName] : null;
+}
+
+// ── Technique classification: trolled vs. static/casting ─────────────────────
+// A trolling sweep route only makes sense for lures actually presented while
+// the boat is moving along a controlled path (crankbaits, A-Rigs, flutter
+// spoons on a set lead length). Topwater and free-lined/downlined live bait
+// are cast or drifted/anchored at a spot — dragging a "trolling lane" for
+// those techniques produces a route the angler was never going to run.
+function isStaticTechnique(rawLureName) {
+  if (!rawLureName) return false;
+  const s = rawLureName.toLowerCase();
+  // Cast/surface presentations
+  if (s.includes('topwater') || s.includes('buzz') || s.includes('plopper') || s.includes('spook')) return true;
+  // Live/cut bait — not trolled from this kayak setup
+  if (s.includes('free-line') || s.includes('freeline') || s.includes('free line')) return true;
+  if (s.includes('downline') || s.includes('down-line') || s.includes('down line')) return true;
+  if (s.includes('live') && !s.includes('lead-core')) return true;
+  if (s.includes('cut bait') || s.includes('cut_bait')) return true;
+  // v2 key names — anchor/finesse techniques with no useful trolling route
+  if (s.includes('anchor')) return true;
+  if (s.includes('finesse')) return true;
+  if (s.includes('wacky') || s.includes('drop_shot') || s.includes('ned_rig') || s.includes('jig_n_pig')) return true;
+  if (s.includes('texas_rig') || s.includes('carolina_rig')) return true;
+  if (s.includes('live_bluegill') || s.includes('live_bream') || s.includes('live_shad')) return true;
+  const resolved = resolveLure(rawLureName);
+  if (resolved && resolved.toLowerCase().includes('topwater')) return true;
+  return false;
+}
+
+// A phase counts as "static" for route-generation purposes if its PRIMARY
+// (first-listed) recommended lure is a static technique — that's the one
+// species-intel.js entries treat as the lead presentation for the phase.
+function isStaticPhase(phaseRec) {
+  const lures = getEffectiveLures(phaseRec);
+  if (!lures.length) return false;
+  return isStaticTechnique(lures[0]);
+}
+
+// FIX (2026-07-03): species-intel.js entries frequently list freshwater
+// live-bait presentations (herring, shad, menhaden) as the recommended
+// technique — but this angler has no livewell, freshwater live bait is
+// fragile even with a portable aerated tank, and cast-netting for it near
+// where it's needed isn't a safe kayak operation. Filters those out per
+// the confirmed profile in fishing-style-profile.js, falling back to the
+// next listed option, or a generic trolled default if every option in the
+// phase was unavailable live bait. Both buildPhaseRods (lure selection)
+// and isStaticPhase (route generation) use this SAME filtered list so a
+// substituted lure doesn't create inconsistency between what shows in the
+// spread and whether a trolling route gets generated for it.
+function getEffectiveLures(phaseRec) {
+  if (!phaseRec?.lures?.length) return [];
+  const available = phaseRec.lures.filter(l => isLiveBaitAvailable(l));
+  if (available.length) return available;
+  // Every listed option was unavailable live bait (fully-freshwater-livebait
+  // phase entry) — fall back to a sensible generic trolled default instead
+  // of leaving the phase with nothing at all.
+  return ['A-Rig Medium'];
 }
 
 // ── Sunrise computation ───────────────────────────────────────────────────────
@@ -230,11 +329,50 @@ function computePhases(launchTimeStr, returnTimeStr, dateStr, lakeName) {
 
 // ── Per-phase behavior lookup ─────────────────────────────────────────────────
 function getPhaseRecommendation(species, lakeName, season, phaseNum, waterTempF) {
+  // Try v2 multi-species brain first
+  const v2sp = IntelV2?.SPECIES_BEHAVIOR_V2?.[species];
+  if (v2sp) {
+    const lakeKeyV2 = (IntelV2.resolveLakeKey
+      ? (IntelV2.resolveLakeKey(lakeName, v2sp) || 'default_SC_reservoir')
+      : (v2sp[lakeName] ? lakeName : 'default_SC_reservoir'));
+    const lakeNode = v2sp[lakeKeyV2] || v2sp['default_SC_reservoir'] || v2sp['Coastal SC Inshore'];
+    const sNode = lakeNode?.[season];
+    if (sNode) {
+      let [dMin, dMax] = typeof sNode.preferredDepth === 'function'
+        ? sNode.preferredDepth(waterTempF)
+        : (sNode.preferredDepth || [5, 15]);
+      const phaseShifts = { 1: -4, 2: 0, 3: 4 }; // dawn shallower, deep push phase3
+      const shift = phaseShifts[phaseNum] || 0;
+      dMin = Math.max(1, dMin + shift);
+      dMax = Math.max(dMin + 4, dMax + shift);
+      const speed = Array.isArray(sNode.preferredSpeed)
+        ? sNode.preferredSpeed[0]
+        : (sNode.preferredSpeed || 2.0);
+      return {
+        depthMin: dMin, depthMax: dMax,
+        lures: sNode.preferredPresentation || [],
+        speed,
+        notes: Array.isArray(sNode.notes) ? sNode.notes.join(' · ') : (sNode.notes || ''),
+        _v2meta: {
+          structure: sNode.preferredStructure,
+          lureFamilies: sNode.lureFamilies,
+          colors: sNode.preferredColors,
+          lead: sNode.leadDistance,
+          rod: sNode.rodArchitecture,
+          forage: sNode.forage,
+          reactionStrike: sNode.reactionStrike,
+          confidence: sNode.confidence,
+          fallback: sNode.fallbackPresentation,
+        },
+      };
+    }
+  }
+
+  // Fallback → v1 species-intel.js (Striped Bass legacy entries)
   const lakeKey = resolveLakeKey(lakeName, SPECIES_BEHAVIOR);
   const seasonData = SPECIES_BEHAVIOR[lakeKey]?.[species]?.[season];
   if (!seasonData) return null;
 
-  // Map phase number to time-of-day key
   const todKeys = { 1: 'dawn', 2: 'day', 3: 'day' };
   const tod = seasonData.timeOfDay[todKeys[phaseNum]] || seasonData.timeOfDay['day'];
   if (!tod) return null;
@@ -243,10 +381,6 @@ function getPhaseRecommendation(species, lakeName, season, phaseNum, waterTempF)
     ? seasonData.depthBand(waterTempF)
     : [...seasonData.depthBand];
 
-  // Phase-specific depth adjustments beyond the standard time-of-day shift
-  // Phase 1: Dawn — shallow (positive shift = shallower)
-  // Phase 2: Transition — mid depth
-  // Phase 3: Deep — push 4-6ft deeper than base band (fish thermocline/channel)
   const baseShift = tod.depthShift || 0;
   const phaseDepthShifts = { 1: baseShift, 2: Math.round(baseShift / 2), 3: -5 };
   const shift = phaseDepthShifts[phaseNum];
@@ -261,79 +395,40 @@ function getPhaseRecommendation(species, lakeName, season, phaseNum, waterTempF)
   };
 }
 
-// ── Lure depth compatibility check ───────────────────────────────────────────
-function lureCompatibleWithDepth(lureName, targetDepth) {
-  if (!lureName) return true;
-  const dive = LURE_DIVE_DEPTHS[lureName];
-  if (!dive) return true; // unknown lure — assume compatible
-  // Lure runs too deep for target (e.g. Deep Hit Stick min 12ft in 8ft water)
-  if (dive.minDive > targetDepth + 2) return false;
-  // Fixed-dive crankbait can't reach deep enough (and can't be weighted in this rig)
-  if (dive.needsWeight && dive.maxDive < targetDepth - 3) return false;
-  return true;
-}
-
-function getDiveWarning(lureName, targetDepth) {
-  if (!lureName) return null;
-  const dive = LURE_DIVE_DEPTHS[lureName];
-  if (!dive) return null;
-  if (dive.minDive > targetDepth + 2)
-    return `⚠ ${lureName} runs ${dive.minDive}-${dive.maxDive}ft — too deep for ${targetDepth}ft target`;
-  if (dive.needsWeight && dive.maxDive < targetDepth - 3)
-    return `⚠ ${lureName} only reaches ${dive.maxDive}ft — add inline weight to hit ${targetDepth}ft`;
-  return null;
-}
-
 // ── Build 2 rods for a phase ──────────────────────────────────────────────────
 function buildPhaseRods(phaseRec, phaseNum, sides) {
   if (!phaseRec) return [newRodRow(), newRodRow()];
-  const depth = Math.round((phaseRec.depthMin + phaseRec.depthMax) / 2);
-  const allLures = phaseRec.lures.filter(Boolean);
-
-  // Rod presets — both rods same setup on a kayak 2-rod spread
-  const ROD_PRESET = '7\' M Mod-Fast Spinning (Ugly Stik Lite Pro)';
+  // ZERO-SNAG LURE RUNNING DEPTH RULE (2026-07-04):
+  // Never set target lure depth below the shallowest inward swing of the contour route!
+  // If route crosses depthMin (e.g. 14ft flat or point lip), setting lure depth to 18ft
+  // drags a $20 A-Rig or deep crankbait into bottom timber/rocks.
+  // Rod 1 (Inside Shallow Rod): patrols 2.5 ft above shallowest breakline lip.
+  // Rod 2 (Outside Deep Ledge Rod): patrols 1.0 ft above shallowest breakline lip.
+  const shallowLip = phaseRec.depthMin || 12;
+  const rod1Depth = Math.max(2.5, Math.round((shallowLip - 2.5) * 2) / 2);
+  const rod2Depth = Math.max(3.5, Math.round((shallowLip - 1.0) * 2) / 2);
+  const lures = getEffectiveLures(phaseRec);
+  // Was any originally-recommended lure dropped for unavailable live bait?
+  const wasSubstituted = phaseRec.lures?.some(l => !isLiveBaitAvailable(l));
 
   return sides.map((side, i) => {
-    // Pick a depth-compatible lure — try each lure in the list until one fits
-    let resolved = null;
-    let rawLure = null;
-    for (let attempt = 0; attempt < allLures.length; attempt++) {
-      const candidate = allLures[(i + attempt) % Math.max(1, allLures.length)];
-      const candidateResolved = resolveLure(candidate);
-      if (candidateResolved && lureCompatibleWithDepth(candidateResolved, depth)) {
-        resolved = candidateResolved;
-        rawLure = candidate;
-        break;
-      } else if (candidateResolved && !resolved) {
-        // Keep as fallback even if depth-incompatible
-        resolved = candidateResolved;
-        rawLure = candidate;
-      }
-    }
-
-    // Position: always Mid — Ryan swaps rods manually from a 4-rod vertical mount
-    const position = 'Mid';
-
+    const rawLure = lures[i % Math.max(1, lures.length)];
+    const resolved = resolveLure(rawLure);
+    const targetLureDepth = (i === 0) ? rod1Depth : rod2Depth;
     const rod = newRodRow({
       side,
-      position,
-      rod: ROD_PRESET,
+      position: 'Mid',
+      rod: '7\' M Mod-Fast Spinning (Ugly Stik Lite Pro)',
       reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader',
-      depth: String(depth),
+      depth: String(targetLureDepth),
     });
-
     if (resolved) {
-      rod.lure  = resolved;
+      rod.lure = resolved;
       rod.color = LURE_COLOR_DEFAULTS[resolved] || '';
-      rod.lead  = String(autoCalculateLead(rod, phaseRec.speed));
+      rod.lead = String(autoCalculateLead(rod, phaseRec.speed));
 
-      // Depth warning note if lure is incompatible but was the only option
-      const warn = getDiveWarning(resolved, depth);
-      if (warn) rod.notes = (rod.notes ? rod.notes + ' · ' : '') + warn;
-
-      // Auto-populate A-Rig detail fields
-      const isARig = resolved.includes('A-Rig');
-      if (isARig) {
+      // Auto-populate A-Rig trailer and jig weight fields for build page display
+      if (resolved.includes('A-Rig')) {
         const isLight  = resolved.includes('Light')  || resolved.includes('1.65');
         const isMedium = resolved.includes('Medium') || resolved.includes('2.65');
         const isHeavy  = resolved.includes('Heavy')  || resolved.includes('3.5oz');
@@ -344,16 +439,33 @@ function buildPhaseRods(phaseRec, phaseNum, sides) {
     } else if (rawLure) {
       rod.notes = rawLure;
     }
-
     if (phaseRec.notes) {
-      rod.notes = (rod.notes ? rod.notes + ' · ' : '') + phaseRec.notes;
+      // FIX (2026-07-03): this was .slice(0, 50) with no ellipsis, cutting
+      // tactical notes off mid-word ("shallower than mid-") in the final
+      // plan output. Raised to a much more reasonable length and added an
+      // ellipsis so a genuine cutoff is at least visible as intentional
+      // rather than looking like broken/missing text.
+      const NOTE_CHAR_LIMIT = 220;
+      const trimmedNote = phaseRec.notes.length > NOTE_CHAR_LIMIT
+        ? phaseRec.notes.slice(0, NOTE_CHAR_LIMIT).replace(/\s+\S*$/, '') + '…'
+        : phaseRec.notes;
+      rod.notes = (rod.notes ? rod.notes + ' · ' : '') + trimmedNote;
     }
+    if (wasSubstituted) {
+      rod.notes = (rod.notes ? rod.notes + ' · ' : '') + '⚠ Swapped from original live-bait rec (freshwater live bait not assumed available — see fishing-style-profile.js)';
+    }
+    // Surface v2 metadata if available — structure priorities, lure families, confidence source
+    const v2 = phaseRec._v2meta;
+    if (v2?.structure?.length) rod.notes = (rod.notes ? rod.notes + ' · ' : '') + 'Structure: ' + v2.structure.slice(0, 3).join(', ');
+    if (v2?.lureFamilies?.length) rod.notes = (rod.notes ? rod.notes + ' · ' : '') + 'Families: ' + v2.lureFamilies.slice(0, 3).join(', ');
+    if (v2?.colors?.length) rod.notes = (rod.notes ? rod.notes + ' · ' : '') + 'Colors: ' + v2.colors.slice(0, 2).join(', ');
+    if (v2?.confidence?.source) rod.notes = (rod.notes ? rod.notes + ' · ' : '') + v2.confidence.source;
     return rod;
   });
 }
 
 // ── Route generation per phase ────────────────────────────────────────────────
-async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon, rangeMiles) {
+async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon, rangeMiles, targetLengthFt = null, startLat = null, startLon = null, endLat = null, endLon = null, isReturnPass = false) {
   if (!phaseRec) return;
 
   window._smartPlanPhaseRoutes = window._smartPlanPhaseRoutes || [];
@@ -365,6 +477,23 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
     speed: phaseRec.speed,
     window: `${phase.startStr} – ${phase.endStr}`,
   });
+
+  // FIX (2026-07-03): Smart Plan was generating a trolling sweep route for
+  // EVERY phase regardless of the recommended technique — including phases
+  // whose primary lure is topwater, or free-lined/downlined live bait. Those
+  // are cast or drift-fished at a spot, not trolled along a controlled path;
+  // generating a "trolling lane" for them produces a route nobody was ever
+  // going to run. Skip route generation for these and surface the existing
+  // phaseRec.notes (which already frequently describes WHERE to fish —
+  // "points and creek mouths", "near Pinopolis Dam", etc.) as spot guidance
+  // instead of a pointless sweep track.
+  if (isStaticPhase(phaseRec)) {
+    const primaryLure = phaseRec.lures[0];
+    console.log(`[smart-plan] Phase ${phase.num} ${phase.name}: primary technique "${primaryLure}" is static/casting, not trolled — skipping route generation.`);
+    window._smartPlanPhaseRoutes[window._smartPlanPhaseRoutes.length - 1].staticTechnique = true;
+    window._smartPlanPhaseRoutes[window._smartPlanPhaseRoutes.length - 1].technique = primaryLure;
+    return;
+  }
 
   const minEl = document.getElementById('rbDepthMin');
   const maxEl = document.getElementById('rbDepthMax');
@@ -379,12 +508,22 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
     } else {
       console.warn(`[smart-plan] Phase ${phase.num}: no ramp coords or range — using existing clip if any`);
     }
+    const rCfg = getRouteConfigForPhase(phaseRec, phase.num) || {};
     const tracks = generateAndCommitRoute({
-      depthMin:  phaseRec.depthMin,
-      depthMax:  phaseRec.depthMax,
-      trackName: `Phase ${phase.num} ${phase.name} (${phase.startStr}–${phase.endStr})`,
-      rampLat:   rampLat ?? null,
-      rampLon:   rampLon ?? null,
+      depthMin:       phaseRec.depthMin,
+      depthMax:       phaseRec.depthMax,
+      pattern:        rCfg.pattern || 'sine+straight',
+      amplitude:      rCfg.amplitude || 24,
+      spacing:        rCfg.spacing || 150,
+      trackName:      `Phase ${phase.num} ${phase.name} (${phase.startStr}–${phase.endStr})`,
+      rampLat:        rampLat ?? null,
+      rampLon:        rampLon ?? null,
+      startLat:       startLat ?? rampLat ?? null,
+      startLon:       startLon ?? rampLon ?? null,
+      endLat:         endLat ?? null,
+      endLon:         endLon ?? null,
+      targetLengthFt: targetLengthFt || null,
+      isReturnPass:   isReturnPass,
     });
     if (tracks?.length) {
       console.log(`[smart-plan] Phase ${phase.num} ${phase.name}: generated ${tracks.length} route(s) at ${phaseRec.depthMin}-${phaseRec.depthMax}ft`);
@@ -427,12 +566,43 @@ export function applyStoredSmartPlanDepth() {
   }
 }
 
+// ── Phase Trolling Pattern & Route Config Brain ───────────────────────────────
+function getRouteConfigForPhase(rec, phaseNum) {
+  if (!rec) return null;
+  if (phaseNum === 1) {
+    return {
+      pattern: 'sine+straight',
+      amplitude: 18,
+      spacing: 180,
+      lanes: 1,
+      rationale: 'Sine+Straight pattern with 18ft amplitude glides parallel along the shallow ledge breakline and executes smooth S-curve turns across primary points. Keeps presentations in prime morning ambush zones without overshooting onto shallow flats.'
+    };
+  } else if (phaseNum === 2) {
+    return {
+      pattern: 'sine',
+      amplitude: 28,
+      spacing: 140,
+      lanes: 1,
+      rationale: 'Continuous Sine S-curve oscillation (28ft amplitude) weaves back and forth across the primary channel drop-off. Speed changes on turns accelerate the outside lure and stall/drop the inside lure to trigger following predators.'
+    };
+  } else {
+    return {
+      pattern: 'sine+straight',
+      amplitude: 22,
+      spacing: 160,
+      lanes: 1,
+      rationale: 'Controlled weave along the deep channel ledge edge returning toward launch ramp. Keeps deep-diving crankbaits and heavy A-Rigs patrolling right above suspended thermocline fish.'
+    };
+  }
+}
+
 // ── Rationale text ────────────────────────────────────────────────────────────
-function buildRationaleText(species, lakeName, season, phases, phaseRecs, phaseInfo, totalRoutes) {
+function buildRationaleText(species, lakeName, season, phases, phaseRecs, phaseInfo, totalRoutes, staticPhaseCount = 0) {
   const lines = [];
   lines.push(`${species} — ${lakeName}, ${season}`);
   lines.push(`Sunrise: ${phaseInfo.phases[0].startStr} → Phase boundaries computed from sunrise + solunar`);
-  if (totalRoutes > 0) lines.push(`Routes: ${totalRoutes} auto-generated and committed to plan`);
+  if (totalRoutes > 0) lines.push(`Routes: ${totalRoutes} auto-generated and committed to plan${staticPhaseCount ? ` · ${staticPhaseCount} phase(s) static-technique, no route needed` : ''}`);
+  else if (staticPhaseCount === phases.length) lines.push(`Routes: 0 — every phase is a static/casting technique this trip, no trolling routes needed`);
   else lines.push(`Routes: No contour data loaded — open Contour Data tab first`);
 
   const sol = phaseInfo.solunar;
@@ -450,11 +620,37 @@ function buildRationaleText(species, lakeName, season, phases, phaseRecs, phaseI
     if (rec) {
       lines.push(`  Rods ${phase.num * 2 - 1} & ${phase.num * 2} · Depth: ${rec.depthMin}-${rec.depthMax}ft · Speed: ${rec.speed}mph`);
       lines.push(`  Lures: ${rec.lures.slice(0, 3).join(', ')}`);
-      if (rec.notes) lines.push(`  Notes: ${rec.notes}`);
-      const routeCfg = getRouteConfigForPhase(rec, phase.num);
-      if (routeCfg) {
-        lines.push(`  Route: ${routeCfg.pattern} · amplitude ${routeCfg.amplitude}ft · spacing ${routeCfg.spacing}ft · ${routeCfg.lanes} lane(s)`);
-        lines.push(`  Why: ${routeCfg.rationale}`);
+      // FIX (2026-07-03): Smart Plan used to generate a trolling sweep route
+      // for every phase, including phases whose primary technique is
+      // topwater or free-lined/downlined live bait — techniques nobody
+      // trolls. Those phases now skip route generation entirely (see
+      // generateRouteForPhase / isStaticPhase); call that out explicitly
+      // here instead of silently having no route with no explanation, and
+      // surface the notes field prominently since it's usually the only
+      // spot guidance this phase has (points, creek mouths, dam schooling
+      // areas, etc.) — it was previously just tacked on as a minor line.
+      if (isStaticPhase(rec)) {
+        lines.push(`  ⚠ STATIC TECHNIQUE (${rec.lures[0]}) — no trolling route generated for this phase.`);
+        lines.push(`  Where to fish: ${rec.notes || 'No specific area guidance in the data for this entry — use local structure knowledge (points, creek mouths, breaklines).'}`);
+      } else {
+        if (rec.notes) lines.push(`  Notes: ${rec.notes}`);
+      }
+      // FIX (2026-07-03): getRouteConfigForPhase is not defined anywhere in
+      // this codebase — no local function, no import. This was crashing
+      // buildRationaleText entirely (ReferenceError), which in turn left
+      // plan-builder.js's rationaleHtml undefined and crashed the whole
+      // plan preview render, even though route generation itself had
+      // already succeeded. Guarded so a missing optional line can't take
+      // down the rest of the plan. TODO: restore real per-phase route
+      // config (pattern/amplitude/spacing/lanes) once the intended source
+      // of this function is found — it may have been renamed/removed in
+      // route-builder.js during a prior refactor.
+      if (!isStaticPhase(rec) && typeof getRouteConfigForPhase === 'function') {
+        const routeCfg = getRouteConfigForPhase(rec, phase.num);
+        if (routeCfg) {
+          lines.push(`  Route: ${routeCfg.pattern} · amplitude ${routeCfg.amplitude}ft · spacing ${routeCfg.spacing}ft · ${routeCfg.lanes} lane(s)`);
+          lines.push(`  Why: ${routeCfg.rationale}`);
+        }
       }
     } else {
       lines.push(`  No data for this phase`);
@@ -578,29 +774,122 @@ export async function runSmartPlan() {
       'lake murray': MURRAY_RAMPS, 'murray': MURRAY_RAMPS,
       'lake monticello': MONTICELLO_RAMPS, 'monticello': MONTICELLO_RAMPS,
     };
-    const rampList = lakeRampMap[lakeName.toLowerCase()] || [];
+    // FIX (2026-07-03): this used to be an exact match against lakeName.toLowerCase().
+    // Now that #planLake is populated from the worker-backed access index,
+    // values look like "Lake Wateree, SC" or "Lake Wateree (Fairfield Co, SC)"
+    // instead of the bare "Lake Wateree" LAKE_DB used to produce — the exact
+    // match silently failed for ALL FIVE of these lakes, not just new ones,
+    // leaving rampLat/rampLon null and skipping setClipFromRamp() entirely.
+    // That's what let a sweep run with zero clip and hit the 44k+ point cap.
+    const cleanLakeName = String(lakeName || '')
+      .toLowerCase()
+      .replace(/\([^)]*\)/g, ' ')   // strip "(County Co, ST)"
+      .replace(/,.*$/, '')          // strip ", ST" suffix
+      .trim();
+    const rampList = lakeRampMap[cleanLakeName]
+      || Object.entries(lakeRampMap).find(([k]) => cleanLakeName.includes(k) || k.includes(cleanLakeName))?.[1]
+      || [];
     const selectedRampKey = document.getElementById('planRamp')?.value || '';
-    const selectedRamp = rampList.find(r => r.key === selectedRampKey) || rampList[0];
-    if (selectedRamp) {
-      rampLat = selectedRamp.lat;
-      rampLon = selectedRamp.lon;
-      console.log(`[smart-plan] Using ramp: ${selectedRamp.name} (${rampLat}, ${rampLon})`);
+    const GUARANTEED_SC_RAMPS = {
+      'clearwater cove': [34.37927, -80.72881],
+      'clearwater cove marina': [34.37927, -80.72881],
+      'clearwater': [34.37927, -80.72881],
+      'colonel creek': [34.36885, -80.79724],
+      'colonel creek landing': [34.36885, -80.79724],
+      'taylor creek': [34.3830, -80.7374],
+      'taylor creek boat ramp': [34.3830, -80.7374],
+      'lake wateree state park': [34.3830, -80.7374],
+      'beaver creek': [34.4199, -80.7989],
+      'wateree creek': [34.4800, -80.8800]
+    };
+    const normRampKey = String(selectedRampKey || '').trim().toLowerCase();
+    for (const [k, coords] of Object.entries(GUARANTEED_SC_RAMPS)) {
+      if (normRampKey === k || normRampKey.includes(k) || k.includes(normRampKey)) {
+        rampLat = coords[0];
+        rampLon = coords[1];
+        console.log(`[smart-plan] Using guaranteed GPS coords for "${selectedRampKey}": (${rampLat}, ${rampLon})`);
+        break;
+      }
+    }
+
+    if (rampLat == null || rampLon == null) {
+      if (typeof LAKE_DB !== 'undefined') {
+        const dbEntry = LAKE_DB[lakeName] || LAKE_DB[cleanLakeName] || Object.entries(LAKE_DB).find(([k]) => cleanLakeName.includes(k.toLowerCase()))?.[1];
+        if (dbEntry?.ramps) {
+          const coords = dbEntry.ramps[selectedRampKey] || Object.entries(dbEntry.ramps).find(([k]) => k.toLowerCase() === selectedRampKey.toLowerCase() || k.toLowerCase().includes(selectedRampKey.toLowerCase()))?.[1];
+          if (coords) {
+            rampLat = Array.isArray(coords) ? coords[0] : coords.lat;
+            rampLon = Array.isArray(coords) ? coords[1] : (coords.lon || coords.lng);
+            console.log(`[smart-plan] Using LAKE_DB ramp: "${selectedRampKey}" (${rampLat}, ${rampLon})`);
+          }
+        }
+      }
+    }
+
+    if (rampLat == null || rampLon == null) {
+      const selectedRamp = rampList.find(r => r.key === selectedRampKey || r.name === selectedRampKey || String(r.name).toLowerCase() === String(selectedRampKey).toLowerCase() || String(r.name).toLowerCase().includes(String(selectedRampKey).toLowerCase())) || rampList[0];
+      if (selectedRamp) {
+        rampLat = selectedRamp.lat;
+        rampLon = selectedRamp.lon;
+        console.log(`[smart-plan] Using ryan-ramps ramp: ${selectedRamp.name} (${rampLat}, ${rampLon})`);
+      }
+    } else {
+      console.warn(`[smart-plan] No ramp coords found for "${lakeName}" (normalized: "${cleanLakeName}") — route will generate with NO clip box unless one is already set. This will likely blow the point-count safety cap.`);
     }
   } catch (e) {
     console.warn('[smart-plan] Could not load ramp coords:', e.message);
   }
 
-  // Generate routes for each phase oriented toward selected ramp
+  // Generate continuous trolling circuit routes for each phase
   window._smartPlanPhaseRoutes = [];
+  function calcDurHrs(sStr, eStr) {
+    const parse = s => {
+      const m = String(s||'').match(/(\d+):(\d+)\s*(AM|PM)?/i);
+      if (!m) return 2.0;
+      let h = parseInt(m[1]), min = parseInt(m[2]);
+      if (m[3]?.toUpperCase() === 'PM' && h < 12) h += 12;
+      if (m[3]?.toUpperCase() === 'AM' && h === 12) h = 0;
+      return h + (min / 60.0);
+    };
+    let s = parse(sStr), e = parse(eStr);
+    if (e < s) e += 24.0;
+    return Math.max(0.5, e - s);
+  }
+
+  let curLat = rampLat, curLon = rampLon;
   for (let i = 0; i < phases.length; i++) {
-    await generateRouteForPhase(phases[i], phaseRecs[i], lakeName, rampLat, rampLon, rangeMiles);
+    const durHrs = calcDurHrs(phases[i].startStr, phases[i].endStr);
+    const spd = phaseRecs[i]?.speed || 2.2;
+    const targetFt = Math.round(durHrs * spd * 5280 * 0.80);
+    const isLastPhase = (i === phases.length - 1);
+    
+    await generateRouteForPhase(
+      phases[i], phaseRecs[i], lakeName, rampLat, rampLon, rangeMiles,
+      targetFt, curLat, curLon, isLastPhase ? rampLat : null, isLastPhase ? rampLon : null, isLastPhase
+    );
+
+    const generated = state.DATA?.tracks;
+    if (generated && generated.length > 0) {
+      const lastTrk = generated[generated.length - 1];
+      if (lastTrk && lastTrk.pts && lastTrk.pts.length > 0) {
+        const lastPt = lastTrk.pts[lastTrk.pts.length - 1]; // [lon, lat]
+        curLon = lastPt[0]; curLat = lastPt[1];
+      }
+    }
   }
   applyToPlanFields(phaseRecs, phases);
   applyStoredSmartPlanDepth();
 
   // Build rationale
-  const totalRoutes = (window._smartPlanPhaseRoutes || []).length;
-  let rationale = buildRationaleText(sp, lakeName, season, phases, phaseRecs, phaseInfo, totalRoutes);
+  // FIX (2026-07-03): this was hardcoded to 0 unconditionally, so the
+  // rationale header always said "No contour data loaded" even when routes
+  // had genuinely just been generated above. Now reflects the real count,
+  // and separately reports how many phases were static-technique (no route
+  // expected) so the summary line is accurate either way.
+  const generatedRoutes = (window._smartPlanPhaseRoutes || []).filter(r => !r.staticTechnique).length;
+  const staticPhaseCount = (window._smartPlanPhaseRoutes || []).filter(r => r.staticTechnique).length;
+  const totalRoutes = generatedRoutes;
+  let rationale = buildRationaleText(sp, lakeName, season, phases, phaseRecs, phaseInfo, totalRoutes, staticPhaseCount);
 
   // Ramp evaluation — check if selected ramp is optimal
   const weatherStr = document.getElementById('planWeather')?.value || '';
@@ -617,7 +906,6 @@ export async function runSmartPlan() {
   if (outEl) outEl.value = rationale;
 
   // ── Write computed values back to plan form fields so collectPlan() saves them ──
-  // Solunar
   const sol = phaseInfo.solunar;
   function solFmt(h) {
     const hh = Math.floor(((h % 24) + 24) % 24);
@@ -628,7 +916,6 @@ export async function runSmartPlan() {
   const solunarEl = document.getElementById('planSolunar');
   if (solunarEl && !solunarEl.value) solunarEl.value = solunarStr;
 
-  // Structure intel summary (from rationale structure section if present)
   const structureEl = document.getElementById('planStructure');
   if (structureEl && !structureEl.value) {
     const recStructures = phaseRecs.filter(Boolean).flatMap(r =>
@@ -637,8 +924,66 @@ export async function runSmartPlan() {
     if (recStructures.length) structureEl.value = recStructures[0].replace(/structure[:\s]+/i, '').trim();
   }
 
-  // Weather — pull from planWeather DOM if not already set (user may have filled it)
-  // (weather field is user-entered, smart plan doesn't auto-fill it)
+  // ── Groq plan audit — async, non-blocking, appends to rationale when done ──
+  // Fires after the plan is already visible so it doesn't slow down the main flow.
+  const auditPayload = {
+    plan: {
+      lake: lakeName, species: sp, season, date: document.getElementById('planDate')?.value || '',
+      ramp: document.getElementById('planRamp')?.value || '',
+      rangeMiles: rangeMiles.toFixed(1),
+      phases: phases.map((phase, i) => {
+        const rec = phaseRecs[i];
+        return {
+          name: phase.name, window: `${phase.startStr}-${phase.endStr}`,
+          depthMin: rec?.depthMin, depthMax: rec?.depthMax,
+          speed: rec?.speed, lures: getEffectiveLures(rec).slice(0, 3),
+          notes: rec?.notes || '',
+        };
+      }),
+      weather: document.getElementById('planWeather')?.value || '',
+      tackle: document.getElementById('planTackle')?.value || '',
+      safety: document.getElementById('planSafety')?.value || '',
+    }
+  };
+
+  const WORKER_URL = (typeof CF_WORKER_URL !== 'undefined' ? CF_WORKER_URL : window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev');
+  if (outEl) outEl.value = rationale + '\n\n⏳ Groq plan audit running...';
+
+  fetch(`${WORKER_URL}/audit-plan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(auditPayload),
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (!data.success || !data.audit) return;
+      const a = data.audit;
+      const scoreBar = (n) => n >= 8 ? '🟢' : n >= 5 ? '🟡' : '🔴';
+      const auditBlock = [
+        '',
+        '══════════ GROQ PLAN AUDIT ══════════',
+        `Overall: ${scoreBar(a.overall_score)} ${a.overall_score}/10 · ${a.confidence?.toUpperCase() || ''} confidence`,
+        `Verdict: ${a.verdict || ''}`,
+        '',
+        `Depth alignment: ${scoreBar(a.scores?.depth_alignment)} ${a.scores?.depth_alignment}/10`,
+        `Lure selection:  ${scoreBar(a.scores?.lure_selection)} ${a.scores?.lure_selection}/10`,
+        `Speed/cadence:   ${scoreBar(a.scores?.speed_cadence)} ${a.scores?.speed_cadence}/10`,
+        `Battery mgmt:    ${scoreBar(a.scores?.battery_management)} ${a.scores?.battery_management}/10`,
+        `Safety:          ${scoreBar(a.scores?.safety)} ${a.scores?.safety}/10`,
+        '',
+        a.flags?.length ? `⚠ FLAGS:\n${a.flags.map(f => `  · ${f}`).join('\n')}` : '',
+        a.fixes?.length ? `🔧 FIXES:\n${a.fixes.map(f => `  · ${f}`).join('\n')}` : '',
+        a.keeper_moves?.length ? `✅ SOLID MOVES:\n${a.keeper_moves.map(f => `  · ${f}`).join('\n')}` : '',
+        a.local_intel ? `💡 LOCAL INTEL: ${a.local_intel}` : '',
+        '═════════════════════════════════════',
+      ].filter(Boolean).join('\n');
+
+      if (outEl) outEl.value = rationale + auditBlock;
+      if (document.getElementById('catchCenterBody')) window.renderCatchSubtab?.();
+    })
+    .catch(e => {
+      if (outEl) outEl.value = rationale + `\n\n⚠ Groq audit failed: ${e.message}`;
+    });
 
   const firstRec = phaseRecs.find(Boolean);
   setStatus(
@@ -661,7 +1006,14 @@ console.log('[smart-plan] module ready');
 // ── Ramp evaluation integration ───────────────────────────────────────────────
 // Imported lazily so wateree-ramps.js only loads when needed
 async function getRampEvaluation(lakeName, species, season, phaseRecs, weatherStr, roughWeather) {
-  const { evaluateRamps, parseWindDeg } = await import('../data/ryan-ramps.js');
+  // FIX (2026-07-03): this was importing from '../data/ryan-ramps.js', which
+  // doesn't exist and 404s — the real file lives alongside this module and
+  // is already imported correctly elsewhere in this file (see the ramp
+  // lookup in runSmartPlan) as './ryan-ramps.js'. The wrong path here was
+  // crashing runSmartPlan at the ramp-evaluation step, after routes had
+  // already generated successfully, aborting before the rationale text and
+  // status line ever got written.
+  const { evaluateRamps, parseWindDeg } = await import('./ryan-ramps.js');
 
   // Determine target zones from phase recommendations
   const targetZones = [];
