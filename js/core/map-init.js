@@ -251,10 +251,40 @@ export function renderMap() {
   state.LAYER.clearLayers();
   const bounds = [];
 
+  // Phase-aware track colors for Smart Plan routes
+  const PHASE_COLORS = {
+    1: '#00e5ff',  // Phase 1 Dawn — cyan
+    2: '#ffb300',  // Phase 2 Transition — amber
+    3: '#ff4081',  // Phase 3 Deep — pink/magenta
+  };
+  function getTrackColor(trackName) {
+    if (!trackName) return '#ff00e6';
+    const n = String(trackName);
+    if (/Phase\s*1|Dawn/i.test(n))       return PHASE_COLORS[1];
+    if (/Phase\s*2|Transition/i.test(n)) return PHASE_COLORS[2];
+    if (/Phase\s*3|Deep/i.test(n))       return PHASE_COLORS[3];
+    return '#ff00e6'; // default magenta for non-smart-plan tracks
+  }
+
   for (const t of state.DATA.tracks) {
     if (t.pts.length > 1) {
+      const color = getTrackColor(t.name);
       L.polyline(t.pts, { color: '#000', weight: 6, opacity: 0.55 }).addTo(state.LAYER);
-      L.polyline(t.pts, { color: '#ff00e6', weight: 2.5, opacity: 1 }).addTo(state.LAYER);
+      L.polyline(t.pts, { color, weight: 2.5, opacity: 1 }).addTo(state.LAYER);
+      // Phase label at midpoint
+      if (/Phase/i.test(t.name || '')) {
+        const mid = t.pts[Math.floor(t.pts.length / 2)];
+        if (mid) {
+          const label = (t.name || '').match(/Phase\s*(\d+)/i)?.[0] || '';
+          L.marker(mid, {
+            icon: L.divIcon({
+              className: '',
+              html: `<div style="background:${color};color:#000;font-size:10px;font-weight:700;padding:2px 5px;border-radius:3px;white-space:nowrap;opacity:0.9">${label}</div>`,
+              iconAnchor: [20, 10],
+            })
+          }).addTo(state.LAYER);
+        }
+      }
       t.pts.forEach((p) => bounds.push(p));
     }
   }
