@@ -229,9 +229,9 @@ async function loadFishingSpots(lakeKey) {
       if (!coords) return;
       const m = L.circleMarker([coords[1], coords[0]], {
         radius: 4,
-        color: '#ffb703',
+        color: '#76ff03',
         weight: 1,
-        fillColor: '#ffb703',
+        fillColor: '#76ff03',
         fillOpacity: 0.7,
       });
       m.bindTooltip('Community fishing spot', { sticky: true, direction: 'top', opacity: 0.85 });
@@ -245,7 +245,7 @@ async function loadFishingSpots(lakeKey) {
     const lines = await loadLayer(lakeKey, 'fishing_lines');
     L.geoJSON(lines, {
       style() {
-        return { color: '#ffb703', weight: 1.5, opacity: 0.55, dashArray: '4,4' };
+        return { color: '#76ff03', weight: 1.5, opacity: 0.55, dashArray: '4,4' };
       },
       onEachFeature(feat, layer) {
         layer.bindTooltip('Community fishing path', { sticky: true, direction: 'top', opacity: 0.85 });
