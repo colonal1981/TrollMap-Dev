@@ -606,48 +606,20 @@ function generateContourRoutes(cfg) {
     const passAmplitude = amplitude;
 
     // SMART ONE-WAY CONTINUOUS CIRCUIT SHAPING:
-    // Phase 1 starts at ramp and meanders OUT in one direction along shallow structure.
-    // Phase 2 starts where Phase 1 ended and meanders OUT along mid-depth structure.
-    // Phase 3 starts where Phase 2 ended and meanders BACK toward the launch ramp along deep structure!
+    // App route points are [lat,lon]. Raw GeoJSON is [lon,lat] only before
+    // resampleContour(). The old code accidentally swapped these during the
+    // nearest-to-ramp/orientation step, which made tracks pass near the ramp but
+    // begin a mile away. Prepare the spine by slicing at the point nearest the
+    // phase start, then choose the direction that best fits this phase.
     const targetPassFt = cfg.targetLengthFt || 15000;
-
-    // Find the closest point on the spine to the phase start coordinate
-    let startIdx = 0;
-    const sLat = cfg.startLat != null ? cfg.startLat : cfg.rampLat;
-    const sLon = cfg.startLon != null ? cfg.startLon : cfg.rampLon;
-    if (sLat != null && sLon != null) {
-      let minDist = Infinity;
-      for (let j = 0; j < spine.length; j++) {
-        const [d] = distBearing(sLat, sLon, spine[j][1], spine[j][0]);
-        if (d < minDist) { minDist = d; startIdx = j; }
-      }
-    }
-
-    // Orient spine direction: if Phase 3 (return pass), orient toward ramp. Else orient away along structure.
-    if (cfg.isReturnPass && cfg.endLat != null && cfg.endLon != null && spine.length >= 2) {
-      const [dFirst] = distBearing(cfg.endLat, cfg.endLon, spine[0][1], spine[0][0]);
-      const [dLast]  = distBearing(cfg.endLat, cfg.endLon, spine[spine.length-1][1], spine[spine.length-1][0]);
-      if (dLast > dFirst) spine = spine.slice().reverse();
-    } else if (spine.length >= 2 && sLat != null && sLon != null) {
-      const [dFirst] = distBearing(sLat, sLon, spine[0][1], spine[0][0]);
-      const [dLast]  = distBearing(sLat, sLon, spine[spine.length-1][1], spine[spine.length-1][0]);
-      if (dLast < dFirst) spine = spine.slice().reverse();
-    }
-
-    // Slice spine starting from the start coordinate for the target distance
-    if (startIdx > 0 && startIdx < spine.length - 2) {
-      spine = spine.slice(startIdx);
-    }
-    if (spine.length >= 2 && trackLengthFt(spine) > targetPassFt) {
-      const stepFt = Math.max(50, waveFt);
-      const keepPts = Math.max(10, Math.floor(targetPassFt / stepFt));
-      spine = spine.slice(0, keepPts);
-    }
+    spine = prepareSpineForPhase(spine, cfg);
+    if (spine.length < 2) continue;
 
     let pts = patternAlongSpine(spine, {
       pattern, amplitude: passAmplitude, wave: waveFt, straightFt, spacing,
     });
     pts = clampToClip(pts);
+    if (targetPassFt > 0) pts = trimPolylineToLength(pts, targetPassFt);
     if (pts.length < 2) continue;
 
     // Max-gap split: don't draw lines across land gaps > 400ft
@@ -758,6 +730,126 @@ function trackLengthFt(pts) {
     l += d;
   }
   return l;
+}
+
+function isValidLatLon(lat, lon) {
+  return Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
+}
+
+function distancePointToRefFt(pt, lat, lon) {
+  if (!pt || !isValidLatLon(lat, lon)) return Infinity;
+  // App route points are ALWAYS [lat, lon]. Raw GeoJSON is the only lon/lat source.
+  return distBearing(lat, lon, pt[0], pt[1])[0];
+}
+
+function nearestPointIndex(pts, lat, lon) {
+  if (!pts?.length || !isValidLatLon(lat, lon)) return 0;
+  let bestIdx = 0;
+  let best = Infinity;
+  for (let i = 0; i < pts.length; i++) {
+    const d = distancePointToRefFt(pts[i], lat, lon);
+    if (d < best) { best = d; bestIdx = i; }
+  }
+  return bestIdx;
+}
+
+function trimPolylineToLength(pts, maxFt) {
+  if (!pts?.length || !Number.isFinite(maxFt) || maxFt <= 0) return pts || [];
+  if (pts.length < 2) return pts;
+  const out = [pts[0]];
+  let used = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1];
+    const b = pts[i];
+    const [segFt, brng] = distBearing(a[0], a[1], b[0], b[1]);
+    if (used + segFt <= maxFt) {
+      out.push(b);
+      used += segFt;
+      continue;
+    }
+    const remain = Math.max(0, maxFt - used);
+    if (remain > 5) out.push(destination(a[0], a[1], brng, remain));
+    break;
+  }
+  return out.length >= 2 ? out : pts.slice(0, 2);
+}
+
+function availableLength(pts) {
+  return pts?.length >= 2 ? trackLengthFt(pts) : 0;
+}
+
+function prepareSpineForPhase(spine, cfg) {
+  if (!spine?.length) return spine || [];
+  const sLat = cfg.startLat != null ? cfg.startLat : cfg.rampLat;
+  const sLon = cfg.startLon != null ? cfg.startLon : cfg.rampLon;
+  const eLat = cfg.endLat;
+  const eLon = cfg.endLon;
+
+  let candidates = [];
+  if (isValidLatLon(sLat, sLon)) {
+    const idx = nearestPointIndex(spine, sLat, sLon);
+    const forward = spine.slice(idx);
+    const reverse = spine.slice(0, idx + 1).reverse();
+    if (forward.length >= 2) candidates.push(forward);
+    if (reverse.length >= 2) candidates.push(reverse);
+  } else {
+    candidates = [spine];
+    if (spine.length >= 2) candidates.push(spine.slice().reverse());
+  }
+
+  if (!candidates.length) return spine;
+
+  const target = Number.isFinite(cfg.targetLengthFt) && cfg.targetLengthFt > 0 ? cfg.targetLengthFt : 0;
+  const scoreCandidate = (pts) => {
+    const len = availableLength(pts);
+    const startPenalty = isValidLatLon(sLat, sLon) ? distancePointToRefFt(pts[0], sLat, sLon) : 0;
+    const lengthPenalty = target ? Math.max(0, target - len) * 0.35 : 0;
+    let endPenalty = 0;
+    if (cfg.isReturnPass && isValidLatLon(eLat, eLon)) {
+      endPenalty = distancePointToRefFt(pts[pts.length - 1], eLat, eLon);
+    }
+    let bearingPenalty = 0;
+    if (!cfg.isReturnPass && cfg.lockedBearing != null && pts.length >= 2) {
+      const [, brng] = distBearing(pts[0][0], pts[0][1], pts[Math.min(pts.length - 1, 2)][0], pts[Math.min(pts.length - 1, 2)][1]);
+      const diff = Math.abs(((brng - cfg.lockedBearing + 540) % 360) - 180);
+      bearingPenalty = diff > 90 ? 500 : diff * 2;
+    }
+    // Lower is better. For return phases, ending close to ramp matters most.
+    return startPenalty + lengthPenalty + endPenalty + bearingPenalty - Math.min(len, target || 5000) * 0.02;
+  };
+
+  candidates.sort((a, b) => scoreCandidate(a) - scoreCandidate(b));
+  let out = candidates[0];
+  if (target > 0) out = trimPolylineToLength(out, target);
+  return out;
+}
+
+function buildConnectorTrack(name, fromLat, fromLon, toLat, toLon, role = 'connector') {
+  if (!isValidLatLon(fromLat, fromLon) || !isValidLatLon(toLat, toLon)) return null;
+  const [distFt, brng] = distBearing(fromLat, fromLon, toLat, toLon);
+  if (!Number.isFinite(distFt) || distFt < 3) return null;
+  const stepFt = 250;
+  const n = Math.max(1, Math.ceil(distFt / stepFt));
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    pts.push(destination(fromLat, fromLon, brng, distFt * i / n));
+  }
+  // Force exact endpoints so GPX exports prove the route is anchored.
+  pts[0] = [fromLat, fromLon];
+  pts[pts.length - 1] = [toLat, toLon];
+  return { name, pts, role, connector: true, smartPlan: true, lengthFt: distFt };
+}
+
+function addOrSnapConnector(out, name, fromLat, fromLon, targetTrack, role) {
+  if (!targetTrack?.pts?.length || !isValidLatLon(fromLat, fromLon)) return;
+  const first = targetTrack.pts[0];
+  const [d] = distBearing(fromLat, fromLon, first[0], first[1]);
+  if (d <= 25) {
+    targetTrack.pts[0] = [fromLat, fromLon];
+    return;
+  }
+  const c = buildConnectorTrack(name, fromLat, fromLon, first[0], first[1], role);
+  if (c) out.push(c);
 }
 
 
@@ -982,34 +1074,97 @@ export function generateAndCommitRoute(overrides = {}) {
 
   // Name each track by phase so it's identifiable in the plan/GPX export
   const prefix = overrides.trackName || `Smart Plan ${cfg.depthMin}-${cfg.depthMax}ft`;
+
+  // Smart Plan should use one coherent fishing pass per phase. If clipping or
+  // stitching emitted several fragments, choose the fragment that starts nearest
+  // the phase start and, for the return phase, finishes nearest the return ramp.
+  if (overrides.singleBestTrack !== false && tracks.length > 1) {
+    const sLat = cfg.startLat ?? cfg.rampLat;
+    const sLon = cfg.startLon ?? cfg.rampLon;
+    const eLat = cfg.endLat;
+    const eLon = cfg.endLon;
+    tracks.sort((a, b) => {
+      const af = a.pts?.[0], al = a.pts?.[a.pts.length - 1];
+      const bf = b.pts?.[0], bl = b.pts?.[b.pts.length - 1];
+      const aStart = isValidLatLon(sLat, sLon) ? distancePointToRefFt(af, sLat, sLon) : 0;
+      const bStart = isValidLatLon(sLat, sLon) ? distancePointToRefFt(bf, sLat, sLon) : 0;
+      const aEnd = (cfg.isReturnPass && isValidLatLon(eLat, eLon)) ? distancePointToRefFt(al, eLat, eLon) : 0;
+      const bEnd = (cfg.isReturnPass && isValidLatLon(eLat, eLon)) ? distancePointToRefFt(bl, eLat, eLon) : 0;
+      return (aStart + aEnd) - (bStart + bEnd);
+    });
+    tracks = tracks.slice(0, 1);
+  }
+
   tracks = tracks.map((t, i) => ({
     ...t,
     name: tracks.length > 1 ? `${prefix} (${i + 1})` : prefix,
+    role: t.role || 'fishing',
+    smartPlan: overrides.smartPlan !== false,
+    connector: false,
+    lengthFt: trackLengthFt(t.pts || []),
   }));
 
-  // Orient each track so it starts at the end nearest the ramp launch point
-  if (rampLat != null && rampLon != null) {
+  // Final orientation safety: app route points are [lat,lon]. Reverse a track if
+  // its far end is closer to the requested phase start. This used to be swapped.
+  const startLat = cfg.startLat ?? rampLat;
+  const startLon = cfg.startLon ?? rampLon;
+  if (isValidLatLon(startLat, startLon)) {
     tracks = tracks.map(track => {
       if (!track.pts || track.pts.length < 2) return track;
-      const first = track.pts[0];   // [lon, lat]
+      const first = track.pts[0];
       const last  = track.pts[track.pts.length - 1];
-      const dFirst = distBearing(rampLat, rampLon, first[1], first[0])[0];
-      const dLast  = distBearing(rampLat, rampLon, last[1],  last[0])[0];
-      // If the last point is closer to the ramp than the first, reverse the track
-      if (dLast < dFirst) {
-        return { ...track, pts: track.pts.slice().reverse() };
-      }
+      const dFirst = distBearing(startLat, startLon, first[0], first[1])[0];
+      const dLast  = distBearing(startLat, startLon, last[0],  last[1])[0];
+      if (dLast < dFirst) return { ...track, pts: track.pts.slice().reverse() };
       return track;
     });
-    console.log(`[route-builder] oriented ${tracks.length} track(s) toward ramp (${rampLat.toFixed(4)}, ${rampLon.toFixed(4)})`);
+    console.log(`[route-builder] oriented ${tracks.length} track(s) toward phase start (${startLat.toFixed(4)}, ${startLon.toFixed(4)})`);
   }
 
-  // Commit directly to plan — no pending/confirm step needed for auto-routes
-  state.DATA.tracks.push(...tracks);
+  const commitTracks = [];
+  const emitConnectors = overrides.emitConnectors !== false;
+  if (emitConnectors && tracks[0]) {
+    const startLabel = overrides.startLabel || 'Start';
+    addOrSnapConnector(commitTracks, `Connector: ${startLabel} → ${prefix}`, startLat, startLon, tracks[0], 'start_connector');
+  }
+
+  for (let i = 0; i < tracks.length; i++) {
+    if (i > 0 && emitConnectors) {
+      const prev = tracks[i - 1].pts?.[tracks[i - 1].pts.length - 1];
+      const next = tracks[i].pts?.[0];
+      if (prev && next) {
+        const c = buildConnectorTrack(`Connector: ${tracks[i - 1].name} → ${tracks[i].name}`, prev[0], prev[1], next[0], next[1], 'phase_gap_connector');
+        if (c) commitTracks.push(c);
+      }
+    }
+    tracks[i].lengthFt = trackLengthFt(tracks[i].pts || []);
+    commitTracks.push(tracks[i]);
+  }
+
+  if (emitConnectors && cfg.endLat != null && cfg.endLon != null && commitTracks.length) {
+    const lastTrack = commitTracks[commitTracks.length - 1];
+    const lastPt = lastTrack.pts?.[lastTrack.pts.length - 1];
+    const endLabel = overrides.endLabel || 'Return';
+    if (lastPt) {
+      const [d] = distBearing(lastPt[0], lastPt[1], cfg.endLat, cfg.endLon);
+      if (d <= 25) {
+        lastTrack.pts[lastTrack.pts.length - 1] = [cfg.endLat, cfg.endLon];
+      } else {
+        const c = buildConnectorTrack(`Connector: ${prefix} → ${endLabel}`, lastPt[0], lastPt[1], cfg.endLat, cfg.endLon, 'return_connector');
+        if (c) commitTracks.push(c);
+      }
+    }
+  }
+
+  if (!state.DATA.tracks) state.DATA.tracks = [];
+  state.DATA.tracks.push(...commitTracks);
   renderAll();
 
-  console.log(`[route-builder] auto-committed ${tracks.length} track(s): ${prefix}`);
-  return tracks;
+  const fishingFt = tracks.reduce((sum, t) => sum + (t.lengthFt || trackLengthFt(t.pts || [])), 0);
+  const connectorFt = commitTracks.filter(t => t.connector).reduce((sum, t) => sum + (t.lengthFt || trackLengthFt(t.pts || [])), 0);
+  window._lastRouteBuildAudit = { prefix, trackCount: commitTracks.length, fishingFt, connectorFt, startLat, startLon, endLat: cfg.endLat, endLon: cfg.endLon };
+  console.log(`[route-builder] auto-committed ${commitTracks.length} track(s): ${prefix} · fishing=${Math.round(fishingFt)}ft connector=${Math.round(connectorFt)}ft`);
+  return commitTracks;
 }
 
 export function buildRouteBuilderPanel(container) {

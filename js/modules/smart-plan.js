@@ -24,6 +24,7 @@
  */
 
 import { state } from '../core/state.js';
+import { renderAll } from '../core/map-init.js';
 import { esc } from '../utils/escape.js';
 import { newRodRow } from '../utils/rod-row.js';
 import { renderSpread, autoCalculateLead, LURE_DIVE_DEPTHS } from './spread-builder.js';
@@ -287,6 +288,52 @@ function geoDistanceFt(lat1, lon1, lat2, lon2) {
   const p1 = lat1 * D, p2 = lat2 * D, dp = (lat2 - lat1) * D, dl = (lon2 - lon1) * D;
   const a = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function geoBearingDeg(lat1, lon1, lat2, lon2) {
+  const D = Math.PI / 180, R2D = 180 / Math.PI;
+  const p1 = lat1 * D, p2 = lat2 * D, dl = (lon2 - lon1) * D;
+  const y = Math.sin(dl) * Math.cos(p2);
+  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+  return (Math.atan2(y, x) * R2D + 360) % 360;
+}
+
+function geoDestinationFt(lat, lon, bearingDeg, distFt) {
+  const R = 20902231, D = Math.PI / 180, R2D = 180 / Math.PI;
+  const br = bearingDeg * D, lr = lat * D, d = distFt / R;
+  const lat2 = Math.asin(Math.sin(lr) * Math.cos(d) + Math.cos(lr) * Math.sin(d) * Math.cos(br));
+  const lon2 = lon * D + Math.atan2(Math.sin(br) * Math.sin(d) * Math.cos(lr), Math.cos(d) - Math.sin(lr) * Math.sin(lat2));
+  return [lat2 * R2D, lon2 * R2D];
+}
+
+function buildSmartPlanConnectorTrack(name, fromLat, fromLon, toLat, toLon, role = 'connector') {
+  const distFt = geoDistanceFt(fromLat, fromLon, toLat, toLon);
+  if (!Number.isFinite(distFt) || distFt <= 25) return null;
+  const brng = geoBearingDeg(fromLat, fromLon, toLat, toLon);
+  const stepFt = 250;
+  const n = Math.max(1, Math.ceil(distFt / stepFt));
+  const pts = [];
+  for (let i = 0; i <= n; i++) pts.push(geoDestinationFt(fromLat, fromLon, brng, distFt * i / n));
+  pts[0] = [fromLat, fromLon];
+  pts[pts.length - 1] = [toLat, toLon];
+  return { name, pts, role, connector: true, smartPlan: true, lengthFt: distFt };
+}
+
+function appendConnectorThenTracks(out, fromLat, fromLon, tracks, labelFrom, labelTo) {
+  if (!tracks?.length) return { lat: fromLat, lon: fromLon };
+  const first = tracks[0]?.pts?.[0];
+  if (!first) return { lat: fromLat, lon: fromLon };
+  const d = geoDistanceFt(fromLat, fromLon, first[0], first[1]);
+  if (Number.isFinite(d) && d <= 25) {
+    tracks[0].pts[0] = [fromLat, fromLon];
+  } else {
+    const c = buildSmartPlanConnectorTrack(`Connector: ${labelFrom} → ${labelTo}`, fromLat, fromLon, first[0], first[1], 'phase_connector');
+    if (c) out.push(c);
+  }
+  out.push(...tracks);
+  const lastTrack = [...tracks].reverse().find(t => t?.pts?.length >= 2);
+  const last = lastTrack?.pts?.[lastTrack.pts.length - 1];
+  return last ? { lat: last[0], lon: last[1] } : { lat: fromLat, lon: fromLon };
 }
 
 function trackLengthFtFromPts(pts) {
@@ -668,7 +715,11 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
       rationale: phase.num === 1 ? 'Meandering outbound explore' : (phase.num === 2 ? 'Direct ledge swing' : 'Return circuit to ramp'),
     };
 
-    const tracks = generateAndCommitRoute({
+    // Let the Route Builder make the fishing pass, then immediately pull those
+    // tracks back out. Smart Plan assembles launch/phase/return connectors itself
+    // so stale route-builder code or browser cache cannot drop the connectors.
+    const beforeCount = state.DATA?.tracks?.length || 0;
+    const returnedTracks = generateAndCommitRoute({
       ...rCfg,
       depthMin:       phaseRec.depthMin,
       depthMax:       phaseRec.depthMax,
@@ -677,21 +728,27 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
       rampLon:        rampLon ?? null,
       startLat:       startLat ?? rampLat ?? null,
       startLon:       startLon ?? rampLon ?? null,
-      endLat:         endLat ?? null,
-      endLon:         endLon ?? null,
+      endLat:         null,
+      endLon:         null,
       targetLengthFt: targetLengthFt || null,
       isReturnPass:   isReturnPass,
       lockedBearing:  lockedBearing,
       smartPlan:      true,
-      emitConnectors: true,
+      emitConnectors: false,
       singleBestTrack:true,
-      startLabel:     phase.num === 1 ? 'Launch ramp' : `Phase ${phase.num} start`,
-      endLabel:       isReturnPass ? 'Launch ramp' : null,
     });
-    if (tracks?.length) {
-      console.log(`[smart-plan] Phase ${phase.num} ${phase.name}: committed ${tracks.length} connected route track(s) at ${phaseRec.depthMin}-${phaseRec.depthMax}ft`);
+
+    const addedTracks = state.DATA?.tracks?.slice(beforeCount) || [];
+    if (state.DATA?.tracks) state.DATA.tracks.splice(beforeCount);
+
+    const tracks = (addedTracks.length ? addedTracks : (returnedTracks || []))
+      .filter(t => t?.pts?.length >= 2)
+      .map(t => ({ ...t, smartPlan: true, role: 'fishing', connector: false }));
+
+    if (tracks.length) {
+      console.log(`[smart-plan] Phase ${phase.num} ${phase.name}: built ${tracks.length} fishing track(s) at ${phaseRec.depthMin}-${phaseRec.depthMax}ft`);
     }
-    return tracks || [];
+    return tracks;
   } catch (e) {
     console.warn('[smart-plan] Route generation failed:', e.message);
     return [];
@@ -1036,16 +1093,15 @@ export async function runSmartPlan() {
 
   let curLat = rampLat, curLon = rampLon;
   let lockedBearing = null;
+  const assembledSmartPlanTracks = [];
 
   for (let i = 0; i < phases.length; i++) {
     const durHrs = calcDurHrs(phases[i].startStr, phases[i].endStr);
     const spd = phaseRecs[i]?.speed || 2.2;
-    
+
     // Each phase gets a distance budget based on its own time window. Keep the
     // fishing pass under the full phase mileage so there is room for launch,
-    // phase-to-phase, and return connectors. The previous logic made Phase 3 as
-    // long as Phase 1 + Phase 2, which routinely created GPX routes longer than
-    // the whole trip window.
+    // phase-to-phase, and return connectors.
     const isLastPhase = (i === phases.length - 1);
     const phaseFishingFraction = isLastPhase ? 0.60 : 0.70;
     const targetFt = Math.round(durHrs * spd * 5280 * phaseFishingFraction);
@@ -1053,30 +1109,48 @@ export async function runSmartPlan() {
     const phaseTracks = await generateRouteForPhase(
       phases[i], phaseRecs[i], lakeName, rampLat, rampLon, rangeMiles,
       targetFt, curLat, curLon,
-      isLastPhase ? rampLat : null, isLastPhase ? rampLon : null,
+      null, null,
       isLastPhase,
       lockedBearing
     );
-    if (phaseTracks?.length) window._smartPlanCommittedTracks.push(...phaseTracks);
 
-    // Advance the next phase from the end of the actual fishing pass, not from
-    // the start connector. For the final phase the return connector may end at
-    // the ramp, but that is irrelevant after planning is complete.
-    const lastFishingTrack = [...(phaseTracks || [])].reverse().find(t => !t.connector && t.pts?.length >= 2)
-      || [...(phaseTracks || [])].reverse().find(t => t.pts?.length >= 2);
-    if (lastFishingTrack) {
-      const pts = lastFishingTrack.pts;
-      const lastPt = pts[pts.length - 1];
-      curLat = lastPt[0]; curLon = lastPt[1];
+    if (phaseTracks?.length) {
+      const fromLabel = i === 0 ? (selectedRampKey || 'Launch ramp') : `Phase ${phases[i - 1].num} ${phases[i - 1].name}`;
+      const toLabel = `Phase ${phases[i].num} ${phases[i].name}`;
+      const next = appendConnectorThenTracks(assembledSmartPlanTracks, curLat, curLon, phaseTracks, fromLabel, toLabel);
+      curLat = next.lat; curLon = next.lon;
 
       if (i === 0 && lockedBearing === null && Number.isFinite(rampLat) && Number.isFinite(rampLon)) {
-        const farPt = pts[pts.length - 1];
-        const dLat = (farPt[0] - rampLat) * 111320;
-        const dLon = (farPt[1] - rampLon) * 111320 * Math.cos(rampLat * Math.PI / 180);
-        lockedBearing = Math.atan2(dLon, dLat) * 180 / Math.PI;
+        const lastFishingTrack = [...phaseTracks].reverse().find(t => t?.pts?.length >= 2);
+        const farPt = lastFishingTrack?.pts?.[lastFishingTrack.pts.length - 1];
+        if (farPt) {
+          const dLat = (farPt[0] - rampLat) * 111320;
+          const dLon = (farPt[1] - rampLon) * 111320 * Math.cos(rampLat * Math.PI / 180);
+          lockedBearing = Math.atan2(dLon, dLat) * 180 / Math.PI;
+        }
       }
     }
   }
+
+  // Hard return-to-ramp rule. If the final fishing track does not end at the
+  // launch, add an explicit return connector.
+  if (assembledSmartPlanTracks.length && Number.isFinite(rampLat) && Number.isFinite(rampLon)) {
+    const ret = buildSmartPlanConnectorTrack(
+      `Connector: Phase ${phases[phases.length - 1].num} ${phases[phases.length - 1].name} → ${selectedRampKey || 'Launch ramp'}`,
+      curLat, curLon, rampLat, rampLon, 'return_connector'
+    );
+    if (ret) assembledSmartPlanTracks.push(ret);
+    else {
+      const lastTrack = assembledSmartPlanTracks[assembledSmartPlanTracks.length - 1];
+      if (lastTrack?.pts?.length) lastTrack.pts[lastTrack.pts.length - 1] = [rampLat, rampLon];
+    }
+  }
+
+  if (!state.DATA.tracks) state.DATA.tracks = [];
+  state.DATA.tracks.push(...assembledSmartPlanTracks);
+  window._smartPlanCommittedTracks = assembledSmartPlanTracks;
+  renderAll();
+
   applyToPlanFields(phaseRecs, phases);
   applyStoredSmartPlanDepth();
 
