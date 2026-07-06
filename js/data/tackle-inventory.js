@@ -34,14 +34,14 @@ export const TACKLE_INVENTORY = [
   { id:'blade_3in',   name:'3" Blade Vibe Bait',   type:'blade_vibe', trollable:true, weightOz:null, sizes:['3"'] },
 
   // ── A-Rigs / Umbrella Rigs ────────────────────────────────────────────────
-  { id:'arig_light',  name:'A-Rig Light (~1.65oz)',  type:'umbrella_rig', trollable:true, weightOz:1.65, jigWeights:[0.125,0.1875,0.25],     sizes:['3.8"'] },
-  { id:'arig_medium', name:'A-Rig Medium (~2.65oz)', type:'umbrella_rig', trollable:true, weightOz:2.65, jigWeights:[0.1875,0.25,0.375],     sizes:['4.6"'] },
-  { id:'arig_heavy',  name:'A-Rig Heavy (~3.5oz)',   type:'umbrella_rig', trollable:true, weightOz:3.5,  jigWeights:[0.25,0.375,0.5],        sizes:['5"'] },
+  { id:'arig_light',  name:'A-Rig Light (~1.65oz) – 3.8" Swimbait',  type:'umbrella_rig', trollable:true, weightOz:1.65, jigWeights:[0.125,0.1875,0.25],     sizes:['3.8"'] },
+  { id:'arig_medium', name:'A-Rig Medium (~2.65oz) – 4.6" Swimbait', type:'umbrella_rig', trollable:true, weightOz:2.65, jigWeights:[0.1875,0.25,0.375],     sizes:['4.6"'] },
+  { id:'arig_heavy',  name:'A-Rig Heavy (~3.5oz) – 5" Swimbait',   type:'umbrella_rig', trollable:true, weightOz:3.5,  jigWeights:[0.25,0.375,0.5],        sizes:['5"'] },
 
   // ── Swimbaits (Paddle Tail) ───────────────────────────────────────────────
-  { id:'swimbait_3in', name:'3" Paddle Tail Swimbait', type:'swimbait_paddle', trollable:true, weightOz:null, jigWeights:[0.125,0.1875,0.25],     sizes:['3"'] },
-  { id:'swimbait_4in', name:'4" Paddle Tail Swimbait', type:'swimbait_paddle', trollable:true, weightOz:null, jigWeights:[0.1875,0.25,0.375,0.5], sizes:['4"'] },
-  { id:'swimbait_5in', name:'5" Paddle Tail Swimbait', type:'swimbait_paddle', trollable:true, weightOz:null, jigWeights:[0.25,0.375,0.5,0.75],   sizes:['5"'] },
+  { id:'swimbait_3in', name:'Swimbait 3.8" – Jighead', type:'swimbait_paddle', trollable:true, weightOz:null, jigWeights:[0.125,0.1875,0.25],     sizes:['3"'] },
+  { id:'swimbait_4in', name:'Swimbait 4.6" – Jighead', type:'swimbait_paddle', trollable:true, weightOz:null, jigWeights:[0.1875,0.25,0.375,0.5], sizes:['4"'] },
+  { id:'swimbait_5in', name:'Swimbait 5" – Jighead', type:'swimbait_paddle', trollable:true, weightOz:null, jigWeights:[0.25,0.375,0.5,0.75],   sizes:['5"'] },
 
   // ── Flutter Spoons ────────────────────────────────────────────────────────
   { id:'spoon_2oz', name:'Flutter Spoon 2oz', type:'flutter_spoon', trollable:true, weightOz:2.0 },
