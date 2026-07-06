@@ -280,6 +280,120 @@ function computeRangeMiles(speedMph) {
   return (BATTERY_AH_DEFAULT / MOTOR_AMP_AVG * spd) / 2;
 }
 
+// ── Smart Plan route audit helpers ────────────────────────────────────────────
+function geoDistanceFt(lat1, lon1, lat2, lon2) {
+  const R = 20902231, D = Math.PI / 180;
+  if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return Infinity;
+  const p1 = lat1 * D, p2 = lat2 * D, dp = (lat2 - lat1) * D, dl = (lon2 - lon1) * D;
+  const a = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function trackLengthFtFromPts(pts) {
+  if (!pts?.length) return 0;
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) total += geoDistanceFt(pts[i-1][0], pts[i-1][1], pts[i][0], pts[i][1]);
+  return total;
+}
+
+function planDurationHours(launchTimeStr, returnTimeStr) {
+  const parse = s => {
+    const m = String(s || '').match(/(\d+):(\d+)\s*(AM|PM)?/i);
+    if (!m) return null;
+    let h = parseInt(m[1]), min = parseInt(m[2]);
+    if (m[3]?.toUpperCase() === 'PM' && h < 12) h += 12;
+    if (m[3]?.toUpperCase() === 'AM' && h === 12) h = 0;
+    return h + min / 60;
+  };
+  const s = parse(launchTimeStr), e0 = parse(returnTimeStr);
+  if (s == null || e0 == null) return null;
+  let e = e0;
+  if (e < s) e += 24;
+  return Math.max(0, e - s);
+}
+
+function isSmartPlanTrack(t) {
+  const name = String(t?.name || '');
+  return !!(t?.smartPlan || name.startsWith('Phase ') || name.startsWith('Connector:'));
+}
+
+function clearExistingSmartPlanTracks() {
+  if (!state.DATA?.tracks?.length) return 0;
+  const before = state.DATA.tracks.length;
+  state.DATA.tracks = state.DATA.tracks.filter(t => !isSmartPlanTrack(t));
+  return before - state.DATA.tracks.length;
+}
+
+function upsertSmartPlanRampWaypoint(rampName, lat, lon) {
+  if (![lat, lon].every(Number.isFinite)) return;
+  if (!state.DATA) state.DATA = {};
+  if (!Array.isArray(state.DATA.waypoints)) state.DATA.waypoints = [];
+  const name = rampName || 'Launch Ramp';
+  const existing = state.DATA.waypoints.find(w => w?.role === 'launch_ramp' || w?.name === name);
+  const payload = { name, lat, lon, role: 'launch_ramp', smartPlan: true };
+  if (existing) Object.assign(existing, payload);
+  else state.DATA.waypoints.push(payload);
+  state.DATA.rampCoords = { name, lat, lon, source: 'smart_plan_locked', locked: true };
+  window._smartPlanRamp = state.DATA.rampCoords;
+}
+
+function auditSmartPlanRoute(tracks, rampLat, rampLon, launchTime, returnTime, speedMph) {
+  const out = { ok: true, flags: [], trackCount: tracks?.length || 0 };
+  const list = (tracks || []).filter(t => t?.pts?.length >= 2);
+  if (!list.length) {
+    out.ok = false; out.flags.push('No route tracks were generated.');
+    return out;
+  }
+  const first = list[0].pts[0];
+  const lastTrack = list[list.length - 1];
+  const last = lastTrack.pts[lastTrack.pts.length - 1];
+  out.startFt = geoDistanceFt(rampLat, rampLon, first[0], first[1]);
+  out.endFt = geoDistanceFt(rampLat, rampLon, last[0], last[1]);
+  out.totalFt = list.reduce((sum, t) => sum + trackLengthFtFromPts(t.pts), 0);
+  out.connectorFt = list.filter(t => t.connector || String(t.role || '').includes('connector')).reduce((sum, t) => sum + trackLengthFtFromPts(t.pts), 0);
+  out.fishingFt = out.totalFt - out.connectorFt;
+  out.maxGapFt = 0;
+  for (let i = 1; i < list.length; i++) {
+    const prev = list[i - 1].pts[list[i - 1].pts.length - 1];
+    const cur = list[i].pts[0];
+    out.maxGapFt = Math.max(out.maxGapFt, geoDistanceFt(prev[0], prev[1], cur[0], cur[1]));
+  }
+  const durH = planDurationHours(launchTime, returnTime);
+  out.durationH = durH;
+  out.speedMph = speedMph || 2.0;
+  out.budgetFt = durH ? durH * out.speedMph * 5280 : null;
+  out.estimatedH = out.totalFt / 5280 / out.speedMph;
+
+  if (out.startFt > 35) { out.ok = false; out.flags.push(`First GPX point is ${Math.round(out.startFt)}ft from the locked ramp.`); }
+  if (out.endFt > 35) { out.ok = false; out.flags.push(`Final GPX point is ${Math.round(out.endFt)}ft from the locked ramp.`); }
+  if (out.maxGapFt > 75) { out.ok = false; out.flags.push(`Tracks have an unconnected gap of ${Math.round(out.maxGapFt)}ft.`); }
+  if (out.budgetFt && out.totalFt > out.budgetFt * 1.05) {
+    out.ok = false;
+    out.flags.push(`Route is ${(out.totalFt / 5280).toFixed(1)}mi, but ${durH.toFixed(1)}hr at ${out.speedMph.toFixed(1)}mph supports about ${(out.budgetFt / 5280).toFixed(1)}mi.`);
+  }
+  return out;
+}
+
+function buildRouteAuditText(audit, rampName, rampLat, rampLon) {
+  if (!audit) return '';
+  const lines = ['', '── Route Audit ──'];
+  lines.push(`Ramp locked: ${rampName || 'selected ramp'} (${Number(rampLat).toFixed(5)}, ${Number(rampLon).toFixed(5)})`);
+  if (!audit.trackCount) {
+    lines.push('✗ No route tracks generated.');
+    return lines.join('\n');
+  }
+  lines.push(`${audit.ok ? '✓' : '⚠'} Starts at ramp: ${Math.round(audit.startFt || 0)}ft from locked coordinate`);
+  lines.push(`${audit.ok ? '✓' : '⚠'} Returns to ramp: ${Math.round(audit.endFt || 0)}ft from locked coordinate`);
+  lines.push(`${audit.maxGapFt <= 75 ? '✓' : '⚠'} Phase/track continuity max gap: ${Math.round(audit.maxGapFt || 0)}ft`);
+  lines.push(`Total route: ${(audit.totalFt / 5280).toFixed(2)}mi · fishing ${(audit.fishingFt / 5280).toFixed(2)}mi · connectors ${(audit.connectorFt / 5280).toFixed(2)}mi`);
+  if (audit.durationH) lines.push(`Estimated moving time: ${audit.estimatedH.toFixed(1)}hr at ${audit.speedMph.toFixed(1)}mph · plan window ${audit.durationH.toFixed(1)}hr`);
+  if (audit.flags?.length) {
+    lines.push('Route flags:');
+    audit.flags.forEach(f => lines.push(`  • ${f}`));
+  }
+  return lines.join('\n');
+}
+
 // ── Phase boundary computation ────────────────────────────────────────────────
 function computePhases(launchTimeStr, returnTimeStr, dateStr, lakeName) {
   const center = getLakeCenter(lakeName);
@@ -496,7 +610,7 @@ function buildPhaseRods(phaseRec, phaseNum, sides) {
 
 // ── Route generation per phase ────────────────────────────────────────────────
 async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon, rangeMiles, targetLengthFt = null, startLat = null, startLon = null, endLat = null, endLon = null, isReturnPass = false, lockedBearing = null) {
-  if (!phaseRec) return;
+  if (!phaseRec) return [];
 
   window._smartPlanPhaseRoutes = window._smartPlanPhaseRoutes || [];
   window._smartPlanPhaseRoutes.push({
@@ -513,7 +627,7 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
     console.log(`[smart-plan] Phase ${phase.num} ${phase.name}: primary technique "${primaryLure}" is static/casting, not trolled — skipping route generation.`);
     window._smartPlanPhaseRoutes[window._smartPlanPhaseRoutes.length - 1].staticTechnique = true;
     window._smartPlanPhaseRoutes[window._smartPlanPhaseRoutes.length - 1].technique = primaryLure;
-    return;
+    return [];
   }
 
   const minEl = document.getElementById('rbDepthMin');
@@ -568,12 +682,19 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
       targetLengthFt: targetLengthFt || null,
       isReturnPass:   isReturnPass,
       lockedBearing:  lockedBearing,
+      smartPlan:      true,
+      emitConnectors: true,
+      singleBestTrack:true,
+      startLabel:     phase.num === 1 ? 'Launch ramp' : `Phase ${phase.num} start`,
+      endLabel:       isReturnPass ? 'Launch ramp' : null,
     });
     if (tracks?.length) {
-      console.log(`[smart-plan] Phase ${phase.num} ${phase.name}: generated ${tracks.length} route(s) at ${phaseRec.depthMin}-${phaseRec.depthMax}ft`);
+      console.log(`[smart-plan] Phase ${phase.num} ${phase.name}: committed ${tracks.length} connected route track(s) at ${phaseRec.depthMin}-${phaseRec.depthMax}ft`);
     }
+    return tracks || [];
   } catch (e) {
     console.warn('[smart-plan] Route generation failed:', e.message);
+    return [];
   }
 }
 
@@ -807,8 +928,29 @@ export async function runSmartPlan() {
   state.SPREAD = newSpread;
   renderSpread();
 
-  // Get ramp coordinates for route orientation
+  // Remove stale Smart Plan tracks before regenerating. Manual/user tracks stay.
+  const clearedSmartPlanTracks = clearExistingSmartPlanTracks();
+  if (clearedSmartPlanTracks) console.log(`[smart-plan] Cleared ${clearedSmartPlanTracks} stale Smart Plan route track(s)`);
+  window._smartPlanCommittedTracks = [];
+
+  // Get and lock ramp coordinates for route anchoring. The ramp may be
+  // challenged later by the coach as a recommendation, but the route engine
+  // must never silently change the selected launch.
   let rampLat = null, rampLon = null;
+  const selectedRampKey = document.getElementById('planRamp')?.value || '';
+  const normalizeName = (v) => String(v || '')
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const cleanLakeName = normalizeName(String(lakeName || '').replace(/\([^)]*\)/g, ' ').replace(/,.*$/, ''));
+  const normRampKey = normalizeName(selectedRampKey);
+  const rampMatches = (a, b) => {
+    const x = normalizeName(a), y = normalizeName(b);
+    return !!x && !!y && (x === y || x.includes(y) || y.includes(x));
+  };
+
   try {
     const { WATEREE_RAMPS, MARION_RAMPS, MOULTRIE_RAMPS, MURRAY_RAMPS, MONTICELLO_RAMPS } = await import('./ryan-ramps.js');
     const lakeRampMap = {
@@ -818,22 +960,10 @@ export async function runSmartPlan() {
       'lake murray': MURRAY_RAMPS, 'murray': MURRAY_RAMPS,
       'lake monticello': MONTICELLO_RAMPS, 'monticello': MONTICELLO_RAMPS,
     };
-    // FIX (2026-07-03): this used to be an exact match against lakeName.toLowerCase().
-    // Now that #planLake is populated from the worker-backed access index,
-    // values look like "Lake Wateree, SC" or "Lake Wateree (Fairfield Co, SC)"
-    // instead of the bare "Lake Wateree" LAKE_DB used to produce — the exact
-    // match silently failed for ALL FIVE of these lakes, not just new ones,
-    // leaving rampLat/rampLon null and skipping setClipFromRamp() entirely.
-    // That's what let a sweep run with zero clip and hit the 44k+ point cap.
-    const cleanLakeName = String(lakeName || '')
-      .toLowerCase()
-      .replace(/\([^)]*\)/g, ' ')   // strip "(County Co, ST)"
-      .replace(/,.*$/, '')          // strip ", ST" suffix
-      .trim();
     const rampList = lakeRampMap[cleanLakeName]
       || Object.entries(lakeRampMap).find(([k]) => cleanLakeName.includes(k) || k.includes(cleanLakeName))?.[1]
       || [];
-    const selectedRampKey = document.getElementById('planRamp')?.value || '';
+
     const GUARANTEED_SC_RAMPS = {
       'clearwater cove': [34.37927, -80.72881],
       'clearwater cove marina': [34.37927, -80.72881],
@@ -844,44 +974,48 @@ export async function runSmartPlan() {
       'taylor creek boat ramp': [34.3830, -80.7374],
       'lake wateree state park': [34.3830, -80.7374],
       'beaver creek': [34.4199, -80.7989],
-      'wateree creek': [34.4800, -80.8800]
+      'wateree creek': [34.4800, -80.8800],
     };
-    const normRampKey = String(selectedRampKey || '').trim().toLowerCase();
-    for (const [k, coords] of Object.entries(GUARANTEED_SC_RAMPS)) {
-      if (normRampKey === k || normRampKey.includes(k) || k.includes(normRampKey)) {
-        rampLat = coords[0];
-        rampLon = coords[1];
-        console.log(`[smart-plan] Using guaranteed GPS coords for "${selectedRampKey}": (${rampLat}, ${rampLon})`);
-        break;
+
+    if (normRampKey) {
+      for (const [k, coords] of Object.entries(GUARANTEED_SC_RAMPS)) {
+        if (rampMatches(normRampKey, k)) {
+          rampLat = coords[0]; rampLon = coords[1];
+          console.log(`[smart-plan] Locked guaranteed ramp coords for "${selectedRampKey}": (${rampLat}, ${rampLon})`);
+          break;
+        }
       }
     }
 
-    if (rampLat == null || rampLon == null) {
-      if (typeof LAKE_DB !== 'undefined') {
-        const dbEntry = LAKE_DB[lakeName] || LAKE_DB[cleanLakeName] || Object.entries(LAKE_DB).find(([k]) => cleanLakeName.includes(k.toLowerCase()))?.[1];
-        if (dbEntry?.ramps) {
-          const coords = dbEntry.ramps[selectedRampKey] || Object.entries(dbEntry.ramps).find(([k]) => k.toLowerCase() === selectedRampKey.toLowerCase() || k.toLowerCase().includes(selectedRampKey.toLowerCase()))?.[1];
-          if (coords) {
-            rampLat = Array.isArray(coords) ? coords[0] : coords.lat;
-            rampLon = Array.isArray(coords) ? coords[1] : (coords.lon || coords.lng);
-            console.log(`[smart-plan] Using LAKE_DB ramp: "${selectedRampKey}" (${rampLat}, ${rampLon})`);
-          }
+    if ((rampLat == null || rampLon == null) && typeof LAKE_DB !== 'undefined') {
+      const dbEntry = LAKE_DB[lakeName] || LAKE_DB[cleanLakeName]
+        || Object.entries(LAKE_DB).find(([k]) => cleanLakeName.includes(normalizeName(k)))?.[1];
+      if (dbEntry?.ramps) {
+        const found = Object.entries(dbEntry.ramps).find(([k]) => rampMatches(k, selectedRampKey));
+        const coords = dbEntry.ramps[selectedRampKey] || found?.[1];
+        if (coords) {
+          rampLat = Array.isArray(coords) ? coords[0] : coords.lat;
+          rampLon = Array.isArray(coords) ? coords[1] : (coords.lon || coords.lng);
+          console.log(`[smart-plan] Locked LAKE_DB ramp coords for "${selectedRampKey}": (${rampLat}, ${rampLon})`);
         }
       }
     }
 
     if (rampLat == null || rampLon == null) {
-      const selectedRamp = rampList.find(r => r.key === selectedRampKey || r.name === selectedRampKey || String(r.name).toLowerCase() === String(selectedRampKey).toLowerCase() || String(r.name).toLowerCase().includes(String(selectedRampKey).toLowerCase())) || rampList[0];
+      const selectedRamp = rampList.find(r => rampMatches(r.key, selectedRampKey) || rampMatches(r.name, selectedRampKey)) || rampList[0];
       if (selectedRamp) {
-        rampLat = selectedRamp.lat;
-        rampLon = selectedRamp.lon;
-        console.log(`[smart-plan] Using ryan-ramps ramp: ${selectedRamp.name} (${rampLat}, ${rampLon})`);
+        rampLat = selectedRamp.lat; rampLon = selectedRamp.lon;
+        console.log(`[smart-plan] Locked ryan-ramps coords for ${selectedRamp.name}: (${rampLat}, ${rampLon})`);
       }
-    } else {
-      console.warn(`[smart-plan] No ramp coords found for "${lakeName}" (normalized: "${cleanLakeName}") — route will generate with NO clip box unless one is already set. This will likely blow the point-count safety cap.`);
     }
   } catch (e) {
     console.warn('[smart-plan] Could not load ramp coords:', e.message);
+  }
+
+  if (rampLat == null || rampLon == null) {
+    console.warn(`[smart-plan] No ramp coords found for "${lakeName}" / "${selectedRampKey}" — route will generate without a locked launch anchor.`);
+  } else {
+    upsertSmartPlanRampWaypoint(selectedRampKey || 'Launch ramp', rampLat, rampLon);
   }
 
   // Generate continuous trolling circuit routes for each phase
@@ -907,41 +1041,39 @@ export async function runSmartPlan() {
     const durHrs = calcDurHrs(phases[i].startStr, phases[i].endStr);
     const spd = phaseRecs[i]?.speed || 2.2;
     
-    // BALANCE: Phase 3 (Return) should take roughly as long as Phase 1 + Phase 2 (Outbound)
-    let targetFt;
-    if (i < 2) {
-      targetFt = Math.round(durHrs * spd * 5280 * 0.80);
-    } else {
-      // For Phase 3, we calculate the total outbound distance and try to match it
-      const outboundDur = (phases[0].end - phases[0].start) + (phases[1].end - phases[1].start);
-      const outboundSpd = (phaseRecs[0]?.speed || 2.2) + (phaseRecs[1]?.speed || 2.2);
-      targetFt = Math.round(outboundDur * (outboundSpd/2) * 5280 * 0.80);
-    }
-
+    // Each phase gets a distance budget based on its own time window. Keep the
+    // fishing pass under the full phase mileage so there is room for launch,
+    // phase-to-phase, and return connectors. The previous logic made Phase 3 as
+    // long as Phase 1 + Phase 2, which routinely created GPX routes longer than
+    // the whole trip window.
     const isLastPhase = (i === phases.length - 1);
+    const phaseFishingFraction = isLastPhase ? 0.60 : 0.70;
+    const targetFt = Math.round(durHrs * spd * 5280 * phaseFishingFraction);
 
-    await generateRouteForPhase(
+    const phaseTracks = await generateRouteForPhase(
       phases[i], phaseRecs[i], lakeName, rampLat, rampLon, rangeMiles,
       targetFt, curLat, curLon,
       isLastPhase ? rampLat : null, isLastPhase ? rampLon : null,
       isLastPhase,
       lockedBearing
     );
+    if (phaseTracks?.length) window._smartPlanCommittedTracks.push(...phaseTracks);
 
-    const generated = state.DATA?.tracks;
-    if (generated && generated.length > 0) {
-      const lastTrk = generated[generated.length - 1];
-      if (lastTrk && lastTrk.pts && lastTrk.pts.length >= 2) {
-        const pts = lastTrk.pts;
-        const lastPt = pts[pts.length - 1];
-        curLat = lastPt[0]; curLon = lastPt[1];
+    // Advance the next phase from the end of the actual fishing pass, not from
+    // the start connector. For the final phase the return connector may end at
+    // the ramp, but that is irrelevant after planning is complete.
+    const lastFishingTrack = [...(phaseTracks || [])].reverse().find(t => !t.connector && t.pts?.length >= 2)
+      || [...(phaseTracks || [])].reverse().find(t => t.pts?.length >= 2);
+    if (lastFishingTrack) {
+      const pts = lastFishingTrack.pts;
+      const lastPt = pts[pts.length - 1];
+      curLat = lastPt[0]; curLon = lastPt[1];
 
-        if (i === 0 && lockedBearing === null) {
-          const farPt = pts[pts.length - 1];
-          const dLat = (farPt[0] - rampLat) * 111320;
-          const dLon = (farPt[1] - rampLon) * 111320 * Math.cos(rampLat * Math.PI / 180);
-          lockedBearing = Math.atan2(dLon, dLat) * 180 / Math.PI;
-        }
+      if (i === 0 && lockedBearing === null && Number.isFinite(rampLat) && Number.isFinite(rampLon)) {
+        const farPt = pts[pts.length - 1];
+        const dLat = (farPt[0] - rampLat) * 111320;
+        const dLon = (farPt[1] - rampLon) * 111320 * Math.cos(rampLat * Math.PI / 180);
+        lockedBearing = Math.atan2(dLon, dLat) * 180 / Math.PI;
       }
     }
   }
@@ -969,6 +1101,11 @@ export async function runSmartPlan() {
 
   if (rampEval) {
     rationale += buildRampRationaleText(rampEval);
+  }
+
+  const routeAudit = auditSmartPlanRoute(window._smartPlanCommittedTracks || [], rampLat, rampLon, launchTime, returnTime, speedMph);
+  if (Number.isFinite(rampLat) && Number.isFinite(rampLon)) {
+    rationale += buildRouteAuditText(routeAudit, selectedRampKey, rampLat, rampLon);
   }
 
   if (outEl) outEl.value = rationale;
