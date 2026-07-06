@@ -412,4 +412,9 @@ onContourChange(() => {
 // so no listener needed here — just expose the function on window as backup.
 window.loadContourForLake = loadContourForLake;
 
+// ── Backward-compat alias for capture-panel.js ───────────────────────────────
+export async function loadContourDataset(key) {
+  return loadContourByR2Key(key);
+}
+
 console.log('[contour-data] module ready — lazy lake-triggered loading active');
