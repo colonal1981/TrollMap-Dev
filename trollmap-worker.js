@@ -1,5 +1,6 @@
 /**
- * TrollMap Cloudflare Worker — v11 (2026-06-24)
+ * TrollMap Cloudflare Worker — v14 (2026-07-04)
+ * Added POST /audit-plan route backed by free Groq Llama 3.3 70B API
  * ─────────────────────────────────────────────────────────────────
  * New in v11:
  *   D1 cross-device sync routes:
@@ -43,7 +44,8 @@
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, X-Sync-Token, X-Image-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Sync-Token, X-Image-Type, X-Lake, X-Date, X-Lat, X-Lon, X-Species-Hint, X-Assume-Board',
+  'Access-Control-Max-Age': '60',
 };
 
 const JSON_HEADERS = { ...CORS, 'Content-Type': 'application/json' };
@@ -2028,6 +2030,528 @@ async function handleContourGeojsonPut(request, env, lake) {
 }
 
 
+// ══════════════════════════════════════════════════════════════
+// TrollMap Catch ID v13 — ported from fish_sorter_v4.py
+// GPS-aware, bump-board-first, ecological reality guardrails
+// ══════════════════════════════════════════════════════════════
+
+const SPECIES_MIDLANDS_SANTEE = [
+  "Striped Bass","Largemouth Bass","White Bass / Hybrid","Chain Pickerel",
+  "Bowfin","Bowfin (Mudfish)",
+  "Black Crappie","White Crappie","Crappie",
+  "Bluegill",
+  "Redear Sunfish (Shellcracker)","Redbreast Sunfish","Sunfish (Panfish)",
+  "Yellow Perch",
+  "Blue Catfish","Channel Catfish","Flathead Catfish","Catfish",
+  "Longnose Gar","Spotted Gar","Gar",
+  "American Shad","Herring","Common Carp","Grass Carp","Tilapia"
+];
+
+const SPECIES_UPSTATE = [
+  "Spotted Bass","Largemouth Bass","Smallmouth Bass","Striped Bass",
+  "Rainbow / Brown Trout","Trout",
+  "Black Crappie","White Crappie","Crappie",
+  "Channel Catfish","Catfish","Walleye",
+  "Yellow Perch","Bluegill","Chain Pickerel"
+];
+
+const SPECIES_COASTAL_SALTWATER = [
+  "Red Drum (Redfish)",
+  "Speckled Trout (Spotted Seatrout)",
+  "Flounder",
+  "Black Drum","Sheepshead","Bluefish","Spanish Mackerel","Black Sea Bass",
+  "Atlantic Croaker","Whiting / Sea Mullet","Cobia","Striped Bass","Ladyfish",
+  "Jack Crevalle",
+  // freshwater strays in tidal creeks
+  "Largemouth Bass","Bowfin","Catfish","Bluegill","Sunfish (Panfish)","Gar"
+];
+
+// Union for schema enum – plus catch-journal canonical names
+const SPECIES_ALL_TROLLMAP = [...new Set([
+  ...SPECIES_MIDLANDS_SANTEE,
+  ...SPECIES_UPSTATE,
+  ...SPECIES_COASTAL_SALTWATER,
+  // catch-journal canonical aliases
+  "Spotted Bass","Smallmouth Bass","Blue Catfish","Channel Catfish","Flathead Catfish",
+  "Bowfin","Chain Pickerel","Bluegill","Redear Sunfish (Shellcracker)","Sunfish (Panfish)",
+  "Warmouth","Yellow Perch","White Perch","Longnose Gar","Gar",
+  "Red Drum (Redfish)","Speckled Trout (Spotted Seatrout)","Flounder","American Shad",
+  "White Bass / Hybrid","Crappie","Catfish",
+  "Other Fish","Not Fish"
+])].sort();
+
+function getSpeciesListForGps(lat, lon) {
+  if (!isFinite(lat) || !isFinite(lon)) return SPECIES_MIDLANDS_SANTEE;
+  // Coastal saltwater roughly east of lon -80.2 in SC/GA, south of 33.8
+  if (lon > -80.2 && lat < 33.8) return SPECIES_COASTAL_SALTWATER;
+  // Upstate SC / Western NC mountain lakes roughly north of 34.5 and west of -82.0
+  if (lat > 34.5 && lon < -82.0) return SPECIES_UPSTATE;
+  // Default Santee Cooper / Midlands
+  return SPECIES_MIDLANDS_SANTEE;
+}
+
+const MAX_BIOLOGICAL_LENGTH = {
+  "Largemouth Bass": 26.5,
+  "Spotted Bass": 24.0,
+  "Smallmouth Bass": 24.5,
+  "Black Crappie": 18.5,
+  "White Crappie": 18.5,
+  "Crappie": 18.5,
+  "Bluegill": 14.0,
+  "Redear Sunfish (Shellcracker)": 15.0,
+  "Redbreast Sunfish": 12.0,
+  "Sunfish (Panfish)": 14.0,
+  "Yellow Perch": 16.0,
+  "White Bass / Hybrid": 30.0,
+  "Chain Pickerel": 28.5,
+  "Bowfin": 36.0,
+  "Bowfin (Mudfish)": 36.0,
+  "Striped Bass": 52.0,
+  "Flounder": 32.0,
+  "Speckled Trout (Spotted Seatrout)": 34.0,
+  "Red Drum (Redfish)": 55.0,
+};
+
+function checkBiologicalLength(species, length) {
+  if (!length || !species) return [true, ""];
+  const maxLen = MAX_BIOLOGICAL_LENGTH[species] ?? MAX_BIOLOGICAL_LENGTH[species?.replace(' (Mudfish)','')] ?? 60.0;
+  if (length > maxLen) return [false, `⚠️ LENGTH ANOMALY: Reported length (${length} in) exceeds biological limit for ${species} (max ~${maxLen} in).`];
+  if (length < 3.0) return [false, `⚠️ LENGTH ANOMALY: Reported length (${length} in) is implausibly small.`];
+  return [true, ""];
+}
+
+const PURE_SALTWATER = new Set([
+  "Red Drum (Redfish)",
+  "Speckled Trout (Spotted Seatrout)",
+  "Flounder",
+  "Black Drum","Sheepshead","Bluefish","Spanish Mackerel","Black Sea Bass",
+  "Atlantic Croaker","Whiting / Sea Mullet","Cobia","Ladyfish","Jack Crevalle"
+]);
+
+const PURE_FRESHWATER = new Set([
+  "Largemouth Bass","Spotted Bass","Smallmouth Bass",
+  "Black Crappie","White Crappie","Crappie",
+  "Chain Pickerel",
+  "Bowfin","Bowfin (Mudfish)",
+  "Bluegill","Redear Sunfish (Shellcracker)","Redbreast Sunfish","Sunfish (Panfish)","Warmouth",
+  "Walleye","Rainbow / Brown Trout","Trout",
+  "Blue Catfish","Channel Catfish","Flathead Catfish","Catfish",
+  "Longnose Gar","Spotted Gar","Gar",
+  "Yellow Perch","White Perch",
+  "Common Carp","Grass Carp","Tilapia"
+]);
+
+function checkEcologicalReality(lat, lon, species) {
+  if (!isFinite(lat) || !isFinite(lon) || !species) return [true, ""];
+  const s = String(species);
+  if (["Not Fish","No Fish","Unknown","Other Fish","", "Other"].includes(s)) return [true, ""];
+
+  // 1. Lake Robinson (Darlington County, SC near Hartsville) ~ 34.30 to 34.42 N, -80.22 to -80.08 W
+  if (34.30 <= lat && lat <= 34.42 && -80.22 <= lon && lon <= -80.08) {
+    if (/Striped Bass|Striper|Hybrid/i.test(s)) {
+      return [false, `⚠️ ECOLOGICAL ANOMALY: ${s} reported in Lake Robinson area (Darlington Co). Lake Robinson has NO established Striped Bass population.`];
+    }
+  }
+  // 2. Lake Monticello / Parr Reservoir ~ 34.24 to 34.38 N, -81.38 to -81.25 W
+  if (34.24 <= lat && lat <= 34.38 && -81.38 <= lon && lon <= -81.25) {
+    if (/Striped Bass|Striper/i.test(s)) {
+      return [false, `⚠️ ECOLOGICAL ANOMALY: ${s} reported in Monticello/Parr Reservoir area. No stocked striper population here.`];
+    }
+  }
+  // 3. High-Salinity Estuarine & Coastal Marine Zones
+  const is_murrells_inlet = (33.45 <= lat && lat <= 33.70 && lon >= -79.15);
+  const is_charleston_coast = (lat <= 32.90 && lon >= -79.95);
+  const is_southern_coast = (lat <= 32.45 && lon >= -80.75);
+  if (is_murrells_inlet || is_charleston_coast || is_southern_coast) {
+    if (PURE_FRESHWATER.has(s) || /Bass|Crappie|Pickerel|Bowfin|Catfish|Bluegill|Sunfish|Perch|Gar/i.test(s) && !/Striped Bass|White Bass|Sea Bass/i.test(s)) {
+      // allow Striped Bass – they do run coastal sometimes – but flag pure freshwater
+      const pureCheck = [...PURE_FRESHWATER].some(pf => s === pf);
+      if (pureCheck) {
+        const place = is_murrells_inlet ? "Murrells Inlet / Grand Strand Estuary" : "High-Salinity Coastal Marine Estuary";
+        return [false, `⚠️ ECOLOGICAL ANOMALY: Pure freshwater species (${s}) reported in ${place}.`];
+      }
+    }
+  }
+  // 4. Inland Reservoirs vs Pure Saltwater species (west of longitude -80.35 in SC/NC/GA)
+  if (lon <= -80.35 && lat >= 33.20) {
+    if (PURE_SALTWATER.has(s)) {
+      return [false, `⚠️ ECOLOGICAL ANOMALY: Pure saltwater marine species (${s}) reported in inland freshwater reservoir.`];
+    }
+  }
+  // 5. Smallmouth Bass Check — Only valid in Monticello / Parr Reservoir / Broad River system or cold Upstate mountain waters
+  if (/Smallmouth Bass/i.test(s)) {
+    const in_monticello_parr = (34.15 <= lat && lat <= 34.45 && -81.45 <= lon && lon <= -81.15);
+    const in_upstate_mountains = (lat >= 34.50 && lon <= -82.00);
+    if (!(in_monticello_parr || in_upstate_mountains)) {
+      return [false, `⚠️ ECOLOGICAL ANOMALY: Smallmouth Bass reported outside valid habitat (only possible in Monticello/Parr Reservoir or cold Upstate mountain waters).`];
+    }
+  }
+  // 6. Coldwater Mountain Species Check (Trout / Walleye)
+  if (/Trout|Walleye/i.test(s)) {
+    if (lat < 34.50 || lon > -82.00) {
+      return [false, `⚠️ ECOLOGICAL ANOMALY: Coldwater species (${s}) reported outside cold mountain waters.`];
+    }
+  }
+  return [true, ""];
+}
+
+// ── fish_sorter_v4 prompt – ported exactly ──────────────────
+function buildStage1Prompt(species_list, assume_board=false, lat=null, lon=null) {
+  const species_str = species_list.map(s=>`"${s}"`).join(', ');
+  const gps_tag = (isFinite(lat) && isFinite(lon))
+    ? `Photo GPS location: lat=${lat.toFixed(4)}, lon=${lon.toFixed(4)} — ${ (lon > -80.2 && lat < 33.8) ? 'COASTAL SALTWATER' : 'INLAND FRESHWATER' }`
+    : `Photo GPS location: GPS unknown`;
+
+  const board_task = assume_board
+    ? `TASK 1 — BUMP BOARD: This photo is confirmed to contain a fish on a bump board. on_bump_board = true.`
+    : `TASK 1 — BUMP BOARD DETECTION
+A bump board is ANY rigid measuring device with a perpendicular nose stop and inch markings.
+Common boards: Ketch Board (yellow), Hawg Trough, Golden Rule, homemade wood board.
+IMPORTANT: Do NOT reject bump board because:
+  - board is dirty, wet, or has stickers on it
+  - numbers are faded or partially visible
+  - board edge is cropped out of frame
+  - fish tail hangs slightly off the end
+If ANY measuring device with markings is present under the fish → on_bump_board = true`;
+
+  return `You are a precise fisheries technician for a South Carolina kayak angler.
+Return ONLY valid JSON. Temperature = 0. No guessing. No placeholders.
+${gps_tag}
+IMPORTANT: Use the GPS location to rule out impossible species. Inland freshwater GPS = no saltwater fish possible.
+
+${board_task}
+
+TASK 2 — SPECIES IDENTIFICATION
+This angler fishes South Carolina freshwater lakes AND coastal saltwater. Species priority rules:
+
+STRIPED BASS (highest priority freshwater):
+  - 7-8 UNBROKEN horizontal black stripes running full body length
+  - Forked tail, two separate dorsal fins
+  - JUVENILE RULE: Never classify as White Bass/Hybrid because fish is small (<20 inches)
+  - If continuous horizontal stripes are visible → classify as Striped Bass regardless of size
+
+BOWFIN:
+  - Single LONG dorsal fin running most of body length (not two separate fins)
+  - Rounded tail (not forked)
+  - Dark eyespot near base of tail — WARNING: this eyespot looks like a redfish spot but bowfin are FRESHWATER
+  - Olive/brown/dark color, no stripes
+  - CRITICAL: Bowfin have ONE continuous dorsal fin. Red Drum have TWO separate dorsal fins.
+  - If GPS coordinates are inland/freshwater and fish has eyespot → Bowfin, NOT Red Drum
+
+CHAIN PICKEREL:
+  - Long duck-bill snout, very toothy
+  - Chain-link or reticulated pattern on sides (not stripes)
+  - Elongated body
+
+CATFISH:
+  - Visible whiskers/barbels around mouth
+  - Smooth skin, no scales
+  - No horizontal stripes
+  - Blue Catfish: slate blue, straight anal fin
+  - Channel Catfish: olive with dark spots, rounded anal fin
+  - Flathead Catfish: flat broad head, lower jaw protruding, mottled yellow/brown
+
+BASS (Largemouth / Spotted / Smallmouth):
+  - Largemouth: jaw PAST eye, dorsal deeply notched, dark lateral blotchy band, no tongue tooth patch
+  - Spotted Bass: jaw to MID-eye, rough tooth patch on tongue, dorsal fins connected, rows small spots below lateral line
+  - Smallmouth: bronze, vertical bars, jaw BEFORE eye – ONLY Upstate / Jocassee / Broad River – DO NOT default Smallmouth in Wateree/Murray/Marion
+
+CRAPPIE:
+  - Deep compressed panfish
+  - Black Crappie: 7-8 dorsal spines, irregular speckling
+  - White Crappie: 5-6 dorsal spines, vertical barring
+  - If spines not countable → "Crappie"
+
+SUNFISH / PANFISH:
+  - Bluegill: blue-purple gill flap, vertical barring, orange breast
+  - Redear Sunfish (Shellcracker): red/orange margin on opercular flap
+  - If uncertain beyond family → "Sunfish (Panfish)"
+
+SALTWATER SPECIES (if coastal GPS or saltwater environment visible):
+  - Red Drum (Redfish): copper/bronze body, ONE OR MORE black spots near tail base, TWO separate dorsal fins, no stripes, chin NO barbels
+  - Speckled Trout: silver with scattered black spots on body AND fins, canine teeth
+  - Flounder: FLAT fish, both eyes on same side, lies flat, mottled brown
+
+GAR:
+  - Long needle snout, ganoid diamond scales, long cylindrical body
+  - Longnose Gar: snout >2× head length
+
+Species choices (pick closest match): [${species_str}, "Other Fish"]
+
+TASK 3 — LENGTH MEASUREMENT
+ONLY if fish is on bump board:
+  Step 1: Find nose touching bump stop (this is the 0 mark)
+  Step 2: Find the FURTHEST tail tip — not the body end, the actual fin tip
+  Step 3: Read ruler mark where tail tip ends
+  Step 4: Round to nearest 0.25 inch — tail pinched – if ruler mark is not clearly readable → length_inches = null
+  Step 5: If ruler mark is not clearly readable → length_inches = null
+  CRITICAL — IGNORE ALL OF THESE when reading length:
+    - Numbers on fish finders, GPS units, depth sounders, or any electronics in the photo
+    - Stickers or labels on the board
+    - The far end of the board
+    - Your estimate of how big the fish looks
+  READ ONLY the ruler mark on the bump board where the tail tip ends
+
+Return ONLY this JSON:
+{"has_fish": <true/false>, "on_bump_board": <true/false>, "species": "<exact species from list>", "length_inches": <number or null>, "confidence": "high|medium|low", "notes": "<what you see: tail tip position, visible ruler marks, species field marks>"}`;
+}
+
+// ── Gemini JSON schema – fish_sorter_v4 compatible ────────
+const CATCH_JSON_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    has_fish: { type: "BOOLEAN" },
+    on_bump_board: { type: "BOOLEAN" },
+    species: { type: "STRING" },
+    length_inches: { type: ["NUMBER", "NULL"] },
+    confidence: { type: "STRING", enum: ["high","medium","low"] },
+    notes: { type: "STRING" }
+  },
+  required: ["has_fish","on_bump_board","species","confidence"]
+};
+
+// Also allow extended TrollMap fields for forward-compat
+const CATCH_JSON_SCHEMA_V2 = {
+  type: "OBJECT",
+  properties: {
+    has_fish: { type: "BOOLEAN" },
+    on_bump_board: { type: "BOOLEAN" },
+    species: { type: "STRING" },
+    length_inches: { type: ["NUMBER", "NULL"] },
+    confidence: { type: "STRING", enum: ["high","medium","low"] },
+    notes: { type: "STRING" },
+    // extended (optional)
+    species_confidence: { type: "NUMBER" },
+    alt_species: { type: "ARRAY", items: { type: "OBJECT", properties: { species:{type:"STRING"}, probability:{type:"NUMBER"}}, required:["species"] } },
+    length_source: { type: "STRING" },
+    board_detected: { type: "BOOLEAN" },
+    board_type: { type: "STRING" },
+    measurement_confidence: { type: "STRING" },
+    id_features: { type: "ARRAY", items: { type: "STRING" } },
+    data_quality: { type: "OBJECT" },
+    trollmap_tags: { type: "ARRAY", items: { type: "STRING" } }
+  },
+  required: ["has_fish","on_bump_board","species","confidence"]
+};
+
+async function handleIdentifyCatch(request, env) {
+  const apiKey = env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error('GEMINI_API_KEY not configured');
+
+  // context – headers for backward compat, also allow JSON body pass-through via v2
+  const latHeader = parseFloat(request.headers.get('X-Lat'));
+  const lonHeader = parseFloat(request.headers.get('X-Lon'));
+  const lake  = request.headers.get('X-Lake') || '';
+  const date  = request.headers.get('X-Date') || '';
+  const speciesHintHeader = (request.headers.get('X-Species-Hint')||'').split(',').map(s=>s.trim()).filter(Boolean);
+
+  const mimeType = request.headers.get('X-Image-Type') || request.headers.get('Content-Type') || 'image/jpeg';
+  const imageBuffer = await request.arrayBuffer();
+  const bytes = new Uint8Array(imageBuffer);
+  // chunked base64 – avoids call-stack overflow
+  let binary = '';
+  const CHUNK = 8192;
+  for (let i=0;i<bytes.length;i+=CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i+CHUNK));
+  }
+  const base64String = btoa(binary);
+
+  // GPS-aware species list – exactly fish_sorter_v4.py
+  let species_list = speciesHintHeader.length ? speciesHintHeader : getSpeciesListForGps(latHeader, lonHeader);
+  // Ensure core TrollMap catch-journal names are present for mapping
+  const extra = ["Striped Bass","Largemouth Bass","Spotted Bass","Smallmouth Bass","Crappie","Blue Catfish","Channel Catfish","Flathead Catfish","Catfish","Bowfin","Bowfin (Mudfish)","Chain Pickerel","Bluegill","Redear Sunfish (Shellcracker)","Sunfish (Panfish)","Yellow Perch","White Bass / Hybrid","Longnose Gar","Gar","Red Drum (Redfish)","Speckled Trout (Spotted Seatrout)","Flounder","American Shad","Other Fish","Not Fish"];
+  species_list = [...new Set([...species_list, ...extra])];
+
+  const assume_board = (request.headers.get('X-Assume-Board')||'').toLowerCase() === 'true';
+
+  const prompt = buildStage1Prompt(species_list, assume_board, isFinite(latHeader)?latHeader:null, isFinite(lonHeader)?lonHeader:null);
+
+  const payload = {
+    systemInstruction: { parts: [{ text: "You are a precise fisheries technician. Return ONLY valid JSON. Temperature = 0." }] },
+    contents: [{ parts: [
+      { text: prompt },
+      { inlineData: { mime_type: mimeType, data: base64String } }
+    ]}],
+    generationConfig: {
+      temperature: 0.0,
+      response_mime_type: "application/json",
+      response_schema: CATCH_JSON_SCHEMA
+    }
+  };
+
+  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+  const geminiResp = await fetch(geminiUrl, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+  if (!geminiResp.ok) {
+    const errText = await geminiResp.text();
+    throw new Error(`Gemini API ${geminiResp.status}: ${errText.slice(0,300)}`);
+  }
+  const geminiData = await geminiResp.json();
+  const rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!rawText) throw new Error('Empty response from Gemini');
+  let analysis;
+  try { analysis = JSON.parse(rawText); } catch(e){ 
+    // try to extract JSON blob
+    const m = rawText.match(/\{[\s\S]*\}/);
+    if (!m) throw new Error('Gemini returned non-JSON: '+rawText.slice(0,200));
+    analysis = JSON.parse(m[0]);
+  }
+
+  // ── Normalize to TrollMap catch-journal canonical names ──
+  const SPECIES_MAP = {
+    "Bowfin (Mudfish)": "Bowfin",
+    "Mudfish": "Bowfin",
+    "Black Crappie": "Crappie",
+    "White Crappie": "Crappie",
+    "Red Drum": "Red Drum (Redfish)",
+    "Redfish": "Red Drum (Redfish)",
+    "Spotted Seatrout": "Speckled Trout (Spotted Seatrout)",
+    "Speckled Trout": "Speckled Trout (Spotted Seatrout)",
+    "Redear Sunfish": "Redear Sunfish (Shellcracker)",
+    "Shellcracker": "Redear Sunfish (Shellcracker)",
+    "Bluegill": "Bluegill",
+    "Panfish": "Sunfish (Panfish)",
+    "Bream": "Sunfish (Panfish)",
+    "White Bass": "White Bass / Hybrid",
+    "Hybrid Bass": "White Bass / Hybrid",
+    "Hybrid": "White Bass / Hybrid",
+    "Wiper": "White Bass / Hybrid",
+    "Striper": "Striped Bass",
+    "Striped bass": "Striped Bass",
+    "Largemouth bass": "Largemouth Bass",
+    "Spotted bass": "Spotted Bass",
+    "Smallmouth bass": "Smallmouth Bass",
+    "Blue catfish": "Blue Catfish",
+    "Channel catfish": "Channel Catfish",
+    "Flathead catfish": "Flathead Catfish",
+    "No Fish": "Not Fish",
+    "None": "Not Fish",
+    "Shad": "American Shad"
+  };
+  let species = analysis.species || "Other Fish";
+  species = SPECIES_MAP[species] || species;
+
+  // Map fish_sorter names -> catch-journal canonical if needed
+  // catch-journal.js cleanSpecies() does similar – keep in sync
+  const has_fish = analysis.has_fish ?? true;
+  const on_bump_board = analysis.on_bump_board ?? false;
+  let length_inches = analysis.length_inches;
+  if (length_inches != null) {
+    length_inches = Math.round(Number(length_inches) * 4) / 4; // nearest 0.25
+  }
+  let confidence = analysis.confidence || "medium";
+  let notes = analysis.notes || "";
+
+  // ── Post-AI guardrails: ecological + biological ─────────
+  if (isFinite(latHeader) && isFinite(lonHeader) && has_fish) {
+    const [eco_ok, eco_warn] = checkEcologicalReality(latHeader, lonHeader, species);
+    if (!eco_ok) {
+      notes = `${eco_warn} | ${notes}`.replace(/^\s*\|\s*|\s*\|\s*$/g,'');
+      confidence = "low";
+      // try to remap obvious freshwater/saltwater confusion
+      if (/Bowfin.*Red Drum|Red Drum.*Bowfin|eyespot/i.test(eco_warn)) {
+        // inland GPS + eyespot → force Bowfin
+        if (lonHeader <= -80.35) species = "Bowfin";
+      }
+    }
+  }
+  if (length_inches != null && has_fish) {
+    const [len_ok, len_warn] = checkBiologicalLength(species, Number(length_inches));
+    if (!len_ok) {
+      notes = `${len_warn} | ${notes}`.replace(/^\s*\|\s*|\s*\|\s*$/g,'');
+      confidence = "low";
+      // null out implausible ruler misreads – let human review
+      // keep length but flag – do NOT auto-correct
+    }
+  }
+
+  // ── Build TrollMap-standard response ───────────────────
+  const out = {
+    // fish_sorter_v4 canonical (python-compatible)
+    has_fish,
+    on_bump_board,
+    species,
+    length_inches: length_inches ?? null,
+    confidence,
+    notes,
+    // catch-journal.js camelCase compat
+    lengthInches: length_inches ?? null,
+    species_confidence: confidence === "high" ? 0.9 : confidence === "medium" ? 0.65 : 0.4,
+    // extended v2 fields
+    length_source: on_bump_board ? (length_inches != null ? "board_ruler" : "board_no_read") : "body_estimate",
+    board_detected: !!on_bump_board,
+    board_type: on_bump_board ? "generic" : "none",
+    measurement_confidence: confidence,
+    data_quality: {
+      species: confidence === "high" ? "ai_verified" : "ai",
+      length: on_bump_board && length_inches != null ? "board_verified" : length_inches != null ? "estimated" : "missing",
+      lure: "missing",
+      speed: "missing",
+      depth: "missing",
+      gps: (isFinite(latHeader) && isFinite(lonHeader)) ? "exif" : "missing"
+    },
+    trollmap_tags: [],
+    source_model: "gemini-2.5-flash fish_sorter_v4"
+  };
+
+  // tag helpers
+  if (/Bowfin/i.test(species)) out.trollmap_tags.push("reaction_feeder","vegetation_trolling_target");
+  if (/Striped Bass/i.test(species)) out.trollmap_tags.push("trolling_primary","thermocline");
+  if (/Red Drum|Redfish/i.test(species)) out.trollmap_tags.push("inshore","tide_dependent");
+  if (on_bump_board) out.trollmap_tags.push("board_measured");
+
+  return out;
+}
+
+async function handleIdentifyCatchV2(request, env) {
+  // Accept JSON: { image_base64, mime_type?, context:{lat,lon,lake,date,species_hint[],assume_board?} }
+  let ctx = {};
+  let mime_type = "image/jpeg";
+  let image_base64 = null;
+  try {
+    const body = await request.json();
+    image_base64 = body.image_base64;
+    mime_type = body.mime_type || mime_type;
+    ctx = body.context || {};
+  } catch(e) {
+    return new Response(JSON.stringify({success:false, error:"invalid JSON body – expected {image_base64, context{}}"}), {status:400, headers: JSON_HEADERS});
+  }
+  if (!image_base64) {
+    return new Response(JSON.stringify({success:false, error:"missing image_base64"}), {status:400, headers: JSON_HEADERS});
+  }
+  // Build a fake Request that handleIdentifyCatch() already understands (header-driven)
+  const fakeReq = {
+    headers: { get: (k) => {
+      const map = {
+        'X-Image-Type': mime_type,
+        'Content-Type': mime_type,
+        'X-Lake': ctx.lake || '',
+        'X-Date': ctx.date || '',
+        'X-Lat': ctx.lat != null ? String(ctx.lat) : '',
+        'X-Lon': ctx.lon != null ? String(ctx.lon) : '',
+        'X-Species-Hint': (ctx.species_hint||[]).join(','),
+        'X-Assume-Board': ctx.assume_board ? 'true' : ''
+      };
+      return map[k] || null;
+    }},
+    arrayBuffer: async () => {
+      const bin = atob(image_base64);
+      const arr = new Uint8Array(bin.length);
+      for (let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+      return arr.buffer;
+    }
+  };
+  const analysis = await handleIdentifyCatch(fakeReq, env);
+  return new Response(JSON.stringify({
+    success: true,
+    analysis,
+    context_used: ctx,
+    taxonomy_version: "fish_sorter_v4 / TrollMap v13",
+    timestamp: new Date().toISOString()
+  }), { headers: JSON_HEADERS });
+}
+
+// end catch ID v13 module
+
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
@@ -2048,78 +2572,233 @@ export default {
       //   /ramps?state=SC&refresh=1 — force refresh regardless of cache age
       //
       // Returns: { state, source, fetched, count, waterbodies: { name: [{name,lat,lon,...}] } }
+// ── CATCH ID – TROLLMAP SC TROLLING MASTER TAXONOMY v12 ──
       if (path === '/identify-catch' && request.method === 'POST') {
         try {
-          const apiKey = env.GEMINI_API_KEY;
-          if (!apiKey) {
-            return new Response(JSON.stringify({ error: 'GEMINI_API_KEY not configured' }), { status: 500, headers: JSON_HEADERS });
+          const analysis = await handleIdentifyCatch(request, env);
+          return new Response(JSON.stringify({ success: true, analysis }), { headers: JSON_HEADERS });
+        } catch (err) {
+          return new Response(JSON.stringify({ success: false, error: err.message }), { status: 500, headers: JSON_HEADERS });
+        }
+      }
+      if (path === '/identify-catch-v2' && request.method === 'POST') {
+        try {
+          return await handleIdentifyCatchV2(request, env);
+        } catch (err) {
+          return new Response(JSON.stringify({ success: false, error: err.message }), { status: 500, headers: JSON_HEADERS });
+        }
+      }
+
+      // --- /audit-plan route: Free AI fishing plan critique via Groq Llama 3.3 70B ---
+      if (path === '/audit-plan' && request.method === 'POST') {
+        try {
+          const body = await request.json();
+          const groqKey = env.GROQ_API_KEY;
+          if (!groqKey) {
+            return new Response(JSON.stringify({ success: false, error: "GROQ_API_KEY not configured on worker environment" }), { status: 500, headers: JSON_HEADERS });
           }
 
-          // Detect mime type before anything else
-          const mimeType = request.headers.get('X-Image-Type') || request.headers.get('Content-Type') || 'image/jpeg';
+          const SYSTEM_PROMPT = `You are an expert South Carolina freshwater and inshore saltwater fishing guide with deep knowledge of trolling tactics from a kayak.
 
-          // Read image and convert to base64
-          const imageBuffer = await request.arrayBuffer();
-          const bytes = new Uint8Array(imageBuffer);
-          let binary = '';
-          for (let i = 0; i < bytes.byteLength; i++) {
-            binary += String.fromCharCode(bytes[i]);
-          }
-          const base64String = btoa(binary);
-          console.log(`[identify-catch] image size: ${imageBuffer.byteLength} bytes, base64: ${base64String.length} chars, mime: ${mimeType}`);
+ANGLER PROFILE — apply these constraints strictly. Do NOT flag anything that contradicts these known facts about this angler:
+- Watercraft: Native Watersports Slayer Propel Max 12.5 pedal kayak + NK180 Pro 24V bow-mount trolling motor
+- Rods: Spinning rods ONLY. This angler intentionally runs A-rigs/umbrella rigs on spinning rods — this is confirmed working gear, do NOT flag it as incompatible.
+- No lead-core, no conventional reels, no planer boards, no downriggers
+- Depth control: Lead length only (inline weights or lure dive curve). A-rig depth is controlled entirely by lead length + jighead weight — this is valid technique.
+- Max 2 rods in the water simultaneously (kayak platform)
+- Trolling-first angler — casts topwater/reaction baits but prefers moving presentation
+- Freshwater live bait: NOT available (no livewell). Do NOT suggest live bait for freshwater unless plan explicitly notes it.
+- Saltwater live bait (mullet, shrimp): available from shore bait shops
+- Primary target lakes: Wateree, Marion, Moultrie, Murray, Monticello (SC)
+- Battery: NK180 on 100Ah LiFePO4. Evaluate battery management based on trip duration and trolling speed — not route count.
+- Pool level: when provided, factor into ramp access risk and shallow structure exposure (low pool = exposed flats and ramps, high pool = flooded timber and cover).
+- Solunar timing: when provided, evaluate whether phase depths and lure choices align with the major/minor feeding windows.
+- Speed cadence: evaluate whether the dawn-shallow to deep phase progression fits the species, season, and water temp. Do NOT flag "missing speed cadence" if the rationale already describes phase-specific speeds and patterns.
+
+CRITIQUE FORMAT — respond ONLY with valid JSON, no markdown fences:
+{
+  "overall_score": <1-10>,
+  "confidence": "<high|medium|low>",
+  "verdict": "<one punchy sentence overall take>",
+  "scores": {
+    "depth_alignment": <1-10>,
+    "lure_selection": <1-10>,
+    "speed_cadence": <1-10>,
+    "battery_management": <1-10>,
+    "safety": <1-10>
+  },
+  "flags": ["<specific issue>", ...],
+  "fixes": ["<specific actionable fix>", ...],
+  "keeper_moves": ["<what the plan gets right>", ...],
+  "local_intel": "<one SC-specific tip the plan missed or could use>"
+}
+
+Keep flags, fixes, and keeper_moves to 2-3 items each. Be direct and practical — this angler is experienced. Only flag real problems, not assumed gaps based on missing fields.`;
+
+          // Distill the plan down to what Groq actually needs for a useful
+          // audit — skip lakeIntel/clarityIntel blobs, empty spread fields,
+          // and raw GPX. Keep fishing-relevant data only.
+          const p = body.plan || body;
+          const meta = p.meta || {};
+          const spread = (p.spread || []).map(r => ({
+            side: r.side, position: r.position,
+            rod: r.rod || '', reel: r.reel || '',
+            lure: r.lure || r.notes?.split('·')[0]?.trim() || '',
+            depth: r.depth, lead: r.lead,
+            notes: r.notes?.slice(0, 120) || '',
+          })).filter(r => r.lure || r.notes);
+
+          const cleanPlan = {
+            lake: meta.lake, species: meta.species,
+            date: meta.date, ramp: meta.ramp,
+            launchTime: meta.launchTime, returnTime: meta.returnTime,
+            waterTemp: meta.waterTemp ? `${meta.waterTemp}°F` : null,
+            poolLevel: meta.poolLevel ? `${meta.poolLevel} ${meta.poolUnit||''}`.trim() : null,
+            weather: meta.weather || '',
+            clarity: meta.clarity || '',
+            motor: meta.motor || '',
+            solunar: meta.solunar || '',
+            spread: spread.slice(0, 6),
+            tackle: p.tackle || '',
+            safety: p.safety || '',
+            notes: p.notes || '',
+            rationale: (p.rationale || '').slice(0, 1500), // first 800 chars of rationale only
+          };
+
+          const userMessage = `Audit this trolling plan. Apply the angler profile constraints strictly — flag anything that assumes gear or bait this angler does not have. Identify the single most dangerous safety gap if any. Return ONLY the JSON object described in your system prompt.
+
+PLAN DATA:
+${JSON.stringify(cleanPlan, null, 2)}`;
 
           const payload = {
-            systemInstruction: {
-              parts: [{
-                text: `You are an expert fisheries biologist measuring fish on a bump board for a fishing tournament in South Carolina.
-- Identify the species. Classifications are STRICTLY limited to: 'Striped Bass', 'Largemouth Bass', 'Smallmouth Bass', 'Crappie', 'Catfish', or 'White Bass/Hybrid'.
-- If the fish has faint or broken lateral lines and is not clearly a true striped bass, classify it as 'White Bass/Hybrid'.
-- Measure the length by reading the bump board ruler at the tip of the tail, to the nearest 0.25 inch.
-- If you cannot see the bump board ruler clearly, estimate length from the fish body proportions and set confidence to 'low'.
-- You MUST return ONLY a valid JSON object matching the provided schema. No other text.`
-              }]
-            },
-            contents: [{
-              parts: [
-                { text: 'Analyze this fish photo. Return the species and length.' },
-                { inlineData: { mime_type: mimeType, data: base64String } }
-              ]
-            }],
+            model: "llama-3.3-70b-versatile",
+            messages: [
+              { role: "system", content: SYSTEM_PROMPT },
+              { role: "user", content: userMessage }
+            ],
+            temperature: 0.15,
+            response_format: { type: "json_object" },
+          };
+
+          const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${groqKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          const j = await r.json();
+          if (!r.ok) {
+            return new Response(JSON.stringify({ success: false, error: j.error?.message || `Groq API HTTP ${r.status}` }), { status: r.status, headers: JSON_HEADERS });
+          }
+          let audit = {};
+          try { audit = JSON.parse(j.choices?.[0]?.message?.content || '{}'); } catch (_) { audit = { error: 'parse failed', raw: j.choices?.[0]?.message?.content }; }
+          return new Response(JSON.stringify({ success: true, audit }), { headers: JSON_HEADERS });
+        } catch (err) {
+          return new Response(JSON.stringify({ success: false, error: err.message }), { status: 500, headers: JSON_HEADERS });
+        }
+      }
+
+
+      if (path === '/detect-structure' && request.method === 'POST') {
+        try {
+          const body = await request.json();
+          const apiKey = env.GEMINI_API_KEY;
+          if (!apiKey) {
+            return new Response(JSON.stringify({ success: false, error: "GEMINI_API_KEY not configured" }), { status: 500, headers: JSON_HEADERS });
+          }
+
+          const {
+            image_base64, mime_type = 'image/jpeg', bounds,
+            image_width = 1024, image_height = 600,
+          } = body;
+          if (!image_base64 || !bounds?.north || !bounds?.south || !bounds?.east || !bounds?.west) {
+            return new Response(JSON.stringify({ success: false, error: "missing image_base64 or bounds" }), { status: 400, headers: JSON_HEADERS });
+          }
+
+          const SYSTEM_PROMPT = `You are analyzing a satellite/aerial image of a South Carolina lake or river for fishing-relevant structures.
+
+First, confirm water is visible. If no water body is present, return {"has_water":false,"features":[],"image_notes":"No water visible"}.
+
+STRICT RULE: Only report structures that have a VISIBLE PHYSICAL CONNECTION to the shoreline or are clearly sitting in/on the water. A structure floating in open water with no visible connection to shore is almost certainly a false read — omit it. When in doubt, omit.
+
+For each structure DIRECTLY OVER OR TOUCHING the water, identify:
+- Docks/boat docks (rectangular platforms extending from shore over water — must be attached to shore)
+- Piers (longer linear walkways into water — must connect to land)
+- Boat ramps (light-colored concrete sloping from shore into water)
+- Boathouses (roofed structures over water — must be shore-connected)
+- Timber/logs (clearly visible debris in the water, not shadows)
+- Fish attractors (dark man-made patches in shallow water near shore)
+
+DO NOT flag: swimming pools, buildings set back from water, roads, shadows, trees, boat wakes, reflections, open water with no structure, or anything without a clear physical connection to shore or the water surface.
+
+Return position as precise FRACTION of image dimensions:
+- x_frac: 0.0 (left edge) to 1.0 (right edge)
+- y_frac: 0.0 (top edge) to 1.0 (bottom edge)
+
+Place the fraction at the point where the structure meets the water, not the far end. Only include structures you are 75%+ confident about. Fewer accurate results is better than many uncertain ones.`;
+
+          const userPrompt = `Analyze this ${image_width}x${image_height} satellite image. Bounds: N=${bounds.north.toFixed(6)}, S=${bounds.south.toFixed(6)}, E=${bounds.east.toFixed(6)}, W=${bounds.west.toFixed(6)}. Return ONLY valid JSON: {"has_water":true,"features":[{"type":"dock|pier|boat_ramp|boathouse|timber|fish_attractor","x_frac":0.0,"y_frac":0.0,"confidence":0.0,"description":"brief","fishing_notes":"why this matters"}],"image_notes":"description"}`;
+
+          const payload = {
+            systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+            contents: [{ parts: [
+              { text: userPrompt },
+              { inlineData: { mime_type, data: image_base64 } }
+            ]}],
             generationConfig: {
-              temperature: 0.1,
+              temperature: 0.0,
               response_mime_type: 'application/json',
-              response_schema: {
-                type: 'OBJECT',
-                properties: {
-                  species:      { type: 'STRING' },
-                  lengthInches: { type: 'NUMBER' },
-                  confidence:   { type: 'STRING', enum: ['high', 'medium', 'low'] },
-                  notes:        { type: 'STRING' },
-                },
-                required: ['species', 'lengthInches', 'confidence'],
-              },
-            },
+              thinkingConfig: { thinkingBudget: 0 },
+            }
           };
 
           const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-          const geminiResp = await fetch(geminiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
-
-          if (!geminiResp.ok) {
-            const errText = await geminiResp.text();
-            throw new Error(`Gemini API ${geminiResp.status}: ${errText.slice(0, 200)}`);
+          let r, attempts = 0;
+          while (attempts < 3) {
+            r = await fetch(geminiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            if (r.status !== 503) break;
+            attempts++;
+            if (attempts < 3) await new Promise(res => setTimeout(res, 1000 * attempts));
+          }
+          if (!r.ok) {
+            const errText = await r.text();
+            return new Response(JSON.stringify({ success: false, error: `Gemini ${r.status}: ${errText.slice(0,300)}` }), { status: r.status, headers: JSON_HEADERS });
           }
 
-          const geminiData = await geminiResp.json();
-          const rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (!rawText) throw new Error('Empty response from Gemini');
+          const gData = await r.json();
+          const rawText = gData.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (!rawText) return new Response(JSON.stringify({ success: false, error: 'Empty Gemini response' }), { status: 500, headers: JSON_HEADERS });
 
-          const analysis = JSON.parse(rawText);
-          return new Response(JSON.stringify({ success: true, analysis }), { headers: JSON_HEADERS });
+          let result = {};
+          try { result = JSON.parse(rawText); } catch (_) { result = { error: 'parse failed', raw: rawText.slice(0, 500) }; }
 
+          const latRange = bounds.north - bounds.south;
+          const lonRange = bounds.east - bounds.west;
+
+          if (Array.isArray(result.features)) {
+            // Convert x_frac/y_frac → lat/lon
+            result.features = result.features.map(f => ({
+              ...f,
+              lat: bounds.north - (f.y_frac * latRange),
+              lon: bounds.west  + (f.x_frac * lonRange),
+            }));
+
+            // Edge-proximity filter: drop anything >35% inward from all edges.
+            // Real shore structures are always near an edge; open-water dots aren't.
+            const before = result.features.length;
+            result.features = result.features.filter(f => {
+              const fromWest  = (f.lon - bounds.west)  / lonRange;
+              const fromEast  = (bounds.east - f.lon)  / lonRange;
+              const fromNorth = (bounds.north - f.lat)  / latRange;
+              const fromSouth = (f.lat - bounds.south)  / latRange;
+              return Math.min(fromWest, fromEast, fromNorth, fromSouth) <= 0.35;
+            });
+            const dropped = before - result.features.length;
+            if (dropped > 0) {
+              result.image_notes = (result.image_notes || '') + ` [${dropped} open-water false positive${dropped > 1 ? 's' : ''} removed]`;
+            }
+          }
+
+          return new Response(JSON.stringify({ success: true, ...result }), { headers: JSON_HEADERS });
         } catch (err) {
           return new Response(JSON.stringify({ success: false, error: err.message }), { status: 500, headers: JSON_HEADERS });
         }
