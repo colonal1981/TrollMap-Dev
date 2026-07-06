@@ -332,6 +332,7 @@ function buildPhaseRods(phaseRec, phaseNum, sides) {
       if (warn) rod.notes = (rod.notes ? rod.notes + ' · ' : '') + warn;
 
       // Auto-populate A-Rig detail fields
+      const isARig = resolved.includes('A-Rig');
       if (isARig) {
         const isLight  = resolved.includes('Light')  || resolved.includes('1.65');
         const isMedium = resolved.includes('Medium') || resolved.includes('2.65');
