@@ -14,6 +14,7 @@
 
 import { state } from '../core/state.js';
 import { loadAccessIndex } from '../data/access-index.js';
+import { loadContourForLake } from './contour-data.js';
 
 // ── Populate lake dropdown ───────────────────────────────────────────────
 
@@ -71,6 +72,9 @@ async function onLakeChange(selLakeName) {
   // Sync planLake if not already set
   const planLakeEl = document.getElementById('planLake');
   if (planLakeEl && !planLakeEl.value) planLakeEl.value = selLakeName;
+
+  // Load contours for this lake
+  loadContourForLake(selLakeName);
 
   // Populate access dropdown
   if (!rampSel) return;
