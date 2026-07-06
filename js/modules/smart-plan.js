@@ -124,6 +124,17 @@ const BEHAVIOR_LURE_MAP = {
   'flutter_spoon':           'Flutter Spoon 2oz',
   'bucktail':                'Bucktail Jig 1oz',
   'umbrella_rig':            'A-Rig Medium (~2.65oz) – 4.6" Swimbait',
+  'umbrella_rig_medium':     'A-Rig Medium (~2.65oz) – 4.6" Swimbait',
+  'umbrella_rig_light':      'A-Rig Light (~1.65oz) – 3.8" Swimbait',
+  'umbrella_rig_heavy':      'A-Rig Heavy (~3.5oz) – 5" Swimbait',
+  'swimbait_jighead':        'Swimbait 4.6" – Jighead',
+  'jigging_spoon':           'Flutter Spoon 2oz',
+  'jigging_spoon_vertical':  'Flutter Spoon 2oz',
+  'bucktail_slow':           'Bucktail Jig 1oz',
+  'bucktail_jig':            'Bucktail Jig 1oz',
+  'medium_crankbait':        'Flicker Minnow 11 – Crankbait',
+  'deep_crankbait':          'Deep Hit Stick – Crankbait',
+  'spinnerbait_slow':        'Spinnerbait 1/2oz',
   // Live-bait → note only, no preset
   'Live herring free-line':         null,
   'Live herring downline':          null,
@@ -931,6 +942,10 @@ export async function runSmartPlan() {
       lake: lakeName, species: sp, season, date: document.getElementById('planDate')?.value || '',
       ramp: document.getElementById('planRamp')?.value || '',
       rangeMiles: rangeMiles.toFixed(1),
+      waterTemp: document.getElementById('planWaterTemp')?.value ? `${document.getElementById('planWaterTemp').value}°F` : null,
+      poolLevel: document.getElementById('planPoolLevel')?.value ? `${document.getElementById('planPoolLevel').value} ${document.getElementById('planPoolUnit')?.textContent || ''}`.trim() : null,
+      solunar: document.getElementById('planSolunar')?.value || '',
+      clarity: document.getElementById('planClarity')?.value || '',
       phases: phases.map((phase, i) => {
         const rec = phaseRecs[i];
         return {
