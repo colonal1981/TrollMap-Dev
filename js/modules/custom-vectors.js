@@ -49,6 +49,7 @@ let mappingMode  = false;
 let panelOpen    = false;
 let undoStack    = [];   // array of feature indices for undo
 let pinCount     = 0;    // running total for HUD
+let structuresVisible = true; // track show/hide state
 
 // ── Persistent GeoJSON store ──────────────────────────────────────────────────
 // The live GeoJSON is stored here in memory; layer is rebuilt on changes.
@@ -413,6 +414,7 @@ panel.innerHTML = `
   </div>
 
   <div style="display:flex;flex-direction:column;gap:4px">
+    <button id="btnToggleStructures" style="width:100%;padding:6px;border-radius:5px;border:1px solid #03A9F4;background:rgba(3,169,244,.1);color:#03A9F4;font-size:11px;font-weight:700;cursor:pointer;margin-bottom:2px">👁 Hide Structures</button>
     <button id="btnExportStructures" style="width:100%;padding:4px;border-radius:5px;border:1px solid var(--accent);background:transparent;color:var(--accent);font-size:10px;cursor:pointer">💾 Export My Structures GeoJSON</button>
     <button id="btnSonarTarget" style="width:100%;padding:6px;border-radius:5px;border:1px solid #00E5FF;background:rgba(0,229,255,.08);color:#00E5FF;font-size:11px;font-weight:700;cursor:pointer">🎯 Save Sonar Target (GPS position)</button>
     <button id="loadVectorBtn" style="width:100%;padding:4px;border-radius:5px;border:1px solid var(--line);background:transparent;color:var(--muted);font-size:10px;cursor:pointer">📂 Load GeoJSON File</button>
@@ -445,6 +447,20 @@ panel.querySelector('#closeVectorPanel')?.addEventListener('click', () => {
 panel.querySelector('#btnStartMapping')?.addEventListener('click', () => {
   if (mappingMode) exitMappingMode();
   else enterMappingMode();
+});
+
+panel.querySelector('#btnToggleStructures')?.addEventListener('click', () => {
+  const layer = VECTOR_LAYERS[MY_STRUCTURES_KEY];
+  const btn   = panel.querySelector('#btnToggleStructures');
+  if (!layer) return;
+  structuresVisible = !structuresVisible;
+  if (structuresVisible) {
+    layer.addTo(state.MAP);
+    if (btn) { btn.textContent = '👁 Hide Structures'; btn.style.background = 'rgba(3,169,244,.1)'; }
+  } else {
+    state.MAP?.removeLayer(layer);
+    if (btn) { btn.textContent = '👁 Show Structures'; btn.style.background = 'rgba(255,255,255,.05)'; }
+  }
 });
 
 panel.querySelector('#btnExportStructures')?.addEventListener('click', exportMyStructures);

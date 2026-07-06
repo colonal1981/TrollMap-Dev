@@ -695,7 +695,7 @@ async function buildPhaseRods(phaseRec, phaseNum, sides, fishingContext) {
 
     if (selectedLure) {
       rod.lure  = selectedLure.name || selectedLure;
-      rod.color = getLureColor(selectedLure, clarityKey);
+      rod.color = getLureColor(selectedLure.type || selectedLure, clarityKey);
       rod.lead  = String(autoCalculateLead({ ...rod, lure: rod.lure }, speedMph));
 
       // Jighead for A-rigs and swimbaits

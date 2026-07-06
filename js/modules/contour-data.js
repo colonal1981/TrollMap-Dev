@@ -346,8 +346,10 @@ export function buildContourDataPanel(container) {
   document.getElementById('cdShowContourLayer')?.addEventListener('change', e => {
     if (e.target.checked) {
       renderContourLayer(true, false);
+      window.toggleDepthAreas?.(true);
     } else if (state.CONTOUR_LAYER) {
       state.MAP?.removeLayer(state.CONTOUR_LAYER);
+      window.toggleDepthAreas?.(false);
     }
   });
 
@@ -404,7 +406,10 @@ onContourChange(() => {
     updateStatusPanel('loaded', state.ACTIVE_CONTOUR_KEY, count);
   }
   const showLayer = document.getElementById('cdShowContourLayer')?.checked !== false;
-  if (showLayer) renderContourLayer(true, false);
+  if (showLayer) {
+    renderContourLayer(true, false);
+    window.toggleDepthAreas?.(true);
+  }
 });
 
 // ── Hook into toolbar lake dropdown via lake-ramp-select.js ──────────────────

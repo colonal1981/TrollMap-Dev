@@ -458,3 +458,15 @@ init();
 
 // Expose for lake-ramp-select.js hook
 window.loadSupplementalForLake = loadSupplementalForLake;
+
+// Toggle depth area polygons — called by contour-data.js checkbox
+window.toggleDepthAreas = function(visible) {
+  _depthAreaVisible = visible;
+  if (!_depthAreaLayer) return;
+  if (visible) {
+    _depthAreaLayer.addTo(getMap());
+    _depthAreaLayer.bringToBack();
+  } else {
+    getMap()?.removeLayer(_depthAreaLayer);
+  }
+};
