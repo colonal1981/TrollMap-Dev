@@ -124,6 +124,17 @@ const BEHAVIOR_LURE_MAP = {
   'flutter_spoon':           'Flutter Spoon 2oz',
   'bucktail':                'Bucktail Jig 1oz',
   'umbrella_rig':            'A-Rig Medium (~2.65oz) – 4.6" Swimbait',
+  'umbrella_rig_medium':     'A-Rig Medium (~2.65oz) – 4.6" Swimbait',
+  'umbrella_rig_light':      'A-Rig Light (~1.65oz) – 3.8" Swimbait',
+  'umbrella_rig_heavy':      'A-Rig Heavy (~3.5oz) – 5" Swimbait',
+  'swimbait_jighead':        'Swimbait 4.6" – Jighead',
+  'jigging_spoon':           'Flutter Spoon 2oz',
+  'jigging_spoon_vertical':  'Flutter Spoon 2oz',
+  'bucktail_slow':           'Bucktail Jig 1oz',
+  'bucktail_jig':            'Bucktail Jig 1oz',
+  'medium_crankbait':        'Flicker Minnow 11 – Crankbait',
+  'deep_crankbait':          'Deep Hit Stick – Crankbait',
+  'spinnerbait_slow':        'Spinnerbait 1/2oz',
   // Live-bait → note only, no preset
   'Live herring free-line':         null,
   'Live herring downline':          null,
@@ -465,7 +476,7 @@ function buildPhaseRods(phaseRec, phaseNum, sides) {
 }
 
 // ── Route generation per phase ────────────────────────────────────────────────
-async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon, rangeMiles, targetLengthFt = null, startLat = null, startLon = null, endLat = null, endLon = null, isReturnPass = false) {
+async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon, rangeMiles, targetLengthFt = null, startLat = null, startLon = null, endLat = null, endLon = null, isReturnPass = false, lockedBearing = null) {
   if (!phaseRec) return;
 
   window._smartPlanPhaseRoutes = window._smartPlanPhaseRoutes || [];
@@ -520,6 +531,7 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
       rampLon:        rampLon ?? null,
       startLat:       startLat ?? rampLat ?? null,
       startLon:       startLon ?? rampLon ?? null,
+      lockedBearing:  lockedBearing,
       endLat:         endLat ?? null,
       endLon:         endLon ?? null,
       targetLengthFt: targetLengthFt || null,
@@ -857,23 +869,40 @@ export async function runSmartPlan() {
   }
 
   let curLat = rampLat, curLon = rampLon;
+  let lockedBearing = null; // Set from Phase 1 spine, all phases travel same direction
+
   for (let i = 0; i < phases.length; i++) {
     const durHrs = calcDurHrs(phases[i].startStr, phases[i].endStr);
     const spd = phaseRecs[i]?.speed || 2.2;
     const targetFt = Math.round(durHrs * spd * 5280 * 0.80);
     const isLastPhase = (i === phases.length - 1);
-    
+
     await generateRouteForPhase(
       phases[i], phaseRecs[i], lakeName, rampLat, rampLon, rangeMiles,
-      targetFt, curLat, curLon, isLastPhase ? rampLat : null, isLastPhase ? rampLon : null, isLastPhase
+      targetFt, curLat, curLon,
+      isLastPhase ? rampLat : null, isLastPhase ? rampLon : null,
+      isLastPhase,
+      lockedBearing
     );
 
+    // After Phase 1 commits, read the bearing of the generated spine and lock it
     const generated = state.DATA?.tracks;
     if (generated && generated.length > 0) {
       const lastTrk = generated[generated.length - 1];
-      if (lastTrk && lastTrk.pts && lastTrk.pts.length > 0) {
-        const lastPt = lastTrk.pts[lastTrk.pts.length - 1]; // [lat, lon]
+      if (lastTrk && lastTrk.pts && lastTrk.pts.length >= 2) {
+        const pts = lastTrk.pts;
+        const lastPt = pts[pts.length - 1];
         curLat = lastPt[0]; curLon = lastPt[1];
+
+        // Lock bearing from Phase 1 outbound direction
+        if (i === 0 && lockedBearing === null) {
+          // Compute bearing from ramp to the far end of Phase 1 track
+          const farPt = pts[pts.length - 1];
+          const dLat = (farPt[0] - rampLat) * 111320;
+          const dLon = (farPt[1] - rampLon) * 111320 * Math.cos(rampLat * Math.PI / 180);
+          lockedBearing = Math.atan2(dLon, dLat) * 180 / Math.PI;
+          console.log(`[smart-plan] Locked outbound bearing: ${lockedBearing.toFixed(1)}°`);
+        }
       }
     }
   }
@@ -940,6 +969,10 @@ export async function runSmartPlan() {
           notes: rec?.notes || '',
         };
       }),
+      waterTemp: document.getElementById('planWaterTemp')?.value ? document.getElementById('planWaterTemp').value + 'F' : null,
+      poolLevel: document.getElementById('planPoolLevel')?.value || null,
+      solunar: document.getElementById('planSolunar')?.value || '',
+      clarity: document.getElementById('planClarity')?.value || '',
       weather: document.getElementById('planWeather')?.value || '',
       tackle: document.getElementById('planTackle')?.value || '',
       safety: document.getElementById('planSafety')?.value || '',

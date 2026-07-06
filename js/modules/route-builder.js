@@ -59,6 +59,11 @@ function genStraight(p1, p2, cfg) {
 }
 
 function genSine(p1, p2, cfg) {
+  const MIN_TURN_RADIUS_FT = 35;
+  if (cfg.amplitude > 0 && cfg.wave > 0) {
+    const minWave = Math.PI * Math.sqrt(cfg.amplitude * MIN_TURN_RADIUS_FT);
+    if (cfg.wave < minWave) cfg = { ...cfg, wave: Math.ceil(minWave) };
+  }
   // Direct port of the original Kayak Troll Generator genSine — the version that
   // actually worked. Adds: configurable points-per-wave, dynamic amplitude (fatter
   // in the middle of each leg, softer at the ends), asymmetric depth bias (push
@@ -487,23 +492,26 @@ function generateContourRoutes(cfg) {
   // Prioritize contour spines closest to the phase start point (where boat currently is).
   const refLat = cfg.startLat != null ? cfg.startLat : cfg.rampLat;
   const refLon = cfg.startLon != null ? cfg.startLon : cfg.rampLon;
+  const lockedBearing = cfg.lockedBearing ?? null;
   if (refLat != null && refLon != null) {
     candidates.forEach(s => {
-      // Score by distance from START to nearest spine ENDPOINT (not midpoint).
-      // This ensures Phase 2 picks up where Phase 1 left off, not a random midpoint.
       const [distToMidFt]   = distBearing(refLat, refLon, s.mid[1], s.mid[0]);
       const [distToStartFt] = distBearing(refLat, refLon, s.coords[0][1], s.coords[0][0]);
       const [distToEndFt]   = distBearing(refLat, refLon, s.coords[s.coords.length-1][1], s.coords[s.coords.length-1][0]);
-      const closestEndpointFt = Math.min(distToMidFt, distToStartFt, distToEndFt);
-      // Proximity dominates — a nearby spine always beats a distant long spine.
-      // Max proximity bonus: 100,000 (nearby) → 0 (>5 miles away)
-      const proxScore = Math.max(0, 100000 - closestEndpointFt * 3);
+      const closestFt = Math.min(distToMidFt, distToStartFt, distToEndFt);
+      const proxScore = Math.max(0, 100000 - closestFt * 3);
       const lenScore  = Math.min(s.len, cfg.targetLengthFt || 15000);
-      s.trollScore = proxScore + (lenScore * 0.5);
-      s._closestEndFt = closestEndpointFt; // for debugging
+      let bearingBonus = 0;
+      if (lockedBearing !== null && s.coords.length >= 2) {
+        const [, spineBrng] = distBearing(s.coords[0][1], s.coords[0][0], s.coords[s.coords.length-1][1], s.coords[s.coords.length-1][0]);
+        const diff = Math.abs(((spineBrng - lockedBearing + 540) % 360) - 180);
+        bearingBonus = diff < 90 ? (1 - diff / 90) * 30000 : -10000;
+      }
+      s.trollScore = proxScore + (lenScore * 0.5) + bearingBonus;
+      s._closestFt = closestFt;
     });
     candidates.sort((a, b) => (b.trollScore || 0) - (a.trollScore || 0));
-    console.log(`[route-builder] top 3 candidates by proximity: ${candidates.slice(0,3).map(c => `d=${Math.round(c._closestEndFt)}ft len=${Math.round(c.len)}ft score=${Math.round(c.trollScore)}`).join(' | ')}`);
+    console.log('[route-builder] top 3 spines: ' + candidates.slice(0,3).map(c => 'd=' + Math.round(c._closestFt) + 'ft len=' + Math.round(c.len) + 'ft score=' + Math.round(c.trollScore)).join(' | '));
   }
 
   const DEDUP = Math.max(spacing * 0.6, 150);
@@ -642,16 +650,29 @@ function generateContourRoutes(cfg) {
     pts = clampToClip(pts);
     if (pts.length < 2) continue;
 
-    const MAX_PTS_PER_TRACK = 3000;
-    if (pts.length > MAX_PTS_PER_TRACK) {
-      pts = pts.slice(0, MAX_PTS_PER_TRACK);
+    // Max-gap split: don't draw lines across land gaps > 400ft
+    const MAX_GAP_FT = 400;
+    const segments = [];
+    let seg = [pts[0]];
+    for (let k = 1; k < pts.length; k++) {
+      const [gapFt] = distBearing(pts[k-1][0], pts[k-1][1], pts[k][0], pts[k][1]);
+      if (gapFt > MAX_GAP_FT) {
+        if (seg.length >= 2) segments.push(seg);
+        seg = [pts[k]];
+      } else { seg.push(pts[k]); }
     }
-
-    tracks.push({
-      name: lanes > 1 ? `Sweep_${depthMin}-${depthMax}ft_L${i+1}` : `Sweep_${depthMin}-${depthMax}ft`,
-      pts,
-      depth: (depthMin + depthMax) / 2,
-    });
+    if (seg.length >= 2) segments.push(seg);
+    const MAX_PTS_PER_TRACK = 3000;
+    const baseName = lanes > 1 ? 'Sweep_' + depthMin + '-' + depthMax + 'ft_L' + (i+1) : 'Sweep_' + depthMin + '-' + depthMax + 'ft';
+    for (let si = 0; si < segments.length; si++) {
+      let segPts = segments[si];
+      if (segPts.length > MAX_PTS_PER_TRACK) segPts = segPts.slice(0, MAX_PTS_PER_TRACK);
+      tracks.push({
+        name: segments.length > 1 ? baseName + '_S' + (si+1) : baseName,
+        pts: segPts,
+        depth: (depthMin + depthMax) / 2,
+      });
+    }
   }
   return tracks;
 }
@@ -935,6 +956,7 @@ export function generateAndCommitRoute(overrides = {}) {
     endLon:         overrides.endLon ?? null,
     targetLengthFt: overrides.targetLengthFt ?? null,
     isReturnPass:   overrides.isReturnPass ?? false,
+    lockedBearing:  overrides.lockedBearing ?? null,
     depthMin:       overrides.depthMin   != null ? overrides.depthMin   : (parseInt(document.getElementById('rbDepthMin')?.value)    || 18),
     depthMax:   overrides.depthMax   != null ? overrides.depthMax   : (parseInt(document.getElementById('rbDepthMax')?.value)    || 28),
     pattern:    overrides.pattern    != null ? overrides.pattern    : (document.getElementById('rbPattern')?.value               || 'sine+straight'),
