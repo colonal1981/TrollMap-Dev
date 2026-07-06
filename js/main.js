@@ -83,6 +83,7 @@ import './modules/sw-register.js';
 import './modules/supplemental-layers.js';
 import { pullUpdatesOnLoad, pushAllLocalToCloud } from './modules/cloud-sync.js';
 import './modules/pinch-point-finder.js'; // still used by route-builder.js
+import { initTackleInventoryPanel } from './modules/tackle-inventory-ui.js'
 
 // ── Plan-tab dropdown helpers are exposed on `window` so the ──
 //    tab switcher in core/tabs.js can invoke them by name.        ──
@@ -160,6 +161,7 @@ async function boot() {
 
     // Pull cloud updates (non-blocking — fires after local restore is done)
     pullUpdatesOnLoad().catch((e) => console.warn('Cloud pull failed:', e));
+    initTackleInventoryPanel();
 
     // Seed default 6-rod spread on first run (when SPREAD is empty)
     if (!state.SPREAD || state.SPREAD.length === 0) {
