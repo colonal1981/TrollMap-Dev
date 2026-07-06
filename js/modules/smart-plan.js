@@ -417,15 +417,20 @@ function getTacticallyAlignedLure(targetDepth, preferredLures) {
     }
   }
 
-  // 2. Fallback: If nothing in the preferred list fits, pick a tactically sound lure for this depth
-  if (depth < 8) {
-    return 'Choppo 90 – Topwater'; // Ultra shallow
+  // 2. Tactical Fallback: Use the full gear catalog based on depth bands
+  // This ensures we use Spoons, Jigs, and Lipless instead of just A-Rigs
+  if (depth < 5) {
+    const shallows = ['Choppo 90 – Topwater', 'Zara Spook – Topwater', 'Whopper Plopper 110 – Topwater', 'ChatterBait 3/4oz'];
+    return shallows[Math.floor(Math.random() * shallows.length)];
   } else if (depth < 12) {
-    return 'Rapala DT-10 – Crankbait'; // Shallow/Medium
-  } else if (depth < 18) {
-    return 'A-Rig Medium (~2.65oz) – 4.6" Swimbait'; // Mid-depth schooler
+    const midShallows = ['Rapala DT-10 – Crankbait', 'Flicker Minnow 11 – Crankbait', 'Bucktail Jig 1oz', 'Marabou Jig 3/4oz', 'Kastmaster 3/4oz'];
+    return midShallows[Math.floor(Math.random() * midShallows.length)];
+  } else if (depth < 20) {
+    const midDepths = ['A-Rig Medium (~2.65oz) – 4.6" Swimbait', 'Rapala DT-14 – Crankbait', 'Flutter Spoon 2oz', 'Swimbait 4.6" – Jighead'];
+    return midDepths[Math.floor(Math.random() * midDepths.length)];
   } else {
-    return 'Deep Hit Stick – Crankbait'; // Deep
+    const deeps = ['Deep Hit Stick – Crankbait', 'A-Rig Heavy (~3.5oz) – 5" Swimbait', 'Flutter Spoon 3oz', 'Swimbait 5" – Jighead'];
+    return deeps[Math.floor(Math.random() * deeps.length)];
   }
 }
 
@@ -503,15 +508,6 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
     window: `${phase.startStr} – ${phase.endStr}`,
   });
 
-  // FIX (2026-07-03): Smart Plan was generating a trolling sweep route for
-  // EVERY phase regardless of the recommended technique — including phases
-  // whose primary lure is topwater, or free-lined/downlined live bait. Those
-  // are cast or drift-fished at a spot, not trolled along a controlled path;
-  // generating a "trolling lane" for them produces a route nobody was ever
-  // going to run. Skip route generation for these and surface the existing
-  // phaseRec.notes (which already frequently describes WHERE to fish —
-  // "points and creek mouths", "near Pinopolis Dam", etc.) as spot guidance
-  // instead of a pointless sweep track.
   if (isStaticPhase(phaseRec)) {
     const primaryLure = phaseRec.lures[0];
     console.log(`[smart-plan] Phase ${phase.num} ${phase.name}: primary technique "${primaryLure}" is static/casting, not trolled — skipping route generation.`);
@@ -527,29 +523,51 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
 
   try {
     const { generateAndCommitRoute, setClipFromRamp } = await import('./route-builder.js');
-    // Auto-set clip bbox from ramp + battery range — no manual drawing needed
     if (rampLat && rampLon && rangeMiles) {
       setClipFromRamp(rampLat, rampLon, rangeMiles);
     } else {
       console.warn(`[smart-plan] Phase ${phase.num}: no ramp coords or range — using existing clip if any`);
     }
-    const rCfg = getRouteConfigForPhase(phaseRec, phase.num) || {};
+    
+    // TACTICAL PATTERN SELECTION:
+    // Phase 1: Meandering / Exploring (Sine)
+    // Phase 2: Direct Head-out / Ledge-hunting (Sine+Straight)
+    // Phase 3: Return to Ramp (Sine+Straight)
+    let pattern = 'sine+straight';
+    let amplitude = 30;
+    if (phase.num === 1) {
+      pattern = 'sine'; 
+      amplitude = 40; // More aggressive meander
+    } else if (phase.num === 2) {
+      pattern = 'sine+straight';
+      amplitude = 25; // Tighter, more direct
+    } else {
+      pattern = 'sine+straight';
+      amplitude = 30;
+    }
+
+    const rCfg = {
+      pattern,
+      amplitude,
+      spacing: 150,
+      lanes: 1,
+      rationale: phase.num === 1 ? 'Meandering outbound explore' : (phase.num === 2 ? 'Direct ledge swing' : 'Return circuit to ramp'),
+    };
+
     const tracks = generateAndCommitRoute({
+      ...rCfg,
       depthMin:       phaseRec.depthMin,
       depthMax:       phaseRec.depthMax,
-      pattern:        rCfg.pattern || 'sine+straight',
-      amplitude:      rCfg.amplitude || 24,
-      spacing:        rCfg.spacing || 150,
       trackName:      `Phase ${phase.num} ${phase.name} (${phase.startStr}–${phase.endStr})`,
       rampLat:        rampLat ?? null,
       rampLon:        rampLon ?? null,
       startLat:       startLat ?? rampLat ?? null,
       startLon:       startLon ?? rampLon ?? null,
-      lockedBearing:  lockedBearing,
       endLat:         endLat ?? null,
       endLon:         endLon ?? null,
       targetLengthFt: targetLengthFt || null,
       isReturnPass:   isReturnPass,
+      lockedBearing:  lockedBearing,
     });
     if (tracks?.length) {
       console.log(`[smart-plan] Phase ${phase.num} ${phase.name}: generated ${tracks.length} route(s) at ${phaseRec.depthMin}-${phaseRec.depthMax}ft`);
@@ -883,12 +901,23 @@ export async function runSmartPlan() {
   }
 
   let curLat = rampLat, curLon = rampLon;
-  let lockedBearing = null; // Set from Phase 1 spine, all phases travel same direction
+  let lockedBearing = null;
 
   for (let i = 0; i < phases.length; i++) {
     const durHrs = calcDurHrs(phases[i].startStr, phases[i].endStr);
     const spd = phaseRecs[i]?.speed || 2.2;
-    const targetFt = Math.round(durHrs * spd * 5280 * 0.80);
+    
+    // BALANCE: Phase 3 (Return) should take roughly as long as Phase 1 + Phase 2 (Outbound)
+    let targetFt;
+    if (i < 2) {
+      targetFt = Math.round(durHrs * spd * 5280 * 0.80);
+    } else {
+      // For Phase 3, we calculate the total outbound distance and try to match it
+      const outboundDur = (phases[0].end - phases[0].start) + (phases[1].end - phases[1].start);
+      const outboundSpd = (phaseRecs[0]?.speed || 2.2) + (phaseRecs[1]?.speed || 2.2);
+      targetFt = Math.round(outboundDur * (outboundSpd/2) * 5280 * 0.80);
+    }
+
     const isLastPhase = (i === phases.length - 1);
 
     await generateRouteForPhase(
@@ -899,7 +928,6 @@ export async function runSmartPlan() {
       lockedBearing
     );
 
-    // After Phase 1 commits, read the bearing of the generated spine and lock it
     const generated = state.DATA?.tracks;
     if (generated && generated.length > 0) {
       const lastTrk = generated[generated.length - 1];
@@ -908,14 +936,11 @@ export async function runSmartPlan() {
         const lastPt = pts[pts.length - 1];
         curLat = lastPt[0]; curLon = lastPt[1];
 
-        // Lock bearing from Phase 1 outbound direction
         if (i === 0 && lockedBearing === null) {
-          // Compute bearing from ramp to the far end of Phase 1 track
           const farPt = pts[pts.length - 1];
           const dLat = (farPt[0] - rampLat) * 111320;
           const dLon = (farPt[1] - rampLon) * 111320 * Math.cos(rampLat * Math.PI / 180);
           lockedBearing = Math.atan2(dLon, dLat) * 180 / Math.PI;
-          console.log(`[smart-plan] Locked outbound bearing: ${lockedBearing.toFixed(1)}°`);
         }
       }
     }
