@@ -120,8 +120,8 @@ export const SPECIES_BEHAVIOR = {
         timeOfDay: {
           [DAWN]: { depthShift: -6, lures: ['Choppo 90', 'Rattling Spook', 'Bucktail'], speed: 1.8,
             notes: 'Early AM stripers run 12-15ft, shallower than mid-day. Topwater/schooling window. Cast netting bait around grass banks if live-baiting.' },
-          [DAY]: { depthShift: 0, lures: ['A-Rig Medium', 'Deep Hit Stick', 'Umbrella Rig 3/4oz'], speed: 2.0,
-            notes: 'Fish scatter to ledges/channels by mid-morning. Umbrella rigs with 1/4oz jigheads + 4-5" trailers (match the hatch to shad size). Trolling speed 1.5-2.5mph.' },
+          [DAY]: { depthShift: 0, lures: ['A-Rig Medium', 'Umbrella Rig 3/4oz', 'Flutter Spoon 2oz'], speed: 2.0,
+            notes: 'Fish scatter to ledges/channels by mid-morning. Umbrella rigs with 1/4oz jigheads + 4-5" trailers (match the hatch to shad size). Trolling speed 1.5-2.5mph. Thermocline sets up 16-20ft by late summer — use electronics to find suspended fish.' },
           [DUSK]: { depthShift: -4, lures: ['Choppo 90', 'Bucktail', 'Shad-imitation lure'], speed: 1.8,
             notes: 'Topwater schooling action returns, scattered but dependable in low light.' },
         },
@@ -168,8 +168,8 @@ export const SPECIES_BEHAVIOR = {
         timeOfDay: {
           [DAWN]: { depthShift: -4, lures: ['Live herring free-line', 'Choppo 90'], speed: 1.0,
             notes: 'Fish may only be 12-15ft deep early, get progressively deeper through morning. Free-line one rod, work topwater on the other — both fishable from a kayak with no planer board needed.' },
-          [DAY]: { depthShift: 0, lures: ['Down-line live herring', 'Umbrella rig'], speed: 1.5,
-            notes: 'Thermocline ~30ft in lower lake (Dreher Island to dam). One group suspends near 30ft, another holds bottom in 70-100ft near the dam (low O2, harder to catch). Use umbrella rig lead-length or inline trolling weight for depth control (spinning gear — no lead-core/line-counter reels).' },
+          [DAY]: { depthShift: 0, lures: ['Down-line live herring', 'Umbrella rig', 'Lead-core trolling'], speed: 1.5,
+            notes: 'Thermocline ~30ft in lower lake (Dreher Island to dam). One group suspends near 30ft, another holds bottom in 70-100ft near the dam (low O2, harder to catch). Down-rodding with line counters recommended.' },
           [DUSK]: { depthShift: -4, lures: ['Free-line live herring'], speed: 1.0, notes: 'Evening shallow push similar to dawn.' },
         },
         sources: ['William Attaway guide interview, Carolina Sportsman 2021', 'AHQ Lake Murray Summer 2021 report', 'Bouknight guide interview, Fish of Dreams'],
