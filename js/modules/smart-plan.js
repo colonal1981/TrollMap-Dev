@@ -982,8 +982,6 @@ export async function runSmartPlan() {
       rationale: rationale.slice(0, 2000),
     }
   };
-    }
-  };
 
   const WORKER_URL = (typeof CF_WORKER_URL !== 'undefined' ? CF_WORKER_URL : window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev');
   if (outEl) outEl.value = rationale + '\n\n⏳ Groq plan audit running...';
