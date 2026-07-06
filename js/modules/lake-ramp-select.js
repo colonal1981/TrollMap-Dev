@@ -71,7 +71,10 @@ async function onLakeChange(selLakeName) {
 
   // Sync planLake if not already set
   const planLakeEl = document.getElementById('planLake');
-  if (planLakeEl && !planLakeEl.value) planLakeEl.value = selLakeName;
+  if (planLakeEl && !planLakeEl.value) {
+    planLakeEl.value = selLakeName;
+    planLakeEl.dispatchEvent(new Event('change'));
+  }
 
   // Load contours for this lake
   loadContourForLake(selLakeName);
