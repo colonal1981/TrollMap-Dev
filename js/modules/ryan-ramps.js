@@ -442,6 +442,7 @@ export function evaluateRamps({ lakeName, currentRampKey, targetZones, windDeg, 
         if (hasFreeAlternative) { score -= 5; reasons.push(`${r.name} has a launch fee`); }
       }
 
+      score = Math.min(100, Math.max(0, score));
       return { ramp: r, score, reasons, positives };
     })
     .sort((a, b) => b.score - a.score);
