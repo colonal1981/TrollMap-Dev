@@ -32,9 +32,10 @@ const TYPE_LABELS = {
 };
 
 function depthLabel(lure) {
-  if (lure.minDepth === null || lure.maxDepth === null) return 'Variable';
-  if (lure.minDepth === 0 && lure.maxDepth <= 1) return 'Surface';
-  return `${lure.minDepth}–${lure.maxDepth}ft`;
+  const pd = LURE_KNOWLEDGE[lure.type]?.physicalDepth;
+  if (!pd) return 'Variable';
+  if (pd.min === 0 && pd.max <= 1) return 'Surface';
+  return `${pd.min}–${pd.max}ft`;
 }
 
 async function renderTable(body) {
