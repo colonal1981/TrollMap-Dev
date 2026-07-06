@@ -2598,28 +2598,32 @@ export default {
             return new Response(JSON.stringify({ success: false, error: "GROQ_API_KEY not configured on worker environment" }), { status: 500, headers: JSON_HEADERS });
           }
 
-          const SYSTEM_PROMPT = `You are an expert South Carolina freshwater and inshore saltwater fishing guide with deep knowledge of trolling tactics from a kayak.
+          const SYSTEM_PROMPT = `You are a crusty, veteran South Carolina fishing guide. You have zero patience for "textbook" plans that make no tactical sense in the real world. You speak plainly and critically.
 
-ANGLER PROFILE — apply these constraints strictly. Do NOT flag anything that contradicts these known facts about this angler:
+ANGLER PROFILE — apply these constraints strictly:
 - Watercraft: Native Watersports Slayer Propel Max 12.5 pedal kayak + NK180 Pro 24V bow-mount trolling motor
-- Rods: Spinning rods ONLY. This angler intentionally runs A-rigs/umbrella rigs on spinning rods — this is confirmed working gear, do NOT flag it as incompatible.
+- Rods: Spinning rods ONLY. A-rigs on spinning rods are confirmed working gear.
 - No lead-core, no conventional reels, no planer boards, no downriggers
-- Depth control: Lead length only (inline weights or lure dive curve). A-rig depth is controlled entirely by lead length + jighead weight — this is valid technique.
-- Max 2 rods in the water simultaneously (kayak platform)
-- Trolling-first angler — casts topwater/reaction baits but prefers moving presentation
-- Freshwater live bait: NOT available (no livewell). Do NOT suggest live bait for freshwater unless plan explicitly notes it.
-- Saltwater live bait (mullet, shrimp): available from shore bait shops
-- Primary target lakes: Wateree, Marion, Moultrie, Murray, Monticello (SC)
-- Battery: NK180 on 100Ah LiFePO4. Evaluate battery management based on trip duration and trolling speed — not route count.
-- Pool level: when provided, factor into ramp access risk and shallow structure exposure (low pool = exposed flats and ramps, high pool = flooded timber and cover).
-- Solunar timing: when provided, evaluate whether phase depths and lure choices align with the major/minor feeding windows.
-- Speed cadence: evaluate whether the dawn-shallow to deep phase progression fits the species, season, and water temp. Do NOT flag "missing speed cadence" if the rationale already describes phase-specific speeds and patterns.
+- Depth control: Lead length only.
+- Max 2 rods in the water simultaneously.
+- Trolling-first angler.
+- Freshwater live bait: NOT available (no livewell).
+
+TACTICAL AUDIT RULES — Flag these as MAJOR ERRORS:
+1. DEPTH MISMATCHES: 
+   - Flag any A-Rig or Deep Crankbait running shallower than 10-12ft. (Trolling an A-Rig at 5ft is a waste of time).
+   - Flag any lure with a max dive of 15ft being run in 25ft of water without clear rationale.
+   - Flag any "Deep" lure running too deep for the target species/season (e.g., Stripers in summer usually stack 16-20ft; 30ft is too deep).
+2. LURE MISMATCHES:
+   - If the plan calls for "Shallow" water (<10ft) but uses an A-Rig, flag it. Suggest Squarebills, Lipless, Spinnerbaits, or Topwater.
+3. LOGIC GAPS:
+   - If the plan suggests "Dawn" tactics but uses deep-water lures at depths that don't match morning schooling behavior.
 
 CRITIQUE FORMAT — respond ONLY with valid JSON, no markdown fences:
 {
   "overall_score": <1-10>,
   "confidence": "<high|medium|low>",
-  "verdict": "<one punchy sentence overall take>",
+  "verdict": "<one punchy, honest sentence overall take>",
   "scores": {
     "depth_alignment": <1-10>,
     "lure_selection": <1-10>,
@@ -2627,19 +2631,19 @@ CRITIQUE FORMAT — respond ONLY with valid JSON, no markdown fences:
     "battery_management": <1-10>,
     "safety": <1-10>
   },
-  "flags": ["<specific issue>", ...],
-  "fixes": ["<specific actionable fix>", ...],
-  "keeper_moves": ["<what the plan gets right>", ...],
-  "local_intel": "<one SC-specific tip the plan missed or could use>"
+  "flags": ["<specific tactical error>", ...],
+  "fixes": ["<actionable professional fix>", ...],
+  "keeper_moves": ["<what actually makes sense>", ...],
+  "local_intel": "<one SC-specific tip the plan missed>"
 }
 
-Keep flags, fixes, and keeper_moves to 2-3 items each. Be direct and practical — this angler is experienced. Only flag real problems, not assumed gaps based on missing fields.`;
+Be direct. If the plan is tactically stupid, say so. Keep flags and fixes to 2-3 items each.`;
 
           // Distill the plan down to what Groq actually needs for a useful
           // audit — skip lakeIntel/clarityIntel blobs, empty spread fields,
           // and raw GPX. Keep fishing-relevant data only.
           const p = body.plan || body;
-          const meta = p.meta || {};
+          const meta = p.meta || p;   // Fall back to p itself when no nested meta
           const spread = (p.spread || []).map(r => ({
             side: r.side, position: r.position,
             rod: r.rod || '', reel: r.reel || '',
@@ -2649,15 +2653,18 @@ Keep flags, fixes, and keeper_moves to 2-3 items each. Be direct and practical �
           })).filter(r => r.lure || r.notes);
 
           const cleanPlan = {
-            lake: meta.lake, species: meta.species,
-            date: meta.date, ramp: meta.ramp,
-            launchTime: meta.launchTime, returnTime: meta.returnTime,
-            waterTemp: meta.waterTemp ? `${meta.waterTemp}°F` : null,
-            poolLevel: meta.poolLevel ? `${meta.poolLevel} ${meta.poolUnit||''}`.trim() : null,
-            weather: meta.weather || '',
-            clarity: meta.clarity || '',
-            motor: meta.motor || '',
-            solunar: meta.solunar || '',
+            lake: meta.lake || p.lake,
+            species: meta.species || p.species,
+            date: meta.date || p.date,
+            ramp: meta.ramp || p.ramp,
+            launchTime: meta.launchTime || p.launchTime,
+            returnTime: meta.returnTime || p.returnTime,
+            waterTemp: (meta.waterTemp || p.waterTemp) ? `${meta.waterTemp || p.waterTemp}` : null,
+            poolLevel: (meta.poolLevel || p.poolLevel) || null,
+            weather: meta.weather || p.weather || '',
+            clarity: meta.clarity || p.clarity || '',
+            motor: meta.motor || p.motor || '',
+            solunar: meta.solunar || p.solunar || '',
             spread: spread.slice(0, 6),
             tackle: p.tackle || '',
             safety: p.safety || '',
