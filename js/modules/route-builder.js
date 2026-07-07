@@ -937,7 +937,6 @@ function generateDepthPolygonRoutes(cfg) {
     const MAX_SPINE_DIST_FT = cfg.singleBestTrack ? 5280 : Infinity; // 1mi cap for smart plan
     const eLat = cfg.endLat;
     const eLon = cfg.endLon;
-    console.log('[debug] targetLengthFt:', cfg.targetLengthFt, 'lenCap:', (cfg.targetLengthFt || 15000) * 3);
     const lenCap = (cfg.targetLengthFt || 15000) * 3;
 
     candidates.forEach(s => {

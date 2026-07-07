@@ -437,16 +437,7 @@ function auditSmartPlanRoute(tracks, rampLat, rampLon, launchTime, returnTime, s
   out.durationH = durH;
   out.speedMph = speedMph || 2.0;
   out.budgetFt = durH ? durH * out.speedMph * 5280 : null;
-  // Split estimated time: fishing tracks at trolling speed, connectors at
-  // transit speed (2.5mph pedal/motor). Using one speed for everything made
-  // the plan look like it covered the whole day when it didn't.
-  const TRANSIT_MPH = 2.5;
-  const trollMph = out.speedMph; // plan trolling speed
-  const fishingH   = (out.fishingFt   / 5280) / trollMph;
-  const connectorH = (out.connectorFt / 5280) / TRANSIT_MPH;
-  out.estimatedH = fishingH + connectorH;
-  out.fishingH   = fishingH;
-  out.connectorH = connectorH;
+  out.estimatedH = out.totalFt / 5280 / out.speedMph;
 
   if (out.startFt > 35) { out.ok = false; out.flags.push(`First GPX point is ${Math.round(out.startFt)}ft from the locked ramp.`); }
   if (out.endFt > 35) { out.ok = false; out.flags.push(`Final GPX point is ${Math.round(out.endFt)}ft from the locked ramp.`); }
@@ -470,12 +461,7 @@ function buildRouteAuditText(audit, rampName, rampLat, rampLon) {
   lines.push(`${audit.ok ? '✓' : '⚠'} Returns to ramp: ${Math.round(audit.endFt || 0)}ft from locked coordinate`);
   lines.push(`${audit.maxGapFt <= 75 ? '✓' : '⚠'} Phase/track continuity max gap: ${Math.round(audit.maxGapFt || 0)}ft`);
   lines.push(`Total route: ${(audit.totalFt / 5280).toFixed(2)}mi · fishing ${(audit.fishingFt / 5280).toFixed(2)}mi · connectors ${(audit.connectorFt / 5280).toFixed(2)}mi`);
-  if (audit.durationH) {
-    const fishingHStr   = audit.fishingH   ? ` (${audit.fishingH.toFixed(1)}hr trolling + ${audit.connectorH.toFixed(1)}hr transit)` : '';
-    lines.push(`Estimated time on water: ${audit.estimatedH.toFixed(1)}hr${fishingHStr} · plan window ${audit.durationH.toFixed(1)}hr`);
-    const idleH = audit.durationH - audit.estimatedH;
-    if (idleH > 1.0) lines.push(`⚠ ${idleH.toFixed(1)}hr unaccounted — routes cover only ${(audit.estimatedH / audit.durationH * 100).toFixed(0)}% of the plan window`);
-  }
+  if (audit.durationH) lines.push(`Estimated moving time: ${audit.estimatedH.toFixed(1)}hr at ${audit.speedMph.toFixed(1)}mph · plan window ${audit.durationH.toFixed(1)}hr`);
   if (audit.flags?.length) {
     lines.push('Route flags:');
     audit.flags.forEach(f => lines.push(`  • ${f}`));
@@ -1273,12 +1259,21 @@ export async function runSmartPlan() {
       const next = appendConnectorThenTracks(assembledSmartPlanTracks, curLat, curLon, phaseTracks, fromLabel, toLabel);
       curLat = next.lat; curLon = next.lon;
 
-      if (i === 0 && lockedBearing === null && Number.isFinite(rampLat) && Number.isFinite(rampLon)) {
-        const lastFishingTrack = [...phaseTracks].reverse().find(t => t?.pts?.length >= 2);
-        const farPt = lastFishingTrack?.pts?.[lastFishingTrack.pts.length - 1];
-        if (farPt) {
-          const dLat = (farPt[0] - rampLat) * 111320;
-          const dLon = (farPt[1] - rampLon) * 111320 * Math.cos(rampLat * Math.PI / 180);
+      // Update lockedBearing after every phase from the direction of travel
+      // at the END of that phase's track. This ensures each subsequent phase
+      // continues in the same general direction rather than using Phase 1's
+      // outbound bearing for all phases (which was causing bearing bonus to
+      // dominate spine selection and pick distant spines).
+      const lastFishingTrack = [...phaseTracks].reverse().find(t => t?.pts?.length >= 2);
+      if (lastFishingTrack?.pts?.length >= 2) {
+        const pts = lastFishingTrack.pts;
+        // Use the last 10% of points to get a stable exit bearing
+        const lookback = Math.max(2, Math.floor(pts.length * 0.1));
+        const fromPt = pts[pts.length - lookback];
+        const toPt   = pts[pts.length - 1];
+        const dLat = (toPt[0] - fromPt[0]) * 111320;
+        const dLon = (toPt[1] - fromPt[1]) * 111320 * Math.cos(fromPt[0] * Math.PI / 180);
+        if (Math.abs(dLat) > 0.1 || Math.abs(dLon) > 0.1) {
           lockedBearing = Math.atan2(dLon, dLat) * 180 / Math.PI;
         }
       }
