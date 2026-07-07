@@ -669,8 +669,41 @@ function generateContourRoutes(cfg) {
 //   the spine scoring (proximity to start point + bearing lock) pick the
 //   right ones near the current position.
 
+// ── Depth polygon shared-edge extraction ─────────────────────────────────────
+//
+// Previous approach: dump ALL outer ring edges of any polygon overlapping the
+// target band → 57k+ raw edges, mostly internal polygon noise.
+//
+// New approach: dynamically discover band boundaries in the loaded GeoJSON,
+// find which transition edge sits inside the requested depth range, then
+// extract only edges that are SHARED between the shallow polygon and its
+// adjacent deeper neighbor. Those shared edges are the true drop-off lines.
+//
+// Works for any lake — no hardcoded depth values.
+
+function ftBetweenLonLat([lon1, lat1], [lon2, lat2]) {
+  const R = 20902231, D = Math.PI / 180;
+  const dlat = (lat2 - lat1) * D, dlon = (lon2 - lon1) * D;
+  const a = Math.sin(dlat/2)**2 + Math.cos(lat1*D)*Math.cos(lat2*D)*Math.sin(dlon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// Extract all outer-ring edges of a feature as [lonA, lonB] pairs.
+function featureEdges(feat) {
+  const geom = feat.geometry;
+  if (!geom) return [];
+  let rings = [];
+  if (geom.type === 'Polygon') rings = [geom.coordinates[0]];
+  else if (geom.type === 'MultiPolygon') rings = geom.coordinates.map(p => p[0]);
+  const edges = [];
+  for (const ring of rings) {
+    if (!ring || ring.length < 3) continue;
+    for (let i = 0; i < ring.length - 1; i++) edges.push([ring[i], ring[i + 1]]);
+  }
+  return edges;
+}
+
 function getDepthPolygonEdges(depthMinFt, depthMaxFt) {
-  // Try imported getter first (most reliable — direct module reference)
   const gj = getDepthAreaGeoJSON()
     || window.SUPPLEMENTAL_DEPTH_GEOJSON
     || globalThis.SUPPLEMENTAL_DEPTH_GEOJSON;
@@ -680,59 +713,95 @@ function getDepthPolygonEdges(depthMinFt, depthMaxFt) {
     return [];
   }
 
-  const edges = [];
+  // ── Step 1: discover all distinct depth bands present in this lake's data ──
+  const bandSet = new Set();
+  for (const f of gj.features) {
+    const p = f.properties || {};
+    const mn = p.depth_min_ft, mx = p.depth_max_ft;
+    if (mn != null && mx != null) bandSet.add(`${mn}|${mx}`);
+  }
+  // Sort bands by depth_min so adjacency is positional
+  const allBands = [...bandSet].map(s => {
+    const [mn, mx] = s.split('|').map(Number);
+    return { min: mn, max: mx };
+  }).sort((a, b) => a.min - b.min);
 
-  for (const feat of gj.features) {
-    const props = feat.properties || {};
-    const pMin = props.depth_min_ft ?? 0;
-    const pMax = props.depth_max_ft ?? 0;
-
-    // Include polygon if its depth range overlaps the target band
-    if (pMax < depthMinFt || pMin > depthMaxFt) continue;
-
-    const geom = feat.geometry;
-    if (!geom) continue;
-
-    // Handle Polygon and MultiPolygon
-    let rings = [];
-    if (geom.type === 'Polygon') {
-      rings = [geom.coordinates[0]]; // outer ring only
-    } else if (geom.type === 'MultiPolygon') {
-      rings = geom.coordinates.map(p => p[0]); // outer ring of each polygon
-    } else {
-      continue;
+  // ── Step 2: find all adjacent band pairs whose shared boundary falls inside
+  //    the requested depth range. The boundary between band A (max=N) and
+  //    band B (min=N) is at depth N — keep it if depthMinFt < N < depthMaxFt.
+  //    Also include the shallowest band edge if depthMinFt == band.min, and
+  //    deepest band edge if depthMaxFt == band.max (explicit band boundaries).
+  const transitionDepths = new Set();
+  for (let i = 0; i < allBands.length - 1; i++) {
+    const boundary = allBands[i].max; // == allBands[i+1].min for adjacent bands
+    if (boundary > depthMinFt && boundary < depthMaxFt) {
+      transitionDepths.add(boundary);
     }
-
-    for (const ring of rings) {
-      if (!ring || ring.length < 3) continue;
-      // Each consecutive pair of vertices is one edge — coords are [lon, lat]
-      for (let i = 0; i < ring.length - 1; i++) {
-        edges.push([ring[i], ring[i + 1]]);
+  }
+  // If no interior transition exists (request spans exactly one band),
+  // use the band's own min and max boundaries as the edges.
+  if (transitionDepths.size === 0) {
+    for (const b of allBands) {
+      if (b.min >= depthMinFt && b.max <= depthMaxFt) {
+        transitionDepths.add(b.min);
+        transitionDepths.add(b.max);
       }
     }
   }
 
-  console.log(`[route-builder] depth polygon edges: ${edges.length} raw edges for ${depthMinFt}-${depthMaxFt}ft`);
-  return edges;
+  console.log(`[route-builder] depth polygon edges: target ${depthMinFt}-${depthMaxFt}ft, transition boundaries at [${[...transitionDepths].sort((a,b)=>a-b).join(', ')}]ft`);
+
+  // ── Step 3: for each transition depth N, collect edges from the shallower
+  //    polygon (depth_max_ft == N) and the deeper polygon (depth_min_ft == N).
+  //    An edge is a TRUE shared boundary if a geometrically near-identical edge
+  //    exists in the adjacent polygon (within SHARED_TOL_FT). These are the
+  //    actual drop-off lines fish hold on.
+  const SHARED_TOL_FT = 25; // vertices must be within 25ft to be "shared"
+  const sharedEdges = [];
+
+  for (const boundary of transitionDepths) {
+    const shallowFeats = gj.features.filter(f => (f.properties?.depth_max_ft ?? -1) === boundary);
+    const deepFeats    = gj.features.filter(f => (f.properties?.depth_min_ft ?? -1) === boundary);
+
+    if (!shallowFeats.length || !deepFeats.length) {
+      // Only one side found — just use those edges directly (lake edge / dam boundary)
+      const soloFeats = shallowFeats.length ? shallowFeats : deepFeats;
+      for (const f of soloFeats) sharedEdges.push(...featureEdges(f));
+      continue;
+    }
+
+    // Build a flat list of all deep-polygon edge midpoints for proximity check
+    const deepEdgeMids = [];
+    for (const f of deepFeats) {
+      for (const [a, b] of featureEdges(f)) {
+        deepEdgeMids.push([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
+      }
+    }
+
+    // Keep only shallow edges whose midpoint is within SHARED_TOL_FT of any
+    // deep edge midpoint — those are the geometrically shared boundary edges.
+    for (const f of shallowFeats) {
+      for (const edge of featureEdges(f)) {
+        const mid = [(edge[0][0] + edge[1][0]) / 2, (edge[0][1] + edge[1][1]) / 2];
+        const isShared = deepEdgeMids.some(dm => ftBetweenLonLat(mid, dm) < SHARED_TOL_FT);
+        if (isShared) sharedEdges.push(edge);
+      }
+    }
+  }
+
+  console.log(`[route-builder] depth polygon edges: ${sharedEdges.length} shared transition edges for ${depthMinFt}-${depthMaxFt}ft`);
+  return sharedEdges;
 }
 
 // Convert raw edges into spine-format objects compatible with buildStitchedSpines output
 function edgesToSpines(edges, depthMin, depthMax) {
   if (!edges.length) return [];
 
-  // Group nearby edges into chains by connecting endpoint proximity
-  const TOL_FT = 30; // tolerance in feet for endpoint matching
+  const TOL_FT = 30;
   const used = new Set();
   const chains = [];
 
-  function ftBetween([lon1, lat1], [lon2, lat2]) {
-    const R = 20902231, D = Math.PI / 180;
-    const dlat = (lat2 - lat1) * D, dlon = (lon2 - lon1) * D;
-    const a = Math.sin(dlat/2)**2 + Math.cos(lat1*D)*Math.cos(lat2*D)*Math.sin(dlon/2)**2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  }
-
-  // Build chains greedily
+  // Build chains greedily by connecting edges whose endpoints are within TOL_FT
   for (let i = 0; i < edges.length; i++) {
     if (used.has(i)) continue;
     const chain = [...edges[i]];
@@ -744,21 +813,16 @@ function edgesToSpines(edges, depthMin, depthMax) {
         if (used.has(j)) continue;
         const [ea, eb] = edges[j];
         const tail = chain[chain.length - 1];
-        if (ftBetween(tail, ea) < TOL_FT) {
-          chain.push(eb);
-          used.add(j);
-          extended = true;
-        } else if (ftBetween(tail, eb) < TOL_FT) {
-          chain.push(ea);
-          used.add(j);
-          extended = true;
+        if (ftBetweenLonLat(tail, ea) < TOL_FT) {
+          chain.push(eb); used.add(j); extended = true;
+        } else if (ftBetweenLonLat(tail, eb) < TOL_FT) {
+          chain.push(ea); used.add(j); extended = true;
         }
       }
     }
     if (chain.length >= 3) chains.push(chain);
   }
 
-  // Convert chains to spine format — coords are [lon,lat], mid is midpoint
   const depth = (depthMin + depthMax) / 2;
   return chains.map(chain => ({
     coords: chain,
