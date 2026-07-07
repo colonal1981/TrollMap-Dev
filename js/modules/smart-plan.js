@@ -31,7 +31,7 @@ import { renderSpread, autoCalculateLead, LURE_DIVE_DEPTHS } from './spread-buil
 import { onContourChange } from './contour-data.js';
 import { selectBestLure, getRecommendedSpeed } from '../data/tackle-inventory.js';
 import { getLureColor } from '../data/lure-knowledge.js';
-import { getPhaseDepth, getStrategySpeed, normalizeSpecies, getPresentationPriority } from '../data/species-strategies.js';
+import { getPhaseDepth, getStrategySpeed, normalizeSpecies, getPresentationPriority, getPhaseNotes } from '../data/species-strategies.js';
 import { buildFishingContext, buildGroqCoachPayload } from './smart-plan-context.js';
 import { startCoachSession } from './groq-coach.js';
 import {
@@ -561,7 +561,15 @@ function getPhaseRecommendation(species, lakeName, season, phaseNum, waterTempF)
         depthMin: Math.round(dMin), depthMax: Math.round(dMax),
         lures: sNode.preferredPresentation || [],
         speed,
-        notes: Array.isArray(sNode.notes) ? sNode.notes.join(' · ') : (sNode.notes || ''),
+        // Use phase-specific note if available (species-strategies.js phaseNotes),
+        // otherwise fall back to the flat season notes array.
+        notes: (() => {
+          try {
+            const pn = getPhaseNotes(species, season, phaseNum);
+            if (pn) return pn;
+          } catch (_) {}
+          return Array.isArray(sNode.notes) ? sNode.notes.join(' · ') : (sNode.notes || '');
+        })(),
         _v2meta: {
           structure: sNode.preferredStructure,
           lureFamilies: sNode.lureFamilies,
