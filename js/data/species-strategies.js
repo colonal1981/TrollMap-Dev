@@ -57,8 +57,18 @@ export const SPECIES_STRATEGIES = {
         notes:  'Pre/post spawn — fish move shallow. Target creek mouths and points at dawn. Schooling activity increases midday as fish push bait.',
       },
       summer: {
-        depthRange:  [14, 28],
-        phaseDepths: [14, 20, 26],
+        depthRange:  [16, 30],
+        // Phase depths account for lure running depth + 3ft clearance off bottom.
+        // Dawn (Ph1): fish near surface/shallow ledges 0-60min post-sunrise — target 18ft water
+        //   so deepest bait (flutter spoon ~15ft) clears bottom with margin.
+        // Transition (Ph2): sun up, fish dropping to thermocline edge ~20-24ft water column.
+        // Deep (Ph3): mid-morning through afternoon, fish on channel ledges/suspended 24-28ft.
+        phaseDepths: [18, 22, 26],
+        phaseNotes: {
+          1: 'Dawn window — stripers schooling near surface. Troll channel-adjacent ledges 18-22ft. A-rig + flutter spoon. First light to sun-over-trees only.',
+          2: 'Sun up — fish dropping off shallow ledge to thermocline edge. Transition to 20-24ft water column. Slow down slightly, drop leads.',
+          3: 'Mid-morning through afternoon — stripers suspended just above thermocline 24-28ft. Channel ledges and humps. Electronics essential to find suspended fish.',
+        },
         structure:   ['thermocline_zone', 'channel_ledge', 'main_lake_point', 'suspended_bait', 'deep_channel'],
         presentations: [
           'umbrella_rig',
@@ -70,7 +80,7 @@ export const SPECIES_STRATEGIES = {
           'topwater_troll',   // dawn only — planner applies time gate
         ],
         speed:  { min: 1.4, ideal: 1.8, max: 2.2 },
-        notes:  'Thermocline-driven. Fish suspend just above thermocline (typically 16-22ft on Wateree in July). Dawn window: topwater and shallow A-rig. As sun rises: drop to channel ledges and thermocline edge.',
+        notes:  'Thermocline-driven. Fish suspend just above thermocline (typically 18-24ft on Wateree in July). Dawn: channel-adjacent ledges and points. As sun rises: drop to thermocline edge. Mid-morning: deep channel and suspended fish.',
       },
       fall: {
         depthRange:  [8, 22],
@@ -498,6 +508,20 @@ export function getStrategySpeed(species, season) {
  */
 export function getStrategyNotes(species, season) {
   return getStrategy(species, season)?.notes || '';
+}
+
+/**
+ * Get phase-specific behavioral notes for plan rationale.
+ * Falls back to general season notes if no phaseNotes defined.
+ * phaseNum: 1 = dawn, 2 = transition, 3 = deep
+ */
+export function getPhaseNotes(species, season, phaseNum) {
+  const strategy = getStrategy(species, season);
+  if (!strategy) return '';
+  // Use per-phase note if available
+  if (strategy.phaseNotes?.[phaseNum]) return strategy.phaseNotes[phaseNum];
+  // Fall back to general notes
+  return strategy.notes || '';
 }
 
 /**

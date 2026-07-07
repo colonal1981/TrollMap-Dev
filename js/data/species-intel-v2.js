@@ -128,7 +128,15 @@ export const SPECIES_BEHAVIOR_V2 = {
         reactionStrike:true,
         forage:['threadfin_shad','blueback_herring'],
         confidence:{source:'Field Validated',evidence:['Carolina Sportsman guide interviews – Heinning, Whiteside','Repeated catches by user – Wateree trolling']},
-        notes:['Thermocline 16-20ft Aug – fish scatter to ledges mid-morning','Early AM 12-15ft topwater/schooling window','Umbrella rig 1/4oz jigheads + 4-5" trailers – match shad size']
+        // Notes are now phase-aware — see species-strategies.js phaseNotes.
+        // These top-level notes are used only as fallback context for Groq.
+        notes:[
+          'Thermocline typically 18-24ft on Wateree in July (shallower Jun, deeper Aug)',
+          'Dawn window: channel-adjacent ledges — fish near surface first 60min of light',
+          'Mid-morning: fish drop to thermocline edge — use electronics to find suspended fish',
+          'Umbrella rig 1/4oz jigheads + 4-5" trailers — match shad size',
+          'Flutter spoon 3/4oz + 2oz torpedo — vertical jigging or slow troll',
+        ]
       }),
       fall: baseSCReservoir({
         preferredStructure:['creek_mouth','channel_edge','secondary_points'],
