@@ -48,7 +48,7 @@ const MAX_RODS_PER_PHASE = 2;       // kayak: 2 rods in water at a time
 const TOTAL_RODS = 6;               // 6 rods on kayak, 2 per phase × 3 phases
 const BATTERY_AH_DEFAULT = 100;     // LiFePO4 100Ah
 const MOTOR_AMP_AVG = 6;            // NK180 Pro avg draw at ~2mph trolling
-const PHASE_1_END_OFFSET_MIN = 90;  // minutes after sunrise Phase 1 ends (default)
+const PHASE_1_END_OFFSET_MIN = 60;  // minutes after sunrise Phase 1 ends (default)
 const PHASE_2_END_OFFSET_MIN = 210; // minutes after sunrise Phase 2 ends (3.5hrs)
 
 // ── Lure presets (must exactly match spread-builder.js LURE_PRESETS) ─────────
@@ -772,11 +772,49 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
   if (maxEl) maxEl.value = phaseRec.depthMax;
 
   try {
-    const { generateAndCommitRoute, setClipFromRamp } = await import('./route-builder.js');
-    if (rampLat && rampLon && rangeMiles) {
-      setClipFromRamp(rampLat, rampLon, rangeMiles);
+    const { generateAndCommitRoute, setClipFromRamp, setClipPolygon } = await import('./route-builder.js');
+
+    if (phase.num === 1) {
+      // Phase 1: clip from ramp, moderate radius — find best outbound dawn depth
+      setClipFromRamp(rampLat, rampLon, Math.min(rangeMiles, 2.5));
+
+    } else if (phase.num === 2) {
+      // Phase 2: clip tightly around current position (Phase 1 end)
+      // This forces Phase 2 to start near where Phase 1 ended
+      const clipLat = startLat ?? rampLat;
+      const clipLon = startLon ?? rampLon;
+      setClipFromRamp(clipLat, clipLon, 1.0);
+
     } else {
-      console.warn(`[smart-plan] Phase ${phase.num}: no ramp coords or range — using existing clip if any`);
+      // Phase 3: clip must cover BOTH current position AND the ramp so the
+      // return route can physically reach home. Build a bounding box that
+      // encompasses both points with a 0.5mi buffer.
+      const clipLat = startLat ?? rampLat;
+      const clipLon = startLon ?? rampLon;
+      if (Number.isFinite(clipLat) && Number.isFinite(rampLat)) {
+        const BUFFER_MI = 0.5;
+        const latBuf = BUFFER_MI / 69.0;
+        const lonBuf = BUFFER_MI / (69.0 * Math.cos(rampLat * Math.PI / 180));
+        const minLat = Math.min(clipLat, rampLat) - latBuf;
+        const maxLat = Math.max(clipLat, rampLat) + latBuf;
+        const minLon = Math.min(clipLon, rampLon) - lonBuf;
+        const maxLon = Math.max(clipLon, rampLon) + lonBuf;
+        if (typeof setClipPolygon === 'function') {
+          setClipPolygon([
+            [minLat, minLon], [maxLat, minLon],
+            [maxLat, maxLon], [minLat, maxLon],
+            [minLat, minLon],
+          ]);
+        } else {
+          // Fallback if setClipPolygon not exported — use midpoint with enough radius
+          const midLat = (clipLat + rampLat) / 2;
+          const midLon = (clipLon + rampLon) / 2;
+          const distMi = Math.sqrt(((clipLat - rampLat) * 69)**2 + ((clipLon - rampLon) * 69)**2) / 2 + BUFFER_MI;
+          setClipFromRamp(midLat, midLon, distMi);
+        }
+      } else {
+        setClipFromRamp(rampLat, rampLon, Math.min(rangeMiles, 3.5));
+      }
     }
     
     // TACTICAL PATTERN SELECTION:

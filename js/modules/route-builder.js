@@ -500,7 +500,10 @@ function generateContourRoutes(cfg) {
       const [distToStartFt] = distBearing(refLat, refLon, s.coords[0][1], s.coords[0][0]);
       const [distToEndFt]   = distBearing(refLat, refLon, s.coords[s.coords.length-1][1], s.coords[s.coords.length-1][0]);
       const closestFt = Math.min(distToMidFt, distToStartFt, distToEndFt);
+      // Hard floor: spines under 500ft are useless regardless of proximity.
+      if (s.len < 500) { s.trollScore = -Infinity; s._closestFt = closestFt; return; }
       const proxScore = Math.max(0, 100000 - closestFt * 3);
+      // Increased len weight (2× vs old 0.5×) so a long-but-distant spine beats a short-but-close one.
       const lenScore  = Math.min(s.len, cfg.targetLengthFt || 15000);
       let bearingBonus = 0;
       if (lockedBearing !== null && s.coords.length >= 2) {
@@ -508,7 +511,7 @@ function generateContourRoutes(cfg) {
         const diff = Math.abs(((spineBrng - lockedBearing + 540) % 360) - 180);
         bearingBonus = diff < 90 ? (1 - diff / 90) * 30000 : -10000;
       }
-      s.trollScore = proxScore + (lenScore * 0.5) + bearingBonus;
+      s.trollScore = proxScore + (lenScore * 2) + bearingBonus;
       s._closestFt = closestFt;
     });
     candidates.sort((a, b) => (b.trollScore || 0) - (a.trollScore || 0));
@@ -801,7 +804,10 @@ function generateDepthPolygonRoutes(cfg) {
       const [distToStart] = distBearing(refLat, refLon, s.coords[0][1], s.coords[0][0]);
       const [distToEnd]   = distBearing(refLat, refLon, s.coords[s.coords.length-1][1], s.coords[s.coords.length-1][0]);
       const closestFt = Math.min(distToMid, distToStart, distToEnd);
+      // Hard floor: spines under 500ft are useless regardless of proximity.
+      if (s.len < 500) { s.trollScore = -Infinity; s._closestFt = closestFt; return; }
       const proxScore = Math.max(0, 100000 - closestFt * 3);
+      // Increased len weight (2× vs old 0.5×) so a long-but-distant spine beats a short-but-close one.
       const lenScore  = Math.min(s.len, cfg.targetLengthFt || 15000);
       let bearingBonus = 0;
       if (lockedBearing !== null && s.coords.length >= 2) {
@@ -809,7 +815,7 @@ function generateDepthPolygonRoutes(cfg) {
         const diff = Math.abs(((spineBrng - lockedBearing + 540) % 360) - 180);
         bearingBonus = diff < 90 ? (1 - diff / 90) * 30000 : -10000;
       }
-      s.trollScore = proxScore + (lenScore * 0.5) + bearingBonus;
+      s.trollScore = proxScore + (lenScore * 2) + bearingBonus;
       s._closestFt = closestFt;
     });
     candidates.sort((a, b) => (b.trollScore || 0) - (a.trollScore || 0));
@@ -823,14 +829,29 @@ function generateDepthPolygonRoutes(cfg) {
   if (!spine) return null;
 
   // Trim to clip and prepare for patterning — same pipeline as contour routing
-  const trimmed = trimSpineToClip(spine.coords.map(([lon, lat]) => [lat, lon]));
+  let trimmed = trimSpineToClip(spine.coords.map(([lon, lat]) => [lat, lon]));
   if (trimmed.length < 2) return null;
 
-  // Apply sine pattern along the spine
-  const pts = clampToClip(patternAlongSpine(trimmed, {
+  // Pre-trim the spine to targetLengthFt before patterning so we don't
+  // generate a 100mi sine wave over a 629,903ft contour and then try to
+  // trim after the fact. Pattern inflates distance (sine traverses more
+  // ground than the spine), so cap the spine at targetLengthFt first.
+  // The post-pattern trim below handles any remaining overshoot.
+  const targetPassFt = (Number.isFinite(cfg.targetLengthFt) && cfg.targetLengthFt > 0)
+    ? cfg.targetLengthFt : 15000;
+  trimmed = prepareSpineForPhase(trimmed, cfg);
+  if (trimmed.length < 2) return null;
+
+  // Apply pattern along the (now properly bounded) spine
+  let pts = clampToClip(patternAlongSpine(trimmed, {
     ...cfg,
     amplitude: cfg.amplitude || 25,
   }));
+  if (pts.length < 2) return null;
+
+  // Post-pattern trim: sine inflates distance beyond spine length, so trim
+  // the patterned output to the target length as the final hard cap.
+  pts = trimPolylineToLength(pts, targetPassFt);
   if (pts.length < 2) return null;
 
   const MAX_PTS = 3000;
