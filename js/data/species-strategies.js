@@ -63,7 +63,7 @@ export const SPECIES_STRATEGIES = {
         //   so deepest bait (flutter spoon ~15ft) clears bottom with margin.
         // Transition (Ph2): sun up, fish dropping to thermocline edge ~20-24ft water column.
         // Deep (Ph3): mid-morning through afternoon, fish on channel ledges/suspended 24-28ft.
-        phaseDepths: [18, 22, 26],
+        phaseDepths: [17, 23, 27],
         phaseNotes: {
           1: 'Dawn window — stripers schooling near surface. Troll channel-adjacent ledges 18-22ft. A-rig + flutter spoon. First light to sun-over-trees only.',
           2: 'Sun up — fish dropping off shallow ledge to thermocline edge. Transition to 20-24ft water column. Slow down slightly, drop leads.',
