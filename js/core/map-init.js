@@ -268,11 +268,18 @@ export function renderMap() {
 
   for (const t of state.DATA.tracks) {
     if (t.pts.length > 1) {
+      const isConnector = t.connector || /^Connector:|^Retrace Return:/i.test(t.name || '');
       const color = getTrackColor(t.name);
-      L.polyline(t.pts, { color: '#000', weight: 6, opacity: 0.55 }).addTo(state.LAYER);
-      L.polyline(t.pts, { color, weight: 2.5, opacity: 1 }).addTo(state.LAYER);
-      // Phase label at midpoint
-      if (/Phase/i.test(t.name || '')) {
+      if (isConnector) {
+        // Connectors: thin dashed line, dimmed
+        L.polyline(t.pts, { color, weight: 1.5, opacity: 0.4, dashArray: '6,8' }).addTo(state.LAYER);
+      } else {
+        // Fishing tracks: full weight with black halo
+        L.polyline(t.pts, { color: '#000', weight: 6, opacity: 0.55 }).addTo(state.LAYER);
+        L.polyline(t.pts, { color, weight: 2.5, opacity: 1 }).addTo(state.LAYER);
+      }
+      // Phase label at midpoint — only on fishing tracks, not connectors
+      if (!isConnector && /Phase/i.test(t.name || '')) {
         const mid = t.pts[Math.floor(t.pts.length / 2)];
         if (mid) {
           const label = (t.name || '').match(/Phase\s*(\d+)/i)?.[0] || '';
