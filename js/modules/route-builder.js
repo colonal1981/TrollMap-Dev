@@ -444,6 +444,23 @@ function buildStitchedSpines(features) {
   return spines;
 }
 
+// Sample every Nth vertex of a [lon,lat] spine and return the closest
+// distance in feet to [refLat, refLon]. Using only endpoints+midpoint misses
+// the case where a lake-length spine passes right next to the ref point in the
+// middle — dense sampling is much more accurate and still cheap (≤60 samples).
+function closestPointOnSpineFt(refLat, refLon, coords) {
+  if (!coords?.length) return Infinity;
+  const step = Math.max(1, Math.floor(coords.length / 60));
+  let best = Infinity;
+  for (let i = 0; i < coords.length; i += step) {
+    const [d] = distBearing(refLat, refLon, coords[i][1], coords[i][0]);
+    if (d < best) best = d;
+  }
+  const [dLast] = distBearing(refLat, refLon,
+    coords[coords.length-1][1], coords[coords.length-1][0]);
+  return Math.min(best, dLast);
+}
+
 // ── Contour mode: follow depth band ──────────────────────────────────────────
 
 function generateContourRoutes(cfg) {
@@ -495,15 +512,23 @@ function generateContourRoutes(cfg) {
   const refLon = cfg.startLon != null ? cfg.startLon : cfg.rampLon;
   const lockedBearing = cfg.lockedBearing ?? null;
   if (refLat != null && refLon != null) {
+    // For singleBestTrack (smart plan) phases, cap how far the chosen spine
+    // can be from the phase start. A lake-length spine that happens to pass
+    // nearby in the middle would score huge on length but start the route
+    // miles away — the cap forces it to use the nearby section or be rejected.
+    const MAX_SPINE_DIST_FT = cfg.singleBestTrack ? 5280 : Infinity; // 1mi cap for smart plan
+
     candidates.forEach(s => {
-      const [distToMidFt]   = distBearing(refLat, refLon, s.mid[1], s.mid[0]);
-      const [distToStartFt] = distBearing(refLat, refLon, s.coords[0][1], s.coords[0][0]);
-      const [distToEndFt]   = distBearing(refLat, refLon, s.coords[s.coords.length-1][1], s.coords[s.coords.length-1][0]);
-      const closestFt = Math.min(distToMidFt, distToStartFt, distToEndFt);
+      // Dense sampling: measure closest point anywhere along the spine, not
+      // just endpoints/midpoint. Fixes lake-length spines that pass right
+      // next to the ref point in the middle but have distant endpoints.
+      const closestFt = closestPointOnSpineFt(refLat, refLon, s.coords);
       // Hard floor: spines under 500ft are useless regardless of proximity.
       if (s.len < 500) { s.trollScore = -Infinity; s._closestFt = closestFt; return; }
+      // Proximity cap for smart plan phases — disqualify spines whose nearest
+      // point is more than 1mi from the phase start.
+      if (closestFt > MAX_SPINE_DIST_FT) { s.trollScore = -Infinity; s._closestFt = closestFt; return; }
       const proxScore = Math.max(0, 100000 - closestFt * 3);
-      // Increased len weight (2× vs old 0.5×) so a long-but-distant spine beats a short-but-close one.
       const lenScore  = Math.min(s.len, cfg.targetLengthFt || 15000);
       let bearingBonus = 0;
       if (lockedBearing !== null && s.coords.length >= 2) {
@@ -863,15 +888,16 @@ function generateDepthPolygonRoutes(cfg) {
   const lockedBearing = cfg.lockedBearing ?? null;
 
   if (refLat != null && refLon != null) {
+    // For singleBestTrack (smart plan) phases, cap how far the chosen spine
+    // can be from the phase start — same logic as contour routing.
+    const MAX_SPINE_DIST_FT = cfg.singleBestTrack ? 5280 : Infinity; // 1mi cap for smart plan
+
     candidates.forEach(s => {
-      const [distToMid]   = distBearing(refLat, refLon, s.mid[1], s.mid[0]);
-      const [distToStart] = distBearing(refLat, refLon, s.coords[0][1], s.coords[0][0]);
-      const [distToEnd]   = distBearing(refLat, refLon, s.coords[s.coords.length-1][1], s.coords[s.coords.length-1][0]);
-      const closestFt = Math.min(distToMid, distToStart, distToEnd);
-      // Hard floor: spines under 500ft are useless regardless of proximity.
+      // Dense sampling: closest point anywhere along spine, not just endpoints.
+      const closestFt = closestPointOnSpineFt(refLat, refLon, s.coords);
       if (s.len < 500) { s.trollScore = -Infinity; s._closestFt = closestFt; return; }
+      if (closestFt > MAX_SPINE_DIST_FT) { s.trollScore = -Infinity; s._closestFt = closestFt; return; }
       const proxScore = Math.max(0, 100000 - closestFt * 3);
-      // Increased len weight (2× vs old 0.5×) so a long-but-distant spine beats a short-but-close one.
       const lenScore  = Math.min(s.len, cfg.targetLengthFt || 15000);
       let bearingBonus = 0;
       if (lockedBearing !== null && s.coords.length >= 2) {

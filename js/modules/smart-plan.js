@@ -775,46 +775,42 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
     const { generateAndCommitRoute, setClipFromRamp, setClipPolygon } = await import('./route-builder.js');
 
     if (phase.num === 1) {
-      // Phase 1: clip from ramp, moderate radius — find best outbound dawn depth
-      setClipFromRamp(rampLat, rampLon, Math.min(rangeMiles, 2.5));
+      // Phase 1: clip from ramp at 1.5mi — tight enough to keep the dawn
+      // pass close to home, loose enough to find good structure nearby.
+      // Reduced from 2.5mi which caused too much westward drift on Wateree.
+      setClipFromRamp(rampLat, rampLon, Math.min(rangeMiles, 1.5));
 
     } else if (phase.num === 2) {
-      // Phase 2: clip tightly around current position (Phase 1 end)
-      // This forces Phase 2 to start near where Phase 1 ended
-      const clipLat = startLat ?? rampLat;
-      const clipLon = startLon ?? rampLon;
-      setClipFromRamp(clipLat, clipLon, 1.0);
+      // Phase 2: clip around the MIDPOINT between Phase 1 end and the ramp,
+      // with a radius that reaches both. This keeps Phase 2 from drifting
+      // further from home and forces it to fish the bridge zone back toward ramp.
+      const p1EndLat = startLat ?? rampLat;
+      const p1EndLon = startLon ?? rampLon;
+      const midLat = (p1EndLat + rampLat) / 2;
+      const midLon = (p1EndLon + rampLon) / 2;
+      const halfDistMi = Math.sqrt(
+        ((p1EndLat - rampLat) * 69) ** 2 +
+        ((p1EndLon - rampLon) * 69 * Math.cos(rampLat * Math.PI / 180)) ** 2
+      ) / 2;
+      // At least 0.75mi so there is room to find structure; at most 2mi
+      const clipRadiusMi = Math.min(2.0, Math.max(0.75, halfDistMi + 0.5));
+      setClipFromRamp(midLat, midLon, clipRadiusMi);
 
     } else {
-      // Phase 3: clip must cover BOTH current position AND the ramp so the
-      // return route can physically reach home. Build a bounding box that
-      // encompasses both points with a 0.5mi buffer.
-      const clipLat = startLat ?? rampLat;
-      const clipLon = startLon ?? rampLon;
-      if (Number.isFinite(clipLat) && Number.isFinite(rampLat)) {
-        const BUFFER_MI = 0.5;
-        const latBuf = BUFFER_MI / 69.0;
-        const lonBuf = BUFFER_MI / (69.0 * Math.cos(rampLat * Math.PI / 180));
-        const minLat = Math.min(clipLat, rampLat) - latBuf;
-        const maxLat = Math.max(clipLat, rampLat) + latBuf;
-        const minLon = Math.min(clipLon, rampLon) - lonBuf;
-        const maxLon = Math.max(clipLon, rampLon) + lonBuf;
-        if (typeof setClipPolygon === 'function') {
-          setClipPolygon([
-            [minLat, minLon], [maxLat, minLon],
-            [maxLat, maxLon], [minLat, maxLon],
-            [minLat, minLon],
-          ]);
-        } else {
-          // Fallback if setClipPolygon not exported — use midpoint with enough radius
-          const midLat = (clipLat + rampLat) / 2;
-          const midLon = (clipLon + rampLon) / 2;
-          const distMi = Math.sqrt(((clipLat - rampLat) * 69)**2 + ((clipLon - rampLon) * 69)**2) / 2 + BUFFER_MI;
-          setClipFromRamp(midLat, midLon, distMi);
-        }
-      } else {
-        setClipFromRamp(rampLat, rampLon, Math.min(rangeMiles, 3.5));
-      }
+      // Phase 3: clip centered on the RAMP with radius reaching Phase 2 end.
+      // This forces Phase 3 to fish structure between current position and home
+      // rather than drifting further away. Spine scoring orients the track to
+      // start near Phase 2 end (startLat/startLon) and isReturnPass biases
+      // the endpoint toward the ramp (endLat/endLon).
+      const p2EndLat = startLat ?? rampLat;
+      const p2EndLon = startLon ?? rampLon;
+      const distToRampMi = Math.sqrt(
+        ((p2EndLat - rampLat) * 69) ** 2 +
+        ((p2EndLon - rampLon) * 69 * Math.cos(rampLat * Math.PI / 180)) ** 2
+      );
+      // Radius = distance from ramp to Phase 2 end + 0.5mi buffer, capped at rangeMiles
+      const clipRadiusMi = Math.min(rangeMiles, distToRampMi + 0.5);
+      setClipFromRamp(rampLat, rampLon, clipRadiusMi);
     }
     
     // TACTICAL PATTERN SELECTION:
@@ -1272,20 +1268,18 @@ export async function runSmartPlan() {
   // retrace known water route points back toward the ramp instead.
   if (assembledSmartPlanTracks.length && Number.isFinite(rampLat) && Number.isFinite(rampLon)) {
     const directReturnFt = geoDistanceFt(curLat, curLon, rampLat, rampLon);
-    const MAX_DIRECT_RETURN_FT = 1200; // about 0.23mi — longer lines often cross points/land
+    // Raised from 1200ft — almost any fishing session ends more than 0.23mi
+    // from the ramp, so the old threshold always triggered the retrace monster
+    // (925-point spaghetti). Now we always draw a direct return connector and
+    // label it clearly so the angler knows it's a transit line, not a fishing
+    // route. The retrace fallback is kept only for sub-25ft snapping.
     if (directReturnFt <= 25) {
       const lastTrack = assembledSmartPlanTracks[assembledSmartPlanTracks.length - 1];
       if (lastTrack?.pts?.length) lastTrack.pts[lastTrack.pts.length - 1] = [rampLat, rampLon];
-    } else if (directReturnFt <= MAX_DIRECT_RETURN_FT) {
-      const ret = buildSmartPlanConnectorTrack(
-        `Connector: Phase ${phases[phases.length - 1].num} ${phases[phases.length - 1].name} → ${selectedRampKey || 'Launch ramp'}`,
-        curLat, curLon, rampLat, rampLon, 'return_connector'
-      );
-      if (ret) assembledSmartPlanTracks.push(ret);
     } else {
-      const ret = buildRetraceReturnTrack(
-        assembledSmartPlanTracks, rampLat, rampLon,
-        `Retrace Return: Phase ${phases[phases.length - 1].num} ${phases[phases.length - 1].name} → ${selectedRampKey || 'Launch ramp'}`
+      const ret = buildSmartPlanConnectorTrack(
+        `Return: Phase ${phases[phases.length - 1].num} ${phases[phases.length - 1].name} → ${selectedRampKey || 'Launch ramp'}`,
+        curLat, curLon, rampLat, rampLon, 'return_connector'
       );
       if (ret) assembledSmartPlanTracks.push(ret);
     }
