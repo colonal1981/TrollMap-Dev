@@ -512,34 +512,38 @@ function generateContourRoutes(cfg) {
   const refLon = cfg.startLon != null ? cfg.startLon : cfg.rampLon;
   const lockedBearing = cfg.lockedBearing ?? null;
   if (refLat != null && refLon != null) {
+    // For singleBestTrack (smart plan) phases, cap how far the chosen spine
+    // can be from the phase start. A lake-length spine that happens to pass
+    // nearby in the middle would score huge on length but start the route
+    // miles away — the cap forces it to use the nearby section or be rejected.
     const MAX_SPINE_DIST_FT = cfg.singleBestTrack ? 5280 : Infinity; // 1mi cap for smart plan
     const eLat = cfg.endLat;
     const eLon = cfg.endLon;
+    // lenCap at 4× target: a 2361ft stub and a 132k ft spine should NOT tie
+    // on lenScore just because both exceed the old 15000ft cap. 4× lets the
+    // longer spine win clearly while still bounding absurd lake-length spines.
+    const lenCap = (cfg.targetLengthFt || 15000) * 4;
 
     candidates.forEach(s => {
       const closestFt = closestPointOnSpineFt(refLat, refLon, s.coords);
       if (s.len < 500) { s.trollScore = -Infinity; s._closestFt = closestFt; return; }
       if (closestFt > MAX_SPINE_DIST_FT) { s.trollScore = -Infinity; s._closestFt = closestFt; return; }
-
-      // Start penalty: prefer spines whose closest point is near phase start.
       const startPenalty = closestFt * 3;
-      const lenScore = Math.min(s.len, cfg.targetLengthFt || 15000);
-
-      // End penalty for return passes (Phase 3): prefer spines that also pass
-      // near the ramp. Weight 2 — lighter than start so Phase 3 stays long.
+      const lenScore = Math.min(s.len, lenCap);
+      // End penalty for return passes only (Phase 3): light 1× weight so long
+      // spines that don't end exactly at the ramp still compete —
+      // prepareSpineForPhase trims the actual route toward the ramp.
       let endPenalty = 0;
       if (cfg.isReturnPass && eLat != null && eLon != null) {
         const endDistFt = closestPointOnSpineFt(eLat, eLon, s.coords);
-        endPenalty = endDistFt * 2;
+        endPenalty = endDistFt * 7; // heavier for return pass — keeps lake-length monsters from winning over well-positioned spines
       }
-
       let bearingBonus = 0;
       if (lockedBearing !== null && s.coords.length >= 2) {
         const [, spineBrng] = distBearing(s.coords[0][1], s.coords[0][0], s.coords[s.coords.length-1][1], s.coords[s.coords.length-1][0]);
         const diff = Math.abs(((spineBrng - lockedBearing + 540) % 360) - 180);
         bearingBonus = diff < 90 ? (1 - diff / 90) * 30000 : -10000;
       }
-
       s.trollScore = (lenScore * 2) - startPenalty - endPenalty + bearingBonus;
       s._closestFt = closestFt;
     });
@@ -892,33 +896,30 @@ function generateDepthPolygonRoutes(cfg) {
   const lockedBearing = cfg.lockedBearing ?? null;
 
   if (refLat != null && refLon != null) {
+    // For singleBestTrack (smart plan) phases, cap how far the chosen spine
+    // can be from the phase start — same logic as contour routing.
     const MAX_SPINE_DIST_FT = cfg.singleBestTrack ? 5280 : Infinity; // 1mi cap for smart plan
     const eLat = cfg.endLat;
     const eLon = cfg.endLon;
+    const lenCap = (cfg.targetLengthFt || 15000) * 4;
 
     candidates.forEach(s => {
       const closestFt = closestPointOnSpineFt(refLat, refLon, s.coords);
       if (s.len < 500) { s.trollScore = -Infinity; s._closestFt = closestFt; return; }
       if (closestFt > MAX_SPINE_DIST_FT) { s.trollScore = -Infinity; s._closestFt = closestFt; return; }
-
       const startPenalty = closestFt * 3;
-      const lenScore = Math.min(s.len, cfg.targetLengthFt || 15000);
-
-      // End penalty for return passes — weight 2 keeps Phase 3 long enough
-      // while still biasing toward spines that pass near the ramp.
+      const lenScore = Math.min(s.len, lenCap);
       let endPenalty = 0;
       if (cfg.isReturnPass && eLat != null && eLon != null) {
         const endDistFt = closestPointOnSpineFt(eLat, eLon, s.coords);
-        endPenalty = endDistFt * 2;
+        endPenalty = endDistFt * 7; // heavier for return pass — keeps lake-length monsters from winning over well-positioned spines
       }
-
       let bearingBonus = 0;
       if (lockedBearing !== null && s.coords.length >= 2) {
         const [, spineBrng] = distBearing(s.coords[0][1], s.coords[0][0], s.coords[s.coords.length-1][1], s.coords[s.coords.length-1][0]);
         const diff = Math.abs(((spineBrng - lockedBearing + 540) % 360) - 180);
         bearingBonus = diff < 90 ? (1 - diff / 90) * 30000 : -10000;
       }
-
       s.trollScore = (lenScore * 2) - startPenalty - endPenalty + bearingBonus;
       s._closestFt = closestFt;
     });
