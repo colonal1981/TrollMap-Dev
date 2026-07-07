@@ -437,7 +437,16 @@ function auditSmartPlanRoute(tracks, rampLat, rampLon, launchTime, returnTime, s
   out.durationH = durH;
   out.speedMph = speedMph || 2.0;
   out.budgetFt = durH ? durH * out.speedMph * 5280 : null;
-  out.estimatedH = out.totalFt / 5280 / out.speedMph;
+  // Split estimated time: fishing tracks at trolling speed, connectors at
+  // transit speed (2.5mph pedal/motor). Using one speed for everything made
+  // the plan look like it covered the whole day when it didn't.
+  const TRANSIT_MPH = 2.5;
+  const trollMph = out.speedMph; // plan trolling speed
+  const fishingH   = (out.fishingFt   / 5280) / trollMph;
+  const connectorH = (out.connectorFt / 5280) / TRANSIT_MPH;
+  out.estimatedH = fishingH + connectorH;
+  out.fishingH   = fishingH;
+  out.connectorH = connectorH;
 
   if (out.startFt > 35) { out.ok = false; out.flags.push(`First GPX point is ${Math.round(out.startFt)}ft from the locked ramp.`); }
   if (out.endFt > 35) { out.ok = false; out.flags.push(`Final GPX point is ${Math.round(out.endFt)}ft from the locked ramp.`); }
@@ -461,7 +470,12 @@ function buildRouteAuditText(audit, rampName, rampLat, rampLon) {
   lines.push(`${audit.ok ? '✓' : '⚠'} Returns to ramp: ${Math.round(audit.endFt || 0)}ft from locked coordinate`);
   lines.push(`${audit.maxGapFt <= 75 ? '✓' : '⚠'} Phase/track continuity max gap: ${Math.round(audit.maxGapFt || 0)}ft`);
   lines.push(`Total route: ${(audit.totalFt / 5280).toFixed(2)}mi · fishing ${(audit.fishingFt / 5280).toFixed(2)}mi · connectors ${(audit.connectorFt / 5280).toFixed(2)}mi`);
-  if (audit.durationH) lines.push(`Estimated moving time: ${audit.estimatedH.toFixed(1)}hr at ${audit.speedMph.toFixed(1)}mph · plan window ${audit.durationH.toFixed(1)}hr`);
+  if (audit.durationH) {
+    const fishingHStr   = audit.fishingH   ? ` (${audit.fishingH.toFixed(1)}hr trolling + ${audit.connectorH.toFixed(1)}hr transit)` : '';
+    lines.push(`Estimated time on water: ${audit.estimatedH.toFixed(1)}hr${fishingHStr} · plan window ${audit.durationH.toFixed(1)}hr`);
+    const idleH = audit.durationH - audit.estimatedH;
+    if (idleH > 1.0) lines.push(`⚠ ${idleH.toFixed(1)}hr unaccounted — routes cover only ${(audit.estimatedH / audit.durationH * 100).toFixed(0)}% of the plan window`);
+  }
   if (audit.flags?.length) {
     lines.push('Route flags:');
     audit.flags.forEach(f => lines.push(`  • ${f}`));

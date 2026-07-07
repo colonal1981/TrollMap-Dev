@@ -1141,6 +1141,32 @@ function prepareSpineForPhase(spine, cfg) {
   candidates.sort((a, b) => scoreCandidate(a) - scoreCandidate(b));
   let out = candidates[0];
   if (target > 0) out = trimPolylineToLength(out, target);
+
+  // For return passes: after trimming, check if the actual trimmed endpoint
+  // ends near the ramp. The scorer above picks the best start direction but
+  // trimPolylineToLength cuts from the start, so the trimmed end may land
+  // far from the ramp. If so, try the reverse and take whichever trimmed
+  // version ends closer to the ramp.
+  if (cfg.isReturnPass && isValidLatLon(eLat, eLon) && out?.length >= 2) {
+    const endDistFt = distancePointToRefFt(out[out.length - 1], eLat, eLon);
+    // Only bother if we're more than 3000ft from ramp at end of trimmed route
+    if (endDistFt > 3000 && candidates.length > 1) {
+      // Try all other candidates trimmed, pick whichever ends closest to ramp
+      let bestEndDist = endDistFt;
+      let bestOut = out;
+      for (let i = 1; i < candidates.length; i++) {
+        const alt = target > 0 ? trimPolylineToLength(candidates[i], target) : candidates[i];
+        if (!alt?.length) continue;
+        const altEndDist = distancePointToRefFt(alt[alt.length - 1], eLat, eLon);
+        if (altEndDist < bestEndDist) {
+          bestEndDist = altEndDist;
+          bestOut = alt;
+        }
+      }
+      out = bestOut;
+    }
+  }
+
   return out;
 }
 
