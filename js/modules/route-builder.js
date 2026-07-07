@@ -304,16 +304,29 @@ function angleDiff(a, b) {
 function endBearing(coordsLL, atTail) {
   if (coordsLL.length < 2) return 0;
   if (atTail) {
-    const a = coordsLL[coordsLL.length - 2], b = coordsLL[coordsLL.length - 1];
+    const b = coordsLL[coordsLL.length - 1];
+    let a = coordsLL[coordsLL.length - 2];
+    // Look back at least 25ft to get a true bearing, ignoring tiny vector tile hooks
+    for (let i = coordsLL.length - 2; i >= 0; i--) {
+      if (distBearing(coordsLL[i][0], coordsLL[i][1], b[0], b[1])[0] > 25) {
+        a = coordsLL[i]; break;
+      }
+    }
     return distBearing(a[0], a[1], b[0], b[1])[1];
   } else {
-    const a = coordsLL[1], b = coordsLL[0];
+    const b = coordsLL[0];
+    let a = coordsLL[1];
+    for (let i = 1; i < coordsLL.length; i++) {
+      if (distBearing(coordsLL[i][0], coordsLL[i][1], b[0], b[1])[0] > 25) {
+        a = coordsLL[i]; break;
+      }
+    }
     return distBearing(a[0], a[1], b[0], b[1])[1];
   }
 }
 
-// Increased TOL to 75ft to bridge larger gaps
-function stitchFragments(fragments, TOL = 75, MAX_TURN = 45) {
+// Set Tolerance to 50 (prevents jumping channels)
+function stitchFragments(fragments, TOL = 50, MAX_TURN = 45) {
   const segs = fragments
     .filter(c => c.length >= 2 && !isContourStub(c))
     .map(c => c.map(([lo, la]) => [la, lo]));      
@@ -410,10 +423,10 @@ function generateContourRoutes(cfg) {
   const { depthMin, depthMax, spacing, pattern, amplitude, wave, straightFt } = cfg;
   const lanes = Math.max(1, Math.min(12, cfg.lanes || 1));
 
-  // Expand depth tolerance to prevent short, fragmented routes
-  const depthTolerance = 3; 
-  const effectiveDepthMin = depthMin - depthTolerance;
-  const effectiveDepthMax = depthMax + depthTolerance;
+  // Expand depth tolerance to 5ft to ensure contours connect across phases
+  const depthTolerance = 5; 
+  const effectiveDepthMin = cfg.depthMin - depthTolerance;
+  const effectiveDepthMax = cfg.depthMax + depthTolerance;
 
   const inRange = gj.features.filter(f => {
     const d = f.properties?.depth_ft;
@@ -431,8 +444,7 @@ function generateContourRoutes(cfg) {
     .filter(s => s.len >= 250);
   if (!candidates.length) return [];
 
-  // SMART TROLLING CIRCUIT BRAIN (SPATIAL CHAINING):
-  // Score contours based on how close their ENDPOINTS are to the start/end anchors.
+   // SMART TROLLING CIRCUIT BRAIN (PROXIMITY + CHAINING):
   const sLat = cfg.startLat != null ? cfg.startLat : cfg.rampLat;
   const sLon = cfg.startLon != null ? cfg.startLon : cfg.rampLon;
   const eLat = cfg.endLat;
@@ -440,34 +452,23 @@ function generateContourRoutes(cfg) {
   const lockedBearing = cfg.lockedBearing ?? null;
 
   if (sLat != null && sLon != null) {
-    const MAX_SPINE_DIST_FT = cfg.singleBestTrack ? 10560 : Infinity; // 2mi cap for smart plan
+    const MAX_SPINE_DIST_FT = cfg.singleBestTrack ? 10560 : Infinity;
 
     candidates.forEach(s => {
-      // 1. Measure distance from the start anchor to BOTH ends of the spine
-      // s.coords is [lon, lat] here
-      const distToStart1 = distBearing(sLat, sLon, s.coords[0][1], s.coords[0][0])[0];
-      const distToStart2 = distBearing(sLat, sLon, s.coords[s.coords.length-1][1], s.coords[s.coords.length-1][0])[0];
+      // Find the absolute closest point on this contour line to the boat
+      const closestFt = closestPointOnSpineFt(sLat, sLon, s.coords);
       
-      const startDistFt = Math.min(distToStart1, distToStart2);
+      if (closestFt > MAX_SPINE_DIST_FT) { s.trollScore = -Infinity; s._closestFt = closestFt; return; }
+
+      // Heavy penalty for starting far away (prevents the 1-mile overland jump)
+      const startPenalty = closestFt * 10;
       
-      // 2. Identify the end point of the spine (the opposite of the start)
-      let endDistFt = 0;
+      // If returning to ramp, heavily penalize contours that don't point toward the ramp
+      let endPenalty = 0;
       if (cfg.isReturnPass && eLat != null && eLon != null) {
-        // We MUST return to the ramp for Phase 3
-        const endPt = (distToStart1 < distToStart2) ? s.coords[s.coords.length-1] : s.coords[0];
-        endDistFt = distBearing(eLat, eLon, endPt[1], endPt[0])[0];
-      } else {
-        // If not returning, reward spines that stretch AWAY from the start point
-        const endPt = (distToStart1 < distToStart2) ? s.coords[s.coords.length-1] : s.coords[0];
-        endDistFt = -distBearing(sLat, sLon, endPt[1], endPt[0])[0]; 
+         const endDistFt = closestPointOnSpineFt(eLat, eLon, s.coords);
+         endPenalty = endDistFt * 10;
       }
-
-      // Hard floor: disqualify spines that don't start near the anchor
-      if (startDistFt > MAX_SPINE_DIST_FT) { s.trollScore = -Infinity; s._closestFt = startDistFt; return; }
-
-      // 3. SPATIAL PENALTIES (The Anchor Method)
-      const startPenalty = startDistFt * 6; // Heavy penalty if it starts far away
-      const endPenalty = (cfg.isReturnPass) ? (endDistFt * 6) : (endDistFt * 0.5);
 
       const lenScore = Math.min(s.len, cfg.targetLengthFt || 15000);
       
@@ -478,13 +479,13 @@ function generateContourRoutes(cfg) {
         bearingBonus = diff < 90 ? (1 - diff / 90) * 30000 : -10000;
       }
       
-      // 4. Final Chained Score
       s.trollScore = (lenScore * 3) - startPenalty - endPenalty + bearingBonus;
-      s._closestFt = startDistFt;
+      s._closestFt = closestFt;
     });
     candidates.sort((a, b) => (b.trollScore || 0) - (a.trollScore || 0));
-    console.log('[route-builder] top 3 chained spines: ' + candidates.slice(0,3).map(c => 'startGap=' + Math.round(c._closestFt) + 'ft len=' + Math.round(c.len) + 'ft score=' + Math.round(c.trollScore)).join(' | '));
+    console.log('[route-builder] top 3 spines: ' + candidates.slice(0,3).map(c => 'gap=' + Math.round(c._closestFt) + 'ft len=' + Math.round(c.len) + 'ft score=' + Math.round(c.trollScore)).join(' | '));
   }
+
 
   const DEDUP = Math.max(spacing * 0.6, 150);
   const chosen = [];
