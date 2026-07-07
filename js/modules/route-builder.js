@@ -355,13 +355,41 @@ function endBearing(coordsLL, atTail) {
   }
 }
 
-function stitchFragments(fragments, TOL = 18, MAX_TURN = 45) {
+function stitchFragments(fragments, TOL = 18, MAX_TURN = 30) {
   // Work in [lat,lon] internally for bearing math; inputs/outputs are [lon,lat].
+  // MAX_TURN tightened from 45° to 30° — fragments that require a sharp turn
+  // to join are almost always from opposite sides of the contour or different
+  // structural features. Allowing 45° was letting U-turns sneak through.
   const segs = fragments
     .filter(c => c.length >= 2 && !isContourStub(c))
     .map(c => c.map(([lo, la]) => [la, lo]));      // -> [lat,lon]
   const used = new Array(segs.length).fill(false);
   const chains = [];
+
+  // Minimum distance (ft) required to compute a reliable bearing on a fragment.
+  // Fragments shorter than this give garbage bearings due to floating-point noise.
+  const MIN_BEARING_DIST_FT = 25;
+
+  // Safe bearing helper: walk away from endpoint until we've moved MIN_BEARING_DIST_FT
+  function safeBearingFrom(coords, fromStart) {
+    // fromStart=true → bearing leaving coords[0]; false → bearing leaving coords[last]
+    const n = coords.length;
+    if (n < 2) return 0;
+    const ref = fromStart ? coords[0] : coords[n - 1];
+    if (fromStart) {
+      for (let i = 1; i < n; i++) {
+        if (distBearing(ref[0], ref[1], coords[i][0], coords[i][1])[0] >= MIN_BEARING_DIST_FT)
+          return distBearing(ref[0], ref[1], coords[i][0], coords[i][1])[1];
+      }
+    } else {
+      for (let i = n - 2; i >= 0; i--) {
+        if (distBearing(ref[0], ref[1], coords[i][0], coords[i][1])[0] >= MIN_BEARING_DIST_FT)
+          return distBearing(ref[0], ref[1], coords[i][0], coords[i][1])[1];
+      }
+    }
+    // Fragment too short — return bearing between endpoints as fallback
+    return distBearing(coords[0][0], coords[0][1], coords[n-1][0], coords[n-1][1])[1];
+  }
 
   for (let s = 0; s < segs.length; s++) {
     if (used[s]) continue;
@@ -371,34 +399,30 @@ function stitchFragments(fragments, TOL = 18, MAX_TURN = 45) {
     while (grew) {
       grew = false;
       const head = chain[0], tail = chain[chain.length - 1];
-      const tailBrng = endBearing(chain, true);      // direction leaving tail
-      const headBrng = endBearing(chain, false);     // direction leaving head (backwards)
+      const tailBrng = endBearing(chain, true);
+      const headBrng = endBearing(chain, false);
 
       let bestJ = -1, bestScore = Infinity, bestOp = null;
       for (let j = 0; j < segs.length; j++) {
         if (used[j]) continue;
         const c = segs[j];
         const a = c[0], b = c[c.length - 1];
-        // For each way of attaching, require: endpoint within TOL AND the join
-        // continues roughly straight (turn angle <= MAX_TURN). Score = dist +
-        // turn penalty so we prefer the most natural continuation.
+        // Use safe bearings that skip past noise at very short distances
+        const cFwdBrng = safeBearingFrom(c, true);   // bearing leaving c[0]
+        const cRevBrng = safeBearingFrom(c, false);  // bearing leaving c[last]
         const cands = [
-          // append c forward to tail: tail->a, then travel a->... must match tailBrng
           { d: distBearing(tail[0], tail[1], a[0], a[1])[0], op: 'TA',
-            turn: angleDiff(tailBrng, distBearing(a[0], a[1], c[1][0], c[1][1])[1]) },
-          // append c reversed to tail: tail->b
+            turn: angleDiff(tailBrng, cFwdBrng) },
           { d: distBearing(tail[0], tail[1], b[0], b[1])[0], op: 'TB',
-            turn: angleDiff(tailBrng, distBearing(b[0], b[1], c[c.length-2][0], c[c.length-2][1])[1]) },
-          // prepend c reversed to head: head<-a  (head travels backwards along headBrng)
+            turn: angleDiff(tailBrng, cRevBrng) },
           { d: distBearing(head[0], head[1], a[0], a[1])[0], op: 'HA',
-            turn: angleDiff(headBrng, distBearing(a[0], a[1], c[1][0], c[1][1])[1]) },
-          // prepend c forward to head: head<-b
+            turn: angleDiff(headBrng, cFwdBrng) },
           { d: distBearing(head[0], head[1], b[0], b[1])[0], op: 'HB',
-            turn: angleDiff(headBrng, distBearing(b[0], b[1], c[c.length-2][0], c[c.length-2][1])[1]) },
+            turn: angleDiff(headBrng, cRevBrng) },
         ];
         for (const cand of cands) {
           if (cand.d > TOL || cand.turn > MAX_TURN) continue;
-          const score = cand.d + cand.turn * 2; // ft + weighted degrees
+          const score = cand.d + cand.turn * 2;
           if (score < bestScore) { bestScore = score; bestJ = j; bestOp = cand.op; }
         }
       }
@@ -411,7 +435,6 @@ function stitchFragments(fragments, TOL = 18, MAX_TURN = 45) {
         else chain = c.concat(chain);
       }
     }
-    // back to [lon,lat]
     chains.push(chain.map(([la, lo]) => [lo, la]));
   }
   return chains;
@@ -522,7 +545,7 @@ function generateContourRoutes(cfg) {
     // lenCap at 4× target: a 2361ft stub and a 132k ft spine should NOT tie
     // on lenScore just because both exceed the old 15000ft cap. 4× lets the
     // longer spine win clearly while still bounding absurd lake-length spines.
-    const lenCap = (cfg.targetLengthFt || 15000) * 3; // 3× cap: long spines beat stubs without letting distant spines beat nearby ones
+    const lenCap = (cfg.targetLengthFt || 15000) * 3;
 
     candidates.forEach(s => {
       const closestFt = closestPointOnSpineFt(refLat, refLon, s.coords);
@@ -771,35 +794,25 @@ function getDepthPolygonEdges(depthMinFt, depthMaxFt) {
       transitionDepths.add(boundary);
     }
   }
-  // If no interior transition exists, find the boundary that best represents
-  // this depth range. Strategy:
-  // 1. Any band fully contained within the range → use its edges
-  // 2. Otherwise, find the band boundary closest to the midpoint of the range
-  //    (handles cases like 20-26ft on Wateree where bands are 15-20 and 20-27
-  //    with no bands fully inside — use the 20ft boundary that straddles it)
   if (transitionDepths.size === 0) {
-    // Try fully-contained bands first
     for (const b of allBands) {
       if (b.min >= depthMinFt && b.max <= depthMaxFt) {
         transitionDepths.add(b.min);
         transitionDepths.add(b.max);
       }
     }
-    // If still empty, find the band boundary nearest the range midpoint
+    // If still empty, find band boundary nearest the range midpoint
     if (transitionDepths.size === 0) {
       const mid = (depthMinFt + depthMaxFt) / 2;
       let bestBoundary = null, bestDist = Infinity;
       for (let i = 0; i < allBands.length - 1; i++) {
-        const boundary = allBands[i].max; // shared edge between band i and i+1
+        const boundary = allBands[i].max;
         const dist = Math.abs(boundary - mid);
         if (dist < bestDist) { bestDist = dist; bestBoundary = boundary; }
       }
-      // Also check first band's min and last band's max
       if (allBands.length) {
-        const firstMin = allBands[0].min;
-        const lastMax  = allBands[allBands.length - 1].max;
-        if (Math.abs(firstMin - mid) < bestDist) bestBoundary = firstMin;
-        if (Math.abs(lastMax  - mid) < bestDist) bestBoundary = lastMax;
+        if (Math.abs(allBands[0].min - mid) < bestDist) bestBoundary = allBands[0].min;
+        if (Math.abs(allBands[allBands.length-1].max - mid) < bestDist) bestBoundary = allBands[allBands.length-1].max;
       }
       if (bestBoundary != null) transitionDepths.add(bestBoundary);
     }
@@ -924,7 +937,7 @@ function generateDepthPolygonRoutes(cfg) {
     const MAX_SPINE_DIST_FT = cfg.singleBestTrack ? 5280 : Infinity; // 1mi cap for smart plan
     const eLat = cfg.endLat;
     const eLon = cfg.endLon;
-    const lenCap = (cfg.targetLengthFt || 15000) * 3; // 3× cap: long spines beat stubs without letting distant spines beat nearby ones
+    const lenCap = (cfg.targetLengthFt || 15000) * 3;
 
     candidates.forEach(s => {
       const closestFt = closestPointOnSpineFt(refLat, refLon, s.coords);
@@ -1164,6 +1177,25 @@ function prepareSpineForPhase(spine, cfg) {
   candidates.sort((a, b) => scoreCandidate(a) - scoreCandidate(b));
   let out = candidates[0];
   if (target > 0) out = trimPolylineToLength(out, target);
+
+  // Guarantee the trimmed route starts within 500ft of the phase start point.
+  // If it doesn't, the angler has to cross good water to reach the route —
+  // unacceptable. Snap the first point to the nearest spine vertex within 500ft.
+  if (isValidLatLon(sLat, sLon) && out?.length >= 2) {
+    const startDist = distancePointToRefFt(out[0], sLat, sLon);
+    if (startDist > 500) {
+      // Walk the trimmed route to find the closest point to phase start
+      let bestIdx = 0, bestDist = startDist;
+      for (let i = 1; i < Math.min(out.length, 50); i++) {
+        const d = distancePointToRefFt(out[i], sLat, sLon);
+        if (d < bestDist) { bestDist = d; bestIdx = i; }
+      }
+      // Slice from the closest point if it meaningfully reduces start distance
+      if (bestDist < startDist * 0.5 && out.length - bestIdx >= 2) {
+        out = out.slice(bestIdx);
+      }
+    }
+  }
 
   // For return passes: after trimming, check if the actual trimmed endpoint
   // ends near the ramp. If more than 3000ft away, try other candidates and
