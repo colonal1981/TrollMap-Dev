@@ -565,7 +565,7 @@ function generateContourRoutes(cfg) {
       if (lockedBearing !== null && s.coords.length >= 2) {
         const [, spineBrng] = distBearing(s.coords[0][1], s.coords[0][0], s.coords[s.coords.length-1][1], s.coords[s.coords.length-1][0]);
         const diff = Math.abs(((spineBrng - lockedBearing + 540) % 360) - 180);
-        bearingBonus = diff < 90 ? (1 - diff / 90) * 30000 : -10000;
+        bearingBonus = diff < 90 ? (1 - diff / 90) * 5000 : -3000;
       }
       s.trollScore = (lenScore * 2) - startPenalty - endPenalty + bearingBonus;
       s._closestFt = closestFt;
@@ -867,10 +867,30 @@ function edgesToSpines(edges, depthMin, depthMax) {
   if (!edges.length) return [];
 
   const TOL_FT = 30;
+  const MAX_TURN_DEG = 30; // same as stitchFragments — no U-turns
+  const MIN_BEARING_DIST = 25; // ft before bearing is reliable
   const used = new Set();
   const chains = [];
 
-  // Build chains greedily by connecting edges whose endpoints are within TOL_FT
+  // Get a stable bearing leaving a point along a chain direction
+  function chainExitBearing(chain) {
+    const n = chain.length;
+    if (n < 2) return null;
+    const ref = chain[n - 1];
+    for (let k = n - 2; k >= 0; k--) {
+      const [d, b] = distBearing(ref[1], ref[0], chain[k][1], chain[k][0]);
+      if (d >= MIN_BEARING_DIST) return (b + 180) % 360; // reverse = exit direction
+    }
+    const [, b] = distBearing(chain[0][1], chain[0][0], chain[n-1][1], chain[n-1][0]);
+    return b;
+  }
+
+  function angleDiff2(a, b) {
+    const d = Math.abs(((a - b + 540) % 360) - 180);
+    return d;
+  }
+
+  // Build chains greedily — connect edges within TOL_FT AND within MAX_TURN_DEG
   for (let i = 0; i < edges.length; i++) {
     if (used.has(i)) continue;
     const chain = [...edges[i]];
@@ -878,15 +898,41 @@ function edgesToSpines(edges, depthMin, depthMax) {
     let extended = true;
     while (extended) {
       extended = false;
+      const tail = chain[chain.length - 1];
+      const exitBrng = chainExitBearing(chain);
+
+      let bestJ = -1, bestScore = Infinity, bestPushPt = null;
       for (let j = 0; j < edges.length; j++) {
         if (used.has(j)) continue;
         const [ea, eb] = edges[j];
-        const tail = chain[chain.length - 1];
-        if (ftBetweenLonLat(tail, ea) < TOL_FT) {
-          chain.push(eb); used.add(j); extended = true;
-        } else if (ftBetweenLonLat(tail, eb) < TOL_FT) {
-          chain.push(ea); used.add(j); extended = true;
+        // Try connecting ea to tail (push eb), or eb to tail (push ea)
+        const dA = ftBetweenLonLat(tail, ea);
+        const dB = ftBetweenLonLat(tail, eb);
+        for (const [d, pushPt, inPt] of [[dA, eb, ea], [dB, ea, eb]]) {
+          if (d > TOL_FT) continue;
+          // Check turn angle if we have a reliable exit bearing
+          if (exitBrng !== null) {
+            // Direction from tail toward inPt (the connecting end)
+            const [dd, inBrng] = distBearing(tail[1], tail[0], inPt[1], inPt[0]);
+            if (dd >= MIN_BEARING_DIST) {
+              const turn = angleDiff2(exitBrng, inBrng);
+              if (turn > MAX_TURN_DEG) continue; // too sharp — skip
+              const score = d + turn * 2;
+              if (score < bestScore) { bestScore = score; bestJ = j; bestPushPt = pushPt; }
+            } else {
+              // inPt too close to measure — accept on distance alone
+              if (d < bestScore) { bestScore = d; bestJ = j; bestPushPt = pushPt; }
+            }
+          } else {
+            if (d < bestScore) { bestScore = d; bestJ = j; bestPushPt = pushPt; }
+          }
         }
+      }
+
+      if (bestJ >= 0) {
+        chain.push(bestPushPt);
+        used.add(bestJ);
+        extended = true;
       }
     }
     if (chain.length >= 3) chains.push(chain);
@@ -954,7 +1000,7 @@ function generateDepthPolygonRoutes(cfg) {
       if (lockedBearing !== null && s.coords.length >= 2) {
         const [, spineBrng] = distBearing(s.coords[0][1], s.coords[0][0], s.coords[s.coords.length-1][1], s.coords[s.coords.length-1][0]);
         const diff = Math.abs(((spineBrng - lockedBearing + 540) % 360) - 180);
-        bearingBonus = diff < 90 ? (1 - diff / 90) * 30000 : -10000;
+        bearingBonus = diff < 90 ? (1 - diff / 90) * 5000 : -3000;
       }
       s.trollScore = (lenScore * 2) - startPenalty - endPenalty + bearingBonus;
       s._closestFt = closestFt;
