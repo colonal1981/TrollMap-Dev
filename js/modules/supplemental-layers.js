@@ -204,6 +204,8 @@ async function loadDepthAreas(lakeKey) {
       // Depth areas go below contour lines — insert behind other layers
       _depthAreaLayer.bringToBack();
     }
+    // Expose for route-builder.js polygon edge routing
+    window.SUPPLEMENTAL_DEPTH_LAYER = _depthAreaLayer;
     console.log(`[supplemental] depth_areas loaded: ${gj.features.length} features for ${lakeKey}`);
   } catch (e) {
     // No depth areas for this lake — silent fail, not every lake has them
@@ -466,7 +468,10 @@ window.toggleDepthAreas = function(visible) {
   if (visible) {
     _depthAreaLayer.addTo(getMap());
     _depthAreaLayer.bringToBack();
+    window.SUPPLEMENTAL_DEPTH_LAYER = _depthAreaLayer;
   } else {
     getMap()?.removeLayer(_depthAreaLayer);
+    // Keep reference available for routing even when hidden visually
+    window.SUPPLEMENTAL_DEPTH_LAYER = _depthAreaLayer;
   }
 };

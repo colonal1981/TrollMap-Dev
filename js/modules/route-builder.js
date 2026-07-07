@@ -650,9 +650,189 @@ function generateContourRoutes(cfg) {
 }
 
 
-// ── Follow mode: trace a specific contour with pattern applied along its shape ─
+// ── Depth polygon edge routing ────────────────────────────────────────────────
+//
+// Uses the DEPARE depth zone polygons from supplemental-layers.js instead of
+// contour lines. Extracts the boundary edges between depth zones and routes
+// along them — this gives the actual drop-off line where fish hold.
+//
+// Edge extraction strategy:
+//   For each polygon in the target depth band, iterate its outer ring edges.
+//   An edge is a "drop-off edge" if it borders a shallower polygon.
+//   We approximate this by keeping edges on the shallow side of the polygon
+//   boundary — i.e. the outer ring segments where the polygon is transitioning
+//   from shallow to deep. In practice we keep all outer ring edges and let
+//   the spine scoring (proximity to start point + bearing lock) pick the
+//   right ones near the current position.
 
-function generateFollowRoutes(cfg) {
+function getDepthPolygonEdges(depthMinFt, depthMaxFt) {
+  // Pull from supplemental-layers.js in-memory layer
+  const layer = window.SUPPLEMENTAL_DEPTH_LAYER;
+  if (!layer) return [];
+
+  const edges = []; // each edge is [[lon,lat],[lon,lat]] — same format as contour coords
+
+  layer.eachLayer?.(l => {
+    const props = l.feature?.properties || l.options?.feature?.properties || {};
+    const pMin = props.depth_min_ft ?? 0;
+    const pMax = props.depth_max_ft ?? 0;
+
+    // Include polygon if its depth range overlaps the target band
+    const overlaps = pMax >= depthMinFt && pMin <= depthMaxFt;
+    if (!overlaps) return;
+
+    // Extract outer ring from Leaflet layer
+    let ring = null;
+    try {
+      const lls = l.getLatLngs?.();
+      if (!lls) return;
+      // Polygon: lls = [[latlng,...]] or [[[latlng,...],...]]] for multipolygon
+      const flat = Array.isArray(lls[0]) ? lls[0] : lls;
+      const outerRing = Array.isArray(flat[0]) ? flat[0] : flat;
+      if (outerRing.length < 3) return;
+      ring = outerRing.map(ll => [ll.lng ?? ll.lon, ll.lat]);
+    } catch (_) { return; }
+
+    // Break ring into edges — each consecutive pair of vertices is one edge
+    for (let i = 0; i < ring.length - 1; i++) {
+      edges.push([ring[i], ring[i + 1]]);
+    }
+  });
+
+  return edges;
+}
+
+// Convert raw edges into spine-format objects compatible with buildStitchedSpines output
+function edgesToSpines(edges, depthMin, depthMax) {
+  if (!edges.length) return [];
+
+  // Group nearby edges into chains by connecting endpoint proximity
+  const TOL_FT = 30; // tolerance in feet for endpoint matching
+  const used = new Set();
+  const chains = [];
+
+  function ftBetween([lon1, lat1], [lon2, lat2]) {
+    const R = 20902231, D = Math.PI / 180;
+    const dlat = (lat2 - lat1) * D, dlon = (lon2 - lon1) * D;
+    const a = Math.sin(dlat/2)**2 + Math.cos(lat1*D)*Math.cos(lat2*D)*Math.sin(dlon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  // Build chains greedily
+  for (let i = 0; i < edges.length; i++) {
+    if (used.has(i)) continue;
+    const chain = [...edges[i]];
+    used.add(i);
+    let extended = true;
+    while (extended) {
+      extended = false;
+      for (let j = 0; j < edges.length; j++) {
+        if (used.has(j)) continue;
+        const [ea, eb] = edges[j];
+        const tail = chain[chain.length - 1];
+        if (ftBetween(tail, ea) < TOL_FT) {
+          chain.push(eb);
+          used.add(j);
+          extended = true;
+        } else if (ftBetween(tail, eb) < TOL_FT) {
+          chain.push(ea);
+          used.add(j);
+          extended = true;
+        }
+      }
+    }
+    if (chain.length >= 3) chains.push(chain);
+  }
+
+  // Convert chains to spine format — coords are [lon,lat], mid is midpoint
+  const depth = (depthMin + depthMax) / 2;
+  return chains.map(chain => ({
+    coords: chain,
+    len:    contourArcLength(chain),
+    depth,
+    mid:    chain[Math.floor(chain.length / 2)],
+  })).filter(s => s.len >= 200).sort((a, b) => b.len - a.len);
+}
+
+function generateDepthPolygonRoutes(cfg) {
+  const { depthMin, depthMax } = cfg;
+
+  // Get edges from depth polygons
+  const edges = getDepthPolygonEdges(depthMin, depthMax);
+  if (!edges.length) {
+    console.log(`[route-builder] no depth polygon edges for ${depthMin}-${depthMax}ft — falling back to contour routing`);
+    return null; // signal to fall back
+  }
+
+  console.log(`[route-builder] depth polygon routing: ${edges.length} edges for ${depthMin}-${depthMax}ft`);
+
+  // Build spines from edges
+  let candidates = edgesToSpines(edges, depthMin, depthMax);
+  if (!candidates.length) return null;
+
+  // Apply clip polygon filter
+  if (clipPolygon) {
+    candidates = candidates.filter(s => {
+      // Keep spines that have at least one point inside the clip
+      return s.coords.some(([lon, lat]) => pointInPolygon([lat, lon], clipPolygon));
+    });
+  }
+  if (!candidates.length) return null;
+
+  // Score candidates by proximity to start point and bearing — same as contour routing
+  const refLat = cfg.startLat != null ? cfg.startLat : cfg.rampLat;
+  const refLon = cfg.startLon != null ? cfg.startLon : cfg.rampLon;
+  const lockedBearing = cfg.lockedBearing ?? null;
+
+  if (refLat != null && refLon != null) {
+    candidates.forEach(s => {
+      const [distToMid]   = distBearing(refLat, refLon, s.mid[1], s.mid[0]);
+      const [distToStart] = distBearing(refLat, refLon, s.coords[0][1], s.coords[0][0]);
+      const [distToEnd]   = distBearing(refLat, refLon, s.coords[s.coords.length-1][1], s.coords[s.coords.length-1][0]);
+      const closestFt = Math.min(distToMid, distToStart, distToEnd);
+      const proxScore = Math.max(0, 100000 - closestFt * 3);
+      const lenScore  = Math.min(s.len, cfg.targetLengthFt || 15000);
+      let bearingBonus = 0;
+      if (lockedBearing !== null && s.coords.length >= 2) {
+        const [, spineBrng] = distBearing(s.coords[0][1], s.coords[0][0], s.coords[s.coords.length-1][1], s.coords[s.coords.length-1][0]);
+        const diff = Math.abs(((spineBrng - lockedBearing + 540) % 360) - 180);
+        bearingBonus = diff < 90 ? (1 - diff / 90) * 30000 : -10000;
+      }
+      s.trollScore = proxScore + (lenScore * 0.5) + bearingBonus;
+      s._closestFt = closestFt;
+    });
+    candidates.sort((a, b) => (b.trollScore || 0) - (a.trollScore || 0));
+    console.log('[route-builder] polygon top 3 spines: ' + candidates.slice(0,3).map(c =>
+      `closest=${Math.round(c._closestFt)}ft len=${Math.round(c.len)}ft score=${Math.round(c.trollScore)}`
+    ).join(' | '));
+  }
+
+  // Pick best spine
+  const spine = candidates[0];
+  if (!spine) return null;
+
+  // Trim to clip and prepare for patterning — same pipeline as contour routing
+  const trimmed = trimSpineToClip(spine.coords.map(([lon, lat]) => [lat, lon]));
+  if (trimmed.length < 2) return null;
+
+  // Apply sine pattern along the spine
+  const pts = clampToClip(patternAlongSpine(trimmed, {
+    ...cfg,
+    amplitude: cfg.amplitude || 25,
+  }));
+  if (pts.length < 2) return null;
+
+  const MAX_PTS = 3000;
+  const finalPts = pts.length > MAX_PTS ? pts.slice(0, MAX_PTS) : pts;
+
+  return [{
+    name:  `Sweep_${depthMin}-${depthMax}ft`,
+    pts:   finalPts,
+    depth: (depthMin + depthMax) / 2,
+  }];
+}
+
+
   // FOLLOW mode: spine = the target contour line itself.
   // Sine oscillates perpendicular to direction of travel, naturally crossing
   // into neighbouring depths (17/19ft when targeting 18ft) based on local
@@ -1064,11 +1244,15 @@ export function generateAndCommitRoute(overrides = {}) {
     minSpacing: parseFloat(document.getElementById('rbMinSpacing')?.value)|| 25,
   };
 
-  // Always use contour sweep mode for Smart Plan routes
-  let tracks = generateContourRoutes(cfg);
+  // Try depth polygon routing first (uses DEPARE zone boundaries from supplemental-layers)
+  // Falls back to contour routing if no polygon data is available for this lake/depth
+  let tracks = generateDepthPolygonRoutes(cfg);
+  if (!tracks) {
+    tracks = generateContourRoutes(cfg);
+  }
 
-  if (!tracks.length) {
-    console.warn(`[route-builder] generateAndCommitRoute: no contours found in ${cfg.depthMin}-${cfg.depthMax}ft range`);
+  if (!tracks || !tracks.length) {
+    console.warn(`[route-builder] generateAndCommitRoute: no route found in ${cfg.depthMin}-${cfg.depthMax}ft range`);
     return [];
   }
 
