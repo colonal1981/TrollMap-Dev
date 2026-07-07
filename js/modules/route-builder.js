@@ -522,7 +522,7 @@ function generateContourRoutes(cfg) {
     // lenCap at 4× target: a 2361ft stub and a 132k ft spine should NOT tie
     // on lenScore just because both exceed the old 15000ft cap. 4× lets the
     // longer spine win clearly while still bounding absurd lake-length spines.
-    const lenCap = (cfg.targetLengthFt || 15000) * 4;
+    const lenCap = (cfg.targetLengthFt || 15000) * 3; // 3× cap: long spines beat stubs without letting distant spines beat nearby ones
 
     candidates.forEach(s => {
       const closestFt = closestPointOnSpineFt(refLat, refLon, s.coords);
@@ -771,14 +771,37 @@ function getDepthPolygonEdges(depthMinFt, depthMaxFt) {
       transitionDepths.add(boundary);
     }
   }
-  // If no interior transition exists (request spans exactly one band),
-  // use the band's own min and max boundaries as the edges.
+  // If no interior transition exists, find the boundary that best represents
+  // this depth range. Strategy:
+  // 1. Any band fully contained within the range → use its edges
+  // 2. Otherwise, find the band boundary closest to the midpoint of the range
+  //    (handles cases like 20-26ft on Wateree where bands are 15-20 and 20-27
+  //    with no bands fully inside — use the 20ft boundary that straddles it)
   if (transitionDepths.size === 0) {
+    // Try fully-contained bands first
     for (const b of allBands) {
       if (b.min >= depthMinFt && b.max <= depthMaxFt) {
         transitionDepths.add(b.min);
         transitionDepths.add(b.max);
       }
+    }
+    // If still empty, find the band boundary nearest the range midpoint
+    if (transitionDepths.size === 0) {
+      const mid = (depthMinFt + depthMaxFt) / 2;
+      let bestBoundary = null, bestDist = Infinity;
+      for (let i = 0; i < allBands.length - 1; i++) {
+        const boundary = allBands[i].max; // shared edge between band i and i+1
+        const dist = Math.abs(boundary - mid);
+        if (dist < bestDist) { bestDist = dist; bestBoundary = boundary; }
+      }
+      // Also check first band's min and last band's max
+      if (allBands.length) {
+        const firstMin = allBands[0].min;
+        const lastMax  = allBands[allBands.length - 1].max;
+        if (Math.abs(firstMin - mid) < bestDist) bestBoundary = firstMin;
+        if (Math.abs(lastMax  - mid) < bestDist) bestBoundary = lastMax;
+      }
+      if (bestBoundary != null) transitionDepths.add(bestBoundary);
     }
   }
 
@@ -901,7 +924,7 @@ function generateDepthPolygonRoutes(cfg) {
     const MAX_SPINE_DIST_FT = cfg.singleBestTrack ? 5280 : Infinity; // 1mi cap for smart plan
     const eLat = cfg.endLat;
     const eLon = cfg.endLon;
-    const lenCap = (cfg.targetLengthFt || 15000) * 4;
+    const lenCap = (cfg.targetLengthFt || 15000) * 3; // 3× cap: long spines beat stubs without letting distant spines beat nearby ones
 
     candidates.forEach(s => {
       const closestFt = closestPointOnSpineFt(refLat, refLon, s.coords);
@@ -1143,25 +1166,18 @@ function prepareSpineForPhase(spine, cfg) {
   if (target > 0) out = trimPolylineToLength(out, target);
 
   // For return passes: after trimming, check if the actual trimmed endpoint
-  // ends near the ramp. The scorer above picks the best start direction but
-  // trimPolylineToLength cuts from the start, so the trimmed end may land
-  // far from the ramp. If so, try the reverse and take whichever trimmed
-  // version ends closer to the ramp.
+  // ends near the ramp. If more than 3000ft away, try other candidates and
+  // take whichever trimmed version ends closest to the ramp.
   if (cfg.isReturnPass && isValidLatLon(eLat, eLon) && out?.length >= 2) {
     const endDistFt = distancePointToRefFt(out[out.length - 1], eLat, eLon);
-    // Only bother if we're more than 3000ft from ramp at end of trimmed route
     if (endDistFt > 3000 && candidates.length > 1) {
-      // Try all other candidates trimmed, pick whichever ends closest to ramp
       let bestEndDist = endDistFt;
       let bestOut = out;
       for (let i = 1; i < candidates.length; i++) {
         const alt = target > 0 ? trimPolylineToLength(candidates[i], target) : candidates[i];
         if (!alt?.length) continue;
         const altEndDist = distancePointToRefFt(alt[alt.length - 1], eLat, eLon);
-        if (altEndDist < bestEndDist) {
-          bestEndDist = altEndDist;
-          bestOut = alt;
-        }
+        if (altEndDist < bestEndDist) { bestEndDist = altEndDist; bestOut = alt; }
       }
       out = bestOut;
     }
