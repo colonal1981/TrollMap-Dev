@@ -2552,6 +2552,159 @@ async function handleIdentifyCatchV2(request, env) {
 
 // end catch ID v13 module
 
+
+// ── Groq iterative coach handler ──────────────────────────────────────────────
+
+const COACH_SYSTEM_PROMPT = `You are an expert kayak fishing guide and tactical advisor for TrollMap.
+
+Your job is to review a trolling plan and find EXACTLY ONE improvement — the single change most likely to increase catch rate given the conditions, fish behavior, and angler equipment.
+
+ANGLER CONSTRAINTS (never violate these):
+- Spinning rods only — no conventional reels, no downriggers
+- No freshwater live bait
+- Maximum 2 rods in the water at once (port + starboard)
+- Equipment list is fixed — only suggest lures the angler owns
+- Kayak platform: Native Watersports Slayer Propel Max 12.5 + NK180 24V bow-mount trolling motor
+  Faster speeds drain battery faster; speed suggestions must be realistic for a full-day kayak session
+- Depth control: lead length only (no downriggers, no planer boards)
+
+LURE-SPECIFIC HARD CONSTRAINTS (non-negotiable):
+- Flutter Spoon: angler owns exactly ONE system — 3/4oz Nichols 4" Shattered Glass Silver + 2oz torpedo
+  inline weight (2.75oz total). Color is ALWAYS Shattered Glass Silver — no other color exists.
+  This is a TROLLING presentation at 1.6-2.4mph, NOT a vertical jigging lure.
+  Only ONE rod can run the flutter spoon at any time.
+- A-Rig (umbrella rig): comes in Light/Medium/Heavy sizes. Port and Starboard CAN both run
+  A-rigs simultaneously at different sizes/leads to cover different depth zones.
+- Port and Starboard rods are COMPLEMENTARY — they should cover different depth zones or
+  presentations simultaneously, not the same lure on both rods.
+
+ROD PAIRING LOGIC:
+- A valid spread has two DIFFERENT presentations covering different water column zones
+- Flutter Spoon + A-Rig is a valid pairing (different action profiles, different depths)
+- A-Rig Light + A-Rig Medium is a valid pairing (same family, different depths)
+- Flutter Spoon + Flutter Spoon is INVALID — only one spoon system exists
+- Do NOT swap lures between port and starboard if it creates an invalid pairing
+- Do NOT suggest flutter_spoon_color changes — color is always Shattered Glass Silver
+
+YOU MAY ONLY SUGGEST CHANGES TO THESE FIELDS:
+lure, lure_size, lead_length, trolling_speed, target_depth,
+phase_timing, rod_assignment, inline_weight, route_pattern, casting_stop_suggestion
+
+YOU MUST NEVER SUGGEST CHANGES TO:
+lure_color for flutter spoon, species, lake, launch_ramp, weather, safety_limits,
+battery_limits, gear_not_owned, live_bait, conventional_reels
+
+RESPONSE FORMAT — return ONLY this JSON object, no other text:
+{
+  "has_suggestion": true,
+  "suggestion": {
+    "field": "the field being changed",
+    "phase": 1,
+    "rod": "Port",
+    "current_value": "what it is now",
+    "recommended_value": "what to change it to",
+    "confidence": 0.87,
+    "reasons": ["reason 1", "reason 2", "reason 3"],
+    "warnings": ["any cautions"],
+    "evidence_sources": ["catch_history", "water_temp", "clarity", "solunar", "structure", "community_spots", "general_knowledge"]
+  },
+  "no_suggestion_reason": "only populate if has_suggestion is false"
+}
+
+If you cannot find a meaningful improvement, set has_suggestion to false.
+Never invent lures the angler does not own. Never suggest live bait.`;
+
+async function handleCoachPlan(request, env) {
+  try {
+    const body    = await request.json();
+    const groqKey = env?.GROQ_API_KEY;
+    if (!groqKey) {
+      return new Response(JSON.stringify({ success: false, error: "Groq API key not configured" }), { status: 500, headers: JSON_HEADERS });
+    }
+
+    const { payload, previousSuggestions = [] } = body;
+    if (!payload) {
+      return new Response(JSON.stringify({ success: false, error: "Missing payload" }), { status: 400, headers: JSON_HEADERS });
+    }
+
+    let userMessage = `Review this trolling plan and find ONE improvement.
+
+PLAN:
+${JSON.stringify(payload, null, 2)}`;
+
+    if (previousSuggestions.length > 0) {
+      const accepted = previousSuggestions.filter(s => s.status === 'accepted' || !s.status);
+      const skipped  = previousSuggestions.filter(s => s.status === 'skipped');
+
+      if (accepted.length > 0) {
+        userMessage += `
+
+ACCEPTED CHANGES — these are now LIVE in the plan, do not reverse or re-suggest:
+`;
+        accepted.forEach((s, i) => {
+          userMessage += `${i + 1}. [ACCEPTED] ${s.field}${s.phase ? ` Phase ${s.phase}` : ""}${s.rod ? ` ${s.rod}` : ""}: "${s.current_value}" → "${s.recommended_value}"
+`;
+        });
+      }
+
+      if (skipped.length > 0) {
+        userMessage += `
+SKIPPED SUGGESTIONS — angler passed on these, do not re-suggest:
+`;
+        skipped.forEach((s, i) => {
+          userMessage += `${i + 1}. [SKIPPED] ${s.field}${s.phase ? ` Phase ${s.phase}` : ""}${s.rod ? ` ${s.rod}` : ""}: "${s.current_value}" → "${s.recommended_value}"
+`;
+        });
+      }
+
+      // Build current spread state from accepted changes so Groq knows what rods look like now
+      userMessage += `
+CURRENT SPREAD STATE (after accepted changes):
+- Check accepted changes above to understand what each rod is currently running
+- Do not suggest a change that would undo an accepted change or create an invalid rod pairing
+`;
+    }
+
+    userMessage += `
+
+Return ONLY the JSON object. Find the single highest-confidence improvement, or set has_suggestion to false if the plan is already well-optimized.`;
+
+    const groqPayload = {
+      model:           "llama-3.3-70b-versatile",
+      messages:        [
+        { role: "system", content: COACH_SYSTEM_PROMPT },
+        { role: "user",   content: userMessage },
+      ],
+      temperature:     0.15,
+      max_tokens:      800,
+      response_format: { type: "json_object" },
+    };
+
+    const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method:  "POST",
+      headers: { "Authorization": `Bearer ${groqKey}`, "Content-Type": "application/json" },
+      body:    JSON.stringify(groqPayload),
+    });
+
+    const j = await r.json();
+    if (!r.ok) {
+      return new Response(JSON.stringify({ success: false, error: j.error?.message || `Groq HTTP ${r.status}` }), { status: r.status, headers: JSON_HEADERS });
+    }
+
+    let suggestion = {};
+    try {
+      suggestion = JSON.parse(j.choices?.[0]?.message?.content || "{}");
+    } catch (_) {
+      suggestion = { has_suggestion: false, no_suggestion_reason: "Parse error" };
+    }
+
+    return new Response(JSON.stringify({ success: true, ...suggestion }), { headers: JSON_HEADERS });
+
+  } catch (e) {
+    return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers: JSON_HEADERS });
+  }
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
@@ -2704,6 +2857,10 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
         }
       }
 
+      // --- /coach-plan route: Iterative Groq fishing coach (one suggestion at a time) ---
+      if (path === '/coach-plan' && request.method === 'POST') {
+        return handleCoachPlan(request, env);
+      }
 
       if (path === '/detect-structure' && request.method === 'POST') {
         try {
