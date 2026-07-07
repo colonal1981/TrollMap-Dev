@@ -840,6 +840,9 @@ function generateDepthPolygonRoutes(cfg) {
 }
 
 
+// ── Follow mode: trace a specific contour with pattern applied along its shape ─
+
+function generateFollowRoutes(cfg) {
   // FOLLOW mode: spine = the target contour line itself.
   // Sine oscillates perpendicular to direction of travel, naturally crossing
   // into neighbouring depths (17/19ft when targeting 18ft) based on local
