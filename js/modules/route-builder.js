@@ -18,6 +18,7 @@ import { esc } from '../utils/escape.js';
 import { distFt } from '../utils/geo.js';
 import { setBanner, showPreview, clearPreview, renderAll } from '../core/map-init.js';
 import { getActiveContour, onContourChange } from './contour-data.js';
+import { getDepthAreaGeoJSON } from './supplemental-layers.js';
 
 // ── Shared state ──────────────────────────────────────────────────────────────
 
@@ -666,10 +667,13 @@ function generateContourRoutes(cfg) {
 //   right ones near the current position.
 
 function getDepthPolygonEdges(depthMinFt, depthMaxFt) {
-  // Try raw GeoJSON first (more reliable than Leaflet layer reference)
-  const gj = window.SUPPLEMENTAL_DEPTH_GEOJSON || globalThis.SUPPLEMENTAL_DEPTH_GEOJSON;
+  // Try imported getter first (most reliable — direct module reference)
+  const gj = getDepthAreaGeoJSON()
+    || window.SUPPLEMENTAL_DEPTH_GEOJSON
+    || globalThis.SUPPLEMENTAL_DEPTH_GEOJSON;
+
   if (!gj?.features?.length) {
-    console.log('[route-builder] no SUPPLEMENTAL_DEPTH_GEOJSON available');
+    console.log('[route-builder] no depth polygon GeoJSON available — falling back to contour routing');
     return [];
   }
 

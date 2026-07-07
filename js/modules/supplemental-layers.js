@@ -153,6 +153,10 @@ let _activeLakeKey      = null;
 // Depth areas — auto layer
 let _depthAreaLayer     = null;
 let _depthAreaVisible   = true; // on by default
+let _depthAreaGeoJSON   = null; // raw GeoJSON — accessible to route-builder
+
+// Export getter for route-builder.js to access depth polygon data
+export function getDepthAreaGeoJSON() { return _depthAreaGeoJSON; }
 
 // Fishing spots toggle
 let _fishingLayer       = null;
@@ -204,8 +208,12 @@ async function loadDepthAreas(lakeKey) {
       // Depth areas go below contour lines — insert behind other layers
       _depthAreaLayer.bringToBack();
     }
-    // Expose for route-builder.js polygon edge routing
+    // Store in module variable (reliable) + window globals (fallback)
+    _depthAreaGeoJSON = gj;
+    globalThis.SUPPLEMENTAL_DEPTH_LAYER = _depthAreaLayer;
+    globalThis.SUPPLEMENTAL_DEPTH_GEOJSON = gj;
     window.SUPPLEMENTAL_DEPTH_LAYER = _depthAreaLayer;
+    window.SUPPLEMENTAL_DEPTH_GEOJSON = gj;
     console.log(`[supplemental] depth_areas loaded: ${gj.features.length} features for ${lakeKey}`);
   } catch (e) {
     // No depth areas for this lake — silent fail, not every lake has them
