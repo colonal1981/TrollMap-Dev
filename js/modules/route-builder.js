@@ -666,39 +666,46 @@ function generateContourRoutes(cfg) {
 //   right ones near the current position.
 
 function getDepthPolygonEdges(depthMinFt, depthMaxFt) {
-  // Pull from supplemental-layers.js in-memory layer
-  const layer = window.SUPPLEMENTAL_DEPTH_LAYER;
-  if (!layer) return [];
+  // Try raw GeoJSON first (more reliable than Leaflet layer reference)
+  const gj = window.SUPPLEMENTAL_DEPTH_GEOJSON || globalThis.SUPPLEMENTAL_DEPTH_GEOJSON;
+  if (!gj?.features?.length) {
+    console.log('[route-builder] no SUPPLEMENTAL_DEPTH_GEOJSON available');
+    return [];
+  }
 
-  const edges = []; // each edge is [[lon,lat],[lon,lat]] — same format as contour coords
+  const edges = [];
 
-  layer.eachLayer?.(l => {
-    const props = l.feature?.properties || l.options?.feature?.properties || {};
+  for (const feat of gj.features) {
+    const props = feat.properties || {};
     const pMin = props.depth_min_ft ?? 0;
     const pMax = props.depth_max_ft ?? 0;
 
     // Include polygon if its depth range overlaps the target band
-    const overlaps = pMax >= depthMinFt && pMin <= depthMaxFt;
-    if (!overlaps) return;
+    if (pMax < depthMinFt || pMin > depthMaxFt) continue;
 
-    // Extract outer ring from Leaflet layer
-    let ring = null;
-    try {
-      const lls = l.getLatLngs?.();
-      if (!lls) return;
-      // Polygon: lls = [[latlng,...]] or [[[latlng,...],...]]] for multipolygon
-      const flat = Array.isArray(lls[0]) ? lls[0] : lls;
-      const outerRing = Array.isArray(flat[0]) ? flat[0] : flat;
-      if (outerRing.length < 3) return;
-      ring = outerRing.map(ll => [ll.lng ?? ll.lon, ll.lat]);
-    } catch (_) { return; }
+    const geom = feat.geometry;
+    if (!geom) continue;
 
-    // Break ring into edges — each consecutive pair of vertices is one edge
-    for (let i = 0; i < ring.length - 1; i++) {
-      edges.push([ring[i], ring[i + 1]]);
+    // Handle Polygon and MultiPolygon
+    let rings = [];
+    if (geom.type === 'Polygon') {
+      rings = [geom.coordinates[0]]; // outer ring only
+    } else if (geom.type === 'MultiPolygon') {
+      rings = geom.coordinates.map(p => p[0]); // outer ring of each polygon
+    } else {
+      continue;
     }
-  });
 
+    for (const ring of rings) {
+      if (!ring || ring.length < 3) continue;
+      // Each consecutive pair of vertices is one edge — coords are [lon, lat]
+      for (let i = 0; i < ring.length - 1; i++) {
+        edges.push([ring[i], ring[i + 1]]);
+      }
+    }
+  }
+
+  console.log(`[route-builder] depth polygon edges: ${edges.length} raw edges for ${depthMinFt}-${depthMaxFt}ft`);
   return edges;
 }
 
@@ -1006,18 +1013,18 @@ function prepareSpineForPhase(spine, cfg) {
 
 function buildConnectorTrack(name, fromLat, fromLon, toLat, toLon, role = 'connector') {
   if (!isValidLatLon(fromLat, fromLon) || !isValidLatLon(toLat, toLon)) return null;
-  const [distFt, brng] = distBearing(fromLat, fromLon, toLat, toLon);
-  if (!Number.isFinite(distFt) || distFt < 3) return null;
+  const [connDistFt, brng] = distBearing(fromLat, fromLon, toLat, toLon);
+  if (!Number.isFinite(connDistFt) || connDistFt < 3) return null;
   const stepFt = 250;
-  const n = Math.max(1, Math.ceil(distFt / stepFt));
+  const n = Math.max(1, Math.ceil(connDistFt / stepFt));
   const pts = [];
   for (let i = 0; i <= n; i++) {
-    pts.push(destination(fromLat, fromLon, brng, distFt * i / n));
+    pts.push(destination(fromLat, fromLon, brng, connDistFt * i / n));
   }
   // Force exact endpoints so GPX exports prove the route is anchored.
   pts[0] = [fromLat, fromLon];
   pts[pts.length - 1] = [toLat, toLon];
-  return { name, pts, role, connector: true, smartPlan: true, lengthFt: distFt };
+  return { name, pts, role, connector: true, smartPlan: true, lengthFt: connDistFt };
 }
 
 function addOrSnapConnector(out, name, fromLat, fromLon, targetTrack, role) {
@@ -1177,6 +1184,15 @@ function renderRoutes(tracks) {
  *
  * Returns the committed tracks array (may be empty if no contours found).
  */
+// ── Set clip polygon directly (called by Smart Plan Phase 3) ─────────────────
+export function setClipPolygon(polygon) {
+  clipPolygon = polygon;
+  window._routeBuilderClipActive = !!polygon;
+  if (polygon) {
+    console.log(`[route-builder] clip set: custom polygon (${polygon.length} points)`);
+  }
+}
+
 // ── Set clip polygon from ramp coords + range (called by Smart Plan) ──────────
 export function setClipFromRamp(rampLat, rampLon, rangeMiles) {
   if (!rampLat || !rampLon || !rangeMiles) {
