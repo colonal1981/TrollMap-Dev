@@ -45,7 +45,8 @@ import { isLiveBaitAvailable } from '../data/fishing-style-profile.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const MAX_RODS_PER_PHASE = 2;       // kayak: 2 rods in water at a time
-const TOTAL_RODS = 6;               // 6 rods on kayak, 2 per phase × 3 phases
+const TOTAL_RODS = 6;               // 6 rod rows in spread (2 per depth tier × 3 tiers)
+const SUB_PHASES_PER_TIER = 2;      // split each depth tier into 2 sub-phases to avoid route doubling
 const BATTERY_AH_DEFAULT = 100;     // LiFePO4 100Ah
 const MOTOR_AMP_AVG = 6;            // NK180 Pro avg draw at ~2mph trolling
 const PHASE_1_END_OFFSET_MIN = 60;  // minutes after sunrise Phase 1 ends (default)
@@ -516,13 +517,24 @@ function computePhases(launchTimeStr, returnTimeStr, dateStr, lakeName) {
     return `${hh % 12 || 12}:${String(mm).padStart(2, '0')} ${ampm}`;
   }
 
+  // Split each depth tier into 2 sub-phases. Each sub-phase gets half the
+  // time budget, keeping route lengths short enough to avoid doubling back
+  // on Wateree's long parallel depth transitions. Rod setup (tier) stays
+  // the same within a tier — angler only changes rigs at tier boundaries.
+  const p1Mid = (launchH + p1End) / 2;
+  const p2Mid = (p1End + p2End) / 2;
+  const p3Mid = (p2End + returnH) / 2;
+
   return {
     sunriseH,
     solunar: sol,
     phases: [
-      { num: 1, name: 'Dawn',       start: launchH, end: p1End, startStr: hToStr(launchH), endStr: hToStr(p1End) },
-      { num: 2, name: 'Transition', start: p1End,   end: p2End, startStr: hToStr(p1End),  endStr: hToStr(p2End) },
-      { num: 3, name: 'Deep',       start: p2End,   end: returnH, startStr: hToStr(p2End), endStr: hToStr(returnH) },
+      { num: 1, tier: 1, name: 'Dawn A',        start: launchH, end: p1Mid,   startStr: hToStr(launchH), endStr: hToStr(p1Mid) },
+      { num: 2, tier: 1, name: 'Dawn B',        start: p1Mid,   end: p1End,   startStr: hToStr(p1Mid),   endStr: hToStr(p1End) },
+      { num: 3, tier: 2, name: 'Transition A',  start: p1End,   end: p2Mid,   startStr: hToStr(p1End),   endStr: hToStr(p2Mid) },
+      { num: 4, tier: 2, name: 'Transition B',  start: p2Mid,   end: p2End,   startStr: hToStr(p2Mid),   endStr: hToStr(p2End) },
+      { num: 5, tier: 3, name: 'Deep A',        start: p2End,   end: p3Mid,   startStr: hToStr(p2End),   endStr: hToStr(p3Mid) },
+      { num: 6, tier: 3, name: 'Deep B',        start: p3Mid,   end: returnH, startStr: hToStr(p3Mid),   endStr: hToStr(returnH) },
     ],
   };
 }
@@ -782,13 +794,11 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
   try {
     const { generateAndCommitRoute, setClipFromRamp, setClipPolygon } = await import('./route-builder.js');
 
-    if (phase.num === 1) {
-      // Phase 1: clip from ramp at 1.5mi — tight enough to keep the dawn
-      // pass close to home, loose enough to find good structure nearby.
-      // Reduced from 2.5mi which caused too much westward drift on Wateree.
+    const phaseTier = phase.tier ?? phase.num;
+    if (phaseTier === 1) {
       setClipFromRamp(rampLat, rampLon, Math.min(rangeMiles, 1.5));
 
-    } else if (phase.num === 2) {
+    } else if (phaseTier === 2) {
       // Phase 2: clip around the MIDPOINT between Phase 1 end and the ramp,
       // with a radius that reaches both. This keeps Phase 2 from drifting
       // further from home and forces it to fish the bridge zone back toward ramp.
@@ -805,7 +815,7 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
       setClipFromRamp(midLat, midLon, clipRadiusMi);
 
     } else {
-      // Phase 3: clip centered on the RAMP with radius reaching Phase 2 end.
+      // Phase tier 3 (Deep A + B): clip centered on ramp.
       // This forces Phase 3 to fish structure between current position and home
       // rather than drifting further away. Spine scoring orients the track to
       // start near Phase 2 end (startLat/startLon) and isReturnPass biases
@@ -827,12 +837,13 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
     // Phase 3: Return to Ramp (Sine+Straight)
     let pattern = 'sine+straight';
     let amplitude = 30;
-    if (phase.num === 1) {
-      pattern = 'sine'; 
-      amplitude = 40; // More aggressive meander
-    } else if (phase.num === 2) {
+    const pt = phase.tier ?? phase.num;
+    if (pt === 1) {
+      pattern = 'sine';
+      amplitude = 40;
+    } else if (pt === 2) {
       pattern = 'sine+straight';
-      amplitude = 25; // Tighter, more direct
+      amplitude = 25;
     } else {
       pattern = 'sine+straight';
       amplitude = 30;
@@ -843,7 +854,7 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
       amplitude,
       spacing: 150,
       lanes: 1,
-      rationale: phase.num === 1 ? 'Meandering outbound explore' : (phase.num === 2 ? 'Direct ledge swing' : 'Return circuit to ramp'),
+      rationale: (phase.tier??phase.num) === 1 ? 'Meandering outbound explore' : ((phase.tier??phase.num) === 2 ? 'Direct ledge swing' : 'Return circuit to ramp'),
     };
 
     // Let the Route Builder make the fishing pass, then immediately pull those
@@ -971,7 +982,11 @@ function buildRationaleText(species, lakeName, season, phases, phaseRecs, phaseI
     const rec = phaseRecs[i];
     lines.push(`Phase ${phase.num} — ${phase.name} (${phase.startStr} – ${phase.endStr})`);
     if (rec) {
-      lines.push(`  Rod setup (Phase ${phase.num}) · Port + Stbd · Depth: ${rec.depthMin}-${rec.depthMax}ft · Speed: ${rec.speed}mph`);
+      const tierLabel = phase.tier ?? phase.num;
+      const isFirstOfTier = phases.findIndex(p => (p.tier ?? p.num) === tierLabel) === phases.indexOf(phase);
+      if (isFirstOfTier) {
+        lines.push(`  Rod setup (Tier ${tierLabel}) · Port + Stbd · Depth: ${rec.depthMin}-${rec.depthMax}ft · Speed: ${rec.speed}mph`);
+      }
       lines.push(`  Lures: ${rec.lures.slice(0, 3).join(', ')}`);
       // FIX (2026-07-03): Smart Plan used to generate a trolling sweep route
       // for every phase, including phases whose primary technique is
@@ -999,7 +1014,7 @@ function buildRationaleText(species, lakeName, season, phases, phaseRecs, phaseI
       // of this function is found — it may have been renamed/removed in
       // route-builder.js during a prior refactor.
       if (!isStaticPhase(rec) && typeof getRouteConfigForPhase === 'function') {
-        const routeCfg = getRouteConfigForPhase(rec, phase.num);
+        const routeCfg = getRouteConfigForPhase(rec, phase.tier ?? phase.num);
         if (routeCfg) {
           lines.push(`  Route: ${routeCfg.pattern} · amplitude ${routeCfg.amplitude}ft · spacing ${routeCfg.spacing}ft · ${routeCfg.lanes} lane(s)`);
           lines.push(`  Why: ${routeCfg.rationale}`);
@@ -1094,7 +1109,7 @@ export async function runSmartPlan() {
   const rangeMiles = computeRangeMiles(speedMph);
 
   // Get per-phase behavior recommendations
-  const phaseRecs = phases.map(p => getPhaseRecommendation(sp, lakeName, season, p.num, waterTempF));
+  const phaseRecs = phases.map(p => getPhaseRecommendation(sp, lakeName, season, p.tier ?? p.num, waterTempF));
 
   if (phaseRecs.every(r => !r)) {
     setStatus('No behavior data for this lake/species yet', false);
@@ -1110,14 +1125,24 @@ export async function runSmartPlan() {
     rampLat: null, rampLon: null, // ramp coords locked below, context builds with map center
   });
 
-  // Build 6-rod spread (2 rods × 3 phases) — now async via inventory pipeline
+  // Build 6-rod spread (2 rods × 3 depth tiers) — one rod pair per tier.
+  // Sub-phases within the same tier share the same rod setup so the angler
+  // only changes rigs at depth transitions, not every sub-phase.
   const sides = ['Port', 'Starboard'];
   const newSpread = [];
+  const seenTiers = new Set();
   for (const phase of phases) {
     const i    = phases.indexOf(phase);
-    const rods = await buildPhaseRods(phaseRecs[i], phase.num, sides, fishingContext);
+    const tier = phase.tier ?? phase.num;
+    if (seenTiers.has(tier)) continue; // skip duplicate tiers — same rods
+    seenTiers.add(tier);
+    const rods = await buildPhaseRods(phaseRecs[i], tier, sides, fishingContext);
+    // Find the last sub-phase of this tier for the end time label
+    const tierPhases = phases.filter(p => (p.tier ?? p.num) === tier);
+    const tierStart = tierPhases[0];
+    const tierEnd   = tierPhases[tierPhases.length - 1];
     rods.forEach(r => {
-      r.notes = `[Ph${phase.num}: ${phase.startStr}-${phase.endStr}] ` + (r.notes || '');
+      r.notes = `[Ph${tier}: ${tierStart.startStr}-${tierEnd.endStr}] ` + (r.notes || '');
       newSpread.push(r);
     });
   }
@@ -1249,7 +1274,7 @@ export async function runSmartPlan() {
       phases[i], phaseRecs[i], lakeName, rampLat, rampLon, rangeMiles,
       targetFt, curLat, curLon,
       isLastPhase ? rampLat : null, isLastPhase ? rampLon : null,
-      isLastPhase,
+      isLastPhase, // isReturnPass — only true for the final sub-phase
       lockedBearing
     );
 
@@ -1259,21 +1284,12 @@ export async function runSmartPlan() {
       const next = appendConnectorThenTracks(assembledSmartPlanTracks, curLat, curLon, phaseTracks, fromLabel, toLabel);
       curLat = next.lat; curLon = next.lon;
 
-      // Update lockedBearing after every phase from the direction of travel
-      // at the END of that phase's track. This ensures each subsequent phase
-      // continues in the same general direction rather than using Phase 1's
-      // outbound bearing for all phases (which was causing bearing bonus to
-      // dominate spine selection and pick distant spines).
-      const lastFishingTrack = [...phaseTracks].reverse().find(t => t?.pts?.length >= 2);
-      if (lastFishingTrack?.pts?.length >= 2) {
-        const pts = lastFishingTrack.pts;
-        // Use the last 10% of points to get a stable exit bearing
-        const lookback = Math.max(2, Math.floor(pts.length * 0.1));
-        const fromPt = pts[pts.length - lookback];
-        const toPt   = pts[pts.length - 1];
-        const dLat = (toPt[0] - fromPt[0]) * 111320;
-        const dLon = (toPt[1] - fromPt[1]) * 111320 * Math.cos(fromPt[0] * Math.PI / 180);
-        if (Math.abs(dLat) > 0.1 || Math.abs(dLon) > 0.1) {
+      if (i === 0 && lockedBearing === null && Number.isFinite(rampLat) && Number.isFinite(rampLon)) {
+        const lastFishingTrack = [...phaseTracks].reverse().find(t => t?.pts?.length >= 2);
+        const farPt = lastFishingTrack?.pts?.[lastFishingTrack.pts.length - 1];
+        if (farPt) {
+          const dLat = (farPt[0] - rampLat) * 111320;
+          const dLon = (farPt[1] - rampLon) * 111320 * Math.cos(rampLat * Math.PI / 180);
           lockedBearing = Math.atan2(dLon, dLat) * 180 / Math.PI;
         }
       }
@@ -1381,7 +1397,7 @@ export async function runSmartPlan() {
 
   const firstRec = phaseRecs.find(Boolean);
   setStatus(
-    `✓ 3-phase plan: ${phases.map((p, i) => phaseRecs[i] ? `Ph${p.num} ${phaseRecs[i].depthMin}-${phaseRecs[i].depthMax}ft` : '').filter(Boolean).join(' → ')} | Range: ${rangeMiles.toFixed(1)}mi`,
+    `✓ 6-segment plan (3 depth tiers): ${[...new Set(phases.map(p => p.tier ?? p.num))].map(t => { const i = phases.findIndex(p => (p.tier??p.num)===t); return phaseRecs[i] ? `T${t} ${phaseRecs[i].depthMin}-${phaseRecs[i].depthMax}ft` : ''; }).filter(Boolean).join(' → ')} | Range: ${rangeMiles.toFixed(1)}mi`,
     true
   );
   return { phases, phaseRecs, phaseInfo, rangeMiles, rampEval };
