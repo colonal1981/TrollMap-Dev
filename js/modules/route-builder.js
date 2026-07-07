@@ -65,10 +65,6 @@ function genSine(p1, p2, cfg) {
     const minWave = Math.PI * Math.sqrt(cfg.amplitude * MIN_TURN_RADIUS_FT);
     if (cfg.wave < minWave) cfg = { ...cfg, wave: Math.ceil(minWave) };
   }
-  // Direct port of the original Kayak Troll Generator genSine — the version that
-  // actually worked. Adds: configurable points-per-wave, dynamic amplitude (fatter
-  // in the middle of each leg, softer at the ends), asymmetric depth bias (push
-  // the curve harder toward the deep/contour side), and minimum-spacing thinning.
   const [dist, brng] = distBearing(p1[0], p1[1], p2[0], p2[1]);
   if (dist < 1) return [];
   const wave = Math.max(20, cfg.wave || 300);
@@ -82,13 +78,13 @@ function genSine(p1, p2, cfg) {
     const t = i / n;
     const c = destination(p1[0], p1[1], brng, dist * t);
     let amp = cfg.amplitude;
-    if (cfg.dynamic) amp *= 0.65 + 0.35 * Math.sin(Math.PI * t);  // bulge in middle
+    if (cfg.dynamic) amp *= 0.65 + 0.35 * Math.sin(Math.PI * t);
     let offset = Math.sin((2 * Math.PI * dist * t) / wave) * amp;
-    if (cfg.bias > 0 && offset > 0) offset *= (1 + cfg.bias);     // lean deep side
+    if (cfg.bias > 0 && offset > 0) offset *= (1 + cfg.bias);
     const f = destination(c[0], c[1], perp, offset);
     if (prev && minSpacing > 0) {
       const [d] = distBearing(prev[0], prev[1], f[0], f[1]);
-      if (d < minSpacing) continue;                              // thin dense points
+      if (d < minSpacing) continue;
     }
     pts.push(f);
     prev = f;
@@ -97,7 +93,6 @@ function genSine(p1, p2, cfg) {
 }
 
 function genZigzag(p1, p2, cfg) {
-  // Port of the original genZigzag: wave_ft/2 step, min_turns floor.
   const [dist, brng] = distBearing(p1[0], p1[1], p2[0], p2[1]);
   if (dist < 1) return [];
   const perp = (brng + 90) % 360;
@@ -109,7 +104,7 @@ function genZigzag(p1, p2, cfg) {
   for (let i = 1; i < n; i++) {
     const c = destination(p1[0], p1[1], brng, i * spacing);
     let amp = cfg.amplitude;
-    if (cfg.bias > 0 && dir > 0) amp *= (1 + cfg.bias); // lean deep side
+    if (cfg.bias > 0 && dir > 0) amp *= (1 + cfg.bias);
     pts.push(destination(c[0], c[1], perp, amp * dir));
     dir *= -1;
   }
@@ -124,14 +119,9 @@ function genMixed(p1, p2, cfg, curveFn) {
   const wave = Math.max(20, cfg.wave || 300);
   let straightFt = cfg.straightFt || 350;
 
-  // Adaptive straight length: on SHORT segments (e.g. close waypoints ~150ft) a
-  // fixed 350ft straight swallows the whole segment and you never see a curve.
-  // Cap the straight run so it's at most ~40% of the segment and always leaves
-  // room for at least one full wave of curve.
   if (dist < straightFt + wave) {
     straightFt = Math.min(straightFt, dist * 0.4);
   }
-  // If the segment is too short to hold any curve at all, just go straight.
   if (dist < wave * 0.75) return genStraight(p1, p2, cfg);
 
   const pts = [p1];
@@ -192,8 +182,6 @@ function featureIntersectsClip(feat) {
   if (!clipPolygon) return true;
   const coords = feat.geometry?.coordinates;
   if (!coords?.length) return false;
-  // Sample up to 9 evenly-spaced points — a long contour may cross the clip
-  // polygon without its midpoint being inside it.
   const step = Math.max(1, Math.floor(coords.length / 8));
   for (let i = 0; i < coords.length; i += step) {
     if (pointInPolygon([coords[i][1], coords[i][0]], clipPolygon)) return true;
@@ -217,7 +205,6 @@ function pointInPolygon([lat, lon], polygon) {
 
 // ── Geometry helpers shared by contour route generators ───────────────────────
 
-// Total arc length of a LineString feature (coords are [lon,lat]).
 function contourArcLength(coords) {
   let len = 0;
   for (let i = 1; i < coords.length; i++) {
@@ -227,7 +214,6 @@ function contourArcLength(coords) {
   return len;
 }
 
-// Resample a [lon,lat] LineString into evenly spaced [lat,lon] waypoints.
 function resampleContour(coords, intervalFt) {
   const wp = [[coords[0][1], coords[0][0]]];
   let carry = 0;
@@ -243,8 +229,6 @@ function resampleContour(coords, intervalFt) {
   return wp;
 }
 
-// Apply the chosen pattern along a sequence of spine waypoints, returning a
-// single continuous point list. Pattern oscillates perpendicular to travel.
 function patternAlongSpine(waypoints, cfg) {
   const out = [];
   for (let i = 0; i < waypoints.length - 1; i++) {
@@ -258,16 +242,8 @@ function patternAlongSpine(waypoints, cfg) {
   return out;
 }
 
-// Keep generated points on the water: if a clip polygon is set, pull any point
-// that strays outside it back onto the nearest spine waypoint. This prevents
-// the sine swing from throwing the route over land.
-// Keep generated points on the water. Rather than SNAP out-of-polygon points to a
-// far spine vertex (which created huge fold-backs / triangles), we simply DROP the
-// points that fall outside the clip polygon and keep the largest contiguous run
-// that stays inside. This trims the route to the box cleanly without teleporting.
 function clampToClip(pts) {
   if (!clipPolygon || !pts.length) return pts;
-  // Split into runs of consecutive in-polygon points; return the longest run.
   let best = [], cur = [];
   for (const p of pts) {
     if (pointInPolygon(p, clipPolygon)) {
@@ -281,9 +257,6 @@ function clampToClip(pts) {
   return best;
 }
 
-// Trim a spine (array of [lat,lon]) to the largest contiguous portion that lies
-// inside the clip polygon. Done BEFORE patterning so the sine develops only over
-// the in-box stretch and never has to be snapped back.
 function trimSpineToClip(spine) {
   if (!clipPolygon || spine.length < 2) return spine;
   let best = [], cur = [];
@@ -299,15 +272,10 @@ function trimSpineToClip(spine) {
   return best;
 }
 
-// Shortest distance (ft) from a [lat,lon] point to the nearest VERTEX of any
-// contour in `others`. Vertices are dense enough on these datasets that nearest-
-// vertex is a good proxy for nearest-point and far cheaper. Returns Infinity if
-// no others. Used to measure true band width = distance across the gradient.
 function nearestContourDistFt([lat, lon], others) {
   let best = Infinity;
   for (const o of others) {
     const cs = o.coords;
-    // Sample coarsely (every ~4th vertex) — we only need an approximate width.
     const step = Math.max(1, Math.floor(cs.length / 24));
     for (let i = 0; i < cs.length; i += step) {
       const [d] = distBearing(lat, lon, cs[i][1], cs[i][0]);
@@ -318,14 +286,7 @@ function nearestContourDistFt([lat, lon], others) {
 }
 
 // ── Contour stitching ─────────────────────────────────────────────────────────
-//
-// The smart GeoJSON is OCR-traced per map TILE, so a single physical depth line
-// is shattered into many short fragments (median ~120ft on Monticello) whose
-// endpoints nearly touch across tile seams. Generating a route per-fragment gives
-// dozens of unusable 100ft stubs (and a too-short sweep spine). Stitching merges
-// same-depth fragments end-to-end into long continuous polylines first.
 
-// A "there-and-back" stub: <=3 coords whose start ≈ end. Pure OCR noise.
 function isContourStub(coords) {
   if (coords.length <= 3) {
     const [d] = distBearing(coords[0][1], coords[0][0],
@@ -335,16 +296,12 @@ function isContourStub(coords) {
   return false;
 }
 
-// Greedily chain [lon,lat] fragments whose endpoints fall within TOL feet.
 function angleDiff(a, b) {
   let d = Math.abs(a - b) % 360;
   return d > 180 ? 360 - d : d;
 }
 
-// Bearing of the last/first short segment of a chain, in the direction of travel
-// AT that endpoint (tail = outgoing, head = incoming).
 function endBearing(coordsLL, atTail) {
-  // coordsLL: [lat,lon][]; return bearing of travel leaving the tail / entering head.
   if (coordsLL.length < 2) return 0;
   if (atTail) {
     const a = coordsLL[coordsLL.length - 2], b = coordsLL[coordsLL.length - 1];
@@ -355,11 +312,11 @@ function endBearing(coordsLL, atTail) {
   }
 }
 
-function stitchFragments(fragments, TOL = 18, MAX_TURN = 45) {
-  // Work in [lat,lon] internally for bearing math; inputs/outputs are [lon,lat].
+// Increased TOL to 75ft to bridge larger gaps
+function stitchFragments(fragments, TOL = 75, MAX_TURN = 45) {
   const segs = fragments
     .filter(c => c.length >= 2 && !isContourStub(c))
-    .map(c => c.map(([lo, la]) => [la, lo]));      // -> [lat,lon]
+    .map(c => c.map(([lo, la]) => [la, lo]));      
   const used = new Array(segs.length).fill(false);
   const chains = [];
 
@@ -371,34 +328,23 @@ function stitchFragments(fragments, TOL = 18, MAX_TURN = 45) {
     while (grew) {
       grew = false;
       const head = chain[0], tail = chain[chain.length - 1];
-      const tailBrng = endBearing(chain, true);      // direction leaving tail
-      const headBrng = endBearing(chain, false);     // direction leaving head (backwards)
+      const tailBrng = endBearing(chain, true);      
+      const headBrng = endBearing(chain, false);     
 
       let bestJ = -1, bestScore = Infinity, bestOp = null;
       for (let j = 0; j < segs.length; j++) {
         if (used[j]) continue;
         const c = segs[j];
         const a = c[0], b = c[c.length - 1];
-        // For each way of attaching, require: endpoint within TOL AND the join
-        // continues roughly straight (turn angle <= MAX_TURN). Score = dist +
-        // turn penalty so we prefer the most natural continuation.
         const cands = [
-          // append c forward to tail: tail->a, then travel a->... must match tailBrng
-          { d: distBearing(tail[0], tail[1], a[0], a[1])[0], op: 'TA',
-            turn: angleDiff(tailBrng, distBearing(a[0], a[1], c[1][0], c[1][1])[1]) },
-          // append c reversed to tail: tail->b
-          { d: distBearing(tail[0], tail[1], b[0], b[1])[0], op: 'TB',
-            turn: angleDiff(tailBrng, distBearing(b[0], b[1], c[c.length-2][0], c[c.length-2][1])[1]) },
-          // prepend c reversed to head: head<-a  (head travels backwards along headBrng)
-          { d: distBearing(head[0], head[1], a[0], a[1])[0], op: 'HA',
-            turn: angleDiff(headBrng, distBearing(a[0], a[1], c[1][0], c[1][1])[1]) },
-          // prepend c forward to head: head<-b
-          { d: distBearing(head[0], head[1], b[0], b[1])[0], op: 'HB',
-            turn: angleDiff(headBrng, distBearing(b[0], b[1], c[c.length-2][0], c[c.length-2][1])[1]) },
+          { d: distBearing(tail[0], tail[1], a[0], a[1])[0], op: 'TA', turn: angleDiff(tailBrng, distBearing(a[0], a[1], c[1][0], c[1][1])[1]) },
+          { d: distBearing(tail[0], tail[1], b[0], b[1])[0], op: 'TB', turn: angleDiff(tailBrng, distBearing(b[0], b[1], c[c.length-2][0], c[c.length-2][1])[1]) },
+          { d: distBearing(head[0], head[1], a[0], a[1])[0], op: 'HA', turn: angleDiff(headBrng, distBearing(a[0], a[1], c[1][0], c[1][1])[1]) },
+          { d: distBearing(head[0], head[1], b[0], b[1])[0], op: 'HB', turn: angleDiff(headBrng, distBearing(b[0], b[1], c[c.length-2][0], c[c.length-2][1])[1]) },
         ];
         for (const cand of cands) {
           if (cand.d > TOL || cand.turn > MAX_TURN) continue;
-          const score = cand.d + cand.turn * 2; // ft + weighted degrees
+          const score = cand.d + cand.turn * 2; 
           if (score < bestScore) { bestScore = score; bestJ = j; bestOp = cand.op; }
         }
       }
@@ -411,14 +357,11 @@ function stitchFragments(fragments, TOL = 18, MAX_TURN = 45) {
         else chain = c.concat(chain);
       }
     }
-    // back to [lon,lat]
     chains.push(chain.map(([la, lo]) => [lo, la]));
   }
   return chains;
 }
 
-// Build stitched, length-tagged spines for a set of features, grouped by depth.
-// Returns [{ coords:[lon,lat][], len, depth, mid:[lon,lat] }] sorted longest-first.
 function buildStitchedSpines(features) {
   const byDepth = new Map();
   for (const f of features) {
@@ -444,10 +387,6 @@ function buildStitchedSpines(features) {
   return spines;
 }
 
-// Sample every Nth vertex of a [lon,lat] spine and return the closest
-// distance in feet to [refLat, refLon]. Using only endpoints+midpoint misses
-// the case where a lake-length spine passes right next to the ref point in the
-// middle — dense sampling is much more accurate and still cheap (≤60 samples).
 function closestPointOnSpineFt(refLat, refLon, coords) {
   if (!coords?.length) return Infinity;
   const step = Math.max(1, Math.floor(coords.length / 60));
@@ -464,17 +403,6 @@ function closestPointOnSpineFt(refLat, refLon, coords) {
 // ── Contour mode: follow depth band ──────────────────────────────────────────
 
 function generateContourRoutes(cfg) {
-  // SWEEP mode: run ALONG the depth band, sine oscillating ACROSS it so you
-  // weave between depthMin and depthMax. Direction of travel is PARALLEL to the
-  // contours — and the only reliable source of "parallel to the contours" is
-  // the contour geometry itself. So we anchor each pass to a REAL contour line
-  // and oscillate perpendicular to it, rather than synthesising a straight
-  // centreline from the bbox (which flew over land).
-  //
-  // Multi-pass ("lanes"): when cfg.lanes > 1 we use the N longest DISTINCT
-  // contours in the band as parallel spines — a lawnmower pattern that still
-  // hugs real water the whole way. Passes are stitched end-to-start (boustro-
-  // phedon) so the route flows continuously without big dead-runs across land.
   const contour = getActiveContour();
   const gj = contour?.smart || contour?.raw;
   if (!gj?.features?.length) return [];
@@ -482,65 +410,80 @@ function generateContourRoutes(cfg) {
   const { depthMin, depthMax, spacing, pattern, amplitude, wave, straightFt } = cfg;
   const lanes = Math.max(1, Math.min(12, cfg.lanes || 1));
 
+  // Expand depth tolerance to prevent short, fragmented routes
+  const depthTolerance = 3; 
+  const effectiveDepthMin = depthMin - depthTolerance;
+  const effectiveDepthMax = depthMax + depthTolerance;
+
   const inRange = gj.features.filter(f => {
     const d = f.properties?.depth_ft;
-    return d != null && d >= depthMin && d <= depthMax;
+    return d != null && d >= effectiveDepthMin && d <= effectiveDepthMax;
   });
+  
   if (!inRange.length) return [];
 
-  // DIAGNOSTIC (2026-07-03): added after three different requested depth
-  // bands (e.g. 8-16ft, 14-22ft, 9-17ft) produced byte-identical output
-  // tracks. This logs the actual distinct depth values found for THIS
-  // band's filter, so we can tell whether that's because the contour data
-  // in the clip area is genuinely dominated by one depth value that
-  // satisfies all three overlapping ranges, or something else is stale.
   const distinctDepths = [...new Set(inRange.map(f => f.properties?.depth_ft))].sort((a, b) => a - b);
-  console.log(`[route-builder] depth band ${depthMin}-${depthMax}ft: ${inRange.length} features, distinct depths found: [${distinctDepths.join(', ')}]`);
+  console.log(`[route-builder] depth band ${effectiveDepthMin}-${effectiveDepthMax}ft: ${inRange.length} features, distinct depths found: [${distinctDepths.join(', ')}]`);
 
-  // Stitch fragmented same-depth contours into long continuous spines first, then
-  // keep those long enough to be useful. (On Monticello raw fragments are ~120ft;
-  // stitched chains reach 1500-2000ft.)
   const scoped = clipPolygon ? inRange.filter(featureIntersectsClip) : inRange;
   let candidates = buildStitchedSpines(scoped)
     .map(s => ({ ...s, coords: s.coords, mid: s.mid }))
     .filter(s => s.len >= 250);
   if (!candidates.length) return [];
 
-  // SMART TROLLING CIRCUIT BRAIN:
-  // Prioritize contour spines closest to the phase start point (where boat currently is).
-  const refLat = cfg.startLat != null ? cfg.startLat : cfg.rampLat;
-  const refLon = cfg.startLon != null ? cfg.startLon : cfg.rampLon;
+  // SMART TROLLING CIRCUIT BRAIN (SPATIAL CHAINING):
+  // Score contours based on how close their ENDPOINTS are to the start/end anchors.
+  const sLat = cfg.startLat != null ? cfg.startLat : cfg.rampLat;
+  const sLon = cfg.startLon != null ? cfg.startLon : cfg.rampLon;
+  const eLat = cfg.endLat;
+  const eLon = cfg.endLon;
   const lockedBearing = cfg.lockedBearing ?? null;
-  if (refLat != null && refLon != null) {
-    // For singleBestTrack (smart plan) phases, cap how far the chosen spine
-    // can be from the phase start. A lake-length spine that happens to pass
-    // nearby in the middle would score huge on length but start the route
-    // miles away — the cap forces it to use the nearby section or be rejected.
-    const MAX_SPINE_DIST_FT = cfg.singleBestTrack ? 5280 : Infinity; // 1mi cap for smart plan
+
+  if (sLat != null && sLon != null) {
+    const MAX_SPINE_DIST_FT = cfg.singleBestTrack ? 10560 : Infinity; // 2mi cap for smart plan
 
     candidates.forEach(s => {
-      // Dense sampling: measure closest point anywhere along the spine, not
-      // just endpoints/midpoint. Fixes lake-length spines that pass right
-      // next to the ref point in the middle but have distant endpoints.
-      const closestFt = closestPointOnSpineFt(refLat, refLon, s.coords);
-      // Hard floor: spines under 500ft are useless regardless of proximity.
-      if (s.len < 500) { s.trollScore = -Infinity; s._closestFt = closestFt; return; }
-      // Proximity cap for smart plan phases — disqualify spines whose nearest
-      // point is more than 1mi from the phase start.
-      if (closestFt > MAX_SPINE_DIST_FT) { s.trollScore = -Infinity; s._closestFt = closestFt; return; }
-      const proxScore = Math.max(0, 100000 - closestFt * 3);
-      const lenScore  = Math.min(s.len, cfg.targetLengthFt || 15000);
+      // 1. Measure distance from the start anchor to BOTH ends of the spine
+      // s.coords is [lon, lat] here
+      const distToStart1 = distBearing(sLat, sLon, s.coords[0][1], s.coords[0][0])[0];
+      const distToStart2 = distBearing(sLat, sLon, s.coords[s.coords.length-1][1], s.coords[s.coords.length-1][0])[0];
+      
+      const startDistFt = Math.min(distToStart1, distToStart2);
+      
+      // 2. Identify the end point of the spine (the opposite of the start)
+      let endDistFt = 0;
+      if (cfg.isReturnPass && eLat != null && eLon != null) {
+        // We MUST return to the ramp for Phase 3
+        const endPt = (distToStart1 < distToStart2) ? s.coords[s.coords.length-1] : s.coords[0];
+        endDistFt = distBearing(eLat, eLon, endPt[1], endPt[0])[0];
+      } else {
+        // If not returning, reward spines that stretch AWAY from the start point
+        const endPt = (distToStart1 < distToStart2) ? s.coords[s.coords.length-1] : s.coords[0];
+        endDistFt = -distBearing(sLat, sLon, endPt[1], endPt[0])[0]; 
+      }
+
+      // Hard floor: disqualify spines that don't start near the anchor
+      if (startDistFt > MAX_SPINE_DIST_FT) { s.trollScore = -Infinity; s._closestFt = startDistFt; return; }
+
+      // 3. SPATIAL PENALTIES (The Anchor Method)
+      const startPenalty = startDistFt * 6; // Heavy penalty if it starts far away
+      const endPenalty = (cfg.isReturnPass) ? (endDistFt * 6) : (endDistFt * 0.5);
+
+      const lenScore = Math.min(s.len, cfg.targetLengthFt || 15000);
+      
       let bearingBonus = 0;
       if (lockedBearing !== null && s.coords.length >= 2) {
         const [, spineBrng] = distBearing(s.coords[0][1], s.coords[0][0], s.coords[s.coords.length-1][1], s.coords[s.coords.length-1][0]);
         const diff = Math.abs(((spineBrng - lockedBearing + 540) % 360) - 180);
         bearingBonus = diff < 90 ? (1 - diff / 90) * 30000 : -10000;
       }
-      s.trollScore = proxScore + (lenScore * 2) + bearingBonus;
-      s._closestFt = closestFt;
+      
+      // 4. Final Chained Score
+      s.trollScore = (lenScore * 3) - startPenalty - endPenalty + bearingBonus;
+      s._closestFt = startDistFt;
     });
     candidates.sort((a, b) => (b.trollScore || 0) - (a.trollScore || 0));
-    console.log('[route-builder] top 3 spines: ' + candidates.slice(0,3).map(c => 'd=' + Math.round(c._closestFt) + 'ft len=' + Math.round(c.len) + 'ft score=' + Math.round(c.trollScore)).join(' | '));
+    console.log('[route-builder] top 3 chained spines: ' + candidates.slice(0,3).map(c => 'startGap=' + Math.round(c._closestFt) + 'ft len=' + Math.round(c.len) + 'ft score=' + Math.round(c.trollScore)).join(' | '));
   }
 
   const DEDUP = Math.max(spacing * 0.6, 150);
@@ -552,53 +495,31 @@ function generateContourRoutes(cfg) {
   }
   if (!chosen.length) return [];
 
-  // DIAGNOSTIC (2026-07-03): part of the same investigation above — logs
-  // which physical spine(s) actually got selected after stitching/dedup,
-  // so we can tell if different depth bands are landing on the exact same
-  // contour line (which would explain identical output even with a
-  // correctly-varying depth filter upstream).
-  console.log(`[route-builder] depth band ${depthMin}-${depthMax}ft: chose ${chosen.length} spine(s) — ${chosen.map(c => `depth=${c.depth}ft@[${c.mid[1].toFixed(4)},${c.mid[0].toFixed(4)}] len=${Math.round(c.len)}ft`).join(' | ')}`);
+  console.log(`[route-builder] depth band ${effectiveDepthMin}-${effectiveDepthMax}ft: chose ${chosen.length} spine(s) — ${chosen.map(c => `depth=${c.depth}ft@[${c.mid[1].toFixed(4)},${c.mid[0].toFixed(4)}] len=${Math.round(c.len)}ft`).join(' | ')}`);
 
-  // ── TRUE band width (across the depth gradient) ──────────────────────────────
-  // The amplitude must carry you from the shallow edge of the band (depthMin) to
-  // the deep edge (depthMax). Measure that by taking the shallowest-depth and
-  // deepest-depth contours in range as the band EDGES, then sampling, at points
-  // along the spine, the perpendicular distance from the spine out to each edge.
-  // Median of those samples = real band half-width. This is what was missing —
-  // the old midpoint-to-midpoint measure was along-contour, not across it.
   const minD = Math.min(...candidates.map(c => c.depth));
   const maxD = Math.max(...candidates.map(c => c.depth));
   const shallowEdge = candidates.filter(c => c.depth <= minD + 1);
   const deepEdge    = candidates.filter(c => c.depth >= maxD - 1);
 
   function bandHalfWidthForSpine(spineCoords) {
-    const samp = resampleContour(spineCoords, 250); // sample the spine every 250ft
+    const samp = resampleContour(spineCoords, 250); 
     const widths = [];
     for (const pt of samp) {
       const toShallow = nearestContourDistFt(pt, shallowEdge);
       const toDeep    = nearestContourDistFt(pt, deepEdge);
-      // Full local band width ≈ distance to shallow edge + distance to deep edge.
-      // (Spine sits somewhere inside the band; summing both reaches edge-to-edge.)
       const w = (isFinite(toShallow) ? toShallow : 0) + (isFinite(toDeep) ? toDeep : 0);
       if (w > 0 && w < 4000) widths.push(w);
     }
     if (!widths.length) return amplitude;
     widths.sort((a, b) => a - b);
-    // Use the 70th percentile (not median) so the swing reaches into the wider
-    // parts of the band rather than being held down by the tightest pinch points.
     const p70 = widths[Math.min(widths.length - 1, Math.floor(widths.length * 0.7))];
-    return p70 / 2; // half-width = amplitude basis
+    return p70 / 2; 
   }
 
-  // The amplitude input now acts as a MULTIPLIER on the measured band half-width
-  // (default 30 → ~1.0x; treat the slider's 30 as the neutral "fill the band"
-  // value). Users can dial it down to stay nearer the centre or up to overshoot.
   const ampScale = (amplitude || 30) / 30;
   const waveFt = Math.max(wave || 300, 150);
 
-  // Order passes by position ALONG the band so the lawnmower runs in sequence
-  // rather than jumping around. Project each spine midpoint onto the dominant
-  // contour bearing and sort by that scalar.
   let sinSum = 0, cosSum = 0;
   for (const c of chosen) {
     for (let i = 1; i < c.coords.length; i++) {
@@ -609,7 +530,7 @@ function generateContourRoutes(cfg) {
     }
   }
   const acrossBrng = (((Math.atan2(sinSum, cosSum) * 180 / Math.PI / 2) + 180) % 180 + 90) % 360;
-  const ref = chosen[0].mid; // [lon,lat]
+  const ref = chosen[0].mid; 
   chosen.forEach(c => {
     const [d, b] = distBearing(ref[1], ref[0], c.mid[1], c.mid[0]);
     c.acrossProj = d * Math.cos(((b - acrossBrng + 540) % 360 - 180) * Math.PI / 180);
@@ -621,25 +542,11 @@ function generateContourRoutes(cfg) {
   for (let i = 0; i < chosen.length; i++) {
     const src = chosen[i];
     let spine = resampleContour(src.coords, waveFt);
-    // Trim the spine to the part inside the area box BEFORE patterning, so the
-    // route runs only over the in-box stretch (no fold-backs from snapping).
     spine = trimSpineToClip(spine);
     if (spine.length < 2) continue;
 
-    // True local band half-width for THIS spine, scaled by the amplitude input.
-    // Floored at the raw amplitude so a degenerate measurement never collapses
-    // the swing to nothing.
-    // Use the user's amplitude setting directly.
-    // The auto-measured band half-width was overriding user input with huge values
-    // on narrow water bodies like creeks, causing routes to swing over land.
     const passAmplitude = amplitude;
 
-    // SMART ONE-WAY CONTINUOUS CIRCUIT SHAPING:
-    // App route points are [lat,lon]. Raw GeoJSON is [lon,lat] only before
-    // resampleContour(). The old code accidentally swapped these during the
-    // nearest-to-ramp/orientation step, which made tracks pass near the ramp but
-    // begin a mile away. Prepare the spine by slicing at the point nearest the
-    // phase start, then choose the direction that best fits this phase.
     const targetPassFt = cfg.targetLengthFt || 15000;
     spine = prepareSpineForPhase(spine, cfg);
     if (spine.length < 2) continue;
@@ -651,7 +558,6 @@ function generateContourRoutes(cfg) {
     if (targetPassFt > 0) pts = trimPolylineToLength(pts, targetPassFt);
     if (pts.length < 2) continue;
 
-    // Max-gap split: don't draw lines across land gaps > 400ft
     const MAX_GAP_FT = 400;
     const segments = [];
     let seg = [pts[0]];
@@ -678,33 +584,7 @@ function generateContourRoutes(cfg) {
   return tracks;
 }
 
-
 // ── Depth polygon edge routing ────────────────────────────────────────────────
-//
-// Uses the DEPARE depth zone polygons from supplemental-layers.js instead of
-// contour lines. Extracts the boundary edges between depth zones and routes
-// along them — this gives the actual drop-off line where fish hold.
-//
-// Edge extraction strategy:
-//   For each polygon in the target depth band, iterate its outer ring edges.
-//   An edge is a "drop-off edge" if it borders a shallower polygon.
-//   We approximate this by keeping edges on the shallow side of the polygon
-//   boundary — i.e. the outer ring segments where the polygon is transitioning
-//   from shallow to deep. In practice we keep all outer ring edges and let
-//   the spine scoring (proximity to start point + bearing lock) pick the
-//   right ones near the current position.
-
-// ── Depth polygon shared-edge extraction ─────────────────────────────────────
-//
-// Previous approach: dump ALL outer ring edges of any polygon overlapping the
-// target band → 57k+ raw edges, mostly internal polygon noise.
-//
-// New approach: dynamically discover band boundaries in the loaded GeoJSON,
-// find which transition edge sits inside the requested depth range, then
-// extract only edges that are SHARED between the shallow polygon and its
-// adjacent deeper neighbor. Those shared edges are the true drop-off lines.
-//
-// Works for any lake — no hardcoded depth values.
 
 function ftBetweenLonLat([lon1, lat1], [lon2, lat2]) {
   const R = 20902231, D = Math.PI / 180;
@@ -713,7 +593,6 @@ function ftBetweenLonLat([lon1, lat1], [lon2, lat2]) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-// Extract all outer-ring edges of a feature as [lonA, lonB] pairs.
 function featureEdges(feat) {
   const geom = feat.geometry;
   if (!geom) return [];
@@ -738,33 +617,24 @@ function getDepthPolygonEdges(depthMinFt, depthMaxFt) {
     return [];
   }
 
-  // ── Step 1: discover all distinct depth bands present in this lake's data ──
   const bandSet = new Set();
   for (const f of gj.features) {
     const p = f.properties || {};
     const mn = p.depth_min_ft, mx = p.depth_max_ft;
     if (mn != null && mx != null) bandSet.add(`${mn}|${mx}`);
   }
-  // Sort bands by depth_min so adjacency is positional
   const allBands = [...bandSet].map(s => {
     const [mn, mx] = s.split('|').map(Number);
     return { min: mn, max: mx };
   }).sort((a, b) => a.min - b.min);
 
-  // ── Step 2: find all adjacent band pairs whose shared boundary falls inside
-  //    the requested depth range. The boundary between band A (max=N) and
-  //    band B (min=N) is at depth N — keep it if depthMinFt < N < depthMaxFt.
-  //    Also include the shallowest band edge if depthMinFt == band.min, and
-  //    deepest band edge if depthMaxFt == band.max (explicit band boundaries).
   const transitionDepths = new Set();
   for (let i = 0; i < allBands.length - 1; i++) {
-    const boundary = allBands[i].max; // == allBands[i+1].min for adjacent bands
+    const boundary = allBands[i].max; 
     if (boundary > depthMinFt && boundary < depthMaxFt) {
       transitionDepths.add(boundary);
     }
   }
-  // If no interior transition exists (request spans exactly one band),
-  // use the band's own min and max boundaries as the edges.
   if (transitionDepths.size === 0) {
     for (const b of allBands) {
       if (b.min >= depthMinFt && b.max <= depthMaxFt) {
@@ -774,14 +644,7 @@ function getDepthPolygonEdges(depthMinFt, depthMaxFt) {
     }
   }
 
-  console.log(`[route-builder] depth polygon edges: target ${depthMinFt}-${depthMaxFt}ft, transition boundaries at [${[...transitionDepths].sort((a,b)=>a-b).join(', ')}]ft`);
-
-  // ── Step 3: for each transition depth N, collect edges from the shallower
-  //    polygon (depth_max_ft == N) and the deeper polygon (depth_min_ft == N).
-  //    An edge is a TRUE shared boundary if a geometrically near-identical edge
-  //    exists in the adjacent polygon (within SHARED_TOL_FT). These are the
-  //    actual drop-off lines fish hold on.
-  const SHARED_TOL_FT = 25; // vertices must be within 25ft to be "shared"
+  const SHARED_TOL_FT = 25; 
   const sharedEdges = [];
 
   for (const boundary of transitionDepths) {
@@ -789,13 +652,11 @@ function getDepthPolygonEdges(depthMinFt, depthMaxFt) {
     const deepFeats    = gj.features.filter(f => (f.properties?.depth_min_ft ?? -1) === boundary);
 
     if (!shallowFeats.length || !deepFeats.length) {
-      // Only one side found — just use those edges directly (lake edge / dam boundary)
       const soloFeats = shallowFeats.length ? shallowFeats : deepFeats;
       for (const f of soloFeats) sharedEdges.push(...featureEdges(f));
       continue;
     }
 
-    // Build a flat list of all deep-polygon edge midpoints for proximity check
     const deepEdgeMids = [];
     for (const f of deepFeats) {
       for (const [a, b] of featureEdges(f)) {
@@ -803,8 +664,6 @@ function getDepthPolygonEdges(depthMinFt, depthMaxFt) {
       }
     }
 
-    // Keep only shallow edges whose midpoint is within SHARED_TOL_FT of any
-    // deep edge midpoint — those are the geometrically shared boundary edges.
     for (const f of shallowFeats) {
       for (const edge of featureEdges(f)) {
         const mid = [(edge[0][0] + edge[1][0]) / 2, (edge[0][1] + edge[1][1]) / 2];
@@ -814,11 +673,9 @@ function getDepthPolygonEdges(depthMinFt, depthMaxFt) {
     }
   }
 
-  console.log(`[route-builder] depth polygon edges: ${sharedEdges.length} shared transition edges for ${depthMinFt}-${depthMaxFt}ft`);
   return sharedEdges;
 }
 
-// Convert raw edges into spine-format objects compatible with buildStitchedSpines output
 function edgesToSpines(edges, depthMin, depthMax) {
   if (!edges.length) return [];
 
@@ -826,7 +683,6 @@ function edgesToSpines(edges, depthMin, depthMax) {
   const used = new Set();
   const chains = [];
 
-  // Build chains greedily by connecting edges whose endpoints are within TOL_FT
   for (let i = 0; i < edges.length; i++) {
     if (used.has(i)) continue;
     const chain = [...edges[i]];
@@ -860,87 +716,85 @@ function edgesToSpines(edges, depthMin, depthMax) {
 function generateDepthPolygonRoutes(cfg) {
   const { depthMin, depthMax } = cfg;
 
-  // Get edges from depth polygons
   const edges = getDepthPolygonEdges(depthMin, depthMax);
   if (!edges.length) {
     console.log(`[route-builder] no depth polygon edges for ${depthMin}-${depthMax}ft — falling back to contour routing`);
-    return null; // signal to fall back
+    return null; 
   }
 
-  console.log(`[route-builder] depth polygon routing: ${edges.length} edges for ${depthMin}-${depthMax}ft`);
-
-  // Build spines from edges
   let candidates = edgesToSpines(edges, depthMin, depthMax);
   if (!candidates.length) return null;
 
-  // Apply clip polygon filter
   if (clipPolygon) {
     candidates = candidates.filter(s => {
-      // Keep spines that have at least one point inside the clip
       return s.coords.some(([lon, lat]) => pointInPolygon([lat, lon], clipPolygon));
     });
   }
   if (!candidates.length) return null;
 
-  // Score candidates by proximity to start point and bearing — same as contour routing
-  const refLat = cfg.startLat != null ? cfg.startLat : cfg.rampLat;
-  const refLon = cfg.startLon != null ? cfg.startLon : cfg.rampLon;
+  const sLat = cfg.startLat != null ? cfg.startLat : cfg.rampLat;
+  const sLon = cfg.startLon != null ? cfg.startLon : cfg.rampLon;
+  const eLat = cfg.endLat;
+  const eLon = cfg.endLon;
   const lockedBearing = cfg.lockedBearing ?? null;
 
-  if (refLat != null && refLon != null) {
-    // For singleBestTrack (smart plan) phases, cap how far the chosen spine
-    // can be from the phase start — same logic as contour routing.
-    const MAX_SPINE_DIST_FT = cfg.singleBestTrack ? 5280 : Infinity; // 1mi cap for smart plan
+  if (sLat != null && sLon != null) {
+    const MAX_SPINE_DIST_FT = cfg.singleBestTrack ? 10560 : Infinity; // 2mi cap for smart plan
 
     candidates.forEach(s => {
-      // Dense sampling: closest point anywhere along spine, not just endpoints.
-      const closestFt = closestPointOnSpineFt(refLat, refLon, s.coords);
-      if (s.len < 500) { s.trollScore = -Infinity; s._closestFt = closestFt; return; }
-      if (closestFt > MAX_SPINE_DIST_FT) { s.trollScore = -Infinity; s._closestFt = closestFt; return; }
-      const proxScore = Math.max(0, 100000 - closestFt * 3);
+      const distToStart1 = distBearing(sLat, sLon, s.coords[0][1], s.coords[0][0])[0];
+      const distToStart2 = distBearing(sLat, sLon, s.coords[s.coords.length-1][1], s.coords[s.coords.length-1][0])[0];
+      
+      const startDistFt = Math.min(distToStart1, distToStart2);
+      
+      let endDistFt = 0;
+      if (cfg.isReturnPass && eLat != null && eLon != null) {
+        const endPt = (distToStart1 < distToStart2) ? s.coords[s.coords.length-1] : s.coords[0];
+        endDistFt = distBearing(eLat, eLon, endPt[1], endPt[0])[0];
+      } else {
+        const endPt = (distToStart1 < distToStart2) ? s.coords[s.coords.length-1] : s.coords[0];
+        endDistFt = -distBearing(sLat, sLon, endPt[1], endPt[0])[0]; 
+      }
+
+      if (startDistFt > MAX_SPINE_DIST_FT) { s.trollScore = -Infinity; s._closestFt = startDistFt; return; }
+
+      const startPenalty = startDistFt * 6;
+      const endPenalty = (cfg.isReturnPass) ? (endDistFt * 6) : (endDistFt * 0.5);
       const lenScore  = Math.min(s.len, cfg.targetLengthFt || 15000);
+      
       let bearingBonus = 0;
       if (lockedBearing !== null && s.coords.length >= 2) {
         const [, spineBrng] = distBearing(s.coords[0][1], s.coords[0][0], s.coords[s.coords.length-1][1], s.coords[s.coords.length-1][0]);
         const diff = Math.abs(((spineBrng - lockedBearing + 540) % 360) - 180);
         bearingBonus = diff < 90 ? (1 - diff / 90) * 30000 : -10000;
       }
-      s.trollScore = proxScore + (lenScore * 2) + bearingBonus;
-      s._closestFt = closestFt;
+      
+      s.trollScore = (lenScore * 3) - startPenalty - endPenalty + bearingBonus;
+      s._closestFt = startDistFt;
     });
     candidates.sort((a, b) => (b.trollScore || 0) - (a.trollScore || 0));
     console.log('[route-builder] polygon top 3 spines: ' + candidates.slice(0,3).map(c =>
-      `closest=${Math.round(c._closestFt)}ft len=${Math.round(c.len)}ft score=${Math.round(c.trollScore)}`
+      `startGap=${Math.round(c._closestFt)}ft len=${Math.round(c.len)}ft score=${Math.round(c.trollScore)}`
     ).join(' | '));
   }
 
-  // Pick best spine
   const spine = candidates[0];
   if (!spine) return null;
 
-  // Trim to clip and prepare for patterning — same pipeline as contour routing
   let trimmed = trimSpineToClip(spine.coords.map(([lon, lat]) => [lat, lon]));
   if (trimmed.length < 2) return null;
 
-  // Pre-trim the spine to targetLengthFt before patterning so we don't
-  // generate a 100mi sine wave over a 629,903ft contour and then try to
-  // trim after the fact. Pattern inflates distance (sine traverses more
-  // ground than the spine), so cap the spine at targetLengthFt first.
-  // The post-pattern trim below handles any remaining overshoot.
   const targetPassFt = (Number.isFinite(cfg.targetLengthFt) && cfg.targetLengthFt > 0)
     ? cfg.targetLengthFt : 15000;
   trimmed = prepareSpineForPhase(trimmed, cfg);
   if (trimmed.length < 2) return null;
 
-  // Apply pattern along the (now properly bounded) spine
   let pts = clampToClip(patternAlongSpine(trimmed, {
     ...cfg,
     amplitude: cfg.amplitude || 25,
   }));
   if (pts.length < 2) return null;
 
-  // Post-pattern trim: sine inflates distance beyond spine length, so trim
-  // the patterned output to the target length as the final hard cap.
   pts = trimPolylineToLength(pts, targetPassFt);
   if (pts.length < 2) return null;
 
@@ -954,43 +808,35 @@ function generateDepthPolygonRoutes(cfg) {
   }];
 }
 
-
 // ── Follow mode: trace a specific contour with pattern applied along its shape ─
 
 function generateFollowRoutes(cfg) {
-  // FOLLOW mode: spine = the target contour line itself.
-  // Sine oscillates perpendicular to direction of travel, naturally crossing
-  // into neighbouring depths (17/19ft when targeting 18ft) based on local
-  // contour spacing — tight contours = small depth swing, wide = larger swing.
   const contour = getActiveContour();
   const gj = contour?.smart || contour?.raw;
   if (!gj?.features?.length) return [];
 
   const { depthMin, depthMax, spacing, pattern, amplitude, wave, straightFt } = cfg;
 
+  // Add depth tolerance here too for consistency and stability
+  const depthTolerance = 3; 
+  const effectiveDepthMin = depthMin - depthTolerance;
+  const effectiveDepthMax = depthMax + depthTolerance;
+
   const inRange = gj.features.filter(f => {
     const d = f.properties?.depth_ft;
-    return d != null && d >= depthMin && d <= depthMax;
+    return d != null && d >= effectiveDepthMin && d <= effectiveDepthMax;
   });
   if (!inRange.length) return [];
 
   const scoped = clipPolygon ? inRange.filter(f => featureIntersectsClip(f)) : inRange;
   if (!scoped.length) return [];
 
-  // Tunables: with an area box drawn the user has explicitly scoped things, so we
-  // can relax. Without one, be more selective and cap output — otherwise the lake
-  // sprays many short fragments (the "lanes everywhere" problem).
-  const MIN_LEN_FT = clipPolygon ? 250 : 500;   // drop short stitched chains
-  const MAX_ROUTES = clipPolygon ? 12  : 6;      // cap total emitted routes
+  const MIN_LEN_FT = clipPolygon ? 250 : 500;   
+  const MAX_ROUTES = clipPolygon ? 12  : 6;      
 
-  // Stitch same-depth fragments into long chains, then keep the longest usable
-  // ones. Stitching is what turns dozens of 120ft stubs into a handful of real
-  // 1000ft+ contours.
   const spines = buildStitchedSpines(scoped).filter(s => s.len >= MIN_LEN_FT);
   if (!spines.length) return [];
 
-  // Dedup near-duplicate chains (stacked / overlapping lines). Sample points and
-  // drop any chain that overlaps an already-kept one for most of its length.
   const DEDUP = Math.max(spacing, 200);
   const keptSpines = [];
   for (const sp of spines) {
@@ -1005,21 +851,17 @@ function generateFollowRoutes(cfg) {
   }
   const kept = keptSpines.map(s => ({ feat: { properties: { depth_ft: s.depth } }, coords: s.coords, pathLen: s.len }));
 
-  // For each kept contour: resample to wave-length intervals, apply pattern
-  // between consecutive waypoints so sine has room to develop along the contour.
   const RESAMPLE_FT = Math.max(wave || 300, 150);
   const tracks = [];
 
   for (const { feat, coords } of kept) {
     const depth = feat.properties.depth_ft;
     let waypoints = resampleContour(coords, RESAMPLE_FT);
-    // Trim to the in-box stretch before patterning (no fold-backs).
     waypoints = trimSpineToClip(waypoints);
     if (waypoints.length < 2) continue;
 
     let allPts = patternAlongSpine(waypoints, { pattern, amplitude, wave, straightFt, spacing });
     allPts = clampToClip(allPts);
-    // After trimming, only keep routes that are still a useful length.
     if (allPts.length > 1 && trackLengthFt(allPts) >= MIN_LEN_FT * 0.6) {
       tracks.push({ name: `Follow_${depth}ft`, pts: allPts, depth });
     }
@@ -1027,7 +869,6 @@ function generateFollowRoutes(cfg) {
   return tracks;
 }
 
-// Arc length of a [lat,lon] point list, in feet.
 function trackLengthFt(pts) {
   let l = 0;
   for (let i = 1; i < pts.length; i++) {
@@ -1043,7 +884,6 @@ function isValidLatLon(lat, lon) {
 
 function distancePointToRefFt(pt, lat, lon) {
   if (!pt || !isValidLatLon(lat, lon)) return Infinity;
-  // App route points are ALWAYS [lat, lon]. Raw GeoJSON is the only lon/lat source.
   return distBearing(lat, lon, pt[0], pt[1])[0];
 }
 
@@ -1119,7 +959,6 @@ function prepareSpineForPhase(spine, cfg) {
       const diff = Math.abs(((brng - cfg.lockedBearing + 540) % 360) - 180);
       bearingPenalty = diff > 90 ? 500 : diff * 2;
     }
-    // Lower is better. For return phases, ending close to ramp matters most.
     return startPenalty + lengthPenalty + endPenalty + bearingPenalty - Math.min(len, target || 5000) * 0.02;
   };
 
@@ -1139,7 +978,6 @@ function buildConnectorTrack(name, fromLat, fromLon, toLat, toLon, role = 'conne
   for (let i = 0; i <= n; i++) {
     pts.push(destination(fromLat, fromLon, brng, connDistFt * i / n));
   }
-  // Force exact endpoints so GPX exports prove the route is anchored.
   pts[0] = [fromLat, fromLon];
   pts[pts.length - 1] = [toLat, toLon];
   return { name, pts, role, connector: true, smartPlan: true, lengthFt: connDistFt };
@@ -1157,17 +995,12 @@ function addOrSnapConnector(out, name, fromLat, fromLon, targetTrack, role) {
   if (c) out.push(c);
 }
 
-
 // ── Existing saved waypoints (auto-detected from state.DATA) ──────────────────
 
-// Field names we'll look for, in priority order. Each should hold an array of
-// objects with some flavour of lat/lon (lat/lon, lat/lng, latitude/longitude)
-// or a [lon,lat]/[lat,lon] coords pair.
 const WPT_FIELDS = ['waypoints', 'wpts', 'marks', 'markers', 'catches', 'points', 'pins'];
 
 function coerceLatLon(o) {
   if (!o) return null;
-  // Direct lat/lon-ish properties
   const lat = o.lat ?? o.latitude ?? o.y;
   const lon = o.lon ?? o.lng ?? o.long ?? o.longitude ?? o.x;
   if (typeof lat === 'number' && typeof lon === 'number') {
@@ -1175,31 +1008,25 @@ function coerceLatLon(o) {
   }
   const name = o.name || o.label || o.title || '';
 
-  // True GeoJSON geometry is ALWAYS [lon, lat] by spec — handle explicitly so we
-  // never mis-swap when both values happen to be < 90 (e.g. SC: lon ~-81, lat ~34).
   const gjc = o.geometry?.coordinates;
   if (Array.isArray(gjc) && gjc.length >= 2 && typeof gjc[0] === 'number' && typeof gjc[1] === 'number') {
     return { lat: gjc[1], lon: gjc[0], name };
   }
 
-  // Leaflet LatLng array convention is [lat, lon].
   if (Array.isArray(o.latlng) && o.latlng.length >= 2) {
     return { lat: o.latlng[0], lon: o.latlng[1], name };
   }
 
-  // Generic coords/coordinates pair of unknown order — use magnitude heuristic
-  // (longitude in the continental US has |v| > 90; latitude does not).
   const c = o.coords || o.coordinates;
   if (Array.isArray(c) && c.length >= 2 && typeof c[0] === 'number' && typeof c[1] === 'number') {
     const [a, b] = c;
-    if (Math.abs(a) > 90 && Math.abs(b) <= 90) return { lat: b, lon: a, name }; // [lon,lat]
-    if (Math.abs(b) > 90 && Math.abs(a) <= 90) return { lat: a, lon: b, name }; // [lat,lon]
-    return { lat: a, lon: b, name }; // ambiguous → assume [lat,lon]
+    if (Math.abs(a) > 90 && Math.abs(b) <= 90) return { lat: b, lon: a, name }; 
+    if (Math.abs(b) > 90 && Math.abs(a) <= 90) return { lat: a, lon: b, name }; 
+    return { lat: a, lon: b, name }; 
   }
   return null;
 }
 
-// Returns [{lat,lon,name}, ...] from whichever DATA field holds waypoints.
 function getSavedWaypoints() {
   const D = state.DATA;
   if (!D) return [];
@@ -1218,7 +1045,6 @@ function getSavedWaypoints() {
 function generateWaypointRoute(cfg) {
   if (manualWaypoints.length < 2) return [];
   const { pattern, amplitude, wave, straightFt, spacing, closeLoop } = cfg;
-  // Optionally append the first waypoint to the end to close the loop back to start.
   const seq = closeLoop ? [...manualWaypoints, manualWaypoints[0]] : manualWaypoints;
   const allPts = [];
   for (let i = 0; i < seq.length - 1; i++) {
@@ -1243,7 +1069,6 @@ function renderWaypointMarkers() {
     m.bindTooltip(`WP${i+1}`, { permanent: false, direction: 'top' });
     waypointMarkers.push(m);
   });
-  // Draw connecting line preview (closing back to WP1 if close-loop is checked)
   if (waypointMarkers._previewLine) state.MAP?.removeLayer(waypointMarkers._previewLine);
   if (manualWaypoints.length > 1) {
     const closeLoop = document.getElementById('rbCloseLoop')?.checked;
@@ -1292,17 +1117,6 @@ function renderRoutes(tracks) {
 
 // ── Panel UI ──────────────────────────────────────────────────────────────────
 
-/**
- * generateAndCommitRoute(overrides) — callable by Smart Plan to auto-generate
- * and immediately commit a contour sweep route for a given phase.
- *
- * Merges phase-specific overrides (depthMin, depthMax, trackName) with
- * whatever settings are currently in the Route Builder panel UI (pattern,
- * spacing, amplitude, etc.) so the user's preferred settings are respected.
- *
- * Returns the committed tracks array (may be empty if no contours found).
- */
-// ── Set clip polygon directly (called by Smart Plan Phase 3) ─────────────────
 export function setClipPolygon(polygon) {
   clipPolygon = polygon;
   window._routeBuilderClipActive = !!polygon;
@@ -1311,29 +1125,20 @@ export function setClipPolygon(polygon) {
   }
 }
 
-// ── Set clip polygon from ramp coords + range (called by Smart Plan) ──────────
 export function setClipFromRamp(rampLat, rampLon, rangeMiles) {
   if (!rampLat || !rampLon || !rangeMiles) {
     clipPolygon = null;
     window._routeBuilderClipActive = false;
     return;
   }
-  // Cap the clip radius. computeRangeMiles() falls back to full-battery range
-  // (~16.7mi) when BLE isn't connected, which produces a bbox wider than most
-  // SC lakes — the clip filter then admits every contour fragment and stitched
-  // spines span the whole lake (see July 2 handoff known issue). A fishing
-  // route has no business being a 33-mile-wide box regardless of how much
-  // battery is theoretically left, so clamp to a sane planning radius.
-  const MAX_CLIP_RADIUS_MI = 4.0; // Upgraded: 4.0mi planning box allows full day 9-hour trolling circuits around ramp
+  const MAX_CLIP_RADIUS_MI = 4.0; 
   const MIN_CLIP_RADIUS_MI = 0.5;
   const clippedRangeMiles = Math.min(MAX_CLIP_RADIUS_MI, Math.max(MIN_CLIP_RADIUS_MI, rangeMiles));
   if (clippedRangeMiles !== rangeMiles) {
     console.warn(`[route-builder] clip radius ${rangeMiles.toFixed(1)}mi exceeds cap — using ${clippedRangeMiles}mi instead`);
   }
-  // Convert range miles to degrees (approximate)
   const latDeg = clippedRangeMiles / 69.0;
   const lonDeg = clippedRangeMiles / (69.0 * Math.cos(rampLat * Math.PI / 180));
-  // Create a rectangular bounding box around the ramp
   clipPolygon = [
     [rampLat - latDeg, rampLon - lonDeg],
     [rampLat + latDeg, rampLon - lonDeg],
@@ -1346,10 +1151,6 @@ export function setClipFromRamp(rampLat, rampLon, rangeMiles) {
 }
 
 export function generateAndCommitRoute(overrides = {}) {
-  // Read current panel settings as base config — falls back to defaults
-  // if panel hasn't been opened yet (inputs don't exist in DOM)
-
-  // Ramp start point — if provided, orient route so it starts nearest the ramp
   const rampLat = overrides.rampLat ?? null;
   const rampLon = overrides.rampLon ?? null;
 
@@ -1378,8 +1179,6 @@ export function generateAndCommitRoute(overrides = {}) {
     minSpacing: parseFloat(document.getElementById('rbMinSpacing')?.value)|| 25,
   };
 
-  // Try depth polygon routing first (uses DEPARE zone boundaries from supplemental-layers)
-  // Falls back to contour routing if no polygon data is available for this lake/depth
   let tracks = generateDepthPolygonRoutes(cfg);
   if (!tracks) {
     tracks = generateContourRoutes(cfg);
@@ -1390,12 +1189,8 @@ export function generateAndCommitRoute(overrides = {}) {
     return [];
   }
 
-  // Name each track by phase so it's identifiable in the plan/GPX export
   const prefix = overrides.trackName || `Smart Plan ${cfg.depthMin}-${cfg.depthMax}ft`;
 
-  // Smart Plan should use one coherent fishing pass per phase. If clipping or
-  // stitching emitted several fragments, choose the fragment that starts nearest
-  // the phase start and, for the return phase, finishes nearest the return ramp.
   if (overrides.singleBestTrack !== false && tracks.length > 1) {
     const sLat = cfg.startLat ?? cfg.rampLat;
     const sLon = cfg.startLon ?? cfg.rampLon;
@@ -1422,8 +1217,6 @@ export function generateAndCommitRoute(overrides = {}) {
     lengthFt: trackLengthFt(t.pts || []),
   }));
 
-  // Final orientation safety: app route points are [lat,lon]. Reverse a track if
-  // its far end is closer to the requested phase start. This used to be swapped.
   const startLat = cfg.startLat ?? rampLat;
   const startLon = cfg.startLon ?? rampLon;
   if (isValidLatLon(startLat, startLon)) {
@@ -1527,7 +1320,6 @@ export function buildRouteBuilderPanel(container) {
         <input id="rbDepthMax" type="number" value="28" min="0" max="200" style="width:55px;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;text-align:center">
         <span style="color:var(--muted);font-size:11px">ft</span>
       </div>
-      <!-- Sweep lanes (lawnmower passes) — only meaningful in sweep mode -->
       <div id="rbLanesRow" style="display:flex;align-items:center;gap:6px;margin-top:8px">
         <span style="color:var(--muted);font-size:11px">Passes</span>
         <input id="rbLanes" type="number" value="1" min="1" max="12" style="width:50px;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;text-align:center">
@@ -1542,7 +1334,6 @@ export function buildRouteBuilderPanel(container) {
         <button id="rbAddWpt" style="flex:1;height:28px;font-size:11px;border:1px solid var(--accent);background:rgba(0,229,255,.08);color:var(--accent);border-radius:5px;cursor:pointer;font-weight:600">📍 Add waypoint</button>
         <button id="rbClearWpts" style="height:28px;padding:0 10px;font-size:11px;border:1px solid var(--bad);background:transparent;color:var(--bad);border-radius:5px;cursor:pointer">Clear all</button>
       </div>
-      <!-- Add from existing saved waypoints -->
       <div style="display:flex;gap:5px;margin-bottom:6px">
         <select id="rbSavedWptSelect" style="flex:1;min-width:0;height:28px;font-size:11px;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:5px;padding:0 6px">
           <option value="">— saved waypoints —</option>
@@ -1579,7 +1370,6 @@ export function buildRouteBuilderPanel(container) {
           <input id="rbAmplitude" type="number" value="30" min="5" max="200" style="width:100%;padding:4px 6px;border-radius:5px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:12px;box-sizing:border-box">
         </div>
       </div>
-      <!-- Wave cycle + straight stretch (ported from original generator) -->
       <div style="display:flex;gap:8px;margin-top:8px">
         <div style="flex:1">
           <div style="font-size:10px;color:var(--muted);margin-bottom:3px">Weave cycle</div>
@@ -1599,7 +1389,6 @@ export function buildRouteBuilderPanel(container) {
           </select>
         </div>
       </div>
-      <!-- Advanced curve quality (collapsible) -->
       <details style="margin-top:8px">
         <summary style="font-size:10px;color:var(--muted);cursor:pointer;user-select:none">Advanced curve quality</summary>
         <div style="margin-top:6px;display:flex;flex-direction:column;gap:6px">
@@ -1658,9 +1447,6 @@ export function buildRouteBuilderPanel(container) {
   wireRouteBuilder();
   updateContourInfo();
   onContourChange(updateContourInfo);
-  // Apply any Smart Plan depth recommendation that was set before this
-  // panel was opened (the panel is lazy-loaded on first open, so the
-  // inputs didn't exist when Smart Plan ran).
   if (typeof window.applyStoredSmartPlanDepth === 'function') {
     window.applyStoredSmartPlanDepth();
   }
@@ -1679,10 +1465,8 @@ function readCfg() {
     amplitude:  num('rbAmplitude', 30),
     lanes:      parseInt(document.getElementById('rbLanes')?.value)        || 1,
     closeLoop:  document.getElementById('rbCloseLoop')?.checked || false,
-    // Wave cycle + straight-stretch defaults from the original generator.
     wave:       num('rbWave', 350),
     straightFt: num('rbStraight', 500),
-    // Advanced curve-quality knobs (ported from the original that worked).
     ppw:        parseInt(document.getElementById('rbPpw')?.value) || 16,
     dynamic:    document.getElementById('rbDynamic')?.checked || false,
     bias:       num('rbBias', 0),
@@ -1715,9 +1499,7 @@ function updateContourInfo() {
   }
 }
 
-
 function wireRouteBuilder() {
-  // Source toggle
   document.querySelectorAll('input[name="rbSrc"]').forEach(radio => {
     radio.addEventListener('change', () => {
       const isContour = document.getElementById('rbSrcContour')?.checked;
@@ -1728,7 +1510,6 @@ function wireRouteBuilder() {
     });
   });
 
-  // Contour sub-mode toggle: update depth label hint
   document.querySelectorAll('input[name="rbContourMode"]').forEach(radio => {
     radio.addEventListener('change', () => {
       const isFollow = document.getElementById('rbModeFollow')?.checked;
@@ -1737,10 +1518,8 @@ function wireRouteBuilder() {
       if (lbl) lbl.textContent = isFollow
         ? 'Target depth (ft) — narrow band recommended (e.g. 28–30)'
         : 'Depth band (ft) — sweep generates lanes across this range';
-      // Lanes/passes only apply to sweep mode
       const lanesRow = document.getElementById('rbLanesRow');
       if (lanesRow) lanesRow.style.display = isFollow ? 'none' : 'flex';
-      // Style the border of the active sub-mode label
       document.querySelectorAll('input[name="rbContourMode"]').forEach(r => {
         const lel = r.closest('label');
         if (!lel) return;
@@ -1752,7 +1531,6 @@ function wireRouteBuilder() {
     });
   });
 
-  // Waypoint manual mode
   document.getElementById('rbAddWpt')?.addEventListener('click', () => {
     window._rbPickMode = 'waypoint';
     setBanner('📍 Click map to add waypoint — click Add again when done');
@@ -1765,7 +1543,6 @@ function wireRouteBuilder() {
     setBanner('');
   });
 
-  // Populate the saved-waypoints dropdown from state.DATA (auto-detected field)
   const refreshSavedWptDropdown = () => {
     const sel = document.getElementById('rbSavedWptSelect');
     if (!sel) return;
@@ -1789,7 +1566,6 @@ function wireRouteBuilder() {
     window._rbSavedWptCache = saved;
   };
 
-  // Refresh dropdown whenever the user switches to Waypoints source
   document.getElementById('rbSrcManual')?.addEventListener('change', refreshSavedWptDropdown);
   refreshSavedWptDropdown();
 
@@ -1820,19 +1596,15 @@ function wireRouteBuilder() {
     renderWaypointMarkers();
   };
 
-  // Re-draw preview when close-loop toggles
   document.getElementById('rbCloseLoop')?.addEventListener('change', renderWaypointMarkers);
 
-  // Single map click handler for all pick modes
   const handleMapClick = (e) => {
     if (!window._rbPickMode) return;
     const { lat, lng } = e.latlng;
     if (window._rbPickMode === 'waypoint') {
       manualWaypoints.push([lat, lng]);
       renderWaypointMarkers();
-      // Stay in waypoint mode so user can keep clicking
     } else if (window._rbPickMode === 'clip') {
-      // handled by L.Draw
     }
   };
 
@@ -1842,7 +1614,6 @@ function wireRouteBuilder() {
     setTimeout(() => state.MAP?.on('click', handleMapClick), 2000);
   }
 
-  // Clip drawing
   document.getElementById('rbDrawClip')?.addEventListener('click', () => {
     if (!window.L?.Draw) { alert('Draw plugin not available'); return; }
     setBanner('Draw a polygon to filter the route area. Double-click to finish.');
@@ -1867,7 +1638,6 @@ function wireRouteBuilder() {
     if (el) el.textContent = '';
   });
 
-  // Generate
   document.getElementById('rbGenerate')?.addEventListener('click', () => {
     const cfg = readCfg();
     const isContour = document.getElementById('rbSrcContour')?.checked;
@@ -1891,7 +1661,6 @@ function wireRouteBuilder() {
     pendingTracks = tracks;
     renderRoutes(tracks);
     let msg = `Generated ${tracks.length} route(s). Commit to add to plan.`;
-    // Nudge toward the area box when follow mode emits a lot of routes whole-lake.
     if (isContour && isFollow && tracks.length >= 5 && !clipPolygon) {
       msg += ' Tip: Draw area to focus on one spot.';
     }
@@ -1900,10 +1669,6 @@ function wireRouteBuilder() {
     document.getElementById('rbReverse').style.display = '';
   });
 
-  // Commit — guard against double-clicks creating duplicate tracks.
-  // Disable immediately on click rather than waiting for pendingTracks to
-  // clear, since a fast double-click can fire both handlers before the
-  // first one finishes hiding the button.
   document.getElementById('rbCommit')?.addEventListener('click', (e) => {
     const btn = e.currentTarget;
     if (btn.disabled || !pendingTracks.length) return;
@@ -1912,11 +1677,10 @@ function wireRouteBuilder() {
     pendingTracks = [];
     renderAll();
     btn.style.display = 'none';
-    btn.disabled = false; // reset for next generate/commit cycle
+    btn.disabled = false; 
     setStatus(`✅ ${state.DATA.tracks.length} track(s) in plan.`, 'var(--accent2)');
   });
 
-  // Clear
   document.getElementById('rbClear')?.addEventListener('click', () => {
     if (routeLayer) { state.MAP?.removeLayer(routeLayer); routeLayer = null; }
     pendingTracks = [];
@@ -1925,7 +1689,6 @@ function wireRouteBuilder() {
     setStatus('');
   });
 
-  // Reverse — flip direction of all pending tracks and re-render
   document.getElementById('rbReverse')?.addEventListener('click', () => {
     if (!pendingTracks.length) return;
     pendingTracks = pendingTracks.map(t => ({ ...t, pts: [...t.pts].reverse() }));
@@ -1933,19 +1696,15 @@ function wireRouteBuilder() {
     setStatus('Route reversed. Commit to add to plan.', 'var(--accent2)');
   });
 
-  // Pinch points
   document.getElementById('rbPinch')?.addEventListener('click', () => {
-    // Trigger pinch finder — it reads from window._smartRouteGeoJSON
     const ppPanel = document.getElementById('pinchPanel');
     if (ppPanel) {
       ppPanel.style.display = ppPanel.style.display === 'none' ? 'block' : 'none';
     } else {
-      // Fall back to clicking the old button if it exists
       document.getElementById('btnPinchFinder')?.click();
     }
   });
 
-  // Expose for waypoint popup — appends to waypoint list and switches to manual mode
   window.sendWptToRouteBuilder = (lat, lon, role) => {
     manualWaypoints.push([lat, lon]);
     renderWaypointMarkers();
@@ -1953,7 +1712,6 @@ function wireRouteBuilder() {
     if (manual) { manual.checked = true; manual.dispatchEvent(new Event('change')); }
   };
 
-  // Legacy compatibility
   window.sendWptToGenerator = window.sendWptToRouteBuilder;
 }
 
