@@ -44,8 +44,9 @@ export const TACKLE_INVENTORY = [
   { id:'swimbait_5in', name:'Swimbait 5" – Jighead', type:'swimbait_paddle', trollable:true, weightOz:null, jigWeights:[0.25,0.375,0.5,0.75],   sizes:['5"'] },
 
   // ── Flutter Spoons ────────────────────────────────────────────────────────
-  { id:'spoon_2oz', name:'Flutter Spoon 2oz', type:'flutter_spoon', trollable:true, weightOz:2.0 },
-  { id:'spoon_3oz', name:'Flutter Spoon 3oz', type:'flutter_spoon', trollable:true, weightOz:3.0 },
+  // Nichols 4" Shattered Glass Silver 3/4oz spoon + 2oz torpedo inline weight
+  // System weight: 2.75oz total. Inline weight is always paired with the spoon.
+  { id:'spoon_3quarter', name:'Flutter Spoon 3/4oz + 2oz Torpedo', type:'flutter_spoon', trollable:true, weightOz:0.75, inlineWeightOz:2.0, systemWeightOz:2.75 },
 
   // ── Spinnerbaits ──────────────────────────────────────────────────────────
   { id:'spinner_quarter',  name:'1/4oz Spinnerbait', type:'spinnerbait', trollable:true, weightOz:0.25 },

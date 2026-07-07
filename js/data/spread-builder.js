@@ -42,8 +42,7 @@ export const LURE_PRESETS = [
   'Swimbait 4.6" – Jighead',
   'Swimbait 5" – Jighead',
   '— Spoons —',
-  'Flutter Spoon 2oz',
-  'Flutter Spoon 3oz',
+  'Flutter Spoon 3/4oz + 2oz Torpedo',
   'Kastmaster 3/4oz',
   '— Topwater —',
   'Choppo 90 – Topwater',
@@ -120,9 +119,8 @@ export const LURE_DIVE_DEPTHS = {
   'Swimbait 3.8" – Jighead':                { minDive: 4,  maxDive: 30, needsWeight: false },
   'Swimbait 4.6" – Jighead':                { minDive: 6,  maxDive: 35, needsWeight: false },
   'Swimbait 5" – Jighead':                  { minDive: 8,  maxDive: 40, needsWeight: false },
-  // Spoons
-  'Flutter Spoon 2oz':                       { minDive: 8,  maxDive: 45, needsWeight: false },
-  'Flutter Spoon 3oz':                       { minDive: 10, maxDive: 55, needsWeight: false },
+  // Spoons — 3/4oz Nichols spoon + 2oz torpedo = 2.75oz system weight
+  'Flutter Spoon 3/4oz + 2oz Torpedo':      { minDive: 8,  maxDive: 45, needsWeight: false },
   'Kastmaster 3/4oz':                        { minDive: 4,  maxDive: 30, needsWeight: false },
   // Topwater — surface only
   'Choppo 90 – Topwater':                   { minDive: 0,  maxDive: 1,  needsWeight: false },
@@ -231,7 +229,12 @@ export function autoCalculateLead(rod, speedMph) {
   if (lure.includes('light') || lure.includes('1.65')) return Math.round(depth * 6.5);
   if (lure.includes('medium') || lure.includes('2.65')) return Math.round(depth * 7.5);
   if (lure.includes('heavy') || lure.includes('3.5')) return Math.round(depth * 6.8);
-  if (lure.includes('spoon') || lure.includes('flutter')) return Math.round(depth * 3.5);
+  // Flutter spoon: 3/4oz spoon + 2oz torpedo = 2.75oz system
+  // At 1.8mph: ~6ft of lead per foot of depth. At 2.4mph: ~7.5ft per foot.
+  if (lure.includes('spoon') || lure.includes('flutter')) {
+    const speedMult = spd <= 1.6 ? 5.5 : spd <= 2.0 ? 6.0 : 7.5;
+    return Math.round(depth * speedMult);
+  }
   if (lure.includes('flicker minnow 11') || lure.includes('crankbait')) {
     if (depth <= 12) return Math.round(depth * 3.0);
     if (depth <= 20) return Math.round(depth * 3.8);
@@ -342,8 +345,8 @@ function wireButtons() {
       newRodRow({ side: 'Starboard', position: 'Bow', reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader', lure: 'A-Rig Medium (~2.65oz) – 4.6" Swimbait', color: 'Natural Pearl / Smoke', depth: '25', lead: '95', notes: 'Starboard ledge' }),
       newRodRow({ side: 'Port', position: 'Mid', reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader', lure: 'Flicker Minnow 11 – Crankbait', color: 'Blue / Silver Herring', depth: '28', lead: '106', notes: 'Port secondary bottom drop' }),
       newRodRow({ side: 'Starboard', position: 'Mid', reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader', lure: 'Flicker Minnow 11 – Crankbait', color: 'Sexy Shad', depth: '28', lead: '106', notes: 'Starboard secondary bottom drop' }),
-      newRodRow({ side: 'Port', position: 'Stern', reel: 'Spinning / 30lb 8-strand braid directly tied to swivel snap', lure: 'Flutter Spoon 2oz', color: 'Shattered Glass Silver', depth: '32', lead: '112', notes: 'Port deep flutter tail' }),
-      newRodRow({ side: 'Starboard', position: 'Stern', reel: 'Spinning / 30lb 8-strand braid directly tied to swivel snap', lure: 'Flutter Spoon 2oz', color: 'Chrome / Silver', depth: '32', lead: '112', notes: 'Starboard deep flutter tail' }),
+      newRodRow({ side: 'Port', position: 'Stern', reel: 'Spinning / 30lb 8-strand braid directly tied to swivel snap', lure: 'Flutter Spoon 3/4oz + 2oz Torpedo', color: 'Shattered Glass Silver', depth: '32', lead: '112', notes: 'Port deep flutter tail' }),
+      newRodRow({ side: 'Starboard', position: 'Stern', reel: 'Spinning / 30lb 8-strand braid directly tied to swivel snap', lure: 'Flutter Spoon 3/4oz + 2oz Torpedo', color: 'Chrome / Silver', depth: '32', lead: '112', notes: 'Starboard deep flutter tail' }),
     ];
     renderSpread();
   });

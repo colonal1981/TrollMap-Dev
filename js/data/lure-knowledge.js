@@ -409,29 +409,29 @@ export function scoreLureForContext(lureType, context = {}) {
 export function getLureColor(lureType, clarityKey) {
   const c = clarityKey || 'clear';
   const colorMap = {
-    umbrella_rig:         { clear:'Blueback Herring',       stained:'Chartreuse / White UV', muddy:'Dark Shad / Black' },
-    crankbait_squarebill: { clear:'Natural Shad',           stained:'Chartreuse Shad',       muddy:'Black/Blue Shad' },
-    crankbait_sr:         { clear:'Blue / Silver Herring',  stained:'Chartreuse Shad',       muddy:'Black/Blue Shad' },
-    crankbait_mr:         { clear:'Blue / Silver Herring',  stained:'Chartreuse Shad',       muddy:'Black/Blue Shad' },
-    crankbait_dd1:        { clear:'Sexy Shad',              stained:'Firetiger',             muddy:'Black/Blue Shad' },
-    crankbait_dd2:        { clear:'Sexy Shad',              stained:'Firetiger',             muddy:'Black/Blue Shad' },
-    crankbait_dd3:        { clear:'Tennessee Shad',         stained:'Chartreuse / Orange',   muddy:'Dark Crawdad' },
-    crankbait_dd4:        { clear:'Tennessee Shad',         stained:'Chartreuse / Orange',   muddy:'Dark Crawdad' },
-    lipless:              { clear:'Chrome / Silver',        stained:'Gold / Copper',         muddy:'Black/Blue' },
-    blade_vibe:           { clear:'Chrome / Silver',        stained:'Gold / Copper',         muddy:'Black Nickel' },
-    flutter_spoon:        { clear:'Shattered Glass Silver', stained:'Chartreuse Gold',       muddy:'Black Nickel' },
-    swimbait_paddle:      { clear:'Blueback Herring',       stained:'Chartreuse / White',    muddy:'Black/Blue Shad' },
-    spinnerbait:          { clear:'White / Nickel',         stained:'Chartreuse / White',    muddy:'Black / Blue' },
-    chatterbait:          { clear:'Natural Shad',           stained:'Chartreuse / White',    muddy:'Black / Blue' },
-    bucktail:             { clear:'White / Natural',        stained:'Chartreuse / White',    muddy:'Black / Dark' },
-    marabou_jig:          { clear:'White / Natural',        stained:'Chartreuse / White',    muddy:'Black / Dark' },
-    road_runner:          { clear:'White / Nickel',         stained:'Chartreuse / Gold',     muddy:'Black / Copper' },
-    topwater_troll:       { clear:'Bone / Natural Shad',   stained:'White / Chartreuse',    muddy:'Black / Dark' },
-    topwater_cast:        { clear:'Bone / Natural',         stained:'White / Chartreuse',    muddy:'Black / Dark' },
-    jighead:              { clear:'Natural',                stained:'Chartreuse / White',    muddy:'Black / Blue' },
-    cast_only:            { clear:'Natural',                stained:'Chartreuse / White',    muddy:'Black / Blue' },
+    umbrella_rig:         { clear:'Blueback Herring',      stained:'Chartreuse / White',  muddy:'Dark Shad' },
+    crankbait_squarebill: { clear:'Natural Pearl / Smoke', stained:'Chartreuse / Shad',   muddy:'Black / Blue' },
+    crankbait_sr:         { clear:'Blue / Silver Herring', stained:'Chartreuse / Shad',   muddy:'Black / Blue' },
+    crankbait_mr:         { clear:'Blue / Silver Herring', stained:'Chartreuse / Shad',   muddy:'Black / Blue' },
+    crankbait_dd1:        { clear:'Sexy Shad',             stained:'Firetiger',           muddy:'Black / Blue' },
+    crankbait_dd2:        { clear:'Sexy Shad',             stained:'Firetiger',           muddy:'Black / Blue' },
+    crankbait_dd3:        { clear:'Tennessee Shad',        stained:'Firetiger',           muddy:'Dark Shad' },
+    crankbait_dd4:        { clear:'Tennessee Shad',        stained:'Chartreuse / Shad',   muddy:'Dark Shad' },
+    lipless:              { clear:'Chrome / Silver',       stained:'Gold / Copper',       muddy:'Black / Blue' },
+    blade_vibe:           { clear:'Chrome / Silver',       stained:'Gold / Copper',       muddy:'Black / Blue' },
+    flutter_spoon:        { clear:'Shattered Glass Silver',stained:'Shattered Glass Silver',muddy:'Shattered Glass Silver' },
+    swimbait_paddle:      { clear:'Blueback Herring',      stained:'Chartreuse / White',  muddy:'Dark Shad' },
+    spinnerbait:          { clear:'White / UV',            stained:'Chartreuse / White',  muddy:'Black / Blue' },
+    chatterbait:          { clear:'Natural Pearl / Smoke', stained:'Chartreuse / White',  muddy:'Black / Blue' },
+    bucktail:             { clear:'Natural Pearl / Smoke', stained:'Chartreuse / White',  muddy:'Black / Blue' },
+    marabou_jig:          { clear:'Natural Pearl / Smoke', stained:'Chartreuse / White',  muddy:'Black / Blue' },
+    road_runner:          { clear:'White / UV',            stained:'Chartreuse / White',  muddy:'Black / Blue' },
+    topwater_troll:       { clear:'Bone / Natural',        stained:'White / UV',          muddy:'Black / Blue' },
+    topwater_cast:        { clear:'Bone / Natural',        stained:'White / UV',          muddy:'Black / Blue' },
+    jighead:              { clear:'Natural Pearl / Smoke', stained:'Chartreuse / White',  muddy:'Black / Blue' },
+    cast_only:            { clear:'Natural Pearl / Smoke', stained:'Chartreuse / White',  muddy:'Black / Blue' },
   };
-  return colorMap[lureType]?.[c] || 'Natural';
+  return colorMap[lureType]?.[c] || 'Natural Pearl / Smoke';
 }
 
 // ── Jighead selection ─────────────────────────────────────────────────────────
