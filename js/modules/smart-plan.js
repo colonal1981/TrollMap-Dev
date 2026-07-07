@@ -1239,7 +1239,7 @@ export async function runSmartPlan() {
     // Raised from 0.60-0.70 — Ryan's manual route shows 15.7mi for a 9hr day
     // at 1.8mph = 0.97 coverage. Use 0.90 to leave room for connectors.
     // Phase 1 (shallow, slower 1.5mph casting) gets slightly less distance.
-    const phaseFishingFraction = phase.tier === 1 ? 0.75 : 0.92;
+    const phaseFishingFraction = (phases[i].tier ?? phases[i].num) === 1 ? 0.75 : 0.92;
     const targetFt = Math.round(durHrs * spd * 5280 * phaseFishingFraction);
 
     const phaseTracks = await generateRouteForPhase(
