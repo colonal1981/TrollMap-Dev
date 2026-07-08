@@ -83,6 +83,116 @@ async function loadZoneSpine(r2Key, zoneId) {
   return coords.map(c => [c[1], c[0]]);
 }
 
+function selectZoneSpine(zones, phaseRec, startLat, startLon, maxDistMi, phaseTier) {
+  // Algorithmically pick a chain of geographically connected zones for a phase.
+  // Strategy:
+  //   1. Filter to right depth band and within range
+  //   2. Start with the zone closest to startLat/startLon
+  //   3. Chain to the nearest endpoint-adjacent zone with similar bearing
+  //   4. Skip zones requiring sharp turns (>50°) to avoid coves
+  //   5. Stop when chain is long enough or no more connectable zones exist
+
+  const depthMin = phaseRec.depthMin - 5;
+  const depthMax = phaseRec.depthMax + 5;
+
+  function distFt(lat1, lon1, lat2, lon2) {
+    const R = 20902231;
+    const phi1 = lat1 * Math.PI/180, phi2 = lat2 * Math.PI/180;
+    const dphi = (lat2-lat1) * Math.PI/180;
+    const dlam = (lon2-lon1) * Math.PI/180;
+    const a = Math.sin(dphi/2)**2 + Math.cos(phi1)*Math.cos(phi2)*Math.sin(dlam/2)**2;
+    return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  function bearingDeg(lat1, lon1, lat2, lon2) {
+    const dlon = (lon2-lon1) * Math.PI/180;
+    const x = Math.sin(dlon) * Math.cos(lat2 * Math.PI/180);
+    const y = Math.cos(lat1*Math.PI/180)*Math.sin(lat2*Math.PI/180) -
+              Math.sin(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.cos(dlon);
+    return (Math.atan2(x,y) * 180/Math.PI + 360) % 360;
+  }
+
+  function angleDiff(a, b) {
+    const d = Math.abs(a - b) % 360;
+    return Math.min(d, 360 - d);
+  }
+
+  const maxDistFt = maxDistMi * 5280;
+  const GAP_FT = 800;       // max gap between zone endpoints to chain
+  const MAX_TURN_DEG = 50;  // max bearing change to prevent cove-diving
+  const MIN_ZONE_FT = 500;  // skip tiny fragments
+
+  // Filter candidates
+  const candidates = zones.filter(z => {
+    if (z.depth_ft < depthMin || z.depth_ft > depthMax) return false;
+    if (z.length_ft < MIN_ZONE_FT) return false;
+    const d = distFt(startLat, startLon, z.centroid_lat, z.centroid_lon);
+    return d <= maxDistFt;
+  });
+
+  if (!candidates.length) {
+    console.warn(`[zone-spine] no candidates for depth ${depthMin}-${depthMax}ft within ${maxDistMi}mi`);
+    return [];
+  }
+
+  // Find best starting zone — closest endpoint to startLat/startLon, prefer high catch count
+  const used = new Set();
+  let chain = [];
+  let curLat = startLat, curLon = startLon;
+  let curBearing = null;
+
+  for (let iter = 0; iter < 20; iter++) {
+    let best = null, bestScore = Infinity;
+
+    for (const z of candidates) {
+      if (used.has(z.id)) continue;
+
+      // Check both endpoints
+      for (const [eLat, eLon] of [[z.start_lat, z.start_lon], [z.end_lat, z.end_lon]]) {
+        const d = distFt(curLat, curLon, eLat, eLon);
+        if (d > (chain.length === 0 ? maxDistFt : GAP_FT)) continue;
+
+        // Bearing check after first zone
+        const zBearing = z.bearing;
+        if (curBearing !== null && angleDiff(curBearing, zBearing) > MAX_TURN_DEG) continue;
+
+        // Score: distance - bonus for catches and length
+        const score = d - (z.catch_count || 0) * 500 - (z.length_ft / 10);
+        if (score < bestScore) {
+          bestScore = score;
+          best = { zone: z, entryLat: eLat, entryLon: eLon };
+        }
+      }
+    }
+
+    if (!best) break;
+
+    used.add(best.zone.id);
+    chain.push(best.zone.id);
+
+    // Exit at the far endpoint from entry
+    const z = best.zone;
+    const dStart = distFt(best.entryLat, best.entryLon, z.start_lat, z.start_lon);
+    const dEnd   = distFt(best.entryLat, best.entryLon, z.end_lat,   z.end_lon);
+    if (dStart < dEnd) {
+      curLat = z.end_lat; curLon = z.end_lon;
+    } else {
+      curLat = z.start_lat; curLon = z.start_lon;
+    }
+    curBearing = bearingDeg(best.entryLat, best.entryLon, curLat, curLon);
+
+    // Stop if we've chained enough length
+    const totalFt = chain.reduce((acc, id) => {
+      const zone = candidates.find(c => c.id === id);
+      return acc + (zone?.length_ft || 0);
+    }, 0);
+    if (totalFt > maxDistMi * 5280 * 0.6) break; // 60% of range budget
+  }
+
+  console.log(`[zone-spine] Phase ${phaseTier}: chained ${chain.length} zones (${chain.join(', ')})`);
+  return chain;
+}
+
 async function pickZonesWithGroq(zones, phaseRec, species, conditions, rampLat, rampLon, phaseTier) {
   // Build a compact summary of candidate zones for Groq
   // Filter to relevant depth band and within reasonable range
@@ -922,15 +1032,18 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
     };
     const planLakeName = document.getElementById('planLake')?.value || '';
     const r2Key = state.ACTIVE_CONTOUR_KEY || LAKE_TO_R2[planLakeName] || null;
-    if (r2Key && !isReturnPass) {
+    const _phaseLabelKey = `p${phase.tier ?? phase.num}`;
+    const _hasLabeledPts = typeof window.getMyStructures === 'function' &&
+      window.getMyStructures().some(s => s.label === _phaseLabelKey);
+    if (r2Key && !isReturnPass && !_hasLabeledPts) {
       try {
         const zones = await loadZoneRegistry(r2Key);
         if (zones?.length) {
-          const conditions = `season=${phase.name} time=${phase.startStr}`;
-          const speciesStr = document.querySelector('#planSpeciesChecks input:checked')?.value || 'Striped Bass';
-          console.log(`[smart-plan] Zone picker: ${zones.length} zones, depth ${phaseRec?.depthMin}-${phaseRec?.depthMax}ft, species=${speciesStr}, r2Key=${r2Key}`);
-          const pickedIds = await pickZonesWithGroq(zones, phaseRec, speciesStr, conditions, rampLat, rampLon, phase.tier ?? phase.num);
-          console.log(`[smart-plan] Zone picker result:`, pickedIds);
+          const phaseTier2 = phase.tier ?? phase.num;
+          const phaseStartLat = startLat ?? rampLat;
+          const phaseStartLon = startLon ?? rampLon;
+          const pickedIds = selectZoneSpine(zones, phaseRec, phaseStartLat, phaseStartLon, Math.min(rangeMiles, 4.0), phaseTier2);
+          console.log(`[smart-plan] Zone spine for phase ${phaseTier2}:`, pickedIds);
           if (pickedIds?.length) {
             // Load spine coords for picked zones and chain them
             const allSpineCoords = [];
@@ -954,7 +1067,7 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
                 depthMax: phaseRec.depthMax,
                 startLat: startLat ?? rampLat,
                 startLon: startLon ?? rampLon,
-                targetLengthFt: null,
+                targetLengthFt: targetLengthFt || null,
                 pattern: 'straight',
                 amplitude: 0,
                 lockedBearing,
