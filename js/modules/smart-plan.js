@@ -117,8 +117,8 @@ function selectZoneSpine(zones, phaseRec, startLat, startLon, maxDistMi, phaseTi
     return Math.min(d, 360 - d);
   }
 
-  const maxDistFt = maxDistMi * 5280;
-  const GAP_FT = 800;       // max gap between zone endpoints to chain
+  const maxDistFt = Math.min(maxDistMi, 2.5) * 5280; // hard cap 2.5mi from start point
+  const GAP_FT = 1500;      // max gap between zone endpoints to chain
   const MAX_TURN_DEG = 50;  // max bearing change to prevent cove-diving
   const MIN_ZONE_FT = 500;  // skip tiny fragments
 
@@ -156,8 +156,11 @@ function selectZoneSpine(zones, phaseRec, startLat, startLon, maxDistMi, phaseTi
         const zBearing = z.bearing;
         if (curBearing !== null && angleDiff(curBearing, zBearing) > MAX_TURN_DEG) continue;
 
-        // Score: distance - bonus for catches and length
-        const score = d - (z.catch_count || 0) * 500 - (z.length_ft / 10);
+        // Score: distance heavily weighted first, then catches and length
+        // For first zone (chain empty), distance from startLat/startLon dominates
+        // For subsequent zones, gap distance dominates
+        const distWeight = chain.length === 0 ? 3.0 : 1.0;
+        const score = (d * distWeight) - (z.catch_count || 0) * 500 - (z.fishing_spot_count || 0) * 10 - (z.length_ft / 20);
         if (score < bestScore) {
           bestScore = score;
           best = { zone: z, entryLat: eLat, entryLon: eLon };
