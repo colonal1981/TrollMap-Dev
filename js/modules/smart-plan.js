@@ -83,7 +83,7 @@ async function loadZoneSpine(r2Key, zoneId) {
   return coords.map(c => [c[1], c[0]]);
 }
 
-function selectZoneSpine(zones, phaseRec, startLat, startLon, maxDistMi, phaseTier) {
+function selectZoneSpine(zones, phaseRec, startLat, startLon, maxDistMi, phaseTier, globalUsed = new Set()) {
   // Algorithmically pick a chain of geographically connected zones for a phase.
   // Strategy:
   //   1. Filter to right depth band and within range
@@ -119,8 +119,9 @@ function selectZoneSpine(zones, phaseRec, startLat, startLon, maxDistMi, phaseTi
 
   const maxDistFt = Math.min(maxDistMi, 2.5) * 5280; // hard cap 2.5mi from start point
   const GAP_FT = 1500;      // max gap between zone endpoints to chain
-  const MAX_TURN_DEG = 50;  // max bearing change to prevent cove-diving
-  const MIN_ZONE_FT = 500;  // skip tiny fragments
+  const MAX_TURN_DEG = 40;  // max bearing change to prevent cove-diving
+  const MIN_ZONE_FT = 800;  // skip tiny fragments
+  const MIN_ZONE_FT_TURN = 2000; // longer minimum if zone requires a bearing change
 
   // Filter candidates
   const candidates = zones.filter(z => {
@@ -145,7 +146,7 @@ function selectZoneSpine(zones, phaseRec, startLat, startLon, maxDistMi, phaseTi
     let best = null, bestScore = Infinity;
 
     for (const z of candidates) {
-      if (used.has(z.id)) continue;
+      if (used.has(z.id) || globalUsed.has(z.id)) continue;
 
       // Check both endpoints
       for (const [eLat, eLon] of [[z.start_lat, z.start_lon], [z.end_lat, z.end_lon]]) {
@@ -154,7 +155,10 @@ function selectZoneSpine(zones, phaseRec, startLat, startLon, maxDistMi, phaseTi
 
         // Bearing check after first zone
         const zBearing = z.bearing;
-        if (curBearing !== null && angleDiff(curBearing, zBearing) > MAX_TURN_DEG) continue;
+        const turnAngle = curBearing !== null ? angleDiff(curBearing, zBearing) : 0;
+        if (curBearing !== null && turnAngle > MAX_TURN_DEG) continue;
+        // Short zones that require a turn are likely cove dead-ends — skip them
+        if (curBearing !== null && turnAngle > 20 && z.length_ft < MIN_ZONE_FT_TURN) continue;
 
         // Score: distance heavily weighted first, then catches and length
         // For first zone (chain empty), distance from startLat/startLon dominates
@@ -1035,6 +1039,7 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
     };
     const planLakeName = document.getElementById('planLake')?.value || '';
     const r2Key = state.ACTIVE_CONTOUR_KEY || LAKE_TO_R2[planLakeName] || null;
+    if (!window._usedZoneIds) window._usedZoneIds = new Set();
     const _phaseLabelKey = `p${phase.tier ?? phase.num}`;
     const _hasLabeledPts = typeof window.getMyStructures === 'function' &&
       window.getMyStructures().some(s => s.label === _phaseLabelKey);
@@ -1046,8 +1051,9 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
           const phaseStartLat = startLat ?? rampLat;
           const phaseStartLon = startLon ?? rampLon;
           console.log(`[zone-spine] Phase ${phaseTier2} start: (${phaseStartLat?.toFixed(4)}, ${phaseStartLon?.toFixed(4)}), depth ${phaseRec.depthMin}-${phaseRec.depthMax}ft`);
-          const pickedIds = selectZoneSpine(zones, phaseRec, phaseStartLat, phaseStartLon, Math.min(rangeMiles, 4.0), phaseTier2);
+          const pickedIds = selectZoneSpine(zones, phaseRec, phaseStartLat, phaseStartLon, Math.min(rangeMiles, 4.0), phaseTier2, window._usedZoneIds);
           console.log(`[smart-plan] Zone spine for phase ${phaseTier2}:`, pickedIds);
+          if (pickedIds?.length) pickedIds.forEach(id => window._usedZoneIds.add(id));
           if (pickedIds?.length) {
             // Load spine coords for picked zones and chain them
             const allSpineCoords = [];
@@ -1595,7 +1601,8 @@ export async function runSmartPlan() {
       for (const [k, coords] of Object.entries(GUARANTEED_SC_RAMPS)) {
         if (rampMatches(normRampKey, k)) {
           rampLat = coords[0]; rampLon = coords[1];
-          console.log(`[smart-plan] Locked guaranteed ramp coords for "${selectedRampKey}": (${rampLat}, ${rampLon})`);
+          window._usedZoneIds = new Set(); // reset cross-phase zone exclusion
+  console.log(`[smart-plan] Locked guaranteed ramp coords for "${selectedRampKey}": (${rampLat}, ${rampLon})`);
           break;
         }
       }
