@@ -45,7 +45,8 @@ async function loadZoneRegistry(r2Key) {
   try {
     const url = `${CF_WORKER_URL}/chartpacks/${r2Key}/zones.json`;
     const res = await fetch(url, { cache: 'no-store' });
-    if (!res.ok) return null;
+    console.log(`[zone-picker] Groq response status: ${res.status}`);
+    if (!res.ok) { console.warn('[zone-picker] Groq failed:', res.status); return null; }
     const data = await res.json();
     _zoneCache[r2Key] = { zones: data.zones || [], loadedAt: Date.now() };
     console.log(`[smart-plan] zone registry loaded: ${data.zones?.length} zones for ${r2Key}`);
@@ -99,6 +100,7 @@ async function pickZonesWithGroq(zones, phaseRec, species, conditions, rampLat, 
     .sort((a, b) => (-(a.catch_count||0)*3 - (a.fishing_spot_count||0)) - (-(b.catch_count||0)*3 - (b.fishing_spot_count||0)))
     .slice(0, 30); // top 30 candidates
 
+  console.log(`[zone-picker] candidates after filter: ${candidates.length}`);
   if (!candidates.length) return null;
 
   const zoneList = candidates.map(z =>
@@ -124,6 +126,7 @@ Rules:
 - No explanation, no markdown, just the JSON array`;
 
   try {
+    console.log(`[zone-picker] calling Groq with ${candidates.length} candidates...`);
     const res = await fetch(`${CF_WORKER_URL}/groq-query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
