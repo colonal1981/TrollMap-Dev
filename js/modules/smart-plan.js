@@ -860,8 +860,8 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
     let amplitude = 30;
     const pt = phase.tier ?? phase.num;
     if (pt === 1) {
-      pattern = 'sine';
-      amplitude = 40;
+      pattern = 'straight';
+      amplitude = 0;
     } else if (pt === 2) {
       pattern = 'sine+straight';
       amplitude = 25;
