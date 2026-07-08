@@ -791,6 +791,7 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
 
     // Pre-build corridor polygon for Phase 2/3 BEFORE clip is set
     window._phaseClipPolygon = null;
+    window._hasLabeledWaypoints = false;
     if ((phaseTier === 2 || phaseTier === 3) && typeof window.getMyStructures === 'function') {
       try {
         const _structs = window.getMyStructures();
@@ -798,6 +799,7 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
         const _cPts = _structs.filter(s => s.label === _labelKey && s.lat && s.lon)
           .sort((a, b) => (a.addedAt||'').localeCompare(b.addedAt||''));
         if (_cPts.length >= 2) {
+          window._hasLabeledWaypoints = true;
           const _D2R = Math.PI/180;
           const _W = [[startLat??rampLat, startLon??rampLon], ..._cPts.map(s=>[s.lat,s.lon])];
           const _WFT = 2640, _L=[], _R=[];
@@ -821,7 +823,7 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
     if (phaseTier === 1) {
       setClipFromRamp(rampLat, rampLon, Math.min(rangeMiles, 4.0));
 
-    } else if (window._phaseClipPolygon && !dockWaypoints) {
+    } else if (window._phaseClipPolygon && !window._hasLabeledWaypoints) {
       // Use corridor polygon only when no labeled waypoints — waypoints define
       // the route already so the corridor clip just cuts off early points
       setClipPolygon(window._phaseClipPolygon);
