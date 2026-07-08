@@ -1321,10 +1321,11 @@ export async function runSmartPlan() {
         const dLon = (toPt[1] - fromPt[1]) * 111320 * Math.cos(fromPt[0] * Math.PI / 180);
         if (Math.abs(dLat) > 0.1 || Math.abs(dLon) > 0.1) {
           const exitBearing = Math.atan2(dLon, dLat) * 180 / Math.PI;
-          // Last phase: flip bearing to head back toward ramp
-          const isLast = (i === phases.length - 1);
-          lockedBearing = isLast ? (exitBearing + 180) % 360 : exitBearing;
-          console.log(`[smart-plan] Phase ${phases[i].num} exit bearing: ${exitBearing.toFixed(0)}° → next lockedBearing: ${lockedBearing.toFixed(0)}°`);
+          // If the NEXT phase is the last phase, flip the bearing 180° so
+          // Phase 3 heads back toward the ramp instead of continuing outbound.
+          const nextIsLast = (i === phases.length - 2);
+          lockedBearing = nextIsLast ? (exitBearing + 180) % 360 : exitBearing;
+          console.log(`[smart-plan] Phase ${phases[i].num} exit bearing: ${exitBearing.toFixed(0)}° → next lockedBearing: ${lockedBearing.toFixed(0)}°${nextIsLast ? ' (FLIPPED for return)' : ''}`);
         }
       }
     }
