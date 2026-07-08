@@ -72,6 +72,17 @@ const LAKE_NAME_TO_R2_KEY = {
   'Nantahala Lake, NC':            'nantahala_lake',
 };
 
+// Maps display name → NHD boundary filename (in trollmap-chartpacks/boundaries/)
+const LAKE_BOUNDARY_KEY = {
+  'Lake Marion, SC':               'lake_marion_3dhp',
+  'Lake Moultrie, SC':             'lake_moultrie_3dhp',
+  'Lake Murray, SC':               'lake_murray_3dhp',
+  'Lake Wateree, SC':              'lake_wateree_3dhp',
+  'Fishing Creek Reservoir, SC':   'lake_wateree_3dhp',
+  'Lake Monticello, SC':           'lake_monticello_3dhp',
+  'Parr Reservoir, SC':            'lake_monticello_3dhp',
+};
+
 // ── Depth color scale — matches contour-data.js DEPTH_COLORS exactly ─────────
 const DEPTH_BANDS = [
   { max: 10,       color: '#e63946' },
@@ -165,6 +176,10 @@ let _fishingVisible     = false;
 // POI toggle
 let _poiLayer           = null;
 let _poiVisible         = false;
+
+// Lake boundary — loaded silently, exposed globally for route clipping
+let _boundaryGeoJSON    = null;
+export function getLakeBoundaryGeoJSON() { return _boundaryGeoJSON; }
 
 function getMap() { return state.MAP; }
 function mapReady() { return state.MAP_OK && !!state.MAP; }
@@ -329,6 +344,39 @@ async function loadPOIs(lakeKey) {
 }
 
 // ── Lake change — loads all layers for the new lake ───────────────────────────
+// ── Lake boundary ────────────────────────────────────────────────────────────
+async function loadLakeBoundary(displayName) {
+  const boundaryKey = LAKE_BOUNDARY_KEY[displayName];
+  if (!boundaryKey) return;
+
+  const cacheKey = `boundary/${boundaryKey}`;
+  try {
+    const cached = await idbGet(cacheKey);
+    if (cached?.ts && (Date.now() - cached.ts) < CACHE_TTL && cached.value?.features?.length) {
+      _boundaryGeoJSON = cached.value;
+      console.log(`[supplemental] boundary loaded from cache: ${boundaryKey}`);
+      return;
+    }
+    const url = `${CF_WORKER_URL}/chartpacks/boundaries/${boundaryKey}.geojson?v=${Date.now()}`;
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const gj = await r.json();
+    if (!gj?.features?.length) throw new Error('empty');
+    // Find the main lake polygon (largest by area)
+    const main = gj.features.reduce((best, f) => {
+      const a = f.properties?.shape_Area || f.properties?.areasqkm || 0;
+      return a > (best?.properties?.shape_Area || best?.properties?.areasqkm || 0) ? f : best;
+    }, gj.features[0]);
+    _boundaryGeoJSON = { type: 'FeatureCollection', features: [main] };
+    await idbSet(cacheKey, _boundaryGeoJSON);
+    console.log(`[supplemental] boundary loaded: ${boundaryKey} (${gj.features.length} features, using largest)`);
+    // Expose globally for route-builder clipping
+    window.LAKE_BOUNDARY_GEOJSON = _boundaryGeoJSON;
+  } catch (e) {
+    console.warn(`[supplemental] boundary fetch failed for ${boundaryKey}:`, e.message);
+  }
+}
+
 export async function loadSupplementalForLake(displayName) {
   if (!displayName || displayName.startsWith('river:')) return;
 
@@ -351,9 +399,10 @@ export async function loadSupplementalForLake(displayName) {
   // Depth areas load automatically alongside contours
   await loadDepthAreas(lakeKey);
 
-  // Pre-fetch fishing spots and POIs in background so toggle is instant
+  // Pre-fetch fishing spots, POIs, and lake boundary in background
   loadFishingSpots(lakeKey).catch(() => {});
   loadPOIs(lakeKey).catch(() => {});
+  loadLakeBoundary(displayName).catch(() => {});
 }
 
 // ── Button state helper ───────────────────────────────────────────────────────

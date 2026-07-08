@@ -265,12 +265,39 @@ function patternAlongSpine(waypoints, cfg) {
 // far spine vertex (which created huge fold-backs / triangles), we simply DROP the
 // points that fall outside the clip polygon and keep the largest contiguous run
 // that stays inside. This trims the route to the box cleanly without teleporting.
+// Extract all rings from a GeoJSON MultiPolygon or Polygon as [lat,lon][] arrays
+function extractLakeBoundaryRings(geo) {
+  const rings = [];
+  const addRing = (coords) => rings.push(coords.map(([lon, lat]) => [lat, lon]));
+  if (!geo?.features?.length) return rings;
+  for (const f of geo.features) {
+    const g = f.geometry;
+    if (!g) continue;
+    if (g.type === 'Polygon') g.coordinates.forEach(addRing);
+    else if (g.type === 'MultiPolygon') g.coordinates.forEach(poly => poly.forEach(addRing));
+  }
+  return rings;
+}
+
+function pointInLakeBoundary(pt) {
+  const boundary = window.LAKE_BOUNDARY_GEOJSON;
+  if (!boundary) return true; // no boundary loaded — assume on water
+  const rings = extractLakeBoundaryRings(boundary);
+  if (!rings.length) return true;
+  // Point must be inside at least one ring
+  return rings.some(ring => pointInPolygon(pt, ring));
+}
+
 function clampToClip(pts) {
   if (!clipPolygon || !pts.length) return pts;
+  const hasBoundary = !!window.LAKE_BOUNDARY_GEOJSON;
   // Split into runs of consecutive in-polygon points; return the longest run.
   let best = [], cur = [];
   for (const p of pts) {
-    if (pointInPolygon(p, clipPolygon)) {
+    // Point must be inside clip radius AND inside lake boundary (if available)
+    const inClip = pointInPolygon(p, clipPolygon);
+    const inLake = hasBoundary ? pointInLakeBoundary(p) : true;
+    if (inClip && inLake) {
       cur.push(p);
     } else {
       if (cur.length > best.length) best = cur;
