@@ -789,8 +789,42 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
 
     const phaseTier = phase.tier ?? phase.num;
 
+    // Pre-build corridor polygon for Phase 2/3 BEFORE clip is set
+    window._phaseClipPolygon = null;
+    if ((phaseTier === 2 || phaseTier === 3) && typeof window.getMyStructures === 'function') {
+      try {
+        const _structs = window.getMyStructures();
+        const _pts = _structs.filter(s => s.type === 'point' && s.lat && s.lon)
+          .sort((a, b) => (a.addedAt||'').localeCompare(b.addedAt||''));
+        const _cPts = phaseTier === 2 ? _pts.slice(0,3) : _pts.slice(3);
+        if (_cPts.length >= 2) {
+          const _D2R = Math.PI/180;
+          const _W = [[startLat??rampLat, startLon??rampLon], ..._cPts.map(s=>[s.lat,s.lon])];
+          const _WFT = 2640, _L=[], _R=[];
+          for (let _i=0;_i<_W.length;_i++) {
+            const [_la,_lo] = _W[_i];
+            const _wlat = _WFT/111320/3.28084, _wlon = _WFT/(111320*Math.cos(_la*_D2R))/3.28084;
+            let _b;
+            if (_i===0) _b=Math.atan2((_W[1][1]-_lo)*Math.cos(_la*_D2R),_W[1][0]-_la);
+            else if (_i===_W.length-1) _b=Math.atan2((_lo-_W[_i-1][1])*Math.cos(_la*_D2R),_la-_W[_i-1][0]);
+            else _b=Math.atan2((_W[_i+1][1]-_W[_i-1][1])*Math.cos(_la*_D2R),_W[_i+1][0]-_W[_i-1][0]);
+            const _p=_b+Math.PI/2;
+            _L.push([_la+Math.cos(_p)*_wlat, _lo+Math.sin(_p)*_wlon]);
+            _R.push([_la-Math.cos(_p)*_wlat, _lo-Math.sin(_p)*_wlon]);
+          }
+          window._phaseClipPolygon = [..._L,...[..._R].reverse(),_L[0]];
+          console.log(`[smart-plan] Phase ${phaseTier}: corridor polygon ready (${window._phaseClipPolygon.length} pts)`);
+        }
+      } catch(_e) { console.warn('corridor build failed', _e.message); }
+    }
+
     if (phaseTier === 1) {
       setClipFromRamp(rampLat, rampLon, Math.min(rangeMiles, 4.0));
+
+    } else if (window._phaseClipPolygon) {
+      // Use corridor polygon built from user waypoints
+      setClipPolygon(window._phaseClipPolygon);
+      window._phaseClipPolygon = null;
 
     } else if (phaseTier === 2) {
       const p1EndLat = startLat ?? rampLat;
@@ -798,16 +832,24 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
       setClipFromRamp(p1EndLat, p1EndLon, Math.min(rangeMiles, 3.5));
 
     } else {
+      // Phase 3: clip must reach the furthest corridor waypoint (P3-turn)
+      // Use the actual corridor points to compute needed radius
       const p2EndLat = startLat ?? rampLat;
       const p2EndLon = startLon ?? rampLon;
-      const midLat3 = (p2EndLat + rampLat) / 2;
-      const midLon3 = (p2EndLon + rampLon) / 2;
-      const halfDistMi3 = Math.sqrt(
-        ((p2EndLat - rampLat) * 69) ** 2 +
-        ((p2EndLon - rampLon) * 69 * Math.cos(rampLat * Math.PI / 180)) ** 2
-      ) / 2;
-      const clipRadiusMi = Math.min(rangeMiles, Math.max(2.0, halfDistMi3 + 0.75));
-      setClipFromRamp(midLat3, midLon3, clipRadiusMi);
+      const allStructs3 = (typeof window.getMyStructures === 'function') ? window.getMyStructures() : [];
+      const p3pts = allStructs3.filter(s => s.type === 'point' && s.lat && s.lon)
+        .sort((a, b) => (a.addedAt || '').localeCompare(b.addedAt || '')).slice(3);
+      let clipRadiusMi = 2.0;
+      if (p3pts.length >= 2) {
+        // Find furthest point from phase start
+        const maxDist = Math.max(...p3pts.map(s => Math.sqrt(
+          ((s.lat - p2EndLat) * 69) ** 2 +
+          ((s.lon - p2EndLon) * 69 * Math.cos(p2EndLat * Math.PI / 180)) ** 2
+        )));
+        clipRadiusMi = Math.min(rangeMiles, maxDist + 0.5);
+      }
+      setClipFromRamp(p2EndLat, p2EndLon, clipRadiusMi);
+      console.log(`[smart-plan] Phase 3: clip ${clipRadiusMi.toFixed(1)}mi from phase start`);
     }
     
     // TACTICAL PATTERN SELECTION:
@@ -866,33 +908,9 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
           }
 
         } else if (phaseTier === 2 || phaseTier === 3) {
-          // Use point waypoints as corridor but interpolate densely (every 500ft)
-          // so no segment is long enough to cross land or islands.
-          const pts = allStructs.filter(s => s.type === 'point' && s.lat && s.lon)
-            .sort((a, b) => (a.addedAt || '').localeCompare(b.addedAt || ''));
-          const corridorPts = phaseTier === 2 ? pts.slice(0, 3) : pts.slice(3);
-          if (corridorPts.length >= 2) {
-            const STEP_FT = 500;
-            const D2R = Math.PI / 180;
-            // Start from where previous phase ended
-            const allWpts = [[startLat ?? refLat, startLon ?? refLon],
-              ...corridorPts.map(s => [s.lat, s.lon])];
-            const dense = [allWpts[0]];
-            for (let i = 0; i < allWpts.length - 1; i++) {
-              const [lat1, lon1] = allWpts[i];
-              const [lat2, lon2] = allWpts[i + 1];
-              const dLat = (lat2 - lat1) * 111320;
-              const dLon = (lon2 - lon1) * 111320 * Math.cos(lat1 * D2R);
-              const distFt = Math.sqrt(dLat * dLat + dLon * dLon) * 3.28084;
-              const steps = Math.max(1, Math.floor(distFt / STEP_FT));
-              for (let s = 1; s <= steps; s++) {
-                const t = s / steps;
-                dense.push([lat1 + (lat2 - lat1) * t, lon1 + (lon2 - lon1) * t]);
-              }
-            }
-            dockWaypoints = dense;
-            console.log(`[smart-plan] Phase ${phaseTier}: ${corridorPts.length} points → ${dense.length} interpolated waypoints`);
-          }
+          // Corridor polygon already built above before clip block.
+          // Depth polygon routing handles Phase 2/3 — no waypoint spine needed.
+          dockWaypoints = null;
         }
       } catch (e) {
         console.warn('[smart-plan] waypoint build failed:', e.message);
