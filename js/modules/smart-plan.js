@@ -521,20 +521,13 @@ function computePhases(launchTimeStr, returnTimeStr, dateStr, lakeName) {
   // time budget, keeping route lengths short enough to avoid doubling back
   // on Wateree's long parallel depth transitions. Rod setup (tier) stays
   // the same within a tier — angler only changes rigs at tier boundaries.
-  const p1Mid = (launchH + p1End) / 2;
-  const p2Mid = (p1End + p2End) / 2;
-  const p3Mid = (p2End + returnH) / 2;
-
   return {
     sunriseH,
     solunar: sol,
     phases: [
-      { num: 1, tier: 1, name: 'Dawn A',        start: launchH, end: p1Mid,   startStr: hToStr(launchH), endStr: hToStr(p1Mid) },
-      { num: 2, tier: 1, name: 'Dawn B',        start: p1Mid,   end: p1End,   startStr: hToStr(p1Mid),   endStr: hToStr(p1End) },
-      { num: 3, tier: 2, name: 'Transition A',  start: p1End,   end: p2Mid,   startStr: hToStr(p1End),   endStr: hToStr(p2Mid) },
-      { num: 4, tier: 2, name: 'Transition B',  start: p2Mid,   end: p2End,   startStr: hToStr(p2Mid),   endStr: hToStr(p2End) },
-      { num: 5, tier: 3, name: 'Deep A',        start: p2End,   end: p3Mid,   startStr: hToStr(p2End),   endStr: hToStr(p3Mid) },
-      { num: 6, tier: 3, name: 'Deep B',        start: p3Mid,   end: returnH, startStr: hToStr(p3Mid),   endStr: hToStr(returnH) },
+      { num: 1, tier: 1, name: 'Dawn',       start: launchH, end: p1End,   startStr: hToStr(launchH), endStr: hToStr(p1End) },
+      { num: 2, tier: 2, name: 'Transition', start: p1End,   end: p2End,   startStr: hToStr(p1End),   endStr: hToStr(p2End) },
+      { num: 3, tier: 3, name: 'Deep',       start: p2End,   end: returnH, startStr: hToStr(p2End),   endStr: hToStr(returnH) },
     ],
   };
 }
@@ -1165,19 +1158,12 @@ export async function runSmartPlan() {
   // only changes rigs at depth transitions, not every sub-phase.
   const sides = ['Port', 'Starboard'];
   const newSpread = [];
-  const seenTiers = new Set();
   for (const phase of phases) {
     const i    = phases.indexOf(phase);
     const tier = phase.tier ?? phase.num;
-    if (seenTiers.has(tier)) continue; // skip duplicate tiers — same rods
-    seenTiers.add(tier);
     const rods = await buildPhaseRods(phaseRecs[i], tier, sides, fishingContext);
-    // Find the last sub-phase of this tier for the end time label
-    const tierPhases = phases.filter(p => (p.tier ?? p.num) === tier);
-    const tierStart = tierPhases[0];
-    const tierEnd   = tierPhases[tierPhases.length - 1];
     rods.forEach(r => {
-      r.notes = `[Ph${tier}: ${tierStart.startStr}-${tierEnd.endStr}] ` + (r.notes || '');
+      r.notes = `[Ph${phase.num}: ${phase.startStr}-${phase.endStr}] ` + (r.notes || '');
       newSpread.push(r);
     });
   }
