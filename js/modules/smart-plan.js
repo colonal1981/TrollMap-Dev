@@ -861,37 +861,36 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
               const db = Math.sqrt(Math.pow((b.lat-refLat)*111320,2)+Math.pow((b.lon-refLon)*111320*Math.cos(refLat*D2R),2));
               return da - db;
             });
-            dockWaypoints = [[refLat, refLon], ...docks.map(s => {
-              const cLat = 34.37, cLon = -80.75;
-              const dLat2 = (cLat - s.lat); const dLon2 = (cLon - s.lon);
-              const mag = Math.sqrt(dLat2*dLat2 + dLon2*dLon2) || 1;
-              const offsetDeg = 75 / 111320;
-              return [s.lat + (dLat2/mag)*offsetDeg, s.lon + (dLon2/mag)*offsetDeg];
-            })];
+            // Use raw dock positions — no offset. The sine amplitude handles
+            // the perpendicular oscillation away from the bank.
+            dockWaypoints = [[refLat, refLon], ...docks.map(s => [s.lat, s.lon])];
             console.log(`[smart-plan] Phase 1: using ${docks.length} dock waypoints as spine`);
           }
 
         } else if (phaseTier === 2) {
+          // Phase 2: use first 3 points as corridor (skip cove → mid → end)
           const pts = allStructs.filter(s => s.type === 'point' && s.lat && s.lon)
             .sort((a, b) => (a.addedAt || '').localeCompare(b.addedAt || ''));
-          if (pts.length >= 1) {
+          const p2pts = pts.slice(0, 3);
+          if (p2pts.length >= 2) {
             dockWaypoints = [
               [startLat ?? refLat, startLon ?? refLon],
-              [pts[0].lat, pts[0].lon],
+              ...p2pts.map(s => [s.lat, s.lon]),
             ];
-            console.log(`[smart-plan] Phase 2: using point to skip cove @ ${pts[0].lat.toFixed(4)},${pts[0].lon.toFixed(4)}`);
+            console.log(`[smart-plan] Phase 2: using ${p2pts.length} point waypoints as corridor`);
           }
 
         } else if (phaseTier === 3) {
+          // Phase 3: use points 4-6 as corridor (start → dam → end near ramp)
           const pts = allStructs.filter(s => s.type === 'point' && s.lat && s.lon)
             .sort((a, b) => (a.addedAt || '').localeCompare(b.addedAt || ''));
-          if (pts.length >= 2) {
-            const corridorPts = pts.slice(1); // skip Phase 2 cove point
+          const p3pts = pts.slice(3);
+          if (p3pts.length >= 2) {
             dockWaypoints = [
               [startLat ?? refLat, startLon ?? refLon],
-              ...corridorPts.map(s => [s.lat, s.lon]),
+              ...p3pts.map(s => [s.lat, s.lon]),
             ];
-            console.log(`[smart-plan] Phase 3: using ${corridorPts.length} point waypoints as corridor`);
+            console.log(`[smart-plan] Phase 3: using ${p3pts.length} point waypoints as corridor`);
           }
         }
       } catch (e) {

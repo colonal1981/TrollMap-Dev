@@ -290,14 +290,10 @@ function pointInLakeBoundary(pt) {
 
 function clampToClip(pts) {
   if (!clipPolygon || !pts.length) return pts;
-  const hasBoundary = !!window.LAKE_BOUNDARY_GEOJSON;
   // Split into runs of consecutive in-polygon points; return the longest run.
   let best = [], cur = [];
   for (const p of pts) {
-    // Point must be inside clip radius AND inside lake boundary (if available)
-    const inClip = pointInPolygon(p, clipPolygon);
-    const inLake = hasBoundary ? pointInLakeBoundary(p) : true;
-    if (inClip && inLake) {
+    if (pointInPolygon(p, clipPolygon)) {
       cur.push(p);
     } else {
       if (cur.length > best.length) best = cur;
