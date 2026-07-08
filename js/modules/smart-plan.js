@@ -789,50 +789,8 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
 
     const phaseTier = phase.tier ?? phase.num;
 
-    // Clear phase overrides from previous phase
-    window._phaseClipPolygon = null;
-    window._phaseStartOverride = null;
-
-    // Build corridor clip polygon from user's 'point' waypoints BEFORE setting clip
-    // so the corridor is ready when the clip block runs below
-    if ((phaseTier === 2 || phaseTier === 3) && typeof window.getMyStructures === 'function') {
-      try {
-        const allStructs2 = window.getMyStructures();
-        const pts2 = allStructs2.filter(s => s.type === 'point' && s.lat && s.lon)
-          .sort((a, b) => (a.addedAt || '').localeCompare(b.addedAt || ''));
-        const corridorPts2 = phaseTier === 2 ? pts2.slice(0, 3) : pts2.slice(3);
-        if (corridorPts2.length >= 2) {
-          const hullPts2 = [
-            { lat: startLat ?? rampLat, lon: startLon ?? rampLon },
-            ...corridorPts2.map(s => ({ lat: s.lat, lon: s.lon }))
-          ];
-          const BUF2 = 0.75 / 69.0;
-          const BUFLON2 = 0.75 / (69.0 * Math.cos((startLat ?? rampLat) * Math.PI / 180));
-          const minLat2 = Math.min(...hullPts2.map(p => p.lat)) - BUF2;
-          const maxLat2 = Math.max(...hullPts2.map(p => p.lat)) + BUF2;
-          const minLon2 = Math.min(...hullPts2.map(p => p.lon)) - BUFLON2;
-          const maxLon2 = Math.max(...hullPts2.map(p => p.lon)) + BUFLON2;
-          window._phaseClipPolygon = [
-            [minLat2, minLon2], [maxLat2, minLon2],
-            [maxLat2, maxLon2], [minLat2, maxLon2],
-            [minLat2, minLon2],
-          ];
-          window._phaseStartOverride = { lat: corridorPts2[0].lat, lon: corridorPts2[0].lon };
-          console.log(`[smart-plan] Phase ${phaseTier}: corridor clip from ${corridorPts2.length} points`);
-        }
-      } catch (_) {}
-    }
-
     if (phaseTier === 1) {
       setClipFromRamp(rampLat, rampLon, Math.min(rangeMiles, 4.0));
-
-    } else if (window._phaseClipPolygon) {
-      // Use corridor clip polygon built from user waypoints
-      setClipPolygon(window._phaseClipPolygon);
-      if (window._phaseStartOverride) {
-        startLat = window._phaseStartOverride.lat;
-        startLon = window._phaseStartOverride.lon;
-      }
 
     } else if (phaseTier === 2) {
       const p1EndLat = startLat ?? rampLat;
@@ -908,9 +866,33 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
           }
 
         } else if (phaseTier === 2 || phaseTier === 3) {
-          // Corridor clip polygon already built above before the clip block.
-          // Nothing to do here — depth polygon routing handles Phase 2/3.
-          dockWaypoints = null;
+          // Use point waypoints as corridor but interpolate densely (every 500ft)
+          // so no segment is long enough to cross land or islands.
+          const pts = allStructs.filter(s => s.type === 'point' && s.lat && s.lon)
+            .sort((a, b) => (a.addedAt || '').localeCompare(b.addedAt || ''));
+          const corridorPts = phaseTier === 2 ? pts.slice(0, 3) : pts.slice(3);
+          if (corridorPts.length >= 2) {
+            const STEP_FT = 500;
+            const D2R = Math.PI / 180;
+            // Start from where previous phase ended
+            const allWpts = [[startLat ?? refLat, startLon ?? refLon],
+              ...corridorPts.map(s => [s.lat, s.lon])];
+            const dense = [allWpts[0]];
+            for (let i = 0; i < allWpts.length - 1; i++) {
+              const [lat1, lon1] = allWpts[i];
+              const [lat2, lon2] = allWpts[i + 1];
+              const dLat = (lat2 - lat1) * 111320;
+              const dLon = (lon2 - lon1) * 111320 * Math.cos(lat1 * D2R);
+              const distFt = Math.sqrt(dLat * dLat + dLon * dLon) * 3.28084;
+              const steps = Math.max(1, Math.floor(distFt / STEP_FT));
+              for (let s = 1; s <= steps; s++) {
+                const t = s / steps;
+                dense.push([lat1 + (lat2 - lat1) * t, lon1 + (lon2 - lon1) * t]);
+              }
+            }
+            dockWaypoints = dense;
+            console.log(`[smart-plan] Phase ${phaseTier}: ${corridorPts.length} points → ${dense.length} interpolated waypoints`);
+          }
         }
       } catch (e) {
         console.warn('[smart-plan] waypoint build failed:', e.message);
