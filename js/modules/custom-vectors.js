@@ -72,13 +72,10 @@ async function loadMyStructures() {
 
 async function saveMyStructures() {
   if (!window.DB?.db) return;
-  try {
-    await window.DB.put('layers', {
-      name: MY_STRUCTURES_KEY,
-      geo: myStructuresGeo,
-      importedAt: new Date().toISOString(),
-    });
-  } catch (_) {}
+  const rec = { name: MY_STRUCTURES_KEY, geo: myStructuresGeo, importedAt: new Date().toISOString() };
+  try { await window.DB.put('layers', rec); } catch (_) {}
+  // Sync to cloud so structures are available across devices
+  window.pushItemOnSave?.('layer', MY_STRUCTURES_KEY, rec);
 }
 
 // ── Layer rendering ───────────────────────────────────────────────────────────
@@ -342,7 +339,9 @@ window.addCustomVectorLayer = function addCustomVectorLayer(layerName, geojson) 
   try { map.fitBounds(layer.getBounds(), { padding: [30, 30] }); } catch (_) {}
   renderVectorList();
   if (window.DB?.db) {
-    try { window.DB.put('layers', { name: layerName, geo: geojson, importedAt: new Date().toISOString() }); } catch (_) {}
+    const rec = { name: layerName, geo: geojson, importedAt: new Date().toISOString() };
+    try { window.DB.put('layers', rec); } catch (_) {}
+    window.pushItemOnSave?.('layer', layerName, rec);
   }
 
   // If imported GeoJSON contains Point features with known structure types or
@@ -391,7 +390,7 @@ window.getMyStructures = function() {
   return myStructuresGeo.features.map(f => ({
     name:     f.properties?.name  || 'Structure',
     type:     f.properties?.type  || 'unknown',
-    label:   f.properties?.label   || null,        // ← ADD THIS
+    label:    f.properties?.label || null,
     quality:  f.properties?.quality ?? 5,
     lat:      f.geometry?.coordinates?.[1],
     lon:      f.geometry?.coordinates?.[0],

@@ -342,6 +342,8 @@ function normalizeCsvRow(row, importedFrom = 'csv') {
 
 async function saveCatches() {
   try { await window.DB?.put('journal', { name: CATCHES_DB_KEY, data: getCatches() }); } catch (_) {}
+  // Sync to cloud so catches are available across devices
+  try { window.pushItemOnSave?.('catch', CATCHES_DB_KEY, { name: CATCHES_DB_KEY, data: getCatches() }); } catch (_) {}
 }
 async function saveQueue() {
   try { await window.DB?.put('journal', { name: QUEUE_DB_KEY, data: getQueue() }); } catch (_) {}
@@ -586,6 +588,7 @@ function renderReview(body) {
       <button id="reviewPendingBtn" class="small">Pending ${counts.pending}</button>
       <button id="exportQueueBtn" class="small">⬇ Export Cleaned CSV</button>
       <button id="enrichQueueBtn" class="small">🌦 Check Missing History</button>
+      <button id="approveAllPendingBtn" class="small primary">✅ Approve All Pending</button>
       <button id="clearImportedBtn" class="small">Clear imported/approved</button>
       <button id="clearQueueBtn" class="warn small">🗑 Clear Queue</button>
       <span class="muted">Total ${counts.total} · Board ${counts.board} · Approved ${counts.approved} · Rejected ${counts.rejected}</span>
@@ -600,6 +603,14 @@ function renderReview(body) {
   body.querySelector('#exportQueueBtn')?.addEventListener('click', exportQueueCsv);
   body.querySelector('#enrichQueueBtn')?.addEventListener('click', () => enrichMissingHistoricalData(body));
   body.querySelector('#reviewPendingBtn')?.addEventListener('click', () => { selectedQueueId = queue.find(q => q.status === 'pending')?.id || selectedQueueId; renderReview(body); });
+  body.querySelector('#approveAllPendingBtn')?.addEventListener('click', async () => {
+    const pending = getQueue().filter(q => q.status === 'pending');
+    if (!pending.length) return;
+    if (!confirm(`Approve all ${pending.length} pending catches to journal?`)) return;
+    for (const q of pending) await approveQueueItem(q);
+    await saveCatches(); await saveQueue();
+    renderCatchSubtab();
+  });
   body.querySelector('#clearImportedBtn')?.addEventListener('click', async () => {
     setQueue(getQueue().filter(q => !['approved', 'imported'].includes(q.status)));
     await saveQueue(); renderReview(body);
@@ -855,11 +866,22 @@ async function importCsvFiles(files) {
   // that are about to be enriched from GPS.
   try { await loadAccessIndex(); } catch (_) {}
   let added = 0, skipped = 0, skippedHandheld = 0;
+  let autoApproved = 0;
   for (const file of files) {
     const text = await file.text();
     const rows = parseCsv(text);
     for (const row of rows) {
       const item = enrichItemFromGps(normalizeCsvRow(row, file.name));
+      // Auto-approve rows already marked as imported in the CSV — skip review queue
+      if (row.review_status === 'imported') {
+        if (!getCatches().some(c => c.sourceFile === item.filename && item.filename)) {
+          item.status = 'imported';
+          item.verified.reviewed = true;
+          await approveQueueItem(item);
+          autoApproved++;
+        } else { skipped++; }
+        continue;
+      }
       if (!includeRejected && !item.verified.hasFish) { skipped++; continue; }
       if (boardOnly && !item.verified.onBoard) { skippedHandheld++; continue; }
       if (getQueue().some(q => q.id === item.id)) { skipped++; continue; }
@@ -867,7 +889,7 @@ async function importCsvFiles(files) {
     }
   }
   await saveQueue();
-  if (status) status.textContent = `Imported ${added} queue item(s)${skippedHandheld ? ` · skipped ${skippedHandheld} handheld/non-board` : ''}${skipped ? ` · skipped ${skipped} other/duplicate` : ''}.`;
+  if (status) status.textContent = `${autoApproved ? `Auto-approved ${autoApproved} to journal. ` : ''}${added ? `Added ${added} to review queue. ` : ''}${skippedHandheld ? `Skipped ${skippedHandheld} handheld. ` : ''}${skipped ? `Skipped ${skipped} duplicate. ` : ''}`.trim();
   currentSubtab = 'review'; selectedQueueId = getQueue().find(q => q.status === 'pending')?.id || getQueue()[0]?.id || null;
   setTimeout(renderCatchCenter, 700);
 }

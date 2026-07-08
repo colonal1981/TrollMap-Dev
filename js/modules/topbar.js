@@ -5,6 +5,7 @@
 
 import { setBase, fitMap, renderMap } from '../core/map-init.js';
 import { state } from '../core/state.js';
+import { pushAllLocalToCloud, pullUpdatesOnLoad } from './cloud-sync.js';
 
 function wireButtons() {
   document.getElementById('basemap')?.addEventListener('change', (e) => {
@@ -29,15 +30,25 @@ function wireButtons() {
   function closeModal() {
     if (modal) modal.classList.remove('open');
   }
-document.getElementById('pushCloudBtn')?.addEventListener('click', async () => {
-  const { pushAllLocalToCloud } = await import('./cloud-sync.js');
-  pushAllLocalToCloud();
-});
 
-document.getElementById('pullCloudBtn')?.addEventListener('click', async () => {
-  const { pullUpdatesOnLoad } = await import('./cloud-sync.js');
-  pullUpdatesOnLoad();
-});
+  document.getElementById('pushCloudBtn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('pushCloudBtn');
+    btn.textContent = '☁️ Pushing...';
+    btn.disabled = true;
+    try { await pushAllLocalToCloud(); btn.textContent = '✅ Pushed'; }
+    catch (e) { btn.textContent = '❌ Failed'; }
+    setTimeout(() => { btn.textContent = '☁️ Push'; btn.disabled = false; }, 3000);
+  });
+
+  document.getElementById('pullCloudBtn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('pullCloudBtn');
+    btn.textContent = '⬇️ Pulling...';
+    btn.disabled = true;
+    try { await pullUpdatesOnLoad(); btn.textContent = '✅ Pulled'; }
+    catch (e) { btn.textContent = '❌ Failed'; }
+    setTimeout(() => { btn.textContent = '⬇️ Pull'; btn.disabled = false; }, 3000);
+  });
+
   document.getElementById('topSearchBtn')?.addEventListener('click', openModal);
   document.getElementById('mapSearchBtn')?.addEventListener('click', openModal);
   document.getElementById('searchClose')?.addEventListener('click', closeModal);
