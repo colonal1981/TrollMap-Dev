@@ -137,12 +137,15 @@ Rules:
         temperature: 0.2,
       }),
     });
-    if (!res.ok) return null;
+    if (!res.ok) { console.warn('[zone-picker] Groq HTTP failed:', res.status); return null; }
     const data = await res.json();
     const text = data.choices?.[0]?.message?.content?.trim() || '';
-    const match = text.match(/\[.*\]/s);
-    if (!match) return null;
-    const ids = JSON.parse(match[0]);
+    console.log('[zone-picker] Groq raw response:', text);
+    const clean = text.replace(/```json|```/g, '').trim();
+    const start = clean.indexOf('[');
+    const end = clean.lastIndexOf(']');
+    if (start === -1 || end === -1) { console.warn('[zone-picker] No JSON array found in response'); return null; }
+    const ids = JSON.parse(clean.slice(start, end + 1));
     console.log(`[smart-plan] Groq zone picks for phase ${phaseTier}:`, ids);
     return ids.filter(id => candidates.some(z => z.id === id));
   } catch (e) {
