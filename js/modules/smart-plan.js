@@ -157,14 +157,17 @@ function selectZoneSpine(zones, phaseRec, startLat, startLon, maxDistMi, phaseTi
         const zBearing = z.bearing;
         const turnAngle = curBearing !== null ? angleDiff(curBearing, zBearing) : 0;
         if (curBearing !== null && turnAngle > MAX_TURN_DEG) continue;
-        // Short zones that require a turn are likely cove dead-ends — skip them
-        if (curBearing !== null && turnAngle > 20 && z.length_ft < MIN_ZONE_FT_TURN) continue;
+        // Short zones that dead-end (both endpoints close together) are cove loops — skip
+        // Don't skip short zones that are valid transitions to longer runs
 
         // Score: distance heavily weighted first, then catches and length
         // For first zone (chain empty), distance from startLat/startLon dominates
         // For subsequent zones, gap distance dominates
-        const distWeight = chain.length === 0 ? 3.0 : 1.0;
-        const score = (d * distWeight) - (z.catch_count || 0) * 500 - (z.fishing_spot_count || 0) * 10 - (z.length_ft / 20);
+        // First zone: pick best structure in range, not just closest — willing to transit
+        // Subsequent zones: gap distance dominates to maintain continuity
+        const distWeight = chain.length === 0 ? 0.5 : 1.0;
+        const lengthBonus = chain.length === 0 ? 3 : 5; // stronger length preference for first zone
+        const score = (d * distWeight) - (z.catch_count || 0) * 500 - (z.fishing_spot_count || 0) * 10 - (z.length_ft / lengthBonus);
         if (score < bestScore) {
           bestScore = score;
           best = { zone: z, entryLat: eLat, entryLon: eLon };
