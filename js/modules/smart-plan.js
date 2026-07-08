@@ -904,8 +904,7 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
           // Use labeled route waypoints — Ryan's hand-drawn lane becomes the spine
           // Dense interpolation at 200ft so no segment crosses land
           const STEP_FT = 200;
-          const allWpts = [[startLat ?? refLat, startLon ?? refLon],
-            ...labeledPts.map(s => [s.lat, s.lon])];
+          const allWpts = labeledPts.map(s => [s.lat, s.lon]);
           const dense = [allWpts[0]];
           for (let i = 0; i < allWpts.length - 1; i++) {
             const [la1,lo1] = allWpts[i], [la2,lo2] = allWpts[i+1];
@@ -958,7 +957,7 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
       startLon:       startLon ?? rampLon ?? null,
       endLat:         endLat ?? null,
       endLon:         endLon ?? null,
-      targetLengthFt: dockWaypoints ? null : (targetLengthFt || null),
+      targetLengthFt: targetLengthFt || null,
       isReturnPass:   isReturnPass,
       lockedBearing:  lockedBearing,
       smartPlan:      true,
