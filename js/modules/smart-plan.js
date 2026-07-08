@@ -902,7 +902,19 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
     // ── Zone-based routing (new) ──────────────────────────────────────────────
     // If a zone registry exists for this lake, ask Groq to pick the best zones
     // for this phase and use their spine coords instead of depth-polygon routing.
-    const r2Key = state.ACTIVE_CONTOUR_KEY;
+    // Derive R2 key from state (set after contour loads) or from plan lake selector
+    const LAKE_TO_R2 = {
+      'Lake Wateree, SC': 'lake_wateree_fishing_creek',
+      'Fishing Creek Reservoir, SC': 'lake_wateree_fishing_creek',
+      'Lake Marion, SC': 'lake_marion',
+      'Lake Moultrie, SC': 'lake_moultrie',
+      'Lake Murray, SC': 'lake_murray',
+      'Lake Wylie, SC/NC': 'lake_wylie',
+      'Lake Hartwell, SC/GA': 'lake_hartwell',
+      'Lake Norman, NC': 'lake_norman_mountain_island',
+    };
+    const planLakeName = document.getElementById('planLake')?.value || '';
+    const r2Key = state.ACTIVE_CONTOUR_KEY || LAKE_TO_R2[planLakeName] || null;
     if (r2Key && !isReturnPass) {
       try {
         const zones = await loadZoneRegistry(r2Key);
