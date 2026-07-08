@@ -89,6 +89,7 @@ async function pickZonesWithGroq(zones, phaseRec, species, conditions, rampLat, 
   const depthMax = phaseRec.depthMax;
   const MAX_DIST_MI = 4.0;
 
+  console.log(`[zone-picker] called: ${zones?.length} zones, depthMin=${phaseRec?.depthMin}, depthMax=${phaseRec?.depthMax}`);
   const candidates = zones
     .filter(z => {
       const zDepth = z.depth_ft;
@@ -921,7 +922,9 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
         if (zones?.length) {
           const conditions = `season=${phase.name} time=${phase.startStr}`;
           const speciesStr = document.querySelector('#planSpeciesChecks input:checked')?.value || 'Striped Bass';
+          console.log(`[smart-plan] Zone picker: ${zones.length} zones, depth ${phaseRec?.depthMin}-${phaseRec?.depthMax}ft, species=${speciesStr}, r2Key=${r2Key}`);
           const pickedIds = await pickZonesWithGroq(zones, phaseRec, speciesStr, conditions, rampLat, rampLon, phase.tier ?? phase.num);
+          console.log(`[smart-plan] Zone picker result:`, pickedIds);
           if (pickedIds?.length) {
             // Load spine coords for picked zones and chain them
             const allSpineCoords = [];
