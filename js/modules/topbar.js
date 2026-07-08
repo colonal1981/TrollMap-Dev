@@ -29,7 +29,15 @@ function wireButtons() {
   function closeModal() {
     if (modal) modal.classList.remove('open');
   }
+document.getElementById('pushCloudBtn')?.addEventListener('click', async () => {
+  const { pushAllLocalToCloud } = await import('./cloud-sync.js');
+  pushAllLocalToCloud();
+});
 
+document.getElementById('pullCloudBtn')?.addEventListener('click', async () => {
+  const { pullUpdatesOnLoad } = await import('./cloud-sync.js');
+  pullUpdatesOnLoad();
+});
   document.getElementById('topSearchBtn')?.addEventListener('click', openModal);
   document.getElementById('mapSearchBtn')?.addEventListener('click', openModal);
   document.getElementById('searchClose')?.addEventListener('click', closeModal);
