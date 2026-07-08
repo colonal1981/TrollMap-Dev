@@ -123,7 +123,7 @@ Rules:
 - No explanation, no markdown, just the JSON array`;
 
   try {
-    const res = await fetch(`${CF_WORKER_URL}/groq`, {
+    const res = await fetch(`${CF_WORKER_URL}/groq-query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

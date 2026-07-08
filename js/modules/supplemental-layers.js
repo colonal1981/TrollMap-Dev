@@ -168,6 +168,13 @@ let _depthAreaGeoJSON   = null; // raw GeoJSON — accessible to route-builder
 
 // Export getter for route-builder.js to access depth polygon data
 export function getDepthAreaGeoJSON() { return _depthAreaGeoJSON; }
+export function bringDepthAreasToBack() {
+  if (_depthAreaLayer) _depthAreaLayer.bringToBack();
+}
+// Expose globally so contour-data.js can call without a direct import cycle
+window.bringDepthAreasToBack = function() {
+  if (_depthAreaLayer) _depthAreaLayer.bringToBack();
+};
 
 // Fishing spots toggle
 let _fishingLayer       = null;

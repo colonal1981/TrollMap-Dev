@@ -268,6 +268,12 @@ export function renderContourLayer(showSmart = true, showRaw = false) {
       },
     }).addTo(state.CONTOUR_LAYER);
   }
+
+  // Push depth area polygons behind contour lines so they don't overlap visually.
+  // supplemental-layers.js owns _depthAreaLayer — call its exported function if available.
+  if (typeof window.bringDepthAreasToBack === 'function') {
+    window.bringDepthAreasToBack();
+  }
 }
 
 // ── Status panel helpers ──────────────────────────────────────────────────────
