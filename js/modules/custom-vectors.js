@@ -391,6 +391,7 @@ window.getMyStructures = function() {
   return myStructuresGeo.features.map(f => ({
     name:     f.properties?.name  || 'Structure',
     type:     f.properties?.type  || 'unknown',
+    label:   f.properties?.label   || null,        // ← ADD THIS
     quality:  f.properties?.quality ?? 5,
     lat:      f.geometry?.coordinates?.[1],
     lon:      f.geometry?.coordinates?.[0],
