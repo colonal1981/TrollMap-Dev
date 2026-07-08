@@ -1513,9 +1513,33 @@ export function generateAndCommitRoute(overrides = {}) {
     minSpacing: parseFloat(document.getElementById('rbMinSpacing')?.value)|| 25,
   };
 
+  // If manual waypoints are provided (e.g. dock spine for Phase 1), use them
+  // directly as the spine instead of depth polygon or contour routing.
+  let tracks;
+  if (overrides.useWaypointSpine && overrides.manualWaypoints?.length >= 2) {
+    const spine = overrides.manualWaypoints; // [[lat,lon], ...]
+    let pts = clampToClip(patternAlongSpine(spine, {
+      pattern:    cfg.pattern,
+      amplitude:  cfg.amplitude,
+      wave:       cfg.wave,
+      straightFt: cfg.straightFt,
+      spacing:    cfg.spacing,
+      ppw:        cfg.ppw,
+      dynamic:    cfg.dynamic,
+      bias:       cfg.bias,
+      minSpacing: cfg.minSpacing,
+    }));
+    if (pts.length < 2) pts = spine; // fallback to raw waypoints if clamp kills it
+    if (cfg.targetLengthFt > 0) pts = trimPolylineToLength(pts, cfg.targetLengthFt);
+    tracks = pts.length >= 2 ? [{ name: 'dock_spine', pts, depth: (cfg.depthMin + cfg.depthMax) / 2 }] : null;
+    console.log(`[route-builder] dock waypoint spine: ${pts.length} pts`);
+  }
+
   // Try depth polygon routing first (uses DEPARE zone boundaries from supplemental-layers)
   // Falls back to contour routing if no polygon data is available for this lake/depth
-  let tracks = generateDepthPolygonRoutes(cfg);
+  if (!tracks) {
+    tracks = generateDepthPolygonRoutes(cfg);
+  }
   if (!tracks) {
     tracks = generateContourRoutes(cfg);
   }
