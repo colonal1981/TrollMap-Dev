@@ -2564,7 +2564,7 @@ ANGLER CONSTRAINTS (never violate these):
 - No freshwater live bait
 - Maximum 2 rods in the water at once (port + starboard)
 - Equipment list is fixed — only suggest lures the angler owns
-- Kayak platform: Native Watersports Slayer Propel Max 12.5 + NK180 24V bow-mount trolling motor
+- Kayak platform: Native Watersports Slayer Propel Max 12.5 + NK180 24V stern-mount electric outboard motor
   Faster speeds drain battery faster; speed suggestions must be realistic for a full-day kayak session
 - Depth control: lead length only (no downriggers, no planer boards)
 
@@ -2860,6 +2860,27 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
       // --- /coach-plan route: Iterative Groq fishing coach (one suggestion at a time) ---
       if (path === '/coach-plan' && request.method === 'POST') {
         return handleCoachPlan(request, env);
+      }
+
+      // ── /groq-query: simple Groq proxy for zone picking and other lightweight AI tasks ──
+      if (path === '/groq-query' && request.method === 'POST') {
+        try {
+          const body = await request.json();
+          const groqKey = env?.GROQ_API_KEY;
+          if (!groqKey) return new Response(JSON.stringify({ error: 'Groq API key not configured' }), { status: 500, headers: JSON_HEADERS });
+          const { messages, model = 'llama-3.3-70b-versatile', max_tokens = 200, temperature = 0.2 } = body;
+          if (!messages?.length) return new Response(JSON.stringify({ error: 'Missing messages' }), { status: 400, headers: JSON_HEADERS });
+          const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model, messages, max_tokens, temperature }),
+          });
+          const data = await r.json();
+          if (!r.ok) return new Response(JSON.stringify({ error: data.error?.message || `Groq HTTP ${r.status}` }), { status: r.status, headers: JSON_HEADERS });
+          return new Response(JSON.stringify(data), { headers: JSON_HEADERS });
+        } catch (e) {
+          return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: JSON_HEADERS });
+        }
       }
 
       if (path === '/detect-structure' && request.method === 'POST') {
