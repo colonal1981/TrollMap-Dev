@@ -1305,13 +1305,26 @@ export async function runSmartPlan() {
       const next = appendConnectorThenTracks(assembledSmartPlanTracks, curLat, curLon, phaseTracks, fromLabel, toLabel);
       curLat = next.lat; curLon = next.lon;
 
-      if (i === 0 && lockedBearing === null && Number.isFinite(rampLat) && Number.isFinite(rampLon)) {
-        const lastFishingTrack = [...phaseTracks].reverse().find(t => t?.pts?.length >= 2);
-        const farPt = lastFishingTrack?.pts?.[lastFishingTrack.pts.length - 1];
-        if (farPt) {
-          const dLat = (farPt[0] - rampLat) * 111320;
-          const dLon = (farPt[1] - rampLon) * 111320 * Math.cos(rampLat * Math.PI / 180);
-          lockedBearing = Math.atan2(dLon, dLat) * 180 / Math.PI;
+      // Update lockedBearing after each phase from exit direction.
+      // Phase 1 sets the outbound bearing from its endpoint.
+      // Phase 2 continues same direction (deeper water, same corridor).
+      // Phase 3 (last) flips 180° — always return in opposite direction
+      // of travel so the plan goes OUT and comes BACK regardless of which
+      // direction Phase 1 chose. Dynamic, not hardcoded.
+      const lastFishingTrack = [...phaseTracks].reverse().find(t => t?.pts?.length >= 2);
+      if (lastFishingTrack?.pts?.length >= 2) {
+        const pts = lastFishingTrack.pts;
+        const lookback = Math.max(2, Math.floor(pts.length * 0.1));
+        const fromPt = pts[pts.length - lookback];
+        const toPt   = pts[pts.length - 1];
+        const dLat = (toPt[0] - fromPt[0]) * 111320;
+        const dLon = (toPt[1] - fromPt[1]) * 111320 * Math.cos(fromPt[0] * Math.PI / 180);
+        if (Math.abs(dLat) > 0.1 || Math.abs(dLon) > 0.1) {
+          const exitBearing = Math.atan2(dLon, dLat) * 180 / Math.PI;
+          // Last phase: flip bearing to head back toward ramp
+          const isLast = (i === phases.length - 1);
+          lockedBearing = isLast ? (exitBearing + 180) % 360 : exitBearing;
+          console.log(`[smart-plan] Phase ${phases[i].num} exit bearing: ${exitBearing.toFixed(0)}° → next lockedBearing: ${lockedBearing.toFixed(0)}°`);
         }
       }
     }
