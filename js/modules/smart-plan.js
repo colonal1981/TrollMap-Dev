@@ -199,7 +199,21 @@ function selectZoneSpine(zones, phaseRec, startLat, startLon, maxDistMi, phaseTi
     if (totalFt > maxDistMi * 5280 * 0.6) break; // 60% of range budget
   }
 
-  console.log(`[zone-spine] Phase ${phaseTier}: chained ${chain.length} zones (${chain.join(', ')})`);
+  // Debug: show top candidates that were considered for first zone
+  if (chain.length > 0) {
+    const firstCandidates = candidates
+      .map(z => {
+        const dStart = distFt(startLat, startLon, z.start_lat, z.start_lon);
+        const dEnd = distFt(startLat, startLon, z.end_lat, z.end_lon);
+        const d = Math.min(dStart, dEnd);
+        const score = (d * 0.5) - (z.catch_count || 0) * 500 - (z.fishing_spot_count || 0) * 10 - (z.length_ft / 3);
+        return { id: z.id, d: Math.round(d), len: z.length_ft, score: Math.round(score), depth: z.depth_ft };
+      })
+      .sort((a, b) => a.score - b.score)
+      .slice(0, 8);
+    console.log(`[zone-spine] Phase ${phaseTier} top candidates:`, firstCandidates.map(c => `${c.id}(${c.depth}ft,${c.len}ft,${Math.round(c.d)}ft away,score=${c.score})`).join(' | '));
+  }
+  console.log(`[zone-spine] Phase ${phaseTier}: chained ${chain.length} zones (${chain.join(', ')})`)
   return chain;
 }
 
