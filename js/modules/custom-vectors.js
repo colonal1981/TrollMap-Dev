@@ -344,6 +344,35 @@ window.addCustomVectorLayer = function addCustomVectorLayer(layerName, geojson) 
   if (window.DB?.db) {
     try { window.DB.put('layers', { name: layerName, geo: geojson, importedAt: new Date().toISOString() }); } catch (_) {}
   }
+
+  // If imported GeoJSON contains Point features with known structure types or
+  // labels, merge them into My Structures so getMyStructures() can find them.
+  // This allows imported route templates (Ln1/Ln2/Ln3/Ln4 waypoints) to be
+  // used by Smart Plan without manually re-dropping every point.
+  const structurePoints = (geojson.features || []).filter(f =>
+    f.geometry?.type === 'Point' &&
+    (STRUCTURE_TYPES[f.properties?.type] || f.properties?.label)
+  );
+  if (structurePoints.length > 0) {
+    // Merge into myStructuresGeo — replace any existing features with same name/label
+    const existingNames = new Set(myStructuresGeo.features.map(f => f.properties?.name).filter(Boolean));
+    let added = 0;
+    for (const f of structurePoints) {
+      const name = f.properties?.name;
+      if (name && existingNames.has(name)) continue; // skip duplicates
+      myStructuresGeo.features.push({
+        ...f,
+        properties: { ...f.properties, addedAt: f.properties?.addedAt || new Date().toISOString() }
+      });
+      added++;
+    }
+    if (added > 0) {
+      pinCount = myStructuresGeo.features.length;
+      rebuildMyStructuresLayer();
+      saveMyStructures();
+      console.log(`[custom-vectors] merged ${added} structure points from "${layerName}" into My Structures`);
+    }
+  }
 };
 
 window.removeCustomVectorLayer = function(layerName) {
