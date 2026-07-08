@@ -893,7 +893,35 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
         const D2R = Math.PI / 180;
         const refLat = rampLat, refLon = rampLon;
 
-        if (phaseTier === 1) {
+        // Check for labeled route waypoints first (from converted GPX lanes)
+        // label: p1=Phase1, p2=Phase2, p3=Phase3, p4=return
+        const labelKey = `p${phaseTier}`;
+        const labeledPts = allStructs
+          .filter(s => s.label === labelKey && s.lat && s.lon)
+          .sort((a, b) => (a.addedAt||'').localeCompare(b.addedAt||''));
+
+        if (labeledPts.length >= 2) {
+          // Use labeled route waypoints — Ryan's hand-drawn lane becomes the spine
+          // Dense interpolation at 200ft so no segment crosses land
+          const STEP_FT = 200;
+          const allWpts = [[startLat ?? refLat, startLon ?? refLon],
+            ...labeledPts.map(s => [s.lat, s.lon])];
+          const dense = [allWpts[0]];
+          for (let i = 0; i < allWpts.length - 1; i++) {
+            const [la1,lo1] = allWpts[i], [la2,lo2] = allWpts[i+1];
+            const dLat=(la2-la1)*111320, dLon=(lo2-lo1)*111320*Math.cos(la1*D2R);
+            const distFt=Math.sqrt(dLat*dLat+dLon*dLon)*3.28084;
+            const steps=Math.max(1,Math.floor(distFt/STEP_FT));
+            for (let s=1;s<=steps;s++) {
+              const t=s/steps;
+              dense.push([la1+(la2-la1)*t, lo1+(lo2-lo1)*t]);
+            }
+          }
+          dockWaypoints = dense;
+          console.log(`[smart-plan] Phase ${phaseTier}: using ${labeledPts.length} labeled waypoints (${dense.length} interpolated at 200ft)`);
+
+        } else if (phaseTier === 1) {
+          // Fall back to dock markers sorted by distance from ramp
           const docks = allStructs.filter(s => s.type === 'dock' && s.lat && s.lon);
           if (docks.length >= 3) {
             docks.sort((a, b) => {
@@ -901,15 +929,12 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
               const db = Math.sqrt(Math.pow((b.lat-refLat)*111320,2)+Math.pow((b.lon-refLon)*111320*Math.cos(refLat*D2R),2));
               return da - db;
             });
-            // Use raw dock positions — no offset. The sine amplitude handles
-            // the perpendicular oscillation away from the bank.
             dockWaypoints = [[refLat, refLon], ...docks.map(s => [s.lat, s.lon])];
-            console.log(`[smart-plan] Phase 1: using ${docks.length} dock waypoints as spine`);
+            console.log(`[smart-plan] Phase 1: using ${docks.length} dock waypoints (fallback)`);
           }
 
         } else if (phaseTier === 2 || phaseTier === 3) {
-          // Corridor polygon already built above before clip block.
-          // Depth polygon routing handles Phase 2/3 — no waypoint spine needed.
+          // No labeled waypoints and no dock fallback — depth polygon routing
           dockWaypoints = null;
         }
       } catch (e) {
