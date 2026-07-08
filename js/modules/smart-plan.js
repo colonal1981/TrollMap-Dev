@@ -842,43 +842,60 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
     // use those as the spine waypoints instead of the depth polygon edge.
     // Dock positions define the productive bank — troll parallel to them
     // at ~75ft offset rather than following cove-tracing polygon geometry.
+    // QuickDraw waypoint spine logic:
+    // Phase 1 (Dawn):      'dock' markers → troll the dock line
+    // Phase 2 (Transition):'point' #1 → skip-past-cove waypoint
+    // Phase 3 (Deep):      'point' #2+ → full corridor spine
     let dockWaypoints = null;
-    if (phaseTier === 1 && typeof window.getMyStructures === 'function') {
+    if (typeof window.getMyStructures === 'function') {
       try {
-        const structs = window.getMyStructures().filter(s => s.type === 'dock' && s.lat && s.lon);
-        if (structs.length >= 3) {
-          // Sort docks by bearing from ramp so they progress in trolling order
-          const D2R = Math.PI / 180;
-          const refLat = rampLat, refLon = rampLon;
-          const withBearing = structs.map(s => {
-            const dLat = (s.lat - refLat) * 111320;
-            const dLon = (s.lon - refLon) * 111320 * Math.cos(refLat * D2R);
-            const brng = Math.atan2(dLon, dLat) * 180 / Math.PI;
-            return { ...s, brng };
-          });
-          // Sort by bearing — docks northwest of ramp (270-360 or 0-90 range)
-          // Use cumulative distance from ramp as primary sort for a natural troll path
-          withBearing.sort((a, b) => {
-            const da = Math.sqrt(Math.pow((a.lat-refLat)*111320,2)+Math.pow((a.lon-refLon)*111320*Math.cos(refLat*D2R),2));
-            const db = Math.sqrt(Math.pow((b.lat-refLat)*111320,2)+Math.pow((b.lon-refLon)*111320*Math.cos(refLat*D2R),2));
-            return da - db;
-          });
-          // Offset each dock ~75ft perpendicular toward open water (away from shore)
-          // Use a simple outward offset: move point away from the nearest land
-          // by nudging it toward the lake center (ramp is on the water, so away from shore = toward ramp area)
-          dockWaypoints = [[refLat, refLon], ...withBearing.map(s => {
-            // Offset 75ft (~0.000225 deg lat) toward open water
-            // Direction: from dock toward nearest open water approximated by bearing FROM dock TO lake center
-            const cLat = 34.37, cLon = -80.75; // approximate Wateree center
-            const dLat = (cLat - s.lat); const dLon = (cLon - s.lon);
-            const mag = Math.sqrt(dLat*dLat + dLon*dLon) || 1;
-            const offsetDeg = 75 / 111320;
-            return [s.lat + (dLat/mag)*offsetDeg, s.lon + (dLon/mag)*offsetDeg];
-          })];
-          console.log(`[smart-plan] Phase 1: using ${structs.length} dock waypoints as spine`);
+        const allStructs = window.getMyStructures();
+        const D2R = Math.PI / 180;
+        const refLat = rampLat, refLon = rampLon;
+
+        if (phaseTier === 1) {
+          const docks = allStructs.filter(s => s.type === 'dock' && s.lat && s.lon);
+          if (docks.length >= 3) {
+            docks.sort((a, b) => {
+              const da = Math.sqrt(Math.pow((a.lat-refLat)*111320,2)+Math.pow((a.lon-refLon)*111320*Math.cos(refLat*D2R),2));
+              const db = Math.sqrt(Math.pow((b.lat-refLat)*111320,2)+Math.pow((b.lon-refLon)*111320*Math.cos(refLat*D2R),2));
+              return da - db;
+            });
+            dockWaypoints = [[refLat, refLon], ...docks.map(s => {
+              const cLat = 34.37, cLon = -80.75;
+              const dLat2 = (cLat - s.lat); const dLon2 = (cLon - s.lon);
+              const mag = Math.sqrt(dLat2*dLat2 + dLon2*dLon2) || 1;
+              const offsetDeg = 75 / 111320;
+              return [s.lat + (dLat2/mag)*offsetDeg, s.lon + (dLon2/mag)*offsetDeg];
+            })];
+            console.log(`[smart-plan] Phase 1: using ${docks.length} dock waypoints as spine`);
+          }
+
+        } else if (phaseTier === 2) {
+          const pts = allStructs.filter(s => s.type === 'point' && s.lat && s.lon)
+            .sort((a, b) => (a.addedAt || '').localeCompare(b.addedAt || ''));
+          if (pts.length >= 1) {
+            dockWaypoints = [
+              [startLat ?? refLat, startLon ?? refLon],
+              [pts[0].lat, pts[0].lon],
+            ];
+            console.log(`[smart-plan] Phase 2: using point to skip cove @ ${pts[0].lat.toFixed(4)},${pts[0].lon.toFixed(4)}`);
+          }
+
+        } else if (phaseTier === 3) {
+          const pts = allStructs.filter(s => s.type === 'point' && s.lat && s.lon)
+            .sort((a, b) => (a.addedAt || '').localeCompare(b.addedAt || ''));
+          if (pts.length >= 2) {
+            const corridorPts = pts.slice(1); // skip Phase 2 cove point
+            dockWaypoints = [
+              [startLat ?? refLat, startLon ?? refLon],
+              ...corridorPts.map(s => [s.lat, s.lon]),
+            ];
+            console.log(`[smart-plan] Phase 3: using ${corridorPts.length} point waypoints as corridor`);
+          }
         }
       } catch (e) {
-        console.warn('[smart-plan] dock waypoint build failed:', e.message);
+        console.warn('[smart-plan] waypoint build failed:', e.message);
         dockWaypoints = null;
       }
     }
