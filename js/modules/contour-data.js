@@ -264,7 +264,9 @@ export function renderContourLayer(showSmart = true, showRaw = false) {
       },
       onEachFeature(feat, layer) {
         const d = feat.properties?.depth_ft;
-        if (d != null) layer.bindTooltip(`${d} ft`, { sticky: true });
+        const name = feat.properties?.name;
+        const tip = name ? name : (d != null ? `${d} ft` : null);
+        if (tip) layer.bindTooltip(tip, { sticky: true });
       },
     }).addTo(state.CONTOUR_LAYER);
   }
