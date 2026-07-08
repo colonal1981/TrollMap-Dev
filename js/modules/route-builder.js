@@ -1608,7 +1608,7 @@ export function generateAndCommitRoute(overrides = {}) {
   // its far end is closer to the requested phase start. This used to be swapped.
   const startLat = cfg.startLat ?? rampLat;
   const startLon = cfg.startLon ?? rampLon;
-  if (isValidLatLon(startLat, startLon)) {
+  if (isValidLatLon(startLat, startLon) && !overrides.useWaypointSpine) {
     tracks = tracks.map(track => {
       if (!track.pts || track.pts.length < 2) return track;
       const first = track.pts[0];

@@ -961,7 +961,7 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
       startLon:       startLon ?? rampLon ?? null,
       endLat:         endLat ?? null,
       endLon:         endLon ?? null,
-      targetLengthFt: targetLengthFt || null,
+      targetLengthFt: dockWaypoints ? null : (targetLengthFt || null),
       isReturnPass:   isReturnPass,
       lockedBearing:  lockedBearing,
       smartPlan:      true,
