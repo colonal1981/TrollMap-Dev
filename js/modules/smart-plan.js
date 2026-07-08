@@ -23,7 +23,7 @@
  *   100Ah LiFePO4 battery, 2 rods max in water at any time.
  */
 
-import { state } from '../core/state.js';
+import { state, CF_WORKER_URL } from '../core/state.js';
 import { renderAll } from '../core/map-init.js';
 import { esc } from '../utils/escape.js';
 import { newRodRow } from '../utils/rod-row.js';
@@ -34,6 +34,119 @@ import { getLureColor } from '../data/lure-knowledge.js';
 import { getPhaseDepth, getStrategySpeed, normalizeSpecies, getPresentationPriority, getPhaseNotes } from '../data/species-strategies.js';
 import { buildFishingContext, buildGroqCoachPayload } from './smart-plan-context.js';
 import { startCoachSession } from './groq-coach.js';
+
+// ── Zone registry cache ───────────────────────────────────────────────────────
+const _zoneCache = {};  // r2Key -> { zones, loadedAt }
+const ZONE_CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
+
+async function loadZoneRegistry(r2Key) {
+  const cached = _zoneCache[r2Key];
+  if (cached && (Date.now() - cached.loadedAt) < ZONE_CACHE_TTL) return cached.zones;
+  try {
+    const url = `${CF_WORKER_URL}/chartpacks/${r2Key}/zones.json`;
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) return null;
+    const data = await res.json();
+    _zoneCache[r2Key] = { zones: data.zones || [], loadedAt: Date.now() };
+    console.log(`[smart-plan] zone registry loaded: ${data.zones?.length} zones for ${r2Key}`);
+    return data.zones || [];
+  } catch (e) {
+    console.warn('[smart-plan] zone registry load failed:', e.message);
+    return null;
+  }
+}
+
+async function loadZoneSpine(r2Key, zoneId) {
+  // Fetch the full spines file — cache in sessionStorage to avoid re-fetching
+  const cacheKey = `trollmap_spines_${r2Key}`;
+  let spines = null;
+  try {
+    const cached = sessionStorage.getItem(cacheKey);
+    if (cached) spines = JSON.parse(cached);
+  } catch (_) {}
+  if (!spines) {
+    try {
+      const url = `${CF_WORKER_URL}/chartpacks/${r2Key}/zones_spines.json`;
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) return null;
+      spines = await res.json();
+      try { sessionStorage.setItem(cacheKey, JSON.stringify(spines)); } catch (_) {}
+    } catch (e) {
+      console.warn('[smart-plan] zone spines load failed:', e.message);
+      return null;
+    }
+  }
+  const coords = spines[zoneId];
+  if (!coords) return null;
+  // Convert [lon, lat] to [lat, lon] for route-builder
+  return coords.map(c => [c[1], c[0]]);
+}
+
+async function pickZonesWithGroq(zones, phaseRec, species, conditions, rampLat, rampLon, phaseTier) {
+  // Build a compact summary of candidate zones for Groq
+  // Filter to relevant depth band and within reasonable range
+  const depthMin = phaseRec.depthMin;
+  const depthMax = phaseRec.depthMax;
+  const MAX_DIST_MI = 4.0;
+
+  const candidates = zones
+    .filter(z => {
+      const zDepth = z.depth_ft;
+      return zDepth >= depthMin - 4 && zDepth <= depthMax + 4
+          && z.dist_mi_from_ramp <= MAX_DIST_MI;
+    })
+    .sort((a, b) => (-(a.catch_count||0)*3 - (a.fishing_spot_count||0)) - (-(b.catch_count||0)*3 - (b.fishing_spot_count||0)))
+    .slice(0, 30); // top 30 candidates
+
+  if (!candidates.length) return null;
+
+  const zoneList = candidates.map(z =>
+    `${z.id}: depth=${z.depth_ft}ft band=${z.depth_band} struct=${z.structure} dir=${z.bearing_cardinal} len=${z.length_ft}ft dist=${z.dist_mi_from_ramp}mi catches=${z.catch_count||0} spots=${z.fishing_spot_count||0}`
+  ).join('
+');
+
+  const prompt = `You are a fishing guide for Lake Wateree SC. Choose the BEST 1-3 zones for Phase ${phaseTier} of a trolling trip.
+
+Species: ${species}
+Phase depth target: ${depthMin}-${depthMax}ft
+Conditions: ${conditions}
+Ramp: Clearwater Cove
+
+Available zones (id: key attributes):
+${zoneList}
+
+Rules:
+- Prefer zones with catches > 0 and high fishing_spot_count
+- For dawn/shallow phases prefer dock_edge and drop_off structure near shore
+- For deep phases prefer ledge and slope structure along channel
+- Choose zones that form a logical trolling run (similar bearing/quadrant)
+- Return ONLY a JSON array of zone IDs, e.g. ["wt_0107","wt_0124"]
+- No explanation, no markdown, just the JSON array`;
+
+  try {
+    const res = await fetch(`${CF_WORKER_URL}/groq`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 100,
+        temperature: 0.2,
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const text = data.choices?.[0]?.message?.content?.trim() || '';
+    const match = text.match(/\[.*\]/s);
+    if (!match) return null;
+    const ids = JSON.parse(match[0]);
+    console.log(`[smart-plan] Groq zone picks for phase ${phaseTier}:`, ids);
+    return ids.filter(id => candidates.some(z => z.id === id));
+  } catch (e) {
+    console.warn('[smart-plan] Groq zone pick failed:', e.message);
+    return null;
+  }
+}
 import {
   SPECIES_BEHAVIOR, REGULATIONS,
   getSeason, getTimeOfDay, checkRegulations, resolveLakeKey,
@@ -786,6 +899,65 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
 
   try {
     const { generateAndCommitRoute, setClipFromRamp, setClipPolygon } = await import('./route-builder.js');
+
+    // ── Zone-based routing (new) ──────────────────────────────────────────────
+    // If a zone registry exists for this lake, ask Groq to pick the best zones
+    // for this phase and use their spine coords instead of depth-polygon routing.
+    const r2Key = state.ACTIVE_CONTOUR_KEY;
+    if (r2Key && !isReturnPass) {
+      try {
+        const zones = await loadZoneRegistry(r2Key);
+        if (zones?.length) {
+          const conditions = `season=${phase.name} time=${phase.startStr}`;
+          const speciesStr = document.querySelector('#planSpeciesChecks input:checked')?.value || 'Striped Bass';
+          const pickedIds = await pickZonesWithGroq(zones, phaseRec, speciesStr, conditions, rampLat, rampLon, phase.tier ?? phase.num);
+          if (pickedIds?.length) {
+            // Load spine coords for picked zones and chain them
+            const allSpineCoords = [];
+            for (const zoneId of pickedIds) {
+              const coords = await loadZoneSpine(r2Key, zoneId);
+              if (coords?.length >= 2) {
+                if (allSpineCoords.length) allSpineCoords.push(...coords.slice(1));
+                else allSpineCoords.push(...coords);
+              }
+            }
+            if (allSpineCoords.length >= 2) {
+              // Find matched zone for offset — use first picked zone's depth
+              const firstZone = zones.find(z => z.id === pickedIds[0]);
+              const zoneDepth = firstZone?.depth_ft || (phaseRec.depthMin + phaseRec.depthMax) / 2;
+              // Offset shallow side for dawn/shallow phases, deeper for later phases
+              const offsetFt = (phaseRec.depthMin < 20) ? -40 : 40; // negative = shallow side
+              setClipFromRamp(rampLat, rampLon, Math.min(rangeMiles, 4.5));
+              const tracks = await generateAndCommitRoute({
+                rampLat, rampLon,
+                depthMin: phaseRec.depthMin,
+                depthMax: phaseRec.depthMax,
+                startLat: startLat ?? rampLat,
+                startLon: startLon ?? rampLon,
+                targetLengthFt: null,
+                pattern: 'straight',
+                amplitude: 0,
+                lockedBearing,
+                smartPlan: true,
+                emitConnectors: false,
+                singleBestTrack: true,
+                useWaypointSpine: true,
+                manualWaypoints: allSpineCoords,
+                zoneSpineOffset: offsetFt,
+                trackName: `${phase.name} (Zone ${pickedIds.join('+')})`,
+              });
+              if (tracks?.length) {
+                console.log(`[smart-plan] Phase ${phase.tier ?? phase.num}: zone routing succeeded (${pickedIds.join(', ')})`);
+                return tracks;
+              }
+            }
+          }
+        }
+      } catch (zoneErr) {
+        console.warn('[smart-plan] Zone routing failed, falling back to depth-polygon:', zoneErr.message);
+      }
+    }
+    // ── End zone-based routing ────────────────────────────────────────────────
 
     const phaseTier = phase.tier ?? phase.num;
 
