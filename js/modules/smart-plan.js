@@ -821,8 +821,9 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
     if (phaseTier === 1) {
       setClipFromRamp(rampLat, rampLon, Math.min(rangeMiles, 4.0));
 
-    } else if (window._phaseClipPolygon) {
-      // Use corridor polygon built from user waypoints
+    } else if (window._phaseClipPolygon && !dockWaypoints) {
+      // Use corridor polygon only when no labeled waypoints — waypoints define
+      // the route already so the corridor clip just cuts off early points
       setClipPolygon(window._phaseClipPolygon);
       window._phaseClipPolygon = null;
 
@@ -837,8 +838,8 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
       const p2EndLat = startLat ?? rampLat;
       const p2EndLon = startLon ?? rampLon;
       const allStructs3 = (typeof window.getMyStructures === 'function') ? window.getMyStructures() : [];
-      const p3pts = allStructs3.filter(s => s.type === 'point' && s.lat && s.lon)
-        .sort((a, b) => (a.addedAt || '').localeCompare(b.addedAt || '')).slice(3);
+      const p3pts = allStructs3.filter(s => s.label === 'p3' && s.lat && s.lon)
+        .sort((a, b) => (a.addedAt || '').localeCompare(b.addedAt || ''));
       let clipRadiusMi = 2.0;
       if (p3pts.length >= 2) {
         // Find furthest point from phase start
@@ -904,7 +905,8 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
           // Use labeled route waypoints — Ryan's hand-drawn lane becomes the spine
           // Dense interpolation at 200ft so no segment crosses land
           const STEP_FT = 200;
-          const allWpts = labeledPts.map(s => [s.lat, s.lon]);
+          const allWpts = [[startLat ?? refLat, startLon ?? refLon],
+            ...labeledPts.map(s => [s.lat, s.lon])];
           const dense = [allWpts[0]];
           for (let i = 0; i < allWpts.length - 1; i++) {
             const [la1,lo1] = allWpts[i], [la2,lo2] = allWpts[i+1];
