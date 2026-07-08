@@ -102,8 +102,7 @@ async function pickZonesWithGroq(zones, phaseRec, species, conditions, rampLat, 
 
   const zoneList = candidates.map(z =>
     `${z.id}: depth=${z.depth_ft}ft band=${z.depth_band} struct=${z.structure} dir=${z.bearing_cardinal} len=${z.length_ft}ft dist=${z.dist_mi_from_ramp}mi catches=${z.catch_count||0} spots=${z.fishing_spot_count||0}`
-  ).join('
-');
+  ).join('\n');
 
   const prompt = `You are a fishing guide for Lake Wateree SC. Choose the BEST 1-3 zones for Phase ${phaseTier} of a trolling trip.
 
