@@ -1045,6 +1045,7 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
           const phaseTier2 = phase.tier ?? phase.num;
           const phaseStartLat = startLat ?? rampLat;
           const phaseStartLon = startLon ?? rampLon;
+          console.log(`[zone-spine] Phase ${phaseTier2} start: (${phaseStartLat?.toFixed(4)}, ${phaseStartLon?.toFixed(4)}), depth ${phaseRec.depthMin}-${phaseRec.depthMax}ft`);
           const pickedIds = selectZoneSpine(zones, phaseRec, phaseStartLat, phaseStartLon, Math.min(rangeMiles, 4.0), phaseTier2);
           console.log(`[smart-plan] Zone spine for phase ${phaseTier2}:`, pickedIds);
           if (pickedIds?.length) {
