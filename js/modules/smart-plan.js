@@ -794,9 +794,9 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
     if ((phaseTier === 2 || phaseTier === 3) && typeof window.getMyStructures === 'function') {
       try {
         const _structs = window.getMyStructures();
-        const _pts = _structs.filter(s => s.type === 'point' && s.lat && s.lon)
+        const _labelKey = `p${phaseTier}`;
+        const _cPts = _structs.filter(s => s.label === _labelKey && s.lat && s.lon)
           .sort((a, b) => (a.addedAt||'').localeCompare(b.addedAt||''));
-        const _cPts = phaseTier === 2 ? _pts.slice(0,3) : _pts.slice(3);
         if (_cPts.length >= 2) {
           const _D2R = Math.PI/180;
           const _W = [[startLat??rampLat, startLon??rampLon], ..._cPts.map(s=>[s.lat,s.lon])];
