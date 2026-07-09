@@ -674,18 +674,10 @@ function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles,
   const STEP_FT = 150;
   let totalAdded = 0;
 
-  // Build 4-phase schedule evenly split across trip duration
+  // Trip time budget split 50/50 outbound/inbound
   const p = phaseInfo?.phases || phases;
   const totalDurH = p.length ? (p[p.length-1].end - p[0].start) : 6;
-  const segH = totalDurH / 4;
-  const startH = p[0]?.start || 6;
-
-  const fourPhases = [
-    { num: 1, name: 'Dawn Outbound',       start: startH,            end: startH + segH },
-    { num: 2, name: 'Transition Outbound', start: startH + segH,     end: startH + segH * 2 },
-    { num: 3, name: 'Deep Inbound',        start: startH + segH * 2, end: startH + segH * 3 },
-    { num: 4, name: 'Shallow Home',        start: startH + segH * 3, end: startH + segH * 4 },
-  ];
+  const halfBudgetFt = Math.min((totalDurH / 2) * speedMph * 5280 * 0.8, 4.0 * 5280);
 
   // Add ramp waypoint
   if (Number.isFinite(rampLat) && Number.isFinite(rampLon)) {
@@ -698,64 +690,80 @@ function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles,
     });
   }
 
-  // Every phase starts from where the previous one ended
-  let curLat = rampLat, curLon = rampLon;
+  // ── LEG 1: Outbound — shallow band, walk away from ramp ──────────────────
+  const outboundPts = walkContourForWaypoints(
+    15, 20,
+    rampLat, rampLon,
+    maxDistFt,
+    halfBudgetFt,
+    STEP_FT,
+    null // no end target — just walk as far as budget allows
+  );
 
-  for (let i = 0; i < fourPhases.length; i++) {
-    const phase = fourPhases[i];
-    const band  = SCOUT_DEPTH_BANDS[i];
-    const phaseDurH = phase.end - phase.start;
-    const budgetFt  = Math.min(phaseDurH * speedMph * 5280 * 0.8, 2.5 * 5280);
-    const isHomeward = i >= 2; // phases 3+4 should head back toward ramp
-
-    // Always search from current position — chains continuously from previous phase
-    const pts = walkContourForWaypoints(
-      band.depthMin, band.depthMax,
-      curLat, curLon,
-      maxDistFt,
-      budgetFt,
-      STEP_FT,
-      isHomeward ? { endLat: rampLat, endLon: rampLon } : null
-    );
-
-    if (!pts.length) {
-      console.warn(`[scout] Phase ${phase.num} "${phase.name}": no waypoints for ${band.depthMin}-${band.depthMax}ft`);
-      continue;
-    }
-
-    // Phases 3+4: if walk ends farther from ramp than it starts, reverse it
-    let ordered = pts;
-    if (isHomeward && pts.length >= 2) {
-      const firstDist = geoDistanceFt(rampLat, rampLon, pts[0].lat, pts[0].lon);
-      const lastDist  = geoDistanceFt(rampLat, rampLon, pts[pts.length-1].lat, pts[pts.length-1].lon);
-      if (lastDist > firstDist) ordered = pts.slice().reverse();
-    }
-
-    ordered.forEach((pt, j) => {
+  if (outboundPts.length) {
+    // Split outbound into Ph1 (first half) and Ph2 (second half) by waypoint count
+    const splitIdx = Math.floor(outboundPts.length / 2);
+    outboundPts.forEach((pt, j) => {
+      const phNum = j < splitIdx ? 1 : 2;
       state.DATA.waypoints.push({
-        name: `Ph${phase.num}-${j + 1}`,
-        lat: pt.lat,
-        lon: pt.lon,
+        name: `Ph${phNum}-${j + 1}`,
+        lat: pt.lat, lon: pt.lon,
         sym: 'Fishing Area',
         scoutWaypoint: true,
-        phase: phase.num,
+        phase: phNum,
         depth: pt.depth,
       });
       totalAdded++;
     });
+    console.log(`[scout] Outbound: ${outboundPts.length} waypoints at 15-20ft, budget ${Math.round(halfBudgetFt)}ft`);
+  } else {
+    console.warn('[scout] No outbound waypoints found for 15-20ft');
+  }
 
-    const lastPt = ordered[ordered.length - 1];
-    curLat = lastPt.lat;
-    curLon = lastPt.lon;
+  // Turnaround point = last outbound waypoint (or ramp if none)
+  const turnLat = outboundPts.length ? outboundPts[outboundPts.length-1].lat : rampLat;
+  const turnLon = outboundPts.length ? outboundPts[outboundPts.length-1].lon : rampLon;
 
-    console.log(`[scout] Phase ${phase.num} "${phase.name}" (${band.depthMin}-${band.depthMax}ft): ${ordered.length} waypoints, ends (${curLat.toFixed(4)},${curLon.toFixed(4)})`);
+  // ── LEG 2: Inbound — deeper band, walk back toward ramp ──────────────────
+  const inboundPts = walkContourForWaypoints(
+    22, 28,
+    turnLat, turnLon,
+    maxDistFt,
+    halfBudgetFt,
+    STEP_FT,
+    { endLat: rampLat, endLon: rampLon } // prefer direction that ends near home
+  );
+
+  if (inboundPts.length) {
+    // Ensure inbound heads toward ramp — reverse if last point is farther than first
+    let ordered = inboundPts;
+    const firstDist = geoDistanceFt(rampLat, rampLon, inboundPts[0].lat, inboundPts[0].lon);
+    const lastDist  = geoDistanceFt(rampLat, rampLon, inboundPts[inboundPts.length-1].lat, inboundPts[inboundPts.length-1].lon);
+    if (lastDist > firstDist) ordered = inboundPts.slice().reverse();
+
+    const splitIdx = Math.floor(ordered.length / 2);
+    ordered.forEach((pt, j) => {
+      const phNum = j < splitIdx ? 3 : 4;
+      state.DATA.waypoints.push({
+        name: `Ph${phNum}-${j + 1}`,
+        lat: pt.lat, lon: pt.lon,
+        sym: 'Fishing Area',
+        scoutWaypoint: true,
+        phase: phNum,
+        depth: pt.depth,
+      });
+      totalAdded++;
+    });
+    console.log(`[scout] Inbound: ${ordered.length} waypoints at 22-28ft, ends at (${ordered[ordered.length-1].lat.toFixed(4)},${ordered[ordered.length-1].lon.toFixed(4)})`);
+  } else {
+    console.warn('[scout] No inbound waypoints found for 22-28ft');
   }
 
   renderAll();
   return totalAdded;
 }
 
-// ── Groq scout report// ── Groq scout report ─────────────────────────────────────────────────────────
+// ── Groq scout report// ── Groq scout report// ── Groq scout report ─────────────────────────────────────────────────────────
 // Groq gets the fishing intelligence question — NOT coordinates. It tells you
 // what to look for, why, and what to throw. Code handles where.
 
