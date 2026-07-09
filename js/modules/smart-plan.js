@@ -793,9 +793,9 @@ LEG 2 (inbound, exactly ${numWpts} waypoints):
 - Fish the deeper channel structure on the way home
 - End within 0.5 miles of ramp
 
-Return ONLY a JSON array, no explanation, no markdown:
+Return ONLY a JSON array of {"lat", "lon", "leg"} objects. No notes, no explanation, no markdown, no extra fields:
 [
-  {"lat": 34.37800, "lon": -80.72900, "leg": 1, "depth": 15, "note": "dock edge"},
+  {"lat": 34.37800, "lon": -80.72900, "leg": 1},
   ...
 ]
 
