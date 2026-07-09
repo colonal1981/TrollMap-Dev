@@ -725,14 +725,10 @@ async function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, range
   if (!Array.isArray(state.DATA.waypoints)) state.DATA.waypoints = [];
   state.DATA.waypoints = state.DATA.waypoints.filter(w => !w.scoutWaypoint);
 
-  // Add ramp waypoint
   if (Number.isFinite(rampLat) && Number.isFinite(rampLon)) {
     state.DATA.waypoints.push({
-      name: 'Launch',
-      lat: rampLat, lon: rampLon,
-      sym: 'Boat Ramp',
-      role: 'launch_ramp',
-      scoutWaypoint: true,
+      name: 'Launch', lat: rampLat, lon: rampLon,
+      sym: 'Boat Ramp', role: 'launch_ramp', scoutWaypoint: true,
     });
   }
 
@@ -742,81 +738,17 @@ async function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, range
   const rec3 = phaseRecs[2] || phaseRecs[1];
   const outDepthMin = rec1?.depthMin || 10;
   const outDepthMax = rec1?.depthMax || 20;
-  const inDepthMin  = rec3?.depthMin || 20;
-  const inDepthMax  = rec3?.depthMax || 30;
-  const species = phaseRecs.find(Boolean)?.lures?.[0] ? 'Striped Bass' : 'fish';
+  const inDepthMin  = (rec3?.depthMin || outDepthMax);
+  const inDepthMax  = (rec3?.depthMax || outDepthMax + 8);
+  const nWpts = Math.max(8, Math.round((totalDurH / 2 * speedMph * 5280 * 0.8) / 800));
 
-  // Build Groq prompt — full fishing context + two equal legs
-  const totalDistFt = Math.round(totalDurH * speedMph * 5280 * 0.8);
-  const halfDistFt  = Math.round(totalDistFt / 2);
-  const numWpts     = Math.max(10, Math.round(halfDistFt / 800)); // ~800ft spacing per leg — keep response small
-  const season      = phaseInfo?.season || getSeason(new Date());
-  const sp          = phaseRecs.find(Boolean)?._v2meta?.forage ? 'Striped Bass' : 'Striped Bass';
-  const timeOfDay   = phaseInfo?.phases?.[0]?.startStr || 'dawn';
-  const waterTemp   = phaseRecs.find(Boolean)?.waterTempF ? `${phaseRecs.find(Boolean).waterTempF}°F` : 'unknown';
-  const clarity     = document.getElementById('planClarity')?.value || 'unknown';
-  const weather     = document.getElementById('planWeather')?.value || 'unknown';
+  // Helper: one Groq call for one leg
+  const groqLeg = async (legNum, dMin, dMax, startLat, startLon, endLat, endLon, dir) => {
+    const legPrompt = legNum === 1
+      ? `You are a fishing guide for Lake Wateree SC. Place exactly ${nWpts} waypoints for a kayak trolling route outbound leg. Start at ramp (${startLat.toFixed(5)}, ${startLon.toFixed(5)}). Fish ${dMin}-${dMax}ft depth heading ${dir} for ${nWpts} waypoints spaced ~800ft apart along the depth contour. Return ONLY a JSON array: [{"lat":34.378,"lon":-80.729,"leg":1},...]`
+      : `You are a fishing guide for Lake Wateree SC. Place exactly ${nWpts} waypoints for a kayak trolling route return leg. Your outbound leg just ended at (${startLat.toFixed(5)}, ${startLon.toFixed(5)}). Fish back to ramp at (${endLat.toFixed(5)}, ${endLon.toFixed(5)}) on ${dMin}-${dMax}ft depth heading ${dir}. First waypoint near (${startLat.toFixed(5)}, ${startLon.toFixed(5)}), last waypoint near (${endLat.toFixed(5)}, ${endLon.toFixed(5)}). Return ONLY a JSON array: [{"lat":34.378,"lon":-80.729,"leg":2},...]`;
 
-  const prompt = `You are an expert fishing guide for Lake Wateree, South Carolina.
-
-TRIP DETAILS:
-- Species: Striped Bass
-- Season: ${season}
-- Launch time: ${timeOfDay}
-- Water temp: ${waterTemp}
-- Clarity: ${clarity}
-- Weather: ${weather}
-- Platform: Kayak with pedal drive and electric motor (Native Watersports Slayer Propel Max 12.5)
-- Rods: 2 max in water simultaneously, no downriggers, depth controlled by lead length only
-- No live bait
-- Launch ramp: Clearwater Cove (${rampLat.toFixed(5)}, ${rampLon.toFixed(5)})
-- Trip duration: ${totalDurH.toFixed(1)} hours at ${speedMph}mph = ${Math.round(totalDistFt/5280*10)/10} miles total
-
-LAKE ORIENTATION:
-Lake Wateree runs roughly north-south. The main lake body extends southwest from the ramp. Deep channel water is further west. The lake is about 3 miles wide in this area with the deepest water near the center channel.
-
-YOUR JOB:
-Plan a trolling route as exactly two legs of ${numWpts} waypoints each.
-
-LEG 1 (outbound, exactly ${numWpts} waypoints):
-- Target depth: ${outDepthMin}-${outDepthMax}ft
-- Start at ramp (${rampLat.toFixed(5)}, ${rampLon.toFixed(5)})
-- Travel ${Math.round(halfDistFt/5280*10)/10} miles from the ramp along fishable structure
-- Choose water based on where stripers will be at ${timeOfDay} in ${season}
-- Space waypoints ~400ft apart following the contour edge
-- MUST spread the full ${Math.round(halfDistFt/5280*10)/10} miles — do not cluster near ramp
-
-LEG 2 (inbound, exactly ${numWpts} waypoints):
-- Target depth: ${inDepthMin}-${inDepthMax}ft (slightly deeper than leg 1 — channel side)
-- Start where Leg 1 ends
-- Return toward ramp over ${Math.round(halfDistFt/5280*10)/10} miles
-- Fish the deeper channel structure on the way home
-- End within 0.5 miles of ramp
-
-Return ONLY a JSON array of {"lat", "lon", "leg"} objects. No notes, no explanation, no markdown, no extra fields:
-[
-  {"lat": 34.37800, "lon": -80.72900, "leg": 1},
-  ...
-]
-
-Use real Lake Wateree coordinates. Stay in the water. No land. Both legs must have exactly ${numWpts} waypoints.`;
-
-
-  let groqWaypoints = [];
-  try {
-    // Two separate calls — one per leg — keeps each response under token limit
-
-    async function groqLeg(legNum, depthMin, depthMax, startLat, startLon, endLat, endLon, nWpts, direction) {
-      const legPrompt = `You are a fishing guide for Lake Wateree SC.
-Place exactly ${nWpts} waypoints for a kayak trolling route.
-Ramp: (${rampLat.toFixed(5)}, ${rampLon.toFixed(5)})
-${legNum === 1
-  ? `LEG 1 (outbound): Start at (${startLat.toFixed(5)}, ${startLon.toFixed(5)}). Fish ${depthMin}-${depthMax}ft water heading ${direction} for ${nWpts} waypoints spaced ~800ft apart. Follow the depth contour edge.`
-  : `LEG 2 (inbound): Your outbound leg just ended at (${startLat.toFixed(5)}, ${startLon.toFixed(5)}). Now fish back to the ramp at (${endLat.toFixed(5)}, ${endLon.toFixed(5)}) on slightly deeper water (${depthMin}-${depthMax}ft). Travel ${direction}. Place ${nWpts} waypoints spaced ~800ft apart following the depth contour. First waypoint near (${startLat.toFixed(5)}, ${startLon.toFixed(5)}), last waypoint near (${endLat.toFixed(5)}, ${endLon.toFixed(5)}).`
-}
-Return ONLY a JSON array, no explanation:
-[{"lat":34.378,"lon":-80.729,"leg":${legNum}},...]`;
-
+    try {
       const res = await fetch(`${CF_WORKER_URL}/groq-query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -827,44 +759,37 @@ Return ONLY a JSON array, no explanation:
           temperature: 0.3,
         }),
       });
-      if (!res.ok) throw new Error(`Groq HTTP ${res.status}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const text = data.choices?.[0]?.message?.content?.trim() || '';
-      console.log(`[scout] Leg ${legNum} response length: ${text.length}`);
+      console.log(`[scout] Leg ${legNum} response: ${text.length} chars`);
       const clean = text.replace(/```json|```/g, '').trim();
       const si = clean.indexOf('['), ei = clean.lastIndexOf(']');
       if (si === -1 || ei === -1) { console.warn(`[scout] Leg ${legNum}: no JSON array`); return []; }
-      try {
-        const pts = JSON.parse(clean.slice(si, ei + 1));
-        console.log(`[scout] Leg ${legNum}: ${pts.length} waypoints`);
-        return pts;
-      } catch(e) { console.warn(`[scout] Leg ${legNum} parse failed:`, e.message); return []; }
+      const pts = JSON.parse(clean.slice(si, ei + 1));
+      console.log(`[scout] Leg ${legNum}: ${pts.length} waypoints`);
+      return pts;
+    } catch(e) {
+      console.warn(`[scout] Leg ${legNum} failed:`, e.message);
+      return [];
     }
+  };
 
-    const nWpts = Math.max(8, Math.round((totalDurH / 2 * speedMph * 5280 * 0.8) / 800));
-    console.log(`[scout] Requesting ${nWpts} waypoints per leg`);
-
-    // Leg 1: outbound shallow
-    const leg1 = await groqLeg(1, outDepthMin, outDepthMax, rampLat, rampLon, null, null, nWpts, 'southwest');
-
-    // Use last leg1 point as leg2 start
+  let groqWaypoints = [];
+  try {
+    console.log(`[scout] Requesting ${nWpts} waypoints per leg...`);
+    const leg1 = await groqLeg(1, outDepthMin, outDepthMax, rampLat, rampLon, null, null, 'southwest');
     const turnLat = leg1.length ? leg1[leg1.length-1].lat : rampLat;
     const turnLon = leg1.length ? leg1[leg1.length-1].lon : rampLon;
-
-    // Leg 2: inbound deeper
-    const leg2 = await groqLeg(2, inDepthMin, inDepthMax, turnLat, turnLon, rampLat, rampLon, nWpts, 'northeast');
-
+    const leg2 = await groqLeg(2, inDepthMin, inDepthMax, turnLat, turnLon, rampLat, rampLon, 'northeast');
     groqWaypoints = [...leg1, ...leg2];
     console.log(`[scout] Total: ${groqWaypoints.length} waypoints from Groq`);
-
-  } catch (e) {
-    console.warn('[scout] Groq waypoint generation failed:', e.message);
+  } catch(e) {
+    console.warn('[scout] Groq failed:', e.message);
   }
 
   if (!groqWaypoints.length) {
-  if (!groqWaypoints.length) {
-    console.warn('[scout] No waypoints from Groq — falling back to contour walk');
-    // Fallback: simple contour walk outbound only
+    console.warn('[scout] Falling back to contour walk');
     const fallback = walkContourForWaypoints(outDepthMin, outDepthMax, rampLat, rampLon,
       Math.min(rangeMiles, 4.0) * 5280, totalDurH * speedMph * 5280 * 0.4, 150, null);
     fallback.forEach((pt, j) => {
@@ -877,44 +802,28 @@ Return ONLY a JSON array, no explanation:
     return fallback.length;
   }
 
-  // Validate each waypoint against lake boundary and contour depth
+  // Validate: bbox + lake boundary only
   let totalAdded = 0;
   const phaseCounts = {};
-
   for (const wpt of groqWaypoints) {
     const lat = parseFloat(wpt.lat);
     const lon = parseFloat(wpt.lon);
     const leg = wpt.leg || 1;
-    const phNum = leg <= 1 ? 1 : leg >= 2 ? 2 : leg;
-
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-      console.warn(`[scout] Invalid coords: ${lat}, ${lon} — skipped`);
-      continue;
-    }
-
-    // Hard bbox check — must be in Wateree's general area
+    const phNum = leg <= 1 ? 1 : 2;
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
     if (lat < 34.20 || lat > 34.55 || lon < -81.00 || lon > -80.60) {
-      console.warn(`[scout] Coord (${lat.toFixed(4)},${lon.toFixed(4)}) outside Wateree bbox — skipped`);
+      console.warn(`[scout] (${lat.toFixed(4)},${lon.toFixed(4)}) outside Wateree bbox — skipped`);
       continue;
     }
-
-    // Lake boundary check
     if (!isCoordInLake(lat, lon)) {
-      console.warn(`[scout] Coord (${lat.toFixed(4)},${lon.toFixed(4)}) not in lake — skipped`);
+      console.warn(`[scout] (${lat.toFixed(4)},${lon.toFixed(4)}) not in lake — skipped`);
       continue;
     }
-
-
-
     phaseCounts[phNum] = (phaseCounts[phNum] || 0) + 1;
     state.DATA.waypoints.push({
       name: `Ph${phNum}-${phaseCounts[phNum]}`,
-      lat, lon,
-      sym: 'Fishing Area',
-      scoutWaypoint: true,
-      phase: phNum,
-      depth: parseFloat(wpt.depth) || null,
-      note: wpt.note || '',
+      lat, lon, sym: 'Fishing Area',
+      scoutWaypoint: true, phase: phNum,
     });
     totalAdded++;
   }
@@ -924,7 +833,7 @@ Return ONLY a JSON array, no explanation:
   return totalAdded;
 }
 
-// ── Groq scout report ─────────────────────────────────────────────────────────
+// ── Groq scout report// ── Groq scout report ─────────────────────────────────────────────────────────
 // Groq gets the fishing intelligence question — NOT coordinates. It tells you
 // what to look for, why, and what to throw. Code handles where.
 
