@@ -749,7 +749,7 @@ async function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, range
   // Build Groq prompt — full fishing context + two equal legs
   const totalDistFt = Math.round(totalDurH * speedMph * 5280 * 0.8);
   const halfDistFt  = Math.round(totalDistFt / 2);
-  const numWpts     = Math.max(20, Math.round(halfDistFt / 400)); // ~400ft spacing per leg
+  const numWpts     = Math.max(10, Math.round(halfDistFt / 800)); // ~800ft spacing per leg — keep response small
   const season      = phaseInfo?.season || getSeason(new Date());
   const sp          = phaseRecs.find(Boolean)?._v2meta?.forage ? 'Striped Bass' : 'Striped Bass';
   const timeOfDay   = phaseInfo?.phases?.[0]?.startStr || 'dawn';
@@ -795,7 +795,7 @@ LEG 2 (inbound, exactly ${numWpts} waypoints):
 
 Return ONLY a JSON array, no explanation, no markdown:
 [
-  {"lat": 34.37800, "lon": -80.72900, "leg": 1, "depth": 15, "note": "dock edge holding bait at dawn"},
+  {"lat": 34.37800, "lon": -80.72900, "leg": 1, "depth": 15, "note": "dock edge"},
   ...
 ]
 
@@ -811,7 +811,7 @@ Use real Lake Wateree coordinates. Stay in the water. No land. Both legs must ha
       body: JSON.stringify({
         model: 'llama-3.3-70b-versatile',
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 4000,
+        max_tokens: 6000,
         temperature: 0.3,
       }),
     });
