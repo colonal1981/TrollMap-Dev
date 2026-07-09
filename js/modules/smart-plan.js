@@ -123,10 +123,16 @@ function selectZoneSpine(zones, phaseRec, startLat, startLon, maxDistMi, phaseTi
   const MIN_ZONE_FT = 800;  // skip tiny fragments
   const MIN_ZONE_FT_TURN = 2000; // longer minimum if zone requires a bearing change
 
-  // Filter candidates
+  // Fast bbox pre-filter before expensive haversine — cuts zone pool dramatically
+  const latPad = (maxDistFt / 3.28084) / 111320;
+  const lonPad = latPad / Math.cos(startLat * Math.PI / 180);
   const candidates = zones.filter(z => {
     if (z.depth_ft < depthMin || z.depth_ft > depthMax) return false;
     if (z.length_ft < MIN_ZONE_FT) return false;
+    // Bbox check first — cheap
+    if (z.centroid_lat < startLat - latPad || z.centroid_lat > startLat + latPad) return false;
+    if (z.centroid_lon < startLon - lonPad || z.centroid_lon > startLon + lonPad) return false;
+    // Full distance check only for bbox survivors
     const d = distFt(startLat, startLon, z.centroid_lat, z.centroid_lon);
     return d <= maxDistFt;
   });
@@ -135,6 +141,7 @@ function selectZoneSpine(zones, phaseRec, startLat, startLon, maxDistMi, phaseTi
     console.warn(`[zone-spine] no candidates for depth ${depthMin}-${depthMax}ft within ${maxDistMi}mi`);
     return [];
   }
+  console.log(`[zone-spine] ${candidates.length} candidates after filter`);
 
   // Find best starting zone — closest endpoint to startLat/startLon, prefer high catch count
   const used = new Set();
@@ -1055,7 +1062,9 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
       'Lake Norman, NC': 'lake_norman_mountain_island',
     };
     const planLakeName = document.getElementById('planLake')?.value || '';
-    const r2Key = state.ACTIVE_CONTOUR_KEY || LAKE_TO_R2[planLakeName] || null;
+    // Ignore ACTIVE_CONTOUR_KEY if it's a local filename (contains .geojson)
+    const activeKey = state.ACTIVE_CONTOUR_KEY;
+    const r2Key = (activeKey && !activeKey.includes('.geojson') ? activeKey : null) || LAKE_TO_R2[planLakeName] || null;
     if (!window._usedZoneIds) window._usedZoneIds = new Set();
     const _phaseLabelKey = `p${phase.tier ?? phase.num}`;
     const _hasLabeledPts = typeof window.getMyStructures === 'function' &&
