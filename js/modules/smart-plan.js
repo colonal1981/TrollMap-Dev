@@ -540,7 +540,7 @@ function stitchContourFragments(fragments, TOL_FT = 50) {
   return chains;
 }
 
-function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, budgetFt, stepFt = 150) {
+function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, budgetFt, stepFt = 150, endTarget = null) {
   const contour = getActiveContour();
   const gj = contour?.smart || contour?.raw;
   if (!gj?.features?.length) return [];
@@ -594,8 +594,13 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
 
   if (!allChains.length) return [];
 
-  // Score: prefer long chains close to ramp
-  allChains.sort((a, b) => (a.closest * 2 - a.len) - (b.closest * 2 - b.len));
+  // Score: prefer long chains close to ref point.
+  // For Phase 3 (endTarget set): also prefer chains whose far end is near the ramp.
+  allChains.sort((a, b) => {
+    const eA = endTarget ? geoDistanceFt(endTarget.endLat, endTarget.endLon, a.chain[a.chain.length-1][0], a.chain[a.chain.length-1][1]) * 0.5 : 0;
+    const eB = endTarget ? geoDistanceFt(endTarget.endLat, endTarget.endLon, b.chain[b.chain.length-1][0], b.chain[b.chain.length-1][1]) * 0.5 : 0;
+    return (a.closest * 2 - a.len + eA) - (b.closest * 2 - b.len + eB);
+  });
   const best = allChains[0];
   console.log(`[scout] best chain: depth=${best.depth}ft len=${Math.round(best.len)}ft closest=${Math.round(best.closest)}ft`);
 
@@ -648,15 +653,21 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
   return waypoints;
 }
 
+// Hard depth bands per phase — non-overlapping so each phase finds different water.
+// These override species-intel recommendations for waypoint generation only.
+// Rod/lure selection still uses the species-intel depth bands.
+const SCOUT_DEPTH_BANDS = [
+  { depthMin: 15, depthMax: 20 }, // Phase 1: shallow dawn run
+  { depthMin: 22, depthMax: 26 }, // Phase 2: transition ledge
+  { depthMin: 28, depthMax: 32 }, // Phase 3: deep channel, return toward ramp
+];
+
 function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles, speedMph = 2.0, phaseInfo) {
   if (!state.DATA) state.DATA = {};
   if (!Array.isArray(state.DATA.waypoints)) state.DATA.waypoints = [];
-  // Clear previous scout waypoints only
   state.DATA.waypoints = state.DATA.waypoints.filter(w => !w.scoutWaypoint);
 
   const maxDistFt = Math.min(rangeMiles, 4.0) * 5280;
-  // Step size: small enough that connecting consecutive points never crosses land
-  // 150ft = safe for Wateree's cove geometry. Could go to 200ft on open water.
   const STEP_FT = 150;
   let totalAdded = 0;
 
@@ -671,29 +682,42 @@ function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles,
     });
   }
 
+  // Track where each phase ends so the next one starts there
+  let curLat = rampLat, curLon = rampLon;
+
   for (let i = 0; i < phases.length; i++) {
     const phase = phases[i];
     const rec   = phaseRecs[i];
     if (!rec) continue;
 
-    // Phase fishing budget: phase duration × speed × 5280, capped at 2.5mi one-way
+    // Use hard non-overlapping depth bands for waypoint generation
+    const band = SCOUT_DEPTH_BANDS[i] || { depthMin: rec.depthMin, depthMax: rec.depthMax };
+
     const phaseDurH = (phase.end - phase.start);
     const budgetFt  = Math.min(phaseDurH * speedMph * 5280 * 0.8, 2.5 * 5280);
 
+    // Phase 3 reverses direction — start from Phase 2 end, head back toward ramp
+    // walkContourForWaypoints finds the nearest point on the chain to curLat/curLon
+    // and walks forward. For Phase 3 we want to walk in the direction of the ramp,
+    // so pass rampLat/rampLon as the END target to prefer chains closer to home.
     const pts = walkContourForWaypoints(
-      rec.depthMin, rec.depthMax,
-      rampLat, rampLon,
+      band.depthMin, band.depthMax,
+      curLat, curLon,
       maxDistFt,
       budgetFt,
-      STEP_FT
+      STEP_FT,
+      i === 2 ? { endLat: rampLat, endLon: rampLon } : null
     );
 
     if (!pts.length) {
-      console.warn(`[scout] Phase ${phase.num}: no waypoints for ${rec.depthMin}-${rec.depthMax}ft`);
+      console.warn(`[scout] Phase ${phase.num}: no waypoints for ${band.depthMin}-${band.depthMax}ft`);
       continue;
     }
 
-    pts.forEach((pt, j) => {
+    // For Phase 3, reverse the waypoint order so the run heads toward the ramp
+    const ordered = i === 2 ? pts.slice().reverse() : pts;
+
+    ordered.forEach((pt, j) => {
       state.DATA.waypoints.push({
         name: `Ph${phase.num}-${j + 1}`,
         lat: pt.lat,
@@ -706,7 +730,12 @@ function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles,
       totalAdded++;
     });
 
-    console.log(`[scout] Phase ${phase.num} (${rec.depthMin}-${rec.depthMax}ft): ${pts.length} waypoints, budget ${Math.round(budgetFt)}ft`);
+    // Next phase starts where this one ended
+    const lastPt = ordered[ordered.length - 1];
+    curLat = lastPt.lat;
+    curLon = lastPt.lon;
+
+    console.log(`[scout] Phase ${phase.num} (${band.depthMin}-${band.depthMax}ft): ${ordered.length} waypoints from (${curLat.toFixed(4)},${curLon.toFixed(4)}), budget ${Math.round(budgetFt)}ft`);
   }
 
   renderAll();
