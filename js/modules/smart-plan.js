@@ -804,40 +804,64 @@ Use real Lake Wateree coordinates. Stay in the water. No land. Both legs must ha
 
   let groqWaypoints = [];
   try {
-    console.log('[scout] Asking Groq for fishing waypoints...');
-    const res = await fetch(`${CF_WORKER_URL}/groq-query`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 6000,
-        temperature: 0.3,
-      }),
-    });
-    if (!res.ok) throw new Error(`Groq HTTP ${res.status}`);
-    const data = await res.json();
-    const text = data.choices?.[0]?.message?.content?.trim() || '';
-    console.log('[scout] Groq raw response length:', text.length);
-    console.log('[scout] Groq first 300 chars:', text.slice(0, 300));
-    const clean = text.replace(/```json|```/g, '').trim();
-    const startIdx = clean.indexOf('[');
-    const endIdx = clean.lastIndexOf(']');
-    if (startIdx === -1 || endIdx === -1) {
-      console.warn('[scout] No JSON array found in Groq response');
-    } else {
+    // Two separate calls — one per leg — keeps each response under token limit
+
+    async function groqLeg(legNum, depthMin, depthMax, startLat, startLon, endLat, endLon, nWpts, direction) {
+      const legPrompt = `You are a fishing guide for Lake Wateree SC.
+Place exactly ${nWpts} waypoints for a kayak trolling route.
+Ramp: (${rampLat.toFixed(5)}, ${rampLon.toFixed(5)})
+${legNum === 1
+  ? `LEG 1 (outbound): Start at (${startLat.toFixed(5)}, ${startLon.toFixed(5)}). Fish ${depthMin}-${depthMax}ft water heading ${direction} for ${nWpts} waypoints spaced ~800ft apart. Follow the depth contour edge.`
+  : `LEG 2 (inbound): Your outbound leg just ended at (${startLat.toFixed(5)}, ${startLon.toFixed(5)}). Now fish back to the ramp at (${endLat.toFixed(5)}, ${endLon.toFixed(5)}) on slightly deeper water (${depthMin}-${depthMax}ft). Travel ${direction}. Place ${nWpts} waypoints spaced ~800ft apart following the depth contour. First waypoint near (${startLat.toFixed(5)}, ${startLon.toFixed(5)}), last waypoint near (${endLat.toFixed(5)}, ${endLon.toFixed(5)}).`
+}
+Return ONLY a JSON array, no explanation:
+[{"lat":34.378,"lon":-80.729,"leg":${legNum}},...]`;
+
+      const res = await fetch(`${CF_WORKER_URL}/groq-query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages: [{ role: 'user', content: legPrompt }],
+          max_tokens: 3000,
+          temperature: 0.3,
+        }),
+      });
+      if (!res.ok) throw new Error(`Groq HTTP ${res.status}`);
+      const data = await res.json();
+      const text = data.choices?.[0]?.message?.content?.trim() || '';
+      console.log(`[scout] Leg ${legNum} response length: ${text.length}`);
+      const clean = text.replace(/```json|```/g, '').trim();
+      const si = clean.indexOf('['), ei = clean.lastIndexOf(']');
+      if (si === -1 || ei === -1) { console.warn(`[scout] Leg ${legNum}: no JSON array`); return []; }
       try {
-        groqWaypoints = JSON.parse(clean.slice(startIdx, endIdx + 1));
-        console.log(`[scout] Groq returned ${groqWaypoints.length} waypoints`);
-      } catch (parseErr) {
-        console.warn('[scout] JSON parse failed:', parseErr.message);
-        console.warn('[scout] Snippet:', clean.slice(startIdx, startIdx + 200));
-      }
+        const pts = JSON.parse(clean.slice(si, ei + 1));
+        console.log(`[scout] Leg ${legNum}: ${pts.length} waypoints`);
+        return pts;
+      } catch(e) { console.warn(`[scout] Leg ${legNum} parse failed:`, e.message); return []; }
     }
+
+    const nWpts = Math.max(8, Math.round((totalDurH / 2 * speedMph * 5280 * 0.8) / 800));
+    console.log(`[scout] Requesting ${nWpts} waypoints per leg`);
+
+    // Leg 1: outbound shallow
+    const leg1 = await groqLeg(1, outDepthMin, outDepthMax, rampLat, rampLon, null, null, nWpts, 'southwest');
+
+    // Use last leg1 point as leg2 start
+    const turnLat = leg1.length ? leg1[leg1.length-1].lat : rampLat;
+    const turnLon = leg1.length ? leg1[leg1.length-1].lon : rampLon;
+
+    // Leg 2: inbound deeper
+    const leg2 = await groqLeg(2, inDepthMin, inDepthMax, turnLat, turnLon, rampLat, rampLon, nWpts, 'northeast');
+
+    groqWaypoints = [...leg1, ...leg2];
+    console.log(`[scout] Total: ${groqWaypoints.length} waypoints from Groq`);
+
   } catch (e) {
     console.warn('[scout] Groq waypoint generation failed:', e.message);
   }
 
+  if (!groqWaypoints.length) {
   if (!groqWaypoints.length) {
     console.warn('[scout] No waypoints from Groq — falling back to contour walk');
     // Fallback: simple contour walk outbound only
