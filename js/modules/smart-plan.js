@@ -835,13 +835,7 @@ Use real Lake Wateree coordinates. Ramp is at ${rampLat.toFixed(5)}, ${rampLon.t
       continue;
     }
 
-    // Depth sanity check — must be within 8ft of expected depth
-    const actualDepth = getDepthAtCoord(lat, lon);
-    const expectedDepth = parseFloat(wpt.depth) || (leg <= 1 ? (outDepthMin + outDepthMax) / 2 : (inDepthMin + inDepthMax) / 2);
-    if (actualDepth !== null && Math.abs(actualDepth - expectedDepth) > 5) {
-      console.warn(`[scout] Depth mismatch at (${lat.toFixed(4)},${lon.toFixed(4)}): Groq said ${expectedDepth}ft, contour says ${actualDepth}ft — skipped`);
-      continue;
-    }
+
 
     phaseCounts[phNum] = (phaseCounts[phNum] || 0) + 1;
     state.DATA.waypoints.push({
@@ -850,7 +844,7 @@ Use real Lake Wateree coordinates. Ramp is at ${rampLat.toFixed(5)}, ${rampLon.t
       sym: 'Fishing Area',
       scoutWaypoint: true,
       phase: phNum,
-      depth: actualDepth || expectedDepth,
+      depth: parseFloat(wpt.depth) || null,
       note: wpt.note || '',
     });
     totalAdded++;
@@ -861,7 +855,7 @@ Use real Lake Wateree coordinates. Ramp is at ${rampLat.toFixed(5)}, ${rampLon.t
   return totalAdded;
 }
 
-// ── Groq scout report// ── Groq scout report// ── Groq scout report// ── Groq scout report ─────────────────────────────────────────────────────────
+// ── Groq scout report ─────────────────────────────────────────────────────────
 // Groq gets the fishing intelligence question — NOT coordinates. It tells you
 // what to look for, why, and what to throw. Code handles where.
 
