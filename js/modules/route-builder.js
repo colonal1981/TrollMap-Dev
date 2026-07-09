@@ -1159,7 +1159,12 @@ function generateDepthPolygonRoutes(cfg) {
   // Write to a visible element so it can be read without console
   try {
     if (typeof window.logSpineDebug === 'function') {
-      window.logSpineDebug(cfg.depthMin + '-' + cfg.depthMax + 'ft', _dbgRaw, _dbgPrep);
+      const entry = window.logSpineDebug(cfg.depthMin + '-' + cfg.depthMax + 'ft', _dbgRaw, _dbgPrep);
+    }
+    // Also store the sLat used
+    if (window._routeDebug?.length) {
+      window._routeDebug[window._routeDebug.length-1].sLat = window._routeDebug_sLat?.sLat;
+      window._routeDebug[window._routeDebug.length-1].sLon = window._routeDebug_sLat?.sLon;
     }
   } catch(_) {}
 
@@ -1328,6 +1333,14 @@ function prepareSpineForPhase(spine, cfg) {
   const eLon = cfg.endLon;
 
   let candidates = [];
+  // Debug: log what start point is being used
+  try {
+    if (typeof window.logSpineDebug === 'function') {
+      const debugEl = window._routeDebugPanel_sLat;
+      window._routeDebug_sLat = { sLat, sLon };
+    }
+    console.log(`[prepareSpine] sLat=${sLat?.toFixed(5)} sLon=${sLon?.toFixed(5)} cfg.startLat=${cfg.startLat?.toFixed(5)}`);
+  } catch(_) {}
   // Always offer full spine in both directions — never mid-slice.
   // Mid-slicing at nearestPointIndex gives a short tangled segment near the ramp.
   // The scorer picks the best direction based on bearing and start distance.

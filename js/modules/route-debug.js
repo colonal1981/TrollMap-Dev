@@ -92,6 +92,7 @@ function renderDebugPanel() {
     return `
       <div style="border:1px solid #1e3a5f;border-radius:6px;padding:8px;margin-bottom:8px">
         <div style="color:#00e5ff;font-weight:700;margin-bottom:4px">Phase ${e.phase} — ${e.rawPts} raw pts → ${e.prepPts} prepared pts — <span style="color:${revColor}">${e.reversals} reversals</span></div>
+        <div style="color:#ffb703">Start ref: (${e.sLat?.toFixed(5)}, ${e.sLon?.toFixed(5)})</div>
         <div>Raw:  ${rawS} → ${rawE}</div>
         <div>Prep: ${prepS} → ${prepE}</div>
         <details style="margin-top:4px">
