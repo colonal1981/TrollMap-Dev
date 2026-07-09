@@ -1157,7 +1157,7 @@ function generateDepthPolygonRoutes(cfg) {
   console.log(`[SPINE-DEBUG] prepared: ${_dbgPrep.length}pts start=${_dbgPrepStart} end=${_dbgPrepEnd}`);
   // Write to a visible element so it can be read without console
   try {
-    const el = document.getElementById('planRationale') || document.getElementById('planOutput');
+    const el = document.getElementById('planSmartPlanOutput') || document.getElementById('planRationale') || document.getElementById('planOutput');
     if (el) el.value = (el.value||'') + '\n[SPINE] raw:' + _dbgRawStart + '...' + _dbgRawEnd + '\n[SPINE] prep:' + _dbgPrepStart + '...' + _dbgPrepEnd;
   } catch(_) {}
 
