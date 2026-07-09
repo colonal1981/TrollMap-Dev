@@ -92,8 +92,8 @@ function selectZoneSpine(zones, phaseRec, startLat, startLon, maxDistMi, phaseTi
   //   4. Skip zones requiring sharp turns (>50°) to avoid coves
   //   5. Stop when chain is long enough or no more connectable zones exist
 
-  const depthMin = phaseRec.depthMin - 5;
-  const depthMax = phaseRec.depthMax + 5;
+  const depthMin = phaseRec.depthMin - 2;
+  const depthMax = phaseRec.depthMax + 2;
 
   function distFt(lat1, lon1, lat2, lon2) {
     const R = 20902231;
