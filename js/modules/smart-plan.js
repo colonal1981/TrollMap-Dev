@@ -1620,7 +1620,8 @@ export async function runSmartPlan() {
       'taylor creek boat ramp': [34.3830, -80.7374],
       'lake wateree state park': [34.3830, -80.7374],
       'beaver creek': [34.4199, -80.7989],
-      'wateree creek': [34.4800, -80.8800],
+      'wateree creek': [34.4696, -80.9139],
+      'wateree creek access area': [34.4696, -80.9139],
     };
 
     if (normRampKey) {
