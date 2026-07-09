@@ -1132,7 +1132,15 @@ function generateDepthPolygonRoutes(cfg) {
 
   // Pick best spine
   const spine = candidates[0];
-  if (!spine) return null;
+  try {
+    if (window._routeDebug?.length) {
+      window._routeDebug[window._routeDebug.length-1].polySpine = `trollScore=${spine?.trollScore?.toFixed(0)} len=${spine?.len?.toFixed(0)} closest=${spine?._closestFt?.toFixed(0)}`;
+    }
+  } catch(_) {}
+  if (!spine || spine.trollScore === -Infinity) {
+    console.warn(`[route-builder] all polygon spines rejected for ${depthMin}-${depthMax}ft — falling back to contour routing`);
+    return null;
+  }
 
   // Trim to clip and prepare for patterning — same pipeline as contour routing
   let trimmed = trimSpineToClip(spine.coords.map(([lon, lat]) => [lat, lon]));
