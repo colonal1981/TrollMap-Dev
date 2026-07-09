@@ -1121,9 +1121,13 @@ function generateDepthPolygonRoutes(cfg) {
   if (trimmed.length < 2) return null;
 
   // Apply pattern along the (now properly bounded) spine
+  // Smart Plan always uses straight pattern — sine causes clipping artifacts
+  const spPattern = cfg.smartPlan ? 'straight' : (cfg.pattern || 'sine+straight');
+  const spAmplitude = cfg.smartPlan ? 0 : (cfg.amplitude || 25);
   let pts = clampToClip(patternAlongSpine(trimmed, {
     ...cfg,
-    amplitude: cfg.amplitude || 25,
+    pattern: spPattern,
+    amplitude: spAmplitude,
   }));
   if (pts.length < 2) return null;
 
