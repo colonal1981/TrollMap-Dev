@@ -1061,11 +1061,8 @@ function edgesToSpines(edges, depthMin, depthMax) {
 
 function generateDepthPolygonRoutes(cfg) {
   const { depthMin, depthMax } = cfg;
-  // DEBUG marker — write to rationale box immediately
-  try {
-    const el = document.getElementById('planSmartPlanOutput');
-    if (el) el.value = (el.value||'') + `\n[POLY] depth=${depthMin}-${depthMax}ft`;
-  } catch(_) {}
+  // DEBUG — write to localStorage so it persists after smart-plan overwrites rationale
+  try { localStorage.setItem('trollmap_spine_debug_' + depthMin, `depth=${depthMin}-${depthMax}ft started`); } catch(_) {}
 
   // Get edges from depth polygons
   const edges = getDepthPolygonEdges(depthMin, depthMax);
@@ -1162,8 +1159,7 @@ function generateDepthPolygonRoutes(cfg) {
   console.log(`[SPINE-DEBUG] prepared: ${_dbgPrep.length}pts start=${_dbgPrepStart} end=${_dbgPrepEnd}`);
   // Write to a visible element so it can be read without console
   try {
-    const el = document.getElementById('planSmartPlanOutput') || document.getElementById('planRationale') || document.getElementById('planOutput');
-    if (el) el.value = (el.value||'') + '\n[SPINE] raw:' + _dbgRawStart + '...' + _dbgRawEnd + '\n[SPINE] prep:' + _dbgPrepStart + '...' + _dbgPrepEnd;
+    document.title = `P1 raw:${_dbgRawStart} prep:${_dbgPrepStart}`;
   } catch(_) {}
 
   // Apply pattern along the (now properly bounded) spine
