@@ -1145,7 +1145,9 @@ function generateFollowRoutes(cfg) {
   const gj = contour?.smart || contour?.raw;
   if (!gj?.features?.length) return [];
 
-  const { depthMin, depthMax, spacing, pattern, amplitude, wave, straightFt } = cfg;
+  const { depthMin, depthMax, spacing, wave, straightFt } = cfg;
+  const pattern = cfg.smartPlan ? 'straight' : (cfg.pattern || 'sine+straight');
+  const amplitude = cfg.smartPlan ? 0 : (cfg.amplitude || 30);
 
   const inRange = gj.features.filter(f => {
     const d = f.properties?.depth_ft;
