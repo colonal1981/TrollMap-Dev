@@ -1069,7 +1069,7 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
     const _phaseLabelKey = `p${phase.tier ?? phase.num}`;
     const _hasLabeledPts = typeof window.getMyStructures === 'function' &&
       window.getMyStructures().some(s => s.label === _phaseLabelKey);
-    if (r2Key && !isReturnPass && !_hasLabeledPts) {
+    if (false && r2Key && !isReturnPass && !_hasLabeledPts) { // zone routing disabled — using depth polygon
       try {
         const zones = await loadZoneRegistry(r2Key);
         if (zones?.length) {
@@ -1095,7 +1095,7 @@ async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon
               const firstZone = zones.find(z => z.id === pickedIds[0]);
               const zoneDepth = firstZone?.depth_ft || (phaseRec.depthMin + phaseRec.depthMax) / 2;
               // Offset shallow side for dawn/shallow phases, deeper for later phases
-              const offsetFt = (phaseRec.depthMin < 20) ? -40 : 40; // negative = shallow side
+              const offsetFt = 0; // no offset — follow the contour line directly
               setClipFromRamp(rampLat, rampLon, Math.min(rangeMiles, 4.5));
               const tracks = await generateAndCommitRoute({
                 rampLat, rampLon,
