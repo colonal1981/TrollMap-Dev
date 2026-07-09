@@ -6,17 +6,19 @@
  *   - Phase 2: Transition (90min → 3.5hrs post-sunrise, mid-depth)
  *   - Phase 3: Deep (3.5hrs post-sunrise → return, thermocline)
  *
- * Solunar major/minor periods adjust phase boundaries and can
- * "interrupt" a phase when a major hits (bump back to shallower tactics).
+ * NEW APPROACH (2026-07-09):
+ *   Instead of trying to auto-generate trolling routes from depth contour
+ *   spines (which produced reversals, bad directions, and geometry errors),
+ *   Smart Plan now:
+ *     1. Samples real points directly off the depth contour data at the
+ *        correct depth for each phase
+ *     2. Drops those as named waypoints on the map (Ph1-1, Ph1-2, etc.)
+ *     3. Calls Groq to produce a written scout report — what to look for,
+ *        where, why, what to throw
+ *     4. You connect the waypoints manually in the route builder
  *
- * For each phase:
- *   - 2 rods pre-rigged with exact lure/color/depth/lead for that phase
- *   - Route auto-generated at that phase's depth band
- *
- * Range computation:
- *   - If BLE connected: remainingAh / draw × speed / 2 = one-way miles
- *   - Fallback: 100Ah / 6A avg × speed / 2 = one-way miles
- *   - Trip duration fallback: duration_hours × speed / 2
+ *   The waypoint system + manual route builder already works perfectly.
+ *   This gives you the fishing intelligence to use it without drawing blind.
  *
  * Platform: Kayak (Native Watersports Slayer Propel Max 12.5),
  *   NK180 Pro motor (24V brushless, ~6A avg draw at trolling speed),
@@ -29,302 +31,33 @@ import { esc } from '../utils/escape.js';
 import { newRodRow } from '../utils/rod-row.js';
 import { renderSpread, autoCalculateLead, LURE_DIVE_DEPTHS } from './spread-builder.js';
 import { onContourChange } from './contour-data.js';
+import { getActiveContour } from './contour-data.js';
 import { selectBestLure, getRecommendedSpeed } from '../data/tackle-inventory.js';
 import { getLureColor } from '../data/lure-knowledge.js';
 import { getPhaseDepth, getStrategySpeed, normalizeSpecies, getPresentationPriority, getPhaseNotes } from '../data/species-strategies.js';
 import { buildFishingContext, buildGroqCoachPayload } from './smart-plan-context.js';
 import { startCoachSession } from './groq-coach.js';
-
-// ── Zone registry cache ───────────────────────────────────────────────────────
-const _zoneCache = {};  // r2Key -> { zones, loadedAt }
-const ZONE_CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
-
-async function loadZoneRegistry(r2Key) {
-  const cached = _zoneCache[r2Key];
-  if (cached && (Date.now() - cached.loadedAt) < ZONE_CACHE_TTL) return cached.zones;
-  try {
-    const url = `${CF_WORKER_URL}/chartpacks/${r2Key}/zones.json`;
-    const res = await fetch(url, { cache: 'no-store' });
-    console.log(`[zone-picker] Groq response status: ${res.status}`);
-    if (!res.ok) { console.warn('[zone-picker] Groq failed:', res.status); return null; }
-    const data = await res.json();
-    _zoneCache[r2Key] = { zones: data.zones || [], loadedAt: Date.now() };
-    console.log(`[smart-plan] zone registry loaded: ${data.zones?.length} zones for ${r2Key}`);
-    return data.zones || [];
-  } catch (e) {
-    console.warn('[smart-plan] zone registry load failed:', e.message);
-    return null;
-  }
-}
-
-async function loadZoneSpine(r2Key, zoneId) {
-  // Fetch the full spines file — cache in sessionStorage to avoid re-fetching
-  const cacheKey = `trollmap_spines_${r2Key}`;
-  let spines = null;
-  try {
-    const cached = sessionStorage.getItem(cacheKey);
-    if (cached) spines = JSON.parse(cached);
-  } catch (_) {}
-  if (!spines) {
-    try {
-      const url = `${CF_WORKER_URL}/chartpacks/${r2Key}/zones_spines.json`;
-      const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) return null;
-      spines = await res.json();
-      try { sessionStorage.setItem(cacheKey, JSON.stringify(spines)); } catch (_) {}
-    } catch (e) {
-      console.warn('[smart-plan] zone spines load failed:', e.message);
-      return null;
-    }
-  }
-  const coords = spines[zoneId];
-  if (!coords) return null;
-  // Convert [lon, lat] to [lat, lon] for route-builder
-  return coords.map(c => [c[1], c[0]]);
-}
-
-function selectZoneSpine(zones, phaseRec, startLat, startLon, maxDistMi, phaseTier, globalUsed = new Set()) {
-  // Algorithmically pick a chain of geographically connected zones for a phase.
-  // Strategy:
-  //   1. Filter to right depth band and within range
-  //   2. Start with the zone closest to startLat/startLon
-  //   3. Chain to the nearest endpoint-adjacent zone with similar bearing
-  //   4. Skip zones requiring sharp turns (>50°) to avoid coves
-  //   5. Stop when chain is long enough or no more connectable zones exist
-
-  const depthMin = phaseRec.depthMin - 2;
-  const depthMax = phaseRec.depthMax + 2;
-
-  function distFt(lat1, lon1, lat2, lon2) {
-    const R = 20902231;
-    const phi1 = lat1 * Math.PI/180, phi2 = lat2 * Math.PI/180;
-    const dphi = (lat2-lat1) * Math.PI/180;
-    const dlam = (lon2-lon1) * Math.PI/180;
-    const a = Math.sin(dphi/2)**2 + Math.cos(phi1)*Math.cos(phi2)*Math.sin(dlam/2)**2;
-    return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  }
-
-  function bearingDeg(lat1, lon1, lat2, lon2) {
-    const dlon = (lon2-lon1) * Math.PI/180;
-    const x = Math.sin(dlon) * Math.cos(lat2 * Math.PI/180);
-    const y = Math.cos(lat1*Math.PI/180)*Math.sin(lat2*Math.PI/180) -
-              Math.sin(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.cos(dlon);
-    return (Math.atan2(x,y) * 180/Math.PI + 360) % 360;
-  }
-
-  function angleDiff(a, b) {
-    const d = Math.abs(a - b) % 360;
-    return Math.min(d, 360 - d);
-  }
-
-  const maxDistFt = Math.min(maxDistMi, 2.5) * 5280; // hard cap 2.5mi from start point
-  const GAP_FT = 1500;      // max gap between zone endpoints to chain
-  const MAX_TURN_DEG = 40;  // max bearing change to prevent cove-diving
-  const MIN_ZONE_FT = 800;  // skip tiny fragments
-  const MIN_ZONE_FT_TURN = 2000; // longer minimum if zone requires a bearing change
-
-  // Fast bbox pre-filter before expensive haversine — cuts zone pool dramatically
-  const latPad = (maxDistFt / 3.28084) / 111320;
-  const lonPad = latPad / Math.cos(startLat * Math.PI / 180);
-  const candidates = zones.filter(z => {
-    if (z.depth_ft < depthMin || z.depth_ft > depthMax) return false;
-    if (z.length_ft < MIN_ZONE_FT) return false;
-    // Bbox check first — cheap
-    if (z.centroid_lat < startLat - latPad || z.centroid_lat > startLat + latPad) return false;
-    if (z.centroid_lon < startLon - lonPad || z.centroid_lon > startLon + lonPad) return false;
-    // Full distance check only for bbox survivors
-    const d = distFt(startLat, startLon, z.centroid_lat, z.centroid_lon);
-    return d <= maxDistFt;
-  });
-
-  if (!candidates.length) {
-    console.warn(`[zone-spine] no candidates for depth ${depthMin}-${depthMax}ft within ${maxDistMi}mi`);
-    return [];
-  }
-  console.log(`[zone-spine] ${candidates.length} candidates after filter`);
-
-  // Find best starting zone — closest endpoint to startLat/startLon, prefer high catch count
-  const used = new Set();
-  let chain = [];
-  let curLat = startLat, curLon = startLon;
-  let curBearing = null;
-
-  for (let iter = 0; iter < 20; iter++) {
-    let best = null, bestScore = Infinity;
-
-    for (const z of candidates) {
-      if (used.has(z.id) || globalUsed.has(z.id)) continue;
-
-      // Check both endpoints
-      for (const [eLat, eLon] of [[z.start_lat, z.start_lon], [z.end_lat, z.end_lon]]) {
-        const d = distFt(curLat, curLon, eLat, eLon);
-        if (d > (chain.length === 0 ? maxDistFt : GAP_FT)) continue;
-
-        // Bearing check after first zone
-        const zBearing = z.bearing;
-        const turnAngle = curBearing !== null ? angleDiff(curBearing, zBearing) : 0;
-        if (curBearing !== null && turnAngle > MAX_TURN_DEG) continue;
-        // Short zones that dead-end (both endpoints close together) are cove loops — skip
-        // Don't skip short zones that are valid transitions to longer runs
-
-        // Score: distance heavily weighted first, then catches and length
-        // For first zone (chain empty), distance from startLat/startLon dominates
-        // For subsequent zones, gap distance dominates
-        // First zone: pick best structure in range, not just closest — willing to transit
-        // Subsequent zones: gap distance dominates to maintain continuity
-        const distWeight = chain.length === 0 ? 0.5 : 1.0;
-        const lengthBonus = chain.length === 0 ? 3 : 5; // stronger length preference for first zone
-        const score = (d * distWeight) - (z.catch_count || 0) * 500 - (z.fishing_spot_count || 0) * 10 - (z.length_ft / lengthBonus);
-        if (score < bestScore) {
-          bestScore = score;
-          best = { zone: z, entryLat: eLat, entryLon: eLon };
-        }
-      }
-    }
-
-    if (!best) break;
-
-    used.add(best.zone.id);
-    chain.push(best.zone.id);
-
-    // Exit at the far endpoint from entry
-    const z = best.zone;
-    const dStart = distFt(best.entryLat, best.entryLon, z.start_lat, z.start_lon);
-    const dEnd   = distFt(best.entryLat, best.entryLon, z.end_lat,   z.end_lon);
-    if (dStart < dEnd) {
-      curLat = z.end_lat; curLon = z.end_lon;
-    } else {
-      curLat = z.start_lat; curLon = z.start_lon;
-    }
-    curBearing = bearingDeg(best.entryLat, best.entryLon, curLat, curLon);
-
-    // Stop if we've chained enough length
-    const totalFt = chain.reduce((acc, id) => {
-      const zone = candidates.find(c => c.id === id);
-      return acc + (zone?.length_ft || 0);
-    }, 0);
-    if (totalFt > maxDistMi * 5280 * 0.6) break; // 60% of range budget
-  }
-
-  // Debug: show top candidates that were considered for first zone
-  if (chain.length > 0) {
-    const firstCandidates = candidates
-      .map(z => {
-        const dStart = distFt(startLat, startLon, z.start_lat, z.start_lon);
-        const dEnd = distFt(startLat, startLon, z.end_lat, z.end_lon);
-        const d = Math.min(dStart, dEnd);
-        const score = (d * 0.5) - (z.catch_count || 0) * 500 - (z.fishing_spot_count || 0) * 10 - (z.length_ft / 3);
-        return { id: z.id, d: Math.round(d), len: z.length_ft, score: Math.round(score), depth: z.depth_ft };
-      })
-      .sort((a, b) => a.score - b.score)
-      .slice(0, 8);
-    console.log(`[zone-spine] Phase ${phaseTier} top candidates:`, firstCandidates.map(c => `${c.id}(${c.depth}ft,${c.len}ft,${Math.round(c.d)}ft away,score=${c.score})`).join(' | '));
-  }
-  console.log(`[zone-spine] Phase ${phaseTier}: chained ${chain.length} zones (${chain.join(', ')})`)
-  return chain;
-}
-
-async function pickZonesWithGroq(zones, phaseRec, species, conditions, rampLat, rampLon, phaseTier) {
-  // Build a compact summary of candidate zones for Groq
-  // Filter to relevant depth band and within reasonable range
-  const depthMin = phaseRec.depthMin;
-  const depthMax = phaseRec.depthMax;
-  const MAX_DIST_MI = 4.0;
-
-  console.log(`[zone-picker] called: ${zones?.length} zones, depthMin=${phaseRec?.depthMin}, depthMax=${phaseRec?.depthMax}`);
-  const candidates = zones
-    .filter(z => {
-      const zDepth = z.depth_ft;
-      return zDepth >= depthMin - 4 && zDepth <= depthMax + 4
-          && z.dist_mi_from_ramp <= MAX_DIST_MI;
-    })
-    .sort((a, b) => (-(a.catch_count||0)*3 - (a.fishing_spot_count||0)) - (-(b.catch_count||0)*3 - (b.fishing_spot_count||0)))
-    .slice(0, 30); // top 30 candidates
-
-  console.log(`[zone-picker] candidates after filter: ${candidates.length}`);
-  if (!candidates.length) return null;
-
-  const zoneList = candidates.map(z =>
-    `${z.id}: depth=${z.depth_ft}ft band=${z.depth_band} struct=${z.structure} dir=${z.bearing_cardinal} len=${z.length_ft}ft dist=${z.dist_mi_from_ramp}mi catches=${z.catch_count||0} spots=${z.fishing_spot_count||0}`
-  ).join('\n');
-
-  const prompt = `You are a fishing guide for Lake Wateree SC. Choose the BEST 1-3 zones for Phase ${phaseTier} of a trolling trip.
-
-Species: ${species}
-Phase depth target: ${depthMin}-${depthMax}ft
-Conditions: ${conditions}
-Ramp: Clearwater Cove
-
-Available zones (id: key attributes):
-${zoneList}
-
-Rules:
-- Prefer zones with catches > 0 and high fishing_spot_count
-- For dawn/shallow phases prefer dock_edge and drop_off structure near shore
-- For deep phases prefer ledge and slope structure along channel
-- Choose zones that form a logical trolling run (similar bearing/quadrant)
-- Return ONLY a JSON array of zone IDs, e.g. ["wt_0107","wt_0124"]
-- No explanation, no markdown, just the JSON array`;
-
-  try {
-    console.log(`[zone-picker] calling Groq with ${candidates.length} candidates...`);
-    const res = await fetch(`${CF_WORKER_URL}/groq-query`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 100,
-        temperature: 0.2,
-      }),
-    });
-    if (!res.ok) { console.warn('[zone-picker] Groq HTTP failed:', res.status); return null; }
-    const data = await res.json();
-    const text = data.choices?.[0]?.message?.content?.trim() || '';
-    console.log('[zone-picker] Groq raw response:', text);
-    const clean = text.replace(/```json|```/g, '').trim();
-    const start = clean.indexOf('[');
-    const end = clean.lastIndexOf(']');
-    if (start === -1 || end === -1) { console.warn('[zone-picker] No JSON array found in response'); return null; }
-    const ids = JSON.parse(clean.slice(start, end + 1));
-    console.log(`[smart-plan] Groq zone picks for phase ${phaseTier}:`, ids);
-    return ids.filter(id => candidates.some(z => z.id === id));
-  } catch (e) {
-    console.warn('[smart-plan] Groq zone pick failed:', e.message);
-    return null;
-  }
-}
 import {
   SPECIES_BEHAVIOR, REGULATIONS,
   getSeason, getTimeOfDay, checkRegulations, resolveLakeKey,
 } from '../data/species-intel.js';
 import { LAKE_DB } from '../data/lakes.js';
-// v2 multi-species brain — if present, use it; fall back to v1 for legacy lakes
 import * as IntelV2 from '../data/species-intel-v2.js';
 import { isLiveBaitAvailable } from '../data/fishing-style-profile.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
-const MAX_RODS_PER_PHASE = 2;       // kayak: 2 rods in water at a time
-const TOTAL_RODS = 6;               // 6 rod rows in spread (2 per depth tier × 3 tiers)
-const SUB_PHASES_PER_TIER = 2;      // split each depth tier into 2 sub-phases to avoid route doubling
-const BATTERY_AH_DEFAULT = 100;     // LiFePO4 100Ah
-const MOTOR_AMP_AVG = 6;            // NK180 Pro avg draw at ~2mph trolling
-const PHASE_1_END_OFFSET_MIN = 60;  // minutes after sunrise Phase 1 ends (default)
-const PHASE_2_END_OFFSET_MIN = 210; // minutes after sunrise Phase 2 ends (3.5hrs)
+const MAX_RODS_PER_PHASE = 2;
+const BATTERY_AH_DEFAULT = 100;
+const MOTOR_AMP_AVG = 6;
+const PHASE_1_END_OFFSET_MIN = 60;
+const PHASE_2_END_OFFSET_MIN = 210;
 
-// ── Lure presets (must exactly match spread-builder.js LURE_PRESETS) ─────────
-// FIX (2026-07-03): generalized to broad categories (matching the
-// COLOR_PRESETS group headers in spread-builder.js: Natural, Bright, Dark,
-// Metallic) instead of ultra-specific named patterns like "Blueback
-// Herring" or "Sexy Shad". This app doesn't know exactly which specific
-// colorway of a lure the angler owns — a general steer ("Natural" vs
-// "Bright") is honest about that; a hyper-specific name implies a
-// precision the recommendation doesn't actually have.
+// ── Lure color defaults ───────────────────────────────────────────────────────
 const LURE_COLOR_DEFAULTS = {
   'Choppo 90 – Topwater':                    'Natural',
   'Zara Spook – Topwater':                   'Natural',
   'Whopper Plopper 110 – Topwater':          'Natural',
-  'Buzzbait 1/2oz – Topwater':                'Bright',
+  'Buzzbait 1/2oz – Topwater':               'Bright',
   'Popping Cork':                             'Natural',
   'Bucktail Jig 1oz':                        'Bright',
   'Marabou Jig 3/4oz':                       'Bright',
@@ -347,7 +80,6 @@ const LURE_COLOR_DEFAULTS = {
   'ChatterBait 3/4oz':                       'Bright',
 };
 
-// Short behavior-table names → exact LURE_PRESETS strings
 const BEHAVIOR_LURE_MAP = {
   'Choppo 90':              'Choppo 90 – Topwater',
   'Rattling Spook':         'Zara Spook – Topwater',
@@ -359,12 +91,6 @@ const BEHAVIOR_LURE_MAP = {
   'Deep Hit Stick':         'Deep Hit Stick – Crankbait',
   'Crankbait':              'Flicker Minnow 11 – Crankbait',
   'Jigging spoon':          'Flutter Spoon 2oz',
-  'Rockport Rattler jig':   'Bucktail Jig 1oz',
-  'Jig + plastic trailer':  'Swimbait 4.6" – Jighead',
-  'Casting plugs':          'Flicker Minnow 11 – Crankbait',
-  'Flukes':                 'Swimbait 3.8" – Jighead',
-  'Plugs':                  'Choppo 90 – Topwater',
-  // Added 2026-07-03: matches the gear the angler actually owns/fishes.
   'Spinnerbait':            'Spinnerbait 1/2oz',
   'Lipless crankbait':      'Lipless Crankbait 1/2oz',
   'Lipless Crankbait':      'Lipless Crankbait 1/2oz',
@@ -373,7 +99,6 @@ const BEHAVIOR_LURE_MAP = {
   'Shallow crankbait':      'Rapala DT-10 – Crankbait (shallow/medium, ~10ft)',
   'Medium crankbait':       'Rapala DT-14 – Crankbait (medium/deep, ~14ft)',
   'Swimbait on jighead':    'Swimbait 4.6" – Jighead',
-  // v2 species-intel-v2.js presentation keys
   'medium_diving_crankbait': 'Rapala DT-14 – Crankbait (medium/deep, ~14ft)',
   'deep_diving_crankbait':   'Deep Hit Stick – Crankbait',
   'spinnerbait':             'Spinnerbait 1/2oz',
@@ -402,7 +127,6 @@ const BEHAVIOR_LURE_MAP = {
   'medium_crankbait':        'Flicker Minnow 11 – Crankbait',
   'deep_crankbait':          'Deep Hit Stick – Crankbait',
   'spinnerbait_slow':        'Spinnerbait 1/2oz',
-  // Live-bait → note only, no preset
   'Live herring free-line':         null,
   'Live herring downline':          null,
   'Live blueback herring downline': null,
@@ -422,25 +146,15 @@ function resolveLure(rawName) {
   return BEHAVIOR_LURE_MAP.hasOwnProperty(rawName) ? BEHAVIOR_LURE_MAP[rawName] : null;
 }
 
-// ── Technique classification: trolled vs. static/casting ─────────────────────
-// A trolling sweep route only makes sense for lures actually presented while
-// the boat is moving along a controlled path (crankbaits, A-Rigs, flutter
-// spoons on a set lead length). Topwater and free-lined/downlined live bait
-// are cast or drifted/anchored at a spot — dragging a "trolling lane" for
-// those techniques produces a route the angler was never going to run.
 function isStaticTechnique(rawLureName) {
   if (!rawLureName) return false;
   const s = rawLureName.toLowerCase();
-  // Cast/surface presentations
   if (s.includes('topwater') || s.includes('buzz') || s.includes('plopper') || s.includes('spook')) return true;
-  // Live/cut bait — not trolled from this kayak setup
   if (s.includes('free-line') || s.includes('freeline') || s.includes('free line')) return true;
   if (s.includes('downline') || s.includes('down-line') || s.includes('down line')) return true;
   if (s.includes('live') && !s.includes('lead-core')) return true;
   if (s.includes('cut bait') || s.includes('cut_bait')) return true;
-  // v2 key names — anchor/finesse techniques with no useful trolling route
-  if (s.includes('anchor')) return true;
-  if (s.includes('finesse')) return true;
+  if (s.includes('anchor') || s.includes('finesse')) return true;
   if (s.includes('wacky') || s.includes('drop_shot') || s.includes('ned_rig') || s.includes('jig_n_pig')) return true;
   if (s.includes('texas_rig') || s.includes('carolina_rig')) return true;
   if (s.includes('live_bluegill') || s.includes('live_bream') || s.includes('live_shad')) return true;
@@ -449,40 +163,29 @@ function isStaticTechnique(rawLureName) {
   return false;
 }
 
-// A phase counts as "static" for route-generation purposes if its PRIMARY
-// (first-listed) recommended lure is a static technique — that's the one
-// species-intel.js entries treat as the lead presentation for the phase.
 function isStaticPhase(phaseRec) {
   const lures = getEffectiveLures(phaseRec);
   if (!lures.length) return false;
   return isStaticTechnique(lures[0]);
 }
 
-// FIX (2026-07-03): species-intel.js entries frequently list freshwater
-// live-bait presentations (herring, shad, menhaden) as the recommended
-// technique — but this angler has no livewell, freshwater live bait is
-// fragile even with a portable aerated tank, and cast-netting for it near
-// where it's needed isn't a safe kayak operation. Filters those out per
-// the confirmed profile in fishing-style-profile.js, falling back to the
-// next listed option, or a generic trolled default if every option in the
-// phase was unavailable live bait. Both buildPhaseRods (lure selection)
-// and isStaticPhase (route generation) use this SAME filtered list so a
-// substituted lure doesn't create inconsistency between what shows in the
-// spread and whether a trolling route gets generated for it.
 function getEffectiveLures(phaseRec) {
   if (!phaseRec?.lures?.length) return [];
   const available = phaseRec.lures.filter(l => isLiveBaitAvailable(l));
   if (available.length) return available;
-  // Every listed option was unavailable live bait (fully-freshwater-livebait
-  // phase entry) — fall back to a sensible generic trolled default instead
-  // of leaving the phase with nothing at all.
   return ['A-Rig Medium'];
 }
 
+// ── Geo helpers ───────────────────────────────────────────────────────────────
+function geoDistanceFt(lat1, lon1, lat2, lon2) {
+  const R = 20902231, D = Math.PI / 180;
+  if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return Infinity;
+  const p1 = lat1*D, p2 = lat2*D, dp = (lat2-lat1)*D, dl = (lon2-lon1)*D;
+  const a = Math.sin(dp/2)**2 + Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
 // ── Sunrise computation ───────────────────────────────────────────────────────
-// Approximate astronomical sunrise for a lat/lon/date.
-// Accurate to ~2 minutes for SC latitudes — good enough for phase planning.
-// Uses the NOAA/Jean Meeus simplified algorithm.
 function computeSunrise(lat, lon, dateStr) {
   const d = new Date(dateStr + 'T12:00:00');
   const JD = Math.floor(d / 86400000) + 2440587.5;
@@ -494,144 +197,459 @@ function computeSunrise(lat, lon, dateStr) {
   const cosDec = Math.cos(Math.asin(sinDec));
   const cosH = (Math.cos(90.833 * Math.PI / 180) - sinDec * Math.sin(lat * Math.PI / 180))
                / (cosDec * Math.cos(lat * Math.PI / 180));
-  if (Math.abs(cosH) > 1) return 6.0; // fallback 6AM
+  if (Math.abs(cosH) > 1) return 6.0;
   const H = Math.acos(cosH) * 180 / Math.PI;
   const RA = Math.atan2(Math.cos(23.439 * Math.PI / 180) * Math.sin(lambda), Math.cos(lambda)) * 180 / Math.PI;
   const t = 720 - 4 * (lon + H) - (RA - 15 * ((JD - 2451545) / 36525 * 360.9856474 % 360)) / 15;
   const utcHour = ((t / 60) + 24) % 24;
-  return utcHour - 5; // EST (Wateree is UTC-5 standard, UTC-4 EDT)
+  return utcHour - 5;
 }
 
 // ── Solunar computation ───────────────────────────────────────────────────────
-// Returns major1, major2, minor1, minor2 as decimal hours local time.
 function computeSolunar(lat, lon, dateStr) {
   const d = new Date(dateStr + 'T00:00:00');
   const JD = Math.floor(d / 86400000) + 2440587.5;
   const T = (JD - 2451545.0) / 36525;
   const Lm = 218.3164 + 481267.8812 * T;
-  const moonTransitUT = (360 - (Lm % 360)) / 15; // rough transit hour UTC
-  const offsetH = lon / 15; // longitude offset
-  const major1 = ((moonTransitUT + offsetH + 24) % 24) - 5; // local
+  const moonTransitUT = (360 - (Lm % 360)) / 15;
+  const offsetH = lon / 15;
+  const major1 = ((moonTransitUT + offsetH + 24) % 24) - 5;
   const major2 = (major1 + 12) % 24;
   const minor1 = (major1 + 6) % 24;
   const minor2 = (major1 + 18) % 24;
   return { major1, major2, minor1, minor2 };
 }
 
-// ── Lake center coordinates (for sunrise/solunar) ─────────────────────────────
 const LAKE_CENTERS = {
-  'Lake Wateree':   { lat: 34.37,  lon: -80.73 },
-  'Lake Murray':    { lat: 34.06,  lon: -81.32 },
-  'Lake Marion':    { lat: 33.55,  lon: -80.30 },
-  'Lake Moultrie':  { lat: 33.28,  lon: -80.05 },
-  'Lake Monticello':{ lat: 34.44,  lon: -81.21 },
-  'Parr Reservoir': { lat: 34.30,  lon: -81.16 },
+  'Lake Wateree':    { lat: 34.37, lon: -80.73 },
+  'Lake Murray':     { lat: 34.06, lon: -81.32 },
+  'Lake Marion':     { lat: 33.55, lon: -80.30 },
+  'Lake Moultrie':   { lat: 33.28, lon: -80.05 },
+  'Lake Monticello': { lat: 34.44, lon: -81.21 },
+  'Parr Reservoir':  { lat: 34.30, lon: -81.16 },
 };
 
 function getLakeCenter(lakeName) {
   const key = Object.keys(LAKE_CENTERS).find(k =>
     lakeName.toLowerCase().includes(k.toLowerCase().replace('lake ', ''))
   );
-  return key ? LAKE_CENTERS[key] : { lat: 34.37, lon: -80.73 }; // default Wateree
+  return key ? LAKE_CENTERS[key] : { lat: 34.37, lon: -80.73 };
 }
 
-// ── Range computation ─────────────────────────────────────────────────────────
 function computeRangeMiles(speedMph) {
   const spd = speedMph || 2.0;
   const bms = window.ACTIVE_BLE_BMS;
   if (bms && bms.connected && bms.remainingAh > 0 && bms.current > 0.1) {
-    const hoursRemaining = bms.remainingAh / bms.current;
-    return (hoursRemaining * spd) / 2; // one-way
+    return (bms.remainingAh / bms.current * spd) / 2;
   }
-  // Fallback: full 100Ah battery, 6A avg draw
   return (BATTERY_AH_DEFAULT / MOTOR_AMP_AVG * spd) / 2;
 }
 
-// ── Smart Plan route audit helpers ────────────────────────────────────────────
-function geoDistanceFt(lat1, lon1, lat2, lon2) {
-  const R = 20902231, D = Math.PI / 180;
-  if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return Infinity;
-  const p1 = lat1 * D, p2 = lat2 * D, dp = (lat2 - lat1) * D, dl = (lon2 - lon1) * D;
-  const a = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
+// ── Phase boundary computation ────────────────────────────────────────────────
+function computePhases(launchTimeStr, returnTimeStr, dateStr, lakeName) {
+  const center = getLakeCenter(lakeName);
+  const sunriseH = computeSunrise(center.lat, center.lon, dateStr);
+  const sol = computeSolunar(center.lat, center.lon, dateStr);
 
-function geoBearingDeg(lat1, lon1, lat2, lon2) {
-  const D = Math.PI / 180, R2D = 180 / Math.PI;
-  const p1 = lat1 * D, p2 = lat2 * D, dl = (lon2 - lon1) * D;
-  const y = Math.sin(dl) * Math.cos(p2);
-  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
-  return (Math.atan2(y, x) * R2D + 360) % 360;
-}
-
-function geoDestinationFt(lat, lon, bearingDeg, distFt) {
-  const R = 20902231, D = Math.PI / 180, R2D = 180 / Math.PI;
-  const br = bearingDeg * D, lr = lat * D, d = distFt / R;
-  const lat2 = Math.asin(Math.sin(lr) * Math.cos(d) + Math.cos(lr) * Math.sin(d) * Math.cos(br));
-  const lon2 = lon * D + Math.atan2(Math.sin(br) * Math.sin(d) * Math.cos(lr), Math.cos(d) - Math.sin(lr) * Math.sin(lat2));
-  return [lat2 * R2D, lon2 * R2D];
-}
-
-function buildSmartPlanConnectorTrack(name, fromLat, fromLon, toLat, toLon, role = 'connector') {
-  const distFt = geoDistanceFt(fromLat, fromLon, toLat, toLon);
-  if (!Number.isFinite(distFt) || distFt <= 25) return null;
-  const brng = geoBearingDeg(fromLat, fromLon, toLat, toLon);
-  const stepFt = 250;
-  const n = Math.max(1, Math.ceil(distFt / stepFt));
-  const pts = [];
-  for (let i = 0; i <= n; i++) pts.push(geoDestinationFt(fromLat, fromLon, brng, distFt * i / n));
-  pts[0] = [fromLat, fromLon];
-  pts[pts.length - 1] = [toLat, toLon];
-  return { name, pts, role, connector: true, smartPlan: true, lengthFt: distFt };
-}
-
-function appendConnectorThenTracks(out, fromLat, fromLon, tracks, labelFrom, labelTo) {
-  if (!tracks?.length) return { lat: fromLat, lon: fromLon };
-  const first = tracks[0]?.pts?.[0];
-  if (!first) return { lat: fromLat, lon: fromLon };
-  const d = geoDistanceFt(fromLat, fromLon, first[0], first[1]);
-  if (Number.isFinite(d) && d <= 25) {
-    tracks[0].pts[0] = [fromLat, fromLon];
-  } else {
-    const c = buildSmartPlanConnectorTrack(`Connector: ${labelFrom} → ${labelTo}`, fromLat, fromLon, first[0], first[1], 'phase_connector');
-    if (c) out.push(c);
+  function parseTimeStr(t) {
+    if (!t) return null;
+    const m = t.match(/(\d+):(\d+)\s*(am|pm)?/i);
+    if (!m) return null;
+    let h = parseInt(m[1]), min = parseInt(m[2]);
+    if (m[3] && m[3].toLowerCase() === 'pm' && h < 12) h += 12;
+    if (m[3] && m[3].toLowerCase() === 'am' && h === 12) h = 0;
+    return h + min / 60;
   }
-  out.push(...tracks);
-  const lastTrack = [...tracks].reverse().find(t => t?.pts?.length >= 2);
-  const last = lastTrack?.pts?.[lastTrack.pts.length - 1];
-  return last ? { lat: last[0], lon: last[1] } : { lat: fromLat, lon: fromLon };
+
+  const launchH = parseTimeStr(launchTimeStr) || 6.0;
+  const returnH = parseTimeStr(returnTimeStr) || 12.0;
+
+  let p1End = sunriseH + PHASE_1_END_OFFSET_MIN / 60;
+  let p2End = sunriseH + PHASE_2_END_OFFSET_MIN / 60;
+
+  [sol.major1, sol.major2].forEach(t => {
+    if (t >= launchH && t <= p1End + 0.5) p1End = Math.max(p1End, t + 1.0);
+    if (t >= p1End && t <= p2End + 0.5) p2End = Math.max(p2End, t + 1.0);
+  });
+  [sol.minor1, sol.minor2].forEach(t => {
+    if (t >= launchH && t <= p1End + 0.25) p1End = Math.max(p1End, t + 0.5);
+  });
+
+  p1End = Math.min(p1End, returnH - 1.0);
+  p2End = Math.min(p2End, returnH - 0.5);
+  if (p1End >= p2End) p1End = launchH + (returnH - launchH) / 3;
+  if (p2End >= returnH) p2End = launchH + 2 * (returnH - launchH) / 3;
+
+  function hToStr(h) {
+    const hh = Math.floor(((h % 24) + 24) % 24);
+    const mm = Math.round((h % 1) * 60);
+    return `${hh % 12 || 12}:${String(mm).padStart(2, '0')} ${hh < 12 ? 'AM' : 'PM'}`;
+  }
+
+  return {
+    sunriseH,
+    solunar: sol,
+    phases: [
+      { num: 1, tier: 1, name: 'Dawn',       start: launchH, end: p1End,   startStr: hToStr(launchH), endStr: hToStr(p1End) },
+      { num: 2, tier: 2, name: 'Transition', start: p1End,   end: p2End,   startStr: hToStr(p1End),   endStr: hToStr(p2End) },
+      { num: 3, tier: 3, name: 'Deep',       start: p2End,   end: returnH, startStr: hToStr(p2End),   endStr: hToStr(returnH) },
+    ],
+  };
 }
 
-function buildRetraceReturnTrack(existingTracks, rampLat, rampLon, name = 'Retrace return to launch') {
-  // Last-resort safety: if a direct return line would cut across land, retrace
-  // already-generated water route points back to the point nearest the ramp.
-  const flat = [];
-  for (const t of existingTracks || []) {
-    for (const p of (t.pts || [])) {
-      const last = flat[flat.length - 1];
-      if (!last || geoDistanceFt(last[0], last[1], p[0], p[1]) > 3) flat.push(p);
+// ── Per-phase behavior lookup ─────────────────────────────────────────────────
+function getPhaseRecommendation(species, lakeName, season, phaseNum, waterTempF) {
+  const v2sp = IntelV2?.SPECIES_BEHAVIOR_V2?.[species];
+  if (v2sp) {
+    const lakeKeyV2 = (IntelV2.resolveLakeKey
+      ? (IntelV2.resolveLakeKey(lakeName, v2sp) || 'default_SC_reservoir')
+      : (v2sp[lakeName] ? lakeName : 'default_SC_reservoir'));
+    const lakeNode = v2sp[lakeKeyV2] || v2sp['default_SC_reservoir'] || v2sp['Coastal SC Inshore'];
+    const sNode = lakeNode?.[season];
+    if (sNode) {
+      let [dMin, dMax] = typeof sNode.preferredDepth === 'function'
+        ? sNode.preferredDepth(waterTempF)
+        : (sNode.preferredDepth || [5, 15]);
+      try {
+        const sd = getPhaseDepth(species, season, phaseNum);
+        if (sd) [dMin, dMax] = sd;
+      } catch (_) {
+        const spread = dMax - dMin;
+        if (phaseNum === 1)      { dMax = Math.round(dMin + spread * 0.45); }
+        else if (phaseNum === 2) { dMin = Math.round(dMin + spread * 0.25); dMax = Math.round(dMin + spread * 0.5); }
+        else                     { dMin = Math.round(dMin + spread * 0.55); }
+      }
+      let speed = Array.isArray(sNode.preferredSpeed) ? sNode.preferredSpeed[0] : (sNode.preferredSpeed || 1.8);
+      try { const ss = getStrategySpeed(species, season); if (ss?.ideal) speed = ss.ideal; } catch (_) {}
+      return {
+        depthMin: Math.round(dMin), depthMax: Math.round(dMax),
+        lures: sNode.preferredPresentation || [],
+        speed,
+        notes: (() => {
+          try { const pn = getPhaseNotes(species, season, phaseNum); if (pn) return pn; } catch (_) {}
+          return Array.isArray(sNode.notes) ? sNode.notes.join(' · ') : (sNode.notes || '');
+        })(),
+        _v2meta: {
+          structure: sNode.preferredStructure,
+          lureFamilies: sNode.lureFamilies,
+          colors: sNode.preferredColors,
+          lead: sNode.leadDistance,
+          forage: sNode.forage,
+        },
+      };
     }
   }
-  if (flat.length < 2) return null;
-  let bestIdx = 0, bestFt = Infinity;
-  for (let i = 0; i < flat.length; i++) {
-    const d = geoDistanceFt(rampLat, rampLon, flat[i][0], flat[i][1]);
-    if (d < bestFt) { bestFt = d; bestIdx = i; }
+
+  const lakeKey = resolveLakeKey(lakeName, SPECIES_BEHAVIOR);
+  const seasonData = SPECIES_BEHAVIOR[lakeKey]?.[species]?.[season];
+  if (!seasonData) return null;
+  const todKeys = { 1: 'dawn', 2: 'day', 3: 'day' };
+  const tod = seasonData.timeOfDay[todKeys[phaseNum]] || seasonData.timeOfDay['day'];
+  if (!tod) return null;
+  let [dMin, dMax] = typeof seasonData.depthBand === 'function'
+    ? seasonData.depthBand(waterTempF) : [...seasonData.depthBand];
+  try { const sd = getPhaseDepth(species, season, phaseNum); if (sd) [dMin, dMax] = sd; } catch (_) {}
+  return {
+    depthMin: Math.round(dMin), depthMax: Math.round(dMax),
+    lures: tod.lures || [],
+    speed: tod.speed || 2.0,
+    notes: tod.notes || '',
+  };
+}
+
+// ── Rod builder ───────────────────────────────────────────────────────────────
+function getTacticallyAlignedLure(targetDepth, preferredLures, slotIndex = 0) {
+  const depth = parseFloat(targetDepth);
+  if (isNaN(depth)) return null;
+  const validMatches = [];
+  for (const rawLure of preferredLures) {
+    const resolved = resolveLure(rawLure);
+    if (!resolved) continue;
+    const dive = LURE_DIVE_DEPTHS[resolved];
+    if (dive && depth >= dive.minDive && depth <= dive.maxDive) {
+      if (!validMatches.includes(resolved)) validMatches.push(resolved);
+    }
   }
-  const pts = flat.slice(bestIdx).reverse();
-  const last = pts[pts.length - 1];
-  if (geoDistanceFt(last[0], last[1], rampLat, rampLon) > 25) pts.push([rampLat, rampLon]);
-  else pts[pts.length - 1] = [rampLat, rampLon];
-  return { name, pts, role: 'return_retrace', connector: true, smartPlan: true, lengthFt: trackLengthFtFromPts(pts) };
+  if (validMatches.length > slotIndex) return validMatches[slotIndex];
+  if (validMatches.length > 0) return validMatches[0];
+  if (depth < 5)  return 'Choppo 90 – Topwater';
+  if (depth < 12) return 'Flicker Minnow 11 – Crankbait';
+  if (depth < 20) return 'A-Rig Medium (~2.65oz) – 4.6" Swimbait';
+  return 'Deep Hit Stick – Crankbait';
 }
 
-function trackLengthFtFromPts(pts) {
-  if (!pts?.length) return 0;
-  let total = 0;
-  for (let i = 1; i < pts.length; i++) total += geoDistanceFt(pts[i-1][0], pts[i-1][1], pts[i][0], pts[i][1]);
-  return total;
+async function buildPhaseRods(phaseRec, phaseNum, sides, fishingContext) {
+  if (!phaseRec) return [newRodRow(), newRodRow()];
+  const dMin = phaseRec.depthMin || 10;
+  const dMax = phaseRec.depthMax || 18;
+  const bandMid = (dMin + dMax) / 2;
+  const rod1Depth = Math.round(((dMin + bandMid) / 2) * 2) / 2;
+  const rod2Depth = Math.round(((bandMid + dMax) / 2) * 2) / 2;
+  const clarity    = document.getElementById('planClarity')?.value || 'Clear';
+  const clarityKey = clarity.toLowerCase().includes('mud') ? 'muddy'
+    : clarity.toLowerCase().includes('stain') ? 'stained' : 'clear';
+  const speedMph   = parseFloat(document.getElementById('planSpeed')?.value) || phaseRec.speed || 1.8;
+  const speciesNorm = normalizeSpecies(fishingContext?.species || '');
+  const season      = fishingContext?.season || 'summer';
+  const structure   = fishingContext?.structureTypes || [];
+  let preferredTypes = [];
+  try {
+    const timePhase = phaseNum === 1 ? 'dawn' : phaseNum === 3 ? 'deep' : 'morning';
+    preferredTypes  = getPresentationPriority(speciesNorm, season, { timeOfDay: timePhase, clarityKey });
+  } catch (_) {}
+
+  const results = [];
+  for (let i = 0; i < sides.length; i++) {
+    const side        = sides[i];
+    const targetDepth = i === 0 ? rod1Depth : rod2Depth;
+    let selectedLure  = null;
+    let scoreResult   = null;
+    try {
+      const result = await selectBestLure({
+        species: speciesNorm, season, clarity, clarityKey,
+        targetDepthFt: targetDepth, depthMin: dMin, depthMax: dMax,
+        speedMph, structure, preferredTypes, slotIndex: i,
+      });
+      selectedLure = result?.lure || null;
+      scoreResult  = result?.scoreResult || null;
+    } catch (_) {}
+    if (!selectedLure) {
+      const lures   = getEffectiveLures(phaseRec);
+      const rawLure = getTacticallyAlignedLure(targetDepth, lures, i);
+      if (rawLure) selectedLure = { name: rawLure, type: null };
+    }
+    const rod = newRodRow({
+      side,
+      position: 'Mid',
+      rod: "7' M Mod-Fast Spinning (Ugly Stik Lite Pro)",
+      reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader',
+      depth: String(targetDepth),
+    });
+    if (selectedLure) {
+      rod.lure  = selectedLure.name || selectedLure;
+      rod.color = getLureColor(selectedLure.type || selectedLure, clarityKey);
+      rod.lead  = String(autoCalculateLead({ ...rod, lure: rod.lure }, speedMph));
+      if (selectedLure.jigWeights?.length) {
+        try {
+          const { getJigheadForDepth: getJighead } = await import('../data/lure-knowledge.js');
+          const jigOz = getJighead(selectedLure.jigWeights, targetDepth, speedMph);
+          if (jigOz) {
+            rod.jigWeight   = `${jigOz}oz`;
+            rod.arigWeight  = selectedLure.weightOz ? `~${selectedLure.weightOz}oz` : '';
+            rod.trailerSize = selectedLure.sizes?.[0] || '';
+          }
+        } catch (_) {
+          if (rod.lure?.includes('A-Rig')) {
+            const isLight  = rod.lure.includes('Light')  || rod.lure.includes('1.65');
+            const isMedium = rod.lure.includes('Medium') || rod.lure.includes('2.65');
+            rod.arigWeight  = isLight ? '~1.65oz (5-wire light)' : isMedium ? '~2.65oz (5-wire medium)' : '~3.5oz (5-wire heavy)';
+            rod.trailerSize = isLight ? '3.8" swimbait' : isMedium ? '4.6" swimbait' : '5" swimbait';
+            rod.jigWeight   = isLight ? '1/8oz × 5' : isMedium ? '3/16oz × 5' : '1/4oz × 5';
+          }
+        }
+      }
+      rod._scoreResult = scoreResult;
+    }
+    if (phaseRec.notes) {
+      const trimmed = phaseRec.notes.length > 220
+        ? phaseRec.notes.slice(0, 220).replace(/\s+\S*$/, '') + '…'
+        : phaseRec.notes;
+      rod.notes = (rod.notes ? rod.notes + ' · ' : '') + trimmed;
+    }
+    results.push(rod);
+  }
+  return results;
 }
 
+// ── Scout waypoint generation ─────────────────────────────────────────────────
+// Samples points directly off loaded depth contour features at the right depth
+// for each phase. Sorts them into a logical nearest-neighbor chain starting
+// from the ramp (or previous phase end). Drops them as named waypoints on the
+// map so you can connect them in the route builder.
+//
+// Points are guaranteed to be in real water at the right depth — they come
+// directly from the contour data, not from geometry math.
+
+function sampleContourPoints(depthMin, depthMax, refLat, refLon, maxDistFt, maxPoints = 15) {
+  const contour = getActiveContour();
+  const gj = contour?.smart || contour?.raw;
+  if (!gj?.features?.length) return [];
+
+  // Collect all features in depth range
+  const inRange = gj.features.filter(f => {
+    const d = f.properties?.depth_ft;
+    return d != null && d >= depthMin && d <= depthMax;
+  });
+  if (!inRange.length) {
+    console.warn(`[scout] no features in ${depthMin}-${depthMax}ft range`);
+    return [];
+  }
+
+  // Sample one point per feature (midpoint), filter by distance from ref
+  const pts = [];
+  for (const f of inRange) {
+    const coords = f.geometry?.coordinates;
+    if (!coords?.length) continue;
+    // Use midpoint of the feature
+    const mid = coords[Math.floor(coords.length / 2)];
+    if (!mid || mid.length < 2) continue;
+    const lat = mid[1], lon = mid[0]; // GeoJSON is [lon,lat]
+    const distFt = geoDistanceFt(refLat, refLon, lat, lon);
+    if (distFt > maxDistFt) continue;
+    pts.push({ lat, lon, distFt, depth: f.properties.depth_ft });
+  }
+
+  if (!pts.length) return [];
+
+  // Nearest-neighbor chain from refLat/refLon — produces a logical fishing order
+  // rather than random scatter. No geometry math — just "what's closest next."
+  const result = [];
+  const used = new Set();
+  let curLat = refLat, curLon = refLon;
+
+  for (let iter = 0; iter < maxPoints; iter++) {
+    let bestIdx = -1, bestDist = Infinity;
+    for (let i = 0; i < pts.length; i++) {
+      if (used.has(i)) continue;
+      const d = geoDistanceFt(curLat, curLon, pts[i].lat, pts[i].lon);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    }
+    if (bestIdx === -1) break;
+    used.add(bestIdx);
+    result.push(pts[bestIdx]);
+    curLat = pts[bestIdx].lat;
+    curLon = pts[bestIdx].lon;
+  }
+
+  return result;
+}
+
+function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles) {
+  // Clear any existing smart plan waypoints
+  if (!state.DATA) state.DATA = {};
+  if (!Array.isArray(state.DATA.waypoints)) state.DATA.waypoints = [];
+  state.DATA.waypoints = state.DATA.waypoints.filter(w => !w.scoutWaypoint);
+
+  const maxDistFt = Math.min(rangeMiles, 4.0) * 5280;
+  const POINTS_PER_PHASE = 6; // enough to define a trolling run without overwhelming
+  let totalAdded = 0;
+
+  // Add ramp waypoint
+  const rampWpt = state.DATA.waypoints.find(w => w.role === 'launch_ramp');
+  if (!rampWpt && Number.isFinite(rampLat) && Number.isFinite(rampLon)) {
+    state.DATA.waypoints.push({
+      name: 'Launch Ramp',
+      lat: rampLat, lon: rampLon,
+      sym: 'Boat Ramp',
+      role: 'launch_ramp',
+      scoutWaypoint: true,
+    });
+  }
+
+  for (let i = 0; i < phases.length; i++) {
+    const phase = phases[i];
+    const rec   = phaseRecs[i];
+    if (!rec) continue;
+
+    const pts = sampleContourPoints(
+      rec.depthMin, rec.depthMax,
+      rampLat, rampLon,
+      maxDistFt,
+      POINTS_PER_PHASE
+    );
+
+    if (!pts.length) {
+      console.warn(`[scout] Phase ${phase.num}: no points sampled for ${rec.depthMin}-${rec.depthMax}ft`);
+      continue;
+    }
+
+    pts.forEach((pt, j) => {
+      state.DATA.waypoints.push({
+        name: `Ph${phase.num}-${j + 1} (${Math.round(pt.depth)}ft)`,
+        lat: pt.lat,
+        lon: pt.lon,
+        sym: 'Fishing Area',
+        scoutWaypoint: true,
+        phase: phase.num,
+        depth: pt.depth,
+      });
+      totalAdded++;
+    });
+
+    console.log(`[scout] Phase ${phase.num} (${rec.depthMin}-${rec.depthMax}ft): dropped ${pts.length} waypoints`);
+  }
+
+  renderAll();
+  return totalAdded;
+}
+
+// ── Groq scout report ─────────────────────────────────────────────────────────
+// Groq gets the fishing intelligence question — NOT coordinates. It tells you
+// what to look for, why, and what to throw. Code handles where.
+
+async function buildGroqScoutReport(species, lakeName, season, phases, phaseRecs, phaseInfo, rampName, waterTempF, clarity) {
+  const phaseLines = phases.map((phase, i) => {
+    const rec = phaseRecs[i];
+    if (!rec) return '';
+    const lures = getEffectiveLures(rec).slice(0, 3).join(', ');
+    return `Phase ${phase.num} — ${phase.name} (${phase.startStr}–${phase.endStr}): ${rec.depthMin}-${rec.depthMax}ft, ${rec.speed}mph, lures: ${lures}. Notes: ${rec.notes || 'none'}`;
+  }).filter(Boolean).join('\n');
+
+  const sol = phaseInfo.solunar;
+  function hToStr(h) {
+    const hh = Math.floor(((h % 24) + 24) % 24);
+    const mm = String(Math.round((h % 1) * 60)).padStart(2, '0');
+    return `${hh % 12 || 12}:${mm} ${hh < 12 ? 'AM' : 'PM'}`;
+  }
+
+  const prompt = `You are an expert freshwater fishing guide for ${lakeName}, South Carolina. 
+Give me a practical scout report for today's trip targeting ${species}.
+
+Conditions:
+- Season: ${season}
+- Water temp: ${waterTempF ? waterTempF + '°F' : 'unknown'}
+- Water clarity: ${clarity || 'unknown'}
+- Launch ramp: ${rampName || 'unknown'}
+- Sunrise: ${hToStr(phaseInfo.sunriseH)}
+- Solunar majors: ${hToStr(sol.major1)}, ${hToStr(sol.major2)}
+- Solunar minors: ${hToStr(sol.minor1)}, ${hToStr(sol.minor2)}
+
+Phase plan:
+${phaseLines}
+
+For each phase, tell me:
+1. WHAT to look for on the fishfinder and on the map (specific structure, depth transitions, bottom composition)
+2. WHERE to focus relative to the ramp (what direction, what kind of water)
+3. HOW to work the lures through that structure (speed variations, depth, presentation)
+4. One key adjustment if fish aren't responding in the first 20 minutes
+
+Be specific and practical. This angler is in a kayak with a pedal drive and electric motor, 2 rods max, no live bait, no downriggers — depth controlled by lead length only.
+Keep it under 400 words total. Use plain language, no fluff.`;
+
+  try {
+    const res = await fetch(`${CF_WORKER_URL}/groq-query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 600,
+        temperature: 0.4,
+      }),
+    });
+    if (!res.ok) {
+      console.warn('[scout] Groq HTTP failed:', res.status);
+      return null;
+    }
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content?.trim() || null;
+  } catch (e) {
+    console.warn('[scout] Groq scout report failed:', e.message);
+    return null;
+  }
+}
+
+// ── Ramp lookup helpers (unchanged from original) ─────────────────────────────
 function planDurationHours(launchTimeStr, returnTimeStr) {
   const parse = s => {
     const m = String(s || '').match(/(\d+):(\d+)\s*(AM|PM)?/i);
@@ -660,840 +678,6 @@ function clearExistingSmartPlanTracks() {
   return before - state.DATA.tracks.length;
 }
 
-function upsertSmartPlanRampWaypoint(rampName, lat, lon) {
-  if (![lat, lon].every(Number.isFinite)) return;
-  if (!state.DATA) state.DATA = {};
-  if (!Array.isArray(state.DATA.waypoints)) state.DATA.waypoints = [];
-  const name = rampName || 'Launch Ramp';
-  const existing = state.DATA.waypoints.find(w => w?.role === 'launch_ramp' || w?.name === name);
-  const payload = { name, lat, lon, role: 'launch_ramp', smartPlan: true };
-  if (existing) Object.assign(existing, payload);
-  else state.DATA.waypoints.push(payload);
-  state.DATA.rampCoords = { name, lat, lon, source: 'smart_plan_locked', locked: true };
-  window._smartPlanRamp = state.DATA.rampCoords;
-}
-
-function auditSmartPlanRoute(tracks, rampLat, rampLon, launchTime, returnTime, speedMph) {
-  const out = { ok: true, flags: [], trackCount: tracks?.length || 0 };
-  const list = (tracks || []).filter(t => t?.pts?.length >= 2);
-  if (!list.length) {
-    out.ok = false; out.flags.push('No route tracks were generated.');
-    return out;
-  }
-  const first = list[0].pts[0];
-  const lastTrack = list[list.length - 1];
-  const last = lastTrack.pts[lastTrack.pts.length - 1];
-  out.startFt = geoDistanceFt(rampLat, rampLon, first[0], first[1]);
-  out.endFt = geoDistanceFt(rampLat, rampLon, last[0], last[1]);
-  out.totalFt = list.reduce((sum, t) => sum + trackLengthFtFromPts(t.pts), 0);
-  out.connectorFt = list.filter(t => t.connector || String(t.role || '').includes('connector')).reduce((sum, t) => sum + trackLengthFtFromPts(t.pts), 0);
-  out.fishingFt = out.totalFt - out.connectorFt;
-  out.maxGapFt = 0;
-  for (let i = 1; i < list.length; i++) {
-    const prev = list[i - 1].pts[list[i - 1].pts.length - 1];
-    const cur = list[i].pts[0];
-    out.maxGapFt = Math.max(out.maxGapFt, geoDistanceFt(prev[0], prev[1], cur[0], cur[1]));
-  }
-  const durH = planDurationHours(launchTime, returnTime);
-  out.durationH = durH;
-  out.speedMph = speedMph || 2.0;
-  out.budgetFt = durH ? durH * out.speedMph * 5280 : null;
-  out.estimatedH = out.totalFt / 5280 / out.speedMph;
-
-  if (out.startFt > 35) { out.ok = false; out.flags.push(`First GPX point is ${Math.round(out.startFt)}ft from the locked ramp.`); }
-  if (out.endFt > 35) { out.ok = false; out.flags.push(`Final GPX point is ${Math.round(out.endFt)}ft from the locked ramp.`); }
-  if (out.maxGapFt > 75) { out.ok = false; out.flags.push(`Tracks have an unconnected gap of ${Math.round(out.maxGapFt)}ft.`); }
-  if (out.budgetFt && out.totalFt > out.budgetFt * 1.05) {
-    out.ok = false;
-    out.flags.push(`Route is ${(out.totalFt / 5280).toFixed(1)}mi, but ${durH.toFixed(1)}hr at ${out.speedMph.toFixed(1)}mph supports about ${(out.budgetFt / 5280).toFixed(1)}mi.`);
-  }
-  return out;
-}
-
-function buildRouteAuditText(audit, rampName, rampLat, rampLon) {
-  if (!audit) return '';
-  const lines = ['', '── Route Audit ──'];
-  lines.push(`Ramp locked: ${rampName || 'selected ramp'} (${Number(rampLat).toFixed(5)}, ${Number(rampLon).toFixed(5)})`);
-  if (!audit.trackCount) {
-    lines.push('✗ No route tracks generated.');
-    return lines.join('\n');
-  }
-  lines.push(`${audit.ok ? '✓' : '⚠'} Starts at ramp: ${Math.round(audit.startFt || 0)}ft from locked coordinate`);
-  lines.push(`${audit.ok ? '✓' : '⚠'} Returns to ramp: ${Math.round(audit.endFt || 0)}ft from locked coordinate`);
-  lines.push(`${audit.maxGapFt <= 75 ? '✓' : '⚠'} Phase/track continuity max gap: ${Math.round(audit.maxGapFt || 0)}ft`);
-  lines.push(`Total route: ${(audit.totalFt / 5280).toFixed(2)}mi · fishing ${(audit.fishingFt / 5280).toFixed(2)}mi · connectors ${(audit.connectorFt / 5280).toFixed(2)}mi`);
-  if (audit.durationH) lines.push(`Estimated moving time: ${audit.estimatedH.toFixed(1)}hr at ${audit.speedMph.toFixed(1)}mph · plan window ${audit.durationH.toFixed(1)}hr`);
-  if (audit.flags?.length) {
-    lines.push('Route flags:');
-    audit.flags.forEach(f => lines.push(`  • ${f}`));
-  }
-  return lines.join('\n');
-}
-
-// ── Phase boundary computation ────────────────────────────────────────────────
-function computePhases(launchTimeStr, returnTimeStr, dateStr, lakeName) {
-  const center = getLakeCenter(lakeName);
-  const sunriseH = computeSunrise(center.lat, center.lon, dateStr);
-  const sol = computeSolunar(center.lat, center.lon, dateStr);
-
-  // Parse launch/return times
-  function parseTimeStr(t) {
-    if (!t) return null;
-    const m = t.match(/(\d+):(\d+)\s*(am|pm)?/i);
-    if (!m) return null;
-    let h = parseInt(m[1]), min = parseInt(m[2]);
-    if (m[3] && m[3].toLowerCase() === 'pm' && h < 12) h += 12;
-    if (m[3] && m[3].toLowerCase() === 'am' && h === 12) h = 0;
-    return h + min / 60;
-  }
-
-  const launchH = parseTimeStr(launchTimeStr) || 6.0;
-  const returnH = parseTimeStr(returnTimeStr) || 12.0;
-
-  // Default phase boundaries from sunrise
-  let p1End = sunriseH + PHASE_1_END_OFFSET_MIN / 60;
-  let p2End = sunriseH + PHASE_2_END_OFFSET_MIN / 60;
-
-  // Solunar adjustment: if a major falls within a phase, extend that phase
-  // to include the full feeding window (majors = ~2hr window, minors = ~1hr)
-  [sol.major1, sol.major2].forEach(t => {
-    if (t >= launchH && t <= p1End + 0.5) p1End = Math.max(p1End, t + 1.0);
-    if (t >= p1End && t <= p2End + 0.5) p2End = Math.max(p2End, t + 1.0);
-  });
-  [sol.minor1, sol.minor2].forEach(t => {
-    if (t >= launchH && t <= p1End + 0.25) p1End = Math.max(p1End, t + 0.5);
-  });
-
-  // Clamp to trip duration
-  p1End = Math.min(p1End, returnH - 1.0);
-  p2End = Math.min(p2End, returnH - 0.5);
-  if (p1End >= p2End) p1End = launchH + (returnH - launchH) / 3;
-  if (p2End >= returnH) p2End = launchH + 2 * (returnH - launchH) / 3;
-
-  function hToStr(h) {
-    const hh = Math.floor(((h % 24) + 24) % 24);
-    const mm = Math.round((h % 1) * 60);
-    const ampm = hh < 12 ? 'AM' : 'PM';
-    return `${hh % 12 || 12}:${String(mm).padStart(2, '0')} ${ampm}`;
-  }
-
-  // Split each depth tier into 2 sub-phases. Each sub-phase gets half the
-  // time budget, keeping route lengths short enough to avoid doubling back
-  // on Wateree's long parallel depth transitions. Rod setup (tier) stays
-  // the same within a tier — angler only changes rigs at tier boundaries.
-  return {
-    sunriseH,
-    solunar: sol,
-    phases: [
-      { num: 1, tier: 1, name: 'Dawn',       start: launchH, end: p1End,   startStr: hToStr(launchH), endStr: hToStr(p1End) },
-      { num: 2, tier: 2, name: 'Transition', start: p1End,   end: p2End,   startStr: hToStr(p1End),   endStr: hToStr(p2End) },
-      { num: 3, tier: 3, name: 'Deep',       start: p2End,   end: returnH, startStr: hToStr(p2End),   endStr: hToStr(returnH) },
-    ],
-  };
-}
-
-// ── Per-phase behavior lookup ─────────────────────────────────────────────────
-function getPhaseRecommendation(species, lakeName, season, phaseNum, waterTempF) {
-  // Try v2 multi-species brain first
-  const v2sp = IntelV2?.SPECIES_BEHAVIOR_V2?.[species];
-  if (v2sp) {
-    const lakeKeyV2 = (IntelV2.resolveLakeKey
-      ? (IntelV2.resolveLakeKey(lakeName, v2sp) || 'default_SC_reservoir')
-      : (v2sp[lakeName] ? lakeName : 'default_SC_reservoir'));
-    const lakeNode = v2sp[lakeKeyV2] || v2sp['default_SC_reservoir'] || v2sp['Coastal SC Inshore'];
-    const sNode = lakeNode?.[season];
-    if (sNode) {
-      let [dMin, dMax] = typeof sNode.preferredDepth === 'function'
-        ? sNode.preferredDepth(waterTempF)
-        : (sNode.preferredDepth || [5, 15]);
-
-      // Phase-aware depth from species-strategies (authoritative)
-      try {
-        const sd = getPhaseDepth(species, season, phaseNum);
-        if (sd) [dMin, dMax] = sd;
-      } catch (_) {
-        // Fallback band split
-        const spread = dMax - dMin;
-        if (phaseNum === 1)      { dMax = Math.round(dMin + spread * 0.45); }
-        else if (phaseNum === 2) { dMin = Math.round(dMin + spread * 0.25); dMax = Math.round(dMin + spread * 0.5); }
-        else                     { dMin = Math.round(dMin + spread * 0.55); }
-      }
-
-      let speed = Array.isArray(sNode.preferredSpeed) ? sNode.preferredSpeed[0] : (sNode.preferredSpeed || 1.8);
-      try { const ss = getStrategySpeed(species, season); if (ss?.ideal) speed = ss.ideal; } catch (_) {}
-
-      return {
-        depthMin: Math.round(dMin), depthMax: Math.round(dMax),
-        lures: sNode.preferredPresentation || [],
-        speed,
-        // Use phase-specific note if available (species-strategies.js phaseNotes),
-        // otherwise fall back to the flat season notes array.
-        notes: (() => {
-          try {
-            const pn = getPhaseNotes(species, season, phaseNum);
-            if (pn) return pn;
-          } catch (_) {}
-          return Array.isArray(sNode.notes) ? sNode.notes.join(' · ') : (sNode.notes || '');
-        })(),
-        _v2meta: {
-          structure: sNode.preferredStructure,
-          lureFamilies: sNode.lureFamilies,
-          colors: sNode.preferredColors,
-          lead: sNode.leadDistance,
-          rod: sNode.rodArchitecture,
-          forage: sNode.forage,
-          reactionStrike: sNode.reactionStrike,
-          confidence: sNode.confidence,
-          fallback: sNode.fallbackPresentation,
-        },
-      };
-    }
-  }
-
-  // Fallback → v1 species-intel.js
-  const lakeKey = resolveLakeKey(lakeName, SPECIES_BEHAVIOR);
-  const seasonData = SPECIES_BEHAVIOR[lakeKey]?.[species]?.[season];
-  if (!seasonData) return null;
-
-  const todKeys = { 1: 'dawn', 2: 'day', 3: 'day' };
-  const tod = seasonData.timeOfDay[todKeys[phaseNum]] || seasonData.timeOfDay['day'];
-  if (!tod) return null;
-
-  let [dMin, dMax] = typeof seasonData.depthBand === 'function'
-    ? seasonData.depthBand(waterTempF) : [...seasonData.depthBand];
-
-  try { const sd = getPhaseDepth(species, season, phaseNum); if (sd) [dMin, dMax] = sd; } catch (_) {}
-
-  return {
-    depthMin: Math.round(dMin), depthMax: Math.round(dMax),
-    lures: tod.lures || [],
-    speed: tod.speed || 2.0,
-    notes: tod.notes || '',
-  };
-}
-
-// ── Tactical Lure Matcher ──────────────────────────────────────────────────
-function getTacticallyAlignedLure(targetDepth, preferredLures, slotIndex = 0) {
-  const depth = parseFloat(targetDepth);
-  if (isNaN(depth)) return null;
-
-  // Build list of all valid lures for this depth from the preferred list
-  const validMatches = [];
-  for (const rawLure of preferredLures) {
-    const resolved = resolveLure(rawLure);
-    if (!resolved) continue;
-    const dive = LURE_DIVE_DEPTHS[resolved];
-    if (dive && depth >= dive.minDive && depth <= dive.maxDive) {
-      if (!validMatches.includes(resolved)) validMatches.push(resolved);
-    }
-  }
-
-  // slotIndex 0 = port (first valid lure), slotIndex 1 = starboard (second distinct lure)
-  if (validMatches.length > slotIndex) return validMatches[slotIndex];
-  if (validMatches.length > 0) return validMatches[0];
-
-  // Tactical fallback by depth band
-  if (depth < 5) {
-    const shallows = ['Choppo 90 – Topwater', 'Zara Spook – Topwater', 'Whopper Plopper 110 – Topwater', 'ChatterBait 3/4oz'];
-    return shallows[Math.floor(Math.random() * shallows.length)];
-  } else if (depth < 12) {
-    const midShallows = ['Rapala DT-10 – Crankbait', 'Flicker Minnow 11 – Crankbait', 'Bucktail Jig 1oz', 'Marabou Jig 3/4oz', 'Kastmaster 3/4oz'];
-    return midShallows[Math.floor(Math.random() * midShallows.length)];
-  } else if (depth < 20) {
-    const midDepths = ['A-Rig Medium (~2.65oz) – 4.6" Swimbait', 'Rapala DT-14 – Crankbait', 'Flutter Spoon 2oz', 'Swimbait 4.6" – Jighead'];
-    return midDepths[Math.floor(Math.random() * midDepths.length)];
-  } else {
-    const deeps = ['Deep Hit Stick – Crankbait', 'A-Rig Heavy (~3.5oz) – 5" Swimbait', 'Flutter Spoon 3oz', 'Swimbait 5" – Jighead'];
-    return deeps[Math.floor(Math.random() * deeps.length)];
-  }
-}
-
-// ── Build 2 rods for a phase ──────────────────────────────────────────────────
-async function buildPhaseRods(phaseRec, phaseNum, sides, fishingContext) {
-  if (!phaseRec) return [newRodRow(), newRodRow()];
-
-  const dMin    = phaseRec.depthMin || 10;
-  const dMax    = phaseRec.depthMax || 18;
-  const bandMid = (dMin + dMax) / 2;
-  const rod1Depth = Math.round(((dMin + bandMid) / 2) * 2) / 2;
-  const rod2Depth = Math.round(((bandMid + dMax) / 2) * 2) / 2;
-
-  const clarity    = document.getElementById('planClarity')?.value || 'Clear';
-  const clarityKey = clarity.toLowerCase().includes('mud') ? 'muddy'
-    : clarity.toLowerCase().includes('stain') ? 'stained' : 'clear';
-  const speedMph   = parseFloat(document.getElementById('planSpeed')?.value) || phaseRec.speed || 1.8;
-  const speciesNorm = normalizeSpecies(fishingContext?.species || '');
-  const season      = fishingContext?.season || 'summer';
-  const structure   = fishingContext?.structureTypes || [];
-
-  // Get presentation priority from species-strategies
-  let preferredTypes = [];
-  try {
-    const timePhase = phaseNum === 1 ? 'dawn' : phaseNum === 3 ? 'deep' : 'morning';
-    preferredTypes  = getPresentationPriority(speciesNorm, season, { timeOfDay: timePhase, clarityKey });
-  } catch (_) {}
-
-  const results = [];
-  for (let i = 0; i < sides.length; i++) {
-    const side        = sides[i];
-    const targetDepth = i === 0 ? rod1Depth : rod2Depth;
-    let selectedLure  = null;
-    let scoreResult   = null;
-
-    // Try inventory-based selection first
-    try {
-      const result = await selectBestLure({
-        species: speciesNorm, season, clarity, clarityKey,
-        targetDepthFt: targetDepth, depthMin: dMin, depthMax: dMax,
-        speedMph, structure, preferredTypes, slotIndex: i,
-      });
-      selectedLure = result?.lure || null;
-      scoreResult  = result?.scoreResult || null;
-    } catch (_) {}
-
-    // Fallback to old tactical matcher if inventory select fails
-    if (!selectedLure) {
-      const lures   = getEffectiveLures(phaseRec);
-      const rawLure = getTacticallyAlignedLure(targetDepth, lures, i);
-      if (rawLure) selectedLure = { name: rawLure, type: null };
-    }
-
-    const rod = newRodRow({
-      side,
-      position: 'Mid',
-      rod: "7' M Mod-Fast Spinning (Ugly Stik Lite Pro)",
-      reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader',
-      depth: String(targetDepth),
-    });
-
-    if (selectedLure) {
-      rod.lure  = selectedLure.name || selectedLure;
-      rod.color = getLureColor(selectedLure.type || selectedLure, clarityKey);
-      rod.lead  = String(autoCalculateLead({ ...rod, lure: rod.lure }, speedMph));
-
-      // Jighead for A-rigs and swimbaits
-      if (selectedLure.jigWeights?.length) {
-        try {
-          const { getJigheadForDepth: getJighead } = await import('../data/lure-knowledge.js');
-          const jigOz = getJighead(selectedLure.jigWeights, targetDepth, speedMph);
-          if (jigOz) {
-            rod.jigWeight   = `${jigOz}oz`;
-            rod.arigWeight  = selectedLure.weightOz ? `~${selectedLure.weightOz}oz` : '';
-            rod.trailerSize = selectedLure.sizes?.[0] || '';
-          }
-        } catch (_) {
-          // Fallback A-rig labels from name string
-          if (rod.lure?.includes('A-Rig')) {
-            const isLight  = rod.lure.includes('Light')  || rod.lure.includes('1.65');
-            const isMedium = rod.lure.includes('Medium') || rod.lure.includes('2.65');
-            rod.arigWeight  = isLight ? '~1.65oz (5-wire light)' : isMedium ? '~2.65oz (5-wire medium)' : '~3.5oz (5-wire heavy)';
-            rod.trailerSize = isLight ? '3.8" swimbait' : isMedium ? '4.6" swimbait' : '5" swimbait';
-            rod.jigWeight   = isLight ? '1/8oz × 5' : isMedium ? '3/16oz × 5' : '1/4oz × 5';
-          }
-        }
-      }
-      rod._scoreResult = scoreResult;
-    }
-
-    if (phaseRec.notes) {
-      const trimmed = phaseRec.notes.length > 220
-        ? phaseRec.notes.slice(0, 220).replace(/\s+\S*$/, '') + '…'
-        : phaseRec.notes;
-      rod.notes = (rod.notes ? rod.notes + ' · ' : '') + trimmed;
-    }
-
-    if (scoreResult?.confidence) {
-      const pct = Math.round(scoreResult.confidence * 100);
-      rod.notes = (rod.notes ? rod.notes + ' · ' : '') + `Confidence: ${pct}%`;
-      if (scoreResult.warnings?.length) rod.notes += ` ⚠ ${scoreResult.warnings[0]}`;
-    }
-
-    const v2 = phaseRec._v2meta;
-    if (v2?.structure?.length) rod.notes = (rod.notes ? rod.notes + ' · ' : '') + 'Structure: ' + v2.structure.slice(0, 2).join(', ');
-    if (v2?.lureFamilies?.length) rod.notes = (rod.notes ? rod.notes + ' · ' : '') + 'Families: ' + v2.lureFamilies.slice(0, 2).join(', ');
-
-    results.push(rod);
-  }
-  return results;
-}
-
-// ── Route generation per phase ────────────────────────────────────────────────
-async function generateRouteForPhase(phase, phaseRec, lakeName, rampLat, rampLon, rangeMiles, targetLengthFt = null, startLat = null, startLon = null, endLat = null, endLon = null, isReturnPass = false, lockedBearing = null) {
-  if (!phaseRec) return [];
-
-  window._smartPlanPhaseRoutes = window._smartPlanPhaseRoutes || [];
-  window._smartPlanPhaseRoutes.push({
-    phase: phase.num,
-    phaseName: phase.name,
-    depthMin: phaseRec.depthMin,
-    depthMax: phaseRec.depthMax,
-    speed: phaseRec.speed,
-    window: `${phase.startStr} – ${phase.endStr}`,
-  });
-
-  if (isStaticPhase(phaseRec)) {
-    const primaryLure = phaseRec.lures[0];
-    console.log(`[smart-plan] Phase ${phase.num} ${phase.name}: primary technique "${primaryLure}" is static/casting, not trolled — skipping route generation.`);
-    window._smartPlanPhaseRoutes[window._smartPlanPhaseRoutes.length - 1].staticTechnique = true;
-    window._smartPlanPhaseRoutes[window._smartPlanPhaseRoutes.length - 1].technique = primaryLure;
-    return [];
-  }
-
-  const minEl = document.getElementById('rbDepthMin');
-  const maxEl = document.getElementById('rbDepthMax');
-  if (minEl) minEl.value = phaseRec.depthMin;
-  if (maxEl) maxEl.value = phaseRec.depthMax;
-
-  try {
-    const { generateAndCommitRoute, setClipFromRamp, setClipPolygon } = await import('./route-builder.js');
-
-    // ── Zone-based routing (new) ──────────────────────────────────────────────
-    // If a zone registry exists for this lake, ask Groq to pick the best zones
-    // for this phase and use their spine coords instead of depth-polygon routing.
-    // Derive R2 key from state (set after contour loads) or from plan lake selector
-    const LAKE_TO_R2 = {
-      'Lake Wateree, SC': 'lake_wateree_fishing_creek',
-      'Fishing Creek Reservoir, SC': 'lake_wateree_fishing_creek',
-      'Lake Marion, SC': 'lake_marion',
-      'Lake Moultrie, SC': 'lake_moultrie',
-      'Lake Murray, SC': 'lake_murray',
-      'Lake Wylie, SC/NC': 'lake_wylie',
-      'Lake Hartwell, SC/GA': 'lake_hartwell',
-      'Lake Norman, NC': 'lake_norman_mountain_island',
-    };
-    const planLakeName = document.getElementById('planLake')?.value || '';
-    // Ignore ACTIVE_CONTOUR_KEY if it's a local filename (contains .geojson)
-    const activeKey = state.ACTIVE_CONTOUR_KEY;
-    const r2Key = (activeKey && !activeKey.includes('.geojson') ? activeKey : null) || LAKE_TO_R2[planLakeName] || null;
-    if (!window._usedZoneIds) window._usedZoneIds = new Set();
-    const _phaseLabelKey = `p${phase.tier ?? phase.num}`;
-    const _hasLabeledPts = typeof window.getMyStructures === 'function' &&
-      window.getMyStructures().some(s => s.label === _phaseLabelKey);
-    if (false && r2Key && !isReturnPass && !_hasLabeledPts) { // zone routing disabled — using depth polygon
-      try {
-        const zones = await loadZoneRegistry(r2Key);
-        if (zones?.length) {
-          const phaseTier2 = phase.tier ?? phase.num;
-          const phaseStartLat = startLat ?? rampLat;
-          const phaseStartLon = startLon ?? rampLon;
-          console.log(`[zone-spine] Phase ${phaseTier2} start: (${phaseStartLat?.toFixed(4)}, ${phaseStartLon?.toFixed(4)}), depth ${phaseRec.depthMin}-${phaseRec.depthMax}ft`);
-          const pickedIds = selectZoneSpine(zones, phaseRec, phaseStartLat, phaseStartLon, Math.min(rangeMiles, 4.0), phaseTier2, window._usedZoneIds);
-          console.log(`[smart-plan] Zone spine for phase ${phaseTier2}:`, pickedIds);
-          if (pickedIds?.length) pickedIds.forEach(id => window._usedZoneIds.add(id));
-          if (pickedIds?.length) {
-            // Load spine coords for picked zones and chain them
-            const allSpineCoords = [];
-            for (const zoneId of pickedIds) {
-              const coords = await loadZoneSpine(r2Key, zoneId);
-              if (coords?.length >= 2) {
-                if (allSpineCoords.length) allSpineCoords.push(...coords.slice(1));
-                else allSpineCoords.push(...coords);
-              }
-            }
-            if (allSpineCoords.length >= 2) {
-              // Find matched zone for offset — use first picked zone's depth
-              const firstZone = zones.find(z => z.id === pickedIds[0]);
-              const zoneDepth = firstZone?.depth_ft || (phaseRec.depthMin + phaseRec.depthMax) / 2;
-              // Offset shallow side for dawn/shallow phases, deeper for later phases
-              const offsetFt = 0; // no offset — follow the contour line directly
-              setClipFromRamp(rampLat, rampLon, Math.min(rangeMiles, 4.5));
-              const tracks = await generateAndCommitRoute({
-                rampLat, rampLon,
-                depthMin: phaseRec.depthMin,
-                depthMax: phaseRec.depthMax,
-                startLat: startLat ?? rampLat,
-                startLon: startLon ?? rampLon,
-                targetLengthFt: targetLengthFt || null,
-                pattern: 'straight',
-                amplitude: 0,
-                lockedBearing,
-                smartPlan: true,
-                emitConnectors: false,
-                singleBestTrack: true,
-                useWaypointSpine: true,
-                manualWaypoints: allSpineCoords,
-                zoneSpineOffset: offsetFt,
-                trackName: `${phase.name} (Zone ${pickedIds.join('+')})`,
-              });
-              if (tracks?.length) {
-                console.log(`[smart-plan] Phase ${phase.tier ?? phase.num}: zone routing succeeded (${pickedIds.join(', ')})`);
-                return tracks;
-              }
-            }
-          }
-        }
-      } catch (zoneErr) {
-        console.warn('[smart-plan] Zone routing failed, falling back to depth-polygon:', zoneErr.message);
-      }
-    }
-    // ── End zone-based routing ────────────────────────────────────────────────
-
-    const phaseTier = phase.tier ?? phase.num;
-
-    // Pre-build corridor polygon for Phase 2/3 BEFORE clip is set
-    window._phaseClipPolygon = null;
-    window._hasLabeledWaypoints = false;
-    if ((phaseTier === 2 || phaseTier === 3) && typeof window.getMyStructures === 'function') {
-      try {
-        const _structs = window.getMyStructures();
-        const _labelKey = `p${phaseTier}`;
-        const _cPts = _structs.filter(s => s.label === _labelKey && s.lat && s.lon)
-          .sort((a, b) => (a.addedAt||'').localeCompare(b.addedAt||''));
-        if (_cPts.length >= 2) {
-          window._hasLabeledWaypoints = true;
-          const _D2R = Math.PI/180;
-          const _W = [[startLat??rampLat, startLon??rampLon], ..._cPts.map(s=>[s.lat,s.lon])];
-          const _WFT = 2640, _L=[], _R=[];
-          for (let _i=0;_i<_W.length;_i++) {
-            const [_la,_lo] = _W[_i];
-            const _wlat = _WFT/111320/3.28084, _wlon = _WFT/(111320*Math.cos(_la*_D2R))/3.28084;
-            let _b;
-            if (_i===0) _b=Math.atan2((_W[1][1]-_lo)*Math.cos(_la*_D2R),_W[1][0]-_la);
-            else if (_i===_W.length-1) _b=Math.atan2((_lo-_W[_i-1][1])*Math.cos(_la*_D2R),_la-_W[_i-1][0]);
-            else _b=Math.atan2((_W[_i+1][1]-_W[_i-1][1])*Math.cos(_la*_D2R),_W[_i+1][0]-_W[_i-1][0]);
-            const _p=_b+Math.PI/2;
-            _L.push([_la+Math.cos(_p)*_wlat, _lo+Math.sin(_p)*_wlon]);
-            _R.push([_la-Math.cos(_p)*_wlat, _lo-Math.sin(_p)*_wlon]);
-          }
-          window._phaseClipPolygon = [..._L,...[..._R].reverse(),_L[0]];
-          console.log(`[smart-plan] Phase ${phaseTier}: corridor polygon ready (${window._phaseClipPolygon.length} pts)`);
-        }
-      } catch(_e) { console.warn('corridor build failed', _e.message); }
-    }
-
-    if (phaseTier === 1) {
-      setClipFromRamp(rampLat, rampLon, Math.min(rangeMiles, 4.0));
-
-    } else if (window._phaseClipPolygon && !window._hasLabeledWaypoints) {
-      // Use corridor polygon only when no labeled waypoints — waypoints define
-      // the route already so the corridor clip just cuts off early points
-      setClipPolygon(window._phaseClipPolygon);
-      window._phaseClipPolygon = null;
-
-    } else if (phaseTier === 2) {
-      const p1EndLat = startLat ?? rampLat;
-      const p1EndLon = startLon ?? rampLon;
-      setClipFromRamp(p1EndLat, p1EndLon, Math.min(rangeMiles, 3.5));
-
-    } else {
-      // Phase 3: clip must reach the furthest corridor waypoint (P3-turn)
-      // Use the actual corridor points to compute needed radius
-      const p2EndLat = startLat ?? rampLat;
-      const p2EndLon = startLon ?? rampLon;
-      const allStructs3 = (typeof window.getMyStructures === 'function') ? window.getMyStructures() : [];
-      const p3pts = allStructs3.filter(s => s.label === 'p3' && s.lat && s.lon)
-        .sort((a, b) => (a.addedAt || '').localeCompare(b.addedAt || ''));
-      let clipRadiusMi = 2.0;
-      if (p3pts.length >= 2) {
-        // Find furthest point from phase start
-        const maxDist = Math.max(...p3pts.map(s => Math.sqrt(
-          ((s.lat - p2EndLat) * 69) ** 2 +
-          ((s.lon - p2EndLon) * 69 * Math.cos(p2EndLat * Math.PI / 180)) ** 2
-        )));
-        clipRadiusMi = Math.min(rangeMiles, maxDist + 0.5);
-      }
-      setClipFromRamp(p2EndLat, p2EndLon, clipRadiusMi);
-      console.log(`[smart-plan] Phase 3: clip ${clipRadiusMi.toFixed(1)}mi from phase start`);
-    }
-    
-    // TACTICAL PATTERN SELECTION:
-    // Phase 1: Meandering / Exploring (Sine)
-    // Phase 2: Direct Head-out / Ledge-hunting (Sine+Straight)
-    // Phase 3: Return to Ramp (Sine+Straight)
-    let pattern = 'sine+straight';
-    let amplitude = 30;
-    const pt = phase.tier ?? phase.num;
-    if (pt === 1) {
-      pattern = 'straight';
-      amplitude = 0;
-    } else if (pt === 2) {
-      pattern = 'sine+straight';
-      amplitude = 25;
-    } else {
-      pattern = 'sine+straight';
-      amplitude = 30;
-    }
-
-    const rCfg = {
-      pattern,
-      amplitude,
-      spacing: 150,
-      lanes: 1,
-      rationale: (phase.tier??phase.num) === 1 ? 'Meandering outbound explore' : ((phase.tier??phase.num) === 2 ? 'Direct ledge swing' : 'Return circuit to ramp'),
-    };
-
-    // For Phase 1 (Dawn): if the angler has mapped docks with QuickDraw,
-    // use those as the spine waypoints instead of the depth polygon edge.
-    // Dock positions define the productive bank — troll parallel to them
-    // at ~75ft offset rather than following cove-tracing polygon geometry.
-    // QuickDraw waypoint spine logic:
-    // Phase 1 (Dawn):      'dock' markers → troll the dock line
-    // Phase 2 (Transition):'point' #1 → skip-past-cove waypoint
-    // Phase 3 (Deep):      'point' #2+ → full corridor spine
-    let dockWaypoints = null;
-    if (typeof window.getMyStructures === 'function') {
-      try {
-        const allStructs = window.getMyStructures();
-        const D2R = Math.PI / 180;
-        const refLat = rampLat, refLon = rampLon;
-
-        // Check for labeled route waypoints first (from converted GPX lanes)
-        // label: p1=Phase1, p2=Phase2, p3=Phase3, p4=return
-        const labelKey = `p${phaseTier}`;
-        const labeledPts = allStructs
-          .filter(s => s.label === labelKey && s.lat && s.lon)
-          .sort((a, b) => (a.addedAt||'').localeCompare(b.addedAt||''));
-
-        if (labeledPts.length >= 2) {
-          // Use labeled route waypoints — Ryan's hand-drawn lane becomes the spine
-          // Dense interpolation at 200ft so no segment crosses land
-          const STEP_FT = 200;
-          const allWpts = [[startLat ?? refLat, startLon ?? refLon],
-            ...labeledPts.map(s => [s.lat, s.lon])];
-          const dense = [allWpts[0]];
-          for (let i = 0; i < allWpts.length - 1; i++) {
-            const [la1,lo1] = allWpts[i], [la2,lo2] = allWpts[i+1];
-            const dLat=(la2-la1)*111320, dLon=(lo2-lo1)*111320*Math.cos(la1*D2R);
-            const distFt=Math.sqrt(dLat*dLat+dLon*dLon)*3.28084;
-            const steps=Math.max(1,Math.floor(distFt/STEP_FT));
-            for (let s=1;s<=steps;s++) {
-              const t=s/steps;
-              dense.push([la1+(la2-la1)*t, lo1+(lo2-lo1)*t]);
-            }
-          }
-          dockWaypoints = dense;
-          console.log(`[smart-plan] Phase ${phaseTier}: using ${labeledPts.length} labeled waypoints (${dense.length} interpolated at 200ft)`);
-
-        } else if (phaseTier === 1) {
-          // Fall back to dock markers sorted by distance from ramp
-          const docks = allStructs.filter(s => s.type === 'dock' && s.lat && s.lon);
-          if (docks.length >= 3) {
-            docks.sort((a, b) => {
-              const da = Math.sqrt(Math.pow((a.lat-refLat)*111320,2)+Math.pow((a.lon-refLon)*111320*Math.cos(refLat*D2R),2));
-              const db = Math.sqrt(Math.pow((b.lat-refLat)*111320,2)+Math.pow((b.lon-refLon)*111320*Math.cos(refLat*D2R),2));
-              return da - db;
-            });
-            dockWaypoints = [[refLat, refLon], ...docks.map(s => [s.lat, s.lon])];
-            console.log(`[smart-plan] Phase 1: using ${docks.length} dock waypoints (fallback)`);
-          }
-
-        } else if (phaseTier === 2 || phaseTier === 3) {
-          // No labeled waypoints and no dock fallback — depth polygon routing
-          dockWaypoints = null;
-        }
-      } catch (e) {
-        console.warn('[smart-plan] waypoint build failed:', e.message);
-        dockWaypoints = null;
-      }
-    }
-
-    // Let the Route Builder make the fishing pass, then immediately pull those
-    // tracks back out. Smart Plan assembles launch/phase/return connectors itself
-    // so stale route-builder code or browser cache cannot drop the connectors.
-    const beforeCount = state.DATA?.tracks?.length || 0;
-    const returnedTracks = generateAndCommitRoute({
-      ...rCfg,
-      depthMin:       phaseRec.depthMin,
-      depthMax:       phaseRec.depthMax,
-      trackName:      `Phase ${phase.num} ${phase.name} (${phase.startStr}–${phase.endStr})`,
-      rampLat:        rampLat ?? null,
-      rampLon:        rampLon ?? null,
-      startLat:       startLat ?? rampLat ?? null,
-      startLon:       startLon ?? rampLon ?? null,
-      endLat:         endLat ?? null,
-      endLon:         endLon ?? null,
-      targetLengthFt: dockWaypoints ? null : (targetLengthFt || null),
-      isReturnPass:   isReturnPass,
-      lockedBearing:  lockedBearing,
-      smartPlan:      true,
-      emitConnectors: false,
-      singleBestTrack:true,
-      // If dock waypoints are available for Phase 1, pass them as the spine
-      ...(dockWaypoints ? { manualWaypoints: dockWaypoints, useWaypointSpine: true } : {}),
-    });
-
-    const addedTracks = state.DATA?.tracks?.slice(beforeCount) || [];
-    if (state.DATA?.tracks) state.DATA.tracks.splice(beforeCount);
-
-    const tracks = (addedTracks.length ? addedTracks : (returnedTracks || []))
-      .filter(t => t?.pts?.length >= 2)
-      .map(t => ({ ...t, smartPlan: true, role: 'fishing', connector: false }));
-
-    if (tracks.length) {
-      console.log(`[smart-plan] Phase ${phase.num} ${phase.name}: built ${tracks.length} fishing track(s) at ${phaseRec.depthMin}-${phaseRec.depthMax}ft`);
-    }
-    return tracks;
-  } catch (e) {
-    console.warn('[smart-plan] Route generation failed:', e.message);
-    return [];
-  }
-}
-
-// ── Apply to plan fields ──────────────────────────────────────────────────────
-function applyToPlanFields(phaseRecs, phases) {
-  // Use Phase 1 depth/speed as the primary plan fields
-  const p1 = phaseRecs[0];
-  if (!p1) return;
-  const depthEl = document.getElementById('planTargetDepth');
-  const speedEl = document.getElementById('planSpeed');
-  if (depthEl) depthEl.value = `${p1.depthMin}-${p1.depthMax}`;
-  if (speedEl) speedEl.value = String(p1.speed);
-}
-
-// ── Route Builder depth pre-fill on lazy open ─────────────────────────────────
-export function applyStoredSmartPlanDepth() {
-  const routes = window._smartPlanPhaseRoutes;
-  if (!routes || !routes.length) return;
-  const p1 = routes.find(r => r.phase === 1);
-  if (!p1) return;
-  const minEl = document.getElementById('rbDepthMin');
-  const maxEl = document.getElementById('rbDepthMax');
-  if (minEl) minEl.value = p1.depthMin;
-  if (maxEl) maxEl.value = p1.depthMax;
-  const note = document.getElementById('rbContourInfoText');
-  if (note) {
-    const phaseList = routes.map(r =>
-      `Phase ${r.phase} (${r.phaseName}): ${r.depthMin}-${r.depthMax}ft @ ${r.speed}mph [${r.window}]`
-    ).join(' · ');
-    if (!note.textContent.includes('Phase 1')) {
-      note.insertAdjacentHTML('beforeend',
-        `<br><span style="color:var(--accent2);font-size:10px">⚡ Smart Plan phases: ${phaseList}</span>`);
-    }
-  }
-}
-
-// ── Phase Trolling Pattern & Route Config Brain ───────────────────────────────
-function getRouteConfigForPhase(rec, phaseNum) {
-  if (!rec) return null;
-  if (phaseNum === 1) {
-    return {
-      pattern: 'sine+straight',
-      amplitude: 18,
-      spacing: 180,
-      lanes: 1,
-      rationale: 'Sine+Straight pattern with 18ft amplitude glides parallel along the shallow ledge breakline and executes smooth S-curve turns across primary points. Keeps presentations in prime morning ambush zones without overshooting onto shallow flats.'
-    };
-  } else if (phaseNum === 2) {
-    return {
-      pattern: 'sine',
-      amplitude: 28,
-      spacing: 140,
-      lanes: 1,
-      rationale: 'Continuous Sine S-curve oscillation (28ft amplitude) weaves back and forth across the primary channel drop-off. Speed changes on turns accelerate the outside lure and stall/drop the inside lure to trigger following predators.'
-    };
-  } else {
-    return {
-      pattern: 'sine+straight',
-      amplitude: 22,
-      spacing: 160,
-      lanes: 1,
-      rationale: 'Controlled weave along the deep channel ledge edge returning toward launch ramp. Keeps deep-diving crankbaits and heavy A-Rigs patrolling right above suspended thermocline fish.'
-    };
-  }
-}
-
-// ── Rationale text ────────────────────────────────────────────────────────────
-function buildRationaleText(species, lakeName, season, phases, phaseRecs, phaseInfo, totalRoutes, staticPhaseCount = 0) {
-  const lines = [];
-  lines.push(`${species} — ${lakeName}, ${season}`);
-  lines.push(`Sunrise: ${phaseInfo.phases[0].startStr} → Phase boundaries computed from sunrise + solunar`);
-  if (totalRoutes > 0) lines.push(`Routes: ${totalRoutes} auto-generated and committed to plan${staticPhaseCount ? ` · ${staticPhaseCount} phase(s) static-technique, no route needed` : ''}`);
-  else if (staticPhaseCount === phases.length) lines.push(`Routes: 0 — every phase is a static/casting technique this trip, no trolling routes needed`);
-  else lines.push(`Routes: No contour data loaded — open Contour Data tab first`);
-
-  const sol = phaseInfo.solunar;
-  function hToStr(h) {
-    const hh = Math.floor(((h % 24) + 24) % 24);
-    const mm = Math.round((h % 1) * 60);
-    return `${hh % 12 || 12}:${String(mm).padStart(2, '0')} ${hh < 12 ? 'AM' : 'PM'}`;
-  }
-  lines.push(`Solunar majors: ${hToStr(sol.major1)} & ${hToStr(sol.major2)} | minors: ${hToStr(sol.minor1)} & ${hToStr(sol.minor2)}`);
-  lines.push('');
-
-  phases.forEach((phase, i) => {
-    const rec = phaseRecs[i];
-    lines.push(`Phase ${phase.num} — ${phase.name} (${phase.startStr} – ${phase.endStr})`);
-    if (rec) {
-      const tierLabel = phase.tier ?? phase.num;
-      const isFirstOfTier = phases.findIndex(p => (p.tier ?? p.num) === tierLabel) === phases.indexOf(phase);
-      if (isFirstOfTier) {
-        lines.push(`  Rod setup (Tier ${tierLabel}) · Port + Stbd · Depth: ${rec.depthMin}-${rec.depthMax}ft · Speed: ${rec.speed}mph`);
-      }
-      lines.push(`  Lures: ${rec.lures.slice(0, 3).join(', ')}`);
-      // FIX (2026-07-03): Smart Plan used to generate a trolling sweep route
-      // for every phase, including phases whose primary technique is
-      // topwater or free-lined/downlined live bait — techniques nobody
-      // trolls. Those phases now skip route generation entirely (see
-      // generateRouteForPhase / isStaticPhase); call that out explicitly
-      // here instead of silently having no route with no explanation, and
-      // surface the notes field prominently since it's usually the only
-      // spot guidance this phase has (points, creek mouths, dam schooling
-      // areas, etc.) — it was previously just tacked on as a minor line.
-      if (isStaticPhase(rec)) {
-        lines.push(`  ⚠ STATIC TECHNIQUE (${rec.lures[0]}) — no trolling route generated for this phase.`);
-        lines.push(`  Where to fish: ${rec.notes || 'No specific area guidance in the data for this entry — use local structure knowledge (points, creek mouths, breaklines).'}`);
-      } else {
-        if (rec.notes) lines.push(`  Notes: ${rec.notes}`);
-      }
-      // FIX (2026-07-03): getRouteConfigForPhase is not defined anywhere in
-      // this codebase — no local function, no import. This was crashing
-      // buildRationaleText entirely (ReferenceError), which in turn left
-      // plan-builder.js's rationaleHtml undefined and crashed the whole
-      // plan preview render, even though route generation itself had
-      // already succeeded. Guarded so a missing optional line can't take
-      // down the rest of the plan. TODO: restore real per-phase route
-      // config (pattern/amplitude/spacing/lanes) once the intended source
-      // of this function is found — it may have been renamed/removed in
-      // route-builder.js during a prior refactor.
-      if (!isStaticPhase(rec) && typeof getRouteConfigForPhase === 'function') {
-        const routeCfg = getRouteConfigForPhase(rec, phase.tier ?? phase.num);
-        if (routeCfg) {
-          lines.push(`  Route: ${routeCfg.pattern} · amplitude ${routeCfg.amplitude}ft · spacing ${routeCfg.spacing}ft · ${routeCfg.lanes} lane(s)`);
-          lines.push(`  Why: ${routeCfg.rationale}`);
-        }
-      }
-    } else {
-      lines.push(`  No data for this phase`);
-    }
-    lines.push('');
-  });
-
-  return lines.join('\n');
-}
-
-// ── Ramp rationale text ──────────────────────────────────────────────────────
-function buildRampRationaleText(eval_) {
-  if (!eval_) return '';
-  const lines = ['', '── Ramp Evaluation ──'];
-
-  if (eval_.shouldSwitch) {
-    lines.push(`⚠ RAMP RECOMMENDATION: Consider switching to ${eval_.best.name}`);
-    lines.push(`  Your selected ramp scores ${eval_.currentScore}/100 vs ${eval_.best.name} at ${eval_.bestScore}/100 (+${eval_.switchDelta} points)`);
-    lines.push(`  Reasons to switch:`);
-    const current = eval_.current;
-    if (current) {
-      const currentEntry = eval_.ranked.find(r => r.ramp.key === current.key);
-      (currentEntry?.reasons || []).forEach(r => lines.push(`    • ${r}`));
-    }
-    lines.push(`  Why ${eval_.best.name} is better:`);
-    const bestEntry = eval_.ranked[0];
-    (bestEntry?.positives || []).forEach(r => lines.push(`    + ${r}`));
-    lines.push(`  ${eval_.best.notes}`);
-  } else if (eval_.current) {
-    lines.push(`✓ ${eval_.current.name} is a good choice for these conditions (score: ${eval_.currentScore}/100)`);
-    const currentEntry = eval_.ranked.find(r => r.ramp.key === eval_.current.key);
-    (currentEntry?.positives || []).forEach(r => lines.push(`  + ${r}`));
-    if (currentEntry?.reasons?.length) {
-      lines.push(`  Minor considerations:`);
-      (currentEntry.reasons || []).forEach(r => lines.push(`    • ${r}`));
-    }
-  } else {
-    lines.push(`Best ramp for these conditions: ${eval_.best?.name || 'unknown'}`);
-  }
-
-  return lines.join('\n');
-}
-
 // ── Read DOM inputs ───────────────────────────────────────────────────────────
 function readPlanInputs() {
   const lakeName    = document.getElementById('planLake')?.value || '';
@@ -1506,6 +690,27 @@ function readPlanInputs() {
   const speedMph    = speedStr ? parseFloat(speedStr) : 2.0;
   const species     = [...document.querySelectorAll('#planSpeciesChecks input:checked')].map(c => c.value);
   return { lakeName, dateStr, launchTime, returnTime, waterTempF, speedMph, species };
+}
+
+// ── Apply to plan fields ──────────────────────────────────────────────────────
+function applyToPlanFields(phaseRecs, phases) {
+  const p1 = phaseRecs[0];
+  if (!p1) return;
+  const depthEl = document.getElementById('planTargetDepth');
+  const speedEl = document.getElementById('planSpeed');
+  if (depthEl) depthEl.value = `${p1.depthMin}-${p1.depthMax}`;
+  if (speedEl) speedEl.value = String(p1.speed);
+}
+
+export function applyStoredSmartPlanDepth() {
+  const routes = window._smartPlanPhaseRoutes;
+  if (!routes || !routes.length) return;
+  const p1 = routes.find(r => r.phase === 1);
+  if (!p1) return;
+  const minEl = document.getElementById('rbDepthMin');
+  const maxEl = document.getElementById('rbDepthMax');
+  if (minEl) minEl.value = p1.depthMin;
+  if (maxEl) maxEl.value = p1.depthMax;
 }
 
 // ── Main entry point ──────────────────────────────────────────────────────────
@@ -1521,7 +726,6 @@ export async function runSmartPlan() {
   if (!lakeName) { setStatus('Select a lake first', false); return; }
   if (!species.length) { setStatus('Check at least one target species', false); return; }
 
-  // Regulation check
   const date = new Date(dateStr + 'T12:00:00');
   const sp = species[0];
   const regCheck = checkRegulations(lakeName, sp, date);
@@ -1531,35 +735,29 @@ export async function runSmartPlan() {
     return;
   }
 
-  const season = getSeason(date);
+  setStatus('Building scout report…', true);
 
-  // Compute phase timing
+  const season = getSeason(date);
   const phaseInfo = computePhases(launchTime, returnTime, dateStr, lakeName);
   const { phases } = phaseInfo;
-
-  // Compute range
   const rangeMiles = computeRangeMiles(speedMph);
-
-  // Get per-phase behavior recommendations
   const phaseRecs = phases.map(p => getPhaseRecommendation(sp, lakeName, season, p.tier ?? p.num, waterTempF));
 
   if (phaseRecs.every(r => !r)) {
     setStatus('No behavior data for this lake/species yet', false);
-    if (outEl) outEl.value = `No behavior data available for ${sp} on ${lakeName}. Add entries to species-intel.js.`;
+    if (outEl) outEl.value = `No behavior data available for ${sp} on ${lakeName}.`;
     return;
   }
 
-  // Build fishing context — gathers structures, catches, attractors for lure scoring
+  // Build fishing context for rod selection
   const fishingContext = await buildFishingContext({
     species: sp, lakeName, season,
     clarity:    document.getElementById('planClarity')?.value || 'Clear',
     waterTempF, speedMph, dateStr, launchTime,
-    rampLat: null, rampLon: null, // ramp coords locked below, context builds with map center
+    rampLat: null, rampLon: null,
   });
 
-  // Build 6-rod spread (2 rods × 3 depth tiers) — one rod pair per tier.
-  // Sub-phases within the same tier share the same rod setup so the angler
-  // only changes rigs at depth transitions, not every sub-phase.
+  // Build rod spread
   const sides = ['Port', 'Starboard'];
   const newSpread = [];
   for (const phase of phases) {
@@ -1574,28 +772,17 @@ export async function runSmartPlan() {
   state.SPREAD = newSpread;
   renderSpread();
 
-  // Remove stale Smart Plan tracks before regenerating. Manual/user tracks stay.
-  const clearedSmartPlanTracks = clearExistingSmartPlanTracks();
-  if (clearedSmartPlanTracks) console.log(`[smart-plan] Cleared ${clearedSmartPlanTracks} stale Smart Plan route track(s)`);
-  window._smartPlanCommittedTracks = [];
+  // Clear stale smart plan tracks
+  const cleared = clearExistingSmartPlanTracks();
+  if (cleared) console.log(`[smart-plan] Cleared ${cleared} stale tracks`);
 
-  // Get and lock ramp coordinates for route anchoring. The ramp may be
-  // challenged later by the coach as a recommendation, but the route engine
-  // must never silently change the selected launch.
+  // ── Ramp lookup ───────────────────────────────────────────────────────────
   let rampLat = null, rampLon = null;
   const selectedRampKey = document.getElementById('planRamp')?.value || '';
-  const normalizeName = (v) => String(v || '')
-    .toLowerCase()
-    .replace(/[_-]+/g, ' ')
-    .replace(/[^a-z0-9 ]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const normalizeName = (v) => String(v || '').toLowerCase().replace(/[_-]+/g, ' ').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
   const cleanLakeName = normalizeName(String(lakeName || '').replace(/\([^)]*\)/g, ' ').replace(/,.*$/, ''));
   const normRampKey = normalizeName(selectedRampKey);
-  const rampMatches = (a, b) => {
-    const x = normalizeName(a), y = normalizeName(b);
-    return !!x && !!y && (x === y || x.includes(y) || y.includes(x));
-  };
+  const rampMatches = (a, b) => { const x = normalizeName(a), y = normalizeName(b); return !!x && !!y && (x === y || x.includes(y) || y.includes(x)); };
 
   try {
     const { WATEREE_RAMPS, MARION_RAMPS, MOULTRIE_RAMPS, MURRAY_RAMPS, MONTICELLO_RAMPS } = await import('./ryan-ramps.js');
@@ -1606,9 +793,6 @@ export async function runSmartPlan() {
       'lake murray': MURRAY_RAMPS, 'murray': MURRAY_RAMPS,
       'lake monticello': MONTICELLO_RAMPS, 'monticello': MONTICELLO_RAMPS,
     };
-    const rampList = lakeRampMap[cleanLakeName]
-      || Object.entries(lakeRampMap).find(([k]) => cleanLakeName.includes(k) || k.includes(cleanLakeName))?.[1]
-      || [];
 
     const GUARANTEED_SC_RAMPS = {
       'clearwater cove': [34.37927, -80.72881],
@@ -1628,10 +812,7 @@ export async function runSmartPlan() {
       for (const [k, coords] of Object.entries(GUARANTEED_SC_RAMPS)) {
         if (rampMatches(normRampKey, k)) {
           rampLat = coords[0]; rampLon = coords[1];
-          window._usedZoneIds = new Set(); // reset cross-phase zone exclusion
-          window._routeDebugScores = []; // reset debug scores
-          window._routeDebug = []; // reset debug panel
-  console.log(`[smart-plan] Locked guaranteed ramp coords for "${selectedRampKey}": (${rampLat}, ${rampLon})`);
+          console.log(`[smart-plan] Ramp locked: "${selectedRampKey}" (${rampLat}, ${rampLon})`);
           break;
         }
       }
@@ -1646,204 +827,127 @@ export async function runSmartPlan() {
         if (coords) {
           rampLat = Array.isArray(coords) ? coords[0] : coords.lat;
           rampLon = Array.isArray(coords) ? coords[1] : (coords.lon || coords.lng);
-          console.log(`[smart-plan] Locked LAKE_DB ramp coords for "${selectedRampKey}": (${rampLat}, ${rampLon})`);
         }
       }
     }
 
     if (rampLat == null || rampLon == null) {
+      const rampList = lakeRampMap[cleanLakeName]
+        || Object.entries(lakeRampMap).find(([k]) => cleanLakeName.includes(k) || k.includes(cleanLakeName))?.[1]
+        || [];
       const selectedRamp = rampList.find(r => rampMatches(r.key, selectedRampKey) || rampMatches(r.name, selectedRampKey)) || rampList[0];
-      if (selectedRamp) {
-        rampLat = selectedRamp.lat; rampLon = selectedRamp.lon;
-        console.log(`[smart-plan] Locked ryan-ramps coords for ${selectedRamp.name}: (${rampLat}, ${rampLon})`);
-      }
+      if (selectedRamp) { rampLat = selectedRamp.lat; rampLon = selectedRamp.lon; }
     }
   } catch (e) {
-    console.warn('[smart-plan] Could not load ramp coords:', e.message);
+    console.warn('[smart-plan] Ramp lookup failed:', e.message);
   }
 
   if (rampLat == null || rampLon == null) {
-    console.warn(`[smart-plan] No ramp coords found for "${lakeName}" / "${selectedRampKey}" — route will generate without a locked launch anchor.`);
-  } else {
-    upsertSmartPlanRampWaypoint(selectedRampKey || 'Launch ramp', rampLat, rampLon);
+    console.warn(`[smart-plan] No ramp coords for "${selectedRampKey}" — waypoints will use lake center`);
+    const center = getLakeCenter(lakeName);
+    rampLat = center.lat; rampLon = center.lon;
   }
 
-  // Generate continuous trolling circuit routes for each phase
-  window._smartPlanPhaseRoutes = [];
-  function calcDurHrs(sStr, eStr) {
-    const parse = s => {
-      const m = String(s||'').match(/(\d+):(\d+)\s*(AM|PM)?/i);
-      if (!m) return 2.0;
-      let h = parseInt(m[1]), min = parseInt(m[2]);
-      if (m[3]?.toUpperCase() === 'PM' && h < 12) h += 12;
-      if (m[3]?.toUpperCase() === 'AM' && h === 12) h = 0;
-      return h + (min / 60.0);
-    };
-    let s = parse(sStr), e = parse(eStr);
-    if (e < s) e += 24.0;
-    return Math.max(0.5, e - s);
-  }
+  // ── Drop scout waypoints ──────────────────────────────────────────────────
+  setStatus('Sampling depth contours…', true);
+  const totalWaypoints = generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles);
 
-  let curLat = rampLat, curLon = rampLon;
-  let lockedBearing = null;
-  const assembledSmartPlanTracks = [];
-
-  for (let i = 0; i < phases.length; i++) {
-    const durHrs = calcDurHrs(phases[i].startStr, phases[i].endStr);
-    const spd = phaseRecs[i]?.speed || 2.2;
-
-    // Each phase gets a distance budget based on its own time window. Keep the
-    // fishing pass under the full phase mileage so there is room for launch,
-    // phase-to-phase, and return connectors.
-    const isLastPhase = (i === phases.length - 1);
-    const phaseFishingFraction = (phases[i].tier ?? phases[i].num) === 1 ? 0.75 : 0.92;
-    const targetFt = Math.round(durHrs * spd * 5280 * phaseFishingFraction);
-
-    const phaseTracks = await generateRouteForPhase(
-      phases[i], phaseRecs[i], lakeName, rampLat, rampLon, rangeMiles,
-      targetFt, curLat, curLon,
-      isLastPhase ? rampLat : null, isLastPhase ? rampLon : null,
-      isLastPhase, // isReturnPass — only true for the final sub-phase
-      lockedBearing
-    );
-
-    if (phaseTracks?.length) {
-      const fromLabel = i === 0 ? (selectedRampKey || 'Launch ramp') : `Phase ${phases[i - 1].num} ${phases[i - 1].name}`;
-      const toLabel = `Phase ${phases[i].num} ${phases[i].name}`;
-      const next = appendConnectorThenTracks(assembledSmartPlanTracks, curLat, curLon, phaseTracks, fromLabel, toLabel);
-      curLat = next.lat; curLon = next.lon;
-
-      // Update lockedBearing after each phase from exit direction.
-      // Phase 1 sets the outbound bearing from its endpoint.
-      // Phase 2 continues same direction (deeper water, same corridor).
-      // Phase 3 (last) flips 180° — always return in opposite direction
-      // of travel so the plan goes OUT and comes BACK regardless of which
-      // direction Phase 1 chose. Dynamic, not hardcoded.
-      const lastFishingTrack = [...phaseTracks].reverse().find(t => t?.pts?.length >= 2);
-      if (lastFishingTrack?.pts?.length >= 2) {
-        const pts = lastFishingTrack.pts;
-        const lookback = Math.max(2, Math.floor(pts.length * 0.1));
-        const fromPt = pts[pts.length - lookback];
-        const toPt   = pts[pts.length - 1];
-        const dLat = (toPt[0] - fromPt[0]) * 111320;
-        const dLon = (toPt[1] - fromPt[1]) * 111320 * Math.cos(fromPt[0] * Math.PI / 180);
-        if (Math.abs(dLat) > 0.1 || Math.abs(dLon) > 0.1) {
-          const exitBearing = Math.atan2(dLon, dLat) * 180 / Math.PI;
-          // If the NEXT phase is the last phase, flip the bearing 180° so
-          // Phase 3 heads back toward the ramp instead of continuing outbound.
-          const nextIsLast = (i === phases.length - 2);
-          lockedBearing = nextIsLast ? (exitBearing + 180) % 360 : exitBearing;
-          console.log(`[smart-plan] Phase ${phases[i].num} exit bearing: ${exitBearing.toFixed(0)}° → next lockedBearing: ${lockedBearing.toFixed(0)}°${nextIsLast ? ' (FLIPPED for return)' : ''}`);
-        }
-      }
-    }
-  }
-
-  // Hard return-to-ramp rule. Prefer a short direct connector only. If the
-  // final point is still far from launch, do NOT draw a long overland line;
-  // retrace known water route points back toward the ramp instead.
-  if (assembledSmartPlanTracks.length && Number.isFinite(rampLat) && Number.isFinite(rampLon)) {
-    const directReturnFt = geoDistanceFt(curLat, curLon, rampLat, rampLon);
-    // Raised from 1200ft — almost any fishing session ends more than 0.23mi
-    // from the ramp, so the old threshold always triggered the retrace monster
-    // (925-point spaghetti). Now we always draw a direct return connector and
-    // label it clearly so the angler knows it's a transit line, not a fishing
-    // route. The retrace fallback is kept only for sub-25ft snapping.
-    if (directReturnFt <= 25) {
-      const lastTrack = assembledSmartPlanTracks[assembledSmartPlanTracks.length - 1];
-      if (lastTrack?.pts?.length) lastTrack.pts[lastTrack.pts.length - 1] = [rampLat, rampLon];
-    } else {
-      const ret = buildSmartPlanConnectorTrack(
-        `Return: Phase ${phases[phases.length - 1].num} ${phases[phases.length - 1].name} → ${selectedRampKey || 'Launch ramp'}`,
-        curLat, curLon, rampLat, rampLon, 'return_connector'
-      );
-      if (ret) assembledSmartPlanTracks.push(ret);
-    }
-  }
-
-  if (!state.DATA.tracks) state.DATA.tracks = [];
-  state.DATA.tracks.push(...assembledSmartPlanTracks);
-  window._smartPlanCommittedTracks = assembledSmartPlanTracks;
-  renderAll();
+  // ── Store phase routes for depth pre-fill in route builder ───────────────
+  window._smartPlanPhaseRoutes = phases.map((phase, i) => ({
+    phase: phase.num,
+    phaseName: phase.name,
+    depthMin: phaseRecs[i]?.depthMin,
+    depthMax: phaseRecs[i]?.depthMax,
+    speed: phaseRecs[i]?.speed,
+    window: `${phase.startStr} – ${phase.endStr}`,
+  })).filter(r => r.depthMin != null);
 
   applyToPlanFields(phaseRecs, phases);
   applyStoredSmartPlanDepth();
 
-  // Build rationale
-  // FIX (2026-07-03): this was hardcoded to 0 unconditionally, so the
-  // rationale header always said "No contour data loaded" even when routes
-  // had genuinely just been generated above. Now reflects the real count,
-  // and separately reports how many phases were static-technique (no route
-  // expected) so the summary line is accurate either way.
-  const generatedRoutes = (window._smartPlanPhaseRoutes || []).filter(r => !r.staticTechnique).length;
-  const staticPhaseCount = (window._smartPlanPhaseRoutes || []).filter(r => r.staticTechnique).length;
-  const totalRoutes = generatedRoutes;
-  let rationale = buildRationaleText(sp, lakeName, season, phases, phaseRecs, phaseInfo, totalRoutes, staticPhaseCount);
-
-  // Ramp evaluation — check if selected ramp is optimal
-  const weatherStr = document.getElementById('planWeather')?.value || '';
-  // Rough weather = wind > 15mph or plan is marked CAUTION/NO-GO
-  const windMatch = weatherStr.match(/(\d+)\s*mph/i);
-  const windMph = windMatch ? parseInt(windMatch[1]) : 0;
-  const roughWeather = windMph > 15;
-  const rampEval = await getRampEvaluation(lakeName, sp, season, phaseRecs, weatherStr, roughWeather);
-
-  if (rampEval) {
-    rationale += buildRampRationaleText(rampEval);
-  }
-
-  const routeAudit = auditSmartPlanRoute(window._smartPlanCommittedTracks || [], rampLat, rampLon, launchTime, returnTime, speedMph);
-  if (Number.isFinite(rampLat) && Number.isFinite(rampLon)) {
-    rationale += buildRouteAuditText(routeAudit, selectedRampKey, rampLat, rampLon);
-  }
-
-  if (outEl) outEl.value = rationale;
-
-  // ── Write computed values back to plan form fields so collectPlan() saves them ──
+  // ── Build rationale header ────────────────────────────────────────────────
   const sol = phaseInfo.solunar;
-  function solFmt(h) {
+  function hToStr(h) {
     const hh = Math.floor(((h % 24) + 24) % 24);
     const mm = String(Math.round((h % 1) * 60)).padStart(2, '0');
     return `${hh % 12 || 12}:${mm} ${hh < 12 ? 'AM' : 'PM'}`;
   }
-  const solunarStr = `Majors: ${solFmt(sol.major1)}, ${solFmt(sol.major2)} · Minors: ${solFmt(sol.minor1)}, ${solFmt(sol.minor2)}`;
+
+  const lines = [];
+  lines.push(`${sp} — ${lakeName}, ${season}`);
+  lines.push(`Sunrise: ${hToStr(phaseInfo.sunriseH)} · Solunar majors: ${hToStr(sol.major1)}, ${hToStr(sol.major2)} · minors: ${hToStr(sol.minor1)}, ${hToStr(sol.minor2)}`);
+  lines.push(`Range: ${rangeMiles.toFixed(1)}mi`);
+  lines.push('');
+
+  phases.forEach((phase, i) => {
+    const rec = phaseRecs[i];
+    lines.push(`Phase ${phase.num} — ${phase.name} (${phase.startStr} – ${phase.endStr})`);
+    if (rec) {
+      lines.push(`  Depth: ${rec.depthMin}-${rec.depthMax}ft · Speed: ${rec.speed}mph`);
+      lines.push(`  Lures: ${getEffectiveLures(rec).slice(0, 3).join(', ')}`);
+      if (rec.notes) lines.push(`  Notes: ${rec.notes}`);
+    }
+    lines.push('');
+  });
+
+  if (totalWaypoints > 0) {
+    lines.push(`── Scout Waypoints ──`);
+    lines.push(`${totalWaypoints} waypoints dropped on map (Ph1-1 through Ph3-${Math.ceil(totalWaypoints / 3)}).`);
+    lines.push(`Connect them in the Route Builder to build your track, then export to Garmin.`);
+    lines.push('');
+  } else {
+    lines.push(`── No Waypoints ──`);
+    lines.push(`No contour data loaded or no features in range. Load a contour dataset first.`);
+    lines.push('');
+  }
+
+  lines.push('── Scout Report (loading…) ──');
+  if (outEl) outEl.value = lines.join('\n');
+
+  setStatus('Asking Groq for scout report…', true);
+
+  // ── Groq scout report (non-blocking) ─────────────────────────────────────
+  const clarity = document.getElementById('planClarity')?.value || 'Clear';
+  buildGroqScoutReport(sp, lakeName, season, phases, phaseRecs, phaseInfo, selectedRampKey, waterTempF, clarity)
+    .then(report => {
+      if (report) {
+        lines[lines.length - 1] = '── Scout Report ──';
+        lines.push('');
+        lines.push(report);
+      } else {
+        lines[lines.length - 1] = '── Scout Report unavailable (Groq timeout) ──';
+      }
+      if (outEl) outEl.value = lines.join('\n');
+    });
+
+  // ── Solunar field ─────────────────────────────────────────────────────────
+  const solunarStr = `Majors: ${hToStr(sol.major1)}, ${hToStr(sol.major2)} · Minors: ${hToStr(sol.minor1)}, ${hToStr(sol.minor2)}`;
   const solunarEl = document.getElementById('planSolunar');
   if (solunarEl && !solunarEl.value) solunarEl.value = solunarStr;
 
-  const structureEl = document.getElementById('planStructure');
-  if (structureEl && !structureEl.value) {
-    const recStructures = phaseRecs.filter(Boolean).flatMap(r =>
-      (r.notes || '').match(/structure[:\s]+([^\n·]+)/gi) || []
-    );
-    if (recStructures.length) structureEl.value = recStructures[0].replace(/structure[:\s]+/i, '').trim();
-  }
-
-  // ── Groq iterative coach — replaces one-shot audit ───────────────────────────
-  // Builds rich context payload and starts the coaching session as a floating panel.
-  // Non-blocking — plan is already visible before coach starts.
+  // ── Groq coach (non-blocking) ─────────────────────────────────────────────
   try {
     const coachPayload = buildGroqCoachPayload(fishingContext, {
-      phases,
-      phaseRecs,
+      phases, phaseRecs,
       spread:    state.SPREAD,
       solunarStr,
       poolLevel: document.getElementById('planPoolLevel')?.value || null,
       weather:   document.getElementById('planWeather')?.value || '',
-      rationale: rationale.slice(0, 1500),
-      rampName:  selectedRampKey || document.getElementById('planRamp')?.value || '',
+      rationale: lines.slice(0, 20).join('\n'),
+      rampName:  selectedRampKey || '',
       rangeMiles,
     });
     startCoachSession(coachPayload);
   } catch (e) {
-    console.warn('[smart-plan] Coach session failed to start:', e.message);
+    console.warn('[smart-plan] Coach session failed:', e.message);
   }
 
-  const firstRec = phaseRecs.find(Boolean);
-  setStatus(
-    `✓ 6-segment plan (3 depth tiers): ${[...new Set(phases.map(p => p.tier ?? p.num))].map(t => { const i = phases.findIndex(p => (p.tier??p.num)===t); return phaseRecs[i] ? `T${t} ${phaseRecs[i].depthMin}-${phaseRecs[i].depthMax}ft` : ''; }).filter(Boolean).join(' → ')} | Range: ${rangeMiles.toFixed(1)}mi`,
-    true
-  );
-  return { phases, phaseRecs, phaseInfo, rangeMiles, rampEval };
+  const wayptMsg = totalWaypoints > 0
+    ? `✓ ${totalWaypoints} scout waypoints on map — connect in Route Builder`
+    : '⚠ No waypoints — load contour data first';
+  setStatus(wayptMsg, totalWaypoints > 0);
+
+  return { phases, phaseRecs, phaseInfo, rangeMiles };
 }
 
 // Wire the button
@@ -1854,45 +958,4 @@ setTimeout(() => {
 window.runSmartPlan = runSmartPlan;
 window.applyStoredSmartPlanDepth = applyStoredSmartPlanDepth;
 
-console.log('[smart-plan] module ready');
-
-// ── Ramp evaluation integration ───────────────────────────────────────────────
-// Imported lazily so wateree-ramps.js only loads when needed
-async function getRampEvaluation(lakeName, species, season, phaseRecs, weatherStr, roughWeather) {
-  // FIX (2026-07-03): this was importing from '../data/ryan-ramps.js', which
-  // doesn't exist and 404s — the real file lives alongside this module and
-  // is already imported correctly elsewhere in this file (see the ramp
-  // lookup in runSmartPlan) as './ryan-ramps.js'. The wrong path here was
-  // crashing runSmartPlan at the ramp-evaluation step, after routes had
-  // already generated successfully, aborting before the rationale text and
-  // status line ever got written.
-  const { evaluateRamps, parseWindDeg } = await import('./ryan-ramps.js');
-
-  // Determine target zones from phase recommendations
-  const targetZones = [];
-  phaseRecs.forEach((rec, i) => {
-    if (!rec) return;
-    if (rec.depthMin < 18) targetZones.push('shallow_flats', 'clearwater_cove');
-    if (rec.depthMin >= 18 && rec.depthMin < 26) targetZones.push('channel_ledges', 'mid_channel');
-    if (rec.depthMin >= 26) targetZones.push('channel_ledges', 'mid_channel');
-  });
-  // Remove duplicates
-  const uniqueZones = [...new Set(targetZones)];
-
-  const windDeg = parseWindDeg(weatherStr);
-  const speedMph = parseFloat(document.getElementById('planSpeed')?.value) || 2.0;
-  const rangeMiles = computeRangeMiles(speedMph);
-
-  // Get current ramp from plan form
-  const rampEl = document.getElementById('planRamp');
-  const currentRampKey = rampEl?.value || '';
-
-  return evaluateRamps({
-    lakeName,
-    currentRampKey,
-    targetZones: uniqueZones,
-    windDeg,
-    rangeMiles,
-    roughWeather,
-  });
-}
+console.log('[smart-plan] module ready — scout waypoint mode');
