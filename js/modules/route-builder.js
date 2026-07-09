@@ -1328,30 +1328,11 @@ function prepareSpineForPhase(spine, cfg) {
   const eLon = cfg.endLon;
 
   let candidates = [];
-  if (isValidLatLon(sLat, sLon)) {
-    // Prefer starting from whichever END of the spine is closest to the phase start.
-    // This gives the full spine length to travel rather than a half-spine from the middle.
-    const dStart = distancePointToRefFt(spine[0], sLat, sLon);
-    const dEnd   = distancePointToRefFt(spine[spine.length - 1], sLat, sLon);
-    if (dEnd < dStart) {
-      // End is closer — run the spine in reverse (end → start)
-      candidates.push(spine.slice().reverse());
-      candidates.push(spine);
-    } else {
-      // Start is closer — run forward
-      candidates.push(spine);
-      candidates.push(spine.slice().reverse());
-    }
-    // Also offer the mid-slice options as fallback candidates
-    const idx = nearestPointIndex(spine, sLat, sLon);
-    const forward = spine.slice(idx);
-    const reverse = spine.slice(0, idx + 1).reverse();
-    if (forward.length >= 2) candidates.push(forward);
-    if (reverse.length >= 2) candidates.push(reverse);
-  } else {
-    candidates = [spine];
-    if (spine.length >= 2) candidates.push(spine.slice().reverse());
-  }
+  // Always offer full spine in both directions — never mid-slice.
+  // Mid-slicing at nearestPointIndex gives a short tangled segment near the ramp.
+  // The scorer picks the best direction based on bearing and start distance.
+  candidates.push(spine);
+  candidates.push(spine.slice().reverse());
 
   if (!candidates.length) return spine;
 
