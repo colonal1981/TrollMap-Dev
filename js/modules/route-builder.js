@@ -1159,7 +1159,14 @@ function generateDepthPolygonRoutes(cfg) {
   // Write to a visible element so it can be read without console
   try {
     if (typeof window.logSpineDebug === 'function') {
-      window.logSpineDebug(cfg.depthMin + '-' + cfg.depthMax + 'ft', _dbgRaw, _dbgPrep);
+      const entry = window.logSpineDebug(cfg.depthMin + '-' + cfg.depthMax + 'ft', _dbgRaw, _dbgPrep);
+    }
+    if (window._routeDebug?.length && window._routeDebug_sLat) {
+      const d = window._routeDebug_sLat;
+      window._routeDebug[window._routeDebug.length-1].sLat = d.sLat;
+      window._routeDebug[window._routeDebug.length-1].sLon = d.sLon;
+      window._routeDebug[window._routeDebug.length-1].cfgStartLat = d.cfgStartLat;
+      window._routeDebug[window._routeDebug.length-1].cfgRampLat = d.cfgRampLat;
     }
   } catch(_) {}
 
@@ -1324,6 +1331,8 @@ function prepareSpineForPhase(spine, cfg) {
   if (!spine?.length) return spine || [];
   const sLat = cfg.startLat != null ? cfg.startLat : cfg.rampLat;
   const sLon = cfg.startLon != null ? cfg.startLon : cfg.rampLon;
+  // Store sLat for debug panel
+  try { window._routeDebug_sLat = { sLat, sLon, cfgStartLat: cfg.startLat, cfgRampLat: cfg.rampLat }; } catch(_) {}
   const eLat = cfg.endLat;
   const eLon = cfg.endLon;
 
