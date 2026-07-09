@@ -82,6 +82,7 @@ import './modules/quickdraw-key.js';
 import './modules/sw-register.js';
 import './modules/supplemental-layers.js';
 import './modules/groq-coach.js';
+import './modules/route-debug.js';
 import { pullUpdatesOnLoad, pushAllLocalToCloud } from './modules/cloud-sync.js';
 import './modules/pinch-point-finder.js'; // still used by route-builder.js
 import { initTackleInventoryPanel } from './modules/tackle-inventory-ui.js'
