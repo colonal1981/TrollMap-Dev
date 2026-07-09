@@ -1144,8 +1144,22 @@ function generateDepthPolygonRoutes(cfg) {
   // The post-pattern trim below handles any remaining overshoot.
   const targetPassFt = (Number.isFinite(cfg.targetLengthFt) && cfg.targetLengthFt > 0)
     ? cfg.targetLengthFt : 15000;
+  // DEBUG: log spine before and after prepareSpineForPhase
+  const _dbgRaw = trimmed;
+  const _dbgRawStart = _dbgRaw.slice(0,3).map(p=>`(${p[0].toFixed(5)},${p[1].toFixed(5)})`).join('→');
+  const _dbgRawEnd = _dbgRaw.slice(-3).map(p=>`(${p[0].toFixed(5)},${p[1].toFixed(5)})`).join('→');
+  console.log(`[SPINE-DEBUG] raw: ${_dbgRaw.length}pts start=${_dbgRawStart} end=${_dbgRawEnd}`);
   trimmed = prepareSpineForPhase(trimmed, cfg);
   if (trimmed.length < 2) return null;
+  const _dbgPrep = trimmed;
+  const _dbgPrepStart = _dbgPrep.slice(0,3).map(p=>`(${p[0].toFixed(5)},${p[1].toFixed(5)})`).join('→');
+  const _dbgPrepEnd = _dbgPrep.slice(-3).map(p=>`(${p[0].toFixed(5)},${p[1].toFixed(5)})`).join('→');
+  console.log(`[SPINE-DEBUG] prepared: ${_dbgPrep.length}pts start=${_dbgPrepStart} end=${_dbgPrepEnd}`);
+  // Write to a visible element so it can be read without console
+  try {
+    const el = document.getElementById('planRationale') || document.getElementById('planOutput');
+    if (el) el.value = (el.value||'') + '\n[SPINE] raw:' + _dbgRawStart + '...' + _dbgRawEnd + '\n[SPINE] prep:' + _dbgPrepStart + '...' + _dbgPrepEnd;
+  } catch(_) {}
 
   // Apply pattern along the (now properly bounded) spine
   // Smart Plan always uses straight pattern — sine causes clipping artifacts
