@@ -1629,6 +1629,8 @@ export async function runSmartPlan() {
         if (rampMatches(normRampKey, k)) {
           rampLat = coords[0]; rampLon = coords[1];
           window._usedZoneIds = new Set(); // reset cross-phase zone exclusion
+          window._routeDebugScores = []; // reset debug scores
+          window._routeDebug = []; // reset debug panel
   console.log(`[smart-plan] Locked guaranteed ramp coords for "${selectedRampKey}": (${rampLat}, ${rampLon})`);
           break;
         }

@@ -62,7 +62,7 @@ function renderDebugPanel() {
     
     const header = document.createElement('div');
     Object.assign(header.style, { display: 'flex', justifyContent: 'space-between', marginBottom: '6px' });
-    header.innerHTML = '<b style="color:#00e5ff">🔍 Route Spine Debug</b><div><button id="_routeDebugClear" style="margin-right:6px;padding:2px 8px;font-size:10px;cursor:pointer">Clear</button><button id="_routeDebugClose" style="padding:2px 8px;font-size:10px;cursor:pointer">✕</button></div>';
+    header.innerHTML = '<b style="color:#00e5ff">🔍 Route Spine Debug</b><div><button id="_routeDebugDownload" style="margin-right:6px;padding:2px 8px;font-size:10px;cursor:pointer">⬇ JSON</button><button id="_routeDebugClear" style="margin-right:6px;padding:2px 8px;font-size:10px;cursor:pointer">Clear</button><button id="_routeDebugClose" style="padding:2px 8px;font-size:10px;cursor:pointer">✕</button></div>';
     panel.appendChild(header);
     
     const content = document.createElement('div');
@@ -71,6 +71,7 @@ function renderDebugPanel() {
     
     document.body.appendChild(panel);
     
+    document.getElementById('_routeDebugDownload').onclick = () => window._downloadRouteDebug();
     document.getElementById('_routeDebugClear').onclick = () => { window._routeDebug = []; renderDebugPanel(); };
     document.getElementById('_routeDebugClose').onclick = () => { panel.style.display = 'none'; };
   }
@@ -108,6 +109,22 @@ function renderDebugPanel() {
       </div>`;
   }).join('');
 }
+
+// Download full debug data as JSON
+window._downloadRouteDebug = function() {
+  const data = {
+    timestamp: new Date().toISOString(),
+    phases: window._routeDebug || [],
+    spineScores: window._routeDebugScores || [],
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `trollmap_route_debug_${Date.now()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
 
 // Add toggle button to toolbar
 document.addEventListener('DOMContentLoaded', () => {
