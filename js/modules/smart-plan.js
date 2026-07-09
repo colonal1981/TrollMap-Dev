@@ -604,10 +604,17 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
   const best = allChains[0];
   console.log(`[scout] best chain: depth=${best.depth}ft len=${Math.round(best.len)}ft closest=${Math.round(best.closest)}ft`);
 
-  // Find the point on the chain nearest the ramp — start walking from there
+
+
+  // For homeward phases: start from the point on the chain nearest the RAMP
+  // so we walk from home-side outward (budget-limited), naturally ending
+  // closer to the ramp than where we started.
+  // For outbound phases: start from the point nearest curLat/curLon (ref point).
+  const anchorLat = endTarget ? endTarget.endLat : refLat;
+  const anchorLon = endTarget ? endTarget.endLon : refLon;
   let nearIdx = 0, nearDist = Infinity;
   for (let i = 0; i < best.chain.length; i++) {
-    const d = geoDistanceFt(refLat, refLon, best.chain[i][0], best.chain[i][1]);
+    const d = geoDistanceFt(anchorLat, anchorLon, best.chain[i][0], best.chain[i][1]);
     if (d < nearDist) { nearDist = d; nearIdx = i; }
   }
 
