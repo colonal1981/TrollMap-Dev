@@ -724,6 +724,8 @@ async function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, range
   if (!state.DATA) state.DATA = {};
   if (!Array.isArray(state.DATA.waypoints)) state.DATA.waypoints = [];
   state.DATA.waypoints = state.DATA.waypoints.filter(w => !w.scoutWaypoint);
+  if (!state.DATA.tracks) state.DATA.tracks = [];
+  state.DATA.tracks = state.DATA.tracks.filter(t => !t.scoutRoute);
 
   if (Number.isFinite(rampLat) && Number.isFinite(rampLon)) {
     state.DATA.waypoints.push({
@@ -747,21 +749,21 @@ async function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, range
   ];
 
   let totalAdded = 0;
+  const phaseWaypoints = {};
 
   for (const band of bands) {
     const pts = walkContourForWaypoints(
       band.depthMin, band.depthMax,
       rampLat, rampLon,
-      maxDistFt,
-      budgetFt,
-      STEP_FT,
-      null
+      maxDistFt, budgetFt, STEP_FT, null
     );
 
     if (!pts.length) {
       console.warn(`[scout] Ph${band.phase}: no waypoints for ${band.depthMin}-${band.depthMax}ft`);
       continue;
     }
+
+    phaseWaypoints[band.phase] = pts.map(pt => [pt.lat, pt.lon]);
 
     pts.forEach((pt, j) => {
       state.DATA.waypoints.push({
@@ -778,13 +780,68 @@ async function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, range
     console.log(`[scout] Ph${band.phase} (${band.depthMin}-${band.depthMax}ft): ${pts.length} waypoints, budget ${Math.round(budgetFt)}ft`);
   }
 
+  // Build out-and-back tracks from the waypoints
+  buildScoutRoutes(phaseWaypoints);
+
   renderAll();
   return totalAdded;
 }
 
-// ── Groq scout report// ── Groq scout report// ── Groq scout report ─────────────────────────────────────────────────────────
-// Groq gets the fishing intelligence question — NOT coordinates. It tells you
-// what to look for, why, and what to throw. Code handles where.
+// ── Build out-and-back routes from scout waypoints ────────────────────────────
+// For each phase: apply sine pattern along waypoints outbound, then reversed inbound.
+// Swing amplitude is gentle — enough to cover the structure edge without crossing land.
+
+function buildScoutRoutes(phaseWaypoints) {
+  if (!state.DATA.tracks) state.DATA.tracks = [];
+  state.DATA.tracks = state.DATA.tracks.filter(t => !t.scoutRoute);
+
+  const amplitude = 20;  // ft swing perpendicular to travel
+  const wave      = 500; // ft per sine cycle
+
+  function makeTrack(waypoints, name) {
+    const out = [];
+    let totalDist = 0;
+    for (let i = 0; i < waypoints.length - 1; i++) {
+      const p1 = waypoints[i], p2 = waypoints[i+1];
+      const dlat = p2[0]-p1[0], dlon = p2[1]-p1[1];
+      const latM = (p1[0]+p2[0])/2;
+      const cosLat = Math.cos(latM * Math.PI/180);
+      const segFt = Math.sqrt((dlat*364000)**2 + (dlon*364000*cosLat)**2);
+      if (segFt < 5) continue;
+      const brng = Math.atan2(dlon*cosLat, dlat);
+      const perp = brng + Math.PI/2;
+      const pLat = Math.cos(perp)/364000;
+      const pLon = Math.sin(perp)/(364000*cosLat);
+      const steps = Math.max(2, Math.ceil(segFt/50));
+      for (let s = (i===0?0:1); s<=steps; s++) {
+        const t = s/steps;
+        const lat = p1[0]+dlat*t;
+        const lon = p1[1]+dlon*t;
+        const d = totalDist + segFt*t;
+        const swing = amplitude * Math.sin(2*Math.PI*d/wave);
+        out.push([lat+swing*pLat, lon+swing*pLon]);
+      }
+      totalDist += segFt;
+    }
+    return { name, pts: out, scoutRoute: true, smartPlan: true };
+  }
+
+  for (const [phNum, pts] of Object.entries(phaseWaypoints).sort()) {
+    if (pts.length < 2) continue;
+
+    const outTrack = makeTrack(pts, `Ph${phNum} Outbound`);
+    if (outTrack.pts.length >= 2) {
+      state.DATA.tracks.push(outTrack);
+      console.log(`[scout-routes] Ph${phNum} Outbound: ${outTrack.pts.length}pts`);
+    }
+
+    const inTrack = makeTrack([...pts].reverse(), `Ph${phNum} Inbound`);
+    if (inTrack.pts.length >= 2) {
+      state.DATA.tracks.push(inTrack);
+      console.log(`[scout-routes] Ph${phNum} Inbound: ${inTrack.pts.length}pts`);
+    }
+  }
+}
 
 async function buildGroqScoutReport(species, lakeName, season, phases, phaseRecs, phaseInfo, rampName, waterTempF, clarity) {
   const phaseLines = phases.map((phase, i) => {
