@@ -612,44 +612,39 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
   }
 
   // Walk forward from nearIdx, sampling every stepFt, up to budgetFt total
-  const waypoints = [];
-  let traveled = 0;
-  let carry = 0;
-  // Start from the nearest point
-  waypoints.push({ lat: best.chain[nearIdx][0], lon: best.chain[nearIdx][1], depth: best.depth });
-
+  const fwdPts = [];
+  let traveled = 0, carry = 0;
+  fwdPts.push({ lat: best.chain[nearIdx][0], lon: best.chain[nearIdx][1], depth: best.depth });
   for (let i = nearIdx + 1; i < best.chain.length && traveled < budgetFt; i++) {
-    const prev = best.chain[i - 1];
-    const curr = best.chain[i];
+    const prev = best.chain[i - 1], curr = best.chain[i];
     const segFt = geoDistanceFt(prev[0], prev[1], curr[0], curr[1]);
-    carry += segFt;
-    traveled += segFt;
-    if (carry >= stepFt) {
-      waypoints.push({ lat: curr[0], lon: curr[1], depth: best.depth });
-      carry = 0;
-    }
+    carry += segFt; traveled += segFt;
+    if (carry >= stepFt) { fwdPts.push({ lat: curr[0], lon: curr[1], depth: best.depth }); carry = 0; }
   }
 
-  // If we hit the end of the chain before the budget, try walking backward from nearIdx
-  if (traveled < budgetFt * 0.5 && nearIdx > 0) {
-    const backPts = [];
-    carry = 0;
-    for (let i = nearIdx - 1; i >= 0 && traveled < budgetFt; i--) {
-      const prev = best.chain[i + 1];
-      const curr = best.chain[i];
-      const segFt = geoDistanceFt(prev[0], prev[1], curr[0], curr[1]);
-      carry += segFt;
-      traveled += segFt;
-      if (carry >= stepFt) {
-        backPts.push({ lat: curr[0], lon: curr[1], depth: best.depth });
-        carry = 0;
-      }
-    }
-    // Prepend reversed backward points so chain reads start→end
-    waypoints.unshift(...backPts.reverse());
+  // Also walk backward from nearIdx
+  const revPts = [];
+  traveled = 0; carry = 0;
+  revPts.push({ lat: best.chain[nearIdx][0], lon: best.chain[nearIdx][1], depth: best.depth });
+  for (let i = nearIdx - 1; i >= 0 && traveled < budgetFt; i--) {
+    const prev = best.chain[i + 1], curr = best.chain[i];
+    const segFt = geoDistanceFt(prev[0], prev[1], curr[0], curr[1]);
+    carry += segFt; traveled += segFt;
+    if (carry >= stepFt) { revPts.push({ lat: curr[0], lon: curr[1], depth: best.depth }); carry = 0; }
   }
 
-  console.log(`[scout] walked ${Math.round(traveled)}ft, ${waypoints.length} waypoints at ${stepFt}ft spacing`);
+  // Pick the longer walk, unless endTarget is set (Phase 3) — then pick the walk
+  // whose last point is closer to the ramp so the phase naturally heads home.
+  let waypoints;
+  if (endTarget && fwdPts.length >= 2 && revPts.length >= 2) {
+    const fwdEndDist = geoDistanceFt(endTarget.endLat, endTarget.endLon, fwdPts[fwdPts.length-1].lat, fwdPts[fwdPts.length-1].lon);
+    const revEndDist = geoDistanceFt(endTarget.endLat, endTarget.endLon, revPts[revPts.length-1].lat, revPts[revPts.length-1].lon);
+    waypoints = fwdEndDist < revEndDist ? fwdPts : revPts;
+  } else {
+    waypoints = fwdPts.length >= revPts.length ? fwdPts : revPts;
+  }
+
+  console.log(`[scout] ${waypoints.length} waypoints at ${stepFt}ft spacing`);
   return waypoints;
 }
 
@@ -714,8 +709,18 @@ function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles,
       continue;
     }
 
-    // For Phase 3, reverse the waypoint order so the run heads toward the ramp
-    const ordered = i === 2 ? pts.slice().reverse() : pts;
+    // For Phase 3, reverse the waypoint order so the run heads toward the ramp.
+    // But only reverse if the last point is actually farther from the ramp than
+    // the first — if the walk already heads homeward, leave it alone.
+    let ordered = pts;
+    if (i === 2 && pts.length >= 2) {
+      const firstDist = geoDistanceFt(rampLat, rampLon, pts[0].lat, pts[0].lon);
+      const lastDist  = geoDistanceFt(rampLat, rampLon, pts[pts.length-1].lat, pts[pts.length-1].lon);
+      if (firstDist < lastDist) {
+        // First point is closer to ramp — reverse so we end near home
+        ordered = pts.slice().reverse();
+      }
+    }
 
     ordered.forEach((pt, j) => {
       state.DATA.waypoints.push({
