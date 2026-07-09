@@ -747,15 +747,22 @@ async function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, range
   const species = phaseRecs.find(Boolean)?.lures?.[0] ? 'Striped Bass' : 'fish';
 
   // Build Groq prompt — ask for ordered coordinates, outbound then inbound
+  const totalDistFt = Math.round(totalDurH * speedMph * 5280 * 0.8);
+  const halfDistFt  = Math.round(totalDistFt / 2);
+  const numWptOut   = Math.round(halfDistFt / 400); // waypoint every ~400ft
+  const numWptIn    = Math.round(halfDistFt / 400);
+
   const prompt = `You are a fishing guide for Lake Wateree, South Carolina.
-I am launching from coordinates (${rampLat.toFixed(5)}, ${rampLon.toFixed(5)}) in a kayak.
-I have ${totalDurH.toFixed(1)} hours on the water at ${speedMph}mph.
+I am launching from (${rampLat.toFixed(5)}, ${rampLon.toFixed(5)}) in a kayak.
+I have ${totalDurH.toFixed(1)} hours at ${speedMph}mph = ${Math.round(totalDistFt/5280 * 10)/10} miles total.
 
-Give me a trolling route as two legs:
-LEG 1 (outbound): ~${Math.round(totalDurH/2 * speedMph * 5280)}ft of fishing at ${outDepthMin}-${outDepthMax}ft depth. Start at the ramp, fish away from it.
-LEG 2 (inbound): ~${Math.round(totalDurH/2 * speedMph * 5280)}ft of fishing at ${inDepthMin}-${inDepthMax}ft depth. Start where Leg 1 ends, fish back toward the ramp.
+Lake Wateree runs roughly north-south. The main lake body and deepest water is to the WEST and SOUTHWEST of the ramp. The lake extends about 3 miles southwest from the ramp before reaching deeper channel water.
 
-Place waypoints every 300-400 feet along real fishable water on Lake Wateree. Stay in the lake. No land. Follow depth contours.
+CRITICAL: Spread waypoints across the FULL distance. LEG 1 must travel ${Math.round(halfDistFt/5280 * 10)/10} miles from the ramp before turning around. Do NOT cluster near the ramp.
+
+LEG 1 (outbound, ${numWptOut} waypoints): Fish ${outDepthMin}-${outDepthMax}ft water. Start at ramp (${rampLat.toFixed(5)}, ${rampLon.toFixed(5)}). Travel southwest along the lake for ${Math.round(halfDistFt/5280 * 10)/10} miles. Place waypoints every ~400ft. Last waypoint should be ~${Math.round(halfDistFt/5280 * 10)/10} miles from ramp.
+
+LEG 2 (inbound, ${numWptIn} waypoints): Fish ${inDepthMin}-${inDepthMax}ft water (deeper channel side). Start where Leg 1 ends. Travel northeast back toward ramp for ${Math.round(halfDistFt/5280 * 10)/10} miles. End near ramp.
 
 Return ONLY a JSON array, no explanation, no markdown:
 [
@@ -763,7 +770,7 @@ Return ONLY a JSON array, no explanation, no markdown:
   ...
 ]
 
-Use real Lake Wateree coordinates. Ramp is at ${rampLat.toFixed(5)}, ${rampLon.toFixed(5)}.`;
+Real Lake Wateree coordinates only. Stay in the water. No land crossings.`;
 
   let groqWaypoints = [];
   try {
