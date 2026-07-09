@@ -490,8 +490,10 @@ function stitchFragments(fragments, TOL = 18, MAX_TURN = 30) {
       const [prevDist, prevBrng] = distBearing(prev1[0], prev1[1], curr[0], curr[1]);
       if (prevDist < 1) continue; // skip duplicate points
       const turn = angleDiff(genBrng, prevBrng);
-      // If previous point is a sharp reversal AND very close, skip it
-      if (turn > 120 && distBearing(prev2[0], prev2[1], prev1[0], prev1[1])[0] < 200) {
+      // If the step to the current point reverses sharply vs general direction, skip prev1
+      // This catches tile boundary direction changes regardless of distance
+      const [stepDist] = distBearing(prev1[0], prev1[1], curr[0], curr[1]);
+      if (turn > 120 && stepDist < 500) {
         cleaned.pop(); // remove the reversal point
       }
       cleaned.push(curr);
@@ -660,6 +662,11 @@ function generateContourRoutes(cfg) {
   // contour line (which would explain identical output even with a
   // correctly-varying depth filter upstream).
   console.log(`[route-builder] depth band ${depthMin}-${depthMax}ft: chose ${chosen.length} spine(s) — ${chosen.map(c => `depth=${c.depth}ft@[${c.mid[1].toFixed(4)},${c.mid[0].toFixed(4)}] len=${Math.round(c.len)}ft`).join(' | ')}`);
+  if (chosen[0]) {
+    const s0 = chosen[0].coords;
+    const first = s0[0], last = s0[s0.length-1];
+    console.log(`[route-builder] spine[0] first=[${first[1].toFixed(5)},${first[0].toFixed(5)}] last=[${last[1].toFixed(5)},${last[0].toFixed(5)}] pts=${s0.length}`);
+  }
 
   // ── TRUE band width (across the depth gradient) ──────────────────────────────
   // The amplitude must carry you from the shallow edge of the band (depthMin) to
