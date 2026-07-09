@@ -35,15 +35,15 @@ import { getActiveContour } from './contour-data.js';
 import { selectBestLure, getRecommendedSpeed } from '../data/tackle-inventory.js';
 import { getLureColor } from '../data/lure-knowledge.js';
 import { getPhaseDepth, getStrategySpeed, normalizeSpecies, getPresentationPriority, getPhaseNotes } from '../data/species-strategies.js';
-import { buildFishingContext, buildGroqCoachPayload } from './smart-plan-context.js';
-import { startCoachSession } from './groq-coach.js';
+
 import {
   SPECIES_BEHAVIOR, REGULATIONS,
   getSeason, getTimeOfDay, checkRegulations, resolveLakeKey,
 } from '../data/species-intel.js';
 import { LAKE_DB } from '../data/lakes.js';
 import * as IntelV2 from '../data/species-intel-v2.js';
-import { isLiveBaitAvailable } from '../data/fishing-style-profile.js';
+import { renderSmartPlanUI, assignRouteRods, syncSpread } from './smart-plan-ui.js';
+
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const MAX_RODS_PER_PHASE = 2;
@@ -1181,25 +1181,34 @@ export async function runSmartPlan() {
   const solunarEl = document.getElementById('planSolunar');
   if (solunarEl && !solunarEl.value) solunarEl.value = solunarStr;
 
-  // ── Groq coach (non-blocking) ─────────────────────────────────────────────
+  // ── Render Smart Plan UI + scout report ──────────────────────────────────
   try {
-    const coachPayload = buildGroqCoachPayload(fishingContext, {
-      phases, phaseRecs,
-      spread:    state.SPREAD,
-      solunarStr,
-      poolLevel: document.getElementById('planPoolLevel')?.value || null,
-      weather:   document.getElementById('planWeather')?.value || '',
-      rationale: lines.slice(0, 20).join('\n'),
-      rampName:  selectedRampKey || '',
-      rangeMiles,
-    });
-    startCoachSession(coachPayload);
-  } catch (e) {
-    console.warn('[smart-plan] Coach session failed:', e.message);
+    const routeRods = assignRouteRods(phaseRecs, state.DATA?.tracks || [], speedMph, season, clarity, sp);
+    syncSpread(null, routeRods);
+    renderSmartPlanUI({ routeRods, scoutReport: null, speedMph, phases, solunar: solunarStr });
+    window._smartPlanRouteRods = routeRods;
+    // When Groq scout report arrives, update the UI with it
+    buildGroqScoutReport(sp, lakeName, season, phases, phaseRecs, phaseInfo, selectedRampKey, waterTempF, clarity)
+      .then(report => {
+        if (report && window._smartPlanRouteRods) {
+          renderSmartPlanUI({
+            routeRods: window._smartPlanRouteRods,
+            scoutReport: report,
+            speedMph, phases, solunar: solunarStr,
+          });
+        }
+        if (outEl && report) {
+          lines[lines.length - 1] = '── Scout Report ──';
+          lines.push(''); lines.push(report);
+          outEl.value = lines.join('\n');
+        }
+      });
+  } catch (uiErr) {
+    console.warn('[smart-plan] UI render failed:', uiErr.message);
   }
 
   const wayptMsg = totalWaypoints > 0
-    ? `✓ ${totalWaypoints} scout waypoints on map — connect in Route Builder`
+    ? `✓ ${totalWaypoints} waypoints · routes built — ready to fish`
     : '⚠ No waypoints — load contour data first';
   setStatus(wayptMsg, totalWaypoints > 0);
 
