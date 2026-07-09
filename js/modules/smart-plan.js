@@ -665,19 +665,65 @@ const SCOUT_DEPTH_BANDS = [
   { depthMin: 18, depthMax: 23 }, // Phase 4: mid-shallow, home
 ];
 
-function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles, speedMph = 2.0, phaseInfo) {
+// ── Groq-driven waypoint generation ─────────────────────────────────────────
+// Ask Groq to place fishing waypoints along a route it knows from local knowledge.
+// Validate every coordinate against lake boundary + contour depth data before
+// dropping it on the map. If Groq hallucinates coordinates outside the lake they
+// get thrown out silently. Worst case = zero waypoints, same as before.
+
+function pointInPolygonSimple(lat, lon, polygon) {
+  // polygon = [[lat,lon], ...] GeoJSON outer ring
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [yi, xi] = polygon[i];
+    const [yj, xj] = polygon[j];
+    if (((yi > lat) !== (yj > lat)) && (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function isCoordInLake(lat, lon) {
+  // Check against loaded lake boundary if available
+  const boundary = window.LAKE_BOUNDARY_GEOJSON;
+  if (!boundary?.features?.length) return true; // no boundary loaded — trust it
+  for (const f of boundary.features) {
+    const g = f.geometry;
+    if (!g) continue;
+    const rings = g.type === 'Polygon' ? [g.coordinates[0]]
+      : g.type === 'MultiPolygon' ? g.coordinates.map(p => p[0]) : [];
+    for (const ring of rings) {
+      const ll = ring.map(([lo, la]) => [la, lo]);
+      if (pointInPolygonSimple(lat, lon, ll)) return true;
+    }
+  }
+  return false;
+}
+
+function getDepthAtCoord(lat, lon) {
+  // Find the nearest contour feature and return its depth
+  const contour = getActiveContour();
+  const gj = contour?.smart || contour?.raw;
+  if (!gj?.features?.length) return null;
+  let bestDepth = null, bestDist = Infinity;
+  const step = Math.max(1, Math.floor(gj.features.length / 200));
+  for (let fi = 0; fi < gj.features.length; fi += step) {
+    const f = gj.features[fi];
+    const coords = f.geometry?.coordinates;
+    const depth = f.properties?.depth_ft;
+    if (!coords || depth == null) continue;
+    const mid = coords[Math.floor(coords.length / 2)];
+    const d = geoDistanceFt(lat, lon, mid[1], mid[0]);
+    if (d < bestDist) { bestDist = d; bestDepth = depth; }
+  }
+  return bestDist < 2000 ? bestDepth : null; // only trust within 2000ft
+}
+
+async function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles, speedMph = 2.0, phaseInfo) {
   if (!state.DATA) state.DATA = {};
   if (!Array.isArray(state.DATA.waypoints)) state.DATA.waypoints = [];
   state.DATA.waypoints = state.DATA.waypoints.filter(w => !w.scoutWaypoint);
-
-  const maxDistFt = Math.min(rangeMiles, 4.0) * 5280;
-  const STEP_FT = 150;
-  let totalAdded = 0;
-
-  // Trip time budget split 50/50 outbound/inbound
-  const p = phaseInfo?.phases || phases;
-  const totalDurH = p.length ? (p[p.length-1].end - p[0].start) : 6;
-  const halfBudgetFt = Math.min((totalDurH / 2) * speedMph * 5280 * 0.8, 4.0 * 5280);
 
   // Add ramp waypoint
   if (Number.isFinite(rampLat) && Number.isFinite(rampLon)) {
@@ -690,80 +736,132 @@ function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles,
     });
   }
 
-  // ── LEG 1: Outbound — shallow band, walk away from ramp ──────────────────
-  const outboundPts = walkContourForWaypoints(
-    15, 20,
-    rampLat, rampLon,
-    maxDistFt,
-    halfBudgetFt,
-    STEP_FT,
-    null // no end target — just walk as far as budget allows
-  );
+  const p = phaseInfo?.phases || phases;
+  const totalDurH = p.length ? (p[p.length-1].end - p[0].start) : 6;
+  const rec1 = phaseRecs[0];
+  const rec3 = phaseRecs[2] || phaseRecs[1];
+  const outDepthMin = rec1?.depthMin || 10;
+  const outDepthMax = rec1?.depthMax || 20;
+  const inDepthMin  = rec3?.depthMin || 20;
+  const inDepthMax  = rec3?.depthMax || 30;
+  const species = phaseRecs.find(Boolean)?.lures?.[0] ? 'Striped Bass' : 'fish';
 
-  if (outboundPts.length) {
-    // Split outbound into Ph1 (first half) and Ph2 (second half) by waypoint count
-    const splitIdx = Math.floor(outboundPts.length / 2);
-    outboundPts.forEach((pt, j) => {
-      const phNum = j < splitIdx ? 1 : 2;
-      state.DATA.waypoints.push({
-        name: `Ph${phNum}-${j + 1}`,
-        lat: pt.lat, lon: pt.lon,
-        sym: 'Fishing Area',
-        scoutWaypoint: true,
-        phase: phNum,
-        depth: pt.depth,
-      });
-      totalAdded++;
+  // Build Groq prompt — ask for ordered coordinates, outbound then inbound
+  const prompt = `You are a fishing guide for Lake Wateree, South Carolina.
+I am launching from coordinates (${rampLat.toFixed(5)}, ${rampLon.toFixed(5)}) in a kayak.
+I have ${totalDurH.toFixed(1)} hours on the water at ${speedMph}mph.
+
+Give me a trolling route as two legs:
+LEG 1 (outbound): ~${Math.round(totalDurH/2 * speedMph * 5280)}ft of fishing at ${outDepthMin}-${outDepthMax}ft depth. Start at the ramp, fish away from it.
+LEG 2 (inbound): ~${Math.round(totalDurH/2 * speedMph * 5280)}ft of fishing at ${inDepthMin}-${inDepthMax}ft depth. Start where Leg 1 ends, fish back toward the ramp.
+
+Place waypoints every 300-400 feet along real fishable water on Lake Wateree. Stay in the lake. No land. Follow depth contours.
+
+Return ONLY a JSON array, no explanation, no markdown:
+[
+  {"lat": 34.37800, "lon": -80.72900, "leg": 1, "depth": 15, "note": "dock edge"},
+  ...
+]
+
+Use real Lake Wateree coordinates. Ramp is at ${rampLat.toFixed(5)}, ${rampLon.toFixed(5)}.`;
+
+  let groqWaypoints = [];
+  try {
+    console.log('[scout] Asking Groq for fishing waypoints...');
+    const res = await fetch(`${CF_WORKER_URL}/groq-query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 2000,
+        temperature: 0.3,
+      }),
     });
-    console.log(`[scout] Outbound: ${outboundPts.length} waypoints at 15-20ft, budget ${Math.round(halfBudgetFt)}ft`);
-  } else {
-    console.warn('[scout] No outbound waypoints found for 15-20ft');
+    if (!res.ok) throw new Error(`Groq HTTP ${res.status}`);
+    const data = await res.json();
+    const text = data.choices?.[0]?.message?.content?.trim() || '';
+    console.log('[scout] Groq raw response length:', text.length);
+    const clean = text.replace(/```json|```/g, '').trim();
+    const start = clean.indexOf('[');
+    const end = clean.lastIndexOf(']');
+    if (start !== -1 && end !== -1) {
+      groqWaypoints = JSON.parse(clean.slice(start, end + 1));
+      console.log(`[scout] Groq returned ${groqWaypoints.length} raw waypoints`);
+    }
+  } catch (e) {
+    console.warn('[scout] Groq waypoint generation failed:', e.message);
   }
 
-  // Turnaround point = last outbound waypoint (or ramp if none)
-  const turnLat = outboundPts.length ? outboundPts[outboundPts.length-1].lat : rampLat;
-  const turnLon = outboundPts.length ? outboundPts[outboundPts.length-1].lon : rampLon;
-
-  // ── LEG 2: Inbound — deeper band, walk back toward ramp ──────────────────
-  const inboundPts = walkContourForWaypoints(
-    22, 28,
-    turnLat, turnLon,
-    maxDistFt,
-    halfBudgetFt,
-    STEP_FT,
-    { endLat: rampLat, endLon: rampLon } // prefer direction that ends near home
-  );
-
-  if (inboundPts.length) {
-    // Ensure inbound heads toward ramp — reverse if last point is farther than first
-    let ordered = inboundPts;
-    const firstDist = geoDistanceFt(rampLat, rampLon, inboundPts[0].lat, inboundPts[0].lon);
-    const lastDist  = geoDistanceFt(rampLat, rampLon, inboundPts[inboundPts.length-1].lat, inboundPts[inboundPts.length-1].lon);
-    if (lastDist > firstDist) ordered = inboundPts.slice().reverse();
-
-    const splitIdx = Math.floor(ordered.length / 2);
-    ordered.forEach((pt, j) => {
-      const phNum = j < splitIdx ? 3 : 4;
+  if (!groqWaypoints.length) {
+    console.warn('[scout] No waypoints from Groq — falling back to contour walk');
+    // Fallback: simple contour walk outbound only
+    const fallback = walkContourForWaypoints(outDepthMin, outDepthMax, rampLat, rampLon,
+      Math.min(rangeMiles, 4.0) * 5280, totalDurH * speedMph * 5280 * 0.4, 150, null);
+    fallback.forEach((pt, j) => {
       state.DATA.waypoints.push({
-        name: `Ph${phNum}-${j + 1}`,
-        lat: pt.lat, lon: pt.lon,
-        sym: 'Fishing Area',
-        scoutWaypoint: true,
-        phase: phNum,
-        depth: pt.depth,
+        name: `Ph1-${j+1}`, lat: pt.lat, lon: pt.lon,
+        sym: 'Fishing Area', scoutWaypoint: true, phase: 1, depth: pt.depth,
       });
-      totalAdded++;
     });
-    console.log(`[scout] Inbound: ${ordered.length} waypoints at 22-28ft, ends at (${ordered[ordered.length-1].lat.toFixed(4)},${ordered[ordered.length-1].lon.toFixed(4)})`);
-  } else {
-    console.warn('[scout] No inbound waypoints found for 22-28ft');
+    renderAll();
+    return fallback.length;
   }
 
+  // Validate each waypoint against lake boundary and contour depth
+  let totalAdded = 0;
+  const phaseCounts = {};
+
+  for (const wpt of groqWaypoints) {
+    const lat = parseFloat(wpt.lat);
+    const lon = parseFloat(wpt.lon);
+    const leg = wpt.leg || 1;
+    const phNum = leg <= 1 ? 1 : leg >= 2 ? 2 : leg;
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      console.warn(`[scout] Invalid coords: ${lat}, ${lon} — skipped`);
+      continue;
+    }
+
+    // Hard bbox check — must be in Wateree's general area
+    if (lat < 34.20 || lat > 34.55 || lon < -81.00 || lon > -80.60) {
+      console.warn(`[scout] Coord (${lat.toFixed(4)},${lon.toFixed(4)}) outside Wateree bbox — skipped`);
+      continue;
+    }
+
+    // Lake boundary check
+    if (!isCoordInLake(lat, lon)) {
+      console.warn(`[scout] Coord (${lat.toFixed(4)},${lon.toFixed(4)}) not in lake — skipped`);
+      continue;
+    }
+
+    // Depth sanity check — must be within 8ft of expected depth
+    const actualDepth = getDepthAtCoord(lat, lon);
+    const expectedDepth = parseFloat(wpt.depth) || (leg <= 1 ? (outDepthMin + outDepthMax) / 2 : (inDepthMin + inDepthMax) / 2);
+    if (actualDepth !== null && Math.abs(actualDepth - expectedDepth) > 5) {
+      console.warn(`[scout] Depth mismatch at (${lat.toFixed(4)},${lon.toFixed(4)}): Groq said ${expectedDepth}ft, contour says ${actualDepth}ft — skipped`);
+      continue;
+    }
+
+    phaseCounts[phNum] = (phaseCounts[phNum] || 0) + 1;
+    state.DATA.waypoints.push({
+      name: `Ph${phNum}-${phaseCounts[phNum]}`,
+      lat, lon,
+      sym: 'Fishing Area',
+      scoutWaypoint: true,
+      phase: phNum,
+      depth: actualDepth || expectedDepth,
+      note: wpt.note || '',
+    });
+    totalAdded++;
+  }
+
+  console.log(`[scout] ${totalAdded}/${groqWaypoints.length} waypoints passed validation`);
   renderAll();
   return totalAdded;
 }
 
-// ── Groq scout report// ── Groq scout report// ── Groq scout report ─────────────────────────────────────────────────────────
+// ── Groq scout report// ── Groq scout report// ── Groq scout report// ── Groq scout report ─────────────────────────────────────────────────────────
 // Groq gets the fishing intelligence question — NOT coordinates. It tells you
 // what to look for, why, and what to throw. Code handles where.
 
@@ -1029,8 +1127,8 @@ export async function runSmartPlan() {
   }
 
   // ── Drop scout waypoints ──────────────────────────────────────────────────
-  setStatus('Sampling depth contours…', true);
-  const totalWaypoints = generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles, speedMph, phaseInfo);
+  setStatus('Asking Groq for fishing spots…', true);
+  const totalWaypoints = await generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles, speedMph, phaseInfo);
 
   // ── Store phase routes for depth pre-fill in route builder ───────────────
   window._smartPlanPhaseRoutes = phases.map((phase, i) => ({
