@@ -842,11 +842,32 @@ function featureEdges(feat) {
 }
 
 // Cache shared edges by depth range key to avoid recomputing on every phase
+// Persisted to sessionStorage so reloads don't require full recompute
 const _depthEdgeCache = new Map();
+const _EDGE_CACHE_PREFIX = 'trollmap_edges_';
+
+function _loadEdgeCache(cacheKey) {
+  if (_depthEdgeCache.has(cacheKey)) return _depthEdgeCache.get(cacheKey);
+  try {
+    const raw = sessionStorage.getItem(_EDGE_CACHE_PREFIX + cacheKey);
+    if (raw) {
+      const edges = JSON.parse(raw);
+      _depthEdgeCache.set(cacheKey, edges);
+      return edges;
+    }
+  } catch (_) {}
+  return null;
+}
+
+function _saveEdgeCache(cacheKey, edges) {
+  _depthEdgeCache.set(cacheKey, edges);
+  try { sessionStorage.setItem(_EDGE_CACHE_PREFIX + cacheKey, JSON.stringify(edges)); } catch (_) {}
+}
 
 function getDepthPolygonEdges(depthMinFt, depthMaxFt) {
   const cacheKey = `${depthMinFt}|${depthMaxFt}`;
-  if (_depthEdgeCache.has(cacheKey)) return _depthEdgeCache.get(cacheKey);
+  const cached = _loadEdgeCache(cacheKey);
+  if (cached) return cached;
   const gj = getDepthAreaGeoJSON()
     || window.SUPPLEMENTAL_DEPTH_GEOJSON
     || globalThis.SUPPLEMENTAL_DEPTH_GEOJSON;
@@ -946,7 +967,7 @@ function getDepthPolygonEdges(depthMinFt, depthMaxFt) {
   }
 
   console.log(`[route-builder] depth polygon edges: ${sharedEdges.length} shared transition edges for ${depthMinFt}-${depthMaxFt}ft`);
-  _depthEdgeCache.set(cacheKey, sharedEdges);
+  _saveEdgeCache(cacheKey, sharedEdges);
   return sharedEdges;
 }
 
@@ -1292,6 +1313,20 @@ function prepareSpineForPhase(spine, cfg) {
 
   let candidates = [];
   if (isValidLatLon(sLat, sLon)) {
+    // Prefer starting from whichever END of the spine is closest to the phase start.
+    // This gives the full spine length to travel rather than a half-spine from the middle.
+    const dStart = distancePointToRefFt(spine[0], sLat, sLon);
+    const dEnd   = distancePointToRefFt(spine[spine.length - 1], sLat, sLon);
+    if (dEnd < dStart) {
+      // End is closer — run the spine in reverse (end → start)
+      candidates.push(spine.slice().reverse());
+      candidates.push(spine);
+    } else {
+      // Start is closer — run forward
+      candidates.push(spine);
+      candidates.push(spine.slice().reverse());
+    }
+    // Also offer the mid-slice options as fallback candidates
     const idx = nearestPointIndex(spine, sLat, sLon);
     const forward = spine.slice(idx);
     const reverse = spine.slice(0, idx + 1).reverse();
