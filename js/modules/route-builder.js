@@ -1080,6 +1080,12 @@ function generateDepthPolygonRoutes(cfg) {
       const closestFt = closestPointOnSpineFt(refLat, refLon, s.coords);
       if (s.len < 500) { s.trollScore = -Infinity; s._closestFt = closestFt; return; }
       if (closestFt > MAX_SPINE_DIST_FT) { s.trollScore = -Infinity; s._closestFt = closestFt; return; }
+      // Reject cove-loop spines that don't travel anywhere — start-to-end displacement < 1500ft
+      if (s.coords?.length >= 2) {
+        const sc = s.coords[0], ec = s.coords[s.coords.length-1];
+        const disp = distBearing(sc[1], sc[0], ec[1], ec[0])[0];
+        if (disp < 1500) { s.trollScore = -Infinity; s._closestFt = closestFt; return; }
+      }
       const startPenalty = closestFt * 3;
       const lenScore = Math.min(s.len, lenCap);
       let endPenalty = 0;
