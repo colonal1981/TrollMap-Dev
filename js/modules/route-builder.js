@@ -1061,6 +1061,11 @@ function edgesToSpines(edges, depthMin, depthMax) {
 
 function generateDepthPolygonRoutes(cfg) {
   const { depthMin, depthMax } = cfg;
+  // DEBUG marker — write to rationale box immediately
+  try {
+    const el = document.getElementById('planSmartPlanOutput');
+    if (el) el.value = (el.value||'') + `\n[POLY] depth=${depthMin}-${depthMax}ft`;
+  } catch(_) {}
 
   // Get edges from depth polygons
   const edges = getDepthPolygonEdges(depthMin, depthMax);
