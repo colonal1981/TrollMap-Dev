@@ -1340,7 +1340,7 @@ function prepareSpineForPhase(spine, cfg) {
   const sLat = cfg.startLat != null ? cfg.startLat : cfg.rampLat;
   const sLon = cfg.startLon != null ? cfg.startLon : cfg.rampLon;
   // Store sLat for debug panel
-  try { window._routeDebug_sLat = { sLat, sLon, cfgStartLat: cfg.startLat, cfgRampLat: cfg.rampLat }; } catch(_) {}
+  try { window._routeDebug_sLat = { sLat, sLon, cfgStartLat: cfg.startLat, cfgRampLat: cfg.rampLat, lockedBearing: cfg.lockedBearing }; } catch(_) {}
   const eLat = cfg.endLat;
   const eLon = cfg.endLon;
 
@@ -1350,6 +1350,14 @@ function prepareSpineForPhase(spine, cfg) {
   const nearIdx = nearestPointIndex(spine, sLat, sLon);
   const forwardHalf = spine.slice(nearIdx);   // from nearest point to end
   const reverseHalf = spine.slice(0, nearIdx + 1).reverse(); // from nearest point back to start
+  // Debug: store half lengths
+  try {
+    if (window._routeDebug?.length) {
+      window._routeDebug[window._routeDebug.length-1].nearIdx = nearIdx;
+      window._routeDebug[window._routeDebug.length-1].fwdLen = forwardHalf.length;
+      window._routeDebug[window._routeDebug.length-1].revLen = reverseHalf.length;
+    }
+  } catch(_) {}
   // Always include both full-spine directions
   candidates.push(spine);
   candidates.push(spine.slice().reverse());
