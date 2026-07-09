@@ -1264,6 +1264,81 @@ function prepareSpineForPhase(spine, cfg) {
   let out = candidates[0];
   if (target > 0) out = trimPolylineToLength(out, target);
 
+  // ── Spine continuation: if budget remains after first spine ends, chain next ──
+  // When the best spine is shorter than targetLengthFt, look for a continuation
+  // spine whose nearest endpoint is within 1500ft of our current end AND whose
+  // bearing is within 90° of our travel direction (no doublebacks).
+  if (target > 0 && out?.length >= 2 && typeof window !== 'undefined') {
+    const MAX_GAP_FT = 1500;
+    const MAX_TURN_DEG = 90;
+    const usedMids = new Set([candidates[0]?.mid?.join(',')]);
+    let budgetLeft = target - trackLengthFt(out);
+    let chainTries = 0;
+
+    while (budgetLeft > 500 && chainTries < 10) {
+      chainTries++;
+      const tailPt = out[out.length - 1]; // [lat, lon]
+      const tailLat = tailPt[0], tailLon = tailPt[1];
+
+      // Current travel bearing from last few points
+      const prevPt = out[Math.max(0, out.length - 5)];
+      const [, curBearing] = distBearing(prevPt[0], prevPt[1], tailLat, tailLon);
+
+      // Find the nearest candidate spine endpoint that:
+      // 1. We haven't used yet
+      // 2. Is within MAX_GAP_FT of tail
+      // 3. Has bearing within MAX_TURN_DEG of current direction
+      let bestNext = null, bestDist = MAX_GAP_FT + 1;
+
+      for (const cand of candidates) {
+        const midKey = cand.mid?.join(',');
+        if (usedMids.has(midKey)) continue;
+
+        // Check both endpoints
+        for (const [eLat, eLon] of [
+          [cand.coords[0][1], cand.coords[0][0]],
+          [cand.coords[cand.coords.length-1][1], cand.coords[cand.coords.length-1][0]]
+        ]) {
+          const [d] = distBearing(tailLat, tailLon, eLat, eLon);
+          if (d > MAX_GAP_FT) continue;
+
+          // Bearing to this endpoint from tail
+          const [, bToNext] = distBearing(tailLat, tailLon, eLat, eLon);
+          const turn = Math.abs(((bToNext - curBearing + 540) % 360) - 180);
+          if (turn > MAX_TURN_DEG) continue;
+
+          if (d < bestDist) {
+            bestDist = d;
+            bestNext = { cand, entryLat: eLat, entryLon: eLon };
+          }
+        }
+      }
+
+      if (!bestNext) break;
+
+      usedMids.add(bestNext.cand.mid?.join(','));
+
+      // Orient the continuation spine starting from the entry point
+      let nextSpine = resampleContour(bestNext.cand.coords, cfg.wave || 350);
+      nextSpine = trimSpineToClip(nextSpine);
+      if (nextSpine.length < 2) break;
+
+      // Convert to [lat,lon] and find the entry end
+      const nextPts = nextSpine.map(c => [c[1], c[0]]);
+      const dToFirst = distBearing(bestNext.entryLat, bestNext.entryLon, nextPts[0][0], nextPts[0][1])[0];
+      const dToLast  = distBearing(bestNext.entryLat, bestNext.entryLon, nextPts[nextPts.length-1][0], nextPts[nextPts.length-1][1])[0];
+      const orientedNext = dToLast < dToFirst ? nextPts.slice().reverse() : nextPts;
+
+      // Trim to remaining budget
+      const continuation = trimPolylineToLength(orientedNext, budgetLeft);
+      if (continuation.length < 2) break;
+
+      // Append (skip first point to avoid duplicate)
+      out = out.concat(continuation.slice(1));
+      budgetLeft -= trackLengthFt(continuation);
+    }
+  }
+
   // Guarantee the trimmed route starts within 500ft of the phase start point.
   // If it doesn't, the angler has to cross good water to reach the route —
   // unacceptable. Snap the first point to the nearest spine vertex within 500ft.
