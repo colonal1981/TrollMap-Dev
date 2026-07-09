@@ -1355,16 +1355,17 @@ function prepareSpineForPhase(spine, cfg) {
     return startPenalty + lengthPenalty + endPenalty + bearingPenalty - Math.min(len, target || 5000) * 0.02;
   };
 
-  candidates.sort((a, b) => scoreCandidate(a) - scoreCandidate(b));
-  // Hard constraint: if one candidate starts much closer to phase start, always use it
-  // regardless of bearing score — don't start 1+ miles away when 300ft is available
-  if (isValidLatLon(sLat, sLon) && candidates.length >= 2) {
-    const d0 = distancePointToRefFt(candidates[0][0], sLat, sLon);
-    const d1 = distancePointToRefFt(candidates[1][0], sLat, sLon);
-    if (d1 < d0 && d1 < 800 && d0 > d1 * 3) {
-      // Swap — the scorer picked a far start over a close one, override it
-      [candidates[0], candidates[1]] = [candidates[1], candidates[0]];
-    }
+  // For smart plan phases, always start from the candidate whose first point is
+  // closest to the phase start — ignore bearing score for direction selection.
+  // The scorer is good at picking WHICH spine but bad at picking direction.
+  if (isValidLatLon(sLat, sLon)) {
+    candidates.sort((a, b) => {
+      const dA = distancePointToRefFt(a[0], sLat, sLon);
+      const dB = distancePointToRefFt(b[0], sLat, sLon);
+      return dA - dB;
+    });
+  } else {
+    candidates.sort((a, b) => scoreCandidate(a) - scoreCandidate(b));
   }
   let out = candidates[0];
   if (target > 0) out = trimPolylineToLength(out, target);
