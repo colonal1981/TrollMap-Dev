@@ -475,7 +475,28 @@ function stitchFragments(fragments, TOL = 18, MAX_TURN = 30) {
         else chain = c.concat(chain);
       }
     }
-    chains.push(chain.map(([la, lo]) => [lo, la]));
+    // Remove micro-reversals at tile boundaries — points that briefly go
+    // backwards (>120° from general travel direction) before resuming.
+    // These are coordinate direction artifacts at PBF tile seams.
+    const cleaned = [];
+    for (let i = 0; i < chain.length; i++) {
+      if (cleaned.length < 2) { cleaned.push(chain[i]); continue; }
+      const prev2 = cleaned[cleaned.length - 2];
+      const prev1 = cleaned[cleaned.length - 1];
+      const curr  = chain[i];
+      // General direction from 2 points ago to now
+      const [, genBrng] = distBearing(prev2[0], prev2[1], curr[0], curr[1]);
+      // Direction of the previous step
+      const [prevDist, prevBrng] = distBearing(prev1[0], prev1[1], curr[0], curr[1]);
+      if (prevDist < 1) continue; // skip duplicate points
+      const turn = angleDiff(genBrng, prevBrng);
+      // If previous point is a sharp reversal AND very close, skip it
+      if (turn > 120 && distBearing(prev2[0], prev2[1], prev1[0], prev1[1])[0] < 200) {
+        cleaned.pop(); // remove the reversal point
+      }
+      cleaned.push(curr);
+    }
+    chains.push(cleaned.map(([la, lo]) => [lo, la]));
   }
   return chains;
 }
@@ -503,6 +524,11 @@ function buildStitchedSpines(features) {
       });
     }
   }
+  // Cap individual spine length at 3x the clip radius to prevent lake-spanning loops
+  // A single stitched contour shouldn't span the entire lake
+  const clipRadiusFt = (window._clipRadiusMi || 4.0) * 5280;
+  const MAX_SPINE_LEN = clipRadiusFt * 3;
+  spines.forEach(s => { if (s.len > MAX_SPINE_LEN) s.len = MAX_SPINE_LEN; });
   spines.sort((a, b) => b.len - a.len);
   return spines;
 }
@@ -591,6 +617,11 @@ function generateContourRoutes(cfg) {
       const closestFt = closestPointOnSpineFt(refLat, refLon, s.coords);
       if (s.len < 500) { s.trollScore = -Infinity; s._closestFt = closestFt; return; }
       if (closestFt > MAX_SPINE_DIST_FT) { s.trollScore = -Infinity; s._closestFt = closestFt; return; }
+      // Reject spines that don't travel anywhere useful — start-to-end displacement
+      // must be at least 1500ft so tangled cove knots don't score as long spines
+      const spineStart = s.coords[0], spineEnd = s.coords[s.coords.length - 1];
+      const displacement = distBearing(spineStart[1], spineStart[0], spineEnd[1], spineEnd[0])[0];
+      if (displacement < 1500) { s.trollScore = -Infinity; s._closestFt = closestFt; return; }
       const startPenalty = closestFt * 3;
       const lenScore = Math.min(s.len, lenCap);
       // End penalty for return passes only (Phase 3): light 1× weight so long
@@ -1274,6 +1305,7 @@ function prepareSpineForPhase(spine, cfg) {
     const usedMids = new Set([candidates[0]?.mid?.join(',')]);
     let budgetLeft = target - trackLengthFt(out);
     let chainTries = 0;
+    const chainCandidates = candidates.slice(0, 20); // limit to top 20 for performance
 
     while (budgetLeft > 500 && chainTries < 10) {
       chainTries++;
@@ -1290,7 +1322,7 @@ function prepareSpineForPhase(spine, cfg) {
       // 3. Has bearing within MAX_TURN_DEG of current direction
       let bestNext = null, bestDist = MAX_GAP_FT + 1;
 
-      for (const cand of candidates) {
+      for (const cand of chainCandidates) {
         const midKey = cand.mid?.join(',');
         if (usedMids.has(midKey)) continue;
 
@@ -1577,6 +1609,7 @@ export function setClipFromRamp(rampLat, rampLon, rangeMiles) {
   const MAX_CLIP_RADIUS_MI = 4.0; // Upgraded: 4.0mi planning box allows full day 9-hour trolling circuits around ramp
   const MIN_CLIP_RADIUS_MI = 0.5;
   const clippedRangeMiles = Math.min(MAX_CLIP_RADIUS_MI, Math.max(MIN_CLIP_RADIUS_MI, rangeMiles));
+  window._clipRadiusMi = clippedRangeMiles;
   if (clippedRangeMiles !== rangeMiles) {
     console.warn(`[route-builder] clip radius ${rangeMiles.toFixed(1)}mi exceeds cap — using ${clippedRangeMiles}mi instead`);
   }
