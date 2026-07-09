@@ -1337,11 +1337,17 @@ function prepareSpineForPhase(spine, cfg) {
   const eLon = cfg.endLon;
 
   let candidates = [];
-  // Always offer full spine in both directions — never mid-slice.
-  // Mid-slicing at nearestPointIndex gives a short tangled segment near the ramp.
-  // The scorer picks the best direction based on bearing and start distance.
+  // Offer: full spine forward, full spine reverse, AND the longer half from nearest point.
+  // The longer half ensures we get the most fishing distance while starting near the ramp.
+  const nearIdx = nearestPointIndex(spine, sLat, sLon);
+  const forwardHalf = spine.slice(nearIdx);   // from nearest point to end
+  const reverseHalf = spine.slice(0, nearIdx + 1).reverse(); // from nearest point back to start
+  // Always include both full-spine directions
   candidates.push(spine);
   candidates.push(spine.slice().reverse());
+  // Add whichever half is longer as the preferred candidate
+  if (forwardHalf.length >= 2) candidates.push(forwardHalf);
+  if (reverseHalf.length >= 2) candidates.push(reverseHalf);
 
   if (!candidates.length) return spine;
 
@@ -1371,7 +1377,10 @@ function prepareSpineForPhase(spine, cfg) {
     candidates.sort((a, b) => {
       const dA = distancePointToRefFt(a[0], sLat, sLon);
       const dB = distancePointToRefFt(b[0], sLat, sLon);
-      return dA - dB;
+      // Primary: distance from phase start (closer = better)
+      // Secondary: length (longer = better, tiebreaker when both start at same point)
+      if (Math.abs(dA - dB) > 100) return dA - dB;
+      return b.length - a.length;
     });
   } else {
     candidates.sort((a, b) => scoreCandidate(a) - scoreCandidate(b));
