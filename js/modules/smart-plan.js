@@ -462,83 +462,208 @@ async function buildPhaseRods(phaseRec, phaseNum, sides, fishingContext) {
 }
 
 // ── Scout waypoint generation ─────────────────────────────────────────────────
-// Samples points directly off loaded depth contour features at the right depth
-// for each phase. Sorts them into a logical nearest-neighbor chain starting
-// from the ramp (or previous phase end). Drops them as named waypoints on the
-// map so you can connect them in the route builder.
+// Walks stitched contour fragments at the right depth, sampling a point every
+// STEP_FT feet. This produces a dense chain of points that follows the actual
+// depth edge geometry — no direction math, no spine reversal problems, no
+// tile boundary artifacts. Short enough steps mean connecting them in order
+// never crosses land.
 //
-// Points are guaranteed to be in real water at the right depth — they come
-// directly from the contour data, not from geometry math.
+// Strategy:
+//   1. Collect all contour features in the depth band within range of ramp
+//   2. Stitch same-depth fragments end-to-end (reuse route-builder logic inline)
+//   3. Pick the longest stitched chain closest to the ramp
+//   4. Walk it sampling a point every STEP_FT feet
+//   5. Trim to the phase fishing budget (time × speed)
 
-function sampleContourPoints(depthMin, depthMax, refLat, refLon, maxDistFt, maxPoints = 15) {
+// Simple fragment stitcher — chains [lon,lat] fragments whose endpoints are
+// within TOL_FT of each other. Same logic as route-builder stitchFragments
+// but self-contained so smart-plan doesn't need to import route-builder.
+function stitchContourFragments(fragments, TOL_FT = 50) {
+  const segs = fragments
+    .filter(c => c.length >= 2)
+    .map(c => c.map(([lo, la]) => [la, lo])); // [lon,lat] → [lat,lon]
+  const used = new Array(segs.length).fill(false);
+  const chains = [];
+
+  function dist2(a, b) {
+    const dlat = (a[0] - b[0]) * 364000;
+    const dlon = (a[1] - b[1]) * 364000 * Math.cos(a[0] * Math.PI / 180);
+    return Math.sqrt(dlat * dlat + dlon * dlon);
+  }
+
+  // Turn angle between two bearings — reject joins that would double back
+  function bearing(a, b) {
+    return Math.atan2((b[1] - a[1]) * Math.cos(a[0] * Math.PI / 180), b[0] - a[0]) * 180 / Math.PI;
+  }
+  function angleDiff(a, b) {
+    let d = Math.abs(a - b) % 360;
+    return d > 180 ? 360 - d : d;
+  }
+
+  for (let s = 0; s < segs.length; s++) {
+    if (used[s]) continue;
+    used[s] = true;
+    let chain = segs[s].slice();
+    let grew = true;
+    while (grew) {
+      grew = false;
+      const head = chain[0], tail = chain[chain.length - 1];
+      const tailBrng = chain.length >= 2 ? bearing(chain[chain.length - 2], tail) : 0;
+      const headBrng = chain.length >= 2 ? bearing(chain[1], head) : 0;
+      let bestJ = -1, bestScore = Infinity, bestOp = null;
+      for (let j = 0; j < segs.length; j++) {
+        if (used[j]) continue;
+        const c = segs[j];
+        const a = c[0], b = c[c.length - 1];
+        const cands = [
+          { d: dist2(tail, a), op: 'TA', turn: angleDiff(tailBrng, bearing(a, c[Math.min(1, c.length-1)])) },
+          { d: dist2(tail, b), op: 'TB', turn: angleDiff(tailBrng, bearing(b, c[Math.max(0, c.length-2)])) },
+          { d: dist2(head, a), op: 'HA', turn: angleDiff(headBrng, bearing(a, c[Math.min(1, c.length-1)])) },
+          { d: dist2(head, b), op: 'HB', turn: angleDiff(headBrng, bearing(b, c[Math.max(0, c.length-2)])) },
+        ];
+        for (const cand of cands) {
+          if (cand.d > TOL_FT || cand.turn > 90) continue; // allow up to 90° — contours bend
+          const score = cand.d + cand.turn;
+          if (score < bestScore) { bestScore = score; bestJ = j; bestOp = cand.op; }
+        }
+      }
+      if (bestJ >= 0) {
+        const c = segs[bestJ].slice(); used[bestJ] = true; grew = true;
+        if (bestOp === 'TA') chain = chain.concat(c);
+        else if (bestOp === 'TB') chain = chain.concat(c.reverse());
+        else if (bestOp === 'HA') chain = c.reverse().concat(chain);
+        else chain = c.concat(chain);
+      }
+    }
+    chains.push(chain); // [lat,lon][]
+  }
+  return chains;
+}
+
+function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, budgetFt, stepFt = 150) {
   const contour = getActiveContour();
   const gj = contour?.smart || contour?.raw;
   if (!gj?.features?.length) return [];
 
-  // Collect all features in depth range
+  // Filter to depth band and within range
   const inRange = gj.features.filter(f => {
     const d = f.properties?.depth_ft;
-    return d != null && d >= depthMin && d <= depthMax;
+    if (d == null || d < depthMin || d > depthMax) return false;
+    const coords = f.geometry?.coordinates;
+    if (!coords?.length) return false;
+    // Quick bbox check — any vertex within range
+    return coords.some(([lo, la]) => geoDistanceFt(refLat, refLon, la, lo) <= maxDistFt);
   });
+
   if (!inRange.length) {
-    console.warn(`[scout] no features in ${depthMin}-${depthMax}ft range`);
+    console.warn(`[scout] no features in ${depthMin}-${depthMax}ft within ${Math.round(maxDistFt)}ft`);
     return [];
   }
 
-  // Sample one point per feature (midpoint), filter by distance from ref
-  const pts = [];
+  // Group by depth and stitch each depth's fragments
+  const byDepth = new Map();
   for (const f of inRange) {
-    const coords = f.geometry?.coordinates;
-    if (!coords?.length) continue;
-    // Use midpoint of the feature
-    const mid = coords[Math.floor(coords.length / 2)];
-    if (!mid || mid.length < 2) continue;
-    const lat = mid[1], lon = mid[0]; // GeoJSON is [lon,lat]
-    const distFt = geoDistanceFt(refLat, refLon, lat, lon);
-    if (distFt > maxDistFt) continue;
-    pts.push({ lat, lon, distFt, depth: f.properties.depth_ft });
+    const d = f.properties.depth_ft;
+    if (!byDepth.has(d)) byDepth.set(d, []);
+    byDepth.get(d).push(f.geometry.coordinates);
   }
 
-  if (!pts.length) return [];
-
-  // Nearest-neighbor chain from refLat/refLon — produces a logical fishing order
-  // rather than random scatter. No geometry math — just "what's closest next."
-  const result = [];
-  const used = new Set();
-  let curLat = refLat, curLon = refLon;
-
-  for (let iter = 0; iter < maxPoints; iter++) {
-    let bestIdx = -1, bestDist = Infinity;
-    for (let i = 0; i < pts.length; i++) {
-      if (used.has(i)) continue;
-      const d = geoDistanceFt(curLat, curLon, pts[i].lat, pts[i].lon);
-      if (d < bestDist) { bestDist = d; bestIdx = i; }
+  // Build all stitched chains across all depths, compute length + proximity
+  const allChains = [];
+  for (const [depth, frags] of byDepth) {
+    const chains = stitchContourFragments(frags);
+    for (const chain of chains) {
+      if (chain.length < 2) continue;
+      // Arc length
+      let len = 0;
+      for (let i = 1; i < chain.length; i++) {
+        len += geoDistanceFt(chain[i-1][0], chain[i-1][1], chain[i][0], chain[i][1]);
+      }
+      if (len < stepFt * 2) continue; // too short to be useful
+      // Closest point on chain to ramp
+      let closest = Infinity;
+      const step = Math.max(1, Math.floor(chain.length / 40));
+      for (let i = 0; i < chain.length; i += step) {
+        const d = geoDistanceFt(refLat, refLon, chain[i][0], chain[i][1]);
+        if (d < closest) closest = d;
+      }
+      if (closest > maxDistFt) continue;
+      allChains.push({ chain, len, closest, depth });
     }
-    if (bestIdx === -1) break;
-    used.add(bestIdx);
-    result.push(pts[bestIdx]);
-    curLat = pts[bestIdx].lat;
-    curLon = pts[bestIdx].lon;
   }
 
-  return result;
+  if (!allChains.length) return [];
+
+  // Score: prefer long chains close to ramp
+  allChains.sort((a, b) => (a.closest * 2 - a.len) - (b.closest * 2 - b.len));
+  const best = allChains[0];
+  console.log(`[scout] best chain: depth=${best.depth}ft len=${Math.round(best.len)}ft closest=${Math.round(best.closest)}ft`);
+
+  // Find the point on the chain nearest the ramp — start walking from there
+  let nearIdx = 0, nearDist = Infinity;
+  for (let i = 0; i < best.chain.length; i++) {
+    const d = geoDistanceFt(refLat, refLon, best.chain[i][0], best.chain[i][1]);
+    if (d < nearDist) { nearDist = d; nearIdx = i; }
+  }
+
+  // Walk forward from nearIdx, sampling every stepFt, up to budgetFt total
+  const waypoints = [];
+  let traveled = 0;
+  let carry = 0;
+  // Start from the nearest point
+  waypoints.push({ lat: best.chain[nearIdx][0], lon: best.chain[nearIdx][1], depth: best.depth });
+
+  for (let i = nearIdx + 1; i < best.chain.length && traveled < budgetFt; i++) {
+    const prev = best.chain[i - 1];
+    const curr = best.chain[i];
+    const segFt = geoDistanceFt(prev[0], prev[1], curr[0], curr[1]);
+    carry += segFt;
+    traveled += segFt;
+    if (carry >= stepFt) {
+      waypoints.push({ lat: curr[0], lon: curr[1], depth: best.depth });
+      carry = 0;
+    }
+  }
+
+  // If we hit the end of the chain before the budget, try walking backward from nearIdx
+  if (traveled < budgetFt * 0.5 && nearIdx > 0) {
+    const backPts = [];
+    carry = 0;
+    for (let i = nearIdx - 1; i >= 0 && traveled < budgetFt; i--) {
+      const prev = best.chain[i + 1];
+      const curr = best.chain[i];
+      const segFt = geoDistanceFt(prev[0], prev[1], curr[0], curr[1]);
+      carry += segFt;
+      traveled += segFt;
+      if (carry >= stepFt) {
+        backPts.push({ lat: curr[0], lon: curr[1], depth: best.depth });
+        carry = 0;
+      }
+    }
+    // Prepend reversed backward points so chain reads start→end
+    waypoints.unshift(...backPts.reverse());
+  }
+
+  console.log(`[scout] walked ${Math.round(traveled)}ft, ${waypoints.length} waypoints at ${stepFt}ft spacing`);
+  return waypoints;
 }
 
-function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles) {
-  // Clear any existing smart plan waypoints
+function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles, speedMph = 2.0, phaseInfo) {
   if (!state.DATA) state.DATA = {};
   if (!Array.isArray(state.DATA.waypoints)) state.DATA.waypoints = [];
+  // Clear previous scout waypoints only
   state.DATA.waypoints = state.DATA.waypoints.filter(w => !w.scoutWaypoint);
 
   const maxDistFt = Math.min(rangeMiles, 4.0) * 5280;
-  const POINTS_PER_PHASE = 6; // enough to define a trolling run without overwhelming
+  // Step size: small enough that connecting consecutive points never crosses land
+  // 150ft = safe for Wateree's cove geometry. Could go to 200ft on open water.
+  const STEP_FT = 150;
   let totalAdded = 0;
 
   // Add ramp waypoint
-  const rampWpt = state.DATA.waypoints.find(w => w.role === 'launch_ramp');
-  if (!rampWpt && Number.isFinite(rampLat) && Number.isFinite(rampLon)) {
+  if (Number.isFinite(rampLat) && Number.isFinite(rampLon)) {
     state.DATA.waypoints.push({
-      name: 'Launch Ramp',
+      name: 'Launch',
       lat: rampLat, lon: rampLon,
       sym: 'Boat Ramp',
       role: 'launch_ramp',
@@ -551,21 +676,26 @@ function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles)
     const rec   = phaseRecs[i];
     if (!rec) continue;
 
-    const pts = sampleContourPoints(
+    // Phase fishing budget: phase duration × speed × 5280, capped at 2.5mi one-way
+    const phaseDurH = (phase.end - phase.start);
+    const budgetFt  = Math.min(phaseDurH * speedMph * 5280 * 0.8, 2.5 * 5280);
+
+    const pts = walkContourForWaypoints(
       rec.depthMin, rec.depthMax,
       rampLat, rampLon,
       maxDistFt,
-      POINTS_PER_PHASE
+      budgetFt,
+      STEP_FT
     );
 
     if (!pts.length) {
-      console.warn(`[scout] Phase ${phase.num}: no points sampled for ${rec.depthMin}-${rec.depthMax}ft`);
+      console.warn(`[scout] Phase ${phase.num}: no waypoints for ${rec.depthMin}-${rec.depthMax}ft`);
       continue;
     }
 
     pts.forEach((pt, j) => {
       state.DATA.waypoints.push({
-        name: `Ph${phase.num}-${j + 1} (${Math.round(pt.depth)}ft)`,
+        name: `Ph${phase.num}-${j + 1}`,
         lat: pt.lat,
         lon: pt.lon,
         sym: 'Fishing Area',
@@ -576,7 +706,7 @@ function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles)
       totalAdded++;
     });
 
-    console.log(`[scout] Phase ${phase.num} (${rec.depthMin}-${rec.depthMax}ft): dropped ${pts.length} waypoints`);
+    console.log(`[scout] Phase ${phase.num} (${rec.depthMin}-${rec.depthMax}ft): ${pts.length} waypoints, budget ${Math.round(budgetFt)}ft`);
   }
 
   renderAll();
@@ -850,7 +980,7 @@ export async function runSmartPlan() {
 
   // ── Drop scout waypoints ──────────────────────────────────────────────────
   setStatus('Sampling depth contours…', true);
-  const totalWaypoints = generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles);
+  const totalWaypoints = generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles, speedMph, phaseInfo);
 
   // ── Store phase routes for depth pre-fill in route builder ───────────────
   window._smartPlanPhaseRoutes = phases.map((phase, i) => ({
