@@ -801,6 +801,7 @@ Return ONLY a JSON array, no explanation, no markdown:
 
 Use real Lake Wateree coordinates. Stay in the water. No land. Both legs must have exactly ${numWpts} waypoints.`;
 
+
   let groqWaypoints = [];
   try {
     console.log('[scout] Asking Groq for fishing waypoints...');
@@ -810,7 +811,7 @@ Use real Lake Wateree coordinates. Stay in the water. No land. Both legs must ha
       body: JSON.stringify({
         model: 'llama-3.3-70b-versatile',
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 2000,
+        max_tokens: 4000,
         temperature: 0.3,
       }),
     });
@@ -818,12 +819,20 @@ Use real Lake Wateree coordinates. Stay in the water. No land. Both legs must ha
     const data = await res.json();
     const text = data.choices?.[0]?.message?.content?.trim() || '';
     console.log('[scout] Groq raw response length:', text.length);
+    console.log('[scout] Groq first 300 chars:', text.slice(0, 300));
     const clean = text.replace(/```json|```/g, '').trim();
-    const start = clean.indexOf('[');
-    const end = clean.lastIndexOf(']');
-    if (start !== -1 && end !== -1) {
-      groqWaypoints = JSON.parse(clean.slice(start, end + 1));
-      console.log(`[scout] Groq returned ${groqWaypoints.length} raw waypoints`);
+    const startIdx = clean.indexOf('[');
+    const endIdx = clean.lastIndexOf(']');
+    if (startIdx === -1 || endIdx === -1) {
+      console.warn('[scout] No JSON array found in Groq response');
+    } else {
+      try {
+        groqWaypoints = JSON.parse(clean.slice(startIdx, endIdx + 1));
+        console.log(`[scout] Groq returned ${groqWaypoints.length} waypoints`);
+      } catch (parseErr) {
+        console.warn('[scout] JSON parse failed:', parseErr.message);
+        console.warn('[scout] Snippet:', clean.slice(startIdx, startIdx + 200));
+      }
     }
   } catch (e) {
     console.warn('[scout] Groq waypoint generation failed:', e.message);
