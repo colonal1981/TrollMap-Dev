@@ -95,6 +95,7 @@ function renderDebugPanel() {
         <div style="color:#ffb703">Start ref: (${e.sLat?.toFixed(5)}, ${e.sLon?.toFixed(5)})</div>
         <div>Raw:  ${rawS} → ${rawE}</div>
         <div>Prep: ${prepS} → ${prepE}</div>
+        ${e.candidateScores ? '<div style="color:#8aa3bd;font-size:10px">' + e.candidateScores.join('<br>') + '</div>' : ''}
         <details style="margin-top:4px">
           <summary style="cursor:pointer;color:#8aa3bd">First 20 prepared points</summary>
           <table style="width:100%;border-collapse:collapse;margin-top:4px">
