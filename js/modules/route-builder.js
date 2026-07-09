@@ -1061,8 +1061,7 @@ function edgesToSpines(edges, depthMin, depthMax) {
 
 function generateDepthPolygonRoutes(cfg) {
   const { depthMin, depthMax } = cfg;
-  // DEBUG — write to localStorage so it persists after smart-plan overwrites rationale
-  try { localStorage.setItem('trollmap_spine_debug_' + depthMin, `depth=${depthMin}-${depthMax}ft started`); } catch(_) {}
+
 
   // Get edges from depth polygons
   const edges = getDepthPolygonEdges(depthMin, depthMax);
@@ -1159,7 +1158,9 @@ function generateDepthPolygonRoutes(cfg) {
   console.log(`[SPINE-DEBUG] prepared: ${_dbgPrep.length}pts start=${_dbgPrepStart} end=${_dbgPrepEnd}`);
   // Write to a visible element so it can be read without console
   try {
-    document.title = `P1 raw:${_dbgRawStart} prep:${_dbgPrepStart}`;
+    if (typeof window.logSpineDebug === 'function') {
+      window.logSpineDebug(cfg.depthMin + '-' + cfg.depthMax + 'ft', _dbgRaw, _dbgPrep);
+    }
   } catch(_) {}
 
   // Apply pattern along the (now properly bounded) spine
