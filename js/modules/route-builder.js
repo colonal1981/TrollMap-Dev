@@ -841,7 +841,12 @@ function featureEdges(feat) {
   return edges;
 }
 
+// Cache shared edges by depth range key to avoid recomputing on every phase
+const _depthEdgeCache = new Map();
+
 function getDepthPolygonEdges(depthMinFt, depthMaxFt) {
+  const cacheKey = `${depthMinFt}|${depthMaxFt}`;
+  if (_depthEdgeCache.has(cacheKey)) return _depthEdgeCache.get(cacheKey);
   const gj = getDepthAreaGeoJSON()
     || window.SUPPLEMENTAL_DEPTH_GEOJSON
     || globalThis.SUPPLEMENTAL_DEPTH_GEOJSON;
@@ -941,8 +946,12 @@ function getDepthPolygonEdges(depthMinFt, depthMaxFt) {
   }
 
   console.log(`[route-builder] depth polygon edges: ${sharedEdges.length} shared transition edges for ${depthMinFt}-${depthMaxFt}ft`);
+  _depthEdgeCache.set(cacheKey, sharedEdges);
   return sharedEdges;
 }
+
+// Clear edge cache when lake changes
+export function clearDepthEdgeCache() { _depthEdgeCache.clear(); }
 
 // Convert raw edges into spine-format objects compatible with buildStitchedSpines output
 function edgesToSpines(edges, depthMin, depthMax) {
