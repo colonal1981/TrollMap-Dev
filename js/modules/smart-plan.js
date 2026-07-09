@@ -656,14 +656,13 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
 }
 
 // Hard depth bands per phase — non-overlapping so each phase finds different water.
-// 4 phases: outbound shallow → outbound mid → return deep → return shallow home.
-// Phases 1+2 head away from the ramp. Phases 3+4 head back toward it.
-// Rod/lure selection still uses species-intel depth bands (unchanged).
+// All phases start from where the previous one ended (curLat/curLon).
+// Phases 3+4: if walk ends farther from ramp than it started, reverse it.
 const SCOUT_DEPTH_BANDS = [
-  { depthMin: 15, depthMax: 20, homeward: false }, // Phase 1: shallow, outbound
-  { depthMin: 22, depthMax: 26, homeward: false }, // Phase 2: mid-ledge, outbound
-  { depthMin: 28, depthMax: 32, homeward: true  }, // Phase 3: deep channel, inbound
-  { depthMin: 18, depthMax: 23, homeward: true  }, // Phase 4: mid-shallow, inbound home
+  { depthMin: 15, depthMax: 20 }, // Phase 1: shallow, outbound
+  { depthMin: 22, depthMax: 26 }, // Phase 2: mid-ledge, outbound
+  { depthMin: 28, depthMax: 32 }, // Phase 3: deep channel
+  { depthMin: 18, depthMax: 23 }, // Phase 4: mid-shallow, home
 ];
 
 function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles, speedMph = 2.0, phaseInfo) {
@@ -675,17 +674,15 @@ function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles,
   const STEP_FT = 150;
   let totalAdded = 0;
 
-  // Build 4-phase schedule from the 3-phase timing, splitting the middle phase
-  // Phase timing: P1=dawn, P2a=transition first half, P2b=transition second half, P3=deep
-  // We generate waypoints for 4 bands regardless of how many phaseRecs exist
+  // Build 4-phase schedule evenly split across trip duration
   const p = phaseInfo?.phases || phases;
   const totalDurH = p.length ? (p[p.length-1].end - p[0].start) : 6;
   const segH = totalDurH / 4;
   const startH = p[0]?.start || 6;
 
   const fourPhases = [
-    { num: 1, name: 'Dawn Outbound',       start: startH,           end: startH + segH },
-    { num: 2, name: 'Transition Outbound', start: startH + segH,    end: startH + segH * 2 },
+    { num: 1, name: 'Dawn Outbound',       start: startH,            end: startH + segH },
+    { num: 2, name: 'Transition Outbound', start: startH + segH,     end: startH + segH * 2 },
     { num: 3, name: 'Deep Inbound',        start: startH + segH * 2, end: startH + segH * 3 },
     { num: 4, name: 'Shallow Home',        start: startH + segH * 3, end: startH + segH * 4 },
   ];
@@ -701,6 +698,7 @@ function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles,
     });
   }
 
+  // Every phase starts from where the previous one ended
   let curLat = rampLat, curLon = rampLon;
 
   for (let i = 0; i < fourPhases.length; i++) {
@@ -708,24 +706,16 @@ function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles,
     const band  = SCOUT_DEPTH_BANDS[i];
     const phaseDurH = phase.end - phase.start;
     const budgetFt  = Math.min(phaseDurH * speedMph * 5280 * 0.8, 2.5 * 5280);
+    const isHomeward = i >= 2; // phases 3+4 should head back toward ramp
 
-    // Homeward phases: find chain nearest ramp on the deep/return side,
-    // start from its far end and walk toward the ramp.
-    // Outbound phases: find chain nearest curLat/curLon, walk away from ramp.
-    const endTarget = band.homeward ? { endLat: rampLat, endLon: rampLon } : null;
-
-    // For homeward phases, search from ramp side to find chains that connect home.
-    // For outbound phases, search from current position.
-    const searchLat = band.homeward ? curLat : curLat;
-    const searchLon = band.homeward ? curLon : curLon;
-
+    // Always search from current position — chains continuously from previous phase
     const pts = walkContourForWaypoints(
       band.depthMin, band.depthMax,
-      searchLat, searchLon,
+      curLat, curLon,
       maxDistFt,
       budgetFt,
       STEP_FT,
-      endTarget
+      isHomeward ? { endLat: rampLat, endLon: rampLon } : null
     );
 
     if (!pts.length) {
@@ -733,10 +723,9 @@ function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles,
       continue;
     }
 
-    // For homeward phases: ensure walk ends closer to ramp than it starts.
-    // If not, reverse it.
+    // Phases 3+4: if walk ends farther from ramp than it starts, reverse it
     let ordered = pts;
-    if (band.homeward && pts.length >= 2) {
+    if (isHomeward && pts.length >= 2) {
       const firstDist = geoDistanceFt(rampLat, rampLon, pts[0].lat, pts[0].lon);
       const lastDist  = geoDistanceFt(rampLat, rampLon, pts[pts.length-1].lat, pts[pts.length-1].lon);
       if (lastDist > firstDist) ordered = pts.slice().reverse();
@@ -766,7 +755,7 @@ function generateScoutWaypoints(phases, phaseRecs, rampLat, rampLon, rangeMiles,
   return totalAdded;
 }
 
-// ── Groq scout report ─────────────────────────────────────────────────────────
+// ── Groq scout report// ── Groq scout report ─────────────────────────────────────────────────────────
 // Groq gets the fishing intelligence question — NOT coordinates. It tells you
 // what to look for, why, and what to throw. Code handles where.
 
