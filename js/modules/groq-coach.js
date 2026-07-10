@@ -329,11 +329,11 @@ Return ONLY the JSON array, nothing else.`;
     for (const s of changes) {
       if (!s.field || s.recommended_value == null) continue;
       applyCoachSuggestion(s);
-      applied.push(\`\${s.field.replace(/_/g,' ')} → \${s.recommended_value}\`);
+      applied.push(`${s.field.replace(/_/g,' ')} → ${s.recommended_value}`);
       _suggestionHistory.push({ ...s, status: 'accepted' });
     }
 
-    btn.textContent = \`✓ Applied: \${applied.join(', ')}\`;
+    btn.textContent = `✓ Applied: ${applied.join(', ')}`;
     btn.disabled = true;
     appendMessage('assistant', `Applied to plan: ${applied.join(', ')}`);
 
