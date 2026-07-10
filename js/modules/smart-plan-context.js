@@ -292,37 +292,42 @@ export function buildGroqCoachPayload(fishingContext, planState) {
       solunar:   solunarStr,
     },
 
-    // Plan phases
+        // Plan phases
     phases: phases?.map((phase, i) => {
       const rec = phaseRecs?.[i];
-      const rodPair = spread?.filter(r =>
-        r.notes?.includes(`[Ph${phase.num}:`)).slice(0, 2) || [];
+      
+      // Look for rods assigned to this phase's route (e.g., 'Ph1 Outbound')
+      const phaseRods = spread?.filter(r => r.route?.startsWith(`Ph${phase.num}`)) || [];
+      const portRod = phaseRods.find(r => r.side === 'Port');
+      const stbdRod = phaseRods.find(r => r.side === 'Starboard');
+
       return {
         name:     phase.name,
         window:   `${phase.startStr}–${phase.endStr}`,
         depthMin: rec?.depthMin,
         depthMax: rec?.depthMax,
         speed:    rec?.speed,
-        port: rodPair[0] ? {
-          lure:  rodPair[0].lure,
-          color: rodPair[0].color,
-          lead:  rodPair[0].lead,
-          depth: rodPair[0].depth,
-          confidence: rodPair[0]._scoreResult?.confidence,
-          reasons:    rodPair[0]._scoreResult?.reasons?.slice(0,3),
-          warnings:   rodPair[0]._scoreResult?.warnings,
+        port: portRod ? {
+          lure:  portRod.lure,
+          color: portRod.color,
+          lead:  portRod.lead,
+          depth: portRod.depth,
+          confidence: portRod._scoreResult?.confidence,
+          reasons:    portRod._scoreResult?.reasons?.slice(0,3),
+          warnings:   portRod._scoreResult?.warnings,
         } : null,
-        starboard: rodPair[1] ? {
-          lure:  rodPair[1].lure,
-          color: rodPair[1].color,
-          lead:  rodPair[1].lead,
-          depth: rodPair[1].depth,
-          confidence: rodPair[1]._scoreResult?.confidence,
-          reasons:    rodPair[1]._scoreResult?.reasons?.slice(0,3),
-          warnings:   rodPair[1]._scoreResult?.warnings,
+        starboard: stbdRod ? {
+          lure:  stbdRod.lure,
+          color: stbdRod.color,
+          lead:  stbdRod.lead,
+          depth: stbdRod.depth,
+          confidence: stbdRod._scoreResult?.confidence,
+          reasons:    stbdRod._scoreResult?.reasons?.slice(0,3),
+          warnings:   stbdRod._scoreResult?.warnings,
         } : null,
       };
     }) || [],
+
 
     // Fishing intelligence
     intelligence: {
