@@ -1181,30 +1181,27 @@ export async function runSmartPlan() {
   const solunarEl = document.getElementById('planSolunar');
   if (solunarEl && !solunarEl.value) solunarEl.value = solunarStr;
 
-  // ── Render Smart Plan UI + scout report ──────────────────────────────────
+  // ── Render Smart Plan UI ──────────────────────────────────────────────────
   try {
     const routeRods = assignRouteRods(phaseRecs, state.DATA?.tracks || [], speedMph, season, clarity, sp);
     syncSpread(null, routeRods);
     renderSmartPlanUI({ routeRods, scoutReport: null, speedMph, phases, solunar: solunarStr });
     window._smartPlanRouteRods = routeRods;
-    // When Groq scout report arrives, update the UI with it
+    // Update UI when scout report arrives
     buildGroqScoutReport(sp, lakeName, season, phases, phaseRecs, phaseInfo, selectedRampKey, waterTempF, clarity)
       .then(report => {
-        if (report && window._smartPlanRouteRods) {
-          renderSmartPlanUI({
-            routeRods: window._smartPlanRouteRods,
-            scoutReport: report,
-            speedMph, phases, solunar: solunarStr,
-          });
+        if (!report) return;
+        if (window._smartPlanRouteRods) {
+          renderSmartPlanUI({ routeRods: window._smartPlanRouteRods, scoutReport: report, speedMph, phases, solunar: solunarStr });
         }
-        if (outEl && report) {
+        if (outEl) {
           lines[lines.length - 1] = '── Scout Report ──';
           lines.push(''); lines.push(report);
           outEl.value = lines.join('\n');
         }
       });
   } catch (uiErr) {
-    console.warn('[smart-plan] UI render failed:', uiErr.message);
+    console.error('[smart-plan] UI render failed:', uiErr.message, uiErr.stack);
   }
 
   const wayptMsg = totalWaypoints > 0
