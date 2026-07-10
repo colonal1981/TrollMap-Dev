@@ -298,7 +298,7 @@ Each change: {"field": "trolling_speed|lead_length|lure|lure_color|target_depth|
 If no concrete changes are suggested, return [].
 Return ONLY the JSON array, nothing else.`;
 
-    const res = await fetch(\`\${CF_WORKER_URL}/groq-query\`, {
+    const res = await fetch(`${CF_WORKER_URL}/groq-query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -311,7 +311,7 @@ Return ONLY the JSON array, nothing else.`;
 
     const data = await res.json();
     const raw = data.choices?.[0]?.message?.content?.trim() || '[]';
-    const clean = raw.replace(/\`\`\`json|\`\`\`/g, '').trim();
+    const clean = raw.replace(/```json|```/g, '').trim();
 
     let changes = [];
     try { changes = JSON.parse(clean); } catch (_) { changes = []; }
@@ -335,7 +335,7 @@ Return ONLY the JSON array, nothing else.`;
 
     btn.textContent = \`✓ Applied: \${applied.join(', ')}\`;
     btn.disabled = true;
-    appendMessage('assistant', \`Applied to plan: \${applied.join(', ')}\`);
+    appendMessage('assistant', `Applied to plan: ${applied.join(', ')}`);
 
   } catch (e) {
     btn.textContent = '⚠ Extract failed';
