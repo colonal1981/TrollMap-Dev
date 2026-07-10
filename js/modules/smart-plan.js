@@ -400,7 +400,6 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
 
   allChains.sort((a,b)=>(a.closest*2-a.len)-(b.closest*2-b.len));
   const best=allChains[0];
-  console.log(`[scout] best chain: depth=${best.depth}ft len=${Math.round(best.len)}ft closest=${Math.round(best.closest)}ft`);
 
   let nearIdx=0, nearDist=Infinity;
   for (let i=0; i<best.chain.length; i++) {
@@ -448,13 +447,12 @@ async function generateScoutWaypoints(phases, bands, rampLat, rampLon, rangeMile
 
   for (const band of bands) {
     const pts=walkContourForWaypoints(band.depthMin,band.depthMax,rampLat,rampLon,maxDistFt,budgetFt,STEP_FT);
-    if (!pts.length) { console.warn(`[scout] Ph${band.phase}: no waypoints for ${band.depthMin}-${band.depthMax}ft`); continue; }
+    if (!pts.length) continue;
     phaseWaypoints[band.phase]=pts.map(pt=>[pt.lat,pt.lon]);
     pts.forEach((pt,j)=>{
       state.DATA.waypoints.push({name:`Ph${band.phase}-${j+1}`,lat:pt.lat,lon:pt.lon,sym:'Fishing Area',scoutWaypoint:true,phase:band.phase,depth:pt.depth});
       totalAdded++;
     });
-    console.log(`[scout] Ph${band.phase} (${band.depthMin}-${band.depthMax}ft): ${pts.length} waypoints`);
   }
 
   buildScoutRoutes(phaseWaypoints);
@@ -466,10 +464,7 @@ function buildScoutRoutes(phaseWaypoints) {
   if (!state.DATA.tracks) state.DATA.tracks=[];
   state.DATA.tracks=state.DATA.tracks.filter(t=>!t.scoutRoute);
   
-  // The base amplitude for the S-curves
   const amplitude = 20, wave = 500;
-  // The offset for the Inbound (return) pass. 
-  // An offset of 30 pushes the return track 30 feet wider/deeper than the outbound track.
   const inboundOffset = 30; 
 
   function makeTrack(waypoints, name, offset = 0) {
@@ -487,7 +482,6 @@ function buildScoutRoutes(phaseWaypoints) {
       for (let s=(i===0?0:1); s<=steps; s++) {
         const t=s/steps, lat=p1[0]+dlat*t, lon=p1[1]+dlon*t;
         const d=totalDist+segFt*t;
-        // The sine swing plus the static offset
         const swing = (amplitude * Math.sin(2*Math.PI*d/wave)) + offset;
         out.push([lat+swing*pLat,lon+swing*pLon]);
       }
@@ -498,13 +492,10 @@ function buildScoutRoutes(phaseWaypoints) {
 
   for (const [phNum,pts] of Object.entries(phaseWaypoints).sort()) {
     if (pts.length<2) continue;
-    // Outbound track (offset = 0)
     const out = makeTrack(pts, `Ph${phNum} Outbound`, 0);
-    if (out.pts.length>=2) { state.DATA.tracks.push(out); console.log(`[scout-routes] Ph${phNum} Outbound: ${out.pts.length}pts`); }
-    
-    // Inbound track (offset = inboundOffset, creating a wider return pass)
+    if (out.pts.length>=2) state.DATA.tracks.push(out);
     const inn = makeTrack([...pts].reverse(), `Ph${phNum} Inbound`, inboundOffset);
-    if (inn.pts.length>=2) { state.DATA.tracks.push(inn); console.log(`[scout-routes] Ph${phNum} Inbound: ${inn.pts.length}pts`); }
+    if (inn.pts.length>=2) state.DATA.tracks.push(inn);
   }
 }
 
@@ -573,9 +564,7 @@ export async function runSmartPlan() {
   const rampName  =document.getElementById('planRamp')?.value||'unknown ramp';
   const weatherStr=document.getElementById('planWeather')?.value||'';
 
-  // Load live inventory — what Groq sees and what sanitizer matches against
   const inventoryNames = await getTrollableNames();
-  console.log('[smart-plan] Live trollable inventory (' + inventoryNames.length + '):', inventoryNames);
 
   function hStr(h){
     const hh=Math.floor(((h%24)+24)%24),mm=String(Math.round((h%1)*60)).padStart(2,'0');
@@ -585,7 +574,7 @@ export async function runSmartPlan() {
   const solunarStr=`Majors: ${hStr(sol.major1)}, ${hStr(sol.major2)} · Minors: ${hStr(sol.minor1)}, ${hStr(sol.minor2)}`;
   const totalDurH=phaseInfo.phases.length?(phaseInfo.phases[phaseInfo.phases.length-1].end-phaseInfo.phases[0].start):6;
 
-  // ── Unified Groq Call (Plan JSON + Scout Narrative) ────────────────────────
+  // ── Unified Groq Call ────────────────────────────────────────────────
   const planPrompt=`You are an expert fishing guide for ${lakeName}, South Carolina.
 Build a trolling plan for today targeting ${sp}.
 
@@ -637,22 +626,24 @@ Return ONLY valid JSON, no markdown:
 
   let groqPlan=null;
   let groqError=null;
+  let rawGroqText = ''; // Stores the raw string for debugging
+
   try {
     if (outEl) outEl.value='⏳ Calling Groq (/groq-query)…';
     const res=await fetch(`${CF_WORKER_URL}/groq-query`,{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({model:'llama-3.3-70b-versatile',messages:[{role:'user',content:planPrompt}],max_tokens:1000,temperature:0.3}),
     });
-    const rawText=await res.text();
-    console.log('[smart-plan] Groq raw response HTTP',res.status,':', rawText.slice(0,500));
+    
+    rawGroqText = await res.text();
+    
     if (!res.ok) {
-      groqError=`HTTP ${res.status}: ${rawText.slice(0,200)}`;
+      groqError=`HTTP ${res.status}: ${rawGroqText.slice(0,200)}`;
     } else {
       let data;
-      try { data=JSON.parse(rawText); } catch(pe) { groqError=`Worker response not JSON: ${rawText.slice(0,200)}`; data=null; }
+      try { data=JSON.parse(rawGroqText); } catch(pe) { groqError=`Worker response not JSON: ${rawGroqText.slice(0,200)}`; data=null; }
       if (data) {
         const content=data.choices?.[0]?.message?.content?.trim()||'';
-        console.log('[smart-plan] Groq content:', content.slice(0,400));
         if (!content) { groqError='Groq returned empty content'; }
         else {
           const clean=content.replace(/```json|```/g,'').trim();
@@ -661,7 +652,6 @@ Return ONLY valid JSON, no markdown:
           else {
             try {
               groqPlan=JSON.parse(clean.slice(si,ei+1));
-              console.log('[smart-plan] Groq plan parsed OK:',groqPlan);
             } catch(pe) {
               groqError=`JSON parse failed: ${pe.message} — raw: ${clean.slice(0,200)}`;
             }
@@ -671,12 +661,6 @@ Return ONLY valid JSON, no markdown:
     }
   } catch(e) {
     groqError=`Fetch failed: ${e.message}`;
-    console.warn('[smart-plan] Groq plan call failed:',e.message);
-  }
-
-  if (groqError) {
-    console.error('[smart-plan] Groq error:', groqError);
-    if (outEl) outEl.value=`⚠ Groq call failed — using species-intel fallback\nError: ${groqError}\n\n(Running plan anyway with fallback depth bands…)`;
   }
 
   // Fallback — use live inventory names so the spread table shows real lures
@@ -684,7 +668,6 @@ Return ONLY valid JSON, no markdown:
     const phaseRecs=phaseInfo.phases.map(p=>getPhaseRecommendation(sp,lakeName,season,p.num,waterTempF));
     const r1=phaseRecs[0]||{depthMin:12,depthMax:18,speed:1.8};
     const r2=phaseRecs[1]||{depthMin:22,depthMax:28,speed:1.8};
-    // Pick real names from live inventory for fallback lures
     const fallPort1  = depthFallbackLure(r1.depthMin + 3, inventoryNames);
     const fallStbd1  = depthFallbackLure(r1.depthMax - 2, inventoryNames);
     const fallPort2  = depthFallbackLure(r2.depthMin + 3, inventoryNames);
@@ -696,7 +679,7 @@ Return ONLY valid JSON, no markdown:
       structureFocus:'Look for baitfish marks suspended over channel edges on the fishfinder.',
       adjustmentTip:'Shorten lead 10ft and slow to 1.5mph if no bites.',
       scoutNotes:'Running fallback plan — Groq unavailable.',
-      fishfinderNarrative: `⚠ Groq Narrative Failed. Fallback: Look for baitfish marks suspended over drop-offs. If using ${fallPort1}, ensure your lead keeps it just above the bait school. Use electronics to follow bait migration out of the creeks as the sun rises.`
+      fishfinderNarrative: `⚠ Groq Narrative Failed. Fallback: Look for baitfish marks suspended over drop-offs. If using ${fallPort1}, ensure your lead keeps it just above the bait school.`
     };
   }
 
@@ -760,8 +743,7 @@ Return ONLY valid JSON, no markdown:
       const found=rampList.find(r=>rampMatch(r.key,selectedRampKey)||rampMatch(r.name,selectedRampKey))||rampList[0];
       if (found){rampLat=found.lat;rampLon=found.lon;}
     }
-  } catch(e){console.warn('[smart-plan] Ramp lookup failed:',e.message);}
-
+  } catch(e){}
   if (rampLat==null){const c=getLakeCenter(lakeName);rampLat=c.lat;rampLon=c.lon;}
 
   // ── Generate waypoints ────────────────────────────────────────────────────
@@ -777,7 +759,6 @@ Return ONLY valid JSON, no markdown:
     {phase:2,phaseName:'Deep',   depthMin:groqPlan.band2.depthMin,depthMax:groqPlan.band2.depthMax,speed:smartSpeedMph,window:'Band 2'},
   ];
   applyStoredSmartPlanDepth();
-
   syncSpread(null,routeRods);
   window._smartPlanRouteRods=routeRods;
 
@@ -787,7 +768,7 @@ Return ONLY valid JSON, no markdown:
   const phaseRecsForRamp=phaseInfo.phases.map(p=>getPhaseRecommendation(sp,lakeName,season,p.num,waterTempF));
   const rampEval=await getRampEvaluation(lakeName,sp,season,phaseRecsForRamp,weatherStr,windMph>15);
 
-  // ── Build full scout text — everything Groq returned, visible in UI ───────
+  // ── Build full scout text ──────────────────────────────────────────────────
   const b1p=routeRods['Ph1 Outbound'][0];
   const b1s=routeRods['Ph1 Outbound'][1];
   const b2p=routeRods['Ph2 Outbound'][0];
@@ -831,6 +812,9 @@ Return ONLY valid JSON, no markdown:
     '',
     `════════════════════════════════`,
     `${totalWaypoints} waypoints · 4 routes committed to map`,
+    ``,
+    `════════ RAW GROQ DEBUG ════════`,
+    rawGroqText || 'No raw response received'
   ].filter(l=>l!==null&&l!==undefined).join('\n');
 
   if (outEl) outEl.value=scoutText;
@@ -848,10 +832,6 @@ Return ONLY valid JSON, no markdown:
   const clarityIntelVal=document.getElementById('planClarityIntel')?.value||'';
   const clarityIntelDisplay=document.getElementById('planClarityIntelDisplay');
   if (clarityIntelDisplay&&clarityIntelVal) clarityIntelDisplay.textContent=clarityIntelVal;
-  const safetyDisplay=document.getElementById('planSafetyDisplay');
-  if (safetyDisplay) {
-    safetyDisplay.innerHTML=['• File a float plan with someone onshore before launching.','• Kayak: Native Watersports Slayer Propel Max 12.5 — confirm bilge plug is in.','• Motor: NK180 Pro 24V — check battery level before launch.','• PFD on at all times. Phone in dry bag.','• Check weather before launch — conditions can change rapidly on open water.',`• Return time: ${document.getElementById('planReturnTime')?.value||'set return time'}`].map(s=>`<div style="margin-bottom:4px">${s}</div>`).join('');
-  }
 
   // ── Groq Coach ────────────────────────────────────────────────────────────
   try {
@@ -867,15 +847,17 @@ Return ONLY valid JSON, no markdown:
       ],
       spread:coachSpread, solunarStr,
       poolLevel:document.getElementById('planPoolLevel')?.value||null,
-      weather:weatherStr, rationale:scoutText, rampName:selectedRampKey||'', rangeMiles,
+      weather:weatherStr, rationale:scoutText.split('════════ RAW GROQ DEBUG ════════')[0], rampName:selectedRampKey||'', rangeMiles,
     });
     startCoachSession(coachPayload);
   } catch(e){console.warn('[smart-plan] Coach session failed:',e.message);}
 
   const wayptMsg=totalWaypoints>0
     ?`✓ Plan built — ${totalWaypoints} waypoints, 4 routes @ ${smartSpeedMph}mph, coach reviewing…`
-    :'⚠ No waypoints — load contour data first (Contour Data tab)';
-  setStatus(wayptMsg,totalWaypoints>0);
+    : groqError 
+      ? `⚠ Plan built with fallback logic. Groq error: ${groqError}`
+      : '⚠ No waypoints — load contour data first (Contour Data tab)';
+  setStatus(wayptMsg,totalWaypoints>0 && !groqError);
 
   return {groqPlan,phaseInfo,rangeMiles};
 }
