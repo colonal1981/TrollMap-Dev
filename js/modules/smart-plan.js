@@ -707,19 +707,49 @@ Return ONLY valid JSON, no markdown:
 }`;
 
   let groqPlan=null;
+  let groqError=null;
   try {
+    if (outEl) outEl.value='⏳ Calling Groq (/groq-query)…';
     const res=await fetch(`${CF_WORKER_URL}/groq-query`,{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({model:'llama-3.3-70b-versatile',messages:[{role:'user',content:planPrompt}],max_tokens:800,temperature:0.3}),
     });
-    if (res.ok) {
-      const data=await res.json();
-      const text=data.choices?.[0]?.message?.content?.trim()||'';
-      const clean=text.replace(/```json|```/g,'').trim();
-      const si=clean.indexOf('{'),ei=clean.lastIndexOf('}');
-      if (si!==-1&&ei!==-1) { groqPlan=JSON.parse(clean.slice(si,ei+1)); console.log('[smart-plan] Groq plan:',groqPlan); }
+    const rawText=await res.text();
+    console.log('[smart-plan] Groq raw response HTTP',res.status,':', rawText.slice(0,500));
+    if (!res.ok) {
+      groqError=`HTTP ${res.status}: ${rawText.slice(0,200)}`;
+    } else {
+      let data;
+      try { data=JSON.parse(rawText); } catch(pe) { groqError=`Worker response not JSON: ${rawText.slice(0,200)}`; data=null; }
+      if (data) {
+        // /groq-query returns the raw Groq API response object
+        const content=data.choices?.[0]?.message?.content?.trim()||'';
+        console.log('[smart-plan] Groq content:', content.slice(0,400));
+        if (!content) { groqError='Groq returned empty content'; }
+        else {
+          const clean=content.replace(/```json|```/g,'').trim();
+          const si=clean.indexOf('{'),ei=clean.lastIndexOf('}');
+          if (si===-1||ei===-1) { groqError=`No JSON object in response: ${clean.slice(0,200)}`; }
+          else {
+            try {
+              groqPlan=JSON.parse(clean.slice(si,ei+1));
+              console.log('[smart-plan] Groq plan parsed OK:',groqPlan);
+            } catch(pe) {
+              groqError=`JSON parse failed: ${pe.message} — raw: ${clean.slice(0,200)}`;
+            }
+          }
+        }
+      }
     }
-  } catch(e) { console.warn('[smart-plan] Groq plan call failed:',e.message); }
+  } catch(e) {
+    groqError=`Fetch failed: ${e.message}`;
+    console.warn('[smart-plan] Groq plan call failed:',e.message);
+  }
+
+  if (groqError) {
+    console.error('[smart-plan] Groq error:', groqError);
+    if (outEl) outEl.value=`⚠ Groq call failed — using species-intel fallback\nError: ${groqError}\n\n(Running plan anyway with fallback depth bands…)`;
+  }
 
   // Fallback
   if (!groqPlan) {
