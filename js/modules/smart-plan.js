@@ -1182,6 +1182,35 @@ export async function runSmartPlan() {
   const solunarEl = document.getElementById('planSolunar');
   if (solunarEl && !solunarEl.value) solunarEl.value = solunarStr;
 
+  // ── Populate auto intel display sections ─────────────────────────────────
+  const intelSection = document.getElementById('planIntelSection');
+  if (intelSection) intelSection.style.display = 'block';
+
+  const solunarDisplay = document.getElementById('planSolunarDisplay');
+  if (solunarDisplay) solunarDisplay.textContent = solunarStr;
+
+  const lakeIntelDisplay = document.getElementById('planLakeIntelDisplay');
+  const lakeIntelVal = document.getElementById('planLakeIntel')?.value || '';
+  if (lakeIntelDisplay && lakeIntelVal) lakeIntelDisplay.textContent = lakeIntelVal;
+
+  const clarityIntelDisplay = document.getElementById('planClarityIntelDisplay');
+  const clarityIntelVal = document.getElementById('planClarityIntel')?.value || '';
+  if (clarityIntelDisplay && clarityIntelVal) clarityIntelDisplay.textContent = clarityIntelVal;
+
+  // Safety brief — basic auto-generated from conditions
+  const safetyDisplay = document.getElementById('planSafetyDisplay');
+  if (safetyDisplay) {
+    const weather = document.getElementById('planWeather')?.value || '';
+    safetyDisplay.innerHTML = [
+      '• File a float plan with someone onshore before launching.',
+      '• Kayak: Native Watersports Slayer Propel Max 12.5 — confirm bilge plug is in.',
+      '• Motor: NK180 Pro 24V — check battery level before launch.',
+      '• PFD on at all times. Phone in dry bag.',
+      weather ? `• Weather: ${weather}` : '• Check weather before launch — conditions can change rapidly on open water.',
+      '• Return time: ' + (document.getElementById('planReturnTime')?.value || 'set return time'),
+    ].map(s => `<div style="margin-bottom:4px">${s}</div>`).join('');
+  }
+
   // ── Render Smart Plan UI ──────────────────────────────────────────────────
   try {
     const routeRods = assignRouteRods(phaseRecs, state.DATA?.tracks || [], speedMph, season, clarity, sp);
