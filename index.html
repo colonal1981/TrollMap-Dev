@@ -691,46 +691,19 @@
 
     <section class="panel" id="panel-plan">
       <div class="pad">
-        <div class="subtabs">
-          <button data-plansub="builder" class="active">🛠 Builder</button>
+
+        <!-- Two tabs: Plan and Preview -->
+        <div class="subtabs" id="planSubtabs">
+          <button data-plansub="plan" class="active">🎣 Smart Plan</button>
           <button data-plansub="preview">📄 Preview / Print</button>
-          <button data-plansub="library">📚 Saved Plans</button>
         </div>
 
-        <!-- BUILDER -->
+        <!-- ── PLAN TAB ──────────────────────────────────────────────────── -->
         <div id="plan-builder" class="plan-sub">
 
-          <!-- Stats bar -->
-          <div class="grid" style="grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
-            <div class="card" style="text-align:center;padding:10px">
-              <div class="muted" style="font-size:11px">WAYPOINTS</div>
-              <div class="big" id="planWpts">0</div>
-            </div>
-            <div class="card" style="text-align:center;padding:10px">
-              <div class="muted" style="font-size:11px">TRACKS</div>
-              <div class="big" id="planTrks">0</div>
-            </div>
-            <div class="card" style="text-align:center;padding:10px">
-              <div class="muted" style="font-size:11px">TRACK PTS</div>
-              <div class="big" id="planPts">0</div>
-            </div>
-            <div class="card" style="text-align:center;padding:10px">
-              <div class="muted" style="font-size:11px">DIST (nm)</div>
-              <div class="big" id="planDist">0</div>
-            </div>
-          </div>
-
-            <!-- Section 1: Trip Details -->
+          <!-- INPUTS CARD -->
           <div class="card plan-section">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-              <h4 style="margin:0">📅 Trip Details</h4>
-              <div style="display:flex;gap:6px;align-items:center">
-                <input id="planName" placeholder="Plan name" style="width:220px">
-                <button id="autoNameBtn" class="small" title="Auto-generate name">⚡ Auto-name</button>
-              </div>
-            </div>
-            
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
               <div>
                 <label>Waterbody</label>
                 <select id="planLake" style="width:100%">
@@ -738,356 +711,149 @@
                 </select>
               </div>
               <div>
-                <label>Ramp / Launch Site</label>
+                <label>Ramp</label>
                 <select id="planRamp" style="width:100%">
                   <option value="">— select ramp —</option>
                 </select>
               </div>
-              <div><label>Trip Date</label><input type="date" id="planDate" style="width:100%"></div>
-              <div><label>Launch Time</label><input type="time" id="planLaunchTime" value="06:00" style="width:100%"></div>
-              <div><label>Return Time</label><input type="time" id="planReturnTime" value="12:00" style="width:100%"></div>
-            </div>
-            
-            <div style="margin-top:15px; display:flex; justify-content:space-between; align-items:flex-end;">
-              <div style="flex-grow: 1;">
-                <label>Target Species</label>
-                <div id="planSpeciesChecks" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:4px">
-                  <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="Striped Bass" checked> Striped Bass</label>
-                  <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="Hybrid"> Hybrid Striper</label>
-                  <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="Largemouth Bass"> Largemouth</label>
-                  <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="Catfish"> Catfish</label>
-                  <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="Crappie"> Crappie</label>
-                  <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" value="White Bass"> White Bass</label>
+              <div>
+                <label>Date</label>
+                <input type="date" id="planDate" style="width:100%">
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+                <div>
+                  <label>Launch</label>
+                  <input type="time" id="planLaunchTime" value="06:00" style="width:100%">
+                </div>
+                <div>
+                  <label>Return</label>
+                  <input type="time" id="planReturnTime" value="15:00" style="width:100%">
+                </div>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+                <div>
+                  <label>Water °F</label>
+                  <input id="planWaterTemp" placeholder="87" style="width:100%">
+                </div>
+                <div>
+                  <label>Clarity</label>
+                  <select id="planClarity" style="width:100%">
+                    <option>Clear</option>
+                    <option>Stained</option>
+                    <option>Muddy</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Speed mph</label>
+                  <input id="planSpeed" value="1.8" style="width:100%">
                 </div>
               </div>
               <div>
-                <button id="runSmartPlanBtn" type="button" class="small primary" title="Compute target depth, lures, speed, and regulation check for the checked species at this lake/date/time" style="width:100%;height:32px;font-size:12px">⚡ Generate Smart Plan</button>
-              </div>
-            </div>
-            
-            <!-- Output container for the rationale text -->
-            <div style="margin-top:15px;">
-              <span id="smartPlanStatus" style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;color:var(--muted)"></span>
-              <textarea id="planSmartPlanOutput" readonly placeholder="Smart Plan rationale will appear here..." rows="8" style="width:100%;font-size:11.5px;font-family:monospace"></textarea>
-            </div>
-          </div>
-          <!-- Section 2: Conditions & Live Utility Pool Level -->
-          <div class="card plan-section" id="conditionsCard">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px">
-              <h4 style="margin:0">🌊 Live Water Conditions &amp; Pool Elevation</h4>
-              <div style="display:flex;gap:6px;align-items:center">
-                <button id="syncDukeBtn" class="small primary" title="Direct browser pull from live utility / USGS stream files">
-                  ⚡ Live Utility Sync
-                </button>
-                <span id="utilitySyncStatus" style="font-size:11px;color:var(--muted);font-family:monospace">Ready</span>
+                <label>Target Species</label>
+                <div id="planSpeciesChecks" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px">
+                  <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="Striped Bass" checked> Striped Bass</label>
+                  <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="Hybrid"> Hybrid</label>
+                  <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="Largemouth Bass"> Largemouth</label>
+                  <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="Catfish"> Catfish</label>
+                  <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="Crappie"> Crappie</label>
+                  <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="White Bass"> White Bass</label>
+                  <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="Bowfin"> Bowfin</label>
+                </div>
               </div>
             </div>
 
-            <!-- Utility Assessment Callout Box -->
-            <div id="utilityAssessmentBox" style="display:none;background:rgba(0,229,255,0.08);border-left:4px solid var(--accent);padding:10px 14px;border-radius:0 8px 8px 0;margin-bottom:12px;font-size:12.5px;line-height:1.4">
-              <div style="display:flex;justify-content:space-between;align-items:center">
-                <b id="uTitle" style="color:var(--accent);font-size:13.5px">Utility Management System</b>
-                <span id="uMode" style="background:var(--panel2);color:var(--accent2);padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700">Direct Browser Pull</span>
-              </div>
-              <div id="uDesc" style="margin-top:4px;color:var(--fg)">
-                Connects directly to live clean stream data files and utility curves.
-              </div>
-              <div id="uManualVerify" style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.1)">
-                <a id="uLink" href="https://waterdata.usgs.gov/" target="_blank" style="color:var(--warn);text-decoration:none;font-weight:700">
-                  ⚠ Verify Real-Time Utility Operation Dashboard in a new tab ↗
-                </a>
-              </div>
-            </div>
+            <!-- Hidden fields auto-populated by Smart Plan -->
+            <input type="hidden" id="planName">
+            <input type="hidden" id="planTargetDepth">
+            <input type="hidden" id="planPattern" value="S-curves">
+            <input type="hidden" id="planSolunar">
+            <input type="hidden" id="planPoolLevel">
+            <input type="hidden" id="planFullPool">
+            <input type="hidden" id="planWeather">
+            <input type="hidden" id="planMotor" value="NK180 Pro 24V, 100Ah LiFePO4">
+            <input type="hidden" id="planSonar" value="Garmin ECHOMAP UHD2 93sv">
+            <textarea id="planLakeIntel" style="display:none"></textarea>
+            <textarea id="planClarityIntel" style="display:none"></textarea>
+            <textarea id="planStructure" style="display:none"></textarea>
+            <textarea id="planSmartPlanOutput" style="display:none"></textarea>
 
-            <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px">
-              <div>
-                <label>Water Temp °F</label>
-                <input id="planWaterTemp" placeholder="Auto e.g. 72.5">
-              </div>
-              <div>
-                <label>Target Full Pool</label>
-                <input id="planFullPool" placeholder="Auto / E.g. 100.0">
-              </div>
-              <div>
-                <label>Current Live Level</label>
-                <input id="planPoolLevel" placeholder="Auto e.g. 97.4">
-              </div>
-              <div>
-                <label>Air / Weather</label>
-                <input id="planWeather" placeholder="Auto from Open-Meteo">
-              </div>
-              <div>
-                <label>Water Clarity</label>
-                <select id="planClarity" style="width:100%">
-                  <option value="Clear">Clear — natural colors, fluoro critical</option>
-                  <option value="Stained">Stained — high contrast, vibration</option>
-                  <option value="Muddy">Muddy — dark silhouettes, rattles</option>
-                </select>
-              </div>
-              <div>
-                <label>Solunar Window</label>
-                <input id="planSolunar" placeholder="Auto Major e.g. 7:15 AM">
-              </div>
-            </div>
-
-            <!-- River-only live fields (shown automatically when a river is selected above) -->
-            <div id="planRiverFields" style="display:none;margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px">
-                <h4 style="margin:0;color:#ffb703">🌊 Live River / Dam Release Intel</h4>
-                <span class="muted" style="font-size:11px">uses the same Cloudflare <code>/river</code> endpoint already in the worker</span>
-              </div>
-              <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px">
-                <div><label>Kayak Go / No-Go</label><input id="planRiverSafety" readonly placeholder="Auto"></div>
-                <div><label>Streamflow</label><input id="planRiverFlow" readonly placeholder="Auto cfs"></div>
-                <div><label>Gauge Height</label><input id="planRiverGauge" readonly placeholder="Auto ft"></div>
-                <div><label>Water Temp</label><input id="planRiverTemp" readonly placeholder="Auto °F"></div>
-                <div><label>Rate of Rise</label><input id="planRiverRise" readonly placeholder="Auto ft/hr"></div>
-                <div><label>Surge ETA @ selected launch</label><input id="planRiverSurgeEta" readonly placeholder="Select ramp + sync"></div>
-              </div>
-              <div style="margin-top:8px">
-                <label>Dam Schedule / Safety Reasons</label>
-                <textarea id="planRiverSchedule" rows="4" readonly placeholder="Live dam schedule, surge timing, and kayak safety reasons will populate here."></textarea>
-                <textarea id="planRiverSummary" class="hidden"></textarea>
+            <!-- Generate button -->
+            <button id="runSmartPlanBtn" type="button" class="primary"
+              style="width:100%;height:42px;font-size:14px;font-weight:700;margin-top:4px;border-radius:8px">
+              ⚡ Generate Smart Plan
+            </button>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+              <span id="smartPlanStatus" style="font-size:12px;color:var(--muted)"></span>
+              <div style="display:flex;gap:6px">
+                <button id="exportPlanJsonBtn" class="small ghost" style="font-size:11px">⬇ JSON</button>
+                <button id="exportPlanHtmlBtn" class="small ghost" style="font-size:11px">⬇ HTML</button>
+                <button id="buildPreviewBtn" class="small" style="font-size:11px">📄 Preview</button>
               </div>
             </div>
           </div>
 
+          <!-- ROUTE CARDS — populated by smart-plan-ui.js after Generate -->
+          <div id="smartPlanUIContainer"></div>
 
-          <!-- Section 2a: Lake Intelligence -->
-          <div class="card plan-section" id="lakeIntelCard">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px">
-              <h4 style="margin:0">🧠 Lake Intelligence Briefing</h4>
-              <div style="display:flex;gap:6px;align-items:center">
-                <button id="syncLakeIntelBtn" class="small primary" title="Build a fisherman-focused lake briefing from curated profile + worker-scraped fishing reports">⚡ Build Lake Intel</button>
-                <span id="lakeIntelStatus" style="font-size:11px;color:var(--muted);font-family:monospace">Ready</span>
-              </div>
-            </div>
-            <p class="muted" style="margin-top:0;line-height:1.4">
-              Generates a lake-specific fisherman report: primary sport fish, stocking notes, invasive/spotted bass pressure, bottom and cover, hazards, seasonal patterns, ramps/strategy, and latest fishing-report scrape when available.
-            </p>
-            <div id="lakeIntelSummary" style="display:none;background:rgba(0,229,255,0.08);border-left:4px solid var(--accent);padding:10px 14px;border-radius:0 8px 8px 0;margin-bottom:10px;font-size:12.5px;line-height:1.45"></div>
-            <textarea id="planLakeIntel" rows="8" placeholder="Click Build Lake Intel after selecting a lake. This text is saved with the plan and included in the preview." style="font-size:12.5px"></textarea>
-          </div>
+          <!-- AUTO-POPULATED INTEL — shown after Generate -->
+          <div id="planIntelSection" style="display:none">
 
-          <!-- Section 2a2: Clarity & Runoff Intelligence -->
-          <div class="card plan-section" id="clarityIntelCard">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px">
-              <h4 style="margin:0">🌦 Clarity &amp; Runoff Intelligence</h4>
-              <div style="display:flex;gap:6px;align-items:center">
-                <button id="syncClarityIntelBtn" class="small primary" title="Predict clarity by lake zone from recent/forecast rain, wind, and lake profile">⚡ Build Clarity Forecast</button>
-                <span id="clarityIntelStatus" style="font-size:11px;color:var(--muted);font-family:monospace">Ready</span>
-              </div>
-            </div>
-            <p class="muted" style="margin-top:0;line-height:1.4">Predicts which lake zones will be clear/stained/muddy, recommends lure colors, and suggests ramps/zones. This is a model — verify water color at the ramp.</p>
-            <div id="clarityIntelSummary" style="display:none;background:rgba(255,183,3,0.10);border-left:4px solid var(--warn);padding:10px 14px;border-radius:0 8px 8px 0;margin-bottom:10px;font-size:12.5px;line-height:1.45"></div>
-            <textarea id="planClarityIntel" rows="7" placeholder="Click Build Clarity Forecast after selecting a lake and trip date. Included in the preview and used to update Water Clarity." style="font-size:12.5px"></textarea>
-          </div>
-
-
-          <!-- Section 2b: Coastal Tides (saltwater trips) -->
-          <div class="card plan-section" id="tidesCard">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px">
-              <h4 style="margin:0">🌊 Coastal Saltwater Tides <span class="muted" style="font-weight:normal;font-size:11px">— freshwater trips: leave blank</span></h4>
-              <div style="display:flex;gap:6px;align-items:center">
-                <button id="syncTidesBtn" class="small primary">⚡ Fetch Tides</button>
-                <span id="tideSyncStatus" style="font-size:11px;color:var(--muted);font-family:monospace">Offline</span>
-              </div>
-            </div>
-            <div class="row" style="gap:10px;margin-bottom:10px">
-              <div style="flex:1;min-width:200px">
-                <label>Coastal Reference Station</label>
-                <select id="noaaStationSelect" style="width:100%">
-                  <option value="">— freshwater / non-tidal trip —</option>
-                  <optgroup label="South Carolina Coast">
-                    <option value="8665530">Charleston Harbor ✅</option>
-                    <option value="8668103">Beaufort River (Dispensary Creek)</option>
-                    <option value="8662245">Georgetown (Winyah Bay)</option>
-                    <option value="8661070">Myrtle Beach (Springmaid Pier)</option>
-                    <option value="8662915">Murrells Inlet (Captain Dick's)</option>
-                    <option value="8669968">Hilton Head (Calibogue Sound)</option>
-                  </optgroup>
-                  <optgroup label="North Carolina Coast">
-                    <option value="8658120">Wilmington (Cape Fear River)</option>
-                    <option value="8656483">Beaufort NC (Duke Marine Lab)</option>
-                    <option value="8652587">Oregon Inlet Marina</option>
-                  </optgroup>
-                  <optgroup label="Georgia Coast">
-                    <option value="8670870">Fort Pulaski (Savannah River)</option>
-                    <option value="8677344">St. Simons Island</option>
-                  </optgroup>
-                </select>
-              </div>
-              <div style="width:160px">
-                <label>Live Water Stage</label>
-                <input id="liveTideStageReadout" placeholder="Incoming / Flood" readonly style="font-weight:700;color:var(--accent)">
-              </div>
-            </div>
-            <div id="tidesAssessmentTableWrap" style="display:none;margin-top:8px;overflow-x:auto">
-              <table id="tidesAssessmentTable" style="width:100%;border-collapse:collapse;font-size:12.5px">
-                <thead>
-                  <tr style="background:var(--panel2);color:var(--accent)">
-                    <th>Event</th><th>Time</th><th>Level (MLLW)</th><th>Tactical Impact</th>
-                  </tr>
-                </thead>
-                <tbody id="tidesAssessmentBody"></tbody>
-              </table>
-            </div>
-          </div>
-
-          <!-- Section 3: Gear -->
-          <div class="card plan-section">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px">
-              <h4 style="margin:0">⚙️ Advanced Gear &amp; Live BLE Motor Hub</h4>
-              <div style="display:flex;gap:6px;align-items:center">
-                <button id="btnEmbedPairBle" class="small primary" style="background:var(--accent2);color:#000;font-weight:900;font-family:monospace;box-shadow:0 2px 8px rgba(118,255,3,0.3)" title="Flawlessly pair Web Bluetooth API directly inside TrollMap with XZNY / Smart BMS LiFePO4 battery">
-                  <span>⚡</span> Live Web Bluetooth Pair
-                </button>
-                <!-- Separate app removed - embedded is now primary -->
-              </div>
-            </div>
-            <!-- Live Active Web Bluetooth Telemetry Callout Box -->
-            <div id="embedBleAssessmentBox" style="display:none;background:#0f172a;border-left:4px solid var(--accent2);padding:10px 14px;border-radius:0 8px 8px 0;margin-bottom:12px;font-size:12.5px;line-height:1.4">
-              <div style="display:flex;justify-content:space-between;align-items:center">
-                <b id="ebName" style="color:var(--accent2);font-size:13.5px">XZNY 24V LiFePO4 Battery Active Feed</b>
-                <span id="ebSoc" style="background:var(--panel2);color:var(--accent);padding:1px 6px;border-radius:4px;font-size:11px;font-weight:700">100% SOC</span>
-              </div>
-              <div style="margin-top:4px;display:flex;gap:14px;flex-wrap:wrap">
-                <span id="ebVolts" style="font-family:monospace;color:#fff">26.4V</span>
-                <span id="ebAmps" style="font-family:monospace;color:var(--warn)">Active Active Load: 0.0A (0W)</span>
-                <span id="ebRemAh" style="font-family:monospace;color:#00e5ff">Remaining Usable Active: 100.0 Ah</span>
-              </div>
-              <div id="ebSprintTime" style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.1);color:var(--accent2);font-weight:700">
-                ⚡ Full Throttle Sprint Runtime Usable: Infinite (Standby)
-              </div>
-            </div>
-            <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">
-              <div><label>Motor / Battery</label><input id="planMotor" value="NK180 Pro 24V, 100Ah LiFePO4" placeholder="Personal Motor Profile"></div>
-              <div><label>Sonar Unit</label><input id="planSonar" value="Garmin ECHOMAP UHD2 93sv" placeholder="Personal Sonar Profile"></div>
-              <div><label>Troll Speed (mph)</label><input id="planSpeed" value="2.4" type="number" step="0.1"></div>
-              <div><label>Target Depth (ft)</label><input id="planTargetDepth" placeholder="25-35"></div>
-              <div>
-                <label>Troll Pattern</label>
-                <select id="planPattern" style="width:100%">
-                  <option>S-curves</option>
-                  <option>Straight lanes</option>
-                  <option>Zigzag</option>
-                  <option>Contour follow</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          <!-- Section 4: Spread -->
-          <div class="card plan-section">
-            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
-              <h4 style="margin:0">🎣 Trolling Spread</h4>
-              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-                <select id="savedSpreadsSelect" style="min-width:160px">
-                  <option value="">— load saved spread —</option>
-                </select>
-                <button id="saveSpreadBtn" class="small">💾 Save spread</button>
-                <button id="delSpreadBtn" class="small">🗑</button>
-                <button class="small" id="addRodBtn">+ Add rod</button>
-                <button class="small" id="fillDefaultSpreadBtn">⚡ Default</button>
-              </div>
-            </div>
-            <div style="overflow-x:auto">
-              <table class="spread-table" id="spreadTable">
-                <thead><tr>
-                  <th>#</th><th>Side</th><th>Position</th><th>Rod</th>
-                  <th>Reel / Line</th><th>Lure / Bait</th><th>Color</th>
-                  <th>Depth ft</th><th>Lead ft</th><th>Notes</th><th></th>
-                </tr></thead>
-                <tbody id="spreadBody"></tbody>
-              </table>
-            </div>
-            <p class="muted" style="font-size:11px;margin-top:6px">Port = left · Starboard = right · Position: Bow / Mid / Stern</p>
-          </div>
-
-          <!-- Section 5: Structure & Lanes -->
-          <div class="card plan-section">
-            <h4>🗺 Structure Notes & Lane Intel</h4>
-            <textarea id="planStructure" rows="4" placeholder="LN1: 25-35ft channel edge, old road bed at 32ft&#10;LN2: hump top 22ft, drops to 40ft east side&#10;LN3: creek channel, max 45ft&#10;(auto-populates run times from GPX tracks)"></textarea>
-            <div style="margin-top:8px">
-              <label class="muted" style="font-size:11px">Waypoints / Tracks loaded (from map)</label>
-              <div id="planGroups" style="min-height:20px;font-size:12px"></div>
-            </div>
-          </div>
-
-          <!-- Section 6: Checklists side by side -->
-          <div class="grid" style="grid-template-columns:1fr 1fr;gap:12px">
+            <!-- Solunar -->
             <div class="card plan-section">
-              <h4>🎒 Tackle Checklist</h4>
-              <textarea id="planTackle" rows="10">A-rigs x2-3 (light + medium)
-Crankbaits (Flicker Minnow 11, Deep Hit Stick)
-Flutter spoon (silver)
-Swimbaits 3.8" + 4.6" (natural pearl / blueback herring)
-Inline weights 2oz x2
-Jigheads 1/4oz + 3/4oz
-Fluoro leaders 20lb
-Snap swivels, split rings
-Net / lip grippers
-Pliers + hook remover</textarea>
+              <h4 style="margin:0 0 6px;color:var(--accent2);font-size:12px;text-transform:uppercase;letter-spacing:.05em">🌙 Solunar</h4>
+              <div id="planSolunarDisplay" style="font-size:13px;color:var(--text)"></div>
             </div>
+
+            <!-- Lake Intel -->
             <div class="card plan-section">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px">
-                <h4 style="margin:0">🦺 Active Live Threat Safety Checklist</h4>
-                <button id="autoCompileSafetyBtn" class="small primary" title="Autonomous AI compilation from weather forecast and live water temperatures">
-                  ⚡ Auto-Compile from Weather
-                </button>
-              </div>
-              <textarea id="planSafety" rows="10">PFD on at all times
-Phone charged + dry bag
-Float plan filed (ramp, return time, contact)
-Check radar before launch
-Whistle + light clipped to PFD
-Anchor + 30ft rope
-First aid kit
-Water 3L minimum
-Sunscreen SPF50+ / UV shirt / hat
-Battery check (NK180 Bluetooth app)
-Trolling motor prop clear
-First thunder → nearest shore immediately</textarea>
+              <h4 style="margin:0 0 6px;color:var(--accent2);font-size:12px;text-transform:uppercase;letter-spacing:.05em">🗺 Lake Intelligence</h4>
+              <div id="planLakeIntelDisplay" style="font-size:12px;color:var(--muted);line-height:1.6;max-height:200px;overflow-y:auto"></div>
             </div>
+
+            <!-- Clarity Intel -->
+            <div class="card plan-section">
+              <h4 style="margin:0 0 6px;color:var(--accent2);font-size:12px;text-transform:uppercase;letter-spacing:.05em">💧 Clarity Forecast</h4>
+              <div id="planClarityIntelDisplay" style="font-size:12px;color:var(--muted);line-height:1.6;max-height:200px;overflow-y:auto"></div>
+            </div>
+
+            <!-- Safety brief -->
+            <div class="card plan-section">
+              <h4 style="margin:0 0 6px;color:var(--accent2);font-size:12px;text-transform:uppercase;letter-spacing:.05em">⚠️ Safety Brief</h4>
+              <div id="planSafetyDisplay" style="font-size:12px;color:var(--muted);line-height:1.6"></div>
+            </div>
+
           </div>
 
-          <!-- Section 7: Notes -->
-          <div class="card plan-section">
-            <h4>📝 Notes / Backup Spots / Intel</h4>
-            <textarea id="planNotes" rows="3" placeholder="Backup ramps, hot spots from last trip, buddy reports, tide/flow notes..."></textarea>
+          <!-- Old spread table — hidden, kept for save/export compatibility -->
+          <div style="display:none">
+            <table id="spreadTable"><tbody id="spreadBody"></tbody></table>
+            <select id="savedSpreadsSelect"></select>
+            <button id="saveSpreadBtn"></button>
+            <button id="delSpreadBtn"></button>
+            <button id="addRodBtn"></button>
+            <button id="fillDefaultSpreadBtn"></button>
+            <textarea id="planTackle"></textarea>
+            <textarea id="planNotes"></textarea>
+            <textarea id="planSafety"></textarea>
+            <input id="planGroups">
+            <div id="planWpts"></div>
+            <div id="planTrks"></div>
+            <div id="planPts"></div>
+            <div id="planDist"></div>
           </div>
 
-          <!-- Catch Journal moved to panel-catch -->
+        </div><!-- /plan-builder -->
 
-          <!-- Action buttons -->
-          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;padding-bottom:20px">
-            <button id="savePlanBtn" class="primary">💾 Save Plan</button>
-            <button id="buildPreviewBtn" class="primary">📄 Build Preview</button>
-            <button id="printPlanBtn">🖨 Print Plan</button>
-            <button id="exportPlanHtmlBtn">⬇ HTML</button>
-            <button id="exportPlanJsonBtn">⬇ JSON</button>
-          </div>
-
-        </div><!-- /builder -->
-
-        <!-- PREVIEW -->
+        <!-- ── PREVIEW TAB ──────────────────────────────────────────────── -->
         <div id="plan-preview" class="plan-sub hidden">
           <div class="card">
-            <div class="row no-print" style="justify-content:flex-end">
-              <button id="backToBuilderBtn" class="ghost small">← Back to Builder</button>
+            <div class="row no-print" style="justify-content:flex-end;gap:8px;margin-bottom:10px">
+              <button id="backToBuilderBtn" class="ghost small">← Back</button>
               <button onclick="window.print()" class="primary small">🖨 Print</button>
             </div>
             <div id="planPreviewHtml" class="plan-preview">
-              <p class="muted">Click "Build Preview" in the Builder tab.</p>
+              <p class="muted">Generate a Smart Plan first, then click Preview.</p>
             </div>
-          </div>
-        </div>
-
-        <!-- LIBRARY -->
-        <div id="plan-library" class="plan-sub hidden">
-          <div class="card">
-            <h3>Saved Fishing Plans</h3>
-            <div id="planLibraryList"><p class="muted">No saved plans yet.</p></div>
           </div>
         </div>
 
