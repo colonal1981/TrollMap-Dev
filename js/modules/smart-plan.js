@@ -12,7 +12,7 @@ import { esc } from '../utils/escape.js';
 import { newRodRow } from '../utils/rod-row.js';
 import { renderSpread, autoCalculateLead, LURE_DIVE_DEPTHS } from './spread-builder.js';
 import { getActiveContour } from './contour-data.js';
-import { selectBestLure } from '../data/tackle-inventory.js';
+import { selectBestLure, getInventory } from '../data/tackle-inventory.js';
 import { getLureColor } from '../data/lure-knowledge.js';
 import { getPhaseDepth, getStrategySpeed, normalizeSpecies, getPresentationPriority, getPhaseNotes } from '../data/species-strategies.js';
 import {
@@ -29,78 +29,58 @@ const MOTOR_AMP_AVG      = 6;
 const PHASE_1_END_OFFSET_MIN = 60;
 const PHASE_2_END_OFFSET_MIN = 210;
 
-// ── Exact inventory names shown to Groq in the prompt ────────────────────────
-const INVENTORY_NAMES = [
-  'A-Rig Light (~1.65oz) – 3.8" Swimbait',
-  'A-Rig Medium (~2.65oz) – 4.6" Swimbait',
-  'A-Rig Heavy (~3.5oz) – 5" Swimbait',
-  'Flutter Spoon 2oz', 'Flutter Spoon 3oz', 'Kastmaster 3/4oz',
-  'Flicker Minnow 11 – Crankbait', 'Deep Hit Stick – Crankbait',
-  'Bandit 300 Series – Crankbait',
-  'Rapala DT-10 – Crankbait', 'Rapala DT-14 – Crankbait',
-  'Swimbait 3.8" – Jighead', 'Swimbait 4.6" – Jighead', 'Swimbait 5" – Jighead',
-  'Lipless Crankbait 1/2oz', 'Spinnerbait 1/2oz', 'ChatterBait 3/4oz',
-  'Bucktail Jig 1oz', 'Marabou Jig 3/4oz',
-  'Zara Spook – Topwater', 'Whopper Plopper 110 – Topwater',
-  'Choppo 90 – Topwater', 'Buzzbait 1/2oz – Topwater',
-];
+// ── Dynamic inventory name list (loaded from tackle-inventory.js at runtime) ──
+// Cached after first load so subsequent calls don't re-hit IDB.
+let _cachedTrollableNames = null;
 
-// ── Groq lure name sanitizer ──────────────────────────────────────────────────
-// Groq often returns slightly wrong names. Run through fuzzy match against
-// INVENTORY_NAMES before setting on rod row. Falls back to depth-based default.
-function sanitizeGroqLureName(raw, targetDepthFt) {
-  if (!raw) return depthFallbackLure(targetDepthFt);
-  const r = String(raw).toLowerCase().trim();
-
-  const exact = INVENTORY_NAMES.find(n => n.toLowerCase() === r);
-  if (exact) return exact;
-
-  if (r.includes('flutter spoon') || r.includes('flutter_spoon'))
-    return (r.includes('3oz') || r.includes('3 oz')) ? 'Flutter Spoon 3oz' : 'Flutter Spoon 2oz';
-  if (r.includes('kastmaster')) return 'Kastmaster 3/4oz';
-  if (r.includes('a-rig') || r.includes('arig') || r.includes('umbrella rig') || r.includes('umbrella_rig')) {
-    if (r.includes('heavy') || r.includes('3.5') || r.includes('5"')) return 'A-Rig Heavy (~3.5oz) – 5" Swimbait';
-    if (r.includes('light') || r.includes('1.65') || r.includes('3.8"')) return 'A-Rig Light (~1.65oz) – 3.8" Swimbait';
-    return 'A-Rig Medium (~2.65oz) – 4.6" Swimbait';
-  }
-  if (r.includes('deep hit stick')) return 'Deep Hit Stick – Crankbait';
-  if (r.includes('flicker minnow')) return 'Flicker Minnow 11 – Crankbait';
-  if (r.includes('bandit')) return 'Bandit 300 Series – Crankbait';
-  if (r.includes('dt-14') || r.includes('dt14') || (r.includes('rapala') && r.includes('14'))) return 'Rapala DT-14 – Crankbait';
-  if (r.includes('dt-10') || r.includes('dt10') || (r.includes('rapala') && r.includes('10'))) return 'Rapala DT-10 – Crankbait';
-  if (r.includes('rapala')) return parseFloat(targetDepthFt) >= 14 ? 'Rapala DT-14 – Crankbait' : 'Rapala DT-10 – Crankbait';
-  if (r.includes('lipless')) return 'Lipless Crankbait 1/2oz';
-  if (r.includes('spinnerbait') || r.includes('spinner bait')) return 'Spinnerbait 1/2oz';
-  if (r.includes('chatterbait') || r.includes('chatter bait')) return 'ChatterBait 3/4oz';
-  if (r.includes('bucktail')) return 'Bucktail Jig 1oz';
-  if (r.includes('marabou')) return 'Marabou Jig 3/4oz';
-  if (r.includes('swimbait') || r.includes('swim bait') || r.includes('paddle tail')) {
-    if (r.includes('5"') || r.includes('5 in')) return 'Swimbait 5" – Jighead';
-    if (r.includes('3.8') || r.includes('3"')) return 'Swimbait 3.8" – Jighead';
-    return 'Swimbait 4.6" – Jighead';
-  }
-  if (r.includes('whopper plopper') || r.includes('plopper')) return 'Whopper Plopper 110 – Topwater';
-  if (r.includes('choppo')) return 'Choppo 90 – Topwater';
-  if (r.includes('spook') || r.includes('zara')) return 'Zara Spook – Topwater';
-  if (r.includes('buzzbait') || r.includes('buzz bait')) return 'Buzzbait 1/2oz – Topwater';
-  if (r.includes('topwater') || r.includes('top water')) return 'Choppo 90 – Topwater';
-  if (r.includes('crankbait') || r.includes('crank bait')) {
-    const d = parseFloat(targetDepthFt) || 15;
-    if (d >= 18) return 'Deep Hit Stick – Crankbait';
-    if (d >= 12) return 'Rapala DT-14 – Crankbait';
-    return 'Flicker Minnow 11 – Crankbait';
-  }
-  const partial = INVENTORY_NAMES.find(n => n.toLowerCase().includes(r.split(' ')[0]));
-  if (partial) return partial;
-  return depthFallbackLure(targetDepthFt);
+async function getTrollableNames() {
+  if (_cachedTrollableNames) return _cachedTrollableNames;
+  const inv = await getInventory();
+  _cachedTrollableNames = inv.filter(l => l.trollable).map(l => l.name);
+  return _cachedTrollableNames;
 }
 
-function depthFallbackLure(depthFt) {
+// ── Groq lure name sanitizer ──────────────────────────────────────────────────
+// Fuzzy-match Groq's returned name against the live inventory list.
+// Falls back to depth-based default if nothing matches.
+function sanitizeGroqLureName(raw, targetDepthFt, inventoryNames) {
+  if (!raw) return depthFallbackLure(targetDepthFt, inventoryNames);
+  const r = String(raw).toLowerCase().trim();
+
+  // 1. Exact match (case-insensitive)
+  const exact = inventoryNames.find(n => n.toLowerCase() === r);
+  if (exact) return exact;
+
+  // 2. Substring match — inventory name contains Groq's word, or vice versa
+  const substr = inventoryNames.find(n => {
+    const nl = n.toLowerCase();
+    return nl.includes(r) || r.includes(nl);
+  });
+  if (substr) return substr;
+
+  // 3. Keyword fuzzy — find best matching inventory name by shared keywords
+  const rWords = r.replace(/[^a-z0-9"]/g, ' ').split(/\s+/).filter(w => w.length > 2);
+  let bestName = null, bestScore = 0;
+  for (const name of inventoryNames) {
+    const nl = name.toLowerCase();
+    const score = rWords.filter(w => nl.includes(w)).length;
+    if (score > bestScore) { bestScore = score; bestName = name; }
+  }
+  if (bestScore >= 1) return bestName;
+
+  // 4. Category fallback by depth
+  return depthFallbackLure(targetDepthFt, inventoryNames);
+}
+
+function depthFallbackLure(depthFt, inventoryNames) {
   const d = parseFloat(depthFt) || 15;
-  if (d < 8)  return 'Flicker Minnow 11 – Crankbait';
-  if (d < 15) return 'A-Rig Light (~1.65oz) – 3.8" Swimbait';
-  if (d < 22) return 'A-Rig Medium (~2.65oz) – 4.6" Swimbait';
-  return 'A-Rig Heavy (~3.5oz) – 5" Swimbait';
+  // Pick a reasonable trollable lure by depth from whatever's actually in inventory
+  const find = (...keywords) => inventoryNames.find(n => keywords.some(k => n.toLowerCase().includes(k)));
+  if (d < 8)  return find('squarebill', 'sr crankbait', 'lipless', 'spinnerbait') || inventoryNames[0];
+  if (d < 14) return find('mr crankbait', 'dd1', 'a-rig light', 'swimbait 3.8') || inventoryNames[0];
+  if (d < 20) return find('dd1', 'dd2', 'a-rig medium', 'swimbait 4.6', 'umbrella') || inventoryNames[0];
+  if (d < 26) return find('dd2', 'dd3', 'a-rig heavy', 'swimbait 5"', 'flutter spoon') || inventoryNames[0];
+  return find('dd3', 'dd4', 'flutter spoon', 'bucktail') || inventoryNames[0];
 }
 
 // ── BEHAVIOR_LURE_MAP (legacy / fallback) ────────────────────────────────────
@@ -639,7 +619,7 @@ export async function runSmartPlan() {
   }
 
   setStatus('Asking Groq for fishing plan…',true);
-  if (outEl) outEl.value='⏳ Groq is building your plan…';
+  if (outEl) outEl.value='⏳ Loading inventory + building plan…';
 
   const season    =getSeason(date);
   const phaseInfo =computePhases(launchTime,returnTime,dateStr,lakeName);
@@ -648,6 +628,10 @@ export async function runSmartPlan() {
   const clarity   =document.getElementById('planClarity')?.value||'Clear';
   const rampName  =document.getElementById('planRamp')?.value||'unknown ramp';
   const weatherStr=document.getElementById('planWeather')?.value||'';
+
+  // Load live inventory — what Groq sees and what sanitizer matches against
+  const inventoryNames = await getTrollableNames();
+  console.log('[smart-plan] Live trollable inventory (' + inventoryNames.length + '):', inventoryNames);
 
   function hStr(h){
     const hh=Math.floor(((h%24)+24)%24),mm=String(Math.round((h%1)*60)).padStart(2,'0');
@@ -678,7 +662,7 @@ PLATFORM:
 - Depth controlled by lead length only
 
 AVAILABLE TACKLE — use ONLY these exact names, no others:
-${INVENTORY_NAMES.join(', ')}
+${inventoryNames.join(', ')}
 
 ROUTE STRUCTURE: Pick two depth bands. Band 1 = shallower morning run. Band 2 = deeper mid-morning run.
 Each band trolled outbound and back (4 routes total).
@@ -751,16 +735,21 @@ Return ONLY valid JSON, no markdown:
     if (outEl) outEl.value=`⚠ Groq call failed — using species-intel fallback\nError: ${groqError}\n\n(Running plan anyway with fallback depth bands…)`;
   }
 
-  // Fallback
+  // Fallback — use live inventory names so the spread table shows real lures
   if (!groqPlan) {
     const phaseRecs=phaseInfo.phases.map(p=>getPhaseRecommendation(sp,lakeName,season,p.num,waterTempF));
     const r1=phaseRecs[0]||{depthMin:12,depthMax:18,speed:1.8};
     const r2=phaseRecs[1]||{depthMin:22,depthMax:28,speed:1.8};
+    // Pick real names from live inventory for fallback lures
+    const fallPort1  = depthFallbackLure(r1.depthMin + 3, inventoryNames);
+    const fallStbd1  = depthFallbackLure(r1.depthMax - 2, inventoryNames);
+    const fallPort2  = depthFallbackLure(r2.depthMin + 3, inventoryNames);
+    const fallStbd2  = depthFallbackLure(r2.depthMax - 2, inventoryNames);
     groqPlan={
       speed:r1.speed||1.8, speedRationale:'Species-intel fallback — Groq unavailable',
-      band1:{depthMin:r1.depthMin,depthMax:r1.depthMax,port:'A-Rig Medium (~2.65oz) – 4.6" Swimbait',starboard:'Flutter Spoon 2oz',portColor:'Natural Pearl',starboardColor:'Shattered Glass Silver',portLeadFt:40,starboardLeadFt:50,why:'Fallback: mid-depth morning run'},
-      band2:{depthMin:r2.depthMin,depthMax:r2.depthMax,port:'A-Rig Heavy (~3.5oz) – 5" Swimbait',starboard:'Deep Hit Stick – Crankbait',portColor:'Natural Pearl',starboardColor:'Tennessee Shad',portLeadFt:50,starboardLeadFt:60,why:'Fallback: deep mid-morning run'},
-      structureFocus:'Look for baitfish marks suspended over channel edges.',
+      band1:{depthMin:r1.depthMin,depthMax:r1.depthMax,port:fallPort1,starboard:fallStbd1,portColor:'Natural',starboardColor:'Metallic',portLeadFt:40,starboardLeadFt:50,why:'Fallback: mid-depth morning run'},
+      band2:{depthMin:r2.depthMin,depthMax:r2.depthMax,port:fallPort2,starboard:fallStbd2,portColor:'Natural',starboardColor:'Natural',portLeadFt:50,starboardLeadFt:60,why:'Fallback: deep mid-morning run'},
+      structureFocus:'Look for baitfish marks suspended over channel edges on the fishfinder.',
       adjustmentTip:'Shorten lead 10ft and slow to 1.5mph if no bites.',
       scoutNotes:'Running fallback plan — Groq unavailable.',
     };
@@ -769,10 +758,10 @@ Return ONLY valid JSON, no markdown:
   // ── Sanitize lure names ───────────────────────────────────────────────────
   const b1mid=(groqPlan.band1.depthMin+groqPlan.band1.depthMax)/2;
   const b2mid=(groqPlan.band2.depthMin+groqPlan.band2.depthMax)/2;
-  groqPlan.band1.port      =sanitizeGroqLureName(groqPlan.band1.port,      b1mid-2);
-  groqPlan.band1.starboard =sanitizeGroqLureName(groqPlan.band1.starboard,  b1mid+2);
-  groqPlan.band2.port      =sanitizeGroqLureName(groqPlan.band2.port,      b2mid-2);
-  groqPlan.band2.starboard =sanitizeGroqLureName(groqPlan.band2.starboard,  b2mid+2);
+  groqPlan.band1.port      =sanitizeGroqLureName(groqPlan.band1.port,      b1mid-2, inventoryNames);
+  groqPlan.band1.starboard =sanitizeGroqLureName(groqPlan.band1.starboard,  b1mid+2, inventoryNames);
+  groqPlan.band2.port      =sanitizeGroqLureName(groqPlan.band2.port,      b2mid-2, inventoryNames);
+  groqPlan.band2.starboard =sanitizeGroqLureName(groqPlan.band2.starboard,  b2mid+2, inventoryNames);
 
   const smartSpeedMph=groqPlan.speed||1.8;
   const speedEl=document.getElementById('planSpeed');
