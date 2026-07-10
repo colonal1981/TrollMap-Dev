@@ -21,7 +21,7 @@ import { buildFishingContext, buildGroqCoachPayload } from './smart-plan-context
 import { startCoachSession } from './groq-coach.js';
 import { renderSmartPlanUI, syncSpread, reelForLure } from './smart-plan-ui.js';
 
-// NEW: Pull from the universal worker-backed access database
+// Pull from the universal worker-backed access database
 import { getLoadedAccessIndex } from '../data/access-index.js';
 
 const BATTERY_AH_DEFAULT = 100;
@@ -222,7 +222,6 @@ function getPhaseRecommendation(species, lakeName, season, phaseNum, waterTempF)
 
 // ── Ramp evaluation ───────────────────────────────────────────────────────────
 async function getRampEvaluation(lakeName, species, season, phaseRecs, weatherStr, roughWeather) {
-  // Deprecated: Old hardcoded SC ramps are gone. UI drops pin instead.
   return null;
 }
 
@@ -447,7 +446,7 @@ function readPlanInputs() {
     launchTime: document.getElementById('planLaunchTime')?.value||'6:00 AM',
     returnTime: document.getElementById('planReturnTime')?.value||'12:00 PM',
     waterTempF: parseFloat(document.getElementById('planWaterTemp')?.value)||null,
-    speedMph:   2.0,
+    speedMph:   parseFloat(document.getElementById('planSpeed')?.value)||2.0,
     species:    [...document.querySelectorAll('#planSpeciesChecks input:checked')].map(c=>c.value),
   };
 }
@@ -527,11 +526,21 @@ export async function runSmartPlan() {
   const solunarStr=`Majors: ${hStr(sol.major1)}, ${hStr(sol.major2)} · Minors: ${hStr(sol.minor1)}, ${hStr(sol.minor2)}`;
   const totalDurH=phaseInfo.phases.length?(phaseInfo.phases[phaseInfo.phases.length-1].end-phaseInfo.phases[0].start):6;
 
-  // ── Unified Groq Call (State-Agnostic Prompt) ─────────────────────────
+  // ── Pull our local intel FIRST (For Guided Creativity prompt) ─────────
+  const fishingContext = await buildFishingContext({
+    species: sp, lakeName, season, clarity, waterTempF, 
+    speedMph: speedMph, 
+    dateStr, launchTime, rampLat, rampLon
+  });
+  
+  const intelNotes = fishingContext?.intel?.notes || 'No local notes available.';
+  const intelSpeed = fishingContext?.intel?.preferredSpeed || 2.0;
+
+  // ── Unified Groq Call (State-Agnostic Prompt + Guided Creativity) ─────
   const planPrompt=`You are an expert fishing guide for ${lakeName}.
 Build a trolling plan for today targeting ${sp}.
 
-TRIP:
+TRIP & CONDITIONS:
 - Date: ${dateStr}
 - Launch: ${hStr(phaseInfo.phases[0]?.start||6)} from ${rampName}
 - Return: ${hStr(phaseInfo.phases[phaseInfo.phases.length-1]?.end||12)}
@@ -541,7 +550,14 @@ TRIP:
 - Clarity: ${clarity}
 - Solunar majors: ${hStr(sol.major1)}, ${hStr(sol.major2)}
 
-PLATFORM:
+LOCAL HISTORICAL INTEL (Your baseline):
+- Typical Speed: ${intelSpeed} mph
+- Local Patterns: ${intelNotes}
+
+YOUR ROLE:
+You are the expert guide on the water *today*. Use the historical intel as your foundation, but YOU must adapt the speed, depths, and lure colors based on today's specific water temp (${waterTempF?waterTempF+'°F':'unknown'}), clarity (${clarity}), and season (${season}). If you deviate from the typical speed or depth, explain why in your rationale.
+
+PLATFORM CONSTRAINTS (STRICT - DO NOT BREAK THESE):
 - Kayak (Native Watersports Slayer Propel Max 12.5, pedal drive + electric motor)
 - 2 rods max in water simultaneously (port + starboard)
 - No live bait, no downriggers, no planer boards, spinning rods only
@@ -556,7 +572,7 @@ Each band trolled outbound and back (4 routes total).
 Return ONLY valid JSON, no markdown:
 {
   "speed": <mph>,
-  "speedRationale": "<one sentence why>",
+  "speedRationale": "<one sentence why, especially if deviating from typical speed>",
   "band1": {
     "depthMin": <ft>, "depthMax": <ft>,
     "port": "<exact inventory name>", "starboard": "<exact inventory name>",
@@ -717,10 +733,10 @@ Return ONLY valid JSON, no markdown:
 
   // ── Groq Coach ────────────────────────────────────────────────────────────
   try {
-    const fishingContext=await buildFishingContext({species:sp,lakeName,season,clarity,waterTempF,speedMph:smartSpeedMph,dateStr,launchTime,rampLat,rampLon});
     const coachSpread=Object.entries(routeRods).flatMap(([routeName,rods])=>
       rods.map(r=>({route:routeName,side:r.side,rod:r.rod||'',lure:r.lure||'',color:r.color||'',depth:r.depth||'',lead:r.lead||'',notes:(r.notes||'').slice(0,80)}))
     );
+    // Notice we just reuse the fishingContext we built earlier!
     const coachPayload=buildGroqCoachPayload(fishingContext,{
       phases:phaseInfo.phases,
       phaseRecs:[
@@ -749,4 +765,4 @@ setTimeout(()=>{ document.getElementById('runSmartPlanBtn')?.addEventListener('c
 window.runSmartPlan=runSmartPlan;
 window.applyStoredSmartPlanDepth=applyStoredSmartPlanDepth;
 
-console.log('[smart-plan] module ready — universal access mode');
+console.log('[smart-plan] module ready — universal access + guided creativity mode');
