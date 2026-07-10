@@ -1042,7 +1042,7 @@ PLATFORM:
 - Will cast while trolling if structure warrants it
 
 AVAILABLE TACKLE (exact names from inventory):
-${lure_list_str}
+A-Rig Light (~1.65oz) – 3.8" Swimbait, A-Rig Medium (~2.65oz) – 4.6" Swimbait, A-Rig Heavy (~3.5oz) – 5" Swimbait, Flutter Spoon 2oz, Flutter Spoon 3oz, Kastmaster 3/4oz, Flicker Minnow 11 – Crankbait, Deep Hit Stick – Crankbait, Bandit 300 Series – Crankbait, Rapala DT-10 – Crankbait, Rapala DT-14 – Crankbait, Swimbait 3.8" – Jighead, Swimbait 4.6" – Jighead, Swimbait 5" – Jighead, Lipless Crankbait 1/2oz, Spinnerbait 1/2oz, ChatterBait 3/4oz, Bucktail Jig 1oz, Marabou Jig 3/4oz, Zara Spook – Topwater, Whopper Plopper 110 – Topwater, Choppo 90 – Topwater, Buzzbait 1/2oz – Topwater
 
 ROUTE STRUCTURE:
 You are picking two depth bands. Each band gets trolled outbound and back (4 routes total).
