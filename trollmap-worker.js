@@ -874,20 +874,31 @@ function stripHtml(html) {
     .trim();
 }
 
+
+
 async function fetchAhqFishingReport(slug) {
   if (!slug) return null;
-  const url = `https://www.anglersheadquarters.com/pages/${slug}-fishing-report`;
+  const url = 'https://www.anglersheadquarters.com/pages/' + slug + '-fishing-report';
   try {
     const r = await fetchText(url);
     if (!r.ok || !r.text) return null;
     const text = stripHtml(r.text);
+    // AHQ nav menu contains lure category names (Crankbaits, Bass Jigs etc.)
+    // that appear BEFORE the real report and pollute keyword searches.
+    // The actual report body starts after a date header like
+    // "Week 28 Fishing Report - Updated July 8" — anchor to that.
+    const anchorIdx = text.search(/week \d+ fishing report|fishing report.*?updated|lake \w+ \d{1,2} \w+, \d{4}/i);
+    const searchFrom = anchorIdx >= 0 ? anchorIdx : Math.floor(text.length * 0.25);
+    const reportText = text.slice(searchFrom);
     const idxs = [
-      text.search(/Morning surface water temperatures/i),
-      text.search(/water temperatures/i),
-      text.search(/Bass fishing|striper|crappie|catfish/i),
+      reportText.search(/morning surface water temp/i),
+      reportText.search(/water temp/i),
+      reportText.search(/striper|striped bass|largemouth|crappie|catfish/i),
+      reportText.search(/fishing has been|bite has been|fish are/i),
     ].filter(i => i >= 0);
-    const idx = idxs.length ? Math.min(...idxs) : 0;
-    let summary = text.slice(Math.max(0, idx - 180), idx + 900).trim();
+    if (!idxs.length) return null;
+    const idx = Math.min(...idxs);
+    let summary = reportText.slice(Math.max(0, idx - 100), idx + 900).trim();
     if (summary.length > 1000) summary = summary.slice(0, 1000) + '…';
     return { source: url, summary };
   } catch (_) { return null; }
