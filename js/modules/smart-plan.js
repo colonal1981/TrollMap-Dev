@@ -66,48 +66,14 @@ function sanitizeGroqLureName(raw, targetDepthFt, inventoryNames) {
 
 function depthFallbackLure(depthFt, inventoryNames) {
   const d = parseFloat(depthFt) || 15;
-  const find = (...keywords) => inventoryNames.find(n => keywords.some(k => n.toLowerCase().includes(k)));
-  if (d < 8)  return find('squarebill', 'sr crankbait', 'lipless', 'spinnerbait') || inventoryNames[0];
-  if (d < 14) return find('mr crankbait', 'dd1', 'a-rig light', 'swimbait 3.8') || inventoryNames[0];
-  if (d < 20) return find('dd1', 'dd2', 'a-rig medium', 'swimbait 4.6', 'umbrella') || inventoryNames[0];
-  if (d < 26) return find('dd2', 'dd3', 'a-rig heavy', 'swimbait 5"', 'flutter spoon') || inventoryNames[0];
-  return find('dd3', 'dd4', 'flutter spoon', 'bucktail') || inventoryNames[0];
-}
-
-// ── BEHAVIOR_LURE_MAP (legacy / fallback) ────────────────────────────────────
-const BEHAVIOR_LURE_MAP = {
-  'Choppo 90': 'Choppo 90 – Topwater', 'Rattling Spook': 'Zara Spook – Topwater',
-  'Bucktail': 'Bucktail Jig 1oz', 'A-Rig Light': 'A-Rig Light (~1.65oz) – 3.8" Swimbait',
-  'A-Rig Medium': 'A-Rig Medium (~2.65oz) – 4.6" Swimbait', 'A-Rig Heavy': 'A-Rig Heavy (~3.5oz) – 5" Swimbait',
-  'Deep Hit Stick': 'Deep Hit Stick – Crankbait', 'Crankbait': 'Flicker Minnow 11 – Crankbait',
-  'Jigging spoon': 'Flutter Spoon 2oz', 'Spinnerbait': 'Spinnerbait 1/2oz',
-  'Lipless crankbait': 'Lipless Crankbait 1/2oz', 'Lipless Crankbait': 'Lipless Crankbait 1/2oz',
-  'ChatterBait': 'ChatterBait 3/4oz', 'Buzzbait': 'Buzzbait 1/2oz – Topwater',
-  'Shallow crankbait': 'Rapala DT-10 – Crankbait', 'Medium crankbait': 'Rapala DT-14 – Crankbait',
-  'Swimbait on jighead': 'Swimbait 4.6" – Jighead',
-  'medium_diving_crankbait': 'Rapala DT-14 – Crankbait', 'deep_diving_crankbait': 'Deep Hit Stick – Crankbait',
-  'spinnerbait': 'Spinnerbait 1/2oz', 'chatterbait': 'ChatterBait 3/4oz',
-  'paddle_tail': 'Swimbait 4.6" – Jighead', 'swim_jig': 'Swimbait 4.6" – Jighead',
-  'lipless_crankbait': 'Lipless Crankbait 1/2oz', 'road_runner': 'Marabou Jig 3/4oz',
-  'hair_jig': 'Marabou Jig 3/4oz', 'gold_spoon': 'Kastmaster 3/4oz',
-  'topwater_walker': 'Zara Spook – Topwater', 'topwater_frog_casting': 'Buzzbait 1/2oz – Topwater',
-  'squarebill': 'Rapala DT-10 – Crankbait', 'flutter_spoon': 'Flutter Spoon 2oz',
-  'bucktail': 'Bucktail Jig 1oz', 'umbrella_rig': 'A-Rig Medium (~2.65oz) – 4.6" Swimbait',
-  'umbrella_rig_medium': 'A-Rig Medium (~2.65oz) – 4.6" Swimbait',
-  'umbrella_rig_light': 'A-Rig Light (~1.65oz) – 3.8" Swimbait',
-  'umbrella_rig_heavy': 'A-Rig Heavy (~3.5oz) – 5" Swimbait',
-  'swimbait_jighead': 'Swimbait 4.6" – Jighead', 'jigging_spoon': 'Flutter Spoon 2oz',
-  'bucktail_jig': 'Bucktail Jig 1oz', 'medium_crankbait': 'Flicker Minnow 11 – Crankbait',
-  'deep_crankbait': 'Deep Hit Stick – Crankbait',
-  'Live herring free-line': null, 'Live herring downline': null, 'Live blueback herring': null,
-  'Live shad downline': null, 'Down-line live herring': null, 'Live bait downline': null,
-  'Cut bait': null, 'Live bait': null,
-};
-
-function resolveLure(rawName) {
-  if (!rawName) return null;
-  if (INVENTORY_NAMES.includes(rawName)) return rawName;
-  return BEHAVIOR_LURE_MAP.hasOwnProperty(rawName) ? BEHAVIOR_LURE_MAP[rawName] : null;
+  const findMatch = (...keywords) => {
+    return inventoryNames.find(n => keywords.some(k => n.toLowerCase().includes(k)));
+  };
+  if (d < 8)  return findMatch('squarebill', 'sr crankbait', 'lipless', 'spinnerbait') || inventoryNames[0];
+  if (d < 14) return findMatch('mr crankbait', 'dd1', 'a-rig light', 'swimbait 3.8') || inventoryNames[0];
+  if (d < 20) return findMatch('dd1', 'dd2', 'a-rig medium', 'swimbait 4.6', 'umbrella') || inventoryNames[0];
+  if (d < 26) return findMatch('dd2', 'dd3', 'a-rig heavy', 'swimbait 5"', 'flutter spoon') || inventoryNames[0];
+  return findMatch('dd3', 'dd4', 'flutter spoon', 'bucktail') || inventoryNames[0];
 }
 
 function isStaticTechnique(rawLureName) {
@@ -116,17 +82,7 @@ function isStaticTechnique(rawLureName) {
   if (s.includes('topwater') || s.includes('buzz') || s.includes('plopper') || s.includes('spook')) return true;
   if (s.includes('free-line') || s.includes('downline') || s.includes('live') || s.includes('cut bait')) return true;
   if (s.includes('anchor') || s.includes('finesse') || s.includes('wacky') || s.includes('drop_shot')) return true;
-  const resolved = resolveLure(rawLureName);
-  return !!(resolved && resolved.toLowerCase().includes('topwater'));
-}
-
-function getEffectiveLures(phaseRec) {
-  if (!phaseRec?.lures?.length) return [];
-  const available = phaseRec.lures.filter(l => {
-    const s = String(l||'').toLowerCase();
-    return !(s.includes('live') || s.includes('free-line') || s.includes('downline') || s.includes('cut bait'));
-  });
-  return available.length ? available : ['A-Rig Medium'];
+  return false;
 }
 
 // ── Geo helpers ───────────────────────────────────────────────────────────────
@@ -400,6 +356,7 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
 
   allChains.sort((a,b)=>(a.closest*2-a.len)-(b.closest*2-b.len));
   const best=allChains[0];
+  console.log(`[scout] best chain: depth=${best.depth}ft len=${Math.round(best.len)}ft closest=${Math.round(best.closest)}ft`);
 
   let nearIdx=0, nearDist=Infinity;
   for (let i=0; i<best.chain.length; i++) {
@@ -447,12 +404,13 @@ async function generateScoutWaypoints(phases, bands, rampLat, rampLon, rangeMile
 
   for (const band of bands) {
     const pts=walkContourForWaypoints(band.depthMin,band.depthMax,rampLat,rampLon,maxDistFt,budgetFt,STEP_FT);
-    if (!pts.length) continue;
+    if (!pts.length) { console.warn(`[scout] Ph${band.phase}: no waypoints for ${band.depthMin}-${band.depthMax}ft`); continue; }
     phaseWaypoints[band.phase]=pts.map(pt=>[pt.lat,pt.lon]);
     pts.forEach((pt,j)=>{
       state.DATA.waypoints.push({name:`Ph${band.phase}-${j+1}`,lat:pt.lat,lon:pt.lon,sym:'Fishing Area',scoutWaypoint:true,phase:band.phase,depth:pt.depth});
       totalAdded++;
     });
+    console.log(`[scout] Ph${band.phase} (${band.depthMin}-${band.depthMax}ft): ${pts.length} waypoints`);
   }
 
   buildScoutRoutes(phaseWaypoints);
@@ -493,9 +451,10 @@ function buildScoutRoutes(phaseWaypoints) {
   for (const [phNum,pts] of Object.entries(phaseWaypoints).sort()) {
     if (pts.length<2) continue;
     const out = makeTrack(pts, `Ph${phNum} Outbound`, 0);
-    if (out.pts.length>=2) state.DATA.tracks.push(out);
+    if (out.pts.length>=2) { state.DATA.tracks.push(out); console.log(`[scout-routes] Ph${phNum} Outbound: ${out.pts.length}pts`); }
+    
     const inn = makeTrack([...pts].reverse(), `Ph${phNum} Inbound`, inboundOffset);
-    if (inn.pts.length>=2) state.DATA.tracks.push(inn);
+    if (inn.pts.length>=2) { state.DATA.tracks.push(inn); console.log(`[scout-routes] Ph${phNum} Inbound: ${inn.pts.length}pts`); }
   }
 }
 
@@ -625,8 +584,8 @@ Return ONLY valid JSON, no markdown:
 }`;
 
   let groqPlan=null;
-  let groqError=null;
-  let rawGroqText = ''; // Stores the raw string for debugging
+  let rawGroqText = ''; 
+  let isFallback = false;
 
   try {
     if (outEl) outEl.value='⏳ Calling Groq (/groq-query)…';
@@ -638,52 +597,45 @@ Return ONLY valid JSON, no markdown:
     rawGroqText = await res.text();
     
     if (!res.ok) {
-      groqError=`HTTP ${res.status}: ${rawGroqText.slice(0,200)}`;
-    } else {
-      let data;
-      try { data=JSON.parse(rawGroqText); } catch(pe) { groqError=`Worker response not JSON: ${rawGroqText.slice(0,200)}`; data=null; }
-      if (data) {
-        const content=data.choices?.[0]?.message?.content?.trim()||'';
-        if (!content) { groqError='Groq returned empty content'; }
-        else {
-          const clean=content.replace(/```json|```/g,'').trim();
-          const si=clean.indexOf('{'),ei=clean.lastIndexOf('}');
-          if (si===-1||ei===-1) { groqError=`No JSON object in response: ${clean.slice(0,200)}`; }
-          else {
-            try {
-              groqPlan=JSON.parse(clean.slice(si,ei+1));
-            } catch(pe) {
-              groqError=`JSON parse failed: ${pe.message} — raw: ${clean.slice(0,200)}`;
-            }
-          }
-        }
-      }
-    }
-  } catch(e) {
-    groqError=`Fetch failed: ${e.message}`;
-  }
+      throw new Error(`HTTP ${res.status}: ${rawGroqText.slice(0,200)}`);
+    } 
 
-  // Fallback — use live inventory names so the spread table shows real lures
-  if (!groqPlan) {
+    const data = JSON.parse(rawGroqText);
+    const content = data.choices?.[0]?.message?.content?.trim();
+    
+    if (!content) throw new Error('Groq returned empty content');
+    
+    const clean = content.replace(/```json|```/g,'').trim();
+    const si = clean.indexOf('{'), ei = clean.lastIndexOf('}');
+    
+    if (si === -1 || ei === -1) throw new Error(`No JSON object in response`);
+    
+    groqPlan = JSON.parse(clean.slice(si, ei+1));
+
+  } catch(e) {
+    console.error('[smart-plan] Groq Error:', e.message);
+    isFallback = true;
+    
     const phaseRecs=phaseInfo.phases.map(p=>getPhaseRecommendation(sp,lakeName,season,p.num,waterTempF));
     const r1=phaseRecs[0]||{depthMin:12,depthMax:18,speed:1.8};
     const r2=phaseRecs[1]||{depthMin:22,depthMax:28,speed:1.8};
-    const fallPort1  = depthFallbackLure(r1.depthMin + 3, inventoryNames);
+    
+    const fallPort1  = depthFallbackLure(r1.depthMin + 2, inventoryNames);
     const fallStbd1  = depthFallbackLure(r1.depthMax - 2, inventoryNames);
-    const fallPort2  = depthFallbackLure(r2.depthMin + 3, inventoryNames);
+    const fallPort2  = depthFallbackLure(r2.depthMin + 2, inventoryNames);
     const fallStbd2  = depthFallbackLure(r2.depthMax - 2, inventoryNames);
+    
     groqPlan={
       speed:r1.speed||1.8, speedRationale:'Species-intel fallback — Groq unavailable',
       band1:{depthMin:r1.depthMin,depthMax:r1.depthMax,port:fallPort1,starboard:fallStbd1,portColor:'Natural',starboardColor:'Metallic',portLeadFt:40,starboardLeadFt:50,why:'Fallback: mid-depth morning run'},
       band2:{depthMin:r2.depthMin,depthMax:r2.depthMax,port:fallPort2,starboard:fallStbd2,portColor:'Natural',starboardColor:'Natural',portLeadFt:50,starboardLeadFt:60,why:'Fallback: deep mid-morning run'},
       structureFocus:'Look for baitfish marks suspended over channel edges on the fishfinder.',
       adjustmentTip:'Shorten lead 10ft and slow to 1.5mph if no bites.',
-      scoutNotes:'Running fallback plan — Groq unavailable.',
-      fishfinderNarrative: `⚠ Groq Narrative Failed. Fallback: Look for baitfish marks suspended over drop-offs. If using ${fallPort1}, ensure your lead keeps it just above the bait school.`
+      scoutNotes:`Groq API Failed (${e.message}). Running Fallback Plan.`,
+      fishfinderNarrative: `⚠ Groq Narrative Failed. Fallback: Look for baitfish marks suspended over drop-offs.`
     };
   }
 
-  // ── Sanitize lure names ───────────────────────────────────────────────────
   const b1mid=(groqPlan.band1.depthMin+groqPlan.band1.depthMax)/2;
   const b2mid=(groqPlan.band2.depthMin+groqPlan.band2.depthMax)/2;
   groqPlan.band1.port      =sanitizeGroqLureName(groqPlan.band1.port,      b1mid-2, inventoryNames);
@@ -697,17 +649,18 @@ Return ONLY valid JSON, no markdown:
 
   // ── Build rod rows ────────────────────────────────────────────────────────
   function buildRodFromGroq(lureName,colorName,depthFt,slotIdx,phaseLabel,groqLeadFt) {
-    const reel=reelForLure(lureName);
+    const finalLure = inventoryNames.includes(lureName) ? lureName : inventoryNames[0];
+    const reel=reelForLure(finalLure);
     const rod={
       side:slotIdx===0?'Port':'Starboard', position:'Mid',
       rod:"7' M Mod-Fast Spinning (Ugly Stik Lite Pro)", reel,
-      lure:lureName, color:colorName||getLureColor(lureName,clarity.toLowerCase().includes('mud')?'muddy':clarity.toLowerCase().includes('stain')?'stained':'clear'),
+      lure:finalLure, color:colorName||getLureColor(finalLure,clarity.toLowerCase().includes('mud')?'muddy':clarity.toLowerCase().includes('stain')?'stained':'clear'),
       depth:String(depthFt), lead:'0', notes:phaseLabel,
       trailerSize:'', arigWeight:'', jigWeight:'',
     };
-    if (lureName?.toLowerCase().includes('a-rig')) {
-      const isLight=lureName.includes('Light')||lureName.includes('1.65');
-      const isMedium=lureName.includes('Medium')||lureName.includes('2.65');
+    if (finalLure?.toLowerCase().includes('a-rig')) {
+      const isLight=finalLure.includes('Light')||finalLure.includes('1.65');
+      const isMedium=finalLure.includes('Medium')||finalLure.includes('2.65');
       rod.arigWeight =isLight?'~1.65oz (5-wire light)':isMedium?'~2.65oz (5-wire medium)':'~3.5oz (5-wire heavy)';
       rod.trailerSize=isLight?'3.8" swimbait':isMedium?'4.6" swimbait':'5" swimbait';
       rod.jigWeight  =isLight?'1/8oz × 5':isMedium?'3/16oz × 5':'1/4oz × 5';
@@ -832,6 +785,10 @@ Return ONLY valid JSON, no markdown:
   const clarityIntelVal=document.getElementById('planClarityIntel')?.value||'';
   const clarityIntelDisplay=document.getElementById('planClarityIntelDisplay');
   if (clarityIntelDisplay&&clarityIntelVal) clarityIntelDisplay.textContent=clarityIntelVal;
+  const safetyDisplay=document.getElementById('planSafetyDisplay');
+  if (safetyDisplay) {
+    safetyDisplay.innerHTML=['• File a float plan with someone onshore before launching.','• Kayak: Native Watersports Slayer Propel Max 12.5 — confirm bilge plug is in.','• Motor: NK180 Pro 24V — check battery level before launch.','• PFD on at all times. Phone in dry bag.','• Check weather before launch — conditions can change rapidly on open water.',`• Return time: ${document.getElementById('planReturnTime')?.value||'set return time'}`].map(s=>`<div style="margin-bottom:4px">${s}</div>`).join('');
+  }
 
   // ── Groq Coach ────────────────────────────────────────────────────────────
   try {
@@ -854,10 +811,10 @@ Return ONLY valid JSON, no markdown:
 
   const wayptMsg=totalWaypoints>0
     ?`✓ Plan built — ${totalWaypoints} waypoints, 4 routes @ ${smartSpeedMph}mph, coach reviewing…`
-    : groqError 
-      ? `⚠ Plan built with fallback logic. Groq error: ${groqError}`
+    : isFallback 
+      ? `⚠ Plan built with fallback logic.`
       : '⚠ No waypoints — load contour data first (Contour Data tab)';
-  setStatus(wayptMsg,totalWaypoints>0 && !groqError);
+  setStatus(wayptMsg,totalWaypoints>0 && !isFallback);
 
   return {groqPlan,phaseInfo,rangeMiles};
 }
