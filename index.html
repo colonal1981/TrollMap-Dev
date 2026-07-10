@@ -730,7 +730,7 @@
                   <input type="time" id="planReturnTime" value="15:00" style="width:100%">
                 </div>
               </div>
-              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
                 <div>
                   <label>Water °F</label>
                   <input id="planWaterTemp" placeholder="87" style="width:100%">
@@ -743,11 +743,9 @@
                     <option>Muddy</option>
                   </select>
                 </div>
-                <div>
-                  <label>Speed mph</label>
-                  <input id="planSpeed" value="1.8" style="width:100%">
-                </div>
               </div>
+              <!-- Speed set by Groq — not a user input -->
+              <input type="hidden" id="planSpeed" value="1.8">
               <div>
                 <label>Target Species</label>
                 <div id="planSpeciesChecks" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px">
