@@ -42,10 +42,11 @@ import {
 } from '../data/species-intel.js';
 import { LAKE_DB } from '../data/lakes.js';
 import * as IntelV2 from '../data/species-intel-v2.js';
+import { isLiveBaitAvailable } from '../data/fishing-style-profile.js';
+import { buildFishingContext, buildGroqCoachPayload } from './smart-plan-context.js';
+import { startCoachSession } from './groq-coach.js';
 import { renderSmartPlanUI, assignRouteRods, syncSpread } from './smart-plan-ui.js';
 
-
-// ── Constants ────────────────────────────────────────────────────────────────
 const MAX_RODS_PER_PHASE = 2;
 const BATTERY_AH_DEFAULT = 100;
 const MOTOR_AMP_AVG = 6;
