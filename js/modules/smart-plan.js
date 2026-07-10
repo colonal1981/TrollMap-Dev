@@ -745,8 +745,9 @@ async function generateScoutWaypoints(phases, bands, rampLat, rampLon, rangeMile
   const STEP_FT   = 150;
 
   // Add phase number to bands
-  bands = (bands || []).map((b, i) => ({ ...b, phase: i + 1 }));
 
+  bands = (bands || []).map((b, i) => ({ ...b, phase: i + 1 }));
+  let totalAdded = 0;
   const phaseWaypoints = {};
 
   for (const band of bands) {
