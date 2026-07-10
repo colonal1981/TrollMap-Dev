@@ -631,7 +631,7 @@ Return ONLY valid JSON, no markdown:
       band2:{depthMin:r2.depthMin,depthMax:r2.depthMax,port:fallPort2,starboard:fallStbd2,portColor:'Natural',starboardColor:'Natural',portLeadFt:50,starboardLeadFt:60,why:'Fallback: deep mid-morning run'},
       structureFocus:'Look for baitfish marks suspended over channel edges on the fishfinder.',
       adjustmentTip:'Shorten lead 10ft and slow to 1.5mph if no bites.',
-      scoutNotes:`Groq API Failed (${e.message}). Running Fallback Plan.`,
+      scoutNotes:`Groq API Failed (${e.message}). Running Fallback Plan.\n\n── RAW GROQ DEBUG ──\nResponse: ${rawGroqText || 'No raw response received'}\nStack: ${e.stack}`,
       fishfinderNarrative: `⚠ Groq Narrative Failed. Fallback: Look for baitfish marks suspended over drop-offs.`
     };
   }
