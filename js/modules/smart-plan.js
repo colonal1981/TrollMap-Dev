@@ -761,6 +761,7 @@ Return ONLY valid JSON, no markdown:
     const coachSpread=Object.entries(routeRods).flatMap(([routeName,rods])=>
       rods.map(r=>({route:routeName,side:r.side,rod:r.rod||'',lure:r.lure||'',color:r.color||'',depth:r.depth||'',lead:r.lead||'',notes:(r.notes||'').slice(0,80)}))
     );
+    // ADDED: speed and speedRationale passed explicitly into planState
     const coachPayload=buildGroqCoachPayload(fishingContext,{
       phases:phaseInfo.phases,
       phaseRecs:[
@@ -768,6 +769,8 @@ Return ONLY valid JSON, no markdown:
         {depthMin:groqPlan.band2.depthMin,depthMax:groqPlan.band2.depthMax,speed:smartSpeedMph,lures:[groqPlan.band2.port,groqPlan.band2.starboard],notes:groqPlan.band2.why},
       ],
       spread:coachSpread, solunarStr,
+      speed: smartSpeedMph,                     
+      speedRationale: groqPlan.speedRationale,  
       poolLevel:document.getElementById('planPoolLevel')?.value||null,
       weather:weatherStr, rationale: "Raw JSON dump sent", rampName:rampName||'', rangeMiles,
     });

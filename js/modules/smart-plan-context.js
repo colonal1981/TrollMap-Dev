@@ -257,6 +257,7 @@ export function buildGroqCoachPayload(fishingContext, planState) {
   const {
     phases, phaseRecs, spread, solunarStr, poolLevel,
     weather, rationale, rampName, rangeMiles,
+    speed, speedRationale, // ADDED: Destructure the new speed fields
   } = planState;
 
   return {
@@ -266,6 +267,16 @@ export function buildGroqCoachPayload(fishingContext, planState) {
       rodSetup:    'Spinning rods only, 30lb 8-strand braid + 20lb fluoro leader',
       noLiveBait:  true,
       maxRods:     2,
+    },
+    
+    // ADDED: Plan Meta so the Coach knows the Planner already made a deliberate decision
+    planMeta: {
+      source: 'groq_smart_plan',
+      speed: speed || null,
+      speedRationale: speedRationale || null,
+      note: speedRationale
+        ? `Speed was set to ${speed}mph by the primary AI guide: "${speedRationale}". Do not suggest changing speed unless there is a compelling safety or species-behavior reason that overrides this.`
+        : null,
     },
 
     // Conditions
