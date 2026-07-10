@@ -14,14 +14,15 @@ import { getActiveContour } from './contour-data.js';
 import { selectBestLure, getInventory } from '../data/tackle-inventory.js';
 import { getLureColor } from '../data/lure-knowledge.js';
 import { getPhaseDepth, getStrategySpeed, normalizeSpecies, getPresentationPriority, getPhaseNotes } from '../data/species-strategies.js';
-import {
-  SPECIES_BEHAVIOR, getSeason, checkRegulations, resolveLakeKey,
-} from '../data/species-intel.js';
+import { SPECIES_BEHAVIOR, getSeason, checkRegulations, resolveLakeKey } from '../data/species-intel.js';
 import * as IntelV2 from '../data/species-intel-v2.js';
 import { isLiveBaitAvailable } from '../data/fishing-style-profile.js';
 import { buildFishingContext, buildGroqCoachPayload } from './smart-plan-context.js';
 import { startCoachSession } from './groq-coach.js';
 import { renderSmartPlanUI, syncSpread, reelForLure } from './smart-plan-ui.js';
+
+// NEW: Pull from the universal worker-backed access database
+import { getLoadedAccessIndex } from '../data/access-index.js';
 
 const BATTERY_AH_DEFAULT = 100;
 const MOTOR_AMP_AVG      = 6;
@@ -126,22 +127,6 @@ function computeSolunar(lat, lon, dateStr) {
   return { major1, major2, minor1: (major1 + 6) % 24, minor2: (major1 + 18) % 24 };
 }
 
-const LAKE_CENTERS = {
-  'Lake Wateree':    { lat: 34.37, lon: -80.73 },
-  'Lake Murray':     { lat: 34.06, lon: -81.32 },
-  'Lake Marion':     { lat: 33.55, lon: -80.30 },
-  'Lake Moultrie':   { lat: 33.28, lon: -80.05 },
-  'Lake Monticello': { lat: 34.44, lon: -81.21 },
-  'Parr Reservoir':  { lat: 34.30, lon: -81.16 },
-};
-
-function getLakeCenter(lakeName) {
-  const key = Object.keys(LAKE_CENTERS).find(k =>
-    lakeName.toLowerCase().includes(k.toLowerCase().replace('lake ', ''))
-  );
-  return key ? LAKE_CENTERS[key] : { lat: 34.37, lon: -80.73 };
-}
-
 function computeRangeMiles(speedMph) {
   const spd = speedMph || 2.0;
   const bms = window.ACTIVE_BLE_BMS;
@@ -151,10 +136,9 @@ function computeRangeMiles(speedMph) {
 }
 
 // ── Phase boundaries ──────────────────────────────────────────────────────────
-function computePhases(launchTimeStr, returnTimeStr, dateStr, lakeName) {
-  const center = getLakeCenter(lakeName);
-  const sunriseH = computeSunrise(center.lat, center.lon, dateStr);
-  const sol = computeSolunar(center.lat, center.lon, dateStr);
+function computePhases(launchTimeStr, returnTimeStr, dateStr, lat, lon) {
+  const sunriseH = computeSunrise(lat, lon, dateStr);
+  const sol = computeSolunar(lat, lon, dateStr);
 
   function parseT(t) {
     if (!t) return null;
@@ -238,22 +222,8 @@ function getPhaseRecommendation(species, lakeName, season, phaseNum, waterTempF)
 
 // ── Ramp evaluation ───────────────────────────────────────────────────────────
 async function getRampEvaluation(lakeName, species, season, phaseRecs, weatherStr, roughWeather) {
-  try {
-    const { evaluateRamps, parseWindDeg } = await import('./ryan-ramps.js');
-    const targetZones = [];
-    phaseRecs.forEach(rec => {
-      if (!rec) return;
-      if (rec.depthMin < 18) targetZones.push('shallow_flats', 'clearwater_cove');
-      else targetZones.push('channel_ledges', 'mid_channel');
-    });
-    const windDeg = parseWindDeg(weatherStr);
-    const speedMph = parseFloat(document.getElementById('planSpeed')?.value) || 2.0;
-    return evaluateRamps({
-      lakeName, currentRampKey: document.getElementById('planRamp')?.value || '',
-      targetZones: [...new Set(targetZones)], windDeg,
-      rangeMiles: computeRangeMiles(speedMph), roughWeather,
-    });
-  } catch (_) { return null; }
+  // Deprecated: Old hardcoded SC ramps are gone. UI drops pin instead.
+  return null;
 }
 
 function buildRampRationaleText(rampEval) {
@@ -516,13 +486,37 @@ export async function runSmartPlan() {
   if (outEl) outEl.value='⏳ Loading inventory + building plan…';
 
   const season    =getSeason(date);
-  const phaseInfo =computePhases(launchTime,returnTime,dateStr,lakeName);
-  const sol       =phaseInfo.solunar;
-  const rangeMiles=computeRangeMiles(speedMph);
   const clarity   =document.getElementById('planClarity')?.value||'Clear';
   const rampName  =document.getElementById('planRamp')?.value||'unknown ramp';
   const weatherStr=document.getElementById('planWeather')?.value||'';
 
+  // ── Universal DNR Ramp Lookup ───────────────────────────────────────────
+  clearExistingSmartPlanTracks();
+  window._smartPlanCommittedTracks=[];
+
+  let rampLat=null, rampLon=null;
+  const idx = getLoadedAccessIndex();
+  const lakePoints = idx.byLake.get(lakeName) || [];
+  
+  const normN = v => String(v||'').toLowerCase().replace(/[_-]+/g,' ').replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
+  const rampMatch = (a,b) => { const x=normN(a), y=normN(b); return !!x && !!y && (x===y || x.includes(y) || y.includes(x)); };
+  
+  const found = lakePoints.find(p => rampMatch(p.name, rampName)) || lakePoints[0];
+  if (found) { rampLat = found.lat; rampLon = found.lon; }
+  
+  // Fallback: Check if the UI dropdown cached it
+  if (rampLat == null) {
+    const opt = document.querySelector('#planRamp option:checked');
+    if (opt && opt.dataset.lat) { rampLat = parseFloat(opt.dataset.lat); rampLon = parseFloat(opt.dataset.lon); }
+  }
+  
+  // Ultimate Fallback: Just drop the pin somewhere in the southeast
+  if (rampLat == null) { rampLat = 34.0; rampLon = -81.0; }
+
+  // ── Phase boundaries & Astronomy ───────────────────────────────────────
+  const phaseInfo = computePhases(launchTime, returnTime, dateStr, rampLat, rampLon);
+  const sol       = phaseInfo.solunar;
+  const rangeMiles= computeRangeMiles(speedMph);
   const inventoryNames = await getTrollableNames();
 
   function hStr(h){
@@ -533,8 +527,8 @@ export async function runSmartPlan() {
   const solunarStr=`Majors: ${hStr(sol.major1)}, ${hStr(sol.major2)} · Minors: ${hStr(sol.minor1)}, ${hStr(sol.minor2)}`;
   const totalDurH=phaseInfo.phases.length?(phaseInfo.phases[phaseInfo.phases.length-1].end-phaseInfo.phases[0].start):6;
 
-  // ── Unified Groq Call ────────────────────────────────────────────────
-  const planPrompt=`You are an expert fishing guide for ${lakeName}, South Carolina.
+  // ── Unified Groq Call (State-Agnostic Prompt) ─────────────────────────
+  const planPrompt=`You are an expert fishing guide for ${lakeName}.
 Build a trolling plan for today targeting ${sp}.
 
 TRIP:
@@ -631,7 +625,7 @@ Return ONLY valid JSON, no markdown:
       band2:{depthMin:r2.depthMin,depthMax:r2.depthMax,port:fallPort2,starboard:fallStbd2,portColor:'Natural',starboardColor:'Natural',portLeadFt:50,starboardLeadFt:60,why:'Fallback: deep mid-morning run'},
       structureFocus:'Look for baitfish marks suspended over channel edges on the fishfinder.',
       adjustmentTip:'Shorten lead 10ft and slow to 1.5mph if no bites.',
-      scoutNotes:`Groq API Failed (${e.message}). Running Fallback Plan.\n\n── RAW GROQ DEBUG ──\nResponse: ${rawGroqText || 'No raw response received'}\nStack: ${e.stack}`,
+      scoutNotes:`Groq API Failed (${e.message}). Running Fallback Plan.`,
       fishfinderNarrative: `⚠ Groq Narrative Failed. Fallback: Look for baitfish marks suspended over drop-offs.`
     };
   }
@@ -676,29 +670,6 @@ Return ONLY valid JSON, no markdown:
     'Ph2 Inbound': [buildRodFromGroq(groqPlan.band2.port,groqPlan.band2.portColor,b2mid-2,0,'Ph2 In',groqPlan.band2.portLeadFt), buildRodFromGroq(groqPlan.band2.starboard,groqPlan.band2.starboardColor,b2mid+2,1,'Ph2 In',groqPlan.band2.starboardLeadFt)],
   };
 
-  // ── Clear + ramp lookup ───────────────────────────────────────────────────
-  clearExistingSmartPlanTracks();
-  window._smartPlanCommittedTracks=[];
-
-  let rampLat=null,rampLon=null;
-  const selectedRampKey=document.getElementById('planRamp')?.value||'';
-  const normN=v=>String(v||'').toLowerCase().replace(/[_-]+/g,' ').replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
-  const cleanLake=normN(String(lakeName||'').replace(/\([^)]*\)/g,' ').replace(/,.*$/,''));
-  const rampMatch=(a,b)=>{const x=normN(a),y=normN(b);return!!x&&!!y&&(x===y||x.includes(y)||y.includes(x));};
-
-  try {
-    const {WATEREE_RAMPS,MARION_RAMPS,MOULTRIE_RAMPS,MURRAY_RAMPS,MONTICELLO_RAMPS}=await import('./ryan-ramps.js');
-    const lakeRampMap={'lake wateree':WATEREE_RAMPS,'wateree':WATEREE_RAMPS,'lake marion':MARION_RAMPS,'marion':MARION_RAMPS,'lake moultrie':MOULTRIE_RAMPS,'moultrie':MOULTRIE_RAMPS,'lake murray':MURRAY_RAMPS,'murray':MURRAY_RAMPS,'lake monticello':MONTICELLO_RAMPS,'monticello':MONTICELLO_RAMPS};
-    const GUARANTEED={'clearwater cove':[34.37927,-80.72881],'clearwater cove marina':[34.37927,-80.72881],'clearwater':[34.37927,-80.72881],'colonel creek':[34.36885,-80.79724],'colonel creek landing':[34.36885,-80.79724],'taylor creek':[34.3830,-80.7374],'wateree creek':[34.4696,-80.9139]};
-    if (selectedRampKey) { for (const [k,c] of Object.entries(GUARANTEED)) { if (rampMatch(selectedRampKey,k)){rampLat=c[0];rampLon=c[1];break;} } }
-    if (rampLat==null) {
-      const rampList=lakeRampMap[cleanLake]||[];
-      const found=rampList.find(r=>rampMatch(r.key,selectedRampKey)||rampMatch(r.name,selectedRampKey))||rampList[0];
-      if (found){rampLat=found.lat;rampLon=found.lon;}
-    }
-  } catch(e){}
-  if (rampLat==null){const c=getLakeCenter(lakeName);rampLat=c.lat;rampLon=c.lon;}
-
   // ── Generate waypoints ────────────────────────────────────────────────────
   setStatus('Building contour waypoints…',true);
   const totalWaypoints=await generateScoutWaypoints(
@@ -715,65 +686,10 @@ Return ONLY valid JSON, no markdown:
   syncSpread(null,routeRods);
   window._smartPlanRouteRods=routeRods;
 
-  // ── Ramp evaluation ───────────────────────────────────────────────────────
-  const windMatch=weatherStr.match(/(\d+)\s*mph/i);
-  const windMph=windMatch?parseInt(windMatch[1]):0;
-  const phaseRecsForRamp=phaseInfo.phases.map(p=>getPhaseRecommendation(sp,lakeName,season,p.num,waterTempF));
-  const rampEval=await getRampEvaluation(lakeName,sp,season,phaseRecsForRamp,weatherStr,windMph>15);
+  const rampEval=await getRampEvaluation(lakeName,sp,season,[],weatherStr,false);
 
-  // ── Build full scout text ──────────────────────────────────────────────────
-  const b1p=routeRods['Ph1 Outbound'][0];
-  const b1s=routeRods['Ph1 Outbound'][1];
-  const b2p=routeRods['Ph2 Outbound'][0];
-  const b2s=routeRods['Ph2 Outbound'][1];
-
-  const scoutText=[
-    `════════ GROQ SMART PLAN ════════`,
-    `${sp} — ${lakeName} — ${season}`,
-    `Date: ${dateStr}  Launch: ${hStr(phaseInfo.phases[0]?.start||6)}  Return: ${hStr(phaseInfo.phases[phaseInfo.phases.length-1]?.end||12)}`,
-    `Sunrise: ${hStr(phaseInfo.sunriseH)}  Range: ${rangeMiles.toFixed(1)}mi`,
-    `Solunar: ${solunarStr}`,
-    `Water: ${waterTempF?waterTempF+'°F':'unknown'}  Clarity: ${clarity}`,
-    '',
-    `── SPEED (Groq) ──`,
-    `${smartSpeedMph}mph${groqPlan.speedRationale?' — '+groqPlan.speedRationale:''}`,
-    '',
-    `── BAND 1 — ${groqPlan.band1.depthMin}-${groqPlan.band1.depthMax}ft  [Ph1 Out + Ph1 In] ──`,
-    `Port:      ${b1p.lure}`,
-    `           Color: ${b1p.color}  Lead: ${b1p.lead}ft  Depth: ${b1p.depth}ft`,
-    `Starboard: ${b1s.lure}`,
-    `           Color: ${b1s.color}  Lead: ${b1s.lead}ft  Depth: ${b1s.depth}ft`,
-    `Why: ${groqPlan.band1.why}`,
-    '',
-    `── BAND 2 — ${groqPlan.band2.depthMin}-${groqPlan.band2.depthMax}ft  [Ph2 Out + Ph2 In] ──`,
-    `Port:      ${b2p.lure}`,
-    `           Color: ${b2p.color}  Lead: ${b2p.lead}ft  Depth: ${b2p.depth}ft`,
-    `Starboard: ${b2s.lure}`,
-    `           Color: ${b2s.color}  Lead: ${b2s.lead}ft  Depth: ${b2s.depth}ft`,
-    `Why: ${groqPlan.band2.why}`,
-    '',
-    `── FISHFINDER TARGET ──`,
-    groqPlan.structureFocus||'',
-    '',
-    `── IF NO BITES AFTER 30 MIN ──`,
-    groqPlan.adjustmentTip||'',
-    '',
-    `── GUIDE NOTES ──`,
-    groqPlan.scoutNotes||'',
-    groqPlan.fishfinderNarrative ? '\n── PER-ROUTE FISHFINDER GUIDE ──\n'+groqPlan.fishfinderNarrative : '',
-    rampEval ? buildRampRationaleText(rampEval) : '',
-    '',
-    `════════════════════════════════`,
-    `${totalWaypoints} waypoints · 4 routes committed to map`,
-    ``,
-    `════════ RAW GROQ DEBUG ════════`,
-    rawGroqText || 'No raw response received'
-  ].filter(l=>l!==null&&l!==undefined).join('\n');
-
-  if (outEl) outEl.value=scoutText;
-
-   // Dump literally EVERYTHING Groq returned into the Scout Report box
-  const fullScoutReport = `── RAW LLM OUTPUT ──\n${rawGroqText}\n\n── PARSED JSON DATA ──\n${JSON.stringify(groqPlan, null, 2)}`;
+  // Dump literally EVERYTHING Groq returned into the Scout Report box
+  const fullScoutReport = `── RAW LLM OUTPUT ──\n${rawGroqText || e?.message}\n\n── PARSED JSON DATA ──\n${JSON.stringify(groqPlan, null, 2)}`;
 
   renderSmartPlanUI({
     routeRods,
@@ -782,8 +698,6 @@ Return ONLY valid JSON, no markdown:
     phases: phaseInfo.phases,
     solunar: solunarStr
   });
-
-
 
   // ── Intel displays ────────────────────────────────────────────────────────
   const intelSection=document.getElementById('planIntelSection');
@@ -815,7 +729,7 @@ Return ONLY valid JSON, no markdown:
       ],
       spread:coachSpread, solunarStr,
       poolLevel:document.getElementById('planPoolLevel')?.value||null,
-      weather:weatherStr, rationale:scoutText.split('════════ RAW GROQ DEBUG ════════')[0], rampName:selectedRampKey||'', rangeMiles,
+      weather:weatherStr, rationale: "Raw JSON dump sent", rampName:rampName||'', rangeMiles,
     });
     startCoachSession(coachPayload);
   } catch(e){console.warn('[smart-plan] Coach session failed:',e.message);}
@@ -835,4 +749,4 @@ setTimeout(()=>{ document.getElementById('runSmartPlanBtn')?.addEventListener('c
 window.runSmartPlan=runSmartPlan;
 window.applyStoredSmartPlanDepth=applyStoredSmartPlanDepth;
 
-console.log('[smart-plan] module ready — scout waypoint mode');
+console.log('[smart-plan] module ready — universal access mode');
