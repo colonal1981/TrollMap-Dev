@@ -77,15 +77,6 @@ function depthFallbackLure(depthFt, inventoryNames) {
   return findMatch('dd3', 'dd4', 'flutter spoon', 'bucktail') || inventoryNames[0];
 }
 
-function isStaticTechnique(rawLureName) {
-  if (!rawLureName) return false;
-  const s = rawLureName.toLowerCase();
-  if (s.includes('topwater') || s.includes('buzz') || s.includes('plopper') || s.includes('spook')) return true;
-  if (s.includes('free-line') || s.includes('downline') || s.includes('live') || s.includes('cut bait')) return true;
-  if (s.includes('anchor') || s.includes('finesse') || s.includes('wacky') || s.includes('drop_shot')) return true;
-  return false;
-}
-
 // ── Geo helpers ───────────────────────────────────────────────────────────────
 function geoDistanceFt(lat1, lon1, lat2, lon2) {
   const R = 20902231, D = Math.PI / 180;
@@ -95,7 +86,7 @@ function geoDistanceFt(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-// ── Sunrise ───────────────────────────────────────────────────────────────────
+// ── Sunrise & Solunar ─────────────────────────────────────────────────────────
 function computeSunrise(lat, lon, dateStr) {
   const d = new Date(dateStr + 'T12:00:00');
   const JD = Math.floor(d / 86400000) + 2440587.5;
@@ -114,7 +105,6 @@ function computeSunrise(lat, lon, dateStr) {
   return ((t / 60) + 24) % 24 - 5;
 }
 
-// ── Solunar ───────────────────────────────────────────────────────────────────
 function computeSolunar(lat, lon, dateStr) {
   const d = new Date(dateStr + 'T00:00:00');
   const JD = Math.floor(d / 86400000) + 2440587.5;
@@ -218,20 +208,6 @@ function getPhaseRecommendation(species, lakeName, season, phaseNum, waterTempF)
   let [dMin, dMax] = typeof seasonData.depthBand === 'function'
     ? seasonData.depthBand(waterTempF) : [...seasonData.depthBand];
   return { depthMin:Math.round(dMin), depthMax:Math.round(dMax), lures:tod.lures||[], speed:tod.speed||2.0, notes:tod.notes||'' };
-}
-
-// ── Ramp evaluation ───────────────────────────────────────────────────────────
-async function getRampEvaluation(lakeName, species, season, phaseRecs, weatherStr, roughWeather) {
-  return null;
-}
-
-function buildRampRationaleText(rampEval) {
-  if (!rampEval) return '';
-  const lines = ['', '── RAMP EVALUATION ──'];
-  if (rampEval.recommended) lines.push(`Recommended: ${rampEval.recommended}`);
-  if (rampEval.reason) lines.push(`Reason: ${rampEval.reason}`);
-  if (rampEval.flags?.length) lines.push(...rampEval.flags.map(f => `⚠ ${f}`));
-  return lines.join('\n');
 }
 
 // ── Contour walk ──────────────────────────────────────────────────────────────
@@ -503,16 +479,12 @@ export async function runSmartPlan() {
   const found = lakePoints.find(p => rampMatch(p.name, rampName)) || lakePoints[0];
   if (found) { rampLat = found.lat; rampLon = found.lon; }
   
-  // Fallback: Check if the UI dropdown cached it
   if (rampLat == null) {
     const opt = document.querySelector('#planRamp option:checked');
     if (opt && opt.dataset.lat) { rampLat = parseFloat(opt.dataset.lat); rampLon = parseFloat(opt.dataset.lon); }
   }
-  
-  // Ultimate Fallback: Just drop the pin somewhere in the southeast
   if (rampLat == null) { rampLat = 34.0; rampLon = -81.0; }
 
-  // ── Phase boundaries & Astronomy ───────────────────────────────────────
   const phaseInfo = computePhases(launchTime, returnTime, dateStr, rampLat, rampLon);
   const sol       = phaseInfo.solunar;
   const rangeMiles= computeRangeMiles(speedMph);
@@ -546,31 +518,39 @@ TRIP & CONDITIONS:
 - Return: ${hStr(phaseInfo.phases[phaseInfo.phases.length-1]?.end||12)}
 - Duration: ${totalDurH.toFixed(1)} hours on water
 - Season: ${season}
+- Weather/Wind Forecast: ${weatherStr || 'Unknown'}
 - Water temp: ${waterTempF?waterTempF+'°F':'unknown'}
 - Clarity: ${clarity}
 - Solunar majors: ${hStr(sol.major1)}, ${hStr(sol.major2)}
+
+SAFETY & RAMP EVALUATION (GO / NO-GO):
+You must evaluate the weather and wind forecast against the platform (12.5ft Kayak). 
+- Sustained winds > 15mph or gusts > 20mph are NO-GO conditions for a kayak.
+- Evaluate the launch ramp (${rampName}) against the wind direction. Will it be a dangerous windward launch?
+- If conditions are unsafe, set "isGo" to false and explain why in "safetyWarning".
 
 LOCAL HISTORICAL INTEL (Your baseline):
 - Typical Speed: ${intelSpeed} mph
 - Local Patterns: ${intelNotes}
 
 YOUR ROLE:
-You are the expert guide on the water *today*. Use the historical intel as your foundation, but YOU must adapt the speed, depths, and lure colors based on today's specific water temp (${waterTempF?waterTempF+'°F':'unknown'}), clarity (${clarity}), and season (${season}). If you deviate from the typical speed or depth, explain why in your rationale.
+You are the expert guide on the water *today*. Use the historical intel as your foundation, but adapt speed, depths, and colors based on today's specific water temp, wind, clarity, and season.
 
 PLATFORM CONSTRAINTS (STRICT - DO NOT BREAK THESE):
 - Kayak (Native Watersports Slayer Propel Max 12.5, pedal drive + electric motor)
 - 2 rods max in water simultaneously (port + starboard)
 - No live bait, no downriggers, no planer boards, spinning rods only
-- Depth controlled by lead length only
 
 AVAILABLE TACKLE — use ONLY these exact names, no others:
 ${inventoryNames.join(', ')}
 
 ROUTE STRUCTURE: Pick two depth bands. Band 1 = shallower morning run. Band 2 = deeper mid-morning run.
-Each band trolled outbound and back (4 routes total).
 
 Return ONLY valid JSON, no markdown:
 {
+  "isGo": <boolean>,
+  "safetyWarning": "<If isGo is false, explain the hazard. If true, write 'Conditions look safe for a kayak.'>",
+  "rampEvaluation": "<One sentence evaluating the wind exposure for the selected boat ramp>",
   "speed": <mph>,
   "speedRationale": "<one sentence why, especially if deviating from typical speed>",
   "band1": {
@@ -636,6 +616,9 @@ Return ONLY valid JSON, no markdown:
     const fallStbd2  = depthFallbackLure(r2.depthMax - 2, inventoryNames);
     
     groqPlan={
+      isGo: true,
+      safetyWarning: `Groq API Failed (${e.message}). Proceed with caution.`,
+      rampEvaluation: "Could not evaluate wind exposure due to API failure.",
       speed:r1.speed||1.8, speedRationale:'Species-intel fallback — Groq unavailable',
       band1:{depthMin:r1.depthMin,depthMax:r1.depthMax,port:fallPort1,starboard:fallStbd1,portColor:'Natural',starboardColor:'Metallic',portLeadFt:40,starboardLeadFt:50,why:'Fallback: mid-depth morning run'},
       band2:{depthMin:r2.depthMin,depthMax:r2.depthMax,port:fallPort2,starboard:fallStbd2,portColor:'Natural',starboardColor:'Natural',portLeadFt:50,starboardLeadFt:60,why:'Fallback: deep mid-morning run'},
@@ -644,6 +627,21 @@ Return ONLY valid JSON, no markdown:
       scoutNotes:`Groq API Failed (${e.message}). Running Fallback Plan.`,
       fishfinderNarrative: `⚠ Groq Narrative Failed. Fallback: Look for baitfish marks suspended over drop-offs.`
     };
+  }
+
+  // ── Safety Abort ────────────────────────────────────────────────────────
+  if (groqPlan.isGo === false) {
+    setStatus(`🚨 NO-GO: Unsafe Conditions for Kayak`, false);
+    const abortMessage = `🚨 ABORT TRIP 🚨\n\nAI Guide Evaluation:\n${groqPlan.safetyWarning}\n\nRamp Evaluation:\n${groqPlan.rampEvaluation}\n\nDo not launch the kayak in these conditions.`;
+    
+    renderSmartPlanUI({
+      routeRods: {},
+      scoutReport: `${abortMessage}\n\n── RAW JSON OUTPUT ──\n${JSON.stringify(groqPlan, null, 2)}`,
+      speedMph: 0,
+      phases: [],
+      solunar: solunarStr
+    });
+    return;
   }
 
   const b1mid=(groqPlan.band1.depthMin+groqPlan.band1.depthMax)/2;
@@ -702,14 +700,41 @@ Return ONLY valid JSON, no markdown:
   syncSpread(null,routeRods);
   window._smartPlanRouteRods=routeRods;
 
-  const rampEval=await getRampEvaluation(lakeName,sp,season,[],weatherStr,false);
+  // Build the Hybrid Report: Beautiful readable text on top, raw JSON on bottom
+  const b1p=routeRods['Ph1 Outbound'][0], b1s=routeRods['Ph1 Outbound'][1];
+  const b2p=routeRods['Ph2 Outbound'][0], b2s=routeRods['Ph2 Outbound'][1];
 
-  // Dump literally EVERYTHING Groq returned into the Scout Report box
-  const fullScoutReport = `── RAW LLM OUTPUT ──\n${rawGroqText || e?.message}\n\n── PARSED JSON DATA ──\n${JSON.stringify(groqPlan, null, 2)}`;
+  const scoutText=[
+    `════════ TACTICAL OVERVIEW ════════`,
+    groqPlan.scoutNotes||'',
+    '',
+    `════════ SAFETY & RAMP ════════`,
+    groqPlan.safetyWarning,
+    groqPlan.rampEvaluation,
+    '',
+    `════════ BAND 1 — ${groqPlan.band1.depthMin}-${groqPlan.band1.depthMax}ft ════════`,
+    `Why: ${groqPlan.band1.why}`,
+    `Port: ${b1p.lure} (${b1p.color}) — Lead: ${b1p.lead}ft`,
+    `Stbd: ${b1s.lure} (${b1s.color}) — Lead: ${b1s.lead}ft`,
+    '',
+    `════════ BAND 2 — ${groqPlan.band2.depthMin}-${groqPlan.band2.depthMax}ft ════════`,
+    `Why: ${groqPlan.band2.why}`,
+    `Port: ${b2p.lure} (${b2p.color}) — Lead: ${b2p.lead}ft`,
+    `Stbd: ${b2s.lure} (${b2s.color}) — Lead: ${b2s.lead}ft`,
+    '',
+    `════════ FISHFINDER GUIDE ════════`,
+    `Target: ${groqPlan.structureFocus||''}`,
+    groqPlan.fishfinderNarrative ? '\n'+groqPlan.fishfinderNarrative : '',
+    '',
+    `💡 Tip: ${groqPlan.adjustmentTip||''}`,
+    '',
+    `════════ RAW JSON DEBUG ════════`,
+    rawGroqText || JSON.stringify(groqPlan, null, 2)
+  ].filter(l=>l!==null&&l!==undefined).join('\n');
 
   renderSmartPlanUI({
     routeRods,
-    scoutReport: fullScoutReport,
+    scoutReport: scoutText,
     speedMph: smartSpeedMph,
     phases: phaseInfo.phases,
     solunar: solunarStr
@@ -736,7 +761,6 @@ Return ONLY valid JSON, no markdown:
     const coachSpread=Object.entries(routeRods).flatMap(([routeName,rods])=>
       rods.map(r=>({route:routeName,side:r.side,rod:r.rod||'',lure:r.lure||'',color:r.color||'',depth:r.depth||'',lead:r.lead||'',notes:(r.notes||'').slice(0,80)}))
     );
-    // Notice we just reuse the fishingContext we built earlier!
     const coachPayload=buildGroqCoachPayload(fishingContext,{
       phases:phaseInfo.phases,
       phaseRecs:[
@@ -765,4 +789,4 @@ setTimeout(()=>{ document.getElementById('runSmartPlanBtn')?.addEventListener('c
 window.runSmartPlan=runSmartPlan;
 window.applyStoredSmartPlanDepth=applyStoredSmartPlanDepth;
 
-console.log('[smart-plan] module ready — universal access + guided creativity mode');
+console.log('[smart-plan] module ready — universal access + dynamic safety');

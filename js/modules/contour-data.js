@@ -15,9 +15,6 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
 
 // ── Display name → R2 key mapping ────────────────────────────────────────────
-// Maps LAKE_DB display names to the R2 key (split_output2 filename stem).
-// Chain entries map both member lakes to the same combined file.
-
 const LAKE_NAME_TO_R2_KEY = {
   // SC Lakes
   'Lake Marion, SC':               'lake_marion',
@@ -98,7 +95,6 @@ const LAKE_NAME_TO_R2_KEY = {
   'Savannah River / Savannah, GA': 'sc_ga_coastal',
 };
 
-// Human-readable chain descriptions shown in status panel
 const CHAIN_DESCRIPTIONS = {
   'lake_thurmond_russell':      'Clarks Hill / Thurmond + Russell Chain',
   'lake_greenwood_secession':   'Lake Greenwood + Secession Chain',
@@ -112,7 +108,7 @@ const CHAIN_DESCRIPTIONS = {
 // ── IndexedDB cache ───────────────────────────────────────────────────────────
 const IDB_NAME    = 'trollmap_contours';
 const IDB_STORE   = 'geojson';
-const CACHE_TTL   = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_TTL   = 24 * 60 * 60 * 1000;
 
 function openDB() {
   return new Promise((res, rej) => {
@@ -143,11 +139,9 @@ async function idbSet(key, value) {
   } catch (_) {}
 }
 
-// ── Internal state ────────────────────────────────────────────────────────────
 let changeListeners = [];
-let _loadingKey     = null; // debounce concurrent loads
+let _loadingKey     = null;
 
-// ── Public API ────────────────────────────────────────────────────────────────
 export function getActiveContour() {
   return state.ACTIVE_CONTOUR || { smart: null, raw: null };
 }
@@ -161,7 +155,6 @@ function notifyChange() {
   window._smartRouteGeoJSON = state.ACTIVE_CONTOUR?.smart || state.ACTIVE_CONTOUR?.raw || null;
 }
 
-// ── Fetch from R2 via worker ──────────────────────────────────────────────────
 async function fetchFromR2(r2Key) {
   const url = `${CF_WORKER_URL}/chartpacks/${r2Key}/contours.geojson?v=${Date.now()}`;
   const r = await fetch(url, { cache: 'no-store' });
@@ -169,16 +162,14 @@ async function fetchFromR2(r2Key) {
   return r.json();
 }
 
-// ── Load contours for a given R2 key (with IDB cache) ────────────────────────
 export async function loadContourByR2Key(r2Key) {
   if (!r2Key) return;
-  if (_loadingKey === r2Key) return; // already in flight
+  if (_loadingKey === r2Key) return;
   _loadingKey = r2Key;
 
   updateStatusPanel('loading', r2Key);
 
   try {
-    // Check IDB cache first
     const cached = await idbGet(r2Key);
     if (cached && cached.ts && (Date.now() - cached.ts) < CACHE_TTL && cached.value?.features?.length) {
       console.log(`[contour-data] cache hit: ${r2Key} (${cached.value.features.length} features)`);
@@ -191,12 +182,10 @@ export async function loadContourByR2Key(r2Key) {
       return;
     }
 
-    // Fetch from R2
     console.log(`[contour-data] fetching from R2: ${r2Key}`);
     const gj = await fetchFromR2(r2Key);
     if (!gj?.features?.length) throw new Error('empty response');
 
-    // Save to IDB
     await idbSet(r2Key, gj);
 
     state.ACTIVE_CONTOUR     = { smart: gj, raw: null };
@@ -212,15 +201,35 @@ export async function loadContourByR2Key(r2Key) {
   _loadingKey = null;
 }
 
-// ── Load contours by lake display name (called from plan-builder on change) ──
+// ── FIX: fuzzy name lookup so access-index name variations still resolve ──────
+function resolveR2Key(displayName) {
+  // 1. Exact match
+  if (LAKE_NAME_TO_R2_KEY[displayName]) return LAKE_NAME_TO_R2_KEY[displayName];
+
+  // 2. Strip state suffix ", SC" / ", NC/GA" etc
+  const stripped = displayName.replace(/,\s*[A-Z]{2}(\/[A-Z]{2})?$/, '').trim();
+  if (LAKE_NAME_TO_R2_KEY[stripped]) return LAKE_NAME_TO_R2_KEY[stripped];
+
+  // 3. Case-insensitive partial match on both sides (handles extra words like "(Duke Energy)")
+  const dl = stripped.toLowerCase();
+  const found = Object.entries(LAKE_NAME_TO_R2_KEY).find(([k]) => {
+    const kl = k.toLowerCase().replace(/,\s*[a-z]{2}(\/[a-z]{2})?$/, '').trim();
+    return dl.includes(kl) || kl.includes(dl);
+  });
+  if (found) return found[1];
+
+  return null;
+}
+
 export async function loadContourForLake(displayName) {
   if (!displayName || displayName.startsWith('river:')) return;
-  const r2Key = LAKE_NAME_TO_R2_KEY[displayName];
+  const r2Key = resolveR2Key(displayName);
   if (!r2Key) {
     console.warn(`[contour-data] no R2 key for lake: "${displayName}"`);
     updateStatusPanel('none', displayName);
     return;
   }
+  console.log(`[contour-data] "${displayName}" → ${r2Key}`);
   await loadContourByR2Key(r2Key);
 }
 
@@ -271,14 +280,11 @@ export function renderContourLayer(showSmart = true, showRaw = false) {
     }).addTo(state.CONTOUR_LAYER);
   }
 
-  // Push depth area polygons behind contour lines so they don't overlap visually.
-  // supplemental-layers.js owns _depthAreaLayer — call its exported function if available.
   if (typeof window.bringDepthAreasToBack === 'function') {
     window.bringDepthAreasToBack();
   }
 }
 
-// ── Status panel helpers ──────────────────────────────────────────────────────
 function updateStatusPanel(status, key, count = 0, errMsg = '') {
   const el = document.getElementById('cdActiveInfo');
   if (!el) return;
@@ -303,7 +309,6 @@ function updateStatusPanel(status, key, count = 0, errMsg = '') {
   }
 }
 
-// ── Panel UI (simplified — status + local file loader only) ──────────────────
 export function buildContourDataPanel(container) {
   container.innerHTML = `
     <div style="margin-bottom:10px">
@@ -398,7 +403,6 @@ export function buildContourDataPanel(container) {
     }
   });
 
-  // Reflect current state on open
   const c = state.ACTIVE_CONTOUR;
   const count = c?.smart?.features?.length || c?.raw?.features?.length || 0;
   if (count && state.ACTIVE_CONTOUR_KEY) {
@@ -406,7 +410,6 @@ export function buildContourDataPanel(container) {
   }
 }
 
-// Subscribe to keep panel in sync
 onContourChange(() => {
   const c     = state.ACTIVE_CONTOUR;
   const count = c?.smart?.features?.length || c?.raw?.features?.length || 0;
@@ -420,12 +423,8 @@ onContourChange(() => {
   }
 });
 
-// ── Hook into toolbar lake dropdown via lake-ramp-select.js ──────────────────
-// loadContourForLake is called from lake-ramp-select.js onLakeChange()
-// so no listener needed here — just expose the function on window as backup.
 window.loadContourForLake = loadContourForLake;
 
-// ── Backward-compat alias for capture-panel.js ───────────────────────────────
 export async function loadContourDataset(key) {
   return loadContourByR2Key(key);
 }
