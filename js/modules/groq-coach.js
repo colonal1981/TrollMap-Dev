@@ -251,16 +251,99 @@ function appendMessage(role, text) {
   const welcome = document.getElementById('coachWelcome');
   if (welcome) welcome.style.display = 'none';
 
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'display:flex;flex-direction:column;' +
+    (role === 'user' ? 'align-items:flex-end;' : 'align-items:flex-start;');
+
   const div = document.createElement('div');
   div.style.cssText = role === 'user'
-    ? 'align-self:flex-end;background:var(--accent2);color:#062d00;border-radius:8px 8px 2px 8px;padding:8px 10px;font-size:12px;max-width:85%;'
+    ? 'background:var(--accent2);color:#062d00;border-radius:8px 8px 2px 8px;padding:8px 10px;font-size:12px;max-width:85%;'
     : role === 'error'
-    ? 'align-self:flex-start;background:var(--panel2);border:1px solid var(--warn);color:var(--warn);border-radius:8px 8px 8px 2px;padding:8px 10px;font-size:11px;max-width:90%;'
-    : 'align-self:flex-start;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px 8px 8px 2px;padding:8px 10px;font-size:12px;max-width:90%;line-height:1.5;';
+    ? 'background:var(--panel2);border:1px solid var(--warn);color:var(--warn);border-radius:8px 8px 8px 2px;padding:8px 10px;font-size:11px;max-width:90%;'
+    : 'background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px 8px 8px 2px;padding:8px 10px;font-size:12px;max-width:90%;line-height:1.5;';
 
   div.textContent = text;
-  el.appendChild(div);
+  wrapper.appendChild(div);
+
+  // Add "Apply this" button after assistant messages that might contain plan changes
+  if (role === 'assistant') {
+    const applyBtn = document.createElement('button');
+    applyBtn.textContent = '⚡ Apply this to plan';
+    applyBtn.style.cssText = 'margin-top:4px;font-size:10px;padding:3px 8px;' +
+      'border:1px solid var(--accent2);border-radius:4px;background:transparent;' +
+      'color:var(--accent2);cursor:pointer;align-self:flex-start;';
+    applyBtn.addEventListener('click', () => extractAndApplyFromChat(text, applyBtn));
+    wrapper.appendChild(applyBtn);
+  }
+
+  el.appendChild(wrapper);
   el.scrollTop = el.scrollHeight;
+}
+
+// ── Extract plan changes from chat response and apply them ────────────────────
+async function extractAndApplyFromChat(assistantText, btn) {
+  if (_busy) return;
+  _busy = true;
+  btn.textContent = '⏳ Extracting…';
+  btn.disabled = true;
+
+  try {
+    const extractPrompt = `The fishing guide said this:
+
+"${assistantText}"
+
+Extract any concrete plan changes from that response as a JSON array.
+Each change: {"field": "trolling_speed|lead_length|lure|lure_color|target_depth|inline_weight", "phase": 1|2|null, "rod": "Port"|"Starboard"|"Both"|null, "current_value": "what it is now or null", "recommended_value": "the new value"}
+
+If no concrete changes are suggested, return [].
+Return ONLY the JSON array, nothing else.`;
+
+    const res = await fetch(\`\${CF_WORKER_URL}/groq-query\`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: [{ role: 'user', content: extractPrompt }],
+        max_tokens: 300,
+        temperature: 0.1,
+      }),
+    });
+
+    const data = await res.json();
+    const raw = data.choices?.[0]?.message?.content?.trim() || '[]';
+    const clean = raw.replace(/\`\`\`json|\`\`\`/g, '').trim();
+
+    let changes = [];
+    try { changes = JSON.parse(clean); } catch (_) { changes = []; }
+
+    if (!Array.isArray(changes) || changes.length === 0) {
+      btn.textContent = '— Nothing concrete to apply';
+      btn.disabled = true;
+      setTimeout(() => { btn.textContent = '⚡ Apply this to plan'; btn.disabled = false; }, 2000);
+      _busy = false;
+      return;
+    }
+
+    // Apply each extracted change
+    let applied = [];
+    for (const s of changes) {
+      if (!s.field || s.recommended_value == null) continue;
+      applyCoachSuggestion(s);
+      applied.push(\`\${s.field.replace(/_/g,' ')} → \${s.recommended_value}\`);
+      _suggestionHistory.push({ ...s, status: 'accepted' });
+    }
+
+    btn.textContent = \`✓ Applied: \${applied.join(', ')}\`;
+    btn.disabled = true;
+    appendMessage('assistant', \`Applied to plan: \${applied.join(', ')}\`);
+
+  } catch (e) {
+    btn.textContent = '⚠ Extract failed';
+    btn.disabled = true;
+    setTimeout(() => { btn.textContent = '⚡ Apply this to plan'; btn.disabled = false; }, 2000);
+  }
+
+  _busy = false;
 }
 
 let _thinkingCounter = 0;
@@ -349,7 +432,7 @@ function renderSuggestionCard(container, s) {
     </div>
     ${reasonsHtml}${warningsHtml}
     <div style="display:flex;gap:6px;margin-top:8px">
-      <button id="suggAccept" style="flex:1;padding:6px;font-size:11px;font-weight:700;border:1px solid var(--good);border-radius:5px;background:var(--good);color:#000;cursor:pointer">✓ Apply</button>
+      <button id="suggAccept" style="flex:1;padding:6px;font-size:11px;font-weight:700;border:1px solid var(--accent2);border-radius:5px;background:var(--accent2);color:var(--panel);cursor:pointer">✓ Apply</button>
       <button id="suggSkip"   style="flex:1;padding:6px;font-size:11px;border:1px solid var(--line);border-radius:5px;background:var(--panel2);color:var(--text);cursor:pointer">✗ Skip</button>
       <button id="suggDismiss" style="padding:6px 8px;font-size:11px;border:none;background:none;color:var(--muted);cursor:pointer">✕</button>
     </div>
