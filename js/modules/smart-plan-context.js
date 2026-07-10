@@ -364,11 +364,25 @@ export function buildGroqCoachPayload(fishingContext, planState) {
       'casting_stop_suggestion',
     ],
 
-    // What the coach must never touch
+  // What the coach must never touch
     forbiddenModifications: [
       'species', 'lake', 'launch_ramp', 'weather',
       'safety_limits', 'battery_limits', 'gear_not_owned',
       'live_bait', 'conventional_reels',
     ],
+
+    // Full rod spread — route, side, lure, color, depth, lead for every rod slot
+    // This is what the chat coach reads to answer specific rig questions
+    spread: spread || [],
+
+    // Speed decision metadata — prevents coach from second-guessing deliberate speed picks
+    planMeta: {
+      source:         'groq_smart_plan',
+      speed:          speed || null,
+      speedRationale: speedRationale || null,
+      note: speedRationale
+        ? `Speed was set to ${speed}mph by the primary AI guide: "${speedRationale}". Do not suggest changing speed unless there is a compelling safety or species-behavior reason that directly overrides this.`
+        : null,
+    },
   };
 }
