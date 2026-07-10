@@ -465,26 +465,10 @@ async function buildPhaseRods(phaseRec, phaseNum, sides, fishingContext) {
 }
 
 // ── Scout waypoint generation ─────────────────────────────────────────────────
-// Walks stitched contour fragments at the right depth, sampling a point every
-// STEP_FT feet. This produces a dense chain of points that follows the actual
-// depth edge geometry — no direction math, no spine reversal problems, no
-// tile boundary artifacts. Short enough steps mean connecting them in order
-// never crosses land.
-//
-// Strategy:
-//   1. Collect all contour features in the depth band within range of ramp
-//   2. Stitch same-depth fragments end-to-end (reuse route-builder logic inline)
-//   3. Pick the longest stitched chain closest to the ramp
-//   4. Walk it sampling a point every STEP_FT feet
-//   5. Trim to the phase fishing budget (time × speed)
-
-// Simple fragment stitcher — chains [lon,lat] fragments whose endpoints are
-// within TOL_FT of each other. Same logic as route-builder stitchFragments
-// but self-contained so smart-plan doesn't need to import route-builder.
 function stitchContourFragments(fragments, TOL_FT = 50) {
   const segs = fragments
     .filter(c => c.length >= 2)
-    .map(c => c.map(([lo, la]) => [la, lo])); // [lon,lat] → [lat,lon]
+    .map(c => c.map(([lo, la]) => [la, lo]));
   const used = new Array(segs.length).fill(false);
   const chains = [];
 
@@ -494,7 +478,6 @@ function stitchContourFragments(fragments, TOL_FT = 50) {
     return Math.sqrt(dlat * dlat + dlon * dlon);
   }
 
-  // Turn angle between two bearings — reject joins that would double back
   function bearing(a, b) {
     return Math.atan2((b[1] - a[1]) * Math.cos(a[0] * Math.PI / 180), b[0] - a[0]) * 180 / Math.PI;
   }
@@ -525,7 +508,7 @@ function stitchContourFragments(fragments, TOL_FT = 50) {
           { d: dist2(head, b), op: 'HB', turn: angleDiff(headBrng, bearing(b, c[Math.max(0, c.length-2)])) },
         ];
         for (const cand of cands) {
-          if (cand.d > TOL_FT || cand.turn > 90) continue; // allow up to 90° — contours bend
+          if (cand.d > TOL_FT || cand.turn > 90) continue;
           const score = cand.d + cand.turn;
           if (score < bestScore) { bestScore = score; bestJ = j; bestOp = cand.op; }
         }
@@ -538,7 +521,7 @@ function stitchContourFragments(fragments, TOL_FT = 50) {
         else chain = c.concat(chain);
       }
     }
-    chains.push(chain); // [lat,lon][]
+    chains.push(chain);
   }
   return chains;
 }
@@ -548,13 +531,11 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
   const gj = contour?.smart || contour?.raw;
   if (!gj?.features?.length) return [];
 
-  // Filter to depth band and within range
   const inRange = gj.features.filter(f => {
     const d = f.properties?.depth_ft;
     if (d == null || d < depthMin || d > depthMax) return false;
     const coords = f.geometry?.coordinates;
     if (!coords?.length) return false;
-    // Quick bbox check — any vertex within range
     return coords.some(([lo, la]) => geoDistanceFt(refLat, refLon, la, lo) <= maxDistFt);
   });
 
@@ -563,7 +544,6 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
     return [];
   }
 
-  // Group by depth and stitch each depth's fragments
   const byDepth = new Map();
   for (const f of inRange) {
     const d = f.properties.depth_ft;
@@ -571,19 +551,16 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
     byDepth.get(d).push(f.geometry.coordinates);
   }
 
-  // Build all stitched chains across all depths, compute length + proximity
   const allChains = [];
   for (const [depth, frags] of byDepth) {
     const chains = stitchContourFragments(frags);
     for (const chain of chains) {
       if (chain.length < 2) continue;
-      // Arc length
       let len = 0;
       for (let i = 1; i < chain.length; i++) {
         len += geoDistanceFt(chain[i-1][0], chain[i-1][1], chain[i][0], chain[i][1]);
       }
-      if (len < stepFt * 2) continue; // too short to be useful
-      // Closest point on chain to ramp
+      if (len < stepFt * 2) continue;
       let closest = Infinity;
       const step = Math.max(1, Math.floor(chain.length / 40));
       for (let i = 0; i < chain.length; i += step) {
@@ -597,8 +574,6 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
 
   if (!allChains.length) return [];
 
-  // Score: prefer long chains close to ref point.
-  // For Phase 3 (endTarget set): also prefer chains whose far end is near the ramp.
   allChains.sort((a, b) => {
     const eA = endTarget ? geoDistanceFt(endTarget.endLat, endTarget.endLon, a.chain[a.chain.length-1][0], a.chain[a.chain.length-1][1]) * 0.5 : 0;
     const eB = endTarget ? geoDistanceFt(endTarget.endLat, endTarget.endLon, b.chain[b.chain.length-1][0], b.chain[b.chain.length-1][1]) * 0.5 : 0;
@@ -607,12 +582,6 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
   const best = allChains[0];
   console.log(`[scout] best chain: depth=${best.depth}ft len=${Math.round(best.len)}ft closest=${Math.round(best.closest)}ft`);
 
-
-
-  // For homeward phases: start from the point on the chain nearest the RAMP
-  // so we walk from home-side outward (budget-limited), naturally ending
-  // closer to the ramp than where we started.
-  // For outbound phases: start from the point nearest curLat/curLon (ref point).
   const anchorLat = endTarget ? endTarget.endLat : refLat;
   const anchorLon = endTarget ? endTarget.endLon : refLon;
   let nearIdx = 0, nearDist = Infinity;
@@ -621,7 +590,6 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
     if (d < nearDist) { nearDist = d; nearIdx = i; }
   }
 
-  // Walk forward from nearIdx, sampling every stepFt, up to budgetFt total
   const fwdPts = [];
   let traveled = 0, carry = 0;
   fwdPts.push({ lat: best.chain[nearIdx][0], lon: best.chain[nearIdx][1], depth: best.depth });
@@ -632,7 +600,6 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
     if (carry >= stepFt) { fwdPts.push({ lat: curr[0], lon: curr[1], depth: best.depth }); carry = 0; }
   }
 
-  // Also walk backward from nearIdx
   const revPts = [];
   traveled = 0; carry = 0;
   revPts.push({ lat: best.chain[nearIdx][0], lon: best.chain[nearIdx][1], depth: best.depth });
@@ -643,8 +610,6 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
     if (carry >= stepFt) { revPts.push({ lat: curr[0], lon: curr[1], depth: best.depth }); carry = 0; }
   }
 
-  // Pick the longer walk, unless endTarget is set (Phase 3) — then pick the walk
-  // whose last point is closer to the ramp so the phase naturally heads home.
   let waypoints;
   if (endTarget && fwdPts.length >= 2 && revPts.length >= 2) {
     const fwdEndDist = geoDistanceFt(endTarget.endLat, endTarget.endLon, fwdPts[fwdPts.length-1].lat, fwdPts[fwdPts.length-1].lon);
@@ -658,72 +623,6 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
   return waypoints;
 }
 
-// Hard depth bands per phase — non-overlapping so each phase finds different water.
-// All phases start from where the previous one ended (curLat/curLon).
-// Phases 3+4: if walk ends farther from ramp than it started, reverse it.
-const SCOUT_DEPTH_BANDS = [
-  { depthMin: 15, depthMax: 20 }, // Phase 1: shallow, outbound
-  { depthMin: 22, depthMax: 26 }, // Phase 2: mid-ledge, outbound
-  { depthMin: 28, depthMax: 32 }, // Phase 3: deep channel
-  { depthMin: 18, depthMax: 23 }, // Phase 4: mid-shallow, home
-];
-
-// ── Groq-driven waypoint generation ─────────────────────────────────────────
-// Ask Groq to place fishing waypoints along a route it knows from local knowledge.
-// Validate every coordinate against lake boundary + contour depth data before
-// dropping it on the map. If Groq hallucinates coordinates outside the lake they
-// get thrown out silently. Worst case = zero waypoints, same as before.
-
-function pointInPolygonSimple(lat, lon, polygon) {
-  // polygon = [[lat,lon], ...] GeoJSON outer ring
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const [yi, xi] = polygon[i];
-    const [yj, xj] = polygon[j];
-    if (((yi > lat) !== (yj > lat)) && (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi)) {
-      inside = !inside;
-    }
-  }
-  return inside;
-}
-
-function isCoordInLake(lat, lon) {
-  // Check against loaded lake boundary if available
-  const boundary = window.LAKE_BOUNDARY_GEOJSON;
-  if (!boundary?.features?.length) return true; // no boundary loaded — trust it
-  for (const f of boundary.features) {
-    const g = f.geometry;
-    if (!g) continue;
-    const rings = g.type === 'Polygon' ? [g.coordinates[0]]
-      : g.type === 'MultiPolygon' ? g.coordinates.map(p => p[0]) : [];
-    for (const ring of rings) {
-      const ll = ring.map(([lo, la]) => [la, lo]);
-      if (pointInPolygonSimple(lat, lon, ll)) return true;
-    }
-  }
-  return false;
-}
-
-function getDepthAtCoord(lat, lon) {
-  // Find the nearest contour feature and return its depth
-  const contour = getActiveContour();
-  const gj = contour?.smart || contour?.raw;
-  if (!gj?.features?.length) return null;
-  let bestDepth = null, bestDist = Infinity;
-  const step = Math.max(1, Math.floor(gj.features.length / 200));
-  for (let fi = 0; fi < gj.features.length; fi += step) {
-    const f = gj.features[fi];
-    const coords = f.geometry?.coordinates;
-    const depth = f.properties?.depth_ft;
-    if (!coords || depth == null) continue;
-    const mid = coords[Math.floor(coords.length / 2)];
-    const d = geoDistanceFt(lat, lon, mid[1], mid[0]);
-    if (d < bestDist) { bestDist = d; bestDepth = depth; }
-  }
-  return bestDist < 2000 ? bestDepth : null; // only trust within 2000ft
-}
-
-// bands = [{depthMin, depthMax}, {depthMin, depthMax}] — from Groq
 async function generateScoutWaypoints(phases, bands, rampLat, rampLon, rangeMiles, speedMph = 2.0, phaseInfo) {
   if (!state.DATA) state.DATA = {};
   if (!Array.isArray(state.DATA.waypoints)) state.DATA.waypoints = [];
@@ -743,8 +642,6 @@ async function generateScoutWaypoints(phases, bands, rampLat, rampLon, rangeMile
   const maxDistFt = Math.min(rangeMiles, 4.0) * 5280;
   const budgetFt  = Math.min(totalDurH / 2 * speedMph * 5280 * 0.8, 3.0 * 5280);
   const STEP_FT   = 150;
-
-  // Add phase number to bands
 
   bands = (bands || []).map((b, i) => ({ ...b, phase: i + 1 }));
   let totalAdded = 0;
@@ -779,23 +676,18 @@ async function generateScoutWaypoints(phases, bands, rampLat, rampLon, rangeMile
     console.log(`[scout] Ph${band.phase} (${band.depthMin}-${band.depthMax}ft): ${pts.length} waypoints, budget ${Math.round(budgetFt)}ft`);
   }
 
-  // Build out-and-back tracks from the waypoints
   buildScoutRoutes(phaseWaypoints);
 
   renderAll();
   return totalAdded;
 }
 
-// ── Build out-and-back routes from scout waypoints ────────────────────────────
-// For each phase: apply sine pattern along waypoints outbound, then reversed inbound.
-// Swing amplitude is gentle — enough to cover the structure edge without crossing land.
-
 function buildScoutRoutes(phaseWaypoints) {
   if (!state.DATA.tracks) state.DATA.tracks = [];
   state.DATA.tracks = state.DATA.tracks.filter(t => !t.scoutRoute);
 
-  const amplitude = 20;  // ft swing perpendicular to travel
-  const wave      = 500; // ft per sine cycle
+  const amplitude = 20;
+  const wave      = 500;
 
   function makeTrack(waypoints, name) {
     const out = [];
@@ -907,7 +799,6 @@ For each route tell me: (1) what structure/depth signature to find on the fishfi
     const data = await res.json();
     return data.choices?.[0]?.message?.content?.trim() || null;
   } catch (e) {
-
     console.warn('[scout] Groq scout report failed:', e.message);
     return null;
   }
@@ -950,8 +841,7 @@ function readPlanInputs() {
   const returnTime  = document.getElementById('planReturnTime')?.value || '12:00 PM';
   const waterTempStr= document.getElementById('planWaterTemp')?.value || '';
   const waterTempF  = waterTempStr ? parseFloat(waterTempStr) : null;
-  // Speed is determined by Smart Plan from species-intel, not a user input
-  const speedMph    = 2.0; // overridden after phaseRecs computed
+  const speedMph    = 2.0;
   const species     = [...document.querySelectorAll('#planSpeciesChecks input:checked')].map(c => c.value);
   return { lakeName, dateStr, launchTime, returnTime, waterTempF, speedMph, species };
 }
@@ -1015,9 +905,6 @@ export async function runSmartPlan() {
 
   const solunarStr = `Majors: ${hToStr(sol.major1)}, ${hToStr(sol.major2)} · Minors: ${hToStr(sol.minor1)}, ${hToStr(sol.minor2)}`;
 
-  // ── Groq Call 1: Fishing Plan ─────────────────────────────────────────────
-  // Groq is the guide. Give him conditions + full inventory.
-  // He picks two depth bands and two lures per band.
   const totalDurH = phaseInfo.phases.length
     ? phaseInfo.phases[phaseInfo.phases.length-1].end - phaseInfo.phases[0].start
     : 6;
@@ -1100,7 +987,7 @@ Return ONLY valid JSON, no explanation:
     console.warn('[smart-plan] Groq plan call failed:', e.message);
   }
 
-  // Fallback if Groq fails — use species-intel
+  // Fallback if Groq fails
   if (!groqPlan) {
     console.warn('[smart-plan] Using species-intel fallback for depth bands');
     const phaseRecs = phaseInfo.phases.map(p => getPhaseRecommendation(sp, lakeName, season, p.num, waterTempF));
@@ -1120,7 +1007,6 @@ Return ONLY valid JSON, no explanation:
     };
   }
 
-  // Write speed back to hidden field
   const smartSpeedMph = groqPlan.speed || 1.8;
   const speedEl = document.getElementById('planSpeed');
   if (speedEl) speedEl.value = String(smartSpeedMph);
@@ -1227,7 +1113,6 @@ Return ONLY valid JSON, no explanation:
     rampLat, rampLon, rangeMiles, smartSpeedMph, phaseInfo
   );
 
-  // ── Store phase routes for route builder depth pre-fill ───────────────────
   window._smartPlanPhaseRoutes = [
     { phase: 1, phaseName: 'Shallow', depthMin: groqPlan.band1.depthMin, depthMax: groqPlan.band1.depthMax, speed: smartSpeedMph, window: 'Band 1' },
     { phase: 2, phaseName: 'Deep',    depthMin: groqPlan.band2.depthMin, depthMax: groqPlan.band2.depthMax, speed: smartSpeedMph, window: 'Band 2' },
@@ -1235,7 +1120,7 @@ Return ONLY valid JSON, no explanation:
 
   applyStoredSmartPlanDepth();
 
-  // ── Render Smart Plan UI ──────────────────────────────────────────────────
+  // ── Sync rod spread to state.SPREAD and render ────────────────────────────
   syncSpread(null, routeRods);
   window._smartPlanRouteRods = routeRods;
 
@@ -1281,18 +1166,38 @@ Return ONLY valid JSON, no explanation:
   }
 
   // ── Groq Coach — quality check ────────────────────────────────────────────
+  // FIX: pass routeRods directly into the coach payload so the coach sees
+  // actual rod/lure/depth/lead assignments for all 4 routes, not just the
+  // generic state.SPREAD which may not reflect per-route assignments yet.
   try {
     const fishingContext = await buildFishingContext({
       species: sp, lakeName, season, clarity, waterTempF, speedMph: smartSpeedMph, dateStr, launchTime,
       rampLat, rampLon,
     });
+
+    // Flatten routeRods into a spread array the coach can audit
+    const coachSpread = Object.entries(routeRods).flatMap(([routeName, rods]) =>
+      rods.map(r => ({
+        route:    routeName,
+        side:     r.side,
+        rod:      r.rod || '',
+        lure:     r.lure || '',
+        color:    r.color || '',
+        depth:    r.depth || '',
+        lead:     r.lead || '',
+        notes:    (r.notes || '').slice(0, 80),
+      }))
+    );
+
     const coachPayload = buildGroqCoachPayload(fishingContext, {
       phases: phaseInfo.phases,
       phaseRecs: [
         { depthMin: groqPlan.band1.depthMin, depthMax: groqPlan.band1.depthMax, speed: smartSpeedMph, lures: [groqPlan.band1.port, groqPlan.band1.starboard], notes: groqPlan.band1.why },
         { depthMin: groqPlan.band2.depthMin, depthMax: groqPlan.band2.depthMax, speed: smartSpeedMph, lures: [groqPlan.band2.port, groqPlan.band2.starboard], notes: groqPlan.band2.why },
       ],
-      spread: state.SPREAD,
+      // FIX: use the flattened coachSpread (all 8 rod slots across 4 routes)
+      // instead of state.SPREAD, which may be stale or aggregated differently
+      spread: coachSpread,
       solunarStr,
       poolLevel: document.getElementById('planPoolLevel')?.value || null,
       weather:   document.getElementById('planWeather')?.value || '',
