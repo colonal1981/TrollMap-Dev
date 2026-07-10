@@ -772,7 +772,23 @@ Return ONLY valid JSON, no markdown:
 
   if (outEl) outEl.value=scoutText;
 
-  renderSmartPlanUI({routeRods,scoutReport:groqPlan.scoutNotes||null,speedMph:smartSpeedMph,phases:phaseInfo.phases,solunar:solunarStr});
+  // Combine all of Groq's textual advice into one comprehensive report for the UI box
+  const fullScoutReport = [
+    groqPlan.scoutNotes ? `📝 OVERVIEW:\n${groqPlan.scoutNotes}` : '',
+    groqPlan.structureFocus ? `🔎 FISHFINDER TARGET:\n${groqPlan.structureFocus}` : '',
+    groqPlan.fishfinderNarrative ? `📺 SONAR GUIDE:\n${groqPlan.fishfinderNarrative}` : '',
+    groqPlan.adjustmentTip ? `💡 ADJUSTMENT TIP:\n${groqPlan.adjustmentTip}` : '',
+    groqPlan.speedRationale ? `🚤 SPEED RATIONALE:\n${groqPlan.speedRationale}` : ''
+  ].filter(Boolean).join('\n\n');
+
+  renderSmartPlanUI({
+    routeRods,
+    scoutReport: fullScoutReport || null,
+    speedMph: smartSpeedMph,
+    phases: phaseInfo.phases,
+    solunar: solunarStr
+  });
+
 
   // ── Intel displays ────────────────────────────────────────────────────────
   const intelSection=document.getElementById('planIntelSection');
