@@ -2,8 +2,7 @@
  * smart-plan.js — TrollMap Smart Plan Orchestrator
  *
  * Scout waypoint mode: Groq picks depth bands + lures, contour data places
- * waypoints, 4 out-and-back routes are built. Secondary Groq call generates
- * per-route fishfinder guidance. Coach reviews the full plan.
+ * waypoints, 4 out-and-back routes are built. Coach reviews the full plan.
  */
 
 import { state, CF_WORKER_URL } from '../core/state.js';
@@ -30,7 +29,6 @@ const PHASE_1_END_OFFSET_MIN = 60;
 const PHASE_2_END_OFFSET_MIN = 210;
 
 // ── Dynamic inventory name list (loaded from tackle-inventory.js at runtime) ──
-// Cached after first load so subsequent calls don't re-hit IDB.
 let _cachedTrollableNames = null;
 
 async function getTrollableNames() {
@@ -41,24 +39,19 @@ async function getTrollableNames() {
 }
 
 // ── Groq lure name sanitizer ──────────────────────────────────────────────────
-// Fuzzy-match Groq's returned name against the live inventory list.
-// Falls back to depth-based default if nothing matches.
 function sanitizeGroqLureName(raw, targetDepthFt, inventoryNames) {
   if (!raw) return depthFallbackLure(targetDepthFt, inventoryNames);
   const r = String(raw).toLowerCase().trim();
 
-  // 1. Exact match (case-insensitive)
   const exact = inventoryNames.find(n => n.toLowerCase() === r);
   if (exact) return exact;
 
-  // 2. Substring match — inventory name contains Groq's word, or vice versa
   const substr = inventoryNames.find(n => {
     const nl = n.toLowerCase();
     return nl.includes(r) || r.includes(nl);
   });
   if (substr) return substr;
 
-  // 3. Keyword fuzzy — find best matching inventory name by shared keywords
   const rWords = r.replace(/[^a-z0-9"]/g, ' ').split(/\s+/).filter(w => w.length > 2);
   let bestName = null, bestScore = 0;
   for (const name of inventoryNames) {
@@ -68,13 +61,11 @@ function sanitizeGroqLureName(raw, targetDepthFt, inventoryNames) {
   }
   if (bestScore >= 1) return bestName;
 
-  // 4. Category fallback by depth
   return depthFallbackLure(targetDepthFt, inventoryNames);
 }
 
 function depthFallbackLure(depthFt, inventoryNames) {
   const d = parseFloat(depthFt) || 15;
-  // Pick a reasonable trollable lure by depth from whatever's actually in inventory
   const find = (...keywords) => inventoryNames.find(n => keywords.some(k => n.toLowerCase().includes(k)));
   if (d < 8)  return find('squarebill', 'sr crankbait', 'lipless', 'spinnerbait') || inventoryNames[0];
   if (d < 14) return find('mr crankbait', 'dd1', 'a-rig light', 'swimbait 3.8') || inventoryNames[0];
@@ -474,9 +465,14 @@ async function generateScoutWaypoints(phases, bands, rampLat, rampLon, rangeMile
 function buildScoutRoutes(phaseWaypoints) {
   if (!state.DATA.tracks) state.DATA.tracks=[];
   state.DATA.tracks=state.DATA.tracks.filter(t=>!t.scoutRoute);
-  const amplitude=20, wave=500;
+  
+  // The base amplitude for the S-curves
+  const amplitude = 20, wave = 500;
+  // The offset for the Inbound (return) pass. 
+  // An offset of 30 pushes the return track 30 feet wider/deeper than the outbound track.
+  const inboundOffset = 30; 
 
-  function makeTrack(waypoints, name) {
+  function makeTrack(waypoints, name, offset = 0) {
     const out=[]; let totalDist=0;
     for (let i=0; i<waypoints.length-1; i++) {
       const p1=waypoints[i], p2=waypoints[i+1];
@@ -487,9 +483,12 @@ function buildScoutRoutes(phaseWaypoints) {
       const brng=Math.atan2(dlon*cosLat,dlat), perp=brng+Math.PI/2;
       const pLat=Math.cos(perp)/364000, pLon=Math.sin(perp)/(364000*cosLat);
       const steps=Math.max(2,Math.ceil(segFt/50));
+      
       for (let s=(i===0?0:1); s<=steps; s++) {
         const t=s/steps, lat=p1[0]+dlat*t, lon=p1[1]+dlon*t;
-        const d=totalDist+segFt*t, swing=amplitude*Math.sin(2*Math.PI*d/wave);
+        const d=totalDist+segFt*t;
+        // The sine swing plus the static offset
+        const swing = (amplitude * Math.sin(2*Math.PI*d/wave)) + offset;
         out.push([lat+swing*pLat,lon+swing*pLon]);
       }
       totalDist+=segFt;
@@ -499,69 +498,14 @@ function buildScoutRoutes(phaseWaypoints) {
 
   for (const [phNum,pts] of Object.entries(phaseWaypoints).sort()) {
     if (pts.length<2) continue;
-    const out=makeTrack(pts,`Ph${phNum} Outbound`);
+    // Outbound track (offset = 0)
+    const out = makeTrack(pts, `Ph${phNum} Outbound`, 0);
     if (out.pts.length>=2) { state.DATA.tracks.push(out); console.log(`[scout-routes] Ph${phNum} Outbound: ${out.pts.length}pts`); }
-    const inn=makeTrack([...pts].reverse(),`Ph${phNum} Inbound`);
+    
+    // Inbound track (offset = inboundOffset, creating a wider return pass)
+    const inn = makeTrack([...pts].reverse(), `Ph${phNum} Inbound`, inboundOffset);
     if (inn.pts.length>=2) { state.DATA.tracks.push(inn); console.log(`[scout-routes] Ph${phNum} Inbound: ${inn.pts.length}pts`); }
   }
-}
-
-// ── Secondary Groq call: per-route fishfinder narrative ───────────────────────
-async function buildGroqScoutReport(species, lakeName, season, phaseInfo, routeRods, waterTempF, clarity, rampName) {
-  const tracks = state.DATA?.tracks || [];
-  function trackDist(name) {
-    const t=tracks.find(tr=>tr.name===name);
-    if (!t?.pts?.length) return null;
-    let ft=0;
-    for (let i=1; i<t.pts.length; i++) {
-      const a=t.pts[i-1], b=t.pts[i];
-      const aLat=Array.isArray(a)?a[0]:a.lat, aLon=Array.isArray(a)?a[1]:a.lon;
-      const bLat=Array.isArray(b)?b[0]:b.lat, bLon=Array.isArray(b)?b[1]:b.lon;
-      const dLat=(bLat-aLat)*364000, dLon=(bLon-aLon)*364000*Math.cos(aLat*Math.PI/180);
-      ft+=Math.sqrt(dLat*dLat+dLon*dLon);
-    }
-    return (ft/5280).toFixed(1);
-  }
-
-  const routeDefs=[
-    {key:'Ph1 Outbound',label:'Route 1 — Outbound shallow'},
-    {key:'Ph1 Inbound', label:'Route 2 — Inbound shallow return'},
-    {key:'Ph2 Outbound',label:'Route 3 — Outbound deeper'},
-    {key:'Ph2 Inbound', label:'Route 4 — Inbound deeper return'},
-  ];
-
-  const sol=phaseInfo.solunar;
-  function hStr(h) {
-    const hh=Math.floor(((h%24)+24)%24), mm=String(Math.round((h%1)*60)).padStart(2,'0');
-    return `${hh%12||12}:${mm} ${hh<12?'AM':'PM'}`;
-  }
-
-  const routeLines=routeDefs.map(def=>{
-    const rods=routeRods[def.key]||[];
-    const dist=trackDist(def.key);
-    const rodDesc=rods.map(r=>`${r.side}: ${r.lure} (${r.color}, ${r.depth}ft, ${r.lead}ft lead)`).join(' | ');
-    return `${def.label}${dist?' — '+dist+'mi':''}: ${rodDesc||'no rods assigned'}`;
-  }).join('\n');
-
-  const prompt=`You are an expert fishing guide for ${lakeName}, SC. Scout report for ${species} — ${season}.
-
-Conditions: water ${waterTempF?waterTempF+'°F':'unknown'}, ${clarity||'unknown'} clarity, sunrise ${hStr(phaseInfo.sunriseH)}, solunar majors ${hStr(sol.major1)} & ${hStr(sol.major2)}.
-Ramp: ${rampName||'unknown'}. Kayak + electric motor. 2 rods max. No live bait, depth by lead length only.
-
-Routes and rigs for today:
-${routeLines}
-
-For each route: (1) what depth/baitfish signature to find on the fishfinder, (2) how to work the specific lures rigged — speed tweak, trigger, (3) one adjustment if no bites in 20 min. Only mention lures actually rigged. Under 350 words, plain language.`;
-
-  try {
-    const res=await fetch(`${CF_WORKER_URL}/groq-query`,{
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'llama-3.3-70b-versatile',messages:[{role:'user',content:prompt}],max_tokens:600,temperature:0.4}),
-    });
-    if (!res.ok) return null;
-    const data=await res.json();
-    return data.choices?.[0]?.message?.content?.trim()||null;
-  } catch(e) { console.warn('[scout] Groq scout report failed:',e.message); return null; }
 }
 
 function isSmartPlanTrack(t) {
@@ -641,7 +585,7 @@ export async function runSmartPlan() {
   const solunarStr=`Majors: ${hStr(sol.major1)}, ${hStr(sol.major2)} · Minors: ${hStr(sol.minor1)}, ${hStr(sol.minor2)}`;
   const totalDurH=phaseInfo.phases.length?(phaseInfo.phases[phaseInfo.phases.length-1].end-phaseInfo.phases[0].start):6;
 
-  // ── Groq Call 1: Plan JSON ────────────────────────────────────────────────
+  // ── Unified Groq Call (Plan JSON + Scout Narrative) ────────────────────────
   const planPrompt=`You are an expert fishing guide for ${lakeName}, South Carolina.
 Build a trolling plan for today targeting ${sp}.
 
@@ -687,7 +631,8 @@ Return ONLY valid JSON, no markdown:
   },
   "structureFocus": "<fishfinder signature to find>",
   "adjustmentTip": "<if no bites after 30min, do this>",
-  "scoutNotes": "<2-3 sentence tactical overview>"
+  "scoutNotes": "<2-3 sentence tactical overview>",
+  "fishfinderNarrative": "<A short 150-word narrative telling the angler what to look for on the sonar screen during these routes, and how to work the specific lures rigged.>"
 }`;
 
   let groqPlan=null;
@@ -696,7 +641,7 @@ Return ONLY valid JSON, no markdown:
     if (outEl) outEl.value='⏳ Calling Groq (/groq-query)…';
     const res=await fetch(`${CF_WORKER_URL}/groq-query`,{
       method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'llama-3.3-70b-versatile',messages:[{role:'user',content:planPrompt}],max_tokens:800,temperature:0.3}),
+      body:JSON.stringify({model:'llama-3.3-70b-versatile',messages:[{role:'user',content:planPrompt}],max_tokens:1000,temperature:0.3}),
     });
     const rawText=await res.text();
     console.log('[smart-plan] Groq raw response HTTP',res.status,':', rawText.slice(0,500));
@@ -706,7 +651,6 @@ Return ONLY valid JSON, no markdown:
       let data;
       try { data=JSON.parse(rawText); } catch(pe) { groqError=`Worker response not JSON: ${rawText.slice(0,200)}`; data=null; }
       if (data) {
-        // /groq-query returns the raw Groq API response object
         const content=data.choices?.[0]?.message?.content?.trim()||'';
         console.log('[smart-plan] Groq content:', content.slice(0,400));
         if (!content) { groqError='Groq returned empty content'; }
@@ -752,6 +696,7 @@ Return ONLY valid JSON, no markdown:
       structureFocus:'Look for baitfish marks suspended over channel edges on the fishfinder.',
       adjustmentTip:'Shorten lead 10ft and slow to 1.5mph if no bites.',
       scoutNotes:'Running fallback plan — Groq unavailable.',
+      fishfinderNarrative: `⚠ Groq Narrative Failed. Fallback: Look for baitfish marks suspended over drop-offs. If using ${fallPort1}, ensure your lead keeps it just above the bait school. Use electronics to follow bait migration out of the creeks as the sun rises.`
     };
   }
 
@@ -789,10 +734,10 @@ Return ONLY valid JSON, no markdown:
   }
 
   const routeRods={
-    'Ph1 Outbound':[buildRodFromGroq(groqPlan.band1.port,groqPlan.band1.portColor,b1mid-2,0,'Ph1 Outbound',groqPlan.band1.portLeadFt),buildRodFromGroq(groqPlan.band1.starboard,groqPlan.band1.starboardColor,b1mid+2,1,'Ph1 Outbound',groqPlan.band1.starboardLeadFt)],
-    'Ph1 Inbound': [buildRodFromGroq(groqPlan.band1.port,groqPlan.band1.portColor,b1mid-2,0,'Ph1 Inbound',groqPlan.band1.portLeadFt), buildRodFromGroq(groqPlan.band1.starboard,groqPlan.band1.starboardColor,b1mid+2,1,'Ph1 Inbound',groqPlan.band1.starboardLeadFt)],
-    'Ph2 Outbound':[buildRodFromGroq(groqPlan.band2.port,groqPlan.band2.portColor,b2mid-2,0,'Ph2 Outbound',groqPlan.band2.portLeadFt),buildRodFromGroq(groqPlan.band2.starboard,groqPlan.band2.starboardColor,b2mid+2,1,'Ph2 Outbound',groqPlan.band2.starboardLeadFt)],
-    'Ph2 Inbound': [buildRodFromGroq(groqPlan.band2.port,groqPlan.band2.portColor,b2mid-2,0,'Ph2 Inbound',groqPlan.band2.portLeadFt), buildRodFromGroq(groqPlan.band2.starboard,groqPlan.band2.starboardColor,b2mid+2,1,'Ph2 Inbound',groqPlan.band2.starboardLeadFt)],
+    'Ph1 Outbound':[buildRodFromGroq(groqPlan.band1.port,groqPlan.band1.portColor,b1mid-2,0,'Ph1 Out',groqPlan.band1.portLeadFt),buildRodFromGroq(groqPlan.band1.starboard,groqPlan.band1.starboardColor,b1mid+2,1,'Ph1 Out',groqPlan.band1.starboardLeadFt)],
+    'Ph1 Inbound': [buildRodFromGroq(groqPlan.band1.port,groqPlan.band1.portColor,b1mid-2,0,'Ph1 In',groqPlan.band1.portLeadFt), buildRodFromGroq(groqPlan.band1.starboard,groqPlan.band1.starboardColor,b1mid+2,1,'Ph1 In',groqPlan.band1.starboardLeadFt)],
+    'Ph2 Outbound':[buildRodFromGroq(groqPlan.band2.port,groqPlan.band2.portColor,b2mid-2,0,'Ph2 Out',groqPlan.band2.portLeadFt),buildRodFromGroq(groqPlan.band2.starboard,groqPlan.band2.starboardColor,b2mid+2,1,'Ph2 Out',groqPlan.band2.starboardLeadFt)],
+    'Ph2 Inbound': [buildRodFromGroq(groqPlan.band2.port,groqPlan.band2.portColor,b2mid-2,0,'Ph2 In',groqPlan.band2.portLeadFt), buildRodFromGroq(groqPlan.band2.starboard,groqPlan.band2.starboardColor,b2mid+2,1,'Ph2 In',groqPlan.band2.starboardLeadFt)],
   };
 
   // ── Clear + ramp lookup ───────────────────────────────────────────────────
@@ -842,10 +787,6 @@ Return ONLY valid JSON, no markdown:
   const phaseRecsForRamp=phaseInfo.phases.map(p=>getPhaseRecommendation(sp,lakeName,season,p.num,waterTempF));
   const rampEval=await getRampEvaluation(lakeName,sp,season,phaseRecsForRamp,weatherStr,windMph>15);
 
-  // ── Groq Call 2: Per-route fishfinder narrative ───────────────────────────
-  setStatus('Getting fishfinder guidance…',true);
-  const groqScoutReport=await buildGroqScoutReport(sp,lakeName,season,phaseInfo,routeRods,waterTempF,clarity,selectedRampKey||rampName);
-
   // ── Build full scout text — everything Groq returned, visible in UI ───────
   const b1p=routeRods['Ph1 Outbound'][0];
   const b1s=routeRods['Ph1 Outbound'][1];
@@ -885,7 +826,7 @@ Return ONLY valid JSON, no markdown:
     '',
     `── GUIDE NOTES ──`,
     groqPlan.scoutNotes||'',
-    groqScoutReport ? '\n── PER-ROUTE FISHFINDER GUIDE ──\n'+groqScoutReport : '',
+    groqPlan.fishfinderNarrative ? '\n── PER-ROUTE FISHFINDER GUIDE ──\n'+groqPlan.fishfinderNarrative : '',
     rampEval ? buildRampRationaleText(rampEval) : '',
     '',
     `════════════════════════════════`,
