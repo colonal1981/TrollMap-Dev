@@ -19,7 +19,7 @@ import { LURE_PRESETS, LURE_DIVE_DEPTHS, autoCalculateLead } from './spread-buil
 import { getLureColor } from '../data/lure-knowledge.js';
 
 // ── Reel assignment rule ──────────────────────────────────────────────────────
-function reelForLure(lureName) {
+export function reelForLure(lureName) {
   if (!lureName) return 'Spinning / 30lb 8-strand braid + 20lb fluoro leader';
   const l = lureName.toLowerCase();
   if (l.includes('a-rig') || l.includes('umbrella') ||
@@ -247,15 +247,23 @@ function resolveLureName(raw) {
   return null;
 }
 
-function fallbackLure(depth, exclude) {
+function fallbackLure(depth, exclude, slotIdx = 0) {
+  // Vary rod 1 vs rod 2 deliberately — don't put same lure family on both
+  // Rod 1 (slotIdx 0): A-rig / umbrella family
+  // Rod 2 (slotIdx 1): crankbait or spoon — different presentation
   const opts = depth < 10
-    ? ['Lipless Crankbait 1/2oz', 'Spinnerbait 1/2oz', 'Flicker Minnow 11 – Crankbait']
+    ? [['Lipless Crankbait 1/2oz', 'Spinnerbait 1/2oz'],
+       ['Flicker Minnow 11 – Crankbait', 'Lipless Crankbait 1/2oz']]
     : depth < 18
-    ? ['A-Rig Light (~1.65oz) – 3.8" Swimbait', 'Rapala DT-10 – Crankbait (shallow/medium, ~10ft)', 'Flutter Spoon 2oz']
+    ? [['A-Rig Light (~1.65oz) – 3.8" Swimbait', 'A-Rig Medium (~2.65oz) – 4.6" Swimbait'],
+       ['Rapala DT-10 – Crankbait (shallow/medium, ~10ft)', 'Flutter Spoon 2oz']]
     : depth < 26
-    ? ['A-Rig Medium (~2.65oz) – 4.6" Swimbait', 'Rapala DT-14 – Crankbait (medium/deep, ~14ft)', 'Flutter Spoon 2oz']
-    : ['A-Rig Heavy (~3.5oz) – 5" Swimbait', 'Deep Hit Stick – Crankbait', 'Flutter Spoon 3oz'];
-  return opts.find(l => l !== exclude) || opts[0];
+    ? [['A-Rig Medium (~2.65oz) – 4.6" Swimbait', 'A-Rig Heavy (~3.5oz) – 5" Swimbait'],
+       ['Rapala DT-14 – Crankbait (medium/deep, ~14ft)', 'Flutter Spoon 2oz']]
+    : [['A-Rig Heavy (~3.5oz) – 5" Swimbait', 'Bucktail Jig 1oz'],
+       ['Deep Hit Stick – Crankbait', 'Flutter Spoon 3oz']];
+  const slotOpts = opts[Math.min(slotIdx, opts.length - 1)];
+  return slotOpts.find(l => l !== exclude) || slotOpts[0];
 }
 
 function buildOneRod(targetDepth, rec, timeOfDay, clarityKey, speedMph, slotIdx, excludeLure) {
@@ -269,10 +277,10 @@ function buildOneRod(targetDepth, rec, timeOfDay, clarityKey, speedMph, slotIdx,
       return targetDepth >= dive.minDive - 3 && targetDepth <= dive.maxDive + 3;
     });
 
-  let lureName = candidates[slotIdx] || candidates[0] || fallbackLure(targetDepth, excludeLure);
+  let lureName = candidates[slotIdx] || candidates[0] || fallbackLure(targetDepth, excludeLure, slotIdx);
 
-  // Dawn + shallow -> topwater on port rod
-  if (slotIdx === 0 && timeOfDay === 'dawn' && targetDepth < 15) {
+  // Dawn + shallow -> topwater on port rod (depth band starts under 22ft)
+  if (slotIdx === 0 && timeOfDay === 'dawn' && targetDepth < 22) {
     const topwaterMap = {
       clear:   'Zara Spook – Topwater',
       stained: 'Whopper Plopper 110 – Topwater',
