@@ -629,7 +629,7 @@ SPECIES INTEL — ${sp} in ${season} on ${lakeName} (use this as your primary de
 - Colors: ${(sNode.preferredColors || []).join(', ') || 'match forage'}
 ${notes ? `- Notes: ${notes}` : ''}
 
-Your two depth bands MUST fall within or near this depth range. Do not invent depths that contradict this intel.`;
+Use this as your baseline. Today's conditions — water temp, clarity, wind, and solunar — should drive your final depth and speed decisions within this general range. You may adjust outside it if conditions strongly support doing so.`;
     }
   }
 
@@ -668,7 +668,7 @@ ${speciesIntelBlock}
 ${catchBlock}
 
 YOUR ROLE:
-You are the expert guide on the water *today*. The SPECIES INTEL above is your ground truth for depth, speed, and structure. Adapt color and lure selection based on today's water temp, clarity, and conditions — but never override the species depth and speed baseline without a compelling reason stated in your rationale.
+You are the expert guide on the water *today*. The SPECIES INTEL above is your starting point — use it to understand where this species generally holds in this season, then make your own call based on today's actual conditions. A good guide doesn't just read a data sheet; he reads the water.
 
 PLATFORM CONSTRAINTS (STRICT - DO NOT BREAK THESE):
 - Kayak (Native Watersports Slayer Propel Max 12.5, pedal drive + electric motor)
