@@ -209,6 +209,235 @@ function renderProfile(profile) {
   renderPackage(profile, currentPackageFiles, currentVersions);
 }
 
+function formatHumanReadableSection(key, data) {
+  if (!data || (typeof data === 'object' && !Object.keys(data).length)) {
+    return `<div class="muted" style="font-style:italic">No data researched for this section yet.</div>`;
+  }
+  if (typeof data === 'string') {
+    return `<div style="white-space:pre-wrap">${esc(data)}</div>`;
+  }
+
+  // 1. Identity
+  if (key === 'identity') {
+    const d = data.identity || data;
+    return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:6px;font-size:12px;">
+      <div><b>Waterbody:</b> ${esc(d.lakeName||'—')}</div>
+      <div><b>State:</b> ${esc(d.state||'—')}</div>
+      <div><b>River System:</b> ${esc(d.riverSystem||'—')}</div>
+      <div><b>Reservoir Owner:</b> ${esc(d.reservoirOwner||'—')}</div>
+      <div><b>Surface Area:</b> ${d.surfaceAreaAcres ? `${d.surfaceAreaAcres.toLocaleString()} acres` : '—'}</div>
+      <div><b>Max Depth:</b> ${d.maxDepthFt ? `${d.maxDepthFt} ft` : '—'}</div>
+      <div><b>Average Depth:</b> ${d.averageDepthFt ? `${d.averageDepthFt} ft` : '—'}</div>
+      <div><b>Normal Pool:</b> ${d.normalPoolFt ? `${d.normalPoolFt} ft` : '—'}</div>
+      <div><b>Dam Name:</b> ${esc(d.damName||'—')}</div>
+      <div><b>Year Impounded:</b> ${d.yearImpounded ? d.yearImpounded : '—'}</div>
+      <div style="grid-column:1/-1"><b>Type & Archetype:</b> ${esc(d.type||'—')} • <i>${esc(d.archetype||'—')}</i></div>
+      ${d.aliases && d.aliases.length ? `<div style="grid-column:1/-1"><b>Aliases:</b> ${esc(d.aliases.join(', '))}</div>` : ''}
+    </div>`;
+  }
+
+  // 2. Limnology
+  if (key === 'limnology') {
+    const d = data.limnology || data;
+    const cl = d.waterClarity || {};
+    const th = d.thermocline || {};
+    const ox = d.oxygen || {};
+    return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;font-size:12px;">
+      <div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+        <b>🌊 Clarity & Color</b><br>
+        Typical: <b>${esc(cl.typical||'—')}</b> ${cl.secchiFt ? `(${cl.secchiFt} ft Secchi)` : ''}<br>
+        Color/Turbidity: ${esc(cl.color||d.waterColor||'—')}<br>
+        ${cl.note ? `<span class="muted" style="font-size:11px">${esc(cl.note)}</span>` : ''}
+      </div>
+      <div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+        <b>🌡 Summer Thermocline</b><br>
+        Depth: <b>${Array.isArray(th.summerDepthFt) ? `${th.summerDepthFt.join(' - ')} ft` : (th.summerDepthFt||'—')}</b> (${esc(th.strength||'—')} strength)<br>
+        Winter Mix: ${esc(th.winterMix||'—')}<br>
+        ${th.note ? `<span class="muted" style="font-size:11px">${esc(th.note)}</span>` : ''}
+      </div>
+      <div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+        <b>🫧 Dissolved Oxygen Floor</b><br>
+        Depletion Depth: <b>${ox.depletionDepthFt ? `${ox.depletionDepthFt} ft` : '—'}</b><br>
+        Anoxic Below: <b style="color:#ff7043">${ox.anoxicBelowFt ? `${ox.anoxicBelowFt} ft (fish floor)` : '—'}</b><br>
+        ${ox.note ? `<span class="muted" style="font-size:11px">${esc(ox.note)}</span>` : ''}
+      </div>
+      <div style="grid-column:1/-1;background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+        <b>Flow & Chemistry:</b> ${esc(d.flowCharacteristics||'—')} • Trophic: <b>${esc(d.trophicStatus||'—')}</b> • pH: ${d.phTypical||'—'} • Hardness: ${esc(d.bottomHardness||'—')}<br>
+        Seasonal Drawdown: ${d.seasonalDrawdownFt !== undefined && d.seasonalDrawdownFt !== null ? `${d.seasonalDrawdownFt} ft` : '—'} • Mixing: ${esc(d.mixingType||'—')}
+      </div>
+    </div>`;
+  }
+
+  // 3. Fisheries Biology / Forage
+  if (key === 'biology' || key === 'forage') {
+    const d = data.biology || data.forage || data;
+    const pf = Array.isArray(d.primaryForage) ? d.primaryForage.map(f=>typeof f==='object'?`<b>${esc(f.species||'')}</b> (${esc(f.abundance||'')}) ${f.notes?`— <i>${esc(f.notes)}</i>`:''}` : esc(f)).join('<br>') : (typeof d.primaryForage==='object'?JSON.stringify(d.primaryForage):esc(d.primaryForage||'—'));
+    const sf = Array.isArray(d.secondaryForage) ? d.secondaryForage.map(f=>typeof f==='object'?`<b>${esc(f.species||'')}</b> (${esc(f.abundance||'')}) ${f.notes?`— <i>${esc(f.notes)}</i>`:''}` : esc(f)).join('<br>') : esc(d.secondaryForage||'—');
+    const preds = Array.isArray(d.predatorSpecies) ? d.predatorSpecies.join(', ') : esc(d.predatorSpecies||'—');
+    const abund = typeof d.speciesAbundance === 'object' ? Object.entries(d.speciesAbundance||{}).map(([s,a])=>`<b>${esc(s)}:</b> ${esc(a)}`).join(' • ') : '';
+    const stk = Array.isArray(d.knownStockings) ? d.knownStockings.map(s=>typeof s==='object'?`${esc(s.species||'')} (${esc(s.agency||'')}, ${s.year||''})` : esc(s)).join('; ') : '—';
+    const inv = Array.isArray(d.invasiveSpecies) ? d.invasiveSpecies.join(', ') : esc(d.invasiveSpecies||'None reported');
+    const cal = d.forageCalendar || {};
+    return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;font-size:12px;">
+      <div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+        <b style="color:#bdffa0">🐟 Primary Forage Base</b><br>${pf||'—'}
+      </div>
+      <div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+        <b>🦞 Secondary Forage</b><br>${sf||'—'}
+      </div>
+      <div style="grid-column:1/-1;background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+        <b>🎣 Target Predators:</b> ${preds}<br>
+        ${abund ? `<div style="margin-top:4px">${abund}</div>` : ''}
+      </div>
+      <div style="grid-column:1/-1;background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+        <b>🧭 Seasonal Baitfish Movement Patterns:</b><br>${esc(d.baitfishMovement||'—')}
+      </div>
+      ${Object.keys(cal).length ? `<div style="grid-column:1/-1;background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+        <b>🗓 Forage Seasonal Calendar:</b><br>
+        ${['spring','summer','fall','winter'].map(s => cal[s] ? `<div><span style="display:inline-block;width:60px;text-transform:capitalize;color:var(--accent2)">${s}:</span> ${esc(cal[s])}</div>` : '').join('')}
+      </div>` : ''}
+      <div style="grid-column:1/-1;font-size:11px;color:var(--muted)">
+        Stockings: ${stk} • Invasive/Aquatic Nuisance: ${inv}
+      </div>
+    </div>`;
+  }
+
+  // 4. Habitat
+  if (key === 'habitat') {
+    const d = data.habitat || data;
+    const bc = typeof d.bottomComposition === 'object' ? Object.entries(d.bottomComposition||{}).map(([k,v])=>`<b>${esc(k)}:</b> ${esc(v)}`).join(' • ') : esc(d.bottomComposition||'—');
+    const cov = Array.isArray(d.cover) ? d.cover.join(', ') : esc(d.cover||'—');
+    const veg = typeof d.vegetation === 'object' ? Object.entries(d.vegetation||{}).map(([k,v])=>`<b>${esc(k)}:</b> ${esc(v)}`).join(' • ') : esc(d.vegetation||'—');
+    const se = d.structuralElements || {};
+    return `<div style="display:grid;grid-template-columns:1fr;gap:6px;font-size:12px;">
+      <div><b>Bottom Composition:</b> ${bc}</div>
+      <div><b>Cover Types:</b> ${cov} • Standing Timber: <b>${esc(d.standingTimber||'—')}</b> • Dock Density: <b>${esc(d.dockDensity||'—')}</b> • Bridge Pilings: <b>${d.bridgePilings?'Yes':'No'}</b></div>
+      <div><b>Vegetation:</b> ${veg}</div>
+      ${typeof se === 'object' && Object.keys(se).length ? `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px;margin-top:4px">
+        <b style="color:var(--accent2)">📐 Structural Elements Breakdown:</b>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:4px;margin-top:4px;font-size:11px">
+          ${Object.entries(se).map(([k,v])=>`<div><span style="text-transform:capitalize;color:var(--accent)">${esc(k)}:</span> ${esc(v)}</div>`).join('')}
+        </div>
+      </div>` : ''}
+      ${d.notes ? `<div style="font-style:italic;color:var(--muted);margin-top:4px">${esc(d.notes)}</div>` : ''}
+    </div>`;
+  }
+
+  // 5. Navigation
+  if (key === 'navigation') {
+    const d = data.navigation || data;
+    const ramps = Array.isArray(d.ramps) ? d.ramps.map(r=>typeof r==='object'?`<b>${esc(r.name||'Ramp')}</b> ${r.lat?`(${r.lat}, ${r.lon})`:''} ${r.lanes?`[${r.lanes} lanes]`:''}` : esc(r)).join('<br>') : esc(d.ramps||'—');
+    const haz = Array.isArray(d.hazards) ? d.hazards.map(h=>typeof h==='object'?`<span style="color:#ff7043">⚠ <b>${esc(h.type||'Hazard')}</b> (${esc(h.location||'')})</span> — ${esc(h.description||'')}` : `<span style="color:#ff7043">⚠ ${esc(h)}</span>`).join('<br>') : esc(d.hazards||'—');
+    const shoals = Array.isArray(d.shoals) ? d.shoals.join('; ') : esc(d.shoals||'—');
+    const idle = Array.isArray(d.idleZones) ? d.idleZones.join('; ') : esc(d.idleZones||'—');
+    const dang = Array.isArray(d.dangerousAreas) ? d.dangerousAreas.join('; ') : esc(d.dangerousAreas||'—');
+    return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;font-size:12px;">
+      <div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+        <b>🚤 Boat Ramps & Access</b><br>${ramps}
+      </div>
+      <div style="background:rgba(255,82,82,.08);border:1px solid rgba(255,82,82,.2);padding:6px;border-radius:6px">
+        <b style="color:#ff7043">⚠️ Navigation Hazards & Shoals</b><br>${haz}<br>
+        ${shoals !== '—' && shoals ? `<div style="margin-top:4px;font-size:11px"><b>Shoals:</b> ${shoals}</div>` : ''}
+      </div>
+      <div style="grid-column:1/-1;background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+        <b>🚫 Idle & No-Wake Zones:</b> ${idle}<br>
+        <b style="color:#ff7043">⚡ Dangerous Tailwater / Surge Areas:</b> ${dang}
+      </div>
+      ${d.notes ? `<div style="grid-column:1/-1;font-size:11px;color:var(--muted);font-style:italic">${esc(d.notes)}</div>` : ''}
+    </div>`;
+  }
+
+  // 6. Regulations
+  if (key === 'regulations') {
+    const d = data.regulations || data;
+    const gLen = d.generalStateRegulations?.lengthLimits || d.lengthLimits || {};
+    const gCreel = d.generalStateRegulations?.creelLimits || d.creelLimits || {};
+    const lakeRegs = d.lakeSpecificRegulations || {};
+    const hasEx = lakeRegs.hasExceptions !== undefined ? lakeRegs.hasExceptions : (Object.keys(lakeRegs).length > 0 && !lakeRegs.hasExceptions === false);
+    const exCreel = lakeRegs.creelLimits || {};
+    const exSize = lakeRegs.sizeLimits || {};
+    const closed = Array.isArray(lakeRegs.closedSeasons) && lakeRegs.closedSeasons.length ? lakeRegs.closedSeasons : (Array.isArray(d.seasonalClosures) ? d.seasonalClosures : []);
+    const special = Array.isArray(lakeRegs.specialRules) && lakeRegs.specialRules.length ? lakeRegs.specialRules : (Array.isArray(d.specialRegulations) ? d.specialRegulations : []);
+
+    return `<div style="display:grid;grid-template-columns:1fr;gap:8px;font-size:12px;">
+      <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:4px;">
+        <span><b>Governing Agency / State:</b> ${esc(d.state||'SC DNR')}</span>
+        <span class="muted" style="font-size:11px">Last Updated / Verified: ${esc(d.lastUpdated||'2026')}</span>
+      </div>
+      <div style="background:rgba(118,255,3,.08);border:1px solid var(--accent2);padding:8px;border-radius:6px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <b style="color:#bdffa0;font-size:13px;">📌 Lake-Specific Regulations & Exceptions</b>
+          <span class="pill" style="background:${hasEx ? 'var(--warn)' : 'var(--panel2)'};color:${hasEx ? '#000' : 'var(--text)'};font-weight:700;">${hasEx ? '⚠️ Has Lake Exceptions' : 'Standard Statewide Regulations Apply'}</span>
+        </div>
+        ${Object.keys(exCreel).length ? `<div style="margin-top:4px"><b>Specific Creel Limits for ${esc(currentLakeName||d.lakeName||'this lake')}:</b><br>` + Object.entries(exCreel).map(([s,c])=>`• <b>${esc(s)}:</b> ${esc(c)}`).join('<br>') + `</div>` : ''}
+        ${Object.keys(exSize).length ? `<div style="margin-top:4px"><b>Specific Size/Length Limits for this lake:</b><br>` + Object.entries(exSize).map(([s,l])=>`• <b>${esc(s)}:</b> ${esc(l)}`).join('<br>') + `</div>` : ''}
+        ${closed.length ? `<div style="margin-top:6px;padding:6px;background:rgba(255,82,82,.1);border-left:3px solid #ff5252;border-radius:4px;">
+          <b style="color:#ff5252">🗓 Seasonal Closures & Closed Times:</b><br>` + closed.map(c=>typeof c==='object'?`• <b>${esc(c.species||'Species')}:</b> ${esc(c.period||'Closed dates')} ${c.times?`[${esc(c.times)}]`:''} ${c.note?`(${esc(c.note)})`:''}` : `• ${esc(c)}`).join('<br>') + `</div>` : ''}
+        ${special.length ? `<div style="margin-top:6px"><b>Special Rules / Tailwater Sanctuaries:</b><br>` + special.map(r=>`• ${esc(r)}`).join('<br>') + `</div>` : ''}
+        ${!Object.keys(exCreel).length && !Object.keys(exSize).length && !closed.length && !special.length ? `<div class="muted">No specific creel/size limit deviations or seasonal closures found; verify with official state DNR portal.</div>` : ''}
+      </div>
+      <details style="background:rgba(255,255,255,.02);border:1px solid var(--line);border-radius:6px;padding:6px;">
+        <summary style="font-weight:bold;cursor:pointer;color:var(--accent)">Show General Statewide Regulations (SC / NC / GA Baseline)</summary>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px;font-size:11px;">
+          <div>
+            <b>Statewide Length Limits:</b><br>
+            ${typeof gLen === 'object' ? Object.entries(gLen).map(([k,v])=>`• <b>${esc(k)}:</b> ${esc(v)}`).join('<br>') : esc(gLen||'—')}
+          </div>
+          <div>
+            <b>Statewide Creel Limits:</b><br>
+            ${typeof gCreel === 'object' ? Object.entries(gCreel).map(([k,v])=>`• <b>${esc(k)}:</b> ${esc(v)}`).join('<br>') : esc(gCreel||'—')}
+          </div>
+        </div>
+      </details>
+      ${d.licenseRequirements ? `<div style="font-size:11px;color:var(--muted)"><b>License Requirements:</b> ${esc(d.licenseRequirements)}</div>` : ''}
+      ${d.sourceUrl ? `<div style="font-size:11px"><b>Official DNR Link:</b> <a href="${esc(d.sourceUrl)}" target="_blank">${esc(d.sourceUrl)}</a></div>` : ''}
+    </div>`;
+  }
+
+  // 7. Trolling Intelligence
+  if (key === 'trolling' || key === 'trollingIntelligence') {
+    const d = data.trollingIntelligence || data.trolling || data;
+    if (typeof d !== 'object' || !Object.keys(d).length) return `<div class="muted">No structured trolling intelligence found.</div>`;
+    let html = `<div style="display:flex;flex-direction:column;gap:10px;font-size:12px;">`;
+    for (const [species, seasons] of Object.entries(d)) {
+      if (typeof seasons !== 'object' || !seasons) continue;
+      html += `<div style="background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:6px;padding:8px;">
+        <b style="font-size:13px;color:#bdffa0">🐟 ${esc(species)}</b> — Seasonal Trolling Profile
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:6px;margin-top:6px;">`;
+      for (const season of ['spring','summer','fall','winter']) {
+        const sData = seasons[season];
+        if (!sData || typeof sData !== 'object') continue;
+        const dep = Array.isArray(sData.preferredDepth) && sData.preferredDepth.length === 2 ? `${sData.preferredDepth[0]} - ${sData.preferredDepth[1]} ft` : (sData.preferredDepth||'—');
+        const str = Array.isArray(sData.structures) ? sData.structures.join(', ') : (sData.structures||'—');
+        const forg = Array.isArray(sData.forage) ? sData.forage.join(', ') : (sData.forage||'—');
+        const pres = Array.isArray(sData.recommendedPresentations) ? sData.recommendedPresentations.join(', ') : (sData.recommendedPresentations||'—');
+        html += `<div style="background:rgba(0,0,0,.3);padding:6px;border-radius:4px;border-left:2px solid ${season==='summer'?'#ff7043':season==='winter'?'#29b6f6':season==='spring'?'#66bb6a':'#ffa726'}">
+          <b style="text-transform:capitalize;color:${season==='summer'?'#ff7043':season==='winter'?'#29b6f6':season==='spring'?'#66bb6a':'#ffa726'}">${season}</b><br>
+          Depth Range: <b>${dep}</b><br>
+          Structure: ${esc(str)}<br>
+          Target Forage: ${esc(forg)}<br>
+          Presentations: <b style="color:var(--accent2)">${esc(pres)}</b><br>
+          ${sData.notes ? `<div style="font-size:11px;color:var(--muted);margin-top:3px;font-style:italic">${esc(sData.notes)}</div>` : ''}
+        </div>`;
+      }
+      html += `</div></div>`;
+    }
+    html += `</div>`;
+    return html;
+  }
+
+  // 8. Summary
+  if (key === 'summary') {
+    const d = data.summary || data;
+    const txt = typeof d === 'string' ? d : (d.text || JSON.stringify(d, null, 2));
+    const kw = Array.isArray(d.keywords) ? d.keywords : [];
+    return `<div style="font-size:13px;line-height:1.5;white-space:pre-wrap;color:var(--text);">${esc(txt)}</div>
+    ${kw.length ? `<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px">` + kw.map(k=>`<span class="pill" style="background:var(--panel2);color:var(--accent);border:1px solid var(--line)">#${esc(k)}</span>`).join('') + `</div>` : ''}`;
+  }
+
+  return `<pre style="font-size:11px;white-space:pre-wrap">${esc(JSON.stringify(data, null, 2))}</pre>`;
+}
+
 function renderSections(profile) {
   const container = document.getElementById('researchSections');
   if (!container) return;
@@ -216,20 +445,118 @@ function renderSections(profile) {
   let html = '';
   for (const key of RESEARCH_ORDER) {
     const label = RESEARCH_LABELS[key]||key;
+    const sectionData = profile[key] || (key==='biology' ? profile.forage : '') || (key==='trolling' ? (profile.trollingIntelligence||profile.trolling) : null) || {};
     const has = !!(profile[key] || profile[key==='biology' ? 'forage' : ''] || (key==='trolling' && (profile.trollingIntelligence||profile.trolling)));
     const c = conf[key] || conf[key==='trolling' ? 'trollingIntelligence' : ''] || conf[key==='biology' ? 'forage' : ''];
     const pct = c?.percent|| (has?75:0);
     const level = c?.level|| (has?'medium':'missing');
     const okIcon = has ? (pct>=70 ? '✔' : '⚠') : '◻';
     const levelClass = pct>=95?'veryhigh':pct>=85?'high':pct>=70?'medium':pct>=50?'low':'need';
-    html += `<div class="section-row">
-      <span class="sec-icon">${has? '✔' : '◻'}</span>
-      <span class="sec-name">${label} <span class="muted" style="font-size:11px">${level}</span></span>
-      <span class="sec-conf">${pct}%</span>
+    
+    html += `<div class="section-row" style="flex-wrap:wrap;justify-content:space-between;align-items:center;">
+      <div style="display:flex;align-items:center;gap:8px;flex:1 1 200px;">
+        <span class="sec-icon">${okIcon}</span>
+        <span class="sec-name"><b>${label}</b> <span class="muted" style="font-size:11px">${level}</span></span>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span class="sec-conf" style="font-weight:700;">${pct}%</span>
+        ${has ? `<button type="button" class="small ghost btn-toggle-viewer" data-section="${key}" style="font-size:10px;padding:2px 6px;color:var(--accent)">👁️ View Summary</button>` : ''}
+        <button type="button" class="small ghost btn-toggle-section-editor" data-section="${key}" style="font-size:10px;padding:2px 6px;">✏️ Edit JSON</button>
+      </div>
     </div>
-    <div class="conf-bar" style="margin:0 10px 8px 40px"><div class="conf-fill ${levelClass}" style="width:${pct}%"></div></div>`;
+    <div class="conf-bar" style="margin:0 10px 4px 40px"><div class="conf-fill ${levelClass}" style="width:${pct}%"></div></div>
+    
+    <div class="section-viewer-container" id="viewer-container-${key}" style="display:${has ? 'block' : 'none'};margin:6px 10px 14px 40px;background:rgba(0,229,255,.03);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;color:var(--text);line-height:1.4;">
+      ${formatHumanReadableSection(key, sectionData)}
+    </div>
+
+    <div class="section-editor-container" id="editor-container-${key}" style="display:none;margin:4px 10px 12px 40px;background:#060f1a;border:1px solid var(--line);border-radius:6px;padding:8px;">
+      <div style="font-size:11px;color:var(--accent);margin-bottom:4px;">Make direct changes to this section's JSON below. If something is wrong or different for this lake, edit or delete it:</div>
+      <textarea class="section-loaded-textarea" id="textarea-section-${key}" data-section="${key}" style="width:100%;height:220px;font-family:monospace;font-size:11px;background:#030810;color:#bdffa0;border:1px solid var(--line);border-radius:4px;padding:6px;white-space:pre;overflow:auto;">${esc(JSON.stringify(sectionData, null, 2))}</textarea>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+        <div style="display:flex;gap:6px;">
+          <button type="button" class="small primary btn-save-section-loaded" data-section="${key}" style="background:var(--accent2);color:#000;font-size:11px;">💾 Apply Section Change</button>
+          <button type="button" class="small ghost btn-format-section-loaded" data-section="${key}" style="font-size:11px;">✨ Format</button>
+        </div>
+        <span id="status-section-${key}" class="muted" style="font-size:11px;"></span>
+      </div>
+    </div>`;
   }
   container.innerHTML = html;
+
+  container.querySelectorAll('.btn-toggle-viewer').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const sec = e.target.dataset.section;
+      const el = document.getElementById(`viewer-container-${sec}`);
+      if (el) {
+        el.style.display = el.style.display === 'none' ? 'block' : 'none';
+      }
+    });
+  });
+
+  container.querySelectorAll('.btn-toggle-section-editor').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const sec = e.target.dataset.section;
+      const el = document.getElementById(`editor-container-${sec}`);
+      if (el) {
+        el.style.display = el.style.display === 'none' ? 'block' : 'none';
+      }
+    });
+  });
+
+  container.querySelectorAll('.btn-format-section-loaded').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const sec = e.target.dataset.section;
+      const ta = document.getElementById(`textarea-section-${sec}`);
+      if (ta) {
+        try {
+          const parsed = JSON.parse(ta.value);
+          ta.value = JSON.stringify(parsed, null, 2);
+          const st = document.getElementById(`status-section-${sec}`);
+          if (st) st.textContent = 'Formatted ✓';
+        } catch (err) {
+          alert(`Cannot format — invalid JSON: ${err.message}`);
+        }
+      }
+    });
+  });
+
+  container.querySelectorAll('.btn-save-section-loaded').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const sec = e.target.dataset.section;
+      const ta = document.getElementById(`textarea-section-${sec}`);
+      const st = document.getElementById(`status-section-${sec}`);
+      if (!ta || !currentProfile) return;
+      try {
+        const parsed = JSON.parse(ta.value);
+        currentProfile[sec] = parsed;
+        if (sec === 'biology') currentProfile.forage = parsed;
+        if (sec === 'trolling') currentProfile.trollingIntelligence = parsed;
+        if (sec === 'trollingIntelligence') currentProfile.trolling = parsed;
+        packagePartsCache[sec] = parsed;
+
+        // Immediately update the human-readable viewer card right above it!
+        const viewerEl = document.getElementById(`viewer-container-${sec}`);
+        if (viewerEl) {
+          viewerEl.innerHTML = formatHumanReadableSection(sec, parsed);
+          viewerEl.style.display = 'block';
+        }
+
+        if (st) {
+          st.textContent = 'Applied in memory ✓ (click Approve/Save above to persist)';
+          st.style.color = 'var(--accent2)';
+        }
+        log(`Directly modified ${sec} JSON in loaded profile.`);
+        setTimeout(() => { if (st) st.textContent = ''; }, 4000);
+      } catch (err) {
+        alert(`Failed to apply section JSON — syntax error:\n${err.message}`);
+        if (st) {
+          st.textContent = 'Invalid JSON syntax ❌';
+          st.style.color = 'var(--bad)';
+        }
+      }
+    });
+  });
 }
 
 function renderConfidence(profile) {
@@ -480,13 +807,50 @@ function renderReview(merged, agentResults) {
       <div style="display:flex;justify-content:space-between"><b>${RESEARCH_LABELS[r.agent]||r.agent}</b><span style="font-size:11px;color:${need?'var(--bad)':'var(--accent2)'}">${pct}% ${r.confidence?.level||''} — ${r.confidence?.reason||''}</span></div>
       <div class="conf-bar"><div class="conf-fill ${levelClass}" style="width:${pct}%"></div></div>
       <div style="font-size:11px;color:var(--muted);margin-top:4px">Model: ${esc(r.meta?.model||'?')} • ${r.meta?.durationMs||0}ms • ${r.sources?.length||0} sources</div>
-      <details style="margin-top:6px"><summary style="font-size:11px;color:var(--accent);cursor:pointer">Show data</summary><pre style="font-size:10px;white-space:pre-wrap;max-height:200px;overflow:auto;background:#060f1a;border:1px solid var(--line);border-radius:6px;padding:6px;margin-top:4px">${esc(JSON.stringify(r.section, null, 2).slice(0,2000))}</pre></details>
-      <div style="margin-top:6px;display:flex;gap:6px">
+      <div style="margin-top:6px;margin-bottom:6px;background:rgba(0,229,255,.03);border:1px solid var(--line);border-radius:6px;padding:8px">${formatHumanReadableSection(r.agent, r.section)}</div>
+      <details style="margin-top:6px">
+        <summary style="font-size:11px;color:var(--accent);cursor:pointer;font-weight:bold;">View & Direct Edit JSON (Interactive)</summary>
+        <div style="font-size:10px;color:var(--muted);margin:4px 0;">If any creel limit, size limit, or lake fact is wrong, edit or delete it below right before saving:</div>
+        <textarea class="review-section-textarea" data-agent="${r.agent}" style="width:100%;height:200px;font-family:monospace;font-size:11px;background:#030810;color:#bdffa0;border:1px solid var(--line);border-radius:4px;padding:6px;white-space:pre;overflow:auto;">${esc(JSON.stringify(r.section, null, 2))}</textarea>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+          <button type="button" class="small primary btn-apply-review-section" data-agent="${r.agent}" style="background:var(--accent2);color:#000;font-size:11px;">✔ Apply Section Edit</button>
+          <span class="status-review-section muted" id="status-review-${r.agent}" style="font-size:11px;"></span>
+        </div>
+      </details>
+      <div style="margin-top:8px;display:flex;gap:6px">
         <label style="font-size:11px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="review-accept" data-agent="${r.agent}" ${pct>=70?'checked':''}> Accept ${pct<50?'— Needs Review':''}</label>
       </div>
     </div>`;
   }
   list.innerHTML = html;
+
+  list.querySelectorAll('.btn-apply-review-section').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const agent = e.target.dataset.agent;
+      const ta = list.querySelector(`.review-section-textarea[data-agent="${agent}"]`);
+      const st = document.getElementById(`status-review-${agent}`);
+      if (!ta || !card.dataset.merged) return;
+      try {
+        const parsed = JSON.parse(ta.value);
+        const curMerged = JSON.parse(card.dataset.merged);
+        const curParts = JSON.parse(card.dataset.parts || '{}');
+        curMerged[agent] = parsed;
+        if (agent === 'biology') curMerged.forage = parsed;
+        if (agent === 'trolling') curMerged.trollingIntelligence = parsed;
+        curParts[agent] = parsed;
+        card.dataset.merged = JSON.stringify(curMerged);
+        card.dataset.parts = JSON.stringify(curParts);
+        packagePartsCache[agent] = parsed;
+        if (st) {
+          st.textContent = 'Applied to Review Buffer ✓';
+          st.style.color = 'var(--accent2)';
+        }
+      } catch (err) {
+        alert(`Cannot apply edit — invalid JSON:\n${err.message}`);
+      }
+    });
+  });
+
   // scroll to review
   card.scrollIntoView({behavior:'smooth'});
 }
@@ -494,9 +858,27 @@ function renderReview(merged, agentResults) {
 async function saveProfile(status='draft') {
   const reviewCard = document.getElementById('reviewCard');
   let merged, parts;
-  if (reviewCard && reviewCard.dataset.merged) {
-    try { merged = JSON.parse(reviewCard.dataset.merged); } catch {}
-    try { parts = JSON.parse(reviewCard.dataset.parts); } catch {}
+  if (reviewCard && reviewCard.style.display !== 'none' && reviewCard.dataset.merged) {
+    try {
+      merged = JSON.parse(reviewCard.dataset.merged);
+      parts = JSON.parse(reviewCard.dataset.parts || '{}');
+      // Automatically incorporate any direct edits from textareas on the review screen right before saving
+      document.querySelectorAll('.review-section-textarea').forEach(ta => {
+        const agent = ta.dataset.agent;
+        if (agent && ta.value) {
+          try {
+            const parsed = JSON.parse(ta.value);
+            merged[agent] = parsed;
+            if (agent === 'biology') merged.forage = parsed;
+            if (agent === 'trolling') merged.trollingIntelligence = parsed;
+            parts[agent] = parsed;
+            packagePartsCache[agent] = parsed;
+          } catch (e) {
+            console.warn(`Warning: unparsed JSON in review textarea for ${agent}`, e);
+          }
+        }
+      });
+    } catch {}
   }
   // if no review, use currentProfile as base
   if (!merged) {
@@ -622,6 +1004,111 @@ async function importProfile(file) {
   } catch (e) {
     log(`✘ Import failed: ${e.message}`);
     alert(`Import failed: ${e.message}`);
+  }
+}
+
+function openMasterJsonEditor() {
+  const card = document.getElementById('masterJsonEditCard');
+  const ta = document.getElementById('masterJsonTextarea');
+  const st = document.getElementById('masterJsonStatus');
+  if (!card || !ta) return;
+  if (!currentProfile) {
+    alert('No profile currently loaded. Select or load a lake profile first.');
+    return;
+  }
+  card.style.display = 'block';
+  ta.value = JSON.stringify(currentProfile, null, 2);
+  if (st) st.textContent = '';
+  card.scrollIntoView({behavior: 'smooth'});
+}
+
+function closeMasterJsonEditor() {
+  const card = document.getElementById('masterJsonEditCard');
+  if (card) card.style.display = 'none';
+}
+
+function formatMasterJsonEditor() {
+  const ta = document.getElementById('masterJsonTextarea');
+  const st = document.getElementById('masterJsonStatus');
+  if (!ta) return;
+  try {
+    const parsed = JSON.parse(ta.value);
+    ta.value = JSON.stringify(parsed, null, 2);
+    if (st) {
+      st.textContent = 'Formatted ✓';
+      st.style.color = 'var(--accent2)';
+    }
+  } catch (err) {
+    alert(`Invalid JSON syntax — cannot format:\n${err.message}`);
+    if (st) {
+      st.textContent = 'Syntax Error ❌';
+      st.style.color = 'var(--bad)';
+    }
+  }
+}
+
+async function saveMasterJsonEditor() {
+  const ta = document.getElementById('masterJsonTextarea');
+  const st = document.getElementById('masterJsonStatus');
+  if (!ta) return;
+  let parsed;
+  try {
+    parsed = JSON.parse(ta.value);
+  } catch (err) {
+    alert(`Invalid JSON syntax:\n${err.message}`);
+    return;
+  }
+  
+  if (st) st.textContent = 'Saving master profile to R2...';
+  const lakeName = parsed.lakeName || currentLakeName || document.getElementById('researchLakeSelect')?.value;
+  if (!lakeName) {
+    alert('Missing lakeName in profile');
+    return;
+  }
+
+  currentProfile = parsed;
+  const parts = {
+    identity: parsed.identity,
+    limnology: parsed.limnology,
+    biology: parsed.biology || parsed.forage,
+    forage: parsed.forage || parsed.biology,
+    habitat: parsed.habitat,
+    navigation: parsed.navigation,
+    regulations: parsed.regulations,
+    trolling: parsed.trolling || parsed.trollingIntelligence,
+    trollingIntelligence: parsed.trollingIntelligence || parsed.trolling,
+    summary: parsed.summary
+  };
+  Object.assign(packagePartsCache, parts);
+
+  try {
+    const r = await fetch(`${CF_WORKER_URL}/research/save`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        lakeName,
+        profile: parsed,
+        packageParts: parts,
+        notes: parsed.notes || document.getElementById('researchNotes')?.value || "",
+        status: parsed.metadata?.status || 'verified',
+        requestedBy: "master-editor"
+      })
+    });
+    const data = await r.json();
+    if (!data.ok) throw new Error(data.error || 'save failed');
+    if (st) {
+      st.textContent = `✔ Saved v${data.version} successfully!`;
+      st.style.color = 'var(--accent2)';
+    }
+    log(`✔ Directly edited and saved master JSON for ${lakeName} v${data.version}`);
+    alert(`Saved ${lakeName} v${data.version} via Master JSON Editor!\nBytes: ${data.bytes}\nOverall Confidence: ${data.overallConfidence}%`);
+    await loadProfile(lakeName);
+  } catch (e) {
+    if (st) {
+      st.textContent = `Save failed: ${e.message}`;
+      st.style.color = 'var(--bad)';
+    }
+    alert(`Save failed: ${e.message}`);
   }
 }
 
@@ -780,6 +1267,11 @@ function initLakeResearch() {
     if (el) el.textContent='Log cleared';
     showProgress(false);
   });
+
+  document.getElementById('btnEditMasterJson')?.addEventListener('click', openMasterJsonEditor);
+  document.getElementById('btnCloseMasterJson')?.addEventListener('click', closeMasterJsonEditor);
+  document.getElementById('btnFormatMasterJson')?.addEventListener('click', formatMasterJsonEditor);
+  document.getElementById('btnSaveMasterJson')?.addEventListener('click', saveMasterJsonEditor);
 
   // Smart Plan auto-check when lake changes
   const planLake = document.getElementById('planLake');

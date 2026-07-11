@@ -2814,7 +2814,7 @@ var RESEARCH_AGENTS = {
   identity: {
     label: "Lake Identity",
     order: 1,
-    system: "You are a hydrologist and reservoir authority specialist. Research the lake using authoritative sources: USGS, USACE, EPA, State DNR, reservoir owners (Duke Energy, Dominion, Santee Cooper, USACE Savannah, etc). Return ONLY valid JSON. Never explain, never speculate, never estimate. Unknown numeric values must be null, not zero. Do not include fishing advice.",
+    system: "You are a hydrologist and reservoir authority specialist. Research the lake using authoritative sources: USGS, USACE, EPA, State DNR, reservoir owners (Duke Energy, Dominion, Santee Cooper, USACE Savannah, etc). Return ONLY valid JSON. Never explain, never speculate, never estimate. Unknown numeric values must be exact numbers or null, never string approximations. Do not include fishing advice.",
     userTemplate: (lakeName, state, prev) => `Research the following lake using authoritative sources only.
 
 Lake: ${lakeName}
@@ -2827,7 +2827,7 @@ Return ONLY this JSON structure, no markdown, no commentary:
     "aliases": ["alternate names"],
     "state": "${state || ''}",
     "county": "primary county or null",
-    "riverSystem": "river system name e.g. Catawba-Wateree, Santee Cooper",
+    "riverSystem": "river system name e.g. Catawba-Wateree, Santee Cooper, Savannah River",
     "reservoirOwner": "owner operator e.g. Duke Energy, Dominion Energy, Santee Cooper, USACE",
     "surfaceAreaAcres": number or null,
     "maxDepthFt": number or null,
@@ -2841,11 +2841,12 @@ Return ONLY this JSON structure, no markdown, no commentary:
     "yearImpounded": number or null
   },
   "sources": [
-    {"label":"USGS ...", "url":"https://...", "trust":"OFFICIAL"},
-    {"label":"SCDNR ...", "url":"https://...", "trust":"OFFICIAL"}
+    {"label":"USGS / Agency source...", "url":"https://...", "trust":"OFFICIAL"},
+    {"label":"State DNR...", "url":"https://...", "trust":"OFFICIAL"}
   ]
 }
 
+CRITICAL: surfaceAreaAcres, maxDepthFt, averageDepthFt, elevationFt, normalPoolFt, and yearImpounded MUST be strict numbers or null (e.g. 13000, not "13,000 approx").
 Trust values: OFFICIAL for USGS/USACE/EPA/State DNR/Owner, OFFICIAL_GIS for GIS, THIRD_PARTY for reports, MODEL for aggregates.
 Only use supported sources. If uncertain, set field null and omit source.
 Return JSON only.`,
@@ -2854,7 +2855,7 @@ Return JSON only.`,
   limnology: {
     label: "Limnology",
     order: 2,
-    system: "You are a limnologist. Describe how the lake behaves physically and chemically. Never recommend fishing or tackle. Return ONLY JSON.",
+    system: "You are a limnologist. Describe how the lake behaves physically and chemically. Pay special attention to summer stratification, thermocline depths, oxygen depletion floors, and turbidity/color after rainfall. Never recommend fishing or tackle. Return ONLY JSON.",
     userTemplate: (lakeName, state, prev) => `Research limnology for:
 
 Lake: ${lakeName}
@@ -2866,14 +2867,14 @@ ${JSON.stringify(prev?.identity || prev || {}, null, 2).slice(0, 4000)}
 Return ONLY:
 {
   "limnology": {
-    "waterClarity": {"typical":"Clear | Stained | etc", "color":"", "secchiFt": number|null, "note":""},
-    "thermocline": {"summerDepthFt": [12,18] or null, "strength":"weak | moderate | strong", "winterMix":"full | partial", "note":""},
-    "oxygen": {"depletionDepthFt": number|null, "anoxicBelowFt": number|null, "note":""},
-    "waterColor": "e.g. green tint, brown stain",
-    "flowCharacteristics": "river-run vs bowl, retention time",
+    "waterClarity": {"typical":"Clear | Stained | Muddy after rain etc", "color":"", "secchiFt": number|null, "note":""},
+    "thermocline": {"summerDepthFt": [12,18] or null, "strength":"weak | moderate | strong", "winterMix":"full | partial", "note":"detail seasonal thermal stratification"},
+    "oxygen": {"depletionDepthFt": number|null, "anoxicBelowFt": number|null, "note":"summer/fall dissolved oxygen floor where fish cannot survive below"},
+    "waterColor": "e.g. green tint, brown stain, red clay runoff after heavy rains",
+    "flowCharacteristics": "river-run vs bowl, retention time, generation current effects",
     "seasonalDrawdownFt": number|null,
-    "bottomHardness": "clay rock sand etc",
-    "mixingType": "dimictic, monomictic, etc or null",
+    "bottomHardness": "clay rock sand mud gravel etc",
+    "mixingType": "dimictic, monomictic, polymictic etc or null",
     "phTypical": number|null,
     "trophicStatus": "oligotrophic | mesotrophic | eutrophic | null"
   },
@@ -2885,7 +2886,7 @@ JSON only. No fishing advice.`,
   biology: {
     label: "Fisheries Biology",
     order: 3,
-    system: "You are a fisheries biologist. Research the food chain for this lake. Never recommend tackle or fishing methods. Return ONLY JSON.",
+    system: "You are a fisheries biologist. Research the food chain, primary/secondary forage, baitfish seasonal movements, and predator gamefish for this lake. Never recommend tackle or fishing methods. Return ONLY JSON.",
     userTemplate: (lakeName, state, prev) => `Research fisheries biology for:
 
 Lake: ${lakeName}
@@ -2897,13 +2898,13 @@ ${JSON.stringify({identity: prev?.identity, limnology: prev?.limnology}, null, 2
 Return ONLY:
 {
   "biology": {
-    "primaryForage": [{"species":"Threadfin Shad","abundance":"high | moderate | low","notes":""}],
-    "secondaryForage": [{"species":"Gizzard Shad","abundance":"","notes":""}],
-    "predatorSpecies": ["Largemouth Bass","Striped Bass", ...],
-    "speciesAbundance": {"Largemouth Bass":"moderate","Striped Bass":"high", "...":"..."},
-    "baitfishMovement": "seasonal movement description",
+    "primaryForage": [{"species":"Threadfin Shad or Blueback Herring etc","abundance":"high | moderate | low","notes":"detail seasonal depth preferences"}],
+    "secondaryForage": [{"species":"Gizzard Shad or Crawfish etc","abundance":"high | moderate | low","notes":""}],
+    "predatorSpecies": ["Largemouth Bass","Striped Bass","Crappie","Catfish", ...],
+    "speciesAbundance": {"Largemouth Bass":"moderate","Striped Bass":"high", "Crappie":"high", "...":"..."},
+    "baitfishMovement": "seasonal migration between shallow creek arms in spring/fall and main river channel swings in summer/winter",
     "knownStockings": [{"species":"Striped Bass","agency":"SCDNR","year":2023,"note":""}],
-    "invasiveSpecies": ["Blueback Herring","..."],
+    "invasiveSpecies": ["Blueback Herring","Hydrilla","..."],
     "forageCalendar": {"spring":"...", "summer":"...", "fall":"...", "winter":"..."}
   },
   "sources": [{"label":"","url":"","trust":"OFFICIAL"}]
@@ -2914,7 +2915,7 @@ JSON only. Never recommend tackle.`,
   habitat: {
     label: "Habitat",
     order: 4,
-    system: "You are an aquatic habitat specialist. Map fish habitat. No fishing advice. Return ONLY JSON.",
+    system: "You are an aquatic habitat specialist. Map permanent fish habitat and structural features specific to this lake. No fishing advice. Return ONLY JSON.",
     userTemplate: (lakeName, state, prev) => `Research habitat for:
 
 Lake: ${lakeName}
@@ -2927,21 +2928,21 @@ Return ONLY:
 {
   "habitat": {
     "bottomComposition": {"clay":"moderate","rock":"high","sand":"low","mud":"moderate","gravel":"moderate","note":""},
-    "cover": ["standing timber","brush piles","docks","etc"],
+    "cover": ["standing timber","brush piles","docks","stumps","etc"],
     "vegetation": {"hydrilla":"none|low|moderate|high","grass":"...","milfoil":"...","lily":"...","note":""},
-    "artificialHabitat": ["brush piles","fish attractors","etc"],
+    "artificialHabitat": ["SCDNR fish attractors","brush piles","etc"],
     "structuralElements": {
-      "points": "abundant | moderate | few - description",
-      "humps": "...",
-      "creekArms": "...",
-      "channelLedges": "...",
-      "flats": "...",
-      "bridges": "...",
-      "riprap": "..."
+      "points": "abundant | moderate | few - description e.g. long tapering red clay points",
+      "humps": "description of offshore humps and island tops",
+      "creekArms": "description of primary creek arms and feeder creeks",
+      "channelLedges": "description of old river channel swings and drop-offs",
+      "flats": "description of shallow flats",
+      "bridges": "description of bridge pilings and causeways",
+      "riprap": "description of riprap along dams and bridges"
     },
     "dockDensity": "low | medium | high",
     "bridgePilings": true,
-    "standingTimber": "none | light | moderate | heavy",
+    "standingTimber": "none | light | moderate | heavy — note specific creek arms or upper reaches",
     "notes": "overall habitat assessment"
   },
   "sources": [{"label":"","url":"","trust":"OFFICIAL_GIS"}]
@@ -2952,8 +2953,8 @@ JSON only.`,
   navigation: {
     label: "Navigation",
     order: 5,
-    system: "You are a boating safety specialist. Identify safe navigation info. Return ONLY JSON.",
-    userTemplate: (lakeName, state, prev) => `Research navigation for:
+    system: "You are a boating safety specialist. Identify safe navigation info, hazards, shoals, and boat ramps for this lake. Return ONLY JSON.",
+    userTemplate: (lakeName, state, prev) => `Research navigation and boating safety for:
 
 Lake: ${lakeName}
 State: ${state}
@@ -2961,14 +2962,14 @@ State: ${state}
 Return ONLY:
 {
   "navigation": {
-    "ramps": [{"name":"Clearwater Cove","lat":34.37,"lon":-80.72,"lanes":2}],
-    "hazards": [{"type":"shoal|stump|timber|rock|dam","location":"upper river","description":""}],
-    "shoals": ["description"],
-    "standingTimberAreas": ["upper arms"],
-    "bridgeHazards": ["low clearance at ..."],
-    "idleZones": ["near dam","..."],
-    "dangerousAreas": ["below dam tailwater surge","..."],
-    "notes": "overall navigation safety"
+    "ramps": [{"name":"Clearwater Cove or Lake Wateree State Park etc","lat":34.37,"lon":-80.72,"lanes":2}],
+    "hazards": [{"type":"shoal|stump|timber|rock|dam","location":"upper river / creek mouths","description":"details on fluctuating water hazards or shallow stumps outside marked channel"}],
+    "shoals": ["description of shallow shoals"],
+    "standingTimberAreas": ["upper arms / specific creeks"],
+    "bridgeHazards": ["low clearance at high pool for specific bridges"],
+    "idleZones": ["near dam or marinas"],
+    "dangerousAreas": ["below dam tailwater surge zone at generation"],
+    "notes": "overall navigation safety and water level fluctuation warnings"
   },
   "sources": [{"label":"","url":"","trust":"OFFICIAL"}]
 }
@@ -2978,29 +2979,45 @@ JSON only.`,
   regulations: {
     label: "Regulations",
     order: 6,
-    system: "You are a fishing regulations specialist. Research current fishing laws from official wildlife agency sources only. Return ONLY JSON. Never summarize laws you are unsure about - use null.",
-    userTemplate: (lakeName, state, prev) => `Research current fishing regulations for:
+    system: "You are a fishing regulations specialist for freshwater lakes and reservoirs. Research current fishing laws from official wildlife agency sources only (SCDNR, NCWRC, GA DNR, etc.). You MUST distinguish between general statewide regulations and lake-specific exceptions. If the creel limit, size/length limit, or seasonal open/closed times differ for this specific lake from the general state regulations, you must explicitly state both and detail the lake-specific rules. Return ONLY valid JSON. Never invent limits - if unknown, set field null.",
+    userTemplate: (lakeName, state, prev) => `Research current fishing regulations specific to this waterbody:
 
 Lake: ${lakeName}
 State: ${state || 'SC'}
 
-Use only current wildlife agency info (SCDNR, NCWRC, GA DNR). Return ONLY:
+CRITICAL INSTRUCTION:
+Do not just give general statewide regulations! Check if ${lakeName} has specific creel limits, size/length limits, or closed season dates/times that differ from statewide limits (for example, many reservoirs have special striper/hybrid creel/size limits, crappie limits, or summer/tailrace seasonal closures).
+
+Use only current wildlife agency info (SCDNR, NCWRC, GA DNR). Return ONLY this structure:
 {
   "regulations": {
     "state": "${state || 'SC'}",
     "lastUpdated": "2026-07-10 estimated or null",
-    "lengthLimits": {"Largemouth Bass":"12in minimum","Striped Bass":"26in etc","...":"..."},
-    "creelLimits": {"Largemouth Bass":"5","Striped Bass":"5","Crappie":"20"},
-    "protectedSpecies": ["..."],
-    "seasonalClosures": [{"species":"Striped Bass","period":"June 1 - Sept 30 in lower lake","note":""}],
-    "licenseRequirements": "SC freshwater license required, etc",
-    "specialRegulations": ["..."],
-    "notes": "verify current year",
+    "generalStateRegulations": {
+      "lengthLimits": {"Largemouth Bass":"statewide limit e.g. 14in","Striped Bass":"statewide limit e.g. 26in","Crappie":"statewide limit"},
+      "creelLimits": {"Largemouth Bass":"5","Striped Bass":"3","Crappie":"30"}
+    },
+    "lakeSpecificRegulations": {
+      "hasExceptions": true,
+      "creelLimits": {"Striped Bass": "specific creel limit for ${lakeName} if different from statewide, or same", "Crappie": "specific creel limit for ${lakeName} if different from statewide"},
+      "sizeLimits": {"Striped Bass": "specific size/length limit for ${lakeName} if different e.g. no minimum size", "Largemouth Bass": "specific size limit for ${lakeName}"},
+      "closedSeasons": [
+        {"species": "Striped Bass or other", "period": "exact dates e.g. June 1 - Sept 30", "times": "applicable hours/times or all day", "note": "closure details e.g. lower lake closed or catch & release only"}
+      ],
+      "specialRules": ["Any other lake-specific rules, gear restrictions, or tailwater/dam sanctuary times"]
+    },
+    "lengthLimits": {"Largemouth Bass":"14in minimum (or lake specific)","Striped Bass":"Lake specific - see exceptions or statewide limit"},
+    "creelLimits": {"Largemouth Bass":"5","Striped Bass":"Lake specific limit e.g. 10 or 3","Crappie":"Lake specific limit e.g. 20 or 30"},
+    "protectedSpecies": ["Shortnose Sturgeon", "..."],
+    "seasonalClosures": [{"species":"Striped Bass","period":"June 1 - Sept 30 if applicable","note":""}],
+    "licenseRequirements": "State freshwater fishing license required...",
+    "specialRegulations": ["List key lake specific rules and exceptions here as well"],
+    "notes": "Always verify exact lake exceptions at official agency site before fishing.",
     "sourceUrl": "https://www.dnr.sc.gov/fishregs/"
   },
-  "sources": [{"label":"SCDNR Regulations","url":"https://www.dnr.sc.gov/fishregs/","trust":"OFFICIAL"}]
+  "sources": [{"label":"SCDNR / Agency Regulations for ${lakeName}","url":"https://www.dnr.sc.gov/fishregs/","trust":"OFFICIAL"}]
 }
-Return JSON only. Never invent limits - if unknown, set field null or empty.`,
+Return JSON only. Never invent limits - if unknown, set field null.`,
     expectedKey: "regulations"
   },
   trolling: {
@@ -3024,23 +3041,21 @@ Return ONLY:
         "structures": ["channel ledges","creek mouths","long points"],
         "forage": ["Threadfin Shad"],
         "recommendedPresentations": ["MR Crankbait","DD Crankbait","A-Rig"],
-        "notes": "general behavior — reference thermocline if applicable"
+        "notes": "general behavior — reference thermocline and oxygen floor if applicable"
       },
       "fall": {"preferredDepth":[8,15],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""},
       "winter": {"preferredDepth":[20,35],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""},
       "spring": {"preferredDepth":[5,15],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""}
     },
-    "Largemouth Bass": { "summer": {...}, "fall": {...}, "winter": {...}, "spring": {...} },
-    "Crappie": {...},
-    "Catfish": {...},
-    "White Bass": {...},
-    "Bowfin": {...}
+    "Largemouth Bass": { "summer": {"preferredDepth":[10,20],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""}, "fall": {...}, "winter": {...}, "spring": {...} },
+    "Crappie": { "summer": {"preferredDepth":[12,18],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""}, "fall": {...}, "winter": {...}, "spring": {...} },
+    "Catfish": { "summer": {"preferredDepth":[15,30],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""}, "fall": {...}, "winter": {...}, "spring": {...} }
   },
   "sources": [{"label":"Derived from lake profile","trust":"DERIVED"}]
 }
 
-Species list should include at least Striped Bass if present system includes it, plus Largemouth, Crappie, Catfish. More if relevant.
-
+Species list should include at least Striped Bass if present in the system, plus Largemouth Bass, Crappie, Catfish. More if relevant (e.g. White Bass, Bowfin).
+preferredDepth MUST be a 2-element number array [minDepthFt, maxDepthFt] or null.
 No speeds, no colors, no routes - only stable patterns.
 JSON only.`,
     expectedKey: "trollingIntelligence"
@@ -3057,8 +3072,8 @@ ${JSON.stringify(prev, null, 2).slice(0, 15000)}
 Return ONLY:
 {
   "summary": {
-    "text": "Lake Wateree is a lowland river-run reservoir... Primary trolling opportunities are ...",
-    "keywords": ["river-run","striped bass","channel ledges","Threadfin Shad"]
+    "text": "Lake Wateree is a lowland river-run reservoir... Primary trolling opportunities are ... Always check lake specific fishing regulations for season closures and creel limits before launching.",
+    "keywords": ["river-run","striped bass","channel ledges","Threadfin Shad","regulations"]
   },
   "sources": [{"label":"Derived from lake profile","trust":"DERIVED"}]
 }
@@ -3099,6 +3114,27 @@ function calculateSectionConfidence(sources, hasData, sectionType) {
     if (speciesCount >= 2 && structuredSeasons >= 3) return { percent: 65, level: "medium", reason: `validated: ${speciesCount} species, ${structuredSeasons} structured seasons`, trollingValidation: true };
     if (speciesCount >= 1 && structuredSeasons >= 1) return { percent: 50, level: "low", reason: `validated: ${speciesCount} species, ${structuredSeasons} structured seasons`, trollingValidation: true };
     // Fall through to source-count scoring if structure is empty
+  }
+
+  // ── Regulations — data-structure validation for general statewide limits + lake-specific exceptions ──
+  if (sectionType === 'regulations') {
+    const sectionData = arguments[3];
+    if (sectionData && typeof sectionData === 'object') {
+      const hasLakeSpecific = sectionData.lakeSpecificRegulations && typeof sectionData.lakeSpecificRegulations === 'object';
+      const hasGeneralState = sectionData.generalStateRegulations && typeof sectionData.generalStateRegulations === 'object';
+      const hasClosedSeasons = (hasLakeSpecific && Array.isArray(sectionData.lakeSpecificRegulations.closedSeasons)) || Array.isArray(sectionData.seasonalClosures);
+      let officialSources = 0;
+      for (const s of src) {
+        if (String(s.trust||'').toUpperCase().includes('OFFICIAL') || /DNR|WILDLIFE|FISHREGS|CODE|AGENCY/.test(String(s.label||'').toUpperCase())) officialSources++;
+      }
+      if (hasLakeSpecific && hasGeneralState && officialSources >= 1) {
+        const pct = Math.min(99, 85 + (officialSources > 1 ? 8 : 0) + (hasClosedSeasons ? 5 : 0));
+        return { percent: pct, level: pct >= 95 ? "very high" : "high", reason: `validated: state limits + lake exceptions (${officialSources} official sources)`, regulationsValidation: true };
+      }
+      if ((hasLakeSpecific || hasGeneralState) && officialSources >= 1) {
+        return { percent: 75, level: "medium", reason: `validated regulations structure (${officialSources} official sources)`, regulationsValidation: true };
+      }
+    }
   }
 
   if (!src.length) return { percent: 45, level: "low", reason: "no sources, AI estimate" };
@@ -4350,8 +4386,8 @@ Place the fraction at the point where the structure meets the water, not the far
       return new Response(JSON.stringify({
         ok: true,
         worker: "trollmap-worker",
-        version: 15.2,
-        changelog: "2026-07-11: Lake Research v2 — review screen with per-field inline editing; fix confidence merge bug (biology/forage + trolling/trollingIntelligence double-count); add Gemini provider with routing for identity/limnology to preserve 120b budget for trolling; trolling confidence now uses data-structure validation instead of source-count; trolling agent prompt now references biology/forage/thermocline/habitat data",
+        version: 15.3,
+        changelog: "2026-07-11: Lake Research v3 — distinguish general state vs lake-specific regulations (creel limits, size limits, closed seasons); per-section inline JSON editing in UI and master JSON editor; enhance all 8 agent prompts against model hallucination and truncation limits",
         routes: [
           "/research/agent                    \u2014 run single AI research agent (identity|limnology|biology|habitat|navigation|regulations|trolling|summary) — uses full callLLM chain (groq 120b primary → fallback), grounded with known LAKES baseline for identity",
           "/research/list or /lakes/list      \u2014 list all researched lake master profiles",
