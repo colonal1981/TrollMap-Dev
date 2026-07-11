@@ -605,8 +605,6 @@ export async function runSmartPlan() {
     dateStr, launchTime, rampLat, rampLon
   });
   
-  const intelNotes = fishingContext?.intel?.notes || 'No local notes available.';
-  const intelSpeed = fishingContext?.intel?.preferredSpeed || 2.0;
   const researchedSummary = fishingContext?.researchedSummary || null;
   const researchedTrolling = fishingContext?.researchedTrolling || null;
   const hasResearched = fishingContext?.hasResearchedProfile || false;
@@ -634,7 +632,7 @@ ${researchedTrollingSlice ? `Trolling (target species only ${sp}): ${JSON.string
 Limnology key: ${(fishingContext.researchedProfile?.limnology?.thermocline?.summerDepthFt ? `thermocline ${JSON.stringify(fishingContext.researchedProfile.limnology.thermocline.summerDepthFt)}ft` : '')} ${String(fishingContext.researchedProfile?.limnology?.waterClarity?.typical||'').slice(0,80)}
 Habitat key: ${String(fishingContext.researchedProfile?.habitat?.structuralElements ? Object.values(fishingContext.researchedProfile.habitat.structuralElements).join('; ').slice(0,200) : '').slice(0,200)}
 Note: This profile is authoritative for permanent lake characteristics (type, structure, forage, thermocline). For dynamic species behavior, blend researched baseline with generic species intel and today's water temp/weather. If researched conflicts with generic, prefer researched for permanent facts, generic for dynamic.
-` : `No verified research profile yet — using generic species intel.`;
+` : '';
 
 
   // ── Pull species-intel-v2 data for this species + season ─────────────
