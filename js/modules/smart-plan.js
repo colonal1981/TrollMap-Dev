@@ -598,10 +598,10 @@ export async function runSmartPlan() {
   const solunarStr=`Majors: ${hStr(sol.major1)}, ${hStr(sol.major2)} · Minors: ${hStr(sol.minor1)}, ${hStr(sol.minor2)}`;
   const totalDurH=phaseInfo.phases.length?(phaseInfo.phases[phaseInfo.phases.length-1].end-phaseInfo.phases[0].start):6;
 
-  // ── Pull our local intel FIRST (For Guided Creativity prompt) ─────────
+  // ── Pull our local intel FIRST ───────────────────────────────────────
   const fishingContext = await buildFishingContext({
-    species: sp, lakeName, season, clarity, waterTempF, 
-    speedMph: speedMph, 
+    species: sp, lakeName, season, clarity, waterTempF,
+    speedMph: speedMph,
     dateStr, launchTime, rampLat, rampLon
   });
   
@@ -636,6 +636,47 @@ Habitat key: ${String(fishingContext.researchedProfile?.habitat?.structuralEleme
 Note: This profile is authoritative for permanent lake characteristics (type, structure, forage, thermocline). For dynamic species behavior, blend researched baseline with generic species intel and today's water temp/weather. If researched conflicts with generic, prefer researched for permanent facts, generic for dynamic.
 ` : `No verified research profile yet — using generic species intel.`;
 
+
+  // ── Pull species-intel-v2 data for this species + season ─────────────
+  const v2sp = IntelV2?.SPECIES_BEHAVIOR_V2?.[sp];
+  let speciesIntelBlock = '';
+  if (v2sp) {
+    const lakeKeyV2 = (IntelV2.resolveLakeKey
+      ? (IntelV2.resolveLakeKey(lakeName, v2sp) || 'default_SC_reservoir')
+      : (v2sp[lakeName] ? lakeName : 'default_SC_reservoir'));
+    const sNode = v2sp[lakeKeyV2]?.[season] || v2sp['default_SC_reservoir']?.[season];
+    if (sNode) {
+      const depthRange = typeof sNode.preferredDepth === 'function'
+        ? sNode.preferredDepth(waterTempF) : (sNode.preferredDepth || [5, 20]);
+      const speedRange = Array.isArray(sNode.preferredSpeed)
+        ? sNode.preferredSpeed : [sNode.preferredSpeed || 1.8, sNode.preferredSpeed || 1.8];
+      const notes = Array.isArray(sNode.notes) ? sNode.notes.join(' · ') : (sNode.notes || '');
+      speciesIntelBlock = `
+SPECIES INTEL — ${sp} in ${season} on ${lakeName} (use this as your primary depth/speed/structure baseline):
+- Preferred depth range: ${depthRange[0]}–${depthRange[1]}ft
+- Preferred trolling speed: ${speedRange[0]}–${speedRange[1]} mph
+- Key structure: ${(sNode.preferredStructure || []).join(', ') || 'general structure'}
+- Presentations: ${(sNode.preferredPresentation || []).join(', ') || 'general trolling'}
+- Lure families: ${(sNode.lureFamilies || []).join(', ') || 'see tackle list'}
+- Colors: ${(sNode.preferredColors || []).join(', ') || 'match forage'}
+${notes ? `- Notes: ${notes}` : ''}
+
+Use this as your baseline. Today's conditions — water temp, clarity, wind, and solunar — should drive your final depth and speed decisions within this general range. You may adjust outside it if conditions strongly support doing so.`;
+    }
+  }
+
+  // ── Catch history context ─────────────────────────────────────────────
+  const catchSummary = fishingContext?.catchSummary;
+  let catchBlock = '';
+  if (catchSummary && catchSummary.totalCatches > 0) {
+    catchBlock = `
+ANGLER CATCH HISTORY — ${sp} on ${lakeName} (${catchSummary.totalCatches} catches logged):
+- Average catch depth: ${catchSummary.avgDepthFt != null ? catchSummary.avgDepthFt + 'ft' : 'unknown'}
+- Best time of day: ${catchSummary.bestTime || 'unknown'}
+- Top lures: ${catchSummary.topLures.map(l => `${l.lure} (${l.count}x)`).join(', ') || 'none logged'}`;
+  }
+
+  // ── Unified Groq Call (Species-Driven Prompt) ─────────────────────────
   const planPrompt=`You are an expert fishing guide for ${lakeName}.
 Build a trolling plan for today targeting ${sp}.
 
@@ -655,15 +696,13 @@ You must evaluate the weather and wind forecast against the platform (12.5ft Kay
 - Sustained winds > 15mph or gusts > 20mph are NO-GO conditions for a kayak.
 - Evaluate the launch ramp (${rampName}) against the wind direction. Will it be a dangerous windward launch?
 - If conditions are unsafe, set "isGo" to false and explain why in "safetyWarning".
-
-LOCAL HISTORICAL INTEL (Your baseline):
-- Typical Speed: ${intelSpeed} mph
-- Local Patterns: ${intelNotes}
+${speciesIntelBlock}
+${catchBlock}
 
 ${researchedBlock}
 
 YOUR ROLE:
-You are the expert guide on the water *today*. Use the historical intel as your foundation, but adapt speed, depths, and colors based on today's specific water temp, wind, clarity, and season.
+You are the expert guide on the water *today*. The SPECIES INTEL above is your starting point — use it to understand where this species generally holds in this season, then make your own call based on today's actual conditions. A good guide doesn't just read a data sheet; he reads the water.
 
 PLATFORM CONSTRAINTS (STRICT - DO NOT BREAK THESE):
 - Kayak (Native Watersports Slayer Propel Max 12.5, pedal drive + electric motor)
@@ -675,7 +714,7 @@ ${inventoryNames.join(', ')}
 
 TROLLING-SPEED LIMITS (HARD): Every tackle name above includes its physical trolling-speed range in brackets. Pick a separate speed for each band. Band 1's speed applies to BOTH its outbound and inbound pass; Band 2's speed applies to BOTH its outbound and inbound pass. A band's speed must never exceed the lower maximum speed of its selected port and starboard lures. The two bands may use different speeds.
 
-ROUTE STRUCTURE: Pick two depth bands. Band 1 = shallower morning run. Band 2 = deeper mid-morning run.
+ROUTE STRUCTURE: Pick two depth bands that reflect where ${sp} actually hold during ${season}. Do not default to a shallow-then-deep morning pattern unless the species intel supports it.
 
 Return ONLY valid JSON, no markdown:
 {
@@ -720,7 +759,7 @@ Return ONLY valid JSON, no markdown:
           {role:'system',content:'You are TrollMap Smart Plan. Return only one valid JSON object and no markdown.'},
           {role:'user',content:planPrompt}
         ],
-        max_tokens:1800,
+        max_tokens:3000,
         temperature:0.25,
         response_format:{type:'json_object'}
       }),
@@ -882,12 +921,19 @@ Return ONLY valid JSON, no markdown:
     let calcLead = autoCalculateLead(rod, bandSpeedMph || band1Speed);
     // Cap variable-depth lures (A-rigs, spoons, swimbaits etc) at 80ft on a kayak
     const lureL = (rod.lure||'').toLowerCase();
+    // Variable-depth lures: A-rigs, spoons, swimbaits, spinnerbaits etc.
+    // These are depth-controlled by lead length — cap at 80ft on a kayak.
     const isVarDepth = lureL.includes('a-rig') || lureL.includes('swimbait') ||
       lureL.includes('spoon') || lureL.includes('spinnerbait') ||
       lureL.includes('chatterbait') || lureL.includes('bucktail') ||
       lureL.includes('marabou') || lureL.includes('jighead') ||
       lureL.includes('road runner');
     if (isVarDepth && calcLead > 80) calcLead = 80;
+    // Crankbaits have a physical dive curve — long lead doesn't make them go deeper,
+    // it just puts them farther back. Cap at 100ft on a kayak (realistic maximum).
+    const isCrankbait = lureL.includes('crankbait') || lureL.includes('lipless') ||
+      lureL.includes('blade vibe');
+    if (isCrankbait && calcLead > 100) calcLead = 100;
     rod.lead = String(calcLead);
     return rod;
   }

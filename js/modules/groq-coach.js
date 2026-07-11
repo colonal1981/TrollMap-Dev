@@ -13,7 +13,7 @@
 
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
-import { renderSpread } from './spread-builder.js';
+import { renderSpread, autoCalculateLead } from './spread-builder.js';
 
 const CF_WORKER_URL = window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev';
 
@@ -149,9 +149,15 @@ function buildSystemPrompt() {
   ).join('\n');
 
   // Phase depth bands
-  const phaseLines = (p.phases || []).map((ph, i) =>
-    `  Band ${i+1}: ${ph.depthMin}-${ph.depthMax}ft @ ${ph.speed || meta.speed || '?'}mph — ${ph.notes || ''}`
-  ).join('\n');
+  const phaseLines = (p.phases || []).map((ph, i) => {
+    const bandNum = i + 1;
+    const role = bandNum === 1 ? 'Dawn run (first light → ~90min post-sunrise)'
+               : bandNum === 2 ? 'Mid-morning run (deeper, post-dawn)'
+               : 'Late run';
+    const timeStr = (ph.startStr && ph.endStr) ? ` | ${ph.startStr} – ${ph.endStr}` : '';
+    const speedStr = ph.speed || meta.speed || '?';
+    return `  Band ${bandNum} [${role}${timeStr}]: ${ph.depthMin}-${ph.depthMax}ft @ ${speedStr}mph`;
+  }).join('\n');
 
   const catchNote = p.intelligence?.catchHistory
     ? `Angler has ${p.intelligence.catchHistory.totalCatches} logged catches on this lake. Avg depth: ${p.intelligence.catchHistory.avgDepthFt}ft. Top lures: ${p.intelligence.catchHistory.topLures?.map(l=>l.lure).join(', ')}.`
@@ -189,7 +195,9 @@ INSTRUCTIONS:
 - If they challenge a decision, explain the reasoning — or admit if it's uncertain.
 - Keep answers concise — 2-4 sentences unless they ask for detail.
 - Never suggest gear the angler doesn't own.
-- If you'd recommend a change, say so clearly and explain why.`;
+- If you'd recommend a change, say so clearly and explain why.
+- Band 1 is ALWAYS the dawn/early-morning run. Band 2 is ALWAYS the deeper mid-morning run. Do not confuse which band runs at which time of day.
+- When discussing depth changes, be specific about which band and why that depth is or is not appropriate for the time of day and conditions.`;
 }
 
 async function sendChatMessage() {
@@ -464,18 +472,54 @@ function applyCoachSuggestion(s) {
     return phaseMatch && rodMatch;
   }) || [];
 
+  const currentSpeed = parseFloat(document.getElementById('planSpeed')?.value) || 2.0;
+
   switch (field) {
-    case 'lure':       getRodRows().forEach(r => { r.lure  = recommended_value; }); break;
+    case 'lure':
+      getRodRows().forEach(r => {
+        r.lure = recommended_value;
+        r.lead = String(autoCalculateLead(r, currentSpeed));
+      });
+      break;
     case 'lure_color': getRodRows().forEach(r => { r.color = recommended_value; }); break;
-    case 'lead_length':getRodRows().forEach(r => { r.lead  = String(recommended_value); }); break;
+    case 'lead_length': getRodRows().forEach(r => { r.lead = String(recommended_value); }); break;
     case 'trolling_speed': {
       const el = document.getElementById('planSpeed');
       if (el) el.value = String(recommended_value);
+      (state.SPREAD || []).forEach(r => {
+        r.lead = String(autoCalculateLead(r, parseFloat(recommended_value)));
+      });
       break;
     }
-    case 'target_depth': getRodRows().forEach(r => { r.depth = String(recommended_value); }); break;
-    case 'inline_weight': getRodRows().forEach(r => { r.notes = (r.notes||'') + ` · Coach: add ${recommended_value} inline weight`; }); break;
-    default: getRodRows().forEach(r => { r.notes = (r.notes||'') + ` · Coach: ${field} → ${recommended_value}`; });
+    case 'target_depth':
+      getRodRows().forEach(r => {
+        r.depth = String(recommended_value);
+        r.lead = String(autoCalculateLead(r, currentSpeed));
+      });
+      break;
+    case 'inline_weight':
+      getRodRows().forEach(r => { r.notes = (r.notes||'') + ` · Coach: add ${recommended_value} inline weight`; });
+      break;
+    default:
+      getRodRows().forEach(r => { r.notes = (r.notes||'') + ` · Coach: ${field} → ${recommended_value}`; });
+  }
+
+  // Sync _coachPayload.spread so follow-up chat sees updated state
+  if (_coachPayload && state.SPREAD) {
+    _coachPayload.spread = (window._smartPlanRouteRods
+      ? Object.entries(window._smartPlanRouteRods).flatMap(([routeName, rods]) =>
+          rods.map(r => ({
+            route: routeName, side: r.side, rod: r.rod||'',
+            lure: r.lure||'', color: r.color||'',
+            depth: r.depth||'', lead: r.lead||'',
+            notes: (r.notes||'').slice(0,80),
+          }))
+        )
+      : state.SPREAD.map(r => ({
+          side: r.side, lure: r.lure||'', color: r.color||'',
+          depth: r.depth||'', lead: r.lead||'', notes: (r.notes||'').slice(0,80),
+        }))
+    );
   }
 
   renderSpread();
