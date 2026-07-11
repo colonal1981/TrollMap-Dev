@@ -31,18 +31,80 @@ export async function syncLakeIntelData() {
     if(!res.ok) throw new Error(`Worker HTTP ${res.status}`);
     const d = await res.json();
     const p = d.profile || {};
+    const rp = (d.hasResearchedProfile && d.researched?.status === 'verified') ? d.researched.fullProfile : null;
     const lines=[];
+
+    // Header
     lines.push(`${d.lake || label} \u2014 Lake Intelligence Briefing`);
-    if(d.confidence && String(d.confidence).includes('generic')) lines.push('VERIFY: No curated lake profile is available yet; this is a research checklist, not confirmed lake intelligence.');
-    lines.push(`Primary sport fish: ${(p.primarySportFish||[]).join(', ') || 'Unknown / verify locally'}`);
-    lines.push(`Known forage: ${(p.forage||[]).join(', ') || 'Unknown'}`);
-    if(p.stocking) lines.push(`Stocking / management: ${p.stocking}`);
-    if(p.spottedBass) lines.push(`Spotted bass / invasive pressure: ${p.spottedBass}`);
-    if(p.habitat) lines.push(`Habitat / cover: ${p.habitat}`);
-    if(p.bottom) lines.push(`Bottom composition: ${p.bottom}`);
-    if(p.hazards) lines.push(`Navigation hazards: ${p.hazards}`);
-    if(p.seasonalPattern) lines.push(`Seasonal pattern: ${p.seasonalPattern}`);
-    if(p.tacticalNotes?.length){ lines.push('Tactical notes:'); p.tacticalNotes.forEach(x=>lines.push(`\u2022 ${x}`)); }
+    if(rp) {
+      lines.push(`\uD83E\uDDE0 Verified Research Profile v${rp.metadata?.version||'?'} \u00B7 ${rp.confidence?.overall?.percent||'?'}% confidence \u00B7 ${new Date(rp.metadata?.lastUpdated||Date.now()).toLocaleDateString()}`);
+    } else if(d.confidence && String(d.confidence).includes('generic')) {
+      lines.push('VERIFY: No curated lake profile is available yet; this is a research checklist, not confirmed lake intelligence.');
+    }
+
+    // Species / forage
+    if(rp?.biology) {
+      const bio = rp.biology;
+      if(bio.primaryGameFish?.length) lines.push(`Primary sport fish: ${bio.primaryGameFish.join(', ')}`);
+      if(bio.forage?.primaryForage?.length) lines.push(`Known forage: ${bio.forage.primaryForage.join(', ')}`);
+      if(bio.stocking) lines.push(`Stocking / management: ${bio.stocking}`);
+    } else {
+      lines.push(`Primary sport fish: ${(p.primarySportFish||[]).join(', ') || 'Unknown / verify locally'}`);
+      lines.push(`Known forage: ${(p.forage||[]).join(', ') || 'Unknown'}`);
+      if(p.stocking) lines.push(`Stocking / management: ${p.stocking}`);
+      if(p.spottedBass) lines.push(`Spotted bass / invasive pressure: ${p.spottedBass}`);
+    }
+
+    // Habitat / cover / bottom
+    if(rp?.habitat) {
+      const h = rp.habitat;
+      if(h.cover?.length) lines.push(`Habitat / cover: ${h.cover.join(', ')}`);
+      if(h.structuralElements) lines.push(`Structure: ${Object.entries(h.structuralElements).map(([k,v])=>`${k}: ${v}`).join('; ')}`);
+      if(h.bottomComposition) lines.push(`Bottom composition: ${Object.entries(h.bottomComposition).filter(([k,v])=>k!=='note'&&v&&v!=='low').map(([k,v])=>`${k} (${v})`).join(', ')}`);
+      if(h.notes) lines.push(`Habitat notes: ${h.notes}`);
+    } else {
+      if(p.habitat) lines.push(`Habitat / cover: ${p.habitat}`);
+      if(p.bottom) lines.push(`Bottom composition: ${p.bottom}`);
+    }
+
+    // Navigation hazards
+    if(rp?.navigation) {
+      const nav = rp.navigation;
+      const hazards = [];
+      if(nav.navigationHazards?.length) hazards.push(nav.navigationHazards.join('; '));
+      if(nav.drawdownNotes) hazards.push(nav.drawdownNotes);
+      if(hazards.length) lines.push(`Navigation hazards: ${hazards.join(' \u00B7 ')}`);
+    } else {
+      if(p.hazards) lines.push(`Navigation hazards: ${p.hazards}`);
+    }
+
+    // Seasonal pattern / trolling intel
+    if(rp?.trollingIntelligence) {
+      const ti = rp.trollingIntelligence;
+      const species = Object.keys(ti);
+      if(species.length) {
+        lines.push('Seasonal trolling patterns (verified):');
+        species.forEach(sp => {
+          const seasons = ti[sp];
+          const parts = [];
+          if(seasons?.summer?.preferredDepth) parts.push(`Summer: ${seasons.summer.preferredDepth[0]}-${seasons.summer.preferredDepth[1]}ft`);
+          if(seasons?.winter?.preferredDepth) parts.push(`Winter: ${seasons.winter.preferredDepth[0]}-${seasons.winter.preferredDepth[1]}ft`);
+          if(parts.length) lines.push(`\u2022 ${sp}: ${parts.join(' \u00B7 ')}`);
+        });
+      }
+    } else {
+      if(p.seasonalPattern) lines.push(`Seasonal pattern: ${p.seasonalPattern}`);
+      if(p.tacticalNotes?.length){ lines.push('Tactical notes:'); p.tacticalNotes.forEach(x=>lines.push(`\u2022 ${x}`)); }
+    }
+
+    // Regulations
+    if(rp?.regulations) {
+      const reg = rp.regulations;
+      lines.push('Regulations (verified \u2014 always confirm with SCDNR):');
+      if(reg.lengthLimits) Object.entries(reg.lengthLimits).forEach(([sp,limit])=>lines.push(`\u2022 ${sp}: ${limit}`));
+      if(reg.creelLimits) Object.entries(reg.creelLimits).forEach(([sp,limit])=>lines.push(`\u2022 ${sp} creel: ${limit} fish/day`));
+      if(reg.notes) lines.push(`\u2022 ${reg.notes}`);
+    }
     if(d.sourceRegistry){
       lines.push('Source Trust Stack:');
       const sr=d.sourceRegistry;
@@ -71,7 +133,9 @@ export async function syncLakeIntelData() {
     if(out) out.value = lines.join('\n');
     if(summary){
       summary.style.display='block';
-      summary.innerHTML = `<b style="color:var(--accent)">🧠 ${esc(d.lake||label)}</b><br><span>${esc((p.primarySportFish||[]).join(', ')||'Profile generated')}</span>${d.confidence&&String(d.confidence).includes('generic')?`<br><span style="color:var(--warn);font-weight:700">⚠ VERIFY: generic/unconfirmed profile</span>`:''}${d.latestReport?.source?`<br><span class="muted">Latest scraped report source \u2014 verify before relying: ${esc(d.latestReport.source)}</span>`:''}`;
+      const verifiedBadge = rp ? `<br><span style="color:var(--accent2);font-weight:700">\uD83E\uDDE0 Verified Research v${rp.metadata?.version||'?'} \u00B7 ${rp.confidence?.overall?.percent||'?'}% confidence</span>` : (d.confidence&&String(d.confidence).includes('generic')?`<br><span style="color:var(--warn);font-weight:700">\u26A0 VERIFY: generic/unconfirmed profile</span>`:'');
+      const speciesDisplay = rp?.biology?.primaryGameFish?.length ? rp.biology.primaryGameFish.join(', ') : (p.primarySportFish||[]).join(', ')||'Profile generated';
+      summary.innerHTML = `<b style="color:var(--accent)">\uD83E\uDDE0 ${esc(d.lake||label)}</b><br><span>${esc(speciesDisplay)}</span>${verifiedBadge}${d.latestReport?.source?`<br><span class="muted">Latest scraped report source \u2014 verify before relying: ${esc(d.latestReport.source)}</span>`:''}`;
     }
     say('Intel ready', false);
     window.LAST_LAKE_INTEL = d;
