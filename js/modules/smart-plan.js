@@ -691,7 +691,7 @@ Return ONLY valid JSON, no markdown:
           {role:'system',content:'You are TrollMap Smart Plan. Return only one valid JSON object and no markdown.'},
           {role:'user',content:planPrompt}
         ],
-        max_tokens:1800,
+        max_tokens:3000,
         temperature:0.25,
         response_format:{type:'json_object'}
       }),
