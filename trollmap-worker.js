@@ -2714,6 +2714,704 @@ Return ONLY the JSON object. Find the single highest-confidence improvement, or 
   }
 }
 __name(handleCoachPlan, "handleCoachPlan");
+// ─── LAKE RESEARCH MODULE ─────────────────────────────────────────────────
+// Implements spec v1.0: Lake Research permanent intelligence profiles
+// R2 layout (reuses R2_TROLLMAP_CHARTPACKS):
+//   lakes/<sanitized>.json                     -> current master profile
+//   lakes/versions/<sanitized>/v#.json        -> version history
+//   lake_packages/<sanitized>/identity.json   -> split package files
+//   lake_packages/<sanitized>/limnology.json ...
+//   lake_packages/<sanitized>/research_log.json
+// Client-orchestrated pipeline: frontend calls POST /research/agent sequentially
+// Worker handles single agent via callLLM and handles save/list/get/version logic
+
+function sanitizeLakeId(name) {
+  return String(name || '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80) || 'unknown_lake';
+}
+__name(sanitizeLakeId, "sanitizeLakeId");
+
+function lakeResearchMasterKey(lakeName) {
+  return `lakes/${sanitizeLakeId(lakeName)}.json`;
+}
+__name(lakeResearchMasterKey, "lakeResearchMasterKey");
+
+function lakeResearchVersionKey(lakeName, version) {
+  return `lakes/versions/${sanitizeLakeId(lakeName)}/v${version}.json`;
+}
+__name(lakeResearchVersionKey, "lakeResearchVersionKey");
+
+function lakePackageKey(lakeName, filename) {
+  return `lake_packages/${sanitizeLakeId(lakeName)}/${filename}`;
+}
+__name(lakePackageKey, "lakePackageKey");
+
+function extractJsonPossibly(txt) {
+  if (!txt) return null;
+  let t = String(txt).trim();
+  // strip code fences
+  t = t.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
+  try { return JSON.parse(t); } catch (_) {}
+  // find first { ... last }
+  const s = t.indexOf('{');
+  const e = t.lastIndexOf('}');
+  if (s >=0 && e > s) {
+    try { return JSON.parse(t.slice(s, e+1)); } catch (_) {}
+  }
+  return null;
+}
+__name(extractJsonPossibly, "extractJsonPossibly");
+
+var RESEARCH_AGENTS = {
+  identity: {
+    label: "Lake Identity",
+    order: 1,
+    system: "You are a hydrologist and reservoir authority specialist. Research the lake using authoritative sources: USGS, USACE, EPA, State DNR, reservoir owners (Duke Energy, Dominion, Santee Cooper, USACE Savannah, etc). Return ONLY valid JSON. Never explain, never speculate, never estimate. Unknown numeric values must be null, not zero. Do not include fishing advice.",
+    userTemplate: (lakeName, state, prev) => `Research the following lake using authoritative sources only.
+
+Lake: ${lakeName}
+State: ${state || 'USA'}
+
+Return ONLY this JSON structure, no markdown, no commentary:
+{
+  "identity": {
+    "lakeName": "${lakeName}",
+    "aliases": ["alternate names"],
+    "state": "${state || ''}",
+    "county": "primary county or null",
+    "riverSystem": "river system name e.g. Catawba-Wateree, Santee Cooper",
+    "reservoirOwner": "owner operator e.g. Duke Energy, Dominion Energy, Santee Cooper, USACE",
+    "surfaceAreaAcres": number or null,
+    "maxDepthFt": number or null,
+    "averageDepthFt": number or null,
+    "elevationFt": number or null,
+    "normalPoolFt": number or null,
+    "gpsCenter": {"lat": number, "lon": number} or null,
+    "type": "reservoir | natural | tidal etc",
+    "archetype": "e.g. lowland river-run reservoir, highland deep reservoir, shallow stump-filled reservoir, deep clear herring lake, bowl-like",
+    "damName": "dam name or null",
+    "yearImpounded": number or null
+  },
+  "sources": [
+    {"label":"USGS ...", "url":"https://...", "trust":"OFFICIAL"},
+    {"label":"SCDNR ...", "url":"https://...", "trust":"OFFICIAL"}
+  ]
+}
+
+Trust values: OFFICIAL for USGS/USACE/EPA/State DNR/Owner, OFFICIAL_GIS for GIS, THIRD_PARTY for reports, MODEL for aggregates.
+Only use supported sources. If uncertain, set field null and omit source.
+Return JSON only.`,
+    expectedKey: "identity"
+  },
+  limnology: {
+    label: "Limnology",
+    order: 2,
+    system: "You are a limnologist. Describe how the lake behaves physically and chemically. Never recommend fishing or tackle. Return ONLY JSON.",
+    userTemplate: (lakeName, state, prev) => `Research limnology for:
+
+Lake: ${lakeName}
+State: ${state}
+
+Previous Identity data (use for context):
+${JSON.stringify(prev?.identity || prev || {}, null, 2).slice(0, 4000)}
+
+Return ONLY:
+{
+  "limnology": {
+    "waterClarity": {"typical":"Clear | Stained | etc", "color":"", "secchiFt": number|null, "note":""},
+    "thermocline": {"summerDepthFt": [12,18] or null, "strength":"weak | moderate | strong", "winterMix":"full | partial", "note":""},
+    "oxygen": {"depletionDepthFt": number|null, "anoxicBelowFt": number|null, "note":""},
+    "waterColor": "e.g. green tint, brown stain",
+    "flowCharacteristics": "river-run vs bowl, retention time",
+    "seasonalDrawdownFt": number|null,
+    "bottomHardness": "clay rock sand etc",
+    "mixingType": "dimictic, monomictic, etc or null",
+    "phTypical": number|null,
+    "trophicStatus": "oligotrophic | mesotrophic | eutrophic | null"
+  },
+  "sources": [{"label":"","url":"","trust":"OFFICIAL"}]
+}
+JSON only. No fishing advice.`,
+    expectedKey: "limnology"
+  },
+  biology: {
+    label: "Fisheries Biology",
+    order: 3,
+    system: "You are a fisheries biologist. Research the food chain for this lake. Never recommend tackle or fishing methods. Return ONLY JSON.",
+    userTemplate: (lakeName, state, prev) => `Research fisheries biology for:
+
+Lake: ${lakeName}
+State: ${state}
+
+Context:
+${JSON.stringify({identity: prev?.identity, limnology: prev?.limnology}, null, 2).slice(0, 5000)}
+
+Return ONLY:
+{
+  "biology": {
+    "primaryForage": [{"species":"Threadfin Shad","abundance":"high | moderate | low","notes":""}],
+    "secondaryForage": [{"species":"Gizzard Shad","abundance":"","notes":""}],
+    "predatorSpecies": ["Largemouth Bass","Striped Bass", ...],
+    "speciesAbundance": {"Largemouth Bass":"moderate","Striped Bass":"high", "...":"..."},
+    "baitfishMovement": "seasonal movement description",
+    "knownStockings": [{"species":"Striped Bass","agency":"SCDNR","year":2023,"note":""}],
+    "invasiveSpecies": ["Blueback Herring","..."],
+    "forageCalendar": {"spring":"...", "summer":"...", "fall":"...", "winter":"..."}
+  },
+  "sources": [{"label":"","url":"","trust":"OFFICIAL"}]
+}
+JSON only. Never recommend tackle.`,
+    expectedKey: "biology"
+  },
+  habitat: {
+    label: "Habitat",
+    order: 4,
+    system: "You are an aquatic habitat specialist. Map fish habitat. No fishing advice. Return ONLY JSON.",
+    userTemplate: (lakeName, state, prev) => `Research habitat for:
+
+Lake: ${lakeName}
+State: ${state}
+
+Context:
+${JSON.stringify({identity: prev?.identity, limnology: prev?.limnology}, null, 2).slice(0, 4000)}
+
+Return ONLY:
+{
+  "habitat": {
+    "bottomComposition": {"clay":"moderate","rock":"high","sand":"low","mud":"moderate","gravel":"moderate","note":""},
+    "cover": ["standing timber","brush piles","docks","etc"],
+    "vegetation": {"hydrilla":"none|low|moderate|high","grass":"...","milfoil":"...","lily":"...","note":""},
+    "artificialHabitat": ["brush piles","fish attractors","etc"],
+    "structuralElements": {
+      "points": "abundant | moderate | few - description",
+      "humps": "...",
+      "creekArms": "...",
+      "channelLedges": "...",
+      "flats": "...",
+      "bridges": "...",
+      "riprap": "..."
+    },
+    "dockDensity": "low | medium | high",
+    "bridgePilings": true,
+    "standingTimber": "none | light | moderate | heavy",
+    "notes": "overall habitat assessment"
+  },
+  "sources": [{"label":"","url":"","trust":"OFFICIAL_GIS"}]
+}
+JSON only.`,
+    expectedKey: "habitat"
+  },
+  navigation: {
+    label: "Navigation",
+    order: 5,
+    system: "You are a boating safety specialist. Identify safe navigation info. Return ONLY JSON.",
+    userTemplate: (lakeName, state, prev) => `Research navigation for:
+
+Lake: ${lakeName}
+State: ${state}
+
+Return ONLY:
+{
+  "navigation": {
+    "ramps": [{"name":"Clearwater Cove","lat":34.37,"lon":-80.72,"lanes":2}],
+    "hazards": [{"type":"shoal|stump|timber|rock|dam","location":"upper river","description":""}],
+    "shoals": ["description"],
+    "standingTimberAreas": ["upper arms"],
+    "bridgeHazards": ["low clearance at ..."],
+    "idleZones": ["near dam","..."],
+    "dangerousAreas": ["below dam tailwater surge","..."],
+    "notes": "overall navigation safety"
+  },
+  "sources": [{"label":"","url":"","trust":"OFFICIAL"}]
+}
+JSON only.`,
+    expectedKey: "navigation"
+  },
+  regulations: {
+    label: "Regulations",
+    order: 6,
+    system: "You are a fishing regulations specialist. Research current fishing laws from official wildlife agency sources only. Return ONLY JSON. Never summarize laws you are unsure about - use null.",
+    userTemplate: (lakeName, state, prev) => `Research current fishing regulations for:
+
+Lake: ${lakeName}
+State: ${state || 'SC'}
+
+Use only current wildlife agency info (SCDNR, NCWRC, GA DNR). Return ONLY:
+{
+  "regulations": {
+    "state": "${state || 'SC'}",
+    "lastUpdated": "2026-07-10 estimated or null",
+    "lengthLimits": {"Largemouth Bass":"12in minimum","Striped Bass":"26in etc","...":"..."},
+    "creelLimits": {"Largemouth Bass":"5","Striped Bass":"5","Crappie":"20"},
+    "protectedSpecies": ["..."],
+    "seasonalClosures": [{"species":"Striped Bass","period":"June 1 - Sept 30 in lower lake","note":""}],
+    "licenseRequirements": "SC freshwater license required, etc",
+    "specialRegulations": ["..."],
+    "notes": "verify current year",
+    "sourceUrl": "https://www.dnr.sc.gov/fishregs/"
+  },
+  "sources": [{"label":"SCDNR Regulations","url":"https://www.dnr.sc.gov/fishregs/","trust":"OFFICIAL"}]
+}
+Return JSON only. Never invent limits - if unknown, set field null or empty.`,
+    expectedKey: "regulations"
+  },
+  trolling: {
+    label: "Trolling Intelligence",
+    order: 7,
+    system: "You are a fisheries biologist and professional trolling guide. You are given a verified lake profile. DO NOT SEARCH THE INTERNET. Use ONLY supplied JSON. Determine general seasonal fish locations, depth preferences, structure preferences, trolling presentations, forage relationships. Do NOT recommend routes, speeds, colors, or specific lures. Return JSON only.",
+    userTemplate: (lakeName, state, prev) => `You are given a verified lake profile. Use ONLY this JSON - no internet.
+
+Lake: ${lakeName}
+Full profile so far:
+${JSON.stringify(prev, null, 2).slice(0, 12000)}
+
+Task: Translate lake science into long-term trolling intelligence. This is stable knowledge, not today's plan.
+
+Return ONLY:
+{
+  "trollingIntelligence": {
+    "Striped Bass": {
+      "summer": {
+        "preferredDepth": [12,18],
+        "structures": ["channel ledges","creek mouths","long points"],
+        "forage": ["Threadfin Shad"],
+        "recommendedPresentations": ["MR Crankbait","DD Crankbait","A-Rig"],
+        "notes": "general behavior"
+      },
+      "fall": {"preferredDepth":[8,15],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""},
+      "winter": {"preferredDepth":[20,35],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""},
+      "spring": {"preferredDepth":[5,15],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""}
+    },
+    "Largemouth Bass": { "summer": {...}, "fall": {...}, "winter": {...}, "spring": {...} },
+    "Crappie": {...},
+    "Catfish": {...},
+    "White Bass": {...},
+    "Bowfin": {...}
+  },
+  "sources": [{"label":"Derived from lake profile","trust":"DERIVED"}]
+}
+
+Species list should include at least Striped Bass if present system includes it, plus Largemouth, Crappie, Catfish. More if relevant.
+
+No speeds, no colors, no routes - only stable patterns.
+JSON only.`,
+    expectedKey: "trollingIntelligence"
+  },
+  summary: {
+    label: "AI Summary",
+    order: 8,
+    system: "You summarize a lake profile into a readable human description, max 500 words. Use only supplied JSON. Never invent facts. Return JSON with text field.",
+    userTemplate: (lakeName, state, prev) => `Summarize this lake profile for a kayak angler. Max 500 words. Use only supplied JSON. Never invent facts.
+
+Profile:
+${JSON.stringify(prev, null, 2).slice(0, 15000)}
+
+Return ONLY:
+{
+  "summary": {
+    "text": "Lake Wateree is a lowland river-run reservoir... Primary trolling opportunities are ...",
+    "keywords": ["river-run","striped bass","channel ledges","Threadfin Shad"]
+  },
+  "sources": [{"label":"Derived from lake profile","trust":"DERIVED"}]
+}
+
+Plain text summary in text field, no markdown headers, no bullet list - 2-3 paragraphs max.
+JSON only.`,
+    expectedKey: "summary"
+  }
+};
+
+function calculateSectionConfidence(sources, hasData) {
+  if (!hasData) return { percent: 0, level: "missing", reason: "no data" };
+  const src = Array.isArray(sources) ? sources : [];
+  if (!src.length) return { percent: 45, level: "low", reason: "no sources, AI estimate" };
+  let score = 0;
+  let official = 0, secondary = 0, model = 0, derived = 0;
+  for (const s of src) {
+    const trust = String(s.trust || '').toUpperCase();
+    const label = String(s.label || '').toUpperCase();
+    if (trust.includes('OFFICIAL') || /USGS|USACE|EPA|DNR|WILDLIFE|DUKE|DOMINION|SANTEE|SAVANNAH|CORPS/.test(label)) {
+      score += 30; official++;
+    } else if (trust.includes('DERIVED')) {
+      score += 20; derived++;
+    } else if (trust.includes('OFFICIAL_GIS') || trust.includes('THIRD_PARTY') || /SURVEY|FISH|REPORT|SAMPLE/.test(label)) {
+      score += 15; secondary++;
+    } else {
+      score += 5; model++;
+    }
+  }
+  // bonus for multiple agreeing sources
+  if (official >= 3) score += 20;
+  else if (official >=2) score += 10;
+  else if (official >=1 && secondary >=1) score += 8;
+  if (src.length >=3) score += 10;
+  else if (src.length >=2) score += 5;
+
+  let pct = Math.min(99, Math.max(10, score));
+  // cap based on source quality
+  if (official ===0 && secondary ===0) pct = Math.min(pct, 65);
+  if (official ===0 && derived===0) pct = Math.min(pct, 75);
+
+  let level = "low";
+  if (pct >= 95) level = "very high";
+  else if (pct >= 85) level = "high";
+  else if (pct >= 70) level = "medium";
+  else if (pct >= 50) level = "low";
+  else level = "needs review";
+
+  return {
+    percent: pct,
+    level,
+    officialCount: official,
+    secondaryCount: secondary,
+    totalSources: src.length,
+    reason: `${official} official, ${secondary} secondary, ${src.length} total`
+  };
+}
+__name(calculateSectionConfidence, "calculateSectionConfidence");
+
+async function handleResearchAgent(request, env) {
+  let body;
+  try { body = await request.json(); } catch { return new Response(JSON.stringify({success:false, error:"invalid JSON body"}), {status:400, headers:JSON_HEADERS}); }
+  const lakeName = String(body.lakeName || body.lake || '').trim();
+  const state = String(body.state || '').trim() || 'SC';
+  const agentKey = String(body.agent || '').trim().toLowerCase();
+  const previousResults = body.previousResults || body.context || {};
+  if (!lakeName) return new Response(JSON.stringify({success:false, error:"missing lakeName"}), {status:400, headers:JSON_HEADERS});
+  const agent = RESEARCH_AGENTS[agentKey];
+  if (!agent) return new Response(JSON.stringify({success:false, error:`unknown agent ${agentKey}. Valid: ${Object.keys(RESEARCH_AGENTS).join(', ')}`}), {status:400, headers:JSON_HEADERS});
+
+  // Ground identity agent with known LAKES constant to reduce hallucination
+  let groundedPrev = previousResults;
+  if (agentKey === 'identity') {
+    const lookupKey = lakeKeyFromName(lakeName);
+    const known = LAKES[lookupKey];
+    if (known) {
+      groundedPrev = {...previousResults, _knownBaseline: {lakeKey: lookupKey, ...known, note:"This is TrollMap curated baseline — verify against official sources, don't trust blindly"}};
+    }
+  }
+
+  const systemPrompt = agent.system;
+  const userPrompt = agent.userTemplate(lakeName, state, groundedPrev);
+
+  const payload = {
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt }
+    ],
+    temperature: 0.15,
+    max_tokens: agentKey === 'trolling' ? 2000 : agentKey === 'summary' ? 800 : 1500,
+    response_format: { type: "json_object" }
+  };
+
+  const start = Date.now();
+  let llmResult;
+  try {
+    llmResult = await callLLM(env, payload);
+  } catch (e) {
+    return new Response(JSON.stringify({success:false, error:`LLM failed: ${e.message}`, agent: agentKey, lakeName}), {status: 502, headers: JSON_HEADERS});
+  }
+  const rawText = extractLLMText(llmResult.data);
+  const parsed = extractJsonPossibly(rawText);
+  if (!parsed) {
+    return new Response(JSON.stringify({success:false, error:"Agent returned non-JSON", raw: rawText.slice(0, 800), agent: agentKey}), {status: 502, headers: JSON_HEADERS});
+  }
+
+  const dataKey = agent.expectedKey;
+  const sectionData = parsed[dataKey] || parsed[agentKey] || parsed;
+  const sources = parsed.sources || parsed[dataKey]?.sources || [];
+  const hasData = sectionData && (typeof sectionData === 'object' ? Object.keys(sectionData).length > 0 : true);
+  const confidence = calculateSectionConfidence(sources, hasData);
+
+  return new Response(JSON.stringify({
+    success: true,
+    agent: agentKey,
+    label: agent.label,
+    order: agent.order,
+    lakeName,
+    state,
+    data: parsed,
+    section: sectionData,
+    sectionKey: dataKey,
+    sources,
+    confidence,
+    meta: {
+      provider: llmResult.provider,
+      model: llmResult.model,
+      durationMs: Date.now() - start,
+      timestamp: new Date().toISOString()
+    },
+    raw: rawText.slice(0, 2000)
+  }), {headers: JSON_HEADERS});
+}
+__name(handleResearchAgent, "handleResearchAgent");
+
+async function handleResearchList(env) {
+  const prefix = "lakes/";
+  let cursor;
+  const masters = [];
+  const versions = [];
+  do {
+    const listed = await env.R2_TROLLMAP_CHARTPACKS.list({ prefix, cursor });
+    for (const obj of listed.objects) {
+      if (obj.key.includes("/versions/")) {
+        versions.push({key: obj.key, size: obj.size, uploaded: obj.uploaded});
+      } else if (obj.key.startsWith("lakes/") && obj.key.endsWith(".json") && !obj.key.includes("lake_packages")) {
+        masters.push({key: obj.key, size: obj.size, uploaded: obj.uploaded, id: obj.key.replace(/^lakes\//,'').replace(/\.json$/,'')});
+      }
+    }
+    cursor = listed.truncated ? listed.cursor : null;
+  } while (cursor);
+  masters.sort((a,b)=>a.key.localeCompare(b.key));
+  return new Response(JSON.stringify({ok:true, count: masters.length, lakes: masters, versionFiles: versions.length, timestamp: new Date().toISOString()}), {headers: JSON_HEADERS});
+}
+__name(handleResearchList, "handleResearchList");
+
+async function handleResearchGet(env, lakeId) {
+  const safe = sanitizeLakeId(lakeId);
+  const masterKey = `lakes/${safe}.json`;
+  const obj = await env.R2_TROLLMAP_CHARTPACKS.get(masterKey);
+  if (!obj) return new Response(JSON.stringify({ok:false, error:`no profile for ${lakeId} (${safe})`}), {status:404, headers:JSON_HEADERS});
+  const text = await obj.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = {raw:text}; }
+  // also try to list package files
+  let packageFiles = [];
+  try {
+    const pkgListed = await env.R2_TROLLMAP_CHARTPACKS.list({prefix: `lake_packages/${safe}/`});
+    packageFiles = pkgListed.objects.map(o=>({key:o.key, size:o.size, name:o.key.split('/').pop()}));
+  } catch {}
+  let versionList = [];
+  try {
+    const vListed = await env.R2_TROLLMAP_CHARTPACKS.list({prefix: `lakes/versions/${safe}/`});
+    versionList = vListed.objects.map(o=>({key:o.key, size:o.size, version: (o.key.match(/v(\d+)\.json/)||[])[1]||null})).sort((a,b)=> (parseInt(b.version||0)-parseInt(a.version||0)));
+  } catch {}
+  return new Response(JSON.stringify({ok:true, lakeId: lakeId, sanitized: safe, masterKey, profile: data, packageFiles, versions: versionList}), {headers: JSON_HEADERS});
+}
+__name(handleResearchGet, "handleResearchGet");
+
+async function handleResearchSave(request, env) {
+  let body;
+  try { body = await request.json(); } catch { return new Response(JSON.stringify({ok:false, error:"invalid JSON"}), {status:400, headers:JSON_HEADERS}); }
+  const lakeName = String(body.lakeName || body.profile?.lakeName || body.profile?.identity?.lakeName || '').trim();
+  if (!lakeName) return new Response(JSON.stringify({ok:false, error:"missing lakeName"}), {status:400, headers:JSON_HEADERS});
+  const safe = sanitizeLakeId(lakeName);
+  const incomingProfile = body.profile || body;
+  const packageParts = body.packageParts || body.parts || {};
+  const notes = body.notes || incomingProfile.notes || "";
+
+  // Determine next version
+  let nextVersion = 1;
+  let existingMeta = null;
+  try {
+    const existingObj = await env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${safe}.json`);
+    if (existingObj) {
+      const txt = await existingObj.text();
+      const existing = JSON.parse(txt);
+      existingMeta = existing.metadata || {};
+      const v = parseInt(existingMeta.version || existingMeta.versionNumber || 0);
+      if (v) nextVersion = v+1;
+      else {
+        // list versions to find max
+        const vList = await env.R2_TROLLMAP_CHARTPACKS.list({prefix:`lakes/versions/${safe}/`});
+        let maxV = 0;
+        for (const o of vList.objects) {
+          const m = o.key.match(/v(\d+)\.json/);
+          if (m) maxV = Math.max(maxV, parseInt(m[1]));
+        }
+        nextVersion = maxV+1 || 2;
+      }
+    }
+  } catch {}
+
+  // Calculate confidence per section if not provided
+  const sections = ["identity","limnology","biology","forage","habitat","navigation","regulations","trollingIntelligence","trolling","summary"];
+  const confidence = incomingProfile.confidence || {};
+  const sources = incomingProfile.sources || [];
+  // build overall confidence
+  let confSum = 0, confCount = 0;
+  for (const sec of sections) {
+    const secData = incomingProfile[sec] || packageParts[sec];
+    if (secData) {
+      if (!confidence[sec]) {
+        const src = (secData.sources) || incomingProfile.sources || [];
+        const calc = calculateSectionConfidence(src, true);
+        confidence[sec] = calc;
+      }
+      if (confidence[sec]?.percent) { confSum += confidence[sec].percent; confCount++; }
+    }
+  }
+  let overallConf = confCount ? Math.round(confSum/confCount) : 75;
+
+  // Merge master profile per spec section 6
+  const now = new Date().toISOString();
+  const master = {
+    lakeName: incomingProfile.lakeName || lakeName,
+    aliases: incomingProfile.aliases || incomingProfile.identity?.aliases || [],
+    state: incomingProfile.state || packageParts.identity?.state || "",
+    riverSystem: incomingProfile.riverSystem || incomingProfile.identity?.riverSystem || "",
+    archetype: incomingProfile.archetype || incomingProfile.identity?.archetype || "",
+    surfaceAreaAcres: incomingProfile.surfaceAreaAcres ?? incomingProfile.identity?.surfaceAreaAcres ?? null,
+    maxDepthFt: incomingProfile.maxDepthFt ?? incomingProfile.identity?.maxDepthFt ?? null,
+    averageDepthFt: incomingProfile.averageDepthFt ?? incomingProfile.identity?.averageDepthFt ?? null,
+    limnology: incomingProfile.limnology || packageParts.limnology || {},
+    forage: incomingProfile.forage || incomingProfile.biology || packageParts.biology || packageParts.forage || {},
+    biology: incomingProfile.biology || incomingProfile.forage || {},
+    habitat: incomingProfile.habitat || packageParts.habitat || {},
+    navigation: incomingProfile.navigation || packageParts.navigation || {},
+    regulations: incomingProfile.regulations || packageParts.regulations || {},
+    trolling: incomingProfile.trolling || incomingProfile.trollingIntelligence || packageParts.trolling || packageParts.trollingIntelligence || {},
+    trollingIntelligence: incomingProfile.trollingIntelligence || incomingProfile.trolling || {},
+    summary: incomingProfile.summary || packageParts.summary || {},
+    sources: incomingProfile.sources || sources || [],
+    confidence: {...confidence, overall: {percent: overallConf, level: overallConf>=95?'very high':overallConf>=85?'high':overallConf>=70?'medium':'low'}},
+    metadata: {
+      version: `${nextVersion}.0`,
+      versionNumber: nextVersion,
+      status: incomingProfile.metadata?.status || body.status || (nextVersion===1?"draft":"verified"),
+      lastUpdated: now,
+      createdAt: existingMeta?.createdAt || now,
+      createdBy: body.requestedBy || incomingProfile.metadata?.createdBy || "Ryan",
+      verified: !!(body.verified || incomingProfile.metadata?.verified),
+      verifiedAt: body.verified ? now : (existingMeta?.verifiedAt||null),
+      lakeId: safe,
+      previousVersion: existingMeta?.version || null
+    },
+    notes: notes,
+    researchLog: incomingProfile.researchLog || body.researchLog || {requestTime: now, completedAgents: Object.keys(packageParts)}
+  };
+
+  // Ensure metadata status logic: first save draft -> user approves to verified via approve endpoint, but allow direct verified if requested
+  if (body.approve || body.status === 'verified') {
+    master.metadata.status = 'verified';
+    master.metadata.verified = true;
+    master.metadata.verifiedAt = now;
+  }
+
+  const masterJson = JSON.stringify(master, null, 2);
+  if (masterJson.length > 250*1024) {
+    console.warn(`Lake profile ${safe} exceeds 250KB: ${masterJson.length}`);
+  }
+
+  // Save current master
+  await env.R2_TROLLMAP_CHARTPACKS.put(`lakes/${safe}.json`, masterJson, {
+    httpMetadata: {contentType:"application/json"},
+    customMetadata: {version: String(nextVersion), status: master.metadata.status, lakeName: lakeName, updated: now}
+  });
+  // Save version copy
+  await env.R2_TROLLMAP_CHARTPACKS.put(`lakes/versions/${safe}/v${nextVersion}.json`, masterJson, {
+    httpMetadata: {contentType:"application/json"},
+    customMetadata: {version: String(nextVersion), lakeName: lakeName}
+  });
+
+  // Save package parts (hybrid)
+  const partKeys = ['identity','limnology','biology','forage','habitat','navigation','regulations','trolling','trollingIntelligence','summary'];
+  for (const k of partKeys) {
+    const partData = packageParts[k] || master[k];
+    if (partData) {
+      await env.R2_TROLLMAP_CHARTPACKS.put(`lake_packages/${safe}/${k}.json`, JSON.stringify(partData, null, 2), {
+        httpMetadata: {contentType:"application/json"},
+        customMetadata: {lakeName, version: String(nextVersion)}
+      });
+    }
+  }
+  // Save sources, research_log, metadata as separate files for Inspector
+  await env.R2_TROLLMAP_CHARTPACKS.put(`lake_packages/${safe}/sources.json`, JSON.stringify(master.sources||[], null, 2), {httpMetadata:{contentType:"application/json"}});
+  await env.R2_TROLLMAP_CHARTPACKS.put(`lake_packages/${safe}/metadata.json`, JSON.stringify(master.metadata, null, 2), {httpMetadata:{contentType:"application/json"}});
+  await env.R2_TROLLMAP_CHARTPACKS.put(`lake_packages/${safe}/research_log.json`, JSON.stringify(master.researchLog||{}, null, 2), {httpMetadata:{contentType:"application/json"}});
+  if (master.notes) {
+    await env.R2_TROLLMAP_CHARTPACKS.put(`lake_packages/${safe}/notes.md`, String(master.notes), {httpMetadata:{contentType:"text/markdown"}});
+  }
+
+  return new Response(JSON.stringify({ok:true, lakeId: safe, lakeName, version: nextVersion, masterKey: `lakes/${safe}.json`, overallConfidence: overallConf, status: master.metadata.status, bytes: masterJson.length}), {headers: JSON_HEADERS});
+}
+__name(handleResearchSave, "handleResearchSave");
+
+async function handleResearchApprove(request, env) {
+  let body;
+  try { body = await request.json(); } catch { return new Response(JSON.stringify({ok:false, error:"invalid JSON"}), {status:400, headers:JSON_HEADERS}); }
+  const lakeName = String(body.lakeName || body.lake || '').trim();
+  if (!lakeName) return new Response(JSON.stringify({ok:false, error:"missing lakeName"}), {status:400, headers:JSON_HEADERS});
+  const safe = sanitizeLakeId(lakeName);
+  const masterKey = `lakes/${safe}.json`;
+  const obj = await env.R2_TROLLMAP_CHARTPACKS.get(masterKey);
+  if (!obj) return new Response(JSON.stringify({ok:false, error:`no profile for ${lakeName}`}), {status:404, headers:JSON_HEADERS});
+  const txt = await obj.text();
+  let profile;
+  try { profile = JSON.parse(txt); } catch { return new Response(JSON.stringify({ok:false, error:"corrupt JSON"}), {status:500, headers:JSON_HEADERS}); }
+  profile.metadata = profile.metadata||{};
+  profile.metadata.status = "verified";
+  profile.metadata.verified = true;
+  profile.metadata.verifiedAt = new Date().toISOString();
+  profile.metadata.approvedBy = body.approvedBy || "Ryan";
+  if (body.notes) profile.notes = body.notes;
+  const newJson = JSON.stringify(profile, null, 2);
+  await env.R2_TROLLMAP_CHARTPACKS.put(masterKey, newJson, {httpMetadata:{contentType:"application/json"}, customMetadata:{version: String(profile.metadata.versionNumber||profile.metadata.version||1), status:"verified"}});
+  // also save as new version? keep same version but mark verified
+  return new Response(JSON.stringify({ok:true, lakeId: safe, lakeName, status:"verified", version: profile.metadata.version||profile.metadata.versionNumber}), {headers: JSON_HEADERS});
+}
+__name(handleResearchApprove, "handleResearchApprove");
+
+async function handleResearchPackage(env, lakeId) {
+  const safe = sanitizeLakeId(lakeId);
+  const listed = await env.R2_TROLLMAP_CHARTPACKS.list({prefix: `lake_packages/${safe}/`});
+  if (!listed.objects.length) return new Response(JSON.stringify({ok:false, error:`no package for ${lakeId}`}), {status:404, headers:JSON_HEADERS});
+  const files = [];
+  for (const o of listed.objects) {
+    files.push({key:o.key, name:o.key.split('/').pop(), size:o.size, uploaded:o.uploaded});
+  }
+  files.sort((a,b)=>a.name.localeCompare(b.name));
+  return new Response(JSON.stringify({ok:true, lakeId: lakeId, sanitized: safe, count: files.length, files}), {headers: JSON_HEADERS});
+}
+__name(handleResearchPackage, "handleResearchPackage");
+
+async function handleResearchPackageFile(env, lakeId, filename) {
+  const safe = sanitizeLakeId(lakeId);
+  const key = `lake_packages/${safe}/${filename}`;
+  const obj = await env.R2_TROLLMAP_CHARTPACKS.get(key);
+  if (!obj) return new Response(JSON.stringify({ok:false, error:`no file ${filename} for ${lakeId}`}), {status:404, headers:JSON_HEADERS});
+  const body = await obj.arrayBuffer();
+  const ct = filename.endsWith('.json') ? 'application/json' : filename.endsWith('.md') ? 'text/markdown' : 'application/octet-stream';
+  return new Response(body, {headers: {...CORS, "Content-Type": ct, "Cache-Control":"no-store"}});
+}
+__name(handleResearchPackageFile, "handleResearchPackageFile");
+
+async function handleEnhancedLakeIntel(lakeName, env) {
+  // merges curated LAKE_INTEL with researched profile if exists
+  const key = lakeKeyFromName(lakeName);
+  const curated = await getLakeIntel(lakeName);
+  let researched = null;
+  let researchedProfile = null;
+  try {
+    const safe = sanitizeLakeId(lakeName);
+    // try full lakeName sanitized, then key sanitized
+    let obj = await env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${safe}.json`);
+    if (!obj) {
+      const safeKey = sanitizeLakeId(key);
+      obj = await env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${safeKey}.json`);
+    }
+    if (obj) {
+      const txt = await obj.text();
+      researchedProfile = JSON.parse(txt);
+      researched = {
+        exists: true,
+        lakeName: researchedProfile.lakeName,
+        version: researchedProfile.metadata?.version,
+        status: researchedProfile.metadata?.status,
+        lastUpdated: researchedProfile.metadata?.lastUpdated,
+        overallConfidence: researchedProfile.confidence?.overall,
+        summary: researchedProfile.summary,
+        trollingIntelligence: researchedProfile.trollingIntelligence || researchedProfile.trolling,
+        fullProfile: researchedProfile
+      };
+    }
+  } catch {}
+  return {...curated, researched, hasResearchedProfile: !!researched};
+}
+__name(handleEnhancedLakeIntel, "handleEnhancedLakeIntel");
+
 var trollmap_worker_default = {
   async fetch(request, env) {
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
@@ -2855,6 +3553,45 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
           return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: JSON_HEADERS });
         }
       }
+      // ── LAKE RESEARCH ROUTES ─────────────────────────────────────
+      if (path === "/research/agent" && request.method === "POST") {
+        return handleResearchAgent(request, env);
+      }
+      if ((path === "/research/list" || path === "/lakes/list") && request.method === "GET") {
+        return handleResearchList(env);
+      }
+      if (path === "/research/get" && request.method === "GET") {
+        const lake = url.searchParams.get("lake") || url.searchParams.get("lakeName") || "";
+        if (!lake) return new Response(JSON.stringify({ok:false, error:"missing lake param"}), {status:400, headers:JSON_HEADERS});
+        return handleResearchGet(env, lake);
+      }
+      if (path === "/research/save" && request.method === "POST") {
+        return handleResearchSave(request, env);
+      }
+      if (path === "/research/approve" && request.method === "POST") {
+        return handleResearchApprove(request, env);
+      }
+      if (path === "/research/package" && request.method === "GET") {
+        const lake = url.searchParams.get("lake") || "";
+        if (!lake) return new Response(JSON.stringify({ok:false, error:"missing lake"}), {status:400, headers:JSON_HEADERS});
+        const file = url.searchParams.get("file");
+        if (file) return handleResearchPackageFile(env, lake, file);
+        return handleResearchPackage(env, lake);
+      }
+      if (path === "/lake-research" && request.method === "GET") {
+        const lake = url.searchParams.get("lake") || "";
+        if (!lake) return new Response(JSON.stringify({ok:false, error:"missing lake"}), {status:400, headers:JSON_HEADERS});
+        const enhanced = await handleEnhancedLakeIntel(lake, env);
+        return new Response(JSON.stringify(enhanced, null, 2), {headers: JSON_HEADERS});
+      }
+      if (path.startsWith("/lakes/") && request.method === "GET") {
+        // /lakes/<id>.json or /lakes/<id> -> get master
+        const m = path.match(/^\/lakes\/([^\/]+)(?:\.json)?$/);
+        if (m) {
+          return handleResearchGet(env, decodeURIComponent(m[1]));
+        }
+      }
+
       if (path === "/detect-structure" && request.method === "POST") {
         try {
           const body = await request.json();
@@ -3368,8 +4105,14 @@ Place the fraction at the point where the structure meets the water, not the far
       if (path === "/lake-intel") {
         const name = url.searchParams.get("lake") || url.searchParams.get("waterbody") || "";
         if (!name) return new Response(JSON.stringify({ error: "missing lake" }), { headers: JSON_HEADERS, status: 400 });
-        const intel = await getLakeIntel(name);
-        return new Response(JSON.stringify(intel, null, 2), { headers: JSON_HEADERS });
+        // Enhanced with researched profile if exists
+        try {
+          const enhanced = await handleEnhancedLakeIntel(name, env);
+          return new Response(JSON.stringify(enhanced, null, 2), { headers: JSON_HEADERS });
+        } catch {
+          const intel = await getLakeIntel(name);
+          return new Response(JSON.stringify(intel, null, 2), { headers: JSON_HEADERS });
+        }
       }
       if (path === "/river" || url.searchParams.has("river")) {
         const r = (url.searchParams.get("river") || "").toLowerCase();
@@ -3524,9 +4267,18 @@ Place the fraction at the point where the structure meets the water, not the far
       return new Response(JSON.stringify({
         ok: true,
         worker: "trollmap-worker",
-        version: 14,
-        changelog: "2026-07-11: Fix LLM model IDs — groq openai/gpt-oss-120b primary, cerebras llama-3.3-70b, multi-model fallback chain",
+        version: 15.1,
+        changelog: "2026-07-11: Lake Research v1.0 patch - token-optimized Smart Plan injection (target species only, softer tone), identity grounding with LAKES constant to reduce hallucination, fix species-not-covered handling",
         routes: [
+          "/research/agent                    \u2014 run single AI research agent (identity|limnology|biology|habitat|navigation|regulations|trolling|summary) — uses full callLLM chain (groq 120b primary → fallback), grounded with known LAKES baseline for identity",
+          "/research/list or /lakes/list      \u2014 list all researched lake master profiles",
+          "/research/get?lake=...             \u2014 get master profile + package file list + versions",
+          "/research/save                     \u2014 save merged profile (master + hybrid package + version)",
+          "/research/approve                  \u2014 mark profile verified",
+          "/research/package?lake=...         \u2014 list package files for lake",
+          "/research/package?lake=...&file=... \u2014 get single package file",
+          "/lake-research?lake=...            \u2014 enhanced lake intel with researched profile if exists",
+          "/lakes/<id>                        \u2014 shortcut get master profile",
           "/sync/item/:type/:id               \u2014 push/get/delete a sync item (auth required)",
           "/sync/list-updates?since=<ts>      \u2014 delta list for cross-device sync (auth required)",
           "/sync/migrate                      \u2014 bulk import all local data (auth required)",
@@ -3535,7 +4287,7 @@ Place the fraction at the point where the structure meets the water, not the far
           "/lake?lake=wateree                     \u2014 unified lake JSON",
           "/lake-clarity?lake=wateree&date=YYYY-MM-DD \u2014 runoff clarity/ramp/lure forecast",
           "/lake-intel-sources?lake=wateree       \u2014 trust-tier source registry",
-          "/lake-intel?lake=murray|marion|wateree    \u2014 fisherman lake profile + latest report scrape",
+          "/lake-intel?lake=murray|marion|wateree    \u2014 fisherman lake profile + latest report scrape + researched if exists",
           "/river?river=wateree|congaree|saluda|broad|santee|cooper",
           "/rivers                                \u2014 list all rivers",
           "/duke-flow-arrivals?basin=1|2|3|6|10|11 \u2014 raw Duke scheduled dam releases",

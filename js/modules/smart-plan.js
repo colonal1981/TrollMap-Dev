@@ -607,8 +607,35 @@ export async function runSmartPlan() {
   
   const intelNotes = fishingContext?.intel?.notes || 'No local notes available.';
   const intelSpeed = fishingContext?.intel?.preferredSpeed || 2.0;
+  const researchedSummary = fishingContext?.researchedSummary || null;
+  const researchedTrolling = fishingContext?.researchedTrolling || null;
+  const hasResearched = fishingContext?.hasResearchedProfile || false;
+  const researchedMeta = fishingContext?.researchedProfile?.metadata || null;
 
   // ── Unified Groq Call (State-Agnostic Prompt + Guided Creativity) ─────
+  // Token-optimized: only inject target species slice, not entire trolling intel map
+  let researchedTrollingSlice = null;
+  if (hasResearched && researchedTrolling) {
+    // researchedTrolling structure: { "Striped Bass": {summer:{...}}, "Largemouth Bass": {...}, ... }
+    // Extract only the target species + 1-2 additional common species to keep token low
+    const targetKey = Object.keys(researchedTrolling).find(k => k.toLowerCase().includes(sp.toLowerCase().split(' ')[0]) || sp.toLowerCase().includes(k.toLowerCase().split(' ')[0]));
+    if (targetKey) {
+      researchedTrollingSlice = { [targetKey]: researchedTrolling[targetKey] };
+    } else {
+      // species not covered in researched profile — will fall back to generic, note it
+      researchedTrollingSlice = { _note: `Research profile exists but does not contain ${sp}. Use generic species intel for ${sp}.`, availableSpecies: Object.keys(researchedTrolling).slice(0,6) };
+    }
+  }
+
+  const researchedBlock = hasResearched && researchedMeta ? `
+🧠 VERIFIED LAKE RESEARCH (v${researchedMeta.version||'?'} ${researchedMeta.status||''} ${fishingContext.researchedProfile?.confidence?.overall?.percent||'?'}% — prioritize for permanent facts, adapt for today's conditions):
+Summary: ${String(researchedSummary||'').slice(0,350)}
+${researchedTrollingSlice ? `Trolling (target species only ${sp}): ${JSON.stringify(researchedTrollingSlice, null, 0).slice(0,900)}` : ''}
+Limnology key: ${(fishingContext.researchedProfile?.limnology?.thermocline?.summerDepthFt ? `thermocline ${JSON.stringify(fishingContext.researchedProfile.limnology.thermocline.summerDepthFt)}ft` : '')} ${String(fishingContext.researchedProfile?.limnology?.waterClarity?.typical||'').slice(0,80)}
+Habitat key: ${String(fishingContext.researchedProfile?.habitat?.structuralElements ? Object.values(fishingContext.researchedProfile.habitat.structuralElements).join('; ').slice(0,200) : '').slice(0,200)}
+Note: This profile is authoritative for permanent lake characteristics (type, structure, forage, thermocline). For dynamic species behavior, blend researched baseline with generic species intel and today's water temp/weather. If researched conflicts with generic, prefer researched for permanent facts, generic for dynamic.
+` : `No verified research profile yet — using generic species intel.`;
+
   const planPrompt=`You are an expert fishing guide for ${lakeName}.
 Build a trolling plan for today targeting ${sp}.
 
@@ -632,6 +659,8 @@ You must evaluate the weather and wind forecast against the platform (12.5ft Kay
 LOCAL HISTORICAL INTEL (Your baseline):
 - Typical Speed: ${intelSpeed} mph
 - Local Patterns: ${intelNotes}
+
+${researchedBlock}
 
 YOUR ROLE:
 You are the expert guide on the water *today*. Use the historical intel as your foundation, but adapt speed, depths, and colors based on today's specific water temp, wind, clarity, and season.
