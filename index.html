@@ -353,6 +353,34 @@
     display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px;
   }
   #gpsPanelPopup .gps-grid button { height: 34px; font-size: 11px; }
+
+  /* ── Lake Research Module ── */
+  #panel-research .research-header { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:12px; }
+  #panel-research .research-header .lake-field { flex:1 1 220px; }
+  #panel-research .research-meta { display:flex; flex-wrap:wrap; gap:8px; font-size:11px; color:var(--muted); margin-bottom:10px; }
+  #panel-research .research-meta .meta-pill { background:var(--panel2); border:1px solid var(--line); border-radius:999px; padding:3px 9px; font-size:11px; }
+  #panel-research .research-meta .meta-pill.verified { border-color:var(--accent2); color:var(--accent2); }
+  #panel-research .research-meta .meta-pill.draft { border-color:var(--warn); color:var(--warn); }
+  #panel-research .research-actions { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
+  #panel-research .conf-bar { height:8px; background:var(--panel2); border-radius:4px; overflow:hidden; margin-top:4px; }
+  #panel-research .conf-fill { height:100%; transition:width .4s; }
+  #panel-research .conf-fill.veryhigh { background:var(--accent2); }
+  #panel-research .conf-fill.high { background:#4caf50; }
+  #panel-research .conf-fill.medium { background:var(--warn); }
+  #panel-research .conf-fill.low { background:#ff7043; }
+  #panel-research .conf-fill.need { background:var(--bad); }
+  #panel-research .section-row { display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid var(--line); }
+  #panel-research .section-row:last-child { border-bottom:none; }
+  #panel-research .section-row .sec-icon { width:22px; text-align:center; }
+  #panel-research .section-row .sec-name { flex:1; font-size:13px; }
+  #panel-research .section-row .sec-conf { font-size:11px; color:var(--accent2); min-width:40px; text-align:right; }
+  #panel-research .log-box { background:#0d1a2a; border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-family:monospace; font-size:11px; max-height:200px; overflow:auto; white-space:pre-wrap; }
+  #panel-research .source-item { padding:6px 8px; border-bottom:1px solid var(--line); font-size:11px; }
+  #panel-research .source-item a { color:var(--accent); text-decoration:none; }
+  #panel-research .review-card { border:1px solid var(--accent2); background:rgba(118,255,3,.06); border-radius:10px; padding:10px; margin-bottom:8px; }
+  #panel-research .review-card.need { border-color:var(--bad); background:rgba(255,82,82,.08); }
+  #panel-research .progress-ring { display:inline-block; width:14px; height:14px; border:2px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin 0.8s linear infinite; vertical-align:middle; margin-right:6px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
   </style>
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%230b1623'/><text x='50' y='60' font-size='50' text-anchor='middle' fill='%2300e5ff'>🎣</text></svg>">
@@ -689,6 +717,141 @@
       </div>
     </section>
 
+    <!-- ===== RESEARCH ===== -->
+    <section class="panel" id="panel-research">
+      <div class="pad">
+        <div class="card">
+          <h3>🧠 Lake Research — Permanent Intelligence</h3>
+          <p class="muted" style="margin:4px 0 12px">Build a verified lake profile that Smart Plan uses forever. Permanent facts (type, forage, structure) are researched once. Dynamic facts (weather, temp) come from live conditions.</p>
+          <div class="research-header">
+            <div class="lake-field">
+              <label>Lake (from SC/NC/GA dropdown)</label>
+              <select id="researchLakeSelect" style="width:100%">
+                <option value="">— select lake —</option>
+              </select>
+            </div>
+            <div style="display:flex;gap:6px;align-items:flex-end">
+              <button id="researchLoadBtn" class="small">📂 Load</button>
+              <button id="researchListBtn" class="small ghost">↻ List</button>
+            </div>
+          </div>
+          <div id="researchMeta" class="research-meta" style="display:none">
+            <span class="meta-pill" id="researchStatusPill">Status: —</span>
+            <span class="meta-pill" id="researchVersionPill">Version: —</span>
+            <span class="meta-pill" id="researchUpdatedPill">Last Updated: —</span>
+            <span class="meta-pill" id="researchConfidencePill">Overall: —%</span>
+          </div>
+          <div class="research-actions">
+            <button id="btnResearch" class="primary" style="background:var(--accent2);color:#000">🔬 Research</button>
+            <button id="btnRefresh" title="Refresh - pick which sections to re-run">🔄 Refresh</button>
+            <button id="btnApprove" class="small" style="display:none;color:var(--accent2);border-color:var(--accent2)">✔ Approve / Verify</button>
+            <button id="btnExport" class="small">⬇ Export JSON</button>
+            <label class="btn-label small" style="cursor:pointer">⬆ Import<input id="researchImportInput" type="file" accept=".json" class="hidden"></label>
+            <button id="btnDeleteResearch" class="small" style="color:var(--bad);border-color:var(--bad);display:none">🗑 Delete</button>
+          </div>
+          <div id="researchProgress" style="display:none;margin:8px 0">
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted)"><span id="researchProgressLabel">Starting...</span><span id="researchProgressPct">0%</span></div>
+            <div class="conf-bar"><div id="researchProgressFill" class="conf-fill veryhigh" style="width:0%"></div></div>
+            <div id="researchLog" class="log-box" style="margin-top:8px">Waiting to start...</div>
+          </div>
+        </div>
+
+        <!-- Refresh picker -->
+        <div id="refreshPicker" class="card" style="display:none">
+          <h3>🔄 Refresh — Pick Sections to Re-Research</h3>
+          <p class="muted">Select which sections to re-run. Physical facts (identity, limnology) rarely change. Regulations and trolling intelligence benefit most from refresh.</p>
+          <div style="display:flex;flex-wrap:wrap;gap:10px;margin:10px 0">
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="identity" checked> 🆔 Identity</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="limnology"> 🌊 Limnology</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="biology"> 🐟 Biology</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="habitat"> 🌿 Habitat</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="navigation"> 🧭 Navigation</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="regulations" checked> 📜 Regulations</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="trolling" checked> 🎣 Trolling</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="summary" checked> 📝 Summary</label>
+          </div>
+          <div class="row">
+            <button id="btnDoRefresh" class="primary small">▶ Run Selected</button>
+            <button id="btnCancelRefresh" class="small">Cancel</button>
+          </div>
+        </div>
+
+        <!-- Research Sections -->
+        <div class="card">
+          <h3>📋 Research Sections</h3>
+          <div id="researchSections">
+            <div class="muted" style="padding:10px">No profile loaded. Select a lake and click Load or Research.</div>
+          </div>
+        </div>
+
+        <!-- Confidence -->
+        <div class="card" id="confidenceCard" style="display:none">
+          <h3>📊 Confidence</h3>
+          <div id="confidenceList"></div>
+          <div style="margin-top:10px;font-size:11px;color:var(--muted)">Confidence = calculated from source trust tiers: OFFICIAL (USGS/USACE/EPA/DNR/Owner) 30pts, SECONDARY 15pts, DERIVED 20pts, agreement bonus. Flag if &lt;70%, Needs Review if &lt;50%.</div>
+        </div>
+
+        <!-- Sources -->
+        <div class="card" id="sourcesCard" style="display:none">
+          <h3>📚 Sources</h3>
+          <div id="sourcesList"></div>
+        </div>
+
+        <!-- Summary + Notes -->
+        <div class="card" id="summaryCard" style="display:none">
+          <h3>📝 AI Summary</h3>
+          <div id="summaryText" style="font-size:13px;line-height:1.5;color:var(--text);white-space:pre-wrap"></div>
+        </div>
+
+        <div class="card" id="notesCard" style="display:none">
+          <h3>🗒 Notes (editable by user)</h3>
+          <textarea id="researchNotes" placeholder="Add personal notes, corrections, observations... these are saved with the profile." rows="4"></textarea>
+          <div class="row" style="margin-top:8px">
+            <button id="btnSaveNotes" class="small">💾 Save Notes</button>
+            <span id="notesStatus" class="muted" style="font-size:11px"></span>
+          </div>
+        </div>
+
+        <!-- Package Files & Versions -->
+        <div class="card" id="packageCard" style="display:none">
+          <h3>📦 Intelligence Package</h3>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Hybrid storage: master JSON + split package files + version history in R2 (reuses chartpacks bucket).</div>
+          <div id="packageFiles"></div>
+          <div id="versionHistory" style="margin-top:10px"></div>
+        </div>
+
+        <!-- Drafts / Review -->
+        <div class="card" id="reviewCard" style="display:none">
+          <h3>🔍 Review — Human Approval Required</h3>
+          <p class="muted">No auto-trust. Check fields below, edit if needed, then click Approve to mark Verified.</p>
+          <div id="reviewList"></div>
+          <div class="row" style="margin-top:12px">
+            <button id="btnApproveReview" class="primary" style="background:var(--accent2);color:#000">✔ Approve & Save as Verified</button>
+            <button id="btnSaveDraft" class="small">💾 Save as Draft</button>
+          </div>
+        </div>
+
+        <!-- Dev / Debug -->
+        <div class="card" style="background:rgba(0,229,255,.04)">
+          <h3>🧪 Lake Research v1.0 — Minimal MVP</h3>
+          <div style="font-size:11px;color:var(--muted);line-height:1.5">
+            ✅ Research any SC/NC/GA lake from dropdown via 8 AI agents (Identity → Limnology → Biology → Habitat → Navigation → Regulations → Trolling → Summary)<br>
+            ✅ Permanent profile stored in R2 lakes/ + lake_packages/ + versions/ — hybrid master + split files<br>
+            ✅ Confidence calculated from trust tiers, not just AI self-score<br>
+            ✅ Sources listed, Notes editable<br>
+            ✅ Export/Import JSON, Version history<br>
+            ✅ Smart Plan auto-uses verified profile<br>
+            ⏳ v2: Compare, Knowledge Browser tree, Inspector traceability, offline IDB cache
+          </div>
+          <div class="row" style="margin-top:8px">
+            <button id="btnDebugProfile" class="small ghost">🐛 Dump Profile JSON</button>
+            <button id="btnClearResearchCache" class="small ghost">🧹 Clear Log</button>
+          </div>
+          <pre id="debugOutput" style="display:none;background:#060f1a;border:1px solid var(--line);border-radius:8px;padding:8px;font-size:10px;max-height:300px;overflow:auto;white-space:pre-wrap;margin-top:8px"></pre>
+        </div>
+      </div>
+    </section>
+
     <section class="panel" id="panel-plan">
       <div class="pad">
 
@@ -861,7 +1024,7 @@
 
   <nav id="bottomNav">
     <button data-tab="map" class="active"><span class="ico">🗺️</span>Map</button>
-    
+    <button data-tab="research"><span class="ico">🧠</span>Research</button>
     <button data-tab="edit"><span class="ico">✏️</span>Edit</button>
     <button data-tab="catch"><span class="ico">🐟</span>Catch</button>
     <button data-tab="plan"><span class="ico">🎣</span>Plan</button>

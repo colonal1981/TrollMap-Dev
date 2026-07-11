@@ -87,6 +87,7 @@ import './modules/plan-tab-wiring.js';
 import { pullUpdatesOnLoad, pushAllLocalToCloud } from './modules/cloud-sync.js';
 import './modules/pinch-point-finder.js'; // still used by route-builder.js
 import { initTackleInventoryPanel } from './modules/tackle-inventory-ui.js'
+import './modules/lake-research.js';
 
 // ── Plan-tab dropdown helpers are exposed on `window` so the ──
 //    tab switcher in core/tabs.js can invoke them by name.        ──
