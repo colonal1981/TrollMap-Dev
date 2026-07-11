@@ -60,6 +60,42 @@ function stripLureAnnotation(raw) {
   return String(raw).replace(/\s*\[.*$/, '').trim();
 }
 
+/**
+ * Apply the physical speed ceiling for one trolling pass.
+ *
+ * A pass has exactly two lures in the water, so its boat speed is limited by
+ * the lower trollSpeedMax of that pass's port and starboard lures.  This is
+ * deliberately per-pass: Band 1's lures must not constrain Band 2, and vice
+ * versa.  The returned speed is safe to use for both the outbound and inbound
+ * route for that band.
+ */
+export function capPassSpeed(requestedSpeed, lureNames, inventory, fallbackSpeed = 1.8) {
+  const requested = Number.parseFloat(requestedSpeed);
+  const requestedMph = Number.isFinite(requested) && requested > 0 ? requested : fallbackSpeed;
+  const selectedLures = (lureNames || []).map((name) => {
+    const cleanName = String(stripLureAnnotation(name) || '').toLowerCase();
+    return (inventory || []).find((lure) =>
+      lure?.trollable && String(lure.name || '').toLowerCase() === cleanName,
+    );
+  }).filter(Boolean);
+  const maxSpeeds = selectedLures
+    .map((lure) => Number.parseFloat(lure.trollSpeedMax))
+    .filter((speed) => Number.isFinite(speed) && speed > 0);
+  const maxMph = maxSpeeds.length ? Math.min(...maxSpeeds) : null;
+  const appliedMph = maxMph == null ? requestedMph : Math.min(requestedMph, maxMph);
+  const limitingLures = maxMph == null ? [] : selectedLures
+    .filter((lure) => Number.parseFloat(lure.trollSpeedMax) === maxMph);
+
+  return {
+    requestedMph,
+    appliedMph,
+    maxMph,
+    selectedLures,
+    limitingLures,
+    wasCapped: maxMph != null && requestedMph > maxMph,
+  };
+}
+
 // ── Groq lure name sanitizer ──────────────────────────────────────────────────
 function sanitizeGroqLureName(raw, targetDepthFt, inventoryNames) {
   if (!raw) return depthFallbackLure(targetDepthFt, inventoryNames);
@@ -354,7 +390,7 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
   return fwd.length>=rev.length ? fwd : rev;
 }
 
-async function generateScoutWaypoints(phases, bands, rampLat, rampLon, rangeMiles, speedMph=2.0, phaseInfo) {
+async function generateScoutWaypoints(phases, bands, rampLat, rampLon, rangeMiles, speedsMph=2.0, phaseInfo) {
   if (!state.DATA) state.DATA={};
   if (!Array.isArray(state.DATA.waypoints)) state.DATA.waypoints=[];
   state.DATA.waypoints=state.DATA.waypoints.filter(w=>!w.scoutWaypoint);
@@ -368,7 +404,6 @@ async function generateScoutWaypoints(phases, bands, rampLat, rampLon, rangeMile
   const p=phaseInfo?.phases||phases;
   const totalDurH=p.length?(p[p.length-1].end-p[0].start):6;
   const maxDistFt=Math.min(rangeMiles,4.0)*5280;
-  const budgetFt=Math.min(totalDurH/2*speedMph*5280*0.8,3.0*5280);
   const STEP_FT=150;
 
   bands=(bands||[]).map((b,i)=>({...b,phase:i+1}));
@@ -376,6 +411,15 @@ async function generateScoutWaypoints(phases, bands, rampLat, rampLon, rangeMile
   const phaseWaypoints={};
 
   for (const band of bands) {
+    const passSpeed = Array.isArray(speedsMph)
+      ? speedsMph[band.phase - 1]
+      : speedsMph;
+    const safePassSpeed = Number.isFinite(Number(passSpeed)) && Number(passSpeed) > 0
+      ? Number(passSpeed)
+      : 2.0;
+    // Each band has its own out-and-back pass, so size its waypoint budget at
+    // that pass's applied speed rather than borrowing speed from the other band.
+    const budgetFt=Math.min(totalDurH/2*safePassSpeed*5280*0.8,3.0*5280);
     const pts=walkContourForWaypoints(band.depthMin,band.depthMax,rampLat,rampLon,maxDistFt,budgetFt,STEP_FT);
     if (!pts.length) { console.warn(`[scout] Ph${band.phase}: no waypoints for ${band.depthMin}-${band.depthMax}ft`); continue; }
     phaseWaypoints[band.phase]=pts.map(pt=>[pt.lat,pt.lon]);
@@ -542,8 +586,9 @@ export async function runSmartPlan() {
 
   const phaseInfo = computePhases(launchTime, returnTime, dateStr, rampLat, rampLon);
   const sol       = phaseInfo.solunar;
-  const rangeMiles= computeRangeMiles(speedMph);
+  let rangeMiles= computeRangeMiles(speedMph);
   const inventoryNames = await getTrollableNames();
+  const inventory = await getInventory();
 
   function hStr(h){
     const hh=Math.floor(((h%24)+24)%24),mm=String(Math.round((h%1)*60)).padStart(2,'0');
@@ -599,6 +644,8 @@ PLATFORM CONSTRAINTS (STRICT - DO NOT BREAK THESE):
 AVAILABLE TACKLE — use ONLY these exact names, no others:
 ${inventoryNames.join(', ')}
 
+TROLLING-SPEED LIMITS (HARD): Every tackle name above includes its physical trolling-speed range in brackets. Pick a separate speed for each band. Band 1's speed applies to BOTH its outbound and inbound pass; Band 2's speed applies to BOTH its outbound and inbound pass. A band's speed must never exceed the lower maximum speed of its selected port and starboard lures. The two bands may use different speeds.
+
 ROUTE STRUCTURE: Pick two depth bands. Band 1 = shallower morning run. Band 2 = deeper mid-morning run.
 
 Return ONLY valid JSON, no markdown:
@@ -606,17 +653,19 @@ Return ONLY valid JSON, no markdown:
   "isGo": <boolean>,
   "safetyWarning": "<If isGo is false, explain the hazard. If true, write 'Conditions look safe for a kayak.'>",
   "rampEvaluation": "<One sentence evaluating the wind exposure for the selected boat ramp>",
-  "speed": <mph>,
-  "speedRationale": "<one sentence why, especially if deviating from typical speed>",
+  "speed": <legacy fallback mph; set this equal to band1.speed>,
+  "speedRationale": "<one sentence covering the two pass speeds>",
   "band1": {
-    "depthMin": <ft>, "depthMax": <ft>,
+    "depthMin": <ft>, "depthMax": <ft>, "speed": <mph>,
+    "speedRationale": "<why this pass speed fits both selected lures>",
     "port": "<exact inventory name>", "starboard": "<exact inventory name>",
     "portColor": "<color>", "starboardColor": "<color>",
     "portLeadFt": <ft>, "starboardLeadFt": <ft>,
     "why": "<one sentence species behavior>"
   },
   "band2": {
-    "depthMin": <ft>, "depthMax": <ft>,
+    "depthMin": <ft>, "depthMax": <ft>, "speed": <mph>,
+    "speedRationale": "<why this pass speed fits both selected lures>",
     "port": "<exact inventory name>", "starboard": "<exact inventory name>",
     "portColor": "<color>", "starboardColor": "<color>",
     "portLeadFt": <ft>, "starboardLeadFt": <ft>,
@@ -675,8 +724,8 @@ Return ONLY valid JSON, no markdown:
       safetyWarning: `Groq API Failed (${e.message}). Proceed with caution.`,
       rampEvaluation: "Could not evaluate wind exposure due to API failure.",
       speed:r1.speed||1.8, speedRationale:'Species-intel fallback — Groq unavailable',
-      band1:{depthMin:r1.depthMin,depthMax:r1.depthMax,port:fallPort1,starboard:fallStbd1,portColor:'Natural',starboardColor:'Metallic',portLeadFt:40,starboardLeadFt:50,why:'Fallback: mid-depth morning run'},
-      band2:{depthMin:r2.depthMin,depthMax:r2.depthMax,port:fallPort2,starboard:fallStbd2,portColor:'Natural',starboardColor:'Natural',portLeadFt:50,starboardLeadFt:60,why:'Fallback: deep mid-morning run'},
+      band1:{depthMin:r1.depthMin,depthMax:r1.depthMax,speed:r1.speed||1.8,speedRationale:'Species-intel fallback speed for Band 1',port:fallPort1,starboard:fallStbd1,portColor:'Natural',starboardColor:'Metallic',portLeadFt:40,starboardLeadFt:50,why:'Fallback: mid-depth morning run'},
+      band2:{depthMin:r2.depthMin,depthMax:r2.depthMax,speed:r2.speed||1.8,speedRationale:'Species-intel fallback speed for Band 2',port:fallPort2,starboard:fallStbd2,portColor:'Natural',starboardColor:'Natural',portLeadFt:50,starboardLeadFt:60,why:'Fallback: deep mid-morning run'},
       structureFocus:'Look for baitfish marks suspended over channel edges on the fishfinder.',
       adjustmentTip:'Shorten lead 10ft and slow to 1.5mph if no bites.',
       scoutNotes:`Groq API Failed (${e.message}). Running Fallback Plan.`,
@@ -706,11 +755,50 @@ Return ONLY valid JSON, no markdown:
   groqPlan.band2.port      =sanitizeGroqLureName(groqPlan.band2.port,      b2mid-2, inventoryNames);
   groqPlan.band2.starboard =sanitizeGroqLureName(groqPlan.band2.starboard,  b2mid+2, inventoryNames);
 
-  const band1Speed = groqPlan.band1?.speed || groqPlan.speed || 1.8;
-  const band2Speed = groqPlan.band2?.speed || groqPlan.speed || 1.8;
-  const smartSpeedMph = band1Speed; // Band 1 speed shown in speed field
+  // Speed is guarded per pass, not across all four lures. Each band keeps its
+  // own speed for its outbound + inbound run, capped only by the two lures
+  // actually in the water during that run.
+  const band1SpeedGuard = capPassSpeed(
+    groqPlan.band1?.speed ?? groqPlan.speed,
+    [groqPlan.band1.port, groqPlan.band1.starboard],
+    inventory,
+  );
+  const band2SpeedGuard = capPassSpeed(
+    groqPlan.band2?.speed ?? groqPlan.speed,
+    [groqPlan.band2.port, groqPlan.band2.starboard],
+    inventory,
+  );
+  const band1Speed = band1SpeedGuard.appliedMph;
+  const band2Speed = band2SpeedGuard.appliedMph;
+  const passSpeedGuards = [
+    { label: 'Band 1', guard: band1SpeedGuard },
+    { label: 'Band 2', guard: band2SpeedGuard },
+  ];
+  const speedCapNotes = passSpeedGuards.filter(({ guard }) => guard.wasCapped).map(({ label, guard }) => {
+    const limitingNames = [...new Set(guard.limitingLures.map((lure) => lure.name))].join(' + ');
+    console.warn(
+      `[smart-plan] ${label} speed override: Groq requested ${guard.requestedMph} mph; ` +
+      `${limitingNames} limits this pass to ${guard.maxMph} mph.`,
+    );
+    return `⚠ ${label} speed capped at ${guard.appliedMph} mph (Groq requested ${guard.requestedMph} mph; ${limitingNames} max ${guard.maxMph} mph).`;
+  });
+
+  // Keep the normalized speeds on the plan so every downstream consumer uses
+  // the applied, lure-safe value. Root speed remains a Band 1 legacy fallback.
+  groqPlan.band1.speed = band1Speed;
+  groqPlan.band2.speed = band2Speed;
+  groqPlan.speed = band1Speed;
+  const routeSpeeds = {
+    'Ph1 Outbound': band1Speed,
+    'Ph1 Inbound': band1Speed,
+    'Ph2 Outbound': band2Speed,
+    'Ph2 Inbound': band2Speed,
+  };
   const speedEl = document.getElementById('planSpeed');
-  if (speedEl) speedEl.value = String(smartSpeedMph);
+  // #planSpeed is retained for older saved-plan consumers; phase speeds below
+  // are the source of truth for this Smart Plan.
+  if (speedEl) speedEl.value = String(band1Speed);
+  rangeMiles = computeRangeMiles(Math.max(band1Speed, band2Speed));
 
   // ── Build rod rows ────────────────────────────────────────────────────────
   function buildRodFromGroq(lureName,colorName,depthFt,slotIdx,phaseLabel,bandSpeedMph) {
@@ -736,7 +824,7 @@ Return ONLY valid JSON, no markdown:
       rod.jigWeight  =isLight?'1/8oz × 5':isMedium?'3/16oz × 5':'1/4oz × 5';
     }
     // Always use physics-based lead — ignore Groq's lead suggestion
-    let calcLead = autoCalculateLead(rod, bandSpeedMph || smartSpeedMph);
+    let calcLead = autoCalculateLead(rod, bandSpeedMph || band1Speed);
     // Cap variable-depth lures (A-rigs, spoons, swimbaits etc) at 80ft on a kayak
     const lureL = (rod.lure||'').toLowerCase();
     const isVarDepth = lureL.includes('a-rig') || lureL.includes('swimbait') ||
@@ -773,7 +861,7 @@ Return ONLY valid JSON, no markdown:
   const totalWaypoints=await generateScoutWaypoints(
     phaseInfo.phases,
     [{depthMin:groqPlan.band1.depthMin,depthMax:groqPlan.band1.depthMax},{depthMin:groqPlan.band2.depthMin,depthMax:groqPlan.band2.depthMax}],
-    rampLat,rampLon,rangeMiles,smartSpeedMph,phaseInfo
+    rampLat,rampLon,rangeMiles,[band1Speed, band2Speed],phaseInfo
   );
 
   window._smartPlanPhaseRoutes = [
@@ -786,7 +874,7 @@ Return ONLY valid JSON, no markdown:
   if (targetDepthEl) {
     targetDepthEl.value = `${groqPlan.band1.depthMin}-${groqPlan.band1.depthMax}ft / ${groqPlan.band2.depthMin}-${groqPlan.band2.depthMax}ft`;
   }
-  syncSpread(null,routeRods);
+  syncSpread(null,routeRods,routeSpeeds);
   window._smartPlanRouteRods=routeRods;
 
   // Build the Hybrid Report: Beautiful readable text on top, raw JSON on bottom
@@ -796,6 +884,8 @@ Return ONLY valid JSON, no markdown:
   const scoutText=[
     `════════ TACTICAL OVERVIEW ════════`,
     groqPlan.scoutNotes||'',
+    `Pass speeds: Band 1 outbound + inbound ${band1Speed} mph · Band 2 outbound + inbound ${band2Speed} mph.`,
+    ...speedCapNotes,
     '',
     `════════ SAFETY & RAMP ════════`,
     groqPlan.safetyWarning,
@@ -803,11 +893,13 @@ Return ONLY valid JSON, no markdown:
     '',
     `════════ BAND 1 — ${groqPlan.band1.depthMin}-${groqPlan.band1.depthMax}ft ════════`,
     `Why: ${groqPlan.band1.why}`,
+    `Pass speed: ${band1Speed} mph (outbound + inbound)`,
     `Port: ${b1p.lure} (${b1p.color}) — Lead: ${b1p.lead}ft`,
     `Stbd: ${b1s.lure} (${b1s.color}) — Lead: ${b1s.lead}ft`,
     '',
     `════════ BAND 2 — ${groqPlan.band2.depthMin}-${groqPlan.band2.depthMax}ft ════════`,
     `Why: ${groqPlan.band2.why}`,
+    `Pass speed: ${band2Speed} mph (outbound + inbound)`,
     `Port: ${b2p.lure} (${b2p.color}) — Lead: ${b2p.lead}ft`,
     `Stbd: ${b2s.lure} (${b2s.color}) — Lead: ${b2s.lead}ft`,
     '',
@@ -828,7 +920,8 @@ Return ONLY valid JSON, no markdown:
   renderSmartPlanUI({
     routeRods,
     scoutReport: scoutText,
-    speedMph: smartSpeedMph,
+    speedMph: band1Speed,
+    routeSpeeds,
     phases: phaseInfo.phases,
     solunar: solunarStr
   });
@@ -863,12 +956,13 @@ Return ONLY valid JSON, no markdown:
     const coachPayload=buildGroqCoachPayload(fishingContext,{
       phases:phaseInfo.phases,
       phaseRecs:[
-        {depthMin:groqPlan.band1.depthMin,depthMax:groqPlan.band1.depthMax,speed:smartSpeedMph,lures:[groqPlan.band1.port,groqPlan.band1.starboard],notes:groqPlan.band1.why},
-        {depthMin:groqPlan.band2.depthMin,depthMax:groqPlan.band2.depthMax,speed:smartSpeedMph,lures:[groqPlan.band2.port,groqPlan.band2.starboard],notes:groqPlan.band2.why},
+        {depthMin:groqPlan.band1.depthMin,depthMax:groqPlan.band1.depthMax,speed:band1Speed,lures:[groqPlan.band1.port,groqPlan.band1.starboard],notes:groqPlan.band1.why},
+        {depthMin:groqPlan.band2.depthMin,depthMax:groqPlan.band2.depthMax,speed:band2Speed,lures:[groqPlan.band2.port,groqPlan.band2.starboard],notes:groqPlan.band2.why},
       ],
       spread:coachSpread, solunarStr,
-      speed: smartSpeedMph,                     
-      speedRationale: groqPlan.speedRationale,  
+      speed: band1Speed,
+      phaseSpeeds: { band1: band1Speed, band2: band2Speed },
+      speedRationale: groqPlan.speedRationale,
       poolLevel:document.getElementById('planPoolLevel')?.value||null,
       weather:weatherStr, rationale: "Raw JSON dump sent", rampName:rampName||'', rangeMiles,
     });
@@ -876,7 +970,7 @@ Return ONLY valid JSON, no markdown:
   } catch(e){console.warn('[smart-plan] Coach session failed:',e.message);}
 
   const wayptMsg=totalWaypoints>0
-    ?`✓ Plan built — ${totalWaypoints} waypoints, 4 routes @ ${smartSpeedMph}mph, coach reviewing…`
+    ?`✓ Plan built — ${totalWaypoints} waypoints; Band 1 @ ${band1Speed} mph, Band 2 @ ${band2Speed} mph, coach reviewing…`
     : isFallback 
       ? `⚠ Plan built with fallback logic.`
       : '⚠ No waypoints — load contour data first (Contour Data tab)';
