@@ -579,6 +579,12 @@ async function buildPlanPreviewHtml(p){
         weatherHtml = `<b>${condition}</b> · High <b>${tmaxF}°F</b> / Low <b>${tminF}°F</b> · Wind <b>${windD} ${windMph} mph</b> · Precip <b>${precip}mm</b> · UV max <b>${uvMax}</b>.`+
           (hot ? ' <b>⚠ HEAT ADVISORY — hydrate hard, consider early exit.</b>' : '') + uvWarn;
 
+        // Give Smart Plan / Groq the same full Open-Meteo forecast used by the report.
+        const weatherEl = document.getElementById('planWeather');
+        if (weatherEl) {
+          weatherEl.value = `Wind ${windD} ${windMph} mph · Precip ${precip}mm`;
+        }
+
         // Hourly wind table for launch window (4 AM to 2 PM = hours 4-14)
         if(data.hourly){
           const H = data.hourly;

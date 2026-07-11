@@ -121,7 +121,7 @@ export async function syncClarityIntelData() {
 
     // Populate planWeather hidden field for Smart Plan / Groq consumption
     const weatherEl = document.getElementById('planWeather');
-    if (weatherEl && d.rain) {
+    if (weatherEl && d.rain && !weatherEl.value) {
       const wind = d.rain.windMax_mph != null ? `${Math.round(d.rain.windMax_mph)} mph` : 'calm';
       const precipIn = d.rain.precipTrip_mm != null ? (d.rain.precipTrip_mm / 25.4).toFixed(2) : '0';
       const precip72 = d.rain.weighted72_in != null ? d.rain.weighted72_in.toFixed(2) : '0';
@@ -131,7 +131,10 @@ export async function syncClarityIntelData() {
 
     if(summary){
       summary.style.display='block';
-      summary.innerHTML = `<b style="color:var(--warn)">🌦 ${esc(d.lake)}</b><br><span>Predicted: <b>${esc(d.overall?.clarity||'Unknown')}</b></span>${d.rain?`<br><span class="muted">Rain signal: ${esc(d.rain.weighted72_in)}" weighted 72h \u00B7 verify at ramp</span>`:''}`;
+      const windSummary = d.rain?.windMax_mph != null
+        ? `Wind: ${Math.round(d.rain.windMax_mph)} mph${d.rain.windDirection_deg != null ? ` ${Math.round(d.rain.windDirection_deg)}\u00B0` : ''} \u00B7 `
+        : '';
+      summary.innerHTML = `<b style="color:var(--warn)">🌦 ${esc(d.lake)}</b><br><span>Predicted: <b>${esc(d.overall?.clarity||'Unknown')}</b></span>${d.rain?`<br><span class="muted">${esc(windSummary)}Rain signal: ${esc(d.rain.weighted72_in)}" weighted 72h \u00B7 verify at ramp</span>`:''}`;
     }
     say('Clarity ready', false);
     window.LAST_CLARITY_INTEL=d;
