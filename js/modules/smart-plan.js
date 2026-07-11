@@ -686,7 +686,15 @@ Return ONLY valid JSON, no markdown:
     if (outEl) outEl.value='⏳ Calling Groq (/groq-query)… [openai/gpt-oss-120b → fallback chain]';
     const res=await fetch(`${CF_WORKER_URL}/groq-query`,{
       method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({messages:[{role:'user',content:planPrompt}],max_tokens:1000,temperature:0.3}),
+      body:JSON.stringify({
+        messages:[
+          {role:'system',content:'You are TrollMap Smart Plan. Return only one valid JSON object and no markdown.'},
+          {role:'user',content:planPrompt}
+        ],
+        max_tokens:1800,
+        temperature:0.25,
+        response_format:{type:'json_object'}
+      }),
     });
 
     rawGroqText = await res.text();
@@ -706,9 +714,15 @@ Return ONLY valid JSON, no markdown:
       llmProviderInfo = `${data._trollmap.provider}/${data._trollmap.model}`;
       console.log(`[smart-plan] LLM resolved to ${llmProviderInfo}`);
     }
-    const content = data.choices?.[0]?.message?.content?.trim();
+    const rawContent = data.choices?.[0]?.message?.content;
+    const content = (Array.isArray(rawContent)
+      ? rawContent.map(part => (typeof part === 'string' ? part : (part?.text || part?.content || ''))).join('')
+      : (rawContent || data.output_text || '')).trim();
 
-    if (!content) throw new Error('Groq returned empty content');
+    if (!content) {
+      const finish = data.choices?.[0]?.finish_reason;
+      throw new Error(`LLM returned empty content${finish ? ` (finish_reason=${finish})` : ''}`);
+    }
 
     const clean = content.replace(/```json|```/g,'').trim();
     const si = clean.indexOf('{'), ei = clean.lastIndexOf('}');
