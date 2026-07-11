@@ -216,20 +216,95 @@ function renderSections(profile) {
   let html = '';
   for (const key of RESEARCH_ORDER) {
     const label = RESEARCH_LABELS[key]||key;
+    const sectionData = profile[key] || (key==='biology' ? profile.forage : '') || (key==='trolling' ? (profile.trollingIntelligence||profile.trolling) : null) || {};
     const has = !!(profile[key] || profile[key==='biology' ? 'forage' : ''] || (key==='trolling' && (profile.trollingIntelligence||profile.trolling)));
     const c = conf[key] || conf[key==='trolling' ? 'trollingIntelligence' : ''] || conf[key==='biology' ? 'forage' : ''];
     const pct = c?.percent|| (has?75:0);
     const level = c?.level|| (has?'medium':'missing');
     const okIcon = has ? (pct>=70 ? '✔' : '⚠') : '◻';
     const levelClass = pct>=95?'veryhigh':pct>=85?'high':pct>=70?'medium':pct>=50?'low':'need';
-    html += `<div class="section-row">
-      <span class="sec-icon">${has? '✔' : '◻'}</span>
-      <span class="sec-name">${label} <span class="muted" style="font-size:11px">${level}</span></span>
-      <span class="sec-conf">${pct}%</span>
+    
+    html += `<div class="section-row" style="flex-wrap:wrap;justify-content:space-between;align-items:center;">
+      <div style="display:flex;align-items:center;gap:8px;flex:1 1 200px;">
+        <span class="sec-icon">${okIcon}</span>
+        <span class="sec-name"><b>${label}</b> <span class="muted" style="font-size:11px">${level}</span></span>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span class="sec-conf" style="font-weight:700;">${pct}%</span>
+        <button type="button" class="small ghost btn-toggle-section-editor" data-section="${key}" style="font-size:10px;padding:2px 6px;">✏️ Edit JSON</button>
+      </div>
     </div>
-    <div class="conf-bar" style="margin:0 10px 8px 40px"><div class="conf-fill ${levelClass}" style="width:${pct}%"></div></div>`;
+    <div class="conf-bar" style="margin:0 10px 4px 40px"><div class="conf-fill ${levelClass}" style="width:${pct}%"></div></div>
+    <div class="section-editor-container" id="editor-container-${key}" style="display:none;margin:4px 10px 12px 40px;background:#060f1a;border:1px solid var(--line);border-radius:6px;padding:8px;">
+      <div style="font-size:11px;color:var(--accent);margin-bottom:4px;">Make direct changes to this section's JSON below. If something is wrong or different for this lake, edit or delete it:</div>
+      <textarea class="section-loaded-textarea" id="textarea-section-${key}" data-section="${key}" style="width:100%;height:220px;font-family:monospace;font-size:11px;background:#030810;color:#bdffa0;border:1px solid var(--line);border-radius:4px;padding:6px;white-space:pre;overflow:auto;">${esc(JSON.stringify(sectionData, null, 2))}</textarea>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+        <div style="display:flex;gap:6px;">
+          <button type="button" class="small primary btn-save-section-loaded" data-section="${key}" style="background:var(--accent2);color:#000;font-size:11px;">💾 Apply Section Change</button>
+          <button type="button" class="small ghost btn-format-section-loaded" data-section="${key}" style="font-size:11px;">✨ Format</button>
+        </div>
+        <span id="status-section-${key}" class="muted" style="font-size:11px;"></span>
+      </div>
+    </div>`;
   }
   container.innerHTML = html;
+
+  container.querySelectorAll('.btn-toggle-section-editor').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const sec = e.target.dataset.section;
+      const el = document.getElementById(`editor-container-${sec}`);
+      if (el) {
+        el.style.display = el.style.display === 'none' ? 'block' : 'none';
+      }
+    });
+  });
+
+  container.querySelectorAll('.btn-format-section-loaded').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const sec = e.target.dataset.section;
+      const ta = document.getElementById(`textarea-section-${sec}`);
+      if (ta) {
+        try {
+          const parsed = JSON.parse(ta.value);
+          ta.value = JSON.stringify(parsed, null, 2);
+          const st = document.getElementById(`status-section-${sec}`);
+          if (st) st.textContent = 'Formatted ✓';
+        } catch (err) {
+          alert(`Cannot format — invalid JSON: ${err.message}`);
+        }
+      }
+    });
+  });
+
+  container.querySelectorAll('.btn-save-section-loaded').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const sec = e.target.dataset.section;
+      const ta = document.getElementById(`textarea-section-${sec}`);
+      const st = document.getElementById(`status-section-${sec}`);
+      if (!ta || !currentProfile) return;
+      try {
+        const parsed = JSON.parse(ta.value);
+        currentProfile[sec] = parsed;
+        if (sec === 'biology') currentProfile.forage = parsed;
+        if (sec === 'trolling') currentProfile.trollingIntelligence = parsed;
+        if (sec === 'trollingIntelligence') currentProfile.trolling = parsed;
+        packagePartsCache[sec] = parsed;
+
+        if (st) {
+          st.textContent = 'Applied in memory ✓ (click Approve/Save above to persist)';
+          st.style.color = 'var(--accent2)';
+        }
+        log(`Directly modified ${sec} JSON in loaded profile.`);
+        setTimeout(() => { if (st) st.textContent = ''; }, 4000);
+      } catch (err) {
+        alert(`Failed to apply section JSON — syntax error:\n${err.message}`);
+        if (st) {
+          st.textContent = 'Invalid JSON syntax ❌';
+          st.style.color = 'var(--bad)';
+        }
+      }
+    });
+  });
 }
 
 function renderConfidence(profile) {
@@ -480,13 +555,49 @@ function renderReview(merged, agentResults) {
       <div style="display:flex;justify-content:space-between"><b>${RESEARCH_LABELS[r.agent]||r.agent}</b><span style="font-size:11px;color:${need?'var(--bad)':'var(--accent2)'}">${pct}% ${r.confidence?.level||''} — ${r.confidence?.reason||''}</span></div>
       <div class="conf-bar"><div class="conf-fill ${levelClass}" style="width:${pct}%"></div></div>
       <div style="font-size:11px;color:var(--muted);margin-top:4px">Model: ${esc(r.meta?.model||'?')} • ${r.meta?.durationMs||0}ms • ${r.sources?.length||0} sources</div>
-      <details style="margin-top:6px"><summary style="font-size:11px;color:var(--accent);cursor:pointer">Show data</summary><pre style="font-size:10px;white-space:pre-wrap;max-height:200px;overflow:auto;background:#060f1a;border:1px solid var(--line);border-radius:6px;padding:6px;margin-top:4px">${esc(JSON.stringify(r.section, null, 2).slice(0,2000))}</pre></details>
-      <div style="margin-top:6px;display:flex;gap:6px">
+      <details style="margin-top:6px" open>
+        <summary style="font-size:11px;color:var(--accent);cursor:pointer;font-weight:bold;">View & Direct Edit JSON (Interactive)</summary>
+        <div style="font-size:10px;color:var(--muted);margin:4px 0;">If any creel limit, size limit, or lake fact is wrong, edit or delete it below right before saving:</div>
+        <textarea class="review-section-textarea" data-agent="${r.agent}" style="width:100%;height:200px;font-family:monospace;font-size:11px;background:#030810;color:#bdffa0;border:1px solid var(--line);border-radius:4px;padding:6px;white-space:pre;overflow:auto;">${esc(JSON.stringify(r.section, null, 2))}</textarea>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+          <button type="button" class="small primary btn-apply-review-section" data-agent="${r.agent}" style="background:var(--accent2);color:#000;font-size:11px;">✔ Apply Section Edit</button>
+          <span class="status-review-section muted" id="status-review-${r.agent}" style="font-size:11px;"></span>
+        </div>
+      </details>
+      <div style="margin-top:8px;display:flex;gap:6px">
         <label style="font-size:11px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="review-accept" data-agent="${r.agent}" ${pct>=70?'checked':''}> Accept ${pct<50?'— Needs Review':''}</label>
       </div>
     </div>`;
   }
   list.innerHTML = html;
+
+  list.querySelectorAll('.btn-apply-review-section').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const agent = e.target.dataset.agent;
+      const ta = list.querySelector(`.review-section-textarea[data-agent="${agent}"]`);
+      const st = document.getElementById(`status-review-${agent}`);
+      if (!ta || !card.dataset.merged) return;
+      try {
+        const parsed = JSON.parse(ta.value);
+        const curMerged = JSON.parse(card.dataset.merged);
+        const curParts = JSON.parse(card.dataset.parts || '{}');
+        curMerged[agent] = parsed;
+        if (agent === 'biology') curMerged.forage = parsed;
+        if (agent === 'trolling') curMerged.trollingIntelligence = parsed;
+        curParts[agent] = parsed;
+        card.dataset.merged = JSON.stringify(curMerged);
+        card.dataset.parts = JSON.stringify(curParts);
+        packagePartsCache[agent] = parsed;
+        if (st) {
+          st.textContent = 'Applied to Review Buffer ✓';
+          st.style.color = 'var(--accent2)';
+        }
+      } catch (err) {
+        alert(`Cannot apply edit — invalid JSON:\n${err.message}`);
+      }
+    });
+  });
+
   // scroll to review
   card.scrollIntoView({behavior:'smooth'});
 }
@@ -494,9 +605,27 @@ function renderReview(merged, agentResults) {
 async function saveProfile(status='draft') {
   const reviewCard = document.getElementById('reviewCard');
   let merged, parts;
-  if (reviewCard && reviewCard.dataset.merged) {
-    try { merged = JSON.parse(reviewCard.dataset.merged); } catch {}
-    try { parts = JSON.parse(reviewCard.dataset.parts); } catch {}
+  if (reviewCard && reviewCard.style.display !== 'none' && reviewCard.dataset.merged) {
+    try {
+      merged = JSON.parse(reviewCard.dataset.merged);
+      parts = JSON.parse(reviewCard.dataset.parts || '{}');
+      // Automatically incorporate any direct edits from textareas on the review screen right before saving
+      document.querySelectorAll('.review-section-textarea').forEach(ta => {
+        const agent = ta.dataset.agent;
+        if (agent && ta.value) {
+          try {
+            const parsed = JSON.parse(ta.value);
+            merged[agent] = parsed;
+            if (agent === 'biology') merged.forage = parsed;
+            if (agent === 'trolling') merged.trollingIntelligence = parsed;
+            parts[agent] = parsed;
+            packagePartsCache[agent] = parsed;
+          } catch (e) {
+            console.warn(`Warning: unparsed JSON in review textarea for ${agent}`, e);
+          }
+        }
+      });
+    } catch {}
   }
   // if no review, use currentProfile as base
   if (!merged) {
@@ -622,6 +751,111 @@ async function importProfile(file) {
   } catch (e) {
     log(`✘ Import failed: ${e.message}`);
     alert(`Import failed: ${e.message}`);
+  }
+}
+
+function openMasterJsonEditor() {
+  const card = document.getElementById('masterJsonEditCard');
+  const ta = document.getElementById('masterJsonTextarea');
+  const st = document.getElementById('masterJsonStatus');
+  if (!card || !ta) return;
+  if (!currentProfile) {
+    alert('No profile currently loaded. Select or load a lake profile first.');
+    return;
+  }
+  card.style.display = 'block';
+  ta.value = JSON.stringify(currentProfile, null, 2);
+  if (st) st.textContent = '';
+  card.scrollIntoView({behavior: 'smooth'});
+}
+
+function closeMasterJsonEditor() {
+  const card = document.getElementById('masterJsonEditCard');
+  if (card) card.style.display = 'none';
+}
+
+function formatMasterJsonEditor() {
+  const ta = document.getElementById('masterJsonTextarea');
+  const st = document.getElementById('masterJsonStatus');
+  if (!ta) return;
+  try {
+    const parsed = JSON.parse(ta.value);
+    ta.value = JSON.stringify(parsed, null, 2);
+    if (st) {
+      st.textContent = 'Formatted ✓';
+      st.style.color = 'var(--accent2)';
+    }
+  } catch (err) {
+    alert(`Invalid JSON syntax — cannot format:\n${err.message}`);
+    if (st) {
+      st.textContent = 'Syntax Error ❌';
+      st.style.color = 'var(--bad)';
+    }
+  }
+}
+
+async function saveMasterJsonEditor() {
+  const ta = document.getElementById('masterJsonTextarea');
+  const st = document.getElementById('masterJsonStatus');
+  if (!ta) return;
+  let parsed;
+  try {
+    parsed = JSON.parse(ta.value);
+  } catch (err) {
+    alert(`Invalid JSON syntax:\n${err.message}`);
+    return;
+  }
+  
+  if (st) st.textContent = 'Saving master profile to R2...';
+  const lakeName = parsed.lakeName || currentLakeName || document.getElementById('researchLakeSelect')?.value;
+  if (!lakeName) {
+    alert('Missing lakeName in profile');
+    return;
+  }
+
+  currentProfile = parsed;
+  const parts = {
+    identity: parsed.identity,
+    limnology: parsed.limnology,
+    biology: parsed.biology || parsed.forage,
+    forage: parsed.forage || parsed.biology,
+    habitat: parsed.habitat,
+    navigation: parsed.navigation,
+    regulations: parsed.regulations,
+    trolling: parsed.trolling || parsed.trollingIntelligence,
+    trollingIntelligence: parsed.trollingIntelligence || parsed.trolling,
+    summary: parsed.summary
+  };
+  Object.assign(packagePartsCache, parts);
+
+  try {
+    const r = await fetch(`${CF_WORKER_URL}/research/save`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        lakeName,
+        profile: parsed,
+        packageParts: parts,
+        notes: parsed.notes || document.getElementById('researchNotes')?.value || "",
+        status: parsed.metadata?.status || 'verified',
+        requestedBy: "master-editor"
+      })
+    });
+    const data = await r.json();
+    if (!data.ok) throw new Error(data.error || 'save failed');
+    if (st) {
+      st.textContent = `✔ Saved v${data.version} successfully!`;
+      st.style.color = 'var(--accent2)';
+    }
+    log(`✔ Directly edited and saved master JSON for ${lakeName} v${data.version}`);
+    alert(`Saved ${lakeName} v${data.version} via Master JSON Editor!\nBytes: ${data.bytes}\nOverall Confidence: ${data.overallConfidence}%`);
+    await loadProfile(lakeName);
+  } catch (e) {
+    if (st) {
+      st.textContent = `Save failed: ${e.message}`;
+      st.style.color = 'var(--bad)';
+    }
+    alert(`Save failed: ${e.message}`);
   }
 }
 
@@ -780,6 +1014,11 @@ function initLakeResearch() {
     if (el) el.textContent='Log cleared';
     showProgress(false);
   });
+
+  document.getElementById('btnEditMasterJson')?.addEventListener('click', openMasterJsonEditor);
+  document.getElementById('btnCloseMasterJson')?.addEventListener('click', closeMasterJsonEditor);
+  document.getElementById('btnFormatMasterJson')?.addEventListener('click', formatMasterJsonEditor);
+  document.getElementById('btnSaveMasterJson')?.addEventListener('click', saveMasterJsonEditor);
 
   // Smart Plan auto-check when lake changes
   const planLake = document.getElementById('planLake');
