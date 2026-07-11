@@ -11,6 +11,78 @@ var CORS = {
 var JSON_HEADERS = { ...CORS, "Content-Type": "application/json" };
 var TEXT_HEADERS = { ...CORS, "Content-Type": "text/plain; charset=utf-8" };
 var SYNC_TOKEN = "";
+
+// ─── LLM Provider Abstraction (Groq → OpenRouter → Cerebras fallback) ──────────────────
+var LLM_PROVIDERS = [
+  {
+    name: "groq",
+    baseUrl: "https://api.groq.com/openai/v1/chat/completions",
+    keyEnv: "GROQ_API_KEY",
+    defaultModel: "llama-3.3-70b-versatile",
+    headers: (key) => ({ "Authorization": `Bearer ${key}`, "Content-Type": "application/json" }),
+    transformPayload: (p) => p, // Groq uses standard OpenAI format
+  },
+  {
+    name: "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1/chat/completions",
+    keyEnv: "OPENROUTER_API_KEY",
+    defaultModel: "meta-llama/llama-3.1-70b-instruct:free",
+    headers: (key) => ({
+      "Authorization": `Bearer ${key}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "https://trollmap.dev",
+      "X-Title": "TrollMap"
+    }),
+    transformPayload: (p) => ({ ...p, model: p.model || "meta-llama/llama-3.1-70b-instruct:free" }),
+  },
+  {
+    name: "cerebras",
+    baseUrl: "https://api.cerebras.ai/v1/chat/completions",
+    keyEnv: "CEREBRAS_API_KEY",
+    defaultModel: "llama3.1-70b",
+    headers: (key) => ({ "Authorization": `Bearer ${key}`, "Content-Type": "application/json" }),
+    transformPayload: (p) => ({ ...p, model: p.model || "llama3.1-70b" }),
+  }
+];
+
+async function callLLM(env, payload, preferredProvider = null) {
+  const providers = preferredProvider
+    ? LLM_PROVIDERS.filter(p => p.name === preferredProvider)
+    : LLM_PROVIDERS.filter(p => env[p.keyEnv]);
+
+  if (!providers.length) {
+    throw new Error("No LLM provider configured. Set GROQ_API_KEY, OPENROUTER_API_KEY, or CEREBRAS_API_KEY");
+  }
+
+  let lastError;
+  for (const provider of providers) {
+    try {
+      const key = env[provider.keyEnv];
+      const body = provider.transformPayload({ ...payload, model: payload.model || provider.defaultModel });
+      const r = await fetch(provider.baseUrl, {
+        method: "POST",
+        headers: provider.headers(key),
+        body: JSON.stringify(body)
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        const msg = data.error?.message || data.message || `HTTP ${r.status}`;
+        throw new Error(`${provider.name}: ${msg}`);
+      }
+      // Normalize response to OpenAI format
+      if (provider.name === "cerebras" && data.choices?.[0]?.message?.content) {
+        // Cerebras already returns OpenAI-compatible format
+      }
+      return { provider: provider.name, data };
+    } catch (e) {
+      lastError = e;
+      console.warn(`LLM provider ${provider.name} failed:`, e.message);
+      continue; // Try next provider
+    }
+  }
+  throw lastError || new Error("All LLM providers failed");
+}
+__name(callLLM, "callLLM");
 async function isAuthorized(request, env) {
   const want = env && env.SYNC_TOKEN || typeof SYNC_TOKEN !== "undefined" && SYNC_TOKEN || null;
   if (!want) return false;
@@ -2501,10 +2573,6 @@ Never invent lures the angler does not own. Never suggest live bait.`;
 async function handleCoachPlan(request, env) {
   try {
     const body = await request.json();
-    const groqKey = env?.GROQ_API_KEY;
-    if (!groqKey) {
-      return new Response(JSON.stringify({ success: false, error: "Groq API key not configured" }), { status: 500, headers: JSON_HEADERS });
-    }
     const { payload, previousSuggestions = [] } = body;
     if (!payload) {
       return new Response(JSON.stringify({ success: false, error: "Missing payload" }), { status: 400, headers: JSON_HEADERS });
@@ -2544,7 +2612,7 @@ CURRENT SPREAD STATE (after accepted changes):
     userMessage += `
 
 Return ONLY the JSON object. Find the single highest-confidence improvement, or set has_suggestion to false if the plan is already well-optimized.`;
-    const groqPayload = {
+    const llmPayload = {
       model: "llama-3.3-70b-versatile",
       messages: [
         { role: "system", content: COACH_SYSTEM_PROMPT },
@@ -2554,18 +2622,10 @@ Return ONLY the JSON object. Find the single highest-confidence improvement, or 
       max_tokens: 800,
       response_format: { type: "json_object" }
     };
-    const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${groqKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify(groqPayload)
-    });
-    const j = await r.json();
-    if (!r.ok) {
-      return new Response(JSON.stringify({ success: false, error: j.error?.message || `Groq HTTP ${r.status}` }), { status: r.status, headers: JSON_HEADERS });
-    }
+    const { data } = await callLLM(env, llmPayload);
     let suggestion = {};
     try {
-      suggestion = JSON.parse(j.choices?.[0]?.message?.content || "{}");
+      suggestion = JSON.parse(data.choices?.[0]?.message?.content || "{}");
     } catch (_) {
       suggestion = { has_suggestion: false, no_suggestion_reason: "Parse error" };
     }
@@ -2600,10 +2660,6 @@ var trollmap_worker_default = {
       if (path === "/audit-plan" && request.method === "POST") {
         try {
           const body = await request.json();
-          const groqKey = env.GROQ_API_KEY;
-          if (!groqKey) {
-            return new Response(JSON.stringify({ success: false, error: "GROQ_API_KEY not configured on worker environment" }), { status: 500, headers: JSON_HEADERS });
-          }
           const SYSTEM_PROMPT = `You are a crusty, veteran South Carolina fishing guide. You have zero patience for "textbook" plans that make no tactical sense in the real world. You speak plainly and critically.
 
 ANGLER PROFILE \u2014 apply these constraints strictly:
@@ -2689,20 +2745,12 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
             temperature: 0.15,
             response_format: { type: "json_object" }
           };
-          const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-            method: "POST",
-            headers: { "Authorization": `Bearer ${groqKey}`, "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-          });
-          const j = await r.json();
-          if (!r.ok) {
-            return new Response(JSON.stringify({ success: false, error: j.error?.message || `Groq API HTTP ${r.status}` }), { status: r.status, headers: JSON_HEADERS });
-          }
+          const { data } = await callLLM(env, payload, "groq");
           let audit = {};
           try {
-            audit = JSON.parse(j.choices?.[0]?.message?.content || "{}");
+            audit = JSON.parse(data.choices?.[0]?.message?.content || "{}");
           } catch (_) {
-            audit = { error: "parse failed", raw: j.choices?.[0]?.message?.content };
+            audit = { error: "parse failed", raw: data.choices?.[0]?.message?.content };
           }
           return new Response(JSON.stringify({ success: true, audit }), { headers: JSON_HEADERS });
         } catch (err) {
@@ -2715,17 +2763,9 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
       if (path === "/groq-query" && request.method === "POST") {
         try {
           const body = await request.json();
-          const groqKey = env?.GROQ_API_KEY;
-          if (!groqKey) return new Response(JSON.stringify({ error: "Groq API key not configured" }), { status: 500, headers: JSON_HEADERS });
-          const { messages, model = "llama-3.3-70b-versatile", max_tokens = 200, temperature = 0.2 } = body;
+          const { messages, model, max_tokens = 200, temperature = 0.2, response_format } = body;
           if (!messages?.length) return new Response(JSON.stringify({ error: "Missing messages" }), { status: 400, headers: JSON_HEADERS });
-          const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-            method: "POST",
-            headers: { "Authorization": `Bearer ${groqKey}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ model, messages, max_tokens, temperature })
-          });
-          const data = await r.json();
-          if (!r.ok) return new Response(JSON.stringify({ error: data.error?.message || `Groq HTTP ${r.status}` }), { status: r.status, headers: JSON_HEADERS });
+          const { data } = await callLLM(env, { messages, model, max_tokens, temperature, response_format });
           return new Response(JSON.stringify(data), { headers: JSON_HEADERS });
         } catch (e) {
           return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: JSON_HEADERS });
