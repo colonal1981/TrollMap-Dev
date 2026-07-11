@@ -598,17 +598,53 @@ export async function runSmartPlan() {
   const solunarStr=`Majors: ${hStr(sol.major1)}, ${hStr(sol.major2)} · Minors: ${hStr(sol.minor1)}, ${hStr(sol.minor2)}`;
   const totalDurH=phaseInfo.phases.length?(phaseInfo.phases[phaseInfo.phases.length-1].end-phaseInfo.phases[0].start):6;
 
-  // ── Pull our local intel FIRST (For Guided Creativity prompt) ─────────
+  // ── Pull our local intel FIRST ───────────────────────────────────────
   const fishingContext = await buildFishingContext({
-    species: sp, lakeName, season, clarity, waterTempF, 
-    speedMph: speedMph, 
+    species: sp, lakeName, season, clarity, waterTempF,
+    speedMph: speedMph,
     dateStr, launchTime, rampLat, rampLon
   });
-  
-  const intelNotes = fishingContext?.intel?.notes || 'No local notes available.';
-  const intelSpeed = fishingContext?.intel?.preferredSpeed || 2.0;
 
-  // ── Unified Groq Call (State-Agnostic Prompt + Guided Creativity) ─────
+  // ── Pull species-intel-v2 data for this species + season ─────────────
+  const v2sp = IntelV2?.SPECIES_BEHAVIOR_V2?.[sp];
+  let speciesIntelBlock = '';
+  if (v2sp) {
+    const lakeKeyV2 = (IntelV2.resolveLakeKey
+      ? (IntelV2.resolveLakeKey(lakeName, v2sp) || 'default_SC_reservoir')
+      : (v2sp[lakeName] ? lakeName : 'default_SC_reservoir'));
+    const sNode = v2sp[lakeKeyV2]?.[season] || v2sp['default_SC_reservoir']?.[season];
+    if (sNode) {
+      const depthRange = typeof sNode.preferredDepth === 'function'
+        ? sNode.preferredDepth(waterTempF) : (sNode.preferredDepth || [5, 20]);
+      const speedRange = Array.isArray(sNode.preferredSpeed)
+        ? sNode.preferredSpeed : [sNode.preferredSpeed || 1.8, sNode.preferredSpeed || 1.8];
+      const notes = Array.isArray(sNode.notes) ? sNode.notes.join(' · ') : (sNode.notes || '');
+      speciesIntelBlock = `
+SPECIES INTEL — ${sp} in ${season} on ${lakeName} (use this as your primary depth/speed/structure baseline):
+- Preferred depth range: ${depthRange[0]}–${depthRange[1]}ft
+- Preferred trolling speed: ${speedRange[0]}–${speedRange[1]} mph
+- Key structure: ${(sNode.preferredStructure || []).join(', ') || 'general structure'}
+- Presentations: ${(sNode.preferredPresentation || []).join(', ') || 'general trolling'}
+- Lure families: ${(sNode.lureFamilies || []).join(', ') || 'see tackle list'}
+- Colors: ${(sNode.preferredColors || []).join(', ') || 'match forage'}
+${notes ? `- Notes: ${notes}` : ''}
+
+Your two depth bands MUST fall within or near this depth range. Do not invent depths that contradict this intel.`;
+    }
+  }
+
+  // ── Catch history context ─────────────────────────────────────────────
+  const catchSummary = fishingContext?.catchSummary;
+  let catchBlock = '';
+  if (catchSummary && catchSummary.totalCatches > 0) {
+    catchBlock = `
+ANGLER CATCH HISTORY — ${sp} on ${lakeName} (${catchSummary.totalCatches} catches logged):
+- Average catch depth: ${catchSummary.avgDepthFt != null ? catchSummary.avgDepthFt + 'ft' : 'unknown'}
+- Best time of day: ${catchSummary.bestTime || 'unknown'}
+- Top lures: ${catchSummary.topLures.map(l => `${l.lure} (${l.count}x)`).join(', ') || 'none logged'}`;
+  }
+
+  // ── Unified Groq Call (Species-Driven Prompt) ─────────────────────────
   const planPrompt=`You are an expert fishing guide for ${lakeName}.
 Build a trolling plan for today targeting ${sp}.
 
@@ -628,13 +664,11 @@ You must evaluate the weather and wind forecast against the platform (12.5ft Kay
 - Sustained winds > 15mph or gusts > 20mph are NO-GO conditions for a kayak.
 - Evaluate the launch ramp (${rampName}) against the wind direction. Will it be a dangerous windward launch?
 - If conditions are unsafe, set "isGo" to false and explain why in "safetyWarning".
-
-LOCAL HISTORICAL INTEL (Your baseline):
-- Typical Speed: ${intelSpeed} mph
-- Local Patterns: ${intelNotes}
+${speciesIntelBlock}
+${catchBlock}
 
 YOUR ROLE:
-You are the expert guide on the water *today*. Use the historical intel as your foundation, but adapt speed, depths, and colors based on today's specific water temp, wind, clarity, and season.
+You are the expert guide on the water *today*. The SPECIES INTEL above is your ground truth for depth, speed, and structure. Adapt color and lure selection based on today's water temp, clarity, and conditions — but never override the species depth and speed baseline without a compelling reason stated in your rationale.
 
 PLATFORM CONSTRAINTS (STRICT - DO NOT BREAK THESE):
 - Kayak (Native Watersports Slayer Propel Max 12.5, pedal drive + electric motor)
@@ -646,7 +680,7 @@ ${inventoryNames.join(', ')}
 
 TROLLING-SPEED LIMITS (HARD): Every tackle name above includes its physical trolling-speed range in brackets. Pick a separate speed for each band. Band 1's speed applies to BOTH its outbound and inbound pass; Band 2's speed applies to BOTH its outbound and inbound pass. A band's speed must never exceed the lower maximum speed of its selected port and starboard lures. The two bands may use different speeds.
 
-ROUTE STRUCTURE: Pick two depth bands. Band 1 = shallower morning run. Band 2 = deeper mid-morning run.
+ROUTE STRUCTURE: Pick two depth bands that reflect where ${sp} actually hold during ${season}. Do not default to a shallow-then-deep morning pattern unless the species intel supports it.
 
 Return ONLY valid JSON, no markdown:
 {
