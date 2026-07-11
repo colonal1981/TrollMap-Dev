@@ -713,7 +713,7 @@ Return ONLY valid JSON, no markdown:
   if (speedEl) speedEl.value = String(smartSpeedMph);
 
   // ── Build rod rows ────────────────────────────────────────────────────────
-  function buildRodFromGroq(lureName,colorName,depthFt,slotIdx,phaseLabel,groqLeadFt) {
+  function buildRodFromGroq(lureName,colorName,depthFt,slotIdx,phaseLabel,bandSpeedMph) {
     // Strip annotation bracket in case it leaked through sanitizer
     const cleanLureName = stripLureAnnotation(lureName);
     const bareNames = inventoryNames.map(n => stripLureAnnotation(n));
