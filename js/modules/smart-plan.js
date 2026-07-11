@@ -35,7 +35,14 @@ let _cachedTrollableNames = null;
 async function getTrollableNames() {
   if (_cachedTrollableNames) return _cachedTrollableNames;
   const inv = await getInventory();
-  _cachedTrollableNames = inv.filter(l => l.trollable).map(l => l.name);
+  // Include depth range and speed range so Groq can't pick incompatible combos
+  _cachedTrollableNames = inv.filter(l => l.trollable).map(l => {
+    const depthStr = (l.diveDepthMin != null && l.diveDepthMax != null)
+      ? (l.diveDepthMin === 0 ? 'surface' : `${l.diveDepthMin}-${l.diveDepthMax}ft dive`)
+      : 'variable depth (lead controls)';
+    const speedStr = `${l.trollSpeedMin}-${l.trollSpeedMax}mph`;
+    return `${l.name} [${depthStr} | ${speedStr}]`;
+  });
   return _cachedTrollableNames;
 }
 
@@ -536,6 +543,12 @@ LOCAL HISTORICAL INTEL (Your baseline):
 YOUR ROLE:
 You are the expert guide on the water *today*. Use the historical intel as your foundation, but adapt speed, depths, and colors based on today's specific water temp, wind, clarity, and season.
 
+LURE SPEED CONSTRAINTS (HARD RULES — do not violate):
+Each lure has a speed range shown in brackets. The band speed MUST fall within
+the range of BOTH chosen lures. If two lures have incompatible speed ranges,
+pick different lures. Example: SR Crankbait [1.2-1.8mph] cannot pair with a
+band speed of 2.5mph — it will blow to the surface and lose action.
+
 PLATFORM CONSTRAINTS (STRICT - DO NOT BREAK THESE):
 - Kayak (Native Watersports Slayer Propel Max 12.5, pedal drive + electric motor)
 - 2 rods max in water simultaneously (port + starboard)
@@ -551,21 +564,20 @@ Return ONLY valid JSON, no markdown:
   "isGo": <boolean>,
   "safetyWarning": "<If isGo is false, explain the hazard. If true, write 'Conditions look safe for a kayak.'>",
   "rampEvaluation": "<One sentence evaluating the wind exposure for the selected boat ramp>",
-  "speed": <mph>,
-  "speedRationale": "<one sentence why, especially if deviating from typical speed>",
+  "speedRationale": "<one sentence on overall speed philosophy for today>",
   "band1": {
+    "speed": <mph — must be within the speed range of BOTH chosen lures>,
     "depthMin": <ft>, "depthMax": <ft>,
-    "port": "<exact inventory name>", "starboard": "<exact inventory name>",
+    "port": "<exact inventory name from list>", "starboard": "<exact inventory name from list>",
     "portColor": "<color>", "starboardColor": "<color>",
-    "portLeadFt": <ft>, "starboardLeadFt": <ft>,
-    "why": "<one sentence species behavior>"
+    "why": "<one sentence: why these lures + depth for this band>"
   },
   "band2": {
+    "speed": <mph — must be within the speed range of BOTH chosen lures>,
     "depthMin": <ft>, "depthMax": <ft>,
-    "port": "<exact inventory name>", "starboard": "<exact inventory name>",
+    "port": "<exact inventory name from list>", "starboard": "<exact inventory name from list>",
     "portColor": "<color>", "starboardColor": "<color>",
-    "portLeadFt": <ft>, "starboardLeadFt": <ft>,
-    "why": "<one sentence species behavior>"
+    "why": "<one sentence: why these lures + depth for this band>"
   },
   "structureFocus": "<fishfinder signature to find>",
   "adjustmentTip": "<if no bites after 30min, do this>",
@@ -651,37 +663,60 @@ Return ONLY valid JSON, no markdown:
   groqPlan.band2.port      =sanitizeGroqLureName(groqPlan.band2.port,      b2mid-2, inventoryNames);
   groqPlan.band2.starboard =sanitizeGroqLureName(groqPlan.band2.starboard,  b2mid+2, inventoryNames);
 
-  const smartSpeedMph=groqPlan.speed||1.8;
-  const speedEl=document.getElementById('planSpeed');
-  if (speedEl) speedEl.value=String(smartSpeedMph);
+  // Use band1 speed as the primary display speed (band2 may differ)
+  const smartSpeedMph = groqPlan.band1?.speed || groqPlan.speed || 1.8;
+  const speedEl = document.getElementById('planSpeed');
+  if (speedEl) speedEl.value = String(smartSpeedMph);
 
   // ── Build rod rows ────────────────────────────────────────────────────────
-  function buildRodFromGroq(lureName,colorName,depthFt,slotIdx,phaseLabel,groqLeadFt) {
+  function buildRodFromGroq(lureName, colorName, depthFt, slotIdx, phaseLabel, bandSpeedMph) {
     const finalLure = inventoryNames.includes(lureName) ? lureName : inventoryNames[0];
-    const reel=reelForLure(finalLure);
-    const rod={
-      side:slotIdx===0?'Port':'Starboard', position:'Mid',
-      rod:"7' M Mod-Fast Spinning (Ugly Stik Lite Pro)", reel,
-      lure:finalLure, color:colorName||getLureColor(finalLure,clarity.toLowerCase().includes('mud')?'muddy':clarity.toLowerCase().includes('stain')?'stained':'clear'),
-      depth:String(depthFt), lead:'0', notes:phaseLabel,
-      trailerSize:'', arigWeight:'', jigWeight:'',
+    const reel = reelForLure(finalLure);
+    const rod = {
+      side:     slotIdx === 0 ? 'Port' : 'Starboard',
+      position: 'Mid',
+      rod:      "7' M Mod-Fast Spinning (Ugly Stik Lite Pro)",
+      reel,
+      lure:     finalLure,
+      color:    colorName || getLureColor(finalLure, clarity.toLowerCase().includes('mud') ? 'muddy' : clarity.toLowerCase().includes('stain') ? 'stained' : 'clear'),
+      depth:    String(depthFt),
+      lead:     '0',
+      notes:    phaseLabel,
+      trailerSize: '', arigWeight: '', jigWeight: '',
     };
     if (finalLure?.toLowerCase().includes('a-rig')) {
-      const isLight=finalLure.includes('Light')||finalLure.includes('1.65');
-      const isMedium=finalLure.includes('Medium')||finalLure.includes('2.65');
-      rod.arigWeight =isLight?'~1.65oz (5-wire light)':isMedium?'~2.65oz (5-wire medium)':'~3.5oz (5-wire heavy)';
-      rod.trailerSize=isLight?'3.8" swimbait':isMedium?'4.6" swimbait':'5" swimbait';
-      rod.jigWeight  =isLight?'1/8oz × 5':isMedium?'3/16oz × 5':'1/4oz × 5';
+      const isLight  = finalLure.includes('Light')  || finalLure.includes('1.65');
+      const isMedium = finalLure.includes('Medium') || finalLure.includes('2.65');
+      rod.arigWeight  = isLight ? '~1.65oz (5-wire light)'  : isMedium ? '~2.65oz (5-wire medium)' : '~3.5oz (5-wire heavy)';
+      rod.trailerSize = isLight ? '3.8" swimbait'           : isMedium ? '4.6" swimbait'            : '5" swimbait';
+      rod.jigWeight   = isLight ? '1/8oz × 5'               : isMedium ? '3/16oz × 5'               : '1/4oz × 5';
     }
-    rod.lead=groqLeadFt?String(groqLeadFt):String(autoCalculateLead(rod,smartSpeedMph));
+    // Always use physics-based lead calculation — Groq no longer supplies lead lengths
+    rod.lead = String(autoCalculateLead(rod, bandSpeedMph || smartSpeedMph));
     return rod;
   }
 
-  const routeRods={
-    'Ph1 Outbound':[buildRodFromGroq(groqPlan.band1.port,groqPlan.band1.portColor,b1mid-2,0,'Ph1 Out',groqPlan.band1.portLeadFt),buildRodFromGroq(groqPlan.band1.starboard,groqPlan.band1.starboardColor,b1mid+2,1,'Ph1 Out',groqPlan.band1.starboardLeadFt)],
-    'Ph1 Inbound': [buildRodFromGroq(groqPlan.band1.port,groqPlan.band1.portColor,b1mid-2,0,'Ph1 In',groqPlan.band1.portLeadFt), buildRodFromGroq(groqPlan.band1.starboard,groqPlan.band1.starboardColor,b1mid+2,1,'Ph1 In',groqPlan.band1.starboardLeadFt)],
-    'Ph2 Outbound':[buildRodFromGroq(groqPlan.band2.port,groqPlan.band2.portColor,b2mid-2,0,'Ph2 Out',groqPlan.band2.portLeadFt),buildRodFromGroq(groqPlan.band2.starboard,groqPlan.band2.starboardColor,b2mid+2,1,'Ph2 Out',groqPlan.band2.starboardLeadFt)],
-    'Ph2 Inbound': [buildRodFromGroq(groqPlan.band2.port,groqPlan.band2.portColor,b2mid-2,0,'Ph2 In',groqPlan.band2.portLeadFt), buildRodFromGroq(groqPlan.band2.starboard,groqPlan.band2.starboardColor,b2mid+2,1,'Ph2 In',groqPlan.band2.starboardLeadFt)],
+  // Per-band speeds from Groq (falls back to top-level speed if not provided)
+  const band1Speed = groqPlan.band1.speed || groqPlan.speed || 1.8;
+  const band2Speed = groqPlan.band2.speed || groqPlan.speed || 1.8;
+
+  const routeRods = {
+    'Ph1 Outbound': [
+      buildRodFromGroq(groqPlan.band1.port,     groqPlan.band1.portColor,  b1mid-2, 0, 'Ph1 Out', band1Speed),
+      buildRodFromGroq(groqPlan.band1.starboard, groqPlan.band1.starboardColor, b1mid+2, 1, 'Ph1 Out', band1Speed),
+    ],
+    'Ph1 Inbound': [
+      buildRodFromGroq(groqPlan.band1.port,     groqPlan.band1.portColor,  b1mid-2, 0, 'Ph1 In',  band1Speed),
+      buildRodFromGroq(groqPlan.band1.starboard, groqPlan.band1.starboardColor, b1mid+2, 1, 'Ph1 In',  band1Speed),
+    ],
+    'Ph2 Outbound': [
+      buildRodFromGroq(groqPlan.band2.port,     groqPlan.band2.portColor,  b2mid-2, 0, 'Ph2 Out', band2Speed),
+      buildRodFromGroq(groqPlan.band2.starboard, groqPlan.band2.starboardColor, b2mid+2, 1, 'Ph2 Out', band2Speed),
+    ],
+    'Ph2 Inbound': [
+      buildRodFromGroq(groqPlan.band2.port,     groqPlan.band2.portColor,  b2mid-2, 0, 'Ph2 In',  band2Speed),
+      buildRodFromGroq(groqPlan.band2.starboard, groqPlan.band2.starboardColor, b2mid+2, 1, 'Ph2 In',  band2Speed),
+    ],
   };
 
   // ── Generate waypoints ────────────────────────────────────────────────────
@@ -692,9 +727,9 @@ Return ONLY valid JSON, no markdown:
     rampLat,rampLon,rangeMiles,smartSpeedMph,phaseInfo
   );
 
-  window._smartPlanPhaseRoutes=[
-    {phase:1,phaseName:'Shallow',depthMin:groqPlan.band1.depthMin,depthMax:groqPlan.band1.depthMax,speed:smartSpeedMph,window:'Band 1'},
-    {phase:2,phaseName:'Deep',   depthMin:groqPlan.band2.depthMin,depthMax:groqPlan.band2.depthMax,speed:smartSpeedMph,window:'Band 2'},
+  window._smartPlanPhaseRoutes = [
+    { phase:1, phaseName:'Shallow', depthMin:groqPlan.band1.depthMin, depthMax:groqPlan.band1.depthMax, speed:band1Speed, window:'Band 1' },
+    { phase:2, phaseName:'Deep',    depthMin:groqPlan.band2.depthMin, depthMax:groqPlan.band2.depthMax, speed:band2Speed, window:'Band 2' },
   ];
   applyStoredSmartPlanDepth();
   syncSpread(null,routeRods);
