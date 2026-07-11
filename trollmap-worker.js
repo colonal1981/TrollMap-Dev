@@ -74,6 +74,21 @@ var LLM_PROVIDERS = [
   }
 ];
 
+function extractLLMText(data) {
+  const message = data?.choices?.[0]?.message;
+  const content = message?.content;
+  if (typeof content === "string") return content.trim();
+  if (Array.isArray(content)) {
+    return content.map((part) => {
+      if (typeof part === "string") return part;
+      return part?.text || part?.content || "";
+    }).join("").trim();
+  }
+  if (typeof data?.output_text === "string") return data.output_text.trim();
+  return "";
+}
+__name(extractLLMText, "extractLLMText");
+
 async function callLLM(env, payload, preferredProvider = null) {
   const providers = preferredProvider
     ? LLM_PROVIDERS.filter(p => p.name === preferredProvider)
@@ -115,6 +130,22 @@ async function callLLM(env, payload, preferredProvider = null) {
           }
           throw new Error(`${provider.name}/${modelId}: ${msgStr}`);
         }
+
+        // Some reasoning-first models (notably GPT-OSS on Groq) can return HTTP 200
+        // with an empty assistant content field if the response budget is consumed by
+        // reasoning. That is not usable for TrollMap; treat it as a failed candidate
+        // so the fallback chain can continue to the next model/provider.
+        if (Array.isArray(data?.choices) && data.choices.length) {
+          const text = extractLLMText(data);
+          if (!text) {
+            const choice = data.choices[0] || {};
+            const finish = choice.finish_reason ? ` finish_reason=${choice.finish_reason}` : "";
+            const reasoning = choice.message?.reasoning || choice.message?.reasoning_content || "";
+            const hint = reasoning ? ` reasoning=${String(reasoning).slice(0,160)}` : "";
+            throw new Error(`${provider.name}/${modelId}: empty assistant content.${finish}${hint}`);
+          }
+        }
+
         return { provider: provider.name, model: modelId, data };
       } catch (e) {
         lastError = e;
