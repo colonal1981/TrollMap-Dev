@@ -678,36 +678,48 @@ Return ONLY valid JSON, no markdown:
 }`;
 
   let groqPlan=null;
-  let rawGroqText = ''; 
+  let rawGroqText = '';
   let isFallback = false;
+  let llmProviderInfo = null;
 
   try {
-    if (outEl) outEl.value='⏳ Calling Groq (/groq-query)…';
+    if (outEl) outEl.value='⏳ Calling Groq (/groq-query)… [openai/gpt-oss-120b → fallback chain]';
     const res=await fetch(`${CF_WORKER_URL}/groq-query`,{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({messages:[{role:'user',content:planPrompt}],max_tokens:1000,temperature:0.3}),
     });
-    
+
     rawGroqText = await res.text();
-    
+    const provHeader = res.headers.get('X-LLM-Provider');
+    const modelHeader = res.headers.get('X-LLM-Model');
+    if (provHeader) {
+      llmProviderInfo = `${provHeader}/${modelHeader}`;
+      console.log(`[smart-plan] LLM provider: ${llmProviderInfo}`);
+    }
+
     if (!res.ok) {
-      throw new Error(`HTTP ${res.status}: ${rawGroqText.slice(0,200)}`);
-    } 
+      throw new Error(`HTTP ${res.status}: ${rawGroqText.slice(0,400)}`);
+    }
 
     const data = JSON.parse(rawGroqText);
+    if (data._trollmap) {
+      llmProviderInfo = `${data._trollmap.provider}/${data._trollmap.model}`;
+      console.log(`[smart-plan] LLM resolved to ${llmProviderInfo}`);
+    }
     const content = data.choices?.[0]?.message?.content?.trim();
-    
+
     if (!content) throw new Error('Groq returned empty content');
-    
+
     const clean = content.replace(/```json|```/g,'').trim();
     const si = clean.indexOf('{'), ei = clean.lastIndexOf('}');
-    
-    if (si === -1 || ei === -1) throw new Error(`No JSON object in response`);
-    
+
+    if (si === -1 || ei === -1) throw new Error(`No JSON object in response: ${clean.slice(0,200)}`);
+
     groqPlan = JSON.parse(clean.slice(si, ei+1));
+    console.log(`[smart-plan] ✓ Groq plan parsed via ${llmProviderInfo || 'unknown provider'}`);
 
   } catch(e) {
-    console.error('[smart-plan] Groq Error:', e.message);
+    console.error('[smart-plan] Groq Error:', e.message, e.stack || '');
     isFallback = true;
     
     const phaseRecs=phaseInfo.phases.map(p=>getPhaseRecommendation(sp,lakeName,season,p.num,waterTempF));
@@ -883,6 +895,7 @@ Return ONLY valid JSON, no markdown:
 
   const scoutText=[
     `════════ TACTICAL OVERVIEW ════════`,
+    llmProviderInfo ? `LLM: ${llmProviderInfo}${isFallback ? ' (FALLBACK)' : ''}` : (isFallback ? 'LLM: fallback (Groq unavailable)' : ''),
     groqPlan.scoutNotes||'',
     `Pass speeds: Band 1 outbound + inbound ${band1Speed} mph · Band 2 outbound + inbound ${band2Speed} mph.`,
     ...speedCapNotes,
@@ -970,9 +983,11 @@ Return ONLY valid JSON, no markdown:
   } catch(e){console.warn('[smart-plan] Coach session failed:',e.message);}
 
   const wayptMsg=totalWaypoints>0
-    ?`✓ Plan built — ${totalWaypoints} waypoints; Band 1 @ ${band1Speed} mph, Band 2 @ ${band2Speed} mph, coach reviewing…`
-    : isFallback 
-      ? `⚠ Plan built with fallback logic.`
+    ? (isFallback
+        ? `⚠ Fallback plan — ${totalWaypoints} waypoints; Band1 ${band1Speed}mph, Band2 ${band2Speed}mph (Groq down, using local intel)`
+        : `✓ Plan built via ${llmProviderInfo || 'Groq'} — ${totalWaypoints} waypoints; Band1 ${band1Speed}mph, Band2 ${band2Speed}mph, coach reviewing…`)
+    : isFallback
+      ? `⚠ Plan built with fallback logic but no contour data — load contours first.`
       : '⚠ No waypoints — load contour data first (Contour Data tab)';
   setStatus(wayptMsg,totalWaypoints>0 && !isFallback);
 
