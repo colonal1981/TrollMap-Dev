@@ -26,8 +26,8 @@ var LLM_PROVIDERS = [
     defaultModel: "openai/gpt-oss-120b",
     models: [
       "openai/gpt-oss-120b",
-      "qwen/qwen3-32b",
       "openai/gpt-oss-20b",
+      "qwen/qwen3-32b",
       "llama-3.3-70b-versatile",
       "meta-llama/llama-4-scout-17b-16e-instruct"
     ],
