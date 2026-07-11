@@ -90,7 +90,7 @@ function formatPhaseSpeeds(phaseSpeeds, fallbackSpeed) {
     .join(' · ');
 }
 
-function collectPlan(){
+export function collectPlan(){
   function gV(id, fb = '') { const el = document.getElementById(id); return el ? el.value : fb; }
   const species = [...document.querySelectorAll('#planSpeciesChecks input:checked')].map(c=>c.value);
   const lakeVal = gV('planLake');
@@ -224,7 +224,7 @@ function loadPlanIntoForm(p){
   sVBot('planNotes', p.notes);
 }
 
-async function buildPlanPreviewHtml(p){
+export async function buildPlanPreviewHtml(p){
   function sideClass(s){
     if(s.includes('Port')) return 'rod-side-port';
     if(s.includes('Starboard')) return 'rod-side-starboard';
