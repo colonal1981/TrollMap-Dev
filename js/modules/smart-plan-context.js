@@ -202,6 +202,16 @@ export async function buildFishingContext(params = {}) {
     } catch (_) {}
   }
 
+  // ── Researched Lake Intelligence (from Lake Research module) ──────────────
+  let researchedProfile = null;
+  let hasResearchedProfile = false;
+  try {
+    if (typeof window.getResearchedProfile === 'function' && lakeName) {
+      researchedProfile = window.getResearchedProfile(lakeName);
+      hasResearchedProfile = !!researchedProfile && (researchedProfile.metadata?.status === 'verified' || researchedProfile.metadata?.verified);
+    }
+  } catch {}
+
   // ── Clarity key ───────────────────────────────────────────────────────────
   const clarityKey = (clarity || 'Clear').toLowerCase().includes('mud') ? 'muddy'
     : (clarity || 'Clear').toLowerCase().includes('stain') ? 'stained'
@@ -240,6 +250,12 @@ export async function buildFishingContext(params = {}) {
     nearbyFishingSpots:  supplementalContext.fishingPoints,
     attractorCount:      supplementalContext.attractors.length,
     fishingSpotCount:    supplementalContext.fishingPoints.length,
+
+    // Lake Research — permanent intelligence
+    researchedProfile,
+    hasResearchedProfile,
+    researchedTrolling: researchedProfile?.trollingIntelligence || researchedProfile?.trolling || null,
+    researchedSummary: researchedProfile?.summary?.text || researchedProfile?.summary || null,
   };
 }
 
@@ -335,6 +351,17 @@ export function buildGroqCoachPayload(fishingContext, planState) {
       communityFishingSpots: fishingSpotCount > 0 ? {
         count: fishingSpotCount,
         note: `${fishingSpotCount} community-marked fishing spots within 2mi of ramp`,
+      } : null,
+      researchedProfile: fishingContext.researchedProfile ? {
+        exists: true,
+        lakeName: fishingContext.researchedProfile.lakeName,
+        version: fishingContext.researchedProfile.metadata?.version,
+        status: fishingContext.researchedProfile.metadata?.status,
+        overallConfidence: fishingContext.researchedProfile.confidence?.overall,
+        summary: typeof fishingContext.researchedProfile.summary === 'string' ? fishingContext.researchedProfile.summary : fishingContext.researchedProfile.summary?.text,
+        trollingIntelligence: fishingContext.researchedProfile.trollingIntelligence || fishingContext.researchedProfile.trolling,
+        limnology: fishingContext.researchedProfile.limnology,
+        habitat: fishingContext.researchedProfile.habitat,
       } : null,
     },
 
