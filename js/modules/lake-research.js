@@ -214,14 +214,10 @@ function renderSections(profile) {
   if (!container) return;
   const conf = profile.confidence||{};
   let html = '';
-  const skippedAliases = new Set(['forage','trollingIntelligence']); // these are aliases, not separate sections
   for (const key of RESEARCH_ORDER) {
-    // Skip aliased duplicate keys that bloat confidence
-    if (skippedAliases.has(key)) continue;
     const label = RESEARCH_LABELS[key]||key;
-    const has = !!(profile[key] || (key==='biology' && (profile.forage||profile.biology)) || (key==='trolling' && (profile.trolling||profile.trollingIntelligence)));
-    // Use canonical confidence key (biology covers forage, trolling covers trollingIntelligence)
-    const c = conf[key] || conf[key==='trolling'?'trollingIntelligence':''] || conf[key==='biology'?'forage':''];
+    const has = !!(profile[key] || profile[key==='biology' ? 'forage' : ''] || (key==='trolling' && (profile.trollingIntelligence||profile.trolling)));
+    const c = conf[key] || conf[key==='trolling' ? 'trollingIntelligence' : ''] || conf[key==='biology' ? 'forage' : ''];
     const pct = c?.percent|| (has?75:0);
     const level = c?.level|| (has?'medium':'missing');
     const okIcon = has ? (pct>=70 ? '✔' : '⚠') : '◻';
@@ -244,15 +240,12 @@ function renderConfidence(profile) {
   if (!Object.keys(conf).length) { card.style.display='none'; return; }
   card.style.display='block';
   let html='';
-  const aliasSkip = new Set(['forage','trollingIntelligence']); // aliases of biology/trolling
   for (const [k,v] of Object.entries(conf)) {
     if (k==='overall') continue;
-    if (aliasSkip.has(k)) continue; // skip aliased duplicate keys
     if (typeof v!=='object') continue;
-    const label = k==='biology' ? '🐟 Fisheries/Forage' : RESEARCH_LABELS[k]||k;
     const pct = v.percent||0;
     const levelClass = pct>=95?'veryhigh':pct>=85?'high':pct>=70?'medium':pct>=50?'low':'need';
-    html += `<div style="display:flex;justify-content:space-between;font-size:12px;margin:6px 0"><span>${label} — ${v.level||''} <span class="muted">(${v.reason||''})</span></span><span style="color:var(--accent2)">${pct}%</span></div><div class="conf-bar"><div class="conf-fill ${levelClass}" style="width:${pct}%"></div></div>`;
+    html += `<div style="display:flex;justify-content:space-between;font-size:12px;margin:6px 0"><span>${RESEARCH_LABELS[k]||k} — ${v.level||''} <span class="muted">(${v.reason||''})</span></span><span style="color:var(--accent2)">${pct}%</span></div><div class="conf-bar"><div class="conf-fill ${levelClass}" style="width:${pct}%"></div></div>`;
   }
   const overall = conf.overall;
   if (overall) {
@@ -376,7 +369,8 @@ async function runResearch(lakeName, selectedAgents=null) {
     log(`Agent ${i+1}/${order.length}: ${agentKey}...`);
     try {
       const res = await callAgent(lakeName, agentKey, accumulated);
-      log(`✔ ${agentKey}: confidence ${res.confidence?.percent}% via ${res.meta?.model} (${res.meta?.durationMs}ms) sources:${res.sources?.length||0}`);
+      const chain = res.meta?.fallbackChain?.length ? ` [tried: ${res.meta.fallbackChain.join(' → ')}]` : '';
+      log(`✔ ${agentKey}: confidence ${res.confidence?.percent}% via ${res.meta?.model} (${res.meta?.durationMs}ms) sources:${res.sources?.length||0}${chain}`);
       packagePartsCache[agentKey] = res.section;
       packagePartsCache[res.sectionKey] = res.section;
       // merge into accumulated for next agents
@@ -417,19 +411,12 @@ function buildMasterProfile(lakeName, accumulated, parts, agentResults) {
   let conf = {};
   for (const r of agentResults) {
     if (r.sources) allSources = allSources.concat(r.sources);
-    if (r.confidence) {
-      // Store confidence under canonical section key, avoiding duplicate keys
-      const canonicalKey = r.sectionKey === 'biology' ? 'biology' :
-                           r.sectionKey === 'trollingIntelligence' ? 'trolling' :
-                           r.sectionKey;
-      conf[canonicalKey] = r.confidence;
-    }
+    if (r.confidence) conf[r.sectionKey||r.agent] = r.confidence;
   }
   // deduplicate sources by label
   const seen = new Set();
   allSources = allSources.filter(s=>{ const k=(s.label||'')+'|'+(s.url||''); if (seen.has(k)) return false; seen.add(k); return true; });
 
-  // Only count unique sections (not aliased duplicates like biology==forage, trolling==trollingIntelligence)
   let confSum=0, confCount=0;
   for (const v of Object.values(conf)) { if (v.percent) { confSum+=v.percent; confCount++; } }
   const overall = confCount? Math.round(confSum/confCount):75;
@@ -484,97 +471,24 @@ function renderReview(merged, agentResults) {
   // store merged for save
   card.dataset.merged = JSON.stringify(merged);
   card.dataset.parts = JSON.stringify(packagePartsCache);
-  let html='<div style="margin-bottom:12px;padding:8px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;font-size:11px;color:var(--muted)">🔍 <b>Review v2</b> — Per-field editing. Toggle Accept to include sections in the merged profile. Click <b>Show data</b> to expand and edit key fields inline. Default: sections ≥70% confidence are pre-accepted.</div>';
+  let html='';
   for (const r of agentResults) {
     const pct = r.confidence?.percent||0;
     const need = pct<70;
     const levelClass = pct>=95?'veryhigh':pct>=85?'high':pct>=70?'medium':pct>=50?'low':'need';
-    // Build per-field inline editors for key fields in each section
-    const editableFields = getEditableFieldsForAgent(r.agent, r.section);
-    let fieldEditors = '';
-    for (const field of editableFields) {
-      fieldEditors += `<div style="margin:4px 0;display:flex;align-items:center;gap:6px;font-size:11px">
-        <span style="min-width:90px;color:var(--muted);text-align:right">${esc(field.label)}:</span>
-        <input type="text" class="review-field" data-agent="${r.agent}" data-key="${esc(field.key)}" value="${esc(String(field.value??''))}" style="flex:1;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:2px 6px;color:var(--text);font-size:11px" onchange="this.style.borderColor='var(--accent)'" />
-      </div>`;
-    }
-    html+=`<div class="review-card ${need?'need':''}" style="margin-bottom:10px">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <b>${RESEARCH_LABELS[r.agent]||r.agent}</b>
-        <span style="font-size:11px;color:${need?'var(--bad)':'var(--accent2)'}">${pct}% ${r.confidence?.level||''} — ${r.confidence?.reason||''}</span>
-      </div>
+    html+=`<div class="review-card ${need?'need':''}">
+      <div style="display:flex;justify-content:space-between"><b>${RESEARCH_LABELS[r.agent]||r.agent}</b><span style="font-size:11px;color:${need?'var(--bad)':'var(--accent2)'}">${pct}% ${r.confidence?.level||''} — ${r.confidence?.reason||''}</span></div>
       <div class="conf-bar"><div class="conf-fill ${levelClass}" style="width:${pct}%"></div></div>
       <div style="font-size:11px;color:var(--muted);margin-top:4px">Model: ${esc(r.meta?.model||'?')} • ${r.meta?.durationMs||0}ms • ${r.sources?.length||0} sources</div>
-      <details style="margin-top:6px" id="reviewDetails_${r.agent}">
-        <summary style="font-size:11px;color:var(--accent);cursor:pointer">✏️ Show data &amp; edit fields</summary>
-        <div style="margin-top:6px;background:#060f1a;border:1px solid var(--line);border-radius:6px;padding:8px">
-          ${fieldEditors || '<div style="font-size:10px;color:var(--muted)">No editable fields for this section</div>'}
-          <pre style="font-size:10px;white-space:pre-wrap;max-height:160px;overflow:auto;margin-top:6px;padding:6px;background:rgba(0,0,0,.3);border-radius:4px">${esc(JSON.stringify(r.section, null, 2).slice(0,2000))}</pre>
-        </div>
-      </details>
-      <div style="margin-top:6px;display:flex;gap:6px;align-items:center">
-        <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
-          <input type="checkbox" class="review-accept" data-agent="${r.agent}" ${pct>=70?'checked':''}> Accept section ${pct<50?'— Needs Review':''}
-        </label>
-        <span style="font-size:10px;color:var(--muted)">${r.section ? Object.keys(r.section).length+' fields' : 'no data'}</span>
+      <details style="margin-top:6px"><summary style="font-size:11px;color:var(--accent);cursor:pointer">Show data</summary><pre style="font-size:10px;white-space:pre-wrap;max-height:200px;overflow:auto;background:#060f1a;border:1px solid var(--line);border-radius:6px;padding:6px;margin-top:4px">${esc(JSON.stringify(r.section, null, 2).slice(0,2000))}</pre></details>
+      <div style="margin-top:6px;display:flex;gap:6px">
+        <label style="font-size:11px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="review-accept" data-agent="${r.agent}" ${pct>=70?'checked':''}> Accept ${pct<50?'— Needs Review':''}</label>
       </div>
     </div>`;
   }
   list.innerHTML = html;
   // scroll to review
   card.scrollIntoView({behavior:'smooth'});
-}
-
-/** Determine which fields from a section are editable based on agent type */
-function getEditableFieldsForAgent(agentKey, section) {
-  if (!section) return [];
-  const map = {
-    identity: [
-      {label:'Lake Name', key:'lakeName'},{label:'State', key:'state'},{label:'River System', key:'riverSystem'},
-      {label:'Owner', key:'reservoirOwner'},{label:'Area (ac)', key:'surfaceAreaAcres'},{label:'Max Depth (ft)', key:'maxDepthFt'},
-      {label:'Archetype', key:'archetype'},{label:'Dam', key:'damName'}
-    ],
-    limnology: [
-      {label:'Clarity', key:'waterClarity.typical'},{label:'Thermocline (ft)', key:'thermocline.summerDepthFt'},
-      {label:'Oxygen Floor (ft)', key:'oxygen.depletionDepthFt'},{label:'Trophic', key:'trophicStatus'}
-    ],
-    biology: [
-      {label:'Primary Forage', key:'primaryForage'},{label:'Predators', key:'predatorSpecies'},
-      {label:'Forage Spring', key:'forageCalendar.spring'},{label:'Forage Summer', key:'forageCalendar.summer'}
-    ],
-    habitat: [
-      {label:'Bottom Comp.', key:'bottomComposition'},{label:'Cover Types', key:'cover'},
-      {label:'Points', key:'structuralElements.points'},{label:'Dock Density', key:'dockDensity'}
-    ],
-    navigation: [
-      {label:'Hazards', key:'hazards'},{label:'Dangerous Areas', key:'dangerousAreas'},{label:'Notes', key:'notes'}
-    ],
-    regulations: [
-      {label:'State', key:'state'},{label:'Last Updated', key:'lastUpdated'},
-      {label:'License', key:'licenseRequirements'},{label:'Notes', key:'notes'}
-    ],
-    trolling: [
-      {label:'Striped Bass Summer Depth', key:'trollingIntelligence.Striped Bass.summer.preferredDepth'},
-      {label:'Striped Bass Structures', key:'trollingIntelligence.Striped Bass.summer.structures'},
-      {label:'LMB Summer Depth', key:'trollingIntelligence.Largemouth Bass.summer.preferredDepth'},
-      {label:'LMB Structures', key:'trollingIntelligence.Largemouth Bass.summer.structures'}
-    ],
-    summary: [
-      {label:'Summary Text', key:'text'}
-    ]
-  };
-  const fields = map[agentKey] || [];
-  // Resolve dotted keys from section data
-  return fields.map(f => {
-    let val = section;
-    const parts = f.key.split('.');
-    for (const p of parts) {
-      if (val && typeof val === 'object') val = val[p];
-      else { val = undefined; break; }
-    }
-    if (Array.isArray(val)) val = val.join(', ');
-    return {...f, value: val ?? ''};
-  });
 }
 
 async function saveProfile(status='draft') {
@@ -597,41 +511,6 @@ async function saveProfile(status='draft') {
     if (rejected.length) {
       if (!confirm(`You have ${rejected.length} sections not accepted (${rejected.join(', ')}). Save anyway as draft? Low confidence sections will be flagged Needs Review.`)) return;
     }
-  }
-  // Apply inline field edits back into merged profile and packageParts
-  const fieldEdits = Array.from(document.querySelectorAll('.review-field'));
-  if (fieldEdits.length) {
-    log(`Applying ${fieldEdits.length} inline field edits...`);
-    for (const input of fieldEdits) {
-      const agentKey = input.dataset.agent;
-      const keyPath = input.dataset.key;
-      const newVal = input.value.trim();
-      if (!agentKey || !keyPath) continue;
-      // Resolve the dotted key path and set the value
-      const parts2 = keyPath.split('.');
-      // Determine which section object to write into
-      let targetSection;
-      // Map agentKey to the section key used in merged profile
-      const agentToSectionKey = {
-        identity:'identity', limnology:'limnology', biology:'biology', habitat:'habitat',
-        navigation:'navigation', regulations:'regulations', trolling:'trollingIntelligence', summary:'summary'
-      };
-      const sectionKey = agentToSectionKey[agentKey] || agentKey;
-      // Write to merged profile
-      if (merged[sectionKey] && typeof merged[sectionKey] === 'object') {
-        setNestedValue(merged[sectionKey], parts2, newVal);
-      }
-      // Also write to packageParts for consistency
-      if (parts[agentKey] && typeof parts[agentKey] === 'object') {
-        setNestedValue(parts[agentKey], parts2, newVal);
-      }
-      if (parts[sectionKey] && parts[sectionKey] !== parts[agentKey] && typeof parts[sectionKey] === 'object') {
-        setNestedValue(parts[sectionKey], parts2, newVal);
-      }
-    }
-    // Re-serialize merged into reviewCard so subsequent saves use edited data
-    reviewCard.dataset.merged = JSON.stringify(merged);
-    reviewCard.dataset.parts = JSON.stringify(parts);
   }
   // merge notes
   const notes = document.getElementById('researchNotes')?.value || merged.notes || "";
@@ -668,26 +547,6 @@ async function saveProfile(status='draft') {
   } catch (e) {
     log(`✘ Save failed: ${e.message}`);
     alert(`Save failed: ${e.message}`);
-  }
-}
-
-/** Set a nested value on an object using a dotted key path */
-function setNestedValue(obj, parts, value) {
-  for (let i = 0; i < parts.length - 1; i++) {
-    const key = parts[i];
-    if (!(key in obj) || typeof obj[key] !== 'object' || obj[key] === null) {
-      obj[key] = {};
-    }
-    obj = obj[key];
-  }
-  const lastKey = parts[parts.length - 1];
-  // Try to parse array values (comma-separated)
-  if (value.includes(',') && !value.startsWith('{') && !value.startsWith('[')) {
-    obj[lastKey] = value.split(',').map(s => s.trim()).filter(Boolean);
-  } else if (!isNaN(value) && value !== '' && !value.includes(' ')) {
-    obj[lastKey] = Number(value);
-  } else {
-    obj[lastKey] = value;
   }
 }
 
