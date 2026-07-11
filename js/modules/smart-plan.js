@@ -853,12 +853,19 @@ Return ONLY valid JSON, no markdown:
     let calcLead = autoCalculateLead(rod, bandSpeedMph || band1Speed);
     // Cap variable-depth lures (A-rigs, spoons, swimbaits etc) at 80ft on a kayak
     const lureL = (rod.lure||'').toLowerCase();
+    // Variable-depth lures: A-rigs, spoons, swimbaits, spinnerbaits etc.
+    // These are depth-controlled by lead length — cap at 80ft on a kayak.
     const isVarDepth = lureL.includes('a-rig') || lureL.includes('swimbait') ||
       lureL.includes('spoon') || lureL.includes('spinnerbait') ||
       lureL.includes('chatterbait') || lureL.includes('bucktail') ||
       lureL.includes('marabou') || lureL.includes('jighead') ||
       lureL.includes('road runner');
     if (isVarDepth && calcLead > 80) calcLead = 80;
+    // Crankbaits have a physical dive curve — long lead doesn't make them go deeper,
+    // it just puts them farther back. Cap at 100ft on a kayak (realistic maximum).
+    const isCrankbait = lureL.includes('crankbait') || lureL.includes('lipless') ||
+      lureL.includes('blade vibe');
+    if (isCrankbait && calcLead > 100) calcLead = 100;
     rod.lead = String(calcLead);
     return rod;
   }

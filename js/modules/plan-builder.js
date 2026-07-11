@@ -146,7 +146,7 @@ export function collectPlan(){
     // since nothing anywhere ever declared that variable. Smart Plan writes
     // its rationale text into #planSmartPlanOutput; capture it here so it
     // round-trips through save/load and the Preview can actually use it.
-    rationale: document.getElementById('planSmartPlanOutput')?.value || '',
+    rationale: window._smartPlanRationale || document.getElementById('planSmartPlanOutput')?.value || '',
     gpx: {
       waypoints: state.DATA.waypoints.length,
       tracks: state.DATA.tracks.length,
