@@ -20,6 +20,27 @@ var SYNC_TOKEN = "";
 // We now try multiple model candidates per provider in order, and fall back across providers.
 var LLM_PROVIDERS = [
   {
+    name: "gemini",
+    baseUrl: null, // uses Google's native SDK-style REST, handled in callLLM
+    keyEnv: "GEMINI_API_KEY",
+    defaultModel: "gemini-2.5-flash",
+    models: [
+      "gemini-2.5-flash",
+      "gemini-2.0-flash"
+    ],
+    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
+    isGemini: true,
+    transformPayload: (p) => ({
+      systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
+      contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
+      generationConfig: {
+        temperature: p.temperature || 0.15,
+        maxOutputTokens: p.max_tokens || 1500,
+        responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined
+      }
+    }),
+  },
+  {
     name: "groq",
     baseUrl: "https://api.groq.com/openai/v1/chat/completions",
     keyEnv: "GROQ_API_KEY",
@@ -91,13 +112,50 @@ async function callLLM(env, payload, preferredProvider = null) {
     : LLM_PROVIDERS.filter(p => env[p.keyEnv]);
 
   if (!providers.length) {
-    throw new Error("No LLM provider configured. Set GROQ_API_KEY, OPENROUTER_API_KEY, or CEREBRAS_API_KEY");
+    throw new Error("No LLM provider configured. Set GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, or CEREBRAS_API_KEY");
   }
 
   let lastError;
   for (const provider of providers) {
     const key = env[provider.keyEnv];
     if (!key) continue;
+
+    // ── Gemini uses a different API (Google native REST, not OpenAI-compatible) ──
+    if (provider.isGemini) {
+      const modelCandidates = provider.models?.length ? provider.models : [provider.defaultModel];
+      for (const modelId of modelCandidates) {
+        try {
+          const geminiPayload = provider.transformPayload(payload);
+          const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${key}`;
+          const r = await fetch(geminiUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(geminiPayload)
+          });
+          let data;
+          try { data = await r.json(); } catch (_) {
+            const txt = await r.text().catch(() => "");
+            throw new Error(`gemini/${modelId}: HTTP ${r.status} non-JSON ${txt.slice(0,200)}`);
+          }
+          if (!r.ok) {
+            const msg = data.error?.message || data.error || `HTTP ${r.status}`;
+            const msgStr = typeof msg === "string" ? msg : JSON.stringify(msg).slice(0,400);
+            throw new Error(`gemini/${modelId}: ${msgStr}`);
+          }
+          // Convert Gemini response to OpenAI-compatible shape for extractLLMText
+          const geminiText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (!geminiText) throw new Error(`gemini/${modelId}: empty content`);
+          const compatData = { choices: [{ message: { content: geminiText } }] };
+          return { provider: "gemini", model: modelId, data: compatData };
+        } catch (e) {
+          lastError = e;
+          console.warn(`LLM gemini/${modelId} failed: ${e.message}`);
+          continue;
+        }
+      }
+      continue; // exhausted Gemini models, move to next provider
+    }
+
     const modelCandidates = provider.models?.length ? provider.models : [provider.defaultModel];
     for (const modelId of modelCandidates) {
       try {
@@ -118,7 +176,6 @@ async function callLLM(env, payload, preferredProvider = null) {
         if (!r.ok) {
           const msg = data.error?.message || data.error || data.message || `HTTP ${r.status}`;
           const msgStr = typeof msg === "string" ? msg : JSON.stringify(msg).slice(0,400);
-          // If model does not exist, try next model candidate before moving to next provider
           if (/does not exist|decommissioned|not found|invalid.*model|No such model/i.test(msgStr)) {
             console.warn(`LLM provider ${provider.name} model ${modelId} rejected: ${msgStr}`);
             lastError = new Error(`${provider.name}/${modelId}: ${msgStr}`);
@@ -127,10 +184,6 @@ async function callLLM(env, payload, preferredProvider = null) {
           throw new Error(`${provider.name}/${modelId}: ${msgStr}`);
         }
 
-        // Some reasoning-first models (notably GPT-OSS on Groq) can return HTTP 200
-        // with an empty assistant content field if the response budget is consumed by
-        // reasoning. That is not usable for TrollMap; treat it as a failed candidate
-        // so the fallback chain can continue to the next model/provider.
         if (Array.isArray(data?.choices) && data.choices.length) {
           const text = extractLLMText(data);
           if (!text) {
@@ -145,15 +198,12 @@ async function callLLM(env, payload, preferredProvider = null) {
         return { provider: provider.name, model: modelId, data };
       } catch (e) {
         lastError = e;
-        // Only warn once per model attempt, continue to next model if it looks like model error, else next provider
         const isModelErr = /does not exist|decommissioned|not found|invalid.*model|No such model/i.test(e.message);
         console.warn(`LLM ${provider.name}/${modelId} failed: ${e.message}`);
-        if (isModelErr) continue; // try next model in same provider
-        // For other errors (rate limit, auth, timeout) also try next model once, but break to next provider after exhausting models
+        if (isModelErr) continue;
         continue;
       }
     }
-    // exhausted all models for this provider, move to next provider
   }
   throw lastError || new Error("All LLM providers/models failed");
 }
@@ -2956,14 +3006,14 @@ Return JSON only. Never invent limits - if unknown, set field null or empty.`,
   trolling: {
     label: "Trolling Intelligence",
     order: 7,
-    system: "You are a fisheries biologist and professional trolling guide. You are given a verified lake profile. DO NOT SEARCH THE INTERNET. Use ONLY supplied JSON. Determine general seasonal fish locations, depth preferences, structure preferences, trolling presentations, forage relationships. Do NOT recommend routes, speeds, colors, or specific lures. Return JSON only.",
+    system: "You are a fisheries biologist and professional trolling guide. You are given a verified lake profile containing limnology, biology, forage, habitat, and other sections. DO NOT SEARCH THE INTERNET. Use ONLY supplied JSON. Reference the biology/forage data extensively — use Threadfin Shad dominance, thermocline depth, oxygen depletion floor, and structural habitat data to inform your depth/structure/forage recommendations. Do NOT recommend routes, speeds, colors, or specific lures. Return JSON only.",
     userTemplate: (lakeName, state, prev) => `You are given a verified lake profile. Use ONLY this JSON - no internet.
 
 Lake: ${lakeName}
-Full profile so far:
+Full profile so far (reference biology/forage, limnology including thermocline depth & oxygen floor, and habitat structure):
 ${JSON.stringify(prev, null, 2).slice(0, 12000)}
 
-Task: Translate lake science into long-term trolling intelligence. This is stable knowledge, not today's plan.
+Task: Translate lake science into long-term trolling intelligence. This is stable knowledge, not today's plan. Use the forage data (e.g. Threadfin Shad dominance), thermocline depth, oxygen depletion floor, and structural habitat from the profile to inform your recommendations.
 
 Return ONLY:
 {
@@ -2974,7 +3024,7 @@ Return ONLY:
         "structures": ["channel ledges","creek mouths","long points"],
         "forage": ["Threadfin Shad"],
         "recommendedPresentations": ["MR Crankbait","DD Crankbait","A-Rig"],
-        "notes": "general behavior"
+        "notes": "general behavior — reference thermocline if applicable"
       },
       "fall": {"preferredDepth":[8,15],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""},
       "winter": {"preferredDepth":[20,35],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""},
@@ -3019,9 +3069,38 @@ JSON only.`,
   }
 };
 
-function calculateSectionConfidence(sources, hasData) {
+function calculateSectionConfidence(sources, hasData, sectionType) {
   if (!hasData) return { percent: 0, level: "missing", reason: "no data" };
   const src = Array.isArray(sources) ? sources : [];
+
+  // ── Trolling / TrollingIntelligence — data-structure validated scoring ──
+  // Trolling has no citable sources (fishing tactics aren't USGS-published),
+  // so source-count scoring always under-reports. Instead, validate the output
+  // structure: does it have species × season entries with depth/structure/forage?
+  if (sectionType === 'trolling' || sectionType === 'trollingIntelligence') {
+    const sectionData = arguments[3]; // passed by handleResearchAgent
+    let speciesCount = 0, structuredSeasons = 0;
+    if (sectionData && typeof sectionData === 'object') {
+      for (const [species, seasons] of Object.entries(sectionData)) {
+        if (typeof seasons !== 'object' || !seasons) continue;
+        speciesCount++;
+        for (const season of ['spring','summer','fall','winter']) {
+          const s = seasons[season];
+          if (s && typeof s === 'object') {
+            const hasDepth = Array.isArray(s.preferredDepth) && s.preferredDepth.length === 2;
+            const hasStruct = Array.isArray(s.structures) && s.structures.length > 0;
+            const hasForage = Array.isArray(s.forage) && s.forage.length > 0;
+            if (hasDepth && (hasStruct || hasForage)) structuredSeasons++;
+          }
+        }
+      }
+    }
+    if (speciesCount >= 3 && structuredSeasons >= 6) return { percent: 80, level: "high", reason: `validated: ${speciesCount} species, ${structuredSeasons} structured seasons`, trollingValidation: true };
+    if (speciesCount >= 2 && structuredSeasons >= 3) return { percent: 65, level: "medium", reason: `validated: ${speciesCount} species, ${structuredSeasons} structured seasons`, trollingValidation: true };
+    if (speciesCount >= 1 && structuredSeasons >= 1) return { percent: 50, level: "low", reason: `validated: ${speciesCount} species, ${structuredSeasons} structured seasons`, trollingValidation: true };
+    // Fall through to source-count scoring if structure is empty
+  }
+
   if (!src.length) return { percent: 45, level: "low", reason: "no sources, AI estimate" };
   let score = 0;
   let official = 0, secondary = 0, model = 0, derived = 0;
@@ -3105,7 +3184,10 @@ async function handleResearchAgent(request, env) {
   const start = Date.now();
   let llmResult;
   try {
-    llmResult = await callLLM(env, payload);
+    // Route identity and limnology through Gemini to preserve Groq 120b budget for later agents
+    // Gemini handles factual/encyclopedic tasks well — ideal for lake facts and water science
+    const useGemini = (agentKey === 'identity' || agentKey === 'limnology') && env.GEMINI_API_KEY;
+    llmResult = await callLLM(env, payload, useGemini ? 'gemini' : null);
   } catch (e) {
     return new Response(JSON.stringify({success:false, error:`LLM failed: ${e.message}`, agent: agentKey, lakeName}), {status: 502, headers: JSON_HEADERS});
   }
@@ -3119,7 +3201,7 @@ async function handleResearchAgent(request, env) {
   const sectionData = parsed[dataKey] || parsed[agentKey] || parsed;
   const sources = parsed.sources || parsed[dataKey]?.sources || [];
   const hasData = sectionData && (typeof sectionData === 'object' ? Object.keys(sectionData).length > 0 : true);
-  const confidence = calculateSectionConfidence(sources, hasData);
+  const confidence = calculateSectionConfidence(sources, hasData, agentKey, sectionData);
 
   return new Response(JSON.stringify({
     success: true,
@@ -3223,7 +3305,8 @@ async function handleResearchSave(request, env) {
   } catch {}
 
   // Calculate confidence per section if not provided
-  const sections = ["identity","limnology","biology","forage","habitat","navigation","regulations","trollingIntelligence","trolling","summary"];
+  // Canonical sections only — skip aliased duplicates (forage=biology, trollingIntelligence=trolling)
+  const sections = ["identity","limnology","biology","habitat","navigation","regulations","trolling","summary"];
   const confidence = incomingProfile.confidence || {};
   const sources = incomingProfile.sources || [];
   // build overall confidence
@@ -3232,13 +3315,17 @@ async function handleResearchSave(request, env) {
     const secData = incomingProfile[sec] || packageParts[sec];
     if (secData) {
       if (!confidence[sec]) {
-        const src = (secData.sources) || incomingProfile.sources || [];
-        const calc = calculateSectionConfidence(src, true);
+        // Look for sources on the section data or use incomingProfile sources
+        const src = (typeof secData === 'object' && secData.sources) || incomingProfile.sources || [];
+        const calc = calculateSectionConfidence(src, true, sec, secData);
         confidence[sec] = calc;
       }
       if (confidence[sec]?.percent) { confSum += confidence[sec].percent; confCount++; }
     }
   }
+  // Remove any aliased duplicate confidence keys that would bloat the object
+  delete confidence.forage;
+  delete confidence.trollingIntelligence;
   let overallConf = confCount ? Math.round(confSum/confCount) : 75;
 
   // Merge master profile per spec section 6
@@ -4263,8 +4350,8 @@ Place the fraction at the point where the structure meets the water, not the far
       return new Response(JSON.stringify({
         ok: true,
         worker: "trollmap-worker",
-        version: 15.1,
-        changelog: "2026-07-11: Lake Research v1.0 patch - token-optimized Smart Plan injection (target species only, softer tone), identity grounding with LAKES constant to reduce hallucination, fix species-not-covered handling",
+        version: 15.2,
+        changelog: "2026-07-11: Lake Research v2 — review screen with per-field inline editing; fix confidence merge bug (biology/forage + trolling/trollingIntelligence double-count); add Gemini provider with routing for identity/limnology to preserve 120b budget for trolling; trolling confidence now uses data-structure validation instead of source-count; trolling agent prompt now references biology/forage/thermocline/habitat data",
         routes: [
           "/research/agent                    \u2014 run single AI research agent (identity|limnology|biology|habitat|navigation|regulations|trolling|summary) — uses full callLLM chain (groq 120b primary → fallback), grounded with known LAKES baseline for identity",
           "/research/list or /lakes/list      \u2014 list all researched lake master profiles",
