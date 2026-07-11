@@ -897,7 +897,6 @@ For each route tell me: (1) what structure/depth signature to find on the fishfi
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 600,
         temperature: 0.4,
@@ -1080,7 +1079,6 @@ Return ONLY valid JSON, no explanation:
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
         messages: [{ role: 'user', content: planPrompt }],
         max_tokens: 600,
         temperature: 0.3,

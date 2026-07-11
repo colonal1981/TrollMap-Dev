@@ -58,7 +58,11 @@ async function callLLM(env, payload, preferredProvider = null) {
   for (const provider of providers) {
     try {
       const key = env[provider.keyEnv];
-      const body = provider.transformPayload({ ...payload, model: payload.model || provider.defaultModel });
+      // Each provider uses its own default model — don't forward a
+      // provider-specific model name (e.g. Groq's "llama-3.3-70b-versatile")
+      // to Cerebras or OpenRouter where it doesn't exist.
+      const providerPayload = { ...payload, model: provider.defaultModel };
+      const body = provider.transformPayload(providerPayload);
       const r = await fetch(provider.baseUrl, {
         method: "POST",
         headers: provider.headers(key),

@@ -215,7 +215,6 @@ async function sendChatMessage() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
         messages,
         max_tokens: 400,
         temperature: 0.4,
@@ -302,7 +301,6 @@ Return ONLY the JSON array, nothing else.`;
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
         messages: [{ role: 'user', content: extractPrompt }],
         max_tokens: 300,
         temperature: 0.1,

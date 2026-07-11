@@ -685,7 +685,7 @@ Return ONLY valid JSON, no markdown:
     if (outEl) outEl.value='⏳ Calling Groq (/groq-query)…';
     const res=await fetch(`${CF_WORKER_URL}/groq-query`,{
       method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'llama-3.3-70b-versatile',messages:[{role:'user',content:planPrompt}],max_tokens:1000,temperature:0.3}),
+      body:JSON.stringify({messages:[{role:'user',content:planPrompt}],max_tokens:1000,temperature:0.3}),
     });
     
     rawGroqText = await res.text();
