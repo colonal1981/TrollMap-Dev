@@ -8,7 +8,7 @@
  *           Everything else -> fluoro leader
  *
  * Exported:
- *   renderSmartPlanUI({ routeRods, scoutReport, speedMph, phases, solunar })
+ *   renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeeds, phases, solunar })
  *   assignRouteRods(phaseRecs, tracks, speedMph, season, clarity, species)
  *   syncSpread(cards, routeRods)
  */
@@ -51,13 +51,18 @@ function getTrackStats(trackName, speedMph) {
 }
 
 // ── Route card definitions ────────────────────────────────────────────────────
-function buildCards(speedMph) {
+function buildCards(fallbackSpeedMph, routeSpeeds = {}) {
+  const fallbackSpeed = Number(fallbackSpeedMph) || 1.8;
   return [
     { key: 'Ph1 Outbound', label: 'Ph1 — Outbound', icon: '🌅', color: '#00e5ff', desc: 'Dawn — shallow structure, heading out' },
     { key: 'Ph1 Inbound',  label: 'Ph1 — Inbound',  icon: '↩️',  color: '#00bcd4', desc: 'Return pass on same depth' },
     { key: 'Ph2 Outbound', label: 'Ph2 — Outbound', icon: '☀️',  color: '#ffb300', desc: 'Mid-depth ledge run — heading out' },
     { key: 'Ph2 Inbound',  label: 'Ph2 — Inbound',  icon: '🏠',  color: '#ff9800', desc: 'Heading home — deeper channel' },
-  ].map(c => ({ ...c, stats: getTrackStats(c.key, speedMph) }));
+  ].map((card) => {
+    const routeSpeed = Number(routeSpeeds?.[card.key]);
+    const speedMph = Number.isFinite(routeSpeed) && routeSpeed > 0 ? routeSpeed : fallbackSpeed;
+    return { ...card, speedMph, stats: getTrackStats(card.key, speedMph) };
+  });
 }
 
 // ── Rod slot HTML ─────────────────────────────────────────────────────────────
@@ -103,7 +108,7 @@ function rodSlotHtml(rod, cardIdx, slotIdx) {
 }
 
 // ── Main render ───────────────────────────────────────────────────────────────
-export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, phases, solunar }) {
+export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeeds = {}, phases, solunar }) {
   // Self-inject container before spread table if needed
   let container = document.getElementById('smartPlanUIContainer');
   if (!container) {
@@ -117,9 +122,11 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, phases, so
   }
   if (!container) return;
 
-  const cards = buildCards(speedMph || 1.8);
+  const cards = buildCards(speedMph || 1.8, routeSpeeds);
   const totalTime = cards.reduce((s, c) => s + (c.stats.timeMin || 0), 0);
   const totalDist = cards.reduce((s, c) => s + parseFloat(c.stats.distMi || 0), 0);
+  const passSpeeds = [...new Set(cards.map((card) => card.speedMph))];
+  const speedSummary = passSpeeds.join(' / ');
 
   let html = `
   <!-- Trip summary -->
@@ -128,7 +135,7 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, phases, so
       ['Routes', cards.length, ''],
       ['Distance', totalDist.toFixed(1), 'mi'],
       ['Trolling', `${Math.floor(totalTime/60)}h ${totalTime%60}m`, ''],
-      ['Speed', speedMph || 1.8, 'mph'],
+      ['Pass speeds', speedSummary, 'mph'],
     ].map(([label, val, unit]) => `
     <div style="background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;text-align:center">
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">${label}</div>
@@ -156,6 +163,7 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, phases, so
           </div>
         </div>
         <div style="text-align:right;font-size:11px;color:var(--muted)">
+          <span style="color:${card.color};font-weight:700">${card.speedMph} mph</span><br>
           ${hasStats
             ? `<span style="color:${card.color};font-weight:600">${card.stats.distMi}mi</span> · ${card.stats.timeMin}min`
             : 'no track yet'}
@@ -191,15 +199,16 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, phases, so
     rod.lure  = picked;
     rod.reel  = reelForLure(picked);
     rod.color = getLureColor(picked, 'clear');
-    rod.lead  = String(autoCalculateLead({ ...rod, lure: picked }, speedMph || 1.8));
-    renderSmartPlanUI({ routeRods, scoutReport, speedMph, phases, solunar });
-    syncSpread(cards, routeRods);
+    // Preserve the pass-specific speed when recalculating lead after an edit.
+    rod.lead  = String(autoCalculateLead({ ...rod, lure: picked }, card.speedMph));
+    renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeeds, phases, solunar });
+    syncSpread(cards, routeRods, routeSpeeds);
   };
 }
 
 // ── Sync to state.SPREAD ──────────────────────────────────────────────────────
-export function syncSpread(cards, routeRods) {
-  const allCards = cards || buildCards(1.8);
+export function syncSpread(cards, routeRods, routeSpeeds = {}) {
+  const allCards = cards || buildCards(1.8, routeSpeeds);
   state.SPREAD = [];
   for (const card of allCards) {
     for (const rod of (routeRods?.[card.key] || [])) {
@@ -207,7 +216,8 @@ export function syncSpread(cards, routeRods) {
       state.SPREAD.push({
         ...rod,
         reel: reelForLure(rod.lure),
-        notes: `[${card.label}] ${rod.notes || ''}`.trim(),
+        speedMph: card.speedMph,
+        notes: `[${card.label} @ ${card.speedMph} mph] ${rod.notes || ''}`.trim(),
       });
     }
   }

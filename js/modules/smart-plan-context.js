@@ -257,7 +257,7 @@ export function buildGroqCoachPayload(fishingContext, planState) {
   const {
     phases, phaseRecs, spread, solunarStr, poolLevel,
     weather, rationale, rampName, rangeMiles,
-    speed, speedRationale, // ADDED: Destructure the new speed fields
+    speed, phaseSpeeds, speedRationale,
   } = planState;
 
   return {
@@ -268,17 +268,6 @@ export function buildGroqCoachPayload(fishingContext, planState) {
       noLiveBait:  true,
       maxRods:     2,
     },
-    
-    // ADDED: Plan Meta so the Coach knows the Planner already made a deliberate decision
-    planMeta: {
-      source: 'groq_smart_plan',
-      speed: speed || null,
-      speedRationale: speedRationale || null,
-      note: speedRationale
-        ? `Speed was set to ${speed}mph by the primary AI guide: "${speedRationale}". Do not suggest changing speed unless there is a compelling safety or species-behavior reason that overrides this.`
-        : null,
-    },
-
     // Conditions
     conditions: {
       lake:      lakeName,
@@ -375,14 +364,17 @@ export function buildGroqCoachPayload(fishingContext, planState) {
     // This is what the chat coach reads to answer specific rig questions
     spread: spread || [],
 
-    // Speed decision metadata — prevents coach from second-guessing deliberate speed picks
+    // Speed decision metadata — each band is a distinct out-and-back pass.
     planMeta: {
       source:         'groq_smart_plan',
       speed:          speed || null,
+      phaseSpeeds:    phaseSpeeds || null,
       speedRationale: speedRationale || null,
-      note: speedRationale
-        ? `Speed was set to ${speed}mph by the primary AI guide: "${speedRationale}". Do not suggest changing speed unless there is a compelling safety or species-behavior reason that directly overrides this.`
-        : null,
+      note: phaseSpeeds
+        ? `Use the applied per-pass speeds: Band 1 ${phaseSpeeds.band1}mph and Band 2 ${phaseSpeeds.band2}mph. Each is capped by the two lures in that pass; do not suggest exceeding either cap.`
+        : (speedRationale
+          ? `Speed was set to ${speed}mph by the primary AI guide: "${speedRationale}". Do not suggest changing speed unless there is a compelling safety or species-behavior reason that directly overrides this.`
+          : null),
     },
   };
 }

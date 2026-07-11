@@ -19,14 +19,15 @@ import { getFilename, setFilename } from "../core/map-init.js";
 // FIX: calcTrollTimes was referenced but never defined (the exact
 // error you saw: "calcTrollTimes is not defined" at buildPlanPreviewHtml).
 // Safe self-contained version using loaded tracks.
-function calcTrollTimes() {
+function calcTrollTimes(phaseSpeeds = []) {
   try {
     const tracks = (state && state.DATA && state.DATA.tracks) || [];
     if (!tracks.length) return [];
 
-    const speedMph = parseFloat(document.getElementById('planSpeed')?.value) || 2.4;
+    const fallbackSpeed = parseFloat(document.getElementById('planSpeed')?.value) || 2.4;
 
     return tracks.map((t, i) => {
+      const speedMph = speedForTrack(t.name, phaseSpeeds, fallbackSpeed);
       const pts = t.pts || [];
       let distMi = 1.2;
 
@@ -56,6 +57,7 @@ function calcTrollTimes() {
       return {
         name: t.name || `Lane ${i + 1}`,
         distMi: distMi.toFixed(1),
+        speedMph,
         mins
       };
     });
@@ -66,11 +68,34 @@ function calcTrollTimes() {
 }
 // ─────────────────────────────────────────────────────────────
 
+function normalizedPhaseSpeeds(phaseSpeeds) {
+  return Array.isArray(phaseSpeeds)
+    ? phaseSpeeds.filter((pass) => Number.isFinite(Number(pass?.phase)) && Number(pass?.speed) > 0)
+      .map((pass) => ({ ...pass, phase: Number(pass.phase), speed: Number(pass.speed) }))
+    : [];
+}
+
+function speedForTrack(trackName, phaseSpeeds, fallbackSpeed) {
+  const phase = String(trackName || '').match(/^Ph(\d+)\b/i)?.[1];
+  const savedPass = normalizedPhaseSpeeds(phaseSpeeds).find((pass) => String(pass.phase) === phase);
+  return savedPass?.speed || fallbackSpeed;
+}
+
+function formatPhaseSpeeds(phaseSpeeds, fallbackSpeed) {
+  const savedPasses = normalizedPhaseSpeeds(phaseSpeeds);
+  if (!savedPasses.length) return `${fallbackSpeed} mph`;
+  return savedPasses
+    .sort((a, b) => a.phase - b.phase)
+    .map((pass) => `${pass.phaseName || `Band ${pass.phase}`}: ${pass.speed} mph`)
+    .join(' · ');
+}
+
 function collectPlan(){
   function gV(id, fb = '') { const el = document.getElementById(id); return el ? el.value : fb; }
   const species = [...document.querySelectorAll('#planSpeciesChecks input:checked')].map(c=>c.value);
   const lakeVal = gV('planLake');
   const isRiv = isPlanRiverValue(lakeVal);
+  const phaseSpeeds = normalizedPhaseSpeeds(window._smartPlanPhaseRoutes);
   return {
     meta:{
       name: gV('planName', 'Fishing Plan'),
@@ -104,7 +129,10 @@ function collectPlan(){
       species,
     },
     trolling:{
+      // Legacy single speed remains for older plans; Smart Plan saves its
+      // per-band pass speeds as the authoritative values.
       speed: gV('planSpeed', '2.4'),
+      phaseSpeeds,
       targetDepth: gV('planTargetDepth'),
       pattern: gV('planPattern', 'Straight lanes'),
     },
@@ -167,6 +195,11 @@ function loadPlanIntoForm(p){
   document.querySelectorAll('#planSpeciesChecks input').forEach(c=> c.checked = (m.species||[]).includes(c.value));
   if(p.trolling){
     sV('planSpeed', p.trolling.speed || '2.4');
+    if (normalizedPhaseSpeeds(p.trolling.phaseSpeeds).length) {
+      // Preserve pass speeds when a saved Smart Plan is loaded and then saved
+      // again, even if Smart Plan is not re-run first.
+      window._smartPlanPhaseRoutes = normalizedPhaseSpeeds(p.trolling.phaseSpeeds);
+    }
     sV('planTargetDepth', p.trolling.targetDepth);
     sV('planPattern', p.trolling.pattern || 'Straight lanes');
   }
@@ -207,6 +240,7 @@ async function buildPlanPreviewHtml(p){
   const rationaleHtml = p.rationale
     ? `<pre style="white-space:pre-wrap;font-family:inherit;background:#f7f9fb;padding:10px;border-radius:6px;font-size:13px;border-left:4px solid #0d4f8b">${esc(p.rationale)}</pre>`
     : '';
+  const phaseSpeedSummary = formatPhaseSpeeds(p.trolling?.phaseSpeeds, p.trolling?.speed || '2.4');
 
   // ── Clarity tactical ──────────────────────────────────────────────────────
   const clarity = p.meta.clarity || 'Clear';
@@ -440,10 +474,10 @@ async function buildPlanPreviewHtml(p){
 
   // ── Troll lane time calculator ────────────────────────────────────────────
   // Uses the top-level safe implementation (defined above)
-  const trollTimes = calcTrollTimes();
+  const trollTimes = calcTrollTimes(p.trolling?.phaseSpeeds);
   let trollTimeRows = '';
   if(trollTimes && trollTimes.length){
-    trollTimeRows = trollTimes.map(t=>`<tr><td>${esc(t.name)}</td><td>${t.distMi} mi</td><td><b>${t.mins} min</b></td></tr>`).join('');
+    trollTimeRows = trollTimes.map(t=>`<tr><td>${esc(t.name)}</td><td>${t.distMi} mi</td><td>${esc(t.speedMph)} mph</td><td><b>${t.mins} min</b></td></tr>`).join('');
   }
 
 
@@ -961,7 +995,7 @@ ${pressureHtml}
     <div style="background:#0f172a;padding:14px 16px;border-radius:8px;border:1px solid rgba(255,255,255,0.08)">
       <b style="color:#76ff03;font-size:14.5px;display:block;margin-bottom:6px">🎯 Therefore Protocol Recommendations</b>
       <div style="display:flex;flex-direction:column;gap:5px">
-        <span>• <b>Trolling Velocity</b>: Maintain exactly <b>${esc(p.trolling.speed||'2.4')} mph</b> to maximize horizontal tracking without lure blowout.</span>
+        <span>• <b>Trolling Velocity</b>: Maintain the pass-specific speed: <b>${esc(phaseSpeedSummary)}</b>, so each lure stays within its physical trolling limit.</span>
         <span>• <b>Target Drop-Off</b>: Deploy Core Rod Matrix exactly across <b>${esc(p.trolling.targetDepth||'18–28')} ft</b> ledge drop-offs using automated wire let-out helpers.</span>
         <span>• <b>Match-the-Hatch Profile</b>: Force swimbait profile sizing to exactly <b>${parseFloat(p.meta.waterTemp)<65?'3.8" Finesse Threadfin':parseFloat(p.meta.waterTemp)<80?'4.6" Finesse Blueback Herring':'6" Gizzard Shad'}</b>.</span>
         <span>• <b>Color Penetration</b>: ${(p.meta.clarity||'')==='Stained'?'Prioritize <b style="color:#76ff03">Firetiger / Chartreuse UV</b> due to suspended particulate light limits.':(p.meta.clarity||'')==='Muddy'?'Deploy loud rattles and dark Black/Blue silhouettes.':'Focus entirely on natural <b style="color:#fff">Bone / Pearl Flash</b> with fluoro leaders.'}</span>
@@ -1012,7 +1046,7 @@ ${twilightHtml?`<h2>4 · Light &amp; Bite Feed Triggers</h2>${twilightHtml}`:''}
     <tr style="background:#eef4fa"><th>Target Trolling Speed</th><th>Target Drop-Off Depth</th><th>Tactical Pattern</th></tr>
   </thead>
   <tbody>
-    <tr><td><b style="font-size:15px;color:#0d4f8b">${esc(p.trolling.speed||'—')} mph</b></td><td><b style="font-size:15px;color:#0d4f8b">${esc(p.trolling.targetDepth||'25–35')} ft</b></td><td><b style="font-size:15px">${esc(p.trolling.pattern||'—')}</b></td></tr>
+    <tr><td><b style="font-size:15px;color:#0d4f8b">${esc(phaseSpeedSummary)}</b></td><td><b style="font-size:15px;color:#0d4f8b">${esc(p.trolling.targetDepth||'25–35')} ft</b></td><td><b style="font-size:15px">${esc(p.trolling.pattern||'—')}</b></td></tr>
   </tbody>
 </table>
 
@@ -1095,8 +1129,8 @@ ${rationaleHtml ? `<h2>5.5 · Smart Plan Rationale</h2>${rationaleHtml}` : ''}
 </table>
 <p class="rp-small" style="margin-top:4px">Port = Left side of cockpit · Starboard = Right side of cockpit</p>
 
-${trollTimeRows?`<h3>Lane Telemetry — Run Times @ ${esc(p.trolling.speed||'2.4')} mph</h3>
-<table><thead><tr style="background:#eef4fa"><th>Lane / Track</th><th>Distance</th><th>Run Time</th></tr></thead>
+${trollTimeRows?`<h3>Lane Telemetry — Run Times by Pass Speed</h3>
+<table><thead><tr style="background:#eef4fa"><th>Lane / Track</th><th>Distance</th><th>Speed</th><th>Run Time</th></tr></thead>
 <tbody>${trollTimeRows}</tbody></table>`:''}
 
 ${p.meta.structure?`<h2>🗺 Structure Notes Per Lane</h2>
