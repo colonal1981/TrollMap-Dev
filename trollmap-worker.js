@@ -26,11 +26,10 @@ var LLM_PROVIDERS = [
     defaultModel: "openai/gpt-oss-120b",
     models: [
       "openai/gpt-oss-120b",
-      "openai/gpt-oss-20b",
-      "meta-llama/llama-4-scout-17b-16e-instruct",
-      "llama-3.3-70b-versatile",
       "qwen/qwen3-32b",
-      "qwen/qwen3.6-27b"
+      "openai/gpt-oss-20b",
+      "llama-3.3-70b-versatile",
+      "meta-llama/llama-4-scout-17b-16e-instruct"
     ],
     headers: (key) => ({ "Authorization": `Bearer ${key}`, "Content-Type": "application/json" }),
     transformPayload: (p) => p,
@@ -62,12 +61,9 @@ var LLM_PROVIDERS = [
     defaultModel: "llama-3.3-70b",
     models: [
       "llama-3.3-70b",
-      "llama3.3-70b",
-      "gpt-oss-120b",
-      "openai/gpt-oss-120b",
-      "llama-3.1-8b",
       "qwen-3-32b",
-      "zai-glm-4.7"
+      "gpt-oss-120b",
+      "llama-3.1-8b"
     ],
     headers: (key) => ({ "Authorization": `Bearer ${key}`, "Content-Type": "application/json" }),
     transformPayload: (p) => p,
