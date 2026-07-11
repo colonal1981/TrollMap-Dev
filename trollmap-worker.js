@@ -13,35 +13,64 @@ var TEXT_HEADERS = { ...CORS, "Content-Type": "text/plain; charset=utf-8" };
 var SYNC_TOKEN = "";
 
 // ─── LLM Provider Abstraction (Groq → OpenRouter → Cerebras fallback) ──────────────────
+// Updated 2026-07-11: Fix deprecation fallout.
+// - Groq: llama-3.3-70b-versatile is deprecated Aug 16 2026; recommended is openai/gpt-oss-120b [1](https://console.groq.com/docs/deprecations)[2](https://console.groq.com/docs/batch)
+// - Cerebras: valid models are llama-3.3-70b, llama-3.1-8b, qwen-3-32b, gpt-oss-120b etc — NOT llama3.1-70b [3](https://tokenmix.ai/blog/cerebras-api-key-access-speed-tests-2026)
+// - OpenRouter free: use 3.3 variant
+// We now try multiple model candidates per provider in order, and fall back across providers.
 var LLM_PROVIDERS = [
   {
     name: "groq",
     baseUrl: "https://api.groq.com/openai/v1/chat/completions",
     keyEnv: "GROQ_API_KEY",
-    defaultModel: "llama-3.3-70b-versatile",
+    defaultModel: "openai/gpt-oss-120b",
+    models: [
+      "openai/gpt-oss-120b",
+      "openai/gpt-oss-20b",
+      "meta-llama/llama-4-scout-17b-16e-instruct",
+      "llama-3.3-70b-versatile",
+      "qwen/qwen3-32b",
+      "qwen/qwen3.6-27b"
+    ],
     headers: (key) => ({ "Authorization": `Bearer ${key}`, "Content-Type": "application/json" }),
-    transformPayload: (p) => p, // Groq uses standard OpenAI format
+    transformPayload: (p) => p,
   },
   {
     name: "openrouter",
     baseUrl: "https://openrouter.ai/api/v1/chat/completions",
     keyEnv: "OPENROUTER_API_KEY",
-    defaultModel: "meta-llama/llama-3.1-70b-instruct:free",
+    defaultModel: "meta-llama/llama-3.3-70b-instruct:free",
+    models: [
+      "meta-llama/llama-3.3-70b-instruct:free",
+      "meta-llama/llama-3.1-70b-instruct:free",
+      "openai/gpt-oss-120b:free",
+      "qwen/qwen3-32b:free",
+      "meta-llama/llama-4-scout-17b-16e-instruct:free"
+    ],
     headers: (key) => ({
       "Authorization": `Bearer ${key}`,
       "Content-Type": "application/json",
       "HTTP-Referer": "https://trollmap.dev",
       "X-Title": "TrollMap"
     }),
-    transformPayload: (p) => ({ ...p, model: p.model || "meta-llama/llama-3.1-70b-instruct:free" }),
+    transformPayload: (p) => p,
   },
   {
     name: "cerebras",
     baseUrl: "https://api.cerebras.ai/v1/chat/completions",
     keyEnv: "CEREBRAS_API_KEY",
-    defaultModel: "llama3.1-70b",
+    defaultModel: "llama-3.3-70b",
+    models: [
+      "llama-3.3-70b",
+      "llama3.3-70b",
+      "gpt-oss-120b",
+      "openai/gpt-oss-120b",
+      "llama-3.1-8b",
+      "qwen-3-32b",
+      "zai-glm-4.7"
+    ],
     headers: (key) => ({ "Authorization": `Bearer ${key}`, "Content-Type": "application/json" }),
-    transformPayload: (p) => ({ ...p, model: p.model || "llama3.1-70b" }),
+    transformPayload: (p) => p,
   }
 ];
 
@@ -56,35 +85,50 @@ async function callLLM(env, payload, preferredProvider = null) {
 
   let lastError;
   for (const provider of providers) {
-    try {
-      const key = env[provider.keyEnv];
-      // Each provider uses its own default model — don't forward a
-      // provider-specific model name (e.g. Groq's "llama-3.3-70b-versatile")
-      // to Cerebras or OpenRouter where it doesn't exist.
-      const providerPayload = { ...payload, model: provider.defaultModel };
-      const body = provider.transformPayload(providerPayload);
-      const r = await fetch(provider.baseUrl, {
-        method: "POST",
-        headers: provider.headers(key),
-        body: JSON.stringify(body)
-      });
-      const data = await r.json();
-      if (!r.ok) {
-        const msg = data.error?.message || data.message || `HTTP ${r.status}`;
-        throw new Error(`${provider.name}: ${msg}`);
+    const key = env[provider.keyEnv];
+    if (!key) continue;
+    const modelCandidates = provider.models?.length ? provider.models : [provider.defaultModel];
+    for (const modelId of modelCandidates) {
+      try {
+        const providerPayload = { ...payload, model: modelId };
+        const body = provider.transformPayload(providerPayload);
+        const r = await fetch(provider.baseUrl, {
+          method: "POST",
+          headers: provider.headers(key),
+          body: JSON.stringify(body)
+        });
+        let data;
+        try {
+          data = await r.json();
+        } catch (_) {
+          const txt = await r.text().catch(() => "");
+          throw new Error(`${provider.name}/${modelId}: HTTP ${r.status} non-JSON ${txt.slice(0,200)}`);
+        }
+        if (!r.ok) {
+          const msg = data.error?.message || data.error || data.message || `HTTP ${r.status}`;
+          const msgStr = typeof msg === "string" ? msg : JSON.stringify(msg).slice(0,400);
+          // If model does not exist, try next model candidate before moving to next provider
+          if (/does not exist|decommissioned|not found|invalid.*model|No such model/i.test(msgStr)) {
+            console.warn(`LLM provider ${provider.name} model ${modelId} rejected: ${msgStr}`);
+            lastError = new Error(`${provider.name}/${modelId}: ${msgStr}`);
+            continue;
+          }
+          throw new Error(`${provider.name}/${modelId}: ${msgStr}`);
+        }
+        return { provider: provider.name, model: modelId, data };
+      } catch (e) {
+        lastError = e;
+        // Only warn once per model attempt, continue to next model if it looks like model error, else next provider
+        const isModelErr = /does not exist|decommissioned|not found|invalid.*model|No such model/i.test(e.message);
+        console.warn(`LLM ${provider.name}/${modelId} failed: ${e.message}`);
+        if (isModelErr) continue; // try next model in same provider
+        // For other errors (rate limit, auth, timeout) also try next model once, but break to next provider after exhausting models
+        continue;
       }
-      // Normalize response to OpenAI format
-      if (provider.name === "cerebras" && data.choices?.[0]?.message?.content) {
-        // Cerebras already returns OpenAI-compatible format
-      }
-      return { provider: provider.name, data };
-    } catch (e) {
-      lastError = e;
-      console.warn(`LLM provider ${provider.name} failed:`, e.message);
-      continue; // Try next provider
     }
+    // exhausted all models for this provider, move to next provider
   }
-  throw lastError || new Error("All LLM providers failed");
+  throw lastError || new Error("All LLM providers/models failed");
 }
 __name(callLLM, "callLLM");
 async function isAuthorized(request, env) {
@@ -2617,7 +2661,7 @@ CURRENT SPREAD STATE (after accepted changes):
 
 Return ONLY the JSON object. Find the single highest-confidence improvement, or set has_suggestion to false if the plan is already well-optimized.`;
     const llmPayload = {
-      model: "llama-3.3-70b-versatile",
+      model: "openai/gpt-oss-120b",
       messages: [
         { role: "system", content: COACH_SYSTEM_PROMPT },
         { role: "user", content: userMessage }
@@ -2741,7 +2785,7 @@ Be direct. If the plan is tactically stupid, say so. Keep flags and fixes to 2-3
 PLAN DATA:
 ${JSON.stringify(cleanPlan, null, 2)}`;
           const payload = {
-            model: "llama-3.3-70b-versatile",
+            model: "openai/gpt-oss-120b",
             messages: [
               { role: "system", content: SYSTEM_PROMPT },
               { role: "user", content: userMessage }
@@ -2769,8 +2813,13 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
           const body = await request.json();
           const { messages, model, max_tokens = 200, temperature = 0.2, response_format } = body;
           if (!messages?.length) return new Response(JSON.stringify({ error: "Missing messages" }), { status: 400, headers: JSON_HEADERS });
-          const { data } = await callLLM(env, { messages, model, max_tokens, temperature, response_format });
-          return new Response(JSON.stringify(data), { headers: JSON_HEADERS });
+          const { provider, model: usedModel, data } = await callLLM(env, { messages, model, max_tokens, temperature, response_format });
+          const headers = { ...JSON_HEADERS, "X-LLM-Provider": provider, "X-LLM-Model": usedModel };
+          // Attach provider info to payload for frontend debugging without breaking OpenAI shape
+          if (data && typeof data === "object" && !data._trollmap) {
+            data._trollmap = { provider, model: usedModel };
+          }
+          return new Response(JSON.stringify(data), { headers });
         } catch (e) {
           return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: JSON_HEADERS });
         }
@@ -3444,7 +3493,8 @@ Place the fraction at the point where the structure meets the water, not the far
       return new Response(JSON.stringify({
         ok: true,
         worker: "trollmap-worker",
-        version: 13,
+        version: 14,
+        changelog: "2026-07-11: Fix LLM model IDs — groq openai/gpt-oss-120b primary, cerebras llama-3.3-70b, multi-model fallback chain",
         routes: [
           "/sync/item/:type/:id               \u2014 push/get/delete a sync item (auth required)",
           "/sync/list-updates?since=<ts>      \u2014 delta list for cross-device sync (auth required)",
