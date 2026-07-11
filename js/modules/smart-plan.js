@@ -23,6 +23,7 @@ import { renderSmartPlanUI, syncSpread, reelForLure } from './smart-plan-ui.js';
 
 // Pull from the universal worker-backed access database
 import { getLoadedAccessIndex } from '../data/access-index.js';
+import { LAKE_DB } from '../data/lakes.js';
 
 const BATTERY_AH_DEFAULT = 100;
 const MOTOR_AMP_AVG      = 6;
@@ -490,7 +491,34 @@ export async function runSmartPlan() {
   const season    =getSeason(date);
   const clarity   =document.getElementById('planClarity')?.value||'Clear';
   const rampName  =document.getElementById('planRamp')?.value||'unknown ramp';
-  const weatherStr=document.getElementById('planWeather')?.value||'';
+
+  // ── Fetch full Open-Meteo forecast BEFORE reading planWeather (bug fix)
+  // Ensures Groq prompt always has fresh wind/conditions even if Preview was never opened.
+  let weatherStr = document.getElementById('planWeather')?.value || '';
+  try {
+    const lakeEntry = LAKE_DB[lakeName] || Object.values(LAKE_DB).find(e => lakeName.toLowerCase().includes((e.name||'').toLowerCase().split(',')[0]));
+    if (lakeEntry && lakeEntry.center) {
+      const [lat, lon] = lakeEntry.center;
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+        `&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,windspeed_10m_max,winddirection_10m_dominant,precipitation_sum` +
+        `&timezone=auto&start_date=${dateStr}&end_date=${dateStr}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout?.(4500) });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.daily) {
+          const D = data.daily;
+          const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+          const windD = dirs[Math.round((D.winddirection_10m_dominant?.[0] || 0) / 22.5) % 16];
+          const windMph = Math.round((D.windspeed_10m_max?.[0] || 0) * 0.621371);
+          const precip = D.precipitation_sum?.[0] || 0;
+          const weatherVal = `Wind ${windD} ${windMph} mph · Precip ${precip}mm`;
+          const weatherEl = document.getElementById('planWeather');
+          if (weatherEl) weatherEl.value = weatherVal;
+          weatherStr = weatherVal;
+        }
+      }
+    }
+  } catch (_) { /* non-fatal: fall back to whatever is already in the field */ }
 
   // ── Universal DNR Ramp Lookup ───────────────────────────────────────────
   clearExistingSmartPlanTracks();
