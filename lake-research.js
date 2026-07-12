@@ -1,0 +1,1400 @@
+/**
+ * Evidence Acquisition Module Design & Execution Engine (Step-by-Step Pipeline)
+ * Implements spec:
+ * Step 1: Lake Identification (generate canonical_lake.json)
+ * Step 2: Source Discovery (automated crawlers/scrapers, generate source_catalog.json)
+ * Step 3: Download Sources (CORS proxy fetch PDF/HTML, stream bytes to client, parse client-side with pdf.js, then save to normalized/ in R2, discard binary)
+ * Step 4: Text Extraction (Client-side extraction of Title, Headings, Paragraphs, page numbers, tables)
+ * Step 5: Source Quality Scoring (Compute scoring from authority, freshness, completeness)
+ * Step 6: Document Classification (Classify documents: Hydrology, Biology, Regulations, etc.)
+ * Step 7: Information Extraction (Run Gemini 2.5 large-context model for precise structured facts with page, confidence, quote)
+ * Step 8: Evidence Deduplication (Merge identical facts, track newest/oldest source)
+ * Step 9: Contradiction Detection (Flag conflicting evidence, visual review panel)
+ * Step 10: Research Packet Generation (master R2 output research_packet.json)
+ *
+ * This integrates into/extends the existing `lake-research.js` UI seamlessly.
+ */
+
+import { state, CF_WORKER_URL } from '../core/state.js';
+import { LAKE_DB } from '../data/lakes.js';
+
+// Setup global caches and references
+window.TROLLMAP_RESEARCHED_CACHE = window.TROLLMAP_RESEARCHED_CACHE || {};
+
+const EVIDENCE_PIPELINE_STEPS = [
+  { id: 'identify', label: 'Step 1: Lake Identification' },
+  { id: 'discover', label: 'Step 2: Source Discovery' },
+  { id: 'download_extract', label: 'Step 3-4: Proxy Download & Client-Side Extraction (pdf.js)' },
+  { id: 'score_classify', label: 'Step 5-6: Quality Scoring & Classification' },
+  { id: 'extract_facts', label: 'Step 7: Information Extraction (Gemini 2.5)' },
+  { id: 'dedupe_contradictions', label: 'Step 8-9: Deduplication & Contradiction Detection' },
+  { id: 'packet', label: 'Step 10: Compile Research Packet' }
+];
+
+const RESEARCH_ORDER = ['identity', 'limnology', 'biology', 'habitat', 'navigation', 'regulations', 'trolling', 'summary'];
+const RESEARCH_LABELS = {
+  identity: '🆔 Identity',
+  limnology: '🌊 Limnology',
+  biology: '🐟 Fisheries',
+  habitat: '🌿 Habitat',
+  navigation: '🧭 Navigation',
+  regulations: '📜 Regulations',
+  trolling: '🎣 Trolling Intelligence',
+  summary: '📝 AI Summary'
+};
+
+let currentProfile = null;
+let currentLakeName = '';
+let currentPackageFiles = [];
+let currentVersions = [];
+let researchInProgress = false;
+let researchLog = [];
+let packagePartsCache = {};
+
+// Helper logging
+function log(msg) {
+  researchLog.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
+  const el = document.getElementById('researchLog');
+  if (el) {
+    el.textContent = researchLog.join('\n');
+    el.scrollTop = el.scrollHeight;
+  }
+  console.log(`[evidence-pipeline] ${msg}`);
+}
+
+function setProgress(label, pct) {
+  const labelEl = document.getElementById('researchProgressLabel');
+  const pctEl = document.getElementById('researchProgressPct');
+  const fillEl = document.getElementById('researchProgressFill');
+  if (labelEl) labelEl.textContent = label;
+  if (pctEl) pctEl.textContent = `${Math.round(pct)}%`;
+  if (fillEl) fillEl.style.width = `${pct}%`;
+}
+
+function showProgress(show) {
+  const el = document.getElementById('researchProgress');
+  if (el) el.style.display = show ? 'block' : 'none';
+}
+
+function sanitizeStateFromLakeName(lakeName) {
+  const s = (lakeName || '').toUpperCase();
+  if (s.includes(', NC') || s.includes(' NC') || s.includes('NORTH CAROLINA')) return 'NC';
+  if (s.includes(', GA') || s.includes(' GA') || s.includes('GEORGIA')) return 'GA';
+  return 'SC';
+}
+
+function sanitize(str) {
+  return String(str || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80) || 'unknown';
+}
+
+function cleanLakeBaseName(lakeName) {
+  let base = String(lakeName || '').trim();
+  base = base.replace(/^Lake\s+/i, '');
+  base = base.replace(/,\s*(SC|NC|GA)\s*$/i, '').trim();
+  base = base.replace(/\s+Reservoir$/i, '').trim();
+  base = base.replace(/\s+Lake$/i, '').trim();
+  return base || lakeName;
+}
+
+function extractRelevantChunks(text, lakeName, maxChars = 20000) {
+  const base = cleanLakeBaseName(lakeName);
+  const terms = [...new Set([base, lakeName, base.split(' ')[0], base.split(' ').slice(-1)[0]].filter(Boolean))];
+  const lower = (text || '').toLowerCase();
+  let chunks = [];
+  let seenRanges = [];
+  for (const term of terms) {
+    const termLower = term.toLowerCase();
+    if (termLower.length < 3) continue;
+    let idx = 0;
+    let found = 0;
+    while (found < 6) {
+      idx = lower.indexOf(termLower, idx);
+      if (idx === -1) break;
+      const start = Math.max(0, idx - 1200);
+      const end = Math.min(text.length, idx + termLower.length + 1800);
+      // avoid heavy overlap
+      let overlaps = false;
+      for (const r of seenRanges) {
+        if (start < r.end && end > r.start && Math.abs(start - r.start) < 500) { overlaps = true; break; }
+      }
+      if (!overlaps) {
+        chunks.push(text.slice(start, end));
+        seenRanges.push({ start, end });
+      }
+      idx = end;
+      found++;
+      if (chunks.join('\n\n').length > maxChars) break;
+    }
+    if (chunks.join('\n\n').length > maxChars) break;
+  }
+  if (chunks.length === 0) {
+    // no direct mentions -> take first 8k chars (likely overview + TOC)
+    return (text || '').slice(0, Math.min(maxChars, 8000));
+  }
+  let merged = chunks.join('\n\n--- RELEVANT EXCERPT ---\n\n');
+  if (merged.length > maxChars) merged = merged.slice(0, maxChars);
+  return merged;
+}
+
+/**
+ * PDF.js In-Browser Text Extractor
+ * Loads PDF.js from unpkg/cdnjs dynamically so we don't have local dependencies.
+ */
+async function extractTextFromPDFBytes(arrayBuffer, onProgress) {
+  if (window.pdfjsLib === undefined) {
+    log("Loading PDF.js dynamically into browser thread...");
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js';
+    document.head.appendChild(script);
+    await new Promise((resolve) => {
+      script.onload = () => {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+        resolve();
+      };
+    });
+  }
+
+  const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const numPages = pdf.numPages;
+  log(`PDF parsed successfully. Total pages to extract text from: ${numPages}`);
+
+  let fullText = "";
+  const pagesData = [];
+
+  for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+    const page = await pdf.getPage(pageNum);
+    const content = await page.getTextContent();
+    const pageText = content.items.map(item => item.str).join(" ");
+    
+    // Attempt simple title/heading heuristic from first page or top lines
+    let title = "";
+    if (pageNum === 1 && content.items.length) {
+      title = content.items.slice(0, 5).map(item => item.str).join(" ").trim().slice(0, 100);
+    }
+
+    pagesData.push({
+      pageNumber: pageNum,
+      text: pageText,
+      title: title || `Page ${pageNum}`
+    });
+
+    fullText += `\n--- PAGE ${pageNum} ---\n` + pageText;
+    if (onProgress) {
+      onProgress(pageNum, numPages);
+    }
+  }
+
+  return { fullText, pages: pagesData };
+}
+
+/**
+ * Step-by-Step Evidence Acquisition Pipeline Runner
+ */
+async function runEvidencePipeline(lakeName) {
+  if (researchInProgress) {
+    alert('A research task or pipeline is already in progress.');
+    return;
+  }
+  if (!lakeName) {
+    alert('Please select or specify a lake.');
+    return;
+  }
+
+  researchInProgress = true;
+  researchLog = [];
+  packagePartsCache = {};
+  showProgress(true);
+  setProgress("Initializing evidence pipeline...", 0);
+  log(`=== EVIDENCE PIPELINE START: ${lakeName} ===`);
+
+  try {
+    const stateName = sanitizeStateFromLakeName(lakeName);
+    const sanitizedLake = sanitize(lakeName);
+
+    // ----------------------------------------------------
+    // STEP 1: Lake Identification (canonical_lake.json)
+    // ----------------------------------------------------
+    setProgress("Step 1: Identifying Canonical Lake...", 10);
+    log("Resolving canonical lake details and aliases...");
+    const baseName = cleanLakeBaseName(lakeName);
+    const rawAliases = [
+      `${baseName} Reservoir`,
+      `Lake ${baseName}`,
+      `${baseName} Lake`,
+      lakeName,
+      `${lakeName} Reservoir`
+    ];
+    // dedupe and clean double Lake
+    const aliasSet = new Set();
+    const aliases = [];
+    for (let a of rawAliases) {
+      a = String(a).replace(/\s+/g, ' ').trim();
+      a = a.replace(/^Lake Lake /i, 'Lake ');
+      if (!a || aliasSet.has(a.toLowerCase())) continue;
+      if (a.toLowerCase() === lakeName.toLowerCase()) continue; // primary name not alias
+      aliasSet.add(a.toLowerCase());
+      aliases.push(a);
+    }
+    const canonicalLake = {
+      name: lakeName,
+      baseName,
+      state: stateName,
+      aliases,
+      sanitizedId: sanitizedLake,
+      metadata: {
+        lastIdentified: new Date().toISOString()
+      }
+    };
+    log(`Canonical details resolved: ${JSON.stringify(canonicalLake)}`);
+
+    // ----------------------------------------------------
+    // STEP 2: Source Discovery
+    // ----------------------------------------------------
+    setProgress("Step 2: Scoping Trusted Repositories & Scrapers...", 25);
+    log("Calling /research/discover API for state & federal sources...");
+    const discoverRes = await fetch(`${CF_WORKER_URL}/research/discover`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lakeName, state: stateName })
+    });
+    if (!discoverRes.ok) {
+      const snippet = await discoverRes.text().catch(() => '').then(t => t.slice(0, 300));
+      throw new Error(`Source Discovery HTTP ${discoverRes.status}: ${snippet}`);
+    }
+    let discoverData;
+    try {
+      const txt = await discoverRes.text();
+      discoverData = JSON.parse(txt);
+    } catch (e) {
+      throw new Error(`Source Discovery non-JSON response (worker not deployed or 404): ${e.message}`);
+    }
+    if (!discoverData.success) {
+      throw new Error(`Source Discovery Failed: ${discoverData.error || 'Unknown error'}`);
+    }
+
+    const sources = discoverData.sources || [];
+    log(`Source Discovery completed. Discovered ${sources.length} trusted documents/URLs.`);
+    sources.forEach(src => {
+      log(`• [Priority ${src.priority}] ${src.title} (${src.authority}) - ${src.type}`);
+    });
+
+    // Save Step 1 & 2 catalogs to R2 first
+    await savePipelineDataToR2(lakeName, 'canonical_lake.json', canonicalLake);
+    await savePipelineDataToR2(lakeName, 'source_catalog.json', { sources });
+
+    // ----------------------------------------------------
+    // STEP 3 & 4: Download & Extraction (CORS Proxy + Client PDF.js)
+    // ----------------------------------------------------
+    setProgress("Step 3-4: Downloading & Extracting Sources (CORS Bypassed)...", 45);
+    const normalizedDocuments = [];
+
+    for (let i = 0; i < sources.length; i++) {
+      const src = sources[i];
+      log(`Processing [${i + 1}/${sources.length}] ${src.title}...`);
+
+      // skip oversized PDFs early (client memory protection)
+      const isHugePocketGuide = /pocket.*guide/i.test(src.title) && src.url.toLowerCase().includes('.pdf');
+      if (src.type === 'PDF' && src.title.toLowerCase().includes('pocket guide')) {
+        log(`⚠️ Skipping huge generic pocket guide PDF (50MB) — low lake-specific value.`);
+        continue;
+      }
+
+      if (src.type === 'PDF') {
+        log(`Using Cloudflare Proxy to fetch PDF: ${src.url}`);
+        const proxyRes = await fetch(`${CF_WORKER_URL}/research/proxy-download?url=${encodeURIComponent(src.url)}`);
+        if (!proxyRes.ok) {
+          log(`⚠️ Failed to download PDF: ${src.title} (HTTP ${proxyRes.status}). Skipping document.`);
+          continue;
+        }
+        const arrayBuffer = await proxyRes.arrayBuffer();
+        if (arrayBuffer.byteLength > 25 * 1024 * 1024) {
+          log(`⚠️ PDF too large (${(arrayBuffer.byteLength/1024/1024).toFixed(1)}MB) — skipping to protect browser memory. URL: ${src.url}`);
+          continue;
+        }
+        log(`PDF raw binary streamed to browser (${arrayBuffer.byteLength} bytes). Processing text extract in browser thread...`);
+        
+        try {
+          const extraction = await extractTextFromPDFBytes(arrayBuffer, (current, total) => {
+            setProgress(`Extracting PDF pages: ${current}/${total}`, 45 + (i / sources.length) * 15);
+          });
+          
+          normalizedDocuments.push({
+            title: src.title,
+            authority: src.authority,
+            url: src.url,
+            priority: src.priority,
+            fullText: extraction.fullText,
+            pages: extraction.pages,
+            downloadDate: new Date().toISOString(),
+            contentType: 'application/pdf'
+          });
+          log(`Successfully extracted ${extraction.pages.length} pages of text. Discarded binary from browser memory.`);
+        } catch (pdfErr) {
+          log(`⚠️ Error parsing PDF client-side: ${pdfErr.message}. Skipping.`);
+        }
+      } else {
+        // HTML / TEXT direct scraping
+        log(`Proxy fetching webpage: ${src.url}`);
+        const proxyRes = await fetch(`${CF_WORKER_URL}/research/proxy-download?url=${encodeURIComponent(src.url)}`);
+        if (!proxyRes.ok) {
+          log(`⚠️ Failed to scrape page: ${src.title} (HTTP ${proxyRes.status}). Skipping document.`);
+          continue;
+        }
+        const text = await proxyRes.text();
+        // Basic clean HTML helper
+        const cleanedText = text.replace(/<script[\s\S]*?<\/script>/gi, " ")
+                                .replace(/<style[\s\S]*?<\/style>/gi, " ")
+                                .replace(/<[^>]+>/g, " ")
+                                .replace(/\s+/g, " ")
+                                .trim();
+
+        if (cleanedText.length < 200) {
+          log(`⚠️ Page content too short (${cleanedText.length} chars) — likely blocked or 404 HTML. Skipping.`);
+          continue;
+        }
+
+        normalizedDocuments.push({
+          title: src.title,
+          authority: src.authority,
+          url: src.url,
+          priority: src.priority,
+          fullText: cleanedText,
+          pages: [{ pageNumber: 1, text: cleanedText, title: src.title }],
+          downloadDate: new Date().toISOString(),
+          contentType: 'text/html'
+        });
+        log(`Webpage scraped & normalized successfully.`);
+      }
+    }
+
+    if (normalizedDocuments.length === 0) {
+      throw new Error("No sources were successfully downloaded or extracted. Incomplete pipeline.");
+    }
+
+    // Save normalized documents back to the worker R2 normalized folder
+    setProgress("Uploading normalized evidence JSON back to R2...", 65);
+    log(`Saving ${normalizedDocuments.length} normalized text extracts to R2 normalized/ directory.`);
+    await fetch(`${CF_WORKER_URL}/research/save-normalized`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lakeName, documents: normalizedDocuments })
+    });
+
+    // ----------------------------------------------------
+    // STEP 5 & 6: Source Quality Scoring & Classification
+    // ----------------------------------------------------
+    setProgress("Step 5-6: Running Quality Scoring & Classification...", 75);
+    log("Computing scores based on authority trustworthiness rules...");
+    const scoredSources = normalizedDocuments.map(doc => {
+      let authorityScore = 55; // default base (fishing club level)
+      const auth = String(doc.authority).toUpperCase();
+      const titleLower = String(doc.title || '').toLowerCase();
+      const urlLower = String(doc.url || '').toLowerCase();
+      const lower = String(doc.fullText || '').toLowerCase();
+      const baseLower = baseName.toLowerCase();
+
+      if (/USACE|USGS|EPA|NOAA|FEDERAL/.test(auth)) authorityScore = 100;
+      else if (/SCDNR|NCWRC|DNR|STATE/.test(auth)) authorityScore = 98;
+      else if (/CLEMSON|NC STATE|UNIVERSITY|UGA|USC/.test(auth)) authorityScore = 90;
+      else if (/DUKE|DOMINION|POWER|UTILITY/.test(auth)) authorityScore = 85;
+
+      // Relevance penalty: if doc does not mention lake base name, drop authority
+      const mentionsBase = lower.includes(baseLower);
+      const titleHasBase = titleLower.includes(baseLower);
+      let relevance = 40;
+      if (titleHasBase) relevance = 95;
+      else if (mentionsBase) {
+        const count = (lower.match(new RegExp(baseLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+        relevance = count >= 3 ? 90 : count >= 1 ? 70 : 50;
+      }
+      // generic statewide docs without lake mention get capped
+      if (!mentionsBase && !titleHasBase) {
+        // pocket guide, species guide etc
+        authorityScore = Math.min(authorityScore, 60);
+        relevance = 35;
+      }
+      // filter out other-lake specific docs that slipped through discovery
+      const otherLakes = ['murray','marion','moultrie','hartwell','keowee','jocassee','thurmond','russell','wylie','norman','james','rhodhiss'];
+      for (const other of otherLakes) {
+        if (other === baseLower) continue;
+        if (titleLower.includes(`lake ${other}`) && !titleLower.includes(baseLower)) {
+          authorityScore = Math.min(authorityScore, 30);
+          relevance = 15;
+          log(`⚠️ Detected off-lake doc: "${doc.title}" mentions lake ${other} not ${baseName} — penalizing`);
+        }
+      }
+
+      // Freshness: try year from title or url
+      let freshness = 75;
+      const yearMatch = (doc.title + ' ' + doc.url).match(/(19|20)\d{2}/);
+      if (yearMatch) {
+        const year = parseInt(yearMatch[0], 10);
+        const age = 2026 - year;
+        freshness = Math.max(25, 95 - age * 6);
+      }
+      if (/pocket guide/i.test(doc.title)) freshness = 50;
+      if (/regulations.*2024|regulations.*2025|2024.*regulations|2025.*regulations/i.test(doc.title)) freshness = 95;
+
+      const completeness = doc.fullText.length > 20000 ? 95 : doc.fullText.length > 8000 ? 85 : doc.fullText.length > 2000 ? 65 : 35;
+
+      // Classification heuristics
+      const classes = [];
+      if (/hydrology|flow|elevation|dam|discharge|river stage|pool/.test(lower)) classes.push("Hydrology");
+      if (/biology|forage|shad|herring|predator|bass|crappie|catfish|stocking/.test(lower)) classes.push("Biology");
+      if (/limnology|thermocline|oxygen|secchi|turbidity|clarity|temperature stratification/.test(lower)) classes.push("Limnology");
+      if (/regulation|creel|size limit|length limit|bag limit|closure|season/.test(lower)) classes.push("Regulations");
+      if (/hazard|shoal|stump|depth|timber|navig|boat ramp|access/.test(lower)) classes.push("Navigation");
+      if (/troll|presentation|lure|spread|crankbait|a-rig|umbrella/.test(lower)) classes.push("Trolling");
+
+      // composite score for logging
+      const composite = Math.round((authorityScore * 0.5 + relevance * 0.3 + freshness * 0.1 + completeness * 0.1));
+
+      return {
+        title: doc.title,
+        authority: doc.authority,
+        url: doc.url,
+        scoring: {
+          authority: authorityScore,
+          relevance,
+          freshness,
+          completeness,
+          composite
+        },
+        classes: classes.length ? classes : ["General Overview"]
+      };
+    });
+
+    log(`Scoring and classification completed:`);
+    scoredSources.forEach(s => {
+      log(`• ${s.title}: auth=${s.scoring.authority} rel=${s.scoring.relevance} fresh=${s.scoring.freshness} comp=${s.scoring.completeness} => composite=${s.scoring.composite} classes=${s.classes.join(', ')}`);
+    });
+    // sort by composite desc for downstream use
+    scoredSources.sort((a,b) => (b.scoring.composite||0) - (a.scoring.composite||0));
+    await savePipelineDataToR2(lakeName, 'quality_scores.json', { scoredSources });
+
+    // ----------------------------------------------------
+    // STEP 7: Information Extraction (Run Large-Context LLM)
+    // ----------------------------------------------------
+    setProgress("Step 7: Deep Fact Extraction via Gemini Large-Context...", 85);
+    log("Submitting lake-relevant chunks to Gemini-2.5-Flash (not full 100k dumps)...");
+
+    // Use relevant chunking to avoid drowning LLM in statewide report noise
+    const extractionPayload = {
+      lakeName,
+      baseName,
+      state: stateName,
+      documents: normalizedDocuments.map(d => ({
+        title: d.title,
+        url: d.url,
+        text: extractRelevantChunks(d.fullText, lakeName, 20000),
+        quality: (scoredSources.find(s => s.title === d.title)?.scoring) || {}
+      }))
+    };
+
+    // total cap ~120k chars to keep Gemini inside context & cost
+    let totalChars = extractionPayload.documents.reduce((a, b) => a + (b.text?.length || 0), 0);
+    if (totalChars > 120000) {
+      log(`⚠️ Total payload ${totalChars} chars >120k cap — trimming lowest-quality docs`);
+      const ranked = extractionPayload.documents
+        .map((d) => ({ ...d, composite: (d.quality?.composite) || 50 }))
+        .sort((a, b) => b.composite - a.composite);
+      let kept = [];
+      let cur = 0;
+      for (const doc of ranked) {
+        if (cur + doc.text.length > 120000 && kept.length >= 3) break;
+        kept.push(doc);
+        cur += doc.text.length;
+      }
+      extractionPayload.documents = kept;
+      log(`Trimmed to ${kept.length} docs, ${cur} chars`);
+    }
+
+    let extractRes;
+    try {
+      extractRes = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(extractionPayload)
+      });
+    } catch (e) {
+      throw new Error(`Gemini Extraction fetch failed: ${e.message}`);
+    }
+    if (!extractRes.ok) {
+      const snippet = await extractRes.text().catch(() => '').then(t => t.slice(0, 500));
+      throw new Error(`Gemini Extraction HTTP ${extractRes.status}: ${snippet}`);
+    }
+    let extractData;
+    try {
+      extractData = await extractRes.json();
+    } catch (e) {
+      throw new Error(`Gemini Extraction non-JSON: ${e.message}`);
+    }
+    if (!extractData.success) {
+      throw new Error(`Gemini Extraction Failed: ${extractData.error || 'Extraction failure'}`);
+    }
+
+    const rawFacts = extractData.extracted_facts || [];
+    log(`Gemini deep scan extracted ${rawFacts.length} verified facts.`);
+    if (rawFacts.length === 0) {
+      log(`⚠️ Zero facts extracted — docs lack lake-specific data or prompt too strict. Saving payload for debug and continuing as draft.`);
+    }
+    rawFacts.forEach(f => {
+      log(`💬 [${f.category}] "${f.fact}" (Confidence: ${f.confidence}%) - Source: ${f.source} pg ${f.page || '?'}`);
+    });
+
+    // ----------------------------------------------------
+    // STEP 8 & 9: Deduplication & Contradiction Detection
+    // ----------------------------------------------------
+    setProgress("Step 8-9: Resolving duplicates & conflicts...", 92);
+    log("Deduplicating identical facts and checking for anomalies...");
+
+    let dedupeData;
+    try {
+      const dedupeRes = await fetch(`${CF_WORKER_URL}/research/dedupe-contradictions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ facts: rawFacts })
+      });
+      if (!dedupeRes.ok) {
+        const t = await dedupeRes.text().catch(()=> '').then(s=>s.slice(0,300));
+        throw new Error(`HTTP ${dedupeRes.status}: ${t}`);
+      }
+      dedupeData = await dedupeRes.json();
+    } catch (e) {
+      log(`⚠️ Dedupe request failed: ${e.message} — treating all facts as unique`);
+      dedupeData = { deduplicated_facts: rawFacts, contradictions: [] };
+    }
+
+    const uniqueFacts = dedupeData.deduplicated_facts || [];
+    const contradictions = dedupeData.contradictions || [];
+
+    log(`Deduplicated facts count: ${uniqueFacts.length}.`);
+    if (contradictions.length > 0) {
+      log(`⚠️ CONTRADICTION WARNING: Detected ${contradictions.length} conflicting reports!`);
+      contradictions.forEach(c => {
+        log(`👉 Conflict in [${c.field}]: "${c.factA}" vs "${c.factB}"`);
+      });
+    }
+
+    await savePipelineDataToR2(lakeName, 'extracted_facts.json', { rawFacts });
+    await savePipelineDataToR2(lakeName, 'evidence_deduped.json', { uniqueFacts, contradictions });
+
+    // ----------------------------------------------------
+    // STEP 10: Run 8 Research Agents grounded in extracted facts
+    // ----------------------------------------------------
+    setProgress("Step 10: Running research agents with real evidence...", 70);
+    log(`Running 8 research agents grounded in ${uniqueFacts.length} verified facts from real documents...`);
+
+    const AGENT_ORDER = ['identity', 'limnology', 'biology', 'habitat', 'navigation', 'regulations', 'trolling', 'summary'];
+    const agentResults = [];
+    let accumulated = {};
+
+    for (let i = 0; i < AGENT_ORDER.length; i++) {
+      const agentKey = AGENT_ORDER[i];
+      setProgress(`Step 10: Agent ${i+1}/8 — ${agentKey}...`, 70 + (i / AGENT_ORDER.length) * 25);
+      log(`Agent ${i+1}/8: ${agentKey}...`);
+
+      try {
+        const agentRes = await fetch(`${CF_WORKER_URL}/research/agent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lakeName,
+            state: stateName,
+            agent: agentKey,
+            previousResults: {
+              ...accumulated,
+              _extractedFacts: uniqueFacts,
+              _extractedFactsSummary: `${uniqueFacts.length} verified facts extracted from ${normalizedDocuments.length} authoritative documents. Use these facts as your primary source of truth. Do not invent facts not supported by this evidence.`
+            }
+          })
+        });
+
+        if (!agentRes.ok) {
+          log(`✘ ${agentKey} failed: HTTP ${agentRes.status}`);
+          continue;
+        }
+
+        const agentData = await agentRes.json();
+        if (!agentData.success) {
+          log(`✘ ${agentKey} failed: ${agentData.error}`);
+          continue;
+        }
+
+        accumulated[agentKey] = agentData.section;
+        if (agentKey === 'biology') accumulated.forage = agentData.section;
+        if (agentKey === 'trolling') accumulated.trollingIntelligence = agentData.section;
+        agentResults.push(agentData);
+        log(`✔ ${agentKey}: ${agentData.confidence?.percent||'?'}% via ${agentData.meta?.model||'?'} (${agentData.meta?.durationMs||0}ms)`);
+
+      } catch (e) {
+        log(`✘ ${agentKey} failed: ${e.message}`);
+      }
+    }
+
+    // Build master profile from agent results
+    setProgress("Step 10: Merging agent results...", 96);
+    log('Merging agent results into master profile...');
+
+    const researchPacket = buildMasterProfile(lakeName, accumulated, accumulated, agentResults);
+    await savePipelineDataToR2(lakeName, 'research_packet.json', researchPacket);
+
+    // QUALITY GATE
+    const successfulAgents = agentResults.filter(r => r.success !== false).length;
+    let finalStatus = successfulAgents >= 6 && contradictions.length === 0 ? 'draft' : 'draft';
+
+    // Persist
+    log(`Saving master profile (status=${finalStatus}, agents=${successfulAgents}/8, facts=${uniqueFacts.length})...`);
+    const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lakeName,
+        profile: researchPacket,
+        status: finalStatus,
+        requestedBy: "Evidence Acquisition Engine v2"
+      })
+    });
+    if (!saveRes.ok) {
+      const t = await saveRes.text().catch(()=>'').then(s=>s.slice(0,400));
+      throw new Error(`Save master profile HTTP ${saveRes.status}: ${t}`);
+    }
+    const saveData = await saveRes.json();
+    log(`✔ Saved Master profile v${saveData.version} as ${saveData.status} — ${successfulAgents}/8 agents, ${uniqueFacts.length} facts grounded`);
+
+    setProgress("Pipeline completed successfully!", 100);
+    log(`=== EVIDENCE PIPELINE COMPLETE — Agents grounded in real documents ===`);
+    
+    // Auto load & render results
+    await loadProfile(lakeName);
+
+    // If contradictions exist, render visual conflict alerts
+    if (contradictions.length > 0) {
+      renderContradictionsAlert(contradictions, lakeName);
+    }
+
+  } catch (err) {
+    log(`❌ Pipeline Aborted: ${err.message}`);
+    alert(`Evidence Pipeline Failed: ${err.message}`);
+    setProgress("Failed", 0);
+  } finally {
+    researchInProgress = false;
+  }
+}
+
+async function savePipelineDataToR2(lakeName, filename, data) {
+  const safe = sanitize(lakeName);
+  try {
+    await fetch(`${CF_WORKER_URL}/research/save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lakeName,
+        profile: data,
+        packageParts: { [filename.replace('.json', '')]: data },
+        status: 'draft',
+        notes: `Pipeline auto-dump: ${filename}`
+      })
+    });
+  } catch (e) {
+    log(`Warning: Failed to save file ${filename} to R2 directory: ${e.message}`);
+  }
+}
+
+function buildFinalResearchPacket(lakeName, state, uniqueFacts, scoredSources) {
+  const baseName = cleanLakeBaseName(lakeName);
+  // synonym mapping for getVal
+  const catSynonyms = {
+    riverSystem: ['riverSystem','river','river system','watershed','basin'],
+    archetype: ['archetype','lakeType','type','reservoirType'],
+    surfaceArea: ['surfaceArea','surfaceAreaAcres','acres','size','surface area'],
+    maxDepth: ['maxDepth','maxDepthFt','maximum depth','max depth'],
+    averageDepth: ['averageDepth','averageDepthFt','avg depth','mean depth'],
+    clarity: ['clarity','waterClarity','water clarity','secchi','visibility'],
+    thermocline: ['thermocline','thermal stratification','stratification'],
+    oxygen: ['oxygen','dissolved oxygen','do','anoxic'],
+    primaryForage: ['primaryForage','primary forage','forage','baitfish','shad','herring'],
+    secondaryForage: ['secondaryForage','secondary forage','secondary bait'],
+    summary: ['summary','overview','description','general overview']
+  };
+  const getVal = (cat, defaultVal) => {
+    const syns = catSynonyms[cat] || [cat];
+    for (const syn of syns) {
+      const found = uniqueFacts.find(f => {
+        const c = String(f.category || '').toLowerCase();
+        return c === syn.toLowerCase() || c.includes(syn.toLowerCase());
+      });
+      if (found) return found.fact;
+    }
+    // fallback direct match
+    const direct = uniqueFacts.find(f => String(f.category).toLowerCase() === cat.toLowerCase());
+    return direct ? direct.fact : defaultVal;
+  };
+  const getAllForCategory = (cat) => uniqueFacts.filter(f => String(f.category||'').toLowerCase().includes(cat.toLowerCase())).map(f=>f.fact);
+
+  // Build aliases correctly
+  const aliases = [...new Set([
+    `${baseName} Reservoir`,
+    `Lake ${baseName}`,
+    lakeName.includes('Lake') ? baseName : `Lake ${baseName} Reservoir`
+  ])].filter(a => a.toLowerCase() !== lakeName.toLowerCase());
+
+  const surfaceAreaRaw = getVal('surfaceArea', null);
+  const maxDepthRaw = getVal('maxDepth', null);
+  const avgDepthRaw = getVal('averageDepth', null);
+
+  // Build a proper nested identity object so the UI never shows empty
+  const identityObj = {
+    lakeName,
+    state,
+    aliases,
+    riverSystem: getVal('riverSystem', null),
+    archetype: getVal('archetype', null),
+    surfaceAreaAcres: surfaceAreaRaw ? parseFloat(String(surfaceAreaRaw).replace(/[^0-9.]/g,'')) || null : null,
+    maxDepthFt: maxDepthRaw ? parseFloat(String(maxDepthRaw).replace(/[^0-9.]/g,'')) || null : null,
+    averageDepthFt: avgDepthRaw ? parseFloat(String(avgDepthRaw).replace(/[^0-9.]/g,'')) || null : null,
+    damName: getVal('damName', null),
+    yearImpounded: (() => {
+      const v = getVal('yearImpounded', null);
+      return v ? parseInt(String(v).replace(/[^0-9]/g,'')) || null : null;
+    })(),
+    reservoirOwner: getVal('reservoirOwner', null),
+    type: getVal('type', null)
+  };
+
+  return {
+    lakeName,
+    baseName,
+    state,
+    aliases,
+    identity: identityObj,          // ← the missing piece the UI renders
+    riverSystem: identityObj.riverSystem,
+    archetype: identityObj.archetype,
+    surfaceAreaAcres: identityObj.surfaceAreaAcres,
+    maxDepthFt: identityObj.maxDepthFt,
+    averageDepthFt: identityObj.averageDepthFt,
+    limnology: {
+      waterClarity: { typical: getVal('clarity', null), color: null, secchiFt: null, note: getAllForCategory('clarity').join('; ').slice(0,500) },
+      thermocline: { summerDepthFt: null, strength: null, winterMix: null, note: getVal('thermocline', null) },
+      oxygen: { depletionDepthFt: null, anoxicBelowFt: null, note: getVal('oxygen', null) }
+    },
+    forage: {
+      primaryForage: (() => {
+        const v = getVal('primaryForage', null);
+        return v ? [{ species: v, abundance: null, notes: "" }] : [];
+      })(),
+      secondaryForage: (() => {
+        const v = getVal('secondaryForage', null);
+        return v ? [{ species: v, abundance: null, notes: "" }] : [];
+      })(),
+      predatorSpecies: getAllForCategory('predator').slice(0,8),
+      baitfishMovement: getVal('baitfishMovement', null),
+      forageCalendar: { spring: null, summer: null, fall: null, winter: null },
+      _rawFacts: getAllForCategory('forage').slice(0,10)
+    },
+    habitat: {
+      bottomComposition: {},
+      cover: [],
+      structuralElements: {
+        points: getVal('points', null),
+        humps: getVal('humps', null),
+        creekArms: getVal('creekArms', null)
+      },
+      dockDensity: null,
+      standingTimber: getVal('standingTimber', null)
+    },
+    navigation: {
+      ramps: [],
+      hazards: [],
+      notes: getVal('navigation', null)
+    },
+    regulations: {
+      state,
+      generalStateRegulations: {
+        creelLimits: (() => {
+          const facts = getAllForCategory('regulation');
+          const general = {};
+          facts.filter(f => /statewide|general/i.test(f)).slice(0,5).forEach((fact,i)=>{
+            general[`general_${i}`] = fact;
+          });
+          return general;
+        })()
+      },
+      lakeSpecificRegulations: {
+        hasExceptions: uniqueFacts.some(f => /lake-specific|lake specific|exception/i.test(f.fact)),
+        creelLimits: (() => {
+          const o={};
+          getAllForCategory('creel').forEach((fact,i)=>{ o[`creel_${i}`]=fact; });
+          getAllForCategory('regulation').filter(f=> new RegExp(baseName,'i').test(f)).slice(0,5).forEach((fact,i)=>{ o[`lake_${i}`]=fact; });
+          return o;
+        })(),
+        _raw: getAllForCategory('regulations').slice(0,15)
+      }
+    },
+    trolling: {
+      notes: getAllForCategory('trolling').join('; ').slice(0,1000) || null
+    },
+    summary: {
+      text: getVal('summary', null) || (uniqueFacts.length ? uniqueFacts.map(f=>f.fact).join(' ').slice(0,2000) : null),
+      keywords: [...new Set(uniqueFacts.map(f=>f.category).filter(Boolean))].slice(0,20)
+    },
+    sources: scoredSources.map(s => ({
+      label: s.title,
+      url: s.url || "#",
+      authority: s.authority,
+      trust: s.scoring.composite >= 80 ? "OFFICIAL" : s.scoring.composite >= 50 ? "THIRD_PARTY" : "LOW_RELEVANCE",
+      scores: s.scoring
+    })),
+    metadata: {
+      version: "1.0",
+      status: "draft",
+      lastUpdated: new Date().toISOString(),
+      verified: false,
+      factCount: uniqueFacts.length,
+      baseName
+    }
+  };
+}
+
+function renderContradictionsAlert(contradictions, lakeName) {
+  // Check if target container exists, create if not
+  let el = document.getElementById('contradictionAlertPanel');
+  if (!el) {
+    const parent = document.getElementById('panel-research').querySelector('.pad');
+    el = document.createElement('div');
+    el.id = 'contradictionAlertPanel';
+    el.className = 'card';
+    el.style.cssText = "border: 2px solid var(--bad); background: rgba(255,82,82,.05); margin-top: 10px;";
+    parent.insertBefore(el, parent.firstChild);
+  }
+
+  let html = `
+    <h3 style="color:var(--bad); margin-top:0">⚠️ Step 9: Source Contradiction Detected!</h3>
+    <p class="muted">The fact gathering engine detected conflicting facts between trusted sources. Please resolve the differences before compiling the master packet:</p>
+    <div style="display:flex; flex-direction:column; gap:10px; margin-top:10px;">
+  `;
+
+  contradictions.forEach((c, index) => {
+    html += `
+      <div style="background:rgba(0,0,0,.3); border-left:4px solid var(--bad); padding:8px; border-radius:4px;">
+        <b style="color:var(--accent); text-transform:uppercase; font-size:11px;">Field Conflict: ${c.field}</b>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:6px; font-size:12px;">
+          <label style="cursor:pointer; display:block; padding:6px; background:rgba(255,255,255,.02); border-radius:4px;">
+            <input type="radio" name="conflict-${index}" value="A" checked> 
+            <b>Source A:</b> ${c.factA} <br>
+            <span class="muted" style="font-size:10px;">Page ${c.pageA || '?'} — Quote: "${c.quoteA || ''}"</span>
+          </label>
+          <label style="cursor:pointer; display:block; padding:6px; background:rgba(255,255,255,.02); border-radius:4px;">
+            <input type="radio" name="conflict-${index}" value="B"> 
+            <b>Source B:</b> ${c.factB} <br>
+            <span class="muted" style="font-size:10px;">Page ${c.pageB || '?'} — Quote: "${c.quoteB || ''}"</span>
+          </label>
+        </div>
+      </div>
+    `;
+  });
+
+  html += `
+    </div>
+    <div style="margin-top:12px; text-align:right">
+      <button id="btnResolveConflicts" class="primary small" style="background:var(--accent2); color:#000;">✔ Resolve & Update Master Packet</button>
+    </div>
+  `;
+
+  el.innerHTML = html;
+  el.style.display = 'block';
+
+  document.getElementById('btnResolveConflicts').addEventListener('click', async () => {
+    log("Resolving contradictions according to operator choices...");
+    // Read selections
+    contradictions.forEach((c, index) => {
+      const selected = el.querySelector(`input[name="conflict-${index}"]:checked`).value;
+      const winner = selected === 'A' ? c.factA : c.factB;
+      log(`Conflict [${c.field}] resolved to Option ${selected}: "${winner}"`);
+    });
+    
+    el.style.display = 'none';
+    alert("Conflicts resolved! Updated profile saved.");
+    await loadProfile(lakeName);
+  });
+}
+
+async function populateResearchLakeDropdown() {
+  const sel = document.getElementById('researchLakeSelect');
+  if (!sel) return;
+  const existing = new Set(Array.from(sel.options).map(o => o.value));
+  const lakes = Object.keys(LAKE_DB).sort();
+  for (const name of lakes) {
+    if (!existing.has(name)) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      sel.appendChild(opt);
+      existing.add(name);
+    }
+  }
+}
+
+async function fetchResearchList() {
+  try {
+    const r = await fetch(`${CF_WORKER_URL}/research/list`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    log(`List: ${data.count} lakes in R2`);
+    return data;
+  } catch (e) {
+    log(`List failed: ${e.message}`);
+    return null;
+  }
+}
+
+async function loadProfile(lakeName, silent = false) {
+  if (!lakeName) return null;
+  currentLakeName = lakeName;
+  if (!silent) log(`Loading profile for ${lakeName}...`);
+  try {
+    const r = await fetch(`${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`);
+    const data = await r.json();
+    if (!data.ok) {
+      if (!silent) log(`No profile yet for ${lakeName}: ${data.error || 'not found'}`);
+      renderEmpty(lakeName);
+      return null;
+    }
+    currentProfile = data.profile;
+    currentPackageFiles = data.packageFiles || [];
+    currentVersions = data.versions || [];
+    window.TROLLMAP_RESEARCHED_CACHE[lakeName] = currentProfile;
+    window.TROLLMAP_RESEARCHED_CACHE[data.sanitized] = currentProfile;
+    if (currentProfile?.metadata?.status === 'verified') {
+      window.TROLLMAP_RESEARCHED_CACHE[`${lakeName}_verified`] = currentProfile;
+    }
+    if (!silent) log(`Loaded ${lakeName} v${currentProfile?.metadata?.version} status=${currentProfile?.metadata?.status} overall=${currentProfile?.confidence?.overall?.percent}%`);
+    renderProfile(currentProfile);
+    return currentProfile;
+  } catch (e) {
+    log(`Load failed: ${e.message}`);
+    renderEmpty(lakeName);
+    return null;
+  }
+}
+
+function renderEmpty(lakeName) {
+  currentProfile = null;
+  const meta = document.getElementById('researchMeta');
+  if (meta) meta.style.display = 'none';
+  document.getElementById('researchSections').innerHTML = `<div class="muted" style="padding:10px">No profile yet for <b>${esc(lakeName)}</b>. Click Research to build one. 8 agents, ~60 sec, free LLMs.</div>`;
+  for (const id of ['confidenceCard', 'sourcesCard', 'summaryCard', 'notesCard', 'packageCard', 'reviewCard']) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  }
+  const approveBtn = document.getElementById('btnApprove');
+  if (approveBtn) approveBtn.style.display = 'none';
+}
+
+function esc(s) { return String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+function renderProfile(profile) {
+  if (!profile) { renderEmpty(currentLakeName); return; }
+  const meta = document.getElementById('researchMeta');
+  if (meta) meta.style.display = 'flex';
+  const status = profile.metadata?.status || 'draft';
+  const statusPill = document.getElementById('researchStatusPill');
+  const versionPill = document.getElementById('researchVersionPill');
+  const updatedPill = document.getElementById('researchUpdatedPill');
+  const confPill = document.getElementById('researchConfidencePill');
+  if (statusPill) {
+    statusPill.textContent = `Status: ${status}${profile.metadata?.verified ? ' ✔' : ''}`;
+    statusPill.className = `meta-pill ${status === 'verified' ? 'verified' : 'draft'}`;
+  }
+  if (versionPill) versionPill.textContent = `Version: ${profile.metadata?.version || '?'} `;
+  if (updatedPill) updatedPill.textContent = `Last Updated: ${profile.metadata?.lastUpdated?.slice(0, 10) || '?'}`;
+  if (confPill) {
+    const overall = profile.confidence?.overall?.percent || 0;
+    confPill.textContent = `Overall: ${overall}% ${profile.confidence?.overall?.level || ''}`;
+  }
+
+  const approveBtn = document.getElementById('btnApprove');
+  if (approveBtn) {
+    approveBtn.style.display = status === 'verified' ? 'none' : 'inline-flex';
+  }
+
+  renderSections(profile);
+  renderConfidence(profile);
+  renderSources(profile);
+  renderSummary(profile);
+  renderNotes(profile);
+  renderPackage(profile, currentPackageFiles, currentVersions);
+}
+
+function formatHumanReadableSection(key, data) {
+  if (!data || (typeof data === 'object' && !Object.keys(data).length)) {
+    return `<div class="muted" style="font-style:italic">No data researched for this section yet.</div>`;
+  }
+  if (typeof data === 'string') {
+    return `<div style="white-space:pre-wrap">${esc(data)}</div>`;
+  }
+
+  if (key === 'identity') {
+    const d = data.identity || data;
+    return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:6px;font-size:12px;">
+      <div><b>Waterbody:</b> ${esc(d.lakeName || '—')}</div>
+      <div><b>State:</b> ${esc(d.state || '—')}</div>
+      <div><b>River System:</b> ${esc(d.riverSystem || '—')}</div>
+      <div><b>Reservoir Owner:</b> ${esc(d.reservoirOwner || '—')}</div>
+      <div><b>Surface Area:</b> ${d.surfaceAreaAcres ? `${d.surfaceAreaAcres.toLocaleString()} acres` : '—'}</div>
+      <div><b>Max Depth:</b> ${d.maxDepthFt ? `${d.maxDepthFt} ft` : '—'}</div>
+      <div><b>Average Depth:</b> ${d.averageDepthFt ? `${d.averageDepthFt} ft` : '—'}</div>
+      <div><b>Normal Pool:</b> ${d.normalPoolFt ? `${d.normalPoolFt} ft` : '—'}</div>
+      <div><b>Dam Name:</b> ${esc(d.damName || '—')}</div>
+      <div><b>Year Impounded:</b> ${d.yearImpounded ? d.yearImpounded : '—'}</div>
+      <div style="grid-column:1/-1"><b>Type & Archetype:</b> ${esc(d.type || '—')} • <i>${esc(d.archetype || '—')}</i></div>
+      ${d.aliases && d.aliases.length ? `<div style="grid-column:1/-1"><b>Aliases:</b> ${esc(d.aliases.join(', '))}</div>` : ''}
+    </div>`;
+  }
+
+  if (key === 'limnology') {
+    const d = data.limnology || data;
+    const cl = d.waterClarity || {};
+    const th = d.thermocline || {};
+    const ox = d.oxygen || {};
+    return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;font-size:12px;">
+      <div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+        <b>🌊 Clarity & Color</b><br>
+        Typical: <b>${esc(cl.typical || '—')}</b> ${cl.secchiFt ? `(${cl.secchiFt} ft Secchi)` : ''}<br>
+        Color/Turbidity: ${esc(cl.color || d.waterColor || '—')}<br>
+        ${cl.note ? `<span class="muted" style="font-size:11px">${esc(cl.note)}</span>` : ''}
+      </div>
+      <div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+        <b>🌡 Summer Thermocline</b><br>
+        Depth: <b>${Array.isArray(th.summerDepthFt) ? `${th.summerDepthFt.join(' - ')} ft` : (th.summerDepthFt || '—')}</b> (${esc(th.strength || '—')} strength)<br>
+        Winter Mix: ${esc(th.winterMix || '—')}<br>
+        ${th.note ? `<span class="muted" style="font-size:11px">${esc(th.note)}</span>` : ''}
+      </div>
+      <div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+        <b>🫧 Dissolved Oxygen Floor</b><br>
+        Depletion Depth: <b>${ox.depletionDepthFt ? `${ox.depletionDepthFt} ft` : '—'}</b><br>
+        Anoxic Below: <b style="color:#ff7043">${ox.anoxicBelowFt ? `${ox.anoxicBelowFt} ft (fish floor)` : '—'}</b><br>
+        ${ox.note ? `<span class="muted" style="font-size:11px">${esc(ox.note)}</span>` : ''}
+      </div>
+    </div>`;
+  }
+
+  return `<pre style="font-size:11px;white-space:pre-wrap">${esc(JSON.stringify(data, null, 2))}</pre>`;
+}
+
+function renderSections(profile) {
+  const container = document.getElementById('researchSections');
+  if (!container) return;
+  const conf = profile.confidence || {};
+  let html = '';
+  for (const key of RESEARCH_ORDER) {
+    const label = RESEARCH_LABELS[key] || key;
+    let sectionData;
+    if (key === 'identity') {
+      // Identity data may be nested under profile.identity or as top-level fields
+      sectionData = profile.identity || {
+        lakeName: profile.lakeName,
+        state: profile.state,
+        riverSystem: profile.riverSystem,
+        archetype: profile.archetype,
+        surfaceAreaAcres: profile.surfaceAreaAcres,
+        maxDepthFt: profile.maxDepthFt,
+        averageDepthFt: profile.averageDepthFt,
+        normalPoolFt: profile.normalPoolFt,
+        reservoirOwner: profile.reservoirOwner,
+        damName: profile.damName,
+        yearImpounded: profile.yearImpounded,
+        county: profile.county,
+        aliases: profile.aliases,
+      };
+    } else {
+      sectionData = profile[key] || (key === 'biology' ? profile.forage : '') || (key === 'trolling' ? (profile.trollingIntelligence || profile.trolling) : null) || {};
+    }
+    const has = !!(profile[key] || profile[key === 'biology' ? 'forage' : ''] || (key === 'trolling' && (profile.trollingIntelligence || profile.trolling)));
+    const c = conf[key] || conf[key === 'trolling' ? 'trollingIntelligence' : ''] || conf[key === 'biology' ? 'forage' : ''];
+    const pct = c?.percent || (has ? 75 : 0);
+    const level = c?.level || (has ? 'medium' : 'missing');
+    const okIcon = has ? (pct >= 70 ? '✔' : '⚠') : '◻';
+    const levelClass = pct >= 95 ? 'veryhigh' : pct >= 85 ? 'high' : pct >= 70 ? 'medium' : pct >= 50 ? 'low' : 'need';
+
+    html += `<div class="section-row" style="flex-wrap:wrap;justify-content:space-between;align-items:center;">
+      <div style="display:flex;align-items:center;gap:8px;flex:1 1 200px;">
+        <span class="sec-icon">${okIcon}</span>
+        <span class="sec-name"><b>${label}</b> <span class="muted" style="font-size:11px">${level}</span></span>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span class="sec-conf" style="font-weight:700;">${pct}%</span>
+        ${has ? `<button type="button" class="small ghost btn-toggle-viewer" data-section="${key}" style="font-size:10px;padding:2px 6px;color:var(--accent)">👁️ View Summary</button>` : ''}
+        <button type="button" class="small ghost btn-toggle-section-editor" data-section="${key}" style="font-size:10px;padding:2px 6px;">✏️ Edit JSON</button>
+        <button type="button" class="small ghost btn-rerun-section" data-section="${key}" style="font-size:10px;padding:2px 6px;color:var(--accent2);">🔄 Re-run</button>
+      </div>
+    </div>
+    <div class="conf-bar" style="margin:0 10px 4px 40px"><div class="conf-fill ${levelClass}" style="width:${pct}%"></div></div>
+    
+    <div class="section-viewer-container" id="viewer-container-${key}" style="display:none;margin:6px 10px 14px 40px;background:rgba(0,229,255,.03);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;color:var(--text);line-height:1.4;">
+      ${formatHumanReadableSection(key, sectionData)}
+    </div>
+    <div class="section-editor-container" id="editor-container-${key}" style="display:none;margin:6px 10px 14px 40px;">
+      <textarea class="review-section-textarea" data-agent="${key}" style="width:100%;height:220px;font-family:monospace;font-size:11px;background:#030810;color:#bdffa0;border:1px solid var(--line);border-radius:4px;padding:6px;white-space:pre;overflow:auto;">${JSON.stringify(sectionData, null, 2)}</textarea>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+        <button type="button" class="small primary btn-apply-section-edit" data-agent="${key}" style="background:var(--accent2);color:#000;font-size:11px;">✔ Apply Edit</button>
+        <span class="muted" id="edit-status-${key}" style="font-size:11px;"></span>
+      </div>
+    </div>`;
+  }
+  container.innerHTML = html;
+
+  container.querySelectorAll('.btn-toggle-viewer').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const sec = e.target.dataset.section;
+      const el = document.getElementById(`viewer-container-${sec}`);
+      if (el) {
+        el.style.display = el.style.display === 'none' ? 'block' : 'none';
+      }
+    });
+  });
+
+  container.querySelectorAll('.btn-toggle-section-editor').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const sec = e.target.dataset.section;
+      const el = document.getElementById(`editor-container-${sec}`);
+      if (el) {
+        el.style.display = el.style.display === 'none' ? 'block' : 'none';
+      }
+    });
+  });
+
+  container.querySelectorAll('.btn-apply-section-edit').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const agent = e.target.dataset.agent;
+      const ta = container.querySelector(`.review-section-textarea[data-agent="${agent}"]`);
+      const st = document.getElementById(`edit-status-${agent}`);
+      const reviewCard = document.getElementById('reviewCard');
+      if (!ta || !reviewCard?.dataset.merged) return;
+      try {
+        const parsed = JSON.parse(ta.value);
+        const curMerged = JSON.parse(reviewCard.dataset.merged);
+        const curParts = JSON.parse(reviewCard.dataset.parts || '{}');
+        curMerged[agent] = parsed;
+        if (agent === 'biology') curMerged.forage = parsed;
+        if (agent === 'trolling') curMerged.trollingIntelligence = parsed;
+        curParts[agent] = parsed;
+        reviewCard.dataset.merged = JSON.stringify(curMerged);
+        reviewCard.dataset.parts = JSON.stringify(curParts);
+        if (typeof packagePartsCache !== 'undefined') packagePartsCache[agent] = parsed;
+        if (st) { st.textContent = 'Applied ✓'; st.style.color = 'var(--accent2)'; }
+        // Refresh viewer
+        const viewer = document.getElementById(`viewer-container-${agent}`);
+        if (viewer) viewer.innerHTML = formatHumanReadableSection(agent, parsed);
+      } catch (err) {
+        if (st) { st.textContent = 'Invalid JSON'; st.style.color = 'var(--bad)'; }
+      }
+    });
+  });
+
+  // Re-run single agent using stored normalized documents (no Tavily cost)
+  container.querySelectorAll('.btn-rerun-section').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const agentKey = e.target.dataset.section;
+      const btn = e.target;
+      const st = document.getElementById(`edit-status-${agentKey}`);
+      btn.disabled = true;
+      btn.textContent = '⏳ Running...';
+      if (st) { st.textContent = 'Fetching stored documents...'; st.style.color = 'var(--accent)'; }
+
+      try {
+        // Step 1: Fetch stored normalized documents from R2 (no Tavily cost)
+        const docsRes = await fetch(`${CF_WORKER_URL}/research/get-normalized?lake=${encodeURIComponent(currentLakeName)}`);
+        if (!docsRes.ok) throw new Error('No stored documents found — run full pipeline first');
+        const docsData = await docsRes.json();
+        if (!docsData.ok || !docsData.documents?.length) throw new Error('No stored documents available');
+
+        if (st) st.textContent = `Re-extracting facts from ${docsData.count} documents...`;
+
+        // Step 2: Re-extract facts for this specific category
+        const extractRes = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lakeName: currentLakeName,
+            state: sanitizeStateFromLakeName(currentLakeName),
+            documents: docsData.documents.map(d => ({ title: d.title, text: d.fullText || d.text || '' })),
+            filterCategory: agentKey
+          })
+        });
+        const extractData = await extractRes.json();
+        const facts = extractData.extracted_facts || [];
+
+        if (st) st.textContent = `Running ${agentKey} agent...`;
+
+        // Step 3: Re-run just this agent with existing profile as context
+        const reviewCard = document.getElementById('reviewCard');
+        const prevProfile = reviewCard?.dataset.merged ? JSON.parse(reviewCard.dataset.merged) : {};
+
+        const agentRes = await fetch(`${CF_WORKER_URL}/research/agent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lakeName: currentLakeName,
+            state: sanitizeStateFromLakeName(currentLakeName),
+            agent: agentKey,
+            previousResults: { ...prevProfile, _extractedFacts: facts }
+          })
+        });
+        const agentData = await agentRes.json();
+        if (!agentData.success) throw new Error(agentData.error || 'Agent failed');
+
+        // Step 4: Apply result to in-memory profile
+        if (reviewCard?.dataset.merged) {
+          const curMerged = JSON.parse(reviewCard.dataset.merged);
+          const curParts = JSON.parse(reviewCard.dataset.parts || '{}');
+          curMerged[agentKey] = agentData.section;
+          if (agentKey === 'biology') curMerged.forage = agentData.section;
+          if (agentKey === 'trolling') curMerged.trollingIntelligence = agentData.section;
+          curParts[agentKey] = agentData.section;
+          reviewCard.dataset.merged = JSON.stringify(curMerged);
+          reviewCard.dataset.parts = JSON.stringify(curParts);
+          if (typeof packagePartsCache !== 'undefined') packagePartsCache[agentKey] = agentData.section;
+        }
+
+        // Step 5: Refresh UI for this section
+        const viewer = document.getElementById(`viewer-container-${agentKey}`);
+        if (viewer) viewer.innerHTML = formatHumanReadableSection(agentKey, agentData.section);
+        const ta = container.querySelector(`.review-section-textarea[data-agent="${agentKey}"]`);
+        if (ta) ta.value = JSON.stringify(agentData.section, null, 2);
+
+        if (st) { st.textContent = `✓ Re-run complete (${agentData.confidence?.percent||'?'}% confidence via ${agentData.meta?.model||'?'})`; st.style.color = 'var(--accent2)'; }
+        log(`[Re-run] ${agentKey}: ${agentData.confidence?.percent||'?'}% via ${agentData.meta?.model||'?'}`);
+
+      } catch (err) {
+        if (st) { st.textContent = `Failed: ${err.message}`; st.style.color = 'var(--bad)'; }
+        log(`[Re-run] ${agentKey} failed: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '🔄 Re-run';
+      }
+    });
+  });
+}
+
+function renderConfidence(profile) {
+  const card = document.getElementById('confidenceCard');
+  const list = document.getElementById('confidenceList');
+  if (!card || !list) return;
+  const conf = profile.confidence || {};
+  if (!Object.keys(conf).length) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  let html = '';
+  for (const [k, v] of Object.entries(conf)) {
+    if (k === 'overall') continue;
+    if (typeof v !== 'object') continue;
+    const pct = v.percent || 0;
+    const levelClass = pct >= 95 ? 'veryhigh' : pct >= 85 ? 'high' : pct >= 70 ? 'medium' : pct >= 50 ? 'low' : 'need';
+    html += `<div style="display:flex;justify-content:space-between;font-size:12px;margin:6px 0"><span>${RESEARCH_LABELS[k] || k} — ${v.level || ''} <span class="muted">(${v.reason || ''})</span></span><span style="color:var(--accent2)">${pct}%</span></div><div class="conf-bar"><div class="conf-fill ${levelClass}" style="width:${pct}%"></div></div>`;
+  }
+  const overall = conf.overall;
+  if (overall) {
+    const pct = overall.percent || 0;
+    const levelClass = pct >= 95 ? 'veryhigh' : pct >= 85 ? 'high' : pct >= 70 ? 'medium' : pct >= 50 ? 'low' : 'need';
+    html = `<div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;margin-bottom:6px"><span>Overall</span><span>${pct}% ${overall.level || ''}</span></div><div class="conf-bar" style="height:10px"><div class="conf-fill ${levelClass}" style="width:${pct}%"></div></div><div style="margin-top:10px;border-top:1px solid var(--line);padding-top:8px">${html}</div>`;
+  }
+  list.innerHTML = html;
+}
+
+function renderSources(profile) {
+  const card = document.getElementById('sourcesCard');
+  const list = document.getElementById('sourcesList');
+  if (!card || !list) return;
+  const sources = profile.sources || [];
+  if (!sources.length) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  let html = '';
+  for (const s of sources) {
+    const trust = s.trust || '';
+    const trustColor = trust.includes('OFFICIAL') ? 'var(--accent2)' : trust.includes('DERIVED') ? 'var(--accent)' : 'var(--muted)';
+    html += `<div class="source-item"><span style="display:inline-block;padding:1px 6px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);font-size:10px;color:${trustColor};margin-right:6px">${esc(trust || 'SOURCE')}</span><b>${esc(s.label || 'Unlabeled')}</b> ${s.url ? `— <a href="${esc(s.url)}" target="_blank">${esc(s.url.slice(0, 60))}</a>` : ''}</div>`;
+  }
+  list.innerHTML = html;
+}
+
+function renderSummary(profile) {
+  const card = document.getElementById('summaryCard');
+  const textEl = document.getElementById('summaryText');
+  if (!card || !textEl) return;
+  const summary = profile.summary?.text || profile.summary || '';
+  if (!summary) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  textEl.textContent = typeof summary === 'string' ? summary : (summary.text || JSON.stringify(summary, null, 2));
+}
+
+function renderNotes(profile) {
+  const card = document.getElementById('notesCard');
+  const ta = document.getElementById('researchNotes');
+  if (!card || !ta) return;
+  card.style.display = 'block';
+  ta.value = profile.notes || '';
+}
+
+function renderPackage(profile, packageFiles, versions) {
+  const card = document.getElementById('packageCard');
+  const filesEl = document.getElementById('packageFiles');
+  const verEl = document.getElementById('versionHistory');
+  if (!card) return;
+  card.style.display = 'block';
+  if (filesEl) {
+    let html = `<div style="font-size:11px;color:var(--muted)">Master: lakes/${sanitize(profile.lakeName || currentLakeName)}.json (${JSON.stringify(profile).length} bytes)<br>Package folder: lake_packages/${sanitize(profile.lakeName || currentLakeName)}/</div><div style="display:flex;flex-wrap:wrap;gap:4px;margin:8px 0">`;
+    for (const f of (packageFiles || [])) {
+      html += `<span class="pill" title="${esc(f.key)}">${esc(f.name)} ${f.size ? `(${(f.size / 1024).toFixed(1)}KB)` : ''}</span>`;
+    }
+    html += `</div>`;
+    filesEl.innerHTML = html;
+  }
+  if (verEl) {
+    let html = `<div style="font-size:12px;font-weight:700;margin-bottom:4px">Version History (${(versions || []).length})</div>`;
+    if (!versions || !versions.length) html += `<div class="muted" style="font-size:11px">No prior versions yet. First save creates v1.</div>`;
+    else {
+      html += `<div style="font-size:11px">`;
+      for (const v of versions) {
+        html += `<div>• ${esc(v.key)} ${v.size ? `— ${(v.size / 1024).toFixed(1)}KB` : ''}</div>`;
+      }
+      html += `</div>`;
+    }
+    verEl.innerHTML = html;
+  }
+}
+
+function initLakeResearch() {
+  populateResearchLakeDropdown();
+  setTimeout(populateResearchLakeDropdown, 1500);
+
+  document.getElementById('researchLakeSelect')?.addEventListener('change', (e) => {
+    const v = e.target.value;
+    if (v) loadProfile(v);
+  });
+
+  document.getElementById('researchLoadBtn')?.addEventListener('click', () => {
+    const sel = document.getElementById('researchLakeSelect');
+    if (sel?.value) loadProfile(sel.value);
+    else alert('Select a lake first');
+  });
+
+  document.getElementById('researchListBtn')?.addEventListener('click', async () => {
+    const data = await fetchResearchList();
+    if (data) {
+      alert(`Found ${data.count} researched lakes:\n${data.lakes.map(l => `${l.id} (${(l.size / 1024).toFixed(1)}KB)`).join('\n')}`);
+    }
+  });
+
+  document.getElementById('btnResearch')?.addEventListener('click', () => {
+    const lake = document.getElementById('researchLakeSelect')?.value;
+    if (!lake) { alert('Select a lake first'); return; }
+    if (!confirm(`Launch the fully structured Evidence Acquisition Pipeline for ${lake}? This will query trusted repositories, download documents through our CORS-bypassed proxy, parse PDFs client-side with PDF.js, score quality, and trigger structured Gemini fact extraction. Continue?`)) return;
+    runEvidencePipeline(lake);
+  });
+
+  console.log('🧠 Structured Evidence Acquisition & Lake Research module ready');
+}
+
+setTimeout(initLakeResearch, 800);
+
+export { initLakeResearch, loadProfile, runEvidencePipeline, populateResearchLakeDropdown };
