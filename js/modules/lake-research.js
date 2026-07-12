@@ -580,90 +580,115 @@ async function runEvidencePipeline(lakeName) {
     await savePipelineDataToR2(lakeName, 'evidence_deduped.json', { uniqueFacts, contradictions });
 
     // ----------------------------------------------------
-    // STEP 10: Run 8 Research Agents grounded in extracted facts
+    // STEP 10: Map facts to profile (no hallucination — null means unknown)
     // ----------------------------------------------------
-    setProgress("Step 10: Running research agents with real evidence...", 70);
-    log(`Running 8 research agents grounded in ${uniqueFacts.length} verified facts from real documents...`);
+    setProgress("Step 10: Mapping verified facts to profile...", 70);
+    log(`Mapping ${uniqueFacts.length} verified facts to profile schema (no inference, no gap-filling from training data)...`);
 
-    const AGENT_ORDER = ['identity', 'limnology', 'biology', 'habitat', 'navigation', 'regulations', 'trolling', 'summary'];
-    const agentResults = [];
-    let accumulated = {};
+    const mapRes = await fetch(`${CF_WORKER_URL}/research/map-facts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lakeName, facts: uniqueFacts, pass: 1 })
+    });
+    if (!mapRes.ok) throw new Error(`Mapping agent HTTP ${mapRes.status}`);
+    const mapData = await mapRes.json();
+    if (!mapData.success) throw new Error(`Mapping agent failed: ${mapData.error}`);
+    let researchPacket = mapData.profile;
+    log(`✔ Pass 1 mapping complete via ${mapData.model} — profile built from ${mapData.factsUsed} facts`);
 
-    for (let i = 0; i < AGENT_ORDER.length; i++) {
-      const agentKey = AGENT_ORDER[i];
-      setProgress(`Step 10: Agent ${i+1}/8 — ${agentKey}...`, 70 + (i / AGENT_ORDER.length) * 25);
-      log(`Agent ${i+1}/8: ${agentKey}...`);
+    // STEP 11: Gap analysis — find null fields and run targeted searches
+    // ----------------------------------------------------
+    setProgress("Step 11: Analyzing gaps...", 75);
+    const gapRes = await fetch(`${CF_WORKER_URL}/research/gap-analysis`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lakeName, state: stateName, profile: researchPacket })
+    });
+    const gapData = await gapRes.json();
+    log(`Gap analysis: ${gapData.nullFields?.length||0} null fields, ${gapData.searchableGaps||0} targeted searches to run`);
 
-      try {
-        const agentRes = await fetch(`${CF_WORKER_URL}/research/agent`, {
+    // STEP 12: Targeted Tavily searches for null fields
+    // ----------------------------------------------------
+    const gapFacts = [];
+
+    if (gapData.gapQueries?.length) {
+      setProgress("Step 12: Running targeted gap searches...", 78);
+      log(`Running ${gapData.gapQueries.length} targeted searches for missing data...`);
+
+      for (let i = 0; i < gapData.gapQueries.length; i++) {
+        const { field, query } = gapData.gapQueries[i];
+        setProgress(`Step 12: Searching for ${field}...`, 78 + (i / gapData.gapQueries.length) * 8);
+        try {
+          // Route through worker to keep Tavily key server-side
+          const factRes = await fetch(`${CF_WORKER_URL}/research/gap-search`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lakeName, state: stateName, field, query })
+          });
+          if (!factRes.ok) continue;
+          const factData = await factRes.json();
+          const newFacts = factData.extracted_facts || [];
+          if (newFacts.length) {
+            log(`✔ Gap [${field}]: ${newFacts.length} new facts`);
+            gapFacts.push(...newFacts);
+          }
+        } catch (e) {
+          log(`⚠ Gap search [${field}] failed: ${e.message}`);
+        }
+      }
+
+      // STEP 13: Second mapping pass with gap facts merged in
+      if (gapFacts.length) {
+        setProgress("Step 13: Second mapping pass with gap facts...", 88);
+        log(`Running second mapping pass with ${gapFacts.length} additional facts...`);
+        const allFacts = [...uniqueFacts, ...gapFacts];
+        const map2Res = await fetch(`${CF_WORKER_URL}/research/map-facts`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            lakeName,
-            state: stateName,
-            agent: agentKey,
-            previousResults: {
-              ...accumulated,
-              _extractedFacts: uniqueFacts,
-              _extractedFactsSummary: `${uniqueFacts.length} verified facts extracted from ${normalizedDocuments.length} authoritative documents. Use these facts as your primary source of truth. Do not invent facts not supported by this evidence.`
-            }
-          })
+          body: JSON.stringify({ lakeName, facts: allFacts, pass: 2 })
         });
-
-        if (!agentRes.ok) {
-          log(`✘ ${agentKey} failed: HTTP ${agentRes.status}`);
-          continue;
+        if (map2Res.ok) {
+          const map2Data = await map2Res.json();
+          if (map2Data.success) {
+            researchPacket = map2Data.profile;
+            log(`✔ Pass 2 mapping complete — ${allFacts.length} total facts used`);
+          }
         }
-
-        const agentData = await agentRes.json();
-        if (!agentData.success) {
-          log(`✘ ${agentKey} failed: ${agentData.error}`);
-          continue;
-        }
-
-        accumulated[agentKey] = agentData.section;
-        if (agentKey === 'biology') accumulated.forage = agentData.section;
-        if (agentKey === 'trolling') accumulated.trollingIntelligence = agentData.section;
-        agentResults.push(agentData);
-        log(`✔ ${agentKey}: ${agentData.confidence?.percent||'?'}% via ${agentData.meta?.model||'?'} (${agentData.meta?.durationMs||0}ms)`);
-
-      } catch (e) {
-        log(`✘ ${agentKey} failed: ${e.message}`);
+      } else {
+        log('No additional facts found from gap searches — using Pass 1 profile');
       }
+    } else {
+      log('Skipping gap searches — no searchable gaps or no Tavily key');
     }
 
-    // Build master profile from agent results
-    setProgress("Step 10: Merging agent results...", 96);
-    log('Merging agent results into master profile...');
+    // Store extracted facts in profile for re-run capability
+    researchPacket._extractedFacts = [...uniqueFacts, ...gapFacts];
+    researchPacket._extractedFactsCount = researchPacket._extractedFacts.length;
 
-    const researchPacket = buildMasterProfile(lakeName, accumulated, accumulated, agentResults);
     await savePipelineDataToR2(lakeName, 'research_packet.json', researchPacket);
 
-    // QUALITY GATE
-    const successfulAgents = agentResults.filter(r => r.success !== false).length;
-    let finalStatus = successfulAgents >= 6 && contradictions.length === 0 ? 'draft' : 'draft';
-
     // Persist
-    log(`Saving master profile (status=${finalStatus}, agents=${successfulAgents}/8, facts=${uniqueFacts.length})...`);
+    setProgress("Saving profile...", 96);
+    log(`Saving profile (facts=${researchPacket._extractedFacts.length}, gaps searched=${gapData.searchableGaps||0})...`);
     const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         lakeName,
         profile: researchPacket,
-        status: finalStatus,
-        requestedBy: "Evidence Acquisition Engine v2"
+        status: 'draft',
+        requestedBy: "Evidence Acquisition Engine v3"
       })
     });
     if (!saveRes.ok) {
       const t = await saveRes.text().catch(()=>'').then(s=>s.slice(0,400));
-      throw new Error(`Save master profile HTTP ${saveRes.status}: ${t}`);
+      throw new Error(`Save HTTP ${saveRes.status}: ${t}`);
     }
     const saveData = await saveRes.json();
-    log(`✔ Saved Master profile v${saveData.version} as ${saveData.status} — ${successfulAgents}/8 agents, ${uniqueFacts.length} facts grounded`);
+    log(`✔ Saved profile v${saveData.version} as draft — ${researchPacket._extractedFacts.length} facts, nulls = unknown`);
 
     setProgress("Pipeline completed successfully!", 100);
-    log(`=== EVIDENCE PIPELINE COMPLETE — Agents grounded in real documents ===`);
+    log(`=== EVIDENCE PIPELINE COMPLETE — Facts only, nulls are honest ===`);
     
     // Auto load & render results
     await loadProfile(lakeName);
@@ -1504,36 +1529,13 @@ function renderSections(profile) {
       const st = document.getElementById(`edit-status-${agentKey}`);
       btn.disabled = true;
       btn.textContent = '⏳ Running...';
-      if (st) { st.textContent = 'Fetching stored documents...'; st.style.color = 'var(--accent)'; }
+      if (st) { st.textContent = `Running ${agentKey} agent...`; st.style.color = 'var(--accent)'; }
 
       try {
-        // Step 1: Fetch stored normalized documents from R2 (no Tavily cost)
-        const docsRes = await fetch(`${CF_WORKER_URL}/research/get-normalized?lake=${encodeURIComponent(currentLakeName)}`);
-        if (!docsRes.ok) throw new Error('No stored documents found — run full pipeline first');
-        const docsData = await docsRes.json();
-        if (!docsData.ok || !docsData.documents?.length) throw new Error('No stored documents available');
-
-        if (st) st.textContent = `Re-extracting facts from ${docsData.count} documents...`;
-
-        // Step 2: Re-extract facts for this specific category
-        const extractRes = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            lakeName: currentLakeName,
-            state: sanitizeStateFromLakeName(currentLakeName),
-            documents: docsData.documents.map(d => ({ title: d.title, text: d.fullText || d.text || '' })),
-            filterCategory: agentKey
-          })
-        });
-        const extractData = await extractRes.json();
-        const facts = extractData.extracted_facts || [];
-
-        if (st) st.textContent = `Running ${agentKey} agent...`;
-
-        // Step 3: Re-run just this agent with existing profile as context
+        // Use already-stored facts from current profile — no re-extraction needed
         const reviewCard = document.getElementById('reviewCard');
         const prevProfile = reviewCard?.dataset.merged ? JSON.parse(reviewCard.dataset.merged) : (currentProfile || {});
+        const storedFacts = prevProfile._extractedFacts || currentProfile?._extractedFacts || [];
 
         const agentRes = await fetch(`${CF_WORKER_URL}/research/agent`, {
           method: 'POST',
@@ -1542,7 +1544,7 @@ function renderSections(profile) {
             lakeName: currentLakeName,
             state: sanitizeStateFromLakeName(currentLakeName),
             agent: agentKey,
-            previousResults: { ...prevProfile, _extractedFacts: facts }
+            previousResults: { ...prevProfile, _extractedFacts: storedFacts }
           })
         });
         const agentData = await agentRes.json();
