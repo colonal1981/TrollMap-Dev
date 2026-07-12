@@ -701,6 +701,64 @@ async function savePipelineDataToR2(lakeName, filename, data) {
   }
 }
 
+function buildMasterProfile(lakeName, accumulated, parts, agentResults) {
+  const stateName = sanitizeStateFromLakeName(lakeName);
+  const baseName = cleanLakeBaseName(lakeName);
+  const sanitizedId = sanitize(lakeName);
+
+  // Build confidence map from agent results
+  const confidence = {};
+  for (const r of (agentResults || [])) {
+    if (r.agent && r.confidence) {
+      confidence[r.agent] = r.confidence;
+    }
+  }
+  // Derive overall
+  const percents = Object.values(confidence).map(c => c.percent || 0).filter(Boolean);
+  if (percents.length) {
+    const avg = Math.round(percents.reduce((a, b) => a + b, 0) / percents.length);
+    confidence.overall = { percent: avg, level: avg >= 95 ? 'very high' : avg >= 85 ? 'high' : avg >= 70 ? 'medium' : avg >= 50 ? 'low' : 'needs research' };
+  }
+
+  // Build source list from agent metadata
+  const sources = [];
+  for (const r of (agentResults || [])) {
+    if (r.meta?.sources) {
+      for (const s of r.meta.sources) {
+        if (!sources.find(x => x.url === s.url)) sources.push(s);
+      }
+    }
+  }
+
+  return {
+    lakeName,
+    baseName,
+    state: stateName,
+    sanitizedId,
+    aliases: accumulated.identity?.aliases || [],
+    identity: accumulated.identity || {},
+    limnology: accumulated.limnology || {},
+    forage: accumulated.biology || accumulated.forage || {},
+    biology: accumulated.biology || accumulated.forage || {},
+    habitat: accumulated.habitat || {},
+    navigation: accumulated.navigation || {},
+    regulations: accumulated.regulations || {},
+    trolling: accumulated.trolling || {},
+    trollingIntelligence: accumulated.trollingIntelligence || accumulated.trolling || {},
+    summary: accumulated.summary || {},
+    confidence,
+    sources,
+    metadata: {
+      version: '1.0',
+      status: 'draft',
+      lastUpdated: new Date().toISOString(),
+      verified: false,
+      agentCount: agentResults.filter(r => r.success !== false).length,
+      baseName
+    }
+  };
+}
+
 function buildFinalResearchPacket(lakeName, state, uniqueFacts, scoredSources) {
   const baseName = cleanLakeBaseName(lakeName);
   // synonym mapping for getVal
@@ -1018,6 +1076,21 @@ function renderProfile(profile) {
     approveBtn.style.display = status === 'verified' ? 'none' : 'inline-flex';
   }
 
+  // Populate reviewCard dataset so re-run agents have full profile context
+  const reviewCard = document.getElementById('reviewCard');
+  if (reviewCard) {
+    reviewCard.dataset.merged = JSON.stringify(profile);
+    // Build parts from profile sections
+    const parts = {};
+    for (const key of RESEARCH_ORDER) {
+      if (key === 'identity') parts[key] = profile.identity || {};
+      else if (key === 'biology') parts[key] = profile.forage || profile.biology || {};
+      else if (key === 'trolling') parts[key] = profile.trollingIntelligence || profile.trolling || {};
+      else parts[key] = profile[key] || {};
+    }
+    reviewCard.dataset.parts = JSON.stringify(parts);
+  }
+
   renderSections(profile);
   renderConfidence(profile);
   renderSources(profile);
@@ -1079,6 +1152,235 @@ function formatHumanReadableSection(key, data) {
     </div>`;
   }
 
+  if (key === 'biology') {
+    const d = data.forage || data.biology || data;
+    const primary = d.primaryForage || d.primary || [];
+    const secondary = d.secondaryForage || d.secondary || [];
+    const predators = d.predatorSpecies || d.predators || [];
+    const calendar = d.forageCalendar || {};
+    let html = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;font-size:12px;">`;
+    html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+      <b>🐟 Primary Forage</b><br>`;
+    if (Array.isArray(primary) && primary.length) {
+      primary.forEach(f => { html += `• <b>${esc(typeof f === 'string' ? f : (f.species || f.name || '—'))}</b>${f.abundance ? ` (${esc(f.abundance)})` : ''}${f.notes ? ` — ${esc(f.notes)}` : ''}<br>`; });
+    } else if (typeof primary === 'string') {
+      html += `${esc(primary)}<br>`;
+    } else { html += `<span class="muted">—</span><br>`; }
+    html += `</div>`;
+    html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+      <b>🎣 Secondary Forage</b><br>`;
+    if (Array.isArray(secondary) && secondary.length) {
+      secondary.forEach(f => { html += `• <b>${esc(typeof f === 'string' ? f : (f.species || f.name || '—'))}</b>${f.abundance ? ` (${esc(f.abundance)})` : ''}<br>`; });
+    } else if (typeof secondary === 'string') {
+      html += `${esc(secondary)}<br>`;
+    } else { html += `<span class="muted">—</span><br>`; }
+    html += `</div>`;
+    html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+      <b>🦈 Predator Species</b><br>`;
+    if (Array.isArray(predators) && predators.length) {
+      predators.forEach(p => { html += `• ${esc(typeof p === 'string' ? p : (p.species || p.name || '—'))}<br>`; });
+    } else if (typeof predators === 'string') {
+      html += `${esc(predators)}<br>`;
+    } else { html += `<span class="muted">—</span><br>`; }
+    html += `</div>`;
+    if (d.baitfishMovement) {
+      html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px;grid-column:1/-1">
+        <b>🔄 Baitfish Movement:</b> ${esc(d.baitfishMovement)}</div>`;
+    }
+    if (calendar && Object.keys(calendar).some(k => calendar[k])) {
+      html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px;grid-column:1/-1">
+        <b>📅 Forage Calendar</b><br>`;
+      for (const season of ['spring','summer','fall','winter']) {
+        if (calendar[season]) html += `<b>${season.charAt(0).toUpperCase()+season.slice(1)}:</b> ${esc(calendar[season])}<br>`;
+      }
+      html += `</div>`;
+    }
+    html += `</div>`;
+    return html;
+  }
+
+  if (key === 'habitat') {
+    const d = data.habitat || data;
+    let html = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;font-size:12px;">`;
+    const struct = d.structuralElements || {};
+    html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+      <b>🏔 Structural Elements</b><br>
+      Points: ${esc(struct.points || '—')}<br>
+      Humps: ${esc(struct.humps || '—')}<br>
+      Creek Arms: ${esc(struct.creekArms || '—')}<br>
+    </div>`;
+    html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+      <b>🪨 Bottom & Cover</b><br>
+      Bottom: ${esc(typeof d.bottomComposition === 'object' ? Object.entries(d.bottomComposition).map(([k,v])=>`${k}: ${v}`).join(', ') : (d.bottomComposition || '—'))}<br>
+      Cover: ${esc(Array.isArray(d.cover) ? d.cover.join(', ') : (d.cover || '—'))}<br>
+      Standing Timber: ${esc(d.standingTimber || '—')}<br>
+      Dock Density: ${esc(d.dockDensity || '—')}<br>
+    </div>`;
+    if (d.vegetation || d.aquaticVegetation) {
+      const veg = d.vegetation || d.aquaticVegetation;
+      html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+        <b>🌿 Vegetation</b><br>${esc(typeof veg === 'string' ? veg : JSON.stringify(veg))}</div>`;
+    }
+    if (d.notes) {
+      html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px;grid-column:1/-1">
+        <b>📝 Notes:</b> ${esc(d.notes)}</div>`;
+    }
+    html += `</div>`;
+    return html;
+  }
+
+  if (key === 'navigation') {
+    const d = data.navigation || data;
+    let html = `<div style="font-size:12px;">`;
+    const ramps = d.ramps || d.boatRamps || [];
+    if (Array.isArray(ramps) && ramps.length) {
+      html += `<b>🚤 Boat Ramps (${ramps.length})</b><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:6px;margin:6px 0;">`;
+      ramps.forEach(r => {
+        const name = typeof r === 'string' ? r : (r.name || r.label || '—');
+        html += `<div style="background:rgba(255,255,255,.03);padding:4px 6px;border-radius:4px">• <b>${esc(name)}</b>${r.type ? ` (${esc(r.type)})` : ''}${r.notes ? ` — ${esc(r.notes)}` : ''}</div>`;
+      });
+      html += `</div>`;
+    }
+    const hazards = d.hazards || [];
+    if (Array.isArray(hazards) && hazards.length) {
+      html += `<b style="color:#ff7043">⚠️ Hazards (${hazards.length})</b><div style="margin:6px 0;">`;
+      hazards.forEach(h => {
+        const desc = typeof h === 'string' ? h : (h.description || h.name || h.type || '—');
+        html += `<div style="background:rgba(255,82,82,.05);padding:4px 6px;border-radius:4px;margin:2px 0">⚠ ${esc(desc)}${h.location ? ` — <i>${esc(h.location)}</i>` : ''}</div>`;
+      });
+      html += `</div>`;
+    }
+    if (d.notes) html += `<div style="margin-top:6px"><b>📝 Notes:</b> ${esc(d.notes)}</div>`;
+    if (d.channels) html += `<div style="margin-top:6px"><b>🔀 Channels:</b> ${esc(typeof d.channels === 'string' ? d.channels : JSON.stringify(d.channels))}</div>`;
+    html += `</div>`;
+    return html;
+  }
+
+  if (key === 'regulations') {
+    const d = data.regulations || data;
+    let html = `<div style="font-size:12px;">`;
+    html += `<div style="margin-bottom:8px"><b>📍 State:</b> ${esc(d.state || '—')}</div>`;
+    const gen = d.generalStateRegulations || d.statewide || {};
+    if (gen && typeof gen === 'object' && Object.keys(gen).length) {
+      html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px;margin-bottom:8px">
+        <b>📋 General State Regulations</b><br>`;
+      const creel = gen.creelLimits || gen;
+      if (typeof creel === 'object') {
+        for (const [k, v] of Object.entries(creel)) {
+          html += `<div style="margin:2px 0">• <b>${esc(k)}:</b> ${esc(typeof v === 'string' ? v : JSON.stringify(v))}</div>`;
+        }
+      } else {
+        html += `${esc(String(creel))}`;
+      }
+      html += `</div>`;
+    }
+    const lake = d.lakeSpecificRegulations || d.lakeSpecific || {};
+    if (lake && typeof lake === 'object' && Object.keys(lake).length) {
+      html += `<div style="background:rgba(0,229,255,.05);padding:6px;border-radius:6px;border:1px solid var(--accent);margin-bottom:8px">
+        <b>🎯 Lake-Specific Regulations</b> ${lake.hasExceptions ? '<span style="color:var(--accent2)">(Has exceptions!)</span>' : ''}<br>`;
+      const lcreel = lake.creelLimits || {};
+      if (typeof lcreel === 'object') {
+        for (const [k, v] of Object.entries(lcreel)) {
+          html += `<div style="margin:2px 0">• <b>${esc(k)}:</b> ${esc(typeof v === 'string' ? v : JSON.stringify(v))}</div>`;
+        }
+      }
+      if (lake.sizeLimits) {
+        html += `<div style="margin-top:4px"><b>Size Limits:</b> ${esc(typeof lake.sizeLimits === 'string' ? lake.sizeLimits : JSON.stringify(lake.sizeLimits))}</div>`;
+      }
+      if (lake._raw && Array.isArray(lake._raw)) {
+        lake._raw.forEach(r => { html += `<div style="margin:2px 0;color:var(--muted);font-size:11px">• ${esc(r)}</div>`; });
+      }
+      html += `</div>`;
+    }
+    if (d.notes) html += `<div><b>📝 Notes:</b> ${esc(d.notes)}</div>`;
+    html += `</div>`;
+    return html;
+  }
+
+  if (key === 'trolling') {
+    const d = data.trollingIntelligence || data.trolling || data;
+    let html = `<div style="font-size:12px;">`;
+    // Handle various trolling data shapes
+    if (d.routes || d.corridors || d.trollingCorridors) {
+      const routes = d.routes || d.corridors || d.trollingCorridors || [];
+      if (Array.isArray(routes) && routes.length) {
+        html += `<b>🗺 Trolling Corridors (${routes.length})</b><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:6px;margin:6px 0;">`;
+        routes.forEach(r => {
+          html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+            <b>${esc(r.name || r.corridor || '—')}</b><br>
+            ${r.depth || r.depthRange ? `Depth: ${esc(r.depth || r.depthRange)}<br>` : ''}
+            ${r.speed || r.trollingSpeed ? `Speed: ${esc(r.speed || r.trollingSpeed)}<br>` : ''}
+            ${r.lures || r.presentations ? `Lures: ${esc(Array.isArray(r.lures||r.presentations) ? (r.lures||r.presentations).join(', ') : (r.lures||r.presentations))}<br>` : ''}
+            ${r.season ? `Season: ${esc(r.season)}<br>` : ''}
+            ${r.notes ? `<span class="muted" style="font-size:11px">${esc(r.notes)}</span>` : ''}
+          </div>`;
+        });
+        html += `</div>`;
+      }
+    }
+    if (d.seasonalPatterns || d.patterns) {
+      const pat = d.seasonalPatterns || d.patterns;
+      html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px;margin:6px 0">
+        <b>📅 Seasonal Patterns</b><br>`;
+      if (typeof pat === 'object' && !Array.isArray(pat)) {
+        for (const [season, info] of Object.entries(pat)) {
+          html += `<div style="margin:3px 0"><b>${esc(season)}:</b> ${esc(typeof info === 'string' ? info : JSON.stringify(info))}</div>`;
+        }
+      } else if (Array.isArray(pat)) {
+        pat.forEach(p => { html += `<div style="margin:2px 0">• ${esc(typeof p === 'string' ? p : (p.description || p.pattern || JSON.stringify(p)))}</div>`; });
+      }
+      html += `</div>`;
+    }
+    if (d.speeds || d.recommendedSpeeds) {
+      html += `<div style="margin:6px 0"><b>⚡ Recommended Speeds:</b> ${esc(typeof (d.speeds||d.recommendedSpeeds) === 'string' ? (d.speeds||d.recommendedSpeeds) : JSON.stringify(d.speeds||d.recommendedSpeeds))}</div>`;
+    }
+    if (d.depthZones || d.targetDepths) {
+      html += `<div style="margin:6px 0"><b>📏 Target Depths:</b> ${esc(typeof (d.depthZones||d.targetDepths) === 'string' ? (d.depthZones||d.targetDepths) : JSON.stringify(d.depthZones||d.targetDepths))}</div>`;
+    }
+    if (d.notes) html += `<div style="margin-top:6px"><b>📝 Notes:</b> ${esc(typeof d.notes === 'string' ? d.notes : JSON.stringify(d.notes))}</div>`;
+    // Fallback for flat trolling objects with arbitrary keys
+    const rendered = new Set(['routes','corridors','trollingCorridors','seasonalPatterns','patterns','speeds','recommendedSpeeds','depthZones','targetDepths','notes']);
+    const remaining = Object.entries(d).filter(([k]) => !rendered.has(k) && !k.startsWith('_'));
+    if (remaining.length && html === `<div style="font-size:12px;">`) {
+      // nothing was rendered yet, show key-value pairs
+      remaining.forEach(([k, v]) => {
+        html += `<div style="margin:3px 0"><b>${esc(k)}:</b> ${esc(typeof v === 'string' ? v : JSON.stringify(v))}</div>`;
+      });
+    }
+    html += `</div>`;
+    return html;
+  }
+
+  if (key === 'summary') {
+    const d = data.summary || data;
+    const text = typeof d === 'string' ? d : (d.text || d.overview || '');
+    const keywords = d.keywords || [];
+    let html = `<div style="font-size:12px;">`;
+    if (text) html += `<div style="white-space:pre-wrap;line-height:1.5">${esc(text)}</div>`;
+    if (keywords.length) {
+      html += `<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px">`;
+      keywords.forEach(kw => { html += `<span class="pill" style="font-size:10px">${esc(kw)}</span>`; });
+      html += `</div>`;
+    }
+    if (!text && !keywords.length) {
+      // fallback for odd summary shapes
+      html += `<div style="white-space:pre-wrap">${esc(typeof d === 'object' ? JSON.stringify(d, null, 2) : String(d))}</div>`;
+    }
+    html += `</div>`;
+    return html;
+  }
+
+  // Generic fallback for any unknown section — render as readable key-value
+  if (typeof data === 'object') {
+    let html = `<div style="font-size:12px;">`;
+    for (const [k, v] of Object.entries(data)) {
+      if (k.startsWith('_')) continue;
+      html += `<div style="margin:3px 0"><b>${esc(k)}:</b> ${esc(typeof v === 'string' ? v : JSON.stringify(v))}</div>`;
+    }
+    html += `</div>`;
+    return html;
+  }
+
   return `<pre style="font-size:11px;white-space:pre-wrap">${esc(JSON.stringify(data, null, 2))}</pre>`;
 }
 
@@ -1110,7 +1412,9 @@ function renderSections(profile) {
     } else {
       sectionData = profile[key] || (key === 'biology' ? profile.forage : '') || (key === 'trolling' ? (profile.trollingIntelligence || profile.trolling) : null) || {};
     }
-    const has = !!(profile[key] || profile[key === 'biology' ? 'forage' : ''] || (key === 'trolling' && (profile.trollingIntelligence || profile.trolling)));
+    const has = !!(key === 'identity'
+      ? (profile.identity || profile.lakeName)
+      : (profile[key] || (key === 'biology' ? profile.forage : null) || (key === 'trolling' ? (profile.trollingIntelligence || profile.trolling) : null)));
     const c = conf[key] || conf[key === 'trolling' ? 'trollingIntelligence' : ''] || conf[key === 'biology' ? 'forage' : ''];
     const pct = c?.percent || (has ? 75 : 0);
     const level = c?.level || (has ? 'medium' : 'missing');
@@ -1229,7 +1533,7 @@ function renderSections(profile) {
 
         // Step 3: Re-run just this agent with existing profile as context
         const reviewCard = document.getElementById('reviewCard');
-        const prevProfile = reviewCard?.dataset.merged ? JSON.parse(reviewCard.dataset.merged) : {};
+        const prevProfile = reviewCard?.dataset.merged ? JSON.parse(reviewCard.dataset.merged) : (currentProfile || {});
 
         const agentRes = await fetch(`${CF_WORKER_URL}/research/agent`, {
           method: 'POST',
@@ -1245,15 +1549,24 @@ function renderSections(profile) {
         if (!agentData.success) throw new Error(agentData.error || 'Agent failed');
 
         // Step 4: Apply result to in-memory profile
-        if (reviewCard?.dataset.merged) {
-          const curMerged = JSON.parse(reviewCard.dataset.merged);
-          const curParts = JSON.parse(reviewCard.dataset.parts || '{}');
+        {
+          const curMerged = reviewCard?.dataset.merged ? JSON.parse(reviewCard.dataset.merged) : (currentProfile || {});
+          const curParts = reviewCard?.dataset.parts ? JSON.parse(reviewCard.dataset.parts) : {};
           curMerged[agentKey] = agentData.section;
           if (agentKey === 'biology') curMerged.forage = agentData.section;
           if (agentKey === 'trolling') curMerged.trollingIntelligence = agentData.section;
+          // Update confidence for this section
+          if (agentData.confidence) {
+            if (!curMerged.confidence) curMerged.confidence = {};
+            curMerged.confidence[agentKey] = agentData.confidence;
+          }
           curParts[agentKey] = agentData.section;
-          reviewCard.dataset.merged = JSON.stringify(curMerged);
-          reviewCard.dataset.parts = JSON.stringify(curParts);
+          if (reviewCard) {
+            reviewCard.dataset.merged = JSON.stringify(curMerged);
+            reviewCard.dataset.parts = JSON.stringify(curParts);
+          }
+          // Keep currentProfile in sync
+          currentProfile = curMerged;
           if (typeof packagePartsCache !== 'undefined') packagePartsCache[agentKey] = agentData.section;
         }
 
@@ -1390,6 +1703,25 @@ function initLakeResearch() {
     if (!lake) { alert('Select a lake first'); return; }
     if (!confirm(`Launch the fully structured Evidence Acquisition Pipeline for ${lake}? This will query trusted repositories, download documents through our CORS-bypassed proxy, parse PDFs client-side with PDF.js, score quality, and trigger structured Gemini fact extraction. Continue?`)) return;
     runEvidencePipeline(lake);
+  });
+
+  document.getElementById('btnExport')?.addEventListener('click', () => {
+    if (!currentProfile) { alert('No profile loaded to export.'); return; }
+    try {
+      const json = JSON.stringify(currentProfile, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${sanitize(currentLakeName || 'lake')}_research.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      log(`Exported profile for ${currentLakeName}`);
+    } catch (e) {
+      alert(`Export failed: ${e.message}`);
+    }
   });
 
   console.log('🧠 Structured Evidence Acquisition & Lake Research module ready');
