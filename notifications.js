@@ -342,5 +342,4 @@ setTimeout(() => {
 // Expose for weather module to call
 window.trollmapCheckWindAlert = checkWindAlert;
 
-export { loadSessionFromSmartPlan };
 console.log('[notifications] module ready');

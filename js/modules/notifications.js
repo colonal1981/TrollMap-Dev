@@ -372,5 +372,4 @@ window.trollmapReloadNotificationSession = function() {
   console.log('[notifications] Session reloaded after Smart Plan');
 };
 
-export { loadSessionFromSmartPlan };
 console.log('[notifications] module ready');
