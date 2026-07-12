@@ -3423,30 +3423,48 @@ JSON only. No fishing advice.`,
   biology: {
     label: "Fisheries Biology",
     order: 3,
-    system: "You are a fisheries biologist. Research the food chain, primary/secondary forage, baitfish seasonal movements, and predator gamefish for this lake. Never recommend tackle or fishing methods. Return ONLY JSON.",
-    userTemplate: (lakeName, state, prev) => `Research fisheries biology for:
+    system: "You are a fisheries biologist. Research the food chain, primary/secondary forage, baitfish seasonal movements, and predator gamefish for this lake. CRITICAL: You MUST ONLY list species that are explicitly mentioned in the provided extracted facts. Do NOT add species not supported by evidence. If the facts do not mention a species, it is NOT present in this lake. Never recommend tackle or fishing methods. Return ONLY JSON.",
+    userTemplate: (lakeName, state, prev) => {
+      const facts = prev?._extractedFacts || [];
+      const biologyFacts = facts.filter(f => /biology|forage|species|predator|stocking|invasive|fisheries|shad|herring|bass|crappie|catfish|walleye|smallmouth|spotted/i.test(f.category || ''));
+      // Limit to ~15k chars to avoid context overflow
+      let factsText = biologyFacts.length > 0
+        ? biologyFacts.map(f => `[${f.category}] ${f.fact} (source: ${f.source}, page ${f.page}, confidence ${f.confidence}%)\n  Quote: "${f.quote}"`).join('\n\n')
+        : 'No biology-specific facts were extracted from documents. You must return empty/unknown fields — do NOT invent species.';
+      if (factsText.length > 15000) factsText = factsText.slice(0, 15000) + '\n\n[TRIMMED — remaining facts omitted]';
+      return `Research fisheries biology for:
 
 Lake: ${lakeName}
 State: ${state}
 
 Context:
-${JSON.stringify({identity: prev?.identity, limnology: prev?.limnology}, null, 2).slice(0, 5000)}
+${JSON.stringify({identity: prev?.identity, limnology: prev?.limnology}, null, 2).slice(0, 3000)}
+
+EXTRACTED FACTS FROM AUTHORITATIVE DOCUMENTS (your primary source of truth):
+${factsText}
+
+CRITICAL RULES:
+- ONLY list species that are explicitly mentioned in the extracted facts above.
+- If a species (e.g. Spotted Bass, Smallmouth Bass, Walleye) is NOT in the facts, do NOT include it.
+- If no biology facts were extracted, return empty arrays/objects and null fields — never invent.
+- The "..." placeholder in predatorSpecies is FORBIDDEN. Use an empty array [] if unknown.
 
 Return ONLY:
 {
   "biology": {
     "primaryForage": [{"species":"Threadfin Shad or Blueback Herring etc","abundance":"high | moderate | low","notes":"detail seasonal depth preferences"}],
     "secondaryForage": [{"species":"Gizzard Shad or Crawfish etc","abundance":"high | moderate | low","notes":""}],
-    "predatorSpecies": ["Largemouth Bass","Striped Bass","Crappie","Catfish", ...],
-    "speciesAbundance": {"Largemouth Bass":"moderate","Striped Bass":"high", "Crappie":"high", "...":"..."},
+    "predatorSpecies": ["Largemouth Bass","Striped Bass","Crappie","Catfish"],
+    "speciesAbundance": {"Largemouth Bass":"moderate","Striped Bass":"high", "Crappie":"high"},
     "baitfishMovement": "seasonal migration between shallow creek arms in spring/fall and main river channel swings in summer/winter",
     "knownStockings": [{"species":"Striped Bass","agency":"SCDNR","year":2023,"note":""}],
-    "invasiveSpecies": ["Blueback Herring","Hydrilla","..."],
+    "invasiveSpecies": ["Blueback Herring","Hydrilla"],
     "forageCalendar": {"spring":"...", "summer":"...", "fall":"...", "winter":"..."}
   },
   "sources": [{"label":"","url":"","trust":"OFFICIAL"}]
 }
-JSON only. Never recommend tackle.`,
+JSON only. Never recommend tackle.`;
+    },
     expectedKey: "biology"
   },
   habitat: {
@@ -3560,19 +3578,30 @@ Return JSON only. Never invent limits - if unknown, set field null.`,
   trolling: {
     label: "Trolling Intelligence",
     order: 7,
-    system: "You are a fisheries biologist and professional trolling guide. You are given a verified lake profile containing limnology, biology, forage, habitat, and other sections. DO NOT SEARCH THE INTERNET. Use ONLY supplied JSON. Reference the biology/forage data extensively — use Threadfin Shad dominance, thermocline depth, oxygen depletion floor, and structural habitat data to inform your depth/structure/forage recommendations. Do NOT recommend routes, speeds, colors, or specific lures. Return JSON only.",
-    userTemplate: (lakeName, state, prev) => `You are given a verified lake profile. Use ONLY this JSON - no internet.
+    system: "You are a fisheries biologist and professional trolling guide. You are given a verified lake profile containing limnology, biology, forage, habitat, and other sections. DO NOT SEARCH THE INTERNET. Use ONLY supplied JSON. Reference the biology/forage data extensively — use Threadfin Shad dominance, thermocline depth, oxygen depletion floor, and structural habitat data to inform your depth/structure/forage recommendations. Do NOT recommend routes, speeds, colors, or specific lures. CRITICAL: Only include species listed in the biology.predatorSpecies array. Do NOT add species not confirmed by biology. Return JSON only.",
+    userTemplate: (lakeName, state, prev) => {
+      const bio = prev?.biology || prev?.forage || {};
+      const confirmedSpecies = Array.isArray(bio.predatorSpecies) ? bio.predatorSpecies : [];
+      const speciesList = confirmedSpecies.length > 0 ? confirmedSpecies : ['(none confirmed — biology section empty)'];
+      const speciesArrayStr = speciesList.map(s => `"${s}"`).join(', ');
+      const exampleSpecies = speciesList[0] || 'SpeciesName';
+      return `You are given a verified lake profile. Use ONLY this JSON - no internet.
 
 Lake: ${lakeName}
 Full profile so far (reference biology/forage, limnology including thermocline depth & oxygen floor, and habitat structure):
 ${JSON.stringify(prev, null, 2).slice(0, 12000)}
 
+CONFIRMED SPECIES FROM BIOLOGY (ONLY these species — do not add others):
+${speciesList.join(', ')}
+
 Task: Translate lake science into long-term trolling intelligence. This is stable knowledge, not today's plan. Use the forage data (e.g. Threadfin Shad dominance), thermocline depth, oxygen depletion floor, and structural habitat from the profile to inform your recommendations.
+
+CRITICAL: Only generate trolling intelligence for the confirmed species listed above. Do NOT invent species. If biology confirmed no species, return empty trollingIntelligence object.
 
 Return ONLY:
 {
   "trollingIntelligence": {
-    "Striped Bass": {
+    "${exampleSpecies}": {
       "summer": {
         "preferredDepth": [12,18],
         "structures": ["channel ledges","creek mouths","long points"],
@@ -3583,18 +3612,16 @@ Return ONLY:
       "fall": {"preferredDepth":[8,15],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""},
       "winter": {"preferredDepth":[20,35],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""},
       "spring": {"preferredDepth":[5,15],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""}
-    },
-    "Largemouth Bass": { "summer": {"preferredDepth":[10,20],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""}, "fall": {...}, "winter": {...}, "spring": {...} },
-    "Crappie": { "summer": {"preferredDepth":[12,18],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""}, "fall": {...}, "winter": {...}, "spring": {...} },
-    "Catfish": { "summer": {"preferredDepth":[15,30],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""}, "fall": {...}, "winter": {...}, "spring": {...} }
+    }
   },
   "sources": [{"label":"Derived from lake profile","trust":"DERIVED"}]
 }
 
-Species list should include at least Striped Bass if present in the system, plus Largemouth Bass, Crappie, Catfish. More if relevant (e.g. White Bass, Bowfin).
+Species list MUST be ONLY: [${speciesArrayStr}] — derived from biology.predatorSpecies. Do NOT add species not in this list.
 preferredDepth MUST be a 2-element number array [minDepthFt, maxDepthFt] or null.
 No speeds, no colors, no routes - only stable patterns.
-JSON only.`,
+JSON only.`;
+    },
     expectedKey: "trollingIntelligence"
   },
   summary: {
