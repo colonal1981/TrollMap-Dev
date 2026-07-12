@@ -2,7 +2,7 @@
   "name": "TrollMap GPX Studio — Carolinas Master Edition",
   "short_name": "TrollMap",
   "description": "Precision trolling route planner, lake/river trip planning, live utility and kayak safety dashboard.",
-  "start_url": "./index.html",
+  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait-primary",
