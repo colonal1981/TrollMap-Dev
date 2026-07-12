@@ -26,17 +26,20 @@ var LLM_PROVIDERS = [
     defaultModel: "gemini-2.5-flash",
     models: [
       "gemini-2.5-flash",
-      "gemini-2.0-flash"
+      "gemini-2.0-flash-001",
+      "gemini-2.5-flash-lite"
     ],
     headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
     isGemini: true,
+    excludeFromGeneral: true,
     transformPayload: (p) => ({
       systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
       contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
       generationConfig: {
         temperature: p.temperature || 0.15,
         maxOutputTokens: p.max_tokens || 1500,
-        responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined
+        responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined,
+        thinkingConfig: { thinkingBudget: 0 }
       }
     }),
   },
@@ -48,9 +51,8 @@ var LLM_PROVIDERS = [
     models: [
       "openai/gpt-oss-120b",
       "openai/gpt-oss-20b",
-      "qwen/qwen3-32b",
       "llama-3.3-70b-versatile",
-      "meta-llama/llama-4-scout-17b-16e-instruct"
+      "llama-3.1-8b-instant"
     ],
     headers: (key) => ({ "Authorization": `Bearer ${key}`, "Content-Type": "application/json" }),
     transformPayload: (p) => p,
@@ -79,12 +81,22 @@ var LLM_PROVIDERS = [
     name: "cerebras",
     baseUrl: "https://api.cerebras.ai/v1/chat/completions",
     keyEnv: "CEREBRAS_API_KEY",
-    defaultModel: "llama-3.3-70b",
+    defaultModel: "gpt-oss-120b",
     models: [
-      "llama-3.3-70b",
-      "qwen-3-32b",
       "gpt-oss-120b",
-      "llama-3.1-8b"
+      "gemma-4-31b"
+    ],
+    headers: (key) => ({ "Authorization": `Bearer ${key}`, "Content-Type": "application/json" }),
+    transformPayload: (p) => p,
+  }
+,
+  {
+    name: "nvidia",
+    baseUrl: "https://integrate.api.nvidia.com/v1/chat/completions",
+    keyEnv: "NVIDIA_API_KEY",
+    defaultModel: "meta/llama-4-maverick-17b-128e-instruct",
+    models: [
+      "meta/llama-4-maverick-17b-128e-instruct"
     ],
     headers: (key) => ({ "Authorization": `Bearer ${key}`, "Content-Type": "application/json" }),
     transformPayload: (p) => p,
@@ -109,7 +121,7 @@ __name(extractLLMText, "extractLLMText");
 async function callLLM(env, payload, preferredProvider = null) {
   const providers = preferredProvider
     ? LLM_PROVIDERS.filter(p => p.name === preferredProvider)
-    : LLM_PROVIDERS.filter(p => env[p.keyEnv]);
+    : LLM_PROVIDERS.filter(p => env[p.keyEnv] && !p.excludeFromGeneral);
 
   if (!providers.length) {
     throw new Error("No LLM provider configured. Set GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, or CEREBRAS_API_KEY");
@@ -146,7 +158,7 @@ async function callLLM(env, payload, preferredProvider = null) {
           const geminiText = data.candidates?.[0]?.content?.parts?.[0]?.text;
           if (!geminiText) throw new Error(`gemini/${modelId}: empty content`);
           const compatData = { choices: [{ message: { content: geminiText } }] };
-          return { provider: "gemini", model: modelId, data: compatData };
+          return { provider: "gemini", model: modelId, data: compatData, _geminiRaw: geminiText.slice(0, 200) };
         } catch (e) {
           lastError = e;
           console.warn(`LLM gemini/${modelId} failed: ${e.message}`);
@@ -3234,9 +3246,9 @@ async function handleResearchAgent(request, env) {
   }
 
   const dataKey = agent.expectedKey;
-  const sectionData = parsed[dataKey] || parsed[agentKey] || parsed;
-  const sources = parsed.sources || parsed[dataKey]?.sources || [];
-  const hasData = sectionData && (typeof sectionData === 'object' ? Object.keys(sectionData).length > 0 : true);
+  const sectionData = (parsed[dataKey] && Object.keys(parsed[dataKey]).length > 0) ? parsed[dataKey] : (parsed[agentKey] && Object.keys(parsed[agentKey] || {}).length > 0) ? parsed[agentKey] : parsed;
+  const sources = parsed.sources || sectionData?.sources || [];
+  const hasData = sectionData && (typeof sectionData === 'object' ? Object.keys(sectionData).filter(k => k !== 'sources').length > 0 : true);
   const confidence = calculateSectionConfidence(sources, hasData, agentKey, sectionData);
 
   return new Response(JSON.stringify({
