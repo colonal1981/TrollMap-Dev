@@ -190,6 +190,72 @@ async function extractTextFromPDFBytes(arrayBuffer, onProgress) {
 /**
  * Step-by-Step Evidence Acquisition Pipeline Runner
  */
+async function runFromNormalized(lakeName) {
+  if (researchInProgress) { alert('A research task is already in progress.'); return; }
+  if (!lakeName) { alert('Please select a lake.'); return; }
+  researchInProgress = true;
+  researchLog = [];
+  packagePartsCache = {};
+  showProgress(true);
+  setProgress('Fetching existing normalized documents from R2...', 5);
+  log(`=== RESUME FROM NORMALIZED: ${lakeName} ===`);
+  try {
+    // Fetch normalized docs already saved in R2
+    const normRes = await fetch(`${CF_WORKER_URL}/research/get-normalized?lake=${encodeURIComponent(lakeName)}`);
+    if (!normRes.ok) throw new Error(`No normalized documents found in R2 for ${lakeName} — run the full pipeline first.`);
+    const normData = await normRes.json();
+    if (!normData.ok || !normData.documents?.length) throw new Error(`No normalized documents found for ${lakeName}.`);
+    const normalizedDocuments = normData.documents;
+    log(`Loaded ${normalizedDocuments.length} normalized documents from R2.`);
+
+    // Resolve canonical details for the rest of the pipeline
+    const canonRes = await fetch(`${CF_WORKER_URL}/research/discover`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lakeName, state: 'SC' })
+    });
+    const canonData = await canonRes.json();
+    const stateName = canonData.state || 'SC';
+    const baseName = lakeName.replace(/^Lake\s+/i, '').replace(/,\s*(SC|NC|GA)\s*$/i, '').trim();
+
+    // Jump straight to scoring (Step 5 & 6)
+    setProgress('Step 5-6: Running Quality Scoring & Classification...', 40);
+    log('Computing scores based on authority trustworthiness rules...');
+    const scoredSources = normalizedDocuments.map(doc => {
+      // reuse existing scoring logic inline — same as full pipeline
+      const lower = String(doc.fullText || '').toLowerCase();
+      const baseNameLower = baseName.toLowerCase();
+      const lakeNameLower = lakeName.toLowerCase();
+      const mentionCount = (lower.match(new RegExp(baseNameLower, 'g')) || []).length;
+      const authority = /scdnr|dnr\.sc\.gov|eregulations|des\.sc\.gov|usgs|usace|epa\.gov/.test(String(doc.url || doc.authority || '').toLowerCase()) ? 98 : 60;
+      const relevance = mentionCount > 10 ? 95 : mentionCount > 3 ? 80 : mentionCount > 0 ? 60 : 35;
+      const freshness = /2024|2025|2026/.test(lower) ? 95 : /2020|2021|2022|2023/.test(lower) ? 75 : /201[5-9]/.test(lower) ? 50 : 25;
+      const completeness = (doc.fullText || '').length > 20000 ? 95 : (doc.fullText || '').length > 8000 ? 85 : (doc.fullText || '').length > 2000 ? 65 : 35;
+      const composite = Math.round(authority * 0.4 + relevance * 0.3 + freshness * 0.15 + completeness * 0.15);
+      const classes = [];
+      if (/hydrology|reservoir|dam|drainage|watershed|elevation|pool/.test(lower)) classes.push('Hydrology');
+      if (/thermocline|oxygen|clarity|turbid|secchi|limnol|trophic|stratif/.test(lower)) classes.push('Limnology');
+      if (/bass|crappie|catfish|striper|shad|herring|forage|stocking|species/.test(lower)) classes.push('Biology');
+      if (/regulation|creel|limit|season|closed|license|legal/.test(lower)) classes.push('Regulations');
+      if (/ramp|dock|hazard|shoal|navigation|marina|access/.test(lower)) classes.push('Navigation');
+      if (/troll|lure|speed|depth|pattern|technique/.test(lower)) classes.push('Trolling');
+      log(`• ${doc.title}: auth=${authority} rel=${relevance} fresh=${freshness} comp=${completeness} => composite=${composite} classes=${classes.join(', ') || 'General'}`);
+      return { ...doc, scoring: { authority, relevance, freshness, completeness, composite }, classes };
+    });
+    log('Scoring and classification completed.');
+
+    // Now run steps 7 onward exactly as the full pipeline does
+    // (fact extraction, dedup, mapping, gap analysis, agents, save)
+    // We reuse the shared tail logic by calling into the pipeline directly
+    await runPipelineTail(lakeName, baseName, stateName, normalizedDocuments, scoredSources);
+
+  } catch (e) {
+    log(`❌ Resume Aborted: ${e.message}`);
+    setProgress('Resume failed — see log.', 0);
+  } finally {
+    researchInProgress = false;
+  }
+}
+
 async function runEvidencePipeline(lakeName) {
   if (researchInProgress) {
     alert('A research task or pipeline is already in progress.');
@@ -479,6 +545,18 @@ async function runEvidencePipeline(lakeName) {
     scoredSources.sort((a,b) => (b.scoring.composite||0) - (a.scoring.composite||0));
     await savePipelineDataToR2(lakeName, 'quality_scores.json', { scoredSources });
 
+    await runPipelineTail(lakeName, baseName, stateName, normalizedDocuments, scoredSources);
+
+  } catch (err) {
+    log(`❌ Pipeline Aborted: ${err.message}`);
+    alert(`Evidence Pipeline Failed: ${err.message}`);
+    setProgress("Failed", 0);
+  } finally {
+    researchInProgress = false;
+  }
+}
+
+async function runPipelineTail(lakeName, baseName, stateName, normalizedDocuments, scoredSources) {
     // ----------------------------------------------------
     // STEP 7: Information Extraction (Run Large-Context LLM)
     // ----------------------------------------------------
@@ -713,14 +791,6 @@ async function runEvidencePipeline(lakeName) {
     if (contradictions.length > 0) {
       renderContradictionsAlert(contradictions, lakeName);
     }
-
-  } catch (err) {
-    log(`❌ Pipeline Aborted: ${err.message}`);
-    alert(`Evidence Pipeline Failed: ${err.message}`);
-    setProgress("Failed", 0);
-  } finally {
-    researchInProgress = false;
-  }
 }
 
 async function savePipelineDataToR2(lakeName, filename, data) {
@@ -1719,8 +1789,28 @@ function initLakeResearch() {
   document.getElementById('btnResearch')?.addEventListener('click', () => {
     const lake = document.getElementById('researchLakeSelect')?.value;
     if (!lake) { alert('Select a lake first'); return; }
-    if (!confirm(`Launch the fully structured Evidence Acquisition Pipeline for ${lake}? This will query trusted repositories, download documents through our CORS-bypassed proxy, parse PDFs client-side with PDF.js, score quality, and trigger structured Gemini fact extraction. Continue?`)) return;
+    if (!confirm(`Launch the fully structured Evidence Acquisition Pipeline for ${lake}? This will query trusted repositories, download documents through our CORS-bypassed proxy, parse PDFs client-side with PDF.js, score quality, and trigger structured LLM fact extraction. Continue?`)) return;
     runEvidencePipeline(lake);
+  });
+
+  // Inject Resume button next to Research button if not already in HTML
+  if (!document.getElementById('btnResumeNormalized')) {
+    const researchBtn = document.getElementById('btnResearch');
+    if (researchBtn) {
+      const resumeBtn = document.createElement('button');
+      resumeBtn.id = 'btnResumeNormalized';
+      resumeBtn.textContent = '⚡ Resume (Skip Downloads)';
+      resumeBtn.title = 'Re-run extraction using existing normalized documents in R2 — skips PDF downloads';
+      resumeBtn.style.cssText = 'margin-left:8px; background:var(--accent2,#f59e0b); color:#000; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; font-size:0.85em;';
+      researchBtn.parentNode.insertBefore(resumeBtn, researchBtn.nextSibling);
+    }
+  }
+
+  document.getElementById('btnResumeNormalized')?.addEventListener('click', async () => {
+    const lake = document.getElementById('researchLakeSelect')?.value;
+    if (!lake) { alert('Select a lake first'); return; }
+    if (!confirm(`Resume extraction for ${lake} using existing normalized documents already in R2? Skips all PDF downloads — jumps straight to scoring, fact extraction, and mapping.`)) return;
+    runFromNormalized(lake);
   });
 
   document.getElementById('btnExport')?.addEventListener('click', () => {
