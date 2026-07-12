@@ -333,25 +333,31 @@ async function runEvidencePipeline(lakeName) {
           log(`⚠️ Error parsing PDF client-side: ${pdfErr.message}. Skipping.`);
         }
       } else {
-        // HTML / TEXT direct scraping
-        log(`Proxy fetching webpage: ${src.url}`);
-        const proxyRes = await fetch(`${CF_WORKER_URL}/research/proxy-download?url=${encodeURIComponent(src.url)}`);
+        // HTML / TEXT — route through Firecrawl via proxy for better extraction
+        log(`Fetching webpage via Firecrawl: ${src.url}`);
+        const proxyRes = await fetch(`${CF_WORKER_URL}/research/proxy-download?url=${encodeURIComponent(src.url)}&type=HTML`);
         if (!proxyRes.ok) {
           log(`⚠️ Failed to scrape page: ${src.title} (HTTP ${proxyRes.status}). Skipping document.`);
           continue;
         }
+
+        const isFirecrawl = proxyRes.headers.get('X-Source') === 'firecrawl';
         const text = await proxyRes.text();
-        // Basic clean HTML helper
-        const cleanedText = text.replace(/<script[\s\S]*?<\/script>/gi, " ")
-                                .replace(/<style[\s\S]*?<\/style>/gi, " ")
-                                .replace(/<[^>]+>/g, " ")
-                                .replace(/\s+/g, " ")
-                                .trim();
+
+        // If Firecrawl returned markdown, use it directly — no HTML stripping needed
+        const cleanedText = isFirecrawl ? text : text
+          .replace(/<script[\s\S]*?<\/script>/gi, " ")
+          .replace(/<style[\s\S]*?<\/style>/gi, " ")
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
 
         if (cleanedText.length < 200) {
-          log(`⚠️ Page content too short (${cleanedText.length} chars) — likely blocked or 404 HTML. Skipping.`);
+          log(`⚠️ Page content too short (${cleanedText.length} chars) — likely blocked or 404. Skipping.`);
           continue;
         }
+
+        log(`${isFirecrawl ? 'Firecrawl' : 'Basic'} extracted ${cleanedText.length} chars from ${src.title}`);
 
         normalizedDocuments.push({
           title: src.title,
@@ -361,9 +367,10 @@ async function runEvidencePipeline(lakeName) {
           fullText: cleanedText,
           pages: [{ pageNumber: 1, text: cleanedText, title: src.title }],
           downloadDate: new Date().toISOString(),
-          contentType: 'text/html'
+          contentType: isFirecrawl ? 'text/markdown' : 'text/html',
+          extractionMethod: isFirecrawl ? 'firecrawl' : 'basic'
         });
-        log(`Webpage scraped & normalized successfully.`);
+        log(`Webpage extracted & normalized successfully.`);
       }
     }
 
