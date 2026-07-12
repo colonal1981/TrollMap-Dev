@@ -87,6 +87,55 @@ function sanitize(str) {
   return String(str || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80) || 'unknown';
 }
 
+function cleanLakeBaseName(lakeName) {
+  let base = String(lakeName || '').trim();
+  base = base.replace(/^Lake\s+/i, '');
+  base = base.replace(/,\s*(SC|NC|GA)\s*$/i, '').trim();
+  base = base.replace(/\s+Reservoir$/i, '').trim();
+  base = base.replace(/\s+Lake$/i, '').trim();
+  return base || lakeName;
+}
+
+function extractRelevantChunks(text, lakeName, maxChars = 20000) {
+  const base = cleanLakeBaseName(lakeName);
+  const terms = [...new Set([base, lakeName, base.split(' ')[0], base.split(' ').slice(-1)[0]].filter(Boolean))];
+  const lower = (text || '').toLowerCase();
+  let chunks = [];
+  let seenRanges = [];
+  for (const term of terms) {
+    const termLower = term.toLowerCase();
+    if (termLower.length < 3) continue;
+    let idx = 0;
+    let found = 0;
+    while (found < 6) {
+      idx = lower.indexOf(termLower, idx);
+      if (idx === -1) break;
+      const start = Math.max(0, idx - 1200);
+      const end = Math.min(text.length, idx + termLower.length + 1800);
+      // avoid heavy overlap
+      let overlaps = false;
+      for (const r of seenRanges) {
+        if (start < r.end && end > r.start && Math.abs(start - r.start) < 500) { overlaps = true; break; }
+      }
+      if (!overlaps) {
+        chunks.push(text.slice(start, end));
+        seenRanges.push({ start, end });
+      }
+      idx = end;
+      found++;
+      if (chunks.join('\n\n').length > maxChars) break;
+    }
+    if (chunks.join('\n\n').length > maxChars) break;
+  }
+  if (chunks.length === 0) {
+    // no direct mentions -> take first 8k chars (likely overview + TOC)
+    return (text || '').slice(0, Math.min(maxChars, 8000));
+  }
+  let merged = chunks.join('\n\n--- RELEVANT EXCERPT ---\n\n');
+  if (merged.length > maxChars) merged = merged.slice(0, maxChars);
+  return merged;
+}
+
 /**
  * PDF.js In-Browser Text Extractor
  * Loads PDF.js from unpkg/cdnjs dynamically so we don't have local dependencies.
@@ -167,14 +216,30 @@ async function runEvidencePipeline(lakeName) {
     // ----------------------------------------------------
     setProgress("Step 1: Identifying Canonical Lake...", 10);
     log("Resolving canonical lake details and aliases...");
+    const baseName = cleanLakeBaseName(lakeName);
+    const rawAliases = [
+      `${baseName} Reservoir`,
+      `Lake ${baseName}`,
+      `${baseName} Lake`,
+      lakeName,
+      `${lakeName} Reservoir`
+    ];
+    // dedupe and clean double Lake
+    const aliasSet = new Set();
+    const aliases = [];
+    for (let a of rawAliases) {
+      a = String(a).replace(/\s+/g, ' ').trim();
+      a = a.replace(/^Lake Lake /i, 'Lake ');
+      if (!a || aliasSet.has(a.toLowerCase())) continue;
+      if (a.toLowerCase() === lakeName.toLowerCase()) continue; // primary name not alias
+      aliasSet.add(a.toLowerCase());
+      aliases.push(a);
+    }
     const canonicalLake = {
       name: lakeName,
+      baseName,
       state: stateName,
-      aliases: [
-        `${lakeName} Reservoir`,
-        `Lake ${lakeName} Reservoir`,
-        `${lakeName} Lake`
-      ],
+      aliases,
       sanitizedId: sanitizedLake,
       metadata: {
         lastIdentified: new Date().toISOString()
@@ -192,7 +257,17 @@ async function runEvidencePipeline(lakeName) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ lakeName, state: stateName })
     });
-    const discoverData = await discoverRes.json();
+    if (!discoverRes.ok) {
+      const snippet = await discoverRes.text().catch(() => '').then(t => t.slice(0, 300));
+      throw new Error(`Source Discovery HTTP ${discoverRes.status}: ${snippet}`);
+    }
+    let discoverData;
+    try {
+      const txt = await discoverRes.text();
+      discoverData = JSON.parse(txt);
+    } catch (e) {
+      throw new Error(`Source Discovery non-JSON response (worker not deployed or 404): ${e.message}`);
+    }
     if (!discoverData.success) {
       throw new Error(`Source Discovery Failed: ${discoverData.error || 'Unknown error'}`);
     }
@@ -217,15 +292,25 @@ async function runEvidencePipeline(lakeName) {
       const src = sources[i];
       log(`Processing [${i + 1}/${sources.length}] ${src.title}...`);
 
+      // skip oversized PDFs early (client memory protection)
+      const isHugePocketGuide = /pocket.*guide/i.test(src.title) && src.url.toLowerCase().includes('.pdf');
+      if (src.type === 'PDF' && src.title.toLowerCase().includes('pocket guide')) {
+        log(`⚠️ Skipping huge generic pocket guide PDF (50MB) — low lake-specific value.`);
+        continue;
+      }
+
       if (src.type === 'PDF') {
         log(`Using Cloudflare Proxy to fetch PDF: ${src.url}`);
         const proxyRes = await fetch(`${CF_WORKER_URL}/research/proxy-download?url=${encodeURIComponent(src.url)}`);
         if (!proxyRes.ok) {
-          log(`⚠️ Failed to download PDF: ${src.title} (HTTP Error / Blocked / Unreachable). Skipping document.`);
+          log(`⚠️ Failed to download PDF: ${src.title} (HTTP ${proxyRes.status}). Skipping document.`);
           continue;
         }
-
         const arrayBuffer = await proxyRes.arrayBuffer();
+        if (arrayBuffer.byteLength > 25 * 1024 * 1024) {
+          log(`⚠️ PDF too large (${(arrayBuffer.byteLength/1024/1024).toFixed(1)}MB) — skipping to protect browser memory. URL: ${src.url}`);
+          continue;
+        }
         log(`PDF raw binary streamed to browser (${arrayBuffer.byteLength} bytes). Processing text extract in browser thread...`);
         
         try {
@@ -252,7 +337,7 @@ async function runEvidencePipeline(lakeName) {
         log(`Proxy fetching webpage: ${src.url}`);
         const proxyRes = await fetch(`${CF_WORKER_URL}/research/proxy-download?url=${encodeURIComponent(src.url)}`);
         if (!proxyRes.ok) {
-          log(`⚠️ Failed to scrape page: ${src.title} (HTTP Error / Blocked / Unreachable). Skipping document.`);
+          log(`⚠️ Failed to scrape page: ${src.title} (HTTP ${proxyRes.status}). Skipping document.`);
           continue;
         }
         const text = await proxyRes.text();
@@ -262,6 +347,11 @@ async function runEvidencePipeline(lakeName) {
                                 .replace(/<[^>]+>/g, " ")
                                 .replace(/\s+/g, " ")
                                 .trim();
+
+        if (cleanedText.length < 200) {
+          log(`⚠️ Page content too short (${cleanedText.length} chars) — likely blocked or 404 HTML. Skipping.`);
+          continue;
+        }
 
         normalizedDocuments.push({
           title: src.title,
@@ -298,32 +388,77 @@ async function runEvidencePipeline(lakeName) {
     const scoredSources = normalizedDocuments.map(doc => {
       let authorityScore = 55; // default base (fishing club level)
       const auth = String(doc.authority).toUpperCase();
+      const titleLower = String(doc.title || '').toLowerCase();
+      const urlLower = String(doc.url || '').toLowerCase();
+      const lower = String(doc.fullText || '').toLowerCase();
+      const baseLower = baseName.toLowerCase();
+
       if (/USACE|USGS|EPA|NOAA|FEDERAL/.test(auth)) authorityScore = 100;
       else if (/SCDNR|NCWRC|DNR|STATE/.test(auth)) authorityScore = 98;
       else if (/CLEMSON|NC STATE|UNIVERSITY|UGA|USC/.test(auth)) authorityScore = 90;
       else if (/DUKE|DOMINION|POWER|UTILITY/.test(auth)) authorityScore = 85;
 
-      // Simple metrics for freshness & completeness
-      const freshness = 90; // assuming up-to-date
-      const completeness = doc.fullText.length > 5000 ? 95 : doc.fullText.length > 1000 ? 75 : 40;
+      // Relevance penalty: if doc does not mention lake base name, drop authority
+      const mentionsBase = lower.includes(baseLower);
+      const titleHasBase = titleLower.includes(baseLower);
+      let relevance = 40;
+      if (titleHasBase) relevance = 95;
+      else if (mentionsBase) {
+        const count = (lower.match(new RegExp(baseLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+        relevance = count >= 3 ? 90 : count >= 1 ? 70 : 50;
+      }
+      // generic statewide docs without lake mention get capped
+      if (!mentionsBase && !titleHasBase) {
+        // pocket guide, species guide etc
+        authorityScore = Math.min(authorityScore, 60);
+        relevance = 35;
+      }
+      // filter out other-lake specific docs that slipped through discovery
+      const otherLakes = ['murray','marion','moultrie','hartwell','keowee','jocassee','thurmond','russell','wylie','norman','james','rhodhiss'];
+      for (const other of otherLakes) {
+        if (other === baseLower) continue;
+        if (titleLower.includes(`lake ${other}`) && !titleLower.includes(baseLower)) {
+          authorityScore = Math.min(authorityScore, 30);
+          relevance = 15;
+          log(`⚠️ Detected off-lake doc: "${doc.title}" mentions lake ${other} not ${baseName} — penalizing`);
+        }
+      }
+
+      // Freshness: try year from title or url
+      let freshness = 75;
+      const yearMatch = (doc.title + ' ' + doc.url).match(/(19|20)\d{2}/);
+      if (yearMatch) {
+        const year = parseInt(yearMatch[0], 10);
+        const age = 2026 - year;
+        freshness = Math.max(25, 95 - age * 6);
+      }
+      if (/pocket guide/i.test(doc.title)) freshness = 50;
+      if (/regulations.*2024|regulations.*2025|2024.*regulations|2025.*regulations/i.test(doc.title)) freshness = 95;
+
+      const completeness = doc.fullText.length > 20000 ? 95 : doc.fullText.length > 8000 ? 85 : doc.fullText.length > 2000 ? 65 : 35;
 
       // Classification heuristics
       const classes = [];
-      const lower = doc.fullText.toLowerCase();
-      if (/hydrology|flow|elevation|dam|discharge/i.test(lower)) classes.push("Hydrology");
-      if (/biology|forage|shad|herring|predator/i.test(lower)) classes.push("Biology");
-      if (/limnology|thermocline|oxygen|temp|clarity/i.test(lower)) classes.push("Limnology");
-      if (/regulation|limit|creel|closure|illegal/i.test(lower)) classes.push("Regulations");
-      if (/hazard|shoal|depth|timber|navig/i.test(lower)) classes.push("Navigation");
-      if (/troll|presentation|lure|spread|crank/i.test(lower)) classes.push("Trolling");
+      if (/hydrology|flow|elevation|dam|discharge|river stage|pool/.test(lower)) classes.push("Hydrology");
+      if (/biology|forage|shad|herring|predator|bass|crappie|catfish|stocking/.test(lower)) classes.push("Biology");
+      if (/limnology|thermocline|oxygen|secchi|turbidity|clarity|temperature stratification/.test(lower)) classes.push("Limnology");
+      if (/regulation|creel|size limit|length limit|bag limit|closure|season/.test(lower)) classes.push("Regulations");
+      if (/hazard|shoal|stump|depth|timber|navig|boat ramp|access/.test(lower)) classes.push("Navigation");
+      if (/troll|presentation|lure|spread|crankbait|a-rig|umbrella/.test(lower)) classes.push("Trolling");
+
+      // composite score for logging
+      const composite = Math.round((authorityScore * 0.5 + relevance * 0.3 + freshness * 0.1 + completeness * 0.1));
 
       return {
         title: doc.title,
         authority: doc.authority,
+        url: doc.url,
         scoring: {
           authority: authorityScore,
+          relevance,
           freshness,
-          completeness
+          completeness,
+          composite
         },
         classes: classes.length ? classes : ["General Overview"]
       };
@@ -331,36 +466,80 @@ async function runEvidencePipeline(lakeName) {
 
     log(`Scoring and classification completed:`);
     scoredSources.forEach(s => {
-      log(`• ${s.title}: score=${s.scoring.authority} classes=${s.classes.join(', ')}`);
+      log(`• ${s.title}: auth=${s.scoring.authority} rel=${s.scoring.relevance} fresh=${s.scoring.freshness} comp=${s.scoring.completeness} => composite=${s.scoring.composite} classes=${s.classes.join(', ')}`);
     });
+    // sort by composite desc for downstream use
+    scoredSources.sort((a,b) => (b.scoring.composite||0) - (a.scoring.composite||0));
     await savePipelineDataToR2(lakeName, 'quality_scores.json', { scoredSources });
 
     // ----------------------------------------------------
     // STEP 7: Information Extraction (Run Large-Context LLM)
     // ----------------------------------------------------
     setProgress("Step 7: Deep Fact Extraction via Gemini Large-Context...", 85);
-    log("Submitting full normalized text payloads to Gemini-2.5-Flash...");
-    
+    log("Submitting lake-relevant chunks to Gemini-2.5-Flash (not full 100k dumps)...");
+
+    // Use relevant chunking to avoid drowning LLM in statewide report noise
     const extractionPayload = {
       lakeName,
+      baseName,
       state: stateName,
-      documents: normalizedDocuments.map(d => ({ title: d.title, text: d.fullText.slice(0, 100000) })) // Safety clip at 100k chars
+      documents: normalizedDocuments.map(d => ({
+        title: d.title,
+        url: d.url,
+        text: extractRelevantChunks(d.fullText, lakeName, 20000),
+        quality: (scoredSources.find(s => s.title === d.title)?.scoring) || {}
+      }))
     };
 
-    const extractRes = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(extractionPayload)
-    });
-    const extractData = await extractRes.json();
+    // total cap ~120k chars to keep Gemini inside context & cost
+    let totalChars = extractionPayload.documents.reduce((a, b) => a + (b.text?.length || 0), 0);
+    if (totalChars > 120000) {
+      log(`⚠️ Total payload ${totalChars} chars >120k cap — trimming lowest-quality docs`);
+      const ranked = extractionPayload.documents
+        .map((d) => ({ ...d, composite: (d.quality?.composite) || 50 }))
+        .sort((a, b) => b.composite - a.composite);
+      let kept = [];
+      let cur = 0;
+      for (const doc of ranked) {
+        if (cur + doc.text.length > 120000 && kept.length >= 3) break;
+        kept.push(doc);
+        cur += doc.text.length;
+      }
+      extractionPayload.documents = kept;
+      log(`Trimmed to ${kept.length} docs, ${cur} chars`);
+    }
+
+    let extractRes;
+    try {
+      extractRes = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(extractionPayload)
+      });
+    } catch (e) {
+      throw new Error(`Gemini Extraction fetch failed: ${e.message}`);
+    }
+    if (!extractRes.ok) {
+      const snippet = await extractRes.text().catch(() => '').then(t => t.slice(0, 500));
+      throw new Error(`Gemini Extraction HTTP ${extractRes.status}: ${snippet}`);
+    }
+    let extractData;
+    try {
+      extractData = await extractRes.json();
+    } catch (e) {
+      throw new Error(`Gemini Extraction non-JSON: ${e.message}`);
+    }
     if (!extractData.success) {
       throw new Error(`Gemini Extraction Failed: ${extractData.error || 'Extraction failure'}`);
     }
 
     const rawFacts = extractData.extracted_facts || [];
     log(`Gemini deep scan extracted ${rawFacts.length} verified facts.`);
+    if (rawFacts.length === 0) {
+      log(`⚠️ Zero facts extracted — docs lack lake-specific data or prompt too strict. Saving payload for debug and continuing as draft.`);
+    }
     rawFacts.forEach(f => {
-      log(`💬 [${f.category}] "${f.fact}" (Confidence: ${f.confidence}%) - Source: ${f.source} pg ${f.page}`);
+      log(`💬 [${f.category}] "${f.fact}" (Confidence: ${f.confidence}%) - Source: ${f.source} pg ${f.page || '?'}`);
     });
 
     // ----------------------------------------------------
@@ -368,14 +547,24 @@ async function runEvidencePipeline(lakeName) {
     // ----------------------------------------------------
     setProgress("Step 8-9: Resolving duplicates & conflicts...", 92);
     log("Deduplicating identical facts and checking for anomalies...");
-    
-    const dedupeRes = await fetch(`${CF_WORKER_URL}/research/dedupe-contradictions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ facts: rawFacts })
-    });
-    const dedupeData = await dedupeRes.json();
-    
+
+    let dedupeData;
+    try {
+      const dedupeRes = await fetch(`${CF_WORKER_URL}/research/dedupe-contradictions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ facts: rawFacts })
+      });
+      if (!dedupeRes.ok) {
+        const t = await dedupeRes.text().catch(()=> '').then(s=>s.slice(0,300));
+        throw new Error(`HTTP ${dedupeRes.status}: ${t}`);
+      }
+      dedupeData = await dedupeRes.json();
+    } catch (e) {
+      log(`⚠️ Dedupe request failed: ${e.message} — treating all facts as unique`);
+      dedupeData = { deduplicated_facts: rawFacts, contradictions: [] };
+    }
+
     const uniqueFacts = dedupeData.deduplicated_facts || [];
     const contradictions = dedupeData.contradictions || [];
 
@@ -400,20 +589,38 @@ async function runEvidencePipeline(lakeName) {
     const researchPacket = buildFinalResearchPacket(lakeName, stateName, uniqueFacts, scoredSources);
     await savePipelineDataToR2(lakeName, 'research_packet.json', researchPacket);
 
+    // QUALITY GATE: never verified if 0 facts
+    let finalStatus = 'draft';
+    if (uniqueFacts.length >= 5 && contradictions.length === 0) finalStatus = 'verified';
+    else if (uniqueFacts.length >= 3 && contradictions.length === 0) finalStatus = 'draft';
+    else if (uniqueFacts.length === 0) {
+      log(`❌ Quality gate: 0 facts -> forcing draft, low confidence`);
+      finalStatus = 'draft';
+    } else if (contradictions.length > 0) {
+      finalStatus = 'draft';
+    }
+
     // Persist as a standard TrollMap lake profile
-    log("Saving compiled evidence packet as master lake profile...");
+    log(`Saving compiled evidence packet as master lake profile (status=${finalStatus}, facts=${uniqueFacts.length})...`);
     const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         lakeName,
         profile: researchPacket,
-        status: contradictions.length > 0 ? 'draft' : 'verified',
-        requestedBy: "Evidence Acquisition Engine"
+        status: finalStatus,
+        requestedBy: "Evidence Acquisition Engine v2"
       })
     });
+    if (!saveRes.ok) {
+      const t = await saveRes.text().catch(()=> '').then(s=>s.slice(0,400));
+      throw new Error(`Save master profile HTTP ${saveRes.status}: ${t}`);
+    }
     const saveData = await saveRes.json();
-    log(`✔ Saved final Master profile v${saveData.version} as ${saveData.status}!`);
+    log(`✔ Saved final Master profile v${saveData.version} as ${saveData.status} (overallConf=${saveData.overallConfidence ?? '?'}%)!`);
+    if (uniqueFacts.length === 0) {
+      log(`⚠️ Master profile is empty — retry with different sources or check Gemini API key. Saved as draft for inspection.`);
+    }
 
     setProgress("Pipeline completed successfully!", 100);
     log(`=== EVIDENCE PIPELINE COMPLETE — Master Package Ready for downstream AI agents ===`);
@@ -455,64 +662,136 @@ async function savePipelineDataToR2(lakeName, filename, data) {
 }
 
 function buildFinalResearchPacket(lakeName, state, uniqueFacts, scoredSources) {
-  const getVal = (cat, defaultVal) => {
-    const found = uniqueFacts.find(f => String(f.category).toLowerCase() === cat.toLowerCase());
-    return found ? found.fact : defaultVal;
+  const baseName = cleanLakeBaseName(lakeName);
+  // synonym mapping for getVal
+  const catSynonyms = {
+    riverSystem: ['riverSystem','river','river system','watershed','basin'],
+    archetype: ['archetype','lakeType','type','reservoirType'],
+    surfaceArea: ['surfaceArea','surfaceAreaAcres','acres','size','surface area'],
+    maxDepth: ['maxDepth','maxDepthFt','maximum depth','max depth'],
+    averageDepth: ['averageDepth','averageDepthFt','avg depth','mean depth'],
+    clarity: ['clarity','waterClarity','water clarity','secchi','visibility'],
+    thermocline: ['thermocline','thermal stratification','stratification'],
+    oxygen: ['oxygen','dissolved oxygen','do','anoxic'],
+    primaryForage: ['primaryForage','primary forage','forage','baitfish','shad','herring'],
+    secondaryForage: ['secondaryForage','secondary forage','secondary bait'],
+    summary: ['summary','overview','description','general overview']
   };
+  const getVal = (cat, defaultVal) => {
+    const syns = catSynonyms[cat] || [cat];
+    for (const syn of syns) {
+      const found = uniqueFacts.find(f => {
+        const c = String(f.category || '').toLowerCase();
+        return c === syn.toLowerCase() || c.includes(syn.toLowerCase());
+      });
+      if (found) return found.fact;
+    }
+    // fallback direct match
+    const direct = uniqueFacts.find(f => String(f.category).toLowerCase() === cat.toLowerCase());
+    return direct ? direct.fact : defaultVal;
+  };
+  const getAllForCategory = (cat) => uniqueFacts.filter(f => String(f.category||'').toLowerCase().includes(cat.toLowerCase())).map(f=>f.fact);
+
+  // Build aliases correctly
+  const aliases = [...new Set([
+    `${baseName} Reservoir`,
+    `Lake ${baseName}`,
+    lakeName.includes('Lake') ? baseName : `Lake ${baseName} Reservoir`
+  ])].filter(a => a.toLowerCase() !== lakeName.toLowerCase());
+
+  const surfaceAreaRaw = getVal('surfaceArea', null);
+  const maxDepthRaw = getVal('maxDepth', null);
+  const avgDepthRaw = getVal('averageDepth', null);
 
   return {
     lakeName,
+    baseName,
     state,
-    aliases: [ `${lakeName} Reservoir`, `Lake ${lakeName} Reservoir` ],
+    aliases,
     riverSystem: getVal('riverSystem', null),
     archetype: getVal('archetype', null),
-    surfaceAreaAcres: parseFloat(getVal('surfaceArea', null)) || null,
-    maxDepthFt: parseFloat(getVal('maxDepth', null)) || null,
-    averageDepthFt: parseFloat(getVal('averageDepth', null)) || null,
+    surfaceAreaAcres: surfaceAreaRaw ? parseFloat(String(surfaceAreaRaw).replace(/[^0-9.]/g,'')) || null : null,
+    maxDepthFt: maxDepthRaw ? parseFloat(String(maxDepthRaw).replace(/[^0-9.]/g,'')) || null : null,
+    averageDepthFt: avgDepthRaw ? parseFloat(String(avgDepthRaw).replace(/[^0-9.]/g,'')) || null : null,
     limnology: {
-      waterClarity: { typical: getVal('clarity', null), color: null, secchiFt: null, note: "" },
+      waterClarity: { typical: getVal('clarity', null), color: null, secchiFt: null, note: getAllForCategory('clarity').join('; ').slice(0,500) },
       thermocline: { summerDepthFt: null, strength: null, winterMix: null, note: getVal('thermocline', null) },
       oxygen: { depletionDepthFt: null, anoxicBelowFt: null, note: getVal('oxygen', null) }
     },
     forage: {
-      primaryForage: [ { species: getVal('primaryForage', null), abundance: null, notes: "" } ],
-      secondaryForage: [ { species: getVal('secondaryForage', null), abundance: null, notes: "" } ],
-      predatorSpecies: [],
-      baitfishMovement: null,
-      forageCalendar: { spring: null, summer: null, fall: null, winter: null }
+      primaryForage: (() => {
+        const v = getVal('primaryForage', null);
+        return v ? [{ species: v, abundance: null, notes: "" }] : [];
+      })(),
+      secondaryForage: (() => {
+        const v = getVal('secondaryForage', null);
+        return v ? [{ species: v, abundance: null, notes: "" }] : [];
+      })(),
+      predatorSpecies: getAllForCategory('predator').slice(0,8),
+      baitfishMovement: getVal('baitfishMovement', null),
+      forageCalendar: { spring: null, summer: null, fall: null, winter: null },
+      _rawFacts: getAllForCategory('forage').slice(0,10)
     },
     habitat: {
       bottomComposition: {},
       cover: [],
       structuralElements: {
-        points: null,
-        humps: null,
-        creekArms: null
+        points: getVal('points', null),
+        humps: getVal('humps', null),
+        creekArms: getVal('creekArms', null)
       },
       dockDensity: null,
-      standingTimber: null
+      standingTimber: getVal('standingTimber', null)
     },
     navigation: {
       ramps: [],
       hazards: [],
-      notes: null
+      notes: getVal('navigation', null)
     },
     regulations: {
       state,
-      generalStateRegulations: { creelLimits: {} },
-      lakeSpecificRegulations: { hasExceptions: null, creelLimits: {} }
+      generalStateRegulations: {
+        creelLimits: (() => {
+          const facts = getAllForCategory('regulation');
+          const general = {};
+          facts.filter(f => /statewide|general/i.test(f)).slice(0,5).forEach((fact,i)=>{
+            general[`general_${i}`] = fact;
+          });
+          return general;
+        })()
+      },
+      lakeSpecificRegulations: {
+        hasExceptions: uniqueFacts.some(f => /lake-specific|lake specific|exception/i.test(f.fact)),
+        creelLimits: (() => {
+          const o={};
+          getAllForCategory('creel').forEach((fact,i)=>{ o[`creel_${i}`]=fact; });
+          getAllForCategory('regulation').filter(f=> new RegExp(baseName,'i').test(f)).slice(0,5).forEach((fact,i)=>{ o[`lake_${i}`]=fact; });
+          return o;
+        })(),
+        _raw: getAllForCategory('regulations').slice(0,15)
+      }
     },
-    trolling: {},
+    trolling: {
+      notes: getAllForCategory('trolling').join('; ').slice(0,1000) || null
+    },
     summary: {
-      text: getVal('summary', null),
-      keywords: []
+      text: getVal('summary', null) || (uniqueFacts.length ? uniqueFacts.map(f=>f.fact).join(' ').slice(0,2000) : null),
+      keywords: [...new Set(uniqueFacts.map(f=>f.category).filter(Boolean))].slice(0,20)
     },
-    sources: scoredSources.map(s => ({ label: s.title, url: "#", trust: s.scoring.authority >= 98 ? "OFFICIAL" : "THIRD_PARTY" })),
+    sources: scoredSources.map(s => ({
+      label: s.title,
+      url: s.url || "#",
+      authority: s.authority,
+      trust: s.scoring.composite >= 80 ? "OFFICIAL" : s.scoring.composite >= 50 ? "THIRD_PARTY" : "LOW_RELEVANCE",
+      scores: s.scoring
+    })),
     metadata: {
       version: "1.0",
       status: "draft",
       lastUpdated: new Date().toISOString(),
-      verified: false
+      verified: false,
+      factCount: uniqueFacts.length,
+      baseName
     }
   };
 }
