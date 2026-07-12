@@ -3244,7 +3244,62 @@ If you truly cannot find ANY verifiable fact, return {"extracted_facts":[]} but 
       return combined.includes(baseName.toLowerCase()) || combined.includes(lakeName.toLowerCase());
     });
 
-    const outFacts = filteredFacts.length ? filteredFacts : facts; // if filtering removed all, keep original to avoid 0
+    let outFacts = filteredFacts.length ? filteredFacts : facts; // if filtering removed all, keep original to avoid 0
+
+    // FALLBACK PASS: if still 0 facts, retry with simpler prompt focused only on regulations docs
+    if (outFacts.length === 0) {
+      console.warn(`handleResearchAnalyzeFacts: primary pass returned 0 facts — running fallback regulations pass`);
+      // Prefer HTML/regulations docs for fallback (shorter, more focused)
+      const regsDocs = documents.filter(d => /regulation|regs|creel|html/i.test((d.title||'') + (d.url||'')));
+      const fallbackDocs = regsDocs.length ? regsDocs : documents.slice(0, 3);
+      const fallbackContext = fallbackDocs.map((d,i) => `--- DOC ${i+1}: ${d.title} ---\n${(d.text||d.fullText||'').slice(0,15000)}`).join('\n\n');
+      const fallbackPrompt = `Extract fishing regulations from these documents for ${lakeName} or general SC statewide rules.
+
+For each rule found, return a JSON object. Include creel limits, size limits, closed seasons, and any lake-specific rules.
+Even general statewide SC rules are valuable. Return as many facts as you can find.
+
+Documents:
+${fallbackContext.slice(0, 40000)}
+
+Return ONLY valid JSON:
+{
+  "extracted_facts": [
+    {"fact": "...", "page": 1, "confidence": 80, "source": "...", "quote": "exact text from doc", "category": "creelLimit_general"}
+  ]
+}`;
+      try {
+        const fbPayload = {
+          messages: [
+            { role: "system", content: "Extract fishing regulation facts. Return ONLY valid JSON with extracted_facts array. Include any creel limits, size limits, seasons, or rules you find." },
+            { role: "user", content: fallbackPrompt }
+          ],
+          temperature: 0.05,
+          max_tokens: 4000,
+          response_format: { type: "json_object" }
+        };
+        const { data: fbData } = await callLLM(env, fbPayload, null);
+        const fbText = extractLLMText(fbData);
+        const fbParsed = extractJsonPossibly(fbText);
+        if (fbParsed) {
+          let fbFacts = fbParsed.extracted_facts || fbParsed.facts || [];
+          if (!Array.isArray(fbFacts)) fbFacts = [];
+          fbFacts = fbFacts.map(f => ({
+            fact: String(f.fact||'').trim().slice(0,500),
+            page: parseInt(f.page)||1,
+            confidence: Math.min(99, Math.max(10, parseInt(f.confidence)||65)),
+            source: String(f.source||'Unknown').slice(0,180),
+            quote: String(f.quote||'').trim().slice(0,400),
+            category: String(f.category||'regulations_general').trim().slice(0,50)
+          })).filter(f => f.fact.length > 10 && f.quote.length > 5);
+          if (fbFacts.length > 0) {
+            console.log(`handleResearchAnalyzeFacts: fallback pass recovered ${fbFacts.length} regulation facts`);
+            outFacts = fbFacts;
+          }
+        }
+      } catch (fbErr) {
+        console.warn(`handleResearchAnalyzeFacts fallback pass failed: ${fbErr.message}`);
+      }
+    }
 
     return new Response(JSON.stringify({ success: true, extracted_facts: outFacts, meta: { totalDocs: documents.length, contextChars: totalChars, filteredOut: facts.length - outFacts.length } }), { headers: JSON_HEADERS });
   } catch (e) {
@@ -3386,13 +3441,21 @@ async function handleResearchMapFacts(request, env) {
   try { body = await request.json(); } catch { body = {}; }
   const lakeName = String(body.lakeName || '').trim();
   const facts = body.facts || [];
-  const pass = body.pass || 1; // pass 1 = broad facts, pass 2 = gap-fill facts
+  const gapTexts = body.gapTexts || []; // raw text from targeted gap searches
+  const pass = body.pass || 1;
 
-  if (!lakeName || !facts.length) {
-    return new Response(JSON.stringify({ success: false, error: "Missing lakeName or facts" }), { status: 400, headers: JSON_HEADERS });
+  if (!lakeName) {
+    return new Response(JSON.stringify({ success: false, error: "Missing lakeName" }), { status: 400, headers: JSON_HEADERS });
+  }
+
+  // If no facts, return empty null profile rather than failing
+  if (!facts.length) {
+    const emptyProfile = { identity: { lakeName }, limnology: {}, biology: {}, habitat: {}, navigation: {}, regulations: {}, trollingIntelligence: {} };
+    return new Response(JSON.stringify({ success: true, profile: emptyProfile, provider: 'none', model: 'none', pass, factsUsed: 0, note: 'No facts provided — all fields null' }), { headers: JSON_HEADERS });
   }
 
   const factsText = facts.map(f => `[${f.category}] ${f.fact} (Source: ${f.source}, Confidence: ${f.confidence}%)`).join('\n');
+  const gapTextsSection = gapTexts.length ? `\n\nADDITIONAL TARGETED SEARCH RESULTS (extract any relevant facts for the null fields):\n${gapTexts.map(g => `[Searching for: ${g.field}]\n${g.text}`).join('\n\n---\n\n').slice(0, 4000)}` : '';
 
   const prompt = `You are a data mapping agent. You have a list of verified facts extracted from official documents about ${lakeName}.
 
@@ -3407,6 +3470,7 @@ STRICT RULES:
 
 VERIFIED FACTS FROM OFFICIAL DOCUMENTS:
 ${factsText.slice(0, 8000)}
+${gapTextsSection}
 
 Map these facts to this exact JSON schema. Every null means no fact was found for that field:
 {
@@ -3547,10 +3611,10 @@ async function handleResearchGapSearch(request, env) {
   const field = String(body.field || '').trim();
   const query = String(body.query || '').trim();
 
-  if (!lakeName || !query) return new Response(JSON.stringify({ success: false, error: "Missing lakeName or query" }), { status: 400, headers: JSON_HEADERS });
+  if (!lakeName || !query) return new Response(JSON.stringify({ success: false, error: "Missing lakeName or query", extracted_facts: [], rawText: '' }), { status: 400, headers: JSON_HEADERS });
 
   const tavilyKey = env.TAVILY_API_KEY || env.TAVILY_KEY;
-  if (!tavilyKey) return new Response(JSON.stringify({ success: false, error: "No Tavily key", extracted_facts: [] }), { headers: JSON_HEADERS });
+  if (!tavilyKey) return new Response(JSON.stringify({ success: false, error: "No Tavily key", extracted_facts: [], rawText: '' }), { headers: JSON_HEADERS });
 
   try {
     // Search
@@ -3559,34 +3623,27 @@ async function handleResearchGapSearch(request, env) {
       headers: { 'Authorization': `Bearer ${tavilyKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, search_depth: 'basic', max_results: 3 })
     });
-    if (!searchRes.ok) return new Response(JSON.stringify({ success: false, error: `Tavily search ${searchRes.status}`, extracted_facts: [] }), { headers: JSON_HEADERS });
+    if (!searchRes.ok) return new Response(JSON.stringify({ success: false, error: `Tavily search ${searchRes.status}`, extracted_facts: [], rawText: '' }), { headers: JSON_HEADERS });
     const searchData = await searchRes.json();
     const urls = (searchData.results||[]).map(r => r.url).filter(Boolean).slice(0, 3);
-    if (!urls.length) return new Response(JSON.stringify({ success: true, extracted_facts: [], note: "No results found" }), { headers: JSON_HEADERS });
+    if (!urls.length) return new Response(JSON.stringify({ success: true, extracted_facts: [], rawText: '', note: "No results found" }), { headers: JSON_HEADERS });
 
-    // Extract
+    // Extract — return raw text, let mapping agent handle it directly
     const extractRes = await fetch('https://api.tavily.com/extract', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${tavilyKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ urls, query: `${lakeName} ${field}`, extract_depth: 'basic', format: 'markdown' })
     });
-    if (!extractRes.ok) return new Response(JSON.stringify({ success: true, extracted_facts: [], note: "Extract failed" }), { headers: JSON_HEADERS });
+    if (!extractRes.ok) return new Response(JSON.stringify({ success: true, extracted_facts: [], rawText: '', note: "Extract failed" }), { headers: JSON_HEADERS });
     const extractData = await extractRes.json();
-    const text = (extractData.results||[]).map(r => r.raw_content||'').join('\n').slice(0, 15000);
-    if (!text) return new Response(JSON.stringify({ success: true, extracted_facts: [], note: "No text extracted" }), { headers: JSON_HEADERS });
+    const rawText = (extractData.results||[]).map(r => r.raw_content||'').join('\n').slice(0, 8000);
 
-    // Extract facts using analyze-facts
-    const fakeReq = new Request(request.url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lakeName, state, documents: [{ title: `Gap: ${field}`, text, url: urls[0] }] })
-    });
-    const factResponse = await handleResearchAnalyzeFacts(fakeReq, env);
-    const factData = await factResponse.json();
-    return new Response(JSON.stringify({ success: true, extracted_facts: factData.extracted_facts || [], field, query }), { headers: JSON_HEADERS });
+    // Return raw text — no LLM extraction here to avoid CPU timeout
+    // The mapping agent will receive this as additional context in Pass 2
+    return new Response(JSON.stringify({ success: true, extracted_facts: [], rawText, field, query, urls }), { headers: JSON_HEADERS });
 
   } catch (e) {
-    return new Response(JSON.stringify({ success: false, error: e.message, extracted_facts: [] }), { status: 502, headers: JSON_HEADERS });
+    return new Response(JSON.stringify({ success: false, error: e.message, extracted_facts: [], rawText: '' }), { status: 502, headers: JSON_HEADERS });
   }
 }
 __name(handleResearchGapSearch, "handleResearchGapSearch");
