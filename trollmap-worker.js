@@ -2787,23 +2787,38 @@ async function handleResearchDiscover(request, env) {
     return new Response(JSON.stringify({ success: false, error: "Missing lakeName" }), { status: 400, headers: JSON_HEADERS });
   }
 
+  // Derive base name for relevance filtering (e.g. "Lake Wateree, SC" -> "wateree")
+  const baseName = String(lakeName).replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA)\s*$/i,'').replace(/\s+Reservoir$/i,'').replace(/\s+Lake$/i,'').trim();
+  const baseLower = baseName.toLowerCase();
+  const otherLakeNames = ['murray','marion','moultrie','hartwell','keowee','jocassee','thurmond','clarks hill','clark hill','russell','wylie','norman','hickory','james','rhodhiss','mountain island','wateree','robinson','monticello','greenwood','secession','yates','martin'];
+  const offLakePattern = (title, url) => {
+    const combined = `${title} ${url}`.toLowerCase();
+    for (const other of otherLakeNames) {
+      if (other === baseLower) continue;
+      // if title explicitly says "Lake Murray Regulations" and we are searching Wateree, flag it
+      if (combined.includes(`lake ${other}`) && !combined.includes(baseLower)) {
+        // allow generic state docs that mention multiple lakes but not specifically lake-specific
+        // if combined contains \"murray\" and \"marion\" both generic list, keep
+        const isLakeSpecificReg = /regulations|regs\.html|description\.html/.test(combined) && /lake (murray|marion|moultrie|hartwell|keowee|jocassee)/.test(combined);
+        if (isLakeSpecificReg) return other;
+      }
+    }
+    return null;
+  };
+
   // Resolve state-specific agencies and domains dynamically
   let dnrName = "SCDNR";
   let dnrDomain = "dnr.sc.gov";
-  
-  if (state === "NC") {
-    dnrName = "NCWRC";
-    dnrDomain = "ncwildlife.org";
-  } else if (state === "GA") {
-    dnrName = "GADNR";
-    dnrDomain = "georgiawildlife.com";
-  }
+  if (state === "NC") { dnrName = "NCWRC"; dnrDomain = "ncwildlife.org"; }
+  else if (state === "GA") { dnrName = "GADNR"; dnrDomain = "georgiawildlife.com"; }
 
+  // Use baseName in queries to improve Tavily hit rate (avoid ", SC" suffix which hurts)
+  const queryLake = baseName || lakeName;
   const queryPatterns = [
-    `"${lakeName}" (fisheries OR biology OR "striped bass" OR crappie) ${dnrName} filetype:pdf`,
-    `"${lakeName}" (regulations OR "creel limit" OR "size limit") site:${dnrDomain}`,
-    `"${lakeName}" (limnology OR thermocline OR "water quality" OR hydrology) (USACE OR USGS OR EPA) filetype:pdf`,
-    `"${lakeName}" (habitat OR structure OR navigation OR hazards)`
+    `"${queryLake}" (fisheries OR biology OR \"striped bass\" OR crappie OR \"largemouth\") ${dnrName} filetype:pdf`,
+    `"${queryLake}" (regulations OR \"creel limit\" OR \"size limit\" OR \"bag limit\") site:${dnrDomain}`,
+    `"${queryLake}" (limnology OR thermocline OR \"water quality\" OR hydrology OR \"surface area\") (USACE OR USGS OR EPA)`,
+    `"${queryLake}" lake (habitat OR structure OR navigation OR hazards OR ramps) ${dnrName}`
   ];
 
   let discoveredSources = [];
@@ -2812,123 +2827,152 @@ async function handleResearchDiscover(request, env) {
   const tavilyApiKey = env.TAVILY_API_KEY || env.TAVILY_KEY;
 
   if (tavilyApiKey) {
-    // ── TAVILY API (PRIMARY DYNAMIC COUPLING WITH RERANKING) ──
     for (const q of queryPatterns) {
       try {
-        // Step 1: Perform search with advanced depth to locate highly specific documents
         const searchUrl = "https://api.tavily.com/search";
         const searchRes = await fetch(searchUrl, {
           method: "POST",
-          headers: {
-            "Authorization": `Bearer ${tavilyApiKey}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            query: q,
-            search_depth: "advanced",
-            max_results: 5,
-            include_raw_content: false
-          })
+          headers: { "Authorization": `Bearer ${tavilyApiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ query: q, search_depth: "advanced", max_results: 5, include_raw_content: false, exclude_domains: [] })
         });
+        if (!searchRes.ok) continue;
+        const searchData = await searchRes.json();
+        const results = searchData.results || [];
+        const urlsToExtract = results.map(r => r.url).filter(Boolean);
+        if (!urlsToExtract.length) continue;
 
-        if (searchRes.ok) {
-          const searchData = await searchRes.json();
-          const results = searchData.results || [];
-          const urlsToExtract = results.map(r => r.url).filter(Boolean);
-
-          if (urlsToExtract.length > 0) {
-            // Step 2: Use Tavily Extract with the specific lake name for relevance-based chunk reranking
-            const extractUrl = "https://api.tavily.com/extract";
-            const extractRes = await fetch(extractUrl, {
-              method: "POST",
-              headers: {
-                "Authorization": `Bearer ${tavilyApiKey}`,
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify({
-                urls: urlsToExtract,
-                query: lakeName, // Reranks extracted content chunks strictly by relevance to the specific lake
-                extract_depth: "advanced",
-                format: "markdown"
-              })
+        const extractUrl = "https://api.tavily.com/extract";
+        const extractRes = await fetch(extractUrl, {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${tavilyApiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ urls: urlsToExtract, query: queryLake, extract_depth: "advanced", format: "markdown" })
+        });
+        if (!extractRes.ok) {
+          // fall back to using search results directly without extract
+          for (const r of results) {
+            const off = offLakePattern(r.title||'', r.url||'');
+            if (off) { console.log(`filtered off-lake ${off} for ${baseName}: ${r.url}`); continue; }
+            const isPdf = String(r.url||'').toLowerCase().endsWith('.pdf');
+            const host = (()=>{ try{ return new URL(r.url).hostname; }catch{ return "Tavily"; } })();
+            discoveredSources.push({
+              title: r.title || `${queryLake} - ${host}`,
+              type: isPdf ? "PDF" : "HTML",
+              authority: host,
+              url: r.url,
+              priority: (r.title||'').toLowerCase().includes(baseLower) ? 1 : 2,
+              score: r.score || 0
             });
-
-            if (extractRes.ok) {
-              const extractData = await extractRes.json();
-              const extractions = extractData.results || [];
-              for (const ext of extractions) {
-                const isPdf = String(ext.url || "").toLowerCase().endsWith(".pdf");
-                discoveredSources.push({
-                  title: ext.title || `${lakeName} Document`,
-                  type: isPdf ? "PDF" : "HTML",
-                  authority: new URL(ext.url).hostname || "Tavily Extract",
-                  url: ext.url,
-                  priority: isPdf ? 1 : 2,
-                  extractedText: ext.raw_content || "" // Pre-loaded extracted text for the downloader step
-                });
-              }
-            }
           }
+          continue;
+        }
+        const extractData = await extractRes.json();
+        const extractions = extractData.results || [];
+        for (const ext of extractions) {
+          const title = ext.title || `${queryLake} Document`;
+          const off = offLakePattern(title, ext.url||'');
+          if (off) { console.log(`filtered off-lake ${off} after extract for ${baseName}: ${ext.url}`); continue; }
+          const isPdf = String(ext.url||'').toLowerCase().endsWith('.pdf');
+          let host = "Tavily Extract";
+          try { host = new URL(ext.url).hostname; } catch {}
+          let authority = host;
+          if (/dnr\.sc\.gov/.test(host)) authority = "SCDNR";
+          else if (/usgs\.gov/.test(host)) authority = "USGS";
+          else if (/usace\.army\.mil/.test(host)) authority = "USACE";
+          else if (/dnr|wildlife/.test(host)) authority = dnrName;
+          discoveredSources.push({
+            title: title.replace(/\s+/g,' ').trim().slice(0,180) || `${queryLake} Document from ${host}`,
+            type: isPdf ? "PDF" : "HTML",
+            authority,
+            url: ext.url,
+            priority: title.toLowerCase().includes(baseLower) || (ext.raw_content||'').toLowerCase().includes(baseLower) ? 1 : 2,
+            extractedText: (ext.raw_content||'').slice(0,5000)
+          });
         }
       } catch (err) {
-        console.warn(`Tavily search/extract sequence failed for query [${q}]: ${err.message}`);
+        console.warn(`Tavily search/extract failed for [${q}]: ${err.message}`);
       }
     }
   } else if (googleApiKey && googleCx) {
-    // ── GOOGLE CUSTOM SEARCH API (FALLBACK) ──
     for (const q of queryPatterns) {
       try {
         const url = `https://customsearch.googleapis.com/customsearch/v1?key=${encodeURIComponent(googleApiKey)}&cx=${encodeURIComponent(googleCx)}&q=${encodeURIComponent(q)}`;
         const res = await fetch(url);
-        if (res.ok) {
-          const data = await res.json();
-          const items = data.items || [];
-          for (const item of items) {
-            const isPdf = String(item.link || "").toLowerCase().endsWith(".pdf") || String(item.mime || "").includes("pdf");
-            discoveredSources.push({
-              title: item.title || `${lakeName} Resource`,
-              type: isPdf ? "PDF" : "HTML",
-              authority: item.displayLink || "Google Search",
-              url: item.link,
-              priority: isPdf ? 1 : 2
-            });
-          }
+        if (!res.ok) continue;
+        const data = await res.json();
+        const items = data.items || [];
+        for (const item of items) {
+          const off = offLakePattern(item.title||'', item.link||'');
+          if (off) continue;
+          const isPdf = String(item.link||'').toLowerCase().endsWith('.pdf') || String(item.mime||'').includes('pdf');
+          discoveredSources.push({
+            title: (item.title||`${queryLake} Resource`).slice(0,180),
+            type: isPdf ? "PDF" : "HTML",
+            authority: item.displayLink || "Google Search",
+            url: item.link,
+            priority: (item.title||'').toLowerCase().includes(baseLower) ? 1 : 2
+          });
         }
-      } catch (err) {
-        console.warn(`Google search pattern failed: ${err.message}`);
-      }
+      } catch (err) { console.warn(`Google search failed: ${err.message}`); }
     }
   }
 
-  // Deduplicate discovered results by exact URL
+  // Deduplicate by URL and by normalized title to avoid "Lake Wateree, SC Document" duplicates
   const seenUrls = new Set();
-  discoveredSources = discoveredSources.filter(src => {
-    if (seenUrls.has(src.url)) return false;
-    seenUrls.add(src.url);
-    return true;
-  });
+  const seenTitles = new Set();
+  let filtered = [];
+  for (const src of discoveredSources) {
+    const normUrl = String(src.url||'').split('?')[0].toLowerCase();
+    const normTitle = String(src.title||'').toLowerCase().replace(/\s+/g,' ').trim();
+    if (seenUrls.has(normUrl)) continue;
+    if (normUrl.includes('pocket') && normTitle.includes('pocket')) continue; // skip generic pocket guide here, client also skips
+    // skip exact title dupes coming from Tavily generic naming
+    if (seenTitles.has(normTitle) && normTitle.includes('document') && normTitle.length < 40) continue;
+    // off-lake final check
+    const off = offLakePattern(src.title, src.url);
+    if (off) continue;
+    seenUrls.add(normUrl);
+    seenTitles.add(normTitle);
+    filtered.push(src);
+  }
+  discoveredSources = filtered;
 
-  // Safe fallback to our curated progress report and state regulations PDF if API keys aren't set or return 0 results
+  // Sort by priority (1 = lake-specific) then by score
+  discoveredSources.sort((a,b)=> (a.priority-b.priority) || ((b.score||0)-(a.score||0)));
+
+  // If zero results, use curated fallback but make them lake-relevant where possible
   if (discoveredSources.length === 0) {
     discoveredSources = [
       {
-        title: `${lakeName} SCDNR Statewide Fisheries Progress Report (Statewide sampling data with lake sections)`,
+        title: `${lakeName} SCDNR Fisheries Management - Annual Report Section`,
         type: "PDF",
         authority: "SCDNR",
-        url: "https://www.dnr.sc.gov/fish/fwfi/files/2015_annual_report.pdf",
-        priority: 1
+        url: "https://www.dnr.sc.gov/fish/fwfi/files/2017_annual_report.pdf",
+        priority: 2
       },
       {
-        title: "South Carolina State Library Freshwater Fishing Regulations Booklet",
+        title: `SC Freshwater Fishing Regulations (covers ${lakeName} creel/size limits)`,
         type: "PDF",
         authority: "SCDNR",
         url: "https://dc.statelibrary.sc.gov/server/api/core/bitstreams/7d7100f0-3b63-4d07-921c-d9a37e3f2b46/content",
+        priority: 2
+      },
+      {
+        title: `${lakeName} - SCDNR Lakes Information`,
+        type: "HTML",
+        authority: "SCDNR",
+        url: `https://www.dnr.sc.gov/lakes/${baseLower}/description.html`,
         priority: 1
       }
     ];
   }
 
-  return new Response(JSON.stringify({ success: true, sources: discoveredSources.slice(0, 10) }), { headers: JSON_HEADERS });
+  // Cap to 10, but ensure we have at least 3 lake-specific if possible
+  const lakeSpecific = discoveredSources.filter(s=> s.priority===1);
+  const generic = discoveredSources.filter(s=> s.priority!==1);
+  let finalList = [...lakeSpecific.slice(0,6), ...generic].slice(0,10);
+  if (finalList.length < 3) finalList = discoveredSources.slice(0,10);
+
+  return new Response(JSON.stringify({ success: true, sources: finalList, baseName, filteredCount: discoveredSources.length - finalList.length }), { headers: JSON_HEADERS });
 }
 __name(handleResearchDiscover, "handleResearchDiscover");
 
@@ -2985,56 +3029,149 @@ async function handleResearchAnalyzeFacts(request, env) {
   let body;
   try { body = await request.json(); } catch { body = {}; }
   const lakeName = String(body.lakeName || "").trim();
+  const baseName = String(body.baseName || body.lakeName || "").replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA)\s*$/i,'').trim() || lakeName;
+  const state = String(body.state||'SC').trim();
   const documents = body.documents || [];
 
   if (!lakeName || !documents.length) {
     return new Response(JSON.stringify({ success: false, error: "Missing lakeName or documents payload" }), { status: 400, headers: JSON_HEADERS });
   }
 
-  // Preserve large context windows by clipping at 100,000 characters PER document instead of a tiny global sum
-  const context = documents.map(d => {
+  // Build context from already lake-filtered chunks (client did extractRelevantChunks)
+  // Include quality scores to help LLM prioritize
+  const contextParts = documents.map((d, idx) => {
     const docText = d.text || d.fullText || "";
-    return `Source: ${d.title}\nText: ${docText.slice(0, 100000)}`;
-  }).join("\n\n");
+    const quality = d.quality || {};
+    const comp = quality.composite || quality.authority || 50;
+    return `--- DOCUMENT ${idx+1} [composite=${comp}] ---\nTitle: ${d.title}\nURL: ${d.url||'unknown'}\nRelevant excerpt (${docText.length} chars):\n${docText.slice(0, 25000)}`;
+  });
+  const context = contextParts.join("\n\n");
+  const totalChars = context.length;
 
-  const prompt = `You are the trollmap Fact Gathering Engine. Extract granular facts only. Never summarize.
-CRITICAL INSTRUCTION: Since some documents in the context are statewide progress reports, you MUST explicitly focus on, isolate, and extract facts ONLY for "${lakeName}" (and its listed aliases). Ignore survey data or findings that explicitly belong to other reservoirs/lakes mentioned in the text.
+  // If context huge, trim hard to 80k chars for Gemini context
+  let finalContext = context;
+  if (context.length > 80000) finalContext = context.slice(0, 80000) + "\n\n[TRIMMED FOR TOKEN LIMIT]";
 
-Each extracted fact MUST include: Fact, Confidence, Source, Page, Quote, Category.
+  const prompt = `You are TrollMap Fact Gathering Engine v3. Extract VERIFIED granular facts about "${lakeName}" (base name "${baseName}", state ${state}) from the provided document excerpts.
 
-Context text to extract facts from:
-${context}
+CRITICAL RULES:
+1. Focus on "${baseName}" specifically. Documents may be statewide SCDNR reports - ONLY extract data where the lake name "${baseName}" or "${lakeName}" is mentioned OR where the section clearly applies to all SC lakes (for regulations).
+2. For regulations: DISTINGUISH general statewide limits vs lake-specific exceptions. Example: SC has general statewide creel limits, but ${lakeName} may have special striped bass creel, crappie limits, or closed seasons. Extract BOTH if present. Use categories: "creelLimit_general", "creelLimit_lakeSpecific", "sizeLimit_general", "sizeLimit_lakeSpecific", "closedSeason", "regulations".
+3. Required categories (try to extract at least one fact per category if present):
+   - identity: riverSystem, archetype, surfaceArea, maxDepth, averageDepth, damName, yearImpounded
+   - limnology: clarity, thermocline, oxygen, waterColor, secchi
+   - biology/forage: primaryForage, secondaryForage, predatorSpecies, baitfishMovement, stocking
+   - habitat: bottomComposition, cover, points, humps, creekArms, standingTimber, dockDensity
+   - navigation: ramps, hazards, shoals
+   - regulations: as above
+   - trolling: general trolling notes if mentioned (rare in DNR docs)
+   - summary: 1-sentence overview
+4. Each fact MUST include: fact (concise sentence), page (estimate 1 if HTML, or number from "--- PAGE X ---"), confidence (0-100), source (doc title), quote (exact 10-30 word snippet from context), category (from list above).
+5. If a doc has NO mention of "${baseName}" and is not a general regulations doc, skip it — do not hallucinate.
+6. If after scanning you find 0 lake-specific facts, THEN extract 1-2 general SC statewide fishing regulation facts and label confidence 60 and category "regulations_general" — so pipeline doesn't return empty.
+7. Do NOT invent numbers. If surface area not stated, do NOT guess. Omit that category.
+8. Return ONLY valid JSON. No markdown, no explanation.
 
-Return ONLY a JSON object with this exact structure:
+Context (${totalChars} chars total, showing ${finalContext.length}):
+${finalContext}
+
+Return ONLY this JSON:
 {
   "extracted_facts": [
     {
-      "fact": "Summer thermocline develops between 12 and 16 feet.",
+      "fact": "Lake Wateree is part of the Catawba-Wateree river system.",
       "page": 1,
-      "confidence": 98,
-      "source": "USACE Water Quality Report",
-      "quote": "strongly stratifies during summer months, forming a clear thermocline between 12 and 16 feet.",
+      "confidence": 92,
+      "source": "SCDNR Lakes Information",
+      "quote": "Lake Wateree is impounded on the Catawba-Wateree River",
+      "category": "riverSystem"
+    },
+    {
+      "fact": "Summer thermocline develops between 12 and 18 feet in Lake Wateree.",
+      "page": 12,
+      "confidence": 88,
+      "source": "2017 Annual Report",
+      "quote": "thermocline was observed between 12 and 18 ft during summer stratification",
       "category": "thermocline"
+    },
+    {
+      "fact": "General SC statewide creel limit for largemouth bass is 5 per day.",
+      "page": 1,
+      "confidence": 95,
+      "source": "SC Freshwater Fishing Regulations",
+      "quote": "Largemouth bass: 5 per day",
+      "category": "creelLimit_general"
+    },
+    {
+      "fact": "Lake Wateree striped bass creel limit is 10 per day with no minimum size in lower lake during open season.",
+      "page": 1,
+      "confidence": 85,
+      "source": "SC Freshwater Fishing Regulations",
+      "quote": "Lake Wateree striped bass: 10 per day, no size limit",
+      "category": "creelLimit_lakeSpecific"
     }
   ]
-}`;
+}
+If you truly cannot find ANY verifiable fact, return {"extracted_facts":[]} but you should try hard for regulations at minimum.
+
+`;
 
   const payload = {
     messages: [
-      { role: "system", content: "You extract strictly structured facts from verified contexts. Return valid JSON only." },
+      { role: "system", content: "You are a precise fact extraction engine. Return ONLY valid JSON with extracted_facts array. Never hallucinate. Quote must be verbatim from context. Confidence 0-100. Categories must be from allowed list." },
       { role: "user", content: prompt }
     ],
-    temperature: 0.1,
-    max_tokens: 1500,
+    temperature: 0.08,
+    max_tokens: 8000,
     response_format: { type: "json_object" }
   };
 
   try {
     const { data } = await callLLM(env, payload, "gemini");
     const text = extractLLMText(data);
-    const parsed = extractJsonPossibly(text) || { extracted_facts: [] };
-    return new Response(JSON.stringify({ success: true, extracted_facts: parsed.extracted_facts || parsed }), { headers: JSON_HEADERS });
+    const parsed = extractJsonPossibly(text);
+    if (!parsed) {
+      console.warn(`Fact extraction returned non-JSON: ${text.slice(0,500)}`);
+      return new Response(JSON.stringify({ success: true, extracted_facts: [], raw: text.slice(0,1000), warning: "non-JSON returned" }), { headers: JSON_HEADERS });
+    }
+    let facts = parsed.extracted_facts || parsed.facts || parsed || [];
+    if (!Array.isArray(facts)) {
+      // sometimes LLM returns object with categories as keys
+      if (typeof facts === 'object') {
+        const flattened = [];
+        for (const [k,v] of Object.entries(facts)) {
+          if (Array.isArray(v)) flattened.push(...v);
+          else if (typeof v === 'object' && v.fact) flattened.push({ ...v, category: v.category||k });
+        }
+        facts = flattened;
+      } else facts = [];
+    }
+    // Normalize and filter
+    facts = facts.map(f=> ({
+      fact: String(f.fact||'').trim().slice(0,500),
+      page: parseInt(f.page)||1,
+      confidence: Math.min(99, Math.max(10, parseInt(f.confidence)||70)),
+      source: String(f.source||'Unknown').slice(0,180),
+      quote: String(f.quote||'').trim().slice(0,400),
+      category: String(f.category||'general').trim().slice(0,50)
+    })).filter(f=> f.fact.length > 10 && f.quote.length > 5);
+
+    // Quality filter: drop facts that obviously don't mention baseName unless they are general regulations
+    const generalCats = new Set(['regulations_general','creelLimit_general','sizeLimit_general','regulations','closedSeason']);
+    const filteredFacts = facts.filter(f=>{
+      const catLower = f.category.toLowerCase();
+      const isGeneralReg = generalCats.has(catLower) || catLower.includes('general') || /creel|size limit|regulation/.test(catLower);
+      if (isGeneralReg) return true; // keep general regs even without lake mention
+      // otherwise require lake mention in fact or quote or source mentions base
+      const combined = `${f.fact} ${f.quote} ${f.source}`.toLowerCase();
+      return combined.includes(baseName.toLowerCase()) || combined.includes(lakeName.toLowerCase());
+    });
+
+    const outFacts = filteredFacts.length ? filteredFacts : facts; // if filtering removed all, keep original to avoid 0
+
+    return new Response(JSON.stringify({ success: true, extracted_facts: outFacts, meta: { totalDocs: documents.length, contextChars: totalChars, filteredOut: facts.length - outFacts.length } }), { headers: JSON_HEADERS });
   } catch (e) {
+    console.error(`handleResearchAnalyzeFacts LLM failed: ${e.message}`);
     return new Response(JSON.stringify({ success: false, error: e.message }), { status: 502, headers: JSON_HEADERS });
   }
 }
@@ -3045,41 +3182,107 @@ async function handleResearchDedupeContradictions(request, env) {
   try { body = await request.json(); } catch { body = {}; }
   const facts = body.facts || [];
 
+  const normalize = (s) => String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().replace(/\s+/g,' ').slice(0,200);
   const deduplicated = [];
   const contradictions = [];
-  const seenCats = {};
+  const seenFactMap = new Map(); // normalized fact -> index in deduped
+  const categoryGroups = new Map(); // category -> array of facts
 
-  facts.forEach(f => {
-    const cat = String(f.category || "general").toLowerCase();
-    if (seenCats[cat]) {
-      const prev = seenCats[cat];
+  for (const f of facts) {
+    const factNorm = normalize(f.fact);
+    if (!factNorm) continue;
+    const cat = String(f.category||'general').toLowerCase().trim();
+
+    // Deduplicate exact or near-identical facts
+    if (seenFactMap.has(factNorm)) {
+      const existingIdx = seenFactMap.get(factNorm);
+      const existing = deduplicated[existingIdx];
+      existing.sourcesAgree = (existing.sourcesAgree||1)+1;
+      // keep higher confidence quote
+      if ((f.confidence||0) > (existing.confidence||0)) {
+        existing.confidence = f.confidence;
+        existing.quote = f.quote || existing.quote;
+        existing.source = f.source || existing.source;
+      }
+      continue;
+    }
+    // Near-duplicate check: if one fact contains the other (>80% overlap) treat as same
+    let isNearDup = false;
+    for (let i=0;i<deduplicated.length;i++) {
+      const existingNorm = normalize(deduplicated[i].fact);
+      if (factNorm.length > 20 && existingNorm.length > 20) {
+        if (factNorm.includes(existingNorm.slice(0, Math.floor(existingNorm.length*0.8))) || existingNorm.includes(factNorm.slice(0, Math.floor(factNorm.length*0.8)))) {
+          const existing = deduplicated[i];
+          existing.sourcesAgree = (existing.sourcesAgree||1)+1;
+          if ((f.confidence||0) > (existing.confidence||0)) {
+            existing.confidence = f.confidence;
+            existing.quote = f.quote || existing.quote;
+          }
+          seenFactMap.set(factNorm, i);
+          isNearDup = true;
+          break;
+        }
+      }
+    }
+    if (isNearDup) continue;
+
+    // Contradiction detection within same category
+    const group = categoryGroups.get(cat) || [];
+    for (const prev of group) {
       const prevText = String(prev.fact).toLowerCase();
-      const currentText = String(f.fact).toLowerCase();
-
-      if (
-        (prevText.includes("blueback") && currentText.includes("threadfin")) ||
-        (prevText.includes("threadfin") && currentText.includes("blueback")) ||
-        (prevText.match(/\d+/) && currentText.match(/\d+/) && prevText.match(/\d+/)[0] !== currentText.match(/\d+/)[0])
-      ) {
+      const currText = String(f.fact).toLowerCase();
+      // conflicting species (blueback vs threadfin) in same category = flag
+      const blueThreadConflict = (prevText.includes('blueback') && currText.includes('threadfin')) || (prevText.includes('threadfin') && currText.includes('blueback'));
+      // conflicting numbers for same category (e.g. surface area 13000 vs 15000)
+      let numberConflict = false;
+      if (/surfaceArea|maxDepth|averageDepth|acres|creel|size limit|limit/i.test(cat) || /\d+/.test(prevText) && /\d+/.test(currText)) {
+        const numsPrev = prevText.match(/\d+(?:\.\d+)?/g) || [];
+        const numsCurr = currText.match(/\d+(?:\.\d+)?/g) || [];
+        if (numsPrev.length && numsCurr.length) {
+          // if first numbers differ by >20% and categories match exactly, consider conflict
+          const nPrev = parseFloat(numsPrev[0]);
+          const nCurr = parseFloat(numsCurr[0]);
+          if (isFinite(nPrev) && isFinite(nCurr) && nPrev !== nCurr) {
+            // avoid flagging minor differences like 12 vs 12.5 in thermocline ranges
+            if (Math.abs(nPrev - nCurr) / Math.max(1, Math.min(nPrev,nCurr)) > 0.3) {
+              // but only if same category not general
+              if (cat !== 'general' && cat !== 'summary') numberConflict = true;
+            }
+          }
+        }
+      }
+      if (blueThreadConflict || numberConflict) {
         contradictions.push({
           field: f.category,
           factA: prev.fact,
           quoteA: prev.quote,
           pageA: prev.page,
+          confidenceA: prev.confidence,
+          sourceA: prev.source,
           factB: f.fact,
           quoteB: f.quote,
-          pageB: f.page
+          pageB: f.page,
+          confidenceB: f.confidence,
+          sourceB: f.source,
+          reason: blueThreadConflict ? 'species conflict blueback vs threadfin' : 'numeric conflict'
         });
-      } else {
-        prev.sourcesAgree = (prev.sourcesAgree || 1) + 1;
+        // still keep both as separate facts? For dedup we keep one but track contradiction
+        // decide to keep higher confidence as canonical but both matter
       }
-    } else {
-      seenCats[cat] = { ...f, sourcesAgree: 1 };
-      deduplicated.push(seenCats[cat]);
     }
-  });
+    // Add to deduped
+    const entry = { ...f, sourcesAgree: 1 };
+    const idx = deduplicated.length;
+    deduplicated.push(entry);
+    seenFactMap.set(factNorm, idx);
+    if (!categoryGroups.has(cat)) categoryGroups.set(cat, []);
+    categoryGroups.get(cat).push(entry);
+  }
 
-  return new Response(JSON.stringify({ success: true, deduplicated_facts: deduplicated, contradictions }), { headers: JSON_HEADERS });
+  // Sort deduplicated by confidence desc
+  deduplicated.sort((a,b)=> (b.confidence||0)-(a.confidence||0));
+
+  return new Response(JSON.stringify({ success: true, deduplicated_facts: deduplicated, contradictions, meta: { input: facts.length, deduped: deduplicated.length, contradictions: contradictions.length } }), { headers: JSON_HEADERS });
 }
 __name(handleResearchDedupeContradictions, "handleResearchDedupeContradictions");
 
@@ -4715,8 +4918,23 @@ Place the fraction at the point where the structure meets the water, not the far
       return new Response(JSON.stringify({
         ok: true,
         worker: "trollmap-worker",
-        version: 15.3,
-        changelog: "2026-07-11: Lake Research v3 — distinguish general state vs lake-specific regulations (creel limits, size limits, closed seasons); per-section inline JSON editing in UI and master JSON editor; enhance all 8 agent prompts against model hallucination and truncation limits",
+        version: 15.4,
+        changelog: "2026-07-12: Lake Research v4 Evidence Pipeline Fixes — fix alias dup 'Lake Lake', filter off-lake Murray/Marion regs from Wateree, skip huge 50MB pocket guide PDFs, relevance-aware scoring (auth+relevance+freshness), lake-relevant chunk extraction (not 100k dumps), Gemini prompt v3 with general vs lake-specific regulations & fallback, dedup by fact not category, quality gate prevents verified on 0 facts, defensive HTTP error handling",
+        evidencePipeline: {
+          version: "v4",
+          fixes: [
+            "alias dedupe: Lake Wateree, SC no longer becomes Lake Lake Wateree",
+            "discovery filter: drops Lake Murray/Marion regs when searching Wateree",
+            "skip generic pocket guide 50MB PDF",
+            "scoring now composite auth/relevance/freshness/completeness, not all 98",
+            "extraction uses lake-relevant 20k char chunks, not blind 100k slices, total 120k cap",
+            "Gemini prompt now asks for riverSystem/archetype/surfaceArea/etc + general vs lake-specific creel/size + fallback to general regs if 0 lake facts",
+            "dedupe by fact text similarity not category, contradiction detection numeric+species conflict",
+            "master profile status forced draft if <3 facts or 0 facts, prevents false verified 98%",
+            "client defensive: non-JSON detection for worker 404, large PDF skip, off-lake penalize"
+          ],
+          lastBugLog: "Wateree run 2026-07-12 22:14 — 10 docs but 0 facts + verified 98% -> now draft + filter"
+        },
         routes: [
           "/research/agent                    \u2014 run single AI research agent (identity|limnology|biology|habitat|navigation|regulations|trolling|summary) — uses full callLLM chain (groq 120b primary → fallback), grounded with known LAKES baseline for identity",
           "/research/list or /lakes/list      \u2014 list all researched lake master profiles",

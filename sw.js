@@ -1,6 +1,6 @@
-/* TrollMap service worker — v16 (modular build, 2026-07-04) */
+/* TrollMap service worker — v17 (evidence pipeline fixes, 2026-07-12) */
 // Bump CACHE_NAME whenever CORE_ASSETS changes — old caches get pruned on activate.
-const CACHE_NAME = 'trollmap-v16-2026-07-04';
+const CACHE_NAME = 'trollmap-v17-2026-07-12';
 
 // Keep this list tight — only assets that MUST be available offline for the
 // app shell to load. Everything else (modules, data, worker API calls) is
