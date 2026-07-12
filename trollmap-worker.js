@@ -2943,15 +2943,17 @@ async function handleResearchDiscover(request, env) {
     wateree: [
       { title: "Lake Wateree SC DES Water Quality Report", type: "PDF", authority: "SCDESC", url: "https://des.sc.gov/sites/des/files/Documents/BOW/WaterQuality/WPLakeWateree.pdf", priority: 1 },
       { title: "Lake Wateree SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/wateree/description.html", priority: 1 },
-      { title: "Lake Wateree Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/wateree/regs.html", priority: 1 },
+      { title: "Lake Wateree Fishing Information", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/wateree/fishing.html", priority: 1 },
+      { title: "SC Freshwater Game Fishing Regulations (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
+      { title: "SCDNR Striped Bass Fisheries Fact Sheet (covers Wateree)", type: "PDF", authority: "SCDNR", url: "https://www.dnr.sc.gov//wildlife/publications/pdf/fisheriesfacts.pdf", priority: 1 },
     ],
     murray: [
       { title: "Lake Murray SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/murray/description.html", priority: 1 },
-      { title: "Lake Murray Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/murray/regs.html", priority: 1 },
+      { title: "SC Freshwater Game Fishing Regulations (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
     ],
     marion: [
       { title: "Lake Marion SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/marion/description.html", priority: 1 },
-      { title: "Lake Marion Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/marion/regs.html", priority: 1 },
+      { title: "SC Freshwater Game Fishing Regulations (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
     ],
     moultrie: [
       { title: "Lake Moultrie SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/moultrie/description.html", priority: 1 },
@@ -3264,20 +3266,21 @@ ${fallbackContext.slice(0, 40000)}
 Return ONLY valid JSON:
 {
   "extracted_facts": [
-    {"fact": "...", "page": 1, "confidence": 80, "source": "...", "quote": "exact text from doc", "category": "creelLimit_general"}
+    {"fact": "...", "page": 1, "confidence": 80, "source": "...", "quote": "text from doc or empty string if not found", "category": "creelLimit_general"}
   ]
 }`;
       try {
         const fbPayload = {
           messages: [
-            { role: "system", content: "Extract fishing regulation facts. Return ONLY valid JSON with extracted_facts array. Include any creel limits, size limits, seasons, or rules you find." },
+            { role: "system", content: "Extract fishing regulation facts. Return ONLY valid JSON with extracted_facts array. Include any creel limits, size limits, seasons, or rules you find. The quote field can be empty string if you cannot find verbatim text — do NOT skip facts just because you cannot quote them." },
             { role: "user", content: fallbackPrompt }
           ],
           temperature: 0.05,
           max_tokens: 4000,
           response_format: { type: "json_object" }
         };
-        const { data: fbData } = await callLLM(env, fbPayload, null);
+        const preferGemini = !!env.GEMINI_API_KEY;
+        const { data: fbData } = await callLLM(env, fbPayload, preferGemini ? 'gemini' : null);
         const fbText = extractLLMText(fbData);
         const fbParsed = extractJsonPossibly(fbText);
         if (fbParsed) {
@@ -3288,9 +3291,9 @@ Return ONLY valid JSON:
             page: parseInt(f.page)||1,
             confidence: Math.min(99, Math.max(10, parseInt(f.confidence)||65)),
             source: String(f.source||'Unknown').slice(0,180),
-            quote: String(f.quote||'').trim().slice(0,400),
+            quote: String(f.quote||f.fact||'').trim().slice(0,400),
             category: String(f.category||'regulations_general').trim().slice(0,50)
-          })).filter(f => f.fact.length > 10 && f.quote.length > 5);
+          })).filter(f => f.fact.length > 10); // no quote requirement in fallback
           if (fbFacts.length > 0) {
             console.log(`handleResearchAnalyzeFacts: fallback pass recovered ${fbFacts.length} regulation facts`);
             outFacts = fbFacts;
