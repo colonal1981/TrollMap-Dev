@@ -3398,8 +3398,11 @@ Return JSON only.`,
 Lake: ${lakeName}
 State: ${state}
 
-Previous Identity data (use for context):
-${JSON.stringify(prev?.identity || prev || {}, null, 2).slice(0, 4000)}
+${prev?._extractedFacts?.filter(f => /limnology|thermocline|oxygen|clarity|secchi|trophic|color|turbid|stratif|depth|anoxic/i.test(f.category + ' ' + f.fact)).length > 0 ? `VERIFIED FACTS FROM OFFICIAL DOCUMENTS (use these as primary source — override training data):
+${prev._extractedFacts.filter(f => /limnology|thermocline|oxygen|clarity|secchi|trophic|color|turbid|stratif|depth|anoxic/i.test(f.category + ' ' + f.fact)).map(f => `• ${f.fact} (Source: ${f.source})`).join('\n')}
+
+` : ''}Previous Identity data (use for context):
+${JSON.stringify(prev?.identity || prev || {}, null, 2).slice(0, 3000)}
 
 Return ONLY:
 {
