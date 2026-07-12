@@ -2774,14 +2774,316 @@ Return ONLY the JSON object. Find the single highest-confidence improvement, or 
 __name(handleCoachPlan, "handleCoachPlan");
 // ─── LAKE RESEARCH MODULE ─────────────────────────────────────────────────
 // Implements spec v1.0: Lake Research permanent intelligence profiles
-// R2 layout (reuses R2_TROLLMAP_CHARTPACKS):
-//   lakes/<sanitized>.json                     -> current master profile
-//   lakes/versions/<sanitized>/v#.json        -> version history
-//   lake_packages/<sanitized>/identity.json   -> split package files
-//   lake_packages/<sanitized>/limnology.json ...
-//   lake_packages/<sanitized>/research_log.json
-// Client-orchestrated pipeline: frontend calls POST /research/agent sequentially
-// Worker handles single agent via callLLM and handles save/list/get/version logic
+
+// ─── EXTENDED EVIDENCE ACQUISITION PIPELINE FUNCTIONS ───
+
+async function handleResearchDiscover(request, env) {
+  let body;
+  try { body = await request.json(); } catch { body = {}; }
+  const lakeName = String(body.lakeName || "").trim();
+  const state = String(body.state || "SC").trim().toUpperCase();
+
+  if (!lakeName) {
+    return new Response(JSON.stringify({ success: false, error: "Missing lakeName" }), { status: 400, headers: JSON_HEADERS });
+  }
+
+  // Resolve state-specific agencies and domains dynamically
+  let dnrName = "SCDNR";
+  let dnrDomain = "dnr.sc.gov";
+  
+  if (state === "NC") {
+    dnrName = "NCWRC";
+    dnrDomain = "ncwildlife.org";
+  } else if (state === "GA") {
+    dnrName = "GADNR";
+    dnrDomain = "georgiawildlife.com";
+  }
+
+  const queryPatterns = [
+    `"${lakeName}" (fisheries OR biology OR "striped bass" OR crappie) ${dnrName} filetype:pdf`,
+    `"${lakeName}" (regulations OR "creel limit" OR "size limit") site:${dnrDomain}`,
+    `"${lakeName}" (limnology OR thermocline OR "water quality" OR hydrology) (USACE OR USGS OR EPA) filetype:pdf`,
+    `"${lakeName}" (habitat OR structure OR navigation OR hazards)`
+  ];
+
+  let discoveredSources = [];
+  const googleApiKey = env.GOOGLE_SEARCH_API_KEY || env.GOOGLE_CSE_KEY;
+  const googleCx = env.GOOGLE_SEARCH_CX || env.GOOGLE_CSE_CX;
+  const tavilyApiKey = env.TAVILY_API_KEY || env.TAVILY_KEY;
+
+  if (tavilyApiKey) {
+    // ── TAVILY API (PRIMARY DYNAMIC COUPLING WITH RERANKING) ──
+    for (const q of queryPatterns) {
+      try {
+        // Step 1: Perform search with advanced depth to locate highly specific documents
+        const searchUrl = "https://api.tavily.com/search";
+        const searchRes = await fetch(searchUrl, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${tavilyApiKey}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            query: q,
+            search_depth: "advanced",
+            max_results: 5,
+            include_raw_content: false
+          })
+        });
+
+        if (searchRes.ok) {
+          const searchData = await searchRes.json();
+          const results = searchData.results || [];
+          const urlsToExtract = results.map(r => r.url).filter(Boolean);
+
+          if (urlsToExtract.length > 0) {
+            // Step 2: Use Tavily Extract with the specific lake name for relevance-based chunk reranking
+            const extractUrl = "https://api.tavily.com/extract";
+            const extractRes = await fetch(extractUrl, {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${tavilyApiKey}`,
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({
+                urls: urlsToExtract,
+                query: lakeName, // Reranks extracted content chunks strictly by relevance to the specific lake
+                extract_depth: "advanced",
+                format: "markdown"
+              })
+            });
+
+            if (extractRes.ok) {
+              const extractData = await extractRes.json();
+              const extractions = extractData.results || [];
+              for (const ext of extractions) {
+                const isPdf = String(ext.url || "").toLowerCase().endsWith(".pdf");
+                discoveredSources.push({
+                  title: ext.title || `${lakeName} Document`,
+                  type: isPdf ? "PDF" : "HTML",
+                  authority: new URL(ext.url).hostname || "Tavily Extract",
+                  url: ext.url,
+                  priority: isPdf ? 1 : 2,
+                  extractedText: ext.raw_content || "" // Pre-loaded extracted text for the downloader step
+                });
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn(`Tavily search/extract sequence failed for query [${q}]: ${err.message}`);
+      }
+    }
+  } else if (googleApiKey && googleCx) {
+    // ── GOOGLE CUSTOM SEARCH API (FALLBACK) ──
+    for (const q of queryPatterns) {
+      try {
+        const url = `https://customsearch.googleapis.com/customsearch/v1?key=${encodeURIComponent(googleApiKey)}&cx=${encodeURIComponent(googleCx)}&q=${encodeURIComponent(q)}`;
+        const res = await fetch(url);
+        if (res.ok) {
+          const data = await res.json();
+          const items = data.items || [];
+          for (const item of items) {
+            const isPdf = String(item.link || "").toLowerCase().endsWith(".pdf") || String(item.mime || "").includes("pdf");
+            discoveredSources.push({
+              title: item.title || `${lakeName} Resource`,
+              type: isPdf ? "PDF" : "HTML",
+              authority: item.displayLink || "Google Search",
+              url: item.link,
+              priority: isPdf ? 1 : 2
+            });
+          }
+        }
+      } catch (err) {
+        console.warn(`Google search pattern failed: ${err.message}`);
+      }
+    }
+  }
+
+  // Deduplicate discovered results by exact URL
+  const seenUrls = new Set();
+  discoveredSources = discoveredSources.filter(src => {
+    if (seenUrls.has(src.url)) return false;
+    seenUrls.add(src.url);
+    return true;
+  });
+
+  // Safe fallback to our curated progress report and state regulations PDF if API keys aren't set or return 0 results
+  if (discoveredSources.length === 0) {
+    discoveredSources = [
+      {
+        title: `${lakeName} SCDNR Statewide Fisheries Progress Report (Statewide sampling data with lake sections)`,
+        type: "PDF",
+        authority: "SCDNR",
+        url: "https://www.dnr.sc.gov/fish/fwfi/files/2015_annual_report.pdf",
+        priority: 1
+      },
+      {
+        title: "South Carolina State Library Freshwater Fishing Regulations Booklet",
+        type: "PDF",
+        authority: "SCDNR",
+        url: "https://dc.statelibrary.sc.gov/server/api/core/bitstreams/7d7100f0-3b63-4d07-921c-d9a37e3f2b46/content",
+        priority: 1
+      }
+    ];
+  }
+
+  return new Response(JSON.stringify({ success: true, sources: discoveredSources.slice(0, 10) }), { headers: JSON_HEADERS });
+}
+__name(handleResearchDiscover, "handleResearchDiscover");
+
+async function handleResearchProxyDownload(request, env) {
+  const url = new URL(request.url);
+  const target = url.searchParams.get("url");
+  if (!target) {
+    return new Response(JSON.stringify({ success: false, error: "Missing url parameter" }), { status: 400, headers: JSON_HEADERS });
+  }
+
+  try {
+    const response = await fetch(target, {
+      headers: {
+        "User-Agent": "TrollMap/15.3 Evidence Engine",
+        "Accept": "*/*"
+      }
+    });
+
+    if (!response.ok) {
+      return new Response(JSON.stringify({ success: false, error: `HTTP Error ${response.status}: Failed to retrieve file from source.` }), { status: response.status, headers: JSON_HEADERS });
+    }
+
+    const headers = new Headers(response.headers);
+    headers.set("Access-Control-Allow-Origin", "*");
+    return new Response(response.body, { headers });
+  } catch (err) {
+    return new Response(JSON.stringify({ success: false, error: err.message }), { status: 502, headers: JSON_HEADERS });
+  }
+}
+__name(handleResearchProxyDownload, "handleResearchProxyDownload");
+
+async function handleResearchSaveNormalized(request, env) {
+  let body;
+  try { body = await request.json(); } catch { body = {}; }
+  const lakeName = String(body.lakeName || "").trim();
+  const documents = body.documents || [];
+
+  if (!lakeName || !documents.length) {
+    return new Response(JSON.stringify({ success: false, error: "Missing lakeName or documents payload" }), { status: 400, headers: JSON_HEADERS });
+  }
+
+  const safe = sanitizeLakeId(lakeName);
+  const key = `lake_packages/${safe}/normalized_documents.json`;
+
+  await env.R2_TROLLMAP_CHARTPACKS.put(key, JSON.stringify(documents, null, 2), {
+    httpMetadata: { contentType: "application/json" }
+  });
+
+  return new Response(JSON.stringify({ success: true, key }), { headers: JSON_HEADERS });
+}
+__name(handleResearchSaveNormalized, "handleResearchSaveNormalized");
+
+async function handleResearchAnalyzeFacts(request, env) {
+  let body;
+  try { body = await request.json(); } catch { body = {}; }
+  const lakeName = String(body.lakeName || "").trim();
+  const documents = body.documents || [];
+
+  if (!lakeName || !documents.length) {
+    return new Response(JSON.stringify({ success: false, error: "Missing lakeName or documents payload" }), { status: 400, headers: JSON_HEADERS });
+  }
+
+  // Preserve large context windows by clipping at 100,000 characters PER document instead of a tiny global sum
+  const context = documents.map(d => {
+    const docText = d.text || d.fullText || "";
+    return `Source: ${d.title}\nText: ${docText.slice(0, 100000)}`;
+  }).join("\n\n");
+
+  const prompt = `You are the trollmap Fact Gathering Engine. Extract granular facts only. Never summarize.
+CRITICAL INSTRUCTION: Since some documents in the context are statewide progress reports, you MUST explicitly focus on, isolate, and extract facts ONLY for "${lakeName}" (and its listed aliases). Ignore survey data or findings that explicitly belong to other reservoirs/lakes mentioned in the text.
+
+Each extracted fact MUST include: Fact, Confidence, Source, Page, Quote, Category.
+
+Context text to extract facts from:
+${context}
+
+Return ONLY a JSON object with this exact structure:
+{
+  "extracted_facts": [
+    {
+      "fact": "Summer thermocline develops between 12 and 16 feet.",
+      "page": 1,
+      "confidence": 98,
+      "source": "USACE Water Quality Report",
+      "quote": "strongly stratifies during summer months, forming a clear thermocline between 12 and 16 feet.",
+      "category": "thermocline"
+    }
+  ]
+}`;
+
+  const payload = {
+    messages: [
+      { role: "system", content: "You extract strictly structured facts from verified contexts. Return valid JSON only." },
+      { role: "user", content: prompt }
+    ],
+    temperature: 0.1,
+    max_tokens: 1500,
+    response_format: { type: "json_object" }
+  };
+
+  try {
+    const { data } = await callLLM(env, payload, "gemini");
+    const text = extractLLMText(data);
+    const parsed = extractJsonPossibly(text) || { extracted_facts: [] };
+    return new Response(JSON.stringify({ success: true, extracted_facts: parsed.extracted_facts || parsed }), { headers: JSON_HEADERS });
+  } catch (e) {
+    return new Response(JSON.stringify({ success: false, error: e.message }), { status: 502, headers: JSON_HEADERS });
+  }
+}
+__name(handleResearchAnalyzeFacts, "handleResearchAnalyzeFacts");
+
+async function handleResearchDedupeContradictions(request, env) {
+  let body;
+  try { body = await request.json(); } catch { body = {}; }
+  const facts = body.facts || [];
+
+  const deduplicated = [];
+  const contradictions = [];
+  const seenCats = {};
+
+  facts.forEach(f => {
+    const cat = String(f.category || "general").toLowerCase();
+    if (seenCats[cat]) {
+      const prev = seenCats[cat];
+      const prevText = String(prev.fact).toLowerCase();
+      const currentText = String(f.fact).toLowerCase();
+
+      if (
+        (prevText.includes("blueback") && currentText.includes("threadfin")) ||
+        (prevText.includes("threadfin") && currentText.includes("blueback")) ||
+        (prevText.match(/\d+/) && currentText.match(/\d+/) && prevText.match(/\d+/)[0] !== currentText.match(/\d+/)[0])
+      ) {
+        contradictions.push({
+          field: f.category,
+          factA: prev.fact,
+          quoteA: prev.quote,
+          pageA: prev.page,
+          factB: f.fact,
+          quoteB: f.quote,
+          pageB: f.page
+        });
+      } else {
+        prev.sourcesAgree = (prev.sourcesAgree || 1) + 1;
+      }
+    } else {
+      seenCats[cat] = { ...f, sourcesAgree: 1 };
+      deduplicated.push(seenCats[cat]);
+    }
+  });
+
+  return new Response(JSON.stringify({ success: true, deduplicated_facts: deduplicated, contradictions }), { headers: JSON_HEADERS });
+}
+__name(handleResearchDedupeContradictions, "handleResearchDedupeContradictions");
+
+// ─── ORIGINAL LAKE RESEARCH MODULE FUNCTIONS ───
 
 function sanitizeLakeId(name) {
   return String(name || '').toLowerCase()
@@ -3685,6 +3987,21 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
         }
       }
       // ── LAKE RESEARCH ROUTES ─────────────────────────────────────
+      if (path === "/research/discover" && request.method === "POST") {
+        return handleResearchDiscover(request, env);
+      }
+      if (path === "/research/proxy-download" && request.method === "GET") {
+        return handleResearchProxyDownload(request, env);
+      }
+      if (path === "/research/save-normalized" && request.method === "POST") {
+        return handleResearchSaveNormalized(request, env);
+      }
+      if (path === "/research/analyze-facts" && request.method === "POST") {
+        return handleResearchAnalyzeFacts(request, env);
+      }
+      if (path === "/research/dedupe-contradictions" && request.method === "POST") {
+        return handleResearchDedupeContradictions(request, env);
+      }
       if (path === "/research/agent" && request.method === "POST") {
         return handleResearchAgent(request, env);
       }
