@@ -3148,7 +3148,9 @@ CRITICAL RULES:
    - regulations: as above
    - trolling: general trolling notes if mentioned (rare in DNR docs)
    - summary: 1-sentence overview
-4. Each fact MUST include: fact (concise sentence), page (estimate 1 if HTML, or number from "--- PAGE X ---"), confidence (0-100), source (doc title), quote (exact 10-30 word snippet from context), category (from list above).
+4. DATA EXTRACTION: Much of the best data is in TABLES. You MUST extract from tables. 
+   - Each fact MUST include: fact (concise sentence), page (estimate 1 if HTML, or number from "--- PAGE X ---"), confidence (0-100), source (doc title), quote (the most relevant verbatim snippet from context), category (from list above).
+   - QUOTE RULE: If the fact comes from a table, the quote should be the relevant row or cell content. Do not obsess over word count (10-30 words); prioritize verbatim accuracy over length.
 5. If a doc has NO mention of "${baseName}" and is not a general regulations doc, skip it — do not hallucinate.
 6. If after scanning you find 0 lake-specific facts, THEN extract 1-2 general SC statewide fishing regulation facts and label confidence 60 and category "regulations_general" — so pipeline doesn't return empty.
 7. Do NOT invent numbers. If surface area not stated, do NOT guess. Omit that category.
@@ -3454,31 +3456,31 @@ async function handleResearchMapFacts(request, env) {
     return new Response(JSON.stringify({ success: false, error: "Missing lakeName" }), { status: 400, headers: JSON_HEADERS });
   }
 
-  // If no facts, return empty null profile rather than failing
-  if (!facts.length) {
+  // If neither facts nor gap texts are provided, return empty null profile
+  if (!facts.length && !gapTexts.length) {
     const emptyProfile = { identity: { lakeName }, limnology: {}, biology: {}, habitat: {}, navigation: {}, regulations: {}, trollingIntelligence: {} };
-    return new Response(JSON.stringify({ success: true, profile: emptyProfile, provider: 'none', model: 'none', pass, factsUsed: 0, note: 'No facts provided — all fields null' }), { headers: JSON_HEADERS });
+    return new Response(JSON.stringify({ success: true, profile: emptyProfile, provider: 'none', model: 'none', pass, factsUsed: 0, note: 'No facts or gap texts provided — all fields null' }), { headers: JSON_HEADERS });
   }
 
   const factsText = facts.map(f => `[${f.category}] ${f.fact} (Source: ${f.source}, Confidence: ${f.confidence}%)`).join('\n');
   const gapTextsSection = gapTexts.length ? `\n\nADDITIONAL TARGETED SEARCH RESULTS (extract any relevant facts for the null fields):\n${gapTexts.map(g => `[Searching for: ${g.field}]\n${g.text}`).join('\n\n---\n\n').slice(0, 4000)}` : '';
 
-  const prompt = `You are a data mapping agent. You have a list of verified facts extracted from official documents about ${lakeName}.
+  const prompt = `You are a data mapping agent. You have a list of verified facts and potentially some raw research excerpts (gap texts) for ${lakeName}.
 
-Your ONLY job is to map these facts to the correct fields in the profile schema below.
+Your job is to map this information to the correct fields in the profile schema below.
 
 STRICT RULES:
-- ONLY use information explicitly stated in the facts list below
-- If no fact supports a field, set it to null or empty array
-- Do NOT infer, estimate, or use any knowledge beyond these facts
-- Do NOT add species, numbers, or details not mentioned in the facts
-- Null is correct when data is missing — it means unknown, not bad data
+- Use the "VERIFIED FACTS" list primarily.
+- Use "ADDITIONAL TARGETED SEARCH RESULTS" to fill in null fields. You MUST extract data from these excerpts, including from tables.
+- If the data is in a table, treat the row/cell as a verified fact.
+- Do NOT infer, estimate, or use any knowledge beyond the provided text.
+- Null is correct when data is missing — it means unknown, not bad data.
 
 VERIFIED FACTS FROM OFFICIAL DOCUMENTS:
 ${factsText.slice(0, 8000)}
 ${gapTextsSection}
 
-Map these facts to this exact JSON schema. Every null means no fact was found for that field:
+Map this information to this exact JSON schema. Every null means no information was found for that field:
 {
   "identity": {
     "lakeName": "${lakeName}",
