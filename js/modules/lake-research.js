@@ -580,28 +580,71 @@ async function runEvidencePipeline(lakeName) {
     await savePipelineDataToR2(lakeName, 'evidence_deduped.json', { uniqueFacts, contradictions });
 
     // ----------------------------------------------------
-    // STEP 10: Compile Structured Research Packet
+    // STEP 10: Run 8 Research Agents grounded in extracted facts
     // ----------------------------------------------------
-    setProgress("Step 10: Assembling Final Research Packet...", 97);
-    log("Formatting master structured research packet file...");
+    setProgress("Step 10: Running research agents with real evidence...", 70);
+    log(`Running 8 research agents grounded in ${uniqueFacts.length} verified facts from real documents...`);
 
-    // Build the finalized packet
-    const researchPacket = buildFinalResearchPacket(lakeName, stateName, uniqueFacts, scoredSources);
-    await savePipelineDataToR2(lakeName, 'research_packet.json', researchPacket);
+    const AGENT_ORDER = ['identity', 'limnology', 'biology', 'habitat', 'navigation', 'regulations', 'trolling', 'summary'];
+    const agentResults = [];
+    let accumulated = {};
 
-    // QUALITY GATE: never verified if 0 facts
-    let finalStatus = 'draft';
-    if (uniqueFacts.length >= 5 && contradictions.length === 0) finalStatus = 'verified';
-    else if (uniqueFacts.length >= 3 && contradictions.length === 0) finalStatus = 'draft';
-    else if (uniqueFacts.length === 0) {
-      log(`❌ Quality gate: 0 facts -> forcing draft, low confidence`);
-      finalStatus = 'draft';
-    } else if (contradictions.length > 0) {
-      finalStatus = 'draft';
+    for (let i = 0; i < AGENT_ORDER.length; i++) {
+      const agentKey = AGENT_ORDER[i];
+      setProgress(`Step 10: Agent ${i+1}/8 — ${agentKey}...`, 70 + (i / AGENT_ORDER.length) * 25);
+      log(`Agent ${i+1}/8: ${agentKey}...`);
+
+      try {
+        const agentRes = await fetch(`${CF_WORKER_URL}/research/agent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lakeName,
+            state: stateName,
+            agent: agentKey,
+            previousResults: {
+              ...accumulated,
+              _extractedFacts: uniqueFacts,
+              _extractedFactsSummary: `${uniqueFacts.length} verified facts extracted from ${normalizedDocuments.length} authoritative documents. Use these facts as your primary source of truth. Do not invent facts not supported by this evidence.`
+            }
+          })
+        });
+
+        if (!agentRes.ok) {
+          log(`✘ ${agentKey} failed: HTTP ${agentRes.status}`);
+          continue;
+        }
+
+        const agentData = await agentRes.json();
+        if (!agentData.success) {
+          log(`✘ ${agentKey} failed: ${agentData.error}`);
+          continue;
+        }
+
+        accumulated[agentKey] = agentData.section;
+        if (agentKey === 'biology') accumulated.forage = agentData.section;
+        if (agentKey === 'trolling') accumulated.trollingIntelligence = agentData.section;
+        agentResults.push(agentData);
+        log(`✔ ${agentKey}: ${agentData.confidence?.percent||'?'}% via ${agentData.meta?.model||'?'} (${agentData.meta?.durationMs||0}ms)`);
+
+      } catch (e) {
+        log(`✘ ${agentKey} failed: ${e.message}`);
+      }
     }
 
-    // Persist as a standard TrollMap lake profile
-    log(`Saving compiled evidence packet as master lake profile (status=${finalStatus}, facts=${uniqueFacts.length})...`);
+    // Build master profile from agent results
+    setProgress("Step 10: Merging agent results...", 96);
+    log('Merging agent results into master profile...');
+
+    const researchPacket = buildMasterProfile(lakeName, accumulated, accumulated, agentResults);
+    await savePipelineDataToR2(lakeName, 'research_packet.json', researchPacket);
+
+    // QUALITY GATE
+    const successfulAgents = agentResults.filter(r => r.success !== false).length;
+    let finalStatus = successfulAgents >= 6 && contradictions.length === 0 ? 'draft' : 'draft';
+
+    // Persist
+    log(`Saving master profile (status=${finalStatus}, agents=${successfulAgents}/8, facts=${uniqueFacts.length})...`);
     const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -613,17 +656,14 @@ async function runEvidencePipeline(lakeName) {
       })
     });
     if (!saveRes.ok) {
-      const t = await saveRes.text().catch(()=> '').then(s=>s.slice(0,400));
+      const t = await saveRes.text().catch(()=>'').then(s=>s.slice(0,400));
       throw new Error(`Save master profile HTTP ${saveRes.status}: ${t}`);
     }
     const saveData = await saveRes.json();
-    log(`✔ Saved final Master profile v${saveData.version} as ${saveData.status} (overallConf=${saveData.overallConfidence ?? '?'}%)!`);
-    if (uniqueFacts.length === 0) {
-      log(`⚠️ Master profile is empty — retry with different sources or check Gemini API key. Saved as draft for inspection.`);
-    }
+    log(`✔ Saved Master profile v${saveData.version} as ${saveData.status} — ${successfulAgents}/8 agents, ${uniqueFacts.length} facts grounded`);
 
     setProgress("Pipeline completed successfully!", 100);
-    log(`=== EVIDENCE PIPELINE COMPLETE — Master Package Ready for downstream AI agents ===`);
+    log(`=== EVIDENCE PIPELINE COMPLETE — Agents grounded in real documents ===`);
     
     // Auto load & render results
     await loadProfile(lakeName);
@@ -1086,11 +1126,12 @@ function renderSections(profile) {
         <span class="sec-conf" style="font-weight:700;">${pct}%</span>
         ${has ? `<button type="button" class="small ghost btn-toggle-viewer" data-section="${key}" style="font-size:10px;padding:2px 6px;color:var(--accent)">👁️ View Summary</button>` : ''}
         <button type="button" class="small ghost btn-toggle-section-editor" data-section="${key}" style="font-size:10px;padding:2px 6px;">✏️ Edit JSON</button>
+        <button type="button" class="small ghost btn-rerun-section" data-section="${key}" style="font-size:10px;padding:2px 6px;color:var(--accent2);">🔄 Re-run</button>
       </div>
     </div>
     <div class="conf-bar" style="margin:0 10px 4px 40px"><div class="conf-fill ${levelClass}" style="width:${pct}%"></div></div>
     
-    <div class="section-viewer-container" id="viewer-container-${key}" style="display:${has ? 'block' : 'none'};margin:6px 10px 14px 40px;background:rgba(0,229,255,.03);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;color:var(--text);line-height:1.4;">
+    <div class="section-viewer-container" id="viewer-container-${key}" style="display:none;margin:6px 10px 14px 40px;background:rgba(0,229,255,.03);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;color:var(--text);line-height:1.4;">
       ${formatHumanReadableSection(key, sectionData)}
     </div>
     <div class="section-editor-container" id="editor-container-${key}" style="display:none;margin:6px 10px 14px 40px;">
@@ -1147,6 +1188,90 @@ function renderSections(profile) {
         if (viewer) viewer.innerHTML = formatHumanReadableSection(agent, parsed);
       } catch (err) {
         if (st) { st.textContent = 'Invalid JSON'; st.style.color = 'var(--bad)'; }
+      }
+    });
+  });
+
+  // Re-run single agent using stored normalized documents (no Tavily cost)
+  container.querySelectorAll('.btn-rerun-section').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const agentKey = e.target.dataset.section;
+      const btn = e.target;
+      const st = document.getElementById(`edit-status-${agentKey}`);
+      btn.disabled = true;
+      btn.textContent = '⏳ Running...';
+      if (st) { st.textContent = 'Fetching stored documents...'; st.style.color = 'var(--accent)'; }
+
+      try {
+        // Step 1: Fetch stored normalized documents from R2 (no Tavily cost)
+        const docsRes = await fetch(`${CF_WORKER_URL}/research/get-normalized?lake=${encodeURIComponent(currentLakeName)}`);
+        if (!docsRes.ok) throw new Error('No stored documents found — run full pipeline first');
+        const docsData = await docsRes.json();
+        if (!docsData.ok || !docsData.documents?.length) throw new Error('No stored documents available');
+
+        if (st) st.textContent = `Re-extracting facts from ${docsData.count} documents...`;
+
+        // Step 2: Re-extract facts for this specific category
+        const extractRes = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lakeName: currentLakeName,
+            state: sanitizeStateFromLakeName(currentLakeName),
+            documents: docsData.documents.map(d => ({ title: d.title, text: d.fullText || d.text || '' })),
+            filterCategory: agentKey
+          })
+        });
+        const extractData = await extractRes.json();
+        const facts = extractData.extracted_facts || [];
+
+        if (st) st.textContent = `Running ${agentKey} agent...`;
+
+        // Step 3: Re-run just this agent with existing profile as context
+        const reviewCard = document.getElementById('reviewCard');
+        const prevProfile = reviewCard?.dataset.merged ? JSON.parse(reviewCard.dataset.merged) : {};
+
+        const agentRes = await fetch(`${CF_WORKER_URL}/research/agent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lakeName: currentLakeName,
+            state: sanitizeStateFromLakeName(currentLakeName),
+            agent: agentKey,
+            previousResults: { ...prevProfile, _extractedFacts: facts }
+          })
+        });
+        const agentData = await agentRes.json();
+        if (!agentData.success) throw new Error(agentData.error || 'Agent failed');
+
+        // Step 4: Apply result to in-memory profile
+        if (reviewCard?.dataset.merged) {
+          const curMerged = JSON.parse(reviewCard.dataset.merged);
+          const curParts = JSON.parse(reviewCard.dataset.parts || '{}');
+          curMerged[agentKey] = agentData.section;
+          if (agentKey === 'biology') curMerged.forage = agentData.section;
+          if (agentKey === 'trolling') curMerged.trollingIntelligence = agentData.section;
+          curParts[agentKey] = agentData.section;
+          reviewCard.dataset.merged = JSON.stringify(curMerged);
+          reviewCard.dataset.parts = JSON.stringify(curParts);
+          if (typeof packagePartsCache !== 'undefined') packagePartsCache[agentKey] = agentData.section;
+        }
+
+        // Step 5: Refresh UI for this section
+        const viewer = document.getElementById(`viewer-container-${agentKey}`);
+        if (viewer) viewer.innerHTML = formatHumanReadableSection(agentKey, agentData.section);
+        const ta = container.querySelector(`.review-section-textarea[data-agent="${agentKey}"]`);
+        if (ta) ta.value = JSON.stringify(agentData.section, null, 2);
+
+        if (st) { st.textContent = `✓ Re-run complete (${agentData.confidence?.percent||'?'}% confidence via ${agentData.meta?.model||'?'})`; st.style.color = 'var(--accent2)'; }
+        log(`[Re-run] ${agentKey}: ${agentData.confidence?.percent||'?'}% via ${agentData.meta?.model||'?'}`);
+
+      } catch (err) {
+        if (st) { st.textContent = `Failed: ${err.message}`; st.style.color = 'var(--bad)'; }
+        log(`[Re-run] ${agentKey} failed: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '🔄 Re-run';
       }
     });
   });

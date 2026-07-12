@@ -963,6 +963,11 @@ Return ONLY valid JSON, no markdown:
     rampLat,rampLon,rangeMiles,[band1Speed, band2Speed],phaseInfo
   );
 
+  // Expose phase timing for notifications module
+  if (phaseInfo?.phases?.length) {
+    window._trollmapPhases = phaseInfo.phases.map(p => ({ startH: p.start, endH: p.end, num: p.num }));
+    if (window.trollmapLoadPhaseNotifications) window.trollmapLoadPhaseNotifications(phaseInfo.phases);
+  }
   window._smartPlanPhaseRoutes = [
     { phase:1, phaseName:'Shallow', depthMin:groqPlan.band1.depthMin, depthMax:groqPlan.band1.depthMax, speed:band1Speed, window:'Band 1' },
     { phase:2, phaseName:'Deep',    depthMin:groqPlan.band2.depthMin, depthMax:groqPlan.band2.depthMax, speed:band2Speed, window:'Band 2' },
@@ -1078,6 +1083,8 @@ Return ONLY valid JSON, no markdown:
       : '⚠ No waypoints — load contour data first (Contour Data tab)';
   setStatus(wayptMsg,totalWaypoints>0 && !isFallback);
 
+  // Reload notification session with fresh plan data
+  if (window.trollmapReloadNotificationSession) window.trollmapReloadNotificationSession();
   return {groqPlan,phaseInfo,rangeMiles};
 }
 

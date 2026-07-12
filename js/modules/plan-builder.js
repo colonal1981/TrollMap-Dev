@@ -579,6 +579,9 @@ export async function buildPlanPreviewHtml(p){
 
     const sol = calcSolunar(date, lat, lon);
     moonPhase = sol.phaseName; moonIllum = sol.illum;
+    // Expose solunar times for notifications module
+    window._trollmapSolunar = { major1: sol.major1, major2: sol.major2, minor1: sol.minor1, minor2: sol.minor2 };
+    if (window.trollmapLoadSolunarNotifications) window.trollmapLoadSolunarNotifications(sol);
     solunarAutoRows = `
       <tr><td><span class="rp-pill ${sol.ratingClass}">MAJOR</span></td><td>${sol.major1Str} &amp; ${sol.major2Str}</td><td>Peak feeding — be on fish. Plan troll to hit structure during this window.</td></tr>
       <tr><td><span class="rp-pill rp-strong">MINOR</span></td><td>${sol.minor1Str} &amp; ${sol.minor2Str}</td><td>Secondary feeding activity — maintain coverage.</td></tr>
@@ -604,6 +607,7 @@ export async function buildPlanPreviewHtml(p){
         const tmaxF = Math.round(D.temperature_2m_max[0] * 9/5 + 32);
         const tminF = Math.round(D.temperature_2m_min[0] * 9/5 + 32);
         const windMph = Math.round(D.windspeed_10m_max[0] * 0.621371);
+        if (window.trollmapCheckWindAlert) window.trollmapCheckWindAlert(windMph);
         const windD   = windDir(D.winddirection_10m_dominant[0]);
         const precip  = D.precipitation_sum[0];
         const uvMax   = D.uv_index_max[0];
