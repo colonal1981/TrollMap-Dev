@@ -2944,7 +2944,7 @@ async function handleResearchDiscover(request, env) {
   // Per-lake pre-seeded authoritative sources — always included regardless of Tavily results
   const LAKE_SEEDS = {
     wateree: [
-      { title: "Lake Wateree SC DES Water Quality Report", type: "PDF", authority: "SCDESC", url: "https://des.sc.gov/sites/des/files/Documents/BOW/WaterQuality/WPLakeWateree.pdf", priority: 1 },
+      { title: "Lake Wateree SC DES Water Quality Report", type: "PDF", authority: "SCDNR", url: "https://des.sc.gov/sites/des/files/Documents/BOW/WaterQuality/WPLakeWateree.pdf", priority: 1 },
       { title: "Lake Wateree SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/wateree/description.html", priority: 1 },
       { title: "Lake Wateree Fishing Information", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/wateree/fishing.html", priority: 1 },
       { title: "SC Freshwater Game Fishing Regulations (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
