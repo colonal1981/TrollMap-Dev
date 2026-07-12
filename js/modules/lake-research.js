@@ -1049,7 +1049,27 @@ function renderSections(profile) {
   let html = '';
   for (const key of RESEARCH_ORDER) {
     const label = RESEARCH_LABELS[key] || key;
-    const sectionData = profile[key] || (key === 'biology' ? profile.forage : '') || (key === 'trolling' ? (profile.trollingIntelligence || profile.trolling) : null) || {};
+    let sectionData;
+    if (key === 'identity') {
+      // Identity data may be nested under profile.identity or as top-level fields
+      sectionData = profile.identity || {
+        lakeName: profile.lakeName,
+        state: profile.state,
+        riverSystem: profile.riverSystem,
+        archetype: profile.archetype,
+        surfaceAreaAcres: profile.surfaceAreaAcres,
+        maxDepthFt: profile.maxDepthFt,
+        averageDepthFt: profile.averageDepthFt,
+        normalPoolFt: profile.normalPoolFt,
+        reservoirOwner: profile.reservoirOwner,
+        damName: profile.damName,
+        yearImpounded: profile.yearImpounded,
+        county: profile.county,
+        aliases: profile.aliases,
+      };
+    } else {
+      sectionData = profile[key] || (key === 'biology' ? profile.forage : '') || (key === 'trolling' ? (profile.trollingIntelligence || profile.trolling) : null) || {};
+    }
     const has = !!(profile[key] || profile[key === 'biology' ? 'forage' : ''] || (key === 'trolling' && (profile.trollingIntelligence || profile.trolling)));
     const c = conf[key] || conf[key === 'trolling' ? 'trollingIntelligence' : ''] || conf[key === 'biology' ? 'forage' : ''];
     const pct = c?.percent || (has ? 75 : 0);
@@ -1072,6 +1092,13 @@ function renderSections(profile) {
     
     <div class="section-viewer-container" id="viewer-container-${key}" style="display:${has ? 'block' : 'none'};margin:6px 10px 14px 40px;background:rgba(0,229,255,.03);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;color:var(--text);line-height:1.4;">
       ${formatHumanReadableSection(key, sectionData)}
+    </div>
+    <div class="section-editor-container" id="editor-container-${key}" style="display:none;margin:6px 10px 14px 40px;">
+      <textarea class="review-section-textarea" data-agent="${key}" style="width:100%;height:220px;font-family:monospace;font-size:11px;background:#030810;color:#bdffa0;border:1px solid var(--line);border-radius:4px;padding:6px;white-space:pre;overflow:auto;">${JSON.stringify(sectionData, null, 2)}</textarea>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+        <button type="button" class="small primary btn-apply-section-edit" data-agent="${key}" style="background:var(--accent2);color:#000;font-size:11px;">✔ Apply Edit</button>
+        <span class="muted" id="edit-status-${key}" style="font-size:11px;"></span>
+      </div>
     </div>`;
   }
   container.innerHTML = html;
@@ -1082,6 +1109,44 @@ function renderSections(profile) {
       const el = document.getElementById(`viewer-container-${sec}`);
       if (el) {
         el.style.display = el.style.display === 'none' ? 'block' : 'none';
+      }
+    });
+  });
+
+  container.querySelectorAll('.btn-toggle-section-editor').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const sec = e.target.dataset.section;
+      const el = document.getElementById(`editor-container-${sec}`);
+      if (el) {
+        el.style.display = el.style.display === 'none' ? 'block' : 'none';
+      }
+    });
+  });
+
+  container.querySelectorAll('.btn-apply-section-edit').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const agent = e.target.dataset.agent;
+      const ta = container.querySelector(`.review-section-textarea[data-agent="${agent}"]`);
+      const st = document.getElementById(`edit-status-${agent}`);
+      const reviewCard = document.getElementById('reviewCard');
+      if (!ta || !reviewCard?.dataset.merged) return;
+      try {
+        const parsed = JSON.parse(ta.value);
+        const curMerged = JSON.parse(reviewCard.dataset.merged);
+        const curParts = JSON.parse(reviewCard.dataset.parts || '{}');
+        curMerged[agent] = parsed;
+        if (agent === 'biology') curMerged.forage = parsed;
+        if (agent === 'trolling') curMerged.trollingIntelligence = parsed;
+        curParts[agent] = parsed;
+        reviewCard.dataset.merged = JSON.stringify(curMerged);
+        reviewCard.dataset.parts = JSON.stringify(curParts);
+        if (typeof packagePartsCache !== 'undefined') packagePartsCache[agent] = parsed;
+        if (st) { st.textContent = 'Applied ✓'; st.style.color = 'var(--accent2)'; }
+        // Refresh viewer
+        const viewer = document.getElementById(`viewer-container-${agent}`);
+        if (viewer) viewer.innerHTML = formatHumanReadableSection(agent, parsed);
+      } catch (err) {
+        if (st) { st.textContent = 'Invalid JSON'; st.style.color = 'var(--bad)'; }
       }
     });
   });
