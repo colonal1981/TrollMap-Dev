@@ -543,7 +543,7 @@ async function runEvidencePipeline(lakeName) {
     const rawFacts = extractData.extracted_facts || [];
     log(`Gemini deep scan extracted ${rawFacts.length} verified facts.`);
     if (rawFacts.length === 0) {
-      log(`⚠️ Zero facts extracted — docs lack lake-specific data or prompt too strict. Saving payload for debug and continuing as draft.`);
+      log(`⚠️ Zero facts extracted — primary pass returned empty. Worker will attempt regulations fallback if not already done.`);
     }
     rawFacts.forEach(f => {
       log(`💬 [${f.category}] "${f.fact}" (Confidence: ${f.confidence}%) - Source: ${f.source} pg ${f.page || '?'}`);
@@ -553,27 +553,33 @@ async function runEvidencePipeline(lakeName) {
     // STEP 8 & 9: Deduplication & Contradiction Detection
     // ----------------------------------------------------
     setProgress("Step 8-9: Resolving duplicates & conflicts...", 92);
-    log("Deduplicating identical facts and checking for anomalies...");
 
-    let dedupeData;
-    try {
-      const dedupeRes = await fetch(`${CF_WORKER_URL}/research/dedupe-contradictions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ facts: rawFacts })
-      });
-      if (!dedupeRes.ok) {
-        const t = await dedupeRes.text().catch(()=> '').then(s=>s.slice(0,300));
-        throw new Error(`HTTP ${dedupeRes.status}: ${t}`);
+    let uniqueFacts = rawFacts;
+    let contradictions = [];
+
+    if (rawFacts.length === 0) {
+      log("Skipping dedup — no facts to process.");
+    } else {
+      log("Deduplicating identical facts and checking for anomalies...");
+      let dedupeData;
+      try {
+        const dedupeRes = await fetch(`${CF_WORKER_URL}/research/dedupe-contradictions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ facts: rawFacts })
+        });
+        if (!dedupeRes.ok) {
+          const t = await dedupeRes.text().catch(()=> '').then(s=>s.slice(0,300));
+          throw new Error(`HTTP ${dedupeRes.status}: ${t}`);
+        }
+        dedupeData = await dedupeRes.json();
+      } catch (e) {
+        log(`⚠️ Dedupe request failed: ${e.message} — treating all facts as unique`);
+        dedupeData = { deduplicated_facts: rawFacts, contradictions: [] };
       }
-      dedupeData = await dedupeRes.json();
-    } catch (e) {
-      log(`⚠️ Dedupe request failed: ${e.message} — treating all facts as unique`);
-      dedupeData = { deduplicated_facts: rawFacts, contradictions: [] };
+      uniqueFacts = dedupeData.deduplicated_facts || [];
+      contradictions = dedupeData.contradictions || [];
     }
-
-    const uniqueFacts = dedupeData.deduplicated_facts || [];
-    const contradictions = dedupeData.contradictions || [];
 
     log(`Deduplicated facts count: ${uniqueFacts.length}.`);
     if (contradictions.length > 0) {
@@ -617,6 +623,7 @@ async function runEvidencePipeline(lakeName) {
     // STEP 12: Targeted Tavily searches for null fields
     // ----------------------------------------------------
     const gapFacts = [];
+    const gapRawTexts = []; // raw text from gap searches passed directly to Pass 2 mapping
 
     if (gapData.gapQueries?.length) {
       setProgress("Step 12: Running targeted gap searches...", 78);
@@ -626,7 +633,6 @@ async function runEvidencePipeline(lakeName) {
         const { field, query } = gapData.gapQueries[i];
         setProgress(`Step 12: Searching for ${field}...`, 78 + (i / gapData.gapQueries.length) * 8);
         try {
-          // Route through worker to keep Tavily key server-side
           const factRes = await fetch(`${CF_WORKER_URL}/research/gap-search`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -634,25 +640,28 @@ async function runEvidencePipeline(lakeName) {
           });
           if (!factRes.ok) continue;
           const factData = await factRes.json();
-          const newFacts = factData.extracted_facts || [];
-          if (newFacts.length) {
-            log(`✔ Gap [${field}]: ${newFacts.length} new facts`);
-            gapFacts.push(...newFacts);
+          // Collect raw text for Pass 2 mapping
+          if (factData.rawText && factData.rawText.length > 100) {
+            log(`✔ Gap [${field}]: ${factData.rawText.length} chars retrieved`);
+            gapRawTexts.push({ field, text: factData.rawText.slice(0, 3000) });
           }
+          // Also collect any pre-extracted facts if present
+          const newFacts = factData.extracted_facts || [];
+          if (newFacts.length) gapFacts.push(...newFacts);
         } catch (e) {
           log(`⚠ Gap search [${field}] failed: ${e.message}`);
         }
       }
 
-      // STEP 13: Second mapping pass with gap facts merged in
-      if (gapFacts.length) {
-        setProgress("Step 13: Second mapping pass with gap facts...", 88);
-        log(`Running second mapping pass with ${gapFacts.length} additional facts...`);
+      // STEP 13: Second mapping pass with gap texts as additional context
+      if (gapRawTexts.length || gapFacts.length) {
+        setProgress("Step 13: Second mapping pass with gap search results...", 88);
+        log(`Running second mapping pass with ${gapFacts.length} additional facts + ${gapRawTexts.length} gap text sources...`);
         const allFacts = [...uniqueFacts, ...gapFacts];
         const map2Res = await fetch(`${CF_WORKER_URL}/research/map-facts`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lakeName, facts: allFacts, pass: 2 })
+          body: JSON.stringify({ lakeName, facts: allFacts, pass: 2, gapTexts: gapRawTexts })
         });
         if (map2Res.ok) {
           const map2Data = await map2Res.json();
