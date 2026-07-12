@@ -703,9 +703,9 @@ function buildFinalResearchPacket(lakeName, state, uniqueFacts, scoredSources) {
   const maxDepthRaw = getVal('maxDepth', null);
   const avgDepthRaw = getVal('averageDepth', null);
 
-  return {
+  // Build a proper nested identity object so the UI never shows empty
+  const identityObj = {
     lakeName,
-    baseName,
     state,
     aliases,
     riverSystem: getVal('riverSystem', null),
@@ -713,6 +713,26 @@ function buildFinalResearchPacket(lakeName, state, uniqueFacts, scoredSources) {
     surfaceAreaAcres: surfaceAreaRaw ? parseFloat(String(surfaceAreaRaw).replace(/[^0-9.]/g,'')) || null : null,
     maxDepthFt: maxDepthRaw ? parseFloat(String(maxDepthRaw).replace(/[^0-9.]/g,'')) || null : null,
     averageDepthFt: avgDepthRaw ? parseFloat(String(avgDepthRaw).replace(/[^0-9.]/g,'')) || null : null,
+    damName: getVal('damName', null),
+    yearImpounded: (() => {
+      const v = getVal('yearImpounded', null);
+      return v ? parseInt(String(v).replace(/[^0-9]/g,'')) || null : null;
+    })(),
+    reservoirOwner: getVal('reservoirOwner', null),
+    type: getVal('type', null)
+  };
+
+  return {
+    lakeName,
+    baseName,
+    state,
+    aliases,
+    identity: identityObj,          // ← the missing piece the UI renders
+    riverSystem: identityObj.riverSystem,
+    archetype: identityObj.archetype,
+    surfaceAreaAcres: identityObj.surfaceAreaAcres,
+    maxDepthFt: identityObj.maxDepthFt,
+    averageDepthFt: identityObj.averageDepthFt,
     limnology: {
       waterClarity: { typical: getVal('clarity', null), color: null, secchiFt: null, note: getAllForCategory('clarity').join('; ').slice(0,500) },
       thermocline: { summerDepthFt: null, strength: null, winterMix: null, note: getVal('thermocline', null) },
