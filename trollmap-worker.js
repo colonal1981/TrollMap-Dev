@@ -2944,11 +2944,9 @@ async function handleResearchDiscover(request, env) {
   // Per-lake pre-seeded authoritative sources — always included regardless of Tavily results
   const LAKE_SEEDS = {
     wateree: [
-      { title: "Lake Wateree SC DES Water Quality Report", type: "PDF", authority: "SCDNR", url: "https://des.sc.gov/sites/des/files/Documents/BOW/WaterQuality/WPLakeWateree.pdf", priority: 1 },
       { title: "Lake Wateree SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/wateree/description.html", priority: 1 },
-      { title: "Lake Wateree Fishing Information", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/wateree/fishing.html", priority: 1 },
-      { title: "SC Freshwater Game Fishing Regulations (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
-      { title: "SCDNR Striped Bass Fisheries Fact Sheet (covers Wateree)", type: "PDF", authority: "SCDNR", url: "https://www.dnr.sc.gov//wildlife/publications/pdf/fisheriesfacts.pdf", priority: 1 },
+      { title: "SC Freshwater Fish Size & Possession Limits (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
+      { title: "SCDNR Striped Bass Species Page (current regulations & biology)", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/fish/species/stripedbass.html", priority: 1 },
     ],
     murray: [
       { title: "Lake Murray SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/murray/description.html", priority: 1 },
