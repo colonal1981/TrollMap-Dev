@@ -3012,8 +3012,40 @@ __name(handleResearchDiscover, "handleResearchDiscover");
 async function handleResearchProxyDownload(request, env) {
   const url = new URL(request.url);
   const target = url.searchParams.get("url");
+  const sourceType = url.searchParams.get("type") || ""; // "PDF" or "HTML"
   if (!target) {
     return new Response(JSON.stringify({ success: false, error: "Missing url parameter" }), { status: 400, headers: JSON_HEADERS });
+  }
+
+  // Route HTML sources through Firecrawl for better extraction
+  const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
+  const isHtml = sourceType.toUpperCase() === 'HTML' || (!target.toLowerCase().includes('.pdf') && !sourceType.toUpperCase().includes('PDF'));
+
+  if (firecrawlKey && isHtml) {
+    try {
+      const fcRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: target,
+          formats: ['markdown'],
+          onlyMainContent: true,
+          timeout: 20000
+        })
+      });
+      if (fcRes.ok) {
+        const fcData = await fcRes.json();
+        const markdown = fcData.data?.markdown || fcData.markdown || '';
+        if (markdown && markdown.length > 100) {
+          // Return as text/plain so lake-research.js can use it directly without pdf.js
+          const headers = new Headers({ 'Content-Type': 'text/plain; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'X-Source': 'firecrawl' });
+          return new Response(markdown, { headers });
+        }
+      }
+      // Fall through to basic fetch if Firecrawl fails
+    } catch (e) {
+      console.warn(`Firecrawl failed for ${target}: ${e.message} — falling back to basic fetch`);
+    }
   }
 
   try {
