@@ -593,8 +593,8 @@ var LAKE_INTEL_SOURCE_REGISTRY = {
   "default": {
     "official": [
       {
-        "label": "State fisheries regulations / DNR",
-        "url": "https://www.dnr.sc.gov/fishregs/",
+        "label": "SCDNR Freshwater Size & Possession Limits (eRegulations)",
+        "url": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
         "trust": "OFFICIAL"
       }
     ],
@@ -611,8 +611,8 @@ var LAKE_INTEL_SOURCE_REGISTRY = {
         "use": "pool level / advisories"
       },
       {
-        "label": "SCDNR Fishing Regulations",
-        "url": "https://www.dnr.sc.gov/fishregs/",
+        "label": "SCDNR Freshwater Size & Possession Limits (eRegulations)",
+        "url": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
         "trust": "OFFICIAL",
         "use": "seasons, limits, creel rules"
       },
@@ -663,8 +663,8 @@ var LAKE_INTEL_SOURCE_REGISTRY = {
         "use": "lake management / drawdown notices"
       },
       {
-        "label": "SCDNR Fishing Regulations",
-        "url": "https://www.dnr.sc.gov/fishregs/",
+        "label": "SCDNR Freshwater Size & Possession Limits (eRegulations)",
+        "url": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
         "trust": "OFFICIAL",
         "use": "seasons and limits"
       }
@@ -706,8 +706,8 @@ var LAKE_INTEL_SOURCE_REGISTRY = {
         "use": "lake data / rule curve context"
       },
       {
-        "label": "SCDNR Fishing Regulations",
-        "url": "https://www.dnr.sc.gov/fishregs/",
+        "label": "SCDNR Freshwater Size & Possession Limits (eRegulations)",
+        "url": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
         "trust": "OFFICIAL",
         "use": "Santee Cooper system rules"
       }
@@ -743,8 +743,8 @@ var LAKE_INTEL_SOURCE_REGISTRY = {
         "use": "lake data / rule curve context"
       },
       {
-        "label": "SCDNR Fishing Regulations",
-        "url": "https://www.dnr.sc.gov/fishregs/",
+        "label": "SCDNR Freshwater Size & Possession Limits (eRegulations)",
+        "url": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
         "trust": "OFFICIAL"
       }
     ],
@@ -773,8 +773,8 @@ var LAKE_INTEL_SOURCE_REGISTRY = {
         "use": "pool level / advisories"
       },
       {
-        "label": "SCDNR Fishing Regulations",
-        "url": "https://www.dnr.sc.gov/fishregs/",
+        "label": "SCDNR Freshwater Size & Possession Limits (eRegulations)",
+        "url": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
         "trust": "OFFICIAL"
       }
     ],
@@ -815,8 +815,8 @@ var LAKE_INTEL_SOURCE_REGISTRY = {
         "use": "USACE lake levels"
       },
       {
-        "label": "SCDNR / GA DNR Regulations",
-        "url": "https://www.dnr.sc.gov/fishregs/",
+        "label": "SCDNR / GA DNR Freshwater Regs (eRegulations)",
+        "url": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
         "trust": "OFFICIAL"
       }
     ],
@@ -844,8 +844,8 @@ var LAKE_INTEL_SOURCE_REGISTRY = {
         "use": "lake level / ramp context"
       },
       {
-        "label": "SCDNR / GA DNR Regulations",
-        "url": "https://www.dnr.sc.gov/fishregs/",
+        "label": "SCDNR / GA DNR Freshwater Regs (eRegulations)",
+        "url": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
         "trust": "OFFICIAL"
       }
     ],
@@ -867,8 +867,8 @@ var LAKE_INTEL_SOURCE_REGISTRY = {
         "use": "lake level / project info"
       },
       {
-        "label": "SCDNR / GA DNR Regulations",
-        "url": "https://www.dnr.sc.gov/fishregs/",
+        "label": "SCDNR / GA DNR Freshwater Regs (eRegulations)",
+        "url": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
         "trust": "OFFICIAL"
       }
     ],
@@ -889,8 +889,8 @@ var LAKE_INTEL_SOURCE_REGISTRY = {
         "trust": "OFFICIAL_UTILITY"
       },
       {
-        "label": "SCDNR Fishing Regulations",
-        "url": "https://www.dnr.sc.gov/fishregs/",
+        "label": "SCDNR Freshwater Size & Possession Limits (eRegulations)",
+        "url": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
         "trust": "OFFICIAL"
       }
     ],
@@ -1247,7 +1247,7 @@ async function getLakeIntel(lakeName) {
   const latestReport = lakeCfg?.ahq ? await fetchAhqFishingReport(lakeCfg.ahq) : null;
   const lakeMonster = await fetchLakeMonsterIntel(key);
   const sources = [
-    { label: "State fisheries / regulations", url: "https://www.dnr.sc.gov/fishregs/" }
+    { label: "State fisheries / regulations", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits" }
   ];
   if (latestReport?.source) sources.push({ label: "Angler's Headquarters fishing report (VERIFY: third-party scraped text)", url: latestReport.source });
   if (lakeMonster?.source) sources.push({ label: "LakeMonster lake context (VERIFY: third-party aggregate/model)", url: lakeMonster.source });
@@ -2807,16 +2807,19 @@ async function handleResearchDiscover(request, env) {
   };
 
   // Resolve state-specific agencies and domains dynamically
+  // Fix 2026-07-12: dnr.sc.gov/fishregs now 404s — official regs moved to eRegulations
+  // For SC, we search both dnr.sc.gov (lake descriptions still work) AND eregulations.com (new regs host)
   let dnrName = "SCDNR";
   let dnrDomain = "dnr.sc.gov";
-  if (state === "NC") { dnrName = "NCWRC"; dnrDomain = "ncwildlife.org"; }
-  else if (state === "GA") { dnrName = "GADNR"; dnrDomain = "georgiawildlife.com"; }
+  let regsSiteFilter = "site:dnr.sc.gov OR site:eregulations.com";
+  if (state === "NC") { dnrName = "NCWRC"; dnrDomain = "ncwildlife.org"; regsSiteFilter = "site:ncwildlife.org OR site:eregulations.com"; }
+  else if (state === "GA") { dnrName = "GADNR"; dnrDomain = "georgiawildlife.com"; regsSiteFilter = "site:georgiawildlife.com OR site:eregulations.com"; }
 
   // Use baseName in queries to improve Tavily hit rate (avoid ", SC" suffix which hurts)
   const queryLake = baseName || lakeName;
   const queryPatterns = [
     `"${queryLake}" (fisheries OR biology OR \"striped bass\" OR crappie OR \"largemouth\") ${dnrName} filetype:pdf`,
-    `"${queryLake}" (regulations OR \"creel limit\" OR \"size limit\" OR \"bag limit\") site:${dnrDomain}`,
+    `"${queryLake}" (regulations OR \"creel limit\" OR \"size limit\" OR \"bag limit\") (${regsSiteFilter})`,
     `"${queryLake}" (limnology OR thermocline OR \"water quality\" OR hydrology OR \"surface area\") (USACE OR USGS OR EPA)`,
     `"${queryLake}" lake (habitat OR structure OR navigation OR hazards OR ramps) ${dnrName}`,
     `"${queryLake}" (thermocline OR \"oxygen depletion\" OR stratification OR \"dissolved oxygen\") depth fishing`
@@ -2876,7 +2879,7 @@ async function handleResearchDiscover(request, env) {
           let host = "Tavily Extract";
           try { host = new URL(ext.url).hostname; } catch {}
           let authority = host;
-          if (/dnr\.sc\.gov/.test(host)) authority = "SCDNR";
+          if (/dnr\.sc\.gov/.test(host) || /eregulations\.com/.test(host)) authority = "SCDNR";
           else if (/usgs\.gov/.test(host)) authority = "USGS";
           else if (/usace\.army\.mil/.test(host)) authority = "USACE";
           else if (/dnr|wildlife/.test(host)) authority = dnrName;
@@ -3565,7 +3568,7 @@ async function handleResearchGapAnalysis(request, env) {
   const profile = body.profile || {};
   const state = String(body.state || 'SC').toUpperCase();
 
-  const dnrDomain = state === 'NC' ? 'ncwildlife.org' : state === 'GA' ? 'georgiawildlife.com' : 'dnr.sc.gov';
+  const dnrDomain = state === 'NC' ? 'ncwildlife.org OR eregulations.com' : state === 'GA' ? 'georgiawildlife.com OR eregulations.com' : 'dnr.sc.gov OR eregulations.com'; // Fix 2026-07-12: dnr.sc.gov/fishregs 404s -> eRegulations
   const baseName = lakeName.replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA)\s*$/i,'').trim();
 
   // Only check fields that directly affect Smart Plan quality
@@ -3916,9 +3919,9 @@ Use only current wildlife agency info (SCDNR, NCWRC, GA DNR). Return ONLY this s
     "licenseRequirements": "State freshwater fishing license required...",
     "specialRegulations": ["List key lake specific rules and exceptions here as well"],
     "notes": "Always verify exact lake exceptions at official agency site before fishing.",
-    "sourceUrl": "https://www.dnr.sc.gov/fishregs/"
+    "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits"
   },
-  "sources": [{"label":"SCDNR / Agency Regulations for ${lakeName}","url":"https://www.dnr.sc.gov/fishregs/","trust":"OFFICIAL"}]
+  "sources": [{"label":"SCDNR / Agency Regulations for ${lakeName}","url":"https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits","trust":"OFFICIAL"}]
 }
 Return JSON only. Never invent limits - if unknown, set field null.`,
     expectedKey: "regulations"
@@ -5327,8 +5330,8 @@ Place the fraction at the point where the structure meets the water, not the far
       return new Response(JSON.stringify({
         ok: true,
         worker: "trollmap-worker",
-        version: 15.4,
-        changelog: "2026-07-12: Lake Research v4 Evidence Pipeline Fixes — fix alias dup 'Lake Lake', filter off-lake Murray/Marion regs from Wateree, skip huge 50MB pocket guide PDFs, relevance-aware scoring (auth+relevance+freshness), lake-relevant chunk extraction (not 100k dumps), Gemini prompt v3 with general vs lake-specific regulations & fallback, dedup by fact not category, quality gate prevents verified on 0 facts, defensive HTTP error handling",
+        version: 15.5,
+        changelog: "2026-07-12 v15.5: Fix SCDNR regs 404 — dnr.sc.gov/fishregs now 404s (verified). Migrated ALL regulation URLs to https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits (official SCDNR host). Updated LAKE_INTEL_SOURCE_REGISTRY, discovery queries to search (site:dnr.sc.gov OR site:eregulations.com), authority detection treats eregulations.com as OFFICIAL SCDNR, gap analysis includes eRegulations. Plan preview footer now links directly to new regs page. Previous v15.4: Lake Research v4 Evidence Pipeline Fixes — alias dedupe, off-lake filter, skip pocket guide, relevance scoring, chunk extraction, dedup by fact",
         evidencePipeline: {
           version: "v4",
           fixes: [

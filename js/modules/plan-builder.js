@@ -1191,7 +1191,7 @@ ${regsRows?`<h2>📋 SC Fishing Regulations — ${esc(lakeForRegs.split(',')[0]|
   <thead><tr style="background:#eef4fa"><th>Species</th><th>Season</th><th>Size Limit</th><th>Bag Limit</th><th>Notes</th></tr></thead>
   <tbody>${regsRows}</tbody>
 </table>
-<p class="rp-small">Source: SCDNR / SC Code § 50-13. Always verify current regulations at dnr.sc.gov before fishing. Emergency closures may apply.</p>`:''}
+<p class="rp-small">Source: SCDNR / SC Code § 50-13 via <a href="https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits" target="_blank">eRegulations – SC Freshwater Size & Possession Limits</a>. Always verify current regulations at <strong>eregulations.com/southcarolina/fishing</strong> and <strong>dnr.sc.gov</strong> before fishing. Emergency closures may apply.</p>`:''}
 
 <h2>🐟 Fish-Fight Protocol</h2>
 <table>
