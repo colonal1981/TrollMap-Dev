@@ -2966,18 +2966,21 @@ async function handleResearchDiscover(request, env) {
     ],
   };
 
-  // Inject seeds for this lake — deduplicated against Tavily results
+  // Inject seeds — seeds always take guaranteed slots, prepend so they sort first
   const seeds = LAKE_SEEDS[baseLower] || [];
+  const guaranteedSeeds = [];
   for (const seed of seeds) {
     if (!seenUrls.has(seed.url)) {
       seenUrls.add(seed.url);
-      discoveredSources.push(seed);
+      guaranteedSeeds.push(seed);
     }
   }
+  // Prepend seeds so they beat Tavily results in sort
+  discoveredSources = [...guaranteedSeeds, ...discoveredSources];
 
   discoveredSources.sort((a,b)=> (a.priority-b.priority) || ((b.score||0)-(a.score||0)));
 
-  // If zero results, use curated fallback but make them lake-relevant where possible
+  // If zero results, use curated fallback
   if (discoveredSources.length === 0) {
     discoveredSources = [
       {
@@ -3004,10 +3007,12 @@ async function handleResearchDiscover(request, env) {
     ];
   }
 
-  // Cap to 10, but ensure we have at least 3 lake-specific if possible
-  const lakeSpecific = discoveredSources.filter(s=> s.priority===1);
-  const generic = discoveredSources.filter(s=> s.priority!==1);
-  let finalList = [...lakeSpecific.slice(0,6), ...generic].slice(0,10);
+  // Seeds are guaranteed in final list; fill remaining slots with Tavily results
+  const tavilySources = discoveredSources.filter(s => !guaranteedSeeds.includes(s));
+  const remainingSlots = Math.max(0, 10 - guaranteedSeeds.length);
+  const tavilyFill = tavilySources.filter(s => s.priority===1).slice(0, remainingSlots);
+  const tavilyGeneric = tavilySources.filter(s => s.priority!==1);
+  let finalList = [...guaranteedSeeds, ...tavilyFill, ...tavilyGeneric].slice(0,10);
   if (finalList.length < 3) finalList = discoveredSources.slice(0,10);
 
   return new Response(JSON.stringify({ success: true, sources: finalList, baseName, filteredCount: discoveredSources.length - finalList.length }), { headers: JSON_HEADERS });
