@@ -7,7 +7,7 @@
  * Step 4: Text Extraction (Client-side extraction of Title, Headings, Paragraphs, page numbers, tables)
  * Step 5: Source Quality Scoring (Compute scoring from authority, freshness, completeness)
  * Step 6: Document Classification (Classify documents: Hydrology, Biology, Regulations, etc.)
- * Step 7: Information Extraction (Run Gemini 2.5 large-context model for precise structured facts with page, confidence, quote)
+ * Step 7: Information Extraction (Run LLM large-context model for precise structured facts with page, confidence, quote)
  * Step 8: Evidence Deduplication (Merge identical facts, track newest/oldest source)
  * Step 9: Contradiction Detection (Flag conflicting evidence, visual review panel)
  * Step 10: Research Packet Generation (master R2 output research_packet.json)
@@ -26,7 +26,7 @@ const EVIDENCE_PIPELINE_STEPS = [
   { id: 'discover', label: 'Step 2: Source Discovery' },
   { id: 'download_extract', label: 'Step 3-4: Proxy Download & Client-Side Extraction (pdf.js)' },
   { id: 'score_classify', label: 'Step 5-6: Quality Scoring & Classification' },
-  { id: 'extract_facts', label: 'Step 7: Information Extraction (Gemini 2.5)' },
+  { id: 'extract_facts', label: 'Step 7: Information Extraction (LLM)' },
   { id: 'dedupe_contradictions', label: 'Step 8-9: Deduplication & Contradiction Detection' },
   { id: 'packet', label: 'Step 10: Compile Research Packet' }
 ];
@@ -560,8 +560,8 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     // ----------------------------------------------------
     // STEP 7: Information Extraction (Run Large-Context LLM)
     // ----------------------------------------------------
-    setProgress("Step 7: Deep Fact Extraction via Gemini Large-Context...", 85);
-    log("Submitting lake-relevant chunks to Gemini-2.5-Flash (not full 100k dumps)...");
+    setProgress("Step 7: Deep Fact Extraction via Research LLM...", 85);
+    log("Submitting lake-relevant chunks to Research LLM (not full 100k dumps)...");
 
     // Use relevant chunking to avoid drowning LLM in statewide report noise
     const extractionPayload = {
@@ -576,7 +576,7 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       }))
     };
 
-    // total cap ~120k chars to keep Gemini inside context & cost
+    // total cap ~120k chars to keep LLM inside context & cost
     let totalChars = extractionPayload.documents.reduce((a, b) => a + (b.text?.length || 0), 0);
     if (totalChars > 120000) {
       log(`⚠️ Total payload ${totalChars} chars >120k cap — trimming lowest-quality docs`);
@@ -602,24 +602,24 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
         body: JSON.stringify(extractionPayload)
       });
     } catch (e) {
-      throw new Error(`Gemini Extraction fetch failed: ${e.message}`);
+      throw new Error(`Fact Extraction fetch failed: ${e.message}`);
     }
     if (!extractRes.ok) {
       const snippet = await extractRes.text().catch(() => '').then(t => t.slice(0, 500));
-      throw new Error(`Gemini Extraction HTTP ${extractRes.status}: ${snippet}`);
+      throw new Error(`Fact Extraction HTTP ${extractRes.status}: ${snippet}`);
     }
     let extractData;
     try {
       extractData = await extractRes.json();
     } catch (e) {
-      throw new Error(`Gemini Extraction non-JSON: ${e.message}`);
+      throw new Error(`Fact Extraction non-JSON: ${e.message}`);
     }
     if (!extractData.success) {
-      throw new Error(`Gemini Extraction Failed: ${extractData.error || 'Extraction failure'}`);
+      throw new Error(`Fact Extraction Failed: ${extractData.error || 'Extraction failure'}`);
     }
 
     const rawFacts = extractData.extracted_facts || [];
-    log(`Gemini deep scan extracted ${rawFacts.length} verified facts.`);
+    log(`Deep scan extracted ${rawFacts.length} verified facts.`);
     if (rawFacts.length === 0) {
       log(`⚠️ Zero facts extracted — primary pass returned empty. Worker will attempt regulations fallback if not already done.`);
     }
