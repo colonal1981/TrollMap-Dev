@@ -45,8 +45,10 @@ export async function syncLakeIntelData() {
     // Species / forage
     if(rp?.biology) {
       const bio = rp.biology;
-      if(bio.primaryGameFish?.length) lines.push(`Primary sport fish: ${bio.primaryGameFish.join(', ')}`);
-      if(bio.forage?.primaryForage?.length) lines.push(`Known forage: ${bio.forage.primaryForage.join(', ')}`);
+      // Biology agent outputs predatorSpecies; fallback to primaryGameFish for backward compat
+      const gameFish = (bio.predatorSpecies?.length) ? bio.predatorSpecies : (bio.primaryGameFish || []);
+      if(gameFish.length) lines.push(`Primary sport fish: ${gameFish.join(', ')}`);
+      if(bio.primaryForage?.length) lines.push(`Known forage: ${bio.primaryForage.map(f => typeof f === 'string' ? f : f.species).filter(Boolean).join(', ')}`);
       if(bio.stocking) lines.push(`Stocking / management: ${bio.stocking}`);
     } else {
       lines.push(`Primary sport fish: ${(p.primarySportFish||[]).join(', ') || 'Unknown / verify locally'}`);
@@ -134,7 +136,7 @@ export async function syncLakeIntelData() {
     if(summary){
       summary.style.display='block';
       const verifiedBadge = rp ? `<br><span style="color:var(--accent2);font-weight:700">\uD83E\uDDE0 Verified Research v${rp.metadata?.version||'?'} \u00B7 ${rp.confidence?.overall?.percent||'?'}% confidence</span>` : (d.confidence&&String(d.confidence).includes('generic')?`<br><span style="color:var(--warn);font-weight:700">\u26A0 VERIFY: generic/unconfirmed profile</span>`:'');
-      const speciesDisplay = rp?.biology?.primaryGameFish?.length ? rp.biology.primaryGameFish.join(', ') : (p.primarySportFish||[]).join(', ')||'Profile generated';
+      const speciesDisplay = rp?.biology?.predatorSpecies?.length ? rp.biology.predatorSpecies.join(', ') : (rp?.biology?.primaryGameFish?.length ? rp.biology.primaryGameFish.join(', ') : (p.primarySportFish||[]).join(', ')||'Profile generated');
       summary.innerHTML = `<b style="color:var(--accent)">\uD83E\uDDE0 ${esc(d.lake||label)}</b><br><span>${esc(speciesDisplay)}</span>${verifiedBadge}${d.latestReport?.source?`<br><span class="muted">Latest scraped report source \u2014 verify before relying: ${esc(d.latestReport.source)}</span>`:''}`;
     }
     say('Intel ready', false);
