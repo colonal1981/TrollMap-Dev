@@ -556,14 +556,29 @@ async function runEvidencePipeline(lakeName) {
   }
 }
 
+// Helper: get relevant chunks from a doc by title match
+function getDocChunks(normalizedDocuments, titlePatterns, lakeName, maxChars) {
+  const docs = normalizedDocuments.filter(d =>
+    titlePatterns.some(p => typeof p === 'string'
+      ? d.title?.toLowerCase().includes(p.toLowerCase()) || d.url?.toLowerCase().includes(p.toLowerCase())
+      : p.test(d.title || '') || p.test(d.url || ''))
+  );
+  return docs.map(d => {
+    const rawLen = (d.fullText || '').length;
+    const budget = rawLen > 50000 ? 6000 : maxChars;
+    const chunk = extractRelevantChunks(d.fullText, lakeName, budget);
+    return `=== ${d.title} ===\n${chunk}`;
+  }).join('\n\n');
+}
+
 async function runPipelineTail(lakeName, baseName, stateName, normalizedDocuments, scoredSources) {
     // ----------------------------------------------------
-    // STEP 7: Information Extraction (Run Large-Context LLM)
+    // STEP 7: Fact extraction (blind pass — facts only, no inference)
     // ----------------------------------------------------
-    setProgress("Step 7: Deep Fact Extraction via Research LLM...", 85);
+    setProgress("Step 7: Extracting verified facts from documents...", 50);
     log("Submitting lake-relevant chunks to Research LLM (not full 100k dumps)...");
 
-    // Use relevant chunking — sort docs by score first so high-value docs get context budget
+    // Sort docs by composite score so high-value docs get budget first
     const sortedDocs = [...normalizedDocuments].sort((a, b) => {
       const sa = scoredSources.find(s => s.title === a.title)?.scoring?.composite || 50;
       const sb = scoredSources.find(s => s.title === b.title)?.scoring?.composite || 50;
@@ -576,7 +591,6 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       state: stateName,
       documents: sortedDocs.map(d => {
         const rawLen = (d.fullText || '').length;
-        // Large PDFs (>50k chars) get a tighter chunk budget so they don't crowd out regs/HTML docs
         const chunkBudget = rawLen > 50000 ? 6000 : 20000;
         return {
           title: d.title,
@@ -639,150 +653,192 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     });
 
     // ----------------------------------------------------
-    // STEP 8 & 9: Deduplication & Contradiction Detection
+    // STEP 8: Deduplication
     // ----------------------------------------------------
-    setProgress("Step 8-9: Resolving duplicates & conflicts...", 92);
-
+    setProgress("Step 8: Deduplicating facts...", 60);
     let uniqueFacts = rawFacts;
     let contradictions = [];
-
-    if (rawFacts.length === 0) {
-      log("Skipping dedup — no facts to process.");
-    } else {
+    if (rawFacts.length > 0) {
       log("Deduplicating identical facts and checking for anomalies...");
-      let dedupeData;
       try {
         const dedupeRes = await fetch(`${CF_WORKER_URL}/research/dedupe-contradictions`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ facts: rawFacts })
         });
-        if (!dedupeRes.ok) {
-          const t = await dedupeRes.text().catch(()=> '').then(s=>s.slice(0,300));
-          throw new Error(`HTTP ${dedupeRes.status}: ${t}`);
+        if (dedupeRes.ok) {
+          const dedupeData = await dedupeRes.json();
+          uniqueFacts = dedupeData.deduplicated_facts || rawFacts;
+          contradictions = dedupeData.contradictions || [];
         }
-        dedupeData = await dedupeRes.json();
       } catch (e) {
-        log(`⚠️ Dedupe request failed: ${e.message} — treating all facts as unique`);
-        dedupeData = { deduplicated_facts: rawFacts, contradictions: [] };
+        log(`⚠️ Dedupe failed: ${e.message} — using raw facts`);
       }
-      uniqueFacts = dedupeData.deduplicated_facts || [];
-      contradictions = dedupeData.contradictions || [];
-    }
-
-    log(`Deduplicated facts count: ${uniqueFacts.length}.`);
-    if (contradictions.length > 0) {
-      log(`⚠️ CONTRADICTION WARNING: Detected ${contradictions.length} conflicting reports!`);
-      contradictions.forEach(c => {
-        log(`👉 Conflict in [${c.field}]: "${c.factA}" vs "${c.factB}"`);
-      });
-    }
-
-    await savePipelineDataToR2(lakeName, 'extracted_facts.json', { rawFacts });
-    await savePipelineDataToR2(lakeName, 'evidence_deduped.json', { uniqueFacts, contradictions });
-
-    // ----------------------------------------------------
-    // STEP 10: Map facts to profile (no hallucination — null means unknown)
-    // ----------------------------------------------------
-    setProgress("Step 10: Mapping verified facts to profile...", 70);
-    log(`Mapping ${uniqueFacts.length} verified facts to profile schema (no inference, no gap-filling from training data)...`);
-
-    const mapRes = await fetch(`${CF_WORKER_URL}/research/map-facts`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lakeName, facts: uniqueFacts, pass: 1 })
-    });
-    if (!mapRes.ok) throw new Error(`Mapping agent HTTP ${mapRes.status}`);
-    const mapData = await mapRes.json();
-    if (!mapData.success) throw new Error(`Mapping agent failed: ${mapData.error}`);
-    let researchPacket = mapData.profile;
-    log(`✔ Pass 1 mapping complete via ${mapData.model} — profile built from ${mapData.factsUsed} facts`);
-
-    // STEP 11: Gap analysis — find null fields and run targeted searches
-    // ----------------------------------------------------
-    setProgress("Step 11: Analyzing gaps...", 75);
-    const gapRes = await fetch(`${CF_WORKER_URL}/research/gap-analysis`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lakeName, state: stateName, profile: researchPacket })
-    });
-    const gapData = await gapRes.json();
-    log(`Gap analysis: ${gapData.nullFields?.length||0} null fields, ${gapData.searchableGaps||0} targeted searches to run`);
-
-    // STEP 12: Targeted Tavily searches for null fields
-    // ----------------------------------------------------
-    const gapFacts = [];
-    const gapRawTexts = []; // raw text from gap searches passed directly to Pass 2 mapping
-
-    if (gapData.gapQueries?.length) {
-      setProgress("Step 12: Running targeted gap searches...", 78);
-      log(`Running ${gapData.gapQueries.length} targeted searches for missing data...`);
-
-      for (let i = 0; i < gapData.gapQueries.length; i++) {
-        const { field, query } = gapData.gapQueries[i];
-        setProgress(`Step 12: Searching for ${field}...`, 78 + (i / gapData.gapQueries.length) * 8);
-        try {
-          const factRes = await fetch(`${CF_WORKER_URL}/research/gap-search`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ lakeName, state: stateName, field, query })
-          });
-          if (!factRes.ok) continue;
-          const factData = await factRes.json();
-          // Collect raw text for Pass 2 mapping
-          if (factData.rawText && factData.rawText.length > 100) {
-            log(`✔ Gap [${field}]: ${factData.rawText.length} chars retrieved`);
-            gapRawTexts.push({ field, text: factData.rawText.slice(0, 3000) });
-          }
-          // Also collect any pre-extracted facts if present
-          const newFacts = factData.extracted_facts || [];
-          if (newFacts.length) gapFacts.push(...newFacts);
-        } catch (e) {
-          log(`⚠ Gap search [${field}] failed: ${e.message}`);
-        }
-      }
-
-      // STEP 13: Second mapping pass with gap texts as additional context
-      if (gapRawTexts.length || gapFacts.length) {
-        setProgress("Step 13: Second mapping pass with gap search results...", 88);
-        log(`Running second mapping pass with ${gapFacts.length} additional facts + ${gapRawTexts.length} gap text sources...`);
-        const allFacts = [...uniqueFacts, ...gapFacts];
-        const map2Res = await fetch(`${CF_WORKER_URL}/research/map-facts`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lakeName, facts: allFacts, pass: 2, gapTexts: gapRawTexts })
-        });
-        if (map2Res.ok) {
-          const map2Data = await map2Res.json();
-          if (map2Data.success) {
-            researchPacket = map2Data.profile;
-            log(`✔ Pass 2 mapping complete — ${allFacts.length} total facts used`);
-          }
-        }
-      } else {
-        log('No additional facts found from gap searches — using Pass 1 profile');
+      log(`Deduplicated facts count: ${uniqueFacts.length}.`);
+      if (contradictions.length > 0) {
+        log(`⚠️ ${contradictions.length} contradictions detected:`);
+        contradictions.forEach(c => log(`👉 [${c.field}]: "${c.factA}" vs "${c.factB}"`));
       }
     } else {
-      log('Skipping gap searches — no searchable gaps or no Tavily key');
+      log("Skipping dedup — no facts to process.");
     }
 
-    // Store extracted facts in profile for re-run capability
-    researchPacket._extractedFacts = [...uniqueFacts, ...gapFacts];
-    researchPacket._extractedFactsCount = researchPacket._extractedFacts.length;
+    // Stringify facts once for reuse in agent prompts
+    const factsBlock = uniqueFacts.length
+      ? `VERIFIED FACTS FROM DOCUMENTS (use these as primary source — do not contradict them):\n` +
+        uniqueFacts.map(f => `[${f.category}] ${f.fact} (source: ${f.source}, confidence: ${f.confidence}%)`).join('\n')
+      : 'No verified facts were extracted from documents for this lake.';
 
-    await savePipelineDataToR2(lakeName, 'research_packet.json', researchPacket);
+    // ----------------------------------------------------
+    // STEP 9–12: 4 Targeted Agent Calls
+    // Each agent gets relevant doc chunks + extracted facts,
+    // extracts what it needs AND synthesizes its section.
+    // ----------------------------------------------------
 
-    // Persist
-    setProgress("Saving profile...", 96);
-    log(`Saving profile (facts=${researchPacket._extractedFacts.length}, gaps searched=${gapData.searchableGaps||0})...`);
+    const agentSections = {};
+
+    // --- CALL 1: Identity + Limnology ---
+    setProgress("Step 9: Identity & Limnology...", 65);
+    log("Running identity & limnology agent...");
+    try {
+      const identityChunks = getDocChunks(normalizedDocuments,
+        ['description', 'wateree lake', 'wateree sc', 'water quality', 'watershed'],
+        lakeName, 15000);
+      const call1Res = await fetch(`${CF_WORKER_URL}/groq-query`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [
+            { role: 'system', content: `You are a lake research specialist. Extract and synthesize lake identity and limnology data from provided documents and verified facts. Return ONLY valid JSON. Null means unknown — never invent numbers. Do not use training data for numeric fields unless the documents support it.` },
+            { role: 'user', content: `Lake: ${lakeName}\n\n${factsBlock}\n\nDOCUMENT EXCERPTS:\n${identityChunks.slice(0, 25000)}\n\nReturn ONLY this JSON:\n{"identity":{"lakeName":"${lakeName}","state":"${stateName}","county":null,"riverSystem":null,"reservoirOwner":null,"surfaceAreaAcres":null,"maxDepthFt":null,"averageDepthFt":null,"normalPoolFt":null,"shorelineLengthMi":null,"damName":null,"yearImpounded":null,"archetype":null,"aliases":[]},"limnology":{"waterClarity":{"typical":null,"color":null,"secchiFt":null,"note":null},"thermocline":{"summerDepthFt":null,"strength":null,"winterMix":null,"note":null},"oxygen":{"depletionDepthFt":null,"anoxicBelowFt":null,"note":null},"trophicStatus":null,"flowCharacteristics":null,"seasonalDrawdownFt":null}}` }
+          ],
+          max_tokens: 1500, temperature: 0.1, response_format: { type: 'json_object' }
+        })
+      });
+      if (call1Res.ok) {
+        const call1Data = await call1Res.json();
+        const text = call1Data.choices?.[0]?.message?.content || '';
+        const parsed = JSON.parse(text.replace(/^```json\s*/i,'').replace(/\s*```$/,'').trim());
+        if (parsed.identity) agentSections.identity = parsed.identity;
+        if (parsed.limnology) agentSections.limnology = parsed.limnology;
+        log(`✔ Identity & Limnology complete`);
+      }
+    } catch (e) { log(`⚠️ Identity/Limnology agent failed: ${e.message}`); }
+
+    // --- CALL 2: Biology + Habitat ---
+    setProgress("Step 10: Biology & Habitat...", 72);
+    log("Running biology & habitat agent...");
+    try {
+      const bioChunks = getDocChunks(normalizedDocuments,
+        ['largemouth', 'bass', 'fisheries', 'hatchery', 'bayless', '2017', 'annual', 'striper', 'striped'],
+        lakeName, 15000);
+      const call2Res = await fetch(`${CF_WORKER_URL}/groq-query`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [
+            { role: 'system', content: `You are a fisheries biologist. Extract and synthesize fisheries biology and habitat data from provided documents and facts. You MAY use training knowledge for species known to inhabit this lake system, but clearly ground facts in the documents where possible. Return ONLY valid JSON.` },
+            { role: 'user', content: `Lake: ${lakeName} (${stateName})\n\n${factsBlock}\n\nDOCUMENT EXCERPTS:\n${bioChunks.slice(0, 25000)}\n\nReturn ONLY this JSON:\n{"biology":{"primaryForage":[{"species":null,"abundance":null,"notes":null}],"secondaryForage":[],"predatorSpecies":[],"speciesAbundance":{},"knownStockings":[],"baitfishMovement":null,"forageCalendar":{"spring":null,"summer":null,"fall":null,"winter":null}},"habitat":{"bottomComposition":{},"cover":[],"vegetation":{},"structuralElements":{"points":null,"humps":null,"creekArms":null,"channelLedges":null,"flats":null},"dockDensity":null,"standingTimber":null,"notes":null}}` }
+          ],
+          max_tokens: 1500, temperature: 0.15, response_format: { type: 'json_object' }
+        })
+      });
+      if (call2Res.ok) {
+        const call2Data = await call2Res.json();
+        const text = call2Data.choices?.[0]?.message?.content || '';
+        const parsed = JSON.parse(text.replace(/^```json\s*/i,'').replace(/\s*```$/,'').trim());
+        if (parsed.biology) agentSections.biology = parsed.biology;
+        if (parsed.habitat) agentSections.habitat = parsed.habitat;
+        log(`✔ Biology & Habitat complete`);
+      }
+    } catch (e) { log(`⚠️ Biology/Habitat agent failed: ${e.message}`); }
+
+    // --- CALL 3: Regulations + Navigation ---
+    setProgress("Step 11: Regulations & Navigation...", 82);
+    log("Running regulations & navigation agent...");
+    try {
+      const regChunks = getDocChunks(normalizedDocuments,
+        ['eregulations', 'regulation', 'regs', 'stripedbass', 'striped bass', 'size', 'possession', 'creel', 'limit', 'description'],
+        lakeName, 15000);
+      const call3Res = await fetch(`${CF_WORKER_URL}/groq-query`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [
+            { role: 'system', content: `You are a fishing regulations specialist. Extract ALL species creel limits and size limits from the regulations documents provided. List every species in the table — do not summarize or skip species. Also extract navigation info. Return ONLY valid JSON. Never invent limits — null if not found.` },
+            { role: 'user', content: `Lake: ${lakeName} (${stateName})\n\n${factsBlock}\n\nDOCUMENT EXCERPTS:\n${regChunks.slice(0, 25000)}\n\nIMPORTANT: The eRegulations page has a complete table. Extract EVERY species row — bream, crappie, bass, catfish, striped bass, walleye, pickerel, gar, etc. For Lake Wateree specifically note any exceptions from statewide limits.\n\nReturn ONLY this JSON:\n{"regulations":{"state":"${stateName}","generalStateRegulations":{"lengthLimits":{},"creelLimits":{}},"lakeSpecificRegulations":{"hasExceptions":null,"creelLimits":{},"sizeLimits":{},"specialRules":[],"closedSeasons":[]},"notes":null},"navigation":{"ramps":[],"hazards":[],"notes":null}}` }
+          ],
+          max_tokens: 2000, temperature: 0.05, response_format: { type: 'json_object' }
+        })
+      });
+      if (call3Res.ok) {
+        const call3Data = await call3Res.json();
+        const text = call3Data.choices?.[0]?.message?.content || '';
+        const parsed = JSON.parse(text.replace(/^```json\s*/i,'').replace(/\s*```$/,'').trim());
+        if (parsed.regulations) agentSections.regulations = parsed.regulations;
+        if (parsed.navigation) agentSections.navigation = parsed.navigation;
+        log(`✔ Regulations & Navigation complete`);
+      }
+    } catch (e) { log(`⚠️ Regulations/Navigation agent failed: ${e.message}`); }
+
+    // --- CALL 4: Trolling Intelligence + Summary ---
+    setProgress("Step 12: Trolling Intelligence & Summary...", 90);
+    log("Running trolling intelligence & summary agent...");
+    try {
+      const profileSoFar = JSON.stringify({
+        identity: agentSections.identity,
+        limnology: agentSections.limnology,
+        biology: agentSections.biology,
+        habitat: agentSections.habitat,
+        regulations: agentSections.regulations
+      }, null, 2).slice(0, 12000);
+      const call4Res = await fetch(`${CF_WORKER_URL}/groq-query`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [
+            { role: 'system', content: `You are a professional kayak trolling guide and fisheries biologist. Using the lake profile provided, derive trolling intelligence for confirmed predator species only. Also write a 2-3 paragraph angler summary. Do NOT invent species not in the biology section. Do NOT recommend specific lures, colors, or routes. Return ONLY valid JSON.` },
+            { role: 'user', content: `Lake: ${lakeName}\n\nPROFILE SO FAR:\n${profileSoFar}\n\nReturn ONLY this JSON:\n{"trollingIntelligence":{},"summary":{"text":null,"keywords":[]}}` }
+          ],
+          max_tokens: 2000, temperature: 0.2, response_format: { type: 'json_object' }
+        })
+      });
+      if (call4Res.ok) {
+        const call4Data = await call4Res.json();
+        const text = call4Data.choices?.[0]?.message?.content || '';
+        const parsed = JSON.parse(text.replace(/^```json\s*/i,'').replace(/\s*```$/,'').trim());
+        if (parsed.trollingIntelligence) agentSections.trollingIntelligence = parsed.trollingIntelligence;
+        if (parsed.summary) agentSections.summary = parsed.summary;
+        log(`✔ Trolling Intelligence & Summary complete`);
+      }
+    } catch (e) { log(`⚠️ Trolling/Summary agent failed: ${e.message}`); }
+
+    // ----------------------------------------------------
+    // STEP 13: Assemble and save complete profile
+    // ----------------------------------------------------
+    setProgress("Step 13: Saving complete profile...", 96);
+
+    const researchPacket = {
+      lakeName,
+      baseName,
+      state: stateName,
+      ...agentSections,
+      forage: agentSections.biology || {},
+      trolling: agentSections.trollingIntelligence || {},
+      _extractedFacts: uniqueFacts,
+      _extractedFactsCount: uniqueFacts.length,
+      sources: scoredSources.map(s => ({
+        label: s.title,
+        url: s.url || '#',
+        authority: s.authority,
+        trust: (s.scoring?.composite || 0) >= 80 ? 'OFFICIAL' : 'THIRD_PARTY',
+        scores: s.scoring
+      }))
+    };
+
+    log(`Saving profile (facts=${uniqueFacts.length}, sections=${Object.keys(agentSections).length})...`);
     const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         lakeName,
         profile: researchPacket,
         status: 'draft',
-        requestedBy: "Evidence Acquisition Engine v3"
+        requestedBy: 'Evidence Acquisition Engine v4'
       })
     });
     if (!saveRes.ok) {
@@ -790,15 +846,13 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       throw new Error(`Save HTTP ${saveRes.status}: ${t}`);
     }
     const saveData = await saveRes.json();
-    log(`✔ Saved profile v${saveData.version} as draft — ${researchPacket._extractedFacts.length} facts, nulls = unknown`);
+    log(`✔ Saved profile v${saveData.version} as draft — ${uniqueFacts.length} facts, ${Object.keys(agentSections).length} sections populated`);
 
     setProgress("Pipeline completed successfully!", 100);
-    log(`=== EVIDENCE PIPELINE COMPLETE — Facts only, nulls are honest ===`);
-    
-    // Auto load & render results
+    log(`=== EVIDENCE PIPELINE COMPLETE ===`);
+
     await loadProfile(lakeName);
 
-    // If contradictions exist, render visual conflict alerts
     if (contradictions.length > 0) {
       renderContradictionsAlert(contradictions, lakeName);
     }
