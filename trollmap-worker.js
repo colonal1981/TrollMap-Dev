@@ -3025,6 +3025,18 @@ async function handleResearchSaveNormalized(request, env) {
 }
 __name(handleResearchSaveNormalized, "handleResearchSaveNormalized");
 
+async function handleResearchGetNormalized(env, lakeName) {
+  const safe = sanitizeLakeId(lakeName);
+  const key = `lake_packages/${safe}/normalized_documents.json`;
+  const obj = await env.R2_TROLLMAP_CHARTPACKS.get(key);
+  if (!obj) return new Response(JSON.stringify({ok:false, error:`no normalized documents for ${lakeName}`}), {status:404, headers:JSON_HEADERS});
+  const text = await obj.text();
+  let docs;
+  try { docs = JSON.parse(text); } catch { return new Response(JSON.stringify({ok:false, error:"corrupt normalized documents"}), {status:500, headers:JSON_HEADERS}); }
+  return new Response(JSON.stringify({ok:true, lakeName, count: docs.length, documents: docs}), {headers:JSON_HEADERS});
+}
+__name(handleResearchGetNormalized, "handleResearchGetNormalized");
+
 async function handleResearchAnalyzeFacts(request, env) {
   let body;
   try { body = await request.json(); } catch { body = {}; }
@@ -3127,7 +3139,7 @@ If you truly cannot find ANY verifiable fact, return {"extracted_facts":[]} but 
   };
 
   try {
-    const { data } = await callLLM(env, payload, "gemini");
+    const { data } = await callLLM(env, payload, null); // use general chain (Groq 120b -> Cerebras 120b), not Gemini
     const text = extractLLMText(data);
     const parsed = extractJsonPossibly(text);
     if (!parsed) {
@@ -4203,6 +4215,11 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
       }
       if (path === "/research/proxy-download" && request.method === "GET") {
         return handleResearchProxyDownload(request, env);
+      }
+      if (path === "/research/get-normalized" && request.method === "GET") {
+        const lake = url.searchParams.get("lake") || url.searchParams.get("lakeName") || "";
+        if (!lake) return new Response(JSON.stringify({ok:false, error:"missing lake param"}), {status:400, headers:JSON_HEADERS});
+        return handleResearchGetNormalized(env, lake);
       }
       if (path === "/research/save-normalized" && request.method === "POST") {
         return handleResearchSaveNormalized(request, env);
