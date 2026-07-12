@@ -2818,7 +2818,8 @@ async function handleResearchDiscover(request, env) {
     `"${queryLake}" (fisheries OR biology OR \"striped bass\" OR crappie OR \"largemouth\") ${dnrName} filetype:pdf`,
     `"${queryLake}" (regulations OR \"creel limit\" OR \"size limit\" OR \"bag limit\") site:${dnrDomain}`,
     `"${queryLake}" (limnology OR thermocline OR \"water quality\" OR hydrology OR \"surface area\") (USACE OR USGS OR EPA)`,
-    `"${queryLake}" lake (habitat OR structure OR navigation OR hazards OR ramps) ${dnrName}`
+    `"${queryLake}" lake (habitat OR structure OR navigation OR hazards OR ramps) ${dnrName}`,
+    `"${queryLake}" (thermocline OR \"oxygen depletion\" OR stratification OR \"dissolved oxygen\") depth fishing`
   ];
 
   let discoveredSources = [];
@@ -2937,6 +2938,38 @@ async function handleResearchDiscover(request, env) {
   discoveredSources = filtered;
 
   // Sort by priority (1 = lake-specific) then by score
+  // Per-lake pre-seeded authoritative sources — always included regardless of Tavily results
+  const LAKE_SEEDS = {
+    wateree: [
+      { title: "Lake Wateree SC DES Water Quality Report", type: "PDF", authority: "SCDESC", url: "https://des.sc.gov/sites/des/files/Documents/BOW/WaterQuality/WPLakeWateree.pdf", priority: 1 },
+      { title: "Lake Wateree SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/wateree/description.html", priority: 1 },
+      { title: "Lake Wateree Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/wateree/regs.html", priority: 1 },
+    ],
+    murray: [
+      { title: "Lake Murray SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/murray/description.html", priority: 1 },
+      { title: "Lake Murray Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/murray/regs.html", priority: 1 },
+    ],
+    marion: [
+      { title: "Lake Marion SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/marion/description.html", priority: 1 },
+      { title: "Lake Marion Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/marion/regs.html", priority: 1 },
+    ],
+    moultrie: [
+      { title: "Lake Moultrie SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/moultrie/description.html", priority: 1 },
+    ],
+    monticello: [
+      { title: "Lake Monticello SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/monticello/description.html", priority: 1 },
+    ],
+  };
+
+  // Inject seeds for this lake — deduplicated against Tavily results
+  const seeds = LAKE_SEEDS[baseLower] || [];
+  for (const seed of seeds) {
+    if (!seenUrls.has(seed.url)) {
+      seenUrls.add(seed.url);
+      discoveredSources.push(seed);
+    }
+  }
+
   discoveredSources.sort((a,b)=> (a.priority-b.priority) || ((b.score||0)-(a.score||0)));
 
   // If zero results, use curated fallback but make them lake-relevant where possible
@@ -3305,6 +3338,226 @@ async function handleResearchDedupeContradictions(request, env) {
   return new Response(JSON.stringify({ success: true, deduplicated_facts: deduplicated, contradictions, meta: { input: facts.length, deduped: deduplicated.length, contradictions: contradictions.length } }), { headers: JSON_HEADERS });
 }
 __name(handleResearchDedupeContradictions, "handleResearchDedupeContradictions");
+
+// ── GAP QUERY TEMPLATES ──────────────────────────────────────────────────────
+const GAP_QUERIES = {
+  "limnology.thermocline.summerDepthFt":   (lake, dnr) => `"${lake}" thermocline depth summer stratification fishing`,
+  "limnology.oxygen.depletionDepthFt":     (lake, dnr) => `"${lake}" dissolved oxygen depletion depth summer fish floor`,
+  "biology.predatorSpecies":               (lake, dnr) => `"${lake}" fish species gamefish bass crappie catfish striped`,
+  "biology.primaryForage":                 (lake, dnr) => `"${lake}" forage fish shad herring baitfish`,
+  "regulations.lakeSpecificRegulations":   (lake, dnr) => `"${lake}" fishing regulations specific creel limit size limit site:${dnr}`,
+};
+
+// ── MAPPING AGENT — maps extracted facts to profile schema, nulls everything else ──
+async function handleResearchMapFacts(request, env) {
+  let body;
+  try { body = await request.json(); } catch { body = {}; }
+  const lakeName = String(body.lakeName || '').trim();
+  const facts = body.facts || [];
+  const pass = body.pass || 1; // pass 1 = broad facts, pass 2 = gap-fill facts
+
+  if (!lakeName || !facts.length) {
+    return new Response(JSON.stringify({ success: false, error: "Missing lakeName or facts" }), { status: 400, headers: JSON_HEADERS });
+  }
+
+  const factsText = facts.map(f => `[${f.category}] ${f.fact} (Source: ${f.source}, Confidence: ${f.confidence}%)`).join('\n');
+
+  const prompt = `You are a data mapping agent. You have a list of verified facts extracted from official documents about ${lakeName}.
+
+Your ONLY job is to map these facts to the correct fields in the profile schema below.
+
+STRICT RULES:
+- ONLY use information explicitly stated in the facts list below
+- If no fact supports a field, set it to null or empty array
+- Do NOT infer, estimate, or use any knowledge beyond these facts
+- Do NOT add species, numbers, or details not mentioned in the facts
+- Null is correct when data is missing — it means unknown, not bad data
+
+VERIFIED FACTS FROM OFFICIAL DOCUMENTS:
+${factsText.slice(0, 8000)}
+
+Map these facts to this exact JSON schema. Every null means no fact was found for that field:
+{
+  "identity": {
+    "lakeName": "${lakeName}",
+    "state": null,
+    "county": null,
+    "riverSystem": null,
+    "reservoirOwner": null,
+    "surfaceAreaAcres": null,
+    "maxDepthFt": null,
+    "averageDepthFt": null,
+    "normalPoolFt": null,
+    "shorelinesLengthMi": null,
+    "damName": null,
+    "yearImpounded": null,
+    "archetype": null,
+    "aliases": []
+  },
+  "limnology": {
+    "waterClarity": {"typical": null, "color": null, "secchiFt": null, "note": null},
+    "thermocline": {"summerDepthFt": null, "strength": null, "winterMix": null, "note": null},
+    "oxygen": {"depletionDepthFt": null, "anoxicBelowFt": null, "note": null},
+    "trophicStatus": null,
+    "flowCharacteristics": null,
+    "seasonalDrawdownFt": null
+  },
+  "biology": {
+    "primaryForage": [],
+    "secondaryForage": [],
+    "predatorSpecies": [],
+    "speciesAbundance": {},
+    "knownStockings": [],
+    "invasiveSpecies": []
+  },
+  "habitat": {
+    "bottomComposition": {},
+    "cover": [],
+    "vegetation": {},
+    "structuralElements": {},
+    "artificialHabitat": [],
+    "dockDensity": null,
+    "standingTimber": null,
+    "notes": null
+  },
+  "navigation": {
+    "ramps": [],
+    "hazards": [],
+    "notes": null
+  },
+  "regulations": {
+    "state": null,
+    "generalStateRegulations": {"lengthLimits": {}, "creelLimits": {}},
+    "lakeSpecificRegulations": {"hasExceptions": null, "creelLimits": {}, "sizeLimits": {}, "specialRules": [], "closedSeasons": []},
+    "notes": null
+  },
+  "trollingIntelligence": {}
+}
+
+Return ONLY valid JSON matching this schema exactly. No explanations.`;
+
+  const payload = {
+    messages: [
+      { role: "system", content: "You are a strict data mapping agent. Map facts to schema fields only. Return valid JSON only. Never add information not in the facts list." },
+      { role: "user", content: prompt }
+    ],
+    temperature: 0.05,
+    max_tokens: 3000,
+    response_format: { type: "json_object" }
+  };
+
+  try {
+    const { data, provider, model } = await callLLM(env, payload, null);
+    const text = extractLLMText(data);
+    const parsed = extractJsonPossibly(text);
+    if (!parsed) return new Response(JSON.stringify({ success: false, error: "Mapping agent returned non-JSON" }), { status: 502, headers: JSON_HEADERS });
+    return new Response(JSON.stringify({ success: true, profile: parsed, provider, model, pass, factsUsed: facts.length }), { headers: JSON_HEADERS });
+  } catch (e) {
+    return new Response(JSON.stringify({ success: false, error: e.message }), { status: 502, headers: JSON_HEADERS });
+  }
+}
+__name(handleResearchMapFacts, "handleResearchMapFacts");
+
+// ── GAP ANALYSIS — identify null fields and return targeted search queries ──
+async function handleResearchGapAnalysis(request, env) {
+  let body;
+  try { body = await request.json(); } catch { body = {}; }
+  const lakeName = String(body.lakeName || '').trim();
+  const profile = body.profile || {};
+  const state = String(body.state || 'SC').toUpperCase();
+
+  const dnrDomain = state === 'NC' ? 'ncwildlife.org' : state === 'GA' ? 'georgiawildlife.com' : 'dnr.sc.gov';
+  const baseName = lakeName.replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA)\s*$/i,'').trim();
+
+  // Only check fields that directly affect Smart Plan quality
+  const nullFields = [];
+  const check = (path, val) => {
+    if (val === null || val === undefined || val === '' || (Array.isArray(val) && !val.length) || (typeof val === 'object' && !Array.isArray(val) && !Object.keys(val).length)) {
+      nullFields.push(path);
+    }
+  };
+
+  const lim = profile.limnology || {};
+  check('limnology.thermocline.summerDepthFt', lim.thermocline?.summerDepthFt);
+  check('limnology.oxygen.depletionDepthFt', lim.oxygen?.depletionDepthFt);
+
+  const bio = profile.biology || {};
+  check('biology.predatorSpecies', bio.predatorSpecies);
+  check('biology.primaryForage', bio.primaryForage);
+
+  const reg = profile.regulations || {};
+  const lakeRegs = reg.lakeSpecificRegulations || {};
+  if (!lakeRegs.hasExceptions && !Object.keys(lakeRegs.creelLimits||{}).length) {
+    nullFields.push('regulations.lakeSpecificRegulations');
+  }
+
+  // Build targeted queries for null fields
+  const gapQueries = nullFields
+    .filter(f => GAP_QUERIES[f])
+    .map(f => ({ field: f, query: GAP_QUERIES[f](baseName, dnrDomain) }));
+
+  return new Response(JSON.stringify({
+    success: true,
+    nullFields,
+    gapQueries,
+    totalGaps: nullFields.length,
+    searchableGaps: gapQueries.length
+  }), { headers: JSON_HEADERS });
+}
+__name(handleResearchGapAnalysis, "handleResearchGapAnalysis");
+
+// ── GAP SEARCH — targeted Tavily search + extract + fact extraction for one null field ──
+async function handleResearchGapSearch(request, env) {
+  let body;
+  try { body = await request.json(); } catch { body = {}; }
+  const lakeName = String(body.lakeName || '').trim();
+  const state = String(body.state || 'SC').toUpperCase();
+  const field = String(body.field || '').trim();
+  const query = String(body.query || '').trim();
+
+  if (!lakeName || !query) return new Response(JSON.stringify({ success: false, error: "Missing lakeName or query" }), { status: 400, headers: JSON_HEADERS });
+
+  const tavilyKey = env.TAVILY_API_KEY || env.TAVILY_KEY;
+  if (!tavilyKey) return new Response(JSON.stringify({ success: false, error: "No Tavily key", extracted_facts: [] }), { headers: JSON_HEADERS });
+
+  try {
+    // Search
+    const searchRes = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${tavilyKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, search_depth: 'basic', max_results: 3 })
+    });
+    if (!searchRes.ok) return new Response(JSON.stringify({ success: false, error: `Tavily search ${searchRes.status}`, extracted_facts: [] }), { headers: JSON_HEADERS });
+    const searchData = await searchRes.json();
+    const urls = (searchData.results||[]).map(r => r.url).filter(Boolean).slice(0, 3);
+    if (!urls.length) return new Response(JSON.stringify({ success: true, extracted_facts: [], note: "No results found" }), { headers: JSON_HEADERS });
+
+    // Extract
+    const extractRes = await fetch('https://api.tavily.com/extract', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${tavilyKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ urls, query: `${lakeName} ${field}`, extract_depth: 'basic', format: 'markdown' })
+    });
+    if (!extractRes.ok) return new Response(JSON.stringify({ success: true, extracted_facts: [], note: "Extract failed" }), { headers: JSON_HEADERS });
+    const extractData = await extractRes.json();
+    const text = (extractData.results||[]).map(r => r.raw_content||'').join('\n').slice(0, 15000);
+    if (!text) return new Response(JSON.stringify({ success: true, extracted_facts: [], note: "No text extracted" }), { headers: JSON_HEADERS });
+
+    // Extract facts using analyze-facts
+    const fakeReq = new Request(request.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lakeName, state, documents: [{ title: `Gap: ${field}`, text, url: urls[0] }] })
+    });
+    const factResponse = await handleResearchAnalyzeFacts(fakeReq, env);
+    const factData = await factResponse.json();
+    return new Response(JSON.stringify({ success: true, extracted_facts: factData.extracted_facts || [], field, query }), { headers: JSON_HEADERS });
+
+  } catch (e) {
+    return new Response(JSON.stringify({ success: false, error: e.message, extracted_facts: [] }), { status: 502, headers: JSON_HEADERS });
+  }
+}
+__name(handleResearchGapSearch, "handleResearchGapSearch");
 
 // ─── ORIGINAL LAKE RESEARCH MODULE FUNCTIONS ───
 
@@ -4259,6 +4512,15 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
       }
       if (path === "/research/dedupe-contradictions" && request.method === "POST") {
         return handleResearchDedupeContradictions(request, env);
+      }
+      if (path === "/research/map-facts" && request.method === "POST") {
+        return handleResearchMapFacts(request, env);
+      }
+      if (path === "/research/gap-analysis" && request.method === "POST") {
+        return handleResearchGapAnalysis(request, env);
+      }
+      if (path === "/research/gap-search" && request.method === "POST") {
+        return handleResearchGapSearch(request, env);
       }
       if (path === "/research/agent" && request.method === "POST") {
         return handleResearchAgent(request, env);
