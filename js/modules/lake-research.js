@@ -563,17 +563,28 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     setProgress("Step 7: Deep Fact Extraction via Research LLM...", 85);
     log("Submitting lake-relevant chunks to Research LLM (not full 100k dumps)...");
 
-    // Use relevant chunking to avoid drowning LLM in statewide report noise
+    // Use relevant chunking — sort docs by score first so high-value docs get context budget
+    const sortedDocs = [...normalizedDocuments].sort((a, b) => {
+      const sa = scoredSources.find(s => s.title === a.title)?.scoring?.composite || 50;
+      const sb = scoredSources.find(s => s.title === b.title)?.scoring?.composite || 50;
+      return sb - sa;
+    });
+
     const extractionPayload = {
       lakeName,
       baseName,
       state: stateName,
-      documents: normalizedDocuments.map(d => ({
-        title: d.title,
-        url: d.url,
-        text: extractRelevantChunks(d.fullText, lakeName, 20000),
-        quality: (scoredSources.find(s => s.title === d.title)?.scoring) || {}
-      }))
+      documents: sortedDocs.map(d => {
+        const rawLen = (d.fullText || '').length;
+        // Large PDFs (>50k chars) get a tighter chunk budget so they don't crowd out regs/HTML docs
+        const chunkBudget = rawLen > 50000 ? 6000 : 20000;
+        return {
+          title: d.title,
+          url: d.url,
+          text: extractRelevantChunks(d.fullText, lakeName, chunkBudget),
+          quality: (scoredSources.find(s => s.title === d.title)?.scoring) || {}
+        };
+      })
     };
 
     // total cap ~120k chars to keep LLM inside context & cost
