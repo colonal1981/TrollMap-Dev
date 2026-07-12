@@ -3226,48 +3226,56 @@ async function handleResearchDedupeContradictions(request, env) {
     }
     if (isNearDup) continue;
 
-    // Contradiction detection within same category
+    // Contradiction detection — ONLY mutually exclusive claims on the SAME specific attribute.
+    // Biology/forage facts are NEVER considered for contradictions (they are almost always complementary).
+    // Only identity (acreage, depth, elevation) and regulations (creel/size limits) can produce real conflicts.
     const group = categoryGroups.get(cat) || [];
-    for (const prev of group) {
-      const prevText = String(prev.fact).toLowerCase();
-      const currText = String(f.fact).toLowerCase();
-      // conflicting species (blueback vs threadfin) in same category = flag
-      const blueThreadConflict = (prevText.includes('blueback') && currText.includes('threadfin')) || (prevText.includes('threadfin') && currText.includes('blueback'));
-      // conflicting numbers for same category (e.g. surface area 13000 vs 15000)
-      let numberConflict = false;
-      if (/surfaceArea|maxDepth|averageDepth|acres|creel|size limit|limit/i.test(cat) || /\d+/.test(prevText) && /\d+/.test(currText)) {
+    const IMPORTANT_CATEGORIES = new Set(['identity', 'surfacearea', 'maxdepth', 'averagedepth', 'elevation', 'regulations', 'creellimit_lakespecific', 'sizelimit_lakespecific', 'creellimit', 'sizelimit']);
+
+    if (!IMPORTANT_CATEGORIES.has(cat) && !cat.includes('identity') && !cat.includes('regulation')) {
+      // skip biology/forage/limnology/habitat/navigation entirely — they produce false positives
+    } else {
+      for (const prev of group) {
+        const prevText = String(prev.fact).toLowerCase();
+        const currText = String(f.fact).toLowerCase();
+
+        // Only look for direct numeric conflicts on the exact same attribute
+        // e.g. "13,710 acres" vs "13,025 acres" for surface area, or two different creel limits
+        let numberConflict = false;
         const numsPrev = prevText.match(/\d+(?:\.\d+)?/g) || [];
         const numsCurr = currText.match(/\d+(?:\.\d+)?/g) || [];
+
         if (numsPrev.length && numsCurr.length) {
-          // if first numbers differ by >20% and categories match exactly, consider conflict
           const nPrev = parseFloat(numsPrev[0]);
           const nCurr = parseFloat(numsCurr[0]);
           if (isFinite(nPrev) && isFinite(nCurr) && nPrev !== nCurr) {
-            // avoid flagging minor differences like 12 vs 12.5 in thermocline ranges
-            if (Math.abs(nPrev - nCurr) / Math.max(1, Math.min(nPrev,nCurr)) > 0.3) {
-              // but only if same category not general
-              if (cat !== 'general' && cat !== 'summary') numberConflict = true;
+            // Require the facts to be talking about the exact same measurable attribute
+            // (surface area, max depth, creel limit, size limit, elevation, etc.)
+            const sameAttr = /acre|surface|depth|elevation|pool|creel|limit|size/i.test(prevText) &&
+                             /acre|surface|depth|elevation|pool|creel|limit|size/i.test(currText);
+            const relDiff = Math.abs(nPrev - nCurr) / Math.max(1, Math.min(nPrev, nCurr));
+            if (sameAttr && relDiff > 0.05) { // >5% difference on same attribute
+              numberConflict = true;
             }
           }
         }
-      }
-      if (blueThreadConflict || numberConflict) {
-        contradictions.push({
-          field: f.category,
-          factA: prev.fact,
-          quoteA: prev.quote,
-          pageA: prev.page,
-          confidenceA: prev.confidence,
-          sourceA: prev.source,
-          factB: f.fact,
-          quoteB: f.quote,
-          pageB: f.page,
-          confidenceB: f.confidence,
-          sourceB: f.source,
-          reason: blueThreadConflict ? 'species conflict blueback vs threadfin' : 'numeric conflict'
-        });
-        // still keep both as separate facts? For dedup we keep one but track contradiction
-        // decide to keep higher confidence as canonical but both matter
+
+        if (numberConflict) {
+          contradictions.push({
+            field: f.category,
+            factA: prev.fact,
+            quoteA: prev.quote,
+            pageA: prev.page,
+            confidenceA: prev.confidence,
+            sourceA: prev.source,
+            factB: f.fact,
+            quoteB: f.quote,
+            pageB: f.page,
+            confidenceB: f.confidence,
+            sourceB: f.source,
+            reason: 'mutually exclusive numeric claim on same attribute'
+          });
+        }
       }
     }
     // Add to deduped
