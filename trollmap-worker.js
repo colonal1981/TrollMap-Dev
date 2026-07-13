@@ -3275,8 +3275,8 @@ async function handleResearchProxyDownload(request, env) {
   // EPA NSCEP / NEPIS ZyNET:
   //  - Search results page (ZyActionS) — harvest document links
   //  - Document landing (ZyActionD) — extract raw-text / PDF format links
-  const isNepisSearch = /nepis\.epa\.gov/i.test(target) && /ZyActionS|ZyAction=ZyActionS/i.test(target);
-  const isNepisLanding = /nepis\.epa\.gov/i.test(target) && /ZyActionD|ZyPDF/i.test(target);
+  const isNepisSearch = /nepis\.epa\.gov/i.test(target) && /[?&]ZyAction=ZyActionS\b/i.test(target);
+  const isNepisLanding = /nepis\.epa\.gov/i.test(target) && (/[?&]ZyAction=ZyActionD\b/i.test(target) || /zypdf\.cgi/i.test(target));
   const isNepisAny = /nepis\.epa\.gov|ZyNET\.exe/i.test(target);
   // Only use Firecrawl for JS-heavy SPAs and NEPIS pages (saves ~8 Firecrawl credits per run)
   const needsFirecrawl = isNepisSearch || isNepisLanding || isNepisAny || /eregulations\.com/i.test(target);
@@ -3643,9 +3643,13 @@ function toNepisRawTextUrl(landingUrl) {
     // Switch from the viewer action to the download action, keeping File= etc.
     url.searchParams.delete('ZyActionD');
     url.searchParams.set('ZyActionW', 'Download');
-    // The download endpoint expects SearchMethod=4 and a text-friendly Display.
-    url.searchParams.set('SearchMethod', '4');
-    url.searchParams.set('Display', 'h|p|f');
+    // Retain existing SearchMethod and Display if present; only default if missing
+    if (!url.searchParams.has('SearchMethod')) {
+      url.searchParams.set('SearchMethod', '1');
+    }
+    if (!url.searchParams.has('Display')) {
+      url.searchParams.set('Display', 'hpfr');
+    }
     return url.toString();
   } catch (e) {
     return null;
