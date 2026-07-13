@@ -2786,11 +2786,11 @@ async function handleResearchLimnologyData(request, env) {
   }
 
   // ── Step 1: Fetch DO + Temperature measurements from WQP within lake bbox ──
-  const chars = ['Temperature%2C+water', 'Dissolved+oxygen+%28DO%29', 'Dissolved+Oxygen'];
+  const chars = ['Temperature, water', 'Dissolved oxygen'];
   const wqpUrl = `https://www.waterqualitydata.us/data/Result/search?` +
     `north=${bboxNorth}&south=${bboxSouth}&east=${bboxEast}&west=${bboxWest}` +
     `&siteType=Lake%2C+Reservoir%2C+Impoundment` +
-    `&characteristicName=${chars.join('&characteristicName=')}` +
+    `&characteristicName=${chars.map(c => encodeURIComponent(c)).join('&characteristicName=')}` +
     `&dataProfile=narrowResult&mimeType=csv&sorted=no` +
     `&startDateLo=01-01-2010`;
 
