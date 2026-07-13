@@ -1024,10 +1024,13 @@ function lakeKeyFromName(lakeName) {
     murray: "murray",
     marion: "marion",
     moultrie: "moultrie",
+    monticello: "monticello",
+    greenwood: "greenwood",
+    secession: "secession",
     keowee: "keowee",
     jocassee: "jocassee",
     hartwell: "hartwell",
-    thurmond: "thurmond",
+    thurmond: "thurmond", 
     "clarks hill": "thurmond",
     "clark hill": "thurmond",
     russell: "russell",
@@ -2785,9 +2788,7 @@ async function handleResearchLimnologyData(request, env) {
     return new Response(JSON.stringify({ ok: false, error: 'missing bbox — provide bboxNorth/South/East/West from lake GeoJSON' }), { status: 400, headers: JSON_HEADERS });
   }
 
-  // ── Step 1: Fetch DO + Temperature measurements from WQP within lake bbox ──
-  const chars = ['Temperature, water', 'Dissolved oxygen'];
-  // WQP bbox format: bBox=west,south,east,north (comma-separated, single param)
+  const chars = ['Temperature, water', 'Dissolved oxygen', 'Turbidity', 'Conductivity', 'Alkalinity, total', 'Hardness, Ca, Mg'];
   const wqpUrl = `https://www.waterqualitydata.us/data/Result/search?` +
     `bBox=${bboxWest},${bboxSouth},${bboxEast},${bboxNorth}` +
     `&siteType=Lake%2C+Reservoir%2C+Impoundment` +
@@ -2806,15 +2807,13 @@ async function handleResearchLimnologyData(request, env) {
     return new Response(JSON.stringify({ ok: false, error: `WQP fetch failed: ${e.message}`, thermocline: null }), { headers: JSON_HEADERS });
   }
 
-  // ── Step 2: Parse CSV — extract depth, value, characteristic, date ──
-  // WQP CSV uses RFC 4180 quoting — fields may contain commas inside double-quotes.
   function parseCSVLine(line) {
     const result = [];
     let cur = '', inQ = false;
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
       if (ch === '"') {
-        if (inQ && line[i+1] === '"') { cur += '"'; i++; } // escaped quote
+        if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
         else inQ = !inQ;
       } else if (ch === ',' && !inQ) {
         result.push(cur.trim()); cur = '';
@@ -2828,88 +2827,88 @@ async function handleResearchLimnologyData(request, env) {
 
   const lines = csvText.split('\n').filter(Boolean);
   if (lines.length < 2) {
-    return new Response(JSON.stringify({ ok: true, recordCount: 0, thermocline: null, oxygen: null, note: 'No WQP monitoring data found for this lake boundary' }), { headers: JSON_HEADERS });
+    return new Response(JSON.stringify({ ok: true, recordCount: 0, thermocline: null, oxygen: null, surfaceWater: null, note: 'No WQP monitoring data found for this lake boundary' }), { headers: JSON_HEADERS });
   }
 
   const headers = parseCSVLine(lines[0]);
   const col = (name) => headers.findIndex(h => h.toLowerCase().includes(name.toLowerCase()));
-
-  const iChar    = col('characteristicname');
-  const iValue   = col('resultmeasurevalue');
-  const iUnit    = col('resultmeasure/measureunitcode');
-  const iDepth   = col('activitydepthheightmeasure/measurevalue');
-  const iDepthU  = col('activitydepthheightmeasure/measureunitcode');
-  const iDate    = col('activitystartdate');
-  const iMonth   = -1; // derived from date
+  const iChar = col('characteristicname');
+  const iValue = col('resultmeasurevalue');
+  const iUnit = col('resultmeasure/measureunitcode');
+  const iDepth = col('activitydepthheightmeasure/measurevalue');
+  const iDepthU = col('activitydepthheightmeasure/measureunitcode');
+  const iDate = col('activitystartdate');
+  const iProject = col('projectname');
+  const iLoc = col('monitoringlocationname');
 
   const records = [];
   for (let i = 1; i < lines.length; i++) {
     const cols = parseCSVLine(lines[i]);
-    const char    = cols[iChar]  || '';
-    const valRaw  = cols[iValue] || '';
-    const unit    = cols[iUnit]  || '';
-    const depRaw  = cols[iDepth] || '';
+    const char = cols[iChar] || '';
+    const valRaw = cols[iValue] || '';
+    const unit = cols[iUnit] || '';
+    const depRaw = cols[iDepth] || '';
     const depUnit = cols[iDepthU] || '';
-    const date    = cols[iDate]  || '';
-    const val     = parseFloat(valRaw);
-    let   dep     = parseFloat(depRaw);
-    if (isNaN(val) || isNaN(dep) || dep < 0) continue;
-    // Convert depth to feet if in meters
-    if (depUnit.toLowerCase().includes('m') && !depUnit.toLowerCase().includes('ft')) dep = dep * 3.28084;
-    // Determine type
-    const isTemp = /temperature/i.test(char);
-    const isDO   = /oxygen/i.test(char);
-    if (!isTemp && !isDO) continue;
-    // Convert temp to F if Celsius
-    let valF = val;
-    if (isTemp && (unit.toLowerCase().includes('deg c') || unit === 'deg C' || unit === 'C')) valF = val * 9/5 + 32;
-    // Extract month from date
-    const month = date ? parseInt(date.split('-')[1]) : null;
-    records.push({ type: isTemp ? 'temp' : 'do', depthFt: Math.round(dep * 10) / 10, value: Math.round(valF * 10) / 10, month, date, unit });
+    const date = cols[iDate] || '';
+    const project = cols[iProject] || '';
+    const location = cols[iLoc] || '';
+    const val = parseFloat(valRaw);
+    if (isNaN(val)) continue;
+    let dep = parseFloat(depRaw);
+    let depthFt = null;
+    if (!isNaN(dep) && dep >= 0) {
+      depthFt = dep;
+      if (depUnit.toLowerCase().includes('m') && !depUnit.toLowerCase().includes('ft')) depthFt = dep * 3.28084;
+      depthFt = Math.round(depthFt * 10) / 10;
+    }
+    const lowerChar = char.toLowerCase();
+    let type = null;
+    if (/temperature/.test(lowerChar)) type = 'temperature';
+    else if (/dissolved oxygen|oxygen/.test(lowerChar)) type = 'do';
+    else if (/turbidity/.test(lowerChar)) type = 'turbidity';
+    else if (/conductivity/.test(lowerChar)) type = 'conductivity';
+    else if (/alkalinity/.test(lowerChar)) type = 'alkalinity';
+    else if (/hardness/.test(lowerChar)) type = 'hardness';
+    if (!type) continue;
+    let value = val;
+    let outUnit = unit;
+    if (type === 'temperature' && (unit.toLowerCase().includes('deg c') || unit === 'deg C' || unit === 'C')) {
+      value = val * 9 / 5 + 32;
+      outUnit = 'deg F';
+    }
+    const month = date ? parseInt(date.split('-')[1], 10) : null;
+    records.push({ type, value: Math.round(value * 100) / 100, unit: outUnit, depthFt, month, date, project, location });
   }
 
   if (records.length === 0) {
-    return new Response(JSON.stringify({ ok: true, recordCount: 0, thermocline: null, oxygen: null, note: 'WQP returned data but no usable depth+value records found' }), { headers: JSON_HEADERS });
+    return new Response(JSON.stringify({ ok: true, recordCount: 0, thermocline: null, oxygen: null, surfaceWater: null, note: 'WQP returned data but no usable records found' }), { headers: JSON_HEADERS });
   }
 
-  // ── Step 3: Filter to summer months (Jun–Sep = 6–9) for thermocline ──
-  const summerRecs = records.filter(r => r.month >= 6 && r.month <= 9);
-  const allDO      = records.filter(r => r.type === 'do');
-  const summerDO   = summerRecs.filter(r => r.type === 'do');
-  const summerTemp = summerRecs.filter(r => r.type === 'temp');
+  const depthRecords = records.filter(r => r.depthFt != null);
+  const summerDepthRecs = depthRecords.filter(r => r.month >= 6 && r.month <= 9);
+  const summerDO = summerDepthRecs.filter(r => r.type === 'do');
+  const summerTemp = summerDepthRecs.filter(r => r.type === 'temperature');
+  const allDO = depthRecords.filter(r => r.type === 'do');
 
-  // ── Step 4: Derive thermocline depth ──
-  // Method A: DO-based — find shallowest depth where DO consistently drops below 4mg/L
-  let thermoclineDepthFt = null;
-  let method = null;
-  let confidence = null;
-  let evidenceCount = 0;
-
+  let thermocline = null;
   if (summerDO.length >= 3) {
-    // Bin DO readings by depth bracket (2ft bands)
     const doBins = {};
     for (const r of summerDO) {
       const bin = Math.floor(r.depthFt / 2) * 2;
       if (!doBins[bin]) doBins[bin] = [];
       doBins[bin].push(r.value);
     }
-    // Find shallowest bin where median DO < 4mg/L
     const sortedBins = Object.keys(doBins).map(Number).sort((a, b) => a - b);
     for (const bin of sortedBins) {
-      const vals = doBins[bin].sort((a, b) => a - b);
+      const vals = doBins[bin].slice().sort((a, b) => a - b);
       const median = vals[Math.floor(vals.length / 2)];
-      if (median < 4.0) {
-        thermoclineDepthFt = bin;
-        method = 'derived_from_do_profile';
-        evidenceCount = summerDO.length;
-        confidence = summerDO.length >= 10 ? 88 : summerDO.length >= 5 ? 75 : 60;
+      if (median < 4) {
+        thermocline = { depthFt: bin, confidence: summerDO.length >= 10 ? 88 : summerDO.length >= 5 ? 75 : 60, method: 'derived_from_do_profile', evidenceCount: summerDO.length };
         break;
       }
     }
   }
-
-  // Method B: Temperature-based — find depth of steepest temp gradient
-  if (!thermoclineDepthFt && summerTemp.length >= 3) {
+  if (!thermocline && summerTemp.length >= 3) {
     const tempBins = {};
     for (const r of summerTemp) {
       const bin = Math.floor(r.depthFt / 2) * 2;
@@ -2919,88 +2918,75 @@ async function handleResearchLimnologyData(request, env) {
     const sortedBins = Object.keys(tempBins).map(Number).sort((a, b) => a - b);
     let maxGradient = 0, maxBin = null;
     for (let i = 1; i < sortedBins.length; i++) {
-      const shallowVals = tempBins[sortedBins[i-1]];
-      const deepVals    = tempBins[sortedBins[i]];
-      const shallowMed  = shallowVals.sort((a,b)=>a-b)[Math.floor(shallowVals.length/2)];
-      const deepMed     = deepVals.sort((a,b)=>a-b)[Math.floor(deepVals.length/2)];
-      const gradient    = shallowMed - deepMed; // positive = cooling with depth
-      if (gradient > maxGradient) { maxGradient = gradient; maxBin = sortedBins[i-1]; }
+      const shallowVals = tempBins[sortedBins[i - 1]].slice().sort((a, b) => a - b);
+      const deepVals = tempBins[sortedBins[i]].slice().sort((a, b) => a - b);
+      const shallowMed = shallowVals[Math.floor(shallowVals.length / 2)];
+      const deepMed = deepVals[Math.floor(deepVals.length / 2)];
+      const gradient = shallowMed - deepMed;
+      if (gradient > maxGradient) { maxGradient = gradient; maxBin = sortedBins[i - 1]; }
     }
-    if (maxBin !== null && maxGradient >= 3) { // at least 3°F drop per 2ft band
-      thermoclineDepthFt = maxBin;
-      method = 'derived_from_temp_gradient';
-      evidenceCount = summerTemp.length;
-      confidence = summerTemp.length >= 10 ? 80 : summerTemp.length >= 5 ? 65 : 50;
+    if (maxBin != null && maxGradient >= 3) {
+      thermocline = { depthFt: maxBin, confidence: summerTemp.length >= 10 ? 80 : summerTemp.length >= 5 ? 65 : 50, method: 'derived_from_temp_gradient', evidenceCount: summerTemp.length };
     }
   }
 
-  // ── Step 5: Derive oxygen depletion floor (anoxic below X ft) ──
-  let anoxicBelowFt = null;
+  let oxygen = null;
   if (allDO.length >= 3) {
-    const doBins = {};
+    const bins = {};
     for (const r of allDO) {
       const bin = Math.floor(r.depthFt / 2) * 2;
-      if (!doBins[bin]) doBins[bin] = [];
-      doBins[bin].push(r.value);
+      if (!bins[bin]) bins[bin] = [];
+      bins[bin].push(r.value);
     }
-    const sortedBins = Object.keys(doBins).map(Number).sort((a, b) => a - b);
+    const sortedBins = Object.keys(bins).map(Number).sort((a, b) => a - b);
+    let anoxicBelowFt = null;
     for (const bin of sortedBins) {
-      const vals = doBins[bin].sort((a, b) => a - b);
+      const vals = bins[bin].slice().sort((a, b) => a - b);
       const median = vals[Math.floor(vals.length / 2)];
-      if (median < 2.0) { anoxicBelowFt = bin; break; }
+      if (median < 2) { anoxicBelowFt = bin; break; }
     }
+    oxygen = { anoxicBelowFt, note: anoxicBelowFt != null ? `Median dissolved oxygen drops below 2 mg/L near ${anoxicBelowFt} ft in available depth-profile samples.` : null };
   }
 
-  // ── Step 6: Get most recent observation date ──
-  const dates = records.map(r => r.date).filter(Boolean).sort();
-  const lastObserved = dates[dates.length - 1] || null;
-
-  // ── Step 7: Build species-specific oxygen tolerance notes ──
-  const doNotes = [];
-  if (thermoclineDepthFt !== null) {
-    doNotes.push(`Striped bass (need >4mg/L DO): avoid below ${thermoclineDepthFt}ft in summer`);
-    doNotes.push(`Largemouth bass (tolerate ~2mg/L DO): can fish to ${anoxicBelowFt ?? thermoclineDepthFt + 6}ft`);
+  const latestDateByType = {};
+  for (const r of records) {
+    if (!latestDateByType[r.type] || r.date > latestDateByType[r.type]) latestDateByType[r.type] = r.date;
   }
-
-  const result = {
-    ok: true,
-    recordCount: records.length,
-    summerRecords: summerRecs.length,
-    lastObserved,
-    thermocline: thermoclineDepthFt !== null ? {
-      depthFt: thermoclineDepthFt,
-      confidence,
-      method,
-      evidenceCount,
-      sourceType: 'WQP_measured',
-      lastObserved,
-      note: `Summer thermocline derived from ${evidenceCount} WQP measurements. ${doNotes[0] || ''}`
-    } : null,
-    oxygen: {
-      depletionDepthFt: thermoclineDepthFt,
-      anoxicBelowFt,
-      stripeThresholdFt: thermoclineDepthFt,
-      largemouthThresholdFt: anoxicBelowFt,
-      note: doNotes.join(' '),
-      sourceType: 'WQP_measured',
-      evidenceCount: allDO.length
-    },
-    rawSummary: {
-      doReadings: allDO.length,
-      tempReadings: records.filter(r => r.type === 'temp').length,
-      summerDoReadings: summerDO.length,
-      summerTempReadings: summerTemp.length,
-      depthRangeFt: records.length ? `${Math.min(...records.map(r=>r.depthFt))}–${Math.max(...records.map(r=>r.depthFt))}ft` : null
-    }
+  const summarizeType = (type) => {
+    const latestDate = latestDateByType[type];
+    if (!latestDate) return null;
+    const vals = records.filter(r => r.type === type && r.date === latestDate).map(r => r.value).filter(v => isFinite(v));
+    if (!vals.length) return null;
+    const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+    const programs = [...new Set(records.filter(r => r.type === type && r.date === latestDate).map(r => r.project).filter(Boolean))];
+    return { value: Math.round(avg * 100) / 100, lastObserved: latestDate, sampleCount: vals.length, programs };
   };
 
-  // Cache result in R2 for 30 days
-  try {
-    const safe = lakeName.toLowerCase().replace(/[^a-z0-9]+/g, '_');
-    await env.TROLLMAP_DATA.put(`lake_packages/${safe}/limnology_wqp.json`, JSON.stringify({ ...result, cachedAt: new Date().toISOString() }), { expirationTtl: 60 * 60 * 24 * 30 });
-  } catch (_) {}
+  const surfaceWater = {
+    recentTempF: summarizeType('temperature')?.value ?? null,
+    recentDissolvedOxygenMgL: summarizeType('do')?.value ?? null,
+    recentTurbidityNTU: summarizeType('turbidity')?.value ?? null,
+    recentConductivity: summarizeType('conductivity')?.value ?? null,
+    recentAlkalinityMgL: summarizeType('alkalinity')?.value ?? null,
+    recentHardnessMgL: summarizeType('hardness')?.value ?? null,
+    lastObserved: [summarizeType('temperature')?.lastObserved, summarizeType('do')?.lastObserved, summarizeType('turbidity')?.lastObserved].filter(Boolean).sort().slice(-1)[0] || null,
+    programs: [...new Set(records.map(r => r.project).filter(Boolean))],
+    note: 'Summary reflects the most recent available surface/grab samples by characteristic from WQP/SCDES monitoring sites within the lake boundary.'
+  };
 
-  return new Response(JSON.stringify(result), { headers: JSON_HEADERS });
+  const out = {
+    ok: true,
+    lakeName,
+    recordCount: records.length,
+    depthProfileCount: depthRecords.length,
+    summerRecords: summerDepthRecs.length,
+    lastObserved: records.map(r => r.date).filter(Boolean).sort().slice(-1)[0] || null,
+    thermocline,
+    oxygen,
+    surfaceWater,
+    note: thermocline ? null : depthRecords.length ? 'Depth-profile records exist but were insufficient to derive a defensible thermocline.' : 'Monitoring data were found, but available records are surface/grab samples rather than depth profiles.'
+  };
+  return new Response(JSON.stringify(out), { headers: JSON_HEADERS });
 }
 __name(handleResearchLimnologyData, 'handleResearchLimnologyData');
 
@@ -3486,6 +3472,660 @@ async function handleResearchDatasetHunt(request, env) {
   }), { headers: JSON_HEADERS });
 }
 __name(handleResearchDatasetHunt, 'handleResearchDatasetHunt');
+
+
+function normalizeResearchName(s) {
+  return String(s || '').toLowerCase().replace(/&amp;/g, '&').replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
+}
+__name(normalizeResearchName, "normalizeResearchName");
+
+function hasResearchValue(v) {
+  if (v == null) return false;
+  if (typeof v === 'string') return v.trim().length > 0;
+  if (Array.isArray(v)) return v.length > 0;
+  if (typeof v === 'object') return Object.keys(v).length > 0;
+  return true;
+}
+__name(hasResearchValue, "hasResearchValue");
+
+function buildEvidence(sourceType, sourceLabel, sourceUrl, quote, method, extra = {}) {
+  return { sourceType, sourceLabel, sourceUrl, quote: quote || null, method, ...extra };
+}
+__name(buildEvidence, "buildEvidence");
+
+function titleCaseWords(s) {
+  return String(s || '').split(/\s+/).filter(Boolean).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+}
+__name(titleCaseWords, "titleCaseWords");
+
+const RESEARCH_SPECIES_CANON = {
+  'black crappie': 'Black Crappie',
+  'white crappie': 'White Crappie',
+  'crappie': 'Crappie',
+  'striped bass': 'Striped Bass',
+  'largemouth bass': 'Largemouth Bass',
+  'spotted bass': 'Spotted Bass',
+  'smallmouth bass': 'Smallmouth Bass',
+  'hybrid bass': 'White Bass / Hybrid',
+  'white bass': 'White Bass / Hybrid',
+  'white bass hybrid': 'White Bass / Hybrid',
+  'striped bass x white bass hybrid': 'White Bass / Hybrid',
+  'catfish': 'Catfish',
+  'blue catfish': 'Blue Catfish',
+  'channel catfish': 'Channel Catfish',
+  'flathead catfish': 'Flathead Catfish',
+  'bluegill': 'Bluegill',
+  'redear sunfish': 'Redear Sunfish (Shellcracker)',
+  'shellcracker': 'Redear Sunfish (Shellcracker)',
+  'redbreast sunfish': 'Redbreast Sunfish',
+  'chain pickerel': 'Chain Pickerel',
+  'bowfin': 'Bowfin',
+  'yellow perch': 'Yellow Perch',
+  'white perch': 'White Perch',
+  'threadfin shad': 'Threadfin Shad',
+  'gizzard shad': 'Gizzard Shad',
+  'blueback herring': 'Blueback Herring',
+  'american shad': 'American Shad',
+  'trout': 'Trout',
+  'rainbow trout': 'Rainbow Trout',
+  'brown trout': 'Brown Trout',
+  'walleye': 'Walleye',
+  'gar': 'Gar',
+  'longnose gar': 'Longnose Gar'
+};
+
+function canonicalizeResearchSpecies(raw) {
+  const n = normalizeResearchName(raw).replace(/\*/g, '').trim();
+  if (!n) return null;
+  return RESEARCH_SPECIES_CANON[n] || titleCaseWords(n);
+}
+__name(canonicalizeResearchSpecies, "canonicalizeResearchSpecies");
+
+function uniqueResearchSpecies(items) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of items || []) {
+    const s = canonicalizeResearchSpecies(raw);
+    if (!s) continue;
+    const key = normalizeResearchName(s);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+  }
+  return out;
+}
+__name(uniqueResearchSpecies, "uniqueResearchSpecies");
+
+function splitSpeciesText(text) {
+  const cleaned = String(text || '').replace(/\([^)]*\)/g, ' ').replace(/\band\b/gi, ',').replace(/;/g, ',');
+  return cleaned.split(',').map(s => s.trim()).filter(Boolean);
+}
+__name(splitSpeciesText, "splitSpeciesText");
+
+function parseSCDNRDescriptionFacts(lakeName, url, html) {
+  const text = stripHtml(html).replace(/\s+/g, ' ').trim();
+  const identity = { aliases: [], counties: [] };
+  const biology = { primaryForage: [], secondaryForage: [], predatorSpecies: [], speciesAbundance: {}, knownStockings: [], baitfishMovement: null, forageCalendar: {}, notes: [] };
+  const habitat = { structuralElements: {}, cover: [], vegetation: [], standingTimber: null, dockDensity: null, artificialHabitat: [], artificialHabitatDetails: { attractorCount: null, attractorTypes: [] }, notes: null };
+  const navigation = { ramps: [], hazards: [], notes: null, accessPointCount: null, publicRampCount: null, privateAccessCount: null };
+  const evidence = { identity: {}, biology: {}, habitat: {}, navigation: {} };
+
+  const store = (section, field, entry) => {
+    if (!evidence[section]) evidence[section] = {};
+    if (!evidence[section][field]) evidence[section][field] = [];
+    evidence[section][field].push(entry);
+  };
+
+  const mArea = text.match(/Acres of Surface Water:\s*([0-9,]+)/i);
+  if (mArea) {
+    identity.surfaceAreaAcres = parseInt(mArea[1].replace(/,/g, ''), 10) || null;
+    store('identity', 'surfaceAreaAcres', buildEvidence('official_document', 'SCDNR Lake Description', url, mArea[0], 'regex_exact_text'));
+  }
+  const mAvg = text.match(/Average Depth:\s*([0-9.]+)\s*feet/i);
+  if (mAvg) {
+    identity.averageDepthFt = parseFloat(mAvg[1]);
+    store('identity', 'averageDepthFt', buildEvidence('official_document', 'SCDNR Lake Description', url, mAvg[0], 'regex_exact_text'));
+  }
+  const mMax = text.match(/Maximum Depth:\s*Approximately\s*([0-9.]+)\s*feet/i);
+  if (mMax) {
+    identity.maxDepthFt = parseFloat(mMax[1]);
+    store('identity', 'maxDepthFt', buildEvidence('official_document', 'SCDNR Lake Description', url, mMax[0], 'regex_exact_text'));
+  }
+  const mShore = text.match(/Miles of Shoreline:\s*([0-9,]+(?:\.[0-9]+)?)/i);
+  if (mShore) {
+    identity.shorelineLengthMi = parseFloat(mShore[1].replace(/,/g, ''));
+    store('identity', 'shorelineLengthMi', buildEvidence('official_document', 'SCDNR Lake Description', url, mShore[0], 'regex_exact_text'));
+  }
+  const mCounties = text.match(/Counties Lake is Within:\s*([^*]+?)(?:Average Depth:|Maximum Depth:|Boat Ramps:)/i);
+  if (mCounties) {
+    identity.counties = mCounties[1].split(',').map(s => s.trim()).filter(Boolean);
+    store('identity', 'counties', buildEvidence('official_document', 'SCDNR Lake Description', url, `Counties Lake is Within: ${mCounties[1].trim()}`, 'regex_exact_text'));
+  }
+  const mOwner = text.match(/Owned and Managed by:\s*([^*]+?)(?:Boat Ramps:|Fish Attractors:|$)/i);
+  if (mOwner) {
+    identity.reservoirOwner = mOwner[1].replace(/\[[^\]]*\]/g, '').trim().replace(/\s+/g, ' ');
+    store('identity', 'reservoirOwner', buildEvidence('official_document', 'SCDNR Lake Description', url, `Owned and Managed by: ${identity.reservoirOwner}`, 'regex_exact_text'));
+  }
+  const mPool = text.match(/Full pond elevation is\s*([0-9.]+)\s*feet/i);
+  if (mPool) {
+    identity.normalPoolFt = parseFloat(mPool[1]);
+    store('identity', 'normalPoolFt', buildEvidence('official_document', 'SCDNR Lake Description', url, mPool[0], 'regex_exact_text'));
+  }
+  const mYear = text.match(/created in\s*(\d{4})/i) || text.match(/operation of .*? in\s*(\d{4})/i);
+  if (mYear) {
+    identity.yearImpounded = parseInt(mYear[1], 10);
+    store('identity', 'yearImpounded', buildEvidence('official_document', 'SCDNR Lake Description', url, mYear[0], 'regex_exact_text'));
+  }
+  const mDam = text.match(/The\s+([A-Z][A-Za-z0-9\- ]+? Dam)\s+is\s+[0-9,]+\s+feet\s+long/i);
+  if (mDam) {
+    identity.damName = mDam[1].trim();
+    store('identity', 'damName', buildEvidence('official_document', 'SCDNR Lake Description', url, mDam[0], 'regex_exact_text'));
+  }
+  const mRiver = text.match(/largest of the ([A-Za-z\- ]+?) lakes/i) || text.match(/upper most of the two beautiful water bodies that comprise ([A-Za-z\- ]+?) reservoir/i);
+  if (mRiver) {
+    identity.riverSystem = mRiver[1].trim();
+    store('identity', 'riverSystem', buildEvidence('official_document', 'SCDNR Lake Description', url, mRiver[0], 'regex_exact_text'));
+  }
+  const mArchetype = text.match(/([0-9,]+ acre [a-z\- ]+ reservoir)/i);
+  if (mArchetype) {
+    identity.archetype = mArchetype[1].trim();
+    store('identity', 'archetype', buildEvidence('official_document', 'SCDNR Lake Description', url, mArchetype[0], 'regex_exact_text'));
+  }
+
+  const mSport = text.match(/Popular sport fish on .*? include ([^.]+)\./i) || text.match(/best known for its ([^.]+?) fishery but it serves host to ([^.]+?)\./i);
+  if (mSport) {
+    const speciesText = mSport[1] + (mSport[2] ? ', ' + mSport[2] : '');
+    biology.predatorSpecies = uniqueResearchSpecies(splitSpeciesText(speciesText));
+    if (biology.predatorSpecies.length) {
+      store('biology', 'predatorSpecies', buildEvidence('official_document', 'SCDNR Lake Description', url, mSport[0], 'regex_exact_text'));
+    }
+  }
+  const mStock = text.match(/stocks? ([a-z ]+?) regularly/i);
+  if (mStock) {
+    const stocked = canonicalizeResearchSpecies(mStock[1]);
+    if (stocked) {
+      biology.knownStockings = [{ species: stocked, agency: 'SCDNR', note: 'Stocked regularly' }];
+      store('biology', 'knownStockings', buildEvidence('official_document', 'SCDNR Lake Description', url, mStock[0], 'regex_exact_text'));
+    }
+  }
+
+  const mAttr = text.match(/Fish Attractors:\s*([0-9,]+)/i);
+  if (mAttr) {
+    habitat.artificialHabitat = ['SCDNR fish attractors'];
+    habitat.artificialHabitatDetails.attractorCount = parseInt(mAttr[1].replace(/,/g, ''), 10) || null;
+    const note = `${habitat.artificialHabitatDetails.attractorCount} official SCDNR fish attractors listed on the lake page.`;
+    habitat.notes = habitat.notes ? `${habitat.notes} ${note}` : note;
+    store('habitat', 'artificialHabitatDetails', buildEvidence('official_document', 'SCDNR Lake Description', url, mAttr[0], 'regex_exact_text'));
+  }
+  const mRamps = text.match(/Boat Ramps:\s*([0-9,]+)/i);
+  if (mRamps) {
+    navigation.accessPointCount = parseInt(mRamps[1].replace(/,/g, ''), 10) || null;
+    store('navigation', 'accessPointCount', buildEvidence('official_document', 'SCDNR Lake Description', url, mRamps[0], 'regex_exact_text'));
+  }
+  const mAccess = text.match(/There are\s*([0-9]+) access points in the Lake/i);
+  if (mAccess) {
+    navigation.accessPointCount = parseInt(mAccess[1], 10) || navigation.accessPointCount || null;
+    store('navigation', 'accessPointCount', buildEvidence('official_document', 'SCDNR Lake Description', url, mAccess[0], 'regex_exact_text'));
+  }
+  const mPublicPrivate = text.match(/maintain\s*([a-z0-9]+) public boat access areas.*?Five are privately owned and operated/i);
+  if (mPublicPrivate) {
+    const n = parseInt(String(mPublicPrivate[1]).replace(/[^0-9]/g, ''), 10);
+    if (isFinite(n)) navigation.publicRampCount = n;
+    navigation.privateAccessCount = 5;
+    store('navigation', 'publicRampCount', buildEvidence('official_document', 'SCDNR Lake Description', url, mPublicPrivate[0], 'regex_exact_text'));
+  }
+
+  return { identity, biology, habitat, navigation, evidence, sources: [{ label: 'SCDNR Lake Description', url, trust: 'OFFICIAL', sourceType: 'official_document' }] };
+}
+__name(parseSCDNRDescriptionFacts, "parseSCDNRDescriptionFacts");
+
+const RESEARCH_RAMP_SOURCES = {
+  SC: {
+    url: "https://services.arcgis.com/acgZYxoN5Oj8pDLa/arcgis/rest/services/South_Carolina_Public_Water_Access_PUBLIC_VIEW/FeatureServer/0/query",
+    label: 'SCDNR South Carolina Public Water Access',
+    idField: 'OBJECTID',
+    filter: (p) => p.WaterAccessType === 'Boat Ramp' && String(p.Status || '').toLowerCase() === 'active' && String(p.PublicAccess || '').toLowerCase() !== 'closed',
+    name: (p) => p.WaterAccessName,
+    wb: (p) => p.Waterbody,
+    lat: (p) => p.Latitude,
+    lon: (p) => p.Longitude,
+    meta: (p) => ({ lanes: p.LaunchLanes, dock: p.CourtesyDock, fee: false, species: p.SpeciesList, county: p.County, owner: p.Owner, comments: p.Comments })
+  },
+  GA: {
+    url: "https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/WRD_Water_Access_Points/FeatureServer/0/query",
+    label: 'Georgia DNR WRD Water Access Points',
+    idField: 'FID',
+    filter: (p) => String(p.Ramp || '').toUpperCase() === 'Y' && !['closed', 'inactive'].includes(String(p.Status || '').toLowerCase()),
+    name: (p) => p.Name,
+    wb: (p) => p.Waterbody,
+    lat: (p) => p.Latitude,
+    lon: (p) => p.Longitude,
+    meta: (p) => ({ lanes: p.NumLanes, dock: p.Dock, fee: String(p.Fee || '').toUpperCase() === 'Y', species: p.SpeciesList || '', county: p.County, owner: p.Owner, motorRestrictions: p.MotorRest })
+  },
+  NC: {
+    url: "https://services1.arcgis.com/YfqBAUM5nWR3yhGP/arcgis/rest/services/NCWRC_Boating_Access_Areas_view/FeatureServer/0/query",
+    label: 'NC Wildlife Resources Commission Boating Access Areas',
+    idField: 'OBJECTID',
+    filter: (p) => !String(p.Site_Status || 'OPEN').toUpperCase().includes('CLOSED'),
+    name: (p) => p.BAA_Name,
+    wb: (p) => p.Water_Access || p.BAA_Alias,
+    lat: (p) => p.Latitude,
+    lon: (p) => p.Longitude,
+    meta: (p) => ({ lanes: p.Launch_Lane_No, dock: p.Courtesy_Dock_No || p.Fix_Dock_No, fee: false, species: '', county: p.County, owner: p.Owner, motorRestrictions: p.Motorboats_Restricted })
+  }
+};
+
+const RESEARCH_ATTRACTOR_SOURCES = {
+  SC: {
+    url: "https://services.arcgis.com/acgZYxoN5Oj8pDLa/arcgis/rest/services/SCDNR_Freshwater_Fish_Attractors_Public_Web_App/FeatureServer/0/query",
+    label: 'SCDNR Freshwater Fish Attractors',
+    idField: 'OBJECTID',
+    filter: () => true,
+    name: (p) => p.FishAttractorName,
+    wb: (p) => p.Waterbody,
+    lat: (p) => p.lat_dd,
+    lon: (p) => p.lon_dd,
+    type: (p) => p.Material
+  },
+  GA: {
+    url: "https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/Fish_Attractors_for_Download/FeatureServer/0/query",
+    label: 'Georgia DNR Fish Attractors',
+    idField: 'OBJECTID',
+    filter: () => true,
+    name: (p) => p.note,
+    wb: (p) => p.waterbody,
+    lat: () => null,
+    lon: () => null,
+    type: (p) => `${p.attractor_code || ''} ${p.attractor_code_other || ''}`.trim()
+  },
+  NC: {
+    url: "https://services1.arcgis.com/YfqBAUM5nWR3yhGP/arcgis/rest/services/Fish_Attractors_public_view/FeatureServer/0/query",
+    label: 'NC WRC Fish Attractors',
+    idField: 'OBJECTID',
+    filter: () => true,
+    name: (p) => `${p.Waterbody} Attractor`,
+    wb: (p) => p.Waterbody,
+    lat: (p) => p.Latitude,
+    lon: (p) => p.Longitude,
+    type: (p) => `${p.Structure1 || ''} ${p.Structure2 || ''}`.trim() || p.Attractor_Type
+  }
+};
+
+async function fetchArcGISGrouped(env, cacheKey, sourceDef, buildRecord) {
+  try {
+    const cached = await env.R2_TROLLMAP_CHARTPACKS.get(cacheKey);
+    if (cached) {
+      const txt = await cached.text();
+      return JSON.parse(txt);
+    }
+  } catch (_) {}
+  const allFeatures = [];
+  let offset = 0;
+  const pageSize = 1000;
+  while (true) {
+    const params = new URLSearchParams({ outFields: '*', where: '1=1', f: 'geojson', resultOffset: offset, resultRecordCount: pageSize, orderByFields: sourceDef.idField || 'OBJECTID' });
+    const resp = await fetch(`${sourceDef.url}?${params.toString()}`, { headers: { 'User-Agent': 'TrollMap/1.0 (Cloudflare Worker)', 'Accept': 'application/json' }, cf: { cacheTtl: 0 } });
+    if (!resp.ok) throw new Error(`ArcGIS HTTP ${resp.status}`);
+    const data = await resp.json();
+    const features = data.features || [];
+    allFeatures.push(...features);
+    if (features.length < pageSize) break;
+    offset += pageSize;
+  }
+  const waterbodies = {};
+  for (const feat of allFeatures) {
+    const p = feat.properties || {};
+    if (!sourceDef.filter(p)) continue;
+    const wb = String(sourceDef.wb(p) || 'Unknown').trim();
+    const rec = buildRecord(feat, p);
+    if (!rec) continue;
+    if (!waterbodies[wb]) waterbodies[wb] = [];
+    waterbodies[wb].push(rec);
+  }
+  const result = { waterbodies };
+  try {
+    await env.R2_TROLLMAP_CHARTPACKS.put(cacheKey, JSON.stringify(result), { httpMetadata: { contentType: 'application/json' }, customMetadata: { fetchedAt: new Date().toISOString() } });
+  } catch (_) {}
+  return result;
+}
+__name(fetchArcGISGrouped, "fetchArcGISGrouped");
+
+function waterbodyMatchesLake(lakeName, waterbodyName) {
+  const a = normalizeResearchName(lakeName).replace(/^lake /, '');
+  const b = normalizeResearchName(waterbodyName).replace(/^lake /, '');
+  return !!a && !!b && (a === b || a.includes(b) || b.includes(a));
+}
+__name(waterbodyMatchesLake, "waterbodyMatchesLake");
+
+
+function stripHtmlPreserveTables(html) {
+  return String(html || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/tr>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<li>/gi, '• ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+__name(stripHtmlPreserveTables, "stripHtmlPreserveTables");
+
+function extractHtmlTableRows(html) {
+  const rows = [];
+  const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  let rowMatch;
+  while ((rowMatch = rowRe.exec(String(html || '')))) {
+    const rowHtml = rowMatch[1];
+    const cellRe = /<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/gi;
+    const cells = [];
+    let cellMatch;
+    while ((cellMatch = cellRe.exec(rowHtml))) {
+      const txt = stripHtmlPreserveTables(cellMatch[1]).replace(/\s+/g, ' ').trim();
+      if (txt) cells.push(txt);
+    }
+    if (cells.length >= 2) rows.push(cells);
+  }
+  return rows;
+}
+__name(extractHtmlTableRows, "extractHtmlTableRows");
+
+function lakeMentionedInCell(lakeName, cellText) {
+  const lake = normalizeResearchName(lakeName).replace(/^lake /, '');
+  const cell = normalizeResearchName(cellText);
+  const last = lake.split(' ').slice(-1)[0];
+  return cell.includes(lake) || (last && cell.includes(last));
+}
+__name(lakeMentionedInCell, "lakeMentionedInCell");
+
+function parseSCRegulationsFromHtml(lakeName, regsUrl, html, lakeSpecificHtml = '') {
+  const rows = extractHtmlTableRows(html);
+  const regs = {
+    state: 'SC',
+    lastUpdated: null,
+    generalStateRegulations: { lengthLimits: {}, creelLimits: {} },
+    lakeSpecificRegulations: { hasExceptions: null, creelLimits: {}, sizeLimits: {}, specialRules: [], closedSeasons: [] },
+    notes: 'Always verify exact lake exceptions at official agency site before fishing.'
+  };
+  const evidence = { regulations: {} };
+  const addEvidence = (field, quote, method='table_row') => {
+    evidence.regulations[field] = (evidence.regulations[field] || []).concat([buildEvidence('official_document', 'SCDNR / eRegulations', regsUrl, quote, method)]);
+  };
+
+  const plain = stripHtmlPreserveTables(html);
+  const mUpdated = plain.match(/Last Updated:\s*([A-Za-z]+\s+\d{1,2},\s*\d{4})/i);
+  if (mUpdated) {
+    regs.lastUpdated = mUpdated[1].trim();
+    addEvidence('lastUpdated', mUpdated[0], 'regex_exact_text');
+  }
+
+  for (const row of rows) {
+    const cells = row.map(c => c.replace(/\s+/g, ' ').trim());
+    if (cells.length < 4) continue;
+    const [waterBody, fish, size, limit] = cells;
+    const fishNorm = normalizeResearchName(fish);
+    const waterNorm = normalizeResearchName(waterBody);
+
+    const applyGeneral = (speciesName, sizeValue, limitValue) => {
+      if (sizeValue) regs.generalStateRegulations.lengthLimits[speciesName] = sizeValue;
+      if (limitValue) regs.generalStateRegulations.creelLimits[speciesName] = limitValue;
+      addEvidence(`general.${speciesName}`, `${waterBody} | ${fish} | ${size} | ${limit}`);
+    };
+    const applyLakeSpecific = (speciesName, sizeValue, limitValue) => {
+      regs.lakeSpecificRegulations.hasExceptions = true;
+      if (sizeValue) regs.lakeSpecificRegulations.sizeLimits[speciesName] = sizeValue;
+      if (limitValue) regs.lakeSpecificRegulations.creelLimits[speciesName] = limitValue;
+      addEvidence(`lakeSpecific.${speciesName}`, `${waterBody} | ${fish} | ${size} | ${limit}`);
+    };
+
+    if (waterNorm.startsWith('statewide') && fishNorm == 'crappie') applyGeneral('Crappie', size, limit);
+    if (waterNorm.startsWith('statewide') && fishNorm.includes('bream')) applyGeneral('Bream', size, limit);
+    if (waterNorm.startsWith('statewide') && fishNorm === 'redbreast sunfish') applyGeneral('Redbreast Sunfish', size, limit);
+    if (waterNorm.startsWith('statewide') && fishNorm === 'chain pickerel') applyGeneral('Chain Pickerel', size, limit);
+    if (waterNorm.startsWith('statewide') && fishNorm.includes('yellow perch')) applyGeneral('Yellow Perch', size, limit);
+    if (waterNorm === 'statewide' && fishNorm === 'blue catfish') applyGeneral('Blue Catfish', size, limit);
+
+    if (waterNorm.startsWith('statewide except the water bodies listed below') && fishNorm == 'largemouth bass') {
+      applyGeneral('Largemouth Bass', size, limit);
+    }
+    if (lakeMentionedInCell(lakeName, waterBody) && fishNorm == 'largemouth bass') {
+      applyLakeSpecific('Largemouth Bass', size, limit);
+    }
+
+  }
+
+  // Striper / hybrid rows need multi-row handling because closures/season text split across rows.
+  const striperRows = rows.filter(r => normalizeResearchName(r[1] || '').includes('striped or hybrid bass'));
+  const statewideStriper = striperRows.find(r => normalizeResearchName(r[0] || '').startsWith('statewide except the water bodies list below') || normalizeResearchName(r[0] || '').startsWith('statewide except the water bodies listed below'));
+  if (statewideStriper) {
+    regs.generalStateRegulations.lengthLimits['Striped Bass / Hybrid'] = statewideStriper[2];
+    regs.generalStateRegulations.creelLimits['Striped Bass / Hybrid'] = statewideStriper[3];
+    addEvidence('general.Striped Bass / Hybrid', statewideStriper.join(' | '));
+  }
+  const lakeSpecificStriper = striperRows.find(r => lakeMentionedInCell(lakeName, r[0] || ''));
+  if (lakeSpecificStriper) {
+    regs.lakeSpecificRegulations.hasExceptions = true;
+    regs.lakeSpecificRegulations.sizeLimits['Striped Bass / Hybrid'] = lakeSpecificStriper[2];
+    regs.lakeSpecificRegulations.creelLimits['Striped Bass / Hybrid'] = lakeSpecificStriper[3];
+    addEvidence('lakeSpecific.Striped Bass / Hybrid', lakeSpecificStriper.join(' | '));
+  } else if (statewideStriper) {
+    // If not in exception rows, statewide applies directly to the lake.
+    regs.lakeSpecificRegulations.creelLimits['Striped Bass / Hybrid'] = statewideStriper[3];
+    regs.lakeSpecificRegulations.sizeLimits['Striped Bass / Hybrid'] = statewideStriper[2];
+    regs.lakeSpecificRegulations.hasExceptions = regs.lakeSpecificRegulations.hasExceptions ?? false;
+  }
+
+  const lakePlain = stripHtmlPreserveTables(lakeSpecificHtml);
+  const mLmb = lakePlain.match(/no largemouth bass less than\s*([0-9]+)\s*inches/i);
+  if (mLmb) {
+    regs.lakeSpecificRegulations.hasExceptions = true;
+    regs.lakeSpecificRegulations.sizeLimits['Largemouth Bass'] = `${mLmb[1]} inches min`;
+    addEvidence('lakeSpecific.Largemouth Bass', mLmb[0], 'regex_exact_text');
+  }
+
+  const closureText = striperRows.map(r => r.join(' | ')).join(' ');
+  if (/June 16 - Sept\. 30 closed/i.test(closureText)) {
+    regs.lakeSpecificRegulations.closedSeasons.push({ species: 'Striped Bass / Hybrid', period: 'June 16 - Sept. 30', note: 'Closed where indicated by row-specific regulation text.' });
+    addEvidence('lakeSpecific.closedSeasons', 'June 16 - Sept. 30 closed', 'regex_exact_text');
+  }
+
+  // Flatten convenience fields for UI/back-compat
+  regs.lengthLimits = { ...regs.generalStateRegulations.lengthLimits, ...regs.lakeSpecificRegulations.sizeLimits };
+  regs.creelLimits = { ...regs.generalStateRegulations.creelLimits, ...regs.lakeSpecificRegulations.creelLimits };
+
+  return { regulations: regs, evidence, sources: [{ label: 'SCDNR / eRegulations', url: regsUrl, trust: 'OFFICIAL', sourceType: 'official_document' }] };
+}
+__name(parseSCRegulationsFromHtml, "parseSCRegulationsFromHtml");
+
+async function getRampSpeciesFacts(env, lakeName, state) {
+  const sourceDef = RESEARCH_RAMP_SOURCES[state];
+  if (!sourceDef) return null;
+  const data = await fetchArcGISGrouped(env, `ramps/${String(state).toLowerCase()}/ramps.json`, sourceDef, (feat, p) => {
+    const lat = parseFloat(sourceDef.lat(p));
+    const lon = parseFloat(sourceDef.lon(p));
+    if (!isFinite(lat) || !isFinite(lon)) return null;
+    return { name: String(sourceDef.name(p) || 'Unknown').trim(), lat, lon, ...sourceDef.meta(p) };
+  });
+  const matches = Object.entries(data.waterbodies || {}).filter(([wb]) => waterbodyMatchesLake(lakeName, wb));
+  if (!matches.length) return null;
+  const ramps = matches.flatMap(([, arr]) => arr || []);
+  const predatorSpecies = uniqueResearchSpecies(ramps.flatMap(r => splitSpeciesText(r.species || '')));
+  return { ramps, predatorSpecies, sourceLabel: sourceDef.label };
+}
+__name(getRampSpeciesFacts, "getRampSpeciesFacts");
+
+async function getAttractorFacts(env, lakeName, state) {
+  const sourceDef = RESEARCH_ATTRACTOR_SOURCES[state];
+  if (!sourceDef) return null;
+  const data = await fetchArcGISGrouped(env, `attractors/${String(state).toLowerCase()}/attractors.json`, sourceDef, (feat, p) => {
+    const lat = parseFloat(sourceDef.lat(p) || feat.geometry?.coordinates?.[1]);
+    const lon = parseFloat(sourceDef.lon(p) || feat.geometry?.coordinates?.[0]);
+    if (!isFinite(lat) || !isFinite(lon)) return null;
+    return { name: String(sourceDef.name(p) || 'Attractor').trim(), lat, lon, type: String(sourceDef.type(p) || 'Unknown').trim() };
+  });
+  const matches = Object.entries(data.waterbodies || {}).filter(([wb]) => waterbodyMatchesLake(lakeName, wb));
+  if (!matches.length) return null;
+  const attractors = matches.flatMap(([, arr]) => arr || []);
+  const typeCounts = {};
+  for (const a of attractors) {
+    const t = a.type || 'Unknown';
+    typeCounts[t] = (typeCounts[t] || 0) + 1;
+  }
+  return { attractors, typeCounts, sourceLabel: sourceDef.label };
+}
+__name(getAttractorFacts, "getAttractorFacts");
+
+function buildFactualSummary(profile) {
+  const parts = [];
+  const id = profile.identity || {};
+  const bio = profile.biology || {};
+  const lim = profile.limnology || {};
+  const hab = profile.habitat || {};
+  if (id.archetype || id.surfaceAreaAcres || id.maxDepthFt) {
+    parts.push(`${profile.lakeName} ${id.archetype ? `is a ${String(id.archetype).toLowerCase()}` : 'is a reservoir/lake'}${id.surfaceAreaAcres ? ` with about ${Number(id.surfaceAreaAcres).toLocaleString()} surface acres` : ''}${id.maxDepthFt ? ` and a maximum depth near ${id.maxDepthFt} feet` : ''}.`);
+  }
+  if (bio.predatorSpecies?.length) {
+    parts.push(`Confirmed sport fish documented for this waterbody include ${bio.predatorSpecies.join(', ')}${bio.knownStockings?.length ? `; documented stocking notes include ${bio.knownStockings.map(s => s.species).join(', ')}` : ''}.`);
+  }
+  if (hasResearchValue(lim.surfaceWater) || lim.waterClarity?.secchiFt || lim.thermocline?.summerDepthFt) {
+    const limBits = [];
+    if (lim.waterClarity?.secchiFt) limBits.push(`Secchi clarity around ${lim.waterClarity.secchiFt} ft when observed`);
+    if (lim.surfaceWater?.recentTempF != null) limBits.push(`recent surface water about ${lim.surfaceWater.recentTempF}°F`);
+    if (lim.surfaceWater?.recentDissolvedOxygenMgL != null) limBits.push(`recent surface dissolved oxygen about ${lim.surfaceWater.recentDissolvedOxygenMgL} mg/L`);
+    if (lim.thermocline?.summerDepthFt) limBits.push(`summer thermocline near ${Array.isArray(lim.thermocline.summerDepthFt) ? lim.thermocline.summerDepthFt.join('-') : lim.thermocline.summerDepthFt} ft`);
+    if (limBits.length) parts.push(`Available limnology data indicate ${limBits.join('; ')}.`);
+  }
+  const attrCount = hab.artificialHabitatDetails?.attractorCount;
+  if (attrCount || hab.cover?.length || hab.notes) {
+    const habBits = [];
+    if (attrCount) habBits.push(`${attrCount} mapped fish attractors`);
+    if (hab.cover?.length) habBits.push(`cover includes ${hab.cover.slice(0, 4).join(', ')}`);
+    if (habBits.length) parts.push(`Habitat facts currently confirm ${habBits.join('; ')}.`);
+  }
+  return parts.join(' ').trim() || null;
+}
+__name(buildFactualSummary, "buildFactualSummary");
+
+async function handleResearchDeterministicFacts(request, env) {
+  let body;
+  try { body = await request.json(); } catch { body = {}; }
+  const lakeName = String(body.lakeName || body.lake || '').trim();
+  const state = String(body.state || 'SC').trim().toUpperCase();
+  if (!lakeName) return new Response(JSON.stringify({ ok: false, error: 'missing lakeName' }), { status: 400, headers: JSON_HEADERS });
+
+  const profile = {
+    lakeName,
+    state,
+    identity: { aliases: [], counties: [] },
+    biology: { primaryForage: [], secondaryForage: [], predatorSpecies: [], speciesAbundance: {}, knownStockings: [], baitfishMovement: null, forageCalendar: {}, notes: [] },
+    limnology: { waterClarity: { typical: null, color: null, secchiFt: null, note: null }, surfaceWater: {}, thermocline: { summerDepthFt: null, method: null, note: null }, oxygen: { depletionDepthFt: null, anoxicBelowFt: null, note: null }, trophicStatus: null, flowCharacteristics: null, seasonalDrawdownFt: null },
+    habitat: { structuralElements: {}, cover: [], vegetation: [], standingTimber: null, dockDensity: null, artificialHabitat: [], artificialHabitatDetails: { attractorCount: null, attractorTypes: [] }, notes: null },
+    navigation: { ramps: [], hazards: [], notes: null },
+    regulations: { state, generalStateRegulations: { lengthLimits: {}, creelLimits: {} }, lakeSpecificRegulations: { hasExceptions: null, creelLimits: {}, sizeLimits: {}, specialRules: [], closedSeasons: [] }, notes: null },
+    summary: { text: null, keywords: [] },
+    evidence: { identity: {}, biology: {}, limnology: {}, habitat: {}, navigation: {}, regulations: {}, summary: {} },
+    sources: []
+  };
+
+  const mergeEvidence = (section, field, entries) => {
+    if (!entries?.length) return;
+    if (!profile.evidence[section]) profile.evidence[section] = {};
+    profile.evidence[section][field] = (profile.evidence[section][field] || []).concat(entries);
+  };
+
+  // SCDNR lake description (SC only)
+  if (state === 'SC') {
+    const slug = lakeKeyFromName(lakeName);
+    const descUrl = `https://www.dnr.sc.gov/lakes/${slug}/description.html`;
+    try {
+      const descRes = await fetch(descUrl, { headers: { 'User-Agent': 'TrollMap/16 Evidence Engine', 'Accept': 'text/html' }, cf: { cacheTtl: 86400, cacheEverything: true } });
+      if (descRes.ok) {
+        const html = await descRes.text();
+        const parsed = parseSCDNRDescriptionFacts(lakeName, descUrl, html);
+        Object.assign(profile.identity, parsed.identity || {});
+        profile.biology.predatorSpecies = uniqueResearchSpecies([...(profile.biology.predatorSpecies || []), ...((parsed.biology || {}).predatorSpecies || [])]);
+        if ((parsed.biology || {}).knownStockings?.length) profile.biology.knownStockings = parsed.biology.knownStockings;
+        profile.habitat.artificialHabitat = [...new Set([...(profile.habitat.artificialHabitat || []), ...((parsed.habitat || {}).artificialHabitat || [])])];
+        if (parsed.habitat?.artificialHabitatDetails?.attractorCount != null) profile.habitat.artificialHabitatDetails.attractorCount = parsed.habitat.artificialHabitatDetails.attractorCount;
+        if (parsed.habitat?.notes) profile.habitat.notes = parsed.habitat.notes;
+        if (parsed.navigation?.accessPointCount != null) profile.navigation.accessPointCount = parsed.navigation.accessPointCount;
+        if (parsed.navigation?.publicRampCount != null) profile.navigation.publicRampCount = parsed.navigation.publicRampCount;
+        if (parsed.navigation?.privateAccessCount != null) profile.navigation.privateAccessCount = parsed.navigation.privateAccessCount;
+        for (const src of parsed.sources || []) profile.sources.push(src);
+        for (const [sec, fields] of Object.entries(parsed.evidence || {})) for (const [field, entries] of Object.entries(fields || {})) mergeEvidence(sec, field, entries);
+      }
+    } catch (e) {
+      console.warn(`deterministic description fetch failed for ${lakeName}: ${e.message}`);
+    }
+  }
+
+  // Deterministic SC regulations from official pages
+  if (state === 'SC') {
+    const slug = lakeKeyFromName(lakeName);
+    const regsUrl = 'https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits';
+    const lakeRegsUrl = `https://www.dnr.sc.gov/lakes/${slug}/regs.html`;
+    try {
+      const [regsRes, lakeRegsRes] = await Promise.all([
+        fetch(regsUrl, { headers: { 'User-Agent': 'TrollMap/16 Evidence Engine', 'Accept': 'text/html' }, cf: { cacheTtl: 86400, cacheEverything: true } }),
+        fetch(lakeRegsUrl, { headers: { 'User-Agent': 'TrollMap/16 Evidence Engine', 'Accept': 'text/html' }, cf: { cacheTtl: 86400, cacheEverything: true } })
+      ]);
+      if (regsRes.ok) {
+        const regsHtml = await regsRes.text();
+        const lakeRegsHtml = lakeRegsRes.ok ? await lakeRegsRes.text() : '';
+        const parsedRegs = parseSCRegulationsFromHtml(lakeName, regsUrl, regsHtml, lakeRegsHtml);
+        profile.regulations = mergeMissing(profile.regulations, parsedRegs.regulations || {});
+        for (const src of parsedRegs.sources || []) profile.sources.push(src);
+        for (const [sec, fields] of Object.entries(parsedRegs.evidence || {})) for (const [field, entries] of Object.entries(fields || {})) mergeEvidence(sec, field, entries);
+      }
+    } catch (e) {
+      console.warn(`deterministic regulations fetch failed for ${lakeName}: ${e.message}`);
+    }
+  }
+
+  // Structured ramps/species
+  try {
+    const rampFacts = await getRampSpeciesFacts(env, lakeName, state);
+    if (rampFacts) {
+      profile.navigation.ramps = rampFacts.ramps.map(r => ({ name: r.name, lat: Math.round(r.lat * 1e6) / 1e6, lon: Math.round(r.lon * 1e6) / 1e6, lanes: r.lanes || null, county: r.county || null, owner: r.owner || null }));
+      profile.biology.predatorSpecies = uniqueResearchSpecies([...(profile.biology.predatorSpecies || []), ...(rampFacts.predatorSpecies || [])]);
+      mergeEvidence('navigation', 'ramps', [buildEvidence('official_structured', rampFacts.sourceLabel, `worker:/ramps?state=${state}`, null, 'structured_waterbody_aggregation', { count: profile.navigation.ramps.length })]);
+      if (rampFacts.predatorSpecies?.length) mergeEvidence('biology', 'predatorSpecies', [buildEvidence('official_structured', rampFacts.sourceLabel, `worker:/ramps?state=${state}`, null, 'structured_species_aggregation', { speciesCount: rampFacts.predatorSpecies.length })]);
+      profile.sources.push({ label: rampFacts.sourceLabel, url: `worker:/ramps?state=${state}`, trust: 'OFFICIAL_GIS', sourceType: 'official_structured' });
+    }
+  } catch (e) {
+    console.warn(`deterministic ramps fetch failed for ${lakeName}: ${e.message}`);
+  }
+
+  // Structured attractors
+  try {
+    const attractorFacts = await getAttractorFacts(env, lakeName, state);
+    if (attractorFacts) {
+      profile.habitat.artificialHabitat = [...new Set([...(profile.habitat.artificialHabitat || []), 'Fish attractors'])];
+      profile.habitat.artificialHabitatDetails.attractorCount = attractorFacts.attractors.length;
+      profile.habitat.artificialHabitatDetails.attractorTypes = Object.keys(attractorFacts.typeCounts || {}).sort();
+      if (!profile.habitat.notes && attractorFacts.attractors.length) {
+        profile.habitat.notes = `${attractorFacts.attractors.length} mapped fish attractors available from ${attractorFacts.sourceLabel}.`;
+      }
+      mergeEvidence('habitat', 'artificialHabitatDetails', [buildEvidence('official_structured', attractorFacts.sourceLabel, `worker:/attractors?state=${state}`, null, 'structured_waterbody_aggregation', { count: attractorFacts.attractors.length, types: profile.habitat.artificialHabitatDetails.attractorTypes })]);
+      profile.sources.push({ label: attractorFacts.sourceLabel, url: `worker:/attractors?state=${state}`, trust: 'OFFICIAL_GIS', sourceType: 'official_structured' });
+    }
+  } catch (e) {
+    console.warn(`deterministic attractors fetch failed for ${lakeName}: ${e.message}`);
+  }
+
+  // Simple deterministic summary from explicit facts only
+  profile.summary.text = buildFactualSummary(profile);
+  profile.summary.keywords = uniqueResearchSpecies([...(profile.biology.predatorSpecies || []), ...(profile.biology.primaryForage || []), ...(profile.habitat.artificialHabitatDetails?.attractorTypes || [])]).slice(0, 12);
+  if (profile.summary.text) {
+      mergeEvidence('summary', 'text', [buildEvidence('internal_synthesis', 'TrollMap deterministic profile synthesis', 'internal:deterministic-facts', null, 'deterministic_fact_synthesis')]);
+  }
+
+  return new Response(JSON.stringify({ ok: true, lakeName, state, profile }), { headers: JSON_HEADERS });
+}
+__name(handleResearchDeterministicFacts, "handleResearchDeterministicFacts");
 
 async function handleResearchSaveNormalized(request, env) {
   let body;
@@ -4757,9 +5397,10 @@ async function handleResearchSave(request, env) {
     habitat: incomingProfile.habitat || packageParts.habitat || {},
     navigation: incomingProfile.navigation || packageParts.navigation || {},
     regulations: incomingProfile.regulations || packageParts.regulations || {},
-    trolling: incomingProfile.trolling || incomingProfile.trollingIntelligence || packageParts.trolling || packageParts.trollingIntelligence || {},
-    trollingIntelligence: incomingProfile.trollingIntelligence || incomingProfile.trolling || {},
+    trolling: incomingProfile.trolling || incomingProfile.trollingIntelligence || packageParts.trolling || packageParts.trollingIntelligence || null,
+    trollingIntelligence: incomingProfile.trollingIntelligence || incomingProfile.trolling || null,
     summary: incomingProfile.summary || packageParts.summary || {},
+    evidence: incomingProfile.evidence || packageParts.evidence || {},
     sources: incomingProfile.sources || sources || [],
     confidence: {...confidence, overall: {percent: overallConf, level: overallConf>=95?'very high':overallConf>=85?'high':overallConf>=70?'medium':'low'}},
     metadata: {
@@ -4802,7 +5443,7 @@ async function handleResearchSave(request, env) {
   });
 
   // Save package parts (hybrid)
-  const partKeys = ['identity','limnology','biology','forage','habitat','navigation','regulations','trolling','trollingIntelligence','summary'];
+  const partKeys = ['identity','limnology','biology','forage','habitat','navigation','regulations','trolling','trollingIntelligence','summary','evidence'];
   for (const k of partKeys) {
     const partData = packageParts[k] || master[k];
     if (partData) {
@@ -4815,6 +5456,7 @@ async function handleResearchSave(request, env) {
   // Save sources, research_log, metadata as separate files for Inspector
   await env.R2_TROLLMAP_CHARTPACKS.put(`lake_packages/${safe}/sources.json`, JSON.stringify(master.sources||[], null, 2), {httpMetadata:{contentType:"application/json"}});
   await env.R2_TROLLMAP_CHARTPACKS.put(`lake_packages/${safe}/metadata.json`, JSON.stringify(master.metadata, null, 2), {httpMetadata:{contentType:"application/json"}});
+  await env.R2_TROLLMAP_CHARTPACKS.put(`lake_packages/${safe}/evidence.json`, JSON.stringify(master.evidence||{}, null, 2), {httpMetadata:{contentType:"application/json"}});
   await env.R2_TROLLMAP_CHARTPACKS.put(`lake_packages/${safe}/research_log.json`, JSON.stringify(master.researchLog||{}, null, 2), {httpMetadata:{contentType:"application/json"}});
   if (master.notes) {
     await env.R2_TROLLMAP_CHARTPACKS.put(`lake_packages/${safe}/notes.md`, String(master.notes), {httpMetadata:{contentType:"text/markdown"}});
@@ -4848,6 +5490,28 @@ async function handleResearchApprove(request, env) {
   return new Response(JSON.stringify({ok:true, lakeId: safe, lakeName, status:"verified", version: profile.metadata.version||profile.metadata.versionNumber}), {headers: JSON_HEADERS});
 }
 __name(handleResearchApprove, "handleResearchApprove");
+
+async function handleResearchDelete(request, env) {
+  let body;
+  try { body = await request.json(); } catch { body = {}; }
+  const lakeName = String(body.lakeName || body.lake || '').trim();
+  if (!lakeName) return new Response(JSON.stringify({ ok:false, error:'missing lakeName' }), { status:400, headers:JSON_HEADERS });
+  const safe = sanitizeLakeId(lakeName);
+  const keys = [`lakes/${safe}.json`];
+  try {
+    const pkg = await env.R2_TROLLMAP_CHARTPACKS.list({ prefix: `lake_packages/${safe}/` });
+    for (const o of pkg.objects) keys.push(o.key);
+  } catch {}
+  try {
+    const vers = await env.R2_TROLLMAP_CHARTPACKS.list({ prefix: `lakes/versions/${safe}/` });
+    for (const o of vers.objects) keys.push(o.key);
+  } catch {}
+  for (const key of keys) {
+    try { await env.R2_TROLLMAP_CHARTPACKS.delete(key); } catch {}
+  }
+  return new Response(JSON.stringify({ ok:true, lakeName, deleted: keys.length }), { headers: JSON_HEADERS });
+}
+__name(handleResearchDelete, "handleResearchDelete");
 
 async function handleResearchPackage(env, lakeId) {
   const safe = sanitizeLakeId(lakeId);
@@ -5052,6 +5716,9 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
       if (path === "/research/limnology-data" && request.method === "POST") {
         return handleResearchLimnologyData(request, env);
       }
+      if (path === "/research/deterministic-facts" && request.method === "POST") {
+        return handleResearchDeterministicFacts(request, env);
+      }
       if (path === "/research/discover" && request.method === "POST") {
         return handleResearchDiscover(request, env);
       }
@@ -5100,6 +5767,9 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
       }
       if (path === "/research/approve" && request.method === "POST") {
         return handleResearchApprove(request, env);
+      }
+      if (path === "/research/delete" && request.method === "POST") {
+        return handleResearchDelete(request, env);
       }
       if (path === "/research/package" && request.method === "GET") {
         const lake = url.searchParams.get("lake") || "";

@@ -17,6 +17,8 @@
 
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { LAKE_DB } from '../data/lakes.js';
+import { resolveR2Key } from './contour-data.js';
+import { resolveSupplementalKey, resolveBoundaryKey } from './supplemental-layers.js';
 
 // Setup global caches and references
 window.TROLLMAP_RESEARCHED_CACHE = window.TROLLMAP_RESEARCHED_CACHE || {};
@@ -31,7 +33,7 @@ const EVIDENCE_PIPELINE_STEPS = [
   { id: 'packet', label: 'Step 10: Compile Research Packet' }
 ];
 
-const RESEARCH_ORDER = ['identity', 'limnology', 'biology', 'habitat', 'navigation', 'regulations', 'trolling', 'summary'];
+const RESEARCH_ORDER = ['identity', 'limnology', 'biology', 'habitat', 'navigation', 'regulations', 'summary'];
 const RESEARCH_LABELS = {
   identity: '🆔 Identity',
   limnology: '🌊 Limnology',
@@ -39,7 +41,6 @@ const RESEARCH_LABELS = {
   habitat: '🌿 Habitat',
   navigation: '🧭 Navigation',
   regulations: '📜 Regulations',
-  trolling: '🎣 Trolling Intelligence',
   summary: '📝 AI Summary'
 };
 
@@ -134,6 +135,309 @@ function extractRelevantChunks(text, lakeName, maxChars = 20000) {
   let merged = chunks.join('\n\n--- RELEVANT EXCERPT ---\n\n');
   if (merged.length > maxChars) merged = merged.slice(0, maxChars);
   return merged;
+}
+
+function hasResearchValue(v) {
+  if (v == null) return false;
+  if (typeof v === 'string') return v.trim().length > 0;
+  if (Array.isArray(v)) return v.length > 0;
+  if (typeof v === 'object') return Object.keys(v).length > 0;
+  return true;
+}
+
+function cloneJson(v) {
+  return v == null ? v : JSON.parse(JSON.stringify(v));
+}
+
+function mergeMissing(target, source) {
+  if (source == null) return cloneJson(target);
+  if (target == null) return cloneJson(source);
+  if (Array.isArray(target)) return target.length ? cloneJson(target) : cloneJson(source);
+  if (Array.isArray(source)) return hasResearchValue(target) ? cloneJson(target) : cloneJson(source);
+  if (typeof target !== 'object' || typeof source !== 'object') return hasResearchValue(target) ? target : cloneJson(source);
+  const out = { ...cloneJson(target) };
+  for (const [k, sv] of Object.entries(source)) {
+    if (!(k in out)) out[k] = cloneJson(sv);
+    else out[k] = mergeMissing(out[k], sv);
+  }
+  return out;
+}
+
+function mergeEvidenceMaps(a = {}, b = {}) {
+  const out = cloneJson(a) || {};
+  for (const [section, fields] of Object.entries(b || {})) {
+    out[section] = out[section] || {};
+    for (const [field, entries] of Object.entries(fields || {})) {
+      out[section][field] = (out[section][field] || []).concat(cloneJson(entries) || []);
+    }
+  }
+  return out;
+}
+
+function buildDeterministicSummary(profile) {
+  const identity = profile?.identity || {};
+  const biology = profile?.biology || {};
+  const lim = profile?.limnology || {};
+  const hab = profile?.habitat || {};
+  const sentences = [];
+  if (identity.archetype || identity.surfaceAreaAcres || identity.maxDepthFt) {
+    let s = profile?.lakeName || currentLakeName || 'This lake';
+    if (identity.archetype) s += ` is a ${String(identity.archetype).toLowerCase()}`;
+    if (identity.surfaceAreaAcres) s += `${identity.archetype ? '' : ' has'} about ${Number(identity.surfaceAreaAcres).toLocaleString()} surface acres`;
+    if (identity.maxDepthFt) s += `${identity.surfaceAreaAcres ? ',' : ''} with a maximum depth near ${identity.maxDepthFt} feet`;
+    sentences.push(`${s}.`);
+  }
+  if (biology.predatorSpecies?.length) {
+    let s = `Confirmed sport fish include ${biology.predatorSpecies.join(', ')}`;
+    if (biology.knownStockings?.length) s += `; documented stocking notes include ${biology.knownStockings.map(x => x.species).join(', ')}`;
+    sentences.push(`${s}.`);
+  }
+  const limBits = [];
+  if (lim.waterClarity?.secchiFt) limBits.push(`Secchi clarity around ${lim.waterClarity.secchiFt} ft`);
+  if (lim.surfaceWater?.recentTempF != null) limBits.push(`recent surface water near ${lim.surfaceWater.recentTempF}°F`);
+  if (lim.surfaceWater?.recentDissolvedOxygenMgL != null) limBits.push(`recent surface dissolved oxygen near ${lim.surfaceWater.recentDissolvedOxygenMgL} mg/L`);
+  if (Array.isArray(lim.thermocline?.summerDepthFt) ? lim.thermocline.summerDepthFt.length : lim.thermocline?.summerDepthFt != null) {
+    const depthText = Array.isArray(lim.thermocline.summerDepthFt) ? lim.thermocline.summerDepthFt.join('-') : lim.thermocline.summerDepthFt;
+    limBits.push(`summer thermocline near ${depthText} ft`);
+  }
+  if (limBits.length) sentences.push(`Available limnology data indicate ${limBits.join('; ')}.`);
+  const attrCount = hab?.artificialHabitatDetails?.attractorCount;
+  const structKeys = Object.keys(hab?.structuralElements || {}).filter(k => hasResearchValue(hab.structuralElements[k]));
+  if (attrCount || hab.cover?.length || structKeys.length) {
+    const bits = [];
+    if (attrCount) bits.push(`${attrCount} mapped fish attractors`);
+    if (hab.cover?.length) bits.push(`cover includes ${hab.cover.slice(0, 4).join(', ')}`);
+    if (structKeys.length) bits.push(`mapped structure includes ${structKeys.slice(0, 4).join(', ')}`);
+    sentences.push(`Habitat facts currently confirm ${bits.join('; ')}.`);
+  }
+  return sentences.join(' ').trim() || null;
+}
+
+function buildEvidenceEntry(sourceType, sourceLabel, sourceUrl, quote, method, extra = {}) {
+  return { sourceType, sourceLabel, sourceUrl, quote: quote || null, method, ...extra };
+}
+
+function applyWqpToLimnology(base = {}, wqp = null) {
+  const out = cloneJson(base) || {};
+  if (!wqp?.ok) return out;
+  out.surfaceWater = out.surfaceWater || {};
+  if (wqp.surfaceWater) {
+    Object.assign(out.surfaceWater, wqp.surfaceWater);
+  }
+  out.waterClarity = out.waterClarity || {};
+  if (wqp.surfaceWater?.recentTurbidityNTU != null && !out.waterClarity.note) {
+    out.waterClarity.note = `Recent WQP/SCDES surface turbidity around ${wqp.surfaceWater.recentTurbidityNTU} NTU.`;
+  }
+  if (wqp.thermocline?.depthFt != null && !hasResearchValue(out.thermocline?.summerDepthFt)) {
+    out.thermocline = out.thermocline || {};
+    out.thermocline.summerDepthFt = wqp.thermocline.depthFt;
+    out.thermocline.method = wqp.thermocline.method || null;
+    out.thermocline.note = wqp.note || out.thermocline.note || null;
+  }
+  if (wqp.oxygen?.anoxicBelowFt != null && !hasResearchValue(out.oxygen?.anoxicBelowFt)) {
+    out.oxygen = out.oxygen || {};
+    out.oxygen.anoxicBelowFt = wqp.oxygen.anoxicBelowFt;
+    out.oxygen.note = wqp.oxygen.note || out.oxygen.note || null;
+  }
+  return out;
+}
+
+function buildWqpEvidence(wqp) {
+  if (!wqp?.ok) return {};
+  const sourceUrl = 'worker:/research/limnology-data';
+  const entry = buildEvidenceEntry('official_structured', 'Water Quality Portal / SCDES monitoring', sourceUrl, null, 'structured_surface_monitoring', { lastObserved: wqp.lastObserved, recordCount: wqp.recordCount });
+  const evidence = { limnology: {} };
+  if (wqp.surfaceWater) evidence.limnology.surfaceWater = [entry];
+  if (wqp.thermocline?.depthFt != null) evidence.limnology.thermocline = [buildEvidenceEntry('official_structured', 'Water Quality Portal / SCDES monitoring', sourceUrl, null, wqp.thermocline.method || 'depth_profile_derivation', { lastObserved: wqp.lastObserved, evidenceCount: wqp.thermocline.evidenceCount })];
+  if (wqp.oxygen?.anoxicBelowFt != null) evidence.limnology.oxygen = [entry];
+  return evidence;
+}
+
+async function fetchGeoJsonMaybe(url) {
+  try {
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch {
+    return null;
+  }
+}
+
+function getBoundaryOuterRing(boundaryGeo) {
+  const features = boundaryGeo?.features || [];
+  for (const f of features) {
+    const g = f?.geometry;
+    if (!g) continue;
+    if (g.type === 'Polygon' && Array.isArray(g.coordinates?.[0])) return g.coordinates[0];
+    if (g.type === 'MultiPolygon' && Array.isArray(g.coordinates?.[0]?.[0])) return g.coordinates[0][0];
+  }
+  return null;
+}
+
+function toFeetXY(lon, lat, refLat) {
+  const x = lon * 364000 * Math.cos((refLat || lat) * Math.PI / 180);
+  const y = lat * 364000;
+  return [x, y];
+}
+
+function polygonAreaAcresLonLat(ring) {
+  if (!Array.isArray(ring) || ring.length < 4) return 0;
+  const refLat = ring.reduce((a, p) => a + (p[1] || 0), 0) / ring.length;
+  let sum = 0;
+  for (let i = 0; i < ring.length - 1; i++) {
+    const [x1, y1] = toFeetXY(ring[i][0], ring[i][1], refLat);
+    const [x2, y2] = toFeetXY(ring[i + 1][0], ring[i + 1][1], refLat);
+    sum += x1 * y2 - x2 * y1;
+  }
+  return Math.abs(sum / 2) / 43560;
+}
+
+function centroidLonLat(ring) {
+  if (!Array.isArray(ring) || !ring.length) return [0, 0];
+  let lon = 0, lat = 0;
+  for (const p of ring) { lon += p[0]; lat += p[1]; }
+  return [lon / ring.length, lat / ring.length];
+}
+
+function pointInPolygonLonLat(lon, lat, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1];
+    const xj = ring[j][0], yj = ring[j][1];
+    const intersect = ((yi > lat) !== (yj > lat)) && (lon < (xj - xi) * (lat - yi) / ((yj - yi) || 1e-9) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function summarizePointComplexityFromBoundary(ring) {
+  if (!Array.isArray(ring) || ring.length < 40) return {};
+  const step = Math.max(1, Math.floor(ring.length / 120));
+  const sampled = ring.filter((_, idx) => idx % step === 0);
+  const [clon, clat] = centroidLonLat(sampled);
+  const radii = sampled.map(([lon, lat]) => geoDistanceFt(clat, clon, lat, lon));
+  if (radii.length < 10) return {};
+  const smooth = radii.map((_, i) => {
+    const prev = radii[(i - 1 + radii.length) % radii.length];
+    const cur = radii[i];
+    const next = radii[(i + 1) % radii.length];
+    return (prev + cur + next) / 3;
+  });
+  const avg = smooth.reduce((a, b) => a + b, 0) / smooth.length;
+  let maxima = 0, minima = 0;
+  for (let i = 1; i < smooth.length - 1; i++) {
+    if (smooth[i] > smooth[i - 1] && smooth[i] > smooth[i + 1] && smooth[i] > avg * 1.06) maxima++;
+    if (smooth[i] < smooth[i - 1] && smooth[i] < smooth[i + 1] && smooth[i] < avg * 0.94) minima++;
+  }
+  const out = {};
+  if (maxima >= 7) out.points = 'numerous shoreline points visible in boundary geometry';
+  else if (maxima >= 4) out.points = 'several prominent shoreline points visible in boundary geometry';
+  else if (maxima >= 2) out.points = 'a few major shoreline points visible in boundary geometry';
+  if (minima >= 6) out.creekArms = 'multiple creek arms / embayments visible in boundary geometry';
+  else if (minima >= 3) out.creekArms = 'several creek arms / embayments visible in boundary geometry';
+  return out;
+}
+
+function isClosedContour(coords) {
+  if (!Array.isArray(coords) || coords.length < 4) return false;
+  const first = coords[0], last = coords[coords.length - 1];
+  return geoDistanceFt(first[1], first[0], last[1], last[0]) < 150;
+}
+
+function flattenLineCoords(geom) {
+  if (!geom) return [];
+  if (geom.type === 'LineString') return [geom.coordinates || []];
+  if (geom.type === 'MultiLineString') return geom.coordinates || [];
+  return [];
+}
+
+function deriveContourStructures(contourGeo, boundaryRing = null) {
+  const result = {};
+  if (!contourGeo?.features?.length) return result;
+  let midDepthCount = 0;
+  let closedInteriorLoops = 0;
+  for (const f of contourGeo.features) {
+    const depth = f?.properties?.depth_ft;
+    if (depth != null && depth >= 15 && depth <= 35) midDepthCount++;
+    for (const coords of flattenLineCoords(f.geometry)) {
+      if (!isClosedContour(coords)) continue;
+      const areaAcres = polygonAreaAcresLonLat(coords);
+      if (areaAcres < 1 || areaAcres > 400) continue;
+      if (boundaryRing) {
+        const [lon, lat] = centroidLonLat(coords);
+        if (!pointInPolygonLonLat(lon, lat, boundaryRing)) continue;
+      }
+      closedInteriorLoops++;
+    }
+  }
+  if (midDepthCount >= 25) result.channelLedges = 'mid-depth contour density indicates multiple ledges / drop-offs';
+  else if (midDepthCount >= 10) result.channelLedges = 'contours indicate at least some ledges / depth breaks';
+  if (closedInteriorLoops >= 5) result.humps = 'multiple closed contour loops suggest several offshore humps or high spots';
+  else if (closedInteriorLoops >= 1) result.humps = 'at least one closed contour loop suggests offshore hump / high-spot structure';
+  return result;
+}
+
+function deriveDepthAreaStructures(depthGeo) {
+  const result = {};
+  if (!depthGeo?.features?.length) return result;
+  let largeShallow = 0;
+  for (const f of depthGeo.features) {
+    const p = f.properties || {};
+    const max = Number(p.depth_max_ft ?? p.depth_min_ft ?? NaN);
+    if (!isFinite(max) || max > 10) continue;
+    const g = f.geometry;
+    if (!g) continue;
+    const rings = g.type === 'Polygon' ? [g.coordinates?.[0]] : g.type === 'MultiPolygon' ? (g.coordinates || []).map(poly => poly[0]) : [];
+    for (const ring of rings) {
+      const acres = polygonAreaAcresLonLat(ring || []);
+      if (acres >= 20) largeShallow++;
+    }
+  }
+  if (largeShallow >= 3) result.flats = 'multiple large shallow flats appear in mapped depth-area polygons';
+  else if (largeShallow >= 1) result.flats = 'at least one large shallow flat appears in mapped depth-area polygons';
+  return result;
+}
+
+function derivePoiStructures(poiGeo) {
+  const result = {};
+  if (!poiGeo?.features?.length) return result;
+  const names = poiGeo.features.map(f => String(f.properties?.name || '')).filter(Boolean);
+  const bridgeNames = names.filter(n => /bridge/i.test(n));
+  if (bridgeNames.length >= 2) result.bridges = `bridge-related POIs include ${bridgeNames.slice(0, 3).join(', ')}`;
+  else if (bridgeNames.length === 1) result.bridges = `bridge-related POI includes ${bridgeNames[0]}`;
+  return result;
+}
+
+async function deriveGeospatialStructureFacts(lakeName) {
+  const contourKey = resolveR2Key(lakeName);
+  const supplementalKey = resolveSupplementalKey(lakeName);
+  const boundaryKey = resolveBoundaryKey(lakeName);
+  const [contourGeo, depthGeo, poiGeo, boundaryGeo] = await Promise.all([
+    contourKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${contourKey}/contours.geojson?v=${Date.now()}`) : Promise.resolve(null),
+    supplementalKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/supplemental/${supplementalKey}/depth_areas.geojson?v=${Date.now()}`) : Promise.resolve(null),
+    supplementalKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/supplemental/${supplementalKey}/pois.geojson?v=${Date.now()}`) : Promise.resolve(null),
+    boundaryKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/boundaries/${boundaryKey}.geojson?v=${Date.now()}`) : Promise.resolve(null),
+  ]);
+  const ring = getBoundaryOuterRing(boundaryGeo);
+  const structuralElements = {
+    ...summarizePointComplexityFromBoundary(ring),
+    ...deriveContourStructures(contourGeo, ring),
+    ...deriveDepthAreaStructures(depthGeo),
+    ...derivePoiStructures(poiGeo),
+  };
+  if (!Object.keys(structuralElements).length) return null;
+  const evidence = { habitat: {} };
+  for (const field of Object.keys(structuralElements)) {
+    evidence.habitat[`structuralElements.${field}`] = [buildEvidenceEntry('internal_geospatial_layer', 'TrollMap contour/supplemental/boundary layers', 'internal:contours+supplemental+boundaries', null, 'geometry_derived_structure_classification', { lakeName })];
+  }
+  return {
+    habitat: {
+      structuralElements,
+      notes: 'Structural elements summarized from TrollMap contour, depth-area, POI, and boundary layers.'
+    },
+    evidence,
+    sources: [{ label: 'TrollMap contour / supplemental / boundary layers', url: 'internal:contours+supplemental+boundaries', trust: 'OFFICIAL_GIS', sourceType: 'internal_geospatial_layer' }]
+  };
 }
 
 /**
@@ -573,12 +877,11 @@ function getDocChunks(normalizedDocuments, titlePatterns, lakeName, maxChars) {
 
 async function runPipelineTail(lakeName, baseName, stateName, normalizedDocuments, scoredSources) {
     // ----------------------------------------------------
-    // STEP 7: Fact extraction (blind pass — facts only, no inference)
+    // STEP 7: Fact extraction (quoted/source-backed only)
     // ----------------------------------------------------
     setProgress("Step 7: Extracting verified facts from documents...", 50);
     log("Submitting lake-relevant chunks to Research LLM (not full 100k dumps)...");
 
-    // Sort docs by composite score so high-value docs get budget first
     const sortedDocs = [...normalizedDocuments].sort((a, b) => {
       const sa = scoredSources.find(s => s.title === a.title)?.scoring?.composite || 50;
       const sb = scoredSources.find(s => s.title === b.title)?.scoring?.composite || 50;
@@ -601,7 +904,6 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       })
     };
 
-    // total cap ~120k chars to keep LLM inside context & cost
     let totalChars = extractionPayload.documents.reduce((a, b) => a + (b.text?.length || 0), 0);
     if (totalChars > 120000) {
       log(`⚠️ Total payload ${totalChars} chars >120k cap — trimming lowest-quality docs`);
@@ -646,7 +948,7 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     const rawFacts = extractData.extracted_facts || [];
     log(`Deep scan extracted ${rawFacts.length} verified facts.`);
     if (rawFacts.length === 0) {
-      log(`⚠️ Zero facts extracted — primary pass returned empty. Worker will attempt regulations fallback if not already done.`);
+      log(`⚠️ Zero facts extracted — profile will rely on deterministic accessible sources only.`);
     }
     rawFacts.forEach(f => {
       log(`💬 [${f.category}] "${f.fact}" (Confidence: ${f.confidence}%) - Source: ${f.source} pg ${f.page || '?'}`);
@@ -682,20 +984,47 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       log("Skipping dedup — no facts to process.");
     }
 
-    // Stringify facts once for reuse in agent prompts
-    const factsBlock = uniqueFacts.length
-      ? `VERIFIED FACTS FROM DOCUMENTS (use these as primary source — do not contradict them):\n` +
-        uniqueFacts.map(f => `[${f.category}] ${f.fact} (source: ${f.source}, confidence: ${f.confidence}%)`).join('\n')
-      : 'No verified facts were extracted from documents for this lake.';
+    // ----------------------------------------------------
+    // STEP 9: Deterministic baseline + WQP surface/profile data
+    // ----------------------------------------------------
+    setProgress("Step 9: Building factual lake baseline...", 66);
+    let deterministicProfile = { identity: {}, biology: {}, limnology: {}, habitat: {}, navigation: {}, regulations: {}, summary: {}, evidence: {}, sources: [] };
+    try {
+      const detRes = await fetch(`${CF_WORKER_URL}/research/deterministic-facts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lakeName, state: stateName })
+      });
+      if (detRes.ok) {
+        const detData = await detRes.json();
+        if (detData.ok && detData.profile) {
+          deterministicProfile = detData.profile;
+          log(`✔ Deterministic baseline loaded — identity=${Object.keys(detData.profile.identity || {}).length}, predatorSpecies=${detData.profile.biology?.predatorSpecies?.length || 0}, ramps=${detData.profile.navigation?.ramps?.length || 0}`);
+        }
+      }
+    } catch (e) {
+      log(`⚠️ Deterministic baseline unavailable: ${e.message}`);
+    }
 
-    // ----------------------------------------------------
-    // STEP 9: WQP Limnology Data (real DO/temp profiles)
-    // ----------------------------------------------------
-    setProgress("Step 9: Fetching real limnology data from WQP...", 62);
-    log("Querying Water Quality Portal for DO and temperature profiles...");
+    try {
+      const geoStruct = await deriveGeospatialStructureFacts(lakeName);
+      if (geoStruct) {
+        deterministicProfile.habitat = mergeMissing(deterministicProfile.habitat || {}, geoStruct.habitat || {});
+        if (geoStruct.habitat?.notes) {
+          deterministicProfile.habitat.notes = [deterministicProfile.habitat.notes, geoStruct.habitat.notes].filter(Boolean).join(' ');
+        }
+        deterministicProfile.evidence = mergeEvidenceMaps(deterministicProfile.evidence || {}, geoStruct.evidence || {});
+        deterministicProfile.sources = [...(deterministicProfile.sources || []), ...(geoStruct.sources || [])];
+        log(`✔ Geospatial structure adapter loaded — ${Object.keys(geoStruct.habitat?.structuralElements || {}).join(', ') || 'structure notes'}`);
+      } else {
+        log('⚠️ Geospatial structure adapter found no supported structural fields for this lake.');
+      }
+    } catch (e) {
+      log(`⚠️ Geospatial structure adapter failed: ${e.message}`);
+    }
+
     let wqpLimnology = null;
     try {
-      // Derive bbox from lake GeoJSON in R2
       const geoRes = await fetch(`${CF_WORKER_URL}/chartpacks/lake-boundary?lake=${encodeURIComponent(lakeName)}`);
       let bbox = null;
       if (geoRes.ok) {
@@ -714,12 +1043,7 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
         if (coords.length) {
           const lons = coords.map(c => c[0]);
           const lats = coords.map(c => c[1]);
-          bbox = {
-            bboxNorth: Math.max(...lats),
-            bboxSouth: Math.min(...lats),
-            bboxEast:  Math.max(...lons),
-            bboxWest:  Math.min(...lons)
-          };
+          bbox = { bboxNorth: Math.max(...lats), bboxSouth: Math.min(...lats), bboxEast: Math.max(...lons), bboxWest: Math.min(...lons) };
         }
       }
       if (bbox) {
@@ -731,7 +1055,9 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
           const wqpData = await wqpRes.json();
           if (wqpData.ok && wqpData.recordCount > 0) {
             wqpLimnology = wqpData;
-            log(`✔ WQP: ${wqpData.recordCount} records, ${wqpData.summerRecords} summer — thermocline: ${wqpData.thermocline ? `${wqpData.thermocline.depthFt}ft (confidence: ${wqpData.thermocline.confidence}%, method: ${wqpData.thermocline.method})` : 'not derived'}`);
+            const thermoMsg = wqpData.thermocline ? `${wqpData.thermocline.depthFt}ft (${wqpData.thermocline.method})` : 'not derived';
+            const surfMsg = wqpData.surfaceWater?.recentTempF != null ? `surface ${wqpData.surfaceWater.recentTempF}°F / DO ${wqpData.surfaceWater.recentDissolvedOxygenMgL ?? '?'} mg/L` : 'surface summary unavailable';
+            log(`✔ WQP: ${wqpData.recordCount} records — thermocline ${thermoMsg}; ${surfMsg}`);
           } else {
             log(`⚠️ WQP: ${wqpData.note || 'no data found for this lake boundary'}`);
           }
@@ -743,141 +1069,50 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       log(`⚠️ WQP limnology fetch failed: ${e.message} — continuing without measured data`);
     }
 
-    // Build WQP context block for limnology agent
-    const wqpBlock = wqpLimnology?.thermocline ? `
-MEASURED LIMNOLOGY DATA FROM WATER QUALITY PORTAL (${wqpLimnology.recordCount} records, last observed ${wqpLimnology.lastObserved}):
-- Summer thermocline depth: ${wqpLimnology.thermocline.depthFt}ft (confidence: ${wqpLimnology.thermocline.confidence}%, method: ${wqpLimnology.thermocline.method})
-- Anoxic below: ${wqpLimnology.oxygen?.anoxicBelowFt ?? 'not determined'}ft
-- Striper safe depth ceiling: ${wqpLimnology.oxygen?.stripeThresholdFt ?? 'unknown'}ft (need >4mg/L DO)
-- Largemouth safe depth ceiling: ${wqpLimnology.oxygen?.largemouthThresholdFt ?? 'unknown'}ft
-- Evidence count: ${wqpLimnology.thermocline.evidenceCount} summer measurements
-USE THESE VALUES DIRECTLY — do not estimate or override with training data.` : `
-No measured thermocline data available from WQP for this lake. Use training data estimate if known for similar SC piedmont reservoirs, clearly label as estimated.`;
+    // ----------------------------------------------------
+    // STEP 10: Fact-only section assembly (no inferred tactics)
+    // ----------------------------------------------------
+    setProgress("Step 10: Assembling factual profile...", 84);
+    const agentSections = {
+      identity: cloneJson(deterministicProfile.identity || {}),
+      biology: cloneJson(deterministicProfile.biology || {}),
+      habitat: cloneJson(deterministicProfile.habitat || {}),
+      navigation: cloneJson(deterministicProfile.navigation || {}),
+      regulations: cloneJson(deterministicProfile.regulations || {}),
+      limnology: applyWqpToLimnology(deterministicProfile.limnology || {}, wqpLimnology),
+      summary: cloneJson(deterministicProfile.summary || {})
+    };
+
+    const evidence = mergeEvidenceMaps(deterministicProfile.evidence || {}, buildWqpEvidence(wqpLimnology));
+    const factualSummary = buildDeterministicSummary({ lakeName, identity: agentSections.identity, biology: agentSections.biology, limnology: agentSections.limnology, habitat: agentSections.habitat });
+    if (factualSummary) {
+      agentSections.summary = { text: factualSummary, keywords: deterministicProfile.summary?.keywords || [] };
+      evidence.summary = evidence.summary || {};
+      evidence.summary.text = (evidence.summary.text || []).concat([buildEvidenceEntry('internal_synthesis', 'TrollMap deterministic profile synthesis', 'internal:deterministic-facts', null, 'deterministic_fact_synthesis')]);
+    }
 
     // ----------------------------------------------------
-    // STEP 9–12: 4 Targeted Agent Calls
-    // Each agent gets relevant doc chunks + extracted facts,
-    // extracts what it needs AND synthesizes its section.
+    // STEP 11: Save factual profile
     // ----------------------------------------------------
-
-    const agentSections = {};
-
-    // --- CALL 1: Identity + Limnology ---
-    setProgress("Step 10: Identity & Limnology...", 68);
-    log("Running identity & limnology agent...");
-    try {
-      const identityChunks = getDocChunks(normalizedDocuments,
-        ['description', 'wateree lake', 'wateree sc', 'water quality', 'watershed'],
-        lakeName, 15000);
-      const call1Res = await fetch(`${CF_WORKER_URL}/groq-query`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [
-            { role: 'system', content: `You are a lake research specialist. Extract and synthesize lake identity and limnology data from provided documents, verified facts, and measured water quality data. Return ONLY valid JSON. Null means unknown — never invent numbers. For limnology fields backed by WQP measured data, use those values directly and set confidence accordingly.` },
-            { role: 'user', content: `Lake: ${lakeName}\n\n${factsBlock}\n\n${wqpBlock}\n\nDOCUMENT EXCERPTS:\n${identityChunks.slice(0, 20000)}\n\nReturn ONLY this JSON:\n{"identity":{"lakeName":"${lakeName}","state":"${stateName}","county":null,"riverSystem":null,"reservoirOwner":null,"surfaceAreaAcres":null,"maxDepthFt":null,"averageDepthFt":null,"normalPoolFt":null,"shorelineLengthMi":null,"damName":null,"yearImpounded":null,"archetype":null,"aliases":[]},"limnology":{"waterClarity":{"typical":null,"color":null,"secchiFt":null,"note":null},"thermocline":{"summerDepthFt":null,"strength":null,"winterMix":null,"confidence":null,"method":null,"evidenceCount":null,"lastObserved":null,"note":null},"oxygen":{"depletionDepthFt":null,"anoxicBelowFt":null,"striperCeilingFt":null,"largemouthCeilingFt":null,"note":null},"trophicStatus":null,"flowCharacteristics":null,"seasonalDrawdownFt":null}}` }
-          ],
-          max_tokens: 1500, temperature: 0.1, response_format: { type: 'json_object' }
-        })
-      });
-      if (call1Res.ok) {
-        const call1Data = await call1Res.json();
-        const text = call1Data.choices?.[0]?.message?.content || '';
-        const parsed = JSON.parse(text.replace(/^```json\s*/i,'').replace(/\s*```$/,'').trim());
-        if (parsed.identity) agentSections.identity = parsed.identity;
-        if (parsed.limnology) agentSections.limnology = parsed.limnology;
-        log(`✔ Identity & Limnology complete`);
-      }
-    } catch (e) { log(`⚠️ Identity/Limnology agent failed: ${e.message}`); }
-
-    // --- CALL 2: Biology + Habitat ---
-    setProgress("Step 11: Biology & Habitat...", 75);
-    log("Running biology & habitat agent...");
-    try {
-      const bioChunks = getDocChunks(normalizedDocuments,
-        ['largemouth', 'bass', 'fisheries', 'hatchery', 'bayless', '2017', 'annual', 'striper', 'striped'],
-        lakeName, 15000);
-      const call2Res = await fetch(`${CF_WORKER_URL}/groq-query`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [
-            { role: 'system', content: `You are a fisheries biologist. Extract and synthesize fisheries biology and habitat data from provided documents and facts. You MAY use training knowledge for species known to inhabit this lake system, but clearly ground facts in the documents where possible. Return ONLY valid JSON.` },
-            { role: 'user', content: `Lake: ${lakeName} (${stateName})\n\n${factsBlock}\n\nDOCUMENT EXCERPTS:\n${bioChunks.slice(0, 25000)}\n\nReturn ONLY this JSON:\n{"biology":{"primaryForage":[{"species":null,"abundance":null,"notes":null}],"secondaryForage":[],"predatorSpecies":[],"speciesAbundance":{},"knownStockings":[],"baitfishMovement":null,"forageCalendar":{"spring":null,"summer":null,"fall":null,"winter":null}},"habitat":{"bottomComposition":{},"cover":[],"vegetation":{},"structuralElements":{"points":null,"humps":null,"creekArms":null,"channelLedges":null,"flats":null},"dockDensity":null,"standingTimber":null,"notes":null}}` }
-          ],
-          max_tokens: 1500, temperature: 0.15, response_format: { type: 'json_object' }
-        })
-      });
-      if (call2Res.ok) {
-        const call2Data = await call2Res.json();
-        const text = call2Data.choices?.[0]?.message?.content || '';
-        const parsed = JSON.parse(text.replace(/^```json\s*/i,'').replace(/\s*```$/,'').trim());
-        if (parsed.biology) agentSections.biology = parsed.biology;
-        if (parsed.habitat) agentSections.habitat = parsed.habitat;
-        log(`✔ Biology & Habitat complete`);
-      }
-    } catch (e) { log(`⚠️ Biology/Habitat agent failed: ${e.message}`); }
-
-    // --- CALL 3: Regulations + Navigation ---
-    setProgress("Step 12: Regulations & Navigation...", 84);
-    log("Running regulations & navigation agent...");
-    try {
-      const regChunks = getDocChunks(normalizedDocuments,
-        ['eregulations', 'regulation', 'regs', 'stripedbass', 'striped bass', 'size', 'possession', 'creel', 'limit', 'description'],
-        lakeName, 15000);
-      const call3Res = await fetch(`${CF_WORKER_URL}/groq-query`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [
-            { role: 'system', content: `You are a fishing regulations specialist. Extract ALL species creel limits and size limits from the regulations documents provided. List every species in the table — do not summarize or skip species. Also extract navigation info. Return ONLY valid JSON. Never invent limits — null if not found.` },
-            { role: 'user', content: `Lake: ${lakeName} (${stateName})\n\n${factsBlock}\n\nDOCUMENT EXCERPTS:\n${regChunks.slice(0, 25000)}\n\nIMPORTANT: The eRegulations page has a complete table. Extract EVERY species row — bream, crappie, bass, catfish, striped bass, walleye, pickerel, gar, etc. For Lake Wateree specifically note any exceptions from statewide limits.\n\nReturn ONLY this JSON:\n{"regulations":{"state":"${stateName}","generalStateRegulations":{"lengthLimits":{},"creelLimits":{}},"lakeSpecificRegulations":{"hasExceptions":null,"creelLimits":{},"sizeLimits":{},"specialRules":[],"closedSeasons":[]},"notes":null},"navigation":{"ramps":[],"hazards":[],"notes":null}}` }
-          ],
-          max_tokens: 2000, temperature: 0.05, response_format: { type: 'json_object' }
-        })
-      });
-      if (call3Res.ok) {
-        const call3Data = await call3Res.json();
-        const text = call3Data.choices?.[0]?.message?.content || '';
-        const parsed = JSON.parse(text.replace(/^```json\s*/i,'').replace(/\s*```$/,'').trim());
-        if (parsed.regulations) agentSections.regulations = parsed.regulations;
-        if (parsed.navigation) agentSections.navigation = parsed.navigation;
-        log(`✔ Regulations & Navigation complete`);
-      }
-    } catch (e) { log(`⚠️ Regulations/Navigation agent failed: ${e.message}`); }
-
-    // --- CALL 4: Trolling Intelligence + Summary ---
-    setProgress("Step 13: Trolling Intelligence & Summary...", 92);
-    log("Running trolling intelligence & summary agent...");
-    try {
-      const profileSoFar = JSON.stringify({
-        identity: agentSections.identity,
-        limnology: agentSections.limnology,
-        biology: agentSections.biology,
-        habitat: agentSections.habitat,
-        regulations: agentSections.regulations
-      }, null, 2).slice(0, 12000);
-      const call4Res = await fetch(`${CF_WORKER_URL}/groq-query`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [
-            { role: 'system', content: `You are a professional kayak trolling guide and fisheries biologist. Using the lake profile and measured thermocline data provided, derive trolling intelligence for confirmed predator species only. Also write a 2-3 paragraph angler summary. Do NOT invent species not in the biology section. Do NOT recommend specific lures, colors, or routes. If thermocline depth is provided as measured data, use it to set species depth ceilings. Return ONLY valid JSON.` },
-            { role: 'user', content: `Lake: ${lakeName}\n\n${wqpBlock}\n\nPROFILE SO FAR:\n${profileSoFar}\n\nReturn ONLY this JSON:\n{"trollingIntelligence":{},"summary":{"text":null,"keywords":[]}}` }
-          ],
-          max_tokens: 2000, temperature: 0.2, response_format: { type: 'json_object' }
-        })
-      });
-      if (call4Res.ok) {
-        const call4Data = await call4Res.json();
-        const text = call4Data.choices?.[0]?.message?.content || '';
-        const parsed = JSON.parse(text.replace(/^```json\s*/i,'').replace(/\s*```$/,'').trim());
-        if (parsed.trollingIntelligence) agentSections.trollingIntelligence = parsed.trollingIntelligence;
-        if (parsed.summary) agentSections.summary = parsed.summary;
-        log(`✔ Trolling Intelligence & Summary complete`);
-      }
-    } catch (e) { log(`⚠️ Trolling/Summary agent failed: ${e.message}`); }
-
-    // ----------------------------------------------------
-    // STEP 13: Assemble and save complete profile
-    // ----------------------------------------------------
-    setProgress("Step 13: Saving complete profile...", 96);
+    setProgress("Step 11: Saving factual profile...", 96);
+    const sourceMap = new Map();
+    for (const s of (deterministicProfile.sources || [])) {
+      const key = `${s.label}|${s.url}`;
+      sourceMap.set(key, s);
+    }
+    for (const s of scoredSources.map(s => ({
+      label: s.title,
+      url: s.url || '#',
+      authority: s.authority,
+      trust: (s.scoring?.composite || 0) >= 80 ? 'OFFICIAL' : 'THIRD_PARTY',
+      scores: s.scoring
+    }))) {
+      const key = `${s.label}|${s.url}`;
+      if (!sourceMap.has(key)) sourceMap.set(key, s);
+    }
+    if (wqpLimnology?.recordCount > 0) {
+      sourceMap.set('Water Quality Portal|https://www.waterqualitydata.us/', { label: 'Water Quality Portal / SCDES monitoring', url: 'https://www.waterqualitydata.us/', trust: 'OFFICIAL', sourceType: 'official_structured' });
+    }
 
     const researchPacket = {
       lakeName,
@@ -885,27 +1120,23 @@ No measured thermocline data available from WQP for this lake. Use training data
       state: stateName,
       ...agentSections,
       forage: agentSections.biology || {},
-      trolling: agentSections.trollingIntelligence || {},
+      trolling: null,
+      trollingIntelligence: null,
       _extractedFacts: uniqueFacts,
       _extractedFactsCount: uniqueFacts.length,
       _wqpLimnology: wqpLimnology || null,
-      sources: scoredSources.map(s => ({
-        label: s.title,
-        url: s.url || '#',
-        authority: s.authority,
-        trust: (s.scoring?.composite || 0) >= 80 ? 'OFFICIAL' : 'THIRD_PARTY',
-        scores: s.scoring
-      }))
+      evidence,
+      sources: [...sourceMap.values()]
     };
 
-    log(`Saving profile (facts=${uniqueFacts.length}, sections=${Object.keys(agentSections).length})...`);
+    log(`Saving factual profile (facts=${uniqueFacts.length}, deterministic species=${agentSections.biology?.predatorSpecies?.length || 0})...`);
     const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         lakeName,
         profile: researchPacket,
         status: 'draft',
-        requestedBy: 'Evidence Acquisition Engine v4'
+        requestedBy: 'Evidence Acquisition Engine v5 factual-only'
       })
     });
     if (!saveRes.ok) {
@@ -913,16 +1144,13 @@ No measured thermocline data available from WQP for this lake. Use training data
       throw new Error(`Save HTTP ${saveRes.status}: ${t}`);
     }
     const saveData = await saveRes.json();
-    log(`✔ Saved profile v${saveData.version} as draft — ${uniqueFacts.length} facts, ${Object.keys(agentSections).length} sections populated`);
+    log(`✔ Saved factual profile v${saveData.version} as draft — facts=${uniqueFacts.length}`);
 
     setProgress("Pipeline completed successfully!", 100);
     log(`=== EVIDENCE PIPELINE COMPLETE ===`);
 
     await loadProfile(lakeName);
-
-    if (contradictions.length > 0) {
-      renderContradictionsAlert(contradictions, lakeName);
-    }
+    if (contradictions.length > 0) renderContradictionsAlert(contradictions, lakeName);
 }
 
 async function savePipelineDataToR2(lakeName, filename, data) {
@@ -1283,13 +1511,15 @@ function renderEmpty(lakeName) {
   currentProfile = null;
   const meta = document.getElementById('researchMeta');
   if (meta) meta.style.display = 'none';
-  document.getElementById('researchSections').innerHTML = `<div class="muted" style="padding:10px">No profile yet for <b>${esc(lakeName)}</b>. Click Research to build one. 8 agents, ~60 sec, free LLMs.</div>`;
+  document.getElementById('researchSections').innerHTML = `<div class="muted" style="padding:10px">No profile yet for <b>${esc(lakeName)}</b>. Click Research to build one. Factual pipeline first (official pages, GIS, WQP), then quoted document extraction for anything else.</div>`;
   for (const id of ['confidenceCard', 'sourcesCard', 'summaryCard', 'notesCard', 'packageCard', 'reviewCard']) {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
   }
   const approveBtn = document.getElementById('btnApprove');
   if (approveBtn) approveBtn.style.display = 'none';
+  const deleteBtn = document.getElementById('btnDeleteResearch');
+  if (deleteBtn) deleteBtn.style.display = 'none';
 }
 
 function esc(s) { return String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
@@ -1318,6 +1548,10 @@ function renderProfile(profile) {
   if (approveBtn) {
     approveBtn.style.display = status === 'verified' ? 'none' : 'inline-flex';
   }
+  const deleteBtn = document.getElementById('btnDeleteResearch');
+  if (deleteBtn) {
+    deleteBtn.style.display = 'inline-flex';
+  }
 
   // Populate reviewCard dataset so re-run agents have full profile context
   const reviewCard = document.getElementById('reviewCard');
@@ -1340,6 +1574,7 @@ function renderProfile(profile) {
   renderSummary(profile);
   renderNotes(profile);
   renderPackage(profile, currentPackageFiles, currentVersions);
+  renderReviewCard(profile);
 }
 
 function formatHumanReadableSection(key, data) {
@@ -1355,6 +1590,7 @@ function formatHumanReadableSection(key, data) {
     return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:6px;font-size:12px;">
       <div><b>Waterbody:</b> ${esc(d.lakeName || '—')}</div>
       <div><b>State:</b> ${esc(d.state || '—')}</div>
+      <div><b>County/Counties:</b> ${esc(Array.isArray(d.counties) ? d.counties.join(', ') : (d.county || '—'))}</div>
       <div><b>River System:</b> ${esc(d.riverSystem || '—')}</div>
       <div><b>Reservoir Owner:</b> ${esc(d.reservoirOwner || '—')}</div>
       <div><b>Surface Area:</b> ${d.surfaceAreaAcres ? `${d.surfaceAreaAcres.toLocaleString()} acres` : '—'}</div>
@@ -1371,6 +1607,7 @@ function formatHumanReadableSection(key, data) {
   if (key === 'limnology') {
     const d = data.limnology || data;
     const cl = d.waterClarity || {};
+    const sw = d.surfaceWater || {};
     const th = d.thermocline || {};
     const ox = d.oxygen || {};
     return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;font-size:12px;">
@@ -1381,8 +1618,15 @@ function formatHumanReadableSection(key, data) {
         ${cl.note ? `<span class="muted" style="font-size:11px">${esc(cl.note)}</span>` : ''}
       </div>
       <div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+        <b>🌡 Surface Monitoring</b><br>
+        Temp: <b>${sw.recentTempF != null ? `${sw.recentTempF} °F` : '—'}</b><br>
+        DO: <b>${sw.recentDissolvedOxygenMgL != null ? `${sw.recentDissolvedOxygenMgL} mg/L` : '—'}</b><br>
+        Turbidity: <b>${sw.recentTurbidityNTU != null ? `${sw.recentTurbidityNTU} NTU` : '—'}</b><br>
+        ${sw.lastObserved ? `<span class="muted" style="font-size:11px">Last observed: ${esc(sw.lastObserved)}</span>` : ''}
+      </div>
+      <div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
         <b>🌡 Summer Thermocline</b><br>
-        Depth: <b>${Array.isArray(th.summerDepthFt) ? `${th.summerDepthFt.join(' - ')} ft` : (th.summerDepthFt || '—')}</b> (${esc(th.strength || '—')} strength)<br>
+        Depth: <b>${Array.isArray(th.summerDepthFt) ? `${th.summerDepthFt.join(' - ')} ft` : (th.summerDepthFt || '—')}</b>${th.method ? ` (${esc(th.method)})` : ''}<br>
         Winter Mix: ${esc(th.winterMix || '—')}<br>
         ${th.note ? `<span class="muted" style="font-size:11px">${esc(th.note)}</span>` : ''}
       </div>
@@ -1430,6 +1674,14 @@ function formatHumanReadableSection(key, data) {
       html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px;grid-column:1/-1">
         <b>🔄 Baitfish Movement:</b> ${esc(d.baitfishMovement)}</div>`;
     }
+    if (Array.isArray(d.knownStockings) && d.knownStockings.length) {
+      html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px;grid-column:1/-1">
+        <b>🐣 Documented Stocking / Management Notes</b><br>`;
+      d.knownStockings.forEach(s => {
+        html += `• <b>${esc(s.species || '—')}</b>${s.agency ? ` (${esc(s.agency)})` : ''}${s.note ? ` — ${esc(s.note)}` : ''}<br>`;
+      });
+      html += `</div>`;
+    }
     if (calendar && Object.keys(calendar).some(k => calendar[k])) {
       html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px;grid-column:1/-1">
         <b>📅 Forage Calendar</b><br>`;
@@ -1463,6 +1715,13 @@ function formatHumanReadableSection(key, data) {
       const veg = d.vegetation || d.aquaticVegetation;
       html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
         <b>🌿 Vegetation</b><br>${esc(typeof veg === 'string' ? veg : JSON.stringify(veg))}</div>`;
+    }
+    if (d.artificialHabitatDetails?.attractorCount || (Array.isArray(d.artificialHabitatDetails?.attractorTypes) && d.artificialHabitatDetails.attractorTypes.length)) {
+      html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+        <b>🧱 Artificial Habitat</b><br>
+        Attractor Count: ${esc(d.artificialHabitatDetails?.attractorCount ?? '—')}<br>
+        Types: ${esc((d.artificialHabitatDetails?.attractorTypes || []).join(', ') || '—')}
+      </div>`;
     }
     if (d.notes) {
       html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px;grid-column:1/-1">
@@ -1896,6 +2155,68 @@ function renderPackage(profile, packageFiles, versions) {
   }
 }
 
+function renderReviewCard(profile) {
+  const card = document.getElementById('reviewCard');
+  const list = document.getElementById('reviewList');
+  if (!card || !list) return;
+  const status = profile?.metadata?.status || 'draft';
+  if (!profile || status === 'verified') {
+    card.style.display = 'none';
+    return;
+  }
+  card.style.display = 'block';
+  const conf = profile.confidence || {};
+  const rows = [];
+  for (const key of RESEARCH_ORDER) {
+    const data = key === 'identity'
+      ? (profile.identity || {})
+      : key === 'biology'
+        ? (profile.biology || profile.forage || {})
+        : key === 'trolling'
+          ? (profile.trollingIntelligence || profile.trolling || null)
+          : profile[key];
+    const pct = conf[key]?.percent || (hasResearchValue(data) ? 70 : 0);
+    const needsReview = pct < 70 || !hasResearchValue(data);
+    rows.push(`<div class="review-card ${needsReview ? 'need' : ''}">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
+        <div><b>${esc(RESEARCH_LABELS[key] || key)}</b><br><span class="muted" style="font-size:11px">${needsReview ? 'Needs review / may be incomplete' : 'Looks populated'}</span></div>
+        <div style="font-weight:700;color:${needsReview ? 'var(--bad)' : 'var(--accent2)'}">${pct}%</div>
+      </div>
+    </div>`);
+  }
+  list.innerHTML = rows.join('');
+}
+
+async function saveCurrentResearchProfile(status = 'draft') {
+  const reviewCard = document.getElementById('reviewCard');
+  const merged = reviewCard?.dataset.merged ? JSON.parse(reviewCard.dataset.merged) : (currentProfile ? cloneJson(currentProfile) : null);
+  if (!merged || !currentLakeName) throw new Error('No profile loaded');
+  const notesVal = document.getElementById('researchNotes')?.value || merged.notes || '';
+  merged.notes = notesVal;
+  merged.metadata = merged.metadata || {};
+  merged.metadata.status = status;
+  merged.metadata.verified = status === 'verified';
+  if (status === 'verified') merged.metadata.verifiedAt = new Date().toISOString();
+  const res = await fetch(`${CF_WORKER_URL}/research/save`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      lakeName: currentLakeName,
+      profile: merged,
+      status,
+      approve: status === 'verified',
+      verified: status === 'verified',
+      notes: notesVal,
+      requestedBy: 'Lake Research UI'
+    })
+  });
+  if (!res.ok) {
+    const msg = await res.text().catch(() => '');
+    throw new Error(`Save failed: ${res.status} ${msg.slice(0, 200)}`);
+  }
+  return res.json();
+}
+
 function initLakeResearch() {
   populateResearchLakeDropdown();
   setTimeout(populateResearchLakeDropdown, 1500);
@@ -1918,10 +2239,48 @@ function initLakeResearch() {
     }
   });
 
+  document.getElementById('btnApprove')?.addEventListener('click', async () => {
+    if (!currentProfile || !currentLakeName) { alert('Load a profile first'); return; }
+    if (!confirm(`Mark ${currentLakeName} as verified? This will save the current in-memory profile to R2 as VERIFIED.`)) return;
+    try {
+      await saveCurrentResearchProfile('verified');
+      await loadProfile(currentLakeName, true);
+      alert(`${currentLakeName} saved as VERIFIED.`);
+    } catch (e) {
+      alert(`Approve failed: ${e.message}`);
+      log(`Approve failed: ${e.message}`);
+    }
+  });
+
+  document.getElementById('btnApproveReview')?.addEventListener('click', async () => {
+    if (!currentProfile || !currentLakeName) { alert('Load a profile first'); return; }
+    if (!confirm(`Approve and save ${currentLakeName} as VERIFIED?`)) return;
+    try {
+      await saveCurrentResearchProfile('verified');
+      await loadProfile(currentLakeName, true);
+      alert(`${currentLakeName} saved as VERIFIED.`);
+    } catch (e) {
+      alert(`Approve failed: ${e.message}`);
+      log(`Approve failed: ${e.message}`);
+    }
+  });
+
+  document.getElementById('btnSaveDraft')?.addEventListener('click', async () => {
+    if (!currentProfile || !currentLakeName) { alert('Load a profile first'); return; }
+    try {
+      await saveCurrentResearchProfile('draft');
+      await loadProfile(currentLakeName, true);
+      alert(`${currentLakeName} draft saved.`);
+    } catch (e) {
+      alert(`Draft save failed: ${e.message}`);
+      log(`Draft save failed: ${e.message}`);
+    }
+  });
+
   document.getElementById('btnResearch')?.addEventListener('click', () => {
     const lake = document.getElementById('researchLakeSelect')?.value;
     if (!lake) { alert('Select a lake first'); return; }
-    if (!confirm(`Launch the fully structured Evidence Acquisition Pipeline for ${lake}? This will query trusted repositories, download documents through our CORS-bypassed proxy, parse PDFs client-side with PDF.js, score quality, and trigger structured LLM fact extraction. Continue?`)) return;
+    if (!confirm(`Launch the factual lake research pipeline for ${lake}? This will pull official pages and GIS sources first, fetch accessible documents, parse PDFs client-side with PDF.js, and only use quoted/source-backed extraction where needed. Continue?`)) return;
     runEvidencePipeline(lake);
   });
 
@@ -1943,6 +2302,152 @@ function initLakeResearch() {
     if (!lake) { alert('Select a lake first'); return; }
     if (!confirm(`Resume extraction for ${lake} using existing normalized documents already in R2? Skips all PDF downloads — jumps straight to scoring, fact extraction, and mapping.`)) return;
     runFromNormalized(lake);
+  });
+
+  document.getElementById('btnSaveNotes')?.addEventListener('click', async () => {
+    if (!currentProfile || !currentLakeName) { alert('Load a profile first'); return; }
+    const st = document.getElementById('notesStatus');
+    try {
+      if (st) { st.textContent = 'Saving…'; st.style.color = 'var(--accent)'; }
+      await saveCurrentResearchProfile(currentProfile?.metadata?.status === 'verified' ? 'verified' : 'draft');
+      await loadProfile(currentLakeName, true);
+      if (st) { st.textContent = 'Saved ✓'; st.style.color = 'var(--accent2)'; }
+    } catch (e) {
+      if (st) { st.textContent = `Save failed: ${e.message}`; st.style.color = 'var(--bad)'; }
+      log(`Save notes failed: ${e.message}`);
+    }
+  });
+
+  document.getElementById('btnEditMasterJson')?.addEventListener('click', () => {
+    if (!currentProfile) { alert('Load a profile first'); return; }
+    const card = document.getElementById('masterJsonEditCard');
+    const ta = document.getElementById('masterJsonTextarea');
+    const st = document.getElementById('masterJsonStatus');
+    if (ta) ta.value = JSON.stringify(currentProfile, null, 2);
+    if (st) st.textContent = '';
+    if (card) card.style.display = 'block';
+  });
+  document.getElementById('btnCloseMasterJson')?.addEventListener('click', () => {
+    const card = document.getElementById('masterJsonEditCard');
+    if (card) card.style.display = 'none';
+  });
+  document.getElementById('btnFormatMasterJson')?.addEventListener('click', () => {
+    const ta = document.getElementById('masterJsonTextarea');
+    const st = document.getElementById('masterJsonStatus');
+    if (!ta) return;
+    try {
+      ta.value = JSON.stringify(JSON.parse(ta.value), null, 2);
+      if (st) { st.textContent = 'Formatted'; st.style.color = 'var(--accent2)'; }
+    } catch (e) {
+      if (st) { st.textContent = `Invalid JSON: ${e.message}`; st.style.color = 'var(--bad)'; }
+    }
+  });
+  document.getElementById('btnSaveMasterJson')?.addEventListener('click', async () => {
+    const ta = document.getElementById('masterJsonTextarea');
+    const st = document.getElementById('masterJsonStatus');
+    if (!ta || !currentLakeName) return;
+    try {
+      const parsed = JSON.parse(ta.value);
+      if (st) { st.textContent = 'Saving…'; st.style.color = 'var(--accent)'; }
+      const res = await fetch(`${CF_WORKER_URL}/research/save`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lakeName: currentLakeName,
+          profile: parsed,
+          status: parsed?.metadata?.status || currentProfile?.metadata?.status || 'draft',
+          approve: parsed?.metadata?.status === 'verified',
+          verified: parsed?.metadata?.status === 'verified',
+          notes: parsed?.notes || '',
+          requestedBy: 'Lake Research Master JSON Editor'
+        })
+      });
+      if (!res.ok) {
+        const msg = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status}: ${msg.slice(0, 200)}`);
+      }
+      await loadProfile(currentLakeName, true);
+      const card = document.getElementById('masterJsonEditCard');
+      if (card) card.style.display = 'none';
+      if (st) { st.textContent = 'Saved ✓'; st.style.color = 'var(--accent2)'; }
+    } catch (e) {
+      if (st) { st.textContent = `Save failed: ${e.message}`; st.style.color = 'var(--bad)'; }
+      log(`Master JSON save failed: ${e.message}`);
+    }
+  });
+
+  document.getElementById('researchImportInput')?.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const txt = await file.text();
+      const parsed = JSON.parse(txt);
+      const importedLake = parsed.lakeName || parsed.identity?.lakeName || currentLakeName;
+      if (!importedLake) throw new Error('Imported JSON missing lakeName');
+      const res = await fetch(`${CF_WORKER_URL}/research/save`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lakeName: importedLake, profile: parsed, status: parsed?.metadata?.status || 'draft', notes: parsed?.notes || '', requestedBy: 'Lake Research Import' })
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      document.getElementById('researchLakeSelect').value = importedLake;
+      await loadProfile(importedLake, true);
+      alert(`Imported profile for ${importedLake}`);
+    } catch (err) {
+      alert(`Import failed: ${err.message}`);
+      log(`Import failed: ${err.message}`);
+    } finally {
+      e.target.value = '';
+    }
+  });
+
+  document.getElementById('btnRefresh')?.addEventListener('click', () => {
+    if (!currentLakeName) { alert('Load a lake first'); return; }
+    const picker = document.getElementById('refreshPicker');
+    if (picker) picker.style.display = 'block';
+  });
+  document.getElementById('btnCancelRefresh')?.addEventListener('click', () => {
+    const picker = document.getElementById('refreshPicker');
+    if (picker) picker.style.display = 'none';
+  });
+  document.getElementById('btnDoRefresh')?.addEventListener('click', async () => {
+    if (!currentLakeName) { alert('Load a lake first'); return; }
+    const picker = document.getElementById('refreshPicker');
+    const selected = Array.from(document.querySelectorAll('#refreshPicker input[type="checkbox"]:checked')).map(el => el.value);
+    if (!selected.length) { alert('Pick at least one section'); return; }
+    if (picker) picker.style.display = 'none';
+    log(`Refresh requested for sections: ${selected.join(', ')} — running full factual refresh from existing normalized docs.`);
+    await runFromNormalized(currentLakeName);
+  });
+
+  document.getElementById('btnDeleteResearch')?.addEventListener('click', async () => {
+    if (!currentLakeName) { alert('Load a lake first'); return; }
+    if (!confirm(`Delete researched profile for ${currentLakeName}? This removes the master JSON, package parts, and versions from R2.`)) return;
+    try {
+      const res = await fetch(`${CF_WORKER_URL}/research/delete`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lakeName: currentLakeName })
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      renderEmpty(currentLakeName);
+      currentProfile = null;
+      alert(`Deleted research for ${currentLakeName}`);
+    } catch (e) {
+      alert(`Delete failed: ${e.message}`);
+      log(`Delete failed: ${e.message}`);
+    }
+  });
+
+  document.getElementById('btnDebugProfile')?.addEventListener('click', () => {
+    const out = document.getElementById('debugOutput');
+    if (!out) return;
+    out.style.display = out.style.display === 'none' ? 'block' : 'none';
+    out.textContent = currentProfile ? JSON.stringify(currentProfile, null, 2) : 'No profile loaded';
+  });
+  document.getElementById('btnClearResearchCache')?.addEventListener('click', () => {
+    researchLog = [];
+    const logEl = document.getElementById('researchLog');
+    if (logEl) logEl.textContent = 'Log cleared.';
+    const out = document.getElementById('debugOutput');
+    if (out) out.textContent = '';
   });
 
   document.getElementById('btnExport')?.addEventListener('click', () => {
@@ -1968,5 +2473,13 @@ function initLakeResearch() {
 }
 
 setTimeout(initLakeResearch, 800);
+
+window.getResearchedProfile = function getResearchedProfile(lakeName) {
+  if (!lakeName) return null;
+  const direct = window.TROLLMAP_RESEARCHED_CACHE?.[lakeName];
+  if (direct) return direct;
+  const safe = sanitize(lakeName);
+  return window.TROLLMAP_RESEARCHED_CACHE?.[safe] || null;
+};
 
 export { initLakeResearch, loadProfile, runEvidencePipeline, populateResearchLakeDropdown };

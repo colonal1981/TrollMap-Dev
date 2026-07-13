@@ -49,7 +49,9 @@ export async function syncLakeIntelData() {
       const gameFish = (bio.predatorSpecies?.length) ? bio.predatorSpecies : (bio.primaryGameFish || []);
       if(gameFish.length) lines.push(`Primary sport fish: ${gameFish.join(', ')}`);
       if(bio.primaryForage?.length) lines.push(`Known forage: ${bio.primaryForage.map(f => typeof f === 'string' ? f : f.species).filter(Boolean).join(', ')}`);
-      if(bio.stocking) lines.push(`Stocking / management: ${bio.stocking}`);
+      if(Array.isArray(bio.knownStockings) && bio.knownStockings.length) {
+        lines.push(`Stocking / management: ${bio.knownStockings.map(s => `${s.species}${s.note ? ` (${s.note})` : ''}`).join('; ')}`);
+      } else if(bio.stocking) lines.push(`Stocking / management: ${bio.stocking}`);
     } else {
       lines.push(`Primary sport fish: ${(p.primarySportFish||[]).join(', ') || 'Unknown / verify locally'}`);
       lines.push(`Known forage: ${(p.forage||[]).join(', ') || 'Unknown'}`);

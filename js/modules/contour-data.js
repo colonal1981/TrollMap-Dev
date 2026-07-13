@@ -210,7 +210,7 @@ export async function loadContourByR2Key(r2Key) {
 }
 
 // ── Fuzzy name resolver — handles access-index name variations ────────────────
-function resolveR2Key(displayName) {
+export function resolveR2Key(displayName) {
   // 1. Exact match
   if (LAKE_NAME_TO_R2_KEY[displayName]) return LAKE_NAME_TO_R2_KEY[displayName];
   // 2. Strip state suffix ", SC" / ", NC/GA" etc

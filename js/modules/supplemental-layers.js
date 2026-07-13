@@ -114,7 +114,7 @@ const LAKE_BOUNDARY_KEY = {
 };
 
 // ── FIX: fuzzy name resolver — same logic as contour-data.js resolveR2Key ────
-function resolveSupplementalKey(displayName) {
+export function resolveSupplementalKey(displayName) {
   // 1. Exact match
   if (LAKE_NAME_TO_R2_KEY[displayName]) return LAKE_NAME_TO_R2_KEY[displayName];
   // 2. Strip state suffix ", SC" / ", NC/GA" etc
@@ -130,7 +130,7 @@ function resolveSupplementalKey(displayName) {
 }
 
 // Same fuzzy logic for boundary key
-function resolveBoundaryKey(displayName) {
+export function resolveBoundaryKey(displayName) {
   if (LAKE_BOUNDARY_KEY[displayName]) return LAKE_BOUNDARY_KEY[displayName];
   const stripped = displayName.replace(/,\s*[A-Z]{2}(\/[A-Z]{2})?$/, '').trim();
   if (LAKE_BOUNDARY_KEY[stripped]) return LAKE_BOUNDARY_KEY[stripped];
