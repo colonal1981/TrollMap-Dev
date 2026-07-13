@@ -950,10 +950,30 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       throw new Error(`Fact Extraction Failed: ${extractData.error || 'Extraction failure'}`);
     }
 
-    const rawFacts = extractData.extracted_facts || [];
+    let rawFacts = extractData.extracted_facts || [];
     log(`Deep scan extracted ${rawFacts.length} verified facts.`);
+    // Auto-retry once on cold start / transient LLM timeout
     if (rawFacts.length === 0) {
-      log(`⚠️ Zero facts extracted — profile will rely on deterministic accessible sources only.`);
+      log(`⚠️ Zero facts — retrying after 3s (likely cold start)...`);
+      await new Promise(r => setTimeout(r, 3000));
+      try {
+        const retryRes = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(extractionPayload)
+        });
+        if (retryRes.ok) {
+          const retryData = await retryRes.json();
+          if (retryData.success && retryData.extracted_facts?.length > 0) {
+            rawFacts = retryData.extracted_facts;
+            log(`✔ Retry succeeded — extracted ${rawFacts.length} facts.`);
+          } else {
+            log(`⚠️ Retry also returned 0 facts — profile will rely on deterministic sources only.`);
+          }
+        }
+      } catch (e) {
+        log(`⚠️ Retry failed: ${e.message}`);
+      }
     }
     rawFacts.forEach(f => {
       log(`💬 [${f.category}] "${f.fact}" (Confidence: ${f.confidence}%) - Source: ${f.source} pg ${f.page || '?'}`);
