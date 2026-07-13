@@ -3340,80 +3340,39 @@ async function handleResearchProxyDownload(request, env) {
             if (!docLinks.some(d => d.url === m[0])) docLinks.push({ url: m[0], title: 'EPA NSCEP document' });
           }
           if (md.length > 100 || docLinks.length) {
-            // If we found a single clear document, scrape its raw text directly
+            // If we found a single clear document, fetch its raw .txt download directly.
             if (docLinks.length === 1) {
               const docUrl = docLinks[0].url;
-              try {
-                const landRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
-                  method: 'POST',
-                  headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    url: docUrl,
-                    formats: ['markdown', 'json'],
-                    onlyMainContent: true,
-                    timeout: 25000,
-                    jsonOptions: {
-                      schema: {
-                        type: 'object',
-                        properties: {
-                          report_metadata: {
-                            type: 'object',
-                            properties: { title: { type: 'string' }, pub_number: { type: 'string' } }
-                          },
-                          available_formats: {
-                            type: 'object',
-                            properties: {
-                              pdf_url: { type: 'string' },
-                              raw_text_url: { type: 'string', description: 'Link to raw text, ASCII, or TXT version' },
-                              tiff_url: { type: 'string' }
-                            }
-                          }
-                        }
-                      }
+              const rawTextUrl = toNepisRawTextUrl(docUrl);
+              if (rawTextUrl) {
+                try {
+                  const rawRes = await fetch(rawTextUrl, {
+                    headers: {
+                      'User-Agent': 'TrollMap/15.3 Evidence Engine',
+                      'Accept': 'text/plain,*/*'
                     }
-                  })
-                });
-                if (landRes.ok) {
-                  const landData = await landRes.json();
-                  const extracted = landData.data?.json || landData.json || {};
-                  const rawTextUrl = extracted.available_formats?.raw_text_url;
-                  if (rawTextUrl && /^https?:\/\//i.test(rawTextUrl)) {
-                    const textRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
-                      method: 'POST',
-                      headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ url: rawTextUrl, formats: ['markdown'], onlyMainContent: true, timeout: 25000 })
-                    });
-                    if (textRes.ok) {
-                      const textData = await textRes.json();
-                      const markdown = textData.data?.markdown || textData.markdown || '';
-                      if (markdown.length > 100) {
-                        const headers = new Headers({
-                          'Content-Type': 'text/plain; charset=utf-8',
-                          'Access-Control-Allow-Origin': '*',
-                          'X-Source': 'firecrawl',
-                          'X-Nepis-Format': 'raw_text',
-                          'X-Nepis-Title': (extracted.report_metadata?.title || docLinks[0].title || '').slice(0, 180),
-                          'X-Nepis-Doc-Url': docUrl
-                        });
-                        return new Response(markdown, { headers });
-                      }
+                  });
+                  if (rawRes.ok) {
+                    const rawText = await rawRes.text();
+                    if (rawText.length > 200) {
+                      const firstLine = rawText.split('\n')[0] || '';
+                      const metaMatch = firstLine.match(/^([A-Z]+[0-9]+)(Report on Lake .+?)([0-9]{1,3})([0-9]{4})([A-Z].*)$/i);
+                      const title = metaMatch ? metaMatch[2].trim() : (docLinks[0].title || '');
+                      const headers = new Headers({
+                        'Content-Type': 'text/plain; charset=utf-8',
+                        'Access-Control-Allow-Origin': '*',
+                        'X-Source': 'firecrawl',
+                        'X-Nepis-Format': 'raw_text',
+                        'X-Nepis-Title': title.slice(0, 180),
+                        'X-Nepis-Doc-Url': docUrl,
+                        'X-Nepis-RawText': rawTextUrl
+                      });
+                      return new Response(rawText, { headers });
                     }
                   }
-                  // Fall back to landing markdown
-                  const landMd = landData.data?.markdown || landData.markdown || '';
-                  if (landMd.length > 100) {
-                    const headers = new Headers({
-                      'Content-Type': 'text/plain; charset=utf-8',
-                      'Access-Control-Allow-Origin': '*',
-                      'X-Source': 'firecrawl',
-                      'X-Nepis-Format': 'landing',
-                      'X-Nepis-Doc-Url': docUrl
-                    });
-                    return new Response(landMd, { headers });
-                  }
+                } catch (e) {
+                  console.warn(`NEPI S single-doc raw-text fetch failed: ${e.message}`);
                 }
-              } catch (e) {
-                console.warn(`NEPI S single-doc follow-up failed: ${e.message}`);
               }
             }
             // Multi-doc search results: return markdown catalog + document URL list
@@ -3445,6 +3404,41 @@ async function handleResearchProxyDownload(request, env) {
       // Two-step for EPA NSCEP document landing pages: first extract format links,
       // then scrape the raw-text URL for clean markdown (avoids TIFF/OCR).
       if (isNepisLanding || (isNepisAny && !isNepisSearch)) {
+        // NSCEP viewer URLs share the same File= parameter as the raw-text download.
+        // Try to fetch the .txt download directly before paying for a Firecrawl scrape.
+        const rawTextUrl = toNepisRawTextUrl(target);
+        if (rawTextUrl) {
+          try {
+            const rawRes = await fetch(rawTextUrl, {
+              headers: {
+                'User-Agent': 'TrollMap/15.3 Evidence Engine',
+                'Accept': 'text/plain,*/*'
+              }
+            });
+            if (rawRes.ok) {
+              const rawText = await rawRes.text();
+              if (rawText.length > 200) {
+                // The first metadata line concatenates pubnumber + title + pages + year + ...
+                // e.g. "NESWP434Report on Lake Marion,... EPA Region IV601976NEPIS..."
+                const firstLine = rawText.split('\n')[0] || '';
+                const metaMatch = firstLine.match(/^([A-Z]+[0-9]+)(Report on Lake .+?)([0-9]{1,3})([0-9]{4})([A-Z].*)$/i);
+                const title = metaMatch ? metaMatch[2].trim() : '';
+                const headers = new Headers({
+                  'Content-Type': 'text/plain; charset=utf-8',
+                  'Access-Control-Allow-Origin': '*',
+                  'X-Source': 'firecrawl',
+                  'X-Nepis-Format': 'raw_text',
+                  'X-Nepis-Title': title.slice(0, 180),
+                  'X-Nepis-RawText': rawTextUrl
+                });
+                return new Response(rawText, { headers });
+              }
+            }
+          } catch (eRaw) {
+            console.warn(`Direct NSCEP raw-text fetch failed: ${eRaw.message}`);
+          }
+        }
+
         const landRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
@@ -3652,6 +3646,29 @@ function buildNepisSearchUrl(lakeName, state, queryOverride = null) {
     '1976 Thru 1980', 'Prior to 1976'
   ].map(i => `Index=${encodeURIComponent(i)}`).join('&');
   return `https://nepis.epa.gov/Exe/ZyNET.exe?ZyAction=ZyActionS&User=ANONYMOUS&Password=anonymous&Client=EPA&SearchBack=ZyActionL&SortMethod=h%7C-&MaximumDocuments=15&ImageQuality=r85g16%2Fr85g16%2Fx150y150g16%2Fi500&Display=hpfr&DefSeekPage=&Toc=&TocEntry=&TocRestrict=n&QField=title%5E${titleField}&UseQField=title&Docs=&SearchMethod=1&Time=&FullText=&IntQFieldOp=1&Query=${query}&ExtQFieldOp=1&FuzzyDegree=0&${indexes}`;
+}
+
+// Convert an EPA NSCEP document viewer/landing URL into the raw-text download URL.
+// The viewer endpoint uses ZyActionD=ZyDocument and displays scanned page images.
+// The same .txt endpoint with ZyActionW=Download returns the OCR/plain-text file
+// referenced by the File= parameter.
+function toNepisRawTextUrl(landingUrl) {
+  try {
+    const url = new URL(landingUrl);
+    if (!/nepis\.epa\.gov/i.test(url.hostname)) return null;
+    if (!/\.txt$/i.test(url.pathname)) return null;
+    // Already a download link — nothing to do.
+    if (/ZyActionW=Download/i.test(url.search)) return landingUrl;
+    // Switch from the viewer action to the download action, keeping File= etc.
+    url.searchParams.delete('ZyActionD');
+    url.searchParams.set('ZyActionW', 'Download');
+    // The download endpoint expects SearchMethod=4 and a text-friendly Display.
+    url.searchParams.set('SearchMethod', '4');
+    url.searchParams.set('Display', 'h|p|f');
+    return url.toString();
+  } catch (e) {
+    return null;
+  }
 }
 
 // Queries to run against NEPI S for any SC/NC/GA (tristate) lake
