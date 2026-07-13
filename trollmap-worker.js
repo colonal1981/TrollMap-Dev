@@ -3037,16 +3037,15 @@ async function handleResearchDiscover(request, env) {
   // Use baseName in queries to improve Tavily hit rate (avoid ", SC" suffix which hurts)
   const queryLake = baseName || lakeName;
   const stateFullName = { SC: 'South Carolina', NC: 'North Carolina', GA: 'Georgia' }[state] || 'South Carolina';
+  // CREDIT BUDGET: reduced from 8 queries × (search+extract)=16 Tavily calls
+  // to 4 queries × search-only = 4 calls. Extract is wasteful here because
+  // the proxy-download step will fetch full content anyway.
   const queryPatterns = [
-    `"${queryLake}" (fisheries OR biology OR \"striped bass\" OR crappie OR \"largemouth\") ${dnrName} filetype:pdf`,
+    `"${queryLake}" (fisheries OR biology OR \"striped bass\" OR crappie OR \"largemouth\") ${dnrName}`,
     `"${queryLake}" (regulations OR \"creel limit\" OR \"size limit\" OR \"bag limit\") (${regsSiteFilter})`,
-    `"${queryLake}" (limnology OR thermocline OR \"water quality\" OR hydrology OR \"surface area\") (USACE OR USGS OR EPA)`,
-    `"${queryLake}" lake (habitat OR structure OR navigation OR hazards OR ramps) ${dnrName}`,
-    `"${queryLake}" (thermocline OR \"oxygen depletion\" OR stratification OR \"dissolved oxygen\") depth fishing`,
-    // EPA NSCEP / NEPI S — critical limnology source for ALL tristate lakes (SC/NC/GA)
-    `"Report on Lake ${queryLake}" OR "${queryLake}" site:nepis.epa.gov`,
-    `"${queryLake}" "${stateFullName}" (water quality OR eutrophication OR limnology) (EPA OR NESWP OR nepis)`,
-    `"Report on Lake" "${stateFullName}" ${queryLake}`,
+    `"${queryLake}" (limnology OR thermocline OR \"water quality\" OR \"dissolved oxygen\") (USACE OR USGS OR EPA)`,
+    // EPA NSCEP — covers both "Report on Lake X" and "Report on X Lake" naming
+    `"Report on Lake ${queryLake}" OR "Report on ${queryLake} Lake" OR "${queryLake}" (NESWP OR eutrophication OR nepis)`,
   ];
 
   let discoveredSources = [];
@@ -3054,70 +3053,42 @@ async function handleResearchDiscover(request, env) {
   const googleCx = env.GOOGLE_SEARCH_CX || env.GOOGLE_CSE_CX;
   const tavilyApiKey = env.TAVILY_API_KEY || env.TAVILY_KEY;
 
+  // CREDIT BUDGET: search-only, no extract. The proxy-download step fetches
+  // full page content via Firecrawl or basic fetch, so Tavily extract is
+  // redundant here (was costing 4-8 extra credits per run for no benefit).
   if (tavilyApiKey) {
     for (const q of queryPatterns) {
       try {
-        const searchUrl = "https://api.tavily.com/search";
-        const searchRes = await fetch(searchUrl, {
+        const searchRes = await fetch("https://api.tavily.com/search", {
           method: "POST",
           headers: { "Authorization": `Bearer ${tavilyApiKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ query: q, search_depth: "advanced", max_results: 5, include_raw_content: false, exclude_domains: [] })
+          body: JSON.stringify({ query: q, search_depth: "basic", max_results: 3, include_raw_content: false, exclude_domains: [] })
         });
         if (!searchRes.ok) continue;
         const searchData = await searchRes.json();
-        const results = searchData.results || [];
-        const urlsToExtract = results.map(r => r.url).filter(Boolean);
-        if (!urlsToExtract.length) continue;
-
-        const extractUrl = "https://api.tavily.com/extract";
-        const extractRes = await fetch(extractUrl, {
-          method: "POST",
-          headers: { "Authorization": `Bearer ${tavilyApiKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ urls: urlsToExtract, query: queryLake, extract_depth: "advanced", format: "markdown" })
-        });
-        if (!extractRes.ok) {
-          // fall back to using search results directly without extract
-          for (const r of results) {
-            const off = offLakePattern(r.title||'', r.url||'');
-            if (off) { console.log(`filtered off-lake ${off} for ${baseName}: ${r.url}`); continue; }
-            const isPdf = String(r.url||'').toLowerCase().endsWith('.pdf');
-            const host = (()=>{ try{ return new URL(r.url).hostname; }catch{ return "Tavily"; } })();
-            discoveredSources.push({
-              title: r.title || `${queryLake} - ${host}`,
-              type: isPdf ? "PDF" : "HTML",
-              authority: host,
-              url: r.url,
-              priority: (r.title||'').toLowerCase().includes(baseLower) ? 1 : 2,
-              score: r.score || 0
-            });
-          }
-          continue;
-        }
-        const extractData = await extractRes.json();
-        const extractions = extractData.results || [];
-        for (const ext of extractions) {
-          const title = ext.title || `${queryLake} Document`;
-          const off = offLakePattern(title, ext.url||'');
-          if (off) { console.log(`filtered off-lake ${off} after extract for ${baseName}: ${ext.url}`); continue; }
-          const isPdf = String(ext.url||'').toLowerCase().endsWith('.pdf');
-          let host = "Tavily Extract";
-          try { host = new URL(ext.url).hostname; } catch {}
+        for (const r of (searchData.results || [])) {
+          const off = offLakePattern(r.title||'', r.url||'');
+          if (off) { console.log(`filtered off-lake ${off} for ${baseName}: ${r.url}`); continue; }
+          const isPdf = String(r.url||'').toLowerCase().endsWith('.pdf');
+          let host = "Tavily";
+          try { host = new URL(r.url).hostname; } catch {}
           let authority = host;
           if (/dnr\.sc\.gov/.test(host) || /eregulations\.com/.test(host)) authority = "SCDNR";
           else if (/usgs\.gov/.test(host)) authority = "USGS";
           else if (/usace\.army\.mil/.test(host)) authority = "USACE";
+          else if (/nepis\.epa\.gov|epa\.gov/.test(host)) authority = "EPA NSCEP";
           else if (/dnr|wildlife/.test(host)) authority = dnrName;
           discoveredSources.push({
-            title: title.replace(/\s+/g,' ').trim().slice(0,180) || `${queryLake} Document from ${host}`,
+            title: (r.title || `${queryLake} - ${host}`).replace(/\s+/g,' ').trim().slice(0,180),
             type: isPdf ? "PDF" : "HTML",
             authority,
-            url: ext.url,
-            priority: title.toLowerCase().includes(baseLower) || (ext.raw_content||'').toLowerCase().includes(baseLower) ? 1 : 2,
-            extractedText: (ext.raw_content||'').slice(0,5000)
+            url: r.url,
+            priority: (r.title||'').toLowerCase().includes(baseLower) ? 1 : 2,
+            score: r.score || 0
           });
         }
       } catch (err) {
-        console.warn(`Tavily search/extract failed for [${q}]: ${err.message}`);
+        console.warn(`Tavily search failed for [${q}]: ${err.message}`);
       }
     }
   } else if (googleApiKey && googleCx) {
@@ -3225,7 +3196,7 @@ async function handleResearchDiscover(request, env) {
   }
   // EPA NSCEP search landing for this lake — proxy will harvest raw-text links via Firecrawl
   defaultStateSeeds.push({
-    title: `EPA NSCEP search: Report on Lake ${baseName}`,
+    title: `EPA NSCEP search: Report on ${baseName} / Lake ${baseName}`,
     type: "HTML",
     authority: "EPA NSCEP",
     url: buildNepisSearchUrl(lakeName, state, baseName),
@@ -3295,17 +3266,22 @@ async function handleResearchProxyDownload(request, env) {
     return new Response(JSON.stringify({ success: false, error: "Missing url parameter" }), { status: 400, headers: JSON_HEADERS });
   }
 
-  // Route HTML sources through Firecrawl for better extraction
+  // Route HTML sources through Firecrawl ONLY for JS-rendered SPAs and NEPIS pages.
+  // CREDIT BUDGET: static HTML pages (SCDNR descriptions, USGS, etc.) work fine with
+  // basic fetch + HTML stripping. Firecrawl costs 1 credit per scrape, so we only
+  // use it when necessary.
   const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
   const isHtml = sourceType.toUpperCase() === 'HTML' || (!target.toLowerCase().includes('.pdf') && !sourceType.toUpperCase().includes('PDF'));
-  // EPA NSCEP / NEPI S ZyNET:
+  // EPA NSCEP / NEPIS ZyNET:
   //  - Search results page (ZyActionS) — harvest document links
   //  - Document landing (ZyActionD) — extract raw-text / PDF format links
   const isNepisSearch = /nepis\.epa\.gov/i.test(target) && /ZyActionS|ZyAction=ZyActionS/i.test(target);
   const isNepisLanding = /nepis\.epa\.gov/i.test(target) && /ZyActionD|ZyPDF/i.test(target);
   const isNepisAny = /nepis\.epa\.gov|ZyNET\.exe/i.test(target);
+  // Only use Firecrawl for JS-heavy SPAs and NEPIS pages (saves ~8 Firecrawl credits per run)
+  const needsFirecrawl = isNepisSearch || isNepisLanding || isNepisAny || /eregulations\.com/i.test(target);
 
-  if (firecrawlKey && isHtml) {
+  if (firecrawlKey && isHtml && needsFirecrawl) {
     try {
       // Search-results page: return markdown of the results list so the client can
       // store it, AND surface ZyActionD links in X-Nepis-Documents for follow-up.
@@ -3340,80 +3316,39 @@ async function handleResearchProxyDownload(request, env) {
             if (!docLinks.some(d => d.url === m[0])) docLinks.push({ url: m[0], title: 'EPA NSCEP document' });
           }
           if (md.length > 100 || docLinks.length) {
-            // If we found a single clear document, scrape its raw text directly
+            // If we found a single clear document, fetch its raw .txt download directly.
             if (docLinks.length === 1) {
               const docUrl = docLinks[0].url;
-              try {
-                const landRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
-                  method: 'POST',
-                  headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    url: docUrl,
-                    formats: ['markdown', 'json'],
-                    onlyMainContent: true,
-                    timeout: 25000,
-                    jsonOptions: {
-                      schema: {
-                        type: 'object',
-                        properties: {
-                          report_metadata: {
-                            type: 'object',
-                            properties: { title: { type: 'string' }, pub_number: { type: 'string' } }
-                          },
-                          available_formats: {
-                            type: 'object',
-                            properties: {
-                              pdf_url: { type: 'string' },
-                              raw_text_url: { type: 'string', description: 'Link to raw text, ASCII, or TXT version' },
-                              tiff_url: { type: 'string' }
-                            }
-                          }
-                        }
-                      }
+              const rawTextUrl = toNepisRawTextUrl(docUrl);
+              if (rawTextUrl) {
+                try {
+                  const rawRes = await fetch(rawTextUrl, {
+                    headers: {
+                      'User-Agent': 'TrollMap/15.3 Evidence Engine',
+                      'Accept': 'text/plain,*/*'
                     }
-                  })
-                });
-                if (landRes.ok) {
-                  const landData = await landRes.json();
-                  const extracted = landData.data?.json || landData.json || {};
-                  const rawTextUrl = extracted.available_formats?.raw_text_url;
-                  if (rawTextUrl && /^https?:\/\//i.test(rawTextUrl)) {
-                    const textRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
-                      method: 'POST',
-                      headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ url: rawTextUrl, formats: ['markdown'], onlyMainContent: true, timeout: 25000 })
-                    });
-                    if (textRes.ok) {
-                      const textData = await textRes.json();
-                      const markdown = textData.data?.markdown || textData.markdown || '';
-                      if (markdown.length > 100) {
-                        const headers = new Headers({
-                          'Content-Type': 'text/plain; charset=utf-8',
-                          'Access-Control-Allow-Origin': '*',
-                          'X-Source': 'firecrawl',
-                          'X-Nepis-Format': 'raw_text',
-                          'X-Nepis-Title': (extracted.report_metadata?.title || docLinks[0].title || '').slice(0, 180),
-                          'X-Nepis-Doc-Url': docUrl
-                        });
-                        return new Response(markdown, { headers });
-                      }
+                  });
+                  if (rawRes.ok) {
+                    const rawText = await rawRes.text();
+                    if (rawText.length > 200) {
+                      const firstLine = rawText.split('\n')[0] || '';
+                      const metaMatch = firstLine.match(/^([A-Z]+[0-9]+)(Report on (?:Lake )?.+?)([0-9]{1,3})([0-9]{4})([A-Z].*)$/i);
+                      const title = metaMatch ? metaMatch[2].trim() : (docLinks[0].title || '');
+                      const headers = new Headers({
+                        'Content-Type': 'text/plain; charset=utf-8',
+                        'Access-Control-Allow-Origin': '*',
+                        'X-Source': 'firecrawl',
+                        'X-Nepis-Format': 'raw_text',
+                        'X-Nepis-Title': title.slice(0, 180),
+                        'X-Nepis-Doc-Url': docUrl,
+                        'X-Nepis-RawText': rawTextUrl
+                      });
+                      return new Response(rawText, { headers });
                     }
                   }
-                  // Fall back to landing markdown
-                  const landMd = landData.data?.markdown || landData.markdown || '';
-                  if (landMd.length > 100) {
-                    const headers = new Headers({
-                      'Content-Type': 'text/plain; charset=utf-8',
-                      'Access-Control-Allow-Origin': '*',
-                      'X-Source': 'firecrawl',
-                      'X-Nepis-Format': 'landing',
-                      'X-Nepis-Doc-Url': docUrl
-                    });
-                    return new Response(landMd, { headers });
-                  }
+                } catch (e) {
+                  console.warn(`NEPI S single-doc raw-text fetch failed: ${e.message}`);
                 }
-              } catch (e) {
-                console.warn(`NEPI S single-doc follow-up failed: ${e.message}`);
               }
             }
             // Multi-doc search results: return markdown catalog + document URL list
@@ -3445,6 +3380,42 @@ async function handleResearchProxyDownload(request, env) {
       // Two-step for EPA NSCEP document landing pages: first extract format links,
       // then scrape the raw-text URL for clean markdown (avoids TIFF/OCR).
       if (isNepisLanding || (isNepisAny && !isNepisSearch)) {
+        // NSCEP viewer URLs share the same File= parameter as the raw-text download.
+        // Try to fetch the .txt download directly before paying for a Firecrawl scrape.
+        const rawTextUrl = toNepisRawTextUrl(target);
+        if (rawTextUrl) {
+          try {
+            const rawRes = await fetch(rawTextUrl, {
+              headers: {
+                'User-Agent': 'TrollMap/15.3 Evidence Engine',
+                'Accept': 'text/plain,*/*'
+              }
+            });
+            if (rawRes.ok) {
+              const rawText = await rawRes.text();
+              if (rawText.length > 200) {
+                // The first metadata line concatenates pubnumber + title + pages + year + ...
+                // e.g. "NESWP434Report on Lake Marion,... EPA Region IV601976NEPIS..."
+                // or   "NESWP440Report on Wateree Lake,... EPA Region IV481975NEPIS..."
+                const firstLine = rawText.split('\n')[0] || '';
+                const metaMatch = firstLine.match(/^([A-Z]+[0-9]+)(Report on (?:Lake )?.+?)([0-9]{1,3})([0-9]{4})([A-Z].*)$/i);
+                const title = metaMatch ? metaMatch[2].trim() : '';
+                const headers = new Headers({
+                  'Content-Type': 'text/plain; charset=utf-8',
+                  'Access-Control-Allow-Origin': '*',
+                  'X-Source': 'firecrawl',
+                  'X-Nepis-Format': 'raw_text',
+                  'X-Nepis-Title': title.slice(0, 180),
+                  'X-Nepis-RawText': rawTextUrl
+                });
+                return new Response(rawText, { headers });
+              }
+            }
+          } catch (eRaw) {
+            console.warn(`Direct NSCEP raw-text fetch failed: ${eRaw.message}`);
+          }
+        }
+
         const landRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
@@ -3637,14 +3608,18 @@ function scoreDatasetUrl(url, title, lakeName) {
 }
 
 // Build EPA NSCEP search-results URL(s) for a lake.
-// Historical EPA "Report on Lake …" series (1970s–80s) is often filed under the
-// lake name AND/OR the full state name — run both so every tristate lake has a
-// real chance of surfacing, not only well-known SC reservoirs.
+// Historical EPA "Report on Lake …" series (1970s–80s) uses INCONSISTENT naming:
+//   Most lakes:  "Report on Lake Murray"   (Lake before name)
+//   Wateree etc: "Report on Wateree Lake"  (name before Lake)
+// Using title filter "Report on" (not "Report on Lake") catches BOTH conventions
+// since the lake name is in the Query field anyway.
 function buildNepisSearchUrl(lakeName, state, queryOverride = null) {
   const baseName = String(lakeName || '').replace(/^Lake\s+/i, '').replace(/,\s*(SC|NC|GA|VA|TN).*$/i, '').trim();
   const stateName = { SC: 'South Carolina', NC: 'North Carolina', GA: 'Georgia', VA: 'Virginia', TN: 'Tennessee' }[String(state || 'SC').toUpperCase()] || 'South Carolina';
   const query = encodeURIComponent(queryOverride || baseName || stateName);
-  const titleField = encodeURIComponent('Report on Lake');
+  // Use "Report on" (not "Report on Lake") so both naming conventions match:
+  //   "Report on Lake Murray" AND "Report on Wateree Lake"
+  const titleField = encodeURIComponent('Report on');
   // Indexes cover historical EPA lake reports (1970s–2020)
   const indexes = [
     '2016 Thru 2020', '2011 Thru 2015', '2006 Thru 2010', '2000 Thru 2005',
@@ -3652,6 +3627,29 @@ function buildNepisSearchUrl(lakeName, state, queryOverride = null) {
     '1976 Thru 1980', 'Prior to 1976'
   ].map(i => `Index=${encodeURIComponent(i)}`).join('&');
   return `https://nepis.epa.gov/Exe/ZyNET.exe?ZyAction=ZyActionS&User=ANONYMOUS&Password=anonymous&Client=EPA&SearchBack=ZyActionL&SortMethod=h%7C-&MaximumDocuments=15&ImageQuality=r85g16%2Fr85g16%2Fx150y150g16%2Fi500&Display=hpfr&DefSeekPage=&Toc=&TocEntry=&TocRestrict=n&QField=title%5E${titleField}&UseQField=title&Docs=&SearchMethod=1&Time=&FullText=&IntQFieldOp=1&Query=${query}&ExtQFieldOp=1&FuzzyDegree=0&${indexes}`;
+}
+
+// Convert an EPA NSCEP document viewer/landing URL into the raw-text download URL.
+// The viewer endpoint uses ZyActionD=ZyDocument and displays scanned page images.
+// The same .txt endpoint with ZyActionW=Download returns the OCR/plain-text file
+// referenced by the File= parameter.
+function toNepisRawTextUrl(landingUrl) {
+  try {
+    const url = new URL(landingUrl);
+    if (!/nepis\.epa\.gov/i.test(url.hostname)) return null;
+    if (!/\.txt$/i.test(url.pathname)) return null;
+    // Already a download link — nothing to do.
+    if (/ZyActionW=Download/i.test(url.search)) return landingUrl;
+    // Switch from the viewer action to the download action, keeping File= etc.
+    url.searchParams.delete('ZyActionD');
+    url.searchParams.set('ZyActionW', 'Download');
+    // The download endpoint expects SearchMethod=4 and a text-friendly Display.
+    url.searchParams.set('SearchMethod', '4');
+    url.searchParams.set('Display', 'h|p|f');
+    return url.toString();
+  } catch (e) {
+    return null;
+  }
 }
 
 // Queries to run against NEPI S for any SC/NC/GA (tristate) lake
@@ -3717,8 +3715,11 @@ function buildNepisQueryVariants(lakeName, state) {
   const primaryKey = primary.toLowerCase();
   for (const a of (aliasMap[primaryKey] || [])) addName(a);
   // State name helps the historical "Report on Lake … South Carolina" series
+  // CREDIT BUDGET: reduced from 8 variants to 2 — primary name + state name.
+  // The NSCEP title filter is now "Report on" (not "Report on Lake"), so both
+  // naming conventions are caught with a single search per variant.
   variants.add(stateName);
-  return [...variants].filter(Boolean).slice(0, 8); // cap Firecrawl calls
+  return [...variants].filter(Boolean).slice(0, 2);
 }
 __name(buildNepisSearchUrl, 'buildNepisSearchUrl');
 __name(buildNepisQueryVariants, 'buildNepisQueryVariants');
@@ -3817,42 +3818,19 @@ async function handleResearchDatasetHunt(request, env) {
   };
 
   // ── Phase 1: Firecrawl /v1/map — crawl agency sites for report URLs ──
+  // CREDIT BUDGET: skip agency map entirely — the discover step already seeds
+  // SCDNR/NCWRC/GADNR lake description and regulations pages, and proxy-download
+  // can handle them with basic fetch. Only run NEPIS searches here since they
+  // need Firecrawl to harvest ZyActionD links from dynamic search results.
   if (firecrawlKey) {
     const targets = DATASET_HUNT_TARGETS[state] || DATASET_HUNT_TARGETS.SC;
     for (const target of targets) {
-      if (target.isNepis) {
-        // Run multiple NEPI S queries so every tristate lake surfaces (lake name + aliases + state)
-        const variants = buildNepisQueryVariants(lakeName, state);
-        for (const q of variants) {
-          const mapUrl = buildNepisSearchUrl(lakeName, state, q);
-          await harvestNepisSearchPage(mapUrl, q);
-        }
-        continue;
-      }
-      try {
-        const mapRes = await fetch('https://api.firecrawl.dev/v1/map', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            url: target.url,
-            search: baseName,
-            limit: 50,
-            ignoreSitemap: false,
-          })
-        });
-        if (!mapRes.ok) {
-          console.warn(`Firecrawl map failed for ${target.url}: HTTP ${mapRes.status}`);
-          continue;
-        }
-        const mapData = await mapRes.json();
-        for (const link of (mapData.links || [])) {
-          const url = typeof link === 'string' ? link : (link.url || link);
-          if (!url) continue;
-          const title = (typeof link === 'object' && link.title) ? String(link.title) : '';
-          ingestLink(url, title || url, target.label, 'firecrawl_map', 5);
-        }
-      } catch (e) {
-        console.warn(`Firecrawl map error for ${target.url}: ${e.message}`);
+      if (!target.isNepis) continue; // skip agency maps — already seeded by discover
+      // Run NEPIS queries (capped to 2 variants by buildNepisQueryVariants)
+      const variants = buildNepisQueryVariants(lakeName, state);
+      for (const q of variants) {
+        const mapUrl = buildNepisSearchUrl(lakeName, state, q);
+        await harvestNepisSearchPage(mapUrl, q);
       }
     }
   }
@@ -3862,23 +3840,17 @@ async function handleResearchDatasetHunt(request, env) {
     const stateName = { SC: 'South Carolina', NC: 'North Carolina', GA: 'Georgia' }[state] || 'South Carolina';
     const dnrSite = state === 'NC' ? 'site:ncwildlife.org' : state === 'GA' ? 'site:georgiawildlife.com' : 'site:dnr.sc.gov';
     const huntQueries = [
-      `"${baseName}" stocking report SCDNR OR NCWRC OR "GA DNR" filetype:pdf`,
-      `"${baseName}" creel survey fisheries assessment filetype:pdf`,
-      `"${baseName}" annual fisheries report ${dnrSite}`,
-      `"${baseName}" lake fisheries study "dissolved oxygen" OR thermocline OR stratification`,
-      `"${baseName}" reservoir fish population electrofishing survey`,
-      // EPA NSCEP / NEPI S — lake-name + state-name variants for full tristate coverage
-      `"Report on Lake ${baseName}" site:nepis.epa.gov`,
-      `"${baseName}" "${stateName}" (lake OR reservoir) (water quality OR limnology OR eutrophication) site:nepis.epa.gov OR EPA`,
-      `"Report on Lake" "${stateName}" site:nepis.epa.gov`,
-      `"${baseName}" NESWP OR "National Eutrophication" OR "Clean Lakes" ${stateName}`,
+      `\"${baseName}\" creel survey fisheries assessment filetype:pdf`,
+      `\"${baseName}\" annual fisheries report ${dnrSite}`,
+      // EPA NSCEP — covers both "Report on Lake X" and "Report on X Lake" naming
+      `\"Report on Lake ${baseName}\" OR \"Report on ${baseName} Lake\" site:nepis.epa.gov`,
     ];
     for (const q of huntQueries) {
       try {
         const searchRes = await fetch('https://api.tavily.com/search', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${tavilyKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: q, search_depth: 'advanced', max_results: 5, include_raw_content: false })
+          body: JSON.stringify({ query: q, search_depth: 'basic', max_results: 3, include_raw_content: false })
         });
         if (!searchRes.ok) continue;
         const searchData = await searchRes.json();
