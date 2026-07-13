@@ -3842,7 +3842,9 @@ __name(extractHtmlTableRows, "extractHtmlTableRows");
 // Parse markdown pipe-delimited tables (from Firecrawl/normalized text)
 function extractMarkdownTableRows(text) {
   const rows = [];
-  const lines = String(text || '').split('\n');
+  // Handle both actual newlines and escaped \n sequences from JSON storage
+  const normalized = String(text || '').replace(/\\n/g, '\n');
+  const lines = normalized.split('\n');
   for (const line of lines) {
     if (!line.includes('|')) continue;
     const cells = line.split('|').map(c => c.trim()).filter(Boolean);
@@ -4127,7 +4129,18 @@ async function handleResearchDeterministicFacts(request, env) {
           profile._regsDebug.mdRows = extractMarkdownTableRows(regsHtml).length;
           profile._regsDebug.first100chars = regsHtml.slice(0, 100);
           const parsedRegs = parseSCRegulationsFromHtml(lakeName, regsUrl, regsHtml, lakeRegsHtml);
-          profile.regulations = mergeMissing(profile.regulations, parsedRegs.regulations || {});
+          // Deep merge parsed regulations — don't use mergeMissing (not in scope)
+          const pr = parsedRegs.regulations || {};
+          if (pr.state) profile.regulations.state = pr.state;
+          if (pr.generalStateRegulations) {
+            profile.regulations.generalStateRegulations = profile.regulations.generalStateRegulations || {};
+            Object.assign(profile.regulations.generalStateRegulations, pr.generalStateRegulations);
+          }
+          if (pr.lakeSpecificRegulations) {
+            profile.regulations.lakeSpecificRegulations = profile.regulations.lakeSpecificRegulations || {};
+            Object.assign(profile.regulations.lakeSpecificRegulations, pr.lakeSpecificRegulations);
+          }
+          if (pr.notes) profile.regulations.notes = pr.notes;
           for (const src of parsedRegs.sources || []) profile.sources.push(src);
           for (const [sec, fields] of Object.entries(parsedRegs.evidence || {})) for (const [field, entries] of Object.entries(fields || {})) mergeEvidence(sec, field, entries);
           profile._regsDebug.parsedCreelLimits = parsedRegs.regulations?.generalStateRegulations?.creelLimits || {};
