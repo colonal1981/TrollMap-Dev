@@ -2777,6 +2777,213 @@ __name(handleCoachPlan, "handleCoachPlan");
 
 // ─── EXTENDED EVIDENCE ACQUISITION PIPELINE FUNCTIONS ───
 
+async function handleResearchLimnologyData(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const { lakeName, bboxNorth, bboxSouth, bboxEast, bboxWest } = body;
+  if (!lakeName) return new Response(JSON.stringify({ ok: false, error: 'missing lakeName' }), { status: 400, headers: JSON_HEADERS });
+  if (bboxNorth == null || bboxSouth == null || bboxEast == null || bboxWest == null) {
+    return new Response(JSON.stringify({ ok: false, error: 'missing bbox — provide bboxNorth/South/East/West from lake GeoJSON' }), { status: 400, headers: JSON_HEADERS });
+  }
+
+  // ── Step 1: Fetch DO + Temperature measurements from WQP within lake bbox ──
+  const chars = ['Temperature%2C+water', 'Dissolved+oxygen+%28DO%29', 'Dissolved+Oxygen'];
+  const wqpUrl = `https://www.waterqualitydata.us/data/Result/search?` +
+    `north=${bboxNorth}&south=${bboxSouth}&east=${bboxEast}&west=${bboxWest}` +
+    `&siteType=Lake%2C+Reservoir%2C+Impoundment` +
+    `&characteristicName=${chars.join('&characteristicName=')}` +
+    `&dataProfile=narrowResult&mimeType=csv&sorted=no` +
+    `&startDateLo=01-01-2010`;
+
+  let csvText;
+  try {
+    const wqpRes = await fetch(wqpUrl, {
+      headers: { 'User-Agent': 'TrollMap/1.0 (fishing intelligence platform; contact: trollmap@colonal1981.workers.dev)' }
+    });
+    if (!wqpRes.ok) throw new Error(`WQP HTTP ${wqpRes.status}`);
+    csvText = await wqpRes.text();
+  } catch (e) {
+    return new Response(JSON.stringify({ ok: false, error: `WQP fetch failed: ${e.message}`, thermocline: null }), { headers: JSON_HEADERS });
+  }
+
+  // ── Step 2: Parse CSV — extract depth, value, characteristic, date ──
+  const lines = csvText.split('\n').filter(Boolean);
+  if (lines.length < 2) {
+    return new Response(JSON.stringify({ ok: true, recordCount: 0, thermocline: null, oxygen: null, note: 'No WQP monitoring data found for this lake boundary' }), { headers: JSON_HEADERS });
+  }
+
+  const headers = lines[0].split(',').map(h => h.replace(/"/g, '').trim());
+  const col = (name) => headers.findIndex(h => h.toLowerCase().includes(name.toLowerCase()));
+
+  const iChar    = col('CharacteristicName');
+  const iValue   = col('ResultMeasureValue');
+  const iUnit    = col('ResultMeasure/MeasureUnitCode');
+  const iDepth   = col('ActivityDepthHeightMeasure/MeasureValue');
+  const iDepthU  = col('ActivityDepthHeightMeasure/MeasureUnitCode');
+  const iDate    = col('ActivityStartDate');
+  const iMonth   = -1; // derived from date
+
+  const records = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(',').map(c => c.replace(/"/g, '').trim());
+    const char    = cols[iChar]  || '';
+    const valRaw  = cols[iValue] || '';
+    const unit    = cols[iUnit]  || '';
+    const depRaw  = cols[iDepth] || '';
+    const depUnit = cols[iDepthU] || '';
+    const date    = cols[iDate]  || '';
+    const val     = parseFloat(valRaw);
+    let   dep     = parseFloat(depRaw);
+    if (isNaN(val) || isNaN(dep) || dep < 0) continue;
+    // Convert depth to feet if in meters
+    if (depUnit.toLowerCase().includes('m') && !depUnit.toLowerCase().includes('ft')) dep = dep * 3.28084;
+    // Determine type
+    const isTemp = /temperature/i.test(char);
+    const isDO   = /oxygen/i.test(char);
+    if (!isTemp && !isDO) continue;
+    // Convert temp to F if Celsius
+    let valF = val;
+    if (isTemp && (unit.toLowerCase().includes('deg c') || unit === 'deg C' || unit === 'C')) valF = val * 9/5 + 32;
+    // Extract month from date
+    const month = date ? parseInt(date.split('-')[1]) : null;
+    records.push({ type: isTemp ? 'temp' : 'do', depthFt: Math.round(dep * 10) / 10, value: Math.round(valF * 10) / 10, month, date, unit });
+  }
+
+  if (records.length === 0) {
+    return new Response(JSON.stringify({ ok: true, recordCount: 0, thermocline: null, oxygen: null, note: 'WQP returned data but no usable depth+value records found' }), { headers: JSON_HEADERS });
+  }
+
+  // ── Step 3: Filter to summer months (Jun–Sep = 6–9) for thermocline ──
+  const summerRecs = records.filter(r => r.month >= 6 && r.month <= 9);
+  const allDO      = records.filter(r => r.type === 'do');
+  const summerDO   = summerRecs.filter(r => r.type === 'do');
+  const summerTemp = summerRecs.filter(r => r.type === 'temp');
+
+  // ── Step 4: Derive thermocline depth ──
+  // Method A: DO-based — find shallowest depth where DO consistently drops below 4mg/L
+  let thermoclineDepthFt = null;
+  let method = null;
+  let confidence = null;
+  let evidenceCount = 0;
+
+  if (summerDO.length >= 3) {
+    // Bin DO readings by depth bracket (2ft bands)
+    const doBins = {};
+    for (const r of summerDO) {
+      const bin = Math.floor(r.depthFt / 2) * 2;
+      if (!doBins[bin]) doBins[bin] = [];
+      doBins[bin].push(r.value);
+    }
+    // Find shallowest bin where median DO < 4mg/L
+    const sortedBins = Object.keys(doBins).map(Number).sort((a, b) => a - b);
+    for (const bin of sortedBins) {
+      const vals = doBins[bin].sort((a, b) => a - b);
+      const median = vals[Math.floor(vals.length / 2)];
+      if (median < 4.0) {
+        thermoclineDepthFt = bin;
+        method = 'derived_from_do_profile';
+        evidenceCount = summerDO.length;
+        confidence = summerDO.length >= 10 ? 88 : summerDO.length >= 5 ? 75 : 60;
+        break;
+      }
+    }
+  }
+
+  // Method B: Temperature-based — find depth of steepest temp gradient
+  if (!thermoclineDepthFt && summerTemp.length >= 3) {
+    const tempBins = {};
+    for (const r of summerTemp) {
+      const bin = Math.floor(r.depthFt / 2) * 2;
+      if (!tempBins[bin]) tempBins[bin] = [];
+      tempBins[bin].push(r.value);
+    }
+    const sortedBins = Object.keys(tempBins).map(Number).sort((a, b) => a - b);
+    let maxGradient = 0, maxBin = null;
+    for (let i = 1; i < sortedBins.length; i++) {
+      const shallowVals = tempBins[sortedBins[i-1]];
+      const deepVals    = tempBins[sortedBins[i]];
+      const shallowMed  = shallowVals.sort((a,b)=>a-b)[Math.floor(shallowVals.length/2)];
+      const deepMed     = deepVals.sort((a,b)=>a-b)[Math.floor(deepVals.length/2)];
+      const gradient    = shallowMed - deepMed; // positive = cooling with depth
+      if (gradient > maxGradient) { maxGradient = gradient; maxBin = sortedBins[i-1]; }
+    }
+    if (maxBin !== null && maxGradient >= 3) { // at least 3°F drop per 2ft band
+      thermoclineDepthFt = maxBin;
+      method = 'derived_from_temp_gradient';
+      evidenceCount = summerTemp.length;
+      confidence = summerTemp.length >= 10 ? 80 : summerTemp.length >= 5 ? 65 : 50;
+    }
+  }
+
+  // ── Step 5: Derive oxygen depletion floor (anoxic below X ft) ──
+  let anoxicBelowFt = null;
+  if (allDO.length >= 3) {
+    const doBins = {};
+    for (const r of allDO) {
+      const bin = Math.floor(r.depthFt / 2) * 2;
+      if (!doBins[bin]) doBins[bin] = [];
+      doBins[bin].push(r.value);
+    }
+    const sortedBins = Object.keys(doBins).map(Number).sort((a, b) => a - b);
+    for (const bin of sortedBins) {
+      const vals = doBins[bin].sort((a, b) => a - b);
+      const median = vals[Math.floor(vals.length / 2)];
+      if (median < 2.0) { anoxicBelowFt = bin; break; }
+    }
+  }
+
+  // ── Step 6: Get most recent observation date ──
+  const dates = records.map(r => r.date).filter(Boolean).sort();
+  const lastObserved = dates[dates.length - 1] || null;
+
+  // ── Step 7: Build species-specific oxygen tolerance notes ──
+  const doNotes = [];
+  if (thermoclineDepthFt !== null) {
+    doNotes.push(`Striped bass (need >4mg/L DO): avoid below ${thermoclineDepthFt}ft in summer`);
+    doNotes.push(`Largemouth bass (tolerate ~2mg/L DO): can fish to ${anoxicBelowFt ?? thermoclineDepthFt + 6}ft`);
+  }
+
+  const result = {
+    ok: true,
+    recordCount: records.length,
+    summerRecords: summerRecs.length,
+    lastObserved,
+    thermocline: thermoclineDepthFt !== null ? {
+      depthFt: thermoclineDepthFt,
+      confidence,
+      method,
+      evidenceCount,
+      sourceType: 'WQP_measured',
+      lastObserved,
+      note: `Summer thermocline derived from ${evidenceCount} WQP measurements. ${doNotes[0] || ''}`
+    } : null,
+    oxygen: {
+      depletionDepthFt: thermoclineDepthFt,
+      anoxicBelowFt,
+      stripeThresholdFt: thermoclineDepthFt,
+      largemouthThresholdFt: anoxicBelowFt,
+      note: doNotes.join(' '),
+      sourceType: 'WQP_measured',
+      evidenceCount: allDO.length
+    },
+    rawSummary: {
+      doReadings: allDO.length,
+      tempReadings: records.filter(r => r.type === 'temp').length,
+      summerDoReadings: summerDO.length,
+      summerTempReadings: summerTemp.length,
+      depthRangeFt: records.length ? `${Math.min(...records.map(r=>r.depthFt))}–${Math.max(...records.map(r=>r.depthFt))}ft` : null
+    }
+  };
+
+  // Cache result in R2 for 30 days
+  try {
+    const safe = lakeName.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+    await env.TROLLMAP_DATA.put(`lake_packages/${safe}/limnology_wqp.json`, JSON.stringify({ ...result, cachedAt: new Date().toISOString() }), { expirationTtl: 60 * 60 * 24 * 30 });
+  } catch (_) {}
+
+  return new Response(JSON.stringify(result), { headers: JSON_HEADERS });
+}
+__name(handleResearchLimnologyData, 'handleResearchLimnologyData');
+
 async function handleResearchDiscover(request, env) {
   let body;
   try { body = await request.json(); } catch { body = {}; }
@@ -4593,6 +4800,9 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
         }
       }
       // ── LAKE RESEARCH ROUTES ─────────────────────────────────────
+      if (path === "/research/limnology-data" && request.method === "POST") {
+        return handleResearchLimnologyData(request, env);
+      }
       if (path === "/research/discover" && request.method === "POST") {
         return handleResearchDiscover(request, env);
       }
