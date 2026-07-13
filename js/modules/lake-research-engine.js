@@ -547,7 +547,7 @@ async function extractTextFromPDFBytes(arrayBuffer, onProgress) {
 /**
  * Step-by-Step Evidence Acquisition Pipeline Runner
  */
-async function runFromNormalized(lakeName) {
+async function runFromNormalized(lakeName, callbacks = {}) {
   if (_state.researchInProgress) { alert('A research task is already in progress.'); return; }
   if (!lakeName) { alert('Please select a lake.'); return; }
   _state.researchInProgress = true;
@@ -607,7 +607,7 @@ async function runFromNormalized(lakeName) {
     // Now run steps 7 onward exactly as the full pipeline does
     // (fact extraction, dedup, mapping, gap analysis, agents, save)
     // We reuse the shared tail logic by calling into the pipeline directly
-    await runPipelineTail(lakeName, baseName, stateName, normalizedDocuments, scoredSources);
+    await runPipelineTail(lakeName, baseName, stateName, normalizedDocuments, scoredSources, callbacks);
 
   } catch (e) {
     log(`❌ Resume Aborted: ${e.message}`);
@@ -617,7 +617,7 @@ async function runFromNormalized(lakeName) {
   }
 }
 
-async function runEvidencePipeline(lakeName) {
+async function runEvidencePipeline(lakeName, callbacks = {}) {
   if (_state.researchInProgress) {
     alert('A research task or pipeline is already in progress.');
     return;
@@ -1025,7 +1025,7 @@ async function runEvidencePipeline(lakeName) {
     scoredSources.sort((a,b) => (b.scoring.composite||0) - (a.scoring.composite||0));
     await savePipelineDataToR2(lakeName, 'quality_scores.json', { scoredSources });
 
-    await runPipelineTail(lakeName, baseName, stateName, normalizedDocuments, scoredSources);
+    await runPipelineTail(lakeName, baseName, stateName, normalizedDocuments, scoredSources, callbacks);
 
   } catch (err) {
     log(`❌ Pipeline Aborted: ${err.message}`);
@@ -1051,7 +1051,7 @@ function getDocChunks(normalizedDocuments, titlePatterns, lakeName, maxChars) {
   }).join('\n\n');
 }
 
-async function runPipelineTail(lakeName, baseName, stateName, normalizedDocuments, scoredSources) {
+async function runPipelineTail(lakeName, baseName, stateName, normalizedDocuments, scoredSources, callbacks = {}) {
     // ----------------------------------------------------
     // STEP 7: Fact extraction (quoted/source-backed only)
     // ----------------------------------------------------
@@ -1407,8 +1407,8 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     setProgress("Pipeline completed successfully!", 100);
     log(`=== EVIDENCE PIPELINE COMPLETE ===`);
 
-    await loadProfile(lakeName);
-    if (contradictions.length > 0) renderContradictionsAlert(contradictions, lakeName);
+    if (callbacks.onComplete) await callbacks.onComplete(lakeName);
+    if (contradictions.length > 0 && callbacks.onContradictions) callbacks.onContradictions(contradictions, lakeName);
 }
 
 async function savePipelineDataToR2(lakeName, filename, data) {

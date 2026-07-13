@@ -1037,7 +1037,7 @@ function initLakeResearch() {
     const lake = document.getElementById('researchLakeSelect')?.value;
     if (!lake) { alert('Select a lake first'); return; }
     if (!confirm(`Launch the factual lake research pipeline for ${lake}? This will pull official pages and GIS sources first, fetch accessible documents, parse PDFs client-side with PDF.js, and only use quoted/source-backed extraction where needed. Continue?`)) return;
-    runEvidencePipeline(lake);
+    runEvidencePipeline(lake, { onComplete: loadProfile, onContradictions: renderContradictionsAlert });
   });
 
   // Inject Resume button next to Research button if not already in HTML
@@ -1057,7 +1057,7 @@ function initLakeResearch() {
     const lake = document.getElementById('researchLakeSelect')?.value;
     if (!lake) { alert('Select a lake first'); return; }
     if (!confirm(`Resume extraction for ${lake} using existing normalized documents already in R2? Skips all PDF downloads — jumps straight to scoring, fact extraction, and mapping.`)) return;
-    runFromNormalized(lake);
+    runFromNormalized(lake, { onComplete: loadProfile, onContradictions: renderContradictionsAlert });
   });
 
   document.getElementById('btnSaveNotes')?.addEventListener('click', async () => {
@@ -1171,7 +1171,7 @@ function initLakeResearch() {
     if (!selected.length) { alert('Pick at least one section'); return; }
     if (picker) picker.style.display = 'none';
     log(`Refresh requested for sections: ${selected.join(', ')} — running full factual refresh from existing normalized docs.`);
-    await runFromNormalized(_state.currentLakeName);
+    await runFromNormalized(_state.currentLakeName, { onComplete: loadProfile, onContradictions: renderContradictionsAlert });
   });
 
   document.getElementById('btnDeleteResearch')?.addEventListener('click', async () => {
