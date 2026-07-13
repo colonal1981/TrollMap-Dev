@@ -1,6 +1,6 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { LAKE_DB } from '../data/lakes.js';
-import { _state, runEvidencePipeline, runFromNormalized, RESEARCH_ORDER, RESEARCH_LABELS } from './lake-research-engine.js';
+import { _state, runEvidencePipeline, runFromNormalized, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName } from './lake-research-engine.js';
 
 
 function renderContradictionsAlert(contradictions, lakeName) {
