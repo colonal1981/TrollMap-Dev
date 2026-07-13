@@ -1,0 +1,955 @@
+{
+  "lakeName": "Lake Wateree, SC",
+  "aliases": [],
+  "state": "SC",
+  "riverSystem": "Catawba-Wateree",
+  "archetype": "",
+  "surfaceAreaAcres": 13025,
+  "maxDepthFt": 225,
+  "averageDepthFt": 6.9,
+  "limnology": {
+    "waterClarity": {
+      "typical": "Mean Secchi disc transparency in Lake Wateree was 17 meters.",
+      "color": null,
+      "secchiFt": null,
+      "note": ""
+    },
+    "surfaceWater": {},
+    "thermocline": {
+      "summerDepthFt": null,
+      "method": null,
+      "note": null,
+      "strength": null,
+      "winterMix": null
+    },
+    "oxygen": {
+      "depletionDepthFt": null,
+      "anoxicBelowFt": null,
+      "note": "Marked depression of dissolved oxygen with depth was observed at sampling stations 1 and 2 in July."
+    },
+    "trophicStatus": null,
+    "flowCharacteristics": null,
+    "seasonalDrawdownFt": null
+  },
+  "forage": {
+    "primaryForage": [],
+    "secondaryForage": [],
+    "predatorSpecies": [
+      "Black Crappie",
+      "Striped Bass",
+      "Largemouth Bass",
+      "Catfish",
+      "Bluegill",
+      "Redear Sunfish Shellcracker",
+      "Redbreast Sunfish",
+      "Warmouth",
+      "Channel Catfish",
+      "Blue Catfish",
+      "White Perch",
+      "White Bass / Hybrid"
+    ],
+    "speciesAbundance": {},
+    "knownStockings": [
+      {
+        "species": "Striped Bass",
+        "agency": "SCDNR",
+        "note": "Stocked regularly"
+      }
+    ],
+    "baitfishMovement": null,
+    "forageCalendar": {},
+    "notes": []
+  },
+  "biology": {
+    "primaryForage": [],
+    "secondaryForage": [],
+    "predatorSpecies": [
+      "Black Crappie",
+      "Striped Bass",
+      "Largemouth Bass",
+      "Catfish",
+      "Bluegill",
+      "Redear Sunfish Shellcracker",
+      "Redbreast Sunfish",
+      "Warmouth",
+      "Channel Catfish",
+      "Blue Catfish",
+      "White Perch",
+      "White Bass / Hybrid"
+    ],
+    "speciesAbundance": {},
+    "knownStockings": [
+      {
+        "species": "Striped Bass",
+        "agency": "SCDNR",
+        "note": "Stocked regularly"
+      }
+    ],
+    "baitfishMovement": null,
+    "forageCalendar": {},
+    "notes": []
+  },
+  "habitat": {
+    "structuralElements": {
+      "channelLedges": "mid-depth contour density indicates multiple ledges / drop-offs",
+      "flats": "multiple large shallow flats appear in mapped depth-area polygons"
+    },
+    "cover": [],
+    "vegetation": [],
+    "standingTimber": null,
+    "dockDensity": null,
+    "artificialHabitat": [
+      "Fish attractors"
+    ],
+    "artificialHabitatDetails": {
+      "attractorCount": 22,
+      "attractorTypes": [
+        "Concrete rubble - spillway",
+        "Mossback",
+        "brush/trees"
+      ]
+    },
+    "notes": "22 mapped fish attractors available from SCDNR Freshwater Fish Attractors. Structural elements summarized from TrollMap contour, depth-area, POI, and boundary layers."
+  },
+  "navigation": {
+    "ramps": [
+      {
+        "name": "Beaver Creek",
+        "lat": 34.434081,
+        "lon": -80.770029,
+        "lanes": 1,
+        "county": "Kershaw",
+        "owner": "SCDOT"
+      },
+      {
+        "name": "Buck Hill",
+        "lat": 34.335864,
+        "lon": -80.707209,
+        "lanes": 2,
+        "county": "Kershaw",
+        "owner": "Duke Energy"
+      },
+      {
+        "name": "Clearwater Cove",
+        "lat": 34.379271,
+        "lon": -80.728814,
+        "lanes": 4,
+        "county": "Kershaw",
+        "owner": "Duke Energy"
+      },
+      {
+        "name": "Colonel Creek",
+        "lat": 34.368854,
+        "lon": -80.797237,
+        "lanes": 3,
+        "county": "Fairfield",
+        "owner": "Duke Energy"
+      },
+      {
+        "name": "June Creek",
+        "lat": 34.391261,
+        "lon": -80.829429,
+        "lanes": 2,
+        "county": "Fairfield",
+        "owner": "Duke Energy"
+      },
+      {
+        "name": "Lake Wateree State Park",
+        "lat": 34.432841,
+        "lon": -80.858374,
+        "lanes": 2,
+        "county": "Fairfield",
+        "owner": "SCPRT"
+      },
+      {
+        "name": "Molly Creek Access Area Boat Ramp",
+        "lat": 34.382753,
+        "lon": -80.787994,
+        "lanes": 2,
+        "county": "Fairfield",
+        "owner": "Duke Energy"
+      },
+      {
+        "name": "Taylor Creek",
+        "lat": 34.43773,
+        "lon": -80.875784,
+        "lanes": 2,
+        "county": "Fairfield",
+        "owner": "Duke Energy"
+      },
+      {
+        "name": "Wateree Creek Access Area",
+        "lat": 34.469605,
+        "lon": -80.913862,
+        "lanes": 2,
+        "county": "Fairfield",
+        "owner": "Duke Energy"
+      }
+    ],
+    "hazards": [],
+    "notes": null,
+    "accessPointCount": 14,
+    "privateAccessCount": 5
+  },
+  "regulations": {
+    "state": "SC",
+    "generalStateRegulations": {
+      "lengthLimits": {
+        "American Eel": "9 inches min",
+        "Blue Catfish": "Only 2 fish larger than 32 inches per person may be taken",
+        "Bream": "Any length",
+        "Redbreast Sunfish": "Any length",
+        "Crappie": "8 inches min",
+        "Walleye / Sauger": "Any length",
+        "Chain Pickerel": "Any length",
+        "Redfin Pickerel": "Any length",
+        "Yellow Perch": "Any length",
+        "Smallmouth Bass": "12 inches min",
+        "Redeye Bass": "Any length",
+        "Largemouth Bass": "Any length",
+        "Spotted Bass": "Any length",
+        "White Bass": "Any length",
+        "Striped Bass / Hybrid": "Any length"
+      },
+      "creelLimits": {
+        "American Eel": "25",
+        "Blue Catfish": "25",
+        "Bream": "30",
+        "Redbreast Sunfish": "15",
+        "Crappie": "20",
+        "Walleye / Sauger": "No more than 8 combined total of walleye or sauger",
+        "Chain Pickerel": "30",
+        "Redfin Pickerel": "30",
+        "Yellow Perch": "30",
+        "Smallmouth Bass": "No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+        "Redeye Bass": "No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+        "Largemouth Bass": "No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+        "Spotted Bass": "15",
+        "White Bass": "10",
+        "Striped Bass / Hybrid": "10"
+      }
+    },
+    "lakeSpecificRegulations": {
+      "hasExceptions": true,
+      "creelLimits": {
+        "Largemouth Bass": "No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+        "creel_0": "Anglers may keep no more than five largemouth bass (or combined smallmouth, largemouth, redeye bass) per day in Lake Wateree."
+      },
+      "sizeLimits": {
+        "Largemouth Bass": "14 inches min"
+      },
+      "specialRules": [
+        "Allowable Nongame Devices ( Marking of Nongame Devices ) Device License Limits Traps Recreational License 2 Commercial License 5 Trotlines Recreational License 1 line with 50 hooks maximum Commercial License 3 lines with 150 hooks maximum Facebook RSS Feed Twitter You Tube South Carolina Department "
+      ],
+      "closedSeasons": [],
+      "_raw": []
+    },
+    "notes": "Always verify exact lake exceptions at official agency site before fishing. Striped bass/hybrid: this waterbody is not listed as a striper exception on eRegulations; statewide rule applies on the lake. River/tailwater rows (e.g. Santee River system) do not apply to the reservoir.",
+    "lastUpdated": "November 11, 2025",
+    "lengthLimits": {
+      "American Eel": "9 inches min",
+      "Blue Catfish": "Only 2 fish larger than 32 inches per person may be taken",
+      "Bream": "Any length",
+      "Redbreast Sunfish": "Any length",
+      "Crappie": "8 inches min",
+      "Walleye / Sauger": "Any length",
+      "Chain Pickerel": "Any length",
+      "Redfin Pickerel": "Any length",
+      "Yellow Perch": "Any length",
+      "Smallmouth Bass": "12 inches min",
+      "Redeye Bass": "Any length",
+      "Largemouth Bass": "14 inches min",
+      "Spotted Bass": "Any length",
+      "White Bass": "Any length",
+      "Striped Bass / Hybrid": "Any length"
+    },
+    "creelLimits": {
+      "American Eel": "25",
+      "Blue Catfish": "25",
+      "Bream": "30",
+      "Redbreast Sunfish": "15",
+      "Crappie": "20",
+      "Walleye / Sauger": "No more than 8 combined total of walleye or sauger",
+      "Chain Pickerel": "30",
+      "Redfin Pickerel": "30",
+      "Yellow Perch": "30",
+      "Smallmouth Bass": "No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+      "Redeye Bass": "No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+      "Largemouth Bass": "No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+      "Spotted Bass": "15",
+      "White Bass": "10",
+      "Striped Bass / Hybrid": "10"
+    }
+  },
+  "trolling": null,
+  "trollingIntelligence": null,
+  "summary": {
+    "text": "Lake Wateree, SC has about 13,025 surface acres, with a maximum depth near 225 feet. Confirmed sport fish include Black Crappie, Striped Bass, Largemouth Bass, Catfish, Bluegill, Redear Sunfish Shellcracker, Redbreast Sunfish, Warmouth, Channel Catfish, Blue Catfish, White Perch, White Bass / Hybrid; documented stocking notes include Striped Bass. Habitat facts currently confirm 22 mapped fish attractors; mapped structure includes channelLedges, flats.",
+    "keywords": [
+      "Black Crappie",
+      "Striped Bass",
+      "Largemouth Bass",
+      "Catfish",
+      "Bluegill",
+      "Redear Sunfish Shellcracker",
+      "Redbreast Sunfish",
+      "Warmouth",
+      "Channel Catfish",
+      "Blue Catfish",
+      "White Perch",
+      "White Bass / Hybrid"
+    ]
+  },
+  "evidence": {
+    "identity": {
+      "surfaceAreaAcres": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR Lake Description",
+          "sourceUrl": "https://www.dnr.sc.gov/lakes/wateree/description.html",
+          "quote": "Acres of Surface Water: 13,025",
+          "method": "regex_exact_text"
+        }
+      ],
+      "shorelineLengthMi": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR Lake Description",
+          "sourceUrl": "https://www.dnr.sc.gov/lakes/wateree/description.html",
+          "quote": "Miles of Shoreline: 620",
+          "method": "regex_exact_text"
+        }
+      ],
+      "counties": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR Lake Description",
+          "sourceUrl": "https://www.dnr.sc.gov/lakes/wateree/description.html",
+          "quote": "Counties Lake is Within: Fairfield, Kershaw, Lancaster",
+          "method": "regex_exact_text"
+        }
+      ],
+      "reservoirOwner": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR Lake Description",
+          "sourceUrl": "https://www.dnr.sc.gov/lakes/wateree/description.html",
+          "quote": "Owned and Managed by: Duke-Energy Facebook RSS Feed Twitter You Tube South Carolina Department of Natural Resources - Phone Numbers | Accessibility Rembert C. Dennis Building, 1000 Assembly Street, Columbia, SC 29201 � 2014 All rights reserved. webmaster@dnr.sc.gov",
+          "method": "regex_exact_text"
+        }
+      ],
+      "normalPoolFt": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR Lake Description",
+          "sourceUrl": "https://www.dnr.sc.gov/lakes/wateree/description.html",
+          "quote": "Full pond elevation is 225.5 feet",
+          "method": "regex_exact_text"
+        }
+      ],
+      "yearImpounded": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR Lake Description",
+          "sourceUrl": "https://www.dnr.sc.gov/lakes/wateree/description.html",
+          "quote": "created in 1920",
+          "method": "regex_exact_text"
+        }
+      ],
+      "damName": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR Lake Description",
+          "sourceUrl": "https://www.dnr.sc.gov/lakes/wateree/description.html",
+          "quote": "The Wateree Dam is 3,380 feet long",
+          "method": "regex_exact_text"
+        }
+      ],
+      "riverSystem": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR Lake Description",
+          "sourceUrl": "https://www.dnr.sc.gov/lakes/wateree/description.html",
+          "quote": "largest of the Catawba-Wateree lakes",
+          "method": "regex_exact_text"
+        }
+      ]
+    },
+    "biology": {
+      "predatorSpecies": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR Lake Description",
+          "sourceUrl": "https://www.dnr.sc.gov/lakes/wateree/description.html",
+          "quote": "Popular sport fish on Lake Wateree include black crappie, striped bass, largemouth bass and catfish.",
+          "method": "regex_exact_text"
+        },
+        {
+          "sourceType": "official_structured",
+          "sourceLabel": "SCDNR South Carolina Public Water Access",
+          "sourceUrl": "worker:/ramps?state=SC",
+          "quote": null,
+          "method": "structured_species_aggregation",
+          "speciesCount": 11
+        }
+      ],
+      "knownStockings": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR Lake Description",
+          "sourceUrl": "https://www.dnr.sc.gov/lakes/wateree/description.html",
+          "quote": "stocks striped bass regularly",
+          "method": "regex_exact_text"
+        }
+      ]
+    },
+    "limnology": {},
+    "habitat": {
+      "artificialHabitatDetails": [
+        {
+          "sourceType": "official_structured",
+          "sourceLabel": "SCDNR Freshwater Fish Attractors",
+          "sourceUrl": "worker:/attractors?state=SC",
+          "quote": null,
+          "method": "structured_waterbody_aggregation",
+          "count": 22,
+          "types": [
+            "Concrete rubble - spillway",
+            "Mossback",
+            "brush/trees"
+          ]
+        }
+      ],
+      "structuralElements.channelLedges": [
+        {
+          "sourceType": "internal_geospatial_layer",
+          "sourceLabel": "TrollMap contour/supplemental/boundary layers",
+          "sourceUrl": "internal:contours+supplemental+boundaries",
+          "quote": null,
+          "method": "geometry_derived_structure_classification",
+          "lakeName": "Lake Wateree, SC"
+        }
+      ],
+      "structuralElements.flats": [
+        {
+          "sourceType": "internal_geospatial_layer",
+          "sourceLabel": "TrollMap contour/supplemental/boundary layers",
+          "sourceUrl": "internal:contours+supplemental+boundaries",
+          "quote": null,
+          "method": "geometry_derived_structure_classification",
+          "lakeName": "Lake Wateree, SC"
+        }
+      ]
+    },
+    "navigation": {
+      "accessPointCount": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR Lake Description",
+          "sourceUrl": "https://www.dnr.sc.gov/lakes/wateree/description.html",
+          "quote": "There are 14 access points in the Lake",
+          "method": "regex_exact_text"
+        }
+      ],
+      "publicRampCount": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR Lake Description",
+          "sourceUrl": "https://www.dnr.sc.gov/lakes/wateree/description.html",
+          "quote": "maintain eight public boat access areas on the lake and one below the dam. Lake Wateree State Recreation Area offers boating and bank fishing access. Five are privately owned and operated",
+          "method": "regex_exact_text"
+        }
+      ],
+      "ramps": [
+        {
+          "sourceType": "official_structured",
+          "sourceLabel": "SCDNR South Carolina Public Water Access",
+          "sourceUrl": "worker:/ramps?state=SC",
+          "quote": null,
+          "method": "structured_waterbody_aggregation",
+          "count": 9
+        }
+      ]
+    },
+    "regulations": {
+      "lastUpdated": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Last Updated: November 11, 2025",
+          "method": "regex_exact_text"
+        }
+      ],
+      "general.American Eel": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | American Eel | 9 inches min | 25",
+          "method": "table_row"
+        }
+      ],
+      "general.Blue Catfish": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Blue Catfish | Only 2 fish larger than 32 inches per person may be taken | 25",
+          "method": "table_row"
+        }
+      ],
+      "general.Bream": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Bream (includes bluegill, flier, warmouth, pumpkinseed, green sunfish, redear (shellcracker) and spotted sunfish) | Any length | 30",
+          "method": "table_row"
+        }
+      ],
+      "general.Redbreast Sunfish": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Redbreast Sunfish | Any length | 15",
+          "method": "table_row"
+        }
+      ],
+      "general.Crappie": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Crappie | 8 inches min | 20",
+          "method": "table_row"
+        }
+      ],
+      "general.Walleye / Sauger": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Walleye & Sauger | Any length | No more than 8 combined total of walleye or sauger",
+          "method": "table_row"
+        }
+      ],
+      "general.Chain Pickerel": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Chain Pickerel | Any length | 30",
+          "method": "table_row"
+        }
+      ],
+      "general.Redfin Pickerel": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Redfin Pickerel | Any length | 30",
+          "method": "table_row"
+        }
+      ],
+      "general.Yellow Perch": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Yellow Perch | Any length | 30",
+          "method": "table_row"
+        }
+      ],
+      "general.Smallmouth Bass": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide except the water bodies listed below: | Smallmouth Bass | 12 inches min | No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+          "method": "table_row"
+        }
+      ],
+      "general.Redeye Bass": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide except the water bodies listed below: | Redeye (Bartrams) Bass | Any length | No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+          "method": "table_row"
+        }
+      ],
+      "general.Largemouth Bass": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide except the water bodies listed below: | Largemouth Bass | Any length | No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+          "method": "table_row"
+        }
+      ],
+      "lakeSpecific.Largemouth Bass": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Lakes Blalock, Greenwood, Jocassee, Marion, Monticello, Moultrie, Murray, Secession, Wateree, Wylie and the middle reach of the Saluda River and the upper reach of the Santee River | Largemouth Bass | 14 inches min | No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+          "method": "table_row"
+        },
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "no largemouth bass less than 14 inches",
+          "method": "regex_exact_text"
+        }
+      ],
+      "general.Spotted Bass": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide except the water bodies listed below: | Spotted Bass | Any length | 15",
+          "method": "table_row"
+        }
+      ],
+      "general.White Bass": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide except the Savannah River | White Bass | Any length | 10",
+          "method": "table_row"
+        }
+      ],
+      "general.Striped Bass / Hybrid": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide except the water bodies list below: | Striped or Hybrid Bass or a combination | Any length | 10",
+          "method": "table_row"
+        }
+      ],
+      "lakeSpecific.specialRules": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Allowable Nongame Devices ( Marking of Nongame Devices ) Device License Limits Traps Recreational License 2 Commercial License 5 Trotlines Recreational License 1 line with 50 hooks maximum Commercial License 3 lines with 150 hooks maximum Facebook RSS Feed Twitter You Tube South Carolina Department ",
+          "method": "regex_exact_text"
+        }
+      ]
+    },
+    "summary": {
+      "text": [
+        {
+          "sourceType": "internal_synthesis",
+          "sourceLabel": "TrollMap deterministic profile synthesis",
+          "sourceUrl": "internal:deterministic-facts",
+          "quote": null,
+          "method": "deterministic_fact_synthesis"
+        },
+        {
+          "sourceType": "internal_synthesis",
+          "sourceLabel": "TrollMap deterministic profile synthesis",
+          "sourceUrl": "internal:deterministic-facts",
+          "quote": null,
+          "method": "deterministic_fact_synthesis"
+        }
+      ]
+    }
+  },
+  "sources": [
+    {
+      "label": "SCDNR Lake Description",
+      "url": "https://www.dnr.sc.gov/lakes/wateree/description.html",
+      "trust": "OFFICIAL",
+      "sourceType": "official_document"
+    },
+    {
+      "label": "SCDNR / eRegulations",
+      "url": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+      "trust": "OFFICIAL",
+      "sourceType": "official_document"
+    },
+    {
+      "label": "SCDNR South Carolina Public Water Access",
+      "url": "worker:/ramps?state=SC",
+      "trust": "OFFICIAL_GIS",
+      "sourceType": "official_structured"
+    },
+    {
+      "label": "SCDNR Freshwater Fish Attractors",
+      "url": "worker:/attractors?state=SC",
+      "trust": "OFFICIAL_GIS",
+      "sourceType": "official_structured"
+    },
+    {
+      "label": "TrollMap contour / supplemental / boundary layers",
+      "url": "internal:contours+supplemental+boundaries",
+      "trust": "OFFICIAL_GIS",
+      "sourceType": "internal_geospatial_layer"
+    },
+    {
+      "label": "SC Freshwater Fish Size & Possession Limits (eRegulations)",
+      "url": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 90,
+        "freshness": 75,
+        "completeness": 85,
+        "composite": 92
+      }
+    },
+    {
+      "label": "EPA NSCEP search: Report on Wateree / Lake Wateree",
+      "url": "https://nepis.epa.gov/Exe/ZyNET.exe?ZyAction=ZyActionS&User=ANONYMOUS&Password=anonymous&Client=EPA&SearchBack=ZyActionL&SortMethod=h%7C-&MaximumDocuments=15&ImageQuality=r85g16%2Fr85g16%2Fx150y150g16%2Fi500&Display=hpfr&DefSeekPage=&Toc=&TocEntry=&TocRestrict=n&QField=title%5EReport%20on&UseQField=title&Docs=&SearchMethod=1&Time=&FullText=&IntQFieldOp=1&Query=Wateree&ExtQFieldOp=1&FuzzyDegree=0&Index=2016%20Thru%202020&Index=2011%20Thru%202015&Index=2006%20Thru%202010&Index=2000%20Thru%202005&Index=1995%20Thru%201999&Index=1991%20Thru%201994&Index=1986%20Thru%201990&Index=1981%20Thru%201985&Index=1976%20Thru%201980&Index=Prior%20to%201976",
+      "authority": "EPA NSCEP",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 100,
+        "relevance": 95,
+        "freshness": 35,
+        "completeness": 95,
+        "composite": 92
+      }
+    },
+    {
+      "label": "SC Lakes and Waterways - Lake Wateree",
+      "url": "https://www.dnr.sc.gov/lakes/wateree/description.html",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 65,
+        "composite": 92
+      }
+    },
+    {
+      "label": "EPA NSCEP — Wateree",
+      "url": "https://nepis.epa.gov/Exe/ZyNET.exe/9100D9RD.txt?ZyActionD=ZyDocument&Client=EPA&Index=2016%20Thru%202020%7C2011%20Thru%202015%7C2006%20Thru%202010%7C2000%20Thru%202005%7C1995%20Thru%201999%7C1991%20Thru%201994%7C1986%20Thru%201990%7C1981%20Thru%201985%7C1976%20Thru%201980%7CPrior%20to%201976&Docs=&Query=Wateree&Time=&EndTime=&SearchMethod=1&TocRestrict=n&Toc=&TocEntry=&QField=title%5EReport%20on&QFieldYear=&QFieldMonth=&QFieldDay=&UseQField=title&IntQFieldOp=1&ExtQFieldOp=1&XmlQuery=&File=D%3A%5CZYFILES%5CINDEX%20DATA%5C70THRU75%5CTXT%5C00000010%5C9100D9RD.txt&User=ANONYMOUS&Password=anonymous&SortMethod=h%7C-&MaximumDocuments=15&FuzzyDegree=0&ImageQuality=r85g16/r85g16/x150y150g16/i500&Display=hpfr&DefSeekPage=&SearchBack=ZyActionL&Back=ZyActionS&BackDesc=Results%20page&MaximumPages=1&ZyEntry=1&SeekPage=",
+      "authority": "EPA NSCEP",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 100,
+        "relevance": 95,
+        "freshness": 35,
+        "completeness": 95,
+        "composite": 92
+      }
+    },
+    {
+      "label": "Characterization of water quality and simulation ...",
+      "url": "https://pubs.usgs.gov/publication/wri994234",
+      "authority": "USGS",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 100,
+        "relevance": 90,
+        "freshness": 75,
+        "completeness": 65,
+        "composite": 91
+      }
+    },
+    {
+      "label": "Lakes and Waterways",
+      "url": "https://www.dnr.sc.gov/lakes/wateree/regs.html",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 35,
+        "composite": 89
+      }
+    },
+    {
+      "label": "SCDNR - Fish - Species - Striped bass",
+      "url": "https://www.dnr.sc.gov/fish/species/stripedbass.html",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 70,
+        "freshness": 75,
+        "completeness": 65,
+        "composite": 84
+      }
+    },
+    {
+      "label": "Effect of Striped Bass Introduction in Lake Wateree, South Carolina1",
+      "url": "https://seafwa.org/sites/default/files/journal-articles/NASH-48-54.pdf",
+      "authority": "seafwa.org",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 85,
+        "composite": 72
+      }
+    },
+    {
+      "label": "Wateree River",
+      "url": "https://en.wikipedia.org/wiki/Wateree_River",
+      "authority": "Web",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 85,
+        "composite": 72
+      }
+    },
+    {
+      "label": "Lake Wateree Fishing Report",
+      "url": "https://www.anglersheadquarters.com/pages/lake-wateree-fishing-report",
+      "authority": "www.anglersheadquarters.com",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 65,
+        "composite": 70
+      }
+    },
+    {
+      "label": "Nutrient Limitation of Phytoplankton in Lake Wateree, South Carolina: Implications for Future Water Quality Management",
+      "url": "https://scholarcommons.sc.edu/etd/5313",
+      "authority": "scholarcommons.sc.edu",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 65,
+        "composite": 70
+      }
+    },
+    {
+      "label": "WaterWatch on Lake Wateree",
+      "url": "https://sites.google.com/site/watereewaterwatch",
+      "authority": "sites.google.com",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 65,
+        "composite": 70
+      }
+    },
+    {
+      "label": "Lake Wateree Camping | South Carolina Parks Official Site",
+      "url": "https://southcarolinaparks.com/lake-wateree/camping",
+      "authority": "Web",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 65,
+        "composite": 70
+      }
+    },
+    {
+      "label": "Lake Wateree | South Carolina Parks Official Site",
+      "url": "https://southcarolinaparks.com/lake-wateree",
+      "authority": "Web",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 65,
+        "composite": 70
+      }
+    }
+  ],
+  "confidence": {
+    "identity": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 12,
+      "secondaryCount": 7,
+      "totalSources": 19,
+      "reason": "12 official, 7 secondary, 19 total"
+    },
+    "limnology": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 12,
+      "secondaryCount": 7,
+      "totalSources": 19,
+      "reason": "12 official, 7 secondary, 19 total"
+    },
+    "biology": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 12,
+      "secondaryCount": 7,
+      "totalSources": 19,
+      "reason": "12 official, 7 secondary, 19 total"
+    },
+    "habitat": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 12,
+      "secondaryCount": 7,
+      "totalSources": 19,
+      "reason": "12 official, 7 secondary, 19 total"
+    },
+    "navigation": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 12,
+      "secondaryCount": 7,
+      "totalSources": 19,
+      "reason": "12 official, 7 secondary, 19 total"
+    },
+    "regulations": {
+      "percent": 98,
+      "level": "very high",
+      "reason": "validated: state limits + lake exceptions (12 official sources)",
+      "regulationsValidation": true
+    },
+    "summary": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 12,
+      "secondaryCount": 7,
+      "totalSources": 19,
+      "reason": "12 official, 7 secondary, 19 total"
+    },
+    "overall": {
+      "percent": 99,
+      "level": "very high"
+    }
+  },
+  "metadata": {
+    "version": "55.0",
+    "versionNumber": 55,
+    "status": "draft",
+    "lastUpdated": "2026-07-13T20:12:14.981Z",
+    "createdAt": "2026-07-12T22:37:16.447Z",
+    "createdBy": "Evidence Acquisition Engine v5 factual-only",
+    "verified": false,
+    "verifiedAt": null,
+    "lakeId": "lake_wateree_sc",
+    "previousVersion": "54.0"
+  },
+  "notes": "",
+  "researchLog": {
+    "requestTime": "2026-07-13T20:12:14.981Z",
+    "completedAgents": []
+  }
+}
