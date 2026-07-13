@@ -3043,10 +3043,12 @@ async function handleResearchDiscover(request, env) {
     `"${queryLake}" (limnology OR thermocline OR \"water quality\" OR hydrology OR \"surface area\") (USACE OR USGS OR EPA)`,
     `"${queryLake}" lake (habitat OR structure OR navigation OR hazards OR ramps) ${dnrName}`,
     `"${queryLake}" (thermocline OR \"oxygen depletion\" OR stratification OR \"dissolved oxygen\") depth fishing`,
-    // EPA NSCEP / NEPI S — critical limnology source for ALL tristate lakes (SC/NC/GA)
-    `"Report on Lake ${queryLake}" OR "${queryLake}" site:nepis.epa.gov`,
+    // EPA NSCEP / NEPIS — critical limnology source for ALL tristate lakes (SC/NC/GA)
+    // EPA uses inconsistent lake naming: "Report on Lake Murray" vs "Report on Wateree Lake"
+    // Search BOTH patterns so we don't miss any lake's report
+    `"Report on Lake ${queryLake}" OR "Report on ${queryLake} Lake" OR "${queryLake}" site:nepis.epa.gov`,
     `"${queryLake}" "${stateFullName}" (water quality OR eutrophication OR limnology) (EPA OR NESWP OR nepis)`,
-    `"Report on Lake" "${stateFullName}" ${queryLake}`,
+    `"Report on" "${stateFullName}" ${queryLake}`,
   ];
 
   let discoveredSources = [];
@@ -3225,7 +3227,7 @@ async function handleResearchDiscover(request, env) {
   }
   // EPA NSCEP search landing for this lake — proxy will harvest raw-text links via Firecrawl
   defaultStateSeeds.push({
-    title: `EPA NSCEP search: Report on Lake ${baseName}`,
+    title: `EPA NSCEP search: Report on ${baseName} / Lake ${baseName}`,
     type: "HTML",
     authority: "EPA NSCEP",
     url: buildNepisSearchUrl(lakeName, state, baseName),
@@ -3356,7 +3358,7 @@ async function handleResearchProxyDownload(request, env) {
                     const rawText = await rawRes.text();
                     if (rawText.length > 200) {
                       const firstLine = rawText.split('\n')[0] || '';
-                      const metaMatch = firstLine.match(/^([A-Z]+[0-9]+)(Report on Lake .+?)([0-9]{1,3})([0-9]{4})([A-Z].*)$/i);
+                      const metaMatch = firstLine.match(/^([A-Z]+[0-9]+)(Report on (?:Lake )?.+?)([0-9]{1,3})([0-9]{4})([A-Z].*)$/i);
                       const title = metaMatch ? metaMatch[2].trim() : (docLinks[0].title || '');
                       const headers = new Headers({
                         'Content-Type': 'text/plain; charset=utf-8',
@@ -3420,8 +3422,9 @@ async function handleResearchProxyDownload(request, env) {
               if (rawText.length > 200) {
                 // The first metadata line concatenates pubnumber + title + pages + year + ...
                 // e.g. "NESWP434Report on Lake Marion,... EPA Region IV601976NEPIS..."
+                // or   "NESWP440Report on Wateree Lake,... EPA Region IV481975NEPIS..."
                 const firstLine = rawText.split('\n')[0] || '';
-                const metaMatch = firstLine.match(/^([A-Z]+[0-9]+)(Report on Lake .+?)([0-9]{1,3})([0-9]{4})([A-Z].*)$/i);
+                const metaMatch = firstLine.match(/^([A-Z]+[0-9]+)(Report on (?:Lake )?.+?)([0-9]{1,3})([0-9]{4})([A-Z].*)$/i);
                 const title = metaMatch ? metaMatch[2].trim() : '';
                 const headers = new Headers({
                   'Content-Type': 'text/plain; charset=utf-8',
@@ -3631,14 +3634,18 @@ function scoreDatasetUrl(url, title, lakeName) {
 }
 
 // Build EPA NSCEP search-results URL(s) for a lake.
-// Historical EPA "Report on Lake …" series (1970s–80s) is often filed under the
-// lake name AND/OR the full state name — run both so every tristate lake has a
-// real chance of surfacing, not only well-known SC reservoirs.
+// Historical EPA "Report on Lake …" series (1970s–80s) uses INCONSISTENT naming:
+//   Most lakes:  "Report on Lake Murray"   (Lake before name)
+//   Wateree etc: "Report on Wateree Lake"  (name before Lake)
+// Using title filter "Report on" (not "Report on Lake") catches BOTH conventions
+// since the lake name is in the Query field anyway.
 function buildNepisSearchUrl(lakeName, state, queryOverride = null) {
   const baseName = String(lakeName || '').replace(/^Lake\s+/i, '').replace(/,\s*(SC|NC|GA|VA|TN).*$/i, '').trim();
   const stateName = { SC: 'South Carolina', NC: 'North Carolina', GA: 'Georgia', VA: 'Virginia', TN: 'Tennessee' }[String(state || 'SC').toUpperCase()] || 'South Carolina';
   const query = encodeURIComponent(queryOverride || baseName || stateName);
-  const titleField = encodeURIComponent('Report on Lake');
+  // Use "Report on" (not "Report on Lake") so both naming conventions match:
+  //   "Report on Lake Murray" AND "Report on Wateree Lake"
+  const titleField = encodeURIComponent('Report on');
   // Indexes cover historical EPA lake reports (1970s–2020)
   const indexes = [
     '2016 Thru 2020', '2011 Thru 2015', '2006 Thru 2010', '2000 Thru 2005',
@@ -3884,10 +3891,11 @@ async function handleResearchDatasetHunt(request, env) {
       `"${baseName}" annual fisheries report ${dnrSite}`,
       `"${baseName}" lake fisheries study "dissolved oxygen" OR thermocline OR stratification`,
       `"${baseName}" reservoir fish population electrofishing survey`,
-      // EPA NSCEP / NEPI S — lake-name + state-name variants for full tristate coverage
-      `"Report on Lake ${baseName}" site:nepis.epa.gov`,
+      // EPA NSCEP / NEPIS — lake-name + state-name variants for full tristate coverage
+      // EPA uses inconsistent lake naming: "Report on Lake Murray" vs "Report on Wateree Lake"
+      `"Report on Lake ${baseName}" OR "Report on ${baseName} Lake" site:nepis.epa.gov`,
       `"${baseName}" "${stateName}" (lake OR reservoir) (water quality OR limnology OR eutrophication) site:nepis.epa.gov OR EPA`,
-      `"Report on Lake" "${stateName}" site:nepis.epa.gov`,
+      `"Report on" "${stateName}" site:nepis.epa.gov`,
       `"${baseName}" NESWP OR "National Eutrophication" OR "Clean Lakes" ${stateName}`,
     ];
     for (const q of huntQueries) {
