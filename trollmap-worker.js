@@ -5020,7 +5020,7 @@ If you truly cannot find ANY verifiable fact, return {"extracted_facts":[]} but 
       source: String(f.source||'Unknown').slice(0,180),
       quote: String(f.quote||'').trim().slice(0,400),
       category: String(f.category||'general').trim().slice(0,50)
-    })).filter(f=> f.fact.length > 10 && f.quote.length > 5);
+    })).filter(f=> f.fact.length > 10 && (f.quote.length > 3 || f.confidence >= 70));
 
     // Quality filter: drop facts that obviously don't mention baseName unless they are general regulations
     const generalCats = new Set(['regulations_general','creelLimit_general','sizeLimit_general','regulations','closedSeason']);
@@ -6145,7 +6145,10 @@ async function handleResearchSave(request, env) {
       previousVersion: existingMeta?.version || null
     },
     notes: notes,
-    researchLog: incomingProfile.researchLog || body.researchLog || {requestTime: now, completedAgents: Object.keys(packageParts)}
+    researchLog: incomingProfile.researchLog || body.researchLog || {requestTime: now, completedAgents: Object.keys(packageParts)},
+    _extractedFacts: incomingProfile._extractedFacts || [],
+    _extractedFactsCount: incomingProfile._extractedFactsCount || (incomingProfile._extractedFacts || []).length,
+    _wqpLimnology: incomingProfile._wqpLimnology || null
   };
 
   // Ensure metadata status logic: first save draft -> user approves to verified via approve endpoint, but allow direct verified if requested
