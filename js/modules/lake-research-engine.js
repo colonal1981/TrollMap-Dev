@@ -1643,4 +1643,4 @@ function buildFinalResearchPacket(lakeName, state, uniqueFacts, scoredSources) {
   };
 }
 
-export { runEvidencePipeline, runFromNormalized, _state, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName };
+export { runEvidencePipeline, runFromNormalized, _state, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log };
