@@ -52,17 +52,87 @@ function renderContradictionsAlert(contradictions, lakeName) {
   el.style.display = 'block';
 
   document.getElementById('btnResolveConflicts').addEventListener('click', async () => {
-    log("Resolving contradictions according to operator choices...");
-    // Read selections
+    log('Resolving contradictions according to operator choices...');
+
+    if (!_state.currentProfile || !_state.currentLakeName) {
+      log('⚠️ No profile loaded — cannot apply resolutions.');
+      return;
+    }
+
+    // Deep-set a value at a dot-path in an object, creating intermediate objects as needed
+    function setAtPath(obj, path, value) {
+      const parts = path.split('.');
+      let cursor = obj;
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (cursor[parts[i]] == null || typeof cursor[parts[i]] !== 'object') {
+          cursor[parts[i]] = {};
+        }
+        cursor = cursor[parts[i]];
+      }
+      cursor[parts[parts.length - 1]] = value;
+    }
+
+    const patched = cloneJson(_state.currentProfile);
+    let resolvedCount = 0;
+
     contradictions.forEach((c, index) => {
-      const selected = el.querySelector(`input[name="conflict-${index}"]:checked`).value;
+      const radio = el.querySelector(`input[name="conflict-${index}"]:checked`);
+      if (!radio) return;
+      const selected = radio.value;
       const winner = selected === 'A' ? c.factA : c.factB;
-      log(`Conflict [${c.field}] resolved to Option ${selected}: "${winner}"`);
+      const winnerSource = selected === 'A' ? c.sourceA : c.sourceB;
+      log(`  [${c.field}] → Option ${selected}: "${winner}" (${winnerSource || 'unknown source'})`);
+
+      // Apply to the correct nested path in the profile
+      // c.field may be dot-notation (e.g. "limnology.thermocline.summerDepthFt")
+      // or a flat key — handle both
+      try {
+        setAtPath(patched, c.field, winner);
+        resolvedCount++;
+      } catch (e) {
+        log(`  ⚠️ Could not apply ${c.field}: ${e.message}`);
+      }
     });
-    
-    el.style.display = 'none';
-    alert("Conflicts resolved! Updated profile saved.");
-    await loadProfile(lakeName);
+
+    if (resolvedCount === 0) {
+      log('No resolutions applied.');
+      return;
+    }
+
+    // Stamp the patch in metadata
+    patched.metadata = patched.metadata || {};
+    patched.metadata.lastResolvedAt = new Date().toISOString();
+    patched.metadata.resolvedContradictions = (patched.metadata.resolvedContradictions || 0) + resolvedCount;
+
+    // Write back to in-memory state
+    _state.currentProfile = patched;
+
+    // POST to /research/save
+    log(`Saving resolved profile (${resolvedCount} field(s) patched)...`);
+    try {
+      const res = await fetch(`${CF_WORKER_URL}/research/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lakeName: _state.currentLakeName,
+          profile: patched,
+          status: patched.metadata?.status || 'draft',
+          approve: patched.metadata?.status === 'verified',
+          verified: patched.metadata?.status === 'verified',
+          requestedBy: 'Contradiction Resolution UI'
+        })
+      });
+      if (!res.ok) {
+        const msg = await res.text().catch(() => '');
+        throw new Error(`Save failed: ${res.status} ${msg.slice(0, 200)}`);
+      }
+      log(`✔ Resolved profile saved to R2.`);
+      el.style.display = 'none';
+      // Silent reload to re-render with resolved values
+      await loadProfile(_state.currentLakeName, true);
+    } catch (e) {
+      log(`✗ Save failed: ${e.message}`);
+    }
   });
 }
 
