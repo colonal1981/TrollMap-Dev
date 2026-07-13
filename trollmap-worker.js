@@ -2806,25 +2806,44 @@ async function handleResearchLimnologyData(request, env) {
   }
 
   // ── Step 2: Parse CSV — extract depth, value, characteristic, date ──
+  // WQP CSV uses RFC 4180 quoting — fields may contain commas inside double-quotes.
+  function parseCSVLine(line) {
+    const result = [];
+    let cur = '', inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQ && line[i+1] === '"') { cur += '"'; i++; } // escaped quote
+        else inQ = !inQ;
+      } else if (ch === ',' && !inQ) {
+        result.push(cur.trim()); cur = '';
+      } else {
+        cur += ch;
+      }
+    }
+    result.push(cur.trim());
+    return result;
+  }
+
   const lines = csvText.split('\n').filter(Boolean);
   if (lines.length < 2) {
     return new Response(JSON.stringify({ ok: true, recordCount: 0, thermocline: null, oxygen: null, note: 'No WQP monitoring data found for this lake boundary' }), { headers: JSON_HEADERS });
   }
 
-  const headers = lines[0].split(',').map(h => h.replace(/"/g, '').trim());
+  const headers = parseCSVLine(lines[0]);
   const col = (name) => headers.findIndex(h => h.toLowerCase().includes(name.toLowerCase()));
 
-  const iChar    = col('CharacteristicName');
-  const iValue   = col('ResultMeasureValue');
-  const iUnit    = col('ResultMeasure/MeasureUnitCode');
-  const iDepth   = col('ActivityDepthHeightMeasure/MeasureValue');
-  const iDepthU  = col('ActivityDepthHeightMeasure/MeasureUnitCode');
-  const iDate    = col('ActivityStartDate');
+  const iChar    = col('characteristicname');
+  const iValue   = col('resultmeasurevalue');
+  const iUnit    = col('resultmeasure/measureunitcode');
+  const iDepth   = col('activitydepthheightmeasure/measurevalue');
+  const iDepthU  = col('activitydepthheightmeasure/measureunitcode');
+  const iDate    = col('activitystartdate');
   const iMonth   = -1; // derived from date
 
   const records = [];
   for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(',').map(c => c.replace(/"/g, '').trim());
+    const cols = parseCSVLine(lines[i]);
     const char    = cols[iChar]  || '';
     const valRaw  = cols[iValue] || '';
     const unit    = cols[iUnit]  || '';
