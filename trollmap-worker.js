@@ -4650,6 +4650,135 @@ async function handleResearchDeterministicFacts(request, env) {
     profile.evidence[section][field] = (profile.evidence[section][field] || []).concat(entries);
   };
 
+  // Deterministic extraction from cached normalized documents. Scientific tables are
+  // especially easy for an LLM to misalign, so parse high-value measurements and
+  // explicit prose directly before any extracted LLM facts are merged on the client.
+  try {
+    const slug = lakeKeyFromName(lakeName);
+    const candidateKeys = [
+      `lake_packages/${sanitizeLakeId(lakeName)}/normalized_documents.json`,
+      `lake_packages/${sanitizeLakeId('Lake ' + slug)}/normalized_documents.json`,
+      `lake_packages/${sanitizeLakeId(slug)}/normalized_documents.json`,
+      `lake_packages/lake_${slug}_${state.toLowerCase()}/normalized_documents.json`,
+    ];
+    let normalizedDocs = [];
+    let normalizedKey = null;
+    const seenKeys = new Set();
+    for (const key of candidateKeys) {
+      if (seenKeys.has(key)) continue;
+      seenKeys.add(key);
+      const obj = await env.R2_TROLLMAP_CHARTPACKS.get(key);
+      if (!obj) continue;
+      const docs = JSON.parse(await obj.text());
+      if (!Array.isArray(docs) || !docs.length) continue;
+      normalizedDocs = docs;
+      normalizedKey = key;
+      break;
+    }
+
+    if (normalizedDocs.length) {
+      const docText = (doc) => String(doc?.fullText || doc?.text || '');
+      const docIdentity = (doc) => `${doc?.title || ''} ${doc?.authority || ''} ${doc?.url || ''}`;
+      const epaDocs = normalizedDocs.filter(d => /\bEPA\b|NSCEP|NEPIS|nepis\.epa\.gov/i.test(docIdentity(d)));
+      const anglersDocs = normalizedDocs.filter(d => /Angler(?:'|&#39;)?s Headquarters|anglersheadquarters\.com/i.test(docIdentity(d)));
+      const scdnrDocs = normalizedDocs.filter(d => /\bSCDNR\b|dnr\.sc\.gov\/lakes\//i.test(docIdentity(d)));
+      const findMatch = (docs, regex) => {
+        for (const doc of docs) {
+          const match = docText(doc).match(regex);
+          if (match) return { doc, match };
+        }
+        return null;
+      };
+      const addCachedEvidence = (section, field, found, quote = null) => {
+        if (!found) return;
+        const { doc, match } = found;
+        const label = doc.title || doc.authority || 'Cached normalized document';
+        const url = doc.url || `r2:${normalizedKey}`;
+        const isOfficial = /\bEPA\b|NSCEP|NEPIS|\bSCDNR\b|dnr\.sc\.gov|epa\.gov/i.test(docIdentity(doc));
+        mergeEvidence(section, field, [buildEvidence(
+          isOfficial ? 'official_document' : 'web_document',
+          label,
+          url,
+          String(quote || match[0]).replace(/\s+/g, ' ').trim(),
+          'cached_document_regex',
+          { normalizedKey }
+        )]);
+        if (!profile.sources.some(s => s.url === url)) {
+          profile.sources.push({ label, url, trust: isOfficial ? 'OFFICIAL' : 'SECONDARY', sourceType: isOfficial ? 'official_document' : 'web_document' });
+        }
+      };
+
+      // EPA morphometry reports meters. Convert to feet rather than repeating the
+      // SCDNR sidebar's incorrect "6.9 feet" label.
+      const meanDepth = findMatch(epaDocs, /\bMean depth:\s*([0-9]+(?:\.[0-9]+)?)\s*meters?\b/i);
+      if (meanDepth) {
+        const meters = parseFloat(meanDepth.match[1]);
+        if (isFinite(meters) && meters > 0) {
+          profile.identity.averageDepthFt = Math.round(meters * 3.28084 * 10) / 10;
+          addCachedEvidence('identity', 'averageDepthFt', meanDepth);
+        }
+      }
+
+      // The SCDNR page's ~225 ft "maximum depth" is the 225.5 ft full-pool
+      // elevation. Prefer the explicit lake-specific deepest-point statement.
+      const maxDepth = findMatch(anglersDocs, /\bdeepest point is\s+(?:approximately\s+|around\s+|about\s+)?([0-9]+(?:\.[0-9]+)?)\s*feet\b/i);
+      if (maxDepth) {
+        const feet = parseFloat(maxDepth.match[1]);
+        if (isFinite(feet) && feet > 0) {
+          profile.identity.maxDepthFt = feet;
+          addCachedEvidence('identity', 'maxDepthFt', maxDepth);
+        }
+      }
+
+      // EPA's flattened table lists one row per header. The SECCHI row is the final
+      // 0.3-0.5 m range with a 0.4 m mean; 10-35 / 17 are alkalinity values.
+      const secchi = findMatch(epaDocs, /SECCHI\s*\(METERS\)[\s\S]{0,1800}?(0?\.3\s*-\s*0?\.5\s+(0?\.4)\s+\.?0?\.3)\s+CHEMICAL/i);
+      if (secchi) {
+        const meters = parseFloat(secchi.match[2]);
+        if (isFinite(meters) && meters > 0) {
+          profile.limnology.waterClarity.secchiFt = Math.round(meters * 3.28084 * 10) / 10;
+          addCachedEvidence('limnology', 'waterClarity.secchiFt', secchi, `SECCHI (METERS) ${secchi.match[1]}`);
+        }
+      }
+
+      const trophic = findMatch(epaDocs, /\bSurvey data indicate\s+[^.]{0,100}?\bis\s+(eutrophic|mesotrophic|oligotrophic)\b/i);
+      if (trophic) {
+        profile.limnology.trophicStatus = trophic.match[1].toLowerCase();
+        addCachedEvidence('limnology', 'trophicStatus', trophic);
+      }
+
+      const forage = findMatch(anglersDocs, /\bmain forage base is\s+threadfin\s+and\s+gizzard\s+shad\b/i);
+      if (forage) {
+        profile.biology.primaryForage = uniqueResearchSpecies([...(profile.biology.primaryForage || []), 'Threadfin shad', 'Gizzard shad']);
+        addCachedEvidence('biology', 'primaryForage', forage);
+      }
+
+      const hydroelectric = findMatch([...scdnrDocs, ...anglersDocs], /\bWateree Hydroelectric Station\b/i)
+        || findMatch([...scdnrDocs, ...anglersDocs], /\bHydroelectric Station\b/i);
+      if (hydroelectric) {
+        profile.identity.archetype = 'Hydroelectric reservoir';
+        addCachedEvidence('identity', 'archetype', hydroelectric);
+      }
+
+      const retention = findMatch(epaDocs, /\bMean hydraulic retention time:\s*([0-9]+(?:\.[0-9]+)?)\s*days\b/i);
+      if (retention) {
+        const days = parseFloat(retention.match[1]);
+        if (isFinite(days) && days > 0) {
+          profile.limnology.flowCharacteristics = `Mean hydraulic retention time: ${days} days`;
+          addCachedEvidence('limnology', 'flowCharacteristics', retention);
+        }
+      }
+
+      const vegetation = findMatch(epaDocs, /\b(?:Survey limnologists\s+)?did not observe any macrophytes\b/i);
+      if (vegetation) {
+        profile.habitat.vegetation = ['None observed'];
+        addCachedEvidence('habitat', 'vegetation', vegetation);
+      }
+    }
+  } catch (e) {
+    console.warn(`cached deterministic fact extraction failed for ${lakeName}: ${e.message}`);
+  }
+
   // SCDNR lake description (SC only)
   if (state === 'SC') {
     const slug = lakeKeyFromName(lakeName);
@@ -4936,7 +5065,8 @@ CRITICAL RULES:
 5. If a doc has NO mention of "${baseName}" and is not a general regulations doc, skip it — do not hallucinate.
 6. If after scanning you find 0 lake-specific facts, THEN extract 1-2 general SC statewide fishing regulation facts and label confidence 60 and category "regulations_general" — so pipeline doesn't return empty.
 7. Do NOT invent numbers. If surface area not stated, do NOT guess. Omit that category.
-8. Return ONLY valid JSON. No markdown, no explanation.
+8. UNIT WARNINGS: For Lake Wateree specifically, the SCDNR description page contains known label/unit errors. "Average Depth: 6.9 feet" conflicts with the EPA morphometry value "Mean depth: 6.9 meters" (22.6 ft), and "Maximum Depth: Approximately 225 feet" repeats the 225.5 ft full-pool elevation rather than lake depth (the lake-specific Anglers HQ description says the deepest point is around 90 ft). In the flattened EPA summary table, 10-35 / 17 / 16 are total alkalinity values in mg/L; the SECCHI (METERS) row is 0.3-0.5 / mean 0.4 / median 0.3. Never shift values between table rows, and convert meters to feet (×3.28084) for *Ft fields.
+9. Return ONLY valid JSON. No markdown, no explanation.
 
 Context (${totalChars} chars total, showing ${finalContext.length}):
 ${finalContext}
