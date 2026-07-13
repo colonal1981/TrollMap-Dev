@@ -2050,8 +2050,17 @@ function renderSections(profile) {
         {
           const curMerged = reviewCard?.dataset.merged ? JSON.parse(reviewCard.dataset.merged) : (currentProfile || {});
           const curParts = reviewCard?.dataset.parts ? JSON.parse(reviewCard.dataset.parts) : {};
-          curMerged[agentKey] = agentData.section;
-          if (agentKey === 'biology') curMerged.forage = agentData.section;
+          if (agentKey === 'biology') {
+            // Protect deterministic fields — never let LLM re-run overwrite confirmed species data with empty arrays
+            const existing = curMerged.biology || {};
+            const merged = { ...existing, ...agentData.section };
+            if (existing.predatorSpecies?.length && !agentData.section.predatorSpecies?.length) merged.predatorSpecies = existing.predatorSpecies;
+            if (existing.knownStockings?.length && !agentData.section.knownStockings?.length) merged.knownStockings = existing.knownStockings;
+            curMerged.biology = merged;
+            curMerged.forage = merged;
+          } else {
+            curMerged[agentKey] = agentData.section;
+          }
           if (agentKey === 'trolling') curMerged.trollingIntelligence = agentData.section;
           // Update confidence for this section
           if (agentData.confidence) {
