@@ -4147,6 +4147,7 @@ async function handleResearchDeterministicFacts(request, env) {
           for (const src of parsedRegs.sources || []) profile.sources.push(src);
           for (const [sec, fields] of Object.entries(parsedRegs.evidence || {})) for (const [field, entries] of Object.entries(fields || {})) mergeEvidence(sec, field, entries);
           profile._regsDebug.parsedCreelLimits = parsedRegs.regulations?.generalStateRegulations?.creelLimits || {};
+          profile._regsDebug.parsedGeneralLength = parsedRegs.regulations?.generalStateRegulations?.lengthLimits || {};
           profile._regsDebug.parsedLakeSpecific = parsedRegs.regulations?.lakeSpecificRegulations || {};
         } catch(regsErr) {
           profile._regsDebug.parseError = regsErr.message;
