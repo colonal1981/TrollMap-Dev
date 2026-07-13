@@ -1076,8 +1076,31 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
 
     // ----------------------------------------------------
     // STEP 10: Fact-only section assembly (no inferred tactics)
+    // Apply extracted facts to fill gaps in deterministic profile
     // ----------------------------------------------------
     setProgress("Step 10: Assembling factual profile...", 84);
+
+    // Merge extracted facts into deterministicProfile to fill null fields
+    if (uniqueFacts.length > 0) {
+      const factsPacket = buildFinalResearchPacket(lakeName, stateName, uniqueFacts, scoredSources);
+      // Apply facts packet to deterministic profile — only fill nulls/empty, don't overwrite confirmed data
+      if (factsPacket.identity) {
+        for (const [k, v] of Object.entries(factsPacket.identity)) {
+          if (v != null && v !== '' && !Array.isArray(v)) {
+            if (deterministicProfile.identity[k] == null || deterministicProfile.identity[k] === '') {
+              deterministicProfile.identity[k] = v;
+            }
+          }
+        }
+      }
+      if (factsPacket.regulations) {
+        deterministicProfile.regulations = mergeMissing(deterministicProfile.regulations || {}, factsPacket.regulations);
+      }
+      if (factsPacket.limnology) {
+        deterministicProfile.limnology = mergeMissing(deterministicProfile.limnology || {}, factsPacket.limnology);
+      }
+    }
+
     const agentSections = {
       identity: cloneJson(deterministicProfile.identity || {}),
       biology: cloneJson(deterministicProfile.biology || {}),
