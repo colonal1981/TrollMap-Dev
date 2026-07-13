@@ -3587,16 +3587,9 @@ function parseSCDNRDescriptionFacts(lakeName, url, html) {
     identity.surfaceAreaAcres = parseInt(mArea[1].replace(/,/g, ''), 10) || null;
     store('identity', 'surfaceAreaAcres', buildEvidence('official_document', 'SCDNR Lake Description', url, mArea[0], 'regex_exact_text'));
   }
-  const mAvg = text.match(/Average Depth:\s*([0-9.]+)\s*feet/i);
-  if (mAvg) {
-    identity.averageDepthFt = parseFloat(mAvg[1]);
-    store('identity', 'averageDepthFt', buildEvidence('official_document', 'SCDNR Lake Description', url, mAvg[0], 'regex_exact_text'));
-  }
-  const mMax = text.match(/Maximum Depth:\s*Approximately\s*([0-9.]+)\s*feet/i);
-  if (mMax) {
-    identity.maxDepthFt = parseFloat(mMax[1]);
-    store('identity', 'maxDepthFt', buildEvidence('official_document', 'SCDNR Lake Description', url, mMax[0], 'regex_exact_text'));
-  }
+  // Note: SCDNR description page lists pool elevation as "Maximum Depth" and
+  // average river depth as "Average Depth" — both are misleading and not the
+  // actual lake depth. Do not parse these fields from this source.
   const mShore = text.match(/Miles of Shoreline:\s*([0-9,]+(?:\.[0-9]+)?)/i);
   if (mShore) {
     identity.shorelineLengthMi = parseFloat(mShore[1].replace(/,/g, ''));
@@ -3842,15 +3835,25 @@ __name(extractHtmlTableRows, "extractHtmlTableRows");
 // Parse markdown pipe-delimited tables (from Firecrawl/normalized text)
 function extractMarkdownTableRows(text) {
   const rows = [];
-  // Handle both actual newlines and escaped \n sequences from JSON storage
-  const normalized = String(text || '').replace(/\\n/g, '\n');
-  const lines = normalized.split('\n');
-  for (const line of lines) {
-    if (!line.includes('|')) continue;
-    const cells = line.split('|').map(c => c.trim()).filter(Boolean);
-    if (!cells.length) continue;
-    if (cells.every(c => /^[-:]+$/.test(c))) continue; // separator row
-    if (cells.length >= 2) rows.push(cells);
+  const str = String(text || '');
+  // The normalized text may be a single long line with inline pipe tables (no newlines)
+  // Use regex to extract all | cell | cell | cell | cell | patterns
+  const rowRe = /\|([^|\n]{1,300})\|([^|\n]{1,300})\|([^|\n]{1,300})\|([^|\n]{1,300})\|/g;
+  let m;
+  while ((m = rowRe.exec(str)) !== null) {
+    const cells = [m[1].trim(), m[2].trim(), m[3].trim(), m[4].trim()];
+    if (!cells[0]) continue;
+    if (cells.every(c => /^[-:\s]+$/.test(c))) continue; // separator row
+    rows.push(cells);
+  }
+  // Also try line-by-line for texts that do have newlines
+  if (rows.length === 0) {
+    for (const line of str.split(/\r?\n/)) {
+      if (!line.includes('|')) continue;
+      const cells = line.split('|').map(c => c.trim()).filter(Boolean);
+      if (!cells.length || cells.every(c => /^[-:]+$/.test(c))) continue;
+      if (cells.length >= 2) rows.push(cells);
+    }
   }
   return rows;
 }
