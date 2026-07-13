@@ -1,0 +1,15 @@
+name = "trollmap-worker"
+main = "trollmap-worker.js"
+compatibility_date = "2024-01-01"
+
+[[r2_buckets]]
+binding = "R2_TROLLMAP_CHARTPACKS"
+bucket_name = "trollmap-chartpacks"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "trollmap-sync"
+database_id = "d89a7eb1-f912-47b4-8636-7b92ce36944b"
+
+[vars]
+SYNC_TOKEN = "trollmap2026"

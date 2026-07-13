@@ -1,0 +1,264 @@
+// worker-core.js — Shared infrastructure: CORS headers, LLM provider chain, fetchText
+
+var __defProp = Object.defineProperty;
+var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
+
+// trollmap-worker.js
+var CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, X-Sync-Token, X-Image-Type, X-Lake, X-Date, X-Lat, X-Lon, X-Species-Hint, X-Assume-Board",
+  "Access-Control-Max-Age": "60"
+};
+var JSON_HEADERS = { ...CORS, "Content-Type": "application/json" };
+var TEXT_HEADERS = { ...CORS, "Content-Type": "text/plain; charset=utf-8" };
+var SYNC_TOKEN = "";
+
+// ─── LLM Provider Abstraction (Groq → OpenRouter → Cerebras fallback) ──────────────────
+// Updated 2026-07-11: Fix deprecation fallout.
+// - Groq: llama-3.3-70b-versatile is deprecated Aug 16 2026; recommended is openai/gpt-oss-120b [1](https://console.groq.com/docs/deprecations)[2](https://console.groq.com/docs/batch)
+// - Cerebras: valid models are llama-3.3-70b, llama-3.1-8b, qwen-3-32b, gpt-oss-120b etc — NOT llama3.1-70b [3](https://tokenmix.ai/blog/cerebras-api-key-access-speed-tests-2026)
+// - OpenRouter free: use 3.3 variant
+// We now try multiple model candidates per provider in order, and fall back across providers.
+var LLM_PROVIDERS = [
+  {
+    name: "gemini",
+    baseUrl: null, // uses Google's native SDK-style REST, handled in callLLM
+    keyEnv: "GEMINI_API_KEY",
+    defaultModel: "gemini-2.5-flash",
+    models: [
+      "gemini-2.5-flash",
+      "gemini-2.0-flash-001",
+      "gemini-2.5-flash-lite"
+    ],
+    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
+    isGemini: true,
+    excludeFromGeneral: true,
+    transformPayload: (p) => ({
+      systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
+      contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
+      generationConfig: {
+        temperature: p.temperature || 0.15,
+        maxOutputTokens: p.max_tokens || 1500,
+        responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined,
+        thinkingConfig: { thinkingBudget: 0 }
+      }
+    }),
+  },
+  {
+    name: "groq",
+    baseUrl: "https://api.groq.com/openai/v1/chat/completions",
+    keyEnv: "GROQ_API_KEY",
+    defaultModel: "openai/gpt-oss-120b",
+    models: [
+      "openai/gpt-oss-120b",
+      "openai/gpt-oss-20b",
+      "llama-3.3-70b-versatile",
+      "llama-3.1-8b-instant"
+    ],
+    headers: (key) => ({ "Authorization": `Bearer ${key}`, "Content-Type": "application/json" }),
+    transformPayload: (p) => p,
+  },
+  {
+    name: "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1/chat/completions",
+    keyEnv: "OPENROUTER_API_KEY",
+    defaultModel: "meta-llama/llama-3.3-70b-instruct:free",
+    models: [
+      "meta-llama/llama-3.3-70b-instruct:free",
+      "meta-llama/llama-3.1-70b-instruct:free",
+      "openai/gpt-oss-120b:free",
+      "qwen/qwen3-32b:free",
+      "meta-llama/llama-4-scout-17b-16e-instruct:free"
+    ],
+    headers: (key) => ({
+      "Authorization": `Bearer ${key}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "https://trollmap.dev",
+      "X-Title": "TrollMap"
+    }),
+    transformPayload: (p) => p,
+  },
+  {
+    name: "cerebras",
+    baseUrl: "https://api.cerebras.ai/v1/chat/completions",
+    keyEnv: "CEREBRAS_API_KEY",
+    defaultModel: "gpt-oss-120b",
+    models: [
+      "gpt-oss-120b",
+      "gemma-4-31b"
+    ],
+    headers: (key) => ({ "Authorization": `Bearer ${key}`, "Content-Type": "application/json" }),
+    transformPayload: (p) => p,
+  }
+,
+  {
+    name: "nvidia",
+    baseUrl: "https://integrate.api.nvidia.com/v1/chat/completions",
+    keyEnv: "NVIDIA_API_KEY",
+    defaultModel: "meta/llama-4-maverick-17b-128e-instruct",
+    models: [
+      "meta/llama-4-maverick-17b-128e-instruct"
+    ],
+    headers: (key) => ({ "Authorization": `Bearer ${key}`, "Content-Type": "application/json" }),
+    transformPayload: (p) => p,
+  }
+];
+
+function extractLLMText(data) {
+  const message = data?.choices?.[0]?.message;
+  const content = message?.content;
+  if (typeof content === "string") return content.trim();
+  if (Array.isArray(content)) {
+    return content.map((part) => {
+      if (typeof part === "string") return part;
+      return part?.text || part?.content || "";
+    }).join("").trim();
+  }
+  if (typeof data?.output_text === "string") return data.output_text.trim();
+  return "";
+}
+__name(extractLLMText, "extractLLMText");
+
+async function callLLM(env, payload, preferredProvider = null) {
+  const providers = preferredProvider
+    ? LLM_PROVIDERS.filter(p => p.name === preferredProvider)
+    : LLM_PROVIDERS.filter(p => env[p.keyEnv] && !p.excludeFromGeneral);
+
+  if (!providers.length) {
+    throw new Error("No LLM provider configured. Set GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, or CEREBRAS_API_KEY");
+  }
+
+  let lastError;
+  for (const provider of providers) {
+    const key = env[provider.keyEnv];
+    if (!key) continue;
+
+    // ── Gemini uses a different API (Google native REST, not OpenAI-compatible) ──
+    if (provider.isGemini) {
+      const modelCandidates = provider.models?.length ? provider.models : [provider.defaultModel];
+      for (const modelId of modelCandidates) {
+        try {
+          const geminiPayload = provider.transformPayload(payload);
+          const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${key}`;
+          const r = await fetch(geminiUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(geminiPayload)
+          });
+          let data;
+          try { data = await r.json(); } catch (_) {
+            const txt = await r.text().catch(() => "");
+            throw new Error(`gemini/${modelId}: HTTP ${r.status} non-JSON ${txt.slice(0,200)}`);
+          }
+          if (!r.ok) {
+            const msg = data.error?.message || data.error || `HTTP ${r.status}`;
+            const msgStr = typeof msg === "string" ? msg : JSON.stringify(msg).slice(0,400);
+            throw new Error(`gemini/${modelId}: ${msgStr}`);
+          }
+          // Convert Gemini response to OpenAI-compatible shape for extractLLMText
+          const geminiText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (!geminiText) throw new Error(`gemini/${modelId}: empty content`);
+          const compatData = { choices: [{ message: { content: geminiText } }] };
+          return { provider: "gemini", model: modelId, data: compatData, _geminiRaw: geminiText.slice(0, 200) };
+        } catch (e) {
+          lastError = e;
+          console.warn(`LLM gemini/${modelId} failed: ${e.message}`);
+          continue;
+        }
+      }
+      continue; // exhausted Gemini models, move to next provider
+    }
+
+    const modelCandidates = provider.models?.length ? provider.models : [provider.defaultModel];
+    for (const modelId of modelCandidates) {
+      try {
+        const providerPayload = { ...payload, model: modelId };
+        const body = provider.transformPayload(providerPayload);
+        const r = await fetch(provider.baseUrl, {
+          method: "POST",
+          headers: provider.headers(key),
+          body: JSON.stringify(body)
+        });
+        let data;
+        try {
+          data = await r.json();
+        } catch (_) {
+          const txt = await r.text().catch(() => "");
+          throw new Error(`${provider.name}/${modelId}: HTTP ${r.status} non-JSON ${txt.slice(0,200)}`);
+        }
+        if (!r.ok) {
+          const msg = data.error?.message || data.error || data.message || `HTTP ${r.status}`;
+          const msgStr = typeof msg === "string" ? msg : JSON.stringify(msg).slice(0,400);
+          if (/does not exist|decommissioned|not found|invalid.*model|No such model/i.test(msgStr)) {
+            console.warn(`LLM provider ${provider.name} model ${modelId} rejected: ${msgStr}`);
+            lastError = new Error(`${provider.name}/${modelId}: ${msgStr}`);
+            continue;
+          }
+          throw new Error(`${provider.name}/${modelId}: ${msgStr}`);
+        }
+
+        if (Array.isArray(data?.choices) && data.choices.length) {
+          const text = extractLLMText(data);
+          if (!text) {
+            const choice = data.choices[0] || {};
+            const finish = choice.finish_reason ? ` finish_reason=${choice.finish_reason}` : "";
+            const reasoning = choice.message?.reasoning || choice.message?.reasoning_content || "";
+            const hint = reasoning ? ` reasoning=${String(reasoning).slice(0,160)}` : "";
+            throw new Error(`${provider.name}/${modelId}: empty assistant content.${finish}${hint}`);
+          }
+        }
+
+        return { provider: provider.name, model: modelId, data };
+      } catch (e) {
+        lastError = e;
+        const isModelErr = /does not exist|decommissioned|not found|invalid.*model|No such model/i.test(e.message);
+        console.warn(`LLM ${provider.name}/${modelId} failed: ${e.message}`);
+        if (isModelErr) continue;
+        continue;
+      }
+    }
+  }
+  throw lastError || new Error("All LLM providers/models failed");
+}
+__name(callLLM, "callLLM");
+async function isAuthorized(request, env) {
+  const want = env && env.SYNC_TOKEN || typeof SYNC_TOKEN !== "undefined" && SYNC_TOKEN || null;
+  if (!want) return false;
+  const got = request.headers.get("X-Sync-Token");
+  return got === want;
+}
+__name(isAuthorized, "isAuthorized");
+function chartpackKey(lake, filename) {
+  const safeLake = String(lake).toLowerCase().replace(/[^a-z0-9_\-]/g, "_");
+  const safeFile = String(filename).replace(/[^a-z0-9_.\-\/]/gi, "_");
+  return `${safeLake}/${safeFile}`;
+}
+__name(chartpackKey, "chartpackKey");
+async function handleChartpackList(env) {
+  const out = [];
+  let cursor;
+  do {
+    const listed = await env.R2_TROLLMAP_CHARTPACKS.list({ cursor });
+    for (const obj of listed.objects) {
+      const slash = obj.key.indexOf("/");
+      if (slash < 0) continue;
+      const lake = obj.key.slice(0, slash);
+      const file = obj.key.slice(slash + 1);
+      let entry = out.find((e) => e.name === lake);
+      if (!entry) {
+        entry = { name: lake, files: [], bytes: 0 };
+        out.push(entry);
+      }
+      entry.files.push(file);
+      entry.bytes += obj.size || 0;
+    }
+    cursor = listed.truncated ? listed.cursor : null;
+  } while (cursor);
+  for (const e of out) e.files.sort();
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  return { chartpacks: out, count: out.length };
+}
+__name(handleChartpackList, "handleChartpackList");
+
+export { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized };
