@@ -4063,51 +4063,50 @@ async function handleResearchDeterministicFacts(request, env) {
     }
   }
 
-  // Deterministic SC regulations from official pages
-  // eRegulations is a JS-rendered React app — must use Firecrawl to get rendered HTML with table rows
+  // Deterministic SC regulations — pull from normalized documents already stored in R2
+  // eRegulations content was fetched by Firecrawl during discovery and saved as markdown
+  // No need to re-fetch — just read from the normalized documents store
   if (state === 'SC') {
     const slug = lakeKeyFromName(lakeName);
     const regsUrl = 'https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits';
     const lakeRegsUrl = `https://www.dnr.sc.gov/lakes/${slug}/regs.html`;
-    const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
     try {
-      // Fetch eRegulations via Firecrawl (renders JS) + lake regs page directly (static HTML)
+      // Try to get eRegulations content from normalized documents in R2
       let regsHtml = '';
-      if (firecrawlKey) {
-        try {
-          const fcRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: regsUrl, formats: ['markdown'], onlyMainContent: true, timeout: 25000 })
-          });
-          if (fcRes.ok) {
-            const fcData = await fcRes.json();
-            const md = fcData.data?.markdown || fcData.markdown || '';
-            // Convert markdown pipe tables to HTML table rows for parseSCRegulationsFromHtml
-            if (md) {
-              const tableRows = md.split('\n')
-                .filter(l => l.includes('|'))
-                .map(l => {
-                  const cells = l.split('|').map(c => c.trim()).filter(Boolean);
-                  if (!cells.length || cells.every(c => /^[-:]+$/.test(c))) return '';
-                  return '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>';
-                })
-                .filter(Boolean)
-                .join('\n');
-              regsHtml = `<table>${tableRows}</table>`;
-            }
+      let lakeRegsHtml = '';
+      try {
+        const normKey = `lake_packages/${sanitizeLakeId(lakeName)}/normalized_documents.json`;
+        const normObj = await env.R2_TROLLMAP_CHARTPACKS.get(normKey);
+        if (normObj) {
+          const normDocs = JSON.parse(await normObj.text());
+          const regsDoc = normDocs.find(d => d.url && d.url.includes('eregulations.com'));
+          const lakeRegsDoc = normDocs.find(d => d.url && d.url.includes(`/lakes/${slug}/regs`));
+          if (regsDoc?.fullText) {
+            // Convert normalized markdown text back to pseudo-HTML table for parser
+            const lines = regsDoc.fullText.split('
+');
+            const tableRows = lines
+              .filter(l => l.includes('|'))
+              .map(l => {
+                const cells = l.split('|').map(c => c.trim()).filter(Boolean);
+                if (!cells.length || cells.every(c => /^[-:]+$/.test(c))) return '';
+                return '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>';
+              })
+              .filter(Boolean)
+              .join('
+');
+            regsHtml = tableRows ? `<table>${tableRows}</table>` : regsDoc.fullText;
           }
-        } catch (e) {
-          console.warn(`Firecrawl regs fetch failed: ${e.message}`);
+          if (lakeRegsDoc?.fullText) lakeRegsHtml = lakeRegsDoc.fullText;
         }
+      } catch (e) {
+        console.warn(`normalized regs load failed: ${e.message}`);
       }
-      // Fall back to direct fetch if Firecrawl failed or unavailable
-      if (!regsHtml) {
-        const regsRes = await fetch(regsUrl, { headers: { 'User-Agent': 'TrollMap/16 Evidence Engine', 'Accept': 'text/html' }, cf: { cacheTtl: 86400, cacheEverything: true } });
-        if (regsRes.ok) regsHtml = await regsRes.text();
+      // Fall back to direct fetch of lake-specific regs page (static HTML, no JS needed)
+      if (!lakeRegsHtml) {
+        const lakeRegsRes = await fetch(lakeRegsUrl, { headers: { 'User-Agent': 'TrollMap/16 Evidence Engine', 'Accept': 'text/html' }, cf: { cacheTtl: 86400, cacheEverything: true } });
+        if (lakeRegsRes.ok) lakeRegsHtml = await lakeRegsRes.text();
       }
-      const lakeRegsRes = await fetch(lakeRegsUrl, { headers: { 'User-Agent': 'TrollMap/16 Evidence Engine', 'Accept': 'text/html' }, cf: { cacheTtl: 86400, cacheEverything: true } });
-      const lakeRegsHtml = lakeRegsRes.ok ? await lakeRegsRes.text() : '';
       if (regsHtml) {
         const parsedRegs = parseSCRegulationsFromHtml(lakeName, regsUrl, regsHtml, lakeRegsHtml);
         profile.regulations = mergeMissing(profile.regulations, parsedRegs.regulations || {});
@@ -6390,7 +6389,7 @@ Place the fraction at the point where the structure meets the water, not the far
         }));
         return new Response(JSON.stringify(list, null, 2), { headers: JSON_HEADERS });
       }
-      if (path === "/lake" || lake) {
+      if (path === "/lake") {
         if (!lake) return new Response('{"error":"missing lake"}', { headers: JSON_HEADERS, status: 400 });
         const result = await resolveLake(lake);
         return new Response(JSON.stringify(result, null, 2), { headers: JSON_HEADERS });
