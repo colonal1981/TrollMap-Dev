@@ -2788,13 +2788,18 @@ async function handleResearchLimnologyData(request, env) {
     return new Response(JSON.stringify({ ok: false, error: 'missing bbox — provide bboxNorth/South/East/West from lake GeoJSON' }), { status: 400, headers: JSON_HEADERS });
   }
 
-  const chars = ['Temperature, water', 'Dissolved oxygen', 'Turbidity', 'Conductivity', 'Alkalinity, total', 'Hardness, Ca, Mg'];
+  const chars = ['Temperature, water', 'Dissolved oxygen (DO)', 'Dissolved oxygen'];
+  // WQP query requires: characteristicType=Physical, providers NWIS+WQX,
+  // dataProfile=resultPhysChem, and a date range
   const wqpUrl = `https://www.waterqualitydata.us/data/Result/search?` +
     `bBox=${bboxWest},${bboxSouth},${bboxEast},${bboxNorth}` +
     `&siteType=Lake%2C+Reservoir%2C+Impoundment` +
+    `&characteristicType=Physical` +
     `&characteristicName=${chars.map(c => encodeURIComponent(c)).join('&characteristicName=')}` +
-    `&dataProfile=narrowResult&mimeType=csv&sorted=no` +
-    `&startDateLo=01-01-2010`;
+    `&providers=NWIS&providers=WQX` +
+    `&dataProfile=resultPhysChem` +
+    `&mimeType=csv&sorted=no` +
+    `&startDateLo=01-01-2015&startDateHi=12-31-2026`;
 
   let csvText;
   try {
@@ -4102,10 +4107,9 @@ async function handleResearchDeterministicFacts(request, env) {
           const normDocs = JSON.parse(await normObj.text());
           const regsDoc = normDocs.find(d => d.url && d.url.includes('eregulations.com'));
           const lakeRegsDoc = normDocs.find(d => d.url && d.url.includes(`/lakes/${slug}/regs`));
-          console.log(`[regs-debug] normDocs=${normDocs.length} regsDoc=${!!regsDoc} fullTextLen=${regsDoc?.fullText?.length || 0} lakeRegsDoc=${!!lakeRegsDoc}`);
           if (regsDoc?.fullText) regsHtml = regsDoc.fullText;
           if (lakeRegsDoc?.fullText) lakeRegsHtml = lakeRegsDoc.fullText;
-          console.log(`[regs-debug] regsHtml.length=${regsHtml.length} lakeRegsHtml.length=${lakeRegsHtml.length}`);
+          profile._regsDebug = { normDocsCount: normDocs.length, regsDocFound: !!regsDoc, regsFullTextLen: regsDoc?.fullText?.length || 0, lakeRegsDocFound: !!lakeRegsDoc, regsHtmlLen: regsHtml.length };
         }
       } catch (e) {
         console.warn(`normalized regs load failed: ${e.message}`);
