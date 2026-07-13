@@ -310,6 +310,16 @@ function pointInPolygonLonLat(lon, lat, ring) {
   return inside;
 }
 
+function geoDistanceFt(lat1, lon1, lat2, lon2) {
+  const R = 20902231; // Earth radius in feet
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 function summarizePointComplexityFromBoundary(ring) {
   if (!Array.isArray(ring) || ring.length < 40) return {};
   const step = Math.max(1, Math.floor(ring.length / 120));
@@ -1082,6 +1092,7 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       limnology: applyWqpToLimnology(deterministicProfile.limnology || {}, wqpLimnology),
       summary: cloneJson(deterministicProfile.summary || {})
     };
+    log(`[DEBUG] agentSections.biology.predatorSpecies=${JSON.stringify(agentSections.biology?.predatorSpecies)} knownStockings=${JSON.stringify(agentSections.biology?.knownStockings)}`);
 
     const evidence = mergeEvidenceMaps(deterministicProfile.evidence || {}, buildWqpEvidence(wqpLimnology));
     const factualSummary = buildDeterministicSummary({ lakeName, identity: agentSections.identity, biology: agentSections.biology, limnology: agentSections.limnology, habitat: agentSections.habitat });
@@ -1114,12 +1125,19 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       sourceMap.set('Water Quality Portal|https://www.waterqualitydata.us/', { label: 'Water Quality Portal / SCDES monitoring', url: 'https://www.waterqualitydata.us/', trust: 'OFFICIAL', sourceType: 'official_structured' });
     }
 
+    // Safety net: ensure deterministic biology fields are never lost in the packet
+    const safeBiology = {
+      ...(agentSections.biology || {}),
+      predatorSpecies: agentSections.biology?.predatorSpecies?.length ? agentSections.biology.predatorSpecies : (deterministicProfile.biology?.predatorSpecies || []),
+      knownStockings: agentSections.biology?.knownStockings?.length ? agentSections.biology.knownStockings : (deterministicProfile.biology?.knownStockings || []),
+    };
     const researchPacket = {
       lakeName,
       baseName,
       state: stateName,
       ...agentSections,
-      forage: agentSections.biology || {},
+      biology: safeBiology,
+      forage: safeBiology,
       trolling: null,
       trollingIntelligence: null,
       _extractedFacts: uniqueFacts,
@@ -1129,6 +1147,7 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       sources: [...sourceMap.values()]
     };
 
+    log(`[DEBUG-SAVE] researchPacket.biology.predatorSpecies=${JSON.stringify(researchPacket.biology?.predatorSpecies)} knownStockings=${JSON.stringify(researchPacket.biology?.knownStockings)}`);
     log(`Saving factual profile (facts=${uniqueFacts.length}, deterministic species=${agentSections.biology?.predatorSpecies?.length || 0})...`);
     const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
