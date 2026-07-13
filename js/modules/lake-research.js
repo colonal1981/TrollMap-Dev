@@ -833,7 +833,7 @@ async function runEvidencePipeline(lakeName) {
             const found = cleanedText.match(/https?:\/\/[^\s)"\]]+ZyActionD[^\s)"\]]*/g) || [];
             docUrls = [...new Set(found)].slice(0, 5);
           }
-          const follow = (Array.isArray(docUrls) ? docUrls : []).slice(0, 3);
+          const follow = (Array.isArray(docUrls) ? docUrls : []).slice(0, 1);
           for (const docUrl of follow) {
             if (!docUrl || normalizedDocuments.some(d => d.url === docUrl)) continue;
             try {
