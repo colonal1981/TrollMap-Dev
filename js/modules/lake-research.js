@@ -1101,6 +1101,21 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       }
     }
 
+    // Merge extracted facts into identity for fields not populated by deterministic parser
+    // (e.g. maxDepthFt, averageDepthFt which SCDNR page reports misleadingly)
+    if (uniqueFacts.length > 0) {
+      const factsPacket = buildFinalResearchPacket(lakeName, stateName, uniqueFacts, scoredSources);
+      if (factsPacket.identity) {
+        const depthFields = ['maxDepthFt', 'averageDepthFt', 'archetype', 'damName', 'yearImpounded', 'reservoirOwner'];
+        for (const k of depthFields) {
+          const v = factsPacket.identity[k];
+          if (v != null && v !== '' && (deterministicProfile.identity[k] == null || deterministicProfile.identity[k] === '')) {
+            deterministicProfile.identity[k] = v;
+          }
+        }
+      }
+    }
+
     const agentSections = {
       identity: cloneJson(deterministicProfile.identity || {}),
       biology: cloneJson(deterministicProfile.biology || {}),
