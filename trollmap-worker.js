@@ -4092,8 +4092,7 @@ async function handleResearchDeterministicFacts(request, env) {
                 return '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>';
               })
               .filter(Boolean)
-              .join('
-');
+              .join('\n');
             regsHtml = tableRows ? `<table>${tableRows}</table>` : regsDoc.fullText;
           }
           if (lakeRegsDoc?.fullText) lakeRegsHtml = lakeRegsDoc.fullText;
