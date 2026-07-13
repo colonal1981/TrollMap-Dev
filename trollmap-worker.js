@@ -4102,8 +4102,10 @@ async function handleResearchDeterministicFacts(request, env) {
           const normDocs = JSON.parse(await normObj.text());
           const regsDoc = normDocs.find(d => d.url && d.url.includes('eregulations.com'));
           const lakeRegsDoc = normDocs.find(d => d.url && d.url.includes(`/lakes/${slug}/regs`));
+          console.log(`[regs-debug] normDocs=${normDocs.length} regsDoc=${!!regsDoc} fullTextLen=${regsDoc?.fullText?.length || 0} lakeRegsDoc=${!!lakeRegsDoc}`);
           if (regsDoc?.fullText) regsHtml = regsDoc.fullText;
           if (lakeRegsDoc?.fullText) lakeRegsHtml = lakeRegsDoc.fullText;
+          console.log(`[regs-debug] regsHtml.length=${regsHtml.length} lakeRegsHtml.length=${lakeRegsHtml.length}`);
         }
       } catch (e) {
         console.warn(`normalized regs load failed: ${e.message}`);
