@@ -3006,15 +3006,16 @@ async function handleResearchDiscover(request, env) {
   const otherLakeNames = ['murray','marion','moultrie','hartwell','keowee','jocassee','thurmond','clarks hill','clark hill','russell','wylie','norman','hickory','james','rhodhiss','mountain island','wateree','robinson','monticello','greenwood','secession','yates','martin'];
   const offLakePattern = (title, url) => {
     const combined = `${title} ${url}`.toLowerCase();
+    // Filter irrelevant document types regardless of lake
+    if (/wetlands.management|wma.wetlands|wildlife.management.area|hunting.*pdf|upland.*habitat|prescribed.burn|waterfowl.impound/i.test(combined)) return 'irrelevant_doc_type';
+    if (/nrc\.gov\/docs\//i.test(combined)) return 'nrc_nuclear_doc';
     for (const other of otherLakeNames) {
       if (other === baseLower) continue;
-      // if title explicitly says "Lake Murray Regulations" and we are searching Wateree, flag it
       if (combined.includes(`lake ${other}`) && !combined.includes(baseLower)) {
-        // allow generic state docs that mention multiple lakes but not specifically lake-specific
-        // if combined contains \"murray\" and \"marion\" both generic list, keep
-        const isLakeSpecificReg = /regulations|regs\.html|description\.html/.test(combined) && /lake (murray|marion|moultrie|hartwell|keowee|jocassee)/.test(combined);
+        const isLakeSpecificReg = /regulations|regs\.html|description\.html/.test(combined) && /lake (murray|marion|moultrie|hartwell|keowee|jocassee|greenwood|secession|yates|martin)/.test(combined);
         if (isLakeSpecificReg) return other;
       }
+      if (/regs\.html|description\.html/.test(combined) && combined.includes(`/${other}/`) && !combined.includes(baseLower)) return other;
     }
     return null;
   };
@@ -4063,18 +4064,38 @@ async function handleResearchDeterministicFacts(request, env) {
   }
 
   // Deterministic SC regulations from official pages
+  // eRegulations is a JS-rendered React app — must use Firecrawl to get rendered HTML with table rows
   if (state === 'SC') {
     const slug = lakeKeyFromName(lakeName);
     const regsUrl = 'https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits';
     const lakeRegsUrl = `https://www.dnr.sc.gov/lakes/${slug}/regs.html`;
+    const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
     try {
-      const [regsRes, lakeRegsRes] = await Promise.all([
-        fetch(regsUrl, { headers: { 'User-Agent': 'TrollMap/16 Evidence Engine', 'Accept': 'text/html' }, cf: { cacheTtl: 86400, cacheEverything: true } }),
-        fetch(lakeRegsUrl, { headers: { 'User-Agent': 'TrollMap/16 Evidence Engine', 'Accept': 'text/html' }, cf: { cacheTtl: 86400, cacheEverything: true } })
-      ]);
-      if (regsRes.ok) {
-        const regsHtml = await regsRes.text();
-        const lakeRegsHtml = lakeRegsRes.ok ? await lakeRegsRes.text() : '';
+      // Fetch eRegulations via Firecrawl (renders JS) + lake regs page directly (static HTML)
+      let regsHtml = '';
+      if (firecrawlKey) {
+        try {
+          const fcRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: regsUrl, formats: ['html'], onlyMainContent: false })
+          });
+          if (fcRes.ok) {
+            const fcData = await fcRes.json();
+            regsHtml = fcData.data?.html || fcData.data?.content || '';
+          }
+        } catch (e) {
+          console.warn(`Firecrawl regs fetch failed: ${e.message}`);
+        }
+      }
+      // Fall back to direct fetch if Firecrawl failed or unavailable
+      if (!regsHtml) {
+        const regsRes = await fetch(regsUrl, { headers: { 'User-Agent': 'TrollMap/16 Evidence Engine', 'Accept': 'text/html' }, cf: { cacheTtl: 86400, cacheEverything: true } });
+        if (regsRes.ok) regsHtml = await regsRes.text();
+      }
+      const lakeRegsRes = await fetch(lakeRegsUrl, { headers: { 'User-Agent': 'TrollMap/16 Evidence Engine', 'Accept': 'text/html' }, cf: { cacheTtl: 86400, cacheEverything: true } });
+      const lakeRegsHtml = lakeRegsRes.ok ? await lakeRegsRes.text() : '';
+      if (regsHtml) {
         const parsedRegs = parseSCRegulationsFromHtml(lakeName, regsUrl, regsHtml, lakeRegsHtml);
         profile.regulations = mergeMissing(profile.regulations, parsedRegs.regulations || {});
         for (const src of parsedRegs.sources || []) profile.sources.push(src);
@@ -6410,6 +6431,17 @@ Place the fraction at the point where the structure meets the water, not the far
           return handleContourGeojsonPut(request, env, lakeArg);
         }
       }
+      if (path === "/chartpacks/lake-boundary" && request.method === "GET") {
+        const lakeName = url.searchParams.get("lake") || "";
+        if (!lakeName) return new Response(JSON.stringify({ error: "missing lake param" }), { status: 400, headers: JSON_HEADERS });
+        // Use chartpackKey to resolve R2 path — same pattern as contour-data.js
+        const contourKey = chartpackKey(lakeName, "contours.geojson");
+        const geoObj = await env.R2_TROLLMAP_CHARTPACKS.get(contourKey).catch(() => null);
+        if (!geoObj) return new Response(JSON.stringify({ error: "no contour data found", lake: lakeName }), { status: 404, headers: JSON_HEADERS });
+        const geoText = await geoObj.text();
+        return new Response(geoText, { headers: { ...CORS, "Content-Type": "application/json", "Cache-Control": "public, max-age=86400" } });
+      }
+
       if (path === "/chartpacks/list") {
         const data = await handleChartpackList(env);
         return new Response(JSON.stringify(data, null, 2), { headers: JSON_HEADERS });
