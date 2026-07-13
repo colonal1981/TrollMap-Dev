@@ -1,7 +1,7 @@
 // worker-research.js — Full research pipeline extracted from trollmap-worker.js
 // All /research/* route handlers, RESEARCH_AGENTS, deterministic facts, dataset hunt, etc.
 
-import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized } from './worker-core.js';
+import { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, isAuthorized } from './worker-core.js';
 import { LAKES, LAKE_INTEL, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel } from './worker-data.js';
 
 var __defProp = Object.defineProperty;

@@ -261,4 +261,4 @@ async function handleChartpackList(env) {
 }
 __name(handleChartpackList, "handleChartpackList");
 
-export { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized };
+export { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, isAuthorized };
