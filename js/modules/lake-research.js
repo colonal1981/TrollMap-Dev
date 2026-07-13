@@ -689,6 +689,72 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       : 'No verified facts were extracted from documents for this lake.';
 
     // ----------------------------------------------------
+    // STEP 9: WQP Limnology Data (real DO/temp profiles)
+    // ----------------------------------------------------
+    setProgress("Step 9: Fetching real limnology data from WQP...", 62);
+    log("Querying Water Quality Portal for DO and temperature profiles...");
+    let wqpLimnology = null;
+    try {
+      // Derive bbox from lake GeoJSON in R2
+      const geoRes = await fetch(`${CF_WORKER_URL}/chartpacks/lake-boundary?lake=${encodeURIComponent(lakeName)}`);
+      let bbox = null;
+      if (geoRes.ok) {
+        const geo = await geoRes.json();
+        const coords = [];
+        const extractCoords = (obj) => {
+          if (!obj) return;
+          if (obj.type === 'Feature') extractCoords(obj.geometry);
+          else if (obj.type === 'FeatureCollection') obj.features?.forEach(extractCoords);
+          else if (obj.coordinates) {
+            const flat = obj.coordinates.flat(Infinity);
+            for (let i = 0; i < flat.length - 1; i += 2) coords.push([flat[i], flat[i+1]]);
+          }
+        };
+        extractCoords(geo);
+        if (coords.length) {
+          const lons = coords.map(c => c[0]);
+          const lats = coords.map(c => c[1]);
+          bbox = {
+            bboxNorth: Math.max(...lats),
+            bboxSouth: Math.min(...lats),
+            bboxEast:  Math.max(...lons),
+            bboxWest:  Math.min(...lons)
+          };
+        }
+      }
+      if (bbox) {
+        const wqpRes = await fetch(`${CF_WORKER_URL}/research/limnology-data`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lakeName, ...bbox })
+        });
+        if (wqpRes.ok) {
+          const wqpData = await wqpRes.json();
+          if (wqpData.ok && wqpData.recordCount > 0) {
+            wqpLimnology = wqpData;
+            log(`✔ WQP: ${wqpData.recordCount} records, ${wqpData.summerRecords} summer — thermocline: ${wqpData.thermocline ? `${wqpData.thermocline.depthFt}ft (confidence: ${wqpData.thermocline.confidence}%, method: ${wqpData.thermocline.method})` : 'not derived'}`);
+          } else {
+            log(`⚠️ WQP: ${wqpData.note || 'no data found for this lake boundary'}`);
+          }
+        }
+      } else {
+        log("⚠️ WQP: could not derive lake boundary bbox — skipping limnology data fetch");
+      }
+    } catch (e) {
+      log(`⚠️ WQP limnology fetch failed: ${e.message} — continuing without measured data`);
+    }
+
+    // Build WQP context block for limnology agent
+    const wqpBlock = wqpLimnology?.thermocline ? `
+MEASURED LIMNOLOGY DATA FROM WATER QUALITY PORTAL (${wqpLimnology.recordCount} records, last observed ${wqpLimnology.lastObserved}):
+- Summer thermocline depth: ${wqpLimnology.thermocline.depthFt}ft (confidence: ${wqpLimnology.thermocline.confidence}%, method: ${wqpLimnology.thermocline.method})
+- Anoxic below: ${wqpLimnology.oxygen?.anoxicBelowFt ?? 'not determined'}ft
+- Striper safe depth ceiling: ${wqpLimnology.oxygen?.stripeThresholdFt ?? 'unknown'}ft (need >4mg/L DO)
+- Largemouth safe depth ceiling: ${wqpLimnology.oxygen?.largemouthThresholdFt ?? 'unknown'}ft
+- Evidence count: ${wqpLimnology.thermocline.evidenceCount} summer measurements
+USE THESE VALUES DIRECTLY — do not estimate or override with training data.` : `
+No measured thermocline data available from WQP for this lake. Use training data estimate if known for similar SC piedmont reservoirs, clearly label as estimated.`;
+
+    // ----------------------------------------------------
     // STEP 9–12: 4 Targeted Agent Calls
     // Each agent gets relevant doc chunks + extracted facts,
     // extracts what it needs AND synthesizes its section.
@@ -697,7 +763,7 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     const agentSections = {};
 
     // --- CALL 1: Identity + Limnology ---
-    setProgress("Step 9: Identity & Limnology...", 65);
+    setProgress("Step 10: Identity & Limnology...", 68);
     log("Running identity & limnology agent...");
     try {
       const identityChunks = getDocChunks(normalizedDocuments,
@@ -707,8 +773,8 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: [
-            { role: 'system', content: `You are a lake research specialist. Extract and synthesize lake identity and limnology data from provided documents and verified facts. Return ONLY valid JSON. Null means unknown — never invent numbers. Do not use training data for numeric fields unless the documents support it.` },
-            { role: 'user', content: `Lake: ${lakeName}\n\n${factsBlock}\n\nDOCUMENT EXCERPTS:\n${identityChunks.slice(0, 25000)}\n\nReturn ONLY this JSON:\n{"identity":{"lakeName":"${lakeName}","state":"${stateName}","county":null,"riverSystem":null,"reservoirOwner":null,"surfaceAreaAcres":null,"maxDepthFt":null,"averageDepthFt":null,"normalPoolFt":null,"shorelineLengthMi":null,"damName":null,"yearImpounded":null,"archetype":null,"aliases":[]},"limnology":{"waterClarity":{"typical":null,"color":null,"secchiFt":null,"note":null},"thermocline":{"summerDepthFt":null,"strength":null,"winterMix":null,"note":null},"oxygen":{"depletionDepthFt":null,"anoxicBelowFt":null,"note":null},"trophicStatus":null,"flowCharacteristics":null,"seasonalDrawdownFt":null}}` }
+            { role: 'system', content: `You are a lake research specialist. Extract and synthesize lake identity and limnology data from provided documents, verified facts, and measured water quality data. Return ONLY valid JSON. Null means unknown — never invent numbers. For limnology fields backed by WQP measured data, use those values directly and set confidence accordingly.` },
+            { role: 'user', content: `Lake: ${lakeName}\n\n${factsBlock}\n\n${wqpBlock}\n\nDOCUMENT EXCERPTS:\n${identityChunks.slice(0, 20000)}\n\nReturn ONLY this JSON:\n{"identity":{"lakeName":"${lakeName}","state":"${stateName}","county":null,"riverSystem":null,"reservoirOwner":null,"surfaceAreaAcres":null,"maxDepthFt":null,"averageDepthFt":null,"normalPoolFt":null,"shorelineLengthMi":null,"damName":null,"yearImpounded":null,"archetype":null,"aliases":[]},"limnology":{"waterClarity":{"typical":null,"color":null,"secchiFt":null,"note":null},"thermocline":{"summerDepthFt":null,"strength":null,"winterMix":null,"confidence":null,"method":null,"evidenceCount":null,"lastObserved":null,"note":null},"oxygen":{"depletionDepthFt":null,"anoxicBelowFt":null,"striperCeilingFt":null,"largemouthCeilingFt":null,"note":null},"trophicStatus":null,"flowCharacteristics":null,"seasonalDrawdownFt":null}}` }
           ],
           max_tokens: 1500, temperature: 0.1, response_format: { type: 'json_object' }
         })
@@ -724,7 +790,7 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     } catch (e) { log(`⚠️ Identity/Limnology agent failed: ${e.message}`); }
 
     // --- CALL 2: Biology + Habitat ---
-    setProgress("Step 10: Biology & Habitat...", 72);
+    setProgress("Step 11: Biology & Habitat...", 75);
     log("Running biology & habitat agent...");
     try {
       const bioChunks = getDocChunks(normalizedDocuments,
@@ -751,7 +817,7 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     } catch (e) { log(`⚠️ Biology/Habitat agent failed: ${e.message}`); }
 
     // --- CALL 3: Regulations + Navigation ---
-    setProgress("Step 11: Regulations & Navigation...", 82);
+    setProgress("Step 12: Regulations & Navigation...", 84);
     log("Running regulations & navigation agent...");
     try {
       const regChunks = getDocChunks(normalizedDocuments,
@@ -778,7 +844,7 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     } catch (e) { log(`⚠️ Regulations/Navigation agent failed: ${e.message}`); }
 
     // --- CALL 4: Trolling Intelligence + Summary ---
-    setProgress("Step 12: Trolling Intelligence & Summary...", 90);
+    setProgress("Step 13: Trolling Intelligence & Summary...", 92);
     log("Running trolling intelligence & summary agent...");
     try {
       const profileSoFar = JSON.stringify({
@@ -792,8 +858,8 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: [
-            { role: 'system', content: `You are a professional kayak trolling guide and fisheries biologist. Using the lake profile provided, derive trolling intelligence for confirmed predator species only. Also write a 2-3 paragraph angler summary. Do NOT invent species not in the biology section. Do NOT recommend specific lures, colors, or routes. Return ONLY valid JSON.` },
-            { role: 'user', content: `Lake: ${lakeName}\n\nPROFILE SO FAR:\n${profileSoFar}\n\nReturn ONLY this JSON:\n{"trollingIntelligence":{},"summary":{"text":null,"keywords":[]}}` }
+            { role: 'system', content: `You are a professional kayak trolling guide and fisheries biologist. Using the lake profile and measured thermocline data provided, derive trolling intelligence for confirmed predator species only. Also write a 2-3 paragraph angler summary. Do NOT invent species not in the biology section. Do NOT recommend specific lures, colors, or routes. If thermocline depth is provided as measured data, use it to set species depth ceilings. Return ONLY valid JSON.` },
+            { role: 'user', content: `Lake: ${lakeName}\n\n${wqpBlock}\n\nPROFILE SO FAR:\n${profileSoFar}\n\nReturn ONLY this JSON:\n{"trollingIntelligence":{},"summary":{"text":null,"keywords":[]}}` }
           ],
           max_tokens: 2000, temperature: 0.2, response_format: { type: 'json_object' }
         })
@@ -822,6 +888,7 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       trolling: agentSections.trollingIntelligence || {},
       _extractedFacts: uniqueFacts,
       _extractedFactsCount: uniqueFacts.length,
+      _wqpLimnology: wqpLimnology || null,
       sources: scoredSources.map(s => ({
         label: s.title,
         url: s.url || '#',
