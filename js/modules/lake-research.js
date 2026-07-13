@@ -522,13 +522,8 @@ async function runFromNormalized(lakeName) {
     const normalizedDocuments = normData.documents;
     log(`Loaded ${normalizedDocuments.length} normalized documents from R2.`);
 
-    // Resolve canonical details for the rest of the pipeline
-    const canonRes = await fetch(`${CF_WORKER_URL}/research/discover`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lakeName, state: 'SC' })
-    });
-    const canonData = await canonRes.json();
-    const stateName = canonData.state || 'SC';
+    // Derive state and baseName locally — no Tavily/discover needed for resume
+    const stateName = sanitizeStateFromLakeName(lakeName);
     const baseName = lakeName.replace(/^Lake\s+/i, '').replace(/,\s*(SC|NC|GA)\s*$/i, '').trim();
 
     // Jump straight to scoring (Step 5 & 6)
