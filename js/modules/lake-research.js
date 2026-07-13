@@ -79,8 +79,15 @@ function showProgress(show) {
 
 function sanitizeStateFromLakeName(lakeName) {
   const s = (lakeName || '').toUpperCase();
-  if (s.includes(', NC') || s.includes(' NC') || s.includes('NORTH CAROLINA')) return 'NC';
-  if (s.includes(', GA') || s.includes(' GA') || s.includes('GEORGIA')) return 'GA';
+  // Prefer primary state from suffix: "Lake X, NC", "Lake X, SC/GA", "Lake X, NC/VA"
+  // Order matters: check explicit ", XX" / "/XX" tokens so border lakes resolve correctly.
+  if (/,\s*NC(\/|$|\s)|\/NC\b/.test(s) || s.includes('NORTH CAROLINA')) return 'NC';
+  if (/,\s*GA(\/|$|\s)|\/GA\b/.test(s) || s.includes('GEORGIA')) return 'GA';
+  if (/,\s*VA(\/|$|\s)|\/VA\b/.test(s) || s.includes('VIRGINIA')) return 'NC'; // Kerr/Gaston treated with NC pipeline
+  if (/,\s*SC(\/|$|\s)|\/SC\b/.test(s) || s.includes('SOUTH CAROLINA')) return 'SC';
+  // Loose fallbacks
+  if (/\bNC\b/.test(s)) return 'NC';
+  if (/\bGA\b/.test(s)) return 'GA';
   return 'SC';
 }
 
@@ -532,11 +539,20 @@ async function runFromNormalized(lakeName) {
     const scoredSources = normalizedDocuments.map(doc => {
       // reuse existing scoring logic inline — same as full pipeline
       const lower = String(doc.fullText || '').toLowerCase();
+      const urlLower = String(doc.url || '').toLowerCase();
+      const titleLower = String(doc.title || '').toLowerCase();
       const baseNameLower = baseName.toLowerCase();
       const lakeNameLower = lakeName.toLowerCase();
-      const mentionCount = (lower.match(new RegExp(baseNameLower, 'g')) || []).length;
-      const authority = /scdnr|dnr\.sc\.gov|eregulations|des\.sc\.gov|usgs|usace|epa\.gov/.test(String(doc.url || doc.authority || '').toLowerCase()) ? 98 : 60;
-      const relevance = mentionCount > 10 ? 95 : mentionCount > 3 ? 80 : mentionCount > 0 ? 60 : 35;
+      const mentionCount = (lower.match(new RegExp(baseNameLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+      const isOfficialRegs = /eregulations\.com|size.?possession|freshwater.?fish.?size/i.test(urlLower + ' ' + titleLower);
+      let authority = /scdnr|dnr\.sc\.gov|eregulations|des\.sc\.gov|usgs|usace|epa\.gov|nepis/.test(urlLower + ' ' + String(doc.authority || '').toLowerCase()) ? 98 : 60;
+      // Statewide eRegulations apply to all lakes — high relevance even without lake name
+      let relevance = isOfficialRegs ? 90
+        : mentionCount > 10 ? 95
+        : mentionCount > 3 ? 80
+        : mentionCount > 0 ? 60
+        : 35;
+      if (isOfficialRegs) authority = 98;
       const freshness = /2024|2025|2026/.test(lower) ? 95 : /2020|2021|2022|2023/.test(lower) ? 75 : /201[5-9]/.test(lower) ? 50 : 25;
       const completeness = (doc.fullText || '').length > 20000 ? 95 : (doc.fullText || '').length > 8000 ? 85 : (doc.fullText || '').length > 2000 ? 65 : 35;
       const composite = Math.round(authority * 0.4 + relevance * 0.3 + freshness * 0.15 + completeness * 0.15);
@@ -647,11 +663,66 @@ async function runEvidencePipeline(lakeName) {
       throw new Error(`Source Discovery Failed: ${discoverData.error || 'Unknown error'}`);
     }
 
-    const sources = discoverData.sources || [];
+    let sources = discoverData.sources || [];
     log(`Source Discovery completed. Discovered ${sources.length} trusted documents/URLs.`);
     sources.forEach(src => {
       log(`• [Priority ${src.priority}] ${src.title} (${src.authority}) - ${src.type}`);
     });
+
+    // ----------------------------------------------------
+    // STEP 2b: Dataset hunt (EPA NSCEP / agency reports)
+    // EPA "Report on Lake …" series is often the best limnology source for
+    // tristate reservoirs. Merge top hits into the download queue.
+    // ----------------------------------------------------
+    try {
+      setProgress("Step 2b: Hunting EPA NSCEP & agency datasets...", 32);
+      log("Calling /research/dataset-hunt for EPA NSCEP + agency report URLs...");
+      const huntRes = await fetch(`${CF_WORKER_URL}/research/dataset-hunt`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lakeName, state: stateName })
+      });
+      if (huntRes.ok) {
+        const huntData = await huntRes.json();
+        const datasets = huntData.datasets || [];
+        log(`Dataset hunt returned ${datasets.length} candidates (firecrawl=${!!huntData.firecrawlUsed}, tavily=${!!huntData.tavilyUsed}).`);
+        const seen = new Set(sources.map(s => String(s.url || '').split('?')[0].toLowerCase()));
+        // Prefer EPA NSCEP + high-score PDFs/HTML; cap so we don't explode download time
+        const epaFirst = [...datasets].sort((a, b) => {
+          const aEpa = /epa|nepis/i.test(a.authority + a.url) ? 1 : 0;
+          const bEpa = /epa|nepis/i.test(b.authority + b.url) ? 1 : 0;
+          if (aEpa !== bEpa) return bEpa - aEpa;
+          return (b.score || 0) - (a.score || 0);
+        });
+        let added = 0;
+        const maxAdd = 6;
+        for (const d of epaFirst) {
+          if (added >= maxAdd) break;
+          const norm = String(d.url || '').split('?')[0].toLowerCase();
+          if (!d.url || seen.has(norm)) continue;
+          // Keep NEPI S / EPA always; other agencies need a decent score + lake relevance
+          const isEpa = /nepis\.epa\.gov|epa\.gov|ZyActionD|ZyPDF/i.test(d.url + (d.authority || ''));
+          if (!isEpa && (d.score || 0) < 30) continue;
+          seen.add(norm);
+          sources.push({
+            title: d.title || `Dataset: ${d.url}`,
+            type: d.type || (/\.pdf$/i.test(d.url) || /ZyPDF/i.test(d.url) ? 'PDF' : 'HTML'),
+            authority: d.authority || (isEpa ? 'EPA NSCEP' : 'Web'),
+            url: d.url,
+            priority: isEpa ? 1 : 2,
+            source: d.source || 'dataset_hunt',
+            score: d.score || 0
+          });
+          added++;
+          log(`• [hunt] ${isEpa ? 'EPA' : d.authority} +${d.score || 0}: ${(d.title || d.url).slice(0, 100)}`);
+        }
+        log(`Merged ${added} dataset-hunt sources into download queue (total ${sources.length}).`);
+      } else {
+        log(`⚠️ Dataset hunt HTTP ${huntRes.status} — continuing with discover sources only.`);
+      }
+    } catch (e) {
+      log(`⚠️ Dataset hunt failed: ${e.message} — continuing with discover sources only.`);
+    }
 
     // Save Step 1 & 2 catalogs to R2 first
     await savePipelineDataToR2(lakeName, 'canonical_lake.json', canonicalLake);
@@ -717,6 +788,8 @@ async function runEvidencePipeline(lakeName) {
         }
 
         const isFirecrawl = proxyRes.headers.get('X-Source') === 'firecrawl';
+        const nepisFormat = proxyRes.headers.get('X-Nepis-Format') || '';
+        const nepisTitle = proxyRes.headers.get('X-Nepis-Title') || '';
         const text = await proxyRes.text();
 
         // If Firecrawl returned markdown, use it directly — no HTML stripping needed
@@ -732,20 +805,64 @@ async function runEvidencePipeline(lakeName) {
           continue;
         }
 
-        log(`${isFirecrawl ? 'Firecrawl' : 'Basic'} extracted ${cleanedText.length} chars from ${src.title}`);
+        log(`${isFirecrawl ? 'Firecrawl' : 'Basic'} extracted ${cleanedText.length} chars from ${src.title}${nepisFormat ? ` [nepis:${nepisFormat}]` : ''}`);
 
         normalizedDocuments.push({
-          title: src.title,
-          authority: src.authority,
+          title: nepisTitle || src.title,
+          authority: src.authority || (/nepis|epa/i.test(src.url) ? 'EPA NSCEP' : src.authority),
           url: src.url,
           priority: src.priority,
           fullText: cleanedText,
-          pages: [{ pageNumber: 1, text: cleanedText, title: src.title }],
+          pages: [{ pageNumber: 1, text: cleanedText, title: nepisTitle || src.title }],
           downloadDate: new Date().toISOString(),
           contentType: isFirecrawl ? 'text/markdown' : 'text/html',
-          extractionMethod: isFirecrawl ? 'firecrawl' : 'basic'
+          extractionMethod: isFirecrawl ? (nepisFormat ? `firecrawl_nepis_${nepisFormat}` : 'firecrawl') : 'basic'
         });
         log(`Webpage extracted & normalized successfully.`);
+
+        // EPA NSCEP search-results page may list multiple document landing URLs —
+        // follow up on the first few so full report text becomes evidence.
+        if (nepisFormat === 'search_results') {
+          let docUrls = [];
+          try {
+            const hdr = proxyRes.headers.get('X-Nepis-Documents');
+            if (hdr) docUrls = JSON.parse(hdr);
+          } catch (_) {}
+          // Also scrape markdown catalog for ZyActionD links
+          if (!docUrls.length) {
+            const found = cleanedText.match(/https?:\/\/[^\s)"\]]+ZyActionD[^\s)"\]]*/g) || [];
+            docUrls = [...new Set(found)].slice(0, 5);
+          }
+          const follow = (Array.isArray(docUrls) ? docUrls : []).slice(0, 3);
+          for (const docUrl of follow) {
+            if (!docUrl || normalizedDocuments.some(d => d.url === docUrl)) continue;
+            try {
+              log(`  ↳ Following EPA NSCEP document: ${docUrl.slice(0, 100)}…`);
+              const docRes = await fetch(`${CF_WORKER_URL}/research/proxy-download?url=${encodeURIComponent(docUrl)}&type=HTML`);
+              if (!docRes.ok) {
+                log(`  ⚠️ EPA doc follow-up failed HTTP ${docRes.status}`);
+                continue;
+              }
+              const docText = await docRes.text();
+              if (docText.length < 200) continue;
+              const docTitle = docRes.headers.get('X-Nepis-Title') || `EPA NSCEP document`;
+              normalizedDocuments.push({
+                title: docTitle,
+                authority: 'EPA NSCEP',
+                url: docUrl,
+                priority: 1,
+                fullText: docText,
+                pages: [{ pageNumber: 1, text: docText, title: docTitle }],
+                downloadDate: new Date().toISOString(),
+                contentType: 'text/markdown',
+                extractionMethod: `firecrawl_nepis_${docRes.headers.get('X-Nepis-Format') || 'landing'}`
+              });
+              log(`  ✔ EPA doc extracted ${docText.length} chars: ${docTitle.slice(0, 80)}`);
+            } catch (e) {
+              log(`  ⚠️ EPA doc follow-up error: ${e.message}`);
+            }
+          }
+        }
       }
     }
 
@@ -780,17 +897,29 @@ async function runEvidencePipeline(lakeName) {
       else if (/CLEMSON|NC STATE|UNIVERSITY|UGA|USC/.test(auth)) authorityScore = 90;
       else if (/DUKE|DOMINION|POWER|UTILITY/.test(auth)) authorityScore = 85;
 
-      // Relevance penalty: if doc does not mention lake base name, drop authority
+      // Relevance: lake-name hits help, but official statewide regs (eRegulations) are always high-value
       const mentionsBase = lower.includes(baseLower);
       const titleHasBase = titleLower.includes(baseLower);
+      const isOfficialRegs = /eregulations\.com|fishregs|size.?possession|freshwater.?fish.?size|creel.?limit/i.test(urlLower + ' ' + titleLower)
+        || /size limit|possession limit|creel limit|statewide except/i.test(lower.slice(0, 4000));
+      const isLakeRegsPage = /\/lakes\/[^/]+\/regs\.html/i.test(urlLower) || /lake .+ regulations/i.test(titleLower);
       let relevance = 40;
       if (titleHasBase) relevance = 95;
       else if (mentionsBase) {
         const count = (lower.match(new RegExp(baseLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
         relevance = count >= 3 ? 90 : count >= 1 ? 70 : 50;
       }
-      // generic statewide docs without lake mention get capped
-      if (!mentionsBase && !titleHasBase) {
+      // Official statewide regs pages apply to every SC lake — do NOT penalize for missing lake name
+      if (isOfficialRegs) {
+        relevance = Math.max(relevance, 90);
+        authorityScore = Math.max(authorityScore, 98);
+      }
+      if (isLakeRegsPage && (titleHasBase || urlLower.includes(baseLower))) {
+        relevance = Math.max(relevance, 95);
+        authorityScore = Math.max(authorityScore, 98);
+      }
+      // generic statewide docs without lake mention get capped — EXCEPT official regs
+      if (!mentionsBase && !titleHasBase && !isOfficialRegs) {
         // pocket guide, species guide etc
         authorityScore = Math.min(authorityScore, 60);
         relevance = 35;
@@ -1024,7 +1153,21 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
         const detData = await detRes.json();
         if (detData.ok && detData.profile) {
           deterministicProfile = detData.profile;
-          log(`✔ Deterministic baseline loaded — identity=${Object.keys(detData.profile.identity || {}).length}, predatorSpecies=${detData.profile.biology?.predatorSpecies?.length || 0}, ramps=${detData.profile.navigation?.ramps?.length || 0}`);
+          const genCreel = Object.keys(detData.profile.regulations?.generalStateRegulations?.creelLimits || {}).length;
+          const genLen = Object.keys(detData.profile.regulations?.generalStateRegulations?.lengthLimits || {}).length;
+          const lakeSize = Object.keys(detData.profile.regulations?.lakeSpecificRegulations?.sizeLimits || {}).length;
+          const lakeCreel = Object.keys(detData.profile.regulations?.lakeSpecificRegulations?.creelLimits || {}).length;
+          log(`✔ Deterministic baseline loaded — identity=${Object.keys(detData.profile.identity || {}).length}, predatorSpecies=${detData.profile.biology?.predatorSpecies?.length || 0}, ramps=${detData.profile.navigation?.ramps?.length || 0}, regs(gen creel=${genCreel}/len=${genLen}, lake size=${lakeSize}/creel=${lakeCreel})`);
+          if (detData.profile._regsDebug) {
+            const d = detData.profile._regsDebug;
+            log(`[regs-debug] mdRows=${d.mdRows ?? '?'} htmlRows=${d.htmlRows ?? '?'} regsDocFound=${d.regsDocFound} fullTextLen=${d.regsFullTextLen} parsedOk=${d.parsedOk} method=${d.extractionMethod || (d.liveFirecrawl ? 'liveFirecrawl' : '?')}${d.parseError ? ' ERR=' + d.parseError : ''}`);
+            if (d.parsedCreelLimits) log(`[regs-debug] creel: ${JSON.stringify(d.parsedCreelLimits)}`);
+            if (d.parsedGeneralLength) log(`[regs-debug] length: ${JSON.stringify(d.parsedGeneralLength)}`);
+            if (d.parsedLakeSpecific) log(`[regs-debug] lakeSpecific: ${JSON.stringify({ size: d.parsedLakeSpecific.sizeLimits, creel: d.parsedLakeSpecific.creelLimits, closed: d.parsedLakeSpecific.closedSeasons })}`);
+          }
+          if (!genCreel && !genLen && !lakeSize) {
+            log('⚠️ Regulations section empty after deterministic parse — check that eRegulations is in normalized docs and FIRECRAWL_API_KEY is set on the worker.');
+          }
         }
       }
     } catch (e) {
@@ -1833,40 +1976,99 @@ function formatHumanReadableSection(key, data) {
   if (key === 'regulations') {
     const d = data.regulations || data;
     let html = `<div style="font-size:12px;">`;
-    html += `<div style="margin-bottom:8px"><b>📍 State:</b> ${esc(d.state || '—')}</div>`;
+    html += `<div style="margin-bottom:8px"><b>📍 State:</b> ${esc(d.state || '—')}${d.lastUpdated ? ` · <span class="muted">Updated ${esc(d.lastUpdated)}</span>` : ''}</div>`;
+
+    // Helper: render species → {size, creel} rows from nested maps
+    const renderSpeciesTable = (lengthMap, creelMap, emptyLabel) => {
+      const lengthMapSafe = (lengthMap && typeof lengthMap === 'object') ? lengthMap : {};
+      const creelMapSafe = (creelMap && typeof creelMap === 'object') ? creelMap : {};
+      const species = [...new Set([...Object.keys(lengthMapSafe), ...Object.keys(creelMapSafe)])];
+      if (!species.length) return `<div class="muted" style="font-size:11px">${esc(emptyLabel || 'No limits extracted')}</div>`;
+      let out = `<div style="display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:2px 8px;margin-top:4px;font-size:11px">
+        <div class="muted" style="font-weight:700">Species</div>
+        <div class="muted" style="font-weight:700">Size Limit</div>
+        <div class="muted" style="font-weight:700">Creel / Possession</div>`;
+      for (const sp of species.sort((a, b) => a.localeCompare(b))) {
+        const sizeVal = lengthMapSafe[sp];
+        const creelVal = creelMapSafe[sp];
+        out += `<div><b>${esc(sp)}</b></div>
+          <div>${esc(sizeVal != null && sizeVal !== '' ? String(sizeVal) : '—')}</div>
+          <div>${esc(creelVal != null && creelVal !== '' ? String(creelVal) : '—')}</div>`;
+      }
+      out += `</div>`;
+      return out;
+    };
+
     const gen = d.generalStateRegulations || d.statewide || {};
-    if (gen && typeof gen === 'object' && Object.keys(gen).length) {
-      html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px;margin-bottom:8px">
-        <b>📋 General State Regulations</b><br>`;
-      const creel = gen.creelLimits || gen;
-      if (typeof creel === 'object') {
-        for (const [k, v] of Object.entries(creel)) {
-          html += `<div style="margin:2px 0">• <b>${esc(k)}:</b> ${esc(typeof v === 'string' ? v : JSON.stringify(v))}</div>`;
-        }
-      } else {
-        html += `${esc(String(creel))}`;
+    const genLength = gen.lengthLimits || d.lengthLimits || {};
+    const genCreel = gen.creelLimits || d.creelLimits || {};
+    const hasGen = (gen && typeof gen === 'object' && (Object.keys(genLength).length || Object.keys(genCreel).length || Object.keys(gen).some(k => k !== 'lengthLimits' && k !== 'creelLimits' && gen[k])));
+    if (hasGen || Object.keys(genLength).length || Object.keys(genCreel).length) {
+      html += `<div style="background:rgba(255,255,255,.03);padding:8px;border-radius:6px;margin-bottom:8px">
+        <b>📋 General State Regulations</b>`;
+      html += renderSpeciesTable(genLength, genCreel, 'No statewide limits parsed');
+      // Any leftover non-map fields
+      for (const [k, v] of Object.entries(gen)) {
+        if (k === 'lengthLimits' || k === 'creelLimits') continue;
+        if (v == null || v === '' || (typeof v === 'object' && !Object.keys(v).length)) continue;
+        html += `<div style="margin:3px 0;font-size:11px">• <b>${esc(k)}:</b> ${esc(typeof v === 'string' ? v : JSON.stringify(v))}</div>`;
       }
       html += `</div>`;
     }
+
     const lake = d.lakeSpecificRegulations || d.lakeSpecific || {};
-    if (lake && typeof lake === 'object' && Object.keys(lake).length) {
-      html += `<div style="background:rgba(0,229,255,.05);padding:6px;border-radius:6px;border:1px solid var(--accent);margin-bottom:8px">
-        <b>🎯 Lake-Specific Regulations</b> ${lake.hasExceptions ? '<span style="color:var(--accent2)">(Has exceptions!)</span>' : ''}<br>`;
-      const lcreel = lake.creelLimits || {};
-      if (typeof lcreel === 'object') {
-        for (const [k, v] of Object.entries(lcreel)) {
-          html += `<div style="margin:2px 0">• <b>${esc(k)}:</b> ${esc(typeof v === 'string' ? v : JSON.stringify(v))}</div>`;
-        }
+    const lakeSize = lake.sizeLimits || {};
+    const lakeCreel = lake.creelLimits || {};
+    const lakeHasContent = (lake && typeof lake === 'object') && (
+      lake.hasExceptions ||
+      Object.keys(lakeSize).length ||
+      Object.keys(lakeCreel).length ||
+      (Array.isArray(lake.closedSeasons) && lake.closedSeasons.length) ||
+      (Array.isArray(lake.specialRules) && lake.specialRules.length) ||
+      (Array.isArray(lake._raw) && lake._raw.length)
+    );
+    if (lakeHasContent) {
+      html += `<div style="background:rgba(0,229,255,.05);padding:8px;border-radius:6px;border:1px solid var(--accent);margin-bottom:8px">
+        <b>🎯 Lake-Specific Regulations</b> ${lake.hasExceptions ? '<span style="color:var(--accent2)">(Has exceptions!)</span>' : ''}`;
+      html += renderSpeciesTable(lakeSize, lakeCreel, 'No lake-specific creel/size exceptions');
+      if (Array.isArray(lake.closedSeasons) && lake.closedSeasons.length) {
+        html += `<div style="margin-top:8px"><b style="color:#ff7043">🚫 Closed Seasons</b>`;
+        lake.closedSeasons.forEach(c => {
+          if (typeof c === 'string') {
+            html += `<div style="margin:2px 0;font-size:11px">• ${esc(c)}</div>`;
+          } else {
+            html += `<div style="margin:2px 0;font-size:11px">• <b>${esc(c.species || 'Species')}</b>: ${esc(c.period || '')}${c.times ? ` (${esc(c.times)})` : ''}${c.note ? ` — <span class="muted">${esc(c.note)}</span>` : ''}</div>`;
+          }
+        });
+        html += `</div>`;
       }
-      if (lake.sizeLimits) {
-        html += `<div style="margin-top:4px"><b>Size Limits:</b> ${esc(typeof lake.sizeLimits === 'string' ? lake.sizeLimits : JSON.stringify(lake.sizeLimits))}</div>`;
+      if (Array.isArray(lake.specialRules) && lake.specialRules.length) {
+        html += `<div style="margin-top:6px"><b>📌 Special Rules</b>`;
+        lake.specialRules.forEach(r => {
+          html += `<div style="margin:2px 0;font-size:11px">• ${esc(typeof r === 'string' ? r : JSON.stringify(r))}</div>`;
+        });
+        html += `</div>`;
       }
       if (lake._raw && Array.isArray(lake._raw)) {
         lake._raw.forEach(r => { html += `<div style="margin:2px 0;color:var(--muted);font-size:11px">• ${esc(r)}</div>`; });
       }
       html += `</div>`;
+    } else if (!hasGen && !Object.keys(genLength).length) {
+      // Nothing parsed — show empty state so UI doesn't look broken
+      html += `<div class="muted" style="padding:8px;background:rgba(255,82,82,.05);border-radius:6px;margin-bottom:8px">
+        No regulations data extracted yet. Re-run research (or Resume from normalized) after the eRegulations parser fix so statewide + lake-specific limits populate here.
+      </div>`;
     }
-    if (d.notes) html += `<div><b>📝 Notes:</b> ${esc(d.notes)}</div>`;
+
+    // Flat convenience fields if present and not already covered
+    if (d.licenseRequirements) {
+      html += `<div style="margin:4px 0;font-size:11px"><b>🪪 License:</b> ${esc(d.licenseRequirements)}</div>`;
+    }
+    if (Array.isArray(d.protectedSpecies) && d.protectedSpecies.length) {
+      html += `<div style="margin:4px 0;font-size:11px"><b>🛡️ Protected:</b> ${esc(d.protectedSpecies.join(', '))}</div>`;
+    }
+    if (d.notes) html += `<div style="margin-top:6px"><b>📝 Notes:</b> ${esc(d.notes)}</div>`;
+    if (d.sourceUrl) html += `<div class="muted" style="margin-top:4px;font-size:10px">Source: <a href="${esc(d.sourceUrl)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(d.sourceUrl)}</a></div>`;
     html += `</div>`;
     return html;
   }
