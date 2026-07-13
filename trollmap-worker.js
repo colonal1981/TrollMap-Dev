@@ -3304,6 +3304,189 @@ async function handleResearchProxyDownload(request, env) {
 }
 __name(handleResearchProxyDownload, "handleResearchProxyDownload");
 
+// ─── DATASET HUNTER ──────────────────────────────────────────────────────────
+// Uses Firecrawl /v1/map to crawl authoritative agency sites and find
+// stocking reports, creel surveys, fisheries assessments, and academic papers
+// for a given lake. Returns a ranked list of discovered dataset URLs.
+//
+// Target sources per state:
+//   SC  — dnr.sc.gov (stocking, creel, annual reports, lake descriptions)
+//   NC  — ncwildlife.org
+//   GA  — georgiawildlife.com
+//   All — USGS ScienceBase, USACE, Google Scholar via Tavily
+//
+// Route: POST /research/dataset-hunt  { lakeName, state }
+
+const DATASET_HUNT_TARGETS = {
+  SC: [
+    { label: 'SCDNR Fisheries',        url: 'https://www.dnr.sc.gov/fish/',         depth: 3 },
+    { label: 'SCDNR Lakes',            url: 'https://www.dnr.sc.gov/lakes/',         depth: 2 },
+    { label: 'SCDNR Publications',     url: 'https://www.dnr.sc.gov/publications/',  depth: 2 },
+  ],
+  NC: [
+    { label: 'NCWRC Fisheries',        url: 'https://www.ncwildlife.org/fishing',    depth: 2 },
+  ],
+  GA: [
+    { label: 'GA DNR Fisheries',       url: 'https://georgiawildlife.com/fishing',   depth: 2 },
+  ],
+};
+
+// Keywords that indicate a URL is a dataset/report worth harvesting
+const DATASET_KEYWORDS = [
+  'stocking','creel','survey','report','annual','fisheries','assessment',
+  'population','management','study','research','limnology','water quality',
+  'electrofishing','monitoring','harvest','biology','publication'
+];
+
+// Score a URL for relevance to a given lake
+function scoreDatasetUrl(url, title, lakeName) {
+  const baseName = lakeName.replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA).*$/i,'').trim().toLowerCase();
+  const combined = `${url} ${title}`.toLowerCase();
+  let score = 0;
+  if (combined.includes(baseName)) score += 40;
+  for (const kw of DATASET_KEYWORDS) {
+    if (combined.includes(kw)) score += 5;
+  }
+  if (/\.pdf$/i.test(url)) score += 10; // PDFs are usually actual reports
+  if (/annual.report|creel.survey|stocking.report/i.test(combined)) score += 20;
+  if (/\d{4}/.test(url)) score += 5; // has a year — likely a dated report
+  return score;
+}
+
+async function handleResearchDatasetHunt(request, env) {
+  let body;
+  try { body = await request.json(); } catch { body = {}; }
+  const lakeName = String(body.lakeName || '').trim();
+  const state    = String(body.state || 'SC').trim().toUpperCase();
+
+  if (!lakeName) {
+    return new Response(JSON.stringify({ ok: false, error: 'missing lakeName' }), { status: 400, headers: JSON_HEADERS });
+  }
+
+  const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
+  const tavilyKey    = env.TAVILY_API_KEY || env.TAVILY_KEY;
+  const baseName     = lakeName.replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA).*$/i,'').trim();
+  const baseNameLower = baseName.toLowerCase();
+
+  const discovered = [];
+  const seenUrls   = new Set();
+
+  // ── Phase 1: Firecrawl /v1/map — crawl agency sites for report URLs ──
+  if (firecrawlKey) {
+    const targets = DATASET_HUNT_TARGETS[state] || DATASET_HUNT_TARGETS.SC;
+    for (const target of targets) {
+      try {
+        const mapRes = await fetch('https://api.firecrawl.dev/v1/map', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: target.url,
+            search: baseName,           // Firecrawl filters map results by this search term
+            limit: 50,
+            ignoreSitemap: false,
+          })
+        });
+        if (!mapRes.ok) {
+          console.warn(`Firecrawl map failed for ${target.url}: HTTP ${mapRes.status}`);
+          continue;
+        }
+        const mapData = await mapRes.json();
+        const links = mapData.links || [];
+        for (const link of links) {
+          const url = typeof link === 'string' ? link : (link.url || link);
+          if (!url || seenUrls.has(url)) continue;
+          seenUrls.add(url);
+          const score = scoreDatasetUrl(url, '', lakeName);
+          if (score < 5) continue; // skip irrelevant links
+          discovered.push({
+            url,
+            title: url.split('/').pop().replace(/[-_]/g,' ').replace(/\.pdf$/i,'').trim() || url,
+            type: /\.pdf$/i.test(url) ? 'PDF' : 'HTML',
+            authority: target.label,
+            source: 'firecrawl_map',
+            score,
+          });
+        }
+      } catch (e) {
+        console.warn(`Firecrawl map error for ${target.url}: ${e.message}`);
+      }
+    }
+  }
+
+  // ── Phase 2: Tavily targeted searches for reports and academic papers ──
+  if (tavilyKey) {
+    const huntQueries = [
+      `"${baseName}" stocking report SCDNR OR NCWRC OR "GA DNR" filetype:pdf`,
+      `"${baseName}" creel survey fisheries assessment filetype:pdf`,
+      `"${baseName}" annual fisheries report site:dnr.sc.gov OR site:ncwildlife.org OR site:georgiawildlife.com`,
+      `"${baseName}" lake fisheries study "dissolved oxygen" OR thermocline OR stratification`,
+      `"${baseName}" reservoir fish population electrofishing survey`,
+    ];
+    for (const q of huntQueries) {
+      try {
+        const searchRes = await fetch('https://api.tavily.com/search', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${tavilyKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: q, search_depth: 'advanced', max_results: 5, include_raw_content: false })
+        });
+        if (!searchRes.ok) continue;
+        const searchData = await searchRes.json();
+        for (const r of (searchData.results || [])) {
+          if (!r.url || seenUrls.has(r.url)) continue;
+          seenUrls.add(r.url);
+          const score = scoreDatasetUrl(r.url, r.title || '', lakeName);
+          if (score < 5) continue;
+          let authority = 'Web';
+          try {
+            const host = new URL(r.url).hostname;
+            if (/dnr\.sc\.gov/.test(host))        authority = 'SCDNR';
+            else if (/ncwildlife\.org/.test(host)) authority = 'NCWRC';
+            else if (/georgiawildlife/.test(host)) authority = 'GA DNR';
+            else if (/usgs\.gov/.test(host))       authority = 'USGS';
+            else if (/usace\.army\.mil/.test(host))authority = 'USACE';
+            else if (/edu$/.test(host))            authority = 'Academic';
+          } catch (_) {}
+          discovered.push({
+            url: r.url,
+            title: (r.title || '').slice(0, 180),
+            type: /\.pdf$/i.test(r.url) ? 'PDF' : 'HTML',
+            authority,
+            source: 'tavily',
+            score,
+            snippet: (r.content || '').slice(0, 300),
+          });
+        }
+      } catch (e) {
+        console.warn(`Tavily dataset hunt failed for [${q}]: ${e.message}`);
+      }
+    }
+  }
+
+  // ── Sort and dedupe by score ──
+  discovered.sort((a, b) => b.score - a.score);
+
+  // ── Cache in R2 for 7 days ──
+  try {
+    const safe = lakeName.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+    await env.TROLLMAP_DATA.put(
+      `lake_packages/${safe}/dataset_hunt.json`,
+      JSON.stringify({ lakeName, state, datasets: discovered, cachedAt: new Date().toISOString() }),
+      { expirationTtl: 60 * 60 * 24 * 7 }
+    );
+  } catch (_) {}
+
+  return new Response(JSON.stringify({
+    ok: true,
+    lakeName,
+    state,
+    datasetCount: discovered.length,
+    firecrawlUsed: !!firecrawlKey,
+    tavilyUsed: !!tavilyKey,
+    datasets: discovered,
+  }), { headers: JSON_HEADERS });
+}
+__name(handleResearchDatasetHunt, 'handleResearchDatasetHunt');
+
 async function handleResearchSaveNormalized(request, env) {
   let body;
   try { body = await request.json(); } catch { body = {}; }
@@ -4117,16 +4300,26 @@ JSON only.`,
   regulations: {
     label: "Regulations",
     order: 6,
-    system: "You are a fishing regulations specialist for freshwater lakes and reservoirs. Research current fishing laws from official wildlife agency sources only (SCDNR, NCWRC, GA DNR, etc.). You MUST distinguish between general statewide regulations and lake-specific exceptions. If the creel limit, size/length limit, or seasonal open/closed times differ for this specific lake from the general state regulations, you must explicitly state both and detail the lake-specific rules. Return ONLY valid JSON. Never invent limits - if unknown, set field null.",
-    userTemplate: (lakeName, state, prev) => `Research current fishing regulations specific to this waterbody:
+    system: "You are a fishing regulations specialist. You will be given the LIVE official regulations page content in _regsSource.content. READ THAT CONTENT CAREFULLY — do not use training data for specific limits. Extract ALL species rules from the page. For each species: check if the lake appears in an exception list. If the lake is listed in an exception, use that exception rule. If the lake is NOT listed as an exception, the statewide rule applies. Extract statewide rules AND any lake-specific exceptions. Return ONLY valid JSON. Never invent limits — if unknown after reading the page, set field null.",
+    userTemplate: (lakeName, state, prev) => `Extract fishing regulations for this waterbody from the LIVE REGULATIONS PAGE provided below:
 
 Lake: ${lakeName}
 State: ${state || 'SC'}
 
-CRITICAL INSTRUCTION:
-Do not just give general statewide regulations! Check if ${lakeName} has specific creel limits, size/length limits, or closed season dates/times that differ from statewide limits (for example, many reservoirs have special striper/hybrid creel/size limits, crappie limits, or summer/tailrace seasonal closures).
+LIVE REGULATIONS PAGE CONTENT:
+${prev?._regsSource?.content ? prev._regsSource.content.slice(0, 10000) : 'Not available — use training data as fallback only'}
 
-Use only current wildlife agency info (SCDNR, NCWRC, GA DNR). Return ONLY this structure:
+SOURCE URL: ${prev?._regsSource?.url || 'https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits'}
+
+INSTRUCTIONS:
+1. Read the regulations page content above carefully
+2. For each species, find the row(s) that apply to ${lakeName}
+3. If ${lakeName} is explicitly listed in an exception row, use that exception rule
+4. If ${lakeName} is NOT listed in any exception, the statewide rule applies
+5. Extract rules for ALL species: Largemouth Bass, Striped Bass, Hybrid Bass, White Bass, Crappie, Blue Catfish, Channel Catfish, Flathead Catfish, Bream, Redbreast Sunfish, Chain Pickerel, Yellow Perch
+6. Note any closed seasons or special rules
+
+Return ONLY this structure:
 {
   "regulations": {
     "state": "${state || 'SC'}",
@@ -4348,6 +4541,42 @@ async function handleResearchAgent(request, env) {
     const known = LAKES[lookupKey];
     if (known) {
       groundedPrev = {...previousResults, _knownBaseline: {lakeKey: lookupKey, ...known, note:"This is TrollMap curated baseline — verify against official sources, don't trust blindly"}};
+    }
+  }
+
+  // Ground regulations agent with live eRegulations page — replaces LLM memory with actual current rules
+  if (agentKey === 'regulations') {
+    const regsUrls = {
+      SC: 'https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits',
+      NC: 'https://www.eregulations.com/northcarolina/fishing/freshwater-fishing-regulations',
+      GA: 'https://www.eregulations.com/georgia/fishing/freshwater-fishing-regulations',
+    };
+    const regsUrl = regsUrls[state] || regsUrls.SC;
+    try {
+      const regsRes = await fetch(regsUrl, {
+        headers: { 'User-Agent': 'TrollMap/15 Evidence Engine', 'Accept': 'text/html' },
+        cf: { cacheTtl: 86400, cacheEverything: true }
+      });
+      if (regsRes.ok) {
+        let regsText = await regsRes.text();
+        regsText = regsText
+          .replace(/<script[\s\S]*?<\/script>/gi, '')
+          .replace(/<style[\s\S]*?<\/style>/gi, '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s{2,}/g, ' ')
+          .trim()
+          .slice(0, 12000);
+        groundedPrev = {
+          ...previousResults,
+          _regsSource: {
+            url: regsUrl,
+            content: regsText,
+            note: 'LIVE OFFICIAL REGULATIONS PAGE — use this as authoritative source. Extract ALL species rules that apply to ' + lakeName + '. For statewide rules, check if ' + lakeName + ' appears in any exception list. If not listed as an exception, the statewide rule applies. Do NOT use training data for specific limits.'
+          }
+        };
+      }
+    } catch (e) {
+      console.warn('Regulations page fetch failed: ' + e.message);
     }
   }
 
@@ -4825,6 +5054,9 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
       }
       if (path === "/research/discover" && request.method === "POST") {
         return handleResearchDiscover(request, env);
+      }
+      if (path === "/research/dataset-hunt" && request.method === "POST") {
+        return handleResearchDatasetHunt(request, env);
       }
       if (path === "/research/proxy-download" && request.method === "GET") {
         return handleResearchProxyDownload(request, env);
