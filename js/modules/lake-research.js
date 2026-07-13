@@ -107,9 +107,30 @@ function cleanLakeBaseName(lakeName) {
 function extractRelevantChunks(text, lakeName, maxChars = 20000) {
   const base = cleanLakeBaseName(lakeName);
   const terms = [...new Set([base, lakeName, base.split(' ')[0], base.split(' ').slice(-1)[0]].filter(Boolean))];
+  // Domain keywords: find passages about key data even if lake name isn't nearby
+  const domainKeywords = ['secchi', 'trophic', 'eutrophic', 'thermocline', 'morphometry',
+    'mean depth', 'maximum depth', 'retention time', 'dissolved oxygen', 'chlorophyll',
+    'forage', 'threadfin', 'gizzard shad', 'blueback herring', 'standing stock',
+    'primary forage', 'baitfish'];
   const lower = (text || '').toLowerCase();
   let chunks = [];
   let seenRanges = [];
+
+  // Helper to add a chunk if not overlapping
+  const addChunk = (start, end) => {
+    let overlaps = false;
+    for (const r of seenRanges) {
+      if (start < r.end && end > r.start && Math.abs(start - r.start) < 500) { overlaps = true; break; }
+    }
+    if (!overlaps) {
+      chunks.push(text.slice(start, end));
+      seenRanges.push({ start, end });
+      return true;
+    }
+    return false;
+  };
+
+  // Pass 1: Lake name mentions (primary)
   for (const term of terms) {
     const termLower = term.toLowerCase();
     if (termLower.length < 3) continue;
@@ -120,21 +141,31 @@ function extractRelevantChunks(text, lakeName, maxChars = 20000) {
       if (idx === -1) break;
       const start = Math.max(0, idx - 1200);
       const end = Math.min(text.length, idx + termLower.length + 1800);
-      // avoid heavy overlap
-      let overlaps = false;
-      for (const r of seenRanges) {
-        if (start < r.end && end > r.start && Math.abs(start - r.start) < 500) { overlaps = true; break; }
-      }
-      if (!overlaps) {
-        chunks.push(text.slice(start, end));
-        seenRanges.push({ start, end });
-      }
+      if (addChunk(start, end)) found++;
       idx = end;
-      found++;
       if (chunks.join('\n\n').length > maxChars) break;
     }
     if (chunks.join('\n\n').length > maxChars) break;
   }
+
+  // Pass 2: Domain keyword mentions (fill remaining budget with scientific data passages)
+  if (chunks.join('\n\n').length < maxChars * 0.85) {
+    for (const kw of domainKeywords) {
+      if (chunks.join('\n\n').length > maxChars * 0.95) break;
+      let idx = 0;
+      let found = 0;
+      while (found < 2) { // max 2 hits per keyword
+        idx = lower.indexOf(kw, idx);
+        if (idx === -1) break;
+        const start = Math.max(0, idx - 600);
+        const end = Math.min(text.length, idx + kw.length + 1200);
+        if (addChunk(start, end)) found++;
+        idx = end;
+        if (chunks.join('\n\n').length > maxChars) break;
+      }
+    }
+  }
+
   if (chunks.length === 0) {
     // no direct mentions -> take first 8k chars (likely overview + TOC)
     return (text || '').slice(0, Math.min(maxChars, 8000));
@@ -1034,7 +1065,8 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       state: stateName,
       documents: sortedDocs.map(d => {
         const rawLen = (d.fullText || '').length;
-        const chunkBudget = rawLen > 50000 ? 6000 : 20000;
+        // Increase budget for large scientific docs (EPA reports etc) — 6K was losing critical tables
+        const chunkBudget = rawLen > 50000 ? 15000 : 20000;
         return {
           title: d.title,
           url: d.url,
