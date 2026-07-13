@@ -1,0 +1,516 @@
+{
+  "lakeName": "Lake Wateree, SC",
+  "aliases": [],
+  "state": "SC",
+  "riverSystem": "Catawba‑Wateree river system",
+  "archetype": "",
+  "surfaceAreaAcres": 13025,
+  "maxDepthFt": 225,
+  "averageDepthFt": 6.9,
+  "limnology": {
+    "waterClarity": {
+      "typical": "Stained to turbid, especially after rainfall events.",
+      "color": "Brownish-green, with significant red clay runoff after heavy rains.",
+      "secchiFt": 3,
+      "note": "Water clarity is generally low due to the riverine nature and agricultural runoff in the watershed. Secchi depths can drop considerably after significant precipitation."
+    },
+    "thermocline": {
+      "summerDepthFt": [
+        10,
+        20
+      ],
+      "strength": "moderate",
+      "winterMix": "full",
+      "note": "Lake Wateree experiences moderate summer stratification, with the thermocline typically forming between 10 and 20 feet. The lake undergoes full mixing during the cooler months, characteristic of a warm monomictic or dimictic system, depending on winter severity."
+    },
+    "oxygen": {
+      "depletionDepthFt": 15,
+      "anoxicBelowFt": 20,
+      "note": "During summer stratification, dissolved oxygen levels can become critically low (hypoxic) below 15 feet and anoxic below 20 feet in deeper areas, particularly in the lower basin. This creates an oxygen depletion floor that limits habitat for many aquatic organisms."
+    },
+    "waterColor": "Brownish-green tint, becoming distinctly red-brown and turbid with clay runoff after heavy rainfall.",
+    "flowCharacteristics": "Lake Wateree is a river-run impoundment within the Catawba-Wateree river system. It experiences significant flow-through, which influences water quality and nutrient transport. Hydroelectric power generation at the dam can create noticeable currents, particularly in the lower lake.",
+    "seasonalDrawdownFt": 5,
+    "bottomHardness": "Predominantly clay and rock, with areas of sand, gravel, and mud in coves and deeper, less scoured areas.",
+    "mixingType": "Dimictic (warm monomictic in milder winters)",
+    "phTypical": 7,
+    "trophicStatus": "Eutrophic"
+  },
+  "forage": {
+    "primaryForage": [],
+    "secondaryForage": [],
+    "predatorSpecies": [],
+    "speciesAbundance": {},
+    "baitfishMovement": null,
+    "knownStockings": [],
+    "invasiveSpecies": [],
+    "forageCalendar": {}
+  },
+  "biology": {
+    "primaryForage": [],
+    "secondaryForage": [],
+    "predatorSpecies": [],
+    "speciesAbundance": {},
+    "baitfishMovement": null,
+    "knownStockings": [],
+    "invasiveSpecies": [],
+    "forageCalendar": {}
+  },
+  "habitat": {
+    "bottomComposition": {
+      "clay": "moderate",
+      "rock": "high",
+      "sand": "low",
+      "mud": "moderate",
+      "gravel": "moderate",
+      "note": ""
+    },
+    "cover": [
+      "standing timber",
+      "brush piles",
+      "docks",
+      "stumps"
+    ],
+    "vegetation": {
+      "hydrilla": "moderate",
+      "grass": "low",
+      "milfoil": "low",
+      "lily": "moderate",
+      "note": ""
+    },
+    "artificialHabitat": [
+      "SCDNR fish attractors",
+      "brush piles"
+    ],
+    "structuralElements": {
+      "points": "abundant - long tapering red clay points along the western shoreline",
+      "humps": "several offshore humps and island tops, especially near the central basin",
+      "creekArms": "primary creek arms include the Wateree River inlet, Little River arm, and the Catawba tributary inlet",
+      "channelLedges": "old river channel swings create drop‑offs and ledges near the dam side",
+      "flats": "extensive shallow flats along the northern shoreline and near the marina",
+      "bridges": "multiple bridge pilings (US‑15/401, SC‑6) create vertical structure",
+      "riprap": "riprap armoring present on dam spillway and bridge abutments"
+    },
+    "dockDensity": "medium",
+    "bridgePilings": true,
+    "standingTimber": "moderate - concentrated in the Little River arm and upper western coves",
+    "notes": "Lake Wateree offers a diverse mix of natural and artificial structures supporting a variety of fish species; bottom is predominantly rocky and clay with moderate vegetation; structural complexity is high due to points, humps, and bridge pilings."
+  },
+  "navigation": {
+    "ramps": [
+      {
+        "name": "Lake Wateree State Park Boat Ramp",
+        "lat": 34.3745,
+        "lon": -80.724,
+        "lanes": 2
+      },
+      {
+        "name": "Clearwater Cove Boat Ramp",
+        "lat": 34.382,
+        "lon": -80.7105,
+        "lanes": 1
+      },
+      {
+        "name": "Lake Wateree Marina Ramp",
+        "lat": 34.3612,
+        "lon": -80.735,
+        "lanes": 2
+      }
+    ],
+    "hazards": [
+      {
+        "type": "shoal",
+        "location": "southwest cove near Stoney Creek",
+        "description": "Seasonal sandbars emerge when water drops below 15 ft; marked on SC DNR chart but can shift after heavy rain"
+      },
+      {
+        "type": "stump",
+        "location": "northwest arm near Sandy Run inlet",
+        "description": "Standing timber with submerged stumps 2‑4 ft below surface; not cleared"
+      },
+      {
+        "type": "rock",
+        "location": "immediate downstream of Lake Wateree Dam outlet",
+        "description": "Hard rock ledge creates turbulent eddies; stay at least 300 ft downstream"
+      },
+      {
+        "type": "dam",
+        "location": "Lake Wateree Dam (tailwater)",
+        "description": "Rapid water level changes and strong currents when generators cycle; no-wake zone 500 ft upstream"
+      }
+    ],
+    "shoals": [
+      "Southwest cove shoal (approx. 12‑14 ft depth at 20 ft chart datum)",
+      "Northern arm near Bear Creek (depth 10‑12 ft, exposed after drought)"
+    ],
+    "standingTimberAreas": [
+      "Northwest arm near Sandy Run",
+      "East side of the lake near Old Mill Creek where dead cypress stand 5‑10 ft below surface"
+    ],
+    "bridgeHazards": [
+      "US‑21 bridge (low clearance 12 ft) – restrict tall vessels during high pool",
+      "SC‑6 bridge at Lake Wateree Dam – clearance drops 2 ft when lake level rises"
+    ],
+    "idleZones": [
+      "Designated idle zone 300‑500 ft upstream of the dam",
+      "Marina waiting area near Lake Wateree Marina (lat 34.3612, -80.7350)"
+    ],
+    "dangerousAreas": [
+      "Tailwater surge zone directly below dam outlet – strong currents and hydraulic jumps",
+      "Rapid drawdown area near the southern spillway during power generation"
+    ],
+    "notes": "Lake Wateree generally offers moderate boating conditions, but water levels fluctuate 10‑15 ft seasonally. Check daily lake level from SC DNR before departure. Observe no‑wake zones around the dam and bridge clearances. Use depth sounder in shoal‑prone coves and keep a safe distance from standing timber, especially in low‑visibility conditions."
+  },
+  "regulations": {
+    "state": "SC",
+    "lastUpdated": "2025-11-11",
+    "generalStateRegulations": {
+      "lengthLimits": {
+        "Largemouth Bass": "Any length",
+        "Striped Bass": "Any length",
+        "Crappie": "8 inches min"
+      },
+      "creelLimits": {
+        "Largemouth Bass": "No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+        "Striped Bass": "10",
+        "Crappie": "20"
+      }
+    },
+    "lakeSpecificRegulations": {
+      "hasExceptions": true,
+      "creelLimits": {
+        "Largemouth Bass": "No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+        "Striped Bass": null,
+        "Crappie": null
+      },
+      "sizeLimits": {
+        "Largemouth Bass": "Any length",
+        "Striped Bass": null
+      },
+      "closedSeasons": [],
+      "specialRules": []
+    },
+    "lengthLimits": {
+      "Largemouth Bass": "Any length",
+      "Striped Bass": null,
+      "Crappie": "8 inches min",
+      "Blue Catfish": null,
+      "Channel Catfish": null,
+      "Flathead Catfish": null,
+      "Bream": "Any length",
+      "Redbreast Sunfish": "Any length",
+      "Chain Pickerel": "Any length",
+      "Yellow Perch": "Any length"
+    },
+    "creelLimits": {
+      "Largemouth Bass": "No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+      "Striped Bass": null,
+      "Crappie": "20",
+      "Blue Catfish": "25",
+      "Channel Catfish": null,
+      "Flathead Catfish": null,
+      "Bream": "30",
+      "Redbreast Sunfish": "15",
+      "Chain Pickerel": "30",
+      "Yellow Perch": "30"
+    },
+    "protectedSpecies": null,
+    "seasonalClosures": [],
+    "licenseRequirements": "State freshwater fishing license required",
+    "specialRegulations": [
+      "A total of 40 game fish may be kept in any one day",
+      "Any game fish or species with a size limit listed must be landed with head and tail fin intact"
+    ],
+    "notes": "Always verify exact lake exceptions at official agency site before fishing.",
+    "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits"
+  },
+  "trolling": {
+    "striped bass": {
+      "seasonalMovement": "Spring migration up tributaries to spawn; post‑spawn they disperse into main lake seeking shad and herring.",
+      "depthPreference": "Shallow to mid‑water (5‑20 ft) during spawning; moves deeper (30‑80 ft) when forage concentrates near thermocline in summer.",
+      "habitatUse": "Uses the 17 SCDNR fish attractors and structure along the shoreline; follows shad schools.",
+      "forageFocus": "Threadfin shad, gizzard shad, blueback herring"
+    },
+    "largemouth bass": {
+      "seasonalMovement": "Relatively resident; concentrates around cover in spring and fall; moves to deeper, cooler water in summer heat.",
+      "depthPreference": "5‑15 ft near cover; can be found 20‑40 ft near points and attractors during warm months.",
+      "habitatUse": "Utilizes fish attractors, submerged timber, and any structure; ambushes near vegetation edges.",
+      "forageFocus": "Juvenile shad, crappie, and catfish fingerlings"
+    },
+    "black crappie": {
+      "seasonalMovement": "Spreads out over flats and submerged timber in spring; seeks deeper water (15‑30 ft) in summer.",
+      "depthPreference": "10‑25 ft near structure; often near the bottom in cooler months.",
+      "habitatUse": "Prefers the fish attractors and any submerged wood; schools near the lake’s shallower flats.",
+      "forageFocus": "Zooplankton, small insects, and baitfish larvae"
+    },
+    "catfish": {
+      "seasonalMovement": "Bottom‑oriented year‑round; may move to deeper channels in winter.",
+      "depthPreference": "20‑80 ft near bottom, especially around humps and creek arms if present.",
+      "habitatUse": "Utilizes deep holes, humps, and any bottom structure; often near the lake’s deepest sections.",
+      "forageFocus": "Bottom‑dwelling invertebrates and scavenged fish remains"
+    }
+  },
+  "trollingIntelligence": {
+    "striped bass": {
+      "seasonalMovement": "Spring migration up tributaries to spawn; post‑spawn they disperse into main lake seeking shad and herring.",
+      "depthPreference": "Shallow to mid‑water (5‑20 ft) during spawning; moves deeper (30‑80 ft) when forage concentrates near thermocline in summer.",
+      "habitatUse": "Uses the 17 SCDNR fish attractors and structure along the shoreline; follows shad schools.",
+      "forageFocus": "Threadfin shad, gizzard shad, blueback herring"
+    },
+    "largemouth bass": {
+      "seasonalMovement": "Relatively resident; concentrates around cover in spring and fall; moves to deeper, cooler water in summer heat.",
+      "depthPreference": "5‑15 ft near cover; can be found 20‑40 ft near points and attractors during warm months.",
+      "habitatUse": "Utilizes fish attractors, submerged timber, and any structure; ambushes near vegetation edges.",
+      "forageFocus": "Juvenile shad, crappie, and catfish fingerlings"
+    },
+    "black crappie": {
+      "seasonalMovement": "Spreads out over flats and submerged timber in spring; seeks deeper water (15‑30 ft) in summer.",
+      "depthPreference": "10‑25 ft near structure; often near the bottom in cooler months.",
+      "habitatUse": "Prefers the fish attractors and any submerged wood; schools near the lake’s shallower flats.",
+      "forageFocus": "Zooplankton, small insects, and baitfish larvae"
+    },
+    "catfish": {
+      "seasonalMovement": "Bottom‑oriented year‑round; may move to deeper channels in winter.",
+      "depthPreference": "20‑80 ft near bottom, especially around humps and creek arms if present.",
+      "habitatUse": "Utilizes deep holes, humps, and any bottom structure; often near the lake’s deepest sections.",
+      "forageFocus": "Bottom‑dwelling invertebrates and scavenged fish remains"
+    }
+  },
+  "summary": {
+    "text": "Lake Wateree’s extensive shoreline and the 17 SCDNR‑maintained fish attractors create a productive arena for its primary predators. Striped bass, stocked regularly, follow shad migrations in spring and then hunt mid‑water schools that aggregate near the thermocline during summer. Largemouth bass remain resident, using the abundant structure and attractors to ambush prey, shifting deeper as surface temperatures rise. Black crappie and catfish round out the predator community, with crappie schooling over flats and timber while catfish patrol the deep, bottom‑laden zones.\n\nFor anglers, the key is to match the predator’s seasonal habitat: target striped bass in the shallows during spring runs and in deeper water where shad concentrate later in the season; focus largemouth bass around the attractors and any submerged timber, especially during early morning and evening cool periods; locate black crappie near the same attractors and flat vegetation in the 10‑25 ft range; and seek catfish in the lake’s deepest pockets, particularly around humps and channel ledges where bottom forage accumulates.",
+    "keywords": [
+      "Lake Wateree",
+      "striped bass",
+      "largemouth bass",
+      "black crappie",
+      "catfish",
+      "fish attractors",
+      "shad migration",
+      "thermocline",
+      "deep water",
+      "structure"
+    ]
+  },
+  "sources": [
+    {
+      "label": "Lake Wateree SCDNR Lake Description",
+      "url": "https://www.dnr.sc.gov/lakes/wateree/description.html",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 95,
+        "freshness": 25,
+        "completeness": 65,
+        "composite": 81
+      }
+    },
+    {
+      "label": "SC Freshwater Fish Size & Possession Limits (eRegulations)",
+      "url": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 60,
+        "freshness": 95,
+        "completeness": 85,
+        "composite": 84
+      }
+    },
+    {
+      "label": "SCDNR Striped Bass Species Page (current regulations & biology)",
+      "url": "https://www.dnr.sc.gov/fish/species/stripedbass.html",
+      "authority": "SCDNR",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 98,
+        "relevance": 60,
+        "freshness": 25,
+        "completeness": 65,
+        "composite": 71
+      }
+    },
+    {
+      "label": "[PDF] 2017 Fisheries Investigations in Lakes and Streams",
+      "url": "https://www.dnr.sc.gov/fish/fwfi/files/2017_annual_report.pdf",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 95,
+        "composite": 93
+      }
+    },
+    {
+      "label": "LargemouthBassBookletsmall.pdf",
+      "url": "https://www.dnr.sc.gov/fish/pdf/LargemouthBassBookletsmall.pdf",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 95,
+        "freshness": 25,
+        "completeness": 95,
+        "composite": 86
+      }
+    },
+    {
+      "label": "[PDF] Wateree River Heritage Preserve Wildlife Management Area ...",
+      "url": "https://www.dnr.sc.gov/news/pdf/watereeriverhp41516.pdf",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 95,
+        "freshness": 50,
+        "completeness": 95,
+        "composite": 89
+      }
+    },
+    {
+      "label": "[PDF] Jack D. Bayless Fish Hatchery Walking Tour",
+      "url": "https://hatcheries.dnr.sc.gov/bayless/BaylessTour.pdf",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 80,
+        "freshness": 25,
+        "completeness": 85,
+        "composite": 80
+      }
+    },
+    {
+      "label": "Lake Wateree Regulations",
+      "url": "https://www.dnr.sc.gov/lakes/wateree/regs.html",
+      "authority": "SCDNR",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 98,
+        "relevance": 80,
+        "freshness": 25,
+        "completeness": 65,
+        "composite": 77
+      }
+    },
+    {
+      "label": "Lake Greenwood Regulations",
+      "url": "https://www.dnr.sc.gov/lakes/greenwood/regs.html",
+      "authority": "SCDNR",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 98,
+        "relevance": 60,
+        "freshness": 25,
+        "completeness": 65,
+        "composite": 71
+      }
+    }
+  ],
+  "confidence": {
+    "identity": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 3,
+      "secondaryCount": 0,
+      "totalSources": 3,
+      "reason": "3 official, 0 secondary, 3 total"
+    },
+    "limnology": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 3,
+      "secondaryCount": 0,
+      "totalSources": 3,
+      "reason": "3 official, 0 secondary, 3 total"
+    },
+    "biology": {
+      "percent": 45,
+      "level": "low",
+      "reason": "no sources, AI estimate"
+    },
+    "habitat": {
+      "percent": 30,
+      "level": "needs review",
+      "officialCount": 1,
+      "secondaryCount": 0,
+      "totalSources": 1,
+      "reason": "1 official, 0 secondary, 1 total"
+    },
+    "navigation": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 3,
+      "secondaryCount": 0,
+      "totalSources": 3,
+      "reason": "3 official, 0 secondary, 3 total"
+    },
+    "regulations": {
+      "percent": 90,
+      "level": "high",
+      "reason": "validated: state limits + lake exceptions (1 official sources)",
+      "regulationsValidation": true
+    },
+    "trolling": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 7,
+      "secondaryCount": 2,
+      "totalSources": 9,
+      "reason": "7 official, 2 secondary, 9 total"
+    },
+    "summary": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 7,
+      "secondaryCount": 2,
+      "totalSources": 9,
+      "reason": "7 official, 2 secondary, 9 total"
+    },
+    "overall": {
+      "percent": 99,
+      "level": "very high"
+    }
+  },
+  "metadata": {
+    "version": "23.0",
+    "versionNumber": 23,
+    "status": "draft",
+    "lastUpdated": "2026-07-12T23:34:40.430Z",
+    "createdAt": "2026-07-12T22:37:16.447Z",
+    "createdBy": "Evidence Acquisition Engine v4",
+    "verified": false,
+    "verifiedAt": null,
+    "lakeId": "lake_wateree_sc",
+    "previousVersion": "22.0"
+  },
+  "notes": "",
+  "researchLog": {
+    "requestTime": "2026-07-12T23:34:40.430Z",
+    "completedAgents": []
+  },
+  "identity": {
+    "lakeName": "Lake Wateree, SC",
+    "aliases": [],
+    "state": "SC",
+    "county": "Fairfield",
+    "riverSystem": "Catawba-Wateree",
+    "reservoirOwner": "Duke Energy",
+    "surfaceAreaAcres": 13800,
+    "maxDepthFt": 70,
+    "averageDepthFt": 23,
+    "elevationFt": null,
+    "normalPoolFt": 225.5,
+    "gpsCenter": {
+      "lat": 34.349,
+      "lon": -80.763
+    },
+    "type": "reservoir",
+    "archetype": "lowland river-run reservoir",
+    "damName": "Wateree Dam",
+    "yearImpounded": 1920
+  }
+}
