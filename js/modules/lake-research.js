@@ -695,6 +695,7 @@ async function runEvidencePipeline(lakeName) {
           return (b.score || 0) - (a.score || 0);
         });
         let added = 0;
+        let epaAdded = 0;
         const maxAdd = 6;
         for (const d of epaFirst) {
           if (added >= maxAdd) break;
@@ -702,7 +703,11 @@ async function runEvidencePipeline(lakeName) {
           if (!d.url || seen.has(norm)) continue;
           // Keep NEPI S / EPA always; other agencies need a decent score + lake relevance
           const isEpa = /nepis\.epa\.gov|epa\.gov|ZyActionD|ZyPDF/i.test(d.url + (d.authority || ''));
+          
+          // Limit to at most 1 EPA report per lake
+          if (isEpa && epaAdded >= 1) continue;
           if (!isEpa && (d.score || 0) < 30) continue;
+          
           seen.add(norm);
           sources.push({
             title: d.title || `Dataset: ${d.url}`,
@@ -714,6 +719,7 @@ async function runEvidencePipeline(lakeName) {
             score: d.score || 0
           });
           added++;
+          if (isEpa) epaAdded++;
           log(`• [hunt] ${isEpa ? 'EPA' : d.authority} +${d.score || 0}: ${(d.title || d.url).slice(0, 100)}`);
         }
         log(`Merged ${added} dataset-hunt sources into download queue (total ${sources.length}).`);
