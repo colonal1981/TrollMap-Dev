@@ -4078,11 +4078,24 @@ async function handleResearchDeterministicFacts(request, env) {
           const fcRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: regsUrl, formats: ['html'], onlyMainContent: false })
+            body: JSON.stringify({ url: regsUrl, formats: ['markdown'], onlyMainContent: true, timeout: 25000 })
           });
           if (fcRes.ok) {
             const fcData = await fcRes.json();
-            regsHtml = fcData.data?.html || fcData.data?.content || '';
+            const md = fcData.data?.markdown || fcData.markdown || '';
+            // Convert markdown pipe tables to HTML table rows for parseSCRegulationsFromHtml
+            if (md) {
+              const tableRows = md.split('\n')
+                .filter(l => l.includes('|'))
+                .map(l => {
+                  const cells = l.split('|').map(c => c.trim()).filter(Boolean);
+                  if (!cells.length || cells.every(c => /^[-:]+$/.test(c))) return '';
+                  return '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>';
+                })
+                .filter(Boolean)
+                .join('\n');
+              regsHtml = `<table>${tableRows}</table>`;
+            }
           }
         } catch (e) {
           console.warn(`Firecrawl regs fetch failed: ${e.message}`);
@@ -6434,10 +6447,11 @@ Place the fraction at the point where the structure meets the water, not the far
       if (path === "/chartpacks/lake-boundary" && request.method === "GET") {
         const lakeName = url.searchParams.get("lake") || "";
         if (!lakeName) return new Response(JSON.stringify({ error: "missing lake param" }), { status: 400, headers: JSON_HEADERS });
-        // Use chartpackKey to resolve R2 path — same pattern as contour-data.js
-        const contourKey = chartpackKey(lakeName, "contours.geojson");
+        // Use lakeKeyFromName to match the actual R2 key format used by the pipeline
+        const r2Key = lakeKeyFromName(lakeName);
+        const contourKey = `${r2Key}/contours.geojson`;
         const geoObj = await env.R2_TROLLMAP_CHARTPACKS.get(contourKey).catch(() => null);
-        if (!geoObj) return new Response(JSON.stringify({ error: "no contour data found", lake: lakeName }), { status: 404, headers: JSON_HEADERS });
+        if (!geoObj) return new Response(JSON.stringify({ error: "no contour data found", lake: lakeName, tried: contourKey }), { status: 404, headers: JSON_HEADERS });
         const geoText = await geoObj.text();
         return new Response(geoText, { headers: { ...CORS, "Content-Type": "application/json", "Cache-Control": "public, max-age=86400" } });
       }
