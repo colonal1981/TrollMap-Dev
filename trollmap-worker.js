@@ -4083,8 +4083,7 @@ async function handleResearchDeterministicFacts(request, env) {
           const lakeRegsDoc = normDocs.find(d => d.url && d.url.includes(`/lakes/${slug}/regs`));
           if (regsDoc?.fullText) {
             // Convert normalized markdown text back to pseudo-HTML table for parser
-            const lines = regsDoc.fullText.split('
-');
+            const lines = regsDoc.fullText.split('\n');
             const tableRows = lines
               .filter(l => l.includes('|'))
               .map(l => {
