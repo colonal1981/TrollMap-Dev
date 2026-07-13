@@ -4122,15 +4122,19 @@ async function handleResearchDeterministicFacts(request, env) {
         } catch (_) {}
       }
       if (regsHtml) {
-        const parsedRegs = parseSCRegulationsFromHtml(lakeName, regsUrl, regsHtml, lakeRegsHtml);
-        profile.regulations = mergeMissing(profile.regulations, parsedRegs.regulations || {});
-        for (const src of parsedRegs.sources || []) profile.sources.push(src);
-        for (const [sec, fields] of Object.entries(parsedRegs.evidence || {})) for (const [field, entries] of Object.entries(fields || {})) mergeEvidence(sec, field, entries);
-        profile._regsDebug.parsedCreelLimits = parsedRegs.regulations?.generalStateRegulations?.creelLimits || {};
-        profile._regsDebug.parsedLakeSpecific = parsedRegs.regulations?.lakeSpecificRegulations || {};
-        profile._regsDebug.htmlRows = extractHtmlTableRows(regsHtml).length;
-        profile._regsDebug.mdRows = extractMarkdownTableRows(regsHtml).length;
-        profile._regsDebug.first100chars = regsHtml.slice(0, 100);
+        try {
+          profile._regsDebug.htmlRows = extractHtmlTableRows(regsHtml).length;
+          profile._regsDebug.mdRows = extractMarkdownTableRows(regsHtml).length;
+          profile._regsDebug.first100chars = regsHtml.slice(0, 100);
+          const parsedRegs = parseSCRegulationsFromHtml(lakeName, regsUrl, regsHtml, lakeRegsHtml);
+          profile.regulations = mergeMissing(profile.regulations, parsedRegs.regulations || {});
+          for (const src of parsedRegs.sources || []) profile.sources.push(src);
+          for (const [sec, fields] of Object.entries(parsedRegs.evidence || {})) for (const [field, entries] of Object.entries(fields || {})) mergeEvidence(sec, field, entries);
+          profile._regsDebug.parsedCreelLimits = parsedRegs.regulations?.generalStateRegulations?.creelLimits || {};
+          profile._regsDebug.parsedLakeSpecific = parsedRegs.regulations?.lakeSpecificRegulations || {};
+        } catch(regsErr) {
+          profile._regsDebug.parseError = regsErr.message;
+        }
       }
     } catch (e) {
       console.warn(`deterministic regulations fetch failed for ${lakeName}: ${e.message}`);
