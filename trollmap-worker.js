@@ -3036,12 +3036,17 @@ async function handleResearchDiscover(request, env) {
 
   // Use baseName in queries to improve Tavily hit rate (avoid ", SC" suffix which hurts)
   const queryLake = baseName || lakeName;
+  const stateFullName = { SC: 'South Carolina', NC: 'North Carolina', GA: 'Georgia' }[state] || 'South Carolina';
   const queryPatterns = [
     `"${queryLake}" (fisheries OR biology OR \"striped bass\" OR crappie OR \"largemouth\") ${dnrName} filetype:pdf`,
     `"${queryLake}" (regulations OR \"creel limit\" OR \"size limit\" OR \"bag limit\") (${regsSiteFilter})`,
     `"${queryLake}" (limnology OR thermocline OR \"water quality\" OR hydrology OR \"surface area\") (USACE OR USGS OR EPA)`,
     `"${queryLake}" lake (habitat OR structure OR navigation OR hazards OR ramps) ${dnrName}`,
-    `"${queryLake}" (thermocline OR \"oxygen depletion\" OR stratification OR \"dissolved oxygen\") depth fishing`
+    `"${queryLake}" (thermocline OR \"oxygen depletion\" OR stratification OR \"dissolved oxygen\") depth fishing`,
+    // EPA NSCEP / NEPI S — critical limnology source for ALL tristate lakes (SC/NC/GA)
+    `"Report on Lake ${queryLake}" OR "${queryLake}" site:nepis.epa.gov`,
+    `"${queryLake}" "${stateFullName}" (water quality OR eutrophication OR limnology) (EPA OR NESWP OR nepis)`,
+    `"Report on Lake" "${stateFullName}" ${queryLake}`,
   ];
 
   let discoveredSources = [];
@@ -3164,33 +3169,79 @@ async function handleResearchDiscover(request, env) {
   const LAKE_SEEDS = {
     wateree: [
       { title: "Lake Wateree SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/wateree/description.html", priority: 1 },
+      { title: "Lake Wateree Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/wateree/regs.html", priority: 1 },
       { title: "SC Freshwater Fish Size & Possession Limits (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
       { title: "SCDNR Striped Bass Species Page (current regulations & biology)", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/fish/species/stripedbass.html", priority: 1 },
     ],
     murray: [
       { title: "Lake Murray SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/murray/description.html", priority: 1 },
+      { title: "Lake Murray Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/murray/regs.html", priority: 1 },
       { title: "SC Freshwater Game Fishing Regulations (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
     ],
     marion: [
       { title: "Lake Marion SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/marion/description.html", priority: 1 },
+      { title: "Lake Marion Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/marion/regs.html", priority: 1 },
       { title: "SC Freshwater Game Fishing Regulations (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
     ],
     moultrie: [
       { title: "Lake Moultrie SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/moultrie/description.html", priority: 1 },
+      { title: "Lake Moultrie Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/moultrie/regs.html", priority: 1 },
+      { title: "SC Freshwater Fish Size & Possession Limits (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
     ],
     monticello: [
       { title: "Lake Monticello SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/monticello/description.html", priority: 1 },
+      { title: "Lake Monticello Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/monticello/regs.html", priority: 1 },
+      { title: "SC Freshwater Fish Size & Possession Limits (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
+    ],
+    keowee: [
+      { title: "Lake Keowee SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/keowee/description.html", priority: 1 },
+      { title: "Lake Keowee Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/keowee/regs.html", priority: 1 },
+      { title: "SC Freshwater Fish Size & Possession Limits (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
+    ],
+    greenwood: [
+      { title: "Lake Greenwood SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/greenwood/description.html", priority: 1 },
+      { title: "Lake Greenwood Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/greenwood/regs.html", priority: 1 },
+      { title: "SC Freshwater Fish Size & Possession Limits (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
     ],
   };
 
+  // Default seeds for EVERY tristate lake (SC/NC/GA) — not just the hand-curated LAKE_SEEDS list.
+  // EPA NEPI S search URL is included so the download step always has a path into NSCEP.
+  const defaultStateSeeds = [];
+  if (state === 'SC') {
+    defaultStateSeeds.push(
+      { title: `Lake ${baseName} SCDNR Lake Description`, type: "HTML", authority: "SCDNR", url: `https://www.dnr.sc.gov/lakes/${baseLower}/description.html`, priority: 1 },
+      { title: `Lake ${baseName} Regulations`, type: "HTML", authority: "SCDNR", url: `https://www.dnr.sc.gov/lakes/${baseLower}/regs.html`, priority: 1 },
+      { title: "SC Freshwater Fish Size & Possession Limits (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
+    );
+  } else if (state === 'NC') {
+    defaultStateSeeds.push(
+      { title: "NC Freshwater Fishing Regulations (eRegulations)", type: "HTML", authority: "NCWRC", url: "https://www.eregulations.com/northcarolina/fishing/freshwater-fishing-regulations", priority: 1 },
+    );
+  } else if (state === 'GA') {
+    defaultStateSeeds.push(
+      { title: "GA Freshwater Fishing Regulations (eRegulations)", type: "HTML", authority: "GA DNR", url: "https://www.eregulations.com/georgia/fishing/freshwater-fishing-regulations", priority: 1 },
+    );
+  }
+  // EPA NSCEP search landing for this lake — proxy will harvest raw-text links via Firecrawl
+  defaultStateSeeds.push({
+    title: `EPA NSCEP search: Report on Lake ${baseName}`,
+    type: "HTML",
+    authority: "EPA NSCEP",
+    url: buildNepisSearchUrl(lakeName, state, baseName),
+    priority: 1,
+    source: 'nepis_seed'
+  });
+
   // Inject seeds — seeds always take guaranteed slots, prepend so they sort first
-  const seeds = LAKE_SEEDS[baseLower] || [];
+  const seeds = [...(LAKE_SEEDS[baseLower] || []), ...defaultStateSeeds];
   const guaranteedSeeds = [];
   for (const seed of seeds) {
-    if (!seenUrls.has(seed.url)) {
-      seenUrls.add(seed.url);
-      guaranteedSeeds.push(seed);
-    }
+    const normUrl = String(seed.url || '').split('?')[0].toLowerCase();
+    if (seenUrls.has(normUrl) || seenUrls.has(seed.url)) continue;
+    seenUrls.add(normUrl);
+    seenUrls.add(seed.url);
+    guaranteedSeeds.push(seed);
   }
   // Prepend seeds so they beat Tavily results in sort
   discoveredSources = [...guaranteedSeeds, ...discoveredSources];
@@ -3247,9 +3298,240 @@ async function handleResearchProxyDownload(request, env) {
   // Route HTML sources through Firecrawl for better extraction
   const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
   const isHtml = sourceType.toUpperCase() === 'HTML' || (!target.toLowerCase().includes('.pdf') && !sourceType.toUpperCase().includes('PDF'));
+  // EPA NSCEP / NEPI S ZyNET:
+  //  - Search results page (ZyActionS) — harvest document links
+  //  - Document landing (ZyActionD) — extract raw-text / PDF format links
+  const isNepisSearch = /nepis\.epa\.gov/i.test(target) && /ZyActionS|ZyAction=ZyActionS/i.test(target);
+  const isNepisLanding = /nepis\.epa\.gov/i.test(target) && /ZyActionD|ZyPDF/i.test(target);
+  const isNepisAny = /nepis\.epa\.gov|ZyNET\.exe/i.test(target);
 
   if (firecrawlKey && isHtml) {
     try {
+      // Search-results page: return markdown of the results list so the client can
+      // store it, AND surface ZyActionD links in X-Nepis-Documents for follow-up.
+      if (isNepisSearch) {
+        const scrapeRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: target,
+            formats: ['links', 'markdown'],
+            onlyMainContent: true,
+            waitFor: 2500,
+            timeout: 25000
+          })
+        });
+        if (scrapeRes.ok) {
+          const scrapeData = await scrapeRes.json();
+          const md = scrapeData.data?.markdown || scrapeData.markdown || '';
+          const links = scrapeData.data?.links || scrapeData.links || [];
+          const docLinks = [];
+          for (const link of links) {
+            const url = typeof link === 'string' ? link : (link.url || '');
+            if (/ZyActionD=/i.test(url)) {
+              docLinks.push({
+                url,
+                title: (typeof link === 'object' && link.title) ? String(link.title).slice(0, 180) : 'EPA NSCEP document'
+              });
+            }
+          }
+          // Also pull from markdown
+          for (const m of md.matchAll(/https?:\/\/[^\s)"']+ZyActionD[^\s)"']*/g)) {
+            if (!docLinks.some(d => d.url === m[0])) docLinks.push({ url: m[0], title: 'EPA NSCEP document' });
+          }
+          if (md.length > 100 || docLinks.length) {
+            // If we found a single clear document, scrape its raw text directly
+            if (docLinks.length === 1) {
+              const docUrl = docLinks[0].url;
+              try {
+                const landRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
+                  method: 'POST',
+                  headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    url: docUrl,
+                    formats: ['markdown', 'json'],
+                    onlyMainContent: true,
+                    timeout: 25000,
+                    jsonOptions: {
+                      schema: {
+                        type: 'object',
+                        properties: {
+                          report_metadata: {
+                            type: 'object',
+                            properties: { title: { type: 'string' }, pub_number: { type: 'string' } }
+                          },
+                          available_formats: {
+                            type: 'object',
+                            properties: {
+                              pdf_url: { type: 'string' },
+                              raw_text_url: { type: 'string', description: 'Link to raw text, ASCII, or TXT version' },
+                              tiff_url: { type: 'string' }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  })
+                });
+                if (landRes.ok) {
+                  const landData = await landRes.json();
+                  const extracted = landData.data?.json || landData.json || {};
+                  const rawTextUrl = extracted.available_formats?.raw_text_url;
+                  if (rawTextUrl && /^https?:\/\//i.test(rawTextUrl)) {
+                    const textRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
+                      method: 'POST',
+                      headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ url: rawTextUrl, formats: ['markdown'], onlyMainContent: true, timeout: 25000 })
+                    });
+                    if (textRes.ok) {
+                      const textData = await textRes.json();
+                      const markdown = textData.data?.markdown || textData.markdown || '';
+                      if (markdown.length > 100) {
+                        const headers = new Headers({
+                          'Content-Type': 'text/plain; charset=utf-8',
+                          'Access-Control-Allow-Origin': '*',
+                          'X-Source': 'firecrawl',
+                          'X-Nepis-Format': 'raw_text',
+                          'X-Nepis-Title': (extracted.report_metadata?.title || docLinks[0].title || '').slice(0, 180),
+                          'X-Nepis-Doc-Url': docUrl
+                        });
+                        return new Response(markdown, { headers });
+                      }
+                    }
+                  }
+                  // Fall back to landing markdown
+                  const landMd = landData.data?.markdown || landData.markdown || '';
+                  if (landMd.length > 100) {
+                    const headers = new Headers({
+                      'Content-Type': 'text/plain; charset=utf-8',
+                      'Access-Control-Allow-Origin': '*',
+                      'X-Source': 'firecrawl',
+                      'X-Nepis-Format': 'landing',
+                      'X-Nepis-Doc-Url': docUrl
+                    });
+                    return new Response(landMd, { headers });
+                  }
+                }
+              } catch (e) {
+                console.warn(`NEPI S single-doc follow-up failed: ${e.message}`);
+              }
+            }
+            // Multi-doc search results: return markdown catalog + document URL list
+            const catalog = [
+              `# EPA NSCEP search results`,
+              ``,
+              `Found ${docLinks.length} document landing page(s).`,
+              ``,
+              ...docLinks.slice(0, 15).map((d, i) => `${i + 1}. [${d.title}](${d.url})`),
+              ``,
+              `---`,
+              ``,
+              md.slice(0, 50000)
+            ].join('\n');
+            const headers = new Headers({
+              'Content-Type': 'text/plain; charset=utf-8',
+              'Access-Control-Allow-Origin': '*',
+              'X-Source': 'firecrawl',
+              'X-Nepis-Format': 'search_results',
+              'X-Nepis-Doc-Count': String(docLinks.length),
+              // First few document URLs for client follow-up (header size limit)
+              'X-Nepis-Documents': JSON.stringify(docLinks.slice(0, 5).map(d => d.url)).slice(0, 1500)
+            });
+            return new Response(catalog, { headers });
+          }
+        }
+      }
+
+      // Two-step for EPA NSCEP document landing pages: first extract format links,
+      // then scrape the raw-text URL for clean markdown (avoids TIFF/OCR).
+      if (isNepisLanding || (isNepisAny && !isNepisSearch)) {
+        const landRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: target,
+            formats: ['markdown', 'json'],
+            onlyMainContent: true,
+            timeout: 25000,
+            jsonOptions: {
+              schema: {
+                type: 'object',
+                properties: {
+                  report_metadata: {
+                    type: 'object',
+                    properties: {
+                      title: { type: 'string' },
+                      pub_number: { type: 'string' }
+                    }
+                  },
+                  available_formats: {
+                    type: 'object',
+                    properties: {
+                      pdf_url: { type: 'string', description: 'Link containing ZyPDF.cgi or .pdf' },
+                      raw_text_url: { type: 'string', description: 'Link to the raw text, ASCII, or TXT version of the report' },
+                      tiff_url: { type: 'string', description: 'Link to the TIFF image files' }
+                    }
+                  }
+                },
+                required: ['report_metadata', 'available_formats']
+              }
+            }
+          })
+        });
+        if (landRes.ok) {
+          const landData = await landRes.json();
+          const extracted = landData.data?.json || landData.json || {};
+          const formats = extracted.available_formats || {};
+          const rawTextUrl = formats.raw_text_url || formats.text_url || null;
+          const pdfUrl = formats.pdf_url || null;
+          const title = extracted.report_metadata?.title || '';
+          // Prefer raw text endpoint — Firecrawl markdown of a .txt/ASCII page is clean
+          if (rawTextUrl && /^https?:\/\//i.test(rawTextUrl)) {
+            try {
+              const textRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: rawTextUrl, formats: ['markdown'], onlyMainContent: true, timeout: 25000 })
+              });
+              if (textRes.ok) {
+                const textData = await textRes.json();
+                const markdown = textData.data?.markdown || textData.markdown || '';
+                if (markdown && markdown.length > 100) {
+                  const headers = new Headers({
+                    'Content-Type': 'text/plain; charset=utf-8',
+                    'Access-Control-Allow-Origin': '*',
+                    'X-Source': 'firecrawl',
+                    'X-Nepis-Format': 'raw_text',
+                    'X-Nepis-Title': title.slice(0, 180),
+                    'X-Nepis-Pdf': pdfUrl || ''
+                  });
+                  return new Response(markdown, { headers });
+                }
+              }
+            } catch (e2) {
+              console.warn(`NSCEP raw-text scrape failed: ${e2.message}`);
+            }
+          }
+          // Fall back to landing-page markdown if format extraction didn't yield text
+          const landMd = landData.data?.markdown || landData.markdown || '';
+          if (landMd && landMd.length > 100) {
+            const headers = new Headers({
+              'Content-Type': 'text/plain; charset=utf-8',
+              'Access-Control-Allow-Origin': '*',
+              'X-Source': 'firecrawl',
+              'X-Nepis-Format': 'landing',
+              'X-Nepis-Title': title.slice(0, 180),
+              'X-Nepis-Pdf': pdfUrl || '',
+              'X-Nepis-RawText': rawTextUrl || ''
+            });
+            return new Response(landMd, { headers });
+          }
+        }
+      }
+
+      // Standard Firecrawl markdown scrape for HTML pages (eRegulations, SCDNR, etc.)
+      // waitFor helps JS-rendered SPAs like eRegulations populate table rows
+      const isSpa = /eregulations\.com/i.test(target);
       const fcRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
@@ -3257,7 +3539,8 @@ async function handleResearchProxyDownload(request, env) {
           url: target,
           formats: ['markdown'],
           onlyMainContent: true,
-          timeout: 20000
+          waitFor: isSpa ? 3000 : 0,
+          timeout: 25000
         })
       });
       if (fcRes.ok) {
@@ -3314,12 +3597,16 @@ const DATASET_HUNT_TARGETS = {
     { label: 'SCDNR Fisheries',        url: 'https://www.dnr.sc.gov/fish/',         depth: 3 },
     { label: 'SCDNR Lakes',            url: 'https://www.dnr.sc.gov/lakes/',         depth: 2 },
     { label: 'SCDNR Publications',     url: 'https://www.dnr.sc.gov/publications/',  depth: 2 },
+    // EPA NSCEP / NEPI S — "Report on Lake …" water-quality series + other SC lake reports
+    { label: 'EPA NSCEP / NEPI S',      url: 'https://nepis.epa.gov/',               depth: 1, isNepis: true },
   ],
   NC: [
     { label: 'NCWRC Fisheries',        url: 'https://www.ncwildlife.org/fishing',    depth: 2 },
+    { label: 'EPA NSCEP / NEPI S',      url: 'https://nepis.epa.gov/',               depth: 1, isNepis: true },
   ],
   GA: [
     { label: 'GA DNR Fisheries',       url: 'https://georgiawildlife.com/fishing',   depth: 2 },
+    { label: 'EPA NSCEP / NEPI S',      url: 'https://nepis.epa.gov/',               depth: 1, isNepis: true },
   ],
 };
 
@@ -3327,7 +3614,9 @@ const DATASET_HUNT_TARGETS = {
 const DATASET_KEYWORDS = [
   'stocking','creel','survey','report','annual','fisheries','assessment',
   'population','management','study','research','limnology','water quality',
-  'electrofishing','monitoring','harvest','biology','publication'
+  'electrofishing','monitoring','harvest','biology','publication',
+  // EPA NSCEP lake reports
+  'report on lake','neswp','nepis','water quality','eutrophication','trophic'
 ];
 
 // Score a URL for relevance to a given lake
@@ -3341,9 +3630,98 @@ function scoreDatasetUrl(url, title, lakeName) {
   }
   if (/\.pdf$/i.test(url)) score += 10; // PDFs are usually actual reports
   if (/annual.report|creel.survey|stocking.report/i.test(combined)) score += 20;
+  if (/nepis\.epa\.gov|zynet\.exe|zypdf\.cgi/i.test(url)) score += 15; // EPA NSCEP docs
+  if (/report on lake/i.test(combined)) score += 25;
   if (/\d{4}/.test(url)) score += 5; // has a year — likely a dated report
   return score;
 }
+
+// Build EPA NSCEP search-results URL(s) for a lake.
+// Historical EPA "Report on Lake …" series (1970s–80s) is often filed under the
+// lake name AND/OR the full state name — run both so every tristate lake has a
+// real chance of surfacing, not only well-known SC reservoirs.
+function buildNepisSearchUrl(lakeName, state, queryOverride = null) {
+  const baseName = String(lakeName || '').replace(/^Lake\s+/i, '').replace(/,\s*(SC|NC|GA|VA|TN).*$/i, '').trim();
+  const stateName = { SC: 'South Carolina', NC: 'North Carolina', GA: 'Georgia', VA: 'Virginia', TN: 'Tennessee' }[String(state || 'SC').toUpperCase()] || 'South Carolina';
+  const query = encodeURIComponent(queryOverride || baseName || stateName);
+  const titleField = encodeURIComponent('Report on Lake');
+  // Indexes cover historical EPA lake reports (1970s–2020)
+  const indexes = [
+    '2016 Thru 2020', '2011 Thru 2015', '2006 Thru 2010', '2000 Thru 2005',
+    '1995 Thru 1999', '1991 Thru 1994', '1986 Thru 1990', '1981 Thru 1985',
+    '1976 Thru 1980', 'Prior to 1976'
+  ].map(i => `Index=${encodeURIComponent(i)}`).join('&');
+  return `https://nepis.epa.gov/Exe/ZyNET.exe?ZyAction=ZyActionS&User=ANONYMOUS&Password=anonymous&Client=EPA&SearchBack=ZyActionL&SortMethod=h%7C-&MaximumDocuments=15&ImageQuality=r85g16%2Fr85g16%2Fx150y150g16%2Fi500&Display=hpfr&DefSeekPage=&Toc=&TocEntry=&TocRestrict=n&QField=title%5E${titleField}&UseQField=title&Docs=&SearchMethod=1&Time=&FullText=&IntQFieldOp=1&Query=${query}&ExtQFieldOp=1&FuzzyDegree=0&${indexes}`;
+}
+
+// Queries to run against NEPI S for any SC/NC/GA (tristate) lake
+function buildNepisQueryVariants(lakeName, state) {
+  // Normalize: "Clarks Hill / Thurmond, SC/GA" → try both names; "High Rock Lake, NC" → "High Rock"
+  let raw = String(lakeName || '').replace(/,\s*(SC|NC|GA|VA|TN)(\/(SC|NC|GA|VA|TN))?\s*$/i, '').trim();
+  raw = raw.replace(/\s+Lake$/i, '').replace(/^Lake\s+/i, '').trim();
+  const parts = raw.split(/\s*\/\s*|\s+or\s+/i).map(p => p.replace(/^Lake\s+/i, '').replace(/\s+Lake$/i, '').trim()).filter(Boolean);
+  const primary = parts[0] || raw;
+  const stateCode = String(state || 'SC').toUpperCase();
+  const stateName = { SC: 'South Carolina', NC: 'North Carolina', GA: 'Georgia', VA: 'Virginia', TN: 'Tennessee' }[stateCode] || 'South Carolina';
+  // Aliases that help NEPI S title search (Clarks Hill vs Thurmond, etc.)
+  const aliasMap = {
+    thurmond: ['Thurmond', 'Clarks Hill', "Clark's Hill", 'J. Strom Thurmond'],
+    'clarks hill': ['Clarks Hill', 'Thurmond', "Clark's Hill"],
+    'clark hill': ['Clarks Hill', 'Thurmond'],
+    'j strom thurmond': ['Thurmond', 'Clarks Hill'],
+    hartwell: ['Hartwell'],
+    russell: ['Russell'],
+    murray: ['Murray'],
+    wateree: ['Wateree'],
+    marion: ['Marion'],
+    moultrie: ['Moultrie'],
+    keowee: ['Keowee'],
+    jocassee: ['Jocassee'],
+    greenwood: ['Greenwood'],
+    norman: ['Norman'],
+    wylie: ['Wylie'],
+    secession: ['Secession'],
+    monticello: ['Monticello'],
+    'high rock': ['High Rock'],
+    tillery: ['Tillery'],
+    badin: ['Badin'],
+    blewett: ['Blewett Falls'],
+    'blewett falls': ['Blewett Falls'],
+    jordan: ['Jordan', 'B. Everett Jordan'],
+    'b everett jordan': ['Jordan', 'B. Everett Jordan'],
+    falls: ['Falls'],
+    hickory: ['Hickory'],
+    rhodhiss: ['Rhodhiss'],
+    kerr: ['Kerr', 'Buggs Island'],
+    'buggs island': ['Kerr', 'Buggs Island'],
+    gaston: ['Gaston'],
+    bowen: ['Bowen'],
+    blalock: ['Blalock'],
+    robinson: ['Robinson'],
+    'fishing creek': ['Fishing Creek'],
+    parr: ['Parr'],
+  };
+  const variants = new Set();
+  const addName = (n) => {
+    if (!n) return;
+    variants.add(n);
+    if (!/^lake\s+/i.test(n)) variants.add(`Lake ${n}`);
+  };
+  // Primary + slash-split parts
+  for (const p of parts) {
+    addName(p);
+    const key = p.toLowerCase();
+    for (const a of (aliasMap[key] || [])) addName(a);
+  }
+  // Also match primary key against alias map
+  const primaryKey = primary.toLowerCase();
+  for (const a of (aliasMap[primaryKey] || [])) addName(a);
+  // State name helps the historical "Report on Lake … South Carolina" series
+  variants.add(stateName);
+  return [...variants].filter(Boolean).slice(0, 8); // cap Firecrawl calls
+}
+__name(buildNepisSearchUrl, 'buildNepisSearchUrl');
+__name(buildNepisQueryVariants, 'buildNepisQueryVariants');
 
 async function handleResearchDatasetHunt(request, env) {
   let body;
@@ -3363,17 +3741,101 @@ async function handleResearchDatasetHunt(request, env) {
   const discovered = [];
   const seenUrls   = new Set();
 
+  // Helper: ingest a list of Firecrawl/Tavily links into discovered[]
+  const ingestLink = (url, title, authority, source, minScore = 5) => {
+    if (!url || seenUrls.has(url)) return;
+    seenUrls.add(url);
+    const score = scoreDatasetUrl(url, title || '', lakeName);
+    if (score < minScore) return;
+    discovered.push({
+      url,
+      title: (title || url.split('/').pop().replace(/[-_]/g, ' ').replace(/\.pdf$/i, '').trim() || url).slice(0, 180),
+      type: /\.pdf$/i.test(url) || /ZyPDF/i.test(url) ? 'PDF' : 'HTML',
+      authority,
+      source,
+      score,
+    });
+  };
+
+  // Helper: scrape/map one NEPI S search-results URL and harvest ZyActionD links
+  const harvestNepisSearchPage = async (mapUrl, queryLabel) => {
+    if (!firecrawlKey) return;
+    try {
+      // Prefer /v1/scrape with links — more reliable on ZyNET dynamic results than /map
+      const scrapeRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: mapUrl,
+          formats: ['links', 'markdown'],
+          onlyMainContent: true,
+          waitFor: 2000,
+          timeout: 25000
+        })
+      });
+      if (scrapeRes.ok) {
+        const scrapeData = await scrapeRes.json();
+        const links = scrapeData.data?.links || scrapeData.links || [];
+        const md = scrapeData.data?.markdown || scrapeData.markdown || '';
+        // Also pull ZyActionD URLs embedded in markdown
+        const mdUrls = [...md.matchAll(/https?:\/\/[^\s)"']+/g)].map(m => m[0]);
+        const all = [...links.map(l => typeof l === 'string' ? { url: l } : l), ...mdUrls.map(u => ({ url: u }))];
+        for (const link of all) {
+          const url = typeof link === 'string' ? link : (link.url || link);
+          if (!url) continue;
+          if (!/ZyActionD|ZyPDF|nepis\.epa\.gov/i.test(url)) continue;
+          // Prefer lake-name relevance; still keep strong EPA hits
+          const title = (typeof link === 'object' && link.title) ? String(link.title) : `EPA NSCEP — ${queryLabel || baseName}`;
+          const score = scoreDatasetUrl(url, title + ' ' + md.slice(0, 300), lakeName);
+          if (score < 20 && !new RegExp(baseName, 'i').test(title + url + md.slice(0, 500))) continue;
+          ingestLink(url, title, 'EPA NSCEP', 'firecrawl_nepis_scrape', 15);
+        }
+        return;
+      }
+      console.warn(`NEPI S scrape failed for query="${queryLabel}": HTTP ${scrapeRes.status}`);
+    } catch (e) {
+      console.warn(`NEPI S harvest error for "${queryLabel}": ${e.message}`);
+    }
+    // Fallback: Firecrawl /v1/map
+    try {
+      const mapRes = await fetch('https://api.firecrawl.dev/v1/map', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: mapUrl, search: baseName, limit: 30, ignoreSitemap: true })
+      });
+      if (!mapRes.ok) return;
+      const mapData = await mapRes.json();
+      for (const link of (mapData.links || [])) {
+        const url = typeof link === 'string' ? link : (link.url || link);
+        if (!url || !/ZyActionD|ZyPDF|nepis\.epa\.gov/i.test(url)) continue;
+        const title = (typeof link === 'object' && link.title) ? String(link.title) : `EPA NSCEP — ${queryLabel || baseName}`;
+        ingestLink(url, title, 'EPA NSCEP', 'firecrawl_nepis_map', 15);
+      }
+    } catch (e) {
+      console.warn(`NEPI S map fallback error: ${e.message}`);
+    }
+  };
+
   // ── Phase 1: Firecrawl /v1/map — crawl agency sites for report URLs ──
   if (firecrawlKey) {
     const targets = DATASET_HUNT_TARGETS[state] || DATASET_HUNT_TARGETS.SC;
     for (const target of targets) {
+      if (target.isNepis) {
+        // Run multiple NEPI S queries so every tristate lake surfaces (lake name + aliases + state)
+        const variants = buildNepisQueryVariants(lakeName, state);
+        for (const q of variants) {
+          const mapUrl = buildNepisSearchUrl(lakeName, state, q);
+          await harvestNepisSearchPage(mapUrl, q);
+        }
+        continue;
+      }
       try {
         const mapRes = await fetch('https://api.firecrawl.dev/v1/map', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             url: target.url,
-            search: baseName,           // Firecrawl filters map results by this search term
+            search: baseName,
             limit: 50,
             ignoreSitemap: false,
           })
@@ -3383,21 +3845,11 @@ async function handleResearchDatasetHunt(request, env) {
           continue;
         }
         const mapData = await mapRes.json();
-        const links = mapData.links || [];
-        for (const link of links) {
+        for (const link of (mapData.links || [])) {
           const url = typeof link === 'string' ? link : (link.url || link);
-          if (!url || seenUrls.has(url)) continue;
-          seenUrls.add(url);
-          const score = scoreDatasetUrl(url, '', lakeName);
-          if (score < 5) continue; // skip irrelevant links
-          discovered.push({
-            url,
-            title: url.split('/').pop().replace(/[-_]/g,' ').replace(/\.pdf$/i,'').trim() || url,
-            type: /\.pdf$/i.test(url) ? 'PDF' : 'HTML',
-            authority: target.label,
-            source: 'firecrawl_map',
-            score,
-          });
+          if (!url) continue;
+          const title = (typeof link === 'object' && link.title) ? String(link.title) : '';
+          ingestLink(url, title || url, target.label, 'firecrawl_map', 5);
         }
       } catch (e) {
         console.warn(`Firecrawl map error for ${target.url}: ${e.message}`);
@@ -3407,12 +3859,19 @@ async function handleResearchDatasetHunt(request, env) {
 
   // ── Phase 2: Tavily targeted searches for reports and academic papers ──
   if (tavilyKey) {
+    const stateName = { SC: 'South Carolina', NC: 'North Carolina', GA: 'Georgia' }[state] || 'South Carolina';
+    const dnrSite = state === 'NC' ? 'site:ncwildlife.org' : state === 'GA' ? 'site:georgiawildlife.com' : 'site:dnr.sc.gov';
     const huntQueries = [
       `"${baseName}" stocking report SCDNR OR NCWRC OR "GA DNR" filetype:pdf`,
       `"${baseName}" creel survey fisheries assessment filetype:pdf`,
-      `"${baseName}" annual fisheries report site:dnr.sc.gov OR site:ncwildlife.org OR site:georgiawildlife.com`,
+      `"${baseName}" annual fisheries report ${dnrSite}`,
       `"${baseName}" lake fisheries study "dissolved oxygen" OR thermocline OR stratification`,
       `"${baseName}" reservoir fish population electrofishing survey`,
+      // EPA NSCEP / NEPI S — lake-name + state-name variants for full tristate coverage
+      `"Report on Lake ${baseName}" site:nepis.epa.gov`,
+      `"${baseName}" "${stateName}" (lake OR reservoir) (water quality OR limnology OR eutrophication) site:nepis.epa.gov OR EPA`,
+      `"Report on Lake" "${stateName}" site:nepis.epa.gov`,
+      `"${baseName}" NESWP OR "National Eutrophication" OR "Clean Lakes" ${stateName}`,
     ];
     for (const q of huntQueries) {
       try {
@@ -3436,12 +3895,13 @@ async function handleResearchDatasetHunt(request, env) {
             else if (/georgiawildlife/.test(host)) authority = 'GA DNR';
             else if (/usgs\.gov/.test(host))       authority = 'USGS';
             else if (/usace\.army\.mil/.test(host))authority = 'USACE';
+            else if (/nepis\.epa\.gov|epa\.gov/.test(host)) authority = 'EPA NSCEP';
             else if (/edu$/.test(host))            authority = 'Academic';
           } catch (_) {}
           discovered.push({
             url: r.url,
             title: (r.title || '').slice(0, 180),
-            type: /\.pdf$/i.test(r.url) ? 'PDF' : 'HTML',
+            type: /\.pdf$/i.test(r.url) || /ZyPDF/i.test(r.url) ? 'PDF' : 'HTML',
             authority,
             source: 'tavily',
             score,
@@ -3833,26 +4293,56 @@ function extractHtmlTableRows(html) {
 __name(extractHtmlTableRows, "extractHtmlTableRows");
 
 // Parse markdown pipe-delimited tables (from Firecrawl/normalized text)
+// Firecrawl and basic HTML strippers often flatten multi-row tables into ONE long line
+// with empty cells between rows:  | a | b | c | d | | e | f | g | h |
+// The previous regex walked that line greedily and misaligned columns, so eRegulations
+// tables produced garbage rows and zero usable length/creel limits.
 function extractMarkdownTableRows(text) {
   const rows = [];
   const str = String(text || '');
-  // The normalized text may be a single long line with inline pipe tables (no newlines)
-  // Use regex to extract all | cell | cell | cell | cell | patterns
-  const rowRe = /\|([^|\n]{1,300})\|([^|\n]{1,300})\|([^|\n]{1,300})\|([^|\n]{1,300})\|/g;
-  let m;
-  while ((m = rowRe.exec(str)) !== null) {
-    const cells = [m[1].trim(), m[2].trim(), m[3].trim(), m[4].trim()];
-    if (!cells[0]) continue;
-    if (cells.every(c => /^[-:\s]+$/.test(c))) continue; // separator row
-    rows.push(cells);
+  if (!str.includes('|')) return rows;
+
+  // 1) Primary path: insert newlines at empty-cell row separators, then parse lines
+  const normalized = str
+    .replace(/\|\s*\|/g, '|\n|')          // empty cell between rows → newline
+    .replace(/\r\n/g, '\n');
+
+  for (const line of normalized.split('\n')) {
+    if (!line.includes('|')) continue;
+    // Keep empty trailing cells so 4-col alignment survives; only trim each cell
+    let cells = line.split('|').map(c => c.replace(/\s+/g, ' ').trim());
+    // Drop leading/trailing empties created by edge pipes
+    if (cells.length && cells[0] === '') cells = cells.slice(1);
+    if (cells.length && cells[cells.length - 1] === '') cells = cells.slice(0, -1);
+    if (!cells.length) continue;
+    // Separator / spacer rows
+    if (cells.every(c => !c || /^[-:\s]+$/.test(c))) continue;
+    // Header-ish single-label rows (section titles spanning the table)
+    if (cells.length === 1) continue;
+    // Prefer 4-column regulation rows; pad shorter rows, truncate longer
+    if (cells.length >= 4) {
+      rows.push(cells.slice(0, 4));
+    } else if (cells.length === 3) {
+      rows.push([...cells, '']);
+    } else if (cells.length === 2 && cells[0] && cells[1]) {
+      rows.push([cells[0], cells[1], '', '']);
+    }
   }
-  // Also try line-by-line for texts that do have newlines
+
+  // 2) Fallback: non-overlapping 4-cell regex if still empty (defensive)
   if (rows.length === 0) {
-    for (const line of str.split(/\r?\n/)) {
-      if (!line.includes('|')) continue;
-      const cells = line.split('|').map(c => c.trim()).filter(Boolean);
-      if (!cells.length || cells.every(c => /^[-:]+$/.test(c))) continue;
-      if (cells.length >= 2) rows.push(cells);
+    const rowRe = /\|([^|\n]{1,500})\|([^|\n]{1,500})\|([^|\n]{1,500})\|([^|\n]{1,500})\|/g;
+    let m;
+    let pos = 0;
+    while ((m = rowRe.exec(str)) !== null) {
+      // Advance past this match without re-consuming the trailing |
+      if (m.index < pos) continue;
+      const cells = [m[1].trim(), m[2].trim(), m[3].trim(), m[4].trim()];
+      pos = m.index + m[0].length - 1;
+      if (!cells[0] && !cells[1]) continue;
+      if (cells.every(c => !c || /^[-:\s]+$/.test(c))) continue;
+      rows.push(cells);
+      rowRe.lastIndex = pos;
     }
   }
   return rows;
@@ -3864,15 +4354,30 @@ function lakeMentionedInCell(lakeName, cellText) {
   const cleanName = String(lakeName || '').replace(/,\s*(SC|NC|GA|TN)\s*$/i, '').trim();
   const lake = normalizeResearchName(cleanName).replace(/^lake /, '').trim();
   const cell = normalizeResearchName(cellText);
+  if (!lake || !cell) return false;
   // Use base lake name (e.g. "wateree") for matching
   const baseLake = lake.split(' ')[0];
-  return cell.includes(lake) || (baseLake && cell.includes(baseLake));
+  if (!baseLake) return false;
+  // Reject dam/map/tailwater mentions that share the lake's name
+  // ("Wateree Dam", "below Wateree Dam") — those are not the reservoir itself
+  if (new RegExp(`\\b${baseLake}\\s+dam\\b`).test(cell)) return false;
+  if (/\btailwater\b|\briver system\b|\breach\b/.test(cell) && !new RegExp(`\\blake\\s+${baseLake}\\b`).test(cell) && !cell.includes(`lakes `) /* multi-lake lists use "Lakes A, B, Wateree" */) {
+    // Allow multi-lake exception lists like "Lakes Blalock, Greenwood, ..., Wateree, Wylie"
+    // which contain the base name as a listed lake, not as a dam/system label
+    const multiLakeList = /\blakes?\b/.test(cell) && cell.includes(baseLake);
+    if (!multiLakeList) return false;
+  }
+  // Multi-lake lists: "Lakes Blalock, Greenwood, Jocassee, ..., Wateree, Wylie"
+  if (cell.includes(baseLake)) return true;
+  if (cell.includes(lake)) return true;
+  return false;
 }
 __name(lakeMentionedInCell, "lakeMentionedInCell");
 
 function parseSCRegulationsFromHtml(lakeName, regsUrl, html, lakeSpecificHtml = '') {
   let rows = extractHtmlTableRows(html);
   // Fall back to markdown table parser if HTML parser found nothing
+  // (normalized eRegulations docs are Firecrawl markdown / stripped text, not raw HTML)
   if (!rows.length) rows = extractMarkdownTableRows(html);
   const regs = {
     state: 'SC',
@@ -3893,10 +4398,23 @@ function parseSCRegulationsFromHtml(lakeName, regsUrl, html, lakeSpecificHtml = 
     addEvidence('lastUpdated', mUpdated[0], 'regex_exact_text');
   }
 
+  const isHeaderRow = (waterBody, fish) => {
+    const w = normalizeResearchName(waterBody);
+    const f = normalizeResearchName(fish);
+    return w === 'water body' || f === 'fish' || w === 'size limit' || f === 'size limit';
+  };
+
   for (const row of rows) {
-    const cells = row.map(c => c.replace(/\s+/g, ' ').trim());
+    const cells = row.map(c => String(c || '').replace(/\s+/g, ' ').trim());
     if (cells.length < 4) continue;
     const [waterBody, fish, size, limit] = cells;
+    if (!waterBody || !fish) continue;
+    if (isHeaderRow(waterBody, fish)) continue;
+    // Skip seasonal continuation rows that got misaligned (size looks like a date range with no water body species)
+    if (/^(june|july|aug|sept|oct|nov|dec|jan|feb|mar|apr|may)\b/i.test(waterBody) && !/bass|catfish|crappie|bream|sunfish|perch|pickerel|walleye|eel/i.test(fish)) {
+      continue;
+    }
+
     const fishNorm = normalizeResearchName(fish);
     const waterNorm = normalizeResearchName(waterBody);
 
@@ -3912,55 +4430,144 @@ function parseSCRegulationsFromHtml(lakeName, regsUrl, html, lakeSpecificHtml = 
       addEvidence(`lakeSpecific.${speciesName}`, `${waterBody} | ${fish} | ${size} | ${limit}`);
     };
 
-    if (waterNorm.startsWith('statewide') && fishNorm == 'crappie') applyGeneral('Crappie', size, limit);
-    if (waterNorm.startsWith('statewide') && fishNorm.includes('bream')) applyGeneral('Bream', size, limit);
-    if (waterNorm.startsWith('statewide') && fishNorm === 'redbreast sunfish') applyGeneral('Redbreast Sunfish', size, limit);
-    if (waterNorm.startsWith('statewide') && fishNorm === 'chain pickerel') applyGeneral('Chain Pickerel', size, limit);
-    if (waterNorm.startsWith('statewide') && fishNorm.includes('yellow perch')) applyGeneral('Yellow Perch', size, limit);
-    if (waterNorm === 'statewide' && fishNorm === 'blue catfish') applyGeneral('Blue Catfish', size, limit);
+    // Statewide game/nongame species (exact or starts-with statewide)
+    if (waterNorm === 'statewide' || waterNorm.startsWith('statewide ')) {
+      if (fishNorm === 'crappie') applyGeneral('Crappie', size, limit);
+      if (fishNorm.includes('bream')) applyGeneral('Bream', size, limit);
+      if (fishNorm === 'redbreast sunfish') applyGeneral('Redbreast Sunfish', size, limit);
+      if (fishNorm === 'chain pickerel') applyGeneral('Chain Pickerel', size, limit);
+      if (fishNorm === 'redfin pickerel') applyGeneral('Redfin Pickerel', size, limit);
+      if (fishNorm.includes('yellow perch')) applyGeneral('Yellow Perch', size, limit);
+      if (fishNorm === 'blue catfish') applyGeneral('Blue Catfish', size, limit);
+      if (fishNorm === 'american eel') applyGeneral('American Eel', size, limit);
+      if (fishNorm.includes('walleye') || fishNorm.includes('sauger')) applyGeneral('Walleye / Sauger', size, limit);
+      if (fishNorm === 'white bass') applyGeneral('White Bass', size, limit);
+      if (fishNorm === 'smallmouth bass' && waterNorm.startsWith('statewide except')) applyGeneral('Smallmouth Bass', size, limit);
+      if (fishNorm.includes('redeye') && waterNorm.startsWith('statewide except')) applyGeneral('Redeye Bass', size, limit);
+      if (fishNorm === 'spotted bass' && waterNorm.startsWith('statewide except')) applyGeneral('Spotted Bass', size, limit);
+    }
 
-    if (waterNorm.startsWith('statewide except the water bodies listed below') && fishNorm == 'largemouth bass') {
+    if (waterNorm.startsWith('statewide except the water bodies listed below') && fishNorm === 'largemouth bass') {
       applyGeneral('Largemouth Bass', size, limit);
     }
-    if (lakeMentionedInCell(lakeName, waterBody) && fishNorm == 'largemouth bass') {
+    // Lake-specific largemouth (Wateree is listed in the 14" exception group)
+    if (lakeMentionedInCell(lakeName, waterBody) && fishNorm === 'largemouth bass') {
       applyLakeSpecific('Largemouth Bass', size, limit);
     }
-
+    // Other lake-specific black bass exceptions
+    if (lakeMentionedInCell(lakeName, waterBody) && (fishNorm === 'smallmouth bass' || fishNorm.includes('redeye') || fishNorm === 'spotted bass')) {
+      const speciesName = fishNorm === 'smallmouth bass' ? 'Smallmouth Bass'
+        : fishNorm.includes('redeye') ? 'Redeye Bass'
+        : 'Spotted Bass';
+      applyLakeSpecific(speciesName, size, limit);
+    }
   }
 
   // Striper / hybrid rows need multi-row handling because closures/season text split across rows.
-  const striperRows = rows.filter(r => normalizeResearchName(r[1] || '').includes('striped or hybrid bass'));
-  const statewideStriper = striperRows.find(r => normalizeResearchName(r[0] || '').startsWith('statewide except the water bodies list below') || normalizeResearchName(r[0] || '').startsWith('statewide except the water bodies listed below'));
-  if (statewideStriper) {
+  //
+  // CRITICAL: Exception rows are waterbody-specific. Do NOT map "Santee River system",
+  // "Wateree Dam" map captions, Cooper River, or other river/tailwater rows onto a lake
+  // just because the lake name appears nearby (e.g. Wateree Dam on the Santee system map).
+  // Lake Wateree the RESERVOIR is NOT listed as a striper exception — statewide applies.
+  // Lakes that ARE listed by name (Murray, Russell, Hartwell, Thurmond, etc.) get those rows.
+  const striperRows = rows.filter(r => {
+    const f = normalizeResearchName(r[1] || '');
+    return f.includes('striped or hybrid') || f.includes('striped hybrid or white') || f.includes('striped bass');
+  });
+  // Typo on the live page: "list below" (missing 'ed') — match both forms
+  const statewideStriper = striperRows.find(r => {
+    const w = normalizeResearchName(r[0] || '');
+    return w.startsWith('statewide except the water bodies list below')
+      || w.startsWith('statewide except the water bodies listed below')
+      || (w.startsWith('statewide except') && !lakeMentionedInCell(lakeName, r[0] || ''));
+  });
+  if (statewideStriper && statewideStriper.length >= 4) {
     regs.generalStateRegulations.lengthLimits['Striped Bass / Hybrid'] = statewideStriper[2];
     regs.generalStateRegulations.creelLimits['Striped Bass / Hybrid'] = statewideStriper[3];
     addEvidence('general.Striped Bass / Hybrid', statewideStriper.join(' | '));
   }
-  const lakeSpecificStriper = striperRows.find(r => lakeMentionedInCell(lakeName, r[0] || ''));
-  if (lakeSpecificStriper) {
+
+  // Lake-specific striper ONLY when the waterbody CELL explicitly names this lake
+  // (e.g. "Lake Murray", "Lake Russell", "Lake Hartwell & Lake Thurmond").
+  // Reject river/system/tailwater/map rows — those are not the reservoir.
+  // Note: multi-lake exception lists like "Lakes Blalock, ..., Wateree, Wylie and the
+  // middle reach of the Saluda..." still count as lake lists (they start with "Lakes").
+  const isRiverOrSystemRow = (waterBody) => {
+    const w = String(waterBody || '');
+    // Multi-lake lists are reservoir exceptions, not river rows (even if they also
+    // mention a river reach at the end of the list)
+    if (/^\s*Lakes?\b/i.test(w)) return false;
+    // Explicit river / system / reach / tailwater language
+    if (/\briver system\b|\btailwater\b|\breach\b|\bbackwaters of\b|\bconfluence\b/i.test(w)) return true;
+    // "X River" without "Lake X" as the subject
+    if (/\b[A-Za-z]+ River\b/i.test(w) && !/\bLakes?\s+[A-Za-z]/i.test(w)) return true;
+    // Coastal river laundry-list rows
+    if (/Ashepoo|Waccamaw|Pee Dee|Edisto|Combahee|Cooper River/i.test(w) && !/\bLake\b/i.test(w)) return true;
+    return false;
+  };
+  const lakeSpecificStriper = striperRows.find(r => {
+    const waterBody = r[0] || '';
+    if (isRiverOrSystemRow(waterBody)) return false;
+    // Require the lake name to appear as a listed waterbody, not as a dam/map label
+    return lakeMentionedInCell(lakeName, waterBody);
+  });
+  if (lakeSpecificStriper && lakeSpecificStriper.length >= 4) {
     regs.lakeSpecificRegulations.hasExceptions = true;
     regs.lakeSpecificRegulations.sizeLimits['Striped Bass / Hybrid'] = lakeSpecificStriper[2];
     regs.lakeSpecificRegulations.creelLimits['Striped Bass / Hybrid'] = lakeSpecificStriper[3];
     addEvidence('lakeSpecific.Striped Bass / Hybrid', lakeSpecificStriper.join(' | '));
-  } else if (statewideStriper) {
-    // If not in exception rows, statewide applies directly to the lake.
-    regs.lakeSpecificRegulations.creelLimits['Striped Bass / Hybrid'] = statewideStriper[3];
-    regs.lakeSpecificRegulations.sizeLimits['Striped Bass / Hybrid'] = statewideStriper[2];
-    regs.lakeSpecificRegulations.hasExceptions = regs.lakeSpecificRegulations.hasExceptions ?? false;
+  }
+  // When the lake is NOT on any striper exception row, statewide is what applies on the lake.
+  // Mirror statewide into lake-applicable convenience fields WITHOUT marking hasExceptions
+  // for striper (LMB or other exceptions may still set hasExceptions).
+  if (!lakeSpecificStriper && statewideStriper && statewideStriper.length >= 4) {
+    // Do not put statewide into lakeSpecific size/creel maps as if it were an exception —
+    // keep it only under generalStateRegulations. Flattened lengthLimits/creelLimits below
+    // still surface the statewide rule for UI convenience.
+    regs.notes = (regs.notes || '') +
+      ' Striped bass/hybrid: this waterbody is not listed as a striper exception on eRegulations; statewide rule applies on the lake. River/tailwater rows (e.g. Santee River system) do not apply to the reservoir.';
   }
 
-  const lakePlain = stripHtmlPreserveTables(lakeSpecificHtml);
+  // Lake-specific SCDNR regs page (static HTML) — e.g. 14" largemouth at Wateree
+  const lakePlain = stripHtmlPreserveTables(lakeSpecificHtml || '');
   const mLmb = lakePlain.match(/no largemouth bass less than\s*([0-9]+)\s*inches/i);
   if (mLmb) {
     regs.lakeSpecificRegulations.hasExceptions = true;
     regs.lakeSpecificRegulations.sizeLimits['Largemouth Bass'] = `${mLmb[1]} inches min`;
     addEvidence('lakeSpecific.Largemouth Bass', mLmb[0], 'regex_exact_text');
   }
+  // Nongame device limits from lake regs page
+  if (/trotlines/i.test(lakePlain) || /traps/i.test(lakePlain)) {
+    const deviceNote = lakePlain.match(/Allowable Nongame Devices[\s\S]{0,400}/i);
+    if (deviceNote) {
+      regs.lakeSpecificRegulations.specialRules = regs.lakeSpecificRegulations.specialRules || [];
+      const note = deviceNote[0].replace(/\s+/g, ' ').trim().slice(0, 300);
+      if (!regs.lakeSpecificRegulations.specialRules.includes(note)) {
+        regs.lakeSpecificRegulations.specialRules.push(note);
+        addEvidence('lakeSpecific.specialRules', note, 'regex_exact_text');
+      }
+    }
+  }
 
-  const closureText = striperRows.map(r => r.join(' | ')).join(' ');
-  if (/June 16 - Sept\. 30 closed/i.test(closureText)) {
-    regs.lakeSpecificRegulations.closedSeasons.push({ species: 'Striped Bass / Hybrid', period: 'June 16 - Sept. 30', note: 'Closed where indicated by row-specific regulation text.' });
-    addEvidence('lakeSpecific.closedSeasons', 'June 16 - Sept. 30 closed', 'regex_exact_text');
+  // Closed seasons: ONLY from a striper exception row that actually names THIS lake.
+  // Do not attach Santee River system / coastal river summer closures to unlisted lakes.
+  if (lakeSpecificStriper) {
+    const lakeStriperText = lakeSpecificStriper.join(' | ');
+    // Also scan the next raw striper continuation rows only if they share the same waterbody start
+    // (season splits like "June 1 - Sept. 30: any length" sometimes land in adjacent cells)
+    const closureMatch = lakeStriperText.match(/June\s*1[56]\s*[-–]\s*Sept\.?\s*30[^.|]{0,40}closed/i)
+      || lakeStriperText.match(/closed\s*(?:to\s*(?:the\s*)?taking|season)?[^.|]{0,40}June\s*1[56]/i);
+    if (closureMatch) {
+      const already = (regs.lakeSpecificRegulations.closedSeasons || []).some(c => /June\s*1[56]/i.test(c.period || ''));
+      if (!already) {
+        regs.lakeSpecificRegulations.closedSeasons.push({
+          species: 'Striped Bass / Hybrid',
+          period: 'June 16 - Sept. 30',
+          note: `Closed per eRegulations exception row for ${String(lakeSpecificStriper[0] || '').slice(0, 80)}`
+        });
+        addEvidence('lakeSpecific.closedSeasons', closureMatch[0], 'regex_exact_text');
+      }
+    }
   }
 
   // Flatten convenience fields for UI/back-compat
@@ -4094,31 +4701,82 @@ async function handleResearchDeterministicFacts(request, env) {
   }
 
   // Deterministic SC regulations from official pages
-  // eRegulations is a JS-rendered React app — must use Firecrawl to get rendered HTML with table rows
+  // eRegulations is a JS-rendered React app — content is scraped via Firecrawl during
+  // discovery and stored in normalized_documents.json. We parse those tables here.
   if (state === 'SC') {
     const slug = lakeKeyFromName(lakeName);
     const regsUrl = 'https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits';
     const lakeRegsUrl = `https://www.dnr.sc.gov/lakes/${slug}/regs.html`;
     const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
     try {
-      // Read eRegulations content from normalized documents already in R2
-      // These were fetched by Firecrawl during discovery — no external fetch needed
       let regsHtml = '';
       let lakeRegsHtml = '';
+      // Try multiple R2 keys — lake name may be saved as "Lake Wateree, SC" or "Lake Wateree"
+      const candidateKeys = [
+        `lake_packages/${sanitizeLakeId(lakeName)}/normalized_documents.json`,
+        `lake_packages/${sanitizeLakeId('Lake ' + slug)}/normalized_documents.json`,
+        `lake_packages/${sanitizeLakeId(slug)}/normalized_documents.json`,
+        `lake_packages/lake_${slug}_sc/normalized_documents.json`,
+      ];
+      const seenKeys = new Set();
       try {
-        const normKey = `lake_packages/${sanitizeLakeId(lakeName)}/normalized_documents.json`;
-        const normObj = await env.R2_TROLLMAP_CHARTPACKS.get(normKey);
-        if (normObj) {
+        for (const normKey of candidateKeys) {
+          if (seenKeys.has(normKey)) continue;
+          seenKeys.add(normKey);
+          const normObj = await env.R2_TROLLMAP_CHARTPACKS.get(normKey);
+          if (!normObj) continue;
           const normDocs = JSON.parse(await normObj.text());
-          const regsDoc = normDocs.find(d => d.url && d.url.includes('eregulations.com'));
-          const lakeRegsDoc = normDocs.find(d => d.url && d.url.includes(`/lakes/${slug}/regs`));
+          if (!Array.isArray(normDocs) || !normDocs.length) continue;
+          const regsDoc = normDocs.find(d => d.url && /eregulations\.com/i.test(d.url) && /freshwater-fish-size|possession-limits|freshwater-game/i.test(d.url + (d.title || '')))
+            || normDocs.find(d => d.url && /eregulations\.com/i.test(d.url));
+          const lakeRegsDoc = normDocs.find(d => d.url && d.url.includes(`/lakes/${slug}/regs`))
+            || normDocs.find(d => /lake.*regulations/i.test(d.title || '') && d.url && d.url.includes(slug));
           if (regsDoc?.fullText) regsHtml = regsDoc.fullText;
           if (lakeRegsDoc?.fullText) lakeRegsHtml = lakeRegsDoc.fullText;
-          profile._regsDebug = { normDocsCount: normDocs.length, regsDocFound: !!regsDoc, regsFullTextLen: regsDoc?.fullText?.length || 0, lakeRegsDocFound: !!lakeRegsDoc, regsHtmlLen: regsHtml.length };
+          profile._regsDebug = {
+            normKey,
+            normDocsCount: normDocs.length,
+            regsDocFound: !!regsDoc,
+            regsFullTextLen: regsDoc?.fullText?.length || 0,
+            lakeRegsDocFound: !!lakeRegsDoc,
+            extractionMethod: regsDoc?.extractionMethod || null,
+            regsHtmlLen: regsHtml.length
+          };
+          if (regsHtml) break;
         }
       } catch (e) {
         console.warn(`normalized regs load failed: ${e.message}`);
+        profile._regsDebug = { loadError: e.message };
       }
+
+      // Live Firecrawl scrape of eRegulations if normalized docs missing/empty
+      // (eRegulations is a React SPA — plain fetch returns shell HTML with no table rows)
+      if (!regsHtml && firecrawlKey) {
+        try {
+          const fcRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              url: regsUrl,
+              formats: ['markdown'],
+              onlyMainContent: true,
+              waitFor: 3000,
+              timeout: 25000
+            })
+          });
+          if (fcRes.ok) {
+            const fcData = await fcRes.json();
+            const md = fcData.data?.markdown || fcData.markdown || '';
+            if (md && md.length > 200) {
+              regsHtml = md;
+              profile._regsDebug = { ...(profile._regsDebug || {}), liveFirecrawl: true, regsHtmlLen: md.length };
+            }
+          }
+        } catch (e) {
+          console.warn(`live Firecrawl eRegulations scrape failed: ${e.message}`);
+        }
+      }
+
       // Fall back to direct fetch of lake-specific regs page (static HTML, no JS needed)
       if (!lakeRegsHtml) {
         try {
@@ -4126,30 +4784,52 @@ async function handleResearchDeterministicFacts(request, env) {
           if (lakeRegsRes.ok) lakeRegsHtml = await lakeRegsRes.text();
         } catch (_) {}
       }
-      if (regsHtml) {
+
+      // Even without statewide eRegs, lake-specific page alone is useful (14" LMB etc.)
+      if (regsHtml || lakeRegsHtml) {
         try {
-          profile._regsDebug.htmlRows = extractHtmlTableRows(regsHtml).length;
-          profile._regsDebug.mdRows = extractMarkdownTableRows(regsHtml).length;
-          profile._regsDebug.first100chars = regsHtml.slice(0, 100);
-          const parsedRegs = parseSCRegulationsFromHtml(lakeName, regsUrl, regsHtml, lakeRegsHtml);
-          // Deep merge parsed regulations — don't use mergeMissing (not in scope)
+          profile._regsDebug = profile._regsDebug || {};
+          profile._regsDebug.htmlRows = regsHtml ? extractHtmlTableRows(regsHtml).length : 0;
+          profile._regsDebug.mdRows = regsHtml ? extractMarkdownTableRows(regsHtml).length : 0;
+          profile._regsDebug.first100chars = (regsHtml || lakeRegsHtml || '').slice(0, 100);
+          const parsedRegs = parseSCRegulationsFromHtml(lakeName, regsUrl, regsHtml || '', lakeRegsHtml || '');
           const pr = parsedRegs.regulations || {};
           if (pr.state) profile.regulations.state = pr.state;
+          if (pr.lastUpdated) profile.regulations.lastUpdated = pr.lastUpdated;
           if (pr.generalStateRegulations) {
-            profile.regulations.generalStateRegulations = profile.regulations.generalStateRegulations || {};
-            Object.assign(profile.regulations.generalStateRegulations, pr.generalStateRegulations);
+            profile.regulations.generalStateRegulations = profile.regulations.generalStateRegulations || { lengthLimits: {}, creelLimits: {} };
+            // Deep-merge nested length/creel maps so we don't wipe partial data
+            profile.regulations.generalStateRegulations.lengthLimits = {
+              ...(profile.regulations.generalStateRegulations.lengthLimits || {}),
+              ...(pr.generalStateRegulations.lengthLimits || {})
+            };
+            profile.regulations.generalStateRegulations.creelLimits = {
+              ...(profile.regulations.generalStateRegulations.creelLimits || {}),
+              ...(pr.generalStateRegulations.creelLimits || {})
+            };
           }
           if (pr.lakeSpecificRegulations) {
-            profile.regulations.lakeSpecificRegulations = profile.regulations.lakeSpecificRegulations || {};
-            Object.assign(profile.regulations.lakeSpecificRegulations, pr.lakeSpecificRegulations);
+            const lsr = profile.regulations.lakeSpecificRegulations || { hasExceptions: null, creelLimits: {}, sizeLimits: {}, specialRules: [], closedSeasons: [] };
+            if (pr.lakeSpecificRegulations.hasExceptions != null) lsr.hasExceptions = pr.lakeSpecificRegulations.hasExceptions;
+            lsr.creelLimits = { ...(lsr.creelLimits || {}), ...(pr.lakeSpecificRegulations.creelLimits || {}) };
+            lsr.sizeLimits = { ...(lsr.sizeLimits || {}), ...(pr.lakeSpecificRegulations.sizeLimits || {}) };
+            lsr.specialRules = [...new Set([...(lsr.specialRules || []), ...(pr.lakeSpecificRegulations.specialRules || [])])];
+            lsr.closedSeasons = [...(lsr.closedSeasons || []), ...(pr.lakeSpecificRegulations.closedSeasons || [])];
+            profile.regulations.lakeSpecificRegulations = lsr;
           }
+          if (pr.lengthLimits) profile.regulations.lengthLimits = { ...(profile.regulations.lengthLimits || {}), ...pr.lengthLimits };
+          if (pr.creelLimits) profile.regulations.creelLimits = { ...(profile.regulations.creelLimits || {}), ...pr.creelLimits };
           if (pr.notes) profile.regulations.notes = pr.notes;
           for (const src of parsedRegs.sources || []) profile.sources.push(src);
           for (const [sec, fields] of Object.entries(parsedRegs.evidence || {})) for (const [field, entries] of Object.entries(fields || {})) mergeEvidence(sec, field, entries);
           profile._regsDebug.parsedCreelLimits = parsedRegs.regulations?.generalStateRegulations?.creelLimits || {};
           profile._regsDebug.parsedGeneralLength = parsedRegs.regulations?.generalStateRegulations?.lengthLimits || {};
           profile._regsDebug.parsedLakeSpecific = parsedRegs.regulations?.lakeSpecificRegulations || {};
-        } catch(regsErr) {
+          profile._regsDebug.parsedOk = Object.keys(profile._regsDebug.parsedCreelLimits).length > 0
+            || Object.keys(profile._regsDebug.parsedGeneralLength).length > 0
+            || Object.keys(profile._regsDebug.parsedLakeSpecific?.sizeLimits || {}).length > 0;
+        } catch (regsErr) {
+          profile._regsDebug = profile._regsDebug || {};
           profile._regsDebug.parseError = regsErr.message;
         }
       }
@@ -6562,8 +7242,8 @@ Place the fraction at the point where the structure meets the water, not the far
       return new Response(JSON.stringify({
         ok: true,
         worker: "trollmap-worker",
-        version: 15.5,
-        changelog: "2026-07-12 v15.5: Fix SCDNR regs 404 — dnr.sc.gov/fishregs now 404s (verified). Migrated ALL regulation URLs to https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits (official SCDNR host). Updated LAKE_INTEL_SOURCE_REGISTRY, discovery queries to search (site:dnr.sc.gov OR site:eregulations.com), authority detection treats eregulations.com as OFFICIAL SCDNR, gap analysis includes eRegulations. Plan preview footer now links directly to new regs page. Previous v15.4: Lake Research v4 Evidence Pipeline Fixes — alias dedupe, off-lake filter, skip pocket guide, relevance scoring, chunk extraction, dedup by fact",
+        version: 15.6,
+        changelog: "2026-07-13 v15.6: Fix eRegulations → regulations JSON pipeline. Root cause: Firecrawl flattens multi-row markdown tables into one line with empty-cell separators; extractMarkdownTableRows misaligned columns so parseSCRegulationsFromHtml returned empty creel/size maps (UI showed empty regs). Fixed table parser (split on | |), expanded species matching (striper Santee-system rows for Wateree, lake regs page 14\" LMB), live Firecrawl fallback when normalized docs missing, multi-key R2 lookup for normalized_documents.json. EPA NSCEP/NEPIS two-step Firecrawl workflow (search results → ZyActionD landing → raw_text_url markdown). Dataset-hunt + discovery seeds include lake regs.html + eRegulations. UI regulations viewer now renders size+creel grids, closed seasons, special rules. Previous v15.5: SCDNR fishregs 404 → eRegulations migration.",
         evidencePipeline: {
           version: "v4",
           fixes: [
