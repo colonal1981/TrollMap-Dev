@@ -3850,10 +3850,13 @@ function extractMarkdownTableRows(text) {
 __name(extractMarkdownTableRows, "extractMarkdownTableRows");
 
 function lakeMentionedInCell(lakeName, cellText) {
-  const lake = normalizeResearchName(lakeName).replace(/^lake /, '');
+  // Strip state suffix (", SC" etc) and "Lake" prefix before matching
+  const cleanName = String(lakeName || '').replace(/,\s*(SC|NC|GA|TN)\s*$/i, '').trim();
+  const lake = normalizeResearchName(cleanName).replace(/^lake /, '').trim();
   const cell = normalizeResearchName(cellText);
-  const last = lake.split(' ').slice(-1)[0];
-  return cell.includes(lake) || (last && cell.includes(last));
+  // Use base lake name (e.g. "wateree") for matching
+  const baseLake = lake.split(' ')[0];
+  return cell.includes(lake) || (baseLake && cell.includes(baseLake));
 }
 __name(lakeMentionedInCell, "lakeMentionedInCell");
 
@@ -6451,11 +6454,21 @@ Place the fraction at the point where the structure meets the water, not the far
       if (path === "/chartpacks/lake-boundary" && request.method === "GET") {
         const lakeName = url.searchParams.get("lake") || "";
         if (!lakeName) return new Response(JSON.stringify({ error: "missing lake param" }), { status: 400, headers: JSON_HEADERS });
-        // Use lakeKeyFromName to match the actual R2 key format used by the pipeline
-        const r2Key = sanitizeLakeId(lakeName);
-        const contourKey = `${r2Key}/contours.geojson`;
-        const geoObj = await env.R2_TROLLMAP_CHARTPACKS.get(contourKey).catch(() => null);
-        if (!geoObj) return new Response(JSON.stringify({ error: "no contour data found", lake: lakeName, tried: contourKey }), { status: 404, headers: JSON_HEADERS });
+        // Boundaries stored under boundaries/ prefix with _3dhp suffix
+        const safeId = sanitizeLakeId(lakeName);
+        const shortKey = lakeKeyFromName(lakeName);
+        const candidates = [
+          `boundaries/${safeId}_3dhp.geojson`,
+          `boundaries/lake_${shortKey}_3dhp.geojson`,
+          `boundaries/${safeId}.geojson`,
+          `boundaries/${shortKey}.geojson`,
+        ];
+        let geoObj = null;
+        for (const key of candidates) {
+          geoObj = await env.R2_TROLLMAP_CHARTPACKS.get(key).catch(() => null);
+          if (geoObj) break;
+        }
+        if (!geoObj) return new Response(JSON.stringify({ error: "no boundary data found", lake: lakeName, tried: candidates }), { status: 404, headers: JSON_HEADERS });
         const geoText = await geoObj.text();
         return new Response(geoText, { headers: { ...CORS, "Content-Type": "application/json", "Cache-Control": "public, max-age=86400" } });
       }
