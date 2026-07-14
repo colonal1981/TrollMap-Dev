@@ -313,8 +313,22 @@ async function handleResearchDiscover(request, env) {
   const baseName = String(lakeName).replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA)\s*$/i,'').replace(/\s+Reservoir$/i,'').replace(/\s+Lake$/i,'').trim();
   const baseLower = baseName.toLowerCase();
   const otherLakeNames = ['murray','marion','moultrie','hartwell','keowee','jocassee','thurmond','clarks hill','clark hill','russell','wylie','norman','hickory','james','rhodhiss','mountain island','wateree','robinson','monticello','greenwood','secession','yates','martin'];
+  // NEPIS documents confirmed to be wrong-lake false positives.
+  // Keyed by the document file ID in the NEPIS URL (the alphanumeric before .txt or .pdf).
+  // These matched a lake name (e.g. "Monticello") but are actually about a different
+  // geographic feature entirely (e.g. a wastewater plant in Illinois).
+  const KNOWN_BAD_NEPIS_IDS = new Set([
+    '91024IW5', // "Monticello" wastewater plant / Lake Decatur IL — not Lake Monticello SC
+  ]);
+
   const offLakePattern = (title, url) => {
     const combined = `${title} ${url}`.toLowerCase();
+    // Hard-block known wrong-lake NEPIS documents by file ID
+    const nepisIdMatch = url.match(/\/([A-Z0-9]{6,12})\.txt/i);
+    if (nepisIdMatch && KNOWN_BAD_NEPIS_IDS.has(nepisIdMatch[1].toUpperCase())) {
+      console.log(`Blocked known-bad NEPIS doc ${nepisIdMatch[1]}: ${url}`);
+      return 'known_bad_nepis_doc';
+    }
     // Filter irrelevant document types regardless of lake
     if (/wetlands.management|wma.wetlands|wildlife.management.area|hunting.*pdf|upland.*habitat|prescribed.burn|waterfowl.impound/i.test(combined)) return 'irrelevant_doc_type';
     if (/nrc\.gov\/docs\//i.test(combined)) return 'nrc_nuclear_doc';
@@ -636,6 +650,13 @@ async function handleResearchProxyDownload(request, env) {
   const sourceType = url.searchParams.get("type") || ""; // "PDF" or "HTML"
   if (!target) {
     return new Response(JSON.stringify({ success: false, error: "Missing url parameter" }), { status: 400, headers: JSON_HEADERS });
+  }
+
+  // Hard-block known wrong-lake NEPIS documents before wasting a Firecrawl credit
+  const nepisIdMatch = target.match(/\/([A-Z0-9]{6,12})\.txt/i);
+  if (nepisIdMatch && KNOWN_BAD_NEPIS_IDS.has(nepisIdMatch[1].toUpperCase())) {
+    console.log(`Blocked known-bad NEPIS doc in proxy-download: ${nepisIdMatch[1]}`);
+    return new Response(JSON.stringify({ success: false, error: `Blocked known-bad NEPIS document: ${nepisIdMatch[1]}` }), { status: 403, headers: JSON_HEADERS });
   }
 
   // Route HTML sources through Firecrawl ONLY for JS-rendered SPAs and NEPIS pages.
@@ -963,9 +984,17 @@ const DATASET_KEYWORDS = [
 ];
 
 // Score a URL for relevance to a given lake
+// NEPIS document IDs confirmed as wrong-lake false positives — score -9999 to guarantee exclusion
+const KNOWN_BAD_NEPIS_IDS = new Set([
+  '91024IW5', // "Monticello" wastewater plant / Lake Decatur IL — not Lake Monticello SC
+]);
+
 function scoreDatasetUrl(url, title, lakeName) {
   const baseName = lakeName.replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA).*$/i,'').trim().toLowerCase();
   const combined = `${url} ${title}`.toLowerCase();
+  // Hard-block known wrong-lake NEPIS documents
+  const nepisIdMatch = url.match(/\/([A-Z0-9]{6,12})\.txt/i);
+  if (nepisIdMatch && KNOWN_BAD_NEPIS_IDS.has(nepisIdMatch[1].toUpperCase())) return -9999;
   let score = 0;
   if (combined.includes(baseName)) score += 40;
   for (const kw of DATASET_KEYWORDS) {
