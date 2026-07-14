@@ -2658,7 +2658,12 @@ async function handleResearchDedupeContradictions(request, env) {
             const sameAttr = /acre|surface|depth|elevation|pool|creel|limit|size/i.test(prevText) &&
                              /acre|surface|depth|elevation|pool|creel|limit|size/i.test(currText);
             const relDiff = Math.abs(nPrev - nCurr) / Math.max(1, Math.min(nPrev, nCurr));
-            if (sameAttr && relDiff > 0.05) { // >5% difference on same attribute
+            // Don't flag as contradiction if facts mention different species
+            const speciesNames = /largemouth|striped|hybrid|crappie|catfish|bream|walleye|pickerel|perch|bass|bluegill|redear|muskellunge|muskie/i;
+            const prevSpecies = (prevText.match(speciesNames) || [])[0] || '';
+            const currSpecies = (currText.match(speciesNames) || [])[0] || '';
+            const differentSpecies = prevSpecies && currSpecies && prevSpecies.toLowerCase() !== currSpecies.toLowerCase();
+            if (sameAttr && relDiff > 0.05 && !differentSpecies) {
               numberConflict = true;
             }
           }
@@ -3277,11 +3282,11 @@ INSTRUCTIONS:
 2. For each species, find rows that apply to ${lakeName}
 3. If ${lakeName} is in an exception row, use that exception rule
 4. If not listed, statewide rule applies
-5. Extract rules for: Largemouth Bass, Striped Bass, Hybrid Bass, White Bass, Crappie, Blue Catfish, Channel Catfish, Bream, Chain Pickerel
-6. For Lake Murray: striped bass has seasonal rules (Oct 1-May 31: 21" min, 5 fish; Jun 1-Sep 30: any length, 5 fish)
+5. Extract rules for: Largemouth Bass, Striped Bass / Hybrid, White Bass, Crappie, Blue Catfish, Channel Catfish, Bream, Chain Pickerel
+6. CRITICAL: Put ALL species-specific limits as keys in creelLimits and sizeLimits objects. specialRules is ONLY for gear restrictions (trotlines, traps, unusual rules).
+   CORRECT: "creelLimits": { "Striped Bass / Hybrid": "5" }, "sizeLimits": { "Striped Bass / Hybrid": "Oct. 1 - May 31: 21 inches min" }
+   WRONG: putting species creel/size rules as strings in specialRules[]
 
-Return ONLY:
-{
   "regulations": {
     "state": "${state || 'SC'}",
     "lakeSpecificRegulations": {
