@@ -85,24 +85,12 @@ var LLM_PROVIDERS = [
     keyEnv: "CEREBRAS_API_KEY",
     defaultModel: "gpt-oss-120b",
     models: [
-      "gpt-oss-120b",
-      "gemma-4-31b"
+      "gpt-oss-120b"
     ],
     headers: (key) => ({ "Authorization": `Bearer ${key}`, "Content-Type": "application/json" }),
     transformPayload: (p) => p,
   }
-,
-  {
-    name: "nvidia",
-    baseUrl: "https://integrate.api.nvidia.com/v1/chat/completions",
-    keyEnv: "NVIDIA_API_KEY",
-    defaultModel: "meta/llama-4-maverick-17b-128e-instruct",
-    models: [
-      "meta/llama-4-maverick-17b-128e-instruct"
-    ],
-    headers: (key) => ({ "Authorization": `Bearer ${key}`, "Content-Type": "application/json" }),
-    transformPayload: (p) => p,
-  }
+
 ];
 
 function extractLLMText(data) {
@@ -175,11 +163,23 @@ async function callLLM(env, payload, preferredProvider = null) {
       try {
         const providerPayload = { ...payload, model: modelId };
         const body = provider.transformPayload(providerPayload);
-        const r = await fetch(provider.baseUrl, {
-          method: "POST",
-          headers: provider.headers(key),
-          body: JSON.stringify(body)
-        });
+        // For Groq gpt-oss-120b — retry up to 3x with backoff before falling through
+        const isGroqPrimary = provider.name === 'groq' && modelId === provider.models[0];
+        const maxAttempts = isGroqPrimary ? 3 : 1;
+        let r;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          if (attempt > 1) {
+            const delay = attempt === 2 ? 2000 : 4000; // 2s, then 4s
+            console.warn(`Groq rate limit on ${modelId} — retry ${attempt}/${maxAttempts} after ${delay}ms`);
+            await new Promise(res => setTimeout(res, delay));
+          }
+          r = await fetch(provider.baseUrl, {
+            method: "POST",
+            headers: provider.headers(key),
+            body: JSON.stringify(body)
+          });
+          if (r.status !== 429) break; // success or non-rate-limit error
+        }
         let data;
         try {
           data = await r.json();
