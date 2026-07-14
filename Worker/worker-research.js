@@ -2487,6 +2487,7 @@ RULES:
 1. Only extract facts that explicitly mention "${baseName}" or "${lakeName}", OR are general ${state} statewide regulations that apply to this lake.
 2. Never invent numbers. If a value is not in this document, omit it.
 3. Convert all measurements: meters × 3.281 = feet; km² × 247.1 = acres.
+   CRITICAL: If you see "Surface area: 205.58 kilometers²" or similar — that is km², convert it: 205.58 × 247.1 = 50,798 acres. NEVER report the raw km² number as if it were acres.
 4. For table data: extract each meaningful row as a separate fact with the row content as the quote.
 5. If this document has NO information about "${baseName}", return {"extracted_facts": []}.
 
@@ -3249,6 +3250,54 @@ Return ONLY:
 JSON only.`;
     },
     expectedKey: "navigation"
+  },
+
+  regulations: {
+    label: "Regulations",
+    order: 6,
+    system: "You are a fishing regulations specialist. Extract fishing regulations from the provided live regulations page content. For each species: check if the lake appears in an exception list. If listed, use the exception rule. If not listed, the statewide rule applies. Return ONLY valid JSON. Never invent limits — if unknown, set null.",
+    userTemplate: (lakeName, state, prev) => {
+      const facts = (prev?._extractedFacts || [])
+        .filter(f => /regulation|creel|limit|season|closed|gear|size.*limit|possession|sizeLimit|creelLimit/i.test(f.category + ' ' + f.fact))
+        .slice(0, 15);
+      const factsBlock = facts.map(f => `• [${f.category}] ${f.fact} (source: ${f.source})`).join('\n');
+      const regsContent = prev?._regsSource?.content
+        ? prev._regsSource.content.slice(0, 10000)
+        : 'Not available';
+      return `Extract fishing regulations for ${lakeName} (${state}).
+
+LIVE REGULATIONS PAGE:
+${regsContent}
+
+EXTRACTED REGULATION FACTS (use to fill species-specific fields):
+${factsBlock || 'None extracted'}
+
+INSTRUCTIONS:
+1. Read the regulations page above carefully
+2. For each species, find rows that apply to ${lakeName}
+3. If ${lakeName} is in an exception row, use that exception rule
+4. If not listed, statewide rule applies
+5. Extract rules for: Largemouth Bass, Striped Bass, Hybrid Bass, White Bass, Crappie, Blue Catfish, Channel Catfish, Bream, Chain Pickerel
+6. For Lake Murray: striped bass has seasonal rules (Oct 1-May 31: 21" min, 5 fish; Jun 1-Sep 30: any length, 5 fish)
+
+Return ONLY:
+{
+  "regulations": {
+    "state": "${state || 'SC'}",
+    "lakeSpecificRegulations": {
+      "hasExceptions": true,
+      "creelLimits": {},
+      "sizeLimits": {},
+      "closedSeasons": [],
+      "specialRules": []
+    },
+    "notes": "Verify at official agency site before fishing."
+  },
+  "sources": [{"label":"eRegulations SC Freshwater Fishing","url":"https://www.eregulations.com/southcarolina/fishing","trust":"OFFICIAL"}]
+}
+JSON only. Never invent limits.`;
+    },
+    expectedKey: "regulations"
   },
 
   trolling: {
