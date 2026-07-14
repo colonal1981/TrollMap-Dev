@@ -320,6 +320,8 @@ async function handleResearchDiscover(request, env) {
     if (/nrc\.gov\/docs\//i.test(combined)) return 'nrc_nuclear_doc';
     // Filter non-US / Canadian government documents
     if (/\.gc\.ca\/|dfo-mpo\.gc\.ca|canada\.ca|ontario\.|quebec\.|british.columbia|alberta\.|manitoba\./.test(combined)) return 'foreign_government_doc';
+    // Filter other US state agency documents (Michigan DNR, etc) — only SC/NC/GA are relevant
+    if (/michigandnr\.com|michigan\.gov.*dnr|mndnr\.gov|dnr\.wi\.gov|dnr\.illinois|in\.gov.*dnr|michigan(?:dnr|department.*natural)/.test(url)) return 'other_state_agency';
     // Filter generic how-to fishing articles with no lake-specific data
     if (/how.to.fish|beginner.*fishing|fishing.tips.*general|learn.to.fish|fishing.basics/.test(combined) && !combined.includes(baseLower)) return 'generic_fishing_article';
     for (const other of otherLakeNames) {
@@ -2620,6 +2622,12 @@ async function handleResearchDedupeContradictions(request, env) {
     // Biology/forage facts are NEVER considered for contradictions (they are almost always complementary).
     // Only identity (acreage, depth, elevation) and regulations (creel/size limits) can produce real conflicts.
     const group = categoryGroups.get(cat) || [];
+    // WQP metadata categories — useless for research profile, filter entirely
+    const WQP_NOISE_CATS = new Set(['monitoringlocationidentifier','monitoringlocationname','monitoringlocationtypename',
+      'monitoringlocationdescription','huc','latitude','longitude','datum','identifier','sitetype',
+      'maintainer','watershed','coordinates','country','location']);
+    if (WQP_NOISE_CATS.has(cat)) continue; // skip WQP metadata facts entirely
+
     const IMPORTANT_CATEGORIES = new Set(['identity', 'surfacearea', 'maxdepth', 'averagedepth', 'elevation', 'regulations', 'creellimit_lakespecific', 'sizelimit_lakespecific', 'creellimit', 'sizelimit']);
 
     if (!IMPORTANT_CATEGORIES.has(cat) && !cat.includes('identity') && !cat.includes('regulation')) {
@@ -2966,7 +2974,7 @@ var RESEARCH_AGENTS = {
   identity: {
     label: "Lake Identity",
     order: 1,
-    system: "You are a data assembly agent for lake identity and pool management data. Map extracted facts to the JSON fields. CRITICAL RULES: (1) surfaceAreaAcres must be in ACRES — if source gives km², multiply by 247.1; (2) maxDepthFt is actual water depth — NEVER use pool elevation as depth; (3) For Duke Energy CRA pool tables the columns are: Month | Guide Curve ft | Minimum ft | Maximum ft in local datum; (4) Never invent values. Return ONLY valid JSON.",
+    system: "You are a data assembly agent for lake identity and pool management data. Map extracted facts to the JSON fields. CRITICAL RULES: (1) surfaceAreaAcres must be in ACRES — if source gives km², multiply by 247.1; (2) maxDepthFt is actual water depth — NEVER use pool elevation as depth; (3) For Duke Energy CRA pool tables the columns are: Month | Guide Curve ft | Minimum ft | Maximum ft in local datum; (4) riverSystem must be a river/watershed name like 'Saluda River' or 'Catawba-Wateree' — NEVER a HUC code or monitoring site description; (5) archetype must be a lake type like 'large hydroelectric reservoir' — NEVER a water quality site type like 'other-surface water site'; (6) Never invent values. Return ONLY valid JSON.",
     userTemplate: (lakeName, state, prev) => {
       const facts = prev?._extractedFacts || [];
 
@@ -3493,8 +3501,27 @@ async function handleResearchAgent(request, env) {
     }
   }
 
+  // For regulations agent — filter facts to only regulation-relevant ones to keep prompt size manageable
+  if (agentKey === 'regulations' && groundedPrev._extractedFacts?.length) {
+    const regsCats = new Set(['sizeLimit_lakeSpecific','creelLimit_lakeSpecific','sizeLimit_general',
+      'creelLimit_general','closedSeason','gearRestrictions','regulations_general','regulations']);
+    groundedPrev = {
+      ...groundedPrev,
+      _extractedFacts: groundedPrev._extractedFacts
+        .filter(f => regsCats.has(f.category) || /regulation|creel|limit|season|closed|gear|size.*limit|possession/i.test(f.category + ' ' + f.fact))
+        .slice(0, 20)  // cap at 20 facts max
+    };
+  }
+
   const systemPrompt = agent.system;
   const userPrompt = agent.userTemplate(lakeName, state, groundedPrev);
+  
+  // Safety check — if prompt is too large, truncate _extractedFacts further
+  const promptLen = systemPrompt.length + userPrompt.length;
+  if (promptLen > 28000 && groundedPrev._extractedFacts?.length > 5) {
+    console.warn(`handleResearchAgent: ${agentKey} prompt too large (${promptLen} chars) — truncating facts`);
+    groundedPrev = { ...groundedPrev, _extractedFacts: groundedPrev._extractedFacts.slice(0, 5) };
+  }
 
   const payload = {
     messages: [
