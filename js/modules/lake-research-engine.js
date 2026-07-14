@@ -308,13 +308,17 @@ async function fetchGeoJsonMaybe(url) {
 
 function getBoundaryOuterRing(boundaryGeo) {
   const features = boundaryGeo?.features || [];
+  // Select largest polygon by coordinate count (proxy for area) — same logic as supplemental-layers client
+  let best = null, bestSize = 0;
   for (const f of features) {
     const g = f?.geometry;
     if (!g) continue;
-    if (g.type === 'Polygon' && Array.isArray(g.coordinates?.[0])) return g.coordinates[0];
-    if (g.type === 'MultiPolygon' && Array.isArray(g.coordinates?.[0]?.[0])) return g.coordinates[0][0];
+    let ring = null;
+    if (g.type === 'Polygon' && Array.isArray(g.coordinates?.[0])) ring = g.coordinates[0];
+    else if (g.type === 'MultiPolygon' && Array.isArray(g.coordinates?.[0]?.[0])) ring = g.coordinates[0][0];
+    if (ring && ring.length > bestSize) { best = ring; bestSize = ring.length; }
   }
-  return null;
+  return best;
 }
 
 function toFeetXY(lon, lat, refLat) {
