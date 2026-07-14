@@ -1478,7 +1478,8 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
               log(`✔ ${agentKey} agent complete (${agentData.confidence?.percent || '?'}% via ${agentData.meta?.model || '?'})`);
             }
           } else {
-            log(`⚠️ ${agentKey} agent HTTP ${agentRes.status} — skipping`);
+            const errSnippet = await agentRes.text().catch(() => '').then(t => t.slice(0, 300));
+            log(`⚠️ ${agentKey} agent HTTP ${agentRes.status} — skipping. Response: ${errSnippet}`);
           }
         } catch (e) {
           log(`⚠️ ${agentKey} agent failed: ${e.message} — skipping`);
