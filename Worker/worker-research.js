@@ -2663,7 +2663,10 @@ async function handleResearchDedupeContradictions(request, env) {
             const prevSpecies = (prevText.match(speciesNames) || [])[0] || '';
             const currSpecies = (currText.match(speciesNames) || [])[0] || '';
             const differentSpecies = prevSpecies && currSpecies && prevSpecies.toLowerCase() !== currSpecies.toLowerCase();
-            if (sameAttr && relDiff > 0.05 && !differentSpecies) {
+            // Don't flag seasonal rules as contradictions (Oct-May vs Jun-Sep etc)
+            const seasonPattern = /jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d+\s*-\s*(may|sept|oct)|spring|summer|fall|winter|seasonal/i;
+            const bothSeasonal = seasonPattern.test(prevText) && seasonPattern.test(currText);
+            if (sameAttr && relDiff > 0.05 && !differentSpecies && !bothSeasonal) {
               numberConflict = true;
             }
           }
