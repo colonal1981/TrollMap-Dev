@@ -2259,204 +2259,230 @@ async function handleResearchAnalyzeFacts(request, env) {
     return new Response(JSON.stringify({ success: false, error: "Missing lakeName or documents payload" }), { status: 400, headers: JSON_HEADERS });
   }
 
-  // Build context from already lake-filtered chunks (client did extractRelevantChunks)
-  // Include quality scores to help LLM prioritize
-  const contextParts = documents.map((d, idx) => {
-    const docText = d.text || d.fullText || "";
-    const quality = d.quality || {};
-    const comp = quality.composite || quality.authority || 50;
-    return `--- DOCUMENT ${idx+1} [composite=${comp}] ---\nTitle: ${d.title}\nURL: ${d.url||'unknown'}\nRelevant excerpt (${docText.length} chars):\n${docText.slice(0, 25000)}`;
-  });
-  const context = contextParts.join("\n\n");
-  const totalChars = context.length;
+  // ── Filter worthless docs (search/index pages with high URL density, low prose) ──
+  function isIndexPage(doc) {
+    const text = doc.text || doc.fullText || '';
+    const urlMatches = (text.match(/https?:\/\//g) || []).length;
+    const words = text.split(/\s+/).length;
+    return urlMatches > 20 && urlMatches / words > 0.15;
+  }
+  const usableDocs = documents.filter(d => !isIndexPage(d));
+  const filteredCount = documents.length - usableDocs.length;
+  if (filteredCount > 0) {
+    console.log(`handleResearchAnalyzeFacts: filtered ${filteredCount} index/search page(s) from extraction payload`);
+  }
+  if (!usableDocs.length) {
+    return new Response(JSON.stringify({ success: false, error: "All documents were index/search pages — nothing to extract from" }), { status: 400, headers: JSON_HEADERS });
+  }
 
-  // If context huge, trim hard to 80k chars for Gemini context
-  let finalContext = context;
-  if (context.length > 80000) finalContext = context.slice(0, 80000) + "\n\n[TRIMMED FOR TOKEN LIMIT]";
+  // ── Route documents into 3 targeted groups by classification ──
+  // Each group gets docs classified for it; cross-category docs go to all relevant groups (truncated)
+  const CLASS_GROUPS = {
+    identity_limnology: ['Hydrology', 'Limnology'],
+    biology_habitat:    ['Biology'],
+    regulations:        ['Regulations'],
+  };
 
-  const prompt = `You are TrollMap Fact Gathering Engine v3. Extract VERIFIED granular facts about "${lakeName}" (base name "${baseName}", state ${state}) from the provided document excerpts.
+  function buildGroupContext(targetClasses, docs, maxChars = 50000) {
+    // Primary docs: classified for this group
+    const primary = docs.filter(d => {
+      const classes = d.quality?.classes || [];
+      return targetClasses.some(c => classes.includes(c));
+    });
+    // Cross-category high-value docs not already in primary
+    const primaryTitles = new Set(primary.map(d => d.title));
+    const crossCat = docs.filter(d => {
+      if (primaryTitles.has(d.title)) return false;
+      const comp = d.quality?.composite || 0;
+      const classes = d.quality?.classes || [];
+      return comp >= 80 && classes.length > 1;
+    });
+
+    const parts = [];
+    let used = 0;
+    // Primary docs first, full text
+    for (const doc of primary) {
+      const text = doc.text || '';
+      const chunk = text.slice(0, Math.min(text.length, maxChars - used));
+      if (chunk.length < 100) continue;
+      parts.push(`--- DOCUMENT [composite=${doc.quality?.composite||'?'}] ---\nTitle: ${doc.title}\nURL: ${doc.url||'unknown'}\n${chunk}`);
+      used += chunk.length;
+      if (used >= maxChars) break;
+    }
+    // Cross-category docs truncated to 8k each
+    for (const doc of crossCat) {
+      if (used >= maxChars) break;
+      const text = doc.text || '';
+      const chunk = text.slice(0, Math.min(8000, maxChars - used));
+      if (chunk.length < 100) continue;
+      parts.push(`--- CROSS-REF [composite=${doc.quality?.composite||'?'}] ---\nTitle: ${doc.title}\nURL: ${doc.url||'unknown'}\n${chunk}`);
+      used += chunk.length;
+    }
+    return { context: parts.join('\n\n'), chars: used, docCount: parts.length };
+  }
+
+  // ── Group-specific extraction prompts ──
+  function buildGroupPrompt(group, lakeName, baseName, state, context) {
+    const base = `You are TrollMap Fact Extraction Engine. Extract VERIFIED granular facts about "${lakeName}" (base name "${baseName}", state ${state}) from the document excerpts below.
 
 CRITICAL RULES:
-1. Focus on "${baseName}" specifically. Documents may be statewide SCDNR reports - ONLY extract data where the lake name "${baseName}" or "${lakeName}" is mentioned OR where the section clearly applies to all SC lakes (for regulations).
-2. For regulations: DISTINGUISH general statewide limits vs lake-specific exceptions. Example: SC has general statewide creel limits, but ${lakeName} may have special striped bass creel, crappie limits, or closed seasons. Extract BOTH if present. Use categories: "creelLimit_general", "creelLimit_lakeSpecific", "sizeLimit_general", "sizeLimit_lakeSpecific", "closedSeason", "regulations".
-3. Required categories (try to extract at least one fact per category if present):
-   - identity: riverSystem, archetype, surfaceArea, maxDepth, averageDepth, damName, yearImpounded
-   - limnology: clarity, thermocline, oxygen, waterColor, secchi
-   - biology/forage: primaryForage, secondaryForage, predatorSpecies, baitfishMovement, stocking
-   - habitat: bottomComposition, cover, points, humps, creekArms, standingTimber, dockDensity
-   - navigation: ramps, hazards, shoals
-   - regulations: as above
-   - trolling: general trolling notes if mentioned (rare in DNR docs)
-   - summary: 1-sentence overview
-4. DATA EXTRACTION: Much of the best data is in TABLES. You MUST extract from tables. 
-   - Each fact MUST include: fact (concise sentence), page (estimate 1 if HTML, or number from "--- PAGE X ---"), confidence (0-100), source (doc title), quote (the most relevant verbatim snippet from context), category (from list above).
-   - QUOTE RULE: If the fact comes from a table, the quote should be the relevant row or cell content. Do not obsess over word count (10-30 words); prioritize verbatim accuracy over length.
-5. If a doc has NO mention of "${baseName}" and is not a general regulations doc, skip it — do not hallucinate.
-6. If after scanning you find 0 lake-specific facts, THEN extract 1-2 general SC statewide fishing regulation facts and label confidence 60 and category "regulations_general" — so pipeline doesn't return empty.
-7. Do NOT invent numbers. If surface area not stated, do NOT guess. Omit that category.
-8. UNIT WARNINGS: For Lake Wateree specifically, the SCDNR description page contains known label/unit errors. "Average Depth: 6.9 feet" conflicts with the EPA morphometry value "Mean depth: 6.9 meters" (22.6 ft), and "Maximum Depth: Approximately 225 feet" repeats the 225.5 ft full-pool elevation rather than lake depth (the lake-specific Anglers HQ description says the deepest point is around 90 ft). In the flattened EPA summary table, 10-35 / 17 / 16 are total alkalinity values in mg/L; the SECCHI (METERS) row is 0.3-0.5 / mean 0.4 / median 0.3. Never shift values between table rows, and convert meters to feet (×3.28084) for *Ft fields.
-9. Return ONLY valid JSON. No markdown, no explanation.
-
-Context (${totalChars} chars total, showing ${finalContext.length}):
-${finalContext}
-
-Return ONLY this JSON:
-{
-  "extracted_facts": [
-    {
-      "fact": "Lake Wateree is part of the Catawba-Wateree river system.",
-      "page": 1,
-      "confidence": 92,
-      "source": "SCDNR Lakes Information",
-      "quote": "Lake Wateree is impounded on the Catawba-Wateree River",
-      "category": "riverSystem"
-    },
-    {
-      "fact": "Summer thermocline develops between 12 and 18 feet in Lake Wateree.",
-      "page": 12,
-      "confidence": 88,
-      "source": "2017 Annual Report",
-      "quote": "thermocline was observed between 12 and 18 ft during summer stratification",
-      "category": "thermocline"
-    },
-    {
-      "fact": "General SC statewide creel limit for largemouth bass is 5 per day.",
-      "page": 1,
-      "confidence": 95,
-      "source": "SC Freshwater Fishing Regulations",
-      "quote": "Largemouth bass: 5 per day",
-      "category": "creelLimit_general"
-    },
-    {
-      "fact": "Lake Wateree striped bass creel limit is 10 per day with no minimum size in lower lake during open season.",
-      "page": 1,
-      "confidence": 85,
-      "source": "SC Freshwater Fishing Regulations",
-      "quote": "Lake Wateree striped bass: 10 per day, no size limit",
-      "category": "creelLimit_lakeSpecific"
-    }
-  ]
-}
-If you truly cannot find ANY verifiable fact, return {"extracted_facts":[]} but you should try hard for regulations at minimum.
+1. Only extract facts where "${baseName}" or "${lakeName}" is explicitly mentioned, OR where the section clearly applies to all ${state} lakes (for regulations).
+2. Never invent numbers. If a value is not stated, omit it.
+3. Each fact needs: fact (concise sentence), page (estimate 1 if HTML), confidence (0-100), source (doc title), quote (verbatim snippet), category.
+4. Extract from TABLES — table rows count as facts. Quote the relevant row/cell content verbatim.
+5. UNIT CONVERSION: convert meters to feet (×3.281) for all *Ft fields. Surface area in km² × 247.1 = acres.
+6. Return ONLY valid JSON, no markdown.
 
 `;
 
-  const payload = {
-    messages: [
-      { role: "system", content: "You are a precise fact extraction engine. Return ONLY valid JSON with extracted_facts array. Never hallucinate. Quote must be verbatim from context. Confidence 0-100. Categories must be from allowed list." },
-      { role: "user", content: prompt }
-    ],
-    temperature: 0.08,
-    max_tokens: 8000,
-    response_format: { type: "json_object" }
-  };
+    if (group === 'identity_limnology') {
+      return base + `FOCUS: Physical identity AND water quality/limnology data.
 
-  try {
-    const { data } = await callLLM(env, payload, null); // use general chain (Groq 120b -> Cerebras 120b), not Gemini
-    const text = extractLLMText(data);
-    const parsed = extractJsonPossibly(text);
-    if (!parsed) {
-      console.warn(`Fact extraction returned non-JSON: ${text.slice(0,500)}`);
-      return new Response(JSON.stringify({ success: true, extracted_facts: [], raw: text.slice(0,1000), warning: "non-JSON returned" }), { headers: JSON_HEADERS });
-    }
-    let facts = parsed.extracted_facts || parsed.facts || parsed || [];
-    if (!Array.isArray(facts)) {
-      // sometimes LLM returns object with categories as keys
-      if (typeof facts === 'object') {
-        const flattened = [];
-        for (const [k,v] of Object.entries(facts)) {
-          if (Array.isArray(v)) flattened.push(...v);
-          else if (typeof v === 'object' && v.fact) flattened.push({ ...v, category: v.category||k });
-        }
-        facts = flattened;
-      } else facts = [];
-    }
-    // Normalize and filter
-    facts = facts.map(f=> ({
-      fact: String(f.fact||'').trim().slice(0,500),
-      page: parseInt(f.page)||1,
-      confidence: Math.min(99, Math.max(10, parseInt(f.confidence)||70)),
-      source: String(f.source||'Unknown').slice(0,180),
-      quote: String(f.quote||'').trim().slice(0,400),
-      category: String(f.category||'general').trim().slice(0,50)
-    })).filter(f=> f.fact.length > 10 && (f.quote.length > 3 || f.confidence >= 70));
+TARGET CATEGORIES (extract as many as evidence supports):
+- surfaceArea (in acres — convert from km² if needed: km² × 247.1)
+- maxDepthFt (in feet — convert from meters: m × 3.281)
+- averageDepthFt (in feet)
+- damName, yearImpounded, reservoirOwner, riverSystem, archetype
+- thermocline: look for depth profiles showing temperature break. Derive summerDepthFt from where temp drops sharply with depth.
+- oxygen: look for DO readings at multiple depths. depletionDepthFt = depth where DO drops below 2 mg/L. anoxicBelowFt = depth where DO ≈ 0.
+- waterClarity: Secchi disc transparency in feet (convert meters × 3.281), water color, turbidity
+- trophicStatus: eutrophic/mesotrophic/oligotrophic
+- hydraulicRetentionDays: mean hydraulic retention time in days
+- DEPTH PROFILE DATA: if you see a table with depths and DO/temp readings at multiple depths, extract each row as a separate fact with the actual numbers.
 
-    // Quality filter: drop facts that obviously don't mention baseName unless they are general regulations
-    const generalCats = new Set(['regulations_general','creelLimit_general','sizeLimit_general','regulations','closedSeason']);
-    const filteredFacts = facts.filter(f=>{
-      const catLower = f.category.toLowerCase();
-      const isGeneralReg = generalCats.has(catLower) || catLower.includes('general') || /creel|size limit|regulation/.test(catLower);
-      if (isGeneralReg) return true; // keep general regs even without lake mention
-      // otherwise require lake mention in fact or quote or source mentions base
-      const combined = `${f.fact} ${f.quote} ${f.source}`.toLowerCase();
-      return combined.includes(baseName.toLowerCase()) || combined.includes(lakeName.toLowerCase());
-    });
-
-    let outFacts = filteredFacts.length ? filteredFacts : facts; // if filtering removed all, keep original to avoid 0
-
-    // FALLBACK PASS: if still 0 facts, retry with simpler prompt focused only on regulations docs
-    if (outFacts.length === 0) {
-      console.warn(`handleResearchAnalyzeFacts: primary pass returned 0 facts — running fallback regulations pass`);
-      // Prefer HTML/regulations docs for fallback (shorter, more focused)
-      const regsDocs = documents.filter(d => /regulation|regs|creel|html/i.test((d.title||'') + (d.url||'')));
-      const fallbackDocs = regsDocs.length ? regsDocs : documents.slice(0, 3);
-      const fallbackContext = fallbackDocs.map((d,i) => `--- DOC ${i+1}: ${d.title} ---\n${(d.text||d.fullText||'').slice(0,15000)}`).join('\n\n');
-      const fallbackPrompt = `Extract fishing regulations from these documents for ${lakeName} or general SC statewide rules.
-
-For each rule found, return a JSON object. Include creel limits, size limits, closed seasons, and any lake-specific rules.
-Even general statewide SC rules are valuable. Return as many facts as you can find.
+IMPORTANT for depth profiles: the EPA NSCEP Wateree report has depth profile tables. Station 1 has readings at 0, 6, 15, 30, 48, 64 feet. Extract DO and temperature at each depth as individual facts if present.
 
 Documents:
-${fallbackContext.slice(0, 40000)}
+${context}
 
-Return ONLY valid JSON:
-{
-  "extracted_facts": [
-    {"fact": "...", "page": 1, "confidence": 80, "source": "...", "quote": "text from doc or empty string if not found", "category": "creelLimit_general"}
-  ]
-}`;
-      try {
-        const fbPayload = {
-          messages: [
-            { role: "system", content: "Extract fishing regulation facts. Return ONLY valid JSON with extracted_facts array. Include any creel limits, size limits, seasons, or rules you find. The quote field can be empty string if you cannot find verbatim text — do NOT skip facts just because you cannot quote them." },
-            { role: "user", content: fallbackPrompt }
-          ],
-          temperature: 0.05,
-          max_tokens: 4000,
-          response_format: { type: "json_object" }
-        };
-        const preferGemini = !!env.GEMINI_API_KEY;
-        const { data: fbData } = await callLLM(env, fbPayload, preferGemini ? 'gemini' : null);
-        const fbText = extractLLMText(fbData);
-        const fbParsed = extractJsonPossibly(fbText);
-        if (fbParsed) {
-          let fbFacts = fbParsed.extracted_facts || fbParsed.facts || [];
-          if (!Array.isArray(fbFacts)) fbFacts = [];
-          fbFacts = fbFacts.map(f => ({
-            fact: String(f.fact||'').trim().slice(0,500),
-            page: parseInt(f.page)||1,
-            confidence: Math.min(99, Math.max(10, parseInt(f.confidence)||65)),
-            source: String(f.source||'Unknown').slice(0,180),
-            quote: String(f.quote||f.fact||'').trim().slice(0,400),
-            category: String(f.category||'regulations_general').trim().slice(0,50)
-          })).filter(f => f.fact.length > 10); // no quote requirement in fallback
-          if (fbFacts.length > 0) {
-            console.log(`handleResearchAnalyzeFacts: fallback pass recovered ${fbFacts.length} regulation facts`);
-            outFacts = fbFacts;
-          }
-        }
-      } catch (fbErr) {
-        console.warn(`handleResearchAnalyzeFacts fallback pass failed: ${fbErr.message}`);
-      }
+Return ONLY:
+{"extracted_facts": [{"fact":"...","page":1,"confidence":90,"source":"...","quote":"...","category":"thermocline"}]}
+`;
     }
 
-    return new Response(JSON.stringify({ success: true, extracted_facts: outFacts, meta: { totalDocs: documents.length, contextChars: totalChars, filteredOut: facts.length - outFacts.length } }), { headers: JSON_HEADERS });
-  } catch (e) {
-    console.error(`handleResearchAnalyzeFacts LLM failed: ${e.message}`);
-    return new Response(JSON.stringify({ success: false, error: e.message }), { status: 502, headers: JSON_HEADERS });
+    if (group === 'biology_habitat') {
+      return base + `FOCUS: Species, forage, stocking, habitat, and structure.
+
+TARGET CATEGORIES:
+- predatorSpecies: list all sport fish species mentioned for this lake
+- primaryForage: main forage fish species with abundance data if available
+- secondaryForage: other prey species
+- knownStockings: stocking events with species, quantity, years
+- standingStock: biomass per hectare (kg/ha) if mentioned
+- speciesAbundance: relative abundance of species (% of standing stock etc)
+- bottomComposition: clay, rock, sand, mud, gravel
+- cover: standing timber, docks, stumps, brush, vegetation
+- habitat notes: any structural features, cove counts, etc
+- baitfishMovement: seasonal patterns of shad or other forage
+
+IMPORTANT for biology: the striped bass introduction study has cove rotenone data with standing stocks by year. Extract species composition percentages and biomass data.
+
+Documents:
+${context}
+
+Return ONLY:
+{"extracted_facts": [{"fact":"...","page":1,"confidence":90,"source":"...","quote":"...","category":"primaryForage"}]}
+`;
+    }
+
+    if (group === 'regulations') {
+      return base + `FOCUS: Fishing regulations — creel limits, size limits, closed seasons, lake-specific exceptions.
+
+TARGET CATEGORIES:
+- creelLimit_general: statewide daily bag limits by species
+- sizeLimit_general: statewide minimum size by species
+- creelLimit_lakeSpecific: lake-specific creel limits that differ from statewide
+- sizeLimit_lakeSpecific: lake-specific size limits that differ from statewide
+- closedSeason: closed seasons for any species on this lake
+- regulations: any other rules (catch-and-release zones, gear restrictions)
+
+DISTINGUISH between statewide defaults and lake-specific exceptions. Extract BOTH.
+
+Documents:
+${context}
+
+Return ONLY:
+{"extracted_facts": [{"fact":"...","page":1,"confidence":90,"source":"...","quote":"...","category":"creelLimit_general"}]}
+`;
+    }
+
+    return base + `Documents:\n${context}\n\nReturn ONLY:\n{"extracted_facts": []}`;
   }
+
+  // ── Run all 3 passes ──
+  const allFacts = [];
+  const passResults = [];
+
+  for (const [group, targetClasses] of Object.entries(CLASS_GROUPS)) {
+    const { context, chars, docCount } = buildGroupContext(targetClasses, usableDocs);
+    if (!context || chars < 200) {
+      console.log(`handleResearchAnalyzeFacts: group ${group} has no usable content — skipping`);
+      continue;
+    }
+
+    const prompt = buildGroupPrompt(group, lakeName, baseName, state, context);
+    const payload = {
+      messages: [
+        { role: "system", content: "You are a precise fact extraction engine. Return ONLY valid JSON with extracted_facts array. Never hallucinate. Quote must be verbatim from context. Confidence 0-100." },
+        { role: "user", content: prompt }
+      ],
+      temperature: 0.05,
+      max_tokens: 6000,
+      response_format: { type: "json_object" }
+    };
+
+    try {
+      const { data } = await callLLM(env, payload, null);
+      const text = extractLLMText(data);
+      const parsed = extractJsonPossibly(text);
+      if (!parsed) {
+        console.warn(`handleResearchAnalyzeFacts: group ${group} returned non-JSON`);
+        continue;
+      }
+      let facts = parsed.extracted_facts || parsed.facts || [];
+      if (!Array.isArray(facts)) facts = [];
+
+      // Normalize
+      facts = facts.map(f => ({
+        fact: String(f.fact||'').trim().slice(0,500),
+        page: parseInt(f.page)||1,
+        confidence: Math.min(99, Math.max(10, parseInt(f.confidence)||70)),
+        source: String(f.source||'Unknown').slice(0,180),
+        quote: String(f.quote||'').trim().slice(0,400),
+        category: String(f.category||'general').trim().slice(0,50),
+        extractionGroup: group
+      })).filter(f => f.fact.length > 10);
+
+      // Quality filter: require lake name in fact/quote/source for non-regulation facts
+      const generalCats = new Set(['regulations_general','creelLimit_general','sizeLimit_general','regulations','closedSeason']);
+      const filtered = facts.filter(f => {
+        const catLower = f.category.toLowerCase();
+        if (generalCats.has(catLower) || catLower.includes('general') || /creel|size.?limit|regulation/.test(catLower)) return true;
+        const combined = `${f.fact} ${f.quote} ${f.source}`.toLowerCase();
+        return combined.includes(baseName.toLowerCase()) || combined.includes(lakeName.toLowerCase());
+      });
+
+      const kept = filtered.length ? filtered : facts;
+      allFacts.push(...kept);
+      passResults.push({ group, docsUsed: docCount, charsUsed: chars, factsExtracted: kept.length });
+      console.log(`handleResearchAnalyzeFacts: group ${group} — ${docCount} docs, ${chars} chars, ${kept.length} facts`);
+    } catch (e) {
+      console.warn(`handleResearchAnalyzeFacts: group ${group} failed: ${e.message}`);
+    }
+  }
+
+  return new Response(JSON.stringify({
+    success: true,
+    extracted_facts: allFacts,
+    meta: {
+      totalDocs: usableDocs.length,
+      filteredIndexPages: filteredCount,
+      passes: passResults,
+      totalFacts: allFacts.length
+    }
+  }), { headers: JSON_HEADERS });
 }
-__name(handleResearchAnalyzeFacts, "handleResearchAnalyzeFacts");
+
 
 async function handleResearchDedupeContradictions(request, env) {
   let body;
@@ -2884,34 +2910,56 @@ Return JSON only.`,
     label: "Limnology",
     order: 2,
     system: "You are a limnologist. Describe how the lake behaves physically and chemically. Pay special attention to summer stratification, thermocline depths, oxygen depletion floors, and turbidity/color after rainfall. Never recommend fishing or tackle. Return ONLY JSON.",
-    userTemplate: (lakeName, state, prev) => `Research limnology for:
+    userTemplate: (lakeName, state, prev) => {
+      const limnologyFacts = (prev?._extractedFacts || []).filter(f =>
+        /limnology|thermocline|oxygen|clarity|secchi|trophic|color|turbid|stratif|depth|anoxic|do_depth|temp_depth/i.test(f.category + ' ' + f.fact)
+      );
+      const factsSection = limnologyFacts.length > 0
+        ? `VERIFIED FACTS FROM OFFICIAL DOCUMENTS (primary source — override training data):
+${limnologyFacts.map(f => `• [${f.category}] ${f.fact} (Source: ${f.source}, confidence ${f.confidence}%)\n  Quote: "${f.quote}"`).join('\n\n')}`
+        : 'No limnology facts extracted yet.';
+
+      const docSection = prev?._documentContext
+        ? `\n\nRAW DOCUMENT TEXT (read carefully for depth profiles and tables):
+${prev._documentContext.slice(0, 40000)}`
+        : '';
+
+      return `Research limnology for:
 
 Lake: ${lakeName}
 State: ${state}
 
-${prev?._extractedFacts?.filter(f => /limnology|thermocline|oxygen|clarity|secchi|trophic|color|turbid|stratif|depth|anoxic/i.test(f.category + ' ' + f.fact)).length > 0 ? `VERIFIED FACTS FROM OFFICIAL DOCUMENTS (use these as primary source — override training data):
-${prev._extractedFacts.filter(f => /limnology|thermocline|oxygen|clarity|secchi|trophic|color|turbid|stratif|depth|anoxic/i.test(f.category + ' ' + f.fact)).map(f => `• ${f.fact} (Source: ${f.source})`).join('\n')}
+${factsSection}
 
-` : ''}Previous Identity data (use for context):
-${JSON.stringify(prev?.identity || prev || {}, null, 2).slice(0, 3000)}
+Previous Identity data (context):
+${JSON.stringify(prev?.identity || {}, null, 2).slice(0, 2000)}
+${docSection}
+
+CRITICAL INSTRUCTIONS:
+1. Look for depth profile tables (DO mg/L at multiple depths, temperature at multiple depths).
+2. Thermocline: find where temperature drops sharply with depth — that transition zone IS the thermocline. Report as summerDepthFt range [shallow, deep].
+3. Oxygen depletion: find depth where DO drops below 2 mg/L. That is depletionDepthFt. Where DO ≈ 0 is anoxicBelowFt.
+4. Convert ALL measurements: meters × 3.281 = feet.
+5. Use document data first. Only fall back to training knowledge if truly absent.
+6. trophicStatus: derive from phosphorus loading, Secchi depth, chlorophyll data if present.
 
 Return ONLY:
 {
   "limnology": {
-    "waterClarity": {"typical":"Clear | Stained | Muddy after rain etc", "color":"", "secchiFt": number|null, "note":""},
-    "thermocline": {"summerDepthFt": [12,18] or null, "strength":"weak | moderate | strong", "winterMix":"full | partial", "note":"detail seasonal thermal stratification"},
-    "oxygen": {"depletionDepthFt": number|null, "anoxicBelowFt": number|null, "note":"summer/fall dissolved oxygen floor where fish cannot survive below"},
-    "waterColor": "e.g. green tint, brown stain, red clay runoff after heavy rains",
-    "flowCharacteristics": "river-run vs bowl, retention time, generation current effects",
+    "waterClarity": {"typical":"Clear | Stained | Turbid", "color":"green/brown/clear", "secchiFt": number|null, "note":""},
+    "thermocline": {"summerDepthFt": [min,max]|null, "strength":"weak|moderate|strong", "winterMix":"full|partial", "confidence":"high|medium|low", "note":"source and method"},
+    "oxygen": {"depletionDepthFt": number|null, "anoxicBelowFt": number|null, "note":"DO readings by depth if available"},
+    "waterColor": "description",
+    "flowCharacteristics": "retention time, river-run vs bowl",
+    "hydraulicRetentionDays": number|null,
     "seasonalDrawdownFt": number|null,
-    "bottomHardness": "clay rock sand mud gravel etc",
-    "mixingType": "dimictic, monomictic, polymictic etc or null",
-    "phTypical": number|null,
-    "trophicStatus": "oligotrophic | mesotrophic | eutrophic | null"
+    "trophicStatus": "eutrophic|mesotrophic|oligotrophic|null",
+    "phTypical": number|null
   },
   "sources": [{"label":"","url":"","trust":"OFFICIAL"}]
 }
-JSON only. No fishing advice.`,
+JSON only.`;
+    },
     expectedKey: "limnology"
   },
   biology: {
@@ -2920,40 +2968,49 @@ JSON only. No fishing advice.`,
     system: "You are a fisheries biologist. Research the food chain, primary/secondary forage, baitfish seasonal movements, and predator gamefish for this lake. CRITICAL: You MUST ONLY list species that are explicitly mentioned in the provided extracted facts. Do NOT add species not supported by evidence. If the facts do not mention a species, it is NOT present in this lake. Never recommend tackle or fishing methods. Return ONLY JSON.",
     userTemplate: (lakeName, state, prev) => {
       const facts = prev?._extractedFacts || [];
-      const biologyFacts = facts.filter(f => /biology|forage|species|predator|stocking|invasive|fisheries|shad|herring|bass|crappie|catfish|walleye|smallmouth|spotted/i.test(f.category || ''));
-      // Limit to ~15k chars to avoid context overflow
+      const biologyFacts = facts.filter(f =>
+        /biology|forage|species|predator|stocking|invasive|fisheries|shad|herring|bass|crappie|catfish|walleye|smallmouth|spotted|standing.?stock|rotenone|biomass/i.test(f.category + ' ' + f.fact)
+      );
       let factsText = biologyFacts.length > 0
-        ? biologyFacts.map(f => `[${f.category}] ${f.fact} (source: ${f.source}, page ${f.page}, confidence ${f.confidence}%)\n  Quote: "${f.quote}"`).join('\n\n')
-        : 'No biology-specific facts were extracted from documents. You must return empty/unknown fields — do NOT invent species.';
-      if (factsText.length > 15000) factsText = factsText.slice(0, 15000) + '\n\n[TRIMMED — remaining facts omitted]';
+        ? biologyFacts.map(f => `[${f.category}] ${f.fact} (source: ${f.source}, confidence ${f.confidence}%)\n  Quote: "${f.quote}"`).join('\n\n')
+        : 'No biology-specific facts extracted yet.';
+      if (factsText.length > 10000) factsText = factsText.slice(0, 10000) + '\n[TRIMMED]';
+
+      const docSection = prev?._documentContext
+        ? `\nRAW DOCUMENT TEXT (read for species lists, stocking records, biomass tables, cove rotenone data):\n${prev._documentContext.slice(0, 30000)}`
+        : '';
+
       return `Research fisheries biology for:
 
 Lake: ${lakeName}
 State: ${state}
 
 Context:
-${JSON.stringify({identity: prev?.identity, limnology: prev?.limnology}, null, 2).slice(0, 3000)}
+${JSON.stringify({identity: prev?.identity, limnology: prev?.limnology}, null, 2).slice(0, 2000)}
 
-EXTRACTED FACTS FROM AUTHORITATIVE DOCUMENTS (your primary source of truth):
+EXTRACTED FACTS (primary source):
 ${factsText}
+${docSection}
 
 CRITICAL RULES:
-- ONLY list species that are explicitly mentioned in the extracted facts above.
-- If a species (e.g. Spotted Bass, Smallmouth Bass, Walleye) is NOT in the facts, do NOT include it.
-- If no biology facts were extracted, return empty arrays/objects and null fields — never invent.
-- The "..." placeholder in predatorSpecies is FORBIDDEN. Use an empty array [] if unknown.
+- ONLY list species explicitly mentioned in the facts or documents above. Do NOT invent species.
+- For knownStockings: extract actual stocking events with species, quantities, years if mentioned.
+- For speciesAbundance: use cove rotenone data or biomass % if present in documents.
+- For primaryForage: note if gizzard shad and threadfin shad comprise 60-80% of standing stock — extract the actual percentages if present.
+- The predatorSpecies array must ONLY contain species confirmed in documents/facts.
 
 Return ONLY:
 {
   "biology": {
-    "primaryForage": [{"species":"Threadfin Shad or Blueback Herring etc","abundance":"high | moderate | low","notes":"detail seasonal depth preferences"}],
-    "secondaryForage": [{"species":"Gizzard Shad or Crawfish etc","abundance":"high | moderate | low","notes":""}],
+    "primaryForage": [{"species":"Threadfin Shad","abundance":"high","notes":"60-80% of standing stock with gizzard shad"}],
+    "secondaryForage": [],
     "predatorSpecies": ["Largemouth Bass","Striped Bass","Crappie","Catfish"],
-    "speciesAbundance": {"Largemouth Bass":"moderate","Striped Bass":"high", "Crappie":"high"},
-    "baitfishMovement": "seasonal migration between shallow creek arms in spring/fall and main river channel swings in summer/winter",
-    "knownStockings": [{"species":"Striped Bass","agency":"SCDNR","year":2023,"note":""}],
-    "invasiveSpecies": ["Blueback Herring","Hydrilla"],
-    "forageCalendar": {"spring":"...", "summer":"...", "fall":"...", "winter":"..."}
+    "speciesAbundance": {"Gizzard Shad":"dominant","Threadfin Shad":"high","Largemouth Bass":"moderate"},
+    "standingStockKgHa": "500-1000 kg/ha range or null",
+    "baitfishMovement": "seasonal pattern if documented",
+    "knownStockings": [{"species":"Striped Bass","agency":"SCDNR","quantity":"400000 fingerlings/year","years":"1980-1982 then alternate years","note":""}],
+    "invasiveSpecies": [],
+    "forageCalendar": {"spring":"", "summer":"", "fall":"", "winter":""}
   },
   "sources": [{"label":"","url":"","trust":"OFFICIAL"}]
 }
@@ -3308,6 +3365,32 @@ async function handleResearchAgent(request, env) {
     }
   }
 
+  // Inject document text for agents that benefit from reading source material directly
+  // limnology gets the EPA/water quality docs; biology gets the fisheries docs
+  const docInjectionAgents = new Set(['limnology', 'biology', 'habitat', 'identity']);
+  if (docInjectionAgents.has(agentKey) && previousResults._normalizedDocuments?.length) {
+    const docFilter = {
+      limnology: /epa|nscep|water.?qual|characteriz|nutrient|limnol/i,
+      identity:  /epa|nscep|water.?qual|characteriz|sc.?lake|dnr/i,
+      biology:   /striped.?bass|fisheries|biology|annual|species|stocking/i,
+      habitat:   /habitat|attractor|structure|dnr|sc.?lake/i,
+    };
+    const filter = docFilter[agentKey];
+    const relevantDocs = previousResults._normalizedDocuments
+      .filter(d => !filter || filter.test(d.title + ' ' + d.url))
+      .slice(0, 4); // max 4 docs per agent
+    if (relevantDocs.length) {
+      const docContext = relevantDocs
+        .map(d => `=== ${d.title} ===\n${d.text?.slice(0, 15000) || ''}`)
+        .join('\n\n');
+      groundedPrev = {
+        ...groundedPrev,
+        _documentContext: docContext,
+        _documentContextNote: `Raw document text from ${relevantDocs.length} source(s) — use this for specific measurements, tables, and depth profiles. Prioritize this over training knowledge.`
+      };
+    }
+  }
+
   const systemPrompt = agent.system;
   const userPrompt = agent.userTemplate(lakeName, state, groundedPrev);
 
@@ -3316,17 +3399,16 @@ async function handleResearchAgent(request, env) {
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt }
     ],
-    temperature: 0.15,
-    max_tokens: agentKey === 'trolling' ? 2000 : agentKey === 'summary' ? 800 : 1500,
+    temperature: 0.1,
+    max_tokens: agentKey === 'trolling' ? 2000 : agentKey === 'summary' ? 800 : 3000,
     response_format: { type: "json_object" }
   };
 
   const start = Date.now();
   let llmResult;
   try {
-    // Route identity and limnology through Gemini to preserve Groq 120b budget for later agents
-    // Gemini handles factual/encyclopedic tasks well — ideal for lake facts and water science
-    const useGemini = (agentKey === 'identity' || agentKey === 'limnology') && env.GEMINI_API_KEY;
+    // Limnology gets Gemini for deep document reading; others use Groq
+    const useGemini = (agentKey === 'limnology') && env.GEMINI_API_KEY;
     llmResult = await callLLM(env, payload, useGemini ? 'gemini' : null);
   } catch (e) {
     return new Response(JSON.stringify({success:false, error:`LLM failed: ${e.message}`, agent: agentKey, lakeName}), {status: 502, headers: JSON_HEADERS});
