@@ -1166,10 +1166,9 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     // STEP 7: Fact extraction (quoted/source-backed only)
     // ----------------------------------------------------
     setProgress("Step 7: Extracting verified facts from documents...", 50);
-    log("Submitting lake-relevant chunks to Research LLM (not full 100k dumps)...");
+    log("Per-document extraction — one LLM call per document, no trimming...");
 
-    // Pre-filter raw documents — reject index/search pages before chunking
-    // Detect by URL density in RAW text (before extractRelevantChunks strips content)
+    // Filter index/search pages by URL density in raw text
     const isRawIndexPage = (doc) => {
       const raw = doc.fullText || '';
       const urlMatches = (raw.match(/https?:\/\//g) || []).length;
@@ -1177,161 +1176,57 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       return urlMatches > 40 && urlMatches / words > 0.15;
     };
 
-    // Pin docs that must survive trimming regardless of composite score
-    // (operator agreement PDFs, actual EPA lake reports — not search result pages)
-    const isPinnedDoc = (doc) => {
-      const url = (doc.url || '').toLowerCase();
-      const title = (doc.title || '').toLowerCase();
-      return (
-        // Operator agreement PDFs (Duke CRA, etc)
-        url.includes('duke-energy.com') && url.includes('.pdf') ||
-        // Actual EPA lake reports (not search pages)
-        url.includes('nepis.epa.gov') && url.includes('zyactiond=zydocument') ||
-        // Scientific journal PDFs
-        url.includes('seafwa.org') && url.includes('.pdf') ||
-        // SCDNR description pages — tiny but contain identity facts
-        url.includes('dnr.sc.gov') && url.includes('/description') ||
-        // eRegulations — regulations source
-        url.includes('eregulations.com') ||
-        // SCDNR annual reports
-        url.includes('dnr.sc.gov') && url.includes('annual_report') ||
-        title.includes('agreement summary') ||
-        title.includes('annual report') ||
-        title.includes('fisheries investigations') ||
-        title.includes('scdnr') && title.includes('description') ||
-        title.includes('lake description')
-      );
-    };
-
-    const filteredDocs = normalizedDocuments.filter(d => !isRawIndexPage(d));
-    const removedCount = normalizedDocuments.length - filteredDocs.length;
-    if (removedCount > 0) log(`⚠️ Pre-filtered ${removedCount} index/search page(s) before extraction`);
-
-    const sortedDocs = [...filteredDocs].sort((a, b) => {
-      const sa = scoredSources.find(s => s.title === a.title)?.scoring?.composite || 50;
-      const sb = scoredSources.find(s => s.title === b.title)?.scoring?.composite || 50;
-      // Pinned docs float to top
-      const pa = isPinnedDoc(a) ? 200 : 0;
-      const pb = isPinnedDoc(b) ? 200 : 0;
-      return (sb + pb) - (sa + pa);
+    const usableDocuments = normalizedDocuments.filter(d => {
+      if (!d.fullText || d.fullText.length < 100) return false;
+      if (isRawIndexPage(d)) { log(`⚠️ Skipping index/search page: ${d.title?.slice(0,50)}`); return false; }
+      return true;
     });
 
-    const extractionPayload = {
-      lakeName,
-      baseName,
-      state: stateName,
-      documents: sortedDocs.map(d => {
-        const rawLen = (d.fullText || '').length;
-        const pinned = isPinnedDoc(d);
-        // Pinned docs get full budget; large scientific docs get 15k; others 20k
-        const chunkBudget = pinned ? 25000 : rawLen > 50000 ? 15000 : 20000;
-        return {
-          title: d.title,
-          url: d.url,
-          text: extractRelevantChunks(d.fullText, lakeName, chunkBudget),
-          pinned,
-          quality: (() => {
-            const scored = scoredSources.find(s => s.title === d.title);
-            return scored ? { ...scored.scoring, classes: scored.classes || [] } : {};
-          })()
-        };
-      })
-    };
+    log(`Extracting from ${usableDocuments.length} documents (skipped ${normalizedDocuments.length - usableDocuments.length})`);
 
-    // Pre-filter index/search pages before trimming — they waste context budget
-    const isIndexPage = (doc) => {
-      const text = doc.text || '';
-      const urlMatches = (text.match(/https?:\/\//g) || []).length;
-      const words = text.split(/\s+/).length;
-      return urlMatches > 20 && urlMatches / words > 0.15;
-    };
-    const preFilterCount = extractionPayload.documents.length;
-    extractionPayload.documents = extractionPayload.documents.filter(d => !isIndexPage(d));
-    if (extractionPayload.documents.length < preFilterCount) {
-      log(`⚠️ Filtered ${preFilterCount - extractionPayload.documents.length} index/search page(s) from extraction payload`);
-    }
-
-    let totalChars = extractionPayload.documents.reduce((a, b) => a + (b.text?.length || 0), 0);
-    if (totalChars > 120000) {
-      log(`⚠️ Total payload ${totalChars} chars >120k cap — trimming lowest-quality docs`);
-      // Score on content quality: composite score × prose density (penalise URL-heavy docs)
-      // Pinned docs always survive trimming — separate them out first
-      const pinnedDocs = extractionPayload.documents.filter(d => d.pinned);
-      const unpinnedDocs = extractionPayload.documents.filter(d => !d.pinned);
-      const pinnedChars = pinnedDocs.reduce((a, d) => a + (d.text?.length || 0), 0);
-
-      const ranked = unpinnedDocs.map(d => {
-        const text = d.text || '';
-        const urlDensity = (text.match(/https?:\/\//g) || []).length / Math.max(text.split(/\s+/).length, 1);
-        const contentScore = (d.quality?.composite || 50) * (1 - Math.min(urlDensity * 2, 0.8));
-        return { ...d, contentScore };
-      }).sort((a, b) => b.contentScore - a.contentScore);
-      let kept = [...pinnedDocs];
-      let cur = pinnedChars;
-      for (const doc of ranked) {
-        if (cur + doc.text.length > 120000 && kept.length >= 3) break;
-        kept.push(doc);
-        cur += doc.text.length;
-      }
-      extractionPayload.documents = kept;
-      log(`Trimmed to ${kept.length} docs, ${cur} chars`);
-      kept.forEach(d => log(`  ✓ kept: ${d.title?.slice(0,60)} (${d.text?.length||0} chars${d.pinned?' PINNED':''})`));
-      const dropped = extractionPayload.documents.filter(d => !kept.includes(d));
-      dropped.forEach(d => log(`  ✗ dropped: ${d.title?.slice(0,60)} (${d.text?.length||0} chars)`));
-    }
-
-    let extractRes;
-    try {
-      extractRes = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(extractionPayload)
-      });
-    } catch (e) {
-      throw new Error(`Fact Extraction fetch failed: ${e.message}`);
-    }
-    if (!extractRes.ok) {
-      const snippet = await extractRes.text().catch(() => '').then(t => t.slice(0, 500));
-      throw new Error(`Fact Extraction HTTP ${extractRes.status}: ${snippet}`);
-    }
-    let extractData;
-    try {
-      extractData = await extractRes.json();
-    } catch (e) {
-      throw new Error(`Fact Extraction non-JSON: ${e.message}`);
-    }
-    if (!extractData.success) {
-      throw new Error(`Fact Extraction Failed: ${extractData.error || 'Extraction failure'}`);
-    }
-
-    let rawFacts = extractData.extracted_facts || [];
-    log(`Deep scan extracted ${rawFacts.length} verified facts.`);
-    // Auto-retry once on cold start / transient LLM timeout
-    if (rawFacts.length === 0) {
-      log(`⚠️ Zero facts — retrying after 3s (likely cold start)...`);
-      await new Promise(r => setTimeout(r, 3000));
+    // Call /research/analyze-facts once per document — no batching, no trimming
+    const allDocFacts = [];
+    for (let i = 0; i < usableDocuments.length; i++) {
+      const doc = usableDocuments[i];
+      const scored = scoredSources.find(s => s.title === doc.title);
+      const singlePayload = {
+        lakeName,
+        baseName,
+        state: stateName,
+        documents: [{
+          title: doc.title,
+          url: doc.url || '',
+          text: doc.fullText || '',
+          quality: scored ? { ...scored.scoring, classes: scored.classes || [] } : {}
+        }]
+      };
       try {
-        const retryRes = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
+        const res = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(extractionPayload)
+          body: JSON.stringify(singlePayload)
         });
-        if (retryRes.ok) {
-          const retryData = await retryRes.json();
-          if (retryData.success && retryData.extracted_facts?.length > 0) {
-            rawFacts = retryData.extracted_facts;
-            log(`✔ Retry succeeded — extracted ${rawFacts.length} facts.`);
-          } else {
-            log(`⚠️ Retry also returned 0 facts — profile will rely on deterministic sources only.`);
-          }
+        if (!res.ok) {
+          log(`⚠️ Doc [${i+1}/${usableDocuments.length}] "${doc.title?.slice(0,40)}" HTTP ${res.status} — skipping`);
+          continue;
+        }
+        const data = await res.json();
+        if (data.success && data.extracted_facts?.length) {
+          allDocFacts.push(...data.extracted_facts);
+          log(`📄 [${i+1}/${usableDocuments.length}] "${doc.title?.slice(0,50)}" → ${data.extracted_facts.length} facts`);
+        } else {
+          log(`📄 [${i+1}/${usableDocuments.length}] "${doc.title?.slice(0,50)}" → 0 facts`);
         }
       } catch (e) {
-        log(`⚠️ Retry failed: ${e.message}`);
+        log(`⚠️ Doc [${i+1}] "${doc.title?.slice(0,40)}" failed: ${e.message}`);
       }
     }
+
+    let rawFacts = allDocFacts;
+    log(`Deep scan extracted ${rawFacts.length} verified facts across ${usableDocuments.length} documents.`);
     rawFacts.forEach(f => {
-      log(`💬 [${f.category}] "${f.fact}" (Confidence: ${f.confidence}%) - Source: ${f.source} pg ${f.page || '?'}`);
-    });
+      log(`💬 [${f.category}] "${f.fact?.slice(0,80)}" (${f.confidence}%) - ${f.source?.slice(0,40)}`);
+    });;
 
     // ----------------------------------------------------
     // STEP 8: Deduplication
