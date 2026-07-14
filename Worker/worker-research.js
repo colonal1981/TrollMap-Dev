@@ -2680,7 +2680,22 @@ async function handleResearchDedupeContradictions(request, env) {
   // Sort deduplicated by confidence desc
   deduplicated.sort((a,b)=> (b.confidence||0)-(a.confidence||0));
 
-  return new Response(JSON.stringify({ success: true, deduplicated_facts: deduplicated, contradictions, meta: { input: facts.length, deduped: deduplicated.length, contradictions: contradictions.length } }), { headers: JSON_HEADERS });
+  // Deduplicate contradictions by field — keep only the highest-confidence pair per field
+  // (per-document extraction produces N facts per field, leading to N*(N-1)/2 contradiction pairs)
+  const seenContraField = new Map();
+  const dedupedContradictions = contradictions.filter(c => {
+    const key = String(c.field).toLowerCase();
+    const pairConf = (c.confidenceA || 0) + (c.confidenceB || 0);
+    if (!seenContraField.has(key) || pairConf > seenContraField.get(key).conf) {
+      seenContraField.set(key, { conf: pairConf, c });
+      return false; // will re-add from map below
+    }
+    return false;
+  });
+  // Re-add best pair per field
+  seenContraField.forEach(({ c }) => dedupedContradictions.push(c));
+
+  return new Response(JSON.stringify({ success: true, deduplicated_facts: deduplicated, contradictions: dedupedContradictions, meta: { input: facts.length, deduped: deduplicated.length, contradictions: dedupedContradictions.length } }), { headers: JSON_HEADERS });
 }
 __name(handleResearchDedupeContradictions, "handleResearchDedupeContradictions");
 
