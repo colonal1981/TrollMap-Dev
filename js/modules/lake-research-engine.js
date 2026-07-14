@@ -1168,10 +1168,42 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     setProgress("Step 7: Extracting verified facts from documents...", 50);
     log("Submitting lake-relevant chunks to Research LLM (not full 100k dumps)...");
 
-    const sortedDocs = [...normalizedDocuments].sort((a, b) => {
+    // Pre-filter raw documents — reject index/search pages before chunking
+    // Detect by URL density in RAW text (before extractRelevantChunks strips content)
+    const isRawIndexPage = (doc) => {
+      const raw = doc.fullText || '';
+      const urlMatches = (raw.match(/https?:\/\//g) || []).length;
+      const words = raw.split(/\s+/).length;
+      return urlMatches > 40 && urlMatches / words > 0.15;
+    };
+
+    // Pin docs that must survive trimming regardless of composite score
+    // (operator agreement PDFs, actual EPA lake reports — not search result pages)
+    const isPinnedDoc = (doc) => {
+      const url = (doc.url || '').toLowerCase();
+      const title = (doc.title || '').toLowerCase();
+      return (
+        url.includes('duke-energy.com') && url.includes('.pdf') ||
+        url.includes('nepis.epa.gov') && url.includes('zyactiond=zydocument') ||
+        url.includes('seafwa.org') && url.includes('.pdf') ||
+        url.includes('dnr.sc.gov') && url.includes('annual_report') ||
+        title.includes('agreement summary') ||
+        title.includes('annual report') ||
+        title.includes('fisheries investigations')
+      );
+    };
+
+    const filteredDocs = normalizedDocuments.filter(d => !isRawIndexPage(d));
+    const removedCount = normalizedDocuments.length - filteredDocs.length;
+    if (removedCount > 0) log(`⚠️ Pre-filtered ${removedCount} index/search page(s) before extraction`);
+
+    const sortedDocs = [...filteredDocs].sort((a, b) => {
       const sa = scoredSources.find(s => s.title === a.title)?.scoring?.composite || 50;
       const sb = scoredSources.find(s => s.title === b.title)?.scoring?.composite || 50;
-      return sb - sa;
+      // Pinned docs float to top
+      const pa = isPinnedDoc(a) ? 200 : 0;
+      const pb = isPinnedDoc(b) ? 200 : 0;
+      return (sb + pb) - (sa + pa);
     });
 
     const extractionPayload = {
@@ -1180,12 +1212,14 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       state: stateName,
       documents: sortedDocs.map(d => {
         const rawLen = (d.fullText || '').length;
-        // Increase budget for large scientific docs (EPA reports etc) — 6K was losing critical tables
-        const chunkBudget = rawLen > 50000 ? 15000 : 20000;
+        const pinned = isPinnedDoc(d);
+        // Pinned docs get full budget; large scientific docs get 15k; others 20k
+        const chunkBudget = pinned ? 25000 : rawLen > 50000 ? 15000 : 20000;
         return {
           title: d.title,
           url: d.url,
           text: extractRelevantChunks(d.fullText, lakeName, chunkBudget),
+          pinned,
           quality: (() => {
             const scored = scoredSources.find(s => s.title === d.title);
             return scored ? { ...scored.scoring, classes: scored.classes || [] } : {};
@@ -1211,14 +1245,19 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     if (totalChars > 120000) {
       log(`⚠️ Total payload ${totalChars} chars >120k cap — trimming lowest-quality docs`);
       // Score on content quality: composite score × prose density (penalise URL-heavy docs)
-      const ranked = extractionPayload.documents.map(d => {
+      // Pinned docs always survive trimming — separate them out first
+      const pinnedDocs = extractionPayload.documents.filter(d => d.pinned);
+      const unpinnedDocs = extractionPayload.documents.filter(d => !d.pinned);
+      const pinnedChars = pinnedDocs.reduce((a, d) => a + (d.text?.length || 0), 0);
+
+      const ranked = unpinnedDocs.map(d => {
         const text = d.text || '';
         const urlDensity = (text.match(/https?:\/\//g) || []).length / Math.max(text.split(/\s+/).length, 1);
         const contentScore = (d.quality?.composite || 50) * (1 - Math.min(urlDensity * 2, 0.8));
         return { ...d, contentScore };
       }).sort((a, b) => b.contentScore - a.contentScore);
-      let kept = [];
-      let cur = 0;
+      let kept = [...pinnedDocs];
+      let cur = pinnedChars;
       for (const doc of ranked) {
         if (cur + doc.text.length > 120000 && kept.length >= 3) break;
         kept.push(doc);
