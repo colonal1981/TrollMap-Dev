@@ -369,12 +369,12 @@ async function handleResearchDiscover(request, env) {
   const reservoirOwner = body.reservoirOwner || null;
   const drawdownSource = resolveDrawdownSource(lakeName, state, reservoirOwner);
 
-  // CREDIT BUDGET: 5 search-only Tavily calls per discover run.
+  // CREDIT BUDGET: 5 Firecrawl search calls per discover run + 1 for Grokipedia.
   // Extract is wasteful here — proxy-download fetches full content anyway.
   //
   // 2026-07-13: One combined fishing-guide query covers depth/structure/forage/
   // thermocline/seasonal facts from regional pubs. CWMS lake levels come from
-  // the free direct API on /lake — no Tavily search needed for that.
+  // the free direct API on /lake — no search needed for that.
   const queryPatterns = [
     `"${queryLake}" (fisheries OR biology OR \"striped bass\" OR crappie OR \"largemouth\") ${dnrName}`,
     `"${queryLake}" (regulations OR \"creel limit\" OR \"size limit\" OR \"bag limit\") (${regsSiteFilter})`,
@@ -476,34 +476,50 @@ async function handleResearchDiscover(request, env) {
 
   // Sort by priority (1 = lake-specific) then by score
 
-  // ── Grokipedia slug resolution ─────────────────────────────────────────────
-  // Default slug: Lake_<BaseName> (e.g. Lake_Wateree, Lake_Murray).
-  // Override table covers lakes where Grokipedia uses a non-standard slug.
-  const GROKIPEDIA_SLUG_OVERRIDES = {
-    monticello:    'monticello_reservoir',
-    'clarks hill': 'Clarks_Hill_Lake',
-    thurmond:      'Lake_J._Strom_Thurmond',
-    hartwell:      'Lake_Hartwell',
-    russell:       'Lake_Russell',
-    jocassee:      'Lake_Jocassee',
-    keowee:        'Lake_Keowee',
-    wylie:         'Lake_Wylie',
-    norman:        'Lake_Norman',
-    hickory:       'Lake_Hickory',
-    chatuge:       'Chatuge_Lake',
-    blue_ridge:    'Lake_Blue_Ridge',
-    fontana:       'Fontana_Lake',
-    chickamauga:   'Chickamauga_Lake',
-  };
-  const grokSlug = GROKIPEDIA_SLUG_OVERRIDES[baseLower] || `Lake_${baseName.replace(/\s+/g,'_')}`;
-  const grokSeed = {
-    title: `${lakeName} — Grokipedia`,
-    type: 'HTML',
-    authority: 'Grokipedia',
-    url: `https://grokipedia.com/page/${grokSlug}`,
-    priority: 1,
-    source: 'grokipedia_seed',
-  };
+  // ── Grokipedia search-based discovery ─────────────────────────────────────
+  // Slugs are case-sensitive and inconsistent — search for the correct URL
+  // rather than constructing it. One Firecrawl credit per run, beats maintaining
+  // a manual slug table for 66 lakes.
+  let grokSeed = null;
+  if (firecrawlSearchKey) {
+    try {
+      const grokRes = await fetch('https://api.firecrawl.dev/v2/search', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${firecrawlSearchKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: `site:grokipedia.com "${queryLake}"`, limit: 1 })
+      });
+      if (grokRes.ok) {
+        const grokData = await grokRes.json();
+        const hit = (grokData.data || grokData.results || [])[0];
+        if (hit?.url && /grokipedia\.com\/page\//i.test(hit.url)) {
+          const titleLower = (hit.title || '').toLowerCase();
+          const urlLower = hit.url.toLowerCase();
+          const baseNameNorm = queryLake.toLowerCase().replace(/\s+/g, '_');
+          // Must mention the lake base name in the URL or title
+          const mentionsLake = titleLower.includes(queryLake.toLowerCase()) || urlLower.includes(baseNameNorm);
+          // Must look like a lake or reservoir article
+          const looksLikeLake = /lake|reservoir/.test(titleLower) || /lake|reservoir/.test(urlLower);
+          // Must not be a park, city, state, river, or creek page
+          const notAmbiguous = !/state.park|state_park|\bcity\b|\bcounty\b|river —|creek —|history.of/.test(titleLower);
+          if (mentionsLake && looksLikeLake && notAmbiguous) {
+            grokSeed = {
+              title: hit.title || `${lakeName} — Grokipedia`,
+              type: 'HTML',
+              authority: 'Grokipedia',
+              url: hit.url,
+              priority: 1,
+              source: 'grokipedia_search',
+            };
+            console.log(`Grokipedia seed accepted for ${lakeName}: ${hit.url}`);
+          } else {
+            console.log(`Grokipedia hit rejected for ${lakeName} (mentionsLake=${mentionsLake} looksLikeLake=${looksLikeLake} notAmbiguous=${notAmbiguous}): ${hit.url} — "${hit.title}"`);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`Grokipedia search failed for ${lakeName}: ${e.message}`);
+    }
+  }
 
   // Per-lake pre-seeded authoritative sources — always included regardless of search results
   const LAKE_SEEDS = {
@@ -599,7 +615,8 @@ async function handleResearchDiscover(request, env) {
   // Inject seeds — seeds always take guaranteed slots, prepend so they sort first
   // grokSeed is universal — added for every lake regardless of state or LAKE_SEEDS entry
   // Filter out _skipNepis sentinel objects — they are control flags, not real sources
-  const seeds = [grokSeed, ...(LAKE_SEEDS[baseLower] || []).filter(s => !s._skipNepis), ...defaultStateSeeds];
+  // grokSeed is null if the Firecrawl search found no Grokipedia page for this lake
+  const seeds = [...(grokSeed ? [grokSeed] : []), ...(LAKE_SEEDS[baseLower] || []).filter(s => !s._skipNepis), ...defaultStateSeeds];
   const guaranteedSeeds = [];
   for (const seed of seeds) {
     const normUrl = String(seed.url || '').split('?')[0].toLowerCase();
