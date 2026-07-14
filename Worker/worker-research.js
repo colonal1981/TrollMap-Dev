@@ -319,6 +319,7 @@ async function handleResearchDiscover(request, env) {
   // geographic feature entirely (e.g. a wastewater plant in Illinois).
   const KNOWN_BAD_NEPIS_IDS = new Set([
     '91024IW5', // "Monticello" wastewater plant / Lake Decatur IL — not Lake Monticello SC
+    '9100D35L', // "Monticello" wastewater plants (N+S) / Pearson Creek + White Oak Creek — not Lake Monticello SC
   ]);
 
   const offLakePattern = (title, url) => {
@@ -528,6 +529,10 @@ async function handleResearchDiscover(request, env) {
       { title: "SC Freshwater Fish Size & Possession Limits (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
     ],
     monticello: [
+      // skipNepis: true — lake impounded 1978, postdates the NES survey window (1972-75).
+      // All NEPIS "Monticello" results are wrong-lake (IL wastewater plants). Blocklist covers
+      // known bad IDs but suppressing the seed entirely avoids burning credits on false positives.
+      { _skipNepis: true },
       { title: "Lake Monticello SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/monticello/description.html", priority: 1 },
       { title: "Lake Monticello Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/monticello/regs.html", priority: 1 },
       { title: "SC Freshwater Fish Size & Possession Limits (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
@@ -562,8 +567,10 @@ async function handleResearchDiscover(request, env) {
       { title: "GA Freshwater Fishing Regulations (eRegulations)", type: "HTML", authority: "GA DNR", url: "https://www.eregulations.com/georgia/fishing/freshwater-fishing-regulations", priority: 1 },
     );
   }
-  // EPA NSCEP search landing for this lake — proxy will harvest raw-text links via Firecrawl
-  defaultStateSeeds.push({
+  // EPA NSCEP search landing — skip for lakes where the name is too common to disambiguate
+  // (e.g. Monticello — impounded 1978, postdates NES; all NEPIS hits are wrong-lake IL docs)
+  const skipNepis = (LAKE_SEEDS[baseLower] || []).some(s => s._skipNepis);
+  if (!skipNepis) defaultStateSeeds.push({
     title: `EPA NSCEP search: Report on ${baseName} / Lake ${baseName}`,
     type: "HTML",
     authority: "EPA NSCEP",
@@ -591,7 +598,8 @@ async function handleResearchDiscover(request, env) {
 
   // Inject seeds — seeds always take guaranteed slots, prepend so they sort first
   // grokSeed is universal — added for every lake regardless of state or LAKE_SEEDS entry
-  const seeds = [grokSeed, ...(LAKE_SEEDS[baseLower] || []), ...defaultStateSeeds];
+  // Filter out _skipNepis sentinel objects — they are control flags, not real sources
+  const seeds = [grokSeed, ...(LAKE_SEEDS[baseLower] || []).filter(s => !s._skipNepis), ...defaultStateSeeds];
   const guaranteedSeeds = [];
   for (const seed of seeds) {
     const normUrl = String(seed.url || '').split('?')[0].toLowerCase();
@@ -672,7 +680,7 @@ async function handleResearchProxyDownload(request, env) {
   const isNepisLanding = /nepis\.epa\.gov/i.test(target) && (/[?&]ZyAction=ZyActionD\b/i.test(target) || /zypdf\.cgi/i.test(target));
   const isNepisAny = /nepis\.epa\.gov|ZyNET\.exe/i.test(target);
   // Only use Firecrawl for JS-heavy SPAs and NEPIS pages (saves ~8 Firecrawl credits per run)
-  const needsFirecrawl = isNepisSearch || isNepisLanding || isNepisAny || /eregulations\.com/i.test(target);
+  const needsFirecrawl = isNepisSearch || isNepisLanding || isNepisAny || /eregulations\.com/i.test(target) || /grokipedia\.com/i.test(target);
 
   if (firecrawlKey && isHtml && needsFirecrawl) {
     try {
@@ -987,6 +995,7 @@ const DATASET_KEYWORDS = [
 // NEPIS document IDs confirmed as wrong-lake false positives — score -9999 to guarantee exclusion
 const KNOWN_BAD_NEPIS_IDS = new Set([
   '91024IW5', // "Monticello" wastewater plant / Lake Decatur IL — not Lake Monticello SC
+  '9100D35L', // "Monticello" wastewater plants (N+S) / Pearson Creek + White Oak Creek — not Lake Monticello SC
 ]);
 
 function scoreDatasetUrl(url, title, lakeName) {
