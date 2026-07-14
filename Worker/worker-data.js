@@ -305,6 +305,114 @@ async function fetchUsaceSavannah(lakeKey) {
   return null;
 }
 __name(fetchUsaceSavannah, "fetchUsaceSavannah");
+
+// Query the USACE Corps Water Management System (CWMS) Data API for the
+// latest reservoir elevation for a given lake. Falls back to a location-name
+// search against /locations if no specific CWMS location ID is configured.
+async function fetchCwmsLakeLevel(lakeName, lakeKey) {
+  const base = 'https://cwms-data.usace.army.mil/cwms-data';
+  const nameFrag = String(lakeName || lakeKey || '')
+    .replace(/^lake\s+/i, '')
+    .replace(/,\s*(sc|nc|ga)(\/(sc|nc|ga))?\s*$/i, '')
+    .trim();
+  if (!nameFrag) return null;
+
+  // Known CWMS location IDs for tristate USACE lakes (Savannah District).
+  // These are the official CWMS location names used by the district.
+  const CWMS_LOCATIONS = {
+    hartwell: 'Hartwell',
+    russell: 'Russell',
+    thurmond: 'Thurmond',
+    'clarks hill': 'Thurmond',
+    'clark hill': 'Thurmond',
+    'j strom thurmond': 'Thurmond'
+  };
+
+  const locId = CWMS_LOCATIONS[lakeKey] || CWMS_LOCATIONS[nameFrag.toLowerCase()];
+
+  // Try the configured location ID first.
+  if (locId) {
+    try {
+      // Latest value endpoint for the elevation time series.
+      const tsUrl = `${base}/timeseries?name=${encodeURIComponent(locId)}.Elev.Inst.0.0.USACE-RAW&office=SA&unit=ft`;
+      const r = await fetch(tsUrl, {
+        headers: { 'User-Agent': 'TrollMap/16 Worker', 'Accept': 'application/json' },
+        cf: { cacheTtl: 120 }
+      });
+      if (r.ok) {
+        const j = await r.json();
+        // CWMS CDA response shape: { values: [[dateTs, value, quality]], ... }
+        const vals = j?.values || j?.value?.values || [];
+        if (vals.length) {
+          const latest = vals[vals.length - 1];
+          const elevation = parseFloat(latest[1]);
+          if (isFinite(elevation)) {
+            return {
+              elevation_ft: elevation,
+              source: tsUrl,
+              location: locId,
+              timestamp: latest[0] || null,
+              method: 'cwms_cda_timeseries'
+            };
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`CWMS configured-location fetch failed for ${locId}: ${e.message}`);
+    }
+  }
+
+  // Fallback: search /locations for the lake name and return the first match.
+  try {
+    const searchUrl = `${base}/locations?name=${encodeURIComponent(nameFrag)}&office=SA`;
+    const r = await fetch(searchUrl, {
+      headers: { 'User-Agent': 'TrollMap/16 Worker', 'Accept': 'application/json' },
+      cf: { cacheTtl: 86400 }
+    });
+    if (r.ok) {
+      const j = await r.json();
+      const locations = j?.locations || j || [];
+      const match = locations.find(loc => {
+        const n = String(loc?.name || loc?.location_id || loc?.id || '').toLowerCase();
+        return n.includes(nameFrag.toLowerCase()) || n.includes(String(lakeKey || '').toLowerCase());
+      });
+      if (match) {
+        const matchedName = match.name || match.location_id || match.id;
+        const tsUrl = `${base}/timeseries?name=${encodeURIComponent(matchedName)}.Elev.Inst.0.0.USACE-RAW&office=SA&unit=ft`;
+        try {
+          const tsR = await fetch(tsUrl, {
+            headers: { 'User-Agent': 'TrollMap/16 Worker', 'Accept': 'application/json' },
+            cf: { cacheTtl: 120 }
+          });
+          if (tsR.ok) {
+            const tsJ = await tsR.json();
+            const vals = tsJ?.values || tsJ?.value?.values || [];
+            if (vals.length) {
+              const latest = vals[vals.length - 1];
+              const elevation = parseFloat(latest[1]);
+              if (isFinite(elevation)) {
+                return {
+                  elevation_ft: elevation,
+                  source: tsUrl,
+                  location: matchedName,
+                  timestamp: latest[0] || null,
+                  method: 'cwms_cda_search'
+                };
+              }
+            }
+          }
+        } catch (e2) {
+          console.warn(`CWMS fallback timeseries fetch failed for ${matchedName}: ${e2.message}`);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn(`CWMS location search failed for ${nameFrag}: ${e.message}`);
+  }
+
+  return null;
+}
+__name(fetchCwmsLakeLevel, "fetchCwmsLakeLevel");
 async function fetchAhqWaterTemp(slug) {
   if (!slug) return null;
   const url = `https://www.anglersheadquarters.com/pages/${slug}-fishing-report`;
@@ -1270,4 +1378,4 @@ var RIVERS = {
   }
 };
 
-export { LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchDukeDashboard };
+export { LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard };

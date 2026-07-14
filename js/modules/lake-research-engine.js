@@ -675,6 +675,34 @@ async function runEvidencePipeline(lakeName, callbacks = {}) {
     log(`Canonical details resolved: ${JSON.stringify(canonicalLake)}`);
 
     // ----------------------------------------------------
+    // STEP 1b: Deterministic facts (owner + seeded drawdown sources)
+    // ----------------------------------------------------
+    setProgress("Step 1b: Loading deterministic facts...", 18);
+    let deterministicProfile = null;
+    let reservoirOwner = null;
+    let seededDiscoveryTargets = [];
+    try {
+      const detRes = await fetch(`${CF_WORKER_URL}/research/deterministic-facts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lakeName, state: stateName })
+      });
+      if (detRes.ok) {
+        const detData = await detRes.json();
+        if (detData.ok && detData.profile) {
+          deterministicProfile = detData.profile;
+          reservoirOwner = detData.profile.identity?.reservoirOwner || null;
+          seededDiscoveryTargets = Array.isArray(detData.seededDiscoveryTargets) ? detData.seededDiscoveryTargets : [];
+          log(`✔ Deterministic baseline loaded — owner: ${reservoirOwner || 'unknown'}, seeded drawdown targets: ${seededDiscoveryTargets.length}`);
+        }
+      } else {
+        log(`⚠️ Deterministic facts HTTP ${detRes.status} — continuing discovery without owner seeding`);
+      }
+    } catch (e) {
+      log(`⚠️ Deterministic facts fetch failed: ${e.message} — continuing without owner seeding`);
+    }
+
+    // ----------------------------------------------------
     // STEP 2: Source Discovery
     // ----------------------------------------------------
     setProgress("Step 2: Scoping Trusted Repositories & Scrapers...", 25);
@@ -682,7 +710,7 @@ async function runEvidencePipeline(lakeName, callbacks = {}) {
     const discoverRes = await fetch(`${CF_WORKER_URL}/research/discover`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lakeName, state: stateName })
+      body: JSON.stringify({ lakeName, state: stateName, reservoirOwner })
     });
     if (!discoverRes.ok) {
       const snippet = await discoverRes.text().catch(() => '').then(t => t.slice(0, 300));
@@ -904,6 +932,85 @@ async function runEvidencePipeline(lakeName, callbacks = {}) {
               log(`  ⚠️ EPA doc follow-up error: ${e.message}`);
             }
           }
+        }
+      }
+    }
+
+    // Owner-aware seeded drawdown / operations sources: fetch and merge into
+    // normalized documents so fact extraction can surface lake-level ranges,
+    // seasonal drawdown schedules, and operations facts from the authority.
+    if (seededDiscoveryTargets.length > 0) {
+      setProgress("Step 4b: Fetching owner-seeded drawdown / operations sources...", 62);
+      log(`Fetching ${seededDiscoveryTargets.length} owner-aware seeded source(s)...`);
+      for (const seed of seededDiscoveryTargets) {
+        if (!seed?.url) continue;
+        if (normalizedDocuments.some(d => d.url === seed.url)) {
+          log(`• ${seed.label} already in download queue — skipping`);
+          continue;
+        }
+        log(`Processing seeded source: ${seed.label} (${seed.url})`);
+        try {
+          const isPdf = String(seed.type || '').toUpperCase() === 'PDF' || /\.pdf$/i.test(seed.url);
+          if (isPdf) {
+            const proxyRes = await fetch(`${CF_WORKER_URL}/research/proxy-download?url=${encodeURIComponent(seed.url)}`);
+            if (!proxyRes.ok) {
+              log(`⚠️ Failed to download seeded PDF: ${seed.label} (HTTP ${proxyRes.status})`);
+              continue;
+            }
+            const arrayBuffer = await proxyRes.arrayBuffer();
+            if (arrayBuffer.byteLength > 25 * 1024 * 1024) {
+              log(`⚠️ Seeded PDF too large (${(arrayBuffer.byteLength/1024/1024).toFixed(1)}MB) — skipping`);
+              continue;
+            }
+            const extraction = await extractTextFromPDFBytes(arrayBuffer, (current, total) => {
+              setProgress(`Extracting seeded PDF pages: ${current}/${total}`, 62 + (current / total) * 2);
+            });
+            normalizedDocuments.push({
+              title: seed.label,
+              authority: seed.authority,
+              url: seed.url,
+              priority: 1,
+              fullText: extraction.fullText,
+              pages: extraction.pages,
+              downloadDate: new Date().toISOString(),
+              contentType: 'application/pdf'
+            });
+            log(`✔ Seeded PDF extracted ${extraction.pages.length} pages`);
+          } else {
+            const proxyRes = await fetch(`${CF_WORKER_URL}/research/proxy-download?url=${encodeURIComponent(seed.url)}&type=HTML`);
+            if (!proxyRes.ok) {
+              log(`⚠️ Failed to scrape seeded page: ${seed.label} (HTTP ${proxyRes.status})`);
+              continue;
+            }
+            const isFirecrawl = proxyRes.headers.get('X-Source') === 'firecrawl';
+            const text = await proxyRes.text();
+            const cleanedText = isFirecrawl ? text : text
+              .replace(/<script[\s\S]*?<\/script>/gi, " ")
+              .replace(/<style[\s\S]*?<\/style>/gi, " ")
+              .replace(/<[^>]+>/g, " ")
+              .replace(/&nbsp;/g, " ")
+              .replace(/&amp;/g, "&")
+              .replace(/\s+/g, " ")
+              .trim();
+            if (cleanedText.length < 200) {
+              log(`⚠️ Seeded page content too short (${cleanedText.length} chars) — likely blocked`);
+              continue;
+            }
+            normalizedDocuments.push({
+              title: seed.label,
+              authority: seed.authority,
+              url: seed.url,
+              priority: 1,
+              fullText: cleanedText,
+              pages: [{ pageNumber: 1, text: cleanedText, title: seed.label }],
+              downloadDate: new Date().toISOString(),
+              contentType: isFirecrawl ? 'text/markdown' : 'text/html',
+              extractionMethod: isFirecrawl ? 'firecrawl' : 'basic'
+            });
+            log(`✔ Seeded page extracted ${cleanedText.length} chars`);
+          }
+        } catch (seedErr) {
+          log(`⚠️ Seeded source error for ${seed.label}: ${seedErr.message}`);
         }
       }
     }

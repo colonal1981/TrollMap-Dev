@@ -7,6 +7,62 @@ import { LAKES, LAKE_INTEL, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWater
 var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
+// ─── OWNER-AWARE DRAWDOWN / OPERATIONS SOURCE SEEDS ───
+// When deterministic parsing resolves reservoirOwner, these seeded sources are
+// injected as discovery targets so the pipeline can extract lake-level ranges,
+// seasonal drawdown schedules, and operations facts from the authority that
+// actually manages the water.
+const OWNER_DRAWDOWN_SOURCES = {
+  dukeEnergy: {
+    label: 'Duke Energy Catawba-Wateree License Agreement & Lake Summaries',
+    url: 'https://www.duke-energy.com/community/lakes/hydroelectric-relicensing/catawba/license-agreement',
+    authority: 'Duke Energy / FERC',
+    type: 'HTML'
+  },
+  usaceSavannah: {
+    label: 'USACE Savannah District Water Control / Lake Operations',
+    url: 'https://www.sas.usace.army.mil/Missions/Water-Control/',
+    authority: 'USACE Savannah District',
+    type: 'HTML'
+  },
+  usaceWilmington: {
+    label: 'USACE Wilmington District Water Control',
+    url: 'https://www.saw.usace.army.mil/Missions/Water-Control/',
+    authority: 'USACE Wilmington District',
+    type: 'HTML'
+  },
+  usaceMobile: {
+    label: 'USACE Mobile District Water Control',
+    url: 'https://www.sam.usace.army.mil/Missions/Water-Control/',
+    authority: 'USACE Mobile District',
+    type: 'HTML'
+  }
+};
+
+function resolveDrawdownSource(lakeName, state, reservoirOwner) {
+  const owner = String(reservoirOwner || '').toLowerCase();
+  const name = String(lakeName || '').toLowerCase();
+  const baseName = name.replace(/^lake\s+/, '').replace(/,\s*(sc|nc|ga)(\/(sc|nc|ga))?\s*$/, '').trim();
+
+  // Duke Energy owns Catawba-Wateree, Keowee-Toxaway, Nantahala, Yadkin-Pee Dee, etc.
+  const dukeLakeNames = ['wateree','wylie','norman','keowee','jocassee','hickory','james','rhodhiss','mountain island','lookout shoals','fishing creek','great falls','cedar creek','dearborn','tillery','blewett falls'];
+  if (owner.includes('duke energy') || owner.includes('duke power') || dukeLakeNames.some(l => baseName.includes(l))) {
+    return OWNER_DRAWDOWN_SOURCES.dukeEnergy;
+  }
+
+  // USACE lakes in the tristate region
+  const savannahLakes = ['hartwell','russell','thurmond','clarks hill','clark hill','j strom thurmond','richard b. russell'];
+  if (owner.includes('usace') || owner.includes('u.s. army corps') || owner.includes('army corps') || owner.includes('corps of engineers')) {
+    if (savannahLakes.some(l => baseName.includes(l))) return OWNER_DRAWDOWN_SOURCES.usaceSavannah;
+    if (['SC','GA'].includes(String(state || '').toUpperCase())) return OWNER_DRAWDOWN_SOURCES.usaceSavannah;
+    if (['NC','VA'].includes(String(state || '').toUpperCase())) return OWNER_DRAWDOWN_SOURCES.usaceWilmington;
+    return OWNER_DRAWDOWN_SOURCES.usaceSavannah;
+  }
+
+  return null;
+}
+__name(resolveDrawdownSource, 'resolveDrawdownSource');
+
 // ─── EXTENDED EVIDENCE ACQUISITION PIPELINE FUNCTIONS ───
 
 async function handleResearchLimnologyData(request, env) {
@@ -266,15 +322,27 @@ async function handleResearchDiscover(request, env) {
   // Use baseName in queries to improve Tavily hit rate (avoid ", SC" suffix which hurts)
   const queryLake = baseName || lakeName;
   const stateFullName = { SC: 'South Carolina', NC: 'North Carolina', GA: 'Georgia' }[state] || 'South Carolina';
-  // CREDIT BUDGET: reduced from 8 queries × (search+extract)=16 Tavily calls
-  // to 4 queries × search-only = 4 calls. Extract is wasteful here because
-  // the proxy-download step will fetch full content anyway.
+
+  // Owner-aware drawdown source seeding: if the caller already knows the
+  // reservoir owner (e.g. from deterministic facts), seed the authority's
+  // lake-level / operations page so the pipeline can extract drawdown facts.
+  const reservoirOwner = body.reservoirOwner || null;
+  const drawdownSource = resolveDrawdownSource(lakeName, state, reservoirOwner);
+
+  // CREDIT BUDGET: 5 search-only Tavily calls per discover run.
+  // Extract is wasteful here — proxy-download fetches full content anyway.
+  //
+  // 2026-07-13: One combined fishing-guide query covers depth/structure/forage/
+  // thermocline/seasonal facts from regional pubs. CWMS lake levels come from
+  // the free direct API on /lake — no Tavily search needed for that.
   const queryPatterns = [
     `"${queryLake}" (fisheries OR biology OR \"striped bass\" OR crappie OR \"largemouth\") ${dnrName}`,
     `"${queryLake}" (regulations OR \"creel limit\" OR \"size limit\" OR \"bag limit\") (${regsSiteFilter})`,
     `"${queryLake}" (limnology OR thermocline OR \"water quality\" OR \"dissolved oxygen\") (USACE OR USGS OR EPA)`,
     // EPA NSCEP — covers both "Report on Lake X" and "Report on X Lake" naming
     `"Report on Lake ${queryLake}" OR "Report on ${queryLake} Lake" OR "${queryLake}" (NESWP OR eutrophication OR nepis)`,
+    // Single fishing/general-guide query — lake-specific FACTS only (not opinions)
+    `"${queryLake}" (fishing guide OR fishing report) (thermocline OR depth OR structure OR forage OR "threadfin shad" OR "gizzard shad" OR "fall turnover" OR "spring spawn" OR drawdown) (site:carolinasportsman.com OR site:takemefishing.org OR site:gameandfishmag.com OR site:in-fisherman.com OR site:flwfishing.com OR site:bassmaster.com OR site:majorleaguefishing.com)`,
   ];
 
   let discoveredSources = [];
@@ -432,6 +500,23 @@ async function handleResearchDiscover(request, env) {
     priority: 1,
     source: 'nepis_seed'
   });
+
+  // Owner-aware drawdown / operations source seeding. If we already know the
+  // reservoir owner (passed in body or resolved from lake name), inject the
+  // authority's lake-level / operations page as a guaranteed discovery target.
+  // For Duke Energy lakes this is the Catawba-Wateree license page that links
+  // to per-lake summaries with planned levels / drawdown schedules.
+  // For USACE lakes this is the managing district's water-control page.
+  if (drawdownSource) {
+    defaultStateSeeds.push({
+      title: drawdownSource.label,
+      type: drawdownSource.type,
+      authority: drawdownSource.authority,
+      url: drawdownSource.url,
+      priority: 1,
+      source: 'owner_drawdown_seed'
+    });
+  }
 
   // Inject seeds — seeds always take guaranteed slots, prepend so they sort first
   const seeds = [...(LAKE_SEEDS[baseLower] || []), ...defaultStateSeeds];
@@ -2210,7 +2295,35 @@ async function handleResearchDeterministicFacts(request, env) {
       mergeEvidence('summary', 'text', [buildEvidence('internal_synthesis', 'TrollMap deterministic profile synthesis', 'internal:deterministic-facts', null, 'deterministic_fact_synthesis')]);
   }
 
-  return new Response(JSON.stringify({ ok: true, lakeName, state, profile }), { headers: JSON_HEADERS });
+  // Owner-aware drawdown / operations source seeding. After we have resolved
+  // reservoirOwner (from SCDNR description, cached docs, etc.), inject the
+  // authority's lake-level / operations page as a seeded discovery target.
+  // The client can fetch this via proxy-download and add it to normalized
+  // documents before fact extraction.
+  const seededDiscoveryTargets = [];
+  const drawdownSource = resolveDrawdownSource(lakeName, state, profile.identity?.reservoirOwner);
+  if (drawdownSource) {
+    seededDiscoveryTargets.push({
+      field: 'identity.reservoirOwner',
+      owner: profile.identity?.reservoirOwner || null,
+      ...drawdownSource
+    });
+    profile.sources.push({
+      label: drawdownSource.label,
+      url: drawdownSource.url,
+      trust: 'OFFICIAL_UTILITY',
+      sourceType: 'owner_drawdown_seed'
+    });
+    mergeEvidence('identity', 'reservoirOwner', [buildEvidence(
+      'official_utility',
+      drawdownSource.label,
+      drawdownSource.url,
+      `Seeded discovery target for owner ${profile.identity?.reservoirOwner || 'unknown'}`,
+      'owner_drawdown_seed'
+    )]);
+  }
+
+  return new Response(JSON.stringify({ ok: true, lakeName, state, profile, seededDiscoveryTargets }), { headers: JSON_HEADERS });
 }
 __name(handleResearchDeterministicFacts, "handleResearchDeterministicFacts");
 
