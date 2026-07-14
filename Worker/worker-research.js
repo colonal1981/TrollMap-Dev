@@ -329,26 +329,20 @@ async function handleResearchDiscover(request, env) {
   const reservoirOwner = body.reservoirOwner || null;
   const drawdownSource = resolveDrawdownSource(lakeName, state, reservoirOwner);
 
-  // CREDIT BUDGET: reduced from 8 queries × (search+extract)=16 Tavily calls
-  // to 4 queries × search-only = 4 calls. Extract is wasteful here because
-  // the proxy-download step will fetch full content anyway.
+  // CREDIT BUDGET: 5 search-only Tavily calls per discover run.
+  // Extract is wasteful here — proxy-download fetches full content anyway.
   //
-  // 2026-07-13: Added fishing-guide / general-guide article queries. These
-  // target lake-specific FACTS (depth, structure, forage, thermocline, drawdown,
-  // seasonal patterns) from regional fishing publications — not opinions.
+  // 2026-07-13: One combined fishing-guide query covers depth/structure/forage/
+  // thermocline/seasonal facts from regional pubs. CWMS lake levels come from
+  // the free direct API on /lake — no Tavily search needed for that.
   const queryPatterns = [
     `"${queryLake}" (fisheries OR biology OR \"striped bass\" OR crappie OR \"largemouth\") ${dnrName}`,
     `"${queryLake}" (regulations OR \"creel limit\" OR \"size limit\" OR \"bag limit\") (${regsSiteFilter})`,
     `"${queryLake}" (limnology OR thermocline OR \"water quality\" OR \"dissolved oxygen\") (USACE OR USGS OR EPA)`,
     // EPA NSCEP — covers both "Report on Lake X" and "Report on X Lake" naming
     `"Report on Lake ${queryLake}" OR "Report on ${queryLake} Lake" OR "${queryLake}" (NESWP OR eutrophication OR nepis)`,
-    // Fishing / general guide articles — lake-specific facts beyond thermocline
-    `"${queryLake}" fishing guide (thermocline OR "summer depth" OR "deep structure" OR "channel ledges" OR "creek mouths") (site:carolinasportsman.com OR site:takemefishing.org OR site:gameandfishmag.com OR site:in-fisherman.com OR site:flwfishing.com OR site:bassmaster.com OR site:majorleaguefishing.com)`,
-    `"${queryLake}" fishing report (striper OR bass OR crappie) (thermocline OR "water temperature" OR depth) summer`,
-    `"${queryLake}" lake fishing guide (seasonal pattern OR "spring spawn" OR "fall turnover" OR "winter depth") structure`,
-    `"${queryLake}" (threadfin shad OR gizzard shad OR blueback herring OR forage) depth thermocline`,
-    // USACE CWMS data API — authoritative lake levels / rule curves
-    `"${queryLake}" (reservoir OR lake) (elevation OR "lake level") site:cwms-data.usace.army.mil`,
+    // Single fishing/general-guide query — lake-specific FACTS only (not opinions)
+    `"${queryLake}" (fishing guide OR fishing report) (thermocline OR depth OR structure OR forage OR "threadfin shad" OR "gizzard shad" OR "fall turnover" OR "spring spawn" OR drawdown) (site:carolinasportsman.com OR site:takemefishing.org OR site:gameandfishmag.com OR site:in-fisherman.com OR site:flwfishing.com OR site:bassmaster.com OR site:majorleaguefishing.com)`,
   ];
 
   let discoveredSources = [];
