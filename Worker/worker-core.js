@@ -22,8 +22,9 @@ var SYNC_TOKEN = "";
 // We now try multiple model candidates per provider in order, and fall back across providers.
 var LLM_PROVIDERS = [
   {
+    // Pay-tier Gemini — limnology agent only
     name: "gemini",
-    baseUrl: null, // uses Google's native SDK-style REST, handled in callLLM
+    baseUrl: null,
     keyEnv: "GEMINI_API_KEY",
     defaultModel: "gemini-2.5-flash",
     models: [
@@ -46,13 +47,36 @@ var LLM_PROVIDERS = [
     }),
   },
   {
+    // Free-tier Gemini — general agents primary (500 RPD, 250K TPM)
+    name: "gemini-free",
+    baseUrl: null,
+    keyEnv: "GEMINI_FREE_API_KEY",
+    defaultModel: "gemini-3.1-flash-lite",
+    models: [
+      "gemini-3.1-flash-lite",
+      "gemini-2.5-flash-lite",
+      "gemini-2.5-flash"
+    ],
+    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
+    isGemini: true,
+    transformPayload: (p) => ({
+      systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
+      contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
+      generationConfig: {
+        temperature: p.temperature || 0.15,
+        maxOutputTokens: p.max_tokens || 1500,
+        responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined,
+        thinkingConfig: { thinkingBudget: 0 }
+      }
+    }),
+  },
+  {
     name: "groq",
     baseUrl: "https://api.groq.com/openai/v1/chat/completions",
     keyEnv: "GROQ_API_KEY",
     defaultModel: "openai/gpt-oss-120b",
     models: [
       "openai/gpt-oss-120b",
-      "openai/gpt-oss-20b",
       "llama-3.3-70b-versatile",
       "llama-3.1-8b-instant"
     ],
@@ -163,14 +187,13 @@ async function callLLM(env, payload, preferredProvider = null) {
       try {
         const providerPayload = { ...payload, model: modelId };
         const body = provider.transformPayload(providerPayload);
-        // For Groq gpt-oss-120b — retry up to 3x with backoff before falling through
-        const isGroqPrimary = provider.name === 'groq' && modelId === provider.models[0];
-        const maxAttempts = isGroqPrimary ? 3 : 1;
+        // Retry on 429 for all providers — 2 retries with 2s/4s backoff
+        const maxAttempts = 3;
         let r;
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
           if (attempt > 1) {
-            const delay = attempt === 2 ? 2000 : 4000; // 2s, then 4s
-            console.warn(`Groq rate limit on ${modelId} — retry ${attempt}/${maxAttempts} after ${delay}ms`);
+            const delay = attempt === 2 ? 2000 : 4000;
+            console.warn(`${provider.name}/${modelId} rate limited (429) — retry ${attempt}/${maxAttempts} after ${delay}ms`);
             await new Promise(res => setTimeout(res, delay));
           }
           r = await fetch(provider.baseUrl, {
@@ -178,7 +201,7 @@ async function callLLM(env, payload, preferredProvider = null) {
             headers: provider.headers(key),
             body: JSON.stringify(body)
           });
-          if (r.status !== 429) break; // success or non-rate-limit error
+          if (r.status !== 429) break;
         }
         let data;
         try {

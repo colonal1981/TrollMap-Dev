@@ -374,35 +374,52 @@ async function handleResearchDiscover(request, env) {
   const googleApiKey = env.GOOGLE_SEARCH_API_KEY || env.GOOGLE_CSE_KEY;
   const googleCx = env.GOOGLE_SEARCH_CX || env.GOOGLE_CSE_CX;
   const tavilyApiKey = env.TAVILY_API_KEY || env.TAVILY_KEY;
+  const firecrawlSearchKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
 
-  // CREDIT BUDGET: search-only, no extract. The proxy-download step fetches
-  // full page content via Firecrawl or basic fetch, so Tavily extract is
-  // redundant here (was costing 4-8 extra credits per run for no benefit).
-  if (tavilyApiKey) {
+  // PRIMARY: Firecrawl /v2/search (2 credits per 10 results — very cheap)
+  // FALLBACK: Tavily if Firecrawl unavailable
+  const searchProvider = firecrawlSearchKey ? 'firecrawl' : tavilyApiKey ? 'tavily' : null;
+
+  if (searchProvider) {
     for (const q of queryPatterns) {
       try {
-        const searchRes = await fetch("https://api.tavily.com/search", {
-          method: "POST",
-          headers: { "Authorization": `Bearer ${tavilyApiKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ query: q, search_depth: "basic", max_results: 3, include_raw_content: false, exclude_domains: [] })
-        });
-        if (!searchRes.ok) continue;
-        const searchData = await searchRes.json();
-        for (const r of (searchData.results || [])) {
+        let results = [];
+        if (searchProvider === 'firecrawl') {
+          const searchRes = await fetch('https://api.firecrawl.dev/v2/search', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${firecrawlSearchKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: q, limit: 5 })
+          });
+          if (!searchRes.ok) continue;
+          const searchData = await searchRes.json();
+          results = (searchData.data || searchData.results || []).map(r => ({
+            url: r.url, title: r.title || r.metadata?.title || '', score: 0.5
+          }));
+        } else {
+          const searchRes = await fetch('https://api.tavily.com/search', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${tavilyApiKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: q, search_depth: 'basic', max_results: 3, include_raw_content: false })
+          });
+          if (!searchRes.ok) continue;
+          const searchData = await searchRes.json();
+          results = (searchData.results || []).map(r => ({ url: r.url, title: r.title || '', score: r.score || 0 }));
+        }
+        for (const r of results) {
           const off = offLakePattern(r.title||'', r.url||'');
           if (off) { console.log(`filtered off-lake ${off} for ${baseName}: ${r.url}`); continue; }
           const isPdf = String(r.url||'').toLowerCase().endsWith('.pdf');
-          let host = "Tavily";
+          let host = searchProvider;
           try { host = new URL(r.url).hostname; } catch {}
           let authority = host;
-          if (/dnr\.sc\.gov/.test(host) || /eregulations\.com/.test(host)) authority = "SCDNR";
-          else if (/usgs\.gov/.test(host)) authority = "USGS";
-          else if (/usace\.army\.mil/.test(host)) authority = "USACE";
-          else if (/nepis\.epa\.gov|epa\.gov/.test(host)) authority = "EPA NSCEP";
+          if (/dnr\.sc\.gov/.test(host) || /eregulations\.com/.test(host)) authority = 'SCDNR';
+          else if (/usgs\.gov/.test(host)) authority = 'USGS';
+          else if (/usace\.army\.mil/.test(host)) authority = 'USACE';
+          else if (/nepis\.epa\.gov|epa\.gov/.test(host)) authority = 'EPA NSCEP';
           else if (/dnr|wildlife/.test(host)) authority = dnrName;
           discoveredSources.push({
             title: (r.title || `${queryLake} - ${host}`).replace(/\s+/g,' ').trim().slice(0,180),
-            type: isPdf ? "PDF" : "HTML",
+            type: isPdf ? 'PDF' : 'HTML',
             authority,
             url: r.url,
             priority: (r.title||'').toLowerCase().includes(baseLower) ? 1 : 2,
@@ -410,7 +427,7 @@ async function handleResearchDiscover(request, env) {
           });
         }
       } catch (err) {
-        console.warn(`Tavily search failed for [${q}]: ${err.message}`);
+        console.warn(`Search failed for [${q}]: ${err.message}`);
       }
     }
   } else if (googleApiKey && googleCx) {
@@ -1178,26 +1195,42 @@ async function handleResearchDatasetHunt(request, env) {
     }
   }
 
-  // ── Phase 2: Tavily targeted searches for reports and academic papers ──
-  if (tavilyKey) {
+  // ── Phase 2: Search for reports and academic papers (Firecrawl primary, Tavily fallback) ──
+  const huntSearchKey = firecrawlKey || tavilyKey;
+  const huntSearchProvider = firecrawlKey ? 'firecrawl' : tavilyKey ? 'tavily' : null;
+  if (huntSearchProvider) {
     const stateName = { SC: 'South Carolina', NC: 'North Carolina', GA: 'Georgia' }[state] || 'South Carolina';
     const dnrSite = state === 'NC' ? 'site:ncwildlife.org' : state === 'GA' ? 'site:georgiawildlife.com' : 'site:dnr.sc.gov';
     const huntQueries = [
-      `\"${baseName}\" creel survey fisheries assessment filetype:pdf`,
-      `\"${baseName}\" annual fisheries report ${dnrSite}`,
-      // EPA NSCEP — covers both "Report on Lake X" and "Report on X Lake" naming
-      `\"Report on Lake ${baseName}\" OR \"Report on ${baseName} Lake\" site:nepis.epa.gov`,
+      `"${baseName}" creel survey fisheries assessment filetype:pdf`,
+      `"${baseName}" annual fisheries report ${dnrSite}`,
+      `"Report on Lake ${baseName}" OR "Report on ${baseName} Lake" site:nepis.epa.gov`,
     ];
     for (const q of huntQueries) {
       try {
-        const searchRes = await fetch('https://api.tavily.com/search', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${tavilyKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: q, search_depth: 'basic', max_results: 3, include_raw_content: false })
-        });
-        if (!searchRes.ok) continue;
-        const searchData = await searchRes.json();
-        for (const r of (searchData.results || [])) {
+        let results = [];
+        if (huntSearchProvider === 'firecrawl') {
+          const searchRes = await fetch('https://api.firecrawl.dev/v2/search', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: q, limit: 5 })
+          });
+          if (!searchRes.ok) continue;
+          const searchData = await searchRes.json();
+          results = (searchData.data || searchData.results || []).map(r => ({
+            url: r.url, title: r.title || r.metadata?.title || '', content: ''
+          }));
+        } else {
+          const searchRes = await fetch('https://api.tavily.com/search', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${tavilyKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: q, search_depth: 'basic', max_results: 3, include_raw_content: false })
+          });
+          if (!searchRes.ok) continue;
+          const searchData = await searchRes.json();
+          results = (searchData.results || []).map(r => ({ url: r.url, title: r.title || '', content: r.content || '' }));
+        }
+        for (const r of results) {
           if (!r.url || seenUrls.has(r.url)) continue;
           seenUrls.add(r.url);
           const score = scoreDatasetUrl(r.url, r.title || '', lakeName);
@@ -1218,13 +1251,13 @@ async function handleResearchDatasetHunt(request, env) {
             title: (r.title || '').slice(0, 180),
             type: /\.pdf$/i.test(r.url) || /ZyPDF/i.test(r.url) ? 'PDF' : 'HTML',
             authority,
-            source: 'tavily',
+            source: huntSearchProvider,
             score,
             snippet: (r.content || '').slice(0, 300),
           });
         }
       } catch (e) {
-        console.warn(`Tavily dataset hunt failed for [${q}]: ${e.message}`);
+        console.warn(`Dataset hunt search failed for [${q}]: ${e.message}`);
       }
     }
   }
@@ -3539,7 +3572,8 @@ async function handleResearchAgent(request, env) {
 
   // Inject document text for agents that benefit from reading source material directly
   // limnology gets the EPA/water quality docs; biology gets the fisheries docs
-  const docInjectionAgents = new Set(['limnology', 'biology', 'habitat', 'identity']);
+  // identity uses _extractedFacts only — raw docs make prompt too large for Cerebras TPM
+  const docInjectionAgents = new Set(['limnology', 'biology', 'habitat']);
   if (docInjectionAgents.has(agentKey) && previousResults._normalizedDocuments?.length) {
     const docFilter = {
       limnology: /epa|nscep|water.?qual|characteriz|nutrient|limnol/i,
