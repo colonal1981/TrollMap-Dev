@@ -1407,8 +1407,15 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
               }
               agentSections[agentKey] = merged;
               if (agentKey === 'biology') {
-                agentSections.biology.predatorSpecies = merged.predatorSpecies?.length ? merged.predatorSpecies : (existing.predatorSpecies || []);
-                agentSections.biology.knownStockings = merged.knownStockings?.length ? merged.knownStockings : (existing.knownStockings || []);
+                // Always use the LONGER species list — agents should add, never remove
+                const detSpecies = deterministicProfile.biology?.predatorSpecies || [];
+                const agentSpecies = merged.predatorSpecies || [];
+                const existingSpecies = existing.predatorSpecies || [];
+                // Merge all three lists — take the union
+                const allSpecies = [...new Set([...detSpecies, ...existingSpecies, ...agentSpecies])];
+                agentSections.biology.predatorSpecies = allSpecies.length ? allSpecies : detSpecies;
+                // Stockings: use agent result if non-empty, otherwise keep existing
+                agentSections.biology.knownStockings = merged.knownStockings?.length ? merged.knownStockings : (existing.knownStockings?.length ? existing.knownStockings : (deterministicProfile.biology?.knownStockings || []));
               }
               log(`✔ ${agentKey} agent complete (${agentData.confidence?.percent || '?'}% via ${agentData.meta?.model || '?'})`);
             }
@@ -1445,9 +1452,13 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     }
 
     // Safety net: ensure deterministic biology fields are never lost in the packet
+    // Final species list: union of deterministic + agent results — always additive, never subtractive
+    const _detSpecies = deterministicProfile.biology?.predatorSpecies || [];
+    const _agentSpecies = agentSections.biology?.predatorSpecies || [];
+    const _finalSpecies = [...new Set([..._detSpecies, ..._agentSpecies])];
     const safeBiology = {
       ...(agentSections.biology || {}),
-      predatorSpecies: agentSections.biology?.predatorSpecies?.length ? agentSections.biology.predatorSpecies : (deterministicProfile.biology?.predatorSpecies || []),
+      predatorSpecies: _finalSpecies.length ? _finalSpecies : _detSpecies,
       knownStockings: agentSections.biology?.knownStockings?.length ? agentSections.biology.knownStockings : (deterministicProfile.biology?.knownStockings || []),
     };
     const researchPacket = {
