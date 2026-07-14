@@ -1452,10 +1452,11 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     for (const group of agentGroups) {
       for (const agentKey of group.agents) {
         try {
-          // Small delay between agents to avoid Groq burst rate limiting
-          await new Promise(res => setTimeout(res, 1500));
+          // Delay between agents to avoid burst rate limiting across providers
+          await new Promise(res => setTimeout(res, 3000));
           log(`Running ${agentKey} agent...`);
-          const agentRes = await fetch(`${CF_WORKER_URL}/research/agent`, {
+          // Retry agent once on 502 (provider rate limit) after a longer pause
+          let agentRes = await fetch(`${CF_WORKER_URL}/research/agent`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1465,14 +1466,37 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
               previousResults: {
                 ...agentSections,
                 _extractedFacts: uniqueFacts,
-                _normalizedDocuments: normalizedDocuments.map(d => ({
+                _normalizedDocuments: normalizedDocuments.slice(0, 6).map(d => ({
                   title: d.title,
                   url: d.url,
-                  text: (d.fullText || '').slice(0, 20000)
+                  text: (d.fullText || '').slice(0, 8000)
                 }))
               }
             })
           });
+          // Retry once on 502 after 5s pause (provider rate limit)
+          if (agentRes.status === 502) {
+            log(`⚠️ ${agentKey} agent 502 — retrying after 5s...`);
+            await new Promise(res => setTimeout(res, 5000));
+            agentRes = await fetch(`${CF_WORKER_URL}/research/agent`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                lakeName,
+                state: stateName,
+                agent: agentKey,
+                previousResults: {
+                  ...agentSections,
+                  _extractedFacts: uniqueFacts,
+                  _normalizedDocuments: normalizedDocuments.slice(0, 6).map(d => ({
+                    title: d.title,
+                    url: d.url,
+                    text: (d.fullText || '').slice(0, 8000)
+                  }))
+                }
+              })
+            });
+          }
           if (agentRes.ok) {
             const agentData = await agentRes.json();
             if (agentData.success && agentData.section) {
