@@ -1183,13 +1183,23 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       const url = (doc.url || '').toLowerCase();
       const title = (doc.title || '').toLowerCase();
       return (
+        // Operator agreement PDFs (Duke CRA, etc)
         url.includes('duke-energy.com') && url.includes('.pdf') ||
+        // Actual EPA lake reports (not search pages)
         url.includes('nepis.epa.gov') && url.includes('zyactiond=zydocument') ||
+        // Scientific journal PDFs
         url.includes('seafwa.org') && url.includes('.pdf') ||
+        // SCDNR description pages — tiny but contain identity facts
+        url.includes('dnr.sc.gov') && url.includes('/description') ||
+        // eRegulations — regulations source
+        url.includes('eregulations.com') ||
+        // SCDNR annual reports
         url.includes('dnr.sc.gov') && url.includes('annual_report') ||
         title.includes('agreement summary') ||
         title.includes('annual report') ||
-        title.includes('fisheries investigations')
+        title.includes('fisheries investigations') ||
+        title.includes('scdnr') && title.includes('description') ||
+        title.includes('lake description')
       );
     };
 
@@ -1265,6 +1275,9 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       }
       extractionPayload.documents = kept;
       log(`Trimmed to ${kept.length} docs, ${cur} chars`);
+      kept.forEach(d => log(`  ✓ kept: ${d.title?.slice(0,60)} (${d.text?.length||0} chars${d.pinned?' PINNED':''})`));
+      const dropped = extractionPayload.documents.filter(d => !kept.includes(d));
+      dropped.forEach(d => log(`  ✗ dropped: ${d.title?.slice(0,60)} (${d.text?.length||0} chars)`));
     }
 
     let extractRes;
