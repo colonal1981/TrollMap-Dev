@@ -1,5 +1,5 @@
-// worker-research.js — Full research pipeline extracted from trollmap-worker.js 
-// All /research/* route handlers, RESEARCH_AGENTS, deterministic facts, dataset hunt, etc.  
+// worker-research.js — Full research pipeline extracted from trollmap-worker.js
+// All /research/* route handlers, RESEARCH_AGENTS, deterministic facts, dataset hunt, etc.
 
 import { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, isAuthorized } from './worker-core.js';
 import { LAKES, LAKE_INTEL, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel } from './worker-data.js';
@@ -1851,15 +1851,20 @@ function parseSCRegulationsFromHtml(lakeName, regsUrl, html, lakeSpecificHtml = 
     regs.lakeSpecificRegulations.sizeLimits['Largemouth Bass'] = `${mLmb[1]} inches min`;
     addEvidence('lakeSpecific.Largemouth Bass', mLmb[0], 'regex_exact_text');
   }
-  // Nongame device limits from lake regs page
+  // Nongame device limits — extract structured trap/trotline limits instead of raw text blob
   if (/trotlines/i.test(lakePlain) || /traps/i.test(lakePlain)) {
-    const deviceNote = lakePlain.match(/Allowable Nongame Devices[\s\S]{0,400}/i);
-    if (deviceNote) {
-      regs.lakeSpecificRegulations.specialRules = regs.lakeSpecificRegulations.specialRules || [];
-      const note = deviceNote[0].replace(/\s+/g, ' ').trim().slice(0, 300);
-      if (!regs.lakeSpecificRegulations.specialRules.includes(note)) {
+    regs.lakeSpecificRegulations.specialRules = regs.lakeSpecificRegulations.specialRules || [];
+    const trapRec = lakePlain.match(/Recreational License\s+(\d+)\s+trap/i);
+    const trapCom = lakePlain.match(/Commercial License\s+(\d+)\s+trap/i);
+    const trotRec = lakePlain.match(/Recreational License\s+(\d+)\s+(?:trotline|line)/i);
+    const trotCom = lakePlain.match(/Commercial License\s+(\d+)\s+(?:trotline|line)/i);
+    if (trapRec || trotRec) {
+      const parts = [];
+      if (trapRec) parts.push(`Traps: ${trapRec[1]} (rec)${trapCom ? ', ' + trapCom[1] + ' (com)' : ''}`);
+      if (trotRec) parts.push(`Trotlines: ${trotRec[1]} with 50 hooks max (rec)${trotCom ? ', ' + trotCom[1] + ' with 150 hooks max (com)' : ''}`);
+      const note = parts.join('; ');
+      if (note && !regs.lakeSpecificRegulations.specialRules.includes(note)) {
         regs.lakeSpecificRegulations.specialRules.push(note);
-        addEvidence('lakeSpecific.specialRules', note, 'regex_exact_text');
       }
     }
   }
@@ -3549,8 +3554,39 @@ async function handleResearchAgent(request, env) {
   }
 
   const dataKey = agent.expectedKey;
-  const sectionData = (parsed[dataKey] && Object.keys(parsed[dataKey]).length > 0) ? parsed[dataKey] : (parsed[agentKey] && Object.keys(parsed[agentKey] || {}).length > 0) ? parsed[agentKey] : parsed;
+  let sectionData = (parsed[dataKey] && Object.keys(parsed[dataKey]).length > 0) ? parsed[dataKey] : (parsed[agentKey] && Object.keys(parsed[agentKey] || {}).length > 0) ? parsed[agentKey] : parsed;
   const sources = parsed.sources || sectionData?.sources || [];
+
+  // Sanitize regulations output — remove creel_N / size_N raw fact string keys
+  // These appear when the agent dumps extracted facts instead of mapping to species keys
+  if (agentKey === 'regulations' && sectionData) {
+    const cleanCreel = {};
+    const cleanSize = {};
+    const lsr = sectionData.lakeSpecificRegulations || {};
+    
+    // Only keep properly keyed species entries (not creel_0, creel_1, size_0, etc.)
+    const numberedKeyPattern = /^(creel|size|limit)_\d+$/i;
+    for (const [k, v] of Object.entries(lsr.creelLimits || {})) {
+      if (!numberedKeyPattern.test(k) && typeof v === 'string') cleanCreel[k] = v;
+    }
+    for (const [k, v] of Object.entries(lsr.sizeLimits || {})) {
+      if (!numberedKeyPattern.test(k) && typeof v === 'string') cleanSize[k] = v;
+    }
+    // Also filter specialRules — remove the nongame device garbage
+    const cleanSpecialRules = (lsr.specialRules || []).filter(r => 
+      typeof r === 'string' && r.length < 200 && !/Allowable Nongame Devices|Marking of Nongame|Facebook RSS/i.test(r)
+    );
+    
+    sectionData = {
+      ...sectionData,
+      lakeSpecificRegulations: {
+        ...lsr,
+        creelLimits: cleanCreel,
+        sizeLimits: cleanSize,
+        specialRules: cleanSpecialRules
+      }
+    };
+  }
   const hasData = sectionData && (typeof sectionData === 'object' ? Object.keys(sectionData).filter(k => k !== 'sources').length > 0 : true);
   const confidence = calculateSectionConfidence(sources, hasData, agentKey, sectionData);
 
