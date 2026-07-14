@@ -1,41 +1,6 @@
 
 /
 Claude finished the response
-You're right — 429 is rate limit. 502 is Bad Gateway, meaning the upstream LLM provider itself is returning an error or timing out. So Cerebras is either down, returning a 5xx, or the request is malformed for that provider.
-
-The real issue is the biology agent prompt is probably too large for Cerebras — it's getting the full _extractedFacts array (47 facts) plus _normalizedDocuments (20k chars each × several docs). Cerebras may have a smaller effective context window or stricter payload limits than Groq.
-
-Let me check what the biology agent is actually sending:
-
-
-Find how much document text is sent to agents
-Find how much document text is sent to agents
-10 documents × 20k chars each = 200k chars of document text going to every agent call. That's the problem. The worker then builds the agent prompt from _normalizedDocuments but only filters to 4 relevant docs — still 80k chars of document context. Cerebras chokes on that.
-
-The fix is reduce _normalizedDocuments text slice from 20k to 8k per doc before sending to agents, and also cap the total number of docs sent:
-
-
-Ran 4 commands, read a file
-Ran 4 commands, read a file
-Good catch on the 502 vs 429 distinction. The real issue was payload size — 10 docs × 20k chars = 200k chars going to every agent call, which Cerebras (and probably others) can't handle as a single request body.
-
-Now each agent gets max 6 docs at 8k chars each = 48k chars of document context, which is manageable for any provider. The worker-side docInjectionAgents filter already narrows it further to relevant docs only, so in practice it'll be even smaller.
-
-The seasonal contradiction fix is also in worker-research.js. Try another resume.
-
-
-Lake research engine
-JS 
-
-Worker research
-JS 
-
-[1:37:34 PM] === RESUME FROM NORMALIZED: Lake Wateree, SC === [1:37:34 PM] Loaded 16 normalized documents from R2. [1:37:34 PM] Computing scores based on authority trustworthiness rules... [1:37:34 PM] • SC Freshwater Fish Size & Possession Limits (eRegulations): auth=98 rel=90 fresh=95 comp=85 =
-
-PASTED
-
-ok just for fun i ran it on wateree... your retries worked can you see this
-
 Yes — the retry logic is working:
 
 identity agent 502 — retrying after 5s...
@@ -65,7 +30,7 @@ Good — Murray is the real test since that's where the biology 502 was consiste
 
 [1:43:33 PM] === RESUME FROM NORMALIZED: Lake Murray, SC === [1:43:34 PM] Loaded 11 normalized documents from R2. [1:43:34 PM] Computing scores based on authority trustworthiness rules... [1:43:34 PM] • Lake Murray SCDNR Lake Description: auth=98 rel=80 fresh=25 comp=35 => composite=72 classes=Hydro
 
-PASTED
+pasted
 
 ⚠️ Step 9: Source Contradiction Detected!
 The fact gathering engine detected conflicting facts between trusted sources. Please resolve the differences before compiling the master packet:
@@ -129,9 +94,180 @@ The profile JSON should now actually update when you resolve contradictions. Als
 
 
 Lake research ui
-JS 
+JS 
+this will be the last murray run unless something crazy goes wrong
 
-Want to be notified when Claude responds?
+Agreed — Murray is solid enough. The core data is right, the agents are running clean, the retry logic is working. The remaining issues (SCE&G vs Dominion, normalPoolFt null, knownStockings empty) are document coverage gaps not pipeline bugs.
+
+Run Monticello next — that'll be an interesting test since it's the nuclear cooling lake with daily fluctuation and no seasonal drawdown schedule.
+
+what route does identity take for the LLM... because it 502'd on both trieds but everything else succeeded...
+
+Let me check what provider identity is hitting:
+
+
+Read agent LLM selection in handleResearchAgent
+Read agent LLM selection in handleResearchAgent
+Identity goes through callLLM(env, payload, null) — the general provider chain: Groq → OpenRouter → Cerebras. No special routing.
+
+The identity agent prompt is the largest of all the agents because it includes _knownBaseline (the LAKES constant data for that lake), _extractedFacts, and _normalizedDocuments. The _knownBaseline alone can be substantial if the LAKES entry for Murray is large.
+
+Check the prompt size safety threshold — it triggers at 28,000 chars. The identity prompt for Murray with 63 facts plus baseline data is likely pushing past that, hitting the truncation, but even truncated it might still be too large for whatever provider is selected first.
+
+The fact that it 502'd on both retries suggests the prompt itself is the issue, not transient rate limiting — the provider is rejecting it consistently. What was the actual error message in the retry log?
+
+TPM which tells me it is hitting cerbras
+
+Right — Cerebras TPM (tokens per minute) limit. So Groq is failing first (rate limit or unavailable), falling through to Cerebras, and Cerebras is hitting its TPM limit on the identity agent's large prompt.
+
+The identity agent gets _documentContext injected for it specifically — look at the docInjectionAgents set in the worker. It's one of the agents that gets raw document text added, which makes its prompt much larger than the others.
+
+Quick fix — remove identity from docInjectionAgents. The identity agent has _extractedFacts which already contains the distilled identity facts. It doesn't need raw document text on top of that.
+
+
+Ran 3 commands, read a file
+Ran 3 commands, read a file
+Identity agent now runs on extracted facts only — no raw document injection. Its prompt drops significantly, well under Cerebras TPM limits. Limnology still gets document injection since it needs the raw depth profile tables. Biology and habitat still get it for species data and structural facts.
+
+
+Worker research
+JS 
+it was cerebras for both.... which must mean nothing is hitting groq... i need to check to see what is going on there
+07/14/2026, 17:54
+Default Project
+gpt-oss-120b
+429
+
+0
+0
+0
+0
+0
+—
+a1b264405f37e25a-ORD
+We're experiencing high traffic right now! Please try again soon.
+07/14/2026, 17:54
+Default Project
+gpt-oss-120b
+429
+
+0
+0
+0
+0
+0
+—
+a1b264636c73e25a-ORD
+Tokens per minute limit exceeded - too many tokens processed.
+
+Show more
+So Groq IS being hit — it's just also rate limiting. You're getting 429s on both Groq and Cerebras simultaneously because you're running multiple pipeline operations and both free tiers are exhausted.
+
+Two 429s in a row at 17:54 — that's the identity agent hitting Groq (TPM), falling through to Cerebras (also TPM), both failing, worker returns 502.
+
+This is the free tier wall. You're running enough pipeline calls in a session that you've burned through both Groq and Cerebras token budgets for that minute. The retry with backoff helps for occasional spikes but can't fix sustained load against TPM limits.
+
+This is the $20 Claude credit moment. You've optimized everything you can on the free tier — the pipeline is working correctly, the bugs are fixed, the architecture is solid. The limiting factor now is purely token budget across free providers.
+
+With Claude Haiku 3.5 at $0.80/$4.00 per million tokens you'd have no TPM issues, consistent quality, and all 66 lakes would run clean for well under $20. The free tier optimization work you've done (smaller payloads, fewer doc injections, retry logic) will still apply and reduce costs further.
+
+Sign up for the Anthrop
+
+Claude’s response was interrupted.
+no that is cerebras log... so both hit it
+
+Yes to both — let's do them together. Here's the plan:
+
+LLM: Gemini 3.1 Flash Lite as primary general model (free key), Gemini 2.5 Flash stays for limnology (pay key), Groq as fallback for both.
+
+Search: Firecrawl /v2/search replaces Tavily for discovery and dataset hunt. You already have the Firecrawl key wired in for scraping — same key, different endpoint.
+
+Let me read both files before touching anything:
+
+
+Ran 2 commands
+Ran 2 commands
+Good — I can see both keys are already referenced. Now let me make both changes:
+
+
+Add free Gemini provider and remove gpt-oss-20b from Groq
+Add free Gemini provider and remove gpt-oss-20b from Groq
+Now also need to handle gemini-free in callLLM since it uses the same Gemini REST API path:
+
+
+Ran 2 commands
+Ran 2 commands
+Good — callLLM uses provider.isGemini not provider.name === 'gemini', so gemini-free will route correctly through the same Gemini REST path. Now swap Tavily for Firecrawl in discovery and dataset hunt:
+
+
+Ran 2 commands
+Ran 2 commands
+Now swap Tavily in the dataset hunt:
+
+
+Ran 3 commands
+Ran 3 commands
+Now copy everything out and verify:
+
+
+Ran a command, read a file
+Ran a command, read a file
+All checks pass. Here's what changed:
+
+LLM (worker-core.js):
+
+Added gemini-free provider using GEMINI_FREE_API_KEY — Gemini 3.1 Flash Lite as primary, 2.5 Flash Lite and 2.5 Flash as fallbacks. 500 RPD, 250K TPM, no burst issues.
+Existing gemini (pay key) stays for limnology only, untouched.
+gpt-oss-20b removed from Groq — was producing json_validate_failed repeatedly.
+New provider order: Gemini free → Groq → OpenRouter → Cerebras
+Search (worker-research.js):
+
+Firecrawl /v2/search is now primary for both discovery and dataset hunt — 2 credits per 10 results from your 1,400 Firecrawl credits.
+Tavily stays as automatic fallback if Firecrawl key is missing.
+Tavily credits preserved for emergencies.
+One thing you need to do: Add GEMINI_FREE_API_KEY as a new secret in your Cloudflare Worker environment variables — same place you have GEMINI_API_KEY, just a different variable name with the free tier key value.
+
+
+Worker core
+JS 
+
+Worker research
+JS 
+Then push both files and run Monticello. That'll be the real test — new LLM provider, Firecrawl search, and Monticello is a unique lake (nuclear cooling, daily fluctuation, no drawdown schedule).
+
+i never checked the app after the research ui change
+lake-research-ui.js:2 Uncaught SyntaxError: Invalid regular expression: missing /
+/cdn-cgi/rum?:1  Failed to load resource: the server responded with a status of 404 ()
+
+Syntax error in lake-research-ui.js — the regex escape issue from the earlier Python edit. Let me find it:
+
+
+Ran 4 commands
+Ran 4 commands
+Node says it's valid — the error might be in a different part of the file. Let me check the full file for any regex issues:
+
+
+Find all regex patterns in lake-research-ui.js
+Find all regex patterns in lake-research-ui.js
+The file looks fine syntactically — Node validates it clean. The browser error "Invalid regular expression: missing /" might be coming from a different file that's loaded alongside it. The 404 on /cdn-cgi/rum is just Cloudflare's Real User Monitoring script, not related.
+
+Check the browser console — is the error specifically on line 2 of lake-research-ui.js or is it the import statement on line 1 that's failing because a dependency has the regex error?
+
+
+Check first few lines of lake-research-ui.js
+Check first few lines of lake-research-ui.js
+The error on "line 2" of lake-research-ui.js in the browser is almost certainly the browser pointing to the import of lake-research-engine.js — which has the regex seasonPattern we added to the contradiction detector in worker-research-arena.js. But wait, that's in the worker not the frontend engine.
+
+Check lake-research-engine.js for regex issues:
+
+
+Ran 2 commands
+Ran 2 commands
+Both files check clean with Node. The browser error "Invalid regular expression: missing /" with "line 2" might be a cached version of the old file. Try a hard refresh (Ctrl+Shift+R) in the browser — if the file was recently updated via GitHub the browser may be serving a stale cached version with the old broken regex.
+
+Does a hard refresh clear it?
+
+
 
 
 
@@ -143,8 +279,8 @@ Lake research ui · JS
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { LAKE_DB } from '../data/lakes.js';
 import { _state, runEvidencePipeline, runFromNormalized, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log } from './lake-research-engine.js';
- 
- 
+ 
+ 
 function renderContradictionsAlert(contradictions, lakeName) {
   // Check if target container exists, create if not
   let el = document.getElementById('contradictionAlertPanel');
@@ -156,13 +292,13 @@ function renderContradictionsAlert(contradictions, lakeName) {
     el.style.cssText = "border: 2px solid var(--bad); background: rgba(255,82,82,.05); margin-top: 10px;";
     parent.insertBefore(el, parent.firstChild);
   }
- 
+ 
   let html = `
     <h3 style="color:var(--bad); margin-top:0">⚠️ Step 9: Source Contradiction Detected!</h3>
     <p class="muted">The fact gathering engine detected conflicting facts between trusted sources. Please resolve the differences before compiling the master packet:</p>
     <div style="display:flex; flex-direction:column; gap:10px; margin-top:10px;">
   `;
- 
+ 
   contradictions.forEach((c, index) => {
     html += `
       <div style="background:rgba(0,0,0,.3); border-left:4px solid var(--bad); padding:8px; border-radius:4px;">
@@ -182,25 +318,25 @@ function renderContradictionsAlert(contradictions, lakeName) {
       </div>
     `;
   });
- 
+ 
   html += `
     </div>
     <div style="margin-top:12px; text-align:right">
       <button id="btnResolveConflicts" class="primary small" style="background:var(--accent2); color:#000;">✔ Resolve & Update Master Packet</button>
     </div>
   `;
- 
+ 
   el.innerHTML = html;
   el.style.display = 'block';
- 
+ 
   document.getElementById('btnResolveConflicts').addEventListener('click', async () => {
     log('Resolving contradictions according to operator choices...');
- 
+ 
     if (!_state.currentProfile || !_state.currentLakeName) {
       log('⚠️ No profile loaded — cannot apply resolutions.');
       return;
     }
- 
+ 
     // Deep-set a value at a dot-path in an object, creating intermediate objects as needed
     function setAtPath(obj, path, value) {
       const parts = path.split('.');
@@ -213,10 +349,10 @@ function renderContradictionsAlert(contradictions, lakeName) {
       }
       cursor[parts[parts.length - 1]] = value;
     }
- 
+ 
     const patched = cloneJson(_state.currentProfile);
     let resolvedCount = 0;
- 
+ 
     contradictions.forEach((c, index) => {
       const radio = el.querySelector(`input[name="conflict-${index}"]:checked`);
       if (!radio) return;
@@ -224,7 +360,7 @@ function renderContradictionsAlert(contradictions, lakeName) {
       const winner = selected === 'A' ? c.factA : c.factB;
       const winnerSource = selected === 'A' ? c.sourceA : c.sourceB;
       log(`  [${c.field}] → Option ${selected}: "${winner}" (${winnerSource || 'unknown source'})`);
- 
+ 
       // Apply to the correct nested path in the profile
       // c.field may be dot-notation (e.g. "limnology.thermocline.summerDepthFt")
       // or a flat key — handle both
@@ -238,7 +374,7 @@ function renderContradictionsAlert(contradictions, lakeName) {
           'creelLimit_lakeSpecific': 'regulations.lakeSpecificRegulations.creelLimits',
         };
         const profilePath = fieldMap[c.field] || c.field;
- 
+ 
         // For numeric fields, extract the number from the fact sentence
         const numericFields = new Set(['surfaceAreaAcres','maxDepthFt','averageDepthFt','hydraulicRetentionDays','normalPoolFt']);
         let valueToSet = winner;
@@ -248,27 +384,27 @@ function renderContradictionsAlert(contradictions, lakeName) {
             valueToSet = parseFloat(numMatch[0].replace(/,/g,''));
           }
         }
- 
+ 
         setAtPath(patched, profilePath, valueToSet);
         resolvedCount++;
       } catch (e) {
         log(`  ⚠️ Could not apply ${c.field}: ${e.message}`);
       }
     });
- 
+ 
     if (resolvedCount === 0) {
       log('No resolutions applied.');
       return;
     }
- 
+ 
     // Stamp the patch in metadata
     patched.metadata = patched.metadata || {};
     patched.metadata.lastResolvedAt = new Date().toISOString();
     patched.metadata.resolvedContradictions = (patched.metadata.resolvedContradictions || 0) + resolvedCount;
- 
+ 
     // Write back to in-memory state
     _state.currentProfile = patched;
- 
+ 
     // POST to /research/save
     log(`Saving resolved profile (${resolvedCount} field(s) patched)...`);
     try {
@@ -297,7 +433,7 @@ function renderContradictionsAlert(contradictions, lakeName) {
     }
   });
 }
- 
+ 
 async function populateResearchLakeDropdown() {
   const sel = document.getElementById('researchLakeSelect');
   if (!sel) return;
@@ -313,7 +449,7 @@ async function populateResearchLakeDropdown() {
     }
   }
 }
- 
+ 
 async function fetchResearchList() {
   try {
     const r = await fetch(`${CF_WORKER_URL}/research/list`);
@@ -326,7 +462,7 @@ async function fetchResearchList() {
     return null;
   }
 }
- 
+ 
 async function loadProfile(lakeName, silent = false) {
   if (!lakeName) return null;
   _state.currentLakeName = lakeName;
@@ -356,7 +492,7 @@ async function loadProfile(lakeName, silent = false) {
     return null;
   }
 }
- 
+ 
 function renderEmpty(lakeName) {
   _state.currentProfile = null;
   const meta = document.getElementById('researchMeta');
@@ -371,9 +507,9 @@ function renderEmpty(lakeName) {
   const deleteBtn = document.getElementById('btnDeleteResearch');
   if (deleteBtn) deleteBtn.style.display = 'none';
 }
- 
+ 
 function esc(s) { return String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
- 
+ 
 function renderProfile(profile) {
   if (!profile) { renderEmpty(_state.currentLakeName); return; }
   const meta = document.getElementById('researchMeta');
@@ -393,7 +529,7 @@ function renderProfile(profile) {
     const overall = profile.confidence?.overall?.percent || 0;
     confPill.textContent = `Overall: ${overall}% ${profile.confidence?.overall?.level || ''}`;
   }
- 
+ 
   const approveBtn = document.getElementById('btnApprove');
   if (approveBtn) {
     approveBtn.style.display = status === 'verified' ? 'none' : 'inline-flex';
@@ -402,7 +538,7 @@ function renderProfile(profile) {
   if (deleteBtn) {
     deleteBtn.style.display = 'inline-flex';
   }
- 
+ 
   // Populate reviewCard dataset so re-run agents have full profile context
   const reviewCard = document.getElementById('reviewCard');
   if (reviewCard) {
@@ -417,7 +553,7 @@ function renderProfile(profile) {
     }
     reviewCard.dataset.parts = JSON.stringify(parts);
   }
- 
+ 
   renderSections(profile);
   renderConfidence(profile);
   renderSources(profile);
@@ -426,7 +562,7 @@ function renderProfile(profile) {
   renderPackage(profile, _state.currentPackageFiles, _state.currentVersions);
   renderReviewCard(profile);
 }
- 
+ 
 function formatHumanReadableSection(key, data) {
   if (!data || (typeof data === 'object' && !Object.keys(data).length)) {
     return `<div class="muted" style="font-style:italic">No data researched for this section yet.</div>`;
@@ -434,7 +570,7 @@ function formatHumanReadableSection(key, data) {
   if (typeof data === 'string') {
     return `<div style="white-space:pre-wrap">${esc(data)}</div>`;
   }
- 
+ 
   if (key === 'identity') {
     const d = data.identity || data;
     return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:6px;font-size:12px;">
@@ -453,7 +589,7 @@ function formatHumanReadableSection(key, data) {
       ${d.aliases && d.aliases.length ? `<div style="grid-column:1/-1"><b>Aliases:</b> ${esc(d.aliases.join(', '))}</div>` : ''}
     </div>`;
   }
- 
+ 
   if (key === 'limnology') {
     const d = data.limnology || data;
     const cl = d.waterClarity || {};
@@ -488,7 +624,7 @@ function formatHumanReadableSection(key, data) {
       </div>
     </div>`;
   }
- 
+ 
   if (key === 'biology') {
     const d = data.forage || data.biology || data;
     const primary = d.primaryForage || d.primary || [];
@@ -543,7 +679,7 @@ function formatHumanReadableSection(key, data) {
     html += `</div>`;
     return html;
   }
- 
+ 
   if (key === 'habitat') {
     const d = data.habitat || data;
     let html = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;font-size:12px;">`;
@@ -580,7 +716,7 @@ function formatHumanReadableSection(key, data) {
     html += `</div>`;
     return html;
   }
- 
+ 
   if (key === 'navigation') {
     const d = data.navigation || data;
     let html = `<div style="font-size:12px;">`;
@@ -607,12 +743,12 @@ function formatHumanReadableSection(key, data) {
     html += `</div>`;
     return html;
   }
- 
+ 
   if (key === 'regulations') {
     const d = data.regulations || data;
     let html = `<div style="font-size:12px;">`;
     html += `<div style="margin-bottom:8px"><b>📍 State:</b> ${esc(d.state || '—')}${d.lastUpdated ? ` · <span class="muted">Updated ${esc(d.lastUpdated)}</span>` : ''}</div>`;
- 
+ 
     // Helper: render species → {size, creel} rows from nested maps
     const renderSpeciesTable = (lengthMap, creelMap, emptyLabel) => {
       const lengthMapSafe = (lengthMap && typeof lengthMap === 'object') ? lengthMap : {};
@@ -633,7 +769,7 @@ function formatHumanReadableSection(key, data) {
       out += `</div>`;
       return out;
     };
- 
+ 
     const gen = d.generalStateRegulations || d.statewide || {};
     const genLength = gen.lengthLimits || d.lengthLimits || {};
     const genCreel = gen.creelLimits || d.creelLimits || {};
@@ -650,7 +786,7 @@ function formatHumanReadableSection(key, data) {
       }
       html += `</div>`;
     }
- 
+ 
     const lake = d.lakeSpecificRegulations || d.lakeSpecific || {};
     const lakeSize = lake.sizeLimits || {};
     const lakeCreel = lake.creelLimits || {};
@@ -694,7 +830,7 @@ function formatHumanReadableSection(key, data) {
         No regulations data extracted yet. Re-run research (or Resume from normalized) after the eRegulations parser fix so statewide + lake-specific limits populate here.
       </div>`;
     }
- 
+ 
     // Flat convenience fields if present and not already covered
     if (d.licenseRequirements) {
       html += `<div style="margin:4px 0;font-size:11px"><b>🪪 License:</b> ${esc(d.licenseRequirements)}</div>`;
@@ -707,7 +843,7 @@ function formatHumanReadableSection(key, data) {
     html += `</div>`;
     return html;
   }
- 
+ 
   if (key === 'trolling') {
     const d = data.trollingIntelligence || data.trolling || data;
     let html = `<div style="font-size:12px;">`;
@@ -761,7 +897,7 @@ function formatHumanReadableSection(key, data) {
     html += `</div>`;
     return html;
   }
- 
+ 
   if (key === 'summary') {
     const d = data.summary || data;
     const text = typeof d === 'string' ? d : (d.text || d.overview || '');
@@ -780,7 +916,7 @@ function formatHumanReadableSection(key, data) {
     html += `</div>`;
     return html;
   }
- 
+ 
   // Generic fallback for any unknown section — render as readable key-value
   if (typeof data === 'object') {
     let html = `<div style="font-size:12px;">`;
@@ -791,10 +927,10 @@ function formatHumanReadableSection(key, data) {
     html += `</div>`;
     return html;
   }
- 
+ 
   return `<pre style="font-size:11px;white-space:pre-wrap">${esc(JSON.stringify(data, null, 2))}</pre>`;
 }
- 
+ 
 function renderSections(profile) {
   const container = document.getElementById('researchSections');
   if (!container) return;
@@ -831,7 +967,7 @@ function renderSections(profile) {
     const level = c?.level || (has ? 'medium' : 'missing');
     const okIcon = has ? (pct >= 70 ? '✔' : '⚠') : '◻';
     const levelClass = pct >= 95 ? 'veryhigh' : pct >= 85 ? 'high' : pct >= 70 ? 'medium' : pct >= 50 ? 'low' : 'need';
- 
+ 
     html += `<div class="section-row" style="flex-wrap:wrap;justify-content:space-between;align-items:center;">
       <div style="display:flex;align-items:center;gap:8px;flex:1 1 200px;">
         <span class="sec-icon">${okIcon}</span>
@@ -858,7 +994,7 @@ function renderSections(profile) {
     </div>`;
   }
   container.innerHTML = html;
- 
+ 
   container.querySelectorAll('.btn-toggle-viewer').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const sec = e.target.dataset.section;
@@ -868,7 +1004,7 @@ function renderSections(profile) {
       }
     });
   });
- 
+ 
   container.querySelectorAll('.btn-toggle-section-editor').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const sec = e.target.dataset.section;
@@ -878,7 +1014,7 @@ function renderSections(profile) {
       }
     });
   });
- 
+ 
   container.querySelectorAll('.btn-apply-section-edit').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const agent = e.target.dataset.agent;
@@ -906,7 +1042,7 @@ function renderSections(profile) {
       }
     });
   });
- 
+ 
   // Re-run single agent using stored normalized documents (no Tavily cost)
   container.querySelectorAll('.btn-rerun-section').forEach(btn => {
     btn.addEventListener('click', async (e) => {
@@ -916,13 +1052,13 @@ function renderSections(profile) {
       btn.disabled = true;
       btn.textContent = '⏳ Running...';
       if (st) { st.textContent = `Running ${agentKey} agent...`; st.style.color = 'var(--accent)'; }
- 
+ 
       try {
         // Pass extracted facts AND normalized document text so agent has real evidence
         const reviewCard = document.getElementById('reviewCard');
         const prevProfile = reviewCard?.dataset.merged ? JSON.parse(reviewCard.dataset.merged) : (_state.currentProfile || {});
         const storedFacts = prevProfile._extractedFacts || _state.currentProfile?._extractedFacts || [];
- 
+ 
         // Fetch normalized documents from R2 to give agent actual source text
         let normalizedDocs = [];
         try {
@@ -940,7 +1076,7 @@ function renderSections(profile) {
         } catch (e) {
           log(`[Re-run] Could not fetch normalized docs: ${e.message} — agent will use stored facts only`);
         }
- 
+ 
         const agentRes = await fetch(`${CF_WORKER_URL}/research/agent`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -957,7 +1093,7 @@ function renderSections(profile) {
         });
         const agentData = await agentRes.json();
         if (!agentData.success) throw new Error(agentData.error || 'Agent failed');
- 
+ 
         // Step 4: Apply result to in-memory profile
         {
           const curMerged = reviewCard?.dataset.merged ? JSON.parse(reviewCard.dataset.merged) : (_state.currentProfile || {});
@@ -988,16 +1124,16 @@ function renderSections(profile) {
           _state.currentProfile = curMerged;
           if (typeof _state.packagePartsCache !== 'undefined') _state.packagePartsCache[agentKey] = agentData.section;
         }
- 
+ 
         // Step 5: Refresh UI for this section
         const viewer = document.getElementById(`viewer-container-${agentKey}`);
         if (viewer) viewer.innerHTML = formatHumanReadableSection(agentKey, agentData.section);
         const ta = container.querySelector(`.review-section-textarea[data-agent="${agentKey}"]`);
         if (ta) ta.value = JSON.stringify(agentData.section, null, 2);
- 
+ 
         if (st) { st.textContent = `✓ Re-run complete (${agentData.confidence?.percent||'?'}% confidence via ${agentData.meta?.model||'?'})`; st.style.color = 'var(--accent2)'; }
         log(`[Re-run] ${agentKey}: ${agentData.confidence?.percent||'?'}% via ${agentData.meta?.model||'?'}`);
- 
+ 
       } catch (err) {
         if (st) { st.textContent = `Failed: ${err.message}`; st.style.color = 'var(--bad)'; }
         log(`[Re-run] ${agentKey} failed: ${err.message}`);
@@ -1008,7 +1144,7 @@ function renderSections(profile) {
     });
   });
 }
- 
+ 
 function renderConfidence(profile) {
   const card = document.getElementById('confidenceCard');
   const list = document.getElementById('confidenceList');
@@ -1032,7 +1168,7 @@ function renderConfidence(profile) {
   }
   list.innerHTML = html;
 }
- 
+ 
 function renderSources(profile) {
   const card = document.getElementById('sourcesCard');
   const list = document.getElementById('sourcesList');
@@ -1048,7 +1184,7 @@ function renderSources(profile) {
   }
   list.innerHTML = html;
 }
- 
+ 
 function renderSummary(profile) {
   const card = document.getElementById('summaryCard');
   const textEl = document.getElementById('summaryText');
@@ -1058,7 +1194,7 @@ function renderSummary(profile) {
   card.style.display = 'block';
   textEl.textContent = typeof summary === 'string' ? summary : (summary.text || JSON.stringify(summary, null, 2));
 }
- 
+ 
 function renderNotes(profile) {
   const card = document.getElementById('notesCard');
   const ta = document.getElementById('researchNotes');
@@ -1066,7 +1202,7 @@ function renderNotes(profile) {
   card.style.display = 'block';
   ta.value = profile.notes || '';
 }
- 
+ 
 function renderPackage(profile, packageFiles, versions) {
   const card = document.getElementById('packageCard');
   const filesEl = document.getElementById('packageFiles');
@@ -1094,7 +1230,7 @@ function renderPackage(profile, packageFiles, versions) {
     verEl.innerHTML = html;
   }
 }
- 
+ 
 function renderReviewCard(profile) {
   const card = document.getElementById('reviewCard');
   const list = document.getElementById('reviewList');
@@ -1126,7 +1262,7 @@ function renderReviewCard(profile) {
   }
   list.innerHTML = rows.join('');
 }
- 
+ 
 async function saveCurrentResearchProfile(status = 'draft') {
   const reviewCard = document.getElementById('reviewCard');
   const merged = reviewCard?.dataset.merged ? JSON.parse(reviewCard.dataset.merged) : (_state.currentProfile ? cloneJson(_state.currentProfile) : null);
@@ -1156,29 +1292,29 @@ async function saveCurrentResearchProfile(status = 'draft') {
   }
   return res.json();
 }
- 
+ 
 function initLakeResearch() {
   populateResearchLakeDropdown();
   setTimeout(populateResearchLakeDropdown, 1500);
- 
+ 
   document.getElementById('researchLakeSelect')?.addEventListener('change', (e) => {
     const v = e.target.value;
     if (v) loadProfile(v);
   });
- 
+ 
   document.getElementById('researchLoadBtn')?.addEventListener('click', () => {
     const sel = document.getElementById('researchLakeSelect');
     if (sel?.value) loadProfile(sel.value);
     else alert('Select a lake first');
   });
- 
+ 
   document.getElementById('researchListBtn')?.addEventListener('click', async () => {
     const data = await fetchResearchList();
     if (data) {
       alert(`Found ${data.count} researched lakes:\n${data.lakes.map(l => `${l.id} (${(l.size / 1024).toFixed(1)}KB)`).join('\n')}`);
     }
   });
- 
+ 
   document.getElementById('btnApprove')?.addEventListener('click', async () => {
     if (!_state.currentProfile || !_state.currentLakeName) { alert('Load a profile first'); return; }
     if (!confirm(`Mark ${_state.currentLakeName} as verified? This will save the current in-memory profile to R2 as VERIFIED.`)) return;
@@ -1191,7 +1327,7 @@ function initLakeResearch() {
       log(`Approve failed: ${e.message}`);
     }
   });
- 
+ 
   document.getElementById('btnApproveReview')?.addEventListener('click', async () => {
     if (!_state.currentProfile || !_state.currentLakeName) { alert('Load a profile first'); return; }
     if (!confirm(`Approve and save ${_state.currentLakeName} as VERIFIED?`)) return;
@@ -1204,7 +1340,7 @@ function initLakeResearch() {
       log(`Approve failed: ${e.message}`);
     }
   });
- 
+ 
   document.getElementById('btnSaveDraft')?.addEventListener('click', async () => {
     if (!_state.currentProfile || !_state.currentLakeName) { alert('Load a profile first'); return; }
     try {
@@ -1216,14 +1352,14 @@ function initLakeResearch() {
       log(`Draft save failed: ${e.message}`);
     }
   });
- 
+ 
   document.getElementById('btnResearch')?.addEventListener('click', () => {
     const lake = document.getElementById('researchLakeSelect')?.value;
     if (!lake) { alert('Select a lake first'); return; }
     if (!confirm(`Launch the factual lake research pipeline for ${lake}? This will pull official pages and GIS sources first, fetch accessible documents, parse PDFs client-side with PDF.js, and only use quoted/source-backed extraction where needed. Continue?`)) return;
     runEvidencePipeline(lake, { onComplete: loadProfile, onContradictions: renderContradictionsAlert });
   });
- 
+ 
   // Inject Resume button next to Research button if not already in HTML
   if (!document.getElementById('btnResumeNormalized')) {
     const researchBtn = document.getElementById('btnResearch');
@@ -1236,14 +1372,14 @@ function initLakeResearch() {
       researchBtn.parentNode.insertBefore(resumeBtn, researchBtn.nextSibling);
     }
   }
- 
+ 
   document.getElementById('btnResumeNormalized')?.addEventListener('click', async () => {
     const lake = document.getElementById('researchLakeSelect')?.value;
     if (!lake) { alert('Select a lake first'); return; }
     if (!confirm(`Resume extraction for ${lake} using existing normalized documents already in R2? Skips all PDF downloads — jumps straight to scoring, fact extraction, and mapping.`)) return;
     runFromNormalized(lake, { onComplete: loadProfile, onContradictions: renderContradictionsAlert });
   });
- 
+ 
   document.getElementById('btnSaveNotes')?.addEventListener('click', async () => {
     if (!_state.currentProfile || !_state.currentLakeName) { alert('Load a profile first'); return; }
     const st = document.getElementById('notesStatus');
@@ -1257,7 +1393,7 @@ function initLakeResearch() {
       log(`Save notes failed: ${e.message}`);
     }
   });
- 
+ 
   document.getElementById('btnEditMasterJson')?.addEventListener('click', () => {
     if (!_state.currentProfile) { alert('Load a profile first'); return; }
     const card = document.getElementById('masterJsonEditCard');
@@ -1314,7 +1450,7 @@ function initLakeResearch() {
       log(`Master JSON save failed: ${e.message}`);
     }
   });
- 
+ 
   document.getElementById('researchImportInput')?.addEventListener('change', async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1338,7 +1474,7 @@ function initLakeResearch() {
       e.target.value = '';
     }
   });
- 
+ 
   document.getElementById('btnRefresh')?.addEventListener('click', () => {
     if (!_state.currentLakeName) { alert('Load a lake first'); return; }
     const picker = document.getElementById('refreshPicker');
@@ -1357,7 +1493,7 @@ function initLakeResearch() {
     log(`Refresh requested for sections: ${selected.join(', ')} — running full factual refresh from existing normalized docs.`);
     await runFromNormalized(_state.currentLakeName, { onComplete: loadProfile, onContradictions: renderContradictionsAlert });
   });
- 
+ 
   document.getElementById('btnDeleteResearch')?.addEventListener('click', async () => {
     if (!_state.currentLakeName) { alert('Load a lake first'); return; }
     if (!confirm(`Delete researched profile for ${_state.currentLakeName}? This removes the master JSON, package parts, and versions from R2.`)) return;
@@ -1375,7 +1511,7 @@ function initLakeResearch() {
       log(`Delete failed: ${e.message}`);
     }
   });
- 
+ 
   document.getElementById('btnDebugProfile')?.addEventListener('click', () => {
     const out = document.getElementById('debugOutput');
     if (!out) return;
@@ -1389,7 +1525,7 @@ function initLakeResearch() {
     const out = document.getElementById('debugOutput');
     if (out) out.textContent = '';
   });
- 
+ 
   document.getElementById('btnExport')?.addEventListener('click', () => {
     if (!_state.currentProfile) { alert('No profile loaded to export.'); return; }
     try {
@@ -1408,12 +1544,12 @@ function initLakeResearch() {
       alert(`Export failed: ${e.message}`);
     }
   });
- 
+ 
   console.log('🧠 Structured Evidence Acquisition & Lake Research module ready');
 }
- 
+ 
 setTimeout(initLakeResearch, 800);
- 
+ 
 window.getResearchedProfile = function getResearchedProfile(lakeName) {
   if (!lakeName) return null;
   const direct = window.TROLLMAP_RESEARCHED_CACHE?.[lakeName];
@@ -1421,9 +1557,9 @@ window.getResearchedProfile = function getResearchedProfile(lakeName) {
   const safe = sanitize(lakeName);
   return window.TROLLMAP_RESEARCHED_CACHE?.[safe] || null;
 };
- 
+ 
 export { initLakeResearch, loadProfile, saveCurrentResearchProfile, populateResearchLakeDropdown };
- 
+ 
 
 
 
