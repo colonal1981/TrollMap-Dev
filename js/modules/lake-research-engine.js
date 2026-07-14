@@ -1194,6 +1194,8 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     for (let i = 0; i < usableDocuments.length; i++) {
       const doc = usableDocuments[i];
       const scored = scoredSources.find(s => s.title === doc.title);
+      // Cap document text at 80k chars — large PDFs (200k+) cause LLM timeouts
+      const docText = (doc.fullText || '').slice(0, 80000);
       const singlePayload = {
         lakeName,
         baseName,
@@ -1201,7 +1203,7 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
         documents: [{
           title: doc.title,
           url: doc.url || '',
-          text: doc.fullText || '',
+          text: docText,
           quality: scored ? { ...scored.scoring, classes: scored.classes || [] } : {}
         }]
       };
@@ -1450,6 +1452,8 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     for (const group of agentGroups) {
       for (const agentKey of group.agents) {
         try {
+          // Small delay between agents to avoid Groq burst rate limiting
+          await new Promise(res => setTimeout(res, 1500));
           log(`Running ${agentKey} agent...`);
           const agentRes = await fetch(`${CF_WORKER_URL}/research/agent`, {
             method: 'POST',
