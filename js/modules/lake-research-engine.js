@@ -769,6 +769,11 @@ async function runEvidencePipeline(lakeName, callbacks = {}) {
           if (added >= maxAdd) break;
           const norm = String(d.url || '').split('?')[0].toLowerCase();
           if (!d.url || seen.has(norm)) continue;
+          // Reject non-SC/NC/GA state agency documents
+          if (/michigandnr\.com|michigan\.gov.*dnr|mndnr\.gov|dnr\.wi\.gov|dnr\.illinois|in\.gov.*dnr|\.gc\.ca|dfo-mpo\.gc\.ca/i.test(d.url)) {
+            log(`  ✗ rejected (other state/foreign agency): ${(d.title || d.url).slice(0, 60)}`);
+            continue;
+          }
           // Keep NEPI S / EPA always; other agencies need a decent score + lake relevance
           const isEpa = /nepis\.epa\.gov|epa\.gov|ZyActionD|ZyPDF/i.test(d.url + (d.authority || ''));
           
@@ -1201,11 +1206,19 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
         }]
       };
       try {
-        const res = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(singlePayload)
-        });
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 45000); // 45s per doc max
+        let res;
+        try {
+          res = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(singlePayload),
+            signal: controller.signal
+          });
+        } finally {
+          clearTimeout(timeout);
+        }
         if (!res.ok) {
           log(`⚠️ Doc [${i+1}/${usableDocuments.length}] "${doc.title?.slice(0,40)}" HTTP ${res.status} — skipping`);
           continue;
@@ -1218,7 +1231,11 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
           log(`📄 [${i+1}/${usableDocuments.length}] "${doc.title?.slice(0,50)}" → 0 facts`);
         }
       } catch (e) {
-        log(`⚠️ Doc [${i+1}] "${doc.title?.slice(0,40)}" failed: ${e.message}`);
+        if (e.name === 'AbortError') {
+          log(`⚠️ Doc [${i+1}] "${doc.title?.slice(0,40)}" timed out after 45s — skipping`);
+        } else {
+          log(`⚠️ Doc [${i+1}] "${doc.title?.slice(0,40)}" failed: ${e.message}`);
+        }
       }
     }
 
