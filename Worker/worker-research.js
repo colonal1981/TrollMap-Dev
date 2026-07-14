@@ -373,38 +373,23 @@ async function handleResearchDiscover(request, env) {
   let discoveredSources = [];
   const googleApiKey = env.GOOGLE_SEARCH_API_KEY || env.GOOGLE_CSE_KEY;
   const googleCx = env.GOOGLE_SEARCH_CX || env.GOOGLE_CSE_CX;
-  const tavilyApiKey = env.TAVILY_API_KEY || env.TAVILY_KEY;
   const firecrawlSearchKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
 
-  // PRIMARY: Firecrawl /v2/search (2 credits per 10 results — very cheap)
-  // FALLBACK: Tavily if Firecrawl unavailable
-  const searchProvider = firecrawlSearchKey ? 'firecrawl' : tavilyApiKey ? 'tavily' : null;
-
-  if (searchProvider) {
+  // PRIMARY: Firecrawl /v2/search
+  if (firecrawlSearchKey) {
     for (const q of queryPatterns) {
       try {
         let results = [];
-        if (searchProvider === 'firecrawl') {
-          const searchRes = await fetch('https://api.firecrawl.dev/v2/search', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${firecrawlSearchKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: q, limit: 5 })
-          });
-          if (!searchRes.ok) continue;
-          const searchData = await searchRes.json();
-          results = (searchData.data || searchData.results || []).map(r => ({
-            url: r.url, title: r.title || r.metadata?.title || '', score: 0.5
-          }));
-        } else {
-          const searchRes = await fetch('https://api.tavily.com/search', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${tavilyApiKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: q, search_depth: 'basic', max_results: 3, include_raw_content: false })
-          });
-          if (!searchRes.ok) continue;
-          const searchData = await searchRes.json();
-          results = (searchData.results || []).map(r => ({ url: r.url, title: r.title || '', score: r.score || 0 }));
-        }
+        const searchRes = await fetch('https://api.firecrawl.dev/v2/search', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${firecrawlSearchKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: q, limit: 5 })
+        });
+        if (!searchRes.ok) continue;
+        const searchData = await searchRes.json();
+        results = (searchData.data || searchData.results || []).map(r => ({
+          url: r.url, title: r.title || r.metadata?.title || '', score: 0.5
+        }));
         for (const r of results) {
           const off = offLakePattern(r.title||'', r.url||'');
           if (off) { console.log(`filtered off-lake ${off} for ${baseName}: ${r.url}`); continue; }
@@ -475,7 +460,37 @@ async function handleResearchDiscover(request, env) {
   discoveredSources = filtered;
 
   // Sort by priority (1 = lake-specific) then by score
-  // Per-lake pre-seeded authoritative sources — always included regardless of Tavily results
+
+  // ── Grokipedia slug resolution ─────────────────────────────────────────────
+  // Default slug: Lake_<BaseName> (e.g. Lake_Wateree, Lake_Murray).
+  // Override table covers lakes where Grokipedia uses a non-standard slug.
+  const GROKIPEDIA_SLUG_OVERRIDES = {
+    monticello:    'monticello_reservoir',
+    'clarks hill': 'Clarks_Hill_Lake',
+    thurmond:      'Lake_J._Strom_Thurmond',
+    hartwell:      'Lake_Hartwell',
+    russell:       'Lake_Russell',
+    jocassee:      'Lake_Jocassee',
+    keowee:        'Lake_Keowee',
+    wylie:         'Lake_Wylie',
+    norman:        'Lake_Norman',
+    hickory:       'Lake_Hickory',
+    chatuge:       'Chatuge_Lake',
+    blue_ridge:    'Lake_Blue_Ridge',
+    fontana:       'Fontana_Lake',
+    chickamauga:   'Chickamauga_Lake',
+  };
+  const grokSlug = GROKIPEDIA_SLUG_OVERRIDES[baseLower] || `Lake_${baseName.replace(/\s+/g,'_')}`;
+  const grokSeed = {
+    title: `${lakeName} — Grokipedia`,
+    type: 'HTML',
+    authority: 'Grokipedia',
+    url: `https://grokipedia.com/page/${grokSlug}`,
+    priority: 1,
+    source: 'grokipedia_seed',
+  };
+
+  // Per-lake pre-seeded authoritative sources — always included regardless of search results
   const LAKE_SEEDS = {
     wateree: [
       { title: "Lake Wateree SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/wateree/description.html", priority: 1 },
@@ -561,7 +576,8 @@ async function handleResearchDiscover(request, env) {
   }
 
   // Inject seeds — seeds always take guaranteed slots, prepend so they sort first
-  const seeds = [...(LAKE_SEEDS[baseLower] || []), ...defaultStateSeeds];
+  // grokSeed is universal — added for every lake regardless of state or LAKE_SEEDS entry
+  const seeds = [grokSeed, ...(LAKE_SEEDS[baseLower] || []), ...defaultStateSeeds];
   const guaranteedSeeds = [];
   for (const seed of seeds) {
     const normUrl = String(seed.url || '').split('?')[0].toLowerCase();
@@ -602,12 +618,12 @@ async function handleResearchDiscover(request, env) {
     ];
   }
 
-  // Seeds are guaranteed in final list; fill remaining slots with Tavily results
-  const tavilySources = discoveredSources.filter(s => !guaranteedSeeds.includes(s));
+  // Seeds are guaranteed in final list; fill remaining slots with search results
+  const searchSources = discoveredSources.filter(s => !guaranteedSeeds.includes(s));
   const remainingSlots = Math.max(0, 10 - guaranteedSeeds.length);
-  const tavilyFill = tavilySources.filter(s => s.priority===1).slice(0, remainingSlots);
-  const tavilyGeneric = tavilySources.filter(s => s.priority!==1);
-  let finalList = [...guaranteedSeeds, ...tavilyFill, ...tavilyGeneric].slice(0,10);
+  const searchFill = searchSources.filter(s => s.priority===1).slice(0, remainingSlots);
+  const searchGeneric = searchSources.filter(s => s.priority!==1);
+  let finalList = [...guaranteedSeeds, ...searchFill, ...searchGeneric].slice(0,10);
   if (finalList.length < 3) finalList = discoveredSources.slice(0,10);
 
   return new Response(JSON.stringify({ success: true, sources: finalList, baseName, filteredCount: discoveredSources.length - finalList.length }), { headers: JSON_HEADERS });
@@ -642,7 +658,7 @@ async function handleResearchProxyDownload(request, env) {
       // Search-results page: return markdown of the results list so the client can
       // store it, AND surface ZyActionD links in X-Nepis-Documents for follow-up.
       if (isNepisSearch) {
-        const scrapeRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
+        const scrapeRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -772,7 +788,7 @@ async function handleResearchProxyDownload(request, env) {
           }
         }
 
-        const landRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
+        const landRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -815,7 +831,7 @@ async function handleResearchProxyDownload(request, env) {
           // Prefer raw text endpoint — Firecrawl markdown of a .txt/ASCII page is clean
           if (rawTextUrl && /^https?:\/\//i.test(rawTextUrl)) {
             try {
-              const textRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
+              const textRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ url: rawTextUrl, formats: ['markdown'], onlyMainContent: true, timeout: 25000 })
@@ -859,7 +875,7 @@ async function handleResearchProxyDownload(request, env) {
       // Standard Firecrawl markdown scrape for HTML pages (eRegulations, SCDNR, etc.)
       // waitFor helps JS-rendered SPAs like eRegulations populate table rows
       const isSpa = /eregulations\.com/i.test(target);
-      const fcRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
+      const fcRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1095,7 +1111,6 @@ async function handleResearchDatasetHunt(request, env) {
   }
 
   const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
-  const tavilyKey    = env.TAVILY_API_KEY || env.TAVILY_KEY;
   const baseName     = lakeName.replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA).*$/i,'').trim();
   const baseNameLower = baseName.toLowerCase();
 
@@ -1122,8 +1137,8 @@ async function handleResearchDatasetHunt(request, env) {
   const harvestNepisSearchPage = async (mapUrl, queryLabel) => {
     if (!firecrawlKey) return;
     try {
-      // Prefer /v1/scrape with links — more reliable on ZyNET dynamic results than /map
-      const scrapeRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
+      // Prefer /v2/scrape with links — more reliable on ZyNET dynamic results than /map
+      const scrapeRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1159,7 +1174,7 @@ async function handleResearchDatasetHunt(request, env) {
     }
     // Fallback: Firecrawl /v1/map
     try {
-      const mapRes = await fetch('https://api.firecrawl.dev/v1/map', {
+      const mapRes = await fetch('https://api.firecrawl.dev/v2/map', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: mapUrl, search: baseName, limit: 30, ignoreSitemap: true })
@@ -1195,11 +1210,8 @@ async function handleResearchDatasetHunt(request, env) {
     }
   }
 
-  // ── Phase 2: Search for reports and academic papers (Firecrawl primary, Tavily fallback) ──
-  const huntSearchKey = firecrawlKey || tavilyKey;
-  const huntSearchProvider = firecrawlKey ? 'firecrawl' : tavilyKey ? 'tavily' : null;
-  if (huntSearchProvider) {
-    const stateName = { SC: 'South Carolina', NC: 'North Carolina', GA: 'Georgia' }[state] || 'South Carolina';
+  // ── Phase 2: Search for reports and academic papers (Firecrawl /v2/search) ──
+  if (firecrawlKey) {
     const dnrSite = state === 'NC' ? 'site:ncwildlife.org' : state === 'GA' ? 'site:georgiawildlife.com' : 'site:dnr.sc.gov';
     const huntQueries = [
       `"${baseName}" creel survey fisheries assessment filetype:pdf`,
@@ -1209,27 +1221,16 @@ async function handleResearchDatasetHunt(request, env) {
     for (const q of huntQueries) {
       try {
         let results = [];
-        if (huntSearchProvider === 'firecrawl') {
-          const searchRes = await fetch('https://api.firecrawl.dev/v2/search', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: q, limit: 5 })
-          });
-          if (!searchRes.ok) continue;
-          const searchData = await searchRes.json();
-          results = (searchData.data || searchData.results || []).map(r => ({
-            url: r.url, title: r.title || r.metadata?.title || '', content: ''
-          }));
-        } else {
-          const searchRes = await fetch('https://api.tavily.com/search', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${tavilyKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: q, search_depth: 'basic', max_results: 3, include_raw_content: false })
-          });
-          if (!searchRes.ok) continue;
-          const searchData = await searchRes.json();
-          results = (searchData.results || []).map(r => ({ url: r.url, title: r.title || '', content: r.content || '' }));
-        }
+        const searchRes = await fetch('https://api.firecrawl.dev/v2/search', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: q, limit: 5 })
+        });
+        if (!searchRes.ok) continue;
+        const searchData = await searchRes.json();
+        results = (searchData.data || searchData.results || []).map(r => ({
+          url: r.url, title: r.title || r.metadata?.title || '', content: ''
+        }));
         for (const r of results) {
           if (!r.url || seenUrls.has(r.url)) continue;
           seenUrls.add(r.url);
@@ -1251,7 +1252,7 @@ async function handleResearchDatasetHunt(request, env) {
             title: (r.title || '').slice(0, 180),
             type: /\.pdf$/i.test(r.url) || /ZyPDF/i.test(r.url) ? 'PDF' : 'HTML',
             authority,
-            source: huntSearchProvider,
+            source: 'firecrawl_search',
             score,
             snippet: (r.content || '').slice(0, 300),
           });
@@ -1281,7 +1282,6 @@ async function handleResearchDatasetHunt(request, env) {
     state,
     datasetCount: discovered.length,
     firecrawlUsed: !!firecrawlKey,
-    tavilyUsed: !!tavilyKey,
     datasets: discovered,
   }), { headers: JSON_HEADERS });
 }
@@ -2235,7 +2235,7 @@ async function handleResearchDeterministicFacts(request, env) {
       // (eRegulations is a React SPA — plain fetch returns shell HTML with no table rows)
       if (!regsHtml && firecrawlKey) {
         try {
-          const fcRes = await fetch('https://api.firecrawl.dev/v1/scrape', {
+          const fcRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2941,33 +2941,29 @@ async function handleResearchGapSearch(request, env) {
 
   if (!lakeName || !query) return new Response(JSON.stringify({ success: false, error: "Missing lakeName or query", extracted_facts: [], rawText: '' }), { status: 400, headers: JSON_HEADERS });
 
-  const tavilyKey = env.TAVILY_API_KEY || env.TAVILY_KEY;
-  if (!tavilyKey) return new Response(JSON.stringify({ success: false, error: "No Tavily key", extracted_facts: [], rawText: '' }), { headers: JSON_HEADERS });
+  const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
+  if (!firecrawlKey) return new Response(JSON.stringify({ success: false, error: "No Firecrawl key", extracted_facts: [], rawText: '' }), { headers: JSON_HEADERS });
 
   try {
-    // Search
-    const searchRes = await fetch('https://api.tavily.com/search', {
+    // Search + scrape in one call via Firecrawl /v2/search
+    const searchRes = await fetch('https://api.firecrawl.dev/v2/search', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${tavilyKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, search_depth: 'basic', max_results: 3 })
+      headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, limit: 3 })
     });
-    if (!searchRes.ok) return new Response(JSON.stringify({ success: false, error: `Tavily search ${searchRes.status}`, extracted_facts: [], rawText: '' }), { headers: JSON_HEADERS });
+    if (!searchRes.ok) return new Response(JSON.stringify({ success: false, error: `Firecrawl search ${searchRes.status}`, extracted_facts: [], rawText: '' }), { headers: JSON_HEADERS });
     const searchData = await searchRes.json();
-    const urls = (searchData.results||[]).map(r => r.url).filter(Boolean).slice(0, 3);
-    if (!urls.length) return new Response(JSON.stringify({ success: true, extracted_facts: [], rawText: '', note: "No results found" }), { headers: JSON_HEADERS });
+    const results = searchData.data || searchData.results || [];
+    if (!results.length) return new Response(JSON.stringify({ success: true, extracted_facts: [], rawText: '', note: "No results found" }), { headers: JSON_HEADERS });
 
-    // Extract — return raw text, let mapping agent handle it directly
-    const extractRes = await fetch('https://api.tavily.com/extract', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${tavilyKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ urls, query: `${lakeName} ${field}`, extract_depth: 'basic', format: 'markdown' })
-    });
-    if (!extractRes.ok) return new Response(JSON.stringify({ success: true, extracted_facts: [], rawText: '', note: "Extract failed" }), { headers: JSON_HEADERS });
-    const extractData = await extractRes.json();
-    const rawText = (extractData.results||[]).map(r => r.raw_content||'').join('\n').slice(0, 8000);
+    // Firecrawl /v2/search returns markdown content inline — no separate extract call needed
+    const urls = results.map(r => r.url).filter(Boolean);
+    const rawText = results.map(r => {
+      const content = r.markdown || r.content || r.description || '';
+      return content ? `## ${r.title || r.url}\n${content}` : '';
+    }).filter(Boolean).join('\n\n').slice(0, 8000);
 
-    // Return raw text — no LLM extraction here to avoid CPU timeout
-    // The mapping agent will receive this as additional context in Pass 2
+    // Return raw text — mapping agent handles extraction
     return new Response(JSON.stringify({ success: true, extracted_facts: [], rawText, field, query, urls }), { headers: JSON_HEADERS });
 
   } catch (e) {
