@@ -1,5 +1,5 @@
 import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized } from './worker-core.js';
-import { LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchDukeDashboard } from './worker-data.js';
+import { LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard } from './worker-data.js';
 import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality } from './worker-species.js';
 import { handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey } from './worker-research.js';
 
@@ -474,10 +474,24 @@ async function resolveLake(lakeName) {
         out.sources.push("Santee Cooper");
       }
     } else {
-      const us = await fetchUsaceSavannah(cfg.sepa);
-      if (us?.elevation != null) {
-        out.elevation_ft = us.elevation;
-        out.sources.push("USACE");
+      // Try the USACE CWMS Data API first for authoritative near-real-time elevation.
+      const cwms = await fetchCwmsLakeLevel(lakeName, key);
+      if (cwms?.elevation_ft != null) {
+        out.elevation_ft = round2(cwms.elevation_ft);
+        out.sources.push(`USACE CWMS ${cwms.location || key}`);
+        out.cwms = {
+          location: cwms.location,
+          source: cwms.source,
+          timestamp: cwms.timestamp,
+          method: cwms.method
+        };
+      }
+      if (out.elevation_ft == null) {
+        const us = await fetchUsaceSavannah(cfg.sepa);
+        if (us?.elevation != null) {
+          out.elevation_ft = us.elevation;
+          out.sources.push("USACE Savannah District");
+        }
       }
     }
   }
