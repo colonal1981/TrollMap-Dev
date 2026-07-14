@@ -318,6 +318,10 @@ async function handleResearchDiscover(request, env) {
     // Filter irrelevant document types regardless of lake
     if (/wetlands.management|wma.wetlands|wildlife.management.area|hunting.*pdf|upland.*habitat|prescribed.burn|waterfowl.impound/i.test(combined)) return 'irrelevant_doc_type';
     if (/nrc\.gov\/docs\//i.test(combined)) return 'nrc_nuclear_doc';
+    // Filter non-US / Canadian government documents
+    if (/\.gc\.ca\/|dfo-mpo\.gc\.ca|canada\.ca|ontario\.|quebec\.|british.columbia|alberta\.|manitoba\./.test(combined)) return 'foreign_government_doc';
+    // Filter generic how-to fishing articles with no lake-specific data
+    if (/how.to.fish|beginner.*fishing|fishing.tips.*general|learn.to.fish|fishing.basics/.test(combined) && !combined.includes(baseLower)) return 'generic_fishing_article';
     for (const other of otherLakeNames) {
       if (other === baseLower) continue;
       if (combined.includes(`lake ${other}`) && !combined.includes(baseLower)) {
@@ -2391,186 +2395,133 @@ async function handleResearchAnalyzeFacts(request, env) {
     return new Response(JSON.stringify({ success: false, error: "Missing lakeName or documents payload" }), { status: 400, headers: JSON_HEADERS });
   }
 
-  // ── Filter worthless docs (search/index pages with high URL density, low prose) ──
-  function isIndexPage(doc) {
+  // Filter index/search pages — high URL density, low prose content
+  const isIndexPage = (doc) => {
     const text = doc.text || doc.fullText || '';
     const urlMatches = (text.match(/https?:\/\//g) || []).length;
     const words = text.split(/\s+/).length;
-    return urlMatches > 20 && urlMatches / words > 0.15;
-  }
+    return urlMatches > 40 && urlMatches / words > 0.15;
+  };
+
   const usableDocs = documents.filter(d => !isIndexPage(d));
   const filteredCount = documents.length - usableDocs.length;
   if (filteredCount > 0) {
-    console.log(`handleResearchAnalyzeFacts: filtered ${filteredCount} index/search page(s) from extraction payload`);
-  }
-  if (!usableDocs.length) {
-    return new Response(JSON.stringify({ success: false, error: "All documents were index/search pages — nothing to extract from" }), { status: 400, headers: JSON_HEADERS });
+    console.log(`handleResearchAnalyzeFacts: filtered ${filteredCount} index/search page(s)`);
   }
 
-  // ── Route documents into 3 targeted groups by classification ──
-  // Each group gets docs classified for it; cross-category docs go to all relevant groups (truncated)
-  const CLASS_GROUPS = {
-    identity_limnology: ['Hydrology', 'Limnology'],
-    biology_habitat:    ['Biology'],
-    regulations:        ['Regulations'],
+  if (!usableDocs.length) {
+    return new Response(JSON.stringify({ success: false, error: "All documents were index/search pages" }), { status: 400, headers: JSON_HEADERS });
+  }
+
+  // Per-document extraction — one LLM call per document
+  // This ensures every document gets fully read instead of competing for context budget
+  const allFacts = [];
+  const docResults = [];
+
+  const SYSTEM = "You are a precise fact extraction engine. Extract verified facts about the specified lake from this single document. Return ONLY valid JSON with extracted_facts array. Never hallucinate. Quote must be verbatim from the document. Confidence 0-100.";
+
+  const buildDocPrompt = (doc, lakeName, baseName, state) => {
+    const isRegulations = /regulation|regs|eregulation|creel|size.?limit|bag.?limit/i.test(doc.title + ' ' + (doc.url||''));
+    const isLimnology = /epa|nscep|water.?qual|limnol|nutrient|eutrophication|characteriz/i.test(doc.title + ' ' + (doc.url||''));
+    const isBiology = /fisheries|biology|annual.report|investigations|stocking|species|creel.survey|electrofishing/i.test(doc.title + ' ' + (doc.url||''));
+    const isOperator = /duke.energy|dominion|santee.cooper|usace|army.corps|ferc|cra|agreement/i.test(doc.title + ' ' + (doc.url||''));
+    const isGuide = /sportsman|fishing.report|guide|carolinasportsman|anglersheadquarters|takemefishing/i.test(doc.url||'');
+
+    let focusInstructions = '';
+    if (isLimnology) focusInstructions = `
+PRIORITY FIELDS for this document type:
+- Secchi depth (look for "SECCHI (METERS)" row — convert to feet × 3.281; typical value < 5ft for turbid lakes)
+- Temperature at multiple depths (derive thermocline where temp drops sharply)
+- DO (dissolved oxygen) at multiple depths — depletionDepthFt where DO < 2 mg/L
+- Surface area (in km² or acres — note units), mean depth, max depth (in meters — convert to feet)
+- Hydraulic retention time in days
+- Trophic status (eutrophic/mesotrophic/oligotrophic)
+- Total phosphorus loading
+UNIT WARNING: The EPA NES summary table has multiple rows. SECCHI row values are 0.3-0.5m. Alkalinity row is 10-35 mg/L. Do NOT confuse these. Temperature row is in °C.`;
+
+    if (isBiology) focusInstructions = `
+PRIORITY FIELDS for this document type:
+- Species present (all game fish and forage species mentioned for this lake)
+- Stocking events (species, quantity, year, agency)
+- Standing stock biomass (kg/ha) from cove rotenone or electrofishing data
+- Species composition percentages (% of standing stock)
+- Growth data, PSD/RSD values, electrofishing CPUE
+- Forage fish species and relative abundance
+- Florida bass allele frequency if mentioned`;
+
+    if (isRegulations) focusInstructions = `
+PRIORITY FIELDS for this document type:
+- Creel limits by species (statewide AND lake-specific exceptions)
+- Size/length limits by species
+- Closed seasons (note which waterbodies they apply to — Santee River ≠ Lake Wateree)
+- Any gear restrictions or special rules for this lake`;
+
+    if (isOperator) focusInstructions = `
+PRIORITY FIELDS for this document type:
+- Pool level targets by month (Guide Curve column from CRA table — local datum feet)
+- Minimum and maximum pool elevations
+- Drawdown schedule and target elevations
+- Normal full pool elevation`;
+
+    if (isGuide) focusInstructions = `
+PRIORITY FIELDS for this document type:
+- Thermocline depth (any mention of depth where fish concentrate, e.g. "thermocline at 16 feet")
+- Seasonal patterns by species
+- Structure types where fish are found
+- Forage behavior and depth preferences`;
+
+    return `Extract ALL verified facts about "${lakeName}" (base name "${baseName}", state ${state}) from this document.
+
+DOCUMENT: ${doc.title}
+URL: ${doc.url || 'unknown'}
+${focusInstructions}
+
+RULES:
+1. Only extract facts that explicitly mention "${baseName}" or "${lakeName}", OR are general ${state} statewide regulations that apply to this lake.
+2. Never invent numbers. If a value is not in this document, omit it.
+3. Convert all measurements: meters × 3.281 = feet; km² × 247.1 = acres.
+4. For table data: extract each meaningful row as a separate fact with the row content as the quote.
+5. If this document has NO information about "${baseName}", return {"extracted_facts": []}.
+
+DOCUMENT TEXT:
+${(doc.text || '').slice(0, 35000)}
+
+Return ONLY:
+{"extracted_facts": [{"fact": "concise sentence", "page": 1, "confidence": 85, "source": "${doc.title.slice(0,80)}", "quote": "verbatim text", "category": "category_name"}]}
+
+Categories: surfaceArea, maxDepthFt, averageDepthFt, thermocline, oxygen, secchi, trophicStatus, hydraulicRetentionDays, predatorSpecies, primaryForage, stocking, standingStock, speciesAbundance, creelLimit_general, creelLimit_lakeSpecific, sizeLimit_general, sizeLimit_lakeSpecific, closedSeason, poolLevel, drawdownSchedule, habitatCover, structuralElement, ramp, hazard, reservoirOwner, damName, yearImpounded, riverSystem, summary`;
   };
 
-  function buildGroupContext(targetClasses, docs, maxChars = 50000) {
-    // Primary docs: classified for this group
-    const primary = docs.filter(d => {
-      const classes = d.quality?.classes || [];
-      return targetClasses.some(c => classes.includes(c));
-    });
-    // Cross-category high-value docs not already in primary
-    const primaryTitles = new Set(primary.map(d => d.title));
-    const crossCat = docs.filter(d => {
-      if (primaryTitles.has(d.title)) return false;
-      const comp = d.quality?.composite || 0;
-      const classes = d.quality?.classes || [];
-      return comp >= 80 && classes.length > 1;
-    });
-
-    const parts = [];
-    let used = 0;
-    // Primary docs first, full text
-    for (const doc of primary) {
-      const text = doc.text || '';
-      const chunk = text.slice(0, Math.min(text.length, maxChars - used));
-      if (chunk.length < 100) continue;
-      parts.push(`--- DOCUMENT [composite=${doc.quality?.composite||'?'}] ---\nTitle: ${doc.title}\nURL: ${doc.url||'unknown'}\n${chunk}`);
-      used += chunk.length;
-      if (used >= maxChars) break;
-    }
-    // Cross-category docs truncated to 8k each
-    for (const doc of crossCat) {
-      if (used >= maxChars) break;
-      const text = doc.text || '';
-      const chunk = text.slice(0, Math.min(8000, maxChars - used));
-      if (chunk.length < 100) continue;
-      parts.push(`--- CROSS-REF [composite=${doc.quality?.composite||'?'}] ---\nTitle: ${doc.title}\nURL: ${doc.url||'unknown'}\n${chunk}`);
-      used += chunk.length;
-    }
-    return { context: parts.join('\n\n'), chars: used, docCount: parts.length };
-  }
-
-  // ── Group-specific extraction prompts ──
-  function buildGroupPrompt(group, lakeName, baseName, state, context) {
-    const base = `You are TrollMap Fact Extraction Engine. Extract VERIFIED granular facts about "${lakeName}" (base name "${baseName}", state ${state}) from the document excerpts below.
-
-CRITICAL RULES:
-1. Only extract facts where "${baseName}" or "${lakeName}" is explicitly mentioned, OR where the section clearly applies to all ${state} lakes (for regulations).
-2. Never invent numbers. If a value is not stated, omit it.
-3. Each fact needs: fact (concise sentence), page (estimate 1 if HTML), confidence (0-100), source (doc title), quote (verbatim snippet), category.
-4. Extract from TABLES — table rows count as facts. Quote the relevant row/cell content verbatim.
-5. UNIT CONVERSION: convert meters to feet (×3.281) for all *Ft fields. Surface area in km² × 247.1 = acres.
-6. Return ONLY valid JSON, no markdown.
-
-`;
-
-    if (group === 'identity_limnology') {
-      return base + `FOCUS: Physical identity AND water quality/limnology data.
-
-TARGET CATEGORIES (extract as many as evidence supports):
-- surfaceArea (in acres — convert from km² if needed: km² × 247.1)
-- maxDepthFt (in feet — convert from meters: m × 3.281)
-- averageDepthFt (in feet)
-- damName, yearImpounded, reservoirOwner, riverSystem, archetype
-- thermocline: look for depth profiles showing temperature break. Derive summerDepthFt from where temp drops sharply with depth.
-- oxygen: look for DO readings at multiple depths. depletionDepthFt = depth where DO drops below 2 mg/L. anoxicBelowFt = depth where DO ≈ 0.
-- waterClarity: Secchi disc transparency in feet (convert meters × 3.281), water color, turbidity
-- trophicStatus: eutrophic/mesotrophic/oligotrophic
-- hydraulicRetentionDays: mean hydraulic retention time in days
-- DEPTH PROFILE DATA: if you see a table with depths and DO/temp readings at multiple depths, extract each row as a separate fact with the actual numbers.
-
-IMPORTANT for depth profiles: the EPA NSCEP Wateree report has depth profile tables. Station 1 has readings at 0, 6, 15, 30, 48, 64 feet. Extract DO and temperature at each depth as individual facts if present.
-
-Documents:
-${context}
-
-Return ONLY:
-{"extracted_facts": [{"fact":"...","page":1,"confidence":90,"source":"...","quote":"...","category":"thermocline"}]}
-`;
-    }
-
-    if (group === 'biology_habitat') {
-      return base + `FOCUS: Species, forage, stocking, habitat, and structure.
-
-TARGET CATEGORIES:
-- predatorSpecies: list all sport fish species mentioned for this lake
-- primaryForage: main forage fish species with abundance data if available
-- secondaryForage: other prey species
-- knownStockings: stocking events with species, quantity, years
-- standingStock: biomass per hectare (kg/ha) if mentioned
-- speciesAbundance: relative abundance of species (% of standing stock etc)
-- bottomComposition: clay, rock, sand, mud, gravel
-- cover: standing timber, docks, stumps, brush, vegetation
-- habitat notes: any structural features, cove counts, etc
-- baitfishMovement: seasonal patterns of shad or other forage
-
-IMPORTANT for biology: the striped bass introduction study has cove rotenone data with standing stocks by year. Extract species composition percentages and biomass data.
-
-Documents:
-${context}
-
-Return ONLY:
-{"extracted_facts": [{"fact":"...","page":1,"confidence":90,"source":"...","quote":"...","category":"primaryForage"}]}
-`;
-    }
-
-    if (group === 'regulations') {
-      return base + `FOCUS: Fishing regulations — creel limits, size limits, closed seasons, lake-specific exceptions.
-
-TARGET CATEGORIES:
-- creelLimit_general: statewide daily bag limits by species
-- sizeLimit_general: statewide minimum size by species
-- creelLimit_lakeSpecific: lake-specific creel limits that differ from statewide
-- sizeLimit_lakeSpecific: lake-specific size limits that differ from statewide
-- closedSeason: closed seasons for any species on this lake
-- regulations: any other rules (catch-and-release zones, gear restrictions)
-
-DISTINGUISH between statewide defaults and lake-specific exceptions. Extract BOTH.
-
-Documents:
-${context}
-
-Return ONLY:
-{"extracted_facts": [{"fact":"...","page":1,"confidence":90,"source":"...","quote":"...","category":"creelLimit_general"}]}
-`;
-    }
-
-    return base + `Documents:\n${context}\n\nReturn ONLY:\n{"extracted_facts": []}`;
-  }
-
-  // ── Run all 3 passes ──
-  const allFacts = [];
-  const passResults = [];
-
-  for (const [group, targetClasses] of Object.entries(CLASS_GROUPS)) {
-    const { context, chars, docCount } = buildGroupContext(targetClasses, usableDocs);
-    if (!context || chars < 200) {
-      console.log(`handleResearchAnalyzeFacts: group ${group} has no usable content — skipping`);
+  for (let i = 0; i < usableDocs.length; i++) {
+    const doc = usableDocs[i];
+    const docText = doc.text || doc.fullText || '';
+    if (!docText || docText.length < 100) {
+      console.log(`handleResearchAnalyzeFacts: skipping empty doc [${i+1}]: ${doc.title}`);
       continue;
     }
 
-    const prompt = buildGroupPrompt(group, lakeName, baseName, state, context);
-    const payload = {
-      messages: [
-        { role: "system", content: "You are a precise fact extraction engine. Return ONLY valid JSON with extracted_facts array. Never hallucinate. Quote must be verbatim from context. Confidence 0-100." },
-        { role: "user", content: prompt }
-      ],
-      temperature: 0.05,
-      max_tokens: 6000,
-      response_format: { type: "json_object" }
-    };
-
     try {
+      const prompt = buildDocPrompt(doc, lakeName, baseName, state);
+      const payload = {
+        messages: [
+          { role: "system", content: SYSTEM },
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.05,
+        max_tokens: 4000,
+        response_format: { type: "json_object" }
+      };
+
       const { data } = await callLLM(env, payload, null);
       const text = extractLLMText(data);
       const parsed = extractJsonPossibly(text);
+
       if (!parsed) {
-        console.warn(`handleResearchAnalyzeFacts: group ${group} returned non-JSON`);
+        console.warn(`handleResearchAnalyzeFacts: doc [${i+1}] "${doc.title}" returned non-JSON`);
+        docResults.push({ doc: doc.title, facts: 0, error: 'non-JSON' });
         continue;
       }
+
       let facts = parsed.extracted_facts || parsed.facts || [];
       if (!Array.isArray(facts)) facts = [];
 
@@ -2579,27 +2530,26 @@ Return ONLY:
         fact: String(f.fact||'').trim().slice(0,500),
         page: parseInt(f.page)||1,
         confidence: Math.min(99, Math.max(10, parseInt(f.confidence)||70)),
-        source: String(f.source||'Unknown').slice(0,180),
+        source: String(f.source || doc.title || 'Unknown').slice(0,180),
         quote: String(f.quote||'').trim().slice(0,400),
-        category: String(f.category||'general').trim().slice(0,50),
-        extractionGroup: group
+        category: String(f.category||'general').trim().slice(0,50)
       })).filter(f => f.fact.length > 10);
 
-      // Quality filter: require lake name in fact/quote/source for non-regulation facts
-      const generalCats = new Set(['regulations_general','creelLimit_general','sizeLimit_general','regulations','closedSeason']);
-      const filtered = facts.filter(f => {
-        const catLower = f.category.toLowerCase();
-        if (generalCats.has(catLower) || catLower.includes('general') || /creel|size.?limit|regulation/.test(catLower)) return true;
+      // Quality filter: require lake mention for non-regulation facts
+      const generalCats = new Set(['creelLimit_general','sizeLimit_general','regulations_general','closedSeason']);
+      const kept = facts.filter(f => {
+        if (generalCats.has(f.category) || /general|creel|size.?limit|regulation/i.test(f.category)) return true;
         const combined = `${f.fact} ${f.quote} ${f.source}`.toLowerCase();
         return combined.includes(baseName.toLowerCase()) || combined.includes(lakeName.toLowerCase());
       });
 
-      const kept = filtered.length ? filtered : facts;
       allFacts.push(...kept);
-      passResults.push({ group, docsUsed: docCount, charsUsed: chars, factsExtracted: kept.length });
-      console.log(`handleResearchAnalyzeFacts: group ${group} — ${docCount} docs, ${chars} chars, ${kept.length} facts`);
+      docResults.push({ doc: doc.title, facts: kept.length });
+      console.log(`handleResearchAnalyzeFacts: doc [${i+1}/${usableDocs.length}] "${doc.title.slice(0,50)}" → ${kept.length} facts`);
+
     } catch (e) {
-      console.warn(`handleResearchAnalyzeFacts: group ${group} failed: ${e.message}`);
+      console.warn(`handleResearchAnalyzeFacts: doc [${i+1}] failed: ${e.message}`);
+      docResults.push({ doc: doc.title, facts: 0, error: e.message });
     }
   }
 
@@ -2609,11 +2559,12 @@ Return ONLY:
     meta: {
       totalDocs: usableDocs.length,
       filteredIndexPages: filteredCount,
-      passes: passResults,
+      docResults,
       totalFacts: allFacts.length
     }
   }), { headers: JSON_HEADERS });
 }
+
 
 
 async function handleResearchDedupeContradictions(request, env) {
@@ -3112,7 +3063,7 @@ EXTRACTED FACTS:
 ${factsBlock || 'No limnology facts extracted — derive from document depth profiles.'}
 
 INSTRUCTIONS:
-1. secchiFt: convert meters × 3.281 if given in meters.
+1. secchiFt: The EPA NES table has a row labeled "SECCHI (METERS)" — that is the only row for Secchi. Values are typically 0.3-0.5m for turbid lakes. Convert meters × 3.281. NEVER use alkalinity (10-35 mg/L), conductivity, pH, or any other row as Secchi. If Secchi is in meters, the feet value will be LESS THAN 5 ft for most SE reservoirs. A secchiFt value above 10 is almost certainly wrong — reject it.
 2. thermocline.summerDepthFt: find where temperature drops sharply with depth in summer profiles. Report as [shallowFt, deepFt].
 3. oxygen.depletionDepthFt: depth where DO first drops below 2 mg/L in summer.
 4. oxygen.anoxicBelowFt: depth where DO approaches 0.
