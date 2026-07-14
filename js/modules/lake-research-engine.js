@@ -1075,7 +1075,10 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
           title: d.title,
           url: d.url,
           text: extractRelevantChunks(d.fullText, lakeName, chunkBudget),
-          quality: (scoredSources.find(s => s.title === d.title)?.scoring) || {}
+          quality: (() => {
+            const scored = scoredSources.find(s => s.title === d.title);
+            return scored ? { ...scored.scoring, classes: scored.classes || [] } : {};
+          })()
         };
       })
     };
