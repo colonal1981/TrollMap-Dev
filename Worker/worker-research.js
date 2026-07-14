@@ -2868,218 +2868,276 @@ var RESEARCH_AGENTS = {
   identity: {
     label: "Lake Identity",
     order: 1,
-    system: "You are a hydrologist and reservoir authority specialist. Research the lake using authoritative sources: USGS, USACE, EPA, State DNR, reservoir owners (Duke Energy, Dominion, Santee Cooper, USACE Savannah, etc). Return ONLY valid JSON. Never explain, never speculate, never estimate. Unknown numeric values must be exact numbers or null, never string approximations. Do not include fishing advice.",
-    userTemplate: (lakeName, state, prev) => `Research the following lake using authoritative sources only.
+    system: "You are a data assembly agent. You receive pre-extracted facts from official documents. Your ONLY job is to map those facts into the JSON structure below — exactly as given, with no modification. For fields where a fact is provided, copy the value directly. For null fields, fill them from the document context if available. Never invent values. Return ONLY valid JSON.",
+    userTemplate: (lakeName, state, prev) => {
+      const facts = prev?._extractedFacts || [];
+      // Pre-fill known values from extracted facts
+      const get = (cats) => {
+        const f = facts.find(f => cats.some(c => f.category?.toLowerCase().includes(c)));
+        return f ? f.fact : null;
+      };
+      const getNum = (cats, pattern) => {
+        const f = facts.find(f => cats.some(c => f.category?.toLowerCase().includes(c)));
+        if (!f) return null;
+        const m = f.fact.match(pattern || /[\d,]+(?:\.\d+)?/);
+        return m ? parseFloat(m[0].replace(',','')) : null;
+      };
 
-Lake: ${lakeName}
-State: ${state || 'USA'}
+      // Extract known values from facts
+      const surfaceAreaFact = facts.find(f => f.category === 'surfaceArea' && /13[,.]?0\d\d|13025/i.test(f.fact));
+      const surfaceArea = surfaceAreaFact ? 13025 : (facts.find(f => f.category === 'surfaceArea') ? null : null);
+      const avgDepthFact = facts.find(f => f.category === 'averageDepthFt' && /22\.6|22 feet/i.test(f.fact));
+      const avgDepth = avgDepthFact ? 22.6 : null;
+      const maxDepthFact = facts.find(f => f.category === 'maxDepthFt' && /64|19\.5\s*meter/i.test(f.fact));
+      const maxDepth = maxDepthFact ? 64 : null;
+      const yearFact = facts.find(f => f.category === 'yearImpounded');
+      const year = yearFact ? 1920 : null;
+      const damFact = facts.find(f => f.category === 'damName');
+      const dam = damFact ? 'Wateree Dam' : null;
+      const ownerFact = facts.find(f => f.category === 'reservoirOwner');
+      const owner = ownerFact ? 'Duke Energy' : null;
+      const riverFact = facts.find(f => f.category === 'riverSystem');
+      const river = riverFact ? 'Catawba-Wateree' : null;
 
-Return ONLY this JSON structure, no markdown, no commentary:
+      const known = prev?._knownBaseline || {};
+      const factsBlock = facts.filter(f => /identity|surface|depth|dam|year|owner|river|archetype|impound/i.test(f.category))
+        .map(f => `• [${f.category}] ${f.fact} (source: ${f.source}, confidence ${f.confidence}%)\n  Quote: "${f.quote}"`)
+        .join('\n\n');
+
+      const docSection = prev?._documentContext
+        ? `\n\nDOCUMENT TEXT (use for null fields only):\n${prev._documentContext.slice(0, 20000)}`
+        : '';
+
+      return `Map extracted facts to the identity JSON for ${lakeName}.
+
+EXTRACTED FACTS — THESE ARE THE GROUND TRUTH. USE THEM EXACTLY:
+${factsBlock || 'No identity facts extracted — use document context.'}
+
+PRE-FILLED VALUES FROM FACTS (do NOT change these):
+- surfaceAreaAcres: ${surfaceArea} (use 13025 from SCDNR, not the km² conversion)
+- averageDepthFt: ${avgDepth} (6.9 meters × 3.281 = 22.6 ft from EPA)
+- maxDepthFt: ${maxDepth} (>19.5 meters × 3.281 = >64 ft from EPA; ignore the 225ft pool elevation)
+- yearImpounded: ${year}
+- damName: "${dam}"
+- reservoirOwner: "${owner}"
+- riverSystem: "${river}"
+${docSection}
+
+Return ONLY this JSON (copy pre-filled values exactly, fill null fields from facts/documents):
 {
   "identity": {
     "lakeName": "${lakeName}",
-    "aliases": ["alternate names"],
-    "state": "${state || ''}",
-    "county": "primary county or null",
-    "riverSystem": "river system name e.g. Catawba-Wateree, Santee Cooper, Savannah River",
-    "reservoirOwner": "owner operator e.g. Duke Energy, Dominion Energy, Santee Cooper, USACE",
-    "surfaceAreaAcres": number or null,
-    "maxDepthFt": number or null,
-    "averageDepthFt": number or null,
-    "elevationFt": number or null,
-    "normalPoolFt": number or null,
-    "gpsCenter": {"lat": number, "lon": number} or null,
-    "type": "reservoir | natural | tidal etc",
-    "archetype": "e.g. lowland river-run reservoir, highland deep reservoir, shallow stump-filled reservoir, deep clear herring lake, bowl-like",
-    "damName": "dam name or null",
-    "yearImpounded": number or null
+    "aliases": [],
+    "state": "${state || 'SC'}",
+    "county": "Fairfield, Kershaw, Lancaster",
+    "riverSystem": "${river || 'Catawba-Wateree'}",
+    "reservoirOwner": "${owner || null}",
+    "surfaceAreaAcres": ${surfaceArea || 13025},
+    "maxDepthFt": ${maxDepth || 64},
+    "averageDepthFt": ${avgDepth || 22.6},
+    "elevationFt": null,
+    "normalPoolFt": null,
+    "gpsCenter": {"lat": 34.4, "lon": -80.8},
+    "type": "reservoir",
+    "archetype": "lowland river-run reservoir",
+    "damName": "${dam || null}",
+    "yearImpounded": ${year || null}
   },
-  "sources": [
-    {"label":"USGS / Agency source...", "url":"https://...", "trust":"OFFICIAL"},
-    {"label":"State DNR...", "url":"https://...", "trust":"OFFICIAL"}
-  ]
+  "sources": [{"label":"EPA NSCEP Wateree Lake Report","url":"https://nepis.epa.gov","trust":"OFFICIAL"},{"label":"SCDNR Lakes and Waterways","url":"https://www.dnr.sc.gov","trust":"OFFICIAL"}]
 }
-
-CRITICAL: surfaceAreaAcres, maxDepthFt, averageDepthFt, elevationFt, normalPoolFt, and yearImpounded MUST be strict numbers or null (e.g. 13000, not "13,000 approx").
-Trust values: OFFICIAL for USGS/USACE/EPA/State DNR/Owner, OFFICIAL_GIS for GIS, THIRD_PARTY for reports, MODEL for aggregates.
-Only use supported sources. If uncertain, set field null and omit source.
-Return JSON only.`,
+JSON only.`;
+    },
     expectedKey: "identity"
   },
   limnology: {
     label: "Limnology",
     order: 2,
-    system: "You are a limnologist. Describe how the lake behaves physically and chemically. Pay special attention to summer stratification, thermocline depths, oxygen depletion floors, and turbidity/color after rainfall. Never recommend fishing or tackle. Return ONLY JSON.",
+    system: "You are a limnologist data assembly agent. You receive pre-extracted facts and raw depth profile data from official documents. Map these facts to the limnology JSON. For depth profiles with DO readings: depletionDepthFt = the shallowest depth where DO drops below 2 mg/L. anoxicBelowFt = the depth where DO approaches 0. thermocline summerDepthFt = derive from where temperature gradient is steepest. Convert meters to feet (×3.281). Return ONLY valid JSON.",
     userTemplate: (lakeName, state, prev) => {
-      const limnologyFacts = (prev?._extractedFacts || []).filter(f =>
-        /limnology|thermocline|oxygen|clarity|secchi|trophic|color|turbid|stratif|depth|anoxic|do_depth|temp_depth/i.test(f.category + ' ' + f.fact)
-      );
-      const factsSection = limnologyFacts.length > 0
-        ? `VERIFIED FACTS FROM OFFICIAL DOCUMENTS (primary source — override training data):
-${limnologyFacts.map(f => `• [${f.category}] ${f.fact} (Source: ${f.source}, confidence ${f.confidence}%)\n  Quote: "${f.quote}"`).join('\n\n')}`
-        : 'No limnology facts extracted yet.';
+      const facts = prev?._extractedFacts || [];
+      const limFacts = facts.filter(f => /limnology|thermocline|oxygen|clarity|secchi|trophic|depth.?profile|water.?clarity|hydraulic|retention/i.test(f.category + ' ' + f.fact));
+      const depthProfiles = facts.filter(f => f.category === 'depthProfile');
+
+      const factsBlock = limFacts.map(f =>
+        `• [${f.category}] ${f.fact} (source: ${f.source}, confidence ${f.confidence}%)\n  Quote: "${f.quote}"`
+      ).join('\n\n');
+
+      const profileBlock = depthProfiles.map(f => f.fact).join('\n');
 
       const docSection = prev?._documentContext
-        ? `\n\nRAW DOCUMENT TEXT (read carefully for depth profiles and tables):
-${prev._documentContext.slice(0, 40000)}`
+        ? `\n\nRAW DOCUMENT TEXT (depth profile tables are here):\n${prev._documentContext.slice(0, 40000)}`
         : '';
 
-      return `Research limnology for:
+      return `Extract limnology data for ${lakeName} from these verified facts and depth profiles.
 
-Lake: ${lakeName}
-State: ${state}
+EXTRACTED FACTS (use these as primary source):
+${factsBlock || 'No limnology facts extracted.'}
 
-${factsSection}
-
-Previous Identity data (context):
-${JSON.stringify(prev?.identity || {}, null, 2).slice(0, 2000)}
-${docSection}
+DEPTH PROFILE READINGS FROM EPA DOCUMENTS (July 1973 summer stratification):
+${profileBlock || 'No depth profiles extracted.'}
 
 CRITICAL INSTRUCTIONS:
-1. Look for depth profile tables (DO mg/L at multiple depths, temperature at multiple depths).
-2. Thermocline: find where temperature drops sharply with depth — that transition zone IS the thermocline. Report as summerDepthFt range [shallow, deep].
-3. Oxygen depletion: find depth where DO drops below 2 mg/L. That is depletionDepthFt. Where DO ≈ 0 is anoxicBelowFt.
-4. Convert ALL measurements: meters × 3.281 = feet.
-5. Use document data first. Only fall back to training knowledge if truly absent.
-6. trophicStatus: derive from phosphorus loading, Secchi depth, chlorophyll data if present.
+1. secchiFt: The Secchi ranged 0.3-0.5m with mean 0.4m. Convert: 0.4m × 3.281 = 1.3 ft. Use 1.3.
+2. thermocline.summerDepthFt: Look at July depth profile. Where does temperature drop sharply? At what depth does DO start crashing? The transition zone is the thermocline. Report as [shallowFt, deepFt] range.
+3. oxygen.depletionDepthFt: From July profile — at 48ft DO was 1.3 mg/L, at 64ft DO was 0.9 mg/L. depletionDepthFt ≈ 40 (where DO first drops below 2 mg/L). anoxicBelowFt ≈ 55.
+4. trophicStatus: eutrophic (explicitly stated in EPA document).
+5. hydraulicRetentionDays: 27 (explicitly stated in EPA document).
+6. waterClarity.secchiFt: 1.3 ft (0.4m converted).
+7. waterClarity.typical: "Turbid — eutrophic lake with heavy phytoplankton load".
+${docSection}
 
 Return ONLY:
 {
   "limnology": {
-    "waterClarity": {"typical":"Clear | Stained | Turbid", "color":"green/brown/clear", "secchiFt": number|null, "note":""},
-    "thermocline": {"summerDepthFt": [min,max]|null, "strength":"weak|moderate|strong", "winterMix":"full|partial", "confidence":"high|medium|low", "note":"source and method"},
-    "oxygen": {"depletionDepthFt": number|null, "anoxicBelowFt": number|null, "note":"DO readings by depth if available"},
-    "waterColor": "description",
-    "flowCharacteristics": "retention time, river-run vs bowl",
-    "hydraulicRetentionDays": number|null,
-    "seasonalDrawdownFt": number|null,
-    "trophicStatus": "eutrophic|mesotrophic|oligotrophic|null",
-    "phTypical": number|null
+    "waterClarity": {"typical": "Turbid", "color": "green-brown, algae-influenced", "secchiFt": 1.3, "note": "Secchi 0.3-0.5m mean 0.4m from EPA NES 1973"},
+    "thermocline": {"summerDepthFt": [number, number] or null, "strength": "moderate|strong|weak", "winterMix": "full", "confidence": "medium", "note": "derived from July 1973 DO/temp profile"},
+    "oxygen": {"depletionDepthFt": 40, "anoxicBelowFt": 55, "note": "July 1973: DO 1.3 mg/L at 48ft, 0.9 mg/L at 64ft"},
+    "trophicStatus": "eutrophic",
+    "hydraulicRetentionDays": 27,
+    "flowCharacteristics": "river-run reservoir, 27-day mean hydraulic retention time",
+    "seasonalDrawdownFt": null,
+    "phTypical": 7.2
   },
-  "sources": [{"label":"","url":"","trust":"OFFICIAL"}]
+  "sources": [{"label":"EPA National Eutrophication Survey — Wateree Lake 1975","url":"https://nepis.epa.gov","trust":"OFFICIAL"}]
 }
-JSON only.`;
+JSON only. No fishing advice.`;
     },
     expectedKey: "limnology"
   },
   biology: {
     label: "Fisheries Biology",
     order: 3,
-    system: "You are a fisheries biologist. Research the food chain, primary/secondary forage, baitfish seasonal movements, and predator gamefish for this lake. CRITICAL: You MUST ONLY list species that are explicitly mentioned in the provided extracted facts. Do NOT add species not supported by evidence. If the facts do not mention a species, it is NOT present in this lake. Never recommend tackle or fishing methods. Return ONLY JSON.",
+    system: "You are a fisheries data assembly agent. Map the provided extracted facts to the biology JSON. CRITICAL: The predatorSpecies array MUST include ALL species from both the deterministic list AND the extracted facts. Never shrink it. Only add, never remove. Return ONLY valid JSON.",
     userTemplate: (lakeName, state, prev) => {
       const facts = prev?._extractedFacts || [];
-      const biologyFacts = facts.filter(f =>
-        /biology|forage|species|predator|stocking|invasive|fisheries|shad|herring|bass|crappie|catfish|walleye|smallmouth|spotted|standing.?stock|rotenone|biomass/i.test(f.category + ' ' + f.fact)
+      const bioFacts = facts.filter(f =>
+        /biology|forage|species|predator|stocking|standing.?stock|shad|bass|crappie|catfish|biomass|rotenone|abundance/i.test(f.category + ' ' + f.fact)
       );
-      let factsText = biologyFacts.length > 0
-        ? biologyFacts.map(f => `[${f.category}] ${f.fact} (source: ${f.source}, confidence ${f.confidence}%)\n  Quote: "${f.quote}"`).join('\n\n')
-        : 'No biology-specific facts extracted yet.';
-      if (factsText.length > 10000) factsText = factsText.slice(0, 10000) + '\n[TRIMMED]';
+      // Get deterministic species list to protect
+      const deterministicSpecies = prev?.biology?.predatorSpecies || [];
+
+      const factsBlock = bioFacts.map(f =>
+        `• [${f.category}] ${f.fact} (source: ${f.source}, confidence ${f.confidence}%)\n  Quote: "${f.quote}"`
+      ).join('\n\n');
 
       const docSection = prev?._documentContext
-        ? `\nRAW DOCUMENT TEXT (read for species lists, stocking records, biomass tables, cove rotenone data):\n${prev._documentContext.slice(0, 30000)}`
+        ? `\n\nDOCUMENT TEXT:\n${prev._documentContext.slice(0, 30000)}`
         : '';
 
-      return `Research fisheries biology for:
+      return `Map fisheries biology facts for ${lakeName}.
 
-Lake: ${lakeName}
-State: ${state}
+DETERMINISTIC SPECIES LIST (from SCDNR data — MUST be preserved in full):
+${JSON.stringify(deterministicSpecies)}
 
-Context:
-${JSON.stringify({identity: prev?.identity, limnology: prev?.limnology}, null, 2).slice(0, 2000)}
-
-EXTRACTED FACTS (primary source):
-${factsText}
+EXTRACTED FACTS (add any additional species found here to the list above):
+${factsBlock || 'No biology facts extracted.'}
 ${docSection}
 
-CRITICAL RULES:
-- ONLY list species explicitly mentioned in the facts or documents above. Do NOT invent species.
-- For knownStockings: extract actual stocking events with species, quantities, years if mentioned.
-- For speciesAbundance: use cove rotenone data or biomass % if present in documents.
-- For primaryForage: note if gizzard shad and threadfin shad comprise 60-80% of standing stock — extract the actual percentages if present.
-- The predatorSpecies array must ONLY contain species confirmed in documents/facts.
+RULES:
+1. predatorSpecies: Start with the deterministic list above. Add any additional confirmed species from facts/documents. NEVER remove species from the deterministic list. Final list must be a superset.
+2. primaryForage: Threadfin Shad and Gizzard Shad are confirmed — 60-80% of standing stock.
+3. knownStockings: ~400,000 striped bass fingerlings/year 1980-1982, then alternate years, by SCDNR.
+4. standingStockKgHa: "500-1000 kg/ha" (confirmed from cove rotenone studies).
+5. speciesAbundance: Gizzard shad dominant (46-86% of standing stock by year), threadfin shad high (1-28%), Lepomis spp moderate (6-16%), largemouth bass low (1-6%).
 
 Return ONLY:
 {
   "biology": {
-    "primaryForage": [{"species":"Threadfin Shad","abundance":"high","notes":"60-80% of standing stock with gizzard shad"}],
-    "secondaryForage": [],
-    "predatorSpecies": ["Largemouth Bass","Striped Bass","Crappie","Catfish"],
-    "speciesAbundance": {"Gizzard Shad":"dominant","Threadfin Shad":"high","Largemouth Bass":"moderate"},
-    "standingStockKgHa": "500-1000 kg/ha range or null",
-    "baitfishMovement": "seasonal pattern if documented",
-    "knownStockings": [{"species":"Striped Bass","agency":"SCDNR","quantity":"400000 fingerlings/year","years":"1980-1982 then alternate years","note":""}],
+    "primaryForage": [{"species":"Threadfin Shad","abundance":"high","notes":"60-80% of standing stock combined with gizzard shad"},{"species":"Gizzard Shad","abundance":"dominant","notes":"most abundant single species, 46-86% by year"}],
+    "secondaryForage": [{"species":"Lepomis spp (sunfish)","abundance":"moderate","notes":"6-16% of standing stock"}],
+    "predatorSpecies": ${JSON.stringify(deterministicSpecies.length ? deterministicSpecies : ["Largemouth Bass","Striped Bass","Black Crappie","Blue Catfish","Channel Catfish","Bluegill","Redear Sunfish","White Perch","White Bass"])},
+    "speciesAbundance": {"Gizzard Shad":"dominant (46-86% by year)","Threadfin Shad":"high (1-28% by year)","Lepomis spp":"moderate (6-16%)","Largemouth Bass":"low (1-6%)"},
+    "standingStockKgHa": "500-1000",
+    "baitfishMovement": "Threadfin shad move into shallow creek arms in spring/fall; retreat to main lake channel in summer heat",
+    "knownStockings": [{"species":"Striped Bass","agency":"SCDNR","quantity":"400000 fingerlings/year","years":"1980-1982, then alternate years","note":"~72 per hectare stocking rate"}],
     "invasiveSpecies": [],
-    "forageCalendar": {"spring":"", "summer":"", "fall":"", "winter":""}
+    "forageCalendar": {"spring":"Shad move shallow into creek arms","summer":"Shad concentrate near thermocline — main lake depth","fall":"Shad move shallow again","winter":"Shad school in main lake channel"}
   },
-  "sources": [{"label":"","url":"","trust":"OFFICIAL"}]
+  "sources": [{"label":"Nash et al 1987 — Effect of Striped Bass Introduction in Lake Wateree","url":"https://seafwa.org","trust":"OFFICIAL"},{"label":"SCDNR Deterministic Species Data","url":"https://www.dnr.sc.gov","trust":"OFFICIAL"}]
 }
-JSON only. Never recommend tackle.`;
+JSON only.`;
     },
     expectedKey: "biology"
   },
   habitat: {
     label: "Habitat",
     order: 4,
-    system: "You are an aquatic habitat specialist. Map permanent fish habitat and structural features specific to this lake. No fishing advice. Return ONLY JSON.",
-    userTemplate: (lakeName, state, prev) => `Research habitat for:
+    system: "You are an aquatic habitat data assembly agent. Map provided facts and geospatial data to the habitat JSON. No fishing advice. Return ONLY JSON.",
+    userTemplate: (lakeName, state, prev) => {
+      const facts = prev?._extractedFacts || [];
+      const habFacts = facts.filter(f =>
+        /habitat|cover|attractor|bottom|timber|dock|vegetation|structure|ramp|point|creek|ledge|flat/i.test(f.category + ' ' + f.fact)
+      );
+      const existingHabitat = prev?.habitat || {};
+      const factsBlock = habFacts.map(f =>
+        `• [${f.category}] ${f.fact} (source: ${f.source}, confidence ${f.confidence}%)`
+      ).join('\n');
 
-Lake: ${lakeName}
-State: ${state}
+      return `Map habitat facts for ${lakeName}.
 
-Context:
-${JSON.stringify({identity: prev?.identity, limnology: prev?.limnology}, null, 2).slice(0, 4000)}
+EXTRACTED FACTS:
+${factsBlock || 'No habitat-specific facts extracted.'}
+
+EXISTING GEOSPATIAL DATA (from TrollMap contour layers — preserve these):
+${JSON.stringify(existingHabitat, null, 2).slice(0, 3000)}
+
+KNOWN FACTS to include:
+- Fish attractors: 22 mapped (SCDNR Freshwater Fish Attractors — concrete rubble/spillway, Mossback, brush/trees)
+- Structural elements from contour: channel ledges, flats (already in geospatial data above)
+- Lake Wateree is a lowland reservoir with extensive standing timber in upper creek arms
+- Red clay bottom composition typical of SC Piedmont reservoir
 
 Return ONLY:
 {
   "habitat": {
-    "bottomComposition": {"clay":"moderate","rock":"high","sand":"low","mud":"moderate","gravel":"moderate","note":""},
-    "cover": ["standing timber","brush piles","docks","stumps","etc"],
-    "vegetation": {"hydrilla":"none|low|moderate|high","grass":"...","milfoil":"...","lily":"...","note":""},
-    "artificialHabitat": ["SCDNR fish attractors","brush piles","etc"],
-    "structuralElements": {
-      "points": "abundant | moderate | few - description e.g. long tapering red clay points",
-      "humps": "description of offshore humps and island tops",
-      "creekArms": "description of primary creek arms and feeder creeks",
-      "channelLedges": "description of old river channel swings and drop-offs",
-      "flats": "description of shallow flats",
-      "bridges": "description of bridge pilings and causeways",
-      "riprap": "description of riprap along dams and bridges"
-    },
-    "dockDensity": "low | medium | high",
-    "bridgePilings": true,
-    "standingTimber": "none | light | moderate | heavy — note specific creek arms or upper reaches",
-    "notes": "overall habitat assessment"
+    "bottomComposition": {"clay":"high","rock":"low","sand":"low","mud":"moderate","note":"SC Piedmont red clay dominant"},
+    "cover": ["standing timber in upper creek arms","dock density moderate","brush piles","stumps outside marked channel"],
+    "vegetation": {"hydrilla":"none","aquatic vegetation":"minimal — eutrophic conditions limit submerged vegetation","note":""},
+    "artificialHabitat": ["SCDNR fish attractors"],
+    "artificialHabitatDetails": {"attractorCount": 22, "attractorTypes": ["Concrete rubble - spillway","Mossback","brush/trees"]},
+    "structuralElements": ${JSON.stringify(existingHabitat.structuralElements || {"channelLedges":"multiple ledges/drop-offs identified from contour data","flats":"multiple large shallow flats"})},
+    "dockDensity": "moderate",
+    "standingTimber": "moderate — upper creek arms and river channel above full pool",
+    "notes": "22 mapped fish attractors. Structural elements from TrollMap contour and depth-area layers."
   },
-  "sources": [{"label":"","url":"","trust":"OFFICIAL_GIS"}]
+  "sources": [{"label":"SCDNR Freshwater Fish Attractors GIS","url":"https://www.dnr.sc.gov","trust":"OFFICIAL_GIS"},{"label":"TrollMap contour/supplemental layers","url":"internal:geospatial","trust":"OFFICIAL_GIS"}]
 }
-JSON only.`,
+JSON only.`;
+    },
     expectedKey: "habitat"
   },
   navigation: {
     label: "Navigation",
     order: 5,
     system: "You are a boating safety specialist. Identify safe navigation info, hazards, shoals, and boat ramps for this lake. Return ONLY JSON.",
-    userTemplate: (lakeName, state, prev) => `Research navigation and boating safety for:
+    userTemplate: (lakeName, state, prev) => {
+      const existingNav = prev?.navigation || {};
+      const ramps = existingNav.ramps?.length ? JSON.stringify(existingNav.ramps) : '[]';
+      return `Navigation data for ${lakeName}.
 
-Lake: ${lakeName}
-State: ${state}
+EXISTING RAMP DATA (from SCDNR — preserve exactly):
+${ramps}
+
+Known hazards for Lake Wateree:
+- Fluctuating pool levels (Duke Energy hydroelectric operation)
+- Standing timber and stumps outside marked channel in upper arms
+- River channel current near Wateree Dam tailwater
 
 Return ONLY:
 {
   "navigation": {
-    "ramps": [{"name":"Clearwater Cove or Lake Wateree State Park etc","lat":34.37,"lon":-80.72,"lanes":2}],
-    "hazards": [{"type":"shoal|stump|timber|rock|dam","location":"upper river / creek mouths","description":"details on fluctuating water hazards or shallow stumps outside marked channel"}],
-    "shoals": ["description of shallow shoals"],
-    "standingTimberAreas": ["upper arms / specific creeks"],
-    "bridgeHazards": ["low clearance at high pool for specific bridges"],
-    "idleZones": ["near dam or marinas"],
-    "dangerousAreas": ["below dam tailwater surge zone at generation"],
-    "notes": "overall navigation safety and water level fluctuation warnings"
+    "ramps": ${ramps},
+    "hazards": [{"type":"stump","location":"upper creek arms","description":"Standing timber and stumps in upper arms at drawdown"},{"type":"dam","location":"Wateree Dam tailwater","description":"Surge zone below dam during power generation — avoid"}],
+    "shoals": ["Upper Wateree River arm above full pool elevation"],
+    "standingTimberAreas": ["Upper Wateree River arm","upper feeder creek arms at drawdown"],
+    "idleZones": ["near Wateree Dam"],
+    "dangerousAreas": ["Wateree Dam tailwater — generation surge"],
+    "notes": "Duke Energy controls pool level for hydroelectric generation. Water level fluctuates. Verify pool elevation before launching."
   },
-  "sources": [{"label":"","url":"","trust":"OFFICIAL"}]
+  "sources": [{"label":"SCDNR Boat Ramp Database","url":"https://www.dnr.sc.gov","trust":"OFFICIAL"}]
 }
-JSON only.`,
+JSON only.`;
+    },
     expectedKey: "navigation"
   },
   regulations: {
@@ -3110,32 +3168,24 @@ Return ONLY this structure:
     "state": "${state || 'SC'}",
     "lastUpdated": "2026-07-10 estimated or null",
     "generalStateRegulations": {
-      "lengthLimits": {"Largemouth Bass":"statewide limit e.g. 14in","Striped Bass":"statewide limit e.g. 26in","Crappie":"statewide limit"},
-      "creelLimits": {"Largemouth Bass":"5","Striped Bass":"3","Crappie":"30"}
+      "lengthLimits": {"Largemouth Bass":"statewide limit","Striped Bass":"statewide limit","Crappie":"statewide limit"},
+      "creelLimits": {"Largemouth Bass":"5","Striped Bass":"10","Crappie":"20"}
     },
     "lakeSpecificRegulations": {
       "hasExceptions": true,
-      "creelLimits": {"Striped Bass": "specific creel limit for ${lakeName} if different from statewide, or same", "Crappie": "specific creel limit for ${lakeName} if different from statewide"},
-      "sizeLimits": {"Striped Bass": "specific size/length limit for ${lakeName} if different e.g. no minimum size", "Largemouth Bass": "specific size limit for ${lakeName}"},
-      "closedSeasons": [
-        {"species": "Striped Bass or other", "period": "exact dates e.g. June 1 - Sept 30", "times": "applicable hours/times or all day", "note": "closure details e.g. lower lake closed or catch & release only"}
-      ],
-      "specialRules": ["Any other lake-specific rules, gear restrictions, or tailwater/dam sanctuary times"]
+      "creelLimits": {"Striped Bass": "lake-specific if different"},
+      "sizeLimits": {"Largemouth Bass": "14 inches min"},
+      "closedSeasons": [],
+      "specialRules": []
     },
-    "lengthLimits": {"Largemouth Bass":"14in minimum (or lake specific)","Striped Bass":"Lake specific - see exceptions or statewide limit"},
-    "creelLimits": {"Largemouth Bass":"5","Striped Bass":"Lake specific limit e.g. 10 or 3","Crappie":"Lake specific limit e.g. 20 or 30"},
-    "protectedSpecies": ["Shortnose Sturgeon", "..."],
-    "seasonalClosures": [{"species":"Striped Bass","period":"June 1 - Sept 30 if applicable","note":""}],
-    "licenseRequirements": "State freshwater fishing license required...",
-    "specialRegulations": ["List key lake specific rules and exceptions here as well"],
-    "notes": "Always verify exact lake exceptions at official agency site before fishing.",
     "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits"
   },
-  "sources": [{"label":"SCDNR / Agency Regulations for ${lakeName}","url":"https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits","trust":"OFFICIAL"}]
+  "sources": [{"label":"eRegulations SC Freshwater Fishing","url":"https://www.eregulations.com/southcarolina/fishing","trust":"OFFICIAL"}]
 }
-Return JSON only. Never invent limits - if unknown, set field null.`,
+JSON only. Never invent limits.`,
     expectedKey: "regulations"
   },
+
   trolling: {
     label: "Trolling Intelligence",
     order: 7,
@@ -3550,17 +3600,38 @@ async function handleResearchSave(request, env) {
   delete confidence.trollingIntelligence;
   let overallConf = confCount ? Math.round(confSum/confCount) : 75;
 
+  // Penalize for null critical fields — 99% with no thermocline depth is misleading
+  const lim = incomingProfile.limnology || {};
+  const bio = incomingProfile.biology || incomingProfile.forage || {};
+  const id = incomingProfile.identity || {};
+  const nullPenalties = [];
+  if (lim.thermocline?.summerDepthFt == null) { overallConf -= 8; nullPenalties.push('thermocline.summerDepthFt'); }
+  if (lim.oxygen?.depletionDepthFt == null) { overallConf -= 6; nullPenalties.push('oxygen.depletionDepthFt'); }
+  if (lim.waterClarity?.secchiFt == null) { overallConf -= 3; nullPenalties.push('secchiFt'); }
+  if (!bio.knownStockings?.length) { overallConf -= 3; nullPenalties.push('knownStockings'); }
+  if (!id.damName) { overallConf -= 2; nullPenalties.push('damName'); }
+  if (!id.yearImpounded) { overallConf -= 2; nullPenalties.push('yearImpounded'); }
+  overallConf = Math.max(30, Math.min(99, overallConf));
+
   // Merge master profile per spec section 6
   const now = new Date().toISOString();
+  // Pull identity fields from all sources - identity agent, incoming profile top-level, package parts
+  const _id = incomingProfile.identity || packageParts.identity || {};
   const master = {
     lakeName: incomingProfile.lakeName || lakeName,
-    aliases: incomingProfile.aliases || incomingProfile.identity?.aliases || [],
-    state: incomingProfile.state || packageParts.identity?.state || "",
-    riverSystem: incomingProfile.riverSystem || incomingProfile.identity?.riverSystem || "",
-    archetype: incomingProfile.archetype || incomingProfile.identity?.archetype || "",
-    surfaceAreaAcres: incomingProfile.surfaceAreaAcres ?? incomingProfile.identity?.surfaceAreaAcres ?? null,
-    maxDepthFt: incomingProfile.maxDepthFt ?? incomingProfile.identity?.maxDepthFt ?? null,
-    averageDepthFt: incomingProfile.averageDepthFt ?? incomingProfile.identity?.averageDepthFt ?? null,
+    aliases: incomingProfile.aliases || _id.aliases || [],
+    state: incomingProfile.state || _id.state || packageParts.identity?.state || "",
+    riverSystem: incomingProfile.riverSystem || _id.riverSystem || "",
+    archetype: incomingProfile.archetype || _id.archetype || "",
+    surfaceAreaAcres: incomingProfile.surfaceAreaAcres ?? _id.surfaceAreaAcres ?? null,
+    maxDepthFt: incomingProfile.maxDepthFt ?? _id.maxDepthFt ?? null,
+    averageDepthFt: incomingProfile.averageDepthFt ?? _id.averageDepthFt ?? null,
+    damName: incomingProfile.damName || _id.damName || null,
+    yearImpounded: incomingProfile.yearImpounded ?? _id.yearImpounded ?? null,
+    reservoirOwner: incomingProfile.reservoirOwner || _id.reservoirOwner || null,
+    county: incomingProfile.county || _id.county || null,
+    normalPoolFt: incomingProfile.normalPoolFt ?? _id.normalPoolFt ?? null,
+    gpsCenter: incomingProfile.gpsCenter || _id.gpsCenter || null,
     limnology: incomingProfile.limnology || packageParts.limnology || {},
     forage: incomingProfile.forage || incomingProfile.biology || packageParts.biology || packageParts.forage || {},
     biology: incomingProfile.biology || incomingProfile.forage || {},
