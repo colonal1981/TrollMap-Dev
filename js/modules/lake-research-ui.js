@@ -756,10 +756,28 @@ function renderSections(profile) {
       if (st) { st.textContent = `Running ${agentKey} agent...`; st.style.color = 'var(--accent)'; }
 
       try {
-        // Use already-stored facts from current profile — no re-extraction needed
+        // Pass extracted facts AND normalized document text so agent has real evidence
         const reviewCard = document.getElementById('reviewCard');
         const prevProfile = reviewCard?.dataset.merged ? JSON.parse(reviewCard.dataset.merged) : (_state.currentProfile || {});
         const storedFacts = prevProfile._extractedFacts || _state.currentProfile?._extractedFacts || [];
+
+        // Fetch normalized documents from R2 to give agent actual source text
+        let normalizedDocs = [];
+        try {
+          const normRes = await fetch(`${CF_WORKER_URL}/research/get-normalized?lake=${encodeURIComponent(_state.currentLakeName)}`);
+          if (normRes.ok) {
+            const normData = await normRes.json();
+            if (normData.ok && normData.documents?.length) {
+              normalizedDocs = normData.documents.map(d => ({
+                title: d.title,
+                url: d.url,
+                text: (d.fullText || d.text || '').slice(0, 20000)
+              }));
+            }
+          }
+        } catch (e) {
+          log(`[Re-run] Could not fetch normalized docs: ${e.message} — agent will use stored facts only`);
+        }
 
         const agentRes = await fetch(`${CF_WORKER_URL}/research/agent`, {
           method: 'POST',
@@ -768,7 +786,11 @@ function renderSections(profile) {
             lakeName: _state.currentLakeName,
             state: sanitizeStateFromLakeName(_state.currentLakeName),
             agent: agentKey,
-            previousResults: { ...prevProfile, _extractedFacts: storedFacts }
+            previousResults: {
+              ...prevProfile,
+              _extractedFacts: storedFacts,
+              _normalizedDocuments: normalizedDocs
+            }
           })
         });
         const agentData = await agentRes.json();

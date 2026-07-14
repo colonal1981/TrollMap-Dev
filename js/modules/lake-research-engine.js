@@ -1044,9 +1044,8 @@ function getDocChunks(normalizedDocuments, titlePatterns, lakeName, maxChars) {
       : p.test(d.title || '') || p.test(d.url || ''))
   );
   return docs.map(d => {
-    const rawLen = (d.fullText || '').length;
-    const budget = rawLen > 50000 ? 6000 : maxChars;
-    const chunk = extractRelevantChunks(d.fullText, lakeName, budget);
+    // Don't gut large scientific docs — use full maxChars budget regardless of doc size
+    const chunk = extractRelevantChunks(d.fullText, lakeName, maxChars);
     return `=== ${d.title} ===\n${chunk}`;
   }).join('\n\n');
 }
@@ -1081,12 +1080,29 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       })
     };
 
+    // Pre-filter index/search pages before trimming — they waste context budget
+    const isIndexPage = (doc) => {
+      const text = doc.text || '';
+      const urlMatches = (text.match(/https?:\/\//g) || []).length;
+      const words = text.split(/\s+/).length;
+      return urlMatches > 20 && urlMatches / words > 0.15;
+    };
+    const preFilterCount = extractionPayload.documents.length;
+    extractionPayload.documents = extractionPayload.documents.filter(d => !isIndexPage(d));
+    if (extractionPayload.documents.length < preFilterCount) {
+      log(`⚠️ Filtered ${preFilterCount - extractionPayload.documents.length} index/search page(s) from extraction payload`);
+    }
+
     let totalChars = extractionPayload.documents.reduce((a, b) => a + (b.text?.length || 0), 0);
     if (totalChars > 120000) {
       log(`⚠️ Total payload ${totalChars} chars >120k cap — trimming lowest-quality docs`);
-      const ranked = extractionPayload.documents
-        .map((d) => ({ ...d, composite: (d.quality?.composite) || 50 }))
-        .sort((a, b) => b.composite - a.composite);
+      // Score on content quality: composite score × prose density (penalise URL-heavy docs)
+      const ranked = extractionPayload.documents.map(d => {
+        const text = d.text || '';
+        const urlDensity = (text.match(/https?:\/\//g) || []).length / Math.max(text.split(/\s+/).length, 1);
+        const contentScore = (d.quality?.composite || 50) * (1 - Math.min(urlDensity * 2, 0.8));
+        return { ...d, contentScore };
+      }).sort((a, b) => b.contentScore - a.contentScore);
       let kept = [];
       let cur = 0;
       for (const doc of ranked) {
@@ -1342,9 +1358,70 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     }
 
     // ----------------------------------------------------
-    // STEP 11: Save factual profile
+    // STEP 11: Agent enrichment — runs 3 targeted LLM agents using extracted facts
+    // Each agent receives the facts most relevant to its domain
     // ----------------------------------------------------
-    setProgress("Step 11: Saving factual profile...", 96);
+    setProgress("Step 11: Running agent enrichment...", 88);
+
+    const agentGroups = [
+      { key: 'identity_limnology', agents: ['identity', 'limnology'] },
+      { key: 'biology_habitat',    agents: ['biology', 'habitat'] },
+      { key: 'regulations',        agents: ['regulations'] },
+    ];
+
+    for (const group of agentGroups) {
+      for (const agentKey of group.agents) {
+        try {
+          log(`Running ${agentKey} agent...`);
+          const agentRes = await fetch(`${CF_WORKER_URL}/research/agent`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              lakeName,
+              state: stateName,
+              agent: agentKey,
+              previousResults: {
+                ...agentSections,
+                _extractedFacts: uniqueFacts,
+                _normalizedDocuments: normalizedDocuments.map(d => ({
+                  title: d.title,
+                  url: d.url,
+                  text: (d.fullText || '').slice(0, 20000)
+                }))
+              }
+            })
+          });
+          if (agentRes.ok) {
+            const agentData = await agentRes.json();
+            if (agentData.success && agentData.section) {
+              // Merge agent result — never overwrite deterministic fields with empty arrays
+              const existing = agentSections[agentKey] || {};
+              const merged = { ...existing };
+              for (const [k, v] of Object.entries(agentData.section)) {
+                if (v == null) continue;
+                if (Array.isArray(v) && v.length === 0 && Array.isArray(existing[k]) && existing[k].length > 0) continue;
+                merged[k] = v;
+              }
+              agentSections[agentKey] = merged;
+              if (agentKey === 'biology') {
+                agentSections.biology.predatorSpecies = merged.predatorSpecies?.length ? merged.predatorSpecies : (existing.predatorSpecies || []);
+                agentSections.biology.knownStockings = merged.knownStockings?.length ? merged.knownStockings : (existing.knownStockings || []);
+              }
+              log(`✔ ${agentKey} agent complete (${agentData.confidence?.percent || '?'}% via ${agentData.meta?.model || '?'})`);
+            }
+          } else {
+            log(`⚠️ ${agentKey} agent HTTP ${agentRes.status} — skipping`);
+          }
+        } catch (e) {
+          log(`⚠️ ${agentKey} agent failed: ${e.message} — skipping`);
+        }
+      }
+    }
+
+    // ----------------------------------------------------
+    // STEP 12: Save factual profile
+    // ----------------------------------------------------
+    setProgress("Step 12: Saving factual profile...", 96);
     const sourceMap = new Map();
     for (const s of (deterministicProfile.sources || [])) {
       const key = `${s.label}|${s.url}`;
