@@ -2550,8 +2550,70 @@ async function handleResearchAnalyzeFacts(request, env) {
     const isBiology = /fisheries|biology|annual.report|investigations|stocking|species|creel.survey|electrofishing/i.test(doc.title + ' ' + (doc.url||''));
     const isOperator = /duke.energy|dominion|santee.cooper|usace|army.corps|ferc|cra|agreement/i.test(doc.title + ' ' + (doc.url||''));
     const isGuide = /sportsman|fishing.report|guide|carolinasportsman|anglersheadquarters|takemefishing/i.test(doc.url||'');
+    const isGrokipedia = /grokipedia\.com/i.test(doc.url||'');
 
     let focusInstructions = '';
+    if (isGrokipedia) focusInstructions = `
+PRIORITY FIELDS for this Grokipedia reference article — extract ALL of the following if present:
+
+MORPHOMETRY & IDENTITY:
+- Surface area in acres
+- Maximum depth in feet
+- Average/mean depth in feet
+- Normal pool elevation (feet NGVD or NAVD)
+- Total storage capacity (acre-feet)
+- Active/usable storage capacity (acre-feet)
+- Shoreline miles
+- Year impounded/completed
+- Dam name(s) and type
+- Reservoir owner/operator (current)
+- River system / watershed
+- County/counties
+- GPS coordinates or location description
+- FERC license number and expiration
+
+POOL MANAGEMENT & OPERATIONS:
+- Daily water level fluctuation range (feet)
+- Seasonal drawdown amount (feet)
+- Normal minimum pool elevation
+- Pumped storage cycle description
+- Hydroelectric capacity (MW)
+
+LIMNOLOGY — extract every number you find:
+- Thermocline depth in summer (feet or meters — convert to feet)
+- Hypolimnetic anoxia depth (where DO drops below 2 mg/L)
+- Surface dissolved oxygen range (mg/L)
+- Water clarity / Secchi depth (feet or meters)
+- Trophic status (oligotrophic/mesotrophic/eutrophic)
+- Total phosphorus (mg/L)
+- Chlorophyll-a (µg/L)
+- pH range
+- Water temperature ranges
+- Thermal stratification details
+
+BIOLOGY — extract every species and forage reference:
+- All sport fish species documented (list each separately)
+- Primary forage fish species (gizzard shad, threadfin shad, alewife, etc.)
+- Secondary forage species
+- Total number of documented fish species
+- Any priority/rare/endangered species present
+- Stocking programs (species, quantities, years, agency)
+- Trophy fish potential mentions
+
+HABITAT & NAVIGATION:
+- Fish attractors (count, types)
+- Boat ramps (count, locations)
+- Access points
+- Fishing restrictions (no jet skis, no water skiing, speed limits, etc.)
+- Nuclear exclusion zones or restricted areas
+- Standing timber / submerged structure
+
+WATER QUALITY:
+- Impairments or 303(d) listings
+- PCB or contamination advisories
+- E. coli or bacteria issues
+- Thermal discharge effects (nuclear/industrial cooling)`;
+
     if (isLimnology) focusInstructions = `
 PRIORITY FIELDS for this document type:
 - Secchi depth (look for "SECCHI (METERS)" row — convert to feet × 3.281; typical value < 5ft for turbid lakes)
