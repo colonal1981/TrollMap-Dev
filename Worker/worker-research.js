@@ -387,6 +387,7 @@ async function handleResearchDiscover(request, env) {
   ];
 
   let discoveredSources = [];
+  const queryLog = []; // returned to client for UI logging
   const googleApiKey = env.GOOGLE_SEARCH_API_KEY || env.GOOGLE_CSE_KEY;
   const googleCx = env.GOOGLE_SEARCH_CX || env.GOOGLE_CSE_CX;
   const firecrawlSearchKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
@@ -401,20 +402,20 @@ async function handleResearchDiscover(request, env) {
           headers: { 'Authorization': `Bearer ${firecrawlSearchKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ query: q, limit: 5 })
         });
-        if (!searchRes.ok) { console.warn(`Discover search failed (${searchRes.status}): ${q.slice(0,80)}`); continue; }
+        if (!searchRes.ok) { queryLog.push(`[query] FAILED (${searchRes.status}): ${q.slice(0,80)}`); continue; }
         const searchData = await searchRes.json();
         results = (searchData.data || searchData.results || []).map(r => ({
           url: r.url, title: r.title || r.metadata?.title || '', score: 0.5
         }));
-        console.log(`[discover] query: ${q.slice(0, 100)} → ${results.length} results`);
+        queryLog.push(`[query] ${q.slice(0, 100)} → ${results.length} results`);
         for (const r of results) {
           const off = offLakePattern(r.title||'', r.url||'');
           if (off) {
-            console.log(`  ✗ off-lake (${off}): ${(r.title||r.url).slice(0,80)}`);
+            queryLog.push(`  ✗ off-lake (${off}): ${(r.title||r.url).slice(0,80)}`);
             continue;
           }
           const isPdf = String(r.url||'').toLowerCase().endsWith('.pdf');
-          let host = firecrawlSearchKey ? 'firecrawl' : 'google';
+          let host = 'firecrawl';
           try { host = new URL(r.url).hostname; } catch {}
           let authority = host;
           if (/dnr\.sc\.gov/.test(host) || /eregulations\.com/.test(host)) authority = 'SCDNR';
@@ -422,7 +423,7 @@ async function handleResearchDiscover(request, env) {
           else if (/usace\.army\.mil/.test(host)) authority = 'USACE';
           else if (/nepis\.epa\.gov|epa\.gov/.test(host)) authority = 'EPA NSCEP';
           else if (/dnr|wildlife/.test(host)) authority = dnrName;
-          console.log(`  ✓ found: ${(r.title||r.url).slice(0,80)}`);
+          queryLog.push(`  ✓ found: ${(r.title||r.url).slice(0,80)}`);
           discoveredSources.push({
             title: (r.title || `${queryLake} - ${host}`).replace(/\s+/g,' ').trim().slice(0,180),
             type: isPdf ? 'PDF' : 'HTML',
@@ -469,11 +470,11 @@ async function handleResearchDiscover(request, env) {
   for (const src of discoveredSources) {
     const normUrl = String(src.url||'').split('?')[0].toLowerCase();
     const normTitle = String(src.title||'').toLowerCase().replace(/\s+/g,' ').trim();
-    if (seenUrls.has(normUrl)) { console.log(`  ✗ dupe url: ${src.title?.slice(0,60)}`); continue; }
+    if (seenUrls.has(normUrl)) { queryLog.push(`  ✗ dupe url: ${src.title?.slice(0,60)}`); continue; }
     if (normUrl.includes('pocket') && normTitle.includes('pocket')) continue;
     if (seenTitles.has(normTitle) && normTitle.includes('document') && normTitle.length < 40) continue;
     const off = offLakePattern(src.title, src.url);
-    if (off) { console.log(`  ✗ off-lake final (${off}): ${src.title?.slice(0,60)}`); continue; }
+    if (off) { queryLog.push(`  ✗ off-lake final (${off}): ${src.title?.slice(0,60)}`); continue; }
     seenUrls.add(normUrl);
     seenTitles.add(normTitle);
     filtered.push(src);
@@ -706,7 +707,7 @@ async function handleResearchDiscover(request, env) {
   let finalList = [...guaranteedSeeds, ...searchFill, ...searchGeneric];
   if (finalList.length < 3) finalList = discoveredSources;
 
-  return new Response(JSON.stringify({ success: true, sources: finalList, baseName, filteredCount: discoveredSources.length - finalList.length }), { headers: JSON_HEADERS });
+  return new Response(JSON.stringify({ success: true, sources: finalList, baseName, filteredCount: discoveredSources.length - finalList.length, queryLog }), { headers: JSON_HEADERS });
 }
 __name(handleResearchDiscover, "handleResearchDiscover");
 
