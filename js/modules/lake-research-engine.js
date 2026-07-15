@@ -754,7 +754,15 @@ async function runEvidencePipeline(lakeName, callbacks = {}) {
         const huntData = await huntRes.json();
         const datasets = huntData.datasets || [];
         log(`Dataset hunt returned ${datasets.length} candidates (firecrawl=${!!huntData.firecrawlUsed}, tavily=${!!huntData.tavilyUsed}).`);
-        const seen = new Set(sources.map(s => String(s.url || '').split('?')[0].toLowerCase()));
+        // For NEPIS/ZyNET URLs, normalize on the File= parameter (document ID) not the base URL
+        // since ZyNET.exe is the same for all documents — the File= param identifies the actual doc
+        const normalizeUrl = (url) => {
+          const s = String(url || '');
+          const fileMatch = s.match(/[?&]File=([^&]+)/i);
+          if (fileMatch) return 'nepis:' + decodeURIComponent(fileMatch[1]).toLowerCase();
+          return s.split('?')[0].toLowerCase();
+        };
+        const seen = new Set(sources.map(s => normalizeUrl(s.url)));
         // Prefer EPA NSCEP + high-score PDFs/HTML; cap so we don't explode download time
         const epaFirst = [...datasets].sort((a, b) => {
           const aEpa = /epa|nepis/i.test(a.authority + a.url) ? 1 : 0;
@@ -765,9 +773,25 @@ async function runEvidencePipeline(lakeName, callbacks = {}) {
         let added = 0;
         let epaAdded = 0;
         const maxAdd = 12; // raised from 6 — context windows can handle more sources now
+        // Per-domain caps prevent any single site flooding the queue
+        const DOMAIN_CAPS = {
+          'nepis.epa.gov': 1,
+          'epa.gov': 2,
+          'carolinasportsman.com': 4,
+          'dnr.sc.gov': 3,
+          'ncwildlife.org': 3,
+          'georgiawildlife.com': 3,
+          'gameandfishmag.com': 2,
+          'in-fisherman.com': 2,
+          'bassmaster.com': 2,
+          'saludahydrorelicense.com': 3,
+          'parrfairfieldrelicense.com': 3,
+          'duke-energy.com': 3,
+        };
+        const domainCounts = {};
         for (const d of epaFirst) {
           if (added >= maxAdd) break;
-          const norm = String(d.url || '').split('?')[0].toLowerCase();
+          const norm = normalizeUrl(d.url);
           const scoreVal = d.score || 0;
           const titleSnip = (d.title || d.url).slice(0, 80);
           if (!d.url || seen.has(norm)) {
@@ -780,6 +804,15 @@ async function runEvidencePipeline(lakeName, callbacks = {}) {
             continue;
           }
           const isEpa = /nepis\.epa\.gov|epa\.gov|ZyActionD|ZyPDF/i.test(d.url + (d.authority || ''));
+          // Per-domain cap check
+          let hostname = '';
+          try { hostname = new URL(d.url).hostname.replace(/^www\./,''); } catch(e) {}
+          const domainCap = DOMAIN_CAPS[hostname] || 5;
+          domainCounts[hostname] = domainCounts[hostname] || 0;
+          if (domainCounts[hostname] >= domainCap) {
+            log(`  ✗ skip (domain cap ${domainCap} for ${hostname}): ${titleSnip}`);
+            continue;
+          }
           // Limit to at most 1 EPA report per lake
           if (isEpa && epaAdded >= 1) {
             log(`  ✗ skip (EPA cap reached): ${titleSnip}`);
@@ -790,6 +823,7 @@ async function runEvidencePipeline(lakeName, callbacks = {}) {
             continue;
           }
           seen.add(norm);
+          domainCounts[hostname] = (domainCounts[hostname] || 0) + 1;
           sources.push({
             title: d.title || `Dataset: ${d.url}`,
             type: d.type || (/\.pdf$/i.test(d.url) || /ZyPDF/i.test(d.url) ? 'PDF' : 'HTML'),
@@ -805,7 +839,7 @@ async function runEvidencePipeline(lakeName, callbacks = {}) {
         }
         // Log all remaining candidates that didn't make the cut
         for (const d of epaFirst) {
-          const norm = String(d.url || '').split('?')[0].toLowerCase();
+          const norm = normalizeUrl(d.url);
           if (seen.has(norm)) continue; // already logged above
           const scoreVal = d.score || 0;
           const titleSnip = (d.title || d.url).slice(0, 80);
