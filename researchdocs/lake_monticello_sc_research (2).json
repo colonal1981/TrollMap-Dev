@@ -1,0 +1,1378 @@
+{
+  "lakeName": "Lake Monticello, SC",
+  "aliases": [
+    "Monticello Reservoir"
+  ],
+  "state": "SC",
+  "riverSystem": "Broad River",
+  "archetype": "pumped storage hydroelectric reservoir",
+  "surfaceAreaAcres": 6700,
+  "maxDepthFt": 89,
+  "averageDepthFt": null,
+  "damName": "Dams A, B, C, and D",
+  "yearImpounded": 1978,
+  "reservoirOwner": "Dominion Energy",
+  "county": "Fairfield",
+  "normalPoolFt": 5,
+  "gpsCenter": null,
+  "limnology": {
+    "waterClarity": {
+      "typical": null,
+      "color": null,
+      "secchiFt": null,
+      "note": null
+    },
+    "surfaceWater": {},
+    "thermocline": {
+      "summerDepthFt": null,
+      "strength": null,
+      "winterMix": null,
+      "confidence": null,
+      "note": null
+    },
+    "oxygen": {
+      "depletionDepthFt": null,
+      "anoxicBelowFt": null,
+      "note": null
+    },
+    "trophicStatus": null,
+    "flowCharacteristics": null,
+    "seasonalDrawdownFt": null
+  },
+  "forage": {
+    "primaryForage": [],
+    "secondaryForage": [],
+    "predatorSpecies": [
+      "Largemouth Bass",
+      "Smallmouth Bass",
+      "Spotted Bass",
+      "Bluegill",
+      "Redear Sunfish Shellcracker",
+      "Warmouth",
+      "Black Crappie",
+      "Blue Catfish",
+      "Channel Catfish",
+      "Flathead Catfish",
+      "White Bass / Hybrid",
+      "White Perch"
+    ],
+    "speciesAbundance": {
+      "blackBass": "In July, most are found in deeper water off points and humps; fishing is generally better when there is current.",
+      "catfish": "In July, can be caught by free-line drifting over deep water or anchoring cut bait on humps."
+    },
+    "knownStockings": [],
+    "baitfishMovement": null,
+    "forageCalendar": {
+      "July": [
+        "soft plastics",
+        "flutter spoons",
+        "big crankbaits",
+        "cut bait"
+      ]
+    },
+    "notes": [],
+    "invasiveSpecies": []
+  },
+  "biology": {
+    "primaryForage": [],
+    "secondaryForage": [],
+    "predatorSpecies": [
+      "Largemouth Bass",
+      "Smallmouth Bass",
+      "Spotted Bass",
+      "Bluegill",
+      "Redear Sunfish Shellcracker",
+      "Warmouth",
+      "Black Crappie",
+      "Blue Catfish",
+      "Channel Catfish",
+      "Flathead Catfish",
+      "White Bass / Hybrid",
+      "White Perch"
+    ],
+    "speciesAbundance": {
+      "blackBass": "In July, most are found in deeper water off points and humps; fishing is generally better when there is current.",
+      "catfish": "In July, can be caught by free-line drifting over deep water or anchoring cut bait on humps."
+    },
+    "knownStockings": [],
+    "baitfishMovement": null,
+    "forageCalendar": {
+      "July": [
+        "soft plastics",
+        "flutter spoons",
+        "big crankbaits",
+        "cut bait"
+      ]
+    },
+    "notes": [],
+    "invasiveSpecies": []
+  },
+  "habitat": {
+    "structuralElements": {
+      "channelLedges": "mid-depth contour density indicates multiple ledges / drop-offs",
+      "humps": "multiple closed contour loops suggest several offshore humps or high spots",
+      "flats": "multiple large shallow flats appear in mapped depth-area polygons"
+    },
+    "cover": [
+      "Fish attractor site"
+    ],
+    "vegetation": {},
+    "standingTimber": null,
+    "dockDensity": null,
+    "artificialHabitat": [
+      "Fish attractors"
+    ],
+    "artificialHabitatDetails": {
+      "attractorCount": 12,
+      "attractorTypes": [
+        "Mossback Safe-Haven",
+        "Unknown"
+      ]
+    },
+    "notes": "12 mapped fish attractors available from SCDNR Freshwater Fish Attractors. Structural elements summarized from TrollMap contour, depth-area, POI, and boundary layers.",
+    "bottomComposition": {}
+  },
+  "navigation": {
+    "ramps": [
+      {
+        "name": "Lake Monticello East",
+        "lat": 34.327565,
+        "lon": -81.285632,
+        "lanes": 2,
+        "county": "Fairfield",
+        "owner": "Dominion Energy"
+      },
+      {
+        "name": "Lake Monticello West",
+        "lat": 34.376271,
+        "lon": -81.317874,
+        "lanes": 2,
+        "county": "Fairfield",
+        "owner": "Dominion Energy"
+      }
+    ],
+    "hazards": [],
+    "notes": null
+  },
+  "regulations": {
+    "state": "SC",
+    "generalStateRegulations": {
+      "lengthLimits": {
+        "American Eel": "9 inches min",
+        "Blue Catfish": "Only 2 fish larger than 32 inches per person may be taken",
+        "Bream": "Any length",
+        "Redbreast Sunfish": "Any length",
+        "Crappie": "8 inches min",
+        "Walleye / Sauger": "Any length",
+        "Chain Pickerel": "Any length",
+        "Redfin Pickerel": "Any length",
+        "Yellow Perch": "Any length",
+        "Smallmouth Bass": "12 inches min",
+        "Redeye Bass": "Any length",
+        "Largemouth Bass": "Any length",
+        "Spotted Bass": "Any length",
+        "White Bass": "Any length",
+        "Striped Bass / Hybrid": "Any length"
+      },
+      "creelLimits": {
+        "American Eel": "25",
+        "Blue Catfish": "25",
+        "Bream": "30",
+        "Redbreast Sunfish": "15",
+        "Crappie": "20",
+        "Walleye / Sauger": "No more than 8 combined total of walleye or sauger",
+        "Chain Pickerel": "30",
+        "Redfin Pickerel": "30",
+        "Yellow Perch": "30",
+        "Smallmouth Bass": "No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+        "Redeye Bass": "No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+        "Largemouth Bass": "No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+        "Spotted Bass": "15",
+        "White Bass": "10",
+        "Striped Bass / Hybrid": "10"
+      }
+    },
+    "lakeSpecificRegulations": {
+      "hasExceptions": true,
+      "creelLimits": {
+        "Largemouth Bass": "5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+        "Striped Bass / Hybrid": "10",
+        "White Bass": "10",
+        "Crappie": "20",
+        "Blue Catfish": "25",
+        "Bream": "30",
+        "Chain Pickerel": "30"
+      },
+      "sizeLimits": {
+        "Largemouth Bass": "14 inches min",
+        "Striped Bass / Hybrid": "Any length",
+        "White Bass": "Any length",
+        "Crappie": "8 inches min",
+        "Blue Catfish": "Only 2 fish larger than 32 inches per person may be taken",
+        "Bream": "Any length",
+        "Chain Pickerel": "Any length"
+      },
+      "specialRules": [
+        "Nongame fishing devices are prohibited in Lake Monticello"
+      ],
+      "closedSeasons": []
+    },
+    "notes": "Verify at official agency site before fishing.",
+    "lastUpdated": "November 11, 2025",
+    "lengthLimits": {
+      "American Eel": "9 inches min",
+      "Blue Catfish": "Only 2 fish larger than 32 inches per person may be taken",
+      "Bream": "Any length",
+      "Redbreast Sunfish": "Any length",
+      "Crappie": "8 inches min",
+      "Walleye / Sauger": "Any length",
+      "Chain Pickerel": "Any length",
+      "Redfin Pickerel": "Any length",
+      "Yellow Perch": "Any length",
+      "Smallmouth Bass": "12 inches min",
+      "Redeye Bass": "Any length",
+      "Largemouth Bass": "14 inches min",
+      "Spotted Bass": "Any length",
+      "White Bass": "Any length",
+      "Striped Bass / Hybrid": "Any length"
+    },
+    "creelLimits": {
+      "American Eel": "25",
+      "Blue Catfish": "25",
+      "Bream": "30",
+      "Redbreast Sunfish": "15",
+      "Crappie": "20",
+      "Walleye / Sauger": "No more than 8 combined total of walleye or sauger",
+      "Chain Pickerel": "30",
+      "Redfin Pickerel": "30",
+      "Yellow Perch": "30",
+      "Smallmouth Bass": "No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+      "Redeye Bass": "No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+      "Largemouth Bass": "No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+      "Spotted Bass": "15",
+      "White Bass": "10",
+      "Striped Bass / Hybrid": "10"
+    }
+  },
+  "trolling": null,
+  "trollingIntelligence": null,
+  "summary": {
+    "text": "Lake Monticello, SC is a hydroelectric reservoir about 6,700 surface acres, with a maximum depth near 89 feet. Confirmed sport fish include Largemouth Bass, Smallmouth Bass, Spotted Bass, Bluegill, Redear Sunfish Shellcracker, Warmouth, Black Crappie, Blue Catfish, Channel Catfish, Flathead Catfish, White Bass / Hybrid, White Perch. Habitat facts currently confirm 12 mapped fish attractors; mapped structure includes channelLedges, humps, flats.",
+    "keywords": [
+      "Largemouth Bass",
+      "Smallmouth Bass",
+      "Spotted Bass",
+      "Bluegill",
+      "Redear Sunfish Shellcracker",
+      "Warmouth",
+      "Black Crappie",
+      "Blue Catfish",
+      "Channel Catfish",
+      "Flathead Catfish",
+      "White Bass / Hybrid",
+      "White Perch"
+    ]
+  },
+  "evidence": {
+    "identity": {
+      "archetype": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "Lake Monticello",
+          "sourceUrl": "https://www.dnr.sc.gov/lakes/monticello/description.html",
+          "quote": "hydroelectric station",
+          "method": "cached_document_regex",
+          "normalizedKey": "lake_packages/lake_monticello_sc/normalized_documents.json"
+        }
+      ]
+    },
+    "biology": {
+      "predatorSpecies": [
+        {
+          "sourceType": "official_structured",
+          "sourceLabel": "SCDNR South Carolina Public Water Access",
+          "sourceUrl": "worker:/ramps?state=SC",
+          "quote": null,
+          "method": "structured_species_aggregation",
+          "speciesCount": 12
+        }
+      ]
+    },
+    "limnology": {},
+    "habitat": {
+      "artificialHabitatDetails": [
+        {
+          "sourceType": "official_structured",
+          "sourceLabel": "SCDNR Freshwater Fish Attractors",
+          "sourceUrl": "worker:/attractors?state=SC",
+          "quote": null,
+          "method": "structured_waterbody_aggregation",
+          "count": 12,
+          "types": [
+            "Mossback Safe-Haven",
+            "Unknown"
+          ]
+        }
+      ],
+      "structuralElements.channelLedges": [
+        {
+          "sourceType": "internal_geospatial_layer",
+          "sourceLabel": "TrollMap contour/supplemental/boundary layers",
+          "sourceUrl": "internal:contours+supplemental+boundaries",
+          "quote": null,
+          "method": "geometry_derived_structure_classification",
+          "lakeName": "Lake Monticello, SC"
+        }
+      ],
+      "structuralElements.humps": [
+        {
+          "sourceType": "internal_geospatial_layer",
+          "sourceLabel": "TrollMap contour/supplemental/boundary layers",
+          "sourceUrl": "internal:contours+supplemental+boundaries",
+          "quote": null,
+          "method": "geometry_derived_structure_classification",
+          "lakeName": "Lake Monticello, SC"
+        }
+      ],
+      "structuralElements.flats": [
+        {
+          "sourceType": "internal_geospatial_layer",
+          "sourceLabel": "TrollMap contour/supplemental/boundary layers",
+          "sourceUrl": "internal:contours+supplemental+boundaries",
+          "quote": null,
+          "method": "geometry_derived_structure_classification",
+          "lakeName": "Lake Monticello, SC"
+        }
+      ]
+    },
+    "navigation": {
+      "ramps": [
+        {
+          "sourceType": "official_structured",
+          "sourceLabel": "SCDNR South Carolina Public Water Access",
+          "sourceUrl": "worker:/ramps?state=SC",
+          "quote": null,
+          "method": "structured_waterbody_aggregation",
+          "count": 2
+        }
+      ]
+    },
+    "regulations": {
+      "lastUpdated": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Last Updated: November 11, 2025",
+          "method": "regex_exact_text"
+        }
+      ],
+      "general.American Eel": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | American Eel | 9 inches min | 25",
+          "method": "table_row"
+        }
+      ],
+      "general.Blue Catfish": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Blue Catfish | Only 2 fish larger than 32 inches per person may be taken | 25",
+          "method": "table_row"
+        }
+      ],
+      "general.Bream": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Bream (includes bluegill, flier, warmouth, pumpkinseed, green sunfish, redear (shellcracker) and spotted sunfish) | Any length | 30",
+          "method": "table_row"
+        }
+      ],
+      "general.Redbreast Sunfish": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Redbreast Sunfish | Any length | 15",
+          "method": "table_row"
+        }
+      ],
+      "general.Crappie": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Crappie | 8 inches min | 20",
+          "method": "table_row"
+        }
+      ],
+      "general.Walleye / Sauger": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Walleye & Sauger | Any length | No more than 8 combined total of walleye or sauger",
+          "method": "table_row"
+        }
+      ],
+      "general.Chain Pickerel": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Chain Pickerel | Any length | 30",
+          "method": "table_row"
+        }
+      ],
+      "general.Redfin Pickerel": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Redfin Pickerel | Any length | 30",
+          "method": "table_row"
+        }
+      ],
+      "general.Yellow Perch": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Yellow Perch | Any length | 30",
+          "method": "table_row"
+        }
+      ],
+      "general.Smallmouth Bass": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide except the water bodies listed below: | Smallmouth Bass | 12 inches min | No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+          "method": "table_row"
+        }
+      ],
+      "general.Redeye Bass": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide except the water bodies listed below: | Redeye (Bartrams) Bass | Any length | No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+          "method": "table_row"
+        }
+      ],
+      "general.Largemouth Bass": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide except the water bodies listed below: | Largemouth Bass | Any length | No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+          "method": "table_row"
+        }
+      ],
+      "lakeSpecific.Largemouth Bass": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Lakes Blalock, Greenwood, Jocassee, Marion, Monticello, Moultrie, Murray, Secession, Wateree, Wylie and the middle reach of the Saluda River and the upper reach of the Santee River | Largemouth Bass | 14 inches min | No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+          "method": "table_row"
+        },
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "no largemouth bass less than 14 inches",
+          "method": "regex_exact_text"
+        }
+      ],
+      "general.Spotted Bass": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide except the water bodies listed below: | Spotted Bass | Any length | 15",
+          "method": "table_row"
+        }
+      ],
+      "general.White Bass": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide except the Savannah River | White Bass | Any length | 10",
+          "method": "table_row"
+        }
+      ],
+      "general.Striped Bass / Hybrid": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide except the water bodies list below: | Striped or Hybrid Bass or a combination | Any length | 10",
+          "method": "table_row"
+        }
+      ]
+    },
+    "summary": {
+      "text": [
+        {
+          "sourceType": "internal_synthesis",
+          "sourceLabel": "TrollMap deterministic profile synthesis",
+          "sourceUrl": "internal:deterministic-facts",
+          "quote": null,
+          "method": "deterministic_fact_synthesis"
+        },
+        {
+          "sourceType": "internal_synthesis",
+          "sourceLabel": "TrollMap deterministic profile synthesis",
+          "sourceUrl": "internal:deterministic-facts",
+          "quote": null,
+          "method": "deterministic_fact_synthesis"
+        }
+      ]
+    }
+  },
+  "sources": [
+    {
+      "label": "Lake Monticello",
+      "url": "https://www.dnr.sc.gov/lakes/monticello/description.html",
+      "trust": "OFFICIAL",
+      "sourceType": "official_document"
+    },
+    {
+      "label": "SCDNR / eRegulations",
+      "url": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+      "trust": "OFFICIAL",
+      "sourceType": "official_document"
+    },
+    {
+      "label": "SCDNR South Carolina Public Water Access",
+      "url": "worker:/ramps?state=SC",
+      "trust": "OFFICIAL_GIS",
+      "sourceType": "official_structured"
+    },
+    {
+      "label": "SCDNR Freshwater Fish Attractors",
+      "url": "worker:/attractors?state=SC",
+      "trust": "OFFICIAL_GIS",
+      "sourceType": "official_structured"
+    },
+    {
+      "label": "TrollMap contour / supplemental / boundary layers",
+      "url": "internal:contours+supplemental+boundaries",
+      "trust": "OFFICIAL_GIS",
+      "sourceType": "internal_geospatial_layer"
+    },
+    {
+      "label": "EWG Tap Water Database | Lake Monticello",
+      "url": "https://www.ewg.org/tapwater/system.php?pws=VA2065480",
+      "authority": "www.ewg.org",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 55,
+        "relevance": 95,
+        "freshness": 329,
+        "completeness": 95,
+        "composite": 98
+      }
+    },
+    {
+      "label": "Nongame Fish Species",
+      "url": "https://www.dnr.sc.gov/news/ffopenhouse/Nongameresponses.pdf",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 90,
+        "freshness": 75,
+        "completeness": 95,
+        "composite": 93
+      }
+    },
+    {
+      "label": "SC Freshwater Fish Size & Possession Limits (eRegulations)",
+      "url": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 90,
+        "freshness": 75,
+        "completeness": 85,
+        "composite": 92
+      }
+    },
+    {
+      "label": "Lake Monticello Fishing Information",
+      "url": "https://www.dnr.sc.gov/lakes/monticello/fishing.html",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 65,
+        "composite": 92
+      }
+    },
+    {
+      "label": "SCDNR - News Releases - Freshwater Fishing Trends",
+      "url": "https://www.dnr.sc.gov/news/freshwater.html",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 90,
+        "freshness": 75,
+        "completeness": 85,
+        "composite": 92
+      }
+    },
+    {
+      "label": "2017 Fisheries Investigations in Lakes and Streams",
+      "url": "https://www.dnr.sc.gov/fish/fwfi/files/2017_annual_report.pdf",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 90,
+        "freshness": 41,
+        "completeness": 95,
+        "composite": 90
+      }
+    },
+    {
+      "label": "Lake Monticello Regulations",
+      "url": "https://www.dnr.sc.gov/lakes/monticello/regs.html",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 35,
+        "composite": 89
+      }
+    },
+    {
+      "label": "Lake Monticello Shoreline Management Plan",
+      "url": "https://www.dominionenergy.com/-/media/content/about/lakes-and-recreation/lake-monticello-sc/pdfs/lake-monticello-shoreline-management-plan.pdf",
+      "authority": "www.dominionenergy.com",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 85,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 95,
+        "composite": 88
+      }
+    },
+    {
+      "label": "Lake Monticello, SC — Grokipedia",
+      "url": "https://grokipedia.com/page/monticello_reservoir",
+      "authority": "Grokipedia",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 80,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 95,
+        "composite": 86
+      }
+    },
+    {
+      "label": "LAKE MONTICELLO Water Quality Report 2026 | Virginia",
+      "url": "https://www.tapwaterdata.com/utilities/va/lake-monticello",
+      "authority": "www.tapwaterdata.com",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 95,
+        "freshness": 95,
+        "completeness": 85,
+        "composite": 74
+      }
+    },
+    {
+      "label": "E. coli levels high in part of Lake Monticello",
+      "url": "https://www.cbs19news.com/e-coli-levels-high-in-part-of-lake-monticello/article_f0da8bc3-b364-5da9-9812-6a73fceafcd6.html",
+      "authority": "www.cbs19news.com",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 95,
+        "composite": 73
+      }
+    },
+    {
+      "label": "Lake Monticello VA Water Quality Challenges and Proven ...",
+      "url": "https://clean-flo.com/lake-monticello-va-water-quality-challenges-and-proven-restoration-strategies/",
+      "authority": "clean-flo.com",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 85,
+        "composite": 72
+      }
+    },
+    {
+      "label": "Comcast Channel 977 Schedule",
+      "url": "https://lmoa.org/web/pages/announcements?announcementId=188&backURL=%2Fnews-archive&_jsfBridgeRedirect=true",
+      "authority": "lmoa.org",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 90,
+        "freshness": 75,
+        "completeness": 65,
+        "composite": 69
+      }
+    },
+    {
+      "label": "Matea Drljepan's research works | Brock University and ...",
+      "url": "https://www.researchgate.net/scientific-contributions/Matea-Drljepan-2039467270",
+      "authority": "www.researchgate.net",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 35,
+        "freshness": 173,
+        "completeness": 95,
+        "composite": 65
+      }
+    },
+    {
+      "label": "Cattin' around the Carolinas",
+      "url": "https://www.carolinasportsman.com/fishing/freshwater-fishing/catfish/cattin-around-the-carolinas/",
+      "authority": "www.carolinasportsman.com",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 35,
+        "freshness": 75,
+        "completeness": 85,
+        "composite": 54
+      }
+    },
+    {
+      "label": "Big Gaston blues will be plenty hungry in July after spawning",
+      "url": "https://www.carolinasportsman.com/featured/big-gaston-blues-will-be-plenty-hungry-in-july-after-spawning/",
+      "authority": "www.carolinasportsman.com",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 35,
+        "freshness": 75,
+        "completeness": 85,
+        "composite": 54
+      }
+    },
+    {
+      "label": "A record of Holocene environmental and ecological ...",
+      "url": "https://www.researchgate.net/publication/227522914_A_record_of_Holocene_environmental_and_ecological_changes_from_Wildwood_Lake_Long_Island_New_York",
+      "authority": "www.researchgate.net",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 35,
+        "freshness": 75,
+        "completeness": 35,
+        "composite": 49
+      }
+    },
+    {
+      "label": "Francine MCCARTHY | Professor (Full) | PhD",
+      "url": "https://www.researchgate.net/profile/Francine-Mccarthy/2",
+      "authority": "www.researchgate.net",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 35,
+        "freshness": 75,
+        "completeness": 35,
+        "composite": 49
+      }
+    },
+    {
+      "label": "(PDF) Zebra Mussels in South Carolina: The Potential Risk ...",
+      "url": "https://www.researchgate.net/publication/239581956_Zebra_Mussels_in_South_Carolina_The_Potential_Risk_of_Infestation",
+      "authority": "www.researchgate.net",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 35,
+        "freshness": 25,
+        "completeness": 35,
+        "composite": 44
+      }
+    }
+  ],
+  "confidence": {
+    "identity": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 15,
+      "secondaryCount": 9,
+      "totalSources": 24,
+      "reason": "15 official, 9 secondary, 24 total"
+    },
+    "limnology": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 15,
+      "secondaryCount": 9,
+      "totalSources": 24,
+      "reason": "15 official, 9 secondary, 24 total"
+    },
+    "biology": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 15,
+      "secondaryCount": 9,
+      "totalSources": 24,
+      "reason": "15 official, 9 secondary, 24 total"
+    },
+    "habitat": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 15,
+      "secondaryCount": 9,
+      "totalSources": 24,
+      "reason": "15 official, 9 secondary, 24 total"
+    },
+    "navigation": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 15,
+      "secondaryCount": 9,
+      "totalSources": 24,
+      "reason": "15 official, 9 secondary, 24 total"
+    },
+    "regulations": {
+      "percent": 98,
+      "level": "very high",
+      "reason": "validated: state limits + lake exceptions (14 official sources)",
+      "regulationsValidation": true
+    },
+    "summary": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 15,
+      "secondaryCount": 9,
+      "totalSources": 24,
+      "reason": "15 official, 9 secondary, 24 total"
+    },
+    "overall": {
+      "percent": 75,
+      "level": "medium"
+    }
+  },
+  "metadata": {
+    "version": "18.0",
+    "versionNumber": 18,
+    "status": "draft",
+    "lastUpdated": "2026-07-15T22:53:49.568Z",
+    "createdAt": "2026-07-14T22:31:46.193Z",
+    "createdBy": "Contradiction Resolution UI",
+    "verified": false,
+    "verifiedAt": null,
+    "lakeId": "lake_monticello_sc",
+    "previousVersion": "17.0"
+  },
+  "notes": "",
+  "researchLog": {
+    "requestTime": "2026-07-15T22:47:32.874Z",
+    "completedAgents": []
+  },
+  "_extractedFacts": [
+    {
+      "fact": "Lake Monticello has a surface area of 6,700 acres.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello, SC — Grokipedia",
+      "quote": "Lake Monticello, SC — Grokipedia ... is a 6,700-acre artificial lake",
+      "category": "surfaceArea",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The maximum depth of Lake Monticello is 89 feet.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello, SC — Grokipedia",
+      "quote": "The reservoir features a maximum depth of about 89 feet",
+      "category": "maxDepthFt",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The reservoir was completed in 1978.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello, SC — Grokipedia",
+      "quote": "Completed in 1978 by South Carolina Electric and Gas Company",
+      "category": "yearImpounded",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The reservoir is owned and managed by Dominion Energy.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello, SC — Grokipedia",
+      "quote": "now managed by Dominion Energy",
+      "category": "reservoirOwner",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The reservoir is impounded by four earthen dams (A, B, C, and D).",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello, SC — Grokipedia",
+      "quote": "The reservoir's bathymetry features an irregular basin shape impounded by four earthen dams (A, B, C, and D)",
+      "category": "damName",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The reservoir is located in Fairfield County, South Carolina.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello, SC — Grokipedia",
+      "quote": "is a 6,700-acre artificial lake in Fairfield County, South Carolina",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The reservoir is part of the Frees Creek watershed.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello, SC — Grokipedia",
+      "quote": "Hydrologically, the reservoir serves as an impoundment primarily within the Frees Creek watershed",
+      "category": "riverSystem",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Water levels fluctuate up to 5 feet daily due to pumped storage operations.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello, SC — Grokipedia",
+      "quote": "Its water levels fluctuate up to 5 feet daily due to pumped storage operations",
+      "category": "poolLevel",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Sport fish species include largemouth bass, crappie, catfish, and bream.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello, SC — Grokipedia",
+      "quote": "fishing for species like largemouth bass, crappie, catfish, and bream",
+      "category": "predatorSpecies",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Water-skiing and jet skiing are prohibited on the reservoir.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello, SC — Grokipedia",
+      "quote": "activities such as water-skiing and jet skiing are prohibited to ensure safety",
+      "category": "hazard",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The reservoir has 54 miles of shoreline.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello, SC — Grokipedia",
+      "quote": "The shoreline extends roughly 54 miles",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The total storage capacity is 400,000 acre-feet.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello, SC — Grokipedia",
+      "quote": "The reservoir provides a total storage capacity of 400,000 acre-feet",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The active storage capacity for pumped storage is 29,000 acre-feet.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello, SC — Grokipedia",
+      "quote": "including an active storage volume of 29,000 acre-feet dedicated to pumped storage operations",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The reservoir has three boat ramps and four access points.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello, SC — Grokipedia",
+      "quote": "via three boat ramps and four access points",
+      "category": "ramp",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Largemouth bass in Lake Monticello have a minimum size limit of 14 inches.",
+      "page": 1,
+      "confidence": 99,
+      "source": "SC Freshwater Fish Size & Possession Limits (eRegulations)",
+      "quote": "Lakes Blalock, Greenwood, Jocassee, Marion, Monticello, Moultrie, Murray, Secession, Wateree, Wylie and the middle reach of the Saluda River and the upper reach of the Santee River | Largemouth Bass | 14 inches min | No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+      "category": "sizeLimit_lakeSpecific",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The possession limit for largemouth bass in Lake Monticello is no more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids.",
+      "page": 1,
+      "confidence": 99,
+      "source": "SC Freshwater Fish Size & Possession Limits (eRegulations)",
+      "quote": "Lakes Blalock, Greenwood, Jocassee, Marion, Monticello, Moultrie, Murray, Secession, Wateree, Wylie and the middle reach of the Saluda River and the upper reach of the Santee River | Largemouth Bass | 14 inches min | No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+      "category": "creelLimit_lakeSpecific",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Monticello was completed in 1978.",
+      "page": 3,
+      "confidence": 99,
+      "source": "Lake Monticello Shoreline Management Plan",
+      "quote": "Since their completion in 1978, Monticello Reservoir and its adjacent Recreationa l Lake (hereto called the “Recreational Lake”), together with the previously existing Par Reservoir have become popular recreational sites in western Fairfield County, South Carolina.",
+      "category": "yearImpounded",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Monticello covers 6,700 acres.",
+      "page": 4,
+      "confidence": 99,
+      "source": "Lake Monticello Shoreline Management Plan",
+      "quote": "Monticello Reservoir covers 6,700 acres and has 54 miles of shoreline.",
+      "category": "surfaceArea",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Monticello has 54 miles of shoreline.",
+      "page": 4,
+      "confidence": 99,
+      "source": "Lake Monticello Shoreline Management Plan",
+      "quote": "Monticello Reservoir covers 6,700 acres and has 54 miles of shoreline.",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Monticello is owned and operated by South Carolina Electric & Gas Company (SCE&G).",
+      "page": 3,
+      "confidence": 99,
+      "source": "Lake Monticello Shoreline Management Plan",
+      "quote": "All these impoundments are owned and operated by South Carolina Electric & Gas Company (herein called the “Company” or SCE&G) pursuant to a license issued by the Federal Energy Regulatory Commission (herein called the “FERC”).",
+      "category": "reservoirOwner",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Monticello experiences daily water level fluctuations of 4.5 to 5 feet.",
+      "page": 4,
+      "confidence": 99,
+      "source": "Lake Monticello Shoreline Management Plan",
+      "quote": "Monticello drops 4.5 to 5 feet over a 10 to 12 hour period during the generating phase.",
+      "category": "poolLevel",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The Recreational Lake (sub-impoundment) has a surface area of 300 acres.",
+      "page": 5,
+      "confidence": 99,
+      "source": "Lake Monticello Shoreline Management Plan",
+      "quote": "The Recreational Lake adjacent to Monticello Reservoir has a surface area of 300 acres which is maintained at a stable water level and is not affected by the operation of the pumped storage facility.",
+      "category": "surfaceArea",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The Recreational Lake (sub-impoundment) maintains a stable water level.",
+      "page": 5,
+      "confidence": 99,
+      "source": "Lake Monticello Shoreline Management Plan",
+      "quote": "The Recreational Lake adjacent to Monticello Reservoir has a surface area of 300 acres which is maintained at a stable water level and is not affected by the operation of the pumped storage facility.",
+      "category": "poolLevel",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The Recreational Lake (sub-impoundment) has 10.2 miles of shoreline.",
+      "page": 10,
+      "confidence": 99,
+      "source": "Lake Monticello Shoreline Management Plan",
+      "quote": "A smaller Monticello Sub-Impoundment (The Recreational Lake) is located north of the large body of water and is about 300 acres in size with 10.2 miles of shoreline.",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Monticello is located in Fairfield County.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello",
+      "quote": "Lake Monticello is located in Fairfield County off of HWY 215 in Jenkinsville, SC",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The lake was completed in 1978.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello",
+      "quote": "It was completed in 1978 as a pumped storage facility",
+      "category": "yearImpounded",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The lake has 54 miles of shoreline.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello",
+      "quote": "Miles of Shoreline: 54",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The surface area of the lake is 6,700 acres.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello",
+      "quote": "Acres of Surface Water: 6,700",
+      "category": "surfaceArea",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The maximum depth of the lake is approximately 89 feet.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello",
+      "quote": "Maximum Depth: Approximately 89 feet",
+      "category": "maxDepthFt",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "There are 3 boat ramps on the lake.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello",
+      "quote": "Boat Ramps : 3",
+      "category": "ramp",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The SC DNR maintains 1 fish attractor site.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello",
+      "quote": "The SC DNR manages the lake for recreational fishing and maintains 1 fish attractor site.",
+      "category": "habitatCover",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "There are 4 fishing access locations.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello",
+      "quote": "Fishing Access Locations : 4",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Water levels can fluctuate by 5 feet.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello",
+      "quote": "sometimes causing 5-foot fluctuations in the water level of Lake Monticello.",
+      "category": "poolLevel",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Water-skiing and jet skis are prohibited.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello",
+      "quote": "Lake Monticello has some heavy restrictions on fishing and boating and allows no water-skiing or jet skis.",
+      "category": "creelLimit_lakeSpecific",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The lake is owned and managed by SCE&G.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello",
+      "quote": "Owned and Managed by: SCE&G",
+      "category": "reservoirOwner",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Largemouth bass less than 14 inches in total length may not be harvested from Lake Monticello.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello Regulations",
+      "quote": "Lakes Blalock, Greenwood, Jocassee, Marion, Monticello, Moultrie, Murray, Secession, Wateree, Wylie, and the middle reach of the Saluda River and the upper reach of the Santee River—no largemouth bass less than 14 inches in total length.",
+      "category": "sizeLimit_lakeSpecific",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Bank and pier fishing access is available in Fairfield County.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello Fishing Information",
+      "quote": "Bank & Pier Fishing Access Fairfield county",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Monticello participates in the Fishing Tackle Loaner Program.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Monticello Fishing Information",
+      "quote": "Tackle Loaner Sites Fishing Tackle Loaner Program",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Monticello serves 12,593 people.",
+      "page": 1,
+      "confidence": 99,
+      "source": "EWG Tap Water Database | Lake Monticello",
+      "quote": "serves 12,593",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The water source for Lake Monticello is surface water.",
+      "page": 1,
+      "confidence": 99,
+      "source": "EWG Tap Water Database | Lake Monticello",
+      "quote": "source Surface water",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Monticello is located in Fluvanna County, Virginia.",
+      "page": 1,
+      "confidence": 99,
+      "source": "EWG Tap Water Database | Lake Monticello",
+      "quote": "location Fluvanna County County, Virginia",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "E. coli levels in Jackson Cove were found to be four times higher than recommended levels for safe swimming.",
+      "page": 1,
+      "confidence": 99,
+      "source": "E. coli levels high in part of Lake Monticello",
+      "quote": "Results came back showing E. coli levels four times higher than the recommended levels for safe swimming in Jackson Cove, according to one member of the association.",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The Lake Monticello Owners Association (LMOA) advised that swimming is prohibited in Jackson Cove due to high E. coli levels.",
+      "page": 1,
+      "confidence": 99,
+      "source": "E. coli levels high in part of Lake Monticello",
+      "quote": "\"Lake Monticello Owners Association, or LMOA, they are still advising that no one can swim in Jackson Cove,\"",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Monticello is one of four South Carolina reservoirs where White Perch were collected for growth dynamics analysis.",
+      "page": 9,
+      "confidence": 99,
+      "source": "2017 Fisheries Investigations in Lakes and Streams",
+      "quote": "Number of observations was 57, 20, 22, and 61 from lakes Wateree, Santee-Cooper, Murray, and Monticello, respectively.",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Monticello is approximately 6,000 acres in size.",
+      "page": 10,
+      "confidence": 99,
+      "source": "Nongame Fish Species",
+      "quote": "Monticello is a fairly small (about 6,000 acres) impoundment",
+      "category": "surfaceArea",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Monticello experiences daily water level fluctuations due to its operation as a pumped storage reservoir.",
+      "page": 10,
+      "confidence": 99,
+      "source": "Nongame Fish Species",
+      "quote": "that goes through daily water level fluctuations due to its operation as a bump back storage reservoir.",
+      "category": "poolLevel",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Nongame fishing devices are prohibited in Lake Monticello to manage the lake for recreational fishing only.",
+      "page": 10,
+      "confidence": 99,
+      "source": "Nongame Fish Species",
+      "quote": "More importantly, the SCDNR wants to manage Lake Monticello for recreational fishing only.",
+      "category": "creelLimit_lakeSpecific",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Monticello and Parr Reservoir are connected by a pumped storage system.",
+      "page": 10,
+      "confidence": 99,
+      "source": "Nongame Fish Species",
+      "quote": "Are not the Parr Reservoir and Lake Monticello adjoining reservoirs which are connected by a fish grinder, AKA pumped storage?",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "In July, most black bass in Lake Monticello are found in deeper water off points and humps.",
+      "page": 1,
+      "confidence": 99,
+      "source": "SCDNR - News Releases - Freshwater Fishing Trends",
+      "quote": "In July most of the fish will be in deeper water off points and humps",
+      "category": "speciesAbundance",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Effective lures for black bass in Lake Monticello during July include soft plastics, flutter spoons, or big crankbaits.",
+      "page": 1,
+      "confidence": 99,
+      "source": "SCDNR - News Releases - Freshwater Fishing Trends",
+      "quote": "soft plastics, flutter spoons, or big crankbaits will be the best way to catch them",
+      "category": "speciesAbundance",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Black bass fishing in Lake Monticello is generally better when there is current.",
+      "page": 1,
+      "confidence": 99,
+      "source": "SCDNR - News Releases - Freshwater Fishing Trends",
+      "quote": "Overall, the fishing is usually better when there is current.",
+      "category": "speciesAbundance",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "In July, catfish in Lake Monticello can be caught by free-line drifting over deep water or anchoring cut bait on humps.",
+      "page": 1,
+      "confidence": 99,
+      "source": "SCDNR - News Releases - Freshwater Fishing Trends",
+      "quote": "numbers of fish will be caught free-line drifting over deep water, while bigger fish can be caught anchoring cut bait on humps.",
+      "category": "speciesAbundance",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "A storm sewer overflow was identified as a potential cause for the high E. coli levels in the lake.",
+      "page": 1,
+      "confidence": 95,
+      "source": "E. coli levels high in part of Lake Monticello",
+      "quote": "The LMOA says it could have been caused by storm sewer overflow.",
+      "category": "summary",
+      "sourcesAgree": 1
+    }
+  ],
+  "_extractedFactsCount": 53,
+  "_wqpLimnology": null
+}
