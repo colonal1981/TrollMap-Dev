@@ -557,6 +557,9 @@ async function handleResearchDiscover(request, env) {
       { title: "Lake Wateree Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/wateree/regs.html", priority: 1 },
       { title: "SC Freshwater Fish Size & Possession Limits (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
       { title: "SCDNR Striped Bass Species Page (current regulations & biology)", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/fish/species/stripedbass.html", priority: 1 },
+      { title: "Lake Wateree Channel Catfish — Carolina Sportsman (thermocline, depth, seasonal patterns)", type: "HTML", authority: "Carolina Sportsman", url: "https://www.carolinasportsman.com/fishing/freshwater-fishing/catfish/the-underrated-channel-cat/", priority: 1 },
+      { title: "Lake Wateree Crappie Fishing — Carolina Sportsman (structure, depth, seasonal)", type: "HTML", authority: "Carolina Sportsman", url: "https://www.carolinasportsman.com/content/hot-crappie-haven/", priority: 1 },
+      { title: "Lake Wateree Striped Bass — Carolina Sportsman (thermocline, forage, tactics)", type: "HTML", authority: "Carolina Sportsman", url: "https://www.carolinasportsman.com/fishing/bass-fishing/hot-wateree-stripers/", priority: 1 },
     ],
     murray: [
       { title: "Lake Murray SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/murray/description.html", priority: 1 },
@@ -691,8 +694,10 @@ async function handleResearchDiscover(request, env) {
   const remainingSlots = Math.max(0, 10 - guaranteedSeeds.length);
   const searchFill = searchSources.filter(s => s.priority===1).slice(0, remainingSlots);
   const searchGeneric = searchSources.filter(s => s.priority!==1);
-  let finalList = [...guaranteedSeeds, ...searchFill, ...searchGeneric].slice(0,10);
-  if (finalList.length < 3) finalList = discoveredSources.slice(0,10);
+  // No hard cap on final list — guaranteed seeds always included, search results fill remaining
+  // Gemini context windows are large enough to handle 15-20 sources without issue
+  let finalList = [...guaranteedSeeds, ...searchFill, ...searchGeneric];
+  if (finalList.length < 3) finalList = discoveredSources;
 
   return new Response(JSON.stringify({ success: true, sources: finalList, baseName, filteredCount: discoveredSources.length - finalList.length }), { headers: JSON_HEADERS });
 }
@@ -2671,7 +2676,7 @@ RULES:
 5. If this document has NO information about "${baseName}", return {"extracted_facts": []}.
 
 DOCUMENT TEXT:
-${(doc.text || '').slice(0, 35000)}
+${(doc.text || '').slice(0, 150000)}
 
 Return ONLY:
 {"extracted_facts": [{"fact": "concise sentence", "page": 1, "confidence": 85, "source": "${doc.title.slice(0,80)}", "quote": "verbatim text", "category": "category_name"}]}
