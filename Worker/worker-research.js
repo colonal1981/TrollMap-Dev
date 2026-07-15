@@ -381,8 +381,9 @@ async function handleResearchDiscover(request, env) {
     `"${queryLake}" (limnology OR thermocline OR \"water quality\" OR \"dissolved oxygen\") (USACE OR USGS OR EPA)`,
     // EPA NSCEP — covers both "Report on Lake X" and "Report on X Lake" naming
     `"Report on Lake ${queryLake}" OR "Report on ${queryLake} Lake" OR "${queryLake}" (NESWP OR eutrophication OR nepis)`,
-    // Single fishing/general-guide query — lake-specific FACTS only (not opinions)
-    `"${queryLake}" (fishing guide OR fishing report) (thermocline OR depth OR structure OR forage OR "threadfin shad" OR "gizzard shad" OR "fall turnover" OR "spring spawn" OR drawdown) (site:carolinasportsman.com OR site:takemefishing.org OR site:gameandfishmag.com OR site:in-fisherman.com OR site:flwfishing.com OR site:bassmaster.com OR site:majorleaguefishing.com)`,
+    // Fishing guide query — lake name unquoted at end matches Firecrawl indexing better
+    // than quoted phrase at start (confirmed via playground testing)
+    `(fishing guide OR fishing report) (thermocline OR depth OR structure OR forage OR "threadfin shad" OR "gizzard shad" OR "fall turnover" OR "spring spawn" OR drawdown) (site:carolinasportsman.com OR site:takemefishing.org OR site:gameandfishmag.com OR site:in-fisherman.com OR site:flwfishing.com OR site:bassmaster.com OR site:majorleaguefishing.com) ${huntName}`,
   ];
 
   let discoveredSources = [];
@@ -400,16 +401,20 @@ async function handleResearchDiscover(request, env) {
           headers: { 'Authorization': `Bearer ${firecrawlSearchKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ query: q, limit: 5 })
         });
-        if (!searchRes.ok) continue;
+        if (!searchRes.ok) { console.warn(`Discover search failed (${searchRes.status}): ${q.slice(0,80)}`); continue; }
         const searchData = await searchRes.json();
         results = (searchData.data || searchData.results || []).map(r => ({
           url: r.url, title: r.title || r.metadata?.title || '', score: 0.5
         }));
+        console.log(`[discover] query: ${q.slice(0, 100)} → ${results.length} results`);
         for (const r of results) {
           const off = offLakePattern(r.title||'', r.url||'');
-          if (off) { console.log(`filtered off-lake ${off} for ${baseName}: ${r.url}`); continue; }
+          if (off) {
+            console.log(`  ✗ off-lake (${off}): ${(r.title||r.url).slice(0,80)}`);
+            continue;
+          }
           const isPdf = String(r.url||'').toLowerCase().endsWith('.pdf');
-          let host = searchProvider;
+          let host = firecrawlSearchKey ? 'firecrawl' : 'google';
           try { host = new URL(r.url).hostname; } catch {}
           let authority = host;
           if (/dnr\.sc\.gov/.test(host) || /eregulations\.com/.test(host)) authority = 'SCDNR';
@@ -417,6 +422,7 @@ async function handleResearchDiscover(request, env) {
           else if (/usace\.army\.mil/.test(host)) authority = 'USACE';
           else if (/nepis\.epa\.gov|epa\.gov/.test(host)) authority = 'EPA NSCEP';
           else if (/dnr|wildlife/.test(host)) authority = dnrName;
+          console.log(`  ✓ found: ${(r.title||r.url).slice(0,80)}`);
           discoveredSources.push({
             title: (r.title || `${queryLake} - ${host}`).replace(/\s+/g,' ').trim().slice(0,180),
             type: isPdf ? 'PDF' : 'HTML',
@@ -427,7 +433,7 @@ async function handleResearchDiscover(request, env) {
           });
         }
       } catch (err) {
-        console.warn(`Search failed for [${q}]: ${err.message}`);
+        console.warn(`Search failed for [${q.slice(0,80)}]: ${err.message}`);
       }
     }
   } else if (googleApiKey && googleCx) {
@@ -438,10 +444,12 @@ async function handleResearchDiscover(request, env) {
         if (!res.ok) continue;
         const data = await res.json();
         const items = data.items || [];
+        console.log(`[discover/google] query: ${q.slice(0,100)} → ${items.length} results`);
         for (const item of items) {
           const off = offLakePattern(item.title||'', item.link||'');
-          if (off) continue;
+          if (off) { console.log(`  ✗ off-lake (${off}): ${(item.title||item.link).slice(0,80)}`); continue; }
           const isPdf = String(item.link||'').toLowerCase().endsWith('.pdf') || String(item.mime||'').includes('pdf');
+          console.log(`  ✓ found: ${(item.title||item.link).slice(0,80)}`);
           discoveredSources.push({
             title: (item.title||`${queryLake} Resource`).slice(0,180),
             type: isPdf ? "PDF" : "HTML",
@@ -454,20 +462,18 @@ async function handleResearchDiscover(request, env) {
     }
   }
 
-  // Deduplicate by URL and by normalized title to avoid "Lake Wateree, SC Document" duplicates
+  // Deduplicate by URL and by normalized title to avoid duplicates
   const seenUrls = new Set();
   const seenTitles = new Set();
   let filtered = [];
   for (const src of discoveredSources) {
     const normUrl = String(src.url||'').split('?')[0].toLowerCase();
     const normTitle = String(src.title||'').toLowerCase().replace(/\s+/g,' ').trim();
-    if (seenUrls.has(normUrl)) continue;
-    if (normUrl.includes('pocket') && normTitle.includes('pocket')) continue; // skip generic pocket guide here, client also skips
-    // skip exact title dupes coming from Tavily generic naming
+    if (seenUrls.has(normUrl)) { console.log(`  ✗ dupe url: ${src.title?.slice(0,60)}`); continue; }
+    if (normUrl.includes('pocket') && normTitle.includes('pocket')) continue;
     if (seenTitles.has(normTitle) && normTitle.includes('document') && normTitle.length < 40) continue;
-    // off-lake final check
     const off = offLakePattern(src.title, src.url);
-    if (off) continue;
+    if (off) { console.log(`  ✗ off-lake final (${off}): ${src.title?.slice(0,60)}`); continue; }
     seenUrls.add(normUrl);
     seenTitles.add(normTitle);
     filtered.push(src);
@@ -483,7 +489,7 @@ async function handleResearchDiscover(request, env) {
   const GROKIPEDIA_SLUGS = {
     // SC lakes — direct lake pages
     'wateree':        'lake_wateree',
-    'murray':         'lake_murray_of_richland_south_carolina',
+    'murray':         'Saluda_River',          // Saluda River page covers Lake Murray extensively
     'marion':         'Lake_Marion_(South_Carolina)',
     'moultrie':       'Lake_Moultrie',
     'monticello':     'monticello_reservoir',
@@ -565,8 +571,7 @@ async function handleResearchDiscover(request, env) {
       { title: "Lake Murray SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/murray/description.html", priority: 1 },
       { title: "Lake Murray Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/murray/regs.html", priority: 1 },
       { title: "SC Freshwater Game Fishing Regulations (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
-      { title: "Lake Murray Pool Schedule & Guide Curve (Saluda Hydro Relicensing Exhibit B-18)", type: "PDF", authority: "SCE&G / Dominion Energy", url: "http://www.saludahydrorelicense.com/documents/Attachment3b-ExhibitsAA-1A-2BGtext.pdf", priority: 1 },
-      { title: "Lake Murray Water Quality Report — DO, thermocline, phosphorus, trophic status (Saluda Hydro)", type: "PDF", authority: "SCE&G / Dominion Energy", url: "http://www.saludahydrorelicense.com/documents/LakeMurrayWaterQualityReport.pdf", priority: 1 },
+      { title: "Saluda Hydroelectric Project FERC EA — Lake Murray pool levels, thermocline, DO, trophic status, guide curve (FERC No. 516)", type: "PDF", authority: "FERC / SCE&G", url: "https://www.saludahydrorelicense.com/_files/ugd/5f7780_74967afad1284c508b04fc10b15333f6.pdf", priority: 1 },
     ],
     marion: [
       { title: "Lake Marion SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/marion/description.html", priority: 1 },
