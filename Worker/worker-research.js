@@ -3215,7 +3215,7 @@ Extract into poolManagement: guideCurveFt by month, minimumFt, maximumFt, drawdo
 Set drawdownType: "scheduled" and normalPoolFt to the Maximum column value.` : '';
 
       const docSection = prev?._documentContext
-        ? `\n\nDOCUMENT TEXT:\n${prev._documentContext.slice(0, 25000)}`
+        ? `\n\nDOCUMENT TEXT:\n${prev._documentContext.slice(0, 60000)}`
         : '';
 
       return `Map identity facts for ${lakeName} (${state}).
@@ -3447,10 +3447,10 @@ JSON only.`;
     userTemplate: (lakeName, state, prev) => {
       const facts = (prev?._extractedFacts || [])
         .filter(f => /regulation|creel|limit|season|closed|gear|size.*limit|possession|sizeLimit|creelLimit/i.test(f.category + ' ' + f.fact))
-        .slice(0, 15);
+        .slice(0, 30);
       const factsBlock = facts.map(f => `• [${f.category}] ${f.fact} (source: ${f.source})`).join('\n');
       const regsContent = prev?._regsSource?.content
-        ? prev._regsSource.content.slice(0, 10000)
+        ? prev._regsSource.content.slice(0, 30000)
         : 'Not available';
       return `Extract fishing regulations for ${lakeName} (${state}).
 
@@ -3702,7 +3702,7 @@ async function handleResearchAgent(request, env) {
           .replace(/<[^>]+>/g, ' ')
           .replace(/\s{2,}/g, ' ')
           .trim()
-          .slice(0, 12000);
+          .slice(0, 30000);
         groundedPrev = {
           ...previousResults,
           _regsSource: {
@@ -3731,10 +3731,10 @@ async function handleResearchAgent(request, env) {
     const filter = docFilter[agentKey];
     const relevantDocs = previousResults._normalizedDocuments
       .filter(d => !filter || filter.test(d.title + ' ' + d.url))
-      .slice(0, 4); // max 4 docs per agent
+      .slice(0, 8); // max 8 docs per agent
     if (relevantDocs.length) {
       const docContext = relevantDocs
-        .map(d => `=== ${d.title} ===\n${d.text?.slice(0, 15000) || ''}`)
+        .map(d => `=== ${d.title} ===\n${d.text?.slice(0, 40000) || ''}`)
         .join('\n\n');
       groundedPrev = {
         ...groundedPrev,
@@ -3752,7 +3752,7 @@ async function handleResearchAgent(request, env) {
       ...groundedPrev,
       _extractedFacts: groundedPrev._extractedFacts
         .filter(f => regsCats.has(f.category) || /regulation|creel|limit|season|closed|gear|size.*limit|possession/i.test(f.category + ' ' + f.fact))
-        .slice(0, 20)  // cap at 20 facts max
+        .slice(0, 40)  // cap at 40 facts max
     };
   }
 
@@ -3761,7 +3761,7 @@ async function handleResearchAgent(request, env) {
   
   // Safety check — if prompt is too large, truncate _extractedFacts further
   const promptLen = systemPrompt.length + userPrompt.length;
-  if (promptLen > 28000 && groundedPrev._extractedFacts?.length > 5) {
+  if (promptLen > 80000 && groundedPrev._extractedFacts?.length > 5) {
     console.warn(`handleResearchAgent: ${agentKey} prompt too large (${promptLen} chars) — truncating facts`);
     groundedPrev = { ...groundedPrev, _extractedFacts: groundedPrev._extractedFacts.slice(0, 5) };
   }
