@@ -378,14 +378,18 @@ async function handleResearchDiscover(request, env) {
   // the free direct API on /lake — no search needed for that.
   // Each pattern can be a string (simple query) or { query, ...firecrawlOptions }
   const queryPatterns = [
-    { query: `"${queryLake}" (fisheries OR biology OR "striped bass" OR crappie OR "largemouth") ${dnrName}` },
+    // SCDNR fisheries/biology — prefer PDFs (annual reports, creel surveys)
+    { query: `"${queryLake}" (fisheries OR biology OR "striped bass" OR crappie OR "largemouth") ${dnrName}`, categories: ['pdf'] },
     { query: `"${queryLake}" (regulations OR "creel limit" OR "size limit" OR "bag limit") ${dnrName}` },
-    { query: `"${queryLake}" (limnology OR thermocline OR "water quality" OR "dissolved oxygen") (USACE OR USGS OR EPA)` },
+    // Limnology — research category targets EPA, USGS, Clemson, etc. directly
+    { query: `"${queryLake}" (limnology OR thermocline OR "water quality" OR "dissolved oxygen")`, categories: ['research'] },
     { query: `"Report on Lake ${queryLake}" OR "Report on ${queryLake} Lake" OR "${queryLake}" (NESWP OR eutrophication OR nepis)` },
-    // Fishing guide query — use includeDomains for reliable site filtering
+    // Fishing guide query — includeDomains is a native Firecrawl param (site: in query string is ignored)
+    // scrapeOptions pulls full article content in one call, skipping a separate proxy-download per result
     {
-      query: `${queryLake} (thermocline OR depth OR structure OR forage OR "threadfin shad" OR "gizzard shad" OR "fall turnover" OR "spring spawn" OR drawdown)`,
+      query: `${queryLake} thermocline depth structure forage shad seasonal fishing`,
       includeDomains: ['carolinasportsman.com', 'takemefishing.org', 'gameandfishmag.com', 'in-fisherman.com', 'flwfishing.com', 'bassmaster.com', 'majorleaguefishing.com'],
+      scrapeOptions: { formats: ['markdown'], onlyMainContent: true, maxAge: 604800000 },
     },
   ];
 
@@ -410,8 +414,12 @@ async function handleResearchDiscover(request, env) {
         });
         if (!searchRes.ok) { queryLog.push(`[query] FAILED (${searchRes.status}): ${q.slice(0,80)}`); continue; }
         const searchData = await searchRes.json();
-        results = (searchData.data?.web || searchData.data || searchData.web || (Array.isArray(searchData) ? searchData : [])).map(r => ({
-          url: r.url, title: r.title || r.metadata?.title || '', score: 0.5
+        // When scrapeOptions is present results may include inline markdown — preserve it
+        const rawResults = searchData.data?.web || searchData.data || searchData.web || (Array.isArray(searchData) ? searchData : []);
+        results = rawResults.map(r => ({
+          url: r.url, title: r.title || r.metadata?.title || '', score: 0.5,
+          // inline markdown from scrapeOptions — lets engine skip proxy-download for these URLs
+          fullText: r.markdown || r.content || null
         }));
         queryLog.push(`[query] ${q.slice(0, 100)} → ${results.length} results`);
         for (const r of results) {
@@ -429,14 +437,16 @@ async function handleResearchDiscover(request, env) {
           else if (/usace\.army\.mil/.test(host)) authority = 'USACE';
           else if (/nepis\.epa\.gov|epa\.gov/.test(host)) authority = 'EPA NSCEP';
           else if (/dnr|wildlife/.test(host)) authority = dnrName;
-          queryLog.push(`  ✓ found: ${(r.title||r.url).slice(0,80)}`);
+          queryLog.push(`  ✓ found: ${(r.title||r.url).slice(0,80)}${r.fullText ? ' [inline content]' : ''}`);
           discoveredSources.push({
             title: (r.title || `${queryLake} - ${host}`).replace(/\s+/g,' ').trim().slice(0,180),
             type: isPdf ? 'PDF' : 'HTML',
             authority,
             url: r.url,
             priority: (r.title||'').toLowerCase().includes(baseLower) ? 1 : 2,
-            score: r.score || 0
+            score: r.score || 0,
+            // pass inline content through so engine can skip proxy-download
+            fullText: r.fullText || null
           });
         }
       } catch (err) {
@@ -444,7 +454,8 @@ async function handleResearchDiscover(request, env) {
       }
     }
   } else if (googleApiKey && googleCx) {
-    for (const q of queryPatterns) {
+    for (const pattern of queryPatterns) {
+      const q = typeof pattern === 'string' ? pattern : pattern.query;
       try {
         const url = `https://customsearch.googleapis.com/customsearch/v1?key=${encodeURIComponent(googleApiKey)}&cx=${encodeURIComponent(googleCx)}&q=${encodeURIComponent(q)}`;
         const res = await fetch(url);
@@ -967,8 +978,11 @@ async function handleResearchProxyDownload(request, env) {
       }
 
       // Standard Firecrawl markdown scrape for HTML pages (eRegulations, SCDNR, etc.)
-      // waitFor helps JS-rendered SPAs like eRegulations populate table rows
+      // waitFor helps JS-rendered SPAs like eRegulations populate table rows.
+      // maxAge: static agency pages (SCDNR descriptions, eRegulations) rarely change —
+      // if Firecrawl has a cached version < 7 days old it returns it for 0 additional credits.
       const isSpa = /eregulations\.com/i.test(target);
+      const isStaticAgencyPage = /dnr\.sc\.gov\/lakes|ncwildlife\.org|georgiawildlife\.com|eregulations\.com/i.test(target);
       const fcRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
@@ -977,7 +991,8 @@ async function handleResearchProxyDownload(request, env) {
           formats: ['markdown'],
           onlyMainContent: true,
           waitFor: isSpa ? 3000 : 0,
-          timeout: 25000
+          timeout: 25000,
+          ...(isStaticAgencyPage ? { maxAge: 604800000 } : {}) // 7-day cache for stable pages
         })
       });
       if (fcRes.ok) {
@@ -1253,6 +1268,15 @@ async function handleResearchDatasetHunt(request, env) {
   if (!lakeName) {
     return new Response(JSON.stringify({ ok: false, error: 'missing lakeName' }), { status: 400, headers: JSON_HEADERS });
   }
+
+  // 2026-07-15: All hunt queries absorbed into handleResearchDiscover (categories:['pdf'],
+  // categories:['research'], NEPIS seed). Eliminates this separate ~8-credit call.
+  // engine.js merges 0 datasets and moves on. Remove stub once engine.js stops calling this endpoint.
+  return new Response(JSON.stringify({
+    ok: true, lakeName, state, datasetCount: 0,
+    firecrawlUsed: false, tavilyUsed: false, datasets: [],
+    note: 'absorbed into discover — 0 credits spent'
+  }), { headers: JSON_HEADERS });
 
   const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
   const baseName     = lakeName.replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA).*$/i,'').trim();
