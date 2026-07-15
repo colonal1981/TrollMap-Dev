@@ -26,15 +26,6 @@ import { resolveSupplementalKey, resolveBoundaryKey } from './supplemental-layer
 // Setup global caches and references
 window.TROLLMAP_RESEARCHED_CACHE = window.TROLLMAP_RESEARCHED_CACHE || {};
 
-const EVIDENCE_PIPELINE_STEPS = [
-  { id: 'identify', label: 'Step 1: Lake Identification' },
-  { id: 'discover', label: 'Step 2: Source Discovery' },
-  { id: 'download_extract', label: 'Step 3-4: Proxy Download & Client-Side Extraction (pdf.js)' },
-  { id: 'score_classify', label: 'Step 5-6: Quality Scoring & Classification' },
-  { id: 'extract_facts', label: 'Step 7: Information Extraction (LLM)' },
-  { id: 'dedupe_contradictions', label: 'Step 8-9: Deduplication & Contradiction Detection' },
-  { id: 'packet', label: 'Step 10: Compile Research Packet' }
-];
 
 const RESEARCH_ORDER = ['identity', 'limnology', 'biology', 'habitat', 'navigation', 'regulations', 'summary'];
 const RESEARCH_LABELS = {
@@ -109,76 +100,7 @@ function cleanLakeBaseName(lakeName) {
   return base || lakeName;
 }
 
-function extractRelevantChunks(text, lakeName, maxChars = 20000) {
-  const base = cleanLakeBaseName(lakeName);
-  const terms = [...new Set([base, lakeName, base.split(' ')[0], base.split(' ').slice(-1)[0]].filter(Boolean))];
-  // Domain keywords: find passages about key data even if lake name isn't nearby
-  const domainKeywords = ['secchi', 'trophic', 'eutrophic', 'thermocline', 'morphometry',
-    'mean depth', 'maximum depth', 'retention time', 'dissolved oxygen', 'chlorophyll',
-    'forage', 'threadfin', 'gizzard shad', 'blueback herring', 'standing stock',
-    'primary forage', 'baitfish'];
-  const lower = (text || '').toLowerCase();
-  let chunks = [];
-  let seenRanges = [];
 
-  // Helper to add a chunk if not overlapping
-  const addChunk = (start, end) => {
-    let overlaps = false;
-    for (const r of seenRanges) {
-      if (start < r.end && end > r.start && Math.abs(start - r.start) < 500) { overlaps = true; break; }
-    }
-    if (!overlaps) {
-      chunks.push(text.slice(start, end));
-      seenRanges.push({ start, end });
-      return true;
-    }
-    return false;
-  };
-
-  // Pass 1: Lake name mentions (primary)
-  for (const term of terms) {
-    const termLower = term.toLowerCase();
-    if (termLower.length < 3) continue;
-    let idx = 0;
-    let found = 0;
-    while (found < 6) {
-      idx = lower.indexOf(termLower, idx);
-      if (idx === -1) break;
-      const start = Math.max(0, idx - 1200);
-      const end = Math.min(text.length, idx + termLower.length + 1800);
-      if (addChunk(start, end)) found++;
-      idx = end;
-      if (chunks.join('\n\n').length > maxChars) break;
-    }
-    if (chunks.join('\n\n').length > maxChars) break;
-  }
-
-  // Pass 2: Domain keyword mentions (fill remaining budget with scientific data passages)
-  if (chunks.join('\n\n').length < maxChars * 0.85) {
-    for (const kw of domainKeywords) {
-      if (chunks.join('\n\n').length > maxChars * 0.95) break;
-      let idx = 0;
-      let found = 0;
-      while (found < 2) { // max 2 hits per keyword
-        idx = lower.indexOf(kw, idx);
-        if (idx === -1) break;
-        const start = Math.max(0, idx - 600);
-        const end = Math.min(text.length, idx + kw.length + 1200);
-        if (addChunk(start, end)) found++;
-        idx = end;
-        if (chunks.join('\n\n').length > maxChars) break;
-      }
-    }
-  }
-
-  if (chunks.length === 0) {
-    // no direct mentions -> take first 8k chars (likely overview + TOC)
-    return (text || '').slice(0, Math.min(maxChars, 8000));
-  }
-  let merged = chunks.join('\n\n--- RELEVANT EXCERPT ---\n\n');
-  if (merged.length > maxChars) merged = merged.slice(0, maxChars);
-  return merged;
-}
 
 function hasResearchValue(v) {
   if (v == null) return false;
@@ -551,6 +473,73 @@ async function extractTextFromPDFBytes(arrayBuffer, onProgress) {
 /**
  * Step-by-Step Evidence Acquisition Pipeline Runner
  */
+// Shared scoring function used by both runEvidencePipeline and runFromNormalized.
+// Previously duplicated with a weaker version in the resume path — now one source of truth.
+function scoreDocuments(normalizedDocuments, baseName, lakeName) {
+  const baseLower = baseName.toLowerCase();
+  return normalizedDocuments.map(doc => {
+    let authorityScore = 55;
+    const auth = String(doc.authority || '').toUpperCase();
+    const titleLower = String(doc.title || '').toLowerCase();
+    const urlLower = String(doc.url || '').toLowerCase();
+    const lower = String(doc.fullText || '').toLowerCase();
+
+    if (/USACE|USGS|EPA|NOAA|FEDERAL/.test(auth)) authorityScore = 100;
+    else if (/SCDNR|NCWRC|DNR|STATE/.test(auth)) authorityScore = 98;
+    else if (/CLEMSON|NC STATE|UNIVERSITY|UGA|USC/.test(auth)) authorityScore = 90;
+    else if (/DUKE|DOMINION|POWER|UTILITY/.test(auth)) authorityScore = 85;
+    else if (/GROKIPEDIA/.test(auth) || /grokipedia\.com/i.test(urlLower)) authorityScore = 80;
+
+    const mentionsBase = lower.includes(baseLower);
+    const titleHasBase = titleLower.includes(baseLower);
+    const isOfficialRegs = /eregulations\.com|fishregs|size.?possession|freshwater.?fish.?size|creel.?limit/i.test(urlLower + ' ' + titleLower)
+      || /size limit|possession limit|creel limit|statewide except/i.test(lower.slice(0, 4000));
+    const isLakeRegsPage = /\/lakes\/[^/]+\/regs\.html/i.test(urlLower) || /lake .+ regulations/i.test(titleLower);
+
+    let relevance = 40;
+    if (titleHasBase) relevance = 95;
+    else if (mentionsBase) {
+      const count = (lower.match(new RegExp(baseLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+      relevance = count >= 3 ? 90 : count >= 1 ? 70 : 50;
+    }
+    if (isOfficialRegs) { relevance = Math.max(relevance, 90); authorityScore = Math.max(authorityScore, 98); }
+    if (isLakeRegsPage && (titleHasBase || urlLower.includes(baseLower))) { relevance = Math.max(relevance, 95); authorityScore = Math.max(authorityScore, 98); }
+    if (!mentionsBase && !titleHasBase && !isOfficialRegs) { authorityScore = Math.min(authorityScore, 60); relevance = 35; }
+
+    const otherLakes = ['murray','marion','moultrie','hartwell','keowee','jocassee','thurmond','russell','wylie','norman','james','rhodhiss'];
+    for (const other of otherLakes) {
+      if (other === baseLower) continue;
+      if (titleLower.includes(`lake ${other}`) && !titleLower.includes(baseLower)) {
+        authorityScore = Math.min(authorityScore, 30); relevance = 15;
+        log(`⚠️ Detected off-lake doc: "${doc.title}" mentions lake ${other} not ${baseName} — penalizing`);
+      }
+    }
+
+    let freshness = 75;
+    const yearMatch = (doc.title + ' ' + doc.url).match(/(19|20)\d{2}/);
+    if (yearMatch) { const age = 2026 - parseInt(yearMatch[0], 10); freshness = Math.max(25, 95 - age * 6); }
+    if (/pocket guide/i.test(doc.title)) freshness = 50;
+    if (/regulations.*202[4-6]|202[4-6].*regulations/i.test(doc.title)) freshness = 95;
+
+    const completeness = (doc.fullText||'').length > 20000 ? 95 : (doc.fullText||'').length > 8000 ? 85 : (doc.fullText||'').length > 2000 ? 65 : 35;
+    const composite = Math.round(authorityScore * 0.5 + relevance * 0.3 + freshness * 0.1 + completeness * 0.1);
+
+    const classes = [];
+    if (/hydrology|flow|elevation|dam|discharge|river stage|pool/.test(lower)) classes.push("Hydrology");
+    if (/biology|forage|shad|herring|predator|bass|crappie|catfish|stocking/.test(lower)) classes.push("Biology");
+    if (/limnology|thermocline|oxygen|secchi|turbidity|clarity|temperature stratification/.test(lower)) classes.push("Limnology");
+    if (/regulation|creel|size limit|length limit|bag limit|closure|season/.test(lower)) classes.push("Regulations");
+    if (/hazard|shoal|stump|depth|timber|navig|boat ramp|access/.test(lower)) classes.push("Navigation");
+    if (/troll|presentation|lure|spread|crankbait|a-rig|umbrella/.test(lower)) classes.push("Trolling");
+
+    return {
+      title: doc.title, authority: doc.authority, url: doc.url,
+      scoring: { authority: authorityScore, relevance, freshness, completeness, composite },
+      classes: classes.length ? classes : ["General Overview"]
+    };
+  }).sort((a, b) => (b.scoring.composite||0) - (a.scoring.composite||0));
+}
+
 async function runFromNormalized(lakeName, callbacks = {}) {
   if (_state.researchInProgress) { alert('A research task is already in progress.'); return; }
   if (!lakeName) { alert('Please select a lake.'); return; }
@@ -573,40 +562,14 @@ async function runFromNormalized(lakeName, callbacks = {}) {
     const stateName = sanitizeStateFromLakeName(lakeName);
     const baseName = lakeName.replace(/^Lake\s+/i, '').replace(/,\s*(SC|NC|GA)\s*$/i, '').trim();
 
-    // Jump straight to scoring (Step 5 & 6)
+    // Jump straight to scoring (Step 5 & 6) — uses same scoreDocuments function as full pipeline
     setProgress('Step 5-6: Running Quality Scoring & Classification...', 40);
     log('Computing scores based on authority trustworthiness rules...');
-    const scoredSources = normalizedDocuments.map(doc => {
-      // reuse existing scoring logic inline — same as full pipeline
-      const lower = String(doc.fullText || '').toLowerCase();
-      const urlLower = String(doc.url || '').toLowerCase();
-      const titleLower = String(doc.title || '').toLowerCase();
-      const baseNameLower = baseName.toLowerCase();
-      const lakeNameLower = lakeName.toLowerCase();
-      const mentionCount = (lower.match(new RegExp(baseNameLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
-      const isOfficialRegs = /eregulations\.com|size.?possession|freshwater.?fish.?size/i.test(urlLower + ' ' + titleLower);
-      let authority = /scdnr|dnr\.sc\.gov|eregulations|des\.sc\.gov|usgs|usace|epa\.gov|nepis/.test(urlLower + ' ' + String(doc.authority || '').toLowerCase()) ? 98 : 60;
-      // Statewide eRegulations apply to all lakes — high relevance even without lake name
-      let relevance = isOfficialRegs ? 90
-        : mentionCount > 10 ? 95
-        : mentionCount > 3 ? 80
-        : mentionCount > 0 ? 60
-        : 35;
-      if (isOfficialRegs) authority = 98;
-      const freshness = /2024|2025|2026/.test(lower) ? 95 : /2020|2021|2022|2023/.test(lower) ? 75 : /201[5-9]/.test(lower) ? 50 : 25;
-      const completeness = (doc.fullText || '').length > 20000 ? 95 : (doc.fullText || '').length > 8000 ? 85 : (doc.fullText || '').length > 2000 ? 65 : 35;
-      const composite = Math.round(authority * 0.4 + relevance * 0.3 + freshness * 0.15 + completeness * 0.15);
-      const classes = [];
-      if (/hydrology|reservoir|dam|drainage|watershed|elevation|pool/.test(lower)) classes.push('Hydrology');
-      if (/thermocline|oxygen|clarity|turbid|secchi|limnol|trophic|stratif/.test(lower)) classes.push('Limnology');
-      if (/bass|crappie|catfish|striper|shad|herring|forage|stocking|species/.test(lower)) classes.push('Biology');
-      if (/regulation|creel|limit|season|closed|license|legal/.test(lower)) classes.push('Regulations');
-      if (/ramp|dock|hazard|shoal|navigation|marina|access/.test(lower)) classes.push('Navigation');
-      if (/troll|lure|speed|depth|pattern|technique/.test(lower)) classes.push('Trolling');
-      log(`• ${doc.title}: auth=${authority} rel=${relevance} fresh=${freshness} comp=${completeness} => composite=${composite} classes=${classes.join(', ') || 'General'}`);
-      return { ...doc, scoring: { authority, relevance, freshness, completeness, composite }, classes };
+    const scoredSources = scoreDocuments(normalizedDocuments, baseName, lakeName);
+    log('Scoring and classification completed:');
+    scoredSources.forEach(s => {
+      log(`• ${s.title}: auth=${s.scoring.authority} rel=${s.scoring.relevance} fresh=${s.scoring.freshness} comp=${s.scoring.completeness} => composite=${s.scoring.composite} classes=${s.classes.join(', ')}`);
     });
-    log('Scoring and classification completed.');
 
     // Now run steps 7 onward exactly as the full pipeline does
     // (fact extraction, dedup, mapping, gap analysis, agents, save)
@@ -857,9 +820,7 @@ async function runEvidencePipeline(lakeName, callbacks = {}) {
       log(`⚠️ Dataset hunt failed: ${e.message} — continuing with discover sources only.`);
     }
 
-    // Save Step 1 & 2 catalogs to R2 first
-    await savePipelineDataToR2(lakeName, 'canonical_lake.json', canonicalLake);
-    await savePipelineDataToR2(lakeName, 'source_catalog.json', { sources });
+
 
     // ----------------------------------------------------
     // STEP 3 & 4: Download & Extraction (CORS Proxy + Client PDF.js)
@@ -871,8 +832,19 @@ async function runEvidencePipeline(lakeName, callbacks = {}) {
       const src = sources[i];
       log(`Processing [${i + 1}/${sources.length}] ${src.title}...`);
 
+      // Guide query results from search+scrapeOptions already have inline markdown —
+      // skip proxy-download entirely, add directly to normalizedDocuments
+      if (src.fullText && src.fullText.length > 200 && src.type !== 'PDF') {
+        log(`Using inline content (${src.fullText.length} chars) from search+scrapeOptions: ${src.title}`);
+        normalizedDocuments.push({
+          title: src.title, authority: src.authority, url: src.url, priority: src.priority,
+          fullText: src.fullText, pages: [{ pageNumber: 1, text: src.fullText, title: src.title }],
+          downloadDate: new Date().toISOString(), contentType: 'text/markdown', extractionMethod: 'firecrawl_inline'
+        });
+        continue;
+      }
+
       // skip oversized PDFs early (client memory protection)
-      const isHugePocketGuide = /pocket.*guide/i.test(src.title) && src.url.toLowerCase().includes('.pdf');
       if (src.type === 'PDF' && src.title.toLowerCase().includes('pocket guide')) {
         log(`⚠️ Skipping huge generic pocket guide PDF (50MB) — low lake-specific value.`);
         continue;
@@ -1096,105 +1068,11 @@ async function runEvidencePipeline(lakeName, callbacks = {}) {
     // ----------------------------------------------------
     setProgress("Step 5-6: Running Quality Scoring & Classification...", 75);
     log("Computing scores based on authority trustworthiness rules...");
-    const scoredSources = normalizedDocuments.map(doc => {
-      let authorityScore = 55; // default base (fishing club level)
-      const auth = String(doc.authority).toUpperCase();
-      const titleLower = String(doc.title || '').toLowerCase();
-      const urlLower = String(doc.url || '').toLowerCase();
-      const lower = String(doc.fullText || '').toLowerCase();
-      const baseLower = baseName.toLowerCase();
-
-      if (/USACE|USGS|EPA|NOAA|FEDERAL/.test(auth)) authorityScore = 100;
-      else if (/SCDNR|NCWRC|DNR|STATE/.test(auth)) authorityScore = 98;
-      else if (/CLEMSON|NC STATE|UNIVERSITY|UGA|USC/.test(auth)) authorityScore = 90;
-      else if (/DUKE|DOMINION|POWER|UTILITY/.test(auth)) authorityScore = 85;
-      else if (/GROKIPEDIA/.test(auth) || /grokipedia\.com/i.test(urlLower)) authorityScore = 80; // Grok-synthesized from primary sources with citations
-
-      // Relevance: lake-name hits help, but official statewide regs (eRegulations) are always high-value
-      const mentionsBase = lower.includes(baseLower);
-      const titleHasBase = titleLower.includes(baseLower);
-      const isOfficialRegs = /eregulations\.com|fishregs|size.?possession|freshwater.?fish.?size|creel.?limit/i.test(urlLower + ' ' + titleLower)
-        || /size limit|possession limit|creel limit|statewide except/i.test(lower.slice(0, 4000));
-      const isLakeRegsPage = /\/lakes\/[^/]+\/regs\.html/i.test(urlLower) || /lake .+ regulations/i.test(titleLower);
-      let relevance = 40;
-      if (titleHasBase) relevance = 95;
-      else if (mentionsBase) {
-        const count = (lower.match(new RegExp(baseLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
-        relevance = count >= 3 ? 90 : count >= 1 ? 70 : 50;
-      }
-      // Official statewide regs pages apply to every SC lake — do NOT penalize for missing lake name
-      if (isOfficialRegs) {
-        relevance = Math.max(relevance, 90);
-        authorityScore = Math.max(authorityScore, 98);
-      }
-      if (isLakeRegsPage && (titleHasBase || urlLower.includes(baseLower))) {
-        relevance = Math.max(relevance, 95);
-        authorityScore = Math.max(authorityScore, 98);
-      }
-      // generic statewide docs without lake mention get capped — EXCEPT official regs
-      if (!mentionsBase && !titleHasBase && !isOfficialRegs) {
-        // pocket guide, species guide etc
-        authorityScore = Math.min(authorityScore, 60);
-        relevance = 35;
-      }
-      // filter out other-lake specific docs that slipped through discovery
-      const otherLakes = ['murray','marion','moultrie','hartwell','keowee','jocassee','thurmond','russell','wylie','norman','james','rhodhiss'];
-      for (const other of otherLakes) {
-        if (other === baseLower) continue;
-        if (titleLower.includes(`lake ${other}`) && !titleLower.includes(baseLower)) {
-          authorityScore = Math.min(authorityScore, 30);
-          relevance = 15;
-          log(`⚠️ Detected off-lake doc: "${doc.title}" mentions lake ${other} not ${baseName} — penalizing`);
-        }
-      }
-
-      // Freshness: try year from title or url
-      let freshness = 75;
-      const yearMatch = (doc.title + ' ' + doc.url).match(/(19|20)\d{2}/);
-      if (yearMatch) {
-        const year = parseInt(yearMatch[0], 10);
-        const age = 2026 - year;
-        freshness = Math.max(25, 95 - age * 6);
-      }
-      if (/pocket guide/i.test(doc.title)) freshness = 50;
-      if (/regulations.*2024|regulations.*2025|2024.*regulations|2025.*regulations/i.test(doc.title)) freshness = 95;
-
-      const completeness = doc.fullText.length > 20000 ? 95 : doc.fullText.length > 8000 ? 85 : doc.fullText.length > 2000 ? 65 : 35;
-
-      // Classification heuristics
-      const classes = [];
-      if (/hydrology|flow|elevation|dam|discharge|river stage|pool/.test(lower)) classes.push("Hydrology");
-      if (/biology|forage|shad|herring|predator|bass|crappie|catfish|stocking/.test(lower)) classes.push("Biology");
-      if (/limnology|thermocline|oxygen|secchi|turbidity|clarity|temperature stratification/.test(lower)) classes.push("Limnology");
-      if (/regulation|creel|size limit|length limit|bag limit|closure|season/.test(lower)) classes.push("Regulations");
-      if (/hazard|shoal|stump|depth|timber|navig|boat ramp|access/.test(lower)) classes.push("Navigation");
-      if (/troll|presentation|lure|spread|crankbait|a-rig|umbrella/.test(lower)) classes.push("Trolling");
-
-      // composite score for logging
-      const composite = Math.round((authorityScore * 0.5 + relevance * 0.3 + freshness * 0.1 + completeness * 0.1));
-
-      return {
-        title: doc.title,
-        authority: doc.authority,
-        url: doc.url,
-        scoring: {
-          authority: authorityScore,
-          relevance,
-          freshness,
-          completeness,
-          composite
-        },
-        classes: classes.length ? classes : ["General Overview"]
-      };
-    });
-
+    const scoredSources = scoreDocuments(normalizedDocuments, baseName, lakeName);
     log(`Scoring and classification completed:`);
     scoredSources.forEach(s => {
       log(`• ${s.title}: auth=${s.scoring.authority} rel=${s.scoring.relevance} fresh=${s.scoring.freshness} comp=${s.scoring.completeness} => composite=${s.scoring.composite} classes=${s.classes.join(', ')}`);
     });
-    // sort by composite desc for downstream use
-    scoredSources.sort((a,b) => (b.scoring.composite||0) - (a.scoring.composite||0));
-    await savePipelineDataToR2(lakeName, 'quality_scores.json', { scoredSources });
 
     await runPipelineTail(lakeName, baseName, stateName, normalizedDocuments, scoredSources, callbacks);
 
@@ -1207,19 +1085,7 @@ async function runEvidencePipeline(lakeName, callbacks = {}) {
   }
 }
 
-// Helper: get relevant chunks from a doc by title match
-function getDocChunks(normalizedDocuments, titlePatterns, lakeName, maxChars) {
-  const docs = normalizedDocuments.filter(d =>
-    titlePatterns.some(p => typeof p === 'string'
-      ? d.title?.toLowerCase().includes(p.toLowerCase()) || d.url?.toLowerCase().includes(p.toLowerCase())
-      : p.test(d.title || '') || p.test(d.url || ''))
-  );
-  return docs.map(d => {
-    // Don't gut large scientific docs — use full maxChars budget regardless of doc size
-    const chunk = extractRelevantChunks(d.fullText, lakeName, maxChars);
-    return `=== ${d.title} ===\n${chunk}`;
-  }).join('\n\n');
-}
+
 
 async function runPipelineTail(lakeName, baseName, stateName, normalizedDocuments, scoredSources, callbacks = {}) {
     // ----------------------------------------------------
@@ -1436,40 +1302,34 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     // ----------------------------------------------------
     setProgress("Step 10: Assembling factual profile...", 84);
 
-    // Merge extracted facts into deterministicProfile to fill null fields
+    // Fill null identity fields from extracted facts — direct mapping, no buildFinalResearchPacket needed
     if (uniqueFacts.length > 0) {
-      const factsPacket = buildFinalResearchPacket(lakeName, stateName, uniqueFacts, scoredSources);
-      // Apply facts packet to deterministic profile — only fill nulls/empty, don't overwrite confirmed data
-      if (factsPacket.identity) {
-        for (const [k, v] of Object.entries(factsPacket.identity)) {
-          if (v != null && v !== '' && !Array.isArray(v)) {
-            if (deterministicProfile.identity[k] == null || deterministicProfile.identity[k] === '') {
-              deterministicProfile.identity[k] = v;
-            }
-          }
+      const getFactVal = (categories) => {
+        for (const cat of categories) {
+          const f = uniqueFacts.find(f => String(f.category||'').toLowerCase() === cat.toLowerCase());
+          if (f) return f.fact;
         }
+        return null;
+      };
+      const parseNum = (s) => { const n = parseFloat(String(s||'').replace(/[^0-9.]/g,'')); return isFinite(n) ? n : null; };
+      const id = deterministicProfile.identity;
+      if (id.surfaceAreaAcres == null) id.surfaceAreaAcres = parseNum(getFactVal(['surfaceArea','surfaceAreaAcres']));
+      if (id.maxDepthFt == null)       id.maxDepthFt       = parseNum(getFactVal(['maxDepthFt','maxDepth']));
+      if (id.averageDepthFt == null)   id.averageDepthFt   = parseNum(getFactVal(['averageDepthFt','averageDepth']));
+      if (!id.archetype)               id.archetype        = getFactVal(['archetype']);
+      if (!id.damName)                 id.damName          = getFactVal(['damName']);
+      if (id.yearImpounded == null)    id.yearImpounded    = parseNum(getFactVal(['yearImpounded']));
+      if (!id.reservoirOwner)          id.reservoirOwner   = getFactVal(['reservoirOwner']);
+      if (!id.riverSystem)             id.riverSystem      = getFactVal(['riverSystem']);
+      if (id.normalPoolFt == null)     id.normalPoolFt     = parseNum(getFactVal(['poolLevel','normalPoolFt']));
+      // Fill limnology gaps from facts
+      const lim = deterministicProfile.limnology;
+      if (!lim.thermocline) lim.thermocline = {};
+      if (lim.thermocline.summerDepthFt == null) {
+        const tv = getFactVal(['thermocline']);
+        if (tv) lim.thermocline.note = (lim.thermocline.note ? lim.thermocline.note + ' ' : '') + tv;
       }
-      if (factsPacket.regulations) {
-        deterministicProfile.regulations = mergeMissing(deterministicProfile.regulations || {}, factsPacket.regulations);
-      }
-      if (factsPacket.limnology) {
-        deterministicProfile.limnology = mergeMissing(deterministicProfile.limnology || {}, factsPacket.limnology);
-      }
-    }
-
-    // Merge extracted facts into identity for fields not populated by deterministic parser
-    // (e.g. maxDepthFt, averageDepthFt which SCDNR page reports misleadingly)
-    if (uniqueFacts.length > 0) {
-      const factsPacket = buildFinalResearchPacket(lakeName, stateName, uniqueFacts, scoredSources);
-      if (factsPacket.identity) {
-        const depthFields = ['maxDepthFt', 'averageDepthFt', 'archetype', 'damName', 'yearImpounded', 'reservoirOwner'];
-        for (const k of depthFields) {
-          const v = factsPacket.identity[k];
-          if (v != null && v !== '' && (deterministicProfile.identity[k] == null || deterministicProfile.identity[k] === '')) {
-            deterministicProfile.identity[k] = v;
-          }
-        }
-      }
+      if (!lim.trophicStatus) lim.trophicStatus = getFactVal(['trophicStatus']);
     }
 
     const agentSections = {
@@ -1660,236 +1520,6 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     if (contradictions.length > 0 && callbacks.onContradictions) callbacks.onContradictions(contradictions, lakeName);
 }
 
-async function savePipelineDataToR2(lakeName, filename, data) {
-  const safe = sanitize(lakeName);
-  try {
-    await fetch(`${CF_WORKER_URL}/research/save`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        lakeName,
-        profile: data,
-        packageParts: { [filename.replace('.json', '')]: data },
-        status: 'draft',
-        notes: `Pipeline auto-dump: ${filename}`
-      })
-    });
-  } catch (e) {
-    log(`Warning: Failed to save file ${filename} to R2 directory: ${e.message}`);
-  }
-}
 
-function buildMasterProfile(lakeName, accumulated, parts, agentResults) {
-  const stateName = sanitizeStateFromLakeName(lakeName);
-  const baseName = cleanLakeBaseName(lakeName);
-  const sanitizedId = sanitize(lakeName);
-
-  // Build confidence map from agent results
-  const confidence = {};
-  for (const r of (agentResults || [])) {
-    if (r.agent && r.confidence) {
-      confidence[r.agent] = r.confidence;
-    }
-  }
-  // Derive overall
-  const percents = Object.values(confidence).map(c => c.percent || 0).filter(Boolean);
-  if (percents.length) {
-    const avg = Math.round(percents.reduce((a, b) => a + b, 0) / percents.length);
-    confidence.overall = { percent: avg, level: avg >= 95 ? 'very high' : avg >= 85 ? 'high' : avg >= 70 ? 'medium' : avg >= 50 ? 'low' : 'needs research' };
-  }
-
-  // Build source list from agent metadata
-  const sources = [];
-  for (const r of (agentResults || [])) {
-    if (r.meta?.sources) {
-      for (const s of r.meta.sources) {
-        if (!sources.find(x => x.url === s.url)) sources.push(s);
-      }
-    }
-  }
-
-  return {
-    lakeName,
-    baseName,
-    state: stateName,
-    sanitizedId,
-    aliases: accumulated.identity?.aliases || [],
-    identity: accumulated.identity || {},
-    limnology: accumulated.limnology || {},
-    forage: accumulated.biology || accumulated.forage || {},
-    biology: accumulated.biology || accumulated.forage || {},
-    habitat: accumulated.habitat || {},
-    navigation: accumulated.navigation || {},
-    regulations: accumulated.regulations || {},
-    trolling: accumulated.trolling || {},
-    trollingIntelligence: accumulated.trollingIntelligence || accumulated.trolling || {},
-    summary: accumulated.summary || {},
-    confidence,
-    sources,
-    metadata: {
-      version: '1.0',
-      status: 'draft',
-      lastUpdated: new Date().toISOString(),
-      verified: false,
-      agentCount: agentResults.filter(r => r.success !== false).length,
-      baseName
-    }
-  };
-}
-
-function buildFinalResearchPacket(lakeName, state, uniqueFacts, scoredSources) {
-  const baseName = cleanLakeBaseName(lakeName);
-  // synonym mapping for getVal
-  const catSynonyms = {
-    riverSystem: ['riverSystem','river','river system','watershed','basin'],
-    archetype: ['archetype','lakeType','type','reservoirType'],
-    surfaceArea: ['surfaceArea','surfaceAreaAcres','acres','size','surface area'],
-    maxDepth: ['maxDepth','maxDepthFt','maximum depth','max depth'],
-    averageDepth: ['averageDepth','averageDepthFt','avg depth','mean depth'],
-    clarity: ['clarity','waterClarity','water clarity','secchi','visibility'],
-    thermocline: ['thermocline','thermal stratification','stratification'],
-    oxygen: ['oxygen','dissolved oxygen','do','anoxic'],
-    primaryForage: ['primaryForage','primary forage','forage','baitfish','shad','herring'],
-    secondaryForage: ['secondaryForage','secondary forage','secondary bait'],
-    summary: ['summary','overview','description','general overview']
-  };
-  const getVal = (cat, defaultVal) => {
-    const syns = catSynonyms[cat] || [cat];
-    for (const syn of syns) {
-      const found = uniqueFacts.find(f => {
-        const c = String(f.category || '').toLowerCase();
-        return c === syn.toLowerCase() || c.includes(syn.toLowerCase());
-      });
-      if (found) return found.fact;
-    }
-    // fallback direct match
-    const direct = uniqueFacts.find(f => String(f.category).toLowerCase() === cat.toLowerCase());
-    return direct ? direct.fact : defaultVal;
-  };
-  const getAllForCategory = (cat) => uniqueFacts.filter(f => String(f.category||'').toLowerCase().includes(cat.toLowerCase())).map(f=>f.fact);
-
-  // Build aliases correctly
-  const aliases = [...new Set([
-    `${baseName} Reservoir`,
-    `Lake ${baseName}`,
-    lakeName.includes('Lake') ? baseName : `Lake ${baseName} Reservoir`
-  ])].filter(a => a.toLowerCase() !== lakeName.toLowerCase());
-
-  const surfaceAreaRaw = getVal('surfaceArea', null);
-  const maxDepthRaw = getVal('maxDepth', null);
-  const avgDepthRaw = getVal('averageDepth', null);
-
-  // Build a proper nested identity object so the UI never shows empty
-  const identityObj = {
-    lakeName,
-    state,
-    aliases,
-    riverSystem: getVal('riverSystem', null),
-    archetype: getVal('archetype', null),
-    surfaceAreaAcres: surfaceAreaRaw ? parseFloat(String(surfaceAreaRaw).replace(/[^0-9.]/g,'')) || null : null,
-    maxDepthFt: maxDepthRaw ? parseFloat(String(maxDepthRaw).replace(/[^0-9.]/g,'')) || null : null,
-    averageDepthFt: avgDepthRaw ? parseFloat(String(avgDepthRaw).replace(/[^0-9.]/g,'')) || null : null,
-    damName: getVal('damName', null),
-    yearImpounded: (() => {
-      const v = getVal('yearImpounded', null);
-      return v ? parseInt(String(v).replace(/[^0-9]/g,'')) || null : null;
-    })(),
-    reservoirOwner: getVal('reservoirOwner', null),
-    type: getVal('type', null)
-  };
-
-  return {
-    lakeName,
-    baseName,
-    state,
-    aliases,
-    identity: identityObj,          // ← the missing piece the UI renders
-    riverSystem: identityObj.riverSystem,
-    archetype: identityObj.archetype,
-    surfaceAreaAcres: identityObj.surfaceAreaAcres,
-    maxDepthFt: identityObj.maxDepthFt,
-    averageDepthFt: identityObj.averageDepthFt,
-    limnology: {
-      waterClarity: { typical: getVal('clarity', null), color: null, secchiFt: null, note: getAllForCategory('clarity').join('; ').slice(0,500) },
-      thermocline: { summerDepthFt: null, strength: null, winterMix: null, note: getVal('thermocline', null) },
-      oxygen: { depletionDepthFt: null, anoxicBelowFt: null, note: getVal('oxygen', null) }
-    },
-    forage: {
-      primaryForage: (() => {
-        const v = getVal('primaryForage', null);
-        return v ? [{ species: v, abundance: null, notes: "" }] : [];
-      })(),
-      secondaryForage: (() => {
-        const v = getVal('secondaryForage', null);
-        return v ? [{ species: v, abundance: null, notes: "" }] : [];
-      })(),
-      predatorSpecies: getAllForCategory('predator').slice(0,20),
-      baitfishMovement: getVal('baitfishMovement', null),
-      forageCalendar: { spring: null, summer: null, fall: null, winter: null },
-      _rawFacts: getAllForCategory('forage').slice(0,25)
-    },
-    habitat: {
-      bottomComposition: {},
-      cover: [],
-      structuralElements: {
-        points: getVal('points', null),
-        humps: getVal('humps', null),
-        creekArms: getVal('creekArms', null)
-      },
-      dockDensity: null,
-      standingTimber: getVal('standingTimber', null)
-    },
-    navigation: {
-      ramps: [],
-      hazards: [],
-      notes: getVal('navigation', null)
-    },
-    regulations: {
-      state,
-      generalStateRegulations: {
-        creelLimits: (() => {
-          const facts = getAllForCategory('regulation');
-          const general = {};
-          facts.filter(f => /statewide|general/i.test(f)).slice(0,15).forEach((fact,i)=>{
-            general[`general_${i}`] = fact;
-          });
-          return general;
-        })()
-      },
-      lakeSpecificRegulations: {
-        hasExceptions: uniqueFacts.some(f => /lake-specific|lake specific|exception/i.test(f.fact)),
-        creelLimits: (() => {
-          const o={};
-          getAllForCategory('creel').forEach((fact,i)=>{ o[`creel_${i}`]=fact; });
-          getAllForCategory('regulation').filter(f=> new RegExp(baseName,'i').test(f)).slice(0,5).forEach((fact,i)=>{ o[`lake_${i}`]=fact; });
-          return o;
-        })(),
-        _raw: getAllForCategory('regulations').slice(0,30)
-      }
-    },
-    trolling: {
-      notes: getAllForCategory('trolling').join('; ').slice(0,1000) || null
-    },
-    summary: {
-      text: getVal('summary', null) || (uniqueFacts.length ? uniqueFacts.map(f=>f.fact).join(' ').slice(0,2000) : null),
-      keywords: [...new Set(uniqueFacts.map(f=>f.category).filter(Boolean))].slice(0,20)
-    },
-    sources: scoredSources.map(s => ({
-      label: s.title,
-      url: s.url || "#",
-      authority: s.authority,
-      trust: s.scoring.composite >= 80 ? "OFFICIAL" : s.scoring.composite >= 50 ? "THIRD_PARTY" : "LOW_RELEVANCE",
-      scores: s.scoring
-    })),
-    metadata: {
-      version: "1.0",
-      status: "draft",
-      lastUpdated: new Date().toISOString(),
-      verified: false,
-      factCount: uniqueFacts.length,
-      baseName
-    }
-  };
-}
 
 export { runEvidencePipeline, runFromNormalized, _state, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log };
