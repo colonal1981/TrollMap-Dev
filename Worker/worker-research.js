@@ -404,7 +404,7 @@ async function handleResearchDiscover(request, env) {
         });
         if (!searchRes.ok) { queryLog.push(`[query] FAILED (${searchRes.status}): ${q.slice(0,80)}`); continue; }
         const searchData = await searchRes.json();
-        results = (searchData.data || searchData.results || []).map(r => ({
+        results = (searchData.data || searchData.results || searchData.web || []).map(r => ({
           url: r.url, title: r.title || r.metadata?.title || '', score: 0.5
         }));
         queryLog.push(`[query] ${q.slice(0, 100)} → ${results.length} results`);
@@ -1369,7 +1369,7 @@ async function handleResearchDatasetHunt(request, env) {
         });
         if (!searchRes.ok) continue;
         const searchData = await searchRes.json();
-        results = (searchData.data || searchData.results || []).map(r => ({
+        results = (searchData.data || searchData.results || searchData.web || []).map(r => ({
           url: r.url, title: r.title || r.metadata?.title || '', content: ''
         }));
         for (const r of results) {
@@ -3156,7 +3156,7 @@ async function handleResearchGapSearch(request, env) {
     });
     if (!searchRes.ok) return new Response(JSON.stringify({ success: false, error: `Firecrawl search ${searchRes.status}`, extracted_facts: [], rawText: '' }), { headers: JSON_HEADERS });
     const searchData = await searchRes.json();
-    const results = searchData.data || searchData.results || [];
+    const results = searchData.data || searchData.results || searchData.web || [];
     if (!results.length) return new Response(JSON.stringify({ success: true, extracted_facts: [], rawText: '', note: "No results found" }), { headers: JSON_HEADERS });
 
     // Firecrawl /v2/search returns markdown content inline — no separate extract call needed
