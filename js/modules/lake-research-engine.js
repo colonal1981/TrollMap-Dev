@@ -764,23 +764,31 @@ async function runEvidencePipeline(lakeName, callbacks = {}) {
         });
         let added = 0;
         let epaAdded = 0;
-        const maxAdd = 6;
+        const maxAdd = 12; // raised from 6 — context windows can handle more sources now
         for (const d of epaFirst) {
           if (added >= maxAdd) break;
           const norm = String(d.url || '').split('?')[0].toLowerCase();
-          if (!d.url || seen.has(norm)) continue;
-          // Reject non-SC/NC/GA state agency documents
-          if (/michigandnr\.com|michigan\.gov.*dnr|mndnr\.gov|dnr\.wi\.gov|dnr\.illinois|in\.gov.*dnr|\.gc\.ca|dfo-mpo\.gc\.ca/i.test(d.url)) {
-            log(`  ✗ rejected (other state/foreign agency): ${(d.title || d.url).slice(0, 60)}`);
+          const scoreVal = d.score || 0;
+          const titleSnip = (d.title || d.url).slice(0, 80);
+          if (!d.url || seen.has(norm)) {
+            log(`  ✗ skip (dupe): ${titleSnip}`);
             continue;
           }
-          // Keep NEPI S / EPA always; other agencies need a decent score + lake relevance
+          // Reject non-SC/NC/GA state agency documents
+          if (/michigandnr\.com|michigan\.gov.*dnr|mndnr\.gov|dnr\.wi\.gov|dnr\.illinois|in\.gov.*dnr|\.gc\.ca|dfo-mpo\.gc\.ca/i.test(d.url)) {
+            log(`  ✗ skip (foreign/other-state agency): ${titleSnip}`);
+            continue;
+          }
           const isEpa = /nepis\.epa\.gov|epa\.gov|ZyActionD|ZyPDF/i.test(d.url + (d.authority || ''));
-          
           // Limit to at most 1 EPA report per lake
-          if (isEpa && epaAdded >= 1) continue;
-          if (!isEpa && (d.score || 0) < 30) continue;
-          
+          if (isEpa && epaAdded >= 1) {
+            log(`  ✗ skip (EPA cap reached): ${titleSnip}`);
+            continue;
+          }
+          if (!isEpa && scoreVal < 30) {
+            log(`  ✗ skip (score ${scoreVal} < 30): ${titleSnip}`);
+            continue;
+          }
           seen.add(norm);
           sources.push({
             title: d.title || `Dataset: ${d.url}`,
@@ -789,11 +797,19 @@ async function runEvidencePipeline(lakeName, callbacks = {}) {
             url: d.url,
             priority: isEpa ? 1 : 2,
             source: d.source || 'dataset_hunt',
-            score: d.score || 0
+            score: scoreVal
           });
           added++;
           if (isEpa) epaAdded++;
-          log(`• [hunt] ${isEpa ? 'EPA' : d.authority} +${d.score || 0}: ${(d.title || d.url).slice(0, 100)}`);
+          log(`  ✓ added (score ${scoreVal}): ${titleSnip}`);
+        }
+        // Log all remaining candidates that didn't make the cut
+        for (const d of epaFirst) {
+          const norm = String(d.url || '').split('?')[0].toLowerCase();
+          if (seen.has(norm)) continue; // already logged above
+          const scoreVal = d.score || 0;
+          const titleSnip = (d.title || d.url).slice(0, 80);
+          log(`  — candidate (score ${scoreVal}, not added): ${titleSnip}`);
         }
         log(`Merged ${added} dataset-hunt sources into download queue (total ${sources.length}).`);
       } else {
@@ -1302,10 +1318,7 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
           log(`✔ Deterministic baseline loaded — identity=${Object.keys(detData.profile.identity || {}).length}, predatorSpecies=${detData.profile.biology?.predatorSpecies?.length || 0}, ramps=${detData.profile.navigation?.ramps?.length || 0}, regs(gen creel=${genCreel}/len=${genLen}, lake size=${lakeSize}/creel=${lakeCreel})`);
           if (detData.profile._regsDebug) {
             const d = detData.profile._regsDebug;
-            log(`[regs-debug] mdRows=${d.mdRows ?? '?'} htmlRows=${d.htmlRows ?? '?'} regsDocFound=${d.regsDocFound} fullTextLen=${d.regsFullTextLen} parsedOk=${d.parsedOk} method=${d.extractionMethod || (d.liveFirecrawl ? 'liveFirecrawl' : '?')}${d.parseError ? ' ERR=' + d.parseError : ''}`);
-            if (d.parsedCreelLimits) log(`[regs-debug] creel: ${JSON.stringify(d.parsedCreelLimits)}`);
-            if (d.parsedGeneralLength) log(`[regs-debug] length: ${JSON.stringify(d.parsedGeneralLength)}`);
-            if (d.parsedLakeSpecific) log(`[regs-debug] lakeSpecific: ${JSON.stringify({ size: d.parsedLakeSpecific.sizeLimits, creel: d.parsedLakeSpecific.creelLimits, closed: d.parsedLakeSpecific.closedSeasons })}`);
+
           }
           if (!genCreel && !genLen && !lakeSize) {
             log('⚠️ Regulations section empty after deterministic parse — check that eRegulations is in normalized docs and FIRECRAWL_API_KEY is set on the worker.');
@@ -1430,7 +1443,7 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       limnology: applyWqpToLimnology(deterministicProfile.limnology || {}, wqpLimnology),
       summary: cloneJson(deterministicProfile.summary || {})
     };
-    log(`[DEBUG] agentSections.biology.predatorSpecies=${JSON.stringify(agentSections.biology?.predatorSpecies)} knownStockings=${JSON.stringify(agentSections.biology?.knownStockings)}`);
+
 
     const evidence = mergeEvidenceMaps(deterministicProfile.evidence || {}, buildWqpEvidence(wqpLimnology));
     const factualSummary = buildDeterministicSummary({ lakeName, identity: agentSections.identity, biology: agentSections.biology, limnology: agentSections.limnology, habitat: agentSections.habitat });
@@ -1584,7 +1597,7 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       sources: [...sourceMap.values()]
     };
 
-    log(`[DEBUG-SAVE] researchPacket.biology.predatorSpecies=${JSON.stringify(researchPacket.biology?.predatorSpecies)} knownStockings=${JSON.stringify(researchPacket.biology?.knownStockings)}`);
+
     log(`Saving factual profile (facts=${uniqueFacts.length}, deterministic species=${agentSections.biology?.predatorSpecies?.length || 0})...`);
     const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1772,10 +1785,10 @@ function buildFinalResearchPacket(lakeName, state, uniqueFacts, scoredSources) {
         const v = getVal('secondaryForage', null);
         return v ? [{ species: v, abundance: null, notes: "" }] : [];
       })(),
-      predatorSpecies: getAllForCategory('predator').slice(0,8),
+      predatorSpecies: getAllForCategory('predator').slice(0,20),
       baitfishMovement: getVal('baitfishMovement', null),
       forageCalendar: { spring: null, summer: null, fall: null, winter: null },
-      _rawFacts: getAllForCategory('forage').slice(0,10)
+      _rawFacts: getAllForCategory('forage').slice(0,25)
     },
     habitat: {
       bottomComposition: {},
@@ -1799,7 +1812,7 @@ function buildFinalResearchPacket(lakeName, state, uniqueFacts, scoredSources) {
         creelLimits: (() => {
           const facts = getAllForCategory('regulation');
           const general = {};
-          facts.filter(f => /statewide|general/i.test(f)).slice(0,5).forEach((fact,i)=>{
+          facts.filter(f => /statewide|general/i.test(f)).slice(0,15).forEach((fact,i)=>{
             general[`general_${i}`] = fact;
           });
           return general;
@@ -1813,7 +1826,7 @@ function buildFinalResearchPacket(lakeName, state, uniqueFacts, scoredSources) {
           getAllForCategory('regulation').filter(f=> new RegExp(baseName,'i').test(f)).slice(0,5).forEach((fact,i)=>{ o[`lake_${i}`]=fact; });
           return o;
         })(),
-        _raw: getAllForCategory('regulations').slice(0,15)
+        _raw: getAllForCategory('regulations').slice(0,30)
       }
     },
     trolling: {
