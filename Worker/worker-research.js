@@ -565,6 +565,8 @@ async function handleResearchDiscover(request, env) {
       { title: "Lake Murray SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/murray/description.html", priority: 1 },
       { title: "Lake Murray Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/murray/regs.html", priority: 1 },
       { title: "SC Freshwater Game Fishing Regulations (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
+      { title: "Lake Murray Pool Schedule & Guide Curve (Saluda Hydro Relicensing Exhibit B-18)", type: "PDF", authority: "SCE&G / Dominion Energy", url: "http://www.saludahydrorelicense.com/documents/Attachment3b-ExhibitsAA-1A-2BGtext.pdf", priority: 1 },
+      { title: "Lake Murray Water Quality Report — DO, thermocline, phosphorus, trophic status (Saluda Hydro)", type: "PDF", authority: "SCE&G / Dominion Energy", url: "http://www.saludahydrorelicense.com/documents/LakeMurrayWaterQualityReport.pdf", priority: 1 },
     ],
     marion: [
       { title: "Lake Marion SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/marion/description.html", priority: 1 },
@@ -1051,20 +1053,61 @@ const KNOWN_BAD_NEPIS_IDS = new Set([
 
 function scoreDatasetUrl(url, title, lakeName) {
   const baseName = lakeName.replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA).*$/i,'').trim().toLowerCase();
-  const combined = `${url} ${title}`.toLowerCase();
+  const urlLower = url.toLowerCase();
+  const titleLower = (title || '').toLowerCase();
+  const combined = `${urlLower} ${titleLower}`;
+
   // Hard-block known wrong-lake NEPIS documents
   const nepisIdMatch = url.match(/\/([A-Z0-9]{6,12})\.txt/i);
   if (nepisIdMatch && KNOWN_BAD_NEPIS_IDS.has(nepisIdMatch[1].toUpperCase())) return -9999;
+
   let score = 0;
-  if (combined.includes(baseName)) score += 40;
-  for (const kw of DATASET_KEYWORDS) {
-    if (combined.includes(kw)) score += 5;
-  }
-  if (/\.pdf$/i.test(url)) score += 10; // PDFs are usually actual reports
+
+  // ── Lake name matching ──────────────────────────────────────────────────────
+  // Lake name in URL slug is strongest signal — it's a dedicated page for this lake
+  if (urlLower.includes(baseName.replace(/\s+/g, '-')) || urlLower.includes(baseName.replace(/\s+/g, '_'))) score += 50;
+  else if (urlLower.includes(baseName)) score += 35;
+  else if (titleLower.includes(baseName)) score += 25;
+  // Full "Lake X" in title is stronger than just base name
+  if (titleLower.includes(`lake ${baseName}`) || titleLower.includes(`${baseName} lake`)) score += 10;
+
+  // ── Document type bonuses ───────────────────────────────────────────────────
+  if (/\.pdf$/i.test(url)) score += 10;
+  if (/\d{4}/.test(url)) score += 5; // dated report
   if (/annual.report|creel.survey|stocking.report/i.test(combined)) score += 20;
-  if (/nepis\.epa\.gov|zynet\.exe|zypdf\.cgi/i.test(url)) score += 15; // EPA NSCEP docs
+  if (/nepis\.epa\.gov|zynet\.exe|zypdf\.cgi/i.test(url)) score += 15;
   if (/report on lake/i.test(combined)) score += 25;
-  if (/\d{4}/.test(url)) score += 5; // has a year — likely a dated report
+
+  // ── High-value fishing intel keywords ──────────────────────────────────────
+  // These indicate the article has the specific data Smart Plan needs
+  const intelKeywords = [
+    'thermocline','dissolved oxygen','water quality','limnology','trophic',
+    'forage','threadfin shad','gizzard shad','blueback herring',
+    'depth','structure','seasonal','spawn','fall turnover',
+    'striped bass','striper','crappie','largemouth','catfish',
+    'trolling','jigging','downrigger','Carolina rig',
+  ];
+  for (const kw of intelKeywords) {
+    if (combined.includes(kw)) score += 8;
+  }
+
+  // ── General dataset keywords ────────────────────────────────────────────────
+  for (const kw of DATASET_KEYWORDS) {
+    if (combined.includes(kw)) score += 4;
+  }
+
+  // ── Domain trust tiers ─────────────────────────────────────────────────────
+  // High-trust fishing intel sources
+  if (/carolinasportsman\.com|ncwildlife\.org|dnr\.sc\.gov|georgiawildlife\.com|gameandfishmag\.com/i.test(url)) score += 15;
+  // Scientific / government sources
+  if (/usgs\.gov|usace\.army\.mil|epa\.gov|clemson\.edu|ncsu\.edu|uga\.edu/i.test(url)) score += 10;
+  // Operator relicensing sites
+  if (/saludahydrorelicense\.com|parrfairfieldrelicense\.com|duke-energy\.com|dominionenergy\.com/i.test(url)) score += 20;
+  // Low-value sources
+  if (/pinterest|facebook|instagram|twitter|youtube|reddit|tripadvisor|yelp/i.test(url)) score -= 30;
+  // Generic content that rarely has lake-specific data
+  if (/wikia|fandom|lakelobster|lakeplace|waterfront|realtor|zillow/i.test(url)) score -= 20;
+
   return score;
 }
 
@@ -1302,9 +1345,12 @@ async function handleResearchDatasetHunt(request, env) {
   // ── Phase 2: Search for reports and academic papers (Firecrawl /v2/search) ──
   if (firecrawlKey) {
     const dnrSite = state === 'NC' ? 'site:ncwildlife.org' : state === 'GA' ? 'site:georgiawildlife.com' : 'site:dnr.sc.gov';
+    const stateFullName = { SC: 'South Carolina', NC: 'North Carolina', GA: 'Georgia' }[state] || 'South Carolina';
+    // Use full "Lake X" name + state in quotes to avoid matching unrelated "Murray", "Marion" etc
+    const huntName = lakeName.replace(/,\s*(SC|NC|GA)\s*$/i, '').trim(); // "Lake Murray" not "Murray"
     const huntQueries = [
-      `"${baseName}" creel survey fisheries assessment filetype:pdf`,
-      `"${baseName}" annual fisheries report ${dnrSite}`,
+      `"${huntName}" "${stateFullName}" creel survey fisheries assessment filetype:pdf`,
+      `"${huntName}" annual fisheries report ${dnrSite}`,
       `"Report on Lake ${baseName}" OR "Report on ${baseName} Lake" site:nepis.epa.gov`,
     ];
     for (const q of huntQueries) {
