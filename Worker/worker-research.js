@@ -753,7 +753,7 @@ async function handleResearchProxyDownload(request, env) {
   //  - Search results page (ZyActionS) — harvest document links
   //  - Document landing (ZyActionD) — extract raw-text / PDF format links
   const isNepisSearch = /nepis\.epa\.gov/i.test(target) && /[?&]ZyAction=ZyActionS\b/i.test(target);
-  const isNepisLanding = /nepis\.epa\.gov/i.test(target) && (/[?&]ZyAction=ZyActionD\b/i.test(target) || /zypdf\.cgi/i.test(target));
+  const isNepisLanding = /nepis\.epa\.gov/i.test(target) && (/[?&]ZyAction=ZyActionD\b/i.test(target) || /zypdf\.cgi/i.test(target) || /ZyPURL\.cgi/i.test(target));
   const isNepisAny = /nepis\.epa\.gov|ZyNET\.exe/i.test(target);
   // Pages that MUST stay on Firecrawl: NEPIS (custom two-step), eRegulations (React SPA needs
   // waitFor:3000 to render table rows), Grokipedia (JS-rendered)
@@ -1201,7 +1201,12 @@ function toNepisRawTextUrl(landingUrl) {
   try {
     const url = new URL(landingUrl);
     if (!/nepis\.epa\.gov/i.test(url.hostname)) return null;
-    if (!/\.txt$/i.test(url.pathname)) return null;
+    // .txt may be in pathname OR in Dockey= query param (ZyPURL.cgi?Dockey=9100D9KA.TXT)
+    const hasTxtInPath = /\.txt$/i.test(url.pathname);
+    const hasTxtInQuery = /Dockey=[^&]*\.txt/i.test(url.search);
+    if (!hasTxtInPath && !hasTxtInQuery) return null;
+    // ZyPURL.cgi?Dockey=XXXX.TXT — direct raw text URL, return as-is
+    if (/ZyPURL\.cgi/i.test(url.pathname) && hasTxtInQuery) return landingUrl;
     // Already a download link — nothing to do.
     if (/ZyActionW=Download/i.test(url.search)) return landingUrl;
     // Switch from the viewer action to the download action, keeping File= etc.
