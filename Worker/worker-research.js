@@ -2945,12 +2945,19 @@ async function handleResearchDedupeContradictions(request, env) {
         // Only look for direct numeric conflicts on the exact same attribute
         // e.g. "13,710 acres" vs "13,025 acres" for surface area, or two different creel limits
         let numberConflict = false;
-        const numsPrev = prevText.match(/\d+(?:\.\d+)?/g) || [];
-        const numsCurr = currText.match(/\d+(?:\.\d+)?/g) || [];
+        const numsPrev = prevText.replace(/(\d),(\d)/g, '$1$2').match(/\d+(?:\.\d+)?/g) || [];
+        const numsCurr = currText.replace(/(\d),(\d)/g, '$1$2').match(/\d+(?:\.\d+)?/g) || [];
 
         if (numsPrev.length && numsCurr.length) {
-          const nPrev = parseFloat(numsPrev[0]);
-          const nCurr = parseFloat(numsCurr[0]);
+          // Filter year-like numbers (1800–2100) then pick the largest remaining value.
+          // This avoids "41-mile-long, 50,900-acre" using 41 instead of 50900,
+          // and "2009 statute … 20-fish creel" using 2009 instead of 20.
+          const isYear = n => n >= 1800 && n <= 2100;
+          const filteredPrev = numsPrev.map(Number).filter(n => !isYear(n));
+          const filteredCurr = numsCurr.map(Number).filter(n => !isYear(n));
+          if (!filteredPrev.length || !filteredCurr.length) continue;
+          const nPrev = Math.max(...filteredPrev);
+          const nCurr = Math.max(...filteredCurr);
           if (isFinite(nPrev) && isFinite(nCurr) && nPrev !== nCurr) {
             // Require the facts to be talking about the exact same measurable attribute
             // (surface area, max depth, creel limit, size limit, elevation, etc.)
