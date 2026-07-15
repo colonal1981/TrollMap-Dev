@@ -1,0 +1,1893 @@
+{
+  "lakeName": "Lake Marion, SC",
+  "aliases": [],
+  "state": "SC",
+  "riverSystem": "Santee River",
+  "archetype": "large hydroelectric reservoir",
+  "surfaceAreaAcres": 110600,
+  "maxDepthFt": 76.77,
+  "averageDepthFt": 13.12,
+  "damName": "Santee Dam",
+  "yearImpounded": 1941,
+  "reservoirOwner": "Santee Cooper",
+  "county": null,
+  "normalPoolFt": 19972014,
+  "gpsCenter": null,
+  "limnology": {
+    "waterClarity": {
+      "typical": null,
+      "color": null,
+      "secchiFt": null,
+      "note": null
+    },
+    "surfaceWater": {},
+    "thermocline": {
+      "summerDepthFt": null,
+      "strength": null,
+      "winterMix": null,
+      "confidence": null,
+      "note": null
+    },
+    "oxygen": {
+      "depletionDepthFt": null,
+      "anoxicBelowFt": null,
+      "note": null
+    },
+    "trophicStatus": "eutrophic",
+    "flowCharacteristics": null,
+    "seasonalDrawdownFt": null
+  },
+  "forage": {
+    "primaryForage": [
+      "benthic insects",
+      "fish",
+      "surface insects",
+      "shad"
+    ],
+    "secondaryForage": [
+      "zooplankton"
+    ],
+    "predatorSpecies": [
+      "Largemouth Bass",
+      "Bluegill",
+      "Redear Sunfish Shellcracker",
+      "Black Crappie",
+      "White Crappie",
+      "White Perch",
+      "Channel Catfish",
+      "Blue Catfish",
+      "Flathead Catfish",
+      "Chain Pickerel",
+      "Striped Bass",
+      "American Shad"
+    ],
+    "speciesAbundance": {
+      "whitePerch": "42% of young-of-year (2011)",
+      "americanShad": "27% of young-of-year (2011)",
+      "gizzardShad": "17% of young-of-year (2011)",
+      "stripedBass": "6% relative abundance (2011)"
+    },
+    "knownStockings": [],
+    "baitfishMovement": "Striped bass larvae hatching in upper Lake Marion have higher survival rates than those hatching upstream in the river.",
+    "forageCalendar": {
+      "summer": "Largemouth bass forage on shallow flats and points where shad are present."
+    },
+    "notes": [],
+    "invasiveSpecies": [
+      "Asiatic clam (Corbicula fluminea)",
+      "olive mystery snail (Viviparus subpurpureus)"
+    ]
+  },
+  "biology": {
+    "primaryForage": [
+      "benthic insects",
+      "fish",
+      "surface insects",
+      "shad"
+    ],
+    "secondaryForage": [
+      "zooplankton"
+    ],
+    "predatorSpecies": [
+      "Largemouth Bass",
+      "Bluegill",
+      "Redear Sunfish Shellcracker",
+      "Black Crappie",
+      "White Crappie",
+      "White Perch",
+      "Channel Catfish",
+      "Blue Catfish",
+      "Flathead Catfish",
+      "Chain Pickerel",
+      "Striped Bass",
+      "American Shad"
+    ],
+    "speciesAbundance": {
+      "whitePerch": "42% of young-of-year (2011)",
+      "americanShad": "27% of young-of-year (2011)",
+      "gizzardShad": "17% of young-of-year (2011)",
+      "stripedBass": "6% relative abundance (2011)"
+    },
+    "knownStockings": [],
+    "baitfishMovement": "Striped bass larvae hatching in upper Lake Marion have higher survival rates than those hatching upstream in the river.",
+    "forageCalendar": {
+      "summer": "Largemouth bass forage on shallow flats and points where shad are present."
+    },
+    "notes": [],
+    "invasiveSpecies": [
+      "Asiatic clam (Corbicula fluminea)",
+      "olive mystery snail (Viviparus subpurpureus)"
+    ]
+  },
+  "habitat": {
+    "structuralElements": {
+      "points": "a few major shoreline points visible in boundary geometry",
+      "creekArms": "multiple creek arms / embayments visible in boundary geometry",
+      "channelLedges": "mid-depth contour density indicates multiple ledges / drop-offs",
+      "humps": "multiple closed contour loops suggest several offshore humps or high spots",
+      "flats": "multiple large shallow flats appear in mapped depth-area polygons",
+      "bridges": "bridge-related POIs include Francis Marion Bridge, W J Gooding Bridge, Bates Bridge",
+      "depthRanges": "3-8 feet for largemouth bass; shallow flats less than 6 feet for catfish"
+    },
+    "cover": [
+      "woody cover",
+      "weedy cover",
+      "heavy cover"
+    ],
+    "vegetation": {
+      "types": [
+        "native grasses"
+      ],
+      "notes": "Native grasses provide bass spawning habitat and cover during hot weather."
+    },
+    "standingTimber": null,
+    "dockDensity": null,
+    "artificialHabitat": [
+      "Fish attractors"
+    ],
+    "artificialHabitatDetails": {
+      "attractorCount": 13,
+      "attractorTypes": [
+        "brush/trees",
+        "manmade - PVC"
+      ]
+    },
+    "notes": "13 fish attractors located in Lake Marion. Structural elements summarized from TrollMap contour, depth-area, POI, and boundary layers. Regulations prohibit trotlines, traps, or eel pots within 200 yards of permanent man-made structures.",
+    "bottomComposition": {
+      "notes": "Largemouth bass forage on shallow flats and points where shad are present."
+    }
+  },
+  "navigation": {
+    "ramps": [
+      {
+        "name": "Borrow Pit",
+        "lat": 33.515094,
+        "lon": -80.185171,
+        "lanes": 2,
+        "county": "Clarendon",
+        "owner": "Santee Cooper"
+      },
+      {
+        "name": "C Alex Harvin III",
+        "lat": 33.558913,
+        "lon": -80.203906,
+        "lanes": 3,
+        "county": "Clarendon",
+        "owner": "Santee Cooper"
+      },
+      {
+        "name": "Calhoun Subdivision",
+        "lat": 33.5789,
+        "lon": -80.531662,
+        "lanes": 2,
+        "county": "Calhoun",
+        "owner": "Santee Cooper"
+      },
+      {
+        "name": "Cathead",
+        "lat": 33.415967,
+        "lon": -80.322534,
+        "lanes": 2,
+        "county": "Orangeburg",
+        "owner": "Santee Cooper"
+      },
+      {
+        "name": "Eutaw Springs",
+        "lat": 33.410813,
+        "lon": -80.310006,
+        "lanes": 1,
+        "county": "Orangeburg",
+        "owner": "Santee Cooper"
+      },
+      {
+        "name": "Indian Bluff Park",
+        "lat": 33.432119,
+        "lon": -80.364551,
+        "lanes": 1,
+        "county": "Orangeburg",
+        "owner": "Santee Cooper"
+      },
+      {
+        "name": "John C Land III",
+        "lat": 33.524223,
+        "lon": -80.308321,
+        "lanes": 6,
+        "county": "Clarendon",
+        "owner": "Santee Cooper"
+      },
+      {
+        "name": "Low Falls",
+        "lat": 33.632389,
+        "lon": -80.543511,
+        "lanes": 4,
+        "county": "Calhoun",
+        "owner": "Santee Cooper"
+      },
+      {
+        "name": "Rimini",
+        "lat": 33.659378,
+        "lon": -80.51505,
+        "lanes": 4,
+        "county": "Sumter",
+        "owner": "Santee Cooper"
+      },
+      {
+        "name": "Rowland Subdivision",
+        "lat": 33.546151,
+        "lon": -80.224262,
+        "lanes": 2,
+        "county": "Clarendon",
+        "owner": "Santee Cooper"
+      },
+      {
+        "name": "Santee State Park",
+        "lat": 33.551921,
+        "lon": -80.501585,
+        "lanes": 3,
+        "county": "Orangeburg",
+        "owner": "SCPRT"
+      },
+      {
+        "name": "Spiers",
+        "lat": 33.395682,
+        "lon": -80.197473,
+        "lanes": 2,
+        "county": "Berkeley",
+        "owner": "Berkeley County"
+      },
+      {
+        "name": "Taw Caw Creek",
+        "lat": 33.534139,
+        "lon": -80.331072,
+        "lanes": 2,
+        "county": "Clarendon",
+        "owner": "Santee Cooper"
+      },
+      {
+        "name": "Taw Caw Park",
+        "lat": 33.535404,
+        "lon": -80.331685,
+        "lanes": 2,
+        "county": "Clarendon",
+        "owner": "Clarendin County"
+      },
+      {
+        "name": "White Oak III",
+        "lat": 33.571629,
+        "lon": -80.216197,
+        "lanes": 1,
+        "county": "Clarendon",
+        "owner": "Santee Cooper"
+      },
+      {
+        "name": "Wyboo Boat Ramp and Fishing Pier",
+        "lat": 33.571483,
+        "lon": -80.203886,
+        "lanes": 1,
+        "county": "Clarendon",
+        "owner": "Clarendon County"
+      }
+    ],
+    "hazards": [],
+    "notes": null
+  },
+  "regulations": {
+    "state": "SC",
+    "generalStateRegulations": {
+      "lengthLimits": {
+        "American Eel": "9 inches min",
+        "Blue Catfish": "Only 2 fish larger than 32 inches per person may be taken",
+        "Bream": "Any length",
+        "Redbreast Sunfish": "Any length",
+        "Crappie": "8 inches min",
+        "Walleye / Sauger": "Any length",
+        "Chain Pickerel": "Any length",
+        "Redfin Pickerel": "Any length",
+        "Yellow Perch": "Any length",
+        "Smallmouth Bass": "12 inches min",
+        "Redeye Bass": "Any length",
+        "Largemouth Bass": "Any length",
+        "Spotted Bass": "Any length",
+        "White Bass": "Any length",
+        "Striped Bass / Hybrid": "Any length"
+      },
+      "creelLimits": {
+        "American Eel": "25",
+        "Blue Catfish": "25",
+        "Bream": "30",
+        "Redbreast Sunfish": "15",
+        "Crappie": "20",
+        "Walleye / Sauger": "No more than 8 combined total of walleye or sauger",
+        "Chain Pickerel": "30",
+        "Redfin Pickerel": "30",
+        "Yellow Perch": "30",
+        "Smallmouth Bass": "No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+        "Redeye Bass": "No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+        "Largemouth Bass": "No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+        "Spotted Bass": "15",
+        "White Bass": "10",
+        "Striped Bass / Hybrid": "10"
+      }
+    },
+    "lakeSpecificRegulations": {
+      "hasExceptions": true,
+      "creelLimits": {
+        "Largemouth Bass": "5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+        "Striped Bass / Hybrid": "3",
+        "White Bass": "10",
+        "Crappie": "20",
+        "Blue Catfish": "25",
+        "Channel Catfish": "25",
+        "Bream": "30",
+        "Chain Pickerel": "30"
+      },
+      "sizeLimits": {
+        "Largemouth Bass": "14 inches min",
+        "Striped Bass / Hybrid": "Oct. 1 - June 15: 23-25 inches (one may be > 26 inches); June 16 - Sept. 30: closed",
+        "White Bass": "Any length",
+        "Crappie": "8 inches min",
+        "Blue Catfish": "Only 2 fish larger than 32 inches",
+        "Channel Catfish": "Any length",
+        "Bream": "Any length",
+        "Chain Pickerel": "Any length"
+      },
+      "specialRules": [
+        "Recreational anglers limited to 2 traps",
+        "Commercial anglers limited to 25 traps",
+        "Recreational anglers limited to 1 trotline (max 50 hooks)",
+        "Commercial anglers limited to 3 trotlines (max 400 hooks per line)"
+      ],
+      "closedSeasons": [
+        "Striped Bass / Hybrid: June 16 - Sept. 30",
+        "Cantey Bay, Black Bottom, and Savannah Branch: Nov. 1 - Feb. 28"
+      ]
+    },
+    "notes": "Verify at official agency site before fishing.",
+    "lastUpdated": "November 11, 2025",
+    "lengthLimits": {
+      "American Eel": "9 inches min",
+      "Blue Catfish": "Only 2 fish larger than 32 inches per person may be taken",
+      "Bream": "Any length",
+      "Redbreast Sunfish": "Any length",
+      "Crappie": "8 inches min",
+      "Walleye / Sauger": "Any length",
+      "Chain Pickerel": "Any length",
+      "Redfin Pickerel": "Any length",
+      "Yellow Perch": "Any length",
+      "Smallmouth Bass": "12 inches min",
+      "Redeye Bass": "Any length",
+      "Largemouth Bass": "14 inches min",
+      "Spotted Bass": "Any length",
+      "White Bass": "Any length",
+      "Striped Bass / Hybrid": "Any length"
+    },
+    "creelLimits": {
+      "American Eel": "25",
+      "Blue Catfish": "25",
+      "Bream": "30",
+      "Redbreast Sunfish": "15",
+      "Crappie": "20",
+      "Walleye / Sauger": "No more than 8 combined total of walleye or sauger",
+      "Chain Pickerel": "30",
+      "Redfin Pickerel": "30",
+      "Yellow Perch": "30",
+      "Smallmouth Bass": "No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+      "Redeye Bass": "No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+      "Largemouth Bass": "No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+      "Spotted Bass": "15",
+      "White Bass": "10",
+      "Striped Bass / Hybrid": "10"
+    }
+  },
+  "trolling": null,
+  "trollingIntelligence": null,
+  "summary": {
+    "text": "Lake Marion, SC has about 110,600 surface acres, with a maximum depth near 76.77 feet. Confirmed sport fish include Largemouth Bass, Bluegill, Redear Sunfish Shellcracker, Black Crappie, White Crappie, White Perch, Channel Catfish, Blue Catfish, Flathead Catfish, Chain Pickerel. Habitat facts currently confirm 16 mapped fish attractors; mapped structure includes points, creekArms, channelLedges, humps.",
+    "keywords": [
+      "Largemouth Bass",
+      "Bluegill",
+      "Redear Sunfish Shellcracker",
+      "Black Crappie",
+      "White Crappie",
+      "White Perch",
+      "Channel Catfish",
+      "Blue Catfish",
+      "Flathead Catfish",
+      "Chain Pickerel",
+      "Brush Trees",
+      "Manmade Pvc"
+    ]
+  },
+  "evidence": {
+    "identity": {},
+    "biology": {
+      "predatorSpecies": [
+        {
+          "sourceType": "official_structured",
+          "sourceLabel": "SCDNR South Carolina Public Water Access",
+          "sourceUrl": "worker:/ramps?state=SC",
+          "quote": null,
+          "method": "structured_species_aggregation",
+          "speciesCount": 10
+        }
+      ]
+    },
+    "limnology": {},
+    "habitat": {
+      "artificialHabitatDetails": [
+        {
+          "sourceType": "official_structured",
+          "sourceLabel": "SCDNR Freshwater Fish Attractors",
+          "sourceUrl": "worker:/attractors?state=SC",
+          "quote": null,
+          "method": "structured_waterbody_aggregation",
+          "count": 16,
+          "types": [
+            "brush/trees",
+            "manmade - PVC"
+          ]
+        }
+      ],
+      "structuralElements.points": [
+        {
+          "sourceType": "internal_geospatial_layer",
+          "sourceLabel": "TrollMap contour/supplemental/boundary layers",
+          "sourceUrl": "internal:contours+supplemental+boundaries",
+          "quote": null,
+          "method": "geometry_derived_structure_classification",
+          "lakeName": "Lake Marion, SC"
+        }
+      ],
+      "structuralElements.creekArms": [
+        {
+          "sourceType": "internal_geospatial_layer",
+          "sourceLabel": "TrollMap contour/supplemental/boundary layers",
+          "sourceUrl": "internal:contours+supplemental+boundaries",
+          "quote": null,
+          "method": "geometry_derived_structure_classification",
+          "lakeName": "Lake Marion, SC"
+        }
+      ],
+      "structuralElements.channelLedges": [
+        {
+          "sourceType": "internal_geospatial_layer",
+          "sourceLabel": "TrollMap contour/supplemental/boundary layers",
+          "sourceUrl": "internal:contours+supplemental+boundaries",
+          "quote": null,
+          "method": "geometry_derived_structure_classification",
+          "lakeName": "Lake Marion, SC"
+        }
+      ],
+      "structuralElements.humps": [
+        {
+          "sourceType": "internal_geospatial_layer",
+          "sourceLabel": "TrollMap contour/supplemental/boundary layers",
+          "sourceUrl": "internal:contours+supplemental+boundaries",
+          "quote": null,
+          "method": "geometry_derived_structure_classification",
+          "lakeName": "Lake Marion, SC"
+        }
+      ],
+      "structuralElements.flats": [
+        {
+          "sourceType": "internal_geospatial_layer",
+          "sourceLabel": "TrollMap contour/supplemental/boundary layers",
+          "sourceUrl": "internal:contours+supplemental+boundaries",
+          "quote": null,
+          "method": "geometry_derived_structure_classification",
+          "lakeName": "Lake Marion, SC"
+        }
+      ],
+      "structuralElements.bridges": [
+        {
+          "sourceType": "internal_geospatial_layer",
+          "sourceLabel": "TrollMap contour/supplemental/boundary layers",
+          "sourceUrl": "internal:contours+supplemental+boundaries",
+          "quote": null,
+          "method": "geometry_derived_structure_classification",
+          "lakeName": "Lake Marion, SC"
+        }
+      ]
+    },
+    "navigation": {
+      "ramps": [
+        {
+          "sourceType": "official_structured",
+          "sourceLabel": "SCDNR South Carolina Public Water Access",
+          "sourceUrl": "worker:/ramps?state=SC",
+          "quote": null,
+          "method": "structured_waterbody_aggregation",
+          "count": 16
+        }
+      ]
+    },
+    "regulations": {
+      "lastUpdated": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Last Updated: November 11, 2025",
+          "method": "regex_exact_text"
+        }
+      ],
+      "general.American Eel": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | American Eel | 9 inches min | 25",
+          "method": "table_row"
+        }
+      ],
+      "general.Blue Catfish": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Blue Catfish | Only 2 fish larger than 32 inches per person may be taken | 25",
+          "method": "table_row"
+        }
+      ],
+      "general.Bream": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Bream (includes bluegill, flier, warmouth, pumpkinseed, green sunfish, redear (shellcracker) and spotted sunfish) | Any length | 30",
+          "method": "table_row"
+        }
+      ],
+      "general.Redbreast Sunfish": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Redbreast Sunfish | Any length | 15",
+          "method": "table_row"
+        }
+      ],
+      "general.Crappie": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Crappie | 8 inches min | 20",
+          "method": "table_row"
+        }
+      ],
+      "general.Walleye / Sauger": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Walleye & Sauger | Any length | No more than 8 combined total of walleye or sauger",
+          "method": "table_row"
+        }
+      ],
+      "general.Chain Pickerel": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Chain Pickerel | Any length | 30",
+          "method": "table_row"
+        }
+      ],
+      "general.Redfin Pickerel": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Redfin Pickerel | Any length | 30",
+          "method": "table_row"
+        }
+      ],
+      "general.Yellow Perch": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide | Yellow Perch | Any length | 30",
+          "method": "table_row"
+        }
+      ],
+      "general.Smallmouth Bass": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide except the water bodies listed below: | Smallmouth Bass | 12 inches min | No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+          "method": "table_row"
+        }
+      ],
+      "general.Redeye Bass": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide except the water bodies listed below: | Redeye (Bartrams) Bass | Any length | No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+          "method": "table_row"
+        }
+      ],
+      "general.Largemouth Bass": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide except the water bodies listed below: | Largemouth Bass | Any length | No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+          "method": "table_row"
+        }
+      ],
+      "lakeSpecific.Largemouth Bass": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Lakes Blalock, Greenwood, Jocassee, Marion, Monticello, Moultrie, Murray, Secession, Wateree, Wylie and the middle reach of the Saluda River and the upper reach of the Santee River | Largemouth Bass | 14 inches min | No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+          "method": "table_row"
+        },
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "no largemouth bass less than 14 inches",
+          "method": "regex_exact_text"
+        }
+      ],
+      "general.Spotted Bass": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide except the water bodies listed below: | Spotted Bass | Any length | 15",
+          "method": "table_row"
+        }
+      ],
+      "general.White Bass": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide except the Savannah River | White Bass | Any length | 10",
+          "method": "table_row"
+        }
+      ],
+      "general.Striped Bass / Hybrid": [
+        {
+          "sourceType": "official_document",
+          "sourceLabel": "SCDNR / eRegulations",
+          "sourceUrl": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+          "quote": "Statewide except the water bodies list below: | Striped or Hybrid Bass or a combination | Any length | 10",
+          "method": "table_row"
+        }
+      ]
+    },
+    "summary": {
+      "text": [
+        {
+          "sourceType": "internal_synthesis",
+          "sourceLabel": "TrollMap deterministic profile synthesis",
+          "sourceUrl": "internal:deterministic-facts",
+          "quote": null,
+          "method": "deterministic_fact_synthesis"
+        },
+        {
+          "sourceType": "internal_synthesis",
+          "sourceLabel": "TrollMap deterministic profile synthesis",
+          "sourceUrl": "internal:deterministic-facts",
+          "quote": null,
+          "method": "deterministic_fact_synthesis"
+        }
+      ]
+    }
+  },
+  "sources": [
+    {
+      "label": "SCDNR / eRegulations",
+      "url": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+      "trust": "OFFICIAL",
+      "sourceType": "official_document"
+    },
+    {
+      "label": "SCDNR South Carolina Public Water Access",
+      "url": "worker:/ramps?state=SC",
+      "trust": "OFFICIAL_GIS",
+      "sourceType": "official_structured"
+    },
+    {
+      "label": "SCDNR Freshwater Fish Attractors",
+      "url": "worker:/attractors?state=SC",
+      "trust": "OFFICIAL_GIS",
+      "sourceType": "official_structured"
+    },
+    {
+      "label": "TrollMap contour / supplemental / boundary layers",
+      "url": "internal:contours+supplemental+boundaries",
+      "trust": "OFFICIAL_GIS",
+      "sourceType": "internal_geospatial_layer"
+    },
+    {
+      "label": "Santee River at Lake Marion",
+      "url": "https://water.noaa.gov/gauges/pnvs1",
+      "authority": "water.noaa.gov",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 100,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 65,
+        "composite": 93
+      }
+    },
+    {
+      "label": "Largemouth Bass",
+      "url": "https://www.dnr.sc.gov/fish/pdf/LargemouthBassBookletsmall.pdf",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 90,
+        "freshness": 75,
+        "completeness": 95,
+        "composite": 93
+      }
+    },
+    {
+      "label": "seasonal movements of adult striped bass in the Santee- ...",
+      "url": "https://www.dnr.sc.gov/fish/fwfi/files/SeasonalMovementsStripedBass.pdf",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 90,
+        "freshness": 75,
+        "completeness": 95,
+        "composite": 93
+      }
+    },
+    {
+      "label": "EPA NSCEP search: Report on Marion / Lake Marion",
+      "url": "https://nepis.epa.gov/Exe/ZyNET.exe?ZyAction=ZyActionS&User=ANONYMOUS&Password=anonymous&Client=EPA&SearchBack=ZyActionL&SortMethod=h%7C-&MaximumDocuments=15&ImageQuality=r85g16%2Fr85g16%2Fx150y150g16%2Fi500&Display=hpfr&DefSeekPage=&Toc=&TocEntry=&TocRestrict=n&QField=title%5EReport%20on&UseQField=title&Docs=&SearchMethod=1&Time=&FullText=&IntQFieldOp=1&Query=Marion&ExtQFieldOp=1&FuzzyDegree=0&Index=2016%20Thru%202020&Index=2011%20Thru%202015&Index=2006%20Thru%202010&Index=2000%20Thru%202005&Index=1995%20Thru%201999&Index=1991%20Thru%201994&Index=1986%20Thru%201990&Index=1981%20Thru%201985&Index=1976%20Thru%201980&Index=Prior%20to%201976",
+      "authority": "EPA NSCEP",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 100,
+        "relevance": 95,
+        "freshness": 35,
+        "completeness": 95,
+        "composite": 92
+      }
+    },
+    {
+      "label": "Lake Marion Regulations",
+      "url": "https://www.dnr.sc.gov/lakes/marion/regs.html",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 65,
+        "composite": 92
+      }
+    },
+    {
+      "label": "SC Lakes and Waterways - Lake Marion",
+      "url": "https://www.dnr.sc.gov/lakes/marion/description.html",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 65,
+        "composite": 92
+      }
+    },
+    {
+      "label": "South Carolina Freshwater Fish Size & Possession Limits",
+      "url": "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 90,
+        "freshness": 75,
+        "completeness": 85,
+        "composite": 92
+      }
+    },
+    {
+      "label": "SCDNR - News Releases - Freshwater Fishing Trends",
+      "url": "https://www.dnr.sc.gov/news/freshwater.html",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 90,
+        "freshness": 75,
+        "completeness": 85,
+        "composite": 92
+      }
+    },
+    {
+      "label": "FISHERIES FACT SHEET",
+      "url": "http://www.dnr.sc.gov/wildlife/publications/pdf/fisheriesfacts.pdf",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 90,
+        "freshness": 75,
+        "completeness": 65,
+        "composite": 90
+      }
+    },
+    {
+      "label": "2016 Fisheries Investigations in Lakes and Streams",
+      "url": "https://www.dnr.sc.gov/fish/fwfi/files/2016_annual_report.pdf",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 90,
+        "freshness": 35,
+        "completeness": 95,
+        "composite": 89
+      }
+    },
+    {
+      "label": "2011 Statewide Research – Freshwater Fisheries Job ...",
+      "url": "https://www.dnr.sc.gov/fish/fwfi/files/2011_annual_report.pdf",
+      "authority": "SCDNR",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 98,
+        "relevance": 90,
+        "freshness": 25,
+        "completeness": 95,
+        "composite": 88
+      }
+    },
+    {
+      "label": "Lake Marion, SC — Grokipedia",
+      "url": "https://grokipedia.com/page/Lake_Marion_(South_Carolina)",
+      "authority": "Grokipedia",
+      "trust": "OFFICIAL",
+      "scores": {
+        "authority": 80,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 95,
+        "composite": 86
+      }
+    },
+    {
+      "label": "Upper Lake Marion at Channel Marker 150 (21SCSANT-SC-010) site data ...",
+      "url": "https://www.waterqualitydata.us/provider/STORET/21SCSANT/21SCSANT-SC-010/",
+      "authority": "www.waterqualitydata.us",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 85,
+        "composite": 72
+      }
+    },
+    {
+      "label": "Lake Marion | Lake Details - Lake.WaterAtlas.org",
+      "url": "https://lake.wateratlas.usf.edu/waterbodies/lakes/8091/lake-marion",
+      "authority": "lake.wateratlas.usf.edu",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 85,
+        "composite": 72
+      }
+    },
+    {
+      "label": "Spatial and temporal hydrodynamic and water quality ...",
+      "url": "https://www.sciencedirect.com/science/article/abs/pii/S0304380098001227",
+      "authority": "www.sciencedirect.com",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 90,
+        "freshness": 75,
+        "completeness": 95,
+        "composite": 72
+      }
+    },
+    {
+      "label": "1. Water quality stations in and above Lake Marion. The ...",
+      "url": "https://www.researchgate.net/figure/Water-quality-stations-in-and-above-Lake-Marion-The-stations-are-described-in-Table-32_fig4_334330347",
+      "authority": "www.researchgate.net",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 95,
+        "freshness": 75,
+        "completeness": 35,
+        "composite": 67
+      }
+    },
+    {
+      "label": "Big Bass From Kentucky's Small Lakes",
+      "url": "https://www.gameandfishmag.com/editorial/fishing_bass-fishing_ky_0705_02/242945",
+      "authority": "www.gameandfishmag.com",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 70,
+        "freshness": 75,
+        "completeness": 95,
+        "composite": 66
+      }
+    },
+    {
+      "label": "Small Lakes For Big Illinois Channel Cats",
+      "url": "https://www.gameandfishmag.com/editorial/fishing_catfish-fishing_il_0806_02/243397",
+      "authority": "www.gameandfishmag.com",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 70,
+        "freshness": 75,
+        "completeness": 95,
+        "composite": 66
+      }
+    },
+    {
+      "label": "5. Water level (m above mean sea level) in Lake Marion by year,...",
+      "url": "https://www.researchgate.net/figure/Water-level-m-above-mean-sea-level-in-Lake-Marion-by-year-1997-2014-Horizontal_fig2_334330347",
+      "authority": "www.researchgate.net",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 95,
+        "freshness": 25,
+        "completeness": 35,
+        "composite": 62
+      }
+    },
+    {
+      "label": "Summer Hotspots for South Carolina Fishing",
+      "url": "https://www.gameandfishmag.com/editorial/summer-hotspots-for-south-carolina-fishing/190975",
+      "authority": "www.gameandfishmag.com",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 70,
+        "freshness": 25,
+        "completeness": 95,
+        "composite": 61
+      }
+    },
+    {
+      "label": "Location map of Chapel Branch Creek (CBC) watershed at ...",
+      "url": "https://www.researchgate.net/figure/Location-map-of-Chapel-Branch-Creek-CBC-watershed-at-Lake-Marion-in-South-Carolina_fig1_277663904",
+      "authority": "www.researchgate.net",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 70,
+        "freshness": 75,
+        "completeness": 35,
+        "composite": 60
+      }
+    },
+    {
+      "label": "Cattin' around the Carolinas",
+      "url": "https://www.carolinasportsman.com/fishing/freshwater-fishing/catfish/cattin-around-the-carolinas/",
+      "authority": "www.carolinasportsman.com",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 35,
+        "freshness": 75,
+        "completeness": 85,
+        "composite": 54
+      }
+    },
+    {
+      "label": "Freshwater Fishing Regulations www.dnr.sc.gov/freshwater",
+      "url": "https://dc.statelibrary.sc.gov/server/api/core/bitstreams/7d7100f0-3b63-4d07-921c-d9a37e3f2b46/content",
+      "authority": "dc.statelibrary.sc.gov",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 60,
+        "relevance": 35,
+        "freshness": 75,
+        "completeness": 35,
+        "composite": 52
+      }
+    },
+    {
+      "label": "The Original Drifters",
+      "url": "https://www.carolinasportsman.com/content/the-original-drifters/",
+      "authority": "www.carolinasportsman.com",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 35,
+        "freshness": 75,
+        "completeness": 65,
+        "composite": 52
+      }
+    },
+    {
+      "label": "MUD LAKE, FLORIDA; ITS ALGAE AND ALKALINE BROWN ...",
+      "url": "https://aslopubs.onlinelibrary.wiley.com/doi/10.4319/lo.1969.14.6.0889",
+      "authority": "aslopubs.onlinelibrary.wiley.com",
+      "trust": "THIRD_PARTY",
+      "scores": {
+        "authority": 55,
+        "relevance": 35,
+        "freshness": 25,
+        "completeness": 35,
+        "composite": 44
+      }
+    }
+  ],
+  "confidence": {
+    "identity": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 17,
+      "secondaryCount": 12,
+      "totalSources": 29,
+      "reason": "17 official, 12 secondary, 29 total"
+    },
+    "limnology": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 17,
+      "secondaryCount": 12,
+      "totalSources": 29,
+      "reason": "17 official, 12 secondary, 29 total"
+    },
+    "biology": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 17,
+      "secondaryCount": 12,
+      "totalSources": 29,
+      "reason": "17 official, 12 secondary, 29 total"
+    },
+    "habitat": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 17,
+      "secondaryCount": 12,
+      "totalSources": 29,
+      "reason": "17 official, 12 secondary, 29 total"
+    },
+    "navigation": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 17,
+      "secondaryCount": 12,
+      "totalSources": 29,
+      "reason": "17 official, 12 secondary, 29 total"
+    },
+    "regulations": {
+      "percent": 98,
+      "level": "very high",
+      "reason": "validated: state limits + lake exceptions (17 official sources)",
+      "regulationsValidation": true
+    },
+    "summary": {
+      "percent": 99,
+      "level": "very high",
+      "officialCount": 17,
+      "secondaryCount": 12,
+      "totalSources": 29,
+      "reason": "17 official, 12 secondary, 29 total"
+    },
+    "overall": {
+      "percent": 79,
+      "level": "medium"
+    }
+  },
+  "metadata": {
+    "version": "6.0",
+    "versionNumber": 6,
+    "status": "draft",
+    "lastUpdated": "2026-07-15T23:29:29.428Z",
+    "createdAt": "2026-07-15T16:08:53.536Z",
+    "createdBy": "Evidence Acquisition Engine v5 factual-only",
+    "verified": false,
+    "verifiedAt": null,
+    "lakeId": "lake_marion_sc",
+    "previousVersion": "5.0"
+  },
+  "notes": "",
+  "researchLog": {
+    "requestTime": "2026-07-15T23:29:29.428Z",
+    "completedAgents": []
+  },
+  "_extractedFacts": [
+    {
+      "fact": "Lake Marion has a surface area of 110,600 acres.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion, SC — Grokipedia",
+      "quote": "Lake Marion, the largest reservoir in South Carolina, covers a surface area of 110,600 acres",
+      "category": "surfaceArea",
+      "sourcesAgree": 2
+    },
+    {
+      "fact": "The maximum depth of Lake Marion is approximately 76.77 feet.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion, SC — Grokipedia",
+      "quote": "a maximum depth of approximately 76.77 feet",
+      "category": "maxDepthFt",
+      "sourcesAgree": 2
+    },
+    {
+      "fact": "The average depth of Lake Marion is 13.12 feet.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion, SC — Grokipedia",
+      "quote": "an average depth of 13.12 feet",
+      "category": "averageDepthFt",
+      "sourcesAgree": 2
+    },
+    {
+      "fact": "Lake Marion is classified as having eutrophic conditions.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion, SC — Grokipedia",
+      "quote": "The lake's ecosystem, characterized by eutrophic conditions with nutrient-rich waters",
+      "category": "trophicStatus",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Marion is owned and managed by Santee Cooper.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion, SC — Grokipedia",
+      "quote": "Oversight of these operations is shared between Santee Cooper, the primary manager responsible for daily flow regulation and power production",
+      "category": "reservoirOwner",
+      "sourcesAgree": 2
+    },
+    {
+      "fact": "The primary dam forming Lake Marion is the Santee Dam, completed in 1941.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion, SC — Grokipedia",
+      "quote": "The primary structure forming Lake Marion is the Santee Dam, an earthfill embankment completed in 1941",
+      "category": "damName",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Marion was formed in 1941 by the impoundment of the Santee River.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion, SC — Grokipedia",
+      "quote": "Formed in 1941 by the impoundment of the Santee River",
+      "category": "yearImpounded",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Marion is part of the Santee River watershed.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion, SC — Grokipedia",
+      "quote": "it impounds the upper reaches of the Santee River",
+      "category": "riverSystem",
+      "sourcesAgree": 2
+    },
+    {
+      "fact": "Lake Marion has 511 miles of shoreline.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion, SC — Grokipedia",
+      "quote": "a total shoreline length of 511 miles.",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Marion has 16 public boat ramps.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion, SC — Grokipedia",
+      "quote": "with 16 public boat ramps and multiple marinas.",
+      "category": "ramp",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Marion has a daily limit of five largemouth or spotted bass, each at least 14 inches.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion, SC — Grokipedia",
+      "quote": "Lake Marion-specific rules including five largemouth or spotted bass daily, each at least 14 inches",
+      "category": "creelLimit_lakeSpecific",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Striped bass fishing on Lake Marion is limited to a season from October 1 to June 15 with a three-fish limit.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion, SC — Grokipedia",
+      "quote": "for striped bass, a season from October 1 to June 15 with a three-fish limit (fish 23-25 inches, one may exceed 26 inches).",
+      "category": "creelLimit_lakeSpecific",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "All watercraft and fishing are prohibited from November 1 through February 28 on Cantey Bay, Black Bottom, and Savannah Branch in Lake Marion.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion Regulations",
+      "quote": "All watercraft and fishing are prohibited Nov. 1 through Feb. 28 on Cantey Bay, Black Bottom and Savannah Branch in Lake Marion.",
+      "category": "closedSeason",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "There is a limit of no more than one blue catfish over 36 inches per person per day for Lake Marion.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion Regulations",
+      "quote": "No more than one blue catfish over 36 inches can be taken from Lakes Marion and Moultrie or the upper reaches of the Santee, Congaree and Wateree Rivers per person per day.",
+      "category": "creelLimit_lakeSpecific",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Trotlines, traps, or eel pots are prohibited within 200 yards of any permanent man-made structure on Lake Marion.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion Regulations",
+      "quote": "No trotlines, traps or eel pots shall be placed within 200 yards of any permanent man-made structure on Lakes Marion and Moultrie",
+      "category": "structuralElement",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Trotlines, traps, or eel pots are prohibited in the Diversion Canal connecting Lake Marion and Lake Moultrie.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion Regulations",
+      "quote": "nor placed anywhere in the Diversion Canal connecting Lakes Marion and Moultrie",
+      "category": "structuralElement",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Hooks used in Lake Marion must measure 7/16 inch or less between the point and shank.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion Regulations",
+      "quote": "Hooks used in Lakes Marion and Moultrie ONLY must measure 7/16 inch or less between point and shank.",
+      "category": "structuralElement",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "There is a minimum size limit of 14 inches for largemouth bass in Lake Marion.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion Regulations",
+      "quote": "Lakes Blalock, Greenwood, Jocassee, Marion, Monticello, Moultrie, Murray, Secession, Wateree, Wylie, and the middle reach of the Saluda River and the upper reach of the Santee River—no largemouth bass less than 14 inches in total length.",
+      "category": "sizeLimit_lakeSpecific",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Recreational anglers are limited to 2 traps on Lake Marion.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion Regulations",
+      "quote": "Traps | Recreational License | 2",
+      "category": "creelLimit_lakeSpecific",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Commercial anglers are limited to 25 traps on Lake Marion.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion Regulations",
+      "quote": "Commercial License | 25",
+      "category": "creelLimit_lakeSpecific",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Recreational anglers are limited to 1 trotline with a maximum of 50 hooks on Lake Marion.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion Regulations",
+      "quote": "Trotlines - hooks must have a gap or clearance between point and shank no greater than seven sixteenths inch | Recreational License | 1 line with 50 hooks maximum",
+      "category": "creelLimit_lakeSpecific",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Commercial anglers are limited to 3 trotlines with a maximum of 400 hooks per line on Lake Marion.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion Regulations",
+      "quote": "Commercial License | 3 lines with not more than 400 hooks on each line",
+      "category": "creelLimit_lakeSpecific",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Marion is the largest lake in South Carolina with a surface area of 110,600 acres.",
+      "page": 1,
+      "confidence": 99,
+      "source": "SC Lakes and Waterways - Lake Marion",
+      "quote": "Lake Marion is the largest lake in South Carolina (110,600 acres)",
+      "category": "surfaceArea",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The lake has 511 miles of shoreline.",
+      "page": 1,
+      "confidence": 99,
+      "source": "SC Lakes and Waterways - Lake Marion",
+      "quote": "Miles of Shoreline: 511",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "There are 16 boat ramps on Lake Marion.",
+      "page": 1,
+      "confidence": 99,
+      "source": "SC Lakes and Waterways - Lake Marion",
+      "quote": "Boat Ramps: 16",
+      "category": "ramp",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "There are 13 fish attractors located in Lake Marion.",
+      "page": 1,
+      "confidence": 99,
+      "source": "SC Lakes and Waterways - Lake Marion",
+      "quote": "Fish Attractors: 13",
+      "category": "habitatCover",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "There are 3 fishing access locations on Lake Marion.",
+      "page": 1,
+      "confidence": 99,
+      "source": "SC Lakes and Waterways - Lake Marion",
+      "quote": "Fishing Access Locations: 3",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "There is 1 marina with pumpouts on Lake Marion.",
+      "page": 1,
+      "confidence": 99,
+      "source": "SC Lakes and Waterways - Lake Marion",
+      "quote": "Marinas with Pumpouts: 1",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Fish species present in Lake Marion include crappie, bream, catfish, largemouth bass, pickerel, and striped bass.",
+      "page": 1,
+      "confidence": 99,
+      "source": "SC Lakes and Waterways - Lake Marion",
+      "quote": "especially crappie, bream, and catfish... largemouth bass, pickerel, bream, and many other species... striped bass",
+      "category": "predatorSpecies",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Marion was impounded in November 1941.",
+      "page": 1,
+      "confidence": 99,
+      "source": "SC Lakes and Waterways - Lake Marion",
+      "quote": "Lake Marion Dam was closed before the clearing of Lake Marion completed in November 1941.",
+      "category": "yearImpounded",
+      "sourcesAgree": 2
+    },
+    {
+      "fact": "Water quality stations are located in and above Lake Marion.",
+      "page": 1,
+      "confidence": 99,
+      "source": "1. Water quality stations in and above Lake Marion. The ...",
+      "quote": "Water quality stations in and above Lake Marion.",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The document title references water level data for Lake Marion by year from 1997 to 2014.",
+      "page": 1,
+      "confidence": 99,
+      "source": "https://www.researchgate.net/figure/Water-level-m-above-mean-sea-level-in-Lake-Marion-by-year-1997-2014-Horizontal_fig2_334330347",
+      "quote": "5. Water level (m above mean sea level) in Lake Marion by year,...",
+      "category": "poolLevel",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The monitoring location is identified as Upper Lake Marion at Channel Marker 150.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Upper Lake Marion at Channel Marker 150 (21SCSANT-SC-010) site data",
+      "quote": "Upper Lake Marion at Channel Marker 150",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The reservoir is maintained by the Santee Cooper - South Carolina Public Service Authority.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Upper Lake Marion at Channel Marker 150 (21SCSANT-SC-010) site data",
+      "quote": "This reservoir site, maintained by the Santee Cooper - South Carolina Public Service Authority (identifier 21SCSANT), has the name \"Upper Lake Marion at Channel Marker 150\"",
+      "category": "reservoirOwner",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The sampling site is located in the old river channel of Lake Marion at channel marker 150, 1.5 kilometers north of Santee State Park.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Upper Lake Marion at Channel Marker 150 (21SCSANT-SC-010) site data",
+      "quote": "The sampling site is Lake Marion old river channel at U.S. Fish and Wildlife Service channel marker 150, 1.5 kilometers north of Santee State Park.",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The monitoring location type is classified as a reservoir.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Upper Lake Marion at Channel Marker 150 (21SCSANT-SC-010) site data",
+      "quote": "MonitoringLocationTypeName | Reservoir",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The site is sampled on a monthly basis.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Upper Lake Marion at Channel Marker 150 (21SCSANT-SC-010) site data",
+      "quote": "This site is sampled on a monthly basis.",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Marion is a private lake covering 16 acres.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion | Lake Details - Lake.WaterAtlas.org",
+      "quote": "Lake Marion, covering 16 acres, is a Private lake situated in Unincorporated Lake County.",
+      "category": "surfaceArea",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Marion is located in Unincorporated Lake County.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion | Lake Details - Lake.WaterAtlas.org",
+      "quote": "Lake Marion, covering 16 acres, is a Private lake situated in Unincorporated Lake County.",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Marion is located within the Wekiva River Watershed.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion | Lake Details - Lake.WaterAtlas.org",
+      "quote": "This waterbody is located within: Wekiva River Watershed",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The latitude of Lake Marion is 28.95207688.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion | Lake Details - Lake.WaterAtlas.org",
+      "quote": "Latitude | 28.95207688",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The longitude of Lake Marion is -81.44551752.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion | Lake Details - Lake.WaterAtlas.org",
+      "quote": "Longitude | -81.44551752",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Marion is located in the Ocala Scrub lake region.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Lake Marion | Lake Details - Lake.WaterAtlas.org",
+      "quote": "Lake Region | Ocala Scrub (Region 7509)",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "At a stage of 77.5 feet, structures on the shore of Lake Marion and low-lying islands are threatened by flood water.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Santee River at Lake Marion",
+      "quote": "77.5 - Structures on the shore of Lake Marion and low lying islands are threaten by flood water.",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "At a stage of 77.09 feet, flood water approaches roads nearest to Lake Marion.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Santee River at Lake Marion",
+      "quote": "77.09 - Flood water approaches roads nearest the lake.",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "At a stage of 77 feet, flood stage is reached and areas and beaches on Lake Marion begin to flood.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Santee River at Lake Marion",
+      "quote": "77 - Flood stage - areas and beaches on Lake Marion begin to flood.",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The flood stage for Lake Marion is defined as 77.00 feet.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Santee River at Lake Marion",
+      "quote": "minor Flooding | 77.00 ft",
+      "category": "poolLevel",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The gauge location for Lake Marion is at coordinates 33.4495, -80.1644.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Santee River at Lake Marion",
+      "quote": "Coordinates 33.4495, -80.1644",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Marion is part of the Santee-Cooper lakes system.",
+      "page": 2,
+      "confidence": 99,
+      "source": "2011 Statewide Research – Freshwater Fisheries Job ...",
+      "quote": "Assessment of condition, growth, contribution to fish community, and diet of striped bass, white perch, and American shad young-of-the-year in the Santee-Cooper lakes, South Carolina",
+      "category": "summary",
+      "sourcesAgree": 2
+    },
+    {
+      "fact": "The Big Water site on Lake Marion is located near I-95 on the Clarendon County side.",
+      "page": 17,
+      "confidence": 99,
+      "source": "2011 Statewide Research – Freshwater Fisheries Job ...",
+      "quote": "The “Big Water” site was located near I-95 on the Clarendon County side (34.5178, -80.4349)",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The Indian Bluff site on Lake Marion is located midway down the reservoir on the Orangeburg County side.",
+      "page": 17,
+      "confidence": 99,
+      "source": "2011 Statewide Research – Freshwater Fisheries Job ...",
+      "quote": "the “Indian Bluff” site was located midway down the reservoir on the Orangeburg County side (33.4319, -80.3621).",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "White perch and American shad were the most abundant young-of-year fish collected in Lake Marion during summer 2011.",
+      "page": 15,
+      "confidence": 99,
+      "source": "2011 Statewide Research – Freshwater Fisheries Job ...",
+      "quote": "During summer 2011 white perch and American shad were the most abundant species accounting for 42% and 27% of all young-of-year fish collected.",
+      "category": "speciesAbundance",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Striped bass relative abundance in Lake Marion decreased from 20% in 2009 to 6% in 2011.",
+      "page": 15,
+      "confidence": 99,
+      "source": "2011 Statewide Research – Freshwater Fisheries Job ...",
+      "quote": "Striped bass relative abundance decreased each study year from a high of 20% in 2009 to only 6% during 2011.",
+      "category": "speciesAbundance",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The invasive Asiatic clam Corbicula fluminea is abundant in Lake Marion.",
+      "page": 69,
+      "confidence": 99,
+      "source": "2011 Statewide Research – Freshwater Fisheries Job ...",
+      "quote": "Corbicula fluminea, the invasive Asiatic clam, is abundant.",
+      "category": "speciesAbundance",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The benthos of Lake Marion is dominated by the Asiatic clam Corbicula fluminea and the olive mystery snail Viviparus subpurpureus.",
+      "page": 71,
+      "confidence": 99,
+      "source": "2011 Statewide Research – Freshwater Fisheries Job ...",
+      "quote": "As in Upper Lake Marion, the benthos of Middle and Lower Lake Marion was dominated by the Asiatic clam Corbicula fluminea and the olive mystery snail Viviparus subpurpureus.",
+      "category": "speciesAbundance",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Striped bass larvae hatching in upper Lake Marion have a better chance of survival than those hatching further upstream in the river.",
+      "page": 1,
+      "confidence": 99,
+      "source": "FISHERIES FACT SHEET",
+      "quote": "Larvae that hatch in upper Lake Marion have a better chance of survival than those hatching further upstream, in the river.",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Striped bass are present in Lake Marion.",
+      "page": 1,
+      "confidence": 99,
+      "source": "FISHERIES FACT SHEET",
+      "quote": "Santee Cooper striped bass are essentially landlocked; they live their entire lives in the lakes and tributary rivers.",
+      "category": "predatorSpecies",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Harvest regulation options for striped bass in Lake Marion include specific closed seasons and creel limits.",
+      "page": 2,
+      "confidence": 99,
+      "source": "FISHERIES FACT SHEET",
+      "quote": "For Lakes Marion and Moultrie, Congaree, Broad, Wateree, Santee, and Cooper Rivers: Option 1: Oct 1 – May 31: 2 stripers per day, minimum length 26”, with catch & careful release allowed. June 1 – Sept 30: Closed season. No targeted catch & release fishing allowed.",
+      "category": "creelLimit_lakeSpecific",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The South Carolina state record largemouth bass was caught from Lake Marion in 1949 and weighed 16 lbs. 2 oz.",
+      "page": 2,
+      "confidence": 99,
+      "source": "Largemouth Bass",
+      "quote": "The state record largemouth bass weighed 16 lbs. 2 oz. and was caught from Lake Marion in 1949.",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Marion and Lake Moultrie are managed as a single unit known as Santee-Cooper.",
+      "page": 5,
+      "confidence": 99,
+      "source": "Largemouth Bass",
+      "quote": "Results for lakes Marion and Moultrie are often combined and reported as Santee-Cooper because they are managed as a single unit.",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Marion bass are of average plumpness.",
+      "page": 10,
+      "confidence": 99,
+      "source": "Largemouth Bass",
+      "quote": "Bass from lakes Marion, Moultrie and Jocassee tend to be of average plumpness.",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Marion populations were nearly 100 percent Florida bass.",
+      "page": 11,
+      "confidence": 99,
+      "source": "Largemouth Bass",
+      "quote": "For example, lakes Marion and Moultrie in the coastal plain were nearly 100 percent Florida bass.",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Marion has a 12-inch minimum size limit for largemouth bass.",
+      "page": 17,
+      "confidence": 99,
+      "source": "Largemouth Bass",
+      "quote": "Exceptions to this are lakes Wylie, Marion, Moultrie and the Georgia waters of the Savannah River and its reservoirs, which have a 12- inch minimum.",
+      "category": "sizeLimit_lakeSpecific",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Marion is a 44,000 ha (108,724 acre) impoundment on the Santee River.",
+      "page": 7,
+      "confidence": 99,
+      "source": "https://www.dnr.sc.gov/fish/fwfi/files/SeasonalMovementsStripedBass.pdf",
+      "quote": "Lake Marion is a partially wooded 44,000 ha impoundment on the Santee River",
+      "category": "surfaceArea",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Marion has a maximum depth of 12 meters (39.37 feet) at the dam.",
+      "page": 7,
+      "confidence": 99,
+      "source": "https://www.dnr.sc.gov/fish/fwfi/files/SeasonalMovementsStripedBass.pdf",
+      "quote": "maximum depth of 12 m at the dam",
+      "category": "maxDepthFt",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Marion is generally shallow, with an average depth of 1-3 meters (3.28-9.84 feet).",
+      "page": 7,
+      "confidence": 99,
+      "source": "https://www.dnr.sc.gov/fish/fwfi/files/SeasonalMovementsStripedBass.pdf",
+      "quote": "overall the reservoir is shallow (1-3 m)",
+      "category": "averageDepthFt",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "As of summer 2008, striped bass harvest is limited to 3 fish per day greater than 660 mm TL, with a closed season from June 1 to September 30.",
+      "page": 9,
+      "confidence": 99,
+      "source": "https://www.dnr.sc.gov/fish/fwfi/files/SeasonalMovementsStripedBass.pdf",
+      "quote": "In summer 2008 new harvest restriction went into effect that limit striped bass harvest to 3 fish/d greater than 660 mm TL, except from June 1 – September 30 when no fish may be possessed.",
+      "category": "closedSeason",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Marion and Lake Moultrie are referred to as the Santee-Cooper lakes.",
+      "page": 3,
+      "confidence": 99,
+      "source": "2016 Fisheries Investigations in Lakes and Streams",
+      "quote": "Assessment of condition, growth, contribution to fish community, and diet of striped bass, white perch, and American shad young-of-the-year in the Santee-Cooper lakes, South Carolina.",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The average density of fish in Lake Wateree was over four times higher than the average density reported in lakes Marion and Moultrie from 2013-2015.",
+      "page": 9,
+      "confidence": 99,
+      "source": "2016 Fisheries Investigations in Lakes and Streams",
+      "quote": "The average density of fish recorded in Lake Wateree of 92,597/ha was over four times higher than the average density of 21,363/ha that Bulak (2016) reported in lakes Marion and Moultrie, 2013-2015.",
+      "category": "speciesAbundance",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Young-of-the-year fishes collected from Lake Marion shoreline samples included Striped Bass, White Perch, and American Shad.",
+      "page": 3,
+      "confidence": 99,
+      "source": "2016 Fisheries Investigations in Lakes and Streams",
+      "quote": "Table 1. Diet categories (in bold), and the taxa assigned to each diet category, used for analysis of diet data collected from young-of- the- year fishes in Lakes Marion and Moultrie.",
+      "category": "predatorSpecies",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Benthic insects were the most important prey for White Perch and small Striped Bass in Lake Marion.",
+      "page": 51,
+      "confidence": 99,
+      "source": "2016 Fisheries Investigations in Lakes and Streams",
+      "quote": "The most important prey of white perch and small (≤ 86 mm TL [Total Length]) Striped Bass were benthic insects.",
+      "category": "primaryForage",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Fish and surface insects were the most important prey of large Striped Bass and American Shad in Lake Marion, respectively.",
+      "page": 51,
+      "confidence": 99,
+      "source": "2016 Fisheries Investigations in Lakes and Streams",
+      "quote": "Fish and surface insects were the most important prey of large (> 86 mm TL) Striped Bass and American Shad, respectively.",
+      "category": "primaryForage",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "There was significant biological diet overlap between White Perch and small Striped Bass in Lake Marion.",
+      "page": 51,
+      "confidence": 99,
+      "source": "2016 Fisheries Investigations in Lakes and Streams",
+      "quote": "There was significant biological overlap (Horn’s index = 0.91) in the diets of White Perch and small Striped Bass indicating the potential for resource competition between these fishes depending on prey availability.",
+      "category": "summary",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Largemouth bass in Lake Marion have a minimum size limit of 14 inches.",
+      "page": 1,
+      "confidence": 99,
+      "source": "South Carolina Freshwater Fish Size & Possession Limits",
+      "quote": "Lakes Blalock, Greenwood, Jocassee, Marion, Monticello, Moultrie, Murray, Secession, Wateree, Wylie and the middle reach of the Saluda River and the upper reach of the Santee River | Largemouth Bass | 14 inches min | No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+      "category": "sizeLimit_lakeSpecific",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "The possession limit for largemouth bass in Lake Marion is no more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids.",
+      "page": 1,
+      "confidence": 99,
+      "source": "South Carolina Freshwater Fish Size & Possession Limits",
+      "quote": "Lakes Blalock, Greenwood, Jocassee, Marion, Monticello, Moultrie, Murray, Secession, Wateree, Wylie and the middle reach of the Saluda River and the upper reach of the Santee River | Largemouth Bass | 14 inches min | No more than 5 combined total of smallmouth, largemouth, redeye bass or their hybrids",
+      "category": "creelLimit_lakeSpecific",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "In upper Lake Marion, largemouth bass are found in 5-8 feet of water during the day around woody and weedy cover.",
+      "page": 1,
+      "confidence": 99,
+      "source": "SCDNR - News Releases - Freshwater Fishing Trends",
+      "quote": "largemouth bass in upper Lake Marion will be holding in 5-8 feet of water during the day around the plentiful woody and weedy cover in this section of the lake",
+      "category": "structuralElement",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "In upper Lake Marion, crappie are found on deeper brush.",
+      "page": 1,
+      "confidence": 99,
+      "source": "SCDNR - News Releases - Freshwater Fishing Trends",
+      "quote": "Crappie will be on deeper brush but biting well",
+      "category": "structuralElement",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "In upper Lake Marion, bream are found in 3-7 feet of water around weed edges and cypress tree clusters.",
+      "page": 1,
+      "confidence": 99,
+      "source": "SCDNR - News Releases - Freshwater Fishing Trends",
+      "quote": "bream will be in 3-7 feet of water around weed edges and cypress tree clusters.",
+      "category": "structuralElement",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "July catfish patterns at the top of Santee (Lake Marion) involve fishing shallow flats less than 6 feet deep early and late, and drift-fishing deeper water along channels mid-day.",
+      "page": 1,
+      "confidence": 99,
+      "source": "SCDNR - News Releases - Freshwater Fishing Trends",
+      "quote": "The July catfish patterns at the top of Santee typically involve fishing shallow flats less than 6 feet deep early and late, then drift-fishing deeper water along the channels mid-day.",
+      "category": "structuralElement",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Nocturnal catfishing on shallow flats in upper Lake Marion is productive on calm nights.",
+      "page": 1,
+      "confidence": 99,
+      "source": "SCDNR - News Releases - Freshwater Fishing Trends",
+      "quote": "Note that nocturnal catfishing the shallow flats from an anchored setup is very productive on calm nights.",
+      "category": "structuralElement",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Native grasses in Lake Marion have improved bass spawning habitat and provide cover for fish during hot weather.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Summer Hotspots for South Carolina Fishing",
+      "quote": "These grasses have helped boost the population of largemouth because they have vastly improved bass spawning habitat over the past few years. The grass also provides cover needed for attracting and holding the fish during hot weather.",
+      "category": "habitatCover",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Largemouth bass in Lake Marion are found in heavy cover at depths of 3 to 8 feet during the summer.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Summer Hotspots for South Carolina Fishing",
+      "quote": "There are several patterns that will produce at this time of the year and working heavy cover in water depths from 3- to 8-feet deep is a primary pattern.",
+      "category": "structuralElement",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Largemouth bass in Lake Marion often forage on shallow flats and points where shad are present.",
+      "page": 1,
+      "confidence": 99,
+      "source": "Summer Hotspots for South Carolina Fishing",
+      "quote": "Even if the bass are not busting shad on the surface they will often be working shallow flats and points where shad are found.",
+      "category": "primaryForage",
+      "sourcesAgree": 1
+    },
+    {
+      "fact": "Lake Marion has a surface area of approximately 81,716 acres.",
+      "page": 1,
+      "confidence": 95,
+      "source": "Spatial and temporal hydrodynamic and water quality modeling analysis of a large reservoir on the South Carolina (USA) coastal plain",
+      "quote": "Lake Marion (surface area 330.7 km 2; volume 1548.3×10 6 m 3)",
+      "category": "surfaceArea",
+      "sourcesAgree": 1
+    }
+  ],
+  "_extractedFactsCount": 84,
+  "_wqpLimnology": null
+}
