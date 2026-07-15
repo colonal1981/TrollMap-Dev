@@ -2965,7 +2965,13 @@ async function handleResearchDedupeContradictions(request, env) {
             // Don't flag seasonal rules as contradictions (Oct-May vs Jun-Sep etc)
             const seasonPattern = /jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d+\s*-\s*(may|sept|oct)|spring|summer|fall|winter|seasonal/i;
             const bothSeasonal = seasonPattern.test(prevText) && seasonPattern.test(currText);
-            if (sameAttr && relDiff > 0.05 && !differentSpecies && !bothSeasonal) {
+            // Skip if both facts contain the same set of numbers — different phrasing of same fact
+            const allNumsPrev = new Set((prevText.match(/\d+(?:\.\d+)?/g) || []).map(Number));
+            const allNumsCurr = new Set((currText.match(/\d+(?:\.\d+)?/g) || []).map(Number));
+            const sameNumbers = [...allNumsPrev].every(n => allNumsCurr.has(n)) && [...allNumsCurr].every(n => allNumsPrev.has(n));
+            // 15% threshold filters rounding noise (48k vs 51k acres = 6.25%) while
+            // catching real conflicts (13k vs 51k acres = 292%)
+            if (sameAttr && relDiff > 0.15 && !differentSpecies && !bothSeasonal && !sameNumbers) {
               numberConflict = true;
             }
           }
