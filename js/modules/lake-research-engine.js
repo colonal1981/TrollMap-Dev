@@ -733,6 +733,10 @@ async function runEvidencePipeline(lakeName, callbacks = {}) {
 
     let sources = discoverData.sources || [];
     log(`Source Discovery completed. Discovered ${sources.length} trusted documents/URLs.`);
+    // Log discover query results for visibility into what Firecrawl found/filtered
+    if (discoverData.queryLog?.length) {
+      for (const line of discoverData.queryLog) log(`[discover] ${line}`);
+    }
     sources.forEach(src => {
       log(`• [Priority ${src.priority}] ${src.title} (${src.authority}) - ${src.type}`);
     });
