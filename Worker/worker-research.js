@@ -3581,10 +3581,36 @@ INSTRUCTIONS:
 3. If ${lakeName} is in an exception row, use that exception rule
 4. If not listed, statewide rule applies
 5. Extract rules for: Largemouth Bass, Striped Bass / Hybrid, White Bass, Crappie, Blue Catfish, Channel Catfish, Bream, Chain Pickerel
-6. CRITICAL: Put ALL species-specific limits as keys in creelLimits and sizeLimits objects. specialRules is ONLY for gear restrictions (trotlines, traps, unusual rules).
-   CORRECT: "creelLimits": { "Striped Bass / Hybrid": "5" }, "sizeLimits": { "Striped Bass / Hybrid": "Oct. 1 - May 31: 21 inches min" }
-   WRONG: putting species creel/size rules as strings in specialRules[]
 
+CRITICAL STRUCTURE RULES — violations will corrupt the profile:
+- creelLimits MUST be a JSON object with species name keys. NEVER a string, NEVER an array.
+- sizeLimits MUST be a JSON object with species name keys. NEVER a string, NEVER an array.
+- specialRules is ONLY for gear restrictions (trotlines, traps, slot limits, unusual rules). NEVER put creel or size limits here.
+- Every species you find a creel limit for MUST appear as a key in creelLimits.
+- Every species you find a size limit for MUST appear as a key in sizeLimits.
+
+CORRECT example for Lake Murray:
+"creelLimits": {
+  "Striped Bass / Hybrid": "5",
+  "Largemouth Bass": "5 combined black bass",
+  "Crappie": "20",
+  "White Bass": "10",
+  "Bream": "30",
+  "Blue Catfish": "25",
+  "Chain Pickerel": "30"
+}
+"sizeLimits": {
+  "Largemouth Bass": "14 inches min",
+  "Striped Bass / Hybrid": "Oct. 1 - May 31: 21 inches min; June 1 - Sept. 30: any length",
+  "Crappie": "8 inches min"
+}
+
+WRONG — do NOT do this:
+"creelLimits": "The crappie regulation is 20 fish per day"  ← STRING, NOT ALLOWED
+"creelLimits": ["20 crappie per day"]  ← ARRAY, NOT ALLOWED
+
+Return ONLY valid JSON:
+{
   "regulations": {
     "state": "${state || 'SC'}",
     "lakeSpecificRegulations": {
@@ -3598,7 +3624,7 @@ INSTRUCTIONS:
   },
   "sources": [{"label":"eRegulations SC Freshwater Fishing","url":"https://www.eregulations.com/southcarolina/fishing","trust":"OFFICIAL"}]
 }
-JSON only. Never invent limits.`;
+JSON only. Never output a string or array for creelLimits or sizeLimits.`;
     },
     expectedKey: "regulations"
   },
@@ -3910,26 +3936,34 @@ async function handleResearchAgent(request, env) {
   let sectionData = (parsed[dataKey] && Object.keys(parsed[dataKey]).length > 0) ? parsed[dataKey] : (parsed[agentKey] && Object.keys(parsed[agentKey] || {}).length > 0) ? parsed[agentKey] : parsed;
   const sources = parsed.sources || sectionData?.sources || [];
 
-  // Sanitize regulations output — remove creel_N / size_N raw fact string keys
-  // These appear when the agent dumps extracted facts instead of mapping to species keys
+  // Sanitize regulations output — fix malformed creelLimits/sizeLimits
+  // Agent sometimes returns these as strings or arrays instead of {species: limit} objects
   if (agentKey === 'regulations' && sectionData) {
     const cleanCreel = {};
     const cleanSize = {};
     const lsr = sectionData.lakeSpecificRegulations || {};
-    
+
+    // If creelLimits/sizeLimits came back as a string or array, they're malformed — discard them
+    // so the deterministic parser's correct values aren't overwritten with garbage
+    const creelSource = (lsr.creelLimits && typeof lsr.creelLimits === 'object' && !Array.isArray(lsr.creelLimits))
+      ? lsr.creelLimits : {};
+    const sizeSource = (lsr.sizeLimits && typeof lsr.sizeLimits === 'object' && !Array.isArray(lsr.sizeLimits))
+      ? lsr.sizeLimits : {};
+
     // Only keep properly keyed species entries (not creel_0, creel_1, size_0, etc.)
     const numberedKeyPattern = /^(creel|size|limit)_\d+$/i;
-    for (const [k, v] of Object.entries(lsr.creelLimits || {})) {
+    for (const [k, v] of Object.entries(creelSource)) {
       if (!numberedKeyPattern.test(k) && typeof v === 'string') cleanCreel[k] = v;
     }
-    for (const [k, v] of Object.entries(lsr.sizeLimits || {})) {
+    for (const [k, v] of Object.entries(sizeSource)) {
       if (!numberedKeyPattern.test(k) && typeof v === 'string') cleanSize[k] = v;
     }
-    // Also filter specialRules — remove the nongame device garbage
-    const cleanSpecialRules = (lsr.specialRules || []).filter(r => 
+    // Also filter specialRules — remove nongame device garbage and misplaced creel/size rules
+    const cleanSpecialRules = (lsr.specialRules || []).filter(r =>
       typeof r === 'string' && r.length < 200 && !/Allowable Nongame Devices|Marking of Nongame|Facebook RSS/i.test(r)
+      && !/\d+\s*(inch|in\b|fish|per day|creel|possession|limit)/i.test(r) // misplaced limits
     );
-    
+
     sectionData = {
       ...sectionData,
       lakeSpecificRegulations: {
