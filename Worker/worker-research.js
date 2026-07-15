@@ -359,8 +359,9 @@ async function handleResearchDiscover(request, env) {
   if (state === "NC") { dnrName = "NCWRC"; dnrDomain = "ncwildlife.org"; regsSiteFilter = "site:ncwildlife.org OR site:eregulations.com"; }
   else if (state === "GA") { dnrName = "GADNR"; dnrDomain = "georgiawildlife.com"; regsSiteFilter = "site:georgiawildlife.com OR site:eregulations.com"; }
 
-  // Use baseName in queries to improve Tavily hit rate (avoid ", SC" suffix which hurts)
-  const queryLake = baseName || lakeName;
+  // Use full lake name (without state suffix) in queries for specificity
+  // "Lake Murray" beats "Murray" — avoids matching unrelated Murray documents
+  const queryLake = lakeName.replace(/,\s*(SC|NC|GA|TN)\s*$/i,'').trim(); // "Lake Murray" not "Murray"
   const stateFullName = { SC: 'South Carolina', NC: 'North Carolina', GA: 'Georgia' }[state] || 'South Carolina';
 
   // Owner-aware drawdown source seeding: if the caller already knows the
@@ -382,8 +383,7 @@ async function handleResearchDiscover(request, env) {
     // EPA NSCEP — covers both "Report on Lake X" and "Report on X Lake" naming
     `"Report on Lake ${queryLake}" OR "Report on ${queryLake} Lake" OR "${queryLake}" (NESWP OR eutrophication OR nepis)`,
     // Fishing guide query — lake name unquoted at end matches Firecrawl indexing better
-    // than quoted phrase at start (confirmed via playground testing)
-    `(fishing guide OR fishing report) (thermocline OR depth OR structure OR forage OR "threadfin shad" OR "gizzard shad" OR "fall turnover" OR "spring spawn" OR drawdown) (site:carolinasportsman.com OR site:takemefishing.org OR site:gameandfishmag.com OR site:in-fisherman.com OR site:flwfishing.com OR site:bassmaster.com OR site:majorleaguefishing.com) ${lakeName.replace(/,\s*(SC|NC|GA)\s*$/i,'').trim()}`,
+    `(fishing guide OR fishing report) (thermocline OR depth OR structure OR forage OR "threadfin shad" OR "gizzard shad" OR "fall turnover" OR "spring spawn" OR drawdown) (site:carolinasportsman.com OR site:takemefishing.org OR site:gameandfishmag.com OR site:in-fisherman.com OR site:flwfishing.com OR site:bassmaster.com OR site:majorleaguefishing.com) ${queryLake}`,
   ];
 
   let discoveredSources = [];
