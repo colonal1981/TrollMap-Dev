@@ -832,18 +832,6 @@ async function runEvidencePipeline(lakeName, callbacks = {}) {
       const src = sources[i];
       log(`Processing [${i + 1}/${sources.length}] ${src.title}...`);
 
-      // Guide query results from search+scrapeOptions already have inline markdown —
-      // skip proxy-download entirely, add directly to normalizedDocuments
-      if (src.fullText && src.fullText.length > 200 && src.type !== 'PDF') {
-        log(`Using inline content (${src.fullText.length} chars) from search+scrapeOptions: ${src.title}`);
-        normalizedDocuments.push({
-          title: src.title, authority: src.authority, url: src.url, priority: src.priority,
-          fullText: src.fullText, pages: [{ pageNumber: 1, text: src.fullText, title: src.title }],
-          downloadDate: new Date().toISOString(), contentType: 'text/markdown', extractionMethod: 'firecrawl_inline'
-        });
-        continue;
-      }
-
       // skip oversized PDFs early (client memory protection)
       if (src.type === 'PDF' && src.title.toLowerCase().includes('pocket guide')) {
         log(`⚠️ Skipping huge generic pocket guide PDF (50MB) — low lake-specific value.`);
@@ -1113,9 +1101,9 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     // Call /research/analyze-facts once per document — no batching, no trimming
     const allDocFacts = [];
     for (let i = 0; i < usableDocuments.length; i++) {
-      // 1s spacing between calls keeps burst under Gemini Flash Lite's 15 RPM free limit,
+      // 1.5s spacing keeps burst under Gemini Flash Lite's 15 RPM limit and provides TPM headroom (~167K TPM),
       // reducing cascades to the 2.5 Flash/Lite models which only have 20 RPD each.
-      if (i > 0) await new Promise(res => setTimeout(res, 1000));
+      if (i > 0) await new Promise(res => setTimeout(res, 1500));
       const doc = usableDocuments[i];
       const scored = scoredSources.find(s => s.title === doc.title);
       // Cap document text at 200k chars — large PDFs (200k+) still get trimmed but
@@ -1424,6 +1412,25 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
                 if (v == null) continue;
                 if (Array.isArray(v) && v.length === 0 && Array.isArray(existing[k]) && existing[k].length > 0) continue;
                 merged[k] = v;
+              }
+              // Deep-merge lakeSpecificRegulations for regulations agent —
+              // only overwrite creelLimits/sizeLimits if agent returned a non-empty object.
+              // Prevents sanitized-empty {} from wiping deterministic parser's correct data.
+              if (agentKey === 'regulations' && agentData.section?.lakeSpecificRegulations) {
+                const existingLsr = existing.lakeSpecificRegulations || {};
+                const agentLsr = agentData.section.lakeSpecificRegulations;
+                const mergedCreel = (agentLsr.creelLimits && typeof agentLsr.creelLimits === 'object' && !Array.isArray(agentLsr.creelLimits) && Object.keys(agentLsr.creelLimits).length > 0)
+                  ? agentLsr.creelLimits
+                  : (existingLsr.creelLimits && typeof existingLsr.creelLimits === 'object' ? existingLsr.creelLimits : {});
+                const mergedSize = (agentLsr.sizeLimits && typeof agentLsr.sizeLimits === 'object' && !Array.isArray(agentLsr.sizeLimits) && Object.keys(agentLsr.sizeLimits).length > 0)
+                  ? agentLsr.sizeLimits
+                  : (existingLsr.sizeLimits && typeof existingLsr.sizeLimits === 'object' ? existingLsr.sizeLimits : {});
+                merged.lakeSpecificRegulations = {
+                  ...existingLsr,
+                  ...agentLsr,
+                  creelLimits: mergedCreel,
+                  sizeLimits: mergedSize,
+                };
               }
               agentSections[agentKey] = merged;
               if (agentKey === 'biology') {
