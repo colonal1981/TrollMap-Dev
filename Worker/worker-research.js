@@ -385,11 +385,9 @@ async function handleResearchDiscover(request, env) {
     { query: `"${queryLake}" (limnology OR thermocline OR "water quality" OR "dissolved oxygen")`, categories: ['research'] },
     { query: `"Report on Lake ${queryLake}" OR "Report on ${queryLake} Lake" OR "${queryLake}" (NESWP OR eutrophication OR nepis)` },
     // Fishing guide query — includeDomains is a native Firecrawl param (site: in query string is ignored)
-    // scrapeOptions pulls full article content in one call, skipping a separate proxy-download per result
     {
       query: `${queryLake} thermocline depth structure forage shad seasonal fishing`,
       includeDomains: ['carolinasportsman.com', 'takemefishing.org', 'gameandfishmag.com', 'in-fisherman.com', 'flwfishing.com', 'bassmaster.com', 'majorleaguefishing.com'],
-      scrapeOptions: { formats: ['markdown'], onlyMainContent: true, maxAge: 604800000 },
     },
   ];
 
@@ -744,10 +742,12 @@ async function handleResearchProxyDownload(request, env) {
   }
 
   // Route HTML sources through Firecrawl ONLY for JS-rendered SPAs and NEPIS pages.
-  // CREDIT BUDGET: static HTML pages (SCDNR descriptions, USGS, etc.) work fine with
-  // basic fetch + HTML stripping. Firecrawl costs 1 credit per scrape, so we only
-  // use it when necessary.
+  // CREDIT BUDGET:
+  // - NEPIS/eRegulations/Grokipedia → Firecrawl (custom logic, SPA rendering, NEPIS two-step)
+  // - All other HTML → Jina Reader (r.jina.ai) — free 10M token pool, 0 Firecrawl credits
+  // - PDFs → basic fetch → browser PDF.js (unchanged)
   const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
+  const jinaKey = env.JINA_API_KEY || null;
   const isHtml = sourceType.toUpperCase() === 'HTML' || (!target.toLowerCase().includes('.pdf') && !sourceType.toUpperCase().includes('PDF'));
   // EPA NSCEP / NEPIS ZyNET:
   //  - Search results page (ZyActionS) — harvest document links
@@ -755,7 +755,8 @@ async function handleResearchProxyDownload(request, env) {
   const isNepisSearch = /nepis\.epa\.gov/i.test(target) && /[?&]ZyAction=ZyActionS\b/i.test(target);
   const isNepisLanding = /nepis\.epa\.gov/i.test(target) && (/[?&]ZyAction=ZyActionD\b/i.test(target) || /zypdf\.cgi/i.test(target));
   const isNepisAny = /nepis\.epa\.gov|ZyNET\.exe/i.test(target);
-  // Only use Firecrawl for JS-heavy SPAs and NEPIS pages (saves ~8 Firecrawl credits per run)
+  // Pages that MUST stay on Firecrawl: NEPIS (custom two-step), eRegulations (React SPA needs
+  // waitFor:3000 to render table rows), Grokipedia (JS-rendered)
   const needsFirecrawl = isNepisSearch || isNepisLanding || isNepisAny || /eregulations\.com/i.test(target) || /grokipedia\.com/i.test(target);
 
   if (firecrawlKey && isHtml && needsFirecrawl) {
@@ -1007,6 +1008,38 @@ async function handleResearchProxyDownload(request, env) {
       // Fall through to basic fetch if Firecrawl fails
     } catch (e) {
       console.warn(`Firecrawl failed for ${target}: ${e.message} — falling back to basic fetch`);
+    }
+  }
+
+  // ── Jina Reader for non-Firecrawl HTML pages ─────────────────────────────
+  // Routes all general HTML (guide articles, SCDNR pages, ResearchGate, etc.)
+  // through r.jina.ai — draws from 10M free token pool, 0 Firecrawl credits.
+  // Keeps Firecrawl reserved for NEPIS two-step + eRegulations SPA + Grokipedia.
+  if (isHtml && !needsFirecrawl) {
+    try {
+      const jinaUrl = `https://r.jina.ai/${target}`;
+      const jinaHeaders = {
+        'Accept': 'text/plain',
+        'X-Return-Format': 'markdown',
+        'X-No-Cache': 'false',          // allow Jina cache (5 min TTL) — speeds up re-runs
+        'X-Remove-Selector': 'nav, footer, .sidebar, #ads, .advertisement, .cookie-banner',
+      };
+      if (jinaKey) jinaHeaders['Authorization'] = `Bearer ${jinaKey}`;
+      const jinaRes = await fetch(jinaUrl, { headers: jinaHeaders });
+      if (jinaRes.ok) {
+        const markdown = await jinaRes.text();
+        if (markdown && markdown.length > 200) {
+          const headers = new Headers({
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Access-Control-Allow-Origin': '*',
+            'X-Source': 'jina'
+          });
+          return new Response(markdown, { headers });
+        }
+      }
+      console.warn(`Jina Reader failed for ${target}: HTTP ${jinaRes.status} — falling back to basic fetch`);
+    } catch (e) {
+      console.warn(`Jina Reader error for ${target}: ${e.message} — falling back to basic fetch`);
     }
   }
 
