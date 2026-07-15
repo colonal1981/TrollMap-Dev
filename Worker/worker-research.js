@@ -376,14 +376,17 @@ async function handleResearchDiscover(request, env) {
   // 2026-07-13: One combined fishing-guide query covers depth/structure/forage/
   // thermocline/seasonal facts from regional pubs. CWMS lake levels come from
   // the free direct API on /lake — no search needed for that.
+  // Each pattern can be a string (simple query) or { query, ...firecrawlOptions }
   const queryPatterns = [
-    `"${queryLake}" (fisheries OR biology OR \"striped bass\" OR crappie OR \"largemouth\") ${dnrName}`,
-    `"${queryLake}" (regulations OR \"creel limit\" OR \"size limit\" OR \"bag limit\") (${regsSiteFilter})`,
-    `"${queryLake}" (limnology OR thermocline OR \"water quality\" OR \"dissolved oxygen\") (USACE OR USGS OR EPA)`,
-    // EPA NSCEP — covers both "Report on Lake X" and "Report on X Lake" naming
-    `"Report on Lake ${queryLake}" OR "Report on ${queryLake} Lake" OR "${queryLake}" (NESWP OR eutrophication OR nepis)`,
-    // Fishing guide query — lake name unquoted at end matches Firecrawl indexing better
-    `(fishing guide OR fishing report) (thermocline OR depth OR structure OR forage OR "threadfin shad" OR "gizzard shad" OR "fall turnover" OR "spring spawn" OR drawdown) (site:carolinasportsman.com OR site:takemefishing.org OR site:gameandfishmag.com OR site:in-fisherman.com OR site:flwfishing.com OR site:bassmaster.com OR site:majorleaguefishing.com) ${queryLake}`,
+    { query: `"${queryLake}" (fisheries OR biology OR "striped bass" OR crappie OR "largemouth") ${dnrName}` },
+    { query: `"${queryLake}" (regulations OR "creel limit" OR "size limit" OR "bag limit") ${dnrName}` },
+    { query: `"${queryLake}" (limnology OR thermocline OR "water quality" OR "dissolved oxygen") (USACE OR USGS OR EPA)` },
+    { query: `"Report on Lake ${queryLake}" OR "Report on ${queryLake} Lake" OR "${queryLake}" (NESWP OR eutrophication OR nepis)` },
+    // Fishing guide query — use includeDomains for reliable site filtering
+    {
+      query: `${queryLake} (thermocline OR depth OR structure OR forage OR "threadfin shad" OR "gizzard shad" OR "fall turnover" OR "spring spawn" OR drawdown)`,
+      includeDomains: ['carolinasportsman.com', 'takemefishing.org', 'gameandfishmag.com', 'in-fisherman.com', 'flwfishing.com', 'bassmaster.com', 'majorleaguefishing.com'],
+    },
   ];
 
   let discoveredSources = [];
@@ -394,17 +397,20 @@ async function handleResearchDiscover(request, env) {
 
   // PRIMARY: Firecrawl /v2/search
   if (firecrawlSearchKey) {
-    for (const q of queryPatterns) {
+    for (const pattern of queryPatterns) {
+      const q = typeof pattern === 'string' ? pattern : pattern.query;
+      const extraOpts = typeof pattern === 'object' ? { ...pattern, query: undefined } : {};
+      delete extraOpts.query;
       try {
         let results = [];
         const searchRes = await fetch('https://api.firecrawl.dev/v2/search', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${firecrawlSearchKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: q, limit: 5 })
+          body: JSON.stringify({ query: q, limit: 5, ...extraOpts })
         });
         if (!searchRes.ok) { queryLog.push(`[query] FAILED (${searchRes.status}): ${q.slice(0,80)}`); continue; }
         const searchData = await searchRes.json();
-        results = (Array.isArray(searchData) ? searchData : (searchData.data || searchData.results || searchData.web || [])).map(r => ({
+        results = (searchData.data?.web || searchData.data || searchData.web || (Array.isArray(searchData) ? searchData : [])).map(r => ({
           url: r.url, title: r.title || r.metadata?.title || '', score: 0.5
         }));
         queryLog.push(`[query] ${q.slice(0, 100)} → ${results.length} results`);
@@ -1369,7 +1375,7 @@ async function handleResearchDatasetHunt(request, env) {
         });
         if (!searchRes.ok) continue;
         const searchData = await searchRes.json();
-        results = (Array.isArray(searchData) ? searchData : (searchData.data || searchData.results || searchData.web || [])).map(r => ({
+        results = (searchData.data?.web || searchData.data || searchData.web || (Array.isArray(searchData) ? searchData : [])).map(r => ({
           url: r.url, title: r.title || r.metadata?.title || '', content: ''
         }));
         for (const r of results) {
@@ -3156,7 +3162,7 @@ async function handleResearchGapSearch(request, env) {
     });
     if (!searchRes.ok) return new Response(JSON.stringify({ success: false, error: `Firecrawl search ${searchRes.status}`, extracted_facts: [], rawText: '' }), { headers: JSON_HEADERS });
     const searchData = await searchRes.json();
-    const results = Array.isArray(searchData) ? searchData : (searchData.data || searchData.results || searchData.web || []);
+    const results = searchData.data?.web || searchData.data || searchData.web || (Array.isArray(searchData) ? searchData : []);
     if (!results.length) return new Response(JSON.stringify({ success: true, extracted_facts: [], rawText: '', note: "No results found" }), { headers: JSON_HEADERS });
 
     // Firecrawl /v2/search returns markdown content inline — no separate extract call needed
