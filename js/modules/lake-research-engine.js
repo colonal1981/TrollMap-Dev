@@ -1054,6 +1054,7 @@ async function runEvidencePipeline(lakeName, callbacks = {}) {
       else if (/SCDNR|NCWRC|DNR|STATE/.test(auth)) authorityScore = 98;
       else if (/CLEMSON|NC STATE|UNIVERSITY|UGA|USC/.test(auth)) authorityScore = 90;
       else if (/DUKE|DOMINION|POWER|UTILITY/.test(auth)) authorityScore = 85;
+      else if (/GROKIPEDIA/.test(auth) || /grokipedia\.com/i.test(urlLower)) authorityScore = 80; // Grok-synthesized from primary sources with citations
 
       // Relevance: lake-name hits help, but official statewide regs (eRegulations) are always high-value
       const mentionsBase = lower.includes(baseLower);
