@@ -1195,8 +1195,10 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     for (let i = 0; i < usableDocuments.length; i++) {
       const doc = usableDocuments[i];
       const scored = scoredSources.find(s => s.title === doc.title);
-      // Cap document text at 80k chars — large PDFs (200k+) cause LLM timeouts
-      const docText = (doc.fullText || '').slice(0, 80000);
+      // Cap document text at 200k chars — large PDFs (200k+) still get trimmed but
+      // Gemini 3.1 Flash Lite / 2.5 Flash have 1M token context windows so 200k chars
+      // (~50k tokens) is well within budget. Old 80k cap was from Groq era.
+      const docText = (doc.fullText || '').slice(0, 200000);
       const singlePayload = {
         lakeName,
         baseName,
@@ -1467,10 +1469,10 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
               previousResults: {
                 ...agentSections,
                 _extractedFacts: uniqueFacts,
-                _normalizedDocuments: normalizedDocuments.slice(0, 6).map(d => ({
+                _normalizedDocuments: normalizedDocuments.slice(0, 12).map(d => ({
                   title: d.title,
                   url: d.url,
-                  text: (d.fullText || '').slice(0, 8000)
+                  text: (d.fullText || '').slice(0, 40000)
                 }))
               }
             })
@@ -1489,10 +1491,10 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
                 previousResults: {
                   ...agentSections,
                   _extractedFacts: uniqueFacts,
-                  _normalizedDocuments: normalizedDocuments.slice(0, 6).map(d => ({
+                  _normalizedDocuments: normalizedDocuments.slice(0, 12).map(d => ({
                     title: d.title,
                     url: d.url,
-                    text: (d.fullText || '').slice(0, 8000)
+                    text: (d.fullText || '').slice(0, 40000)
                   }))
                 }
               })
