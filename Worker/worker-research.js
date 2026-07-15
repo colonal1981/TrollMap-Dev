@@ -3316,7 +3316,7 @@ var RESEARCH_AGENTS = {
   identity: {
     label: "Lake Identity",
     order: 1,
-    system: "You are a data assembly agent for lake identity and pool management data. Map extracted facts to the JSON fields. CRITICAL RULES: (1) surfaceAreaAcres must be in ACRES — if source gives km², multiply by 247.1; (2) maxDepthFt is actual water depth — NEVER use pool elevation as depth; (3) For Duke Energy CRA pool tables the columns are: Month | Guide Curve ft | Minimum ft | Maximum ft in local datum; (4) riverSystem must be a river/watershed name like 'Saluda River' or 'Catawba-Wateree' — NEVER a HUC code or monitoring site description; (5) archetype must be a lake type like 'large hydroelectric reservoir' — NEVER a water quality site type like 'other-surface water site'; (6) Never invent values. Return ONLY valid JSON.",
+    system: "You are a data assembly agent for lake identity and pool management data. Map extracted facts to the JSON fields. CRITICAL RULES: (1) surfaceAreaAcres must be in ACRES — if source gives km², multiply by 247.1; (2) maxDepthFt is actual water depth — NEVER use pool elevation as depth; (3) For Duke Energy CRA pool tables the columns are: Month | Guide Curve ft | Minimum ft | Maximum ft in local datum; (4) riverSystem must be a river/watershed name like 'Saluda River' or 'Catawba-Wateree' — NEVER a HUC code or monitoring site description; (5) archetype must be a lake type like 'large hydroelectric reservoir' — NEVER a water quality site type like 'other-surface water site'; (6) Never invent values. Return ONLY valid JSON. (7) normalPoolFt is the STATIC full pool surface elevation in feet NGVD/NAVD (e.g. 385.5, 225.5) — NEVER a daily fluctuation range or drawdown amount. If the only pool number you see is a fluctuation like '5 feet daily' or '4.5 to 5 feet', set normalPoolFt to null.",
     userTemplate: (lakeName, state, prev) => {
       const facts = prev?._extractedFacts || [];
 
@@ -3348,9 +3348,12 @@ var RESEARCH_AGENTS = {
         return null;
       })() : null;
 
-      const identityFacts = facts.filter(f =>
-        /identity|surface|depth|dam|year|owner|river|archetype|impound|county|pool|drawdown|elevation|normal/i.test(f.category)
-      ).map(f => `• [${f.category}] ${f.fact} (source: ${f.source}, confidence ${f.confidence}%)\n  Quote: "${f.quote}"`).join('\n\n');
+      const identityFacts = facts.filter(f => {
+        if (!/identity|surface|depth|dam|year|owner|river|archetype|impound|county|pool|drawdown|elevation|normal/i.test(f.category)) return false;
+        // Exclude poolLevel facts that are just fluctuation ranges — not pool elevations
+        if (f.category === 'poolLevel' && !/elevation|ngvd|navd|feet above|ft msl|\d{3}\s*f/i.test(f.fact)) return false;
+        return true;
+      }).map(f => `• [${f.category}] ${f.fact} (source: ${f.source}, confidence ${f.confidence}%)\n  Quote: "${f.quote}"`).join('\n\n');
 
       const ownerText = (facts.find(f => f.category === 'reservoirOwner')?.fact || '').toLowerCase();
       const isDuke = /duke/i.test(ownerText);
