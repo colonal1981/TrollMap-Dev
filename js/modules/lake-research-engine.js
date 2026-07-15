@@ -1113,6 +1113,9 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     // Call /research/analyze-facts once per document — no batching, no trimming
     const allDocFacts = [];
     for (let i = 0; i < usableDocuments.length; i++) {
+      // 1s spacing between calls keeps burst under Gemini Flash Lite's 15 RPM free limit,
+      // reducing cascades to the 2.5 Flash/Lite models which only have 20 RPD each.
+      if (i > 0) await new Promise(res => setTimeout(res, 1000));
       const doc = usableDocuments[i];
       const scored = scoredSources.find(s => s.title === doc.title);
       // Cap document text at 200k chars — large PDFs (200k+) still get trimmed but
