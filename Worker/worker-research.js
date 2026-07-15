@@ -2665,15 +2665,17 @@ async function handleResearchAnalyzeFacts(request, env) {
   const SYSTEM = "You are a precise fact extraction engine. Extract verified facts about the specified lake from this single document. Return ONLY valid JSON with extracted_facts array. Never hallucinate. Quote must be verbatim from the document. Confidence 0-100.";
 
   const buildDocPrompt = (doc, lakeName, baseName, state) => {
-    const isRegulations = /regulation|regs|eregulation|creel|size.?limit|bag.?limit/i.test(doc.title + ' ' + (doc.url||''));
-    const isLimnology = /epa|nscep|water.?qual|limnol|nutrient|eutrophication|characteriz/i.test(doc.title + ' ' + (doc.url||''));
-    const isBiology = /fisheries|biology|annual.report|investigations|stocking|species|creel.survey|electrofishing/i.test(doc.title + ' ' + (doc.url||''));
-    const isOperator = /duke.energy|dominion|santee.cooper|usace|army.corps|ferc|cra|agreement/i.test(doc.title + ' ' + (doc.url||''));
-    const isGuide = /sportsman|fishing.report|guide|carolinasportsman|anglersheadquarters|takemefishing/i.test(doc.url||'');
-    const isGrokipedia = /grokipedia\.com/i.test(doc.url||'');
+    const combined = (doc.title || '') + ' ' + (doc.url || '');
+    const isRegulations = /regulation|regs|eregulation|creel|size.?limit|bag.?limit/i.test(combined);
+    const isLimnology = /epa|nscep|water.?qual|limnol|nutrient|eutrophication|characteriz|ferc.*ea|environmental.?assess|relicens|phytoplankton|journal.*water|water.*journal/i.test(combined);
+    const isBiology = /fisheries|biology|annual.report|investigations|stocking|species|creel.survey|electrofishing|bass|bream|crappie|striper|catfish|sunfish|perch/i.test(combined);
+    const isOperator = /duke.energy|dominion|santee.cooper|usace|army.corps|ferc|cra|agreement/i.test(combined);
+    const isGuide = /sportsman|fishing.report|guide|carolinasportsman|anglersheadquarters|takemefishing|hot.*spot|night.*bass|monster|striper.*lake|lake.*striper|bassin|fishing.*sc|sc.*fishing/i.test(combined);
+    const isSCDNR = /dnr\.sc\.gov|dnr\.nc\.gov|gadnr|description\.html|lake.*description|scdnr|ncwrc|fisheries.*fact|fact.*sheet/i.test(combined);
+    const isGrokipedia = /grokipedia\.com/i.test(doc.url || '');
 
-    let focusInstructions = '';
-    if (isGrokipedia) focusInstructions = `
+    const focusParts = [];
+    if (isGrokipedia) focusParts.push(`
 PRIORITY FIELDS for this Grokipedia reference article — extract ALL of the following if present:
 
 MORPHOMETRY & IDENTITY:
@@ -2732,9 +2734,9 @@ WATER QUALITY:
 - Impairments or 303(d) listings
 - PCB or contamination advisories
 - E. coli or bacteria issues
-- Thermal discharge effects (nuclear/industrial cooling)`;
+- Thermal discharge effects (nuclear/industrial cooling)`);
 
-    if (isLimnology) focusInstructions = `
+    if (isLimnology) focusParts.push(`
 PRIORITY FIELDS for this document type:
 - Secchi depth (look for "SECCHI (METERS)" row — convert to feet × 3.281; typical value < 5ft for turbid lakes)
 - Temperature at multiple depths (derive thermocline where temp drops sharply)
@@ -2743,9 +2745,9 @@ PRIORITY FIELDS for this document type:
 - Hydraulic retention time in days
 - Trophic status (eutrophic/mesotrophic/oligotrophic)
 - Total phosphorus loading
-UNIT WARNING: The EPA NES summary table has multiple rows. SECCHI row values are 0.3-0.5m. Alkalinity row is 10-35 mg/L. Do NOT confuse these. Temperature row is in °C.`;
+UNIT WARNING: The EPA NES summary table has multiple rows. SECCHI row values are 0.3-0.5m. Alkalinity row is 10-35 mg/L. Do NOT confuse these. Temperature row is in °C.`);
 
-    if (isBiology) focusInstructions = `
+    if (isBiology) focusParts.push(`
 PRIORITY FIELDS for this document type:
 - Species present (all game fish and forage species mentioned for this lake)
 - Stocking events (species, quantity, year, agency)
@@ -2753,29 +2755,54 @@ PRIORITY FIELDS for this document type:
 - Species composition percentages (% of standing stock)
 - Growth data, PSD/RSD values, electrofishing CPUE
 - Forage fish species and relative abundance
-- Florida bass allele frequency if mentioned`;
+- Florida bass allele frequency if mentioned`);
 
-    if (isRegulations) focusInstructions = `
+    if (isRegulations) focusParts.push(`
 PRIORITY FIELDS for this document type:
 - Creel limits by species (statewide AND lake-specific exceptions)
 - Size/length limits by species
 - Closed seasons (note which waterbodies they apply to — Santee River ≠ Lake Wateree)
-- Any gear restrictions or special rules for this lake`;
+- Any gear restrictions or special rules for this lake`);
 
-    if (isOperator) focusInstructions = `
+    if (isOperator) focusParts.push(`
 PRIORITY FIELDS for this document type:
 - Pool level targets by month (Guide Curve column from CRA table — local datum feet)
 - Minimum and maximum pool elevations
 - Drawdown schedule and target elevations
-- Normal full pool elevation`;
+- Normal full pool elevation`);
 
-    if (isGuide) focusInstructions = `
+    if (isGuide) focusParts.push(`
 PRIORITY FIELDS for this document type:
 - Thermocline depth (any mention of depth where fish concentrate, e.g. "thermocline at 16 feet")
 - Seasonal patterns by species
 - Structure types where fish are found
-- Forage behavior and depth preferences`;
+- Forage behavior and depth preferences`);
 
+    if (isSCDNR) focusParts.push(`
+PRIORITY FIELDS for this SCDNR/agency lake description or fact sheet:
+- Surface area in acres
+- Shoreline miles
+- Average and maximum depth in feet
+- Normal pool elevation
+- Boat ramps (count and locations)
+- Fish attractors (count and types)
+- Fishing access locations
+- Marinas
+- Species present (list each separately)
+- Stocking programs
+- Any lake-specific regulations mentioned`);
+
+    // Fallback: if no type matched, use a broad general prompt so no doc gets zero guidance
+    if (focusParts.length === 0) focusParts.push(`
+PRIORITY FIELDS — extract any of the following present in this document:
+- Morphometry: surface area, depth, shoreline, pool elevation
+- Limnology: thermocline depth, dissolved oxygen, Secchi depth, trophic status, water clarity
+- Biology: species present, stocking, forage fish, standing stock
+- Regulations: creel limits, size limits, closed seasons
+- Habitat: fish attractors, structure, vegetation
+- Navigation: boat ramps, access points, hazards`);
+
+    const focusInstructions = focusParts.join('\n\n');
     return `Extract ALL verified facts about "${lakeName}" (base name "${baseName}", state ${state}) from this document.
 
 DOCUMENT: ${doc.title}
@@ -2945,19 +2972,12 @@ async function handleResearchDedupeContradictions(request, env) {
         // Only look for direct numeric conflicts on the exact same attribute
         // e.g. "13,710 acres" vs "13,025 acres" for surface area, or two different creel limits
         let numberConflict = false;
-        const numsPrev = prevText.replace(/(\d),(\d)/g, '$1$2').match(/\d+(?:\.\d+)?/g) || [];
-        const numsCurr = currText.replace(/(\d),(\d)/g, '$1$2').match(/\d+(?:\.\d+)?/g) || [];
+        const numsPrev = prevText.match(/\d+(?:\.\d+)?/g) || [];
+        const numsCurr = currText.match(/\d+(?:\.\d+)?/g) || [];
 
         if (numsPrev.length && numsCurr.length) {
-          // Filter year-like numbers (1800–2100) then pick the largest remaining value.
-          // This avoids "41-mile-long, 50,900-acre" using 41 instead of 50900,
-          // and "2009 statute … 20-fish creel" using 2009 instead of 20.
-          const isYear = n => n >= 1800 && n <= 2100;
-          const filteredPrev = numsPrev.map(Number).filter(n => !isYear(n));
-          const filteredCurr = numsCurr.map(Number).filter(n => !isYear(n));
-          if (!filteredPrev.length || !filteredCurr.length) continue;
-          const nPrev = Math.max(...filteredPrev);
-          const nCurr = Math.max(...filteredCurr);
+          const nPrev = parseFloat(numsPrev[0]);
+          const nCurr = parseFloat(numsCurr[0]);
           if (isFinite(nPrev) && isFinite(nCurr) && nPrev !== nCurr) {
             // Require the facts to be talking about the exact same measurable attribute
             // (surface area, max depth, creel limit, size limit, elevation, etc.)
