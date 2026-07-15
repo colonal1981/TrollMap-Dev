@@ -332,6 +332,10 @@ async function handleResearchDiscover(request, env) {
     }
     // Filter irrelevant document types regardless of lake
     if (/wetlands.management|wma.wetlands|wildlife.management.area|hunting.*pdf|upland.*habitat|prescribed.burn|waterfowl.impound/i.test(combined)) return 'irrelevant_doc_type';
+    // Florida lake database — never relevant for SC/NC/GA/TN lakes
+    if (/wateratlas\.usf\.edu/i.test(combined)) return 'irrelevant_doc_type';
+    // Wrong-state generic articles (Kentucky, Illinois, Florida catfish/bass articles with no SC content)
+    if (/kentucky.*small.*lake|illinois.*channel.*cat|mud lake.*florida|wekiva.*river|lake.*county.*florida/i.test(combined)) return 'irrelevant_doc_type';
     if (/nrc\.gov\/docs\//i.test(combined)) return 'nrc_nuclear_doc';
     // Filter non-US / Canadian government documents
     if (/\.gc\.ca\/|dfo-mpo\.gc\.ca|canada\.ca|ontario\.|quebec\.|british.columbia|alberta\.|manitoba\./.test(combined)) return 'foreign_government_doc';
@@ -732,6 +736,14 @@ async function handleResearchProxyDownload(request, env) {
   const sourceType = url.searchParams.get("type") || ""; // "PDF" or "HTML"
   if (!target) {
     return new Response(JSON.stringify({ success: false, error: "Missing url parameter" }), { status: 400, headers: JSON_HEADERS });
+  }
+
+  // Hard-block Florida lake databases for non-Florida states
+  if (/wateratlas\.usf\.edu/i.test(target)) {
+    const stateParam = url.searchParams.get('state') || '';
+    // WaterAtlas is a Florida-only lake database — never relevant for SC/NC/GA/TN lakes
+    console.log(`Blocked WaterAtlas (Florida lake DB) for non-Florida lake: ${target}`);
+    return new Response(JSON.stringify({ success: false, error: 'WaterAtlas is Florida-only, not relevant for this lake' }), { status: 403, headers: JSON_HEADERS });
   }
 
   // Hard-block known wrong-lake NEPIS documents before wasting a Firecrawl credit
@@ -3321,7 +3333,7 @@ var RESEARCH_AGENTS = {
   identity: {
     label: "Lake Identity",
     order: 1,
-    system: "You are a data assembly agent for lake identity and pool management data. Map extracted facts to the JSON fields. CRITICAL RULES: (1) surfaceAreaAcres must be in ACRES — if source gives km², multiply by 247.1; (2) maxDepthFt is actual water depth — NEVER use pool elevation as depth; (3) For Duke Energy CRA pool tables the columns are: Month | Guide Curve ft | Minimum ft | Maximum ft in local datum; (4) riverSystem must be a river/watershed name like 'Saluda River' or 'Catawba-Wateree' — NEVER a HUC code or monitoring site description; (5) archetype must be a lake type like 'large hydroelectric reservoir' — NEVER a water quality site type like 'other-surface water site'; (6) Never invent values. Return ONLY valid JSON. (7) normalPoolFt is the STATIC full pool surface elevation in feet NGVD/NAVD (e.g. 385.5, 225.5) — NEVER a daily fluctuation range or drawdown amount. If the only pool number you see is a fluctuation like '5 feet daily' or '4.5 to 5 feet', set normalPoolFt to null.",
+    system: "You are a data assembly agent for lake identity and pool management data. Map extracted facts to the JSON fields. CRITICAL RULES: (1) surfaceAreaAcres must be in ACRES — if source gives km², multiply by 247.1; (2) maxDepthFt is actual water depth — NEVER use pool elevation as depth; (3) For Duke Energy CRA pool tables the columns are: Month | Guide Curve ft | Minimum ft | Maximum ft in local datum; (4) riverSystem must be a river/watershed name like 'Saluda River' or 'Catawba-Wateree' — NEVER a HUC code or monitoring site description; (5) archetype must be a lake type like 'large hydroelectric reservoir' — NEVER a water quality site type like 'other-surface water site'; (6) Never invent values. Return ONLY valid JSON. (7) normalPoolFt is the STATIC full pool surface elevation in feet NGVD/NAVD (e.g. 385.5, 225.5, 75.5) — NEVER a daily fluctuation range, drawdown amount, or year range. If you see a year range like '1997 to 2014' or '1997-2014', that is a date range NOT a pool elevation. If the only pool number is a fluctuation ('5 feet daily') or a year range, set normalPoolFt to null.",
     userTemplate: (lakeName, state, prev) => {
       const facts = prev?._extractedFacts || [];
 
