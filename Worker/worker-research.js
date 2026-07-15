@@ -476,50 +476,79 @@ async function handleResearchDiscover(request, env) {
 
   // Sort by priority (1 = lake-specific) then by score
 
-  // ── Grokipedia search-based discovery ─────────────────────────────────────
-  // Slugs are case-sensitive and inconsistent — search for the correct URL
-  // rather than constructing it. One Firecrawl credit per run, beats maintaining
-  // a manual slug table for 66 lakes.
-  let grokSeed = null;
-  if (firecrawlSearchKey) {
-    try {
-      const grokRes = await fetch('https://api.firecrawl.dev/v2/search', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${firecrawlSearchKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: `site:grokipedia.com "${queryLake}"`, limit: 1 })
-      });
-      if (grokRes.ok) {
-        const grokData = await grokRes.json();
-        const hit = (grokData.data || grokData.results || [])[0];
-        if (hit?.url && /grokipedia\.com\/page\//i.test(hit.url)) {
-          const titleLower = (hit.title || '').toLowerCase();
-          const urlLower = hit.url.toLowerCase();
-          const baseNameNorm = queryLake.toLowerCase().replace(/\s+/g, '_');
-          // Must mention the lake base name in the URL or title
-          const mentionsLake = titleLower.includes(queryLake.toLowerCase()) || urlLower.includes(baseNameNorm);
-          // Must look like a lake or reservoir article
-          const looksLikeLake = /lake|reservoir/.test(titleLower) || /lake|reservoir/.test(urlLower);
-          // Must not be a park, city, state, river, or creek page
-          const notAmbiguous = !/state.park|state_park|\bcity\b|\bcounty\b|river —|creek —|history.of/.test(titleLower);
-          if (mentionsLake && looksLikeLake && notAmbiguous) {
-            grokSeed = {
-              title: hit.title || `${lakeName} — Grokipedia`,
-              type: 'HTML',
-              authority: 'Grokipedia',
-              url: hit.url,
-              priority: 1,
-              source: 'grokipedia_search',
-            };
-            console.log(`Grokipedia seed accepted for ${lakeName}: ${hit.url}`);
-          } else {
-            console.log(`Grokipedia hit rejected for ${lakeName} (mentionsLake=${mentionsLake} looksLikeLake=${looksLikeLake} notAmbiguous=${notAmbiguous}): ${hit.url} — "${hit.title}"`);
-          }
-        }
-      }
-    } catch (e) {
-      console.warn(`Grokipedia search failed for ${lakeName}: ${e.message}`);
-    }
+  // ── Grokipedia deterministic slug table ────────────────────────────────────
+  // Manually verified slugs for lakes where Grokipedia uses non-standard naming.
+  // River pages (Catawba_River, Savannah_River) cover multiple lakes in their chain.
+  // Lakes not in this table get no Grokipedia seed — no wasted credits on 404s.
+  const GROKIPEDIA_SLUGS = {
+    // SC lakes — direct lake pages
+    'wateree':        'lake_wateree',
+    'murray':         'lake_murray_of_richland_south_carolina',
+    'marion':         'Lake_Marion_(South_Carolina)',
+    'moultrie':       'Lake_Moultrie',
+    'monticello':     'monticello_reservoir',
+    'greenwood':      'Lake_Greenwood_(South_Carolina)',
+    'keowee':         'keowee',
+    'jocassee':       'jocassee_dam',
+    'hartwell':       'Lake_Hartwell',
+    'wylie':          'Lake_Wylie',
+    'secession':      'rocky_river_south_carolina',
+    'fishing creek':  'fishing_creek_reservoir',
+    'parr':           'parr_reservoir',
+    // SC/GA border — river page covers Hartwell, Russell, Thurmond
+    'russell':        'Savannah_River',
+    'thurmond':       'Savannah_River',
+    'clarks hill':    'Savannah_River',
+    // NC lakes — direct lake pages
+    'norman':         'norman_lake',
+    'chatuge':        'Chatuge_Lake',
+    'blue ridge':     'Lake_Blue_Ridge',
+    'fontana':        'Fontana_Lake',
+    'chickamauga':    'Chickamauga_Lake',
+    // NC Catawba chain — river page covers James, Hickory, Rhodhiss, Mountain Island
+    'james':          'Catawba_River',
+    'hickory':        'Catawba_River',
+    'rhodhiss':       'Catawba_River',
+    'mountain island':'Catawba_River',
+  };
+
+  // Build Grokipedia seeds — one per confirmed slug, priority 2 so 404s don't block pipeline
+  const grokSeeds = [];
+  const grokSlug = GROKIPEDIA_SLUGS[baseLower];
+  if (grokSlug) {
+    grokSeeds.push({
+      title: `${lakeName} — Grokipedia`,
+      type: 'HTML',
+      authority: 'Grokipedia',
+      url: `https://grokipedia.com/page/${grokSlug}`,
+      priority: 2,
+      source: 'grokipedia_slug',
+    });
+    console.log(`Grokipedia seed for ${lakeName}: ${grokSlug}`);
   }
+  // Also seed Savannah River page for Hartwell since it has a direct page too
+  if (baseLower === 'hartwell') {
+    grokSeeds.push({
+      title: 'Savannah River — Grokipedia (covers Hartwell/Russell/Thurmond)',
+      type: 'HTML',
+      authority: 'Grokipedia',
+      url: 'https://grokipedia.com/page/Savannah_River',
+      priority: 2,
+      source: 'grokipedia_slug',
+    });
+  }
+  // Russell also has a state park page with good lake info
+  if (baseLower === 'russell') {
+    grokSeeds.push({
+      title: 'Richard B. Russell State Park — Grokipedia',
+      type: 'HTML',
+      authority: 'Grokipedia',
+      url: 'https://grokipedia.com/page/richard_b_russell_state_park',
+      priority: 2,
+      source: 'grokipedia_slug',
+    });
+  }
+  const grokSeed = grokSeeds[0] || null; // first seed for compat; all seeds injected below
 
   // Per-lake pre-seeded authoritative sources — always included regardless of search results
   const LAKE_SEEDS = {
@@ -615,8 +644,8 @@ async function handleResearchDiscover(request, env) {
   // Inject seeds — seeds always take guaranteed slots, prepend so they sort first
   // grokSeed is universal — added for every lake regardless of state or LAKE_SEEDS entry
   // Filter out _skipNepis sentinel objects — they are control flags, not real sources
-  // grokSeed is null if the Firecrawl search found no Grokipedia page for this lake
-  const seeds = [...(grokSeed ? [grokSeed] : []), ...(LAKE_SEEDS[baseLower] || []).filter(s => !s._skipNepis), ...defaultStateSeeds];
+  // grokSeeds contains 0-2 Grokipedia seeds depending on lake; all injected at priority 2
+  const seeds = [...grokSeeds, ...(LAKE_SEEDS[baseLower] || []).filter(s => !s._skipNepis), ...defaultStateSeeds];
   const guaranteedSeeds = [];
   for (const seed of seeds) {
     const normUrl = String(seed.url || '').split('?')[0].toLowerCase();
