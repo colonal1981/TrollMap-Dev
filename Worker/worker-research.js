@@ -2233,13 +2233,17 @@ async function handleResearchDeterministicFacts(request, env) {
     }
   }
 
-  // Deterministic SC regulations from official pages
+  // Deterministic regulations from official pages — SC, NC, and GA
   // eRegulations is a JS-rendered React app — content is scraped via Firecrawl during
   // discovery and stored in normalized_documents.json. We parse those tables here.
-  if (state === 'SC') {
+  {
     const slug = lakeKeyFromName(lakeName);
-    const regsUrl = 'https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits';
-    const lakeRegsUrl = `https://www.dnr.sc.gov/lakes/${slug}/regs.html`;
+    const regsUrl = state === 'NC'
+      ? 'https://www.eregulations.com/northcarolina/fishing/freshwater-fishing-regulations'
+      : state === 'GA'
+        ? 'https://www.eregulations.com/georgia/fishing/freshwater-fishing-regulations'
+        : 'https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits';
+    const lakeRegsUrl = state === 'SC' ? `https://www.dnr.sc.gov/lakes/${slug}/regs.html` : null;
     const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
     try {
       let regsHtml = '';
@@ -2262,8 +2266,10 @@ async function handleResearchDeterministicFacts(request, env) {
           if (!Array.isArray(normDocs) || !normDocs.length) continue;
           const regsDoc = normDocs.find(d => d.url && /eregulations\.com/i.test(d.url) && /freshwater-fish-size|possession-limits|freshwater-game/i.test(d.url + (d.title || '')))
             || normDocs.find(d => d.url && /eregulations\.com/i.test(d.url));
-          const lakeRegsDoc = normDocs.find(d => d.url && d.url.includes(`/lakes/${slug}/regs`))
-            || normDocs.find(d => /lake.*regulations/i.test(d.title || '') && d.url && d.url.includes(slug));
+          const lakeRegsDoc = state === 'SC'
+            ? (normDocs.find(d => d.url && d.url.includes(`/lakes/${slug}/regs`))
+              || normDocs.find(d => /lake.*regulations/i.test(d.title || '') && d.url && d.url.includes(slug)))
+            : null;
           if (regsDoc?.fullText) regsHtml = regsDoc.fullText;
           if (lakeRegsDoc?.fullText) lakeRegsHtml = lakeRegsDoc.fullText;
           profile._regsDebug = {
@@ -2310,8 +2316,8 @@ async function handleResearchDeterministicFacts(request, env) {
         }
       }
 
-      // Fall back to direct fetch of lake-specific regs page (static HTML, no JS needed)
-      if (!lakeRegsHtml) {
+      // Fall back to direct fetch of lake-specific regs page (SC only — static HTML)
+      if (!lakeRegsHtml && state === 'SC' && lakeRegsUrl) {
         try {
           const lakeRegsRes = await fetch(lakeRegsUrl, { headers: { 'User-Agent': 'TrollMap/16 Evidence Engine', 'Accept': 'text/html' }, cf: { cacheTtl: 86400, cacheEverything: true } });
           if (lakeRegsRes.ok) lakeRegsHtml = await lakeRegsRes.text();
@@ -2325,7 +2331,10 @@ async function handleResearchDeterministicFacts(request, env) {
           profile._regsDebug.htmlRows = regsHtml ? extractHtmlTableRows(regsHtml).length : 0;
           profile._regsDebug.mdRows = regsHtml ? extractMarkdownTableRows(regsHtml).length : 0;
           profile._regsDebug.first100chars = (regsHtml || lakeRegsHtml || '').slice(0, 100);
-          const parsedRegs = parseSCRegulationsFromHtml(lakeName, regsUrl, regsHtml || '', lakeRegsHtml || '');
+          // SC: use deterministic HTML parser. NC/GA: store raw text for agent extraction
+          const parsedRegs = state === 'SC'
+            ? parseSCRegulationsFromHtml(lakeName, regsUrl, regsHtml || '', lakeRegsHtml || '')
+            : { regulations: { state, rawRegsText: (regsHtml || '').slice(0, 8000) }, sources: [{ label: `${state} Freshwater Regulations (eRegulations)`, url: regsUrl, authority: state === 'NC' ? 'NCWRC' : 'GADNR', trust: 'OFFICIAL' }], evidence: {} };
           const pr = parsedRegs.regulations || {};
           if (pr.state) profile.regulations.state = pr.state;
           if (pr.lastUpdated) profile.regulations.lastUpdated = pr.lastUpdated;
