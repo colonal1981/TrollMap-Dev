@@ -74,7 +74,7 @@ function displayLakeName(rawName, stateCode) {
   if (!name || /^unknown/i.test(name)) return '';
 
   // If the official data already carries state context, keep it as-is.
-  if (/\b(SC|NC|GA|AL|VA)\b/.test(name)) return name;
+  if (/\b(SC|NC|GA|TN|AL|VA)\b/.test(name)) return name;
 
   // Do not force state suffixes for rivers/coastal waterways; for lakes, a
   // suffix helps distinguish same-named waterbodies while remaining readable.
