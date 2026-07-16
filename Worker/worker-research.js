@@ -3419,7 +3419,7 @@ var RESEARCH_AGENTS = {
   identity: {
     label: "Lake Identity",
     order: 1,
-    system: "You are a data assembly agent for lake identity and pool management data. Map extracted facts to the JSON fields. CRITICAL RULES: (1) surfaceAreaAcres must be in ACRES — if source gives km², multiply by 247.1; (2) maxDepthFt is actual water depth — NEVER use pool elevation as depth; (3) For Duke Energy CRA pool tables the columns are: Month | Guide Curve ft | Minimum ft | Maximum ft in local datum; (4) riverSystem must be a river/watershed name like 'Saluda River' or 'Catawba-Wateree' — NEVER a HUC code or monitoring site description; (5) archetype must be a lake type like 'large hydroelectric reservoir' — NEVER a water quality site type like 'other-surface water site'; (6) Never invent values. Return ONLY valid JSON. (8) county: use an array for multi-county or multi-state lakes (e.g. ['York, SC', 'Gaston, NC', 'Mecklenburg, NC']). For single county use a string. Never leave null if county information is present in the facts. (7) normalPoolFt is the STATIC full pool surface elevation in feet NGVD/NAVD (e.g. 385.5, 225.5, 75.5) — NEVER a daily fluctuation range, drawdown amount, or year range. If you see a year range like '1997 to 2014' or '1997-2014', that is a date range NOT a pool elevation. If the only pool number is a fluctuation ('5 feet daily') or a year range, set normalPoolFt to null.",
+    system: "You are a data assembly agent for lake identity and pool management data. Map extracted facts to the JSON fields. CRITICAL RULES: (1) surfaceAreaAcres must be in ACRES — if source gives km², multiply by 247.1; (2) maxDepthFt is actual water depth — NEVER use pool elevation as depth; (3) For Duke Energy CRA pool tables the columns are: Month | Guide Curve ft | Minimum ft | Maximum ft in local datum; (4) riverSystem must be a river/watershed name like 'Saluda River' or 'Catawba-Wateree' — NEVER a HUC code or monitoring site description; (5) archetype must be a lake type like 'large hydroelectric reservoir' — NEVER a water quality site type like 'other-surface water site'; (6) Never invent values. Return ONLY valid JSON. (8) county: use an array for multi-county or multi-state lakes (e.g. ['York, SC', 'Gaston, NC', 'Mecklenburg, NC']). For single county use a string. Never leave null if county information is present in the facts. (7) normalPoolFt is the STATIC full pool surface elevation in feet NGVD/NAVD (e.g. 265.3, 385.5, 569.4, 75.5) — NEVER a daily fluctuation range, drawdown amount, or year range. If you see phrases like 'fluctuate up to X feet', 'averaging X feet per day', 'up to X feet daily', or 'X feet year-round fluctuation', those are fluctuation amounts NOT pool elevations — set normalPoolFt to null. If the only pool number is a fluctuation or a year range, set normalPoolFt to null. Valid pool elevations are typically 3-digit numbers (e.g. 265, 385, 569) for NGVD/NAVD, or 2-digit numbers representing local datum (e.g. 97 for Duke Energy lakes). Single-digit or ambiguous numbers should be set to null unless clearly labeled as pool elevation.",
     userTemplate: (lakeName, state, prev) => {
       const facts = prev?._extractedFacts || [];
 
@@ -4456,4 +4456,51 @@ async function handleEnhancedLakeIntel(lakeName, env) {
 }
 __name(handleEnhancedLakeIntel, "handleEnhancedLakeIntel");
 
-export { handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey };
+async function handleResearchValidationPass(request, env) {
+  let body;
+  try { body = await request.json(); } catch { return new Response(JSON.stringify({ok:false,error:'invalid JSON'}),{status:400,headers:JSON_HEADERS}); }
+  const lakeName = String(body.lakeName||'').trim();
+  const nullFields = body.nullFields || [];
+  const facts = String(body.facts||'').trim();
+
+  if (!lakeName || !nullFields.length || !facts) {
+    return new Response(JSON.stringify({ok:false,error:'missing required fields'}),{status:400,headers:JSON_HEADERS});
+  }
+
+  const prompt = `You are filling null fields in a lake research profile for ${lakeName}.
+
+NULL FIELDS TO FILL (only fill if evidence supports it — leave null if uncertain):
+${nullFields.join('\n')}
+
+RELEVANT EXTRACTED FACTS:
+${facts}
+
+Return ONLY valid JSON with dot-notation keys for fields you can fill from the evidence above.
+Leave a field out entirely if evidence does not support a value.
+Rules:
+- thermocline/oxygen depths: only include if specific depth in feet or meters is stated — convert meters × 3.281
+- trophicStatus: 'eutrophic', 'mesotrophic', 'oligotrophic', or 'oligotrophic/mesotrophic'
+- navigation.hazards: array of strings
+- identity.county: array like ['Fairfield, SC', 'Newberry, SC'] for multi-county lakes
+- identity.normalPoolFt: only if a specific pool elevation stated, NOT a fluctuation amount
+- When in doubt, omit the field rather than guess`;
+
+  const payload = {
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0.1,
+    max_tokens: 800,
+    response_format: { type: 'json_object' }
+  };
+
+  try {
+    const { data } = await callLLM(env, payload, null);
+    const text = extractLLMText(data);
+    const clean = text.replace(/\`\`\`json|\`\`\`/g,'').trim();
+    return new Response(JSON.stringify({ok:true, result:clean}),{headers:JSON_HEADERS});
+  } catch(e) {
+    return new Response(JSON.stringify({ok:false,error:e.message}),{status:500,headers:JSON_HEADERS});
+  }
+}
+__name(handleResearchValidationPass,'handleResearchValidationPass');
+
+export { handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchValidationPass, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey };
