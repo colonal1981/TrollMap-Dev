@@ -79,16 +79,25 @@ const LAKE_NAME_TO_R2_KEY = {
 
   // ── TN / NC Mountain ────────────────────────────────────────────────────────
   'Norris Lake, TN':                    'norris_lake',
+  'Norris Reservoir, TN':               'norris_lake',
   'Douglas Lake, TN':                   'douglas_lake',
+  'Douglas Reservoir, TN':              'douglas_lake',
   'Cherokee Lake, TN':                  'cherokee_lake',
+  'Cherokee Reservoir, TN':             'cherokee_lake',
   'Fort Loudoun Lake, TN':              'fort_loudoun_lake',
+  'Fort Loudoun Reservoir, TN':         'fort_loudoun_lake',
+  'Fort Loundon Reservoir, TN':         'fort_loudoun_lake',
   'Tellico Lake, TN':                   'tellico_lake',
+  'Tellico Reservoir, TN':              'tellico_lake',
   'Melton Hill Lake, TN':               'melton_hill_lake',
+  'Melton Hill Reservoir, TN':          'melton_hill_lake',
   'South Holston Lake, TN':             'south_holston_lake',
+  'South Holston Reservoir, TN':        'south_holston_lake',
   'Lake Chilhowee, TN':                 'lake_chilhowee',
   'Lake Cheoah, TN/NC':                 'lake_cheoah',
   'Watauga Lake, TN':                   'watauga_boone_chain',
   'Boone Lake, TN':                     'watauga_boone_chain',
+  'Boone Reservoir, TN':                'watauga_boone_chain',
   'Watauga / Boone Chain, TN/NC':       'watauga_boone_chain',
 
   // ── SC Coastal ──────────────────────────────────────────────────────────────

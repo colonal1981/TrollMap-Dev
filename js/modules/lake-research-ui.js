@@ -160,7 +160,42 @@ async function populateResearchLakeDropdown() {
   const sel = document.getElementById('researchLakeSelect');
   if (!sel) return;
   const existing = new Set(Array.from(sel.options).map(o => o.value));
-  const lakes = Object.keys(LAKE_DB).sort();
+
+  // Use the live DNR access-index as the canonical source — same names the
+  // map/plan dropdown uses, already sorted SC → NC → GA → TN then alpha.
+  // Fall back to LAKE_DB keys for any lakes not yet in the index (e.g. TN
+  // lakes before TWRA data loads, or lakes without ramp data).
+  let lakes = [];
+  try {
+    if (window.getUniversalLakeNamesAsync) {
+      lakes = await window.getUniversalLakeNamesAsync();
+    } else if (window.getUniversalLakeNames) {
+      lakes = window.getUniversalLakeNames();
+    }
+  } catch (_) {}
+
+  // Merge in any LAKE_DB entries not already covered by the access index
+  // (keeps TN lakes visible even if TWRA hasn't loaded yet)
+  const lakeSet = new Set(lakes);
+  const STATE_ORDER = { SC: 0, NC: 1, GA: 2, TN: 3 };
+  function lakeStatePriority(name) {
+    const m = name.match(/,\s*([A-Z]{2}(?:\/[A-Z]{2})?)$/);
+    if (!m) return 99;
+    return STATE_ORDER[m[1].split('/')[0]] ?? 99;
+  }
+  const fallback = Object.keys(LAKE_DB).filter(k => !lakeSet.has(k));
+  if (fallback.length) {
+    lakes = [...lakes, ...fallback].sort((a, b) => {
+      const diff = lakeStatePriority(a) - lakeStatePriority(b);
+      return diff !== 0 ? diff : a.localeCompare(b);
+    });
+  }
+
+  if (!lakes.length) lakes = Object.keys(LAKE_DB).sort((a, b) => {
+    const diff = lakeStatePriority(a) - lakeStatePriority(b);
+    return diff !== 0 ? diff : a.localeCompare(b);
+  });
+
   for (const name of lakes) {
     if (!existing.has(name)) {
       const opt = document.createElement('option');
