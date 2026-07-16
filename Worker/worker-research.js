@@ -2937,6 +2937,8 @@ CRITICAL CATEGORY RULES:
       continue;
     }
 
+    // Rate limit: 15 RPM on gemini-free = 1 req/4s
+    await new Promise(res => setTimeout(res, 4100));
     try {
       const prompt = buildDocPrompt(doc, lakeName, baseName, state);
       const payload = {
@@ -4498,11 +4500,13 @@ Rules:
     const llmResult = await callLLM(env, payload, 'gemini-free');
     const text = extractLLMText(llmResult.data) || llmResult._geminiRaw || '';
     if (!text) {
+      console.error('validation-pass: empty LLM response', JSON.stringify({provider:llmResult.provider,model:llmResult.model}));
       return new Response(JSON.stringify({ok:false,error:'empty LLM response',provider:llmResult.provider,model:llmResult.model}),{status:500,headers:JSON_HEADERS});
     }
     const clean = text.replace(/```json|```/g,'').trim();
     return new Response(JSON.stringify({ok:true, result:clean}),{headers:JSON_HEADERS});
   } catch(e) {
+    console.error('validation-pass error:', String(e.message||e));
     return new Response(JSON.stringify({ok:false,error:String(e.message||e)}),{status:500,headers:JSON_HEADERS});
   }
 }
