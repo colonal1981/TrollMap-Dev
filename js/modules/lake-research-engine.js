@@ -477,6 +477,8 @@ async function extractTextFromPDFBytes(arrayBuffer, onProgress) {
 // Previously duplicated with a weaker version in the resume path — now one source of truth.
 function scoreDocuments(normalizedDocuments, baseName, lakeName) {
   const baseLower = baseName.toLowerCase();
+  // Strip state suffix for off-lake comparison so "Wylie, SC/NC" matches "wylie" correctly
+  const baseNameOnly = baseLower.replace(/,\s*(sc|nc|ga|tn)(\/[a-z]{2})?\s*$/i, '').trim();
   return normalizedDocuments.map(doc => {
     let authorityScore = 55;
     const auth = String(doc.authority || '').toUpperCase();
@@ -508,7 +510,7 @@ function scoreDocuments(normalizedDocuments, baseName, lakeName) {
 
     const otherLakes = ['murray','marion','moultrie','hartwell','keowee','jocassee','thurmond','russell','wylie','norman','james','rhodhiss'];
     for (const other of otherLakes) {
-      if (other === baseLower) continue;
+      if (other === baseLower || other === baseNameOnly) continue;
       if (titleLower.includes(`lake ${other}`) && !titleLower.includes(baseLower)) {
         authorityScore = Math.min(authorityScore, 30); relevance = 15;
         log(`⚠️ Detected off-lake doc: "${doc.title}" mentions lake ${other} not ${baseName} — penalizing`);
