@@ -53,8 +53,6 @@ models: [
     defaultModel: "gemini-3.1-flash-lite",
     models: [
       "gemini-3.1-flash-lite",
-      "gemini-2.5-flash-lite",
-      "gemini-2.5-flash"
     ],
     headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
     isGemini: true,
@@ -76,8 +74,6 @@ models: [
     defaultModel: "gemini-3.1-flash-lite",
     models: [
       "gemini-3.1-flash-lite",
-      "gemini-2.5-flash-lite",
-      "gemini-2.5-flash"
     ],
     headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
     isGemini: true,
