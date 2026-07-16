@@ -1467,11 +1467,11 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     try {
       const nullFields = [];
       const checkProfile = { ...agentSections };
-      if (!checkProfile.identity?.surfaceAreaAcres && !researchPacket?.surfaceAreaAcres) nullFields.push('surfaceAreaAcres');
-      if (!checkProfile.identity?.maxDepthFt && !researchPacket?.maxDepthFt) nullFields.push('maxDepthFt');
-      if (!checkProfile.identity?.averageDepthFt && !researchPacket?.averageDepthFt) nullFields.push('averageDepthFt');
-      if (!checkProfile.identity?.normalPoolFt && !researchPacket?.normalPoolFt) nullFields.push('normalPoolFt');
-      if (!checkProfile.identity?.reservoirOwner && !researchPacket?.reservoirOwner) nullFields.push('reservoirOwner');
+      if (!checkProfile.identity?.surfaceAreaAcres) nullFields.push('surfaceAreaAcres');
+      if (!checkProfile.identity?.maxDepthFt) nullFields.push('maxDepthFt');
+      if (!checkProfile.identity?.averageDepthFt) nullFields.push('averageDepthFt');
+      if (!checkProfile.identity?.normalPoolFt) nullFields.push('normalPoolFt');
+      if (!checkProfile.identity?.reservoirOwner) nullFields.push('reservoirOwner');
       if (!checkProfile.limnology?.thermocline?.summerDepthFt) nullFields.push('thermocline.summerDepthFt');
       if (!checkProfile.limnology?.trophicStatus) nullFields.push('trophicStatus');
       if (!checkProfile.limnology?.waterClarity?.typical) nullFields.push('waterClarity');
