@@ -4495,12 +4495,15 @@ Rules:
   };
 
   try {
-    const { data } = await callLLM(env, payload, 'gemini-free');
-    const text = extractLLMText(data);
-    const clean = text.replace(/\`\`\`json|\`\`\`/g,'').trim();
+    const llmResult = await callLLM(env, payload, 'gemini-free');
+    const text = extractLLMText(llmResult.data) || llmResult._geminiRaw || '';
+    if (!text) {
+      return new Response(JSON.stringify({ok:false,error:'empty LLM response',provider:llmResult.provider,model:llmResult.model}),{status:500,headers:JSON_HEADERS});
+    }
+    const clean = text.replace(/```json|```/g,'').trim();
     return new Response(JSON.stringify({ok:true, result:clean}),{headers:JSON_HEADERS});
   } catch(e) {
-    return new Response(JSON.stringify({ok:false,error:e.message}),{status:500,headers:JSON_HEADERS});
+    return new Response(JSON.stringify({ok:false,error:String(e.message||e)}),{status:500,headers:JSON_HEADERS});
   }
 }
 __name(handleResearchValidationPass,'handleResearchValidationPass');
