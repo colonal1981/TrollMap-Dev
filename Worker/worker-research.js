@@ -310,7 +310,7 @@ async function handleResearchDiscover(request, env) {
   }
 
   // Derive base name for relevance filtering (e.g. "Lake Wateree, SC" -> "wateree")
-  const baseName = String(lakeName).replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA)\s*$/i,'').replace(/\s+Reservoir$/i,'').replace(/\s+Lake$/i,'').trim();
+  const baseName = String(lakeName).replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA|TN)(\/(SC|NC|GA|TN))*\s*$/i,'').replace(/\s+Reservoir$/i,'').replace(/\s+Lake$/i,'').trim();
   const baseLower = baseName.toLowerCase();
   const otherLakeNames = ['murray','marion','moultrie','hartwell','keowee','jocassee','thurmond','clarks hill','clark hill','russell','wylie','norman','hickory','james','rhodhiss','mountain island','wateree','robinson','monticello','greenwood','secession','yates','martin'];
   // NEPIS documents confirmed to be wrong-lake false positives.
@@ -365,7 +365,17 @@ async function handleResearchDiscover(request, env) {
 
   // Use full lake name (without state suffix) in queries for specificity
   // "Lake Murray" beats "Murray" — avoids matching unrelated Murray documents
-  const queryLake = lakeName.replace(/,\s*(SC|NC|GA|TN)\s*$/i,'').trim(); // "Lake Murray" not "Murray"
+  const queryLake = lakeName.replace(/,\s*(SC|NC|GA|TN)(\/(SC|NC|GA|TN))*\s*$/i,'').trim(); // "Lake Murray" not "Murray"; strips SC/GA multi-state suffix too
+  // Border lakes with formal names: override queryLake for better search results
+  const queryLakeOverrides = {
+    'lake russell': 'Richard B. Russell Lake',
+    'russell': 'Richard B. Russell Lake',
+    'lake thurmond': 'J. Strom Thurmond Lake',
+    'thurmond': 'J. Strom Thurmond Lake',
+    'clarks hill': 'J. Strom Thurmond Lake',
+    'clark hill': 'J. Strom Thurmond Lake',
+  };
+  const queryLakeFinal = queryLakeOverrides[queryLake.toLowerCase()] || queryLake;
   const stateFullName = { SC: 'South Carolina', NC: 'North Carolina', GA: 'Georgia' }[state] || 'South Carolina';
 
   // Owner-aware drawdown source seeding: if the caller already knows the
@@ -383,14 +393,14 @@ async function handleResearchDiscover(request, env) {
   // Each pattern can be a string (simple query) or { query, ...firecrawlOptions }
   const queryPatterns = [
     // SCDNR fisheries/biology — prefer PDFs (annual reports, creel surveys)
-    { query: `"${queryLake}" (fisheries OR biology OR "striped bass" OR crappie OR "largemouth") ${dnrName}`, categories: ['pdf'] },
-    { query: `"${queryLake}" (regulations OR "creel limit" OR "size limit" OR "bag limit") ${dnrName}` },
+    { query: `"${queryLakeFinal}" (fisheries OR biology OR "striped bass" OR crappie OR "largemouth") ${dnrName}`, categories: ['pdf'] },
+    { query: `"${queryLakeFinal}" (regulations OR "creel limit" OR "size limit" OR "bag limit") ${dnrName}` },
     // Limnology — research category targets EPA, USGS, Clemson, etc. directly
-    { query: `"${queryLake}" (limnology OR thermocline OR "water quality" OR "dissolved oxygen")`, categories: ['research'] },
-    { query: `"Report on Lake ${queryLake}" OR "Report on ${queryLake} Lake" OR "${queryLake}" (NESWP OR eutrophication OR nepis)` },
+    { query: `"${queryLakeFinal}" (limnology OR thermocline OR "water quality" OR "dissolved oxygen")`, categories: ['research'] },
+    { query: `"Report on Lake ${queryLakeFinal}" OR "Report on ${queryLakeFinal} Lake" OR "${queryLakeFinal}" (NESWP OR eutrophication OR nepis)` },
     // Fishing guide query — includeDomains is a native Firecrawl param (site: in query string is ignored)
     {
-      query: `${queryLake} thermocline depth structure forage shad seasonal fishing`,
+      query: `${queryLakeFinal} thermocline depth structure forage shad seasonal fishing`,
       includeDomains: ['carolinasportsman.com', 'takemefishing.org', 'gameandfishmag.com', 'in-fisherman.com', 'flwfishing.com', 'bassmaster.com', 'majorleaguefishing.com'],
     },
   ];
@@ -563,8 +573,16 @@ async function handleResearchDiscover(request, env) {
       source: 'grokipedia_slug',
     });
   }
-  // Russell also has a state park page with good lake info
+  // Russell — seed both the lake page and state park page
   if (baseLower === 'russell') {
+    grokSeeds.push({
+      title: 'Richard B. Russell Lake — Grokipedia',
+      type: 'HTML',
+      authority: 'Grokipedia',
+      url: 'https://grokipedia.com/page/Richard_B._Russell_Lake',
+      priority: 1,
+      source: 'grokipedia_slug',
+    });
     grokSeeds.push({
       title: 'Richard B. Russell State Park — Grokipedia',
       type: 'HTML',
