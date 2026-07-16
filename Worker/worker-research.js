@@ -415,6 +415,9 @@ async function handleResearchDiscover(request, env) {
   if (baseLower === 'hartwell') {
     addSeed({ title: 'Savannah River — Grokipedia', type: 'HTML', authority: 'Grokipedia', url: 'https://grokipedia.com/page/Savannah_River', priority: 2 });
   }
+  if (baseLower === 'thurmond' || baseLower === 'clarks hill') {
+    addSeed({ title: 'Little River (Columbia County, GA) — Grokipedia', type: 'HTML', authority: 'Grokipedia', url: 'https://grokipedia.com/page/little_river_columbia_county_georgia', priority: 2 });
+  }
 
   // State regulations (always)
   addSeed({ title: regsTitle, type: 'HTML', authority: dnrName, url: regsUrl, priority: 1 });
@@ -2584,8 +2587,12 @@ async function handleResearchAnalyzeFacts(request, env) {
     /dock(?:s|\s+density)|marina|pier|shallow\s+flat|spawning\s+(?:flat|cove)|fish\s+attractor/i,
   ];
 
-  function harvestKeywordSentences(text, maxSentences = 20) {
+  function harvestKeywordSentences(text, maxSentences = 20, lakeAliases = []) {
     if (!text || text.length < 100) return [];
+    // Build alias regex if aliases provided — flags sentences mentioning the lake by any known name
+    const aliasRx = lakeAliases.length
+      ? new RegExp(lakeAliases.map(a => a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'i')
+      : null;
     // Split on sentence boundaries
     const sentences = text
       .replace(/\r\n/g, '\n')
@@ -2599,9 +2606,10 @@ async function handleResearchAnalyzeFacts(request, env) {
       const s = sentences[i];
       if (seen.has(s)) continue;
       const hasKeyword = HARVEST_KEYWORDS.some(rx => rx.test(s));
+      const hasAlias = aliasRx ? aliasRx.test(s) : false;
       const hasNumber = /\d/.test(s);
       const isCastingTarget = /riprap|rip[- ]rapped|creek\s+(?:mouth|arm)|river\s+arm|cove|tributary\s+mouth|inlet|dock|marina|pier|shallow\s+flat|spawning\s+(?:flat|cove)|fish\s+attractor|timber/i.test(s);
-      if (hasKeyword && (hasNumber || isCastingTarget)) {
+      if ((hasKeyword || hasAlias) && (hasNumber || isCastingTarget || hasAlias)) {
         // Include the next sentence too (handles two-sentence fact patterns)
         const pair = i + 1 < sentences.length
           ? s + ' ' + sentences[i + 1]
@@ -2760,7 +2768,29 @@ PRIORITY FIELDS — extract any of the following present in this document:
     const focusInstructions = focusParts.join('\n\n');
     const _baseNameStripped = baseName.replace(/,\s*(SC|NC|GA|TN)(\/[A-Z]{2})?\s*$/i, '').trim();
     const _lakeNameStripped = 'Lake ' + _baseNameStripped;
-    const _flagged = harvestKeywordSentences(doc.text || '', 20);
+
+    // ── Document aliases: real-world names used in documents for lakes with
+    // non-standard display names (slash names, dual names, renamed lakes, etc.)
+    const DOCUMENT_ALIASES = {
+      'clarks hill / thurmond': ['Clarks Hill Lake', 'J. Strom Thurmond Lake', 'Lake Thurmond', 'Thurmond Lake', 'Clarks Hill Reservoir', 'Strom Thurmond Lake'],
+      'lake russell': ['Richard B. Russell Lake', 'Lake Russell', 'Russell Lake', 'R.B. Russell Lake'],
+      'lake wylie': ['Lake Wylie', 'Wylie Lake', 'Lake Wylie Reservoir'],
+      'lake monticello': ['Lake Monticello', 'Monticello Reservoir', 'Broad River Reservoir'],
+      'fishing creek reservoir': ['Fishing Creek Reservoir', 'Fishing Creek Lake', 'Nitrolee Dam'],
+      'lake greenwood': ['Lake Greenwood', 'Buzzard Roost Reservoir'],
+      'lake jocassee': ['Lake Jocassee', 'Jocassee Reservoir'],
+      'mountain island lake': ['Mountain Island Lake', 'Mountain Island Reservoir'],
+      'high rock lake': ['High Rock Lake', 'High Rock Reservoir'],
+      'blewett falls lake': ['Blewett Falls Lake', 'Blewett Falls Reservoir', 'Lake Tillery'],
+      'lake hartwell': ['Lake Hartwell', 'Hartwell Lake', 'Hartwell Reservoir'],
+    };
+    const _aliasKey = _baseNameStripped.toLowerCase().replace(/,\s*(sc|nc|ga|tn)(\/[a-z]{2})?\s*$/i, '').trim();
+    const _docAliases = DOCUMENT_ALIASES[_aliasKey] || [];
+    const _aliasClause = _docAliases.length
+      ? ` OR any of these known aliases: ${_docAliases.map(a => `"${a}"`).join(', ')}`
+      : '';
+
+    const _flagged = harvestKeywordSentences(doc.text || '', 20, _docAliases);
     const _flaggedBlock = _flagged.length
       ? '⚑ FLAGGED PASSAGES (keyword matches — prioritize extracting facts from these):\n' +
         _flagged.map((s, i) => `[${i+1}] ${s.replace(/`/g, "'").replace(/\$/g, 'USD')}`).join('\n') + '\n\n'
@@ -2772,13 +2802,13 @@ URL: ${doc.url || 'unknown'}
 ${focusInstructions}
 
 RULES:
-1. Only extract facts that explicitly mention "${baseName}" or "${lakeName}" or "${_baseNameStripped}" or "${_lakeNameStripped}", OR are general ${state} statewide regulations that apply to this lake.
-1a. MULTI-LAKE DOCUMENTS: If this document covers multiple lakes or water bodies, only extract numeric facts (depths, areas, temperatures, DO levels, Secchi depths) where the specific number is explicitly attributed to "${_baseNameStripped}" or "${_lakeNameStripped}" in the same sentence or the immediately preceding sentence. If a number appears in a paragraph or table row that also discusses another lake, skip it unless the attribution to this lake is unambiguous. When in doubt, omit the fact.
+1. Only extract facts that explicitly mention "${baseName}" or "${lakeName}" or "${_baseNameStripped}" or "${_lakeNameStripped}"${_aliasClause}, OR are general ${state} statewide regulations that apply to this lake.
+1a. MULTI-LAKE DOCUMENTS: If this document covers multiple lakes or water bodies, only extract numeric facts (depths, areas, temperatures, DO levels, Secchi depths) where the specific number is explicitly attributed to "${_baseNameStripped}" or "${_lakeNameStripped}"${_docAliases.length ? ` or one of its aliases (${_docAliases.join(', ')})` : ''} in the same sentence or the immediately preceding sentence. If a number appears in a paragraph or table row that also discusses another lake, skip it unless the attribution to this lake is unambiguous. When in doubt, omit the fact.
 2. Never invent numbers. If a value is not in this document, omit it.
 3. Convert all measurements: meters × 3.281 = feet; km² × 247.1 = acres.
    CRITICAL: If you see "Surface area: 205.58 kilometers²" or similar — that is km², convert it: 205.58 × 247.1 = 50,798 acres. NEVER report the raw km² number as if it were acres.
 4. For table data: extract each meaningful row as a separate fact with the row content as the quote.
-5. If this document has NO information about "${_baseNameStripped}" or "${_lakeNameStripped}", return {"extracted_facts": []}.${_flaggedBlock}DOCUMENT TEXT:
+5. If this document has NO information about "${_baseNameStripped}" or "${_lakeNameStripped}"${_aliasClause}, return {"extracted_facts": []}.${_flaggedBlock}DOCUMENT TEXT:
 ${(doc.text || '').slice(0, 150000)}
 
 Return ONLY:
