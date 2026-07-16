@@ -22,7 +22,7 @@ import { state } from '../core/state.js';
 import { SCDNR_STATE_LAKES } from './scdnr-state-lakes.js';
 import { USER_KNOWN_LAKES } from './user-known-lakes.js';
 
-const STATES = ['SC', 'NC', 'GA'];
+const STATES = ['SC', 'NC', 'GA', 'TN'];
 const ACCESS_SOURCES = [
   { path: '/ramps', label: 'Boat ramp', marker: '🛥️' },
   // NOTE: /bank-pier and /attractors NC field-mappings haven't been verified
@@ -218,7 +218,18 @@ async function buildAccessIndex() {
     });
   });
 
-  index.lakeNames = [...index.byLake.keys()].sort((a, b) => a.localeCompare(b));
+  // Sort lakes by state priority (SC first, then NC, GA, TN) then alphabetically within state
+  const STATE_ORDER = { SC: 0, NC: 1, GA: 2, TN: 3 };
+  function lakeStatePriority(name) {
+    const m = name.match(/,\s*([A-Z]{2}(?:\/[A-Z]{2})?)$/);
+    if (!m) return 99;
+    const firstState = m[1].split('/')[0];
+    return STATE_ORDER[firstState] ?? 99;
+  }
+  index.lakeNames = [...index.byLake.keys()].sort((a, b) => {
+    const diff = lakeStatePriority(a) - lakeStatePriority(b);
+    return diff !== 0 ? diff : a.localeCompare(b);
+  });
   for (const list of index.byLake.values()) {
     list.sort((a, b) => formatAccessLabel(a).localeCompare(formatAccessLabel(b)));
   }
@@ -259,7 +270,10 @@ async function buildAccessIndex() {
     });
   }
 
-  index.lakeNames = [...index.byLake.keys()].sort((a, b) => a.localeCompare(b));
+  index.lakeNames = [...index.byLake.keys()].sort((a, b) => {
+    const diff = lakeStatePriority(a) - lakeStatePriority(b);
+    return diff !== 0 ? diff : a.localeCompare(b);
+  });
 
   if (failures.length) {
     console.warn('[access-index] Some worker access feeds failed:', failures);
