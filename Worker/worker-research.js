@@ -2716,7 +2716,7 @@ async function handleResearchAnalyzeFacts(request, env) {
     /dissolved\s+oxygen|\bdo\b.*mg\/l|mg\/l.*\bdo\b|anox|hypox/i,
     /secchi|water\s+clarity|turbidity|clarity/i,
     /trophic|eutrophic|mesotrophic|oligotrophic/i,
-    /drawdown|rule\s+curve|guide\s+curve|seasonal.*level|winter.*pool|summer.*pool/i,
+    /drawdown|rule\s+curve|guide\s+curve|seasonal.*level|winter.*pool|summer.*pool|normal.*target|target.*level|year.round.*level|level.*year.round|full.*pool|full.pond/i,
     /threadfin|gizzard|blueback|alewife|shad.*forage|forage.*shad/i,
     /retention\s+time|residence\s+time|hydraulic/i,
     /standing\s+timber|submerged\s+timber|stump|cypress.*lake|flooded.*timber/i,
@@ -2859,7 +2859,9 @@ PRIORITY FIELDS for this document type:
 - Pool level targets by month (Guide Curve column from CRA table — local datum feet)
 - Minimum and maximum pool elevations
 - Drawdown schedule and target elevations
-- Normal full pool elevation`);
+- Normal full pool elevation
+- ANY sentence mentioning a target lake level, normal operating level, or year-round target (e.g. "normal target lake level is 97 feet year-round")
+- Fixed target elevations even without a monthly table`);
 
     if (isGuide) focusParts.push(`
 PRIORITY FIELDS for this document type:
