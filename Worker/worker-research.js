@@ -309,450 +309,257 @@ async function handleResearchDiscover(request, env) {
     return new Response(JSON.stringify({ success: false, error: "Missing lakeName" }), { status: 400, headers: JSON_HEADERS });
   }
 
-  // Derive base name for relevance filtering (e.g. "Lake Wateree, SC" -> "wateree")
-  const baseName = String(lakeName).replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA|TN)(\/(SC|NC|GA|TN))*\s*$/i,'').replace(/\s+Reservoir$/i,'').replace(/\s+Lake$/i,'').trim();
+  const baseName = String(lakeName).replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i,'').replace(/\s+Reservoir$/i,'').replace(/\s+Lake$/i,'').trim();
   const baseLower = baseName.toLowerCase();
   const otherLakeNames = ['murray','marion','moultrie','hartwell','keowee','jocassee','thurmond','clarks hill','clark hill','russell','wylie','norman','hickory','james','rhodhiss','mountain island','wateree','robinson','monticello','greenwood','secession','yates','martin'];
-  // NEPIS documents confirmed to be wrong-lake false positives.
-  // Keyed by the document file ID in the NEPIS URL (the alphanumeric before .txt or .pdf).
-  // These matched a lake name (e.g. "Monticello") but are actually about a different
-  // geographic feature entirely (e.g. a wastewater plant in Illinois).
-  const KNOWN_BAD_NEPIS_IDS = new Set([
-    '91024IW5', // "Monticello" wastewater plant / Lake Decatur IL — not Lake Monticello SC
-    '9100D35L', // "Monticello" wastewater plants (N+S) / Pearson Creek + White Oak Creek — not Lake Monticello SC
-  ]);
+
+  const KNOWN_BAD_NEPIS_IDS = new Set(['91024IW5','9100D35L']);
 
   const offLakePattern = (title, url) => {
     const combined = `${title} ${url}`.toLowerCase();
-    // Hard-block known wrong-lake NEPIS documents by file ID
     const nepisIdMatch = url.match(/\/([A-Z0-9]{6,12})\.txt/i);
-    if (nepisIdMatch && KNOWN_BAD_NEPIS_IDS.has(nepisIdMatch[1].toUpperCase())) {
-      console.log(`Blocked known-bad NEPIS doc ${nepisIdMatch[1]}: ${url}`);
-      return 'known_bad_nepis_doc';
-    }
-    // Filter irrelevant document types regardless of lake
+    if (nepisIdMatch && KNOWN_BAD_NEPIS_IDS.has(nepisIdMatch[1].toUpperCase())) return 'known_bad_nepis_doc';
     if (/wetlands.management|wma.wetlands|wildlife.management.area|hunting.*pdf|upland.*habitat|prescribed.burn|waterfowl.impound/i.test(combined)) return 'irrelevant_doc_type';
-    // Florida lake database — never relevant for SC/NC/GA/TN lakes
     if (/wateratlas\.usf\.edu/i.test(combined)) return 'irrelevant_doc_type';
-    // Wrong-state generic articles (Kentucky, Illinois, Florida catfish/bass articles with no SC content)
     if (/kentucky.*small.*lake|illinois.*channel.*cat|mud lake.*florida|wekiva.*river|lake.*county.*florida/i.test(combined)) return 'irrelevant_doc_type';
     if (/nrc\.gov\/docs\//i.test(combined)) return 'nrc_nuclear_doc';
-    // Filter non-US / Canadian government documents
     if (/\.gc\.ca\/|dfo-mpo\.gc\.ca|canada\.ca|ontario\.|quebec\.|british.columbia|alberta\.|manitoba\./.test(combined)) return 'foreign_government_doc';
-    // Filter other US state agency documents (Michigan DNR, etc) — only SC/NC/GA are relevant
-    if (/michigandnr\.com|michigan\.gov.*dnr|mndnr\.gov|dnr\.wi\.gov|dnr\.illinois|in\.gov.*dnr|michigan(?:dnr|department.*natural)/.test(url)) return 'other_state_agency';
-    // Filter generic how-to fishing articles with no lake-specific data
+    if (/michigandnr\.com|michigan\.gov.*dnr|mndnr\.gov|dnr\.wi\.gov|dnr\.illinois|in\.gov.*dnr/.test(url)) return 'other_state_agency';
     if (/how.to.fish|beginner.*fishing|fishing.tips.*general|learn.to.fish|fishing.basics/.test(combined) && !combined.includes(baseLower)) return 'generic_fishing_article';
     for (const other of otherLakeNames) {
       if (other === baseLower) continue;
       if (combined.includes(`lake ${other}`) && !combined.includes(baseLower)) {
-        const isLakeSpecificReg = /regulations|regs\.html|description\.html/.test(combined) && /lake (murray|marion|moultrie|hartwell|keowee|jocassee|greenwood|secession|yates|martin)/.test(combined);
-        if (isLakeSpecificReg) return other;
+        if (/regs\.html|description\.html/.test(combined) && combined.includes(`/${other}/`) && !combined.includes(baseLower)) return other;
       }
-      if (/regs\.html|description\.html/.test(combined) && combined.includes(`/${other}/`) && !combined.includes(baseLower)) return other;
     }
     return null;
   };
 
-  // Resolve state-specific agencies and domains dynamically
-  // Fix 2026-07-12: dnr.sc.gov/fishregs now 404s — official regs moved to eRegulations
-  // For SC, we search both dnr.sc.gov (lake descriptions still work) AND eregulations.com (new regs host)
+  // State-specific config
   let dnrName = "SCDNR";
-  let dnrDomain = "dnr.sc.gov";
-  let regsSiteFilter = "site:dnr.sc.gov OR site:eregulations.com";
-  if (state === "NC") { dnrName = "NCWRC"; dnrDomain = "ncwildlife.org"; regsSiteFilter = "site:ncwildlife.org OR site:eregulations.com"; }
-  else if (state === "GA") { dnrName = "GADNR"; dnrDomain = "georgiawildlife.com"; regsSiteFilter = "site:georgiawildlife.com OR site:eregulations.com"; }
+  let regsUrl = "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits";
+  let regsTitle = "SC Freshwater Fish Size & Possession Limits (eRegulations)";
+  if (state === "NC") { dnrName = "NCWRC"; regsUrl = "https://www.eregulations.com/northcarolina/fishing/freshwater-fishing-regulations"; regsTitle = "NC Freshwater Fishing Regulations (eRegulations)"; }
+  else if (state === "GA") { dnrName = "GADNR"; regsUrl = "https://www.eregulations.com/georgia/fishing/freshwater-fishing-regulations"; regsTitle = "GA Freshwater Fishing Regulations (eRegulations)"; }
 
-  // Use full lake name (without state suffix) in queries for specificity
-  // "Lake Murray" beats "Murray" — avoids matching unrelated Murray documents
-  const queryLake = lakeName.replace(/,\s*(SC|NC|GA|TN)(\/(SC|NC|GA|TN))*\s*$/i,'').trim(); // "Lake Murray" not "Murray"; strips SC/GA multi-state suffix too
-  // Border lakes with formal names: override queryLake for better search results
+  // Border lake query name overrides
+  const queryLake = lakeName.replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i,'').trim();
   const queryLakeOverrides = {
-    'lake russell': 'Richard B. Russell Lake',
-    'russell': 'Richard B. Russell Lake',
-    'lake thurmond': 'J. Strom Thurmond Lake',
-    'thurmond': 'J. Strom Thurmond Lake',
-    'clarks hill': 'J. Strom Thurmond Lake',
-    'clark hill': 'J. Strom Thurmond Lake',
+    'lake russell': 'Richard B. Russell Lake', 'russell': 'Richard B. Russell Lake',
+    'lake thurmond': 'J. Strom Thurmond Lake', 'thurmond': 'J. Strom Thurmond Lake',
+    'clarks hill': 'J. Strom Thurmond Lake', 'clark hill': 'J. Strom Thurmond Lake',
   };
   const queryLakeFinal = queryLakeOverrides[queryLake.toLowerCase()] || queryLake;
-  const stateFullName = { SC: 'South Carolina', NC: 'North Carolina', GA: 'Georgia' }[state] || 'South Carolina';
 
-  // Owner-aware drawdown source seeding: if the caller already knows the
-  // reservoir owner (e.g. from deterministic facts), seed the authority's
-  // lake-level / operations page so the pipeline can extract drawdown facts.
+  // Owner-aware drawdown seeding
   const reservoirOwner = body.reservoirOwner || null;
   const drawdownSource = resolveDrawdownSource(lakeName, state, reservoirOwner);
 
-  // CREDIT BUDGET: 5 Firecrawl search calls per discover run + 1 for Grokipedia.
-  // Extract is wasteful here — proxy-download fetches full content anyway.
-  //
-  // 2026-07-13: One combined fishing-guide query covers depth/structure/forage/
-  // thermocline/seasonal facts from regional pubs. CWMS lake levels come from
-  // the free direct API on /lake — no search needed for that.
-  // Each pattern can be a string (simple query) or { query, ...firecrawlOptions }
-  const queryPatterns = [
-    // SCDNR fisheries/biology — prefer PDFs (annual reports, creel surveys)
-    { query: `"${queryLakeFinal}" (fisheries OR biology OR "striped bass" OR crappie OR "largemouth") ${dnrName}`, categories: ['pdf'] },
-    { query: `"${queryLakeFinal}" (regulations OR "creel limit" OR "size limit" OR "bag limit") ${dnrName}` },
-    // Limnology — research category targets EPA, USGS, Clemson, etc. directly
-    { query: `"${queryLakeFinal}" (limnology OR thermocline OR "water quality" OR "dissolved oxygen")`, categories: ['research'] },
-    { query: `"Report on Lake ${queryLakeFinal}" OR "Report on ${queryLakeFinal} Lake" OR "${queryLakeFinal}" (NESWP OR eutrophication OR nepis)` },
-    // Fishing guide query — includeDomains is a native Firecrawl param (site: in query string is ignored)
-    {
-      query: `${queryLakeFinal} thermocline depth structure forage shad seasonal fishing`,
-      includeDomains: ['carolinasportsman.com', 'takemefishing.org', 'gameandfishmag.com', 'in-fisherman.com', 'flwfishing.com', 'bassmaster.com', 'majorleaguefishing.com'],
-    },
-  ];
+  // ── GROKIPEDIA SLUGS ──────────────────────────────────────────────────────
+  const GROKIPEDIA_SLUGS = {
+    'wateree': 'lake_wateree', 'murray': 'Saluda_River',
+    'marion': 'Lake_Marion_(South_Carolina)', 'moultrie': 'Lake_Moultrie',
+    'monticello': 'monticello_reservoir', 'greenwood': 'Lake_Greenwood_(South_Carolina)',
+    'keowee': 'keowee', 'jocassee': 'jocassee_dam', 'hartwell': 'Lake_Hartwell',
+    'wylie': 'Lake_Wylie', 'secession': 'rocky_river_south_carolina',
+    'fishing creek': 'fishing_creek_reservoir', 'parr': 'parr_reservoir',
+    'russell': 'Richard_B._Russell_Lake', 'thurmond': 'Savannah_River',
+    'clarks hill': 'Savannah_River', 'norman': 'norman_lake',
+    'chatuge': 'Chatuge_Lake', 'blue ridge': 'Lake_Blue_Ridge',
+    'fontana': 'Fontana_Lake', 'chickamauga': 'Chickamauga_Lake',
+    'james': 'Catawba_River', 'hickory': 'Catawba_River',
+    'rhodhiss': 'Catawba_River', 'mountain island': 'Catawba_River',
+  };
 
+  const KNOWN_BAD_NEPIS = new Set(['monticello']);
+  const skipNepis = KNOWN_BAD_NEPIS.has(baseLower);
+
+  const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
+  const seenUrls = new Set();
+  const queryLog = [];
   let discoveredSources = [];
-  const queryLog = []; // returned to client for UI logging
-  const googleApiKey = env.GOOGLE_SEARCH_API_KEY || env.GOOGLE_CSE_KEY;
-  const googleCx = env.GOOGLE_SEARCH_CX || env.GOOGLE_CSE_CX;
-  const firecrawlSearchKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
 
-  // PRIMARY: Firecrawl /v2/search
-  if (firecrawlSearchKey) {
-    for (const pattern of queryPatterns) {
-      const q = typeof pattern === 'string' ? pattern : pattern.query;
-      const extraOpts = typeof pattern === 'object' ? { ...pattern, query: undefined } : {};
-      delete extraOpts.query;
+  // ── STEP 1: Guaranteed seeds (always included) ──────────────────────────
+  const guaranteedSeeds = [];
+
+  const addSeed = (seed) => {
+    const normUrl = String(seed.url || '').split('?')[0].toLowerCase();
+    if (seenUrls.has(normUrl)) return;
+    seenUrls.add(normUrl);
+    seenUrls.add(seed.url);
+    guaranteedSeeds.push(seed);
+  };
+
+  // Grokipedia
+  const grokSlug = GROKIPEDIA_SLUGS[baseLower];
+  if (grokSlug) {
+    addSeed({ title: `${lakeName} — Grokipedia`, type: 'HTML', authority: 'Grokipedia', url: `https://grokipedia.com/page/${grokSlug}`, priority: 1 });
+  }
+  if (baseLower === 'hartwell') {
+    addSeed({ title: 'Savannah River — Grokipedia', type: 'HTML', authority: 'Grokipedia', url: 'https://grokipedia.com/page/Savannah_River', priority: 2 });
+  }
+
+  // State regulations (always)
+  addSeed({ title: regsTitle, type: 'HTML', authority: dnrName, url: regsUrl, priority: 1 });
+
+  // SCDNR lake description + regs pages (dynamic — works for any SC lake)
+  if (state === 'SC') {
+    addSeed({ title: `Lake ${baseName} SCDNR Lake Description`, type: 'HTML', authority: 'SCDNR', url: `https://www.dnr.sc.gov/lakes/${baseLower}/description.html`, priority: 1 });
+    addSeed({ title: `Lake ${baseName} Regulations`, type: 'HTML', authority: 'SCDNR', url: `https://www.dnr.sc.gov/lakes/${baseLower}/regs.html`, priority: 1 });
+  }
+
+  // Owner-aware drawdown source
+  if (drawdownSource) {
+    addSeed({ title: drawdownSource.label, type: drawdownSource.type, authority: drawdownSource.authority, url: drawdownSource.url, priority: 1 });
+  }
+
+  // Duke CRA direct PDF if applicable
+  const durCra = DUKE_CRA_PDFS[baseLower];
+  if (durCra) {
+    addSeed({ title: `${baseName} Lake Management Agreement — Duke Energy CRA`, type: 'PDF', authority: 'Duke Energy / FERC', url: durCra, priority: 1 });
+  }
+
+  // NEPIS EPA survey search
+  if (!skipNepis) {
+    addSeed({
+      title: `EPA NSCEP search: Report on ${baseName} / Lake ${baseName}`,
+      type: 'HTML', authority: 'EPA NSCEP',
+      url: buildNepisSearchUrl(lakeName, state, baseName),
+      priority: 2, source: 'nepis_seed'
+    });
+  }
+
+  // ── STEP 2: Grokipedia citation following ────────────────────────────────
+  // Fetch the Grokipedia page and extract all citation URLs — these are the
+  // same authoritative sources Grokipedia used, handed to us for free.
+  if (grokSlug && firecrawlKey) {
+    try {
+      const grokUrl = `https://grokipedia.com/page/${grokSlug}`;
+      const grokRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: grokUrl, formats: ['links', 'markdown'], onlyMainContent: true, timeout: 30000 })
+      });
+      if (grokRes.ok) {
+        const grokData = await grokRes.json();
+        const grokText = grokData.data?.markdown || '';
+        const grokLinks = grokData.data?.links || [];
+
+        // Extract citation links — Grokipedia uses [1], [2] etc. linked to external sources
+        // These appear as reference links at the bottom of the page
+        const citationLinks = grokLinks
+          .filter(l => {
+            const u = String(l.url || l || '');
+            // Skip internal grokipedia links, social media, Wikipedia disambiguation
+            return !u.includes('grokipedia.com') &&
+                   !u.includes('wikipedia.org/wiki/Wikipedia:') &&
+                   !u.includes('facebook.com') && !u.includes('twitter.com') &&
+                   !u.includes('youtube.com') && !u.includes('instagram.com') &&
+                   u.startsWith('http') && u.length > 20;
+          })
+          .map(l => String(l.url || l))
+          .slice(0, 15); // max 15 citation links
+
+        queryLog.push(`Grokipedia citations found: ${citationLinks.length}`);
+
+        for (const citUrl of citationLinks) {
+          const off = offLakePattern('', citUrl);
+          if (off) continue;
+          const isPdf = citUrl.toLowerCase().endsWith('.pdf');
+          let authority = 'Grokipedia Citation';
+          try {
+            const host = new URL(citUrl).hostname;
+            if (/usace\.army\.mil/.test(host)) authority = 'USACE';
+            else if (/epa\.gov|nepis/.test(host)) authority = 'EPA';
+            else if (/usgs\.gov/.test(host)) authority = 'USGS';
+            else if (/dnr\.sc\.gov/.test(host)) authority = 'SCDNR';
+            else if (/duke-energy\.com/.test(host)) authority = 'Duke Energy';
+            else if (/ferc\.gov/.test(host)) authority = 'FERC';
+            else if (/santeecooper\.com/.test(host)) authority = 'Santee Cooper';
+          } catch {}
+          addSeed({ title: `${lakeName} — ${authority} (via Grokipedia citation)`, type: isPdf ? 'PDF' : 'HTML', authority, url: citUrl, priority: 2 });
+        }
+
+        // Store the Grokipedia markdown content inline so proxy-download can skip re-fetching
+        const existingGrok = guaranteedSeeds.find(s => s.url === grokUrl);
+        if (existingGrok && grokText) existingGrok.fullText = grokText;
+      }
+    } catch (e) {
+      queryLog.push(`Grokipedia citation fetch failed: ${e.message}`);
+    }
+  }
+
+  // ── STEP 3: Natural language search queries (4 queries, no domain filters) ──
+  if (firecrawlKey) {
+    const queries = [
+      `"${queryLakeFinal}" fishing report thermocline depth water temperature`,
+      `"${queryLakeFinal}" water quality dissolved oxygen stratification`,
+      `"${queryLakeFinal}" (fisheries OR biology OR "striped bass" OR crappie) ${dnrName}`,
+      `"${queryLakeFinal}" (limnology OR thermocline OR "water quality" OR "dissolved oxygen")`,
+    ];
+
+    for (const q of queries) {
       try {
-        let results = [];
         const searchRes = await fetch('https://api.firecrawl.dev/v2/search', {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${firecrawlSearchKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: q, limit: 5, ...extraOpts })
+          headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: q, limit: 5 })
         });
         if (!searchRes.ok) { queryLog.push(`[query] FAILED (${searchRes.status}): ${q.slice(0,80)}`); continue; }
         const searchData = await searchRes.json();
-        // When scrapeOptions is present results may include inline markdown — preserve it
         const rawResults = searchData.data?.web || searchData.data || searchData.web || (Array.isArray(searchData) ? searchData : []);
-        results = rawResults.map(r => ({
-          url: r.url, title: r.title || r.metadata?.title || '', score: 0.5,
-          // inline markdown from scrapeOptions — lets engine skip proxy-download for these URLs
-          fullText: r.markdown || r.content || null
-        }));
-        queryLog.push(`[query] ${q.slice(0, 100)} → ${results.length} results`);
-        for (const r of results) {
+        queryLog.push(`[query] ${q.slice(0, 100)} → ${rawResults.length} results`);
+        for (const r of rawResults) {
           const off = offLakePattern(r.title||'', r.url||'');
-          if (off) {
-            queryLog.push(`  ✗ off-lake (${off}): ${(r.title||r.url).slice(0,80)}`);
-            continue;
-          }
+          if (off) { queryLog.push(`  ✗ off-lake (${off}): ${(r.title||r.url).slice(0,80)}`); continue; }
+          const normUrl = String(r.url||'').split('?')[0].toLowerCase();
+          if (seenUrls.has(normUrl)) continue;
+          seenUrls.add(normUrl);
           const isPdf = String(r.url||'').toLowerCase().endsWith('.pdf');
-          let host = 'firecrawl';
-          try { host = new URL(r.url).hostname; } catch {}
-          let authority = host;
-          if (/dnr\.sc\.gov/.test(host) || /eregulations\.com/.test(host)) authority = 'SCDNR';
-          else if (/usgs\.gov/.test(host)) authority = 'USGS';
-          else if (/usace\.army\.mil/.test(host)) authority = 'USACE';
-          else if (/nepis\.epa\.gov|epa\.gov/.test(host)) authority = 'EPA NSCEP';
-          else if (/dnr|wildlife/.test(host)) authority = dnrName;
-          queryLog.push(`  ✓ found: ${(r.title||r.url).slice(0,80)}${r.fullText ? ' [inline content]' : ''}`);
+          let authority = 'Web';
+          try {
+            const host = new URL(r.url).hostname;
+            if (/usace\.army\.mil/.test(host)) authority = 'USACE';
+            else if (/epa\.gov|nepis/.test(host)) authority = 'EPA';
+            else if (/usgs\.gov/.test(host)) authority = 'USGS';
+            else if (/dnr\.sc\.gov/.test(host)) authority = 'SCDNR';
+            else if (/eregulations\.com/.test(host)) authority = dnrName;
+            else if (/carolinasportsman|anglersheadquarters|gameandfishmag|takemefishing/.test(host)) authority = 'Fishing Guide';
+            else if (/grokipedia\.com/.test(host)) authority = 'Grokipedia';
+          } catch {}
+          queryLog.push(`  ✓ found: ${(r.title||r.url).slice(0,80)}`);
           discoveredSources.push({
-            title: (r.title || `${queryLake} - ${host}`).replace(/\s+/g,' ').trim().slice(0,180),
+            title: (r.title || `${queryLake} - Web`).replace(/\s+/g,' ').trim().slice(0,180),
             type: isPdf ? 'PDF' : 'HTML',
             authority,
             url: r.url,
-            priority: (r.title||'').toLowerCase().includes(baseLower) ? 1 : 2,
+            priority: 2,
             score: r.score || 0,
-            // pass inline content through so engine can skip proxy-download
-            fullText: r.fullText || null
+            fullText: r.markdown || r.content || null
           });
         }
       } catch (err) {
         console.warn(`Search failed for [${q.slice(0,80)}]: ${err.message}`);
       }
     }
-  } else if (googleApiKey && googleCx) {
-    for (const pattern of queryPatterns) {
-      const q = typeof pattern === 'string' ? pattern : pattern.query;
-      try {
-        const url = `https://customsearch.googleapis.com/customsearch/v1?key=${encodeURIComponent(googleApiKey)}&cx=${encodeURIComponent(googleCx)}&q=${encodeURIComponent(q)}`;
-        const res = await fetch(url);
-        if (!res.ok) continue;
-        const data = await res.json();
-        const items = data.items || [];
-        console.log(`[discover/google] query: ${q.slice(0,100)} → ${items.length} results`);
-        for (const item of items) {
-          const off = offLakePattern(item.title||'', item.link||'');
-          if (off) { console.log(`  ✗ off-lake (${off}): ${(item.title||item.link).slice(0,80)}`); continue; }
-          const isPdf = String(item.link||'').toLowerCase().endsWith('.pdf') || String(item.mime||'').includes('pdf');
-          console.log(`  ✓ found: ${(item.title||item.link).slice(0,80)}`);
-          discoveredSources.push({
-            title: (item.title||`${queryLake} Resource`).slice(0,180),
-            type: isPdf ? "PDF" : "HTML",
-            authority: item.displayLink || "Google Search",
-            url: item.link,
-            priority: (item.title||'').toLowerCase().includes(baseLower) ? 1 : 2
-          });
-        }
-      } catch (err) { console.warn(`Google search failed: ${err.message}`); }
-    }
   }
 
-  // Deduplicate by URL and by normalized title to avoid duplicates
-  const seenUrls = new Set();
-  const seenTitles = new Set();
-  let filtered = [];
-  for (const src of discoveredSources) {
-    const normUrl = String(src.url||'').split('?')[0].toLowerCase();
-    const normTitle = String(src.title||'').toLowerCase().replace(/\s+/g,' ').trim();
-    if (seenUrls.has(normUrl)) { queryLog.push(`  ✗ dupe url: ${src.title?.slice(0,60)}`); continue; }
-    if (normUrl.includes('pocket') && normTitle.includes('pocket')) continue;
-    if (seenTitles.has(normTitle) && normTitle.includes('document') && normTitle.length < 40) continue;
-    const off = offLakePattern(src.title, src.url);
-    if (off) { queryLog.push(`  ✗ off-lake final (${off}): ${src.title?.slice(0,60)}`); continue; }
-    seenUrls.add(normUrl);
-    seenTitles.add(normTitle);
-    filtered.push(src);
-  }
-  discoveredSources = filtered;
+  // ── STEP 4: Combine, sort, return ────────────────────────────────────────
+  let finalList = [...guaranteedSeeds, ...discoveredSources];
+  finalList.sort((a,b) => (a.priority - b.priority) || ((b.score||0) - (a.score||0)));
 
-  // Sort by priority (1 = lake-specific) then by score
-
-  // ── Grokipedia deterministic slug table ────────────────────────────────────
-  // Manually verified slugs for lakes where Grokipedia uses non-standard naming.
-  // River pages (Catawba_River, Savannah_River) cover multiple lakes in their chain.
-  // Lakes not in this table get no Grokipedia seed — no wasted credits on 404s.
-  const GROKIPEDIA_SLUGS = {
-    // SC lakes — direct lake pages
-    'wateree':        'lake_wateree',
-    'murray':         'Saluda_River',          // Saluda River page covers Lake Murray extensively
-    'marion':         'Lake_Marion_(South_Carolina)',
-    'moultrie':       'Lake_Moultrie',
-    'monticello':     'monticello_reservoir',
-    'greenwood':      'Lake_Greenwood_(South_Carolina)',
-    'keowee':         'keowee',
-    'jocassee':       'jocassee_dam',
-    'hartwell':       'Lake_Hartwell',
-    'wylie':          'Lake_Wylie',
-    'secession':      'rocky_river_south_carolina',
-    'fishing creek':  'fishing_creek_reservoir',
-    'parr':           'parr_reservoir',
-    // SC/GA border — river page covers Hartwell, Russell, Thurmond
-    'russell':        'Richard_B._Russell_Lake',
-    'thurmond':       'Savannah_River',
-    'clarks hill':    'Savannah_River',
-    // NC lakes — direct lake pages
-    'norman':         'norman_lake',
-    'chatuge':        'Chatuge_Lake',
-    'blue ridge':     'Lake_Blue_Ridge',
-    'fontana':        'Fontana_Lake',
-    'chickamauga':    'Chickamauga_Lake',
-    // NC Catawba chain — river page covers James, Hickory, Rhodhiss, Mountain Island
-    'james':          'Catawba_River',
-    'hickory':        'Catawba_River',
-    'rhodhiss':       'Catawba_River',
-    'mountain island':'Catawba_River',
-  };
-
-  // Build Grokipedia seeds — one per confirmed slug, priority 2 so 404s don't block pipeline
-  const grokSeeds = [];
-  const grokSlug = GROKIPEDIA_SLUGS[baseLower];
-  if (grokSlug) {
-    grokSeeds.push({
-      title: `${lakeName} — Grokipedia`,
-      type: 'HTML',
-      authority: 'Grokipedia',
-      url: `https://grokipedia.com/page/${grokSlug}`,
-      priority: 2,
-      source: 'grokipedia_slug',
-    });
-    console.log(`Grokipedia seed for ${lakeName}: ${grokSlug}`);
-  }
-  // Also seed Savannah River page for Hartwell since it has a direct page too
-  if (baseLower === 'hartwell') {
-    grokSeeds.push({
-      title: 'Savannah River — Grokipedia (covers Hartwell/Russell/Thurmond)',
-      type: 'HTML',
-      authority: 'Grokipedia',
-      url: 'https://grokipedia.com/page/Savannah_River',
-      priority: 2,
-      source: 'grokipedia_slug',
-    });
-  }
-  // Russell — seed both the lake page and state park page
-  if (baseLower === 'russell') {
-    grokSeeds.push({
-      title: 'Richard B. Russell Lake — Grokipedia',
-      type: 'HTML',
-      authority: 'Grokipedia',
-      url: 'https://grokipedia.com/page/Richard_B._Russell_Lake',
-      priority: 1,
-      source: 'grokipedia_slug',
-    });
-    grokSeeds.push({
-      title: 'Richard B. Russell State Park — Grokipedia',
-      type: 'HTML',
-      authority: 'Grokipedia',
-      url: 'https://grokipedia.com/page/richard_b_russell_state_park',
-      priority: 2,
-      source: 'grokipedia_slug',
-    });
-  }
-  const grokSeed = grokSeeds[0] || null; // first seed for compat; all seeds injected below
-
-  // Per-lake pre-seeded authoritative sources — always included regardless of search results
-  const LAKE_SEEDS = {
-    wateree: [
-      { title: "Lake Wateree SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/wateree/description.html", priority: 1 },
-      { title: "Lake Wateree Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/wateree/regs.html", priority: 1 },
-      { title: "SC Freshwater Fish Size & Possession Limits (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
-      { title: "SCDNR Striped Bass Species Page (current regulations & biology)", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/fish/species/stripedbass.html", priority: 1 },
-      { title: "Lake Wateree Channel Catfish — Carolina Sportsman (thermocline, depth, seasonal patterns)", type: "HTML", authority: "Carolina Sportsman", url: "https://www.carolinasportsman.com/fishing/freshwater-fishing/catfish/the-underrated-channel-cat/", priority: 1 },
-      { title: "Lake Wateree Crappie Fishing — Carolina Sportsman (structure, depth, seasonal)", type: "HTML", authority: "Carolina Sportsman", url: "https://www.carolinasportsman.com/content/hot-crappie-haven/", priority: 1 },
-      { title: "Lake Wateree Striped Bass — Carolina Sportsman (thermocline, forage, tactics)", type: "HTML", authority: "Carolina Sportsman", url: "https://www.carolinasportsman.com/fishing/bass-fishing/hot-wateree-stripers/", priority: 1 },
-    ],
-    murray: [
-      { title: "Lake Murray SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/murray/description.html", priority: 1 },
-      { title: "Lake Murray Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/murray/regs.html", priority: 1 },
-      { title: "SC Freshwater Game Fishing Regulations (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
-      { title: "Saluda Hydroelectric Project FERC EA — Lake Murray pool levels, thermocline, DO, trophic status, guide curve (FERC No. 516)", type: "PDF", authority: "FERC / SCE&G", url: "https://www.saludahydrorelicense.com/_files/ugd/5f7780_74967afad1284c508b04fc10b15333f6.pdf", priority: 1 },
-    ],
-    marion: [
-      { title: "Lake Marion SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/marion/description.html", priority: 1 },
-      { title: "Lake Marion Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/marion/regs.html", priority: 1 },
-      { title: "SC Freshwater Game Fishing Regulations (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
-    ],
-    russell: [
-      { title: "Lake Russell SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/russell/description.html", priority: 1 },
-      { title: "Richard B. Russell Lake — USACE Savannah District", type: "HTML", authority: "USACE", url: "https://www.sas.usace.army.mil/About/Divisions-and-Offices/Operations-Division/Richard-B-Russell-Dam-and-Lake/", priority: 1 },
-      { title: "Richard B. Russell Lake Pool Level Management", type: "HTML", authority: "USACE", url: "https://water.sas.usace.army.mil/manual/sect7r.html", priority: 1 },
-      { title: "GA Freshwater Fishing Regulations (eRegulations)", type: "HTML", authority: "GA DNR", url: "https://www.eregulations.com/georgia/fishing/freshwater-fishing-regulations", priority: 1 },
-    ],
-    moultrie: [
-      { title: "Lake Moultrie SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/moultrie/description.html", priority: 1 },
-      { title: "Lake Moultrie Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/moultrie/regs.html", priority: 1 },
-      { title: "SC Freshwater Fish Size & Possession Limits (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
-    ],
-    monticello: [
-      // skipNepis: true — lake impounded 1978, postdates the NES survey window (1972-75).
-      // All NEPIS "Monticello" results are wrong-lake (IL wastewater plants). Blocklist covers
-      // known bad IDs but suppressing the seed entirely avoids burning credits on false positives.
-      { _skipNepis: true },
-      { title: "Lake Monticello SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/monticello/description.html", priority: 1 },
-      { title: "Lake Monticello Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/monticello/regs.html", priority: 1 },
-      { title: "SC Freshwater Fish Size & Possession Limits (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
-    ],
-    keowee: [
-      { title: "Lake Keowee SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/keowee/description.html", priority: 1 },
-      { title: "Lake Keowee Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/keowee/regs.html", priority: 1 },
-      { title: "SC Freshwater Fish Size & Possession Limits (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
-    ],
-    greenwood: [
-      { title: "Lake Greenwood SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/greenwood/description.html", priority: 1 },
-      { title: "Lake Greenwood Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/greenwood/regs.html", priority: 1 },
-      { title: "SC Freshwater Fish Size & Possession Limits (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
-    ],
-  };
-
-  // Default seeds for EVERY tristate lake (SC/NC/GA) — not just the hand-curated LAKE_SEEDS list.
-  // EPA NEPI S search URL is included so the download step always has a path into NSCEP.
-  const defaultStateSeeds = [];
-  if (state === 'SC') {
-    defaultStateSeeds.push(
-      { title: `Lake ${baseName} SCDNR Lake Description`, type: "HTML", authority: "SCDNR", url: `https://www.dnr.sc.gov/lakes/${baseLower}/description.html`, priority: 1 },
-      { title: `Lake ${baseName} Regulations`, type: "HTML", authority: "SCDNR", url: `https://www.dnr.sc.gov/lakes/${baseLower}/regs.html`, priority: 1 },
-      { title: "SC Freshwater Fish Size & Possession Limits (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
-    );
-  } else if (state === 'NC') {
-    defaultStateSeeds.push(
-      { title: "NC Freshwater Fishing Regulations (eRegulations)", type: "HTML", authority: "NCWRC", url: "https://www.eregulations.com/northcarolina/fishing/freshwater-fishing-regulations", priority: 1 },
-    );
-  } else if (state === 'GA') {
-    defaultStateSeeds.push(
-      { title: "GA Freshwater Fishing Regulations (eRegulations)", type: "HTML", authority: "GA DNR", url: "https://www.eregulations.com/georgia/fishing/freshwater-fishing-regulations", priority: 1 },
-    );
-  }
-  // EPA NSCEP search landing — skip for lakes where the name is too common to disambiguate
-  // (e.g. Monticello — impounded 1978, postdates NES; all NEPIS hits are wrong-lake IL docs)
-  const skipNepis = (LAKE_SEEDS[baseLower] || []).some(s => s._skipNepis);
-  if (!skipNepis) defaultStateSeeds.push({
-    title: `EPA NSCEP search: Report on ${baseName} / Lake ${baseName}`,
-    type: "HTML",
-    authority: "EPA NSCEP",
-    url: buildNepisSearchUrl(lakeName, state, baseName),
-    priority: 1,
-    source: 'nepis_seed'
-  });
-
-  // Owner-aware drawdown / operations source seeding. If we already know the
-  // reservoir owner (passed in body or resolved from lake name), inject the
-  // authority's lake-level / operations page as a guaranteed discovery target.
-  // For Duke Energy lakes this is the Catawba-Wateree license page that links
-  // to per-lake summaries with planned levels / drawdown schedules.
-  // For USACE lakes this is the managing district's water-control page.
-  if (drawdownSource) {
-    defaultStateSeeds.push({
-      title: drawdownSource.label,
-      type: drawdownSource.type,
-      authority: drawdownSource.authority,
-      url: drawdownSource.url,
-      priority: 1,
-      source: 'owner_drawdown_seed'
-    });
-  }
-
-  // Inject seeds — seeds always take guaranteed slots, prepend so they sort first
-  // grokSeed is universal — added for every lake regardless of state or LAKE_SEEDS entry
-  // Filter out _skipNepis sentinel objects — they are control flags, not real sources
-  // grokSeeds contains 0-2 Grokipedia seeds depending on lake; all injected at priority 2
-  const seeds = [...grokSeeds, ...(LAKE_SEEDS[baseLower] || []).filter(s => !s._skipNepis), ...defaultStateSeeds];
-  const guaranteedSeeds = [];
-  for (const seed of seeds) {
-    const normUrl = String(seed.url || '').split('?')[0].toLowerCase();
-    if (seenUrls.has(normUrl) || seenUrls.has(seed.url)) continue;
-    seenUrls.add(normUrl);
-    seenUrls.add(seed.url);
-    guaranteedSeeds.push(seed);
-  }
-  // Prepend seeds so they beat Tavily results in sort
-  discoveredSources = [...guaranteedSeeds, ...discoveredSources];
-
-  discoveredSources.sort((a,b)=> (a.priority-b.priority) || ((b.score||0)-(a.score||0)));
-
-  // If zero results, use curated fallback
-  if (discoveredSources.length === 0) {
-    discoveredSources = [
-      {
-        title: `${lakeName} SCDNR Fisheries Management - Annual Report Section`,
-        type: "PDF",
-        authority: "SCDNR",
-        url: "https://www.dnr.sc.gov/fish/fwfi/files/2017_annual_report.pdf",
-        priority: 2
-      },
-      {
-        title: `SC Freshwater Fishing Regulations (covers ${lakeName} creel/size limits)`,
-        type: "PDF",
-        authority: "SCDNR",
-        url: "https://dc.statelibrary.sc.gov/server/api/core/bitstreams/7d7100f0-3b63-4d07-921c-d9a37e3f2b46/content",
-        priority: 2
-      },
-      {
-        title: `${lakeName} - SCDNR Lakes Information`,
-        type: "HTML",
-        authority: "SCDNR",
-        url: `https://www.dnr.sc.gov/lakes/${baseLower}/description.html`,
-        priority: 1
-      }
+  // Fallback if nothing found
+  if (finalList.length === 0) {
+    finalList = [
+      { title: `${lakeName} SCDNR Lakes Information`, type: 'HTML', authority: 'SCDNR', url: `https://www.dnr.sc.gov/lakes/${baseLower}/description.html`, priority: 1 },
+      { title: regsTitle, type: 'HTML', authority: dnrName, url: regsUrl, priority: 1 },
     ];
   }
 
-  // Seeds are guaranteed in final list; fill remaining slots with search results
-  const searchSources = discoveredSources.filter(s => !guaranteedSeeds.includes(s));
-  const remainingSlots = Math.max(0, 10 - guaranteedSeeds.length);
-  const searchFill = searchSources.filter(s => s.priority===1).slice(0, remainingSlots);
-  const searchGeneric = searchSources.filter(s => s.priority!==1);
-  // No hard cap on final list — guaranteed seeds always included, search results fill remaining
-  // Gemini context windows are large enough to handle 15-20 sources without issue
-  let finalList = [...guaranteedSeeds, ...searchFill, ...searchGeneric];
-  if (finalList.length < 3) finalList = discoveredSources;
-
-  return new Response(JSON.stringify({ success: true, sources: finalList, baseName, filteredCount: discoveredSources.length - finalList.length, queryLog }), { headers: JSON_HEADERS });
+  return new Response(JSON.stringify({ success: true, sources: finalList, baseName, filteredCount: 0, queryLog }), { headers: JSON_HEADERS });
 }
 __name(handleResearchDiscover, "handleResearchDiscover");
+
 
 async function handleResearchProxyDownload(request, env) {
   const url = new URL(request.url);
