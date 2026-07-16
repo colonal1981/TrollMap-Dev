@@ -2869,10 +2869,25 @@ CRITICAL CATEGORY RULES:
 
       // Quality filter: require lake mention for non-regulation facts
       const generalCats = new Set(['creelLimit_general','sizeLimit_general','regulations_general','closedSeason']);
+      // Build alias check strings for this lake
+      const _qfAliasKey2 = baseName.toLowerCase().replace(/,\s*(sc|nc|ga|tn)(\/[a-z]{2})?\s*$/i, '').trim();
+      const _qfAliases = ({
+        'clarks hill / thurmond': ['clarks hill lake', 'j. strom thurmond lake', 'lake thurmond', 'thurmond lake', 'clarks hill reservoir', 'strom thurmond lake'],
+        'lake russell': ['richard b. russell lake', 'lake russell', 'russell lake', 'r.b. russell lake'],
+        'lake wylie': ['lake wylie', 'wylie lake'],
+        'lake monticello': ['lake monticello', 'monticello reservoir'],
+        'fishing creek reservoir': ['fishing creek reservoir', 'fishing creek lake', 'nitrolee dam'],
+        'lake greenwood': ['lake greenwood', 'buzzard roost reservoir'],
+        'lake hartwell': ['lake hartwell', 'hartwell lake', 'hartwell reservoir'],
+        'mountain island lake': ['mountain island lake', 'mountain island reservoir'],
+        'high rock lake': ['high rock lake', 'high rock reservoir'],
+        'blewett falls lake': ['blewett falls lake', 'blewett falls reservoir'],
+      })[_qfAliasKey2] || [];
       const kept = facts.filter(f => {
         if (generalCats.has(f.category) || /general|creel|size.?limit|regulation/i.test(f.category)) return true;
         const combined = `${f.fact} ${f.quote} ${f.source}`.toLowerCase();
-        return combined.includes(baseName.toLowerCase()) || combined.includes(lakeName.toLowerCase());
+        if (combined.includes(baseName.toLowerCase()) || combined.includes(lakeName.toLowerCase())) return true;
+        return _qfAliases.some(alias => combined.includes(alias));
       });
 
       allFacts.push(...kept);
