@@ -993,6 +993,33 @@ YOU MUST NEVER SUGGEST CHANGES TO:
 lure_color for flutter spoon, species, lake, launch_ramp, weather, safety_limits,
 battery_limits, gear_not_owned, live_bait, conventional_reels
 
+CASTING STOP SUGGESTIONS:
+If the plan includes a stopCandidates array, you MAY suggest a casting_stop_suggestion instead of a trolling tweak.
+A casting stop suggestion is appropriate when:
+- A high-value structure (attractor, named creek mouth, riprap, dock field, hump, point) is near the route
+- Conditions favor pausing (active solunar, bait presence noted, species spawn timing matches season)
+- The stop would complement the trolling pattern rather than interrupt it
+
+When suggesting a casting stop, use field: "casting_stop_suggestion" and populate recommended_value as:
+{
+  "location": "name or description of the spot",
+  "lat": null,
+  "lon": null,
+  "stopMinutes": 10,
+  "targetSpecies": "Largemouth Bass",
+  "reason": "why this spot is worth stopping",
+  "suggestedLures": ["topwater", "weightless swimbait"],
+  "confidence": 0.82
+}
+
+Only suggest lures the angler owns. Casting lure options from angler inventory:
+- Topwater: any walking bait or popper (morning/low light, calm surface, spawning season)
+- Weightless swimbait / fluke: shallow finesse (post-spawn, clear water, pressured fish)
+- Swimbait on jighead: 5-8ft casting, active fish
+- A-Rig: fan-cast from stationary position into deeper adjacent water (10-20ft)
+- Flutter Spoon: vertical jigging only when stationary over deep structure (NOT trolling use)
+- Crankbait: cast-and-retrieve along riprap, channel swings, rocky points
+
 RESPONSE FORMAT \u2014 return ONLY this JSON object, no other text:
 {
   "has_suggestion": true,
@@ -1015,14 +1042,22 @@ Never invent lures the angler does not own. Never suggest live bait.`;
 async function handleCoachPlan(request, env) {
   try {
     const body = await request.json();
-    const { payload, previousSuggestions = [] } = body;
+    const { payload, previousSuggestions = [], stopCandidates = [] } = body;
     if (!payload) {
       return new Response(JSON.stringify({ success: false, error: "Missing payload" }), { status: 400, headers: JSON_HEADERS });
     }
+    // stopCandidates can come as a top-level body field OR embedded in payload.stopCandidates
+    const resolvedStopCandidates = stopCandidates.length > 0 ? stopCandidates : (payload.stopCandidates || []);
     let userMessage = `Review this trolling plan and find ONE improvement.
 
 PLAN:
 ${JSON.stringify(payload, null, 2)}`;
+
+    // Inject stop candidates if provided — coach can suggest a casting stop as an alternative to a trolling tweak
+    if (resolvedStopCandidates && resolvedStopCandidates.length > 0) {
+      userMessage += `\n\nCASTING STOP CANDIDATES (structures near this route worth pausing to fish):\n${JSON.stringify(resolvedStopCandidates, null, 2)}\n\nIf any stop candidate scores higher than a trolling tweak for today's conditions, suggest a casting_stop_suggestion instead.`;
+    }
+
     if (previousSuggestions.length > 0) {
       const accepted = previousSuggestions.filter((s) => s.status === "accepted" || !s.status);
       const skipped = previousSuggestions.filter((s) => s.status === "skipped");

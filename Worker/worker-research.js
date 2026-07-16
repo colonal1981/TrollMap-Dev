@@ -1462,7 +1462,7 @@ function parseSCDNRDescriptionFacts(lakeName, url, html) {
   const text = stripHtml(html).replace(/\s+/g, ' ').trim();
   const identity = { aliases: [], counties: [] };
   const biology = { primaryForage: [], secondaryForage: [], predatorSpecies: [], speciesAbundance: {}, knownStockings: [], baitfishMovement: null, forageCalendar: {}, notes: [] };
-  const habitat = { structuralElements: {}, cover: [], vegetation: [], standingTimber: null, dockDensity: null, artificialHabitat: [], artificialHabitatDetails: { attractorCount: null, attractorTypes: [] }, notes: null };
+  const habitat = { structuralElements: {}, cover: [], vegetation: [], standingTimber: null, dockDensity: null, riprapLocations: [], namedCreekMouths: [], timberFields: null, shallowFlatAreas: null, artificialHabitat: [], artificialHabitatDetails: { attractorCount: null, attractorTypes: [] }, notes: null };
   const navigation = { ramps: [], hazards: [], notes: null, accessPointCount: null, publicRampCount: null, privateAccessCount: null };
   const evidence = { identity: {}, biology: {}, habitat: {}, navigation: {} };
 
@@ -2095,7 +2095,7 @@ async function handleResearchDeterministicFacts(request, env) {
     identity: { aliases: [], counties: [] },
     biology: { primaryForage: [], secondaryForage: [], predatorSpecies: [], speciesAbundance: {}, knownStockings: [], baitfishMovement: null, forageCalendar: {}, notes: [] },
     limnology: { waterClarity: { typical: null, color: null, secchiFt: null, note: null }, surfaceWater: {}, thermocline: { summerDepthFt: null, method: null, note: null }, oxygen: { depletionDepthFt: null, anoxicBelowFt: null, note: null }, trophicStatus: null, flowCharacteristics: null, seasonalDrawdownFt: null },
-    habitat: { structuralElements: {}, cover: [], vegetation: [], standingTimber: null, dockDensity: null, artificialHabitat: [], artificialHabitatDetails: { attractorCount: null, attractorTypes: [] }, notes: null },
+    habitat: { structuralElements: {}, cover: [], vegetation: [], standingTimber: null, dockDensity: null, riprapLocations: [], namedCreekMouths: [], timberFields: null, shallowFlatAreas: null, artificialHabitat: [], artificialHabitatDetails: { attractorCount: null, attractorTypes: [] }, notes: null },
     navigation: { ramps: [], hazards: [], notes: null },
     regulations: { state, generalStateRegulations: { lengthLimits: {}, creelLimits: {} }, lakeSpecificRegulations: { hasExceptions: null, creelLimits: {}, sizeLimits: {}, specialRules: [], closedSeasons: [] }, notes: null },
     summary: { text: null, keywords: [] },
@@ -3083,7 +3083,9 @@ Map this information to this exact JSON schema. Every null means no information 
     "predatorSpecies": [],
     "speciesAbundance": {},
     "knownStockings": [],
-    "invasiveSpecies": []
+    "invasiveSpecies": [],
+    "spawnTiming": {},
+    "forageSpatial": null
   },
   "habitat": {
     "bottomComposition": {},
@@ -3092,6 +3094,10 @@ Map this information to this exact JSON schema. Every null means no information 
     "structuralElements": {},
     "artificialHabitat": [],
     "dockDensity": null,
+    "riprapLocations": [],
+    "namedCreekMouths": [],
+    "timberFields": null,
+    "shallowFlatAreas": null,
     "standingTimber": null,
     "notes": null
   },
@@ -3417,7 +3423,7 @@ JSON only.`;
     userTemplate: (lakeName, state, prev) => {
       const facts = prev?._extractedFacts || [];
       const bioFacts = facts.filter(f =>
-        /biology|forage|species|predator|stocking|standing.?stock|shad|bass|crappie|catfish|biomass|rotenone|abundance|invasive|herring/i.test(f.category + ' ' + f.fact)
+        /biology|forage|species|predator|stocking|standing.?stock|shad|bass|crappie|catfish|biomass|rotenone|abundance|invasive|herring|spawn|bream|bluegill|crawfish|crayfish|perch/i.test(f.category + ' ' + f.fact)
       );
       const deterministicSpecies = prev?.biology?.predatorSpecies || [];
 
@@ -3426,7 +3432,7 @@ JSON only.`;
       ).join('\n\n');
 
       const docSection = prev?._documentContext
-        ? `\n\nDOCUMENT TEXT (look for species lists, stocking records, cove rotenone data, biomass tables):\n${prev._documentContext.slice(0, 30000)}`
+        ? `\n\nDOCUMENT TEXT (look for species lists, stocking records, cove rotenone data, biomass tables, spawn timing, forage location notes):\n${prev._documentContext.slice(0, 30000)}`
         : '';
 
       return `Map fisheries biology facts for ${lakeName}.
@@ -3444,6 +3450,9 @@ RULES:
 3. knownStockings: extract actual stocking events with species, quantities, years if mentioned.
 4. standingStockKgHa: extract biomass figures from rotenone or electrofishing data if present.
 5. speciesAbundance: use actual percentage data from documents if available.
+6. spawnTiming: extract spawn timing per species if mentioned (e.g. "largemouth bass spawn late March to early May when water reaches 62-68°F"). Use format {"species": "timing description"}.
+7. forageSpatial: if documents mention WHERE forage concentrates (e.g. "bream in shallow rocky coves", "shad school in open mid-lake water near dam", "crappie at creek mouths"), extract that as a single descriptive string.
+8. baitfishMovement: if documents describe seasonal or behavioral movement of bait species, extract that.
 
 Return ONLY:
 {
@@ -3456,7 +3465,9 @@ Return ONLY:
     "baitfishMovement": null,
     "knownStockings": [],
     "invasiveSpecies": [],
-    "forageCalendar": {}
+    "forageCalendar": {},
+    "spawnTiming": {},
+    "forageSpatial": null
   },
   "sources": []
 }
@@ -3471,7 +3482,7 @@ JSON only.`;
     userTemplate: (lakeName, state, prev) => {
       const facts = prev?._extractedFacts || [];
       const habFacts = facts.filter(f =>
-        /habitat|cover|attractor|bottom|timber|dock|vegetation|structure|point|creek|ledge|flat|ramp|bridge|riprap/i.test(f.category + ' ' + f.fact)
+        /habitat|cover|attractor|bottom|timber|dock|vegetation|structure|point|creek|ledge|flat|ramp|bridge|riprap|cove|arm|shallow|marina|pier/i.test(f.category + ' ' + f.fact)
       );
       const existingHabitat = prev?.habitat || {};
       const factsBlock = habFacts.map(f =>
@@ -3486,6 +3497,16 @@ ${factsBlock || 'No habitat facts extracted.'}
 EXISTING GEOSPATIAL DATA (from TrollMap contour/supplemental layers — preserve these exactly):
 ${JSON.stringify(existingHabitat, null, 2).slice(0, 3000)}
 
+RULES:
+1. dockDensity: if documents describe dock concentration (e.g. "heavily docked residential shoreline", "sparse docks", "marina on north end"), capture as a descriptive string. null if not mentioned.
+2. riprapLocations: list specific riprap areas if mentioned (e.g. dam face, causeways, bridge approaches, rip-rapped banks). Array of strings.
+3. namedCreekMouths: extract named creek mouths or arms if mentioned in documents (e.g. "Bear Creek arm", "Dutchman Creek mouth"). Array of strings. These are high-value casting targets.
+4. timberFields: if documents describe flooded timber areas or submerged wood concentrations, capture as descriptive string with location if available.
+5. shallowFlatAreas: if documents describe specific named shallow flat areas or coves good for casting/spawning, capture as descriptive string.
+6. standingTimber: boolean or description if submerged timber is present lake-wide.
+7. cover: array of cover types present (docks, brush, timber, riprap, etc.).
+8. Preserve all existing geospatial structuralElements and artificialHabitatDetails exactly.
+
 Return ONLY:
 {
   "habitat": {
@@ -3496,6 +3517,10 @@ Return ONLY:
     "artificialHabitatDetails": ${JSON.stringify(existingHabitat.artificialHabitatDetails || null)},
     "structuralElements": ${JSON.stringify(existingHabitat.structuralElements || {})},
     "dockDensity": null,
+    "riprapLocations": [],
+    "namedCreekMouths": [],
+    "timberFields": null,
+    "shallowFlatAreas": null,
     "standingTimber": null,
     "notes": ${JSON.stringify(existingHabitat.notes || null)}
   },
