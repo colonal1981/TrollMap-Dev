@@ -340,7 +340,7 @@ async function handleResearchDiscover(request, env) {
   let regsUrl = "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits";
   let regsTitle = "SC Freshwater Fish Size & Possession Limits (eRegulations)";
   if (state === "NC") { dnrName = "NCWRC"; regsUrl = "https://www.eregulations.com/northcarolina/fishing/warm-water-game-fish-regulations"; regsTitle = "NC Freshwater Fishing Regulations (eRegulations)"; }
-  else if (state === "GA") { dnrName = "GADNR"; regsUrl = "https://www.eregulations.com/georgia/fishing/freshwater-fishing-regulations"; regsTitle = "GA Freshwater Fishing Regulations (eRegulations)"; }
+  else if (state === "GA") { dnrName = "GADNR"; regsUrl = "https://www.eregulations.com/georgia/fishing/game-species-daily-limits"; regsTitle = "GA Game Species Daily Limits (eRegulations)"; }
 
   // Border lake query name overrides
   const queryLake = lakeName.replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i,'').trim();
@@ -421,6 +421,10 @@ async function handleResearchDiscover(request, env) {
 
   // State regulations (always)
   addSeed({ title: regsTitle, type: 'HTML', authority: dnrName, url: regsUrl, priority: 1 });
+  // GA has regs split across two pages — seed both
+  if (state === 'GA') {
+    addSeed({ title: 'GA General Freshwater Regulations (eRegulations)', type: 'HTML', authority: 'GADNR', url: 'https://www.eregulations.com/georgia/fishing/general-regulations', priority: 1 });
+  }
 
   // SCDNR lake description + regs pages (dynamic — works for any SC lake)
   if (state === 'SC') {
@@ -2287,7 +2291,7 @@ async function handleResearchDeterministicFacts(request, env) {
     const regsUrl = state === 'NC'
       ? 'https://www.eregulations.com/northcarolina/fishing/warm-water-game-fish-regulations'
       : state === 'GA'
-        ? 'https://www.eregulations.com/georgia/fishing/freshwater-fishing-regulations'
+        ? 'https://www.eregulations.com/georgia/fishing/game-species-daily-limits'
         : 'https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits';
     const lakeRegsUrl = state === 'SC' ? `https://www.dnr.sc.gov/lakes/${slug}/regs.html` : null;
     const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
@@ -2310,7 +2314,7 @@ async function handleResearchDeterministicFacts(request, env) {
           if (!normObj) continue;
           const normDocs = JSON.parse(await normObj.text());
           if (!Array.isArray(normDocs) || !normDocs.length) continue;
-          const regsDoc = normDocs.find(d => d.url && /eregulations\.com/i.test(d.url) && /freshwater-fish-size|possession-limits|freshwater-game/i.test(d.url + (d.title || '')))
+          const regsDoc = normDocs.find(d => d.url && /eregulations\.com/i.test(d.url) && /freshwater-fish-size|possession-limits|freshwater-game|freshwater-fishing-regulations|game-species-daily-limits|general-regulations/i.test(d.url + (d.title || '')))
             || normDocs.find(d => d.url && /eregulations\.com/i.test(d.url));
           const lakeRegsDoc = state === 'SC'
             ? (normDocs.find(d => d.url && d.url.includes(`/lakes/${slug}/regs`))
@@ -3907,7 +3911,7 @@ async function handleResearchAgent(request, env) {
     const regsUrls = {
       SC: 'https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits',
       NC: 'https://www.eregulations.com/northcarolina/fishing/warm-water-game-fish-regulations',
-      GA: 'https://www.eregulations.com/georgia/fishing/freshwater-fishing-regulations',
+      GA: 'https://www.eregulations.com/georgia/fishing/game-species-daily-limits',
     };
     const regsUrl = regsUrls[state] || regsUrls.SC;
     try {
