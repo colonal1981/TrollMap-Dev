@@ -616,6 +616,12 @@ async function handleResearchDiscover(request, env) {
       { title: "Lake Marion Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/marion/regs.html", priority: 1 },
       { title: "SC Freshwater Game Fishing Regulations (eRegulations)", type: "HTML", authority: "SCDNR", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits", priority: 1 },
     ],
+    russell: [
+      { title: "Lake Russell SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/russell/description.html", priority: 1 },
+      { title: "Richard B. Russell Lake — USACE Savannah District", type: "HTML", authority: "USACE", url: "https://www.sas.usace.army.mil/About/Divisions-and-Offices/Operations-Division/Richard-B-Russell-Dam-and-Lake/", priority: 1 },
+      { title: "Richard B. Russell Lake Pool Level Management", type: "HTML", authority: "USACE", url: "https://water.sas.usace.army.mil/manual/sect7r.html", priority: 1 },
+      { title: "GA Freshwater Fishing Regulations (eRegulations)", type: "HTML", authority: "GA DNR", url: "https://www.eregulations.com/georgia/fishing/freshwater-fishing-regulations", priority: 1 },
+    ],
     moultrie: [
       { title: "Lake Moultrie SCDNR Lake Description", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/moultrie/description.html", priority: 1 },
       { title: "Lake Moultrie Regulations", type: "HTML", authority: "SCDNR", url: "https://www.dnr.sc.gov/lakes/moultrie/regs.html", priority: 1 },
@@ -2884,6 +2890,11 @@ PRIORITY FIELDS — extract any of the following present in this document:
 - Navigation: boat ramps, access points, hazards`);
 
     const focusInstructions = focusParts.join('\n\n');
+    const _flagged = harvestKeywordSentences(doc.text || '', 20);
+    const _flaggedBlock = _flagged.length
+      ? '⚑ FLAGGED PASSAGES (keyword matches — prioritize extracting facts from these):\n' +
+        _flagged.map((s, i) => `[${i+1}] ${s.replace(/`/g, "'").replace(/\$/g, 'USD')}`).join('\n') + '\n\n'
+      : '';
     return `Extract ALL verified facts about "${lakeName}" (base name "${baseName}", state ${state}) from this document.
 
 DOCUMENT: ${doc.title}
@@ -2898,13 +2909,7 @@ RULES:
 4. For table data: extract each meaningful row as a separate fact with the row content as the quote.
 5. If this document has NO information about "${baseName}", return {"extracted_facts": []}.
 
-${(() => {
-  const flagged = harvestKeywordSentences(doc.text || '', 20);
-  return flagged.length
-    ? '⚑ FLAGGED PASSAGES (keyword matches — prioritize extracting facts from these):\n' +
-      flagged.map((s, i) => `[${i+1}] ${s}`).join('\n') + '\n\n'
-    : '';
-})()}DOCUMENT TEXT:
+${_flaggedBlock}DOCUMENT TEXT:
 ${(doc.text || '').slice(0, 150000)}
 
 Return ONLY:
