@@ -26,12 +26,12 @@ var LLM_PROVIDERS = [
     name: "gemini",
     baseUrl: null,
     keyEnv: "GEMINI_API_KEY",
-    defaultModel: "gemini-3.1-pro",
+  defaultModel: "gemini-3.1-pro-preview",
 models: [
-  "gemini-3.1-pro",
+  "gemini-3.1-pro-preview",
   "gemini-2.5-pro",
   "gemini-2.5-flash"
-    ],
+],
     headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
     isGemini: true,
     excludeFromGeneral: true,
