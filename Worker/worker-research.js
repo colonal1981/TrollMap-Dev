@@ -358,6 +358,7 @@ async function handleResearchDiscover(request, env) {
   // ── GROKIPEDIA SLUGS ──────────────────────────────────────────────────────
   const GROKIPEDIA_SLUGS = {
     'wateree': 'lake_wateree', 'murray': 'Saluda_River',
+    'blewett falls': 'blewett_falls_lake',
     'marion': 'Lake_Marion_(South_Carolina)', 'moultrie': 'Lake_Moultrie',
     'monticello': 'monticello_reservoir', 'greenwood': 'Lake_Greenwood_(South_Carolina)',
     'keowee': 'keowee', 'jocassee': 'jocassee_dam', 'hartwell': 'Lake_Hartwell',
@@ -393,10 +394,13 @@ async function handleResearchDiscover(request, env) {
   // Grokipedia
   const grokSlug = GROKIPEDIA_SLUGS[baseLower];
   // If no known slug, try common patterns — Grokipedia uses Title_Case with underscores
-  // We try up to 3 candidate URLs and pick the first that resolves (checked during citation fetch)
+  // We try canonical, title-case, and common lake-name variants. Grokipedia slugs are
+  // not reliably derived from the UI's cleaned base name (for example, Blewett
+  // Falls Lake is /blewett_falls_lake, not /Lake_Blewett_Falls).
   const grokCandidates = grokSlug
     ? [`https://grokipedia.com/page/${grokSlug}`]
     : [
+        `https://grokipedia.com/page/${baseName.replace(/\s+/g,'_').toLowerCase()}_lake`,
         `https://grokipedia.com/page/Lake_${baseName.replace(/\s+/g,'_')}`,
         `https://grokipedia.com/page/${baseName.replace(/\s+/g,'_')}_Lake`,
         `https://grokipedia.com/page/${baseName.replace(/\s+/g,'_')}`,
@@ -458,7 +462,15 @@ async function handleResearchDiscover(request, env) {
         });
         if (tryRes.ok) {
           const tryData = await tryRes.json();
-          if ((tryData.data?.markdown || '').length > 2000) {
+          const candidateMarkdown = String(tryData.data?.markdown || '');
+          // Do not use an arbitrary character-count cutoff here. A short error,
+          // shell, or anti-bot page can be >400 chars, while the actual article
+          // should be selected by identity. The previous run's 1,406-char
+          // result was from /Lake_Blewett_Falls, not the requested article.
+          const isLakeArticle = /grokipedia\.com\/page\/blewett_falls_lake/i.test(candidate)
+            ? /blewett\s+falls\s+lake/i.test(candidateMarkdown)
+            : candidateMarkdown.length >= 200;
+          if (candidateMarkdown.length >= 200 && isLakeArticle) {
             grokUrl = candidate;
             grokData = tryData;
             // Update seed URL if we found a working candidate
@@ -2567,6 +2579,9 @@ async function handleResearchAnalyzeFacts(request, env) {
     /threadfin|gizzard|blueback|alewife|shad.*forage|forage.*shad/i,
     /retention\s+time|residence\s+time|hydraulic/i,
     /standing\s+timber|submerged\s+timber|stump|cypress.*lake|flooded.*timber/i,
+    /riprap|rip[- ]rapped|rocky\s+(?:bank|shoreline)|dam\s+face|causeway|bridge\s+approach/i,
+    /creek\s+(?:mouth|arm)|river\s+arm|cove|tributary\s+mouth|inlet/i,
+    /dock(?:s|\s+density)|marina|pier|shallow\s+flat|spawning\s+(?:flat|cove)|fish\s+attractor/i,
   ];
 
   function harvestKeywordSentences(text, maxSentences = 20) {
@@ -2585,7 +2600,8 @@ async function handleResearchAnalyzeFacts(request, env) {
       if (seen.has(s)) continue;
       const hasKeyword = HARVEST_KEYWORDS.some(rx => rx.test(s));
       const hasNumber = /\d/.test(s);
-      if (hasKeyword && hasNumber) {
+      const isCastingTarget = /riprap|rip[- ]rapped|creek\s+(?:mouth|arm)|river\s+arm|cove|tributary\s+mouth|inlet|dock|marina|pier|shallow\s+flat|spawning\s+(?:flat|cove)|fish\s+attractor|timber/i.test(s);
+      if (hasKeyword && (hasNumber || isCastingTarget)) {
         // Include the next sentence too (handles two-sentence fact patterns)
         const pair = i + 1 < sentences.length
           ? s + ' ' + sentences[i + 1]
@@ -3453,6 +3469,9 @@ RULES:
 6. spawnTiming: extract spawn timing per species if mentioned (e.g. "largemouth bass spawn late March to early May when water reaches 62-68°F"). Use format {"species": "timing description"}.
 7. forageSpatial: if documents mention WHERE forage concentrates (e.g. "bream in shallow rocky coves", "shad school in open mid-lake water near dam", "crappie at creek mouths"), extract that as a single descriptive string.
 8. baitfishMovement: if documents describe seasonal or behavioral movement of bait species, extract that.
+9. Keep spawnTiming keyed by the exact species name and preserve temperature/date triggers when stated.
+10. forageSpatial must name the area or habitat where forage is reported; do not turn a generic forage species statement into a location.
+11. These fields support casting-stop generation. Extract evidence-backed descriptions even when they contain no numbers, but never infer locations from general fishing knowledge.
 
 Return ONLY:
 {
@@ -3498,14 +3517,17 @@ EXISTING GEOSPATIAL DATA (from TrollMap contour/supplemental layers — preserve
 ${JSON.stringify(existingHabitat, null, 2).slice(0, 3000)}
 
 RULES:
+CASTING EXTRACTION REQUIREMENTS — these fields power the casting stop builder. Search the full document, including captions, tables, map labels, and prose. Preserve named locations verbatim and do not replace a specific location with a generic category.
 1. dockDensity: if documents describe dock concentration (e.g. "heavily docked residential shoreline", "sparse docks", "marina on north end"), capture as a descriptive string. null if not mentioned.
 2. riprapLocations: list specific riprap areas if mentioned (e.g. dam face, causeways, bridge approaches, rip-rapped banks). Array of strings.
 3. namedCreekMouths: extract named creek mouths or arms if mentioned in documents (e.g. "Bear Creek arm", "Dutchman Creek mouth"). Array of strings. These are high-value casting targets.
 4. timberFields: if documents describe flooded timber areas or submerged wood concentrations, capture as descriptive string with location if available.
 5. shallowFlatAreas: if documents describe specific named shallow flat areas or coves good for casting/spawning, capture as descriptive string.
-6. standingTimber: boolean or description if submerged timber is present lake-wide.
-7. cover: array of cover types present (docks, brush, timber, riprap, etc.).
-8. Preserve all existing geospatial structuralElements and artificialHabitatDetails exactly.
+6. Include evidence-backed location details even when no numeric value is present; an empty array/null is correct only when the document contains no support.
+7. Do not infer casting locations from generic lake geography or fishing knowledge.
+8. standingTimber: boolean or description if submerged timber is present lake-wide.
+9. cover: array of cover types present (docks, brush, timber, riprap, etc.).
+10. Preserve all existing geospatial structuralElements and artificialHabitatDetails exactly.
 
 Return ONLY:
 {

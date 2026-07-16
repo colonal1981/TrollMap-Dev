@@ -390,6 +390,14 @@ function formatHumanReadableSection(key, data) {
       });
       html += `</div>`;
     }
+    if (d.spawnTiming && Object.keys(d.spawnTiming).length) {
+      html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px;grid-column:1/-1">
+        <b>🥚 Spawn Timing</b><br>${Object.entries(d.spawnTiming).map(([species, timing]) => `<b>${esc(species)}:</b> ${esc(timing)}<br>`).join('')}</div>`;
+    }
+    if (d.forageSpatial) {
+      html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px;grid-column:1/-1">
+        <b>🦐 Forage Concentration</b><br>${esc(d.forageSpatial)}</div>`;
+    }
     if (calendar && Object.keys(calendar).some(k => calendar[k])) {
       html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px;grid-column:1/-1">
         <b>📅 Forage Calendar</b><br>`;
@@ -423,6 +431,19 @@ function formatHumanReadableSection(key, data) {
       const veg = d.vegetation || d.aquaticVegetation;
       html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
         <b>🌿 Vegetation</b><br>${esc(typeof veg === 'string' ? veg : JSON.stringify(veg))}</div>`;
+    }
+    const castingFields = [
+      ['🪨 Riprap Locations', d.riprapLocations],
+      ['🌊 Named Creek Mouths / Arms', d.namedCreekMouths],
+      ['🌲 Timber Fields', d.timberFields],
+      ['🏖 Shallow Flats / Coves', d.shallowFlatAreas]
+    ];
+    const hasCasting = castingFields.some(([, value]) => Array.isArray(value) ? value.length : value);
+    if (hasCasting) {
+      html += `<div style="background:rgba(70,130,180,.10);padding:6px;border-radius:6px;grid-column:1/-1">
+        <b>🎯 Casting Structure & Location Targets</b><br>
+        ${castingFields.filter(([, value]) => Array.isArray(value) ? value.length : value).map(([label, value]) => `<div style="margin-top:3px"><b>${label}:</b> ${esc(Array.isArray(value) ? value.join('; ') : value)}</div>`).join('')}
+      </div>`;
     }
     if (d.artificialHabitatDetails?.attractorCount || (Array.isArray(d.artificialHabitatDetails?.attractorTypes) && d.artificialHabitatDetails.attractorTypes.length)) {
       html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
@@ -912,9 +933,25 @@ function renderSummary(profile) {
   const textEl = document.getElementById('summaryText');
   if (!card || !textEl) return;
   const summary = profile.summary?.text || profile.summary || '';
-  if (!summary) { card.style.display = 'none'; return; }
+  const summaryText = typeof summary === 'string' ? summary : (summary.text || JSON.stringify(summary, null, 2));
+  const biology = profile.biology || profile.forage || {};
+  const habitat = profile.habitat || {};
+  const casting = [];
+  const add = (label, value) => {
+    if (Array.isArray(value) && value.length) casting.push(`${label}: ${value.join('; ')}`);
+    else if (value != null && String(value).trim()) casting.push(`${label}: ${value}`);
+  };
+  add('Riprap', habitat.riprapLocations);
+  add('Creek mouths/arms', habitat.namedCreekMouths);
+  add('Timber fields', habitat.timberFields);
+  add('Docks', habitat.dockDensity);
+  add('Shallow flats/coves', habitat.shallowFlatAreas);
+  add('Forage locations', biology.forageSpatial);
+  if (Object.keys(biology.spawnTiming || {}).length) add('Spawn timing', Object.entries(biology.spawnTiming).map(([k,v]) => `${k}: ${v}`).join('; '));
+  const castingHtml = casting.length ? `<div style="margin-top:10px;padding:8px;border-left:3px solid var(--accent);background:rgba(255,255,255,.03)"><b>🎯 Casting targets</b><br>${casting.map(esc).join('<br>')}</div>` : '';
+  if (!summaryText && !casting.length) { card.style.display = 'none'; return; }
   card.style.display = 'block';
-  textEl.textContent = typeof summary === 'string' ? summary : (summary.text || JSON.stringify(summary, null, 2));
+  textEl.innerHTML = `${summaryText ? `<div style="white-space:pre-wrap">${esc(summaryText)}</div>` : ''}${castingHtml}`;
 }
 
 function renderNotes(profile) {
