@@ -477,8 +477,6 @@ async function extractTextFromPDFBytes(arrayBuffer, onProgress) {
 // Previously duplicated with a weaker version in the resume path — now one source of truth.
 function scoreDocuments(normalizedDocuments, baseName, lakeName) {
   const baseLower = baseName.toLowerCase();
-  // Strip state suffix for off-lake comparison so "Wylie, SC/NC" matches "wylie" correctly
-  const baseNameOnly = baseLower.replace(/,\s*(sc|nc|ga|tn)(\/[a-z]{2})?\s*$/i, '').trim();
   return normalizedDocuments.map(doc => {
     let authorityScore = 55;
     const auth = String(doc.authority || '').toUpperCase();
@@ -510,7 +508,7 @@ function scoreDocuments(normalizedDocuments, baseName, lakeName) {
 
     const otherLakes = ['murray','marion','moultrie','hartwell','keowee','jocassee','thurmond','russell','wylie','norman','james','rhodhiss'];
     for (const other of otherLakes) {
-      if (other === baseLower || other === baseNameOnly) continue;
+      if (other === baseLower) continue;
       if (titleLower.includes(`lake ${other}`) && !titleLower.includes(baseLower)) {
         authorityScore = Math.min(authorityScore, 30); relevance = 15;
         log(`⚠️ Detected off-lake doc: "${doc.title}" mentions lake ${other} not ${baseName} — penalizing`);
@@ -1459,6 +1457,107 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     }
 
     // ----------------------------------------------------
+    // STEP 11b: Validation pass — fill null critical fields from extracted facts
+    // One targeted LLM call using free-tier Flash Lite. Only runs if nulls exist.
+    // ----------------------------------------------------
+    try {
+      const lim = agentSections.limnology || {};
+      const ident = agentSections.identity || {};
+      const nav = agentSections.navigation || {};
+      const hab = agentSections.habitat || {};
+
+      const nullFields = [];
+      if (!lim.trophicStatus)                          nullFields.push('limnology.trophicStatus');
+      if (!lim.flowCharacteristics)                    nullFields.push('limnology.flowCharacteristics');
+      if (lim.seasonalDrawdownFt == null)              nullFields.push('limnology.seasonalDrawdownFt');
+      if (!lim.thermocline?.summerDepthFt)             nullFields.push('limnology.thermocline.summerDepthFt');
+      if (!lim.thermocline?.strength)                  nullFields.push('limnology.thermocline.strength');
+      if (!lim.oxygen?.depletionDepthFt)               nullFields.push('limnology.oxygen.depletionDepthFt');
+      if (!lim.oxygen?.anoxicBelowFt)                  nullFields.push('limnology.oxygen.anoxicBelowFt');
+      if (!lim.waterClarity?.typical)                  nullFields.push('limnology.waterClarity.typical');
+      if (!lim.waterClarity?.secchiFt)                 nullFields.push('limnology.waterClarity.secchiFt');
+      if (!ident.county)                               nullFields.push('identity.county');
+      if (!ident.normalPoolFt)                         nullFields.push('identity.normalPoolFt');
+      if (!ident.gpsCenter)                            nullFields.push('identity.gpsCenter');
+      if (!(nav.hazards?.length))                      nullFields.push('navigation.hazards');
+      if (!hab.standingTimber)                         nullFields.push('habitat.standingTimber');
+
+      if (nullFields.length > 0) {
+        log(\`Running validation pass for \${nullFields.length} null field(s)...\`);
+
+        // Build a facts block from the most relevant extracted facts
+        const relevantFacts = uniqueFacts
+          .filter(f => /trophic|eutrophic|mesotrophic|oligotrophic|thermocline|dissolved.oxygen|anox|hypox|secchi|clarity|turbid|pool.level|pool.elevation|drawdown|fluctuat|county|gps|lat|lon|hazard|stump|timber|flow.character|pumped.storage|run.of.river|daily.fluctuat/i.test(f.fact))
+          .slice(0, 30)
+          .map((f, i) => \`[\${i+1}] (\${f.category}) \${f.fact}\`)
+          .join('\n');
+
+        if (relevantFacts) {
+                    const valRes = await fetch(`${CF_WORKER_URL}/research/validation-pass`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lakeName, nullFields, facts: relevantFacts })
+          });
+
+          if (valRes.ok) {
+            const valData = await valRes.json();
+            const valText = valData.result || '';
+            try {
+              const clean = valText.replace(/\`\`\`json|\`\`\`/g, '').trim();
+              const filled = JSON.parse(clean);
+              let fillCount = 0;
+
+              for (const [dotKey, value] of Object.entries(filled)) {
+                if (value == null) continue;
+                const parts = dotKey.split('.');
+                // Map dot-key back to agentSections
+                if (parts[0] === 'limnology') {
+                  agentSections.limnology = agentSections.limnology || {};
+                  if (parts.length === 2) {
+                    agentSections.limnology[parts[1]] = value;
+                    fillCount++;
+                  } else if (parts.length === 3) {
+                    agentSections.limnology[parts[1]] = agentSections.limnology[parts[1]] || {};
+                    agentSections.limnology[parts[1]][parts[2]] = value;
+                    fillCount++;
+                  }
+                } else if (parts[0] === 'identity') {
+                  agentSections.identity = agentSections.identity || {};
+                  agentSections.identity[parts[1]] = value;
+                  // Also apply to top-level researchPacket fields
+                  if (parts[1] === 'county') agentSections._validationCounty = value;
+                  if (parts[1] === 'normalPoolFt') agentSections._validationNormalPoolFt = value;
+                  if (parts[1] === 'gpsCenter') agentSections._validationGpsCenter = value;
+                  fillCount++;
+                } else if (parts[0] === 'navigation') {
+                  agentSections.navigation = agentSections.navigation || {};
+                  agentSections.navigation[parts[1]] = value;
+                  fillCount++;
+                } else if (parts[0] === 'habitat') {
+                  agentSections.habitat = agentSections.habitat || {};
+                  agentSections.habitat[parts[1]] = value;
+                  fillCount++;
+                }
+              }
+
+              log(\`✔ Validation pass filled \${fillCount} field(s)\`);
+            } catch (parseErr) {
+              log(\`⚠️ Validation pass JSON parse failed: \${parseErr.message}\`);
+            }
+          } else {
+            log(\`⚠️ Validation pass API call failed: HTTP \${valRes.status}\`);
+          }
+        } else {
+          log(\`Validation pass: no relevant facts found for null fields — skipping\`);
+        }
+      } else {
+        log(\`Validation pass: no null critical fields — skipping\`);
+      }
+    } catch (valErr) {
+      log(\`⚠️ Validation pass error (non-fatal): \${valErr.message}\`);
+    }
+
+    // ----------------------------------------------------
     // STEP 12: Save factual profile
     // ----------------------------------------------------
     setProgress("Step 12: Saving factual profile...", 96);
@@ -1496,6 +1595,10 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       baseName,
       state: stateName,
       ...agentSections,
+      // Apply validation pass top-level overrides
+      ...(agentSections._validationCounty ? { county: agentSections._validationCounty } : {}),
+      ...(agentSections._validationNormalPoolFt != null ? { normalPoolFt: agentSections._validationNormalPoolFt } : {}),
+      ...(agentSections._validationGpsCenter ? { gpsCenter: agentSections._validationGpsCenter } : {}),
       biology: safeBiology,
       forage: safeBiology,
       trolling: null,
