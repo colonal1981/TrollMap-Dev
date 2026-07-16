@@ -26,12 +26,12 @@ var LLM_PROVIDERS = [
     name: "gemini",
     baseUrl: null,
     keyEnv: "GEMINI_API_KEY",
-    defaultModel: "gemini-3.1-pro-preview",
-    models: [
-      "gemini-3.1-pro-preview",
-      "gemini-2.5-pro",
-      "gemini-2.5-flash"
-    ],
+  defaultModel: "gemini-3.1-pro-preview",
+models: [
+  "gemini-3.1-pro-preview",
+  "gemini-2.5-pro",
+  "gemini-2.5-flash"
+],
     headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
     isGemini: true,
     excludeFromGeneral: true,
@@ -42,7 +42,6 @@ var LLM_PROVIDERS = [
         temperature: p.temperature || 0.15,
         maxOutputTokens: p.max_tokens || 1500,
         responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined,
-        thinkingConfig: { thinkingBudget: 0 }
       }
     }),
   },
@@ -66,7 +65,6 @@ var LLM_PROVIDERS = [
         temperature: p.temperature || 0.15,
         maxOutputTokens: p.max_tokens || 1500,
         responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined,
-        thinkingConfig: { thinkingBudget: 0 }
       }
     }),
   },
