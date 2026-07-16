@@ -79,11 +79,13 @@ function sanitizeStateFromLakeName(lakeName) {
   // Order matters: check explicit ", XX" / "/XX" tokens so border lakes resolve correctly.
   if (/,\s*NC(\/|$|\s)|\/NC\b/.test(s) || s.includes('NORTH CAROLINA')) return 'NC';
   if (/,\s*GA(\/|$|\s)|\/GA\b/.test(s) || s.includes('GEORGIA')) return 'GA';
+  if (/,\s*TN(\/|$|\s)|\/TN\b/.test(s) || s.includes('TENNESSEE')) return 'TN';
   if (/,\s*VA(\/|$|\s)|\/VA\b/.test(s) || s.includes('VIRGINIA')) return 'NC'; // Kerr/Gaston treated with NC pipeline
   if (/,\s*SC(\/|$|\s)|\/SC\b/.test(s) || s.includes('SOUTH CAROLINA')) return 'SC';
   // Loose fallbacks
   if (/\bNC\b/.test(s)) return 'NC';
   if (/\bGA\b/.test(s)) return 'GA';
+  if (/\bTN\b/.test(s)) return 'TN';
   return 'SC';
 }
 
@@ -94,7 +96,7 @@ function sanitize(str) {
 function cleanLakeBaseName(lakeName) {
   let base = String(lakeName || '').trim();
   base = base.replace(/^Lake\s+/i, '');
-  base = base.replace(/,\s*(SC|NC|GA)\s*$/i, '').trim();
+  base = base.replace(/,\s*(SC|NC|GA|TN)(?:\/(?:SC|NC|GA|TN))*\s*$/i, '').trim();
   base = base.replace(/\s+Reservoir$/i, '').trim();
   base = base.replace(/\s+Lake$/i, '').trim();
   return base || lakeName;
@@ -560,7 +562,7 @@ async function runFromNormalized(lakeName, callbacks = {}) {
 
     // Derive state and baseName locally — no Tavily/discover needed for resume
     const stateName = sanitizeStateFromLakeName(lakeName);
-    const baseName = lakeName.replace(/^Lake\s+/i, '').replace(/,\s*(SC|NC|GA)\s*$/i, '').trim();
+    const baseName = cleanLakeBaseName(lakeName);
 
     // Jump straight to scoring (Step 5 & 6) — uses same scoreDocuments function as full pipeline
     setProgress('Step 5-6: Running Quality Scoring & Classification...', 40);

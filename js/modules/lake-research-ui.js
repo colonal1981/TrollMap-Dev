@@ -1,5 +1,5 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
-import { LAKE_DB } from '../data/lakes.js';
+import { loadAccessIndex } from './access-index.js';
 import { _state, runEvidencePipeline, runFromNormalized, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log } from './lake-research-engine.js';
 
 
@@ -159,52 +159,24 @@ function renderContradictionsAlert(contradictions, lakeName) {
 async function populateResearchLakeDropdown() {
   const sel = document.getElementById('researchLakeSelect');
   if (!sel) return;
-  const existing = new Set(Array.from(sel.options).map(o => o.value));
 
-  // Use the live DNR access-index as the canonical source — same names the
-  // map/plan dropdown uses, already sorted SC → NC → GA → TN then alpha.
-  // Fall back to LAKE_DB keys for any lakes not yet in the index (e.g. TN
-  // lakes before TWRA data loads, or lakes without ramp data).
+  // Research deliberately shares the exact worker-backed access index used by
+  // the map/plan pickers. Do not merge LAKE_DB here: static aliases create
+  // alternate R2 IDs for the same lake and defeat the canonical dropdown.
   let lakes = [];
   try {
-    if (window.getUniversalLakeNamesAsync) {
-      lakes = await window.getUniversalLakeNamesAsync();
-    } else if (window.getUniversalLakeNames) {
-      lakes = window.getUniversalLakeNames();
-    }
-  } catch (_) {}
-
-  // Merge in any LAKE_DB entries not already covered by the access index
-  // (keeps TN lakes visible even if TWRA hasn't loaded yet)
-  const lakeSet = new Set(lakes);
-  const STATE_ORDER = { SC: 0, NC: 1, GA: 2, TN: 3 };
-  function lakeStatePriority(name) {
-    const m = name.match(/,\s*([A-Z]{2}(?:\/[A-Z]{2})?)$/);
-    if (!m) return 99;
-    return STATE_ORDER[m[1].split('/')[0]] ?? 99;
-  }
-  const fallback = Object.keys(LAKE_DB).filter(k => !lakeSet.has(k));
-  if (fallback.length) {
-    lakes = [...lakes, ...fallback].sort((a, b) => {
-      const diff = lakeStatePriority(a) - lakeStatePriority(b);
-      return diff !== 0 ? diff : a.localeCompare(b);
-    });
+    const idx = await loadAccessIndex();
+    lakes = idx.lakeNames || [];
+  } catch (err) {
+    console.warn('[research] Unable to load the shared access index:', err);
   }
 
-  if (!lakes.length) lakes = Object.keys(LAKE_DB).sort((a, b) => {
-    const diff = lakeStatePriority(a) - lakeStatePriority(b);
-    return diff !== 0 ? diff : a.localeCompare(b);
-  });
-
-  for (const name of lakes) {
-    if (!existing.has(name)) {
-      const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = name;
-      sel.appendChild(opt);
-      existing.add(name);
-    }
-  }
+  const current = sel.value;
+  const placeholder = Array.from(sel.options).find(o => !o.value);
+  sel.replaceChildren();
+  sel.appendChild(placeholder || new Option('Select a lake…', ''));
+  for (const name of lakes) sel.appendChild(new Option(name, name));
+  if (lakes.includes(current)) sel.value = current;
 }
 
 async function fetchResearchList() {
@@ -1133,7 +1105,6 @@ async function saveCurrentResearchProfile(status = 'draft') {
 
 function initLakeResearch() {
   populateResearchLakeDropdown();
-  setTimeout(populateResearchLakeDropdown, 1500);
 
   document.getElementById('researchLakeSelect')?.addEventListener('change', (e) => {
     const v = e.target.value;

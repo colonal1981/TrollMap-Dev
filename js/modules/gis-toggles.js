@@ -1,4 +1,4 @@
-import { state } from '../core/state.js';
+import { state, CF_WORKER_URL } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { setBanner } from '../core/map-init.js';
 
@@ -50,27 +50,78 @@ function normalizeRows(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function getWorkerBase() {
+  return String(window.TROLLMAP_WORKER_URL || window.TROLLMAP_WORKER_BASE || window.WORKER_URL || window.API_BASE || CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev').replace(/\/$/, '');
+}
+
+// GIS toggles historically use preloaded static tri-state arrays. Those arrays
+// do not include TN, so append the live TWRA worker feed before a layer is
+// built. The worker response is grouped by waterbody; flatten it into the
+// shape this renderer already consumes.
+async function loadTnWorkerRows(path, type) {
+  const res = await fetch(`${getWorkerBase()}${path}?state=TN`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`${path}?state=TN returned HTTP ${res.status}`);
+  const payload = await res.json();
+  const rows = [];
+  for (const [waterbody, items] of Object.entries(payload?.waterbodies || {})) {
+    for (const item of normalizeRows(items)) {
+      const lat = Number(item.lat);
+      const lon = Number(item.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      rows.push({
+        ...item,
+        lat,
+        lon,
+        name: item.name || `${waterbody} ${type}`,
+        type: item.type || type,
+        waterbody,
+        state: 'TN',
+        source: 'TWRA'
+      });
+    }
+  }
+  return rows;
+}
+
+function appendUniqueRows(base, additions) {
+  const out = [...normalizeRows(base)];
+  const seen = new Set(out.map(row => `${Number(row.lat).toFixed(5)},${Number(row.lon).toFixed(5)}|${String(row.name || '').toLowerCase()}`));
+  for (const row of normalizeRows(additions)) {
+    const key = `${Number(row.lat).toFixed(5)},${Number(row.lon).toFixed(5)}|${String(row.name || '').toLowerCase()}`;
+    if (!seen.has(key)) { seen.add(key); out.push(row); }
+  }
+  return out;
+}
+
+async function loadLayerRows(existingLoader, staticRows, workerPath, type) {
+  const base = existingLoader ? normalizeRows(await existingLoader()) : normalizeRows(staticRows);
+  try {
+    const tnRows = await loadTnWorkerRows(workerPath, type);
+    console.log(`[gis-toggles] Added ${tnRows.length} live TWRA ${type} records.`);
+    return appendUniqueRows(base, tnRows);
+  } catch (err) {
+    // Preserve existing SC/NC/GA functionality if a worker deployment is
+    // temporarily unavailable; TN will become available as soon as it is up.
+    console.warn(`[gis-toggles] TN ${type} feed unavailable:`, err.message);
+    return base;
+  }
+}
+
 async function loadBankPier() {
   if (BANK_DATA) return BANK_DATA;
-  BANK_DATA = window.TrollMapData?.loadBankPier
-    ? normalizeRows(await window.TrollMapData.loadBankPier())
-    : normalizeRows(window.TRISTATE_MASTER_BANK_PIER);
+  BANK_DATA = await loadLayerRows(window.TrollMapData?.loadBankPier, window.TRISTATE_MASTER_BANK_PIER, '/bank-pier', 'Bank / pier access');
   return BANK_DATA;
 }
 
 async function loadPaddle() {
   if (PADDLE_DATA) return PADDLE_DATA;
-  PADDLE_DATA = window.TrollMapData?.loadPaddle
-    ? normalizeRows(await window.TrollMapData.loadPaddle())
-    : normalizeRows(window.TRISTATE_MASTER_PADDLE);
+  PADDLE_DATA = await loadLayerRows(window.TrollMapData?.loadPaddle, window.TRISTATE_MASTER_PADDLE, '/paddle', 'Paddle launch');
   return PADDLE_DATA;
 }
 
 async function loadHotspots() {
   if (ATTRACTOR_DATA) return ATTRACTOR_DATA;
-  ATTRACTOR_DATA = window.TrollMapData?.loadHotspots
-    ? normalizeRows(await window.TrollMapData.loadHotspots())
-    : normalizeRows(window.TRISTATE_MASTER_HOTSPOTS);
+  ATTRACTOR_DATA = await loadLayerRows(window.TrollMapData?.loadHotspots, window.TRISTATE_MASTER_HOTSPOTS, '/attractors', 'Fish attractor');
   return ATTRACTOR_DATA;
 }
 
