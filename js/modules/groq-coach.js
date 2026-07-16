@@ -387,6 +387,8 @@ async function runStructuredSuggestion() {
       body: JSON.stringify({
         payload: _coachPayload,
         previousSuggestions: _suggestionHistory,
+        // Pass stop candidates for casting stop suggestions
+        stopCandidates: _coachPayload?.stopCandidates || [],
       }),
     });
 
@@ -423,6 +425,69 @@ function renderSuggestionCard(container, s) {
     `<div style="color:var(--warn);font-size:11px;margin:1px 0">⚠ ${esc(w)}</div>`
   ).join('');
 
+  // ── Casting Stop Suggestion — special card layout ────────────────────────
+  if (s.field === 'casting_stop_suggestion') {
+    let stopData;
+    try {
+      stopData = typeof s.recommended_value === 'string' ? JSON.parse(s.recommended_value) : s.recommended_value;
+    } catch (_) {
+      stopData = { location: s.recommended_value, reason: s.reasons?.[0] || '' };
+    }
+
+    const stopMins = stopData?.stopMinutes || 10;
+    const targetSp = stopData?.targetSpecies || 'fish';
+    const lures = Array.isArray(stopData?.suggestedLures) ? stopData.suggestedLures.join(', ') : 'lure';
+
+    container.innerHTML = `
+      <div style="font-size:10px;color:var(--muted);margin-bottom:6px">
+        🎣 Casting Stop
+        <span style="float:right;font-weight:700;color:${confColor}">${pct}%</span>
+      </div>
+      <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:6px">
+        📍 <span style="color:var(--accent2)">${esc(stopData?.location || 'Cast to structure')}</span>
+      </div>
+      <div style="font-size:11px;color:var(--text);margin-bottom:4px;line-height:1.4">
+        ${esc(stopData?.reason || '')}
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+        <div style="font-size:10px;background:var(--panel2);border-radius:4px;padding:2px 6px">
+          ⏱ ${stopMins} min
+        </div>
+        <div style="font-size:10px;background:var(--panel2);border-radius:4px;padding:2px 6px">
+          🎯 ${esc(targetSp)}
+        </div>
+        <div style="font-size:10px;background:var(--panel2);border-radius:4px;padding:2px 6px">
+          ${esc(lures)}
+        </div>
+      </div>
+      ${reasonsHtml}${warningsHtml}
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button id="suggAccept" style="flex:1;padding:6px;font-size:11px;font-weight:700;border:1px solid var(--accent2);border-radius:5px;background:var(--accent2);color:var(--panel);cursor:pointer">✓ Add Stop</button>
+        <button id="suggSkip"   style="flex:1;padding:6px;font-size:11px;border:1px solid var(--line);border-radius:5px;background:var(--panel2);color:var(--text);cursor:pointer">✗ Skip</button>
+        <button id="suggDismiss" style="padding:6px 8px;font-size:11px;border:none;background:none;color:var(--muted);cursor:pointer">✕</button>
+      </div>
+    `;
+
+    container.querySelector('#suggAccept')?.addEventListener('click', () => {
+      applyCoachSuggestion(s);
+      _suggestionHistory.push({ ...s, status: 'accepted' });
+      appendMessage('assistant', `✓ Added casting stop: ${stopData?.location}. We'll pause ${stopMins} min to cast ${lures}.`);
+      container.style.display = 'none';
+    });
+
+    container.querySelector('#suggSkip')?.addEventListener('click', () => {
+      _suggestionHistory.push({ ...s, recommended_value: `[SKIPPED] ${s.recommended_value}`, status: 'skipped' });
+      container.style.display = 'none';
+    });
+
+    container.querySelector('#suggDismiss')?.addEventListener('click', () => {
+      container.style.display = 'none';
+    });
+
+    return;
+  }
+
+  // ── Standard suggestion card ─────────────────────────────────────────────
   container.innerHTML = `
     <div style="font-size:10px;color:var(--muted);margin-bottom:6px">
       Suggestion${target ? ` · ${esc(target)}` : ''}
@@ -500,6 +565,57 @@ function applyCoachSuggestion(s) {
     case 'inline_weight':
       getRodRows().forEach(r => { r.notes = (r.notes||'') + ` · Coach: add ${recommended_value} inline weight`; });
       break;
+    case 'casting_stop_suggestion': {
+      // Parse the stop data from recommended_value (may be JSON string or object)
+      let stopData;
+      try {
+        stopData = typeof recommended_value === 'string' ? JSON.parse(recommended_value) : recommended_value;
+      } catch (_) {
+        stopData = { location: recommended_value, reason: s.reasons?.[0] || '', stopMinutes: 10 };
+      }
+
+      const stopMins = stopData?.stopMinutes || 10;
+      const targetSp = stopData?.targetSpecies || 'fish';
+      const lures = Array.isArray(stopData?.suggestedLures) ? stopData.suggestedLures.join(', ') : '';
+
+      // Add as a waypoint with casting stop info
+      if (!state.DATA) state.DATA = {};
+      if (!Array.isArray(state.DATA.waypoints)) state.DATA.waypoints = [];
+
+      // Check if we already have this casting stop
+      const existingStop = state.DATA.waypoints.find(w =>
+        w.castingStop && w.name?.includes(stopData?.location?.slice(0, 20) || '')
+      );
+      if (existingStop) {
+        // Update existing stop
+        existingStop.castingMinutes = stopMins;
+        existingStop.targetSpecies = targetSp;
+        existingStop.suggestedLures = lures;
+        existingStop.reason = stopData?.reason || '';
+      } else {
+        // Create new casting stop waypoint
+        state.DATA.waypoints.push({
+          name: `🎣 Cast: ${stopData?.location || 'Structure'}`,
+          lat: stopData?.lat || null,
+          lon: stopData?.lon || null,
+          sym: 'Fish House',
+          role: 'casting_stop',
+          castingStop: true,
+          castingMinutes: stopMins,
+          targetSpecies: targetSp,
+          suggestedLures: lures,
+          reason: stopData?.reason || '',
+          phase: phase || null,
+          notes: `${stopMins} min cast · ${targetSp}${lures ? ` · ${lures}` : ''}`,
+        });
+      }
+
+      // Try to re-render waypoints on map if available
+      if (typeof window.renderAll === 'function') {
+        window.renderAll();
+      }
+      break;
+    }
     default:
       getRodRows().forEach(r => { r.notes = (r.notes||'') + ` · Coach: ${field} → ${recommended_value}`; });
   }

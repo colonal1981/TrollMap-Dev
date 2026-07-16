@@ -391,6 +391,16 @@ export function buildGroqCoachPayload(fishingContext, planState) {
     // This is what the chat coach reads to answer specific rig questions
     spread: spread || [],
 
+    // Stop candidates — nearby structures that the coach can suggest as casting stops
+    // Convert nearby structures to the format the coach expects
+    stopCandidates: nearbyStructures?.length > 0 ? nearbyStructures.map(s => ({
+      type: s.type,
+      name: s.name || s.type,
+      lat: s.lat,
+      lon: s.lon,
+      description: `${s.type}${s.name ? ` (${s.name})` : ''}`,
+    })) : [],
+
     // Speed decision metadata — each band is a distinct out-and-back pass.
     planMeta: {
       source:         'groq_smart_plan',
