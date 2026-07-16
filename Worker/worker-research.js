@@ -532,7 +532,7 @@ async function handleResearchDiscover(request, env) {
     'fishing creek':  'fishing_creek_reservoir',
     'parr':           'parr_reservoir',
     // SC/GA border — river page covers Hartwell, Russell, Thurmond
-    'russell':        'Savannah_River',
+    'russell':        'Richard_B._Russell_Lake',
     'thurmond':       'Savannah_River',
     'clarks hill':    'Savannah_River',
     // NC lakes — direct lake pages
@@ -801,8 +801,7 @@ async function handleResearchProxyDownload(request, env) {
             url: target,
             formats: ['links', 'markdown'],
             onlyMainContent: true,
-            waitFor: 2500,
-            timeout: 25000
+            timeout: 120000
           })
         });
         if (scrapeRes.ok) {
@@ -931,7 +930,7 @@ async function handleResearchProxyDownload(request, env) {
             url: target,
             formats: ['markdown', 'json'],
             onlyMainContent: true,
-            timeout: 25000,
+            timeout: 120000,
             jsonOptions: {
               schema: {
                 type: 'object',
@@ -970,7 +969,7 @@ async function handleResearchProxyDownload(request, env) {
               const textRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url: rawTextUrl, formats: ['markdown'], onlyMainContent: true, timeout: 25000 })
+                body: JSON.stringify({ url: rawTextUrl, formats: ['markdown'], onlyMainContent: true, timeout: 120000 })
               });
               if (textRes.ok) {
                 const textData = await textRes.json();
