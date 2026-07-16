@@ -1459,6 +1459,65 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     }
 
     // ----------------------------------------------------
+    // STEP 11b: Validation pass — targeted fill for null fields
+    // Sends the merged profile back to the worker which uses a
+    // lightweight LLM call to fill any remaining null fields
+    // using already-extracted facts and document context.
+    // ----------------------------------------------------
+    try {
+      const nullFields = [];
+      const checkProfile = { ...agentSections };
+      if (!checkProfile.identity?.surfaceAreaAcres && !researchPacket?.surfaceAreaAcres) nullFields.push('surfaceAreaAcres');
+      if (!checkProfile.identity?.maxDepthFt && !researchPacket?.maxDepthFt) nullFields.push('maxDepthFt');
+      if (!checkProfile.identity?.averageDepthFt && !researchPacket?.averageDepthFt) nullFields.push('averageDepthFt');
+      if (!checkProfile.identity?.normalPoolFt && !researchPacket?.normalPoolFt) nullFields.push('normalPoolFt');
+      if (!checkProfile.identity?.reservoirOwner && !researchPacket?.reservoirOwner) nullFields.push('reservoirOwner');
+      if (!checkProfile.limnology?.thermocline?.summerDepthFt) nullFields.push('thermocline.summerDepthFt');
+      if (!checkProfile.limnology?.trophicStatus) nullFields.push('trophicStatus');
+      if (!checkProfile.limnology?.waterClarity?.typical) nullFields.push('waterClarity');
+      if (!checkProfile.biology?.primaryForage?.length) nullFields.push('primaryForage');
+      if (!checkProfile.biology?.predatorSpecies?.length) nullFields.push('predatorSpecies');
+
+      if (nullFields.length > 0) {
+        log(`Running validation pass for ${nullFields.length} null field(s)...`);
+        const valRes = await fetch(`${CF_WORKER_URL}/research/validation-pass`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lakeName,
+            state: stateName,
+            nullFields,
+            profile: agentSections,
+            extractedFacts: uniqueFacts,
+          })
+        });
+        if (valRes.ok) {
+          const valData = await valRes.json();
+          if (valData.success && valData.filled) {
+            let filledCount = 0;
+            for (const [path, value] of Object.entries(valData.filled)) {
+              if (value == null) continue;
+              const parts = path.split('.');
+              let obj = agentSections;
+              for (let i = 0; i < parts.length - 1; i++) {
+                if (!obj[parts[i]]) obj[parts[i]] = {};
+                obj = obj[parts[i]];
+              }
+              const lastKey = parts[parts.length - 1];
+              if (obj[lastKey] == null || (Array.isArray(obj[lastKey]) && obj[lastKey].length === 0)) {
+                obj[lastKey] = value;
+                filledCount++;
+              }
+            }
+            log(`✔ Validation pass filled ${filledCount} field(s)`);
+          }
+        }
+      }
+    } catch (e) {
+      log(`⚠️ Validation pass failed: ${e.message} — continuing`);
+    }
+
+    // ----------------------------------------------------
     // STEP 12: Save factual profile
     // ----------------------------------------------------
     setProgress("Step 12: Saving factual profile...", 96);
