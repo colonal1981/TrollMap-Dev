@@ -993,33 +993,6 @@ YOU MUST NEVER SUGGEST CHANGES TO:
 lure_color for flutter spoon, species, lake, launch_ramp, weather, safety_limits,
 battery_limits, gear_not_owned, live_bait, conventional_reels
 
-CASTING STOP SUGGESTIONS:
-If the plan includes a stopCandidates array, you MAY suggest a casting_stop_suggestion instead of a trolling tweak.
-A casting stop suggestion is appropriate when:
-- A high-value structure (attractor, named creek mouth, riprap, dock field, hump, point) is near the route
-- Conditions favor pausing (active solunar, bait presence noted, species spawn timing matches season)
-- The stop would complement the trolling pattern rather than interrupt it
-
-When suggesting a casting stop, use field: "casting_stop_suggestion" and populate recommended_value as:
-{
-  "location": "name or description of the spot",
-  "lat": null,
-  "lon": null,
-  "stopMinutes": 10,
-  "targetSpecies": "Largemouth Bass",
-  "reason": "why this spot is worth stopping",
-  "suggestedLures": ["topwater", "weightless swimbait"],
-  "confidence": 0.82
-}
-
-Only suggest lures the angler owns. Casting lure options from angler inventory:
-- Topwater: any walking bait or popper (morning/low light, calm surface, spawning season)
-- Weightless swimbait / fluke: shallow finesse (post-spawn, clear water, pressured fish)
-- Swimbait on jighead: 5-8ft casting, active fish
-- A-Rig: fan-cast from stationary position into deeper adjacent water (10-20ft)
-- Flutter Spoon: vertical jigging only when stationary over deep structure (NOT trolling use)
-- Crankbait: cast-and-retrieve along riprap, channel swings, rocky points
-
 RESPONSE FORMAT \u2014 return ONLY this JSON object, no other text:
 {
   "has_suggestion": true,
@@ -1042,22 +1015,14 @@ Never invent lures the angler does not own. Never suggest live bait.`;
 async function handleCoachPlan(request, env) {
   try {
     const body = await request.json();
-    const { payload, previousSuggestions = [], stopCandidates = [] } = body;
+    const { payload, previousSuggestions = [] } = body;
     if (!payload) {
       return new Response(JSON.stringify({ success: false, error: "Missing payload" }), { status: 400, headers: JSON_HEADERS });
     }
-    // stopCandidates can come as a top-level body field OR embedded in payload.stopCandidates
-    const resolvedStopCandidates = stopCandidates.length > 0 ? stopCandidates : (payload.stopCandidates || []);
     let userMessage = `Review this trolling plan and find ONE improvement.
 
 PLAN:
 ${JSON.stringify(payload, null, 2)}`;
-
-    // Inject stop candidates if provided — coach can suggest a casting stop as an alternative to a trolling tweak
-    if (resolvedStopCandidates && resolvedStopCandidates.length > 0) {
-      userMessage += `\n\nCASTING STOP CANDIDATES (structures near this route worth pausing to fish):\n${JSON.stringify(resolvedStopCandidates, null, 2)}\n\nIf any stop candidate scores higher than a trolling tweak for today's conditions, suggest a casting_stop_suggestion instead.`;
-    }
-
     if (previousSuggestions.length > 0) {
       const accepted = previousSuggestions.filter((s) => s.status === "accepted" || !s.status);
       const skipped = previousSuggestions.filter((s) => s.status === "skipped");
@@ -1481,11 +1446,21 @@ Place the fraction at the point where the structure meets the water, not the far
             lon: /* @__PURE__ */ __name((p) => p.Longitude, "lon"),
             meta: /* @__PURE__ */ __name((p) => ({ lanes: p.Launch_Lane_No, dock: p.Courtesy_Dock_No || p.Fix_Dock_No, fee: false, county: p.County, owner: p.Owner, motorRestrictions: p.Motorboats_Restricted }), "meta"),
             label: "NC Wildlife Resources Commission Boating Access Areas"
+          },
+          TN: {
+            url: "https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/Boat_Launch_Sites/FeatureServer/0/query",
+            filter: /* @__PURE__ */ __name((p) => p.Type === "Boat Launch" && p.IncludeWeb === "Yes" && !["closed", "inactive"].includes(String(p.Status || "").toLowerCase()), "filter"),
+            name: /* @__PURE__ */ __name((p) => p.Name, "name"),
+            wb: /* @__PURE__ */ __name((p) => p.Waterway, "wb"),
+            lat: /* @__PURE__ */ __name((p) => p.Latitude, "lat"),
+            lon: /* @__PURE__ */ __name((p) => p.Longitude, "lon"),
+            meta: /* @__PURE__ */ __name((p) => ({ lanes: p.Lanes, dock: p.CourtesyDock === "Yes" ? 1 : 0, fee: p.AccessFee === "Yes", county: p.County, owner: p.Owner, restrooms: p.Restrooms === "Yes", handicap: p.HandicapPark === "Yes", canoeLanding: p.CanoeLanding === "Yes" }), "meta"),
+            label: "Tennessee Wildlife Resources Agency Boat Launch Sites"
           }
         };
         const source = RAMP_SOURCES[state];
         if (!source) {
-          return new Response(JSON.stringify({ error: `Unknown state: ${state}. Use SC, GA, or NC.` }), { headers: JSON_HEADERS, status: 400 });
+          return new Response(JSON.stringify({ error: `Unknown state: ${state}. Use SC, GA, NC, or TN.` }), { headers: JSON_HEADERS, status: 400 });
         }
         if (!forceRefresh) {
           try {
@@ -1599,6 +1574,15 @@ Place the fraction at the point where the structure meets the water, not the far
             lat: /* @__PURE__ */ __name((p) => p.Latitude, "lat"),
             lon: /* @__PURE__ */ __name((p) => p.Longitude, "lon"),
             meta: /* @__PURE__ */ __name((p) => ({ type: p.Portable_Boat_Access_Type, county: p.County, owner: p.Owner }), "meta")
+          },
+          TN: {
+            url: "https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/Paddling_Access_Sites/FeatureServer/0/query",
+            filter: /* @__PURE__ */ __name((p) => p.IncludeWeb === "Yes", "filter"),
+            name: /* @__PURE__ */ __name((p) => p.Name, "name"),
+            wb: /* @__PURE__ */ __name((p) => p.Waterway, "wb"),
+            lat: /* @__PURE__ */ __name((p) => p.Latitude, "lat"),
+            lon: /* @__PURE__ */ __name((p) => p.Longitude, "lon"),
+            meta: /* @__PURE__ */ __name((p) => ({ county: p.County, owner: p.Owner, type: "Paddling Access" }), "meta")
           }
         };
         const source = PADDLE_SOURCES[state];
@@ -1679,6 +1663,15 @@ Place the fraction at the point where the structure meets the water, not the far
             lat: /* @__PURE__ */ __name((p) => p.Latitude, "lat"),
             lon: /* @__PURE__ */ __name((p) => p.Longitude, "lon"),
             meta: /* @__PURE__ */ __name((p) => ({ pier: p.Fishing_Pier, bank: p.Bank_Access }), "meta")
+          },
+          TN: {
+            url: "https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/Fishing_Sites/FeatureServer/0/query",
+            filter: /* @__PURE__ */ __name((p) => p.IncludeWeb === "Yes", "filter"),
+            name: /* @__PURE__ */ __name((p) => p.Name, "name"),
+            wb: /* @__PURE__ */ __name((p) => p.Waterway, "wb"),
+            lat: /* @__PURE__ */ __name((p) => p.Latitude, "lat"),
+            lon: /* @__PURE__ */ __name((p) => p.Longitude, "lon"),
+            meta: /* @__PURE__ */ __name((p) => ({ type: p.Type, pier: p.FishingPier === "Yes", county: p.County, owner: p.Owner }), "meta")
           }
         };
         const source = BANKPIER_SOURCES[state];
@@ -1767,6 +1760,15 @@ Place the fraction at the point where the structure meets the water, not the far
             lat: /* @__PURE__ */ __name((p) => p.Latitude, "lat"),
             lon: /* @__PURE__ */ __name((p) => p.Longitude, "lon"),
             type: /* @__PURE__ */ __name((p) => `${p.Structure1 || ""} ${p.Structure2 || ""}`.trim() || p.Attractor_Type, "type")
+          },
+          TN: {
+            url: "https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/Fish_Attractor_Locations_view/FeatureServer/0/query",
+            filter: /* @__PURE__ */ __name((p) => true, "filter"),
+            name: /* @__PURE__ */ __name((p) => p.Site_Name || (p.Embayment ? `${p.WaterBody} - ${p.Embayment}` : `${p.WaterBody} Attractor`), "name"),
+            wb: /* @__PURE__ */ __name((p) => p.WaterBody, "wb"),
+            lat: /* @__PURE__ */ __name((p) => p.YLat, "lat"),
+            lon: /* @__PURE__ */ __name((p) => p.XLong, "lon"),
+            type: /* @__PURE__ */ __name((p) => [p.StructureTypes, p.Artificial, p.Natural_].filter(Boolean).join(", ") || "Unknown", "type")
           }
         };
         const source = ATTRACTOR_SOURCES[state];
