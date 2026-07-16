@@ -877,6 +877,50 @@ function renderSections(profile) {
         if (st) { st.textContent = `✓ Re-run complete (${agentData.confidence?.percent||'?'}% confidence via ${agentData.meta?.model||'?'})`; st.style.color = 'var(--accent2)'; }
         log(`[Re-run] ${agentKey}: ${agentData.confidence?.percent||'?'}% via ${agentData.meta?.model||'?'}`);
 
+        // ── Field-level capture/miss logging for new casting-relevant fields ──
+        const sec = agentData.section || {};
+        if (agentKey === 'biology') {
+          const newFields = {
+            spawnTiming:   sec.spawnTiming,
+            forageSpatial: sec.forageSpatial,
+            baitfishMovement: sec.baitfishMovement,
+          };
+          for (const [field, val] of Object.entries(newFields)) {
+            const isEmpty = !val || (typeof val === 'object' && !Array.isArray(val) && Object.keys(val).length === 0) || (Array.isArray(val) && val.length === 0);
+            if (!isEmpty) {
+              log(`[Re-run] ✅ biology.${field}: ${typeof val === 'object' ? JSON.stringify(val) : val}`);
+            } else {
+              log(`[Re-run] ⬜ biology.${field}: not found in documents`);
+            }
+          }
+          // Also log primary forage and stocking for comparison
+          if (sec.primaryForage?.length) log(`[Re-run] ✅ biology.primaryForage: ${sec.primaryForage.join(', ')}`);
+          if (sec.knownStockings?.length) log(`[Re-run] ✅ biology.knownStockings: ${sec.knownStockings.length} stocking event(s)`);
+          if (sec.predatorSpecies?.length) log(`[Re-run] ✅ biology.predatorSpecies: ${sec.predatorSpecies.length} species`);
+        }
+
+        if (agentKey === 'habitat') {
+          const newFields = {
+            dockDensity:     sec.dockDensity,
+            riprapLocations: sec.riprapLocations,
+            namedCreekMouths: sec.namedCreekMouths,
+            timberFields:    sec.timberFields,
+            shallowFlatAreas: sec.shallowFlatAreas,
+          };
+          for (const [field, val] of Object.entries(newFields)) {
+            const isEmpty = !val || (Array.isArray(val) && val.length === 0) || val === '' || val === 'null';
+            if (!isEmpty) {
+              log(`[Re-run] ✅ habitat.${field}: ${Array.isArray(val) ? val.join(', ') : val}`);
+            } else {
+              log(`[Re-run] ⬜ habitat.${field}: not found in documents`);
+            }
+          }
+          // Also log cover and attractor count for context
+          if (sec.cover?.length) log(`[Re-run] ✅ habitat.cover: ${sec.cover.join(', ')}`);
+          if (sec.artificialHabitatDetails?.attractorCount) log(`[Re-run] ✅ habitat.attractors: ${sec.artificialHabitatDetails.attractorCount}`);
+          if (sec.dockDensity === null) log(`[Re-run] ℹ️ habitat.dockDensity null — source docs may not describe dock concentration`);
+        }
+
       } catch (err) {
         if (st) { st.textContent = `Failed: ${err.message}`; st.style.color = 'var(--bad)'; }
         log(`[Re-run] ${agentKey} failed: ${err.message}`);
