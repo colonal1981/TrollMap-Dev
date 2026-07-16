@@ -1606,7 +1606,7 @@ Place the fraction at the point where the structure meets the water, not the far
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
             if (data.features) allFeatures.push(...data.features);
-            if (!data.features || data.features.length < pageSize) break;
+            if (!data.features || data.features.length < 1e3) break;
             offset += 1e3;
           }
           const waterbodies = {};
@@ -1695,7 +1695,7 @@ Place the fraction at the point where the structure meets the water, not the far
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
             if (data.features) allFeatures.push(...data.features);
-            if (!data.features || data.features.length < pageSize) break;
+            if (!data.features || data.features.length < 1e3) break;
             offset += 1e3;
           }
           const waterbodies = {};
