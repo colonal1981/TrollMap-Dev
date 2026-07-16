@@ -1483,13 +1483,13 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       if (!hab.standingTimber)                         nullFields.push('habitat.standingTimber');
 
       if (nullFields.length > 0) {
-        log(\`Running validation pass for \${nullFields.length} null field(s)...\`);
+        log(`Running validation pass for ${nullFields.length} null field(s)...`);
 
         // Build a facts block from the most relevant extracted facts
         const relevantFacts = uniqueFacts
           .filter(f => /trophic|eutrophic|mesotrophic|oligotrophic|thermocline|dissolved.oxygen|anox|hypox|secchi|clarity|turbid|pool.level|pool.elevation|drawdown|fluctuat|county|gps|lat|lon|hazard|stump|timber|flow.character|pumped.storage|run.of.river|daily.fluctuat/i.test(f.fact))
           .slice(0, 30)
-          .map((f, i) => \`[\${i+1}] (\${f.category}) \${f.fact}\`)
+          .map((f, i) => `[${i+1}] (${f.category}) ${f.fact}`)
           .join('\n');
 
         if (relevantFacts) {
@@ -1540,21 +1540,21 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
                 }
               }
 
-              log(\`✔ Validation pass filled \${fillCount} field(s)\`);
+              log(`✔ Validation pass filled ${fillCount} field(s)`);
             } catch (parseErr) {
-              log(\`⚠️ Validation pass JSON parse failed: \${parseErr.message}\`);
+              log(`⚠️ Validation pass JSON parse failed: ${parseErr.message}`);
             }
           } else {
-            log(\`⚠️ Validation pass API call failed: HTTP \${valRes.status}\`);
+            log(`⚠️ Validation pass API call failed: HTTP ${valRes.status}`);
           }
         } else {
-          log(\`Validation pass: no relevant facts found for null fields — skipping\`);
+          log(`Validation pass: no relevant facts found for null fields — skipping`);
         }
       } else {
-        log(\`Validation pass: no null critical fields — skipping\`);
+        log(`Validation pass: no null critical fields — skipping`);
       }
     } catch (valErr) {
-      log(\`⚠️ Validation pass error (non-fatal): \${valErr.message}\`);
+      log(`⚠️ Validation pass error (non-fatal): ${valErr.message}`);
     }
 
     // ----------------------------------------------------
