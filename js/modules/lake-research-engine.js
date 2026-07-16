@@ -1374,7 +1374,7 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
                 _normalizedDocuments: normalizedDocuments.slice(0, 12).map(d => ({
                   title: d.title,
                   url: d.url,
-                  text: (d.fullText || '').slice(0, 40000)
+                  text: (d.fullText || d.text || '').slice(0, 40000)
                 }))
               }
             })
@@ -1396,7 +1396,7 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
                   _normalizedDocuments: normalizedDocuments.slice(0, 12).map(d => ({
                     title: d.title,
                     url: d.url,
-                    text: (d.fullText || '').slice(0, 40000)
+                    text: (d.fullText || d.text || '').slice(0, 40000)
                   }))
                 }
               })
