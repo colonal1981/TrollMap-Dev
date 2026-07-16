@@ -69,6 +69,29 @@ models: [
     }),
   },
   {
+    // Free-tier Gemini — fallback when first free key hits rate limits
+    name: "gemini-free2",
+    baseUrl: null,
+    keyEnv: "GEMINI_FREE2_API_KEY",
+    defaultModel: "gemini-3.1-flash-lite",
+    models: [
+      "gemini-3.1-flash-lite",
+      "gemini-2.5-flash-lite",
+      "gemini-2.5-flash"
+    ],
+    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
+    isGemini: true,
+    transformPayload: (p) => ({
+      systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
+      contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
+      generationConfig: {
+        temperature: p.temperature || 0.15,
+        maxOutputTokens: p.max_tokens || 1500,
+        responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined,
+      }
+    }),
+  },
+  {
     name: "groq",
     baseUrl: "https://api.groq.com/openai/v1/chat/completions",
     keyEnv: "GROQ_API_KEY",
