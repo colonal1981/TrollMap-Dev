@@ -2895,6 +2895,8 @@ PRIORITY FIELDS — extract any of the following present in this document:
 - Navigation: boat ramps, access points, hazards`);
 
     const focusInstructions = focusParts.join('\n\n');
+    const _baseNameStripped = baseName.replace(/,\s*(SC|NC|GA|TN)(\/[A-Z]{2})?\s*$/i, '').trim();
+    const _lakeNameStripped = 'Lake ' + _baseNameStripped;
     const _flagged = harvestKeywordSentences(doc.text || '', 20);
     const _flaggedBlock = _flagged.length
       ? '⚑ FLAGGED PASSAGES (keyword matches — prioritize extracting facts from these):\n' +
@@ -2907,14 +2909,12 @@ URL: ${doc.url || 'unknown'}
 ${focusInstructions}
 
 RULES:
-1. Only extract facts that explicitly mention "${baseName}" or "${lakeName}", OR are general ${state} statewide regulations that apply to this lake.
+1. Only extract facts that explicitly mention "${baseName}" or "${lakeName}" or "${_baseNameStripped}" or "${_lakeNameStripped}", OR are general ${state} statewide regulations that apply to this lake.
 2. Never invent numbers. If a value is not in this document, omit it.
 3. Convert all measurements: meters × 3.281 = feet; km² × 247.1 = acres.
    CRITICAL: If you see "Surface area: 205.58 kilometers²" or similar — that is km², convert it: 205.58 × 247.1 = 50,798 acres. NEVER report the raw km² number as if it were acres.
 4. For table data: extract each meaningful row as a separate fact with the row content as the quote.
-5. If this document has NO information about "${baseName}", return {"extracted_facts": []}.
-
-${_flaggedBlock}DOCUMENT TEXT:
+5. If this document has NO information about "${_baseNameStripped}" or "${_lakeNameStripped}", return {"extracted_facts": []}.${_flaggedBlock}DOCUMENT TEXT:
 ${(doc.text || '').slice(0, 150000)}
 
 Return ONLY:
