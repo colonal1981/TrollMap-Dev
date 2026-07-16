@@ -392,8 +392,21 @@ async function handleResearchDiscover(request, env) {
 
   // Grokipedia
   const grokSlug = GROKIPEDIA_SLUGS[baseLower];
+  // If no known slug, try common patterns — Grokipedia uses Title_Case with underscores
+  // We try up to 3 candidate URLs and pick the first that resolves (checked during citation fetch)
+  const grokCandidates = grokSlug
+    ? [`https://grokipedia.com/page/${grokSlug}`]
+    : [
+        `https://grokipedia.com/page/Lake_${baseName.replace(/\s+/g,'_')}`,
+        `https://grokipedia.com/page/${baseName.replace(/\s+/g,'_')}_Lake`,
+        `https://grokipedia.com/page/${baseName.replace(/\s+/g,'_')}`,
+      ];
+  const resolvedGrokUrl = grokCandidates[0]; // will be validated during citation fetch
   if (grokSlug) {
-    addSeed({ title: `${lakeName} — Grokipedia`, type: 'HTML', authority: 'Grokipedia', url: `https://grokipedia.com/page/${grokSlug}`, priority: 1 });
+    addSeed({ title: `${lakeName} — Grokipedia`, type: 'HTML', authority: 'Grokipedia', url: resolvedGrokUrl, priority: 1 });
+  } else {
+    // Unknown lake — add as lower priority, will be dropped if it 404s
+    addSeed({ title: `${lakeName} — Grokipedia (auto)`, type: 'HTML', authority: 'Grokipedia', url: resolvedGrokUrl, priority: 2 });
   }
   if (baseLower === 'hartwell') {
     addSeed({ title: 'Savannah River — Grokipedia', type: 'HTML', authority: 'Grokipedia', url: 'https://grokipedia.com/page/Savannah_River', priority: 2 });
@@ -432,16 +445,34 @@ async function handleResearchDiscover(request, env) {
   // ── STEP 2: Grokipedia citation following ────────────────────────────────
   // Fetch the Grokipedia page and extract all citation URLs — these are the
   // same authoritative sources Grokipedia used, handed to us for free.
-  if (grokSlug && firecrawlKey) {
+  if (firecrawlKey && (grokSlug || grokCandidates.length > 1)) {
     try {
-      const grokUrl = `https://grokipedia.com/page/${grokSlug}`;
-      const grokRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: grokUrl, formats: ['links', 'markdown'], onlyMainContent: true, timeout: 30000 })
-      });
-      if (grokRes.ok) {
-        const grokData = await grokRes.json();
+      // Try candidates in order until one returns real content (>2000 chars)
+      let grokUrl = null;
+      let grokData = null;
+      for (const candidate of grokCandidates) {
+        const tryRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: candidate, formats: ['links', 'markdown'], onlyMainContent: true, timeout: 30000 })
+        });
+        if (tryRes.ok) {
+          const tryData = await tryRes.json();
+          if ((tryData.data?.markdown || '').length > 2000) {
+            grokUrl = candidate;
+            grokData = tryData;
+            // Update seed URL if we found a working candidate
+            const grokSeed = guaranteedSeeds.find(s => s.authority === 'Grokipedia');
+            if (grokSeed && grokSeed.url !== candidate) {
+              grokSeed.url = candidate;
+              grokSeed.title = `${lakeName} — Grokipedia`;
+            }
+            break;
+          }
+        }
+      }
+      if (!grokUrl) { queryLog.push('Grokipedia: no valid page found for any candidate'); }
+      if (grokUrl && grokData) {
         const grokText = grokData.data?.markdown || '';
         const grokLinks = grokData.data?.links || [];
 
