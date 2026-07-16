@@ -2681,7 +2681,54 @@ async function handleResearchAnalyzeFacts(request, env) {
 
   const SYSTEM = "You are a precise fact extraction engine. Extract verified facts about the specified lake from this single document. Return ONLY valid JSON with extracted_facts array. Never hallucinate. Quote must be verbatim from the document. Confidence 0-100.";
 
-  const buildDocPrompt = (doc, lakeName, baseName, state) => {
+
+  // ── Keyword sentence harvester ─────────────────────────────────────────────
+  // Scans raw document text for sentences containing high-value keywords plus
+  // a numeric value. Injects flagged sentences directly into the extraction
+  // prompt so the LLM sees the relevant evidence rather than hunting for it.
+  const HARVEST_KEYWORDS = [
+    // Identity / morphometry
+    /normal\s+pool|full\s+pool|pool\s+elevation|pool\s+level|surface\s+elevation/i,
+    /thermocline|metalimnion|epilimnion|hypolimnion|stratif/i,
+    /dissolved\s+oxygen|\bdo\b.*mg\/l|mg\/l.*\bdo\b|anox|hypox/i,
+    /secchi|water\s+clarity|turbidity|clarity/i,
+    /trophic|eutrophic|mesotrophic|oligotrophic/i,
+    /drawdown|rule\s+curve|guide\s+curve|seasonal.*level|winter.*pool|summer.*pool/i,
+    /threadfin|gizzard|blueback|alewife|shad.*forage|forage.*shad/i,
+    /retention\s+time|residence\s+time|hydraulic/i,
+    /standing\s+timber|submerged\s+timber|stump|cypress.*lake|flooded.*timber/i,
+  ];
+
+  function harvestKeywordSentences(text, maxSentences = 20) {
+    if (!text || text.length < 100) return [];
+    // Split on sentence boundaries
+    const sentences = text
+      .replace(/\r\n/g, '\n')
+      .split(/(?<=[.!?])\s+(?=[A-Z])|\n{2,}/)
+      .map(s => s.replace(/\s+/g, ' ').trim())
+      .filter(s => s.length > 20 && s.length < 800);
+
+    const flagged = [];
+    const seen = new Set();
+    for (let i = 0; i < sentences.length; i++) {
+      const s = sentences[i];
+      if (seen.has(s)) continue;
+      const hasKeyword = HARVEST_KEYWORDS.some(rx => rx.test(s));
+      const hasNumber = /\d/.test(s);
+      if (hasKeyword && hasNumber) {
+        // Include the next sentence too (handles two-sentence fact patterns)
+        const pair = i + 1 < sentences.length
+          ? s + ' ' + sentences[i + 1]
+          : s;
+        flagged.push(pair.slice(0, 600));
+        seen.add(s);
+        if (flagged.length >= maxSentences) break;
+      }
+    }
+    return flagged;
+  }
+
+    const buildDocPrompt = (doc, lakeName, baseName, state) => {
     const combined = (doc.title || '') + ' ' + (doc.url || '');
     const isRegulations = /regulation|regs|eregulation|creel|size.?limit|bag.?limit/i.test(combined);
     const isLimnology = /epa|nscep|water.?qual|limnol|nutrient|eutrophication|characteriz|ferc.*ea|environmental.?assess|relicens|phytoplankton|journal.*water|water.*journal/i.test(combined);
@@ -2834,7 +2881,13 @@ RULES:
 4. For table data: extract each meaningful row as a separate fact with the row content as the quote.
 5. If this document has NO information about "${baseName}", return {"extracted_facts": []}.
 
-DOCUMENT TEXT:
+${(() => {
+  const flagged = harvestKeywordSentences(doc.text || '', 20);
+  return flagged.length
+    ? '⚑ FLAGGED PASSAGES (keyword matches — prioritize extracting facts from these):\n' +
+      flagged.map((s, i) => `[${i+1}] ${s}`).join('\n') + '\n\n'
+    : '';
+})()}DOCUMENT TEXT:
 ${(doc.text || '').slice(0, 150000)}
 
 Return ONLY:
