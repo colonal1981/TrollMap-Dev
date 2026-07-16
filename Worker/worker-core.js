@@ -31,7 +31,6 @@ models: [
   "gemini-3.1-pro",
   "gemini-2.5-pro",
   "gemini-2.5-flash"
-]
     ],
     headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
     isGemini: true,
