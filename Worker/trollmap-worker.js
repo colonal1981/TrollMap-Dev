@@ -1301,7 +1301,7 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
           return handleResearchGet(env, decodeURIComponent(m[1]));
         }
       }
-      if (path === '/research/validation-pass' && request.method === 'POST') return handleResearchValidationPass(request, env);, env);
+      if (path === '/research/validation-pass' && request.method === 'POST') return handleResearchValidationPass(request, env);
       if (path === "/detect-structure" && request.method === "POST") {
         try {
           const body = await request.json();
