@@ -1147,7 +1147,7 @@ const KNOWN_BAD_NEPIS_IDS = new Set([
 ]);
 
 function scoreDatasetUrl(url, title, lakeName) {
-  const baseName = lakeName.replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA).*$/i,'').trim().toLowerCase();
+  const baseName = lakeName.replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i,'').trim().toLowerCase();
   const urlLower = url.toLowerCase();
   const titleLower = (title || '').toLowerCase();
   const combined = `${urlLower} ${titleLower}`;
@@ -1352,7 +1352,7 @@ async function handleResearchDatasetHunt(request, env) {
   }), { headers: JSON_HEADERS });
 
   const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
-  const baseName     = lakeName.replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA).*$/i,'').trim();
+  const baseName     = lakeName.replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i,'').trim();
   const baseNameLower = baseName.toLowerCase();
 
   const discovered = [];
@@ -2671,7 +2671,7 @@ async function handleResearchAnalyzeFacts(request, env) {
   let body;
   try { body = await request.json(); } catch { body = {}; }
   const lakeName = String(body.lakeName || "").trim();
-  const baseName = String(body.baseName || body.lakeName || "").replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA)\s*$/i,'').trim() || lakeName;
+  const baseName = String(body.baseName || body.lakeName || "").replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i,'').trim() || lakeName;
   const state = String(body.state||'SC').trim();
   const documents = body.documents || [];
 
@@ -3292,7 +3292,7 @@ async function handleResearchGapAnalysis(request, env) {
   const state = String(body.state || 'SC').toUpperCase();
 
   const dnrDomain = state === 'NC' ? 'ncwildlife.org OR eregulations.com' : state === 'GA' ? 'georgiawildlife.com OR eregulations.com' : 'dnr.sc.gov OR eregulations.com'; // Fix 2026-07-12: dnr.sc.gov/fishregs 404s -> eRegulations
-  const baseName = lakeName.replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA)\s*$/i,'').trim();
+  const baseName = lakeName.replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i,'').trim();
 
   // Only check fields that directly affect Smart Plan quality
   const nullFields = [];
