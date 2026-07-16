@@ -339,7 +339,7 @@ async function handleResearchDiscover(request, env) {
   let dnrName = "SCDNR";
   let regsUrl = "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits";
   let regsTitle = "SC Freshwater Fish Size & Possession Limits (eRegulations)";
-  if (state === "NC") { dnrName = "NCWRC"; regsUrl = "https://www.eregulations.com/northcarolina/fishing/freshwater-fishing-regulations"; regsTitle = "NC Freshwater Fishing Regulations (eRegulations)"; }
+  if (state === "NC") { dnrName = "NCWRC"; regsUrl = "https://www.eregulations.com/northcarolina/fishing/warm-water-game-fish-regulations"; regsTitle = "NC Freshwater Fishing Regulations (eRegulations)"; }
   else if (state === "GA") { dnrName = "GADNR"; regsUrl = "https://www.eregulations.com/georgia/fishing/freshwater-fishing-regulations"; regsTitle = "GA Freshwater Fishing Regulations (eRegulations)"; }
 
   // Border lake query name overrides
@@ -833,7 +833,7 @@ async function handleResearchProxyDownload(request, env) {
           url: target,
           formats: ['markdown'],
           onlyMainContent: true,
-          waitFor: isSpa ? 3000 : 0,
+          waitFor: isSpa ? 6000 : 0,  // eRegulations React SPA needs extra render time
           timeout: 25000,
           ...(isStaticAgencyPage ? { maxAge: 604800000 } : {}) // 7-day cache for stable pages
         })
@@ -2239,7 +2239,7 @@ async function handleResearchDeterministicFacts(request, env) {
   {
     const slug = lakeKeyFromName(lakeName);
     const regsUrl = state === 'NC'
-      ? 'https://www.eregulations.com/northcarolina/fishing/freshwater-fishing-regulations'
+      ? 'https://www.eregulations.com/northcarolina/fishing/warm-water-game-fish-regulations'
       : state === 'GA'
         ? 'https://www.eregulations.com/georgia/fishing/freshwater-fishing-regulations'
         : 'https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits';
@@ -3783,7 +3783,7 @@ async function handleResearchAgent(request, env) {
   if (agentKey === 'regulations') {
     const regsUrls = {
       SC: 'https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits',
-      NC: 'https://www.eregulations.com/northcarolina/fishing/freshwater-fishing-regulations',
+      NC: 'https://www.eregulations.com/northcarolina/fishing/warm-water-game-fish-regulations',
       GA: 'https://www.eregulations.com/georgia/fishing/freshwater-fishing-regulations',
     };
     const regsUrl = regsUrls[state] || regsUrls.SC;
