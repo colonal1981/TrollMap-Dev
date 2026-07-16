@@ -2825,14 +2825,17 @@ WATER QUALITY:
 
     if (isLimnology) focusParts.push(`
 PRIORITY FIELDS for this document type:
-- Secchi depth (look for "SECCHI (METERS)" row — convert to feet × 3.281; typical value < 5ft for turbid lakes)
+- Thermocline depth: the SPECIFIC DEPTH in meters or feet where temperature drops sharply (epilimnion thickness). Convert meters × 3.281 to feet. Example fact: "Thermocline in Lake X develops at 4-6 meters (~13-20 feet)."
+- Oxygen depletion depth: the SPECIFIC DEPTH where DO drops below 2 mg/L. Example fact: "DO drops below 2 mg/L below 5 meters (~16 feet) in Lake X."
+- Secchi depth: actual measured value in meters or feet. Example: "Secchi depth averaged 1.2 meters (3.9 feet)."
 - Temperature at multiple depths (derive thermocline where temp drops sharply)
-- DO (dissolved oxygen) at multiple depths — depletionDepthFt where DO < 2 mg/L
 - Surface area (in km² or acres — note units), mean depth, max depth (in meters — convert to feet)
 - Hydraulic retention time in days
 - Trophic status (eutrophic/mesotrophic/oligotrophic)
-- Total phosphorus loading
-UNIT WARNING: The EPA NES summary table has multiple rows. SECCHI row values are 0.3-0.5m. Alkalinity row is 10-35 mg/L. Do NOT confuse these. Temperature row is in °C.`);
+- Total phosphorus and chlorophyll-a values
+- Drawdown schedule / rule curve target elevations
+UNIT WARNING: The EPA NES summary table has multiple rows. SECCHI row values are 0.3-0.5m. Alkalinity row is 10-35 mg/L. Do NOT confuse these. Temperature row is in °C.
+CRITICAL: If you see a depth value near a thermocline or oxygen keyword, ALWAYS extract it with the specific number. "Oxygen depletion below the thermocline is widespread" is NOT a useful fact without the depth.`);
 
     if (isBiology) focusParts.push(`
 PRIORITY FIELDS for this document type:
@@ -2915,7 +2918,12 @@ ${(doc.text || '').slice(0, 150000)}
 Return ONLY:
 {"extracted_facts": [{"fact": "concise sentence", "page": 1, "confidence": 85, "source": "${doc.title.slice(0,80)}", "quote": "verbatim text", "category": "category_name"}]}
 
-Categories: surfaceArea, maxDepthFt, averageDepthFt, thermocline, oxygen, secchi, trophicStatus, hydraulicRetentionDays, predatorSpecies, primaryForage, stocking, standingStock, speciesAbundance, creelLimit_general, creelLimit_lakeSpecific, sizeLimit_general, sizeLimit_lakeSpecific, closedSeason, poolLevel, drawdownSchedule, habitatCover, structuralElement, ramp, hazard, reservoirOwner, damName, yearImpounded, riverSystem, summary`;
+Categories: surfaceArea, maxDepthFt, averageDepthFt, thermocline, oxygen, secchi, trophicStatus, hydraulicRetentionDays, predatorSpecies, primaryForage, stocking, standingStock, speciesAbundance, creelLimit_general, creelLimit_lakeSpecific, sizeLimit_general, sizeLimit_lakeSpecific, closedSeason, poolLevel, drawdownSchedule, habitatCover, structuralElement, ramp, hazard, reservoirOwner, damName, yearImpounded, riverSystem, consumptionAdvisory, summary
+CRITICAL CATEGORY RULES:
+- thermocline: MUST include the actual depth in feet or meters (e.g. 'thermocline at 4-6m', 'epilimnion extends to 20 feet'). Do NOT file vague facts like 'thermocline is present' without a depth.
+- oxygen: MUST include the depth where DO drops below 2 mg/L (e.g. 'DO < 2 mg/L below 5 meters'). Do NOT file vague facts like 'oxygen depletion occurs' without a depth.
+- secchi: MUST include the actual Secchi depth value in meters or feet.
+- consumptionAdvisory: use for mercury advisories, meal frequency limits due to contamination — NOT for creel limits`;
   };
 
   for (let i = 0; i < usableDocs.length; i++) {
