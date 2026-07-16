@@ -4486,14 +4486,16 @@ Rules:
 - When in doubt, omit the field rather than guess`;
 
   const payload = {
-    messages: [{ role: 'user', content: prompt }],
+    messages: [
+      { role: 'system', content: 'You are a JSON-only data filling agent. Return only valid JSON, no markdown, no explanation.' },
+      { role: 'user', content: prompt }
+    ],
     temperature: 0.1,
-    max_tokens: 800,
-    response_format: { type: 'json_object' }
+    max_tokens: 800
   };
 
   try {
-    const { data } = await callLLM(env, payload, null);
+    const { data } = await callLLM(env, payload, 'gemini-free');
     const text = extractLLMText(data);
     const clean = text.replace(/\`\`\`json|\`\`\`/g,'').trim();
     return new Response(JSON.stringify({ok:true, result:clean}),{headers:JSON_HEADERS});
