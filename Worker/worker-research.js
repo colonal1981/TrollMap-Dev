@@ -404,12 +404,12 @@ async function handleResearchLimnologyData(request, env) {
     ? 'Monitoring data were found, but available records are surface/grab samples only — no vertical depth profiles. Thermocline cannot be derived from this source.'
     : null;
 
-  // If surface-only, run targeted guide article search for anecdotal thermocline inline
+  // Trigger guide article search whenever thermocline is null — surface-only OR insufficient depth data
   let thermoclineAnecdotal = null;
   let thermoclineSearchResults = null;
-  if (surfaceOnlyNote) {
+  if (!thermocline) {
     try {
-      console.log(`[limnology-data] surface-only — triggering inline thermocline guide search for ${lakeName}`);
+      console.log(`[limnology-data] no thermocline derived — triggering inline guide article search for ${lakeName}`);
       const tcReq = new Request('internal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
