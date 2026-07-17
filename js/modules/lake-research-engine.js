@@ -677,6 +677,162 @@ async function validateExistingFacts(lakeName, callbacks = {}) {
   }
 }
 
+const SMART_PLAN_RECOVERY_FIELDS = [
+  'limnology.waterClarity.typical', 'limnology.waterClarity.color', 'limnology.waterClarity.secchiFt',
+  'limnology.thermocline.summerDepthFt', 'limnology.thermocline.strength',
+  'limnology.oxygen.depletionDepthFt', 'limnology.oxygen.anoxicBelowFt',
+  'limnology.flowCharacteristics', 'limnology.seasonalDrawdownFt',
+  'biology.primaryForage', 'biology.secondaryForage', 'biology.baitfishMovement',
+  'biology.spawnTiming', 'biology.forageSpatial',
+  'habitat.cover', 'habitat.standingTimber', 'habitat.dockDensity',
+  'habitat.riprapLocations', 'habitat.namedCreekMouths', 'habitat.timberFields',
+  'habitat.shallowFlatAreas', 'habitat.artificialHabitat',
+  'habitat.artificialHabitatDetails.attractorCount', 'habitat.artificialHabitatDetails.attractorTypes'
+];
+
+function normalizeMasterForRecovery(profile) {
+  profile.identity = profile.identity || {
+    lakeName: profile.lakeName, state: profile.state, aliases: profile.aliases || [], county: profile.county,
+    riverSystem: profile.riverSystem, reservoirOwner: profile.reservoirOwner, surfaceAreaAcres: profile.surfaceAreaAcres,
+    maxDepthFt: profile.maxDepthFt, averageDepthFt: profile.averageDepthFt, normalPoolFt: profile.normalPoolFt,
+    damName: profile.damName, yearImpounded: profile.yearImpounded, archetype: profile.archetype
+  };
+  profile.biology = profile.biology || profile.forage || {};
+  profile.limnology = profile.limnology || {};
+  profile.limnology.waterClarity = profile.limnology.waterClarity || {};
+  profile.limnology.thermocline = profile.limnology.thermocline || {};
+  profile.limnology.oxygen = profile.limnology.oxygen || {};
+  profile.habitat = profile.habitat || {};
+  profile.habitat.artificialHabitatDetails = profile.habitat.artificialHabitatDetails || {};
+  profile.navigation = profile.navigation || {};
+  profile.fieldStatus = profile.fieldStatus || {};
+  return profile;
+}
+
+function applyShallowLakeApplicability(profile, fields) {
+  const max = Number(profile.identity?.maxDepthFt);
+  const avg = Number(profile.identity?.averageDepthFt);
+  const noPersistentThermocline = (Number.isFinite(max) && max <= 10)
+    || (Number.isFinite(max) && max <= 15 && Number.isFinite(avg) && avg <= 8);
+  if (!noPersistentThermocline) return fields;
+  const exempt = new Set([
+    'limnology.thermocline.summerDepthFt', 'limnology.thermocline.strength',
+    'limnology.oxygen.depletionDepthFt', 'limnology.oxygen.anoxicBelowFt'
+  ]);
+  for (const path of fields) {
+    if (!exempt.has(path)) continue;
+    profile.fieldStatus[path] = {
+      status: 'not_applicable',
+      reason: `Maximum depth ${max} ft${Number.isFinite(avg) ? ` and average depth ${avg} ft` : ''} indicate no persistent, Smart Plan-relevant summer thermocline or deep oxygen floor.`
+    };
+  }
+  return fields.filter(path => !exempt.has(path));
+}
+
+function scoreRecoveryDocument(doc, fields) {
+  const id = `${doc.title || ''} ${doc.url || ''}`.toLowerCase();
+  const text = String(doc.fullText || doc.text || '').slice(0, 120000).toLowerCase();
+  let score = /usgs|epa|water.?quality|limnolog|spartanburgwater|operator|reservoir/i.test(id) ? 20 : 0;
+  if (fields.some(f => f.startsWith('limnology.')) && /thermocline|dissolved oxygen|secchi|water quality|stratif|limnolog|profile/.test(text)) score += 30;
+  if (fields.some(f => f.startsWith('biology.')) && /forage|herring|shad|spawn|stocking|fisheries|species/.test(text)) score += 20;
+  if (fields.some(f => f.startsWith('habitat.')) && /timber|riprap|creek|dock|attractor|vegetation|brush|flat|structure/.test(text)) score += 20;
+  if (/facebook|lake biwa|researchgate|bowfishing/i.test(id)) score -= 30;
+  return score;
+}
+
+// One-and-done, Smart Plan-only recovery. It never downloads or discovers new
+// sources: at most five already-normalized R2 documents are re-extracted.
+async function recoverSmartPlanFacts(lakeName, callbacks = {}) {
+  if (_state.researchInProgress) throw new Error('A research task is already in progress.');
+  if (!lakeName) throw new Error('Select a lake first.');
+  _state.researchInProgress = true;
+  _state.researchLog = [];
+  showProgress(true);
+  setProgress('Loading saved Smart Plan evidence…', 5);
+  log(`=== SMART PLAN TARGETED RECOVERY: ${lakeName} ===`);
+  try {
+    const [profileRes, docsRes] = await Promise.all([
+      fetch(`${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`),
+      fetch(`${CF_WORKER_URL}/research/get-normalized?lake=${encodeURIComponent(lakeName)}`)
+    ]);
+    if (!profileRes.ok || !docsRes.ok) throw new Error('A saved profile and normalized documents are both required.');
+    const profileData = await profileRes.json();
+    const docsData = await docsRes.json();
+    if (!profileData.ok || !docsData.ok) throw new Error('Could not load saved profile/documents.');
+    const profile = normalizeMasterForRecovery(cloneJson(profileData.profile));
+    let targetFields = SMART_PLAN_RECOVERY_FIELDS.filter(path => isValidationGap(valueAtPath(profile, path)));
+    targetFields = applyShallowLakeApplicability(profile, targetFields);
+    if (!targetFields.length) {
+      log('✔ No applicable Smart Plan recovery gaps remain.');
+      if (callbacks.onComplete) await callbacks.onComplete(lakeName);
+      return { ok: true, documents: 0, facts: 0, filled: 0, finalized: 0 };
+    }
+    const docs = (docsData.documents || []).filter(d => String(d.fullText || d.text || '').length >= 200);
+    const selected = docs.map(d => ({ d, score: scoreRecoveryDocument(d, targetFields) }))
+      .filter(x => x.score >= 20).sort((a, b) => b.score - a.score).slice(0, 5).map(x => x.d);
+    log(`Applicable Smart Plan gaps: ${targetFields.length}. Re-extracting ${selected.length} highest-value cached document(s).`);
+    const newFacts = [];
+    for (let i = 0; i < selected.length; i++) {
+      const doc = selected[i];
+      setProgress(`Targeted extraction ${i + 1}/${selected.length}…`, 12 + (i / Math.max(1, selected.length)) * 48);
+      log(`Targeted document ${i + 1}/${selected.length}: ${doc.title}`);
+      const res = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lakeName, state: sanitizeStateFromLakeName(lakeName), targetFields, documents: [{ title: doc.title, url: doc.url, text: String(doc.fullText || doc.text || '').slice(0, 200000) }] })
+      });
+      if (!res.ok) { log(`⚠️ Targeted extraction HTTP ${res.status}; continuing.`); continue; }
+      const data = await res.json();
+      newFacts.push(...(data.extracted_facts || []));
+      if (i + 1 < selected.length) await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    let facts = [...(profile._extractedFacts || []), ...newFacts];
+    if (newFacts.length) {
+      const dedupeRes = await fetch(`${CF_WORKER_URL}/research/dedupe-contradictions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ facts }) });
+      if (dedupeRes.ok) facts = (await dedupeRes.json()).deduplicated_facts || facts;
+    }
+    profile._extractedFacts = facts;
+    profile._extractedFactsCount = facts.length;
+    log(`Targeted extraction produced ${newFacts.length} fact(s); evidence corpus now has ${facts.length}.`);
+
+    // Validate only the Smart Plan gaps, now including any recovered facts.
+    const filled = {};
+    for (let start = 0; start < targetFields.length; start += 10) {
+      const batch = targetFields.slice(start, start + 10);
+      const res = await fetch(`${CF_WORKER_URL}/research/validation-pass`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lakeName, state: sanitizeStateFromLakeName(lakeName), nullFields: batch, extractedFacts: facts }) });
+      if (!res.ok) throw new Error(`Validation HTTP ${res.status}`);
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || 'Validation failed');
+      Object.assign(filled, data.filled || {});
+      if (start + 10 < targetFields.length) await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    let applied = 0;
+    for (const [path, value] of Object.entries(filled)) {
+      if (targetFields.includes(path) && !isValidationGap(value) && isValidationGap(valueAtPath(profile, path))) { setAtPath(profile, path, value); applied++; }
+    }
+    // This is the terminal recovery pass by design: remaining applicable gaps
+    // are explicitly recorded as reviewed/unavailable and no longer penalize confidence.
+    let finalized = 0;
+    for (const path of targetFields) {
+      if (!isValidationGap(valueAtPath(profile, path))) continue;
+      profile.fieldStatus[path] = { status: 'not_available_after_targeted_review', reason: `No defensible value found after targeted extraction of ${selected.length} highest-value saved Smart Plan source(s).` };
+      finalized++;
+    }
+    for (const key of ['surfaceAreaAcres','maxDepthFt','averageDepthFt','normalPoolFt','reservoirOwner','riverSystem','damName','yearImpounded','county','archetype']) if (profile.identity[key] != null) profile[key] = profile.identity[key];
+    profile.metadata = profile.metadata || {};
+    profile.metadata.lastSmartPlanRecoveryAt = new Date().toISOString();
+    profile.metadata.smartPlanRecovery = { targetedDocuments: selected.map(d => d.title), newFacts: newFacts.length, applied, finalized };
+    setProgress('Saving Smart Plan recovery profile…', 92);
+    const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lakeName, profile, status: profile.metadata.status || 'draft', requestedBy: 'Smart Plan Targeted Recovery' }) });
+    if (!saveRes.ok) throw new Error(`Save HTTP ${saveRes.status}`);
+    log(`✔ Smart Plan recovery applied ${applied}; finalized ${finalized} reviewed gap(s).`);
+    setProgress('Smart Plan recovery complete.', 100);
+    if (callbacks.onComplete) await callbacks.onComplete(lakeName);
+    return { ok: true, documents: selected.length, facts: newFacts.length, filled: applied, finalized };
+  } catch (err) {
+    log(`❌ Smart Plan recovery failed: ${err.message}`); setProgress('Recovery failed — see log.', 0); throw err;
+  } finally { _state.researchInProgress = false; }
+}
+
 async function runFromNormalized(lakeName, callbacks = {}) {
   if (_state.researchInProgress) { alert('A research task is already in progress.'); return; }
   if (!lakeName) { alert('Please select a lake.'); return; }
@@ -1750,4 +1906,4 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
 
 
 
-export { runEvidencePipeline, runFromNormalized, validateExistingFacts, _state, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log };
+export { runEvidencePipeline, runFromNormalized, validateExistingFacts, recoverSmartPlanFacts, _state, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log };

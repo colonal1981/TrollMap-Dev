@@ -1,5 +1,5 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
-import { _state, runEvidencePipeline, runFromNormalized, validateExistingFacts, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log } from './lake-research-engine.js';
+import { _state, runEvidencePipeline, runFromNormalized, validateExistingFacts, recoverSmartPlanFacts, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log } from './lake-research-engine.js';
 
 
 function renderContradictionsAlert(contradictions, lakeName) {
@@ -1220,6 +1220,36 @@ function initLakeResearch() {
       alert(`Existing-fact validation failed: ${err.message}`);
     } finally {
       if (button) { button.disabled = false; button.textContent = '✓ Validate Existing Facts'; }
+    }
+  });
+
+  // One-and-done recovery for only fields Smart Plan actually consumes. It
+  // re-extracts no more than five high-value R2 documents, then records any
+  // remaining applicable gap as reviewed/unavailable so it stops penalizing confidence.
+  if (!document.getElementById('btnSmartPlanRecovery')) {
+    const anchor = document.getElementById('btnValidateExistingFacts') || document.getElementById('btnResumeNormalized') || document.getElementById('btnResearch');
+    if (anchor) {
+      const recoverBtn = document.createElement('button');
+      recoverBtn.id = 'btnSmartPlanRecovery';
+      recoverBtn.textContent = '🎯 Smart Plan Recovery';
+      recoverBtn.title = 'One targeted re-extraction of the highest-value saved documents for Smart Plan gaps, then finalize remaining reviewed gaps';
+      recoverBtn.style.cssText = 'margin-left:8px; background:var(--accent2); color:#000; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; font-size:0.85em;';
+      anchor.parentNode.insertBefore(recoverBtn, anchor.nextSibling);
+    }
+  }
+  document.getElementById('btnSmartPlanRecovery')?.addEventListener('click', async () => {
+    const lake = document.getElementById('researchLakeSelect')?.value;
+    if (!lake) { alert('Select a lake first'); return; }
+    if (!confirm(`Run the one-time Smart Plan Recovery for ${lake}? It uses only saved R2 documents, re-extracts at most five high-value sources, and finalizes any still-unavailable Smart Plan fields so they no longer reduce confidence.`)) return;
+    const button = document.getElementById('btnSmartPlanRecovery');
+    if (button) { button.disabled = true; button.textContent = '⏳ Recovering…'; }
+    try {
+      const result = await recoverSmartPlanFacts(lake, { onComplete: loadProfile });
+      alert(`Smart Plan Recovery complete: ${result.documents} cached documents checked, ${result.facts} facts recovered, ${result.filled} fields filled, ${result.finalized} remaining reviewed gaps finalized.`);
+    } catch (err) {
+      alert(`Smart Plan Recovery failed: ${err.message}`);
+    } finally {
+      if (button) { button.disabled = false; button.textContent = '🎯 Smart Plan Recovery'; }
     }
   });
 
