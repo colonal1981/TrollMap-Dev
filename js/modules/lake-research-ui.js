@@ -1415,6 +1415,11 @@ function initLakeResearch() {
       } else {
         wqpLog(`[WQP] Secchi: no data`);
       }
+      if (wqpData.waterColor) {
+        wqpLog(`[WQP] Water color: ${wqpData.waterColor.avgColorPCU} PCU avg — ${wqpData.waterColor.clarityDescription} (n=${wqpData.waterColor.sampleCount})`);
+      } else {
+        wqpLog(`[WQP] Water color: no data`);
+      }
       if (wqpData.seasonalTemp) {
         wqpLog(`[WQP] Seasonal temp — summer avg: ${wqpData.seasonalTemp.summerAvgTempF ?? 'n/a'}°F, peak: ${wqpData.seasonalTemp.peakSummerTempF ?? 'n/a'}°F, winter avg: ${wqpData.seasonalTemp.winterAvgTempF ?? 'n/a'}°F`);
       }
@@ -1479,6 +1484,12 @@ function initLakeResearch() {
         profile.limnology.waterClarity.secchiFt = wqpData.secchi.avgSecchiDepthFt;
         profile.limnology.waterClarity.secchiNote = `WQP avg from ${wqpData.secchi.sampleCount} samples (range ${wqpData.secchi.minSecchiDepthFt}–${wqpData.secchi.maxSecchiDepthFt}ft, last observed ${wqpData.secchi.lastObserved})`;
       }
+      if (wqpData.waterColor) {
+        profile.limnology.waterClarity = profile.limnology.waterClarity || {};
+        profile.limnology.waterClarity.color = wqpData.waterColor.clarityDescription;
+        profile.limnology.waterClarity.colorPCU = wqpData.waterColor.avgColorPCU;
+        profile.limnology.waterClarity.colorNote = `WQP avg ${wqpData.waterColor.avgColorPCU} PCU from ${wqpData.waterColor.sampleCount} samples (range ${wqpData.waterColor.minColorPCU}–${wqpData.waterColor.maxColorPCU} PCU) — ${wqpData.waterColor.clarityDescription}`;
+      }
       if (wqpData.seasonalTemp) {
         profile.limnology.surfaceWater = profile.limnology.surfaceWater || {};
         if (wqpData.seasonalTemp.summerAvgTempF != null) profile.limnology.surfaceWater.summerAvgTempF = wqpData.seasonalTemp.summerAvgTempF;
@@ -1516,8 +1527,9 @@ function initLakeResearch() {
           ? `thermocline ~${wqpData.thermoclineAnecdotal.summerThermoclineDepthFt}ft (anecdotal, confidence ${wqpData.thermoclineAnecdotal.confidenceScore}%)`
           : wqpData.surfaceOnlyNote ? 'surface samples only — no thermocline' : 'no thermocline derived';
       const secchiMsg = wqpData.secchi ? `secchi avg ${wqpData.secchi.avgSecchiDepthFt}ft` : '';
+      const colorMsg = wqpData.waterColor ? `color ${wqpData.waterColor.avgColorPCU} PCU (${wqpData.waterColor.clarityDescription})` : '';
       const seasonalMsg = wqpData.seasonalTemp?.summerAvgTempF ? `summer avg ${wqpData.seasonalTemp.summerAvgTempF}°F` : '';
-      const summary = [thermoMsg, secchiMsg, seasonalMsg].filter(Boolean).join(' | ');
+      const summary = [thermoMsg, secchiMsg, colorMsg, seasonalMsg].filter(Boolean).join(' | ');
       wqpLog(`[WQP] ✔ Saved — ${wqpData.recordCount} records — ${summary}`);
       await loadProfile(lake, true);
       alert(`WQP complete — ${wqpData.recordCount} records.\n${summary}`);
