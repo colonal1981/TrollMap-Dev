@@ -50,6 +50,12 @@ const OWNER_DRAWDOWN_SOURCES = {
     url: 'https://www.sam.usace.army.mil/Missions/Water-Control/',
     authority: 'USACE Mobile District',
     type: 'HTML'
+  },
+  tva: {
+    label: 'Tennessee Valley Authority Reservoir Operations',
+    url: 'https://www.tva.com/environment/lake-levels',
+    authority: 'Tennessee Valley Authority',
+    type: 'HTML'
   }
 };
 
@@ -67,6 +73,11 @@ function resolveDrawdownSource(lakeName, state, reservoirOwner) {
       return { label: `Duke Energy ${baseName} Lake Agreement Summary (pool levels, drawdown schedule)`, url: dukePdf, authority: 'Duke Energy / FERC', type: 'PDF' };
     }
     return OWNER_DRAWDOWN_SOURCES.dukeEnergy;
+  }
+
+  // TVA manages Tennessee Valley reservoirs.
+  if (owner.includes('tennessee valley authority') || owner.includes('tva') || String(state || '').toUpperCase() === 'TN') {
+    return OWNER_DRAWDOWN_SOURCES.tva;
   }
 
   // USACE lakes in the tristate region
@@ -341,6 +352,7 @@ async function handleResearchDiscover(request, env) {
   let regsTitle = "SC Freshwater Fish Size & Possession Limits (eRegulations)";
   if (state === "NC") { dnrName = "NCWRC"; regsUrl = "https://www.eregulations.com/northcarolina/fishing/warm-water-game-fish-regulations"; regsTitle = "NC Freshwater Fishing Regulations (eRegulations)"; }
   else if (state === "GA") { dnrName = "GADNR"; regsUrl = "https://www.eregulations.com/georgia/fishing/game-species-daily-limits"; regsTitle = "GA Game Species Daily Limits (eRegulations)"; }
+  else if (state === "TN") { dnrName = "TWRA"; regsUrl = "https://www.tn.gov/twra/fishing/regulations.html"; regsTitle = "Tennessee Fishing Regulations (TWRA)"; }
 
   // Border lake query name overrides
   const queryLake = lakeName.replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i,'').trim();
@@ -348,6 +360,10 @@ async function handleResearchDiscover(request, env) {
     'lake russell': 'Richard B. Russell Lake', 'russell': 'Richard B. Russell Lake',
     'lake thurmond': 'J. Strom Thurmond Lake', 'thurmond': 'J. Strom Thurmond Lake',
     'clarks hill': 'J. Strom Thurmond Lake', 'clark hill': 'J. Strom Thurmond Lake',
+    // Worker/TWRA dropdown names are reservoir-form; search the public names.
+    'norris reservoir': 'Norris Lake', 'norris lake': 'Norris Lake',
+    'douglas reservoir': 'Douglas Lake', 'douglas lake': 'Douglas Lake',
+    'watauga lake': 'Watauga Reservoir', 'watauga reservoir': 'Watauga Reservoir',
   };
   const queryLakeFinal = queryLakeOverrides[queryLake.toLowerCase()] || queryLake;
 
@@ -365,6 +381,9 @@ async function handleResearchDiscover(request, env) {
     'wylie': 'Lake_Wylie', 'secession': 'rocky_river_south_carolina',
     'fishing creek': 'fishing_creek_reservoir', 'parr': 'parr_reservoir',
     'russell': 'Richard_B._Russell_Lake', 'thurmond': 'Savannah_River',
+    'norris': 'lake_norris', 'norris lake': 'lake_norris',
+    'douglas': 'douglas_lake', 'douglas lake': 'douglas_lake',
+    'watauga': 'watauga_reservoir', 'watauga lake': 'watauga_reservoir',
     'clarks hill': 'Savannah_River', 'norman': 'norman_lake',
     'chatuge': 'Chatuge_Lake', 'blue ridge': 'Lake_Blue_Ridge',
     'fontana': 'Fontana_Lake', 'chickamauga': 'Chickamauga_Lake',
@@ -430,6 +449,17 @@ async function handleResearchDiscover(request, env) {
   if (state === 'SC') {
     addSeed({ title: `Lake ${baseName} SCDNR Lake Description`, type: 'HTML', authority: 'SCDNR', url: `https://www.dnr.sc.gov/lakes/${baseLower}/description.html`, priority: 1 });
     addSeed({ title: `Lake ${baseName} Regulations`, type: 'HTML', authority: 'SCDNR', url: `https://www.dnr.sc.gov/lakes/${baseLower}/regs.html`, priority: 1 });
+  }
+
+  // TWRA reservoir profiles include lake-specific species and limits. Keep this
+  // explicit because the generic regulations page is statewide.
+  const TWRA_LAKE_PAGES = {
+    'norris': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/norris-reservoir.html',
+    'douglas': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/douglas-reservoir.html',
+    'watauga': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/watauga-reservoir.html',
+  };
+  if (state === 'TN' && TWRA_LAKE_PAGES[baseLower]) {
+    addSeed({ title: `${baseName} TWRA Reservoir Profile`, type: 'HTML', authority: 'TWRA', url: TWRA_LAKE_PAGES[baseLower], priority: 1 });
   }
 
   // Owner-aware drawdown source
@@ -1620,6 +1650,17 @@ const RESEARCH_RAMP_SOURCES = {
     lat: (p) => p.Latitude,
     lon: (p) => p.Longitude,
     meta: (p) => ({ lanes: p.Launch_Lane_No, dock: p.Courtesy_Dock_No || p.Fix_Dock_No, fee: false, species: '', county: p.County, owner: p.Owner, motorRestrictions: p.Motorboats_Restricted })
+  }  },
+  TN: {
+    url: "https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/Boat_Launch_Sites/FeatureServer/0/query",
+    label: 'Tennessee Wildlife Resources Agency Boat Launch Sites',
+    idField: 'OBJECTID',
+    filter: (p) => p.Type === 'Boat Launch' && String(p.IncludeWeb || '').toLowerCase() === 'yes' && !/^(none|0)$/i.test(String(p.Ramps || '')),
+    name: (p) => p.Name,
+    wb: (p) => p.Waterway,
+    lat: (p) => p.Latitude,
+    lon: (p) => p.Longitude,
+    meta: (p) => ({ lanes: p.Lanes, dock: String(p.CourtesyDock || '').toLowerCase() === 'yes', fee: String(p.AccessFee || '').toLowerCase() === 'yes', species: '', county: p.County, owner: p.Owner, launchable: p.Launchable })
   }
 };
 
@@ -1656,6 +1697,17 @@ const RESEARCH_ATTRACTOR_SOURCES = {
     lat: (p) => p.Latitude,
     lon: (p) => p.Longitude,
     type: (p) => `${p.Structure1 || ''} ${p.Structure2 || ''}`.trim() || p.Attractor_Type
+  }  },
+  TN: {
+    url: "https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/Fish_Attractor_Locations_view/FeatureServer/0/query",
+    label: 'Tennessee Wildlife Resources Agency Fish Attractors',
+    idField: 'OBJECTID',
+    filter: () => true,
+    name: (p) => p.Site_Name || (p.Embayment ? `${p.WaterBody} - ${p.Embayment}` : `${p.WaterBody} Attractor`),
+    wb: (p) => p.WaterBody,
+    lat: (p) => p.YLat,
+    lon: (p) => p.XLong,
+    type: (p) => [p.StructureTypes, p.Artificial, p.Natural_].filter(Boolean).join(', ') || 'Unknown'
   }
 };
 
@@ -2292,7 +2344,9 @@ async function handleResearchDeterministicFacts(request, env) {
       ? 'https://www.eregulations.com/northcarolina/fishing/warm-water-game-fish-regulations'
       : state === 'GA'
         ? 'https://www.eregulations.com/georgia/fishing/game-species-daily-limits'
-        : 'https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits';
+        : state === 'TN'
+          ? 'https://www.tn.gov/twra/fishing/regulations.html'
+          : 'https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits';
     const lakeRegsUrl = state === 'SC' ? `https://www.dnr.sc.gov/lakes/${slug}/regs.html` : null;
     const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
     try {
@@ -2384,7 +2438,7 @@ async function handleResearchDeterministicFacts(request, env) {
           // SC: use deterministic HTML parser. NC/GA: store raw text for agent extraction
           const parsedRegs = state === 'SC'
             ? parseSCRegulationsFromHtml(lakeName, regsUrl, regsHtml || '', lakeRegsHtml || '')
-            : { regulations: { state, rawRegsText: (regsHtml || '').slice(0, 8000) }, sources: [{ label: `${state} Freshwater Regulations (eRegulations)`, url: regsUrl, authority: state === 'NC' ? 'NCWRC' : 'GADNR', trust: 'OFFICIAL' }], evidence: {} };
+            : { regulations: { state, rawRegsText: (regsHtml || '').slice(0, 8000) }, sources: [{ label: `${state} Freshwater Regulations (eRegulations)`, url: regsUrl, authority: state === 'NC' ? 'NCWRC' : state === 'TN' ? 'TWRA' : 'GADNR', trust: 'OFFICIAL' }], evidence: {} };
           const pr = parsedRegs.regulations || {};
           if (pr.state) profile.regulations.state = pr.state;
           if (pr.lastUpdated) profile.regulations.lastUpdated = pr.lastUpdated;
@@ -3912,6 +3966,7 @@ async function handleResearchAgent(request, env) {
       SC: 'https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits',
       NC: 'https://www.eregulations.com/northcarolina/fishing/warm-water-game-fish-regulations',
       GA: 'https://www.eregulations.com/georgia/fishing/game-species-daily-limits',
+      TN: 'https://www.tn.gov/twra/fishing/regulations.html',
     };
     const regsUrl = regsUrls[state] || regsUrls.SC;
     try {
@@ -4403,54 +4458,56 @@ __name(handleEnhancedLakeIntel, "handleEnhancedLakeIntel");
 
 async function handleResearchValidationPass(request, env) {
   let body;
-  try { body = await request.json(); } catch { return new Response(JSON.stringify({ok:false,error:'invalid JSON'}),{status:400,headers:JSON_HEADERS}); }
-  const lakeName = String(body.lakeName||'').trim();
-  const nullFields = body.nullFields || [];
-  const facts = String(body.facts||'').trim();
+  try { body = await request.json(); } catch {
+    return new Response(JSON.stringify({ success:false, error:'invalid JSON' }), { status:400, headers:JSON_HEADERS });
+  }
+  const lakeName = String(body.lakeName || '').trim();
+  const nullFields = Array.isArray(body.nullFields) ? body.nullFields.filter(Boolean) : [];
+  // The client sends extractedFacts (array); retain facts for backward compatibility.
+  const rawFacts = body.extractedFacts || body.facts || [];
+  const facts = Array.isArray(rawFacts)
+    ? rawFacts.map(f => `[${f.category || 'fact'}] ${f.fact || f.quote || ''}`).filter(Boolean).join('\n')
+    : String(rawFacts || '').trim();
 
   if (!lakeName || !nullFields.length || !facts) {
-    return new Response(JSON.stringify({ok:false,error:'missing required fields'}),{status:400,headers:JSON_HEADERS});
+    return new Response(JSON.stringify({ success:false, error:'missing lakeName, nullFields, or extractedFacts', filled:{} }), { status:400, headers:JSON_HEADERS });
   }
 
-  const prompt = `You are filling null fields in a lake research profile for ${lakeName}.
+  const prompt = `Fill only requested null fields in a lake research profile for ${lakeName}.
 
-NULL FIELDS TO FILL (only fill if evidence supports it — leave null if uncertain):
-${nullFields.join('\n')}
+REQUESTED FIELDS:\n${nullFields.join('\n')}
 
-RELEVANT EXTRACTED FACTS:
-${facts}
+EXTRACTED, SOURCE-BACKED FACTS:\n${facts.slice(0, 30000)}
 
-Return ONLY valid JSON with dot-notation keys for fields you can fill from the evidence above.
-Leave a field out entirely if evidence does not support a value.
-Rules:
-- thermocline/oxygen depths: only include if specific depth in feet or meters is stated — convert meters × 3.281
-- trophicStatus: 'eutrophic', 'mesotrophic', 'oligotrophic', or 'oligotrophic/mesotrophic'
-- navigation.hazards: array of strings
-- identity.county: array like ['Fairfield, SC', 'Newberry, SC'] for multi-county lakes
-- identity.normalPoolFt: only if a specific pool elevation stated, NOT a fluctuation amount
-- When in doubt, omit the field rather than guess`;
-
+Return only a JSON object whose keys are requested dot paths and whose values are explicitly supported by the facts. Omit unsupported fields. Do not infer.
+Rules: depth values must be specific and convert meters × 3.281; normalPoolFt must be an actual pool elevation, not a fluctuation; trophicStatus must be eutrophic, mesotrophic, oligotrophic, or oligotrophic/mesotrophic.`;
   const payload = {
     messages: [
-      { role: 'system', content: 'You are a JSON-only data filling agent. Return only valid JSON, no markdown, no explanation.' },
+      { role: 'system', content: 'You are a JSON-only evidence extraction agent. Never guess.' },
       { role: 'user', content: prompt }
     ],
-    temperature: 0.1,
-    max_tokens: 800
+    temperature: 0,
+    max_tokens: 800,
+    response_format: { type: 'json_object' }
   };
-
   try {
-    const llmResult = await callLLM(env, payload, 'gemini-free');
-    const text = extractLLMText(llmResult.data) || llmResult._geminiRaw || '';
-    if (!text) {
-      console.error('validation-pass: empty LLM response', JSON.stringify({provider:llmResult.provider,model:llmResult.model}));
-      return new Response(JSON.stringify({ok:false,error:'empty LLM response',provider:llmResult.provider,model:llmResult.model}),{status:500,headers:JSON_HEADERS});
+    const llmResult = await callLLM(env, payload, null);
+    const parsed = extractJsonPossibly(extractLLMText(llmResult.data));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return new Response(JSON.stringify({ success:false, error:'validation agent returned non-JSON', filled:{} }), { status:502, headers:JSON_HEADERS });
     }
-    const clean = text.replace(/```json|```/g,'').trim();
-    return new Response(JSON.stringify({ok:true, result:clean}),{headers:JSON_HEADERS});
-  } catch(e) {
-    console.error('validation-pass error:', String(e.message||e));
-    return new Response(JSON.stringify({ok:false,error:String(e.message||e)}),{status:500,headers:JSON_HEADERS});
+    const allowed = new Set(nullFields);
+    // Accept either the requested flat dot-path object or a defensive
+    // { filled: { ... } } wrapper from a provider that follows the endpoint
+    // name rather than the prompt literally.
+    const candidate = parsed.filled && typeof parsed.filled === 'object' && !Array.isArray(parsed.filled)
+      ? parsed.filled : parsed;
+    const filled = Object.fromEntries(Object.entries(candidate).filter(([path, value]) =>
+      allowed.has(path) && value !== null && value !== '' && !(Array.isArray(value) && !value.length)
+    ));
+    return new Response(JSON.stringify({ success:true, filled, meta:{ provider:llmResult.provider, model:llmResult.model } }), { headers:JSON_HEADERS });
+  } catch (e) {
+    return new Response(JSON.stringify({ success:false, error:String(e.message || e), filled:{} }), { status:502, headers:JSON_HEADERS });
   }
 }
 __name(handleResearchValidationPass,'handleResearchValidationPass');
