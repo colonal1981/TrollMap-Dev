@@ -1,5 +1,4 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
-import { loadAccessIndex } from './access-index.js';
 import { _state, runEvidencePipeline, runFromNormalized, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log } from './lake-research-engine.js';
 
 
@@ -165,8 +164,11 @@ async function populateResearchLakeDropdown() {
   // alternate R2 IDs for the same lake and defeat the canonical dropdown.
   let lakes = [];
   try {
-    const idx = await loadAccessIndex();
-    lakes = idx.lakeNames || [];
+    // access-index.js owns the shared in-flight load and exposes this global
+    // for legacy modules. Do not import it here: deployment layouts may serve
+    // research modules from a different asset base than access-index.js.
+    if (window.getUniversalLakeNamesAsync) lakes = await window.getUniversalLakeNamesAsync();
+    else if (window.getUniversalLakeNames) lakes = window.getUniversalLakeNames();
   } catch (err) {
     console.warn('[research] Unable to load the shared access index:', err);
   }
