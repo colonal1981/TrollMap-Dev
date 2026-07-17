@@ -343,12 +343,16 @@ async function handleResearchLimnologyData(request, env) {
       byMonth[r.month].push(r.value);
     }
     const avg = (arr) => arr.length ? Math.round(arr.reduce((a,b) => a+b,0) / arr.length * 10) / 10 : null;
+    const validF = (arr) => arr.filter(v => v >= 32 && v <= 110); // sanity-clamp: realistic water temps in °F
     const summerMonths = [6,7,8,9].filter(m => byMonth[m]?.length);
     const winterMonths = [12,1,2,3].filter(m => byMonth[m]?.length);
     return {
-      summerAvgTempF: summerMonths.length ? avg(summerMonths.flatMap(m => byMonth[m])) : null,
-      winterAvgTempF: winterMonths.length ? avg(winterMonths.flatMap(m => byMonth[m])) : null,
-      peakSummerTempF: summerMonths.length ? Math.round(Math.max(...summerMonths.flatMap(m => byMonth[m])) * 10) / 10 : null,
+      summerAvgTempF: summerMonths.length ? avg(validF(summerMonths.flatMap(m => byMonth[m]))) : null,
+      winterAvgTempF: winterMonths.length ? avg(validF(winterMonths.flatMap(m => byMonth[m]))) : null,
+      peakSummerTempF: summerMonths.length ? (() => {
+        const validTemps = summerMonths.flatMap(m => byMonth[m]).filter(v => v >= 32 && v <= 110);
+        return validTemps.length ? Math.round(Math.max(...validTemps) * 10) / 10 : null;
+      })() : null,
       monthsObserved: Object.keys(byMonth).map(Number).sort((a,b) => a-b),
     };
   })();
@@ -359,7 +363,9 @@ async function handleResearchLimnologyData(request, env) {
     const vals = secchiRecords.map(r => {
       // Secchi is often in meters — convert to ft
       let v = r.value;
-      if (r.unit && (r.unit.toLowerCase().includes('m') && !r.unit.toLowerCase().includes('ft'))) v = v * 3.28084;
+      // Convert meters to feet — match 'm' or 'meters' exactly, not 'mg/L' or 'ppm'
+      const u = (r.unit || '').toLowerCase().trim();
+      if (u === 'm' || u === 'meters' || u === 'meter') v = v * 3.28084;
       return Math.round(v * 10) / 10;
     });
     const avg = vals.reduce((a,b) => a+b,0) / vals.length;
@@ -388,6 +394,29 @@ async function handleResearchLimnologyData(request, env) {
     ? 'Monitoring data were found, but available records are surface/grab samples only — no vertical depth profiles. Thermocline cannot be derived from this source.'
     : null;
 
+  // If surface-only, run targeted guide article search for anecdotal thermocline inline
+  let thermoclineAnecdotal = null;
+  let thermoclineSearchResults = null;
+  if (surfaceOnlyNote) {
+    try {
+      console.log(`[limnology-data] surface-only — triggering inline thermocline guide search for ${lakeName}`);
+      const tcReq = new Request('internal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lakeName })
+      });
+      const tcRes = await handleResearchThermoclineSearch(tcReq, env);
+      if (tcRes.ok) {
+        const tcData = await tcRes.clone().json();
+        thermoclineAnecdotal = tcData.thermocline || null;
+        thermoclineSearchResults = { articles: tcData.articles || [], queryResults: tcData.queryResults || [], note: tcData.note };
+        console.log(`[limnology-data] thermocline search: ${thermoclineAnecdotal ? thermoclineAnecdotal.summerThermoclineDepthFt + 'ft anecdotal' : 'no result'}`);
+      }
+    } catch (e) {
+      console.warn(`[limnology-data] inline thermocline search failed: ${e.message}`);
+    }
+  }
+
   const out = {
     ok: true,
     lakeName,
@@ -396,6 +425,8 @@ async function handleResearchLimnologyData(request, env) {
     summerRecords: summerDepthRecs.length,
     lastObserved: records.map(r => r.date).filter(Boolean).sort().slice(-1)[0] || null,
     thermocline,
+    thermoclineAnecdotal,
+    thermoclineSearch: thermoclineSearchResults,
     oxygen,
     surfaceWater,
     seasonalTemp,
