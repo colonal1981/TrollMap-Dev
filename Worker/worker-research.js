@@ -2594,6 +2594,9 @@ async function handleResearchAnalyzeFacts(request, env) {
   const baseName = String(body.baseName || body.lakeName || "").replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i,'').trim() || lakeName;
   const state = String(body.state||'SC').trim();
   const documents = body.documents || [];
+  // Optional low-cost Smart Plan recovery mode. Documents still come from the
+  // caller's saved R2 normalized corpus; this merely narrows extraction focus.
+  const targetFields = Array.isArray(body.targetFields) ? body.targetFields.filter(Boolean).slice(0, 20) : [];
 
   if (!lakeName || !documents.length) {
     return new Response(JSON.stringify({ success: false, error: "Missing lakeName or documents payload" }), { status: 400, headers: JSON_HEADERS });
@@ -2823,7 +2826,8 @@ PRIORITY FIELDS — extract any of the following present in this document:
 - Habitat: fish attractors, structure, vegetation
 - Navigation: boat ramps, access points, hazards`);
 
-    const focusInstructions = focusParts.join('\n\n');
+    const targetedRecoveryInstructions = targetFields.length ? `\nTARGETED SMART PLAN RECOVERY: The only requested gaps are ${targetFields.join(', ')}. Prioritize exact, lake-attributed evidence for those fields. Do not return generic facts merely because they are present.` : '';
+    const focusInstructions = focusParts.join('\n\n') + targetedRecoveryInstructions;
     const _baseNameStripped = baseName.replace(/,\s*(SC|NC|GA|TN)(\/[A-Z]{2})?\s*$/i, '').trim();
     const _lakeNameStripped = 'Lake ' + _baseNameStripped;
 
@@ -4246,11 +4250,13 @@ async function handleResearchSave(request, env) {
   const bio = incomingProfile.biology || incomingProfile.forage || {};
   const id = incomingProfile.identity || {};
   const nullPenalties = [];
-  if (lim.thermocline?.summerDepthFt == null) { overallConf -= 8; nullPenalties.push('thermocline.summerDepthFt'); }
-  if (lim.oxygen?.depletionDepthFt == null) { overallConf -= 6; nullPenalties.push('oxygen.depletionDepthFt'); }
-  if (lim.waterClarity?.secchiFt == null) { overallConf -= 3; nullPenalties.push('secchiFt'); }
-  if (!bio.knownStockings?.length) { overallConf -= 3; nullPenalties.push('knownStockings'); }
-  if (!id.damName) { overallConf -= 2; nullPenalties.push('damName'); }
+  const fieldStatus = incomingProfile.fieldStatus || {};
+  const confidenceExempt = (path) => ['not_applicable', 'not_available_after_targeted_review'].includes(fieldStatus[path]?.status);
+  if (lim.thermocline?.summerDepthFt == null && !confidenceExempt('limnology.thermocline.summerDepthFt')) { overallConf -= 8; nullPenalties.push('thermocline.summerDepthFt'); }
+  if (lim.oxygen?.depletionDepthFt == null && !confidenceExempt('limnology.oxygen.depletionDepthFt')) { overallConf -= 6; nullPenalties.push('oxygen.depletionDepthFt'); }
+  if (lim.waterClarity?.secchiFt == null && !confidenceExempt('limnology.waterClarity.secchiFt')) { overallConf -= 3; nullPenalties.push('secchiFt'); }
+  if (!bio.knownStockings?.length && !confidenceExempt('biology.knownStockings')) { overallConf -= 3; nullPenalties.push('knownStockings'); }
+  if (!id.damName && !confidenceExempt('identity.damName')) { overallConf -= 2; nullPenalties.push('damName'); }
   if (!id.yearImpounded) { overallConf -= 2; nullPenalties.push('yearImpounded'); }
   overallConf = Math.max(30, Math.min(99, overallConf));
 
@@ -4283,6 +4289,7 @@ async function handleResearchSave(request, env) {
     trollingIntelligence: incomingProfile.trollingIntelligence || incomingProfile.trolling || null,
     summary: incomingProfile.summary || packageParts.summary || {},
     evidence: incomingProfile.evidence || packageParts.evidence || {},
+    fieldStatus: incomingProfile.fieldStatus || {},
     sources: incomingProfile.sources || sources || [],
     confidence: {...confidence, overall: {percent: overallConf, level: overallConf>=95?'very high':overallConf>=85?'high':overallConf>=70?'medium':'low'}},
     metadata: {
@@ -4480,7 +4487,7 @@ REQUESTED FIELDS:\n${nullFields.join('\n')}
 EXTRACTED, SOURCE-BACKED FACTS:\n${facts.slice(0, 30000)}
 
 Return only a JSON object whose keys are requested dot paths and whose values are explicitly supported by the facts. Omit unsupported fields. Do not infer.
-Rules: depth values must be specific and convert meters × 3.281; normalPoolFt must be an actual pool elevation, not a fluctuation; trophicStatus must be eutrophic, mesotrophic, oligotrophic, or oligotrophic/mesotrophic.`;
+Rules: depth values must be specific and convert meters × 3.281; normalPoolFt must be an actual pool elevation, not a fluctuation; trophicStatus must be eutrophic, mesotrophic, oligotrophic, or oligotrophic/mesotrophic. thermocline.strength is qualitative only (for example weak, moderate, strong, distinct); never put a depth, a depth range, feet, or meters in that field.`;
   const payload = {
     messages: [
       { role: 'system', content: 'You are a JSON-only evidence extraction agent. Never guess.' },
@@ -4502,8 +4509,16 @@ Rules: depth values must be specific and convert meters × 3.281; normalPoolFt m
     // name rather than the prompt literally.
     const candidate = parsed.filled && typeof parsed.filled === 'object' && !Array.isArray(parsed.filled)
       ? parsed.filled : parsed;
+    const validFieldValue = (path, value) => {
+      if (path === 'limnology.thermocline.strength') {
+        const text = String(value || '').toLowerCase();
+        // A measurement belongs in summerDepthFt, not the qualitative strength field.
+        if (/\b(m|meters?|feet|ft)\b|^\s*\d/.test(text)) return /\b(weak|moderate|strong|distinct)\b/.test(text) && !/\d/.test(text);
+      }
+      return true;
+    };
     const filled = Object.fromEntries(Object.entries(candidate).filter(([path, value]) =>
-      allowed.has(path) && value !== null && value !== '' && !(Array.isArray(value) && !value.length)
+      allowed.has(path) && value !== null && value !== '' && !(Array.isArray(value) && !value.length) && validFieldValue(path, value)
     ));
     return new Response(JSON.stringify({ success:true, filled, meta:{ provider:llmResult.provider, model:llmResult.model } }), { headers:JSON_HEADERS });
   } catch (e) {
