@@ -1227,7 +1227,7 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
         return handleResearchThermoclineSearch(request, env);
       }
       if (path === "/research/vision-scan" && request.method === "POST") {
-        return handleResearchVisionScan(request, env, ctx);
+        return handleResearchVisionScan(request, env);
       }
       if (path === "/research/limnology-data" && request.method === "POST") {
         return handleResearchLimnologyData(request, env);
