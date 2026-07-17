@@ -144,8 +144,6 @@ async function handleResearchLimnologyData(request, env) {
     'Dissolved oxygen (DO)',
     'Dissolved oxygen',
     'Depth, Secchi disk depth',
-    'Color, water, filtered',
-    'Apparent color, water, unfiltered',
   ];
   const wqpUrl = 'https://www.waterqualitydata.us/data/Result/search?' + [
     `bBox=${bboxWest},${bboxSouth},${bboxEast},${bboxNorth}`,
