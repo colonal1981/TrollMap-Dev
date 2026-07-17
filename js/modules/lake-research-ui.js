@@ -1245,7 +1245,25 @@ function initLakeResearch() {
     if (button) { button.disabled = true; button.textContent = '⏳ Recovering…'; }
     try {
       const result = await recoverSmartPlanFacts(lake, { onComplete: loadProfile });
-      alert(`Smart Plan Recovery complete: ${result.documents} cached documents checked, ${result.facts} facts recovered, ${result.filled} fields filled, ${result.finalized} remaining reviewed gaps finalized.`);
+      // Auto-verify — Smart Plan Recovery is the final research step
+      if (_state.currentProfile) {
+        _state.currentProfile.metadata = _state.currentProfile.metadata || {};
+        _state.currentProfile.metadata.status = 'verified';
+        await fetch(`${CF_WORKER_URL}/research/save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lakeName: lake,
+            profile: _state.currentProfile,
+            status: 'verified',
+            approve: true,
+            verified: true,
+            requestedBy: 'Smart Plan Recovery auto-verify'
+          })
+        });
+        await loadProfile(lake, true);
+      }
+      alert(`Smart Plan Recovery complete: ${result.documents} cached documents checked, ${result.facts} facts recovered, ${result.filled} fields filled, ${result.finalized} remaining reviewed gaps finalized.\n\n✔ Profile marked as verified.`);
     } catch (err) {
       alert(`Smart Plan Recovery failed: ${err.message}`);
     } finally {
@@ -1424,12 +1442,14 @@ function initLakeResearch() {
       }
       if (wqpData.surfaceOnlyNote) {
         wqpLog(`[WQP] ⚠️ ${wqpData.surfaceOnlyNote}`);
-        wqpLog(`[WQP] Running guide article thermocline search (inline)…`);
+      }
+      if (!wqpData.thermocline) {
+        wqpLog(`[WQP] Running guide article thermocline search…`);
       }
       if (wqpData.thermoclineAnecdotal) {
         wqpLog(`[WQP] ✔ Anecdotal thermocline from ${wqpData.thermoclineAnecdotal.sourceCount} article(s): ~${wqpData.thermoclineAnecdotal.summerThermoclineDepthFt}ft (confidence ${wqpData.thermoclineAnecdotal.confidenceScore}%)`);
         wqpLog(`[WQP] Anecdotal note: ${wqpData.thermoclineAnecdotal.note || 'none'}`);
-      } else if (wqpData.surfaceOnlyNote) {
+      } else if (!wqpData.thermocline) {
         wqpLog(`[WQP] ✗ Guide article search: no thermocline depth found`);
       }
       if (wqpData.thermoclineSearch?.articles?.length) {
