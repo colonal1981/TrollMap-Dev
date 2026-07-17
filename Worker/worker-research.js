@@ -97,24 +97,58 @@ __name(resolveDrawdownSource, 'resolveDrawdownSource');
 
 async function handleResearchLimnologyData(request, env) {
   const body = await request.json().catch(() => ({}));
-  const { lakeName, bboxNorth, bboxSouth, bboxEast, bboxWest } = body;
+  let { lakeName, bboxNorth, bboxSouth, bboxEast, bboxWest } = body;
   if (!lakeName) return new Response(JSON.stringify({ ok: false, error: 'missing lakeName' }), { status: 400, headers: JSON_HEADERS });
+
+  // If no bbox provided, self-derive from supplemental shoreline GeoJSON (available for all lakes)
   if (bboxNorth == null || bboxSouth == null || bboxEast == null || bboxWest == null) {
-    return new Response(JSON.stringify({ ok: false, error: 'missing bbox — provide bboxNorth/South/East/West from lake GeoJSON' }), { status: 400, headers: JSON_HEADERS });
+    try {
+      const lakeKey = lakeKeyFromName(lakeName);
+      const shorelineObj = await env.R2_TROLLMAP_CHARTPACKS.get(`supplemental/${lakeKey}/shoreline.geojson`);
+      if (!shorelineObj) throw new Error(`no shoreline.geojson in R2 for ${lakeKey}`);
+      const geo = JSON.parse(await shorelineObj.text());
+      const coords = [];
+      const extractCoords = (obj) => {
+        if (!obj) return;
+        if (obj.type === 'Feature') extractCoords(obj.geometry);
+        else if (obj.type === 'FeatureCollection') obj.features?.forEach(extractCoords);
+        else if (obj.coordinates) {
+          const flat = obj.coordinates.flat(Infinity);
+          const stride = (flat.length % 3 === 0 && flat.length % 2 !== 0) ? 3 : 2;
+          for (let i = 0; i < flat.length - stride + 1; i += stride) coords.push([flat[i], flat[i+1]]);
+        }
+      };
+      extractCoords(geo);
+      if (!coords.length) throw new Error('no coordinates extracted from shoreline');
+      const lons = coords.map(c => c[0]);
+      const lats = coords.map(c => c[1]);
+      bboxWest  = Math.min(...lons);
+      bboxEast  = Math.max(...lons);
+      bboxSouth = Math.min(...lats);
+      bboxNorth = Math.max(...lats);
+      console.log(`[limnology-data] bbox self-derived from shoreline: W${bboxWest.toFixed(4)} S${bboxSouth.toFixed(4)} E${bboxEast.toFixed(4)} N${bboxNorth.toFixed(4)}`);
+    } catch (e) {
+      return new Response(JSON.stringify({ ok: false, error: `bbox not provided and shoreline self-derive failed: ${e.message}` }), { status: 400, headers: JSON_HEADERS });
+    }
   }
 
-  const chars = ['Temperature, water', 'Dissolved oxygen (DO)', 'Dissolved oxygen'];
-  // WQP query requires: characteristicType=Physical, providers NWIS+WQX,
-  // dataProfile=resultPhysChem, and a date range
-  const wqpUrl = `https://www.waterqualitydata.us/data/Result/search?` +
-    `bBox=${bboxWest},${bboxSouth},${bboxEast},${bboxNorth}` +
-    `&siteType=Lake%2C+Reservoir%2C+Impoundment` +
-    `&characteristicType=Physical` +
-    `&characteristicName=${chars.map(c => encodeURIComponent(c)).join('&characteristicName=')}` +
-    `&providers=NWIS&providers=WQX` +
-    `&dataProfile=resultPhysChem` +
-    `&mimeType=csv&sorted=no` +
-    `&startDateLo=01-01-2015&startDateHi=12-31-2026`;
+  // WQP requires %20 (not +) for spaces, STORET provider, and zip=no for raw CSV
+  const wqpParams = new URLSearchParams();
+  wqpParams.append('bBox', `${bboxWest},${bboxSouth},${bboxEast},${bboxNorth}`);
+  wqpParams.append('siteType', 'Lake, Reservoir, Impoundment');
+  wqpParams.append('characteristicType', 'Physical');
+  wqpParams.append('characteristicName', 'Temperature, water');
+  wqpParams.append('characteristicName', 'Dissolved oxygen (DO)');
+  wqpParams.append('characteristicName', 'Dissolved oxygen');
+  wqpParams.append('providers', 'NWIS');
+  wqpParams.append('providers', 'STORET');
+  wqpParams.append('dataProfile', 'resultPhysChem');
+  wqpParams.append('mimeType', 'csv');
+  wqpParams.append('zip', 'no');
+  wqpParams.append('sorted', 'no');
+  wqpParams.append('startDateLo', '01-01-2015');
+  wqpParams.append('startDateHi', '12-31-2026');
+  const wqpUrl = `https://www.waterqualitydata.us/data/Result/search?${wqpParams.toString().replace(/\+/g, '%20')}`;
 
   let csvText;
   try {
