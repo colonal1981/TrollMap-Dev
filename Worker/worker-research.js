@@ -4721,4 +4721,156 @@ If no thermocline or depth information is found, return found: false and null fo
   }), { headers: JSON_HEADERS });
 }
 
+
+// ── Vision Structure Scanner ──────────────────────────────────────────────────
+async function runVisionScan(lakeName, env) {
+  const lakeKey = (() => {
+    const base = lakeName.split(',')[0].trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+    return base.startsWith('lake_') ? base : `lake_${base}`;
+  })();
+
+  console.log(`[vision-scan] Starting for ${lakeName} (${lakeKey})`);
+
+  const SUPPLEMENTAL_KEY_OVERRIDES = {
+    'lake monticello': 'lake_monticello_parr',
+    'lake wateree': 'lake_wateree_fishing_creek',
+    'lake russell': 'lake_thurmond_russell',
+    'clarks hill': 'lake_thurmond_russell',
+    'lake thurmond': 'lake_thurmond_russell',
+    'lake greenwood': 'lake_greenwood_secession',
+    'lake norman': 'lake_norman_mountain_island',
+    'mountain island lake': 'lake_norman_mountain_island',
+    'lake wylie': 'lake_wylie',
+  };
+  const plainName = lakeName.split(',')[0].trim().toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+  const resolvedKey = SUPPLEMENTAL_KEY_OVERRIDES[plainName] || lakeKey;
+
+  const shorelineObj = await env.R2_TROLLMAP_CHARTPACKS.get(`supplemental/${resolvedKey}/shoreline.geojson`);
+  if (!shorelineObj) {
+    console.warn(`[vision-scan] No shoreline.geojson for ${resolvedKey}`);
+    return { ok: false, error: 'no shoreline' };
+  }
+
+  const geo = JSON.parse(await shorelineObj.text());
+  const coords = [];
+  function extractCoords(obj) {
+    if (!obj) return;
+    if (obj.type === 'Feature') extractCoords(obj.geometry);
+    else if (obj.type === 'FeatureCollection') obj.features?.forEach(extractCoords);
+    else if (obj.coordinates) {
+      const flat = obj.coordinates.flat(Infinity);
+      const stride = (flat.length % 3 === 0 && flat.length % 2 !== 0) ? 3 : 2;
+      for (let i = 0; i < flat.length - stride + 1; i += stride) coords.push([flat[i], flat[i+1]]);
+    }
+  }
+  extractCoords(geo);
+  if (!coords.length) return { ok: false, error: 'no coords' };
+
+  const lons = coords.map(c => c[0]);
+  const lats = coords.map(c => c[1]);
+  const bboxW = Math.min(...lons), bboxE = Math.max(...lons);
+  const bboxS = Math.min(...lats), bboxN = Math.max(...lats);
+
+  const TILE_DEG = 0.004;
+  const TILE_W = 800, TILE_H = 800;
+  const MAX_TILES = 80;
+  const tiles = [];
+  for (let lat = bboxS; lat < bboxN; lat += TILE_DEG) {
+    for (let lon = bboxW; lon < bboxE; lon += TILE_DEG) {
+      tiles.push({ s: lat, n: Math.min(lat + TILE_DEG, bboxN), w: lon, e: Math.min(lon + TILE_DEG, bboxE) });
+      if (tiles.length >= MAX_TILES) break;
+    }
+    if (tiles.length >= MAX_TILES) break;
+  }
+  console.log(`[vision-scan] ${tiles.length} tiles for ${lakeName}`);
+
+  const geminiKeys = [env.GEMINI_FREE_API_KEY, env.GEMINI_FREE2_API_KEY, env.GEMINI_FREE3_API_KEY, env.GEMINI_FREE4_API_KEY].filter(Boolean);
+  if (!geminiKeys.length) return { ok: false, error: 'no Gemini keys' };
+
+  let keyIdx = 0;
+  const MODEL = 'gemini-3.1-flash-lite';
+
+  async function analyzeImage(base64) {
+    const key = geminiKeys[keyIdx % geminiKeys.length];
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${key}`;
+    const prompt = `Analyze this aerial/satellite image of a freshwater lake.
+
+Identify ONLY these structure types that are CLEARLY VISIBLE:
+1. DOCK_CLUSTER — 3 or more docks/piers concentrated in one area
+2. RIPRAP — rock or concrete revetment along a shoreline
+3. BRIDGE — bridge crossing the water with visible pilings
+4. FLOODED_TIMBER — standing dead trees or stumps in or at water's edge
+
+DO NOT report individual docks, vegetation, boats, or anything below the water surface.
+Estimate position as fraction of image (x from left 0-1, y from top 0-1).
+
+Return ONLY valid JSON:
+{"structures":[{"type":"DOCK_CLUSTER|RIPRAP|BRIDGE|FLOODED_TIMBER","x_frac":0.5,"y_frac":0.5,"confidence":0.85,"description":"brief","dock_count_estimate":null}],"has_water":true}
+If nothing found: {"structures":[],"has_water":true}`;
+
+    const body = {
+      contents: [{ parts: [{ inline_data: { mime_type: 'image/jpeg', data: base64 } }, { text: prompt }] }],
+      generationConfig: { temperature: 0.05, maxOutputTokens: 600, responseMimeType: 'application/json' }
+    };
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (r.status === 429) {
+      keyIdx++;
+      console.warn(`[vision-scan] Rate limited — rotating to key ${keyIdx % geminiKeys.length}`);
+      await new Promise(res => setTimeout(res, 2000));
+      return analyzeImage(base64);
+    }
+    if (!r.ok) throw new Error(`Gemini ${r.status}`);
+    const data = await r.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+    return JSON.parse(text.replace(/```json|```/g, '').trim());
+  }
+
+  const features = [];
+  let processed = 0, skipped = 0, errors = 0;
+
+  for (const tile of tiles) {
+    try {
+      const bbox = `${tile.w},${tile.s},${tile.e},${tile.n}`;
+      const esriUrl = `https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${encodeURIComponent(bbox)}&bboxSR=4326&imageSR=4326&size=${TILE_W},${TILE_H}&format=jpg&transparent=false&f=image`;
+      const imgRes = await fetch(esriUrl, { signal: AbortSignal.timeout(12000) });
+      if (!imgRes.ok) { skipped++; continue; }
+      const buf = await imgRes.arrayBuffer();
+      const base64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+      const result = await analyzeImage(base64);
+      if (!result.has_water) { skipped++; } else { processed++; }
+      for (const s of (result.structures || [])) {
+        if ((s.confidence || 0) < 0.6) continue;
+        const lon = tile.w + (tile.e - tile.w) * (s.x_frac || 0.5);
+        const lat = tile.n - (tile.n - tile.s) * (s.y_frac || 0.5);
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [lon, lat] },
+          properties: { structure_type: s.type, confidence: s.confidence, description: s.description || '', dock_count_estimate: s.dock_count_estimate || null, source: 'gemini_vision', scanned_at: new Date().toISOString() }
+        });
+      }
+      await new Promise(res => setTimeout(res, 4200));
+    } catch (e) { errors++; console.warn(`[vision-scan] tile error: ${e.message}`); }
+  }
+
+  const geojson = {
+    type: 'FeatureCollection', features,
+    metadata: { lakeName, lakeKey: resolvedKey, tilesTotal: tiles.length, tilesProcessed: processed, tilesSkipped: skipped, tileErrors: errors, structuresFound: features.length, scannedAt: new Date().toISOString(), model: MODEL }
+  };
+  await env.R2_TROLLMAP_CHARTPACKS.put(`supplemental/${resolvedKey}/vision-structure.geojson`, JSON.stringify(geojson), { httpMetadata: { contentType: 'application/json' } });
+  console.log(`[vision-scan] Complete — ${features.length} structures, ${processed} tiles processed`);
+  return { ok: true, structuresFound: features.length, tilesProcessed: processed };
+}
+
+async function handleResearchVisionScan(request, env, ctx) {
+  const body = await request.json().catch(() => ({}));
+  const { lakeName } = body;
+  if (!lakeName) return new Response(JSON.stringify({ ok: false, error: 'missing lakeName' }), { status: 400, headers: JSON_HEADERS });
+  if (ctx?.waitUntil) {
+    ctx.waitUntil(runVisionScan(lakeName, env).catch(e => console.error('[vision-scan] background failed:', e.message)));
+    return new Response(JSON.stringify({ ok: true, status: 'scanning', message: `Vision scan started for ${lakeName} — results saved to R2 when complete (3-8 minutes)` }), { headers: JSON_HEADERS });
+  }
+  const result = await runVisionScan(lakeName, env);
+  return new Response(JSON.stringify(result), { headers: JSON_HEADERS });
+}
+
 export { handleResearchVisionScan, handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchValidationPass, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey };
