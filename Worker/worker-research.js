@@ -146,15 +146,13 @@ async function handleResearchLimnologyData(request, env) {
   wqpParams.append('characteristicName', 'Dissolved oxygen (DO)');
   wqpParams.append('characteristicName', 'Dissolved oxygen');
   wqpParams.append('characteristicName', 'Secchi depth');
-  wqpParams.append('characteristicName', 'Secchi disk depth');
-  wqpParams.append('providers', 'NWIS');
-  wqpParams.append('providers', 'STORET');
-  wqpParams.append('dataProfile', 'resultPhysChem');
-  wqpParams.append('mimeType', 'csv');
-  wqpParams.append('zip', 'no');
-  wqpParams.append('sorted', 'no');
   wqpParams.append('startDateLo', '01-01-2015');
   wqpParams.append('startDateHi', '12-31-2026');
+  wqpParams.append('mimeType', 'csv');
+  wqpParams.append('zip', 'no');
+  wqpParams.append('dataProfile', 'resultPhysChem');
+  wqpParams.append('providers', 'NWIS');
+  wqpParams.append('providers', 'STORET');
   const wqpUrl = `https://www.waterqualitydata.us/data/Result/search?${wqpParams.toString().replace(/\+/g, '%20')}`;
 
   let csvText;
