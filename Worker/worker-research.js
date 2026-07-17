@@ -4013,12 +4013,18 @@ async function handleResearchAgent(request, env) {
       habitat:   /habitat|attractor|structure|dnr|sc.?lake/i,
     };
     const filter = docFilter[agentKey];
+    // Gemini free-tier requests must stay comfortably below token-per-minute
+    // limits. Limnology already receives extracted facts, so two focused source
+    // excerpts are enough for table/profile confirmation; eight large docs made
+    // the paid/free model route hit quota while biology still succeeded.
+    const maxDocs = agentKey === 'limnology' ? 2 : 8;
+    const charsPerDoc = agentKey === 'limnology' ? 15000 : 40000;
     const relevantDocs = previousResults._normalizedDocuments
       .filter(d => !filter || filter.test(d.title + ' ' + d.url))
-      .slice(0, 8); // max 8 docs per agent
+      .slice(0, maxDocs);
     if (relevantDocs.length) {
       const docContext = relevantDocs
-        .map(d => `=== ${d.title} ===\n${d.text?.slice(0, 40000) || ''}`)
+        .map(d => `=== ${d.title} ===\n${d.text?.slice(0, charsPerDoc) || ''}`)
         .join('\n\n');
       groundedPrev = {
         ...groundedPrev,
@@ -4063,11 +4069,11 @@ async function handleResearchAgent(request, env) {
   const start = Date.now();
   let llmResult;
   try {
-    // Keep limnology on the Gemini free-tier route. worker-core maps
-    // gemini-free to Gemini 3.1 Flash-Lite; do not use the paid `gemini`
-    // route (which selected 3.1 Pro Preview in prior runs).
-    const providerPreference = agentKey === 'limnology' ? 'gemini-free' : null;
-    llmResult = await callLLM(env, payload, providerPreference);
+    // Use the exact same default free-tier routing chain as biology, habitat,
+    // identity, and regulations. Limnology used to force the Gemini route,
+    // bypassing the successful default fallback/rate routing used by the other
+    // agents even when they ultimately reported Flash-Lite.
+    llmResult = await callLLM(env, payload, null);
   } catch (e) {
     return new Response(JSON.stringify({success:false, error:`LLM failed: ${e.message}`, agent: agentKey, lakeName}), {status: 502, headers: JSON_HEADERS});
   }
