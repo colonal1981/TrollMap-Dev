@@ -3632,7 +3632,7 @@ RULES:
 5. speciesAbundance: use actual percentage data from documents if available.
 6. spawnTiming: extract spawn timing per species if mentioned (e.g. "largemouth bass spawn late March to early May when water reaches 62-68°F"). Use format {"species": "timing description"}.
 7. forageSpatial: if documents mention WHERE forage concentrates (e.g. "bream in shallow rocky coves", "shad school in open mid-lake water near dam", "crappie at creek mouths"), extract that as a single descriptive string.
-8. baitfishMovement: if documents describe seasonal or behavioral movement of bait species, extract that.
+8. baitfishMovement: if documents describe seasonal or behavioral movement of bait species, extract as a seasonal object {"spring": "...", "summer": "...", "fall": "...", "winter": "..."}. Include spatial context (e.g. "suspend over humps near thermocline", "push into creek backs"). Omit seasons with no document support.
 9. Keep spawnTiming keyed by the exact species name and preserve temperature/date triggers when stated.
 10. forageSpatial must name the area or habitat where forage is reported; do not turn a generic forage species statement into a location.
 11. These fields support casting-stop generation. Extract evidence-backed descriptions even when they contain no numbers, but never infer locations from general fishing knowledge.
@@ -3645,7 +3645,7 @@ Return ONLY:
     "predatorSpecies": ${JSON.stringify(deterministicSpecies.length ? deterministicSpecies : [])},
     "speciesAbundance": {},
     "standingStockKgHa": null,
-    "baitfishMovement": null,
+    "baitfishMovement": { "spring": null, "summer": null, "fall": null, "winter": null },
     "knownStockings": [],
     "invasiveSpecies": [],
     "forageCalendar": {},

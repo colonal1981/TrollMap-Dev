@@ -1,7 +1,7 @@
 import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized } from './worker-core.js'; 
 import { LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard } from './worker-data.js';
 import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality } from './worker-species.js';
-import { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass } from './worker-research.js';
+import { handleResearchVisionScan, handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass } from './worker-research.js';
 
 var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
@@ -308,7 +308,7 @@ __name(getRiver, "getRiver");
 async function computeGageRateOfRise(site) {
   try {
     const url = `https://waterservices.usgs.gov/nwis/iv/?sites=${site}&parameterCd=00065&format=rdb&period=PT3H`;
-    const r = await fetch(url, { cf: { cacheTtl: 900 } });
+    const r = await fetch(url, { cf: { cacheTtl: 120 } });
     if (!r.ok) return null;
     const text = await r.text();
     const lines = text.split("\n").filter((l) => l && !l.startsWith("#"));
@@ -355,7 +355,7 @@ var DUKE_API_BASE = "https://api.hydro-derived.duke-energy.app";
 async function fetchDukeFlowArrivals(basinId) {
   try {
     const r = await fetch(`${DUKE_API_BASE}/rivers/flow-arrivals/${basinId}`, {
-      cf: { cacheTtl: 900, cacheEverything: true },
+      cf: { cacheTtl: 300, cacheEverything: true },
       headers: {
         "User-Agent": "TrollMap/12 Worker",
         "Origin": "https://lakes.hydro-derived.duke-energy.app",
@@ -403,7 +403,7 @@ async function fetchDominionSaludaStatus() {
   };
   try {
     const r = await fetch("https://www.dominionenergy.com/about/lakes-and-recreation/lower-saluda-river-sc", {
-      cf: { cacheTtl: 900, cacheEverything: true },
+      cf: { cacheTtl: 600, cacheEverything: true },
       headers: { "User-Agent": "TrollMap/12 Worker", "Accept": "text/html" }
     });
     if (!r.ok) return null;
@@ -1225,6 +1225,9 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
       // ── LAKE RESEARCH ROUTES ─────────────────────────────────────
       if (path === "/research/thermocline-search" && request.method === "POST") {
         return handleResearchThermoclineSearch(request, env);
+      }
+      if (path === "/research/vision-scan" && request.method === "POST") {
+        return handleResearchVisionScan(request, env, ctx);
       }
       if (path === "/research/limnology-data" && request.method === "POST") {
         return handleResearchLimnologyData(request, env);
