@@ -206,6 +206,8 @@ async function handleResearchLimnologyData(request, env) {
   const iUnit = col('resultmeasure/measureunitcode');
   const iDepth = col('activitydepthheightmeasure/measurevalue');
   const iDepthU = col('activitydepthheightmeasure/measureunitcode');
+  const iResultDepth = col('resultdepthheightmeasure/measurevalue');
+  const iResultDepthU = col('resultdepthheightmeasure/measureunitcode');
   const iDate = col('activitystartdate');
   const iProject = col('projectname');
   const iLoc = col('monitoringlocationname');
@@ -216,8 +218,9 @@ async function handleResearchLimnologyData(request, env) {
     const char = cols[iChar] || '';
     const valRaw = cols[iValue] || '';
     const unit = cols[iUnit] || '';
-    const depRaw = cols[iDepth] || '';
-    const depUnit = cols[iDepthU] || '';
+    // Use ActivityDepth first, fall back to ResultDepth (GA EPD stores depth here)
+    const depRaw = cols[iDepth] || cols[iResultDepth] || '';
+    const depUnit = cols[iDepthU] || cols[iResultDepthU] || '';
     const date = cols[iDate] || '';
     const project = cols[iProject] || '';
     const location = cols[iLoc] || '';
@@ -4680,32 +4683,42 @@ async function handleResearchThermoclineSearch(request, env) {
   ];
 
   const articles = [];
+  const queryResults = [];
+  console.log(`[thermocline-search] Starting for ${lakeName} — ${queries.length} queries`);
   for (const q of queries) {
     try {
+      console.log(`[thermocline-search] Query: ${q}`);
       const res = await fetch('https://api.firecrawl.dev/v2/search', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: q, limit: 3 })
       });
-      if (!res.ok) { console.warn(`[thermocline-search] query failed (${res.status}): ${q}`); continue; }
+      if (!res.ok) { console.warn(`[thermocline-search] query failed (${res.status}): ${q}`); queryResults.push({ query: q, status: res.status, found: 0 }); continue; }
       const data = await res.json();
       const results = data.data?.web || data.data || data.web || (Array.isArray(data) ? data : []);
+      let added = 0;
       for (const r of results) {
         if (!r.url || !r.markdown) continue;
         const normUrl = String(r.url).split('?')[0].toLowerCase();
         if (articles.some(a => a.url.split('?')[0].toLowerCase() === normUrl)) continue;
         articles.push({ url: r.url, title: r.title || r.url, content: r.markdown.slice(0, 3000) });
+        added++;
         if (articles.length >= 5) break;
       }
+      queryResults.push({ query: q, found: results.length, added });
+      console.log(`[thermocline-search] → ${results.length} results, ${added} added (total articles: ${articles.length})`);
       if (articles.length >= 5) break;
     } catch (e) {
       console.warn(`[thermocline-search] query error: ${e.message}`);
+      queryResults.push({ query: q, error: e.message });
     }
   }
 
   if (!articles.length) {
-    return new Response(JSON.stringify({ ok: true, thermocline: null, note: 'No guide articles found for thermocline search', articles: [] }), { headers: JSON_HEADERS });
+    console.log(`[thermocline-search] No articles found — returning early`);
+    return new Response(JSON.stringify({ ok: true, thermocline: null, note: 'No guide articles found for thermocline search', articles: [], queryResults }), { headers: JSON_HEADERS });
   }
+  console.log(`[thermocline-search] ${articles.length} articles collected — running LLM extract`);
 
   // Lightweight LLM extract — one call, all articles combined
   const articleText = articles.map((a, i) => `--- Article ${i+1}: ${a.title}\nURL: ${a.url}\n${a.content}`).join('\n\n');
@@ -4756,11 +4769,17 @@ If no thermocline or depth information is found, return found: false and null fo
     console.warn(`[thermocline-search] LLM extract failed: ${e.message}`);
   }
 
+  if (thermocline) {
+    console.log(`[thermocline-search] ✔ Thermocline derived: ${thermocline.summerThermoclineDepthFt}ft (confidence ${thermocline.confidenceScore}%)`);
+  } else {
+    console.log(`[thermocline-search] ✗ No thermocline extracted from ${articles.length} articles`);
+  }
   return new Response(JSON.stringify({
     ok: true,
     thermocline,
     articleCount: articles.length,
     articles: articles.map(a => ({ title: a.title, url: a.url })),
+    queryResults,
     note: thermocline ? null : 'Articles found but no thermocline/depth information extracted',
   }), { headers: JSON_HEADERS });
 }
