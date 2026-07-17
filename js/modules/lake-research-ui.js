@@ -1,5 +1,5 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
-import { _state, runEvidencePipeline, runFromNormalized, validateExistingFacts, recoverSmartPlanFacts, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log } from './lake-research-engine.js';
+import { _state, runEvidencePipeline, runFromNormalized, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log } from './lake-research-engine.js';
 
 
 function renderContradictionsAlert(contradictions, lakeName) {
@@ -1250,6 +1250,93 @@ function initLakeResearch() {
       alert(`Smart Plan Recovery failed: ${err.message}`);
     } finally {
       if (button) { button.disabled = false; button.textContent = '🎯 Smart Plan Recovery'; }
+    }
+  });
+
+  // Standalone geospatial adapter re-run — no pipeline, no downloads, no Tavily
+  // Pulls contour/boundary/supplemental layers from R2, merges into current profile, saves.
+  if (!document.getElementById('btnRerunGeospatial')) {
+    const anchor = document.getElementById('btnSmartPlanRecovery') || document.getElementById('btnValidateExistingFacts') || document.getElementById('btnResumeNormalized') || document.getElementById('btnResearch');
+    if (anchor) {
+      const geoBtn = document.createElement('button');
+      geoBtn.id = 'btnRerunGeospatial';
+      geoBtn.textContent = '🗺️ Rerun Geospatial';
+      geoBtn.title = 'Re-derive structural habitat fields from R2 contour/boundary/supplemental layers and merge into the current profile — no pipeline, no downloads';
+      geoBtn.style.cssText = 'margin-left:8px; background:var(--panel2); color:var(--accent); border:1px solid var(--accent); padding:6px 12px; border-radius:4px; cursor:pointer; font-size:0.85em;';
+      anchor.parentNode.insertBefore(geoBtn, anchor.nextSibling);
+    }
+  }
+
+  document.getElementById('btnRerunGeospatial')?.addEventListener('click', async () => {
+    const lake = _state.currentLakeName || document.getElementById('researchLakeSelect')?.value;
+    if (!lake) { alert('Load a lake first'); return; }
+    if (!_state.currentProfile) { alert('No profile loaded — load the lake profile first'); return; }
+    const button = document.getElementById('btnRerunGeospatial');
+    if (button) { button.disabled = true; button.textContent = '⏳ Running…'; }
+    log(`[Geospatial] Re-running geospatial adapter for ${lake}…`);
+    try {
+      const geoStruct = await deriveGeospatialStructureFacts(lake);
+      if (!geoStruct) {
+        log('[Geospatial] ⚠️ No structural fields returned — contour/boundary layers may not be loaded for this lake.');
+        alert('Geospatial adapter returned no data. Check that contour and boundary layers are loaded in R2 for this lake.');
+        return;
+      }
+
+      // Merge into current in-memory profile
+      const profile = cloneJson(_state.currentProfile);
+
+      // Merge habitat — geo output wins for structural elements, existing narrative preserved
+      profile.habitat = profile.habitat || {};
+      const existingNotes = profile.habitat.notes || '';
+      const geoNotes = geoStruct.habitat?.notes || '';
+      Object.assign(profile.habitat, geoStruct.habitat || {});
+      profile.habitat.notes = [existingNotes, geoNotes].filter(Boolean).join(' ') || profile.habitat.notes;
+
+      // Merge evidence and sources
+      if (geoStruct.evidence) {
+        profile.evidence = profile.evidence || {};
+        for (const [k, v] of Object.entries(geoStruct.evidence)) {
+          profile.evidence[k] = [...(profile.evidence[k] || []), ...v];
+        }
+      }
+      if (geoStruct.sources?.length) {
+        const existingUrls = new Set((profile.sources || []).map(s => s.url));
+        for (const s of geoStruct.sources) {
+          if (!existingUrls.has(s.url)) { (profile.sources = profile.sources || []).push(s); existingUrls.add(s.url); }
+        }
+      }
+
+      profile.metadata = profile.metadata || {};
+      profile.metadata.lastGeospatialRun = new Date().toISOString();
+
+      // Save to R2
+      _state.currentProfile = profile;
+      const res = await fetch(`${CF_WORKER_URL}/research/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lakeName: lake,
+          profile,
+          status: profile.metadata?.status || 'draft',
+          approve: profile.metadata?.status === 'verified',
+          verified: profile.metadata?.status === 'verified',
+          requestedBy: 'Geospatial Adapter Rerun'
+        })
+      });
+      if (!res.ok) {
+        const msg = await res.text().catch(() => '');
+        throw new Error(`Save failed: ${res.status} ${msg.slice(0, 200)}`);
+      }
+
+      const fields = Object.keys(geoStruct.habitat?.structuralElements || {}).join(', ') || 'structure notes only';
+      log(`[Geospatial] ✔ Done — fields: ${fields}`);
+      await loadProfile(lake, true);
+      alert(`Geospatial adapter complete.\nFields derived: ${fields}`);
+    } catch (err) {
+      log(`[Geospatial] ✗ ${err.message}`);
+      alert(`Geospatial rerun failed: ${err.message}`);
+    } finally {
+      if (button) { button.disabled = false; button.textContent = '🗺️ Rerun Geospatial'; }
     }
   });
 
