@@ -137,28 +137,31 @@ async function handleResearchLimnologyData(request, env) {
     }
   }
 
-  // WQP requires %20 (not +) for spaces, STORET provider, and zip=no for raw CSV
-  const wqpParams = new URLSearchParams();
-  wqpParams.append('bBox', `${bboxWest},${bboxSouth},${bboxEast},${bboxNorth}`);
-  wqpParams.append('siteType', 'Lake, Reservoir, Impoundment');
-  // Note: characteristicType and characteristicName are mutually exclusive in WQP — omit characteristicType
-  wqpParams.append('characteristicName', 'Temperature, water');
-  wqpParams.append('characteristicName', 'Dissolved oxygen (DO)');
-  wqpParams.append('characteristicName', 'Dissolved oxygen');
-  wqpParams.append('characteristicName', 'Secchi depth');
-  wqpParams.append('characteristicName', 'Depth, Secchi disk depth');
-  wqpParams.append('characteristicName', 'Water transparency, Secchi disc');
-  wqpParams.append('characteristicName', 'Depth, Secchi disk depth reappears');
-  wqpParams.append('characteristicName', 'Color, water, filtered');
-  wqpParams.append('characteristicName', 'Apparent color, water, unfiltered');
-  wqpParams.append('startDateLo', '01-01-2015');
-  wqpParams.append('startDateHi', '12-31-2026');
-  wqpParams.append('mimeType', 'csv');
-  wqpParams.append('zip', 'no');
-  wqpParams.append('dataProfile', 'resultPhysChem');
-  wqpParams.append('providers', 'NWIS');
-  wqpParams.append('providers', 'STORET');
-  const wqpUrl = `https://www.waterqualitydata.us/data/Result/search?${wqpParams.toString().replace(/\+/g, '%20')}`;
+  // Build WQP URL manually — URLSearchParams encodes spaces as + which WQP rejects; use %20 throughout
+  const enc = (s) => encodeURIComponent(s).replace(/%20/g, '%20'); // encodeURIComponent already uses %20, not +
+  const wqpChars = [
+    'Temperature, water',
+    'Dissolved oxygen (DO)',
+    'Dissolved oxygen',
+    'Secchi depth',
+    'Depth, Secchi disk depth',
+    'Water transparency, Secchi disc',
+    'Depth, Secchi disk depth reappears',
+    'Color, water, filtered',
+    'Apparent color, water, unfiltered',
+  ];
+  const wqpUrl = 'https://www.waterqualitydata.us/data/Result/search?' + [
+    `bBox=${bboxWest},${bboxSouth},${bboxEast},${bboxNorth}`,
+    `siteType=${enc('Lake, Reservoir, Impoundment')}`,
+    ...wqpChars.map(c => `characteristicName=${enc(c)}`),
+    `startDateLo=01-01-2015`,
+    `startDateHi=12-31-2026`,
+    `mimeType=csv`,
+    `zip=no`,
+    `dataProfile=resultPhysChem`,
+    `providers=NWIS`,
+    `providers=STORET`,
+  ].join('&');
 
   let csvText;
   try {
