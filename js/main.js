@@ -34,7 +34,7 @@ import './utils/parsers.js';
 import './utils/geo.js';
 import './utils/dedupe.js';
 import './utils/rod-row.js';
-import './data/ramps.js';
+import './data/ramps-loader.js';
 import './data/lakes.js';
 
 // Feature modules (each wires its own button handlers on import)

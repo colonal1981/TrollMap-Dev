@@ -6,7 +6,7 @@
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { LAKE_DB } from '../data/lakes.js';
-import { TRISTATE_MASTER_RAMPS } from '../data/ramps.js';
+import { TRISTATE_MASTER_RAMPS } from '../data/ramps-loader.js';
 import { dedupeLaunchesList } from '../utils/dedupe.js';
 
 let RAMP_LAYER = null;

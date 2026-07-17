@@ -2,7 +2,7 @@
 // Imports from the canonical ramp database and adds fisherman-friendly
 // groupings (e.g. "the Cooper" instead of "Tail Race Canal + Cooper River").
 
-import { TRISTATE_MASTER_RAMPS } from "../data/ramps.js";
+import { TRISTATE_MASTER_RAMPS } from "../data/ramps-loader.js";
 
 /**
  * trollmap_fishing_index.js — Fisherman-friendly overlay on top of SCDNR data
