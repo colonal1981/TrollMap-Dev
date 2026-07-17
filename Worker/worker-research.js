@@ -177,7 +177,7 @@ async function handleResearchLimnologyData(request, env) {
     if (!wqpRes.ok) throw new Error(`WQP HTTP ${wqpRes.status}`);
     csvText = await wqpRes.text();
   } catch (e) {
-    const reason = e.name === 'AbortError' ? 'WQP request timed out after 12s' : `WQP fetch failed: ${e.message}`;
+    const reason = e.name === 'AbortError' ? 'WQP request timed out after 25s — try again, large lakes may need a second attempt' : `WQP fetch failed: ${e.message}`;
     console.warn(`[limnology-data] ${reason} — lake=${lakeName}`);
     return new Response(JSON.stringify({ ok: false, error: reason, thermocline: null }), { headers: JSON_HEADERS });
   }
@@ -4732,17 +4732,18 @@ async function handleResearchThermoclineSearch(request, env) {
       const res = await fetch('https://api.firecrawl.dev/v2/search', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: q, limit: 3 })
+        body: JSON.stringify({ query: q, limit: 3, scrapeOptions: { formats: ['markdown'] } })
       });
       if (!res.ok) { console.warn(`[thermocline-search] query failed (${res.status}): ${q}`); queryResults.push({ query: q, status: res.status, found: 0 }); continue; }
       const data = await res.json();
       const results = data.data?.web || data.data || data.web || (Array.isArray(data) ? data : []);
       let added = 0;
       for (const r of results) {
-        if (!r.url || !r.markdown) continue;
+        const content = r.markdown || r.content || r.description || r.snippet || '';
+        if (!r.url || !content) continue;
         const normUrl = String(r.url).split('?')[0].toLowerCase();
         if (articles.some(a => a.url.split('?')[0].toLowerCase() === normUrl)) continue;
-        articles.push({ url: r.url, title: r.title || r.url, content: r.markdown.slice(0, 3000) });
+        articles.push({ url: r.url, title: r.title || r.url, content: content.slice(0, 3000) });
         added++;
         if (articles.length >= 5) break;
       }
