@@ -158,7 +158,7 @@ async function handleResearchLimnologyData(request, env) {
   let csvText;
   try {
     const controller = new AbortController();
-    const wqpTimeout = setTimeout(() => controller.abort(), 12000);
+    const wqpTimeout = setTimeout(() => controller.abort(), 25000);
     let wqpRes;
     try {
       wqpRes = await fetch(wqpUrl, {
