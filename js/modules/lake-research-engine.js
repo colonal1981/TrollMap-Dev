@@ -1538,7 +1538,12 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
 
     let wqpLimnology = null;
     try {
-      const geoRes = await fetch(`${CF_WORKER_URL}/chartpacks/lake-boundary?lake=${encodeURIComponent(lakeName)}`);
+      // Use supplemental shoreline GeoJSON — available for all lakes, not just the initial 5 with 3dhp boundaries
+      const supplementalKey = resolveSupplementalKey(lakeName);
+      const shorelineUrl = supplementalKey
+        ? `${CF_WORKER_URL}/chartpacks/supplemental/${supplementalKey}/shoreline.geojson?v=${Date.now()}`
+        : `${CF_WORKER_URL}/chartpacks/lake-boundary?lake=${encodeURIComponent(lakeName)}`; // fallback
+      const geoRes = await fetch(shorelineUrl);
       let bbox = null;
       if (geoRes.ok) {
         const geo = await geoRes.json();
@@ -1548,31 +1553,18 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
           if (obj.type === 'Feature') extractCoords(obj.geometry);
           else if (obj.type === 'FeatureCollection') obj.features?.forEach(extractCoords);
           else if (obj.coordinates) {
-            // Recursively find the innermost arrays
-            const getPoints = (arr) => {
-              if (typeof arr[0] === 'number') {
-                // Safely push only lon and lat, ignoring any Z value
-                coords.push([arr[0], arr[1]]);
-              } else {
-                arr.forEach(getPoints);
-              }
-            };
-            getPoints(obj.coordinates);
+            const flat = obj.coordinates.flat(Infinity);
+            // Coordinates may be 2D [lon,lat] or 3D [lon,lat,z] — step by 3 if z present
+            const step = (flat.length >= 3 && flat[2] === 0.0) || (flat.length % 3 === 0 && flat.length % 2 !== 0) ? 3 : 2;
+            for (let i = 0; i < flat.length - 1; i += step) coords.push([flat[i], flat[i+1]]);
           }
         };
-        extractCoords(geo);        
+        extractCoords(geo);
         if (coords.length) {
           const lons = coords.map(c => c[0]);
           const lats = coords.map(c => c[1]);
-          
-          bbox = { 
-            bboxNorth: Number(Math.max(...lats).toFixed(6)), 
-            bboxSouth: Number(Math.min(...lats).toFixed(6)), 
-            bboxEast: Number(Math.max(...lons).toFixed(6)), 
-            bboxWest: Number(Math.min(...lons).toFixed(6)) 
-          };
+          bbox = { bboxNorth: Math.max(...lats), bboxSouth: Math.min(...lats), bboxEast: Math.max(...lons), bboxWest: Math.min(...lons) };
         }
-
       }
       if (bbox) {
         const wqpRes = await fetch(`${CF_WORKER_URL}/research/limnology-data`, {
