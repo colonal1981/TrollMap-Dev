@@ -145,6 +145,8 @@ async function handleResearchLimnologyData(request, env) {
   wqpParams.append('characteristicName', 'Temperature, water');
   wqpParams.append('characteristicName', 'Dissolved oxygen (DO)');
   wqpParams.append('characteristicName', 'Dissolved oxygen');
+  wqpParams.append('characteristicName', 'Secchi depth');
+  wqpParams.append('characteristicName', 'Secchi disk depth');
   wqpParams.append('providers', 'NWIS');
   wqpParams.append('providers', 'STORET');
   wqpParams.append('dataProfile', 'resultPhysChem');
@@ -235,6 +237,7 @@ async function handleResearchLimnologyData(request, env) {
     if (/temperature/.test(lowerChar)) type = 'temperature';
     else if (/dissolved oxygen|oxygen/.test(lowerChar)) type = 'do';
     else if (/turbidity/.test(lowerChar)) type = 'turbidity';
+    else if (/secchi/.test(lowerChar)) type = 'secchi';
     else if (/conductivity/.test(lowerChar)) type = 'conductivity';
     else if (/alkalinity/.test(lowerChar)) type = 'alkalinity';
     else if (/hardness/.test(lowerChar)) type = 'hardness';
@@ -331,6 +334,43 @@ async function handleResearchLimnologyData(request, env) {
     return { value: Math.round(avg * 100) / 100, lastObserved: latestDate, sampleCount: vals.length, programs };
   };
 
+  // Seasonal surface temp summary — useful for shallow lakes where thermocline is never derivable
+  const seasonalTemp = (() => {
+    const byMonth = {};
+    for (const r of records.filter(r => r.type === 'temperature' && r.month)) {
+      if (!byMonth[r.month]) byMonth[r.month] = [];
+      byMonth[r.month].push(r.value);
+    }
+    const avg = (arr) => arr.length ? Math.round(arr.reduce((a,b) => a+b,0) / arr.length * 10) / 10 : null;
+    const summerMonths = [6,7,8,9].filter(m => byMonth[m]?.length);
+    const winterMonths = [12,1,2,3].filter(m => byMonth[m]?.length);
+    return {
+      summerAvgTempF: summerMonths.length ? avg(summerMonths.flatMap(m => byMonth[m])) : null,
+      winterAvgTempF: winterMonths.length ? avg(winterMonths.flatMap(m => byMonth[m])) : null,
+      peakSummerTempF: summerMonths.length ? Math.round(Math.max(...summerMonths.flatMap(m => byMonth[m])) * 10) / 10 : null,
+      monthsObserved: Object.keys(byMonth).map(Number).sort((a,b) => a-b),
+    };
+  })();
+
+  // Secchi depth summary
+  const secchiRecords = records.filter(r => r.type === 'secchi');
+  const secchi = secchiRecords.length ? (() => {
+    const vals = secchiRecords.map(r => {
+      // Secchi is often in meters — convert to ft
+      let v = r.value;
+      if (r.unit && (r.unit.toLowerCase().includes('m') && !r.unit.toLowerCase().includes('ft'))) v = v * 3.28084;
+      return Math.round(v * 10) / 10;
+    });
+    const avg = vals.reduce((a,b) => a+b,0) / vals.length;
+    return {
+      avgSecchiDepthFt: Math.round(avg * 10) / 10,
+      minSecchiDepthFt: Math.min(...vals),
+      maxSecchiDepthFt: Math.max(...vals),
+      sampleCount: vals.length,
+      lastObserved: secchiRecords.map(r => r.date).sort().slice(-1)[0] || null,
+    };
+  })() : null;
+
   const surfaceWater = {
     recentTempF: summarizeType('temperature')?.value ?? null,
     recentDissolvedOxygenMgL: summarizeType('do')?.value ?? null,
@@ -343,6 +383,10 @@ async function handleResearchLimnologyData(request, env) {
     note: 'Summary reflects the most recent available surface/grab samples by characteristic from WQP/SCDES monitoring sites within the lake boundary.'
   };
 
+  const surfaceOnlyNote = !thermocline && !depthRecords.length
+    ? 'Monitoring data were found, but available records are surface/grab samples only — no vertical depth profiles. Thermocline cannot be derived from this source.'
+    : null;
+
   const out = {
     ok: true,
     lakeName,
@@ -353,7 +397,10 @@ async function handleResearchLimnologyData(request, env) {
     thermocline,
     oxygen,
     surfaceWater,
-    note: thermocline ? null : depthRecords.length ? 'Depth-profile records exist but were insufficient to derive a defensible thermocline.' : 'Monitoring data were found, but available records are surface/grab samples rather than depth profiles.'
+    seasonalTemp,
+    secchi,
+    surfaceOnlyNote,
+    note: thermocline ? null : depthRecords.length ? 'Depth-profile records exist but were insufficient to derive a defensible thermocline.' : surfaceOnlyNote,
   };
   return new Response(JSON.stringify(out), { headers: JSON_HEADERS });
 }
@@ -4616,4 +4663,109 @@ Rules: depth values must be specific and convert meters × 3.281; normalPoolFt m
 }
 __name(handleResearchValidationPass,'handleResearchValidationPass');
 
-export { handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchValidationPass, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey };
+
+async function handleResearchThermoclineSearch(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const { lakeName } = body;
+  if (!lakeName) return new Response(JSON.stringify({ ok: false, error: 'missing lakeName' }), { status: 400, headers: JSON_HEADERS });
+
+  const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
+  if (!firecrawlKey) return new Response(JSON.stringify({ ok: false, error: 'FIRECRAWL_API_KEY not configured' }), { status: 500, headers: JSON_HEADERS });
+
+  // Strip state suffix for queries
+  const queryLake = lakeName.replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i, '').trim();
+
+  const queries = [
+    `"${queryLake}" thermocline depth summer fishing`,
+    `"${queryLake}" fishing guide summer depths striper bass`,
+    `"${queryLake}" water temperature depth summer trolling`,
+  ];
+
+  const articles = [];
+  for (const q of queries) {
+    try {
+      const res = await fetch('https://api.firecrawl.dev/v2/search', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: q, limit: 3 })
+      });
+      if (!res.ok) { console.warn(`[thermocline-search] query failed (${res.status}): ${q}`); continue; }
+      const data = await res.json();
+      const results = data.data?.web || data.data || data.web || (Array.isArray(data) ? data : []);
+      for (const r of results) {
+        if (!r.url || !r.markdown) continue;
+        const normUrl = String(r.url).split('?')[0].toLowerCase();
+        if (articles.some(a => a.url.split('?')[0].toLowerCase() === normUrl)) continue;
+        articles.push({ url: r.url, title: r.title || r.url, content: r.markdown.slice(0, 3000) });
+        if (articles.length >= 5) break;
+      }
+      if (articles.length >= 5) break;
+    } catch (e) {
+      console.warn(`[thermocline-search] query error: ${e.message}`);
+    }
+  }
+
+  if (!articles.length) {
+    return new Response(JSON.stringify({ ok: true, thermocline: null, note: 'No guide articles found for thermocline search', articles: [] }), { headers: JSON_HEADERS });
+  }
+
+  // Lightweight LLM extract — one call, all articles combined
+  const articleText = articles.map((a, i) => `--- Article ${i+1}: ${a.title}\nURL: ${a.url}\n${a.content}`).join('\n\n');
+  const systemPrompt = `You are a fishing intelligence analyst. Extract thermocline depth information from fishing guide articles about ${queryLake}. Return ONLY valid JSON, no markdown, no preamble.`;
+  const userPrompt = `From the following articles about ${queryLake}, extract any mention of thermocline depth, depth at which fish hold in summer, or the depth below which water becomes too warm or too cold for fish activity.
+
+${articleText}
+
+Return JSON in this exact shape:
+{
+  "found": true or false,
+  "summerThermoclineDepthFt": number or null,
+  "depthRangeMin": number or null,
+  "depthRangeMax": number or null,
+  "confidence": "low" or "very_low",
+  "confidenceScore": number between 20 and 45,
+  "sourceCount": number of articles that mentioned depth,
+  "note": "brief explanation of what was found and from which sources",
+  "warning": "Anecdotal — derived from guide articles, not measured vertical profiles"
+}
+
+If no thermocline or depth information is found, return found: false and null for all depth fields.`;
+
+  let thermocline = null;
+  try {
+    const llmResult = await callLLM(env, {
+      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+      max_tokens: 400,
+      temperature: 0.1,
+      response_format: { type: 'json_object' },
+    });
+    const text = extractLLMText(llmResult.data).replace(/\`\`\`json|\`\`\`/g, '').trim();
+    const parsed = JSON.parse(text);
+    if (parsed.found && parsed.summerThermoclineDepthFt != null) {
+      thermocline = {
+        summerThermoclineDepthFt: parsed.summerThermoclineDepthFt,
+        depthRangeMin: parsed.depthRangeMin ?? null,
+        depthRangeMax: parsed.depthRangeMax ?? null,
+        confidence: 'low',
+        confidenceScore: Math.min(45, Math.max(20, parsed.confidenceScore ?? 35)),
+        sourceCount: parsed.sourceCount ?? articles.length,
+        method: 'anecdotal_guide_articles',
+        note: parsed.note || null,
+        warning: 'Derived from fishing guide articles — not measured vertical profiles. Use as behavioral estimate only.',
+      };
+    }
+  } catch (e) {
+    console.warn(`[thermocline-search] LLM extract failed: ${e.message}`);
+  }
+
+  return new Response(JSON.stringify({
+    ok: true,
+    thermocline,
+    articleCount: articles.length,
+    articles: articles.map(a => ({ title: a.title, url: a.url })),
+    note: thermocline ? null : 'Articles found but no thermocline/depth information extracted',
+  }), { headers: JSON_HEADERS });
+}
+__name(handleResearchThermoclineSearch, 'handleResearchThermoclineSearch');
+
+export { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchValidationPass, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey };
