@@ -5,7 +5,6 @@ import { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, isAuthorized
 import { LAKES, LAKE_INTEL, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel } from './worker-data.js';
 
 var __defProp = Object.defineProperty;
-var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // ─── OWNER-AWARE DRAWDOWN / OPERATIONS SOURCE SEEDS ───
 // When deterministic parsing resolves reservoirOwner, these seeded sources are
@@ -91,7 +90,6 @@ function resolveDrawdownSource(lakeName, state, reservoirOwner) {
 
   return null;
 }
-__name(resolveDrawdownSource, 'resolveDrawdownSource');
 
 // ─── EXTENDED EVIDENCE ACQUISITION PIPELINE FUNCTIONS ───
 
@@ -474,7 +472,6 @@ async function handleResearchLimnologyData(request, env) {
   };
   return new Response(JSON.stringify(out), { headers: JSON_HEADERS });
 }
-__name(handleResearchLimnologyData, 'handleResearchLimnologyData');
 
 async function handleResearchDiscover(request, env) {
   let body;
@@ -804,7 +801,6 @@ async function handleResearchDiscover(request, env) {
 
   return new Response(JSON.stringify({ success: true, sources: finalList, baseName, filteredCount: 0, queryLog }), { headers: JSON_HEADERS });
 }
-__name(handleResearchDiscover, "handleResearchDiscover");
 
 
 async function handleResearchProxyDownload(request, env) {
@@ -1150,7 +1146,6 @@ async function handleResearchProxyDownload(request, env) {
     return new Response(JSON.stringify({ success: false, error: err.message }), { status: 502, headers: JSON_HEADERS });
   }
 }
-__name(handleResearchProxyDownload, "handleResearchProxyDownload");
 
 // ─── DATASET HUNTER ──────────────────────────────────────────────────────────
 // Uses Firecrawl /v1/map to crawl authoritative agency sites and find
@@ -1382,8 +1377,6 @@ function buildNepisQueryVariants(lakeName, state) {
   variants.add(stateName);
   return [...variants].filter(Boolean).slice(0, 2);
 }
-__name(buildNepisSearchUrl, 'buildNepisSearchUrl');
-__name(buildNepisQueryVariants, 'buildNepisQueryVariants');
 
 async function handleResearchDatasetHunt(request, env) {
   let body;
@@ -1582,13 +1575,11 @@ async function handleResearchDatasetHunt(request, env) {
     datasets: discovered,
   }), { headers: JSON_HEADERS });
 }
-__name(handleResearchDatasetHunt, 'handleResearchDatasetHunt');
 
 
 function normalizeResearchName(s) {
   return String(s || '').toLowerCase().replace(/&amp;/g, '&').replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
 }
-__name(normalizeResearchName, "normalizeResearchName");
 
 function hasResearchValue(v) {
   if (v == null) return false;
@@ -1597,17 +1588,14 @@ function hasResearchValue(v) {
   if (typeof v === 'object') return Object.keys(v).length > 0;
   return true;
 }
-__name(hasResearchValue, "hasResearchValue");
 
 function buildEvidence(sourceType, sourceLabel, sourceUrl, quote, method, extra = {}) {
   return { sourceType, sourceLabel, sourceUrl, quote: quote || null, method, ...extra };
 }
-__name(buildEvidence, "buildEvidence");
 
 function titleCaseWords(s) {
   return String(s || '').split(/\s+/).filter(Boolean).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
 }
-__name(titleCaseWords, "titleCaseWords");
 
 const RESEARCH_SPECIES_CANON = {
   'black crappie': 'Black Crappie',
@@ -1650,7 +1638,6 @@ function canonicalizeResearchSpecies(raw) {
   if (!n) return null;
   return RESEARCH_SPECIES_CANON[n] || titleCaseWords(n);
 }
-__name(canonicalizeResearchSpecies, "canonicalizeResearchSpecies");
 
 function uniqueResearchSpecies(items) {
   const out = [];
@@ -1665,16 +1652,45 @@ function uniqueResearchSpecies(items) {
   }
   return out;
 }
-__name(uniqueResearchSpecies, "uniqueResearchSpecies");
 
 function splitSpeciesText(text) {
   const cleaned = String(text || '').replace(/\([^)]*\)/g, ' ').replace(/\band\b/gi, ',').replace(/;/g, ',');
   return cleaned.split(',').map(s => s.trim()).filter(Boolean);
 }
-__name(splitSpeciesText, "splitSpeciesText");
 
-function parseSCDNRDescriptionFacts(lakeName, url, html) {
+async function parseSCDNRDescriptionFacts(lakeName, url, html, env) {
   const text = stripHtmlPreserveTables(html).replace(/\s+/g, ' ').trim();
+  const systemPrompt = "You are an expert South Carolina biology and DNR document parser.\n" +
+"Extract the following lake facts and details from the provided South Carolina DNR lake description page text.\n\n" +
+"For each field, extract:\n" +
+"1. The extracted 'value' (adhering to the specified type: number, string, array, etc.).\n" +
+"2. The exact 'quote' from the text supporting this extraction.\n\n" +
+"JSON Schema to return:\n" +
+"{\n" +
+"  \"surfaceAreaAcres\": { \"value\": <number|null>, \"quote\": <string|null> },\n" +
+"  \"shorelineLengthMi\": { \"value\": <number|null>, \"quote\": <string|null> },\n" +
+"  \"counties\": { \"value\": <array of strings>, \"quote\": <string|null> },\n" +
+"  \"reservoirOwner\": { \"value\": <string|null>, \"quote\": <string|null> },\n" +
+"  \"normalPoolFt\": { \"value\": <number|null>, \"quote\": <string|null> },\n" +
+"  \"yearImpounded\": { \"value\": <number|null>, \"quote\": <string|null> },\n" +
+"  \"damName\": { \"value\": <string|null>, \"quote\": <string|null> },\n" +
+"  \"riverSystem\": { \"value\": <string|null>, \"quote\": <string|null> },\n" +
+"  \"archetype\": { \"value\": <string|null>, \"quote\": <string|null> },\n" +
+"  \"predatorSpecies\": { \"value\": <array of strings>, \"quote\": <string|null> },\n" +
+"  \"knownStockings\": { \"value\": [ { \"species\": <string>, \"agency\": \"SCDNR\", \"note\": <string> } ], \"quote\": <string|null> },\n" +
+"  \"attractorCount\": { \"value\": <number|null>, \"quote\": <string|null> },\n" +
+"  \"accessPointCount\": { \"value\": <number|null>, \"quote\": <string|null> },\n" +
+"  \"publicRampCount\": { \"value\": <number|null>, \"quote\": <string|null> },\n" +
+"  \"privateAccessCount\": { \"value\": <number|null>, \"quote\": <string|null> }\n" +
+"}\n\n" +
+"Notes for extraction rules:\n" +
+"- SCDNR description page lists pool elevation as \"Maximum Depth\" and average river depth as \"Average Depth\" — both are misleading and not the actual lake depth. Do not parse these fields into any depth field.\n" +
+"- \"counties\" should be the counties within which the lake is located (e.g. [\"Kershaw\", \"Fairfield\", \"Lancaster\"]).\n" +
+"- \"predatorSpecies\" are popular sport fish mentioned (e.g. [\"Striped Bass\", \"Largemouth Bass\", \"Crappie\", \"Catfish\"]).\n" +
+"- Respond ONLY with valid, raw JSON. Do not include markdown formatting or backticks.";
+
+  const userPrompt = `Lake Name: ${lakeName}\nUrl: ${url}\nText Content:\n${text.slice(0, 12000)}`;
+
   const identity = { aliases: [], counties: [] };
   const biology = { primaryForage: [], secondaryForage: [], predatorSpecies: [], speciesAbundance: {}, knownStockings: [], baitfishMovement: null, forageCalendar: {}, notes: [] };
   const habitat = { structuralElements: {}, cover: [], vegetation: [], standingTimber: null, dockDensity: null, riprapLocations: [], namedCreekMouths: [], timberFields: null, shallowFlatAreas: null, artificialHabitat: [], artificialHabitatDetails: { attractorCount: null, attractorTypes: [] }, notes: null };
@@ -1687,101 +1703,124 @@ function parseSCDNRDescriptionFacts(lakeName, url, html) {
     evidence[section][field].push(entry);
   };
 
-  const mArea = text.match(/Acres of Surface Water:\s*([0-9,]+)/i);
-  if (mArea) {
-    identity.surfaceAreaAcres = parseInt(mArea[1].replace(/,/g, ''), 10) || null;
-    store('identity', 'surfaceAreaAcres', buildEvidence('official_document', 'SCDNR Lake Description', url, mArea[0], 'regex_exact_text'));
-  }
-  // Note: SCDNR description page lists pool elevation as "Maximum Depth" and
-  // average river depth as "Average Depth" — both are misleading and not the
-  // actual lake depth. Do not parse these fields from this source.
-  const mShore = text.match(/Miles of Shoreline:\s*([0-9,]+(?:\.[0-9]+)?)/i);
-  if (mShore) {
-    identity.shorelineLengthMi = parseFloat(mShore[1].replace(/,/g, ''));
-    store('identity', 'shorelineLengthMi', buildEvidence('official_document', 'SCDNR Lake Description', url, mShore[0], 'regex_exact_text'));
-  }
-  const mCounties = text.match(/Counties Lake is Within:\s*([^*]+?)(?:Average Depth:|Maximum Depth:|Boat Ramps:)/i);
-  if (mCounties) {
-    identity.counties = mCounties[1].split(',').map(s => s.trim()).filter(Boolean);
-    store('identity', 'counties', buildEvidence('official_document', 'SCDNR Lake Description', url, `Counties Lake is Within: ${mCounties[1].trim()}`, 'regex_exact_text'));
-  }
-  const mOwner = text.match(/Owned and Managed by:\s*([^*]+?)(?:Boat Ramps:|Fish Attractors:|$)/i);
-  if (mOwner) {
-    identity.reservoirOwner = mOwner[1].replace(/\[[^\]]*\]/g, '').trim().replace(/\s+/g, ' ');
-    store('identity', 'reservoirOwner', buildEvidence('official_document', 'SCDNR Lake Description', url, `Owned and Managed by: ${identity.reservoirOwner}`, 'regex_exact_text'));
-  }
-  const mPool = text.match(/Full pond elevation is\s*([0-9.]+)\s*feet/i);
-  if (mPool) {
-    identity.normalPoolFt = parseFloat(mPool[1]);
-    store('identity', 'normalPoolFt', buildEvidence('official_document', 'SCDNR Lake Description', url, mPool[0], 'regex_exact_text'));
-  }
-  const mYear = text.match(/created in\s*(\d{4})/i) || text.match(/operation of .*? in\s*(\d{4})/i);
-  if (mYear) {
-    identity.yearImpounded = parseInt(mYear[1], 10);
-    store('identity', 'yearImpounded', buildEvidence('official_document', 'SCDNR Lake Description', url, mYear[0], 'regex_exact_text'));
-  }
-  const mDam = text.match(/The\s+([A-Z][A-Za-z0-9\- ]+? Dam)\s+is\s+[0-9,]+\s+feet\s+long/i);
-  if (mDam) {
-    identity.damName = mDam[1].trim();
-    store('identity', 'damName', buildEvidence('official_document', 'SCDNR Lake Description', url, mDam[0], 'regex_exact_text'));
-  }
-  const mRiver = text.match(/largest of the ([A-Za-z\- ]+?) lakes/i) || text.match(/upper most of the two beautiful water bodies that comprise ([A-Za-z\- ]+?) reservoir/i);
-  if (mRiver) {
-    identity.riverSystem = mRiver[1].trim();
-    store('identity', 'riverSystem', buildEvidence('official_document', 'SCDNR Lake Description', url, mRiver[0], 'regex_exact_text'));
-  }
-  const mArchetype = text.match(/([0-9,]+ acre [a-z\- ]+ reservoir)/i);
-  if (mArchetype) {
-    identity.archetype = mArchetype[1].trim();
-    store('identity', 'archetype', buildEvidence('official_document', 'SCDNR Lake Description', url, mArchetype[0], 'regex_exact_text'));
-  }
+  try {
+    const llmResult = await callLLM(env, {
+      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+      max_tokens: 1500,
+      temperature: 0.1,
+      response_format: { type: 'json_object' }
+    });
+    const llmText = extractLLMText(llmResult.data).replace(/`{3}(json)?/g, '').trim();
+    const parsed = JSON.parse(llmText);
 
-  const mSport = text.match(/Popular sport fish on .*? include ([^.]+)\./i) || text.match(/best known for its ([^.]+?) fishery but it serves host to ([^.]+?)\./i);
-  if (mSport) {
-    const speciesText = mSport[1] + (mSport[2] ? ', ' + mSport[2] : '');
-    biology.predatorSpecies = uniqueResearchSpecies(splitSpeciesText(speciesText));
-    if (biology.predatorSpecies.length) {
-      store('biology', 'predatorSpecies', buildEvidence('official_document', 'SCDNR Lake Description', url, mSport[0], 'regex_exact_text'));
-    }
-  }
-  const mStock = text.match(/stocks? ([a-z ]+?) regularly/i);
-  if (mStock) {
-    const stocked = canonicalizeResearchSpecies(mStock[1]);
-    if (stocked) {
-      biology.knownStockings = [{ species: stocked, agency: 'SCDNR', note: 'Stocked regularly' }];
-      store('biology', 'knownStockings', buildEvidence('official_document', 'SCDNR Lake Description', url, mStock[0], 'regex_exact_text'));
-    }
-  }
+    if (parsed) {
+      // 1. Identity
+      if (parsed.surfaceAreaAcres?.value != null) {
+        identity.surfaceAreaAcres = parsed.surfaceAreaAcres.value;
+        if (parsed.surfaceAreaAcres.quote) {
+          store('identity', 'surfaceAreaAcres', buildEvidence('official_document', 'SCDNR Lake Description', url, parsed.surfaceAreaAcres.quote, 'llm_extraction'));
+        }
+      }
+      if (parsed.shorelineLengthMi?.value != null) {
+        identity.shorelineLengthMi = parsed.shorelineLengthMi.value;
+        if (parsed.shorelineLengthMi.quote) {
+          store('identity', 'shorelineLengthMi', buildEvidence('official_document', 'SCDNR Lake Description', url, parsed.shorelineLengthMi.quote, 'llm_extraction'));
+        }
+      }
+      if (Array.isArray(parsed.counties?.value) && parsed.counties.value.length) {
+        identity.counties = parsed.counties.value;
+        if (parsed.counties.quote) {
+          store('identity', 'counties', buildEvidence('official_document', 'SCDNR Lake Description', url, parsed.counties.quote, 'llm_extraction'));
+        }
+      }
+      if (parsed.reservoirOwner?.value) {
+        identity.reservoirOwner = parsed.reservoirOwner.value;
+        if (parsed.reservoirOwner.quote) {
+          store('identity', 'reservoirOwner', buildEvidence('official_document', 'SCDNR Lake Description', url, parsed.reservoirOwner.quote, 'llm_extraction'));
+        }
+      }
+      if (parsed.normalPoolFt?.value != null) {
+        identity.normalPoolFt = parsed.normalPoolFt.value;
+        if (parsed.normalPoolFt.quote) {
+          store('identity', 'normalPoolFt', buildEvidence('official_document', 'SCDNR Lake Description', url, parsed.normalPoolFt.quote, 'llm_extraction'));
+        }
+      }
+      if (parsed.yearImpounded?.value != null) {
+        identity.yearImpounded = parsed.yearImpounded.value;
+        if (parsed.yearImpounded.quote) {
+          store('identity', 'yearImpounded', buildEvidence('official_document', 'SCDNR Lake Description', url, parsed.yearImpounded.quote, 'llm_extraction'));
+        }
+      }
+      if (parsed.damName?.value) {
+        identity.damName = parsed.damName.value;
+        if (parsed.damName.quote) {
+          store('identity', 'damName', buildEvidence('official_document', 'SCDNR Lake Description', url, parsed.damName.quote, 'llm_extraction'));
+        }
+      }
+      if (parsed.riverSystem?.value) {
+        identity.riverSystem = parsed.riverSystem.value;
+        if (parsed.riverSystem.quote) {
+          store('identity', 'riverSystem', buildEvidence('official_document', 'SCDNR Lake Description', url, parsed.riverSystem.quote, 'llm_extraction'));
+        }
+      }
+      if (parsed.archetype?.value) {
+        identity.archetype = parsed.archetype.value;
+        if (parsed.archetype.quote) {
+          store('identity', 'archetype', buildEvidence('official_document', 'SCDNR Lake Description', url, parsed.archetype.quote, 'llm_extraction'));
+        }
+      }
 
-  const mAttr = text.match(/Fish Attractors:\s*([0-9,]+)/i);
-  if (mAttr) {
-    habitat.artificialHabitat = ['SCDNR fish attractors'];
-    habitat.artificialHabitatDetails.attractorCount = parseInt(mAttr[1].replace(/,/g, ''), 10) || null;
-    const note = `${habitat.artificialHabitatDetails.attractorCount} official SCDNR fish attractors listed on the lake page.`;
-    habitat.notes = habitat.notes ? `${habitat.notes} ${note}` : note;
-    store('habitat', 'artificialHabitatDetails', buildEvidence('official_document', 'SCDNR Lake Description', url, mAttr[0], 'regex_exact_text'));
-  }
-  const mRamps = text.match(/Boat Ramps:\s*([0-9,]+)/i);
-  if (mRamps) {
-    navigation.accessPointCount = parseInt(mRamps[1].replace(/,/g, ''), 10) || null;
-    store('navigation', 'accessPointCount', buildEvidence('official_document', 'SCDNR Lake Description', url, mRamps[0], 'regex_exact_text'));
-  }
-  const mAccess = text.match(/There are\s*([0-9]+) access points in the Lake/i);
-  if (mAccess) {
-    navigation.accessPointCount = parseInt(mAccess[1], 10) || navigation.accessPointCount || null;
-    store('navigation', 'accessPointCount', buildEvidence('official_document', 'SCDNR Lake Description', url, mAccess[0], 'regex_exact_text'));
-  }
-  const mPublicPrivate = text.match(/maintain\s*([a-z0-9]+) public boat access areas.*?Five are privately owned and operated/i);
-  if (mPublicPrivate) {
-    const n = parseInt(String(mPublicPrivate[1]).replace(/[^0-9]/g, ''), 10);
-    if (isFinite(n)) navigation.publicRampCount = n;
-    navigation.privateAccessCount = 5;
-    store('navigation', 'publicRampCount', buildEvidence('official_document', 'SCDNR Lake Description', url, mPublicPrivate[0], 'regex_exact_text'));
+      // 2. Biology
+      if (Array.isArray(parsed.predatorSpecies?.value) && parsed.predatorSpecies.value.length) {
+        biology.predatorSpecies = uniqueResearchSpecies(parsed.predatorSpecies.value);
+        if (parsed.predatorSpecies.quote) {
+          store('biology', 'predatorSpecies', buildEvidence('official_document', 'SCDNR Lake Description', url, parsed.predatorSpecies.quote, 'llm_extraction'));
+        }
+      }
+      if (Array.isArray(parsed.knownStockings?.value) && parsed.knownStockings.value.length) {
+        biology.knownStockings = parsed.knownStockings.value;
+        if (parsed.knownStockings.quote) {
+          store('biology', 'knownStockings', buildEvidence('official_document', 'SCDNR Lake Description', url, parsed.knownStockings.quote, 'llm_extraction'));
+        }
+      }
+
+      // 3. Habitat
+      if (parsed.attractorCount?.value != null) {
+        habitat.artificialHabitat = ['SCDNR fish attractors'];
+        habitat.artificialHabitatDetails.attractorCount = parsed.attractorCount.value;
+        const note = `s${parsed.attractorCount.value} official SCDNR fish attractors listed on the lake page.`;
+        habitat.notes = note;
+        if (parsed.attractorCount.quote) {
+          store('habitat', 'artificialHabitatDetails', buildEvidence('official_document', 'SCDNR Lake Description', url, parsed.attractorCount.quote, 'llm_extraction'));
+        }
+      }
+
+      // 4. Navigation
+      if (parsed.accessPointCount?.value != null) {
+        navigation.accessPointCount = parsed.accessPointCount.value;
+        if (parsed.accessPointCount.quote) {
+          store('navigation', 'accessPointCount', buildEvidence('official_document', 'SCDNR Lake Description', url, parsed.accessPointCount.quote, 'llm_extraction'));
+        }
+      }
+      if (parsed.publicRampCount?.value != null) {
+        navigation.publicRampCount = parsed.publicRampCount.value;
+        if (parsed.publicRampCount.quote) {
+          store('navigation', 'publicRampCount', buildEvidence('official_document', 'SCDNR Lake Description', url, parsed.publicRampCount.quote, 'llm_extraction'));
+        }
+      }
+      if (parsed.privateAccessCount?.value != null) {
+        navigation.privateAccessCount = parsed.privateAccessCount.value;
+        if (parsed.privateAccessCount.quote) {
+          store('navigation', 'privateAccessCount', buildEvidence('official_document', 'SCDNR Lake Description', url, parsed.privateAccessCount.quote, 'llm_extraction'));
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`LLM SCDNR Description Fact extraction failed: ${err.message}`);
   }
 
   return { identity, biology, habitat, navigation, evidence, sources: [{ label: 'SCDNR Lake Description', url, trust: 'OFFICIAL', sourceType: 'official_document' }] };
 }
-__name(parseSCDNRDescriptionFacts, "parseSCDNRDescriptionFacts");
 
 const RESEARCH_RAMP_SOURCES = {
   SC: {
@@ -1914,14 +1953,12 @@ async function fetchArcGISGrouped(env, cacheKey, sourceDef, buildRecord) {
   } catch (_) {}
   return result;
 }
-__name(fetchArcGISGrouped, "fetchArcGISGrouped");
 
 function waterbodyMatchesLake(lakeName, waterbodyName) {
   const a = normalizeResearchName(lakeName).replace(/^lake /, '');
   const b = normalizeResearchName(waterbodyName).replace(/^lake /, '');
   return !!a && !!b && (a === b || a.includes(b) || b.includes(a));
 }
-__name(waterbodyMatchesLake, "waterbodyMatchesLake");
 
 
 function stripHtmlPreserveTables(html) {
@@ -1938,7 +1975,6 @@ function stripHtmlPreserveTables(html) {
     .replace(/\s+/g, ' ')
     .trim();
 }
-__name(stripHtmlPreserveTables, "stripHtmlPreserveTables");
 
 function extractHtmlTableRows(html) {
   const rows = [];
@@ -1957,7 +1993,6 @@ function extractHtmlTableRows(html) {
   }
   return rows;
 }
-__name(extractHtmlTableRows, "extractHtmlTableRows");
 
 // Parse markdown pipe-delimited tables (from Firecrawl/normalized text)
 // Firecrawl and basic HTML strippers often flatten multi-row tables into ONE long line
@@ -2014,38 +2049,55 @@ function extractMarkdownTableRows(text) {
   }
   return rows;
 }
-__name(extractMarkdownTableRows, "extractMarkdownTableRows");
 
-function lakeMentionedInCell(lakeName, cellText) {
-  // Strip state suffix (", SC" etc) and "Lake" prefix before matching
-  const cleanName = String(lakeName || '').replace(/,\s*(SC|NC|GA|TN)\s*$/i, '').trim();
-  const lake = normalizeResearchName(cleanName).replace(/^lake /, '').trim();
-  const cell = normalizeResearchName(cellText);
-  if (!lake || !cell) return false;
-  // Use base lake name (e.g. "wateree") for matching
-  const baseLake = lake.split(' ')[0];
-  if (!baseLake) return false;
-  // Reject dam/map/tailwater mentions that share the lake's name
-  // ("Wateree Dam", "below Wateree Dam") — those are not the reservoir itself
-  if (new RegExp(`\\b${baseLake}\\s+dam\\b`).test(cell)) return false;
-  if (/\btailwater\b|\briver system\b|\breach\b/.test(cell) && !new RegExp(`\\blake\\s+${baseLake}\\b`).test(cell) && !cell.includes(`lakes `) /* multi-lake lists use "Lakes A, B, Wateree" */) {
-    // Allow multi-lake exception lists like "Lakes Blalock, Greenwood, ..., Wateree, Wylie"
-    // which contain the base name as a listed lake, not as a dam/system label
-    const multiLakeList = /\blakes?\b/.test(cell) && cell.includes(baseLake);
-    if (!multiLakeList) return false;
-  }
-  // Multi-lake lists: "Lakes Blalock, Greenwood, Jocassee, ..., Wateree, Wylie"
-  if (cell.includes(baseLake)) return true;
-  if (cell.includes(lake)) return true;
-  return false;
-}
-__name(lakeMentionedInCell, "lakeMentionedInCell");
+async function parseSCRegulationsFromHtml(lakeName, regsUrl, html, lakeSpecificHtml = '', env) {
+  const systemPrompt = "You are an expert South Carolina freshwater fisheries regulation parser.\n" +
+"Your task is to extract size and creel (possession) limits from South Carolina's official eRegulations pages.\n\n" +
+"Extract both:\n" +
+"1. Statewide (general) regulations.\n" +
+"2. Lake-specific regulations / exceptions for the specified lake body.\n\n" +
+"JSON Schema to return:\n" +
+"{\n" +
+"  \"lastUpdated\": <string|null>,\n" +
+"  \"generalStateRegulations\": {\n" +
+"    \"lengthLimits\": {\n" +
+"       // mapping of species to exact size limit strings, e.g. \"No limit\" or \"14 inch minimum\"\n" +
+"    },\n" +
+"    \"creelLimits\": {\n" +
+"       // mapping of species to creel limit strings, e.g. \"15 per day\" or \"5 per day\"\n" +
+"    }\n" +
+"  },\n" +
+"  \"lakeSpecificRegulations\": {\n" +
+"    \"hasExceptions\": <boolean|null>,\n" +
+"    \"sizeLimits\": {\n" +
+"       // species exceptions for this specific lake\n" +
+"    },\n" +
+"    \"creelLimits\": {\n" +
+"       // creel exceptions for this specific lake\n" +
+"    },\n" +
+"    \"specialRules\": [\n" +
+"       // array of special regulation rules or notes for this lake\n" +
+"    ],\n" +
+"    \"closedSeasons\": [\n" +
+"       // array of objects like { \"species\": <string>, \"period\": <string>, \"note\": <string> }\n" +
+"    ]\n" +
+"  },\n" +
+"  \"evidence\": {\n" +
+"     // For any extracted regulation, map the field path (e.g. \"general.Crappie\" or \"lakeSpecific.Largemouth Bass\") to the exact matching text row/sentence quote as a string\n" +
+"  }\n" +
+"}\n\n" +
+"Species names should be canonicalized to match:\n" +
+"\"Crappie\", \"Bream\", \"Redbreast Sunfish\", \"Chain Pickerel\", \"Redfin Pickerel\", \"Yellow Perch\", \"Blue Catfish\", \"American Eel\", \"Walleye / Sauger\", \"White Bass\", \"Smallmouth Bass\", \"Redeye Bass\", \"Spotted Bass\", \"Largemouth Bass\", \"Striped Bass / Hybrid\"\n\n" +
+"Special Rules:\n" +
+"- If the lake is listed as a Striper/Hybrid exception, capture it under lakeSpecificRegulations. If it's NOT explicitly listed, note that the statewide regulation applies.\n" +
+"- Do NOT map Santee River system, Wateree Dam, or Cooper River rules as lake exceptions unless they explicitly refer to the reservoir body itself.\n" +
+"- Respond ONLY with valid, raw JSON. Do not include markdown formatting or backticks.";
 
-function parseSCRegulationsFromHtml(lakeName, regsUrl, html, lakeSpecificHtml = '') {
-  let rows = extractHtmlTableRows(html);
-  // Fall back to markdown table parser if HTML parser found nothing
-  // (normalized eRegulations docs are Firecrawl markdown / stripped text, not raw HTML)
-  if (!rows.length) rows = extractMarkdownTableRows(html);
+  const cleanHtml = stripHtmlPreserveTables(html).replace(/\s+/g, ' ').trim();
+  const cleanLakeHtml = stripHtmlPreserveTables(lakeSpecificHtml).replace(/\s+/g, ' ').trim();
+
+  const userPrompt = `Lake Name: 	ext${lakeName}\nUrl: ${regsUrl}\nStatewide Text:\n${cleanHtml.slice(0, 15000)}\n\nLake-Specific Text:\n${cleanLakeHtml.slice(0, 8000)}`;
+
   const regs = {
     state: 'SC',
     lastUpdated: null,
@@ -2054,192 +2106,38 @@ function parseSCRegulationsFromHtml(lakeName, regsUrl, html, lakeSpecificHtml = 
     notes: 'Always verify exact lake exceptions at official agency site before fishing.'
   };
   const evidence = { regulations: {} };
-  const addEvidence = (field, quote, method='table_row') => {
-    evidence.regulations[field] = (evidence.regulations[field] || []).concat([buildEvidence('official_document', 'SCDNR / eRegulations', regsUrl, quote, method)]);
-  };
 
-  const plain = stripHtmlPreserveTables(html);
-  const mUpdated = plain.match(/Last Updated:\s*([A-Za-z]+\s+\d{1,2},\s*\d{4})/i);
-  if (mUpdated) {
-    regs.lastUpdated = mUpdated[1].trim();
-    addEvidence('lastUpdated', mUpdated[0], 'regex_exact_text');
-  }
+  try {
+    const llmResult = await callLLM(env, {
+      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+      max_tokens: 2000,
+      temperature: 0.1,
+      response_format: { type: 'json_object' }
+    });
+    const llmText = extractLLMText(llmResult.data).replace(/`{3}(json)?/g, '').trim();
+    const parsed = JSON.parse(llmText);
 
-  const isHeaderRow = (waterBody, fish) => {
-    const w = normalizeResearchName(waterBody);
-    const f = normalizeResearchName(fish);
-    return w === 'water body' || f === 'fish' || w === 'size limit' || f === 'size limit';
-  };
-
-  for (const row of rows) {
-    const cells = row.map(c => String(c || '').replace(/\s+/g, ' ').trim());
-    if (cells.length < 4) continue;
-    const [waterBody, fish, size, limit] = cells;
-    if (!waterBody || !fish) continue;
-    if (isHeaderRow(waterBody, fish)) continue;
-    // Skip seasonal continuation rows that got misaligned (size looks like a date range with no water body species)
-    if (/^(june|july|aug|sept|oct|nov|dec|jan|feb|mar|apr|may)\b/i.test(waterBody) && !/bass|catfish|crappie|bream|sunfish|perch|pickerel|walleye|eel/i.test(fish)) {
-      continue;
-    }
-
-    const fishNorm = normalizeResearchName(fish);
-    const waterNorm = normalizeResearchName(waterBody);
-
-    const applyGeneral = (speciesName, sizeValue, limitValue) => {
-      if (sizeValue) regs.generalStateRegulations.lengthLimits[speciesName] = sizeValue;
-      if (limitValue) regs.generalStateRegulations.creelLimits[speciesName] = limitValue;
-      addEvidence(`general.${speciesName}`, `${waterBody} | ${fish} | ${size} | ${limit}`);
-    };
-    const applyLakeSpecific = (speciesName, sizeValue, limitValue) => {
-      regs.lakeSpecificRegulations.hasExceptions = true;
-      if (sizeValue) regs.lakeSpecificRegulations.sizeLimits[speciesName] = sizeValue;
-      if (limitValue) regs.lakeSpecificRegulations.creelLimits[speciesName] = limitValue;
-      addEvidence(`lakeSpecific.${speciesName}`, `${waterBody} | ${fish} | ${size} | ${limit}`);
-    };
-
-    // Statewide game/nongame species (exact or starts-with statewide)
-    if (waterNorm === 'statewide' || waterNorm.startsWith('statewide ')) {
-      if (fishNorm === 'crappie') applyGeneral('Crappie', size, limit);
-      if (fishNorm.includes('bream')) applyGeneral('Bream', size, limit);
-      if (fishNorm === 'redbreast sunfish') applyGeneral('Redbreast Sunfish', size, limit);
-      if (fishNorm === 'chain pickerel') applyGeneral('Chain Pickerel', size, limit);
-      if (fishNorm === 'redfin pickerel') applyGeneral('Redfin Pickerel', size, limit);
-      if (fishNorm.includes('yellow perch')) applyGeneral('Yellow Perch', size, limit);
-      if (fishNorm === 'blue catfish') applyGeneral('Blue Catfish', size, limit);
-      if (fishNorm === 'american eel') applyGeneral('American Eel', size, limit);
-      if (fishNorm.includes('walleye') || fishNorm.includes('sauger')) applyGeneral('Walleye / Sauger', size, limit);
-      if (fishNorm === 'white bass') applyGeneral('White Bass', size, limit);
-      if (fishNorm === 'smallmouth bass' && waterNorm.startsWith('statewide except')) applyGeneral('Smallmouth Bass', size, limit);
-      if (fishNorm.includes('redeye') && waterNorm.startsWith('statewide except')) applyGeneral('Redeye Bass', size, limit);
-      if (fishNorm === 'spotted bass' && waterNorm.startsWith('statewide except')) applyGeneral('Spotted Bass', size, limit);
-    }
-
-    if (waterNorm.startsWith('statewide except the water bodies listed below') && fishNorm === 'largemouth bass') {
-      applyGeneral('Largemouth Bass', size, limit);
-    }
-    // Lake-specific largemouth (Wateree is listed in the 14" exception group)
-    if (lakeMentionedInCell(lakeName, waterBody) && fishNorm === 'largemouth bass') {
-      applyLakeSpecific('Largemouth Bass', size, limit);
-    }
-    // Other lake-specific black bass exceptions
-    if (lakeMentionedInCell(lakeName, waterBody) && (fishNorm === 'smallmouth bass' || fishNorm.includes('redeye') || fishNorm === 'spotted bass')) {
-      const speciesName = fishNorm === 'smallmouth bass' ? 'Smallmouth Bass'
-        : fishNorm.includes('redeye') ? 'Redeye Bass'
-        : 'Spotted Bass';
-      applyLakeSpecific(speciesName, size, limit);
-    }
-  }
-
-  // Striper / hybrid rows need multi-row handling because closures/season text split across rows.
-  //
-  // CRITICAL: Exception rows are waterbody-specific. Do NOT map "Santee River system",
-  // "Wateree Dam" map captions, Cooper River, or other river/tailwater rows onto a lake
-  // just because the lake name appears nearby (e.g. Wateree Dam on the Santee system map).
-  // Lake Wateree the RESERVOIR is NOT listed as a striper exception — statewide applies.
-  // Lakes that ARE listed by name (Murray, Russell, Hartwell, Thurmond, etc.) get those rows.
-  const striperRows = rows.filter(r => {
-    const f = normalizeResearchName(r[1] || '');
-    return f.includes('striped or hybrid') || f.includes('striped hybrid or white') || f.includes('striped bass');
-  });
-  // Typo on the live page: "list below" (missing 'ed') — match both forms
-  const statewideStriper = striperRows.find(r => {
-    const w = normalizeResearchName(r[0] || '');
-    return w.startsWith('statewide except the water bodies list below')
-      || w.startsWith('statewide except the water bodies listed below')
-      || (w.startsWith('statewide except') && !lakeMentionedInCell(lakeName, r[0] || ''));
-  });
-  if (statewideStriper && statewideStriper.length >= 4) {
-    regs.generalStateRegulations.lengthLimits['Striped Bass / Hybrid'] = statewideStriper[2];
-    regs.generalStateRegulations.creelLimits['Striped Bass / Hybrid'] = statewideStriper[3];
-    addEvidence('general.Striped Bass / Hybrid', statewideStriper.join(' | '));
-  }
-
-  // Lake-specific striper ONLY when the waterbody CELL explicitly names this lake
-  // (e.g. "Lake Murray", "Lake Russell", "Lake Hartwell & Lake Thurmond").
-  // Reject river/system/tailwater/map rows — those are not the reservoir.
-  // Note: multi-lake exception lists like "Lakes Blalock, ..., Wateree, Wylie and the
-  // middle reach of the Saluda..." still count as lake lists (they start with "Lakes").
-  const isRiverOrSystemRow = (waterBody) => {
-    const w = String(waterBody || '');
-    // Multi-lake lists are reservoir exceptions, not river rows (even if they also
-    // mention a river reach at the end of the list)
-    if (/^\s*Lakes?\b/i.test(w)) return false;
-    // Explicit river / system / reach / tailwater language
-    if (/\briver system\b|\btailwater\b|\breach\b|\bbackwaters of\b|\bconfluence\b/i.test(w)) return true;
-    // "X River" without "Lake X" as the subject
-    if (/\b[A-Za-z]+ River\b/i.test(w) && !/\bLakes?\s+[A-Za-z]/i.test(w)) return true;
-    // Coastal river laundry-list rows
-    if (/Ashepoo|Waccamaw|Pee Dee|Edisto|Combahee|Cooper River/i.test(w) && !/\bLake\b/i.test(w)) return true;
-    return false;
-  };
-  const lakeSpecificStriper = striperRows.find(r => {
-    const waterBody = r[0] || '';
-    if (isRiverOrSystemRow(waterBody)) return false;
-    // Require the lake name to appear as a listed waterbody, not as a dam/map label
-    return lakeMentionedInCell(lakeName, waterBody);
-  });
-  if (lakeSpecificStriper && lakeSpecificStriper.length >= 4) {
-    regs.lakeSpecificRegulations.hasExceptions = true;
-    regs.lakeSpecificRegulations.sizeLimits['Striped Bass / Hybrid'] = lakeSpecificStriper[2];
-    regs.lakeSpecificRegulations.creelLimits['Striped Bass / Hybrid'] = lakeSpecificStriper[3];
-    addEvidence('lakeSpecific.Striped Bass / Hybrid', lakeSpecificStriper.join(' | '));
-  }
-  // When the lake is NOT on any striper exception row, statewide is what applies on the lake.
-  // Mirror statewide into lake-applicable convenience fields WITHOUT marking hasExceptions
-  // for striper (LMB or other exceptions may still set hasExceptions).
-  if (!lakeSpecificStriper && statewideStriper && statewideStriper.length >= 4) {
-    // Do not put statewide into lakeSpecific size/creel maps as if it were an exception —
-    // keep it only under generalStateRegulations. Flattened lengthLimits/creelLimits below
-    // still surface the statewide rule for UI convenience.
-    regs.notes = (regs.notes || '') +
-      ' Striped bass/hybrid: this waterbody is not listed as a striper exception on eRegulations; statewide rule applies on the lake. River/tailwater rows (e.g. Santee River system) do not apply to the reservoir.';
-  }
-
-  // Lake-specific SCDNR regs page (static HTML) — e.g. 14" largemouth at Wateree
-  const lakePlain = stripHtmlPreserveTables(lakeSpecificHtml || '');
-  const mLmb = lakePlain.match(/no largemouth bass less than\s*([0-9]+)\s*inches/i);
-  if (mLmb) {
-    regs.lakeSpecificRegulations.hasExceptions = true;
-    regs.lakeSpecificRegulations.sizeLimits['Largemouth Bass'] = `${mLmb[1]} inches min`;
-    addEvidence('lakeSpecific.Largemouth Bass', mLmb[0], 'regex_exact_text');
-  }
-  // Nongame device limits — extract structured trap/trotline limits instead of raw text blob
-  if (/trotlines/i.test(lakePlain) || /traps/i.test(lakePlain)) {
-    regs.lakeSpecificRegulations.specialRules = regs.lakeSpecificRegulations.specialRules || [];
-    const trapRec = lakePlain.match(/Recreational License\s+(\d+)\s+trap/i);
-    const trapCom = lakePlain.match(/Commercial License\s+(\d+)\s+trap/i);
-    const trotRec = lakePlain.match(/Recreational License\s+(\d+)\s+(?:trotline|line)/i);
-    const trotCom = lakePlain.match(/Commercial License\s+(\d+)\s+(?:trotline|line)/i);
-    if (trapRec || trotRec) {
-      const parts = [];
-      if (trapRec) parts.push(`Traps: ${trapRec[1]} (rec)${trapCom ? ', ' + trapCom[1] + ' (com)' : ''}`);
-      if (trotRec) parts.push(`Trotlines: ${trotRec[1]} with 50 hooks max (rec)${trotCom ? ', ' + trotCom[1] + ' with 150 hooks max (com)' : ''}`);
-      const note = parts.join('; ');
-      if (note && !regs.lakeSpecificRegulations.specialRules.includes(note)) {
-        regs.lakeSpecificRegulations.specialRules.push(note);
+    if (parsed) {
+      if (parsed.lastUpdated) regs.lastUpdated = parsed.lastUpdated;
+      if (parsed.generalStateRegulations) {
+        regs.generalStateRegulations.lengthLimits = parsed.generalStateRegulations.lengthLimits || {};
+        regs.generalStateRegulations.creelLimits = parsed.generalStateRegulations.creelLimits || {};
+      }
+      if (parsed.lakeSpecificRegulations) {
+        regs.lakeSpecificRegulations.hasExceptions = parsed.lakeSpecificRegulations.hasExceptions ?? null;
+        regs.lakeSpecificRegulations.sizeLimits = parsed.lakeSpecificRegulations.sizeLimits || {};
+        regs.lakeSpecificRegulations.creelLimits = parsed.lakeSpecificRegulations.creelLimits || {};
+        regs.lakeSpecificRegulations.specialRules = parsed.lakeSpecificRegulations.specialRules || [];
+        regs.lakeSpecificRegulations.closedSeasons = parsed.lakeSpecificRegulations.closedSeasons || [];
+      }
+      if (parsed.evidence) {
+        for (const [key, quote] of Object.entries(parsed.evidence)) {
+          evidence.regulations[key] = [buildEvidence('official_document', 'SCDNR / eRegulations', regsUrl, quote, 'llm_extraction')];
+        }
       }
     }
-  }
-
-  // Closed seasons: ONLY from a striper exception row that actually names THIS lake.
-  // Do not attach Santee River system / coastal river summer closures to unlisted lakes.
-  if (lakeSpecificStriper) {
-    const lakeStriperText = lakeSpecificStriper.join(' | ');
-    // Also scan the next raw striper continuation rows only if they share the same waterbody start
-    // (season splits like "June 1 - Sept. 30: any length" sometimes land in adjacent cells)
-    const closureMatch = lakeStriperText.match(/June\s*1[56]\s*[-–]\s*Sept\.?\s*30[^.|]{0,40}closed/i)
-      || lakeStriperText.match(/closed\s*(?:to\s*(?:the\s*)?taking|season)?[^.|]{0,40}June\s*1[56]/i);
-    if (closureMatch) {
-      const already = (regs.lakeSpecificRegulations.closedSeasons || []).some(c => /June\s*1[56]/i.test(c.period || ''));
-      if (!already) {
-        regs.lakeSpecificRegulations.closedSeasons.push({
-          species: 'Striped Bass / Hybrid',
-          period: 'June 16 - Sept. 30',
-          note: `Closed per eRegulations exception row for ${String(lakeSpecificStriper[0] || '').slice(0, 80)}`
-        });
-        addEvidence('lakeSpecific.closedSeasons', closureMatch[0], 'regex_exact_text');
-      }
-    }
+  } catch (err) {
+    console.error(`LLM eRegulations Fact extraction failed: ${err.message}`);
   }
 
   // Flatten convenience fields for UI/back-compat
@@ -2248,7 +2146,6 @@ function parseSCRegulationsFromHtml(lakeName, regsUrl, html, lakeSpecificHtml = 
 
   return { regulations: regs, evidence, sources: [{ label: 'SCDNR / eRegulations', url: regsUrl, trust: 'OFFICIAL', sourceType: 'official_document' }] };
 }
-__name(parseSCRegulationsFromHtml, "parseSCRegulationsFromHtml");
 
 async function getRampSpeciesFacts(env, lakeName, state) {
   const sourceDef = RESEARCH_RAMP_SOURCES[state];
@@ -2265,7 +2162,6 @@ async function getRampSpeciesFacts(env, lakeName, state) {
   const predatorSpecies = uniqueResearchSpecies(ramps.flatMap(r => splitSpeciesText(r.species || '')));
   return { ramps, predatorSpecies, sourceLabel: sourceDef.label };
 }
-__name(getRampSpeciesFacts, "getRampSpeciesFacts");
 
 async function getAttractorFacts(env, lakeName, state) {
   const sourceDef = RESEARCH_ATTRACTOR_SOURCES[state];
@@ -2286,7 +2182,6 @@ async function getAttractorFacts(env, lakeName, state) {
   }
   return { attractors, typeCounts, sourceLabel: sourceDef.label };
 }
-__name(getAttractorFacts, "getAttractorFacts");
 
 function buildFactualSummary(profile) {
   const parts = [];
@@ -2317,7 +2212,6 @@ function buildFactualSummary(profile) {
   }
   return parts.join(' ').trim() || null;
 }
-__name(buildFactualSummary, "buildFactualSummary");
 
 async function handleResearchDeterministicFacts(request, env) {
   let body;
@@ -2483,7 +2377,7 @@ async function handleResearchDeterministicFacts(request, env) {
       const descRes = await fetch(descUrl, { headers: { 'User-Agent': 'TrollMap/16 Evidence Engine', 'Accept': 'text/html' }, cf: { cacheTtl: 86400, cacheEverything: true } });
       if (descRes.ok) {
         const html = await descRes.text();
-        const parsed = parseSCDNRDescriptionFacts(lakeName, descUrl, html);
+        const parsed = await parseSCDNRDescriptionFacts(lakeName, descUrl, html, env);
         Object.assign(profile.identity, parsed.identity || {});
         profile.biology.predatorSpecies = uniqueResearchSpecies([...(profile.biology.predatorSpecies || []), ...((parsed.biology || {}).predatorSpecies || [])]);
         if ((parsed.biology || {}).knownStockings?.length) profile.biology.knownStockings = parsed.biology.knownStockings;
@@ -2603,7 +2497,7 @@ async function handleResearchDeterministicFacts(request, env) {
           profile._regsDebug.first100chars = (regsHtml || lakeRegsHtml || '').slice(0, 100);
           // SC: use deterministic HTML parser. NC/GA: store raw text for agent extraction
           const parsedRegs = state === 'SC'
-            ? parseSCRegulationsFromHtml(lakeName, regsUrl, regsHtml || '', lakeRegsHtml || '')
+            ? await parseSCRegulationsFromHtml(lakeName, regsUrl, regsHtml || '', lakeRegsHtml || '', env)
             : { regulations: { state, rawRegsText: (regsHtml || '').slice(0, 8000) }, sources: [{ label: `${state} Freshwater Regulations (eRegulations)`, url: regsUrl, authority: state === 'NC' ? 'NCWRC' : state === 'TN' ? 'TWRA' : 'GADNR', trust: 'OFFICIAL' }], evidence: {} };
           const pr = parsedRegs.regulations || {};
           if (pr.state) profile.regulations.state = pr.state;
@@ -2718,7 +2612,6 @@ async function handleResearchDeterministicFacts(request, env) {
 
   return new Response(JSON.stringify({ ok: true, lakeName, state, profile, seededDiscoveryTargets }), { headers: JSON_HEADERS });
 }
-__name(handleResearchDeterministicFacts, "handleResearchDeterministicFacts");
 
 async function handleResearchSaveNormalized(request, env) {
   let body;
@@ -2739,7 +2632,6 @@ async function handleResearchSaveNormalized(request, env) {
 
   return new Response(JSON.stringify({ success: true, key }), { headers: JSON_HEADERS });
 }
-__name(handleResearchSaveNormalized, "handleResearchSaveNormalized");
 
 async function handleResearchGetNormalized(env, lakeName) {
   const LEGACY_PROFILE_KEYS = {
@@ -2764,7 +2656,6 @@ async function handleResearchGetNormalized(env, lakeName) {
   try { docs = JSON.parse(text); } catch { return new Response(JSON.stringify({ok:false, error:"corrupt normalized documents"}), {status:500, headers:JSON_HEADERS}); }
   return new Response(JSON.stringify({ok:true, lakeName, count: docs.length, documents: docs}), {headers:JSON_HEADERS});
 }
-__name(handleResearchGetNormalized, "handleResearchGetNormalized");
 
 async function handleResearchAnalyzeFacts(request, env) {
   let body;
@@ -3305,7 +3196,6 @@ async function handleResearchDedupeContradictions(request, env) {
 
   return new Response(JSON.stringify({ success: true, deduplicated_facts: deduplicated, contradictions: dedupedContradictions, meta: { input: facts.length, deduped: deduplicated.length, contradictions: dedupedContradictions.length } }), { headers: JSON_HEADERS });
 }
-__name(handleResearchDedupeContradictions, "handleResearchDedupeContradictions");
 
 // ── GAP QUERY TEMPLATES ──────────────────────────────────────────────────────
 const GAP_QUERIES = {
@@ -3439,7 +3329,6 @@ Return ONLY valid JSON matching this schema exactly. No explanations.`;
     return new Response(JSON.stringify({ success: false, error: e.message }), { status: 502, headers: JSON_HEADERS });
   }
 }
-__name(handleResearchMapFacts, "handleResearchMapFacts");
 
 // ── GAP ANALYSIS — identify null fields and return targeted search queries ──
 async function handleResearchGapAnalysis(request, env) {
@@ -3487,7 +3376,6 @@ async function handleResearchGapAnalysis(request, env) {
     searchableGaps: gapQueries.length
   }), { headers: JSON_HEADERS });
 }
-__name(handleResearchGapAnalysis, "handleResearchGapAnalysis");
 
 // ── GAP SEARCH — targeted Tavily search + extract + fact extraction for one null field ──
 async function handleResearchGapSearch(request, env) {
@@ -3529,7 +3417,6 @@ async function handleResearchGapSearch(request, env) {
     return new Response(JSON.stringify({ success: false, error: e.message, extracted_facts: [], rawText: '' }), { status: 502, headers: JSON_HEADERS });
   }
 }
-__name(handleResearchGapSearch, "handleResearchGapSearch");
 
 // ─── ORIGINAL LAKE RESEARCH MODULE FUNCTIONS ───
 
@@ -3539,22 +3426,14 @@ function sanitizeLakeId(name) {
     .replace(/^_+|_+$/g, '')
     .slice(0, 80) || 'unknown_lake';
 }
-__name(sanitizeLakeId, "sanitizeLakeId");
 
 function lakeResearchMasterKey(lakeName) {
   return `lakes/${sanitizeLakeId(lakeName)}.json`;
 }
-__name(lakeResearchMasterKey, "lakeResearchMasterKey");
-
-function lakeResearchVersionKey(lakeName, version) {
-  return `lakes/versions/${sanitizeLakeId(lakeName)}/v${version}.json`;
-}
-__name(lakeResearchVersionKey, "lakeResearchVersionKey");
 
 function lakePackageKey(lakeName, filename) {
   return `lake_packages/${sanitizeLakeId(lakeName)}/${filename}`;
 }
-__name(lakePackageKey, "lakePackageKey");
 
 function extractJsonPossibly(txt) {
   if (!txt) return null;
@@ -3570,7 +3449,6 @@ function extractJsonPossibly(txt) {
   }
   return null;
 }
-__name(extractJsonPossibly, "extractJsonPossibly");
 
 var RESEARCH_AGENTS = {
   identity: {
@@ -4120,7 +3998,6 @@ function calculateSectionConfidence(sources, hasData, sectionType) {
     reason: `${official} official, ${secondary} secondary, ${src.length} total`
   };
 }
-__name(calculateSectionConfidence, "calculateSectionConfidence");
 
 async function handleResearchAgent(request, env) {
   let body;
@@ -4328,7 +4205,6 @@ async function handleResearchAgent(request, env) {
     raw: rawText.slice(0, 2000)
   }), {headers: JSON_HEADERS});
 }
-__name(handleResearchAgent, "handleResearchAgent");
 
 async function handleResearchList(env) {
   const prefix = "lakes/";
@@ -4349,7 +4225,6 @@ async function handleResearchList(env) {
   masters.sort((a,b)=>a.key.localeCompare(b.key));
   return new Response(JSON.stringify({ok:true, count: masters.length, lakes: masters, versionFiles: versions.length, timestamp: new Date().toISOString()}), {headers: JSON_HEADERS});
 }
-__name(handleResearchList, "handleResearchList");
 
 async function handleResearchGet(env, lakeId) {
   // ── Legacy key redirect: new canonical DNR names → existing R2 profile keys ──
@@ -4391,7 +4266,6 @@ async function handleResearchGet(env, lakeId) {
   } catch {}
   return new Response(JSON.stringify({ok:true, lakeId: lakeId, sanitized: safe, masterKey, profile: data, packageFiles, versions: versionList}), {headers: JSON_HEADERS});
 }
-__name(handleResearchGet, "handleResearchGet");
 
 async function handleResearchSave(request, env) {
   let body;
@@ -4562,7 +4436,6 @@ async function handleResearchSave(request, env) {
 
   return new Response(JSON.stringify({ok:true, lakeId: safe, lakeName, version: nextVersion, masterKey: `lakes/${safe}.json`, overallConfidence: overallConf, status: master.metadata.status, bytes: masterJson.length}), {headers: JSON_HEADERS});
 }
-__name(handleResearchSave, "handleResearchSave");
 
 async function handleResearchApprove(request, env) {
   let body;
@@ -4587,7 +4460,6 @@ async function handleResearchApprove(request, env) {
   // also save as new version? keep same version but mark verified
   return new Response(JSON.stringify({ok:true, lakeId: safe, lakeName, status:"verified", version: profile.metadata.version||profile.metadata.versionNumber}), {headers: JSON_HEADERS});
 }
-__name(handleResearchApprove, "handleResearchApprove");
 
 async function handleResearchDelete(request, env) {
   let body;
@@ -4609,7 +4481,6 @@ async function handleResearchDelete(request, env) {
   }
   return new Response(JSON.stringify({ ok:true, lakeName, deleted: keys.length }), { headers: JSON_HEADERS });
 }
-__name(handleResearchDelete, "handleResearchDelete");
 
 async function handleResearchPackage(env, lakeId) {
   const safe = sanitizeLakeId(lakeId);
@@ -4622,7 +4493,6 @@ async function handleResearchPackage(env, lakeId) {
   files.sort((a,b)=>a.name.localeCompare(b.name));
   return new Response(JSON.stringify({ok:true, lakeId: lakeId, sanitized: safe, count: files.length, files}), {headers: JSON_HEADERS});
 }
-__name(handleResearchPackage, "handleResearchPackage");
 
 async function handleResearchPackageFile(env, lakeId, filename) {
   const safe = sanitizeLakeId(lakeId);
@@ -4633,7 +4503,6 @@ async function handleResearchPackageFile(env, lakeId, filename) {
   const ct = filename.endsWith('.json') ? 'application/json' : filename.endsWith('.md') ? 'text/markdown' : 'application/octet-stream';
   return new Response(body, {headers: {...CORS, "Content-Type": ct, "Cache-Control":"no-store"}});
 }
-__name(handleResearchPackageFile, "handleResearchPackageFile");
 
 async function handleEnhancedLakeIntel(lakeName, env) {
   // merges curated LAKE_INTEL with researched profile if exists
@@ -4667,7 +4536,6 @@ async function handleEnhancedLakeIntel(lakeName, env) {
   } catch {}
   return {...curated, researched, hasResearchedProfile: !!researched};
 }
-__name(handleEnhancedLakeIntel, "handleEnhancedLakeIntel");
 
 async function handleResearchValidationPass(request, env) {
   let body;
@@ -4731,7 +4599,6 @@ Rules: depth values must be specific and convert meters × 3.281; normalPoolFt m
     return new Response(JSON.stringify({ success:false, error:String(e.message || e), filled:{} }), { status:502, headers:JSON_HEADERS });
   }
 }
-__name(handleResearchValidationPass,'handleResearchValidationPass');
 
 
 async function handleResearchThermoclineSearch(request, env) {
@@ -4853,6 +4720,5 @@ If no thermocline or depth information is found, return found: false and null fo
     note: thermocline ? null : 'Articles found but no thermocline/depth information extracted',
   }), { headers: JSON_HEADERS });
 }
-__name(handleResearchThermoclineSearch, 'handleResearchThermoclineSearch');
 
 export { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchValidationPass, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey };

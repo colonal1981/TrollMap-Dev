@@ -134,7 +134,7 @@ var LAKE_INTEL = {
 };
 async function fetchText(url, opts = {}) {
   const res = await fetch(url, {
-    cf: { cacheTtl: 120, cacheEverything: true },
+    cf: { cacheTtl: 900, cacheEverything: true },
     headers: { "User-Agent": "TrollMap/10 Worker", "Accept": "text/html,application/json,*/*" },
     ...opts
   });
@@ -145,7 +145,7 @@ async function fetchUsgs(site, paramCd, periodDays = 2) {
   const out = {};
   const jsonUrl = `https://waterservices.usgs.gov/nwis/iv/?sites=${site}&parameterCd=${paramCd}&format=json&period=P${periodDays}D`;
   try {
-    const r = await fetch(jsonUrl, { cf: { cacheTtl: 120 } });
+    const r = await fetch(jsonUrl, { cf: { cacheTtl: 900 } });
     if (r.ok) {
       const j = await r.json();
       for (const ts of j?.value?.timeSeries || []) {
@@ -170,7 +170,7 @@ async function fetchUsgs(site, paramCd, periodDays = 2) {
   if (out.tempC != null || out.gageHeight != null || out.elevation != null) return out;
   try {
     const rdbUrl = `https://waterservices.usgs.gov/nwis/iv/?sites=${site}&parameterCd=${paramCd}&format=rdb&period=P${periodDays}D`;
-    const r = await fetch(rdbUrl, { cf: { cacheTtl: 120 } });
+    const r = await fetch(rdbUrl, { cf: { cacheTtl: 900 } });
     if (!r.ok) return out;
     const text = await r.text();
     const lines = text.split("\n").filter((l) => l && !l.startsWith("#"));
@@ -204,7 +204,7 @@ __name(fetchUsgs, "fetchUsgs");
 async function fetchDukeApi() {
   try {
     const r = await fetch("https://api.hydro-derived.duke-energy.app/lakes/current-level", {
-      cf: { cacheTtl: 120, cacheEverything: true },
+      cf: { cacheTtl: 900, cacheEverything: true },
       headers: {
         "User-Agent": "TrollMap/10 Worker",
         "Origin": "https://lakes.hydro-derived.duke-energy.app",
@@ -337,7 +337,7 @@ async function fetchCwmsLakeLevel(lakeName, lakeKey) {
       const tsUrl = `${base}/timeseries?name=${encodeURIComponent(locId)}.Elev.Inst.0.0.USACE-RAW&office=SA&unit=ft`;
       const r = await fetch(tsUrl, {
         headers: { 'User-Agent': 'TrollMap/16 Worker', 'Accept': 'application/json' },
-        cf: { cacheTtl: 120 }
+        cf: { cacheTtl: 900 }
       });
       if (r.ok) {
         const j = await r.json();
@@ -382,7 +382,7 @@ async function fetchCwmsLakeLevel(lakeName, lakeKey) {
         try {
           const tsR = await fetch(tsUrl, {
             headers: { 'User-Agent': 'TrollMap/16 Worker', 'Accept': 'application/json' },
-            cf: { cacheTtl: 120 }
+            cf: { cacheTtl: 900 }
           });
           if (tsR.ok) {
             const tsJ = await tsR.json();

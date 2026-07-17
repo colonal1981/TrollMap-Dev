@@ -308,7 +308,7 @@ __name(getRiver, "getRiver");
 async function computeGageRateOfRise(site) {
   try {
     const url = `https://waterservices.usgs.gov/nwis/iv/?sites=${site}&parameterCd=00065&format=rdb&period=PT3H`;
-    const r = await fetch(url, { cf: { cacheTtl: 120 } });
+    const r = await fetch(url, { cf: { cacheTtl: 900 } });
     if (!r.ok) return null;
     const text = await r.text();
     const lines = text.split("\n").filter((l) => l && !l.startsWith("#"));
@@ -355,7 +355,7 @@ var DUKE_API_BASE = "https://api.hydro-derived.duke-energy.app";
 async function fetchDukeFlowArrivals(basinId) {
   try {
     const r = await fetch(`${DUKE_API_BASE}/rivers/flow-arrivals/${basinId}`, {
-      cf: { cacheTtl: 300, cacheEverything: true },
+      cf: { cacheTtl: 900, cacheEverything: true },
       headers: {
         "User-Agent": "TrollMap/12 Worker",
         "Origin": "https://lakes.hydro-derived.duke-energy.app",
@@ -403,7 +403,7 @@ async function fetchDominionSaludaStatus() {
   };
   try {
     const r = await fetch("https://www.dominionenergy.com/about/lakes-and-recreation/lower-saluda-river-sc", {
-      cf: { cacheTtl: 600, cacheEverything: true },
+      cf: { cacheTtl: 900, cacheEverything: true },
       headers: { "User-Agent": "TrollMap/12 Worker", "Accept": "text/html" }
     });
     if (!r.ok) return null;
