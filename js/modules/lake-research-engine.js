@@ -542,6 +542,141 @@ function scoreDocuments(normalizedDocuments, baseName, lakeName) {
   }).sort((a, b) => (b.scoring.composite||0) - (a.scoring.composite||0));
 }
 
+const VALIDATION_FIELD_PATHS = [
+  'identity.surfaceAreaAcres', 'identity.maxDepthFt', 'identity.averageDepthFt',
+  'identity.normalPoolFt', 'identity.reservoirOwner', 'identity.riverSystem',
+  'identity.damName', 'identity.yearImpounded', 'identity.county', 'identity.archetype',
+  'limnology.waterClarity.typical', 'limnology.waterClarity.color',
+  'limnology.waterClarity.secchiFt', 'limnology.thermocline.summerDepthFt',
+  'limnology.thermocline.strength', 'limnology.thermocline.winterMix',
+  'limnology.oxygen.depletionDepthFt', 'limnology.oxygen.anoxicBelowFt',
+  'limnology.trophicStatus', 'limnology.flowCharacteristics', 'limnology.seasonalDrawdownFt',
+  'biology.primaryForage', 'biology.secondaryForage', 'biology.predatorSpecies',
+  'biology.speciesAbundance', 'biology.knownStockings', 'biology.baitfishMovement',
+  'biology.invasiveSpecies', 'biology.spawnTiming', 'biology.forageSpatial',
+  'habitat.bottomComposition', 'habitat.cover', 'habitat.vegetation',
+  'habitat.standingTimber', 'habitat.dockDensity', 'habitat.riprapLocations',
+  'habitat.namedCreekMouths', 'habitat.timberFields', 'habitat.shallowFlatAreas',
+  'habitat.artificialHabitat', 'habitat.artificialHabitatDetails.attractorCount',
+  'habitat.artificialHabitatDetails.attractorTypes',
+  'navigation.ramps', 'navigation.hazards', 'navigation.notes'
+];
+
+function valueAtPath(obj, path) {
+  return path.split('.').reduce((value, key) => value == null ? undefined : value[key], obj);
+}
+
+function isValidationGap(value) {
+  return value == null || value === ''
+    || (Array.isArray(value) && value.length === 0)
+    || (typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0);
+}
+
+function setAtPath(obj, path, value) {
+  const parts = path.split('.');
+  let cursor = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (!cursor[parts[i]] || typeof cursor[parts[i]] !== 'object') cursor[parts[i]] = {};
+    cursor = cursor[parts[i]];
+  }
+  cursor[parts[parts.length - 1]] = value;
+}
+
+// Uses only previously extracted R2/profile facts. No discover, proxy-download,
+// Firecrawl, PDF parsing, or per-document extraction is triggered here.
+async function validateExistingFacts(lakeName, callbacks = {}) {
+  if (_state.researchInProgress) throw new Error('A research task is already in progress.');
+  if (!lakeName) throw new Error('Select a lake first.');
+  _state.researchInProgress = true;
+  _state.researchLog = [];
+  showProgress(true);
+  setProgress('Loading saved profile and extracted facts…', 5);
+  log(`=== VALIDATE EXISTING FACTS: ${lakeName} ===`);
+  try {
+    const getRes = await fetch(`${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`);
+    if (!getRes.ok) throw new Error(`Profile load HTTP ${getRes.status}`);
+    const getData = await getRes.json();
+    if (!getData.ok || !getData.profile) throw new Error('No saved research profile exists for this lake. Run research once first.');
+    const profile = cloneJson(getData.profile);
+    const facts = profile._extractedFacts || [];
+    if (!facts.length) throw new Error('This saved profile has no extracted facts to validate. Run research or import facts first.');
+
+    // Masters flatten identity fields, while an in-progress packet has identity
+    // nested. Normalize only for validation and retain both shapes on save.
+    profile.identity = profile.identity || {
+      lakeName: profile.lakeName, state: profile.state, aliases: profile.aliases || [],
+      county: profile.county, riverSystem: profile.riverSystem, reservoirOwner: profile.reservoirOwner,
+      surfaceAreaAcres: profile.surfaceAreaAcres, maxDepthFt: profile.maxDepthFt,
+      averageDepthFt: profile.averageDepthFt, normalPoolFt: profile.normalPoolFt,
+      damName: profile.damName, yearImpounded: profile.yearImpounded, archetype: profile.archetype
+    };
+    profile.biology = profile.biology || profile.forage || {};
+    profile.limnology = profile.limnology || {};
+    profile.habitat = profile.habitat || {};
+    profile.navigation = profile.navigation || {};
+
+    const nullFields = VALIDATION_FIELD_PATHS.filter(path => isValidationGap(valueAtPath(profile, path)));
+    log(`Saved facts: ${facts.length}. Empty supported fields: ${nullFields.length}.`);
+    if (!nullFields.length) {
+      log('✔ No supported validation gaps remain; no LLM call or save needed.');
+      setProgress('Existing facts already validated.', 100);
+      if (callbacks.onComplete) await callbacks.onComplete(lakeName);
+      return { ok: true, fieldsRequested: 0, fieldsFilled: 0 };
+    }
+
+    const filled = {};
+    const batches = Math.ceil(nullFields.length / 10);
+    for (let start = 0; start < nullFields.length; start += 10) {
+      const batch = nullFields.slice(start, start + 10);
+      const index = start / 10 + 1;
+      setProgress(`Validating existing facts (${index}/${batches})…`, 15 + index / batches * 65);
+      log(`Validation batch ${index}/${batches}: ${batch.join(', ')}`);
+      const res = await fetch(`${CF_WORKER_URL}/research/validation-pass`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lakeName, state: sanitizeStateFromLakeName(lakeName), nullFields: batch, extractedFacts: facts })
+      });
+      if (!res.ok) throw new Error(`Validation HTTP ${res.status}`);
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || 'Validation agent failed');
+      Object.assign(filled, data.filled || {});
+      if (start + 10 < nullFields.length) await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    let applied = 0;
+    for (const [path, value] of Object.entries(filled)) {
+      if (nullFields.includes(path) && !isValidationGap(value) && isValidationGap(valueAtPath(profile, path))) {
+        setAtPath(profile, path, value);
+        applied++;
+      }
+    }
+    // Keep master-profile identity convenience fields synchronized with values
+    // filled under the normalized identity object.
+    for (const key of ['surfaceAreaAcres', 'maxDepthFt', 'averageDepthFt', 'normalPoolFt', 'reservoirOwner', 'riverSystem', 'damName', 'yearImpounded', 'county', 'archetype']) {
+      if (profile.identity[key] != null) profile[key] = profile.identity[key];
+    }
+    profile.metadata = profile.metadata || {};
+    profile.metadata.lastExistingFactsValidationAt = new Date().toISOString();
+    profile.metadata.existingFactsValidationApplied = applied;
+
+    setProgress('Saving validated profile…', 90);
+    const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lakeName, profile, status: profile.metadata.status || 'draft', requestedBy: 'Validate Existing Facts' })
+    });
+    if (!saveRes.ok) throw new Error(`Save HTTP ${saveRes.status}`);
+    log(`✔ Existing-fact validation returned ${Object.keys(filled).length} field(s); applied ${applied}.`);
+    setProgress('Existing-fact validation complete.', 100);
+    if (callbacks.onComplete) await callbacks.onComplete(lakeName);
+    return { ok: true, fieldsRequested: nullFields.length, fieldsFilled: applied, returned: Object.keys(filled).length };
+  } catch (err) {
+    log(`❌ Existing-fact validation failed: ${err.message}`);
+    setProgress('Validation failed — see log.', 0);
+    throw err;
+  } finally {
+    _state.researchInProgress = false;
+  }
+}
+
 async function runFromNormalized(lakeName, callbacks = {}) {
   if (_state.researchInProgress) { alert('A research task is already in progress.'); return; }
   if (!lakeName) { alert('Please select a lake.'); return; }
@@ -1467,53 +1602,73 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     // using already-extracted facts and document context.
     // ----------------------------------------------------
     try {
-      const nullFields = [];
-      const checkProfile = { ...agentSections };
-      if (!checkProfile.identity?.surfaceAreaAcres) nullFields.push('surfaceAreaAcres');
-      if (!checkProfile.identity?.maxDepthFt) nullFields.push('maxDepthFt');
-      if (!checkProfile.identity?.averageDepthFt) nullFields.push('averageDepthFt');
-      if (!checkProfile.identity?.normalPoolFt) nullFields.push('normalPoolFt');
-      if (!checkProfile.identity?.reservoirOwner) nullFields.push('reservoirOwner');
-      if (!checkProfile.limnology?.thermocline?.summerDepthFt) nullFields.push('thermocline.summerDepthFt');
-      if (!checkProfile.limnology?.trophicStatus) nullFields.push('trophicStatus');
-      if (!checkProfile.limnology?.waterClarity?.typical) nullFields.push('waterClarity');
-      if (!checkProfile.biology?.primaryForage?.length) nullFields.push('primaryForage');
-      if (!checkProfile.biology?.predatorSpecies?.length) nullFields.push('predatorSpecies');
+      // Validation must see every meaningful unpopulated field, not just the
+      // original handful of identity values. Use real paths in agentSections;
+      // the old unprefixed identity names were written at the packet root and
+      // never filled identity.*.
+      const VALIDATION_FIELDS = [
+        'identity.surfaceAreaAcres', 'identity.maxDepthFt', 'identity.averageDepthFt',
+        'identity.normalPoolFt', 'identity.reservoirOwner', 'identity.riverSystem',
+        'identity.damName', 'identity.yearImpounded', 'identity.county', 'identity.archetype',
+        'limnology.waterClarity.typical', 'limnology.waterClarity.color',
+        'limnology.waterClarity.secchiFt', 'limnology.thermocline.summerDepthFt',
+        'limnology.thermocline.strength', 'limnology.thermocline.winterMix',
+        'limnology.oxygen.depletionDepthFt', 'limnology.oxygen.anoxicBelowFt',
+        'limnology.trophicStatus', 'limnology.flowCharacteristics', 'limnology.seasonalDrawdownFt',
+        'biology.primaryForage', 'biology.secondaryForage', 'biology.predatorSpecies',
+        'biology.speciesAbundance', 'biology.knownStockings', 'biology.baitfishMovement',
+        'biology.invasiveSpecies', 'biology.spawnTiming', 'biology.forageSpatial',
+        'habitat.bottomComposition', 'habitat.cover', 'habitat.vegetation',
+        'habitat.standingTimber', 'habitat.dockDensity', 'habitat.riprapLocations',
+        'habitat.namedCreekMouths', 'habitat.timberFields', 'habitat.shallowFlatAreas',
+        'habitat.artificialHabitat', 'habitat.artificialHabitatDetails.attractorCount',
+        'habitat.artificialHabitatDetails.attractorTypes',
+        'navigation.ramps', 'navigation.hazards', 'navigation.notes'
+      ];
+      const atPath = (obj, path) => path.split('.').reduce((value, key) => value == null ? undefined : value[key], obj);
+      const isMissing = (value) => value == null || value === ''
+        || (Array.isArray(value) && value.length === 0)
+        || (typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0);
+      const nullFields = VALIDATION_FIELDS.filter(path => isMissing(atPath(agentSections, path)));
 
       if (nullFields.length > 0) {
-        log(`Running validation pass for ${nullFields.length} null field(s)...`);
-        const valRes = await fetch(`${CF_WORKER_URL}/research/validation-pass`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            lakeName,
-            state: stateName,
-            nullFields,
-            profile: agentSections,
-            extractedFacts: uniqueFacts,
-          })
-        });
-        if (valRes.ok) {
+        log(`Running validation pass for ${nullFields.length} empty field(s): ${nullFields.join(', ')}`);
+        // A 30+ field request can exceed the validation model's JSON output
+        // budget. Batch fields so every empty field gets an independent chance.
+        const filled = {};
+        const batchSize = 10;
+        for (let i = 0; i < nullFields.length; i += batchSize) {
+          const fieldBatch = nullFields.slice(i, i + batchSize);
+          const valRes = await fetch(`${CF_WORKER_URL}/research/validation-pass`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              lakeName,
+              state: stateName,
+              nullFields: fieldBatch,
+              profile: agentSections,
+              extractedFacts: uniqueFacts,
+            })
+          });
+          if (!valRes.ok) throw new Error(`validation HTTP ${valRes.status}`);
           const valData = await valRes.json();
-          if (valData.success && valData.filled) {
-            let filledCount = 0;
-            for (const [path, value] of Object.entries(valData.filled)) {
-              if (value == null) continue;
-              const parts = path.split('.');
-              let obj = agentSections;
-              for (let i = 0; i < parts.length - 1; i++) {
-                if (!obj[parts[i]]) obj[parts[i]] = {};
-                obj = obj[parts[i]];
-              }
-              const lastKey = parts[parts.length - 1];
-              if (obj[lastKey] == null || (Array.isArray(obj[lastKey]) && obj[lastKey].length === 0)) {
-                obj[lastKey] = value;
-                filledCount++;
-              }
-            }
-            log(`✔ Validation pass filled ${filledCount} field(s)`);
-          }
+          if (!valData.success) throw new Error(valData.error || 'validation agent failed');
+          Object.assign(filled, valData.filled || {});
+          if (i + batchSize < nullFields.length) await new Promise(resolve => setTimeout(resolve, 1000));
         }
+        let filledCount = 0;
+        for (const [path, value] of Object.entries(filled)) {
+          if (!nullFields.includes(path) || value == null) continue;
+          const parts = path.split('.');
+          let obj = agentSections;
+          for (let i = 0; i < parts.length - 1; i++) {
+            if (!obj[parts[i]] || typeof obj[parts[i]] !== 'object') obj[parts[i]] = {};
+            obj = obj[parts[i]];
+          }
+          const lastKey = parts[parts.length - 1];
+          if (isMissing(obj[lastKey])) { obj[lastKey] = value; filledCount++; }
+        }
+        log(`✔ Validation pass returned ${Object.keys(filled).length} evidence-backed field(s); applied ${filledCount}.`);
       }
     } catch (e) {
       log(`⚠️ Validation pass failed: ${e.message} — continuing`);
@@ -1595,4 +1750,4 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
 
 
 
-export { runEvidencePipeline, runFromNormalized, _state, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log };
+export { runEvidencePipeline, runFromNormalized, validateExistingFacts, _state, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log };

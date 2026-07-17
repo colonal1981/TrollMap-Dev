@@ -1,5 +1,5 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
-import { _state, runEvidencePipeline, runFromNormalized, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log } from './lake-research-engine.js';
+import { _state, runEvidencePipeline, runFromNormalized, validateExistingFacts, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log } from './lake-research-engine.js';
 
 
 function renderContradictionsAlert(contradictions, lakeName) {
@@ -1189,6 +1189,38 @@ function initLakeResearch() {
     if (!lake) { alert('Select a lake first'); return; }
     if (!confirm(`Resume extraction for ${lake} using existing normalized documents already in R2? Skips all PDF downloads — jumps straight to scoring, fact extraction, and mapping.`)) return;
     runFromNormalized(lake, { onComplete: loadProfile, onContradictions: renderContradictionsAlert });
+  });
+
+  // This is intentionally separate from Resume: it does not discover, scrape,
+  // download, parse PDFs, or re-extract documents. It only asks the validation
+  // agent to map fields from facts already saved in the research profile.
+  if (!document.getElementById('btnValidateExistingFacts')) {
+    const resumeBtn = document.getElementById('btnResumeNormalized');
+    const anchor = resumeBtn || document.getElementById('btnResearch');
+    if (anchor) {
+      const validateBtn = document.createElement('button');
+      validateBtn.id = 'btnValidateExistingFacts';
+      validateBtn.textContent = '✓ Validate Existing Facts';
+      validateBtn.title = 'Fill supported empty fields from facts already saved in the profile — no discovery, downloads, or document re-extraction';
+      validateBtn.style.cssText = 'margin-left:8px; background:var(--panel2); color:var(--accent); border:1px solid var(--accent); padding:6px 12px; border-radius:4px; cursor:pointer; font-size:0.85em;';
+      anchor.parentNode.insertBefore(validateBtn, anchor.nextSibling);
+    }
+  }
+
+  document.getElementById('btnValidateExistingFacts')?.addEventListener('click', async () => {
+    const lake = document.getElementById('researchLakeSelect')?.value;
+    if (!lake) { alert('Select a lake first'); return; }
+    if (!confirm(`Validate existing extracted facts for ${lake}? This skips discovery, downloads, and full document re-extraction; it only fills currently empty supported fields when saved facts explicitly support them.`)) return;
+    const button = document.getElementById('btnValidateExistingFacts');
+    if (button) { button.disabled = true; button.textContent = '⏳ Validating…'; }
+    try {
+      const result = await validateExistingFacts(lake, { onComplete: loadProfile });
+      alert(`Existing-fact validation finished. Requested ${result.fieldsRequested} empty fields; filled ${result.fieldsFilled} evidence-backed field(s).`);
+    } catch (err) {
+      alert(`Existing-fact validation failed: ${err.message}`);
+    } finally {
+      if (button) { button.disabled = false; button.textContent = '✓ Validate Existing Facts'; }
+    }
   });
 
   document.getElementById('btnSaveNotes')?.addEventListener('click', async () => {
