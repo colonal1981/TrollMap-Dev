@@ -1906,4 +1906,4 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
 
 
 
-export { runEvidencePipeline, runFromNormalized, validateExistingFacts, recoverSmartPlanFacts, _state, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log };
+export { runEvidencePipeline, runFromNormalized, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, _state, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log };
