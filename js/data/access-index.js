@@ -76,10 +76,9 @@ function displayLakeName(rawName, stateCode) {
   // If the official data already carries state context, keep it as-is.
   if (/\b(SC|NC|GA|TN|AL|VA)\b/.test(name)) return name;
 
-  // Do not force state suffixes for rivers/coastal waterways; for lakes, a
-  // suffix helps distinguish same-named waterbodies while remaining readable.
-  if (/\blake\b|\breservoir\b/i.test(name)) return `${name}, ${stateCode}`;
-  return name;
+  // Append state suffix to all waterbodies — creeks, rivers, and branches
+  // are just as ambiguous as lakes across a 4-state coverage area.
+  return `${name}, ${stateCode}`;
 }
 
 function normalizeNameKey(name) {
