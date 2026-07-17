@@ -143,10 +143,7 @@ async function handleResearchLimnologyData(request, env) {
     'Temperature, water',
     'Dissolved oxygen (DO)',
     'Dissolved oxygen',
-    'Secchi depth',
     'Depth, Secchi disk depth',
-    'Water transparency, Secchi disc',
-    'Depth, Secchi disk depth reappears',
     'Color, water, filtered',
     'Apparent color, water, unfiltered',
   ];
@@ -169,10 +166,13 @@ async function handleResearchLimnologyData(request, env) {
     const wqpTimeout = setTimeout(() => controller.abort(), 25000);
     let wqpRes;
     try {
-      wqpRes = await fetch(wqpUrl, {
+      // Pass URL as a Request object to prevent Cloudflare from re-encoding %20 → +
+      const wqpReq = new Request(wqpUrl, {
+        method: 'GET',
+        headers: { 'User-Agent': 'TrollMap/1.0 (fishing intelligence platform; contact: trollmap@colonal1981.workers.dev)' },
         signal: controller.signal,
-        headers: { 'User-Agent': 'TrollMap/1.0 (fishing intelligence platform; contact: trollmap@colonal1981.workers.dev)' }
       });
+      wqpRes = await fetch(wqpReq);
     } finally {
       clearTimeout(wqpTimeout);
     }
