@@ -4063,9 +4063,11 @@ async function handleResearchAgent(request, env) {
   const start = Date.now();
   let llmResult;
   try {
-    // Limnology gets Gemini for deep document reading; others use Groq
-    const useGemini = (agentKey === 'limnology') && env.GEMINI_API_KEY;
-    llmResult = await callLLM(env, payload, useGemini ? 'gemini' : null);
+    // Keep limnology on the Gemini free-tier route. worker-core maps
+    // gemini-free to Gemini 3.1 Flash-Lite; do not use the paid `gemini`
+    // route (which selected 3.1 Pro Preview in prior runs).
+    const providerPreference = agentKey === 'limnology' ? 'gemini-free' : null;
+    llmResult = await callLLM(env, payload, providerPreference);
   } catch (e) {
     return new Response(JSON.stringify({success:false, error:`LLM failed: ${e.message}`, agent: agentKey, lakeName}), {status: 502, headers: JSON_HEADERS});
   }
