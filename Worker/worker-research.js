@@ -93,6 +93,60 @@ function resolveDrawdownSource(lakeName, state, reservoirOwner) {
 
 // ─── EXTENDED EVIDENCE ACQUISITION PIPELINE FUNCTIONS ───
 
+
+// ── Supplemental R2 Key Map — mirrors supplemental-layers.js LAKE_NAME_TO_R2_KEY ──
+const SUPPLEMENTAL_KEY_MAP = {
+  'Lake Marion, SC': 'lake_marion', 'Lake Moultrie, SC': 'lake_moultrie',
+  'Lake Murray, SC': 'lake_murray', 'Lake Wateree, SC': 'lake_wateree_fishing_creek',
+  'Fishing Creek Reservoir, SC': 'lake_wateree_fishing_creek', 'Lake Wylie, SC/NC': 'lake_wylie',
+  'Lake Hartwell, SC/GA': 'lake_hartwell', 'Lake Greenwood, SC': 'lake_greenwood_secession',
+  'Lake Secession, SC': 'lake_greenwood_secession', 'Lake Keowee, SC': 'lake_keowee',
+  'Lake Jocassee, SC/NC': 'lake_jocassee', 'Lake Russell, SC/GA': 'lake_thurmond_russell',
+  'Lake Russell, GA': 'lake_thurmond_russell', 'Lake Russell, SC': 'lake_thurmond_russell',
+  'Richard B. Russell Lake, GA': 'lake_thurmond_russell', 'Clarks Hill / Thurmond, SC/GA': 'lake_thurmond_russell',
+  'Lake Thurmond, SC': 'lake_thurmond_russell', 'Clarks Hill Lake, GA': 'lake_thurmond_russell',
+  'Lake Monticello, SC': 'lake_monticello_parr', 'Parr Reservoir, SC': 'lake_monticello_parr',
+  'Lake Robinson, SC': 'north_saluda_reservoir', 'Lake Bowen, SC': 'lake_bowen', 'Lake Blalock, SC': 'lake_blalock',
+  'Lake Norman, NC': 'lake_norman_mountain_island', 'Mountain Island Lake, NC': 'lake_norman_mountain_island',
+  'Lake Norman (South), NC': 'lake_norman', 'Lake Hickory, NC': 'lake_hickory_rhodhiss',
+  'Lake Rhodhiss, NC': 'lake_hickory_rhodhiss', 'Lake James, NC': 'lake_james',
+  'High Rock Lake, NC': 'yadkin_river_chain', 'Badin Lake, NC': 'yadkin_river_chain',
+  'Lake Tillery, NC': 'yadkin_river_chain', 'Blewett Falls Lake, NC': 'yadkin_river_chain',
+  'Jordan Lake, NC': 'jordan_lake', 'Falls Lake, NC': 'falls_lake',
+  'W. Kerr Scott Reservoir, NC': 'w_kerr_scott_reservoir', 'Shearon Harris Reservoir, NC': 'shearon_harris_reservoir',
+  'Randleman Lake, NC': 'randleman_lake', 'Lake Mackintosh, NC': 'lake_mackintosh',
+  'Lake Townsend, NC': 'lake_townsend', 'Lake Michie / Little River, NC': 'lake_michie',
+  'Belews Lake, NC': 'belews_lake', 'Hyco Lake, NC': 'hyco_lake', 'Mayo Lake, NC': 'mayo_lake',
+  'Nantahala Lake, NC': 'nantahala_lake', 'Lake Santeetlah, NC': 'lake_santeetlah',
+  'Hiwassee Lake, NC': 'hiwassee_lake', 'Fontana Lake, NC': 'fontana_lake', 'Lake Cheoah, NC': 'lake_cheoah',
+  'Lake Oconee, GA': 'lake_oconee', 'Lake Sinclair, GA': 'lake_sinclair', 'Lake Lanier, GA': 'lake_lanier',
+  'Lake Jackson, GA': 'lake_juliette_high_falls', 'Lake Juliette / High Falls, GA': 'lake_juliette_high_falls',
+  'Lake Blackshear, GA': 'lake_blackshear', 'Lake Allatoona, GA': 'lake_allatoona',
+  'Tobesofkee Reservoir, GA': 'tobesofkee_reservoir', 'Lake Blue Ridge, GA': 'lake_blue_ridge',
+  'Lake Nottely, GA': 'lake_nottely', 'Lake Burton, GA': 'lake_burton', 'Lake Chatuge, GA/NC': 'lake_chatuge',
+  'Norris Lake, TN': 'norris_lake', 'Norris Reservoir, TN': 'norris_lake',
+  'Douglas Lake, TN': 'douglas_lake', 'Douglas Reservoir, TN': 'douglas_lake',
+  'Cherokee Lake, TN': 'cherokee_lake', 'Cherokee Reservoir, TN': 'cherokee_lake',
+  'Fort Loudoun Lake, TN': 'fort_loudoun_lake', 'Fort Loudoun Reservoir, TN': 'fort_loudoun_lake',
+  'Tellico Lake, TN': 'tellico_lake', 'Tellico Reservoir, TN': 'tellico_lake',
+  'Watauga Lake, TN': 'watauga_boone_chain', 'Boone Lake, TN': 'watauga_boone_chain',
+  'Boone Reservoir, TN': 'watauga_boone_chain',
+};
+function resolveSupplementalKeyWorker(lakeName) {
+  if (!lakeName) return null;
+  if (SUPPLEMENTAL_KEY_MAP[lakeName]) return SUPPLEMENTAL_KEY_MAP[lakeName];
+  const stripped = lakeName.replace(/,\s*[A-Z]{2}(\/[A-Z]{2})?$/, '').trim();
+  if (SUPPLEMENTAL_KEY_MAP[stripped]) return SUPPLEMENTAL_KEY_MAP[stripped];
+  const dl = stripped.toLowerCase();
+  const found = Object.entries(SUPPLEMENTAL_KEY_MAP).find(([k]) => {
+    const kl = k.toLowerCase().replace(/,\s*[a-z]{2}(\/[a-z]{2})?$/, '').trim();
+    return dl.includes(kl) || kl.includes(dl);
+  });
+  if (found) return found[1];
+  const base = lakeName.split(',')[0].trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+  return base.startsWith('lake_') ? base : `lake_${base}`;
+}
+
 async function handleResearchLimnologyData(request, env) {
   const body = await request.json().catch(() => ({}));
   let { lakeName, bboxNorth, bboxSouth, bboxEast, bboxWest } = body;
@@ -100,41 +154,7 @@ async function handleResearchLimnologyData(request, env) {
 
   // If no bbox provided, self-derive from supplemental shoreline GeoJSON (available for all lakes)
   if (bboxNorth == null || bboxSouth == null || bboxEast == null || bboxWest == null) {
-    try {
-      // Supplemental R2 key overrides — lakes where the simple slug doesn't match the R2 folder name
-      const SUPPLEMENTAL_KEY_OVERRIDES = {
-        'lake monticello': 'lake_monticello_parr',
-        'parr reservoir': 'lake_monticello_parr',
-        'lake wateree': 'lake_wateree_fishing_creek',
-        'fishing creek reservoir': 'lake_wateree_fishing_creek',
-        'lake russell': 'lake_thurmond_russell',
-        'clarks hill': 'lake_thurmond_russell',
-        'lake thurmond': 'lake_thurmond_russell',
-        'richard b russell': 'lake_thurmond_russell',
-        'lake greenwood': 'lake_greenwood_secession',
-        'lake secession': 'lake_greenwood_secession',
-        'lake norman': 'lake_norman_mountain_island',
-        'mountain island lake': 'lake_norman_mountain_island',
-        'lake hickory': 'lake_hickory_rhodhiss',
-        'lake rhodhiss': 'lake_hickory_rhodhiss',
-        'high rock lake': 'yadkin_river_chain',
-        'badin lake': 'yadkin_river_chain',
-        'lake tillery': 'yadkin_river_chain',
-        'blewett falls lake': 'yadkin_river_chain',
-        'lake wylie': 'lake_wylie',
-        'lake jocassee': 'lake_jocassee',
-        'watauga lake': 'watauga_boone_chain',
-        'boone lake': 'watauga_boone_chain',
-      };
-      // Build supplemental key: match the pattern used by lake-research-engine (resolveSupplementalKey)
-      // e.g. "Lake Moultrie, SC" → "lake_moultrie"
-      const lakeKey = (() => {
-        const base = lakeName.split(',')[0].trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-        const slug = base.startsWith('lake_') ? base : `lake_${base}`;
-        // Check overrides using the plain name (without lake_ prefix)
-        const plainName = lakeName.split(',')[0].trim().toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
-        return SUPPLEMENTAL_KEY_OVERRIDES[plainName] || slug;
-      })();
+      const lakeKey = resolveSupplementalKeyWorker(lakeName);
       const shorelineObj = await env.R2_TROLLMAP_CHARTPACKS.get(`supplemental/${lakeKey}/shoreline.geojson`);
       if (!shorelineObj) throw new Error(`no shoreline.geojson in R2 for ${lakeKey}`);
       const geo = JSON.parse(await shorelineObj.text());
@@ -4724,26 +4744,11 @@ If no thermocline or depth information is found, return found: false and null fo
 
 // ── Vision Structure Scanner ──────────────────────────────────────────────────
 async function runVisionScan(lakeName, env) {
-  const lakeKey = (() => {
-    const base = lakeName.split(',')[0].trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-    return base.startsWith('lake_') ? base : `lake_${base}`;
-  })();
+  const resolvedKey = resolveSupplementalKeyWorker(lakeName);
 
-  console.log(`[vision-scan] Starting for ${lakeName} (${lakeKey})`);
+  console.log(`[vision-scan] Starting  console.log(`[vision-scan] Starting for ${lakeName} (${lakeKey})`);
 
-  const SUPPLEMENTAL_KEY_OVERRIDES = {
-    'lake monticello': 'lake_monticello_parr',
-    'lake wateree': 'lake_wateree_fishing_creek',
-    'lake russell': 'lake_thurmond_russell',
-    'clarks hill': 'lake_thurmond_russell',
-    'lake thurmond': 'lake_thurmond_russell',
-    'lake greenwood': 'lake_greenwood_secession',
-    'lake norman': 'lake_norman_mountain_island',
-    'mountain island lake': 'lake_norman_mountain_island',
-    'lake wylie': 'lake_wylie',
-  };
-  const plainName = lakeName.split(',')[0].trim().toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
-  const resolvedKey = SUPPLEMENTAL_KEY_OVERRIDES[plainName] || lakeKey;
+
 
   const shorelineObj = await env.R2_TROLLMAP_CHARTPACKS.get(`supplemental/${resolvedKey}/shoreline.geojson`);
   if (!shorelineObj) {
