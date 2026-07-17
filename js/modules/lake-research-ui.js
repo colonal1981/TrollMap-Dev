@@ -1292,11 +1292,18 @@ function initLakeResearch() {
       Object.assign(profile.habitat, geoStruct.habitat || {});
       profile.habitat.notes = [existingNotes, geoNotes].filter(Boolean).join(' ') || profile.habitat.notes;
 
-      // Merge evidence and sources
+      // Merge evidence — geoStruct.evidence is { habitat: { 'structuralElements.foo': [...] } }
       if (geoStruct.evidence) {
         profile.evidence = profile.evidence || {};
-        for (const [k, v] of Object.entries(geoStruct.evidence)) {
-          profile.evidence[k] = [...(profile.evidence[k] || []), ...v];
+        for (const [section, fieldMap] of Object.entries(geoStruct.evidence)) {
+          if (!fieldMap || typeof fieldMap !== 'object') continue;
+          profile.evidence[section] = profile.evidence[section] || {};
+          for (const [k, v] of Object.entries(fieldMap)) {
+            const existing = profile.evidence[section][k];
+            const existingArr = Array.isArray(existing) ? existing : (existing ? [existing] : []);
+            const newArr = Array.isArray(v) ? v : (v ? [v] : []);
+            profile.evidence[section][k] = [...existingArr, ...newArr];
+          }
         }
       }
       if (geoStruct.sources?.length) {
