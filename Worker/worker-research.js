@@ -103,11 +103,39 @@ async function handleResearchLimnologyData(request, env) {
   // If no bbox provided, self-derive from supplemental shoreline GeoJSON (available for all lakes)
   if (bboxNorth == null || bboxSouth == null || bboxEast == null || bboxWest == null) {
     try {
+      // Supplemental R2 key overrides — lakes where the simple slug doesn't match the R2 folder name
+      const SUPPLEMENTAL_KEY_OVERRIDES = {
+        'lake monticello': 'lake_monticello_parr',
+        'parr reservoir': 'lake_monticello_parr',
+        'lake wateree': 'lake_wateree_fishing_creek',
+        'fishing creek reservoir': 'lake_wateree_fishing_creek',
+        'lake russell': 'lake_thurmond_russell',
+        'clarks hill': 'lake_thurmond_russell',
+        'lake thurmond': 'lake_thurmond_russell',
+        'richard b russell': 'lake_thurmond_russell',
+        'lake greenwood': 'lake_greenwood_secession',
+        'lake secession': 'lake_greenwood_secession',
+        'lake norman': 'lake_norman_mountain_island',
+        'mountain island lake': 'lake_norman_mountain_island',
+        'lake hickory': 'lake_hickory_rhodhiss',
+        'lake rhodhiss': 'lake_hickory_rhodhiss',
+        'high rock lake': 'yadkin_river_chain',
+        'badin lake': 'yadkin_river_chain',
+        'lake tillery': 'yadkin_river_chain',
+        'blewett falls lake': 'yadkin_river_chain',
+        'lake wylie': 'lake_wylie',
+        'lake jocassee': 'lake_jocassee',
+        'watauga lake': 'watauga_boone_chain',
+        'boone lake': 'watauga_boone_chain',
+      };
       // Build supplemental key: match the pattern used by lake-research-engine (resolveSupplementalKey)
       // e.g. "Lake Moultrie, SC" → "lake_moultrie"
       const lakeKey = (() => {
         const base = lakeName.split(',')[0].trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-        return base.startsWith('lake_') ? base : `lake_${base}`;
+        const slug = base.startsWith('lake_') ? base : `lake_${base}`;
+        // Check overrides using the plain name (without lake_ prefix)
+        const plainName = lakeName.split(',')[0].trim().toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+        return SUPPLEMENTAL_KEY_OVERRIDES[plainName] || slug;
       })();
       const shorelineObj = await env.R2_TROLLMAP_CHARTPACKS.get(`supplemental/${lakeKey}/shoreline.geojson`);
       if (!shorelineObj) throw new Error(`no shoreline.geojson in R2 for ${lakeKey}`);
