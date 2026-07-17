@@ -1548,8 +1548,16 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
           if (obj.type === 'Feature') extractCoords(obj.geometry);
           else if (obj.type === 'FeatureCollection') obj.features?.forEach(extractCoords);
           else if (obj.coordinates) {
-            const flat = obj.coordinates.flat(Infinity);
-            for (let i = 0; i < flat.length - 1; i += 2) coords.push([flat[i], flat[i+1]]);
+            // Recursively find the innermost arrays
+            const getPoints = (arr) => {
+              if (typeof arr[0] === 'number') {
+                // Safely push only lon and lat, ignoring any Z value
+                coords.push([arr[0], arr[1]]);
+              } else {
+                arr.forEach(getPoints);
+              }
+            };
+            getPoints(obj.coordinates);
           }
         };
         extractCoords(geo);
