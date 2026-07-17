@@ -118,13 +118,23 @@ async function handleResearchLimnologyData(request, env) {
 
   let csvText;
   try {
-    const wqpRes = await fetch(wqpUrl, {
-      headers: { 'User-Agent': 'TrollMap/1.0 (fishing intelligence platform; contact: trollmap@colonal1981.workers.dev)' }
-    });
+    const controller = new AbortController();
+    const wqpTimeout = setTimeout(() => controller.abort(), 12000);
+    let wqpRes;
+    try {
+      wqpRes = await fetch(wqpUrl, {
+        signal: controller.signal,
+        headers: { 'User-Agent': 'TrollMap/1.0 (fishing intelligence platform; contact: trollmap@colonal1981.workers.dev)' }
+      });
+    } finally {
+      clearTimeout(wqpTimeout);
+    }
     if (!wqpRes.ok) throw new Error(`WQP HTTP ${wqpRes.status}`);
     csvText = await wqpRes.text();
   } catch (e) {
-    return new Response(JSON.stringify({ ok: false, error: `WQP fetch failed: ${e.message}`, thermocline: null }), { headers: JSON_HEADERS });
+    const reason = e.name === 'AbortError' ? 'WQP request timed out after 12s' : `WQP fetch failed: ${e.message}`;
+    console.warn(`[limnology-data] ${reason} — lake=${lakeName}`);
+    return new Response(JSON.stringify({ ok: false, error: reason, thermocline: null }), { headers: JSON_HEADERS });
   }
 
   function parseCSVLine(line) {
@@ -1508,7 +1518,7 @@ function splitSpeciesText(text) {
 __name(splitSpeciesText, "splitSpeciesText");
 
 function parseSCDNRDescriptionFacts(lakeName, url, html) {
-  const text = stripHtml(html).replace(/\s+/g, ' ').trim();
+  const text = stripHtmlPreserveTables(html).replace(/\s+/g, ' ').trim();
   const identity = { aliases: [], counties: [] };
   const biology = { primaryForage: [], secondaryForage: [], predatorSpecies: [], speciesAbundance: {}, knownStockings: [], baitfishMovement: null, forageCalendar: {}, notes: [] };
   const habitat = { structuralElements: {}, cover: [], vegetation: [], standingTimber: null, dockDensity: null, riprapLocations: [], namedCreekMouths: [], timberFields: null, shallowFlatAreas: null, artificialHabitat: [], artificialHabitatDetails: { attractorCount: null, attractorTypes: [] }, notes: null };
