@@ -4747,7 +4747,7 @@ If no thermocline or depth information is found, return found: false and null fo
 async function runVisionScan(lakeName, env) {
   const resolvedKey = resolveSupplementalKeyWorker(lakeName);
 
-  console.log(`[vision-scan] Starting  console.log(`[vision-scan] Starting for ${lakeName} (${lakeKey})`);
+  console.log(`[vision-scan] Starting for ${lakeName} (${resolvedKey})`);
 
 
 
