@@ -1347,6 +1347,97 @@ function initLakeResearch() {
     }
   });
 
+  // Standalone WQP limnology data fetch — no pipeline, just hits WQP for this lake
+  if (!document.getElementById('btnRunWQP')) {
+    const anchor = document.getElementById('btnRerunGeospatial') || document.getElementById('btnSmartPlanRecovery') || document.getElementById('btnResearch');
+    if (anchor) {
+      const wqpBtn = document.createElement('button');
+      wqpBtn.id = 'btnRunWQP';
+      wqpBtn.textContent = '💧 Run WQP';
+      wqpBtn.title = 'Fetch Water Quality Portal limnology data (thermocline, DO, surface temp) for this lake and merge into profile — no pipeline required';
+      wqpBtn.style.cssText = 'margin-left:8px; background:var(--panel2); color:var(--accent); border:1px solid var(--accent); padding:6px 12px; border-radius:4px; cursor:pointer; font-size:0.85em;';
+      anchor.parentNode.insertBefore(wqpBtn, anchor.nextSibling);
+    }
+  }
+
+  document.getElementById('btnRunWQP')?.addEventListener('click', async () => {
+    const lake = _state.currentLakeName || document.getElementById('researchLakeSelect')?.value;
+    if (!lake) { alert('Load a lake first'); return; }
+    if (!_state.currentProfile) { alert('No profile loaded — load the lake profile first'); return; }
+    const button = document.getElementById('btnRunWQP');
+    if (button) { button.disabled = true; button.textContent = '⏳ Fetching…'; }
+    log(`[WQP] Fetching limnology data for ${lake}…`);
+    try {
+      const res = await fetch(`${CF_WORKER_URL}/research/limnology-data`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lakeName: lake })
+        // bbox will be derived server-side from supplemental shoreline
+      });
+      if (!res.ok) {
+        const msg = await res.text().catch(() => '');
+        throw new Error(`WQP request failed: ${res.status} ${msg.slice(0, 200)}`);
+      }
+      const wqpData = await res.json();
+      if (!wqpData.ok || !wqpData.recordCount) {
+        log(`[WQP] ⚠️ ${wqpData.note || wqpData.error || 'No data returned'}`);
+        alert(`WQP returned no data for ${lake}.\n${wqpData.note || wqpData.error || ''}`);
+        return;
+      }
+
+      // Merge into current profile
+      const profile = cloneJson(_state.currentProfile);
+      profile.limnology = profile.limnology || {};
+
+      if (wqpData.thermocline) {
+        profile.limnology.thermocline = profile.limnology.thermocline || {};
+        profile.limnology.thermocline.summerDepthFt = wqpData.thermocline.depthFt ?? profile.limnology.thermocline.summerDepthFt;
+        profile.limnology.thermocline.strength = wqpData.thermocline.strength ?? profile.limnology.thermocline.strength;
+        profile.limnology.thermocline.confidence = 'measured';
+        profile.limnology.thermocline.note = `WQP-derived from ${wqpData.recordCount} records (${wqpData.thermocline.method})`;
+      }
+      if (wqpData.surfaceWater) {
+        profile.limnology.surfaceWater = profile.limnology.surfaceWater || {};
+        if (wqpData.surfaceWater.recentTempF != null) profile.limnology.surfaceWater.recentTempF = wqpData.surfaceWater.recentTempF;
+        if (wqpData.surfaceWater.recentDissolvedOxygenMgL != null) profile.limnology.surfaceWater.recentDissolvedOxygenMgL = wqpData.surfaceWater.recentDissolvedOxygenMgL;
+      }
+      if (wqpData.oxygen) {
+        profile.limnology.oxygen = profile.limnology.oxygen || {};
+        if (wqpData.oxygen.depletionDepthFt != null) profile.limnology.oxygen.depletionDepthFt = wqpData.oxygen.depletionDepthFt;
+        if (wqpData.oxygen.anoxicBelowFt != null) profile.limnology.oxygen.anoxicBelowFt = wqpData.oxygen.anoxicBelowFt;
+      }
+
+      profile.metadata = profile.metadata || {};
+      profile.metadata.lastWQPRun = new Date().toISOString();
+      profile.metadata.wqpRecordCount = wqpData.recordCount;
+
+      _state.currentProfile = profile;
+      const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lakeName: lake,
+          profile,
+          status: profile.metadata?.status || 'draft',
+          approve: profile.metadata?.status === 'verified',
+          verified: profile.metadata?.status === 'verified',
+          requestedBy: 'WQP Standalone Run'
+        })
+      });
+      if (!saveRes.ok) throw new Error(`Save failed: ${saveRes.status}`);
+
+      const thermoMsg = wqpData.thermocline ? `thermocline ${wqpData.thermocline.depthFt}ft` : 'no thermocline derived';
+      log(`[WQP] ✔ ${wqpData.recordCount} records — ${thermoMsg}`);
+      await loadProfile(lake, true);
+      alert(`WQP complete — ${wqpData.recordCount} records.\n${thermoMsg}`);
+    } catch (err) {
+      log(`[WQP] ✗ ${err.message}`);
+      alert(`WQP fetch failed: ${err.message}`);
+    } finally {
+      if (button) { button.disabled = false; button.textContent = '💧 Run WQP'; }
+    }
+  });
+
   document.getElementById('btnSaveNotes')?.addEventListener('click', async () => {
     if (!_state.currentProfile || !_state.currentLakeName) { alert('Load a profile first'); return; }
     const st = document.getElementById('notesStatus');
