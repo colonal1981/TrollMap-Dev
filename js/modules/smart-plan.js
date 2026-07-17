@@ -1028,7 +1028,8 @@ Return ONLY valid JSON, no markdown:
     speedMph: band1Speed,
     routeSpeeds,
     phases: phaseInfo.phases,
-    solunar: solunarStr
+    solunar: solunarStr,
+    stopCandidates,
   });
 
   // ── Intel displays ────────────────────────────────────────────────────────
@@ -1192,7 +1193,32 @@ Return ONLY valid JSON, no markdown:
         } catch (_) {}
       }
 
-      // ── 3. Research profile structural notes — ungrounded, max 2 ──
+      // ── 3. Contour-derived humps and ledges — GPS-grounded from geospatial adapter ──
+      const structuralElements = researchedProfile?.habitat?.structuralElements || {};
+      for (const hump of (structuralElements.humpCoordinates || [])) {
+        if (!hump.lat || !hump.lon) continue;
+        tryAddStop({
+          type: 'hump',
+          name: `Offshore Hump ${hump.id?.replace('hump_', '#') || ''}${hump.areaAcres ? ` (~${hump.areaAcres}ac)` : ''}`,
+          lat: hump.lat, lon: hump.lon,
+          score: 8,
+          reason: `Closed contour loop — offshore high spot${hump.depth ? ` at ~${hump.depth}ft` : ''}. Stripers and suspended fish stage over humps in summer.`,
+          structureType: 'offshore hump',
+        });
+      }
+      for (const ledge of (structuralElements.ledgeCoordinates || [])) {
+        if (!ledge.lat || !ledge.lon) continue;
+        tryAddStop({
+          type: 'ledge',
+          name: `Depth Ledge / Drop-off ${ledge.id?.replace('ledge_', '#') || ''}`,
+          lat: ledge.lat, lon: ledge.lon,
+          score: 7,
+          reason: `High contour density (${ledge.contourDensity} contours) — active depth break. Fish transition through here as conditions change.`,
+          structureType: 'channel ledge / drop-off',
+        });
+      }
+
+      // ── 4. Research profile structural notes — ungrounded, max 2 ──
       const attractorCount = habitat.artificialHabitatDetails?.attractorCount;
       if (attractorCount > 0) {
         tryAddStop({

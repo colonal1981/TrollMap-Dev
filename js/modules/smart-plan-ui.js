@@ -108,7 +108,7 @@ function rodSlotHtml(rod, cardIdx, slotIdx) {
 }
 
 // ── Main render ───────────────────────────────────────────────────────────────
-export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeeds = {}, phases, solunar }) {
+export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeeds = {}, phases, solunar, stopCandidates }) {
   // Self-inject container before spread table if needed
   let container = document.getElementById('smartPlanUIContainer');
   if (!container) {
@@ -184,6 +184,69 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
       <div style="font-size:11px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">🧠 Scout Report</div>
       <pre style="white-space:pre-wrap;font-family:inherit;font-size:12px;color:var(--text);margin:0;line-height:1.6">${esc(scoutReport)}</pre>
     </div>`;
+  }
+
+  // ── Casting Stops ────────────────────────────────────────────────────────────
+  const groundedStops = (stopCandidates || []).filter(s => s.lat && s.lon && s.routeContext);
+  const ungroundedStops = (stopCandidates || []).filter(s => !s.lat || !s.lon);
+
+  if (!stopCandidates) {
+    // stopCandidates not passed — older plan or not yet built
+  } else if (!groundedStops.length && !ungroundedStops.length) {
+    html += `
+    <div style="margin-top:14px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:11px;color:var(--muted)">
+      🎯 <b style="color:var(--text)">Casting Stops</b> — No mapped structure found within 250ft of your route. Load QuickDraw pins or run Vision Scan on this lake to enable casting stop detection.
+    </div>`;
+  } else if (groundedStops.length || ungroundedStops.length) {
+    html += `
+    <div style="margin-top:14px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:14px">
+      <div style="font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">🎯 Casting Stops Near Your Route</div>`;
+
+    if (groundedStops.length) {
+      html += `<div style="display:flex;flex-direction:column;gap:8px">`;
+      groundedStops.forEach((stop, i) => {
+        const ctx = stop.routeContext;
+        const trackColor = ctx.trackName?.includes('Ph2') ? '#ffb300' : '#00e5ff';
+        const sideNote = ctx.distFromRouteFt < 100 ? 'on route' : `${ctx.distFromRouteFt}ft off route`;
+        html += `
+        <div style="border:1px solid var(--line);border-radius:7px;padding:8px 10px;display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center">
+          <div style="font-size:20px;line-height:1">${
+            stop.type === 'DOCK_CLUSTER' || stop.type === 'dock_field' ? '⚓' :
+            stop.type === 'RIPRAP' || stop.type === 'riprap' ? '🪨' :
+            stop.type === 'BRIDGE' ? '🌉' :
+            stop.type === 'FLOODED_TIMBER' || stop.type === 'timber' ? '🪵' :
+            stop.type === 'fish_attractor' ? '🎣' :
+            stop.type === 'community_spot' ? '📍' :
+            stop.type === 'hump' ? '⛰️' :
+            stop.type === 'ledge' ? '📉' : '🎯'
+          }</div>
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--text)">${esc(stop.name || stop.structureType || stop.type)}</div>
+            <div style="font-size:11px;color:var(--muted)">${esc(stop.reason || stop.description || '')}</div>
+          </div>
+          <div style="text-align:right;font-size:11px;white-space:nowrap">
+            <div style="color:${trackColor};font-weight:700">${esc(ctx.trackName)}</div>
+            <div style="color:var(--muted)">~${ctx.etaMin}min in</div>
+            <div style="color:var(--muted);font-size:10px">${sideNote}</div>
+          </div>
+        </div>`;
+      });
+      html += `</div>`;
+    }
+
+    if (ungroundedStops.length) {
+      html += `<div style="margin-top:${groundedStops.length ? '10px' : '0'};padding-top:${groundedStops.length ? '10px' : '0'};${groundedStops.length ? 'border-top:1px solid var(--line);' : ''}">
+        <div style="font-size:10px;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Lake-Wide Structure Context</div>
+        <div style="display:flex;flex-direction:column;gap:5px">`;
+      ungroundedStops.forEach(stop => {
+        html += `<div style="font-size:11px;color:var(--muted);padding:4px 0">
+          <span style="color:var(--text);font-weight:600">${esc(stop.name)}</span> — ${esc(stop.reason || '')}
+        </div>`;
+      });
+      html += `</div></div>`;
+    }
+
+    html += `</div>`;
   }
 
   container.innerHTML = html;

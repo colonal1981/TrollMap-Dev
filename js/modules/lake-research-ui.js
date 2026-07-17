@@ -1365,6 +1365,43 @@ function initLakeResearch() {
     }
   });
 
+  // Vision Structure Scan button
+  if (!document.getElementById('btnVisionScan')) {
+    const anchor = document.getElementById('btnRerunGeospatial') || document.getElementById('btnSmartPlanRecovery') || document.getElementById('btnResearch');
+    if (anchor) {
+      const vBtn = document.createElement('button');
+      vBtn.id = 'btnVisionScan';
+      vBtn.textContent = '🛰️ Vision Scan';
+      vBtn.title = 'Run Gemini vision analysis on satellite imagery to detect dock clusters, riprap, bridge pilings, and flooded timber along the lake — runs async in background (3-8 min)';
+      vBtn.style.cssText = 'margin-left:8px; background:var(--panel2); color:var(--accent); border:1px solid var(--accent); padding:6px 12px; border-radius:4px; cursor:pointer; font-size:0.85em;';
+      anchor.parentNode.insertBefore(vBtn, anchor.nextSibling);
+    }
+  }
+
+  document.getElementById('btnVisionScan')?.addEventListener('click', async () => {
+    const lake = _state.currentLakeName || document.getElementById('researchLakeSelect')?.value;
+    if (!lake) { alert('Load a lake first'); return; }
+    const button = document.getElementById('btnVisionScan');
+    if (button) { button.disabled = true; button.textContent = '⏳ Starting…'; }
+    log(`[Vision] Starting satellite structure scan for ${lake}…`);
+    try {
+      const res = await fetch(`${CF_WORKER_URL}/research/vision-scan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lakeName: lake })
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      log(`[Vision] ${data.message || 'Scan started — results saved to R2 when complete'}`);
+      alert(`Vision scan started for ${lake}.\n\nRunning in background — check back in 3-8 minutes. Structures will appear in supplemental layer automatically.`);
+    } catch (err) {
+      log(`[Vision] ✗ ${err.message}`);
+      alert(`Vision scan failed: ${err.message}`);
+    } finally {
+      if (button) { button.disabled = false; button.textContent = '🛰️ Vision Scan'; }
+    }
+  });
+
   // Standalone WQP limnology data fetch — no pipeline, just hits WQP for this lake
   if (!document.getElementById('btnRunWQP')) {
     const anchor = document.getElementById('btnRerunGeospatial') || document.getElementById('btnSmartPlanRecovery') || document.getElementById('btnResearch');

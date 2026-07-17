@@ -388,6 +388,7 @@ export async function loadSupplementalForLake(displayName) {
 
   if (_fishingLayer) { getMap()?.removeLayer(_fishingLayer); _fishingLayer = null; }
   if (_poiLayer)     { getMap()?.removeLayer(_poiLayer);     _poiLayer     = null; }
+  if (_visionLayer)  { getMap()?.removeLayer(_visionLayer);  _visionLayer  = null; _visionVisible = false; }
 
   _fishingVisible = false;
   _poiVisible     = false;
@@ -398,6 +399,7 @@ export async function loadSupplementalForLake(displayName) {
 
   loadFishingSpots(lakeKey).catch(() => {});
   loadPOIs(lakeKey).catch(() => {});
+  loadVisionStructures(lakeKey).catch(() => {}); // load vision-detected structure if scan exists
   loadLakeBoundary(displayName).catch(() => {});
 }
 
@@ -468,6 +470,17 @@ export function getSupplementalContext(lat, lon, radiusMi = 0.5) {
       const ll = l.getLatLng?.();
       if (!ll) return;
       if (distMi(lat, lon, ll.lat, ll.lng) <= radiusMi) results.fishingPoints.push({ lat: ll.lat, lon: ll.lng });
+    });
+  }
+  if (_visionLayer) {
+    _visionLayer.eachLayer(l => {
+      const ll = l.getLatLng?.();
+      if (!ll) return;
+      if (distMi(lat, lon, ll.lat, ll.lng) <= radiusMi) {
+        const p = l.feature?.properties || {};
+        results.visionStructures = results.visionStructures || [];
+        results.visionStructures.push({ lat: ll.lat, lon: ll.lng, ...p });
+      }
     });
   }
   return results;

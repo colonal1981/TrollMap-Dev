@@ -336,25 +336,84 @@ function deriveContourStructures(contourGeo, boundaryRing = null) {
   const result = {};
   if (!contourGeo?.features?.length) return result;
   let midDepthCount = 0;
-  let closedInteriorLoops = 0;
+
+  // ── Hump detection — closed interior contour loops ───────────────────────
+  // A closed contour loop entirely inside the lake boundary = offshore hump or high spot
+  const humpCandidates = [];
   for (const f of contourGeo.features) {
     const depth = f?.properties?.depth_ft;
     if (depth != null && depth >= 15 && depth <= 35) midDepthCount++;
     for (const coords of flattenLineCoords(f.geometry)) {
       if (!isClosedContour(coords)) continue;
       const areaAcres = polygonAreaAcresLonLat(coords);
-      if (areaAcres < 1 || areaAcres > 400) continue;
-      if (boundaryRing) {
-        const [lon, lat] = centroidLonLat(coords);
-        if (!pointInPolygonLonLat(lon, lat, boundaryRing)) continue;
-      }
-      closedInteriorLoops++;
+      if (areaAcres < 0.5 || areaAcres > 500) continue;
+      const [lon, lat] = centroidLonLat(coords);
+      if (boundaryRing && !pointInPolygonLonLat(lon, lat, boundaryRing)) continue;
+      humpCandidates.push({ lon, lat, areaAcres, depth: depth ?? null });
     }
   }
+
+  // ── Ledge detection — find depth inflection zones ────────────────────────
+  // Group mid-depth contours by proximity; dense clusters = ledge/drop-off zones
+  const ledgeCandidates = [];
+  const midDepthFeatures = contourGeo.features.filter(f => {
+    const d = f?.properties?.depth_ft;
+    return d != null && d >= 12 && d <= 40;
+  });
+
+  // Cluster mid-depth contour centroids into ledge zones using simple grid bucketing
+  const LEDGE_GRID = 0.003; // ~300m grid cells
+  const ledgeGrid = {};
+  for (const f of midDepthFeatures) {
+    for (const coords of flattenLineCoords(f.geometry)) {
+      if (coords.length < 4) continue;
+      const [lon, lat] = centroidLonLat(coords);
+      if (boundaryRing && !pointInPolygonLonLat(lon, lat, boundaryRing)) continue;
+      const key = `${Math.round(lat / LEDGE_GRID)},${Math.round(lon / LEDGE_GRID)}`;
+      if (!ledgeGrid[key]) ledgeGrid[key] = { lats: [], lons: [], count: 0 };
+      ledgeGrid[key].lats.push(lat);
+      ledgeGrid[key].lons.push(lon);
+      ledgeGrid[key].count++;
+    }
+  }
+  for (const cell of Object.values(ledgeGrid)) {
+    if (cell.count < 3) continue; // need density to call it a ledge
+    const lat = cell.lats.reduce((a,b) => a+b, 0) / cell.lats.length;
+    const lon = cell.lons.reduce((a,b) => a+b, 0) / cell.lons.length;
+    ledgeCandidates.push({ lat, lon, density: cell.count });
+  }
+
+  // Sort and cap — top humps by area, top ledges by contour density
+  humpCandidates.sort((a, b) => b.areaAcres - a.areaAcres);
+  ledgeCandidates.sort((a, b) => b.density - a.density);
+  const topHumps = humpCandidates.slice(0, 8);
+  const topLedges = ledgeCandidates.slice(0, 8);
+
+  // Build text summaries (existing behavior)
   if (midDepthCount >= 25) result.channelLedges = 'mid-depth contour density indicates multiple ledges / drop-offs';
   else if (midDepthCount >= 10) result.channelLedges = 'contours indicate at least some ledges / depth breaks';
-  if (closedInteriorLoops >= 5) result.humps = 'multiple closed contour loops suggest several offshore humps or high spots';
-  else if (closedInteriorLoops >= 1) result.humps = 'at least one closed contour loop suggests offshore hump / high-spot structure';
+  if (humpCandidates.length >= 5) result.humps = 'multiple closed contour loops suggest several offshore humps or high spots';
+  else if (humpCandidates.length >= 1) result.humps = 'at least one closed contour loop suggests offshore hump / high-spot structure';
+
+  // Add coordinate arrays for Smart Plan casting stop integration
+  if (topHumps.length) {
+    result.humpCoordinates = topHumps.map((h, i) => ({
+      id: `hump_${i+1}`,
+      lat: Math.round(h.lat * 100000) / 100000,
+      lon: Math.round(h.lon * 100000) / 100000,
+      areaAcres: Math.round(h.areaAcres * 10) / 10,
+      depth: h.depth,
+    }));
+  }
+  if (topLedges.length) {
+    result.ledgeCoordinates = topLedges.map((l, i) => ({
+      id: `ledge_${i+1}`,
+      lat: Math.round(l.lat * 100000) / 100000,
+      lon: Math.round(l.lon * 100000) / 100000,
+      contourDensity: l.density,
+    }));
+  }
+
   return result;
 }
 
