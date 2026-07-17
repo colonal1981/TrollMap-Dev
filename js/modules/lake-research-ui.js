@@ -1354,7 +1354,7 @@ function initLakeResearch() {
       const wqpBtn = document.createElement('button');
       wqpBtn.id = 'btnRunWQP';
       wqpBtn.textContent = '💧 Run WQP';
-      wqpBtn.title = 'Fetch Water Quality Portal limnology data (thermocline, DO, surface temp) for this lake and merge into profile — no pipeline required';
+      wqpBtn.title = 'Fetch WQP limnology data (thermocline, DO, Secchi, seasonal temp) and merge into profile. If WQP returns surface samples only, automatically runs a targeted guide article search for anecdotal thermocline depth — no pipeline required';
       wqpBtn.style.cssText = 'margin-left:8px; background:var(--panel2); color:var(--accent); border:1px solid var(--accent); padding:6px 12px; border-radius:4px; cursor:pointer; font-size:0.85em;';
       anchor.parentNode.insertBefore(wqpBtn, anchor.nextSibling);
     }
@@ -1379,6 +1379,54 @@ function initLakeResearch() {
         throw new Error(`WQP request failed: ${res.status} ${msg.slice(0, 200)}`);
       }
       const wqpData = await res.json();
+
+      // ── Verbose response logging ──────────────────────────────────────────
+      log(`[WQP] ─── Response for ${lake} ───`);
+      log(`[WQP] Total records parsed: ${wqpData.recordCount ?? 0}`);
+      log(`[WQP] Depth-profile records: ${wqpData.depthProfileCount ?? 0}`);
+      log(`[WQP] Summer depth records: ${wqpData.summerRecords ?? 0}`);
+      log(`[WQP] Last observed: ${wqpData.lastObserved || 'unknown'}`);
+      if (wqpData.thermocline) {
+        log(`[WQP] ✔ Thermocline: ${wqpData.thermocline.depthFt}ft — method: ${wqpData.thermocline.method} — evidence: ${wqpData.thermocline.evidenceCount} records — confidence: ${wqpData.thermocline.confidence}`);
+      } else {
+        log(`[WQP] ✗ Thermocline: not derived${wqpData.surfaceOnlyNote ? ' (surface samples only)' : ''}`);
+      }
+      if (wqpData.oxygen) {
+        log(`[WQP] O2 anoxic below: ${wqpData.oxygen.anoxicBelowFt != null ? wqpData.oxygen.anoxicBelowFt + 'ft' : 'not derived'}`);
+      }
+      if (wqpData.secchi) {
+        log(`[WQP] Secchi avg: ${wqpData.secchi.avgSecchiDepthFt}ft (n=${wqpData.secchi.sampleCount}, range ${wqpData.secchi.minSecchiDepthFt}–${wqpData.secchi.maxSecchiDepthFt}ft)`);
+      } else {
+        log(`[WQP] Secchi: no data`);
+      }
+      if (wqpData.seasonalTemp) {
+        log(`[WQP] Seasonal temp — summer avg: ${wqpData.seasonalTemp.summerAvgTempF ?? 'n/a'}°F, peak: ${wqpData.seasonalTemp.peakSummerTempF ?? 'n/a'}°F, winter avg: ${wqpData.seasonalTemp.winterAvgTempF ?? 'n/a'}°F`);
+      }
+      if (wqpData.surfaceWater?.recentTempF != null) {
+        log(`[WQP] Most recent surface temp: ${wqpData.surfaceWater.recentTempF}°F, DO: ${wqpData.surfaceWater.recentDissolvedOxygenMgL ?? 'n/a'} mg/L`);
+      }
+      if (wqpData.surfaceOnlyNote) {
+        log(`[WQP] ⚠️ ${wqpData.surfaceOnlyNote}`);
+        log(`[WQP] Triggering guide article thermocline search…`);
+      }
+      if (wqpData.thermoclineAnecdotal) {
+        log(`[WQP] ✔ Anecdotal thermocline from ${wqpData.thermoclineAnecdotal.sourceCount} article(s): ~${wqpData.thermoclineAnecdotal.summerThermoclineDepthFt}ft (confidence score ${wqpData.thermoclineAnecdotal.confidenceScore}%)`);
+        log(`[WQP] Anecdotal note: ${wqpData.thermoclineAnecdotal.note || 'none'}`);
+      } else if (wqpData.surfaceOnlyNote) {
+        log(`[WQP] ✗ Guide article search: no thermocline depth found`);
+      }
+      // Log article search details if present
+      if (wqpData.articles?.length) {
+        log(`[WQP] Articles searched (${wqpData.articles.length}):`);
+        wqpData.articles.forEach((a, i) => log(`[WQP]   ${i+1}. ${a.title} — ${a.url}`));
+      }
+      if (wqpData.queryResults?.length) {
+        log(`[WQP] Query results:`);
+        wqpData.queryResults.forEach(q => log(`[WQP]   "${q.query}" → ${q.found ?? 0} results, ${q.added ?? 0} used${q.error ? ' ERROR: ' + q.error : ''}`));
+      }
+      if (wqpData.note && !wqpData.surfaceOnlyNote) log(`[WQP] Note: ${wqpData.note}`);
+      log(`[WQP] ─────────────────────────────────`);
+
       if (!wqpData.ok || !wqpData.recordCount) {
         log(`[WQP] ⚠️ ${wqpData.note || wqpData.error || 'No data returned'}`);
         alert(`WQP returned no data for ${lake}.\n${wqpData.note || wqpData.error || ''}`);
