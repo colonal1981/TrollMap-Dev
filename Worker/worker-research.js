@@ -103,7 +103,12 @@ async function handleResearchLimnologyData(request, env) {
   // If no bbox provided, self-derive from supplemental shoreline GeoJSON (available for all lakes)
   if (bboxNorth == null || bboxSouth == null || bboxEast == null || bboxWest == null) {
     try {
-      const lakeKey = lakeKeyFromName(lakeName);
+      // Build supplemental key: match the pattern used by lake-research-engine (resolveSupplementalKey)
+      // e.g. "Lake Moultrie, SC" → "lake_moultrie"
+      const lakeKey = (() => {
+        const base = lakeName.split(',')[0].trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+        return base.startsWith('lake_') ? base : `lake_${base}`;
+      })();
       const shorelineObj = await env.R2_TROLLMAP_CHARTPACKS.get(`supplemental/${lakeKey}/shoreline.geojson`);
       if (!shorelineObj) throw new Error(`no shoreline.geojson in R2 for ${lakeKey}`);
       const geo = JSON.parse(await shorelineObj.text());
