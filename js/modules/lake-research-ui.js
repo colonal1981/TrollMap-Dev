@@ -1366,13 +1366,29 @@ function initLakeResearch() {
     if (!_state.currentProfile) { alert('No profile loaded — load the lake profile first'); return; }
     const button = document.getElementById('btnRunWQP');
     if (button) { button.disabled = true; button.textContent = '⏳ Fetching…'; }
-    log(`[WQP] Fetching limnology data for ${lake}…`);
+
+    // Local log helper that writes directly to the DOM element and forces visibility
+    const wqpLog = (msg) => {
+      _state.researchLog.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
+      const el = document.getElementById('researchLog');
+      if (el) {
+        el.textContent = _state.researchLog.join('\n');
+        el.scrollTop = el.scrollHeight;
+        // Ensure parent panel is visible
+        let p = el.parentElement;
+        while (p && p !== document.body) {
+          if (p.style.display === 'none') p.style.display = '';
+          p = p.parentElement;
+        }
+      }
+    };
+
+    wqpLog(`[WQP] Fetching limnology data for ${lake}…`);
     try {
       const res = await fetch(`${CF_WORKER_URL}/research/limnology-data`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lakeName: lake })
-        // bbox will be derived server-side from supplemental shoreline
       });
       if (!res.ok) {
         const msg = await res.text().catch(() => '');
@@ -1381,54 +1397,53 @@ function initLakeResearch() {
       const wqpData = await res.json();
 
       // ── Verbose response logging ──────────────────────────────────────────
-      log(`[WQP] ─── Response for ${lake} ───`);
-      log(`[WQP] Total records parsed: ${wqpData.recordCount ?? 0}`);
-      log(`[WQP] Depth-profile records: ${wqpData.depthProfileCount ?? 0}`);
-      log(`[WQP] Summer depth records: ${wqpData.summerRecords ?? 0}`);
-      log(`[WQP] Last observed: ${wqpData.lastObserved || 'unknown'}`);
+      wqpLog(`[WQP] ─── Response for ${lake} ───`);
+      wqpLog(`[WQP] Total records parsed: ${wqpData.recordCount ?? 0}`);
+      wqpLog(`[WQP] Depth-profile records: ${wqpData.depthProfileCount ?? 0}`);
+      wqpLog(`[WQP] Summer depth records: ${wqpData.summerRecords ?? 0}`);
+      wqpLog(`[WQP] Last observed: ${wqpData.lastObserved || 'unknown'}`);
       if (wqpData.thermocline) {
-        log(`[WQP] ✔ Thermocline: ${wqpData.thermocline.depthFt}ft — method: ${wqpData.thermocline.method} — evidence: ${wqpData.thermocline.evidenceCount} records — confidence: ${wqpData.thermocline.confidence}`);
+        wqpLog(`[WQP] ✔ Thermocline: ${wqpData.thermocline.depthFt}ft — method: ${wqpData.thermocline.method} — evidence: ${wqpData.thermocline.evidenceCount} records — confidence: ${wqpData.thermocline.confidence}`);
       } else {
-        log(`[WQP] ✗ Thermocline: not derived${wqpData.surfaceOnlyNote ? ' (surface samples only)' : ''}`);
+        wqpLog(`[WQP] ✗ Thermocline: not derived${wqpData.surfaceOnlyNote ? ' (surface samples only)' : ''}`);
       }
       if (wqpData.oxygen) {
-        log(`[WQP] O2 anoxic below: ${wqpData.oxygen.anoxicBelowFt != null ? wqpData.oxygen.anoxicBelowFt + 'ft' : 'not derived'}`);
+        wqpLog(`[WQP] O2 anoxic below: ${wqpData.oxygen.anoxicBelowFt != null ? wqpData.oxygen.anoxicBelowFt + 'ft' : 'not derived'}`);
       }
       if (wqpData.secchi) {
-        log(`[WQP] Secchi avg: ${wqpData.secchi.avgSecchiDepthFt}ft (n=${wqpData.secchi.sampleCount}, range ${wqpData.secchi.minSecchiDepthFt}–${wqpData.secchi.maxSecchiDepthFt}ft)`);
+        wqpLog(`[WQP] Secchi avg: ${wqpData.secchi.avgSecchiDepthFt}ft (n=${wqpData.secchi.sampleCount}, range ${wqpData.secchi.minSecchiDepthFt}–${wqpData.secchi.maxSecchiDepthFt}ft)`);
       } else {
-        log(`[WQP] Secchi: no data`);
+        wqpLog(`[WQP] Secchi: no data`);
       }
       if (wqpData.seasonalTemp) {
-        log(`[WQP] Seasonal temp — summer avg: ${wqpData.seasonalTemp.summerAvgTempF ?? 'n/a'}°F, peak: ${wqpData.seasonalTemp.peakSummerTempF ?? 'n/a'}°F, winter avg: ${wqpData.seasonalTemp.winterAvgTempF ?? 'n/a'}°F`);
+        wqpLog(`[WQP] Seasonal temp — summer avg: ${wqpData.seasonalTemp.summerAvgTempF ?? 'n/a'}°F, peak: ${wqpData.seasonalTemp.peakSummerTempF ?? 'n/a'}°F, winter avg: ${wqpData.seasonalTemp.winterAvgTempF ?? 'n/a'}°F`);
       }
       if (wqpData.surfaceWater?.recentTempF != null) {
-        log(`[WQP] Most recent surface temp: ${wqpData.surfaceWater.recentTempF}°F, DO: ${wqpData.surfaceWater.recentDissolvedOxygenMgL ?? 'n/a'} mg/L`);
+        wqpLog(`[WQP] Most recent surface temp: ${wqpData.surfaceWater.recentTempF}°F, DO: ${wqpData.surfaceWater.recentDissolvedOxygenMgL ?? 'n/a'} mg/L`);
       }
       if (wqpData.surfaceOnlyNote) {
-        log(`[WQP] ⚠️ ${wqpData.surfaceOnlyNote}`);
-        log(`[WQP] Triggering guide article thermocline search…`);
+        wqpLog(`[WQP] ⚠️ ${wqpData.surfaceOnlyNote}`);
+        wqpLog(`[WQP] Running guide article thermocline search (inline)…`);
       }
       if (wqpData.thermoclineAnecdotal) {
-        log(`[WQP] ✔ Anecdotal thermocline from ${wqpData.thermoclineAnecdotal.sourceCount} article(s): ~${wqpData.thermoclineAnecdotal.summerThermoclineDepthFt}ft (confidence score ${wqpData.thermoclineAnecdotal.confidenceScore}%)`);
-        log(`[WQP] Anecdotal note: ${wqpData.thermoclineAnecdotal.note || 'none'}`);
+        wqpLog(`[WQP] ✔ Anecdotal thermocline from ${wqpData.thermoclineAnecdotal.sourceCount} article(s): ~${wqpData.thermoclineAnecdotal.summerThermoclineDepthFt}ft (confidence ${wqpData.thermoclineAnecdotal.confidenceScore}%)`);
+        wqpLog(`[WQP] Anecdotal note: ${wqpData.thermoclineAnecdotal.note || 'none'}`);
       } else if (wqpData.surfaceOnlyNote) {
-        log(`[WQP] ✗ Guide article search: no thermocline depth found`);
+        wqpLog(`[WQP] ✗ Guide article search: no thermocline depth found`);
       }
-      // Log article search details if present
-      if (wqpData.articles?.length) {
-        log(`[WQP] Articles searched (${wqpData.articles.length}):`);
-        wqpData.articles.forEach((a, i) => log(`[WQP]   ${i+1}. ${a.title} — ${a.url}`));
+      if (wqpData.thermoclineSearch?.articles?.length) {
+        wqpLog(`[WQP] Articles searched (${wqpData.thermoclineSearch.articles.length}):`);
+        wqpData.thermoclineSearch.articles.forEach((a, i) => wqpLog(`[WQP]   ${i+1}. ${a.title} — ${a.url}`));
       }
-      if (wqpData.queryResults?.length) {
-        log(`[WQP] Query results:`);
-        wqpData.queryResults.forEach(q => log(`[WQP]   "${q.query}" → ${q.found ?? 0} results, ${q.added ?? 0} used${q.error ? ' ERROR: ' + q.error : ''}`));
+      if (wqpData.thermoclineSearch?.queryResults?.length) {
+        wqpLog(`[WQP] Query results:`);
+        wqpData.thermoclineSearch.queryResults.forEach(q => wqpLog(`[WQP]   "${q.query}" → ${q.found ?? 0} results, ${q.added ?? 0} used${q.error ? ' ERROR: ' + q.error : ''}`));
       }
-      if (wqpData.note && !wqpData.surfaceOnlyNote) log(`[WQP] Note: ${wqpData.note}`);
-      log(`[WQP] ─────────────────────────────────`);
+      if (wqpData.note && !wqpData.surfaceOnlyNote) wqpLog(`[WQP] Note: ${wqpData.note}`);
+      wqpLog(`[WQP] ─────────────────────────────────`);
 
       if (!wqpData.ok || !wqpData.recordCount) {
-        log(`[WQP] ⚠️ ${wqpData.note || wqpData.error || 'No data returned'}`);
+        wqpLog(`[WQP] ⚠️ ${wqpData.note || wqpData.error || 'No data returned'}`);
         alert(`WQP returned no data for ${lake}.\n${wqpData.note || wqpData.error || ''}`);
         return;
       }
@@ -1444,7 +1459,6 @@ function initLakeResearch() {
         profile.limnology.thermocline.confidence = 'measured';
         profile.limnology.thermocline.note = `WQP-derived from ${wqpData.recordCount} records (${wqpData.thermocline.method})`;
       }
-      // Anecdotal thermocline from guide article search (surface-only lakes)
       if (!wqpData.thermocline && wqpData.thermoclineAnecdotal) {
         profile.limnology.thermocline = profile.limnology.thermocline || {};
         profile.limnology.thermocline.summerDepthFt = wqpData.thermoclineAnecdotal.summerThermoclineDepthFt;
@@ -1504,11 +1518,11 @@ function initLakeResearch() {
       const secchiMsg = wqpData.secchi ? `secchi avg ${wqpData.secchi.avgSecchiDepthFt}ft` : '';
       const seasonalMsg = wqpData.seasonalTemp?.summerAvgTempF ? `summer avg ${wqpData.seasonalTemp.summerAvgTempF}°F` : '';
       const summary = [thermoMsg, secchiMsg, seasonalMsg].filter(Boolean).join(' | ');
-      log(`[WQP] ✔ ${wqpData.recordCount} records — ${summary}`);
+      wqpLog(`[WQP] ✔ Saved — ${wqpData.recordCount} records — ${summary}`);
       await loadProfile(lake, true);
       alert(`WQP complete — ${wqpData.recordCount} records.\n${summary}`);
     } catch (err) {
-      log(`[WQP] ✗ ${err.message}`);
+      wqpLog(`[WQP] ✗ ${err.message}`);
       alert(`WQP fetch failed: ${err.message}`);
     } finally {
       if (button) { button.disabled = false; button.textContent = '💧 Run WQP'; }
