@@ -2576,9 +2576,22 @@ async function handleResearchSaveNormalized(request, env) {
 __name(handleResearchSaveNormalized, "handleResearchSaveNormalized");
 
 async function handleResearchGetNormalized(env, lakeName) {
-  const safe = sanitizeLakeId(lakeName);
+  const LEGACY_PROFILE_KEYS = {
+    'lake_thurmond_sc':       'clarks_hill_thurmond_sc_ga',
+    'clarks_hill_lake_ga':    'clarks_hill_thurmond_sc_ga',
+    'j_strom_thurmond_lake':  'clarks_hill_thurmond_sc_ga',
+    'thurmond_lake_sc':       'clarks_hill_thurmond_sc_ga',
+    'richard_b_russell_lake': 'lake_russell_sc_ga',
+    'lake_russell_ga':        'lake_russell_sc_ga',
+    'lake_russell_sc':        'lake_russell_sc_ga',
+  };
+  let safe = sanitizeLakeId(lakeName);
   const key = `lake_packages/${safe}/normalized_documents.json`;
-  const obj = await env.R2_TROLLMAP_CHARTPACKS.get(key);
+  let obj = await env.R2_TROLLMAP_CHARTPACKS.get(key).catch(() => null);
+  if (!obj && LEGACY_PROFILE_KEYS[safe]) {
+    obj = await env.R2_TROLLMAP_CHARTPACKS.get(`lake_packages/${LEGACY_PROFILE_KEYS[safe]}/normalized_documents.json`).catch(() => null);
+    if (obj) safe = LEGACY_PROFILE_KEYS[safe];
+  }
   if (!obj) return new Response(JSON.stringify({ok:false, error:`no normalized documents for ${lakeName}`}), {status:404, headers:JSON_HEADERS});
   const text = await obj.text();
   let docs;
@@ -4173,7 +4186,26 @@ async function handleResearchList(env) {
 __name(handleResearchList, "handleResearchList");
 
 async function handleResearchGet(env, lakeId) {
-  const safe = sanitizeLakeId(lakeId);
+  // ── Legacy key redirect: new canonical DNR names → existing R2 profile keys ──
+  // When the dropdown switched from hand-typed display names to DNR canonical
+  // names, some dual-named lakes (Thurmond/Clarks Hill, Russell) got new
+  // sanitized IDs. Redirect so the UI can load existing profiles under either name.
+  const LEGACY_PROFILE_KEYS = {
+    'lake_thurmond_sc':       'clarks_hill_thurmond_sc_ga',
+    'clarks_hill_lake_ga':    'clarks_hill_thurmond_sc_ga',
+    'j_strom_thurmond_lake':  'clarks_hill_thurmond_sc_ga',
+    'thurmond_lake_sc':       'clarks_hill_thurmond_sc_ga',
+    'richard_b_russell_lake': 'lake_russell_sc_ga',
+    'lake_russell_ga':        'lake_russell_sc_ga',
+    'lake_russell_sc':        'lake_russell_sc_ga',
+  };
+  let safe = sanitizeLakeId(lakeId);
+  const legacySafe = LEGACY_PROFILE_KEYS[safe];
+  if (legacySafe) {
+    // Check if profile exists under new key first; if not, use legacy key
+    const newObj = await env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${safe}.json`).catch(() => null);
+    if (!newObj) safe = legacySafe;
+  }
   const masterKey = `lakes/${safe}.json`;
   const obj = await env.R2_TROLLMAP_CHARTPACKS.get(masterKey);
   if (!obj) return new Response(JSON.stringify({ok:false, error:`no profile for ${lakeId} (${safe})`}), {status:404, headers:JSON_HEADERS});
