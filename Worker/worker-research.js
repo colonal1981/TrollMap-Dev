@@ -141,7 +141,7 @@ async function handleResearchLimnologyData(request, env) {
   const wqpParams = new URLSearchParams();
   wqpParams.append('bBox', `${bboxWest},${bboxSouth},${bboxEast},${bboxNorth}`);
   wqpParams.append('siteType', 'Lake, Reservoir, Impoundment');
-  wqpParams.append('characteristicType', 'Physical');
+  // Note: characteristicType and characteristicName are mutually exclusive in WQP — omit characteristicType
   wqpParams.append('characteristicName', 'Temperature, water');
   wqpParams.append('characteristicName', 'Dissolved oxygen (DO)');
   wqpParams.append('characteristicName', 'Dissolved oxygen');
