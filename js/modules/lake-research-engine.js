@@ -1560,12 +1560,19 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
             getPoints(obj.coordinates);
           }
         };
-        extractCoords(geo);
+        extractCoords(geo);        
         if (coords.length) {
           const lons = coords.map(c => c[0]);
           const lats = coords.map(c => c[1]);
-          bbox = { bboxNorth: Math.max(...lats), bboxSouth: Math.min(...lats), bboxEast: Math.max(...lons), bboxWest: Math.min(...lons) };
+          
+          bbox = { 
+            bboxNorth: Number(Math.max(...lats).toFixed(6)), 
+            bboxSouth: Number(Math.min(...lats).toFixed(6)), 
+            bboxEast: Number(Math.max(...lons).toFixed(6)), 
+            bboxWest: Number(Math.min(...lons).toFixed(6)) 
+          };
         }
+
       }
       if (bbox) {
         const wqpRes = await fetch(`${CF_WORKER_URL}/research/limnology-data`, {
