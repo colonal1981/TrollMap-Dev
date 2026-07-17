@@ -740,7 +740,7 @@ async function handleResearchDiscover(request, env) {
     const queries = [
       `"${queryLakeFinal}" fishing report thermocline depth water temperature`,
       `"${queryLakeFinal}" water quality dissolved oxygen stratification`,
-      `"${queryLakeFinal}" (fisheries OR biology OR "striped bass" OR crappie) ${dnrName}`,
+      `"${queryLakeFinal}" (fisheries OR biology OR "management plan") ${dnrName}`,
       `"${queryLakeFinal}" (limnology OR thermocline OR "water quality" OR "dissolved oxygen")`,
     ];
 
@@ -4746,9 +4746,9 @@ async function handleResearchThermoclineSearch(request, env) {
   const queryLake = lakeName.replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i, '').trim();
 
   const queries = [
-    `"${queryLake}" thermocline depth summer fishing`,
-    `"${queryLake}" fishing guide summer depths striper bass`,
-    `"${queryLake}" water temperature depth summer trolling`,
+    `"${queryLake}" thermocline depth summer`,
+    `"${queryLake}" summer fishing depth water temperature`,
+    `"${queryLake}" fishing guide summer depths`,
   ];
 
   const articles = [];
