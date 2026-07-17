@@ -220,7 +220,8 @@ async function buildAccessIndex() {
   // Sort lakes by state priority (SC first, then NC, GA, TN) then alphabetically within state
   const STATE_ORDER = { SC: 0, NC: 1, GA: 2, TN: 3 };
   function lakeStatePriority(name) {
-    const m = name.match(/,\s*([A-Z]{2}(?:\/[A-Z]{2})?)$/);
+    // Matches ", SC" at end OR "(County Co, SC)" parenthetical format from SCDNR state lakes
+    const m = name.match(/,\s*([A-Z]{2}(?:\/[A-Z]{2})?)\)?$/) || name.match(/\(.*,\s*([A-Z]{2})\)\s*$/);
     if (!m) return 99;
     const firstState = m[1].split('/')[0];
     return STATE_ORDER[firstState] ?? 99;
