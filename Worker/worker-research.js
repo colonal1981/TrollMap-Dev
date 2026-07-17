@@ -2050,30 +2050,6 @@ function extractMarkdownTableRows(text) {
   return rows;
 }
 
-function lakeMentionedInCell(lakeName, cellText) {
-  // Strip state suffix (", SC" etc) and "Lake" prefix before matching
-  const cleanName = String(lakeName || '').replace(/,\s*(SC|NC|GA|TN)\s*$/i, '').trim();
-  const lake = normalizeResearchName(cleanName).replace(/^lake /, '').trim();
-  const cell = normalizeResearchName(cellText);
-  if (!lake || !cell) return false;
-  // Use base lake name (e.g. "wateree") for matching
-  const baseLake = lake.split(' ')[0];
-  if (!baseLake) return false;
-  // Reject dam/map/tailwater mentions that share the lake's name
-  // ("Wateree Dam", "below Wateree Dam") — those are not the reservoir itself
-  if (new RegExp(`\\b${baseLake}\\s+dam\\b`).test(cell)) return false;
-  if (/\btailwater\b|\briver system\b|\breach\b/.test(cell) && !new RegExp(`\\blake\\s+${baseLake}\\b`).test(cell) && !cell.includes(`lakes `) /* multi-lake lists use "Lakes A, B, Wateree" */) {
-    // Allow multi-lake exception lists like "Lakes Blalock, Greenwood, ..., Wateree, Wylie"
-    // which contain the base name as a listed lake, not as a dam/system label
-    const multiLakeList = /\blakes?\b/.test(cell) && cell.includes(baseLake);
-    if (!multiLakeList) return false;
-  }
-  // Multi-lake lists: "Lakes Blalock, Greenwood, Jocassee, ..., Wateree, Wylie"
-  if (cell.includes(baseLake)) return true;
-  if (cell.includes(lake)) return true;
-  return false;
-}
-
 async function parseSCRegulationsFromHtml(lakeName, regsUrl, html, lakeSpecificHtml = '', env) {
   const systemPrompt = "You are an expert South Carolina freshwater fisheries regulation parser.\n" +
 "Your task is to extract size and creel (possession) limits from South Carolina's official eRegulations pages.\n\n" +
@@ -3453,10 +3429,6 @@ function sanitizeLakeId(name) {
 
 function lakeResearchMasterKey(lakeName) {
   return `lakes/${sanitizeLakeId(lakeName)}.json`;
-}
-
-function lakeResearchVersionKey(lakeName, version) {
-  return `lakes/versions/${sanitizeLakeId(lakeName)}/v${version}.json`;
 }
 
 function lakePackageKey(lakeName, filename) {
