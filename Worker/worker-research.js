@@ -1650,7 +1650,7 @@ const RESEARCH_RAMP_SOURCES = {
     lat: (p) => p.Latitude,
     lon: (p) => p.Longitude,
     meta: (p) => ({ lanes: p.Launch_Lane_No, dock: p.Courtesy_Dock_No || p.Fix_Dock_No, fee: false, species: '', county: p.County, owner: p.Owner, motorRestrictions: p.Motorboats_Restricted })
-  }  },
+  },
   TN: {
     url: "https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/Boat_Launch_Sites/FeatureServer/0/query",
     label: 'Tennessee Wildlife Resources Agency Boat Launch Sites',
@@ -1697,7 +1697,7 @@ const RESEARCH_ATTRACTOR_SOURCES = {
     lat: (p) => p.Latitude,
     lon: (p) => p.Longitude,
     type: (p) => `${p.Structure1 || ''} ${p.Structure2 || ''}`.trim() || p.Attractor_Type
-  }  },
+  },
   TN: {
     url: "https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/Fish_Attractor_Locations_view/FeatureServer/0/query",
     label: 'Tennessee Wildlife Resources Agency Fish Attractors',
