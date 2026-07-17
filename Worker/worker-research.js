@@ -145,7 +145,10 @@ async function handleResearchLimnologyData(request, env) {
   wqpParams.append('characteristicName', 'Temperature, water');
   wqpParams.append('characteristicName', 'Dissolved oxygen (DO)');
   wqpParams.append('characteristicName', 'Dissolved oxygen');
+  wqpParams.append('characteristicName', 'Secchi depth');
   wqpParams.append('characteristicName', 'Depth, Secchi disk depth');
+  wqpParams.append('characteristicName', 'Water transparency, Secchi disc');
+  wqpParams.append('characteristicName', 'Depth, Secchi disk depth reappears');
   wqpParams.append('characteristicName', 'Color, water, filtered');
   wqpParams.append('characteristicName', 'Apparent color, water, unfiltered');
   wqpParams.append('startDateLo', '01-01-2015');
