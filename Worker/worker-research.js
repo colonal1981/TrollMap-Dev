@@ -245,7 +245,7 @@ async function handleResearchLimnologyData(request, env) {
     else if (/dissolved oxygen|oxygen/.test(lowerChar)) type = 'do';
     else if (/turbidity/.test(lowerChar)) type = 'turbidity';
     else if (/secchi/.test(lowerChar) || /depth.*secchi|secchi.*depth/.test(lowerChar)) type = 'secchi';
-    else if (/^color|apparent color/.test(lowerChar)) type = 'color';
+
     else if (/conductivity/.test(lowerChar)) type = 'conductivity';
     else if (/alkalinity/.test(lowerChar)) type = 'alkalinity';
     else if (/hardness/.test(lowerChar)) type = 'hardness';
@@ -375,7 +375,8 @@ async function handleResearchLimnologyData(request, env) {
       if (u === 'm' || u === 'meters' || u === 'meter') v = v * 3.28084;
       else if (u === 'in' || u === 'inches' || u === 'inch') v = v / 12;
       return Math.round(v * 10) / 10;
-    });
+    }).filter(v => v > 0 && v <= 40); // cap at 40ft — max realistic freshwater Secchi; removes bad records
+    if (!vals.length) return null;
     const avg = vals.reduce((a,b) => a+b,0) / vals.length;
     return {
       avgSecchiDepthFt: Math.round(avg * 10) / 10,
@@ -398,23 +399,6 @@ async function handleResearchLimnologyData(request, env) {
     note: 'Summary reflects the most recent available surface/grab samples by characteristic from WQP/SCDES monitoring sites within the lake boundary.'
   };
 
-  // Water color summary (PCU) — feeds waterClarity.color
-  const colorRecords = records.filter(r => r.type === 'color');
-  const waterColor = colorRecords.length ? (() => {
-    const vals = colorRecords.map(r => r.value).filter(v => isFinite(v) && v >= 0);
-    if (!vals.length) return null;
-    const avg = Math.round(vals.reduce((a,b) => a+b,0) / vals.length);
-    // PCU interpretation: <10 clear, 10-40 slightly colored, 40-100 moderately stained, >100 heavily stained/tannic
-    const clarity = avg < 10 ? 'clear' : avg < 40 ? 'slightly colored' : avg < 100 ? 'moderately stained' : 'heavily stained/tannic';
-    return {
-      avgColorPCU: avg,
-      minColorPCU: Math.min(...vals),
-      maxColorPCU: Math.max(...vals),
-      sampleCount: vals.length,
-      clarityDescription: clarity,
-      lastObserved: colorRecords.map(r => r.date).sort().slice(-1)[0] || null,
-    };
-  })() : null;
 
   const surfaceOnlyNote = !thermocline && !depthRecords.length
     ? 'Monitoring data were found, but available records are surface/grab samples only — no vertical depth profiles. Thermocline cannot be derived from this source.'
@@ -457,7 +441,6 @@ async function handleResearchLimnologyData(request, env) {
     surfaceWater,
     seasonalTemp,
     secchi,
-    waterColor,
     surfaceOnlyNote,
     note: thermocline ? null : depthRecords.length ? 'Depth-profile records exist but were insufficient to derive a defensible thermocline.' : surfaceOnlyNote,
   };
