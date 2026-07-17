@@ -1396,10 +1396,32 @@ function initLakeResearch() {
         profile.limnology.thermocline.confidence = 'measured';
         profile.limnology.thermocline.note = `WQP-derived from ${wqpData.recordCount} records (${wqpData.thermocline.method})`;
       }
+      // Anecdotal thermocline from guide article search (surface-only lakes)
+      if (!wqpData.thermocline && wqpData.thermoclineAnecdotal) {
+        profile.limnology.thermocline = profile.limnology.thermocline || {};
+        profile.limnology.thermocline.summerDepthFt = wqpData.thermoclineAnecdotal.summerThermoclineDepthFt;
+        profile.limnology.thermocline.depthRangeMin = wqpData.thermoclineAnecdotal.depthRangeMin ?? null;
+        profile.limnology.thermocline.depthRangeMax = wqpData.thermoclineAnecdotal.depthRangeMax ?? null;
+        profile.limnology.thermocline.confidence = 'low';
+        profile.limnology.thermocline.confidenceScore = wqpData.thermoclineAnecdotal.confidenceScore;
+        profile.limnology.thermocline.note = wqpData.thermoclineAnecdotal.note || null;
+        profile.limnology.thermocline.warning = wqpData.thermoclineAnecdotal.warning;
+      }
       if (wqpData.surfaceWater) {
         profile.limnology.surfaceWater = profile.limnology.surfaceWater || {};
         if (wqpData.surfaceWater.recentTempF != null) profile.limnology.surfaceWater.recentTempF = wqpData.surfaceWater.recentTempF;
         if (wqpData.surfaceWater.recentDissolvedOxygenMgL != null) profile.limnology.surfaceWater.recentDissolvedOxygenMgL = wqpData.surfaceWater.recentDissolvedOxygenMgL;
+      }
+      if (wqpData.secchi) {
+        profile.limnology.waterClarity = profile.limnology.waterClarity || {};
+        profile.limnology.waterClarity.secchiFt = wqpData.secchi.avgSecchiDepthFt;
+        profile.limnology.waterClarity.secchiNote = `WQP avg from ${wqpData.secchi.sampleCount} samples (range ${wqpData.secchi.minSecchiDepthFt}–${wqpData.secchi.maxSecchiDepthFt}ft, last observed ${wqpData.secchi.lastObserved})`;
+      }
+      if (wqpData.seasonalTemp) {
+        profile.limnology.surfaceWater = profile.limnology.surfaceWater || {};
+        if (wqpData.seasonalTemp.summerAvgTempF != null) profile.limnology.surfaceWater.summerAvgTempF = wqpData.seasonalTemp.summerAvgTempF;
+        if (wqpData.seasonalTemp.winterAvgTempF != null) profile.limnology.surfaceWater.winterAvgTempF = wqpData.seasonalTemp.winterAvgTempF;
+        if (wqpData.seasonalTemp.peakSummerTempF != null) profile.limnology.surfaceWater.peakSummerTempF = wqpData.seasonalTemp.peakSummerTempF;
       }
       if (wqpData.oxygen) {
         profile.limnology.oxygen = profile.limnology.oxygen || {};
@@ -1426,10 +1448,17 @@ function initLakeResearch() {
       });
       if (!saveRes.ok) throw new Error(`Save failed: ${saveRes.status}`);
 
-      const thermoMsg = wqpData.thermocline ? `thermocline ${wqpData.thermocline.depthFt}ft` : 'no thermocline derived';
-      log(`[WQP] ✔ ${wqpData.recordCount} records — ${thermoMsg}`);
+      const thermoMsg = wqpData.thermocline
+        ? `thermocline ${wqpData.thermocline.depthFt}ft (measured)`
+        : wqpData.thermoclineAnecdotal
+          ? `thermocline ~${wqpData.thermoclineAnecdotal.summerThermoclineDepthFt}ft (anecdotal, confidence ${wqpData.thermoclineAnecdotal.confidenceScore}%)`
+          : wqpData.surfaceOnlyNote ? 'surface samples only — no thermocline' : 'no thermocline derived';
+      const secchiMsg = wqpData.secchi ? `secchi avg ${wqpData.secchi.avgSecchiDepthFt}ft` : '';
+      const seasonalMsg = wqpData.seasonalTemp?.summerAvgTempF ? `summer avg ${wqpData.seasonalTemp.summerAvgTempF}°F` : '';
+      const summary = [thermoMsg, secchiMsg, seasonalMsg].filter(Boolean).join(' | ');
+      log(`[WQP] ✔ ${wqpData.recordCount} records — ${summary}`);
       await loadProfile(lake, true);
-      alert(`WQP complete — ${wqpData.recordCount} records.\n${thermoMsg}`);
+      alert(`WQP complete — ${wqpData.recordCount} records.\n${summary}`);
     } catch (err) {
       log(`[WQP] ✗ ${err.message}`);
       alert(`WQP fetch failed: ${err.message}`);

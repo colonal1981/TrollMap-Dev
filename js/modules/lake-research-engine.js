@@ -1577,7 +1577,30 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
             wqpLimnology = wqpData;
             const thermoMsg = wqpData.thermocline ? `${wqpData.thermocline.depthFt}ft (${wqpData.thermocline.method})` : 'not derived';
             const surfMsg = wqpData.surfaceWater?.recentTempF != null ? `surface ${wqpData.surfaceWater.recentTempF}°F / DO ${wqpData.surfaceWater.recentDissolvedOxygenMgL ?? '?'} mg/L` : 'surface summary unavailable';
-            log(`✔ WQP: ${wqpData.recordCount} records — thermocline ${thermoMsg}; ${surfMsg}`);
+            const secchiMsg = wqpData.secchi ? `secchi avg ${wqpData.secchi.avgSecchiDepthFt}ft (n=${wqpData.secchi.sampleCount})` : '';
+            log(`✔ WQP: ${wqpData.recordCount} records — thermocline ${thermoMsg}; ${surfMsg}${secchiMsg ? '; ' + secchiMsg : ''}`);
+
+            // Surface-only lakes: trigger targeted guide article search for anecdotal thermocline
+            if (!wqpData.thermocline && wqpData.surfaceOnlyNote) {
+              log(`⚠️ WQP surface-only: no depth profiles. Triggering guide article thermocline search…`);
+              try {
+                const tcRes = await fetch(`${CF_WORKER_URL}/research/thermocline-search`, {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ lakeName })
+                });
+                if (tcRes.ok) {
+                  const tcData = await tcRes.json();
+                  if (tcData.thermocline) {
+                    wqpLimnology.thermoclineAnecdotal = tcData.thermocline;
+                    log(`✔ Thermocline search: anecdotal estimate ${tcData.thermocline.summerThermoclineDepthFt}ft (confidence score ${tcData.thermocline.confidenceScore}, n=${tcData.articleCount} articles)`);
+                  } else {
+                    log(`⚠️ Thermocline search: ${tcData.note || 'no depth information found in guide articles'}`);
+                  }
+                }
+              } catch (e) {
+                log(`⚠️ Thermocline guide search failed: ${e.message}`);
+              }
+            }
           } else {
             log(`⚠️ WQP: ${wqpData.note || 'no data found for this lake boundary'}`);
           }
