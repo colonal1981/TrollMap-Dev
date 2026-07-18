@@ -72,19 +72,55 @@ models: [
     baseUrl: null,
     keyEnv: "GEMINI_FREE2_API_KEY",
     defaultModel: "gemini-3.1-flash-lite",
-    models: [
-      "gemini-3.1-flash-lite",
-    ],
+    models: [ "gemini-3.1-flash-lite" ],
     headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
     isGemini: true,
     transformPayload: (p) => ({
       systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
       contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
-      generationConfig: {
-        temperature: p.temperature || 0.15,
-        maxOutputTokens: p.max_tokens || 1500,
-        responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined,
-      }
+      generationConfig: { temperature: p.temperature || 0.15, maxOutputTokens: p.max_tokens || 1500, responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined }
+    }),
+  },
+  {
+    name: "gemini-free3",
+    baseUrl: null,
+    keyEnv: "GEMINI_FREE3_API_KEY",
+    defaultModel: "gemini-3.1-flash-lite",
+    models: [ "gemini-3.1-flash-lite" ],
+    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
+    isGemini: true,
+    transformPayload: (p) => ({
+      systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
+      contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
+      generationConfig: { temperature: p.temperature || 0.15, maxOutputTokens: p.max_tokens || 1500, responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined }
+    }),
+  },
+  {
+    name: "gemini-free4",
+    baseUrl: null,
+    keyEnv: "GEMINI_FREE4_API_KEY",
+    defaultModel: "gemini-3.1-flash-lite",
+    models: [ "gemini-3.1-flash-lite" ],
+    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
+    isGemini: true,
+    transformPayload: (p) => ({
+      systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
+      contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
+      generationConfig: { temperature: p.temperature || 0.15, maxOutputTokens: p.max_tokens || 1500, responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined }
+    }),
+  },
+  {
+    name: "gemini-free5",
+    baseUrl: null,
+    keyEnv: "GEMINI_FREE5_API_KEY",
+    defaultModel: "gemini-3.1-flash-lite",
+    models: [ "gemini-3.1-flash-lite" ],
+    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
+    isGemini: true,
+    transformPayload: (p) => ({
+      systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
+      contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
+      generationConfig: { temperature: p.temperature || 0.15, maxOutputTokens: p.max_tokens || 1500, responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined }
     }),
   },
   {
