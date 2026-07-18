@@ -659,10 +659,7 @@ export async function runSmartPlan() {
     }
     if (byType['ISLAND']) lines.push(`- Islands: ${byType['ISLAND'].length} (fish current seams and points)`);
     if (lines.length) {
-      osmStructureBlock = `LAKE STRUCTURES (OSM — verified locations):
-${lines.join('
-')}
-`;
+      osmStructureBlock = 'LAKE STRUCTURES (OSM — verified locations):\n' + lines.join('\n') + '\n';
     }
   }
 
