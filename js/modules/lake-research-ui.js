@@ -1419,7 +1419,6 @@ function initLakeResearch() {
       log(`[Vision] ${tiles.length} tiles to scan for ${lake}`);
       updateProgress(`Scanning 0/${tiles.length} tiles…`, 3);
 
-      const TILE_W = 800, TILE_H = 800;
       const allFeatures = [];
       let processed = 0, skipped = 0;
 
@@ -1427,24 +1426,15 @@ function initLakeResearch() {
       const BATCH_SIZE = 5;
       const processTile = async (tile, tileIdx) => {
         try {
-          const bbox = `${tile.w},${tile.s},${tile.e},${tile.n}`;
-          const esriUrl = `https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?` +
-            `bbox=${encodeURIComponent(bbox)}&bboxSR=4326&imageSR=4326&size=${TILE_W},${TILE_H}&format=jpg&transparent=false&f=image`;
-          const imgRes = await fetch(esriUrl);
-          if (!imgRes.ok) return { skipped: true };
-          const buf = await imgRes.arrayBuffer();
-          const bytes = new Uint8Array(buf);
-          let binary = '';
-          for (let j = 0; j < bytes.length; j += 8192) binary += String.fromCharCode(...bytes.subarray(j, j + 8192));
-          const imageBase64 = btoa(binary);
+          // Worker fetches ESRI image and runs Gemini — no CORS issues
           const analyzeRes = await fetch(`${CF_WORKER_URL}/research/vision-scan`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ lakeName: lake, imageBase64, tileBounds: tile })
+            body: JSON.stringify({ lakeName: lake, tileBounds: tile })
           });
           if (!analyzeRes.ok) return { skipped: true };
           const result = await analyzeRes.json();
-          if (!result.hasWater) return { skipped: true };
+          if (!result.ok || !result.hasWater) return { skipped: true };
           return { features: result.features || [] };
         } catch (e) {
           console.warn(`[Vision] Tile ${tileIdx+1} error: ${e.message}`);

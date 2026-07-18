@@ -349,10 +349,16 @@ async function loadVisionStructures(lakeKey) {
         radius: 7, color: '#fff', weight: 1.5,
         fillColor: style.color, fillOpacity: 0.85
       });
+      const featureId = `${coords[0].toFixed(6)},${coords[1].toFixed(6)}`;
       m.bindTooltip(`${style.emoji} ${style.label}${dockNote}${conf}`, { sticky: true, direction: 'top', opacity: 0.9 });
       m.bindPopup(`<b style="color:${style.color}">${style.emoji} ${esc(style.label)}</b>${dockNote}<br>
         <span style="font-size:11px">${esc(p.description || '')}</span><br>
-        <span style="color:#aaa;font-size:10px">Confidence: ${conf} · AI vision detection</span>`);
+        <span style="color:#aaa;font-size:10px">Confidence: ${conf} · AI vision detection</span><br>
+        <button onclick="window._removeVisionStructure('${featureId}')"
+          style="margin-top:6px;font-size:11px;padding:3px 10px;background:var(--bad,#b3261e);color:#fff;border:none;border-radius:4px;cursor:pointer">
+          🗑 Remove
+        </button>`);
+      m.featureId = featureId;
       group.addLayer(m);
     });
     _visionLayer = group;
@@ -364,6 +370,46 @@ async function loadVisionStructures(lakeKey) {
     if (!e.message?.includes('404')) console.warn(`[supplemental] vision-structure fetch failed:`, e.message);
   }
 }
+
+// Remove a single vision structure by coordinate ID — patches R2 GeoJSON
+window._removeVisionStructure = async function(featureId) {
+  if (!_activeLakeKey || !_visionLayer) return;
+  // Remove from map
+  _visionLayer.eachLayer(l => {
+    if (l.featureId === featureId) {
+      _visionLayer.removeLayer(l);
+      l.closePopup();
+    }
+  });
+  // Patch R2
+  try {
+    const url = `${CF_WORKER_URL}/chartpacks/supplemental/${_activeLakeKey}/vision-structure.geojson?v=${Date.now()}`;
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) return;
+    const gj = await r.json();
+    const [flon, flat] = featureId.split(',').map(Number);
+    gj.features = gj.features.filter(f => {
+      const [lon, lat] = f.geometry?.coordinates || [];
+      return !(Math.abs(lon - flon) < 0.000001 && Math.abs(lat - flat) < 0.000001);
+    });
+    gj.metadata = gj.metadata || {};
+    gj.metadata.structuresFound = gj.features.length;
+    await fetch(`${CF_WORKER_URL}/research/vision-scan-save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lakeName: gj.metadata?.lakeName || _activeLakeKey,
+        features: gj.features,
+        tilesTotal: gj.metadata?.tilesTotal,
+        tilesProcessed: gj.metadata?.tilesProcessed,
+        tilesSkipped: gj.metadata?.tilesSkipped,
+      })
+    });
+    console.log(`[supplemental] vision structure removed: ${featureId}`);
+  } catch (e) {
+    console.warn(`[supplemental] vision remove failed:`, e.message);
+  }
+};
 
 async function loadPOIs(lakeKey) {
   if (!mapReady()) return;
