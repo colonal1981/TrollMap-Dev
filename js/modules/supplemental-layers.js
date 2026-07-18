@@ -595,6 +595,7 @@ function init() {
 init();
 
 window.loadSupplementalForLake = loadSupplementalForLake;
+window.getSupplementalContext = getSupplementalContext;
 export function getOsmStructures() { return _osmStructureData || []; }
 window._seedOsmStructureData = (features) => { if (!_osmStructureData?.length) _osmStructureData = features; };
 
