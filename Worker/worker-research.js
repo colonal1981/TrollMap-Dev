@@ -4788,7 +4788,7 @@ async function runVisionScan(lakeName, env) {
     }
     if (tiles.length >= MAX_TILES) break;
   }
-  console.log(`[vision-scan] ${tiles.length} tiles for ${lakeName}`);
+  console.log(`[vision-scan] ${tiles.length} tiles for ${lakeName} bbox W${bboxW.toFixed(3)} E${bboxE.toFixed(3)} S${bboxS.toFixed(3)} N${bboxN.toFixed(3)} coords:${coords.length}`);
 
   const geminiKeys = [env.GEMINI_FREE_API_KEY, env.GEMINI_FREE2_API_KEY, env.GEMINI_FREE3_API_KEY, env.GEMINI_FREE4_API_KEY].filter(Boolean);
   if (!geminiKeys.length) return { ok: false, error: 'no Gemini keys' };
