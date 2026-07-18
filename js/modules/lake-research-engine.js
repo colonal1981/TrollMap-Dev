@@ -2040,10 +2040,16 @@ async function runFisheriesRefresh(lakeName, callbacks = {}) {
 
     // Extract facts via analyze-facts endpoint (same as full pipeline)
     setProgress('Fisheries Refresh: Extracting facts from documents...', 35);
-    const usableDocs = normalizedDocuments.filter(d => (d.fullText || d.text) && (d.fullText || d.text).length > 100);
+    const usableDocs = normalizedDocuments
+      .filter(d => (d.fullText || d.text) && (d.fullText || d.text).length > 200)
+      .sort((a, b) => {
+        // Prioritize fishing behavior docs — they have the species depth/structure data we need
+        const fishScore = doc => /fishing|pattern|technique|bass|crappie|catfish|spawn|depth|forage|baitfish|behavior|seasonal/i.test(doc.title) ? 1 : 0;
+        return fishScore(b) - fishScore(a);
+      });
     log(`Extracting facts from ${usableDocs.length} documents...`);
     const allFacts = [];
-    for (let i = 0; i < Math.min(usableDocs.length, 15); i++) {
+    for (let i = 0; i < usableDocs.length; i++) {
       if (i > 0) await new Promise(res => setTimeout(res, 1500));
       const doc = usableDocs[i];
       const docText = (doc.fullText || doc.text || '').slice(0, 200000);
@@ -2117,20 +2123,26 @@ async function runFisheriesRefresh(lakeName, callbacks = {}) {
     log('Running trolling intelligence agent...');
     await new Promise(res => setTimeout(res, 2000));
     const trollingInput = { ...agentInput, biology: newBiology };
-    const trollRes = await fetch(`${CF_WORKER_URL}/research/agent`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lakeName, state: stateName, agent: 'trolling', previousResults: trollingInput }),
-    });
     let newTrolling = existingProfile.trollingIntelligence || {};
-    if (trollRes.ok) {
-      const trollData = await trollRes.json();
-      if (trollData.section) {
-        newTrolling = trollData.section;
-        log(`✔ Trolling agent complete — species: ${Object.keys(newTrolling).join(', ') || 'none'}`);
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      if (attempt > 1) { log('Trolling agent retry after 8s...'); await new Promise(res => setTimeout(res, 8000)); }
+      const trollRes = await fetch(`${CF_WORKER_URL}/research/agent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lakeName, state: stateName, agent: 'trolling', previousResults: trollingInput }),
+      });
+      if (trollRes.ok) {
+        const trollData = await trollRes.json();
+        if (trollData.section) {
+          newTrolling = trollData.section;
+          log(`✔ Trolling agent complete — species: ${Object.keys(newTrolling).join(', ') || 'none'}`);
+        }
+        break;
+      } else if (attempt < 2) {
+        log(`⚠ Trolling agent HTTP ${trollRes.status} — will retry`);
+      } else {
+        log(`⚠ Trolling agent HTTP ${trollRes.status} after 2 attempts — keeping existing`);
       }
-    } else {
-      log(`⚠ Trolling agent HTTP ${trollRes.status} — keeping existing trolling intel`);
     }
 
     // Merge and save updated profile
