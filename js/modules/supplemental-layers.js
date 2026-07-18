@@ -235,6 +235,8 @@ let _depthAreaGeoJSON = null;
 let _fishingLayer     = null;
 let _fishingVisible   = false;
 let _poiLayer         = null;
+let _visionLayer      = null;
+let _visionVisible    = false;
 let _poiVisible       = false;
 let _boundaryGeoJSON  = null;
 
@@ -318,6 +320,50 @@ const POI_STYLE = {
   water_access:   { emoji: '🚣', color: '#4fc3f7' },
   place_name:     { emoji: '📌', color: '#aaaaaa' },
 };
+
+const VISION_STYLE = {
+  DOCK_CLUSTER:    { emoji: '⚓', color: '#03A9F4', label: 'Dock Cluster' },
+  RIPRAP:          { emoji: '🪨', color: '#FF9800', label: 'Riprap' },
+  BRIDGE:          { emoji: '🌉', color: '#9C27B0', label: 'Bridge / Pilings' },
+  FLOODED_TIMBER:  { emoji: '🪵', color: '#795548', label: 'Flooded Timber' },
+};
+
+async function loadVisionStructures(lakeKey) {
+  if (!mapReady()) return;
+  if (_visionLayer) { getMap().removeLayer(_visionLayer); _visionLayer = null; }
+  try {
+    const url = `${CF_WORKER_URL}/chartpacks/supplemental/${lakeKey}/vision-structure.geojson?v=${Date.now()}`;
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) return;
+    const gj = await r.json();
+    if (!gj?.features?.length) return;
+    const group = L.layerGroup();
+    gj.features.forEach(feat => {
+      const coords = feat.geometry?.coordinates;
+      if (!coords) return;
+      const p = feat.properties || {};
+      const style = VISION_STYLE[p.structure_type] || { emoji: '📍', color: '#9E9E9E', label: p.structure_type || 'Structure' };
+      const conf = p.confidence ? ` (${Math.round(p.confidence * 100)}%)` : '';
+      const dockNote = p.dock_count_estimate ? ` ~${p.dock_count_estimate} docks` : '';
+      const m = L.circleMarker([coords[1], coords[0]], {
+        radius: 7, color: '#fff', weight: 1.5,
+        fillColor: style.color, fillOpacity: 0.85
+      });
+      m.bindTooltip(`${style.emoji} ${style.label}${dockNote}${conf}`, { sticky: true, direction: 'top', opacity: 0.9 });
+      m.bindPopup(`<b style="color:${style.color}">${style.emoji} ${esc(style.label)}</b>${dockNote}<br>
+        <span style="font-size:11px">${esc(p.description || '')}</span><br>
+        <span style="color:#aaa;font-size:10px">Confidence: ${conf} · AI vision detection</span>`);
+      group.addLayer(m);
+    });
+    _visionLayer = group;
+    if (_visionVisible) _visionLayer.addTo(getMap());
+    _visionVisible = true;
+    _visionLayer.addTo(getMap());
+    console.log(`[supplemental] vision-structure loaded: ${gj.features.length} features for ${lakeKey}`);
+  } catch (e) {
+    if (!e.message?.includes('404')) console.warn(`[supplemental] vision-structure fetch failed:`, e.message);
+  }
+}
 
 async function loadPOIs(lakeKey) {
   if (!mapReady()) return;
