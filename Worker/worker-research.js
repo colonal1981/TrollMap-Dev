@@ -4860,7 +4860,14 @@ If nothing found: {"structures":[],"has_water":true}`;
       }
       if (!imgRes.ok) { skipped++; continue; }
       const buf = await imgRes.arrayBuffer();
-      const base64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+      // Convert in chunks to avoid call stack overflow on large images
+      const bytes = new Uint8Array(buf);
+      let binary = '';
+      const chunkSize = 8192;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+      }
+      const base64 = btoa(binary);
       const result = await analyzeImage(base64);
       if (!result.has_water) { skipped++; } else { processed++; }
       for (const s of (result.structures || [])) {
