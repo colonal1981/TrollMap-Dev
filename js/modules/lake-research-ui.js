@@ -1383,7 +1383,7 @@ function initLakeResearch() {
     if (!lake) { alert('Load a lake first'); return; }
     const button = document.getElementById('btnVisionScan');
 
-    // Show inline progress panel
+    // Inline progress panel
     let progressPanel = document.getElementById('visionProgressPanel');
     if (!progressPanel) {
       progressPanel = document.createElement('div');
@@ -1391,87 +1391,121 @@ function initLakeResearch() {
       progressPanel.style.cssText = 'margin-top:8px;padding:10px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;font-size:11px;';
       button.parentNode.insertBefore(progressPanel, button.nextSibling);
     }
-
     const updateProgress = (msg, pct, color) => {
+      progressPanel.style.display = 'block';
       progressPanel.innerHTML = `
         <div style="color:var(--text);margin-bottom:6px">🛰️ ${msg}</div>
-        <div style="background:var(--panel);border-radius:4px;overflow:hidden;height:8px;">
-          <div style="background:${color || 'var(--accent)'};height:8px;width:${pct}%;transition:width 0.5s;border-radius:4px"></div>
+        <div style="background:var(--panel);border-radius:4px;overflow:hidden;height:8px">
+          <div style="background:${color || 'var(--accent)'};height:8px;width:${pct}%;transition:width 0.3s;border-radius:4px"></div>
         </div>`;
-      progressPanel.style.display = 'block';
     };
 
-    if (button) { button.disabled = true; button.textContent = '⏳ Starting…'; }
-    updateProgress('Starting scan…', 2, 'var(--accent)');
+    if (button) { button.disabled = true; button.textContent = '⏳ Loading tiles…'; }
+    updateProgress('Getting tile plan from server…', 2);
     log(`[Vision] Starting satellite structure scan for ${lake}…`);
 
     try {
-      const res = await fetch(`${CF_WORKER_URL}/research/vision-scan`, {
+      // Step 1 — get tile plan from worker
+      const planRes = await fetch(`${CF_WORKER_URL}/research/vision-scan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lakeName: lake })
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      log(`[Vision] ${data.message || 'Scan started'}`);
+      if (!planRes.ok) throw new Error(`Plan request failed: ${planRes.status}`);
+      const plan = await planRes.json();
+      if (!plan.ok) throw new Error(plan.error || 'Failed to get tile plan');
 
-      if (data.status !== 'scanning') {
-        updateProgress(`Complete — ${data.structuresFound ?? 0} structures found`, 100, 'var(--accent2)');
-        if (button) { button.disabled = false; button.textContent = '🛰️ Vision Scan'; }
-        return;
-      }
+      const { tiles, lakeKey } = plan;
+      log(`[Vision] ${tiles.length} tiles to scan for ${lake}`);
+      updateProgress(`Scanning 0/${tiles.length} tiles…`, 3);
 
-      // Poll for progress every 15 seconds
-      updateProgress('Fetching satellite tiles…', 5, 'var(--accent)');
-      let pollInterval = setInterval(async () => {
+      const TILE_W = 800, TILE_H = 800;
+      const allFeatures = [];
+      let processed = 0, skipped = 0;
+
+      // Step 2 — browser fetches ESRI images and sends to worker one at a time
+      for (let i = 0; i < tiles.length; i++) {
+        const tile = tiles[i];
+        const pct = Math.round((i / tiles.length) * 90) + 3;
+        updateProgress(`Scanning ${i+1}/${tiles.length} tiles · ${allFeatures.length} structures found`, pct);
+
         try {
-          const statusRes = await fetch(`${CF_WORKER_URL}/research/vision-scan-status`, {
+          // Fetch satellite image from ESRI
+          const bbox = `${tile.w},${tile.s},${tile.e},${tile.n}`;
+          const esriUrl = `https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?` +
+            `bbox=${encodeURIComponent(bbox)}&bboxSR=4326&imageSR=4326&size=${TILE_W},${TILE_H}&format=jpg&transparent=false&f=image`;
+
+          const imgRes = await fetch(esriUrl);
+          if (!imgRes.ok) { skipped++; continue; }
+
+          // Convert to base64
+          const buf = await imgRes.arrayBuffer();
+          const bytes = new Uint8Array(buf);
+          let binary = '';
+          for (let j = 0; j < bytes.length; j += 8192) {
+            binary += String.fromCharCode(...bytes.subarray(j, j + 8192));
+          }
+          const imageBase64 = btoa(binary);
+
+          // Send to worker for Gemini analysis
+          const analyzeRes = await fetch(`${CF_WORKER_URL}/research/vision-scan`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ lakeName: lake })
+            body: JSON.stringify({ lakeName: lake, imageBase64, tileBounds: tile })
           });
-          if (!statusRes.ok) return;
-          const s = await statusRes.json();
-          const total = s.tilesTotal || 50;
-          const done = s.tilesProcessed || 0;
-          const pct = Math.min(95, Math.round(done / total * 100));
-          const found = s.structuresFound || 0;
+          if (!analyzeRes.ok) { skipped++; continue; }
+          const result = await analyzeRes.json();
 
-          if (s.status === 'complete' || s.hasResult) {
-            clearInterval(pollInterval);
-            pollInterval = null;
-            updateProgress(`Complete — ${found} structure${found !== 1 ? 's' : ''} found across ${done} tiles`, 100, 'var(--accent2)');
-            log(`[Vision] ✔ Scan complete — ${found} structures found`);
-            if (button) { button.disabled = false; button.textContent = '🛰️ Vision Scan'; }
-            // Reload supplemental to show new markers
-            if (window.loadSupplementalForLake && _state.currentLakeName) {
-              await window.loadSupplementalForLake(_state.currentLakeName);
-            }
-            setTimeout(() => { if (progressPanel) progressPanel.style.display = 'none'; }, 8000);
-          } else {
-            updateProgress(`Scanning… ${done}/${total} tiles · ${found} structure${found !== 1 ? 's' : ''} found`, pct, 'var(--accent)');
-            log(`[Vision] Progress: ${done}/${total} tiles, ${found} structures`);
+          if (!result.hasWater) { skipped++; continue; }
+          processed++;
+          if (result.features?.length) {
+            allFeatures.push(...result.features);
+            log(`[Vision] Tile ${i+1}: found ${result.features.length} structure(s)`);
           }
-        } catch (_) {}
-      }, 15000);
-
-      // Safety timeout — clear poll after 15 minutes
-      setTimeout(() => {
-        if (pollInterval) {
-          clearInterval(pollInterval);
-          if (button) { button.disabled = false; button.textContent = '🛰️ Vision Scan'; }
-          updateProgress('Scan timed out — check R2 for results', 100, 'var(--bad)');
+        } catch (e) {
+          skipped++;
+          console.warn(`[Vision] Tile ${i+1} error: ${e.message}`);
         }
-      }, 900000);
+
+        // Small delay to avoid hammering APIs
+        await new Promise(res => setTimeout(res, 300));
+      }
+
+      // Step 3 — save results to R2
+      updateProgress(`Saving ${allFeatures.length} structures…`, 95);
+      const saveRes = await fetch(`${CF_WORKER_URL}/research/vision-scan-save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lakeName: lake,
+          features: allFeatures,
+          tilesTotal: tiles.length,
+          tilesProcessed: processed,
+          tilesSkipped: skipped
+        })
+      });
+      if (!saveRes.ok) throw new Error(`Save failed: ${saveRes.status}`);
+
+      updateProgress(`Complete — ${allFeatures.length} structure${allFeatures.length !== 1 ? 's' : ''} found across ${processed} tiles`, 100, 'var(--accent2)');
+      log(`[Vision] ✔ Scan complete — ${allFeatures.length} structures found, ${processed} tiles processed, ${skipped} skipped`);
+
+      // Reload supplemental layer to show new markers
+      if (window.loadSupplementalForLake && _state.currentLakeName) {
+        // Force reload by temporarily clearing active key
+        await window.loadSupplementalForLake(_state.currentLakeName);
+      }
+
+      setTimeout(() => { if (progressPanel) progressPanel.style.display = 'none'; }, 10000);
 
     } catch (err) {
       log(`[Vision] ✗ ${err.message}`);
       updateProgress(`Failed: ${err.message}`, 100, 'var(--bad)');
+    } finally {
       if (button) { button.disabled = false; button.textContent = '🛰️ Vision Scan'; }
     }
   });
 
-  // Standalone WQP limnology data fetch — no pipeline, just hits WQP for this lake
+    // Standalone WQP limnology data fetch — no pipeline, just hits WQP for this lake
   if (!document.getElementById('btnRunWQP')) {
     const anchor = document.getElementById('btnRerunGeospatial') || document.getElementById('btnSmartPlanRecovery') || document.getElementById('btnResearch');
     if (anchor) {
