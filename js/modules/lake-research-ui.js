@@ -1382,8 +1382,29 @@ function initLakeResearch() {
     const lake = _state.currentLakeName || document.getElementById('researchLakeSelect')?.value;
     if (!lake) { alert('Load a lake first'); return; }
     const button = document.getElementById('btnVisionScan');
+
+    // Show inline progress panel
+    let progressPanel = document.getElementById('visionProgressPanel');
+    if (!progressPanel) {
+      progressPanel = document.createElement('div');
+      progressPanel.id = 'visionProgressPanel';
+      progressPanel.style.cssText = 'margin-top:8px;padding:10px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;font-size:11px;';
+      button.parentNode.insertBefore(progressPanel, button.nextSibling);
+    }
+
+    const updateProgress = (msg, pct, color) => {
+      progressPanel.innerHTML = `
+        <div style="color:var(--text);margin-bottom:6px">🛰️ ${msg}</div>
+        <div style="background:var(--panel);border-radius:4px;overflow:hidden;height:8px;">
+          <div style="background:${color || 'var(--accent)'};height:8px;width:${pct}%;transition:width 0.5s;border-radius:4px"></div>
+        </div>`;
+      progressPanel.style.display = 'block';
+    };
+
     if (button) { button.disabled = true; button.textContent = '⏳ Starting…'; }
+    updateProgress('Starting scan…', 2, 'var(--accent)');
     log(`[Vision] Starting satellite structure scan for ${lake}…`);
+
     try {
       const res = await fetch(`${CF_WORKER_URL}/research/vision-scan`, {
         method: 'POST',
@@ -1392,12 +1413,60 @@ function initLakeResearch() {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      log(`[Vision] ${data.message || 'Scan started — results saved to R2 when complete'}`);
-      alert(`Vision scan started for ${lake}.\n\nRunning in background — check back in 3-8 minutes. Structures will appear in supplemental layer automatically.`);
+      log(`[Vision] ${data.message || 'Scan started'}`);
+
+      if (data.status !== 'scanning') {
+        updateProgress(`Complete — ${data.structuresFound ?? 0} structures found`, 100, 'var(--accent2)');
+        if (button) { button.disabled = false; button.textContent = '🛰️ Vision Scan'; }
+        return;
+      }
+
+      // Poll for progress every 15 seconds
+      updateProgress('Fetching satellite tiles…', 5, 'var(--accent)');
+      let pollInterval = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`${CF_WORKER_URL}/research/vision-scan-status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lakeName: lake })
+          });
+          if (!statusRes.ok) return;
+          const s = await statusRes.json();
+          const total = s.tilesTotal || 50;
+          const done = s.tilesProcessed || 0;
+          const pct = Math.min(95, Math.round(done / total * 100));
+          const found = s.structuresFound || 0;
+
+          if (s.status === 'complete' || s.hasResult) {
+            clearInterval(pollInterval);
+            pollInterval = null;
+            updateProgress(`Complete — ${found} structure${found !== 1 ? 's' : ''} found across ${done} tiles`, 100, 'var(--accent2)');
+            log(`[Vision] ✔ Scan complete — ${found} structures found`);
+            if (button) { button.disabled = false; button.textContent = '🛰️ Vision Scan'; }
+            // Reload supplemental to show new markers
+            if (window.loadSupplementalForLake && _state.currentLakeName) {
+              await window.loadSupplementalForLake(_state.currentLakeName);
+            }
+            setTimeout(() => { if (progressPanel) progressPanel.style.display = 'none'; }, 8000);
+          } else {
+            updateProgress(`Scanning… ${done}/${total} tiles · ${found} structure${found !== 1 ? 's' : ''} found`, pct, 'var(--accent)');
+            log(`[Vision] Progress: ${done}/${total} tiles, ${found} structures`);
+          }
+        } catch (_) {}
+      }, 15000);
+
+      // Safety timeout — clear poll after 15 minutes
+      setTimeout(() => {
+        if (pollInterval) {
+          clearInterval(pollInterval);
+          if (button) { button.disabled = false; button.textContent = '🛰️ Vision Scan'; }
+          updateProgress('Scan timed out — check R2 for results', 100, 'var(--bad)');
+        }
+      }, 900000);
+
     } catch (err) {
       log(`[Vision] ✗ ${err.message}`);
-      alert(`Vision scan failed: ${err.message}`);
-    } finally {
+      updateProgress(`Failed: ${err.message}`, 100, 'var(--bad)');
       if (button) { button.disabled = false; button.textContent = '🛰️ Vision Scan'; }
     }
   });
