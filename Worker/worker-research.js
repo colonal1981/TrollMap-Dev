@@ -3851,8 +3851,8 @@ JSON only. Never output a string or array for creelLimits or sizeLimits.`;
     expectedKey: "regulations"
   },
 
-  trolling: {
-    label: "Trolling Intelligence",
+  fisheries: {
+    label: "Species Intelligence",
     order: 7,
     system: "You are a fisheries biologist and professional trolling guide. You are given a verified lake profile containing limnology, biology, forage, habitat, and other sections. DO NOT SEARCH THE INTERNET. Use ONLY supplied JSON. Reference the biology/forage data extensively — use Threadfin Shad dominance, thermocline depth, oxygen depletion floor, and structural habitat data to inform your depth/structure/forage recommendations. Do NOT recommend routes, speeds, colors, or specific lures. CRITICAL: Only include species listed in the biology.predatorSpecies array. Do NOT add species not confirmed by biology. Return JSON only.",
     userTemplate: (lakeName, state, prev) => {
@@ -4326,7 +4326,7 @@ async function handleResearchSave(request, env) {
 
   // Calculate confidence per section if not provided
   // Canonical sections only — skip aliased duplicates (forage=biology, trollingIntelligence=trolling)
-  const sections = ["identity","limnology","biology","habitat","navigation","regulations","trolling","summary"];
+  const sections = ["identity","limnology","biology","habitat","navigation","regulations","fisheries","summary"];
   const confidence = incomingProfile.confidence || {};
   const sources = incomingProfile.sources || [];
   // build overall confidence
@@ -4345,7 +4345,7 @@ async function handleResearchSave(request, env) {
   }
   // Remove any aliased duplicate confidence keys that would bloat the object
   delete confidence.forage;
-  delete confidence.trollingIntelligence;
+  delete confidence.trollingIntelligence; delete confidence.fisheries;
   let overallConf = confCount ? Math.round(confSum/confCount) : 75;
 
   // Penalize for null critical fields — 99% with no thermocline depth is misleading
@@ -4388,7 +4388,7 @@ async function handleResearchSave(request, env) {
     habitat: incomingProfile.habitat || packageParts.habitat || {},
     navigation: incomingProfile.navigation || packageParts.navigation || {},
     regulations: incomingProfile.regulations || packageParts.regulations || {},
-    trolling: incomingProfile.trolling || incomingProfile.trollingIntelligence || packageParts.trolling || packageParts.trollingIntelligence || null,
+    trolling: incomingProfile.fisheries || incomingProfile.trolling || incomingProfile.trollingIntelligence || packageParts.fisheries || packageParts.trolling || packageParts.trollingIntelligence || null,
     trollingIntelligence: incomingProfile.trollingIntelligence || incomingProfile.trolling || null,
     summary: incomingProfile.summary || packageParts.summary || {},
     evidence: incomingProfile.evidence || packageParts.evidence || {},
