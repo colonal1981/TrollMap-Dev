@@ -4753,7 +4753,7 @@ async function handleResearchVisionScan(request, env) {
   if (!lakeName) return new Response(JSON.stringify({ ok: false, error: 'missing lakeName' }), { status: 400, headers: JSON_HEADERS });
 
   // Tile plan request — return bbox and tile list so browser can drive the scan
-  if (!imageBase64) {
+  if (!tileBounds) {
     const resolvedKey = resolveSupplementalKeyWorker(lakeName);
     const shorelineObj = await env.R2_TROLLMAP_CHARTPACKS.get(`supplemental/${resolvedKey}/shoreline.geojson`);
     if (!shorelineObj) return new Response(JSON.stringify({ ok: false, error: `no shoreline for ${resolvedKey}` }), { status: 400, headers: JSON_HEADERS });
