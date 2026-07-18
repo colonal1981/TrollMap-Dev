@@ -4849,10 +4849,10 @@ Identify ONLY these structure types that are CLEARLY VISIBLE:
 4. FLOODED_TIMBER — standing dead trees or stumps in or at water's edge
 
 DO NOT report individual docks, vegetation, boats, or anything below the water surface.
-Estimate position as fraction of image (x from left 0-1, y from top 0-1).
+Estimate position as pixel coordinates in an 800x800 image (x from left 0-800, y from top 0-800).
 
 Return ONLY valid JSON:
-{"structures":[{"type":"DOCK_CLUSTER|RIPRAP|BRIDGE|FLOODED_TIMBER","x_frac":0.5,"y_frac":0.5,"confidence":0.85,"description":"brief","dock_count_estimate":null}],"has_water":true}
+{"structures":[{"type":"DOCK_CLUSTER|RIPRAP|BRIDGE|FLOODED_TIMBER","x_frac":400,"y_frac":400,"confidence":0.85,"description":"brief","dock_count_estimate":null}],"has_water":true}
 If nothing found: {"structures":[],"has_water":true}`;
 
   for (let attempt = 0; attempt < geminiKeys.length; attempt++) {
@@ -4872,13 +4872,19 @@ If nothing found: {"structures":[],"has_water":true}`;
       const data = await r.json();
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
       const result = JSON.parse(text.replace(/```json|```/g, '').trim());
+      const IMG_SIZE = 800;
       const features = (result.structures || [])
         .filter(st => (st.confidence || 0) >= 0.6)
-        .map(st => ({
-          type: 'Feature',
-          geometry: { type: 'Point', coordinates: [w + (e - w) * (st.x_frac || 0.5), n - (n - s) * (st.y_frac || 0.5)]},
-          properties: { structure_type: st.type, confidence: st.confidence, description: st.description || '', dock_count_estimate: st.dock_count_estimate || null, source: 'gemini_vision', scanned_at: new Date().toISOString() }
-        }));
+        .map(st => {
+          // Gemini may return pixel coords (0-800) or fractions (0-1) — normalize to fraction
+          const xFrac = st.x_frac > 1 ? st.x_frac / IMG_SIZE : (st.x_frac || 0.5);
+          const yFrac = st.y_frac > 1 ? st.y_frac / IMG_SIZE : (st.y_frac || 0.5);
+          return {
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [w + (e - w) * xFrac, n - (n - s) * yFrac] },
+            properties: { structure_type: st.type, confidence: st.confidence, description: st.description || '', dock_count_estimate: st.dock_count_estimate || null, source: 'gemini_vision', scanned_at: new Date().toISOString() }
+          };
+        });
       return new Response(JSON.stringify({ ok: true, hasWater: result.has_water, features }), { headers: JSON_HEADERS });
     } catch (e) {
       if (attempt === geminiKeys.length - 1) {
