@@ -1423,52 +1423,49 @@ function initLakeResearch() {
       const allFeatures = [];
       let processed = 0, skipped = 0;
 
-      // Step 2 — browser fetches ESRI images and sends to worker one at a time
-      for (let i = 0; i < tiles.length; i++) {
-        const tile = tiles[i];
-        const pct = Math.round((i / tiles.length) * 90) + 3;
-        updateProgress(`Scanning ${i+1}/${tiles.length} tiles · ${allFeatures.length} structures found`, pct);
-
+      // Step 2 — process tiles in parallel batches of 5 (one per Gemini key)
+      const BATCH_SIZE = 5;
+      const processTile = async (tile, tileIdx) => {
         try {
-          // Fetch satellite image from ESRI
           const bbox = `${tile.w},${tile.s},${tile.e},${tile.n}`;
           const esriUrl = `https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?` +
             `bbox=${encodeURIComponent(bbox)}&bboxSR=4326&imageSR=4326&size=${TILE_W},${TILE_H}&format=jpg&transparent=false&f=image`;
-
           const imgRes = await fetch(esriUrl);
-          if (!imgRes.ok) { skipped++; continue; }
-
-          // Convert to base64
+          if (!imgRes.ok) return { skipped: true };
           const buf = await imgRes.arrayBuffer();
           const bytes = new Uint8Array(buf);
           let binary = '';
-          for (let j = 0; j < bytes.length; j += 8192) {
-            binary += String.fromCharCode(...bytes.subarray(j, j + 8192));
-          }
+          for (let j = 0; j < bytes.length; j += 8192) binary += String.fromCharCode(...bytes.subarray(j, j + 8192));
           const imageBase64 = btoa(binary);
-
-          // Send to worker for Gemini analysis
           const analyzeRes = await fetch(`${CF_WORKER_URL}/research/vision-scan`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ lakeName: lake, imageBase64, tileBounds: tile })
           });
-          if (!analyzeRes.ok) { skipped++; continue; }
+          if (!analyzeRes.ok) return { skipped: true };
           const result = await analyzeRes.json();
-
-          if (!result.hasWater) { skipped++; continue; }
-          processed++;
-          if (result.features?.length) {
-            allFeatures.push(...result.features);
-            log(`[Vision] Tile ${i+1}: found ${result.features.length} structure(s)`);
-          }
+          if (!result.hasWater) return { skipped: true };
+          return { features: result.features || [] };
         } catch (e) {
-          skipped++;
-          console.warn(`[Vision] Tile ${i+1} error: ${e.message}`);
+          console.warn(`[Vision] Tile ${tileIdx+1} error: ${e.message}`);
+          return { error: true };
         }
+      };
 
-        // Small delay to avoid hammering APIs
-        await new Promise(res => setTimeout(res, 300));
+      for (let i = 0; i < tiles.length; i += BATCH_SIZE) {
+        const batch = tiles.slice(i, i + BATCH_SIZE);
+        const pct = Math.round((i / tiles.length) * 90) + 3;
+        updateProgress(`Scanning ${i+1}-${Math.min(i+BATCH_SIZE, tiles.length)}/${tiles.length} tiles · ${allFeatures.length} structures found`, pct);
+
+        const results = await Promise.all(batch.map((tile, bi) => processTile(tile, i + bi)));
+        for (const r of results) {
+          if (r.skipped || r.error) { skipped++; continue; }
+          processed++;
+          if (r.features?.length) {
+            allFeatures.push(...r.features);
+            log(`[Vision] Batch ${Math.floor(i/BATCH_SIZE)+1}: found ${r.features.length} structure(s)`);
+          }
+        }
       }
 
       // Step 3 — save results to R2
