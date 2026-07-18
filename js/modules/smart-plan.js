@@ -18,6 +18,7 @@ import { SPECIES_BEHAVIOR, SPECIES_BEHAVIOR_V2, getSeason, checkRegulations, res
 const IntelV2 = { SPECIES_BEHAVIOR_V2, resolveLakeKey, checkRegulations, getSeason };
 import { isLiveBaitAvailable } from '../data/fishing-style-profile.js';
 import { buildFishingContext, buildGroqCoachPayload } from './smart-plan-context.js';
+import { getOsmStructures } from './supplemental-layers.js';
 import { startCoachSession } from './groq-coach.js';
 import { renderSmartPlanUI, syncSpread, reelForLure } from './smart-plan-ui.js';
 
@@ -625,6 +626,46 @@ export async function runSmartPlan() {
     }
   }
 
+  // ── OSM Structure summary for Groq prompt ──────────────────────────
+  const osmFeatures = (typeof getOsmStructures === 'function' ? getOsmStructures() : []);
+  let osmStructureBlock = '';
+  if (osmFeatures.length) {
+    const byType = {};
+    for (const f of osmFeatures) {
+      const t = f.properties?.structure_type || 'OTHER';
+      if (!byType[t]) byType[t] = [];
+      byType[t].push(f.properties?.name || null);
+    }
+    const lines = [];
+    const DAM_TYPES = ['DAM'];
+    const BRIDGE_TYPES = ['ROAD_BRIDGE', 'RAIL_BRIDGE', 'FOOT_BRIDGE', 'BRIDGE'];
+    const STRUCTURE_TYPES = ['PIER', 'BOAT_RAMP', 'BREAKWATER', 'GROYNE'];
+    if (DAM_TYPES.some(t => byType[t])) {
+      const dams = DAM_TYPES.flatMap(t => byType[t] || []).filter(Boolean);
+      lines.push(`- Dams/weirs (EXCLUSION ZONES — do not troll within 200ft): ${dams.length ? dams.slice(0,5).join(', ') : byType['DAM']?.length + ' unnamed'}`);
+    }
+    if (BRIDGE_TYPES.some(t => byType[t])) {
+      const bridges = BRIDGE_TYPES.flatMap(t => (byType[t] || []).filter(Boolean));
+      const roadCt = (byType['ROAD_BRIDGE'] || []).length;
+      const railCt = (byType['RAIL_BRIDGE'] || []).length;
+      const named = bridges.slice(0, 6).join(', ');
+      lines.push(`- Bridges (fish pilings/shadow lines): ${roadCt} road, ${railCt} rail${named ? ' — ' + named : ''}`);
+    }
+    if (STRUCTURE_TYPES.some(t => byType[t])) {
+      const piers = (byType['PIER'] || []).length;
+      const ramps = (byType['BOAT_RAMP'] || []).length;
+      if (piers) lines.push(`- Piers/docks: ${piers} (dock shadow lines hold baitfish)`);
+      if (ramps) lines.push(`- Boat ramps: ${ramps}`);
+    }
+    if (byType['ISLAND']) lines.push(`- Islands: ${byType['ISLAND'].length} (fish current seams and points)`);
+    if (lines.length) {
+      osmStructureBlock = `LAKE STRUCTURES (OSM — verified locations):
+${lines.join('
+')}
+`;
+    }
+  }
+
   const researchedBlock = hasResearched && researchedMeta ? `
 🧠 VERIFIED LAKE RESEARCH (v${researchedMeta.version||'?'} ${researchedMeta.status||''} ${fishingContext.researchedProfile?.confidence?.overall?.percent||'?'}% — prioritize for permanent facts, adapt for today's conditions):
 Summary: ${String(researchedSummary||'').slice(0,350)}
@@ -697,6 +738,7 @@ You must evaluate the weather and wind forecast against the platform (12.5ft Kay
 ${speciesIntelBlock}
 ${catchBlock}
 
+${osmStructureBlock}
 ${researchedBlock}
 
 YOUR ROLE:
@@ -1091,6 +1133,25 @@ Return ONLY valid JSON, no markdown:
               score: 6,
               reason: 'Community-marked fishing location on or near route',
               structureType: 'community spot',
+            });
+          }
+          // OSM structures — bridges and piers on/near route
+          for (const os of (ctx.osmStructures || [])) {
+            if (!os.lat || !os.lon) continue;
+            const t = os.structure_type || '';
+            if (t === 'DAM') continue; // exclusion zone — handled separately
+            const isBridge = t.includes('BRIDGE');
+            const isPier = t === 'PIER';
+            if (!isBridge && !isPier) continue;
+            tryAddStop({
+              type: isBridge ? 'bridge' : 'pier',
+              name: os.name || (isBridge ? 'Bridge' : 'Pier/Dock'),
+              lat: os.lat, lon: os.lon,
+              score: isBridge ? 7 : 5,
+              reason: isBridge
+                ? 'Bridge pilings create current breaks and shadow lines — prime structure'
+                : 'Dock/pier shadow line holds baitfish',
+              structureType: isBridge ? 'bridge pilings' : 'dock structure',
             });
           }
         }

@@ -1,243 +1,180 @@
 /**
- * osm-structure.js — Structure Detection via Grok Vision
+ * osm-structure.js — OSM Structure Layer Toggle
  *
- * Replaces the original OSM Overpass query approach (which returned unusable
- * state-wide stream networks). Instead captures the current map viewport as
- * a canvas screenshot and sends it to the /detect-structure worker route
- * (Grok grok-2-vision-1212) to identify docks, piers, boat ramps, timber,
- * and fish attractors visible in the satellite imagery.
+ * Loads osm-structures.geojson from R2 (supplemental/<lakeKey>/osm-structures.geojson)
+ * and renders bridges, dams, piers, boat ramps, and islands as map markers.
+ * Data is fetched once per lake and cached in IndexedDB via the supplemental
+ * layer infrastructure.
  *
- * The worker converts pixel coordinates back to lat/lon using the bounds
- * passed with the request. Results are dropped as interactive markers on
- * the map and cached by viewport quadkey in R2 so repeat views don't
- * re-charge the API.
+ * Populated by fetch_osm_structures.py which queries Overpass API.
  */
 
-import { state } from '../core/state.js';
-import { setBanner } from '../core/map-init.js';
+import { state, CF_WORKER_URL } from '../core/state.js';
+import { esc } from '../utils/escape.js';
 
-(function initStructureDetectionModule() {
+(function initOsmStructureModule() {
   const btn = document.getElementById('btnFetchOsm');
   if (!btn) return;
 
-  const WORKER_URL = (typeof CF_WORKER_URL !== 'undefined'
-    ? CF_WORKER_URL
-    : (window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev'));
-
-  const STRUCTURE_ICONS = {
-    dock:          { emoji: '🪵', color: '#03A9F4', label: 'Dock' },
-    pier:          { emoji: '🛟', color: '#03A9F4', label: 'Pier' },
-    boat_ramp:     { emoji: '🛥️',  color: '#4CAF50', label: 'Boat Ramp' },
-    boathouse:     { emoji: '🏠', color: '#FF9800', label: 'Boathouse' },
-    fish_attractor:{ emoji: '🎣', color: '#E91E63', label: 'Fish Attractor' },
-    timber:        { emoji: '🪵', color: '#795548', label: 'Timber/Log' },
-    unknown:       { emoji: '📍', color: '#9E9E9E', label: 'Structure' },
+  const STRUCTURE_STYLE = {
+    DAM:         { emoji: '🚧', color: '#F44336', label: 'Dam',          radius: 10 },
+    ROAD_BRIDGE: { emoji: '🌉', color: '#2196F3', label: 'Road Bridge',  radius: 7  },
+    RAIL_BRIDGE: { emoji: '🚂', color: '#9C27B0', label: 'Rail Bridge',  radius: 7  },
+    FOOT_BRIDGE: { emoji: '🚶', color: '#00BCD4', label: 'Foot Bridge',  radius: 5  },
+    BRIDGE:      { emoji: '🌉', color: '#2196F3', label: 'Bridge',       radius: 7  },
+    PIER:        { emoji: '🪵', color: '#03A9F4', label: 'Pier/Dock',    radius: 5  },
+    BOAT_RAMP:   { emoji: '🛥️',  color: '#4CAF50', label: 'Boat Ramp',   radius: 6  },
+    ISLAND:      { emoji: '🏝️',  color: '#FF9800', label: 'Island',      radius: 6  },
+    BREAKWATER:  { emoji: '🪨', color: '#795548', label: 'Breakwater',   radius: 5  },
+    GROYNE:      { emoji: '🪨', color: '#795548', label: 'Groyne',       radius: 5  },
+    WEIR:        { emoji: '🌊', color: '#00BCD4', label: 'Weir',         radius: 7  },
   };
 
-  let structureLayer = null;
-  let visible = false;
-  let loading = false;
+  const DEFAULT_STYLE = { emoji: '📍', color: '#9E9E9E', label: 'Structure', radius: 5 };
 
-  function getMap() { return state?.MAP || window.MAP || null; }
+  let _osmLayer   = null;
+  let _visible    = false;
+  let _loading    = false;
+  let _lakeKey    = null;   // lake key for currently loaded layer
+
+  function getMap()   { return state?.MAP || window.MAP || null; }
   function mapReady() { return !!(state?.MAP_OK && getMap()); }
 
-  // Fetch a satellite image of the current viewport directly from ESRI's
-  // export endpoint — much faster and cleaner than trying to screenshot the
-  // DOM with html2canvas (which re-fetches every tile through CORS and times
-  // out on ESRI's servers). Returns { base64, width, height, bounds }.
-  async function captureViewport() {
-    const map = getMap();
-    const bounds = map.getBounds();
-    const size = map.getSize();
-
-    // Calculate image dimensions that match the geographic aspect ratio
-    // so ESRI doesn't pad/expand the bbox to fit a mismatched aspect ratio.
-    const latRange = bounds.getNorth() - bounds.getSouth();
-    const lonRange = bounds.getEast() - bounds.getWest();
-    const cosLat = Math.cos((bounds.getCenter().lat) * Math.PI / 180);
-    const geoAspect = (lonRange * cosLat) / latRange; // geographic width:height ratio
-
-    const W = 1024;
-    const H = Math.round(W / geoAspect);
-    console.log(`[structure] Geographic aspect ratio: ${geoAspect.toFixed(3)}, requesting ${W}x${H}`);
-    console.log(`[structure] Geographic aspect ratio: ${geoAspect.toFixed(3)}, requesting ${W}x${H}`);
-
-    const bbox = [
-      bounds.getWest(), bounds.getSouth(),
-      bounds.getEast(), bounds.getNorth()
-    ].join(',');
-
-    const url = `https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?` +
-      `bbox=${encodeURIComponent(bbox)}` +
-      `&bboxSR=4326&imageSR=4326` +
-      `&size=${W},${H}` +
-      `&format=jpg&transparent=false&f=image`;
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-    try {
-      const resp = await fetch(url, { signal: controller.signal });
-      if (!resp.ok) throw new Error(`ESRI export HTTP ${resp.status}`);
-      const blob = await resp.blob();
-
-      // Verify actual image dimensions match what we requested
-      const actualDims = await new Promise(resolve => {
-        const img = new Image();
-        const objUrl = URL.createObjectURL(blob);
-        img.onload = () => { URL.revokeObjectURL(objUrl); resolve({ w: img.naturalWidth, h: img.naturalHeight }); };
-        img.onerror = () => { URL.revokeObjectURL(objUrl); resolve({ w: W, h: H }); };
-        img.src = objUrl;
-      });
-      console.log(`[structure] ESRI image: requested ${W}x${H}, got ${actualDims.w}x${actualDims.h}`);
-
-      const base64 = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result.split(',')[1]);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-      return { base64, width: actualDims.w, height: actualDims.h };
-    } finally {
-      clearTimeout(timeout);
-    }
+  // Read active lake key from supplemental-layers' shared state
+  function getActiveLakeKey() {
+    // supplemental-layers.js exposes this via window for cross-module access
+    return window._osmActiveLakeKey || null;
   }
 
-  async function detectAndDraw() {
-    const map = getMap();
-    if (!mapReady() || !map) { alert('Map not ready.'); return; }
-    if (loading) return;
+  async function fetchOsmStructures(lakeKey) {
+    const url = `${CF_WORKER_URL}/chartpacks/supplemental/${lakeKey}/osm-structures.geojson?v=${Date.now()}`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const gj = await r.json();
+    if (!gj?.features?.length) throw new Error('no OSM structures for this lake');
+    return gj;
+  }
 
-    const zoom = map.getZoom();
-    if (zoom < 15) {
-      alert('Zoom in to at least level 15 before running structure detection. Docks aren\'t clearly visible at this scale.');
-      return;
-    }
+  function buildLayer(gj) {
+    const group = L.layerGroup();
+    let count = 0;
+    gj.features.forEach(feat => {
+      const coords = feat.geometry?.coordinates;
+      if (!coords) return;
+      const p     = feat.properties || {};
+      const type  = p.structure_type || 'UNKNOWN';
+      const style = STRUCTURE_STYLE[type] || DEFAULT_STYLE;
+      const name  = p.name ? esc(p.name) : style.label;
 
-    loading = true;
-    btn.textContent = '⏳ Detecting...';
-    btn.style.background = 'var(--accent)';
-    btn.style.color = '#000';
-    setBanner('Fetching satellite image and running Groq vision analysis — allow up to 30 seconds...');
+      const marker = L.circleMarker([coords[1], coords[0]], {
+        radius:      style.radius,
+        color:       '#fff',
+        weight:      1.5,
+        fillColor:   style.color,
+        fillOpacity: 0.85,
+      });
 
-    // Hide overlays so Groq sees clean satellite imagery only
-    const hiddenLayers = [];
-    if (state.CONTOUR_LAYER && map.hasLayer(state.CONTOUR_LAYER)) {
-      map.removeLayer(state.CONTOUR_LAYER);
-      hiddenLayers.push({ type: 'layer', layer: state.CONTOUR_LAYER });
-    }
-    const overlayPanes = ['markerPane', 'overlayPane', 'shadowPane'];
-    const hiddenPanes = [];
-    overlayPanes.forEach(pane => {
-      const el = map.getPane(pane);
-      if (el) { hiddenPanes.push({ el, prev: el.style.display }); el.style.display = 'none'; }
+      const coordStr = `${coords[1].toFixed(5)}, ${coords[0].toFixed(5)}`;
+      const hwTag    = p.highway ? `<br><span style="color:#aaa;font-size:11px">Hwy: ${esc(p.highway)}</span>` : '';
+      const rwTag    = p.railway ? `<br><span style="color:#aaa;font-size:11px">Rail: ${esc(p.railway)}</span>` : '';
+      const opTag    = p.operator ? `<br><span style="color:#aaa;font-size:11px">Op: ${esc(p.operator)}</span>` : '';
+
+      marker.bindTooltip(`${style.emoji} ${name}`, { sticky: true, direction: 'top', opacity: 0.9 });
+      marker.bindPopup(`
+        <b style="color:${style.color}">${style.emoji} ${name}</b><br>
+        <span style="color:#ccc">${style.label}</span>
+        ${hwTag}${rwTag}${opTag}
+        <br><span style="color:#555;font-size:10px;font-family:monospace">${coordStr}</span>
+        <br><span style="color:#555;font-size:10px">OSM ${esc(p.osm_type || '')}/${p.osm_id || ''}</span>
+      `);
+
+      group.addLayer(marker);
+      count++;
     });
+    console.log(`[osm-structure] rendered ${count} features`);
+    return group;
+  }
 
-    const restoreLayers = () => {
-      hiddenLayers.forEach(h => { if (h.type === 'layer') map.addLayer(h.layer); });
-      hiddenPanes.forEach(h => { h.el.style.display = h.prev; });
-    };
-
-    try {
-      const bounds = map.getBounds();
-      const { base64, width, height } = await captureViewport();
-
-      console.log(`[structure] Sending to worker: ${width}x${height}, bounds N=${bounds.getNorth().toFixed(5)} S=${bounds.getSouth().toFixed(5)} E=${bounds.getEast().toFixed(5)} W=${bounds.getWest().toFixed(5)}`);
-
-      const resp = await fetch(`${WORKER_URL}/detect-structure`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          image_base64: base64,
-          mime_type: 'image/jpeg',
-          bounds: {
-            north: bounds.getNorth(),
-            south: bounds.getSouth(),
-            east: bounds.getEast(),
-            west: bounds.getWest(),
-          },
-          image_width: width,
-          image_height: height,
-        }),
-      });
-
-      if (!resp.ok) throw new Error(`Worker ${resp.status}`);
-      const data = await resp.json();
-      if (!data.success) throw new Error(data.error || 'Unknown error');
-
-      const features = data.features || [];
-
-      // Remove previous layer
-      if (structureLayer) { map.removeLayer(structureLayer); structureLayer = null; }
-
-      if (!features.length) {
-        setBanner(`No structures detected. ${data.image_notes || ''}`);
-        btn.textContent = '🏗 Structure';
-        btn.style.background = '';
-        btn.style.color = '';
-        loading = false;
-        return;
-      }
-
-      const markers = features.map(f => {
-        const icon = STRUCTURE_ICONS[f.type] || STRUCTURE_ICONS.unknown;
-        const conf = Math.round((f.confidence || 0) * 100);
-        const marker = L.circleMarker([f.lat, f.lon], {
-          radius: 8,
-          color: icon.color,
-          fillColor: icon.color,
-          fillOpacity: 0.75,
-          weight: 2,
-        });
-        marker.bindPopup(`
-          <b>${icon.emoji} ${icon.label}</b><br>
-          ${f.description || ''}<br>
-          <i>Confidence: ${conf}%</i><br>
-          <span style="color:#888;font-size:11px">${f.fishing_notes || ''}</span><br>
-          <span style="color:#aaa;font-size:10px;font-family:monospace">pos: ${f.x_frac?.toFixed(3)},${f.y_frac?.toFixed(3)} → ${f.lat?.toFixed(5)}, ${f.lon?.toFixed(5)}</span>
-        `);
-        return marker;
-      });
-
-      structureLayer = L.layerGroup(markers).addTo(map);
-      visible = true;
-      restoreLayers();
-      setBanner(`Found ${features.length} structure${features.length === 1 ? '' : 's'}. ${data.image_notes || ''}`);
-      btn.textContent = '🏗 Hide Structure';
+  function setBtn(state) {
+    if (state === 'on') {
+      btn.textContent = '🏗️ Hide Structure';
       btn.style.background = '#4CAF50';
       btn.style.color = '#fff';
-
-    } catch (e) {
-      console.error('[structure-detection]', e);
-      restoreLayers();
-      setBanner(`Structure detection failed: ${e.message}`);
-      btn.textContent = '🏗 Structure';
+    } else if (state === 'loading') {
+      btn.textContent = '⏳ Loading...';
+      btn.style.background = 'var(--accent)';
+      btn.style.color = '#000';
+    } else {
+      btn.textContent = '🏗️ Structure';
       btn.style.background = '';
       btn.style.color = '';
     }
+  }
 
-    loading = false;
+  async function load() {
+    const map = getMap();
+    if (!mapReady() || !map) { alert('Map not ready.'); return; }
+
+    const lakeKey = getActiveLakeKey();
+    if (!lakeKey) { alert('Select a lake first.'); return; }
+
+    // If already loaded for this lake, just show it
+    if (_osmLayer && _lakeKey === lakeKey) {
+      _osmLayer.addTo(map);
+      _visible = true;
+      setBtn('on');
+      return;
+    }
+
+    // New lake or first load
+    if (_osmLayer) { map.removeLayer(_osmLayer); _osmLayer = null; }
+    _loading = true;
+    setBtn('loading');
+
+    try {
+      const gj = await fetchOsmStructures(lakeKey);
+      _osmLayer = buildLayer(gj);
+      _lakeKey  = lakeKey;
+      _osmLayer.addTo(map);
+      _visible  = true;
+      setBtn('on');
+      console.log(`[osm-structure] loaded ${gj.features.length} features for ${lakeKey}`);
+    } catch (e) {
+      console.warn('[osm-structure]', e.message);
+      setBtn('off');
+      if (e.message.includes('404') || e.message.includes('no OSM')) {
+        alert(`No OSM structure data for this lake yet.\nRun fetch_osm_structures.py to populate it.`);
+      } else {
+        alert(`Failed to load OSM structures: ${e.message}`);
+      }
+    }
+
+    _loading = false;
   }
 
   function toggle() {
     const map = getMap();
-    if (!map) return;
-    if (visible && structureLayer) {
-      map.removeLayer(structureLayer);
-      visible = false;
-      btn.textContent = '🏗 Structure';
-      btn.style.background = '';
-      btn.style.color = '';
-    } else if (structureLayer && !visible) {
-      structureLayer.addTo(map);
-      visible = true;
-      btn.textContent = '🏗 Hide Structure';
-      btn.style.background = '#4CAF50';
-      btn.style.color = '#fff';
+    if (!map || _loading) return;
+
+    if (_visible && _osmLayer) {
+      map.removeLayer(_osmLayer);
+      _visible = false;
+      setBtn('off');
     } else {
-      detectAndDraw();
+      load();
     }
   }
 
+  // Re-clear layer when lake changes so next click fetches fresh data
+  window.addEventListener('trollmap:lakeChanged', () => {
+    const map = getMap();
+    if (_osmLayer && map) { map.removeLayer(_osmLayer); }
+    _osmLayer = null;
+    _visible  = false;
+    _lakeKey  = null;
+    setBtn('off');
+  });
+
   btn.addEventListener('click', toggle);
-  console.log('✓ Structure Detection module armed (Grok Vision)');
+  console.log('✓ OSM Structure module armed');
 })();
