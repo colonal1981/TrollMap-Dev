@@ -1347,12 +1347,12 @@ For each structure DIRECTLY OVER OR TOUCHING the water, identify:
 
 DO NOT flag: swimming pools, buildings set back from water, roads, shadows, trees, boat wakes, reflections, open water with no structure, or anything without a clear physical connection to shore or the water surface.
 
-Return position as precise FRACTION of image dimensions:
-- x_frac: 0.0 (left edge) to 1.0 (right edge)
-- y_frac: 0.0 (top edge) to 1.0 (bottom edge)
+Return position as pixel coordinates in the image:
+- x: 0 (left edge) to 1024 (right edge)
+- y: 0 (top edge) to 600 (bottom edge)
 
-Place the fraction at the point where the structure meets the water, not the far end. Only include structures you are 75%+ confident about. Fewer accurate results is better than many uncertain ones.`;
-          const userPrompt = `Analyze this ${image_width}x${image_height} satellite image. Bounds: N=${bounds.north.toFixed(6)}, S=${bounds.south.toFixed(6)}, E=${bounds.east.toFixed(6)}, W=${bounds.west.toFixed(6)}. Return ONLY valid JSON: {"has_water":true,"features":[{"type":"dock|pier|boat_ramp|boathouse|timber|fish_attractor","x_frac":0.0,"y_frac":0.0,"confidence":0.0,"description":"brief","fishing_notes":"why this matters"}],"image_notes":"description"}`;
+Place the coordinate at the point where the structure meets the water, not the far end. Only include structures you are 75%+ confident about. Fewer accurate results is better than many uncertain ones.`;
+          const userPrompt = `Analyze this ${image_width}x${image_height} satellite image. Bounds: N=${bounds.north.toFixed(6)}, S=${bounds.south.toFixed(6)}, E=${bounds.east.toFixed(6)}, W=${bounds.west.toFixed(6)}. Return ONLY valid JSON: {"has_water":true,"features":[{"type":"dock|pier|boat_ramp|boathouse|timber|fish_attractor","x":0,"y":0,"confidence":0.0,"description":"brief","fishing_notes":"why this matters"}],"image_notes":"description"}`;
           const payload = {
             systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
             contents: [{ parts: [
@@ -1369,7 +1369,7 @@ Place the fraction at the point where the structure meets the water, not the far
           let r, attempts = 0;
           while (attempts < 3) {
             r = await fetch(geminiUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-            if (r.status !== 503) break;
+            if (r.status === 503) break;
             attempts++;
             if (attempts < 3) await new Promise((res) => setTimeout(res, 1e3 * attempts));
           }
@@ -1389,11 +1389,25 @@ Place the fraction at the point where the structure meets the water, not the far
           const latRange = bounds.north - bounds.south;
           const lonRange = bounds.east - bounds.west;
           if (Array.isArray(result.features)) {
-            result.features = result.features.map((f) => ({
-              ...f,
-              lat: bounds.north - f.y_frac * latRange,
-              lon: bounds.west + f.x_frac * lonRange
-            }));
+            result.features = result.features.map((f) => {
+              const extract = (axis, size) => {
+                if (f[axis] !== undefined) return parseFloat(f[axis]);
+                if (f[`${axis}_frac`] !== undefined) return parseFloat(f[`${axis}_frac`]);
+                if (f[`${axis}_pixel`] !== undefined) return parseFloat(f[`${axis}_pixel`]);
+                const key = Object.keys(f).find(k => k.toLowerCase().startsWith(axis));
+                const v = key ? parseFloat(f[key]) : 0.5;
+                return v > 1 ? v / size : v;
+              };
+
+              const xFrac = extract('x', image_width);
+              const yFrac = extract('y', image_height);
+
+              return {
+                ...f,
+                lat: bounds.north - yFrac * latRange,
+                lon: bounds.west + xFrac * lonRange
+              };
+            });
             const before = result.features.length;
             result.features = result.features.filter((f) => {
               const fromWest = (f.lon - bounds.west) / lonRange;

@@ -981,6 +981,194 @@ Return ONLY valid JSON, no markdown:
   syncSpread(null,routeRods,routeSpeeds);
   window._smartPlanRouteRods=routeRods;
 
+  // ── Build route-aware casting stop candidates ───────────────────────────
+  // Only structures that lie within STOP_RADIUS_FT of the actual route
+  // tracks are included. Each stop carries phase + approximate elapsed
+  // time so the coach knows WHEN and WHERE to tell the angler to pause.
+  const STOP_RADIUS_FT = 250; // how close to the route a structure must be
+  const stopCandidates = [];
+  const addedCoords = []; // dedup by proximity
+
+  // Haversine distance in feet
+  function distFt(lat1, lon1, lat2, lon2) {
+    const R = 3958.8 * 5280;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2)**2 +
+      Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  // For a given lat/lon, find the closest point on any smart plan track.
+  // Returns { distFt, trackName, ptIdx, progressPct } or null.
+  function nearestRoutePoint(lat, lon) {
+    const tracks = (state.DATA?.tracks || []).filter(t => t.smartPlan);
+    let best = null;
+    for (const track of tracks) {
+      const pts = track.pts || [];
+      for (let i = 0; i < pts.length; i++) {
+        const d = distFt(lat, lon, pts[i][0], pts[i][1]);
+        if (!best || d < best.distFt) {
+          best = { distFt: d, trackName: track.name, ptIdx: i, progressPct: Math.round(i / pts.length * 100) };
+        }
+      }
+    }
+    return best;
+  }
+
+  // Estimate elapsed time at a route point given track speed
+  function etaMinutes(trackName, progressPct, rangeMiles, phaseSpeeds) {
+    const speed = trackName?.includes('Ph2') ? (phaseSpeeds?.band2 || 2) : (phaseSpeeds?.band1 || 1.8);
+    const trackMiles = rangeMiles / 4; // 4 tracks total
+    const elapsedMiles = trackMiles * progressPct / 100;
+    return Math.round(elapsedMiles / speed * 60);
+  }
+
+  function tryAddStop(candidate) {
+    if (!candidate.lat || !candidate.lon) {
+      // No coords — research profile structural notes, include without route filter
+      // but cap at 2 of these since they have no spatial grounding
+      const ungrounded = stopCandidates.filter(s => !s.lat);
+      if (ungrounded.length >= 2) return;
+      stopCandidates.push(candidate);
+      return;
+    }
+    // Dedup — skip if we already have a stop within 300ft of this one
+    if (addedCoords.some(c => distFt(candidate.lat, candidate.lon, c.lat, c.lon) < 300)) return;
+    // Route proximity check
+    const nearest = nearestRoutePoint(candidate.lat, candidate.lon);
+    if (!nearest || nearest.distFt > STOP_RADIUS_FT) return;
+    // Enrich with route context
+    candidate.routeContext = {
+      trackName: nearest.trackName,
+      distFromRouteFt: Math.round(nearest.distFt),
+      progressPct: nearest.progressPct,
+      etaMin: etaMinutes(nearest.trackName, nearest.progressPct, rangeMiles, { band1: band1Speed, band2: band2Speed }),
+    };
+    addedCoords.push({ lat: candidate.lat, lon: candidate.lon });
+    stopCandidates.push(candidate);
+  }
+
+  try {
+    const researchedProfile = fishingContext?.researchedProfile;
+    const habitat = researchedProfile?.habitat || {};
+    const biology = researchedProfile?.biology || {};
+    const season = fishingContext?.season || getSeason(new Date());
+
+    // ── 1. Supplemental attractors — GPS-grounded, highest priority ──
+    if (rampLat && rampLon && window.getSupplementalContext) {
+      try {
+        // Search the full route extent, not just the ramp
+        const routeTracks = (state.DATA?.tracks || []).filter(t => t.smartPlan);
+        const allPts = routeTracks.flatMap(t => t.pts || []);
+        // Compute route bounding box center for a broader search
+        if (allPts.length) {
+          const lats = allPts.map(p => p[0]);
+          const lons = allPts.map(p => p[1]);
+          const cLat = (Math.min(...lats) + Math.max(...lats)) / 2;
+          const cLon = (Math.min(...lons) + Math.max(...lons)) / 2;
+          const radiusMi = Math.max(1.0,
+            distFt(Math.min(...lats), Math.min(...lons), Math.max(...lats), Math.max(...lons)) / 5280 / 2
+          );
+          const ctx = window.getSupplementalContext(cLat, cLon, radiusMi);
+          for (const a of (ctx.attractors || [])) {
+            if (!a.lat || !a.lon) continue;
+            tryAddStop({
+              type: 'fish_attractor',
+              name: a.name || 'Fish Attractor',
+              lat: a.lat, lon: a.lon,
+              score: 9,
+              reason: 'Mapped fish attractor on or near route — confirmed brush pile / structure',
+              structureType: 'artificial attractor',
+            });
+          }
+          for (const sp of (ctx.fishingPoints || [])) {
+            if (!sp.lat || !sp.lon) continue;
+            tryAddStop({
+              type: 'community_spot',
+              name: sp.name || 'Community Fishing Spot',
+              lat: sp.lat, lon: sp.lon,
+              score: 6,
+              reason: 'Community-marked fishing location on or near route',
+              structureType: 'community spot',
+            });
+          }
+        }
+      } catch (_) {}
+    }
+
+    // ── 2. My Structures (QuickDraw pins) — GPS-grounded ──
+    if (window.getMyStructures) {
+      try {
+        for (const s of window.getMyStructures()) {
+          if (!s.lat || !s.lon) continue;
+          tryAddStop({
+            type: s.type || 'custom_pin',
+            name: s.name || 'My Structure',
+            lat: s.lat, lon: s.lon,
+            score: Math.min(10, (s.quality || 5) + 2),
+            reason: `Angler-marked structure (quality ${s.quality || '?'}/10)`,
+            structureType: s.type || 'custom',
+          });
+        }
+      } catch (_) {}
+    }
+
+    // ── 3. Contour-derived humps and ledges — GPS-grounded from geospatial adapter ──
+    const structuralElements = researchedProfile?.habitat?.structuralElements || {};
+    for (const hump of (structuralElements.humpCoordinates || [])) {
+      if (!hump.lat || !hump.lon) continue;
+      tryAddStop({
+        type: 'hump',
+        name: `Offshore Hump ${hump.id?.replace('hump_', '#') || ''}${hump.areaAcres ? ` (~${hump.areaAcres}ac)` : ''}`,
+        lat: hump.lat, lon: hump.lon,
+        score: 8,
+        reason: `Closed contour loop — offshore high spot${hump.depth ? ` at ~${hump.depth}ft` : ''}. Stripers and suspended fish stage over humps in summer.`,
+        structureType: 'offshore hump',
+      });
+    }
+    for (const ledge of (structuralElements.ledgeCoordinates || [])) {
+      if (!ledge.lat || !ledge.lon) continue;
+      tryAddStop({
+        type: 'ledge',
+        name: `Depth Ledge / Drop-off ${ledge.id?.replace('ledge_', '#') || ''}`,
+        lat: ledge.lat, lon: ledge.lon,
+        score: 7,
+        reason: `High contour density (${ledge.contourDensity} contours) — active depth break. Fish transition through here as conditions change.`,
+        structureType: 'channel ledge / drop-off',
+      });
+    }
+
+    // ── 4. Research profile structural notes — ungrounded, max 2 ──
+    const attractorCount = habitat.artificialHabitatDetails?.attractorCount;
+    if (attractorCount > 0) {
+      tryAddStop({
+        type: 'fish_attractor',
+        name: `${attractorCount} Mapped Fish Attractors (lake-wide)`,
+        score: 7,
+        reason: `${attractorCount} official attractors on this lake — watch sonar for brushpile signatures`,
+        structureType: 'artificial attractor',
+      });
+    }
+    const spawnTiming = biology.spawnTiming || {};
+    const targetSpawn = spawnTiming[sp] || spawnTiming[Object.keys(spawnTiming).find(k => k.toLowerCase().includes((sp||'').toLowerCase().split(' ')[0])) || ''];
+    if (targetSpawn && (season === 'spring' || season === 'winter')) {
+      tryAddStop({
+        type: 'spawn_flat',
+        name: 'Spawning Flats / Coves',
+        score: 8,
+        reason: `${sp} spawn timing: ${targetSpawn} — shallow coves and flats are primary targets this season`,
+        structureType: 'shallow flat / spawning area',
+      });
+    }
+
+    stopCandidates.sort((a, b) => b.score - a.score);
+    stopCandidates.splice(8);
+
+  } catch (stopErr) {
+    console.warn('[smart-plan] Stop candidate build failed:', stopErr.message);
+  }
+
   // Build the Hybrid Report: Beautiful readable text on top, raw JSON on bottom
   const b1p=routeRods['Ph1 Outbound'][0], b1s=routeRods['Ph1 Outbound'][1];
   const b2p=routeRods['Ph2 Outbound'][0], b2s=routeRods['Ph2 Outbound'][1];
@@ -1058,195 +1246,6 @@ Return ONLY valid JSON, no markdown:
     const coachSpread=Object.entries(routeRods).flatMap(([routeName,rods])=>
       rods.map(r=>({route:routeName,side:r.side,rod:r.rod||'',lure:r.lure||'',color:r.color||'',depth:r.depth||'',lead:r.lead||'',notes:(r.notes||'').slice(0,80)}))
     );
-
-    // ── Build route-aware casting stop candidates ───────────────────────────
-    // Only structures that lie within STOP_RADIUS_FT of the actual route
-    // tracks are included. Each stop carries phase + approximate elapsed
-    // time so the coach knows WHEN and WHERE to tell the angler to pause.
-    const STOP_RADIUS_FT = 250; // how close to the route a structure must be
-
-    // Haversine distance in feet
-    function distFt(lat1, lon1, lat2, lon2) {
-      const R = 3958.8 * 5280;
-      const dLat = (lat2 - lat1) * Math.PI / 180;
-      const dLon = (lon2 - lon1) * Math.PI / 180;
-      const a = Math.sin(dLat/2)**2 +
-        Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
-      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    }
-
-    // For a given lat/lon, find the closest point on any smart plan track.
-    // Returns { distFt, trackName, ptIdx, progressPct } or null.
-    function nearestRoutePoint(lat, lon) {
-      const tracks = (state.DATA?.tracks || []).filter(t => t.smartPlan);
-      let best = null;
-      for (const track of tracks) {
-        const pts = track.pts || [];
-        for (let i = 0; i < pts.length; i++) {
-          const d = distFt(lat, lon, pts[i][0], pts[i][1]);
-          if (!best || d < best.distFt) {
-            best = { distFt: d, trackName: track.name, ptIdx: i, progressPct: Math.round(i / pts.length * 100) };
-          }
-        }
-      }
-      return best;
-    }
-
-    // Estimate elapsed time at a route point given track speed
-    function etaMinutes(trackName, progressPct, rangeMiles, phaseSpeeds) {
-      const speed = trackName?.includes('Ph2') ? (phaseSpeeds?.band2 || 2) : (phaseSpeeds?.band1 || 1.8);
-      const trackMiles = rangeMiles / 4; // 4 tracks total
-      const elapsedMiles = trackMiles * progressPct / 100;
-      return Math.round(elapsedMiles / speed * 60);
-    }
-
-    const stopCandidates = [];
-    const addedCoords = []; // dedup by proximity
-
-    function tryAddStop(candidate) {
-      if (!candidate.lat || !candidate.lon) {
-        // No coords — research profile structural notes, include without route filter
-        // but cap at 2 of these since they have no spatial grounding
-        const ungrounded = stopCandidates.filter(s => !s.lat);
-        if (ungrounded.length >= 2) return;
-        stopCandidates.push(candidate);
-        return;
-      }
-      // Dedup — skip if we already have a stop within 300ft of this one
-      if (addedCoords.some(c => distFt(candidate.lat, candidate.lon, c.lat, c.lon) < 300)) return;
-      // Route proximity check
-      const nearest = nearestRoutePoint(candidate.lat, candidate.lon);
-      if (!nearest || nearest.distFt > STOP_RADIUS_FT) return;
-      // Enrich with route context
-      candidate.routeContext = {
-        trackName: nearest.trackName,
-        distFromRouteFt: Math.round(nearest.distFt),
-        progressPct: nearest.progressPct,
-        etaMin: etaMinutes(nearest.trackName, nearest.progressPct, rangeMiles, { band1: band1Speed, band2: band2Speed }),
-      };
-      addedCoords.push({ lat: candidate.lat, lon: candidate.lon });
-      stopCandidates.push(candidate);
-    }
-
-    try {
-      const researchedProfile = fishingContext?.researchedProfile;
-      const habitat = researchedProfile?.habitat || {};
-      const biology = researchedProfile?.biology || {};
-      const season = fishingContext?.season || getSeason(new Date());
-
-      // ── 1. Supplemental attractors — GPS-grounded, highest priority ──
-      if (rampLat && rampLon && window.getSupplementalContext) {
-        try {
-          // Search the full route extent, not just the ramp
-          const routeTracks = (state.DATA?.tracks || []).filter(t => t.smartPlan);
-          const allPts = routeTracks.flatMap(t => t.pts || []);
-          // Compute route bounding box center for a broader search
-          if (allPts.length) {
-            const lats = allPts.map(p => p[0]);
-            const lons = allPts.map(p => p[1]);
-            const cLat = (Math.min(...lats) + Math.max(...lats)) / 2;
-            const cLon = (Math.min(...lons) + Math.max(...lons)) / 2;
-            const radiusMi = Math.max(1.0,
-              distFt(Math.min(...lats), Math.min(...lons), Math.max(...lats), Math.max(...lons)) / 5280 / 2
-            );
-            const ctx = window.getSupplementalContext(cLat, cLon, radiusMi);
-            for (const a of (ctx.attractors || [])) {
-              if (!a.lat || !a.lon) continue;
-              tryAddStop({
-                type: 'fish_attractor',
-                name: a.name || 'Fish Attractor',
-                lat: a.lat, lon: a.lon,
-                score: 9,
-                reason: 'Mapped fish attractor on or near route — confirmed brush pile / structure',
-                structureType: 'artificial attractor',
-              });
-            }
-            for (const sp of (ctx.fishingPoints || [])) {
-              if (!sp.lat || !sp.lon) continue;
-              tryAddStop({
-                type: 'community_spot',
-                name: sp.name || 'Community Fishing Spot',
-                lat: sp.lat, lon: sp.lon,
-                score: 6,
-                reason: 'Community-marked fishing location on or near route',
-                structureType: 'community spot',
-              });
-            }
-          }
-        } catch (_) {}
-      }
-
-      // ── 2. My Structures (QuickDraw pins) — GPS-grounded ──
-      if (window.getMyStructures) {
-        try {
-          for (const s of window.getMyStructures()) {
-            if (!s.lat || !s.lon) continue;
-            tryAddStop({
-              type: s.type || 'custom_pin',
-              name: s.name || 'My Structure',
-              lat: s.lat, lon: s.lon,
-              score: Math.min(10, (s.quality || 5) + 2),
-              reason: `Angler-marked structure (quality ${s.quality || '?'}/10)`,
-              structureType: s.type || 'custom',
-            });
-          }
-        } catch (_) {}
-      }
-
-      // ── 3. Contour-derived humps and ledges — GPS-grounded from geospatial adapter ──
-      const structuralElements = researchedProfile?.habitat?.structuralElements || {};
-      for (const hump of (structuralElements.humpCoordinates || [])) {
-        if (!hump.lat || !hump.lon) continue;
-        tryAddStop({
-          type: 'hump',
-          name: `Offshore Hump ${hump.id?.replace('hump_', '#') || ''}${hump.areaAcres ? ` (~${hump.areaAcres}ac)` : ''}`,
-          lat: hump.lat, lon: hump.lon,
-          score: 8,
-          reason: `Closed contour loop — offshore high spot${hump.depth ? ` at ~${hump.depth}ft` : ''}. Stripers and suspended fish stage over humps in summer.`,
-          structureType: 'offshore hump',
-        });
-      }
-      for (const ledge of (structuralElements.ledgeCoordinates || [])) {
-        if (!ledge.lat || !ledge.lon) continue;
-        tryAddStop({
-          type: 'ledge',
-          name: `Depth Ledge / Drop-off ${ledge.id?.replace('ledge_', '#') || ''}`,
-          lat: ledge.lat, lon: ledge.lon,
-          score: 7,
-          reason: `High contour density (${ledge.contourDensity} contours) — active depth break. Fish transition through here as conditions change.`,
-          structureType: 'channel ledge / drop-off',
-        });
-      }
-
-      // ── 4. Research profile structural notes — ungrounded, max 2 ──
-      const attractorCount = habitat.artificialHabitatDetails?.attractorCount;
-      if (attractorCount > 0) {
-        tryAddStop({
-          type: 'fish_attractor',
-          name: `${attractorCount} Mapped Fish Attractors (lake-wide)`,
-          score: 7,
-          reason: `${attractorCount} official attractors on this lake — watch sonar for brushpile signatures`,
-          structureType: 'artificial attractor',
-        });
-      }
-      const spawnTiming = biology.spawnTiming || {};
-      const targetSpawn = spawnTiming[sp] || spawnTiming[Object.keys(spawnTiming).find(k => k.toLowerCase().includes((sp||'').toLowerCase().split(' ')[0])) || ''];
-      if (targetSpawn && (season === 'spring' || season === 'winter')) {
-        tryAddStop({
-          type: 'spawn_flat',
-          name: 'Spawning Flats / Coves',
-          score: 8,
-          reason: `${sp} spawn timing: ${targetSpawn} — shallow coves and flats are primary targets this season`,
-          structureType: 'shallow flat / spawning area',
-        });
-      }
-
-      stopCandidates.sort((a, b) => b.score - a.score);
-      stopCandidates.splice(8);
-
-    } catch (stopErr) {
-      console.warn('[smart-plan] Stop candidate build failed:', stopErr.message);
-    }
 
     // ADDED: speed and speedRationale passed explicitly into planState
     const coachPayload=buildGroqCoachPayload(fishingContext,{
