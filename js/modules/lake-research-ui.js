@@ -279,7 +279,7 @@ function renderProfile(profile) {
     for (const key of RESEARCH_ORDER) {
       if (key === 'identity') parts[key] = profile.identity || {};
       else if (key === 'biology') parts[key] = profile.forage || profile.biology || {};
-      else if (key === 'trolling') parts[key] = profile.trollingIntelligence || profile.trolling || {};
+      else if (key === 'fisheries') parts[key] = profile.trollingIntelligence || profile.trolling || {};
       else parts[key] = profile[key] || {};
     }
     reviewCard.dataset.parts = JSON.stringify(parts);
@@ -395,8 +395,37 @@ function formatHumanReadableSection(key, data) {
       html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px;grid-column:1/-1">
         <b>🐣 Documented Stocking / Management Notes</b><br>`;
       d.knownStockings.forEach(s => {
-        html += `• <b>${esc(s.species || '—')}</b>${s.agency ? ` (${esc(s.agency)})` : ''}${s.note ? ` — ${esc(s.note)}` : ''}<br>`;
+        if (typeof s === 'string') {
+          html += `• <b>${esc(s)}</b><br>`;
+        } else {
+          html += `• <b>${esc(s.species || '—')}</b>${s.quantity ? ` — ${esc(String(s.quantity))} stocked` : ''}${s.year ? ` (${esc(String(s.year))})` : ''}${s.location ? ` at ${esc(s.location)}` : ''}${s.agency ? ` (${esc(s.agency)})` : ''}${s.note ? ` — ${esc(s.note)}` : ''}<br>`;
+        }
       });
+      html += `</div>`;
+    }
+    if (d.speciesBehavior && Object.keys(d.speciesBehavior).length) {
+      const SEASONS = ['spring','summer','fall','winter'];
+      const SEASON_EMOJI = { spring: '🌸', summer: '☀️', fall: '🍂', winter: '❄️' };
+      html += `<div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px;grid-column:1/-1">
+        <b>🧠 Species Behavior (Lake-Specific)</b>`;
+      for (const [species, data] of Object.entries(d.speciesBehavior)) {
+        html += `<div style="margin:6px 0 2px;font-weight:600">${esc(species)}</div>`;
+        html += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:4px">`;
+        SEASONS.forEach(season => {
+          const s = data[season];
+          if (!s) return;
+          const depth = Array.isArray(s.depthRange) ? `${s.depthRange[0]}–${s.depthRange[1]}ft` : null;
+          const structs = Array.isArray(s.structure) ? s.structure.slice(0,2).join(', ') : null;
+          html += `<div style="background:rgba(255,255,255,.04);padding:4px;border-radius:4px;font-size:11px">
+            <b>${SEASON_EMOJI[season]} ${season.charAt(0).toUpperCase()+season.slice(1)}</b><br>
+            ${depth ? `📏 ${esc(depth)}<br>` : ''}
+            ${structs ? `🏗 ${esc(structs)}<br>` : ''}
+            ${s.notes ? `<span style="color:var(--muted)">${esc(s.notes.slice(0,80))}</span>` : ''}
+          </div>`;
+        });
+        if (data.lakeSpecificNotes) html += `<div style="grid-column:1/-1;font-size:11px;color:var(--muted);margin-top:2px">📌 ${esc(data.lakeSpecificNotes)}</div>`;
+        html += `</div>`;
+      }
       html += `</div>`;
     }
     if (d.spawnTiming && Object.keys(d.spawnTiming).length) {
@@ -596,7 +625,7 @@ function formatHumanReadableSection(key, data) {
     return html;
   }
 
-  if (key === 'trolling') {
+  if (key === 'fisheries') {
     const d = data.trollingIntelligence || data.trolling || data;
     let html = `<div style="font-size:12px;">`;
     // Handle various trolling data shapes
@@ -641,10 +670,42 @@ function formatHumanReadableSection(key, data) {
     const rendered = new Set(['routes','corridors','trollingCorridors','seasonalPatterns','patterns','speeds','recommendedSpeeds','depthZones','targetDepths','notes']);
     const remaining = Object.entries(d).filter(([k]) => !rendered.has(k) && !k.startsWith('_'));
     if (remaining.length && html === `<div style="font-size:12px;">`) {
-      // nothing was rendered yet, show key-value pairs
-      remaining.forEach(([k, v]) => {
-        html += `<div style="margin:3px 0"><b>${esc(k)}:</b> ${esc(typeof v === 'string' ? v : JSON.stringify(v))}</div>`;
-      });
+      // Check if this is the new per-species seasonal format
+      const isSpeciesSeasonal = remaining.every(([k, v]) =>
+        typeof v === 'object' && v !== null &&
+        ['summer','fall','winter','spring'].some(s => s in v)
+      );
+      if (isSpeciesSeasonal) {
+        const SEASONS = ['spring','summer','fall','winter'];
+        const SEASON_EMOJI = { spring: '🌸', summer: '☀️', fall: '🍂', winter: '❄️' };
+        remaining.forEach(([species, seasons]) => {
+          html += `<div style="margin:8px 0;background:rgba(255,255,255,.04);border-radius:6px;padding:8px">`;
+          html += `<div style="font-weight:700;margin-bottom:6px">🐟 ${esc(species)}</div>`;
+          html += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:6px">`;
+          SEASONS.forEach(season => {
+            const s = seasons[season];
+            if (!s) return;
+            const depth = Array.isArray(s.preferredDepth) ? `${s.preferredDepth[0]}–${s.preferredDepth[1]}ft` : (s.preferredDepth || '—');
+            const structs = Array.isArray(s.structures) ? s.structures.slice(0,3).join(', ') : (s.structures || '');
+            const forage = Array.isArray(s.forage) ? s.forage.join(', ') : (s.forage || '');
+            const pres = Array.isArray(s.recommendedPresentations) ? s.recommendedPresentations.slice(0,2).join(', ') : '';
+            html += `<div style="background:rgba(255,255,255,.04);padding:6px;border-radius:4px">
+              <div style="font-weight:600;margin-bottom:3px">${SEASON_EMOJI[season]} ${season.charAt(0).toUpperCase()+season.slice(1)}</div>
+              ${depth ? `<div style="font-size:11px">📏 ${esc(depth)}</div>` : ''}
+              ${structs ? `<div style="font-size:11px">🏗 ${esc(structs)}</div>` : ''}
+              ${forage ? `<div style="font-size:11px">🦟 ${esc(forage)}</div>` : ''}
+              ${pres ? `<div style="font-size:11px;color:var(--accent2)">🎣 ${esc(pres)}</div>` : ''}
+              ${s.notes ? `<div style="font-size:10px;color:var(--muted);margin-top:3px">${esc(s.notes)}</div>` : ''}
+            </div>`;
+          });
+          html += `</div></div>`;
+        });
+      } else {
+        // Original fallback — raw key/value
+        remaining.forEach(([k, v]) => {
+          html += `<div style="margin:3px 0"><b>${esc(k)}:</b> ${esc(typeof v === 'string' ? v : JSON.stringify(v))}</div>`;
+        });
+      }
     }
     html += `</div>`;
     return html;
@@ -709,12 +770,12 @@ function renderSections(profile) {
         aliases: profile.aliases,
       };
     } else {
-      sectionData = profile[key] || (key === 'biology' ? profile.forage : '') || (key === 'trolling' ? (profile.trollingIntelligence || profile.trolling) : null) || {};
+      sectionData = profile[key] || (key === 'biology' ? profile.forage : '') || (key === 'fisheries' ? (profile.trollingIntelligence || profile.trolling) : null) || {};
     }
     const has = !!(key === 'identity'
       ? (profile.identity || profile.lakeName)
-      : (profile[key] || (key === 'biology' ? profile.forage : null) || (key === 'trolling' ? (profile.trollingIntelligence || profile.trolling) : null)));
-    const c = conf[key] || conf[key === 'trolling' ? 'trollingIntelligence' : ''] || conf[key === 'biology' ? 'forage' : ''];
+      : (profile[key] || (key === 'biology' ? profile.forage : null) || (key === 'fisheries' ? (profile.trollingIntelligence || profile.trolling) : null)));
+    const c = conf[key] || conf[key === 'fisheries' ? 'trollingIntelligence' : ''] || conf[key === 'biology' ? 'forage' : ''];
     const pct = c?.percent || (has ? 75 : 0);
     const level = c?.level || (has ? 'medium' : 'missing');
     const okIcon = has ? (pct >= 70 ? '✔' : '⚠') : '◻';
@@ -780,7 +841,7 @@ function renderSections(profile) {
         const curParts = JSON.parse(reviewCard.dataset.parts || '{}');
         curMerged[agent] = parsed;
         if (agent === 'biology') curMerged.forage = parsed;
-        if (agent === 'trolling') curMerged.trollingIntelligence = parsed;
+        if (agent === 'fisheries') curMerged.trollingIntelligence = parsed;
         curParts[agent] = parsed;
         reviewCard.dataset.merged = JSON.stringify(curMerged);
         reviewCard.dataset.parts = JSON.stringify(curParts);
@@ -861,7 +922,7 @@ function renderSections(profile) {
           } else {
             curMerged[agentKey] = agentData.section;
           }
-          if (agentKey === 'trolling') curMerged.trollingIntelligence = agentData.section;
+          if (agentKey === 'fisheries') curMerged.trollingIntelligence = agentData.section;
           // Update confidence for this section
           if (agentData.confidence) {
             if (!curMerged.confidence) curMerged.confidence = {};
@@ -1192,24 +1253,25 @@ function initLakeResearch() {
   });
 
   // Fisheries Refresh — re-runs biology + trolling agents on existing normalized docs
-  // Zero Firecrawl credits. Adds speciesBehavior and trollingIntelligence to existing profile.
   if (!document.getElementById('btnFisheriesRefresh')) {
     const resumeBtn = document.getElementById('btnResumeNormalized');
     if (resumeBtn) {
       const fishBtn = document.createElement('button');
       fishBtn.id = 'btnFisheriesRefresh';
       fishBtn.textContent = '🐟 Refresh Fisheries';
-      fishBtn.title = 'Re-runs biology and trolling intelligence agents on existing documents. Adds per-species seasonal depth/structure data to the profile. Zero Firecrawl credits.';
+      fishBtn.title = 'Re-runs biology and trolling intelligence agents on existing documents. Adds per-species seasonal depth/structure data. Zero Firecrawl credits.';
       fishBtn.style.cssText = resumeBtn.style.cssText || '';
       resumeBtn.insertAdjacentElement('afterend', fishBtn);
     }
   }
-
   document.getElementById('btnFisheriesRefresh')?.addEventListener('click', async () => {
     const lake = document.getElementById('researchLakeSelect')?.value;
     if (!lake) { alert('Select a lake first'); return; }
     if (!confirm(`Refresh fisheries intelligence for ${lake}?\n\nRe-runs biology and trolling agents on existing normalized documents.\nAdds per-species seasonal depth/structure data.\nZero Firecrawl credits — 2 LLM calls only.`)) return;
-    runFisheriesRefresh(lake, { onComplete: loadProfile });
+    runFisheriesRefresh(lake, { onComplete: async (lakeName) => {
+      await loadProfile(lakeName, true);
+      log(`✅ Profile updated — reload the Research tab to view updated fisheries data`);
+    }});
   });
 
   // This is intentionally separate from Resume: it does not discover, scrape,
@@ -1386,6 +1448,132 @@ function initLakeResearch() {
     }
   });
 
+  // Vision Structure Scan button
+  if (!document.getElementById('btnVisionScan')) {
+    const anchor = document.getElementById('btnRerunGeospatial') || document.getElementById('btnSmartPlanRecovery') || document.getElementById('btnResearch');
+    if (anchor) {
+      const vBtn = document.createElement('button');
+      vBtn.id = 'btnVisionScan';
+      vBtn.textContent = '🛰️ Vision Scan';
+      vBtn.title = 'Run Gemini vision analysis on satellite imagery to detect dock clusters, riprap, bridge pilings, and flooded timber along the lake — runs async in background (3-8 min)';
+      vBtn.style.cssText = 'margin-left:8px; background:var(--panel2); color:var(--accent); border:1px solid var(--accent); padding:6px 12px; border-radius:4px; cursor:pointer; font-size:0.85em;';
+      anchor.parentNode.insertBefore(vBtn, anchor.nextSibling);
+    }
+  }
+
+  document.getElementById('btnVisionScan')?.addEventListener('click', async () => {
+    const lake = _state.currentLakeName || document.getElementById('researchLakeSelect')?.value;
+    if (!lake) { alert('Load a lake first'); return; }
+    const button = document.getElementById('btnVisionScan');
+
+    // Inline progress panel
+    let progressPanel = document.getElementById('visionProgressPanel');
+    if (!progressPanel) {
+      progressPanel = document.createElement('div');
+      progressPanel.id = 'visionProgressPanel';
+      progressPanel.style.cssText = 'margin-top:8px;padding:10px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;font-size:11px;';
+      button.parentNode.insertBefore(progressPanel, button.nextSibling);
+    }
+    const updateProgress = (msg, pct, color) => {
+      progressPanel.style.display = 'block';
+      progressPanel.innerHTML = `
+        <div style="color:var(--text);margin-bottom:6px">🛰️ ${msg}</div>
+        <div style="background:var(--panel);border-radius:4px;overflow:hidden;height:8px">
+          <div style="background:${color || 'var(--accent)'};height:8px;width:${pct}%;transition:width 0.3s;border-radius:4px"></div>
+        </div>`;
+    };
+
+    if (button) { button.disabled = true; button.textContent = '⏳ Loading tiles…'; }
+    updateProgress('Getting tile plan from server…', 2);
+    log(`[Vision] Starting satellite structure scan for ${lake}…`);
+
+    try {
+      // Step 1 — get tile plan from worker
+      const planRes = await fetch(`${CF_WORKER_URL}/research/vision-scan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lakeName: lake })
+      });
+      if (!planRes.ok) throw new Error(`Plan request failed: ${planRes.status}`);
+      const plan = await planRes.json();
+      if (!plan.ok) throw new Error(plan.error || 'Failed to get tile plan');
+
+      const { tiles, lakeKey } = plan;
+      log(`[Vision] ${tiles.length} tiles to scan for ${lake}`);
+      updateProgress(`Scanning 0/${tiles.length} tiles…`, 3);
+
+      const allFeatures = [];
+      let processed = 0, skipped = 0;
+
+      // Step 2 — process tiles in parallel batches of 5 (one per Gemini key)
+      const BATCH_SIZE = 5;
+      const processTile = async (tile, tileIdx) => {
+        try {
+          // Worker fetches ESRI image and runs Gemini — no CORS issues
+          const analyzeRes = await fetch(`${CF_WORKER_URL}/research/vision-scan`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lakeName: lake, tileBounds: tile })
+          });
+          if (!analyzeRes.ok) return { skipped: true };
+          const result = await analyzeRes.json();
+          if (!result.ok || !result.hasWater) return { skipped: true };
+          return { features: result.features || [] };
+        } catch (e) {
+          console.warn(`[Vision] Tile ${tileIdx+1} error: ${e.message}`);
+          return { error: true };
+        }
+      };
+
+      for (let i = 0; i < tiles.length; i += BATCH_SIZE) {
+        const batch = tiles.slice(i, i + BATCH_SIZE);
+        const pct = Math.round((i / tiles.length) * 90) + 3;
+        updateProgress(`Scanning ${i+1}-${Math.min(i+BATCH_SIZE, tiles.length)}/${tiles.length} tiles · ${allFeatures.length} structures found`, pct);
+
+        const results = await Promise.all(batch.map((tile, bi) => processTile(tile, i + bi)));
+        for (const r of results) {
+          if (r.skipped || r.error) { skipped++; continue; }
+          processed++;
+          if (r.features?.length) {
+            allFeatures.push(...r.features);
+            log(`[Vision] Batch ${Math.floor(i/BATCH_SIZE)+1}: found ${r.features.length} structure(s)`);
+          }
+        }
+      }
+
+      // Step 3 — save results to R2
+      updateProgress(`Saving ${allFeatures.length} structures…`, 95);
+      const saveRes = await fetch(`${CF_WORKER_URL}/research/vision-scan-save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lakeName: lake,
+          features: allFeatures,
+          tilesTotal: tiles.length,
+          tilesProcessed: processed,
+          tilesSkipped: skipped
+        })
+      });
+      if (!saveRes.ok) throw new Error(`Save failed: ${saveRes.status}`);
+
+      updateProgress(`Complete — ${allFeatures.length} structure${allFeatures.length !== 1 ? 's' : ''} found across ${processed} tiles`, 100, 'var(--accent2)');
+      log(`[Vision] ✔ Scan complete — ${allFeatures.length} structures found, ${processed} tiles processed, ${skipped} skipped`);
+
+      // Reload supplemental layer to show new markers
+      if (window.loadSupplementalForLake && _state.currentLakeName) {
+        // Force reload by temporarily clearing active key
+        await window.loadSupplementalForLake(_state.currentLakeName);
+      }
+
+      setTimeout(() => { if (progressPanel) progressPanel.style.display = 'none'; }, 10000);
+
+    } catch (err) {
+      log(`[Vision] ✗ ${err.message}`);
+      updateProgress(`Failed: ${err.message}`, 100, 'var(--bad)');
+    } finally {
+      if (button) { button.disabled = false; button.textContent = '🛰️ Vision Scan'; }
+    }
+  });
 
     // Standalone WQP limnology data fetch — no pipeline, just hits WQP for this lake
   if (!document.getElementById('btnRunWQP')) {
