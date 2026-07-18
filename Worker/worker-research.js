@@ -4774,7 +4774,12 @@ async function handleResearchVisionScan(request, env) {
     const lons = coords.map(c => c[0]), lats = coords.map(c => c[1]);
     const bboxW = Math.min(...lons), bboxE = Math.max(...lons);
     const bboxS = Math.min(...lats), bboxN = Math.max(...lats);
-    const TILE_DEG = 0.004, MAX_TILES = 200;
+    // Scale tile size to lake extent — target ~60 tiles max for any lake
+    const latSpan = bboxN - bboxS;
+    const lonSpan = bboxE - bboxW;
+    const TARGET_TILES_PER_AXIS = 8; // 8x8 = 64 tiles max
+    const TILE_DEG = Math.max(0.004, Math.max(latSpan, lonSpan) / TARGET_TILES_PER_AXIS);
+    const MAX_TILES = 100;
     const tiles = [];
     for (let lat = bboxS; lat < bboxN; lat += TILE_DEG) {
       for (let lon = bboxW; lon < bboxE; lon += TILE_DEG) {
