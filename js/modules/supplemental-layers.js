@@ -362,8 +362,6 @@ async function loadVisionStructures(lakeKey) {
       group.addLayer(m);
     });
     _visionLayer = group;
-    if (_visionVisible) _visionLayer.addTo(getMap());
-    _visionVisible = true;
     _visionLayer.addTo(getMap());
     console.log(`[supplemental] vision-structure loaded: ${gj.features.length} features for ${lakeKey}`);
   } catch (e) {
