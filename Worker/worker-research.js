@@ -4872,6 +4872,7 @@ If nothing found: {"structures":[],"has_water":true}`;
       const data = await r.json();
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
       const result = JSON.parse(text.replace(/```json|```/g, '').trim());
+      console.log(`[vision-scan] raw structures: ${JSON.stringify(result.structures)} tileBounds: ${JSON.stringify({s,n,w,e})}`);
       const IMG_SIZE = 800;
       const features = (result.structures || [])
         .filter(st => (st.confidence || 0) >= 0.6)
