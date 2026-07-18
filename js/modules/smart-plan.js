@@ -6,6 +6,7 @@
  */
 
 import { state, CF_WORKER_URL } from '../core/state.js';
+import { getOsmStructures } from './supplemental-layers.js';
 import { renderAll } from '../core/map-init.js';
 import { esc } from '../utils/escape.js';
 import { newRodRow } from '../utils/rod-row.js';
@@ -18,7 +19,6 @@ import { SPECIES_BEHAVIOR, SPECIES_BEHAVIOR_V2, getSeason, checkRegulations, res
 const IntelV2 = { SPECIES_BEHAVIOR_V2, resolveLakeKey, checkRegulations, getSeason };
 import { isLiveBaitAvailable } from '../data/fishing-style-profile.js';
 import { buildFishingContext, buildGroqCoachPayload } from './smart-plan-context.js';
-import { getOsmStructures } from './supplemental-layers.js';
 import { startCoachSession } from './groq-coach.js';
 import { renderSmartPlanUI, syncSpread, reelForLure } from './smart-plan-ui.js';
 
