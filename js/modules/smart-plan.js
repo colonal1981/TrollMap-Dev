@@ -718,7 +718,25 @@ Note: This profile is authoritative for permanent lake characteristics (type, st
   // ── Pull species-intel-v2 data for this species + season ─────────────
   const v2sp = IntelV2?.SPECIES_BEHAVIOR_V2?.[sp];
   let speciesIntelBlock = '';
-  if (v2sp) {
+  if (targetBehavior) {
+    // Lake-specific behavior from research profile — overrides generic species intel
+    const sb = targetBehavior[season] || targetBehavior.summer || {};
+    const depth = Array.isArray(sb.depthRange) ? `${sb.depthRange[0]}–${sb.depthRange[1]}ft` : null;
+    const structs = Array.isArray(sb.structure) ? sb.structure.join(', ') : null;
+    const spawnNote = targetBehavior.spawnTiming?.waterTempF
+      ? `Spawn trigger: ${targetBehavior.spawnTiming.waterTempF[0]}–${targetBehavior.spawnTiming.waterTempF[1]}°F`
+      : null;
+    const lakeNote = targetBehavior.lakeSpecificNotes || null;
+    speciesIntelBlock = `
+SPECIES INTEL — ${sp} in ${season} on ${lakeName} (LAKE-SPECIFIC — verified from research documents, use these depths over generic defaults):
+${depth ? `- Preferred depth range: ${depth}` : ''}
+${structs ? `- Key structure: ${structs}` : ''}
+${sb.notes ? `- Notes: ${sb.notes}` : ''}
+${spawnNote ? `- ${spawnNote}` : ''}
+${lakeNote ? `- Lake context: ${lakeNote}` : ''}
+
+CRITICAL: These are verified lake-specific depths from official sources. Do NOT default to generic deep-water patterns. Build your depth bands around ${depth || 'the above range'}.`;
+  } else if (v2sp) {
     const lakeKeyV2 = (IntelV2.resolveLakeKey
       ? (IntelV2.resolveLakeKey(lakeName, v2sp) || 'default_SC_reservoir')
       : (v2sp[lakeName] ? lakeName : 'default_SC_reservoir'));
