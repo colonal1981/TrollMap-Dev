@@ -1,5 +1,5 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
-import { _state, runEvidencePipeline, runFromNormalized, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log } from './lake-research-engine.js';
+import { _state, runEvidencePipeline, runFromNormalized, runFisheriesRefresh, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log } from './lake-research-engine.js';
 
 
 function renderContradictionsAlert(contradictions, lakeName) {
@@ -1189,6 +1189,27 @@ function initLakeResearch() {
     if (!lake) { alert('Select a lake first'); return; }
     if (!confirm(`Resume extraction for ${lake} using existing normalized documents already in R2? Skips all PDF downloads — jumps straight to scoring, fact extraction, and mapping.`)) return;
     runFromNormalized(lake, { onComplete: loadProfile, onContradictions: renderContradictionsAlert });
+  });
+
+  // Fisheries Refresh — re-runs biology + trolling agents on existing normalized docs
+  // Zero Firecrawl credits. Adds speciesBehavior and trollingIntelligence to existing profile.
+  if (!document.getElementById('btnFisheriesRefresh')) {
+    const resumeBtn = document.getElementById('btnResumeNormalized');
+    if (resumeBtn) {
+      const fishBtn = document.createElement('button');
+      fishBtn.id = 'btnFisheriesRefresh';
+      fishBtn.textContent = '🐟 Refresh Fisheries';
+      fishBtn.title = 'Re-runs biology and trolling intelligence agents on existing documents. Adds per-species seasonal depth/structure data to the profile. Zero Firecrawl credits.';
+      fishBtn.style.cssText = resumeBtn.style.cssText || '';
+      resumeBtn.insertAdjacentElement('afterend', fishBtn);
+    }
+  }
+
+  document.getElementById('btnFisheriesRefresh')?.addEventListener('click', async () => {
+    const lake = document.getElementById('researchLakeSelect')?.value;
+    if (!lake) { alert('Select a lake first'); return; }
+    if (!confirm(`Refresh fisheries intelligence for ${lake}?\n\nRe-runs biology and trolling agents on existing normalized documents.\nAdds per-species seasonal depth/structure data.\nZero Firecrawl credits — 2 LLM calls only.`)) return;
+    runFisheriesRefresh(lake, { onComplete: loadProfile });
   });
 
   // This is intentionally separate from Resume: it does not discover, scrape,

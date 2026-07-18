@@ -611,10 +611,23 @@ export async function runSmartPlan() {
   const hasResearched = fishingContext?.hasResearchedProfile || false;
   const researchedMeta = fishingContext?.researchedProfile?.metadata || null;
 
+  // ── Pull per-species behavioral data ─────────────────────────────────
+  // Priority: speciesBehavior (biology agent, lake-specific) > trollingIntelligence > generic
+  const speciesBehavior = fishingContext?.researchedProfile?.biology?.speciesBehavior || null;
+  const targetBehavior = speciesBehavior
+    ? Object.entries(speciesBehavior).find(([k]) =>
+        k.toLowerCase().includes(sp.toLowerCase().split(' ')[0]) ||
+        sp.toLowerCase().includes(k.toLowerCase().split(' ')[0])
+      )?.[1]
+    : null;
+
   // ── Unified Groq Call (State-Agnostic Prompt + Guided Creativity) ─────
   // Token-optimized: only inject target species slice, not entire trolling intel map
   let researchedTrollingSlice = null;
-  if (hasResearched && researchedTrolling) {
+  if (targetBehavior) {
+    // Lake-specific species behavior from biology agent — most accurate source
+    researchedTrollingSlice = { [sp]: targetBehavior, _source: 'lake_specific_behavior' };
+  } else if (hasResearched && researchedTrolling) {
     // researchedTrolling structure: { "Striped Bass": {summer:{...}}, "Largemouth Bass": {...}, ... }
     // Extract only the target species + 1-2 additional common species to keep token low
     const targetKey = Object.keys(researchedTrolling).find(k => k.toLowerCase().includes(sp.toLowerCase().split(' ')[0]) || sp.toLowerCase().includes(k.toLowerCase().split(' ')[0]));
@@ -1024,7 +1037,7 @@ Return ONLY valid JSON, no markdown:
   // Only structures that lie within STOP_RADIUS_FT of the actual route
   // tracks are included. Each stop carries phase + approximate elapsed
   // time so the coach knows WHEN and WHERE to tell the angler to pause.
-  const STOP_RADIUS_FT = 250; // how close to the route a structure must be
+  const STOP_RADIUS_FT = 500; // how close to the route a structure must be
   const stopCandidates = [];
   const addedCoords = []; // dedup by proximity
 
