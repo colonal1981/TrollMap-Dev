@@ -235,9 +235,11 @@ let _depthAreaGeoJSON = null;
 let _fishingLayer     = null;
 let _fishingVisible   = false;
 let _poiLayer         = null;
+let _visionLayer      = null;
+let _visionVisible    = false;
 let _poiVisible       = false;
 let _boundaryGeoJSON  = null;
-let _osmStructureData = null;   // raw features for getSupplementalContext
+let _osmStructureData = null;
 
 export function getDepthAreaGeoJSON() { return _depthAreaGeoJSON; }
 export function getLakeBoundaryGeoJSON() { return _boundaryGeoJSON; }
@@ -320,6 +322,94 @@ const POI_STYLE = {
   place_name:     { emoji: '📌', color: '#aaaaaa' },
 };
 
+const VISION_STYLE = {
+  DOCK_CLUSTER:    { emoji: '⚓', color: '#03A9F4', label: 'Dock Cluster' },
+  RIPRAP:          { emoji: '🪨', color: '#FF9800', label: 'Riprap' },
+  BRIDGE:          { emoji: '🌉', color: '#9C27B0', label: 'Bridge / Pilings' },
+  FLOODED_TIMBER:  { emoji: '🪵', color: '#795548', label: 'Flooded Timber' },
+};
+
+async function loadVisionStructures(lakeKey) {
+  if (!mapReady()) return;
+  if (_visionLayer) { getMap().removeLayer(_visionLayer); _visionLayer = null; }
+  try {
+    const url = `${CF_WORKER_URL}/chartpacks/supplemental/${lakeKey}/vision-structure.geojson?v=${Date.now()}`;
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) return;
+    const gj = await r.json();
+    if (!gj?.features?.length) return;
+    const group = L.layerGroup();
+    gj.features.forEach(feat => {
+      const coords = feat.geometry?.coordinates;
+      if (!coords) return;
+      const p = feat.properties || {};
+      const style = VISION_STYLE[p.structure_type] || { emoji: '📍', color: '#9E9E9E', label: p.structure_type || 'Structure' };
+      const conf = p.confidence ? ` (${Math.round(p.confidence * 100)}%)` : '';
+      const dockNote = p.dock_count_estimate ? ` ~${p.dock_count_estimate} docks` : '';
+      const m = L.circleMarker([coords[1], coords[0]], {
+        radius: 7, color: '#fff', weight: 1.5,
+        fillColor: style.color, fillOpacity: 0.85
+      });
+      const featureId = `${coords[0].toFixed(6)},${coords[1].toFixed(6)}`;
+      m.bindTooltip(`${style.emoji} ${style.label}${dockNote}${conf}`, { sticky: true, direction: 'top', opacity: 0.9 });
+      m.bindPopup(`<b style="color:${style.color}">${style.emoji} ${esc(style.label)}</b>${dockNote}<br>
+        <span style="font-size:11px">${esc(p.description || '')}</span><br>
+        <span style="color:#aaa;font-size:10px">Confidence: ${conf} · AI vision detection</span><br>
+        <button onclick="window._removeVisionStructure('${featureId}')"
+          style="margin-top:6px;font-size:11px;padding:3px 10px;background:var(--bad,#b3261e);color:#fff;border:none;border-radius:4px;cursor:pointer">
+          🗑 Remove
+        </button>`);
+      m.featureId = featureId;
+      group.addLayer(m);
+    });
+    _visionLayer = group;
+    _visionLayer.addTo(getMap());
+    console.log(`[supplemental] vision-structure loaded: ${gj.features.length} features for ${lakeKey}`);
+  } catch (e) {
+    if (!e.message?.includes('404')) console.warn(`[supplemental] vision-structure fetch failed:`, e.message);
+  }
+}
+
+// Remove a single vision structure by coordinate ID — patches R2 GeoJSON
+window._removeVisionStructure = async function(featureId) {
+  if (!_activeLakeKey || !_visionLayer) return;
+  // Remove from map
+  _visionLayer.eachLayer(l => {
+    if (l.featureId === featureId) {
+      _visionLayer.removeLayer(l);
+      l.closePopup();
+    }
+  });
+  // Patch R2
+  try {
+    const url = `${CF_WORKER_URL}/chartpacks/supplemental/${_activeLakeKey}/vision-structure.geojson?v=${Date.now()}`;
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) return;
+    const gj = await r.json();
+    const [flon, flat] = featureId.split(',').map(Number);
+    gj.features = gj.features.filter(f => {
+      const [lon, lat] = f.geometry?.coordinates || [];
+      return !(Math.abs(lon - flon) < 0.000001 && Math.abs(lat - flat) < 0.000001);
+    });
+    gj.metadata = gj.metadata || {};
+    gj.metadata.structuresFound = gj.features.length;
+    await fetch(`${CF_WORKER_URL}/research/vision-scan-save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lakeName: gj.metadata?.lakeName || _activeLakeKey,
+        features: gj.features,
+        tilesTotal: gj.metadata?.tilesTotal,
+        tilesProcessed: gj.metadata?.tilesProcessed,
+        tilesSkipped: gj.metadata?.tilesSkipped,
+      })
+    });
+    console.log(`[supplemental] vision structure removed: ${featureId}`);
+  } catch (e) {
+    console.warn(`[supplemental] vision remove failed:`, e.message);
+  }
+};
+
 async function loadPOIs(lakeKey) {
   if (!mapReady()) return;
   if (_poiLayer) { getMap().removeLayer(_poiLayer); _poiLayer = null; }
@@ -387,11 +477,12 @@ export async function loadSupplementalForLake(displayName) {
   if (lakeKey === _activeLakeKey) return;
   _activeLakeKey = lakeKey;
   window._osmActiveLakeKey = lakeKey;
+  _osmStructureData = null;
   window.dispatchEvent(new CustomEvent('trollmap:lakeChanged'));
-  _osmStructureData = null;  // clear on lake switch; lazy-loaded on first getSupplementalContext call
 
   if (_fishingLayer) { getMap()?.removeLayer(_fishingLayer); _fishingLayer = null; }
   if (_poiLayer)     { getMap()?.removeLayer(_poiLayer);     _poiLayer     = null; }
+  if (_visionLayer)  { getMap()?.removeLayer(_visionLayer);  _visionLayer  = null; _visionVisible = false; }
 
   _fishingVisible = false;
   _poiVisible     = false;
@@ -403,6 +494,11 @@ export async function loadSupplementalForLake(displayName) {
   loadFishingSpots(lakeKey).catch(() => {});
   loadPOIs(lakeKey).catch(() => {});
   loadLakeBoundary(displayName).catch(() => {});
+  // Preload OSM structures for getSupplementalContext and Smart Plan
+  fetch(`${CF_WORKER_URL}/chartpacks/supplemental/${lakeKey}/osm-structures.geojson`)
+    .then(r => r.ok ? r.json() : null)
+    .then(gj => { _osmStructureData = gj && gj.features ? gj.features : []; })
+    .catch(() => { _osmStructureData = []; });
 }
 
 function _updateButtonState(id, active) {
@@ -474,22 +570,13 @@ export function getSupplementalContext(lat, lon, radiusMi = 0.5) {
       if (distMi(lat, lon, ll.lat, ll.lng) <= radiusMi) results.fishingPoints.push({ lat: ll.lat, lon: ll.lng });
     });
   }
-
-  // OSM structures — lazy-load on first context call for this lake
-  if (_osmStructureData === null && _activeLakeKey) {
-    fetch(, { cache: 'force-cache' })
-      .then(r => r.ok ? r.json() : null)
-      .then(gj => { _osmStructureData = gj?.features || []; })
-      .catch(() => { _osmStructureData = []; });
-  }
-  if (_osmStructureData?.length) {
+  if (_osmStructureData && _osmStructureData.length) {
     for (const feat of _osmStructureData) {
-      const coords = feat.geometry?.coordinates;
+      const coords = feat.geometry && feat.geometry.coordinates;
       if (!coords) continue;
-      const fLon = coords[0], fLat = coords[1];
-      if (distMi(lat, lon, fLat, fLon) <= radiusMi) {
+      if (distMi(lat, lon, coords[1], coords[0]) <= radiusMi) {
         results.osmStructures = results.osmStructures || [];
-        results.osmStructures.push({ lat: fLat, lon: fLon, ...feat.properties });
+        results.osmStructures.push({ lat: coords[1], lon: coords[0], ...feat.properties });
       }
     }
   }
