@@ -2040,24 +2040,29 @@ async function runFisheriesRefresh(lakeName, callbacks = {}) {
 
     // Extract facts via analyze-facts endpoint (same as full pipeline)
     setProgress('Fisheries Refresh: Extracting facts from documents...', 35);
-    const usableDocs = normalizedDocuments.filter(d => d.fullText && d.fullText.length > 100);
+    const usableDocs = normalizedDocuments.filter(d => (d.fullText || d.text) && (d.fullText || d.text).length > 100);
     log(`Extracting facts from ${usableDocs.length} documents...`);
     const allFacts = [];
     for (let i = 0; i < Math.min(usableDocs.length, 15); i++) {
       if (i > 0) await new Promise(res => setTimeout(res, 1500));
       const doc = usableDocs[i];
+      const docText = (doc.fullText || doc.text || '').slice(0, 200000);
       try {
         const r = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             lakeName, baseName, state: stateName,
-            documents: [{ title: doc.title, url: doc.url, authority: doc.authority, fullText: (doc.fullText || '').slice(0, 200000) }],
+            documents: [{ title: doc.title, url: doc.url || '', text: docText, quality: {} }],
           }),
         });
         if (r.ok) {
           const d = await r.json();
-          allFacts.push(...(d.facts || []));
+          const facts = d.extracted_facts || d.facts || [];
+          allFacts.push(...facts);
+          if (facts.length) log(`📄 "${doc.title?.slice(0,40)}" → ${facts.length} facts`);
+        } else {
+          log(`⚠ analyze-facts HTTP ${r.status} for "${doc.title?.slice(0,40)}"`);
         }
       } catch (e) { log(`⚠ Fact extraction error: ${e.message}`); }
     }
@@ -2151,7 +2156,7 @@ async function runFisheriesRefresh(lakeName, callbacks = {}) {
 
     setProgress('Fisheries Refresh complete.', 100);
     log(`✅ Fisheries Refresh complete for ${lakeName}`);
-    if (callbacks.onComplete) callbacks.onComplete(updatedProfile);
+    if (callbacks.onComplete) callbacks.onComplete(lakeName);
   } catch (e) {
     log(`❌ Fisheries Refresh failed: ${e.message}`);
     setProgress('Fisheries Refresh failed — see log.', 0);
