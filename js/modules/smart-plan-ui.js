@@ -195,7 +195,7 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
   } else if (!groundedStops.length && !ungroundedStops.length) {
     html += `
     <div style="margin-top:14px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:11px;color:var(--muted)">
-      🎯 <b style="color:var(--text)">Casting Stops</b> — No mapped structure found within 250ft of your route. Load QuickDraw pins or run Vision Scan on this lake to enable casting stop detection.
+      🎯 <b style="color:var(--text)">Casting Stops</b> — No mapped structure found within 500ft of your route. Load QuickDraw pins or enable the Structure layer to add OSM bridges, piers, and docks.
     </div>`;
   } else if (groundedStops.length || ungroundedStops.length) {
     html += `

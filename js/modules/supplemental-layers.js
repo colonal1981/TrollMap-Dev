@@ -596,6 +596,7 @@ init();
 
 window.loadSupplementalForLake = loadSupplementalForLake;
 export function getOsmStructures() { return _osmStructureData || []; }
+window._seedOsmStructureData = (features) => { if (!_osmStructureData?.length) _osmStructureData = features; };
 
 window.toggleDepthAreas = function(visible) {
   _depthAreaVisible = visible;

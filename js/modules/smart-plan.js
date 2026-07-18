@@ -640,7 +640,21 @@ export async function runSmartPlan() {
   }
 
   // ── OSM Structure summary for Groq prompt ──────────────────────────
-  const osmFeatures = (typeof getOsmStructures === 'function' ? getOsmStructures() : []);
+  // _osmStructureData loads async on lake switch — fetch directly if not yet ready
+  let osmFeatures = (typeof getOsmStructures === 'function' ? getOsmStructures() : []);
+  if (!osmFeatures.length) {
+    try {
+      const lakeKey = window._osmActiveLakeKey || 
+        fishingContext?.researchedProfile?.metadata?.lakeId;
+      const r = await fetch(`${CF_WORKER_URL}/chartpacks/supplemental/${lakeKey}/osm-structures.geojson`);
+      if (r.ok) {
+        const gj = await r.json();
+        osmFeatures = gj?.features || [];
+        // Seed the cache so getSupplementalContext also has it
+        if (window._seedOsmStructureData) window._seedOsmStructureData(osmFeatures);
+      }
+    } catch (_) {}
+  }
   let osmStructureBlock = '';
   if (osmFeatures.length) {
     const byType = {};
