@@ -4834,11 +4834,30 @@ If nothing found: {"structures":[],"has_water":true}`;
   const features = [];
   let processed = 0, skipped = 0, errors = 0;
 
+  // Write initial status
+  const writeStatus = async (status) => {
+    try {
+      await env.R2_TROLLMAP_CHARTPACKS.put(
+        `supplemental/${resolvedKey}/vision-scan-status.json`,
+        JSON.stringify({ ...status, lakeName, lakeKey: resolvedKey, tilesTotal: tiles.length }),
+        { httpMetadata: { contentType: 'application/json' } }
+      );
+    } catch (_) {}
+  };
+  await writeStatus({ status: 'scanning', tilesProcessed: 0, structuresFound: 0, startedAt: new Date().toISOString() });
+
   for (const tile of tiles) {
     try {
       const bbox = `${tile.w},${tile.s},${tile.e},${tile.n}`;
       const esriUrl = `https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${encodeURIComponent(bbox)}&bboxSR=4326&imageSR=4326&size=${TILE_W},${TILE_H}&format=jpg&transparent=false&f=image`;
-      const imgRes = await fetch(esriUrl, { signal: AbortSignal.timeout(12000) });
+      const imgController = new AbortController();
+      const imgTimeout = setTimeout(() => imgController.abort(), 12000);
+      let imgRes;
+      try {
+        imgRes = await fetch(esriUrl, { signal: imgController.signal });
+      } finally {
+        clearTimeout(imgTimeout);
+      }
       if (!imgRes.ok) { skipped++; continue; }
       const buf = await imgRes.arrayBuffer();
       const base64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
@@ -4855,7 +4874,11 @@ If nothing found: {"structures":[],"has_water":true}`;
         });
       }
       await new Promise(res => setTimeout(res, 4200));
-    } catch (e) { errors++; console.warn(`[vision-scan] tile error: ${e.message}`); }
+      // Write progress every 10 tiles
+      if ((processed + skipped) % 10 === 0) {
+        await writeStatus({ status: 'scanning', tilesProcessed: processed + skipped, structuresFound: features.length, startedAt: new Date().toISOString() });
+      }
+    } catch (e) { errors++; console.warn(`[vision-scan] tile error (${e.name}): ${e.message}`); }
   }
 
   const geojson = {
@@ -4863,6 +4886,7 @@ If nothing found: {"structures":[],"has_water":true}`;
     metadata: { lakeName, lakeKey: resolvedKey, tilesTotal: tiles.length, tilesProcessed: processed, tilesSkipped: skipped, tileErrors: errors, structuresFound: features.length, scannedAt: new Date().toISOString(), model: MODEL }
   };
   await env.R2_TROLLMAP_CHARTPACKS.put(`supplemental/${resolvedKey}/vision-structure.geojson`, JSON.stringify(geojson), { httpMetadata: { contentType: 'application/json' } });
+  await writeStatus({ status: 'complete', tilesProcessed: processed + skipped, structuresFound: features.length, completedAt: new Date().toISOString() });
   console.log(`[vision-scan] Complete — ${features.length} structures, ${processed} tiles processed`);
   return { ok: true, structuresFound: features.length, tilesProcessed: processed };
 }
@@ -4879,4 +4903,22 @@ async function handleResearchVisionScan(request, env, ctx) {
   return new Response(JSON.stringify(result), { headers: JSON_HEADERS });
 }
 
-export { handleResearchVisionScan, handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchValidationPass, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey };
+
+async function handleResearchVisionScanStatus(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const { lakeName } = body;
+  if (!lakeName) return new Response(JSON.stringify({ ok: false, error: 'missing lakeName' }), { status: 400, headers: JSON_HEADERS });
+  const resolvedKey = resolveSupplementalKeyWorker(lakeName);
+  try {
+    const statusObj = await env.R2_TROLLMAP_CHARTPACKS.get(`supplemental/${resolvedKey}/vision-scan-status.json`);
+    if (!statusObj) return new Response(JSON.stringify({ ok: true, status: 'not_started' }), { headers: JSON_HEADERS });
+    const status = JSON.parse(await statusObj.text());
+    // Check if GeoJSON result also exists
+    const resultObj = await env.R2_TROLLMAP_CHARTPACKS.head(`supplemental/${resolvedKey}/vision-structure.geojson`);
+    return new Response(JSON.stringify({ ok: true, ...status, hasResult: !!resultObj }), { headers: JSON_HEADERS });
+  } catch (e) {
+    return new Response(JSON.stringify({ ok: false, error: e.message }), { headers: JSON_HEADERS });
+  }
+}
+
+export { handleResearchVisionScanStatus, handleResearchVisionScan, handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchValidationPass, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey };
