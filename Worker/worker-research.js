@@ -4852,7 +4852,7 @@ DO NOT report individual docks, vegetation, boats, or anything below the water s
 Estimate position as pixel coordinates in an 800x800 image (x from left 0-800, y from top 0-800).
 
 Return ONLY valid JSON:
-{"structures":[{"type":"DOCK_CLUSTER|RIPRAP|BRIDGE|FLOODED_TIMBER","x_frac":400,"y_frac":400,"confidence":0.85,"description":"brief","dock_count_estimate":null}],"has_water":true}
+{"structures":[{"type":"DOCK_CLUSTER|RIPRAP|BRIDGE|FLOODED_TIMBER","x":400,"y":400,"confidence":0.85,"description":"brief","dock_count_estimate":null}],"has_water":true}
 If nothing found: {"structures":[],"has_water":true}`;
 
   for (let attempt = 0; attempt < geminiKeys.length; attempt++) {
@@ -4877,9 +4877,23 @@ If nothing found: {"structures":[],"has_water":true}`;
       const features = (result.structures || [])
         .filter(st => (st.confidence || 0) >= 0.6)
         .map(st => {
-          // Gemini may return pixel coords (0-800) or fractions (0-1) — normalize to fraction
-          const xFrac = st.x_frac > 1 ? st.x_frac / IMG_SIZE : (st.x_frac || 0.5);
-          const yFrac = st.y_frac > 1 ? st.y_frac / IMG_SIZE : (st.y_frac || 0.5);
+          // Robust coordinate parsing — look for any field starting with x or y
+          // handles Gemini inventing field names like "y_760" or mixed formats
+          const extract = (axis) => {
+            if (st[axis] !== undefined) return parseFloat(st[axis]);
+            if (st[`${axis}_frac`] !== undefined) return parseFloat(st[`${axis}_frac`]);
+            if (st[`${axis}_pixel`] !== undefined) return parseFloat(st[`${axis}_pixel`]);
+            const key = Object.keys(st).find(k => k.toLowerCase().startsWith(axis));
+            return key ? parseFloat(st[key]) : null;
+          };
+
+          const xVal = extract('x');
+          const yVal = extract('y');
+          
+          // If > 1 assume pixels (800x800), else assume fraction
+          const xFrac = (xVal === null || isNaN(xVal)) ? 0.5 : (xVal > 1 ? xVal / IMG_SIZE : xVal);
+          const yFrac = (yVal === null || isNaN(yVal)) ? 0.5 : (yVal > 1 ? yVal / IMG_SIZE : yVal);
+          
           return {
             type: 'Feature',
             geometry: { type: 'Point', coordinates: [w + (e - w) * xFrac, n - (n - s) * yFrac] },
