@@ -4774,15 +4774,29 @@ async function handleResearchVisionScan(request, env) {
     const lons = coords.map(c => c[0]), lats = coords.map(c => c[1]);
     const bboxW = Math.min(...lons), bboxE = Math.max(...lons);
     const bboxS = Math.min(...lats), bboxN = Math.max(...lats);
-    // Scale tile size to lake extent — target ~60 tiles max for any lake
+    // Scale tile size to lake extent — target ~8x8 grid
     const latSpan = bboxN - bboxS;
     const lonSpan = bboxE - bboxW;
-    const TARGET_TILES_PER_AXIS = 8; // 8x8 = 64 tiles max
-    const TILE_DEG = Math.max(0.004, Math.max(latSpan, lonSpan) / TARGET_TILES_PER_AXIS);
+    const TILE_DEG = Math.max(0.004, Math.max(latSpan, lonSpan) / 8);
     const MAX_TILES = 100;
+
+    // Point-in-polygon — only tile centers inside the lake boundary
+    function pointInPoly(lon, lat, polyCoords) {
+      let inside = false;
+      for (let i = 0, j = polyCoords.length - 1; i < polyCoords.length; j = i++) {
+        const xi = polyCoords[i][0], yi = polyCoords[i][1];
+        const xj = polyCoords[j][0], yj = polyCoords[j][1];
+        if (((yi > lat) !== (yj > lat)) && (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi)) inside = !inside;
+      }
+      return inside;
+    }
+
     const tiles = [];
     for (let lat = bboxS; lat < bboxN; lat += TILE_DEG) {
       for (let lon = bboxW; lon < bboxE; lon += TILE_DEG) {
+        const cLat = lat + TILE_DEG / 2;
+        const cLon = lon + TILE_DEG / 2;
+        if (!pointInPoly(cLon, cLat, coords)) continue;
         tiles.push({ s: lat, n: Math.min(lat + TILE_DEG, bboxN), w: lon, e: Math.min(lon + TILE_DEG, bboxE) });
         if (tiles.length >= MAX_TILES) break;
       }
@@ -4799,11 +4813,31 @@ async function handleResearchVisionScan(request, env) {
     return new Response(JSON.stringify({ ok: true, tiles, lakeKey: resolvedKey }), { headers: JSON_HEADERS });
   }
 
-  // Single tile analysis
+  // Single tile analysis — worker fetches ESRI image (no CORS) + runs Gemini
   if (!tileBounds) return new Response(JSON.stringify({ ok: false, error: 'missing tileBounds' }), { status: 400, headers: JSON_HEADERS });
 
   const geminiKeys = [env.GEMINI_FREE_API_KEY, env.GEMINI_FREE2_API_KEY, env.GEMINI_FREE3_API_KEY, env.GEMINI_FREE4_API_KEY, env.GEMINI_FREE5_API_KEY].filter(Boolean);
   if (!geminiKeys.length) return new Response(JSON.stringify({ ok: false, error: 'no Gemini keys' }), { status: 500, headers: JSON_HEADERS });
+
+  // Fetch ESRI satellite image from worker (no CORS restrictions)
+  const { s, n, w, e } = tileBounds;
+  const bbox = `${w},${s},${e},${n}`;
+  const esriUrl = `https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${encodeURIComponent(bbox)}&bboxSR=4326&imageSR=4326&size=800,800&format=jpg&transparent=false&f=image`;
+  const imgController = new AbortController();
+  const imgTimeout = setTimeout(() => imgController.abort(), 12000);
+  let imgRes;
+  try {
+    imgRes = await fetch(esriUrl, { signal: imgController.signal });
+  } finally {
+    clearTimeout(imgTimeout);
+  }
+  if (!imgRes.ok) return new Response(JSON.stringify({ ok: false, error: `ESRI ${imgRes.status}`, features: [] }), { headers: JSON_HEADERS });
+
+  const buf = await imgRes.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  const imageBase64 = btoa(binary);
 
   const MODEL = 'gemini-3.1-flash-lite';
   const prompt = `Analyze this aerial/satellite image of a freshwater lake.
@@ -4833,25 +4867,18 @@ If nothing found: {"structures":[],"has_water":true}`;
           generationConfig: { temperature: 0.05, maxOutputTokens: 600, responseMimeType: 'application/json' }
         })
       });
-      if (r.status === 429) { continue; } // try next key
+      if (r.status === 429) { continue; }
       if (!r.ok) throw new Error(`Gemini ${r.status}`);
       const data = await r.json();
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
       const result = JSON.parse(text.replace(/```json|```/g, '').trim());
-
-      // Convert fractional positions to lat/lon
-      const { s, n, w, e } = tileBounds;
       const features = (result.structures || [])
         .filter(st => (st.confidence || 0) >= 0.6)
         .map(st => ({
           type: 'Feature',
-          geometry: { type: 'Point', coordinates: [
-            w + (e - w) * (st.x_frac || 0.5),
-            n - (n - s) * (st.y_frac || 0.5)
-          ]},
+          geometry: { type: 'Point', coordinates: [w + (e - w) * (st.x_frac || 0.5), n - (n - s) * (st.y_frac || 0.5)]},
           properties: { structure_type: st.type, confidence: st.confidence, description: st.description || '', dock_count_estimate: st.dock_count_estimate || null, source: 'gemini_vision', scanned_at: new Date().toISOString() }
         }));
-
       return new Response(JSON.stringify({ ok: true, hasWater: result.has_water, features }), { headers: JSON_HEADERS });
     } catch (e) {
       if (attempt === geminiKeys.length - 1) {
