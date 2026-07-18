@@ -4769,6 +4769,11 @@ async function handleResearchVisionScan(request, env) {
       if (obj.type === 'FeatureCollection') return obj.features?.forEach(collectPolygons);
       if (obj.type === 'Polygon') polygons.push(obj.coordinates);
       if (obj.type === 'MultiPolygon') obj.coordinates?.forEach(poly => polygons.push(poly));
+      // Supplemental shoreline files are not uniform: older lake packages use
+      // a closed LineString/MultiLineString rather than a Polygon. A closed
+      // shoreline line is a valid ring for scan planning as well.
+      if (obj.type === 'LineString') polygons.push([obj.coordinates]);
+      if (obj.type === 'MultiLineString') obj.coordinates?.forEach(line => polygons.push([line]));
       if (obj.type === 'GeometryCollection') obj.geometries?.forEach(collectPolygons);
     };
     collectPolygons(geo);
