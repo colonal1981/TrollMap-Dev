@@ -4758,81 +4758,46 @@ async function handleResearchVisionScan(request, env) {
     const shorelineObj = await env.R2_TROLLMAP_CHARTPACKS.get(`supplemental/${resolvedKey}/shoreline.geojson`);
     if (!shorelineObj) return new Response(JSON.stringify({ ok: false, error: `no shoreline for ${resolvedKey}` }), { status: 400, headers: JSON_HEADERS });
     const geo = JSON.parse(await shorelineObj.text());
-
-    // Keep rings intact.  Flattening every coordinate into one synthetic polygon
-    // (the previous implementation) joins unrelated rings/islands and makes a
-    // centre-point test unreliable at narrow arms and at the dam.
-    const polygons = [];
-    const collectPolygons = (obj) => {
+    const coords = [];
+    const extractCoords = (obj) => {
       if (!obj) return;
-      if (obj.type === 'Feature') return collectPolygons(obj.geometry);
-      if (obj.type === 'FeatureCollection') return obj.features?.forEach(collectPolygons);
-      if (obj.type === 'Polygon') polygons.push(obj.coordinates);
-      if (obj.type === 'MultiPolygon') obj.coordinates?.forEach(poly => polygons.push(poly));
-      // Supplemental shoreline files are not uniform: older lake packages use
-      // a closed LineString/MultiLineString rather than a Polygon. A closed
-      // shoreline line is a valid ring for scan planning as well.
-      if (obj.type === 'LineString') polygons.push([obj.coordinates]);
-      if (obj.type === 'MultiLineString') obj.coordinates?.forEach(line => polygons.push([line]));
-      if (obj.type === 'GeometryCollection') obj.geometries?.forEach(collectPolygons);
+      if (obj.type === 'Feature') extractCoords(obj.geometry);
+      else if (obj.type === 'FeatureCollection') obj.features?.forEach(extractCoords);
+      else if (obj.coordinates) {
+        const flat = obj.coordinates.flat(Infinity);
+        const stride = (flat.length % 3 === 0 && flat.length % 2 !== 0) ? 3 : 2;
+        for (let i = 0; i < flat.length - stride + 1; i += stride) coords.push([flat[i], flat[i+1]]);
+      }
     };
-    collectPolygons(geo);
-    const validPolygons = polygons.filter(poly => Array.isArray(poly?.[0]) && poly[0].length >= 3);
-    const coords = validPolygons.flatMap(poly => poly.flat());
-    if (!coords.length) return new Response(JSON.stringify({ ok: false, error: 'no polygon coords in shoreline' }), { status: 400, headers: JSON_HEADERS });
+    extractCoords(geo);
+    if (!coords.length) return new Response(JSON.stringify({ ok: false, error: 'no coords in shoreline' }), { status: 400, headers: JSON_HEADERS });
     const lons = coords.map(c => c[0]), lats = coords.map(c => c[1]);
-    const rawBboxW = Math.min(...lons), rawBboxE = Math.max(...lons);
-    const rawBboxS = Math.min(...lats), rawBboxN = Math.max(...lats);
-    // Scale tile size to lake extent — target ~8x8 grid.
-    const latSpan = rawBboxN - rawBboxS;
-    const lonSpan = rawBboxE - rawBboxW;
+    const bboxW = Math.min(...lons), bboxE = Math.max(...lons);
+    const bboxS = Math.min(...lats), bboxN = Math.max(...lats);
+    // Scale tile size to lake extent — target ~8x8 grid
+    const latSpan = bboxN - bboxS;
+    const lonSpan = bboxE - bboxW;
     const TILE_DEG = Math.max(0.004, Math.max(latSpan, lonSpan) / 8);
     const MAX_TILES = 100;
 
-    function pointInRing(lon, lat, ring) {
+    // Point-in-polygon — only tile centers inside the lake boundary
+    function pointInPoly(lon, lat, polyCoords) {
       let inside = false;
-      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-        const [xi, yi] = ring[i], [xj, yj] = ring[j];
+      for (let i = 0, j = polyCoords.length - 1; i < polyCoords.length; j = i++) {
+        const xi = polyCoords[i][0], yi = polyCoords[i][1];
+        const xj = polyCoords[j][0], yj = polyCoords[j][1];
         if (((yi > lat) !== (yj > lat)) && (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi)) inside = !inside;
       }
       return inside;
     }
-    function pointInPolygon(lon, lat, polygon) {
-      // A point in an interior ring is not water.
-      return pointInRing(lon, lat, polygon[0]) && !polygon.slice(1).some(ring => pointInRing(lon, lat, ring));
-    }
-    function segmentsIntersect(a, b, c, d) {
-      const cross = (p1, p2, p3) => (p2[0] - p1[0]) * (p3[1] - p1[1]) - (p2[1] - p1[1]) * (p3[0] - p1[0]);
-      const abC = cross(a, b, c), abD = cross(a, b, d), cdA = cross(c, d, a), cdB = cross(c, d, b);
-      return ((abC > 0 && abD < 0) || (abC < 0 && abD > 0)) && ((cdA > 0 && cdB < 0) || (cdA < 0 && cdB > 0));
-    }
-    function tileIntersectsPolygon(tile, polygon) {
-      const corners = [[tile.w, tile.s], [tile.e, tile.s], [tile.e, tile.n], [tile.w, tile.n]];
-      if (corners.some(([x, y]) => pointInPolygon(x, y, polygon))) return true;
-      const outer = polygon[0];
-      if (outer.some(([x, y]) => x >= tile.w && x <= tile.e && y >= tile.s && y <= tile.n)) return true;
-      const tileEdges = corners.map((p, i) => [p, corners[(i + 1) % corners.length]]);
-      for (let i = 0; i < outer.length; i++) {
-        const edge = [outer[i], outer[(i + 1) % outer.length]];
-        if (tileEdges.some(([a, b]) => segmentsIntersect(a, b, edge[0], edge[1]))) return true;
-      }
-      return false;
-    }
 
-    // Start the grid slightly outside the shoreline.  This keeps shoreline
-    // tiles, and therefore dams/abutments immediately beyond the water edge,
-    // inside the exported imagery instead of cropping them at the bbox.
-    const margin = TILE_DEG * 0.20;
-    const bboxW = rawBboxW - margin, bboxE = rawBboxE + margin;
-    const bboxS = rawBboxS - margin, bboxN = rawBboxN + margin;
     const tiles = [];
     for (let lat = bboxS; lat < bboxN; lat += TILE_DEG) {
       for (let lon = bboxW; lon < bboxE; lon += TILE_DEG) {
-        const tile = { s: lat, n: Math.min(lat + TILE_DEG, bboxN), w: lon, e: Math.min(lon + TILE_DEG, bboxE) };
-        // Intersection, not just centre-in-polygon: narrow water, island, and
-        // edge tiles are otherwise silently omitted.
-        if (!validPolygons.some(poly => tileIntersectsPolygon(tile, poly))) continue;
-        tiles.push(tile);
+        const cLat = lat + TILE_DEG / 2;
+        const cLon = lon + TILE_DEG / 2;
+        if (!pointInPoly(cLon, cLat, coords)) continue;
+        tiles.push({ s: lat, n: Math.min(lat + TILE_DEG, bboxN), w: lon, e: Math.min(lon + TILE_DEG, bboxE) });
         if (tiles.length >= MAX_TILES) break;
       }
       if (tiles.length >= MAX_TILES) break;
@@ -4857,7 +4822,7 @@ async function handleResearchVisionScan(request, env) {
   // Fetch ESRI satellite image from worker (no CORS restrictions)
   const { s, n, w, e } = tileBounds;
   const bbox = `${w},${s},${e},${n}`;
-  const esriUrl = `https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${encodeURIComponent(bbox)}&bboxSR=4326&imageSR=4326&size=800,800&format=jpg&transparent=false&adjustAspectRatio=false&f=image`;
+  const esriUrl = `https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${encodeURIComponent(bbox)}&bboxSR=4326&imageSR=4326&size=800,800&format=jpg&transparent=false&f=image`;
   const imgController = new AbortController();
   const imgTimeout = setTimeout(() => imgController.abort(), 12000);
   let imgRes;
@@ -4912,8 +4877,7 @@ If nothing found: {"structures":[],"has_water":true}`;
       const features = (result.structures || [])
         .filter(st => (st.confidence || 0) >= 0.6)
         .map(st => {
-          // Robust coordinate parsing — look for any field starting with x or y
-          // handles Gemini inventing field names like "y_760" or mixed formats
+          // Robust coordinate parsing — handles Gemini inventing field names like "y_760"
           const extract = (axis) => {
             if (st[axis] !== undefined) return parseFloat(st[axis]);
             if (st[`${axis}_frac`] !== undefined) return parseFloat(st[`${axis}_frac`]);
@@ -4921,17 +4885,12 @@ If nothing found: {"structures":[],"has_water":true}`;
             const key = Object.keys(st).find(k => k.toLowerCase().startsWith(axis));
             return key ? parseFloat(st[key]) : null;
           };
-
           const xVal = extract('x');
           const yVal = extract('y');
-          
-          // The model is explicitly asked for pixels.  Never silently turn a
-          // missing/invalid location into the tile centre — that creates a
-          // convincing but false map point.  Values of 0 or 1 are valid pixels.
+          // Reject invalid coordinates — never default to tile centre
           if (!Number.isFinite(xVal) || !Number.isFinite(yVal) || xVal < 0 || xVal >= IMG_SIZE || yVal < 0 || yVal >= IMG_SIZE) return null;
           const xFrac = xVal / IMG_SIZE;
           const yFrac = yVal / IMG_SIZE;
-
           return {
             type: 'Feature',
             geometry: { type: 'Point', coordinates: [w + (e - w) * xFrac, n - (n - s) * yFrac] },
