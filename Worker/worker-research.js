@@ -4749,7 +4749,7 @@ If no thermocline or depth information is found, return found: false and null fo
 // Worker receives one base64 image + bounds, runs Gemini, returns structures.
 async function handleResearchVisionScan(request, env) {
   const body = await request.json().catch(() => ({}));
-  const { lakeName, imageBase64, tileBounds } = body;
+  const { lakeName, tileBounds } = body;
   if (!lakeName) return new Response(JSON.stringify({ ok: false, error: 'missing lakeName' }), { status: 400, headers: JSON_HEADERS });
 
   // Tile plan request — return bbox and tile list so browser can drive the scan
