@@ -600,6 +600,21 @@ export async function runSmartPlan() {
   const totalDurH=phaseInfo.phases.length?(phaseInfo.phases[phaseInfo.phases.length-1].end-phaseInfo.phases[0].start):6;
 
   // ── Pull our local intel FIRST ───────────────────────────────────────
+  // Seed TROLLMAP_RESEARCHED_CACHE from R2 if not already loaded (e.g. Research tab not opened)
+  if (!window.TROLLMAP_RESEARCHED_CACHE?.[lakeName]) {
+    try {
+      const profileRes = await fetch(`${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`);
+      if (profileRes.ok) {
+        const profileData = await profileRes.json();
+        if (profileData.ok && profileData.profile) {
+          window.TROLLMAP_RESEARCHED_CACHE = window.TROLLMAP_RESEARCHED_CACHE || {};
+          window.TROLLMAP_RESEARCHED_CACHE[lakeName] = profileData.profile;
+          if (profileData.sanitized) window.TROLLMAP_RESEARCHED_CACHE[profileData.sanitized] = profileData.profile;
+        }
+      }
+    } catch (_) {}
+  }
+
   const fishingContext = await buildFishingContext({
     species: sp, lakeName, season, clarity, waterTempF,
     speedMph: speedMph,
