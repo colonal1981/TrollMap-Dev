@@ -4744,62 +4744,64 @@ If no thermocline or depth information is found, return found: false and null fo
 
 
 // ── Vision Structure Scanner ──────────────────────────────────────────────────
-async function runVisionScan(lakeName, env) {
-  const resolvedKey = resolveSupplementalKeyWorker(lakeName);
+// ── Vision Scan — single tile analysis endpoint ──────────────────────────────
+// Tiling and ESRI image fetching happens client-side (no worker timeout issues).
+// Worker receives one base64 image + bounds, runs Gemini, returns structures.
+async function handleResearchVisionScan(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const { lakeName, imageBase64, tileBounds } = body;
+  if (!lakeName) return new Response(JSON.stringify({ ok: false, error: 'missing lakeName' }), { status: 400, headers: JSON_HEADERS });
 
-  console.log(`[vision-scan] Starting for ${lakeName} (${resolvedKey})`);
-
-
-
-  const shorelineObj = await env.R2_TROLLMAP_CHARTPACKS.get(`supplemental/${resolvedKey}/shoreline.geojson`);
-  if (!shorelineObj) {
-    console.warn(`[vision-scan] No shoreline.geojson for ${resolvedKey}`);
-    return { ok: false, error: 'no shoreline' };
-  }
-
-  const geo = JSON.parse(await shorelineObj.text());
-  const coords = [];
-  function extractCoords(obj) {
-    if (!obj) return;
-    if (obj.type === 'Feature') extractCoords(obj.geometry);
-    else if (obj.type === 'FeatureCollection') obj.features?.forEach(extractCoords);
-    else if (obj.coordinates) {
-      const flat = obj.coordinates.flat(Infinity);
-      const stride = (flat.length % 3 === 0 && flat.length % 2 !== 0) ? 3 : 2;
-      for (let i = 0; i < flat.length - stride + 1; i += stride) coords.push([flat[i], flat[i+1]]);
-    }
-  }
-  extractCoords(geo);
-  if (!coords.length) return { ok: false, error: 'no coords' };
-
-  const lons = coords.map(c => c[0]);
-  const lats = coords.map(c => c[1]);
-  const bboxW = Math.min(...lons), bboxE = Math.max(...lons);
-  const bboxS = Math.min(...lats), bboxN = Math.max(...lats);
-
-  const TILE_DEG = 0.004;
-  const TILE_W = 800, TILE_H = 800;
-  const MAX_TILES = 80;
-  const tiles = [];
-  for (let lat = bboxS; lat < bboxN; lat += TILE_DEG) {
-    for (let lon = bboxW; lon < bboxE; lon += TILE_DEG) {
-      tiles.push({ s: lat, n: Math.min(lat + TILE_DEG, bboxN), w: lon, e: Math.min(lon + TILE_DEG, bboxE) });
+  // Tile plan request — return bbox and tile list so browser can drive the scan
+  if (!imageBase64) {
+    const resolvedKey = resolveSupplementalKeyWorker(lakeName);
+    const shorelineObj = await env.R2_TROLLMAP_CHARTPACKS.get(`supplemental/${resolvedKey}/shoreline.geojson`);
+    if (!shorelineObj) return new Response(JSON.stringify({ ok: false, error: `no shoreline for ${resolvedKey}` }), { status: 400, headers: JSON_HEADERS });
+    const geo = JSON.parse(await shorelineObj.text());
+    const coords = [];
+    const extractCoords = (obj) => {
+      if (!obj) return;
+      if (obj.type === 'Feature') extractCoords(obj.geometry);
+      else if (obj.type === 'FeatureCollection') obj.features?.forEach(extractCoords);
+      else if (obj.coordinates) {
+        const flat = obj.coordinates.flat(Infinity);
+        const stride = (flat.length % 3 === 0 && flat.length % 2 !== 0) ? 3 : 2;
+        for (let i = 0; i < flat.length - stride + 1; i += stride) coords.push([flat[i], flat[i+1]]);
+      }
+    };
+    extractCoords(geo);
+    if (!coords.length) return new Response(JSON.stringify({ ok: false, error: 'no coords in shoreline' }), { status: 400, headers: JSON_HEADERS });
+    const lons = coords.map(c => c[0]), lats = coords.map(c => c[1]);
+    const bboxW = Math.min(...lons), bboxE = Math.max(...lons);
+    const bboxS = Math.min(...lats), bboxN = Math.max(...lats);
+    const TILE_DEG = 0.004, MAX_TILES = 200;
+    const tiles = [];
+    for (let lat = bboxS; lat < bboxN; lat += TILE_DEG) {
+      for (let lon = bboxW; lon < bboxE; lon += TILE_DEG) {
+        tiles.push({ s: lat, n: Math.min(lat + TILE_DEG, bboxN), w: lon, e: Math.min(lon + TILE_DEG, bboxE) });
+        if (tiles.length >= MAX_TILES) break;
+      }
       if (tiles.length >= MAX_TILES) break;
     }
-    if (tiles.length >= MAX_TILES) break;
+    // Write initial status
+    try {
+      await env.R2_TROLLMAP_CHARTPACKS.put(
+        `supplemental/${resolvedKey}/vision-scan-status.json`,
+        JSON.stringify({ status: 'scanning', lakeName, lakeKey: resolvedKey, tilesTotal: tiles.length, tilesProcessed: 0, structuresFound: 0, startedAt: new Date().toISOString() }),
+        { httpMetadata: { contentType: 'application/json' } }
+      );
+    } catch (_) {}
+    return new Response(JSON.stringify({ ok: true, tiles, lakeKey: resolvedKey }), { headers: JSON_HEADERS });
   }
-  console.log(`[vision-scan] ${tiles.length} tiles for ${lakeName} bbox W${bboxW.toFixed(3)} E${bboxE.toFixed(3)} S${bboxS.toFixed(3)} N${bboxN.toFixed(3)} coords:${coords.length}`);
+
+  // Single tile analysis
+  if (!tileBounds) return new Response(JSON.stringify({ ok: false, error: 'missing tileBounds' }), { status: 400, headers: JSON_HEADERS });
 
   const geminiKeys = [env.GEMINI_FREE_API_KEY, env.GEMINI_FREE2_API_KEY, env.GEMINI_FREE3_API_KEY, env.GEMINI_FREE4_API_KEY].filter(Boolean);
-  if (!geminiKeys.length) return { ok: false, error: 'no Gemini keys' };
+  if (!geminiKeys.length) return new Response(JSON.stringify({ ok: false, error: 'no Gemini keys' }), { status: 500, headers: JSON_HEADERS });
 
-  let keyIdx = 0;
   const MODEL = 'gemini-3.1-flash-lite';
-
-  async function analyzeImage(base64) {
-    const key = geminiKeys[keyIdx % geminiKeys.length];
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${key}`;
-    const prompt = `Analyze this aerial/satellite image of a freshwater lake.
+  const prompt = `Analyze this aerial/satellite image of a freshwater lake.
 
 Identify ONLY these structure types that are CLEARLY VISIBLE:
 1. DOCK_CLUSTER — 3 or more docks/piers concentrated in one area
@@ -4814,100 +4816,63 @@ Return ONLY valid JSON:
 {"structures":[{"type":"DOCK_CLUSTER|RIPRAP|BRIDGE|FLOODED_TIMBER","x_frac":0.5,"y_frac":0.5,"confidence":0.85,"description":"brief","dock_count_estimate":null}],"has_water":true}
 If nothing found: {"structures":[],"has_water":true}`;
 
-    const body = {
-      contents: [{ parts: [{ inline_data: { mime_type: 'image/jpeg', data: base64 } }, { text: prompt }] }],
-      generationConfig: { temperature: 0.05, maxOutputTokens: 600, responseMimeType: 'application/json' }
-    };
-    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (r.status === 429) {
-      keyIdx++;
-      console.warn(`[vision-scan] Rate limited — rotating to key ${keyIdx % geminiKeys.length}`);
-      await new Promise(res => setTimeout(res, 2000));
-      return analyzeImage(base64);
-    }
-    if (!r.ok) throw new Error(`Gemini ${r.status}`);
-    const data = await r.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-    return JSON.parse(text.replace(/```json|```/g, '').trim());
-  }
-
-  const features = [];
-  let processed = 0, skipped = 0, errors = 0;
-
-  // Write initial status
-  const writeStatus = async (status) => {
+  for (let attempt = 0; attempt < geminiKeys.length; attempt++) {
+    const key = geminiKeys[attempt % geminiKeys.length];
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${key}`;
     try {
-      await env.R2_TROLLMAP_CHARTPACKS.put(
-        `supplemental/${resolvedKey}/vision-scan-status.json`,
-        JSON.stringify({ ...status, lakeName, lakeKey: resolvedKey, tilesTotal: tiles.length }),
-        { httpMetadata: { contentType: 'application/json' } }
-      );
-    } catch (_) {}
-  };
-  await writeStatus({ status: 'scanning', tilesProcessed: 0, structuresFound: 0, startedAt: new Date().toISOString() });
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ inline_data: { mime_type: 'image/jpeg', data: imageBase64 } }, { text: prompt }] }],
+          generationConfig: { temperature: 0.05, maxOutputTokens: 600, responseMimeType: 'application/json' }
+        })
+      });
+      if (r.status === 429) { continue; } // try next key
+      if (!r.ok) throw new Error(`Gemini ${r.status}`);
+      const data = await r.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+      const result = JSON.parse(text.replace(/```json|```/g, '').trim());
 
-  for (const tile of tiles) {
-    try {
-      const bbox = `${tile.w},${tile.s},${tile.e},${tile.n}`;
-      const esriUrl = `https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${encodeURIComponent(bbox)}&bboxSR=4326&imageSR=4326&size=${TILE_W},${TILE_H}&format=jpg&transparent=false&f=image`;
-      const imgController = new AbortController();
-      const imgTimeout = setTimeout(() => imgController.abort(), 12000);
-      let imgRes;
-      try {
-        imgRes = await fetch(esriUrl, { signal: imgController.signal });
-      } finally {
-        clearTimeout(imgTimeout);
-      }
-      if (!imgRes.ok) { skipped++; continue; }
-      const buf = await imgRes.arrayBuffer();
-      // Convert in chunks to avoid call stack overflow on large images
-      const bytes = new Uint8Array(buf);
-      let binary = '';
-      const chunkSize = 8192;
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-      }
-      const base64 = btoa(binary);
-      const result = await analyzeImage(base64);
-      if (!result.has_water) { skipped++; } else { processed++; }
-      for (const s of (result.structures || [])) {
-        if ((s.confidence || 0) < 0.6) continue;
-        const lon = tile.w + (tile.e - tile.w) * (s.x_frac || 0.5);
-        const lat = tile.n - (tile.n - tile.s) * (s.y_frac || 0.5);
-        features.push({
+      // Convert fractional positions to lat/lon
+      const { s, n, w, e } = tileBounds;
+      const features = (result.structures || [])
+        .filter(st => (st.confidence || 0) >= 0.6)
+        .map(st => ({
           type: 'Feature',
-          geometry: { type: 'Point', coordinates: [lon, lat] },
-          properties: { structure_type: s.type, confidence: s.confidence, description: s.description || '', dock_count_estimate: s.dock_count_estimate || null, source: 'gemini_vision', scanned_at: new Date().toISOString() }
-        });
-      }
-      await new Promise(res => setTimeout(res, 4200));
-      // Write progress every 10 tiles
-      if ((processed + skipped) % 10 === 0) {
-        await writeStatus({ status: 'scanning', tilesProcessed: processed + skipped, structuresFound: features.length, startedAt: new Date().toISOString() });
-      }
-    } catch (e) { errors++; console.warn(`[vision-scan] tile error (${e.name}): ${e.message}`); }
-  }
+          geometry: { type: 'Point', coordinates: [
+            w + (e - w) * (st.x_frac || 0.5),
+            n - (n - s) * (st.y_frac || 0.5)
+          ]},
+          properties: { structure_type: st.type, confidence: st.confidence, description: st.description || '', dock_count_estimate: st.dock_count_estimate || null, source: 'gemini_vision', scanned_at: new Date().toISOString() }
+        }));
 
-  const geojson = {
-    type: 'FeatureCollection', features,
-    metadata: { lakeName, lakeKey: resolvedKey, tilesTotal: tiles.length, tilesProcessed: processed, tilesSkipped: skipped, tileErrors: errors, structuresFound: features.length, scannedAt: new Date().toISOString(), model: MODEL }
-  };
-  await env.R2_TROLLMAP_CHARTPACKS.put(`supplemental/${resolvedKey}/vision-structure.geojson`, JSON.stringify(geojson), { httpMetadata: { contentType: 'application/json' } });
-  await writeStatus({ status: 'complete', tilesProcessed: processed + skipped, structuresFound: features.length, completedAt: new Date().toISOString() });
-  console.log(`[vision-scan] Complete — ${features.length} structures, ${processed} tiles processed`);
-  return { ok: true, structuresFound: features.length, tilesProcessed: processed };
+      return new Response(JSON.stringify({ ok: true, hasWater: result.has_water, features }), { headers: JSON_HEADERS });
+    } catch (e) {
+      if (attempt === geminiKeys.length - 1) {
+        return new Response(JSON.stringify({ ok: false, error: e.message, features: [] }), { headers: JSON_HEADERS });
+      }
+    }
+  }
+  return new Response(JSON.stringify({ ok: false, error: 'all Gemini keys failed', features: [] }), { headers: JSON_HEADERS });
 }
 
-async function handleResearchVisionScan(request, env, ctx) {
+// Save accumulated vision scan results to R2
+async function handleResearchVisionScanSave(request, env) {
   const body = await request.json().catch(() => ({}));
-  const { lakeName } = body;
-  if (!lakeName) return new Response(JSON.stringify({ ok: false, error: 'missing lakeName' }), { status: 400, headers: JSON_HEADERS });
-  if (ctx?.waitUntil) {
-    ctx.waitUntil(runVisionScan(lakeName, env).catch(e => console.error('[vision-scan] background failed:', e.message)));
-    return new Response(JSON.stringify({ ok: true, status: 'scanning', message: `Vision scan started for ${lakeName} — results saved to R2 when complete (3-8 minutes)` }), { headers: JSON_HEADERS });
-  }
-  const result = await runVisionScan(lakeName, env);
-  return new Response(JSON.stringify(result), { headers: JSON_HEADERS });
+  const { lakeName, features, tilesTotal, tilesProcessed, tilesSkipped } = body;
+  if (!lakeName || !features) return new Response(JSON.stringify({ ok: false, error: 'missing lakeName or features' }), { status: 400, headers: JSON_HEADERS });
+  const resolvedKey = resolveSupplementalKeyWorker(lakeName);
+  const geojson = {
+    type: 'FeatureCollection', features,
+    metadata: { lakeName, lakeKey: resolvedKey, tilesTotal, tilesProcessed, tilesSkipped, structuresFound: features.length, scannedAt: new Date().toISOString(), model: 'gemini-3.1-flash-lite' }
+  };
+  await env.R2_TROLLMAP_CHARTPACKS.put(`supplemental/${resolvedKey}/vision-structure.geojson`, JSON.stringify(geojson), { httpMetadata: { contentType: 'application/json' } });
+  await env.R2_TROLLMAP_CHARTPACKS.put(`supplemental/${resolvedKey}/vision-scan-status.json`,
+    JSON.stringify({ status: 'complete', lakeName, lakeKey: resolvedKey, tilesTotal, tilesProcessed, structuresFound: features.length, completedAt: new Date().toISOString() }),
+    { httpMetadata: { contentType: 'application/json' } }
+  );
+  return new Response(JSON.stringify({ ok: true, structuresFound: features.length }), { headers: JSON_HEADERS });
 }
 
 
@@ -4928,4 +4893,4 @@ async function handleResearchVisionScanStatus(request, env) {
   }
 }
 
-export { handleResearchVisionScanStatus, handleResearchVisionScan, handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchValidationPass, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey };
+export { handleResearchVisionScanStatus, handleResearchVisionScanSave, handleResearchVisionScan, handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchValidationPass, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey };
