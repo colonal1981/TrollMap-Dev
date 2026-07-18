@@ -1,7 +1,7 @@
 import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized } from './worker-core.js'; 
 import { LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard } from './worker-data.js';
 import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality } from './worker-species.js';
-import { handleResearchVisionScanStatus, handleResearchVisionScanSave, handleResearchVisionScan, handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass } from './worker-research.js';
+import { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass } from './worker-research.js';
 
 var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
@@ -1226,15 +1226,9 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
       if (path === "/research/thermocline-search" && request.method === "POST") {
         return handleResearchThermoclineSearch(request, env);
       }
-      if (path === "/research/vision-scan-save" && request.method === "POST") {
-        return handleResearchVisionScanSave(request, env);
-      }
-      if (path === "/research/vision-scan-status" && request.method === "POST") {
-        return handleResearchVisionScanStatus(request, env);
-      }
-      if (path === "/research/vision-scan" && request.method === "POST") {
-        return handleResearchVisionScan(request, env);
-      }
+
+
+
       if (path === "/research/limnology-data" && request.method === "POST") {
         return handleResearchLimnologyData(request, env);
       }
@@ -1314,118 +1308,7 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
         }
       }
       if (path === '/research/validation-pass' && request.method === 'POST') return handleResearchValidationPass(request, env);
-      if (path === "/detect-structure" && request.method === "POST") {
-        try {
-          const body = await request.json();
-          const apiKey = env.GEMINI_API_KEY;
-          if (!apiKey) {
-            return new Response(JSON.stringify({ success: false, error: "GEMINI_API_KEY not configured" }), { status: 500, headers: JSON_HEADERS });
-          }
-          const {
-            image_base64,
-            mime_type = "image/jpeg",
-            bounds,
-            image_width = 1024,
-            image_height = 600
-          } = body;
-          if (!image_base64 || !bounds?.north || !bounds?.south || !bounds?.east || !bounds?.west) {
-            return new Response(JSON.stringify({ success: false, error: "missing image_base64 or bounds" }), { status: 400, headers: JSON_HEADERS });
-          }
-          const SYSTEM_PROMPT = `You are analyzing a satellite/aerial image of a South Carolina lake or river for fishing-relevant structures.
 
-First, confirm water is visible. If no water body is present, return {"has_water":false,"features":[],"image_notes":"No water visible"}.
-
-STRICT RULE: Only report structures that have a VISIBLE PHYSICAL CONNECTION to the shoreline or are clearly sitting in/on the water. A structure floating in open water with no visible connection to shore is almost certainly a false read \u2014 omit it. When in doubt, omit.
-
-For each structure DIRECTLY OVER OR TOUCHING the water, identify:
-- Docks/boat docks (rectangular platforms extending from shore over water \u2014 must be attached to shore)
-- Piers (longer linear walkways into water \u2014 must connect to land)
-- Boat ramps (light-colored concrete sloping from shore into water)
-- Boathouses (roofed structures over water \u2014 must be shore-connected)
-- Timber/logs (clearly visible debris in the water, not shadows)
-- Fish attractors (dark man-made patches in shallow water near shore)
-
-DO NOT flag: swimming pools, buildings set back from water, roads, shadows, trees, boat wakes, reflections, open water with no structure, or anything without a clear physical connection to shore or the water surface.
-
-Return position as pixel coordinates in the image:
-- x: 0 (left edge) to 1024 (right edge)
-- y: 0 (top edge) to 600 (bottom edge)
-
-Place the coordinate at the point where the structure meets the water, not the far end. Only include structures you are 75%+ confident about. Fewer accurate results is better than many uncertain ones.`;
-          const userPrompt = `Analyze this ${image_width}x${image_height} satellite image. Bounds: N=${bounds.north.toFixed(6)}, S=${bounds.south.toFixed(6)}, E=${bounds.east.toFixed(6)}, W=${bounds.west.toFixed(6)}. Return ONLY valid JSON: {"has_water":true,"features":[{"type":"dock|pier|boat_ramp|boathouse|timber|fish_attractor","x":0,"y":0,"confidence":0.0,"description":"brief","fishing_notes":"why this matters"}],"image_notes":"description"}`;
-          const payload = {
-            systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-            contents: [{ parts: [
-              { text: userPrompt },
-              { inlineData: { mime_type, data: image_base64 } }
-            ] }],
-            generationConfig: {
-              temperature: 0,
-              response_mime_type: "application/json",
-              thinkingConfig: { thinkingBudget: 0 }
-            }
-          };
-          const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-          let r, attempts = 0;
-          while (attempts < 3) {
-            r = await fetch(geminiUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-            if (r.status === 503) break;
-            attempts++;
-            if (attempts < 3) await new Promise((res) => setTimeout(res, 1e3 * attempts));
-          }
-          if (!r.ok) {
-            const errText = await r.text();
-            return new Response(JSON.stringify({ success: false, error: `Gemini ${r.status}: ${errText.slice(0, 300)}` }), { status: r.status, headers: JSON_HEADERS });
-          }
-          const gData = await r.json();
-          const rawText = gData.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (!rawText) return new Response(JSON.stringify({ success: false, error: "Empty Gemini response" }), { status: 500, headers: JSON_HEADERS });
-          let result = {};
-          try {
-            result = JSON.parse(rawText);
-          } catch (_) {
-            result = { error: "parse failed", raw: rawText.slice(0, 500) };
-          }
-          const latRange = bounds.north - bounds.south;
-          const lonRange = bounds.east - bounds.west;
-          if (Array.isArray(result.features)) {
-            result.features = result.features.map((f) => {
-              const extract = (axis, size) => {
-                if (f[axis] !== undefined) return parseFloat(f[axis]);
-                if (f[`${axis}_frac`] !== undefined) return parseFloat(f[`${axis}_frac`]);
-                if (f[`${axis}_pixel`] !== undefined) return parseFloat(f[`${axis}_pixel`]);
-                const key = Object.keys(f).find(k => k.toLowerCase().startsWith(axis));
-                const v = key ? parseFloat(f[key]) : 0.5;
-                return v > 1 ? v / size : v;
-              };
-
-              const xFrac = extract('x', image_width);
-              const yFrac = extract('y', image_height);
-
-              return {
-                ...f,
-                lat: bounds.north - yFrac * latRange,
-                lon: bounds.west + xFrac * lonRange
-              };
-            });
-            const before = result.features.length;
-            result.features = result.features.filter((f) => {
-              const fromWest = (f.lon - bounds.west) / lonRange;
-              const fromEast = (bounds.east - f.lon) / lonRange;
-              const fromNorth = (bounds.north - f.lat) / latRange;
-              const fromSouth = (f.lat - bounds.south) / latRange;
-              return Math.min(fromWest, fromEast, fromNorth, fromSouth) <= 0.35;
-            });
-            const dropped = before - result.features.length;
-            if (dropped > 0) {
-              result.image_notes = (result.image_notes || "") + ` [${dropped} open-water false positive${dropped > 1 ? "s" : ""} removed]`;
-            }
-          }
-          return new Response(JSON.stringify({ success: true, ...result }), { headers: JSON_HEADERS });
-        } catch (err) {
-          return new Response(JSON.stringify({ success: false, error: err.message }), { status: 500, headers: JSON_HEADERS });
-        }
-      }
       if (path === "/ramps") {
         const state = (url.searchParams.get("state") || "SC").toUpperCase();
         const forceRefresh = url.searchParams.has("refresh");
