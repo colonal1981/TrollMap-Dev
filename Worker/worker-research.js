@@ -4755,9 +4755,26 @@ async function handleResearchVisionScan(request, env) {
   // Tile plan request — return bbox and tile list so browser can drive the scan
   if (!tileBounds) {
     const resolvedKey = resolveSupplementalKeyWorker(lakeName);
+
+    // Load boundary geometry — prefer shoreline.geojson, fall back to 3DHP boundary polygon.
+    // Shoreline is a LineString (i-boating derived); boundary is a Polygon (USGS 3DHP).
+    // Both work for bbox derivation and point-in-polygon tile filtering.
+    let geo = null;
+    let boundarySource = null;
     const shorelineObj = await env.R2_TROLLMAP_CHARTPACKS.get(`supplemental/${resolvedKey}/shoreline.geojson`);
-    if (!shorelineObj) return new Response(JSON.stringify({ ok: false, error: `no shoreline for ${resolvedKey}` }), { status: 400, headers: JSON_HEADERS });
-    const geo = JSON.parse(await shorelineObj.text());
+    if (shorelineObj) {
+      geo = JSON.parse(await shorelineObj.text());
+      boundarySource = 'shoreline';
+    } else {
+      const boundaryObj = await env.R2_TROLLMAP_CHARTPACKS.get(`boundaries/${resolvedKey}_3dhp.geojson`);
+      if (boundaryObj) {
+        geo = JSON.parse(await boundaryObj.text());
+        boundarySource = '3dhp_boundary';
+      }
+    }
+    if (!geo) return new Response(JSON.stringify({ ok: false, error: `no shoreline or 3DHP boundary found for ${resolvedKey}` }), { status: 400, headers: JSON_HEADERS });
+    console.log(`[vision-scan] using ${boundarySource} for tile plan: ${resolvedKey}`);
+
     const coords = [];
     const extractCoords = (obj) => {
       if (!obj) return;
@@ -4770,7 +4787,7 @@ async function handleResearchVisionScan(request, env) {
       }
     };
     extractCoords(geo);
-    if (!coords.length) return new Response(JSON.stringify({ ok: false, error: 'no coords in shoreline' }), { status: 400, headers: JSON_HEADERS });
+    if (!coords.length) return new Response(JSON.stringify({ ok: false, error: `no coords in ${boundarySource}` }), { status: 400, headers: JSON_HEADERS });
     const lons = coords.map(c => c[0]), lats = coords.map(c => c[1]);
     const bboxW = Math.min(...lons), bboxE = Math.max(...lons);
     const bboxS = Math.min(...lats), bboxN = Math.max(...lats);
@@ -4806,7 +4823,7 @@ async function handleResearchVisionScan(request, env) {
     try {
       await env.R2_TROLLMAP_CHARTPACKS.put(
         `supplemental/${resolvedKey}/vision-scan-status.json`,
-        JSON.stringify({ status: 'scanning', lakeName, lakeKey: resolvedKey, tilesTotal: tiles.length, tilesProcessed: 0, structuresFound: 0, startedAt: new Date().toISOString() }),
+        JSON.stringify({ status: 'scanning', lakeName, lakeKey: resolvedKey, boundarySource, tilesTotal: tiles.length, tilesProcessed: 0, structuresFound: 0, startedAt: new Date().toISOString() }),
         { httpMetadata: { contentType: 'application/json' } }
       );
     } catch (_) {}
