@@ -56,7 +56,15 @@ function getNearbyStructures(lat, lon, radiusMi = 2.0) {
  * Get catch history for a species on a lake.
  * Returns array of recent catches with GPS, depth, lure, date.
  */
-function getCatchHistory(species, lakeName, limit = 20) {
+function getCatchHistory(species, lakeName, limit = 20, season = null) {
+  const SEASON_MONTHS = {
+    spring: [3, 4, 5],
+    summer: [6, 7, 8],
+    fall:   [9, 10, 11],
+    winter: [12, 1, 2],
+  };
+  const seasonMonths = season ? (SEASON_MONTHS[season] || null) : null;
+
   try {
     const catches = state.CATCHES || [];
     const spKey = normalizeSpecies(species);
@@ -66,7 +74,13 @@ function getCatchHistory(species, lakeName, limit = 20) {
         const matchSpecies = !species || normalizeSpecies(c.species || '') === spKey;
         const matchLake = !lakeName ||
           (c.lake || '').toLowerCase().includes(lakeName.toLowerCase().split(',')[0].toLowerCase());
-        return matchSpecies && matchLake;
+        if (!matchSpecies || !matchLake) return false;
+        // Filter by season if specified
+        if (seasonMonths && c.date) {
+          const month = new Date(c.date).getMonth() + 1;
+          if (!seasonMonths.includes(month)) return false;
+        }
+        return true;
       })
       .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
       .slice(0, limit)
@@ -191,7 +205,7 @@ export async function buildFishingContext(params = {}) {
   }).filter(Boolean))];
 
   // ── Catch history ─────────────────────────────────────────────────────────
-  const catchHistory = getCatchHistory(species, lakeName);
+  const catchHistory = getCatchHistory(species, lakeName, 20, season);
   const catchSummary = summarizeCatches(catchHistory);
 
   // ── Supplemental (attractors + fishing spots) ─────────────────────────────

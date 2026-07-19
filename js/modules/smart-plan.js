@@ -683,6 +683,15 @@ export async function runSmartPlan() {
     }
   }
 
+  // ── Pull lake-specific species behavior from research profile ─────────
+  const speciesBehavior = fishingContext?.researchedProfile?.biology?.speciesBehavior || null;
+  const targetBehavior = speciesBehavior
+    ? Object.entries(speciesBehavior).find(([k]) =>
+        k.toLowerCase().includes(sp.toLowerCase().split(' ')[0]) ||
+        sp.toLowerCase().includes(k.toLowerCase().split(' ')[0])
+      )?.[1]
+    : null;
+
   const researchedBlock = hasResearched && researchedMeta ? `
 🧠 VERIFIED LAKE RESEARCH (v${researchedMeta.version||'?'} ${researchedMeta.status||''} ${fishingContext.researchedProfile?.confidence?.overall?.percent||'?'}% — prioritize for permanent facts, adapt for today's conditions):
 Summary: ${String(researchedSummary||'').slice(0,350)}
@@ -695,8 +704,31 @@ Note: This profile is authoritative for permanent lake characteristics (type, st
 
   // ── Pull species-intel-v2 data for this species + season ─────────────
   const v2sp = IntelV2?.SPECIES_BEHAVIOR_V2?.[sp];
+  const oxygenFloor = fishingContext?.researchedProfile?.limnology?.oxygen?.anoxicBelowFt || null;
+  const oxygenConstraint = oxygenFloor
+    ? `\nCRITICAL: Oxygen depletion floor is ${oxygenFloor}ft on this lake in summer — all depth bands MUST stay above ${oxygenFloor}ft.`
+    : '';
+
   let speciesIntelBlock = '';
-  if (v2sp) {
+  if (targetBehavior) {
+    // Lake-specific behavior from research profile — overrides generic species intel
+    const sb = targetBehavior[season] || targetBehavior.summer || {};
+    const depth = Array.isArray(sb.depthRange) ? `${sb.depthRange[0]}–${sb.depthRange[1]}ft` : null;
+    const structs = Array.isArray(sb.structure) ? sb.structure.join(', ') : null;
+    const spawnNote = targetBehavior.spawnTiming?.waterTempF
+      ? `Spawn trigger: ${targetBehavior.spawnTiming.waterTempF[0]}–${targetBehavior.spawnTiming.waterTempF[1]}°F`
+      : null;
+    const lakeNote = targetBehavior.lakeSpecificNotes || null;
+    speciesIntelBlock = `
+SPECIES INTEL — ${sp} in ${season} on ${lakeName} (LAKE-SPECIFIC from verified research — prioritize over generic defaults):
+${depth ? `- Preferred depth range: ${depth}` : ''}
+${structs ? `- Key structure: ${structs}` : ''}
+${sb.notes ? `- Notes: ${sb.notes}` : ''}
+${spawnNote ? `- ${spawnNote}` : ''}
+${lakeNote ? `- Lake context: ${lakeNote}` : ''}
+${oxygenConstraint}
+CRITICAL: Build depth bands around ${depth || 'the above range'}. Do NOT use generic deep-water summer patterns — the lake-specific research overrides them.`;
+  } else if (v2sp) {
     const lakeKeyV2 = (IntelV2.resolveLakeKey
       ? (IntelV2.resolveLakeKey(lakeName, v2sp) || 'default_SC_reservoir')
       : (v2sp[lakeName] ? lakeName : 'default_SC_reservoir'));
@@ -726,10 +758,11 @@ Use this as your baseline. Today's conditions — water temp, clarity, wind, and
   let catchBlock = '';
   if (catchSummary && catchSummary.totalCatches > 0) {
     catchBlock = `
-ANGLER CATCH HISTORY — ${sp} on ${lakeName} (${catchSummary.totalCatches} catches logged):
+ANGLER CATCH HISTORY — ${sp} on ${lakeName} in ${season} (${catchSummary.totalCatches} same-season catches logged):
 - Average catch depth: ${catchSummary.avgDepthFt != null ? catchSummary.avgDepthFt + 'ft' : 'unknown'}
 - Best time of day: ${catchSummary.bestTime || 'unknown'}
-- Top lures: ${catchSummary.topLures.map(l => `${l.lure} (${l.count}x)`).join(', ') || 'none logged'}`;
+- Top lures: ${catchSummary.topLures.map(l => `${l.lure} (${l.count}x)`).join(', ') || 'none logged'}
+NOTE: Catch history is supplemental only. If SPECIES INTEL above specifies a different depth range, prioritize the research data over catch averages.`;
   }
 
   // ── Unified Groq Call (Species-Driven Prompt) ─────────────────────────
