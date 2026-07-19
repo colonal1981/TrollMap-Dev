@@ -3002,12 +3002,12 @@ CRITICAL CATEGORY RULES:
       continue;
     }
 
-    // Round-robin across 5 gemini-free keys to spread RPM load — 5x throughput vs single key
-    // Each key has 15 RPM limit; rotating means each key sees ~1 req/20s instead of 1 req/4s
-    // Safe inter-request delay drops from 4100ms to 900ms
+    // Round-robin across 5 gemini-free keys using docIndex passed from engine
+    // Engine fires batches of 5 concurrently — each gets a different key
     const freeKeyProviders = ['gemini-free', 'gemini-free2', 'gemini-free3', 'gemini-free4', 'gemini-free5'];
-    const providerForDoc = freeKeyProviders[i % freeKeyProviders.length];
-    await new Promise(res => setTimeout(res, 900));
+    const docIndex = typeof body.docIndex === 'number' ? body.docIndex : i;
+    const providerForDoc = freeKeyProviders[docIndex % freeKeyProviders.length];
+    console.log(`analyze-facts: doc[${docIndex}] "${doc.title?.slice(0,40)}" → provider=${providerForDoc} (body.docIndex=${body.docIndex})`);
     try {
       const prompt = buildDocPrompt(doc, lakeName, baseName, state);
       const payload = {
@@ -3020,7 +3020,24 @@ CRITICAL CATEGORY RULES:
         response_format: { type: "json_object" }
       };
 
-      const { data } = await callLLM(env, payload, providerForDoc);
+      let llmResult;
+      try {
+        llmResult = await callLLM(env, payload, providerForDoc);
+      } catch (preferredErr) {
+        console.warn(`analyze-facts: preferred provider ${providerForDoc} failed (${preferredErr.message}) — falling back to any gemini-free key`);
+        // Try remaining keys in order, skipping the one that just failed
+        const fallbackProviders = freeKeyProviders.filter(p => p !== providerForDoc);
+        let fallbackSuccess = false;
+        for (const fallback of fallbackProviders) {
+          try {
+            llmResult = await callLLM(env, payload, fallback);
+            fallbackSuccess = true;
+            break;
+          } catch (_) { continue; }
+        }
+        if (!fallbackSuccess) throw preferredErr;
+      }
+      const { data } = llmResult;
       const text = extractLLMText(data);
       const parsed = extractJsonPossibly(text);
 
