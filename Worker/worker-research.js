@@ -4160,7 +4160,7 @@ async function handleResearchAgent(request, env) {
     // excerpts are enough for table/profile confirmation; eight large docs made
     // the paid/free model route hit quota while biology still succeeded.
     const maxDocs = agentKey === 'limnology' ? 2 : agentKey === 'fisheries' ? 8 : 8;
-    const charsPerDoc = agentKey === 'limnology' ? 15000 : agentKey === 'fisheries' ? 100000 : 40000;
+    const charsPerDoc = agentKey === 'limnology' ? 15000 : agentKey === 'fisheries' ? 150000 : 40000;
     const relevantDocs = previousResults._normalizedDocuments
       .filter(d => !filter || filter.test(d.title + ' ' + d.url))
       .slice(0, maxDocs);
@@ -4267,6 +4267,47 @@ async function handleResearchAgent(request, env) {
       }
     };
   }
+
+  // Normalize trollingIntelligence — fix bare array season entries like [5, 15]
+  // Agent sometimes shortcuts secondary species to just a depth array instead of full season object
+  if (agentKey === 'fisheries' && sectionData && typeof sectionData === 'object') {
+    const SEASONS = ['spring', 'summer', 'fall', 'winter'];
+    const normalized = {};
+    for (const [species, seasons] of Object.entries(sectionData)) {
+      if (species === 'sources') { normalized[species] = seasons; continue; }
+      if (!seasons || typeof seasons !== 'object') { normalized[species] = seasons; continue; }
+      const normSeasons = {};
+      for (const season of SEASONS) {
+        const entry = seasons[season];
+        if (entry === null || entry === undefined) {
+          normSeasons[season] = null;
+        } else if (Array.isArray(entry) && entry.length === 2 && typeof entry[0] === 'number') {
+          // Bare depth array — promote to full season object
+          normSeasons[season] = {
+            preferredDepth: entry,
+            structures: [],
+            forage: [],
+            recommendedPresentations: [],
+            notes: null
+          };
+        } else if (typeof entry === 'object' && !Array.isArray(entry)) {
+          // Full object — ensure all required keys present
+          normSeasons[season] = {
+            preferredDepth: Array.isArray(entry.preferredDepth) && entry.preferredDepth.length === 2 ? entry.preferredDepth : null,
+            structures: Array.isArray(entry.structures) ? entry.structures : [],
+            forage: Array.isArray(entry.forage) ? entry.forage : [],
+            recommendedPresentations: Array.isArray(entry.recommendedPresentations) ? entry.recommendedPresentations : [],
+            notes: entry.notes || null
+          };
+        } else {
+          normSeasons[season] = null;
+        }
+      }
+      normalized[species] = normSeasons;
+    }
+    sectionData = normalized;
+  }
+
   const hasData = sectionData && (typeof sectionData === 'object' ? Object.keys(sectionData).filter(k => k !== 'sources').length > 0 : true);
   const confidence = calculateSectionConfidence(sources, hasData, agentKey, sectionData);
 
