@@ -3880,18 +3880,25 @@ JSON only. Never output a string or array for creelLimits or sizeLimits.`;
       const speciesList = confirmedSpecies.length > 0 ? confirmedSpecies : ['(none confirmed — biology section empty)'];
       const speciesArrayStr = speciesList.map(s => `"${s}"`).join(', ');
       const exampleSpecies = speciesList[0] || 'SpeciesName';
+      const primaryForage = Array.isArray(bio.primaryForage) ? bio.primaryForage : (typeof bio.primaryForage === 'string' ? [bio.primaryForage] : []);
+      const secondaryForage = Array.isArray(bio.secondaryForage) ? bio.secondaryForage : (typeof bio.secondaryForage === 'string' ? [bio.secondaryForage] : []);
+      const allForage = [...primaryForage, ...secondaryForage];
+      const forageStr = allForage.length > 0 ? allForage.join(', ') : 'unknown';
       const docSection = prev?._documentContext
-        ? `\n\nSOURCE DOCUMENTS (extract seasonal depth, structure, and behavior from these — this is primary evidence):\n${prev._documentContext.slice(0, 50000)}`
+        ? `\n\nSOURCE DOCUMENTS (extract seasonal depth, structure, and behavior from these — this is primary evidence):\n${prev._documentContext}`
         : '';
       return `You are given a verified lake profile and source documents. Extract seasonal fishing intelligence from BOTH.
 
 Lake: ${lakeName}
 Lake profile (use for confirmed species, forage, limnology context):
-${JSON.stringify(prev, null, 2).slice(0, 6000)}
+${JSON.stringify(prev, null, 2).slice(0, 12000)}
 ${docSection}
 
 CONFIRMED SPECIES (ONLY these — do not add others):
 ${speciesList.join(', ')}
+
+CONFIRMED FORAGE for this lake: ${forageStr}
+Always populate the forage array for each season using the confirmed forage above. If source documents specify which forage a species targets in a given season, use that. Otherwise default to the confirmed lake forage list. Never leave forage as null or empty if confirmed forage exists.
 
 Task: For each confirmed species, extract seasonal depth ranges, key structures, forage, and behavior notes from the source documents above. Use the profile (thermocline, oxygen floor, forage) to fill gaps where documents are silent. This is stable long-term intelligence, not a daily plan.
 
@@ -4120,8 +4127,8 @@ async function handleResearchAgent(request, env) {
     // limits. Limnology already receives extracted facts, so two focused source
     // excerpts are enough for table/profile confirmation; eight large docs made
     // the paid/free model route hit quota while biology still succeeded.
-    const maxDocs = agentKey === 'limnology' ? 2 : agentKey === 'fisheries' ? 6 : 8;
-    const charsPerDoc = agentKey === 'limnology' ? 15000 : agentKey === 'fisheries' ? 30000 : 40000;
+    const maxDocs = agentKey === 'limnology' ? 2 : agentKey === 'fisheries' ? 8 : 8;
+    const charsPerDoc = agentKey === 'limnology' ? 15000 : agentKey === 'fisheries' ? 100000 : 40000;
     const relevantDocs = previousResults._normalizedDocuments
       .filter(d => !filter || filter.test(d.title + ' ' + d.url))
       .slice(0, maxDocs);
