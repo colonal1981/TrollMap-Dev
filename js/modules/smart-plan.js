@@ -431,13 +431,7 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
       if (traveled>=budgetFt) break;
       if (carry>=stepFt) {
         const ptLat=curr[0], ptLon=curr[1];
-        const lastPt = pts[pts.length-1];
-        const midLat = (lastPt.lat + ptLat) / 2;
-        const midLon = (lastPt.lon + ptLon) / 2;
-        // Drop waypoints where path midpoint is very close to shore (likely crossing land)
-        if (distToRingFt(midLat, midLon) >= 50) {
-          pts.push({lat:ptLat,lon:ptLon,depth:best.depth});
-        }
+        pts.push({lat:ptLat,lon:ptLon,depth:best.depth});
         carry=0;
       }
     }
