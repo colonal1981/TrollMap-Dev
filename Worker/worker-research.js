@@ -3002,8 +3002,12 @@ CRITICAL CATEGORY RULES:
       continue;
     }
 
-    // Rate limit: 15 RPM on gemini-free = 1 req/4s
-    await new Promise(res => setTimeout(res, 4100));
+    // Round-robin across 5 gemini-free keys to spread RPM load — 5x throughput vs single key
+    // Each key has 15 RPM limit; rotating means each key sees ~1 req/20s instead of 1 req/4s
+    // Safe inter-request delay drops from 4100ms to 900ms
+    const freeKeyProviders = ['gemini-free', 'gemini-free2', 'gemini-free3', 'gemini-free4', 'gemini-free5'];
+    const providerForDoc = freeKeyProviders[i % freeKeyProviders.length];
+    await new Promise(res => setTimeout(res, 900));
     try {
       const prompt = buildDocPrompt(doc, lakeName, baseName, state);
       const payload = {
@@ -3016,7 +3020,7 @@ CRITICAL CATEGORY RULES:
         response_format: { type: "json_object" }
       };
 
-      const { data } = await callLLM(env, payload, null);
+      const { data } = await callLLM(env, payload, providerForDoc);
       const text = extractLLMText(data);
       const parsed = extractJsonPossibly(text);
 
