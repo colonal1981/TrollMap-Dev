@@ -6,7 +6,6 @@
  */
 
 import { state, CF_WORKER_URL } from '../core/state.js';
-import { getOsmStructures } from './supplemental-layers.js';
 import { renderAll } from '../core/map-init.js';
 import { esc } from '../utils/escape.js';
 import { newRodRow } from '../utils/rod-row.js';
@@ -374,6 +373,37 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
     if (d<nearDist) { nearDist=d; nearIdx=i; }
   }
 
+  const SHORE_STANDOFF_FT = 250;
+
+  // Build boundary ring for standoff check
+  let boundaryRing = null;
+  try {
+    const bgj = window.LAKE_BOUNDARY_GEOJSON;
+    if (bgj?.features?.length) {
+      let bestRing = null, bestLen = 0;
+      for (const feat of bgj.features) {
+        const geom = feat.geometry;
+        const rings = geom?.type === 'Polygon' ? [geom.coordinates[0]]
+          : geom?.type === 'MultiPolygon' ? geom.coordinates.map(p => p[0])
+          : [];
+        for (const ring of rings) {
+          if (ring?.length > bestLen) { bestRing = ring; bestLen = ring.length; }
+        }
+      }
+      if (bestRing) boundaryRing = bestRing; // [[lon, lat], ...]
+    }
+  } catch (_) {}
+
+  function distToRingFt(lat, lon) {
+    if (!boundaryRing) return Infinity;
+    let minDist = Infinity;
+    for (let i = 0; i < boundaryRing.length; i++) {
+      const d = geoDistanceFt(lat, lon, boundaryRing[i][1], boundaryRing[i][0]);
+      if (d < minDist) minDist = d;
+    }
+    return minDist;
+  }
+
   const walk = (start, dir) => {
     const pts=[{lat:best.chain[start][0],lon:best.chain[start][1],depth:best.depth}];
     let traveled=0, carry=0;
@@ -382,7 +412,13 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
       const segFt=geoDistanceFt(prev[0],prev[1],curr[0],curr[1]);
       carry+=segFt; traveled+=segFt;
       if (traveled>=budgetFt) break;
-      if (carry>=stepFt) { pts.push({lat:curr[0],lon:curr[1],depth:best.depth}); carry=0; }
+      if (carry>=stepFt) {
+        const ptLat=curr[0], ptLon=curr[1];
+        if (distToRingFt(ptLat, ptLon) >= SHORE_STANDOFF_FT) {
+          pts.push({lat:ptLat,lon:ptLon,depth:best.depth});
+        }
+        carry=0;
+      }
     }
     return pts;
   };
@@ -600,21 +636,6 @@ export async function runSmartPlan() {
   const totalDurH=phaseInfo.phases.length?(phaseInfo.phases[phaseInfo.phases.length-1].end-phaseInfo.phases[0].start):6;
 
   // ── Pull our local intel FIRST ───────────────────────────────────────
-  // Seed TROLLMAP_RESEARCHED_CACHE from R2 if not already loaded (e.g. Research tab not opened)
-  if (!window.TROLLMAP_RESEARCHED_CACHE?.[lakeName]) {
-    try {
-      const profileRes = await fetch(`${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`);
-      if (profileRes.ok) {
-        const profileData = await profileRes.json();
-        if (profileData.ok && profileData.profile) {
-          window.TROLLMAP_RESEARCHED_CACHE = window.TROLLMAP_RESEARCHED_CACHE || {};
-          window.TROLLMAP_RESEARCHED_CACHE[lakeName] = profileData.profile;
-          if (profileData.sanitized) window.TROLLMAP_RESEARCHED_CACHE[profileData.sanitized] = profileData.profile;
-        }
-      }
-    } catch (_) {}
-  }
-
   const fishingContext = await buildFishingContext({
     species: sp, lakeName, season, clarity, waterTempF,
     speedMph: speedMph,
@@ -626,23 +647,10 @@ export async function runSmartPlan() {
   const hasResearched = fishingContext?.hasResearchedProfile || false;
   const researchedMeta = fishingContext?.researchedProfile?.metadata || null;
 
-  // ── Pull per-species behavioral data ─────────────────────────────────
-  // Priority: speciesBehavior (biology agent, lake-specific) > trollingIntelligence > generic
-  const speciesBehavior = fishingContext?.researchedProfile?.biology?.speciesBehavior || null;
-  const targetBehavior = speciesBehavior
-    ? Object.entries(speciesBehavior).find(([k]) =>
-        k.toLowerCase().includes(sp.toLowerCase().split(' ')[0]) ||
-        sp.toLowerCase().includes(k.toLowerCase().split(' ')[0])
-      )?.[1]
-    : null;
-
   // ── Unified Groq Call (State-Agnostic Prompt + Guided Creativity) ─────
   // Token-optimized: only inject target species slice, not entire trolling intel map
   let researchedTrollingSlice = null;
-  if (targetBehavior) {
-    // Lake-specific species behavior from biology agent — most accurate source
-    researchedTrollingSlice = { [sp]: targetBehavior, _source: 'lake_specific_behavior' };
-  } else if (hasResearched && researchedTrolling) {
+  if (hasResearched && researchedTrolling) {
     // researchedTrolling structure: { "Striped Bass": {summer:{...}}, "Largemouth Bass": {...}, ... }
     // Extract only the target species + 1-2 additional common species to keep token low
     const targetKey = Object.keys(researchedTrolling).find(k => k.toLowerCase().includes(sp.toLowerCase().split(' ')[0]) || sp.toLowerCase().includes(k.toLowerCase().split(' ')[0]));
@@ -651,57 +659,6 @@ export async function runSmartPlan() {
     } else {
       // species not covered in researched profile — will fall back to generic, note it
       researchedTrollingSlice = { _note: `Research profile exists but does not contain ${sp}. Use generic species intel for ${sp}.`, availableSpecies: Object.keys(researchedTrolling).slice(0,6) };
-    }
-  }
-
-  // ── OSM Structure summary for Groq prompt ──────────────────────────
-  // _osmStructureData loads async on lake switch — fetch directly if not yet ready
-  let osmFeatures = (typeof getOsmStructures === 'function' ? getOsmStructures() : []);
-  if (!osmFeatures.length) {
-    try {
-      const lakeKey = window._osmActiveLakeKey || 
-        fishingContext?.researchedProfile?.metadata?.lakeId;
-      const r = await fetch(`${CF_WORKER_URL}/chartpacks/supplemental/${lakeKey}/osm-structures.geojson`);
-      if (r.ok) {
-        const gj = await r.json();
-        osmFeatures = gj?.features || [];
-        // Seed the cache so getSupplementalContext also has it
-        if (window._seedOsmStructureData) window._seedOsmStructureData(osmFeatures);
-      }
-    } catch (_) {}
-  }
-  let osmStructureBlock = '';
-  if (osmFeatures.length) {
-    const byType = {};
-    for (const f of osmFeatures) {
-      const t = f.properties?.structure_type || 'OTHER';
-      if (!byType[t]) byType[t] = [];
-      byType[t].push(f.properties?.name || null);
-    }
-    const lines = [];
-    const DAM_TYPES = ['DAM'];
-    const BRIDGE_TYPES = ['ROAD_BRIDGE', 'RAIL_BRIDGE', 'FOOT_BRIDGE', 'BRIDGE'];
-    const STRUCTURE_TYPES = ['PIER', 'BOAT_RAMP', 'BREAKWATER', 'GROYNE'];
-    if (DAM_TYPES.some(t => byType[t])) {
-      const dams = DAM_TYPES.flatMap(t => byType[t] || []).filter(Boolean);
-      lines.push(`- Dams/weirs (EXCLUSION ZONES — do not troll within 200ft): ${dams.length ? dams.slice(0,5).join(', ') : byType['DAM']?.length + ' unnamed'}`);
-    }
-    if (BRIDGE_TYPES.some(t => byType[t])) {
-      const bridges = BRIDGE_TYPES.flatMap(t => (byType[t] || []).filter(Boolean));
-      const roadCt = (byType['ROAD_BRIDGE'] || []).length;
-      const railCt = (byType['RAIL_BRIDGE'] || []).length;
-      const named = bridges.slice(0, 6).join(', ');
-      lines.push(`- Bridges (fish pilings/shadow lines): ${roadCt} road, ${railCt} rail${named ? ' — ' + named : ''}`);
-    }
-    if (STRUCTURE_TYPES.some(t => byType[t])) {
-      const piers = (byType['PIER'] || []).length;
-      const ramps = (byType['BOAT_RAMP'] || []).length;
-      if (piers) lines.push(`- Piers/docks: ${piers} (dock shadow lines hold baitfish)`);
-      if (ramps) lines.push(`- Boat ramps: ${ramps}`);
-    }
-    if (byType['ISLAND']) lines.push(`- Islands: ${byType['ISLAND'].length} (fish current seams and points)`);
-    if (lines.length) {
-      osmStructureBlock = 'LAKE STRUCTURES (OSM — verified locations):\n' + lines.join('\n') + '\n';
     }
   }
 
@@ -718,25 +675,7 @@ Note: This profile is authoritative for permanent lake characteristics (type, st
   // ── Pull species-intel-v2 data for this species + season ─────────────
   const v2sp = IntelV2?.SPECIES_BEHAVIOR_V2?.[sp];
   let speciesIntelBlock = '';
-  if (targetBehavior) {
-    // Lake-specific behavior from research profile — overrides generic species intel
-    const sb = targetBehavior[season] || targetBehavior.summer || {};
-    const depth = Array.isArray(sb.depthRange) ? `${sb.depthRange[0]}–${sb.depthRange[1]}ft` : null;
-    const structs = Array.isArray(sb.structure) ? sb.structure.join(', ') : null;
-    const spawnNote = targetBehavior.spawnTiming?.waterTempF
-      ? `Spawn trigger: ${targetBehavior.spawnTiming.waterTempF[0]}–${targetBehavior.spawnTiming.waterTempF[1]}°F`
-      : null;
-    const lakeNote = targetBehavior.lakeSpecificNotes || null;
-    speciesIntelBlock = `
-SPECIES INTEL — ${sp} in ${season} on ${lakeName} (LAKE-SPECIFIC — verified from research documents, use these depths over generic defaults):
-${depth ? `- Preferred depth range: ${depth}` : ''}
-${structs ? `- Key structure: ${structs}` : ''}
-${sb.notes ? `- Notes: ${sb.notes}` : ''}
-${spawnNote ? `- ${spawnNote}` : ''}
-${lakeNote ? `- Lake context: ${lakeNote}` : ''}
-
-CRITICAL: These are verified lake-specific depths from official sources. Do NOT default to generic deep-water patterns. Build your depth bands around ${depth || 'the above range'}.`;
-  } else if (v2sp) {
+  if (v2sp) {
     const lakeKeyV2 = (IntelV2.resolveLakeKey
       ? (IntelV2.resolveLakeKey(lakeName, v2sp) || 'default_SC_reservoir')
       : (v2sp[lakeName] ? lakeName : 'default_SC_reservoir'));
@@ -795,7 +734,6 @@ You must evaluate the weather and wind forecast against the platform (12.5ft Kay
 ${speciesIntelBlock}
 ${catchBlock}
 
-${osmStructureBlock}
 ${researchedBlock}
 
 YOUR ROLE:
@@ -1084,7 +1022,7 @@ Return ONLY valid JSON, no markdown:
   // Only structures that lie within STOP_RADIUS_FT of the actual route
   // tracks are included. Each stop carries phase + approximate elapsed
   // time so the coach knows WHEN and WHERE to tell the angler to pause.
-  const STOP_RADIUS_FT = 500; // how close to the route a structure must be
+  const STOP_RADIUS_FT = 250; // how close to the route a structure must be
   const stopCandidates = [];
   const addedCoords = []; // dedup by proximity
 
@@ -1190,25 +1128,6 @@ Return ONLY valid JSON, no markdown:
               score: 6,
               reason: 'Community-marked fishing location on or near route',
               structureType: 'community spot',
-            });
-          }
-          // OSM structures — bridges and piers on/near route
-          for (const os of (ctx.osmStructures || [])) {
-            if (!os.lat || !os.lon) continue;
-            const t = os.structure_type || '';
-            if (t === 'DAM') continue; // exclusion zone — handled separately
-            const isBridge = t.includes('BRIDGE');
-            const isPier = t === 'PIER';
-            if (!isBridge && !isPier) continue;
-            tryAddStop({
-              type: isBridge ? 'bridge' : 'pier',
-              name: os.name || (isBridge ? 'Bridge' : 'Pier/Dock'),
-              lat: os.lat, lon: os.lon,
-              score: isBridge ? 7 : 5,
-              reason: isBridge
-                ? 'Bridge pilings create current breaks and shadow lines — prime structure'
-                : 'Dock/pier shadow line holds baitfish',
-              structureType: isBridge ? 'bridge pilings' : 'dock structure',
             });
           }
         }
