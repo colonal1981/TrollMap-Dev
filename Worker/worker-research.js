@@ -3915,7 +3915,26 @@ Task: For each confirmed species, extract seasonal depth ranges, key structures,
 
 CRITICAL SPECIES COVERAGE: Every species in the confirmed list MUST appear in trollingIntelligence, even if some seasons are null. For species with seasonal closures (e.g. Striped Bass closed June-August on Lake Marion), still include all four seasons — use null for closed/unknown seasons, but populate open seasons from document evidence. Do not silently omit any confirmed species.
 
+SPECIFIC EXTRACTION TARGETS — look for these in the source documents:
+- Striped Bass spring: look for "pre-spawn", "staging", "spawning tributaries", "spring run", "March", "April", "May", "58-68°F" — extract depth, structure, forage from that context
+- Striped Bass fall: look for "October", "fall striper", "post-closure", "schooling" — extract what you find
+- Largemouth Bass winter: look for "cold water", "winter bass", "January", "February", "deep timber", "creek channels in winter" — do not leave winter null if any cold-water largemouth content exists in docs
+- If a document says "pre-spawn striped bass staging near spawning tributaries following shad schools" — that is spring striper data, extract it
+
 If a document gives specific depth ranges or seasonal behavior for a species on ${lakeName}, use it — do not replace document evidence with generic inferences.
+
+SCHEMA RULES — every season entry MUST follow this exact structure, no exceptions:
+{
+  "preferredDepth": [minFt, maxFt],   ← 2-element number array, or null if truly unknown
+  "structures": [],                    ← array of strings, never omit this key
+  "forage": [],                        ← array of strings, never omit this key
+  "recommendedPresentations": [],      ← array of strings, never omit this key
+  "notes": ""                          ← string or null, never omit this key
+}
+
+NEVER output a bare array like [5, 12] for a season — that is invalid. Every season must be a full object or null.
+If you only know the depth range for a species but not structures/forage, still return the full object with preferredDepth populated and empty arrays for the rest.
+If a season is completely unknown, use null for that season entry.
 
 Return ONLY:
 {
@@ -3937,7 +3956,7 @@ Return ONLY:
 }
 
 Species list MUST be ONLY: [${speciesArrayStr}] — do NOT add species not in this list.
-preferredDepth MUST be a 2-element number array [minDepthFt, maxDepthFt] or null if unknown.
+preferredDepth MUST be a 2-element number array [minDepthFt, maxDepthFt] or null — NEVER a bare array at the season level.
 JSON only.`;
     },
     expectedKey: "trollingIntelligence"
