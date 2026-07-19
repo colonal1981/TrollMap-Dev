@@ -330,6 +330,35 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
   const gj = contour?.smart || contour?.raw;
   if (!gj?.features?.length) return [];
 
+  // Build boundary ring once at the top — used for both chain scoring and walk filtering
+  let boundaryRing = null;
+  try {
+    const bgj = window.LAKE_BOUNDARY_GEOJSON;
+    if (bgj?.features?.length) {
+      let bestRing = null, bestLen = 0;
+      for (const feat of bgj.features) {
+        const geom = feat.geometry;
+        const rings = geom?.type === 'Polygon' ? [geom.coordinates[0]]
+          : geom?.type === 'MultiPolygon' ? geom.coordinates.map(p => p[0])
+          : [];
+        for (const ring of rings) {
+          if (ring?.length > bestLen) { bestRing = ring; bestLen = ring.length; }
+        }
+      }
+      if (bestRing) boundaryRing = bestRing;
+    }
+  } catch (_) {}
+
+  function distToRingFt(lat, lon) {
+    if (!boundaryRing) return Infinity;
+    let minDist = Infinity;
+    for (let i = 0; i < boundaryRing.length; i++) {
+      const d = geoDistanceFt(lat, lon, boundaryRing[i][1], boundaryRing[i][0]);
+      if (d < minDist) minDist = d;
+    }
+    return minDist;
+  }
+
   const inRange = gj.features.filter(f => {
     const d = f.properties?.depth_ft;
     if (d==null||d<depthMin||d>depthMax) return false;
@@ -391,35 +420,6 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
   }
 
   const SHORE_STANDOFF_FT = 100;
-
-  // Build boundary ring for standoff check
-  let boundaryRing = null;
-  try {
-    const bgj = window.LAKE_BOUNDARY_GEOJSON;
-    if (bgj?.features?.length) {
-      let bestRing = null, bestLen = 0;
-      for (const feat of bgj.features) {
-        const geom = feat.geometry;
-        const rings = geom?.type === 'Polygon' ? [geom.coordinates[0]]
-          : geom?.type === 'MultiPolygon' ? geom.coordinates.map(p => p[0])
-          : [];
-        for (const ring of rings) {
-          if (ring?.length > bestLen) { bestRing = ring; bestLen = ring.length; }
-        }
-      }
-      if (bestRing) boundaryRing = bestRing; // [[lon, lat], ...]
-    }
-  } catch (_) {}
-
-  function distToRingFt(lat, lon) {
-    if (!boundaryRing) return Infinity;
-    let minDist = Infinity;
-    for (let i = 0; i < boundaryRing.length; i++) {
-      const d = geoDistanceFt(lat, lon, boundaryRing[i][1], boundaryRing[i][0]);
-      if (d < minDist) minDist = d;
-    }
-    return minDist;
-  }
 
   const walk = (start, dir) => {
     const pts=[{lat:best.chain[start][0],lon:best.chain[start][1],depth:best.depth}];
