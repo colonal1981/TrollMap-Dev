@@ -755,14 +755,31 @@ async function handleResearchDiscover(request, env) {
     }
   }
 
-  // ── STEP 3: Natural language search queries (4 queries, no domain filters) ──
+  // ── STEP 3: Natural language search queries (4-5 queries, no domain filters) ──
   if (firecrawlKey) {
-    const queries = [
-      `"${queryLakeFinal}" fishing report thermocline depth water temperature`,
-      `"${queryLakeFinal}" water quality dissolved oxygen stratification`,
-      `"${queryLakeFinal}" (fisheries OR biology OR "management plan") ${dnrName}`,
-      `"${queryLakeFinal}" (limnology OR thermocline OR "water quality" OR "dissolved oxygen")`,
-    ];
+    // Build species-targeted query from deterministic species list (passed from engine)
+    // Use top 4 species max to keep query tight — prioritize non-generic names
+    const inboundSpecies = Array.isArray(body.predatorSpecies) ? body.predatorSpecies : [];
+    const speciesQueryTerms = inboundSpecies
+      .filter(s => s && typeof s === 'string')
+      .slice(0, 4)
+      .map(s => `"${s}"`)
+      .join(' OR ');
+
+    // _speciesQueryOnly: true — set by fisheries refresh to skip the 4 standard queries
+    // and only fire the species-targeted query (saves 4 Firecrawl credits per refresh)
+    const speciesQueryOnly = body._speciesQueryOnly === true;
+
+    const queries = speciesQueryOnly
+      ? (speciesQueryTerms ? [`"${queryLakeFinal}" (${speciesQueryTerms}) seasonal depth structure behavior`] : [])
+      : [
+          `"${queryLakeFinal}" fishing report thermocline depth water temperature`,
+          `"${queryLakeFinal}" water quality dissolved oxygen stratification`,
+          `"${queryLakeFinal}" (fisheries OR biology OR "management plan") ${dnrName}`,
+          `"${queryLakeFinal}" (limnology OR thermocline OR "water quality" OR "dissolved oxygen")`,
+          // Species-targeted query — only fires when deterministic species list is available
+          ...(speciesQueryTerms ? [`"${queryLakeFinal}" (${speciesQueryTerms}) seasonal depth structure behavior`] : []),
+        ];
 
     for (const q of queries) {
       try {
