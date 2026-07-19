@@ -454,7 +454,9 @@ async function handleResearchLimnologyData(request, env) {
   // Trigger guide article search whenever thermocline is null — surface-only OR insufficient depth data
   let thermoclineAnecdotal = null;
   let thermoclineSearchResults = null;
-  if (!thermocline) {
+  // Only fire thermocline search if WQP had NO depth data at all (not surface-only — that still has useful data)
+  // This prevents burning Firecrawl credits on every small lake that lacks depth profiling
+  if (!thermocline && recordCount === 0) {
     try {
       console.log(`[limnology-data] no thermocline derived — triggering inline guide article search for ${lakeName}`);
       const tcReq = new Request('internal', {
@@ -4650,7 +4652,7 @@ async function handleResearchThermoclineSearch(request, env) {
       const res = await fetch('https://api.firecrawl.dev/v2/search', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: q, limit: 3, scrapeOptions: { formats: ['markdown'] } })
+        body: JSON.stringify({ query: q, limit: 3 })
       });
       if (!res.ok) { console.warn(`[thermocline-search] query failed (${res.status}): ${q}`); queryResults.push({ query: q, status: res.status, found: 0 }); continue; }
       const data = await res.json();
@@ -4963,4 +4965,4 @@ async function handleResearchVisionScanStatus(request, env) {
   }
 }
 
-export { handleResearchVisionScanStatus, handleResearchVisionScanSave, handleResearchVisionScan, handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchValidationPass, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey };
+export { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchValidationPass, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey };
