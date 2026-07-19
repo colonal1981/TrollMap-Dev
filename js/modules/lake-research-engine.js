@@ -1030,7 +1030,7 @@ async function runEvidencePipeline(lakeName, callbacks = {}) {
     const discoverRes = await fetch(`${CF_WORKER_URL}/research/discover`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lakeName, state: stateName, reservoirOwner })
+      body: JSON.stringify({ lakeName, state: stateName, reservoirOwner, predatorSpecies: deterministicProfile?.biology?.predatorSpecies || [] })
     });
     if (!discoverRes.ok) {
       const snippet = await discoverRes.text().catch(() => '').then(t => t.slice(0, 300));
@@ -1995,6 +1995,146 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
 // All pipeline guardrails (dedup, scoring, fact validation) apply.
 // Zero Firecrawl credits — reads existing normalized docs from R2.
 async function runFisheriesRefresh(lakeName, callbacks = {}) {
+  if (_state.researchInProgress) { alert('A research task is already in progress.'); return; }
+  if (!lakeName) { alert('Please select a lake.'); return; }
+  _state.researchInProgress = true;
+  _state.researchLog = [];
+  showProgress(true);
+
+  try {
+    // ── Step 1: Load existing profile to get confirmed species list ──
+    setProgress('Fisheries Refresh: Loading existing profile...', 5);
+    log(`=== FISHERIES REFRESH: ${lakeName} ===`);
+
+    const stateName = sanitizeStateFromLakeName(lakeName);
+
+    let predatorSpecies = [];
+    try {
+      const profileRes = await fetch(`${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`);
+      if (profileRes.ok) {
+        const profileData = await profileRes.json();
+        predatorSpecies = profileData?.profile?.biology?.predatorSpecies || [];
+        log(`Loaded existing profile — ${predatorSpecies.length} confirmed species: ${predatorSpecies.slice(0,5).join(', ')}${predatorSpecies.length > 5 ? '…' : ''}`);
+      }
+    } catch (e) {
+      log(`⚠️ Could not load existing profile: ${e.message} — continuing without species list`);
+    }
+
+    // ── Step 2: Species-targeted discovery (only if we have species) ──
+    if (predatorSpecies.length > 0) {
+      setProgress('Fisheries Refresh: Running species-targeted discovery...', 15);
+
+      // Load existing normalized docs to use as dedup gate
+      let existingUrls = new Set();
+      try {
+        const normRes = await fetch(`${CF_WORKER_URL}/research/get-normalized?lake=${encodeURIComponent(lakeName)}`);
+        if (normRes.ok) {
+          const normData = await normRes.json();
+          for (const doc of (normData.documents || [])) {
+            if (doc.url) existingUrls.add(doc.url.split('?')[0].toLowerCase());
+          }
+          log(`Existing normalized cache: ${existingUrls.size} URLs — will skip these.`);
+        }
+      } catch (e) {
+        log(`⚠️ Could not load normalized cache for dedup: ${e.message}`);
+      }
+
+      // Build species-targeted query — top 4 species, same logic as discover handler
+      const speciesTerms = predatorSpecies.slice(0, 4).map(s => `"${s}"`).join(' OR ');
+      const queryLake = lakeName.replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i, '').trim();
+      const speciesQuery = `"${queryLake}" (${speciesTerms}) seasonal depth structure behavior`;
+      log(`Species-targeted query: ${speciesQuery}`);
+
+      try {
+        const discoverRes = await fetch(`${CF_WORKER_URL}/research/discover`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lakeName, state: stateName, predatorSpecies, _speciesQueryOnly: true })
+        });
+
+        if (discoverRes.ok) {
+          const discoverData = await discoverRes.json();
+          // Only use sources from the species query — _speciesQueryOnly flag signals discover
+          // to skip the 4 standard queries and only run the species-targeted one
+          const newSources = (discoverData.sources || []).filter(src => {
+            const normUrl = String(src.url || '').split('?')[0].toLowerCase();
+            return !existingUrls.has(normUrl);
+          });
+
+          log(`Species discovery: ${discoverData.sources?.length || 0} found, ${newSources.length} new (not already cached).`);
+          if (discoverData.queryLog?.length) {
+            for (const line of discoverData.queryLog) log(`[species-discover] ${line}`);
+          }
+
+          if (newSources.length > 0) {
+            // ── Step 3: Download and normalize only new docs ──
+            setProgress('Fisheries Refresh: Downloading new species-specific sources...', 30);
+            const newNormalized = [];
+
+            for (let i = 0; i < newSources.length; i++) {
+              const src = newSources[i];
+              log(`Fetching [${i+1}/${newSources.length}] ${src.title}...`);
+              try {
+                if (src.type === 'PDF') {
+                  const proxyRes = await fetch(`${CF_WORKER_URL}/research/proxy-download?url=${encodeURIComponent(src.url)}`);
+                  if (!proxyRes.ok) { log(`⚠️ PDF fetch failed (${proxyRes.status}) — skipping`); continue; }
+                  const arrayBuffer = await proxyRes.arrayBuffer();
+                  if (arrayBuffer.byteLength > 25 * 1024 * 1024) { log(`⚠️ PDF too large — skipping`); continue; }
+                  const extraction = await extractTextFromPDFBytes(arrayBuffer, () => {});
+                  newNormalized.push({ title: src.title, authority: src.authority, url: src.url, priority: src.priority, fullText: extraction.fullText, pages: extraction.pages, downloadDate: new Date().toISOString(), contentType: 'application/pdf' });
+                  log(`✔ PDF extracted: ${extraction.pages.length} pages`);
+                } else {
+                  const proxyRes = await fetch(`${CF_WORKER_URL}/research/proxy-download?url=${encodeURIComponent(src.url)}&type=HTML`);
+                  if (!proxyRes.ok) { log(`⚠️ HTML fetch failed (${proxyRes.status}) — skipping`); continue; }
+                  const isFirecrawl = proxyRes.headers.get('X-Source') === 'firecrawl';
+                  const text = await proxyRes.text();
+                  const cleanedText = isFirecrawl ? text : text.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+                  if (cleanedText.length < 200) { log(`⚠️ Content too short (${cleanedText.length} chars) — skipping`); continue; }
+                  newNormalized.push({ title: src.title, authority: src.authority, url: src.url, priority: src.priority, fullText: cleanedText, pages: [{ pageNumber: 1, text: cleanedText, title: src.title }], downloadDate: new Date().toISOString(), contentType: isFirecrawl ? 'text/markdown' : 'text/html', extractionMethod: isFirecrawl ? 'firecrawl' : 'basic' });
+                  log(`✔ HTML extracted: ${cleanedText.length} chars`);
+                }
+              } catch (e) {
+                log(`⚠️ Error fetching ${src.title}: ${e.message}`);
+              }
+            }
+
+            // ── Step 4: Merge new docs into R2 normalized cache ──
+            if (newNormalized.length > 0) {
+              setProgress('Fisheries Refresh: Merging new documents into cache...', 45);
+              try {
+                const normRes = await fetch(`${CF_WORKER_URL}/research/get-normalized?lake=${encodeURIComponent(lakeName)}`);
+                const existingDocs = normRes.ok ? ((await normRes.json()).documents || []) : [];
+                const merged = [...existingDocs, ...newNormalized];
+                await fetch(`${CF_WORKER_URL}/research/save-normalized`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ lakeName, documents: merged })
+                });
+                log(`✔ Merged ${newNormalized.length} new doc(s) into normalized cache (total now ${merged.length}).`);
+              } catch (e) {
+                log(`⚠️ Failed to merge into normalized cache: ${e.message} — refresh will use existing cache only`);
+              }
+            } else {
+              log('No new documents successfully extracted — using existing normalized cache.');
+            }
+          }
+        } else {
+          log(`⚠️ Species discovery HTTP ${discoverRes.status} — skipping pre-discovery`);
+        }
+      } catch (e) {
+        log(`⚠️ Species-targeted discovery failed: ${e.message} — continuing with existing cache`);
+      }
+    } else {
+      log('No confirmed species in profile — skipping species-targeted discovery.');
+    }
+
+  } catch (e) {
+    log(`⚠️ Fisheries refresh pre-discovery error: ${e.message} — falling through to normalized run`);
+  } finally {
+    _state.researchInProgress = false;
+  }
+
+  // ── Step 5: Run biology + fisheries agents on full (now augmented) normalized cache ──
   return runFromNormalized(lakeName, callbacks, ['biology', 'fisheries']);
 }
 
