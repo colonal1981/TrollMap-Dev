@@ -373,7 +373,7 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
     if (d<nearDist) { nearDist=d; nearIdx=i; }
   }
 
-  const SHORE_STANDOFF_FT = 250;
+  const SHORE_STANDOFF_FT = 100;
 
   // Build boundary ring for standoff check
   let boundaryRing = null;
@@ -414,6 +414,11 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
       if (traveled>=budgetFt) break;
       if (carry>=stepFt) {
         const ptLat=curr[0], ptLon=curr[1];
+        // Check midpoint between last kept point and candidate — if near shore, likely crossing land
+        const lastPt = pts[pts.length-1];
+        const midLat = (lastPt.lat + ptLat) / 2;
+        const midLon = (lastPt.lon + ptLon) / 2;
+        if (distToRingFt(midLat, midLon) < 50) { carry=0; continue; }
         if (distToRingFt(ptLat, ptLon) >= SHORE_STANDOFF_FT) {
           pts.push({lat:ptLat,lon:ptLon,depth:best.depth});
         }
