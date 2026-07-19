@@ -727,7 +727,7 @@ ${sb.notes ? `- Notes: ${sb.notes}` : ''}
 ${spawnNote ? `- ${spawnNote}` : ''}
 ${lakeNote ? `- Lake context: ${lakeNote}` : ''}
 ${oxygenConstraint}
-CRITICAL: Build depth bands around ${depth || 'the above range'}. Do NOT use generic deep-water summer patterns — the lake-specific research overrides them.`;
+CRITICAL: Both depth bands MUST stay within ${depth || 'the above range'}. Do NOT create a second band deeper than ${Array.isArray(sb.depthRange) ? sb.depthRange[1] : 10}ft — lake-specific research does not support deeper patterns for ${sp} in ${season} on this lake.`;
   } else if (v2sp) {
     const lakeKeyV2 = (IntelV2.resolveLakeKey
       ? (IntelV2.resolveLakeKey(lakeName, v2sp) || 'default_SC_reservoir')
@@ -803,7 +803,7 @@ ${inventoryNames.join(', ')}
 
 TROLLING-SPEED LIMITS (HARD): Every tackle name above includes its physical trolling-speed range in brackets. Pick a separate speed for each band. Band 1's speed applies to BOTH its outbound and inbound pass; Band 2's speed applies to BOTH its outbound and inbound pass. A band's speed must never exceed the lower maximum speed of its selected port and starboard lures. The two bands may use different speeds.
 
-ROUTE STRUCTURE: Pick two depth bands that reflect where ${sp} actually hold during ${season}. Do not default to a shallow-then-deep morning pattern unless the species intel supports it.
+ROUTE STRUCTURE: Pick two depth bands that reflect where ${sp} actually hold during ${season}. Do not default to a shallow-then-deep morning pattern unless the species intel supports it.${targetBehavior && targetBehavior[season]?.depthRange ? ` LAKE-SPECIFIC MAX DEPTH: ${targetBehavior[season].depthRange[1]}ft — both bands must stay at or above this based on verified research for this lake.` : ''}
 
 Return ONLY valid JSON, no markdown:
 {
