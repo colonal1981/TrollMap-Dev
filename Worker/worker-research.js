@@ -3897,12 +3897,21 @@ ${docSection}
 CONFIRMED SPECIES (ONLY these — do not add others):
 ${speciesList.join(', ')}
 
-CONFIRMED FORAGE for this lake: ${forageStr}
-Always populate the forage array for each season using the confirmed forage above. If source documents specify which forage a species targets in a given season, use that. Otherwise default to the confirmed lake forage list. Never leave forage as null or empty if confirmed forage exists.
+CONFIRMED LAKE FORAGE: ${forageStr}
+Use forage intelligently — match what each predator species actually eats, not the full lake forage list:
+- Striped Bass / Largemouth Bass / Spotted Bass: primary forage is shad (threadfin, gizzard, blueback herring)
+- Crappie: small shad, minnows
+- Catfish: shad, bream, crawfish — opportunistic
+- Bluegill / Panfish: insects, small invertebrates, tiny minnows — NOT shad or herring
+- If source documents specify forage for a species/season, use exactly that
+- If documents are silent, use species-appropriate forage from the confirmed lake list
+- Never assign the full lake forage list to every species — that is wrong
 
 Task: For each confirmed species, extract seasonal depth ranges, key structures, forage, and behavior notes from the source documents above. Use the profile (thermocline, oxygen floor, forage) to fill gaps where documents are silent. This is stable long-term intelligence, not a daily plan.
 
-CRITICAL: Only generate intelligence for the confirmed species listed above. If a document gives specific depth ranges or seasonal behavior for a species on ${lakeName}, use it — do not replace document evidence with generic inferences.
+CRITICAL SPECIES COVERAGE: Every species in the confirmed list MUST appear in trollingIntelligence, even if some seasons are null. For species with seasonal closures (e.g. Striped Bass closed June-August on Lake Marion), still include all four seasons — use null for closed/unknown seasons, but populate open seasons from document evidence. Do not silently omit any confirmed species.
+
+If a document gives specific depth ranges or seasonal behavior for a species on ${lakeName}, use it — do not replace document evidence with generic inferences.
 
 Return ONLY:
 {
