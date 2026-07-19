@@ -3873,25 +3873,29 @@ JSON only. Never output a string or array for creelLimits or sizeLimits.`;
   fisheries: {
     label: "Species Intelligence",
     order: 7,
-    system: "You are a fisheries biologist and professional trolling guide. You are given a verified lake profile containing limnology, biology, forage, habitat, and other sections. DO NOT SEARCH THE INTERNET. Use ONLY supplied JSON. Reference the biology/forage data extensively — use Threadfin Shad dominance, thermocline depth, oxygen depletion floor, and structural habitat data to inform your depth/structure/forage recommendations. Do NOT recommend routes, speeds, colors, or specific lures. CRITICAL: Only include species listed in the biology.predatorSpecies array. Do NOT add species not confirmed by biology. Return JSON only.",
+    system: "You are a fisheries biologist and professional fishing guide. You are given a verified lake profile AND raw text from source documents (fishing guides, reports, agency surveys). Extract seasonal species behavior from BOTH the profile AND the source documents. Prioritize specific depth ranges, structures, and behavioral notes found in the documents over generic inferences. Do NOT recommend routes, speeds, or specific lure colors. CRITICAL: Only include species listed in the biology.predatorSpecies array. Return JSON only.",
     userTemplate: (lakeName, state, prev) => {
       const bio = prev?.biology || prev?.forage || {};
       const confirmedSpecies = Array.isArray(bio.predatorSpecies) ? bio.predatorSpecies : [];
       const speciesList = confirmedSpecies.length > 0 ? confirmedSpecies : ['(none confirmed — biology section empty)'];
       const speciesArrayStr = speciesList.map(s => `"${s}"`).join(', ');
       const exampleSpecies = speciesList[0] || 'SpeciesName';
-      return `You are given a verified lake profile. Use ONLY this JSON - no internet.
+      const docSection = prev?._documentContext
+        ? `\n\nSOURCE DOCUMENTS (extract seasonal depth, structure, and behavior from these — this is primary evidence):\n${prev._documentContext.slice(0, 50000)}`
+        : '';
+      return `You are given a verified lake profile and source documents. Extract seasonal fishing intelligence from BOTH.
 
 Lake: ${lakeName}
-Full profile so far (reference biology/forage, limnology including thermocline depth & oxygen floor, and habitat structure):
-${JSON.stringify(prev, null, 2).slice(0, 12000)}
+Lake profile (use for confirmed species, forage, limnology context):
+${JSON.stringify(prev, null, 2).slice(0, 6000)}
+${docSection}
 
-CONFIRMED SPECIES FROM BIOLOGY (ONLY these species — do not add others):
+CONFIRMED SPECIES (ONLY these — do not add others):
 ${speciesList.join(', ')}
 
-Task: Translate lake science into long-term trolling intelligence. This is stable knowledge, not today's plan. Use the forage data (e.g. Threadfin Shad dominance), thermocline depth, oxygen depletion floor, and structural habitat from the profile to inform your recommendations.
+Task: For each confirmed species, extract seasonal depth ranges, key structures, forage, and behavior notes from the source documents above. Use the profile (thermocline, oxygen floor, forage) to fill gaps where documents are silent. This is stable long-term intelligence, not a daily plan.
 
-CRITICAL: Only generate trolling intelligence for the confirmed species listed above. Do NOT invent species. If biology confirmed no species, return empty trollingIntelligence object.
+CRITICAL: Only generate intelligence for the confirmed species listed above. If a document gives specific depth ranges or seasonal behavior for a species on ${lakeName}, use it — do not replace document evidence with generic inferences.
 
 Return ONLY:
 {
@@ -3902,19 +3906,18 @@ Return ONLY:
         "structures": ["channel ledges","creek mouths","long points"],
         "forage": ["Threadfin Shad"],
         "recommendedPresentations": ["MR Crankbait","DD Crankbait","A-Rig"],
-        "notes": "general behavior — reference thermocline and oxygen floor if applicable"
+        "notes": "behavior notes drawn from source documents"
       },
       "fall": {"preferredDepth":[8,15],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""},
       "winter": {"preferredDepth":[20,35],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""},
       "spring": {"preferredDepth":[5,15],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""}
     }
   },
-  "sources": [{"label":"Derived from lake profile","trust":"DERIVED"}]
+  "sources": [{"label":"Derived from lake profile and source documents","trust":"DERIVED"}]
 }
 
-Species list MUST be ONLY: [${speciesArrayStr}] — derived from biology.predatorSpecies. Do NOT add species not in this list.
-preferredDepth MUST be a 2-element number array [minDepthFt, maxDepthFt] or null.
-No speeds, no colors, no routes - only stable patterns.
+Species list MUST be ONLY: [${speciesArrayStr}] — do NOT add species not in this list.
+preferredDepth MUST be a 2-element number array [minDepthFt, maxDepthFt] or null if unknown.
 JSON only.`;
     },
     expectedKey: "trollingIntelligence"
@@ -4101,22 +4104,24 @@ async function handleResearchAgent(request, env) {
 
   // Inject document text for agents that benefit from reading source material directly
   // limnology gets the EPA/water quality docs; biology gets the fisheries docs
+  // fisheries gets fishing guide/report docs — seasonal behavior lives in these, not the profile
   // identity uses _extractedFacts only — raw docs make prompt too large for Cerebras TPM
-  const docInjectionAgents = new Set(['limnology', 'biology', 'habitat']);
+  const docInjectionAgents = new Set(['limnology', 'biology', 'habitat', 'fisheries']);
   if (docInjectionAgents.has(agentKey) && previousResults._normalizedDocuments?.length) {
     const docFilter = {
       limnology: /epa|nscep|water.?qual|characteriz|nutrient|limnol/i,
       identity:  /epa|nscep|water.?qual|characteriz|sc.?lake|dnr/i,
       biology:   /striped.?bass|fisheries|biology|annual|species|stocking/i,
       habitat:   /habitat|attractor|structure|dnr|sc.?lake/i,
+      fisheries: /fish|bass|crappie|striper|catfish|pattern|season|depth|behavior|report|tactic|guide|omnia|conventional|sportsman/i,
     };
     const filter = docFilter[agentKey];
     // Gemini free-tier requests must stay comfortably below token-per-minute
     // limits. Limnology already receives extracted facts, so two focused source
     // excerpts are enough for table/profile confirmation; eight large docs made
     // the paid/free model route hit quota while biology still succeeded.
-    const maxDocs = agentKey === 'limnology' ? 2 : 8;
-    const charsPerDoc = agentKey === 'limnology' ? 15000 : 40000;
+    const maxDocs = agentKey === 'limnology' ? 2 : agentKey === 'fisheries' ? 6 : 8;
+    const charsPerDoc = agentKey === 'limnology' ? 15000 : agentKey === 'fisheries' ? 30000 : 40000;
     const relevantDocs = previousResults._normalizedDocuments
       .filter(d => !filter || filter.test(d.title + ' ' + d.url))
       .slice(0, maxDocs);
