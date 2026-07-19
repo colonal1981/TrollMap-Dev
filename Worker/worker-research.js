@@ -456,7 +456,7 @@ async function handleResearchLimnologyData(request, env) {
   let thermoclineSearchResults = null;
   // Only fire thermocline search if WQP had NO depth data at all (not surface-only — that still has useful data)
   // This prevents burning Firecrawl credits on every small lake that lacks depth profiling
-  if (!thermocline && recordCount === 0) {
+  if (!thermocline && depthRecords.length === 0) {
     try {
       console.log(`[limnology-data] no thermocline derived — triggering inline guide article search for ${lakeName}`);
       const tcReq = new Request('internal', {
