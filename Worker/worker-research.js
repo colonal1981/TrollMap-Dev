@@ -3652,7 +3652,7 @@ JSON only.`;
       ).join('\n\n');
 
       const docSection = prev?._documentContext
-        ? `\n\nDOCUMENT TEXT (look for species lists, stocking records, cove rotenone data, biomass tables, spawn timing, forage location notes):\n${prev._documentContext.slice(0, 30000)}`
+        ? `\n\nDOCUMENT TEXT (look for species lists, stocking records, cove rotenone data, biomass tables, spawn timing, forage location notes):\n${prev._documentContext.slice(0, 80000)}`
         : '';
 
       return `Map fisheries biology facts for ${lakeName}.
@@ -3666,7 +3666,7 @@ ${docSection}
 
 RULES:
 1. predatorSpecies: start with deterministic list above. Add confirmed species from facts/documents. Never remove.
-2. primaryForage: extract from facts — do not assume shad without document support.
+2. primaryForage: extract from facts AND document text. If shad (threadfin shad, gizzard shad, blueback herring) are mentioned as forage or baitfish in any document, include them. Do not leave primaryForage empty if forage species appear in the source material.
 3. knownStockings: extract actual stocking events with species, quantities, years if mentioned.
 4. standingStockKgHa: extract biomass figures from rotenone or electrofishing data if present.
 5. speciesAbundance: use actual percentage data from documents if available.
@@ -4118,7 +4118,7 @@ async function handleResearchAgent(request, env) {
     const docFilter = {
       limnology: /epa|nscep|water.?qual|characteriz|nutrient|limnol/i,
       identity:  /epa|nscep|water.?qual|characteriz|sc.?lake|dnr/i,
-      biology:   /striped.?bass|fisheries|biology|annual|species|stocking/i,
+      biology:   /striped.?bass|fisheries|biology|annual|species|stocking|fish|bass|crappie|catfish|pattern|forage|shad|herring|omnia|conventional|sportsman|tactic|guide/i,
       habitat:   /habitat|attractor|structure|dnr|sc.?lake/i,
       fisheries: /fish|bass|crappie|striper|catfish|pattern|season|depth|behavior|report|tactic|guide|omnia|conventional|sportsman/i,
     };
