@@ -358,14 +358,31 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
         const d2=geoDistanceFt(refLat,refLon,chain[i][0],chain[i][1]);
         if (d2<closest) closest=d2;
       }
-      if (closest<=maxDistFt) allChains.push({chain,len,closest,depth});
+      // Compute average distance from shore — channel chains score higher than bank-huggers
+      let avgShoreDist = 0;
+      if (boundaryRing) {
+        const sampleStep = Math.max(1, Math.floor(chain.length / 20));
+        let sampleCount = 0;
+        for (let i = 0; i < chain.length; i += sampleStep) {
+          avgShoreDist += distToRingFt(chain[i][0], chain[i][1]);
+          sampleCount++;
+        }
+        avgShoreDist = sampleCount ? avgShoreDist / sampleCount : 0;
+      }
+      if (closest<=maxDistFt) allChains.push({chain,len,closest,depth,avgShoreDist});
     }
   }
   if (!allChains.length) return [];
 
-  allChains.sort((a,b)=>(a.closest*2-a.len)-(b.closest*2-b.len));
+  // Score: prefer chains that are close to ramp, long, AND furthest from shore (channel preference)
+  // avgShoreDist bonus is capped at 500ft so it doesn't overwhelm proximity on wide open water
+  allChains.sort((a,b) => {
+    const scoreA = a.closest*2 - a.len - Math.min(a.avgShoreDist, 500);
+    const scoreB = b.closest*2 - b.len - Math.min(b.avgShoreDist, 500);
+    return scoreA - scoreB;
+  });
   const best=allChains[0];
-  console.log(`[scout] best chain: depth=${best.depth}ft len=${Math.round(best.len)}ft closest=${Math.round(best.closest)}ft`);
+  console.log(`[scout] best chain: depth=${best.depth}ft len=${Math.round(best.len)}ft closest=${Math.round(best.closest)}ft avgShoreDist=${Math.round(best.avgShoreDist)}ft`);
 
   let nearIdx=0, nearDist=Infinity;
   for (let i=0; i<best.chain.length; i++) {
@@ -414,12 +431,11 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
       if (traveled>=budgetFt) break;
       if (carry>=stepFt) {
         const ptLat=curr[0], ptLon=curr[1];
-        // Check midpoint between last kept point and candidate — if near shore, likely crossing land
         const lastPt = pts[pts.length-1];
         const midLat = (lastPt.lat + ptLat) / 2;
         const midLon = (lastPt.lon + ptLon) / 2;
-        if (distToRingFt(midLat, midLon) < 50) { carry=0; continue; }
-        if (distToRingFt(ptLat, ptLon) >= SHORE_STANDOFF_FT) {
+        // Drop waypoints where path midpoint is very close to shore (likely crossing land)
+        if (distToRingFt(midLat, midLon) >= 50) {
           pts.push({lat:ptLat,lon:ptLon,depth:best.depth});
         }
         carry=0;
