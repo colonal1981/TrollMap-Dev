@@ -1016,6 +1016,8 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
 }
 
 // ── runAgents: Execute multiple agents in parallel (max 2 concurrent, 2s stagger) ──
+// After all agents complete, assembles and saves the profile then fires callbacks.
+// Summary agent always runs last (needs all other sections as context).
 async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
   if (_state.researchInProgress) { alert('A research task is already in progress.'); return; }
   if (!lakeName) { alert('Please select a lake first.'); return; }
@@ -1026,6 +1028,9 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
   _state.packagePartsCache = {};
   showProgress(true);
 
+  // Summary always runs last — separate it from the parallel batch
+  const hasSummary = agentKeys.includes('summary');
+  const parallelAgents = agentKeys.filter(k => k !== 'summary');
   const total = agentKeys.length;
   let completed = 0;
   log(`=== RUN AGENTS: [${agentKeys.join(', ')}] (${mode}) ===`);
@@ -1035,18 +1040,20 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
   const results = [];
 
   try {
-    for (let i = 0; i < agentKeys.length; i += MAX_CONCURRENT) {
-      const batch = agentKeys.slice(i, i + MAX_CONCURRENT);
+    // Run all non-summary agents in parallel batches
+    for (let i = 0; i < parallelAgents.length; i += MAX_CONCURRENT) {
+      const batch = parallelAgents.slice(i, i + MAX_CONCURRENT);
       const batchPromises = batch.map((agentKey, batchIdx) => {
         const delay = batchIdx * STAGGER_MS;
         return new Promise(resolve => setTimeout(async () => {
           try {
             const result = await runAgent(lakeName, agentKey, mode, {}, true);
             completed++;
-            setProgress(`[${completed}/${total}] ${RESEARCH_LABELS[agentKey] || agentKey} complete`, Math.round((completed / total) * 100));
+            setProgress(`[${completed}/${total}] ${RESEARCH_LABELS[agentKey] || agentKey} complete`, Math.round((completed / total) * 80));
             resolve({ status: 'fulfilled', value: result, agent: agentKey });
           } catch (e) {
             completed++;
+            log(`❌ ${agentKey} failed: ${e.message}`);
             resolve({ status: 'rejected', reason: e, agent: agentKey });
           }
         }, delay));
@@ -1054,24 +1061,49 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
 
       const batchResults = await Promise.all(batchPromises);
       for (const result of batchResults) {
-        if (result.status === 'fulfilled') {
-          results.push({ agent: result.agent, data: result.value });
-        } else {
-          log(`❌ ${result.agent} failed: ${result.reason?.message}`);
-        }
+        if (result.status === 'fulfilled') results.push({ agent: result.agent, data: result.value });
       }
+      if (i + MAX_CONCURRENT < parallelAgents.length) await new Promise(r => setTimeout(r, STAGGER_MS));
+    }
 
-      if (i + MAX_CONCURRENT < agentKeys.length) {
-        await new Promise(r => setTimeout(r, STAGGER_MS));
-      }
+    // Assemble + save profile from all agent results
+    setProgress('Assembling and saving profile...', 82);
+    let assembleResult = { contradictions: [] };
+    try {
+      assembleResult = await assembleAndSaveProfile(lakeName, results, mode);
+    } catch (e) {
+      log(`⚠️ Profile assembly failed: ${e.message}`);
+    }
+
+    // Summary agent runs last with the fully assembled profile as context
+    if (hasSummary) {
+      setProgress('Running summary agent...', 92);
+      try {
+        const summaryResult = await runAgent(lakeName, 'summary', mode, {}, true);
+        completed++;
+        results.push({ agent: 'summary', data: summaryResult });
+        // Merge summary into the already-saved profile
+        if (summaryResult?.section) {
+          const existingRes = await fetch(`${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`);
+          if (existingRes.ok) {
+            const existingData = await existingRes.json();
+            if (existingData.profile) {
+              const patched = { ...existingData.profile, summary: summaryResult.section };
+              await fetch(`${CF_WORKER_URL}/research/save`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ lakeName, profile: patched, status: patched.metadata?.status || 'draft', requestedBy: 'Summary agent patch' })
+              });
+              log('✔ Summary section merged into saved profile');
+            }
+          }
+        }
+      } catch (e) { log(`⚠️ Summary agent failed: ${e.message}`); }
     }
 
     log(`✔ All agents complete: ${results.filter(r => r.data).length}/${total} succeeded`);
     if (callbacks.onComplete) await callbacks.onComplete(lakeName);
-    if (callbacks.onContradictions) {
-      // Collect any contradictions from agent results and surface them
-      const allContradictions = results.flatMap(r => r.data?.contradictions || []);
-      if (allContradictions.length) callbacks.onContradictions(allContradictions);
+    if (assembleResult.contradictions?.length && callbacks.onContradictions) {
+      callbacks.onContradictions(assembleResult.contradictions, lakeName);
     }
     return results;
 
@@ -1084,9 +1116,8 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
   }
 }
 
-// ── runFullPipeline: delegates to runAgents (per-agent discover→fetch→extract→enrich) ──
-// Steps 1 and 1b run here to load deterministic facts before agents start,
-// so every agent has owner/species context and regulations agent has KV-cached regs data.
+
+// ── runFullPipeline: Steps 1-1d, then delegates to runAgents ──────────────
 async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
   if (_state.researchInProgress) { alert('A research task or pipeline is already in progress.'); return; }
   if (!lakeName) { alert('Please select or specify a lake.'); return; }
@@ -1094,25 +1125,19 @@ async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
   _state.researchInProgress = true;
   _state.researchLog = [];
   _state.packagePartsCache = {};
+  _state.deterministicProfile = null;
+  _state.wqpLimnology = null;
   showProgress(true);
 
   try {
     const stateName = sanitizeStateFromLakeName(lakeName);
+    log(`Resolving canonical lake details — ${lakeName} / ${stateName}`);
 
-    // STEP 1: Canonical lake identification
-    setProgress('Step 1: Identifying lake...', 5);
-    log('Resolving canonical lake details...');
-    const baseName = cleanLakeBaseName(lakeName);
-    log(`Canonical: ${lakeName} / ${baseName} / ${stateName}`);
-
-    // STEP 1b: Deterministic facts — owner, ramps, species, regulations from APIs
-    // Stored on _state so runAgent can pass them as previousResults to the worker.
-    setProgress('Step 1b: Loading deterministic facts...', 12);
-    _state.deterministicProfile = null;
+    // STEP 1b: Deterministic facts (owner, ramps, species, regulations from APIs)
+    setProgress('Step 1b: Loading deterministic facts...', 10);
     try {
       const detRes = await fetch(`${CF_WORKER_URL}/research/deterministic-facts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lakeName, state: stateName })
       });
       if (detRes.ok) {
@@ -1120,28 +1145,94 @@ async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
         if (detData.ok && detData.profile) {
           _state.deterministicProfile = detData.profile;
           const owner = detData.profile.identity?.reservoirOwner || 'unknown';
-          const rampCount = detData.profile.navigation?.ramps?.length || 0;
-          const speciesCount = detData.profile.biology?.predatorSpecies?.length || 0;
+          const ramps = detData.profile.navigation?.ramps?.length || 0;
+          const species = detData.profile.biology?.predatorSpecies?.length || 0;
           const genCreel = Object.keys(detData.profile.regulations?.generalStateRegulations?.creelLimits || {}).length;
-          const genLen = Object.keys(detData.profile.regulations?.generalStateRegulations?.lengthLimits || {}).length;
+          const genLen   = Object.keys(detData.profile.regulations?.generalStateRegulations?.lengthLimits || {}).length;
           const lakeSize = Object.keys(detData.profile.regulations?.lakeSpecificRegulations?.sizeLimits || {}).length;
-          const lakeCreel = Object.keys(detData.profile.regulations?.lakeSpecificRegulations?.creelLimits || {}).length;
-          log(`✔ Deterministic baseline loaded — owner: ${owner}, ramps: ${rampCount}, species: ${speciesCount}, regs(gen creel=${genCreel}/len=${genLen}, lake size=${lakeSize}/creel=${lakeCreel})`);
+          const lakeCreel= Object.keys(detData.profile.regulations?.lakeSpecificRegulations?.creelLimits || {}).length;
+          log(`✔ Deterministic baseline loaded — owner: ${owner}, ramps: ${ramps}, species: ${species}, regs(gen creel=${genCreel}/len=${genLen}, lake size=${lakeSize}/creel=${lakeCreel})`);
           if (detData.profile._regsDebug) {
             const d = detData.profile._regsDebug;
             log(`  regs debug: state=${d.state} cacheHit=${d.cacheHit} pagesLoaded=${d.pagesLoaded} parseErrors=${d.parseErrors}`);
           }
         }
       } else {
-        log(`⚠️ Deterministic facts HTTP ${detRes.status} — agents will run without owner/regs context`);
+        log(`⚠️ Deterministic facts HTTP ${detRes.status} — continuing without context`);
       }
-    } catch (e) {
-      log(`⚠️ Deterministic facts fetch failed: ${e.message} — continuing`);
+    } catch (e) { log(`⚠️ Deterministic facts failed: ${e.message}`); }
+
+    // STEP 1c: Geospatial structure adapter
+    setProgress('Step 1c: Geospatial structure...', 15);
+    try {
+      const geoStruct = await deriveGeospatialStructureFacts(lakeName);
+      if (geoStruct && _state.deterministicProfile) {
+        _state.deterministicProfile.habitat = mergeMissing(_state.deterministicProfile.habitat || {}, geoStruct.habitat || {});
+        if (geoStruct.habitat?.notes) {
+          _state.deterministicProfile.habitat.notes = [_state.deterministicProfile.habitat.notes, geoStruct.habitat.notes].filter(Boolean).join(' ');
+        }
+        _state.deterministicProfile.evidence = mergeEvidenceMaps(_state.deterministicProfile.evidence || {}, geoStruct.evidence || {});
+        _state.deterministicProfile.sources  = [...(_state.deterministicProfile.sources || []), ...(geoStruct.sources || [])];
+        log(`✔ Geospatial structure adapter loaded — ${Object.keys(geoStruct.habitat || {}).join(', ') || 'no fields'}`);
+      }
+    } catch (e) { log(`⚠️ Geospatial adapter failed: ${e.message}`); }
+
+    // STEP 1d: WQP limnology (only when limnology agent is in the run)
+    if (!selectedAgents || selectedAgents.includes('limnology')) {
+      setProgress('Step 1d: WQP limnology data...', 20);
+      try {
+        const supplementalKey = resolveSupplementalKey(lakeName);
+        const shorelineUrl = supplementalKey
+          ? `${CF_WORKER_URL}/chartpacks/supplemental/${supplementalKey}/shoreline.geojson?v=${Date.now()}`
+          : `${CF_WORKER_URL}/chartpacks/lake-boundary?lake=${encodeURIComponent(lakeName)}`;
+        const geoRes = await fetch(shorelineUrl);
+        let bbox = null;
+        if (geoRes.ok) {
+          const geo = await geoRes.json();
+          const coords = [];
+          const extractCoords = (obj) => {
+            if (!obj) return;
+            if (obj.type === 'Feature') extractCoords(obj.geometry);
+            else if (obj.type === 'FeatureCollection') obj.features?.forEach(extractCoords);
+            else if (obj.coordinates) {
+              const flat = obj.coordinates.flat(Infinity);
+              const step = (flat.length >= 3 && flat[2] === 0.0) || (flat.length % 3 === 0 && flat.length % 2 !== 0) ? 3 : 2;
+              for (let i = 0; i < flat.length - 1; i += step) coords.push([flat[i], flat[i+1]]);
+            }
+          };
+          extractCoords(geo);
+          if (coords.length) {
+            const lons = coords.map(c => c[0]);
+            const lats = coords.map(c => c[1]);
+            bbox = { bboxNorth: Math.max(...lats), bboxSouth: Math.min(...lats), bboxEast: Math.max(...lons), bboxWest: Math.min(...lons) };
+          }
+        }
+        if (bbox) {
+          const wqpRes = await fetch(`${CF_WORKER_URL}/research/limnology-data`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lakeName, ...bbox })
+          });
+          if (wqpRes.ok) {
+            const wqpData = await wqpRes.json();
+            if (wqpData.ok && wqpData.recordCount > 0) {
+              _state.wqpLimnology = wqpData;
+              const tc   = wqpData.thermocline ? `${wqpData.thermocline.depthFt}ft (${wqpData.thermocline.method})` : 'not derived';
+              const surf = wqpData.surfaceWater?.recentTempF != null ? `surface ${wqpData.surfaceWater.recentTempF}°F / DO ${wqpData.surfaceWater.recentDissolvedOxygenMgL ?? '?'} mg/L` : '';
+              const sec  = wqpData.secchi ? `secchi avg ${wqpData.secchi.avgSecchiDepthFt}ft (n=${wqpData.secchi.sampleCount})` : '';
+              log(`✔ WQP: ${wqpData.recordCount} records — thermocline ${tc}${surf ? '; ' + surf : ''}${sec ? '; ' + sec : ''}`);
+            } else {
+              log(`⚠️ WQP: ${wqpData.note || 'no data found'}`);
+            }
+          }
+        } else {
+          log('⚠️ WQP: could not derive bbox — skipping');
+        }
+      } catch (e) { log(`⚠️ WQP fetch failed: ${e.message}`); }
     }
 
-    // Hand off to runAgents — each agent does its own per-agent discover→fetch→extract→enrich
-    // _state.deterministicProfile is now available for runAgent to pass as previousResults
-    _state.researchInProgress = false; // runAgents will re-set it
+    // Delegate to runAgents — each agent does per-agent discover→cache-check→fetch→extract→LLM
+    // assembleAndSaveProfile runs after all agents finish inside runAgents
+    _state.researchInProgress = false;
     await runAgents(lakeName, selectedAgents, 'full', callbacks);
 
   } catch (err) {
@@ -1151,584 +1242,204 @@ async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
     _state.researchInProgress = false;
   }
 }
-async function runPipelineTail(lakeName, baseName, stateName, normalizedDocuments, scoredSources, callbacks = {}, onlyAgents = null) {
-    // ----------------------------------------------------
-    // STEP 7: Fact extraction (quoted/source-backed only)
-    // ----------------------------------------------------
-    setProgress("Step 7: Extracting verified facts from documents...", 50);
-    log("Per-document extraction — one LLM call per document, no trimming...");
 
-    // Filter index/search pages by URL density in raw text
-    const isRawIndexPage = (doc) => {
-      const raw = doc.fullText || '';
-      const urlMatches = (raw.match(/https?:\/\//g) || []).length;
-      const words = raw.split(/\s+/).length;
-      return urlMatches > 40 && urlMatches / words > 0.15;
-    };
+// ── assembleAndSaveProfile: merge agent results → save to R2 ─────────────
+// Called by runAgents after all agents complete. Handles both full runs
+// (all agents) and targeted runs (subset — loads existing R2 profile first
+// so un-run sections are preserved).
+async function assembleAndSaveProfile(lakeName, agentResults, mode) {
+  const stateName = sanitizeStateFromLakeName(lakeName);
+  const det = _state.deterministicProfile || { identity: {}, biology: {}, limnology: {}, habitat: {}, navigation: {}, regulations: {}, summary: {}, evidence: {}, sources: [] };
+  const wqp = _state.wqpLimnology || null;
 
-    const usableDocuments = normalizedDocuments.filter(d => {
-      if (!d.fullText || d.fullText.length < 100) return false;
-      if (isRawIndexPage(d)) { log(`⚠️ Skipping index/search page: ${d.title?.slice(0,50)}`); return false; }
-      return true;
-    });
-
-    log(`Extracting from ${usableDocuments.length} documents (skipped ${normalizedDocuments.length - usableDocuments.length})`);
-
-    // Call /research/analyze-facts once per document — batched in groups of 5 (one per Gemini free key)
-    // docIndex is passed so the worker can deterministically select which key to use
-    // without relying on shared module state (which resets per Worker invocation)
-    const allDocFacts = [];
-    const BATCH_SIZE = 5;
-    for (let batchStart = 0; batchStart < usableDocuments.length; batchStart += BATCH_SIZE) {
-      const batch = usableDocuments.slice(batchStart, batchStart + BATCH_SIZE);
-      if (batchStart > 0) await new Promise(res => setTimeout(res, 1000));
-
-      const batchPromises = batch.map((doc, batchIdx) => {
-        const i = batchStart + batchIdx;
-        const scored = scoredSources.find(s => s.title === doc.title);
-        const docText = (doc.fullText || '').slice(0, 200000);
-        const singlePayload = {
-          lakeName,
-          baseName,
-          state: stateName,
-          docIndex: i, // worker uses this for deterministic key selection
-          documents: [{
-            title: doc.title,
-            url: doc.url || '',
-            text: docText,
-            quality: scored ? { ...scored.scoring, classes: scored.classes || [] } : {}
-          }]
-        };
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 45000);
-        return fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(singlePayload),
-          signal: controller.signal
-        })
-          .finally(() => clearTimeout(timeout))
-          .then(async res => {
-            if (!res.ok) {
-              log(`⚠️ Doc [${i+1}/${usableDocuments.length}] "${doc.title?.slice(0,40)}" HTTP ${res.status} — skipping`);
-              return [];
-            }
-            const data = await res.json();
-            if (data.success && data.extracted_facts?.length) {
-              log(`📄 [${i+1}/${usableDocuments.length}] "${doc.title?.slice(0,50)}" → ${data.extracted_facts.length} facts`);
-              return data.extracted_facts;
-            } else {
-              log(`📄 [${i+1}/${usableDocuments.length}] "${doc.title?.slice(0,50)}" → 0 facts`);
-              return [];
-            }
-          })
-          .catch(e => {
-            if (e.name === 'AbortError') {
-              log(`⚠️ Doc [${i+1}] "${doc.title?.slice(0,40)}" timed out after 45s — skipping`);
-            } else {
-              log(`⚠️ Doc [${i+1}] "${doc.title?.slice(0,40)}" failed: ${e.message}`);
-            }
-            return [];
-          });
-      });
-
-      const batchResults = await Promise.all(batchPromises);
-      for (const facts of batchResults) allDocFacts.push(...facts);
+  // Load existing R2 profile so a targeted refresh doesn't wipe un-run sections
+  let existingSavedProfile = {};
+  try {
+    const existingRes = await fetch(`${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`);
+    if (existingRes.ok) {
+      const existingData = await existingRes.json();
+      if (existingData.profile) existingSavedProfile = existingData.profile;
     }
+  } catch (e) { /* non-fatal */ }
 
-    let rawFacts = allDocFacts;
-    log(`Deep scan extracted ${rawFacts.length} verified facts across ${usableDocuments.length} documents.`);
-    rawFacts.forEach(f => {
-      log(`💬 [${f.category}] "${f.fact?.slice(0,80)}" (${f.confidence}%) - ${f.source?.slice(0,40)}`);
-    });;
+  // Build section map — start from existing/deterministic, then layer in new agent results
+  const agentSections = {
+    identity:             cloneJson(existingSavedProfile.identity     || det.identity     || {}),
+    biology:              cloneJson(det.biology || {}),
+    habitat:              cloneJson(existingSavedProfile.habitat      || det.habitat      || {}),
+    navigation:           cloneJson(existingSavedProfile.navigation   || det.navigation   || {}),
+    regulations:          cloneJson(existingSavedProfile.regulations  || det.regulations  || {}),
+    limnology:            applyWqpToLimnology(existingSavedProfile.limnology || det.limnology || {}, wqp),
+    summary:              cloneJson(existingSavedProfile.summary      || det.summary      || {}),
+    trollingIntelligence: existingSavedProfile.trollingIntelligence   || null,
+  };
 
-    // ----------------------------------------------------
-    // STEP 8: Deduplication
-    // ----------------------------------------------------
-    setProgress("Step 8: Deduplicating facts...", 60);
-    let uniqueFacts = rawFacts;
-    let contradictions = [];
-    if (rawFacts.length > 0) {
-      log("Deduplicating identical facts and checking for anomalies...");
-      try {
-        const dedupeRes = await fetch(`${CF_WORKER_URL}/research/dedupe-contradictions`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ facts: rawFacts })
-        });
-        if (dedupeRes.ok) {
-          const dedupeData = await dedupeRes.json();
-          uniqueFacts = dedupeData.deduplicated_facts || rawFacts;
-          contradictions = dedupeData.contradictions || [];
-        }
-      } catch (e) {
-        log(`⚠️ Dedupe failed: ${e.message} — using raw facts`);
-      }
-      log(`Deduplicated facts count: ${uniqueFacts.length}.`);
-      if (contradictions.length > 0) {
-        log(`⚠️ ${contradictions.length} contradictions detected:`);
-        contradictions.forEach(c => log(`👉 [${c.field}]: "${c.factA}" vs "${c.factB}"`));
-      }
+  const evidence = mergeEvidenceMaps(det.evidence || {}, buildWqpEvidence(wqp));
+  const factualSummary = buildDeterministicSummary({ lakeName, identity: agentSections.identity, biology: agentSections.biology, limnology: agentSections.limnology, habitat: agentSections.habitat });
+  if (factualSummary) {
+    agentSections.summary = { text: factualSummary, keywords: det.summary?.keywords || [] };
+  }
+
+  // Apply unique facts from deterministic profile to fill identity/limnology gaps
+  const detFacts = det._extractedFacts || [];
+  if (detFacts.length) {
+    const getFactVal = (cats) => { for (const c of cats) { const f = detFacts.find(f => String(f.category||'').toLowerCase() === c.toLowerCase()); if (f) return f.fact; } return null; };
+    const parseNum  = (s) => { const n = parseFloat(String(s||'').replace(/[^0-9.]/g,'')); return isFinite(n) ? n : null; };
+    const id = agentSections.identity;
+    if (id.surfaceAreaAcres == null) id.surfaceAreaAcres = parseNum(getFactVal(['surfaceArea','surfaceAreaAcres']));
+    if (id.maxDepthFt == null)       id.maxDepthFt       = parseNum(getFactVal(['maxDepthFt','maxDepth']));
+    if (id.averageDepthFt == null)   id.averageDepthFt   = parseNum(getFactVal(['averageDepthFt','averageDepth']));
+    if (!id.archetype)               id.archetype        = getFactVal(['archetype']);
+    if (!id.damName)                 id.damName          = getFactVal(['damName']);
+    if (id.yearImpounded == null)    id.yearImpounded    = parseNum(getFactVal(['yearImpounded']));
+    if (!id.reservoirOwner)          id.reservoirOwner   = getFactVal(['reservoirOwner']);
+    if (!id.riverSystem)             id.riverSystem      = getFactVal(['riverSystem']);
+    if (id.normalPoolFt == null)     id.normalPoolFt     = parseNum(getFactVal(['poolLevel','normalPoolFt']));
+    const lim = agentSections.limnology;
+    if (!lim.thermocline) lim.thermocline = {};
+    if (lim.thermocline.summerDepthFt == null) { const tv = getFactVal(['thermocline']); if (tv) lim.thermocline.note = (lim.thermocline.note ? lim.thermocline.note + ' ' : '') + tv; }
+    if (!lim.trophicStatus) lim.trophicStatus = getFactVal(['trophicStatus']);
+  }
+
+  // Merge new agent section results on top
+  for (const { agent: agentKey, data } of agentResults) {
+    if (!data?.section) continue;
+    const existing = agentSections[agentKey] || {};
+    const merged = { ...existing };
+    for (const [k, v] of Object.entries(data.section)) {
+      if (v == null) continue;
+      if (Array.isArray(v) && v.length === 0 && Array.isArray(existing[k]) && existing[k].length > 0) continue;
+      merged[k] = v;
+    }
+    // Regulations: deep-merge lakeSpecificRegulations — don't let empty overwrite populated
+    if (agentKey === 'regulations' && data.section?.lakeSpecificRegulations) {
+      const existingLsr = existing.lakeSpecificRegulations || {};
+      const agentLsr    = data.section.lakeSpecificRegulations;
+      const mergedCreel = (agentLsr.creelLimits && Object.keys(agentLsr.creelLimits).length) ? agentLsr.creelLimits : (existingLsr.creelLimits || {});
+      const mergedSize  = (agentLsr.sizeLimits  && Object.keys(agentLsr.sizeLimits).length)  ? agentLsr.sizeLimits  : (existingLsr.sizeLimits  || {});
+      merged.lakeSpecificRegulations = { ...existingLsr, ...agentLsr, creelLimits: mergedCreel, sizeLimits: mergedSize };
+    }
+    // Biology: species list is always additive — never let agent shrink the list
+    if (agentKey === 'biology') {
+      const detSpecies      = det.biology?.predatorSpecies || [];
+      const existingSpecies = existing.predatorSpecies || [];
+      const agentSpecies    = merged.predatorSpecies || [];
+      merged.predatorSpecies = [...new Set([...detSpecies, ...existingSpecies, ...agentSpecies])];
+      merged.knownStockings  = merged.knownStockings?.length ? merged.knownStockings : (existing.knownStockings?.length ? existing.knownStockings : (det.biology?.knownStockings || []));
+    }
+    // Fisheries agent returns trollingIntelligence
+    if (agentKey === 'fisheries') {
+      agentSections.trollingIntelligence = merged;
     } else {
-      log("Skipping dedup — no facts to process.");
+      agentSections[agentKey] = merged;
     }
+  }
 
-    // ----------------------------------------------------
-    // STEP 9: Deterministic baseline + WQP surface/profile data
-    // ----------------------------------------------------
-    setProgress("Step 9: Building factual lake baseline...", 66);
-    let deterministicProfile = { identity: {}, biology: {}, limnology: {}, habitat: {}, navigation: {}, regulations: {}, summary: {}, evidence: {}, sources: [] };
+  // Collect all facts from agent responses for validation + source map
+  const allFacts = agentResults.flatMap(r => r.data?._extractedFacts || []);
+  const contradictions = agentResults.flatMap(r => r.data?.contradictions || []);
+
+  // Validation pass — fill remaining null fields in batches of 10
+  const VALIDATION_FIELDS = [
+    'identity.surfaceAreaAcres','identity.maxDepthFt','identity.averageDepthFt',
+    'identity.normalPoolFt','identity.reservoirOwner','identity.riverSystem',
+    'identity.damName','identity.yearImpounded','identity.county','identity.archetype',
+    'limnology.waterClarity.typical','limnology.waterClarity.color','limnology.waterClarity.secchiFt',
+    'limnology.thermocline.summerDepthFt','limnology.thermocline.strength','limnology.thermocline.winterMix',
+    'limnology.oxygen.depletionDepthFt','limnology.oxygen.anoxicBelowFt',
+    'limnology.trophicStatus','limnology.flowCharacteristics','limnology.seasonalDrawdownFt',
+    'biology.primaryForage','biology.secondaryForage','biology.predatorSpecies',
+    'biology.speciesAbundance','biology.knownStockings','biology.baitfishMovement',
+    'biology.invasiveSpecies','biology.spawnTiming','biology.forageSpatial',
+    'habitat.bottomComposition','habitat.cover','habitat.vegetation',
+    'habitat.standingTimber','habitat.dockDensity','habitat.riprapLocations',
+    'habitat.namedCreekMouths','habitat.timberFields','habitat.shallowFlatAreas',
+    'habitat.artificialHabitat','habitat.artificialHabitatDetails.attractorCount','habitat.artificialHabitatDetails.attractorTypes',
+    'navigation.ramps','navigation.hazards','navigation.notes'
+  ];
+  const atPath = (obj, path) => path.split('.').reduce((v, k) => v == null ? undefined : v[k], obj);
+  const isMissing = (v) => v == null || v === '' || (Array.isArray(v) && !v.length) || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length);
+  const nullFields = VALIDATION_FIELDS.filter(p => isMissing(atPath(agentSections, p)));
+  if (nullFields.length > 0) {
+    log(`Running validation pass for ${nullFields.length} empty fields: ${nullFields.slice(0,5).join(', ')}${nullFields.length > 5 ? '...' : ''}`);
     try {
-      const detRes = await fetch(`${CF_WORKER_URL}/research/deterministic-facts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lakeName, state: stateName })
-      });
-      if (detRes.ok) {
-        const detData = await detRes.json();
-        if (detData.ok && detData.profile) {
-          deterministicProfile = detData.profile;
-          const genCreel = Object.keys(detData.profile.regulations?.generalStateRegulations?.creelLimits || {}).length;
-          const genLen = Object.keys(detData.profile.regulations?.generalStateRegulations?.lengthLimits || {}).length;
-          const lakeSize = Object.keys(detData.profile.regulations?.lakeSpecificRegulations?.sizeLimits || {}).length;
-          const lakeCreel = Object.keys(detData.profile.regulations?.lakeSpecificRegulations?.creelLimits || {}).length;
-          log(`✔ Deterministic baseline loaded — identity=${Object.keys(detData.profile.identity || {}).length}, predatorSpecies=${detData.profile.biology?.predatorSpecies?.length || 0}, ramps=${detData.profile.navigation?.ramps?.length || 0}, regs(gen creel=${genCreel}/len=${genLen}, lake size=${lakeSize}/creel=${lakeCreel})`);
-          if (detData.profile._regsDebug) {
-            const d = detData.profile._regsDebug;
-
-          }
-          if (!genCreel && !genLen && !lakeSize && stateName === 'SC') {
-            log('⚠️ Regulations section empty after deterministic parse — check that eRegulations is in normalized docs and FIRECRAWL_API_KEY is set on the worker.');
-          } else if (!genCreel && !genLen && !lakeSize) {
-            log('ℹ️ Regs structured fields empty — expected for NC/GA (regulations agent will parse from raw text).');
-          }
-        }
-      }
-    } catch (e) {
-      log(`⚠️ Deterministic baseline unavailable: ${e.message}`);
-    }
-
-    try {
-      const geoStruct = await deriveGeospatialStructureFacts(lakeName);
-      if (geoStruct) {
-        deterministicProfile.habitat = mergeMissing(deterministicProfile.habitat || {}, geoStruct.habitat || {});
-        if (geoStruct.habitat?.notes) {
-          deterministicProfile.habitat.notes = [deterministicProfile.habitat.notes, geoStruct.habitat.notes].filter(Boolean).join(' ');
-        }
-        deterministicProfile.evidence = mergeEvidenceMaps(deterministicProfile.evidence || {}, geoStruct.evidence || {});
-        deterministicProfile.sources = [...(deterministicProfile.sources || []), ...(geoStruct.sources || [])];
-        log(`✔ Geospatial structure adapter loaded — ${Object.keys(geoStruct.habitat?.structuralElements || {}).join(', ') || 'structure notes'}`);
-      } else {
-        log('⚠️ Geospatial structure adapter found no supported structural fields for this lake.');
-      }
-    } catch (e) {
-      log(`⚠️ Geospatial structure adapter failed: ${e.message}`);
-    }
-
-    let wqpLimnology = null;
-    try {
-      // Use supplemental shoreline GeoJSON — available for all lakes, not just the initial 5 with 3dhp boundaries
-      const supplementalKey = resolveSupplementalKey(lakeName);
-      const shorelineUrl = supplementalKey
-        ? `${CF_WORKER_URL}/chartpacks/supplemental/${supplementalKey}/shoreline.geojson?v=${Date.now()}`
-        : `${CF_WORKER_URL}/chartpacks/lake-boundary?lake=${encodeURIComponent(lakeName)}`; // fallback
-      const geoRes = await fetch(shorelineUrl);
-      let bbox = null;
-      if (geoRes.ok) {
-        const geo = await geoRes.json();
-        const coords = [];
-        const extractCoords = (obj) => {
-          if (!obj) return;
-          if (obj.type === 'Feature') extractCoords(obj.geometry);
-          else if (obj.type === 'FeatureCollection') obj.features?.forEach(extractCoords);
-          else if (obj.coordinates) {
-            const flat = obj.coordinates.flat(Infinity);
-            // Coordinates may be 2D [lon,lat] or 3D [lon,lat,z] — step by 3 if z present
-            const step = (flat.length >= 3 && flat[2] === 0.0) || (flat.length % 3 === 0 && flat.length % 2 !== 0) ? 3 : 2;
-            for (let i = 0; i < flat.length - 1; i += step) coords.push([flat[i], flat[i+1]]);
-          }
-        };
-        extractCoords(geo);
-        if (coords.length) {
-          const lons = coords.map(c => c[0]);
-          const lats = coords.map(c => c[1]);
-          bbox = { bboxNorth: Math.max(...lats), bboxSouth: Math.min(...lats), bboxEast: Math.max(...lons), bboxWest: Math.min(...lons) };
-        }
-      }
-      if (bbox) {
-        const wqpRes = await fetch(`${CF_WORKER_URL}/research/limnology-data`, {
+      const filled = {};
+      const batchSize = 10;
+      for (let i = 0; i < nullFields.length; i += batchSize) {
+        const fieldBatch = nullFields.slice(i, i + batchSize);
+        const valRes = await fetch(`${CF_WORKER_URL}/research/validation-pass`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lakeName, ...bbox })
+          body: JSON.stringify({ lakeName, state: stateName, nullFields: fieldBatch, profile: agentSections, extractedFacts: allFacts })
         });
-        if (wqpRes.ok) {
-          const wqpData = await wqpRes.json();
-          if (wqpData.ok && wqpData.recordCount > 0) {
-            wqpLimnology = wqpData;
-            const thermoMsg = wqpData.thermocline ? `${wqpData.thermocline.depthFt}ft (${wqpData.thermocline.method})` : 'not derived';
-            const surfMsg = wqpData.surfaceWater?.recentTempF != null ? `surface ${wqpData.surfaceWater.recentTempF}°F / DO ${wqpData.surfaceWater.recentDissolvedOxygenMgL ?? '?'} mg/L` : 'surface summary unavailable';
-            const secchiMsg = wqpData.secchi ? `secchi avg ${wqpData.secchi.avgSecchiDepthFt}ft (n=${wqpData.secchi.sampleCount})` : '';
-            log(`✔ WQP: ${wqpData.recordCount} records — thermocline ${thermoMsg}; ${surfMsg}${secchiMsg ? '; ' + secchiMsg : ''}`);
-
-            // Thermocline search fires inside limnology-data if needed — no duplicate call here
-            if (wqpData.thermoclineAnecdotal) {
-              wqpLimnology.thermoclineAnecdotal = wqpData.thermoclineAnecdotal;
-              log(`✔ Thermocline search (from limnology-data): anecdotal estimate ${wqpData.thermoclineAnecdotal.summerThermoclineDepthFt}ft`);
-            }
-          } else {
-            log(`⚠️ WQP: ${wqpData.note || 'no data found for this lake boundary'}`);
-          }
-        }
-      } else {
-        log("⚠️ WQP: could not derive lake boundary bbox — skipping limnology data fetch");
+        if (!valRes.ok) throw new Error(`HTTP ${valRes.status}`);
+        const valData = await valRes.json();
+        if (!valData.success) throw new Error(valData.error || 'failed');
+        Object.assign(filled, valData.filled || {});
+        if (i + batchSize < nullFields.length) await new Promise(r => setTimeout(r, 1000));
       }
-    } catch (e) {
-      log(`⚠️ WQP limnology fetch failed: ${e.message} — continuing without measured data`);
-    }
-
-    // ----------------------------------------------------
-    // STEP 10: Fact-only section assembly (no inferred tactics)
-    // Apply extracted facts to fill gaps in deterministic profile
-    // ----------------------------------------------------
-    setProgress("Step 10: Assembling factual profile...", 84);
-
-    // Fill null identity fields from extracted facts — direct mapping, no buildFinalResearchPacket needed
-    if (uniqueFacts.length > 0) {
-      const getFactVal = (categories) => {
-        for (const cat of categories) {
-          const f = uniqueFacts.find(f => String(f.category||'').toLowerCase() === cat.toLowerCase());
-          if (f) return f.fact;
-        }
-        return null;
-      };
-      const parseNum = (s) => { const n = parseFloat(String(s||'').replace(/[^0-9.]/g,'')); return isFinite(n) ? n : null; };
-      const id = deterministicProfile.identity;
-      if (id.surfaceAreaAcres == null) id.surfaceAreaAcres = parseNum(getFactVal(['surfaceArea','surfaceAreaAcres']));
-      if (id.maxDepthFt == null)       id.maxDepthFt       = parseNum(getFactVal(['maxDepthFt','maxDepth']));
-      if (id.averageDepthFt == null)   id.averageDepthFt   = parseNum(getFactVal(['averageDepthFt','averageDepth']));
-      if (!id.archetype)               id.archetype        = getFactVal(['archetype']);
-      if (!id.damName)                 id.damName          = getFactVal(['damName']);
-      if (id.yearImpounded == null)    id.yearImpounded    = parseNum(getFactVal(['yearImpounded']));
-      if (!id.reservoirOwner)          id.reservoirOwner   = getFactVal(['reservoirOwner']);
-      if (!id.riverSystem)             id.riverSystem      = getFactVal(['riverSystem']);
-      if (id.normalPoolFt == null)     id.normalPoolFt     = parseNum(getFactVal(['poolLevel','normalPoolFt']));
-      // Fill limnology gaps from facts
-      const lim = deterministicProfile.limnology;
-      if (!lim.thermocline) lim.thermocline = {};
-      if (lim.thermocline.summerDepthFt == null) {
-        const tv = getFactVal(['thermocline']);
-        if (tv) lim.thermocline.note = (lim.thermocline.note ? lim.thermocline.note + ' ' : '') + tv;
+      let filledCount = 0;
+      for (const [path, value] of Object.entries(filled)) {
+        if (!nullFields.includes(path) || value == null) continue;
+        const parts = path.split('.');
+        let obj = agentSections;
+        for (let i = 0; i < parts.length - 1; i++) { if (!obj[parts[i]] || typeof obj[parts[i]] !== 'object') obj[parts[i]] = {}; obj = obj[parts[i]]; }
+        const lastKey = parts[parts.length - 1];
+        if (isMissing(obj[lastKey])) { obj[lastKey] = value; filledCount++; }
       }
-      if (!lim.trophicStatus) lim.trophicStatus = getFactVal(['trophicStatus']);
+      log(`✔ Validation pass: ${filledCount} fields filled from ${Object.keys(filled).length} returned`);
+    } catch (e) { log(`⚠️ Validation pass failed: ${e.message} — continuing`); }
+  }
+
+  // Safety-net biology before save
+  const detSpecies = det.biology?.predatorSpecies || [];
+  const agentSpecies = agentSections.biology?.predatorSpecies || [];
+  const finalSpecies = [...new Set([...detSpecies, ...agentSpecies])];
+  const safeBiology = {
+    ...(agentSections.biology || {}),
+    predatorSpecies: finalSpecies.length ? finalSpecies : detSpecies,
+    knownStockings: agentSections.biology?.knownStockings?.length ? agentSections.biology.knownStockings : (det.biology?.knownStockings || []),
+  };
+
+  // Build source map
+  const sourceMap = new Map();
+  for (const s of (det.sources || [])) sourceMap.set(`${s.label}|${s.url}`, s);
+  for (const r of agentResults) {
+    for (const s of (r.data?.sources || [])) {
+      const key = `${s.label || s.title}|${s.url || '#'}`;
+      if (!sourceMap.has(key)) sourceMap.set(key, { label: s.label || s.title, url: s.url || '#', authority: s.authority, trust: 'THIRD_PARTY' });
     }
+  }
+  if (wqp?.recordCount > 0) sourceMap.set('Water Quality Portal|https://www.waterqualitydata.us/', { label: 'Water Quality Portal / SCDES monitoring', url: 'https://www.waterqualitydata.us/', trust: 'OFFICIAL', sourceType: 'official_structured' });
 
-    // When running only specific agents, load the existing saved profile to preserve
-    // sections not being re-run (e.g. fisheries refresh should not wipe habitat)
-    let existingSavedProfile = {};
-    if (onlyAgents) {
-      try {
-        const existingRes = await fetch(`${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`);
-        if (existingRes.ok) {
-          const existingData = await existingRes.json();
-          if (existingData.profile) existingSavedProfile = existingData.profile;
-        }
-      } catch (e) { /* non-fatal — fall back to deterministic baseline */ }
-    }
+  const baseName = cleanLakeBaseName(lakeName);
+  const researchPacket = {
+    lakeName, baseName, state: stateName,
+    ...agentSections,
+    biology: safeBiology,
+    forage: safeBiology,
+    trolling: null,
+    trollingIntelligence: agentSections.trollingIntelligence || null,
+    _extractedFacts: allFacts,
+    _extractedFactsCount: allFacts.length,
+    _wqpLimnology: wqp || null,
+    evidence,
+    sources: [...sourceMap.values()]
+  };
 
-    const agentSections = {
-      identity: cloneJson(existingSavedProfile.identity || deterministicProfile.identity || {}),
-      biology: cloneJson(deterministicProfile.biology || {}),
-      habitat: cloneJson(existingSavedProfile.habitat || deterministicProfile.habitat || {}),
-      navigation: cloneJson(existingSavedProfile.navigation || deterministicProfile.navigation || {}),
-      regulations: cloneJson(existingSavedProfile.regulations || deterministicProfile.regulations || {}),
-      limnology: applyWqpToLimnology(existingSavedProfile.limnology || deterministicProfile.limnology || {}, wqpLimnology),
-      summary: cloneJson(existingSavedProfile.summary || deterministicProfile.summary || {}),
-      trollingIntelligence: existingSavedProfile.trollingIntelligence || null,
-    };
-
-
-    const evidence = mergeEvidenceMaps(deterministicProfile.evidence || {}, buildWqpEvidence(wqpLimnology));
-    const factualSummary = buildDeterministicSummary({ lakeName, identity: agentSections.identity, biology: agentSections.biology, limnology: agentSections.limnology, habitat: agentSections.habitat });
-    if (factualSummary) {
-      agentSections.summary = { text: factualSummary, keywords: deterministicProfile.summary?.keywords || [] };
-      evidence.summary = evidence.summary || {};
-      evidence.summary.text = (evidence.summary.text || []).concat([buildEvidenceEntry('internal_synthesis', 'TrollMap deterministic profile synthesis', 'internal:deterministic-facts', null, 'deterministic_fact_synthesis')]);
-    }
-
-    // ----------------------------------------------------
-    // STEP 11: Agent enrichment — runs 3 targeted LLM agents using extracted facts
-    // Each agent receives the facts most relevant to its domain
-    // ----------------------------------------------------
-    setProgress("Step 11: Running agent enrichment...", 88);
-
-    const agentGroups = [
-      { key: 'identity_limnology', agents: ['identity', 'limnology'] },
-      { key: 'biology_habitat',    agents: ['biology', 'habitat'] },
-      { key: 'regulations',        agents: ['regulations'] },
-      { key: 'fisheries',          agents: ['fisheries'] },
-    ];
-
-    for (const group of agentGroups) {
-      for (const agentKey of group.agents) {
-        // Skip agents not in the onlyAgents list if specified
-        if (onlyAgents && !onlyAgents.includes(agentKey)) continue;
-        try {
-          // Delay between agents to avoid burst rate limiting across providers
-          await new Promise(res => setTimeout(res, 3000));
-          log(`Running ${agentKey} agent...`);
-          // Retry agent once on 502 (provider rate limit) after a longer pause
-          let agentRes = await fetch(`${CF_WORKER_URL}/research/agent`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              lakeName,
-              state: stateName,
-              agent: agentKey,
-              previousResults: {
-                ...agentSections,
-                _extractedFacts: uniqueFacts,
-                _normalizedDocuments: normalizedDocuments.slice(0, agentKey === 'fisheries' ? 25 : 12).map(d => ({
-                  title: d.title,
-                  url: d.url,
-                  text: (d.fullText || '').slice(0, agentKey === 'fisheries' ? 150000 : 40000)
-                }))
-              }
-            })
-          });
-          // Retry once on 502 after 5s pause (provider rate limit)
-          if (agentRes.status === 502) {
-            log(`⚠️ ${agentKey} agent 502 — retrying after 5s...`);
-            await new Promise(res => setTimeout(res, 5000));
-            agentRes = await fetch(`${CF_WORKER_URL}/research/agent`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                lakeName,
-                state: stateName,
-                agent: agentKey,
-                previousResults: {
-                  ...agentSections,
-                  _extractedFacts: uniqueFacts,
-                  _normalizedDocuments: normalizedDocuments.slice(0, agentKey === 'fisheries' ? 25 : 12).map(d => ({
-                    title: d.title,
-                    url: d.url,
-                    text: (d.fullText || '').slice(0, agentKey === 'fisheries' ? 150000 : 40000)
-                  }))
-                }
-              })
-            });
-          }
-          if (agentRes.ok) {
-            const agentData = await agentRes.json();
-            if (agentData.success && agentData.section) {
-              // Merge agent result — never overwrite deterministic fields with empty arrays
-              const existing = agentSections[agentKey] || {};
-              const merged = { ...existing };
-              for (const [k, v] of Object.entries(agentData.section)) {
-                if (v == null) continue;
-                if (Array.isArray(v) && v.length === 0 && Array.isArray(existing[k]) && existing[k].length > 0) continue;
-                merged[k] = v;
-              }
-              // Deep-merge lakeSpecificRegulations for regulations agent —
-              // only overwrite creelLimits/sizeLimits if agent returned a non-empty object.
-              // Prevents sanitized-empty {} from wiping deterministic parser's correct data.
-              if (agentKey === 'regulations' && agentData.section?.lakeSpecificRegulations) {
-                const existingLsr = existing.lakeSpecificRegulations || {};
-                const agentLsr = agentData.section.lakeSpecificRegulations;
-                const mergedCreel = (agentLsr.creelLimits && typeof agentLsr.creelLimits === 'object' && !Array.isArray(agentLsr.creelLimits) && Object.keys(agentLsr.creelLimits).length > 0)
-                  ? agentLsr.creelLimits
-                  : (existingLsr.creelLimits && typeof existingLsr.creelLimits === 'object' ? existingLsr.creelLimits : {});
-                const mergedSize = (agentLsr.sizeLimits && typeof agentLsr.sizeLimits === 'object' && !Array.isArray(agentLsr.sizeLimits) && Object.keys(agentLsr.sizeLimits).length > 0)
-                  ? agentLsr.sizeLimits
-                  : (existingLsr.sizeLimits && typeof existingLsr.sizeLimits === 'object' ? existingLsr.sizeLimits : {});
-                merged.lakeSpecificRegulations = {
-                  ...existingLsr,
-                  ...agentLsr,
-                  creelLimits: mergedCreel,
-                  sizeLimits: mergedSize,
-                };
-              }
-              agentSections[agentKey] = merged;
-              if (agentKey === 'biology') {
-                // Always use the LONGER species list — agents should add, never remove
-                const detSpecies = deterministicProfile.biology?.predatorSpecies || [];
-                const agentSpecies = merged.predatorSpecies || [];
-                const existingSpecies = existing.predatorSpecies || [];
-                // Merge all three lists — take the union
-                const allSpecies = [...new Set([...detSpecies, ...existingSpecies, ...agentSpecies])];
-                agentSections.biology.predatorSpecies = allSpecies.length ? allSpecies : detSpecies;
-                // Stockings: use agent result if non-empty, otherwise keep existing
-                agentSections.biology.knownStockings = merged.knownStockings?.length ? merged.knownStockings : (existing.knownStockings?.length ? existing.knownStockings : (deterministicProfile.biology?.knownStockings || []));
-                // speciesBehavior: merge new into existing, don't overwrite populated seasons
-                if (merged.speciesBehavior && Object.keys(merged.speciesBehavior).length) {
-                  agentSections.biology.speciesBehavior = merged.speciesBehavior;
-                }
-              }
-              if (agentKey === 'fisheries') {
-                // fisheries agent returns trollingIntelligence key — store it
-                agentSections.trollingIntelligence = merged;
-              }
-              log(`✔ ${agentKey} agent complete (${agentData.confidence?.percent || '?'}% via ${agentData.meta?.model || '?'})`);
-            }
-          } else {
-            const errSnippet = await agentRes.text().catch(() => '').then(t => t.slice(0, 300));
-            log(`⚠️ ${agentKey} agent HTTP ${agentRes.status} — skipping. Response: ${errSnippet}`);
-          }
-        } catch (e) {
-          log(`⚠️ ${agentKey} agent failed: ${e.message} — skipping`);
-        }
-      }
-    }
-
-    // ----------------------------------------------------
-    // STEP 11b: Validation pass — targeted fill for null fields
-    // Sends the merged profile back to the worker which uses a
-    // lightweight LLM call to fill any remaining null fields
-    // using already-extracted facts and document context.
-    // ----------------------------------------------------
-    try {
-      // Validation must see every meaningful unpopulated field, not just the
-      // original handful of identity values. Use real paths in agentSections;
-      // the old unprefixed identity names were written at the packet root and
-      // never filled identity.*.
-      const VALIDATION_FIELDS = [
-        'identity.surfaceAreaAcres', 'identity.maxDepthFt', 'identity.averageDepthFt',
-        'identity.normalPoolFt', 'identity.reservoirOwner', 'identity.riverSystem',
-        'identity.damName', 'identity.yearImpounded', 'identity.county', 'identity.archetype',
-        'limnology.waterClarity.typical', 'limnology.waterClarity.color',
-        'limnology.waterClarity.secchiFt', 'limnology.thermocline.summerDepthFt',
-        'limnology.thermocline.strength', 'limnology.thermocline.winterMix',
-        'limnology.oxygen.depletionDepthFt', 'limnology.oxygen.anoxicBelowFt',
-        'limnology.trophicStatus', 'limnology.flowCharacteristics', 'limnology.seasonalDrawdownFt',
-        'biology.primaryForage', 'biology.secondaryForage', 'biology.predatorSpecies',
-        'biology.speciesAbundance', 'biology.knownStockings', 'biology.baitfishMovement',
-        'biology.invasiveSpecies', 'biology.spawnTiming', 'biology.forageSpatial',
-        'habitat.bottomComposition', 'habitat.cover', 'habitat.vegetation',
-        'habitat.standingTimber', 'habitat.dockDensity', 'habitat.riprapLocations',
-        'habitat.namedCreekMouths', 'habitat.timberFields', 'habitat.shallowFlatAreas',
-        'habitat.artificialHabitat', 'habitat.artificialHabitatDetails.attractorCount',
-        'habitat.artificialHabitatDetails.attractorTypes',
-        'navigation.ramps', 'navigation.hazards', 'navigation.notes'
-      ];
-      const atPath = (obj, path) => path.split('.').reduce((value, key) => value == null ? undefined : value[key], obj);
-      const isMissing = (value) => value == null || value === ''
-        || (Array.isArray(value) && value.length === 0)
-        || (typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0);
-      const nullFields = VALIDATION_FIELDS.filter(path => isMissing(atPath(agentSections, path)));
-
-      if (nullFields.length > 0) {
-        log(`Running validation pass for ${nullFields.length} empty field(s): ${nullFields.join(', ')}`);
-        // A 30+ field request can exceed the validation model's JSON output
-        // budget. Batch fields so every empty field gets an independent chance.
-        const filled = {};
-        const batchSize = 10;
-        for (let i = 0; i < nullFields.length; i += batchSize) {
-          const fieldBatch = nullFields.slice(i, i + batchSize);
-          const valRes = await fetch(`${CF_WORKER_URL}/research/validation-pass`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              lakeName,
-              state: stateName,
-              nullFields: fieldBatch,
-              profile: agentSections,
-              extractedFacts: uniqueFacts,
-            })
-          });
-          if (!valRes.ok) throw new Error(`validation HTTP ${valRes.status}`);
-          const valData = await valRes.json();
-          if (!valData.success) throw new Error(valData.error || 'validation agent failed');
-          Object.assign(filled, valData.filled || {});
-          if (i + batchSize < nullFields.length) await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-        let filledCount = 0;
-        for (const [path, value] of Object.entries(filled)) {
-          if (!nullFields.includes(path) || value == null) continue;
-          const parts = path.split('.');
-          let obj = agentSections;
-          for (let i = 0; i < parts.length - 1; i++) {
-            if (!obj[parts[i]] || typeof obj[parts[i]] !== 'object') obj[parts[i]] = {};
-            obj = obj[parts[i]];
-          }
-          const lastKey = parts[parts.length - 1];
-          if (isMissing(obj[lastKey])) { obj[lastKey] = value; filledCount++; }
-        }
-        log(`✔ Validation pass returned ${Object.keys(filled).length} evidence-backed field(s); applied ${filledCount}.`);
-      }
-    } catch (e) {
-      log(`⚠️ Validation pass failed: ${e.message} — continuing`);
-    }
-
-    // ----------------------------------------------------
-    // STEP 12: Save factual profile
-    // ----------------------------------------------------
-    setProgress("Step 12: Saving factual profile...", 96);
-    const sourceMap = new Map();
-    for (const s of (deterministicProfile.sources || [])) {
-      const key = `${s.label}|${s.url}`;
-      sourceMap.set(key, s);
-    }
-    for (const s of scoredSources.map(s => ({
-      label: s.title,
-      url: s.url || '#',
-      authority: s.authority,
-      trust: (s.scoring?.composite || 0) >= 80 ? 'OFFICIAL' : 'THIRD_PARTY',
-      scores: s.scoring
-    }))) {
-      const key = `${s.label}|${s.url}`;
-      if (!sourceMap.has(key)) sourceMap.set(key, s);
-    }
-    if (wqpLimnology?.recordCount > 0) {
-      sourceMap.set('Water Quality Portal|https://www.waterqualitydata.us/', { label: 'Water Quality Portal / SCDES monitoring', url: 'https://www.waterqualitydata.us/', trust: 'OFFICIAL', sourceType: 'official_structured' });
-    }
-
-    // Safety net: ensure deterministic biology fields are never lost in the packet
-    // Final species list: union of deterministic + agent results — always additive, never subtractive
-    const _detSpecies = deterministicProfile.biology?.predatorSpecies || [];
-    const _agentSpecies = agentSections.biology?.predatorSpecies || [];
-    const _finalSpecies = [...new Set([..._detSpecies, ..._agentSpecies])];
-    const safeBiology = {
-      ...(agentSections.biology || {}),
-      predatorSpecies: _finalSpecies.length ? _finalSpecies : _detSpecies,
-      knownStockings: agentSections.biology?.knownStockings?.length ? agentSections.biology.knownStockings : (deterministicProfile.biology?.knownStockings || []),
-    };
-    const researchPacket = {
-      lakeName,
-      baseName,
-      state: stateName,
-      ...agentSections,
-      biology: safeBiology,
-      forage: safeBiology,
-      trolling: null,
-      trollingIntelligence: null,
-      _extractedFacts: uniqueFacts,
-      _extractedFactsCount: uniqueFacts.length,
-      _wqpLimnology: wqpLimnology || null,
-      evidence,
-      sources: [...sourceMap.values()]
-    };
-
-
-    log(`Saving factual profile (facts=${uniqueFacts.length}, deterministic species=${agentSections.biology?.predatorSpecies?.length || 0})...`);
-    const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        lakeName,
-        profile: researchPacket,
-        status: 'draft',
-        requestedBy: 'Evidence Acquisition Engine v5 factual-only'
-      })
-    });
-    if (!saveRes.ok) {
-      const t = await saveRes.text().catch(()=>'').then(s=>s.slice(0,400));
-      throw new Error(`Save HTTP ${saveRes.status}: ${t}`);
-    }
-    const saveData = await saveRes.json();
-    log(`✔ Saved factual profile v${saveData.version} as draft — facts=${uniqueFacts.length}`);
-
-    setProgress("Pipeline completed successfully!", 100);
-    log(`=== EVIDENCE PIPELINE COMPLETE ===`);
-
-    if (callbacks.onComplete) await callbacks.onComplete(lakeName);
-    if (contradictions.length > 0 && callbacks.onContradictions) callbacks.onContradictions(contradictions, lakeName);
+  log(`Saving profile (facts=${allFacts.length}, species=${finalSpecies.length}, sections=${agentResults.map(r=>r.agent).join(',') || 'all'})...`);
+  const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lakeName, profile: researchPacket, status: 'draft', requestedBy: 'TrollMap Evidence Engine v6' })
+  });
+  if (!saveRes.ok) {
+    const t = await saveRes.text().catch(()=>'').then(s=>s.slice(0,400));
+    throw new Error(`Save HTTP ${saveRes.status}: ${t}`);
+  }
+  const saveData = await saveRes.json();
+  log(`✔ Saved profile v${saveData.version} as draft`);
+  setProgress('Pipeline completed successfully!', 100);
+  log('=== EVIDENCE PIPELINE COMPLETE ===');
+  return { contradictions };
 }
 
-export { runFullPipeline, runAgents, runAgent, runResume, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, _state, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log };
+export { runFullPipeline, runAgents, runAgent, runResume, assembleAndSaveProfile, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, _state, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log };
