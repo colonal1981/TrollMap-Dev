@@ -531,3 +531,290 @@ Implemented:
 - NRC Firecrawl usage and USACE Scrape.do usage occur only after free/cache paths fail.
 - Summary performs no discovery or fetch.
 - Historical immutable documents are not repeatedly fetched.
+
+## 12. Implementation clarifications and decisions
+
+This section resolves details that were intentionally left at an architectural level in the first draft. These decisions should be treated as the implementation contract.
+
+### 12.1 Phased implementation decision
+
+Do **not** implement the shared R2 registry, shared segmentation, or shared-section routing in the first implementation phase.
+
+The first phase should include only:
+
+1. Replace the discovery query templates.
+2. Preserve TinyFish title, snippet, position, score, site name, date, and final URL where available.
+3. Add pre-fetch relevance scoring and conservative wrong-lake rejection.
+4. Add canonical URL normalization and cross-category/per-run URL deduplication.
+5. Add the domain-aware USACE Scrape.do and NRC Firecrawl fallbacks with existing credit guards.
+6. Persist TinyFish ETag/Last-Modified fields where the current lake-level normalized-document format can safely carry them.
+7. Keep all current lake-package storage behavior intact.
+
+This delivers the low-risk discovery/fetch improvements without introducing a cross-lake dependency. The shared registry is Phase 2 and must use the segmentation, canonicalization, and rollback rules below.
+
+### 12.2 Segmentation approach for the shared corpus
+
+A mandatory LLM segmentation pass is **not** approved. It would add cost, nondeterminism, and another way to misclassify lake scope. Phase 2 segmentation should be deterministic first, with optional LLM assistance only for an explicitly queued ambiguous document.
+
+#### Segmentation inputs
+
+Preserve structural information during acquisition whenever possible:
+
+- PDF.js output: retain `--- PAGE n ---` markers and page records.
+- TinyFish/Firecrawl Markdown: retain headings, horizontal rules, tables, and page markers if supplied.
+- HTML: retain heading hierarchy and main-content boundaries.
+- Provider title and first-page title remain separate metadata.
+
+#### Deterministic split order
+
+1. Split on explicit PDF page markers while retaining page numbers.
+2. Detect document-level section headings using Markdown headings and conservative plain-text heading rules:
+   - short line, generally under 140 characters;
+   - surrounded by blank lines;
+   - title case or mostly uppercase;
+   - recognized prefixes such as `Study Title`, `Job Title`, `Chapter`, `Section`, `Appendix`, `Summary`, or numbered headings.
+3. Keep heading and subordinate paragraphs/tables together.
+4. If a section exceeds 12,000 characters, split it into chunks at paragraph boundaries with an 800-character overlap.
+5. If no reliable headings exist, use page groups up to 12,000 characters rather than inventing semantic sections.
+6. Never split a table row-by-row unless required by the existing table parser; preserve the heading and table caption in every resulting table chunk.
+
+Store both levels:
+
+```json
+{
+  "sectionId": "stable-document-local-id",
+  "heading": "Hydroacoustic Evaluation of Santee-Cooper Lakes",
+  "startPage": 1,
+  "endPage": 5,
+  "chunks": [
+    { "chunkId": "...-01", "text": "...", "overlapBefore": 0 },
+    { "chunkId": "...-02", "text": "...", "overlapBefore": 800 }
+  ]
+}
+```
+
+#### Deterministic lake tagging
+
+Build tags from the TrollMap lake catalog and alias registry, not from an LLM:
+
+1. Normalize text and match complete canonical lake names and approved aliases using token boundaries.
+2. Match names in the heading, first 1,500 section characters, captions, and repeated body references.
+3. Give heading matches the highest confidence.
+4. Associate a system/basin alias with its member lakes only when that membership is explicitly present in maintained metadata.
+5. Do not infer that every lake in the same river basin applies to every basin-level section.
+6. Store match evidence:
+
+```json
+{
+  "lakeSlug": "lake-marion",
+  "matchedText": "Lakes Marion and Moultrie",
+  "matchLocation": "heading",
+  "confidence": 1.0
+}
+```
+
+#### Deterministic category/topic tagging
+
+Use transparent keyword/rule maps for candidate routing, not final fact creation. One section may have multiple category tags. Examples:
+
+- biology: stocking, recruitment, population, electrofishing, gill net, species abundance;
+- limnology: dissolved oxygen, temperature profile, thermocline, nutrient, chlorophyll, Secchi;
+- habitat: vegetation, hydrilla, substrate, woody debris, fish attractor, shoreline habitat;
+- navigation: shoal, hazard, channel marker, stump, navigation;
+- regulations: creel, size limit, possession, closed season;
+- fisheries: angler, seasonal pattern, catch rate, fishing mortality, creel survey;
+- identity: owner, dam, impoundment, license, project number.
+
+These tags select candidate sections for an agent. They do not authorize a fact by themselves.
+
+#### Wrong-lake isolation at extraction time
+
+Section tagging alone is not the final safety boundary. Before a fact is accepted:
+
+1. Its citation/evidence window must contain the canonical lake, an approved alias, or an inherited unambiguous section heading.
+2. If the evidence window names a different lake and not the target, reject the fact.
+3. If it names the target and another lake, mark it `multiLake=true`; accept only facts explicitly stated for the target or shared system.
+4. Statewide rules/facts may be inherited only from sections tagged `scope=statewide` and from categories that permit statewide inheritance (for example regulations). Numerical biological observations must not be inherited statewide.
+5. Every extracted fact stores `documentId`, `sectionId`, `chunkId`, page range, and exact evidence excerpt.
+
+#### Optional ambiguous-document queue
+
+If deterministic segmentation/tagging produces no reliable sections or conflicting lake tags, mark the document `indexStatus=ambiguous`. Do not expose it to agents by default. A later maintenance task may use one bounded LLM indexing pass that returns only section boundaries and tags, followed by deterministic validation against the lake/alias catalog. This is optional and is not part of normal lake research.
+
+### 12.3 Freshness and fingerprint decision
+
+Do not compute a full normalized-text SHA-256 in the Worker request path.
+
+Use this precedence:
+
+1. Origin/provider ETag.
+2. Origin/provider Last-Modified.
+3. Immutable-document policy for historical PDFs/papers.
+4. Source-type TTL.
+5. Lightweight normalized-content fingerprint only when validators are unavailable and content is refreshed.
+
+The lightweight fingerprint should include more than the first 1,000 characters to avoid collisions between annual reports with similar covers. Compute it over a bounded signature:
+
+```text
+normalized canonical title
++ normalized text length
++ first 4096 characters
++ middle 4096 characters
++ last 4096 characters
+```
+
+Hash that bounded signature with a fast non-cryptographic 32/64-bit function or Web Crypto SHA-256. Because the input is capped near 12 KB, Worker CPU cost is bounded. Store it as `contentFingerprint`, not `contentHash`, so it is not misrepresented as a full-content cryptographic identity.
+
+A full-file/full-text cryptographic hash may be generated by an offline maintenance tool but is not required for request-time deduplication or freshness.
+
+### 12.4 Canonical URL normalization rules
+
+Canonicalization must preserve a lossless audit trail:
+
+```json
+{
+  "requestedUrl": "...",
+  "finalUrl": "...",
+  "canonicalUrl": "...",
+  "urlAliases": ["..."]
+}
+```
+
+Never overwrite the original requested or final URL.
+
+#### Generic normalization
+
+1. Parse with the URL API; reject non-HTTP(S) URLs.
+2. Lowercase scheme and hostname.
+3. Remove default ports (`:80` for HTTP, `:443` for HTTPS).
+4. Remove fragments.
+5. Collapse duplicate path slashes.
+6. Normalize percent-encoding only for unreserved characters; do not decode encoded path separators.
+7. Remove a trailing slash except for the origin root.
+8. Sort retained query parameters by key and value.
+9. Remove known tracking parameters:
+   - `utm_*`, `fbclid`, `gclid`, `msclkid`, `srsltid`;
+   - analytics/referral-only parameters confirmed not to select content.
+10. Do **not** remove all query parameters generically.
+
+#### Parameter classes
+
+Store stripped revision/download parameters as version metadata when present:
+
+- `rev`, `ver`, `version`;
+- `attachment`, `download` when they only toggle disposition;
+- UGA `withWatermark`, `withMetadata`, `registerDownload`.
+
+Retain functional identity parameters unless a domain adapter proves they are disposable:
+
+- NEPIS `Dockey`, `File`, `ZyAction`, and document identifiers;
+- repository record/item IDs;
+- parameters such as `sequence` when they may select a different file/version.
+
+#### Domain adapters
+
+- **NCWRC:** preserve the `/open`, `/download`, or `/media/{id}` path initially. After a redirect/fetch, register both requested and final normalized URLs as aliases of the same document ID. Do not assume two different NCWRC paths are identical until redirect metadata or fingerprint confirms it.
+- **Duke PDFs:** strip `rev` from the identity key but retain its value as `sourceRevision`. A changed revision triggers freshness review, not a second permanent identity.
+- **USACE:** strip cache/version query parameters such as `ver` from identity but retain them as source revision metadata.
+- **UGA:** canonicalize the stable `/record/{id}/files/{filename}` requested URL when available; register the `/nanna/` final download URL as an alias and strip download-presentation flags.
+- **NRC:** normalize hostname/path case conservatively and retain the accession path; do not rewrite accession IDs.
+- **NEPIS:** use the existing NEPIS document/file identifier logic. Do not apply ordinary PDF query stripping.
+
+#### Deduplication key and collision resolution
+
+Use a hash of the short canonical URL string as the registry lookup key, with the canonical URL stored in the record for collision verification. On fetch/redirect, merge records only when one of these is true:
+
+1. normalized requested/final URLs intersect;
+2. a domain adapter identifies the same stable document ID;
+3. validators and bounded fingerprint match;
+4. an explicit reviewed alias relation exists.
+
+A similar title is never sufficient to merge documents.
+
+### 12.5 Shared-registry isolation, rollback, and rebuild
+
+The shared registry must be versioned and replaceable. Do not make a single mutable JSON object the sole source of truth.
+
+Suggested layout:
+
+```text
+research/shared/generations/{generationId}/manifest.json
+research/shared/generations/{generationId}/indexes/...
+research/shared/documents/{documentId}/versions/{versionId}.json
+research/shared/pointers/current.json
+research/shared/pointers/previous.json
+research/shared/quarantine/{documentId}.json
+```
+
+Rules:
+
+1. Shared document versions are immutable after publication.
+2. Build a new manifest/index generation under a new `generationId`.
+3. Validate counts, references, lake slugs, section bounds, and checksums/fingerprints.
+4. Publish by updating `previous.json`, then atomically replacing the small `current.json` pointer last.
+5. Lake research reads one generation ID at the start and uses it for the entire run.
+6. Lake packages record `sharedGenerationId` and all referenced document/section versions.
+7. Rollback changes `current.json` back to the previous validated generation; no document rewrite is required.
+8. A kill switch such as `SHARED_RESEARCH_ENABLED=false` must make the pipeline fall back to the current per-lake behavior.
+9. Bad documents are quarantined by document/version ID and excluded in the next generation; do not destructively delete evidence.
+10. Rebuild indexes deterministically from immutable shared document versions plus the lake/alias catalog. If those objects are unavailable, discard the shared generation and use per-lake acquisition.
+
+This preserves the existing lake-package isolation as a fallback and makes shared-index corruption reversible.
+
+### 12.6 Fishing-report recency decision
+
+Separate current reports from evergreen seasonal-pattern research.
+
+#### Current fishing reports
+
+Primary query:
+
+```text
+"{lakeName}" fishing report
+```
+
+Use:
+
+- `domain_type=web` (or `news` only for a specifically requested news pass);
+- `recency_minutes=64800` (45 days);
+- location `US`, language `en`.
+
+If fewer than three relevant, fetchable results survive scoring, run one fallback query with `recency_minutes=259200` (180 days). Do not automatically run both windows.
+
+Reject or heavily down-rank tournament result pages, social posts, generic aggregation pages, and pages whose publication date is outside the requested window even if TinyFish returns them.
+
+#### Evergreen seasonal patterns
+
+Query:
+
+```text
+"{lakeName}" seasonal fishing patterns bass crappie striped bass -site:facebook.com -site:instagram.com -site:youtube.com
+```
+
+Do not apply `recency_minutes`. Seasonal technique pages and agency studies may remain useful for years. Store publication/update date and apply ordinary source-quality and freshness scoring.
+
+The two result sets serve different purposes and must not share one recency policy.
+
+### 12.7 Domain-aware paid fallback decision
+
+Paid fallbacks must be narrow and observable.
+
+- **USACE PDF:** shared cache -> TinyFish -> direct Worker fetch -> Scrape.do GET -> returned binary PDF -> PDF.js. Firecrawl is not attempted unless Scrape.do also fails and the source is explicitly high-priority.
+- **NRC PDF:** shared cache -> TinyFish -> direct Worker fetch -> optional Scrape.do only if policy retains it -> Firecrawl scrape. Testing established that Firecrawl succeeds where the other tested paths failed.
+- Record every paid attempt with provider, canonical URL, category requests, reason, result, and estimated/actual credit count.
+- Check the existing Firecrawl budget guard before every fallback.
+- A failed source is cached with a short failure TTL to prevent every category from retrying it in the same run.
+- Cross-category deduplication must occur before fallback selection so three agents cannot spend three credits on one URL.
+
+### 12.8 Phase 1 acceptance criteria
+
+Before beginning Phase 2 shared storage, Phase 1 must demonstrate:
+
+- all selected categories merge candidates before fetching;
+- one canonical URL causes at most one acquisition attempt per provider per run;
+- search snippets and metadata survive into scoring/logging;
+- clear wrong-lake titles are rejected;
+- NCWRC attachment/open URL forms are retained and fetchable;
+- USACE and NRC fallbacks follow the tested domain routes and budget guards;
+- existing lake package output remains compatible;
+- disabling the new scoring/deduplication path restores the existing behavior.
