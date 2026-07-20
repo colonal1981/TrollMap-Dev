@@ -3984,7 +3984,8 @@ CRITICAL SPECIES COVERAGE: Every species in the confirmed list MUST appear in tr
 SPECIFIC EXTRACTION TARGETS — look for these in the source documents:
 - Striped Bass spring: look for "pre-spawn", "staging", "spawning tributaries", "spring run", "March", "April", "May", "58-68°F" — extract depth, structure, forage from that context
 - Striped Bass fall: look for "October", "fall striper", "post-closure", "schooling" — extract what you find
-- Largemouth Bass winter: look for "cold water", "winter bass", "January", "February", "deep timber", "creek channels in winter" — do not leave winter null if any cold-water largemouth content exists in docs
+- Largemouth Bass winter: look for "cold water", "winter bass", "January", "February", "deep timber", "creek channels in winter", "jigs spoons worms" — if a doc says "bass move back to deep water where jigs, spoons and heavily weighted worms are productive" that is winter LMB data; populate notes even if no explicit depth is given
+- Striped Bass winter: look for "deep water", "shiner minnows", "drifting", "winter striper" — if a doc says "stripers are in deep water where drifting with large shiner minnows is effective" that is winter striper data; populate notes and use depth from fall as estimate if no winter depth stated
 - If a document says "pre-spawn striped bass staging near spawning tributaries following shad schools" — that is spring striper data, extract it
 
 If a document gives specific depth ranges or seasonal behavior for a species on ${lakeName}, use it — do not replace document evidence with generic inferences.
@@ -4315,7 +4316,7 @@ async function handleResearchAgent(request, env) {
           { role: "user", content: userPrompt }
         ],
         temperature: 0.1,
-        max_tokens: 3000,
+        max_tokens: 5000,
         response_format: { type: "json_object" }
       };
       try {
