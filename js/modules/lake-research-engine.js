@@ -1814,8 +1814,9 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
                 const detSpecies = deterministicProfile.biology?.predatorSpecies || [];
                 const agentSpecies = merged.predatorSpecies || [];
                 const existingSpecies = existing.predatorSpecies || [];
-                // Merge all three lists — take the union
-                const allSpecies = [...new Set([...detSpecies, ...existingSpecies, ...agentSpecies])];
+                // Merge all three lists — take the union, then filter non-game/protected species
+                const NON_GAME_ENGINE = new Set(['shortnose sturgeon','atlantic sturgeon','lake sturgeon','pallid sturgeon','paddlefish','american eel','lamprey','sea lamprey','threadfin shad','gizzard shad','blueback herring','american shad','alewife','carp','common carp','bighead carp','silver carp','grass carp','gar','longnose gar','spotted gar','alligator gar','drum','freshwater drum','buffalo','bigmouth buffalo','smallmouth buffalo','sucker','white sucker','redhorse']);
+                const allSpecies = [...new Set([...detSpecies, ...existingSpecies, ...agentSpecies])].filter(s => !NON_GAME_ENGINE.has(String(s).toLowerCase()));
                 agentSections.biology.predatorSpecies = allSpecies.length ? allSpecies : detSpecies;
                 // Stockings: use agent result if non-empty, otherwise keep existing
                 agentSections.biology.knownStockings = merged.knownStockings?.length ? merged.knownStockings : (existing.knownStockings?.length ? existing.knownStockings : (deterministicProfile.biology?.knownStockings || []));
