@@ -960,9 +960,11 @@ async function runResume(lakeName, selectedAgents, callbacks = {}) {
   await runAgents(lakeName, selectedAgents, 'resume', callbacks);
 }
 
-// ── runAgent: Execute single agent pipeline (discover → fetch → extract → enrich) ──
-// calledFromRunAgents=true suppresses researchInProgress management so runAgents
-// can run multiple agents in parallel without them stomping each other's flag.
+// ── runAgent: Execute single agent pipeline with client-side orchestration ──
+// Calls individual fast Worker endpoints sequentially — no single Worker request
+// does too much, avoiding the CPU time limit that killed handleResearchAgentPipeline.
+// Pattern: discover → proxy-download (per doc) → save-normalized → analyze-facts
+//          → dedupe-contradictions → agent (LLM only)
 async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRunAgents = false) {
   if (!_calledFromRunAgents && _state.researchInProgress) throw new Error('A research task is already in progress.');
   if (!lakeName) throw new Error('Select a lake first.');
@@ -970,7 +972,6 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
 
   const def = AGENT_DEFINITIONS[agentKey];
 
-  // When called standalone (not from runAgents), manage progress state ourselves
   if (!_calledFromRunAgents) {
     _state.researchInProgress = true;
     _state.researchLog = [];
@@ -984,9 +985,8 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
 
   try {
     const stateName = sanitizeStateFromLakeName(lakeName);
+    const baseName = cleanLakeBaseName(lakeName);
 
-    // Pass deterministic profile so regulations agent has its KV-cached data
-    // and other agents have owner/species context without needing to re-fetch.
     let previousResults = {};
     if (_state.deterministicProfile) {
       previousResults = {
@@ -996,38 +996,224 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
       };
     }
 
-    const res = await fetch(`${CF_WORKER_URL}/research/agent`, {
+    // ── STEP 1: Discover sources for this agent ──────────────────────────────
+    log(`  [${agentKey}] Discovering sources...`);
+    const discoverRes = await fetch(`${CF_WORKER_URL}/research/discover`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        lakeName,
-        state: stateName,
-        agent: agentKey,
-        mode,
-        targetFields: def.targetFields,
+        lakeName, state: stateName, agent: agentKey,
         reservoirOwner: previousResults.reservoirOwner || null,
         predatorSpecies: previousResults.predatorSpecies || [],
-        previousResults,
+      })
+    });
+    if (!discoverRes.ok) throw new Error(`Discover failed: ${discoverRes.status}`);
+    const discoverData = await discoverRes.json();
+    if (!discoverData.success) throw new Error(discoverData.error || 'Discovery failed');
+
+    const sources = (discoverData.sources || []).filter(s => s.agentTags?.includes(agentKey) || !s.agentTags);
+    const queryLog = discoverData.queryLog || [];
+    queryLog.forEach(q => log(`  [discover] ${q}`));
+    log(`  [${agentKey}] Found ${sources.length} sources`);
+
+    if (!sources.length) {
+      log(`  [${agentKey}] No sources — skipping`);
+      return { success: true, agent: agentKey, section: {}, factsCount: 0, docsUsed: 0, queryLog };
+    }
+
+    // ── STEP 2: Load existing normalized docs from R2 (cache check) ──────────
+    let existingDocs = [];
+    if (mode === 'resume') {
+      const normRes = await fetch(`${CF_WORKER_URL}/research/get-normalized?lake=${encodeURIComponent(lakeName)}`);
+      if (normRes.ok) {
+        const normData = await normRes.json();
+        existingDocs = (normData.documents || []).filter(d => d.agentTags?.includes(agentKey));
+        log(`  [${agentKey}] Resume: loaded ${existingDocs.length} cached docs`);
+      }
+    } else {
+      const normRes = await fetch(`${CF_WORKER_URL}/research/get-normalized?lake=${encodeURIComponent(lakeName)}`);
+      if (normRes.ok) {
+        const normData = await normRes.json();
+        existingDocs = normData.documents || [];
+      }
+    }
+
+    const existingByUrl = new Map(existingDocs.map(d => [String(d.url || '').split('?')[0].toLowerCase(), d]));
+    const TTL_MS = {
+      academic: 365 * 24 * 60 * 60 * 1000,
+      official:  90 * 24 * 60 * 60 * 1000,
+      news:      30 * 24 * 60 * 60 * 1000,
+      anecdotal: 14 * 24 * 60 * 60 * 1000,
+    };
+    function getDocTtl(url) {
+      const u = String(url || '').toLowerCase();
+      if (/seafwa|usgs|nepis|epa\.gov|asmfc|apms|\.edu/.test(u)) return TTL_MS.academic;
+      if (/dnr\.sc\.gov|ncwildlife|georgiawildlife|tn\.gov|eregulations|ferc|santeecooper|usace/.test(u)) return TTL_MS.official;
+      if (/news|report|stocking|annual|trends|freshwater\.html/.test(u)) return TTL_MS.news;
+      return TTL_MS.anecdotal;
+    }
+
+    // ── STEP 3: Fetch each source (one Worker call per doc — stays fast) ──────
+    const normalizedDocuments = [];
+    const now = Date.now();
+
+    // Regulations agent: already in deterministic facts — skip fetching
+    if (agentKey === 'regulations') {
+      log(`  [regulations] Using KV-cached state regulations — no fetch needed`);
+    } else if (mode === 'resume') {
+      normalizedDocuments.push(...existingDocs);
+    } else {
+      for (const src of sources) {
+        const normUrl = String(src.url || '').split('?')[0].toLowerCase();
+        const existing = existingByUrl.get(normUrl);
+
+        // Cache hit — reuse if fresh
+        if (existing?.fetchedAt) {
+          const age = now - new Date(existing.fetchedAt).getTime();
+          if (age < getDocTtl(src.url)) {
+            log(`  [${agentKey}] cache hit: ${src.title?.slice(0, 60)}`);
+            normalizedDocuments.push({ ...existing, agentTags: [...new Set([...(existing.agentTags || []), agentKey])] });
+            continue;
+          }
+        }
+
+        // Fetch via proxy-download
+        try {
+          const proxyRes = await fetch(
+            `${CF_WORKER_URL}/research/proxy-download?url=${encodeURIComponent(src.url)}&type=${src.type || 'HTML'}`
+          );
+          if (proxyRes.ok) {
+            const text = await proxyRes.text();
+            const xSource = proxyRes.headers?.get('X-Source') || 'unknown';
+            if (text && text.length > 200) {
+              const doc = {
+                title: src.title, url: src.url, fullText: text,
+                agentTags: src.agentTags || [agentKey],
+                discoveredBy: agentKey,
+                fetchedAt: new Date().toISOString(),
+              };
+              normalizedDocuments.push(doc);
+              existingByUrl.set(normUrl, doc);
+              log(`  📄 [${normalizedDocuments.length}] ${src.title?.slice(0, 70)} (${xSource})`);
+            } else {
+              log(`  ⚠️ Insufficient content for ${src.title?.slice(0, 60)} (${text?.length || 0} chars)`);
+            }
+          }
+        } catch (e) {
+          log(`  ⚠️ Fetch failed for ${src.title?.slice(0, 60)}: ${e.message}`);
+        }
+      }
+
+      // Save normalized docs back to R2 (merge with untouched docs)
+      if (normalizedDocuments.length) {
+        const updatedUrls = new Set(normalizedDocuments.map(d => String(d.url || '').split('?')[0].toLowerCase()));
+        const untouched = existingDocs.filter(d => !updatedUrls.has(String(d.url || '').split('?')[0].toLowerCase()));
+        const merged = [...untouched, ...normalizedDocuments];
+        await fetch(`${CF_WORKER_URL}/research/save-normalized`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lakeName, documents: merged })
+        });
+      }
+    }
+
+    if (!normalizedDocuments.length && agentKey !== 'regulations') {
+      log(`  [${agentKey}] No documents fetched — running LLM with deterministic context only`);
+    }
+
+    // ── STEP 4: Extract facts (one Worker call, fast) ─────────────────────────
+    let uniqueFacts = [];
+    if (normalizedDocuments.length > 0) {
+      log(`  [${agentKey}] Extracting facts from ${normalizedDocuments.length} docs...`);
+      const analyzeRes = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lakeName, baseName, state: stateName, docIndex: 0,
+          documents: normalizedDocuments.slice(0, 12).map(d => ({
+            title: d.title, url: d.url || '',
+            text: (d.fullText || '').slice(0, 150000)
+          }))
+        })
+      });
+      if (analyzeRes.ok) {
+        const analyzeData = await analyzeRes.json();
+        const rawFacts = analyzeData.extracted_facts || [];
+
+        // ── STEP 5: Deduplicate facts ─────────────────────────────────────────
+        if (rawFacts.length > 0) {
+          const dedupeRes = await fetch(`${CF_WORKER_URL}/research/dedupe-contradictions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ facts: rawFacts })
+          });
+          if (dedupeRes.ok) {
+            const dedupeData = await dedupeRes.json();
+            uniqueFacts = dedupeData.deduplicated_facts || rawFacts;
+          } else {
+            uniqueFacts = rawFacts;
+          }
+          log(`  [${agentKey}] ${uniqueFacts.length} facts extracted`);
+          uniqueFacts.slice(0, 5).forEach(f => log(`  💬 [${f.category}] ${String(f.fact || '').slice(0, 80)}`));
+        }
+      }
+    }
+
+    // ── STEP 6: LLM enrichment (one Worker call, fast) ───────────────────────
+    log(`  [${agentKey}] Running LLM enrichment...`);
+    const agentRes = await fetch(`${CF_WORKER_URL}/research/agent-llm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lakeName, state: stateName,
+        agent: agentKey,
+        previousResults: {
+          ...previousResults,
+          _extractedFacts: uniqueFacts,
+          _normalizedDocuments: normalizedDocuments.slice(0, agentKey === 'fisheries' ? 25 : 12).map(d => ({
+            title: d.title, url: d.url,
+            text: (d.fullText || '').slice(0, agentKey === 'fisheries' ? 150000 : 40000)
+          }))
+        }
       })
     });
 
-    if (!res.ok) throw new Error(`Agent ${agentKey} failed: ${res.status}`);
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error || 'Agent failed');
+    if (!agentRes.ok) {
+      // Retry once on 502
+      if (agentRes.status === 502) {
+        log(`  ⚠️ ${def.label} LLM 502 — retrying after 5s...`);
+        await new Promise(r => setTimeout(r, 5000));
+        const retry = await fetch(`${CF_WORKER_URL}/research/agent-llm`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lakeName, state: stateName, agent: agentKey,
+            previousResults: {
+              ...previousResults,
+              _extractedFacts: uniqueFacts,
+              _normalizedDocuments: normalizedDocuments.slice(0, 12).map(d => ({
+                title: d.title, url: d.url,
+                text: (d.fullText || '').slice(0, 40000)
+              }))
+            }
+          })
+        });
+        if (!retry.ok) throw new Error(`Agent ${agentKey} LLM failed: ${retry.status}`);
+        const retryData = await retry.json();
+        if (!retryData.success) throw new Error(retryData.error || 'Agent LLM failed');
+        log(`✔ ${def.label} agent complete (${uniqueFacts.length} facts, ${normalizedDocuments.length} docs)`);
+        if (callbacks.onComplete) await callbacks.onComplete(lakeName);
+        return { ...retryData, factsCount: uniqueFacts.length, docsUsed: normalizedDocuments.length, queryLog };
+      }
+      throw new Error(`Agent ${agentKey} LLM failed: ${agentRes.status}`);
+    }
 
-    log(`✔ ${def.label} agent complete (${data.factsCount} facts, ${data.docsUsed} docs)`);
-    if (data.queryLog?.length) {
-      data.queryLog.forEach(q => log(`  [discover] ${q}`));
-    }
-    if (data.docTitles?.length) {
-      data.docTitles.forEach((t, i) => log(`  📄 [${i+1}/${data.docsUsed}] ${t}`));
-    }
-    if (data.factsSample?.length) {
-      data.factsSample.forEach(f => log(`  💬 ${f}`));
-    }
+    const agentData = await agentRes.json();
+    if (!agentData.success) throw new Error(agentData.error || 'Agent LLM failed');
 
+    log(`✔ ${def.label} agent complete (${uniqueFacts.length} facts, ${normalizedDocuments.length} docs)`);
     if (callbacks.onComplete) await callbacks.onComplete(lakeName);
-    return data;
+    return { ...agentData, factsCount: uniqueFacts.length, docsUsed: normalizedDocuments.length, queryLog };
 
   } catch (e) {
     log(`❌ ${def.label} agent failed: ${e.message}`);
@@ -1451,10 +1637,22 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   };
 
   const totalFactsExtracted = agentResults.reduce((sum, r) => sum + (r.data?.factsCount || 0), 0);
+  // Preserve existing verification status — don't demote a verified profile back to draft
+  // just because an agent reran. Status only changes if explicitly set by the user.
+  const existingStatus = existingSavedProfile?.metadata?.status || 'draft';
+  const existingVerified = existingSavedProfile?.metadata?.verified || false;
+  const saveStatus = existingVerified ? 'verified' : existingStatus;
+
   log(`Saving profile (facts=${totalFactsExtracted} extracted server-side, species=${finalSpecies.length}, agents=[${agentResults.map(r=>r.agent).join(',')}])...`);
   const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ lakeName, profile: researchPacket, status: 'draft', requestedBy: 'TrollMap Evidence Engine v6' })
+    body: JSON.stringify({
+      lakeName, profile: researchPacket,
+      status: saveStatus,
+      approve: existingVerified,
+      verified: existingVerified,
+      requestedBy: 'TrollMap Evidence Engine v6'
+    })
   });
   if (!saveRes.ok) {
     const t = await saveRes.text().catch(()=>'').then(s=>s.slice(0,400));
