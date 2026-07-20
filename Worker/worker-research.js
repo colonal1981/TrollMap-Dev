@@ -1679,6 +1679,19 @@ function canonicalizeResearchSpecies(raw) {
   return RESEARCH_SPECIES_CANON[n] || titleCaseWords(n);
 }
 
+// Species that must never appear in predatorSpecies regardless of doc content
+// Includes protected/endangered species, non-game fish, and forage/baitfish
+const NON_GAME_SPECIES = new Set([
+  'shortnose sturgeon', 'atlantic sturgeon', 'lake sturgeon', 'pallid sturgeon',
+  'paddlefish', 'american eel', 'lamprey', 'sea lamprey',
+  'threadfin shad', 'gizzard shad', 'blueback herring', 'american shad', 'alewife',
+  'carp', 'common carp', 'bighead carp', 'silver carp', 'grass carp',
+  'corbicula', 'asian clam', 'zebra mussel',
+  'gar', 'longnose gar', 'spotted gar', 'alligator gar',
+  'drum', 'freshwater drum', 'buffalo', 'bigmouth buffalo', 'smallmouth buffalo',
+  'sucker', 'white sucker', 'redhorse',
+]);
+
 function uniqueResearchSpecies(items) {
   const out = [];
   const seen = new Set();
@@ -1687,6 +1700,7 @@ function uniqueResearchSpecies(items) {
     if (!s) continue;
     const key = normalizeResearchName(s);
     if (seen.has(key)) continue;
+    if (NON_GAME_SPECIES.has(key)) continue; // never add non-game/protected/baitfish
     seen.add(key);
     out.push(s);
   }
@@ -2682,8 +2696,24 @@ async function handleResearchSaveNormalized(request, env) {
     const title = (doc.title || '').toLowerCase();
     const preview = (doc.fullText || doc.text || '').slice(0, 3000).toLowerCase();
     const url = (doc.url || '').toLowerCase();
-    // Pass if any search term appears in title, URL, or first 3000 chars of content
-    return searchTerms.some(term => title.includes(term) || url.includes(term) || preview.includes(term));
+    const combined = title + ' ' + url + ' ' + preview;
+
+    // Must match BOTH lake name/base name AND state — prevents off-state lakes with same name
+    // e.g. "Marion Lake, MN" passes lake name check but fails state check
+    const lakeNameTerms = [lakeName.toLowerCase(), baseName.toLowerCase()];
+    const stateTerms = state ? [
+      ` ${state.toLowerCase()} `, `(${state.toLowerCase()})`,
+      state.toLowerCase() + ' lake', 'south carolina', 'north carolina',
+      'georgia', 'tennessee', 'santee', 'scdnr', 'ncwrc', 'gadnr'
+    ] : [];
+
+    const hasLakeName = lakeNameTerms.some(t => combined.includes(t));
+    const hasState = !state || stateTerms.some(t => combined.includes(t));
+
+    // Official/priority sources (eRegulations, SCDNR, EPA NSCEP, WQP, Grokipedia) pass automatically
+    const isOfficialSource = /eregulations\.com|dnr\.sc\.gov|dnr\.nc\.gov|epd\.georgia|epa\.gov|waterqualitydata|grokipedia|santeecooper|ncwildlife|tw\.gov/i.test(url);
+
+    return isOfficialSource || (hasLakeName && hasState);
   });
 
   const rejected = documents.length - filteredDocuments.length;
@@ -3668,9 +3698,20 @@ JSON only.`;
       const bioFacts = facts.filter(f =>
         /biology|forage|species|predator|stocking|standing.?stock|shad|bass|crappie|catfish|biomass|rotenone|abundance|invasive|herring|spawn|bream|bluegill|crawfish|crayfish|perch/i.test(f.category + ' ' + f.fact)
       );
+
+      // Split facts: official agency sources vs web/guide sources
+      // Only official sources can confirm new species presence
+      const OFFICIAL_SRC = /scdnr|ncwrc|ncwildlife|gadnr|twra|eregulations|dnr\.sc\.gov|dnr\.nc\.gov|ncwildlife\.gov|epd\.georgia|wildlife\.ga|epa\.gov|usgs\.gov|usace|santee.?cooper|duke.?energy|ferc|statewide.?fisheries|annual.?report|management.?plan|survey.*\d{4}|\d{4}.*survey/i;
+      const officialFacts = bioFacts.filter(f => OFFICIAL_SRC.test(f.source || ''));
+      const webFacts = bioFacts.filter(f => !OFFICIAL_SRC.test(f.source || ''));
+
       const deterministicSpecies = prev?.biology?.predatorSpecies || [];
 
-      const factsBlock = bioFacts.map(f =>
+      const officialFactsBlock = officialFacts.map(f =>
+        `• [${f.category}] ${f.fact} (source: ${f.source}, confidence ${f.confidence}%)\n  Quote: "${f.quote}"`
+      ).join('\n\n');
+
+      const webFactsBlock = webFacts.map(f =>
         `• [${f.category}] ${f.fact} (source: ${f.source}, confidence ${f.confidence}%)\n  Quote: "${f.quote}"`
       ).join('\n\n');
 
@@ -3683,12 +3724,15 @@ JSON only.`;
 DETERMINISTIC SPECIES LIST (MUST be preserved — only add, never remove):
 ${JSON.stringify(deterministicSpecies)}
 
-EXTRACTED FACTS:
-${factsBlock || 'No biology facts extracted.'}
+OFFICIAL AGENCY FACTS (SCDNR, NCWRC, EPA, USGS, eRegulations, DNR, Santee Cooper — authoritative for species presence):
+${officialFactsBlock || 'None.'}
+
+WEB / GUIDE FACTS (fishing guides, social media, commercial sites — use for forage/behavior/stocking only, NOT species presence):
+${webFactsBlock || 'None.'}
 ${docSection}
 
 RULES:
-1. predatorSpecies: start with deterministic list above. Add confirmed species from facts/documents. Never remove.
+1. predatorSpecies: start with deterministic list above. ONLY add a species if it appears in the OFFICIAL AGENCY FACTS section or in official agency document text. NEVER add a species based solely on web/guide sources like Omnia Fishing, fishing reports, or social media — these are unreliable for confirming species presence. Never remove. NEVER add: sturgeon, paddlefish, gar, eel, lamprey, shad, herring, carp, drum, buffalo, sucker, or any protected/endangered/baitfish species — these are NOT predator species.
 2. primaryForage: extract from facts AND document text. If shad (threadfin shad, gizzard shad, blueback herring) are mentioned as forage or baitfish in any document, include them. Do not leave primaryForage empty if forage species appear in the source material.
 3. knownStockings: extract actual stocking events with species, quantities, years if mentioned.
 4. standingStockKgHa: extract biomass figures from rotenone or electrofishing data if present.
@@ -4214,12 +4258,28 @@ async function handleResearchAgent(request, env) {
     const bio = groundedPrev?.biology || {};
     const allSpecies = Array.isArray(bio.predatorSpecies) ? bio.predatorSpecies : [];
 
+    // Dedup species before grouping:
+    // Black Crappie / White Crappie are redundant with Crappie for trolling intel purposes
+    // Merge them all into a single 'Crappie' representative to avoid 3 near-identical calls
+    const SPECIES_MERGE = {
+      'Black Crappie': 'Crappie',
+      'White Crappie': 'Crappie',
+      'Redear Sunfish Shellcracker': 'Redear Sunfish (Shellcracker)',
+      'Redear Sunfish': 'Redear Sunfish (Shellcracker)',
+    };
+    const deduped = [];
+    const dedupSeen = new Set();
+    for (const s of allSpecies) {
+      const canonical = SPECIES_MERGE[s] || s;
+      if (!dedupSeen.has(canonical)) { dedupSeen.add(canonical); deduped.push(canonical); }
+    }
+
     // Group species by fishing category
     const SPECIES_GROUPS = {
       bass:    ['Largemouth Bass', 'Smallmouth Bass', 'Spotted Bass', 'Alabama Bass', 'Striped Bass', 'White Bass', 'Yellow Bass', 'Redeye Bass'],
-      crappie: ['Crappie', 'Black Crappie', 'White Crappie'],
+      crappie: ['Crappie'],
       catfish: ['Catfish', 'Blue Catfish', 'Flathead Catfish', 'Channel Catfish', 'Bullhead'],
-      panfish: ['Bream', 'Bluegill', 'Redear Sunfish', 'Redear Sunfish Shellcracker', 'White Perch', 'Yellow Perch', 'Walleye', 'Sauger'],
+      panfish: ['Bream', 'Bluegill', 'Redear Sunfish (Shellcracker)', 'Bowfin', 'White Perch', 'Yellow Perch', 'Walleye', 'Sauger'],
       other:   ['Pickerel', 'Chain Pickerel', 'Pike', 'Muskie', 'Trout', 'Brown Trout', 'Rainbow Trout', 'Brook Trout'],
     };
 
@@ -4227,11 +4287,11 @@ async function handleResearchAgent(request, env) {
     const grouped = {};
     const assigned = new Set();
     for (const [group, members] of Object.entries(SPECIES_GROUPS)) {
-      const matched = allSpecies.filter(s => members.some(m => s.toLowerCase().includes(m.toLowerCase()) || m.toLowerCase().includes(s.toLowerCase())));
+      const matched = deduped.filter(s => members.some(m => s.toLowerCase().includes(m.toLowerCase()) || m.toLowerCase().includes(s.toLowerCase())));
       if (matched.length) { grouped[group] = matched; matched.forEach(s => assigned.add(s)); }
     }
     // Any unmatched species go into 'other'
-    const unmatched = allSpecies.filter(s => !assigned.has(s));
+    const unmatched = deduped.filter(s => !assigned.has(s));
     if (unmatched.length) grouped['other'] = [...(grouped['other'] || []), ...unmatched];
 
     const groupEntries = Object.entries(grouped).filter(([, sp]) => sp.length > 0);
