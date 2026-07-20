@@ -4182,6 +4182,118 @@ async function handleResearchAgent(request, env) {
     };
   }
 
+  // ── Fisheries agent: run one LLM call per species group for focused extraction ──
+  // Running all 17 species in one call causes token budget compression — striper spring
+  // and other minority-season data gets dropped. Split into groups, merge results.
+  if (agentKey === 'fisheries') {
+    const bio = groundedPrev?.biology || {};
+    const allSpecies = Array.isArray(bio.predatorSpecies) ? bio.predatorSpecies : [];
+
+    // Group species by fishing category
+    const SPECIES_GROUPS = {
+      bass:    ['Largemouth Bass', 'Smallmouth Bass', 'Spotted Bass', 'Alabama Bass', 'Striped Bass', 'White Bass', 'Yellow Bass', 'Redeye Bass'],
+      crappie: ['Crappie', 'Black Crappie', 'White Crappie'],
+      catfish: ['Catfish', 'Blue Catfish', 'Flathead Catfish', 'Channel Catfish', 'Bullhead'],
+      panfish: ['Bream', 'Bluegill', 'Redear Sunfish', 'Redear Sunfish Shellcracker', 'White Perch', 'Yellow Perch', 'Walleye', 'Sauger'],
+      other:   ['Pickerel', 'Chain Pickerel', 'Pike', 'Muskie', 'Trout', 'Brown Trout', 'Rainbow Trout', 'Brook Trout'],
+    };
+
+    // Assign each confirmed species to a group
+    const grouped = {};
+    const assigned = new Set();
+    for (const [group, members] of Object.entries(SPECIES_GROUPS)) {
+      const matched = allSpecies.filter(s => members.some(m => s.toLowerCase().includes(m.toLowerCase()) || m.toLowerCase().includes(s.toLowerCase())));
+      if (matched.length) { grouped[group] = matched; matched.forEach(s => assigned.add(s)); }
+    }
+    // Any unmatched species go into 'other'
+    const unmatched = allSpecies.filter(s => !assigned.has(s));
+    if (unmatched.length) grouped['other'] = [...(grouped['other'] || []), ...unmatched];
+
+    const groupEntries = Object.entries(grouped).filter(([, sp]) => sp.length > 0);
+    console.log(`fisheries agent: ${allSpecies.length} species split into ${groupEntries.length} groups: ${groupEntries.map(([g,sp]) => `${g}(${sp.length})`).join(', ')}`);
+
+    // Build a per-group prompt using the same userTemplate but with a filtered species list
+    const buildGroupPrompt = (groupSpecies) => {
+      const groupPrev = { ...groundedPrev, biology: { ...bio, predatorSpecies: groupSpecies } };
+      return agent.userTemplate(lakeName, state, groupPrev);
+    };
+
+    // Run all groups concurrently
+    const groupPromises = groupEntries.map(async ([groupName, groupSpecies]) => {
+      const userPrompt = buildGroupPrompt(groupSpecies);
+      const payload = {
+        messages: [
+          { role: "system", content: agent.system },
+          { role: "user", content: userPrompt }
+        ],
+        temperature: 0.1,
+        max_tokens: 3000,
+        response_format: { type: "json_object" }
+      };
+      try {
+        const llmResult = await callLLM(env, payload, null);
+        const rawText = extractLLMText(llmResult.data);
+        const parsed = extractJsonPossibly(rawText);
+        if (!parsed) {
+          console.warn(`fisheries group ${groupName}: non-JSON response`);
+          return {};
+        }
+        return parsed.trollingIntelligence || parsed[agentKey] || parsed || {};
+      } catch (e) {
+        console.warn(`fisheries group ${groupName} failed: ${e.message}`);
+        return {};
+      }
+    });
+
+    const groupResults = await Promise.all(groupPromises);
+
+    // Merge all group results into single trollingIntelligence object
+    const mergedIntelligence = {};
+    for (const groupResult of groupResults) {
+      for (const [species, seasons] of Object.entries(groupResult)) {
+        if (species === 'sources') continue;
+        mergedIntelligence[species] = seasons;
+      }
+    }
+
+    // Run normalization pass (same as post-processing below)
+    const SEASONS = ['spring', 'summer', 'fall', 'winter'];
+    const normalizedMerged = {};
+    for (const [species, seasons] of Object.entries(mergedIntelligence)) {
+      if (!seasons || typeof seasons !== 'object') { normalizedMerged[species] = seasons; continue; }
+      const normSeasons = {};
+      for (const season of SEASONS) {
+        const entry = seasons[season];
+        if (entry === null || entry === undefined) {
+          normSeasons[season] = null;
+        } else if (Array.isArray(entry) && entry.length === 2 && typeof entry[0] === 'number') {
+          normSeasons[season] = { preferredDepth: entry, structures: [], forage: [], recommendedPresentations: [], notes: null };
+        } else if (typeof entry === 'object' && !Array.isArray(entry)) {
+          normSeasons[season] = {
+            preferredDepth: Array.isArray(entry.preferredDepth) && entry.preferredDepth.length === 2 ? entry.preferredDepth : null,
+            structures: Array.isArray(entry.structures) ? entry.structures : [],
+            forage: Array.isArray(entry.forage) ? entry.forage : [],
+            recommendedPresentations: Array.isArray(entry.recommendedPresentations) ? entry.recommendedPresentations : [],
+            notes: entry.notes || null
+          };
+        } else {
+          normSeasons[season] = null;
+        }
+      }
+      normalizedMerged[species] = normSeasons;
+    }
+
+    const elapsed = Date.now();
+    return new Response(JSON.stringify({
+      success: true,
+      agent: agentKey,
+      section: normalizedMerged,
+      confidence: { percent: 35 },
+      meta: { model: 'multi-group', provider: 'gemini-free' },
+      sources: [{ label: 'Derived from lake profile and source documents', trust: 'DERIVED' }]
+    }), { headers: JSON_HEADERS });
+  }
+
   const systemPrompt = agent.system;
   const userPrompt = agent.userTemplate(lakeName, state, groundedPrev);
   
