@@ -777,6 +777,9 @@ async function handleResearchDiscover(request, env) {
           `"${queryLakeFinal}" water quality dissolved oxygen stratification`,
           `"${queryLakeFinal}" (fisheries OR biology OR "management plan") ${dnrName}`,
           `"${queryLakeFinal}" (limnology OR thermocline OR "water quality" OR "dissolved oxygen")`,
+          // Fishing intel query — surfaces local/regional fishing strategy pages, guide sites, tourism fishing content
+          // Intentionally broad to catch santeecoopercountry.org, guide services, state tourism fishing pages
+          `"${queryLakeFinal}" (fishing strategies OR "how to fish" OR "fishing guide" OR "fishing tips" OR "fishing techniques")`,
           // Species-targeted query — only fires when deterministic species list is available
           ...(speciesQueryTerms ? [`"${queryLakeFinal}" (${speciesQueryTerms}) seasonal depth structure behavior`] : []),
         ];
@@ -807,7 +810,7 @@ async function handleResearchDiscover(request, env) {
             else if (/usgs\.gov/.test(host)) authority = 'USGS';
             else if (/dnr\.sc\.gov/.test(host)) authority = 'SCDNR';
             else if (/eregulations\.com/.test(host)) authority = dnrName;
-            else if (/carolinasportsman|anglersheadquarters|gameandfishmag|takemefishing/.test(host)) authority = 'Fishing Guide';
+            else if (/carolinasportsman|anglersheadquarters|gameandfishmag|takemefishing|santeecoopercountry|lakemartinvoice|visitlakelanier|lakelanier|visitfloridakeys|visitnc|scprt|southcarolinaparks/.test(host)) authority = 'Fishing Guide';
             else if (/grokipedia\.com/.test(host)) authority = 'Grokipedia';
           } catch {}
           queryLog.push(`  ✓ found: ${(r.title||r.url).slice(0,80)}`);
@@ -3940,7 +3943,7 @@ JSON only. Never output a string or array for creelLimits or sizeLimits.`;
   fisheries: {
     label: "Species Intelligence",
     order: 7,
-    system: "You are a fisheries biologist and professional fishing guide. You are given a verified lake profile AND raw text from source documents (fishing guides, reports, agency surveys). Extract seasonal species behavior from BOTH the profile AND the source documents. Prioritize specific depth ranges, structures, and behavioral notes found in the documents over generic inferences. Do NOT recommend routes, speeds, or specific lure colors. CRITICAL: Only include species listed in the biology.predatorSpecies array. Return JSON only.",
+    system: "You are a fisheries biologist and professional fishing guide. You are given a verified lake profile AND raw text from source documents (fishing guides, reports, agency surveys). Extract seasonal species behavior from BOTH the profile AND the source documents. CONSENSUS RULE: When multiple sources cover the same species/season, use the depth range and structure that appears in the majority of sources. If sources contradict (e.g. 3 say 15-25ft and 1 says 5ft), use the majority position and note the discrepancy in the notes field. Do not average contradicting values — pick the consensus. Do not invent data when sources are silent — return null for that season. Prioritize official agency documents over fishing guide content when they conflict. Do NOT recommend routes, speeds, or specific lure colors. CRITICAL: Only include species listed in the biology.predatorSpecies array. Return JSON only.",
     userTemplate: (lakeName, state, prev) => {
       const bio = prev?.biology || prev?.forage || {};
       const confirmedSpecies = Array.isArray(bio.predatorSpecies) ? bio.predatorSpecies : [];
@@ -4683,8 +4686,7 @@ async function handleResearchSave(request, env) {
     habitat: incomingProfile.habitat || packageParts.habitat || {},
     navigation: incomingProfile.navigation || packageParts.navigation || {},
     regulations: incomingProfile.regulations || packageParts.regulations || {},
-    trolling: incomingProfile.fisheries || incomingProfile.trolling || incomingProfile.trollingIntelligence || packageParts.fisheries || packageParts.trolling || packageParts.trollingIntelligence || null,
-    trollingIntelligence: incomingProfile.trollingIntelligence || incomingProfile.trolling || null,
+    trollingIntelligence: incomingProfile.trollingIntelligence || incomingProfile.trolling || incomingProfile.fisheries || packageParts.trollingIntelligence || packageParts.trolling || packageParts.fisheries || null,
     summary: incomingProfile.summary || packageParts.summary || {},
     evidence: incomingProfile.evidence || packageParts.evidence || {},
     fieldStatus: incomingProfile.fieldStatus || {},
@@ -4733,7 +4735,7 @@ async function handleResearchSave(request, env) {
   });
 
   // Save package parts (hybrid)
-  const partKeys = ['identity','limnology','biology','forage','habitat','navigation','regulations','trolling','trollingIntelligence','summary','evidence'];
+  const partKeys = ['identity','limnology','biology','forage','habitat','navigation','regulations','trollingIntelligence','summary','evidence'];
   for (const k of partKeys) {
     const partData = packageParts[k] || master[k];
     if (partData) {
@@ -4847,7 +4849,7 @@ async function handleEnhancedLakeIntel(lakeName, env) {
         lastUpdated: researchedProfile.metadata?.lastUpdated,
         overallConfidence: researchedProfile.confidence?.overall,
         summary: researchedProfile.summary,
-        trollingIntelligence: researchedProfile.trollingIntelligence || researchedProfile.trolling,
+        trollingIntelligence: researchedProfile.trollingIntelligence,
         fullProfile: researchedProfile
       };
     }
