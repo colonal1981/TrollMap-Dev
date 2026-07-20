@@ -535,7 +535,7 @@ async function extractTextFromPDFBytes(arrayBuffer, onProgress) {
 /**
  * Step-by-Step Evidence Acquisition Pipeline Runner
  */
-// Shared scoring function used by both runEvidencePipeline and runFromNormalized.
+// Shared scoring function used by runFullPipeline and runResume.
 // Previously duplicated with a weaker version in the resume path — now one source of truth.
 function scoreDocuments(normalizedDocuments, baseName, lakeName) {
   const baseLower = baseName.toLowerCase();
@@ -900,66 +900,47 @@ async function recoverSmartPlanFacts(lakeName, callbacks = {}) {
   } finally { _state.researchInProgress = false; }
 }
 
-async function runFromNormalized(lakeName, callbacks = {}, onlyAgents = null) {
+// ── runResume: skip discovery/download, load normalized docs from R2, run selected agents ──
+async function runResume(lakeName, selectedAgents, callbacks = {}) {
   if (_state.researchInProgress) { alert('A research task is already in progress.'); return; }
   if (!lakeName) { alert('Please select a lake.'); return; }
   _state.researchInProgress = true;
   _state.researchLog = [];
   _state.packagePartsCache = {};
   showProgress(true);
-  setProgress('Fetching existing normalized documents from R2...', 5);
-  log(`=== RESUME FROM NORMALIZED: ${lakeName} ===`);
+  setProgress('Loading normalized documents from R2...', 5);
+  log(`=== RESUME: ${lakeName} — agents: [${selectedAgents.join(', ')}] ===`);
   try {
-    // Fetch normalized docs already saved in R2
     const normRes = await fetch(`${CF_WORKER_URL}/research/get-normalized?lake=${encodeURIComponent(lakeName)}`);
-    if (!normRes.ok) throw new Error(`No normalized documents found in R2 for ${lakeName} — run the full pipeline first.`);
+    if (!normRes.ok) throw new Error(`No normalized documents found for ${lakeName} — run a full pipeline first.`);
     const normData = await normRes.json();
     if (!normData.ok || !normData.documents?.length) throw new Error(`No normalized documents found for ${lakeName}.`);
     const normalizedDocuments = normData.documents;
     log(`Loaded ${normalizedDocuments.length} normalized documents from R2.`);
-
-    // Derive state and baseName locally — no Tavily/discover needed for resume
     const stateName = sanitizeStateFromLakeName(lakeName);
     const baseName = cleanLakeBaseName(lakeName);
-
-    // Jump straight to scoring (Step 5 & 6) — uses same scoreDocuments function as full pipeline
-    setProgress('Step 5-6: Running Quality Scoring & Classification...', 40);
+    setProgress('Scoring documents...', 40);
     log('Computing scores based on authority trustworthiness rules...');
     const scoredSources = scoreDocuments(normalizedDocuments, baseName, lakeName);
     log('Scoring and classification completed:');
-    scoredSources.forEach(s => {
-      log(`• ${s.title}: auth=${s.scoring.authority} rel=${s.scoring.relevance} fresh=${s.scoring.freshness} comp=${s.scoring.completeness} => composite=${s.scoring.composite} classes=${s.classes.join(', ')}`);
-    });
-
-    // Now run steps 7 onward exactly as the full pipeline does
-    // (fact extraction, dedup, mapping, gap analysis, agents, save)
-    // We reuse the shared tail logic by calling into the pipeline directly
-    await runPipelineTail(lakeName, baseName, stateName, normalizedDocuments, scoredSources, callbacks, onlyAgents);
-
+    scoredSources.forEach(s => log(`• ${s.title}: auth=${s.scoring.authority} rel=${s.scoring.relevance} fresh=${s.scoring.freshness} comp=${s.scoring.completeness} => composite=${s.scoring.composite} classes=${s.classes.join(', ')}`));
+    await runPipelineTail(lakeName, baseName, stateName, normalizedDocuments, scoredSources, callbacks, selectedAgents);
   } catch (e) {
-    log(`❌ Resume Aborted: ${e.message}`);
+    log(`❌ Resume failed: ${e.message}`);
     setProgress('Resume failed — see log.', 0);
   } finally {
     _state.researchInProgress = false;
   }
 }
 
-async function runEvidencePipeline(lakeName, callbacks = {}) {
-  if (_state.researchInProgress) {
-    alert('A research task or pipeline is already in progress.');
-    return;
-  }
-  if (!lakeName) {
-    alert('Please select or specify a lake.');
-    return;
-  }
-
+// ── runFullPipeline: discovery + download + normalize + run selected agents ──
+async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
+  if (_state.researchInProgress) { alert('A research task or pipeline is already in progress.'); return; }
+  if (!lakeName) { alert('Please select or specify a lake.'); return; }
   _state.researchInProgress = true;
   _state.researchLog = [];
   _state.packagePartsCache = {};
   showProgress(true);
-  setProgress("Initializing evidence pipeline...", 0);
-  log(`=== EVIDENCE PIPELINE START: ${lakeName} ===`);
 
   try {
     const stateName = sanitizeStateFromLakeName(lakeName);
@@ -1037,7 +1018,7 @@ async function runEvidencePipeline(lakeName, callbacks = {}) {
     const discoverRes = await fetch(`${CF_WORKER_URL}/research/discover`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lakeName, state: stateName, reservoirOwner })
+      body: JSON.stringify({ lakeName, state: stateName, reservoirOwner, predatorSpecies: deterministicProfile?.biology?.predatorSpecies || [] })
     });
     if (!discoverRes.ok) {
       const snippet = await discoverRes.text().catch(() => '').then(t => t.slice(0, 300));
@@ -1422,18 +1403,17 @@ async function runEvidencePipeline(lakeName, callbacks = {}) {
       log(`• ${s.title}: auth=${s.scoring.authority} rel=${s.scoring.relevance} fresh=${s.scoring.freshness} comp=${s.scoring.completeness} => composite=${s.scoring.composite} classes=${s.classes.join(', ')}`);
     });
 
-    await runPipelineTail(lakeName, baseName, stateName, normalizedDocuments, scoredSources, callbacks);
+    await runPipelineTail(lakeName, baseName, stateName, normalizedDocuments, scoredSources, callbacks, selectedAgents);
 
   } catch (err) {
     log(`❌ Pipeline Aborted: ${err.message}`);
     alert(`Evidence Pipeline Failed: ${err.message}`);
     setProgress("Failed", 0);
+
   } finally {
     _state.researchInProgress = false;
   }
 }
-
-
 
 async function runPipelineTail(lakeName, baseName, stateName, normalizedDocuments, scoredSources, callbacks = {}, onlyAgents = null) {
     // ----------------------------------------------------
@@ -1704,14 +1684,28 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
       if (!lim.trophicStatus) lim.trophicStatus = getFactVal(['trophicStatus']);
     }
 
+    // When running only specific agents, load the existing saved profile to preserve
+    // sections not being re-run (e.g. fisheries refresh should not wipe habitat)
+    let existingSavedProfile = {};
+    if (onlyAgents) {
+      try {
+        const existingRes = await fetch(`${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`);
+        if (existingRes.ok) {
+          const existingData = await existingRes.json();
+          if (existingData.profile) existingSavedProfile = existingData.profile;
+        }
+      } catch (e) { /* non-fatal — fall back to deterministic baseline */ }
+    }
+
     const agentSections = {
-      identity: cloneJson(deterministicProfile.identity || {}),
+      identity: cloneJson(existingSavedProfile.identity || deterministicProfile.identity || {}),
       biology: cloneJson(deterministicProfile.biology || {}),
-      habitat: cloneJson(deterministicProfile.habitat || {}),
-      navigation: cloneJson(deterministicProfile.navigation || {}),
-      regulations: cloneJson(deterministicProfile.regulations || {}),
-      limnology: applyWqpToLimnology(deterministicProfile.limnology || {}, wqpLimnology),
-      summary: cloneJson(deterministicProfile.summary || {})
+      habitat: cloneJson(existingSavedProfile.habitat || deterministicProfile.habitat || {}),
+      navigation: cloneJson(existingSavedProfile.navigation || deterministicProfile.navigation || {}),
+      regulations: cloneJson(existingSavedProfile.regulations || deterministicProfile.regulations || {}),
+      limnology: applyWqpToLimnology(existingSavedProfile.limnology || deterministicProfile.limnology || {}, wqpLimnology),
+      summary: cloneJson(existingSavedProfile.summary || deterministicProfile.summary || {}),
+      trollingIntelligence: existingSavedProfile.trollingIntelligence || null,
     };
 
 
@@ -1755,10 +1749,10 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
               previousResults: {
                 ...agentSections,
                 _extractedFacts: uniqueFacts,
-                _normalizedDocuments: normalizedDocuments.slice(0, 12).map(d => ({
+                _normalizedDocuments: normalizedDocuments.slice(0, agentKey === 'fisheries' ? 25 : 12).map(d => ({
                   title: d.title,
                   url: d.url,
-                  text: (d.fullText || '').slice(0, 40000)
+                  text: (d.fullText || '').slice(0, agentKey === 'fisheries' ? 150000 : 40000)
                 }))
               }
             })
@@ -1777,10 +1771,10 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
                 previousResults: {
                   ...agentSections,
                   _extractedFacts: uniqueFacts,
-                  _normalizedDocuments: normalizedDocuments.slice(0, 12).map(d => ({
+                  _normalizedDocuments: normalizedDocuments.slice(0, agentKey === 'fisheries' ? 25 : 12).map(d => ({
                     title: d.title,
                     url: d.url,
-                    text: (d.fullText || '').slice(0, 40000)
+                    text: (d.fullText || '').slice(0, agentKey === 'fisheries' ? 150000 : 40000)
                   }))
                 }
               })
@@ -2001,20 +1995,4 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     if (contradictions.length > 0 && callbacks.onContradictions) callbacks.onContradictions(contradictions, lakeName);
 }
 
-
-
-// ── Fisheries Refresh — routes through runFromNormalized with onlyAgents filter ──
-// All pipeline guardrails (dedup, scoring, fact validation) apply.
-// Zero Firecrawl credits — reads existing normalized docs from R2.
-async function runFisheriesRefresh(lakeName, callbacks = {}) {
-  return runFromNormalized(lakeName, callbacks, ['biology', 'fisheries']);
-}
-
-// ── Single Agent Refresh — runs runFromNormalized for exactly one agent ──
-// Used by per-agent rerun buttons in the UI — gets full doc injection, scoring,
-// dedup, and all other pipeline checks, just filtered to one agent
-async function runSingleAgentRefresh(lakeName, agentKey, callbacks = {}) {
-  return runFromNormalized(lakeName, callbacks, [agentKey]);
-}
-
-export { runEvidencePipeline, runFromNormalized, runFisheriesRefresh, runSingleAgentRefresh, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, _state, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log };
+export { runFullPipeline, runResume, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, _state, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log };
