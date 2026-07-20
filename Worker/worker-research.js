@@ -986,10 +986,10 @@ const AGENT_DISCOVERY_QUERIES = {
     TN: (lake) => [`"${lake}" fishing regulations creel limit site:tn.gov/twra`],
   },
   fisheries: {
-    SC: (lake) => [`"${lake}" trolling OR "spread" OR "presentation" OR "pattern" site:youtube.com OR site:facebook.com`, `"${lake}" tournament results OR "fishing report"`],
-    NC: (lake) => [`"${lake}" trolling OR "spread" OR "presentation" OR "pattern" site:youtube.com OR site:facebook.com`, `"${lake}" tournament results OR "fishing report"`],
-    GA: (lake) => [`"${lake}" trolling OR "spread" OR "presentation" OR "pattern" site:youtube.com OR site:facebook.com`, `"${lake}" tournament results OR "fishing report"`],
-    TN: (lake) => [`"${lake}" trolling OR "spread" OR "presentation" OR "pattern" site:youtube.com OR site:facebook.com`, `"${lake}" tournament results OR "fishing report"`],
+    SC: (lake) => [`"${lake}" trolling OR "fishing report" OR "fishing pattern" OR "striper" OR tournament`, `"${lake}" trolling OR "spread" OR "presentation" OR "pattern" site:youtube.com OR site:facebook.com`],
+    NC: (lake) => [`"${lake}" trolling OR "fishing report" OR "fishing pattern" OR tournament`, `"${lake}" trolling OR "spread" OR "presentation" OR "pattern" site:youtube.com OR site:facebook.com`],
+    GA: (lake) => [`"${lake}" trolling OR "fishing report" OR "fishing pattern" OR tournament`, `"${lake}" trolling OR "spread" OR "presentation" OR "pattern" site:youtube.com OR site:facebook.com`],
+    TN: (lake) => [`"${lake}" trolling OR "fishing report" OR "fishing pattern" OR tournament`, `"${lake}" trolling OR "spread" OR "presentation" OR "pattern" site:youtube.com OR site:facebook.com`],
   },
   summary: { SC: () => [], NC: () => [], GA: () => [], TN: () => [] }
 };
@@ -5085,7 +5085,7 @@ async function handleResearchAgentPipeline(request, env) {
     // Filter sources for this agent
     const agentSources = sources.filter(s => s.agentTags?.includes(agentKey) || !s.agentTags);
     if (!agentSources.length) {
-      return new Response(JSON.stringify({ success: true, agent: agentKey, section: {}, note: 'No sources found for this agent' }), { headers: JSON_HEADERS });
+      return new Response(JSON.stringify({ success: true, agent: agentKey, section: {}, factsCount: 0, docsUsed: 0, note: 'No sources found for this agent' }), { headers: JSON_HEADERS });
     }
 
     // Step 2: Fetch/normalize documents (if mode=full) or load existing (if mode=resume)
@@ -5193,7 +5193,7 @@ async function handleResearchAgentPipeline(request, env) {
     }
 
     if (!normalizedDocuments.length) {
-      return new Response(JSON.stringify({ success: true, agent: agentKey, section: {}, note: 'No documents available for this agent' }), { headers: JSON_HEADERS });
+      return new Response(JSON.stringify({ success: true, agent: agentKey, section: {}, factsCount: 0, docsUsed: 0, note: 'No documents available for this agent' }), { headers: JSON_HEADERS });
     }
 
     // Step 3: Extract facts with targetFields
