@@ -986,68 +986,361 @@ async function handleResearchDiscover(request, env) {
     'rhodhiss': 'Catawba_River', 'mountain island': 'Catawba_River',
   };
 
+  // ─── LAKE AUTHORITY METADATA ─────────────────────────────────────────────
+  // Per-lake owner domains, state agency domains, and system/basin aliases used
+  // by query builders. Keeps queries lake-agnostic — no lake name hard-coded
+  // in query logic; everything flows through this table.
+  const STATE_FISH_AGENCY_DOMAINS = {
+    SC: ['dnr.sc.gov', 'des.sc.gov'],
+    NC: ['ncwildlife.gov', 'ncwildlife.org', 'deq.nc.gov', 'files.nc.gov'],
+    GA: ['georgiawildlife.com', 'georgiawildlife.blog'],
+    TN: ['tn.gov/twra', 'tn.gov/environment'],
+  };
+  const STATE_ENVIRONMENT_DOMAINS = {
+    SC: ['dnr.sc.gov', 'des.sc.gov'],
+    NC: ['deq.nc.gov', 'ncwildlife.gov'],
+    GA: ['epd.georgia.gov', 'georgiawildlife.com'],
+    TN: ['tn.gov/environment'],
+  };
+  // Per-lake system/basin aliases used in searches — canonical lake name is always
+  // first; basin/project aliases follow. Keyed by baseLower.
+  const LAKE_SYSTEM_ALIASES = {
+    'wateree':        ['Catawba-Wateree', 'Catawba-Wateree Project'],
+    'wylie':          ['Catawba-Wateree', 'Catawba-Wateree Project'],
+    'norman':         ['Catawba-Wateree', 'Catawba-Wateree Project'],
+    'hickory':        ['Catawba-Wateree', 'Catawba-Wateree Project'],
+    'james':          ['Catawba-Wateree', 'Catawba-Wateree Project'],
+    'rhodhiss':       ['Catawba-Wateree', 'Catawba-Wateree Project'],
+    'mountain island':['Catawba-Wateree', 'Catawba-Wateree Project'],
+    'marion':         ['Santee-Cooper', 'Santee Cooper Lakes'],
+    'moultrie':       ['Santee-Cooper', 'Santee Cooper Lakes'],
+    'hartwell':       ['Savannah River Lakes', 'Savannah River Basin'],
+    'russell':        ['Savannah River Lakes', 'Savannah River Basin'],
+    'thurmond':       ['Savannah River Lakes', 'Savannah River Basin'],
+    'clarks hill':    ['Savannah River Lakes', 'Savannah River Basin'],
+    'oconee':         ['Oconee-Sinclair', 'Georgia Power Lakes'],
+    'sinclair':       ['Oconee-Sinclair', 'Georgia Power Lakes'],
+    'lanier':         ['Buford Dam', 'Lake Sidney Lanier', 'USACE Lanier'],
+    'allatoona':      ['USACE Allatoona'],
+    'norris':         ['TVA Lakes', 'Tennessee Valley Authority'],
+    'douglas':        ['TVA Lakes', 'Tennessee Valley Authority'],
+    'cherokee':       ['TVA Lakes', 'Tennessee Valley Authority'],
+    'chickamauga':    ['TVA Lakes', 'Tennessee Valley Authority'],
+    'fort loudoun':   ['TVA Lakes', 'Tennessee Valley Authority'],
+    'tellico':        ['TVA Lakes', 'Tennessee Valley Authority'],
+    'watauga':        ['TVA Lakes', 'Tennessee Valley Authority'],
+    'boone':          ['TVA Lakes', 'Tennessee Valley Authority'],
+  };
+  // Owner domain lookup by baseLower — drives site: queries
+  const LAKE_OWNER_DOMAINS = {
+    'wateree': ['duke-energy.com'], 'wylie': ['duke-energy.com'],
+    'norman': ['duke-energy.com'], 'hickory': ['duke-energy.com'],
+    'james': ['duke-energy.com'], 'rhodhiss': ['duke-energy.com'],
+    'mountain island': ['duke-energy.com'],
+    'fishing creek': ['duke-energy.com'], 'great falls': ['duke-energy.com'],
+    'jocassee': ['duke-energy.com'], 'keowee': ['duke-energy.com'],
+    'oconee': ['georgiapower.com'], 'sinclair': ['georgiapower.com'],
+    'hartwell': ['sas.usace.army.mil'], 'russell': ['sas.usace.army.mil'],
+    'thurmond': ['sas.usace.army.mil'], 'clarks hill': ['sas.usace.army.mil'],
+    'lanier': ['sam.usace.army.mil'], 'allatoona': ['sam.usace.army.mil'],
+    'norris': ['tva.com'], 'douglas': ['tva.com'], 'cherokee': ['tva.com'],
+    'chickamauga': ['tva.com'], 'fort loudoun': ['tva.com'],
+    'tellico': ['tva.com'], 'watauga': ['tva.com'], 'boone': ['tva.com'],
+    'marion': ['santeecooper.com'], 'moultrie': ['santeecooper.com'],
+  };
+  // SC SCDNR fisheries publication series — lake-agnostic, highly productive
+  const SC_FWFI_QUERY = (lake) => `"${lake}" "Fisheries Investigations in Lakes and Streams" site:dnr.sc.gov/fish/fwfi`;
+
+  const lakeOwnerDomains = LAKE_OWNER_DOMAINS[baseLower] || [];
+  const lakeSystemAliases = LAKE_SYSTEM_ALIASES[baseLower] || [];
+  const stateFishDomain = (STATE_FISH_AGENCY_DOMAINS[state] || [])[0] || '';
+  const stateEnvDomain = (STATE_ENVIRONMENT_DOMAINS[state] || [])[0] || '';
+  const ownerOrEnvDomain = lakeOwnerDomains[0] || stateEnvDomain;
+
+  // ─── CANONICAL URL NORMALIZER ─────────────────────────────────────────────
+  // Implements section 12.4 rules. Returns { canonicalUrl, requestedUrl,
+  // urlAliases, sourceRevision } without modifying original URLs.
+  // Used for cross-category deduplication keying only — original URLs are
+  // preserved for fetching.
+  function canonicalizeUrl(rawUrl) {
+    let parsed;
+    try { parsed = new URL(rawUrl); } catch { return { canonicalUrl: rawUrl, requestedUrl: rawUrl, urlAliases: [] }; }
+    if (!['http:', 'https:'].includes(parsed.protocol)) return { canonicalUrl: rawUrl, requestedUrl: rawUrl, urlAliases: [] };
+
+    // Lowercase scheme + hostname; remove default ports
+    let host = parsed.hostname.toLowerCase();
+    let path = parsed.pathname;
+
+    // Remove fragments
+    // Collapse duplicate path slashes
+    path = path.replace(/\/\/+/g, '/');
+
+    // Remove trailing slash except root
+    if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+
+    // Build retained params — strip tracking, preserve functional identity params
+    const TRACKING_PARAMS = new Set(['utm_source','utm_medium','utm_campaign','utm_term','utm_content','fbclid','gclid','msclkid','srsltid']);
+    // Params that select disposition only (store as metadata, not identity)
+    const DISPOSITION_PARAMS = new Set(['attachment','download','withWatermark','withMetadata','registerDownload']);
+    const REVISION_PARAMS = new Set(['rev','ver','version']);
+
+    const retainedParams = [];
+    let sourceRevision = null;
+    const urlAliases = [];
+
+    for (const [k, v] of [...parsed.searchParams.entries()].sort((a,b) => a[0].localeCompare(b[0]))) {
+      if (TRACKING_PARAMS.has(k)) continue;
+      if (REVISION_PARAMS.has(k)) { sourceRevision = `${k}=${v}`; continue; } // strip from key, store as metadata
+      if (DISPOSITION_PARAMS.has(k)) continue; // attachment/download are disposition-only
+      // NEPIS identity params — always retain
+      if (/Dockey|ZyAction|ZyEntry|File|Dockey/i.test(k)) { retainedParams.push([k, v]); continue; }
+      retainedParams.push([k, v]);
+    }
+
+    // Domain adapters
+    // NCWRC: normalize /open and /download?attachment routes — register as aliases of the base path
+    if (/ncwildlife\.gov/i.test(host)) {
+      if (path.endsWith('/open')) {
+        const base = path.slice(0, -5);
+        urlAliases.push(`https://${host}${base}/download?attachment`);
+      } else if (path.includes('/download')) {
+        const base = path.replace(/\/download$/, '');
+        urlAliases.push(`https://${host}${base}/open`);
+      } else if (/\/media\/\d+\/download/.test(path)) {
+        // /media/{id}/download?attachment — keep as-is, no alias inference
+      }
+    }
+
+    // Duke CRA PDFs: strip rev from identity key (stored as sourceRevision above)
+    // UGA: strip download presentation flags, keep stable /record/{id}/files/{name}
+    if (/openscholar\.uga\.edu/i.test(host)) {
+      retainedParams.length = 0; // strip all UGA query params from canonical key
+    }
+
+    const qString = retainedParams.length
+      ? '?' + retainedParams.map(([k,v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&')
+      : '';
+
+    const canonicalUrl = `https://${host}${path}${qString}`;
+    return { canonicalUrl, requestedUrl: rawUrl, urlAliases, sourceRevision };
+  }
+
+  // ─── PRE-FETCH RELEVANCE SCORER ──────────────────────────────────────────
+  // Implements section 5 scoring. Guaranteed seeds always pass (score=999).
+  // Discovered candidates below threshold are logged but not fetched.
+  const PRE_FETCH_THRESHOLD = 2; // minimum score to fetch a discovered candidate
+  function scoreCandidateRelevance(candidate, lakeName, baseName, aliases, state) {
+    if (candidate.priority === 1) return 999; // guaranteed seed — always fetch
+    const title = (candidate.title || '').toLowerCase();
+    const snippet = (candidate.snippet || '').toLowerCase();
+    const url = (candidate.url || '').toLowerCase();
+    const baseLower = baseName.toLowerCase();
+    const lakeNameLower = lakeName.toLowerCase();
+    const stateLower = state.toLowerCase();
+    const aliasesLower = (aliases || []).map(a => a.toLowerCase());
+
+    let score = 0;
+
+    // Positive signals
+    if (title.includes(baseLower) || title.includes(lakeNameLower)) score += 5;
+    if (snippet.includes(baseLower) || snippet.includes(lakeNameLower)) score += 4;
+    if (aliasesLower.some(a => title.includes(a))) score += 4;
+    if (aliasesLower.some(a => snippet.includes(a))) score += 3;
+
+    // Authority domain bonus
+    try {
+      const host = new URL(candidate.url).hostname.toLowerCase();
+      if (/\.gov$|usace\.army\.mil|epa\.gov|usgs\.gov|ferc\.gov|tva\.com|santeecooper\.com|duke-energy\.com|georgiapower\.com/.test(host)) score += 3;
+      else if (/\.edu$/.test(host)) score += 2;
+    } catch {}
+
+    // Document type bonuses
+    if (/report|assessment|survey|management.plan|study|investigation/.test(title + snippet)) score += 2;
+    if (url.endsWith('.pdf') || /\/open$|download\?attachment|\/media\/\d+\/download/.test(url)) score += 1;
+
+    // Negative signals
+    const otherLakeNames = ['murray','marion','moultrie','hartwell','keowee','jocassee','thurmond','clarks hill','clark hill','russell','wylie','norman','hickory','james','rhodhiss','mountain island','wateree','robinson','monticello','greenwood','secession','lanier','oconee','sinclair','allatoona','norris','douglas','cherokee','chickamauga'];
+    for (const other of otherLakeNames) {
+      if (other === baseLower) continue;
+      if (title.includes(`lake ${other}`) || title.includes(`${other} lake`) || title.includes(`${other} reservoir`)) {
+        score -= 6;
+        break;
+      }
+    }
+    // Another state in title context (rough signal)
+    const otherStates = ['florida','virginia','alabama','mississippi','arkansas','ohio','indiana','michigan','wisconsin','illinois','minnesota'];
+    if (otherStates.some(s => title.includes(s))) score -= 5;
+    if (/facebook\.com|instagram\.com|youtube\.com|pinterest\.com|twitter\.com/.test(url)) score -= 5;
+
+    return score;
+  }
+
   // ─── AGENT-SPECIFIC DISCOVERY QUERIES ───
 const AGENT_DISCOVERY_QUERIES = {
+  // Identity: deterministic seeds (Duke CRA, USACE, TVA) are already seeded above.
+  // Search fills gaps — focused queries, one method per search.
   identity: {
-    SC: (lake) => [`${lake} South Carolina dam owner FERC license reservoir`, `${lake} SC reservoir history impounded Santee Cooper Duke Energy`],
-    NC: (lake) => [`${lake} North Carolina dam owner FERC license reservoir`, `${lake} NC Duke Energy Dominion reservoir history`],
-    GA: (lake) => [`${lake} Georgia dam owner FERC license reservoir`, `${lake} GA Georgia Power USACE reservoir history`],
-    TN: (lake) => [`${lake} Tennessee dam owner FERC license reservoir`, `${lake} TN TVA USACE reservoir history`],
-  },
-  limnology: {
-    SC: (lake) => [`${lake} South Carolina EPA water quality report limnology`, `${lake} SC dissolved oxygen thermocline water quality study`],
-    NC: (lake) => [`${lake} North Carolina EPA water quality report limnology`, `${lake} NC dissolved oxygen thermocline water quality study`],
-    GA: (lake) => [`${lake} Georgia EPA water quality report limnology`, `${lake} GA dissolved oxygen thermocline water quality study`],
-    TN: (lake) => [`${lake} Tennessee EPA water quality report limnology`, `${lake} TN dissolved oxygen thermocline water quality study`],
-  },
-  biology: {
-    // Two web searches for agency stocking/survey docs + one academic paper search
-    SC: (lake) => [`${lake} South Carolina fish stocking report SCDNR`, `${lake} SC fish population survey species assessment`, `${lake} shad herring forage striped bass fishery`],
-    NC: (lake) => [`${lake} North Carolina fish stocking report NCWRC`, `${lake} NC fish population survey species assessment`, `${lake} shad herring forage striped bass fishery`],
-    GA: (lake) => [`${lake} Georgia fish stocking report DNR`, `${lake} GA fish population survey species assessment`, `${lake} shad herring forage striped bass fishery`],
-    TN: (lake) => [`${lake} Tennessee fish stocking report TWRA`, `${lake} TN fish population survey species assessment`, `${lake} shad herring forage striped bass fishery`],
-  },
-  // Domain types per agent — 'web' by default, 'research_paper' for biology academic queries
-  _domainTypes: {
-    biology: ['web', 'web', 'research_paper'],
-  },
-  habitat: {
-    SC: (lake) => [`${lake} South Carolina aquatic habitat vegetation standing timber creek mouth SCDNR`],
-    NC: (lake) => [`${lake} North Carolina aquatic habitat vegetation standing timber creek mouth NCWRC`],
-    GA: (lake) => [`${lake} Georgia aquatic habitat vegetation standing timber creek mouth DNR`],
-    TN: (lake) => [`${lake} Tennessee aquatic habitat vegetation standing timber creek mouth TWRA`],
-  },
-  navigation: {
-    SC: (lake) => [`${lake} South Carolina navigation hazards shoals stumps channels SCDNR`],
-    NC: (lake) => [`${lake} North Carolina navigation hazards shoals stumps channels`],
-    GA: (lake) => [`${lake} Georgia navigation hazards shoals stumps channels`],
-    TN: (lake) => [`${lake} Tennessee navigation hazards shoals stumps channels`],
-  },
-  regulations: {
-    SC: (lake) => [`${lake} South Carolina fishing regulations creel limit size limit`],
-    NC: (lake) => [`${lake} North Carolina fishing regulations creel limit size limit`],
-    GA: (lake) => [`${lake} Georgia fishing regulations creel limit size limit`],
-    TN: (lake) => [`${lake} Tennessee fishing regulations creel limit size limit TWRA`],
-  },
-  fisheries: {
-    // Exclude Facebook and YouTube — they never return usable content via fetch
     SC: (lake) => [
-      `${lake} South Carolina fishing report seasonal patterns -site:facebook.com -site:youtube.com`,
-      `${lake} SC striper crappie bass fishing guide depth techniques -site:facebook.com -site:youtube.com`,
+      `"${lake}" dam owner FERC license reservoir filetype:pdf`,
+      ...(lakeOwnerDomains[0] ? [`"${lake}" reservoir project site:${lakeOwnerDomains[0]}`] : []),
+      ...(lakeSystemAliases[0] ? [`"${lakeSystemAliases[0]}" "${lake}" project license reservoir filetype:pdf`] : []),
     ],
     NC: (lake) => [
-      `${lake} North Carolina fishing report seasonal patterns -site:facebook.com -site:youtube.com`,
-      `${lake} NC bass crappie striped bass fishing guide techniques -site:facebook.com -site:youtube.com`,
+      `"${lake}" dam owner FERC license reservoir filetype:pdf`,
+      ...(lakeOwnerDomains[0] ? [`"${lake}" reservoir project site:${lakeOwnerDomains[0]}`] : []),
+      ...(lakeSystemAliases[0] ? [`"${lakeSystemAliases[0]}" "${lake}" project license reservoir filetype:pdf`] : []),
     ],
     GA: (lake) => [
-      `${lake} Georgia fishing report seasonal patterns -site:facebook.com -site:youtube.com`,
-      `${lake} GA bass crappie striped bass fishing guide techniques -site:facebook.com -site:youtube.com`,
+      `"${lake}" dam owner FERC license reservoir filetype:pdf`,
+      ...(lakeOwnerDomains[0] ? [`"${lake}" reservoir project site:${lakeOwnerDomains[0]}`] : []),
+      ...(lakeSystemAliases[0] ? [`"${lakeSystemAliases[0]}" "${lake}" project license reservoir filetype:pdf`] : []),
     ],
     TN: (lake) => [
-      `${lake} Tennessee fishing report seasonal patterns -site:facebook.com -site:youtube.com`,
-      `${lake} TN bass crappie striped bass fishing guide techniques -site:facebook.com -site:youtube.com`,
+      `"${lake}" dam owner FERC license reservoir filetype:pdf`,
+      ...(lakeOwnerDomains[0] ? [`"${lake}" reservoir project site:${lakeOwnerDomains[0]}`] : []),
+      ...(lakeSystemAliases[0] ? [`"${lakeSystemAliases[0]}" "${lake}" project license reservoir filetype:pdf`] : []),
     ],
   },
+  limnology: {
+    SC: (lake) => [
+      `"${lake}" dissolved oxygen water quality monitoring assessment filetype:pdf`,
+      `"${lake}" thermocline hypolimnion temperature profile filetype:pdf`,
+      ...(ownerOrEnvDomain ? [`"${lake}" water quality monitoring site:${ownerOrEnvDomain}`] : []),
+      ...(lakeSystemAliases[0] ? [`"${lakeSystemAliases[0]}" "${lake}" water quality monitoring filetype:pdf`] : []),
+    ],
+    NC: (lake) => [
+      `"${lake}" dissolved oxygen water quality monitoring assessment filetype:pdf`,
+      `"${lake}" thermocline hypolimnion temperature profile filetype:pdf`,
+      ...(ownerOrEnvDomain ? [`"${lake}" water quality monitoring site:${ownerOrEnvDomain}`] : []),
+      ...(lakeSystemAliases[0] ? [`"${lakeSystemAliases[0]}" "${lake}" water quality monitoring filetype:pdf`] : []),
+    ],
+    GA: (lake) => [
+      `"${lake}" dissolved oxygen water quality monitoring assessment filetype:pdf`,
+      `"${lake}" thermocline hypolimnion temperature profile filetype:pdf`,
+      ...(ownerOrEnvDomain ? [`"${lake}" water quality monitoring site:${ownerOrEnvDomain}`] : []),
+      ...(lakeSystemAliases[0] ? [`"${lakeSystemAliases[0]}" "${lake}" water quality monitoring filetype:pdf`] : []),
+    ],
+    TN: (lake) => [
+      `"${lake}" dissolved oxygen water quality monitoring assessment filetype:pdf`,
+      `"${lake}" thermocline hypolimnion temperature profile filetype:pdf`,
+      ...(ownerOrEnvDomain ? [`"${lake}" water quality monitoring site:${ownerOrEnvDomain}`] : []),
+      ...(lakeSystemAliases[0] ? [`"${lakeSystemAliases[0]}" "${lake}" water quality monitoring filetype:pdf`] : []),
+    ],
+  },
+  biology: {
+    // Primary: state fish agency site search. Focused fallbacks run separately.
+    // Third query uses domain_type=research_paper (see _domainTypes below).
+    SC: (lake) => [
+      ...(stateFishDomain ? [`"${lake}" fisheries survey site:${stateFishDomain}`] : [`"${lake}" fisheries survey site:dnr.sc.gov`]),
+      SC_FWFI_QUERY(lake),
+      `"${lake}" striped bass forage stocking assessment -site:facebook.com -site:instagram.com -site:youtube.com`,
+      `"${lake}" fisheries population habitat`,
+    ],
+    NC: (lake) => [
+      ...(stateFishDomain ? [`"${lake}" fisheries survey site:${stateFishDomain}`] : [`"${lake}" fisheries survey site:ncwildlife.gov`]),
+      `"${lake}" stocking evaluation site:${stateFishDomain || 'ncwildlife.gov'}`,
+      `"${lake}" striped bass forage stocking assessment -site:facebook.com -site:instagram.com -site:youtube.com`,
+      `"${lake}" fisheries population habitat`,
+    ],
+    GA: (lake) => [
+      ...(stateFishDomain ? [`"${lake}" fisheries survey site:${stateFishDomain}`] : [`"${lake}" fisheries survey site:georgiawildlife.com`]),
+      `"${lake}" stocking evaluation site:${stateFishDomain || 'georgiawildlife.com'}`,
+      `"${lake}" striped bass forage stocking assessment -site:facebook.com -site:instagram.com -site:youtube.com`,
+      `"${lake}" fisheries population habitat`,
+    ],
+    TN: (lake) => [
+      ...(stateFishDomain ? [`"${lake}" fisheries survey site:${stateFishDomain}`] : [`"${lake}" fisheries survey site:tn.gov/twra`]),
+      `"${lake}" stocking evaluation site:${stateFishDomain || 'tn.gov/twra'}`,
+      `"${lake}" striped bass forage stocking assessment -site:facebook.com -site:instagram.com -site:youtube.com`,
+      `"${lake}" fisheries population habitat`,
+    ],
+  },
+  // Domain types per agent — 'web' by default, 'research_paper' for biology academic query
+  _domainTypes: {
+    // biology: [primary site:, SC series / stocking, forage web, academic]
+    biology: ['web', 'web', 'web', 'research_paper'],
+  },
+  // Per-agent TinyFish purpose strings — passed via API, not injected into query text
+  _purposes: {
+    identity:    (lake, st) => `Find authoritative dam owner, FERC license, and reservoir identity documents for ${lake} in ${st}. Prefer government agencies, reservoir owners, and FERC filings.`,
+    limnology:   (lake, st) => `Find authoritative water quality, dissolved oxygen, thermocline, and limnology studies for ${lake} in ${st}. Prefer government agencies, reservoir owners, and peer-reviewed studies.`,
+    biology:     (lake, st) => `Find authoritative fisheries surveys, stocking records, and fish population assessments for ${lake} in ${st}. Prefer state fish agencies, universities, and original studies.`,
+    habitat:     (lake, st) => `Find authoritative aquatic habitat, vegetation, and structural enhancement assessments for ${lake} in ${st}. Prefer state agencies and original studies.`,
+    navigation:  (lake, st) => `Find authoritative navigation hazards, shoals, channel markers, and access information for ${lake} in ${st}. Reject generic boating pages that do not name this lake.`,
+    regulations: (lake, st) => `Find authoritative fishing regulations, creel limits, and size limits for ${lake} in ${st}. Prefer state fish agency regulation digests.`,
+    fisheries:   (lake, st) => `Find authoritative seasonal fishing patterns, current fishing reports, and angler catch data for ${lake} in ${st}. Reject social media and generic aggregation pages.`,
+  },
+  habitat: {
+    SC: (lake) => [
+      `"${lake}" aquatic vegetation hydrilla management -site:facebook.com -site:instagram.com`,
+      `"${lake}" fish habitat enhancement assessment -site:facebook.com -site:instagram.com`,
+      ...(lakeOwnerDomains[0] ? [`"${lake}" shoreline habitat management site:${lakeOwnerDomains[0]}`] : []),
+    ],
+    NC: (lake) => [
+      `"${lake}" aquatic vegetation hydrilla management -site:facebook.com -site:instagram.com`,
+      `"${lake}" fish habitat enhancement assessment -site:facebook.com -site:instagram.com`,
+      ...(lakeOwnerDomains[0] ? [`"${lake}" shoreline habitat management site:${lakeOwnerDomains[0]}`] : []),
+    ],
+    GA: (lake) => [
+      `"${lake}" aquatic vegetation hydrilla management -site:facebook.com -site:instagram.com`,
+      `"${lake}" fish habitat enhancement assessment -site:facebook.com -site:instagram.com`,
+      ...(lakeOwnerDomains[0] ? [`"${lake}" shoreline habitat management site:${lakeOwnerDomains[0]}`] : []),
+    ],
+    TN: (lake) => [
+      `"${lake}" aquatic vegetation hydrilla management -site:facebook.com -site:instagram.com`,
+      `"${lake}" fish habitat enhancement assessment -site:facebook.com -site:instagram.com`,
+      ...(lakeOwnerDomains[0] ? [`"${lake}" shoreline habitat management site:${lakeOwnerDomains[0]}`] : []),
+    ],
+  },
+  navigation: {
+    SC: (lake) => [
+      `"${lake}" navigation hazards channel markers -site:facebook.com -site:instagram.com -site:youtube.com`,
+      ...(lakeOwnerDomains[0] ? [`"${lake}" navigation shoal markers hazards site:${lakeOwnerDomains[0]}`] : []),
+    ],
+    NC: (lake) => [
+      `"${lake}" navigation hazards channel markers -site:facebook.com -site:instagram.com -site:youtube.com`,
+      ...(lakeOwnerDomains[0] ? [`"${lake}" navigation shoal markers hazards site:${lakeOwnerDomains[0]}`] : []),
+    ],
+    GA: (lake) => [
+      `"${lake}" navigation hazards channel markers -site:facebook.com -site:instagram.com -site:youtube.com`,
+      ...(lakeOwnerDomains[0] ? [`"${lake}" navigation shoal markers hazards site:${lakeOwnerDomains[0]}`] : []),
+    ],
+    TN: (lake) => [
+      `"${lake}" navigation hazards channel markers -site:facebook.com -site:instagram.com -site:youtube.com`,
+      ...(lakeOwnerDomains[0] ? [`"${lake}" navigation shoal markers hazards site:${lakeOwnerDomains[0]}`] : []),
+    ],
+  },
+  regulations: {
+    // Regulations primarily sourced from deterministic seeds (eRegulations, SCDNR regs page).
+    // Discovery fallback only — one focused query per state.
+    SC: (lake) => [`"${lake}" fishing regulations exceptions site:${stateFishDomain || 'dnr.sc.gov'}`],
+    NC: (lake) => [`"${lake}" fishing regulations exceptions site:${stateFishDomain || 'ncwildlife.gov'}`],
+    GA: (lake) => [`"${lake}" fishing regulations exceptions site:${stateFishDomain || 'georgiawildlife.com'}`],
+    TN: (lake) => [`"${lake}" fishing regulations exceptions site:${stateFishDomain || 'tn.gov/twra'}`],
+  },
+  fisheries: {
+    // Two separate queries per section 12.6: current reports (recency window) +
+    // evergreen seasonal patterns (no recency). Handled separately in search loop
+    // via _fisheries_recency flag below.
+    SC: (lake) => [
+      `"${lake}" fishing report`,
+      `"${lake}" seasonal fishing patterns bass crappie striped bass -site:facebook.com -site:instagram.com -site:youtube.com`,
+    ],
+    NC: (lake) => [
+      `"${lake}" fishing report`,
+      `"${lake}" seasonal fishing patterns bass crappie striped bass -site:facebook.com -site:instagram.com -site:youtube.com`,
+    ],
+    GA: (lake) => [
+      `"${lake}" fishing report`,
+      `"${lake}" seasonal fishing patterns bass crappie striped bass -site:facebook.com -site:instagram.com -site:youtube.com`,
+    ],
+    TN: (lake) => [
+      `"${lake}" fishing report`,
+      `"${lake}" seasonal fishing patterns bass crappie striped bass -site:facebook.com -site:instagram.com -site:youtube.com`,
+    ],
+  },
+  // Fisheries query 0 gets recency window (45 days primary); query 1 is evergreen
+  _fisheries_recency: [64800, null],
   summary: { SC: () => [], NC: () => [], GA: () => [], TN: () => [] }
 };
 const AGENT_TO_TAGS = {
@@ -1275,29 +1568,40 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
   const agent = String(body.agent || "").trim().toLowerCase();
   const agentsToDiscover = agent ? [agent] : Object.keys(AGENT_DISCOVERY_QUERIES);
   
+  // Cross-category candidate pool — all agents deposit here; dedup by canonical URL
+  // before returning so a URL requested by multiple agents is fetched only once.
+  const canonicalToCandidate = new Map(); // canonicalUrl -> candidate object
+
   for (const agentKey of agentsToDiscover) {
     if (!AGENT_DISCOVERY_QUERIES[agentKey]) continue;
-    
+
     const stateQueries = AGENT_DISCOVERY_QUERIES[agentKey][state];
     if (!stateQueries) continue;
-    
+
     const queries = stateQueries(queryLakeFinal);
     if (!queries.length) continue;
 
     const agentTags = AGENT_TO_TAGS[agentKey] || [agentKey];
-    
+    const purposeFn = AGENT_DISCOVERY_QUERIES._purposes?.[agentKey];
+    const purposeStr = purposeFn ? purposeFn(queryLakeFinal, state) : `Find authoritative ${agentKey} information about ${lakeName} in ${state}`;
+
     // Check Firecrawl budget before searching
     const budget = await checkFirecrawlBudget(env, queries.length);
     const useFirecrawl = budget.allowed && firecrawlKey && !budget.useTinyFishOnly;
     const useTinyFish = !useFirecrawl;
 
-    for (const q of queries) {
-      const qIndex = queries.indexOf(q);
+    for (let qIndex = 0; qIndex < queries.length; qIndex++) {
+      const q = queries[qIndex];
       const domainTypes = AGENT_DISCOVERY_QUERIES._domainTypes?.[agentKey];
       const domainType = domainTypes?.[qIndex] || 'web';
+
+      // Fisheries: first query gets recency window (45d primary), second is evergreen
+      const recencyWindows = agentKey === 'fisheries' ? AGENT_DISCOVERY_QUERIES._fisheries_recency : null;
+      const recencyMinutes = recencyWindows ? recencyWindows[qIndex] : null;
+
       try {
         let rawResults = [];
-        
+
         if (useFirecrawl) {
           const searchRes = await fetch('https://api.firecrawl.dev/v2/search', {
             method: 'POST',
@@ -1310,15 +1614,31 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
           await recordFirecrawlUsage(env, 1);
         } else if (useTinyFish) {
           try {
-            const tfResult = await tinyfishSearch({
+            const tfParams = {
               query: q,
               domain_type: domainType,
-              purpose: `Find authoritative ${agentKey} information about ${lakeName} in ${state} for a fishing intelligence platform`,
+              purpose: purposeStr,
               location: 'US',
               language: 'en',
-            }, env);
+            };
+            if (recencyMinutes) tfParams.recency_minutes = recencyMinutes;
+            const tfResult = await tinyfishSearch(tfParams, env);
             rawResults = tfResult.results || [];
-            queryLog.push(`[${agentKey}${domainType !== 'web' ? ':' + domainType : ''}] TinyFish: ${q.slice(0,80)} → ${rawResults.length} results`);
+            queryLog.push(`[${agentKey}${domainType !== 'web' ? ':' + domainType : ''}${recencyMinutes ? ':' + recencyMinutes + 'm' : ''}] TinyFish: ${q.slice(0,80)} → ${rawResults.length} results`);
+
+            // Fisheries current-report fallback: if < 3 results at 45d, retry at 180d
+            if (agentKey === 'fisheries' && qIndex === 0 && rawResults.length < 3 && recencyMinutes === 64800) {
+              try {
+                const tfFallback = await tinyfishSearch({ ...tfParams, recency_minutes: 259200 }, env);
+                const fallbackResults = tfFallback.results || [];
+                queryLog.push(`[fisheries] recency fallback 180d: ${fallbackResults.length} additional results`);
+                // Merge — avoid duplicates by URL
+                const existingUrls = new Set(rawResults.map(r => String(r.url||'').toLowerCase()));
+                rawResults = [...rawResults, ...fallbackResults.filter(r => !existingUrls.has(String(r.url||'').toLowerCase()))];
+              } catch (fbErr) {
+                queryLog.push(`[fisheries] recency fallback failed: ${fbErr.message}`);
+              }
+            }
           } catch (tfErr) {
             queryLog.push(`[${agentKey}] TinyFish failed: ${tfErr.message}`);
             continue;
@@ -1329,13 +1649,55 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
         }
 
         queryLog.push(`[${agentKey}] ${q.slice(0, 100)} → ${rawResults.length} results`);
+
         for (const r of rawResults) {
           const off = offLakePattern(r.title||'', r.url||'');
           if (off) { queryLog.push(`  ✗ off-lake (${off}): ${(r.title||r.url).slice(0,80)}`); continue; }
+
+          const { canonicalUrl, urlAliases, sourceRevision } = canonicalizeUrl(r.url || '');
+
+          // Pre-fetch relevance score — using preserved snippet from TinyFish result
+          const snippet = r.snippet || r.description || r.summary || '';
+          const candidate = {
+            title: (r.title || `${queryLake} - Web`).replace(/\s+/g,' ').trim().slice(0,180),
+            url: r.url,
+            canonicalUrl,
+            urlAliases,
+            sourceRevision: sourceRevision || undefined,
+            snippet: snippet.slice(0, 400),
+            siteName: r.site_name || r.siteName || '',
+            publishedDate: r.date || r.published_date || '',
+            searchScore: r.score || 0,
+          };
+          const prefetchScore = scoreCandidateRelevance(candidate, lakeName, baseName, lakeSystemAliases, state);
+
+          if (prefetchScore < PRE_FETCH_THRESHOLD) {
+            queryLog.push(`  ✗ below threshold (score ${prefetchScore}): ${(r.title||r.url).slice(0,80)}`);
+            continue;
+          }
+
+          // Cross-category dedup by canonical URL — merge agentTags if already seen
+          if (canonicalToCandidate.has(canonicalUrl)) {
+            const existing = canonicalToCandidate.get(canonicalUrl);
+            const merged = [...new Set([...(existing.agentTags || []), ...agentTags])];
+            existing.agentTags = merged;
+            queryLog.push(`  ↔ merged tags for ${canonicalUrl.slice(0,80)} → [${merged.join(',')}]`);
+            continue;
+          }
+
+          // Also check raw URL for seeds already in seenUrls
           const normUrl = String(r.url||'').split('?')[0].toLowerCase();
-          if (seenUrls.has(normUrl)) continue;
+          if (seenUrls.has(normUrl) || seenUrls.has(canonicalUrl)) {
+            // Already seeded — just merge tags
+            const existingByCanon = canonicalToCandidate.get(canonicalUrl);
+            if (existingByCanon) existingByCanon.agentTags = [...new Set([...(existingByCanon.agentTags||[]), ...agentTags])];
+            continue;
+          }
           seenUrls.add(normUrl);
-          const isPdf = String(r.url||'').toLowerCase().endsWith('.pdf');
+          seenUrls.add(canonicalUrl);
+          if (urlAliases.length) urlAliases.forEach(a => seenUrls.add(a.split('?')[0].toLowerCase()));
+
+          const isPdf = String(r.url||'').toLowerCase().endsWith('.pdf') || /\/open$|download\?attachment|\/media\/\d+\/download/.test(String(r.url||''));
           let authority = 'Web';
           try {
             const host = new URL(r.url).hostname;
@@ -1343,22 +1705,28 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
             else if (/epa\.gov|nepis/.test(host)) authority = 'EPA';
             else if (/usgs\.gov/.test(host)) authority = 'USGS';
             else if (/dnr\.sc\.gov/.test(host)) authority = 'SCDNR';
+            else if (/ncwildlife\.gov|ncwildlife\.org/.test(host)) authority = 'NCWRC';
+            else if (/georgiawildlife\.com/.test(host)) authority = 'GADNR';
+            else if (/tn\.gov/.test(host)) authority = 'TWRA';
             else if (/eregulations\.com/.test(host)) authority = dnrName;
             else if (/carolinasportsman|anglersheadquarters|gameandfishmag|takemefishing|santeecoopercountry|lakemartinvoice|visitlakelanier|lakelanier|visitfloridakeys|visitnc|scprt|southcarolinaparks/.test(host)) authority = 'Fishing Guide';
             else if (/grokipedia\.com/.test(host)) authority = 'Grokipedia';
           } catch {}
-          queryLog.push(`  ✓ found: ${(r.title||r.url).slice(0,80)}`);
-          discoveredSources.push({
-            title: (r.title || `${queryLake} - Web`).replace(/\s+/g,' ').trim().slice(0,180),
+
+          queryLog.push(`  ✓ found (score ${prefetchScore}): ${(r.title||r.url).slice(0,80)}`);
+
+          const fullCandidate = {
+            ...candidate,
             type: isPdf ? 'PDF' : 'HTML',
             authority,
-            url: r.url,
             priority: 2,
-            score: r.score || 0,
+            prefetchScore,
             fullText: r.markdown || r.content || null,
-            agentTags,
-            discoveredBy: agentKey
-          });
+            agentTags: [...agentTags],
+            discoveredBy: agentKey,
+          };
+          canonicalToCandidate.set(canonicalUrl, fullCandidate);
+          discoveredSources.push(fullCandidate);
         }
       } catch (err) {
         console.warn(`Search failed for [${agentKey}] [${q.slice(0,80)}]: ${err.message}`);
@@ -1689,19 +2057,22 @@ async function handleResearchProxyDownload(request, env) {
     }
   }
 
-  // ── TinyFish Fetch for non-reserved HTML pages ───────────────────────────
-  // TinyFish is free and fast. Try it first for any HTML page that isn't
-  // reserved for Firecrawl's special handling (NEPIS two-step, eRegulations
-  // SPA waitFor, Grokipedia JS render). If TinyFish returns insufficient
-  // content, fall through to Firecrawl (credit-guarded) then Jina then basic.
-  if (isHtml && !needsFirecrawl) {
+  // ── TinyFish Fetch for ordinary HTML and PDF documents ──────────────────
+  // TinyFish can extract PDF text directly as well as render HTML. Trying it
+  // before streaming a PDF avoids browser-side binary parsing and gives the
+  // evidence pipeline normalized text. Reserved SPA/NEPIS pages retain their
+  // custom Firecrawl handling. If extraction is insufficient, fall through to
+  // the existing HTML fallbacks or the direct binary fetch for PDFs.
+  if (!needsFirecrawl) {
     let tfSucceeded = false;
     try {
       const tfResult = await tinyfishFetch({
         urls: [target],
         format: 'markdown',
-        include_selectors: ['main', 'article', '.content', '#main-content'],
-        exclude_selectors: ['nav', 'footer', '.sidebar', '.ads', 'script', 'style'],
+        ...(isHtml ? {
+          include_selectors: ['main', 'article', '.content', '#main-content'],
+          exclude_selectors: ['nav', 'footer', '.sidebar', '.ads', 'script', 'style']
+        } : {}),
         ttl: 86400
       }, env);
       const markdown = tfResult.results[0]?.text || '';
@@ -1727,7 +2098,7 @@ async function handleResearchProxyDownload(request, env) {
     // Scrape.do fallback — Cloudflare bypass, residential proxies, 1 credit/page
     // Only fires when TinyFish returned insufficient content. Failed requests cost 0.
     let scrapeDoSucceeded = false;
-    if (!tfSucceeded) {
+    if (!tfSucceeded && isHtml) {
       try {
         // Use render=true for known JS-heavy domains, plain fetch for everything else
         const needsRender = /anglersheadquarters|majorleaguefishing|omniafishing|carolinasportsman|gameandfishmag/i.test(target);
@@ -1748,7 +2119,7 @@ async function handleResearchProxyDownload(request, env) {
     }
 
     // Firecrawl fallback — only when both TinyFish and Scrape.do failed and budget allows
-    if (!tfSucceeded && !scrapeDoSucceeded && firecrawlKey) {
+    if (isHtml && !tfSucceeded && !scrapeDoSucceeded && firecrawlKey) {
       try {
         const budget = await checkFirecrawlBudget(env, 1);
         if (budget.allowed) {
@@ -1784,8 +2155,8 @@ async function handleResearchProxyDownload(request, env) {
       }
     }
 
-    // Jina Reader — last resort before basic fetch
-    try {
+    // Jina Reader — last resort before basic fetch (HTML only)
+    if (isHtml) try {
       const jinaUrl = `https://r.jina.ai/${target}`;
       const jinaHeaders = {
         'Accept': 'text/plain',
@@ -1812,6 +2183,64 @@ async function handleResearchProxyDownload(request, env) {
     }
   }
 
+  // ── USACE-specific Scrape.do PDF fallback ───────────────────────────────────
+  // Per section 12.7: shared cache -> TinyFish -> direct Worker fetch ->
+  // Scrape.do GET (USACE only). Firecrawl not attempted for USACE unless Scrape.do
+  // also fails and source is explicitly high-priority (not implemented here).
+  if (!isHtml && /usace\.army\.mil|\.usace\.army\.mil/i.test(target)) {
+    const scrapeToken = env.SCRAPEDO_API_KEY;
+    if (scrapeToken) {
+      try {
+        const sdRes = await fetch(`https://api.scrape.do/?token=${scrapeToken}&url=${encodeURIComponent(target)}`, {
+          headers: { 'Accept': 'application/pdf,*/*' }
+        });
+        const remaining = sdRes.headers.get('Scrape.do-Remaining-Credits');
+        const cost = sdRes.headers.get('Scrape.do-Request-Cost');
+        if (remaining) console.log(`[scrape.do USACE PDF] cost=${cost} remaining=${remaining} url=${target.slice(0,80)}`);
+        if (sdRes.ok) {
+          const sdHeaders = new Headers(sdRes.headers);
+          sdHeaders.set('Access-Control-Allow-Origin', '*');
+          sdHeaders.set('X-Source', 'scrapedo-usace');
+          return new Response(sdRes.body, { headers: sdHeaders });
+        }
+        console.warn(`Scrape.do USACE PDF fallback HTTP ${sdRes.status} for ${target}`);
+      } catch (sdErr) {
+        console.warn(`Scrape.do USACE PDF fallback error for ${target}: ${sdErr.message}`);
+      }
+    }
+  }
+
+  // ── NRC-specific Firecrawl PDF fallback ─────────────────────────────────────
+  // Per section 12.7: TinyFish fails for NRC; direct Worker returns 403; Scrape.do
+  // also fails. Firecrawl succeeds. Narrowly scoped — only fires for nrc.gov after
+  // all cheaper paths fail.
+  if (!isHtml && /nrc\.gov/i.test(target) && firecrawlKey) {
+    try {
+      const nrcBudget = await checkFirecrawlBudget(env, 1);
+      if (nrcBudget.allowed) {
+        const nrcRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: target, formats: ['markdown'], onlyMainContent: true, timeout: 30000 })
+        });
+        if (nrcRes.ok) {
+          const nrcData = await nrcRes.json();
+          const nrcText = nrcData.data?.markdown || nrcData.markdown || '';
+          if (nrcText && nrcText.length > 200) {
+            await recordFirecrawlUsage(env, 1);
+            console.log(`[firecrawl NRC PDF] success (${nrcText.length} chars): ${target.slice(0,80)}`);
+            return new Response(nrcText, { headers: new Headers({ 'Content-Type': 'text/plain; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'X-Source': 'firecrawl-nrc' }) });
+          }
+        }
+      } else {
+        console.warn(`Firecrawl budget exhausted — skipping NRC PDF fallback for ${target}`);
+      }
+    } catch (nrcErr) {
+      console.warn(`Firecrawl NRC PDF fallback error for ${target}: ${nrcErr.message}`);
+    }
+  }
+
+  // ── Basic fetch (PDF binary → client runs PDF.js; HTML final fallback) ───────
   try {
     const response = await fetch(target, {
       headers: {
@@ -5329,20 +5758,42 @@ async function handleResearchAgentPipeline(request, env) {
             });
             const proxyRes = await handleResearchProxyDownload(proxyReq, env);
             if (proxyRes.ok) {
-              const text = await proxyRes.text();
               const xSource = proxyRes.headers?.get('X-Source') || 'unknown';
-              if (text.length > 200) {
+              const xEtag = proxyRes.headers?.get('ETag') || proxyRes.headers?.get('X-ETag') || null;
+              const xLastModified = proxyRes.headers?.get('Last-Modified') || proxyRes.headers?.get('X-Last-Modified') || null;
+              // Content-Type determines text vs binary — TinyFish returns text/plain even for
+              // PDF URLs it extracted. Only binary application/pdf needs PDF.js on the Worker
+              // side; but Workers don't have PDF.js — binary PDFs must be returned to client.
+              // So here we accept text responses and skip binary ones (client handles via
+              // lake-research-engine.js which has PDF.js access).
+              const ct = proxyRes.headers?.get('Content-Type') || '';
+              let text = '';
+              if (ct.includes('application/pdf')) {
+                // Binary PDF came back — this shouldn't happen in Worker-side pipeline
+                // (proxy-download should have extracted it via TinyFish). Log and skip;
+                // the client-side runner (lake-research-engine.js) will handle this URL
+                // with PDF.js when it processes the source list directly.
+                console.warn(`[agent-pipeline] binary PDF returned by proxy for ${src.url.slice(0,80)} — skipping Worker-side; client will handle`);
+              } else {
+                text = await proxyRes.text();
+              }
+              if (text && text.length > 200) {
                 const doc = {
                   title: src.title, url: src.url, fullText: text,
                   agentTags: src.agentTags || [agentKey],
                   discoveredBy: src.discoveredBy || agentKey,
                   fetchedAt: new Date().toISOString(),
-                  etag: null, // etag only available from direct TinyFish Fetch calls
+                  etag: xEtag,
+                  lastModified: xLastModified,
+                  snippet: src.snippet || null,
+                  siteName: src.siteName || null,
+                  publishedDate: src.publishedDate || null,
+                  prefetchScore: src.prefetchScore || null,
                 };
                 normalizedDocuments.push(doc);
                 existingByUrl.set(normUrl, doc);
                 console.log(`[agent-pipeline] fetched (${xSource}, ${text.length} chars): ${src.url.slice(0,80)}`);
-              } else {
+              } else if (!ct.includes('application/pdf')) {
                 console.warn(`[agent-pipeline] fetch returned insufficient content (${text.length} chars) via ${xSource}: ${src.url.slice(0,80)}`);
               }
             } else {
