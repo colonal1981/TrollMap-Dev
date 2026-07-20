@@ -4463,6 +4463,21 @@ async function handleResearchAgent(request, env) {
     };
   }
 
+  // Normalize habitat output — fix string fields that should be arrays
+  // The habitat agent sometimes writes cover/riprapLocations/namedCreekMouths as comma-separated strings
+  if (agentKey === 'habitat' && sectionData && typeof sectionData === 'object') {
+    const ARRAY_FIELDS = ['cover', 'riprapLocations', 'namedCreekMouths', 'artificialHabitat'];
+    for (const field of ARRAY_FIELDS) {
+      const val = sectionData[field];
+      if (typeof val === 'string' && val.trim()) {
+        // Convert comma-separated string to array
+        sectionData[field] = val.split(',').map(s => s.trim()).filter(Boolean);
+      } else if (val == null) {
+        sectionData[field] = [];
+      }
+    }
+  }
+
   // Normalize trollingIntelligence — fix bare array season entries like [5, 15]
   // Agent sometimes shortcuts secondary species to just a depth array instead of full season object
   if (agentKey === 'fisheries' && sectionData && typeof sectionData === 'object') {
