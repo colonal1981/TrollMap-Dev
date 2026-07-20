@@ -878,6 +878,13 @@ async function recoverSmartPlanFacts(lakeName, callbacks = {}) {
       finalized++;
     }
     for (const key of ['surfaceAreaAcres','maxDepthFt','averageDepthFt','normalPoolFt','reservoirOwner','riverSystem','damName','yearImpounded','county','archetype']) if (profile.identity[key] != null) profile[key] = profile.identity[key];
+    // Preserve trollingIntelligence — recovery should never wipe fisheries data
+    if (!profile.trollingIntelligence && profileData.profile?.trollingIntelligence) {
+      profile.trollingIntelligence = profileData.profile.trollingIntelligence;
+    }
+    if (!profile.trollingIntelligence && profileData.profile?.trolling) {
+      profile.trollingIntelligence = profileData.profile.trolling;
+    }
     profile.metadata = profile.metadata || {};
     profile.metadata.lastSmartPlanRecoveryAt = new Date().toISOString();
     profile.metadata.smartPlanRecovery = { targetedDocuments: selected.map(d => d.title), newFacts: newFacts.length, applied, finalized };
@@ -1451,61 +1458,66 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
 
     log(`Extracting from ${usableDocuments.length} documents (skipped ${normalizedDocuments.length - usableDocuments.length})`);
 
-    // Call /research/analyze-facts once per document — no batching, no trimming
+    // Call /research/analyze-facts once per document — batched in groups of 5 (one per Gemini free key)
+    // docIndex is passed so the worker can deterministically select which key to use
+    // without relying on shared module state (which resets per Worker invocation)
     const allDocFacts = [];
-    for (let i = 0; i < usableDocuments.length; i++) {
-      // 1.5s spacing keeps burst under Gemini Flash Lite's 15 RPM limit and provides TPM headroom (~167K TPM),
-      // reducing cascades to the 2.5 Flash/Lite models which only have 20 RPD each.
-      if (i > 0) await new Promise(res => setTimeout(res, 1500));
-      const doc = usableDocuments[i];
-      const scored = scoredSources.find(s => s.title === doc.title);
-      // Cap document text at 200k chars — large PDFs (200k+) still get trimmed but
-      // Gemini 3.1 Flash Lite / 2.5 Flash have 1M token context windows so 200k chars
-      // (~50k tokens) is well within budget. Old 80k cap was from Groq era.
-      const docText = (doc.fullText || '').slice(0, 200000);
-      const singlePayload = {
-        lakeName,
-        baseName,
-        state: stateName,
-        documents: [{
-          title: doc.title,
-          url: doc.url || '',
-          text: docText,
-          quality: scored ? { ...scored.scoring, classes: scored.classes || [] } : {}
-        }]
-      };
-      try {
+    const BATCH_SIZE = 5;
+    for (let batchStart = 0; batchStart < usableDocuments.length; batchStart += BATCH_SIZE) {
+      const batch = usableDocuments.slice(batchStart, batchStart + BATCH_SIZE);
+      if (batchStart > 0) await new Promise(res => setTimeout(res, 1000));
+
+      const batchPromises = batch.map((doc, batchIdx) => {
+        const i = batchStart + batchIdx;
+        const scored = scoredSources.find(s => s.title === doc.title);
+        const docText = (doc.fullText || '').slice(0, 200000);
+        const singlePayload = {
+          lakeName,
+          baseName,
+          state: stateName,
+          docIndex: i, // worker uses this for deterministic key selection
+          documents: [{
+            title: doc.title,
+            url: doc.url || '',
+            text: docText,
+            quality: scored ? { ...scored.scoring, classes: scored.classes || [] } : {}
+          }]
+        };
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 45000); // 45s per doc max
-        let res;
-        try {
-          res = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(singlePayload),
-            signal: controller.signal
+        const timeout = setTimeout(() => controller.abort(), 45000);
+        return fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(singlePayload),
+          signal: controller.signal
+        })
+          .finally(() => clearTimeout(timeout))
+          .then(async res => {
+            if (!res.ok) {
+              log(`⚠️ Doc [${i+1}/${usableDocuments.length}] "${doc.title?.slice(0,40)}" HTTP ${res.status} — skipping`);
+              return [];
+            }
+            const data = await res.json();
+            if (data.success && data.extracted_facts?.length) {
+              log(`📄 [${i+1}/${usableDocuments.length}] "${doc.title?.slice(0,50)}" → ${data.extracted_facts.length} facts`);
+              return data.extracted_facts;
+            } else {
+              log(`📄 [${i+1}/${usableDocuments.length}] "${doc.title?.slice(0,50)}" → 0 facts`);
+              return [];
+            }
+          })
+          .catch(e => {
+            if (e.name === 'AbortError') {
+              log(`⚠️ Doc [${i+1}] "${doc.title?.slice(0,40)}" timed out after 45s — skipping`);
+            } else {
+              log(`⚠️ Doc [${i+1}] "${doc.title?.slice(0,40)}" failed: ${e.message}`);
+            }
+            return [];
           });
-        } finally {
-          clearTimeout(timeout);
-        }
-        if (!res.ok) {
-          log(`⚠️ Doc [${i+1}/${usableDocuments.length}] "${doc.title?.slice(0,40)}" HTTP ${res.status} — skipping`);
-          continue;
-        }
-        const data = await res.json();
-        if (data.success && data.extracted_facts?.length) {
-          allDocFacts.push(...data.extracted_facts);
-          log(`📄 [${i+1}/${usableDocuments.length}] "${doc.title?.slice(0,50)}" → ${data.extracted_facts.length} facts`);
-        } else {
-          log(`📄 [${i+1}/${usableDocuments.length}] "${doc.title?.slice(0,50)}" → 0 facts`);
-        }
-      } catch (e) {
-        if (e.name === 'AbortError') {
-          log(`⚠️ Doc [${i+1}] "${doc.title?.slice(0,40)}" timed out after 45s — skipping`);
-        } else {
-          log(`⚠️ Doc [${i+1}] "${doc.title?.slice(0,40)}" failed: ${e.message}`);
-        }
-      }
+      });
+
+      const batchResults = await Promise.all(batchPromises);
+      for (const facts of batchResults) allDocFacts.push(...facts);
     }
 
     let rawFacts = allDocFacts;
