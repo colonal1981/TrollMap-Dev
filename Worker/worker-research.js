@@ -2666,11 +2666,36 @@ async function handleResearchSaveNormalized(request, env) {
   const safe = sanitizeLakeId(lakeName);
   const key = `lake_packages/${safe}/normalized_documents.json`;
 
-  await env.R2_TROLLMAP_CHARTPACKS.put(key, JSON.stringify(documents, null, 2), {
+  // Relevance gate — reject docs with no mention of the lake name, base name, or state
+  // Prevents off-lake docs (wrong state, wrong lake, tangential articles) from polluting
+  // the normalized cache and causing false species extractions downstream
+  const baseName = lakeName.replace(/^Lake\s+/i, '').replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i, '').trim();
+  const stateMatch = lakeName.match(/,\s*(SC|NC|GA|TN)/i);
+  const state = stateMatch ? stateMatch[1].toUpperCase() : '';
+  const searchTerms = [
+    lakeName.toLowerCase(),
+    baseName.toLowerCase(),
+    ...(state ? [state.toLowerCase(), ` ${state.toLowerCase()} `, `${state.toLowerCase()} lake`, `lake ${baseName.toLowerCase()}`] : [])
+  ];
+
+  const filteredDocuments = documents.filter(doc => {
+    const title = (doc.title || '').toLowerCase();
+    const preview = (doc.fullText || doc.text || '').slice(0, 3000).toLowerCase();
+    const url = (doc.url || '').toLowerCase();
+    // Pass if any search term appears in title, URL, or first 3000 chars of content
+    return searchTerms.some(term => title.includes(term) || url.includes(term) || preview.includes(term));
+  });
+
+  const rejected = documents.length - filteredDocuments.length;
+  if (rejected > 0) {
+    console.log(`save-normalized [${lakeName}]: rejected ${rejected} off-lake doc(s) of ${documents.length} total`);
+  }
+
+  await env.R2_TROLLMAP_CHARTPACKS.put(key, JSON.stringify(filteredDocuments, null, 2), {
     httpMetadata: { contentType: "application/json" }
   });
 
-  return new Response(JSON.stringify({ success: true, key }), { headers: JSON_HEADERS });
+  return new Response(JSON.stringify({ success: true, key, saved: filteredDocuments.length, rejected }), { headers: JSON_HEADERS });
 }
 
 async function handleResearchGetNormalized(env, lakeName) {
