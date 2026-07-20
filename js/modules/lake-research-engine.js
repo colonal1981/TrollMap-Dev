@@ -114,6 +114,12 @@ function setProgress(label, pct) {
 function showProgress(show) {
   const el = document.getElementById('researchProgress');
   if (el) el.style.display = show ? 'block' : 'none';
+  // Log element is now a sibling of researchProgress — show it when run starts,
+  // keep it visible after run completes (don't hide with progress bar)
+  if (show) {
+    const logEl = document.getElementById('researchLog');
+    if (logEl) logEl.style.display = 'block';
+  }
 }
 
 function sanitizeStateFromLakeName(lakeName) {

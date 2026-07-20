@@ -1307,7 +1307,7 @@ function initLakeResearch() {
   document.getElementById('btnClearResearchCache')?.addEventListener('click', () => {
     _state.researchLog = [];
     const logEl = document.getElementById('researchLog');
-    if (logEl) logEl.textContent = 'Log cleared.';
+    if (logEl) { logEl.textContent = 'Log cleared.'; logEl.style.display = 'none'; }
     const out = document.getElementById('debugOutput');
     if (out) out.textContent = '';
   });
