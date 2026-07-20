@@ -6,6 +6,376 @@ import { LAKES, LAKE_INTEL, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWater
 
 var __defProp = Object.defineProperty;
 
+// ─── TINYFISH API CLIENT ───
+const TINYFISH_BASE = 'https://api.search.tinyfish.ai';
+const TINYFISH_FETCH_BASE = 'https://api.fetch.tinyfish.ai';
+
+async function tinyfishSearch({ query, domain_type = 'web', purpose, location, language, recency_minutes, after_date, before_date }, env) {
+  const key = env.TINYFISH_API_KEY;
+  if (!key) throw new Error('TINYFISH_API_KEY not configured');
+  
+  const params = new URLSearchParams({ query });
+  if (domain_type) params.set('domain_type', domain_type);
+  if (purpose) params.set('purpose', purpose);
+  if (location) params.set('location', location);
+  if (language) params.set('language', language);
+  if (recency_minutes) params.set('recency_minutes', String(recency_minutes));
+  if (after_date) params.set('after_date', after_date);
+  if (before_date) params.set('before_date', before_date);
+  
+  const res = await fetch(`${TINYFISH_BASE}?${params.toString()}`, {
+    headers: { 'X-API-Key': key }
+  });
+  if (!res.ok) throw new Error(`TinyFish Search HTTP ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+async function tinyfishFetch({ urls, format = 'markdown', include_selectors, exclude_selectors, ttl, if_none_match, if_modified_since, include_etag_and_last_modified }, env) {
+  const key = env.TINYFISH_API_KEY;
+  if (!key) throw new Error('TINYFISH_API_KEY not configured');
+  
+  const body = { urls, format };
+  if (include_selectors) body.include_selectors = include_selectors;
+  if (exclude_selectors) body.exclude_selectors = exclude_selectors;
+  if (ttl !== undefined) body.ttl = ttl;
+  if (if_none_match) body.if_none_match = if_none_match;
+  if (if_modified_since) body.if_modified_since = if_modified_since;
+  if (include_etag_and_last_modified) body.include_etag_and_last_modified = include_etag_and_last_modified;
+  
+  const res = await fetch(TINYFISH_FETCH_BASE, {
+    method: 'POST',
+    headers: { 'X-API-Key': key, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) throw new Error(`TinyFish Fetch HTTP ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+// ─── FIRECRAWL CREDIT GUARD ───
+const FIRECRAWL_MONTHLY_LIMIT = 1500;
+const FIRECRAWL_SAFETY_BUFFER = 300; // Stop using Firecrawl when credits < 300
+const FIRECRAWL_KV_KEY = 'firecrawl:credits_used';
+
+async function checkFirecrawlBudget(env, estimatedCredits = 1) {
+  const used = parseInt(await env.KV.get(FIRECRAWL_KV_KEY) || '0', 10);
+  const remaining = FIRECRAWL_MONTHLY_LIMIT - used;
+  if (remaining < FIRECRAWL_SAFETY_BUFFER) {
+    return { allowed: false, remaining, reason: `Firecrawl budget exhausted (${remaining} remaining, buffer ${FIRECRAWL_SAFETY_BUFFER})` };
+  }
+  if (remaining - estimatedCredits < FIRECRAWL_SAFETY_BUFFER) {
+    return { allowed: true, remaining, useTinyFishOnly: true, reason: `Firecrawl low (${remaining} left), preferring TinyFish` };
+  }
+  return { allowed: true, remaining, useTinyFishOnly: false };
+}
+
+async function recordFirecrawlUsage(env, credits = 1) {
+  const used = parseInt(await env.KV.get(FIRECRAWL_KV_KEY) || '0', 10);
+  await env.KV.put(FIRECRAWL_KV_KEY, String(used + credits), { expirationTtl: 60 * 60 * 24 * 35 }); // 35 days (covers month + buffer)
+}
+
+// ─── REGULATIONS FETCH (One per State, Cached 90 Days) ───
+const STATE_REGULATIONS_CONFIG = {
+  SC: {
+    pages: [
+      { key: 'general', url: 'https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits', parser: 'scTableParser' }
+    ]
+  },
+  NC: {
+    pages: [
+      { key: 'general', url: 'https://www.eregulations.com/northcarolina/fishing/warm-water-game-fish-regulations', parser: 'ncTableParser' }
+    ]
+  },
+  GA: {
+    pages: [
+      { key: 'general', url: 'https://www.eregulations.com/georgia/fishing/game-species-daily-limits', parser: 'gaTableParser' }
+    ]
+  },
+  TN: {
+    pages: [
+      { key: 'general', url: 'https://www.eregulations.com/tennessee/fishing/statewide-limits-regulations', parser: 'tnStatewideParser' },
+      { key: 'exceptions', url: 'https://www.eregulations.com/tennessee/fishing/exceptions-to-statewide-regulations', parser: 'tnExceptionsParser' },
+      { key: 'region1', url: 'https://www.eregulations.com/tennessee/fishing/region-1', parser: 'tnRegionParser' },
+      { key: 'region2', url: 'https://www.eregulations.com/tennessee/fishing/region-2', parser: 'tnRegionParser' },
+      { key: 'region3', url: 'https://www.eregulations.com/tennessee/fishing/region-3', parser: 'tnRegionParser' },
+      { key: 'region4', url: 'https://www.eregulations.com/tennessee/fishing/region-4', parser: 'tnRegionParser' }
+    ]
+  }
+};
+
+function extractMarkdownTables(text) {
+  const tables = [];
+  const lines = text.split('\n');
+  let inTable = false;
+  let currentTable = { headers: [], rows: [] };
+  
+  for (const line of lines) {
+    if (line.includes('|')) {
+      const cells = line.split('|').map(c => c.trim()).filter((_, i, arr) => i > 0 && i < arr.length - 1);
+      if (cells.length > 0) {
+        if (!inTable) {
+          inTable = true;
+          currentTable = { headers: cells, rows: [] };
+        } else if (cells.every(c => /^[-:|]+$/.test(c))) {
+          // separator row - skip
+        } else if (currentTable.headers.length === 0) {
+          currentTable.headers = cells;
+        } else {
+          currentTable.rows.push(cells);
+        }
+      }
+    } else if (inTable) {
+      if (currentTable.headers.length > 0 && currentTable.rows.length > 0) {
+        tables.push(currentTable);
+      }
+      inTable = false;
+    }
+  }
+  if (inTable && currentTable.headers.length > 0 && currentTable.rows.length > 0) {
+    tables.push(currentTable);
+  }
+  return tables;
+}
+
+function parseSCTable(markdown) {
+  const tables = extractMarkdownTables(markdown);
+  const regs = { general: {}, lakeSpecific: {} };
+  
+  for (const table of tables) {
+    const headers = table.headers.map(h => h.toLowerCase());
+    const waterBodyIdx = headers.findIndex(h => h.includes('water body') || h.includes('waterbody'));
+    const fishIdx = headers.findIndex(h => h.includes('fish'));
+    const sizeIdx = headers.findIndex(h => h.includes('size'));
+    const creelIdx = headers.findIndex(h => h.includes('creel') || h.includes('possession'));
+    
+    if (waterBodyIdx === -1 || fishIdx === -1) continue;
+    
+    for (const row of table.rows) {
+      const waterBody = row[waterBodyIdx] || '';
+      const species = row[fishIdx] || '';
+      const sizeLimit = sizeIdx >= 0 ? (row[sizeIdx] || '') : '';
+      const creelLimit = creelIdx >= 0 ? (row[creelIdx] || '') : '';
+      
+      if (!species || !waterBody) continue;
+      
+      const entry = { species, sizeLimit, creelLimit };
+      const isStatewide = /statewide|all public waters except/i.test(waterBody);
+      
+      if (isStatewide) {
+        regs.general[species] = entry;
+      } else {
+        const lakeKey = normalizeLakeName(waterBody);
+        regs.lakeSpecific[lakeKey] = regs.lakeSpecific[lakeKey] || {};
+        regs.lakeSpecific[lakeKey][species] = entry;
+      }
+    }
+  }
+  return regs;
+}
+
+function parseNCTable(markdown) {
+  const tables = extractMarkdownTables(markdown);
+  const regs = { general: {}, lakeSpecific: {} };
+  
+  for (const table of tables) {
+    const headers = table.headers.map(h => h.toLowerCase());
+    const speciesIdx = headers.findIndex(h => h.includes('species'));
+    const sizeIdx = headers.findIndex(h => h.includes('size'));
+    const creelIdx = headers.findIndex(h => h.includes('creel'));
+    const waterBodyIdx = headers.findIndex(h => h.includes('water') || h.includes('lake') || h.includes('reservoir'));
+    
+    if (speciesIdx === -1) continue;
+    
+    for (const row of table.rows) {
+      const species = row[speciesIdx] || '';
+      const sizeLimit = sizeIdx >= 0 ? (row[sizeIdx] || '') : '';
+      const creelLimit = creelIdx >= 0 ? (row[creelIdx] || '') : '';
+      const waterBody = waterBodyIdx >= 0 ? (row[waterBodyIdx] || '') : '';
+      
+      if (!species) continue;
+      
+      const entry = { species, sizeLimit, creelLimit };
+      const isStatewide = /all public waters except|statewide/i.test(waterBody) || !waterBody;
+      
+      if (isStatewide) {
+        regs.general[species] = entry;
+      } else if (waterBody) {
+        const lakeKey = normalizeLakeName(waterBody);
+        regs.lakeSpecific[lakeKey] = regs.lakeSpecific[lakeKey] || {};
+        regs.lakeSpecific[lakeKey][species] = entry;
+      }
+    }
+  }
+  return regs;
+}
+
+function parseGATable(markdown) {
+  const tables = extractMarkdownTables(markdown);
+  const regs = { general: {}, lakeSpecific: {} };
+  
+  for (const table of tables) {
+    const headers = table.headers.map(h => h.toLowerCase());
+    const speciesIdx = headers.findIndex(h => h.includes('species') || h.includes('bass') || h.includes('catfish') || h.includes('crappie'));
+    const limitIdx = headers.findIndex(h => h.includes('daily') || h.includes('limit'));
+    const exceptionsIdx = headers.findIndex(h => h.includes('exception'));
+    
+    if (speciesIdx === -1) continue;
+    
+    for (const row of table.rows) {
+      const species = row[speciesIdx] || '';
+      const dailyLimit = limitIdx >= 0 ? (row[limitIdx] || '') : '';
+      const exceptions = exceptionsIdx >= 0 ? (row[exceptionsIdx] || '') : '';
+      
+      if (!species) continue;
+      
+      // GA format: statewide limit in dailyLimit, lake exceptions in exceptions column
+      const entry = { species, sizeLimit: '', creelLimit: dailyLimit };
+      
+      if (!exceptions || /no exception|—|none/i.test(exceptions)) {
+        regs.general[species] = entry;
+      } else {
+        // Parse lake names from exceptions (e.g., "Lake Lindsay Grace — Only one bass...")
+        const lakeMatches = exceptions.match(/(Lake [A-Za-z\s]+|[A-Za-z\s]+ Lake|[A-Za-z\s]+ Reservoir)/g);
+        if (lakeMatches) {
+          for (const lake of lakeMatches) {
+            const lakeKey = normalizeLakeName(lake);
+            regs.lakeSpecific[lakeKey] = regs.lakeSpecific[lakeKey] || {};
+            regs.lakeSpecific[lakeKey][species] = { ...entry, creelLimit: exceptions };
+          }
+        }
+      }
+    }
+  }
+  return regs;
+}
+
+function parseTNStatewide(markdown) {
+  const tables = extractMarkdownTables(markdown);
+  const regs = { general: {}, lakeSpecific: {} };
+  
+  for (const table of tables) {
+    const headers = table.headers.map(h => h.toLowerCase());
+    const speciesIdx = headers.findIndex(h => h.includes('species'));
+    const creelIdx = headers.findIndex(h => h.includes('creel'));
+    const sizeIdx = headers.findIndex(h => h.includes('length') || h.includes('size'));
+    
+    if (speciesIdx === -1) continue;
+    
+    for (const row of table.rows) {
+      const species = row[speciesIdx] || '';
+      const creelLimit = creelIdx >= 0 ? (row[creelIdx] || '') : '';
+      const sizeLimit = sizeIdx >= 0 ? (row[sizeIdx] || '') : '';
+      
+      if (!species) continue;
+      
+      regs.general[species] = { species, sizeLimit, creelLimit };
+    }
+  }
+  return regs;
+}
+
+function parseTNExceptions(markdown) {
+  const tables = extractMarkdownTables(markdown);
+  const regs = { general: {}, lakeSpecific: {} };
+  
+  let currentLake = '';
+  for (const table of tables) {
+    for (const row of table.rows) {
+      const cellText = row.join(' ').trim();
+      // Detect lake headers (e.g., "### Barkley", "### Kentucky Lake")
+      const lakeMatch = cellText.match(/^#{1,3}\s*(.+)$/);
+      if (lakeMatch && !cellText.includes('|')) {
+        currentLake = normalizeLakeName(lakeMatch[1]);
+        continue;
+      }
+      
+      if (!currentLake) continue;
+      
+      const species = row[0] || '';
+      const detail = row[1] || '';
+      if (!species) continue;
+      
+      regs.lakeSpecific[currentLake] = regs.lakeSpecific[currentLake] || {};
+      regs.lakeSpecific[currentLake][species] = { species, sizeLimit: '', creelLimit: detail };
+    }
+  }
+  return regs;
+}
+
+function parseTNRegion(markdown) {
+  return parseTNExceptions(markdown); // Same format
+}
+
+const PARSERS = {
+  scTableParser: parseSCTable,
+  ncTableParser: parseNCTable,
+  gaTableParser: parseGATable,
+  tnStatewideParser: parseTNStatewide,
+  tnExceptionsParser: parseTNExceptions,
+  tnRegionParser: parseTNRegion
+};
+
+function normalizeLakeName(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/^lake\s+/i, '')
+    .replace(/\s+(lake|reservoir)$/i, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+async function fetchStateRegulations(state, env) {
+  const cacheKey = `regulations:${state}:v2`;
+  let cached = await env.KV.get(cacheKey, { type: 'json' });
+  if (cached) return cached;
+  
+  const config = STATE_REGULATIONS_CONFIG[state];
+  if (!config) return { general: {}, lakeSpecific: {} };
+  
+  const pages = config.pages;
+  const urls = pages.map(p => p.url);
+  
+  // Fetch all pages in ONE TinyFish Fetch call (batched, free)
+  const result = await tinyfishFetch({ urls, format: 'markdown' }, env);
+  
+  const parsed = { general: {}, lakeSpecific: {} };
+  
+  for (let i = 0; i < pages.length; i++) {
+    const page = pages[i];
+    const markdown = result.results[i]?.text || '';
+    const pageData = PARSERS[page.parser](markdown);
+    
+    if (page.key === 'general') {
+      parsed.general = pageData.general || {};
+    } else {
+      // Merge lake-specific from exceptions/regions
+      for (const [lake, speciesMap] of Object.entries(pageData.lakeSpecific || {})) {
+        parsed.lakeSpecific[lake] = { ...(parsed.lakeSpecific[lake] || {}), ...speciesMap };
+      }
+    }
+  }
+  
+  await env.KV.put(cacheKey, JSON.stringify(parsed), { expirationTtl: 90 * 24 * 60 * 60 });
+  return parsed;
+}
+
+function getLakeRegulations(stateRegulations, lakeName) {
+  const normalized = normalizeLakeName(lakeName);
+  let lakeSpecific = stateRegulations.lakeSpecific[normalized] || {};
+  
+  // Also check partial matches
+  for (const [key, val] of Object.entries(stateRegulations.lakeSpecific)) {
+    if (key.includes(normalized) || normalized.includes(key)) {
+      Object.assign(lakeSpecific, val);
+    }
+  }
+  
+  return {
+    generalStateRegulations: stateRegulations.general,
+    lakeSpecificRegulations: lakeSpecific,
+    hasExceptions: Object.keys(lakeSpecific).length > 0
+  };
+}
+
 // ─── OWNER-AWARE DRAWDOWN / OPERATIONS SOURCE SEEDS ───
 // When deterministic parsing resolves reservoirOwner, these seeded sources are
 // injected as discovery targets so the pipeline can extract lake-level ranges,
@@ -577,7 +947,65 @@ async function handleResearchDiscover(request, env) {
     'rhodhiss': 'Catawba_River', 'mountain island': 'Catawba_River',
   };
 
-  const KNOWN_BAD_NEPIS = new Set(['monticello']);
+  // ─── AGENT-SPECIFIC DISCOVERY QUERIES ───
+const AGENT_DISCOVERY_QUERIES = {
+  identity: {
+    SC: (lake) => [`"${lake}" FERC license filetype:pdf`, `"${lake}" "dam owner" OR "reservoir owner" OR "impounded"`],
+    NC: (lake) => [`"${lake}" FERC license filetype:pdf`, `"${lake}" "Duke Energy" OR "Dominion Energy" OR "USACE" dam owner`],
+    GA: (lake) => [`"${lake}" FERC license filetype:pdf`, `"${lake}" "Georgia Power" OR "USACE" dam owner`],
+    TN: (lake) => [`"${lake}" FERC license filetype:pdf`, `"${lake}" "TVA" OR "USACE" dam owner`],
+  },
+  limnology: {
+    SC: (lake) => [`"${lake}" EPA NSCEP OR "Report on Lake" site:nepis.epa.gov`, `"${lake}" water quality dissolved oxygen thermocline site:scdhec.gov OR site:waterqualitydata.us`],
+    NC: (lake) => [`"${lake}" EPA NSCEP OR "Report on Lake" site:nepis.epa.gov`, `"${lake}" water quality dissolved oxygen thermocline site:deq.nc.gov OR site:waterqualitydata.us`],
+    GA: (lake) => [`"${lake}" EPA NSCEP OR "Report on Lake" site:nepis.epa.gov`, `"${lake}" water quality dissolved oxygen thermocline site:epd.georgia.gov OR site:waterqualitydata.us`],
+    TN: (lake) => [`"${lake}" EPA NSCEP OR "Report on Lake" site:nepis.epa.gov`, `"${lake}" water quality dissolved oxygen thermocline site:tn.gov OR site:waterqualitydata.us`],
+  },
+  biology: {
+    SC: (lake) => [`"${lake}" stocking report filetype:pdf`, `"${lake}" fish survey OR population survey filetype:pdf`, `"${lake}" forage OR shad OR herring filetype:pdf`],
+    NC: (lake) => [`"${lake}" stocking report filetype:pdf`, `"${lake}" fish survey filetype:pdf`, `"${lake}" forage OR shad OR herring filetype:pdf`],
+    GA: (lake) => [`"${lake}" stocking report filetype:pdf`, `"${lake}" fish survey filetype:pdf`, `"${lake}" forage OR shad OR herring filetype:pdf`],
+    TN: (lake) => [`"${lake}" stocking report filetype:pdf`, `"${lake}" fish survey filetype:pdf`, `"${lake}" forage OR shad OR herring filetype:pdf`],
+  },
+  habitat: {
+    SC: (lake) => [`"${lake}" habitat OR vegetation OR "standing timber" OR "creek mouth" site:dnr.sc.gov`],
+    NC: (lake) => [`"${lake}" habitat OR vegetation OR "standing timber" OR "creek mouth" site:ncwildlife.org`],
+    GA: (lake) => [`"${lake}" habitat OR vegetation OR "standing timber" OR "creek mouth" site:georgiawildlife.com`],
+    TN: (lake) => [`"${lake}" habitat OR vegetation OR "standing timber" OR "creek mouth" site:tnwildlife.org`],
+  },
+  navigation: {
+    SC: (lake) => [`"${lake}" hazard OR shoal OR stump OR channel site:dnr.sc.gov`],
+    NC: (lake) => [`"${lake}" hazard OR shoal OR stump OR channel site:ncwildlife.org`],
+    GA: (lake) => [`"${lake}" hazard OR shoal OR stump OR channel site:georgiawildlife.com`],
+    TN: (lake) => [`"${lake}" hazard OR shoal OR stump OR channel site:tnwildlife.org`],
+  },
+  regulations: {
+    SC: (lake) => [`"${lake}" fishing regulations creel limit site:eregulations.com/sc`],
+    NC: (lake) => [`"${lake}" fishing regulations creel limit site:eregulations.com/nc`],
+    GA: (lake) => [`"${lake}" fishing regulations creel limit site:eregulations.com/ga`],
+    TN: (lake) => [`"${lake}" fishing regulations creel limit site:tn.gov/twra`],
+  },
+  fisheries: {
+    SC: (lake) => [`"${lake}" trolling OR "spread" OR "presentation" OR "pattern" site:youtube.com OR site:facebook.com`, `"${lake}" tournament results OR "fishing report"`],
+    NC: (lake) => [`"${lake}" trolling OR "spread" OR "presentation" OR "pattern" site:youtube.com OR site:facebook.com`, `"${lake}" tournament results OR "fishing report"`],
+    GA: (lake) => [`"${lake}" trolling OR "spread" OR "presentation" OR "pattern" site:youtube.com OR site:facebook.com`, `"${lake}" tournament results OR "fishing report"`],
+    TN: (lake) => [`"${lake}" trolling OR "spread" OR "presentation" OR "pattern" site:youtube.com OR site:facebook.com`, `"${lake}" tournament results OR "fishing report"`],
+  },
+  summary: { SC: () => [], NC: () => [], GA: () => [], TN: () => [] }
+};
+
+const AGENT_TO_TAGS = {
+  identity: ['identity'],
+  limnology: ['limnology'],
+  biology: ['biology'],
+  habitat: ['habitat'],
+  navigation: ['navigation'],
+  regulations: ['regulations'],
+  fisheries: ['fisheries'],
+  summary: ['summary']
+};
+
+const KNOWN_BAD_NEPIS = new Set(['monticello']);
   const skipNepis = KNOWN_BAD_NEPIS.has(baseLower);
 
   const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
@@ -755,46 +1183,60 @@ async function handleResearchDiscover(request, env) {
     }
   }
 
-  // ── STEP 3: Natural language search queries (4-5 queries, no domain filters) ──
-  if (firecrawlKey) {
-    // Build species-targeted query from deterministic species list (passed from engine)
-    // Use top 4 species max to keep query tight — prioritize non-generic names
-    const inboundSpecies = Array.isArray(body.predatorSpecies) ? body.predatorSpecies : [];
-    const speciesQueryTerms = inboundSpecies
-      .filter(s => s && typeof s === 'string')
-      .slice(0, 4)
-      .map(s => `"${s}"`)
-      .join(' OR ');
+  // ── STEP 3: Agent-specific search queries ───────────────────────────────
+  const agent = String(body.agent || "").trim().toLowerCase();
+  const agentsToDiscover = agent ? [agent] : Object.keys(AGENT_DISCOVERY_QUERIES);
+  
+  for (const agentKey of agentsToDiscover) {
+    if (!AGENT_DISCOVERY_QUERIES[agentKey]) continue;
+    
+    const stateQueries = AGENT_DISCOVERY_QUERIES[agentKey][state];
+    if (!stateQueries) continue;
+    
+    const queries = stateQueries(queryLakeFinal);
+    if (!queries.length) continue;
 
-    // _speciesQueryOnly: true — set by fisheries refresh to skip the 4 standard queries
-    // and only fire the species-targeted query (saves 4 Firecrawl credits per refresh)
-    const speciesQueryOnly = body._speciesQueryOnly === true;
-
-    const queries = speciesQueryOnly
-      ? (speciesQueryTerms ? [`"${queryLakeFinal}" (${speciesQueryTerms}) seasonal depth structure behavior`] : [])
-      : [
-          `"${queryLakeFinal}" fishing report thermocline depth water temperature`,
-          `"${queryLakeFinal}" water quality dissolved oxygen stratification`,
-          `"${queryLakeFinal}" (fisheries OR biology OR "management plan") ${dnrName}`,
-          `"${queryLakeFinal}" (limnology OR thermocline OR "water quality" OR "dissolved oxygen")`,
-          // Fishing intel query — surfaces local/regional fishing strategy pages, guide sites, tourism fishing content
-          // Intentionally broad to catch santeecoopercountry.org, guide services, state tourism fishing pages
-          `"${queryLakeFinal}" (fishing strategies OR "how to fish" OR "fishing guide" OR "fishing tips" OR "fishing techniques")`,
-          // Species-targeted query — only fires when deterministic species list is available
-          ...(speciesQueryTerms ? [`"${queryLakeFinal}" (${speciesQueryTerms}) seasonal depth structure behavior`] : []),
-        ];
+    const agentTags = AGENT_TO_TAGS[agentKey] || [agentKey];
+    
+    // Check Firecrawl budget before searching
+    const budget = await checkFirecrawlBudget(env, queries.length);
+    const useFirecrawl = budget.allowed && firecrawlKey && !budget.useTinyFishOnly;
+    const useTinyFish = !useFirecrawl;
 
     for (const q of queries) {
       try {
-        const searchRes = await fetch('https://api.firecrawl.dev/v2/search', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: q, limit: 5 })
-        });
-        if (!searchRes.ok) { queryLog.push(`[query] FAILED (${searchRes.status}): ${q.slice(0,80)}`); continue; }
-        const searchData = await searchRes.json();
-        const rawResults = searchData.data?.web || searchData.data || searchData.web || (Array.isArray(searchData) ? searchData : []);
-        queryLog.push(`[query] ${q.slice(0, 100)} → ${rawResults.length} results`);
+        let rawResults = [];
+        
+        if (useFirecrawl) {
+          const searchRes = await fetch('https://api.firecrawl.dev/v2/search', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: q, limit: 5 })
+          });
+          if (!searchRes.ok) { queryLog.push(`[${agentKey}] FAILED (${searchRes.status}): ${q.slice(0,80)}`); continue; }
+          const searchData = await searchRes.json();
+          rawResults = searchData.data?.web || searchData.data || searchData.web || (Array.isArray(searchData) ? searchData : []);
+          await recordFirecrawlUsage(env, 1);
+        } else if (useTinyFish) {
+          try {
+            const tfResult = await tinyfishSearch({
+              query: q,
+              domain_type: 'web',
+              purpose: `Find ${agentKey} sources for ${lakeName}`,
+              recency_minutes: 525600
+            }, env);
+            rawResults = tfResult.results || [];
+            queryLog.push(`[${agentKey}] TinyFish: ${q.slice(0,80)} → ${rawResults.length} results`);
+          } catch (tfErr) {
+            queryLog.push(`[${agentKey}] TinyFish failed: ${tfErr.message}`);
+            continue;
+          }
+        } else {
+          queryLog.push(`[${agentKey}] SKIPPED (Firecrawl budget exhausted): ${q.slice(0,80)}`);
+          continue;
+        }
+
+        queryLog.push(`[${agentKey}] ${q.slice(0, 100)} → ${rawResults.length} results`);
         for (const r of rawResults) {
           const off = offLakePattern(r.title||'', r.url||'');
           if (off) { queryLog.push(`  ✗ off-lake (${off}): ${(r.title||r.url).slice(0,80)}`); continue; }
@@ -821,11 +1263,13 @@ async function handleResearchDiscover(request, env) {
             url: r.url,
             priority: 2,
             score: r.score || 0,
-            fullText: r.markdown || r.content || null
+            fullText: r.markdown || r.content || null,
+            agentTags,
+            discoveredBy: agentKey
           });
         }
       } catch (err) {
-        console.warn(`Search failed for [${q.slice(0,80)}]: ${err.message}`);
+        console.warn(`Search failed for [${agentKey}] [${q.slice(0,80)}]: ${err.message}`);
       }
     }
   }
@@ -833,6 +1277,21 @@ async function handleResearchDiscover(request, env) {
   // ── STEP 4: Combine, sort, return ────────────────────────────────────────
   let finalList = [...guaranteedSeeds, ...discoveredSources];
   finalList.sort((a,b) => (a.priority - b.priority) || ((b.score||0) - (a.score||0)));
+
+  // Add agentTags to guaranteed seeds based on what they're relevant for
+  for (const seed of guaranteedSeeds) {
+    if (!seed.agentTags) {
+      if (/SCDNR|NCWRC|GADNR|TWRA|eregulations/i.test(seed.authority || seed.url || '')) {
+        seed.agentTags = ['regulations', 'identity', 'navigation', 'habitat'];
+      } else if (/Grokipedia/i.test(seed.authority)) {
+        seed.agentTags = ['identity', 'limnology', 'biology', 'habitat', 'navigation'];
+      } else if (/EPA|USGS|USACE|Duke Energy|FERC/i.test(seed.authority)) {
+        seed.agentTags = ['identity', 'limnology'];
+      } else {
+        seed.agentTags = ['general'];
+      }
+    }
+  }
 
   // Fallback if nothing found
   if (finalList.length === 0) {
@@ -1138,17 +1597,39 @@ async function handleResearchProxyDownload(request, env) {
     }
   }
 
-  // ── Jina Reader for non-Firecrawl HTML pages ─────────────────────────────
-  // Routes all general HTML (guide articles, SCDNR pages, ResearchGate, etc.)
-  // through r.jina.ai — draws from 10M free token pool, 0 Firecrawl credits.
+  // ── TinyFish Fetch for non-Firecrawl HTML pages (FREE, batched) ───────────
+  // Routes general HTML through TinyFish Fetch — 10 URLs per call, free tier.
   // Keeps Firecrawl reserved for NEPIS two-step + eRegulations SPA + Grokipedia.
   if (isHtml && !needsFirecrawl) {
+    try {
+      const tfResult = await tinyfishFetch({
+        urls: [target],
+        format: 'markdown',
+        include_selectors: ['main', 'article', '.content', '#main-content'],
+        exclude_selectors: ['nav', 'footer', '.sidebar', '.ads', 'script', 'style'],
+        ttl: 86400
+      }, env);
+      const markdown = tfResult.results[0]?.text || '';
+      if (markdown && markdown.length > 200) {
+        const headers = new Headers({
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Access-Control-Allow-Origin': '*',
+          'X-Source': 'tinyfish'
+        });
+        return new Response(markdown, { headers });
+      }
+      console.warn(`TinyFish Fetch returned insufficient content for ${target} — trying Jina`);
+    } catch (tfErr) {
+      console.warn(`TinyFish Fetch error for ${target}: ${tfErr.message} — trying Jina`);
+    }
+
+    // Fallback to Jina Reader
     try {
       const jinaUrl = `https://r.jina.ai/${target}`;
       const jinaHeaders = {
         'Accept': 'text/plain',
         'X-Return-Format': 'markdown',
-        'X-No-Cache': 'false',          // allow Jina cache (5 min TTL) — speeds up re-runs
+        'X-No-Cache': 'false',
         'X-Remove-Selector': 'nav, footer, .sidebar, #ads, .advertisement, .cookie-banner',
       };
       if (jinaKey) jinaHeaders['Authorization'] = `Bearer ${jinaKey}`;
@@ -2675,6 +3156,7 @@ async function handleResearchSaveNormalized(request, env) {
   try { body = await request.json(); } catch { body = {}; }
   const lakeName = String(body.lakeName || "").trim();
   const documents = body.documents || [];
+  const agentTags = Array.isArray(body.agentTags) ? body.agentTags : []; // NEW: per-doc agent tags
 
   if (!lakeName || !documents.length) {
     return new Response(JSON.stringify({ success: false, error: "Missing lakeName or documents payload" }), { status: 400, headers: JSON_HEADERS });
@@ -2719,16 +3201,24 @@ async function handleResearchSaveNormalized(request, env) {
     return isOfficialSource || (hasLakeName && hasState);
   });
 
+  // Add agentTags to each document if provided
+  const docsWithTags = filteredDocuments.map((doc, i) => ({
+    ...doc,
+    agentTags: doc.agentTags || (agentTags[i] || []),
+    discoveredBy: doc.discoveredBy || (agentTags[i] ? agentTags[i][0] : 'unknown'),
+    fetchedAt: doc.fetchedAt || new Date().toISOString()
+  }));
+
   const rejected = documents.length - filteredDocuments.length;
   if (rejected > 0) {
     console.log(`save-normalized [${lakeName}]: rejected ${rejected} off-lake doc(s) of ${documents.length} total`);
   }
 
-  await env.R2_TROLLMAP_CHARTPACKS.put(key, JSON.stringify(filteredDocuments, null, 2), {
+  await env.R2_TROLLMAP_CHARTPACKS.put(key, JSON.stringify(docsWithTags, null, 2), {
     httpMetadata: { contentType: "application/json" }
   });
 
-  return new Response(JSON.stringify({ success: true, key, saved: filteredDocuments.length, rejected }), { headers: JSON_HEADERS });
+  return new Response(JSON.stringify({ success: true, key, saved: docsWithTags.length, rejected }), { headers: JSON_HEADERS });
 }
 
 async function handleResearchGetNormalized(env, lakeName) {
@@ -4543,6 +5033,156 @@ async function handleResearchAgent(request, env) {
   }), {headers: JSON_HEADERS});
 }
 
+// ─── PER-AGENT PIPELINE ENDPOINT ───
+// Orchestrates: discover → fetch → extract → enrich for a SINGLE agent
+// POST /research/agent { lakeName, state, agent, mode, targetFields, previousResults }
+async function handleResearchAgentPipeline(request, env) {
+  let body;
+  try { body = await request.json(); } catch { return new Response(JSON.stringify({success:false, error:"invalid JSON body"}), {status:400, headers:JSON_HEADERS}); }
+  const lakeName = String(body.lakeName || body.lake || '').trim();
+  const state = String(body.state || '').trim() || 'SC';
+  const agentKey = String(body.agent || '').trim().toLowerCase();
+  const mode = String(body.mode || 'full').trim(); // 'full' or 'resume'
+  const targetFields = Array.isArray(body.targetFields) ? body.targetFields : [];
+  const previousResults = body.previousResults || {};
+
+  if (!lakeName) return new Response(JSON.stringify({success:false, error:"missing lakeName"}), {status:400, headers:JSON_HEADERS});
+  if (!agentKey) return new Response(JSON.stringify({success:false, error:"missing agent"}), {status:400, headers:JSON_HEADERS});
+  if (!RESEARCH_AGENTS[agentKey]) return new Response(JSON.stringify({success:false, error:`unknown agent ${agentKey}`}), {status:400, headers:JSON_HEADERS});
+
+  try {
+    // Step 1: Discover sources for this agent
+    const discoverReq = new Request('internal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lakeName, state, agent: agentKey, reservoirOwner: body.reservoirOwner, predatorSpecies: body.predatorSpecies })
+    });
+    const discoverRes = await handleResearchDiscover(discoverReq, env);
+    if (!discoverRes.ok) throw new Error(`Discover failed: ${discoverRes.status}`);
+    const discoverData = await discoverRes.json();
+    if (!discoverData.success) throw new Error(discoverData.error || 'Discovery failed');
+    const sources = discoverData.sources || [];
+
+    // Filter sources for this agent
+    const agentSources = sources.filter(s => s.agentTags?.includes(agentKey) || !s.agentTags);
+    if (!agentSources.length) {
+      return new Response(JSON.stringify({ success: true, agent: agentKey, section: {}, note: 'No sources found for this agent' }), { headers: JSON_HEADERS });
+    }
+
+    // Step 2: Fetch/normalize documents (if mode=full) or load existing (if mode=resume)
+    let normalizedDocuments = [];
+    if (mode === 'full') {
+      for (const src of agentSources) {
+        try {
+          const proxyReq = new Request('internal', {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: src.url, type: src.type })
+          });
+          const proxyRes = await handleResearchProxyDownload(proxyReq, env);
+          if (proxyRes.ok) {
+            const text = await proxyRes.text();
+            if (text.length > 200) {
+              normalizedDocuments.push({
+                title: src.title,
+                url: src.url,
+                fullText: text,
+                agentTags: src.agentTags || [agentKey],
+                discoveredBy: src.discoveredBy || agentKey,
+                fetchedAt: new Date().toISOString()
+              });
+            }
+          }
+        } catch (e) {
+          console.warn(`Proxy download failed for ${src.url}: ${e.message}`);
+        }
+      }
+      // Save normalized docs
+      if (normalizedDocuments.length) {
+        const saveReq = new Request('internal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lakeName, documents: normalizedDocuments })
+        });
+        await handleResearchSaveNormalized(saveReq, env);
+      }
+    } else {
+      // Resume mode: load existing normalized docs and filter by agentTags
+      const normRes = await handleResearchGetNormalized(env, lakeName);
+      if (normRes.ok) {
+        const normData = await normRes.json();
+        normalizedDocuments = (normData.documents || []).filter(d => d.agentTags?.includes(agentKey));
+      }
+    }
+
+    if (!normalizedDocuments.length) {
+      return new Response(JSON.stringify({ success: true, agent: agentKey, section: {}, note: 'No documents available for this agent' }), { headers: JSON_HEADERS });
+    }
+
+    // Step 3: Extract facts with targetFields
+    const analyzeReq = new Request('internal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lakeName,
+        baseName: lakeName.replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i,'').trim(),
+        state,
+        docIndex: 0,
+        documents: normalizedDocuments.slice(0, 12).map(d => ({ title: d.title, url: d.url, text: d.fullText?.slice(0, 150000) }))
+      })
+    });
+    const analyzeRes = await handleResearchAnalyzeFacts(analyzeReq, env);
+    if (!analyzeRes.ok) throw new Error(`Analyze facts failed: ${analyzeRes.status}`);
+    const analyzeData = await analyzeRes.json();
+    const extractedFacts = analyzeData.extracted_facts || [];
+
+    // Step 4: Deduplicate
+    const dedupeReq = new Request('internal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ facts: extractedFacts })
+    });
+    const dedupeRes = await handleResearchDedupeContradictions(dedupeReq, env);
+    let uniqueFacts = extractedFacts;
+    if (dedupeRes.ok) {
+      const dedupeData = await dedupeRes.json();
+      uniqueFacts = dedupeData.deduplicated_facts || extractedFacts;
+    }
+
+    // Step 5: Run agent enrichment
+    const agentReq = new Request('internal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lakeName,
+        state,
+        agent: agentKey,
+        previousResults: {
+          ...previousResults,
+          _extractedFacts: uniqueFacts,
+          _normalizedDocuments: normalizedDocuments.slice(0, agentKey === 'fisheries' ? 25 : 12).map(d => ({ title: d.title, url: d.url, text: d.fullText?.slice(0, agentKey === 'fisheries' ? 150000 : 40000) }))
+        }
+      })
+    });
+    const agentRes = await handleResearchAgent(agentReq, env);
+    if (!agentRes.ok) throw new Error(`Agent ${agentKey} failed: ${agentRes.status}`);
+    const agentData = await agentRes.json();
+
+    return new Response(JSON.stringify({
+      success: true,
+      agent: agentKey,
+      section: agentData.section,
+      confidence: agentData.confidence,
+      sources: agentData.sources,
+      factsCount: uniqueFacts.length,
+      docsUsed: normalizedDocuments.length
+    }), { headers: JSON_HEADERS });
+
+  } catch (e) {
+    return new Response(JSON.stringify({ success: false, error: e.message, agent: agentKey }), { status: 502, headers: JSON_HEADERS });
+  }
+}
+
 async function handleResearchList(env) {
   const prefix = "lakes/";
   let cursor;
@@ -5276,4 +5916,4 @@ async function handleResearchVisionScanStatus(request, env) {
   }
 }
 
-export { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchValidationPass, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey };
+export { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchAgentPipeline, handleResearchValidationPass, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey };

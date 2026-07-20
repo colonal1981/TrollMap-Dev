@@ -39,6 +39,42 @@ const RESEARCH_LABELS = {
   summary: '📝 AI Summary'
 };
 
+// Agent definitions with target fields for validation
+const AGENT_DEFINITIONS = {
+  identity: {
+    label: '🆔 Identity',
+    targetFields: ['identity.surfaceAreaAcres', 'identity.maxDepthFt', 'identity.averageDepthFt', 'identity.normalPoolFt', 'identity.reservoirOwner', 'identity.riverSystem', 'identity.damName', 'identity.yearImpounded', 'identity.county', 'identity.archetype'],
+  },
+  limnology: {
+    label: '🌊 Limnology',
+    targetFields: ['limnology.waterClarity.typical', 'limnology.waterClarity.color', 'limnology.waterClarity.secchiFt', 'limnology.thermocline.summerDepthFt', 'limnology.thermocline.strength', 'limnology.oxygen.depletionDepthFt', 'limnology.oxygen.anoxicBelowFt', 'limnology.trophicStatus', 'limnology.flowCharacteristics', 'limnology.seasonalDrawdownFt'],
+  },
+  biology: {
+    label: '🐟 Fisheries Biology',
+    targetFields: ['biology.primaryForage', 'biology.secondaryForage', 'biology.predatorSpecies', 'biology.speciesAbundance', 'biology.knownStockings', 'biology.baitfishMovement', 'biology.invasiveSpecies', 'biology.spawnTiming', 'biology.forageSpatial'],
+  },
+  habitat: {
+    label: '🌿 Habitat',
+    targetFields: ['habitat.bottomComposition', 'habitat.cover', 'habitat.vegetation', 'habitat.standingTimber', 'habitat.dockDensity', 'habitat.riprapLocations', 'habitat.namedCreekMouths', 'habitat.timberFields', 'habitat.shallowFlatAreas', 'habitat.artificialHabitat', 'habitat.artificialHabitatDetails.attractorCount', 'habitat.artificialHabitatDetails.attractorTypes'],
+  },
+  navigation: {
+    label: '🧭 Navigation',
+    targetFields: ['navigation.ramps', 'navigation.hazards', 'navigation.notes'],
+  },
+  regulations: {
+    label: '📜 Regulations',
+    targetFields: ['regulations.generalStateRegulations', 'regulations.lakeSpecificRegulations'],
+  },
+  fisheries: {
+    label: '🧠 Species Intelligence',
+    targetFields: ['trollingIntelligence'],
+  },
+  summary: {
+    label: '📝 AI Summary',
+    targetFields: ['summary'],
+  },
+};
+
 const _state = {
   currentProfile: null,
   currentLakeName: '',
@@ -915,19 +951,134 @@ async function runResume(lakeName, selectedAgents, callbacks = {}) {
     if (!normRes.ok) throw new Error(`No normalized documents found for ${lakeName} — run a full pipeline first.`);
     const normData = await normRes.json();
     if (!normData.ok || !normData.documents?.length) throw new Error(`No normalized documents found for ${lakeName}.`);
-    const normalizedDocuments = normData.documents;
-    log(`Loaded ${normalizedDocuments.length} normalized documents from R2.`);
+    const allNormalizedDocuments = normData.documents;
+    
+    // Filter documents by agentTags for each selected agent
+    const agentDocsMap = {};
+    for (const agentKey of selectedAgents) {
+      const tags = AGENT_DEFINITIONS[agentKey]?.targetFields ? [agentKey] : ['general'];
+      agentDocsMap[agentKey] = allNormalizedDocuments.filter(d => 
+        d.agentTags?.some(t => tags.includes(t)) || !d.agentTags
+      );
+      log(`Agent ${agentKey}: ${agentDocsMap[agentKey].length}/${allNormalizedDocuments.length} docs`);
+    }
+    
     const stateName = sanitizeStateFromLakeName(lakeName);
     const baseName = cleanLakeBaseName(lakeName);
     setProgress('Scoring documents...', 40);
     log('Computing scores based on authority trustworthiness rules...');
-    const scoredSources = scoreDocuments(normalizedDocuments, baseName, lakeName);
-    log('Scoring and classification completed:');
-    scoredSources.forEach(s => log(`• ${s.title}: auth=${s.scoring.authority} rel=${s.scoring.relevance} fresh=${s.scoring.freshness} comp=${s.scoring.completeness} => composite=${s.scoring.composite} classes=${s.classes.join(', ')}`));
-    await runPipelineTail(lakeName, baseName, stateName, normalizedDocuments, scoredSources, callbacks, selectedAgents);
+    
+    // Run agents in parallel using runAgents
+    await runAgents(lakeName, selectedAgents, 'resume', callbacks);
+    
   } catch (e) {
     log(`❌ Resume failed: ${e.message}`);
     setProgress('Resume failed — see log.', 0);
+  } finally {
+    _state.researchInProgress = false;
+  }
+}
+
+// ── runAgent: Execute single agent pipeline (discover → fetch → extract → enrich) ──
+async function runAgent(lakeName, agentKey, mode, callbacks = {}) {
+  if (_state.researchInProgress) throw new Error('A research task is already in progress.');
+  if (!lakeName) throw new Error('Select a lake first.');
+  if (!AGENT_DEFINITIONS[agentKey]) throw new Error(`Unknown agent: ${agentKey}`);
+  
+  _state.researchInProgress = true;
+  _state.researchLog = [];
+  _state.packagePartsCache = {};
+  showProgress(true);
+  
+  const def = AGENT_DEFINITIONS[agentKey];
+  log(`=== RUN AGENT: ${def.label} (${mode}) ===`);
+  
+  try {
+    const stateName = sanitizeStateFromLakeName(lakeName);
+    const baseName = cleanLakeBaseName(lakeName);
+    
+    // Call the new per-agent endpoint
+    const res = await fetch(`${CF_WORKER_URL}/research/agent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lakeName,
+        state: stateName,
+        agent: agentKey,
+        mode,
+        targetFields: def.targetFields,
+        previousResults: { _state: _state } // minimal context
+      })
+    });
+    
+    if (!res.ok) throw new Error(`Agent ${agentKey} failed: ${res.status}`);
+    const data = await res.json();
+    
+    if (!data.success) throw new Error(data.error || 'Agent failed');
+    
+    log(`✔ ${def.label} agent complete (${data.factsCount} facts, ${data.docsUsed} docs)`);
+    
+    if (callbacks.onComplete) await callbacks.onComplete(lakeName);
+    return data;
+    
+  } catch (e) {
+    log(`❌ ${def.label} agent failed: ${e.message}`);
+    setProgress('Agent failed — see log.', 0);
+    throw e;
+  } finally {
+    _state.researchInProgress = false;
+  }
+}
+
+// ── runAgents: Execute multiple agents in parallel (max 2 concurrent, 2s stagger) ──
+async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
+  if (_state.researchInProgress) throw new Error('A research task is already in progress.');
+  if (!lakeName) throw new Error('Select a lake first.');
+  if (!agentKeys?.length) throw new Error('No agents selected.');
+  
+  _state.researchInProgress = true;
+  _state.researchLog = [];
+  _state.packagePartsCache = {};
+  showProgress(true);
+  
+  log(`=== RUN AGENTS: [${agentKeys.join(', ')}] (${mode}) ===`);
+  
+  const MAX_CONCURRENT = 2;
+  const STAGGER_MS = 2000;
+  const results = [];
+  
+  try {
+    // Process in batches of MAX_CONCURRENT
+    for (let i = 0; i < agentKeys.length; i += MAX_CONCURRENT) {
+      const batch = agentKeys.slice(i, i + MAX_CONCURRENT);
+      const batchPromises = batch.map((agentKey, batchIdx) => {
+        const delay = (i + batchIdx) * STAGGER_MS;
+        return new Promise(resolve => setTimeout(() => resolve(runAgent(lakeName, agentKey, mode, {})), delay));
+      });
+      
+      const batchResults = await Promise.allSettled(batchPromises);
+      for (const [idx, result] of batchResults.entries()) {
+        if (result.status === 'fulfilled') {
+          results.push({ agent: batch[idx], data: result.value });
+        } else {
+          log(`❌ ${batch[idx]} failed: ${result.reason.message}`);
+        }
+      }
+      
+      // Stagger between batches
+      if (i + MAX_CONCURRENT < agentKeys.length) {
+        await new Promise(r => setTimeout(r, STAGGER_MS));
+      }
+    }
+    
+    log(`✔ All agents complete: ${results.filter(r => r.data).length}/${agentKeys.length} succeeded`);
+    if (callbacks.onComplete) await callbacks.onComplete(lakeName);
+    return results;
+    
+  } catch (e) {
+    log(`❌ Multi-agent run failed: ${e.message}`);
+    setProgress('Multi-agent run failed — see log.', 0);
+    throw e;
   } finally {
     _state.researchInProgress = false;
   }
