@@ -1,5 +1,5 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
-import { _state, runEvidencePipeline, runFromNormalized, runFisheriesRefresh, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log } from './lake-research-engine.js';
+import { _state, runEvidencePipeline, runFromNormalized, runFisheriesRefresh, runSingleAgentRefresh, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log } from './lake-research-engine.js';
 
 
 function renderContradictionsAlert(contradictions, lakeName) {
@@ -864,88 +864,73 @@ function renderSections(profile) {
       const st = document.getElementById(`edit-status-${agentKey}`);
       btn.disabled = true;
       btn.textContent = '⏳ Running...';
-      if (st) { st.textContent = `Running ${agentKey} agent...`; st.style.color = 'var(--accent)'; }
+      if (st) { st.textContent = `Running ${agentKey} agent via full pipeline...`; st.style.color = 'var(--accent)'; }
 
       try {
-        // Pass extracted facts AND normalized document text so agent has real evidence
+        // Route through runSingleAgentRefresh — uses runFromNormalized with one agent
+        // This gives full doc injection, proper char limits, scoring, dedup, and all
+        // pipeline checks — same as a full pipeline run but filtered to one agent
         const reviewCard = document.getElementById('reviewCard');
-        const prevProfile = reviewCard?.dataset.merged ? JSON.parse(reviewCard.dataset.merged) : (_state.currentProfile || {});
-        const storedFacts = prevProfile._extractedFacts || _state.currentProfile?._extractedFacts || [];
 
-        // Fetch normalized documents from R2 to give agent actual source text
-        let normalizedDocs = [];
-        try {
-          const normRes = await fetch(`${CF_WORKER_URL}/research/get-normalized?lake=${encodeURIComponent(_state.currentLakeName)}`);
-          if (normRes.ok) {
-            const normData = await normRes.json();
-            if (normData.ok && normData.documents?.length) {
-              normalizedDocs = normData.documents.map(d => ({
-                title: d.title,
-                url: d.url,
-                text: (d.fullText || d.text || '').slice(0, 20000)
-              }));
+        await runSingleAgentRefresh(_state.currentLakeName, agentKey, {
+          onComplete: (lakeName) => {
+            // Read result from _state.currentProfile which runFromNormalized updates
+            const profile = _state.currentProfile || {};
+            const agentSection = agentKey === 'fisheries'
+              ? (profile.trollingIntelligence || profile[agentKey])
+              : profile[agentKey];
+            const agentConfidence = profile.confidence?.[agentKey];
+
+            // Merge result into in-memory reviewCard profile
+            const curMerged = reviewCard?.dataset.merged ? JSON.parse(reviewCard.dataset.merged) : (profile);
+            const curParts = reviewCard?.dataset.parts ? JSON.parse(reviewCard.dataset.parts) : {};
+
+            if (agentKey === 'biology') {
+              const existing = curMerged.biology || {};
+              const merged = { ...existing, ...agentSection };
+              if (existing.predatorSpecies?.length && !agentSection?.predatorSpecies?.length) merged.predatorSpecies = existing.predatorSpecies;
+              if (existing.knownStockings?.length && !agentSection?.knownStockings?.length) merged.knownStockings = existing.knownStockings;
+              curMerged.biology = merged;
+              curMerged.forage = merged;
+            } else if (agentKey === 'fisheries') {
+              curMerged.trollingIntelligence = agentSection;
+            } else {
+              curMerged[agentKey] = agentSection;
             }
+
+            if (agentConfidence) {
+              if (!curMerged.confidence) curMerged.confidence = {};
+              curMerged.confidence[agentKey] = agentConfidence;
+            }
+            curParts[agentKey] = agentSection;
+
+            if (reviewCard) {
+              reviewCard.dataset.merged = JSON.stringify(curMerged);
+              reviewCard.dataset.parts = JSON.stringify(curParts);
+            }
+            if (typeof _state.packagePartsCache !== 'undefined') _state.packagePartsCache[agentKey] = agentSection;
+
+            // Refresh UI for this section
+            const viewer = document.getElementById(`viewer-container-${agentKey}`);
+            if (viewer && agentSection) viewer.innerHTML = formatHumanReadableSection(agentKey, agentSection);
+            const ta = container.querySelector(`.review-section-textarea[data-agent="${agentKey}"]`);
+            if (ta && agentSection) ta.value = JSON.stringify(agentSection, null, 2);
+
+            const pct = agentConfidence?.percent || '?';
+            if (st) { st.textContent = `✓ Re-run complete (${pct}% confidence)`; st.style.color = 'var(--accent2)'; }
+            log(`[Re-run] ${agentKey}: ${pct}% complete`);
           }
-        } catch (e) {
-          log(`[Re-run] Could not fetch normalized docs: ${e.message} — agent will use stored facts only`);
-        }
-
-        const agentRes = await fetch(`${CF_WORKER_URL}/research/agent`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            lakeName: _state.currentLakeName,
-            state: sanitizeStateFromLakeName(_state.currentLakeName),
-            agent: agentKey,
-            previousResults: {
-              ...prevProfile,
-              _extractedFacts: storedFacts,
-              _normalizedDocuments: normalizedDocs
-            }
-          })
         });
-        const agentData = await agentRes.json();
-        if (!agentData.success) throw new Error(agentData.error || 'Agent failed');
 
-        // Step 4: Apply result to in-memory profile
-        {
-          const curMerged = reviewCard?.dataset.merged ? JSON.parse(reviewCard.dataset.merged) : (_state.currentProfile || {});
-          const curParts = reviewCard?.dataset.parts ? JSON.parse(reviewCard.dataset.parts) : {};
-          if (agentKey === 'biology') {
-            // Protect deterministic fields — never let LLM re-run overwrite confirmed species data with empty arrays
-            const existing = curMerged.biology || {};
-            const merged = { ...existing, ...agentData.section };
-            if (existing.predatorSpecies?.length && !agentData.section.predatorSpecies?.length) merged.predatorSpecies = existing.predatorSpecies;
-            if (existing.knownStockings?.length && !agentData.section.knownStockings?.length) merged.knownStockings = existing.knownStockings;
-            curMerged.biology = merged;
-            curMerged.forage = merged;
-          } else {
-            curMerged[agentKey] = agentData.section;
-          }
-          if (agentKey === 'fisheries') curMerged.trollingIntelligence = agentData.section;
-          // Update confidence for this section
-          if (agentData.confidence) {
-            if (!curMerged.confidence) curMerged.confidence = {};
-            curMerged.confidence[agentKey] = agentData.confidence;
-          }
-          curParts[agentKey] = agentData.section;
-          if (reviewCard) {
-            reviewCard.dataset.merged = JSON.stringify(curMerged);
-            reviewCard.dataset.parts = JSON.stringify(curParts);
-          }
-          // Keep _state.currentProfile in sync
-          _state.currentProfile = curMerged;
-          if (typeof _state.packagePartsCache !== 'undefined') _state.packagePartsCache[agentKey] = agentData.section;
-        }
+      } catch (err) {
+        if (st) { st.textContent = `Failed: ${err.message}`; st.style.color = 'var(--bad)'; }
+        log(`[Re-run] ${agentKey} failed: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '🔄 Re-run';
+      }
 
-        // Step 5: Refresh UI for this section
-        const viewer = document.getElementById(`viewer-container-${agentKey}`);
-        if (viewer) viewer.innerHTML = formatHumanReadableSection(agentKey, agentData.section);
-        const ta = container.querySelector(`.review-section-textarea[data-agent="${agentKey}"]`);
-        if (ta) ta.value = JSON.stringify(agentData.section, null, 2);
-
-        if (st) { st.textContent = `✓ Re-run complete (${agentData.confidence?.percent||'?'}% confidence via ${agentData.meta?.model||'?'})`; st.style.color = 'var(--accent2)'; }
-        log(`[Re-run] ${agentKey}: ${agentData.confidence?.percent||'?'}% via ${agentData.meta?.model||'?'}`);
+      const agentSection = _state.currentProfile?.[agentKey];
 
         // ── Field-level capture/miss logging for new casting-relevant fields ──
         const sec = agentData.section || {};
