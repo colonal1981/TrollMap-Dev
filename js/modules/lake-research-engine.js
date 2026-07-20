@@ -1626,8 +1626,17 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   for (const s of (det.sources || [])) sourceMap.set(`${s.label}|${s.url}`, s);
   for (const r of agentResults) {
     for (const s of (r.data?.sources || [])) {
-      const key = `${s.label || s.title}|${s.url || '#'}`;
-      if (!sourceMap.has(key)) sourceMap.set(key, { label: s.label || s.title, url: s.url || '#', authority: s.authority, trust: 'THIRD_PARTY' });
+      const label = s.label || s.title || '';
+      const url = s.url && s.url !== '#' ? s.url : '';
+      if (!label && !url) continue; // skip blank sources entirely
+      const key = `${label}|${url || '#'}`;
+      if (!sourceMap.has(key)) sourceMap.set(key, {
+        label: label || 'Unlabeled',
+        url: url || null,
+        authority: s.authority,
+        trust: s.trust || 'THIRD_PARTY',
+        sourceType: s.sourceType || 'web_document'
+      });
     }
   }
   if (wqp?.recordCount > 0) sourceMap.set('Water Quality Portal|https://www.waterqualitydata.us/', { label: 'Water Quality Portal / SCDES monitoring', url: 'https://www.waterqualitydata.us/', trust: 'OFFICIAL', sourceType: 'official_structured' });

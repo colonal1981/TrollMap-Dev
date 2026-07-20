@@ -851,12 +851,52 @@ function renderSources(profile) {
   if (!sources.length) { card.style.display = 'none'; return; }
   card.style.display = 'block';
   let html = '';
-  for (const s of sources) {
+  for (let i = 0; i < sources.length; i++) {
+    const s = sources[i];
+    if (!s || (!s.label && !s.url)) continue; // skip fully blank entries
     const trust = s.trust || '';
     const trustColor = trust.includes('OFFICIAL') ? 'var(--accent2)' : trust.includes('DERIVED') ? 'var(--accent)' : 'var(--muted)';
-    html += `<div class="source-item"><span style="display:inline-block;padding:1px 6px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);font-size:10px;color:${trustColor};margin-right:6px">${esc(trust || 'SOURCE')}</span><b>${esc(s.label || 'Unlabeled')}</b> ${s.url ? `— <a href="${esc(s.url)}" target="_blank">${esc(s.url.slice(0, 60))}</a>` : ''}</div>`;
+    // Only show delete button for real HTTP(S) URLs that could be in the normalized cache
+    // Internal/GIS sources (worker://, internal:) are not in normalized_documents.json
+    const isDeletable = s.url && /^https?:\/\//i.test(s.url);
+    const deleteBtn = isDeletable
+      ? `<button data-idx="${i}" data-url="${esc(s.url)}" class="del-norm-doc" title="Remove from normalized cache" style="margin-left:8px;padding:1px 6px;font-size:10px;background:transparent;border:1px solid var(--line);border-radius:4px;color:var(--muted);cursor:pointer">✕ cache</button>`
+      : '';
+    html += `<div class="source-item" style="display:flex;align-items:center;gap:4px;flex-wrap:wrap"><span style="display:inline-block;padding:1px 6px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);font-size:10px;color:${trustColor};margin-right:4px">${esc(trust || 'SOURCE')}</span><b>${esc(s.label || 'Unlabeled')}</b>${s.url && s.url !== '#' ? ` — <a href="${esc(s.url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(s.url.slice(0, 60))}</a>` : ''}${deleteBtn}</div>`;
   }
   list.innerHTML = html;
+
+  // Wire delete buttons
+  list.querySelectorAll('.del-norm-doc').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const docUrl = btn.dataset.url;
+      const lakeName = _state.currentLakeName;
+      if (!lakeName || !docUrl) return;
+      if (!confirm(`Remove this document from the normalized cache for ${lakeName}?\n\n${docUrl}\n\nThis does not affect the saved profile — only the cached fetch.`)) return;
+      btn.disabled = true;
+      btn.textContent = '…';
+      try {
+        const res = await fetch(`${CF_WORKER_URL}/research/delete-normalized-doc`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lakeName, url: docUrl })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          btn.closest('.source-item').style.opacity = '0.4';
+          btn.textContent = '✓ removed';
+        } else {
+          btn.textContent = '✕ error';
+          btn.title = data.error || 'failed';
+          btn.disabled = false;
+        }
+      } catch (e) {
+        btn.textContent = '✕ error';
+        btn.title = e.message;
+        btn.disabled = false;
+      }
+    });
+  });
 }
 
 function renderSummary(profile) {
