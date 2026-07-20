@@ -185,7 +185,24 @@ function extractLLMText(data) {
 }
 __name(extractLLMText, "extractLLMText");
 
+// Round-robin counter for gemini-free key rotation across concurrent requests
+// Incremented atomically per call so concurrent analyze-facts requests hit different keys
+let _geminiRoundRobinIdx = 0;
+
 async function callLLM(env, payload, preferredProvider = null) {
+  // If no preferred provider specified and we have multiple gemini-free keys,
+  // auto-rotate across them to spread RPM load
+  if (!preferredProvider) {
+    const freeKeys = ['gemini-free', 'gemini-free2', 'gemini-free3', 'gemini-free4', 'gemini-free5'];
+    const available = freeKeys.filter(name => {
+      const p = LLM_PROVIDERS.find(p => p.name === name);
+      return p && env[p.keyEnv];
+    });
+    if (available.length > 1) {
+      preferredProvider = available[_geminiRoundRobinIdx % available.length];
+      _geminiRoundRobinIdx++;
+    }
+  }
   const providers = preferredProvider
     ? LLM_PROVIDERS.filter(p => p.name === preferredProvider)
     : LLM_PROVIDERS.filter(p => env[p.keyEnv] && !p.excludeFromGeneral);

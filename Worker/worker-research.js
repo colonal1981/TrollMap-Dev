@@ -3002,12 +3002,6 @@ CRITICAL CATEGORY RULES:
       continue;
     }
 
-    // Round-robin across 5 gemini-free keys using docIndex passed from engine
-    // Engine fires batches of 5 concurrently — each gets a different key
-    const freeKeyProviders = ['gemini-free', 'gemini-free2', 'gemini-free3', 'gemini-free4', 'gemini-free5'];
-    const docIndex = typeof body.docIndex === 'number' ? body.docIndex : i;
-    const providerForDoc = freeKeyProviders[docIndex % freeKeyProviders.length];
-    console.log(`analyze-facts: doc[${docIndex}] "${doc.title?.slice(0,40)}" → provider=${providerForDoc} (body.docIndex=${body.docIndex})`);
     try {
       const prompt = buildDocPrompt(doc, lakeName, baseName, state);
       const payload = {
@@ -3020,24 +3014,7 @@ CRITICAL CATEGORY RULES:
         response_format: { type: "json_object" }
       };
 
-      let llmResult;
-      try {
-        llmResult = await callLLM(env, payload, providerForDoc);
-      } catch (preferredErr) {
-        console.warn(`analyze-facts: preferred provider ${providerForDoc} failed (${preferredErr.message}) — falling back to any gemini-free key`);
-        // Try remaining keys in order, skipping the one that just failed
-        const fallbackProviders = freeKeyProviders.filter(p => p !== providerForDoc);
-        let fallbackSuccess = false;
-        for (const fallback of fallbackProviders) {
-          try {
-            llmResult = await callLLM(env, payload, fallback);
-            fallbackSuccess = true;
-            break;
-          } catch (_) { continue; }
-        }
-        if (!fallbackSuccess) throw preferredErr;
-      }
-      const { data } = llmResult;
+      const { data } = await callLLM(env, payload, null);
       const text = extractLLMText(data);
       const parsed = extractJsonPossibly(text);
 
