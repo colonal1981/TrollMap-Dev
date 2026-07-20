@@ -1101,7 +1101,17 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
     }
 
     log(`✔ All agents complete: ${results.filter(r => r.data).length}/${total} succeeded`);
-    if (callbacks.onComplete) await callbacks.onComplete(lakeName);
+    if (callbacks.onComplete) {
+      const savedLog = [...(_state.researchLog || [])];
+      await callbacks.onComplete(lakeName);
+      // loadProfile reinitializes UI state — restore the log so the run is visible
+      if (_state.researchLog?.length < savedLog.length) {
+        _state.researchLog = savedLog;
+        // Re-render log if the UI element exists
+        const logEl = document.getElementById('researchLog');
+        if (logEl) logEl.innerHTML = savedLog.map(l => `<div>${l}</div>`).join('');
+      }
+    }
     if (assembleResult.contradictions?.length && callbacks.onContradictions) {
       callbacks.onContradictions(assembleResult.contradictions, lakeName);
     }
@@ -1152,10 +1162,6 @@ async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
           const lakeSize = Object.keys(detData.profile.regulations?.lakeSpecificRegulations?.sizeLimits || {}).length;
           const lakeCreel= Object.keys(detData.profile.regulations?.lakeSpecificRegulations?.creelLimits || {}).length;
           log(`✔ Deterministic baseline loaded — owner: ${owner}, ramps: ${ramps}, species: ${species}, regs(gen creel=${genCreel}/len=${genLen}, lake size=${lakeSize}/creel=${lakeCreel})`);
-          if (detData.profile._regsDebug) {
-            const d = detData.profile._regsDebug;
-            log(`  regs debug: state=${d.state} cacheHit=${d.cacheHit} pagesLoaded=${d.pagesLoaded} parseErrors=${d.parseErrors}`);
-          }
         }
       } else {
         log(`⚠️ Deterministic facts HTTP ${detRes.status} — continuing without context`);
@@ -1338,30 +1344,25 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   // Collect all facts from agent responses for validation + source map
   const allFacts = agentResults.flatMap(r => r.data?._extractedFacts || []);
   const contradictions = agentResults.flatMap(r => r.data?.contradictions || []);
+  const agentsRan = new Set(agentResults.map(r => r.agent));
 
-  // Validation pass — fill remaining null fields in batches of 10
-  const VALIDATION_FIELDS = [
-    'identity.surfaceAreaAcres','identity.maxDepthFt','identity.averageDepthFt',
-    'identity.normalPoolFt','identity.reservoirOwner','identity.riverSystem',
-    'identity.damName','identity.yearImpounded','identity.county','identity.archetype',
-    'limnology.waterClarity.typical','limnology.waterClarity.color','limnology.waterClarity.secchiFt',
-    'limnology.thermocline.summerDepthFt','limnology.thermocline.strength','limnology.thermocline.winterMix',
-    'limnology.oxygen.depletionDepthFt','limnology.oxygen.anoxicBelowFt',
-    'limnology.trophicStatus','limnology.flowCharacteristics','limnology.seasonalDrawdownFt',
-    'biology.primaryForage','biology.secondaryForage','biology.predatorSpecies',
-    'biology.speciesAbundance','biology.knownStockings','biology.baitfishMovement',
-    'biology.invasiveSpecies','biology.spawnTiming','biology.forageSpatial',
-    'habitat.bottomComposition','habitat.cover','habitat.vegetation',
-    'habitat.standingTimber','habitat.dockDensity','habitat.riprapLocations',
-    'habitat.namedCreekMouths','habitat.timberFields','habitat.shallowFlatAreas',
-    'habitat.artificialHabitat','habitat.artificialHabitatDetails.attractorCount','habitat.artificialHabitatDetails.attractorTypes',
-    'navigation.ramps','navigation.hazards','navigation.notes'
-  ];
+  // Validation pass — only runs when we have facts, only checks fields for agents that ran
+  const ALL_VALIDATION_FIELDS = {
+    identity:   ['identity.surfaceAreaAcres','identity.maxDepthFt','identity.averageDepthFt','identity.normalPoolFt','identity.reservoirOwner','identity.riverSystem','identity.damName','identity.yearImpounded','identity.county','identity.archetype'],
+    limnology:  ['limnology.waterClarity.typical','limnology.waterClarity.color','limnology.waterClarity.secchiFt','limnology.thermocline.summerDepthFt','limnology.thermocline.strength','limnology.thermocline.winterMix','limnology.oxygen.depletionDepthFt','limnology.oxygen.anoxicBelowFt','limnology.trophicStatus','limnology.flowCharacteristics','limnology.seasonalDrawdownFt'],
+    biology:    ['biology.primaryForage','biology.secondaryForage','biology.predatorSpecies','biology.speciesAbundance','biology.knownStockings','biology.baitfishMovement','biology.invasiveSpecies','biology.spawnTiming','biology.forageSpatial'],
+    habitat:    ['habitat.bottomComposition','habitat.cover','habitat.vegetation','habitat.standingTimber','habitat.dockDensity','habitat.riprapLocations','habitat.namedCreekMouths','habitat.timberFields','habitat.shallowFlatAreas','habitat.artificialHabitat','habitat.artificialHabitatDetails.attractorCount','habitat.artificialHabitatDetails.attractorTypes'],
+    navigation: ['navigation.ramps','navigation.hazards','navigation.notes'],
+  };
+  const relevantFields = Object.entries(ALL_VALIDATION_FIELDS)
+    .filter(([section]) => agentsRan.has(section))
+    .flatMap(([, fields]) => fields);
   const atPath = (obj, path) => path.split('.').reduce((v, k) => v == null ? undefined : v[k], obj);
   const isMissing = (v) => v == null || v === '' || (Array.isArray(v) && !v.length) || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length);
-  const nullFields = VALIDATION_FIELDS.filter(p => isMissing(atPath(agentSections, p)));
-  if (nullFields.length > 0) {
-    log(`Running validation pass for ${nullFields.length} empty fields: ${nullFields.slice(0,5).join(', ')}${nullFields.length > 5 ? '...' : ''}`);
+  const nullFields = relevantFields.filter(p => isMissing(atPath(agentSections, p)));
+
+  if (nullFields.length > 0 && allFacts.length > 0) {
+    log(`Running validation pass for ${nullFields.length} empty fields across [${[...agentsRan].join(',')}]: ${nullFields.slice(0,5).join(', ')}${nullFields.length > 5 ? '...' : ''}`);
     try {
       const filled = {};
       const batchSize = 10;
@@ -1388,6 +1389,10 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
       }
       log(`✔ Validation pass: ${filledCount} fields filled from ${Object.keys(filled).length} returned`);
     } catch (e) { log(`⚠️ Validation pass failed: ${e.message} — continuing`); }
+  } else if (nullFields.length > 0) {
+    log(`ℹ️ Validation pass skipped — no facts extracted (${nullFields.length} fields remain empty)`);
+  } else {
+    log(`ℹ️ Validation pass skipped — all relevant fields populated`);
   }
 
   // Safety-net biology before save
