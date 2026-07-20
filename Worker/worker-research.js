@@ -1689,19 +1689,22 @@ async function handleResearchProxyDownload(request, env) {
     }
   }
 
-  // ── TinyFish Fetch for non-reserved HTML pages ───────────────────────────
-  // TinyFish is free and fast. Try it first for any HTML page that isn't
-  // reserved for Firecrawl's special handling (NEPIS two-step, eRegulations
-  // SPA waitFor, Grokipedia JS render). If TinyFish returns insufficient
-  // content, fall through to Firecrawl (credit-guarded) then Jina then basic.
-  if (isHtml && !needsFirecrawl) {
+  // ── TinyFish Fetch for ordinary HTML and PDF documents ──────────────────
+  // TinyFish can extract PDF text directly as well as render HTML. Trying it
+  // before streaming a PDF avoids browser-side binary parsing and gives the
+  // evidence pipeline normalized text. Reserved SPA/NEPIS pages retain their
+  // custom Firecrawl handling. If extraction is insufficient, fall through to
+  // the existing HTML fallbacks or the direct binary fetch for PDFs.
+  if (!needsFirecrawl) {
     let tfSucceeded = false;
     try {
       const tfResult = await tinyfishFetch({
         urls: [target],
         format: 'markdown',
-        include_selectors: ['main', 'article', '.content', '#main-content'],
-        exclude_selectors: ['nav', 'footer', '.sidebar', '.ads', 'script', 'style'],
+        ...(isHtml ? {
+          include_selectors: ['main', 'article', '.content', '#main-content'],
+          exclude_selectors: ['nav', 'footer', '.sidebar', '.ads', 'script', 'style']
+        } : {}),
         ttl: 86400
       }, env);
       const markdown = tfResult.results[0]?.text || '';
@@ -1727,7 +1730,7 @@ async function handleResearchProxyDownload(request, env) {
     // Scrape.do fallback — Cloudflare bypass, residential proxies, 1 credit/page
     // Only fires when TinyFish returned insufficient content. Failed requests cost 0.
     let scrapeDoSucceeded = false;
-    if (!tfSucceeded) {
+    if (!tfSucceeded && isHtml) {
       try {
         // Use render=true for known JS-heavy domains, plain fetch for everything else
         const needsRender = /anglersheadquarters|majorleaguefishing|omniafishing|carolinasportsman|gameandfishmag/i.test(target);
@@ -1748,7 +1751,7 @@ async function handleResearchProxyDownload(request, env) {
     }
 
     // Firecrawl fallback — only when both TinyFish and Scrape.do failed and budget allows
-    if (!tfSucceeded && !scrapeDoSucceeded && firecrawlKey) {
+    if (isHtml && !tfSucceeded && !scrapeDoSucceeded && firecrawlKey) {
       try {
         const budget = await checkFirecrawlBudget(env, 1);
         if (budget.allowed) {
@@ -1784,8 +1787,8 @@ async function handleResearchProxyDownload(request, env) {
       }
     }
 
-    // Jina Reader — last resort before basic fetch
-    try {
+    // Jina Reader — last resort before basic fetch (HTML only)
+    if (isHtml) try {
       const jinaUrl = `https://r.jina.ai/${target}`;
       const jinaHeaders = {
         'Accept': 'text/plain',
