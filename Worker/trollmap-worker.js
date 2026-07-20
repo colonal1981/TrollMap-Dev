@@ -1270,6 +1270,9 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
       if (path === "/research/agent" && request.method === "POST") {
         return handleResearchAgentPipeline(request, env);
       }
+      if (path === "/research/agent-llm" && request.method === "POST") {
+        return handleResearchAgent(request, env);
+      }
       if ((path === "/research/list" || path === "/lakes/list") && request.method === "GET") {
         return handleResearchList(env);
       }
