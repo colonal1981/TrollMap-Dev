@@ -950,50 +950,67 @@ async function handleResearchDiscover(request, env) {
   // ─── AGENT-SPECIFIC DISCOVERY QUERIES ───
 const AGENT_DISCOVERY_QUERIES = {
   identity: {
-    SC: (lake) => [`"${lake}" FERC license filetype:pdf`, `"${lake}" "dam owner" OR "reservoir owner" OR "impounded"`],
-    NC: (lake) => [`"${lake}" FERC license filetype:pdf`, `"${lake}" "Duke Energy" OR "Dominion Energy" OR "USACE" dam owner`],
-    GA: (lake) => [`"${lake}" FERC license filetype:pdf`, `"${lake}" "Georgia Power" OR "USACE" dam owner`],
-    TN: (lake) => [`"${lake}" FERC license filetype:pdf`, `"${lake}" "TVA" OR "USACE" dam owner`],
+    SC: (lake) => [`${lake} South Carolina dam owner FERC license reservoir`, `${lake} SC reservoir history impounded Santee Cooper Duke Energy`],
+    NC: (lake) => [`${lake} North Carolina dam owner FERC license reservoir`, `${lake} NC Duke Energy Dominion reservoir history`],
+    GA: (lake) => [`${lake} Georgia dam owner FERC license reservoir`, `${lake} GA Georgia Power USACE reservoir history`],
+    TN: (lake) => [`${lake} Tennessee dam owner FERC license reservoir`, `${lake} TN TVA USACE reservoir history`],
   },
   limnology: {
-    SC: (lake) => [`"${lake}" EPA NSCEP OR "Report on Lake" site:nepis.epa.gov`, `"${lake}" water quality dissolved oxygen thermocline site:scdhec.gov OR site:waterqualitydata.us`],
-    NC: (lake) => [`"${lake}" EPA NSCEP OR "Report on Lake" site:nepis.epa.gov`, `"${lake}" water quality dissolved oxygen thermocline site:deq.nc.gov OR site:waterqualitydata.us`],
-    GA: (lake) => [`"${lake}" EPA NSCEP OR "Report on Lake" site:nepis.epa.gov`, `"${lake}" water quality dissolved oxygen thermocline site:epd.georgia.gov OR site:waterqualitydata.us`],
-    TN: (lake) => [`"${lake}" EPA NSCEP OR "Report on Lake" site:nepis.epa.gov`, `"${lake}" water quality dissolved oxygen thermocline site:tn.gov OR site:waterqualitydata.us`],
+    SC: (lake) => [`${lake} South Carolina EPA water quality report limnology`, `${lake} SC dissolved oxygen thermocline water quality study`],
+    NC: (lake) => [`${lake} North Carolina EPA water quality report limnology`, `${lake} NC dissolved oxygen thermocline water quality study`],
+    GA: (lake) => [`${lake} Georgia EPA water quality report limnology`, `${lake} GA dissolved oxygen thermocline water quality study`],
+    TN: (lake) => [`${lake} Tennessee EPA water quality report limnology`, `${lake} TN dissolved oxygen thermocline water quality study`],
   },
   biology: {
-    SC: (lake) => [`"${lake}" stocking report filetype:pdf`, `"${lake}" fish survey OR population survey filetype:pdf`, `"${lake}" forage OR shad OR herring filetype:pdf`],
-    NC: (lake) => [`"${lake}" stocking report filetype:pdf`, `"${lake}" fish survey filetype:pdf`, `"${lake}" forage OR shad OR herring filetype:pdf`],
-    GA: (lake) => [`"${lake}" stocking report filetype:pdf`, `"${lake}" fish survey filetype:pdf`, `"${lake}" forage OR shad OR herring filetype:pdf`],
-    TN: (lake) => [`"${lake}" stocking report filetype:pdf`, `"${lake}" fish survey filetype:pdf`, `"${lake}" forage OR shad OR herring filetype:pdf`],
+    // Two web searches for agency stocking/survey docs + one academic paper search
+    SC: (lake) => [`${lake} South Carolina fish stocking report SCDNR`, `${lake} SC fish population survey species assessment`, `${lake} shad herring forage striped bass fishery`],
+    NC: (lake) => [`${lake} North Carolina fish stocking report NCWRC`, `${lake} NC fish population survey species assessment`, `${lake} shad herring forage striped bass fishery`],
+    GA: (lake) => [`${lake} Georgia fish stocking report DNR`, `${lake} GA fish population survey species assessment`, `${lake} shad herring forage striped bass fishery`],
+    TN: (lake) => [`${lake} Tennessee fish stocking report TWRA`, `${lake} TN fish population survey species assessment`, `${lake} shad herring forage striped bass fishery`],
+  },
+  // Domain types per agent — 'web' by default, 'research_paper' for biology academic queries
+  _domainTypes: {
+    biology: ['web', 'web', 'research_paper'],
   },
   habitat: {
-    SC: (lake) => [`"${lake}" habitat OR vegetation OR "standing timber" OR "creek mouth" site:dnr.sc.gov`],
-    NC: (lake) => [`"${lake}" habitat OR vegetation OR "standing timber" OR "creek mouth" site:ncwildlife.org`],
-    GA: (lake) => [`"${lake}" habitat OR vegetation OR "standing timber" OR "creek mouth" site:georgiawildlife.com`],
-    TN: (lake) => [`"${lake}" habitat OR vegetation OR "standing timber" OR "creek mouth" site:tnwildlife.org`],
+    SC: (lake) => [`${lake} South Carolina aquatic habitat vegetation standing timber creek mouth SCDNR`],
+    NC: (lake) => [`${lake} North Carolina aquatic habitat vegetation standing timber creek mouth NCWRC`],
+    GA: (lake) => [`${lake} Georgia aquatic habitat vegetation standing timber creek mouth DNR`],
+    TN: (lake) => [`${lake} Tennessee aquatic habitat vegetation standing timber creek mouth TWRA`],
   },
   navigation: {
-    SC: (lake) => [`"${lake}" hazard OR shoal OR stump OR channel site:dnr.sc.gov`],
-    NC: (lake) => [`"${lake}" hazard OR shoal OR stump OR channel site:ncwildlife.org`],
-    GA: (lake) => [`"${lake}" hazard OR shoal OR stump OR channel site:georgiawildlife.com`],
-    TN: (lake) => [`"${lake}" hazard OR shoal OR stump OR channel site:tnwildlife.org`],
+    SC: (lake) => [`${lake} South Carolina navigation hazards shoals stumps channels SCDNR`],
+    NC: (lake) => [`${lake} North Carolina navigation hazards shoals stumps channels`],
+    GA: (lake) => [`${lake} Georgia navigation hazards shoals stumps channels`],
+    TN: (lake) => [`${lake} Tennessee navigation hazards shoals stumps channels`],
   },
   regulations: {
-    SC: (lake) => [`"${lake}" fishing regulations creel limit site:eregulations.com/sc`],
-    NC: (lake) => [`"${lake}" fishing regulations creel limit site:eregulations.com/nc`],
-    GA: (lake) => [`"${lake}" fishing regulations creel limit site:eregulations.com/ga`],
-    TN: (lake) => [`"${lake}" fishing regulations creel limit site:tn.gov/twra`],
+    SC: (lake) => [`${lake} South Carolina fishing regulations creel limit size limit`],
+    NC: (lake) => [`${lake} North Carolina fishing regulations creel limit size limit`],
+    GA: (lake) => [`${lake} Georgia fishing regulations creel limit size limit`],
+    TN: (lake) => [`${lake} Tennessee fishing regulations creel limit size limit TWRA`],
   },
   fisheries: {
-    SC: (lake) => [`"${lake}" trolling OR "fishing report" OR "fishing pattern" OR "striper" OR tournament`, `"${lake}" trolling OR "spread" OR "presentation" OR "pattern" site:youtube.com OR site:facebook.com`],
-    NC: (lake) => [`"${lake}" trolling OR "fishing report" OR "fishing pattern" OR tournament`, `"${lake}" trolling OR "spread" OR "presentation" OR "pattern" site:youtube.com OR site:facebook.com`],
-    GA: (lake) => [`"${lake}" trolling OR "fishing report" OR "fishing pattern" OR tournament`, `"${lake}" trolling OR "spread" OR "presentation" OR "pattern" site:youtube.com OR site:facebook.com`],
-    TN: (lake) => [`"${lake}" trolling OR "fishing report" OR "fishing pattern" OR tournament`, `"${lake}" trolling OR "spread" OR "presentation" OR "pattern" site:youtube.com OR site:facebook.com`],
+    // Exclude Facebook and YouTube — they never return usable content via fetch
+    SC: (lake) => [
+      `${lake} South Carolina fishing report seasonal patterns -site:facebook.com -site:youtube.com`,
+      `${lake} SC striper crappie bass fishing guide depth techniques -site:facebook.com -site:youtube.com`,
+    ],
+    NC: (lake) => [
+      `${lake} North Carolina fishing report seasonal patterns -site:facebook.com -site:youtube.com`,
+      `${lake} NC bass crappie striped bass fishing guide techniques -site:facebook.com -site:youtube.com`,
+    ],
+    GA: (lake) => [
+      `${lake} Georgia fishing report seasonal patterns -site:facebook.com -site:youtube.com`,
+      `${lake} GA bass crappie striped bass fishing guide techniques -site:facebook.com -site:youtube.com`,
+    ],
+    TN: (lake) => [
+      `${lake} Tennessee fishing report seasonal patterns -site:facebook.com -site:youtube.com`,
+      `${lake} TN bass crappie striped bass fishing guide techniques -site:facebook.com -site:youtube.com`,
+    ],
   },
   summary: { SC: () => [], NC: () => [], GA: () => [], TN: () => [] }
 };
-
 const AGENT_TO_TAGS = {
   identity: ['identity'],
   limnology: ['limnology'],
@@ -1105,8 +1122,18 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
     }
   }
 
-  // NEPIS EPA survey search — limnology only
-  if (wantsNepis && !skipNepis) {
+  // State agency fishing news/trends page — best source of current seasonal pattern data
+  // Tagged fisheries only — these are narrative fishing reports not regulatory docs
+  const STATE_FISHING_NEWS = {
+    SC: { title: 'SCDNR Freshwater Fishing Trends', url: 'https://www.dnr.sc.gov/news/freshwater.html', authority: 'SCDNR' },
+    NC: { title: 'NCWRC Fishing Reports', url: 'https://www.ncwildlife.org/Fishing/Fishing-Where-to-Fish/Fishing-Reports', authority: 'NCWRC' },
+    GA: { title: 'Georgia DNR Fishing Forecasts', url: 'https://georgiawildlife.com/fishing/reports', authority: 'GADNR' },
+    TN: { title: 'TWRA Fishing Reports', url: 'https://www.tn.gov/twra/fishing/fishing-reports.html', authority: 'TWRA' },
+  };
+  const fishingNews = STATE_FISHING_NEWS[state];
+  if (fishingNews && (!agentForSeeds || agentForSeeds === 'fisheries')) {
+    addSeed({ title: fishingNews.title, type: 'HTML', authority: fishingNews.authority, url: fishingNews.url, priority: 1, agentTags: ['fisheries'] });
+  }
     addSeed({
       title: `EPA NSCEP search: Report on ${baseName} / Lake ${baseName}`,
       type: 'HTML', authority: 'EPA NSCEP',
@@ -1223,6 +1250,9 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
     const useTinyFish = !useFirecrawl;
 
     for (const q of queries) {
+      const qIndex = queries.indexOf(q);
+      const domainTypes = AGENT_DISCOVERY_QUERIES._domainTypes?.[agentKey];
+      const domainType = domainTypes?.[qIndex] || 'web';
       try {
         let rawResults = [];
         
@@ -1240,12 +1270,13 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
           try {
             const tfResult = await tinyfishSearch({
               query: q,
-              domain_type: 'web',
-              purpose: `Find ${agentKey} sources for ${lakeName}`,
-              recency_minutes: 525600
+              domain_type: domainType,
+              purpose: `Find authoritative ${agentKey} information about ${lakeName} in ${state} for a fishing intelligence platform`,
+              location: 'US',
+              language: 'en',
             }, env);
             rawResults = tfResult.results || [];
-            queryLog.push(`[${agentKey}] TinyFish: ${q.slice(0,80)} → ${rawResults.length} results`);
+            queryLog.push(`[${agentKey}${domainType !== 'web' ? ':' + domainType : ''}] TinyFish: ${q.slice(0,80)} → ${rawResults.length} results`);
           } catch (tfErr) {
             queryLog.push(`[${agentKey}] TinyFish failed: ${tfErr.message}`);
             continue;
@@ -1616,10 +1647,13 @@ async function handleResearchProxyDownload(request, env) {
     }
   }
 
-  // ── TinyFish Fetch for non-Firecrawl HTML pages (FREE, batched) ───────────
-  // Routes general HTML through TinyFish Fetch — 10 URLs per call, free tier.
-  // Keeps Firecrawl reserved for NEPIS two-step + eRegulations SPA + Grokipedia.
+  // ── TinyFish Fetch for non-reserved HTML pages ───────────────────────────
+  // TinyFish is free and fast. Try it first for any HTML page that isn't
+  // reserved for Firecrawl's special handling (NEPIS two-step, eRegulations
+  // SPA waitFor, Grokipedia JS render). If TinyFish returns insufficient
+  // content, fall through to Firecrawl (credit-guarded) then Jina then basic.
   if (isHtml && !needsFirecrawl) {
+    let tfSucceeded = false;
     try {
       const tfResult = await tinyfishFetch({
         urls: [target],
@@ -1629,7 +1663,13 @@ async function handleResearchProxyDownload(request, env) {
         ttl: 86400
       }, env);
       const markdown = tfResult.results[0]?.text || '';
+      if (tfResult.errors?.length) {
+        for (const err of tfResult.errors) {
+          console.warn(`TinyFish fetch error for ${err.url}: ${err.error}`);
+        }
+      }
       if (markdown && markdown.length > 200) {
+        tfSucceeded = true;
         const headers = new Headers({
           'Content-Type': 'text/plain; charset=utf-8',
           'Access-Control-Allow-Origin': '*',
@@ -1637,12 +1677,49 @@ async function handleResearchProxyDownload(request, env) {
         });
         return new Response(markdown, { headers });
       }
-      console.warn(`TinyFish Fetch returned insufficient content for ${target} — trying Jina`);
+      console.warn(`TinyFish insufficient content (${markdown.length} chars) for ${target} — trying Firecrawl`);
     } catch (tfErr) {
-      console.warn(`TinyFish Fetch error for ${target}: ${tfErr.message} — trying Jina`);
+      console.warn(`TinyFish error for ${target}: ${tfErr.message} — trying Firecrawl`);
     }
 
-    // Fallback to Jina Reader
+    // Firecrawl fallback — only when TinyFish failed and budget allows
+    if (!tfSucceeded && firecrawlKey) {
+      try {
+        const budget = await checkFirecrawlBudget(env, 1);
+        if (budget.allowed) {
+          const fcRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              url: target,
+              formats: ['markdown'],
+              onlyMainContent: true,
+              timeout: 25000,
+            })
+          });
+          if (fcRes.ok) {
+            const fcData = await fcRes.json();
+            const markdown = fcData.data?.markdown || fcData.markdown || '';
+            if (markdown && markdown.length > 200) {
+              await recordFirecrawlUsage(env, 1);
+              const headers = new Headers({
+                'Content-Type': 'text/plain; charset=utf-8',
+                'Access-Control-Allow-Origin': '*',
+                'X-Source': 'firecrawl-fallback'
+              });
+              return new Response(markdown, { headers });
+            }
+          }
+          console.warn(`Firecrawl fallback also failed for ${target} — trying Jina`);
+        } else {
+          console.warn(`Firecrawl budget exhausted — skipping fallback for ${target}, trying Jina`);
+        }
+      } catch (fcErr) {
+        console.warn(`Firecrawl fallback error for ${target}: ${fcErr.message} — trying Jina`);
+      }
+    }
+
+    // Jina Reader — last resort before basic fetch
     try {
       const jinaUrl = `https://r.jina.ai/${target}`;
       const jinaHeaders = {
@@ -5129,16 +5206,54 @@ async function handleResearchAgentPipeline(request, env) {
           const normUrl = String(src.url || '').split('?')[0].toLowerCase();
           const existing = existingByUrl.get(normUrl);
           if (existing?.fetchedAt) {
-            const age = now - new Date(existing.fetchedAt).getTime();
-            const ttl = getDocTtl(src.url);
-            if (age < ttl) {
-              console.log(`[agent-pipeline] cache hit (${Math.round(age/86400000)}d old, ttl ${Math.round(ttl/86400000)}d): ${src.url.slice(0,80)}`);
-              // Merge agentTags so this agent can use it
-              const merged = { ...existing, agentTags: [...new Set([...(existing.agentTags || []), agentKey])] };
-              normalizedDocuments.push(merged);
-              continue;
+            // If we have an etag, use conditional fetch — let the origin tell us if it changed
+            if (existing.etag) {
+              try {
+                const condResult = await tinyfishFetch({
+                  urls: [src.url],
+                  format: 'markdown',
+                  if_none_match: existing.etag,
+                  include_etag_and_last_modified: true,
+                  ttl: 0 // bypass TinyFish cache for conditional check
+                }, env);
+                const condPage = condResult.results?.[0];
+                if (condPage?.not_modified) {
+                  console.log(`[agent-pipeline] etag hit (not modified): ${src.url.slice(0,80)}`);
+                  const merged = { ...existing, agentTags: [...new Set([...(existing.agentTags || []), agentKey])] };
+                  normalizedDocuments.push(merged);
+                  existingByUrl.set(normUrl, merged);
+                  continue;
+                } else if (condPage?.text && condPage.text.length > 200) {
+                  console.log(`[agent-pipeline] etag miss (content changed): ${src.url.slice(0,80)}`);
+                  const doc = {
+                    title: src.title, url: src.url, fullText: condPage.text,
+                    agentTags: [...new Set([...(src.agentTags || [agentKey]), agentKey])],
+                    discoveredBy: src.discoveredBy || agentKey,
+                    fetchedAt: new Date().toISOString(),
+                    etag: condPage.etag || null,
+                    lastModified: condPage.last_modified || null,
+                  };
+                  normalizedDocuments.push(doc);
+                  existingByUrl.set(normUrl, doc);
+                  continue;
+                }
+                // Fall through to full fetch if conditional fetch failed
+              } catch (condErr) {
+                console.warn(`[agent-pipeline] conditional fetch failed for ${src.url}: ${condErr.message} — falling through to full fetch`);
+              }
             } else {
-              console.log(`[agent-pipeline] cache stale (${Math.round(age/86400000)}d old, ttl ${Math.round(ttl/86400000)}d) — refetching: ${src.url.slice(0,80)}`);
+              // No etag — fall back to TTL-based check
+              const age = now - new Date(existing.fetchedAt).getTime();
+              const ttl = getDocTtl(src.url);
+              if (age < ttl) {
+                console.log(`[agent-pipeline] cache hit (${Math.round(age/86400000)}d old, ttl ${Math.round(ttl/86400000)}d): ${src.url.slice(0,80)}`);
+                const merged = { ...existing, agentTags: [...new Set([...(existing.agentTags || []), agentKey])] };
+                normalizedDocuments.push(merged);
+                existingByUrl.set(normUrl, merged);
+                continue;
+              } else {
+                console.log(`[agent-pipeline] cache stale (${Math.round(age/86400000)}d old, ttl ${Math.round(ttl/86400000)}d) — refetching: ${src.url.slice(0,80)}`);
+              }
             }
           }
 
@@ -5150,19 +5265,33 @@ async function handleResearchAgentPipeline(request, env) {
             const proxyRes = await handleResearchProxyDownload(proxyReq, env);
             if (proxyRes.ok) {
               const text = await proxyRes.text();
+              const xSource = proxyRes.headers?.get('X-Source') || 'unknown';
               if (text.length > 200) {
+                // For TinyFish fetches, also get etag for future conditional checks
+                let etag = null;
+                if (xSource === 'tinyfish') {
+                  try {
+                    const etagResult = await tinyfishFetch({
+                      urls: [src.url], format: 'markdown',
+                      include_etag_and_last_modified: true, ttl: 86400
+                    }, env);
+                    etag = etagResult.results?.[0]?.etag || null;
+                  } catch (_) {}
+                }
                 const doc = {
-                  title: src.title,
-                  url: src.url,
-                  fullText: text,
+                  title: src.title, url: src.url, fullText: text,
                   agentTags: src.agentTags || [agentKey],
                   discoveredBy: src.discoveredBy || agentKey,
-                  fetchedAt: new Date().toISOString()
+                  fetchedAt: new Date().toISOString(),
+                  etag,
                 };
                 normalizedDocuments.push(doc);
-                // Update the existing map so later agents in same run see it
                 existingByUrl.set(normUrl, doc);
+              } else {
+                console.warn(`[agent-pipeline] fetch returned insufficient content (${text.length} chars) via ${xSource}: ${src.url.slice(0,80)}`);
               }
+            } else {
+              console.warn(`[agent-pipeline] proxy download HTTP ${proxyRes.status} for ${src.url.slice(0,80)}`);
             }
           } catch (e) {
             console.warn(`Proxy download failed for ${src.url}: ${e.message}`);
