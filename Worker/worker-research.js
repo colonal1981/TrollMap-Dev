@@ -1024,12 +1024,21 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
     guaranteedSeeds.push(seed);
   };
 
-  // Grokipedia
+  // ── Agent-aware seed filtering ───────────────────────────────────────────
+  // When a specific agent is requested, only seed sources relevant to that agent.
+  // Full pipeline (no agent param) gets all seeds as before.
+  // Seed relevance map: which agents care about each seed type
+  const agentForSeeds = String(body.agent || '').trim().toLowerCase() || null;
+  const wantsGrokipedia   = !agentForSeeds || ['identity','limnology','biology','habitat'].includes(agentForSeeds);
+  const wantsRegs         = !agentForSeeds || agentForSeeds === 'regulations';
+  const wantsScdnrDesc    = !agentForSeeds || ['identity','habitat','navigation'].includes(agentForSeeds);
+  const wantsScdnrRegs    = !agentForSeeds || agentForSeeds === 'regulations';
+  const wantsNepis        = !agentForSeeds || ['limnology'].includes(agentForSeeds);
+  const wantsOwnerDoc     = !agentForSeeds || ['identity','limnology'].includes(agentForSeeds);
+  const wantsDukeCra      = !agentForSeeds || ['identity','limnology'].includes(agentForSeeds);
+
+  // Grokipedia — identity/limnology/biology/habitat only
   const grokSlug = GROKIPEDIA_SLUGS[baseLower];
-  // If no known slug, try common patterns — Grokipedia uses Title_Case with underscores
-  // We try canonical, title-case, and common lake-name variants. Grokipedia slugs are
-  // not reliably derived from the UI's cleaned base name (for example, Blewett
-  // Falls Lake is /blewett_falls_lake, not /Lake_Blewett_Falls).
   const grokCandidates = grokSlug
     ? [`https://grokipedia.com/page/${grokSlug}`]
     : [
@@ -1038,69 +1047,79 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
         `https://grokipedia.com/page/${baseName.replace(/\s+/g,'_')}_Lake`,
         `https://grokipedia.com/page/${baseName.replace(/\s+/g,'_')}`,
       ];
-  const resolvedGrokUrl = grokCandidates[0]; // will be validated during citation fetch
-  if (grokSlug) {
-    addSeed({ title: `${lakeName} — Grokipedia`, type: 'HTML', authority: 'Grokipedia', url: resolvedGrokUrl, priority: 1 });
-  } else {
-    // Unknown lake — add as lower priority, will be dropped if it 404s
-    addSeed({ title: `${lakeName} — Grokipedia (auto)`, type: 'HTML', authority: 'Grokipedia', url: resolvedGrokUrl, priority: 2 });
-  }
-  if (baseLower === 'hartwell') {
-    addSeed({ title: 'Savannah River — Grokipedia', type: 'HTML', authority: 'Grokipedia', url: 'https://grokipedia.com/page/Savannah_River', priority: 2 });
-  }
-  if (baseLower === 'thurmond' || baseLower === 'clarks hill') {
-    addSeed({ title: 'Little River (Columbia County, GA) — Grokipedia', type: 'HTML', authority: 'Grokipedia', url: 'https://grokipedia.com/page/little_river_columbia_county_georgia', priority: 2 });
-  }
-
-  // State regulations (always)
-  addSeed({ title: regsTitle, type: 'HTML', authority: dnrName, url: regsUrl, priority: 1 });
-  // GA has regs split across two pages — seed both
-  if (state === 'GA') {
-    addSeed({ title: 'GA General Freshwater Regulations (eRegulations)', type: 'HTML', authority: 'GADNR', url: 'https://www.eregulations.com/georgia/fishing/general-regulations', priority: 1 });
+  const resolvedGrokUrl = grokCandidates[0];
+  if (wantsGrokipedia) {
+    if (grokSlug) {
+      addSeed({ title: `${lakeName} — Grokipedia`, type: 'HTML', authority: 'Grokipedia', url: resolvedGrokUrl, priority: 1, agentTags: ['identity','limnology','biology','habitat'] });
+    } else {
+      addSeed({ title: `${lakeName} — Grokipedia (auto)`, type: 'HTML', authority: 'Grokipedia', url: resolvedGrokUrl, priority: 2, agentTags: ['identity','limnology','biology','habitat'] });
+    }
+    if (baseLower === 'hartwell') {
+      addSeed({ title: 'Savannah River — Grokipedia', type: 'HTML', authority: 'Grokipedia', url: 'https://grokipedia.com/page/Savannah_River', priority: 2, agentTags: ['identity','limnology'] });
+    }
+    if (baseLower === 'thurmond' || baseLower === 'clarks hill') {
+      addSeed({ title: 'Little River (Columbia County, GA) — Grokipedia', type: 'HTML', authority: 'Grokipedia', url: 'https://grokipedia.com/page/little_river_columbia_county_georgia', priority: 2, agentTags: ['identity'] });
+    }
   }
 
-  // SCDNR lake description + regs pages (dynamic — works for any SC lake)
-  if (state === 'SC') {
-    addSeed({ title: `Lake ${baseName} SCDNR Lake Description`, type: 'HTML', authority: 'SCDNR', url: `https://www.dnr.sc.gov/lakes/${baseLower}/description.html`, priority: 1 });
-    addSeed({ title: `Lake ${baseName} Regulations`, type: 'HTML', authority: 'SCDNR', url: `https://www.dnr.sc.gov/lakes/${baseLower}/regs.html`, priority: 1 });
+  // State regulations — regulations agent only
+  // NOTE: regulations agent uses KV-cached fetchStateRegulations (0 docs needed).
+  // eRegulations seed is kept as fallback only if KV cache miss.
+  if (wantsRegs) {
+    addSeed({ title: regsTitle, type: 'HTML', authority: dnrName, url: regsUrl, priority: 1, agentTags: ['regulations'] });
+    if (state === 'GA') {
+      addSeed({ title: 'GA General Freshwater Regulations (eRegulations)', type: 'HTML', authority: 'GADNR', url: 'https://www.eregulations.com/georgia/fishing/general-regulations', priority: 1, agentTags: ['regulations'] });
+    }
   }
 
-  // TWRA reservoir profiles include lake-specific species and limits. Keep this
-  // explicit because the generic regulations page is statewide.
+  // SCDNR lake description — identity/habitat/navigation only
+  if (wantsScdnrDesc && state === 'SC') {
+    addSeed({ title: `Lake ${baseName} SCDNR Lake Description`, type: 'HTML', authority: 'SCDNR', url: `https://www.dnr.sc.gov/lakes/${baseLower}/description.html`, priority: 1, agentTags: ['identity','habitat','navigation'] });
+  }
+
+  // SCDNR regs page — regulations agent only
+  if (wantsScdnrRegs && state === 'SC') {
+    addSeed({ title: `Lake ${baseName} Regulations`, type: 'HTML', authority: 'SCDNR', url: `https://www.dnr.sc.gov/lakes/${baseLower}/regs.html`, priority: 1, agentTags: ['regulations'] });
+  }
+
+  // TWRA reservoir profiles — regulations + identity
   const TWRA_LAKE_PAGES = {
     'norris': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/norris-reservoir.html',
     'douglas': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/douglas-reservoir.html',
     'watauga': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/watauga-reservoir.html',
   };
-  if (state === 'TN' && TWRA_LAKE_PAGES[baseLower]) {
-    addSeed({ title: `${baseName} TWRA Reservoir Profile`, type: 'HTML', authority: 'TWRA', url: TWRA_LAKE_PAGES[baseLower], priority: 1 });
+  if (state === 'TN' && TWRA_LAKE_PAGES[baseLower] && (!agentForSeeds || ['regulations','identity'].includes(agentForSeeds))) {
+    addSeed({ title: `${baseName} TWRA Reservoir Profile`, type: 'HTML', authority: 'TWRA', url: TWRA_LAKE_PAGES[baseLower], priority: 1, agentTags: ['regulations','identity'] });
   }
 
-  // Owner-aware drawdown source
-  if (drawdownSource) {
-    addSeed({ title: drawdownSource.label, type: drawdownSource.type, authority: drawdownSource.authority, url: drawdownSource.url, priority: 1 });
+  // Owner/drawdown source — identity + limnology only
+  if (wantsOwnerDoc && drawdownSource) {
+    addSeed({ title: drawdownSource.label, type: drawdownSource.type, authority: drawdownSource.authority, url: drawdownSource.url, priority: 1, agentTags: ['identity','limnology'] });
   }
 
-  // Duke CRA direct PDF if applicable
-  const durCra = DUKE_CRA_PDFS[baseLower];
-  if (durCra) {
-    addSeed({ title: `${baseName} Lake Management Agreement — Duke Energy CRA`, type: 'PDF', authority: 'Duke Energy / FERC', url: durCra, priority: 1 });
+  // Duke CRA PDF — identity + limnology only
+  if (wantsDukeCra) {
+    const durCra = DUKE_CRA_PDFS[baseLower];
+    if (durCra) {
+      addSeed({ title: `${baseName} Lake Management Agreement — Duke Energy CRA`, type: 'PDF', authority: 'Duke Energy / FERC', url: durCra, priority: 1, agentTags: ['identity','limnology'] });
+    }
   }
 
-  // NEPIS EPA survey search
-  if (!skipNepis) {
+  // NEPIS EPA survey search — limnology only
+  if (wantsNepis && !skipNepis) {
     addSeed({
       title: `EPA NSCEP search: Report on ${baseName} / Lake ${baseName}`,
       type: 'HTML', authority: 'EPA NSCEP',
       url: buildNepisSearchUrl(lakeName, state, baseName),
-      priority: 2, source: 'nepis_seed'
+      priority: 2, source: 'nepis_seed', agentTags: ['limnology']
     });
   }
 
   // ── STEP 2: Grokipedia citation following ────────────────────────────────
   // Fetch the Grokipedia page and extract all citation URLs — these are the
   // same authoritative sources Grokipedia used, handed to us for free.
-  if (firecrawlKey && (grokSlug || grokCandidates.length > 1)) {
+  // Only run for agents that benefit from Grokipedia citations.
+  if (wantsGrokipedia && firecrawlKey && (grokSlug || grokCandidates.length > 1)) {
     try {
       // Try candidates in order until one returns real content (>2000 chars)
       let grokUrl = null;
@@ -5072,39 +5091,97 @@ async function handleResearchAgentPipeline(request, env) {
     // Step 2: Fetch/normalize documents (if mode=full) or load existing (if mode=resume)
     let normalizedDocuments = [];
     if (mode === 'full') {
-      for (const src of agentSources) {
+      // Regulations agent: data is in KV-cached deterministic facts — no docs needed
+      if (agentKey === 'regulations') {
+        console.log(`[agent-pipeline] regulations: skipping fetch — data from deterministic facts KV cache`);
+      } else {
+        // Load existing normalized docs for this lake — skip anything already fresh
+        let existingDocs = [];
         try {
-          const proxyReq = new Request('internal', {
-            method: 'GET',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: src.url, type: src.type })
-          });
-          const proxyRes = await handleResearchProxyDownload(proxyReq, env);
-          if (proxyRes.ok) {
-            const text = await proxyRes.text();
-            if (text.length > 200) {
-              normalizedDocuments.push({
-                title: src.title,
-                url: src.url,
-                fullText: text,
-                agentTags: src.agentTags || [agentKey],
-                discoveredBy: src.discoveredBy || agentKey,
-                fetchedAt: new Date().toISOString()
-              });
+          const normRes = await handleResearchGetNormalized(env, lakeName);
+          if (normRes.ok) {
+            const normData = await normRes.json();
+            existingDocs = normData.documents || [];
+          }
+        } catch (_) {}
+
+        // TTL map by source type — how long before we refetch (ms)
+        const TTL_MS = {
+          academic:   365 * 24 * 60 * 60 * 1000, // SEAFWA, USGS, EPA surveys — static forever
+          official:   90  * 24 * 60 * 60 * 1000, // SCDNR, eRegulations, FERC — annual cycles
+          news:       30  * 24 * 60 * 60 * 1000, // SCDNR news, stocking updates
+          anecdotal:  14  * 24 * 60 * 60 * 1000, // fishing reports, tournament results, social
+        };
+
+        function getDocTtl(url) {
+          const u = String(url || '').toLowerCase();
+          if (/seafwa\.org|usgs\.gov|nepis\.epa\.gov|epa\.gov|asmfc\.org|apms\.org|seafwa|\.edu/.test(u)) return TTL_MS.academic;
+          if (/dnr\.sc\.gov|ncwildlife\.org|georgiawildlife|tn\.gov|eregulations\.com|ferc\.gov|duke-energy\.com|santeecooper\.com|usace\.army\.mil/.test(u)) return TTL_MS.official;
+          if (/news|report|stocking|annual|trends|freshwater\.html|fishing-report/.test(u)) return TTL_MS.news;
+          return TTL_MS.anecdotal;
+        }
+
+        const existingByUrl = new Map(existingDocs.map(d => [String(d.url || '').split('?')[0].toLowerCase(), d]));
+        const now = Date.now();
+
+        for (const src of agentSources) {
+          // Skip PDF/HTML already in R2 and still fresh
+          const normUrl = String(src.url || '').split('?')[0].toLowerCase();
+          const existing = existingByUrl.get(normUrl);
+          if (existing?.fetchedAt) {
+            const age = now - new Date(existing.fetchedAt).getTime();
+            const ttl = getDocTtl(src.url);
+            if (age < ttl) {
+              console.log(`[agent-pipeline] cache hit (${Math.round(age/86400000)}d old, ttl ${Math.round(ttl/86400000)}d): ${src.url.slice(0,80)}`);
+              // Merge agentTags so this agent can use it
+              const merged = { ...existing, agentTags: [...new Set([...(existing.agentTags || []), agentKey])] };
+              normalizedDocuments.push(merged);
+              continue;
+            } else {
+              console.log(`[agent-pipeline] cache stale (${Math.round(age/86400000)}d old, ttl ${Math.round(ttl/86400000)}d) — refetching: ${src.url.slice(0,80)}`);
             }
           }
-        } catch (e) {
-          console.warn(`Proxy download failed for ${src.url}: ${e.message}`);
+
+          // Not cached or stale — fetch it
+          try {
+            const proxyReq = new Request(`https://internal/research/proxy-download?url=${encodeURIComponent(src.url)}&type=${src.type || 'HTML'}`, {
+              method: 'GET',
+            });
+            const proxyRes = await handleResearchProxyDownload(proxyReq, env);
+            if (proxyRes.ok) {
+              const text = await proxyRes.text();
+              if (text.length > 200) {
+                const doc = {
+                  title: src.title,
+                  url: src.url,
+                  fullText: text,
+                  agentTags: src.agentTags || [agentKey],
+                  discoveredBy: src.discoveredBy || agentKey,
+                  fetchedAt: new Date().toISOString()
+                };
+                normalizedDocuments.push(doc);
+                // Update the existing map so later agents in same run see it
+                existingByUrl.set(normUrl, doc);
+              }
+            }
+          } catch (e) {
+            console.warn(`Proxy download failed for ${src.url}: ${e.message}`);
+          }
         }
-      }
-      // Save normalized docs
-      if (normalizedDocuments.length) {
-        const saveReq = new Request('internal', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lakeName, documents: normalizedDocuments })
-        });
-        await handleResearchSaveNormalized(saveReq, env);
+
+        // Merge new/updated docs back into R2 — don't overwrite docs from other agents
+        if (normalizedDocuments.length) {
+          // Build merged list: existing docs not touched by this run + new/refreshed docs
+          const updatedUrls = new Set(normalizedDocuments.map(d => String(d.url || '').split('?')[0].toLowerCase()));
+          const untouched = existingDocs.filter(d => !updatedUrls.has(String(d.url || '').split('?')[0].toLowerCase()));
+          const merged = [...untouched, ...normalizedDocuments];
+          const saveReq = new Request('internal', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lakeName, documents: merged })
+          });
+          await handleResearchSaveNormalized(saveReq, env);
+        }
       }
     } else {
       // Resume mode: load existing normalized docs and filter by agentTags
