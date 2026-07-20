@@ -229,7 +229,7 @@ function renderEmpty(lakeName) {
   const meta = document.getElementById('researchMeta');
   if (meta) meta.style.display = 'none';
   document.getElementById('researchSections').innerHTML = `<div class="muted" style="padding:10px">No profile yet for <b>${esc(lakeName)}</b>. Click Research to build one. Factual pipeline first (official pages, GIS, WQP), then quoted document extraction for anything else.</div>`;
-  for (const id of ['confidenceCard', 'sourcesCard', 'summaryCard', 'notesCard', 'packageCard', 'reviewCard']) {
+  for (const id of ['sourcesCard', 'summaryCard', 'notesCard', 'packageCard']) {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
   }
@@ -270,28 +270,22 @@ function renderProfile(profile) {
     deleteBtn.style.display = 'inline-flex';
   }
 
-  // Populate reviewCard dataset so re-run agents have full profile context
-  const reviewCard = document.getElementById('reviewCard');
-  if (reviewCard) {
-    reviewCard.dataset.merged = JSON.stringify(profile);
-    // Build parts from profile sections
-    const parts = {};
-    for (const key of RESEARCH_ORDER) {
-      if (key === 'identity') parts[key] = profile.identity || {};
-      else if (key === 'biology') parts[key] = profile.forage || profile.biology || {};
-      else if (key === 'fisheries') parts[key] = profile.trollingIntelligence || profile.trolling || {};
-      else parts[key] = profile[key] || {};
-    }
-    reviewCard.dataset.parts = JSON.stringify(parts);
+  // Store merged profile and parts in _state for section editors
+  _state.mergedProfile = cloneJson(profile);
+  const parts = {};
+  for (const key of RESEARCH_ORDER) {
+    if (key === 'identity') parts[key] = profile.identity || {};
+    else if (key === 'biology') parts[key] = profile.forage || profile.biology || {};
+    else if (key === 'fisheries') parts[key] = profile.trollingIntelligence || profile.trolling || {};
+    else parts[key] = profile[key] || {};
   }
+  _state.profileParts = parts;
 
   renderSections(profile);
-  renderConfidence(profile);
   renderSources(profile);
   renderSummary(profile);
   renderNotes(profile);
   renderPackage(profile, _state.currentPackageFiles, _state.currentVersions);
-  renderReviewCard(profile);
 }
 
 function formatHumanReadableSection(key, data) {
@@ -747,13 +741,11 @@ function formatHumanReadableSection(key, data) {
 function renderSections(profile) {
   const container = document.getElementById('researchSections');
   if (!container) return;
-  const conf = profile.confidence || {};
   let html = '';
   for (const key of RESEARCH_ORDER) {
     const label = RESEARCH_LABELS[key] || key;
     let sectionData;
     if (key === 'identity') {
-      // Identity data may be nested under profile.identity or as top-level fields
       sectionData = profile.identity || {
         lakeName: profile.lakeName,
         state: profile.state,
@@ -775,24 +767,18 @@ function renderSections(profile) {
     const has = !!(key === 'identity'
       ? (profile.identity || profile.lakeName)
       : (profile[key] || (key === 'biology' ? profile.forage : null) || (key === 'fisheries' ? (profile.trollingIntelligence || profile.trolling) : null)));
-    const c = conf[key] || conf[key === 'fisheries' ? 'trollingIntelligence' : ''] || conf[key === 'biology' ? 'forage' : ''];
-    const pct = c?.percent || (has ? 75 : 0);
-    const level = c?.level || (has ? 'medium' : 'missing');
-    const okIcon = has ? (pct >= 70 ? '✔' : '⚠') : '◻';
-    const levelClass = pct >= 95 ? 'veryhigh' : pct >= 85 ? 'high' : pct >= 70 ? 'medium' : pct >= 50 ? 'low' : 'need';
+    const okIcon = has ? '✔' : '◻';
 
     html += `<div class="section-row" style="flex-wrap:wrap;justify-content:space-between;align-items:center;">
       <div style="display:flex;align-items:center;gap:8px;flex:1 1 200px;">
         <span class="sec-icon">${okIcon}</span>
-        <span class="sec-name"><b>${label}</b> <span class="muted" style="font-size:11px">${level}</span></span>
+        <span class="sec-name"><b>${label}</b></span>
       </div>
       <div style="display:flex;align-items:center;gap:10px;">
-        <span class="sec-conf" style="font-weight:700;">${pct}%</span>
         ${has ? `<button type="button" class="small ghost btn-toggle-viewer" data-section="${key}" style="font-size:10px;padding:2px 6px;color:var(--accent)">👁️ View Summary</button>` : ''}
         <button type="button" class="small ghost btn-toggle-section-editor" data-section="${key}" style="font-size:10px;padding:2px 6px;">✏️ Edit JSON</button>
       </div>
     </div>
-    <div class="conf-bar" style="margin:0 10px 4px 40px"><div class="conf-fill ${levelClass}" style="width:${pct}%"></div></div>
     
     <div class="section-viewer-container" id="viewer-container-${key}" style="display:none;margin:6px 10px 14px 40px;background:rgba(0,229,255,.03);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;color:var(--text);line-height:1.4;">
       ${formatHumanReadableSection(key, sectionData)}
@@ -817,7 +803,7 @@ function renderSections(profile) {
     });
   });
 
-  container.querySelectorAll('.btn-toggle-section-editor').forEach(btn => {
+  container.querySelectorAll('.btn-toggle_section-editor').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const sec = e.target.dataset.section;
       const el = document.getElementById(`editor-container-${sec}`);
@@ -832,18 +818,17 @@ function renderSections(profile) {
       const agent = e.target.dataset.agent;
       const ta = container.querySelector(`.review-section-textarea[data-agent="${agent}"]`);
       const st = document.getElementById(`edit-status-${agent}`);
-      const reviewCard = document.getElementById('reviewCard');
-      if (!ta || !reviewCard?.dataset.merged) return;
+      if (!ta || !_state.mergedProfile) return;
       try {
         const parsed = JSON.parse(ta.value);
-        const curMerged = JSON.parse(reviewCard.dataset.merged);
-        const curParts = JSON.parse(reviewCard.dataset.parts || '{}');
+        const curMerged = _state.mergedProfile ? cloneJson(_state.mergedProfile) : {};
+        const curParts = _state.profileParts ? cloneJson(_state.profileParts) : {};
         curMerged[agent] = parsed;
         if (agent === 'biology') curMerged.forage = parsed;
         if (agent === 'fisheries') curMerged.trollingIntelligence = parsed;
         curParts[agent] = parsed;
-        reviewCard.dataset.merged = JSON.stringify(curMerged);
-        reviewCard.dataset.parts = JSON.stringify(curParts);
+        _state.mergedProfile = curMerged;
+        _state.profileParts = curParts;
         if (typeof _state.packagePartsCache !== 'undefined') _state.packagePartsCache[agent] = parsed;
         if (st) { st.textContent = 'Applied ✓'; st.style.color = 'var(--accent2)'; }
         // Refresh viewer
@@ -856,52 +841,7 @@ function renderSections(profile) {
   });
 }
 
-function renderConfidence(profile) {
-  const card = document.getElementById('confidenceCard');
-  const list = document.getElementById('confidenceList');
-  if (!card || !list) return;
-  const conf = profile.confidence || {};
 
-  // Include fisheries/trollingIntelligence confidence — derive from profile if not in conf
-  const SECTION_LABELS = {
-    identity:    '🆔 Identity',
-    limnology:   '🌊 Limnology',
-    biology:     '🐟 Fisheries Biology',
-    habitat:     '🌿 Habitat',
-    navigation:  '🧭 Navigation',
-    regulations: '📜 Regulations',
-    fisheries:   '🧠 Species Intelligence',
-    summary:     '📝 AI Summary'
-  };
-
-  // Add fisheries entry if trollingIntelligence is populated but confidence missing
-  const confWithFisheries = { ...conf };
-  if (!confWithFisheries.fisheries && profile.trollingIntelligence && Object.keys(profile.trollingIntelligence).length > 0) {
-    const speciesCount = Object.keys(profile.trollingIntelligence).length;
-    confWithFisheries.fisheries = { percent: 35, level: 'low', reason: `${speciesCount} species — derived from source documents` };
-  }
-
-  if (!Object.keys(confWithFisheries).length) { card.style.display = 'none'; return; }
-  card.style.display = 'block';
-  let html = '';
-  const DISPLAY_ORDER = ['identity', 'limnology', 'biology', 'habitat', 'navigation', 'regulations', 'fisheries', 'summary'];
-  for (const k of DISPLAY_ORDER) {
-    const v = confWithFisheries[k];
-    if (!v || typeof v !== 'object') continue;
-    const pct = v.percent || 0;
-    const levelClass = pct >= 95 ? 'veryhigh' : pct >= 85 ? 'high' : pct >= 70 ? 'medium' : pct >= 50 ? 'low' : 'need';
-    const label = SECTION_LABELS[k] || k;
-    html += `<div style="display:flex;justify-content:space-between;font-size:12px;margin:6px 0"><span>${label} — ${v.level || ''} <span class="muted">(${v.reason || ''})</span></span><span style="color:var(--accent2)">${pct}%</span></div><div class="conf-bar"><div class="conf-fill ${levelClass}" style="width:${pct}%"></div></div>`;
-  }
-  const overall = confWithFisheries.overall;
-  if (overall) {
-    const pct = overall.percent || 0;
-    const levelClass = pct >= 95 ? 'veryhigh' : pct >= 85 ? 'high' : pct >= 70 ? 'medium' : pct >= 50 ? 'low' : 'need';
-    html = `<div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;margin-bottom:6px"><span>Overall</span><span>${pct}% ${overall.level || ''}</span></div><div class="conf-bar" style="height:10px"><div class="conf-fill ${levelClass}" style="width:${pct}%"></div></div><div style="margin-top:10px;border-top:1px solid var(--line);padding-top:8px">${html}</div>`;
-  }
-  list.innerHTML = html;
-  list.insertAdjacentHTML('beforeend', `<div style="margin-top:10px;font-size:10px;color:var(--muted)">Confidence = calculated from source trust tiers: OFFICIAL (USGS/USACE/EPA/DNR/Owner) 30pts, SECONDARY 15pts, DERIVED 20pts, agreement bonus. Flag if &lt;70%, Needs Review if &lt;50%.</div>`);
-}
 
 function renderSources(profile) {
   const card = document.getElementById('sourcesCard');
@@ -981,41 +921,10 @@ function renderPackage(profile, packageFiles, versions) {
   }
 }
 
-function renderReviewCard(profile) {
-  const card = document.getElementById('reviewCard');
-  const list = document.getElementById('reviewList');
-  if (!card || !list) return;
-  const status = profile?.metadata?.status || 'draft';
-  if (!profile || status === 'verified') {
-    card.style.display = 'none';
-    return;
-  }
-  card.style.display = 'block';
-  const conf = profile.confidence || {};
-  const rows = [];
-  for (const key of RESEARCH_ORDER) {
-    const data = key === 'identity'
-      ? (profile.identity || {})
-      : key === 'biology'
-        ? (profile.biology || profile.forage || {})
-        : key === 'fisheries'
-          ? (profile.trollingIntelligence || profile.trolling || null)
-          : profile[key];
-    const pct = conf[key]?.percent || (hasResearchValue(data) ? 70 : 0);
-    const needsReview = pct < 70 || !hasResearchValue(data);
-    rows.push(`<div class="review-card ${needsReview ? 'need' : ''}">
-      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
-        <div><b>${esc(RESEARCH_LABELS[key] || key)}</b><br><span class="muted" style="font-size:11px">${needsReview ? 'Needs review / may be incomplete' : 'Looks populated'}</span></div>
-        <div style="font-weight:700;color:${needsReview ? 'var(--bad)' : 'var(--accent2)'}">${pct}%</div>
-      </div>
-    </div>`);
-  }
-  list.innerHTML = rows.join('');
-}
+
 
 async function saveCurrentResearchProfile(status = 'draft') {
-  const reviewCard = document.getElementById('reviewCard');
-  const merged = reviewCard?.dataset.merged ? JSON.parse(reviewCard.dataset.merged) : (_state.currentProfile ? cloneJson(_state.currentProfile) : null);
+  const merged = _state.mergedProfile ? cloneJson(_state.mergedProfile) : (_state.currentProfile ? cloneJson(_state.currentProfile) : null);
   if (!merged || !_state.currentLakeName) throw new Error('No profile loaded');
   const notesVal = document.getElementById('researchNotes')?.value || merged.notes || '';
   merged.notes = notesVal;
@@ -1077,30 +986,9 @@ function initLakeResearch() {
     }
   });
 
-  document.getElementById('btnApproveReview')?.addEventListener('click', async () => {
-    if (!_state.currentProfile || !_state.currentLakeName) { alert('Load a profile first'); return; }
-    if (!confirm(`Approve and save ${_state.currentLakeName} as VERIFIED?`)) return;
-    try {
-      await saveCurrentResearchProfile('verified');
-      await loadProfile(_state.currentLakeName, true);
-      alert(`${_state.currentLakeName} saved as VERIFIED.`);
-    } catch (e) {
-      alert(`Approve failed: ${e.message}`);
-      log(`Approve failed: ${e.message}`);
-    }
-  });
 
-  document.getElementById('btnSaveDraft')?.addEventListener('click', async () => {
-    if (!_state.currentProfile || !_state.currentLakeName) { alert('Load a profile first'); return; }
-    try {
-      await saveCurrentResearchProfile('draft');
-      await loadProfile(_state.currentLakeName, true);
-      alert(`${_state.currentLakeName} draft saved.`);
-    } catch (e) {
-      alert(`Draft save failed: ${e.message}`);
-      log(`Draft save failed: ${e.message}`);
-    }
-  });
+
+
 
   // ── Agent Selection Modal ──────────────────────────────────────────────────
   // Creates the modal on first use and reuses it — shown for both Run and Resume
