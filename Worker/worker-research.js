@@ -5252,7 +5252,10 @@ async function handleResearchAgentPipeline(request, env) {
       confidence: agentData.confidence,
       sources: agentData.sources,
       factsCount: uniqueFacts.length,
-      docsUsed: normalizedDocuments.length
+      docsUsed: normalizedDocuments.length,
+      docTitles: normalizedDocuments.map(d => d.title?.slice(0, 80)),
+      factsSample: uniqueFacts.slice(0, 5).map(f => `[${f.category}] ${String(f.fact||'').slice(0,80)}`),
+      queryLog: discoverData.queryLog || [],
     }), { headers: JSON_HEADERS });
 
   } catch (e) {
