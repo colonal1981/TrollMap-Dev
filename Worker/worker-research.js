@@ -932,6 +932,11 @@ async function handleResearchDiscover(request, env) {
     if (/\.gc\.ca\/|dfo-mpo\.gc\.ca|canada\.ca|ontario\.|quebec\.|british.columbia|alberta\.|manitoba\./.test(combined)) return 'foreign_government_doc';
     if (/michigandnr\.com|michigan\.gov.*dnr|mndnr\.gov|dnr\.wi\.gov|dnr\.illinois|in\.gov.*dnr/.test(url)) return 'other_state_agency';
     if (/how.to.fish|beginner.*fishing|fishing.tips.*general|learn.to.fish|fishing.basics/.test(combined) && !combined.includes(baseLower)) return 'generic_fishing_article';
+    // County/township boundary articles — "Marion and Lake County line", "Marion County line", etc.
+    // These match lake base names that are also common county names (Marion, Norman, etc.)
+    if (/county\s+line|township\s+line|\bcounty\b.*\bline\b/i.test(title) && !/lake\s+marion|marion\s+lake|lake\s+norman|norman\s+lake/i.test(title)) return 'county_boundary_article';
+    // Fishing forums — usable content rate is near zero, TinyFish can't fetch them anyway
+    if (/stripersonline\.com|bassresource\.com|carolinasportsman\.com\/forums|fishingnc\.com\/forum|fishingsc\.com\/forum|theoutdoorstrader\.com|scstriperfishing|bassfishingforum|iceshanty\.com|fishingcommunity|thefishingwebsite|southernfishingnews\.com\/forum|fishingtalkforums|angler\.com\/forum/i.test(url)) return 'fishing_forum';
     for (const other of otherLakeNames) {
       if (other === baseLower) continue;
       if (combined.includes(`lake ${other}`) && !combined.includes(baseLower)) {
@@ -1773,6 +1778,15 @@ async function handleResearchProxyDownload(request, env) {
     return new Response(JSON.stringify({ success: false, error: "Missing url parameter" }), { status: 400, headers: JSON_HEADERS });
   }
 
+  // Ensure custom response headers (X-Source, X-Nepis-*) are readable by the
+  // browser. Cloudflare blocks non-safelisted headers on cross-origin responses
+  // unless Access-Control-Expose-Headers explicitly names them.
+  const exposeHeaders = (headers) => {
+    headers.set('Access-Control-Allow-Origin', '*');
+    headers.set('Access-Control-Expose-Headers', 'X-Source, X-Nepis-Format, X-Nepis-Title, X-Nepis-Doc-Url, X-Nepis-RawText, X-Nepis-Pdf, X-Nepis-Doc-Count, X-Nepis-Documents, ETag, Last-Modified');
+    return headers;
+  };
+
   // Hard-block Florida lake databases for non-Florida states
   if (/wateratlas\.usf\.edu/i.test(target)) {
     const stateParam = url.searchParams.get('state') || '';
@@ -1858,15 +1872,14 @@ async function handleResearchProxyDownload(request, env) {
                       const firstLine = rawText.split('\n')[0] || '';
                       const metaMatch = firstLine.match(/^([A-Z]+[0-9]+)(Report on (?:Lake )?.+?)([0-9]{1,3})([0-9]{4})([A-Z].*)$/i);
                       const title = metaMatch ? metaMatch[2].trim() : (docLinks[0].title || '');
-                      const headers = new Headers({
+                      const headers = exposeHeaders(new Headers({
                         'Content-Type': 'text/plain; charset=utf-8',
-                        'Access-Control-Allow-Origin': '*',
                         'X-Source': 'firecrawl',
                         'X-Nepis-Format': 'raw_text',
                         'X-Nepis-Title': title.slice(0, 180),
                         'X-Nepis-Doc-Url': docUrl,
                         'X-Nepis-RawText': rawTextUrl
-                      });
+                      }));
                       return new Response(rawText, { headers });
                     }
                   }
@@ -1887,15 +1900,14 @@ async function handleResearchProxyDownload(request, env) {
               ``,
               md.slice(0, 50000)
             ].join('\n');
-            const headers = new Headers({
+            const headers = exposeHeaders(new Headers({
               'Content-Type': 'text/plain; charset=utf-8',
-              'Access-Control-Allow-Origin': '*',
               'X-Source': 'firecrawl',
               'X-Nepis-Format': 'search_results',
               'X-Nepis-Doc-Count': String(docLinks.length),
               // First few document URLs for client follow-up (header size limit)
               'X-Nepis-Documents': JSON.stringify(docLinks.slice(0, 5).map(d => d.url)).slice(0, 1500)
-            });
+            }));
             return new Response(catalog, { headers });
           }
         }
@@ -1924,14 +1936,13 @@ async function handleResearchProxyDownload(request, env) {
                 const firstLine = rawText.split('\n')[0] || '';
                 const metaMatch = firstLine.match(/^([A-Z]+[0-9]+)(Report on (?:Lake )?.+?)([0-9]{1,3})([0-9]{4})([A-Z].*)$/i);
                 const title = metaMatch ? metaMatch[2].trim() : '';
-                const headers = new Headers({
+                const headers = exposeHeaders(new Headers({
                   'Content-Type': 'text/plain; charset=utf-8',
-                  'Access-Control-Allow-Origin': '*',
                   'X-Source': 'firecrawl',
                   'X-Nepis-Format': 'raw_text',
                   'X-Nepis-Title': title.slice(0, 180),
                   'X-Nepis-RawText': rawTextUrl
-                });
+                }));
                 return new Response(rawText, { headers });
               }
             }
@@ -1992,14 +2003,13 @@ async function handleResearchProxyDownload(request, env) {
                 const textData = await textRes.json();
                 const markdown = textData.data?.markdown || textData.markdown || '';
                 if (markdown && markdown.length > 100) {
-                  const headers = new Headers({
+                  const headers = exposeHeaders(new Headers({
                     'Content-Type': 'text/plain; charset=utf-8',
-                    'Access-Control-Allow-Origin': '*',
                     'X-Source': 'firecrawl',
                     'X-Nepis-Format': 'raw_text',
                     'X-Nepis-Title': title.slice(0, 180),
                     'X-Nepis-Pdf': pdfUrl || ''
-                  });
+                  }));
                   return new Response(markdown, { headers });
                 }
               }
@@ -2010,15 +2020,14 @@ async function handleResearchProxyDownload(request, env) {
           // Fall back to landing-page markdown if format extraction didn't yield text
           const landMd = landData.data?.markdown || landData.markdown || '';
           if (landMd && landMd.length > 100) {
-            const headers = new Headers({
+            const headers = exposeHeaders(new Headers({
               'Content-Type': 'text/plain; charset=utf-8',
-              'Access-Control-Allow-Origin': '*',
               'X-Source': 'firecrawl',
               'X-Nepis-Format': 'landing',
               'X-Nepis-Title': title.slice(0, 180),
               'X-Nepis-Pdf': pdfUrl || '',
               'X-Nepis-RawText': rawTextUrl || ''
-            });
+            }));
             return new Response(landMd, { headers });
           }
         }
@@ -2047,7 +2056,7 @@ async function handleResearchProxyDownload(request, env) {
         const markdown = fcData.data?.markdown || fcData.markdown || '';
         if (markdown && markdown.length > 100) {
           // Return as text/plain so lake-research.js can use it directly without pdf.js
-          const headers = new Headers({ 'Content-Type': 'text/plain; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'X-Source': 'firecrawl' });
+          const headers = exposeHeaders(new Headers({ 'Content-Type': 'text/plain; charset=utf-8', 'X-Source': 'firecrawl' }));
           return new Response(markdown, { headers });
         }
       }
@@ -2083,11 +2092,10 @@ async function handleResearchProxyDownload(request, env) {
       }
       if (markdown && markdown.length > 200) {
         tfSucceeded = true;
-        const headers = new Headers({
+        const headers = exposeHeaders(new Headers({
           'Content-Type': 'text/plain; charset=utf-8',
-          'Access-Control-Allow-Origin': '*',
           'X-Source': 'tinyfish'
-        });
+        }));
         return new Response(markdown, { headers });
       }
       console.warn(`TinyFish insufficient content (${markdown.length} chars) for ${target} — trying Firecrawl`);
@@ -2105,11 +2113,10 @@ async function handleResearchProxyDownload(request, env) {
         const sdText = await scrapeDoFetch(target, env, { render: needsRender });
         if (sdText && sdText.length > 200) {
           scrapeDoSucceeded = true;
-          const headers = new Headers({
+          const headers = exposeHeaders(new Headers({
             'Content-Type': 'text/plain; charset=utf-8',
-            'Access-Control-Allow-Origin': '*',
             'X-Source': 'scrapedo'
-          });
+          }));
           return new Response(sdText, { headers });
         }
         console.warn(`Scrape.do returned insufficient content (${sdText?.length || 0} chars) for ${target} — trying Firecrawl`);
@@ -2138,11 +2145,10 @@ async function handleResearchProxyDownload(request, env) {
             const markdown = fcData.data?.markdown || fcData.markdown || '';
             if (markdown && markdown.length > 200) {
               await recordFirecrawlUsage(env, 1);
-              const headers = new Headers({
+              const headers = exposeHeaders(new Headers({
                 'Content-Type': 'text/plain; charset=utf-8',
-                'Access-Control-Allow-Origin': '*',
                 'X-Source': 'firecrawl-fallback'
-              });
+              }));
               return new Response(markdown, { headers });
             }
           }
@@ -2169,11 +2175,10 @@ async function handleResearchProxyDownload(request, env) {
       if (jinaRes.ok) {
         const markdown = await jinaRes.text();
         if (markdown && markdown.length > 200) {
-          const headers = new Headers({
+          const headers = exposeHeaders(new Headers({
             'Content-Type': 'text/plain; charset=utf-8',
-            'Access-Control-Allow-Origin': '*',
             'X-Source': 'jina'
-          });
+          }));
           return new Response(markdown, { headers });
         }
       }
@@ -2198,8 +2203,7 @@ async function handleResearchProxyDownload(request, env) {
         const cost = sdRes.headers.get('Scrape.do-Request-Cost');
         if (remaining) console.log(`[scrape.do USACE PDF] cost=${cost} remaining=${remaining} url=${target.slice(0,80)}`);
         if (sdRes.ok) {
-          const sdHeaders = new Headers(sdRes.headers);
-          sdHeaders.set('Access-Control-Allow-Origin', '*');
+          const sdHeaders = exposeHeaders(new Headers(sdRes.headers));
           sdHeaders.set('X-Source', 'scrapedo-usace');
           return new Response(sdRes.body, { headers: sdHeaders });
         }
@@ -2229,7 +2233,7 @@ async function handleResearchProxyDownload(request, env) {
           if (nrcText && nrcText.length > 200) {
             await recordFirecrawlUsage(env, 1);
             console.log(`[firecrawl NRC PDF] success (${nrcText.length} chars): ${target.slice(0,80)}`);
-            return new Response(nrcText, { headers: new Headers({ 'Content-Type': 'text/plain; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'X-Source': 'firecrawl-nrc' }) });
+            return new Response(nrcText, { headers: exposeHeaders(new Headers({ 'Content-Type': 'text/plain; charset=utf-8', 'X-Source': 'firecrawl-nrc' })) });
           }
         }
       } else {
@@ -2253,8 +2257,7 @@ async function handleResearchProxyDownload(request, env) {
       return new Response(JSON.stringify({ success: false, error: `HTTP Error ${response.status}: Failed to retrieve file from source.` }), { status: response.status, headers: JSON_HEADERS });
     }
 
-    const headers = new Headers(response.headers);
-    headers.set("Access-Control-Allow-Origin", "*");
+    const headers = exposeHeaders(new Headers(response.headers));
     return new Response(response.body, { headers });
   } catch (err) {
     return new Response(JSON.stringify({ success: false, error: err.message }), { status: 502, headers: JSON_HEADERS });
