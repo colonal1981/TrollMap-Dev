@@ -87,10 +87,14 @@ const _state = {
 
 // Helper logging
 function log(msg) {
-  _state.researchLog.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
+  const entry = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  _state.researchLog.push(entry);
   const el = document.getElementById('researchLog');
   if (el) {
-    el.textContent = _state.researchLog.join('\n');
+    // Append a new line node instead of rewriting the whole element —
+    // this means the log survives even if _state.researchLog gets cleared elsewhere
+    const line = document.createTextNode(entry + '\n');
+    el.appendChild(line);
     el.scrollTop = el.scrollHeight;
   }
   console.log(`[evidence-pipeline] ${msg}`);
@@ -963,6 +967,8 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     _state.researchInProgress = true;
     _state.researchLog = [];
     _state.packagePartsCache = {};
+    const _logEl = document.getElementById('researchLog');
+    if (_logEl) _logEl.textContent = '';
     showProgress(true);
   }
 
@@ -1033,7 +1039,6 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
   if (!agentKeys?.length) { alert('No agents selected.'); return; }
 
   _state.researchInProgress = true;
-  _state.researchLog = [];
   _state.packagePartsCache = {};
   showProgress(true);
 
@@ -1110,16 +1115,14 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
     }
 
     log(`✔ All agents complete: ${results.filter(r => r.data).length}/${total} succeeded`);
-    if (callbacks.onComplete) {
-      const savedLog = [...(_state.researchLog || [])];
-      await callbacks.onComplete(lakeName);
-      // loadProfile reinitializes UI state — restore the log so the run is visible
-      if (_state.researchLog?.length < savedLog.length) {
-        _state.researchLog = savedLog;
-        // Re-render log if the UI element exists
-        const logEl = document.getElementById('researchLog');
-        if (logEl) logEl.innerHTML = savedLog.map(l => `<div>${l}</div>`).join('');
-      }
+    const finalLog = [...(_state.researchLog || [])];
+    if (callbacks.onComplete) await callbacks.onComplete(lakeName);
+    // Re-render log after loadProfile — it may have appended entries but textContent is correct
+    // If anything wiped the DOM element, restore it from the saved array
+    const logEl = document.getElementById('researchLog');
+    if (logEl && _state.researchLog?.length === 0) {
+      _state.researchLog = finalLog;
+      logEl.textContent = finalLog.join('\n');
     }
     if (assembleResult.contradictions?.length && callbacks.onContradictions) {
       callbacks.onContradictions(assembleResult.contradictions, lakeName);
@@ -1147,6 +1150,9 @@ async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
   _state.deterministicProfile = null;
   _state.wqpLimnology = null;
   showProgress(true);
+  // Clear the DOM log element for fresh run
+  const _logEl = document.getElementById('researchLog');
+  if (_logEl) _logEl.textContent = '';
 
   try {
     const stateName = sanitizeStateFromLakeName(lakeName);
