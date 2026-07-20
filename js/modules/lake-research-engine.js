@@ -210,7 +210,8 @@ function buildDeterministicSummary(profile) {
   if (attrCount || hab.cover?.length || structKeys.length) {
     const bits = [];
     if (attrCount) bits.push(`${attrCount} mapped fish attractors`);
-    if (hab.cover?.length) bits.push(`cover includes ${hab.cover.slice(0, 4).join(', ')}`);
+    if (hab.cover?.length) bits.push(`cover includes ${(Array.isArray(hab.cover) ? hab.cover : 
+    String(hab.cover).split(/[,;]/).map(s => s.trim()).filter(Boolean)).slice(0, 4).join(', ')}`);
     if (structKeys.length) bits.push(`mapped structure includes ${structKeys.slice(0, 4).join(', ')}`);
     sentences.push(`Habitat facts currently confirm ${bits.join('; ')}.`);
   }
