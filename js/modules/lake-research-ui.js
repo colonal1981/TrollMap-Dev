@@ -939,26 +939,163 @@ function renderPackage(profile, packageFiles, versions) {
   const verEl = document.getElementById('versionHistory');
   if (!card) return;
   card.style.display = 'block';
+
+  const lakeName = profile.lakeName || _state.currentLakeName;
+  const safeKey = sanitize(lakeName);
+
   if (filesEl) {
-    let html = `<div style="font-size:11px;color:var(--muted)">Master: lakes/${sanitize(profile.lakeName || _state.currentLakeName)}.json (${JSON.stringify(profile).length} bytes)<br>Package folder: lake_packages/${sanitize(profile.lakeName || _state.currentLakeName)}/</div><div style="display:flex;flex-wrap:wrap;gap:4px;margin:8px 0">`;
+    let html = `<div style="font-size:11px;color:var(--muted)">Master: lakes/${safeKey}.json (${JSON.stringify(profile).length} bytes)<br>Package folder: lake_packages/${safeKey}/</div><div style="display:flex;flex-wrap:wrap;gap:4px;margin:8px 0">`;
     for (const f of (packageFiles || [])) {
-      html += `<span class="pill" title="${esc(f.key)}">${esc(f.name)} ${f.size ? `(${(f.size / 1024).toFixed(1)}KB)` : ''}</span>`;
+      html += `<span class="pill pkg-file-btn" data-file="${esc(f.name)}" title="${esc(f.key)}" style="cursor:pointer;text-decoration:underline dotted">${esc(f.name)} ${f.size ? `(${(f.size / 1024).toFixed(1)}KB)` : ''}</span>`;
     }
     html += `</div>`;
     filesEl.innerHTML = html;
+
+    filesEl.querySelectorAll('.pkg-file-btn').forEach(btn => {
+      btn.addEventListener('click', () => openPackageFile(lakeName, btn.dataset.file));
+    });
   }
+
   if (verEl) {
     let html = `<div style="font-size:12px;font-weight:700;margin-bottom:4px">Version History (${(versions || []).length})</div>`;
     if (!versions || !versions.length) html += `<div class="muted" style="font-size:11px">No prior versions yet. First save creates v1.</div>`;
     else {
       html += `<div style="font-size:11px">`;
       for (const v of versions) {
-        html += `<div>• ${esc(v.key)} ${v.size ? `— ${(v.size / 1024).toFixed(1)}KB` : ''}</div>`;
+        const vfile = v.key.split('/').pop();
+        html += `<div>• <span class="pkg-ver-btn" data-file="${esc(vfile)}" data-key="${esc(v.key)}" style="cursor:pointer;color:var(--accent);text-decoration:underline dotted">${esc(v.key)}</span> ${v.size ? `— ${(v.size / 1024).toFixed(1)}KB` : ''}</div>`;
       }
       html += `</div>`;
     }
     verEl.innerHTML = html;
+
+    verEl.querySelectorAll('.pkg-ver-btn').forEach(btn => {
+      btn.addEventListener('click', () => openVersionFile(lakeName, btn.dataset.file));
+    });
   }
+}
+
+async function openPackageFile(lakeName, filename) {
+  const modal = ensureJsonModal();
+  modal.setTitle(`${filename} — ${lakeName}`);
+  modal.show('Loading…');
+  try {
+    const res = await fetch(`${CF_WORKER_URL}/research/package?lake=${encodeURIComponent(lakeName)}&file=${encodeURIComponent(filename)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+
+    // normalized_documents.json is huge — render as a doc list with delete buttons
+    if (filename === 'normalized_documents.json') {
+      let docs;
+      try { docs = JSON.parse(text); } catch { docs = null; }
+      if (Array.isArray(docs)) {
+        modal.showNormalizedDocs(docs, lakeName);
+        return;
+      }
+    }
+
+    // All other files — pretty-print JSON with syntax highlight
+    let pretty;
+    try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch { pretty = text; }
+    modal.showJson(pretty);
+  } catch (e) {
+    modal.show(`Error: ${e.message}`);
+  }
+}
+
+async function openVersionFile(lakeName, vfile) {
+  const modal = ensureJsonModal();
+  modal.setTitle(`${vfile} — ${lakeName}`);
+  modal.show('Loading…');
+  try {
+    const safeKey = sanitize(lakeName);
+    const res = await fetch(`${CF_WORKER_URL}/research/package?lake=${encodeURIComponent(lakeName)}&file=${encodeURIComponent(vfile)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    let pretty;
+    try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch { pretty = text; }
+    modal.showJson(pretty);
+  } catch (e) {
+    modal.show(`Error: ${e.message}`);
+  }
+}
+
+function ensureJsonModal() {
+  let overlay = document.getElementById('pkgJsonModal');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'pkgJsonModal';
+    overlay.style.cssText = 'display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.75);overflow:auto;padding:24px';
+    overlay.innerHTML = `
+      <div id="pkgJsonModalInner" style="max-width:900px;margin:0 auto;background:var(--panel,#1a1a2e);border:1px solid var(--line,#333);border-radius:8px;overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--line,#333)">
+          <b id="pkgJsonModalTitle" style="font-size:13px;color:var(--text,#eee)"></b>
+          <button id="pkgJsonModalClose" style="background:transparent;border:none;color:var(--muted,#999);font-size:18px;cursor:pointer;padding:0 4px">✕</button>
+        </div>
+        <div id="pkgJsonModalBody" style="padding:16px;max-height:80vh;overflow:auto;font-size:11px;font-family:monospace;white-space:pre-wrap;color:var(--text,#eee);word-break:break-all"></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    document.getElementById('pkgJsonModalClose').addEventListener('click', () => { overlay.style.display = 'none'; });
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.style.display = 'none'; });
+  }
+  const body = document.getElementById('pkgJsonModalBody');
+  const title = document.getElementById('pkgJsonModalTitle');
+  return {
+    setTitle: (t) => { title.textContent = t; },
+    show: (text) => { body.innerHTML = esc(text); overlay.style.display = 'block'; },
+    showJson: (json) => {
+      // Basic syntax coloring
+      const colored = json
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, match => {
+          if (/^"/.test(match)) return match.endsWith(':') ? `<span style="color:#7ec8e3">${match}</span>` : `<span style="color:#c3e88d">${match}</span>`;
+          if (/true|false/.test(match)) return `<span style="color:#f78c6c">${match}</span>`;
+          if (/null/.test(match)) return `<span style="color:#999">${match}</span>`;
+          return `<span style="color:#f78c6c">${match}</span>`;
+        });
+      body.innerHTML = colored;
+      overlay.style.display = 'block';
+    },
+    showNormalizedDocs: (docs, lakeName) => {
+      let html = `<div style="font-size:12px;margin-bottom:12px;color:var(--muted,#999)">${docs.length} cached documents — click ✕ to remove from cache</div>`;
+      for (const doc of docs) {
+        const url = doc.url || '';
+        const title = doc.title || 'Untitled';
+        const tags = (doc.agentTags || []).join(', ');
+        const fetched = doc.fetchedAt ? new Date(doc.fetchedAt).toLocaleDateString() : '';
+        const chars = doc.fullText?.length || 0;
+        html += `<div style="border:1px solid var(--line,#333);border-radius:4px;padding:8px;margin-bottom:8px;display:flex;align-items:flex-start;gap:8px">
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:12px;color:var(--text,#eee);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(title)}</div>
+            ${url ? `<div style="font-size:10px;color:var(--accent,#6af);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><a href="${esc(url)}" target="_blank" rel="noopener" style="color:inherit">${esc(url)}</a></div>` : ''}
+            <div style="font-size:10px;color:var(--muted,#999);margin-top:2px">${esc(tags)}${fetched ? ` · ${fetched}` : ''}${chars ? ` · ${(chars/1000).toFixed(0)}k chars` : ''}</div>
+          </div>
+          <button class="norm-del-btn" data-url="${esc(url)}" data-lake="${esc(lakeName)}" style="flex-shrink:0;padding:2px 8px;font-size:11px;background:transparent;border:1px solid var(--line,#333);border-radius:4px;color:var(--muted,#999);cursor:pointer">✕</button>
+        </div>`;
+      }
+      body.innerHTML = html;
+      overlay.style.display = 'block';
+
+      body.querySelectorAll('.norm-del-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const docUrl = btn.dataset.url;
+          const lake = btn.dataset.lake;
+          if (!docUrl || !lake) return;
+          if (!confirm(`Remove from normalized cache?\n\n${docUrl}`)) return;
+          btn.disabled = true; btn.textContent = '…';
+          try {
+            const res = await fetch(`${CF_WORKER_URL}/research/delete-normalized-doc`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ lakeName: lake, url: docUrl })
+            });
+            const data = await res.json();
+            if (data.ok) { btn.closest('div[style]').style.opacity = '0.35'; btn.textContent = '✓'; }
+            else { btn.textContent = '✕'; btn.disabled = false; btn.title = data.error || 'failed'; }
+          } catch(e) { btn.textContent = '✕'; btn.disabled = false; btn.title = e.message; }
+        });
+      });
+    }
+  };
 }
 
 
