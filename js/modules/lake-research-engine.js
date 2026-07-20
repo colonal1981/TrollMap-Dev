@@ -1083,8 +1083,19 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
             `${CF_WORKER_URL}/research/proxy-download?url=${encodeURIComponent(src.url)}&type=${src.type || 'HTML'}`
           );
           if (proxyRes.ok) {
-            const text = await proxyRes.text();
             const xSource = proxyRes.headers?.get('X-Source') || 'unknown';
+            const contentType = proxyRes.headers?.get('Content-Type') || '';
+            // TinyFish may return extracted text/plain for a source whose original
+            // type/URL is PDF. Only invoke PDF.js when the proxy actually returned
+            // PDF bytes; unknown content types retain the URL/type fallback.
+            const isPdf = /application\/pdf/i.test(contentType)
+              || (!contentType && (src.type === 'PDF' || /\.pdf(?:$|[?#])/i.test(src.url || '')));
+            // proxy-download intentionally streams ordinary PDFs unchanged. Reading that
+            // binary response with response.text() corrupts it and can make random PDF
+            // bytes look like a valid document. Parse it with the existing PDF.js path.
+            const text = isPdf
+              ? (await extractTextFromPDFBytes(await proxyRes.arrayBuffer())).fullText
+              : await proxyRes.text();
             if (text && text.length > 200) {
               const doc = {
                 title: src.title, url: src.url, fullText: text,
@@ -1094,7 +1105,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
               };
               normalizedDocuments.push(doc);
               existingByUrl.set(normUrl, doc);
-              log(`  📄 [${normalizedDocuments.length}] ${src.title?.slice(0, 70)} (${xSource})`);
+              log(`  📄 [${normalizedDocuments.length}] ${src.title?.slice(0, 70)} (${isPdf ? 'pdf.js via ' : ''}${xSource})`);
             } else {
               log(`  ⚠️ Insufficient content for ${src.title?.slice(0, 60)} (${text?.length || 0} chars)`);
             }
