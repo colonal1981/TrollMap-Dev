@@ -6155,6 +6155,34 @@ async function handleResearchApprove(request, env) {
   return new Response(JSON.stringify({ok:true, lakeId: safe, lakeName, status:"verified", version: profile.metadata.version||profile.metadata.versionNumber}), {headers: JSON_HEADERS});
 }
 
+async function handleResearchDeleteNormalizedDoc(request, env) {
+  let body;
+  try { body = await request.json(); } catch { body = {}; }
+  const lakeName = String(body.lakeName || '').trim();
+  const docUrl = String(body.url || '').trim();
+  if (!lakeName) return new Response(JSON.stringify({ ok: false, error: 'missing lakeName' }), { status: 400, headers: JSON_HEADERS });
+  if (!docUrl) return new Response(JSON.stringify({ ok: false, error: 'missing url' }), { status: 400, headers: JSON_HEADERS });
+
+  const safe = sanitizeLakeId(lakeName);
+  const key = `lake_packages/${safe}/normalized_documents.json`;
+  const obj = await env.R2_TROLLMAP_CHARTPACKS.get(key).catch(() => null);
+  if (!obj) return new Response(JSON.stringify({ ok: false, error: 'no normalized documents found' }), { status: 404, headers: JSON_HEADERS });
+
+  let docs;
+  try { docs = JSON.parse(await obj.text()); } catch { return new Response(JSON.stringify({ ok: false, error: 'corrupt normalized documents' }), { status: 500, headers: JSON_HEADERS }); }
+
+  const normTarget = docUrl.split('?')[0].toLowerCase();
+  const before = docs.length;
+  const filtered = docs.filter(d => String(d.url || '').split('?')[0].toLowerCase() !== normTarget);
+  const removed = before - filtered.length;
+
+  if (removed === 0) return new Response(JSON.stringify({ ok: false, error: 'document not found in cache', url: docUrl }), { status: 404, headers: JSON_HEADERS });
+
+  await env.R2_TROLLMAP_CHARTPACKS.put(key, JSON.stringify(filtered, null, 2), { httpMetadata: { contentType: 'application/json' } });
+  console.log(`[delete-normalized-doc] removed ${removed} doc(s) matching ${docUrl} from ${lakeName}`);
+  return new Response(JSON.stringify({ ok: true, lakeName, url: docUrl, removed, remaining: filtered.length }), { headers: JSON_HEADERS });
+}
+
 async function handleResearchDelete(request, env) {
   let body;
   try { body = await request.json(); } catch { body = {}; }
@@ -6634,4 +6662,4 @@ async function handleResearchVisionScanStatus(request, env) {
   }
 }
 
-export { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchAgentPipeline, handleResearchValidationPass, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey };
+export { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchAgentPipeline, handleResearchValidationPass, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey };
