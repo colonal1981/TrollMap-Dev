@@ -89,15 +89,17 @@ const _state = {
 function log(msg) {
   const entry = `[${new Date().toLocaleTimeString()}] ${msg}`;
   _state.researchLog.push(entry);
-  const el = document.getElementById('researchLog');
-  if (el) {
-    // Append a new line node instead of rewriting the whole element —
-    // this means the log survives even if _state.researchLog gets cleared elsewhere
-    const line = document.createTextNode(entry + '\n');
-    el.appendChild(line);
-    el.scrollTop = el.scrollHeight;
-  }
+  renderLog();
   console.log(`[evidence-pipeline] ${msg}`);
+}
+
+// Re-render the full log from _state.researchLog — call this after any operation
+// that might have replaced the DOM element (loadProfile, renderSections, etc.)
+function renderLog() {
+  const el = document.getElementById('researchLog');
+  if (!el) return;
+  el.textContent = _state.researchLog.join('\n');
+  el.scrollTop = el.scrollHeight;
 }
 
 function setProgress(label, pct) {
@@ -1117,13 +1119,9 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
     log(`✔ All agents complete: ${results.filter(r => r.data).length}/${total} succeeded`);
     const finalLog = [...(_state.researchLog || [])];
     if (callbacks.onComplete) await callbacks.onComplete(lakeName);
-    // Re-render log after loadProfile — it may have appended entries but textContent is correct
-    // If anything wiped the DOM element, restore it from the saved array
-    const logEl = document.getElementById('researchLog');
-    if (logEl && _state.researchLog?.length === 0) {
-      _state.researchLog = finalLog;
-      logEl.textContent = finalLog.join('\n');
-    }
+    // Re-render log after loadProfile — it may have replaced the DOM element
+    _state.researchLog = finalLog.length >= (_state.researchLog?.length || 0) ? finalLog : _state.researchLog;
+    renderLog();
     if (assembleResult.contradictions?.length && callbacks.onContradictions) {
       callbacks.onContradictions(assembleResult.contradictions, lakeName);
     }
@@ -1463,4 +1461,4 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   return { contradictions };
 }
 
-export { runFullPipeline, runAgents, runAgent, runResume, assembleAndSaveProfile, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, _state, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log };
+export { runFullPipeline, runAgents, runAgent, runResume, assembleAndSaveProfile, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, renderLog, _state, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log };

@@ -1,5 +1,5 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
-import { _state, runFullPipeline, runResume, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log } from './lake-research-engine.js';
+import { _state, runFullPipeline, runResume, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log, renderLog } from './lake-research-engine.js';
 
 
 function renderContradictionsAlert(contradictions, lakeName) {
@@ -803,7 +803,7 @@ function renderSections(profile) {
     });
   });
 
-  container.querySelectorAll('.btn-toggle-section-editor').forEach(btn => {
+  container.querySelectorAll('.btn-toggle_section-editor').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const sec = e.target.dataset.section;
       const el = document.getElementById(`editor-container-${sec}`);
