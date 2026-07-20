@@ -941,64 +941,47 @@ async function recoverSmartPlanFacts(lakeName, callbacks = {}) {
 async function runResume(lakeName, selectedAgents, callbacks = {}) {
   if (_state.researchInProgress) { alert('A research task is already in progress.'); return; }
   if (!lakeName) { alert('Please select a lake.'); return; }
-  _state.researchInProgress = true;
-  _state.researchLog = [];
-  _state.packagePartsCache = {};
-  showProgress(true);
-  setProgress('Loading normalized documents from R2...', 5);
+
   log(`=== RESUME: ${lakeName} — agents: [${selectedAgents.join(', ')}] ===`);
-  try {
-    const normRes = await fetch(`${CF_WORKER_URL}/research/get-normalized?lake=${encodeURIComponent(lakeName)}`);
-    if (!normRes.ok) throw new Error(`No normalized documents found for ${lakeName} — run a full pipeline first.`);
-    const normData = await normRes.json();
-    if (!normData.ok || !normData.documents?.length) throw new Error(`No normalized documents found for ${lakeName}.`);
-    const allNormalizedDocuments = normData.documents;
-    
-    // Filter documents by agentTags for each selected agent
-    const agentDocsMap = {};
-    for (const agentKey of selectedAgents) {
-      const tags = AGENT_DEFINITIONS[agentKey]?.targetFields ? [agentKey] : ['general'];
-      agentDocsMap[agentKey] = allNormalizedDocuments.filter(d => 
-        d.agentTags?.some(t => tags.includes(t)) || !d.agentTags
-      );
-      log(`Agent ${agentKey}: ${agentDocsMap[agentKey].length}/${allNormalizedDocuments.length} docs`);
-    }
-    
-    const stateName = sanitizeStateFromLakeName(lakeName);
-    const baseName = cleanLakeBaseName(lakeName);
-    setProgress('Scoring documents...', 40);
-    log('Computing scores based on authority trustworthiness rules...');
-    
-    // Run agents in parallel using runAgents
-    await runAgents(lakeName, selectedAgents, 'resume', callbacks);
-    
-  } catch (e) {
-    log(`❌ Resume failed: ${e.message}`);
-    setProgress('Resume failed — see log.', 0);
-  } finally {
-    _state.researchInProgress = false;
-  }
+  // Worker handles agentTags filtering in resume mode — just delegate to runAgents
+  // researchInProgress is managed entirely by runAgents
+  await runAgents(lakeName, selectedAgents, 'resume', callbacks);
 }
 
 // ── runAgent: Execute single agent pipeline (discover → fetch → extract → enrich) ──
-async function runAgent(lakeName, agentKey, mode, callbacks = {}) {
-  if (_state.researchInProgress) throw new Error('A research task is already in progress.');
+// calledFromRunAgents=true suppresses researchInProgress management so runAgents
+// can run multiple agents in parallel without them stomping each other's flag.
+async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRunAgents = false) {
+  if (!_calledFromRunAgents && _state.researchInProgress) throw new Error('A research task is already in progress.');
   if (!lakeName) throw new Error('Select a lake first.');
   if (!AGENT_DEFINITIONS[agentKey]) throw new Error(`Unknown agent: ${agentKey}`);
-  
-  _state.researchInProgress = true;
-  _state.researchLog = [];
-  _state.packagePartsCache = {};
-  showProgress(true);
-  
+
   const def = AGENT_DEFINITIONS[agentKey];
+
+  // When called standalone (not from runAgents), manage progress state ourselves
+  if (!_calledFromRunAgents) {
+    _state.researchInProgress = true;
+    _state.researchLog = [];
+    _state.packagePartsCache = {};
+    showProgress(true);
+  }
+
   log(`=== RUN AGENT: ${def.label} (${mode}) ===`);
-  
+
   try {
     const stateName = sanitizeStateFromLakeName(lakeName);
-    const baseName = cleanLakeBaseName(lakeName);
-    
-    // Call the new per-agent endpoint
+
+    // Pass deterministic profile so regulations agent has its KV-cached data
+    // and other agents have owner/species context without needing to re-fetch.
+    let previousResults = {};
+    if (_state.deterministicProfile) {
+      previousResults = {
+        ...(_state.deterministicProfile),
+        reservoirOwner: _state.deterministicProfile?.identity?.reservoirOwner || null,
+        predatorSpecies: _state.deterministicProfile?.biology?.predatorSpecies || [],
+      };
+    }
+
     const res = await fetch(`${CF_WORKER_URL}/research/agent`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1008,87 +991,106 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}) {
         agent: agentKey,
         mode,
         targetFields: def.targetFields,
-        previousResults: { _state: _state } // minimal context
+        reservoirOwner: previousResults.reservoirOwner || null,
+        predatorSpecies: previousResults.predatorSpecies || [],
+        previousResults,
       })
     });
-    
+
     if (!res.ok) throw new Error(`Agent ${agentKey} failed: ${res.status}`);
     const data = await res.json();
-    
     if (!data.success) throw new Error(data.error || 'Agent failed');
-    
+
     log(`✔ ${def.label} agent complete (${data.factsCount} facts, ${data.docsUsed} docs)`);
-    
+
     if (callbacks.onComplete) await callbacks.onComplete(lakeName);
     return data;
-    
+
   } catch (e) {
     log(`❌ ${def.label} agent failed: ${e.message}`);
-    setProgress('Agent failed — see log.', 0);
+    if (!_calledFromRunAgents) setProgress('Agent failed — see log.', 0);
     throw e;
   } finally {
-    _state.researchInProgress = false;
+    if (!_calledFromRunAgents) _state.researchInProgress = false;
   }
 }
 
 // ── runAgents: Execute multiple agents in parallel (max 2 concurrent, 2s stagger) ──
 async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
-  if (_state.researchInProgress) throw new Error('A research task is already in progress.');
-  if (!lakeName) throw new Error('Select a lake first.');
-  if (!agentKeys?.length) throw new Error('No agents selected.');
-  
+  if (_state.researchInProgress) { alert('A research task is already in progress.'); return; }
+  if (!lakeName) { alert('Please select a lake first.'); return; }
+  if (!agentKeys?.length) { alert('No agents selected.'); return; }
+
   _state.researchInProgress = true;
   _state.researchLog = [];
   _state.packagePartsCache = {};
   showProgress(true);
-  
+
+  const total = agentKeys.length;
+  let completed = 0;
   log(`=== RUN AGENTS: [${agentKeys.join(', ')}] (${mode}) ===`);
-  
+
   const MAX_CONCURRENT = 2;
   const STAGGER_MS = 2000;
   const results = [];
-  
+
   try {
-    // Process in batches of MAX_CONCURRENT
     for (let i = 0; i < agentKeys.length; i += MAX_CONCURRENT) {
       const batch = agentKeys.slice(i, i + MAX_CONCURRENT);
       const batchPromises = batch.map((agentKey, batchIdx) => {
-        const delay = (i + batchIdx) * STAGGER_MS;
-        return new Promise(resolve => setTimeout(() => resolve(runAgent(lakeName, agentKey, mode, {})), delay));
+        const delay = batchIdx * STAGGER_MS;
+        return new Promise(resolve => setTimeout(async () => {
+          try {
+            const result = await runAgent(lakeName, agentKey, mode, {}, true);
+            completed++;
+            setProgress(`[${completed}/${total}] ${RESEARCH_LABELS[agentKey] || agentKey} complete`, Math.round((completed / total) * 100));
+            resolve({ status: 'fulfilled', value: result, agent: agentKey });
+          } catch (e) {
+            completed++;
+            resolve({ status: 'rejected', reason: e, agent: agentKey });
+          }
+        }, delay));
       });
-      
-      const batchResults = await Promise.allSettled(batchPromises);
-      for (const [idx, result] of batchResults.entries()) {
+
+      const batchResults = await Promise.all(batchPromises);
+      for (const result of batchResults) {
         if (result.status === 'fulfilled') {
-          results.push({ agent: batch[idx], data: result.value });
+          results.push({ agent: result.agent, data: result.value });
         } else {
-          log(`❌ ${batch[idx]} failed: ${result.reason.message}`);
+          log(`❌ ${result.agent} failed: ${result.reason?.message}`);
         }
       }
-      
-      // Stagger between batches
+
       if (i + MAX_CONCURRENT < agentKeys.length) {
         await new Promise(r => setTimeout(r, STAGGER_MS));
       }
     }
-    
-    log(`✔ All agents complete: ${results.filter(r => r.data).length}/${agentKeys.length} succeeded`);
+
+    log(`✔ All agents complete: ${results.filter(r => r.data).length}/${total} succeeded`);
     if (callbacks.onComplete) await callbacks.onComplete(lakeName);
+    if (callbacks.onContradictions) {
+      // Collect any contradictions from agent results and surface them
+      const allContradictions = results.flatMap(r => r.data?.contradictions || []);
+      if (allContradictions.length) callbacks.onContradictions(allContradictions);
+    }
     return results;
-    
+
   } catch (e) {
     log(`❌ Multi-agent run failed: ${e.message}`);
     setProgress('Multi-agent run failed — see log.', 0);
-    throw e;
   } finally {
     _state.researchInProgress = false;
+    showProgress(false);
   }
 }
 
-// ── runFullPipeline: discovery + download + normalize + run selected agents ──
+// ── runFullPipeline: delegates to runAgents (per-agent discover→fetch→extract→enrich) ──
+// Steps 1 and 1b run here to load deterministic facts before agents start,
+// so every agent has owner/species context and regulations agent has KV-cached regs data.
 async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
   if (_state.researchInProgress) { alert('A research task or pipeline is already in progress.'); return; }
   if (!lakeName) { alert('Please select or specify a lake.'); return; }
+
   _state.researchInProgress = true;
   _state.researchLog = [];
   _state.packagePartsCache = {};
@@ -1096,51 +1098,17 @@ async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
 
   try {
     const stateName = sanitizeStateFromLakeName(lakeName);
-    const sanitizedLake = sanitize(lakeName);
 
-    // ----------------------------------------------------
-    // STEP 1: Lake Identification (canonical_lake.json)
-    // ----------------------------------------------------
-    setProgress("Step 1: Identifying Canonical Lake...", 10);
-    log("Resolving canonical lake details and aliases...");
+    // STEP 1: Canonical lake identification
+    setProgress('Step 1: Identifying lake...', 5);
+    log('Resolving canonical lake details...');
     const baseName = cleanLakeBaseName(lakeName);
-    const rawAliases = [
-      `${baseName} Reservoir`,
-      `Lake ${baseName}`,
-      `${baseName} Lake`,
-      lakeName,
-      `${lakeName} Reservoir`
-    ];
-    // dedupe and clean double Lake
-    const aliasSet = new Set();
-    const aliases = [];
-    for (let a of rawAliases) {
-      a = String(a).replace(/\s+/g, ' ').trim();
-      a = a.replace(/^Lake Lake /i, 'Lake ');
-      if (!a || aliasSet.has(a.toLowerCase())) continue;
-      if (a.toLowerCase() === lakeName.toLowerCase()) continue; // primary name not alias
-      aliasSet.add(a.toLowerCase());
-      aliases.push(a);
-    }
-    const canonicalLake = {
-      name: lakeName,
-      baseName,
-      state: stateName,
-      aliases,
-      sanitizedId: sanitizedLake,
-      metadata: {
-        lastIdentified: new Date().toISOString()
-      }
-    };
-    log(`Canonical details resolved: ${JSON.stringify(canonicalLake)}`);
+    log(`Canonical: ${lakeName} / ${baseName} / ${stateName}`);
 
-    // ----------------------------------------------------
-    // STEP 1b: Deterministic facts (owner + seeded drawdown sources)
-    // ----------------------------------------------------
-    setProgress("Step 1b: Loading deterministic facts...", 18);
-    let deterministicProfile = null;
-    let reservoirOwner = null;
-    let seededDiscoveryTargets = [];
+    // STEP 1b: Deterministic facts — owner, ramps, species, regulations from APIs
+    // Stored on _state so runAgent can pass them as previousResults to the worker.
+    setProgress('Step 1b: Loading deterministic facts...', 12);
+    _state.deterministicProfile = null;
     try {
       const detRes = await fetch(`${CF_WORKER_URL}/research/deterministic-facts`, {
         method: 'POST',
@@ -1150,423 +1118,39 @@ async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
       if (detRes.ok) {
         const detData = await detRes.json();
         if (detData.ok && detData.profile) {
-          deterministicProfile = detData.profile;
-          reservoirOwner = detData.profile.identity?.reservoirOwner || null;
-          seededDiscoveryTargets = Array.isArray(detData.seededDiscoveryTargets) ? detData.seededDiscoveryTargets : [];
-          log(`✔ Deterministic baseline loaded — owner: ${reservoirOwner || 'unknown'}, seeded drawdown targets: ${seededDiscoveryTargets.length}`);
+          _state.deterministicProfile = detData.profile;
+          const owner = detData.profile.identity?.reservoirOwner || 'unknown';
+          const rampCount = detData.profile.navigation?.ramps?.length || 0;
+          const speciesCount = detData.profile.biology?.predatorSpecies?.length || 0;
+          const genCreel = Object.keys(detData.profile.regulations?.generalStateRegulations?.creelLimits || {}).length;
+          const genLen = Object.keys(detData.profile.regulations?.generalStateRegulations?.lengthLimits || {}).length;
+          const lakeSize = Object.keys(detData.profile.regulations?.lakeSpecificRegulations?.sizeLimits || {}).length;
+          const lakeCreel = Object.keys(detData.profile.regulations?.lakeSpecificRegulations?.creelLimits || {}).length;
+          log(`✔ Deterministic baseline loaded — owner: ${owner}, ramps: ${rampCount}, species: ${speciesCount}, regs(gen creel=${genCreel}/len=${genLen}, lake size=${lakeSize}/creel=${lakeCreel})`);
+          if (detData.profile._regsDebug) {
+            const d = detData.profile._regsDebug;
+            log(`  regs debug: state=${d.state} cacheHit=${d.cacheHit} pagesLoaded=${d.pagesLoaded} parseErrors=${d.parseErrors}`);
+          }
         }
       } else {
-        log(`⚠️ Deterministic facts HTTP ${detRes.status} — continuing discovery without owner seeding`);
+        log(`⚠️ Deterministic facts HTTP ${detRes.status} — agents will run without owner/regs context`);
       }
     } catch (e) {
-      log(`⚠️ Deterministic facts fetch failed: ${e.message} — continuing without owner seeding`);
+      log(`⚠️ Deterministic facts fetch failed: ${e.message} — continuing`);
     }
 
-    // ----------------------------------------------------
-    // STEP 2: Source Discovery
-    // ----------------------------------------------------
-    setProgress("Step 2: Scoping Trusted Repositories & Scrapers...", 25);
-    log("Calling /research/discover API for state & federal sources...");
-    const discoverRes = await fetch(`${CF_WORKER_URL}/research/discover`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lakeName, state: stateName, reservoirOwner, predatorSpecies: deterministicProfile?.biology?.predatorSpecies || [] })
-    });
-    if (!discoverRes.ok) {
-      const snippet = await discoverRes.text().catch(() => '').then(t => t.slice(0, 300));
-      throw new Error(`Source Discovery HTTP ${discoverRes.status}: ${snippet}`);
-    }
-    let discoverData;
-    try {
-      const txt = await discoverRes.text();
-      discoverData = JSON.parse(txt);
-    } catch (e) {
-      throw new Error(`Source Discovery non-JSON response (worker not deployed or 404): ${e.message}`);
-    }
-    if (!discoverData.success) {
-      throw new Error(`Source Discovery Failed: ${discoverData.error || 'Unknown error'}`);
-    }
-
-    let sources = discoverData.sources || [];
-    log(`Source Discovery completed. Discovered ${sources.length} trusted documents/URLs.`);
-    // Log discover query results for visibility into what Firecrawl found/filtered
-    if (discoverData.queryLog?.length) {
-      for (const line of discoverData.queryLog) log(`[discover] ${line}`);
-    }
-    sources.forEach(src => {
-      log(`• [Priority ${src.priority}] ${src.title} (${src.authority}) - ${src.type}`);
-    });
-
-    // ----------------------------------------------------
-    // STEP 2b: Dataset hunt (EPA NSCEP / agency reports)
-    // EPA "Report on Lake …" series is often the best limnology source for
-    // tristate reservoirs. Merge top hits into the download queue.
-    // ----------------------------------------------------
-    try {
-      setProgress("Step 2b: Hunting EPA NSCEP & agency datasets...", 32);
-      log("Calling /research/dataset-hunt for EPA NSCEP + agency report URLs...");
-      const huntRes = await fetch(`${CF_WORKER_URL}/research/dataset-hunt`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lakeName, state: stateName })
-      });
-      if (huntRes.ok) {
-        const huntData = await huntRes.json();
-        const datasets = huntData.datasets || [];
-        log(`Dataset hunt returned ${datasets.length} candidates (firecrawl=${!!huntData.firecrawlUsed}, tavily=${!!huntData.tavilyUsed}).`);
-        // For NEPIS/ZyNET URLs, normalize on the File= parameter (document ID) not the base URL
-        // since ZyNET.exe is the same for all documents — the File= param identifies the actual doc
-        const normalizeUrl = (url) => {
-          const s = String(url || '');
-          const fileMatch = s.match(/[?&]File=([^&]+)/i);
-          if (fileMatch) return 'nepis:' + decodeURIComponent(fileMatch[1]).toLowerCase();
-          return s.split('?')[0].toLowerCase();
-        };
-        const seen = new Set(sources.map(s => normalizeUrl(s.url)));
-        // Prefer EPA NSCEP + high-score PDFs/HTML; cap so we don't explode download time
-        const epaFirst = [...datasets].sort((a, b) => {
-          const aEpa = /epa|nepis/i.test(a.authority + a.url) ? 1 : 0;
-          const bEpa = /epa|nepis/i.test(b.authority + b.url) ? 1 : 0;
-          if (aEpa !== bEpa) return bEpa - aEpa;
-          return (b.score || 0) - (a.score || 0);
-        });
-        let added = 0;
-        let epaAdded = 0;
-        const maxAdd = 12; // raised from 6 — context windows can handle more sources now
-        // Per-domain caps prevent any single site flooding the queue
-        const DOMAIN_CAPS = {
-          'nepis.epa.gov': 1,
-          'epa.gov': 2,
-          'carolinasportsman.com': 4,
-          'dnr.sc.gov': 3,
-          'ncwildlife.org': 3,
-          'georgiawildlife.com': 3,
-          'gameandfishmag.com': 2,
-          'in-fisherman.com': 2,
-          'bassmaster.com': 2,
-          'saludahydrorelicense.com': 3,
-          'parrfairfieldrelicense.com': 3,
-          'duke-energy.com': 3,
-        };
-        const domainCounts = {};
-        for (const d of epaFirst) {
-          if (added >= maxAdd) break;
-          const norm = normalizeUrl(d.url);
-          const scoreVal = d.score || 0;
-          const titleSnip = (d.title || d.url).slice(0, 80);
-          if (!d.url || seen.has(norm)) {
-            log(`  ✗ skip (dupe): ${titleSnip}`);
-            continue;
-          }
-          // Reject non-SC/NC/GA state agency documents
-          if (/michigandnr\.com|michigan\.gov.*dnr|mndnr\.gov|dnr\.wi\.gov|dnr\.illinois|in\.gov.*dnr|\.gc\.ca|dfo-mpo\.gc\.ca/i.test(d.url)) {
-            log(`  ✗ skip (foreign/other-state agency): ${titleSnip}`);
-            continue;
-          }
-          const isEpa = /nepis\.epa\.gov|epa\.gov|ZyActionD|ZyPDF/i.test(d.url + (d.authority || ''));
-          // Per-domain cap check
-          let hostname = '';
-          try { hostname = new URL(d.url).hostname.replace(/^www\./,''); } catch(e) {}
-          const domainCap = DOMAIN_CAPS[hostname] || 5;
-          domainCounts[hostname] = domainCounts[hostname] || 0;
-          if (domainCounts[hostname] >= domainCap) {
-            log(`  ✗ skip (domain cap ${domainCap} for ${hostname}): ${titleSnip}`);
-            continue;
-          }
-          // Limit to at most 1 EPA report per lake
-          if (isEpa && epaAdded >= 1) {
-            log(`  ✗ skip (EPA cap reached): ${titleSnip}`);
-            continue;
-          }
-          if (!isEpa && scoreVal < 30) {
-            log(`  ✗ skip (score ${scoreVal} < 30): ${titleSnip}`);
-            continue;
-          }
-          seen.add(norm);
-          domainCounts[hostname] = (domainCounts[hostname] || 0) + 1;
-          sources.push({
-            title: d.title || `Dataset: ${d.url}`,
-            type: d.type || (/\.pdf$/i.test(d.url) || /ZyPDF/i.test(d.url) ? 'PDF' : 'HTML'),
-            authority: d.authority || (isEpa ? 'EPA NSCEP' : 'Web'),
-            url: d.url,
-            priority: isEpa ? 1 : 2,
-            source: d.source || 'dataset_hunt',
-            score: scoreVal
-          });
-          added++;
-          if (isEpa) epaAdded++;
-          log(`  ✓ added (score ${scoreVal}): ${titleSnip}`);
-        }
-        // Log all remaining candidates that didn't make the cut
-        for (const d of epaFirst) {
-          const norm = normalizeUrl(d.url);
-          if (seen.has(norm)) continue; // already logged above
-          const scoreVal = d.score || 0;
-          const titleSnip = (d.title || d.url).slice(0, 80);
-          log(`  — candidate (score ${scoreVal}, not added): ${titleSnip}`);
-        }
-        log(`Merged ${added} dataset-hunt sources into download queue (total ${sources.length}).`);
-      } else {
-        log(`⚠️ Dataset hunt HTTP ${huntRes.status} — continuing with discover sources only.`);
-      }
-    } catch (e) {
-      log(`⚠️ Dataset hunt failed: ${e.message} — continuing with discover sources only.`);
-    }
-
-
-
-    // ----------------------------------------------------
-    // STEP 3 & 4: Download & Extraction (CORS Proxy + Client PDF.js)
-    // ----------------------------------------------------
-    setProgress("Step 3-4: Downloading & Extracting Sources (CORS Bypassed)...", 45);
-    const normalizedDocuments = [];
-
-    for (let i = 0; i < sources.length; i++) {
-      const src = sources[i];
-      log(`Processing [${i + 1}/${sources.length}] ${src.title}...`);
-
-      // skip oversized PDFs early (client memory protection)
-      if (src.type === 'PDF' && src.title.toLowerCase().includes('pocket guide')) {
-        log(`⚠️ Skipping huge generic pocket guide PDF (50MB) — low lake-specific value.`);
-        continue;
-      }
-
-      if (src.type === 'PDF') {
-        log(`Using Cloudflare Proxy to fetch PDF: ${src.url}`);
-        const proxyRes = await fetch(`${CF_WORKER_URL}/research/proxy-download?url=${encodeURIComponent(src.url)}`);
-        if (!proxyRes.ok) {
-          log(`⚠️ Failed to download PDF: ${src.title} (HTTP ${proxyRes.status}). Skipping document.`);
-          continue;
-        }
-        const arrayBuffer = await proxyRes.arrayBuffer();
-        if (arrayBuffer.byteLength > 25 * 1024 * 1024) {
-          log(`⚠️ PDF too large (${(arrayBuffer.byteLength/1024/1024).toFixed(1)}MB) — skipping to protect browser memory. URL: ${src.url}`);
-          continue;
-        }
-        log(`PDF raw binary streamed to browser (${arrayBuffer.byteLength} bytes). Processing text extract in browser thread...`);
-        
-        try {
-          const extraction = await extractTextFromPDFBytes(arrayBuffer, (current, total) => {
-            setProgress(`Extracting PDF pages: ${current}/${total}`, 45 + (i / sources.length) * 15);
-          });
-          
-          normalizedDocuments.push({
-            title: src.title,
-            authority: src.authority,
-            url: src.url,
-            priority: src.priority,
-            fullText: extraction.fullText,
-            pages: extraction.pages,
-            downloadDate: new Date().toISOString(),
-            contentType: 'application/pdf'
-          });
-          log(`Successfully extracted ${extraction.pages.length} pages of text. Discarded binary from browser memory.`);
-        } catch (pdfErr) {
-          log(`⚠️ Error parsing PDF client-side: ${pdfErr.message}. Skipping.`);
-        }
-      } else {
-        // HTML / TEXT — route through Firecrawl via proxy for better extraction
-        log(`Fetching webpage via Firecrawl: ${src.url}`);
-        const proxyRes = await fetch(`${CF_WORKER_URL}/research/proxy-download?url=${encodeURIComponent(src.url)}&type=HTML`);
-        if (!proxyRes.ok) {
-          log(`⚠️ Failed to scrape page: ${src.title} (HTTP ${proxyRes.status}). Skipping document.`);
-          continue;
-        }
-
-        const isFirecrawl = proxyRes.headers.get('X-Source') === 'firecrawl';
-        const nepisFormat = proxyRes.headers.get('X-Nepis-Format') || '';
-        const nepisTitle = proxyRes.headers.get('X-Nepis-Title') || '';
-        const text = await proxyRes.text();
-
-        // If Firecrawl returned markdown, use it directly — no HTML stripping needed
-        const cleanedText = isFirecrawl ? text : text
-          .replace(/<script[\s\S]*?<\/script>/gi, " ")
-          .replace(/<style[\s\S]*?<\/style>/gi, " ")
-          .replace(/<[^>]+>/g, " ")
-          .replace(/\s+/g, " ")
-          .trim();
-
-        if (cleanedText.length < 200) {
-          log(`⚠️ Page content too short (${cleanedText.length} chars) — likely blocked or 404. Skipping.`);
-          continue;
-        }
-
-        log(`${isFirecrawl ? 'Firecrawl' : 'Basic'} extracted ${cleanedText.length} chars from ${src.title}${nepisFormat ? ` [nepis:${nepisFormat}]` : ''}`);
-
-        normalizedDocuments.push({
-          title: nepisTitle || src.title,
-          authority: src.authority || (/nepis|epa/i.test(src.url) ? 'EPA NSCEP' : src.authority),
-          url: src.url,
-          priority: src.priority,
-          fullText: cleanedText,
-          pages: [{ pageNumber: 1, text: cleanedText, title: nepisTitle || src.title }],
-          downloadDate: new Date().toISOString(),
-          contentType: isFirecrawl ? 'text/markdown' : 'text/html',
-          extractionMethod: isFirecrawl ? (nepisFormat ? `firecrawl_nepis_${nepisFormat}` : 'firecrawl') : 'basic'
-        });
-        log(`Webpage extracted & normalized successfully.`);
-
-        // EPA NSCEP search-results page may list multiple document landing URLs —
-        // follow up on the first few so full report text becomes evidence.
-        if (nepisFormat === 'search_results') {
-          let docUrls = [];
-          try {
-            const hdr = proxyRes.headers.get('X-Nepis-Documents');
-            if (hdr) docUrls = JSON.parse(hdr);
-          } catch (_) {}
-          // Also scrape markdown catalog for ZyActionD links
-          if (!docUrls.length) {
-            const found = cleanedText.match(/https?:\/\/[^\s)"\]]+ZyActionD[^\s)"\]]*/g) || [];
-            docUrls = [...new Set(found)].slice(0, 5);
-          }
-          const follow = (Array.isArray(docUrls) ? docUrls : []).slice(0, 1);
-          for (const docUrl of follow) {
-            if (!docUrl || normalizedDocuments.some(d => d.url === docUrl)) continue;
-            try {
-              log(`  ↳ Following EPA NSCEP document: ${docUrl.slice(0, 100)}…`);
-              const docRes = await fetch(`${CF_WORKER_URL}/research/proxy-download?url=${encodeURIComponent(docUrl)}&type=HTML`);
-              if (!docRes.ok) {
-                log(`  ⚠️ EPA doc follow-up failed HTTP ${docRes.status}`);
-                continue;
-              }
-              const docText = await docRes.text();
-              if (docText.length < 200) continue;
-              const docTitle = docRes.headers.get('X-Nepis-Title') || `EPA NSCEP document`;
-              normalizedDocuments.push({
-                title: docTitle,
-                authority: 'EPA NSCEP',
-                url: docUrl,
-                priority: 1,
-                fullText: docText,
-                pages: [{ pageNumber: 1, text: docText, title: docTitle }],
-                downloadDate: new Date().toISOString(),
-                contentType: 'text/markdown',
-                extractionMethod: `firecrawl_nepis_${docRes.headers.get('X-Nepis-Format') || 'landing'}`
-              });
-              log(`  ✔ EPA doc extracted ${docText.length} chars: ${docTitle.slice(0, 80)}`);
-            } catch (e) {
-              log(`  ⚠️ EPA doc follow-up error: ${e.message}`);
-            }
-          }
-        }
-      }
-    }
-
-    // Owner-aware seeded drawdown / operations sources: fetch and merge into
-    // normalized documents so fact extraction can surface lake-level ranges,
-    // seasonal drawdown schedules, and operations facts from the authority.
-    if (seededDiscoveryTargets.length > 0) {
-      setProgress("Step 4b: Fetching owner-seeded drawdown / operations sources...", 62);
-      log(`Fetching ${seededDiscoveryTargets.length} owner-aware seeded source(s)...`);
-      for (const seed of seededDiscoveryTargets) {
-        if (!seed?.url) continue;
-        if (normalizedDocuments.some(d => d.url === seed.url)) {
-          log(`• ${seed.label} already in download queue — skipping`);
-          continue;
-        }
-        log(`Processing seeded source: ${seed.label} (${seed.url})`);
-        try {
-          const isPdf = String(seed.type || '').toUpperCase() === 'PDF' || /\.pdf$/i.test(seed.url);
-          if (isPdf) {
-            const proxyRes = await fetch(`${CF_WORKER_URL}/research/proxy-download?url=${encodeURIComponent(seed.url)}`);
-            if (!proxyRes.ok) {
-              log(`⚠️ Failed to download seeded PDF: ${seed.label} (HTTP ${proxyRes.status})`);
-              continue;
-            }
-            const arrayBuffer = await proxyRes.arrayBuffer();
-            if (arrayBuffer.byteLength > 25 * 1024 * 1024) {
-              log(`⚠️ Seeded PDF too large (${(arrayBuffer.byteLength/1024/1024).toFixed(1)}MB) — skipping`);
-              continue;
-            }
-            const extraction = await extractTextFromPDFBytes(arrayBuffer, (current, total) => {
-              setProgress(`Extracting seeded PDF pages: ${current}/${total}`, 62 + (current / total) * 2);
-            });
-            normalizedDocuments.push({
-              title: seed.label,
-              authority: seed.authority,
-              url: seed.url,
-              priority: 1,
-              fullText: extraction.fullText,
-              pages: extraction.pages,
-              downloadDate: new Date().toISOString(),
-              contentType: 'application/pdf'
-            });
-            log(`✔ Seeded PDF extracted ${extraction.pages.length} pages`);
-          } else {
-            const proxyRes = await fetch(`${CF_WORKER_URL}/research/proxy-download?url=${encodeURIComponent(seed.url)}&type=HTML`);
-            if (!proxyRes.ok) {
-              log(`⚠️ Failed to scrape seeded page: ${seed.label} (HTTP ${proxyRes.status})`);
-              continue;
-            }
-            const isFirecrawl = proxyRes.headers.get('X-Source') === 'firecrawl';
-            const text = await proxyRes.text();
-            const cleanedText = isFirecrawl ? text : text
-              .replace(/<script[\s\S]*?<\/script>/gi, " ")
-              .replace(/<style[\s\S]*?<\/style>/gi, " ")
-              .replace(/<[^>]+>/g, " ")
-              .replace(/&nbsp;/g, " ")
-              .replace(/&amp;/g, "&")
-              .replace(/\s+/g, " ")
-              .trim();
-            if (cleanedText.length < 200) {
-              log(`⚠️ Seeded page content too short (${cleanedText.length} chars) — likely blocked`);
-              continue;
-            }
-            normalizedDocuments.push({
-              title: seed.label,
-              authority: seed.authority,
-              url: seed.url,
-              priority: 1,
-              fullText: cleanedText,
-              pages: [{ pageNumber: 1, text: cleanedText, title: seed.label }],
-              downloadDate: new Date().toISOString(),
-              contentType: isFirecrawl ? 'text/markdown' : 'text/html',
-              extractionMethod: isFirecrawl ? 'firecrawl' : 'basic'
-            });
-            log(`✔ Seeded page extracted ${cleanedText.length} chars`);
-          }
-        } catch (seedErr) {
-          log(`⚠️ Seeded source error for ${seed.label}: ${seedErr.message}`);
-        }
-      }
-    }
-
-    if (normalizedDocuments.length === 0) {
-      throw new Error("No sources were successfully downloaded or extracted. Incomplete pipeline.");
-    }
-
-    // Save normalized documents back to the worker R2 normalized folder
-    setProgress("Uploading normalized evidence JSON back to R2...", 65);
-    log(`Saving ${normalizedDocuments.length} normalized text extracts to R2 normalized/ directory.`);
-    await fetch(`${CF_WORKER_URL}/research/save-normalized`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lakeName, documents: normalizedDocuments })
-    });
-
-    // ----------------------------------------------------
-    // STEP 5 & 6: Source Quality Scoring & Classification
-    // ----------------------------------------------------
-    setProgress("Step 5-6: Running Quality Scoring & Classification...", 75);
-    log("Computing scores based on authority trustworthiness rules...");
-    const scoredSources = scoreDocuments(normalizedDocuments, baseName, lakeName);
-    log(`Scoring and classification completed:`);
-    scoredSources.forEach(s => {
-      log(`• ${s.title}: auth=${s.scoring.authority} rel=${s.scoring.relevance} fresh=${s.scoring.freshness} comp=${s.scoring.completeness} => composite=${s.scoring.composite} classes=${s.classes.join(', ')}`);
-    });
-
-    await runPipelineTail(lakeName, baseName, stateName, normalizedDocuments, scoredSources, callbacks, selectedAgents);
+    // Hand off to runAgents — each agent does its own per-agent discover→fetch→extract→enrich
+    // _state.deterministicProfile is now available for runAgent to pass as previousResults
+    _state.researchInProgress = false; // runAgents will re-set it
+    await runAgents(lakeName, selectedAgents, 'full', callbacks);
 
   } catch (err) {
-    log(`❌ Pipeline Aborted: ${err.message}`);
-    alert(`Evidence Pipeline Failed: ${err.message}`);
-    setProgress("Failed", 0);
-
-  } finally {
+    log(`❌ Pipeline failed: ${err.message}`);
+    alert(`Research Pipeline Failed: ${err.message}`);
+    setProgress('Failed', 0);
     _state.researchInProgress = false;
   }
 }
-
 async function runPipelineTail(lakeName, baseName, stateName, normalizedDocuments, scoredSources, callbacks = {}, onlyAgents = null) {
     // ----------------------------------------------------
     // STEP 7: Fact extraction (quoted/source-backed only)
@@ -2147,4 +1731,4 @@ async function runPipelineTail(lakeName, baseName, stateName, normalizedDocument
     if (contradictions.length > 0 && callbacks.onContradictions) callbacks.onContradictions(contradictions, lakeName);
 }
 
-export { runFullPipeline, runResume, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, _state, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log };
+export { runFullPipeline, runAgents, runAgent, runResume, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, _state, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log };
