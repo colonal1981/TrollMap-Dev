@@ -932,6 +932,10 @@ async function handleResearchDiscover(request, env) {
     if (/\.gc\.ca\/|dfo-mpo\.gc\.ca|canada\.ca|ontario\.|quebec\.|british.columbia|alberta\.|manitoba\./.test(combined)) return 'foreign_government_doc';
     if (/michigandnr\.com|michigan\.gov.*dnr|mndnr\.gov|dnr\.wi\.gov|dnr\.illinois|in\.gov.*dnr/.test(url)) return 'other_state_agency';
     if (/how.to.fish|beginner.*fishing|fishing.tips.*general|learn.to.fish|fishing.basics/.test(combined) && !combined.includes(baseLower)) return 'generic_fishing_article';
+    // Social media and video platforms — never fetchable, never useful as evidence
+    if (/facebook\.com|youtube\.com|instagram\.com|tiktok\.com|twitter\.com|x\.com\/(?!ai)|pinterest\.com/i.test(url)) return 'social_media';
+    // xAI/Grokipedia login redirects — not actual content
+    if (/accounts\.x\.ai|check-login.*grokipedia|grokipedia.*check-login/i.test(url)) return 'login_redirect';
     // County/township boundary articles — "Marion and Lake County line", "Marion County line", etc.
     // These match lake base names that are also common county names (Marion, Norman, etc.)
     if (/county\s+line|township\s+line|\bcounty\b.*\bline\b/i.test(title) && !/lake\s+marion|marion\s+lake|lake\s+norman|norman\s+lake/i.test(title)) return 'county_boundary_article';
@@ -1328,19 +1332,19 @@ const AGENT_DISCOVERY_QUERIES = {
     // evergreen seasonal patterns (no recency). Handled separately in search loop
     // via _fisheries_recency flag below.
     SC: (lake) => [
-      `"${lake}" fishing report`,
+      `"${lake}" fishing report -site:facebook.com -site:instagram.com -site:youtube.com`,
       `"${lake}" seasonal fishing patterns bass crappie striped bass -site:facebook.com -site:instagram.com -site:youtube.com`,
     ],
     NC: (lake) => [
-      `"${lake}" fishing report`,
+      `"${lake}" fishing report -site:facebook.com -site:instagram.com -site:youtube.com`,
       `"${lake}" seasonal fishing patterns bass crappie striped bass -site:facebook.com -site:instagram.com -site:youtube.com`,
     ],
     GA: (lake) => [
-      `"${lake}" fishing report`,
+      `"${lake}" fishing report -site:facebook.com -site:instagram.com -site:youtube.com`,
       `"${lake}" seasonal fishing patterns bass crappie striped bass -site:facebook.com -site:instagram.com -site:youtube.com`,
     ],
     TN: (lake) => [
-      `"${lake}" fishing report`,
+      `"${lake}" fishing report -site:facebook.com -site:instagram.com -site:youtube.com`,
       `"${lake}" seasonal fishing patterns bass crappie striped bass -site:facebook.com -site:instagram.com -site:youtube.com`,
     ],
   },
