@@ -73,7 +73,46 @@ async function recordFirecrawlUsage(env, credits = 1) {
   await env.KV.put(FIRECRAWL_KV_KEY, String(used + credits), { expirationTtl: 60 * 60 * 24 * 35 }); // 35 days (covers month + buffer)
 }
 
-// ─── REGULATIONS FETCH (One per State, Cached 90 Days) ───
+// ── Scrape.do Fetch ──────────────────────────────────────────────────────────
+// 1 credit/request for standard pages, 5 with render=true for JS SPAs.
+// Failed requests cost 0. Returns HTML — we strip to plain text via HTMLRewriter.
+// Used as fallback when TinyFish fails. Tracks remaining credits from response header.
+async function scrapeDoFetch(url, env, { render = false } = {}) {
+  const token = env.SCRAPEDO_API_KEY;
+  if (!token) throw new Error('SCRAPEDO_API_KEY not configured');
+
+  const encoded = encodeURIComponent(url);
+  const renderParam = render ? '&render=true' : '';
+  const apiUrl = `https://api.scrape.do/?token=${token}&url=${encoded}${renderParam}`;
+
+  const res = await fetch(apiUrl, {
+    headers: { 'Accept': 'text/html,application/xhtml+xml' }
+  });
+
+  // Log remaining credits from response header for monitoring
+  const remaining = res.headers.get('Scrape.do-Remaining-Credits');
+  const cost = res.headers.get('Scrape.do-Request-Cost');
+  if (remaining) console.log(`[scrape.do] cost=${cost} remaining=${remaining} url=${url.slice(0,80)}`);
+
+  if (!res.ok) throw new Error(`Scrape.do HTTP ${res.status}`);
+
+  // Strip HTML to plain text using HTMLRewriter
+  // Remove script, style, nav, footer, ads — keep main content
+  let text = '';
+  const rewriter = new HTMLRewriter()
+    .on('script, style, nav, footer, header, aside, .ads, .advertisement, .cookie-banner, .newsletter, .sidebar', {
+      element(el) { el.remove(); }
+    })
+    .on('*', {
+      text(chunk) { text += chunk.text; }
+    });
+
+  await rewriter.transform(res).text();
+
+  // Clean up whitespace
+  text = text.replace(/\s+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  return text;
+}
 const STATE_REGULATIONS_CONFIG = {
   SC: {
     pages: [
@@ -1682,8 +1721,31 @@ async function handleResearchProxyDownload(request, env) {
       console.warn(`TinyFish error for ${target}: ${tfErr.message} — trying Firecrawl`);
     }
 
-    // Firecrawl fallback — only when TinyFish failed and budget allows
-    if (!tfSucceeded && firecrawlKey) {
+    // Scrape.do fallback — Cloudflare bypass, residential proxies, 1 credit/page
+    // Only fires when TinyFish returned insufficient content. Failed requests cost 0.
+    let scrapeDoSucceeded = false;
+    if (!tfSucceeded) {
+      try {
+        // Use render=true for known JS-heavy domains, plain fetch for everything else
+        const needsRender = /anglersheadquarters|majorleaguefishing|omniafishing|carolinasportsman|gameandfishmag/i.test(target);
+        const sdText = await scrapeDoFetch(target, env, { render: needsRender });
+        if (sdText && sdText.length > 200) {
+          scrapeDoSucceeded = true;
+          const headers = new Headers({
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Access-Control-Allow-Origin': '*',
+            'X-Source': 'scrapedo'
+          });
+          return new Response(sdText, { headers });
+        }
+        console.warn(`Scrape.do returned insufficient content (${sdText?.length || 0} chars) for ${target} — trying Firecrawl`);
+      } catch (sdErr) {
+        console.warn(`Scrape.do error for ${target}: ${sdErr.message} — trying Firecrawl`);
+      }
+    }
+
+    // Firecrawl fallback — only when both TinyFish and Scrape.do failed and budget allows
+    if (!tfSucceeded && !scrapeDoSucceeded && firecrawlKey) {
       try {
         const budget = await checkFirecrawlBudget(env, 1);
         if (budget.allowed) {
@@ -5267,26 +5329,16 @@ async function handleResearchAgentPipeline(request, env) {
               const text = await proxyRes.text();
               const xSource = proxyRes.headers?.get('X-Source') || 'unknown';
               if (text.length > 200) {
-                // For TinyFish fetches, also get etag for future conditional checks
-                let etag = null;
-                if (xSource === 'tinyfish') {
-                  try {
-                    const etagResult = await tinyfishFetch({
-                      urls: [src.url], format: 'markdown',
-                      include_etag_and_last_modified: true, ttl: 86400
-                    }, env);
-                    etag = etagResult.results?.[0]?.etag || null;
-                  } catch (_) {}
-                }
                 const doc = {
                   title: src.title, url: src.url, fullText: text,
                   agentTags: src.agentTags || [agentKey],
                   discoveredBy: src.discoveredBy || agentKey,
                   fetchedAt: new Date().toISOString(),
-                  etag,
+                  etag: null, // etag only available from direct TinyFish Fetch calls
                 };
                 normalizedDocuments.push(doc);
                 existingByUrl.set(normUrl, doc);
+                console.log(`[agent-pipeline] fetched (${xSource}, ${text.length} chars): ${src.url.slice(0,80)}`);
               } else {
                 console.warn(`[agent-pipeline] fetch returned insufficient content (${text.length} chars) via ${xSource}: ${src.url.slice(0,80)}`);
               }
