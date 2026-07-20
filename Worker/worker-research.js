@@ -4198,7 +4198,7 @@ async function handleResearchAgent(request, env) {
       { role: "user", content: userPrompt }
     ],
     temperature: 0.1,
-    max_tokens: agentKey === 'trolling' ? 2000 : agentKey === 'summary' ? 800 : 3000,
+    max_tokens: agentKey === 'trolling' ? 2000 : agentKey === 'summary' ? 800 : agentKey === 'fisheries' ? 8000 : 3000,
     response_format: { type: "json_object" }
   };
 
