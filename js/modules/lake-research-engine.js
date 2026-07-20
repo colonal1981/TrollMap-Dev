@@ -1002,6 +1002,15 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     if (!data.success) throw new Error(data.error || 'Agent failed');
 
     log(`✔ ${def.label} agent complete (${data.factsCount} facts, ${data.docsUsed} docs)`);
+    if (data.queryLog?.length) {
+      data.queryLog.forEach(q => log(`  [discover] ${q}`));
+    }
+    if (data.docTitles?.length) {
+      data.docTitles.forEach((t, i) => log(`  📄 [${i+1}/${data.docsUsed}] ${t}`));
+    }
+    if (data.factsSample?.length) {
+      data.factsSample.forEach(f => log(`  💬 ${f}`));
+    }
 
     if (callbacks.onComplete) await callbacks.onComplete(lakeName);
     return data;
@@ -1431,7 +1440,8 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     sources: [...sourceMap.values()]
   };
 
-  log(`Saving profile (facts=${allFacts.length}, species=${finalSpecies.length}, sections=${agentResults.map(r=>r.agent).join(',') || 'all'})...`);
+  const totalFactsExtracted = agentResults.reduce((sum, r) => sum + (r.data?.factsCount || 0), 0);
+  log(`Saving profile (facts=${totalFactsExtracted} extracted server-side, species=${finalSpecies.length}, agents=[${agentResults.map(r=>r.agent).join(',')}])...`);
   const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ lakeName, profile: researchPacket, status: 'draft', requestedBy: 'TrollMap Evidence Engine v6' })

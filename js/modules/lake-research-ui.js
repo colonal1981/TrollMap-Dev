@@ -803,7 +803,7 @@ function renderSections(profile) {
     });
   });
 
-  container.querySelectorAll('.btn-toggle_section-editor').forEach(btn => {
+  container.querySelectorAll('.btn-toggle-section-editor').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const sec = e.target.dataset.section;
       const el = document.getElementById(`editor-container-${sec}`);
