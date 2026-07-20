@@ -1173,6 +1173,9 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
   if (fishingNews && (!agentForSeeds || agentForSeeds === 'fisheries')) {
     addSeed({ title: fishingNews.title, type: 'HTML', authority: fishingNews.authority, url: fishingNews.url, priority: 1, agentTags: ['fisheries'] });
   }
+
+  // NEPIS EPA survey search — limnology only
+  if (wantsNepis && !skipNepis) {
     addSeed({
       title: `EPA NSCEP search: Report on ${baseName} / Lake ${baseName}`,
       type: 'HTML', authority: 'EPA NSCEP',
