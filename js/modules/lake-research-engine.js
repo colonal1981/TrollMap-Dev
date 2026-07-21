@@ -1919,7 +1919,11 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
         if (merged[subKey] && existing[subKey]) {
           const mergedSub = { ...existing[subKey] };
           for (const [sk, sv] of Object.entries(merged[subKey])) {
-            if (sv != null) mergedSub[sk] = sv;
+            if (sv != null) {
+              // WQP secchi (many samples) always beats a single doc extraction
+              if (subKey === 'waterClarity' && sk === 'secchiFt' && wqp?.secchi?.sampleCount >= 5 && existing[subKey]?.secchiFt != null) continue;
+              mergedSub[sk] = sv;
+            }
           }
           merged[subKey] = mergedSub;
         }
