@@ -1603,8 +1603,30 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
     const stateQueries = AGENT_DISCOVERY_QUERIES[agentKey][state];
     if (!stateQueries) continue;
 
-    const queries = stateQueries(queryLakeFinal);
+    const isClarksHillThurmond =
+      /thurmond|clarks?\s+hill/i.test(`${queryLake} ${queryLakeFinal}`);
+    const discoveryLakeNames = isClarksHillThurmond
+      ? [
+          queryLakeFinal,
+          'J. Strom Thurmond Lake',
+          'Clarks Hill Lake',
+        ]
+      : [queryLakeFinal];
+    const queries = [
+      ...new Set(
+        discoveryLakeNames.flatMap(name => stateQueries(name))
+      )
+    ];
     if (!queries.length) continue;
+    const discoveryAliases = [
+      ...new Set([
+        ...lakeSystemAliases,
+        ...discoveryLakeNames,
+        ...(isClarksHillThurmond
+          ? ['J. Strom Thurmond Lake', 'Clarks Hill Lake']
+          : []),
+      ])
+    ];
 
     const agentTags = AGENT_TO_TAGS[agentKey] || [agentKey];
     const purposeFn = AGENT_DISCOVERY_QUERIES._purposes?.[agentKey];
@@ -1675,7 +1697,7 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
             publishedDate: r.date || r.published_date || '',
             searchScore: r.score || 0,
           };
-          const prefetchScore = scoreCandidateRelevance(candidate, lakeName, baseName, lakeSystemAliases, state);
+          const prefetchScore = scoreCandidateRelevance(candidate, lakeName, baseName, discoveryAliases, state);
 
           if (prefetchScore < PRE_FETCH_THRESHOLD) {
             queryLog.push(`  ✗ below threshold (score ${prefetchScore}): ${(r.title||r.url).slice(0,80)}`);
@@ -3799,7 +3821,7 @@ async function handleResearchSaveNormalized(request, env) {
     return new Response(JSON.stringify({ success: false, error: "Missing lakeName or documents payload" }), { status: 400, headers: JSON_HEADERS });
   }
 
-  const safe = sanitizeLakeId(lakeName);
+  const safe = researchStorageId(lakeName);
   const key = `lake_packages/${safe}/normalized_documents.json`;
 
   // Relevance gate — reject docs with no mention of the lake name, base name, or state
@@ -3868,7 +3890,7 @@ async function handleResearchGetNormalized(env, lakeName) {
     'lake_russell_ga':        'lake_russell_sc_ga',
     'lake_russell_sc':        'lake_russell_sc_ga',
   };
-  let safe = sanitizeLakeId(lakeName);
+  let safe = researchStorageId(lakeName);
   const key = `lake_packages/${safe}/normalized_documents.json`;
   let obj = await env.R2_TROLLMAP_CHARTPACKS.get(key).catch(() => null);
   if (!obj && LEGACY_PROFILE_KEYS[safe]) {
@@ -4650,12 +4672,26 @@ function sanitizeLakeId(name) {
     .slice(0, 80) || 'unknown_lake';
 }
 
+const RESEARCH_CANONICAL_IDS = {
+  'lake_thurmond_sc': 'clarks_hill_thurmond_sc_ga',
+  'clarks_hill_lake_ga': 'clarks_hill_thurmond_sc_ga',
+  'j_strom_thurmond_lake': 'clarks_hill_thurmond_sc_ga',
+  'thurmond_lake_sc': 'clarks_hill_thurmond_sc_ga',
+  'thurmond_lake_ga': 'clarks_hill_thurmond_sc_ga',
+  'clarks_hill_thurmond_sc_ga': 'clarks_hill_thurmond_sc_ga',
+};
+
+function researchStorageId(lakeName) {
+  const safe = sanitizeLakeId(lakeName);
+  return RESEARCH_CANONICAL_IDS[safe] || safe;
+}
+
 function lakeResearchMasterKey(lakeName) {
-  return `lakes/${sanitizeLakeId(lakeName)}.json`;
+  return `lakes/${researchStorageId(lakeName)}.json`;
 }
 
 function lakePackageKey(lakeName, filename) {
-  return `lake_packages/${sanitizeLakeId(lakeName)}/${filename}`;
+  return `lake_packages/${researchStorageId(lakeName)}/${filename}`;
 }
 
 function extractJsonPossibly(txt) {
@@ -6009,25 +6045,20 @@ async function handleResearchList(env) {
 }
 
 async function handleResearchGet(env, lakeId) {
-  // ── Legacy key redirect: new canonical DNR names → existing R2 profile keys ──
-  // When the dropdown switched from hand-typed display names to DNR canonical
-  // names, some dual-named lakes (Thurmond/Clarks Hill, Russell) got new
-  // sanitized IDs. Redirect so the UI can load existing profiles under either name.
+  const requestedSafe = sanitizeLakeId(lakeId);
+  let safe = researchStorageId(lakeId);
+  // Preserve existing legacy redirects for unrelated historical names.
   const LEGACY_PROFILE_KEYS = {
-    'lake_thurmond_sc':       'clarks_hill_thurmond_sc_ga',
-    'clarks_hill_lake_ga':    'clarks_hill_thurmond_sc_ga',
-    'j_strom_thurmond_lake':  'clarks_hill_thurmond_sc_ga',
-    'thurmond_lake_sc':       'clarks_hill_thurmond_sc_ga',
+    'lake_thurmond_sc': 'clarks_hill_thurmond_sc_ga',
+    'clarks_hill_lake_ga': 'clarks_hill_thurmond_sc_ga',
+    'j_strom_thurmond_lake': 'clarks_hill_thurmond_sc_ga',
+    'thurmond_lake_sc': 'clarks_hill_thurmond_sc_ga',
     'richard_b_russell_lake': 'lake_russell_sc_ga',
-    'lake_russell_ga':        'lake_russell_sc_ga',
-    'lake_russell_sc':        'lake_russell_sc_ga',
+    'lake_russell_ga': 'lake_russell_sc_ga',
+    'lake_russell_sc': 'lake_russell_sc_ga',
   };
-  let safe = sanitizeLakeId(lakeId);
-  const legacySafe = LEGACY_PROFILE_KEYS[safe];
-  if (legacySafe) {
-    // Check if profile exists under new key first; if not, use legacy key
-    const newObj = await env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${safe}.json`).catch(() => null);
-    if (!newObj) safe = legacySafe;
+  if (!RESEARCH_CANONICAL_IDS[requestedSafe] && LEGACY_PROFILE_KEYS[requestedSafe]) {
+    safe = LEGACY_PROFILE_KEYS[requestedSafe];
   }
   const masterKey = `lakes/${safe}.json`;
   const obj = await env.R2_TROLLMAP_CHARTPACKS.get(masterKey);
@@ -6054,7 +6085,7 @@ async function handleResearchSave(request, env) {
   try { body = await request.json(); } catch { return new Response(JSON.stringify({ok:false, error:"invalid JSON"}), {status:400, headers:JSON_HEADERS}); }
   const lakeName = String(body.lakeName || body.profile?.lakeName || body.profile?.identity?.lakeName || '').trim();
   if (!lakeName) return new Response(JSON.stringify({ok:false, error:"missing lakeName"}), {status:400, headers:JSON_HEADERS});
-  const safe = sanitizeLakeId(lakeName);
+  const safe = researchStorageId(lakeName);
   const incomingProfile = body.profile || body;
   const packageParts = body.packageParts || body.parts || {};
   const notes = body.notes || incomingProfile.notes || "";
@@ -6223,7 +6254,7 @@ async function handleResearchApprove(request, env) {
   try { body = await request.json(); } catch { return new Response(JSON.stringify({ok:false, error:"invalid JSON"}), {status:400, headers:JSON_HEADERS}); }
   const lakeName = String(body.lakeName || body.lake || '').trim();
   if (!lakeName) return new Response(JSON.stringify({ok:false, error:"missing lakeName"}), {status:400, headers:JSON_HEADERS});
-  const safe = sanitizeLakeId(lakeName);
+  const safe = researchStorageId(lakeName);
   const masterKey = `lakes/${safe}.json`;
   const obj = await env.R2_TROLLMAP_CHARTPACKS.get(masterKey);
   if (!obj) return new Response(JSON.stringify({ok:false, error:`no profile for ${lakeName}`}), {status:404, headers:JSON_HEADERS});
@@ -6250,7 +6281,7 @@ async function handleResearchDeleteNormalizedDoc(request, env) {
   if (!lakeName) return new Response(JSON.stringify({ ok: false, error: 'missing lakeName' }), { status: 400, headers: JSON_HEADERS });
   if (!docUrl) return new Response(JSON.stringify({ ok: false, error: 'missing url' }), { status: 400, headers: JSON_HEADERS });
 
-  const safe = sanitizeLakeId(lakeName);
+  const safe = researchStorageId(lakeName);
   const key = `lake_packages/${safe}/normalized_documents.json`;
   const obj = await env.R2_TROLLMAP_CHARTPACKS.get(key).catch(() => null);
   if (!obj) return new Response(JSON.stringify({ ok: false, error: 'no normalized documents found' }), { status: 404, headers: JSON_HEADERS });
@@ -6275,7 +6306,7 @@ async function handleResearchDelete(request, env) {
   try { body = await request.json(); } catch { body = {}; }
   const lakeName = String(body.lakeName || body.lake || '').trim();
   if (!lakeName) return new Response(JSON.stringify({ ok:false, error:'missing lakeName' }), { status:400, headers:JSON_HEADERS });
-  const safe = sanitizeLakeId(lakeName);
+  const safe = researchStorageId(lakeName);
   const keys = [`lakes/${safe}.json`];
   try {
     const pkg = await env.R2_TROLLMAP_CHARTPACKS.list({ prefix: `lake_packages/${safe}/` });
@@ -6292,7 +6323,7 @@ async function handleResearchDelete(request, env) {
 }
 
 async function handleResearchPackage(env, lakeId) {
-  const safe = sanitizeLakeId(lakeId);
+  const safe = researchStorageId(lakeId);
   const listed = await env.R2_TROLLMAP_CHARTPACKS.list({prefix: `lake_packages/${safe}/`});
   if (!listed.objects.length) return new Response(JSON.stringify({ok:false, error:`no package for ${lakeId}`}), {status:404, headers:JSON_HEADERS});
   const files = [];
@@ -6304,7 +6335,7 @@ async function handleResearchPackage(env, lakeId) {
 }
 
 async function handleResearchPackageFile(env, lakeId, filename) {
-  const safe = sanitizeLakeId(lakeId);
+  const safe = researchStorageId(lakeId);
   const key = `lake_packages/${safe}/${filename}`;
   const obj = await env.R2_TROLLMAP_CHARTPACKS.get(key);
   if (!obj) return new Response(JSON.stringify({ok:false, error:`no file ${filename} for ${lakeId}`}), {status:404, headers:JSON_HEADERS});
@@ -6320,11 +6351,11 @@ async function handleEnhancedLakeIntel(lakeName, env) {
   let researched = null;
   let researchedProfile = null;
   try {
-    const safe = sanitizeLakeId(lakeName);
+    const safe = researchStorageId(lakeName);
     // try full lakeName sanitized, then key sanitized
     let obj = await env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${safe}.json`);
     if (!obj) {
-      const safeKey = sanitizeLakeId(key);
+      const safeKey = researchStorageId(key);
       obj = await env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${safeKey}.json`);
     }
     if (obj) {
