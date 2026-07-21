@@ -52,25 +52,28 @@ async function tinyfishFetch({ urls, format = 'markdown', include_selectors, exc
 }
 
 // ─── FIRECRAWL CREDIT GUARD ───
-const FIRECRAWL_MONTHLY_LIMIT = 1500;
-const FIRECRAWL_SAFETY_BUFFER = 300; // Stop using Firecrawl when credits < 300
-const FIRECRAWL_KV_KEY = 'firecrawl:credits_used';
+// Tracks remaining Firecrawl credits in KV. Hard stop at 50 remaining to prevent
+// auto-upgrade to paid tier when free credits hit 0.
+// Initialize KV with current balance: await env.KV.put('firecrawl:credits_remaining', '269')
+const FIRECRAWL_HARD_STOP = 50;  // Never go below this — avoids auto-upgrade to paid tier
+const FIRECRAWL_KV_KEY = 'firecrawl:credits_remaining';
 
 async function checkFirecrawlBudget(env, estimatedCredits = 1) {
-  const used = parseInt(await env.KV.get(FIRECRAWL_KV_KEY) || '0', 10);
-  const remaining = FIRECRAWL_MONTHLY_LIMIT - used;
-  if (remaining < FIRECRAWL_SAFETY_BUFFER) {
-    return { allowed: false, remaining, reason: `Firecrawl budget exhausted (${remaining} remaining, buffer ${FIRECRAWL_SAFETY_BUFFER})` };
+  const remaining = parseInt(await env.KV.get(FIRECRAWL_KV_KEY) || '0', 10);
+  if (remaining <= FIRECRAWL_HARD_STOP) {
+    return { allowed: false, remaining, reason: `Firecrawl hard stop (${remaining} remaining, limit ${FIRECRAWL_HARD_STOP})` };
   }
-  if (remaining - estimatedCredits < FIRECRAWL_SAFETY_BUFFER) {
-    return { allowed: true, remaining, useTinyFishOnly: true, reason: `Firecrawl low (${remaining} left), preferring TinyFish` };
+  if (remaining - estimatedCredits <= FIRECRAWL_HARD_STOP) {
+    return { allowed: false, remaining, reason: `Firecrawl would breach hard stop (${remaining} remaining)` };
   }
   return { allowed: true, remaining, useTinyFishOnly: false };
 }
 
 async function recordFirecrawlUsage(env, credits = 1) {
-  const used = parseInt(await env.KV.get(FIRECRAWL_KV_KEY) || '0', 10);
-  await env.KV.put(FIRECRAWL_KV_KEY, String(used + credits), { expirationTtl: 60 * 60 * 24 * 35 }); // 35 days (covers month + buffer)
+  const remaining = parseInt(await env.KV.get(FIRECRAWL_KV_KEY) || '0', 10);
+  const newRemaining = Math.max(0, remaining - credits);
+  await env.KV.put(FIRECRAWL_KV_KEY, String(newRemaining));
+  console.log(`[firecrawl] used ${credits} credit(s) — ${newRemaining} remaining`);
 }
 
 // ── Scrape.do Fetch ──────────────────────────────────────────────────────────
@@ -116,27 +119,28 @@ async function scrapeDoFetch(url, env, { render = false } = {}) {
 const STATE_REGULATIONS_CONFIG = {
   SC: {
     pages: [
-      { key: 'general', url: 'https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits', parser: 'scTableParser' }
+      // SCDNR official freshwater regulations booklet — pages 18-43 contain freshwater
+      // creel/size tables and lake-specific exceptions. Fetched as PDF, sliced by page.
+      { key: 'general', url: 'https://www.dnr.sc.gov/regs/pdf/25SCAB-PP2-RE.pdf', parser: 'scTableParser', pageRange: [18, 43] }
     ]
   },
   NC: {
     pages: [
-      { key: 'general', url: 'https://www.eregulations.com/northcarolina/fishing/warm-water-game-fish-regulations', parser: 'ncTableParser' }
+      // NCWRC official inland fishing rule text — complete regulatory rule set as PDF
+      { key: 'general', url: 'https://www.ncwildlife.gov/media/4600/download?attachment=', parser: 'ncTableParser' }
     ]
   },
   GA: {
     pages: [
-      { key: 'general', url: 'https://www.eregulations.com/georgia/fishing/game-species-daily-limits', parser: 'gaTableParser' }
+      // GA DNR 2025-2026 combined hunting/fishing guide — freshwater fishing regs within
+      { key: 'general', url: 'https://georgiawildlife.com/sites/default/files/wrd/pdf/regulations/GA2026_Hunting&Fishing%20Regulations.pdf', parser: 'gaTableParser' }
     ]
   },
   TN: {
     pages: [
-      { key: 'general', url: 'https://www.eregulations.com/tennessee/fishing/statewide-limits-regulations', parser: 'tnStatewideParser' },
-      { key: 'exceptions', url: 'https://www.eregulations.com/tennessee/fishing/exceptions-to-statewide-regulations', parser: 'tnExceptionsParser' },
-      { key: 'region1', url: 'https://www.eregulations.com/tennessee/fishing/region-1', parser: 'tnRegionParser' },
-      { key: 'region2', url: 'https://www.eregulations.com/tennessee/fishing/region-2', parser: 'tnRegionParser' },
-      { key: 'region3', url: 'https://www.eregulations.com/tennessee/fishing/region-3', parser: 'tnRegionParser' },
-      { key: 'region4', url: 'https://www.eregulations.com/tennessee/fishing/region-4', parser: 'tnRegionParser' }
+      // TWRA statewide creel/length limits — static HTML page, no JS rendering needed
+      { key: 'general', url: 'https://www.tn.gov/twra/fishing-regs/statewide-creel-length-limits.html', parser: 'tnStatewideParser' },
+      { key: 'exceptions', url: 'https://www.tn.gov/twra/fishing-regs/fishing-regulation-exceptions.html', parser: 'tnExceptionsParser' },
     ]
   }
 };
@@ -932,6 +936,8 @@ async function handleResearchDiscover(request, env) {
     if (/\.gc\.ca\/|dfo-mpo\.gc\.ca|canada\.ca|ontario\.|quebec\.|british.columbia|alberta\.|manitoba\./.test(combined)) return 'foreign_government_doc';
     if (/michigandnr\.com|michigan\.gov.*dnr|mndnr\.gov|dnr\.wi\.gov|dnr\.illinois|in\.gov.*dnr/.test(url)) return 'other_state_agency';
     if (/how.to.fish|beginner.*fishing|fishing.tips.*general|learn.to.fish|fishing.basics/.test(combined) && !combined.includes(baseLower)) return 'generic_fishing_article';
+    // Legal, regulatory, and policy papers — no fishing intelligence value
+    if (/legal\s+scheme|water\s+supply\s+withdrawal|water\s+rights\s+litigation|regulatory\s+scheme|hydropower\s+licen|ferc\s+licen|water\s+law|riparian\s+right|water\s+withdrawal|eminent\s+domain/i.test(combined) && !/fish|striper|bass|crappie|catfish|forage|spawn|troll|angl/i.test(combined)) return 'legal_policy_paper';
     // County/township boundary articles — "Marion and Lake County line", "Marion County line", etc.
     // These match lake base names that are also common county names (Marion, Norman, etc.)
     if (/county\s+line|township\s+line|\bcounty\b.*\bline\b/i.test(title) && !/lake\s+marion|marion\s+lake|lake\s+norman|norman\s+lake/i.test(title)) return 'county_boundary_article';
@@ -948,13 +954,13 @@ async function handleResearchDiscover(request, env) {
     return null;
   };
 
-  // State-specific config
+  // State-specific config — direct agency sources, no eRegulations SPA
   let dnrName = "SCDNR";
-  let regsUrl = "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits";
-  let regsTitle = "SC Freshwater Fish Size & Possession Limits (eRegulations)";
-  if (state === "NC") { dnrName = "NCWRC"; regsUrl = "https://www.eregulations.com/northcarolina/fishing/warm-water-game-fish-regulations"; regsTitle = "NC Freshwater Fishing Regulations (eRegulations)"; }
-  else if (state === "GA") { dnrName = "GADNR"; regsUrl = "https://www.eregulations.com/georgia/fishing/game-species-daily-limits"; regsTitle = "GA Game Species Daily Limits (eRegulations)"; }
-  else if (state === "TN") { dnrName = "TWRA"; regsUrl = "https://www.tn.gov/twra/fishing/regulations.html"; regsTitle = "Tennessee Fishing Regulations (TWRA)"; }
+  let regsUrl = "https://www.dnr.sc.gov/regs/pdf/25SCAB-PP2-RE.pdf";
+  let regsTitle = "SC Freshwater Fishing Regulations (SCDNR)";
+  if (state === "NC") { dnrName = "NCWRC"; regsUrl = "https://www.ncwildlife.gov/media/4600/download?attachment="; regsTitle = "NC Inland Fishing Regulations (NCWRC)"; }
+  else if (state === "GA") { dnrName = "GADNR"; regsUrl = "https://georgiawildlife.com/sites/default/files/wrd/pdf/regulations/GA2026_Hunting&Fishing%20Regulations.pdf"; regsTitle = "GA Hunting & Fishing Regulations 2025-2026 (GADNR)"; }
+  else if (state === "TN") { dnrName = "TWRA"; regsUrl = "https://www.tn.gov/twra/fishing-regs/statewide-creel-length-limits.html"; regsTitle = "Tennessee Statewide Creel & Length Limits (TWRA)"; }
 
   // Border lake query name overrides
   const queryLake = lakeName.replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i,'').trim();
@@ -1487,32 +1493,26 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
   // ── STEP 2: Grokipedia citation following ────────────────────────────────
   // Fetch the Grokipedia page and extract all citation URLs — these are the
   // same authoritative sources Grokipedia used, handed to us for free.
+  // Uses TinyFish (free) instead of Firecrawl. Links are extracted from markdown.
   // Only run for agents that benefit from Grokipedia citations.
-  if (wantsGrokipedia && firecrawlKey && (grokSlug || grokCandidates.length > 1)) {
+  if (wantsGrokipedia && (grokSlug || grokCandidates.length > 1)) {
     try {
-      // Try candidates in order until one returns real content (>2000 chars)
       let grokUrl = null;
-      let grokData = null;
+      let grokText = '';
       for (const candidate of grokCandidates) {
-        const tryRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: candidate, formats: ['links', 'markdown'], onlyMainContent: true, timeout: 30000 })
-        });
-        if (tryRes.ok) {
-          const tryData = await tryRes.json();
-          const candidateMarkdown = String(tryData.data?.markdown || '');
-          // Do not use an arbitrary character-count cutoff here. A short error,
-          // shell, or anti-bot page can be >400 chars, while the actual article
-          // should be selected by identity. The previous run's 1,406-char
-          // result was from /Lake_Blewett_Falls, not the requested article.
+        try {
+          const tfGrok = await tinyfishFetch({
+            urls: [candidate],
+            format: 'markdown',
+            ttl: 86400
+          }, env);
+          const candidateMarkdown = String(tfGrok.results?.[0]?.text || '');
           const isLakeArticle = /grokipedia\.com\/page\/blewett_falls_lake/i.test(candidate)
             ? /blewett\s+falls\s+lake/i.test(candidateMarkdown)
             : candidateMarkdown.length >= 200;
           if (candidateMarkdown.length >= 200 && isLakeArticle) {
             grokUrl = candidate;
-            grokData = tryData;
-            // Update seed URL if we found a working candidate
+            grokText = candidateMarkdown;
             const grokSeed = guaranteedSeeds.find(s => s.authority === 'Grokipedia');
             if (grokSeed && grokSeed.url !== candidate) {
               grokSeed.url = candidate;
@@ -1520,49 +1520,65 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
             }
             break;
           }
+        } catch (tfGrokErr) {
+          queryLog.push(`Grokipedia TinyFish fetch failed for ${candidate}: ${tfGrokErr.message}`);
         }
       }
-      if (!grokUrl) { queryLog.push('Grokipedia: no valid page found for any candidate'); }
-      if (grokUrl && grokData) {
-        const grokText = grokData.data?.markdown || '';
-        const grokLinks = grokData.data?.links || [];
 
-        // Extract citation links — Grokipedia uses [1], [2] etc. linked to external sources
-        // These appear as reference links at the bottom of the page
-        const citationLinks = grokLinks
-          .filter(l => {
-            const u = String(l.url || l || '');
-            // Skip internal grokipedia links, social media, Wikipedia disambiguation
-            return !u.includes('grokipedia.com') &&
-                   !u.includes('wikipedia.org/wiki/Wikipedia:') &&
-                   !u.includes('facebook.com') && !u.includes('twitter.com') &&
-                   !u.includes('youtube.com') && !u.includes('instagram.com') &&
-                   u.startsWith('http') && u.length > 20;
-          })
-          .map(l => String(l.url || l))
-          .slice(0, 15); // max 15 citation links
+      if (!grokUrl) { queryLog.push('Grokipedia: no valid page found for any candidate'); }
+      if (grokUrl && grokText) {
+        // Extract citation URLs from markdown — Grokipedia reference links appear as:
+        // [1]: https://... or [[1]](https://...) or plain URLs in reference section
+        const citationLinks = [];
+        const seen = new Set();
+        for (const m of grokText.matchAll(/\]\(?(https?:\/\/[^\s)\]"']+)/g)) {
+          const u = m[1];
+          if (seen.has(u)) continue;
+          seen.add(u);
+          if (u.includes('grokipedia.com')) continue;
+          if (/facebook\.com|twitter\.com|youtube\.com|instagram\.com|wikipedia\.org\/wiki\/Wikipedia:/i.test(u)) continue;
+          citationLinks.push(u);
+        }
 
         queryLog.push(`Grokipedia citations found: ${citationLinks.length}`);
 
-        for (const citUrl of citationLinks) {
-          const off = offLakePattern('', citUrl);
-          if (off) continue;
-          const isPdf = citUrl.toLowerCase().endsWith('.pdf');
-          let authority = 'Grokipedia Citation';
+        for (const citUrl of citationLinks.slice(0, 15)) {
+          // Extract a meaningful title from the URL for offLakePattern title check
+          const urlTitle = decodeURIComponent(citUrl.split('/').pop().replace(/[_-]/g,' ').replace(/\.[a-z]+$/i,''));
+          const off = offLakePattern(urlTitle, citUrl);
+          if (off) { queryLog.push(`  ✗ grok citation rejected (${off}): ${citUrl.slice(0,80)}`); continue; }
+
+          // Authority-aware filtering — only seed high-value domains from citations
+          // Skip generic/commercial domains that won't have lake intelligence
+          let authority = '';
           try {
             const host = new URL(citUrl).hostname;
             if (/usace\.army\.mil/.test(host)) authority = 'USACE';
             else if (/epa\.gov|nepis/.test(host)) authority = 'EPA';
             else if (/usgs\.gov/.test(host)) authority = 'USGS';
             else if (/dnr\.sc\.gov/.test(host)) authority = 'SCDNR';
+            else if (/ncwildlife\.gov|ncwildlife\.org/.test(host)) authority = 'NCWRC';
+            else if (/georgiawildlife\.com/.test(host)) authority = 'GADNR';
+            else if (/tn\.gov/.test(host)) authority = 'TWRA';
             else if (/duke-energy\.com/.test(host)) authority = 'Duke Energy';
             else if (/ferc\.gov/.test(host)) authority = 'FERC';
             else if (/santeecooper\.com/.test(host)) authority = 'Santee Cooper';
+            else if (/seafwa\.org|apms\.org|\.edu$/.test(host)) authority = 'Academic';
+            else if (/tva\.com/.test(host)) authority = 'TVA';
+            else authority = 'Web';
           } catch {}
-          addSeed({ title: `${lakeName} — ${authority} (via Grokipedia citation)`, type: isPdf ? 'PDF' : 'HTML', authority, url: citUrl, priority: 2 });
+
+          // Skip low-value domains from Grokipedia citations entirely
+          if (authority === 'Web') {
+            queryLog.push(`  ✗ grok citation skipped (low-value domain): ${citUrl.slice(0,80)}`);
+            continue;
+          }
+
+          const isPdf = citUrl.toLowerCase().endsWith('.pdf');
+          addSeed({ title: `${lakeName} — ${authority} (via Grokipedia citation)`, type: isPdf ? 'PDF' : 'HTML', authority, url: citUrl, priority: 2, agentTags: ['identity','limnology','biology','habitat'] });
         }
 
-        // Store the Grokipedia markdown content inline so proxy-download can skip re-fetching
+        // Store markdown inline so proxy-download can skip re-fetching
         const existingGrok = guaranteedSeeds.find(s => s.url === grokUrl);
         if (existingGrok && grokText) existingGrok.fullText = grokText;
       }
@@ -1592,11 +1608,6 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
     const purposeFn = AGENT_DISCOVERY_QUERIES._purposes?.[agentKey];
     const purposeStr = purposeFn ? purposeFn(queryLakeFinal, state) : `Find authoritative ${agentKey} information about ${lakeName} in ${state}`;
 
-    // Check Firecrawl budget before searching
-    const budget = await checkFirecrawlBudget(env, queries.length);
-    const useFirecrawl = budget.allowed && firecrawlKey && !budget.useTinyFishOnly;
-    const useTinyFish = !useFirecrawl;
-
     for (let qIndex = 0; qIndex < queries.length; qIndex++) {
       const q = queries[qIndex];
       const domainTypes = AGENT_DISCOVERY_QUERIES._domainTypes?.[agentKey];
@@ -1609,49 +1620,35 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
       try {
         let rawResults = [];
 
-        if (useFirecrawl) {
-          const searchRes = await fetch('https://api.firecrawl.dev/v2/search', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: q, limit: 5 })
-          });
-          if (!searchRes.ok) { queryLog.push(`[${agentKey}] FAILED (${searchRes.status}): ${q.slice(0,80)}`); continue; }
-          const searchData = await searchRes.json();
-          rawResults = searchData.data?.web || searchData.data || searchData.web || (Array.isArray(searchData) ? searchData : []);
-          await recordFirecrawlUsage(env, 1);
-        } else if (useTinyFish) {
-          try {
-            const tfParams = {
-              query: q,
-              domain_type: domainType,
-              purpose: purposeStr,
-              location: 'US',
-              language: 'en',
-            };
-            if (recencyMinutes) tfParams.recency_minutes = recencyMinutes;
-            const tfResult = await tinyfishSearch(tfParams, env);
-            rawResults = tfResult.results || [];
-            queryLog.push(`[${agentKey}${domainType !== 'web' ? ':' + domainType : ''}${recencyMinutes ? ':' + recencyMinutes + 'm' : ''}] TinyFish: ${q.slice(0,80)} → ${rawResults.length} results`);
+        // TinyFish handles all discovery search — free, no credits spent.
+        // Firecrawl is fetch-only (proxy-download). Never use Firecrawl for search.
+        try {
+          const tfParams = {
+            query: q,
+            domain_type: domainType,
+            purpose: purposeStr,
+            location: 'US',
+            language: 'en',
+          };
+          if (recencyMinutes) tfParams.recency_minutes = recencyMinutes;
+          const tfResult = await tinyfishSearch(tfParams, env);
+          rawResults = tfResult.results || [];
+          queryLog.push(`[${agentKey}${domainType !== 'web' ? ':' + domainType : ''}${recencyMinutes ? ':' + recencyMinutes + 'm' : ''}] TinyFish: ${q.slice(0,80)} → ${rawResults.length} results`);
 
-            // Fisheries current-report fallback: if < 3 results at 45d, retry at 180d
-            if (agentKey === 'fisheries' && qIndex === 0 && rawResults.length < 3 && recencyMinutes === 64800) {
-              try {
-                const tfFallback = await tinyfishSearch({ ...tfParams, recency_minutes: 259200 }, env);
-                const fallbackResults = tfFallback.results || [];
-                queryLog.push(`[fisheries] recency fallback 180d: ${fallbackResults.length} additional results`);
-                // Merge — avoid duplicates by URL
-                const existingUrls = new Set(rawResults.map(r => String(r.url||'').toLowerCase()));
-                rawResults = [...rawResults, ...fallbackResults.filter(r => !existingUrls.has(String(r.url||'').toLowerCase()))];
-              } catch (fbErr) {
-                queryLog.push(`[fisheries] recency fallback failed: ${fbErr.message}`);
-              }
+          // Fisheries current-report fallback: if < 3 results at 45d, retry at 180d
+          if (agentKey === 'fisheries' && qIndex === 0 && rawResults.length < 3 && recencyMinutes === 64800) {
+            try {
+              const tfFallback = await tinyfishSearch({ ...tfParams, recency_minutes: 259200 }, env);
+              const fallbackResults = tfFallback.results || [];
+              queryLog.push(`[fisheries] recency fallback 180d: ${fallbackResults.length} additional results`);
+              const existingUrls = new Set(rawResults.map(r => String(r.url||'').toLowerCase()));
+              rawResults = [...rawResults, ...fallbackResults.filter(r => !existingUrls.has(String(r.url||'').toLowerCase()))];
+            } catch (fbErr) {
+              queryLog.push(`[fisheries] recency fallback failed: ${fbErr.message}`);
             }
-          } catch (tfErr) {
-            queryLog.push(`[${agentKey}] TinyFish failed: ${tfErr.message}`);
-            continue;
           }
-        } else {
-          queryLog.push(`[${agentKey}] SKIPPED (Firecrawl budget exhausted): ${q.slice(0,80)}`);
+        } catch (tfErr) {
+          queryLog.push(`[${agentKey}] TinyFish failed: ${tfErr.message}`);
           continue;
         }
 
@@ -1820,7 +1817,7 @@ async function handleResearchProxyDownload(request, env) {
   const isNepisAny = /nepis\.epa\.gov|ZyNET\.exe/i.test(target);
   // Pages that MUST stay on Firecrawl: NEPIS (custom two-step), eRegulations (React SPA needs
   // waitFor:3000 to render table rows), Grokipedia (JS-rendered)
-  const needsFirecrawl = isNepisSearch || isNepisLanding || isNepisAny || /eregulations\.com/i.test(target) || /grokipedia\.com/i.test(target);
+  const needsFirecrawl = isNepisSearch || isNepisLanding || isNepisAny;
 
   if (firecrawlKey && isHtml && needsFirecrawl) {
     try {
@@ -2039,8 +2036,8 @@ async function handleResearchProxyDownload(request, env) {
       // waitFor helps JS-rendered SPAs like eRegulations populate table rows.
       // maxAge: static agency pages (SCDNR descriptions, eRegulations) rarely change —
       // if Firecrawl has a cached version < 7 days old it returns it for 0 additional credits.
-      const isSpa = /eregulations\.com/i.test(target);
-      const isStaticAgencyPage = /dnr\.sc\.gov\/lakes|ncwildlife\.org|georgiawildlife\.com|eregulations\.com/i.test(target);
+      const isSpa = false; // eRegulations removed — no SPA sources remain in this path
+      const isStaticAgencyPage = /dnr\.sc\.gov\/lakes|ncwildlife\.org|georgiawildlife\.com/i.test(target);
       const fcRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
@@ -3183,9 +3180,28 @@ function extractMarkdownTableRows(text) {
   return rows;
 }
 
+// Slice PDF.js extracted text to a page range using --- PAGE n --- markers.
+// Used to extract only the relevant section from large combined PDF guides.
+function slicePdfPageRange(text, startPage, endPage) {
+  if (!text) return text;
+  const lines = text.split('\n');
+  const result = [];
+  let inRange = false;
+  for (const line of lines) {
+    const pageMatch = line.match(/^---\s*PAGE\s*(\d+)\s*---$/i);
+    if (pageMatch) {
+      const pageNum = parseInt(pageMatch[1], 10);
+      inRange = pageNum >= startPage && pageNum <= endPage;
+    }
+    if (inRange) result.push(line);
+  }
+  // If no PAGE markers found (e.g. TinyFish returned plain text), return full text
+  return result.length > 0 ? result.join('\n') : text;
+}
+
 async function parseSCRegulationsFromHtml(lakeName, regsUrl, html, lakeSpecificHtml = '', env) {
   const systemPrompt = "You are an expert South Carolina freshwater fisheries regulation parser.\n" +
-"Your task is to extract size and creel (possession) limits from South Carolina's official eRegulations pages.\n\n" +
+"Your task is to extract size and creel (possession) limits from South Carolina's official freshwater fishing regulations (SCDNR regulations booklet, pages 18-43).\n\n" +
 "Extract both:\n" +
 "1. Statewide (general) regulations.\n" +
 "2. Lake-specific regulations / exceptions for the specified lake body.\n\n" +
@@ -3534,14 +3550,13 @@ async function handleResearchDeterministicFacts(request, env) {
   {
     const slug = lakeKeyFromName(lakeName);
     const regsUrl = state === 'NC'
-      ? 'https://www.eregulations.com/northcarolina/fishing/warm-water-game-fish-regulations'
+      ? 'https://www.ncwildlife.gov/media/4600/download?attachment='
       : state === 'GA'
-        ? 'https://www.eregulations.com/georgia/fishing/game-species-daily-limits'
+        ? 'https://georgiawildlife.com/sites/default/files/wrd/pdf/regulations/GA2026_Hunting&Fishing%20Regulations.pdf'
         : state === 'TN'
-          ? 'https://www.tn.gov/twra/fishing/regulations.html'
-          : 'https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits';
+          ? 'https://www.tn.gov/twra/fishing-regs/statewide-creel-length-limits.html'
+          : 'https://www.dnr.sc.gov/regs/pdf/25SCAB-PP2-RE.pdf';
     const lakeRegsUrl = state === 'SC' ? `https://www.dnr.sc.gov/lakes/${slug}/regs.html` : null;
-    const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
     try {
       let regsHtml = '';
       let lakeRegsHtml = '';
@@ -3561,13 +3576,26 @@ async function handleResearchDeterministicFacts(request, env) {
           if (!normObj) continue;
           const normDocs = JSON.parse(await normObj.text());
           if (!Array.isArray(normDocs) || !normDocs.length) continue;
-          const regsDoc = normDocs.find(d => d.url && /eregulations\.com/i.test(d.url) && /freshwater-fish-size|possession-limits|freshwater-game|freshwater-fishing-regulations|game-species-daily-limits|general-regulations/i.test(d.url + (d.title || '')))
-            || normDocs.find(d => d.url && /eregulations\.com/i.test(d.url));
+          const regsDoc = normDocs.find(d => d.url && /dnr\.sc\.gov\/regs\/pdf|ncwildlife\.gov\/media\/4600|georgiawildlife\.com.*regulations|tn\.gov\/twra\/fishing-regs/i.test(d.url))
+            || normDocs.find(d => d.url && /eregulations\.com/i.test(d.url)); // legacy fallback
           const lakeRegsDoc = state === 'SC'
             ? (normDocs.find(d => d.url && d.url.includes(`/lakes/${slug}/regs`))
               || normDocs.find(d => /lake.*regulations/i.test(d.title || '') && d.url && d.url.includes(slug)))
             : null;
-          if (regsDoc?.fullText) regsHtml = regsDoc.fullText;
+          if (regsDoc?.fullText) {
+            let text = regsDoc.fullText;
+            // Slice SC regulations PDF to freshwater pages 18-43 only
+            // Full booklet includes hunting/saltwater — we only need freshwater creel/size tables
+            if (/dnr\.sc\.gov\/regs\/pdf/i.test(regsDoc.url || '')) {
+              text = slicePdfPageRange(text, 18, 43);
+            }
+            // Slice GA regulations PDF to fishing section (approx pages 44-80)
+            // Combined hunting/fishing guide — fishing section starts around page 44
+            if (/georgiawildlife\.com.*regulations/i.test(regsDoc.url || '')) {
+              text = slicePdfPageRange(text, 44, 85);
+            }
+            regsHtml = text;
+          }
           if (lakeRegsDoc?.fullText) lakeRegsHtml = lakeRegsDoc.fullText;
           profile._regsDebug = {
             normKey,
@@ -3585,31 +3613,43 @@ async function handleResearchDeterministicFacts(request, env) {
         profile._regsDebug = { loadError: e.message };
       }
 
-      // Live Firecrawl scrape of eRegulations if normalized docs missing/empty
-      // (eRegulations is a React SPA — plain fetch returns shell HTML with no table rows)
-      if (!regsHtml && firecrawlKey) {
+      // Live fetch fallback when normalized cache is empty (first run only).
+      // SC: TinyFish can't fetch dnr.sc.gov PDF server-side — use Tavily extract
+      //     (1 credit per 5 URLs, so ~1 credit). After first run the PDF content
+      //     is cached client-side by the regulations agent and this never fires again.
+      // NC/GA/TN: TinyFish handles their static HTML/PDF sources directly.
+      if (!regsHtml) {
         try {
-          const fcRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              url: regsUrl,
-              formats: ['markdown'],
-              onlyMainContent: true,
-              waitFor: 3000,
-              timeout: 25000
-            })
-          });
-          if (fcRes.ok) {
-            const fcData = await fcRes.json();
-            const md = fcData.data?.markdown || fcData.markdown || '';
+          if (state === 'SC') {
+            const tavilyKey = env.TAVILY_API_KEY;
+            if (tavilyKey) {
+              const tvRes = await fetch('https://api.tavily.com/extract', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${tavilyKey}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ urls: [regsUrl], extract_depth: 'basic', format: 'markdown', include_images: false })
+              });
+              if (tvRes.ok) {
+                const tvData = await tvRes.json();
+                const raw = tvData.results?.[0]?.raw_content || '';
+                if (raw && raw.length > 200) {
+                  regsHtml = slicePdfPageRange(raw, 18, 43);
+                  profile._regsDebug = { ...(profile._regsDebug || {}), liveTavily: true, regsHtmlLen: regsHtml.length };
+                }
+              }
+            }
+          } else {
+            // NC/GA/TN — TinyFish handles these directly
+            const tfRegs = await tinyfishFetch({ urls: [regsUrl], format: 'markdown', ttl: 604800 }, env);
+            const md = tfRegs.results?.[0]?.text || '';
             if (md && md.length > 200) {
-              regsHtml = md;
-              profile._regsDebug = { ...(profile._regsDebug || {}), liveFirecrawl: true, regsHtmlLen: md.length };
+              let text = md;
+              if (/georgiawildlife\.com.*regulations/i.test(regsUrl)) text = slicePdfPageRange(text, 44, 85);
+              regsHtml = text;
+              profile._regsDebug = { ...(profile._regsDebug || {}), liveTinyFish: true, regsHtmlLen: regsHtml.length };
             }
           }
         } catch (e) {
-          console.warn(`live Firecrawl eRegulations scrape failed: ${e.message}`);
+          console.warn(`live regs fetch failed for ${regsUrl}: ${e.message}`);
         }
       }
 
@@ -3631,7 +3671,7 @@ async function handleResearchDeterministicFacts(request, env) {
           // SC: use deterministic HTML parser. NC/GA: store raw text for agent extraction
           const parsedRegs = state === 'SC'
             ? await parseSCRegulationsFromHtml(lakeName, regsUrl, regsHtml || '', lakeRegsHtml || '', env)
-            : { regulations: { state, rawRegsText: (regsHtml || '').slice(0, 8000) }, sources: [{ label: `${state} Freshwater Regulations (eRegulations)`, url: regsUrl, authority: state === 'NC' ? 'NCWRC' : state === 'TN' ? 'TWRA' : 'GADNR', trust: 'OFFICIAL' }], evidence: {} };
+            : { regulations: { state, rawRegsText: (regsHtml || '').slice(0, 8000) }, sources: [{ label: `${state} Freshwater Fishing Regulations`, url: regsUrl, authority: state === 'NC' ? 'NCWRC' : state === 'TN' ? 'TWRA' : 'GADNR', trust: 'OFFICIAL' }], evidence: {} };
           const pr = parsedRegs.regulations || {};
           if (pr.state) profile.regulations.state = pr.state;
           if (pr.lastUpdated) profile.regulations.lastUpdated = pr.lastUpdated;
@@ -6330,9 +6370,6 @@ async function handleResearchThermoclineSearch(request, env) {
   const { lakeName } = body;
   if (!lakeName) return new Response(JSON.stringify({ ok: false, error: 'missing lakeName' }), { status: 400, headers: JSON_HEADERS });
 
-  const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
-  if (!firecrawlKey) return new Response(JSON.stringify({ ok: false, error: 'FIRECRAWL_API_KEY not configured' }), { status: 500, headers: JSON_HEADERS });
-
   // Strip state suffix for queries
   const queryLake = lakeName.replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i, '').trim();
 
@@ -6348,17 +6385,17 @@ async function handleResearchThermoclineSearch(request, env) {
   for (const q of queries) {
     try {
       console.log(`[thermocline-search] Query: ${q}`);
-      const res = await fetch('https://api.firecrawl.dev/v2/search', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: q, limit: 3 })
-      });
-      if (!res.ok) { console.warn(`[thermocline-search] query failed (${res.status}): ${q}`); queryResults.push({ query: q, status: res.status, found: 0 }); continue; }
-      const data = await res.json();
-      const results = data.data?.web || data.data || data.web || (Array.isArray(data) ? data : []);
+      const tfResult = await tinyfishSearch({
+        query: q,
+        domain_type: 'web',
+        purpose: `Find thermocline depth and summer fishing depth information for ${queryLake}`,
+        location: 'US',
+        language: 'en',
+      }, env);
+      const results = tfResult.results || [];
       let added = 0;
       for (const r of results) {
-        const content = r.markdown || r.content || r.description || r.snippet || '';
+        const content = r.snippet || r.description || r.summary || r.markdown || r.content || '';
         if (!r.url || !content) continue;
         const normUrl = String(r.url).split('?')[0].toLowerCase();
         if (articles.some(a => a.url.split('?')[0].toLowerCase() === normUrl)) continue;
