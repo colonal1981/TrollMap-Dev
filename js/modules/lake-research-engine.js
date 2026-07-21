@@ -1267,6 +1267,22 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
       }
     }
 
+    // Species trace: keep the evidence handoff visible in the in-app research
+    // log. This is intentionally done here rather than relying on DevTools
+    // Network inspection, which can pause the pipeline in some browsers.
+    if (agentKey === 'biology') {
+      const speciesFacts = uniqueFacts.filter(f =>
+        /predatorSpecies|speciesAbundance|stocking/i.test(String(f.category || '')) ||
+        /\b(muskellunge|muskie|walleye|pickerel|perch|catfish|crappie|bass|bluegill|bowfin)\b/i.test(String(f.fact || ''))
+      );
+      if (speciesFacts.length) {
+        log(`  [biology] Species evidence sent to LLM (${speciesFacts.length} facts):`);
+        speciesFacts.forEach(f => log(`    • [${f.category}] ${String(f.fact || '').slice(0, 220)} — source: ${String(f.source || '').slice(0, 80)}`));
+      } else {
+        log('  [biology] Species evidence sent to LLM: NONE');
+      }
+    }
+
     // ── STEP 6: LLM enrichment (one Worker call, fast) ───────────────────────
     log(`  [${agentKey}] Running LLM enrichment...`);
     const agentRes = await fetch(`${CF_WORKER_URL}/research/agent-llm`, {
@@ -1318,6 +1334,14 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
 
     const agentData = await agentRes.json();
     if (!agentData.success) throw new Error(agentData.error || 'Agent LLM failed');
+
+    if (agentKey === 'biology') {
+      const returnedSpecies = agentData.section?.predatorSpecies || [];
+      const inputSpecies = previousResults.biology?.predatorSpecies || [];
+      const addedSpecies = returnedSpecies.filter(s => !inputSpecies.some(i => String(i).toLowerCase() === String(s).toLowerCase()));
+      log(`  [biology] LLM returned predator species (${returnedSpecies.length}): ${returnedSpecies.join(', ') || 'NONE'}`);
+      log(`  [biology] LLM-added species beyond deterministic input: ${addedSpecies.join(', ') || 'NONE'}`);
+    }
 
     log(`✔ ${def.label} agent complete (${uniqueFacts.length} facts, ${normalizedDocuments.length} docs)`);
     if (callbacks.onComplete) await callbacks.onComplete(lakeName);
