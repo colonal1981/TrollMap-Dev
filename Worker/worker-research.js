@@ -944,7 +944,9 @@ async function handleResearchDiscover(request, env) {
     // Social media and video platforms — never fetchable, never useful as evidence
     if (/facebook\.com|youtube\.com|instagram\.com|tiktok\.com|twitter\.com|x\.com\/(?!ai)|pinterest\.com/i.test(url)) return 'social_media';
     // Fishing forums — usable content rate is near zero, TinyFish can't fetch them anyway
-    if (/stripersonline\.com|bassresource\.com|carolinasportsman\.com\/forums|fishingnc\.com\/forum|fishingsc\.com\/forum|theoutdoorstrader\.com|scstriperfishing|bassfishingforum|iceshanty\.com|fishingcommunity|thefishingwebsite|southernfishingnews\.com\/forum|fishingtalkforums|angler\.com\/forum/i.test(url)) return 'fishing_forum';
+    if (/stripersonline\.com|bassresource\.com|carolinasportsman\.com\/forums|fishingnc\.com\/forum|fishingsc\.com\/forum|theoutdoorstrader\.com|scstriperfishing|bassfishingforum|iceshanty\.com|fishingcommunity|thefishingwebsite|southernfishingnews\.com\/forum|fishingtalkforums|angler\.com\/forum|reddit\.com/i.test(url)) return 'fishing_forum';
+    // Review/booking/aggregator sites — no fishing intelligence value
+    if (/yelp\.com|tripadvisor\.com|fishingbooker\.com|getmyboat\.com|viator\.com|expedia\.com|booking\.com/i.test(url)) return 'review_booking_site';
     for (const other of otherLakeNames) {
       if (other === baseLower) continue;
       if (combined.includes(`lake ${other}`) && !combined.includes(baseLower)) {
