@@ -1168,6 +1168,10 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
         log(`  [${agentKey}] Resume: pulled ${sharedHits} additional docs from shared registry`);
       }
     } else {
+      // ── STEP 3a: Separate cache hits, shared registry hits, and sources needing fetch ──
+      const sourcesToFetch = [];
+      const lakeSlug = lakeName.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+
       for (const src of cappedSources) {
         const normUrl = String(src.url || '').split('?')[0].toLowerCase();
         const existing = existingByUrl.get(normUrl);
@@ -1182,8 +1186,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
           }
         }
 
-        // Fetch via proxy-download
-        // Phase 2: Check shared registry first — skip fetch if canonical URL already stored
+        // Phase 2: Check shared registry first
         let sharedDoc = null;
         if (src.canonicalUrl) {
           try {
@@ -1201,11 +1204,10 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
         }
 
         if (sharedDoc) {
-          // Pull relevant sections from shared registry instead of fetching
           try {
             const queryRes = await fetch(`${CF_WORKER_URL}/research/shared/query`, {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ canonicalUrl: src.canonicalUrl, lakeSlug: lakeName.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,''), categories: [agentKey] })
+              body: JSON.stringify({ canonicalUrl: src.canonicalUrl, lakeSlug, categories: [agentKey] })
             });
             if (queryRes.ok) {
               const queryData = await queryRes.json();
@@ -1222,9 +1224,79 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
               }
             }
           } catch (_) {}
-          // Fall through to normal fetch if shared query fails
+          // Fall through to real fetch if shared query fails
         }
 
+        // Queue for batch or individual fetch
+        sourcesToFetch.push(src);
+      }
+
+      // ── STEP 3b: Batch fetch HTML sources via TinyFish (up to 10 per call) ──
+      // PDFs, NEPIS, and special domains are fetched individually below.
+      const isPdfUrl = (u, t) => (t || '').toUpperCase() === 'PDF' || /\.pdf(?:$|[?#])/i.test(u || '');
+      const isSpecialUrl = (u) => /nepis\.epa\.gov|ZyNET\.exe|wateratlas\.usf\.edu/i.test(u || '');
+
+      const batchSources = sourcesToFetch.filter(s => !isPdfUrl(s.url, s.type) && !isSpecialUrl(s.url));
+      const individualSources = sourcesToFetch.filter(s => isPdfUrl(s.url, s.type) || isSpecialUrl(s.url));
+
+      const BATCH_SIZE = 10;
+      for (let i = 0; i < batchSources.length; i += BATCH_SIZE) {
+        const batch = batchSources.slice(i, i + BATCH_SIZE);
+        const batchPayload = batch.map(s => ({ url: s.url, canonicalUrl: s.canonicalUrl || s.url, title: s.title, type: s.type || 'HTML' }));
+
+        try {
+          const batchRes = await fetch(`${CF_WORKER_URL}/research/proxy-download-batch`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ urls: batchPayload })
+          });
+
+          if (batchRes.ok) {
+            const batchData = await batchRes.json();
+            for (let j = 0; j < batch.length; j++) {
+              const src = batch[j];
+              const result = batchData.results?.[j];
+              const normUrl = String(src.url || '').split('?')[0].toLowerCase();
+
+              if (result?.ok && result.text?.length > 200) {
+                const doc = {
+                  title: src.title, url: src.url, fullText: result.text,
+                  agentTags: src.agentTags || [agentKey],
+                  discoveredBy: agentKey,
+                  fetchedAt: new Date().toISOString(),
+                };
+                normalizedDocuments.push(doc);
+                existingByUrl.set(normUrl, doc);
+                log(`  📄 [${normalizedDocuments.length}] ${src.title?.slice(0, 70)} (${result.source})`);
+
+                // Store in shared registry fire-and-forget
+                if (src.canonicalUrl) {
+                  fetch(`${CF_WORKER_URL}/research/shared/store`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      canonicalUrl: src.canonicalUrl, requestedUrl: src.url,
+                      title: src.title, fullText: result.text,
+                      authority: src.authority || 'unknown', fetchProvider: result.source,
+                    })
+                  }).catch(() => {});
+                }
+              } else if (result?.reason === 'unhandled') {
+                // Batch classified as special — move to individual queue
+                individualSources.push(src);
+              } else {
+                log(`  ⚠️ Batch fetch failed for ${src.title?.slice(0, 60)}: ${result?.error || 'no content'}`);
+              }
+            }
+          }
+        } catch (batchErr) {
+          log(`  ⚠️ Batch fetch error: ${batchErr.message} — falling back to individual fetches`);
+          individualSources.push(...batch);
+        }
+      }
+
+      // ── STEP 3c: Individual fetches for PDFs, NEPIS, and batch fallbacks ──
+      for (const src of individualSources) {
+        const normUrl = String(src.url || '').split('?')[0].toLowerCase();
         try {
           const proxyRes = await fetch(
             `${CF_WORKER_URL}/research/proxy-download?url=${encodeURIComponent(src.url)}&type=${src.type || 'HTML'}`
@@ -1232,14 +1304,8 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
           if (proxyRes.ok) {
             const xSource = proxyRes.headers?.get('X-Source') || 'unknown';
             const contentType = proxyRes.headers?.get('Content-Type') || '';
-            // TinyFish may return extracted text/plain for a source whose original
-            // type/URL is PDF. Only invoke PDF.js when the proxy actually returned
-            // PDF bytes; unknown content types retain the URL/type fallback.
             const isPdf = /application\/pdf/i.test(contentType)
               || (!contentType && (src.type === 'PDF' || /\.pdf(?:$|[?#])/i.test(src.url || '')));
-            // proxy-download intentionally streams ordinary PDFs unchanged. Reading that
-            // binary response with response.text() corrupts it and can make random PDF
-            // bytes look like a valid document. Parse it with the existing PDF.js path.
             const text = isPdf
               ? (await extractTextFromPDFBytes(await proxyRes.arrayBuffer())).fullText
               : await proxyRes.text();
@@ -1254,23 +1320,16 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
               existingByUrl.set(normUrl, doc);
               log(`  📄 [${normalizedDocuments.length}] ${src.title?.slice(0, 70)} (${isPdf ? 'pdf.js via ' : ''}${xSource})`);
 
-              // Phase 2: Store in shared registry after successful fetch
-              // Fire-and-forget — don't block the pipeline on registry storage
+              // Store in shared registry fire-and-forget
               if (src.canonicalUrl) {
                 fetch(`${CF_WORKER_URL}/research/shared/store`, {
                   method: 'POST', headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
-                    canonicalUrl: src.canonicalUrl,
-                    requestedUrl: src.url,
-                    urlAliases: src.urlAliases || [],
-                    sourceRevision: src.sourceRevision || null,
-                    title: src.title,
-                    providerTitle: src.title,
-                    fullText: text,
-                    authority: src.authority || 'unknown',
-                    fetchProvider: xSource,
+                    canonicalUrl: src.canonicalUrl, requestedUrl: src.url,
+                    title: src.title, fullText: text,
+                    authority: src.authority || 'unknown', fetchProvider: xSource,
                   })
-                }).catch(() => {}); // non-blocking
+                }).catch(() => {});
               }
             } else {
               log(`  ⚠️ Insufficient content for ${src.title?.slice(0, 60)} (${text?.length || 0} chars)`);
