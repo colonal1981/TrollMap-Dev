@@ -1371,11 +1371,13 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
   // Summary always runs last — separate it from the parallel batch
   const hasSummary = agentKeys.includes('summary');
   let parallelAgents = agentKeys.filter(k => k !== 'summary');
-  // Keep the dependency producer first even when the UI selection order is
-  // reversed. This also makes resume runs deterministic.
-  if (parallelAgents.includes('biology') && parallelAgents.includes('fisheries')) {
-    parallelAgents = ['biology', ...parallelAgents.filter(k => k !== 'biology')];
-  }
+  // Always sort agents by canonical RESEARCH_ORDER so dependencies are respected
+  // regardless of UI selection order or resume call order.
+  parallelAgents = parallelAgents.sort((a, b) => {
+    const ai = RESEARCH_ORDER.indexOf(a);
+    const bi = RESEARCH_ORDER.indexOf(b);
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+  });
   const total = agentKeys.length;
   let completed = 0;
   log(`=== RUN AGENTS: [${agentKeys.join(', ')}] (${mode}) ===`);
