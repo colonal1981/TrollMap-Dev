@@ -782,6 +782,7 @@ async function handleResearchLimnologyData(request, env) {
     const sortedBins = Object.keys(bins).map(Number).sort((a, b) => a - b);
     let anoxicBelowFt = null;
     for (const bin of sortedBins) {
+      if (bin < 6) continue; // ignore surface bins — near-zero surface grab samples produce false positives
       const vals = bins[bin].slice().sort((a, b) => a - b);
       const median = vals[Math.floor(vals.length / 2)];
       if (median < 2) { anoxicBelowFt = bin; break; }
