@@ -1014,9 +1014,21 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     const sources = (discoverData.sources || []).filter(s => s.agentTags?.includes(agentKey) || !s.agentTags);
     const queryLog = discoverData.queryLog || [];
     queryLog.forEach(q => log(`  [discover] ${q}`));
-    log(`  [${agentKey}] Found ${sources.length} sources`);
 
-    if (!sources.length) {
+    // Cap sources per agent — sort by prefetchScore descending so guaranteed seeds
+    // (score 999) always survive, then take best discovered sources up to cap.
+    // Prevents marginal sources from burning Scrape.do/Firecrawl credits on fetch.
+    const AGENT_SOURCE_CAPS = {
+      identity: 8, limnology: 12, biology: 12, habitat: 8,
+      navigation: 8, regulations: 5, fisheries: 10, summary: 0
+    };
+    const cap = AGENT_SOURCE_CAPS[agentKey] ?? 10;
+    const cappedSources = sources
+      .sort((a, b) => (b.prefetchScore ?? b.score ?? 0) - (a.prefetchScore ?? a.score ?? 0))
+      .slice(0, cap);
+    log(`  [${agentKey}] Found ${sources.length} sources → capped to ${cappedSources.length}`);
+
+    if (!cappedSources.length) {
       log(`  [${agentKey}] No sources — skipping`);
       return { success: true, agent: agentKey, section: {}, factsCount: 0, docsUsed: 0, queryLog };
     }
@@ -1069,7 +1081,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     } else if (mode === 'resume') {
       normalizedDocuments.push(...existingDocs);
     } else {
-      for (const src of sources) {
+      for (const src of cappedSources) {
         const normUrl = String(src.url || '').split('?')[0].toLowerCase();
         const existing = existingByUrl.get(normUrl);
 
@@ -1171,6 +1183,14 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
             uniqueFacts = rawFacts;
           }
           log(`  [${agentKey}] ${uniqueFacts.length} facts extracted`);
+          // Per-doc breakdown — how many facts each document contributed
+          const factsByDoc = {};
+          for (const f of uniqueFacts) {
+            const src = String(f.source || '').slice(0, 50);
+            factsByDoc[src] = (factsByDoc[src] || 0) + 1;
+          }
+          const docEntries = Object.entries(factsByDoc).sort((a,b) => b[1]-a[1]);
+          docEntries.forEach(([src, count]) => log(`  📊 ${count} fact${count>1?'s':''}: ${src}`));
           uniqueFacts.slice(0, 5).forEach(f => log(`  💬 [${f.category}] ${String(f.fact || '').slice(0, 80)}`));
         }
       }
@@ -1571,6 +1591,26 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
           merged[subKey] = mergedSub;
         }
       }
+      // Coerce string types left over from prior runs or LLM output
+      const coerceNum = (v) => {
+        if (v === null || v === undefined) return null;
+        if (typeof v === 'number') return v;
+        if (typeof v === 'string') {
+          if (v === 'null' || v === '' || v === 'unknown') return null;
+          const rangeMatch = v.match(/^([\d.]+)\s*[-–]\s*([\d.]+)$/);
+          if (rangeMatch) return Math.round((parseFloat(rangeMatch[1]) + parseFloat(rangeMatch[2])) / 2);
+          const num = parseFloat(v);
+          return isFinite(num) ? num : null;
+        }
+        return null;
+      };
+      if (merged.thermocline) merged.thermocline.summerDepthFt = coerceNum(merged.thermocline.summerDepthFt);
+      if (merged.oxygen) {
+        merged.oxygen.depletionDepthFt = coerceNum(merged.oxygen.depletionDepthFt);
+        merged.oxygen.anoxicBelowFt = coerceNum(merged.oxygen.anoxicBelowFt);
+      }
+      if (merged.waterClarity) merged.waterClarity.secchiFt = coerceNum(merged.waterClarity.secchiFt);
+      if (merged.seasonalDrawdownFt != null) merged.seasonalDrawdownFt = coerceNum(merged.seasonalDrawdownFt) ?? merged.seasonalDrawdownFt;
     }
     // Regulations: deep-merge lakeSpecificRegulations — don't let empty overwrite populated
     if (agentKey === 'regulations' && data.section?.lakeSpecificRegulations) {
