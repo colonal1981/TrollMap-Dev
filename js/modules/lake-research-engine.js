@@ -965,7 +965,7 @@ async function runResume(lakeName, selectedAgents, callbacks = {}) {
 // does too much, avoiding the CPU time limit that killed handleResearchAgentPipeline.
 // Pattern: discover → proxy-download (per doc) → save-normalized → analyze-facts
 //          → dedupe-contradictions → agent (LLM only)
-async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRunAgents = false) {
+async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRunAgents = false, _contextResults = {}) {
   if (!_calledFromRunAgents && _state.researchInProgress) throw new Error('A research task is already in progress.');
   if (!lakeName) throw new Error('Select a lake first.');
   if (!AGENT_DEFINITIONS[agentKey]) throw new Error(`Unknown agent: ${agentKey}`);
@@ -994,6 +994,14 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
         reservoirOwner: _state.deterministicProfile?.identity?.reservoirOwner || null,
         predatorSpecies: _state.deterministicProfile?.biology?.predatorSpecies || [],
       };
+    }
+
+    // Agents may depend on the output of an earlier agent. In particular,
+    // fisheries must receive biology.predatorSpecies; the multi-agent runner
+    // intentionally starts independent agents in parallel, so merge the
+    // completed dependency context before discovery and LLM enrichment.
+    if (_contextResults && Object.keys(_contextResults).length) {
+      previousResults = { ...previousResults, ..._contextResults };
     }
 
     // ── STEP 1: Discover sources for this agent ──────────────────────────────
@@ -1338,7 +1346,12 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
 
   // Summary always runs last — separate it from the parallel batch
   const hasSummary = agentKeys.includes('summary');
-  const parallelAgents = agentKeys.filter(k => k !== 'summary');
+  let parallelAgents = agentKeys.filter(k => k !== 'summary');
+  // Keep the dependency producer first even when the UI selection order is
+  // reversed. This also makes resume runs deterministic.
+  if (parallelAgents.includes('biology') && parallelAgents.includes('fisheries')) {
+    parallelAgents = ['biology', ...parallelAgents.filter(k => k !== 'biology')];
+  }
   const total = agentKeys.length;
   let completed = 0;
   log(`=== RUN AGENTS: [${agentKeys.join(', ')}] (${mode}) ===`);
@@ -1346,16 +1359,26 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
   const MAX_CONCURRENT = 2;
   const STAGGER_MS = 2000;
   const results = [];
+  // Fisheries consumes biology.predatorSpecies. Do not run those two agents
+  // concurrently: a fresh run otherwise sends fisheries an empty biology
+  // section before the biology result exists ("0 species split into 0 groups").
+  const hasSpeciesDependency = parallelAgents.includes('biology') && parallelAgents.includes('fisheries');
+  const batchSize = hasSpeciesDependency ? 1 : MAX_CONCURRENT;
 
   try {
-    // Run all non-summary agents in parallel batches
-    for (let i = 0; i < parallelAgents.length; i += MAX_CONCURRENT) {
-      const batch = parallelAgents.slice(i, i + MAX_CONCURRENT);
+    // Run all non-summary agents in parallel batches, except the biology ->
+    // fisheries dependency which is deliberately serialized above.
+    for (let i = 0; i < parallelAgents.length; i += batchSize) {
+      const batch = parallelAgents.slice(i, i + batchSize);
       const batchPromises = batch.map((agentKey, batchIdx) => {
         const delay = batchIdx * STAGGER_MS;
         return new Promise(resolve => setTimeout(async () => {
           try {
-            const result = await runAgent(lakeName, agentKey, mode, {}, true);
+            const biologyResult = results.find(r => r.agent === 'biology')?.data;
+            const dependencyContext = biologyResult?.section
+              ? { biology: biologyResult.section }
+              : {};
+            const result = await runAgent(lakeName, agentKey, mode, {}, true, dependencyContext);
             completed++;
             setProgress(`[${completed}/${total}] ${RESEARCH_LABELS[agentKey] || agentKey} complete`, Math.round((completed / total) * 80));
             resolve({ status: 'fulfilled', value: result, agent: agentKey });

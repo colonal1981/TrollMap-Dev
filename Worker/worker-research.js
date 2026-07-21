@@ -5387,8 +5387,18 @@ async function handleResearchAgent(request, env) {
   // Running all 17 species in one call causes token budget compression — striper spring
   // and other minority-season data gets dropped. Split into groups, merge results.
   if (agentKey === 'fisheries') {
+    // The client normally supplies the completed biology section. Keep a
+    // compatibility fallback for older callers/resume payloads that only sent
+    // predatorSpecies at the top level; otherwise fisheries silently receives
+    // an empty list and creates zero groups.
     const bio = groundedPrev?.biology || {};
-    const allSpecies = Array.isArray(bio.predatorSpecies) ? bio.predatorSpecies : [];
+    const allSpecies = Array.isArray(bio.predatorSpecies)
+      ? bio.predatorSpecies
+      : (Array.isArray(groundedPrev?.predatorSpecies) ? groundedPrev.predatorSpecies : []);
+    if (!Array.isArray(bio.predatorSpecies) && allSpecies.length) {
+      bio.predatorSpecies = allSpecies;
+    }
+    console.log(`fisheries agent: received ${allSpecies.length} species from biology context`);
 
     // Dedup species before grouping:
     // Black Crappie / White Crappie are redundant with Crappie for trolling intel purposes
