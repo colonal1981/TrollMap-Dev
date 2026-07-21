@@ -1004,6 +1004,23 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
       previousResults = { ...previousResults, ..._contextResults };
     }
 
+    // When fisheries runs without biology in the same batch (e.g. resume on
+    // fisheries only), load the saved profile's species list so the LLM has
+    // the correct predatorSpecies to generate trollingIntelligence sections.
+    if (agentKey === 'fisheries' && !previousResults.biology?.predatorSpecies?.length) {
+      try {
+        const savedRes = await fetch(`${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`);
+        if (savedRes.ok) {
+          const savedData = await savedRes.json();
+          const savedBiology = savedData.profile?.biology || savedData.profile?.forage || null;
+          if (savedBiology?.predatorSpecies?.length) {
+            previousResults = { ...previousResults, biology: savedBiology, predatorSpecies: savedBiology.predatorSpecies };
+            log(`  [fisheries] Loaded ${savedBiology.predatorSpecies.length} species from saved profile for LLM context`);
+          }
+        }
+      } catch (_) {}
+    }
+
     // ── STEP 1: Discover sources for this agent ──────────────────────────────
     log(`  [${agentKey}] Discovering sources...`);
     const discoverRes = await fetch(`${CF_WORKER_URL}/research/discover`, {
@@ -1472,6 +1489,9 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
         return new Promise(resolve => setTimeout(async () => {
           try {
             const biologyResult = results.find(r => r.agent === 'biology')?.data;
+            // When fisheries runs alone (resume), biology won't be in results.
+            // Fall back to the existing saved profile's species list so fisheries
+            // gets the correct predatorSpecies and doesn't generate empty intel.
             const dependencyContext = biologyResult?.section
               ? { biology: biologyResult.section }
               : {};
