@@ -965,7 +965,7 @@ async function runResume(lakeName, selectedAgents, callbacks = {}) {
 // does too much, avoiding the CPU time limit that killed handleResearchAgentPipeline.
 // Pattern: discover → proxy-download (per doc) → save-normalized → analyze-facts
 //          → dedupe-contradictions → agent (LLM only)
-async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRunAgents = false) {
+async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRunAgents = false, _contextResults = {}) {
   if (!_calledFromRunAgents && _state.researchInProgress) throw new Error('A research task is already in progress.');
   if (!lakeName) throw new Error('Select a lake first.');
   if (!AGENT_DEFINITIONS[agentKey]) throw new Error(`Unknown agent: ${agentKey}`);
@@ -994,6 +994,14 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
         reservoirOwner: _state.deterministicProfile?.identity?.reservoirOwner || null,
         predatorSpecies: _state.deterministicProfile?.biology?.predatorSpecies || [],
       };
+    }
+
+    // Agents may depend on the output of an earlier agent. In particular,
+    // fisheries must receive biology.predatorSpecies; the multi-agent runner
+    // intentionally starts independent agents in parallel, so merge the
+    // completed dependency context before discovery and LLM enrichment.
+    if (_contextResults && Object.keys(_contextResults).length) {
+      previousResults = { ...previousResults, ..._contextResults };
     }
 
     // ── STEP 1: Discover sources for this agent ──────────────────────────────
@@ -1259,6 +1267,22 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
       }
     }
 
+    // Species trace: keep the evidence handoff visible in the in-app research
+    // log. This is intentionally done here rather than relying on DevTools
+    // Network inspection, which can pause the pipeline in some browsers.
+    if (agentKey === 'biology') {
+      const speciesFacts = uniqueFacts.filter(f =>
+        /predatorSpecies|speciesAbundance|stocking/i.test(String(f.category || '')) ||
+        /\b(muskellunge|muskie|walleye|pickerel|perch|catfish|crappie|bass|bluegill|bowfin)\b/i.test(String(f.fact || ''))
+      );
+      if (speciesFacts.length) {
+        log(`  [biology] Species evidence sent to LLM (${speciesFacts.length} facts):`);
+        speciesFacts.forEach(f => log(`    • [${f.category}] ${String(f.fact || '').slice(0, 220)} — source: ${String(f.source || '').slice(0, 80)}`));
+      } else {
+        log('  [biology] Species evidence sent to LLM: NONE');
+      }
+    }
+
     // ── STEP 6: LLM enrichment (one Worker call, fast) ───────────────────────
     log(`  [${agentKey}] Running LLM enrichment...`);
     const agentRes = await fetch(`${CF_WORKER_URL}/research/agent-llm`, {
@@ -1311,6 +1335,14 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     const agentData = await agentRes.json();
     if (!agentData.success) throw new Error(agentData.error || 'Agent LLM failed');
 
+    if (agentKey === 'biology') {
+      const returnedSpecies = agentData.section?.predatorSpecies || [];
+      const inputSpecies = previousResults.biology?.predatorSpecies || [];
+      const addedSpecies = returnedSpecies.filter(s => !inputSpecies.some(i => String(i).toLowerCase() === String(s).toLowerCase()));
+      log(`  [biology] LLM returned predator species (${returnedSpecies.length}): ${returnedSpecies.join(', ') || 'NONE'}`);
+      log(`  [biology] LLM-added species beyond deterministic input: ${addedSpecies.join(', ') || 'NONE'}`);
+    }
+
     log(`✔ ${def.label} agent complete (${uniqueFacts.length} facts, ${normalizedDocuments.length} docs)`);
     if (callbacks.onComplete) await callbacks.onComplete(lakeName);
     return { ...agentData, factsCount: uniqueFacts.length, docsUsed: normalizedDocuments.length, queryLog };
@@ -1338,7 +1370,12 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
 
   // Summary always runs last — separate it from the parallel batch
   const hasSummary = agentKeys.includes('summary');
-  const parallelAgents = agentKeys.filter(k => k !== 'summary');
+  let parallelAgents = agentKeys.filter(k => k !== 'summary');
+  // Keep the dependency producer first even when the UI selection order is
+  // reversed. This also makes resume runs deterministic.
+  if (parallelAgents.includes('biology') && parallelAgents.includes('fisheries')) {
+    parallelAgents = ['biology', ...parallelAgents.filter(k => k !== 'biology')];
+  }
   const total = agentKeys.length;
   let completed = 0;
   log(`=== RUN AGENTS: [${agentKeys.join(', ')}] (${mode}) ===`);
@@ -1346,16 +1383,26 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
   const MAX_CONCURRENT = 2;
   const STAGGER_MS = 2000;
   const results = [];
+  // Fisheries consumes biology.predatorSpecies. Do not run those two agents
+  // concurrently: a fresh run otherwise sends fisheries an empty biology
+  // section before the biology result exists ("0 species split into 0 groups").
+  const hasSpeciesDependency = parallelAgents.includes('biology') && parallelAgents.includes('fisheries');
+  const batchSize = hasSpeciesDependency ? 1 : MAX_CONCURRENT;
 
   try {
-    // Run all non-summary agents in parallel batches
-    for (let i = 0; i < parallelAgents.length; i += MAX_CONCURRENT) {
-      const batch = parallelAgents.slice(i, i + MAX_CONCURRENT);
+    // Run all non-summary agents in parallel batches, except the biology ->
+    // fisheries dependency which is deliberately serialized above.
+    for (let i = 0; i < parallelAgents.length; i += batchSize) {
+      const batch = parallelAgents.slice(i, i + batchSize);
       const batchPromises = batch.map((agentKey, batchIdx) => {
         const delay = batchIdx * STAGGER_MS;
         return new Promise(resolve => setTimeout(async () => {
           try {
-            const result = await runAgent(lakeName, agentKey, mode, {}, true);
+            const biologyResult = results.find(r => r.agent === 'biology')?.data;
+            const dependencyContext = biologyResult?.section
+              ? { biology: biologyResult.section }
+              : {};
+            const result = await runAgent(lakeName, agentKey, mode, {}, true, dependencyContext);
             completed++;
             setProgress(`[${completed}/${total}] ${RESEARCH_LABELS[agentKey] || agentKey} complete`, Math.round((completed / total) * 80));
             resolve({ status: 'fulfilled', value: result, agent: agentKey });
