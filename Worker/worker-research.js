@@ -1427,7 +1427,7 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
   // search only fires once per lake.
   const grokSlug = GROKIPEDIA_SLUGS[baseLower];
   let resolvedGrokUrl = grokSlug ? `https://grokipedia.com/page/${grokSlug}` : null;
-  const grokKvKey = `grokipedia:slug:${lakeSlug}`;
+  const grokKvKey = `grokipedia:slug:${sanitizeLakeId(lakeName)}`;
 
   if (wantsGrokipedia) {
     // Check KV cache first
