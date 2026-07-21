@@ -1225,45 +1225,56 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     let uniqueFacts = [];
     if (normalizedDocuments.length > 0) {
       log(`  [${agentKey}] Extracting facts from ${normalizedDocuments.length} docs...`);
-      const analyzeRes = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          lakeName, baseName, state: stateName, docIndex: 0,
-          documents: normalizedDocuments.slice(0, 12).map(d => ({
-            title: d.title, url: d.url || '',
-            text: (d.fullText || '').slice(0, 150000)
-          }))
-        })
-      });
-      if (analyzeRes.ok) {
-        const analyzeData = await analyzeRes.json();
-        const rawFacts = analyzeData.extracted_facts || [];
+      try {
+        const analyzeRes = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lakeName, baseName, state: stateName, docIndex: 0,
+            documents: normalizedDocuments.slice(0, 12).map(d => ({
+              title: d.title, url: d.url || '',
+              text: (d.fullText || '').slice(0, 150000)
+            }))
+          })
+        });
+        if (analyzeRes.ok) {
+          const analyzeData = await analyzeRes.json();
+          const rawFacts = analyzeData.extracted_facts || [];
 
-        // ── STEP 5: Deduplicate facts ─────────────────────────────────────────
-        if (rawFacts.length > 0) {
-          const dedupeRes = await fetch(`${CF_WORKER_URL}/research/dedupe-contradictions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ facts: rawFacts })
-          });
-          if (dedupeRes.ok) {
-            const dedupeData = await dedupeRes.json();
-            uniqueFacts = dedupeData.deduplicated_facts || rawFacts;
-          } else {
-            uniqueFacts = rawFacts;
+          // ── STEP 5: Deduplicate facts ─────────────────────────────────────────
+          if (rawFacts.length > 0) {
+            try {
+              const dedupeRes = await fetch(`${CF_WORKER_URL}/research/dedupe-contradictions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ facts: rawFacts })
+              });
+              if (dedupeRes.ok) {
+                const dedupeData = await dedupeRes.json();
+                uniqueFacts = dedupeData.deduplicated_facts || rawFacts;
+              } else {
+                uniqueFacts = rawFacts;
+              }
+            } catch (dedupeErr) {
+              log(`  ⚠️ Dedupe failed — using raw facts: ${dedupeErr.message}`);
+              uniqueFacts = rawFacts;
+            }
+            log(`  [${agentKey}] ${uniqueFacts.length} facts extracted`);
+            // Per-doc breakdown — how many facts each document contributed
+            const factsByDoc = {};
+            for (const f of uniqueFacts) {
+              const src = String(f.source || '').slice(0, 50);
+              factsByDoc[src] = (factsByDoc[src] || 0) + 1;
+            }
+            const docEntries = Object.entries(factsByDoc).sort((a,b) => b[1]-a[1]);
+            docEntries.forEach(([src, count]) => log(`  📊 ${count} fact${count>1?'s':''}: ${src}`));
+            uniqueFacts.slice(0, 5).forEach(f => log(`  💬 [${f.category}] ${String(f.fact || '').slice(0, 80)}`));
           }
-          log(`  [${agentKey}] ${uniqueFacts.length} facts extracted`);
-          // Per-doc breakdown — how many facts each document contributed
-          const factsByDoc = {};
-          for (const f of uniqueFacts) {
-            const src = String(f.source || '').slice(0, 50);
-            factsByDoc[src] = (factsByDoc[src] || 0) + 1;
-          }
-          const docEntries = Object.entries(factsByDoc).sort((a,b) => b[1]-a[1]);
-          docEntries.forEach(([src, count]) => log(`  📊 ${count} fact${count>1?'s':''}: ${src}`));
-          uniqueFacts.slice(0, 5).forEach(f => log(`  💬 [${f.category}] ${String(f.fact || '').slice(0, 80)}`));
+        } else {
+          log(`  ⚠️ [${agentKey}] analyze-facts returned ${analyzeRes.status} — continuing with 0 facts`);
         }
+      } catch (analyzeErr) {
+        log(`  ⚠️ [${agentKey}] analyze-facts failed: ${analyzeErr.message} — continuing with 0 facts`);
       }
     }
 
