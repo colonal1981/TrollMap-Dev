@@ -1,7 +1,7 @@
 import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized } from './worker-core.js'; 
 import { LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard } from './worker-data.js';
 import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality } from './worker-species.js';
-import { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchAgentPipeline, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass } from './worker-research.js';
+import { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchAgentPipeline, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
 
 var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
@@ -1292,6 +1292,25 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
       }
       if (path === "/research/delete-normalized-doc" && request.method === "POST") {
         return handleResearchDeleteNormalizedDoc(request, env);
+      }
+      // ── Phase 2: Shared R2 document registry ──────────────────────────────
+      if (path === "/research/shared/check" && request.method === "POST") {
+        return handleSharedCheck(request, env);
+      }
+      if (path === "/research/shared/store" && request.method === "POST") {
+        return handleSharedStore(request, env);
+      }
+      if (path === "/research/shared/query" && request.method === "POST") {
+        return handleSharedQuery(request, env);
+      }
+      if (path === "/research/shared/publish" && request.method === "POST") {
+        return handleSharedPublish(request, env);
+      }
+      if (path === "/research/shared/status" && request.method === "GET") {
+        return handleSharedStatus(request, env);
+      }
+      if (path === "/research/shared/quarantine" && request.method === "POST") {
+        return handleSharedQuarantine(request, env);
       }
       if (path === "/research/package" && request.method === "GET") {
         const lake = url.searchParams.get("lake") || "";
