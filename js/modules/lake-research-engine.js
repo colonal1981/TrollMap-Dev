@@ -1089,7 +1089,67 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     if (agentKey === 'regulations') {
       log(`  [regulations] Using KV-cached state regulations — no fetch needed`);
     } else if (mode === 'resume') {
-      normalizedDocuments.push(...existingDocs);
+      // Start with whatever is in the normalized cache
+      // Filter to agent-tagged docs first, fall back to full cache if none
+      const agentTagged = existingDocs.filter(d => d.agentTags?.includes(agentKey));
+      const resumeDocs = agentTagged.length ? agentTagged : existingDocs;
+      normalizedDocuments.push(...resumeDocs);
+
+      if (agentTagged.length) {
+        log(`  [${agentKey}] Resume: loaded ${resumeDocs.length} cached docs`);
+      } else {
+        log(`  [${agentKey}] Resume: loaded ${resumeDocs.length} cached docs (no agent-tagged docs — using full cache)`);
+      }
+
+      // Phase 2: For sources discovered but not in normalized cache, check shared registry
+      // This covers the case where a full run failed mid-way and some agents never fetched
+      const cachedUrls = new Set(normalizedDocuments.map(d => String(d.url || '').split('?')[0].toLowerCase()));
+      let sharedHits = 0;
+      const lakeSlug = lakeName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+      for (const src of cappedSources) {
+        const normUrl = String(src.url || '').split('?')[0].toLowerCase();
+        if (cachedUrls.has(normUrl)) continue; // already have it
+        if (!src.canonicalUrl) continue;
+
+        try {
+          const checkRes = await fetch(`${CF_WORKER_URL}/research/shared/check`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ canonicalUrl: src.canonicalUrl })
+          });
+          if (!checkRes.ok) continue;
+          const checkData = await checkRes.json();
+          if (!checkData.found || checkData.document?.indexStatus === 'ambiguous') continue;
+
+          // Pull relevant sections from shared registry
+          const queryRes = await fetch(`${CF_WORKER_URL}/research/shared/query`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ canonicalUrl: src.canonicalUrl, lakeSlug, categories: [agentKey] })
+          });
+          if (!queryRes.ok) continue;
+          const queryData = await queryRes.json();
+          if (!queryData.text || queryData.text.length < 200) continue;
+
+          const doc = {
+            title: checkData.document.title || src.title,
+            url: src.url,
+            fullText: queryData.text,
+            agentTags: [agentKey],
+            discoveredBy: agentKey,
+            fetchedAt: checkData.document.fetchedAt,
+            sharedDocId: checkData.document.id,
+            sharedVersionId: checkData.document.versionId,
+          };
+          normalizedDocuments.push(doc);
+          cachedUrls.add(normUrl);
+          sharedHits++;
+          log(`  📚 [${normalizedDocuments.length}] ${src.title?.slice(0, 70)} (shared registry, ${queryData.matchedSections} sections)`);
+        } catch (_) {}
+      }
+
+      if (sharedHits > 0) {
+        log(`  [${agentKey}] Resume: pulled ${sharedHits} additional docs from shared registry`);
+      }
     } else {
       for (const src of cappedSources) {
         const normUrl = String(src.url || '').split('?')[0].toLowerCase();
@@ -1766,6 +1826,11 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     }
     // Fisheries agent returns trollingIntelligence
     if (agentKey === 'fisheries') {
+      const sectionKeys = Object.keys(data.section || {});
+      log(`  [fisheries] section keys from LLM: [${sectionKeys.join(', ')}]`);
+      if (sectionKeys.length === 0) {
+        log(`  ⚠️ [fisheries] LLM returned empty section — trollingIntelligence not updated`);
+      }
       agentSections.trollingIntelligence = merged;
     } else {
       agentSections[agentKey] = merged;
