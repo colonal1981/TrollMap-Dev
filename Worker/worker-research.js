@@ -932,13 +932,11 @@ async function handleResearchDiscover(request, env) {
     if (/\.gc\.ca\/|dfo-mpo\.gc\.ca|canada\.ca|ontario\.|quebec\.|british.columbia|alberta\.|manitoba\./.test(combined)) return 'foreign_government_doc';
     if (/michigandnr\.com|michigan\.gov.*dnr|mndnr\.gov|dnr\.wi\.gov|dnr\.illinois|in\.gov.*dnr/.test(url)) return 'other_state_agency';
     if (/how.to.fish|beginner.*fishing|fishing.tips.*general|learn.to.fish|fishing.basics/.test(combined) && !combined.includes(baseLower)) return 'generic_fishing_article';
-    // Social media and video platforms — never fetchable, never useful as evidence
-    if (/facebook\.com|youtube\.com|instagram\.com|tiktok\.com|twitter\.com|x\.com\/(?!ai)|pinterest\.com/i.test(url)) return 'social_media';
-    // xAI/Grokipedia login redirects — not actual content
-    if (/accounts\.x\.ai|check-login.*grokipedia|grokipedia.*check-login/i.test(url)) return 'login_redirect';
     // County/township boundary articles — "Marion and Lake County line", "Marion County line", etc.
     // These match lake base names that are also common county names (Marion, Norman, etc.)
     if (/county\s+line|township\s+line|\bcounty\b.*\bline\b/i.test(title) && !/lake\s+marion|marion\s+lake|lake\s+norman|norman\s+lake/i.test(title)) return 'county_boundary_article';
+    // Social media and video platforms — never fetchable, never useful as evidence
+    if (/facebook\.com|youtube\.com|instagram\.com|tiktok\.com|twitter\.com|x\.com\/(?!ai)|pinterest\.com/i.test(url)) return 'social_media';
     // Fishing forums — usable content rate is near zero, TinyFish can't fetch them anyway
     if (/stripersonline\.com|bassresource\.com|carolinasportsman\.com\/forums|fishingnc\.com\/forum|fishingsc\.com\/forum|theoutdoorstrader\.com|scstriperfishing|bassfishingforum|iceshanty\.com|fishingcommunity|thefishingwebsite|southernfishingnews\.com\/forum|fishingtalkforums|angler\.com\/forum/i.test(url)) return 'fishing_forum';
     for (const other of otherLakeNames) {
