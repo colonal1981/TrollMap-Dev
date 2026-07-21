@@ -1096,6 +1096,48 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
         }
 
         // Fetch via proxy-download
+        // Phase 2: Check shared registry first — skip fetch if canonical URL already stored
+        let sharedDoc = null;
+        if (src.canonicalUrl) {
+          try {
+            const checkRes = await fetch(`${CF_WORKER_URL}/research/shared/check`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ canonicalUrl: src.canonicalUrl })
+            });
+            if (checkRes.ok) {
+              const checkData = await checkRes.json();
+              if (checkData.found && checkData.document?.indexStatus !== 'ambiguous') {
+                sharedDoc = checkData.document;
+              }
+            }
+          } catch (_) {}
+        }
+
+        if (sharedDoc) {
+          // Pull relevant sections from shared registry instead of fetching
+          try {
+            const queryRes = await fetch(`${CF_WORKER_URL}/research/shared/query`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ canonicalUrl: src.canonicalUrl, lakeSlug: lakeName.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,''), categories: [agentKey] })
+            });
+            if (queryRes.ok) {
+              const queryData = await queryRes.json();
+              if (queryData.text && queryData.text.length > 200) {
+                const doc = {
+                  title: sharedDoc.title || src.title, url: src.url, fullText: queryData.text,
+                  agentTags: src.agentTags || [agentKey], discoveredBy: agentKey,
+                  fetchedAt: sharedDoc.fetchedAt, sharedDocId: sharedDoc.id, sharedVersionId: sharedDoc.versionId,
+                };
+                normalizedDocuments.push(doc);
+                existingByUrl.set(normUrl, doc);
+                log(`  📚 [${normalizedDocuments.length}] ${src.title?.slice(0, 70)} (shared registry, ${queryData.matchedSections} sections)`);
+                continue;
+              }
+            }
+          } catch (_) {}
+          // Fall through to normal fetch if shared query fails
+        }
+
         try {
           const proxyRes = await fetch(
             `${CF_WORKER_URL}/research/proxy-download?url=${encodeURIComponent(src.url)}&type=${src.type || 'HTML'}`
@@ -1124,6 +1166,25 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
               normalizedDocuments.push(doc);
               existingByUrl.set(normUrl, doc);
               log(`  📄 [${normalizedDocuments.length}] ${src.title?.slice(0, 70)} (${isPdf ? 'pdf.js via ' : ''}${xSource})`);
+
+              // Phase 2: Store in shared registry after successful fetch
+              // Fire-and-forget — don't block the pipeline on registry storage
+              if (src.canonicalUrl) {
+                fetch(`${CF_WORKER_URL}/research/shared/store`, {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    canonicalUrl: src.canonicalUrl,
+                    requestedUrl: src.url,
+                    urlAliases: src.urlAliases || [],
+                    sourceRevision: src.sourceRevision || null,
+                    title: src.title,
+                    providerTitle: src.title,
+                    fullText: text,
+                    authority: src.authority || 'unknown',
+                    fetchProvider: xSource,
+                  })
+                }).catch(() => {}); // non-blocking
+              }
             } else {
               log(`  ⚠️ Insufficient content for ${src.title?.slice(0, 60)} (${text?.length || 0} chars)`);
             }
