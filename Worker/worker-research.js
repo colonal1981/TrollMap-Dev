@@ -763,9 +763,9 @@ async function handleResearchLimnologyData(request, env) {
       const shallowMed = shallowVals[Math.floor(shallowVals.length / 2)];
       const deepMed = deepVals[Math.floor(deepVals.length / 2)];
       const gradient = shallowMed - deepMed;
-      if (gradient > maxGradient) { maxGradient = gradient; maxBin = sortedBins[i - 1]; }
+      if (gradient > maxGradient) { maxGradient = gradient; maxBin = sortedBins[i]; }
     }
-    if (maxBin != null && maxGradient >= 3) {
+    if (maxBin != null && maxGradient >= 5 && maxBin >= 6) {
       thermocline = { depthFt: maxBin, confidence: summerTemp.length >= 10 ? 80 : summerTemp.length >= 5 ? 65 : 50, method: 'derived_from_temp_gradient', evidenceCount: summerTemp.length };
     }
   }
