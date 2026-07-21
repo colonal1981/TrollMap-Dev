@@ -5639,6 +5639,8 @@ async function handleResearchAgent(request, env) {
   // Normalize trollingIntelligence — fix bare array season entries like [5, 15]
   // Agent sometimes shortcuts secondary species to just a depth array instead of full season object
   if (agentKey === 'fisheries' && sectionData && typeof sectionData === 'object') {
+    console.log(`[fisheries-debug] sectionData keys: ${Object.keys(sectionData).join(', ')}`);
+    console.log(`[fisheries-debug] first entry sample: ${JSON.stringify(Object.entries(sectionData)[0])?.slice(0, 200)}`);
     const SEASONS = ['spring', 'summer', 'fall', 'winter'];
     const normalized = {};
     for (const [species, seasons] of Object.entries(sectionData)) {
