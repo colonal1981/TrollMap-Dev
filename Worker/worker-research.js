@@ -6839,7 +6839,7 @@ async function handleResearchProxyDownloadBatch(request, env) {
       tfFailed = [...tinyFishBatch];
     }
 
-    // Retry TinyFish failures on Scrape.do
+    // Retry TinyFish failures on Scrape.do (8s timeout — prevents dead URLs from blocking the whole batch)
     for (const item of tfFailed) {
       if (!scrapedoKey) {
         results.push({ url: item.url, text: '', source: 'none', ok: false, error: 'TinyFish failed, no Scrape.do key', title: item.title });
@@ -6847,7 +6847,14 @@ async function handleResearchProxyDownloadBatch(request, env) {
       }
       try {
         const sdUrl = `https://api.scrape.do?token=${scrapedoKey}&url=${encodeURIComponent(item.url)}&render=false&super=false`;
-        const sdRes = await fetch(sdUrl, { headers: { 'Accept': 'text/html,*/*' } });
+        const sdController = new AbortController();
+        const sdTimer = setTimeout(() => sdController.abort(), 8000);
+        let sdRes;
+        try {
+          sdRes = await fetch(sdUrl, { headers: { 'Accept': 'text/html,*/*' }, signal: sdController.signal });
+        } finally {
+          clearTimeout(sdTimer);
+        }
         if (sdRes.ok) {
           const html = await sdRes.text();
           // Strip tags for plain text — very basic
@@ -6859,7 +6866,8 @@ async function handleResearchProxyDownloadBatch(request, env) {
         }
         results.push({ url: item.url, text: '', source: 'scrapedo', ok: false, error: `Scrape.do ${sdRes.status}`, title: item.title });
       } catch (e2) {
-        results.push({ url: item.url, text: '', source: 'none', ok: false, error: e2.message, title: item.title });
+        const isTimeout = e2.name === 'AbortError';
+        results.push({ url: item.url, text: '', source: 'none', ok: false, error: isTimeout ? 'Scrape.do timeout (8s)' : e2.message, title: item.title });
       }
     }
   }
