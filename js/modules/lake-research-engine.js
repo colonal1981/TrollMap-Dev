@@ -1027,8 +1027,14 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
       const normRes = await fetch(`${CF_WORKER_URL}/research/get-normalized?lake=${encodeURIComponent(lakeName)}`);
       if (normRes.ok) {
         const normData = await normRes.json();
-        existingDocs = (normData.documents || []).filter(d => d.agentTags?.includes(agentKey));
-        log(`  [${agentKey}] Resume: loaded ${existingDocs.length} cached docs`);
+        // Load ALL cached docs — agentTags filter was too strict, causing agents
+        // like limnology to see 0 docs when their sources were tagged by a prior
+        // identity or biology run. Prefer docs tagged for this agent, but fall
+        // back to all docs so cross-agent cached content is available.
+        const allDocs = normData.documents || [];
+        const tagged = allDocs.filter(d => d.agentTags?.includes(agentKey));
+        existingDocs = tagged.length > 0 ? tagged : allDocs;
+        log(`  [${agentKey}] Resume: loaded ${existingDocs.length} cached docs${tagged.length === 0 && allDocs.length > 0 ? ' (no agent-tagged docs — using full cache)' : ''}`);
       }
     } else {
       const normRes = await fetch(`${CF_WORKER_URL}/research/get-normalized?lake=${encodeURIComponent(lakeName)}`);
@@ -1487,7 +1493,7 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   // Build section map — start from existing/deterministic, then layer in new agent results
   const agentSections = {
     identity:             cloneJson(existingSavedProfile.identity     || det.identity     || {}),
-    biology:              cloneJson(det.biology || {}),
+    biology:              cloneJson(existingSavedProfile.biology       || det.biology      || {}),
     habitat:              cloneJson(existingSavedProfile.habitat      || det.habitat      || {}),
     navigation:           cloneJson(existingSavedProfile.navigation   || det.navigation   || {}),
     regulations:          cloneJson(existingSavedProfile.regulations  || det.regulations  || {}),
@@ -1626,17 +1632,8 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   for (const s of (det.sources || [])) sourceMap.set(`${s.label}|${s.url}`, s);
   for (const r of agentResults) {
     for (const s of (r.data?.sources || [])) {
-      const label = s.label || s.title || '';
-      const url = s.url && s.url !== '#' ? s.url : '';
-      if (!label && !url) continue; // skip blank sources entirely
-      const key = `${label}|${url || '#'}`;
-      if (!sourceMap.has(key)) sourceMap.set(key, {
-        label: label || 'Unlabeled',
-        url: url || null,
-        authority: s.authority,
-        trust: s.trust || 'THIRD_PARTY',
-        sourceType: s.sourceType || 'web_document'
-      });
+      const key = `${s.label || s.title}|${s.url || '#'}`;
+      if (!sourceMap.has(key)) sourceMap.set(key, { label: s.label || s.title, url: s.url || '#', authority: s.authority, trust: 'THIRD_PARTY' });
     }
   }
   if (wqp?.recordCount > 0) sourceMap.set('Water Quality Portal|https://www.waterqualitydata.us/', { label: 'Water Quality Portal / SCDES monitoring', url: 'https://www.waterqualitydata.us/', trust: 'OFFICIAL', sourceType: 'official_structured' });
