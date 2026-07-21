@@ -740,6 +740,7 @@ async function handleResearchLimnologyData(request, env) {
     }
     const sortedBins = Object.keys(doBins).map(Number).sort((a, b) => a - b);
     for (const bin of sortedBins) {
+      if (bin < 6) continue; // ignore surface bins — hypoxic grab samples at 0-4ft produce false positives
       const vals = doBins[bin].slice().sort((a, b) => a - b);
       const median = vals[Math.floor(vals.length / 2)];
       if (median < 4) {
@@ -6839,7 +6840,7 @@ async function handleResearchProxyDownloadBatch(request, env) {
       tfFailed = [...tinyFishBatch];
     }
 
-    // Retry TinyFish failures on Scrape.do (8s timeout — prevents dead URLs from blocking the whole batch)
+    // Retry TinyFish failures on Scrape.do
     for (const item of tfFailed) {
       if (!scrapedoKey) {
         results.push({ url: item.url, text: '', source: 'none', ok: false, error: 'TinyFish failed, no Scrape.do key', title: item.title });
@@ -6847,14 +6848,7 @@ async function handleResearchProxyDownloadBatch(request, env) {
       }
       try {
         const sdUrl = `https://api.scrape.do?token=${scrapedoKey}&url=${encodeURIComponent(item.url)}&render=false&super=false`;
-        const sdController = new AbortController();
-        const sdTimer = setTimeout(() => sdController.abort(), 8000);
-        let sdRes;
-        try {
-          sdRes = await fetch(sdUrl, { headers: { 'Accept': 'text/html,*/*' }, signal: sdController.signal });
-        } finally {
-          clearTimeout(sdTimer);
-        }
+        const sdRes = await fetch(sdUrl, { headers: { 'Accept': 'text/html,*/*' } });
         if (sdRes.ok) {
           const html = await sdRes.text();
           // Strip tags for plain text — very basic
@@ -6866,8 +6860,7 @@ async function handleResearchProxyDownloadBatch(request, env) {
         }
         results.push({ url: item.url, text: '', source: 'scrapedo', ok: false, error: `Scrape.do ${sdRes.status}`, title: item.title });
       } catch (e2) {
-        const isTimeout = e2.name === 'AbortError';
-        results.push({ url: item.url, text: '', source: 'none', ok: false, error: isTimeout ? 'Scrape.do timeout (8s)' : e2.message, title: item.title });
+        results.push({ url: item.url, text: '', source: 'none', ok: false, error: e2.message, title: item.title });
       }
     }
   }
