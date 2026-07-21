@@ -1920,6 +1920,55 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
         const data = await handleChartpackList(env);
         return new Response(JSON.stringify(data, null, 2), { headers: JSON_HEADERS });
       }
+      if (path === "/chartpacks/supplemental-audit") {
+        // Check each catalog key for contour data presence in R2
+        const CATALOG_KEYS = [
+          'lake_thurmond_russell','lake_hickory_rhodhiss','lake_greenwood_secession',
+          'lake_monticello_parr','yadkin_river_chain','lake_norman_mountain_island',
+          'lake_wateree_fishing_creek','lake_juliette_high_falls','lake_marion','lake_moultrie',
+          'lake_murray','saluda_river_arm','lake_hartwell','lake_wylie','mountain_island_lake',
+          'lake_norman','high_point_lake','bear_creek_reservoir_ga','john_d_long_lake',
+          'prestwood_lake','hb_robinson_lake','lake_jocassee','lake_keowee','lake_summit',
+          'north_fork_reservoir','lake_adger','lake_robinson_greenville','north_saluda_reservoir',
+          'lake_cunningham','lake_blalock','lake_bowen','lake_lure','lake_james','john_h_moss_lake',
+          'lookout_shoals_lake','w_kerr_scott_reservoir','belews_lake','randleman_lake',
+          'shearon_harris_reservoir','buckhorn_reservoir','mayo_lake','hyco_lake','lake_michie',
+          'kerr_lake','lake_gaston','lake_townsend','lake_mackintosh','lake_reidsville',
+          'oak_hollow_higgins','lake_brandt','auman_lake','jordan_lake','falls_lake',
+          'bonnie_doone_lake','kornbow_lake','fort_loudoun_lake','tellico_lake','melton_hill_lake',
+          'watts_bar_lake','lake_chilhowee','chickamauga_lake','nickajack_lake','fontana_lake',
+          'hiwassee_lake','lake_chatuge','watauga_lake','norris_lake','douglas_lake',
+          'cherokee_lake','boone_lake','south_holston_lake','nantahala_lake','lake_santeetlah',
+          'lake_cheoah','lake_glenville','lake_toxaway','bear_creek_lake','lake_lanier',
+          'lake_allatoona','lake_blue_ridge','lake_nottely','lake_burton','lake_seed',
+          'parksville_lake','west_point_lake','lake_sinclair','lake_oconee','lake_jackson_ga',
+          'tobesofkee_reservoir','lake_blackshear','watauga_boone_chain','catawba_narrows',
+          'lake_lure','lake_cunningham','lake_brandt','lake_gaston','lake_michie',
+          'lake_reidsville','lookout_shoals_lake',
+        ];
+        const CONTOUR_FILES = ['depth_areas.geojson','contours.pbf','contours.geojson'];
+        const results = [];
+        const seen = new Set();
+        for (const key of CATALOG_KEYS) {
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const listed = await env.R2_TROLLMAP_CHARTPACKS.list({ prefix: `supplemental/${key}/` });
+          const files = listed.objects.map(o => o.key.replace(`supplemental/${key}/`, ''));
+          const hasContours = files.some(f => CONTOUR_FILES.includes(f));
+          const hasShoreline = files.includes('shoreline.geojson');
+          const hasDepthAreas = files.includes('depth_areas.geojson');
+          results.push({ key, files, hasContours, hasShoreline, hasDepthAreas });
+        }
+        const withContours = results.filter(r => r.hasContours).map(r => r.key).sort();
+        const withoutContours = results.filter(r => !r.hasContours).map(r => ({ key: r.key, files: r.files }));
+        return new Response(JSON.stringify({
+          total: results.length,
+          withContours: withContours.length,
+          withoutContours: withoutContours.length,
+          researchable: withContours,
+          noContourData: withoutContours,
+        }, null, 2), { headers: { ...CORS, ...JSON_HEADERS, 'Cache-Control': 'no-store' } });
+      }
       const idxMatch = path.match(/^\/chartpacks\/([^/]+)\/index\.json$/);
       if (idxMatch) {
         const lakeName = idxMatch[1];
