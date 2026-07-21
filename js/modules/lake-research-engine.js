@@ -1015,18 +1015,20 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     const queryLog = discoverData.queryLog || [];
     queryLog.forEach(q => log(`  [discover] ${q}`));
 
-    // Cap sources per agent — sort by prefetchScore descending so guaranteed seeds
-    // (score 999) always survive, then take best discovered sources up to cap.
-    // Prevents marginal sources from burning Scrape.do/Firecrawl credits on fetch.
+    // Cap sources per agent — guaranteed seeds (priority=1) always pass regardless of cap.
+    // Discovered sources sorted by prefetchScore descending, then capped.
+    // Sources without prefetchScore get a default of 3 so they're not unfairly cut.
     const AGENT_SOURCE_CAPS = {
       identity: 8, limnology: 12, biology: 12, habitat: 8,
       navigation: 8, regulations: 5, fisheries: 10, summary: 0
     };
     const cap = AGENT_SOURCE_CAPS[agentKey] ?? 10;
-    const cappedSources = sources
-      .sort((a, b) => (b.prefetchScore ?? b.score ?? 0) - (a.prefetchScore ?? a.score ?? 0))
-      .slice(0, cap);
-    log(`  [${agentKey}] Found ${sources.length} sources → capped to ${cappedSources.length}`);
+    const guaranteed = sources.filter(s => s.priority === 1);
+    const discovered = sources.filter(s => s.priority !== 1)
+      .sort((a, b) => (b.prefetchScore ?? b.score ?? 3) - (a.prefetchScore ?? a.score ?? 3));
+    const discoveryCap = Math.max(0, cap - guaranteed.length);
+    const cappedSources = [...guaranteed, ...discovered.slice(0, discoveryCap)];
+    log(`  [${agentKey}] Found ${sources.length} sources (${guaranteed.length} seeds + ${discovered.length} discovered) → capped to ${cappedSources.length}`);
 
     if (!cappedSources.length) {
       log(`  [${agentKey}] No sources — skipping`);
@@ -1681,12 +1683,25 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
       const mergedSize  = (agentLsr.sizeLimits  && Object.keys(agentLsr.sizeLimits).length)  ? agentLsr.sizeLimits  : (existingLsr.sizeLimits  || {});
       merged.lakeSpecificRegulations = { ...existingLsr, ...agentLsr, creelLimits: mergedCreel, sizeLimits: mergedSize };
     }
-    // Biology: species list is always additive — never let agent shrink the list
+    // Biology: species list is always additive — never let agent shrink the list.
+    // Normalize to Title Case before deduplication so 'largemouth bass' and
+    // 'Largemouth Bass' don't both appear. Filter blanks and baitfish/non-predators.
     if (agentKey === 'biology') {
-      const detSpecies      = det.biology?.predatorSpecies || [];
-      const existingSpecies = existing.predatorSpecies || [];
-      const agentSpecies    = merged.predatorSpecies || [];
-      merged.predatorSpecies = [...new Set([...detSpecies, ...existingSpecies, ...agentSpecies])];
+      const INVALID_PREDATORS = /^(shad|herring|menhaden|carp|drum|buffalo|sucker|eel|lamprey|mussels?|clam|crawfish|crayfish|insect|zooplankton|algae|diatom|cryptophyte|cyanobacteria|dinoflagellate|phytoplankton|unknown|other)\b/i;
+      const normalizeSpecies = (list) => (list || [])
+        .map(s => String(s || '').trim())
+        .filter(s => s.length > 2 && !INVALID_PREDATORS.test(s))
+        .map(s => s.replace(/\b\w/g, c => c.toUpperCase())); // Title Case
+      const detSpecies      = normalizeSpecies(det.biology?.predatorSpecies);
+      const existingSpecies = normalizeSpecies(existing.predatorSpecies);
+      const agentSpecies    = normalizeSpecies(merged.predatorSpecies);
+      // Deduplicate case-insensitively — keep first occurrence (deterministic wins)
+      const seen = new Map();
+      for (const s of [...detSpecies, ...existingSpecies, ...agentSpecies]) {
+        const key = s.toLowerCase();
+        if (!seen.has(key)) seen.set(key, s);
+      }
+      merged.predatorSpecies = [...seen.values()];
       merged.knownStockings  = merged.knownStockings?.length ? merged.knownStockings : (existing.knownStockings?.length ? existing.knownStockings : (det.biology?.knownStockings || []));
     }
     // Fisheries agent returns trollingIntelligence
@@ -1752,9 +1767,19 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   }
 
   // Safety-net biology before save
-  const detSpecies = det.biology?.predatorSpecies || [];
-  const agentSpecies = agentSections.biology?.predatorSpecies || [];
-  const finalSpecies = [...new Set([...detSpecies, ...agentSpecies])];
+  const INVALID_PREDATORS_FINAL = /^(shad|herring|menhaden|carp|drum|buffalo|sucker|eel|lamprey|mussels?|clam|crawfish|crayfish|insect|zooplankton|algae|diatom|cryptophyte|cyanobacteria|dinoflagellate|phytoplankton|unknown|other)\b/i;
+  const normalizeSpeciesFinal = (list) => (list || [])
+    .map(s => String(s || '').trim())
+    .filter(s => s.length > 2 && !INVALID_PREDATORS_FINAL.test(s))
+    .map(s => s.replace(/\b\w/g, c => c.toUpperCase()));
+  const detSpecies = normalizeSpeciesFinal(det.biology?.predatorSpecies);
+  const agentSpecies = normalizeSpeciesFinal(agentSections.biology?.predatorSpecies);
+  const seenFinal = new Map();
+  for (const s of [...detSpecies, ...agentSpecies]) {
+    const key = s.toLowerCase();
+    if (!seenFinal.has(key)) seenFinal.set(key, s);
+  }
+  const finalSpecies = [...seenFinal.values()];
   const safeBiology = {
     ...(agentSections.biology || {}),
     predatorSpecies: finalSpecies.length ? finalSpecies : detSpecies,
