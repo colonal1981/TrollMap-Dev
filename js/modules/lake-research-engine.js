@@ -1490,6 +1490,26 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     }
   } catch (e) { /* non-fatal */ }
 
+  // Saved profiles store identity fields flat at the top level (surfaceAreaAcres,
+  // reservoirOwner, etc.) rather than nested under an 'identity' key. Reconstruct
+  // the identity object from flat fields so resume runs don't wipe them.
+  if (!existingSavedProfile.identity && existingSavedProfile.lakeName) {
+    existingSavedProfile.identity = {
+      surfaceAreaAcres:  existingSavedProfile.surfaceAreaAcres  ?? null,
+      maxDepthFt:        existingSavedProfile.maxDepthFt        ?? null,
+      averageDepthFt:    existingSavedProfile.averageDepthFt    ?? null,
+      normalPoolFt:      existingSavedProfile.normalPoolFt      ?? null,
+      damName:           existingSavedProfile.damName           ?? null,
+      yearImpounded:     existingSavedProfile.yearImpounded     ?? null,
+      reservoirOwner:    existingSavedProfile.reservoirOwner    ?? null,
+      county:            existingSavedProfile.county            ?? null,
+      riverSystem:       existingSavedProfile.riverSystem       ?? null,
+      archetype:         existingSavedProfile.archetype         ?? null,
+      aliases:           existingSavedProfile.aliases           ?? [],
+      gpsCenter:         existingSavedProfile.gpsCenter         ?? null,
+    };
+  }
+
   // Build section map — start from existing/deterministic, then layer in new agent results
   const agentSections = {
     identity:             cloneJson(existingSavedProfile.identity     || det.identity     || {}),
@@ -1538,6 +1558,19 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
       if (v == null) continue;
       if (Array.isArray(v) && v.length === 0 && Array.isArray(existing[k]) && existing[k].length > 0) continue;
       merged[k] = v;
+    }
+    // Limnology: deep-merge nested objects — never let agent null sub-fields
+    // overwrite existing non-null values (e.g. WQP-derived thermocline/oxygen)
+    if (agentKey === 'limnology') {
+      for (const subKey of ['thermocline', 'oxygen', 'waterClarity', 'surfaceWater']) {
+        if (merged[subKey] && existing[subKey]) {
+          const mergedSub = { ...existing[subKey] };
+          for (const [sk, sv] of Object.entries(merged[subKey])) {
+            if (sv != null) mergedSub[sk] = sv;
+          }
+          merged[subKey] = mergedSub;
+        }
+      }
     }
     // Regulations: deep-merge lakeSpecificRegulations — don't let empty overwrite populated
     if (agentKey === 'regulations' && data.section?.lakeSpecificRegulations) {
@@ -1627,8 +1660,13 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     knownStockings: agentSections.biology?.knownStockings?.length ? agentSections.biology.knownStockings : (det.biology?.knownStockings || []),
   };
 
-  // Build source map
+  // Build source map — seed from existing saved sources first so resume runs
+  // don't lose confidence scoring from prior full runs
   const sourceMap = new Map();
+  for (const s of (existingSavedProfile.sources || [])) {
+    if (!s || (!s.label && !s.url)) continue;
+    sourceMap.set(`${s.label}|${s.url || '#'}`, s);
+  }
   for (const s of (det.sources || [])) sourceMap.set(`${s.label}|${s.url}`, s);
   for (const r of agentResults) {
     for (const s of (r.data?.sources || [])) {
