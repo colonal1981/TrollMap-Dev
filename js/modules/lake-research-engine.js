@@ -246,7 +246,8 @@ function applyWqpToLimnology(base = {}, wqp = null) {
   if (wqp.surfaceWater?.recentTurbidityNTU != null && !out.waterClarity.note) {
     out.waterClarity.note = `Recent WQP/SCDES surface turbidity around ${wqp.surfaceWater.recentTurbidityNTU} NTU.`;
   }
-  if (wqp.secchi?.avgSecchiDepthFt != null && !hasResearchValue(out.waterClarity.secchiFt)) {
+  // WQP secchi always wins when it has 5+ samples — higher confidence than any single doc extraction
+  if (wqp.secchi?.avgSecchiDepthFt != null && (wqp.secchi.sampleCount >= 5 || !hasResearchValue(out.waterClarity.secchiFt))) {
     out.waterClarity.secchiFt = wqp.secchi.avgSecchiDepthFt;
   }
   if (wqp.thermocline?.depthFt != null && !hasResearchValue(out.thermocline?.summerDepthFt)) {
