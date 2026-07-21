@@ -1527,7 +1527,63 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
   _state.researchInProgress = true;
   _state.packagePartsCache = {};
   _state.failedUrlsThisRun = new Set();
+  _state.wqpLimnology = null;
   showProgress(true);
+
+  // WQP limnology — runs on both full and resume when limnology is selected.
+  // runFullPipeline also runs this in Step 1d; runAgents handles the resume case.
+  if (mode === 'resume' && agentKeys.includes('limnology')) {
+    setProgress('WQP limnology data...', 5);
+    try {
+      const supplementalKey = resolveSupplementalKey(lakeName);
+      const shorelineUrl = supplementalKey
+        ? `${CF_WORKER_URL}/chartpacks/supplemental/${supplementalKey}/shoreline.geojson?v=${Date.now()}`
+        : `${CF_WORKER_URL}/chartpacks/lake-boundary?lake=${encodeURIComponent(lakeName)}`;
+      const geoRes = await fetch(shorelineUrl);
+      let bbox = null;
+      if (geoRes.ok) {
+        const geo = await geoRes.json();
+        const coords = [];
+        const extractCoords = (obj) => {
+          if (!obj) return;
+          if (obj.type === 'Feature') extractCoords(obj.geometry);
+          else if (obj.type === 'FeatureCollection') obj.features?.forEach(extractCoords);
+          else if (obj.coordinates) {
+            const flat = obj.coordinates.flat(Infinity);
+            const step = (flat.length >= 3 && flat[2] === 0.0) || (flat.length % 3 === 0 && flat.length % 2 !== 0) ? 3 : 2;
+            for (let i = 0; i < flat.length - 1; i += step) coords.push([flat[i], flat[i+1]]);
+          }
+        };
+        extractCoords(geo);
+        if (coords.length) {
+          const lons = coords.map(c => c[0]);
+          const lats = coords.map(c => c[1]);
+          // 0.01° padding (~0.7mi) ensures monitoring stations near the shoreline edge are captured
+          bbox = { bboxNorth: Math.max(...lats) + 0.01, bboxSouth: Math.min(...lats) - 0.01, bboxEast: Math.max(...lons) + 0.01, bboxWest: Math.min(...lons) - 0.01 };
+        }
+      }
+      if (bbox) {
+        const wqpRes = await fetch(`${CF_WORKER_URL}/research/limnology-data`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lakeName, ...bbox })
+        });
+        if (wqpRes.ok) {
+          const wqpData = await wqpRes.json();
+          if (wqpData.ok && wqpData.recordCount > 0) {
+            _state.wqpLimnology = wqpData;
+            const tc   = wqpData.thermocline ? `${wqpData.thermocline.depthFt}ft (${wqpData.thermocline.method})` : 'not derived';
+            const surf = wqpData.surfaceWater?.recentTempF != null ? `surface ${wqpData.surfaceWater.recentTempF}°F / DO ${wqpData.surfaceWater.recentDissolvedOxygenMgL ?? '?'} mg/L` : '';
+            const sec  = wqpData.secchi ? `secchi avg ${wqpData.secchi.avgSecchiDepthFt}ft (n=${wqpData.secchi.sampleCount})` : '';
+            log(`✔ WQP: ${wqpData.recordCount} records — thermocline ${tc}${surf ? '; ' + surf : ''}${sec ? '; ' + sec : ''}`);
+          } else {
+            log(`⚠️ WQP: ${wqpData.note || 'no data found'}`);
+          }
+        }
+      } else {
+        log('⚠️ WQP: could not derive bbox — skipping');
+      }
+    } catch (e) { log(`⚠️ WQP fetch failed: ${e.message}`); }
+  }
 
   // Summary always runs last — separate it from the parallel batch
   const hasSummary = agentKeys.includes('summary');
