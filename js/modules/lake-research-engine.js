@@ -82,7 +82,8 @@ const _state = {
   currentVersions: [],
   researchInProgress: false,
   researchLog: [],
-  packagePartsCache: {}
+  packagePartsCache: {},
+  failedUrlsThisRun: new Set() // cleared at start of each run; prevents re-fetching dead URLs across agents
 };
 
 // Helper logging
@@ -1227,6 +1228,12 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
           // Fall through to real fetch if shared query fails
         }
 
+        // Skip URLs that already failed (502/timeout) in a prior agent this run
+        if (_state.failedUrlsThisRun.has(src.url)) {
+          log(`  ⏭️ Skipping known-failed URL: ${src.title?.slice(0, 60)}`);
+          continue;
+        }
+
         // Queue for batch or individual fetch
         sourcesToFetch.push(src);
       }
@@ -1284,6 +1291,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
                 // Batch classified as special — move to individual queue
                 individualSources.push(src);
               } else {
+                _state.failedUrlsThisRun.add(src.url);
                 log(`  ⚠️ Batch fetch failed for ${src.title?.slice(0, 60)}: ${result?.error || 'no content'}`);
               }
             }
@@ -1332,10 +1340,12 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
                 }).catch(() => {});
               }
             } else {
+              _state.failedUrlsThisRun.add(src.url);
               log(`  ⚠️ Insufficient content for ${src.title?.slice(0, 60)} (${text?.length || 0} chars)`);
             }
           }
         } catch (e) {
+          _state.failedUrlsThisRun.add(src.url);
           log(`  ⚠️ Fetch failed for ${src.title?.slice(0, 60)}: ${e.message}`);
         }
       }
@@ -1513,6 +1523,7 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
 
   _state.researchInProgress = true;
   _state.packagePartsCache = {};
+  _state.failedUrlsThisRun = new Set();
   showProgress(true);
 
   // Summary always runs last — separate it from the parallel batch
