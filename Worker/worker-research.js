@@ -4772,7 +4772,7 @@ JSON only.`;
   limnology: {
     label: "Limnology",
     order: 2,
-    system: "You are a limnologist data assembly agent. Map extracted facts and depth profile data to the limnology JSON. depletionDepthFt = shallowest depth where DO drops below 2 mg/L. anoxicBelowFt = depth where DO approaches 0. thermocline summerDepthFt = range where temperature gradient is steepest. Convert meters to feet (×3.281). Return ONLY valid JSON.",
+    system: "You are a limnologist data assembly agent. Map extracted facts and depth profile data to the limnology JSON. depletionDepthFt = shallowest depth where DO drops below 2 mg/L. anoxicBelowFt = depth where DO approaches 0. thermocline summerDepthFt = single number (midpoint of thermocline range, in feet). Convert meters to feet (×3.281). All numeric fields must be numbers or null — NEVER strings. Return ONLY valid JSON.",
     userTemplate: (lakeName, state, prev) => {
       const facts = prev?._extractedFacts || [];
       const limFacts = facts.filter(f =>
@@ -4793,12 +4793,13 @@ ${factsBlock || 'No limnology facts extracted — derive from document depth pro
 
 INSTRUCTIONS:
 1. secchiFt: The EPA NES table has a row labeled "SECCHI (METERS)" — that is the only row for Secchi. Values are typically 0.3-0.5m for turbid lakes. Convert meters × 3.281. NEVER use alkalinity (10-35 mg/L), conductivity, pH, or any other row as Secchi. If Secchi is in meters, the feet value will be LESS THAN 5 ft for most SE reservoirs. A secchiFt value above 10 is almost certainly wrong — reject it.
-2. thermocline.summerDepthFt: find where temperature drops sharply with depth in summer profiles. Report as [shallowFt, deepFt].
-3. oxygen.depletionDepthFt: depth where DO first drops below 2 mg/L in summer.
-4. oxygen.anoxicBelowFt: depth where DO approaches 0.
+2. thermocline.summerDepthFt: find where temperature drops sharply with depth in summer profiles. Report as a SINGLE NUMBER (the midpoint in feet, e.g. 19 for a 16-22ft range). NEVER a string, NEVER a range string like "16-22".
+3. oxygen.depletionDepthFt: depth where DO first drops below 2 mg/L in summer. Must be a number or null — never the string "null".
+4. oxygen.anoxicBelowFt: depth where DO approaches 0. Must be a number or null — never the string "null".
 5. trophicStatus: derive from phosphorus, Secchi, chlorophyll data if present.
-6. hydraulicRetentionDays: look for "retention time" or "residence time" in days.
+6. hydraulicRetentionDays: look for "retention time" or "residence time" in days. Number or null.
 7. All depth values in feet — convert meters × 3.281.
+8. CRITICAL: Every numeric field must be a JSON number or JSON null. Never use the string "null", never use a range string. If data is unavailable, use JSON null.
 ${docSection}
 
 Return ONLY:
@@ -5550,6 +5551,36 @@ async function handleResearchAgent(request, env) {
   const dataKey = agent.expectedKey;
   let sectionData = (parsed[dataKey] && Object.keys(parsed[dataKey]).length > 0) ? parsed[dataKey] : (parsed[agentKey] && Object.keys(parsed[agentKey] || {}).length > 0) ? parsed[agentKey] : parsed;
   const sources = parsed.sources || sectionData?.sources || [];
+
+  // Sanitize limnology output — coerce string "null" and range strings to proper types
+  if (agentKey === 'limnology' && sectionData) {
+    const lim = sectionData;
+    const coerceNum = (v) => {
+      if (v === null || v === undefined) return null;
+      if (typeof v === 'number') return v;
+      if (typeof v === 'string') {
+        if (v === 'null' || v === '' || v === 'unknown') return null;
+        // Range string like "16-22" — take midpoint
+        const rangeMatch = v.match(/^([\d.]+)\s*[-–]\s*([\d.]+)$/);
+        if (rangeMatch) return Math.round((parseFloat(rangeMatch[1]) + parseFloat(rangeMatch[2])) / 2);
+        const num = parseFloat(v);
+        return isFinite(num) ? num : null;
+      }
+      return null;
+    };
+    if (lim.thermocline) {
+      lim.thermocline.summerDepthFt = coerceNum(lim.thermocline.summerDepthFt);
+    }
+    if (lim.oxygen) {
+      lim.oxygen.depletionDepthFt = coerceNum(lim.oxygen.depletionDepthFt);
+      lim.oxygen.anoxicBelowFt = coerceNum(lim.oxygen.anoxicBelowFt);
+    }
+    if (lim.waterClarity) {
+      lim.waterClarity.secchiFt = coerceNum(lim.waterClarity.secchiFt);
+    }
+    lim.hydraulicRetentionDays = coerceNum(lim.hydraulicRetentionDays) ?? lim.hydraulicRetentionDays;
+    lim.seasonalDrawdownFt = coerceNum(lim.seasonalDrawdownFt) ?? lim.seasonalDrawdownFt;
+  }
 
   // Sanitize regulations output — fix malformed creelLimits/sizeLimits
   // Agent sometimes returns these as strings or arrays instead of {species: limit} objects
