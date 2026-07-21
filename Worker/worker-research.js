@@ -6778,7 +6778,101 @@ async function handleResearchVisionScanStatus(request, env) {
 }
 
 
-// ─── PHASE 2: SHARED R2 DOCUMENT REGISTRY ────────────────────────────────────
+
+// ─── BATCH PROXY DOWNLOAD ────────────────────────────────────────────────────
+// Fetches up to 10 HTML URLs in a single TinyFish batch call.
+// PDFs, NEPIS, and other special sources are excluded from the batch and must
+// be fetched individually via handleResearchProxyDownload.
+// Returns: { results: [{ url, text, source, ok, error }] }
+async function handleResearchProxyDownloadBatch(request, env) {
+  let body;
+  try { body = await request.json(); } catch { body = {}; }
+  const { urls } = body; // array of { url, canonicalUrl, title, type }
+  if (!Array.isArray(urls) || !urls.length) {
+    return new Response(JSON.stringify({ ok: false, error: 'missing urls array' }), { status: 400, headers: JSON_HEADERS });
+  }
+
+  const scrapedoKey = env.SCRAPEDO_TOKEN || env.SCRAPEDO_API_KEY;
+
+  // Separate into TinyFish-eligible and special-case URLs
+  const tinyFishBatch = [];
+  const specialUrls = [];
+
+  for (const item of urls) {
+    const target = item.url || '';
+    const isPdf = (item.type || '').toUpperCase() === 'PDF' || /\.pdf(?:$|[?#])/i.test(target);
+    const isNepis = /nepis\.epa\.gov|ZyNET\.exe/i.test(target);
+    const isWaterAtlas = /wateratlas\.usf\.edu/i.test(target);
+
+    if (isPdf || isNepis || isWaterAtlas) {
+      specialUrls.push({ ...item, reason: isPdf ? 'pdf' : isNepis ? 'nepis' : 'blocked' });
+    } else {
+      tinyFishBatch.push(item);
+    }
+  }
+
+  const results = [];
+
+  // Batch fetch HTML URLs via TinyFish
+  if (tinyFishBatch.length > 0) {
+    const batchUrls = tinyFishBatch.map(item => item.url);
+    let tfResults = [];
+    let tfFailed = [...tinyFishBatch]; // assume all failed until proven otherwise
+
+    try {
+      const tfData = await tinyfishFetch({ urls: batchUrls, format: 'markdown', ttl: 86400 }, env);
+      tfResults = tfData.results || [];
+      tfFailed = [];
+
+      for (let i = 0; i < tinyFishBatch.length; i++) {
+        const item = tinyFishBatch[i];
+        const result = tfResults[i];
+        const text = result?.text || result?.markdown || result?.content || '';
+        if (text && text.length > 200) {
+          results.push({ url: item.url, text, source: 'tinyfish', ok: true, title: item.title });
+        } else {
+          tfFailed.push(item); // too short — retry on Scrape.do
+        }
+      }
+    } catch (e) {
+      console.warn(`[batch-fetch] TinyFish batch failed: ${e.message} — falling back to Scrape.do for all`);
+      tfFailed = [...tinyFishBatch];
+    }
+
+    // Retry TinyFish failures on Scrape.do
+    for (const item of tfFailed) {
+      if (!scrapedoKey) {
+        results.push({ url: item.url, text: '', source: 'none', ok: false, error: 'TinyFish failed, no Scrape.do key', title: item.title });
+        continue;
+      }
+      try {
+        const sdUrl = `https://api.scrape.do?token=${scrapedoKey}&url=${encodeURIComponent(item.url)}&render=false&super=false`;
+        const sdRes = await fetch(sdUrl, { headers: { 'Accept': 'text/html,*/*' } });
+        if (sdRes.ok) {
+          const html = await sdRes.text();
+          // Strip tags for plain text — very basic
+          const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+          if (text.length > 200) {
+            results.push({ url: item.url, text, source: 'scrapedo', ok: true, title: item.title });
+            continue;
+          }
+        }
+        results.push({ url: item.url, text: '', source: 'scrapedo', ok: false, error: `Scrape.do ${sdRes.status}`, title: item.title });
+      } catch (e2) {
+        results.push({ url: item.url, text: '', source: 'none', ok: false, error: e2.message, title: item.title });
+      }
+    }
+  }
+
+  // Special URLs return as unhandled — engine fetches these individually
+  for (const item of specialUrls) {
+    results.push({ url: item.url, text: '', source: 'unhandled', ok: false, reason: item.reason, title: item.title });
+  }
+
+  return new Response(JSON.stringify({ ok: true, results }), { headers: JSON_HEADERS });
+}
+
+
 // A canonical source is fetched and normalized no more than once, regardless of
 // how many lakes or categories use it. Documents are stored immutably by version;
 // a generation pointer controls which index is active. Kill switch:
@@ -7267,4 +7361,4 @@ async function isQuarantined(env, canonicalUrl) {
   return !!obj;
 }
 
-export { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchAgentPipeline, handleResearchValidationPass, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine };
+export { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchAgentPipeline, handleResearchValidationPass, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine };
