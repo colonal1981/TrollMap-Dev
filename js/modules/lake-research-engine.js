@@ -246,6 +246,9 @@ function applyWqpToLimnology(base = {}, wqp = null) {
   if (wqp.surfaceWater?.recentTurbidityNTU != null && !out.waterClarity.note) {
     out.waterClarity.note = `Recent WQP/SCDES surface turbidity around ${wqp.surfaceWater.recentTurbidityNTU} NTU.`;
   }
+  if (wqp.secchi?.avgSecchiDepthFt != null && !hasResearchValue(out.waterClarity.secchiFt)) {
+    out.waterClarity.secchiFt = wqp.secchi.avgSecchiDepthFt;
+  }
   if (wqp.thermocline?.depthFt != null && !hasResearchValue(out.thermocline?.summerDepthFt)) {
     out.thermocline = out.thermocline || {};
     out.thermocline.summerDepthFt = wqp.thermocline.depthFt;
@@ -1725,7 +1728,8 @@ async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
           if (coords.length) {
             const lons = coords.map(c => c[0]);
             const lats = coords.map(c => c[1]);
-            bbox = { bboxNorth: Math.max(...lats), bboxSouth: Math.min(...lats), bboxEast: Math.max(...lons), bboxWest: Math.min(...lons) };
+            // 0.01° padding (~0.7mi) ensures monitoring stations near the shoreline edge are captured
+            bbox = { bboxNorth: Math.max(...lats) + 0.01, bboxSouth: Math.min(...lats) - 0.01, bboxEast: Math.max(...lons) + 0.01, bboxWest: Math.min(...lons) - 0.01 };
           }
         }
         if (bbox) {
