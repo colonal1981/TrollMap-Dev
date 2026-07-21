@@ -1869,7 +1869,10 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     biology:    ['biology.primaryForage','biology.secondaryForage','biology.predatorSpecies','biology.speciesAbundance','biology.knownStockings','biology.baitfishMovement','biology.invasiveSpecies','biology.spawnTiming','biology.forageSpatial'],
     habitat:    ['habitat.bottomComposition','habitat.cover','habitat.vegetation','habitat.standingTimber','habitat.dockDensity','habitat.riprapLocations','habitat.namedCreekMouths','habitat.timberFields','habitat.shallowFlatAreas','habitat.artificialHabitat','habitat.artificialHabitatDetails.attractorCount','habitat.artificialHabitatDetails.attractorTypes'],
     navigation: ['navigation.ramps','navigation.hazards','navigation.notes'],
+    fisheries:  ['trollingIntelligence'],
   };
+  // Map agent keys to their section paths for validation — fisheries writes to trollingIntelligence
+  const agentSectionPath = (section) => section === 'fisheries' ? 'trollingIntelligence' : section;
   const relevantFields = Object.entries(ALL_VALIDATION_FIELDS)
     .filter(([section]) => agentsRan.has(section))
     .flatMap(([, fields]) => fields);
@@ -1906,7 +1909,7 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
       log(`✔ Validation pass: ${filledCount} fields filled from ${Object.keys(filled).length} returned`);
     } catch (e) { log(`⚠️ Validation pass failed: ${e.message} — continuing`); }
   } else if (nullFields.length > 0) {
-    log(`ℹ️ Validation pass skipped — no facts extracted (${nullFields.length} fields remain empty)`);
+    log(`ℹ️ Validation pass skipped — no facts extracted (${nullFields.length} fields remain empty: ${nullFields.slice(0,5).join(', ')}${nullFields.length > 5 ? '...' : ''})`);
   } else {
     log(`ℹ️ Validation pass skipped — all relevant fields populated`);
   }
