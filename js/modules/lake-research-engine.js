@@ -1536,7 +1536,9 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
   _state.researchInProgress = true;
   _state.packagePartsCache = {};
   _state.failedUrlsThisRun = new Set();
-  _state.wqpLimnology = null;
+  // Only reset wqpLimnology for standalone runAgents calls (resume mode).
+  // When called from runFullPipeline, wqpLimnology is already populated by Step 1d — don't clobber it.
+  if (mode === 'resume') _state.wqpLimnology = null;
   showProgress(true);
 
   // WQP limnology — runs on both full and resume when limnology is selected.
