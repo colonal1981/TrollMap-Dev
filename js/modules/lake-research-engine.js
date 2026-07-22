@@ -261,6 +261,14 @@ function applyWqpToLimnology(base = {}, wqp = null) {
     out.oxygen.anoxicBelowFt = wqp.oxygen.anoxicBelowFt;
     out.oxygen.note = wqp.oxygen.note || out.oxygen.note || null;
   }
+  // Derive trophic status from WQP secchi depth (Carlson TSI thresholds) when not already set
+  if (!hasResearchValue(out.trophicStatus) && wqp.secchi?.avgSecchiDepthFt != null && wqp.secchi.sampleCount >= 5) {
+    const s = wqp.secchi.avgSecchiDepthFt;
+    if (s < 1.6)       out.trophicStatus = 'hypereutrophic';
+    else if (s < 6.6)  out.trophicStatus = 'eutrophic';
+    else if (s < 13.0) out.trophicStatus = 'mesotrophic';
+    else               out.trophicStatus = 'oligotrophic';
+  }
   return out;
 }
 
