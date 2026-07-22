@@ -1,10 +1,9 @@
 name: Deploy Worker
 on:
   push:
-    branches: [main]
+    branches: [main, refactor]
     paths:
       - 'Worker/**'
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -14,3 +13,4 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           workingDirectory: Worker
+          environment: preview
