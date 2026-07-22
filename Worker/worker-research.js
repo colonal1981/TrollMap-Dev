@@ -471,7 +471,7 @@ Return ONLY valid JSON:
 }
 
 async function fetchStateRegulations(state, env) {
-  const cacheKey = `regulations:${state}:v2`;
+  const cacheKey = `regulations:${state}:v3`;
   let cached = await env.KV.get(cacheKey, { type: 'json' });
   if (cached) return cached;
   
@@ -7510,7 +7510,7 @@ async function handleResearchRegsDebug(request, env) {
       return new Response(JSON.stringify({ state, url: config.pages[0].url, length: text.length, lmbIdx, preview: text.slice(offset, offset + 3000) }, null, 2), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
     }
     // bust=1 clears KV cache so fresh parse runs
-    if (bust) await env.KV.delete(`regulations:${state}:v2`).catch(() => {});
+    if (bust) await env.KV.delete(`regulations:${state}:v3`).catch(() => {}); await env.KV.delete(`regulations:${state}:v2`).catch(() => {});
     // Test the LLM parse directly to diagnose issues
     const config2 = STATE_REGULATIONS_CONFIG[state];
     const testResult = await tinyfishFetch({ urls: config2.pages.map(p => p.url), format: 'markdown' }, env);
