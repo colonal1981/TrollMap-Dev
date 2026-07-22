@@ -3104,7 +3104,7 @@ const RESEARCH_RAMP_SOURCES = {
     wb: (p) => p.Waterbody,
     lat: (p) => p.Latitude,
     lon: (p) => p.Longitude,
-    meta: (p) => ({ lanes: p.NumLanes, dock: p.Dock, fee: String(p.Fee || '').toUpperCase() === 'Y', species: p.SpeciesList || '', county: p.County, owner: p.Owner, motorRestrictions: p.MotorRest })
+    meta: (p) => ({ lanes: p.NumLanes, dock: p.Dock, fee: String(p.Fee || '').toUpperCase() === 'Y', species: [p.Largemouth==='Y'&&'Largemouth Bass',p.Smallmouth==='Y'&&'Smallmouth Bass',p.ShoalBass==='Y'&&'Shoal Bass',p.SpotBass==='Y'&&'Spotted Bass',p.WhiteBass==='Y'&&'White Bass',p.StripBass==='Y'&&'Striped Bass',p.HybStrpBas==='Y'&&'Hybrid Striped Bass',p.ChannelCat==='Y'&&'Channel Catfish',p.Flathead==='Y'&&'Flathead Catfish',p.BlueCat==='Y'&&'Blue Catfish',p.WhiteCrap==='Y'&&'White Crappie',p.BlackCrap==='Y'&&'Black Crappie',p.Bluegill==='Y'&&'Bluegill',p.RedearSun==='Y'&&'Redear Sunfish',p.RbwTrout==='Y'&&'Rainbow Trout',p.BrownTrout==='Y'&&'Brown Trout',p.Walleye==='Y'&&'Walleye',p.ChainPick==='Y'&&'Chain Pickerel',p.Bowfin==='Y'&&'Bowfin',p.FreshDrum==='Y'&&'Freshwater Drum'].filter(Boolean).join(', '), county: p.County, owner: p.Owner, motorRestrictions: p.MotorRest })
   },
   NC: {
     url: "https://services1.arcgis.com/YfqBAUM5nWR3yhGP/arcgis/rest/services/NCWRC_Boating_Access_Areas_view/FeatureServer/0/query",
