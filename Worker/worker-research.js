@@ -3886,9 +3886,9 @@ async function handleResearchGetNormalized(env, lakeName) {
     'clarks_hill_lake_ga':    'clarks_hill_thurmond_sc_ga',
     'j_strom_thurmond_lake':  'clarks_hill_thurmond_sc_ga',
     'thurmond_lake_sc':       'clarks_hill_thurmond_sc_ga',
-    'richard_b_russell_lake': 'lake_russell_sc_ga',
-    'lake_russell_ga':        'lake_russell_sc_ga',
-    'lake_russell_sc':        'lake_russell_sc_ga',
+    'richard_b_russell_lake': 'lake_russell_sc',
+    'lake_russell_ga':        'lake_russell_sc',
+    'lake_russell_sc_ga':     'lake_russell_sc',
   };
   let safe = researchStorageId(lakeName);
   const key = `lake_packages/${safe}/normalized_documents.json`;
@@ -4673,12 +4673,23 @@ function sanitizeLakeId(name) {
 }
 
 const RESEARCH_CANONICAL_IDS = {
+  // Clarks Hill / Thurmond (SC/GA) — SC calls it Thurmond, GA calls it Clarks Hill
   'lake_thurmond_sc': 'clarks_hill_thurmond_sc_ga',
   'clarks_hill_lake_ga': 'clarks_hill_thurmond_sc_ga',
   'j_strom_thurmond_lake': 'clarks_hill_thurmond_sc_ga',
   'thurmond_lake_sc': 'clarks_hill_thurmond_sc_ga',
   'thurmond_lake_ga': 'clarks_hill_thurmond_sc_ga',
   'clarks_hill_thurmond_sc_ga': 'clarks_hill_thurmond_sc_ga',
+  // Lake Wylie (SC/NC) — canonical is SC profile
+  'lake_wylie_nc': 'lake_wylie_sc',
+  'lake_wylie_sc_nc': 'lake_wylie_sc',
+  // Lake Hartwell (SC/GA) — canonical is SC profile
+  'lake_hartwell_sc_ga': 'lake_hartwell_sc',
+  // Lake Russell (SC/GA) — SC calls it Lake Russell, GA calls it Lake Russell — canonical is SC profile
+  'lake_russell_sc_ga': 'lake_russell_sc',
+  'lake_russell_ga': 'lake_russell_sc',
+  // Lake Chatuge (GA/NC) — GA calls it Lake Chatuge, NC calls it Chatuge Lake — canonical is GA
+  'chatuge_lake_nc': 'lake_chatuge_ga',
 };
 
 function researchStorageId(lakeName) {
@@ -4828,7 +4839,7 @@ EXTRACTED FACTS:
 ${factsBlock || 'No limnology facts extracted — derive from document depth profiles.'}
 
 INSTRUCTIONS:
-1. secchiFt: The EPA NES table has a row labeled "SECCHI (METERS)" — that is the only row for Secchi. Values are typically 0.3-0.5m for turbid lakes. Convert meters × 3.281. NEVER use alkalinity (10-35 mg/L), conductivity, pH, or any other row as Secchi. If Secchi is in meters, the feet value will be LESS THAN 5 ft for most SE reservoirs. A secchiFt value above 10 is almost certainly wrong — reject it.
+1. secchiFt: The EPA NES table has a row labeled "SECCHI (METERS)" — that is the only row for Secchi. Convert meters × 3.281. NEVER use alkalinity (10-35 mg/L), conductivity, pH, or any other row as Secchi. Most SE piedmont reservoirs have secchi < 5ft, but oligotrophic mountain lakes (Nantahala, Santeetlah, Jocassee, etc.) can have legitimate secchi of 10-20ft. Only reject values above 25ft as implausible.
 2. thermocline.summerDepthFt: find where temperature drops sharply with depth in summer profiles. Report as a SINGLE NUMBER (the midpoint in feet, e.g. 19 for a 16-22ft range). NEVER a string, NEVER a range string like "16-22".
 3. oxygen.depletionDepthFt: depth where DO first drops below 2 mg/L in summer. Must be a number or null — never the string "null".
 4. oxygen.anoxicBelowFt: depth where DO approaches 0. Must be a number or null — never the string "null".
@@ -6053,9 +6064,9 @@ async function handleResearchGet(env, lakeId) {
     'clarks_hill_lake_ga': 'clarks_hill_thurmond_sc_ga',
     'j_strom_thurmond_lake': 'clarks_hill_thurmond_sc_ga',
     'thurmond_lake_sc': 'clarks_hill_thurmond_sc_ga',
-    'richard_b_russell_lake': 'lake_russell_sc_ga',
-    'lake_russell_ga': 'lake_russell_sc_ga',
-    'lake_russell_sc': 'lake_russell_sc_ga',
+    'richard_b_russell_lake': 'lake_russell_sc',
+    'lake_russell_ga': 'lake_russell_sc',
+    'lake_russell_sc_ga': 'lake_russell_sc',
   };
   if (!RESEARCH_CANONICAL_IDS[requestedSafe] && LEGACY_PROFILE_KEYS[requestedSafe]) {
     safe = LEGACY_PROFILE_KEYS[requestedSafe];
@@ -6778,7 +6789,114 @@ async function handleResearchVisionScanStatus(request, env) {
 }
 
 
-// ─── PHASE 2: SHARED R2 DOCUMENT REGISTRY ────────────────────────────────────
+
+// ─── BATCH PROXY DOWNLOAD ────────────────────────────────────────────────────
+// Fetches up to 10 HTML URLs in a single TinyFish batch call.
+// PDFs, NEPIS, and other special sources are excluded from the batch and must
+// be fetched individually via handleResearchProxyDownload.
+// Returns: { results: [{ url, text, source, ok, error }] }
+async function handleResearchProxyDownloadBatch(request, env) {
+  let body;
+  try { body = await request.json(); } catch { body = {}; }
+  const { urls } = body; // array of { url, canonicalUrl, title, type }
+  if (!Array.isArray(urls) || !urls.length) {
+    return new Response(JSON.stringify({ ok: false, error: 'missing urls array' }), { status: 400, headers: JSON_HEADERS });
+  }
+
+  const scrapedoKey = env.SCRAPEDO_TOKEN || env.SCRAPEDO_API_KEY;
+
+  // Separate into TinyFish-eligible and special-case URLs
+  const tinyFishBatch = [];
+  const specialUrls = [];
+
+  for (const item of urls) {
+    const target = item.url || '';
+    const isPdf = (item.type || '').toUpperCase() === 'PDF' || /\.pdf(?:$|[?#])/i.test(target);
+    const isNepis = /nepis\.epa\.gov|ZyNET\.exe/i.test(target);
+    const isWaterAtlas = /wateratlas\.usf\.edu/i.test(target);
+
+    if (isPdf || isNepis || isWaterAtlas) {
+      specialUrls.push({ ...item, reason: isPdf ? 'pdf' : isNepis ? 'nepis' : 'blocked' });
+    } else {
+      tinyFishBatch.push(item);
+    }
+  }
+
+  const results = [];
+
+  // Batch fetch HTML URLs via TinyFish
+  if (tinyFishBatch.length > 0) {
+    const batchUrls = tinyFishBatch.map(item => item.url);
+    let tfResults = [];
+    let tfFailed = [...tinyFishBatch]; // assume all failed until proven otherwise
+
+    try {
+      const tfData = await tinyfishFetch({ urls: batchUrls, format: 'markdown', ttl: 86400 }, env);
+      tfResults = tfData.results || [];
+      tfFailed = [];
+
+      for (let i = 0; i < tinyFishBatch.length; i++) {
+        const item = tinyFishBatch[i];
+        const result = tfResults[i];
+        const text = result?.text || result?.markdown || result?.content || '';
+        if (text && text.length > 200) {
+          results.push({ url: item.url, text, source: 'tinyfish', ok: true, title: item.title });
+        } else {
+          tfFailed.push(item); // too short — retry on Scrape.do
+        }
+      }
+    } catch (e) {
+      console.warn(`[batch-fetch] TinyFish batch failed: ${e.message} — falling back to Scrape.do for all`);
+      tfFailed = [...tinyFishBatch];
+    }
+
+    // Retry TinyFish failures on Scrape.do — up to 5 concurrent (Scrape.do limit)
+    if (!scrapedoKey) {
+      for (const item of tfFailed) {
+        results.push({ url: item.url, text: '', source: 'none', ok: false, error: 'TinyFish failed, no Scrape.do key', title: item.title });
+      }
+    } else {
+      const sdFetch = async (item) => {
+        try {
+          const sdUrl = `https://api.scrape.do?token=${scrapedoKey}&url=${encodeURIComponent(item.url)}&render=false&super=false`;
+          const sdController = new AbortController();
+          const sdTimer = setTimeout(() => sdController.abort(), 8000);
+          let sdRes;
+          try {
+            sdRes = await fetch(sdUrl, { headers: { 'Accept': 'text/html,*/*' }, signal: sdController.signal });
+          } finally {
+            clearTimeout(sdTimer);
+          }
+          if (sdRes.ok) {
+            const html = await sdRes.text();
+            const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+            if (text.length > 200) return { url: item.url, text, source: 'scrapedo', ok: true, title: item.title };
+          }
+          return { url: item.url, text: '', source: 'scrapedo', ok: false, error: `Scrape.do ${sdRes.status}`, title: item.title };
+        } catch (e2) {
+          const isTimeout = e2.name === 'AbortError';
+          return { url: item.url, text: '', source: 'none', ok: false, error: isTimeout ? 'Scrape.do timeout (8s)' : e2.message, title: item.title };
+        }
+      };
+      // Run up to 5 concurrent Scrape.do fetches
+      const SD_CONCURRENCY = 5;
+      for (let i = 0; i < tfFailed.length; i += SD_CONCURRENCY) {
+        const batch = tfFailed.slice(i, i + SD_CONCURRENCY);
+        const batchResults = await Promise.all(batch.map(sdFetch));
+        results.push(...batchResults);
+      }
+    }
+  }
+
+  // Special URLs return as unhandled — engine fetches these individually
+  for (const item of specialUrls) {
+    results.push({ url: item.url, text: '', source: 'unhandled', ok: false, reason: item.reason, title: item.title });
+  }
+
+  return new Response(JSON.stringify({ ok: true, results }), { headers: JSON_HEADERS });
+}
+
+
 // A canonical source is fetched and normalized no more than once, regardless of
 // how many lakes or categories use it. Documents are stored immutably by version;
 // a generation pointer controls which index is active. Kill switch:
@@ -7267,4 +7385,4 @@ async function isQuarantined(env, canonicalUrl) {
   return !!obj;
 }
 
-export { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchAgentPipeline, handleResearchValidationPass, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine };
+export { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchAgentPipeline, handleResearchValidationPass, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine };
