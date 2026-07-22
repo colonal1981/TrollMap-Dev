@@ -17,3 +17,6 @@ SYNC_TOKEN = "trollmap2026"
 binding = "KV"
 id = "9ed201be45584a54aeadc1286b769b44"      
 preview_id = "eab61871419f49ff923d8e2f6bbe4d9f"
+
+[env.preview]
+name = "trollmap-worker-preview"
