@@ -1,5 +1,3 @@
-var __defProp = Object.defineProperty;
-var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // worker-data.js — Static lake/river data extracted from trollmap-worker.js
 // LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS
@@ -140,7 +138,6 @@ async function fetchText(url, opts = {}) {
   });
   return { ok: res.ok, status: res.status, text: await res.text() };
 }
-__name(fetchText, "fetchText");
 async function fetchUsgs(site, paramCd, periodDays = 2) {
   const out = {};
   const jsonUrl = `https://waterservices.usgs.gov/nwis/iv/?sites=${site}&parameterCd=${paramCd}&format=json&period=P${periodDays}D`;
@@ -200,7 +197,6 @@ async function fetchUsgs(site, paramCd, periodDays = 2) {
   }
   return out;
 }
-__name(fetchUsgs, "fetchUsgs");
 async function fetchDukeApi() {
   try {
     const r = await fetch("https://api.hydro-derived.duke-energy.app/lakes/current-level", {
@@ -220,7 +216,6 @@ async function fetchDukeApi() {
     return null;
   }
 }
-__name(fetchDukeApi, "fetchDukeApi");
 function normalizeDukeRow(row) {
   const actual = parseFloat(row.Actual);
   const elevMatch = String(row.Elevation || "").match(/([0-9]+(?:\.[0-9]+)?)/);
@@ -246,7 +241,6 @@ function normalizeDukeRow(row) {
     specialMessage: Array.isArray(row.SpecialMessage) && row.SpecialMessage[0] ? row.SpecialMessage[0].Text : null
   };
 }
-__name(normalizeDukeRow, "normalizeDukeRow");
 async function getDukeLake(nameFragment) {
   const arr = await fetchDukeApi();
   if (!arr) return null;
@@ -254,7 +248,6 @@ async function getDukeLake(nameFragment) {
   const row = arr.find((r) => (r.LakeDisplayName || "").toLowerCase().includes(frag) || (r.LakeName || "").toLowerCase().includes(frag));
   return row ? normalizeDukeRow(row) : null;
 }
-__name(getDukeLake, "getDukeLake");
 async function fetchDukeDashboard(basin = "1") {
   const arr = await fetchDukeApi();
   if (!arr) return null;
@@ -265,7 +258,6 @@ async function fetchDukeDashboard(basin = "1") {
   }).filter(Boolean);
   return { url: "https://api.hydro-derived.duke-energy.app/lakes/current-level", text: lines.join("\n"), json: arr };
 }
-__name(fetchDukeDashboard, "fetchDukeDashboard");
 async function fetchSanteeCooper() {
   const urls = [
     "https://www.santeecooper.com/community/lakes-and-recreation/lake-levels.aspx",
@@ -287,7 +279,6 @@ async function fetchSanteeCooper() {
   }
   return null;
 }
-__name(fetchSanteeCooper, "fetchSanteeCooper");
 async function fetchUsaceSavannah(lakeKey) {
   const urls = [
     "https://water.sas.usace.army.mil/Lakes.htm",
@@ -304,7 +295,6 @@ async function fetchUsaceSavannah(lakeKey) {
   }
   return null;
 }
-__name(fetchUsaceSavannah, "fetchUsaceSavannah");
 
 // Query the USACE Corps Water Management System (CWMS) Data API for the
 // latest reservoir elevation for a given lake. Falls back to a location-name
@@ -412,7 +402,6 @@ async function fetchCwmsLakeLevel(lakeName, lakeKey) {
 
   return null;
 }
-__name(fetchCwmsLakeLevel, "fetchCwmsLakeLevel");
 async function fetchAhqWaterTemp(slug) {
   if (!slug) return null;
   const url = `https://www.anglersheadquarters.com/pages/${slug}-fishing-report`;
@@ -428,13 +417,13 @@ async function fetchAhqWaterTemp(slug) {
   const vagueRe = /water\s+temperatures?\s+(?:are\s+|is\s+|now\s+)?(?:in\s+the\s+)?(lower|low|mid|upper|high)?\s*(\d{2,3})s(?:\s*(?:to|[-–])\s*(lower|low|mid|upper|high)?\s*(\d{2,3})s)?/i;
   const v = r.text.match(vagueRe);
   if (v) {
-    const band = /* @__PURE__ */ __name((mod, base) => {
+    const band = (mod, base) => {
       const b2 = parseInt(base);
       if (!mod || mod === "mid") return b2 + 5;
       if (mod === "lower" || mod === "low") return b2 + 2;
       if (mod === "upper" || mod === "high") return b2 + 8;
       return b2 + 5;
-    }, "band");
+    };
     const a = band(v[1], v[2]);
     const b = v[4] ? band(v[3], v[4]) : null;
     const tempF = b ? Math.round((a + b) / 2) : a;
@@ -442,7 +431,6 @@ async function fetchAhqWaterTemp(slug) {
   }
   return null;
 }
-__name(fetchAhqWaterTemp, "fetchAhqWaterTemp");
 var LAKE_INTEL_SOURCE_REGISTRY = {
   "default": {
     "official": [
@@ -822,11 +810,9 @@ async function fetchLakeMonsterIntel(key) {
     return null;
   }
 }
-__name(fetchLakeMonsterIntel, "fetchLakeMonsterIntel");
 function stripHtml(html) {
   return String(html || "").replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
 }
-__name(stripHtml, "stripHtml");
 async function fetchAhqFishingReport(slug) {
   if (!slug) return null;
   const url = "https://www.anglersheadquarters.com/pages/" + slug + "-fishing-report";
@@ -869,7 +855,6 @@ async function fetchAhqFishingReport(slug) {
     return null;
   }
 }
-__name(fetchAhqFishingReport, "fetchAhqFishingReport");
 function lakeKeyFromName(lakeName) {
   const raw = String(lakeName || "").toLowerCase();
   const normalized = raw.replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
@@ -896,7 +881,6 @@ function lakeKeyFromName(lakeName) {
   }
   return normalized.split(" ")[0] || "";
 }
-__name(lakeKeyFromName, "lakeKeyFromName");
 var LAKE_CLARITY_PROFILES = {
   wateree: {
     displayName: "Lake Wateree",
@@ -970,7 +954,6 @@ function classifyClarity(score) {
   if (score < 85) return { clarity: "Muddy", label: "Muddy", select: "Muddy" };
   return { clarity: "Muddy / debris risk", label: "Muddy / debris risk", select: "Muddy" };
 }
-__name(classifyClarity, "classifyClarity");
 function clarityLurePack(clarity) {
   const c = String(clarity || "").toLowerCase();
   if (c.includes("clear")) return {
@@ -990,7 +973,6 @@ function clarityLurePack(clarity) {
     tactics: ["avoid backs unless targeting catfish/cover", "fish seams and hard edges", "maximize vibration/scent", "watch debris"]
   };
 }
-__name(clarityLurePack, "clarityLurePack");
 async function fetchOpenMeteoRain(lat, lon, tripDate) {
   try {
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=precipitation_sum,windspeed_10m_max,winddirection_10m_dominant&past_days=3&forecast_days=7&timezone=America%2FNew_York`;
@@ -1001,8 +983,8 @@ async function fetchOpenMeteoRain(lat, lon, tripDate) {
     const precip = j?.daily?.precipitation_sum || [];
     const wind = j?.daily?.windspeed_10m_max || [];
     const wdir = j?.daily?.winddirection_10m_dominant || [];
-    const idx = Math.max(0, times.indexOf(tripDate || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)));
-    const mm = /* @__PURE__ */ __name((i) => i >= 0 && i < precip.length && isFinite(precip[i]) ? precip[i] : 0, "mm");
+    const idx = Math.max(0, times.indexOf(tripDate || (new Date()).toISOString().slice(0, 10)));
+    const mm = (i) => i >= 0 && i < precip.length && isFinite(precip[i]) ? precip[i] : 0;
     const p24 = mm(idx - 1);
     const p48 = mm(idx - 2);
     const p72 = mm(idx - 3);
@@ -1024,7 +1006,6 @@ async function fetchOpenMeteoRain(lat, lon, tripDate) {
     return null;
   }
 }
-__name(fetchOpenMeteoRain, "fetchOpenMeteoRain");
 async function getLakeClarity(lakeName, tripDate) {
   const key = lakeKeyFromName(lakeName);
   const profile = LAKE_CLARITY_PROFILES[key] || { displayName: lakeName, center: [34, -81], defaultNote: "No custom clarity model yet; generic creek/runoff model used.", zones: [{ name: "Creeks/upper arms", sensitivity: 1.2, base: 6, likely: "stain first", ramps: [] }, { name: "Main lake/lower basin", sensitivity: 0.75, base: 2, likely: "clearest available water", ramps: [] }] };
@@ -1065,7 +1046,6 @@ async function getLakeClarity(lakeName, tripDate) {
     verify: "Predicted from rainfall/forecast/wind/lake-zone rules \u2014 verify water color at the ramp before committing."
   };
 }
-__name(getLakeClarity, "getLakeClarity");
 function getLakeIntelSourceRegistry(key) {
   const base = LAKE_INTEL_SOURCE_REGISTRY.default || {};
   const lake = LAKE_INTEL_SOURCE_REGISTRY[key] || {};
@@ -1084,7 +1064,6 @@ function getLakeIntelSourceRegistry(key) {
     }
   };
 }
-__name(getLakeIntelSourceRegistry, "getLakeIntelSourceRegistry");
 async function getLakeIntel(lakeName) {
   const key = lakeKeyFromName(lakeName);
   const sourceRegistry = getLakeIntelSourceRegistry(key);
@@ -1117,11 +1096,10 @@ async function getLakeIntel(lakeName) {
     lakeMonster,
     sourceRegistry,
     sources,
-    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    timestamp: (new Date()).toISOString(),
     confidence: LAKE_INTEL[key] ? "curated_profile_plus_live_scrape_when_available" : "generic_unverified_profile"
   };
 }
-__name(getLakeIntel, "getLakeIntel");
 var RIVERS = {
   wateree: {
     label: "Wateree River (below Wateree Dam)",

@@ -1,8 +1,6 @@
 // worker-species.js — Species lists and ecological validation
 // Extracted from trollmap-worker.js
 
-var __defProp = Object.defineProperty;
-var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 var SPECIES_MIDLANDS_SANTEE = [
   "Striped Bass",
@@ -72,7 +70,7 @@ var SPECIES_COASTAL_SALTWATER = [
   "Sunfish (Panfish)",
   "Gar"
 ];
-var SPECIES_ALL_TROLLMAP = [.../* @__PURE__ */ new Set([
+var SPECIES_ALL_TROLLMAP = [...new Set([
   ...SPECIES_MIDLANDS_SANTEE,
   ...SPECIES_UPSTATE,
   ...SPECIES_COASTAL_SALTWATER,
@@ -108,7 +106,6 @@ function getSpeciesListForGps(lat, lon) {
   if (lat > 34.5 && lon < -82) return SPECIES_UPSTATE;
   return SPECIES_MIDLANDS_SANTEE;
 }
-__name(getSpeciesListForGps, "getSpeciesListForGps");
 var MAX_BIOLOGICAL_LENGTH = {
   "Largemouth Bass": 26.5,
   "Spotted Bass": 24,
@@ -137,8 +134,7 @@ function checkBiologicalLength(species, length) {
   if (length < 3) return [false, `\u26A0\uFE0F LENGTH ANOMALY: Reported length (${length} in) is implausibly small.`];
   return [true, ""];
 }
-__name(checkBiologicalLength, "checkBiologicalLength");
-var PURE_SALTWATER = /* @__PURE__ */ new Set([
+var PURE_SALTWATER = new Set([
   "Red Drum (Redfish)",
   "Speckled Trout (Spotted Seatrout)",
   "Flounder",
@@ -153,7 +149,7 @@ var PURE_SALTWATER = /* @__PURE__ */ new Set([
   "Ladyfish",
   "Jack Crevalle"
 ]);
-var PURE_FRESHWATER = /* @__PURE__ */ new Set([
+var PURE_FRESHWATER = new Set([
   "Largemouth Bass",
   "Spotted Bass",
   "Smallmouth Bass",
@@ -229,6 +225,5 @@ function checkEcologicalReality(lat, lon, species) {
   }
   return [true, ""];
 }
-__name(checkEcologicalReality, "checkEcologicalReality");
 
 export { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality };

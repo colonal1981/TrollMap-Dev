@@ -1,7 +1,5 @@
 // worker-core.js — Shared infrastructure: CORS headers, LLM provider chain, fetchText
 
-var __defProp = Object.defineProperty;
-var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // trollmap-worker.js
 var CORS = {
@@ -183,7 +181,6 @@ function extractLLMText(data) {
   if (typeof data?.output_text === "string") return data.output_text.trim();
   return "";
 }
-__name(extractLLMText, "extractLLMText");
 
 // Round-robin counter for gemini-free key rotation across concurrent requests
 // Incremented atomically per call so concurrent analyze-facts requests hit different keys
@@ -314,20 +311,17 @@ async function callLLM(env, payload, preferredProvider = null) {
   }
   throw lastError || new Error("All LLM providers/models failed");
 }
-__name(callLLM, "callLLM");
 async function isAuthorized(request, env) {
   const want = env && env.SYNC_TOKEN || typeof SYNC_TOKEN !== "undefined" && SYNC_TOKEN || null;
   if (!want) return false;
   const got = request.headers.get("X-Sync-Token");
   return got === want;
 }
-__name(isAuthorized, "isAuthorized");
 function chartpackKey(lake, filename) {
   const safeLake = String(lake).toLowerCase().replace(/[^a-z0-9_\-]/g, "_");
   const safeFile = String(filename).replace(/[^a-z0-9_.\-\/]/gi, "_");
   return `${safeLake}/${safeFile}`;
 }
-__name(chartpackKey, "chartpackKey");
 async function handleChartpackList(env) {
   const out = [];
   let cursor;
@@ -352,6 +346,5 @@ async function handleChartpackList(env) {
   out.sort((a, b) => a.name.localeCompare(b.name));
   return { chartpacks: out, count: out.length };
 }
-__name(handleChartpackList, "handleChartpackList");
 
 export { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, isAuthorized };

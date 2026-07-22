@@ -15,7 +15,6 @@ import { selectBestLure, getInventory } from '../data/tackle-inventory.js';
 import { getLureColor } from '../data/lure-knowledge.js';
 import { getPhaseDepth, getStrategySpeed, normalizeSpecies, getPresentationPriority, getPhaseNotes } from '../data/species-strategies.js';
 import { SPECIES_BEHAVIOR, SPECIES_BEHAVIOR_V2, getSeason, checkRegulations, resolveLakeKey } from '../data/species-intel.js';
-const IntelV2 = { SPECIES_BEHAVIOR_V2, resolveLakeKey, checkRegulations, getSeason };
 import { isLiveBaitAvailable } from '../data/fishing-style-profile.js';
 import { buildFishingContext, buildGroqCoachPayload } from './smart-plan-context.js';
 import { startCoachSession } from './groq-coach.js';
@@ -240,10 +239,10 @@ function computePhases(launchTimeStr, returnTimeStr, dateStr, lat, lon) {
 
 // ── Per-phase species-intel lookup (fallback context for rationale) ────────────
 function getPhaseRecommendation(species, lakeName, season, phaseNum, waterTempF) {
-  const v2sp = IntelV2?.SPECIES_BEHAVIOR_V2?.[species];
+  const v2sp = SPECIES_BEHAVIOR_V2?.[species];
   if (v2sp) {
-    const lakeKeyV2 = (IntelV2.resolveLakeKey
-      ? (IntelV2.resolveLakeKey(lakeName, v2sp) || 'default_SC_reservoir')
+    const lakeKeyV2 = (resolveLakeKey
+      ? (resolveLakeKey(lakeName, v2sp) || 'default_SC_reservoir')
       : (v2sp[lakeName] ? lakeName : 'default_SC_reservoir'));
     const lakeNode = v2sp[lakeKeyV2] || v2sp['default_SC_reservoir'] || v2sp['Coastal SC Inshore'];
     const sNode = lakeNode?.[season];
@@ -697,7 +696,7 @@ Note: This profile is authoritative for permanent lake characteristics (type, st
 
 
   // ── Pull species-intel-v2 data for this species + season ─────────────
-  const v2sp = IntelV2?.SPECIES_BEHAVIOR_V2?.[sp];
+  const v2sp = SPECIES_BEHAVIOR_V2?.[sp];
   const oxygenFloor = fishingContext?.researchedProfile?.limnology?.oxygen?.anoxicBelowFt || null;
   const oxygenConstraint = oxygenFloor
     ? `\nCRITICAL: Oxygen depletion floor is ${oxygenFloor}ft on this lake in summer — all depth bands MUST stay above ${oxygenFloor}ft.`
@@ -723,8 +722,8 @@ ${lakeNote ? `- Lake context: ${lakeNote}` : ''}
 ${oxygenConstraint}
 CRITICAL: Both depth bands MUST stay within ${depth || 'the above range'}. Do NOT create a second band deeper than ${Array.isArray(sb.depthRange) ? sb.depthRange[1] : 10}ft — lake-specific research does not support deeper patterns for ${sp} in ${season} on this lake.`;
   } else if (v2sp) {
-    const lakeKeyV2 = (IntelV2.resolveLakeKey
-      ? (IntelV2.resolveLakeKey(lakeName, v2sp) || 'default_SC_reservoir')
+    const lakeKeyV2 = (resolveLakeKey
+      ? (resolveLakeKey(lakeName, v2sp) || 'default_SC_reservoir')
       : (v2sp[lakeName] ? lakeName : 'default_SC_reservoir'));
     const sNode = v2sp[lakeKeyV2]?.[season] || v2sp['default_SC_reservoir']?.[season];
     if (sNode) {

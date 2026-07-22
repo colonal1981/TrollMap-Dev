@@ -1,17 +1,14 @@
 import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized } from './worker-core.js'; 
 import { LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard } from './worker-data.js';
 import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality } from './worker-species.js';
-import { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchAgentPipeline, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
+import { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchAgentPipeline, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine, handleResearchVisionScan, handleResearchVisionScanSave, handleResearchVisionScanStatus } from './worker-research.js';
 
-var __defProp = Object.defineProperty;
-var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 function chartpackKey(lake, filename) {
   const safeLake = String(lake).toLowerCase().replace(/[^a-z0-9_\-]/g, "_");
   const safeFile = String(filename).replace(/[^a-z0-9_.\-\/]/gi, "_");
   return `${safeLake}/${safeFile}`;
 }
-__name(chartpackKey, "chartpackKey");
 async function handleChartpackList(env) {
   const out = [];
   let cursor;
@@ -36,16 +33,15 @@ async function handleChartpackList(env) {
   out.sort((a, b) => a.name.localeCompare(b.name));
   return { chartpacks: out, count: out.length };
 }
-__name(handleChartpackList, "handleChartpackList");
 function assessKayakSafety(riverKey, gaugeData, thresholds) {
   const t = thresholds;
   const reasons = [];
   const metrics = {};
   let level = "go";
-  const escalate = /* @__PURE__ */ __name((newLevel) => {
+  const escalate = (newLevel) => {
     const order = { "go": 0, "caution": 1, "no-go": 2 };
     if (order[newLevel] > order[level]) level = newLevel;
-  }, "escalate");
+  };
   const cfs = gaugeData.streamflow;
   if (cfs != null) {
     metrics.streamflow_cfs = cfs;
@@ -84,7 +80,6 @@ function assessKayakSafety(riverKey, gaugeData, thresholds) {
   if (!reasons.length) reasons.push("Conditions appear normal \u2014 paddleable.");
   return { status: level, reasons, metrics };
 }
-__name(assessKayakSafety, "assessKayakSafety");
 function snapToRiver(centerline, userLat, userLon) {
   let best = null;
   for (const wp of centerline) {
@@ -93,7 +88,6 @@ function snapToRiver(centerline, userLat, userLon) {
   }
   return best;
 }
-__name(snapToRiver, "snapToRiver");
 function interpolateSeverity(att, mi) {
   if (!att) return 1;
   if (att.type === "piecewise" && Array.isArray(att.knots) && att.knots.length >= 2) {
@@ -111,7 +105,6 @@ function interpolateSeverity(att, mi) {
   const t = Math.max(0, Math.min(1, (mi - (att.fullSeverityMi || 0)) / Math.max(1, (att.dispersedMi || 70) - (att.fullSeverityMi || 0))));
   return Math.max(att.minFactor || 0.2, 1 - t * (1 - (att.minFactor || 0.2)));
 }
-__name(interpolateSeverity, "interpolateSeverity");
 function estimateSurgeAt(river, userLat, userLon) {
   if (!river.centerline || userLat == null || userLon == null) return null;
   const snap = snapToRiver(river.centerline, userLat, userLon);
@@ -130,7 +123,6 @@ function estimateSurgeAt(river, userLat, userLon) {
     surge_severity_label: severity > 0.75 ? "full" : severity > 0.5 ? "moderate" : severity > 0.3 ? "reduced" : "minor"
   };
 }
-__name(estimateSurgeAt, "estimateSurgeAt");
 async function getRiver(key, opts = {}) {
   const cfg = RIVERS[key];
   if (!cfg) return { error: `unknown river: ${key}` };
@@ -140,7 +132,7 @@ async function getRiver(key, opts = {}) {
     dam: cfg.damName,
     notes: cfg.notes,
     gauges: [],
-    timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    timestamp: (new Date()).toISOString()
   };
   for (const g of cfg.gauges) {
     const data = await fetchUsgs(
@@ -304,7 +296,6 @@ async function getRiver(key, opts = {}) {
   }
   return out;
 }
-__name(getRiver, "getRiver");
 async function computeGageRateOfRise(site) {
   try {
     const url = `https://waterservices.usgs.gov/nwis/iv/?sites=${site}&parameterCd=00065&format=rdb&period=PT3H`;
@@ -328,7 +319,7 @@ async function computeGageRateOfRise(site) {
       const p = l.split("	");
       const v = parseFloat(p[col]);
       const [date, time] = p[2].split(" ");
-      const ts = (/* @__PURE__ */ new Date(`${date}T${time}:00`)).getTime();
+      const ts = (new Date(`${date}T${time}:00`)).getTime();
       return { ts, v };
     }).filter((s) => isFinite(s.v) && isFinite(s.ts));
     if (samples.length < 2) return null;
@@ -350,7 +341,6 @@ async function computeGageRateOfRise(site) {
     return null;
   }
 }
-__name(computeGageRateOfRise, "computeGageRateOfRise");
 var DUKE_API_BASE = "https://api.hydro-derived.duke-energy.app";
 async function fetchDukeFlowArrivals(basinId) {
   try {
@@ -368,8 +358,8 @@ async function fetchDukeFlowArrivals(basinId) {
     const now = Date.now();
     for (const dam of j?.Dams || []) {
       for (const ev of dam?.FlowArrivalRecessions || []) {
-        const arr = ev.Arrival ? /* @__PURE__ */ new Date(ev.Arrival + (ev.Arrival.endsWith("Z") ? "" : "-04:00")) : null;
-        const rec = ev.Recedes ? /* @__PURE__ */ new Date(ev.Recedes + (ev.Recedes.endsWith("Z") ? "" : "-04:00")) : null;
+        const arr = ev.Arrival ? new Date(ev.Arrival + (ev.Arrival.endsWith("Z") ? "" : "-04:00")) : null;
+        const rec = ev.Recedes ? new Date(ev.Recedes + (ev.Recedes.endsWith("Z") ? "" : "-04:00")) : null;
         if (!arr || arr.getTime() < now - 12 * 3600 * 1e3) continue;
         out.push({
           damName: ev.DamName,
@@ -393,7 +383,6 @@ async function fetchDukeFlowArrivals(basinId) {
     return null;
   }
 }
-__name(fetchDukeFlowArrivals, "fetchDukeFlowArrivals");
 async function fetchDominionSaludaStatus() {
   const COLOR_RANGES = {
     green: { min: 0, max: 350, label: "GREEN \u2014 very low, scraping likely" },
@@ -426,7 +415,6 @@ async function fetchDominionSaludaStatus() {
     return null;
   }
 }
-__name(fetchDominionSaludaStatus, "fetchDominionSaludaStatus");
 async function resolveLake(lakeName) {
   const key = Object.keys(LAKES).find((k) => lakeName.toLowerCase().includes(k));
   if (!key) return { error: `unknown lake: ${lakeName}` };
@@ -436,7 +424,7 @@ async function resolveLake(lakeName) {
     elevation_ft: null,
     water_temperature_F: null,
     sources: [],
-    timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    timestamp: (new Date()).toISOString()
   };
   if (cfg.pool) {
     const u = await fetchUsgs(cfg.pool, "00010,00062,62614,62615,00065");
@@ -528,11 +516,9 @@ async function resolveLake(lakeName) {
   out.status = out.elevation_ft != null ? "success" : "no_data";
   return out;
 }
-__name(resolveLake, "resolveLake");
 function round2(n) {
   return Math.round(n * 100) / 100;
 }
-__name(round2, "round2");
 var SYNC_STORES = ["plan", "spread", "catch", "chart", "layer"];
 async function ensureSyncSchema(db) {
   try {
@@ -546,13 +532,12 @@ async function ensureSyncSchema(db) {
     if (!String(e).includes("already exists") && !String(e).includes("SQLITE_ERROR")) throw e;
   }
 }
-__name(ensureSyncSchema, "ensureSyncSchema");
 async function handleSyncPush(request, env, type, id) {
   if (!SYNC_STORES.includes(type)) {
     return new Response(JSON.stringify({ error: `unknown type: ${type}` }), { headers: JSON_HEADERS, status: 400 });
   }
   const body = await request.json();
-  const { lastModified = (/* @__PURE__ */ new Date()).toISOString(), deleted = false, ...data } = body;
+  const { lastModified = (new Date()).toISOString(), deleted = false, ...data } = body;
   await ensureSyncSchema(env.DB);
   await env.DB.prepare(
     `INSERT INTO sync_items (id, type, payload, lastModified, deleted)
@@ -564,7 +549,6 @@ async function handleSyncPush(request, env, type, id) {
   ).bind(id, type, JSON.stringify(data), lastModified, deleted ? 1 : 0).run();
   return new Response(JSON.stringify({ ok: true, type, id, lastModified }), { headers: JSON_HEADERS });
 }
-__name(handleSyncPush, "handleSyncPush");
 async function handleSyncListUpdates(url, env) {
   await ensureSyncSchema(env.DB);
   const since = url.searchParams.get("since");
@@ -585,7 +569,6 @@ async function handleSyncListUpdates(url, env) {
   }));
   return new Response(JSON.stringify({ items, count: items.length }), { headers: JSON_HEADERS });
 }
-__name(handleSyncListUpdates, "handleSyncListUpdates");
 async function handleSyncGet(env, type, id) {
   await ensureSyncSchema(env.DB);
   const row = await env.DB.prepare(
@@ -599,17 +582,15 @@ async function handleSyncGet(env, type, id) {
     deleted: row.deleted === 1
   }), { headers: JSON_HEADERS });
 }
-__name(handleSyncGet, "handleSyncGet");
 async function handleSyncDelete(env, type, id) {
   await ensureSyncSchema(env.DB);
   await env.DB.prepare(
     `INSERT INTO sync_items (id, type, payload, lastModified, deleted)
      VALUES (?1, ?2, '{}', ?3, 1)
      ON CONFLICT(type, id) DO UPDATE SET deleted=1, lastModified=excluded.lastModified`
-  ).bind(id, type, (/* @__PURE__ */ new Date()).toISOString()).run();
+  ).bind(id, type, (new Date()).toISOString()).run();
   return new Response(JSON.stringify({ ok: true, tombstoned: `${type}/${id}` }), { headers: JSON_HEADERS });
 }
-__name(handleSyncDelete, "handleSyncDelete");
 async function handleSyncMigrate(request, env) {
   await ensureSyncSchema(env.DB);
   const body = await request.json();
@@ -618,7 +599,7 @@ async function handleSyncMigrate(request, env) {
   const errors = [];
   for (const item of items) {
     try {
-      const { type, id, lastModified = (/* @__PURE__ */ new Date()).toISOString(), ...data } = item;
+      const { type, id, lastModified = (new Date()).toISOString(), ...data } = item;
       if (!SYNC_STORES.includes(type) || !id) continue;
       await env.DB.prepare(
         `INSERT INTO sync_items (id, type, payload, lastModified, deleted)
@@ -635,18 +616,15 @@ async function handleSyncMigrate(request, env) {
   }
   return new Response(JSON.stringify({ ok: true, imported: count, errors }), { headers: JSON_HEADERS });
 }
-__name(handleSyncMigrate, "handleSyncMigrate");
 function contourGeojsonKey(lake) {
   return `${lake.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}/vectors/contours.geojson`;
 }
-__name(contourGeojsonKey, "contourGeojsonKey");
 async function handleContourGeojsonGet(env, lake) {
   const key = contourGeojsonKey(lake);
   const obj = await env.R2_TROLLMAP_CHARTPACKS.get(key);
   if (!obj) return new Response(JSON.stringify({ error: "no vectorized contours for this lake yet" }), { headers: JSON_HEADERS, status: 404 });
   return new Response(obj.body, { headers: { ...CORS, "Content-Type": "application/json", "Cache-Control": "no-store" } });
 }
-__name(handleContourGeojsonGet, "handleContourGeojsonGet");
 async function handleContourGeojsonPut(request, env, lake) {
   const body = await request.arrayBuffer();
   if (!body || body.byteLength === 0) {
@@ -658,7 +636,6 @@ async function handleContourGeojsonPut(request, env, lake) {
   });
   return new Response(JSON.stringify({ ok: true, key, bytes: body.byteLength }), { headers: JSON_HEADERS });
 }
-__name(handleContourGeojsonPut, "handleContourGeojsonPut");
 function buildStage1Prompt(species_list, assume_board = false, lat = null, lon = null) {
   const species_str = species_list.map((s) => `"${s}"`).join(", ");
   const gps_tag = isFinite(lat) && isFinite(lon) ? `Photo GPS location: lat=${lat.toFixed(4)}, lon=${lon.toFixed(4)} \u2014 ${lon > -80.2 && lat < 33.8 ? "COASTAL SALTWATER" : "INLAND FRESHWATER"}` : `Photo GPS location: GPS unknown`;
@@ -752,7 +729,6 @@ ONLY if fish is on bump board:
 Return ONLY this JSON:
 {"has_fish": <true/false>, "on_bump_board": <true/false>, "species": "<exact species from list>", "length_inches": <number or null>, "confidence": "high|medium|low", "notes": "<what you see: tail tip position, visible ruler marks, species field marks>"}`;
 }
-__name(buildStage1Prompt, "buildStage1Prompt");
 var CATCH_JSON_SCHEMA = {
   type: "OBJECT",
   properties: {
@@ -784,7 +760,7 @@ async function handleIdentifyCatch(request, env) {
   const base64String = btoa(binary);
   let species_list = speciesHintHeader.length ? speciesHintHeader : getSpeciesListForGps(latHeader, lonHeader);
   const extra = ["Striped Bass", "Largemouth Bass", "Spotted Bass", "Smallmouth Bass", "Crappie", "Blue Catfish", "Channel Catfish", "Flathead Catfish", "Catfish", "Bowfin", "Bowfin (Mudfish)", "Chain Pickerel", "Bluegill", "Redear Sunfish (Shellcracker)", "Sunfish (Panfish)", "Yellow Perch", "White Bass / Hybrid", "Longnose Gar", "Gar", "Red Drum (Redfish)", "Speckled Trout (Spotted Seatrout)", "Flounder", "American Shad", "Other Fish", "Not Fish"];
-  species_list = [.../* @__PURE__ */ new Set([...species_list, ...extra])];
+  species_list = [...new Set([...species_list, ...extra])];
   const assume_board = (request.headers.get("X-Assume-Board") || "").toLowerCase() === "true";
   const prompt = buildStage1Prompt(species_list, assume_board, isFinite(latHeader) ? latHeader : null, isFinite(lonHeader) ? lonHeader : null);
   const payload = {
@@ -906,7 +882,6 @@ async function handleIdentifyCatch(request, env) {
   if (on_bump_board) out.trollmap_tags.push("board_measured");
   return out;
 }
-__name(handleIdentifyCatch, "handleIdentifyCatch");
 async function handleIdentifyCatchV2(request, env) {
   let ctx = {};
   let mime_type = "image/jpeg";
@@ -923,7 +898,7 @@ async function handleIdentifyCatchV2(request, env) {
     return new Response(JSON.stringify({ success: false, error: "missing image_base64" }), { status: 400, headers: JSON_HEADERS });
   }
   const fakeReq = {
-    headers: { get: /* @__PURE__ */ __name((k) => {
+    headers: { get: (k) => {
       const map = {
         "X-Image-Type": mime_type,
         "Content-Type": mime_type,
@@ -935,13 +910,13 @@ async function handleIdentifyCatchV2(request, env) {
         "X-Assume-Board": ctx.assume_board ? "true" : ""
       };
       return map[k] || null;
-    }, "get") },
-    arrayBuffer: /* @__PURE__ */ __name(async () => {
+    } },
+    arrayBuffer: async () => {
       const bin = atob(image_base64);
       const arr = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
       return arr.buffer;
-    }, "arrayBuffer")
+    }
   };
   const analysis = await handleIdentifyCatch(fakeReq, env);
   return new Response(JSON.stringify({
@@ -949,10 +924,9 @@ async function handleIdentifyCatchV2(request, env) {
     analysis,
     context_used: ctx,
     taxonomy_version: "fish_sorter_v4 / TrollMap v13",
-    timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    timestamp: (new Date()).toISOString()
   }), { headers: JSON_HEADERS });
 }
-__name(handleIdentifyCatchV2, "handleIdentifyCatchV2");
 var COACH_SYSTEM_PROMPT = `You are an expert kayak fishing guide and tactical advisor for TrollMap.
 
 Your job is to review a trolling plan and find EXACTLY ONE improvement \u2014 the single change most likely to increase catch rate given the conditions, fish behavior, and angler equipment.
@@ -1076,7 +1050,6 @@ Return ONLY the JSON object. Find the single highest-confidence improvement, or 
     return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers: JSON_HEADERS });
   }
 }
-__name(handleCoachPlan, "handleCoachPlan");
 // ─── LAKE RESEARCH MODULE ─────────────────────────────────────────────────
 // Implements spec v1.0: Lake Research permanent intelligence profiles
 
@@ -1228,7 +1201,6 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
       }
 
 
-
       if (path === "/research/limnology-data" && request.method === "POST") {
         return handleResearchLimnologyData(request, env);
       }
@@ -1336,6 +1308,9 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
         }
       }
       if (path === '/research/validation-pass' && request.method === 'POST') return handleResearchValidationPass(request, env);
+      if (path === '/research/vision-scan' && request.method === 'POST') return handleResearchVisionScan(request, env);
+      if (path === '/research/vision-scan-save' && request.method === 'POST') return handleResearchVisionScanSave(request, env);
+      if (path === '/research/vision-scan-status' && request.method === 'GET') return handleResearchVisionScanStatus(request, env);
 
       if (path === "/ramps") {
         const state = (url.searchParams.get("state") || "SC").toUpperCase();
@@ -1345,12 +1320,12 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
         const RAMP_SOURCES = {
           SC: {
             url: "https://services.arcgis.com/acgZYxoN5Oj8pDLa/arcgis/rest/services/South_Carolina_Public_Water_Access_PUBLIC_VIEW/FeatureServer/0/query",
-            filter: /* @__PURE__ */ __name((p) => p.WaterAccessType === "Boat Ramp" && p.Status?.toLowerCase() === "active" && p.PublicAccess?.toLowerCase() !== "closed", "filter"),
-            name: /* @__PURE__ */ __name((p) => p.WaterAccessName, "name"),
-            wb: /* @__PURE__ */ __name((p) => p.Waterbody, "wb"),
-            lat: /* @__PURE__ */ __name((p) => p.Latitude, "lat"),
-            lon: /* @__PURE__ */ __name((p) => p.Longitude, "lon"),
-            meta: /* @__PURE__ */ __name((p) => ({ lanes: p.LaunchLanes, dock: p.CourtesyDock, fee: false, species: p.SpeciesList, county: p.County, owner: p.Owner, comments: p.Comments }), "meta"),
+            filter: (p) => p.WaterAccessType === "Boat Ramp" && p.Status?.toLowerCase() === "active" && p.PublicAccess?.toLowerCase() !== "closed",
+            name: (p) => p.WaterAccessName,
+            wb: (p) => p.Waterbody,
+            lat: (p) => p.Latitude,
+            lon: (p) => p.Longitude,
+            meta: (p) => ({ lanes: p.LaunchLanes, dock: p.CourtesyDock, fee: false, species: p.SpeciesList, county: p.County, owner: p.Owner, comments: p.Comments }),
             label: "SCDNR South Carolina Public Water Access"
           },
           GA: {
@@ -1363,12 +1338,12 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
             // the strings "yes"/"no" this filter was checking for. Every
             // record failed the check, so GA returned 0 waterbodies/0 ramps
             // regardless of cache state.
-            filter: /* @__PURE__ */ __name((p) => String(p.Ramp || "").toUpperCase() === "Y" && !["closed", "inactive"].includes(String(p.Status || "").toLowerCase()), "filter"),
-            name: /* @__PURE__ */ __name((p) => p.Name, "name"),
-            wb: /* @__PURE__ */ __name((p) => p.Waterbody, "wb"),
-            lat: /* @__PURE__ */ __name((p) => p.Latitude, "lat"),
-            lon: /* @__PURE__ */ __name((p) => p.Longitude, "lon"),
-            meta: /* @__PURE__ */ __name((p) => ({ lanes: p.NumLanes, dock: p.Dock, fee: String(p.Fee || "").toUpperCase() === "Y", county: p.County, owner: p.Owner, motorRestrictions: p.MotorRest }), "meta"),
+            filter: (p) => String(p.Ramp || "").toUpperCase() === "Y" && !["closed", "inactive"].includes(String(p.Status || "").toLowerCase()),
+            name: (p) => p.Name,
+            wb: (p) => p.Waterbody,
+            lat: (p) => p.Latitude,
+            lon: (p) => p.Longitude,
+            meta: (p) => ({ lanes: p.NumLanes, dock: p.Dock, fee: String(p.Fee || "").toUpperCase() === "Y", county: p.County, owner: p.Owner, motorRestrictions: p.MotorRest }),
             label: "Georgia DNR WRD Water Access Points"
           },
           NC: {
@@ -1376,22 +1351,22 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
             // Real schema confirmed 2026-07-03 via outFields=* query — NC WRC does NOT
             // use STATUS/SITE_NAME/WATER_BODY like SC/GA. Every prior field guess missed,
             // so all 267 records collapsed into a single "Unknown" waterbody bucket.
-            filter: /* @__PURE__ */ __name((p) => !String(p.Site_Status || "OPEN").toUpperCase().includes("CLOSED"), "filter"),
-            name: /* @__PURE__ */ __name((p) => p.BAA_Name, "name"),
-            wb: /* @__PURE__ */ __name((p) => p.Water_Access || p.BAA_Alias, "wb"),
-            lat: /* @__PURE__ */ __name((p) => p.Latitude, "lat"),
-            lon: /* @__PURE__ */ __name((p) => p.Longitude, "lon"),
-            meta: /* @__PURE__ */ __name((p) => ({ lanes: p.Launch_Lane_No, dock: p.Courtesy_Dock_No || p.Fix_Dock_No, fee: false, county: p.County, owner: p.Owner, motorRestrictions: p.Motorboats_Restricted }), "meta"),
+            filter: (p) => !String(p.Site_Status || "OPEN").toUpperCase().includes("CLOSED"),
+            name: (p) => p.BAA_Name,
+            wb: (p) => p.Water_Access || p.BAA_Alias,
+            lat: (p) => p.Latitude,
+            lon: (p) => p.Longitude,
+            meta: (p) => ({ lanes: p.Launch_Lane_No, dock: p.Courtesy_Dock_No || p.Fix_Dock_No, fee: false, county: p.County, owner: p.Owner, motorRestrictions: p.Motorboats_Restricted }),
             label: "NC Wildlife Resources Commission Boating Access Areas"
           },
           TN: {
             url: "https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/Boat_Launch_Sites/FeatureServer/0/query",
-            filter: /* @__PURE__ */ __name((p) => p.Type === "Boat Launch" && p.IncludeWeb === "Yes" && !["closed", "inactive"].includes(String(p.Status || "").toLowerCase()), "filter"),
-            name: /* @__PURE__ */ __name((p) => p.Name, "name"),
-            wb: /* @__PURE__ */ __name((p) => p.Waterway, "wb"),
-            lat: /* @__PURE__ */ __name((p) => p.Latitude, "lat"),
-            lon: /* @__PURE__ */ __name((p) => p.Longitude, "lon"),
-            meta: /* @__PURE__ */ __name((p) => ({ lanes: p.Lanes, dock: p.CourtesyDock === "Yes" ? 1 : 0, fee: p.AccessFee === "Yes", county: p.County, owner: p.Owner, restrooms: p.Restrooms === "Yes", handicap: p.HandicapPark === "Yes", canoeLanding: p.CanoeLanding === "Yes" }), "meta"),
+            filter: (p) => p.Type === "Boat Launch" && p.IncludeWeb === "Yes" && !["closed", "inactive"].includes(String(p.Status || "").toLowerCase()),
+            name: (p) => p.Name,
+            wb: (p) => p.Waterway,
+            lat: (p) => p.Latitude,
+            lon: (p) => p.Longitude,
+            meta: (p) => ({ lanes: p.Lanes, dock: p.CourtesyDock === "Yes" ? 1 : 0, fee: p.AccessFee === "Yes", county: p.County, owner: p.Owner, restrooms: p.Restrooms === "Yes", handicap: p.HandicapPark === "Yes", canoeLanding: p.CanoeLanding === "Yes" }),
             label: "Tennessee Wildlife Resources Agency Boat Launch Sites"
           }
         };
@@ -1433,7 +1408,6 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
           }
           return allFeatures;
         }
-        __name(fetchAllRampFeatures, "fetchAllRampFeatures");
         try {
           const features = await fetchAllRampFeatures(source.url, source.idField);
           const waterbodies = {};
@@ -1454,7 +1428,7 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
           const result = {
             state,
             source: source.label,
-            fetched: (/* @__PURE__ */ new Date()).toISOString(),
+            fetched: (new Date()).toISOString(),
             count: Object.values(waterbodies).reduce((s, r) => s + r.length, 0),
             waterbodyCount: Object.keys(waterbodies).length,
             waterbodies
@@ -1485,41 +1459,41 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
         const PADDLE_SOURCES = {
           SC: {
             url: "https://services.arcgis.com/acgZYxoN5Oj8pDLa/arcgis/rest/services/South_Carolina_Public_Water_Access_PUBLIC_VIEW/FeatureServer/0/query",
-            filter: /* @__PURE__ */ __name((p) => p.WaterAccessType === "Paddle Launch" && p.Status?.toLowerCase() === "active" && p.PublicAccess?.toLowerCase() !== "closed", "filter"),
-            name: /* @__PURE__ */ __name((p) => p.WaterAccessName, "name"),
-            wb: /* @__PURE__ */ __name((p) => p.Waterbody, "wb"),
-            lat: /* @__PURE__ */ __name((p) => p.Latitude, "lat"),
-            lon: /* @__PURE__ */ __name((p) => p.Longitude, "lon"),
-            meta: /* @__PURE__ */ __name((p) => ({ subtype: p.WaterAccessSubType, county: p.County, owner: p.Owner }), "meta")
+            filter: (p) => p.WaterAccessType === "Paddle Launch" && p.Status?.toLowerCase() === "active" && p.PublicAccess?.toLowerCase() !== "closed",
+            name: (p) => p.WaterAccessName,
+            wb: (p) => p.Waterbody,
+            lat: (p) => p.Latitude,
+            lon: (p) => p.Longitude,
+            meta: (p) => ({ subtype: p.WaterAccessSubType, county: p.County, owner: p.Owner })
           },
           GA: {
             url: "https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/WRD_Water_Access_Points/FeatureServer/0/query",
             idField: "FID",
             // GA's objectIdFieldName is FID, not OBJECTID
-            filter: /* @__PURE__ */ __name((p) => String(p.CanoeAcc || "").toLowerCase() === "y" && !["closed", "inactive"].includes(String(p.Status || "").toLowerCase()), "filter"),
-            name: /* @__PURE__ */ __name((p) => p.Name, "name"),
-            wb: /* @__PURE__ */ __name((p) => p.Waterbody, "wb"),
-            lat: /* @__PURE__ */ __name((p) => p.Latitude, "lat"),
-            lon: /* @__PURE__ */ __name((p) => p.Longitude, "lon"),
-            meta: /* @__PURE__ */ __name((p) => ({ county: p.County, owner: p.Owner }), "meta")
+            filter: (p) => String(p.CanoeAcc || "").toLowerCase() === "y" && !["closed", "inactive"].includes(String(p.Status || "").toLowerCase()),
+            name: (p) => p.Name,
+            wb: (p) => p.Waterbody,
+            lat: (p) => p.Latitude,
+            lon: (p) => p.Longitude,
+            meta: (p) => ({ county: p.County, owner: p.Owner })
           },
           NC: {
             url: "https://services1.arcgis.com/YfqBAUM5nWR3yhGP/arcgis/rest/services/NCWRC_Boating_Access_Areas_view/FeatureServer/0/query",
-            filter: /* @__PURE__ */ __name((p) => (String(p.Non_Motorized_Access || "").toLowerCase() === "yes" || String(p.Portable_Boat_Access_Type || "").length > 0) && String(p.Site_Status || "").toLowerCase() === "open", "filter"),
-            name: /* @__PURE__ */ __name((p) => p.BAA_Name, "name"),
-            wb: /* @__PURE__ */ __name((p) => p.Water_Access, "wb"),
-            lat: /* @__PURE__ */ __name((p) => p.Latitude, "lat"),
-            lon: /* @__PURE__ */ __name((p) => p.Longitude, "lon"),
-            meta: /* @__PURE__ */ __name((p) => ({ type: p.Portable_Boat_Access_Type, county: p.County, owner: p.Owner }), "meta")
+            filter: (p) => (String(p.Non_Motorized_Access || "").toLowerCase() === "yes" || String(p.Portable_Boat_Access_Type || "").length > 0) && String(p.Site_Status || "").toLowerCase() === "open",
+            name: (p) => p.BAA_Name,
+            wb: (p) => p.Water_Access,
+            lat: (p) => p.Latitude,
+            lon: (p) => p.Longitude,
+            meta: (p) => ({ type: p.Portable_Boat_Access_Type, county: p.County, owner: p.Owner })
           },
           TN: {
             url: "https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/Paddling_Access_Sites/FeatureServer/0/query",
-            filter: /* @__PURE__ */ __name((p) => p.IncludeWeb === "Yes", "filter"),
-            name: /* @__PURE__ */ __name((p) => p.Name, "name"),
-            wb: /* @__PURE__ */ __name((p) => p.Waterway, "wb"),
-            lat: /* @__PURE__ */ __name((p) => p.Latitude, "lat"),
-            lon: /* @__PURE__ */ __name((p) => p.Longitude, "lon"),
-            meta: /* @__PURE__ */ __name((p) => ({ county: p.County, owner: p.Owner, type: "Paddling Access" }), "meta")
+            filter: (p) => p.IncludeWeb === "Yes",
+            name: (p) => p.Name,
+            wb: (p) => p.Waterway,
+            lat: (p) => p.Latitude,
+            lon: (p) => p.Longitude,
+            meta: (p) => ({ county: p.County, owner: p.Owner, type: "Paddling Access" })
           }
         };
         const source = PADDLE_SOURCES[state];
@@ -1560,7 +1534,7 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
           }
           const result = { state, source: source.url, count: Object.values(waterbodies).flat().length, waterbodies };
           const body = JSON.stringify(result);
-          await env.R2_TROLLMAP_CHARTPACKS.put(cacheKey, body, { customMetadata: { uploaded: (/* @__PURE__ */ new Date()).toISOString() } });
+          await env.R2_TROLLMAP_CHARTPACKS.put(cacheKey, body, { customMetadata: { uploaded: (new Date()).toISOString() } });
           return new Response(body, { headers: { ...JSON_HEADERS, "X-Cache": "MISS" } });
         } catch (err) {
           return new Response(JSON.stringify({ error: err.message }), { headers: JSON_HEADERS, status: 502 });
@@ -1574,41 +1548,41 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
         const BANKPIER_SOURCES = {
           SC: {
             url: "https://services.arcgis.com/acgZYxoN5Oj8pDLa/arcgis/rest/services/South_Carolina_Public_Water_Access_PUBLIC_VIEW/FeatureServer/0/query",
-            filter: /* @__PURE__ */ __name((p) => (p.WaterAccessType === "Bank" || p.WaterAccessType === "Pier" || String(p.FishingPier || "").toLowerCase() === "yes") && p.Status?.toLowerCase() === "active" && p.PublicAccess?.toLowerCase() !== "closed", "filter"),
-            name: /* @__PURE__ */ __name((p) => p.WaterAccessName, "name"),
-            wb: /* @__PURE__ */ __name((p) => p.Waterbody, "wb"),
-            lat: /* @__PURE__ */ __name((p) => p.Latitude, "lat"),
-            lon: /* @__PURE__ */ __name((p) => p.Longitude, "lon"),
-            meta: /* @__PURE__ */ __name((p) => ({ type: p.WaterAccessType, pier: p.FishingPier }), "meta")
+            filter: (p) => (p.WaterAccessType === "Bank" || p.WaterAccessType === "Pier" || String(p.FishingPier || "").toLowerCase() === "yes") && p.Status?.toLowerCase() === "active" && p.PublicAccess?.toLowerCase() !== "closed",
+            name: (p) => p.WaterAccessName,
+            wb: (p) => p.Waterbody,
+            lat: (p) => p.Latitude,
+            lon: (p) => p.Longitude,
+            meta: (p) => ({ type: p.WaterAccessType, pier: p.FishingPier })
           },
           GA: {
             url: "https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/WRD_Water_Access_Points/FeatureServer/0/query",
             idField: "FID",
             // GA's objectIdFieldName is FID, not OBJECTID
-            filter: /* @__PURE__ */ __name((p) => (String(p.BankFish || "").toLowerCase() === "y" || String(p.PierFish || "").toLowerCase() === "y") && !["closed", "inactive"].includes(String(p.Status || "").toLowerCase()), "filter"),
-            name: /* @__PURE__ */ __name((p) => p.Name, "name"),
-            wb: /* @__PURE__ */ __name((p) => p.Waterbody, "wb"),
-            lat: /* @__PURE__ */ __name((p) => p.Latitude, "lat"),
-            lon: /* @__PURE__ */ __name((p) => p.Longitude, "lon"),
-            meta: /* @__PURE__ */ __name((p) => ({ bankFish: p.BankFish, pierFish: p.PierFish }), "meta")
+            filter: (p) => (String(p.BankFish || "").toLowerCase() === "y" || String(p.PierFish || "").toLowerCase() === "y") && !["closed", "inactive"].includes(String(p.Status || "").toLowerCase()),
+            name: (p) => p.Name,
+            wb: (p) => p.Waterbody,
+            lat: (p) => p.Latitude,
+            lon: (p) => p.Longitude,
+            meta: (p) => ({ bankFish: p.BankFish, pierFish: p.PierFish })
           },
           NC: {
             url: "https://services1.arcgis.com/YfqBAUM5nWR3yhGP/arcgis/rest/services/NCWRC_Public_Fishing_Areas_view/FeatureServer/0/query",
-            filter: /* @__PURE__ */ __name((p) => String(p.Site_Status || "").toLowerCase() === "open", "filter"),
-            name: /* @__PURE__ */ __name((p) => p.PFA_Name, "name"),
-            wb: /* @__PURE__ */ __name((p) => p.Water_Access, "wb"),
-            lat: /* @__PURE__ */ __name((p) => p.Latitude, "lat"),
-            lon: /* @__PURE__ */ __name((p) => p.Longitude, "lon"),
-            meta: /* @__PURE__ */ __name((p) => ({ pier: p.Fishing_Pier, bank: p.Bank_Access }), "meta")
+            filter: (p) => String(p.Site_Status || "").toLowerCase() === "open",
+            name: (p) => p.PFA_Name,
+            wb: (p) => p.Water_Access,
+            lat: (p) => p.Latitude,
+            lon: (p) => p.Longitude,
+            meta: (p) => ({ pier: p.Fishing_Pier, bank: p.Bank_Access })
           },
           TN: {
             url: "https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/Fishing_Sites/FeatureServer/0/query",
-            filter: /* @__PURE__ */ __name((p) => p.IncludeWeb === "Yes", "filter"),
-            name: /* @__PURE__ */ __name((p) => p.Name, "name"),
-            wb: /* @__PURE__ */ __name((p) => p.Waterway, "wb"),
-            lat: /* @__PURE__ */ __name((p) => p.Latitude, "lat"),
-            lon: /* @__PURE__ */ __name((p) => p.Longitude, "lon"),
-            meta: /* @__PURE__ */ __name((p) => ({ type: p.Type, pier: p.FishingPier === "Yes", county: p.County, owner: p.Owner }), "meta")
+            filter: (p) => p.IncludeWeb === "Yes",
+            name: (p) => p.Name,
+            wb: (p) => p.Waterway,
+            lat: (p) => p.Latitude,
+            lon: (p) => p.Longitude,
+            meta: (p) => ({ type: p.Type, pier: p.FishingPier === "Yes", county: p.County, owner: p.Owner })
           }
         };
         const source = BANKPIER_SOURCES[state];
@@ -1650,7 +1624,7 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
           for (const wb of Object.keys(waterbodies)) waterbodies[wb].sort((a, b) => a.name.localeCompare(b.name));
           const result = { state, source: source.url, count: Object.values(waterbodies).flat().length, waterbodies };
           const body = JSON.stringify(result);
-          await env.R2_TROLLMAP_CHARTPACKS.put(cacheKey, body, { customMetadata: { uploaded: (/* @__PURE__ */ new Date()).toISOString() } });
+          await env.R2_TROLLMAP_CHARTPACKS.put(cacheKey, body, { customMetadata: { uploaded: (new Date()).toISOString() } });
           return new Response(body, { headers: { ...JSON_HEADERS, "X-Cache": "MISS" } });
         } catch (err) {
           return new Response(JSON.stringify({ error: err.message }), { headers: JSON_HEADERS, status: 502 });
@@ -1664,13 +1638,13 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
         const ATTRACTOR_SOURCES = {
           SC: {
             url: "https://services.arcgis.com/acgZYxoN5Oj8pDLa/arcgis/rest/services/SCDNR_Freshwater_Fish_Attractors_Public_Web_App/FeatureServer/0/query",
-            filter: /* @__PURE__ */ __name((p) => true, "filter"),
+            filter: (p) => true,
             // All records in this DB are attractors
-            name: /* @__PURE__ */ __name((p) => p.FishAttractorName, "name"),
-            wb: /* @__PURE__ */ __name((p) => p.Waterbody, "wb"),
-            lat: /* @__PURE__ */ __name((p) => p.lat_dd, "lat"),
-            lon: /* @__PURE__ */ __name((p) => p.lon_dd, "lon"),
-            type: /* @__PURE__ */ __name((p) => p.Material, "type")
+            name: (p) => p.FishAttractorName,
+            wb: (p) => p.Waterbody,
+            lat: (p) => p.lat_dd,
+            lon: (p) => p.lon_dd,
+            type: (p) => p.Material
           },
           GA: {
             url: "https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/Fish_Attractors_for_Download/FeatureServer/0/query",
@@ -1680,32 +1654,32 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
             // FID applies here too. If this route also returns 0 for GA, query
             // this service's outFields=* first to confirm its real
             // objectIdFieldName before guessing at an idField override.
-            filter: /* @__PURE__ */ __name((p) => true, "filter"),
-            name: /* @__PURE__ */ __name((p) => p.note, "name"),
-            wb: /* @__PURE__ */ __name((p) => p.waterbody, "wb"),
-            lat: /* @__PURE__ */ __name((p) => null, "lat"),
+            filter: (p) => true,
+            name: (p) => p.note,
+            wb: (p) => p.waterbody,
+            lat: (p) => null,
             // We pull from geometry
-            lon: /* @__PURE__ */ __name((p) => null, "lon"),
-            type: /* @__PURE__ */ __name((p) => `${p.attractor_code || ""} ${p.attractor_code_other || ""}`.trim(), "type")
+            lon: (p) => null,
+            type: (p) => `${p.attractor_code || ""} ${p.attractor_code_other || ""}`.trim()
           },
           NC: {
             url: "https://services1.arcgis.com/YfqBAUM5nWR3yhGP/arcgis/rest/services/Fish_Attractors_public_view/FeatureServer/0/query",
-            filter: /* @__PURE__ */ __name((p) => true, "filter"),
-            name: /* @__PURE__ */ __name((p) => `${p.Waterbody} Attractor`, "name"),
+            filter: (p) => true,
+            name: (p) => `${p.Waterbody} Attractor`,
             // NC doesn't have names, just types
-            wb: /* @__PURE__ */ __name((p) => p.Waterbody, "wb"),
-            lat: /* @__PURE__ */ __name((p) => p.Latitude, "lat"),
-            lon: /* @__PURE__ */ __name((p) => p.Longitude, "lon"),
-            type: /* @__PURE__ */ __name((p) => `${p.Structure1 || ""} ${p.Structure2 || ""}`.trim() || p.Attractor_Type, "type")
+            wb: (p) => p.Waterbody,
+            lat: (p) => p.Latitude,
+            lon: (p) => p.Longitude,
+            type: (p) => `${p.Structure1 || ""} ${p.Structure2 || ""}`.trim() || p.Attractor_Type
           },
           TN: {
             url: "https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/Fish_Attractor_Locations_view/FeatureServer/0/query",
-            filter: /* @__PURE__ */ __name((p) => true, "filter"),
-            name: /* @__PURE__ */ __name((p) => p.Site_Name || (p.Embayment ? `${p.WaterBody} - ${p.Embayment}` : `${p.WaterBody} Attractor`), "name"),
-            wb: /* @__PURE__ */ __name((p) => p.WaterBody, "wb"),
-            lat: /* @__PURE__ */ __name((p) => p.YLat, "lat"),
-            lon: /* @__PURE__ */ __name((p) => p.XLong, "lon"),
-            type: /* @__PURE__ */ __name((p) => [p.StructureTypes, p.Artificial, p.Natural_].filter(Boolean).join(", ") || "Unknown", "type")
+            filter: (p) => true,
+            name: (p) => p.Site_Name || (p.Embayment ? `${p.WaterBody} - ${p.Embayment}` : `${p.WaterBody} Attractor`),
+            wb: (p) => p.WaterBody,
+            lat: (p) => p.YLat,
+            lon: (p) => p.XLong,
+            type: (p) => [p.StructureTypes, p.Artificial, p.Natural_].filter(Boolean).join(", ") || "Unknown"
           }
         };
         const source = ATTRACTOR_SOURCES[state];
@@ -1746,7 +1720,7 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
           for (const wb of Object.keys(waterbodies)) waterbodies[wb].sort((a, b) => a.name.localeCompare(b.name));
           const result = { state, source: source.url, count: Object.values(waterbodies).flat().length, waterbodies };
           const body = JSON.stringify(result);
-          await env.R2_TROLLMAP_CHARTPACKS.put(cacheKey, body, { customMetadata: { uploaded: (/* @__PURE__ */ new Date()).toISOString() } });
+          await env.R2_TROLLMAP_CHARTPACKS.put(cacheKey, body, { customMetadata: { uploaded: (new Date()).toISOString() } });
           return new Response(body, { headers: { ...JSON_HEADERS, "X-Cache": "MISS" } });
         } catch (err) {
           return new Response(JSON.stringify({ error: err.message }), { headers: JSON_HEADERS, status: 502 });
@@ -1773,7 +1747,7 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
       }
       if (path === "/lake-clarity") {
         const name = url.searchParams.get("lake") || url.searchParams.get("waterbody") || "";
-        const dateParam = url.searchParams.get("date") || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const dateParam = url.searchParams.get("date") || (new Date()).toISOString().slice(0, 10);
         if (!name) return new Response(JSON.stringify({ error: "missing lake" }), { headers: JSON_HEADERS, status: 400 });
         const data = await getLakeClarity(name, dateParam);
         return new Response(JSON.stringify(data, null, 2), { headers: JSON_HEADERS });
@@ -1977,7 +1951,7 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
         const lakeName = idxMatch[1];
         const prefix = chartpackKey(lakeName, "");
         const listed = await env.R2_TROLLMAP_CHARTPACKS.list({ prefix });
-        const tiles = /* @__PURE__ */ new Set();
+        const tiles = new Set();
         let totalBytes = 0;
         for (const obj of listed.objects) {
           const fname = obj.key.slice(prefix.length);
