@@ -390,7 +390,14 @@ async function parseNCRegulationsWithLLM(text, env) {
     "  }\n" +
     "}";
 
-  const userPrompt = "NC Inland Fishing Rule Text (excerpt — focus on creel limits, size limits, and lake exceptions):\n\n" + text.slice(0, 20000);
+  // Find the warmwater species section — skip the mountain trout section at the top
+  // The NC rule text starts with .0205 (mountain trout, very long) then gets to
+  // .0316 (inland game fishes — bass, crappie, catfish, etc.) which is what we need.
+  // Search for the Largemouth Bass section or .0316 as the anchor point.
+  let warmwaterStart = text.search(/largemouth bass|10C\s*\.0316|inland game fish/i);
+  if (warmwaterStart < 0) warmwaterStart = Math.min(15000, Math.floor(text.length * 0.3));
+  const warmwaterText = text.slice(warmwaterStart, warmwaterStart + 30000);
+  const userPrompt = "NC Inland Fishing Rule Text (warmwater species section — extract creel limits, size limits, and lake-specific exceptions for bass, crappie, catfish, walleye, etc.):\n\n" + warmwaterText;
 
   try {
     const llmResult = await callLLM(env, {
