@@ -4839,7 +4839,7 @@ EXTRACTED FACTS:
 ${factsBlock || 'No limnology facts extracted — derive from document depth profiles.'}
 
 INSTRUCTIONS:
-1. secchiFt: The EPA NES table has a row labeled "SECCHI (METERS)" — that is the only row for Secchi. Values are typically 0.3-0.5m for turbid lakes. Convert meters × 3.281. NEVER use alkalinity (10-35 mg/L), conductivity, pH, or any other row as Secchi. If Secchi is in meters, the feet value will be LESS THAN 5 ft for most SE reservoirs. A secchiFt value above 10 is almost certainly wrong — reject it.
+1. secchiFt: The EPA NES table has a row labeled "SECCHI (METERS)" — that is the only row for Secchi. Convert meters × 3.281. NEVER use alkalinity (10-35 mg/L), conductivity, pH, or any other row as Secchi. Most SE piedmont reservoirs have secchi < 5ft, but oligotrophic mountain lakes (Nantahala, Santeetlah, Jocassee, etc.) can have legitimate secchi of 10-20ft. Only reject values above 25ft as implausible.
 2. thermocline.summerDepthFt: find where temperature drops sharply with depth in summer profiles. Report as a SINGLE NUMBER (the midpoint in feet, e.g. 19 for a 16-22ft range). NEVER a string, NEVER a range string like "16-22".
 3. oxygen.depletionDepthFt: depth where DO first drops below 2 mg/L in summer. Must be a number or null — never the string "null".
 4. oxygen.anoxicBelowFt: depth where DO approaches 0. Must be a number or null — never the string "null".
