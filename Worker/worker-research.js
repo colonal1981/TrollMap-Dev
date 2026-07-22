@@ -366,6 +366,54 @@ function normalizeLakeName(name) {
     .replace(/^_+|_+$/g, '');
 }
 
+async function parseNCRegulationsWithLLM(text, env) {
+  // NC regulations are prose-format legal rule text, not tables.
+  // Extract statewide defaults and lake-specific exceptions via LLM.
+  const systemPrompt =
+    "You are an expert North Carolina freshwater fishing regulation parser.\n" +
+    "The input is the full text of the NCWRC Inland Fishing Division Rule (15A NCAC 10C) — the official legal rule text.\n" +
+    "Extract ALL statewide creel and size limits, and ALL lake-specific exceptions listed by name.\n\n" +
+    "Rules about format:\n" +
+    "- For statewide general rules, extract the default that applies to ALL public waters.\n" +
+    "- For lake-specific exceptions, key them by the exact lake or reservoir name as written in the rule text.\n" +
+    "- Species names: use 'Largemouth Bass', 'Smallmouth Bass', 'Striped Bass / Hybrid', 'White Bass', 'Crappie', 'Black Crappie', 'White Crappie', 'Bluegill', 'Catfish', 'Blue Catfish', 'Channel Catfish', 'Flathead Catfish', 'Walleye', 'Yellow Perch', 'Chain Pickerel', 'Trout', 'Kokanee Salmon'.\n" +
+    "- Include special rules like 'no harvest between X and Y inches' as specialRules strings.\n\n" +
+    "Return ONLY valid JSON, no markdown:\n" +
+    "{\n" +
+    "  \"general\": {\n" +
+    "    \"<species>\": { \"sizeLimit\": \"<string or null>\", \"creelLimit\": \"<string or null>\" }\n" +
+    "  },\n" +
+    "  \"lakeSpecific\": {\n" +
+    "    \"<lake name as written in rules>\": {\n" +
+    "      \"<species>\": { \"sizeLimit\": \"<string or null>\", \"creelLimit\": \"<string or null>\", \"specialRules\": [\"<string>\"] }\n" +
+    "    }\n" +
+    "  }\n" +
+    "}";
+
+  const userPrompt = "NC Inland Fishing Rule Text (excerpt — focus on creel limits, size limits, and lake exceptions):\n\n" + text.slice(0, 20000);
+
+  try {
+    const llmResult = await callLLM(env, {
+      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+      max_tokens: 4000,
+      temperature: 0.1,
+      response_format: { type: 'json_object' }
+    });
+    const raw = extractLLMText(llmResult.data).replace(/```(json)?/g, '').trim();
+    const parsed = JSON.parse(raw);
+    // Normalize lake names in lakeSpecific to match normalizeLakeName() format
+    const normalized = { general: parsed.general || {}, lakeSpecific: {} };
+    for (const [lake, speciesMap] of Object.entries(parsed.lakeSpecific || {})) {
+      normalized.lakeSpecific[normalizeLakeName(lake)] = speciesMap;
+    }
+    return normalized;
+  } catch (e) {
+    console.error('parseNCRegulationsWithLLM failed:', e.message);
+    return { general: {}, lakeSpecific: {} };
+  }
+}
+
+
 async function fetchStateRegulations(state, env) {
   const cacheKey = `regulations:${state}:v2`;
   let cached = await env.KV.get(cacheKey, { type: 'json' });
@@ -381,18 +429,28 @@ async function fetchStateRegulations(state, env) {
   const result = await tinyfishFetch({ urls, format: 'markdown' }, env);
   
   const parsed = { general: {}, lakeSpecific: {} };
-  
-  for (let i = 0; i < pages.length; i++) {
-    const page = pages[i];
-    const markdown = result.results[i]?.text || '';
-    const pageData = PARSERS[page.parser](markdown);
-    
-    if (page.key === 'general') {
-      parsed.general = pageData.general || {};
-    } else {
-      // Merge lake-specific from exceptions/regions
-      for (const [lake, speciesMap] of Object.entries(pageData.lakeSpecific || {})) {
-        parsed.lakeSpecific[lake] = { ...(parsed.lakeSpecific[lake] || {}), ...speciesMap };
+
+  // NC regulations are legal prose, not tables — use LLM extraction
+  if (state === 'NC') {
+    const text = result.results?.[0]?.text || '';
+    if (text.length > 500) {
+      const ncParsed = await parseNCRegulationsWithLLM(text, env);
+      parsed.general = ncParsed.general || {};
+      parsed.lakeSpecific = ncParsed.lakeSpecific || {};
+    }
+  } else {
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i];
+      const markdown = result.results[i]?.text || '';
+      const pageData = PARSERS[page.parser](markdown);
+      
+      if (page.key === 'general') {
+        parsed.general = pageData.general || {};
+      } else {
+        // Merge lake-specific from exceptions/regions
+        for (const [lake, speciesMap] of Object.entries(pageData.lakeSpecific || {})) {
+          parsed.lakeSpecific[lake] = { ...(parsed.lakeSpecific[lake] || {}), ...speciesMap };
+        }
       }
     }
   }
@@ -7390,16 +7448,18 @@ async function handleResearchRegsDebug(request, env) {
   const state = url.searchParams.get('state')?.toUpperCase();
   const lake = url.searchParams.get('lake') || '';
   const raw = url.searchParams.get('raw') === '1';
+  const bust = url.searchParams.get('bust') === '1';
   if (!state) return new Response(JSON.stringify({ error: '?state= required' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
   try {
     const config = STATE_REGULATIONS_CONFIG[state];
     if (!config) return new Response(JSON.stringify({ error: 'No config for state' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
-    // Raw mode — show what TinyFish actually returns for the PDF
     if (raw) {
       const result = await tinyfishFetch({ urls: config.pages.map(p => p.url), format: 'markdown' }, env);
       const text = result.results?.[0]?.text || '';
       return new Response(JSON.stringify({ state, url: config.pages[0].url, length: text.length, preview: text.slice(0, 3000) }, null, 2), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
     }
+    // bust=1 clears KV cache so fresh parse runs
+    if (bust) await env.KV.delete(`regulations:${state}:v2`).catch(() => {});
     const stateRegs = await fetchStateRegulations(state, env);
     const lakeRegs = lake ? getLakeRegulations(stateRegs, lake) : null;
     return new Response(JSON.stringify({
