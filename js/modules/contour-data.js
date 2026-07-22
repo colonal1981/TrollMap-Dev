@@ -1,8 +1,10 @@
 /**
-import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../data/lake-keys.js';
-export { LAKE_NAME_TO_R2_KEY, resolveR2Key };
  * contour-data.js — Contour dataset lazy loader + lake selector integration.
  */
+
+import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../data/lake-keys.js';
+
+export { LAKE_NAME_TO_R2_KEY, resolveR2Key };
 
 import { state, CF_WORKER_URL } from '../core/state.js';
 
