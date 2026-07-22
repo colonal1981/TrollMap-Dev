@@ -4986,7 +4986,7 @@ JSON only.`;
 
       // Split facts: official agency sources vs web/guide sources
       // Only official sources can confirm new species presence
-      const OFFICIAL_SRC = /scdnr|ncwrc|ncwildlife|gadnr|twra|eregulations|dnr\.sc\.gov|dnr\.nc\.gov|ncwildlife\.gov|epd\.georgia|wildlife\.ga|epa\.gov|usgs\.gov|usace|santee.?cooper|duke.?energy|ferc|statewide.?fisheries|annual.?report|management.?plan|survey.*\d{4}|\d{4}.*survey/i;
+      const OFFICIAL_SRC = /scdnr|ncwrc|ncwildlife|gadnr|georgiawildlife|twra|tn\.gov|tva\.gov|eregulations|dnr\.sc\.gov|dnr\.nc\.gov|ncwildlife\.gov|epd\.georgia|wildlife\.ga\.gov|georgiawildlife\.com|epa\.gov|usgs\.gov|usace|corps\.army\.mil|santee.?cooper|duke.?energy|ferc|statewide.?fisheries|annual.?report|management.?plan|survey.*\d{4}|\d{4}.*survey/i;
       const officialFacts = bioFacts.filter(f => OFFICIAL_SRC.test(f.source || ''));
       const webFacts = bioFacts.filter(f => !OFFICIAL_SRC.test(f.source || ''));
 
@@ -7510,32 +7510,21 @@ async function handleResearchRegsDebug(request, env) {
       return new Response(JSON.stringify({ state, url: config.pages[0].url, length: text.length, lmbIdx, preview: text.slice(offset, offset + 3000) }, null, 2), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
     }
     // bust=1 clears KV cache so fresh parse runs
-    if (bust) await env.KV.delete(`regulations:${state}:v3`).catch(() => {}); await env.KV.delete(`regulations:${state}:v2`).catch(() => {});
-    // Test the LLM parse directly to diagnose issues
-    const config2 = STATE_REGULATIONS_CONFIG[state];
-    const testResult = await tinyfishFetch({ urls: config2.pages.map(p => p.url), format: 'markdown' }, env);
-    const testText = testResult.results?.[0]?.text || '';
-    let llmParseResult = null;
-    let llmParseError = null;
-    try {
-      llmParseResult = await parseRegulationsWithLLM(state, testText, config2.pages[0].pageHint || '', env);
-    } catch (e) { llmParseError = e.message; }
-
+    if (bust) {
+      await env.KV.delete(`regulations:${state}:v3`).catch(() => {});
+      await env.KV.delete(`regulations:${state}:v2`).catch(() => {});
+    }
     const stateRegs = await fetchStateRegulations(state, env);
     const lakeRegs = lake ? getLakeRegulations(stateRegs, lake) : null;
     return new Response(JSON.stringify({
       state, lake: lake || null,
-      textLength: testText.length,
-      llmParseError,
-      llmGeneralKeys: Object.keys(llmParseResult?.general || {}),
-      llmLakeSpecificKeys: Object.keys(llmParseResult?.lakeSpecific || {}).slice(0, 10),
       generalKeys: Object.keys(stateRegs.general || {}),
-      lakeSpecificKeys: Object.keys(stateRegs.lakeSpecific || {}),
+      lakeSpecificKeys: Object.keys(stateRegs.lakeSpecific || {}).slice(0, 20),
       lakeRegs: lakeRegs || null,
       sampleGeneral: Object.fromEntries(Object.entries(stateRegs.general || {}).slice(0, 5)),
     }, null, 2), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
   } catch (e) {
-    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({ error: e.message, stack: e.stack?.slice(0, 500) }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
 }
 
