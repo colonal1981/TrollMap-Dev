@@ -7385,4 +7385,24 @@ async function isQuarantined(env, canonicalUrl) {
   return !!obj;
 }
 
-export { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchAgentPipeline, handleResearchValidationPass, handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine };
+async function handleResearchRegsDebug(request, env) {
+  const url = new URL(request.url);
+  const state = url.searchParams.get('state')?.toUpperCase();
+  const lake = url.searchParams.get('lake') || '';
+  if (!state) return new Response(JSON.stringify({ error: '?state= required' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+  try {
+    const stateRegs = await fetchStateRegulations(state, env);
+    const lakeRegs = lake ? getLakeRegulations(stateRegs, lake) : null;
+    return new Response(JSON.stringify({
+      state, lake: lake || null,
+      generalKeys: Object.keys(stateRegs.general || {}),
+      lakeSpecificKeys: Object.keys(stateRegs.lakeSpecific || {}),
+      lakeRegs: lakeRegs || null,
+      sampleGeneral: Object.fromEntries(Object.entries(stateRegs.general || {}).slice(0, 5)),
+    }, null, 2), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+  } catch (e) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+}
+
+export { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchAgentPipeline, handleResearchValidationPass, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine };
