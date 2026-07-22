@@ -1483,10 +1483,7 @@ function initLakeResearch() {
       body.querySelectorAll('.lake-status-row').forEach(function(row) {
         row.addEventListener('click', function() {
           const ln = row.dataset.lake;
-          const sel = document.getElementById('researchLakeSelect');
-          if (sel && ln) sel.value = ln;
-          document.getElementById('lakeStatusModal')?.remove();
-          if (window.loadProfile && ln) window.loadProfile(ln);
+          if (ln) { document.getElementById('lakeStatusModal')?.remove(); setTimeout(() => { const sel = document.getElementById('researchLakeSelect'); if (sel) { sel.value = ln; sel.dispatchEvent(new Event('change')); } }, 50); return; }
         });
         row.addEventListener('mouseenter', function() { row.style.background = 'var(--panel2,#252525)'; });
         row.addEventListener('mouseleave', function() { row.style.background = ''; });
