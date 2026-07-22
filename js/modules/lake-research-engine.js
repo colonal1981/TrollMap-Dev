@@ -1640,7 +1640,10 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
     // Wave 1 — all independent agents fire simultaneously
     if (wave1All.length > 0) {
       log(`[runAgents] Wave 1 concurrent: [${wave1All.join(', ')}]`);
-      const wave1Results = await Promise.all(wave1All.map(k => runAgentSafe(k)));
+      // 500ms stagger between agents to avoid RPM spikes on Gemini free tier
+      const wave1Results = await Promise.all(wave1All.map((k, i) =>
+        new Promise(resolve => setTimeout(() => runAgentSafe(k).then(resolve), i * 500))
+      ));
       for (const result of wave1Results) {
         if (result.status === 'fulfilled') results.push({ agent: result.agent, data: result.value });
       }
