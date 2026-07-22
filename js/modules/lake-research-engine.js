@@ -1600,48 +1600,51 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
   let completed = 0;
   log(`=== RUN AGENTS: [${agentKeys.join(', ')}] (${mode}) ===`);
 
-  const MAX_CONCURRENT = 2;
-  const STAGGER_MS = 2000;
   const results = [];
-  // Fisheries consumes biology.predatorSpecies. Do not run those two agents
-  // concurrently: a fresh run otherwise sends fisheries an empty biology
-  // section before the biology result exists ("0 species split into 0 groups").
-  const hasSpeciesDependency = parallelAgents.includes('biology') && parallelAgents.includes('fisheries');
-  const batchSize = hasSpeciesDependency ? 1 : MAX_CONCURRENT;
+  // Wave structure:
+  // Wave 1 — fully concurrent: identity, limnology, habitat, navigation, regulations
+  // Wave 2 — serial: biology then fisheries (fisheries needs biology output)
+  // Wave 3 — summary (always last, handled separately)
+  const WAVE1_AGENTS = ['identity', 'limnology', 'habitat', 'navigation', 'regulations'];
+  const WAVE2_AGENTS = ['biology', 'fisheries'];
+  const wave1 = parallelAgents.filter(k => WAVE1_AGENTS.includes(k));
+  const wave2 = parallelAgents.filter(k => WAVE2_AGENTS.includes(k));
+  // Any unknown agents run in wave 1
+  const unknownAgents = parallelAgents.filter(k => !WAVE1_AGENTS.includes(k) && !WAVE2_AGENTS.includes(k));
+  const wave1All = [...wave1, ...unknownAgents];
+
+  const runAgentSafe = async (agentKey, dependencyContext = {}) => {
+    try {
+      const result = await runAgent(lakeName, agentKey, mode, {}, true, dependencyContext);
+      completed++;
+      setProgress(`[${completed}/${total}] ${RESEARCH_LABELS[agentKey] || agentKey} complete`, Math.round((completed / total) * 80));
+      return { status: 'fulfilled', value: result, agent: agentKey };
+    } catch (e) {
+      completed++;
+      log(`❌ ${agentKey} failed: ${e.message}`);
+      return { status: 'rejected', reason: e, agent: agentKey };
+    }
+  };
 
   try {
-    // Run all non-summary agents in parallel batches, except the biology ->
-    // fisheries dependency which is deliberately serialized above.
-    for (let i = 0; i < parallelAgents.length; i += batchSize) {
-      const batch = parallelAgents.slice(i, i + batchSize);
-      const batchPromises = batch.map((agentKey, batchIdx) => {
-        const delay = batchIdx * STAGGER_MS;
-        return new Promise(resolve => setTimeout(async () => {
-          try {
-            const biologyResult = results.find(r => r.agent === 'biology')?.data;
-            // When fisheries runs alone (resume), biology won't be in results.
-            // Fall back to the existing saved profile's species list so fisheries
-            // gets the correct predatorSpecies and doesn't generate empty intel.
-            const dependencyContext = biologyResult?.section
-              ? { biology: biologyResult.section }
-              : {};
-            const result = await runAgent(lakeName, agentKey, mode, {}, true, dependencyContext);
-            completed++;
-            setProgress(`[${completed}/${total}] ${RESEARCH_LABELS[agentKey] || agentKey} complete`, Math.round((completed / total) * 80));
-            resolve({ status: 'fulfilled', value: result, agent: agentKey });
-          } catch (e) {
-            completed++;
-            log(`❌ ${agentKey} failed: ${e.message}`);
-            resolve({ status: 'rejected', reason: e, agent: agentKey });
-          }
-        }, delay));
-      });
-
-      const batchResults = await Promise.all(batchPromises);
-      for (const result of batchResults) {
+    // Wave 1 — all independent agents fire simultaneously
+    if (wave1All.length > 0) {
+      log(`[runAgents] Wave 1 concurrent: [${wave1All.join(', ')}]`);
+      const wave1Results = await Promise.all(wave1All.map(k => runAgentSafe(k)));
+      for (const result of wave1Results) {
         if (result.status === 'fulfilled') results.push({ agent: result.agent, data: result.value });
       }
-      if (i + MAX_CONCURRENT < parallelAgents.length) await new Promise(r => setTimeout(r, STAGGER_MS));
+    }
+
+    // Wave 2 — biology then fisheries, strictly serial
+    if (wave2.length > 0) {
+      log(`[runAgents] Wave 2 serial: [${wave2.join(', ')}]`);
+      for (const agentKey of wave2) {
+        const biologyResult = results.find(r => r.agent === 'biology')?.data;
+        const dependencyContext = biologyResult?.section ? { biology: biologyResult.section } : {};
+        const result = await runAgentSafe(agentKey, dependencyContext);
+        if (result.status === 'fulfilled') results.push({ agent: result.agent, data: result.value });
+      }
     }
 
     // Assemble + save profile from all agent results
