@@ -6850,27 +6850,40 @@ async function handleResearchProxyDownloadBatch(request, env) {
       tfFailed = [...tinyFishBatch];
     }
 
-    // Retry TinyFish failures on Scrape.do
-    for (const item of tfFailed) {
-      if (!scrapedoKey) {
+    // Retry TinyFish failures on Scrape.do — up to 5 concurrent (Scrape.do limit)
+    if (!scrapedoKey) {
+      for (const item of tfFailed) {
         results.push({ url: item.url, text: '', source: 'none', ok: false, error: 'TinyFish failed, no Scrape.do key', title: item.title });
-        continue;
       }
-      try {
-        const sdUrl = `https://api.scrape.do?token=${scrapedoKey}&url=${encodeURIComponent(item.url)}&render=false&super=false`;
-        const sdRes = await fetch(sdUrl, { headers: { 'Accept': 'text/html,*/*' } });
-        if (sdRes.ok) {
-          const html = await sdRes.text();
-          // Strip tags for plain text — very basic
-          const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-          if (text.length > 200) {
-            results.push({ url: item.url, text, source: 'scrapedo', ok: true, title: item.title });
-            continue;
+    } else {
+      const sdFetch = async (item) => {
+        try {
+          const sdUrl = `https://api.scrape.do?token=${scrapedoKey}&url=${encodeURIComponent(item.url)}&render=false&super=false`;
+          const sdController = new AbortController();
+          const sdTimer = setTimeout(() => sdController.abort(), 8000);
+          let sdRes;
+          try {
+            sdRes = await fetch(sdUrl, { headers: { 'Accept': 'text/html,*/*' }, signal: sdController.signal });
+          } finally {
+            clearTimeout(sdTimer);
           }
+          if (sdRes.ok) {
+            const html = await sdRes.text();
+            const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+            if (text.length > 200) return { url: item.url, text, source: 'scrapedo', ok: true, title: item.title };
+          }
+          return { url: item.url, text: '', source: 'scrapedo', ok: false, error: `Scrape.do ${sdRes.status}`, title: item.title };
+        } catch (e2) {
+          const isTimeout = e2.name === 'AbortError';
+          return { url: item.url, text: '', source: 'none', ok: false, error: isTimeout ? 'Scrape.do timeout (8s)' : e2.message, title: item.title };
         }
-        results.push({ url: item.url, text: '', source: 'scrapedo', ok: false, error: `Scrape.do ${sdRes.status}`, title: item.title });
-      } catch (e2) {
-        results.push({ url: item.url, text: '', source: 'none', ok: false, error: e2.message, title: item.title });
+      };
+      // Run up to 5 concurrent Scrape.do fetches
+      const SD_CONCURRENCY = 5;
+      for (let i = 0; i < tfFailed.length; i += SD_CONCURRENCY) {
+        const batch = tfFailed.slice(i, i + SD_CONCURRENCY);
+        const batchResults = await Promise.all(batch.map(sdFetch));
+        results.push(...batchResults);
       }
     }
   }
