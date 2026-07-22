@@ -7389,8 +7389,17 @@ async function handleResearchRegsDebug(request, env) {
   const url = new URL(request.url);
   const state = url.searchParams.get('state')?.toUpperCase();
   const lake = url.searchParams.get('lake') || '';
+  const raw = url.searchParams.get('raw') === '1';
   if (!state) return new Response(JSON.stringify({ error: '?state= required' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
   try {
+    const config = STATE_REGULATIONS_CONFIG[state];
+    if (!config) return new Response(JSON.stringify({ error: 'No config for state' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+    // Raw mode — show what TinyFish actually returns for the PDF
+    if (raw) {
+      const result = await tinyfishFetch({ urls: config.pages.map(p => p.url), format: 'markdown' }, env);
+      const text = result.results?.[0]?.text || '';
+      return new Response(JSON.stringify({ state, url: config.pages[0].url, length: text.length, preview: text.slice(0, 3000) }, null, 2), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+    }
     const stateRegs = await fetchStateRegulations(state, env);
     const lakeRegs = lake ? getLakeRegulations(stateRegs, lake) : null;
     return new Response(JSON.stringify({
