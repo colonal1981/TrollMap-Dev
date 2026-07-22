@@ -1922,9 +1922,18 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
       }
       if (path === "/debug/regs-cache") {
         const state = url.searchParams.get('state')?.toUpperCase();
+        const lake = url.searchParams.get('lake') || '';
         if (!state) return new Response('?state= required', { status: 400 });
-        const cached = await env.KV.get(`regulations:${state}:v2`, { type: 'json' });
-        return new Response(JSON.stringify({ state, cached }, null, 2), { headers: { ...CORS, ...JSON_HEADERS, 'Cache-Control': 'no-store' } });
+        // Live parse — fetch the regs PDF/page and run it through the parser
+        const stateRegs = await fetchStateRegulations(state, env);
+        const lakeRegs = lake ? getLakeRegulations(stateRegs, lake) : null;
+        return new Response(JSON.stringify({
+          state, lake: lake || null,
+          generalKeys: Object.keys(stateRegs.general || {}),
+          lakeSpecificKeys: Object.keys(stateRegs.lakeSpecific || {}),
+          lakeRegs: lakeRegs || null,
+          sampleGeneral: Object.fromEntries(Object.entries(stateRegs.general || {}).slice(0, 5)),
+        }, null, 2), { headers: { ...CORS, ...JSON_HEADERS, 'Cache-Control': 'no-store' } });
       }
       if (path === "/chartpacks/supplemental-audit") {
         // Check each catalog key for contour data presence in R2
