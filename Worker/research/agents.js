@@ -1,4 +1,4 @@
-// research/agents.js — split from worker-research.js (behavior-preserving)
+// research/agents.js — split from worker-research.js (behavior-preserving) 
 import { JSON_HEADERS, callLLM, extractLLMText } from '../worker-core.js';
 import { LAKES, lakeKeyFromName } from '../worker-data.js';
 import { tinyfishFetch } from './clients.js';
