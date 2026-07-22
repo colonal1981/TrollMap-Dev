@@ -116,32 +116,30 @@ async function scrapeDoFetch(url, env, { render = false } = {}) {
   text = text.replace(/\s+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
   return text;
 }
+// R2 public bucket base URL for regulation digests
+const REGS_R2_BASE = 'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/regulations';
+
+// Effective date for switching to 2026-2027 digests (NC and TN only)
+const REGS_2026_EFFECTIVE = new Date('2026-08-01');
+const USE_2026 = new Date() >= REGS_2026_EFFECTIVE;
+
 const STATE_REGULATIONS_CONFIG = {
   SC: {
-    pages: [
-      // SCDNR official freshwater regulations booklet — pages 18-43 contain freshwater
-      // creel/size tables and lake-specific exceptions. Fetched as PDF, sliced by page.
-      { key: 'general', url: 'https://www.dnr.sc.gov/regs/pdf/25SCAB-PP2-RE.pdf', parser: 'scTableParser', pageRange: [18, 43] }
-    ]
+    // SC 2026-2027 not yet published — use 2025-2026 digest from R2
+    // Pages 18-43 contain freshwater creel/size tables and lake-specific exceptions
+    pages: [{ key: 'general', url: `${REGS_R2_BASE}/sc_digest_2025_2026.pdf`, parser: 'llmParser', pageHint: 'warmwater game fish regulations pages 18-43' }]
   },
   NC: {
-    pages: [
-      // NCWRC official inland fishing rule text — complete regulatory rule set as PDF
-      { key: 'general', url: 'https://www.ncwildlife.gov/media/4600/download?attachment=', parser: 'ncTableParser' }
-    ]
+    // Switch to 2026-2027 digest on August 1, 2026
+    pages: [{ key: 'general', url: `${REGS_R2_BASE}/${USE_2026 ? 'nc_digest_2026_2027' : 'nc_digest_2025_2026'}.pdf`, parser: 'llmParser', pageHint: 'warmwater game fish regulations — largemouth bass, crappie, catfish, walleye, striped bass sections' }]
   },
   GA: {
-    pages: [
-      // GA DNR 2025-2026 combined hunting/fishing guide — freshwater fishing regs within
-      { key: 'general', url: 'https://georgiawildlife.com/sites/default/files/wrd/pdf/regulations/GA2026_Hunting&Fishing%20Regulations.pdf', parser: 'gaTableParser' }
-    ]
+    // GA 2026-2027 not yet published — use 2025-2026 digest from R2
+    pages: [{ key: 'general', url: `${REGS_R2_BASE}/ga_digest_2025_2026.pdf`, parser: 'llmParser', pageHint: 'freshwater fishing regulations — daily limits and size limits for warmwater species' }]
   },
   TN: {
-    pages: [
-      // TWRA statewide creel/length limits — static HTML page, no JS rendering needed
-      { key: 'general', url: 'https://www.tn.gov/twra/fishing-regs/statewide-creel-length-limits.html', parser: 'tnStatewideParser' },
-      { key: 'exceptions', url: 'https://www.tn.gov/twra/fishing-regs/fishing-regulation-exceptions.html', parser: 'tnExceptionsParser' },
-    ]
+    // Switch to 2026-2027 digest on August 1, 2026
+    pages: [{ key: 'general', url: `${REGS_R2_BASE}/${USE_2026 ? 'tn_digest_2026_2027' : 'tn_digest_2025_2026'}.pdf`, parser: 'llmParser', pageHint: 'statewide creel and length limits plus lake-specific exceptions' }]
   }
 };
 
@@ -421,6 +419,57 @@ async function parseNCRegulationsWithLLM(text, env) {
 }
 
 
+async function parseRegulationsWithLLM(state, text, pageHint, env) {
+  const systemPrompt = `You are an expert freshwater fishing regulation parser for ${state}.
+The input is text extracted from the official state fishing regulations digest.
+Extract ALL statewide creel and size limits, and ALL lake-specific or waterbody-specific exceptions.
+
+Rules:
+- For statewide/general rules: extract the default that applies to ALL public waters.
+- For lake/waterbody-specific exceptions: key them by the exact waterbody name as written.
+- Species names to use: 'Largemouth Bass', 'Smallmouth Bass', 'Spotted Bass', 'Striped Bass / Hybrid', 'White Bass', 'Crappie', 'Black Crappie', 'White Crappie', 'Bluegill', 'Catfish', 'Blue Catfish', 'Channel Catfish', 'Flathead Catfish', 'Walleye', 'Yellow Perch', 'Chain Pickerel', 'Muskellunge', 'Trout', 'Kokanee Salmon', 'Sauger'.
+- Include special rules like slot limits, closed seasons, or combination limits as specialRules strings.
+- Focus on: ${pageHint}
+
+Return ONLY valid JSON:
+{
+  "general": {
+    "<species>": { "sizeLimit": "<string or null>", "creelLimit": "<string or null>", "specialRules": [] }
+  },
+  "lakeSpecific": {
+    "<waterbody name as written>": {
+      "<species>": { "sizeLimit": "<string or null>", "creelLimit": "<string or null>", "specialRules": [] }
+    }
+  }
+}`;
+
+  // Find the warmwater/game fish section — skip hunting and intro pages
+  let start = text.search(/largemouth bass|warmwater game fish|daily (bag|creel|limit)|size limit/i);
+  if (start < 0) start = Math.min(10000, Math.floor(text.length * 0.2));
+  const regsText = text.slice(start, start + 35000);
+  const userPrompt = `${state} fishing regulations digest (${pageHint}):\n\n${regsText}`;
+
+  try {
+    const llmResult = await callLLM(env, {
+      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+      max_tokens: 6000,
+      temperature: 0.1,
+      response_format: { type: 'json_object' }
+    });
+    const raw = extractLLMText(llmResult.data).replace(/\`\`\`(json)?/g, '').trim();
+    const parsed = JSON.parse(raw);
+    // Normalize lake names in lakeSpecific
+    const normalized = { general: parsed.general || {}, lakeSpecific: {} };
+    for (const [lake, speciesMap] of Object.entries(parsed.lakeSpecific || {})) {
+      normalized.lakeSpecific[normalizeLakeName(lake)] = speciesMap;
+    }
+    return normalized;
+  } catch (e) {
+    console.error(`parseRegulationsWithLLM(${state}) failed:`, e.message);
+    return { general: {}, lakeSpecific: {} };
+  }
+}
+
 async function fetchStateRegulations(state, env) {
   const cacheKey = `regulations:${state}:v2`;
   let cached = await env.KV.get(cacheKey, { type: 'json' });
@@ -432,33 +481,26 @@ async function fetchStateRegulations(state, env) {
   const pages = config.pages;
   const urls = pages.map(p => p.url);
   
-  // Fetch all pages in ONE TinyFish Fetch call (batched, free)
+  // Fetch all pages via TinyFish (R2 public URLs are fetchable, free)
   const result = await tinyfishFetch({ urls, format: 'markdown' }, env);
-  
+
   const parsed = { general: {}, lakeSpecific: {} };
 
-  // NC regulations are legal prose, not tables — use LLM extraction
-  if (state === 'NC') {
-    const text = result.results?.[0]?.text || '';
-    if (text.length > 500) {
-      const ncParsed = await parseNCRegulationsWithLLM(text, env);
-      parsed.general = ncParsed.general || {};
-      parsed.lakeSpecific = ncParsed.lakeSpecific || {};
+  // All states now use LLM-based extraction from R2 digest PDFs
+  for (let i = 0; i < pages.length; i++) {
+    const page = pages[i];
+    const text = result.results?.[i]?.text || '';
+    if (text.length < 500) {
+      console.warn(`fetchStateRegulations(${state}): page ${i} returned insufficient text (${text.length} chars)`);
+      continue;
     }
-  } else {
-    for (let i = 0; i < pages.length; i++) {
-      const page = pages[i];
-      const markdown = result.results[i]?.text || '';
-      const pageData = PARSERS[page.parser](markdown);
-      
-      if (page.key === 'general') {
-        parsed.general = pageData.general || {};
-      } else {
-        // Merge lake-specific from exceptions/regions
-        for (const [lake, speciesMap] of Object.entries(pageData.lakeSpecific || {})) {
-          parsed.lakeSpecific[lake] = { ...(parsed.lakeSpecific[lake] || {}), ...speciesMap };
-        }
-      }
+    const pageParsed = await parseRegulationsWithLLM(state, text, page.pageHint || '', env);
+    if (page.key === 'general') {
+      parsed.general = { ...parsed.general, ...pageParsed.general };
+    }
+    // Always merge lakeSpecific regardless of key
+    for (const [lake, speciesMap] of Object.entries(pageParsed.lakeSpecific || {})) {
+      parsed.lakeSpecific[lake] = { ...(parsed.lakeSpecific[lake] || {}), ...speciesMap };
     }
   }
   
@@ -7461,9 +7503,11 @@ async function handleResearchRegsDebug(request, env) {
     const config = STATE_REGULATIONS_CONFIG[state];
     if (!config) return new Response(JSON.stringify({ error: 'No config for state' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
     if (raw) {
+      const offset = parseInt(url.searchParams.get('offset') || '0', 10);
       const result = await tinyfishFetch({ urls: config.pages.map(p => p.url), format: 'markdown' }, env);
       const text = result.results?.[0]?.text || '';
-      return new Response(JSON.stringify({ state, url: config.pages[0].url, length: text.length, preview: text.slice(0, 3000) }, null, 2), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+      const lmbIdx = text.search(/largemouth bass/i);
+      return new Response(JSON.stringify({ state, url: config.pages[0].url, length: text.length, lmbIdx, preview: text.slice(offset, offset + 3000) }, null, 2), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
     }
     // bust=1 clears KV cache so fresh parse runs
     if (bust) await env.KV.delete(`regulations:${state}:v2`).catch(() => {});
