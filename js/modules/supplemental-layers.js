@@ -16,9 +16,9 @@ const LAKE_NAME_TO_R2_KEY = {
   'Catawba Narrows, SC/NC':             'catawba_narrows',
   'Lake Hartwell, SC/GA':               'lake_hartwell',
   'Lake Greenwood, SC':                 'lake_greenwood_secession',
-  'Lake Secession, SC':                 'lake_greenwood_secession',
   'Lake Keowee, SC':                    'lake_keowee',
   'Lake Jocassee, SC/NC':               'lake_jocassee',
+  'Lake Secession, SC':                 'lake_thurmond_russell',
   'Lake Russell, SC/GA':                'lake_thurmond_russell',
   'Lake Russell, GA':                   'lake_thurmond_russell',
   'Lake Russell, SC':                   'lake_thurmond_russell',
@@ -126,6 +126,9 @@ const LAKE_BOUNDARY_KEY = {
   'Lake Monticello, SC':           'lake_monticello_3dhp',
   'Parr Reservoir, SC':            'lake_monticello_3dhp',
 };
+
+// Canvas renderer — shared for all supplemental polygon/line layers
+const _canvasRenderer = L.canvas({ padding: 0.5 });
 
 // ── FIX: fuzzy name resolver — same logic as contour-data.js resolveR2Key ────
 export function resolveSupplementalKey(displayName) {
@@ -259,6 +262,8 @@ async function loadDepthAreas(lakeKey) {
   try {
     const gj = await loadLayer(lakeKey, 'depth_areas');
     _depthAreaLayer = L.geoJSON(gj, {
+      renderer: _canvasRenderer,
+      smoothFactor: 1.5,  // simplify at render time — raw GeoJSON in IDB stays intact
       style(feat) {
         const depthFt = feat.properties?.depth_max_ft ?? feat.properties?.depth_min_ft ?? 0;
         const color   = depthAreaColor(depthFt);
@@ -303,6 +308,8 @@ async function loadFishingSpots(lakeKey) {
   try {
     const lines = await loadLayer(lakeKey, 'fishing_lines');
     L.geoJSON(lines, {
+      renderer: _canvasRenderer,
+      smoothFactor: 1.0,
       style() { return { color: '#76ff03', weight: 1.5, opacity: 0.55, dashArray: '4,4' }; },
       onEachFeature(feat, layer) { layer.bindTooltip('Community fishing path', { sticky: true, direction: 'top', opacity: 0.85 }); },
     }).eachLayer(l => { group.addLayer(l); total++; });

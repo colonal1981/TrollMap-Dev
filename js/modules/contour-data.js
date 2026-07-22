@@ -15,9 +15,9 @@ const LAKE_NAME_TO_R2_KEY = {
   'Catawba Narrows, SC/NC':             'catawba_narrows',
   'Lake Hartwell, SC/GA':               'lake_hartwell',
   'Lake Greenwood, SC':                 'lake_greenwood_secession',
-  'Lake Secession, SC':                 'lake_greenwood_secession',
   'Lake Keowee, SC':                    'lake_keowee',
   'Lake Jocassee, SC/NC':               'lake_jocassee',
+  'Lake Secession, SC':                 'lake_thurmond_russell',
   'Lake Russell, SC/GA':                'lake_thurmond_russell',
   'Lake Russell, GA':                   'lake_thurmond_russell',
   'Lake Russell, SC':                   'lake_thurmond_russell',
@@ -268,6 +268,12 @@ function depthColor(ft) {
   return '#ffffff';
 }
 
+// Canvas renderer instance — shared across all contour layers for best performance
+const _canvasRenderer = L.canvas({ padding: 0.5 });
+
+// Zoom threshold below which contour lines are hidden (depth areas still show)
+const CONTOUR_MIN_ZOOM = 11;
+
 export function renderContourLayer(showSmart = true, showRaw = false) {
   if (!state.MAP_OK) return;
   if (state.CONTOUR_LAYER) state.MAP.removeLayer(state.CONTOUR_LAYER);
@@ -276,6 +282,12 @@ export function renderContourLayer(showSmart = true, showRaw = false) {
   const contour = state.ACTIVE_CONTOUR;
   if (!contour) return;
 
+  // Below CONTOUR_MIN_ZOOM, hide contour lines — depth area polygons carry the visual at low zoom
+  const zoom = state.MAP.getZoom();
+  if (zoom < CONTOUR_MIN_ZOOM) return;
+
+  const smoothFactor = zoom >= 14 ? 0.5 : zoom >= 12 ? 1.0 : 1.5;
+
   const layers = [];
   if (showSmart && contour.smart) layers.push({ gj: contour.smart, dashed: false });
   if (showRaw   && contour.raw)   layers.push({ gj: contour.raw,   dashed: true  });
@@ -283,21 +295,34 @@ export function renderContourLayer(showSmart = true, showRaw = false) {
   for (const { gj, dashed } of layers) {
     if (!gj?.features?.length) continue;
     L.geoJSON(gj, {
+      renderer: _canvasRenderer,
+      smoothFactor,
       style(feat) {
         const depth = feat.properties?.depth_ft || 0;
         return { color: depthColor(depth), weight: 1.5, opacity: 0.85, dashArray: dashed ? '4,4' : null };
       },
       onEachFeature(feat, layer) {
+        // Use click popup instead of sticky tooltip — sticky tooltips on canvas are expensive
         const d = feat.properties?.depth_ft;
         const name = feat.properties?.name;
         const tip = name ? name : (d != null ? `${d} ft` : null);
-        if (tip) layer.bindTooltip(tip, { sticky: true });
+        if (tip) layer.bindPopup(tip, { closeButton: false, className: 'contour-popup' });
       },
     }).addTo(state.CONTOUR_LAYER);
   }
 
   if (typeof window.bringDepthAreasToBack === 'function') window.bringDepthAreasToBack();
 }
+
+// Re-render contour lines on zoom changes so threshold gating takes effect
+function _wireZoomHandler() {
+  if (!state.MAP_OK || !state.MAP) { setTimeout(_wireZoomHandler, 500); return; }
+  state.MAP.on('zoomend', () => {
+    const showLayer = document.getElementById('cdShowContourLayer')?.checked !== false;
+    if (showLayer && state.ACTIVE_CONTOUR) renderContourLayer(true, false);
+  });
+}
+_wireZoomHandler();
 
 function updateStatusPanel(status, key, count = 0, errMsg = '') {
   const el = document.getElementById('cdActiveInfo');
