@@ -1926,6 +1926,7 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
         const cached = await env.KV.get(`regulations:${state}:v2`, { type: 'json' });
         return new Response(JSON.stringify({ state, cached }, null, 2), { headers: { ...CORS, ...JSON_HEADERS, 'Cache-Control': 'no-store' } });
       }
+      if (path === "/chartpacks/supplemental-audit") {
         // Check each catalog key for contour data presence in R2
         const CATALOG_KEYS = [
           'lake_thurmond_russell','lake_hickory_rhodhiss','lake_greenwood_secession',
