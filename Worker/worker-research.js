@@ -3886,9 +3886,9 @@ async function handleResearchGetNormalized(env, lakeName) {
     'clarks_hill_lake_ga':    'clarks_hill_thurmond_sc_ga',
     'j_strom_thurmond_lake':  'clarks_hill_thurmond_sc_ga',
     'thurmond_lake_sc':       'clarks_hill_thurmond_sc_ga',
-    'richard_b_russell_lake': 'lake_russell_sc_ga',
-    'lake_russell_ga':        'lake_russell_sc_ga',
-    'lake_russell_sc':        'lake_russell_sc_ga',
+    'richard_b_russell_lake': 'lake_russell_sc',
+    'lake_russell_ga':        'lake_russell_sc',
+    'lake_russell_sc_ga':     'lake_russell_sc',
   };
   let safe = researchStorageId(lakeName);
   const key = `lake_packages/${safe}/normalized_documents.json`;
@@ -4685,8 +4685,9 @@ const RESEARCH_CANONICAL_IDS = {
   'lake_wylie_sc_nc': 'lake_wylie_sc',
   // Lake Hartwell (SC/GA) — canonical is SC profile
   'lake_hartwell_sc_ga': 'lake_hartwell_sc',
-  // Lake Russell (SC/GA) — canonical is SC profile
+  // Lake Russell (SC/GA) — SC calls it Lake Russell, GA calls it Lake Russell — canonical is SC profile
   'lake_russell_sc_ga': 'lake_russell_sc',
+  'lake_russell_ga': 'lake_russell_sc',
   // Lake Chatuge (GA/NC) — GA calls it Lake Chatuge, NC calls it Chatuge Lake — canonical is GA
   'chatuge_lake_nc': 'lake_chatuge_ga',
 };
@@ -6063,9 +6064,9 @@ async function handleResearchGet(env, lakeId) {
     'clarks_hill_lake_ga': 'clarks_hill_thurmond_sc_ga',
     'j_strom_thurmond_lake': 'clarks_hill_thurmond_sc_ga',
     'thurmond_lake_sc': 'clarks_hill_thurmond_sc_ga',
-    'richard_b_russell_lake': 'lake_russell_sc_ga',
-    'lake_russell_ga': 'lake_russell_sc_ga',
-    'lake_russell_sc': 'lake_russell_sc_ga',
+    'richard_b_russell_lake': 'lake_russell_sc',
+    'lake_russell_ga': 'lake_russell_sc',
+    'lake_russell_sc_ga': 'lake_russell_sc',
   };
   if (!RESEARCH_CANONICAL_IDS[requestedSafe] && LEGACY_PROFILE_KEYS[requestedSafe]) {
     safe = LEGACY_PROFILE_KEYS[requestedSafe];
