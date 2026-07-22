@@ -1,4 +1,4 @@
-// worker-species.js — Species lists and ecological validation
+// worker-species.js — Species lists and ecological validation 
 // Extracted from trollmap-worker.js
 
 
