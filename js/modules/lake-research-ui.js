@@ -1354,6 +1354,146 @@ function initLakeResearch() {
     }
   });
 
+  // ── Lake Status Overview ─────────────────────────────────────────────────────
+  if (!document.getElementById('btnLakeStatusOverview')) {
+    const anchor = document.getElementById('btnRerunGeospatial') || document.getElementById('btnSmartPlanRecovery') || document.getElementById('btnResearch');
+    if (anchor) {
+      const btn = document.createElement('button');
+      btn.id = 'btnLakeStatusOverview';
+      btn.textContent = '📋 Lake Status';
+      btn.title = 'View research status for all lakes';
+      btn.style.cssText = 'margin-left:8px;background:var(--panel2);color:var(--text);border:1px solid var(--line);padding:6px 12px;border-radius:4px;cursor:pointer;font-size:0.85em;';
+      anchor.parentNode.insertBefore(btn, anchor.nextSibling);
+    }
+  }
+  document.getElementById('btnLakeStatusOverview')?.addEventListener('click', async () => {
+    // Build or show modal
+    let modal = document.getElementById('lakeStatusModal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'lakeStatusModal';
+      modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;';
+      modal.innerHTML = `
+        <div style="background:var(--panel,#1e1e1e);border:1px solid var(--line,#333);border-radius:10px;width:min(900px,95vw);max-height:85vh;display:flex;flex-direction:column;overflow:hidden;">
+          <div style="padding:14px 18px;border-bottom:1px solid var(--line,#333);display:flex;align-items:center;gap:12px;">
+            <span style="font-weight:700;font-size:1em;flex:1;">📋 Lake Research Status</span>
+            <input id="lakeStatusFilter" placeholder="Filter lakes..." style="padding:5px 10px;border:1px solid var(--line,#333);border-radius:4px;background:var(--panel2,#252525);color:var(--text,#eee);font-size:0.85em;width:200px;">
+            <select id="lakeStatusFilterState" style="padding:5px 8px;border:1px solid var(--line,#333);border-radius:4px;background:var(--panel2,#252525);color:var(--text,#eee);font-size:0.85em;">
+              <option value="">All states</option>
+              <option value="SC">SC</option>
+              <option value="NC">NC</option>
+              <option value="GA">GA</option>
+              <option value="TN">TN</option>
+            </select>
+            <select id="lakeStatusFilterStatus" style="padding:5px 8px;border:1px solid var(--line,#333);border-radius:4px;background:var(--panel2,#252525);color:var(--text,#eee);font-size:0.85em;">
+              <option value="">All statuses</option>
+              <option value="verified">✅ Verified</option>
+              <option value="draft">🔄 Draft</option>
+            </select>
+            <button id="lakeStatusClose" style="background:none;border:none;color:var(--text,#eee);font-size:1.2em;cursor:pointer;padding:0 4px;">✕</button>
+          </div>
+          <div id="lakeStatusBody" style="overflow-y:auto;flex:1;padding:8px 0;">
+            <div style="text-align:center;padding:40px;color:var(--muted,#888);">⏳ Loading...</div>
+          </div>
+          <div id="lakeStatusFooter" style="padding:10px 18px;border-top:1px solid var(--line,#333);font-size:0.8em;color:var(--muted,#888);"></div>
+        </div>`;
+      document.body.appendChild(modal);
+
+      document.getElementById('lakeStatusClose').addEventListener('click', () => modal.remove());
+      modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+
+      const filterFn = () => {
+        const q = document.getElementById('lakeStatusFilter')?.value.toLowerCase() || '';
+        const st = document.getElementById('lakeStatusFilterState')?.value || '';
+        const sv = document.getElementById('lakeStatusFilterStatus')?.value || '';
+        document.querySelectorAll('.lake-status-row').forEach(row => {
+          const name = row.dataset.name || '';
+          const state = row.dataset.state || '';
+          const status = row.dataset.status || '';
+          const show = (!q || name.includes(q))
+            && (!st || state === st)
+            && (!sv || status === sv);
+          row.style.display = show ? '' : 'none';
+        });
+      };
+      document.getElementById('lakeStatusFilter')?.addEventListener('input', filterFn);
+      document.getElementById('lakeStatusFilterState')?.addEventListener('change', filterFn);
+      document.getElementById('lakeStatusFilterStatus')?.addEventListener('change', filterFn);
+    }
+
+    // Fetch lake list
+    const body = document.getElementById('lakeStatusBody');
+    const footer = document.getElementById('lakeStatusFooter');
+    body.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted,#888);">⏳ Loading...</div>';
+    try {
+      const res = await fetch(`${CF_WORKER_URL}/research/list`);
+      const data = await res.json();
+      if (!data.ok || !data.lakes?.length) { body.innerHTML = '<div style="padding:20px;color:var(--muted)">No profiles found.</div>'; return; }
+
+      // Fetch each profile's status — batch via Promise.all with limit
+      const BATCH = 6;
+      const profiles = [];
+      for (let i = 0; i < data.lakes.length; i += BATCH) {
+        const batch = data.lakes.slice(i, i + BATCH);
+        const results = await Promise.all(batch.map(async lake => {
+          try {
+            const r = await fetch(\`\${CF_WORKER_URL}/research/get?lake=\${encodeURIComponent(lake.id)}\`);
+            if (!r.ok) return { id: lake.id, error: true };
+            const d = await r.json();
+            return { id: lake.id, profile: d.profile };
+          } catch { return { id: lake.id, error: true }; }
+        }));
+        profiles.push(...results);
+      }
+
+      const statusIcon = s => s === 'verified' ? '✅' : s === 'draft' ? '🔄' : '❓';
+      const pct = p => p?.confidence?.overall?.percent ?? '—';
+      const stateOf = id => {
+        if (id.endsWith('_sc') || id.includes('_sc_')) return 'SC';
+        if (id.endsWith('_nc') || id.includes('_nc_')) return 'NC';
+        if (id.endsWith('_ga') || id.includes('_ga_') || id.endsWith('_sc_ga')) return 'GA';
+        if (id.endsWith('_tn') || id.includes('_tn_')) return 'TN';
+        return '—';
+      };
+
+      let verified = 0, draft = 0;
+      const rows = profiles.map(p => {
+        const profile = p.profile;
+        const status = profile?.metadata?.status || '—';
+        const name = profile?.lakeName || p.id.replace(/_/g, ' ').replace(/\w/g, c => c.toUpperCase());
+        const overall = pct(profile);
+        const updated = profile?.metadata?.lastUpdated ? new Date(profile.metadata.lastUpdated).toLocaleDateString() : '—';
+        const state = stateOf(p.id);
+        if (status === 'verified') verified++;
+        else if (status === 'draft') draft++;
+        return \`<tr class="lake-status-row" data-name="\${name.toLowerCase()}" data-state="\${state}" data-status="\${status}"
+          style="cursor:pointer;border-bottom:1px solid var(--line,#333);"
+          onclick="document.getElementById('researchLakeSelect').value='\${profile?.lakeName || ''}'; document.getElementById('lakeStatusModal')?.remove(); if(window.loadProfile) loadProfile('\${profile?.lakeName || ''}');">
+          <td style="padding:8px 18px;font-size:0.85em;font-weight:500;">\${name}</td>
+          <td style="padding:8px 12px;font-size:0.8em;color:var(--muted,#888);">\${state}</td>
+          <td style="padding:8px 12px;font-size:0.85em;">\${statusIcon(status)} \${status}</td>
+          <td style="padding:8px 12px;font-size:0.85em;color:\${overall >= 90 ? 'var(--accent2,#4ade80)' : overall >= 70 ? 'var(--accent,#38bdf8)' : 'var(--muted,#888)'};">\${overall !== '—' ? overall + '%' : '—'}</td>
+          <td style="padding:8px 18px;font-size:0.8em;color:var(--muted,#888);">\${updated}</td>
+        </tr>\`;
+      }).join('');
+
+      body.innerHTML = \`<table style="width:100%;border-collapse:collapse;">
+        <thead><tr style="border-bottom:2px solid var(--line,#333);position:sticky;top:0;background:var(--panel,#1e1e1e);">
+          <th style="padding:8px 18px;text-align:left;font-size:0.78em;color:var(--muted,#888);font-weight:600;">LAKE</th>
+          <th style="padding:8px 12px;text-align:left;font-size:0.78em;color:var(--muted,#888);font-weight:600;">STATE</th>
+          <th style="padding:8px 12px;text-align:left;font-size:0.78em;color:var(--muted,#888);font-weight:600;">STATUS</th>
+          <th style="padding:8px 12px;text-align:left;font-size:0.78em;color:var(--muted,#888);font-weight:600;">OVERALL</th>
+          <th style="padding:8px 18px;text-align:left;font-size:0.78em;color:var(--muted,#888);font-weight:600;">LAST UPDATED</th>
+        </tr></thead>
+        <tbody>\${rows}</tbody>
+      </table>\`;
+
+      footer.textContent = \`\${profiles.length} profiles — \${verified} verified, \${draft} draft\`;
+    } catch (e) {
+      body.innerHTML = \`<div style="padding:20px;color:var(--warn,#f87171);">Failed to load: \${e.message}</div>\`;
+    }
+  });
+
   // ── WQP (Water Quality Portal) ───────────────────────────────────────────────
   document.getElementById('btnSaveNotes')?.addEventListener('click', async () => {
     if (!_state.currentProfile || !_state.currentLakeName) { alert('Load a profile first'); return; }
