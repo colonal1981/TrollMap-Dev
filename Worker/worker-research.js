@@ -445,12 +445,6 @@ const OWNER_DRAWDOWN_SOURCES = {
     authority: 'Duke Energy / FERC',
     type: 'HTML'
   },
-  dukeEnergyYadkin: {
-    label: 'Duke Energy Yadkin-Pee Dee Hydro Project & Lake Summaries',
-    url: 'https://www.duke-energy.com/community/lakes/services/yadkin-pee-dee',
-    authority: 'Duke Energy / FERC',
-    type: 'HTML'
-  },
   usaceSavannah: {
     label: 'USACE Savannah District Water Control / Lake Operations',
     url: 'https://www.sas.usace.army.mil/Missions/Water-Control/',
@@ -484,21 +478,11 @@ function resolveDrawdownSource(lakeName, state, reservoirOwner) {
 
   // Duke Energy owns Catawba-Wateree, Keowee-Toxaway, Nantahala, Yadkin-Pee Dee, etc.
   const dukeLakeNames = ['wateree','wylie','norman','keowee','jocassee','hickory','james','rhodhiss','mountain island','lookout shoals','fishing creek','great falls','cedar creek','dearborn','tillery','blewett falls'];
-  const yadkinLakeNames = ['tillery','blewett falls'];
-  const YADKIN_NEIGHBOR_PAGES = {
-    'tillery':       'https://www.duke-energy.com/community/lakes/services/yadkin-pee-dee/lake-tillery-neighbors',
-    'blewett falls': 'https://www.duke-energy.com/community/lakes/services/yadkin-pee-dee',
-  };
   if (owner.includes('duke energy') || owner.includes('duke power') || dukeLakeNames.some(l => baseName.includes(l))) {
-    // Return per-lake CRA PDF if we have it, otherwise fall back to chain landing page
+    // Return per-lake CRA PDF if we have it, otherwise fall back to landing page
     const dukePdf = DUKE_CRA_PDFS[baseName] || Object.entries(DUKE_CRA_PDFS).find(([k]) => baseName.includes(k))?.[1];
     if (dukePdf) {
       return { label: `Duke Energy ${baseName} Lake Agreement Summary (pool levels, drawdown schedule)`, url: dukePdf, authority: 'Duke Energy / FERC', type: 'PDF' };
-    }
-    // Yadkin-PeeDee lakes use their own neighbor/project pages, not Catawba
-    const yadkinNeighbor = YADKIN_NEIGHBOR_PAGES[baseName] || Object.entries(YADKIN_NEIGHBOR_PAGES).find(([k]) => baseName.includes(k))?.[1];
-    if (yadkinNeighbor || yadkinLakeNames.some(l => baseName.includes(l))) {
-      return { label: 'Duke Energy Yadkin-Pee Dee Hydro Project & Lake Summaries', url: yadkinNeighbor || OWNER_DRAWDOWN_SOURCES.dukeEnergyYadkin.url, authority: 'Duke Energy / FERC', type: 'HTML' };
     }
     return OWNER_DRAWDOWN_SOURCES.dukeEnergy;
   }
@@ -756,7 +740,6 @@ async function handleResearchLimnologyData(request, env) {
     }
     const sortedBins = Object.keys(doBins).map(Number).sort((a, b) => a - b);
     for (const bin of sortedBins) {
-      if (bin < 6) continue; // ignore surface bins — hypoxic grab samples at 0-4ft produce false positives
       const vals = doBins[bin].slice().sort((a, b) => a - b);
       const median = vals[Math.floor(vals.length / 2)];
       if (median < 4) {
@@ -798,7 +781,6 @@ async function handleResearchLimnologyData(request, env) {
     const sortedBins = Object.keys(bins).map(Number).sort((a, b) => a - b);
     let anoxicBelowFt = null;
     for (const bin of sortedBins) {
-      if (bin < 6) continue; // ignore surface bins — near-zero surface grab samples produce false positives
       const vals = bins[bin].slice().sort((a, b) => a - b);
       const median = vals[Math.floor(vals.length / 2)];
       if (median < 2) { anoxicBelowFt = bin; break; }
@@ -1002,7 +984,6 @@ async function handleResearchDiscover(request, env) {
   // ── GROKIPEDIA SLUGS ──────────────────────────────────────────────────────
   const GROKIPEDIA_SLUGS = {
     'wateree': 'lake_wateree', 'murray': 'Saluda_River',
-    'tillery': 'Lake_Tillery', 'badin': 'Badin_Lake', 'high rock': 'High_Rock_Lake',
     'blewett falls': 'blewett_falls_lake',
     'marion': 'Lake_Marion_(South_Carolina)', 'moultrie': 'Lake_Moultrie',
     'monticello': 'monticello_reservoir', 'greenwood': 'Lake_Greenwood_(South_Carolina)',
@@ -1421,47 +1402,21 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
   const wantsDukeCra      = !agentForSeeds || ['identity','limnology'].includes(agentForSeeds);
 
   // Grokipedia — identity/limnology/biology/habitat only
-  // Slug table overrides for known edge cases; all other lakes use TinyFish search
-  // query `site:grokipedia.com/page Lake {name} {state}` which reliably returns
-  // the correct disambiguated URL at position 1. Result is cached in KV so the
-  // search only fires once per lake.
   const grokSlug = GROKIPEDIA_SLUGS[baseLower];
-  let resolvedGrokUrl = grokSlug ? `https://grokipedia.com/page/${grokSlug}` : null;
-  const grokKvKey = `grokipedia:slug:${sanitizeLakeId(lakeName)}`;
-
+  const grokCandidates = grokSlug
+    ? [`https://grokipedia.com/page/${grokSlug}`]
+    : [
+        `https://grokipedia.com/page/${baseName.replace(/\s+/g,'_').toLowerCase()}_lake`,
+        `https://grokipedia.com/page/Lake_${baseName.replace(/\s+/g,'_')}`,
+        `https://grokipedia.com/page/${baseName.replace(/\s+/g,'_')}_Lake`,
+        `https://grokipedia.com/page/${baseName.replace(/\s+/g,'_')}`,
+      ];
+  const resolvedGrokUrl = grokCandidates[0];
   if (wantsGrokipedia) {
-    // Check KV cache first
-    if (!resolvedGrokUrl && env.RESEARCH_KV) {
-      try {
-        const cached = await env.RESEARCH_KV.get(grokKvKey);
-        if (cached) { resolvedGrokUrl = cached; queryLog.push(`Grokipedia: KV cache hit → ${cached}`); }
-      } catch (_) {}
-    }
-    // TinyFish search if no slug and no KV hit
-    if (!resolvedGrokUrl) {
-      try {
-        const grokSearchResult = await tinyfishSearch({
-          query: `site:grokipedia.com/page Lake ${baseName} ${state}`,
-          domain_type: 'web'
-        }, env);
-        const grokHit = (grokSearchResult.results || []).find(r => r.url && r.url.includes('grokipedia.com/page/'));
-        if (grokHit) {
-          resolvedGrokUrl = grokHit.url;
-          queryLog.push(`Grokipedia: TinyFish search found → ${resolvedGrokUrl}`);
-          // Cache in KV for future runs
-          if (env.RESEARCH_KV) {
-            try { await env.RESEARCH_KV.put(grokKvKey, resolvedGrokUrl, { expirationTtl: 60 * 60 * 24 * 90 }); } catch (_) {}
-          }
-        } else {
-          queryLog.push(`Grokipedia: no page found via TinyFish search`);
-        }
-      } catch (e) {
-        queryLog.push(`Grokipedia: TinyFish search failed: ${e.message}`);
-      }
-    }
-    if (resolvedGrokUrl) {
-      const isKnownSlug = !!grokSlug;
-      addSeed({ title: `${lakeName} — Grokipedia`, type: 'HTML', authority: 'Grokipedia', url: resolvedGrokUrl, priority: isKnownSlug ? 1 : 2, agentTags: ['identity','limnology','biology','habitat'] });
+    if (grokSlug) {
+      addSeed({ title: `${lakeName} — Grokipedia`, type: 'HTML', authority: 'Grokipedia', url: resolvedGrokUrl, priority: 1, agentTags: ['identity','limnology','biology','habitat'] });
+    } else {
+      addSeed({ title: `${lakeName} — Grokipedia (auto)`, type: 'HTML', authority: 'Grokipedia', url: resolvedGrokUrl, priority: 2, agentTags: ['identity','limnology','biology','habitat'] });
     }
     if (baseLower === 'hartwell') {
       addSeed({ title: 'Savannah River — Grokipedia', type: 'HTML', authority: 'Grokipedia', url: 'https://grokipedia.com/page/Savannah_River', priority: 2, agentTags: ['identity','limnology'] });
@@ -1542,38 +1497,18 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
   // same authoritative sources Grokipedia used, handed to us for free.
   // Uses TinyFish (free) instead of Firecrawl. Links are extracted from markdown.
   // Only run for agents that benefit from Grokipedia citations.
-  if (wantsGrokipedia && resolvedGrokUrl) {
+  if (wantsGrokipedia && (grokSlug || grokCandidates.length > 1)) {
     try {
       let grokUrl = null;
       let grokText = '';
-      for (const candidate of [resolvedGrokUrl]) {
+      for (const candidate of grokCandidates) {
         try {
-          // Tavily extract (1 credit) is the only reliable fetcher for grokipedia.com —
-          // TinyFish gets blocked, Scrape.do needs render=true (5 credits). Tavily fires
-          // once per lake since the result lands in normalized cache + shared registry.
-          let candidateMarkdown = '';
-          const tavilyKey = env.TAVILY_API_KEY;
-          if (tavilyKey) {
-            try {
-              const tvGrok = await fetch('https://api.tavily.com/extract', {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${tavilyKey}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ urls: [candidate], extract_depth: 'basic', format: 'markdown', include_images: false })
-              });
-              if (tvGrok.ok) {
-                const tvData = await tvGrok.json();
-                candidateMarkdown = tvData.results?.[0]?.raw_content || tvData.results?.[0]?.content || '';
-              }
-            } catch (_) {}
-          }
-          // TinyFish fallback if Tavily unavailable
-          if (candidateMarkdown.length < 200) {
-            try {
-              const tfGrok = await tinyfishFetch({ urls: [candidate], format: 'markdown', ttl: 86400 }, env);
-              const tfText = String(tfGrok.results?.[0]?.text || '');
-              if (tfText.length > candidateMarkdown.length) candidateMarkdown = tfText;
-            } catch (_) {}
-          }
+          const tfGrok = await tinyfishFetch({
+            urls: [candidate],
+            format: 'markdown',
+            ttl: 86400
+          }, env);
+          const candidateMarkdown = String(tfGrok.results?.[0]?.text || '');
           const isLakeArticle = /grokipedia\.com\/page\/blewett_falls_lake/i.test(candidate)
             ? /blewett\s+falls\s+lake/i.test(candidateMarkdown)
             : candidateMarkdown.length >= 200;
@@ -4738,12 +4673,22 @@ function sanitizeLakeId(name) {
 }
 
 const RESEARCH_CANONICAL_IDS = {
+  // Clarks Hill / Thurmond (SC/GA) — SC calls it Thurmond, GA calls it Clarks Hill
   'lake_thurmond_sc': 'clarks_hill_thurmond_sc_ga',
   'clarks_hill_lake_ga': 'clarks_hill_thurmond_sc_ga',
   'j_strom_thurmond_lake': 'clarks_hill_thurmond_sc_ga',
   'thurmond_lake_sc': 'clarks_hill_thurmond_sc_ga',
   'thurmond_lake_ga': 'clarks_hill_thurmond_sc_ga',
   'clarks_hill_thurmond_sc_ga': 'clarks_hill_thurmond_sc_ga',
+  // Lake Wylie (SC/NC) — canonical is SC profile
+  'lake_wylie_nc': 'lake_wylie_sc',
+  'lake_wylie_sc_nc': 'lake_wylie_sc',
+  // Lake Hartwell (SC/GA) — canonical is SC profile
+  'lake_hartwell_sc_ga': 'lake_hartwell_sc',
+  // Lake Russell (SC/GA) — canonical is SC profile
+  'lake_russell_sc_ga': 'lake_russell_sc',
+  // Lake Chatuge (GA/NC) — GA calls it Lake Chatuge, NC calls it Chatuge Lake — canonical is GA
+  'chatuge_lake_nc': 'lake_chatuge_ga',
 };
 
 function researchStorageId(lakeName) {
