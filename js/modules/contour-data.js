@@ -18,6 +18,7 @@ const LAKE_NAME_TO_R2_KEY = {
   'Lake Keowee, SC':                    'lake_keowee',
   'Lake Jocassee, SC/NC':               'lake_jocassee',
   'Lake Secession, SC':                 'lake_thurmond_russell',
+  'Secession Lake, SC':                 'lake_thurmond_russell',
   'Lake Russell, SC/GA':                'lake_thurmond_russell',
   'Lake Russell, GA':                   'lake_thurmond_russell',
   'Lake Russell, SC':                   'lake_thurmond_russell',

@@ -19,6 +19,7 @@ const LAKE_NAME_TO_R2_KEY = {
   'Lake Keowee, SC':                    'lake_keowee',
   'Lake Jocassee, SC/NC':               'lake_jocassee',
   'Lake Secession, SC':                 'lake_thurmond_russell',
+  'Secession Lake, SC':                 'lake_thurmond_russell',
   'Lake Russell, SC/GA':                'lake_thurmond_russell',
   'Lake Russell, GA':                   'lake_thurmond_russell',
   'Lake Russell, SC':                   'lake_thurmond_russell',
@@ -498,8 +499,8 @@ export async function loadSupplementalForLake(displayName) {
 
   await loadDepthAreas(lakeKey);
 
-  loadFishingSpots(lakeKey).catch(() => {});
-  loadPOIs(lakeKey).catch(() => {});
+  // Fishing spots and POIs are lazy — only fetch when user toggles them on.
+  // Preloading 90K+ fishing features on large lakes kills scroll/zoom performance.
   loadLakeBoundary(displayName).catch(() => {});
   // Preload OSM structures for getSupplementalContext and Smart Plan
   fetch(`${CF_WORKER_URL}/chartpacks/supplemental/${lakeKey}/osm-structures.geojson`)
