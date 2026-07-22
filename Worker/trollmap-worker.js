@@ -1920,7 +1920,12 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
         const data = await handleChartpackList(env);
         return new Response(JSON.stringify(data, null, 2), { headers: JSON_HEADERS });
       }
-      if (path === "/chartpacks/supplemental-audit") {
+      if (path === "/debug/regs-cache") {
+        const state = url.searchParams.get('state')?.toUpperCase();
+        if (!state) return new Response('?state= required', { status: 400 });
+        const cached = await env.KV.get(`regulations:${state}:v2`, { type: 'json' });
+        return new Response(JSON.stringify({ state, cached }, null, 2), { headers: { ...CORS, ...JSON_HEADERS, 'Cache-Control': 'no-store' } });
+      }
         // Check each catalog key for contour data presence in R2
         const CATALOG_KEYS = [
           'lake_thurmond_russell','lake_hickory_rhodhiss','lake_greenwood_secession',
