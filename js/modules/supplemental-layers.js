@@ -16,11 +16,11 @@ export function resolveSupplementalKey(displayName) {
 
 // Same fuzzy logic for boundary key
 export function resolveBoundaryKey(displayName) {
-  if (LAKE_BOUNDARY_KEY[displayName]) return LAKE_BOUNDARY_KEY[displayName];
+  if (LAKE_NAME_TO_R2_KEY[displayName]) return LAKE_NAME_TO_R2_KEY[displayName];
   const stripped = displayName.replace(/,\s*[A-Z]{2}(\/[A-Z]{2})?$/, '').trim();
-  if (LAKE_BOUNDARY_KEY[stripped]) return LAKE_BOUNDARY_KEY[stripped];
+  if (LAKE_NAME_TO_R2_KEY[stripped]) return LAKE_NAME_TO_R2_KEY[stripped];
   const dl = stripped.toLowerCase();
-  const found = Object.entries(LAKE_BOUNDARY_KEY).find(([k]) => {
+  const found = Object.entries(LAKE_NAME_TO_R2_KEY).find(([k]) => {
     const kl = k.toLowerCase().replace(/,\s*[a-z]{2}(\/[a-z]{2})?$/, '').trim();
     return dl.includes(kl) || kl.includes(dl);
   });
