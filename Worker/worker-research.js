@@ -7511,10 +7511,24 @@ async function handleResearchRegsDebug(request, env) {
     }
     // bust=1 clears KV cache so fresh parse runs
     if (bust) await env.KV.delete(`regulations:${state}:v2`).catch(() => {});
+    // Test the LLM parse directly to diagnose issues
+    const config2 = STATE_REGULATIONS_CONFIG[state];
+    const testResult = await tinyfishFetch({ urls: config2.pages.map(p => p.url), format: 'markdown' }, env);
+    const testText = testResult.results?.[0]?.text || '';
+    let llmParseResult = null;
+    let llmParseError = null;
+    try {
+      llmParseResult = await parseRegulationsWithLLM(state, testText, config2.pages[0].pageHint || '', env);
+    } catch (e) { llmParseError = e.message; }
+
     const stateRegs = await fetchStateRegulations(state, env);
     const lakeRegs = lake ? getLakeRegulations(stateRegs, lake) : null;
     return new Response(JSON.stringify({
       state, lake: lake || null,
+      textLength: testText.length,
+      llmParseError,
+      llmGeneralKeys: Object.keys(llmParseResult?.general || {}),
+      llmLakeSpecificKeys: Object.keys(llmParseResult?.lakeSpecific || {}).slice(0, 10),
       generalKeys: Object.keys(stateRegs.general || {}),
       lakeSpecificKeys: Object.keys(stateRegs.lakeSpecific || {}),
       lakeRegs: lakeRegs || null,
