@@ -6,6 +6,23 @@
 
 This is a fresh audit of the current checkout, not a restatement of the earlier refactor audit. The earlier split of the old 7,500-line Worker file has occurred. The remaining problem is now **policy and orchestration duplication**, not file size alone.
 
+## Implementation status — 2026-07-23
+
+**Phase 1 and Phase 2 have begun.** The implementation removed 749 lines of research code while retaining the existing module boundaries.
+
+Completed:
+
+- Removed per-lake live-source routing from discovery: Grokipedia slug map, search-name overrides, system aliases, owner-domain map, Duke/owner drawdown seeds, direct SCDNR seeds, broad state-news seeds, and the hard-coded no-results fallback.
+- Retained the approved R2 regulation digests, R2 TN/GA source copies, generic Grokipedia candidates/citation following, Wikipedia citation following, and the EPA NSCEP search endpoint.
+- Deleted the unused `drawdown.js` module after all its imports/callers were removed.
+- Removed the Lake Wateree-specific cached-document regex corrections and direct live agency/regulation fetches from deterministic facts.
+- Grounded the regulations agent from the approved R2 digest parser instead of live hard-coded eRegulations URLs.
+- Centralized legacy profile-key resolution through `researchStorageId()` and removed the duplicate storage map.
+
+Deferred intentionally:
+
+- The Worker-side `/research/agent` end-to-end coordinator remains until production access logs confirm that no manual or external client uses it. The browser does not call it, but deleting a public route without that evidence could remove a working external workflow.
+
 ---
 
 ## 1. Plain-English map: what each research module does
