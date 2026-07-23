@@ -389,8 +389,12 @@ const AGENT_TO_TAGS = {
     }
   }
 
-  // TWRA reservoir profiles — R2-hosted static copies (live tn.gov blocks scrapers)
-  // Contains species, regulations, seasonal patterns, stocking, depth, ramps for each TN lake.
+  // TWRA reservoir profiles — R2-hosted static copies (live tn.gov blocks scrapers).
+  // Keyed on parseLakeBaseName() output (leading "Lake"/trailing "Reservoir"/"Lake"
+  // and state suffix already stripped; "Ft." already expanded to "Fort") so the
+  // duplicate "{x}" and "{x} lake" aliases that previously lived here are no
+  // longer needed — baseLower resolves both "Boone Lake" and "Boone Reservoir"
+  // to the same key.
   const TWRA_LAKE_PAGES = {
     'boone':            'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/boone.html',
     'cherokee':         'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/cherokee.html',
@@ -402,15 +406,6 @@ const AGENT_TO_TAGS = {
     'south holston':    'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/south-holston.html',
     'tellico':          'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/tellico.html',
     'watauga':          'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/watauga.html',
-    'boone lake':       'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/boone.html',
-    'cherokee lake':    'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/cherokee.html',
-    'douglas lake':     'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/douglas.html',
-    'fort loudoun lake':'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/fort-loudoun.html',
-    'melton hill lake': 'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/melton-hill.html',
-    'norris lake':      'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/norris.html',
-    'south holston lake':'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/south-holston.html',
-    'tellico lake':     'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/tellico.html',
-    'watauga lake':     'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/watauga.html',
   };
 
   // GADNR fishing forecasts — R2-hosted static copies (live site uses ArcGIS StoryMaps, blocks scrapers)
