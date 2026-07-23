@@ -756,6 +756,87 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
     }
   }
 
+  // ── STEP 2b: Wikipedia citation following (backup for low Grokipedia coverage)
+  // Same pattern as Grokipedia but for Wikipedia — useful for lakes with poor Grokipedia coverage
+  // Lake Greenwood Wikipedia example shows SCDNR description link in references, but many internal #cite_note links
+  if (wantsGrokipedia) { // reuse same flag, Wikipedia is also identity/limnology source
+    try {
+      // Search Wikipedia via TinyFish
+      const wikiSearch = await tinyfishSearch({
+        query: `site:wikipedia.org "${baseName}" lake`,
+        domain_type: 'web',
+        purpose: `Find Wikipedia page for ${lakeName}`,
+      }, env);
+      const wikiUrl = wikiSearch.results?.[0]?.url;
+      if (wikiUrl && /wikipedia\.org/i.test(wikiUrl)) {
+        try {
+          const tfWiki = await tinyfishFetch({ urls: [wikiUrl], format: 'markdown', ttl: 86400 }, env);
+          const wikiMd = String(tfWiki.results?.[0]?.text || '');
+          if (wikiMd.length >= 200) {
+            const wikiLinks = [];
+            const seenWiki = new Set();
+            for (const m of wikiMd.matchAll(/\]\((https?:\/\/[^\s)"']+)/g)) {
+              const u = m[1];
+              if (seenWiki.has(u)) continue;
+              seenWiki.add(u);
+              if (u.includes('wikipedia.org')) continue; // skip internal wiki links
+              if (/facebook\.com|twitter\.com|youtube\.com|instagram\.com|donate\.wikimedia\.org/i.test(u)) continue;
+              wikiLinks.push(u);
+            }
+            queryLog.push(`Wikipedia citations found: ${wikiLinks.length} from ${wikiUrl.split('/').pop()}`);
+
+            for (const citUrl of wikiLinks.slice(0, 15)) {
+              const urlTitle = decodeURIComponent(citUrl.split('/').pop().replace(/[_-]/g,' ').replace(/\.[a-z]+$/i,''));
+              const off = offLakePattern(urlTitle, citUrl);
+              if (off) { queryLog.push(`  ✗ wiki citation rejected (${off}): ${citUrl.slice(0,80)}`); continue; }
+
+              let authority = '';
+              try {
+                const host = new URL(citUrl).hostname;
+                if (/usace\.army\.mil/.test(host)) authority = 'USACE';
+                else if (/epa\.gov|nepis/.test(host)) authority = 'EPA';
+                else if (/usgs\.gov/.test(host)) authority = 'USGS';
+                else if (/dnr\.sc\.gov/.test(host)) authority = 'SCDNR';
+                else if (/ncwildlife\.gov|ncwildlife\.org/.test(host)) authority = 'NCWRC';
+                else if (/georgiawildlife\.com/.test(host)) authority = 'GADNR';
+                else if (/tn\.gov/.test(host)) authority = 'TWRA';
+                else if (/duke-energy\.com/.test(host)) authority = 'Duke Energy';
+                else if (/ferc\.gov/.test(host)) authority = 'FERC';
+                else if (/santeecooper\.com/.test(host)) authority = 'Santee Cooper';
+                else if (/seafwa\.org|apms\.org|\.edu$/.test(host)) authority = 'Academic';
+                else if (/tva\.com/.test(host)) authority = 'TVA';
+                else if (/southcarolinaparks\.com|scprt|state\.sc\.us|greenwoodcounty-sc\.gov|des\.sc\.gov/i.test(host)) authority = 'SC State';
+                else authority = 'Web';
+              } catch {}
+
+              if (authority === 'Web') {
+                queryLog.push(`  ✗ wiki citation skipped (low-value): ${citUrl.slice(0,80)}`);
+                continue;
+              }
+
+              const isPdf = citUrl.toLowerCase().endsWith('.pdf');
+              addSeed({ title: `${lakeName} — ${authority} (via Wikipedia citation)`, type: isPdf ? 'PDF' : 'HTML', authority, url: citUrl, priority: 2, agentTags: ['identity','limnology','biology','habitat'] });
+            }
+
+            // Also store Wikipedia markdown as seed itself (infobox has surface area, depth, etc.)
+            const existingWiki = guaranteedSeeds.find(s => s.url === wikiUrl);
+            if (!existingWiki) {
+              addSeed({ title: `${lakeName} — Wikipedia`, type: 'HTML', authority: 'Wikipedia', url: wikiUrl, priority: 2, agentTags: ['identity'], fullText: wikiMd });
+            } else if (wikiMd) {
+              existingWiki.fullText = wikiMd;
+            }
+          }
+        } catch (wikiErr) {
+          queryLog.push(`Wikipedia fetch failed for ${wikiUrl}: ${wikiErr.message}`);
+        }
+      }
+    } catch (e) {
+      queryLog.push(`Wikipedia citation fetch failed: ${e.message}`);
+    }
+  }
+
+
+
   // ── STEP 3: Agent-specific search queries ───────────────────────────────
   const agent = String(body.agent || "").trim().toLowerCase();
   const agentsToDiscover = agent ? [agent] : Object.keys(AGENT_DISCOVERY_QUERIES);
