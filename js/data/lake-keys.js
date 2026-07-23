@@ -1,6 +1,20 @@
 /**
  * Shared lake display-name → R2 key map.
  * Single source of truth for contour-data.js and supplemental-layers.js.
+ *
+ * resolveR2Key() uses a 4-pass strategy:
+ *   1. Exact match
+ *   2. Case-insensitive exact match (handles all-caps feed names like "FALLS LAKE, NC")
+ *   3. State-suffix-stripped exact + case-insensitive
+ *   4. Normalized fuzzy match — strips "Lake/Reservoir/etc", punctuation, state
+ *      suffixes, and compares core name tokens. Handles word-order inversions
+ *      ("Allatoona Lake" ↔ "Lake Allatoona"), all-caps, abbreviations, and
+ *      variant suffixes without requiring explicit entries for every variant.
+ *
+ * Only add explicit entries where normalization alone produces a wrong or
+ * non-unique match (e.g. "Falls Lake" vs "Blewett Falls Lake"), or where the
+ * display name gives no hint of the R2 slug (multi-lake chains, coastal
+ * catch-alls, border lakes with fixed canonical IDs).
  */
 export const LAKE_NAME_TO_R2_KEY = {
   // ── SC Lakes ────────────────────────────────────────────────────────────────
@@ -42,8 +56,12 @@ export const LAKE_NAME_TO_R2_KEY = {
   'Lake Tillery, NC':                   'yadkin_river_chain',
   'Blewett Falls Lake, NC':             'yadkin_river_chain',
   'Jordan Lake, NC':                    'jordan_lake',
+  // Explicit: "falls" normalizes to match "blewett falls" → yadkin without this
   'Falls Lake, NC':                     'falls_lake',
   'W. Kerr Scott Reservoir, NC':        'w_kerr_scott_reservoir',
+  // Explicit: "kerr" alone matches "w kerr scott" without this
+  'Kerr Lake, NC':                      'kerr_lake',
+  'John H. Kerr Reservoir, NC':         'kerr_lake',
   'Shearon Harris Reservoir, NC':       'shearon_harris_reservoir',
   'Randleman Lake, NC':                 'randleman_lake',
   'Lake Mackintosh, NC':                'lake_mackintosh',
@@ -70,6 +88,7 @@ export const LAKE_NAME_TO_R2_KEY = {
   'Lake Oconee, GA':                    'lake_oconee',
   'Lake Sinclair, GA':                  'lake_sinclair',
   'Lake Lanier, GA':                    'lake_lanier',
+  // Explicit: "jackson" alone matches "lake jackson" → juliette chain without this
   'Lake Jackson, GA':                   'lake_juliette_high_falls',
   'Lake Juliette / High Falls, GA':     'lake_juliette_high_falls',
   'Lake Blackshear, GA':                'lake_blackshear',
@@ -90,7 +109,6 @@ export const LAKE_NAME_TO_R2_KEY = {
   'Cherokee Reservoir, TN':             'cherokee_lake',
   'Fort Loudoun Lake, TN':              'fort_loudoun_lake',
   'Fort Loudoun Reservoir, TN':         'fort_loudoun_lake',
-  'Fort Loundon Reservoir, TN':         'fort_loudoun_lake',
   'Tellico Lake, TN':                   'tellico_lake',
   'Tellico Reservoir, TN':              'tellico_lake',
   'Melton Hill Lake, TN':               'melton_hill_lake',
@@ -103,6 +121,8 @@ export const LAKE_NAME_TO_R2_KEY = {
   'Boone Lake, TN':                     'watauga_boone_chain',
   'Boone Reservoir, TN':                'watauga_boone_chain',
   'Watauga / Boone Chain, TN/NC':       'watauga_boone_chain',
+  'Watts Bar Lake, TN':                 'watts_bar_lake',
+  'Watts Bar Reservoir, TN':            'watts_bar_lake',
 
   // ── SC Coastal ──────────────────────────────────────────────────────────────
   'ACE Basin / Edisto, SC':             'sc_ga_coastal',
@@ -115,23 +135,68 @@ export const LAKE_NAME_TO_R2_KEY = {
   'Savannah River / Savannah, GA':      'sc_ga_coastal',
 };
 
+// Build lowercase lookup once at module load for case-insensitive exact matching.
+const _LOWER_MAP = Object.fromEntries(
+  Object.entries(LAKE_NAME_TO_R2_KEY).map(([k, v]) => [k.toLowerCase(), v])
+);
+
+// Generic water body words stripped before fuzzy comparison so "Lake Allatoona"
+// and "Allatoona Lake" and "Allatoona Reservoir" all reduce to "allatoona".
+const _GENERIC = /\b(lake|lakes|reservoir|res|impoundment|pond|river|creek|fork|chain|sound|harbor|bay|inlet|basin|cove|narrows|arm)\b/g;
+
+function _normalize(name) {
+  return name
+    .toLowerCase()
+    .replace(/,\s*[a-z]{2}(\/[a-z]{2})*\s*$/g, '') // strip ", SC" / ", SC/GA"
+    .replace(/\(.*?\)/g, '')                          // strip parentheticals
+    .replace(/\bft\.?\s*/g, 'fort ')                  // "Ft." → "fort"
+    .replace(/\bst\.?\s*/g, 'saint ')                 // "St." → "saint"
+    .replace(/\bw\.?\s+kerr\b/g, 'w kerr')
+    .replace(_GENERIC, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+// Pre-compute normalized forms of all keys once at module load.
+const _NORM_MAP = Object.entries(LAKE_NAME_TO_R2_KEY)
+  .map(([k, v]) => [_normalize(k), v])
+  .filter(([kn]) => kn.length > 0);
+
 export function resolveR2Key(displayName) {
   if (!displayName || typeof displayName !== 'string') return null;
   const trimmed = displayName.trim();
   if (!trimmed) return null;
-  // 1. Exact match
+
+  // Pass 1 — exact match
   if (LAKE_NAME_TO_R2_KEY[trimmed]) return LAKE_NAME_TO_R2_KEY[trimmed];
-  // 2. Strip state suffix ", SC" / ", NC/GA" etc
-  const stripped = trimmed.replace(/,\s*[A-Z]{2}(\/[A-Z]{2})?$/, '').trim();
-  if (!stripped) return null;
-  if (LAKE_NAME_TO_R2_KEY[stripped]) return LAKE_NAME_TO_R2_KEY[stripped];
-  // 3. Case-insensitive partial match (handles "(Duke Energy)", county suffixes, etc.)
-  const dl = stripped.toLowerCase();
-  if (!dl) return null;
-  const found = Object.entries(LAKE_NAME_TO_R2_KEY).find(([k]) => {
-    const kl = k.toLowerCase().replace(/,\s*[a-z]{2}(\/[a-z]{2})?$/, '').trim();
-    if (!kl) return false;
-    return dl.includes(kl) || kl.includes(dl);
-  });
-  return found ? found[1] : null;
+
+  // Pass 2 — case-insensitive exact match
+  const lower = trimmed.toLowerCase();
+  if (_LOWER_MAP[lower]) return _LOWER_MAP[lower];
+
+  // Pass 3 — state-suffix-stripped exact + case-insensitive
+  const stripped = trimmed.replace(/,\s*[A-Z]{2}(\/[A-Z]{2})*$/i, '').trim();
+  if (stripped !== trimmed) {
+    if (LAKE_NAME_TO_R2_KEY[stripped]) return LAKE_NAME_TO_R2_KEY[stripped];
+    if (_LOWER_MAP[stripped.toLowerCase()]) return _LOWER_MAP[stripped.toLowerCase()];
+  }
+
+  // Pass 4 — normalized fuzzy match
+  // Derives R2 key from core lake name, handling word-order inversions,
+  // all-caps, variant suffixes, and vendor naming differences automatically.
+  // Prefers longer canonical key matches to avoid short tokens over-matching.
+  const dn = _normalize(trimmed);
+  if (!dn) return null;
+
+  let best = null;
+  let bestLen = 0;
+  for (const [kn, v] of _NORM_MAP) {
+    if (dn === kn || dn.includes(kn) || kn.includes(dn)) {
+      if (kn.length > bestLen) {
+        bestLen = kn.length;
+        best = v;
+      }
+    }
+  }
+  return best;
 }
