@@ -1181,6 +1181,23 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
       previousResults = { ...previousResults, ..._contextResults };
     }
 
+    // When identity runs without a full pipeline (e.g. resume mode), load the
+    // saved profile's identity so the LLM sees the geometry-derived bathymetry
+    // values and doesn't replace them with training-data depths.
+    if (agentKey === 'identity' && !previousResults.identity?._geometryDerived) {
+      try {
+        const savedIdRes = await fetch(`${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`);
+        if (savedIdRes.ok) {
+          const savedIdData = await savedIdRes.json();
+          const savedId = savedIdData.profile?.identity || null;
+          if (savedId?._geometryDerived) {
+            previousResults = { ...previousResults, identity: savedId };
+            log(`  [identity] Loaded geometry-derived bathymetry from saved profile (max ${savedId.maxDepthFt} ft, avg ${savedId.averageDepthFt} ft, area ${savedId.surfaceAreaAcres} ac)`);
+          }
+        }
+      } catch (_) {}
+    }
+
     // When fisheries runs without biology in the same batch (e.g. resume on
     // fisheries only), load the saved profile's species list so the LLM has
     // the correct predatorSpecies to generate trollingIntelligence sections.
@@ -2120,9 +2137,9 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     }
   } catch (e) { /* non-fatal */ }
 
-  // Saved profiles store identity fields flat at the top level (surfaceAreaAcres,
-  // reservoirOwner, etc.) rather than nested under an 'identity' key. Reconstruct
-  // the identity object from flat fields so resume runs don't wipe them.
+  // Saved profiles now include a nested identity section (with _geometryDerived
+  // flag and _bathymetryMeta). For older profiles that only have flat fields,
+  // reconstruct the identity object so resume runs don't wipe them.
   if (!existingSavedProfile.identity && existingSavedProfile.lakeName) {
     existingSavedProfile.identity = {
       surfaceAreaAcres:  existingSavedProfile.surfaceAreaAcres  ?? null,
@@ -2289,33 +2306,14 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   const agentsRan = new Set(agentResults.map(r => r.agent));
 
   // ── Fact-backed identity override ──────────────────────────────────────
-  // Geometry-derived bathymetry values (from depth_areas polygons + contours)
-  // are highest-truth: they are direct measurements from our own chart data,
-  // not from LLM training data or scraped text. Re-apply them here so they
-  // win even when the LLM or a document fact populated the field first.
-  const geoId = det.identity && det.identity._geometryDerived ? det.identity : null;
-  if (geoId) {
-    const id = agentSections.identity;
-    if (geoId.surfaceAreaAcres != null && id.surfaceAreaAcres !== geoId.surfaceAreaAcres) {
-      log(`  🗺️ identity.surfaceAreaAcres: geometry ${geoId.surfaceAreaAcres} overrides prior ${id.surfaceAreaAcres}`);
-      id.surfaceAreaAcres = geoId.surfaceAreaAcres;
-    }
-    if (geoId.maxDepthFt != null && id.maxDepthFt !== geoId.maxDepthFt) {
-      log(`  🗺️ identity.maxDepthFt: geometry ${geoId.maxDepthFt} ft overrides prior ${id.maxDepthFt}`);
-      id.maxDepthFt = geoId.maxDepthFt;
-    }
-    if (geoId.averageDepthFt != null && id.averageDepthFt !== geoId.averageDepthFt) {
-      log(`  🗺️ identity.averageDepthFt: geometry ${geoId.averageDepthFt} ft overrides prior ${id.averageDepthFt}`);
-      id.averageDepthFt = geoId.averageDepthFt;
-    }
-  }
-
   // The LLM sometimes overrides pre-extracted numeric identity values with
   // different numbers from training data (e.g. maxDepth 150 from docs → 175
   // from LLM, yearImpounded 1946 from docs → 1942 from LLM).
   // When an extracted fact explicitly states a numeric value with a verbatim
-  // quote from a document, that value wins over the LLM's guess (but never
-  // over geometry-derived values applied above).
+  // quote from a document, that value wins over the LLM's guess.
+  // IMPORTANT: This runs BEFORE the geometry-derived bathymetry override below,
+  // so bathymetry values (direct measurements from our chart data) always take
+  // final precedence over both LLM training data and document-extracted facts.
   if (allFacts.length > 0) {
     const factBackfill = (cats, parseFn) => {
       for (const c of cats) {
@@ -2361,6 +2359,38 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     if (id.averageDepthFt == null && avgFact) id.averageDepthFt = avgFact.value;
     if (id.yearImpounded == null && yearFact) id.yearImpounded = yearFact.value;
     if (id.normalPoolFt == null && poolFact) id.normalPoolFt = poolFact.value;
+  }
+
+  // ── Geometry-derived bathymetry override (FINAL AUTHORITY) ─────────────
+  // Geometry-derived bathymetry values (from depth_areas polygons + contours)
+  // are the highest-truth source: they are direct measurements computed from
+  // our own chart data via hypsometric integration, not from LLM training data,
+  // scraped text, or document-extracted facts. This override runs LAST so it
+  // wins over both the LLM agent output AND the fact-backed identity override
+  // above. Bathymetry is authoritative for surfaceAreaAcres, maxDepthFt, and
+  // averageDepthFt — these fields will never be overwritten by downstream passes.
+  // Check both the deterministic profile (full pipeline) and the existing saved
+  // profile (resume mode) for the _geometryDerived flag so bathymetry values
+  // persist across resume runs even when the deterministic profile isn't loaded.
+  const geoId = (det.identity && det.identity._geometryDerived ? det.identity : null)
+    || (existingSavedProfile.identity && existingSavedProfile.identity._geometryDerived ? existingSavedProfile.identity : null);
+  if (geoId) {
+    const id = agentSections.identity;
+    if (geoId.surfaceAreaAcres != null && id.surfaceAreaAcres !== geoId.surfaceAreaAcres) {
+      log(`  🗺️ identity.surfaceAreaAcres: bathymetry ${geoId.surfaceAreaAcres} ac overrides prior ${id.surfaceAreaAcres} (authoritative)`);
+      id.surfaceAreaAcres = geoId.surfaceAreaAcres;
+    }
+    if (geoId.maxDepthFt != null && id.maxDepthFt !== geoId.maxDepthFt) {
+      log(`  🗺️ identity.maxDepthFt: bathymetry ${geoId.maxDepthFt} ft overrides prior ${id.maxDepthFt} (authoritative)`);
+      id.maxDepthFt = geoId.maxDepthFt;
+    }
+    if (geoId.averageDepthFt != null && id.averageDepthFt !== geoId.averageDepthFt) {
+      log(`  🗺️ identity.averageDepthFt: bathymetry ${geoId.averageDepthFt} ft overrides prior ${id.averageDepthFt} (authoritative)`);
+      id.averageDepthFt = geoId.averageDepthFt;
+    }
+    // Preserve the geometry-derived flag and metadata on the final identity
+    id._geometryDerived = true;
+    if (geoId._bathymetryMeta) id._bathymetryMeta = geoId._bathymetryMeta;
   }
 
   // Validation pass — only runs when we have facts, only checks fields for agents that ran

@@ -12,33 +12,45 @@ var RESEARCH_AGENTS = {
     userTemplate: (lakeName, state, prev) => {
       const facts = prev?._extractedFacts || [];
 
+      // ── Bathymetry-derived depth values from TrollMap contour/depth-area polygons ──
+      // These are the highest-trust depth measurements — direct hypsometric calculations
+      // from our own chart data. They take precedence over LLM training data and
+      // document-extracted facts. Inject them into the prompt so the LLM uses them
+      // verbatim instead of hallucinating different numbers.
+      const prevIdentity = prev?.identity || {};
+      const bathySurfaceArea = prevIdentity.surfaceAreaAcres != null ? prevIdentity.surfaceAreaAcres : null;
+      const bathyMaxDepth = prevIdentity.maxDepthFt != null ? prevIdentity.maxDepthFt : null;
+      const bathyAvgDepth = prevIdentity.averageDepthFt != null ? prevIdentity.averageDepthFt : null;
+      const hasBathymetry = prevIdentity._geometryDerived === true;
+      const bathyMeta = prevIdentity._bathymetryMeta || null;
+
       const surfaceFact = facts.find(f => f.category === 'surfaceArea' && /acre/i.test(f.fact))
         || facts.find(f => f.category === 'surfaceArea');
-      const surfaceArea = surfaceFact ? (() => {
+      const surfaceArea = bathySurfaceArea !== null ? bathySurfaceArea : (surfaceFact ? (() => {
         const m = surfaceFact.fact.match(/([\d,]+(?:\.\d+)?)\s*acres?/i);
         if (m) return parseFloat(m[1].replace(',',''));
         const km = surfaceFact.fact.match(/([\d,]+(?:\.\d+)?)\s*km/i);
         if (km) return Math.round(parseFloat(km[1].replace(',','')) * 247.1);
         return null;
-      })() : null;
+      })() : null);
 
       const maxFact = facts.find(f => f.category === 'maxDepthFt' && !/225|pool|elevation/i.test(f.fact));
-      const maxDepth = maxFact ? (() => {
+      const maxDepth = bathyMaxDepth !== null ? bathyMaxDepth : (maxFact ? (() => {
         const m = maxFact.fact.match(/([\d.]+)\s*f(?:ee)?t/i);
         if (m) return parseFloat(m[1]);
         const met = maxFact.fact.match(/([\d.]+)\s*met/i);
         if (met) return Math.round(parseFloat(met[1]) * 3.281);
         return null;
-      })() : null;
+      })() : null);
 
       const avgFact = facts.find(f => f.category === 'averageDepthFt');
-      const avgDepth = avgFact ? (() => {
+      const avgDepth = bathyAvgDepth !== null ? bathyAvgDepth : (avgFact ? (() => {
         const m = avgFact.fact.match(/([\d.]+)\s*f(?:ee)?t/i);
         if (m) return parseFloat(m[1]);
         const met = avgFact.fact.match(/([\d.]+)\s*met/i);
         if (met) return Math.round(parseFloat(met[1]) * 3.281 * 10) / 10;
         return null;
-      })() : null;
+      })() : null);
 
       const identityFacts = facts.filter(f => {
         if (!/identity|surface|depth|dam|year|owner|river|archetype|impound|county|pool|drawdown|elevation|normal/i.test(f.category)) return false;
@@ -57,6 +69,20 @@ The CRA agreement PDF has a table: Month(s) | Guide Curve (target ft) | Minimum 
 Extract into poolManagement: guideCurveFt by month, minimumFt, maximumFt, drawdownSchedule [{months, targetFt}].
 Set drawdownType: "scheduled" and normalPoolFt to the Maximum column value.` : '';
 
+      // Bathymetry authority section — when geometry-derived depth values exist,
+      // inject them as authoritative so the LLM doesn't replace them with
+      // document-extracted or training-data numbers.
+      const bathySection = hasBathymetry ? `
+
+BATHYMETRY-DERIVED DEPTH DATA (AUTHORITATIVE — use these exact values, do NOT override with document facts):
+These values were computed directly from TrollMap bathymetric contour lines and depth-area polygons using hypsometric integration.
+They are the highest-trust source for depth and area — higher than any document, guide, or LLM training data.
+${bathySurfaceArea !== null ? `- surfaceAreaAcres: ${bathySurfaceArea} acres` : ''}
+${bathyMaxDepth !== null ? `- maxDepthFt: ${bathyMaxDepth} ft` : ''}
+${bathyAvgDepth !== null ? `- averageDepthFt: ${bathyAvgDepth} ft (area-weighted mean depth)` : ''}
+${bathyMeta ? `- Polygon coverage: ${(bathyMeta.bathymetryCoverage * 100).toFixed(0)}% of lake area, ${bathyMeta.bathymetryBandCount || '?'} depth bands` : ''}
+CRITICAL: Use these bathymetry values EXACTLY as given above. Do NOT replace them with values from documents, websites, or training knowledge. If a document says a different depth, ignore the document — bathymetry is authoritative.` : '';
+
       const docSection = prev?._documentContext
         ? `\n\nDOCUMENT TEXT:\n${prev._documentContext.slice(0, 60000)}`
         : '';
@@ -65,6 +91,7 @@ Set drawdownType: "scheduled" and normalPoolFt to the Maximum column value.` : '
 
 EXTRACTED FACTS:
 ${identityFacts || 'No identity facts — use document context.'}
+${bathySection}
 
 RULES:
 - surfaceAreaAcres: ${surfaceArea !== null ? surfaceArea : 'extract from facts (acres preferred; km² × 247.1)'}

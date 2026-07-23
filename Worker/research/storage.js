@@ -132,6 +132,10 @@ async function handleResearchSave(request, env) {
     county: incomingProfile.county || _id.county || null,
     normalPoolFt: incomingProfile.normalPoolFt ?? _id.normalPoolFt ?? null,
     gpsCenter: incomingProfile.gpsCenter || _id.gpsCenter || null,
+    // Preserve the full identity section including _geometryDerived flag and
+    // _bathymetryMeta so bathymetry-derived depth values survive save/load
+    // cycles and resume runs can re-apply them correctly.
+    identity: _id,
     limnology: incomingProfile.limnology || packageParts.limnology || {},
     forage: incomingProfile.forage || incomingProfile.biology || packageParts.biology || packageParts.forage || {},
     biology: incomingProfile.biology || incomingProfile.forage || {},
