@@ -555,34 +555,72 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
     addSeed({ title: `Lake ${baseName} Regulations`, type: 'HTML', authority: 'SCDNR', url: `https://www.dnr.sc.gov/lakes/${baseLower}/regs.html`, priority: 1, agentTags: ['regulations'] });
   }
 
-  // TWRA reservoir profiles — regulations + identity
-  // Expanded from 3 to 10 based on user's local HTML archive (2026-07-22)
-  // These pages contain almost every detail needed for TN lakes: surface area, max depth,
-  // dam, owner, species, regulations, boat ramps, etc. — see https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/
+
+  // TWRA reservoir profiles — R2-hosted static copies (live tn.gov blocks scrapers)
+  // Contains species, regulations, seasonal patterns, stocking, depth, ramps for each TN lake.
   const TWRA_LAKE_PAGES = {
-    'boone': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/boone-reservoir.html',
-    'cherokee': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/cherokee-reservoir.html',
-    'chilhowee': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/chilhowee-reservoir.html',
-    'douglas': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/douglas-reservoir.html',
-    'fort loudoun': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/fort-loudoun-reservoir.html',
-    'melton hill': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/melton-hill-reservoir.html',
-    'norris': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/norris-reservoir.html',
-    'south holston': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/south-holston-reservoir.html',
-    'tellico': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/tellico-reservoir.html',
-    'watauga': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/watauga-reservoir.html',
-    // Aliases for baseName matching (boone lake vs boone reservoir, etc.)
-    'boone lake': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/boone-reservoir.html',
-    'cherokee lake': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/cherokee-reservoir.html',
-    'douglas lake': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/douglas-reservoir.html',
-    'fort loudoun lake': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/fort-loudoun-reservoir.html',
-    'melton hill lake': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/melton-hill-reservoir.html',
-    'norris lake': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/norris-reservoir.html',
-    'south holston lake': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/south-holston-reservoir.html',
-    'tellico lake': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/tellico-reservoir.html',
-    'watauga lake': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/watauga-reservoir.html',
+    'boone':            'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/boone.html',
+    'cherokee':         'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/cherokee.html',
+    'chilhowee':        'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/chilhowee.html',
+    'douglas':          'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/douglas.html',
+    'fort loudoun':     'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/fort-loudoun.html',
+    'melton hill':      'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/melton-hill.html',
+    'norris':           'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/norris.html',
+    'south holston':    'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/south-holston.html',
+    'tellico':          'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/tellico.html',
+    'watauga':          'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/watauga.html',
+    'boone lake':       'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/boone.html',
+    'cherokee lake':    'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/cherokee.html',
+    'douglas lake':     'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/douglas.html',
+    'fort loudoun lake':'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/fort-loudoun.html',
+    'melton hill lake': 'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/melton-hill.html',
+    'norris lake':      'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/norris.html',
+    'south holston lake':'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/south-holston.html',
+    'tellico lake':     'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/tellico.html',
+    'watauga lake':     'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/watauga.html',
   };
-  if (state === 'TN' && TWRA_LAKE_PAGES[baseLower] && (!agentForSeeds || ['regulations','identity'].includes(agentForSeeds))) {
-    addSeed({ title: `${baseName} TWRA Reservoir Profile`, type: 'HTML', authority: 'TWRA', url: TWRA_LAKE_PAGES[baseLower], priority: 1, agentTags: ['regulations','identity'] });
+
+  // GADNR fishing forecasts — R2-hosted static copies (live site uses ArcGIS StoryMaps, blocks scrapers)
+  // Contains species prospects, techniques, seasonal patterns, stocking, habitat per GA lake.
+  const GADNR_LAKE_PAGES = {
+    'allatoona':        'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/allatoona.html',
+    'andrews':          'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/andrews.html',
+    'bartletts ferry':  'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/bartletts-ferry.html',
+    'big haynes':       'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/big-haynes.html',
+    'blackshear':       'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/blackshear.html',
+    'blue ridge':       'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/blue-ridge.html',
+    'burton':           'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/burton.html',
+    'carters':          'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/carters.html',
+    'chatuge':          'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/chatuge.html',
+    'chehaw':           'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/chehaw.html',
+    'clarks hill':      'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/clarks-hill.html',
+    'goat rock':        'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/goat-rock.html',
+    'hamburg':          'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/hamburg.html',
+    'hartwell':         'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/hartwell.html',
+    'high falls':       'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/high-falls.html',
+    'jackson':          'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/jackson.html',
+    'juliette':         'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/juliette.html',
+    'lanier':           'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/lanier.html',
+    'nottely':          'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/nottely.html',
+    'oconee':           'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/oconee.html',
+    'oliver':           'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/oliver.html',
+    'rabun':            'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/rabun.html',
+    'russell':          'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/russell.html',
+    'seed':             'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/seed.html',
+    'seminole':         'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/seminole.html',
+    'sinclair':         'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/sinclair.html',
+    'tobesofkee':       'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/tobesofkee.html',
+    'tugalo':           'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/tugalo.html',
+    'walter f george':  'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/walter-f-george.html',
+    'west point':       'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/west-point.html',
+    'yonah':            'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/yonah.html',
+  };
+  if (state === 'TN' && TWRA_LAKE_PAGES[baseLower] && (!agentForSeeds || ['identity','biology','fisheries','regulations'].includes(agentForSeeds))) {
+    addSeed({ title: `${baseName} TWRA Reservoir Profile`, type: 'HTML', authority: 'TWRA', url: TWRA_LAKE_PAGES[baseLower], priority: 1, agentTags: ['identity','biology','fisheries','regulations'] });
+  }
+
+  if (state === 'GA' && GADNR_LAKE_PAGES[baseLower] && (!agentForSeeds || ['identity','biology','fisheries','regulations'].includes(agentForSeeds))) {
+    addSeed({ title: `${baseName} GADNR Fishing Forecast`, type: 'HTML', authority: 'GADNR', url: GADNR_LAKE_PAGES[baseLower], priority: 1, agentTags: ['identity','biology','fisheries','regulations'] });
   }
 
   // Owner/drawdown source — identity + limnology only
