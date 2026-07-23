@@ -116,15 +116,21 @@ export const LAKE_NAME_TO_R2_KEY = {
 };
 
 export function resolveR2Key(displayName) {
+  if (!displayName || typeof displayName !== 'string') return null;
+  const trimmed = displayName.trim();
+  if (!trimmed) return null;
   // 1. Exact match
-  if (LAKE_NAME_TO_R2_KEY[displayName]) return LAKE_NAME_TO_R2_KEY[displayName];
+  if (LAKE_NAME_TO_R2_KEY[trimmed]) return LAKE_NAME_TO_R2_KEY[trimmed];
   // 2. Strip state suffix ", SC" / ", NC/GA" etc
-  const stripped = displayName.replace(/,\s*[A-Z]{2}(\/[A-Z]{2})?$/, '').trim();
+  const stripped = trimmed.replace(/,\s*[A-Z]{2}(\/[A-Z]{2})?$/, '').trim();
+  if (!stripped) return null;
   if (LAKE_NAME_TO_R2_KEY[stripped]) return LAKE_NAME_TO_R2_KEY[stripped];
   // 3. Case-insensitive partial match (handles "(Duke Energy)", county suffixes, etc.)
   const dl = stripped.toLowerCase();
+  if (!dl) return null;
   const found = Object.entries(LAKE_NAME_TO_R2_KEY).find(([k]) => {
     const kl = k.toLowerCase().replace(/,\s*[a-z]{2}(\/[a-z]{2})?$/, '').trim();
+    if (!kl) return false;
     return dl.includes(kl) || kl.includes(dl);
   });
   return found ? found[1] : null;

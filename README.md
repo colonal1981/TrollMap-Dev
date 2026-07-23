@@ -32,39 +32,48 @@ trollmap-dev (Cloudflare Pages — auto-deploys from GitHub)
 ├── sw.js                         # Service worker v16
 ├── manifest.json                 # PWA metadata
 ├── js/
-│   ├── main.js                   # Entry point
+│   ├── main.js                   # Entry point (side-effect imports → boot)
 │   ├── lazy-data.js              # Optional GIS JSON loader
-│   ├── utils/                    # escape, dedupe, rod-row, db, geo, parsers
-│   ├── data/                     # ramps, lakes, access-index, species-intel,
-│   │                             # species-intel-v2, fishing-style-profile,
-│   │                             # scdnr-state-lakes, user-known-lakes,
-│   │                             # spread-defaults
-│   ├── core/                     # state, tabs, map-init
-│   └── modules/                  # ~40+ feature modules (see below)
-└── data/                         # Contour GeoJSON datasets
+│   ├── api/                      # (planned) typed worker client - see REFACTOR_AUDIT
+│   ├── utils/                    # escape, dedupe, rod-row, db, geo (single source for dist/bearing), parsers
+│   ├── data/                     # lakes, access-index, species-intel (unified v1+v2),
+│   │                             # lake-keys (single source 101 entries → R2 key), tackle-inventory,
+│   │                             # fishing-style-profile, scdnr-state-lakes, user-known-lakes,
+│   │                             # spread-defaults, ramps-loader
+│   ├── core/                     # state (singleton), tabs, map-init
+│   └── modules/                  # ~45+ feature modules (see below)
+├── data/                         # Tri-state GIS caches (tristate-*.json) — not contours; contours in R2
+├── researchdocs/                 # Golden fixtures: research profiles, normalized docs, EPA PDFs
+└── test/                         # Vitest safety net: lake-keys, research-keys, arcgis mappers, fixtures
 
 trollmap-worker (Cloudflare Worker — ES modules, deployed via wrangler)
-├── trollmap-worker.js            # Main fetch router + LLM provider chain
-├── worker-core.js                # CORS, JSON headers, callLLM, isAuthorized
-├── worker-data.js                # LAKES, LAKE_INTEL, RIVERS, clarity profiles,
-│                                 # lake/duke/USGS fetch functions
+├── wrangler.toml
+├── trollmap-worker.js            # Main fetch router (1882 lines after P1 dedupe, was 2054) + LLM provider chain
+├── worker-core.js                # CORS, JSON headers, callLLM provider chain, auth
+├── worker-data.js                # LAKES, LAKE_INTEL, RIVERS, clarity profiles, lake/duke/USGS fetchers
 ├── worker-species.js             # Species lists, ecological validation
-└── worker-research.js            # Full research pipeline (~3,950 lines):
-    ├── /research/discover        # Source discovery (Tavily + seeded URLs)
-    ├── /research/proxy-download  # Firecrawl HTML + PDF extraction
-    ├── /research/analyze-facts   # 3-pass targeted LLM fact extraction
-    ├── /research/dedupe-*        # Deduplication + contradiction detection
-    ├── /research/deterministic-facts  # SCDNR regs parser, ramp/attractor GIS
-    ├── /research/agent           # 5 data-assembly LLM agents
-    ├── /research/limnology-data  # WQP water quality portal integration
-    ├── /research/dataset-hunt    # EPA NSCEP + agency report discovery
-    └── /research/save|get|list   # R2 profile storage + versioning
+├── worker-research.js            # 12-line barrel re-exporting research/*
+├── core/
+│   └── arcgis.js                 # Shared ArcGIS helper (P1 dedupe): fetchAllFeatures, getCachedGis, handleGisRoute
+└── research/                     # Full research pipeline split from 7.5k monolith → 14 modules (P0)
+    ├── keys.js                   # sanitizeLakeId, researchStorageId, lakeResearchMasterKey (canonical lake id logic)
+    ├── discover.js               # Source discovery (Tavily + seeded URLs)
+    ├── download.js               # TinyFish → Scrape.do → Firecrawl → raw fallbacks
+    ├── deterministic.js          # SCDNR regs parser, ramp/attractor GIS seeding
+    ├── extract.js                # 3-pass targeted LLM fact extraction
+    ├── agents.js                 # RESEARCH_AGENTS prompts + sanitizers (1326 lines)
+    ├── storage.js                # save/get/list/package/approve/delete, confidence scoring
+    ├── shared.js                 # Shared R2 document registry check/store/query/publish
+    ├── limnology.js              # WQP integration + supplemental R2 key map (now imports js/data/lake-keys.js single source 101 entries)
+    ├── vision.js                 # Vision-scan routes (wired, was 404)
+    ├── clients.js, dataset.js, drawdown.js, facts-util.js, etc.
 
 Frontend research modules (js/modules/)
-├── lake-research-engine.js       # Pipeline logic, geo helpers, agent calls
-│                                 # (no DOM — pure pipeline)
-└── lake-research-ui.js           # Research panel UI, renderers, editors
-    lake-research.js              # Barrel re-export
+├── lake-research-engine.js       # Pipeline logic, geospatial adapter (uses resolveSupplementalKey/BoundaryKey now unified to js/data/lake-keys.js)
+├── lake-research-ui.js           # Research panel UI, renderers, editors
+└── lake-research.js              # Barrel re-export
+
+Refactor status: See REFACTOR_AUDIT.md (original) + REFACTOR_STATUS_UPDATE.md (verification) — P0 safety net (vitest 79 tests) and P1 ArcGIS dedupe done.
 ```
 
 ---
@@ -73,14 +82,14 @@ Frontend research modules (js/modules/)
 
 | Module | What it does |
 |---|---|
-| `smart-plan.js` | Multi-phase route planning, species-intel-v2 brain, Groq coach call |
+| `smart-plan.js` | Multi-phase route planning, species-intel (unified) brain, Groq coach call, uses geo.js canonical |
 | `route-builder.js` | Contour-following + DEPARE polygon GPX route generator |
 | `plan-builder.js` | Plan form, preview, PDF export |
 | `catch-journal.js` | Photo upload, AI ID queue, nightly workflow |
 | `lake-intel.js` | Lake intelligence + clarity forecast + verified research profile |
 | `lake-research-engine.js` | Evidence acquisition pipeline, geospatial structure derivation |
 | `lake-research-ui.js` | Research panel UI, contradiction resolution, per-section re-run |
-| `species-intel-v2.js` | Trolling-first multi-species recommendation brain |
+| `species-intel.js` | Unified species intel (merged v1 regulations + v2 trolling brain, 101 lakes, lake-keys aware) |
 | `fishing-style-profile.js` | Angler gear/style constraints (spinning only, no live bait FW) |
 | `access-index.js` | Shared worker-backed lake/ramp index (SC/NC/GA DNR) |
 | `contour-data.js` | Lazy per-lake contour loading, 24hr IndexedDB TTL, 66-lake registry |
@@ -153,7 +162,7 @@ regulations: generalStateRegulations, lakeSpecificRegulations,
 
 ---
 
-## Species coverage (species-intel-v2.js)
+## Species coverage (species-intel.js unified)
 
 Striped Bass, Largemouth Bass, White Bass/Hybrid, Crappie, Blue Catfish, Channel Catfish, Flathead Catfish, Bowfin, Chain Pickerel, Red Drum (Redfish), Speckled Trout, Bluegill, Redear Sunfish (Shellcracker)
 
@@ -188,7 +197,7 @@ cd F:\Worker
 wrangler deploy
 ```
 
-Worker is split across 5 ES modules — `wrangler.toml` declares `trollmap-worker.js` as main entry point; imports `worker-core.js`, `worker-data.js`, `worker-species.js`, `worker-research.js`.
+Worker is split across core/ + research/* modules — `wrangler.toml` declares `trollmap-worker.js` as main entry point; it imports `worker-core.js`, `worker-data.js`, `worker-species.js`, `worker-research.js` (12-line barrel), `core/arcgis.js`, and `research/*.js` (14 modules). Single source for R2 keys is `js/data/lake-keys.js` (101 entries) used by both frontend and worker (via `../../js/data/lake-keys.js` import in `research/limnology.js`). Tests via `npm test` (vitest 79 tests).
 
 `wrangler.toml` in the project root declares all bindings. Secrets set separately:
 ```powershell
@@ -202,6 +211,8 @@ wrangler secret put FIRECRAWL_API_KEY
 
 ## R2 Storage Layout
 
+```
+trollmap-chartpacks (R2 bucket) — note: `wateree_zones_overlay.geojson` (5.8MB) removed from git root (2026-07-22) and moved to R2, .gitignore covers it
 ```
 trollmap-chartpacks (R2 bucket)
 ├── [lake_key]/contours.geojson          # Contour GeoJSON (66 lakes)

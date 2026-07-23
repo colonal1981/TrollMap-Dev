@@ -1,0 +1,15 @@
+{
+  "name": "trollmap-dev",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "TrollMap — Kayak Fishing Intelligence Platform — refactor safety net",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint:keys": "node test/check-lake-keys-parity.mjs"
+  },
+  "devDependencies": {
+    "vitest": "^1.6.0"
+  }
+}

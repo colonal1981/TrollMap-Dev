@@ -522,12 +522,26 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
   }
 
   // State regulations — regulations agent only
-  // NOTE: regulations agent uses KV-cached fetchStateRegulations (0 docs needed).
-  // eRegulations seed is kept as fallback only if KV cache miss.
+  // NOTE: regulations agent uses KV-cached fetchStateRegulations (0 docs needed) from R2 public bucket
+  // User has all regs pages that matter uploaded to R2 (https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/regulations)
+  // Primary source is R2 digests, fallback to live agency pages
+  const REGS_R2_BASE = 'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/regulations';
+  const R2_REGS_MAP = {
+    SC: `${REGS_R2_BASE}/sc_digest_2025_2026.pdf`,
+    NC: `${REGS_R2_BASE}/nc_digest_2025_2026.pdf`,
+    GA: `${REGS_R2_BASE}/ga_digest_2025_2026.pdf`,
+    TN: `${REGS_R2_BASE}/tn_digest_2025_2026.pdf`,
+  };
   if (wantsRegs) {
-    addSeed({ title: regsTitle, type: 'HTML', authority: dnrName, url: regsUrl, priority: 1, agentTags: ['regulations'] });
+    // R2 digest primary (user uploaded, stable, free via TinyFish)
+    const r2RegsUrl = R2_REGS_MAP[state];
+    if (r2RegsUrl) {
+      addSeed({ title: `${state} Freshwater Regulations Digest (R2)`, type: 'PDF', authority: dnrName, url: r2RegsUrl, priority: 1, agentTags: ['regulations'] });
+    }
+    // Live agency page fallback
+    addSeed({ title: regsTitle, type: 'HTML', authority: dnrName, url: regsUrl, priority: 2, agentTags: ['regulations'] });
     if (state === 'GA') {
-      addSeed({ title: 'GA General Freshwater Regulations (eRegulations)', type: 'HTML', authority: 'GADNR', url: 'https://www.eregulations.com/georgia/fishing/general-regulations', priority: 1, agentTags: ['regulations'] });
+      addSeed({ title: 'GA General Freshwater Regulations (eRegulations)', type: 'HTML', authority: 'GADNR', url: 'https://www.eregulations.com/georgia/fishing/general-regulations', priority: 2, agentTags: ['regulations'] });
     }
   }
 
@@ -541,14 +555,72 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
     addSeed({ title: `Lake ${baseName} Regulations`, type: 'HTML', authority: 'SCDNR', url: `https://www.dnr.sc.gov/lakes/${baseLower}/regs.html`, priority: 1, agentTags: ['regulations'] });
   }
 
-  // TWRA reservoir profiles — regulations + identity
+
+  // TWRA reservoir profiles — R2-hosted static copies (live tn.gov blocks scrapers)
+  // Contains species, regulations, seasonal patterns, stocking, depth, ramps for each TN lake.
   const TWRA_LAKE_PAGES = {
-    'norris': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/norris-reservoir.html',
-    'douglas': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/douglas-reservoir.html',
-    'watauga': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/watauga-reservoir.html',
+    'boone':            'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/boone.html',
+    'cherokee':         'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/cherokee.html',
+    'chilhowee':        'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/chilhowee.html',
+    'douglas':          'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/douglas.html',
+    'fort loudoun':     'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/fort-loudoun.html',
+    'melton hill':      'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/melton-hill.html',
+    'norris':           'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/norris.html',
+    'south holston':    'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/south-holston.html',
+    'tellico':          'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/tellico.html',
+    'watauga':          'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/watauga.html',
+    'boone lake':       'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/boone.html',
+    'cherokee lake':    'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/cherokee.html',
+    'douglas lake':     'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/douglas.html',
+    'fort loudoun lake':'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/fort-loudoun.html',
+    'melton hill lake': 'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/melton-hill.html',
+    'norris lake':      'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/norris.html',
+    'south holston lake':'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/south-holston.html',
+    'tellico lake':     'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/tellico.html',
+    'watauga lake':     'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/twra-tn/watauga.html',
   };
-  if (state === 'TN' && TWRA_LAKE_PAGES[baseLower] && (!agentForSeeds || ['regulations','identity'].includes(agentForSeeds))) {
-    addSeed({ title: `${baseName} TWRA Reservoir Profile`, type: 'HTML', authority: 'TWRA', url: TWRA_LAKE_PAGES[baseLower], priority: 1, agentTags: ['regulations','identity'] });
+
+  // GADNR fishing forecasts — R2-hosted static copies (live site uses ArcGIS StoryMaps, blocks scrapers)
+  // Contains species prospects, techniques, seasonal patterns, stocking, habitat per GA lake.
+  const GADNR_LAKE_PAGES = {
+    'allatoona':        'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/allatoona.html',
+    'andrews':          'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/andrews.html',
+    'bartletts ferry':  'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/bartletts-ferry.html',
+    'big haynes':       'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/big-haynes.html',
+    'blackshear':       'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/blackshear.html',
+    'blue ridge':       'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/blue-ridge.html',
+    'burton':           'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/burton.html',
+    'carters':          'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/carters.html',
+    'chatuge':          'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/chatuge.html',
+    'chehaw':           'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/chehaw.html',
+    'clarks hill':      'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/clarks-hill.html',
+    'goat rock':        'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/goat-rock.html',
+    'hamburg':          'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/hamburg.html',
+    'hartwell':         'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/hartwell.html',
+    'high falls':       'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/high-falls.html',
+    'jackson':          'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/jackson.html',
+    'juliette':         'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/juliette.html',
+    'lanier':           'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/lanier.html',
+    'nottely':          'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/nottely.html',
+    'oconee':           'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/oconee.html',
+    'oliver':           'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/oliver.html',
+    'rabun':            'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/rabun.html',
+    'russell':          'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/russell.html',
+    'seed':             'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/seed.html',
+    'seminole':         'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/seminole.html',
+    'sinclair':         'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/sinclair.html',
+    'tobesofkee':       'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/tobesofkee.html',
+    'tugalo':           'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/tugalo.html',
+    'walter f george':  'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/walter-f-george.html',
+    'west point':       'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/west-point.html',
+    'yonah':            'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/yonah.html',
+  };
+  if (state === 'TN' && TWRA_LAKE_PAGES[baseLower] && (!agentForSeeds || ['identity','biology','fisheries','regulations'].includes(agentForSeeds))) {
+    addSeed({ title: `${baseName} TWRA Reservoir Profile`, type: 'HTML', authority: 'TWRA', url: TWRA_LAKE_PAGES[baseLower], priority: 1, agentTags: ['identity','biology','fisheries','regulations'] });
+  }
+
+  if (state === 'GA' && GADNR_LAKE_PAGES[baseLower] && (!agentForSeeds || ['identity','biology','fisheries','regulations'].includes(agentForSeeds))) {
+    addSeed({ title: `${baseName} GADNR Fishing Forecast`, type: 'HTML', authority: 'GADNR', url: GADNR_LAKE_PAGES[baseLower], priority: 1, agentTags: ['identity','biology','fisheries','regulations'] });
   }
 
   // Owner/drawdown source — identity + limnology only
@@ -601,15 +673,24 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
           const tfGrok = await tinyfishFetch({
             urls: [candidate],
             format: 'markdown',
+            links: true,
+            image_links: true,
             ttl: 86400
           }, env);
-          const candidateMarkdown = String(tfGrok.results?.[0]?.text || '');
+          const tfResult = tfGrok.results?.[0] || {};
+          const candidateMarkdown = String(tfResult.text || '');
+          const candidateLinks = tfResult.links || [];
           const isLakeArticle = /grokipedia\.com\/page\/blewett_falls_lake/i.test(candidate)
             ? /blewett\s+falls\s+lake/i.test(candidateMarkdown)
             : candidateMarkdown.length >= 200;
           if (candidateMarkdown.length >= 200 && isLakeArticle) {
             grokUrl = candidate;
             grokText = candidateMarkdown;
+            // Store links for citation extraction (structured)
+            if (candidateLinks.length) {
+              // Attach links to grokText result for later use
+              tfGrok._lastLinks = candidateLinks;
+            }
             const grokSeed = guaranteedSeeds.find(s => s.authority === 'Grokipedia');
             if (grokSeed && grokSeed.url !== candidate) {
               grokSeed.url = candidate;
@@ -624,10 +705,25 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
 
       if (!grokUrl) { queryLog.push('Grokipedia: no valid page found for any candidate'); }
       if (grokUrl && grokText) {
-        // Extract citation URLs from markdown — Grokipedia reference links appear as:
-        // [1]: https://... or [[1]](https://...) or plain URLs in reference section
+        // Extract citation URLs — prefer structured links from TinyFish (links=True), fallback to regex on markdown
+        // User provided Python example: from tinyfish import TinyFish; result = client.fetch.get_contents(urls=[...], format="markdown", links=True, image_links=True)
+        // result.results[0].links gives structured links
         const citationLinks = [];
         const seen = new Set();
+        // Try structured links first (more reliable than regex)
+        const structuredLinks = tfGrok._lastLinks || [];
+        if (structuredLinks.length) {
+          for (const u of structuredLinks) {
+            const urlStr = typeof u === 'string' ? u : (u.url || u.href || '');
+            if (!urlStr) continue;
+            if (seen.has(urlStr)) continue;
+            seen.add(urlStr);
+            if (urlStr.includes('grokipedia.com')) continue;
+            if (/facebook\.com|twitter\.com|youtube\.com|instagram\.com|wikipedia\.org\/wiki\/Wikipedia:/i.test(urlStr)) continue;
+            citationLinks.push(urlStr);
+          }
+        }
+        // Fallback regex on markdown for any missed links
         for (const m of grokText.matchAll(/\]\(?(https?:\/\/[^\s)\]"']+)/g)) {
           const u = m[1];
           if (seen.has(u)) continue;
@@ -683,6 +779,100 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
       queryLog.push(`Grokipedia citation fetch failed: ${e.message}`);
     }
   }
+
+  // ── STEP 2b: Wikipedia citation following (backup for low Grokipedia coverage)
+  // Same pattern as Grokipedia but for Wikipedia — useful for lakes with poor Grokipedia coverage
+  // Lake Greenwood Wikipedia example shows SCDNR description link in references, but many internal #cite_note links
+  if (wantsGrokipedia) { // reuse same flag, Wikipedia is also identity/limnology source
+    try {
+      // Search Wikipedia via TinyFish
+      const wikiSearch = await tinyfishSearch({
+        query: `site:wikipedia.org "${baseName}" lake`,
+        domain_type: 'web',
+        purpose: `Find Wikipedia page for ${lakeName}`,
+      }, env);
+      const wikiUrl = wikiSearch.results?.[0]?.url;
+      if (wikiUrl && /wikipedia\.org/i.test(wikiUrl)) {
+        try {
+          const tfWiki = await tinyfishFetch({ urls: [wikiUrl], format: 'markdown', links: true, image_links: true, ttl: 86400 }, env);
+          const wikiResult = tfWiki.results?.[0] || {};
+          const wikiMd = String(wikiResult.text || '');
+          const wikiStructuredLinks = wikiResult.links || [];
+          if (wikiMd.length >= 200) {
+            const wikiLinks = [];
+            const seenWiki = new Set();
+            // Prefer structured links
+            for (const u of wikiStructuredLinks) {
+              const urlStr = typeof u === 'string' ? u : (u.url || u.href || '');
+              if (!urlStr) continue;
+              if (seenWiki.has(urlStr)) continue;
+              seenWiki.add(urlStr);
+              if (urlStr.includes('wikipedia.org')) continue;
+              if (/facebook\.com|twitter\.com|youtube\.com|instagram\.com|donate\.wikimedia\.org/i.test(urlStr)) continue;
+              wikiLinks.push(urlStr);
+            }
+            // Fallback regex
+            for (const m of wikiMd.matchAll(/\]\((https?:\/\/[^\s)"']+)/g)) {
+              const u = m[1];
+              if (seenWiki.has(u)) continue;
+              seenWiki.add(u);
+              if (u.includes('wikipedia.org')) continue;
+              if (/facebook\.com|twitter\.com|youtube\.com|instagram\.com|donate\.wikimedia\.org/i.test(u)) continue;
+              wikiLinks.push(u);
+            }
+            queryLog.push(`Wikipedia citations found: ${wikiLinks.length} from ${wikiUrl.split('/').pop()}`);
+
+            for (const citUrl of wikiLinks.slice(0, 15)) {
+              const urlTitle = decodeURIComponent(citUrl.split('/').pop().replace(/[_-]/g,' ').replace(/\.[a-z]+$/i,''));
+              const off = offLakePattern(urlTitle, citUrl);
+              if (off) { queryLog.push(`  ✗ wiki citation rejected (${off}): ${citUrl.slice(0,80)}`); continue; }
+
+              let authority = '';
+              try {
+                const host = new URL(citUrl).hostname;
+                if (/usace\.army\.mil/.test(host)) authority = 'USACE';
+                else if (/epa\.gov|nepis/.test(host)) authority = 'EPA';
+                else if (/usgs\.gov/.test(host)) authority = 'USGS';
+                else if (/dnr\.sc\.gov/.test(host)) authority = 'SCDNR';
+                else if (/ncwildlife\.gov|ncwildlife\.org/.test(host)) authority = 'NCWRC';
+                else if (/georgiawildlife\.com/.test(host)) authority = 'GADNR';
+                else if (/tn\.gov/.test(host)) authority = 'TWRA';
+                else if (/duke-energy\.com/.test(host)) authority = 'Duke Energy';
+                else if (/ferc\.gov/.test(host)) authority = 'FERC';
+                else if (/santeecooper\.com/.test(host)) authority = 'Santee Cooper';
+                else if (/seafwa\.org|apms\.org|\.edu$/.test(host)) authority = 'Academic';
+                else if (/tva\.com/.test(host)) authority = 'TVA';
+                else if (/southcarolinaparks\.com|scprt|state\.sc\.us|greenwoodcounty-sc\.gov|des\.sc\.gov/i.test(host)) authority = 'SC State';
+                else authority = 'Web';
+              } catch {}
+
+              if (authority === 'Web') {
+                queryLog.push(`  ✗ wiki citation skipped (low-value): ${citUrl.slice(0,80)}`);
+                continue;
+              }
+
+              const isPdf = citUrl.toLowerCase().endsWith('.pdf');
+              addSeed({ title: `${lakeName} — ${authority} (via Wikipedia citation)`, type: isPdf ? 'PDF' : 'HTML', authority, url: citUrl, priority: 2, agentTags: ['identity','limnology','biology','habitat'] });
+            }
+
+            // Also store Wikipedia markdown as seed itself (infobox has surface area, depth, etc.)
+            const existingWiki = guaranteedSeeds.find(s => s.url === wikiUrl);
+            if (!existingWiki) {
+              addSeed({ title: `${lakeName} — Wikipedia`, type: 'HTML', authority: 'Wikipedia', url: wikiUrl, priority: 2, agentTags: ['identity'], fullText: wikiMd });
+            } else if (wikiMd) {
+              existingWiki.fullText = wikiMd;
+            }
+          }
+        } catch (wikiErr) {
+          queryLog.push(`Wikipedia fetch failed for ${wikiUrl}: ${wikiErr.message}`);
+        }
+      }
+    } catch (e) {
+      queryLog.push(`Wikipedia citation fetch failed: ${e.message}`);
+    }
+  }
+
+
 
   // ── STEP 3: Agent-specific search queries ───────────────────────────────
   const agent = String(body.agent || "").trim().toLowerCase();

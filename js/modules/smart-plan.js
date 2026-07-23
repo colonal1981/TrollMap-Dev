@@ -23,6 +23,7 @@ import { renderSmartPlanUI, syncSpread, reelForLure } from './smart-plan-ui.js';
 // Pull from the universal worker-backed access database
 import { getLoadedAccessIndex } from '../data/access-index.js';
 import { LAKE_DB } from '../data/lakes.js';
+import { geoDistanceFt, bearing as geoBearing, distToRingFt as distToRingGeneric, distFtFromCoords as distFtGeneric } from '../utils/geo.js';
 
 const BATTERY_AH_DEFAULT = 100;
 const MOTOR_AMP_AVG      = 6;
@@ -140,14 +141,8 @@ function depthFallbackLure(depthFt, inventoryNames) {
   return findMatch('dd3', 'dd4', 'flutter spoon', 'bucktail') || inventoryNames[0];
 }
 
-// ── Geo helpers ───────────────────────────────────────────────────────────────
-function geoDistanceFt(lat1, lon1, lat2, lon2) {
-  const R = 20902231, D = Math.PI / 180;
-  if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return Infinity;
-  const p1=lat1*D, p2=lat2*D, dp=(lat2-lat1)*D, dl=(lon2-lon1)*D;
-  const a = Math.sin(dp/2)**2 + Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-}
+// ── Geo helpers (now from utils/geo.js) ─────────────────────────────────────
+// geoDistanceFt, bearing, distToRingFt, distFt all canonical in js/utils/geo.js
 
 // ── Sunrise & Solunar ─────────────────────────────────────────────────────────
 function computeSunrise(lat, lon, dateStr) {
@@ -283,7 +278,7 @@ function stitchContourFragments(fragments, TOL_FT = 50) {
     const dlat=(a[0]-b[0])*364000, dlon=(a[1]-b[1])*364000*Math.cos(a[0]*Math.PI/180);
     return Math.sqrt(dlat*dlat+dlon*dlon);
   }
-  function bearing(a, b) { return Math.atan2((b[1]-a[1])*Math.cos(a[0]*Math.PI/180), b[0]-a[0])*180/Math.PI; }
+  const bearing = geoBearing; // from utils/geo.js (canonical)
   function angleDiff(a, b) { let d=Math.abs(a-b)%360; return d>180?360-d:d; }
 
   for (let s=0; s<segs.length; s++) {
@@ -348,15 +343,7 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
     }
   } catch (_) {}
 
-  function distToRingFt(lat, lon) {
-    if (!boundaryRing) return Infinity;
-    let minDist = Infinity;
-    for (let i = 0; i < boundaryRing.length; i++) {
-      const d = geoDistanceFt(lat, lon, boundaryRing[i][1], boundaryRing[i][0]);
-      if (d < minDist) minDist = d;
-    }
-    return minDist;
-  }
+  function distToRingFt(lat, lon) { return distToRingGeneric(lat, lon, boundaryRing, true); } // from utils/geo.js
 
   const inRange = gj.features.filter(f => {
     const d = f.properties?.depth_ft;
@@ -1073,15 +1060,7 @@ Return ONLY valid JSON, no markdown:
   const stopCandidates = [];
   const addedCoords = []; // dedup by proximity
 
-  // Haversine distance in feet
-  function distFt(lat1, lon1, lat2, lon2) {
-    const R = 3958.8 * 5280;
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = Math.sin(dLat/2)**2 +
-      Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  }
+  const distFt = distFtGeneric; // from utils/geo.js (canonical)
 
   // For a given lat/lon, find the closest point on any smart plan track.
   // Returns { distFt, trackName, ptIdx, progressPct } or null.

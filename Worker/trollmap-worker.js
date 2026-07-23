@@ -1,6 +1,7 @@
 import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized } from './worker-core.js'; 
 import { LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard } from './worker-data.js';
 import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality } from './worker-species.js';
+import { handleGisRoute } from './core/arcgis.js';
 import { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchAgentPipeline, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine, handleResearchVisionScan, handleResearchVisionScanSave, handleResearchVisionScanStatus } from './worker-research.js';
 
 
@@ -1076,106 +1077,6 @@ var trollmap_worker_default = {
           return new Response(JSON.stringify({ success: false, error: err.message }), { status: 500, headers: JSON_HEADERS });
         }
       }
-      if (path === "/audit-plan" && request.method === "POST") {
-        try {
-          const body = await request.json();
-          const SYSTEM_PROMPT = `You are a crusty, veteran South Carolina fishing guide. You have zero patience for "textbook" plans that make no tactical sense in the real world. You speak plainly and critically.
-
-ANGLER PROFILE \u2014 apply these constraints strictly:
-- Watercraft: Native Watersports Slayer Propel Max 12.5 pedal kayak + NK180 Pro 24V bow-mount trolling motor
-- Rods: Spinning rods ONLY. A-rigs on spinning rods are confirmed working gear.
-- No lead-core, no conventional reels, no planer boards, no downriggers
-- Depth control: Lead length only.
-- Max 2 rods in the water simultaneously.
-- Trolling-first angler.
-- Freshwater live bait: NOT available (no livewell).
-
-TACTICAL AUDIT RULES \u2014 Flag these as MAJOR ERRORS:
-1. DEPTH MISMATCHES: 
-   - Flag any A-Rig or Deep Crankbait running shallower than 10-12ft. (Trolling an A-Rig at 5ft is a waste of time).
-   - Flag any lure with a max dive of 15ft being run in 25ft of water without clear rationale.
-   - Flag any "Deep" lure running too deep for the target species/season (e.g., Stripers in summer usually stack 16-20ft; 30ft is too deep).
-2. LURE MISMATCHES:
-   - If the plan calls for "Shallow" water (<10ft) but uses an A-Rig, flag it. Suggest Squarebills, Lipless, Spinnerbaits, or Topwater.
-3. LOGIC GAPS:
-   - If the plan suggests "Dawn" tactics but uses deep-water lures at depths that don't match morning schooling behavior.
-
-CRITIQUE FORMAT \u2014 respond ONLY with valid JSON, no markdown fences:
-{
-  "overall_score": <1-10>,
-  "confidence": "<high|medium|low>",
-  "verdict": "<one punchy, honest sentence overall take>",
-  "scores": {
-    "depth_alignment": <1-10>,
-    "lure_selection": <1-10>,
-    "speed_cadence": <1-10>,
-    "battery_management": <1-10>,
-    "safety": <1-10>
-  },
-  "flags": ["<specific tactical error>", ...],
-  "fixes": ["<actionable professional fix>", ...],
-  "keeper_moves": ["<what actually makes sense>", ...],
-  "local_intel": "<one SC-specific tip the plan missed>"
-}
-
-Be direct. If the plan is tactically stupid, say so. Keep flags and fixes to 2-3 items each.`;
-          const p = body.plan || body;
-          const meta = p.meta || p;
-          const spread = (p.spread || []).map((r2) => ({
-            side: r2.side,
-            position: r2.position,
-            rod: r2.rod || "",
-            reel: r2.reel || "",
-            lure: r2.lure || r2.notes?.split("\xB7")[0]?.trim() || "",
-            depth: r2.depth,
-            lead: r2.lead,
-            notes: r2.notes?.slice(0, 120) || ""
-          })).filter((r2) => r2.lure || r2.notes);
-          const cleanPlan = {
-            lake: meta.lake || p.lake,
-            species: meta.species || p.species,
-            date: meta.date || p.date,
-            ramp: meta.ramp || p.ramp,
-            launchTime: meta.launchTime || p.launchTime,
-            returnTime: meta.returnTime || p.returnTime,
-            waterTemp: meta.waterTemp || p.waterTemp ? `${meta.waterTemp || p.waterTemp}` : null,
-            poolLevel: meta.poolLevel || p.poolLevel || null,
-            weather: meta.weather || p.weather || "",
-            clarity: meta.clarity || p.clarity || "",
-            motor: meta.motor || p.motor || "",
-            solunar: meta.solunar || p.solunar || "",
-            spread: spread.slice(0, 6),
-            tackle: p.tackle || "",
-            safety: p.safety || "",
-            notes: p.notes || "",
-            rationale: (p.rationale || "").slice(0, 1500)
-            // first 800 chars of rationale only
-          };
-          const userMessage = `Audit this trolling plan. Apply the angler profile constraints strictly \u2014 flag anything that assumes gear or bait this angler does not have. Identify the single most dangerous safety gap if any. Return ONLY the JSON object described in your system prompt.
-
-PLAN DATA:
-${JSON.stringify(cleanPlan, null, 2)}`;
-          const payload = {
-            model: "openai/gpt-oss-120b",
-            messages: [
-              { role: "system", content: SYSTEM_PROMPT },
-              { role: "user", content: userMessage }
-            ],
-            temperature: 0.15,
-            response_format: { type: "json_object" }
-          };
-          const { data } = await callLLM(env, payload, "groq");
-          let audit = {};
-          try {
-            audit = JSON.parse(data.choices?.[0]?.message?.content || "{}");
-          } catch (_) {
-            audit = { error: "parse failed", raw: data.choices?.[0]?.message?.content };
-          }
-          return new Response(JSON.stringify({ success: true, audit }), { headers: JSON_HEADERS });
-        } catch (err) {
-          return new Response(JSON.stringify({ success: false, error: err.message }), { status: 500, headers: JSON_HEADERS });
-        }
-      }
       if (path === "/coach-plan" && request.method === "POST") {
         return handleCoachPlan(request, env);
       }
@@ -1312,11 +1213,8 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
       if (path === '/research/vision-scan-save' && request.method === 'POST') return handleResearchVisionScanSave(request, env);
       if (path === '/research/vision-scan-status' && request.method === 'GET') return handleResearchVisionScanStatus(request, env);
 
+
       if (path === "/ramps") {
-        const state = (url.searchParams.get("state") || "SC").toUpperCase();
-        const forceRefresh = url.searchParams.has("refresh");
-        const cacheKey = `ramps/${state.toLowerCase()}/ramps.json`;
-        const CACHE_TTL_DAYS = 7;
         const RAMP_SOURCES = {
           SC: {
             url: "https://services.arcgis.com/acgZYxoN5Oj8pDLa/arcgis/rest/services/South_Carolina_Public_Water_Access_PUBLIC_VIEW/FeatureServer/0/query",
@@ -1326,38 +1224,31 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
             lat: (p) => p.Latitude,
             lon: (p) => p.Longitude,
             meta: (p) => ({ lanes: p.LaunchLanes, dock: p.CourtesyDock, fee: false, species: p.SpeciesList, county: p.County, owner: p.Owner, comments: p.Comments }),
-            label: "SCDNR South Carolina Public Water Access"
+            label: "SCDNR South Carolina Public Water Access",
+            metaMode: "flat",
           },
           GA: {
             url: "https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/WRD_Water_Access_Points/FeatureServer/0/query",
             idField: "FID",
-            // GA's objectIdFieldName is FID, not OBJECTID — using OBJECTID in orderByFields causes a 400 from ArcGIS, silently zeroing out results
-            // Real schema confirmed 2026-07-03 via outFields=* query — field
-            // names (Name/Waterbody/Latitude/Longitude/Status) were already
-            // correct, but Ramp/Fee are single-letter "Y"/"N" booleans, not
-            // the strings "yes"/"no" this filter was checking for. Every
-            // record failed the check, so GA returned 0 waterbodies/0 ramps
-            // regardless of cache state.
             filter: (p) => String(p.Ramp || "").toUpperCase() === "Y" && !["closed", "inactive"].includes(String(p.Status || "").toLowerCase()),
             name: (p) => p.Name,
             wb: (p) => p.Waterbody,
             lat: (p) => p.Latitude,
             lon: (p) => p.Longitude,
             meta: (p) => ({ lanes: p.NumLanes, dock: p.Dock, fee: String(p.Fee || "").toUpperCase() === "Y", county: p.County, owner: p.Owner, motorRestrictions: p.MotorRest }),
-            label: "Georgia DNR WRD Water Access Points"
+            label: "Georgia DNR WRD Water Access Points",
+            metaMode: "flat",
           },
           NC: {
             url: "https://services1.arcgis.com/YfqBAUM5nWR3yhGP/arcgis/rest/services/NCWRC_Boating_Access_Areas_view/FeatureServer/0/query",
-            // Real schema confirmed 2026-07-03 via outFields=* query — NC WRC does NOT
-            // use STATUS/SITE_NAME/WATER_BODY like SC/GA. Every prior field guess missed,
-            // so all 267 records collapsed into a single "Unknown" waterbody bucket.
             filter: (p) => !String(p.Site_Status || "OPEN").toUpperCase().includes("CLOSED"),
             name: (p) => p.BAA_Name,
             wb: (p) => p.Water_Access || p.BAA_Alias,
             lat: (p) => p.Latitude,
             lon: (p) => p.Longitude,
             meta: (p) => ({ lanes: p.Launch_Lane_No, dock: p.Courtesy_Dock_No || p.Fix_Dock_No, fee: false, county: p.County, owner: p.Owner, motorRestrictions: p.Motorboats_Restricted }),
-            label: "NC Wildlife Resources Commission Boating Access Areas"
+            label: "NC Wildlife Resources Commission Boating Access Areas",
+            metaMode: "flat",
           },
           TN: {
             url: "https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/Boat_Launch_Sites/FeatureServer/0/query",
@@ -1367,95 +1258,28 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
             lat: (p) => p.Latitude,
             lon: (p) => p.Longitude,
             meta: (p) => ({ lanes: p.Lanes, dock: p.CourtesyDock === "Yes" ? 1 : 0, fee: p.AccessFee === "Yes", county: p.County, owner: p.Owner, restrooms: p.Restrooms === "Yes", handicap: p.HandicapPark === "Yes", canoeLanding: p.CanoeLanding === "Yes" }),
-            label: "Tennessee Wildlife Resources Agency Boat Launch Sites"
+            label: "Tennessee Wildlife Resources Agency Boat Launch Sites",
+            metaMode: "flat",
           }
         };
-        const source = RAMP_SOURCES[state];
-        if (!source) {
-          return new Response(JSON.stringify({ error: `Unknown state: ${state}. Use SC, GA, NC, or TN.` }), { headers: JSON_HEADERS, status: 400 });
-        }
-        if (!forceRefresh) {
-          try {
-            const cached = await env.R2_TROLLMAP_CHARTPACKS.get(cacheKey);
-            if (cached) {
-              const meta = cached.customMetadata || {};
-              const fetchedAt = meta.fetchedAt ? new Date(meta.fetchedAt) : null;
-              const ageMs = fetchedAt ? Date.now() - fetchedAt.getTime() : Infinity;
-              if (ageMs < CACHE_TTL_DAYS * 24 * 60 * 60 * 1e3) {
-                const body = await cached.text();
-                return new Response(body, { headers: { ...JSON_HEADERS, "X-Cache": "HIT", "X-Cache-Age": String(Math.round(ageMs / 36e5)) + "h" } });
-              }
-            }
-          } catch (_) {
-          }
-        }
-        async function fetchAllRampFeatures(baseUrl, idField = "OBJECTID") {
-          const allFeatures = [];
-          let offset = 0;
-          const pageSize2 = 1e3;
-          while (true) {
-            const params = new URLSearchParams({ outFields: "*", where: "1=1", f: "geojson", resultOffset: offset, resultRecordCount: pageSize2, orderByFields: idField });
-            const resp = await fetch(`${baseUrl}?${params}`, {
-              headers: { "User-Agent": "TrollMap/1.0 (Cloudflare Worker)", "Accept": "application/json" },
-              cf: { cacheTtl: 0 }
-            });
-            if (!resp.ok) throw new Error(`ArcGIS HTTP ${resp.status}`);
-            const data = await resp.json();
-            const features = data.features || [];
-            allFeatures.push(...features);
-            if (features.length < pageSize2) break;
-            offset += pageSize2;
-          }
-          return allFeatures;
-        }
-        try {
-          const features = await fetchAllRampFeatures(source.url, source.idField);
-          const waterbodies = {};
-          for (const feat of features) {
-            const p = feat.properties || {};
-            if (!source.filter(p)) continue;
-            const lat = parseFloat(source.lat(p));
-            const lon = parseFloat(source.lon(p));
-            if (!isFinite(lat) || !isFinite(lon) || lat === 0 || lon === 0) continue;
-            const wb = (source.wb(p) || "Unknown").trim();
-            const name = (source.name(p) || "Unknown").trim();
-            if (!waterbodies[wb]) waterbodies[wb] = [];
-            waterbodies[wb].push({ name, lat: Math.round(lat * 1e6) / 1e6, lon: Math.round(lon * 1e6) / 1e6, ...source.meta(p) });
-          }
-          for (const wb of Object.keys(waterbodies)) {
-            waterbodies[wb].sort((a, b) => a.name.localeCompare(b.name));
-          }
-          const result = {
+        return handleGisRoute({
+          env,
+          url,
+          cachePrefix: "ramps",
+          ttlDays: 7,
+          sources: RAMP_SOURCES,
+          buildResult: (state, source, waterbodies, count) => ({
             state,
             source: source.label,
-            fetched: (new Date()).toISOString(),
-            count: Object.values(waterbodies).reduce((s, r) => s + r.length, 0),
+            fetched: new Date().toISOString(),
+            count,
             waterbodyCount: Object.keys(waterbodies).length,
-            waterbodies
-          };
-          const body = JSON.stringify(result);
-          await env.R2_TROLLMAP_CHARTPACKS.put(cacheKey, body, {
-            httpMetadata: { contentType: "application/json" },
-            customMetadata: { fetchedAt: result.fetched, state, count: String(result.count) }
-          });
-          return new Response(body, { headers: { ...JSON_HEADERS, "X-Cache": "MISS", "X-Ramp-Count": String(result.count) } });
-        } catch (err) {
-          try {
-            const stale = await env.R2_TROLLMAP_CHARTPACKS.get(cacheKey);
-            if (stale) {
-              const body = await stale.text();
-              return new Response(body, { headers: { ...JSON_HEADERS, "X-Cache": "STALE", "X-Cache-Error": err.message } });
-            }
-          } catch (_) {
-          }
-          return new Response(JSON.stringify({ error: `Failed to fetch ${state} ramp data: ${err.message}` }), { headers: JSON_HEADERS, status: 502 });
-        }
+            waterbodies,
+          }),
+        });
       }
+
       if (path === "/paddle") {
-        const state = (url.searchParams.get("state") || "SC").toUpperCase();
-        const forceRefresh = url.searchParams.has("refresh");
-        const cacheKey = `paddle/${state.toLowerCase()}/paddle.json`;
-        const CACHE_TTL_DAYS = 7;
         const PADDLE_SOURCES = {
           SC: {
             url: "https://services.arcgis.com/acgZYxoN5Oj8pDLa/arcgis/rest/services/South_Carolina_Public_Water_Access_PUBLIC_VIEW/FeatureServer/0/query",
@@ -1464,18 +1288,19 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
             wb: (p) => p.Waterbody,
             lat: (p) => p.Latitude,
             lon: (p) => p.Longitude,
-            meta: (p) => ({ subtype: p.WaterAccessSubType, county: p.County, owner: p.Owner })
+            meta: (p) => ({ subtype: p.WaterAccessSubType, county: p.County, owner: p.Owner }),
+            metaNested: true,
           },
           GA: {
             url: "https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/WRD_Water_Access_Points/FeatureServer/0/query",
             idField: "FID",
-            // GA's objectIdFieldName is FID, not OBJECTID
             filter: (p) => String(p.CanoeAcc || "").toLowerCase() === "y" && !["closed", "inactive"].includes(String(p.Status || "").toLowerCase()),
             name: (p) => p.Name,
             wb: (p) => p.Waterbody,
             lat: (p) => p.Latitude,
             lon: (p) => p.Longitude,
-            meta: (p) => ({ county: p.County, owner: p.Owner })
+            meta: (p) => ({ county: p.County, owner: p.Owner }),
+            metaNested: true,
           },
           NC: {
             url: "https://services1.arcgis.com/YfqBAUM5nWR3yhGP/arcgis/rest/services/NCWRC_Boating_Access_Areas_view/FeatureServer/0/query",
@@ -1484,7 +1309,8 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
             wb: (p) => p.Water_Access,
             lat: (p) => p.Latitude,
             lon: (p) => p.Longitude,
-            meta: (p) => ({ type: p.Portable_Boat_Access_Type, county: p.County, owner: p.Owner })
+            meta: (p) => ({ type: p.Portable_Boat_Access_Type, county: p.County, owner: p.Owner }),
+            metaNested: true,
           },
           TN: {
             url: "https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/Paddling_Access_Sites/FeatureServer/0/query",
@@ -1493,58 +1319,26 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
             wb: (p) => p.Waterway,
             lat: (p) => p.Latitude,
             lon: (p) => p.Longitude,
-            meta: (p) => ({ county: p.County, owner: p.Owner, type: "Paddling Access" })
+            meta: (p) => ({ county: p.County, owner: p.Owner, type: "Paddling Access" }),
+            metaNested: true,
           }
         };
-        const source = PADDLE_SOURCES[state];
-        if (!source) return new Response(JSON.stringify({ error: `Unknown state: ${state}` }), { headers: JSON_HEADERS, status: 400 });
-        if (!forceRefresh) {
-          const cached = await env.R2_TROLLMAP_CHARTPACKS.get(cacheKey);
-          if (cached) {
-            const ageDays = (Date.now() - new Date(cached.uploaded).getTime()) / 864e5;
-            if (ageDays < CACHE_TTL_DAYS) {
-              return new Response(await cached.text(), { headers: { ...JSON_HEADERS, "X-Cache": "HIT", "X-Cache-Age-Days": ageDays.toFixed(1) } });
-            }
-          }
-        }
-        try {
-          let allFeatures = [];
-          let offset = 0;
-          const idField = source.idField || "OBJECTID";
-          while (true) {
-            const params = new URLSearchParams({ outFields: "*", where: "1=1", f: "geojson", resultOffset: offset, resultRecordCount: 1e3, orderByFields: idField });
-            const resp = await fetch(`${source.url}?${params.toString()}`);
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const data = await resp.json();
-            if (data.features) allFeatures.push(...data.features);
-            if (!data.features || data.features.length < 1e3) break;
-            offset += 1e3;
-          }
-          const waterbodies = {};
-          for (const feat of allFeatures) {
-            const p = feat.properties || {};
-            if (!source.filter(p)) continue;
-            let wb = String(source.wb(p) || "Unknown Waterbody").trim() || "Unknown Waterbody";
-            let name = String(source.name(p) || "Unnamed Launch").trim();
-            const lat = Number(source.lat(p) || feat.geometry?.coordinates?.[1]);
-            const lon = Number(source.lon(p) || feat.geometry?.coordinates?.[0]);
-            if (!lat || !lon || isNaN(lat) || isNaN(lon)) continue;
-            if (!waterbodies[wb]) waterbodies[wb] = [];
-            waterbodies[wb].push({ name, lat, lon, meta: source.meta(p) });
-          }
-          const result = { state, source: source.url, count: Object.values(waterbodies).flat().length, waterbodies };
-          const body = JSON.stringify(result);
-          await env.R2_TROLLMAP_CHARTPACKS.put(cacheKey, body, { customMetadata: { uploaded: (new Date()).toISOString() } });
-          return new Response(body, { headers: { ...JSON_HEADERS, "X-Cache": "MISS" } });
-        } catch (err) {
-          return new Response(JSON.stringify({ error: err.message }), { headers: JSON_HEADERS, status: 502 });
-        }
+        return handleGisRoute({
+          env,
+          url,
+          cachePrefix: "paddle",
+          ttlDays: 7,
+          sources: PADDLE_SOURCES,
+          buildResult: (state, source, waterbodies, count) => ({
+            state,
+            source: source.url,
+            count,
+            waterbodies,
+          }),
+        });
       }
+
       if (path === "/bank-pier") {
-        const state = (url.searchParams.get("state") || "SC").toUpperCase();
-        const forceRefresh = url.searchParams.has("refresh");
-        const cacheKey = `bankpier/${state.toLowerCase()}/bankpier.json`;
-        const CACHE_TTL_DAYS = 7;
         const BANKPIER_SOURCES = {
           SC: {
             url: "https://services.arcgis.com/acgZYxoN5Oj8pDLa/arcgis/rest/services/South_Carolina_Public_Water_Access_PUBLIC_VIEW/FeatureServer/0/query",
@@ -1553,18 +1347,19 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
             wb: (p) => p.Waterbody,
             lat: (p) => p.Latitude,
             lon: (p) => p.Longitude,
-            meta: (p) => ({ type: p.WaterAccessType, pier: p.FishingPier })
+            meta: (p) => ({ type: p.WaterAccessType, pier: p.FishingPier }),
+            metaNested: true,
           },
           GA: {
             url: "https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/WRD_Water_Access_Points/FeatureServer/0/query",
             idField: "FID",
-            // GA's objectIdFieldName is FID, not OBJECTID
             filter: (p) => (String(p.BankFish || "").toLowerCase() === "y" || String(p.PierFish || "").toLowerCase() === "y") && !["closed", "inactive"].includes(String(p.Status || "").toLowerCase()),
             name: (p) => p.Name,
             wb: (p) => p.Waterbody,
             lat: (p) => p.Latitude,
             lon: (p) => p.Longitude,
-            meta: (p) => ({ bankFish: p.BankFish, pierFish: p.PierFish })
+            meta: (p) => ({ bankFish: p.BankFish, pierFish: p.PierFish }),
+            metaNested: true,
           },
           NC: {
             url: "https://services1.arcgis.com/YfqBAUM5nWR3yhGP/arcgis/rest/services/NCWRC_Public_Fishing_Areas_view/FeatureServer/0/query",
@@ -1573,7 +1368,8 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
             wb: (p) => p.Water_Access,
             lat: (p) => p.Latitude,
             lon: (p) => p.Longitude,
-            meta: (p) => ({ pier: p.Fishing_Pier, bank: p.Bank_Access })
+            meta: (p) => ({ pier: p.Fishing_Pier, bank: p.Bank_Access }),
+            metaNested: true,
           },
           TN: {
             url: "https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/Fishing_Sites/FeatureServer/0/query",
@@ -1582,95 +1378,56 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
             wb: (p) => p.Waterway,
             lat: (p) => p.Latitude,
             lon: (p) => p.Longitude,
-            meta: (p) => ({ type: p.Type, pier: p.FishingPier === "Yes", county: p.County, owner: p.Owner })
+            meta: (p) => ({ type: p.Type, pier: p.FishingPier === "Yes", county: p.County, owner: p.Owner }),
+            metaNested: true,
           }
         };
-        const source = BANKPIER_SOURCES[state];
-        if (!source) return new Response(JSON.stringify({ error: `Unknown state: ${state}` }), { headers: JSON_HEADERS, status: 400 });
-        if (!forceRefresh) {
-          const cached = await env.R2_TROLLMAP_CHARTPACKS.get(cacheKey);
-          if (cached) {
-            const ageDays = (Date.now() - new Date(cached.uploaded).getTime()) / 864e5;
-            if (ageDays < CACHE_TTL_DAYS) {
-              return new Response(await cached.text(), { headers: { ...JSON_HEADERS, "X-Cache": "HIT", "X-Cache-Age-Days": ageDays.toFixed(1) } });
-            }
-          }
-        }
-        try {
-          let allFeatures = [];
-          let offset = 0;
-          const idField = source.idField || "OBJECTID";
-          while (true) {
-            const params = new URLSearchParams({ outFields: "*", where: "1=1", f: "geojson", resultOffset: offset, resultRecordCount: 1e3, orderByFields: idField });
-            const resp = await fetch(`${source.url}?${params.toString()}`);
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const data = await resp.json();
-            if (data.features) allFeatures.push(...data.features);
-            if (!data.features || data.features.length < 1e3) break;
-            offset += 1e3;
-          }
-          const waterbodies = {};
-          for (const feat of allFeatures) {
-            const p = feat.properties || {};
-            if (!source.filter(p)) continue;
-            let wb = String(source.wb(p) || "Unknown Waterbody").trim() || "Unknown Waterbody";
-            let name = String(source.name(p) || "Unnamed Spot").trim();
-            const lat = Number(source.lat(p) || feat.geometry?.coordinates?.[1]);
-            const lon = Number(source.lon(p) || feat.geometry?.coordinates?.[0]);
-            if (!lat || !lon || isNaN(lat) || isNaN(lon)) continue;
-            if (!waterbodies[wb]) waterbodies[wb] = [];
-            waterbodies[wb].push({ name, lat, lon, meta: source.meta(p) });
-          }
-          for (const wb of Object.keys(waterbodies)) waterbodies[wb].sort((a, b) => a.name.localeCompare(b.name));
-          const result = { state, source: source.url, count: Object.values(waterbodies).flat().length, waterbodies };
-          const body = JSON.stringify(result);
-          await env.R2_TROLLMAP_CHARTPACKS.put(cacheKey, body, { customMetadata: { uploaded: (new Date()).toISOString() } });
-          return new Response(body, { headers: { ...JSON_HEADERS, "X-Cache": "MISS" } });
-        } catch (err) {
-          return new Response(JSON.stringify({ error: err.message }), { headers: JSON_HEADERS, status: 502 });
-        }
+        return handleGisRoute({
+          env,
+          url,
+          cachePrefix: "bankpier",
+          ttlDays: 7,
+          sources: BANKPIER_SOURCES,
+          buildResult: (state, source, waterbodies, count) => ({
+            state,
+            source: source.url,
+            count,
+            waterbodies,
+          }),
+        });
       }
+
       if (path === "/attractors") {
-        const state = (url.searchParams.get("state") || "SC").toUpperCase();
-        const forceRefresh = url.searchParams.has("refresh");
-        const cacheKey = `attractors/${state.toLowerCase()}/attractors.json`;
-        const CACHE_TTL_DAYS = 7;
         const ATTRACTOR_SOURCES = {
           SC: {
             url: "https://services.arcgis.com/acgZYxoN5Oj8pDLa/arcgis/rest/services/SCDNR_Freshwater_Fish_Attractors_Public_Web_App/FeatureServer/0/query",
             filter: (p) => true,
-            // All records in this DB are attractors
             name: (p) => p.FishAttractorName,
             wb: (p) => p.Waterbody,
             lat: (p) => p.lat_dd,
             lon: (p) => p.lon_dd,
-            type: (p) => p.Material
+            type: (p) => p.Material,
+            metaMode: "type",
           },
           GA: {
             url: "https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/Fish_Attractors_for_Download/FeatureServer/0/query",
-            // NOTE: different GA feature service than /ramps, /paddle, /bank-pier
-            // (which all use WRD_Water_Access_Points, confirmed idField: FID).
-            // This one hasn't been checked against its own schema — don't assume
-            // FID applies here too. If this route also returns 0 for GA, query
-            // this service's outFields=* first to confirm its real
-            // objectIdFieldName before guessing at an idField override.
             filter: (p) => true,
             name: (p) => p.note,
             wb: (p) => p.waterbody,
             lat: (p) => null,
-            // We pull from geometry
             lon: (p) => null,
-            type: (p) => `${p.attractor_code || ""} ${p.attractor_code_other || ""}`.trim()
+            type: (p) => `${p.attractor_code || ""} ${p.attractor_code_other || ""}`.trim(),
+            metaMode: "type",
           },
           NC: {
             url: "https://services1.arcgis.com/YfqBAUM5nWR3yhGP/arcgis/rest/services/Fish_Attractors_public_view/FeatureServer/0/query",
             filter: (p) => true,
             name: (p) => `${p.Waterbody} Attractor`,
-            // NC doesn't have names, just types
             wb: (p) => p.Waterbody,
             lat: (p) => p.Latitude,
             lon: (p) => p.Longitude,
-            type: (p) => `${p.Structure1 || ""} ${p.Structure2 || ""}`.trim() || p.Attractor_Type
+            type: (p) => `${p.Structure1 || ""} ${p.Structure2 || ""}`.trim() || p.Attractor_Type,
+            metaMode: "type",
           },
           TN: {
             url: "https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/Fish_Attractor_Locations_view/FeatureServer/0/query",
@@ -1679,52 +1436,23 @@ ${JSON.stringify(cleanPlan, null, 2)}`;
             wb: (p) => p.WaterBody,
             lat: (p) => p.YLat,
             lon: (p) => p.XLong,
-            type: (p) => [p.StructureTypes, p.Artificial, p.Natural_].filter(Boolean).join(", ") || "Unknown"
+            type: (p) => [p.StructureTypes, p.Artificial, p.Natural_].filter(Boolean).join(", ") || "Unknown",
+            metaMode: "type",
           }
         };
-        const source = ATTRACTOR_SOURCES[state];
-        if (!source) return new Response(JSON.stringify({ error: `Unknown state: ${state}` }), { headers: JSON_HEADERS, status: 400 });
-        if (!forceRefresh) {
-          const cached = await env.R2_TROLLMAP_CHARTPACKS.get(cacheKey);
-          if (cached) {
-            const ageDays = (Date.now() - new Date(cached.uploaded).getTime()) / 864e5;
-            if (ageDays < CACHE_TTL_DAYS) {
-              return new Response(await cached.text(), { headers: { ...JSON_HEADERS, "X-Cache": "HIT", "X-Cache-Age-Days": ageDays.toFixed(1) } });
-            }
-          }
-        }
-        try {
-          let allFeatures = [];
-          let offset = 0;
-          while (true) {
-            const params = new URLSearchParams({ outFields: "*", where: "1=1", f: "geojson", resultOffset: offset, resultRecordCount: 1e3, orderByFields: "OBJECTID" });
-            const resp = await fetch(`${source.url}?${params.toString()}`);
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const data = await resp.json();
-            if (data.features) allFeatures.push(...data.features);
-            if (!data.features || data.features.length < 1e3) break;
-            offset += 1e3;
-          }
-          const waterbodies = {};
-          for (const feat of allFeatures) {
-            const p = feat.properties || {};
-            if (!source.filter(p)) continue;
-            let wb = String(source.wb(p) || "Unknown Waterbody").trim() || "Unknown Waterbody";
-            let name = String(source.name(p) || "Attractor").trim() || "Attractor";
-            const lat = Number(source.lat(p) || feat.geometry?.coordinates?.[1]);
-            const lon = Number(source.lon(p) || feat.geometry?.coordinates?.[0]);
-            if (!lat || !lon || isNaN(lat) || isNaN(lon)) continue;
-            if (!waterbodies[wb]) waterbodies[wb] = [];
-            waterbodies[wb].push({ name, lat, lon, type: String(source.type(p) || "Unknown").trim() });
-          }
-          for (const wb of Object.keys(waterbodies)) waterbodies[wb].sort((a, b) => a.name.localeCompare(b.name));
-          const result = { state, source: source.url, count: Object.values(waterbodies).flat().length, waterbodies };
-          const body = JSON.stringify(result);
-          await env.R2_TROLLMAP_CHARTPACKS.put(cacheKey, body, { customMetadata: { uploaded: (new Date()).toISOString() } });
-          return new Response(body, { headers: { ...JSON_HEADERS, "X-Cache": "MISS" } });
-        } catch (err) {
-          return new Response(JSON.stringify({ error: err.message }), { headers: JSON_HEADERS, status: 502 });
-        }
+        return handleGisRoute({
+          env,
+          url,
+          cachePrefix: "attractors",
+          ttlDays: 7,
+          sources: ATTRACTOR_SOURCES,
+          buildResult: (state, source, waterbodies, count) => ({
+            state,
+            source: source.url,
+            count,
+            waterbodies,
+          }),
+        });
       }
       if (path === "/duke" || url.searchParams.has("duke")) {
         const format = (url.searchParams.get("format") || "text").toLowerCase();

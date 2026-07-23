@@ -28,7 +28,7 @@ async function tinyfishSearch({ query, domain_type = 'web', purpose, location, l
   return res.json();
 }
 
-async function tinyfishFetch({ urls, format = 'markdown', include_selectors, exclude_selectors, ttl, if_none_match, if_modified_since, include_etag_and_last_modified }, env) {
+async function tinyfishFetch({ urls, format = 'markdown', include_selectors, exclude_selectors, ttl, if_none_match, if_modified_since, include_etag_and_last_modified, links, image_links }, env) {
   const key = env.TINYFISH_API_KEY;
   if (!key) throw new Error('TINYFISH_API_KEY not configured');
   
@@ -39,6 +39,8 @@ async function tinyfishFetch({ urls, format = 'markdown', include_selectors, exc
   if (if_none_match) body.if_none_match = if_none_match;
   if (if_modified_since) body.if_modified_since = if_modified_since;
   if (include_etag_and_last_modified) body.include_etag_and_last_modified = include_etag_and_last_modified;
+  if (links !== undefined) body.links = links;
+  if (image_links !== undefined) body.image_links = image_links;
   
   const res = await fetch(TINYFISH_FETCH_BASE, {
     method: 'POST',

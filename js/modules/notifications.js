@@ -18,6 +18,7 @@
  */
 
 import { state } from '../core/state.js';
+import { geoDistanceFt as distFt } from '../utils/geo.js';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const PROXIMITY_RADIUS_FT = 300;   // fire when within 300ft of a pin
@@ -78,15 +79,7 @@ function hToStr(h) {
   return `${hh % 12 || 12}:${String(mm).padStart(2, '0')} ${ap}`;
 }
 
-function distFt(lat1, lon1, lat2, lon2) {
-  const R = 3958.8 * 5280; // feet
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-    Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
+// distFt now imported from utils/geo.js (canonical)
 
 // ── Tick — runs every 30 seconds while session is active ─────────────────────
 function tick() {
