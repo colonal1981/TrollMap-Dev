@@ -504,6 +504,7 @@ async function handleResearchRegsDebug(request, env) {
     }
     // bust=1 clears KV cache so fresh parse runs
     if (bust) {
+      await env.KV.delete(`regulations:${state}:v4`).catch(() => {});
       await env.KV.delete(`regulations:${state}:v3`).catch(() => {});
       await env.KV.delete(`regulations:${state}:v2`).catch(() => {});
     }
