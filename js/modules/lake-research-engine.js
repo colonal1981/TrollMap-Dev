@@ -1028,17 +1028,65 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
       } catch (_) {}
     }
 
+    // Summary runs after the profile has already been assembled and saved. It
+    // should synthesize that saved profile plus the cached normalized documents
+    // created by the other agents — not bail out just because there are no new
+    // summary-specific search results.
+    if (agentKey === 'summary') {
+      try {
+        const savedRes = await fetch(`${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`);
+        if (savedRes.ok) {
+          const savedData = await savedRes.json();
+          const savedProfile = savedData.profile || null;
+          if (savedProfile) {
+            previousResults = {
+              ...previousResults,
+              ...savedProfile,
+              identity: savedProfile.identity || previousResults.identity || {},
+              biology: savedProfile.biology || savedProfile.forage || previousResults.biology || {},
+              forage: savedProfile.forage || savedProfile.biology || previousResults.forage || {},
+              limnology: savedProfile.limnology || previousResults.limnology || {},
+              habitat: savedProfile.habitat || previousResults.habitat || {},
+              navigation: savedProfile.navigation || previousResults.navigation || {},
+              regulations: savedProfile.regulations || previousResults.regulations || {},
+              trollingIntelligence: savedProfile.trollingIntelligence || previousResults.trollingIntelligence || null,
+              _extractedFacts: savedProfile._extractedFacts || previousResults._extractedFacts || [],
+            };
+            log(`  [summary] Loaded saved profile context (facts=${previousResults._extractedFacts?.length || 0}, sources=${savedProfile.sources?.length || 0})`);
+          }
+        }
+      } catch (e) {
+        log(`  ⚠️ [summary] Could not load saved profile context: ${e.message}`);
+      }
+    }
+
     // ── STEP 1: Discover sources for this agent ──────────────────────────────
     log(`  [${agentKey}] Discovering sources...`);
-    const discoverRes = await fetch(`${CF_WORKER_URL}/research/discover`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        lakeName, state: stateName, agent: agentKey,
-        reservoirOwner: previousResults.reservoirOwner || null,
-        predatorSpecies: previousResults.predatorSpecies || [],
-      })
-    });
+    let discoverRes;
+    const discoverPayload = {
+      lakeName, state: stateName, agent: agentKey,
+      reservoirOwner: previousResults.reservoirOwner || null,
+      predatorSpecies: previousResults.predatorSpecies || [],
+    };
+    try {
+      discoverRes = await fetch(`${CF_WORKER_URL}/research/discover`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(discoverPayload)
+      });
+    } catch (e) {
+      log(`  ⚠️ [${agentKey}] Discovery network error (${e.message}) — retrying once`);
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      try {
+        discoverRes = await fetch(`${CF_WORKER_URL}/research/discover`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(discoverPayload)
+        });
+      } catch (retryErr) {
+        throw new Error(`Discover network failed: ${retryErr.message}`);
+      }
+    }
     if (!discoverRes.ok) throw new Error(`Discover failed: ${discoverRes.status}`);
     const discoverData = await discoverRes.json();
     if (!discoverData.success) throw new Error(discoverData.error || 'Discovery failed');
@@ -1060,11 +1108,18 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
       .sort((a, b) => (b.prefetchScore ?? b.score ?? 3) - (a.prefetchScore ?? a.score ?? 3));
     const discoveryCap = Math.max(0, cap - guaranteed.length);
     const cappedSources = [...guaranteed, ...discovered.slice(0, discoveryCap)];
-    log(`  [${agentKey}] Found ${sources.length} sources (${guaranteed.length} seeds + ${discovered.length} discovered) → capped to ${cappedSources.length}`);
+    if (agentKey === 'summary') {
+      log(`  [summary] Found ${sources.length} new sources (${guaranteed.length} seeds + ${discovered.length} discovered); cached profile/docs are the primary summary corpus`);
+    } else {
+      log(`  [${agentKey}] Found ${sources.length} sources (${guaranteed.length} seeds + ${discovered.length} discovered) → capped to ${cappedSources.length}`);
+    }
 
-    if (!cappedSources.length) {
+    if (!cappedSources.length && agentKey !== 'summary') {
       log(`  [${agentKey}] No sources — skipping`);
       return { success: true, agent: agentKey, section: {}, factsCount: 0, docsUsed: 0, queryLog };
+    }
+    if (!cappedSources.length && agentKey === 'summary') {
+      log(`  [summary] No new summary-specific sources — using saved profile and cached normalized documents`);
     }
 
     // ── STEP 2: Load existing normalized docs from R2 (cache check) ──────────
@@ -1109,8 +1164,15 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     const normalizedDocuments = [];
     const now = Date.now();
 
+    // Summary is a synthesis pass. Reuse the normalized documents already
+    // fetched by identity/limnology/biology/habitat/navigation/fisheries so the
+    // summary has actual lake evidence even when it performs no new discovery.
+    if (agentKey === 'summary' && mode !== 'resume') {
+      const summaryDocs = existingDocs.filter(d => String(d.fullText || d.text || '').length >= 200);
+      normalizedDocuments.push(...summaryDocs);
+      log(`  [summary] Loaded ${summaryDocs.length} cached normalized docs for summary context`);
     // Regulations agent: already in deterministic facts — skip fetching
-    if (agentKey === 'regulations') {
+    } else if (agentKey === 'regulations') {
       log(`  [regulations] Using KV-cached state regulations — no fetch needed`);
     } else if (mode === 'resume') {
       // Start with whatever is in the normalized cache
@@ -1375,7 +1437,10 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
 
     // ── STEP 4: Extract facts (one Worker call, fast) ─────────────────────────
     let uniqueFacts = [];
-    if (normalizedDocuments.length > 0) {
+    if (agentKey === 'summary') {
+      uniqueFacts = Array.isArray(previousResults._extractedFacts) ? previousResults._extractedFacts.slice(0, 250) : [];
+      log(`  [summary] Using ${normalizedDocuments.length} cached docs and ${uniqueFacts.length} existing extracted facts for LLM context (no re-extraction)`);
+    } else if (normalizedDocuments.length > 0) {
       log(`  [${agentKey}] Extracting facts from ${normalizedDocuments.length} docs...`);
       try {
         const analyzeRes = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
@@ -1448,6 +1513,8 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
 
     // ── STEP 6: LLM enrichment (one Worker call, fast) ───────────────────────
     log(`  [${agentKey}] Running LLM enrichment...`);
+    const llmDocLimit = agentKey === 'fisheries' ? 25 : agentKey === 'summary' ? 10 : 12;
+    const llmDocChars = agentKey === 'fisheries' ? 150000 : agentKey === 'summary' ? 12000 : 40000;
     const agentRes = await fetch(`${CF_WORKER_URL}/research/agent-llm`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1457,9 +1524,9 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
         previousResults: {
           ...previousResults,
           _extractedFacts: uniqueFacts,
-          _normalizedDocuments: normalizedDocuments.slice(0, agentKey === 'fisheries' ? 25 : 12).map(d => ({
+          _normalizedDocuments: normalizedDocuments.slice(0, llmDocLimit).map(d => ({
             title: d.title, url: d.url,
-            text: (d.fullText || '').slice(0, agentKey === 'fisheries' ? 150000 : 40000)
+            text: (d.fullText || d.text || '').slice(0, llmDocChars)
           }))
         }
       })
@@ -1478,9 +1545,9 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
             previousResults: {
               ...previousResults,
               _extractedFacts: uniqueFacts,
-              _normalizedDocuments: normalizedDocuments.slice(0, 12).map(d => ({
+              _normalizedDocuments: normalizedDocuments.slice(0, llmDocLimit).map(d => ({
                 title: d.title, url: d.url,
-                text: (d.fullText || '').slice(0, 40000)
+                text: (d.fullText || d.text || '').slice(0, llmDocChars)
               }))
             }
           })
@@ -1654,13 +1721,19 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
       }
     }
 
-    // Assemble + save profile from all agent results
-    setProgress('Assembling and saving profile...', 82);
+    // Assemble + save profile from successful non-summary agent results. If all
+    // selected work failed (e.g. biology discovery throws), do not create a new
+    // profile version with agents=[] and facts=0.
     let assembleResult = { contradictions: [] };
-    try {
-      assembleResult = await assembleAndSaveProfile(lakeName, results, mode);
-    } catch (e) {
-      log(`⚠️ Profile assembly failed: ${e.message}`);
+    if (results.length > 0) {
+      setProgress('Assembling and saving profile...', 82);
+      try {
+        assembleResult = await assembleAndSaveProfile(lakeName, results, mode);
+      } catch (e) {
+        log(`⚠️ Profile assembly failed: ${e.message}`);
+      }
+    } else {
+      log('⚠️ No non-summary agents succeeded — skipping profile assembly/save');
     }
 
     // Summary agent runs last with the fully assembled profile as context
@@ -1670,8 +1743,10 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
         const summaryResult = await runAgent(lakeName, 'summary', mode, {}, true);
         completed++;
         results.push({ agent: 'summary', data: summaryResult });
-        // Merge summary into the already-saved profile
-        if (summaryResult?.section) {
+        // Merge summary into the already-saved profile. Do not let an empty
+        // summary response wipe the deterministic/profile summary that was just
+        // saved during assembly.
+        if (summaryResult?.section && hasResearchValue(summaryResult.section)) {
           const existingRes = await fetch(`${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`);
           if (existingRes.ok) {
             const existingData = await existingRes.json();
@@ -1684,6 +1759,8 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
               log('✔ Summary section merged into saved profile');
             }
           }
+        } else {
+          log('⚠️ Summary agent returned no usable section — keeping existing saved summary');
         }
       } catch (e) { log(`⚠️ Summary agent failed: ${e.message}`); }
     }

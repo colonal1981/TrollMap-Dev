@@ -515,11 +515,29 @@ JSON only.`;
   summary: {
     label: "AI Summary",
     order: 8,
-    system: "You summarize a lake profile into a readable human description, max 500 words. Use only supplied JSON. Never invent facts. Return JSON with text field.",
-    userTemplate: (lakeName, state, prev) => `Summarize this lake profile for a kayak angler. Max 500 words. Use only supplied JSON. Never invent facts.
+    system: "You summarize a lake profile into a readable human description, max 500 words. Use only supplied profile JSON and cached source-document excerpts. Never invent facts. Return JSON with text field.",
+    userTemplate: (lakeName, state, prev) => {
+      const profileForSummary = { ...(prev || {}) };
+      delete profileForSummary._normalizedDocuments;
+      delete profileForSummary._documentContext;
+      delete profileForSummary._documentContextNote;
+      if (Array.isArray(profileForSummary._extractedFacts)) {
+        profileForSummary._extractedFacts = profileForSummary._extractedFacts.slice(0, 80);
+      }
+      const sourceTitles = Array.isArray(prev?._normalizedDocuments)
+        ? prev._normalizedDocuments.slice(0, 12).map(d => `• ${d.title || 'Untitled'} — ${d.url || 'no url'}`).join('\n')
+        : '';
+      const docSection = prev?._documentContext
+        ? `\n\nCACHED SOURCE DOCUMENT EXCERPTS (ground the summary with these; do not add facts that conflict with the profile):\n${prev._documentContext.slice(0, 24000)}`
+        : '';
+      return `Summarize this lake profile for a kayak angler. Max 500 words. Use only the supplied profile JSON and cached source-document excerpts. Never invent facts.
 
-Profile:
-${JSON.stringify(prev, null, 2).slice(0, 15000)}
+Profile JSON:
+${JSON.stringify(profileForSummary, null, 2).slice(0, 18000)}
+
+Cached source documents used for grounding:
+${sourceTitles || 'No cached source documents were provided.'}
+${docSection}
 
 Return ONLY:
 {
@@ -527,11 +545,12 @@ Return ONLY:
     "text": "Lake Wateree is a lowland river-run reservoir... Primary trolling opportunities are ... Always check lake specific fishing regulations for season closures and creel limits before launching.",
     "keywords": ["river-run","striped bass","channel ledges","Threadfin Shad","regulations"]
   },
-  "sources": [{"label":"Derived from lake profile","trust":"DERIVED"}]
+  "sources": [{"label":"Derived from saved lake profile and cached source documents","trust":"DERIVED"}]
 }
 
 Plain text summary in text field, no markdown headers, no bullet list - 2-3 paragraphs max.
-JSON only.`,
+JSON only.`;
+    },
     expectedKey: "summary"
   }
 };
@@ -761,8 +780,9 @@ async function handleResearchAgent(request, env) {
   // Inject document text for agents that benefit from reading source material directly
   // limnology gets the EPA/water quality docs; biology gets the fisheries docs
   // fisheries gets fishing guide/report docs — seasonal behavior lives in these, not the profile
+  // summary gets concise excerpts from cached docs so it is grounded in the same evidence corpus.
   // identity uses _extractedFacts only — raw docs make prompt too large for Cerebras TPM
-  const docInjectionAgents = new Set(['limnology', 'biology', 'habitat', 'fisheries']);
+  const docInjectionAgents = new Set(['limnology', 'biology', 'habitat', 'fisheries', 'summary']);
   if (docInjectionAgents.has(agentKey) && previousResults._normalizedDocuments?.length) {
     const docFilter = {
       limnology: /epa|nscep|water.?qual|characteriz|nutrient|limnol/i,
@@ -770,14 +790,15 @@ async function handleResearchAgent(request, env) {
       biology:   /striped.?bass|fisheries|biology|annual|species|stocking|fish|bass|crappie|catfish|pattern|forage|shad|herring|omnia|conventional|sportsman|tactic|guide/i,
       habitat:   /habitat|attractor|structure|dnr|sc.?lake/i,
       fisheries: /fish|bass|crappie|striper|catfish|pattern|season|depth|behavior|report|tactic|guide|omnia|conventional|sportsman/i,
+      summary:   /lake|reservoir|water.?quality|fisher|biology|habitat|navigation|regulation|report|plan|assessment|dnr|duke|owner|dam/i,
     };
     const filter = docFilter[agentKey];
     // Gemini free-tier requests must stay comfortably below token-per-minute
     // limits. Limnology already receives extracted facts, so two focused source
-    // excerpts are enough for table/profile confirmation; eight large docs made
-    // the paid/free model route hit quota while biology still succeeded.
-    const maxDocs = agentKey === 'limnology' ? 2 : agentKey === 'fisheries' ? 8 : 8;
-    const charsPerDoc = agentKey === 'limnology' ? 15000 : agentKey === 'fisheries' ? 150000 : 40000;
+    // excerpts are enough for table/profile confirmation; summary gets short
+    // excerpts from several documents because it also receives the saved profile.
+    const maxDocs = agentKey === 'limnology' ? 2 : agentKey === 'fisheries' ? 8 : agentKey === 'summary' ? 8 : 8;
+    const charsPerDoc = agentKey === 'limnology' ? 15000 : agentKey === 'fisheries' ? 150000 : agentKey === 'summary' ? 8000 : 40000;
     const relevantDocs = previousResults._normalizedDocuments
       .filter(d => !filter || filter.test(d.title + ' ' + d.url))
       .slice(0, maxDocs);
@@ -788,7 +809,9 @@ async function handleResearchAgent(request, env) {
       groundedPrev = {
         ...groundedPrev,
         _documentContext: docContext,
-        _documentContextNote: `Raw document text from ${relevantDocs.length} source(s) — use this for specific measurements, tables, and depth profiles. Prioritize this over training knowledge.`
+        _documentContextNote: agentKey === 'summary'
+          ? `Cached source excerpts from ${relevantDocs.length} document(s) — use to ground wording and cite no facts beyond the saved profile/evidence.`
+          : `Raw document text from ${relevantDocs.length} source(s) — use this for specific measurements, tables, and depth profiles. Prioritize this over training knowledge.`
       };
     }
   }
@@ -1241,9 +1264,11 @@ async function handleResearchAgentPipeline(request, env) {
     if (!discoverData.success) throw new Error(discoverData.error || 'Discovery failed');
     const sources = discoverData.sources || [];
 
-    // Filter sources for this agent
+    // Filter sources for this agent. Summary is allowed to continue with the
+    // saved/cached document corpus even when discovery has no summary-specific
+    // sources.
     const agentSources = sources.filter(s => s.agentTags?.includes(agentKey) || !s.agentTags);
-    if (!agentSources.length) {
+    if (!agentSources.length && agentKey !== 'summary') {
       return new Response(JSON.stringify({ success: true, agent: agentKey, section: {}, factsCount: 0, docsUsed: 0, note: 'No sources found for this agent' }), { headers: JSON_HEADERS });
     }
 
@@ -1278,6 +1303,11 @@ async function handleResearchAgentPipeline(request, env) {
           if (/dnr\.sc\.gov|ncwildlife\.org|georgiawildlife|tn\.gov|eregulations\.com|ferc\.gov|duke-energy\.com|santeecooper\.com|usace\.army\.mil/.test(u)) return TTL_MS.official;
           if (/news|report|stocking|annual|trends|freshwater\.html|fishing-report/.test(u)) return TTL_MS.news;
           return TTL_MS.anecdotal;
+        }
+
+        if (agentKey === 'summary') {
+          normalizedDocuments.push(...existingDocs.filter(d => String(d.fullText || d.text || '').length >= 200));
+          console.log(`[agent-pipeline] summary: loaded ${normalizedDocuments.length} cached normalized docs`);
         }
 
         const existingByUrl = new Map(existingDocs.map(d => [String(d.url || '').split('?')[0].toLowerCase(), d]));
@@ -1392,8 +1422,10 @@ async function handleResearchAgentPipeline(request, env) {
           }
         }
 
-        // Merge new/updated docs back into R2 — don't overwrite docs from other agents
-        if (normalizedDocuments.length) {
+        // Merge new/updated docs back into R2 — don't overwrite docs from other agents.
+        // Summary may have only loaded existing cached docs for context; in that
+        // case there is nothing new to write.
+        if (normalizedDocuments.length && !(agentKey === 'summary' && !agentSources.length)) {
           // Build merged list: existing docs not touched by this run + new/refreshed docs
           const updatedUrls = new Set(normalizedDocuments.map(d => String(d.url || '').split('?')[0].toLowerCase()));
           const untouched = existingDocs.filter(d => !updatedUrls.has(String(d.url || '').split('?')[0].toLowerCase()));
@@ -1411,42 +1443,50 @@ async function handleResearchAgentPipeline(request, env) {
       const normRes = await handleResearchGetNormalized(env, lakeName);
       if (normRes.ok) {
         const normData = await normRes.json();
-        normalizedDocuments = (normData.documents || []).filter(d => d.agentTags?.includes(agentKey));
+        const allDocs = normData.documents || [];
+        const taggedDocs = allDocs.filter(d => d.agentTags?.includes(agentKey));
+        normalizedDocuments = (agentKey === 'summary' && !taggedDocs.length) ? allDocs : taggedDocs;
       }
     }
 
-    if (!normalizedDocuments.length) {
+    if (!normalizedDocuments.length && agentKey !== 'summary') {
       return new Response(JSON.stringify({ success: true, agent: agentKey, section: {}, factsCount: 0, docsUsed: 0, note: 'No documents available for this agent' }), { headers: JSON_HEADERS });
     }
 
-    // Step 3: Extract facts with targetFields
-    const analyzeReq = new Request('internal', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        lakeName,
-        baseName: lakeName.replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i,'').trim(),
-        state,
-        docIndex: 0,
-        documents: normalizedDocuments.slice(0, 12).map(d => ({ title: d.title, url: d.url, text: d.fullText?.slice(0, 150000) }))
-      })
-    });
-    const analyzeRes = await handleResearchAnalyzeFacts(analyzeReq, env);
-    if (!analyzeRes.ok) throw new Error(`Analyze facts failed: ${analyzeRes.status}`);
-    const analyzeData = await analyzeRes.json();
-    const extractedFacts = analyzeData.extracted_facts || [];
+    // Step 3: Extract facts with targetFields. Summary reuses existing facts and
+    // cached document excerpts; it does not need a fresh fact-extraction pass.
+    let uniqueFacts = [];
+    if (agentKey === 'summary') {
+      uniqueFacts = Array.isArray(previousResults._extractedFacts) ? previousResults._extractedFacts.slice(0, 250) : [];
+    } else {
+      const analyzeReq = new Request('internal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lakeName,
+          baseName: lakeName.replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i,'').trim(),
+          state,
+          docIndex: 0,
+          documents: normalizedDocuments.slice(0, 12).map(d => ({ title: d.title, url: d.url, text: (d.fullText || d.text || '').slice(0, 150000) }))
+        })
+      });
+      const analyzeRes = await handleResearchAnalyzeFacts(analyzeReq, env);
+      if (!analyzeRes.ok) throw new Error(`Analyze facts failed: ${analyzeRes.status}`);
+      const analyzeData = await analyzeRes.json();
+      const extractedFacts = analyzeData.extracted_facts || [];
 
-    // Step 4: Deduplicate
-    const dedupeReq = new Request('internal', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ facts: extractedFacts })
-    });
-    const dedupeRes = await handleResearchDedupeContradictions(dedupeReq, env);
-    let uniqueFacts = extractedFacts;
-    if (dedupeRes.ok) {
-      const dedupeData = await dedupeRes.json();
-      uniqueFacts = dedupeData.deduplicated_facts || extractedFacts;
+      // Step 4: Deduplicate
+      const dedupeReq = new Request('internal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ facts: extractedFacts })
+      });
+      const dedupeRes = await handleResearchDedupeContradictions(dedupeReq, env);
+      uniqueFacts = extractedFacts;
+      if (dedupeRes.ok) {
+        const dedupeData = await dedupeRes.json();
+        uniqueFacts = dedupeData.deduplicated_facts || extractedFacts;
+      }
     }
 
     // Step 5: Run agent enrichment
@@ -1460,7 +1500,7 @@ async function handleResearchAgentPipeline(request, env) {
         previousResults: {
           ...previousResults,
           _extractedFacts: uniqueFacts,
-          _normalizedDocuments: normalizedDocuments.slice(0, agentKey === 'fisheries' ? 25 : 12).map(d => ({ title: d.title, url: d.url, text: d.fullText?.slice(0, agentKey === 'fisheries' ? 150000 : 40000) }))
+          _normalizedDocuments: normalizedDocuments.slice(0, agentKey === 'fisheries' ? 25 : agentKey === 'summary' ? 10 : 12).map(d => ({ title: d.title, url: d.url, text: (d.fullText || d.text || '').slice(0, agentKey === 'fisheries' ? 150000 : agentKey === 'summary' ? 12000 : 40000) }))
         }
       })
     });
