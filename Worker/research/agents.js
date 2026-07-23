@@ -568,6 +568,20 @@ function calculateSectionConfidence(sources, hasData, sectionType) {
     }
   }
 
+  // ── Biology — predatorSpecies is the field Smart Plan consumes ──
+  // Source-count scoring over-reports when forage/stocking facts exist but the
+  // confirmed predator list is empty. A biology section with zero predator
+  // species is not actionable for the app regardless of how many sources
+  // contributed forage notes, so cap it low instead of letting the source count
+  // inflate it. Only penalize an explicitly-empty array; leave undefined alone.
+  if (sectionType === 'biology') {
+    const sectionData = arguments[3];
+    const predators = sectionData && Array.isArray(sectionData.predatorSpecies) ? sectionData.predatorSpecies : null;
+    if (predators !== null && predators.length === 0) {
+      return { percent: 35, level: "low", reason: "validated: 0 predator species — unusable for Smart Plan", biologyValidation: true };
+    }
+  }
+
   if (!src.length) return { percent: 45, level: "low", reason: "no sources, AI estimate" };
   let score = 0;
   let official = 0, secondary = 0, model = 0, derived = 0;
@@ -611,6 +625,76 @@ function calculateSectionConfidence(sources, hasData, sectionType) {
     totalSources: src.length,
     reason: `${official} official, ${secondary} secondary, ${src.length} total`
   };
+}
+
+// True when a trollingIntelligence object carries at least one species with a
+// season entry that has a usable depth range, structure list, or forage list.
+// Shared by the section validator and the overall confidence gate.
+function hasStructuredTrollingIntel(trolling) {
+  if (!trolling || typeof trolling !== 'object') return false;
+  return Object.values(trolling).some(seasons => {
+    if (!seasons || typeof seasons !== 'object' || Array.isArray(seasons)) return false;
+    return ['spring', 'summer', 'fall', 'winter'].some(s => {
+      const e = seasons[s];
+      if (!e || typeof e !== 'object') return false;
+      const hasDepth = Array.isArray(e.preferredDepth) && e.preferredDepth.length === 2
+        && e.preferredDepth.every(n => typeof n === 'number' && isFinite(n));
+      const hasStruct = Array.isArray(e.structures) && e.structures.length > 0;
+      const hasForage = Array.isArray(e.forage) && e.forage.length > 0;
+      return hasDepth || hasStruct || hasForage;
+    });
+  });
+}
+
+/**
+ * Apply null-field penalties + Smart Plan critical-field gates to the
+ * section-averaged overall confidence.
+ *
+ * predatorSpecies and trollingIntelligence are the two fields Smart Plan
+ * actually consumes. A profile with empty species is functionally useless to
+ * the app no matter how many sources the other sections found, so these cap the
+ * overall score hard rather than just nudging it. Pure function — shared by
+ * storage.save and the tests so there is exactly one implementation.
+ *
+ * @param {number} rawOverall   confidence averaged across sections (0-99)
+ * @param {object} profile      incoming lake profile
+ * @param {object} fieldStatus  profile.fieldStatus (exemption map)
+ * @returns {{ percent: number, penalties: string[] }}
+ */
+function gateOverallConfidence(rawOverall, profile, fieldStatus = {}) {
+  const lim = profile.limnology || {};
+  const bio = profile.biology || profile.forage || {};
+  const id = profile.identity || {};
+  const trolling = profile.trollingIntelligence || profile.trolling || profile.fisheries || {};
+  const penalties = [];
+  const exempt = (path) => ['not_applicable', 'not_available_after_targeted_review'].includes(fieldStatus[path]?.status);
+  let conf = rawOverall;
+
+  // Limnology / identity null-field penalties (behavior preserved from the
+  // previous inline scoring — 99% with no thermocline depth is misleading).
+  if (lim.thermocline?.summerDepthFt == null && !exempt('limnology.thermocline.summerDepthFt')) { conf -= 8; penalties.push('thermocline.summerDepthFt'); }
+  if (lim.oxygen?.depletionDepthFt == null && !exempt('limnology.oxygen.depletionDepthFt')) { conf -= 6; penalties.push('oxygen.depletionDepthFt'); }
+  if (lim.waterClarity?.secchiFt == null && !exempt('limnology.waterClarity.secchiFt')) { conf -= 3; penalties.push('secchiFt'); }
+  if (!bio.knownStockings?.length && !exempt('biology.knownStockings')) { conf -= 3; penalties.push('knownStockings'); }
+  if (!id.damName && !exempt('identity.damName')) { conf -= 2; penalties.push('damName'); }
+  if (!id.yearImpounded) { conf -= 2; penalties.push('yearImpounded'); }
+
+  // ── Smart Plan critical fields — heavily weighted ──
+  const hasPredatorSpecies = Array.isArray(bio.predatorSpecies) && bio.predatorSpecies.length > 0;
+  const hasTrollingIntel = hasStructuredTrollingIntel(trolling);
+  if (!hasPredatorSpecies && !exempt('biology.predatorSpecies')) {
+    conf -= 28; penalties.push('predatorSpecies (empty — unusable for Smart Plan)');
+  }
+  if (!hasTrollingIntel && !exempt('fisheries.trollingIntelligence')) {
+    conf -= 18; penalties.push('trollingIntelligence (empty — unusable for Smart Plan)');
+  }
+
+  // Hard caps — these two fields gate Smart Plan entirely. No amount of source
+  // count in identity/limnology/habitat can make an empty-species profile useful.
+  if (!hasPredatorSpecies && !exempt('biology.predatorSpecies')) conf = Math.min(conf, 45);
+  if (!hasTrollingIntel && !exempt('fisheries.trollingIntelligence')) conf = Math.min(conf, 58);
+
+  return { percent: Math.max(30, Math.min(99, conf)), penalties };
 }
 
 async function handleResearchAgent(request, env) {
@@ -1323,4 +1407,4 @@ async function handleResearchAgentPipeline(request, env) {
   }
 }
 
-export { RESEARCH_AGENTS, calculateSectionConfidence, handleResearchAgent, handleResearchAgentPipeline };
+export { RESEARCH_AGENTS, calculateSectionConfidence, gateOverallConfidence, hasStructuredTrollingIntel, handleResearchAgent, handleResearchAgentPipeline };
