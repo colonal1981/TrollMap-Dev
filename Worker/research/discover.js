@@ -673,15 +673,24 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
           const tfGrok = await tinyfishFetch({
             urls: [candidate],
             format: 'markdown',
+            links: true,
+            image_links: true,
             ttl: 86400
           }, env);
-          const candidateMarkdown = String(tfGrok.results?.[0]?.text || '');
+          const tfResult = tfGrok.results?.[0] || {};
+          const candidateMarkdown = String(tfResult.text || '');
+          const candidateLinks = tfResult.links || [];
           const isLakeArticle = /grokipedia\.com\/page\/blewett_falls_lake/i.test(candidate)
             ? /blewett\s+falls\s+lake/i.test(candidateMarkdown)
             : candidateMarkdown.length >= 200;
           if (candidateMarkdown.length >= 200 && isLakeArticle) {
             grokUrl = candidate;
             grokText = candidateMarkdown;
+            // Store links for citation extraction (structured)
+            if (candidateLinks.length) {
+              // Attach links to grokText result for later use
+              tfGrok._lastLinks = candidateLinks;
+            }
             const grokSeed = guaranteedSeeds.find(s => s.authority === 'Grokipedia');
             if (grokSeed && grokSeed.url !== candidate) {
               grokSeed.url = candidate;
@@ -696,10 +705,25 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
 
       if (!grokUrl) { queryLog.push('Grokipedia: no valid page found for any candidate'); }
       if (grokUrl && grokText) {
-        // Extract citation URLs from markdown — Grokipedia reference links appear as:
-        // [1]: https://... or [[1]](https://...) or plain URLs in reference section
+        // Extract citation URLs — prefer structured links from TinyFish (links=True), fallback to regex on markdown
+        // User provided Python example: from tinyfish import TinyFish; result = client.fetch.get_contents(urls=[...], format="markdown", links=True, image_links=True)
+        // result.results[0].links gives structured links
         const citationLinks = [];
         const seen = new Set();
+        // Try structured links first (more reliable than regex)
+        const structuredLinks = tfGrok._lastLinks || [];
+        if (structuredLinks.length) {
+          for (const u of structuredLinks) {
+            const urlStr = typeof u === 'string' ? u : (u.url || u.href || '');
+            if (!urlStr) continue;
+            if (seen.has(urlStr)) continue;
+            seen.add(urlStr);
+            if (urlStr.includes('grokipedia.com')) continue;
+            if (/facebook\.com|twitter\.com|youtube\.com|instagram\.com|wikipedia\.org\/wiki\/Wikipedia:/i.test(urlStr)) continue;
+            citationLinks.push(urlStr);
+          }
+        }
+        // Fallback regex on markdown for any missed links
         for (const m of grokText.matchAll(/\]\(?(https?:\/\/[^\s)\]"']+)/g)) {
           const u = m[1];
           if (seen.has(u)) continue;
@@ -770,16 +794,29 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
       const wikiUrl = wikiSearch.results?.[0]?.url;
       if (wikiUrl && /wikipedia\.org/i.test(wikiUrl)) {
         try {
-          const tfWiki = await tinyfishFetch({ urls: [wikiUrl], format: 'markdown', ttl: 86400 }, env);
-          const wikiMd = String(tfWiki.results?.[0]?.text || '');
+          const tfWiki = await tinyfishFetch({ urls: [wikiUrl], format: 'markdown', links: true, image_links: true, ttl: 86400 }, env);
+          const wikiResult = tfWiki.results?.[0] || {};
+          const wikiMd = String(wikiResult.text || '');
+          const wikiStructuredLinks = wikiResult.links || [];
           if (wikiMd.length >= 200) {
             const wikiLinks = [];
             const seenWiki = new Set();
+            // Prefer structured links
+            for (const u of wikiStructuredLinks) {
+              const urlStr = typeof u === 'string' ? u : (u.url || u.href || '');
+              if (!urlStr) continue;
+              if (seenWiki.has(urlStr)) continue;
+              seenWiki.add(urlStr);
+              if (urlStr.includes('wikipedia.org')) continue;
+              if (/facebook\.com|twitter\.com|youtube\.com|instagram\.com|donate\.wikimedia\.org/i.test(urlStr)) continue;
+              wikiLinks.push(urlStr);
+            }
+            // Fallback regex
             for (const m of wikiMd.matchAll(/\]\((https?:\/\/[^\s)"']+)/g)) {
               const u = m[1];
               if (seenWiki.has(u)) continue;
               seenWiki.add(u);
-              if (u.includes('wikipedia.org')) continue; // skip internal wiki links
+              if (u.includes('wikipedia.org')) continue;
               if (/facebook\.com|twitter\.com|youtube\.com|instagram\.com|donate\.wikimedia\.org/i.test(u)) continue;
               wikiLinks.push(u);
             }
