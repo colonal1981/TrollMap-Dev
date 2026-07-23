@@ -1634,9 +1634,8 @@ function initLakeResearch() {
 
   document.getElementById('btnRefresh')?.addEventListener('click', () => {
     if (!_state.currentLakeName) { alert('Load a lake first'); return; }
-    showAgentModal('resume', (selectedAgents) => {
-      runResume(_state.currentLakeName, selectedAgents, { onComplete: loadProfile, onContradictions: renderContradictionsAlert });
-    });
+    log(`Refreshing profile from R2 for ${_state.currentLakeName}...`);
+    loadProfile(_state.currentLakeName, false);
   });
 
   document.getElementById('btnDeleteResearch')?.addEventListener('click', async () => {

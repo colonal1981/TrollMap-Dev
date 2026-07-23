@@ -578,16 +578,17 @@ function deriveDepthStatistics(contourGeo, depthGeo, boundaryRing) {
   // 3. Compute surface area from boundary and coverage ratio
   const boundaryArea = boundaryRing ? polygonAreaAcresLonLat(boundaryRing) : 0;
   out.boundaryAreaAcres = Math.round(boundaryArea * 10) / 10;
+  const hasBoundary = boundaryArea > 0;
 
   // Surface area determination: the boundary polygon represents the lake at full
   // pool and is the authoritative surface area. Depth-band polygons from chart
   // pipelines can overlap significantly (each band polygon may extend slightly
   // into adjacent bands), causing their sum to vastly overestimate the true lake
-  // area. When boundary area is available, use it as the surface area. The
-  // polygon-sum / boundary-area ratio then becomes the coverage metric (>1.0
-  // indicates overlap). Only fall back to polygon sum when no boundary exists.
+  // area (e.g. 70k ac summed vs 13k ac actual). When no boundary exists, we
+  // cannot derive a reliable surface area — the overlapping bands sum inflates
+  // wildly. Only set surfaceAreaAcres when we have a boundary polygon.
   let surfaceAcres;
-  if (boundaryArea > 0) {
+  if (hasBoundary) {
     surfaceAcres = boundaryArea;
     // Detect excessive polygon overlap: if sum exceeds 1.5× boundary, the bands
     // are clearly overlapping and we should use boundary as the truth.
@@ -595,21 +596,26 @@ function deriveDepthStatistics(contourGeo, depthGeo, boundaryRing) {
       out._bandOverlapWarning = `Depth-band polygons sum to ${Math.round(totalBandArea)} ac but boundary is ${Math.round(boundaryArea)} ac — using boundary area`;
     }
   } else {
-    surfaceAcres = totalBandArea;
+    // No boundary — surface area cannot be reliably derived from overlapping bands.
+    surfaceAcres = 0;
   }
-  out.surfaceAreaAcres = surfaceAcres > 0 ? Math.round(surfaceAcres) : null;
+  out.surfaceAreaAcres = (hasBoundary && surfaceAcres > 0) ? Math.round(surfaceAcres) : null;
 
-  if (totalBandArea > 0 && surfaceAcres > 0) {
-    // Coverage ratio: how much of the lake surface is covered by depth polygons.
-    // When polygons overlap, the ratio can exceed 1.0 — cap at 1.0 for the
-    // coverage field and use the raw ratio internally for threshold checks.
+  // Coverage ratio only computable when we have a boundary to compare against.
+  if (totalBandArea > 0 && hasBoundary && surfaceAcres > 0) {
     const rawCoverage = totalBandArea / surfaceAcres;
     out.coverage = Math.round(Math.min(rawCoverage, 1.0) * 1000) / 1000;
     out._rawCoverage = Math.round(rawCoverage * 1000) / 1000;
   }
 
-  // 4. Average depth = volume / area — only publish when polygon coverage is trustworthy
-  if (totalBandArea > 0 && out.coverage >= GEOM_DEPTH_COVERAGE_THRESHOLD) {
+  // 4. Average depth = volume / totalBandArea — works correctly even with
+  //    band overlap (both numerator and denominator are inflated proportionally).
+  //    With a boundary: require ≥65% polygon coverage of the lake area.
+  //    Without a boundary: require at least 3 depth bands as a minimum data bar.
+  const canTrustAverage = hasBoundary
+    ? (out.coverage >= GEOM_DEPTH_COVERAGE_THRESHOLD)
+    : (bandCount >= 3);
+  if (totalBandArea > 0 && canTrustAverage) {
     const avg = volumeAcFt / totalBandArea;
     if (isFinite(avg) && avg > 0) {
       out.averageDepthFt = Math.round(avg * 10) / 10;
@@ -643,7 +649,11 @@ async function deriveGeospatialStructureFacts(lakeName) {
     contourKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${contourKey}/contours.geojson?v=${Date.now()}`) : Promise.resolve(null),
     supplementalKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/supplemental/${supplementalKey}/depth_areas.geojson?v=${Date.now()}`) : Promise.resolve(null),
     supplementalKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/supplemental/${supplementalKey}/pois.geojson?v=${Date.now()}`) : Promise.resolve(null),
-    boundaryKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/boundaries/${boundaryKey}.geojson?v=${Date.now()}`) : Promise.resolve(null),
+    // Boundary files in R2 use a _3dhp suffix (USGS 3D Hydrography Program).
+    // Try _3dhp first, fall back to bare key for older boundary files.
+    boundaryKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/boundaries/${boundaryKey}_3dhp.geojson?v=${Date.now()}`)
+      .then(gj => gj || fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/boundaries/${boundaryKey}.geojson?v=${Date.now()}`))
+      : Promise.resolve(null),
   ]);
   const ring = getBoundaryOuterRing(boundaryGeo);
   const structuralElements = {
@@ -1213,7 +1223,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
           const savedId = savedIdData.profile?.identity || null;
           if (savedId?._geometryDerived) {
             previousResults = { ...previousResults, identity: savedId };
-            log(`  [identity] Loaded geometry-derived bathymetry from saved profile (max ${savedId.maxDepthFt} ft, avg ${savedId.averageDepthFt} ft, area ${savedId.surfaceAreaAcres} ac)`);
+            log(`  [identity] Loaded geometry-derived bathymetry from saved profile (max ${savedId.maxDepthFt} ft, avg ${savedId.averageDepthFt} ft, area ${savedId.surfaceAreaAcres != null ? savedId.surfaceAreaAcres + " ac" : "N/A"})`);
           }
         }
       } catch (_) {}
@@ -1860,7 +1870,7 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
             const covLabel = geoStruct.depthStats._rawCoverage != null
               ? `raw coverage ${(geoStruct.depthStats._rawCoverage*100).toFixed(0)}%`
               : `coverage ${(geoStruct.depthStats.coverage*100).toFixed(0)}%`;
-            log(`✔ Geometry-derived bathymetry — max ${geoStruct.depthStats.maxDepthFt} ft, avg ${geoStruct.depthStats.averageDepthFt} ft, area ${geoStruct.depthStats.surfaceAreaAcres} ac (${covLabel})`);
+            log(`✔ Geometry-derived bathymetry — max ${geoStruct.depthStats.maxDepthFt} ft, avg ${geoStruct.depthStats.averageDepthFt} ft, area ${geoStruct.depthStats.surfaceAreaAcres != null ? geoStruct.depthStats.surfaceAreaAcres + " ac" : "N/A"} (${covLabel})`);
             if (geoStruct.depthStats._bandOverlapWarning) {
               log(`  ⚠️ ${geoStruct.depthStats._bandOverlapWarning}`);
             }
@@ -2129,7 +2139,7 @@ async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
             const covLabel = geoStruct.depthStats._rawCoverage != null
               ? `raw coverage ${(geoStruct.depthStats._rawCoverage*100).toFixed(0)}%`
               : `coverage ${(geoStruct.depthStats.coverage*100).toFixed(0)}%`;
-            log(`✔ Geometry-derived bathymetry — max ${geoStruct.depthStats.maxDepthFt} ft, avg ${geoStruct.depthStats.averageDepthFt} ft, area ${geoStruct.depthStats.surfaceAreaAcres} ac (${covLabel})`);
+            log(`✔ Geometry-derived bathymetry — max ${geoStruct.depthStats.maxDepthFt} ft, avg ${geoStruct.depthStats.averageDepthFt} ft, area ${geoStruct.depthStats.surfaceAreaAcres != null ? geoStruct.depthStats.surfaceAreaAcres + " ac" : "N/A"} (${covLabel})`);
             if (geoStruct.depthStats._bandOverlapWarning) {
               log(`  ⚠️ ${geoStruct.depthStats._bandOverlapWarning}`);
             }

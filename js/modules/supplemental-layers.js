@@ -321,8 +321,14 @@ async function loadLakeBoundary(displayName) {
       console.log(`[supplemental] boundary loaded from cache: ${boundaryKey}`);
       return;
     }
-    const url = `${CF_WORKER_URL}/chartpacks/boundaries/${boundaryKey}.geojson?v=${Date.now()}`;
-    const r = await fetch(url, { cache: 'no-store' });
+    // Boundary files in R2 use a _3dhp suffix (USGS 3D Hydrography Program).
+    // Try _3dhp first, fall back to bare key for older boundary files.
+    let url = `${CF_WORKER_URL}/chartpacks/boundaries/${boundaryKey}_3dhp.geojson?v=${Date.now()}`;
+    let r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) {
+      url = `${CF_WORKER_URL}/chartpacks/boundaries/${boundaryKey}.geojson?v=${Date.now()}`;
+      r = await fetch(url, { cache: 'no-store' });
+    }
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const gj = await r.json();
     if (!gj?.features?.length) throw new Error('empty');
