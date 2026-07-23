@@ -3,6 +3,7 @@ import { JSON_HEADERS } from '../worker-core.js';
 import { tinyfishFetch, tinyfishSearch } from './clients.js';
 import { DUKE_CRA_PDFS, resolveDrawdownSource } from './drawdown.js';
 import { KNOWN_BAD_NEPIS_IDS, buildNepisSearchUrl } from './dataset.js';
+import { parseLakeBaseName } from './keys.js';
 
 async function handleResearchDiscover(request, env) {
   let body;
@@ -14,7 +15,13 @@ async function handleResearchDiscover(request, env) {
     return new Response(JSON.stringify({ success: false, error: "Missing lakeName" }), { status: 400, headers: JSON_HEADERS });
   }
 
-  const baseName = String(lakeName).replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i,'').replace(/\s+Reservoir$/i,'').replace(/\s+Lake$/i,'').trim();
+  // baseName is the lake "base name" (suffix + abbreviation-normalized) used for
+  // baseLower-keyed lookups (TWRA_LAKE_PAGES, LAKE_SYSTEM_ALIASES,
+  // LAKE_OWNER_DOMAINS, GROKIPEDIA_SLUGS). parseLakeBaseName expands "Ft." →
+  // "Fort" so "Ft. Loudoun Reservoir, TN" resolves to baseLower "fort loudoun"
+  // and the TWRA seed (plus system aliases + owner domains) actually fires.
+  // Shared with the test suite via research/keys.js.
+  const baseName = parseLakeBaseName(lakeName);
   const baseLower = baseName.toLowerCase();
   const otherLakeNames = ['murray','marion','moultrie','hartwell','keowee','jocassee','thurmond','clarks hill','clark hill','russell','wylie','norman','hickory','james','rhodhiss','mountain island','wateree','robinson','monticello','greenwood','secession','yates','martin'];
 

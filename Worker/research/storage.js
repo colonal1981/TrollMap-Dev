@@ -3,7 +3,7 @@ import { CORS, JSON_HEADERS, callLLM, extractLLMText } from '../worker-core.js';
 import { getLakeIntel, lakeKeyFromName } from '../worker-data.js';
 import { tinyfishSearch } from './clients.js';
 import { RESEARCH_CANONICAL_IDS, extractJsonPossibly, researchStorageId, sanitizeLakeId } from './keys.js';
-import { calculateSectionConfidence } from './agents.js';
+import { calculateSectionConfidence, gateOverallConfidence } from './agents.js';
 
 async function handleResearchList(env) {
   const prefix = "lakes/";
@@ -119,20 +119,13 @@ async function handleResearchSave(request, env) {
   delete confidence.trollingIntelligence; delete confidence.fisheries;
   let overallConf = confCount ? Math.round(confSum/confCount) : 75;
 
-  // Penalize for null critical fields — 99% with no thermocline depth is misleading
-  const lim = incomingProfile.limnology || {};
-  const bio = incomingProfile.biology || incomingProfile.forage || {};
-  const id = incomingProfile.identity || {};
-  const nullPenalties = [];
-  const fieldStatus = incomingProfile.fieldStatus || {};
-  const confidenceExempt = (path) => ['not_applicable', 'not_available_after_targeted_review'].includes(fieldStatus[path]?.status);
-  if (lim.thermocline?.summerDepthFt == null && !confidenceExempt('limnology.thermocline.summerDepthFt')) { overallConf -= 8; nullPenalties.push('thermocline.summerDepthFt'); }
-  if (lim.oxygen?.depletionDepthFt == null && !confidenceExempt('limnology.oxygen.depletionDepthFt')) { overallConf -= 6; nullPenalties.push('oxygen.depletionDepthFt'); }
-  if (lim.waterClarity?.secchiFt == null && !confidenceExempt('limnology.waterClarity.secchiFt')) { overallConf -= 3; nullPenalties.push('secchiFt'); }
-  if (!bio.knownStockings?.length && !confidenceExempt('biology.knownStockings')) { overallConf -= 3; nullPenalties.push('knownStockings'); }
-  if (!id.damName && !confidenceExempt('identity.damName')) { overallConf -= 2; nullPenalties.push('damName'); }
-  if (!id.yearImpounded) { overallConf -= 2; nullPenalties.push('yearImpounded'); }
-  overallConf = Math.max(30, Math.min(99, overallConf));
+  // Penalize for null critical fields and gate on the Smart Plan critical fields
+  // (predatorSpecies + trollingIntelligence). The gate lives in agents.js so the
+  // same implementation is shared with the test suite — previously this was
+  // inline and only counted sources, so an empty-species profile still read 94%.
+  const gated = gateOverallConfidence(overallConf, incomingProfile, incomingProfile.fieldStatus || {});
+  overallConf = gated.percent;
+  const nullPenalties = gated.penalties;
 
   // Merge master profile per spec section 6
   const now = new Date().toISOString();
