@@ -260,8 +260,8 @@ async function handleResearchDiscover(request, env) {
     // Authority domain bonus
     try {
       const host = new URL(candidate.url).hostname.toLowerCase();
-      if (/\.gov$|usace\.army\.mil|epa\.gov|usgs\.gov|ferc\.gov|tva\.com|santeecooper\.com|duke-energy\.com|georgiapower\.com/.test(host)) score += 3;
-      else if (/\.edu$/.test(host)) score += 2;
+      if (/\.gov$|usace\.army\.mil|epa\.gov|usgs\.gov|ferc\.gov|tva\.com|tva\.gov|osti\.gov|noaa\.gov|santeecooper\.com|duke-energy\.com|georgiapower\.com/.test(host)) score += 3;
+      else if (/\.edu$/.test(host) && (candidate.url.toLowerCase().includes(baseLower) || title.includes(baseLower))) score += 2;
     } catch {}
 
     // Document type bonuses
@@ -501,9 +501,10 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
   const grokCandidates = grokSlug
     ? [`https://grokipedia.com/page/${grokSlug}`]
     : [
-        `https://grokipedia.com/page/${baseName.replace(/\s+/g,'_').toLowerCase()}_lake`,
+        // Lake_ prefix first — avoids false-positive people pages (wateree_people, amby_murray, etc.)
         `https://grokipedia.com/page/Lake_${baseName.replace(/\s+/g,'_')}`,
-        `https://grokipedia.com/page/${baseName.replace(/\s+/g,'_')}_Lake`,
+        `https://grokipedia.com/page/Lake_${baseName.replace(/\s+/g,'_')}_Lake`,
+        `https://grokipedia.com/page/${baseName.replace(/\s+/g,'_').toLowerCase()}_lake`,
         `https://grokipedia.com/page/${baseName.replace(/\s+/g,'_')}`,
       ];
   const resolvedGrokUrl = grokCandidates[0];
@@ -668,6 +669,7 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
     try {
       let grokUrl = null;
       let grokText = '';
+      let grokStructuredLinks = [];  // hoisted out of loop — tfGrok is block-scoped inside
       for (const candidate of grokCandidates) {
         try {
           const tfGrok = await tinyfishFetch({
@@ -688,8 +690,7 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
             grokText = candidateMarkdown;
             // Store links for citation extraction (structured)
             if (candidateLinks.length) {
-              // Attach links to grokText result for later use
-              tfGrok._lastLinks = candidateLinks;
+              grokStructuredLinks = candidateLinks;
             }
             const grokSeed = guaranteedSeeds.find(s => s.authority === 'Grokipedia');
             if (grokSeed && grokSeed.url !== candidate) {
@@ -711,7 +712,7 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
         const citationLinks = [];
         const seen = new Set();
         // Try structured links first (more reliable than regex)
-        const structuredLinks = tfGrok._lastLinks || [];
+        const structuredLinks = grokStructuredLinks || [];
         if (structuredLinks.length) {
           for (const u of structuredLinks) {
             const urlStr = typeof u === 'string' ? u : (u.url || u.href || '');
@@ -756,92 +757,11 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
             else if (/duke-energy\.com/.test(host)) authority = 'Duke Energy';
             else if (/ferc\.gov/.test(host)) authority = 'FERC';
             else if (/santeecooper\.com/.test(host)) authority = 'Santee Cooper';
-            else if (/seafwa\.org|apms\.org|\.edu$/.test(host)) authority = 'Academic';
-            else if (/tva\.com/.test(host)) authority = 'TVA';
-            else authority = 'Web';
-          } catch {}
-
-          // Skip low-value domains from Grokipedia citations entirely
-          if (authority === 'Web') {
-            queryLog.push(`  ✗ grok citation skipped (low-value domain): ${citUrl.slice(0,80)}`);
-            continue;
-          }
-
-          const isPdf = citUrl.toLowerCase().endsWith('.pdf');
-          addSeed({ title: `${lakeName} — ${authority} (via Grokipedia citation)`, type: isPdf ? 'PDF' : 'HTML', authority, url: citUrl, priority: 2, agentTags: ['identity','limnology','biology','habitat'] });
-        }
-
-        // Store markdown inline so proxy-download can skip re-fetching
-        const existingGrok = guaranteedSeeds.find(s => s.url === grokUrl);
-        if (existingGrok && grokText) existingGrok.fullText = grokText;
-      }
-    } catch (e) {
-      queryLog.push(`Grokipedia citation fetch failed: ${e.message}`);
-    }
-  }
-
-  // ── STEP 2b: Wikipedia citation following (backup for low Grokipedia coverage)
-  // Same pattern as Grokipedia but for Wikipedia — useful for lakes with poor Grokipedia coverage
-  // Lake Greenwood Wikipedia example shows SCDNR description link in references, but many internal #cite_note links
-  if (wantsGrokipedia) { // reuse same flag, Wikipedia is also identity/limnology source
-    try {
-      // Search Wikipedia via TinyFish
-      const wikiSearch = await tinyfishSearch({
-        query: `site:wikipedia.org "${baseName}" lake`,
-        domain_type: 'web',
-        purpose: `Find Wikipedia page for ${lakeName}`,
-      }, env);
-      const wikiUrl = wikiSearch.results?.[0]?.url;
-      if (wikiUrl && /wikipedia\.org/i.test(wikiUrl)) {
-        try {
-          const tfWiki = await tinyfishFetch({ urls: [wikiUrl], format: 'markdown', links: true, image_links: true, ttl: 86400 }, env);
-          const wikiResult = tfWiki.results?.[0] || {};
-          const wikiMd = String(wikiResult.text || '');
-          const wikiStructuredLinks = wikiResult.links || [];
-          if (wikiMd.length >= 200) {
-            const wikiLinks = [];
-            const seenWiki = new Set();
-            // Prefer structured links
-            for (const u of wikiStructuredLinks) {
-              const urlStr = typeof u === 'string' ? u : (u.url || u.href || '');
-              if (!urlStr) continue;
-              if (seenWiki.has(urlStr)) continue;
-              seenWiki.add(urlStr);
-              if (urlStr.includes('wikipedia.org')) continue;
-              if (/facebook\.com|twitter\.com|youtube\.com|instagram\.com|donate\.wikimedia\.org/i.test(urlStr)) continue;
-              wikiLinks.push(urlStr);
-            }
-            // Fallback regex
-            for (const m of wikiMd.matchAll(/\]\((https?:\/\/[^\s)"']+)/g)) {
-              const u = m[1];
-              if (seenWiki.has(u)) continue;
-              seenWiki.add(u);
-              if (u.includes('wikipedia.org')) continue;
-              if (/facebook\.com|twitter\.com|youtube\.com|instagram\.com|donate\.wikimedia\.org/i.test(u)) continue;
-              wikiLinks.push(u);
-            }
-            queryLog.push(`Wikipedia citations found: ${wikiLinks.length} from ${wikiUrl.split('/').pop()}`);
-
-            for (const citUrl of wikiLinks.slice(0, 15)) {
-              const urlTitle = decodeURIComponent(citUrl.split('/').pop().replace(/[_-]/g,' ').replace(/\.[a-z]+$/i,''));
-              const off = offLakePattern(urlTitle, citUrl);
-              if (off) { queryLog.push(`  ✗ wiki citation rejected (${off}): ${citUrl.slice(0,80)}`); continue; }
-
-              let authority = '';
-              try {
-                const host = new URL(citUrl).hostname;
-                if (/usace\.army\.mil/.test(host)) authority = 'USACE';
-                else if (/epa\.gov|nepis/.test(host)) authority = 'EPA';
-                else if (/usgs\.gov/.test(host)) authority = 'USGS';
-                else if (/dnr\.sc\.gov/.test(host)) authority = 'SCDNR';
-                else if (/ncwildlife\.gov|ncwildlife\.org/.test(host)) authority = 'NCWRC';
-                else if (/georgiawildlife\.com/.test(host)) authority = 'GADNR';
-                else if (/tn\.gov/.test(host)) authority = 'TWRA';
-                else if (/duke-energy\.com/.test(host)) authority = 'Duke Energy';
-                else if (/ferc\.gov/.test(host)) authority = 'FERC';
-                else if (/santeecooper\.com/.test(host)) authority = 'Santee Cooper';
-                else if (/seafwa\.org|apms\.org|\.edu$/.test(host)) authority = 'Academic';
-                else if (/tva\.com/.test(host)) authority = 'TVA';
+            else if (/seafwa\.org|apms\.org/.test(host)) authority = 'Academic';
+                else if (/osti\.gov/.test(host)) authority = 'Academic';
+                else if (/noaa\.gov/.test(host)) authority = 'Academic';
+                else if (/\.edu$/.test(host) && citUrl.toLowerCase().includes(baseLower)) authority = 'Academic'; // .edu only high-value if URL mentions the lake — skips archaeology papers about people
+                else if (/tva\.com|tva\.gov/.test(host)) authority = 'TVA';
                 else if (/southcarolinaparks\.com|scprt|state\.sc\.us|greenwoodcounty-sc\.gov|des\.sc\.gov/i.test(host)) authority = 'SC State';
                 else authority = 'Web';
               } catch {}
@@ -1024,6 +944,9 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
             else if (/eregulations\.com/.test(host)) authority = dnrName;
             else if (/carolinasportsman|anglersheadquarters|gameandfishmag|takemefishing|santeecoopercountry|lakemartinvoice|visitlakelanier|lakelanier|visitfloridakeys|visitnc|scprt|southcarolinaparks/.test(host)) authority = 'Fishing Guide';
             else if (/grokipedia\.com/.test(host)) authority = 'Grokipedia';
+            else if (/tva\.com|tva\.gov/.test(host)) authority = 'TVA';
+            else if (/osti\.gov/.test(host)) authority = 'Academic';
+            else if (/noaa\.gov/.test(host)) authority = 'Academic';
           } catch {}
 
           queryLog.push(`  ✓ found (score ${prefetchScore}): ${(r.title||r.url).slice(0,80)}`);

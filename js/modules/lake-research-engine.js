@@ -1489,7 +1489,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
         if (!retryData.success) throw new Error(retryData.error || 'Agent LLM failed');
         log(`✔ ${def.label} agent complete (${uniqueFacts.length} facts, ${normalizedDocuments.length} docs)`);
         if (callbacks.onComplete) await callbacks.onComplete(lakeName);
-        return { ...retryData, factsCount: uniqueFacts.length, docsUsed: normalizedDocuments.length, queryLog };
+        return { ...retryData, _extractedFacts: uniqueFacts, factsCount: uniqueFacts.length, docsUsed: normalizedDocuments.length, queryLog };
       }
       throw new Error(`Agent ${agentKey} LLM failed: ${agentRes.status}`);
     }
@@ -1507,7 +1507,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
 
     log(`✔ ${def.label} agent complete (${uniqueFacts.length} facts, ${normalizedDocuments.length} docs)`);
     if (callbacks.onComplete) await callbacks.onComplete(lakeName);
-    return { ...agentData, factsCount: uniqueFacts.length, docsUsed: normalizedDocuments.length, queryLog };
+    return { ...agentData, _extractedFacts: uniqueFacts, factsCount: uniqueFacts.length, docsUsed: normalizedDocuments.length, queryLog };
 
   } catch (e) {
     log(`❌ ${def.label} agent failed: ${e.message}`);
@@ -2005,6 +2005,59 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   const allFacts = agentResults.flatMap(r => r.data?._extractedFacts || []);
   const contradictions = agentResults.flatMap(r => r.data?.contradictions || []);
   const agentsRan = new Set(agentResults.map(r => r.agent));
+
+  // ── Fact-backed identity override ──────────────────────────────────────
+  // The LLM sometimes overrides pre-extracted numeric identity values with
+  // different numbers from training data (e.g. maxDepth 150 from docs → 175
+  // from LLM, yearImpounded 1946 from docs → 1942 from LLM).
+  // When an extracted fact explicitly states a numeric value with a verbatim
+  // quote from a document, that value wins over the LLM's guess.
+  if (allFacts.length > 0) {
+    const factBackfill = (cats, parseFn) => {
+      for (const c of cats) {
+        const f = allFacts.find(f => String(f.category||'').toLowerCase() === c.toLowerCase());
+        if (!f) continue;
+        const parsed = parseFn(f.fact);
+        if (parsed != null) return { value: parsed, quote: f.quote, source: f.source, confidence: f.confidence };
+      }
+      return null;
+    };
+    const parseNum = (s) => { const n = parseFloat(String(s||'').replace(/[^0-9.]/g,'')); return isFinite(n) ? n : null; };
+    const id = agentSections.identity;
+    // Only override if the fact value differs from the current value
+    // (if they match, no need; if current is null, validation pass handles it)
+    const surfaceFact = factBackfill(['surfaceArea','surfaceAreaAcres'], parseNum);
+    if (surfaceFact && id.surfaceAreaAcres != null && id.surfaceAreaAcres !== surfaceFact.value) {
+      log(`  🔄 identity.surfaceAreaAcres: LLM ${id.surfaceAreaAcres} → fact ${surfaceFact.value} (quote: "${surfaceFact.quote?.slice(0,60)}")`);
+      id.surfaceAreaAcres = surfaceFact.value;
+    }
+    const depthFact = factBackfill(['maxDepthFt','maxDepth'], parseNum);
+    if (depthFact && id.maxDepthFt != null && id.maxDepthFt !== depthFact.value) {
+      log(`  🔄 identity.maxDepthFt: LLM ${id.maxDepthFt} → fact ${depthFact.value} (quote: "${depthFact.quote?.slice(0,60)}")`);
+      id.maxDepthFt = depthFact.value;
+    }
+    const avgFact = factBackfill(['averageDepthFt','averageDepth'], parseNum);
+    if (avgFact && id.averageDepthFt != null && id.averageDepthFt !== avgFact.value) {
+      log(`  🔄 identity.averageDepthFt: LLM ${id.averageDepthFt} → fact ${avgFact.value} (quote: "${avgFact.quote?.slice(0,60)}")`);
+      id.averageDepthFt = avgFact.value;
+    }
+    const yearFact = factBackfill(['yearImpounded'], parseNum);
+    if (yearFact && id.yearImpounded != null && id.yearImpounded !== yearFact.value) {
+      log(`  🔄 identity.yearImpounded: LLM ${id.yearImpounded} → fact ${yearFact.value} (quote: "${yearFact.quote?.slice(0,60)}")`);
+      id.yearImpounded = yearFact.value;
+    }
+    const poolFact = factBackfill(['poolLevel','normalPoolFt'], parseNum);
+    if (poolFact && id.normalPoolFt != null && id.normalPoolFt !== poolFact.value) {
+      log(`  🔄 identity.normalPoolFt: LLM ${id.normalPoolFt} → fact ${poolFact.value} (quote: "${poolFact.quote?.slice(0,60)}")`);
+      id.normalPoolFt = poolFact.value;
+    }
+    // Also fill null fields that the deterministic fill didn't cover (facts from non-identity agents)
+    if (id.surfaceAreaAcres == null && surfaceFact) id.surfaceAreaAcres = surfaceFact.value;
+    if (id.maxDepthFt == null && depthFact) id.maxDepthFt = depthFact.value;
+    if (id.averageDepthFt == null && avgFact) id.averageDepthFt = avgFact.value;
+    if (id.yearImpounded == null && yearFact) id.yearImpounded = yearFact.value;
+    if (id.normalPoolFt == null && poolFact) id.normalPoolFt = poolFact.value;
+  }
 
   // Validation pass — only runs when we have facts, only checks fields for agents that ran
   const ALL_VALIDATION_FIELDS = {
