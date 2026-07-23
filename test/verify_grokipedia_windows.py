@@ -45,6 +45,7 @@ LAKES = [
 HIGH_VALUE_DOMAINS = [
     "usace.army.mil",
     "tva.com",
+    "tva.gov",
     "dnr.sc.gov",
     "des.sc.gov",
     "ncwildlife.gov",
@@ -55,6 +56,8 @@ HIGH_VALUE_DOMAINS = [
     "epa.gov",
     "usgs.gov",
     "ferc.gov",
+    "osti.gov",
+    "noaa.gov",
     "santeecooper.com",
     "southcarolinaparks.com",
     "greenwoodcounty",
