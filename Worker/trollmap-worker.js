@@ -2,7 +2,7 @@ import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized } from './worke
 import { LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard } from './worker-data.js';
 import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality } from './worker-species.js';
 import { handleGisRoute } from './core/arcgis.js';
-import { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchAgentPipeline, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine, handleResearchVisionScan, handleResearchVisionScanSave, handleResearchVisionScanStatus } from './worker-research.js';
+import { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine, handleResearchVisionScan, handleResearchVisionScanSave, handleResearchVisionScanStatus } from './worker-research.js';
 
 
 function chartpackKey(lake, filename) {
@@ -1140,9 +1140,6 @@ var trollmap_worker_default = {
       if (path === "/research/gap-search" && request.method === "POST") {
         return handleResearchGapSearch(request, env);
       }
-      if (path === "/research/agent" && request.method === "POST") {
-        return handleResearchAgentPipeline(request, env);
-      }
       if (path === "/research/agent-llm" && request.method === "POST") {
         return handleResearchAgent(request, env);
       }
@@ -1745,7 +1742,6 @@ var trollmap_worker_default = {
           lastBugLog: "Wateree run 2026-07-12 22:14 — 10 docs but 0 facts + verified 98% -> now draft + filter"
         },
         routes: [
-          "/research/agent                    \u2014 run single AI research agent (identity|limnology|biology|habitat|navigation|regulations|trolling|summary) — uses full callLLM chain (groq 120b primary → fallback), grounded with known LAKES baseline for identity",
           "/research/list or /lakes/list      \u2014 list all researched lake master profiles",
           "/research/get?lake=...             \u2014 get master profile + package file list + versions",
           "/research/save                     \u2014 save merged profile (master + hybrid package + version)",

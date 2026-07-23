@@ -495,6 +495,115 @@ function deriveDepthAreaStructures(depthGeo) {
   return result;
 }
 
+// ── Depth-statistics derivation from bathymetric polygons ────────────────────
+// Computes area-weighted mean depth and max depth directly from the
+// depth_areas.geojson band polygons, cross-checked against contour lines and
+// the lake boundary. This replaces LLM/sourced numbers when polygon coverage
+// is sufficient — it is the limnologically standard hypsometric average
+// (V/A) computed with midpoint integration over each depth band.
+const GEOM_DEPTH_COVERAGE_THRESHOLD = 0.65; // require polygons to cover ≥65% of lake area
+function polygonRingsAcres(g) {
+  // Returns array of { ring, acres } for every outer ring of a Polygon/MultiPolygon.
+  // Holes are not subtracted — depth_areas exports from the chart pipeline
+  // typically do not include holes, and subtracting them requires a full
+  // planar overlay we can't do client-side cheaply; outer-ring shoelace is
+  // within ~2–5% for these datasets which is well inside the band-midpoint
+  // error already present.
+  if (!g) return [];
+  const out = [];
+  const collect = (coords) => {
+    const outer = Array.isArray(coords) ? coords[0] : null;
+    if (!Array.isArray(outer) || outer.length < 4) return;
+    out.push({ ring: outer, acres: polygonAreaAcresLonLat(outer) });
+  };
+  if (g.type === 'Polygon') collect(g.coordinates);
+  else if (g.type === 'MultiPolygon') (g.coordinates || []).forEach(poly => collect(poly));
+  return out;
+}
+
+function deriveDepthStatistics(contourGeo, depthGeo, boundaryRing) {
+  const out = { ok: false, polygonAreaAcres: 0, boundaryAreaAcres: 0, coverage: 0, bandCount: 0 };
+
+  // 1. Sum polygon areas + build band histogram
+  let totalBandArea = 0;
+  let volumeAcFt = 0;
+  let polyMaxDepth = 0;
+  let openBanded = false; // true if any polygon is missing depth_max_ft (i.e. "≥ X ft")
+  let bandCount = 0;
+  if (depthGeo?.features?.length) {
+    for (const f of depthGeo.features) {
+      const p = f.properties || {};
+      const zMin = Number(p.depth_min_ft);
+      const zMaxRaw = p.depth_max_ft;
+      const zMax = Number(zMaxRaw);
+      const rings = polygonRingsAcres(f.geometry);
+      for (const { acres } of rings) {
+        if (!isFinite(acres) || acres <= 0) continue;
+        totalBandArea += acres;
+        // Band midpoint. If the deepest band has no upper bound (zMaxRaw is null/non-numeric),
+        // treat the depth as zMin — conservative lower bound for average depth.
+        let zEffective;
+        if (isFinite(zMax) && isFinite(zMin)) {
+          zEffective = (zMin + zMax) / 2;
+          if (zMax > polyMaxDepth) polyMaxDepth = zMax;
+        } else if (isFinite(zMin)) {
+          zEffective = zMin;
+          openBanded = true;
+          if (zMin > polyMaxDepth) polyMaxDepth = zMin;
+        } else {
+          continue; // no usable depth on this polygon
+        }
+        volumeAcFt += acres * zEffective;
+        bandCount++;
+      }
+    }
+  }
+  out.polygonAreaAcres = Math.round(totalBandArea * 10) / 10;
+  out.bandCount = bandCount;
+
+  // 2. Cross-check max against contour lines (deeper isobars may exist outside polygon coverage)
+  let contourMaxDepth = 0;
+  if (contourGeo?.features?.length) {
+    for (const f of contourGeo.features) {
+      const d = Number(f?.properties?.depth_ft);
+      if (isFinite(d) && d > contourMaxDepth) contourMaxDepth = d;
+    }
+  }
+  const maxDepthFt = Math.max(polyMaxDepth, contourMaxDepth);
+  out.maxDepthFt = isFinite(maxDepthFt) && maxDepthFt > 0 ? Math.round(maxDepthFt * 10) / 10 : null;
+  out.contourMaxDepthFt = isFinite(contourMaxDepth) && contourMaxDepth > 0 ? contourMaxDepth : null;
+  out.polyMaxDepthFt = isFinite(polyMaxDepth) && polyMaxDepth > 0 ? polyMaxDepth : null;
+  out.openBanded = openBanded;
+
+  // 3. Compute surface area from boundary and coverage ratio
+  const boundaryArea = boundaryRing ? polygonAreaAcresLonLat(boundaryRing) : 0;
+  out.boundaryAreaAcres = Math.round(boundaryArea * 10) / 10;
+  // Use the larger of polygon-sum and boundary-sum as the effective surface area
+  // (polygons can slightly overlap, boundary may over-estimate shoals — take the max to be conservative)
+  const surfaceAcres = Math.max(totalBandArea, boundaryArea);
+  out.surfaceAreaAcres = surfaceAcres > 0 ? Math.round(surfaceAcres) : null;
+
+  if (totalBandArea > 0 && surfaceAcres > 0) {
+    out.coverage = Math.round((totalBandArea / surfaceAcres) * 1000) / 1000;
+  }
+
+  // 4. Average depth = volume / area — only publish when polygon coverage is trustworthy
+  if (totalBandArea > 0 && out.coverage >= GEOM_DEPTH_COVERAGE_THRESHOLD) {
+    const avg = volumeAcFt / totalBandArea;
+    if (isFinite(avg) && avg > 0) {
+      out.averageDepthFt = Math.round(avg * 10) / 10;
+      out.ok = true;
+    }
+  } else if (totalBandArea > 0 && out.maxDepthFt) {
+    // Compute anyway but mark as partial — useful as a fallback or QA signal,
+    // not published as a verified identity value.
+    const avg = volumeAcFt / totalBandArea;
+    if (isFinite(avg) && avg > 0) out.averageDepthFtPartial = Math.round(avg * 10) / 10;
+  }
+
+  return out;
+}
+
 function derivePoiStructures(poiGeo) {
   const result = {};
   if (!poiGeo?.features?.length) return result;
@@ -522,18 +631,79 @@ async function deriveGeospatialStructureFacts(lakeName) {
     ...deriveDepthAreaStructures(depthGeo),
     ...derivePoiStructures(poiGeo),
   };
-  if (!Object.keys(structuralElements).length) return null;
-  const evidence = { habitat: {} };
+
+  // Geometry-derived identity facts (surface area, max depth, average depth).
+  // These are preferred over LLM/sourced numbers when bathymetric polygon
+  // coverage meets the threshold defined in deriveDepthStatistics.
+  const depthStats = deriveDepthStatistics(contourGeo, depthGeo, ring);
+
+  const identityFacts = {};
+  const identityEvidence = {};
+  const geoMeta = {};
+  if (depthStats.ok) {
+    if (depthStats.surfaceAreaAcres) identityFacts.surfaceAreaAcres = depthStats.surfaceAreaAcres;
+    if (depthStats.maxDepthFt) identityFacts.maxDepthFt = depthStats.maxDepthFt;
+    if (depthStats.averageDepthFt) identityFacts.averageDepthFt = depthStats.averageDepthFt;
+    geoMeta.bathymetryCoverage = depthStats.coverage;
+    geoMeta.bathymetryBandCount = depthStats.bandCount;
+    geoMeta.bathymetryOpenBanded = !!depthStats.openBanded;
+    const bathyEntry = buildEvidenceEntry(
+      'internal_geospatial_layer',
+      'TrollMap bathymetric contour/depth-area polygons',
+      'internal:bathymetry',
+      null,
+      'geometry_derived_hypsometry',
+      {
+        polygonAreaAcres: depthStats.polygonAreaAcres,
+        boundaryAreaAcres: depthStats.boundaryAreaAcres,
+        coverage: depthStats.coverage,
+        maxDepthFt: depthStats.maxDepthFt,
+        averageDepthFt: depthStats.averageDepthFt,
+        surfaceAreaAcres: depthStats.surfaceAreaAcres,
+        openBanded: depthStats.openBanded,
+        bandCount: depthStats.bandCount,
+      }
+    );
+    if (depthStats.surfaceAreaAcres) identityEvidence.surfaceAreaAcres = [bathyEntry];
+    if (depthStats.maxDepthFt) identityEvidence.maxDepthFt = [bathyEntry];
+    if (depthStats.averageDepthFt) identityEvidence.averageDepthFt = [bathyEntry];
+  } else if (depthStats.maxDepthFt) {
+    // Coverage too low to trust the average, but max depth from contours is still usable.
+    identityFacts.maxDepthFt = depthStats.maxDepthFt;
+    geoMeta.bathymetryCoverage = depthStats.coverage;
+    geoMeta.bathymetryNote = 'Polygon coverage below threshold; only contour max depth used.';
+    identityEvidence.maxDepthFt = [buildEvidenceEntry(
+      'internal_geospatial_layer',
+      'TrollMap bathymetric contour lines',
+      'internal:contours',
+      null,
+      'geometry_derived_max_depth_only',
+      { maxDepthFt: depthStats.maxDepthFt, coverage: depthStats.coverage }
+    )];
+  }
+
+  const hasStructure = Object.keys(structuralElements).length > 0;
+  const hasIdentity = Object.keys(identityFacts).length > 0;
+  if (!hasStructure && !hasIdentity) return null;
+
+  const evidence = { habitat: {}, identity: identityEvidence };
   for (const field of Object.keys(structuralElements)) {
     evidence.habitat[`structuralElements.${field}`] = [buildEvidenceEntry('internal_geospatial_layer', 'TrollMap contour/supplemental/boundary layers', 'internal:contours+supplemental+boundaries', null, 'geometry_derived_structure_classification', { lakeName })];
   }
+
+  const habitatSection = hasStructure ? {
+    structuralElements,
+    notes: 'Structural elements summarized from TrollMap contour, depth-area, POI, and boundary layers.'
+  } : (undefined);
+
+  const identitySection = hasIdentity ? { ...identityFacts, _geometryDerived: true, _bathymetryMeta: geoMeta } : (undefined);
+
   return {
-    habitat: {
-      structuralElements,
-      notes: 'Structural elements summarized from TrollMap contour, depth-area, POI, and boundary layers.'
-    },
+    habitat: habitatSection,
+    identity: identitySection,
     evidence,
-    sources: [{ label: 'TrollMap contour / supplemental / boundary layers', url: 'internal:contours+supplemental+boundaries', trust: 'OFFICIAL_GIS', sourceType: 'internal_geospatial_layer' }]
+    sources: [{ label: 'TrollMap contour / supplemental / boundary layers', url: 'internal:contours+supplemental+boundaries', trust: 'OFFICIAL_GIS', sourceType: 'internal_geospatial_layer' }],
+    depthStats,
   };
 }
 
@@ -1830,18 +2000,37 @@ async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
       }
     } catch (e) { log(`⚠️ Deterministic facts failed: ${e.message}`); }
 
-    // STEP 1c: Geospatial structure adapter
+    // STEP 1c: Geospatial structure adapter (habitat structure + geometry-derived identity facts)
     setProgress('Step 1c: Geospatial structure...', 15);
     try {
       const geoStruct = await deriveGeospatialStructureFacts(lakeName);
       if (geoStruct && _state.deterministicProfile) {
-        _state.deterministicProfile.habitat = mergeMissing(_state.deterministicProfile.habitat || {}, geoStruct.habitat || {});
-        if (geoStruct.habitat?.notes) {
-          _state.deterministicProfile.habitat.notes = [_state.deterministicProfile.habitat.notes, geoStruct.habitat.notes].filter(Boolean).join(' ');
+        if (geoStruct.habitat) {
+          _state.deterministicProfile.habitat = mergeMissing(_state.deterministicProfile.habitat || {}, geoStruct.habitat);
+          if (geoStruct.habitat.notes) {
+            _state.deterministicProfile.habitat.notes = [_state.deterministicProfile.habitat.notes, geoStruct.habitat.notes].filter(Boolean).join(' ');
+          }
+        }
+        // Merge geometry-derived identity facts (maxDepthFt, averageDepthFt, surfaceAreaAcres).
+        // These win over anything from LLM / search in the fact-precedence pass
+        // because OFFICIAL_GIS evidence is higher trust than document extraction.
+        if (geoStruct.identity) {
+          const id = _state.deterministicProfile.identity = _state.deterministicProfile.identity || {};
+          for (const k of ['surfaceAreaAcres', 'maxDepthFt', 'averageDepthFt']) {
+            if (geoStruct.identity[k] != null) id[k] = geoStruct.identity[k];
+          }
+          id._geometryDerived = true;
+          id._bathymetryMeta = geoStruct.identity._bathymetryMeta || null;
+          if (geoStruct.depthStats?.ok) {
+            log(`✔ Geometry-derived bathymetry — max ${geoStruct.depthStats.maxDepthFt} ft, avg ${geoStruct.depthStats.averageDepthFt} ft, area ${geoStruct.depthStats.surfaceAreaAcres} ac (coverage ${(geoStruct.depthStats.coverage*100).toFixed(0)}%)`);
+          } else if (geoStruct.depthStats?.maxDepthFt) {
+            log(`✔ Geometry-derived max depth ${geoStruct.depthStats.maxDepthFt} ft (polygon coverage ${Math.round((geoStruct.depthStats.coverage||0)*100)}% — avg depth not trusted)`);
+          }
         }
         _state.deterministicProfile.evidence = mergeEvidenceMaps(_state.deterministicProfile.evidence || {}, geoStruct.evidence || {});
         _state.deterministicProfile.sources  = [...(_state.deterministicProfile.sources || []), ...(geoStruct.sources || [])];
-        log(`✔ Geospatial structure adapter loaded — ${Object.keys(geoStruct.habitat || {}).join(', ') || 'no fields'}`);
+        const structKeys = Object.keys(geoStruct.habitat?.structuralElements || {}).join(', ') || 'no structural fields';
+        log(`✔ Geospatial structure adapter loaded — ${structKeys}`);
       }
     } catch (e) { log(`⚠️ Geospatial adapter failed: ${e.message}`); }
 
@@ -2100,11 +2289,33 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   const agentsRan = new Set(agentResults.map(r => r.agent));
 
   // ── Fact-backed identity override ──────────────────────────────────────
+  // Geometry-derived bathymetry values (from depth_areas polygons + contours)
+  // are highest-truth: they are direct measurements from our own chart data,
+  // not from LLM training data or scraped text. Re-apply them here so they
+  // win even when the LLM or a document fact populated the field first.
+  const geoId = det.identity && det.identity._geometryDerived ? det.identity : null;
+  if (geoId) {
+    const id = agentSections.identity;
+    if (geoId.surfaceAreaAcres != null && id.surfaceAreaAcres !== geoId.surfaceAreaAcres) {
+      log(`  🗺️ identity.surfaceAreaAcres: geometry ${geoId.surfaceAreaAcres} overrides prior ${id.surfaceAreaAcres}`);
+      id.surfaceAreaAcres = geoId.surfaceAreaAcres;
+    }
+    if (geoId.maxDepthFt != null && id.maxDepthFt !== geoId.maxDepthFt) {
+      log(`  🗺️ identity.maxDepthFt: geometry ${geoId.maxDepthFt} ft overrides prior ${id.maxDepthFt}`);
+      id.maxDepthFt = geoId.maxDepthFt;
+    }
+    if (geoId.averageDepthFt != null && id.averageDepthFt !== geoId.averageDepthFt) {
+      log(`  🗺️ identity.averageDepthFt: geometry ${geoId.averageDepthFt} ft overrides prior ${id.averageDepthFt}`);
+      id.averageDepthFt = geoId.averageDepthFt;
+    }
+  }
+
   // The LLM sometimes overrides pre-extracted numeric identity values with
   // different numbers from training data (e.g. maxDepth 150 from docs → 175
   // from LLM, yearImpounded 1946 from docs → 1942 from LLM).
   // When an extracted fact explicitly states a numeric value with a verbatim
-  // quote from a document, that value wins over the LLM's guess.
+  // quote from a document, that value wins over the LLM's guess (but never
+  // over geometry-derived values applied above).
   if (allFacts.length > 0) {
     const factBackfill = (cats, parseFn) => {
       for (const c of cats) {

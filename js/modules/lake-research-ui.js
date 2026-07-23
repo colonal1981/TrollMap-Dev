@@ -304,9 +304,9 @@ function formatHumanReadableSection(key, data) {
       <div><b>County/Counties:</b> ${esc(Array.isArray(d.counties) ? d.counties.join(', ') : (d.county || '—'))}</div>
       <div><b>River System:</b> ${esc(d.riverSystem || '—')}</div>
       <div><b>Reservoir Owner:</b> ${esc(d.reservoirOwner || '—')}</div>
-      <div><b>Surface Area:</b> ${d.surfaceAreaAcres ? `${d.surfaceAreaAcres.toLocaleString()} acres` : '—'}</div>
-      <div><b>Max Depth:</b> ${d.maxDepthFt ? `${d.maxDepthFt} ft` : '—'}</div>
-      <div><b>Average Depth:</b> ${d.averageDepthFt ? `${d.averageDepthFt} ft` : '—'}</div>
+      <div><b>Surface Area:</b> ${d.surfaceAreaAcres ? `${Number(d.surfaceAreaAcres).toLocaleString()} acres${d._geometryDerived ? ' 🗺️' : ''}` : '—'}</div>
+      <div><b>Max Depth:</b> ${d.maxDepthFt ? `${d.maxDepthFt} ft${d._geometryDerived ? ' 🗺️' : ''}` : '—'}</div>
+      <div><b>Average Depth:</b> ${d.averageDepthFt ? `${d.averageDepthFt} ft${d._geometryDerived ? ' 🗺️' : ''}` : '—'}${d._geometryDerived && d._bathymetryMeta?.coverage ? `<span class="muted" style="font-size:10px;margin-left:4px">(${Math.round(d._bathymetryMeta.coverage*100)}% bathy coverage)</span>` : ''}</div>
       <div><b>Normal Pool:</b> ${d.normalPoolFt ? `${d.normalPoolFt} ft` : '—'}</div>
       <div><b>Dam Name:</b> ${esc(d.damName || '—')}</div>
       <div><b>Year Impounded:</b> ${d.yearImpounded ? d.yearImpounded : '—'}</div>
