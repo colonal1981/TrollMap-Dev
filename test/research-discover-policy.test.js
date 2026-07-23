@@ -62,4 +62,21 @@ describe('research discovery source policy', () => {
     expect(r2Digest).toBeTruthy();
     expect(r2Digest.priority).toBe(1);
   });
+
+  it('builds SC biology discovery queries without crashing', async () => {
+    mockDiscoveryFetch();
+    const request = new Request('https://worker/research/discover', {
+      method: 'POST',
+      body: JSON.stringify({ lakeName: 'Lake Wateree, SC', state: 'SC', agent: 'biology' })
+    });
+
+    const response = await handleResearchDiscover(request, { TINYFISH_API_KEY: 'test-key' });
+    const data = await response.json();
+    const urls = data.sources.map(source => source.url);
+
+    expect(response.ok).toBe(true);
+    expect(data.success).toBe(true);
+    expect(data.queryLog.join('\n')).not.toMatch(/SC_FWFI_QUERY|query builder failed/i);
+    expect(urls).toContain('https://www.dnr.sc.gov/fish/lake-wateree-survey.pdf');
+  });
 });

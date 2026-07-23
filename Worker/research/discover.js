@@ -66,6 +66,12 @@ async function handleResearchDiscover(request, env) {
   const stateFishDomain = (STATE_FISH_AGENCY_DOMAINS[state] || [])[0] || '';
   const stateEnvDomain = (STATE_ENVIRONMENT_DOMAINS[state] || [])[0] || '';
 
+  // SCDNR fisheries survey PDFs are usually embedded in annual Freshwater
+  // Fisheries Investigation / Statewide Research reports rather than a simple
+  // per-lake page. Keep this as a function so the biology query list can call it
+  // safely for each lake name.
+  const SC_FWFI_QUERY = (lake) => `"${lake}" "Fisheries Investigations" site:dnr.sc.gov filetype:pdf`;
+
   // ─── CANONICAL URL NORMALIZER ─────────────────────────────────────────────
   // Implements section 12.4 rules. Returns { canonicalUrl, requestedUrl,
   // urlAliases, sourceRevision } without modifying original URLs.
@@ -679,11 +685,15 @@ const AGENT_TO_TAGS = {
     if (!stateQueries) continue;
 
     const discoveryLakeNames = [queryLake];
-    const queries = [
-      ...new Set(
-        discoveryLakeNames.flatMap(name => stateQueries(name))
-      )
-    ];
+    const queryCandidates = [];
+    for (const name of discoveryLakeNames) {
+      try {
+        queryCandidates.push(...(stateQueries(name) || []));
+      } catch (e) {
+        queryLog.push(`[${agentKey}] query builder failed for ${name}: ${e.message}`);
+      }
+    }
+    const queries = [...new Set(queryCandidates.filter(Boolean))];
     if (!queries.length) continue;
     const discoveryAliases = [
       ...new Set([
