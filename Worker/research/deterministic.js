@@ -77,7 +77,7 @@ async function handleResearchDeterministicFacts(request, env) {
 
 
 
-  return new Response(JSON.stringify({ ok: true, lakeName, state, profile, seededDiscoveryTargets }), { headers: JSON_HEADERS });
+  return new Response(JSON.stringify({ ok: true, lakeName, state, profile, seededDiscoveryTargets: [] }), { headers: JSON_HEADERS });
 }
 
 async function handleResearchSaveNormalized(request, env) {
