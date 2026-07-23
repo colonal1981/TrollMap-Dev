@@ -750,6 +750,8 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
             if (/usace\.army\.mil/.test(host)) authority = 'USACE';
             else if (/epa\.gov|nepis/.test(host)) authority = 'EPA';
             else if (/usgs\.gov/.test(host)) authority = 'USGS';
+            else if (/osti\.gov/.test(host)) authority = 'Academic';
+            else if (/noaa\.gov/.test(host)) authority = 'Academic';
             else if (/dnr\.sc\.gov/.test(host)) authority = 'SCDNR';
             else if (/ncwildlife\.gov|ncwildlife\.org/.test(host)) authority = 'NCWRC';
             else if (/georgiawildlife\.com/.test(host)) authority = 'GADNR';
@@ -758,41 +760,109 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
             else if (/ferc\.gov/.test(host)) authority = 'FERC';
             else if (/santeecooper\.com/.test(host)) authority = 'Santee Cooper';
             else if (/seafwa\.org|apms\.org/.test(host)) authority = 'Academic';
-                else if (/osti\.gov/.test(host)) authority = 'Academic';
-                else if (/noaa\.gov/.test(host)) authority = 'Academic';
-                else if (/\.edu$/.test(host) && citUrl.toLowerCase().includes(baseLower)) authority = 'Academic'; // .edu only high-value if URL mentions the lake — skips archaeology papers about people
-                else if (/tva\.com|tva\.gov/.test(host)) authority = 'TVA';
-                else if (/southcarolinaparks\.com|scprt|state\.sc\.us|greenwoodcounty-sc\.gov|des\.sc\.gov/i.test(host)) authority = 'SC State';
-                else authority = 'Web';
-              } catch {}
+            else if (/\.edu$/.test(host) && citUrl.toLowerCase().includes(baseLower)) authority = 'Academic';
+            else if (/tva\.com|tva\.gov/.test(host)) authority = 'TVA';
+            else if (/southcarolinaparks\.com|scprt|state\.sc\.us|greenwoodcounty-sc\.gov|des\.sc\.gov/i.test(host)) authority = 'SC State';
+            else authority = 'Web';
+          } catch {}
 
-              if (authority === 'Web') {
-                queryLog.push(`  ✗ wiki citation skipped (low-value): ${citUrl.slice(0,80)}`);
-                continue;
-              }
+          if (authority === 'Web') {
+            queryLog.push(`  ✗ grok citation skipped (low-value): ${citUrl.slice(0,80)}`);
+            continue;
+          }
 
-              const isPdf = citUrl.toLowerCase().endsWith('.pdf');
-              addSeed({ title: `${lakeName} — ${authority} (via Wikipedia citation)`, type: isPdf ? 'PDF' : 'HTML', authority, url: citUrl, priority: 2, agentTags: ['identity','limnology','biology','habitat'] });
+          const isPdf = citUrl.toLowerCase().endsWith('.pdf');
+          addSeed({ title: `${lakeName} — ${authority} (via Grokipedia citation)`, type: isPdf ? 'PDF' : 'HTML', authority, url: citUrl, priority: 2, agentTags: ['identity','limnology','biology','habitat'] });
+        }
+      }
+    } catch (e) {
+      queryLog.push(`Grokipedia citation fetch failed: ${e.message}`);
+    }
+  }
+
+
+
+  // ── STEP 2b: Wikipedia citation following (fallback when Grokipedia missing) ──
+  // Search Wikipedia for the lake, fetch its page, extract high-value agency links.
+  // Only runs for identity-type agents; skipped if Grokipedia already ran successfully.
+  if (wantsGrokipedia) {
+    try {
+      // Build Wikipedia search query — use "Lake X" to avoid person-name collisions
+      const wikiQuery = `site:wikipedia.org "Lake ${baseName}"`;
+      const wikiSearch = await tinyfishSearch({
+        query: wikiQuery,
+        domain_type: 'web',
+        purpose: `Find Wikipedia page for ${lakeName} to extract agency citation links`,
+        location: 'US',
+        language: 'en',
+      }, env);
+      const wikiUrl = wikiSearch.results?.find(r => /en\.wikipedia\.org\/wiki\//i.test(r.url))?.url;
+      if (wikiUrl) {
+        const wikiSlug = wikiUrl.split('/wiki/').pop();
+        queryLog.push(`Wikipedia citations found: ${0} from ${wikiSlug}`);
+        try {
+          const wikiResult = await tinyfishFetch({ urls: [wikiUrl], format: 'markdown', links: true, ttl: 86400 }, env);
+          const wikiPage = wikiResult.results?.[0] || {};
+          const wikiMd = String(wikiPage.text || '');
+          const wikiLinks = wikiPage.links || [];
+          let wikiCitCount = 0;
+
+          for (const citUrl of wikiLinks) {
+            const urlStr = typeof citUrl === 'string' ? citUrl : (citUrl.url || citUrl.href || '');
+            if (!urlStr || urlStr.includes('wikipedia.org') || urlStr.includes('wikimedia.org') || urlStr.includes('wikidata.org')) continue;
+            if (/facebook\.com|twitter\.com|youtube\.com|instagram\.com|geohack|archive\.org/i.test(urlStr)) continue;
+
+            let authority = '';
+            try {
+              const host = new URL(urlStr).hostname;
+              if (/usace\.army\.mil/.test(host)) authority = 'USACE';
+              else if (/epa\.gov|nepis/.test(host)) authority = 'EPA';
+              else if (/usgs\.gov/.test(host)) authority = 'USGS';
+              else if (/osti\.gov/.test(host)) authority = 'Academic';
+              else if (/noaa\.gov/.test(host)) authority = 'Academic';
+              else if (/dnr\.sc\.gov/.test(host)) authority = 'SCDNR';
+              else if (/ncwildlife\.gov|ncwildlife\.org/.test(host)) authority = 'NCWRC';
+              else if (/georgiawildlife\.com/.test(host)) authority = 'GADNR';
+              else if (/tn\.gov/.test(host)) authority = 'TWRA';
+              else if (/duke-energy\.com/.test(host)) authority = 'Duke Energy';
+              else if (/ferc\.gov/.test(host)) authority = 'FERC';
+              else if (/santeecooper\.com/.test(host)) authority = 'Santee Cooper';
+              else if (/seafwa\.org|apms\.org/.test(host)) authority = 'Academic';
+              else if (/\.edu$/.test(host) && urlStr.toLowerCase().includes(baseLower)) authority = 'Academic';
+              else if (/tva\.com|tva\.gov/.test(host)) authority = 'TVA';
+              else if (/southcarolinaparks\.com|scprt|state\.sc\.us|greenwoodcounty-sc\.gov|des\.sc\.gov/i.test(host)) authority = 'SC State';
+              else authority = 'Web';
+            } catch {}
+
+            if (authority === 'Web') {
+              queryLog.push(`  ✗ wiki citation skipped (low-value): ${urlStr.slice(0,80)}`);
+              continue;
             }
 
-            // Also store Wikipedia markdown as seed itself (infobox has surface area, depth, etc.)
-            const existingWiki = guaranteedSeeds.find(s => s.url === wikiUrl);
-            if (!existingWiki) {
-              addSeed({ title: `${lakeName} — Wikipedia`, type: 'HTML', authority: 'Wikipedia', url: wikiUrl, priority: 2, agentTags: ['identity'], fullText: wikiMd });
-            } else if (wikiMd) {
-              existingWiki.fullText = wikiMd;
-            }
+            const isPdf = urlStr.toLowerCase().endsWith('.pdf');
+            addSeed({ title: `${lakeName} — ${authority} (via Wikipedia citation)`, type: isPdf ? 'PDF' : 'HTML', authority, url: urlStr, priority: 2, agentTags: ['identity','limnology','biology','habitat'] });
+            wikiCitCount++;
+          }
+
+          queryLog.push(`Wikipedia citations found: ${wikiCitCount} from ${wikiSlug}`);
+
+          // Also seed Wikipedia page itself for infobox data (surface area, depth, etc.)
+          const existingWiki = guaranteedSeeds.find(s => s.url === wikiUrl);
+          if (!existingWiki) {
+            addSeed({ title: `${lakeName} — Wikipedia`, type: 'HTML', authority: 'Wikipedia', url: wikiUrl, priority: 2, agentTags: ['identity'], fullText: wikiMd });
+          } else if (wikiMd) {
+            existingWiki.fullText = wikiMd;
           }
         } catch (wikiErr) {
           queryLog.push(`Wikipedia fetch failed for ${wikiUrl}: ${wikiErr.message}`);
         }
+      } else {
+        queryLog.push(`Wikipedia: no page found for ${baseName}`);
       }
     } catch (e) {
       queryLog.push(`Wikipedia citation fetch failed: ${e.message}`);
     }
   }
-
-
 
   // ── STEP 3: Agent-specific search queries ───────────────────────────────
   const agent = String(body.agent || "").trim().toLowerCase();
