@@ -359,6 +359,7 @@ function normalizeLakeName(name) {
   return String(name || '')
     .toLowerCase()
     .replace(/^lake\s+/i, '')
+    .replace(/,?\s+(sc|nc|ga|tn)(?:\/(?:sc|nc|ga|tn))*$/i, '')
     .replace(/\s+(lake|reservoir)$/i, '')
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
@@ -471,7 +472,9 @@ Return ONLY valid JSON:
 }
 
 async function fetchStateRegulations(state, env) {
-  const cacheKey = `regulations:${state}:v3`;
+  // Bump when normalization/exception matching changes; stale v3 entries were
+  // produced without reliably splitting combined waterbody headings.
+  const cacheKey = `regulations:${state}:v4`;
   let cached = await env.KV.get(cacheKey, { type: 'json' });
   if (cached) return cached;
   
@@ -510,17 +513,22 @@ async function fetchStateRegulations(state, env) {
 
 function getLakeRegulations(stateRegulations, lakeName) {
   const normalized = normalizeLakeName(lakeName);
-  let lakeSpecific = stateRegulations.lakeSpecific[normalized] || {};
-  
-  // Also check partial matches
-  for (const [key, val] of Object.entries(stateRegulations.lakeSpecific)) {
-    if (key.includes(normalized) || normalized.includes(key)) {
-      Object.assign(lakeSpecific, val);
-    }
+  const specific = stateRegulations?.lakeSpecific || {};
+  // Do not return/mutate the cached object: the old implementation could leak a
+  // previous lake's exceptions into subsequent requests.
+  const lakeSpecific = {};
+
+  for (const [rawKey, val] of Object.entries(specific)) {
+    const key = normalizeLakeName(rawKey);
+    // Regulation digests commonly put several exceptions in one row, e.g.
+    // "Lakes Blalock, Greenwood, ... Wateree ...". The LLM preserves that
+    // heading as one JSON key, so exact lookup silently missed Lake Wateree.
+    const matches = key === normalized || key.includes(normalized) || normalized.includes(key);
+    if (matches && val && typeof val === 'object') Object.assign(lakeSpecific, val);
   }
-  
+
   return {
-    generalStateRegulations: stateRegulations.general,
+    generalStateRegulations: stateRegulations?.general || {},
     lakeSpecificRegulations: lakeSpecific,
     hasExceptions: Object.keys(lakeSpecific).length > 0
   };
