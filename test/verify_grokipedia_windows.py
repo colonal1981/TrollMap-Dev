@@ -58,16 +58,24 @@ HIGH_VALUE_DOMAINS = [
     "santeecooper.com",
     "southcarolinaparks.com",
     "greenwoodcounty",
-    ".edu",
+    # ".edu" removed — now requires lake name in URL (see is_high_value below)
 ]
 
-def is_high_value(url):
+def is_high_value(url, lake_base=None):
+    """Check if URL is from a high-value domain.
+    .edu domains are only high-value if the URL mentions the lake name —
+    this skips archaeology papers about people (wateree_people, etc.) that
+    don't mention the lake itself.
+    """
     try:
         host = urlparse(url).hostname or ""
         host = host.lower()
         for domain in HIGH_VALUE_DOMAINS:
             if domain in host:
                 return True
+        # .edu only high-value if URL contains lake base name
+        if host.endswith(".edu") and lake_base:
+            return lake_base.lower() in url.lower()
         return False
     except:
         return False
@@ -95,10 +103,10 @@ def main():
         base = re.sub(r',.*$', '', base).strip()
         print(f"\n=== {lake} (base: {base}) ===")
 
-        # 1. Grokipedia search
+        # 1. Grokipedia search — use "Lake {base}" not "{base}" to avoid people pages
         try:
             search = client.search.search(
-                query=f'site:grokipedia.com "{base}"',
+                query=f'site:grokipedia.com "Lake {base}"',
                 domain_type="web"
             )
             grok_url = search.results[0].url if search.results else None
@@ -113,7 +121,7 @@ def main():
                 page = fetch.results[0] if fetch.results else None
                 if page:
                     total_links = len(page.links) if hasattr(page, 'links') else 0
-                    high_links = [l for l in (page.links or []) if is_high_value(l)]
+                    high_links = [l for l in (page.links or []) if is_high_value(l, lake_base=base)]
                     print(f"  Grokipedia: {total_links} total links, {len(high_links)} high-value")
                     for link in high_links[:10]:
                         print(f"    → {link}")
@@ -128,10 +136,10 @@ def main():
         except Exception as e:
             print(f"  Grokipedia error: {e}")
 
-        # 2. Wikipedia search
+        # 2. Wikipedia search — "Lake {base}" not "{base} lake" to avoid people articles
         try:
             search = client.search.search(
-                query=f'site:wikipedia.org "{base}" lake',
+                query=f'site:wikipedia.org "Lake {base}"',
                 domain_type="web"
             )
             wiki_url = search.results[0].url if search.results else None
@@ -146,7 +154,7 @@ def main():
                 page = fetch.results[0] if fetch.results else None
                 if page:
                     total_links = len(page.links) if hasattr(page, 'links') else 0
-                    high_links = [l for l in (page.links or []) if is_high_value(l)]
+                    high_links = [l for l in (page.links or []) if is_high_value(l, lake_base=base)]
                     print(f"  Wikipedia: {total_links} total links, {len(high_links)} high-value")
                     for link in high_links[:10]:
                         print(f"    → {link}")

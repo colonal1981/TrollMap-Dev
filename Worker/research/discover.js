@@ -261,7 +261,7 @@ async function handleResearchDiscover(request, env) {
     try {
       const host = new URL(candidate.url).hostname.toLowerCase();
       if (/\.gov$|usace\.army\.mil|epa\.gov|usgs\.gov|ferc\.gov|tva\.com|santeecooper\.com|duke-energy\.com|georgiapower\.com/.test(host)) score += 3;
-      else if (/\.edu$/.test(host)) score += 2;
+      else if (/\.edu$/.test(host) && (candidate.url.toLowerCase().includes(baseLower) || title.includes(baseLower))) score += 2;
     } catch {}
 
     // Document type bonuses
@@ -501,9 +501,10 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
   const grokCandidates = grokSlug
     ? [`https://grokipedia.com/page/${grokSlug}`]
     : [
-        `https://grokipedia.com/page/${baseName.replace(/\s+/g,'_').toLowerCase()}_lake`,
+        // Lake_ prefix first — avoids false-positive people pages (wateree_people, amby_murray, etc.)
         `https://grokipedia.com/page/Lake_${baseName.replace(/\s+/g,'_')}`,
-        `https://grokipedia.com/page/${baseName.replace(/\s+/g,'_')}_Lake`,
+        `https://grokipedia.com/page/Lake_${baseName.replace(/\s+/g,'_')}_Lake`,
+        `https://grokipedia.com/page/${baseName.replace(/\s+/g,'_').toLowerCase()}_lake`,
         `https://grokipedia.com/page/${baseName.replace(/\s+/g,'_')}`,
       ];
   const resolvedGrokUrl = grokCandidates[0];
@@ -756,7 +757,8 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
             else if (/duke-energy\.com/.test(host)) authority = 'Duke Energy';
             else if (/ferc\.gov/.test(host)) authority = 'FERC';
             else if (/santeecooper\.com/.test(host)) authority = 'Santee Cooper';
-            else if (/seafwa\.org|apms\.org|\.edu$/.test(host)) authority = 'Academic';
+            else if (/seafwa\.org|apms\.org/.test(host)) authority = 'Academic';
+            else if (/\.edu$/.test(host) && citUrl.toLowerCase().includes(baseLower)) authority = 'Academic'; // .edu only high-value if URL mentions the lake
             else if (/tva\.com/.test(host)) authority = 'TVA';
             else authority = 'Web';
           } catch {}
@@ -786,8 +788,9 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
   if (wantsGrokipedia) { // reuse same flag, Wikipedia is also identity/limnology source
     try {
       // Search Wikipedia via TinyFish
+      // Use "Lake ${base}" not "${base}" lake — avoids matching people articles (Murray → amby_murray)
       const wikiSearch = await tinyfishSearch({
-        query: `site:wikipedia.org "${baseName}" lake`,
+        query: `site:wikipedia.org "Lake ${baseName}"`,
         domain_type: 'web',
         purpose: `Find Wikipedia page for ${lakeName}`,
       }, env);
@@ -840,7 +843,8 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
                 else if (/duke-energy\.com/.test(host)) authority = 'Duke Energy';
                 else if (/ferc\.gov/.test(host)) authority = 'FERC';
                 else if (/santeecooper\.com/.test(host)) authority = 'Santee Cooper';
-                else if (/seafwa\.org|apms\.org|\.edu$/.test(host)) authority = 'Academic';
+                else if (/seafwa\.org|apms\.org/.test(host)) authority = 'Academic';
+                else if (/\.edu$/.test(host) && citUrl.toLowerCase().includes(baseLower)) authority = 'Academic'; // .edu only high-value if URL mentions the lake — skips archaeology papers about people
                 else if (/tva\.com/.test(host)) authority = 'TVA';
                 else if (/southcarolinaparks\.com|scprt|state\.sc\.us|greenwoodcounty-sc\.gov|des\.sc\.gov/i.test(host)) authority = 'SC State';
                 else authority = 'Web';
