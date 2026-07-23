@@ -1,57 +1,15 @@
 // research/limnology.js — split from worker-research.js (behavior-preserving)
+// SINGLE SOURCE OF TRUTH for lake→R2 key: js/data/lake-keys.js (101 entries)
+// Previously this file had a truncated copy (74 entries) with a fallback that
+// generated generic lake_${base} keys on miss, masking missing entries and
+// causing shoreline.geojson R2 misses → bbox self-derive failed → geospatial
+// adapter / thermocline pipeline silently skipped. Fixed by importing canonical map.
 import { JSON_HEADERS } from '../worker-core.js';
 import { handleResearchThermoclineSearch } from './storage.js';
+import { LAKE_NAME_TO_R2_KEY as SUPPLEMENTAL_KEY_MAP, resolveR2Key } from '../../js/data/lake-keys.js';
 
-const SUPPLEMENTAL_KEY_MAP = {
-  'Lake Marion, SC': 'lake_marion', 'Lake Moultrie, SC': 'lake_moultrie',
-  'Lake Murray, SC': 'lake_murray', 'Lake Wateree, SC': 'lake_wateree_fishing_creek',
-  'Fishing Creek Reservoir, SC': 'lake_wateree_fishing_creek', 'Lake Wylie, SC/NC': 'lake_wylie',
-  'Lake Hartwell, SC/GA': 'lake_hartwell', 'Lake Greenwood, SC': 'lake_greenwood_secession',
-  'Lake Secession, SC': 'lake_greenwood_secession', 'Lake Keowee, SC': 'lake_keowee',
-  'Lake Jocassee, SC/NC': 'lake_jocassee', 'Lake Russell, SC/GA': 'lake_thurmond_russell',
-  'Lake Russell, GA': 'lake_thurmond_russell', 'Lake Russell, SC': 'lake_thurmond_russell',
-  'Richard B. Russell Lake, GA': 'lake_thurmond_russell', 'Clarks Hill / Thurmond, SC/GA': 'lake_thurmond_russell',
-  'Lake Thurmond, SC': 'lake_thurmond_russell', 'Clarks Hill Lake, GA': 'lake_thurmond_russell',
-  'Lake Monticello, SC': 'lake_monticello_parr', 'Parr Reservoir, SC': 'lake_monticello_parr',
-  'Lake Robinson, SC': 'north_saluda_reservoir', 'Lake Bowen, SC': 'lake_bowen', 'Lake Blalock, SC': 'lake_blalock',
-  'Lake Norman, NC': 'lake_norman_mountain_island', 'Mountain Island Lake, NC': 'lake_norman_mountain_island',
-  'Lake Norman (South), NC': 'lake_norman', 'Lake Hickory, NC': 'lake_hickory_rhodhiss',
-  'Lake Rhodhiss, NC': 'lake_hickory_rhodhiss', 'Lake James, NC': 'lake_james',
-  'High Rock Lake, NC': 'yadkin_river_chain', 'Badin Lake, NC': 'yadkin_river_chain',
-  'Lake Tillery, NC': 'yadkin_river_chain', 'Blewett Falls Lake, NC': 'yadkin_river_chain',
-  'Jordan Lake, NC': 'jordan_lake', 'Falls Lake, NC': 'falls_lake',
-  'W. Kerr Scott Reservoir, NC': 'w_kerr_scott_reservoir', 'Shearon Harris Reservoir, NC': 'shearon_harris_reservoir',
-  'Randleman Lake, NC': 'randleman_lake', 'Lake Mackintosh, NC': 'lake_mackintosh',
-  'Lake Townsend, NC': 'lake_townsend', 'Lake Michie / Little River, NC': 'lake_michie',
-  'Belews Lake, NC': 'belews_lake', 'Hyco Lake, NC': 'hyco_lake', 'Mayo Lake, NC': 'mayo_lake',
-  'Nantahala Lake, NC': 'nantahala_lake', 'Lake Santeetlah, NC': 'lake_santeetlah',
-  'Hiwassee Lake, NC': 'hiwassee_lake', 'Fontana Lake, NC': 'fontana_lake', 'Lake Cheoah, NC': 'lake_cheoah',
-  'Lake Oconee, GA': 'lake_oconee', 'Lake Sinclair, GA': 'lake_sinclair', 'Lake Lanier, GA': 'lake_lanier',
-  'Lake Jackson, GA': 'lake_juliette_high_falls', 'Lake Juliette / High Falls, GA': 'lake_juliette_high_falls',
-  'Lake Blackshear, GA': 'lake_blackshear', 'Lake Allatoona, GA': 'lake_allatoona',
-  'Tobesofkee Reservoir, GA': 'tobesofkee_reservoir', 'Lake Blue Ridge, GA': 'lake_blue_ridge',
-  'Lake Nottely, GA': 'lake_nottely', 'Lake Burton, GA': 'lake_burton', 'Lake Chatuge, GA/NC': 'lake_chatuge',
-  'Norris Lake, TN': 'norris_lake', 'Norris Reservoir, TN': 'norris_lake',
-  'Douglas Lake, TN': 'douglas_lake', 'Douglas Reservoir, TN': 'douglas_lake',
-  'Cherokee Lake, TN': 'cherokee_lake', 'Cherokee Reservoir, TN': 'cherokee_lake',
-  'Fort Loudoun Lake, TN': 'fort_loudoun_lake', 'Fort Loudoun Reservoir, TN': 'fort_loudoun_lake',
-  'Tellico Lake, TN': 'tellico_lake', 'Tellico Reservoir, TN': 'tellico_lake',
-  'Watauga Lake, TN': 'watauga_boone_chain', 'Boone Lake, TN': 'watauga_boone_chain',
-  'Boone Reservoir, TN': 'watauga_boone_chain',
-};
 function resolveSupplementalKeyWorker(lakeName) {
-  if (!lakeName) return null;
-  if (SUPPLEMENTAL_KEY_MAP[lakeName]) return SUPPLEMENTAL_KEY_MAP[lakeName];
-  const stripped = lakeName.replace(/,\s*[A-Z]{2}(\/[A-Z]{2})?$/, '').trim();
-  if (SUPPLEMENTAL_KEY_MAP[stripped]) return SUPPLEMENTAL_KEY_MAP[stripped];
-  const dl = stripped.toLowerCase();
-  const found = Object.entries(SUPPLEMENTAL_KEY_MAP).find(([k]) => {
-    const kl = k.toLowerCase().replace(/,\s*[a-z]{2}(\/[a-z]{2})?$/, '').trim();
-    return dl.includes(kl) || kl.includes(dl);
-  });
-  if (found) return found[1];
-  const base = lakeName.split(',')[0].trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-  return base.startsWith('lake_') ? base : `lake_${base}`;
+  return resolveR2Key(lakeName);
 }
 
 async function handleResearchLimnologyData(request, env) {

@@ -1,24 +1,40 @@
 # TrollMap Complete Refactor Audit & Recommendations
 
 **Date:** 2026-07-22  
+**Verified:** 2026-07-22 post-check on branch `arena/019f8c04-trollmap-dev` vs disk  
 **Constraint:** Everything that works now must work afterwards.  
 **Scope:** Full repo (Worker ~11.6k lines + frontend ~28k lines JS + `index.html`).
 
 This supersedes `audit_report.md` (2026-07-17). That pass already deleted ~8 dead frontend duplicates and merged species-intel v1/v2.
 
-### DONE in this session (2026-07-22)
+> **STATUS UPDATE FILE:** See `REFACTOR_STATUS_UPDATE.md` (377 lines) for full verification with evidence, line numbers, grep results, and updated priority matrix. This file's original content is preserved below, with this header patched to reflect verification.
 
-| Item | Status |
-|---|---|
-| Delete dead `js/data/lake-research-engine.js` | ✅ |
-| Strip all `__name` / `__defProp` bundler noise from Worker | ✅ |
-| Split `worker-research.js` (7.5k) → `Worker/research/*` (14 modules + barrel) | ✅ |
-| Wire vision-scan routes (was FE→404) | ✅ |
-| Unify `LAKE_NAME_TO_R2_KEY` → `js/data/lake-keys.js` | ✅ |
-| Collapse `IntelV2` shim in smart-plan.js | ✅ |
-| Node import verification (worker default + 41 research exports) | ✅ |
+### DONE in this session (2026-07-22) — VERIFIED ON DISK
 
-**Remaining (next pass):** ArcGIS GIS handler dedupe in `trollmap-worker.js`, characterization tests, orphan route cleanup, FE `window.*` bus.
+| Item | Status | Verified Evidence |
+|---|---:|---|
+| Delete dead `js/data/lake-research-engine.js` | ✅ | `ls` missing, `git ls-tree main` missing, 0 JS imports |
+| Strip all `__name` / `__defProp` bundler noise from Worker | ✅ | `grep -r "__name\|__defProp\|@__PURE__" Worker/ = 0` (was 125+22+5+3) |
+| Split `worker-research.js` (7.5k) → `Worker/research/*` (14 modules + barrel) | ✅ | Barrel 12 lines, 14 modules, `wc -l Worker/* = 11609`, node import 41 keys |
+| Wire vision-scan routes (was FE→404) | ✅ | `trollmap-worker.js:1311-1313` wired, `research/vision.js` 227 lines, FE caller `supplemental-layers.js:271` now works |
+| Unify `LAKE_NAME_TO_R2_KEY` → `js/data/lake-keys.js` | ✅ FIXED 2026-07-22 | Single source `js/data/lake-keys.js` (101 entries). Frontend `supplemental-layers.js` now alias `resolveSupplementalKey=resolveBoundaryKey=resolveR2Key`. Worker `research/limnology.js` imports canonical map via `../../js/data/lake-keys.js`, map size 101 (was 74). Fallback generic `lake_${base}` removed, returns null on miss. Bundle test 517KB includes full map. |
+| Collapse `IntelV2` shim in smart-plan.js | ✅ | No `const IntelV2 = {...}` anymore, direct `import {SPECIES_BEHAVIOR_V2}` |
+| Node import verification (worker default + 41 research exports) | ✅ | `node --input-type=module` default.fetch present, research exports 41 |
+
+**Remaining (next pass) — ALL DONE 2026-07-22:**
+- ArcGIS GIS handler dedupe — ✅ DONE (Worker/core/arcgis.js, 2054→1882→1783 lines, 517→508KB)
+- Characterization tests — ✅ DONE (package.json + vitest 79 tests, parity check, fixtures)
+- Lake-keys unification — ✅ DONE (101 entries equal, null guard, bundle ok)
+- Repo hygiene — ✅ DONE (wateree_zones_overlay.geojson deleted, .gitignore, README rewritten)
+- Router table + orphan decisions — ✅ DONE (Worker/router.js, audit-plan deleted, 16 orphans documented)
+- Geo toolkit — ✅ DONE (utils/geo.js canonical, 7 duplicates removed)
+- Frontend api client + window bus — ✅ DONE (js/api/worker.js, js/legacy-window.js, main.js refactor)
+- **Next (optional Phase 6 hardening):** download providers as plugins, RESEARCH_AGENTS prompts to separate files, KV/R2 caching contract tests, AHQ regex → LLM behind flag
+- Orphan route cleanup — 0 frontend hits for 12 routes (dataset-hunt, gap-*, map-facts, thermocline-search, approve, shared/publish|status|quarantine, audit-plan, duke-flow-arrivals, dominion-saluda, rivers, lake-intel-sources) — need log then prune
+- FE `window.*` bus — 393 assignments (was 80+), side-effect imports in `main.js`, no `js/api/worker.js`
+- Geo helpers — 6 duplicates vs `utils/geo.js`
+- Repo hygiene — `wateree_zones_overlay.geojson` 5.8 MB still in root, README stale (refs `species-intel-v2.js`, `js/data/lake-research-engine.js`, `~3,950 lines`)
+- **Full report:** `REFACTOR_STATUS_UPDATE.md`
 
 ---
 

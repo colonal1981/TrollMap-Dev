@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+.env.local
+.wrangler/
+.dev.vars
+.DS_Store
+*.log
+coverage/
+wateree_zones_overlay.geojson

@@ -1,31 +1,27 @@
 /**
  * supplemental-layers.js — Supplemental PBF-extracted layer integration.
+ * Single source of truth for lake→R2 key is js/data/lake-keys.js
  */
 
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../data/lake-keys.js';
+import { distMiFromCoords as distMi } from '../utils/geo.js';
 
 // Canvas renderer — shared for all supplemental polygon/line layers
 const _canvasRenderer = L.canvas({ padding: 0.5 });
 
-// Fuzzy name → R2 key (shared with contour-data via lake-keys.js)
-export function resolveSupplementalKey(displayName) {
-  return resolveR2Key(displayName);
-}
+// ── Unified resolvers ───────────────────────────────────────────────────
+// Previously resolveBoundaryKey duplicated the fuzzy logic from lake-keys.js
+// with a local copy, which caused drift (e.g. missing entries, coastal keys).
+// That broke the geospatial adapter in lake-research-engine.js which uses both
+// resolvers to fetch supplemental depth_areas + boundary geojson. Now both
+// aliases point to the canonical resolveR2Key.
+export const resolveSupplementalKey = resolveR2Key;
+export const resolveBoundaryKey = resolveR2Key;
 
-// Same fuzzy logic for boundary key
-export function resolveBoundaryKey(displayName) {
-  if (LAKE_NAME_TO_R2_KEY[displayName]) return LAKE_NAME_TO_R2_KEY[displayName];
-  const stripped = displayName.replace(/,\s*[A-Z]{2}(\/[A-Z]{2})?$/, '').trim();
-  if (LAKE_NAME_TO_R2_KEY[stripped]) return LAKE_NAME_TO_R2_KEY[stripped];
-  const dl = stripped.toLowerCase();
-  const found = Object.entries(LAKE_NAME_TO_R2_KEY).find(([k]) => {
-    const kl = k.toLowerCase().replace(/,\s*[a-z]{2}(\/[a-z]{2})?$/, '').trim();
-    return dl.includes(kl) || kl.includes(dl);
-  });
-  return found ? found[1] : null;
-}
+// Re-export map for back-compat
+export { LAKE_NAME_TO_R2_KEY, resolveR2Key };
 
 const DEPTH_BANDS = [
   { max: 10,       color: '#e63946' },
@@ -418,13 +414,7 @@ function wirePOIButton() {
 }
 
 export function getSupplementalContext(lat, lon, radiusMi = 0.5) {
-  const R = 3958.8;
-  const toRad = d => d * Math.PI / 180;
-  function distMi(lat1, lon1, lat2, lon2) {
-    const dLat = toRad(lat2-lat1), dLon = toRad(lon2-lon1);
-    const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  }
+  // distMi now from utils/geo.js (canonical)
   const results = { attractors: [], fishingPoints: [], pois: [] };
   if (!_activeLakeKey) return results;
   if (_poiLayer) {

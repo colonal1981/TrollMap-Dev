@@ -80,9 +80,4 @@ function resolveDrawdownSource(lakeName, state, reservoirOwner) {
   return null;
 }
 
-// ─── EXTENDED EVIDENCE ACQUISITION PIPELINE FUNCTIONS ───
-
-
-// ── Supplemental R2 Key Map — mirrors supplemental-layers.js LAKE_NAME_TO_R2_KEY ──
-
 export { DUKE_CRA_PDFS, OWNER_DRAWDOWN_SOURCES, resolveDrawdownSource };
