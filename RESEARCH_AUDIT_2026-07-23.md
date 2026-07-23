@@ -8,7 +8,7 @@ This is a fresh audit of the current checkout, not a restatement of the earlier 
 
 ## Implementation status — 2026-07-23
 
-**Phase 1 and Phase 2 have begun.** The implementation removed 749 lines of research code while retaining the existing module boundaries.
+**Phase 1 and Phase 2 have begun.** The implementation substantially reduced research code while retaining the existing module boundaries.
 
 Completed:
 
