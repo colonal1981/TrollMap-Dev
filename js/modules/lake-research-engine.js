@@ -23,6 +23,7 @@ import { LAKE_DB } from '../data/lakes.js';
 import { resolveR2Key } from './contour-data.js';
 import { resolveSupplementalKey, resolveBoundaryKey } from './supplemental-layers.js';
 import { geoDistanceFt } from '../utils/geo.js';
+import { coerceStockingsArray, coerceSpeciesArray } from '../utils/coerce.js';
 
 // Setup global caches and references
 window.TROLLMAP_RESEARCHED_CACHE = window.TROLLMAP_RESEARCHED_CACHE || {};
@@ -205,9 +206,9 @@ function buildDeterministicSummary(profile) {
     if (identity.maxDepthFt) s += `${identity.surfaceAreaAcres ? ',' : ''} with a maximum depth near ${identity.maxDepthFt} feet`;
     sentences.push(`${s}.`);
   }
-  if (biology.predatorSpecies?.length) {
+  if (Array.isArray(biology.predatorSpecies) && biology.predatorSpecies.length) {
     let s = `Confirmed sport fish include ${biology.predatorSpecies.join(', ')}`;
-    if (biology.knownStockings?.length) s += `; documented stocking notes include ${biology.knownStockings.map(x => x.species).join(', ')}`;
+    if (Array.isArray(biology.knownStockings) && biology.knownStockings.length) s += `; documented stocking notes include ${biology.knownStockings.map(x => x.species).join(', ')}`;
     sentences.push(`${s}.`);
   }
   const limBits = [];
@@ -1886,6 +1887,17 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   };
 
   const evidence = mergeEvidenceMaps(det.evidence || {}, buildWqpEvidence(wqp));
+  // Defensive: ensure biology arrays are real arrays. A malformed value (e.g. a
+  // string from an earlier LLM run or a partial save) previously caused profile
+  // assembly to throw "biology.knownStockings.map is not a function" — most often
+  // when resuming a single agent (e.g. Species Intelligence) that loads the
+  // biology section straight from the saved profile. Normalize here so both the
+  // in-memory assembly and the subsequently saved profile are repaired.
+  if (agentSections.biology) {
+    agentSections.biology.knownStockings = coerceStockingsArray(agentSections.biology.knownStockings);
+    agentSections.biology.predatorSpecies = coerceSpeciesArray(agentSections.biology.predatorSpecies);
+  }
+
   const factualSummary = buildDeterministicSummary({ lakeName, identity: agentSections.identity, biology: agentSections.biology, limnology: agentSections.limnology, habitat: agentSections.habitat });
   if (factualSummary) {
     agentSections.summary = { text: factualSummary, keywords: det.summary?.keywords || [] };
@@ -1987,6 +1999,10 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
       }
       merged.predatorSpecies = [...seen.values()];
       merged.knownStockings  = merged.knownStockings?.length ? merged.knownStockings : (existing.knownStockings?.length ? existing.knownStockings : (det.biology?.knownStockings || []));
+      // Coerce in case the LLM returned a non-array (string/object) — prevents
+      // downstream ".map is not a function" crashes and repairs saved data.
+      merged.knownStockings = coerceStockingsArray(merged.knownStockings);
+      merged.predatorSpecies = coerceSpeciesArray(merged.predatorSpecies);
     }
     // Fisheries agent returns trollingIntelligence
     if (agentKey === 'fisheries') {
@@ -2128,7 +2144,11 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   const safeBiology = {
     ...(agentSections.biology || {}),
     predatorSpecies: finalSpecies.length ? finalSpecies : detSpecies,
-    knownStockings: agentSections.biology?.knownStockings?.length ? agentSections.biology.knownStockings : (det.biology?.knownStockings || []),
+    knownStockings: coerceStockingsArray(
+      (agentSections.biology?.knownStockings?.length ? agentSections.biology.knownStockings : null)
+      || (Array.isArray(det.biology?.knownStockings) && det.biology.knownStockings.length ? det.biology.knownStockings : null)
+      || []
+    ),
   };
 
   // Build source map — seed from existing saved sources first so resume runs
