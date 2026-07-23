@@ -1,7 +1,7 @@
 // research/agents.js — split from worker-research.js (behavior-preserving) 
 import { JSON_HEADERS, callLLM, extractLLMText } from '../worker-core.js';
 import { LAKES, lakeKeyFromName } from '../worker-data.js';
-import { tinyfishFetch } from './clients.js';
+import { fetchStateRegulations, getLakeRegulations, tinyfishFetch } from './clients.js';
 import { extractJsonPossibly } from './keys.js';
 import { handleResearchDiscover } from './discover.js';
 import { handleResearchProxyDownload } from './download.js';
@@ -332,7 +332,7 @@ JSON only.`;
   regulations: {
     label: "Regulations",
     order: 6,
-    system: "You are a fishing regulations specialist. Extract fishing regulations from the provided live regulations page content. For each species: check if the lake appears in an exception list. If listed, use the exception rule. If not listed, the statewide rule applies. Return ONLY valid JSON. Never invent limits — if unknown, set null.",
+    system: "You are a fishing regulations specialist. Extract fishing regulations from the provided approved regulation-source content. For each species: check if the lake appears in an exception list. If listed, use the exception rule. If not listed, the statewide rule applies. Return ONLY valid JSON. Never invent limits — if unknown, set null.",
     userTemplate: (lakeName, state, prev) => {
       const facts = (prev?._extractedFacts || [])
         .filter(f => /regulation|creel|limit|season|closed|gear|size.*limit|possession|sizeLimit|creelLimit/i.test(f.category + ' ' + f.fact))
@@ -343,14 +343,14 @@ JSON only.`;
         : 'Not available';
       return `Extract fishing regulations for ${lakeName} (${state}).
 
-LIVE REGULATIONS PAGE:
+APPROVED REGULATION SOURCE:
 ${regsContent}
 
 EXTRACTED REGULATION FACTS (use to fill species-specific fields):
 ${factsBlock || 'None extracted'}
 
 INSTRUCTIONS:
-1. Read the regulations page above carefully
+1. Read the approved regulation source above carefully
 2. For each species, find rows that apply to ${lakeName}
 3. If ${lakeName} is in an exception row, use that exception rule
 4. If not listed, statewide rule applies
@@ -396,7 +396,7 @@ Return ONLY valid JSON:
     },
     "notes": "Verify at official agency site before fishing."
   },
-  "sources": [{"label":"eRegulations SC Freshwater Fishing","url":"https://www.eregulations.com/southcarolina/fishing","trust":"OFFICIAL"}]
+  "sources": [{"label":"Approved state regulations digest","url":"r2:regulations","trust":"OFFICIAL"}]
 }
 JSON only. Never output a string or array for creelLimits or sizeLimits.`;
     },
@@ -739,40 +739,22 @@ async function handleResearchAgent(request, env) {
     }
   }
 
-  // Ground regulations agent with live eRegulations page — replaces LLM memory with actual current rules
+  // Regulations use the approved R2 digest through the shared parser. This avoids
+  // baking live agency/eRegulations URLs into the agent path.
   if (agentKey === 'regulations') {
-    const regsUrls = {
-      SC: 'https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits',
-      NC: 'https://www.eregulations.com/northcarolina/fishing/warm-water-game-fish-regulations',
-      GA: 'https://www.eregulations.com/georgia/fishing/game-species-daily-limits',
-      TN: 'https://www.tn.gov/twra/fishing/regulations.html',
-    };
-    const regsUrl = regsUrls[state] || regsUrls.SC;
     try {
-      const regsRes = await fetch(regsUrl, {
-        headers: { 'User-Agent': 'TrollMap/15 Evidence Engine', 'Accept': 'text/html' },
-        cf: { cacheTtl: 86400, cacheEverything: true }
-      });
-      if (regsRes.ok) {
-        let regsText = await regsRes.text();
-        regsText = regsText
-          .replace(/<script[\s\S]*?<\/script>/gi, '')
-          .replace(/<style[\s\S]*?<\/style>/gi, '')
-          .replace(/<[^>]+>/g, ' ')
-          .replace(/\s{2,}/g, ' ')
-          .trim()
-          .slice(0, 30000);
-        groundedPrev = {
-          ...previousResults,
-          _regsSource: {
-            url: regsUrl,
-            content: regsText,
-            note: 'LIVE OFFICIAL REGULATIONS PAGE — use this as authoritative source. Extract ALL species rules that apply to ' + lakeName + '. For statewide rules, check if ' + lakeName + ' appears in any exception list. If not listed as an exception, the statewide rule applies. Do NOT use training data for specific limits.'
-          }
-        };
-      }
+      const stateRegulations = await fetchStateRegulations(state, env);
+      const applicableRegulations = getLakeRegulations(stateRegulations, lakeName);
+      groundedPrev = {
+        ...previousResults,
+        _regsSource: {
+          url: 'r2:regulations',
+          content: JSON.stringify(applicableRegulations),
+          note: 'APPROVED R2 REGULATIONS DIGEST — use this parsed statewide and lake-specific data. Never invent limits.'
+        }
+      };
     } catch (e) {
-      console.warn('Regulations page fetch failed: ' + e.message);
+      console.warn('R2 regulations load failed: ' + e.message);
     }
   }
 

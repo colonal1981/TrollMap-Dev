@@ -2,7 +2,7 @@
 import { CORS, JSON_HEADERS, callLLM, extractLLMText } from '../worker-core.js';
 import { getLakeIntel, lakeKeyFromName } from '../worker-data.js';
 import { tinyfishSearch } from './clients.js';
-import { RESEARCH_CANONICAL_IDS, extractJsonPossibly, researchStorageId, sanitizeLakeId } from './keys.js';
+import { extractJsonPossibly, researchStorageId } from './keys.js';
 import { calculateSectionConfidence, gateOverallConfidence } from './agents.js';
 
 async function handleResearchList(env) {
@@ -26,21 +26,7 @@ async function handleResearchList(env) {
 }
 
 async function handleResearchGet(env, lakeId) {
-  const requestedSafe = sanitizeLakeId(lakeId);
-  let safe = researchStorageId(lakeId);
-  // Preserve existing legacy redirects for unrelated historical names.
-  const LEGACY_PROFILE_KEYS = {
-    'lake_thurmond_sc': 'clarks_hill_thurmond_sc_ga',
-    'clarks_hill_lake_ga': 'clarks_hill_thurmond_sc_ga',
-    'j_strom_thurmond_lake': 'clarks_hill_thurmond_sc_ga',
-    'thurmond_lake_sc': 'clarks_hill_thurmond_sc_ga',
-    'richard_b_russell_lake': 'lake_russell_sc',
-    'lake_russell_ga': 'lake_russell_sc',
-    'lake_russell_sc_ga': 'lake_russell_sc',
-  };
-  if (!RESEARCH_CANONICAL_IDS[requestedSafe] && LEGACY_PROFILE_KEYS[requestedSafe]) {
-    safe = LEGACY_PROFILE_KEYS[requestedSafe];
-  }
+  const safe = researchStorageId(lakeId);
   const masterKey = `lakes/${safe}.json`;
   const obj = await env.R2_TROLLMAP_CHARTPACKS.get(masterKey);
   if (!obj) return new Response(JSON.stringify({ok:false, error:`no profile for ${lakeId} (${safe})`}), {status:404, headers:JSON_HEADERS});

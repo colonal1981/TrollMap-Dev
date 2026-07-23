@@ -1,7 +1,6 @@
 // research/discover.js — split from worker-research.js (behavior-preserving)
 import { JSON_HEADERS } from '../worker-core.js';
-import { tinyfishFetch, tinyfishSearch } from './clients.js';
-import { DUKE_CRA_PDFS, resolveDrawdownSource } from './drawdown.js';
+import { STATE_REGULATIONS_CONFIG, tinyfishFetch, tinyfishSearch } from './clients.js';
 import { KNOWN_BAD_NEPIS_IDS, buildNepisSearchUrl } from './dataset.js';
 import { parseLakeBaseName } from './keys.js';
 
@@ -15,17 +14,11 @@ async function handleResearchDiscover(request, env) {
     return new Response(JSON.stringify({ success: false, error: "Missing lakeName" }), { status: 400, headers: JSON_HEADERS });
   }
 
-  // baseName is the lake "base name" (suffix + abbreviation-normalized) used for
-  // baseLower-keyed lookups (TWRA_LAKE_PAGES, LAKE_SYSTEM_ALIASES,
-  // LAKE_OWNER_DOMAINS, GROKIPEDIA_SLUGS). parseLakeBaseName expands "Ft." →
-  // "Fort" so "Ft. Loudoun Reservoir, TN" resolves to baseLower "fort loudoun"
-  // and the TWRA seed (plus system aliases + owner domains) actually fires.
-  // Shared with the test suite via research/keys.js.
+  // Normalize display names once. This supports R2 source lookup without making
+  // live-source discovery depend on a growing per-lake alias table.
   const baseName = parseLakeBaseName(lakeName);
   const baseLower = baseName.toLowerCase();
-  const otherLakeNames = ['murray','marion','moultrie','hartwell','keowee','jocassee','thurmond','clarks hill','clark hill','russell','wylie','norman','hickory','james','rhodhiss','mountain island','wateree','robinson','monticello','greenwood','secession','yates','martin'];
-
-  const KNOWN_BAD_NEPIS_IDS = new Set(['91024IW5','9100D35L']);
+  const queryLake = lakeName.replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i, '').trim();
 
   const offLakePattern = (title, url) => {
     const combined = `${title} ${url}`.toLowerCase();
@@ -49,64 +42,15 @@ async function handleResearchDiscover(request, env) {
     if (/stripersonline\.com|bassresource\.com|carolinasportsman\.com\/forums|fishingnc\.com\/forum|fishingsc\.com\/forum|theoutdoorstrader\.com|scstriperfishing|bassfishingforum|iceshanty\.com|fishingcommunity|thefishingwebsite|southernfishingnews\.com\/forum|fishingtalkforums|angler\.com\/forum|reddit\.com/i.test(url)) return 'fishing_forum';
     // Review/booking/aggregator sites — no fishing intelligence value
     if (/yelp\.com|tripadvisor\.com|fishingbooker\.com|getmyboat\.com|viator\.com|expedia\.com|booking\.com/i.test(url)) return 'review_booking_site';
-    for (const other of otherLakeNames) {
-      if (other === baseLower) continue;
-      if (combined.includes(`lake ${other}`) && !combined.includes(baseLower)) {
-        if (/regs\.html|description\.html/.test(combined) && combined.includes(`/${other}/`) && !combined.includes(baseLower)) return other;
-      }
-    }
     return null;
   };
 
-  // State-specific config — direct agency sources, no eRegulations SPA
-  let dnrName = "SCDNR";
-  let regsUrl = "https://www.dnr.sc.gov/regs/pdf/25SCAB-PP2-RE.pdf";
-  let regsTitle = "SC Freshwater Fishing Regulations (SCDNR)";
-  if (state === "NC") { dnrName = "NCWRC"; regsUrl = "https://www.ncwildlife.gov/media/4600/download?attachment="; regsTitle = "NC Inland Fishing Regulations (NCWRC)"; }
-  else if (state === "GA") { dnrName = "GADNR"; regsUrl = "https://georgiawildlife.com/sites/default/files/wrd/pdf/regulations/GA2026_Hunting&Fishing%20Regulations.pdf"; regsTitle = "GA Hunting & Fishing Regulations 2025-2026 (GADNR)"; }
-  else if (state === "TN") { dnrName = "TWRA"; regsUrl = "https://www.tn.gov/twra/fishing-regs/statewide-creel-length-limits.html"; regsTitle = "Tennessee Statewide Creel & Length Limits (TWRA)"; }
+  // State label only; regulation documents come from the approved R2 config.
+  const dnrName = ({ SC: 'SCDNR', NC: 'NCWRC', GA: 'GADNR', TN: 'TWRA' })[state] || 'SCDNR';
 
-  // Border lake query name overrides
-  const queryLake = lakeName.replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i,'').trim();
-  const queryLakeOverrides = {
-    'lake russell': 'Richard B. Russell Lake', 'russell': 'Richard B. Russell Lake',
-    'lake thurmond': 'J. Strom Thurmond Lake', 'thurmond': 'J. Strom Thurmond Lake',
-    'clarks hill': 'J. Strom Thurmond Lake', 'clark hill': 'J. Strom Thurmond Lake',
-    // Worker/TWRA dropdown names are reservoir-form; search the public names.
-    'norris reservoir': 'Norris Lake', 'norris lake': 'Norris Lake',
-    'douglas reservoir': 'Douglas Lake', 'douglas lake': 'Douglas Lake',
-    'watauga lake': 'Watauga Reservoir', 'watauga reservoir': 'Watauga Reservoir',
-  };
-  const queryLakeFinal = queryLakeOverrides[queryLake.toLowerCase()] || queryLake;
+  // Grokipedia is an allowed source, but use generic page candidates instead of
+  // maintaining lake-by-lake slugs or companion-page seeds.
 
-  // Owner-aware drawdown seeding
-  const reservoirOwner = body.reservoirOwner || null;
-  const drawdownSource = resolveDrawdownSource(lakeName, state, reservoirOwner);
-
-  // ── GROKIPEDIA SLUGS ──────────────────────────────────────────────────────
-  const GROKIPEDIA_SLUGS = {
-    'wateree': 'lake_wateree', 'murray': 'Saluda_River',
-    'blewett falls': 'blewett_falls_lake',
-    'marion': 'Lake_Marion_(South_Carolina)', 'moultrie': 'Lake_Moultrie',
-    'monticello': 'monticello_reservoir', 'greenwood': 'Lake_Greenwood_(South_Carolina)',
-    'keowee': 'keowee', 'jocassee': 'jocassee_dam', 'hartwell': 'Lake_Hartwell',
-    'wylie': 'Lake_Wylie', 'secession': 'rocky_river_south_carolina',
-    'fishing creek': 'fishing_creek_reservoir', 'parr': 'parr_reservoir',
-    'russell': 'Richard_B._Russell_Lake', 'thurmond': 'Savannah_River',
-    'norris': 'lake_norris', 'norris lake': 'lake_norris',
-    'douglas': 'douglas_lake', 'douglas lake': 'douglas_lake',
-    'watauga': 'watauga_reservoir', 'watauga lake': 'watauga_reservoir',
-    'clarks hill': 'Savannah_River', 'norman': 'norman_lake',
-    'chatuge': 'Chatuge_Lake', 'blue ridge': 'Lake_Blue_Ridge',
-    'fontana': 'Fontana_Lake', 'chickamauga': 'Chickamauga_Lake',
-    'james': 'Catawba_River', 'hickory': 'Catawba_River',
-    'rhodhiss': 'Catawba_River', 'mountain island': 'Catawba_River',
-  };
-
-  // ─── LAKE AUTHORITY METADATA ─────────────────────────────────────────────
-  // Per-lake owner domains, state agency domains, and system/basin aliases used
-  // by query builders. Keeps queries lake-agnostic — no lake name hard-coded
-  // in query logic; everything flows through this table.
   const STATE_FISH_AGENCY_DOMAINS = {
     SC: ['dnr.sc.gov', 'des.sc.gov'],
     NC: ['ncwildlife.gov', 'ncwildlife.org', 'deq.nc.gov', 'files.nc.gov'],
@@ -114,65 +58,13 @@ async function handleResearchDiscover(request, env) {
     TN: ['tn.gov/twra', 'tn.gov/environment'],
   };
   const STATE_ENVIRONMENT_DOMAINS = {
-    SC: ['dnr.sc.gov', 'des.sc.gov'],
+    SC: ['des.sc.gov', 'dnr.sc.gov'],
     NC: ['deq.nc.gov', 'ncwildlife.gov'],
     GA: ['epd.georgia.gov', 'georgiawildlife.com'],
     TN: ['tn.gov/environment'],
   };
-  // Per-lake system/basin aliases used in searches — canonical lake name is always
-  // first; basin/project aliases follow. Keyed by baseLower.
-  const LAKE_SYSTEM_ALIASES = {
-    'wateree':        ['Catawba-Wateree', 'Catawba-Wateree Project'],
-    'wylie':          ['Catawba-Wateree', 'Catawba-Wateree Project'],
-    'norman':         ['Catawba-Wateree', 'Catawba-Wateree Project'],
-    'hickory':        ['Catawba-Wateree', 'Catawba-Wateree Project'],
-    'james':          ['Catawba-Wateree', 'Catawba-Wateree Project'],
-    'rhodhiss':       ['Catawba-Wateree', 'Catawba-Wateree Project'],
-    'mountain island':['Catawba-Wateree', 'Catawba-Wateree Project'],
-    'marion':         ['Santee-Cooper', 'Santee Cooper Lakes'],
-    'moultrie':       ['Santee-Cooper', 'Santee Cooper Lakes'],
-    'hartwell':       ['Savannah River Lakes', 'Savannah River Basin'],
-    'russell':        ['Savannah River Lakes', 'Savannah River Basin'],
-    'thurmond':       ['Savannah River Lakes', 'Savannah River Basin'],
-    'clarks hill':    ['Savannah River Lakes', 'Savannah River Basin'],
-    'oconee':         ['Oconee-Sinclair', 'Georgia Power Lakes'],
-    'sinclair':       ['Oconee-Sinclair', 'Georgia Power Lakes'],
-    'lanier':         ['Buford Dam', 'Lake Sidney Lanier', 'USACE Lanier'],
-    'allatoona':      ['USACE Allatoona'],
-    'norris':         ['TVA Lakes', 'Tennessee Valley Authority'],
-    'douglas':        ['TVA Lakes', 'Tennessee Valley Authority'],
-    'cherokee':       ['TVA Lakes', 'Tennessee Valley Authority'],
-    'chickamauga':    ['TVA Lakes', 'Tennessee Valley Authority'],
-    'fort loudoun':   ['TVA Lakes', 'Tennessee Valley Authority'],
-    'tellico':        ['TVA Lakes', 'Tennessee Valley Authority'],
-    'watauga':        ['TVA Lakes', 'Tennessee Valley Authority'],
-    'boone':          ['TVA Lakes', 'Tennessee Valley Authority'],
-  };
-  // Owner domain lookup by baseLower — drives site: queries
-  const LAKE_OWNER_DOMAINS = {
-    'wateree': ['duke-energy.com'], 'wylie': ['duke-energy.com'],
-    'norman': ['duke-energy.com'], 'hickory': ['duke-energy.com'],
-    'james': ['duke-energy.com'], 'rhodhiss': ['duke-energy.com'],
-    'mountain island': ['duke-energy.com'],
-    'fishing creek': ['duke-energy.com'], 'great falls': ['duke-energy.com'],
-    'jocassee': ['duke-energy.com'], 'keowee': ['duke-energy.com'],
-    'oconee': ['georgiapower.com'], 'sinclair': ['georgiapower.com'],
-    'hartwell': ['sas.usace.army.mil'], 'russell': ['sas.usace.army.mil'],
-    'thurmond': ['sas.usace.army.mil'], 'clarks hill': ['sas.usace.army.mil'],
-    'lanier': ['sam.usace.army.mil'], 'allatoona': ['sam.usace.army.mil'],
-    'norris': ['tva.com'], 'douglas': ['tva.com'], 'cherokee': ['tva.com'],
-    'chickamauga': ['tva.com'], 'fort loudoun': ['tva.com'],
-    'tellico': ['tva.com'], 'watauga': ['tva.com'], 'boone': ['tva.com'],
-    'marion': ['santeecooper.com'], 'moultrie': ['santeecooper.com'],
-  };
-  // SC SCDNR fisheries publication series — lake-agnostic, highly productive
-  const SC_FWFI_QUERY = (lake) => `"${lake}" "Fisheries Investigations in Lakes and Streams" site:dnr.sc.gov/fish/fwfi`;
-
-  const lakeOwnerDomains = LAKE_OWNER_DOMAINS[baseLower] || [];
-  const lakeSystemAliases = LAKE_SYSTEM_ALIASES[baseLower] || [];
   const stateFishDomain = (STATE_FISH_AGENCY_DOMAINS[state] || [])[0] || '';
   const stateEnvDomain = (STATE_ENVIRONMENT_DOMAINS[state] || [])[0] || '';
-  const ownerOrEnvDomain = lakeOwnerDomains[0] || stateEnvDomain;
 
   // ─── CANONICAL URL NORMALIZER ─────────────────────────────────────────────
   // Implements section 12.4 rules. Returns { canonicalUrl, requestedUrl,
@@ -276,14 +168,6 @@ async function handleResearchDiscover(request, env) {
     if (url.endsWith('.pdf') || /\/open$|download\?attachment|\/media\/\d+\/download/.test(url)) score += 1;
 
     // Negative signals
-    const otherLakeNames = ['murray','marion','moultrie','hartwell','keowee','jocassee','thurmond','clarks hill','clark hill','russell','wylie','norman','hickory','james','rhodhiss','mountain island','wateree','robinson','monticello','greenwood','secession','lanier','oconee','sinclair','allatoona','norris','douglas','cherokee','chickamauga'];
-    for (const other of otherLakeNames) {
-      if (other === baseLower) continue;
-      if (title.includes(`lake ${other}`) || title.includes(`${other} lake`) || title.includes(`${other} reservoir`)) {
-        score -= 6;
-        break;
-      }
-    }
     // Another state in title context (rough signal)
     const otherStates = ['florida','virginia','alabama','mississippi','arkansas','ohio','indiana','michigan','wisconsin','illinois','minnesota'];
     if (otherStates.some(s => title.includes(s))) score -= 5;
@@ -299,49 +183,37 @@ const AGENT_DISCOVERY_QUERIES = {
   identity: {
     SC: (lake) => [
       `"${lake}" dam owner FERC license reservoir filetype:pdf`,
-      ...(lakeOwnerDomains[0] ? [`"${lake}" reservoir project site:${lakeOwnerDomains[0]}`] : []),
-      ...(lakeSystemAliases[0] ? [`"${lakeSystemAliases[0]}" "${lake}" project license reservoir filetype:pdf`] : []),
     ],
     NC: (lake) => [
       `"${lake}" dam owner FERC license reservoir filetype:pdf`,
-      ...(lakeOwnerDomains[0] ? [`"${lake}" reservoir project site:${lakeOwnerDomains[0]}`] : []),
-      ...(lakeSystemAliases[0] ? [`"${lakeSystemAliases[0]}" "${lake}" project license reservoir filetype:pdf`] : []),
     ],
     GA: (lake) => [
       `"${lake}" dam owner FERC license reservoir filetype:pdf`,
-      ...(lakeOwnerDomains[0] ? [`"${lake}" reservoir project site:${lakeOwnerDomains[0]}`] : []),
-      ...(lakeSystemAliases[0] ? [`"${lakeSystemAliases[0]}" "${lake}" project license reservoir filetype:pdf`] : []),
     ],
     TN: (lake) => [
       `"${lake}" dam owner FERC license reservoir filetype:pdf`,
-      ...(lakeOwnerDomains[0] ? [`"${lake}" reservoir project site:${lakeOwnerDomains[0]}`] : []),
-      ...(lakeSystemAliases[0] ? [`"${lakeSystemAliases[0]}" "${lake}" project license reservoir filetype:pdf`] : []),
     ],
   },
   limnology: {
     SC: (lake) => [
       `"${lake}" dissolved oxygen water quality monitoring assessment filetype:pdf`,
       `"${lake}" thermocline hypolimnion temperature profile filetype:pdf`,
-      ...(ownerOrEnvDomain ? [`"${lake}" water quality monitoring site:${ownerOrEnvDomain}`] : []),
-      ...(lakeSystemAliases[0] ? [`"${lakeSystemAliases[0]}" "${lake}" water quality monitoring filetype:pdf`] : []),
+      ...(stateEnvDomain ? [`"${lake}" water quality monitoring site:${stateEnvDomain}`] : []),
     ],
     NC: (lake) => [
       `"${lake}" dissolved oxygen water quality monitoring assessment filetype:pdf`,
       `"${lake}" thermocline hypolimnion temperature profile filetype:pdf`,
-      ...(ownerOrEnvDomain ? [`"${lake}" water quality monitoring site:${ownerOrEnvDomain}`] : []),
-      ...(lakeSystemAliases[0] ? [`"${lakeSystemAliases[0]}" "${lake}" water quality monitoring filetype:pdf`] : []),
+      ...(stateEnvDomain ? [`"${lake}" water quality monitoring site:${stateEnvDomain}`] : []),
     ],
     GA: (lake) => [
       `"${lake}" dissolved oxygen water quality monitoring assessment filetype:pdf`,
       `"${lake}" thermocline hypolimnion temperature profile filetype:pdf`,
-      ...(ownerOrEnvDomain ? [`"${lake}" water quality monitoring site:${ownerOrEnvDomain}`] : []),
-      ...(lakeSystemAliases[0] ? [`"${lakeSystemAliases[0]}" "${lake}" water quality monitoring filetype:pdf`] : []),
+      ...(stateEnvDomain ? [`"${lake}" water quality monitoring site:${stateEnvDomain}`] : []),
     ],
     TN: (lake) => [
       `"${lake}" dissolved oxygen water quality monitoring assessment filetype:pdf`,
       `"${lake}" thermocline hypolimnion temperature profile filetype:pdf`,
-      ...(ownerOrEnvDomain ? [`"${lake}" water quality monitoring site:${ownerOrEnvDomain}`] : []),
-      ...(lakeSystemAliases[0] ? [`"${lakeSystemAliases[0]}" "${lake}" water quality monitoring filetype:pdf`] : []),
+      ...(stateEnvDomain ? [`"${lake}" water quality monitoring site:${stateEnvDomain}`] : []),
     ],
   },
   biology: {
@@ -391,40 +263,32 @@ const AGENT_DISCOVERY_QUERIES = {
     SC: (lake) => [
       `"${lake}" aquatic vegetation hydrilla management -site:facebook.com -site:instagram.com`,
       `"${lake}" fish habitat enhancement assessment -site:facebook.com -site:instagram.com`,
-      ...(lakeOwnerDomains[0] ? [`"${lake}" shoreline habitat management site:${lakeOwnerDomains[0]}`] : []),
     ],
     NC: (lake) => [
       `"${lake}" aquatic vegetation hydrilla management -site:facebook.com -site:instagram.com`,
       `"${lake}" fish habitat enhancement assessment -site:facebook.com -site:instagram.com`,
-      ...(lakeOwnerDomains[0] ? [`"${lake}" shoreline habitat management site:${lakeOwnerDomains[0]}`] : []),
     ],
     GA: (lake) => [
       `"${lake}" aquatic vegetation hydrilla management -site:facebook.com -site:instagram.com`,
       `"${lake}" fish habitat enhancement assessment -site:facebook.com -site:instagram.com`,
-      ...(lakeOwnerDomains[0] ? [`"${lake}" shoreline habitat management site:${lakeOwnerDomains[0]}`] : []),
     ],
     TN: (lake) => [
       `"${lake}" aquatic vegetation hydrilla management -site:facebook.com -site:instagram.com`,
       `"${lake}" fish habitat enhancement assessment -site:facebook.com -site:instagram.com`,
-      ...(lakeOwnerDomains[0] ? [`"${lake}" shoreline habitat management site:${lakeOwnerDomains[0]}`] : []),
     ],
   },
   navigation: {
     SC: (lake) => [
       `"${lake}" navigation hazards channel markers -site:facebook.com -site:instagram.com -site:youtube.com`,
-      ...(lakeOwnerDomains[0] ? [`"${lake}" navigation shoal markers hazards site:${lakeOwnerDomains[0]}`] : []),
     ],
     NC: (lake) => [
       `"${lake}" navigation hazards channel markers -site:facebook.com -site:instagram.com -site:youtube.com`,
-      ...(lakeOwnerDomains[0] ? [`"${lake}" navigation shoal markers hazards site:${lakeOwnerDomains[0]}`] : []),
     ],
     GA: (lake) => [
       `"${lake}" navigation hazards channel markers -site:facebook.com -site:instagram.com -site:youtube.com`,
-      ...(lakeOwnerDomains[0] ? [`"${lake}" navigation shoal markers hazards site:${lakeOwnerDomains[0]}`] : []),
     ],
     TN: (lake) => [
       `"${lake}" navigation hazards channel markers -site:facebook.com -site:instagram.com -site:youtube.com`,
-      ...(lakeOwnerDomains[0] ? [`"${lake}" navigation shoal markers hazards site:${lakeOwnerDomains[0]}`] : []),
     ],
   },
   regulations: {
@@ -471,10 +335,6 @@ const AGENT_TO_TAGS = {
   summary: ['summary']
 };
 
-const KNOWN_BAD_NEPIS = new Set(['monticello']);
-  const skipNepis = KNOWN_BAD_NEPIS.has(baseLower);
-
-  const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
   const seenUrls = new Set();
   const queryLog = [];
   let discoveredSources = [];
@@ -497,72 +357,31 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
   const agentForSeeds = String(body.agent || '').trim().toLowerCase() || null;
   const wantsGrokipedia   = !agentForSeeds || ['identity','limnology','biology','habitat'].includes(agentForSeeds);
   const wantsRegs         = !agentForSeeds || agentForSeeds === 'regulations';
-  const wantsScdnrDesc    = !agentForSeeds || ['identity','habitat','navigation'].includes(agentForSeeds);
-  const wantsScdnrRegs    = !agentForSeeds || agentForSeeds === 'regulations';
   const wantsNepis        = !agentForSeeds || ['limnology'].includes(agentForSeeds);
-  const wantsOwnerDoc     = !agentForSeeds || ['identity','limnology'].includes(agentForSeeds);
-  const wantsDukeCra      = !agentForSeeds || ['identity','limnology'].includes(agentForSeeds);
 
-  // Grokipedia — identity/limnology/biology/habitat only
-  const grokSlug = GROKIPEDIA_SLUGS[baseLower];
-  const grokCandidates = grokSlug
-    ? [`https://grokipedia.com/page/${grokSlug}`]
-    : [
-        // Lake_ prefix first — avoids false-positive people pages (wateree_people, amby_murray, etc.)
-        `https://grokipedia.com/page/Lake_${baseName.replace(/\s+/g,'_')}`,
-        `https://grokipedia.com/page/Lake_${baseName.replace(/\s+/g,'_')}_Lake`,
-        `https://grokipedia.com/page/${baseName.replace(/\s+/g,'_').toLowerCase()}_lake`,
-        `https://grokipedia.com/page/${baseName.replace(/\s+/g,'_')}`,
-      ];
-  const resolvedGrokUrl = grokCandidates[0];
+  // Grokipedia is allowed, but never receives lake-specific routing. Try the
+  // predictable public page spellings and let citation following find sources.
+  const grokCandidates = [
+    `https://grokipedia.com/page/Lake_${baseName.replace(/\s+/g,'_')}`,
+    `https://grokipedia.com/page/Lake_${baseName.replace(/\s+/g,'_')}_Lake`,
+    `https://grokipedia.com/page/${baseName.replace(/\s+/g,'_').toLowerCase()}_lake`,
+    `https://grokipedia.com/page/${baseName.replace(/\s+/g,'_')}`,
+  ];
   if (wantsGrokipedia) {
-    if (grokSlug) {
-      addSeed({ title: `${lakeName} — Grokipedia`, type: 'HTML', authority: 'Grokipedia', url: resolvedGrokUrl, priority: 1, agentTags: ['identity','limnology','biology','habitat'] });
-    } else {
-      addSeed({ title: `${lakeName} — Grokipedia (auto)`, type: 'HTML', authority: 'Grokipedia', url: resolvedGrokUrl, priority: 2, agentTags: ['identity','limnology','biology','habitat'] });
-    }
-    if (baseLower === 'hartwell') {
-      addSeed({ title: 'Savannah River — Grokipedia', type: 'HTML', authority: 'Grokipedia', url: 'https://grokipedia.com/page/Savannah_River', priority: 2, agentTags: ['identity','limnology'] });
-    }
-    if (baseLower === 'thurmond' || baseLower === 'clarks hill') {
-      addSeed({ title: 'Little River (Columbia County, GA) — Grokipedia', type: 'HTML', authority: 'Grokipedia', url: 'https://grokipedia.com/page/little_river_columbia_county_georgia', priority: 2, agentTags: ['identity'] });
-    }
+    addSeed({ title: `${lakeName} — Grokipedia (discovered candidate)`, type: 'HTML', authority: 'Grokipedia', url: grokCandidates[0], priority: 2, agentTags: ['identity','limnology','biology','habitat'] });
   }
 
   // State regulations — regulations agent only
   // NOTE: regulations agent uses KV-cached fetchStateRegulations (0 docs needed) from R2 public bucket
   // User has all regs pages that matter uploaded to R2 (https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/regulations)
   // Primary source is R2 digests, fallback to live agency pages
-  const REGS_R2_BASE = 'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/regulations';
-  const R2_REGS_MAP = {
-    SC: `${REGS_R2_BASE}/sc_digest_2025_2026.pdf`,
-    NC: `${REGS_R2_BASE}/nc_digest_2025_2026.pdf`,
-    GA: `${REGS_R2_BASE}/ga_digest_2025_2026.pdf`,
-    TN: `${REGS_R2_BASE}/tn_digest_2025_2026.pdf`,
-  };
+  const r2RegsUrl = STATE_REGULATIONS_CONFIG[state]?.pages?.[0]?.url || null;
   if (wantsRegs) {
     // R2 digest primary (user uploaded, stable, free via TinyFish)
-    const r2RegsUrl = R2_REGS_MAP[state];
     if (r2RegsUrl) {
       addSeed({ title: `${state} Freshwater Regulations Digest (R2)`, type: 'PDF', authority: dnrName, url: r2RegsUrl, priority: 1, agentTags: ['regulations'] });
     }
-    // Live agency page fallback
-    addSeed({ title: regsTitle, type: 'HTML', authority: dnrName, url: regsUrl, priority: 2, agentTags: ['regulations'] });
-    if (state === 'GA') {
-      addSeed({ title: 'GA General Freshwater Regulations (eRegulations)', type: 'HTML', authority: 'GADNR', url: 'https://www.eregulations.com/georgia/fishing/general-regulations', priority: 2, agentTags: ['regulations'] });
-    }
   }
-
-  // SCDNR lake description — identity/habitat/navigation only
-  if (wantsScdnrDesc && state === 'SC') {
-    addSeed({ title: `Lake ${baseName} SCDNR Lake Description`, type: 'HTML', authority: 'SCDNR', url: `https://www.dnr.sc.gov/lakes/${baseLower}/description.html`, priority: 1, agentTags: ['identity','habitat','navigation'] });
-  }
-
-  // SCDNR regs page — regulations agent only
-  if (wantsScdnrRegs && state === 'SC') {
-    addSeed({ title: `Lake ${baseName} Regulations`, type: 'HTML', authority: 'SCDNR', url: `https://www.dnr.sc.gov/lakes/${baseLower}/regs.html`, priority: 1, agentTags: ['regulations'] });
-  }
-
 
   // TWRA reservoir profiles — R2-hosted static copies (live tn.gov blocks scrapers)
   // Contains species, regulations, seasonal patterns, stocking, depth, ramps for each TN lake.
@@ -631,34 +450,8 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
     addSeed({ title: `${baseName} GADNR Fishing Forecast`, type: 'HTML', authority: 'GADNR', url: GADNR_LAKE_PAGES[baseLower], priority: 1, agentTags: ['identity','biology','fisheries','regulations'] });
   }
 
-  // Owner/drawdown source — identity + limnology only
-  if (wantsOwnerDoc && drawdownSource) {
-    addSeed({ title: drawdownSource.label, type: drawdownSource.type, authority: drawdownSource.authority, url: drawdownSource.url, priority: 1, agentTags: ['identity','limnology'] });
-  }
-
-  // Duke CRA PDF — identity + limnology only
-  if (wantsDukeCra) {
-    const durCra = DUKE_CRA_PDFS[baseLower];
-    if (durCra) {
-      addSeed({ title: `${baseName} Lake Management Agreement — Duke Energy CRA`, type: 'PDF', authority: 'Duke Energy / FERC', url: durCra, priority: 1, agentTags: ['identity','limnology'] });
-    }
-  }
-
-  // State agency fishing news/trends page — best source of current seasonal pattern data
-  // Tagged fisheries only — these are narrative fishing reports not regulatory docs
-  const STATE_FISHING_NEWS = {
-    SC: { title: 'SCDNR Freshwater Fishing Trends', url: 'https://www.dnr.sc.gov/news/freshwater.html', authority: 'SCDNR' },
-    NC: { title: 'NCWRC Fishing Reports', url: 'https://www.ncwildlife.org/Fishing/Fishing-Where-to-Fish/Fishing-Reports', authority: 'NCWRC' },
-    GA: { title: 'Georgia DNR Fishing Forecasts', url: 'https://georgiawildlife.com/fishing/reports', authority: 'GADNR' },
-    TN: { title: 'TWRA Fishing Reports', url: 'https://www.tn.gov/twra/fishing/fishing-reports.html', authority: 'TWRA' },
-  };
-  const fishingNews = STATE_FISHING_NEWS[state];
-  if (fishingNews && (!agentForSeeds || agentForSeeds === 'fisheries')) {
-    addSeed({ title: fishingNews.title, type: 'HTML', authority: fishingNews.authority, url: fishingNews.url, priority: 1, agentTags: ['fisheries'] });
-  }
-
   // NEPIS EPA survey search — limnology only
-  if (wantsNepis && !skipNepis) {
+  if (wantsNepis) {
     addSeed({
       title: `EPA NSCEP search: Report on ${baseName} / Lake ${baseName}`,
       type: 'HTML', authority: 'EPA NSCEP',
@@ -672,7 +465,7 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
   // same authoritative sources Grokipedia used, handed to us for free.
   // Uses TinyFish (free) instead of Firecrawl. Links are extracted from markdown.
   // Only run for agents that benefit from Grokipedia citations.
-  if (wantsGrokipedia && (grokSlug || grokCandidates.length > 1)) {
+  if (wantsGrokipedia) {
     try {
       let grokUrl = null;
       let grokText = '';
@@ -885,15 +678,7 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
     const stateQueries = AGENT_DISCOVERY_QUERIES[agentKey][state];
     if (!stateQueries) continue;
 
-    const isClarksHillThurmond =
-      /thurmond|clarks?\s+hill/i.test(`${queryLake} ${queryLakeFinal}`);
-    const discoveryLakeNames = isClarksHillThurmond
-      ? [
-          queryLakeFinal,
-          'J. Strom Thurmond Lake',
-          'Clarks Hill Lake',
-        ]
-      : [queryLakeFinal];
+    const discoveryLakeNames = [queryLake];
     const queries = [
       ...new Set(
         discoveryLakeNames.flatMap(name => stateQueries(name))
@@ -902,17 +687,13 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
     if (!queries.length) continue;
     const discoveryAliases = [
       ...new Set([
-        ...lakeSystemAliases,
         ...discoveryLakeNames,
-        ...(isClarksHillThurmond
-          ? ['J. Strom Thurmond Lake', 'Clarks Hill Lake']
-          : []),
       ])
     ];
 
     const agentTags = AGENT_TO_TAGS[agentKey] || [agentKey];
     const purposeFn = AGENT_DISCOVERY_QUERIES._purposes?.[agentKey];
-    const purposeStr = purposeFn ? purposeFn(queryLakeFinal, state) : `Find authoritative ${agentKey} information about ${lakeName} in ${state}`;
+    const purposeStr = purposeFn ? purposeFn(queryLake, state) : `Find authoritative ${agentKey} information about ${lakeName} in ${state}`;
 
     for (let qIndex = 0; qIndex < queries.length; qIndex++) {
       const q = queries[qIndex];
@@ -1066,13 +847,8 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
     }
   }
 
-  // Fallback if nothing found
-  if (finalList.length === 0) {
-    finalList = [
-      { title: `${lakeName} SCDNR Lakes Information`, type: 'HTML', authority: 'SCDNR', url: `https://www.dnr.sc.gov/lakes/${baseLower}/description.html`, priority: 1 },
-      { title: regsTitle, type: 'HTML', authority: dnrName, url: regsUrl, priority: 1 },
-    ];
-  }
+  // No live hard-coded fallback: an empty result is an honest search outcome.
+  // R2 regulations, Grokipedia/Wikipedia, and search results have already been tried.
 
   return new Response(JSON.stringify({ success: true, sources: finalList, baseName, filteredCount: 0, queryLog }), { headers: JSON_HEADERS });
 }

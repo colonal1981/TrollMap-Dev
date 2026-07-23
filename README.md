@@ -55,7 +55,7 @@ trollmap-worker (Cloudflare Worker — ES modules, deployed via wrangler)
 ├── worker-research.js            # 12-line barrel re-exporting research/*
 ├── core/
 │   └── arcgis.js                 # Shared ArcGIS helper (P1 dedupe): fetchAllFeatures, getCachedGis, handleGisRoute
-└── research/                     # Full research pipeline split from 7.5k monolith → 14 modules (P0)
+└── research/                     # Full research pipeline split from 7.5k monolith → 13 modules (P0)
     ├── keys.js                   # sanitizeLakeId, researchStorageId, lakeResearchMasterKey (canonical lake id logic)
     ├── discover.js               # Source discovery (Tavily + seeded URLs)
     ├── download.js               # TinyFish → Scrape.do → Firecrawl → raw fallbacks
@@ -66,7 +66,7 @@ trollmap-worker (Cloudflare Worker — ES modules, deployed via wrangler)
     ├── shared.js                 # Shared R2 document registry check/store/query/publish
     ├── limnology.js              # WQP integration + supplemental R2 key map (now imports js/data/lake-keys.js single source 101 entries)
     ├── vision.js                 # Vision-scan routes (wired, was 404)
-    ├── clients.js, dataset.js, drawdown.js, facts-util.js, etc.
+    ├── clients.js, dataset.js, facts-util.js, etc.
 
 Frontend research modules (js/modules/)
 ├── lake-research-engine.js       # Pipeline logic, geospatial adapter (uses resolveSupplementalKey/BoundaryKey now unified to js/data/lake-keys.js)
@@ -109,7 +109,7 @@ The research pipeline builds verified intelligence profiles for each lake from o
 
 ### Pipeline stages (full run ~7 Tavily credits)
 
-1. **Deterministic facts** — SCDNR regulations parser, ramp/attractor GIS, owner-aware drawdown source seeding
+1. **Deterministic facts** — official ramp/attractor GIS and geospatial structure derivation
 2. **Source discovery** — 5 Tavily searches + seeded URLs (SCDNR, EPA NSCEP, Duke CRA PDFs, USACE, fishing guide publications)
 3. **Dataset hunt** — EPA NSCEP + SCDNR annual report discovery via Firecrawl
 4. **Download & normalize** — Firecrawl HTML extraction + browser-side PDF.js extraction (client-side, no server CPU)
@@ -123,12 +123,9 @@ The research pipeline builds verified intelligence profiles for each lake from o
 
 **Resume mode** (0 Tavily credits) — skips discovery and download, re-runs extraction from existing normalized documents in R2.
 
-### Owner-aware seeding
+### Discovery policy
 
-Operator-specific sources are automatically injected based on `reservoirOwner`:
-- **Duke Energy** → per-lake CRA agreement PDF (pool levels, drawdown schedule) for all 10 Catawba-Wateree chain lakes
-- **USACE** → Savannah or Wilmington District water control pages; CWMS Data API for live pool elevation
-- **All lakes** → EPA NSCEP search, state DNR description + regulations pages
+Research is search-first: it uses exact lake/state queries, official-domain queries, EPA NSCEP discovery, and citation following from Grokipedia and Wikipedia. The only automatic source seeds are approved R2 copies where the live source is scraper-hostile or otherwise not reliably discoverable. Live owner, agency, and drawdown pages are found through search rather than lake-by-lake URL maps.
 
 ### Profile schema (key fields)
 
@@ -197,7 +194,7 @@ cd F:\Worker
 wrangler deploy
 ```
 
-Worker is split across core/ + research/* modules — `wrangler.toml` declares `trollmap-worker.js` as main entry point; it imports `worker-core.js`, `worker-data.js`, `worker-species.js`, `worker-research.js` (12-line barrel), `core/arcgis.js`, and `research/*.js` (14 modules). Single source for R2 keys is `js/data/lake-keys.js` (101 entries) used by both frontend and worker (via `../../js/data/lake-keys.js` import in `research/limnology.js`). Tests via `npm test` (vitest 79 tests).
+Worker is split across core/ + research/* modules — `wrangler.toml` declares `trollmap-worker.js` as main entry point; it imports `worker-core.js`, `worker-data.js`, `worker-species.js`, `worker-research.js` (12-line barrel), `core/arcgis.js`, and `research/*.js` (13 modules). Single source for R2 keys is `js/data/lake-keys.js` (101 entries) used by both frontend and worker (via `../../js/data/lake-keys.js` import in `research/limnology.js`). Tests via `npm test`.
 
 `wrangler.toml` in the project root declares all bindings. Secrets set separately:
 ```powershell
