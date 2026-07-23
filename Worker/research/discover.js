@@ -260,7 +260,7 @@ async function handleResearchDiscover(request, env) {
     // Authority domain bonus
     try {
       const host = new URL(candidate.url).hostname.toLowerCase();
-      if (/\.gov$|usace\.army\.mil|epa\.gov|usgs\.gov|ferc\.gov|tva\.com|santeecooper\.com|duke-energy\.com|georgiapower\.com/.test(host)) score += 3;
+      if (/\.gov$|usace\.army\.mil|epa\.gov|usgs\.gov|ferc\.gov|tva\.com|tva\.gov|santeecooper\.com|duke-energy\.com|georgiapower\.com/.test(host)) score += 3;
       else if (/\.edu$/.test(host) && (candidate.url.toLowerCase().includes(baseLower) || title.includes(baseLower))) score += 2;
     } catch {}
 
@@ -669,6 +669,7 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
     try {
       let grokUrl = null;
       let grokText = '';
+      let grokStructuredLinks = [];  // hoisted out of loop — tfGrok is block-scoped inside
       for (const candidate of grokCandidates) {
         try {
           const tfGrok = await tinyfishFetch({
@@ -689,8 +690,7 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
             grokText = candidateMarkdown;
             // Store links for citation extraction (structured)
             if (candidateLinks.length) {
-              // Attach links to grokText result for later use
-              tfGrok._lastLinks = candidateLinks;
+              grokStructuredLinks = candidateLinks;
             }
             const grokSeed = guaranteedSeeds.find(s => s.authority === 'Grokipedia');
             if (grokSeed && grokSeed.url !== candidate) {
@@ -712,7 +712,7 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
         const citationLinks = [];
         const seen = new Set();
         // Try structured links first (more reliable than regex)
-        const structuredLinks = tfGrok._lastLinks || [];
+        const structuredLinks = grokStructuredLinks || [];
         if (structuredLinks.length) {
           for (const u of structuredLinks) {
             const urlStr = typeof u === 'string' ? u : (u.url || u.href || '');
@@ -759,7 +759,7 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
             else if (/santeecooper\.com/.test(host)) authority = 'Santee Cooper';
             else if (/seafwa\.org|apms\.org/.test(host)) authority = 'Academic';
             else if (/\.edu$/.test(host) && citUrl.toLowerCase().includes(baseLower)) authority = 'Academic'; // .edu only high-value if URL mentions the lake
-            else if (/tva\.com/.test(host)) authority = 'TVA';
+            else if (/tva\.com|tva\.gov/.test(host)) authority = 'TVA';
             else authority = 'Web';
           } catch {}
 
@@ -845,7 +845,7 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
                 else if (/santeecooper\.com/.test(host)) authority = 'Santee Cooper';
                 else if (/seafwa\.org|apms\.org/.test(host)) authority = 'Academic';
                 else if (/\.edu$/.test(host) && citUrl.toLowerCase().includes(baseLower)) authority = 'Academic'; // .edu only high-value if URL mentions the lake — skips archaeology papers about people
-                else if (/tva\.com/.test(host)) authority = 'TVA';
+                else if (/tva\.com|tva\.gov/.test(host)) authority = 'TVA';
                 else if (/southcarolinaparks\.com|scprt|state\.sc\.us|greenwoodcounty-sc\.gov|des\.sc\.gov/i.test(host)) authority = 'SC State';
                 else authority = 'Web';
               } catch {}
@@ -1028,6 +1028,7 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
             else if (/eregulations\.com/.test(host)) authority = dnrName;
             else if (/carolinasportsman|anglersheadquarters|gameandfishmag|takemefishing|santeecoopercountry|lakemartinvoice|visitlakelanier|lakelanier|visitfloridakeys|visitnc|scprt|southcarolinaparks/.test(host)) authority = 'Fishing Guide';
             else if (/grokipedia\.com/.test(host)) authority = 'Grokipedia';
+            else if (/tva\.com|tva\.gov/.test(host)) authority = 'TVA';
           } catch {}
 
           queryLog.push(`  ✓ found (score ${prefetchScore}): ${(r.title||r.url).slice(0,80)}`);
