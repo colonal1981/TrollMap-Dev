@@ -814,7 +814,7 @@ function renderSections(profile) {
   });
 
   container.querySelectorAll('.btn-apply-section-edit').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+    btn.addEventListener('click', async (e) => {
       const agent = e.target.dataset.agent;
       const ta = container.querySelector(`.review-section-textarea[data-agent="${agent}"]`);
       const st = document.getElementById(`edit-status-${agent}`);
@@ -830,10 +830,50 @@ function renderSections(profile) {
         _state.mergedProfile = curMerged;
         _state.profileParts = curParts;
         if (typeof _state.packagePartsCache !== 'undefined') _state.packagePartsCache[agent] = parsed;
-        if (st) { st.textContent = 'Applied ✓'; st.style.color = 'var(--accent2)'; }
         // Refresh viewer
         const viewer = document.getElementById(`viewer-container-${agent}`);
         if (viewer) viewer.innerHTML = formatHumanReadableSection(agent, parsed);
+
+        // ── Save to R2 via worker so edits persist ────────────────────────
+        // Build the full profile from merged state and save it. This mirrors
+        // the master JSON save flow so individual section edits are committed
+        // to the same R2 key that loadProfile reads from.
+        if (_state.currentLakeName && _state.currentProfile) {
+          if (st) { st.textContent = 'Saving…'; st.style.color = 'var(--accent)'; }
+          try {
+            const fullProfile = cloneJson(_state.currentProfile);
+            // Merge the edited section into the full profile so un-edited
+            // sections are preserved on save.
+            fullProfile[agent] = parsed;
+            if (agent === 'biology') fullProfile.forage = parsed;
+            if (agent === 'fisheries') fullProfile.trollingIntelligence = parsed;
+            const res = await fetch(`${CF_WORKER_URL}/research/save`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                lakeName: _state.currentLakeName,
+                profile: fullProfile,
+                status: fullProfile?.metadata?.status || _state.currentProfile?.metadata?.status || 'draft',
+                approve: fullProfile?.metadata?.status === 'verified',
+                verified: fullProfile?.metadata?.status === 'verified',
+                notes: fullProfile?.notes || '',
+                requestedBy: `Section edit: ${agent}`
+              })
+            });
+            if (!res.ok) {
+              const msg = await res.text().catch(() => '');
+              throw new Error(`HTTP ${res.status}: ${msg.slice(0, 200)}`);
+            }
+            // Update the in-memory currentProfile so subsequent saves/loads are consistent
+            _state.currentProfile = fullProfile;
+            if (st) { st.textContent = 'Applied & saved ✓'; st.style.color = 'var(--accent2)'; }
+            log(`✔ Section [${agent}] edited and saved to R2 for ${_state.currentLakeName}`);
+          } catch (saveErr) {
+            if (st) { st.textContent = 'Applied (save failed)'; st.style.color = 'var(--bad)'; }
+            log(`⚠️ Section [${agent}] applied in-memory but save to R2 failed: ${saveErr.message}`);
+          }
+        } else {
+          if (st) { st.textContent = 'Applied ✓'; st.style.color = 'var(--accent2)'; }
+        }
       } catch (err) {
         if (st) { st.textContent = 'Invalid JSON'; st.style.color = 'var(--bad)'; }
       }

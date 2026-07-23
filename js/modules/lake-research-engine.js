@@ -578,13 +578,34 @@ function deriveDepthStatistics(contourGeo, depthGeo, boundaryRing) {
   // 3. Compute surface area from boundary and coverage ratio
   const boundaryArea = boundaryRing ? polygonAreaAcresLonLat(boundaryRing) : 0;
   out.boundaryAreaAcres = Math.round(boundaryArea * 10) / 10;
-  // Use the larger of polygon-sum and boundary-sum as the effective surface area
-  // (polygons can slightly overlap, boundary may over-estimate shoals — take the max to be conservative)
-  const surfaceAcres = Math.max(totalBandArea, boundaryArea);
+
+  // Surface area determination: the boundary polygon represents the lake at full
+  // pool and is the authoritative surface area. Depth-band polygons from chart
+  // pipelines can overlap significantly (each band polygon may extend slightly
+  // into adjacent bands), causing their sum to vastly overestimate the true lake
+  // area. When boundary area is available, use it as the surface area. The
+  // polygon-sum / boundary-area ratio then becomes the coverage metric (>1.0
+  // indicates overlap). Only fall back to polygon sum when no boundary exists.
+  let surfaceAcres;
+  if (boundaryArea > 0) {
+    surfaceAcres = boundaryArea;
+    // Detect excessive polygon overlap: if sum exceeds 1.5× boundary, the bands
+    // are clearly overlapping and we should use boundary as the truth.
+    if (totalBandArea > boundaryArea * 1.5) {
+      out._bandOverlapWarning = `Depth-band polygons sum to ${Math.round(totalBandArea)} ac but boundary is ${Math.round(boundaryArea)} ac — using boundary area`;
+    }
+  } else {
+    surfaceAcres = totalBandArea;
+  }
   out.surfaceAreaAcres = surfaceAcres > 0 ? Math.round(surfaceAcres) : null;
 
   if (totalBandArea > 0 && surfaceAcres > 0) {
-    out.coverage = Math.round((totalBandArea / surfaceAcres) * 1000) / 1000;
+    // Coverage ratio: how much of the lake surface is covered by depth polygons.
+    // When polygons overlap, the ratio can exceed 1.0 — cap at 1.0 for the
+    // coverage field and use the raw ratio internally for threshold checks.
+    const rawCoverage = totalBandArea / surfaceAcres;
+    out.coverage = Math.round(Math.min(rawCoverage, 1.0) * 1000) / 1000;
+    out._rawCoverage = Math.round(rawCoverage * 1000) / 1000;
   }
 
   // 4. Average depth = volume / area — only publish when polygon coverage is trustworthy
@@ -1789,6 +1810,72 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
   if (mode === 'resume') _state.wqpLimnology = null;
   showProgress(true);
 
+  // ── Resume mode: reload deterministic facts so ramps, species, regulations,
+  //    and geospatial structure are fresh. In full-pipeline mode these are
+  //    already loaded by runFullPipeline Step 1b/1c — don't reload them.
+  if (mode === 'resume') {
+    _state.deterministicProfile = null;
+    try {
+      const stateName = sanitizeStateFromLakeName(lakeName);
+      const detRes = await fetch(`${CF_WORKER_URL}/research/deterministic-facts`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lakeName, state: stateName })
+      });
+      if (detRes.ok) {
+        const detData = await detRes.json();
+        if (detData.ok && detData.profile) {
+          _state.deterministicProfile = detData.profile;
+          const owner = detData.profile.identity?.reservoirOwner || 'unknown';
+          const ramps = detData.profile.navigation?.ramps?.length || 0;
+          const species = detData.profile.biology?.predatorSpecies?.length || 0;
+          const genCreel = Object.keys(detData.profile.regulations?.generalStateRegulations?.creelLimits || {}).length;
+          const genLen   = Object.keys(detData.profile.regulations?.generalStateRegulations?.lengthLimits || {}).length;
+          const lakeSize = Object.keys(detData.profile.regulations?.lakeSpecificRegulations?.sizeLimits || {}).length;
+          const lakeCreel= Object.keys(detData.profile.regulations?.lakeSpecificRegulations?.creelLimits || {}).length;
+          log(`✔ Deterministic baseline loaded — owner: ${owner}, ramps: ${ramps}, species: ${species}, regs(gen creel=${genCreel}/len=${genLen}, lake size=${lakeSize}/creel=${lakeCreel})`);
+        }
+      } else {
+        log(`⚠️ Deterministic facts HTTP ${detRes.status} — continuing without context`);
+      }
+    } catch (e) { log(`⚠️ Deterministic facts failed: ${e.message}`); }
+
+    // Geospatial structure adapter (habitat structure + geometry-derived identity facts)
+    try {
+      const geoStruct = await deriveGeospatialStructureFacts(lakeName);
+      if (geoStruct && _state.deterministicProfile) {
+        if (geoStruct.habitat) {
+          _state.deterministicProfile.habitat = mergeMissing(_state.deterministicProfile.habitat || {}, geoStruct.habitat);
+          if (geoStruct.habitat.notes) {
+            _state.deterministicProfile.habitat.notes = [_state.deterministicProfile.habitat.notes, geoStruct.habitat.notes].filter(Boolean).join(' ');
+          }
+        }
+        if (geoStruct.identity) {
+          const id = _state.deterministicProfile.identity = _state.deterministicProfile.identity || {};
+          for (const k of ['surfaceAreaAcres', 'maxDepthFt', 'averageDepthFt']) {
+            if (geoStruct.identity[k] != null) id[k] = geoStruct.identity[k];
+          }
+          id._geometryDerived = true;
+          id._bathymetryMeta = geoStruct.identity._bathymetryMeta || null;
+          if (geoStruct.depthStats?.ok) {
+            const covLabel = geoStruct.depthStats._rawCoverage != null
+              ? `raw coverage ${(geoStruct.depthStats._rawCoverage*100).toFixed(0)}%`
+              : `coverage ${(geoStruct.depthStats.coverage*100).toFixed(0)}%`;
+            log(`✔ Geometry-derived bathymetry — max ${geoStruct.depthStats.maxDepthFt} ft, avg ${geoStruct.depthStats.averageDepthFt} ft, area ${geoStruct.depthStats.surfaceAreaAcres} ac (${covLabel})`);
+            if (geoStruct.depthStats._bandOverlapWarning) {
+              log(`  ⚠️ ${geoStruct.depthStats._bandOverlapWarning}`);
+            }
+          } else if (geoStruct.depthStats?.maxDepthFt) {
+            log(`✔ Geometry-derived max depth ${geoStruct.depthStats.maxDepthFt} ft (polygon coverage ${Math.round((geoStruct.depthStats.coverage||0)*100)}% — avg depth not trusted)`);
+          }
+        }
+        _state.deterministicProfile.evidence = mergeEvidenceMaps(_state.deterministicProfile.evidence || {}, geoStruct.evidence || {});
+        _state.deterministicProfile.sources  = [...(_state.deterministicProfile.sources || []), ...(geoStruct.sources || [])];
+        const structKeys = Object.keys(geoStruct.habitat?.structuralElements || {}).join(', ') || 'no structural fields';
+        log(`✔ Geospatial structure adapter loaded — ${structKeys}`);
+      }
+    } catch (e) { log(`⚠️ Geospatial structure failed: ${e.message}`); }
+  }
+
   // WQP limnology — runs on both full and resume when limnology is selected.
   // runFullPipeline also runs this in Step 1d; runAgents handles the resume case.
   if (mode === 'resume' && agentKeys.includes('limnology')) {
@@ -2039,7 +2126,13 @@ async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
           id._geometryDerived = true;
           id._bathymetryMeta = geoStruct.identity._bathymetryMeta || null;
           if (geoStruct.depthStats?.ok) {
-            log(`✔ Geometry-derived bathymetry — max ${geoStruct.depthStats.maxDepthFt} ft, avg ${geoStruct.depthStats.averageDepthFt} ft, area ${geoStruct.depthStats.surfaceAreaAcres} ac (coverage ${(geoStruct.depthStats.coverage*100).toFixed(0)}%)`);
+            const covLabel = geoStruct.depthStats._rawCoverage != null
+              ? `raw coverage ${(geoStruct.depthStats._rawCoverage*100).toFixed(0)}%`
+              : `coverage ${(geoStruct.depthStats.coverage*100).toFixed(0)}%`;
+            log(`✔ Geometry-derived bathymetry — max ${geoStruct.depthStats.maxDepthFt} ft, avg ${geoStruct.depthStats.averageDepthFt} ft, area ${geoStruct.depthStats.surfaceAreaAcres} ac (${covLabel})`);
+            if (geoStruct.depthStats._bandOverlapWarning) {
+              log(`  ⚠️ ${geoStruct.depthStats._bandOverlapWarning}`);
+            }
           } else if (geoStruct.depthStats?.maxDepthFt) {
             log(`✔ Geometry-derived max depth ${geoStruct.depthStats.maxDepthFt} ft (polygon coverage ${Math.round((geoStruct.depthStats.coverage||0)*100)}% — avg depth not trusted)`);
           }
@@ -2367,8 +2460,12 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   // our own chart data via hypsometric integration, not from LLM training data,
   // scraped text, or document-extracted facts. This override runs LAST so it
   // wins over both the LLM agent output AND the fact-backed identity override
-  // above. Bathymetry is authoritative for surfaceAreaAcres, maxDepthFt, and
-  // averageDepthFt — these fields will never be overwritten by downstream passes.
+  // above. Bathymetry is authoritative for maxDepthFt and averageDepthFt.
+  // For surfaceAreaAcres, bathymetry wins only when it is within a reasonable
+  // range of the fact-backed value — depth-band polygon overlap can cause the
+  // geometry-derived surface area to vastly overestimate the true lake area
+  // (e.g. 70,000 ac computed vs. 13,000 ac actual). When the bathymetry area
+  // exceeds the fact value by more than 50%, the fact value is more reliable.
   // Check both the deterministic profile (full pipeline) and the existing saved
   // profile (resume mode) for the _geometryDerived flag so bathymetry values
   // persist across resume runs even when the deterministic profile isn't loaded.
@@ -2377,8 +2474,20 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   if (geoId) {
     const id = agentSections.identity;
     if (geoId.surfaceAreaAcres != null && id.surfaceAreaAcres !== geoId.surfaceAreaAcres) {
-      log(`  🗺️ identity.surfaceAreaAcres: bathymetry ${geoId.surfaceAreaAcres} ac overrides prior ${id.surfaceAreaAcres} (authoritative)`);
-      id.surfaceAreaAcres = geoId.surfaceAreaAcres;
+      // Sanity check: if bathymetry area is wildly different from fact-backed
+      // area, the polygon overlap has corrupted the surface area calculation.
+      const factArea = id.surfaceAreaAcres;
+      const geoArea = geoId.surfaceAreaAcres;
+      const ratio = (factArea && factArea > 0) ? geoArea / factArea : 0;
+      if (ratio > 0 && ratio <= 1.5) {
+        log(`  🗺️ identity.surfaceAreaAcres: bathymetry ${geoArea} ac overrides prior ${factArea} (authoritative)`);
+        id.surfaceAreaAcres = geoArea;
+      } else if (ratio > 1.5) {
+        log(`  🗺️ identity.surfaceAreaAcres: bathymetry ${geoArea} ac rejected — ${ratio.toFixed(1)}× fact value ${factArea} ac (polygon overlap detected, keeping fact value)`);
+      } else {
+        log(`  🗺️ identity.surfaceAreaAcres: bathymetry ${geoArea} ac overrides prior ${factArea} (authoritative)`);
+        id.surfaceAreaAcres = geoArea;
+      }
     }
     if (geoId.maxDepthFt != null && id.maxDepthFt !== geoId.maxDepthFt) {
       log(`  🗺️ identity.maxDepthFt: bathymetry ${geoId.maxDepthFt} ft overrides prior ${id.maxDepthFt} (authoritative)`);
