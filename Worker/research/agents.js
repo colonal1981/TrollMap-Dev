@@ -931,8 +931,10 @@ async function handleResearchAgent(request, env) {
       'catfish (all species)': ['Blue Catfish', 'Channel Catfish', 'Flathead Catfish'],
       'catfish': ['Blue Catfish', 'Channel Catfish', 'Flathead Catfish'],
       'crappie (all species)': ['Crappie', 'Black Crappie', 'White Crappie'],
+      'crappie': ['Crappie', 'Black Crappie', 'White Crappie'],
       'bream/sunfish': ['Bluegill', 'Redear Sunfish (Shellcracker)', 'Warmouth'],
       'bluegill/warmouth': ['Bluegill', 'Warmouth'],
+      'striped bass or hybrid striped bass': ['Striped Bass', 'Hybrid Striped Bass'],
     };
     const confirmedSet = new Set(allSpecies.map(s => s.toLowerCase()));
     for (const [key, seasons] of Object.entries(mergedIntelligence)) {
@@ -1136,8 +1138,10 @@ async function handleResearchAgent(request, env) {
       'black bass': ['Largemouth Bass', 'Smallmouth Bass', 'Spotted Bass'],
       'catfish (all species)': ['Blue Catfish', 'Channel Catfish', 'Flathead Catfish'],
       'crappie (all species)': ['Crappie', 'Black Crappie', 'White Crappie'],
+      'crappie': ['Crappie', 'Black Crappie', 'White Crappie'],
       'bream/sunfish': ['Bluegill', 'Redear Sunfish (Shellcracker)', 'Warmouth'],
       'bluegill/warmouth': ['Bluegill', 'Warmouth'],
+      'striped bass or hybrid striped bass': ['Striped Bass', 'Hybrid Striped Bass'],
     };
     const bioForRedist = groundedPrev?.biology || {};
     const confirmedForRedist = new Set((Array.isArray(bioForRedist.predatorSpecies) ? bioForRedist.predatorSpecies : []).map(s => s.toLowerCase()));
