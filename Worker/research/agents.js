@@ -406,7 +406,7 @@ JSON only. Never output a string or array for creelLimits or sizeLimits.`;
   fisheries: {
     label: "Species Intelligence",
     order: 7,
-    system: "You are a fisheries biologist and professional fishing guide. You are given a verified lake profile AND raw text from source documents (fishing guides, reports, agency surveys). Extract seasonal species behavior from BOTH the profile AND the source documents. CONSENSUS RULE: When multiple sources cover the same species/season, use the depth range and structure that appears in the majority of sources. If sources contradict (e.g. 3 say 15-25ft and 1 says 5ft), use the majority position and note the discrepancy in the notes field. Do not average contradicting values — pick the consensus. Do not invent data when sources are silent — return null for that season. Prioritize official agency documents over fishing guide content when they conflict. Do NOT recommend routes, speeds, or specific lure colors. CRITICAL: Only include species listed in the biology.predatorSpecies array. Return JSON only.",
+    system: "You are a fisheries biologist and professional fishing guide. You are given a verified lake profile AND raw text from source documents (fishing guides, reports, agency surveys). Extract seasonal species behavior from BOTH the profile AND the source documents. CONSENSUS RULE: When multiple sources cover the same species/season, use the depth range and structure that appears in the majority of sources. If sources contradict (e.g. 3 say 15-25ft and 1 says 5ft), use the majority position and note the discrepancy in the notes field. Do not average contradicting values — pick the consensus. Do not invent data when sources are silent — return null for that season. Prioritize official agency documents over fishing guide content when they conflict. Do NOT recommend routes, speeds, or specific lure colors. CRITICAL: Only include species listed in the biology.predatorSpecies array. SPECIES NAME RESOLUTION — CRITICAL: Agency documents frequently use GROUP TERMS that cover multiple species. You MUST split these into individual species keys. NEVER use a group term as a JSON key. Group terms and their individual species mappings: 'Black Bass' or 'black bass (largemouth, smallmouth, spotted)' → split into Largemouth Bass, Smallmouth Bass, Spotted Bass individually. 'Catfish (all species)' or 'Catfish' → split into Blue Catfish, Channel Catfish, Flathead Catfish as applicable. 'Crappie (all species)' → split into Crappie (or Black Crappie / White Crappie if individually listed). 'Bream/Sunfish' or 'Bluegill/Warmouth and other sunfishes' → split into Bluegill, Redear Sunfish (Shellcracker), Warmouth as applicable. When a document has a group heading like 'Black Bass' followed by individual species tips (e.g. 'Largemouthbass - Spring: ... Summer: ... Fall: ... Winter: ...'), parse EACH species line separately and assign to the correct individual species key. If generic group-level data has no species-specific breakdown, replicate that data to each individual species from the confirmed list that belongs to that group. NEVER output 'Black Bass', 'Catfish (all species)', or any other group term as a species key — always use the exact individual species name from the confirmed species list. Return JSON only.",
     userTemplate: (lakeName, state, prev) => {
       const bio = prev?.biology || prev?.forage || {};
       const confirmedSpecies = Array.isArray(bio.predatorSpecies) ? bio.predatorSpecies : [];
@@ -429,6 +429,27 @@ ${docSection}
 
 CONFIRMED SPECIES (ONLY these — do not add others):
 ${speciesList.join(', ')}
+
+SPECIES NAME RESOLUTION — CRITICAL:
+Source documents (especially state agency pages like TWRA, SCDNR, NCWRC, DNR) frequently use GROUP TERMS as section headings. These are NOT valid species keys — you MUST split them into individual species from the confirmed list above.
+
+Common group terms and how to resolve them:
+• "Black Bass" heading → data goes to Largemouth Bass, Smallmouth Bass, Spotted Bass (whichever are in the confirmed list)
+• "black bass (largemouth, smallmouth, spotted)" → same split as above
+• "Catfish (all species)" → data goes to Blue Catfish, Channel Catfish, Flathead Catfish (whichever are in the confirmed list)
+• "Crappie (all species)" or "Crappie" → data goes to Crappie, Black Crappie, White Crappie (whichever are confirmed)
+• "Bream/Sunfish" or "Bluegill/Warmouth and other sunfishes" → data goes to Bluegill, Redear Sunfish (Shellcracker), Warmouth (whichever are confirmed)
+• "Striped Bass or Hybrid Striped Bass" → data goes to Striped Bass, Hybrid Striped Bass (whichever are confirmed)
+
+PARSING INDIVIDUAL SPECIES TIPS: When a document has a group heading (e.g. "Black Bass") followed by individual species tip lines like:
+  "Largemouthbass - Spring: [tips]; Summer: [tips]; Fall: [tips]; Winter: [tips]"
+  "Smallmouthbass - Spring: [tips]; Summer: [tips]; Fall: [tips]; Winter: [tips]"
+  "SpottedBass - [tips]"
+You MUST parse EACH species line SEPARATELY and assign to the correct individual species key. The species name may be concatenated (e.g. "Largemouthbass" = Largemouth Bass, "Smallmouthbass" = Smallmouth Bass, "SpottedBass" = Spotted Bass). Extract the Spring/Summer/Fall/Winter data from each line into the correct species' seasonal entries.
+
+If generic group-level data has NO species-specific breakdown (just a paragraph about "black bass" in general with no per-species tips), replicate that data to each individual species from the confirmed list that belongs to that group.
+
+NEVER output "Black Bass", "Catfish (all species)", "Bream/Sunfish", or any other group term as a key in trollingIntelligence. Only use exact species names from the confirmed list above.
 
 CONFIRMED LAKE FORAGE: ${forageStr}
 Use forage intelligently — match what each predator species actually eats, not the full lake forage list:
@@ -902,6 +923,43 @@ async function handleResearchAgent(request, env) {
       }
     }
 
+    // ── Post-merge: redistribute group-term keys to individual species ──
+    // Defense-in-depth: if LLM still outputs "Black Bass" instead of splitting
+    // to Largemouth/Smallmouth/Spotted Bass, redistribute the data here.
+    const GROUP_TERM_MAP = {
+      'black bass': ['Largemouth Bass', 'Smallmouth Bass', 'Spotted Bass'],
+      'catfish (all species)': ['Blue Catfish', 'Channel Catfish', 'Flathead Catfish'],
+      'catfish': ['Blue Catfish', 'Channel Catfish', 'Flathead Catfish'],
+      'crappie (all species)': ['Crappie', 'Black Crappie', 'White Crappie'],
+      'bream/sunfish': ['Bluegill', 'Redear Sunfish (Shellcracker)', 'Warmouth'],
+      'bluegill/warmouth': ['Bluegill', 'Warmouth'],
+    };
+    const confirmedSet = new Set(allSpecies.map(s => s.toLowerCase()));
+    for (const [key, seasons] of Object.entries(mergedIntelligence)) {
+      const keyLower = key.toLowerCase();
+      if (GROUP_TERM_MAP[keyLower]) {
+        // This is a group term — redistribute to individual confirmed species
+        const targets = GROUP_TERM_MAP[keyLower].filter(t => confirmedSet.has(t.toLowerCase()));
+        if (targets.length > 0) {
+          console.log(`[fisheries-redist] redistributing "${key}" → ${targets.join(', ')}`);
+          for (const target of targets) {
+            // Only fill in seasons that the target species doesn't already have data for
+            if (!mergedIntelligence[target]) {
+              mergedIntelligence[target] = JSON.parse(JSON.stringify(seasons));
+            } else {
+              // Merge: fill null seasons from group data
+              for (const season of ['spring', 'summer', 'fall', 'winter']) {
+                if ((!mergedIntelligence[target][season] || mergedIntelligence[target][season] === null) && seasons[season]) {
+                  mergedIntelligence[target][season] = JSON.parse(JSON.stringify(seasons[season]));
+                }
+              }
+            }
+          }
+          delete mergedIntelligence[key];
+        }
+      }
+    }
+
     // Run normalization pass (same as post-processing below)
     const SEASONS = ['spring', 'summer', 'fall', 'winter'];
     const normalizedMerged = {};
@@ -1070,6 +1128,41 @@ async function handleResearchAgent(request, env) {
   if (agentKey === 'fisheries' && sectionData && typeof sectionData === 'object') {
     console.log(`[fisheries-debug] sectionData keys: ${Object.keys(sectionData).join(', ')}`);
     console.log(`[fisheries-debug] first entry sample: ${JSON.stringify(Object.entries(sectionData)[0])?.slice(0, 200)}`);
+
+    // ── Redistribute group-term keys to individual species (defense-in-depth) ──
+    // If LLM outputs "Black Bass" instead of splitting to Largemouth/Smallmouth/Spotted,
+    // redistribute here so the data lands on the correct individual species keys.
+    const GROUP_TERM_MAP_FALLBACK = {
+      'black bass': ['Largemouth Bass', 'Smallmouth Bass', 'Spotted Bass'],
+      'catfish (all species)': ['Blue Catfish', 'Channel Catfish', 'Flathead Catfish'],
+      'crappie (all species)': ['Crappie', 'Black Crappie', 'White Crappie'],
+      'bream/sunfish': ['Bluegill', 'Redear Sunfish (Shellcracker)', 'Warmouth'],
+      'bluegill/warmouth': ['Bluegill', 'Warmouth'],
+    };
+    const bioForRedist = groundedPrev?.biology || {};
+    const confirmedForRedist = new Set((Array.isArray(bioForRedist.predatorSpecies) ? bioForRedist.predatorSpecies : []).map(s => s.toLowerCase()));
+    for (const [key, seasons] of Object.entries(sectionData)) {
+      const keyLower = key.toLowerCase();
+      if (GROUP_TERM_MAP_FALLBACK[keyLower]) {
+        const targets = GROUP_TERM_MAP_FALLBACK[keyLower].filter(t => confirmedForRedist.has(t.toLowerCase()));
+        if (targets.length > 0) {
+          console.log(`[fisheries-redist] redistributing "${key}" → ${targets.join(', ')}`);
+          for (const target of targets) {
+            if (!sectionData[target]) {
+              sectionData[target] = JSON.parse(JSON.stringify(seasons));
+            } else {
+              for (const season of ['spring', 'summer', 'fall', 'winter']) {
+                if ((!sectionData[target][season] || sectionData[target][season] === null) && seasons[season]) {
+                  sectionData[target][season] = JSON.parse(JSON.stringify(seasons[season]));
+                }
+              }
+            }
+          }
+          delete sectionData[key];
+        }
+      }
+    }
+
     const SEASONS = ['spring', 'summer', 'fall', 'winter'];
     const normalized = {};
     for (const [species, seasons] of Object.entries(sectionData)) {
