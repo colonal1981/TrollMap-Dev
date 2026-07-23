@@ -522,12 +522,26 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
   }
 
   // State regulations — regulations agent only
-  // NOTE: regulations agent uses KV-cached fetchStateRegulations (0 docs needed).
-  // eRegulations seed is kept as fallback only if KV cache miss.
+  // NOTE: regulations agent uses KV-cached fetchStateRegulations (0 docs needed) from R2 public bucket
+  // User has all regs pages that matter uploaded to R2 (https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/regulations)
+  // Primary source is R2 digests, fallback to live agency pages
+  const REGS_R2_BASE = 'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/regulations';
+  const R2_REGS_MAP = {
+    SC: `${REGS_R2_BASE}/sc_digest_2025_2026.pdf`,
+    NC: `${REGS_R2_BASE}/nc_digest_2025_2026.pdf`,
+    GA: `${REGS_R2_BASE}/ga_digest_2025_2026.pdf`,
+    TN: `${REGS_R2_BASE}/tn_digest_2025_2026.pdf`,
+  };
   if (wantsRegs) {
-    addSeed({ title: regsTitle, type: 'HTML', authority: dnrName, url: regsUrl, priority: 1, agentTags: ['regulations'] });
+    // R2 digest primary (user uploaded, stable, free via TinyFish)
+    const r2RegsUrl = R2_REGS_MAP[state];
+    if (r2RegsUrl) {
+      addSeed({ title: `${state} Freshwater Regulations Digest (R2)`, type: 'PDF', authority: dnrName, url: r2RegsUrl, priority: 1, agentTags: ['regulations'] });
+    }
+    // Live agency page fallback
+    addSeed({ title: regsTitle, type: 'HTML', authority: dnrName, url: regsUrl, priority: 2, agentTags: ['regulations'] });
     if (state === 'GA') {
-      addSeed({ title: 'GA General Freshwater Regulations (eRegulations)', type: 'HTML', authority: 'GADNR', url: 'https://www.eregulations.com/georgia/fishing/general-regulations', priority: 1, agentTags: ['regulations'] });
+      addSeed({ title: 'GA General Freshwater Regulations (eRegulations)', type: 'HTML', authority: 'GADNR', url: 'https://www.eregulations.com/georgia/fishing/general-regulations', priority: 2, agentTags: ['regulations'] });
     }
   }
 
@@ -542,10 +556,30 @@ const KNOWN_BAD_NEPIS = new Set(['monticello']);
   }
 
   // TWRA reservoir profiles — regulations + identity
+  // Expanded from 3 to 10 based on user's local HTML archive (2026-07-22)
+  // These pages contain almost every detail needed for TN lakes: surface area, max depth,
+  // dam, owner, species, regulations, boat ramps, etc. — see https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/
   const TWRA_LAKE_PAGES = {
-    'norris': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/norris-reservoir.html',
+    'boone': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/boone-reservoir.html',
+    'cherokee': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/cherokee-reservoir.html',
+    'chilhowee': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/chilhowee-reservoir.html',
     'douglas': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/douglas-reservoir.html',
+    'fort loudoun': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/fort-loudoun-reservoir.html',
+    'melton hill': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/melton-hill-reservoir.html',
+    'norris': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/norris-reservoir.html',
+    'south holston': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/south-holston-reservoir.html',
+    'tellico': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/tellico-reservoir.html',
     'watauga': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/watauga-reservoir.html',
+    // Aliases for baseName matching (boone lake vs boone reservoir, etc.)
+    'boone lake': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/boone-reservoir.html',
+    'cherokee lake': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/cherokee-reservoir.html',
+    'douglas lake': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/douglas-reservoir.html',
+    'fort loudoun lake': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/fort-loudoun-reservoir.html',
+    'melton hill lake': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/melton-hill-reservoir.html',
+    'norris lake': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/norris-reservoir.html',
+    'south holston lake': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/south-holston-reservoir.html',
+    'tellico lake': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/tellico-reservoir.html',
+    'watauga lake': 'https://www.tn.gov/twra/fishing/where-to-fish/east-tennessee-r4/watauga-reservoir.html',
   };
   if (state === 'TN' && TWRA_LAKE_PAGES[baseLower] && (!agentForSeeds || ['regulations','identity'].includes(agentForSeeds))) {
     addSeed({ title: `${baseName} TWRA Reservoir Profile`, type: 'HTML', authority: 'TWRA', url: TWRA_LAKE_PAGES[baseLower], priority: 1, agentTags: ['regulations','identity'] });

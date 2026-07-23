@@ -258,38 +258,40 @@ async function handleResearchDeterministicFacts(request, env) {
       }
 
       // Live fetch fallback when normalized cache is empty (first run only).
-      // SC: TinyFish can't fetch dnr.sc.gov PDF server-side — use Tavily extract
-      //     (1 credit per 5 URLs, so ~1 credit). After first run the PDF content
-      //     is cached client-side by the regulations agent and this never fires again.
-      // NC/GA/TN: TinyFish handles their static HTML/PDF sources directly.
+      // CREDIT POLICY: TinyFish primary (free), Scrape.do secondary (1 credit/page, failed 0), 
+      // Jina tertiary (free), Tavily/Firecrawl backup only (low credits).
+      // Previous version used Tavily extract for SC PDF (1 credit/5 URLs) — now uses TinyFish primary.
       if (!regsHtml) {
         try {
-          if (state === 'SC') {
-            const tavilyKey = env.TAVILY_API_KEY;
-            if (tavilyKey) {
-              const tvRes = await fetch('https://api.tavily.com/extract', {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${tavilyKey}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ urls: [regsUrl], extract_depth: 'basic', format: 'markdown', include_images: false })
-              });
-              if (tvRes.ok) {
-                const tvData = await tvRes.json();
-                const raw = tvData.results?.[0]?.raw_content || '';
-                if (raw && raw.length > 200) {
-                  regsHtml = slicePdfPageRange(raw, 18, 43);
-                  profile._regsDebug = { ...(profile._regsDebug || {}), liveTavily: true, regsHtmlLen: regsHtml.length };
+          // TinyFish primary for all states (including SC PDF)
+          const tfRegs = await tinyfishFetch({ urls: [regsUrl], format: 'markdown', ttl: 604800 }, env);
+          const md = tfRegs.results?.[0]?.text || '';
+          if (md && md.length > 200) {
+            let text = md;
+            if (state === 'SC') text = slicePdfPageRange(text, 18, 43);
+            if (/georgiawildlife\.com.*regulations/i.test(regsUrl)) text = slicePdfPageRange(text, 44, 85);
+            regsHtml = text;
+            profile._regsDebug = { ...(profile._regsDebug || {}), liveTinyFish: true, regsHtmlLen: regsHtml.length };
+          } else {
+            console.warn(`TinyFish insufficient content for regs ${regsUrl} (${md.length} chars) — trying Tavily backup`);
+            // Tavily backup only for SC (low credits)
+            if (state === 'SC') {
+              const tavilyKey = env.TAVILY_API_KEY;
+              if (tavilyKey) {
+                const tvRes = await fetch('https://api.tavily.com/extract', {
+                  method: 'POST',
+                  headers: { 'Authorization': `Bearer ${tavilyKey}`, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ urls: [regsUrl], extract_depth: 'basic', format: 'markdown', include_images: false })
+                });
+                if (tvRes.ok) {
+                  const tvData = await tvRes.json();
+                  const raw = tvData.results?.[0]?.raw_content || '';
+                  if (raw && raw.length > 200) {
+                    regsHtml = slicePdfPageRange(raw, 18, 43);
+                    profile._regsDebug = { ...(profile._regsDebug || {}), liveTavilyBackup: true, regsHtmlLen: regsHtml.length };
+                  }
                 }
               }
-            }
-          } else {
-            // NC/GA/TN — TinyFish handles these directly
-            const tfRegs = await tinyfishFetch({ urls: [regsUrl], format: 'markdown', ttl: 604800 }, env);
-            const md = tfRegs.results?.[0]?.text || '';
-            if (md && md.length > 200) {
-              let text = md;
-              if (/georgiawildlife\.com.*regulations/i.test(regsUrl)) text = slicePdfPageRange(text, 44, 85);
-              regsHtml = text;
-              profile._regsDebug = { ...(profile._regsDebug || {}), liveTinyFish: true, regsHtmlLen: regsHtml.length };
             }
           }
         } catch (e) {

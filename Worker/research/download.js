@@ -53,249 +53,234 @@ async function handleResearchProxyDownload(request, env) {
   // waitFor:3000 to render table rows), Grokipedia (JS-rendered)
   const needsFirecrawl = isNepisSearch || isNepisLanding || isNepisAny;
 
-  if (firecrawlKey && isHtml && needsFirecrawl) {
+  // CREDIT POLICY: TinyFish primary (free), Firecrawl backup only for NEPIS (low credits, budget guarded)
+  // User is low on Tavily/Firecrawl credits — TinyFish is primary search/fetch
+  // Previous version used Firecrawl primary for NEPIS. Now TinyFish first.
+  if (isHtml && needsFirecrawl) {
+    // 1. TinyFish primary even for NEPIS search/landing
     try {
-      // Search-results page: return markdown of the results list so the client can
-      // store it, AND surface ZyActionD links in X-Nepis-Documents for follow-up.
-      if (isNepisSearch) {
-        const scrapeRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            url: target,
-            formats: ['links', 'markdown'],
-            onlyMainContent: true,
-            timeout: 120000
-          })
-        });
-        if (scrapeRes.ok) {
-          const scrapeData = await scrapeRes.json();
-          const md = scrapeData.data?.markdown || scrapeData.markdown || '';
-          const links = scrapeData.data?.links || scrapeData.links || [];
+      const tfNepis = await tinyfishFetch({ urls: [target], format: 'markdown', ttl: 86400 }, env);
+      const tfMd = tfNepis.results?.[0]?.text || '';
+      if (tfMd && tfMd.length > 200) {
+        const headers = exposeHeaders(new Headers({ 'Content-Type': 'text/plain; charset=utf-8', 'X-Source': 'tinyfish-nepis' }));
+        if (isNepisSearch) {
           const docLinks = [];
-          for (const link of links) {
-            const url = typeof link === 'string' ? link : (link.url || '');
-            if (/ZyActionD=/i.test(url)) {
-              docLinks.push({
-                url,
-                title: (typeof link === 'object' && link.title) ? String(link.title).slice(0, 180) : 'EPA NSCEP document'
-              });
-            }
-          }
-          // Also pull from markdown
-          for (const m of md.matchAll(/https?:\/\/[^\s)"']+ZyActionD[^\s)"']*/g)) {
+          for (const m of tfMd.matchAll(/https?:\/\/[^\s)"']+ZyActionD[^\s)"']*/g)) {
             if (!docLinks.some(d => d.url === m[0])) docLinks.push({ url: m[0], title: 'EPA NSCEP document' });
           }
-          if (md.length > 100 || docLinks.length) {
-            // If we found a single clear document, fetch its raw .txt download directly.
-            if (docLinks.length === 1) {
-              const docUrl = docLinks[0].url;
-              const rawTextUrl = toNepisRawTextUrl(docUrl);
-              if (rawTextUrl) {
-                try {
-                  const rawRes = await fetch(rawTextUrl, {
-                    headers: {
-                      'User-Agent': 'TrollMap/15.3 Evidence Engine',
-                      'Accept': 'text/plain,*/*'
+          if (docLinks.length) {
+            headers.set('X-Nepis-Format', 'search_results');
+            headers.set('X-Nepis-Doc-Count', String(docLinks.length));
+            headers.set('X-Nepis-Documents', JSON.stringify(docLinks.slice(0, 5).map(d => d.url)).slice(0, 1500));
+          }
+        }
+        return new Response(tfMd, { headers });
+      }
+    } catch (e) {
+      console.warn(`TinyFish NEPIS primary failed for ${target}: ${e.message} — trying Firecrawl backup`);
+    }
+
+    // 2. Firecrawl backup with budget guard
+    if (!firecrawlKey) {
+      console.warn(`No Firecrawl key for NEPIS backup, falling through for ${target}`);
+    } else {
+      const budget = await checkFirecrawlBudget(env, 1);
+      if (!budget.allowed) {
+        console.warn(`Firecrawl budget blocked for NEPIS ${target}: ${budget.reason} — falling through to TinyFish ordinary path`);
+      } else {
+        try {
+          // Search-results page: return markdown catalog + doc links
+          if (isNepisSearch) {
+            const scrapeRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                url: target,
+                formats: ['links', 'markdown'],
+                onlyMainContent: true,
+                timeout: 120000
+              })
+            });
+            if (scrapeRes.ok) {
+              const scrapeData = await scrapeRes.json();
+              const md = scrapeData.data?.markdown || scrapeData.markdown || '';
+              const links = scrapeData.data?.links || scrapeData.links || [];
+              const docLinks = [];
+              for (const link of links) {
+                const url = typeof link === 'string' ? link : (link.url || '');
+                if (/ZyActionD=/i.test(url)) docLinks.push({ url, title: (typeof link === 'object' && link.title) ? String(link.title).slice(0, 180) : 'EPA NSCEP document' });
+              }
+              for (const m of md.matchAll(/https?:\/\/[^\s)"']+ZyActionD[^\s)"']*/g)) {
+                if (!docLinks.some(d => d.url === m[0])) docLinks.push({ url: m[0], title: 'EPA NSCEP document' });
+              }
+              if (md.length > 100 || docLinks.length) {
+                if (docLinks.length === 1) {
+                  const docUrl = docLinks[0].url;
+                  const rawTextUrl = toNepisRawTextUrl(docUrl);
+                  if (rawTextUrl) {
+                    try {
+                      const rawRes = await fetch(rawTextUrl, { headers: { 'User-Agent': 'TrollMap/15.3 Evidence Engine', 'Accept': 'text/plain,*/*' } });
+                      if (rawRes.ok) {
+                        const rawText = await rawRes.text();
+                        if (rawText.length > 200) {
+                          const firstLine = rawText.split('\n')[0] || '';
+                          const metaMatch = firstLine.match(/^([A-Z]+[0-9]+)(Report on (?:Lake )?.+?)([0-9]{1,3})([0-9]{4})([A-Z].*)$/i);
+                          const title = metaMatch ? metaMatch[2].trim() : (docLinks[0].title || '');
+                          const headers = exposeHeaders(new Headers({
+                            'Content-Type': 'text/plain; charset=utf-8',
+                            'X-Source': 'firecrawl',
+                            'X-Nepis-Format': 'raw_text',
+                            'X-Nepis-Title': title.slice(0, 180),
+                            'X-Nepis-Doc-Url': docUrl,
+                            'X-Nepis-RawText': rawTextUrl
+                          }));
+                          await recordFirecrawlUsage(env, 1);
+                          return new Response(rawText, { headers });
+                        }
+                      }
+                    } catch (e) {
+                      console.warn(`NEPI S single-doc raw-text fetch failed: ${e.message}`);
                     }
+                  }
+                }
+                const catalog = [`# EPA NSCEP search results`, ``, `Found ${docLinks.length} document landing page(s).`, ``, ...docLinks.slice(0, 15).map((d, i) => `${i + 1}. [${d.title}](${d.url})`), ``, `---`, ``, md.slice(0, 50000)].join('\n');
+                const headers = exposeHeaders(new Headers({
+                  'Content-Type': 'text/plain; charset=utf-8',
+                  'X-Source': 'firecrawl',
+                  'X-Nepis-Format': 'search_results',
+                  'X-Nepis-Doc-Count': String(docLinks.length),
+                  'X-Nepis-Documents': JSON.stringify(docLinks.slice(0, 5).map(d => d.url)).slice(0, 1500)
+                }));
+                await recordFirecrawlUsage(env, 1);
+                return new Response(catalog, { headers });
+              }
+            }
+          }
+
+          // Document landing pages
+          if (isNepisLanding || (isNepisAny && !isNepisSearch)) {
+            const rawTextUrl = toNepisRawTextUrl(target);
+            if (rawTextUrl) {
+              try {
+                const rawRes = await fetch(rawTextUrl, { headers: { 'User-Agent': 'TrollMap/15.3 Evidence Engine', 'Accept': 'text/plain,*/*' } });
+                if (rawRes.ok) {
+                  const rawText = await rawRes.text();
+                  if (rawText.length > 200) {
+                    const firstLine = rawText.split('\n')[0] || '';
+                    const metaMatch = firstLine.match(/^([A-Z]+[0-9]+)(Report on (?:Lake )?.+?)([0-9]{1,3})([0-9]{4})([A-Z].*)$/i);
+                    const title = metaMatch ? metaMatch[2].trim() : '';
+                    const headers = exposeHeaders(new Headers({
+                      'Content-Type': 'text/plain; charset=utf-8',
+                      'X-Source': 'firecrawl',
+                      'X-Nepis-Format': 'raw_text',
+                      'X-Nepis-Title': title.slice(0, 180),
+                      'X-Nepis-RawText': rawTextUrl
+                    }));
+                    return new Response(rawText, { headers });
+                  }
+                }
+              } catch (eRaw) {
+                console.warn(`Direct NSCEP raw-text fetch failed: ${eRaw.message}`);
+              }
+            }
+
+            const landRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                url: target,
+                formats: ['markdown', 'json'],
+                onlyMainContent: true,
+                timeout: 120000,
+                jsonOptions: {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      report_metadata: { type: 'object', properties: { title: { type: 'string' }, pub_number: { type: 'string' } } },
+                      available_formats: { type: 'object', properties: { pdf_url: { type: 'string' }, raw_text_url: { type: 'string' }, tiff_url: { type: 'string' } } }
+                    },
+                    required: ['report_metadata', 'available_formats']
+                  }
+                }
+              })
+            });
+            if (landRes.ok) {
+              const landData = await landRes.json();
+              const extracted = landData.data?.json || landData.json || {};
+              const formats = extracted.available_formats || {};
+              const rawTextUrl = formats.raw_text_url || formats.text_url || null;
+              const pdfUrl = formats.pdf_url || null;
+              const title = extracted.report_metadata?.title || '';
+              if (rawTextUrl && /^https?:\/\//i.test(rawTextUrl)) {
+                try {
+                  const textRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: rawTextUrl, formats: ['markdown'], onlyMainContent: true, timeout: 120000 })
                   });
-                  if (rawRes.ok) {
-                    const rawText = await rawRes.text();
-                    if (rawText.length > 200) {
-                      const firstLine = rawText.split('\n')[0] || '';
-                      const metaMatch = firstLine.match(/^([A-Z]+[0-9]+)(Report on (?:Lake )?.+?)([0-9]{1,3})([0-9]{4})([A-Z].*)$/i);
-                      const title = metaMatch ? metaMatch[2].trim() : (docLinks[0].title || '');
+                  if (textRes.ok) {
+                    const textData = await textRes.json();
+                    const markdown = textData.data?.markdown || textData.markdown || '';
+                    if (markdown && markdown.length > 100) {
+                      await recordFirecrawlUsage(env, 1);
                       const headers = exposeHeaders(new Headers({
                         'Content-Type': 'text/plain; charset=utf-8',
                         'X-Source': 'firecrawl',
                         'X-Nepis-Format': 'raw_text',
                         'X-Nepis-Title': title.slice(0, 180),
-                        'X-Nepis-Doc-Url': docUrl,
-                        'X-Nepis-RawText': rawTextUrl
+                        'X-Nepis-Pdf': pdfUrl || ''
                       }));
-                      return new Response(rawText, { headers });
+                      return new Response(markdown, { headers });
                     }
                   }
-                } catch (e) {
-                  console.warn(`NEPI S single-doc raw-text fetch failed: ${e.message}`);
+                } catch (e2) {
+                  console.warn(`NSCEP raw-text scrape failed: ${e2.message}`);
                 }
               }
-            }
-            // Multi-doc search results: return markdown catalog + document URL list
-            const catalog = [
-              `# EPA NSCEP search results`,
-              ``,
-              `Found ${docLinks.length} document landing page(s).`,
-              ``,
-              ...docLinks.slice(0, 15).map((d, i) => `${i + 1}. [${d.title}](${d.url})`),
-              ``,
-              `---`,
-              ``,
-              md.slice(0, 50000)
-            ].join('\n');
-            const headers = exposeHeaders(new Headers({
-              'Content-Type': 'text/plain; charset=utf-8',
-              'X-Source': 'firecrawl',
-              'X-Nepis-Format': 'search_results',
-              'X-Nepis-Doc-Count': String(docLinks.length),
-              // First few document URLs for client follow-up (header size limit)
-              'X-Nepis-Documents': JSON.stringify(docLinks.slice(0, 5).map(d => d.url)).slice(0, 1500)
-            }));
-            return new Response(catalog, { headers });
-          }
-        }
-      }
-
-      // Two-step for EPA NSCEP document landing pages: first extract format links,
-      // then scrape the raw-text URL for clean markdown (avoids TIFF/OCR).
-      if (isNepisLanding || (isNepisAny && !isNepisSearch)) {
-        // NSCEP viewer URLs share the same File= parameter as the raw-text download.
-        // Try to fetch the .txt download directly before paying for a Firecrawl scrape.
-        const rawTextUrl = toNepisRawTextUrl(target);
-        if (rawTextUrl) {
-          try {
-            const rawRes = await fetch(rawTextUrl, {
-              headers: {
-                'User-Agent': 'TrollMap/15.3 Evidence Engine',
-                'Accept': 'text/plain,*/*'
-              }
-            });
-            if (rawRes.ok) {
-              const rawText = await rawRes.text();
-              if (rawText.length > 200) {
-                // The first metadata line concatenates pubnumber + title + pages + year + ...
-                // e.g. "NESWP434Report on Lake Marion,... EPA Region IV601976NEPIS..."
-                // or   "NESWP440Report on Wateree Lake,... EPA Region IV481975NEPIS..."
-                const firstLine = rawText.split('\n')[0] || '';
-                const metaMatch = firstLine.match(/^([A-Z]+[0-9]+)(Report on (?:Lake )?.+?)([0-9]{1,3})([0-9]{4})([A-Z].*)$/i);
-                const title = metaMatch ? metaMatch[2].trim() : '';
+              const landMd = landData.data?.markdown || landData.markdown || '';
+              if (landMd && landMd.length > 100) {
+                await recordFirecrawlUsage(env, 1);
                 const headers = exposeHeaders(new Headers({
                   'Content-Type': 'text/plain; charset=utf-8',
                   'X-Source': 'firecrawl',
-                  'X-Nepis-Format': 'raw_text',
+                  'X-Nepis-Format': 'landing',
                   'X-Nepis-Title': title.slice(0, 180),
-                  'X-Nepis-RawText': rawTextUrl
+                  'X-Nepis-Pdf': pdfUrl || '',
+                  'X-Nepis-RawText': rawTextUrl || ''
                 }));
-                return new Response(rawText, { headers });
+                return new Response(landMd, { headers });
               }
             }
-          } catch (eRaw) {
-            console.warn(`Direct NSCEP raw-text fetch failed: ${eRaw.message}`);
           }
-        }
 
-        const landRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            url: target,
-            formats: ['markdown', 'json'],
-            onlyMainContent: true,
-            timeout: 120000,
-            jsonOptions: {
-              schema: {
-                type: 'object',
-                properties: {
-                  report_metadata: {
-                    type: 'object',
-                    properties: {
-                      title: { type: 'string' },
-                      pub_number: { type: 'string' }
-                    }
-                  },
-                  available_formats: {
-                    type: 'object',
-                    properties: {
-                      pdf_url: { type: 'string', description: 'Link containing ZyPDF.cgi or .pdf' },
-                      raw_text_url: { type: 'string', description: 'Link to the raw text, ASCII, or TXT version of the report' },
-                      tiff_url: { type: 'string', description: 'Link to the TIFF image files' }
-                    }
-                  }
-                },
-                required: ['report_metadata', 'available_formats']
-              }
-            }
-          })
-        });
-        if (landRes.ok) {
-          const landData = await landRes.json();
-          const extracted = landData.data?.json || landData.json || {};
-          const formats = extracted.available_formats || {};
-          const rawTextUrl = formats.raw_text_url || formats.text_url || null;
-          const pdfUrl = formats.pdf_url || null;
-          const title = extracted.report_metadata?.title || '';
-          // Prefer raw text endpoint — Firecrawl markdown of a .txt/ASCII page is clean
-          if (rawTextUrl && /^https?:\/\//i.test(rawTextUrl)) {
-            try {
-              const textRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url: rawTextUrl, formats: ['markdown'], onlyMainContent: true, timeout: 120000 })
-              });
-              if (textRes.ok) {
-                const textData = await textRes.json();
-                const markdown = textData.data?.markdown || textData.markdown || '';
-                if (markdown && markdown.length > 100) {
-                  const headers = exposeHeaders(new Headers({
-                    'Content-Type': 'text/plain; charset=utf-8',
-                    'X-Source': 'firecrawl',
-                    'X-Nepis-Format': 'raw_text',
-                    'X-Nepis-Title': title.slice(0, 180),
-                    'X-Nepis-Pdf': pdfUrl || ''
-                  }));
-                  return new Response(markdown, { headers });
-                }
-              }
-            } catch (e2) {
-              console.warn(`NSCEP raw-text scrape failed: ${e2.message}`);
+          // Standard Firecrawl for other HTML needing JS
+          const isSpa = false;
+          const isStaticAgencyPage = /dnr\.sc\.gov\/lakes|ncwildlife\.org|georgiawildlife\.com/i.test(target);
+          const fcRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              url: target,
+              formats: ['markdown'],
+              onlyMainContent: true,
+              waitFor: isSpa ? 6000 : 0,
+              timeout: 25000,
+              ...(isStaticAgencyPage ? { maxAge: 604800000 } : {})
+            })
+          });
+          if (fcRes.ok) {
+            const fcData = await fcRes.json();
+            const markdown = fcData.data?.markdown || fcData.markdown || '';
+            if (markdown && markdown.length > 100) {
+              await recordFirecrawlUsage(env, 1);
+              const headers = exposeHeaders(new Headers({ 'Content-Type': 'text/plain; charset=utf-8', 'X-Source': 'firecrawl' }));
+              return new Response(markdown, { headers });
             }
           }
-          // Fall back to landing-page markdown if format extraction didn't yield text
-          const landMd = landData.data?.markdown || landData.markdown || '';
-          if (landMd && landMd.length > 100) {
-            const headers = exposeHeaders(new Headers({
-              'Content-Type': 'text/plain; charset=utf-8',
-              'X-Source': 'firecrawl',
-              'X-Nepis-Format': 'landing',
-              'X-Nepis-Title': title.slice(0, 180),
-              'X-Nepis-Pdf': pdfUrl || '',
-              'X-Nepis-RawText': rawTextUrl || ''
-            }));
-            return new Response(landMd, { headers });
-          }
+        } catch (e) {
+          console.warn(`Firecrawl backup failed for ${target}: ${e.message} — falling back to basic fetch`);
         }
       }
-
-      // Standard Firecrawl markdown scrape for HTML pages (eRegulations, SCDNR, etc.)
-      // waitFor helps JS-rendered SPAs like eRegulations populate table rows.
-      // maxAge: static agency pages (SCDNR descriptions, eRegulations) rarely change —
-      // if Firecrawl has a cached version < 7 days old it returns it for 0 additional credits.
-      const isSpa = false; // eRegulations removed — no SPA sources remain in this path
-      const isStaticAgencyPage = /dnr\.sc\.gov\/lakes|ncwildlife\.org|georgiawildlife\.com/i.test(target);
-      const fcRes = await fetch('https://api.firecrawl.dev/v2/scrape', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: target,
-          formats: ['markdown'],
-          onlyMainContent: true,
-          waitFor: isSpa ? 6000 : 0,  // eRegulations React SPA needs extra render time
-          timeout: 25000,
-          ...(isStaticAgencyPage ? { maxAge: 604800000 } : {}) // 7-day cache for stable pages
-        })
-      });
-      if (fcRes.ok) {
-        const fcData = await fcRes.json();
-        const markdown = fcData.data?.markdown || fcData.markdown || '';
-        if (markdown && markdown.length > 100) {
-          // Return as text/plain so lake-research.js can use it directly without pdf.js
-          const headers = exposeHeaders(new Headers({ 'Content-Type': 'text/plain; charset=utf-8', 'X-Source': 'firecrawl' }));
-          return new Response(markdown, { headers });
-        }
-      }
-      // Fall through to basic fetch if Firecrawl fails
-    } catch (e) {
-      console.warn(`Firecrawl failed for ${target}: ${e.message} — falling back to basic fetch`);
     }
   }
 
