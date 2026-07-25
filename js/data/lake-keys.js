@@ -78,6 +78,7 @@ export const LAKE_NAME_TO_R2_KEY = {
   'John H. Moss Lake, NC':              'john_h_moss_lake',
   'Oak Hollow / Higgins Lake, NC':      'oak_hollow_higgins',
   'Lake Summit, NC':                    'lake_summit',
+  'Lake Waccamaw, NC':                  'lake_waccamaw',
   'Nantahala Lake, NC':                 'nantahala_lake',
   'Lake Santeetlah, NC':                'lake_santeetlah',
   'Hiwassee Lake, NC':                  'hiwassee_lake',
@@ -125,14 +126,31 @@ export const LAKE_NAME_TO_R2_KEY = {
   'Watts Bar Reservoir, TN':            'watts_bar_lake',
 
   // ── SC Coastal ──────────────────────────────────────────────────────────────
-  'ACE Basin / Edisto, SC':             'sc_ga_coastal',
-  'Charleston Harbor, SC':              'sc_ga_coastal',
-  'Winyah Bay / Georgetown, SC':        'sc_ga_coastal',
-  'Beaufort / Port Royal Sound, SC':    'sc_ga_coastal',
-  'St. Helena Sound, SC':               'sc_ga_coastal',
-  'Hilton Head / Calibogue Sound, SC':  'sc_ga_coastal',
-  'Santee River Delta / North Inlet, SC': 'sc_ga_coastal',
-  'Savannah River / Savannah, GA':      'sc_ga_coastal',
+  'Winyah Bay / Georgetown, SC':              'coast_winyah_bay_sc',
+  'Murrells Inlet / Pawleys Island, SC':      'coast_murrells_inlet_sc',
+  'Santee River Delta / North Inlet, SC':     'coast_santee_delta_sc',
+  'Charleston Harbor, SC':                    'coast_charleston_sc',
+  'ACE Basin / Edisto, SC':                   'coast_ace_basin_sc',
+  'St. Helena Sound, SC':                     'coast_st_helena_sc',
+  'Beaufort / Port Royal Sound, SC':          'coast_beaufort_sc',
+  'Hilton Head / Calibogue Sound, SC':        'coast_hilton_head_sc',
+
+  // ── GA Coastal ──────────────────────────────────────────────────────────────
+  'Savannah River / Savannah, GA':            'coast_savannah_ga',
+  'Ossabaw / St. Catherines Sound, GA':       'coast_ossabaw_st_catherines_ga',
+  'Sapelo Sound / Altamaha River, GA':        'coast_sapelo_altamaha_ga',
+  'Brunswick / St. Simons Sound, GA':         'coast_brunswick_st_simons_ga',
+  'Cumberland Island / St. Marys, GA':        'coast_cumberland_st_marys_ga',
+
+  // ── NC Coastal ──────────────────────────────────────────────────────────────
+  'Brunswick County / Shallotte Inlet, NC':   'coast_brunswick_nc',
+  'Cape Fear River / Wilmington, NC':         'coast_cape_fear_nc',
+  'Topsail Island / New River Inlet, NC':     'coast_topsail_new_river_nc',
+  'Bogue Sound / Morehead City, NC':          'coast_bogue_sound_nc',
+  'Core Sound / Cape Lookout, NC':            'coast_core_sound_nc',
+  'Pamlico Sound / Neuse River, NC':          'coast_pamlico_sound_nc',
+  'Outer Banks / Oregon Inlet, NC':           'coast_outer_banks_nc',
+  'Albemarle Sound / Elizabeth City, NC':     'coast_albemarle_sound_nc',
 };
 
 // Build lowercase lookup once at module load for case-insensitive exact matching.
