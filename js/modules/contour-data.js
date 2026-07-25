@@ -9,15 +9,36 @@ export { LAKE_NAME_TO_R2_KEY, resolveR2Key };
 import { state, CF_WORKER_URL } from '../core/state.js';
 
 const CHAIN_DESCRIPTIONS = {
-  'lake_thurmond_russell':      'Clarks Hill / Thurmond + Russell Chain',
-  'lake_greenwood_secession':   'Lake Greenwood + Secession Chain',
-  'lake_monticello_parr':       'Lake Monticello + Parr Reservoir',
-  'lake_wateree_fishing_creek': 'Lake Wateree + Fishing Creek',
-  'lake_hickory_rhodhiss':      'Lake Hickory + Rhodhiss Chain',
-  'lake_norman_mountain_island':'Lake Norman + Mountain Island Chain',
-  'yadkin_river_chain':         'Yadkin River Chain (High Rock → Blewett Falls)',
-  'watauga_boone_chain':        'Watauga / Boone Lake Chain',
-  'sc_ga_coastal':              'SC / GA Coastal Waters',
+  'lake_thurmond_russell':          'Clarks Hill / Thurmond + Russell Chain',
+  'lake_greenwood_secession':       'Lake Greenwood + Secession Chain',
+  'lake_monticello_parr':           'Lake Monticello + Parr Reservoir',
+  'lake_wateree_fishing_creek':     'Lake Wateree + Fishing Creek',
+  'lake_hickory_rhodhiss':          'Lake Hickory + Rhodhiss Chain',
+  'lake_norman_mountain_island':    'Lake Norman + Mountain Island Chain',
+  'yadkin_river_chain':             'Yadkin River Chain (High Rock → Blewett Falls)',
+  'watauga_boone_chain':            'Watauga / Boone Lake Chain',
+  // Coastal zones
+  'coast_winyah_bay_sc':            'Winyah Bay / Georgetown',
+  'coast_murrells_inlet_sc':        'Murrells Inlet / Pawleys Island',
+  'coast_santee_delta_sc':          'Santee River Delta / North Inlet',
+  'coast_charleston_sc':            'Charleston Harbor',
+  'coast_ace_basin_sc':             'ACE Basin / Edisto',
+  'coast_st_helena_sc':             'St. Helena Sound',
+  'coast_beaufort_sc':              'Beaufort / Port Royal Sound',
+  'coast_hilton_head_sc':           'Hilton Head / Calibogue Sound',
+  'coast_savannah_ga':              'Savannah River / Savannah',
+  'coast_ossabaw_st_catherines_ga': 'Ossabaw / St. Catherines Sound',
+  'coast_sapelo_altamaha_ga':       'Sapelo Sound / Altamaha River',
+  'coast_brunswick_st_simons_ga':   'Brunswick / St. Simons Sound',
+  'coast_cumberland_st_marys_ga':   'Cumberland Island / St. Marys',
+  'coast_brunswick_nc':             'Brunswick County / Shallotte Inlet',
+  'coast_cape_fear_nc':             'Cape Fear River / Wilmington',
+  'coast_topsail_new_river_nc':     'Topsail Island / New River Inlet',
+  'coast_bogue_sound_nc':           'Bogue Sound / Morehead City',
+  'coast_core_sound_nc':            'Core Sound / Cape Lookout',
+  'coast_pamlico_sound_nc':         'Pamlico Sound / Neuse River',
+  'coast_outer_banks_nc':           'Outer Banks / Oregon Inlet',
+  'coast_albemarle_sound_nc':       'Albemarle Sound / Elizabeth City',
 };
 
 // ── IndexedDB cache ───────────────────────────────────────────────────────────
@@ -300,4 +321,4 @@ window.loadContourForLake = loadContourForLake;
 
 export async function loadContourDataset(key) { return loadContourByR2Key(key); }
 
-console.log('[contour-data] module ready — 65 lakes mapped');
+console.log('[contour-data] module ready — 67 lakes + 21 coastal zones mapped');

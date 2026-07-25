@@ -647,12 +647,12 @@ async function deriveGeospatialStructureFacts(lakeName) {
   const boundaryKey = resolveBoundaryKey(lakeName);
   const [contourGeo, depthGeo, poiGeo, boundaryGeo] = await Promise.all([
     contourKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${contourKey}/contours.geojson?v=${Date.now()}`) : Promise.resolve(null),
-    supplementalKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/supplemental/${supplementalKey}/depth_areas.geojson?v=${Date.now()}`) : Promise.resolve(null),
-    supplementalKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/supplemental/${supplementalKey}/pois.geojson?v=${Date.now()}`) : Promise.resolve(null),
+    supplementalKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${supplementalKey}/depth_areas.geojson?v=${Date.now()}`) : Promise.resolve(null),
+    supplementalKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${supplementalKey}/pois.geojson?v=${Date.now()}`) : Promise.resolve(null),
     // Boundary files in R2 use a _3dhp suffix (USGS 3D Hydrography Program).
     // Try _3dhp first, fall back to bare key for older boundary files.
-    boundaryKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/boundaries/${boundaryKey}_3dhp.geojson?v=${Date.now()}`)
-      .then(gj => gj || fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/boundaries/${boundaryKey}.geojson?v=${Date.now()}`))
+    boundaryKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${boundaryKey}/boundary.geojson?v=${Date.now()}`)
+      .then(gj => gj || fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${boundaryKey}/boundary.geojson?v=${Date.now()}`))
       : Promise.resolve(null),
   ]);
   const ring = getBoundaryOuterRing(boundaryGeo);
@@ -1893,7 +1893,7 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
     try {
       const supplementalKey = resolveSupplementalKey(lakeName);
       const shorelineUrl = supplementalKey
-        ? `${CF_WORKER_URL}/chartpacks/supplemental/${supplementalKey}/shoreline.geojson?v=${Date.now()}`
+        ? `${CF_WORKER_URL}/chartpacks/${supplementalKey}/shoreline.geojson?v=${Date.now()}`
         : `${CF_WORKER_URL}/chartpacks/lake-boundary?lake=${encodeURIComponent(lakeName)}`;
       const geoRes = await fetch(shorelineUrl);
       let bbox = null;
@@ -2160,7 +2160,7 @@ async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
       try {
         const supplementalKey = resolveSupplementalKey(lakeName);
         const shorelineUrl = supplementalKey
-          ? `${CF_WORKER_URL}/chartpacks/supplemental/${supplementalKey}/shoreline.geojson?v=${Date.now()}`
+          ? `${CF_WORKER_URL}/chartpacks/${supplementalKey}/shoreline.geojson?v=${Date.now()}`
           : `${CF_WORKER_URL}/chartpacks/lake-boundary?lake=${encodeURIComponent(lakeName)}`;
         const geoRes = await fetch(shorelineUrl);
         let bbox = null;

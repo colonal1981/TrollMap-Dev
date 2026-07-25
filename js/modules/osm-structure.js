@@ -1,7 +1,7 @@
 /**
  * osm-structure.js — OSM Structure Layer Toggle
  *
- * Loads osm-structures.geojson from R2 (supplemental/<lakeKey>/osm-structures.geojson)
+ * Loads osm-structures.geojson from R2 ({lakeKey}/osm-structures.geojson)
  * and renders bridges, dams, piers, boat ramps, and islands as map markers.
  * Data is fetched once per lake and cached in IndexedDB via the supplemental
  * layer infrastructure.
@@ -47,7 +47,7 @@ import { esc } from '../utils/escape.js';
   }
 
   async function fetchOsmStructures(lakeKey) {
-    const url = `${CF_WORKER_URL}/chartpacks/supplemental/${lakeKey}/osm-structures.geojson?v=${Date.now()}`;
+    const url = `${CF_WORKER_URL}/chartpacks/${lakeKey}/osm-structures.geojson?v=${Date.now()}`;
     const r = await fetch(url);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const gj = await r.json();

@@ -77,7 +77,7 @@ async function idbSet(key, value) {
 }
 
 async function fetchSupplemental(lakeKey, layer) {
-  const url = `${CF_WORKER_URL}/chartpacks/supplemental/${lakeKey}/${layer}.geojson?v=${Date.now()}`;
+  const url = `${CF_WORKER_URL}/chartpacks/${lakeKey}/${layer}.geojson?v=${Date.now()}`;
   const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
@@ -185,12 +185,20 @@ async function loadFishingSpots(lakeKey) {
 }
 
 const POI_STYLE = {
-  fish_attractor: { emoji: '🎯', color: '#00e5ff' },
-  boat_ramp:      { emoji: '⛵', color: '#4fc3f7' },
-  trailer_ramp:   { emoji: '⛵', color: '#4fc3f7' },
-  generic_ramp:   { emoji: '⛵', color: '#4fc3f7' },
-  water_access:   { emoji: '🚣', color: '#4fc3f7' },
-  place_name:     { emoji: '📌', color: '#aaaaaa' },
+  fish_attractor:  { emoji: '🎯', color: '#00e5ff' },
+  boat_ramp:       { emoji: '⛵', color: '#4fc3f7' },
+  trailer_ramp:    { emoji: '⛵', color: '#4fc3f7' },
+  generic_ramp:    { emoji: '⛵', color: '#4fc3f7' },
+  water_access:    { emoji: '🚣', color: '#4fc3f7' },
+  danger_buoy:     { emoji: '⚠️',  color: '#FF5722' },
+  caution_buoy:    { emoji: '🟡', color: '#FF9800' },
+  slow_no_wake:    { emoji: '🚤', color: '#FF9800' },
+  restricted_area: { emoji: '🚫', color: '#F44336' },
+  nav_buoy:        { emoji: '🔴', color: '#F44336' },
+  nav_beacon:      { emoji: '🟢', color: '#4CAF50' },
+  nav_light:       { emoji: '💡', color: '#FFEB3B' },
+  mile_marker:     { emoji: '📍', color: '#9E9E9E' },
+  place_name:      { emoji: '📌', color: '#aaaaaa' },
 };
 
 const VISION_STYLE = {
@@ -204,7 +212,7 @@ async function loadVisionStructures(lakeKey) {
   if (!mapReady()) return;
   if (_visionLayer) { getMap().removeLayer(_visionLayer); _visionLayer = null; }
   try {
-    const url = `${CF_WORKER_URL}/chartpacks/supplemental/${lakeKey}/vision-structure.geojson?v=${Date.now()}`;
+    const url = `${CF_WORKER_URL}/chartpacks/${lakeKey}/vision-structure.geojson?v=${Date.now()}`;
     const r = await fetch(url, { cache: 'no-store' });
     if (!r.ok) return;
     const gj = await r.json();
@@ -253,7 +261,7 @@ window._removeVisionStructure = async function(featureId) {
   });
   // Patch R2
   try {
-    const url = `${CF_WORKER_URL}/chartpacks/supplemental/${_activeLakeKey}/vision-structure.geojson?v=${Date.now()}`;
+    const url = `${CF_WORKER_URL}/chartpacks/${_activeLakeKey}/vision-structure.geojson?v=${Date.now()}`;
     const r = await fetch(url, { cache: 'no-store' });
     if (!r.ok) return;
     const gj = await r.json();
@@ -321,14 +329,10 @@ async function loadLakeBoundary(displayName) {
       console.log(`[supplemental] boundary loaded from cache: ${boundaryKey}`);
       return;
     }
-    // Boundary files in R2 use a _3dhp suffix (USGS 3D Hydrography Program).
-    // Try _3dhp first, fall back to bare key for older boundary files.
-    let url = `${CF_WORKER_URL}/chartpacks/boundaries/${boundaryKey}_3dhp.geojson?v=${Date.now()}`;
-    let r = await fetch(url, { cache: 'no-store' });
-    if (!r.ok) {
-      url = `${CF_WORKER_URL}/chartpacks/boundaries/${boundaryKey}.geojson?v=${Date.now()}`;
-      r = await fetch(url, { cache: 'no-store' });
-    }
+    // Boundary files now stored at {slug}/boundary.geojson (clean flat structure).
+    // Route through /chartpacks/lake-boundary worker endpoint which handles key resolution.
+    const url = `${CF_WORKER_URL}/chartpacks/lake-boundary?lake=${encodeURIComponent(boundaryKey)}&v=${Date.now()}`;
+    const r = await fetch(url, { cache: 'no-store' });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const gj = await r.json();
     if (!gj?.features?.length) throw new Error('empty');
@@ -372,7 +376,7 @@ export async function loadSupplementalForLake(displayName) {
   // Preloading 90K+ fishing features on large lakes kills scroll/zoom performance.
   loadLakeBoundary(displayName).catch(() => {});
   // Preload OSM structures for getSupplementalContext and Smart Plan
-  fetch(`${CF_WORKER_URL}/chartpacks/supplemental/${lakeKey}/osm-structures.geojson`)
+  fetch(`${CF_WORKER_URL}/chartpacks/${lakeKey}/osm-structures.geojson`)
     .then(r => r.ok ? r.json() : null)
     .then(gj => { _osmStructureData = gj && gj.features ? gj.features : []; })
     .catch(() => { _osmStructureData = []; });
