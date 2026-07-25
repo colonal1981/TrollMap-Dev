@@ -210,7 +210,7 @@ export function renderContourLayer(showSmart = true, showRaw = false) {
     }).addTo(state.CONTOUR_LAYER);
   }
 
-  if (typeof window.bringDepthAreasToBack === 'function') window.bringDepthAreasToBack();
+  // Depth areas stay beneath contours — do NOT call bringDepthAreasToBack() here.
 }
 
 // Re-render contour lines on zoom changes so threshold gating takes effect
