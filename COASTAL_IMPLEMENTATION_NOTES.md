@@ -16,6 +16,7 @@ from the brief and why, and what still needs verifying against live endpoints.
 | `390fbe6` | Tide engine + panel | `js/modules/tide-engine.js`, `js/modules/noaa-tides.js`, `index.html` |
 | `f163140` | Coastal layers | `js/modules/coastal-layers.js` |
 | `5022a78` | Scoring, salinity, agents | `js/modules/coastal-scoring.js`, `js/modules/usgs-gauges.js`, `Worker/research/coastal-agents.js` |
+| (this) | Species selection + season gate | `js/data/coastal-regulations.js`, `js/modules/species-selector.js` |
 
 ---
 
@@ -47,6 +48,36 @@ endpoint returns instantaneous values only. The baseline needs
 ### `LAKE_DB` covers only 9 of 21 zones
 `runSmartPlan()` sourced the Open-Meteo forecast from `LAKE_DB`, so 12 coastal
 zones silently got no weather. Now falls back to `COASTAL_ZONES.center`.
+
+### Saltwater species were unreachable, and the season gate did not cover them
+Two gaps found after the first four commits.
+
+**The Plan tab's species checkboxes were hardcoded freshwater** — Striped Bass,
+Hybrid, Largemouth, Catfish, Crappie, White Bass, Bowfin. Red Drum, Speckled
+Trout and Flounder could not be selected at all, so none of the coastal
+species intel or tide scoring was reachable from the UI. `species-selector.js`
+now swaps the list based on the selected waterbody.
+
+**`checkRegulations()` could not protect coastal zones.** The `REGULATIONS` map
+in `species-intel.js` is keyed by lake name, and its one `'Coastal SC Inshore'`
+entry is a key that no real zone name resolves to. Every coastal trip returned
+`{legal: true, note: 'No specific regulation data available'}`. Verified before
+the fix:
+
+```
+Pamlico Sound / Neuse River, NC + Speckled Trout, 15 Feb 2026
+  -> legal=true          (species was closed statewide by proclamation)
+```
+
+`js/data/coastal-regulations.js` keys by **state** (correct for saltwater, and
+21 zone entries fewer to maintain) and returns the same shape, so the existing
+hard block in `runSmartPlan()` works unchanged. Closed species are also
+disabled in the checkbox list, so the plan cannot be requested in the first
+place.
+
+Closures block; **gear restrictions only warn** — SC's Dec–Feb gig closure on
+red drum and trout does not affect rod and reel, so blocking the plan would be
+wrong.
 
 ### Five tests were already failing on `main`
 Unrelated to this work — they encoded a pre-split world (101 map entries, a
@@ -108,10 +139,17 @@ which is useful for establishing where each zone legally sits.
 | NC Seatrout | — | absent | 12", 10/day | **Closed by proclamation Feb 6 – Jun 30 2026** |
 | NC S. Flounder | — | absent | "periodic closures" | **No recreational season in coastal waters** |
 
-**Nothing was hardcoded from this table.** The `saltwater_regulations` agent
-parses the digest as baseline and layers a recency-bounded live search for
+The **Actual** column is what `js/data/coastal-regulations.js` encodes, as the
+offline baseline that gates plan creation. Each state entry carries `verifyBy`
+(SC/GA 2026-08-15, NC 2026-09-01); past that date `checkCoastalRegulations()`
+returns `stale: true` and attaches a warning telling the angler to confirm with
+the agency, rather than silently asserting expired numbers.
+
+The `saltwater_regulations` agent remains the authoritative live layer: it
+parses the digest as baseline and layers a recency-bounded search for
 amendments; the live source wins via `supersededByProclamation`, and
-`verificationRequired` is set whenever nothing confirmed the digest.
+`verificationRequired` is set whenever nothing confirmed the digest. Where a
+researched profile exists it should win over the static table.
 
 This matters because `runSmartPlan()` hard-blocks on `checkRegulations()`. A
 digest-only path would confidently authorise an out-of-slot red drum today.
@@ -161,6 +199,9 @@ including NWIS's `-999999` sentinel — but the following need a real browser ru
 - [ ] A coastal SmartPlan run end to end
 - [ ] USGS intrusion path — hard to test outside a real runoff event
 - [ ] One coastal research agent run per new agent, to check output shape
+- [ ] Species checkboxes swap to saltwater on selecting a coastal zone
+- [ ] NC Southern Flounder shows as CLOSED and cannot be ticked
+- [ ] Changing the trip date re-evaluates closures (NC seatrout before/after 30 Jun)
 
 Two assumptions worth confirming with real data:
 1. **Sounding density.** If a zone has tens of thousands of soundings, zoom 13

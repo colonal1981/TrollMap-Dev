@@ -33,6 +33,7 @@ import { assessZoneIntrusion } from './usgs-gauges.js';
 import {
   normalizeCoastalSpecies, classifyStructure, tacticalNote, DEPTH_BANDS,
 } from './coastal-scoring.js';
+import { checkCoastalRegulations, formatCoastalLimit } from '../data/coastal-regulations.js';
 
 const BATTERY_AH_DEFAULT = 100;
 const MOTOR_AMP_AVG      = 6;
@@ -614,9 +615,12 @@ export async function buildCoastalContext({ zoneKey, dateStr, launchTime, specie
 
   const primary = normalizeCoastalSpecies(species?.[0]);
   const stage = tide?.stage || null;
+  const regulation = species?.[0]
+    ? checkCoastalRegulations(zone.state, species[0], dateStr)
+    : null;
 
   return {
-    zoneKey, zone, tide, stage, intrusion, structures,
+    zoneKey, zone, tide, stage, intrusion, structures, regulation,
     species: primary,
     tideHeightFt: tide?.heightFt ?? null,
     depthBand: (primary && stage) ? DEPTH_BANDS[primary]?.[stage] : null,
@@ -658,6 +662,12 @@ export function buildCoastalPromptBlock(ctx) {
     L.push('Penalise upper creeks; favour inlet-adjacent structure.');
   }
 
+  if (ctx.regulation?.regInfo) {
+    const limit = formatCoastalLimit(ctx.regulation.regInfo);
+    if (limit) L.push(`Harvest limit (${ctx.zone.state}): ${limit}`);
+  }
+  for (const w of (ctx.regulation?.warnings || [])) L.push(`⚠ ${w}`);
+
   return L.join('\n');
 }
 
@@ -673,11 +683,28 @@ export async function runSmartPlan() {
 
   const date=new Date(dateStr+'T12:00:00');
   const sp=species[0];
-  const regCheck=checkRegulations(lakeName,sp,date);
+
+  // Regulation gate. Coastal zones are checked against the saltwater table:
+  // the freshwater REGULATIONS map is keyed by lake and has no entry any
+  // coastal zone name resolves to, so checkRegulations() would return
+  // legal:true for a closed fishery (e.g. NC seatrout during a cold-stun
+  // proclamation closure). Same return shape, so the block below is shared.
+  const _coastalKeyForRegs = detectCoastalZone(lakeName);
+  const _coastalState = _coastalKeyForRegs ? COASTAL_ZONES[_coastalKeyForRegs]?.state : null;
+  const regCheck = _coastalState
+    ? checkCoastalRegulations(_coastalState, sp, date)
+    : checkRegulations(lakeName, sp, date);
+
   if (!regCheck.legal) {
     setStatus(`⚠ ${sp} not legal: ${regCheck.reason?.slice(0,60)}`,false);
     if (outEl) outEl.value=`REGULATION BLOCK:\n${regCheck.reason}`;
     return;
+  }
+
+  // Non-blocking advisories: gear-specific closures and stale digests.
+  const regWarnings = regCheck.warnings || [];
+  if (regWarnings.length) {
+    console.warn('[smart-plan] regulation advisories:', regWarnings);
   }
 
   setStatus('Asking Groq for fishing plan…',true);

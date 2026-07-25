@@ -82,6 +82,7 @@ import './modules/quickdraw-key.js';
 import './modules/sw-register.js';
 import './modules/supplemental-layers.js';
 import './modules/coastal-layers.js';
+import './modules/species-selector.js';
 import './modules/groq-coach.js';
 import './modules/notifications.js';
 import './modules/route-debug.js';
