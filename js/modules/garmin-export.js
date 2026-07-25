@@ -28,8 +28,10 @@ function garminSymbol(s) {
 
 /**
  * Trigger a download of `state.DATA` as a Garmin-flavored GPX file.
- * Filename comes from the plan name (with whitespace → underscores),
- * or "fishing_plan" if not set.
+ * Waypoints are exported in their current chronological order, which after
+ * Smart Plan is the unified timeline order (trolling waypoints interleaved
+ * with CAST: stop-and-cast waypoints). This satisfies the “GPX export should
+ * include stop-and-cast waypoints interleaved with trolling waypoints in route order” rule.
  */
 export function exportGarminGPX() {
   if (!state.DATA.waypoints.length && !state.DATA.tracks.length) {
@@ -37,11 +39,18 @@ export function exportGarminGPX() {
     return;
   }
 
-  const wptXml = state.DATA.waypoints.map((w) => `  <wpt lat="${w.lat.toFixed(7)}" lon="${w.lon.toFixed(7)}">
+  const wptXml = state.DATA.waypoints.map((w) => {
+    const isCast = !!w.castingStop;
+    const sym = isCast ? (GARMIN_SYMBOL_MAP['Fishing Hot Spot Facility'] || 'Fishing Hot Spot Facility') : garminSymbol(w.sym);
+    const typeVal = isCast ? 'CAST' : (w.role === 'launch_ramp' ? 'LAUNCH' : 'TROLL');
+    const cmt = isCast && w.structureType ? `\n    <cmt>${esc(w.structureType)}${w.depth ? ` ${w.depth}ft` : ''}</cmt>` : '';
+    const desc = isCast && w.tacticalNote ? `\n    <desc>${esc(w.tacticalNote.slice(0,200))}</desc>` : '';
+    return `  <wpt lat="${w.lat.toFixed(7)}" lon="${w.lon.toFixed(7)}">
     <name>${esc(w.name || 'WPT')}</name>
-    <sym>${garminSymbol(w.sym)}</sym>
-    <type>user</type>
-  </wpt>`).join('\n');
+    <sym>${esc(sym)}</sym>
+    <type>${esc(typeVal)}</type>${cmt}${desc}
+  </wpt>`;
+  }).join('\n');
 
   const trkXml = state.DATA.tracks.map((t) => `  <trk>
     <name>${esc(t.name || 'Track')}</name>
