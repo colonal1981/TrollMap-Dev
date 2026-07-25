@@ -99,13 +99,17 @@ async function fetchSupplemental(lakeKey, layer) {
 
 async function loadLayer(lakeKey, layer) {
   const cacheKey = `${lakeKey}/${layer}`;
-  const cached = await idbGet(cacheKey);
-  if (cached?.ts && (Date.now() - cached.ts) < CACHE_TTL && cached.value?.features?.length) {
-    return cached.value;
+  // Coastal depth_areas bypass IDB — file updates happen frequently during development
+  const bypassIdb = lakeKey.startsWith('coast_') && layer === 'depth_areas';
+  if (!bypassIdb) {
+    const cached = await idbGet(cacheKey);
+    if (cached?.ts && (Date.now() - cached.ts) < CACHE_TTL && cached.value?.features?.length) {
+      return cached.value;
+    }
   }
   const gj = await fetchSupplemental(lakeKey, layer);
   if (!gj?.features?.length) throw new Error('empty');
-  await idbSet(cacheKey, gj);
+  if (!bypassIdb) await idbSet(cacheKey, gj);
   return gj;
 }
 
