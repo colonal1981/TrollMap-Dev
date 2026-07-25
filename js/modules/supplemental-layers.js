@@ -127,7 +127,6 @@ export function getLakeBoundaryGeoJSON() { return _boundaryGeoJSON; }
 export function bringDepthAreasToBack() {
   if (!_depthAreaLayer) return;
   if (typeof _depthAreaLayer.bringToBack === 'function') _depthAreaLayer.bringToBack();
-  else if (_depthAreaLayer.eachLayer) _depthAreaLayer.eachLayer(l => { if (typeof l.bringToBack === 'function') l.bringToBack(); });
 }
 window.bringDepthAreasToBack = bringDepthAreasToBack;
 
@@ -140,59 +139,49 @@ async function loadDepthAreas(lakeKey) {
   try {
     const gj = await loadLayer(lakeKey, 'depth_areas');
     const isCoastal = lakeKey.startsWith('coast_');
-    const map = getMap();
 
+    // For coastal zones: filter intertidal (depth_max_ft <= 0) and
+    // sort by range size descending so most precise polygons render last (on top).
+    // For freshwater: use as-is.
+    let features = gj.features;
     if (isCoastal) {
-      // Canvas renders features in insertion order within a single L.geoJSON call.
-      // The only way to guarantee z-order (shallow under deep) on canvas is to add
-      // each depth band as a SEPARATE layer in shallow-to-deep sequence.
-      const group = L.layerGroup();
-      for (let i = 0; i < DEPTH_BANDS_COASTAL.length; i++) {
-        const band = DEPTH_BANDS_COASTAL[i];
-        const prevMax = i > 0 ? DEPTH_BANDS_COASTAL[i - 1].max : -Infinity;
-        const bandFeatures = gj.features.filter(f => {
-          const mx = f.properties?.depth_max_ft ?? 0;
-          return mx > 0 && mx > prevMax && mx <= band.max;
+      features = features
+        .filter(f => (f.properties?.depth_max_ft ?? 0) > 0)
+        .sort((a, b) => {
+          const rangeA = (a.properties.depth_max_ft - a.properties.depth_min_ft);
+          const rangeB = (b.properties.depth_max_ft - b.properties.depth_min_ft);
+          return rangeB - rangeA; // coarse polygons first, precise on top
         });
-        if (!bandFeatures.length) continue;
-        L.geoJSON({ type: 'FeatureCollection', features: bandFeatures }, {
-          renderer: _svgRenderer,
-          smoothFactor: 1.5,
-          style() {
-            return { fillColor: band.color, fillOpacity: 0.85, color: band.color, weight: 0.5, opacity: 0.6 };
-          },
-          onEachFeature(feat, layer) {
-            const p = feat.properties || {};
-            layer.bindTooltip(`Depth zone: ${p.depth_min_ft ?? '?'}–${p.depth_max_ft ?? '?'} ft`, { sticky: true, direction: 'top', opacity: 0.85 });
-          },
-        }).addTo(group);
-      }
-      _depthAreaLayer = group;
-      if (_depthAreaVisible) group.addTo(map);
-    } else {
-      _depthAreaLayer = L.geoJSON(gj, {
-        renderer: _canvasRenderer,
-        smoothFactor: 1.5,
-        style(feat) {
-          const p = feat.properties || {};
-          const depthFt = p.depth_ft ?? p.depth_max_ft ?? p.depth_min_ft ?? 0;
-          const color = depthAreaColor(depthFt);
-          return { fillColor: color, fillOpacity: 0.30, color, weight: 0.5, opacity: 0.5 };
-        },
-        onEachFeature(feat, layer) {
-          const p = feat.properties || {};
-          layer.bindTooltip(`Depth zone: ${p.depth_min_ft ?? '?'}–${p.depth_max_ft ?? '?'} ft`, { sticky: true, direction: 'top', opacity: 0.85 });
-        },
-      });
-      if (_depthAreaVisible) { _depthAreaLayer.addTo(map); _depthAreaLayer.bringToBack(); }
     }
 
+    _depthAreaLayer = L.geoJSON({ ...gj, features }, {
+      renderer: _svgRenderer,
+      smoothFactor: 1.5,
+      style(feat) {
+        const p = feat.properties || {};
+        const depthFt = p.depth_max_ft ?? p.depth_min_ft ?? p.depth_ft ?? 0;
+        const color = depthAreaColor(depthFt, isCoastal);
+        const fillOpacity = isCoastal ? 0.75 : 0.30;
+        return { fillColor: color, fillOpacity, color, weight: 0.5, opacity: 0.5 };
+      },
+      onEachFeature(feat, layer) {
+        const p = feat.properties || {};
+        const minFt = p.depth_min_ft ?? '?';
+        const maxFt = p.depth_max_ft ?? '?';
+        layer.bindTooltip(`Depth zone: ${minFt}–${maxFt} ft`, { sticky: true, direction: 'top', opacity: 0.85 });
+      },
+    });
+
+    if (_depthAreaVisible) {
+      _depthAreaLayer.addTo(getMap());
+      if (!isCoastal) _depthAreaLayer.bringToBack();
+    }
     _depthAreaGeoJSON = gj;
     globalThis.SUPPLEMENTAL_DEPTH_LAYER   = _depthAreaLayer;
     globalThis.SUPPLEMENTAL_DEPTH_GEOJSON = gj;
     window.SUPPLEMENTAL_DEPTH_LAYER       = _depthAreaLayer;
     window.SUPPLEMENTAL_DEPTH_GEOJSON     = gj;
-    console.log(`[supplemental] depth_areas loaded: ${gj.features.length} features for ${lakeKey}`);
+    console.log(`[supplemental] depth_areas loaded: ${features.length} features for ${lakeKey}`);
   } catch (e) {
     if (!e.message.includes('404') && !e.message.includes('empty')) {
       console.warn(`[supplemental] depth_areas fetch failed for ${lakeKey}:`, e.message);
@@ -529,7 +518,7 @@ window.toggleDepthAreas = function(visible) {
   if (!_depthAreaLayer) return;
   if (visible) {
     _depthAreaLayer.addTo(getMap());
-    if (typeof _depthAreaLayer.bringToBack === 'function') _depthAreaLayer.bringToBack();
+    if (typeof _depthAreaLayer.bringToBack === 'function' && !_activeLakeKey?.startsWith('coast_')) _depthAreaLayer.bringToBack();
     window.SUPPLEMENTAL_DEPTH_LAYER = _depthAreaLayer;
   } else {
     getMap()?.removeLayer(_depthAreaLayer);
