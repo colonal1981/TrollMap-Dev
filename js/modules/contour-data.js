@@ -167,8 +167,9 @@ function depthColor(ft) {
   return '#ffffff';
 }
 
-// Canvas renderer instance — shared across all contour layers for best performance
-const _canvasRenderer = L.canvas({ padding: 0.5 });
+// SVG renderer for contour lines — SVG layers sit above canvas in DOM,
+// so contours render on top of canvas depth areas automatically.
+const _canvasRenderer = L.svg({ padding: 0.5 });
 
 // Zoom threshold below which contour lines are hidden (depth areas still show)
 const CONTOUR_MIN_ZOOM = 11;
