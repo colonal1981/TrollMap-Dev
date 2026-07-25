@@ -347,6 +347,12 @@ LAKE_CATALOG = {
         'center': (35.10, -78.93),
         'priority': 10
     },
+    'lake_waccamaw': {
+        'name': 'Lake Waccamaw',
+        'bbox': (34.246753, 34.327257, -78.562721, -78.457374),
+        'center': (34.287, -78.510),
+        'priority': 10
+    },
 
     # ── TENNESSEE & WESTERN NC MOUNTAIN LAKES ─────────────────────────────────
     'fort_loudoun_lake': {

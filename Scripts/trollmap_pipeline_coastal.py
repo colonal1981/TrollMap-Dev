@@ -1,34 +1,25 @@
 #!/usr/bin/env python3
 """
-trollmap_pipeline.py — Unified TrollMap Extraction Pipeline
+trollmap_pipeline_coastal.py — TrollMap Coastal Zone Extraction Pipeline
 
-Single pass over all 4 PBF cache folders extracts BOTH:
-  - Depth contours (layer_depcnt) → {lake_key}/contours.geojson
-  - Supplemental layers:
-      depth_areas     (layer_areas DEPARE polygons)
-      fishing_lines   (layer_fishing_line)
-      fishing_points  (layer_fishing_point)
-      pois            (layer_points: ramps, attractors, place names)
-      shoreline       (layer_lines COALNE)
+Extracts depth contours + supplemental layers for SC/GA coastal zones from
+the murray_marion_moultrie i-Boating PBF cache (which covers the coast).
 
-Output structure matches R2 upload expectations:
+Output structure matches upload_to_r2.py expectations:
   split_output3/
-    {lake_key}.geojson                     ← contours (uploaded as {lake_key}/contours.geojson)
+    {zone_key}.geojson                      ← contours (uploaded as {zone_key}/contours.geojson)
     supplemental/
-      {lake_key}/
+      {zone_key}/
         depth_areas.geojson
         fishing_lines.geojson
         fishing_points.geojson
         pois.geojson
         shoreline.geojson
-    supplemental/_all/
-        pois.geojson                       ← all POIs combined
 
 Usage:
-    python trollmap_pipeline.py
-    python trollmap_pipeline.py --lake lake_wateree_fishing_creek
-    python trollmap_pipeline.py --zooms 14 15 16
-    python trollmap_pipeline.py --output F:\\TrollMapPipeline\\split_output3
+    python trollmap_pipeline_coastal.py
+    python trollmap_pipeline_coastal.py --zone coast_charleston_sc
+    python trollmap_pipeline_coastal.py --zooms 14 15 16
 """
 
 import argparse
@@ -68,23 +59,23 @@ except ImportError:
     sys.exit(1)
 
 try:
-    from lake_catalog import LAKE_CATALOG
+    from coastal_catalog import COASTAL_CATALOG
 except ImportError:
-    print("ERROR: lake_catalog.py not found in same directory")
+    print("ERROR: coastal_catalog.py not found in same directory")
     sys.exit(1)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 PBF_CACHE   = Path(r'F:\TrollMapPipeline\pbf_cache')
 OUTPUT_DIR  = Path(r'F:\TrollMapPipeline\split_output3')
 DEFAULT_ZOOMS = None  # scan all available zooms
-MIN_CONTOUR_FEATURES = 10
+MIN_CONTOUR_FEATURES = 5  # lower threshold for coastal — zones may be sparse
 
+# PBF folders covering coastal zones
 PBF_FOLDERS = [
-    {'folder': PBF_CACHE / 'monticello_parr_wateree',            'label': 'Monticello / Parr / Wateree'},
-    {'folder': PBF_CACHE / 'murray_marion_moultrie',             'label': 'Murray / Marion / Moultrie'},
-    {'folder': PBF_CACHE / 'Georgia',                            'label': 'Georgia'},
-    {'folder': PBF_CACHE / 'Knoxville_western NC_TN',            'label': 'Knoxville / W. NC / TN'},
-    {'folder': PBF_CACHE / 'NC__eastern_lakes_coastal_northern', 'label': 'NC Eastern Lakes'},
+    {'folder': PBF_CACHE / 'murray_marion_moultrie',             'label': 'Murray / Marion / Moultrie / SC+GA Coast'},
+    {'folder': PBF_CACHE / 'NC_coastal_southern',                'label': 'NC Coastal Southern (Myrtle Beach to Wilmington)'},
+    {'folder': PBF_CACHE / 'NC__eastern_lakes_coastal_northern', 'label': 'NC Eastern / Coastal Northern'},
+    {'folder': PBF_CACHE / 'Georgia_coastal',                    'label': 'Georgia Coastal'},
 ]
 
 METERS_TO_FEET = 3.28084
@@ -98,15 +89,15 @@ POI_TYPE_MAP = {
     'caution_buoy':       'caution_buoy',
     'slow_no_wake_buoy':  'slow_no_wake',
     'boats_keep_out_buoy':'restricted_area',
-    'no_ski_zone':        'restricted_area',
-    'BOYLAT':             'nav_buoy',
     'BCNLAT':             'nav_beacon',
-    'mile_marker':        'mile_marker',
+    'LIGHTS':             'nav_light',
+    'BOYSPP':             'nav_buoy',
+    'BOYLAT':             'nav_buoy',
+    'DISMAR':             'mile_marker',
 }
 
 # ── Tile math ─────────────────────────────────────────────────────────────────
 def make_transformer(x, y, z):
-    """Exact Spherical Mercator tile → (lon, lat)."""
     n = 2.0 ** z
     def t(px, py):
         lon = (x + px / 4096.0) / n * 360.0 - 180.0
@@ -116,7 +107,6 @@ def make_transformer(x, y, z):
     return t
 
 def tile_bbox(z, x, y):
-    """Return (south, north, west, east) for a tile."""
     n = 2.0 ** z
     west  = x / n * 360.0 - 180.0
     east  = (x + 1) / n * 360.0 - 180.0
@@ -124,28 +114,26 @@ def tile_bbox(z, x, y):
     north = math.degrees(math.atan(math.sinh(math.pi * (1.0 - 2.0 * y / n))))
     return south, north, west, east
 
-# ── Lake assignment ───────────────────────────────────────────────────────────
-def match_point_to_lake(lon, lat):
+# ── Zone assignment ───────────────────────────────────────────────────────────
+def match_point_to_zone(lon, lat):
     candidates = []
-    for key, data in LAKE_CATALOG.items():
+    for key, data in COASTAL_CATALOG.items():
         s, n, w, e = data['bbox']
         if s <= lat <= n and w <= lon <= e:
             clat, clon = data['center']
             dist = math.sqrt((lat - clat)**2 + (lon - clon)**2)
-            candidates.append((data.get('priority', 10), -dist, key))
+            candidates.append((data.get('priority', 8), -dist, key))
     if not candidates:
         return None
     candidates.sort(reverse=True)
     return candidates[0][2]
 
 def feature_centroid(coords):
-    """Mean centroid of a LineString coordinate list."""
     xs = [c[0] for c in coords]
     ys = [c[1] for c in coords]
     return sum(xs) / len(xs), sum(ys) / len(ys)
 
 def feature_rep_point(geom):
-    """Representative (lon, lat) for any geometry."""
     gtype = geom.get('type', '')
     coords = geom.get('coordinates', [])
     if gtype == 'Point':
@@ -168,14 +156,13 @@ def feature_rep_point(geom):
         return round(sum(xs)/len(xs), 7), round(sum(ys)/len(ys), 7)
     return None, None
 
-# ── Cove propagation for contours ─────────────────────────────────────────────
+# ── Cove propagation ──────────────────────────────────────────────────────────
 def assign_contours_with_propagation(features, max_cove_dist=0.015):
-    """Core-lock + nearest-neighbour cove propagation (same as original pipeline)."""
-    print("\n  Locking contours to lake bounding boxes...")
-    lake_buckets = defaultdict(list)
+    print("\n  Locking contours to coastal zone bounding boxes...")
+    zone_buckets = defaultdict(list)
     unmatched = []
     core_coords = []
-    core_lakes = []
+    core_zones = []
     unboxed = []
     unboxed_coords = []
 
@@ -185,26 +172,26 @@ def assign_contours_with_propagation(features, max_cove_dist=0.015):
             unmatched.append(f)
             continue
         cx, cy = feature_centroid(coords)
-        lake = match_point_to_lake(cx, cy)
-        if lake:
-            lake_buckets[lake].append(f)
+        zone = match_point_to_zone(cx, cy)
+        if zone:
+            zone_buckets[zone].append(f)
             core_coords.append((cy, cx))
-            core_lakes.append(lake)
+            core_zones.append(zone)
         else:
             unboxed.append(f)
             unboxed_coords.append((cy, cx))
 
-    print(f"  Core locked: {sum(len(v) for v in lake_buckets.values()):,} | Unboxed: {len(unboxed):,}")
+    print(f"  Core locked: {sum(len(v) for v in zone_buckets.values()):,} | Unboxed: {len(unboxed):,}")
 
     if unboxed and core_coords:
-        print(f"  Propagating {len(unboxed):,} cove contours...")
+        print(f"  Propagating {len(unboxed):,} edge contours...")
         if cKDTree is not None:
             tree = cKDTree(core_coords)
             dists, idxs = tree.query(unboxed_coords, k=1)
             propagated = 0
             for i, f in enumerate(unboxed):
                 if dists[i] <= max_cove_dist:
-                    lake_buckets[core_lakes[idxs[i]]].append(f)
+                    zone_buckets[core_zones[idxs[i]]].append(f)
                     propagated += 1
                 else:
                     unmatched.append(f)
@@ -218,7 +205,7 @@ def assign_contours_with_propagation(features, max_cove_dist=0.015):
                 dists_sq = (core_arr[:, 0] - pt[0])**2 + (core_arr[:, 1] - pt[1])**2
                 min_idx = int(np.argmin(dists_sq))
                 if dists_sq[min_idx] <= r_sq:
-                    lake_buckets[core_lakes[min_idx]].append(f)
+                    zone_buckets[core_zones[min_idx]].append(f)
                     propagated += 1
                 else:
                     unmatched.append(f)
@@ -226,10 +213,10 @@ def assign_contours_with_propagation(features, max_cove_dist=0.015):
         else:
             unmatched.extend(unboxed)
 
-    return lake_buckets, unmatched
+    return zone_buckets, unmatched
 
 # ── POI normalizer ────────────────────────────────────────────────────────────
-def normalize_poi(raw_props, lon, lat, lake_key, lake_name, z):
+def normalize_poi(raw_props, lon, lat, zone_key, zone_name, z):
     raw_type = raw_props.get('type', '')
     poi_type = POI_TYPE_MAP.get(raw_type, raw_type)
     name = (raw_props.get('frmtd', '') or raw_props.get('ltxt1', '') or '').strip()
@@ -240,7 +227,7 @@ def normalize_poi(raw_props, lon, lat, lake_key, lake_name, z):
     return {
         'poi_type': poi_type, 'raw_type': raw_type, 'name': name,
         'icon': icon, 'ramp_subtype': ramp_subtype,
-        'lake_key': lake_key, 'lake_name': lake_name,
+        'zone_key': zone_key, 'zone_name': zone_name,
         'lon': lon, 'lat': lat, 'source_zoom': z,
     }
 
@@ -257,26 +244,14 @@ def depare_props(raw_props):
     }
 
 # ── Main extraction ───────────────────────────────────────────────────────────
-def extract_all(pbf_folders, zooms, lake_filter=None):
-    """
-    Single pass over all PBF folders extracting contours + supplemental.
-    Returns:
-      contour_features  — flat list (assigned later)
-      depth_areas       — defaultdict(list) keyed by lake_key
-      fishing_lines     — defaultdict(list)
-      fishing_points    — defaultdict(list)
-      pois              — defaultdict(list)
-      shorelines        — defaultdict(list)
-    """
+def extract_all(pbf_folders, zooms, zone_filter=None):
     contour_features = []
-
     depth_areas    = defaultdict(list)
     fishing_lines  = defaultdict(list)
     fishing_points = defaultdict(list)
     pois           = defaultdict(list)
     shorelines     = defaultdict(list)
 
-    # Dedup signatures
     seen_contours = set()
     seen_areas    = set()
     seen_fl       = set()
@@ -284,14 +259,13 @@ def extract_all(pbf_folders, zooms, lake_filter=None):
     seen_poi      = set()
     seen_shore    = set()
 
-    # Lake filter bbox for tile pre-filtering
     filter_bbox = None
-    if lake_filter:
-        lc = LAKE_CATALOG.get(lake_filter)
-        if lc:
-            filter_bbox = lc['bbox']  # (south, north, west, east)
+    if zone_filter:
+        zc = COASTAL_CATALOG.get(zone_filter)
+        if zc:
+            filter_bbox = zc['bbox']
         else:
-            print(f"WARNING: lake_filter '{lake_filter}' not in LAKE_CATALOG")
+            print(f"WARNING: zone_filter '{zone_filter}' not in COASTAL_CATALOG")
 
     for job in pbf_folders:
         folder = Path(job['folder'])
@@ -333,7 +307,7 @@ def extract_all(pbf_folders, zooms, lake_filter=None):
             except Exception:
                 continue
 
-            # ── Contours (layer_depcnt) ───────────────────────────────────────
+            # ── Contours ─────────────────────────────────────────────────────
             for feat in tile.get('layer_depcnt', {}).get('features', []):
                 dm = feat['properties'].get('real0')
                 if dm is None: continue
@@ -346,7 +320,6 @@ def extract_all(pbf_folders, zooms, lake_filter=None):
                     if len(line) < 2: continue
                     coords = [[round(float(c[0]), 7), round(float(c[1]), 7)] for c in line]
                     if len(coords) < 2: continue
-                    # Dedup: sample 5 points
                     n_pts = len(coords)
                     sample = [coords[0], coords[n_pts//4], coords[n_pts//2], coords[3*n_pts//4], coords[-1]]
                     sig = tuple(round(p[i], 4) for p in sample for i in range(2)) + (dft,)
@@ -358,7 +331,7 @@ def extract_all(pbf_folders, zooms, lake_filter=None):
                         'properties': {'depth_ft': dft, 'depth_m': round(float(dm), 3)}
                     })
 
-            # ── Depth areas (layer_areas DEPARE) ─────────────────────────────
+            # ── Depth areas ───────────────────────────────────────────────────
             for feat in tile.get('layer_areas', {}).get('features', []):
                 props = feat.get('properties', {})
                 if props.get('type') != 'DEPARE': continue
@@ -366,12 +339,12 @@ def extract_all(pbf_folders, zooms, lake_filter=None):
                 if not geom or geom['type'] not in ('Polygon', 'MultiPolygon'): continue
                 lon, lat = feature_rep_point(geom)
                 if lon is None: continue
-                lake_key = match_point_to_lake(lon, lat)
-                if not lake_key: continue
+                zone_key = match_point_to_zone(lon, lat)
+                if not zone_key: continue
                 sig = (round(lon, 4), round(lat, 4), props.get('real0', 0), props.get('real1', 0))
                 if sig in seen_areas: continue
                 seen_areas.add(sig)
-                depth_areas[lake_key].append({
+                depth_areas[zone_key].append({
                     'type': 'Feature', 'geometry': geom,
                     'properties': depare_props(props),
                 })
@@ -385,15 +358,15 @@ def extract_all(pbf_folders, zooms, lake_filter=None):
                 if not line: continue
                 mid = line[len(line) // 2]
                 lon, lat = round(float(mid[0]), 7), round(float(mid[1]), 7)
-                lake_key = match_point_to_lake(lon, lat)
-                if not lake_key: continue
+                zone_key = match_point_to_zone(lon, lat)
+                if not zone_key: continue
                 sig = (round(lon, 5), round(lat, 5))
                 if sig in seen_fl: continue
                 seen_fl.add(sig)
-                fishing_lines[lake_key].append({
+                fishing_lines[zone_key].append({
                     'type': 'Feature', 'geometry': geom,
-                    'properties': {'feature_type': 'fishing_line', 'lake_key': lake_key,
-                                   'lake_name': LAKE_CATALOG[lake_key]['name'], 'source_zoom': z},
+                    'properties': {'feature_type': 'fishing_line', 'zone_key': zone_key,
+                                   'zone_name': COASTAL_CATALOG[zone_key]['name'], 'source_zoom': z},
                 })
 
             # ── Fishing points ────────────────────────────────────────────────
@@ -403,18 +376,18 @@ def extract_all(pbf_folders, zooms, lake_filter=None):
                 coords = geom.get('coordinates', [])
                 pt = coords[0] if isinstance(coords[0], list) else coords
                 lon, lat = round(float(pt[0]), 7), round(float(pt[1]), 7)
-                lake_key = match_point_to_lake(lon, lat)
-                if not lake_key: continue
+                zone_key = match_point_to_zone(lon, lat)
+                if not zone_key: continue
                 sig = (round(lon, 5), round(lat, 5))
                 if sig in seen_fp: continue
                 seen_fp.add(sig)
-                fishing_points[lake_key].append({
+                fishing_points[zone_key].append({
                     'type': 'Feature', 'geometry': geom,
-                    'properties': {'feature_type': 'fishing_point', 'lake_key': lake_key,
-                                   'lake_name': LAKE_CATALOG[lake_key]['name'], 'source_zoom': z},
+                    'properties': {'feature_type': 'fishing_point', 'zone_key': zone_key,
+                                   'zone_name': COASTAL_CATALOG[zone_key]['name'], 'source_zoom': z},
                 })
 
-            # ── POIs (layer_points) ───────────────────────────────────────────
+            # ── POIs ──────────────────────────────────────────────────────────
             for feat in tile.get('layer_points', {}).get('features', []):
                 geom = feat.get('geometry')
                 if not geom or geom['type'] != 'Point': continue
@@ -423,45 +396,80 @@ def extract_all(pbf_folders, zooms, lake_filter=None):
                 lon, lat = round(float(coords[0]), 7), round(float(coords[1]), 7)
                 props = feat.get('properties', {})
                 raw_type = props.get('type', '')
-                if raw_type not in ('wateraccess', 'fishattractor', 'gnis', 'boatramp',
-                                    'danger_buoy', 'caution_buoy', 'slow_no_wake_buoy',
-                                    'boats_keep_out_buoy', 'no_ski_zone',
-                                    'BOYLAT', 'BCNLAT', 'mile_marker'): continue
-                lake_key = match_point_to_lake(lon, lat)
-                if not lake_key: continue
+                # Coastal: include nav aids and buoys in addition to standard POI types
+                if raw_type not in ('wateraccess', 'fishattractor', 'gnis',
+                                    'boatramp', 'BCNLAT', 'LIGHTS', 'BOYSPP',
+                                    'BOYLAT', 'danger_buoy', 'caution_buoy',
+                                    'slow_no_wake_buoy', 'DISMAR'): continue
+                zone_key = match_point_to_zone(lon, lat)
+                if not zone_key: continue
                 name = (props.get('frmtd', '') or '').strip()
                 sig = (round(lon, 5), round(lat, 5), raw_type, name)
                 if sig in seen_poi: continue
                 seen_poi.add(sig)
-                pois[lake_key].append({
+                pois[zone_key].append({
                     'type': 'Feature', 'geometry': geom,
-                    'properties': normalize_poi(props, lon, lat, lake_key,
-                                                LAKE_CATALOG[lake_key]['name'], z),
+                    'properties': normalize_poi(props, lon, lat, zone_key,
+                                                COASTAL_CATALOG[zone_key]['name'], z),
                 })
 
-            # ── Shoreline (layer_lines COALNE) ────────────────────────────────
+            # ── Shoreline + coastal structures (layer_lines) ──────────────────
             for feat in tile.get('layer_lines', {}).get('features', []):
                 props = feat.get('properties', {})
-                if props.get('type') not in ('COALNE', 'COALNE_area'): continue
+                raw_type = props.get('type', '')
+                if raw_type not in ('COALNE', 'COALNE_area', 'pier',
+                                    'OBSTRN', 'DRGARE', 'NONEARTHERN_SHORE'): continue
                 geom = feat.get('geometry')
                 if not geom: continue
                 lon, lat = feature_rep_point(geom)
                 if lon is None: continue
-                lake_key = match_point_to_lake(lon, lat)
-                if not lake_key: continue
-                sig = (round(lon, 4), round(lat, 4))
+                zone_key = match_point_to_zone(lon, lat)
+                if not zone_key: continue
+                sig = (round(lon, 4), round(lat, 4), raw_type)
                 if sig in seen_shore: continue
                 seen_shore.add(sig)
-                shorelines[lake_key].append({
+                is_shoreline = raw_type in ('COALNE', 'COALNE_area', 'NONEARTHERN_SHORE')
+                shorelines[zone_key].append({
                     'type': 'Feature', 'geometry': geom,
-                    'properties': {'feature_type': 'shoreline', 'raw_type': props.get('type', ''),
-                                   'lake_key': lake_key, 'lake_name': LAKE_CATALOG[lake_key]['name'],
-                                   'source_zoom': z},
+                    'properties': {
+                        'feature_type': 'shoreline' if is_shoreline else raw_type.lower(),
+                        'raw_type': raw_type,
+                        'zone_key': zone_key,
+                        'zone_name': COASTAL_CATALOG[zone_key]['name'],
+                        'source_zoom': z,
+                    },
+                })
+
+            # ── Depth soundings (layer_soundg) ────────────────────────────────
+            for feat in tile.get('layer_soundg', {}).get('features', []):
+                geom = feat.get('geometry')
+                if not geom or geom['type'] != 'Point': continue
+                coords = geom.get('coordinates', [])
+                if not coords: continue
+                lon, lat = round(float(coords[0]), 7), round(float(coords[1]), 7)
+                props = feat.get('properties', {})
+                dm = props.get('real0')
+                if dm is None: continue
+                dft = round(float(dm) * METERS_TO_FEET, 1)
+                if dft <= 0: continue
+                zone_key = match_point_to_zone(lon, lat)
+                if not zone_key: continue
+                sig = (round(lon, 5), round(lat, 5))
+                if sig in seen_fp: continue
+                seen_fp.add(sig)
+                fishing_points[zone_key].append({
+                    'type': 'Feature', 'geometry': geom,
+                    'properties': {
+                        'feature_type': 'depth_sounding',
+                        'depth_ft': dft,
+                        'depth_m': round(float(dm), 3),
+                        'zone_key': zone_key,
+                        'zone_name': COASTAL_CATALOG[zone_key]['name'],
+                        'source_zoom': z,
+                    },
                 })
 
     return contour_features, depth_areas, fishing_lines, fishing_points, pois, shorelines
-
-# ── Write outputs ─────────────────────────────────────────────────────────────
 def write_geojson(path, features):
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, 'w', encoding='utf-8') as f:
@@ -470,9 +478,9 @@ def write_geojson(path, features):
     return f"{kb/1024:.1f}MB" if kb > 1024 else f"{kb:.0f}KB"
 
 def main():
-    parser = argparse.ArgumentParser(description="TrollMap Unified Pipeline")
+    parser = argparse.ArgumentParser(description="TrollMap Coastal Pipeline")
     parser.add_argument('--output', default=str(OUTPUT_DIR))
-    parser.add_argument('--lake', default=None, help='Single lake key to extract')
+    parser.add_argument('--zone', default=None, help='Single zone key to extract')
     parser.add_argument('--zooms', type=int, nargs='+', default=DEFAULT_ZOOMS,
                         help='Zoom levels to scan (default: all)')
     parser.add_argument('--max-cove-dist', type=float, default=0.015)
@@ -485,21 +493,19 @@ def main():
     supp_dir.mkdir(parents=True, exist_ok=True)
 
     print("=" * 70)
-    print("TrollMap Unified Pipeline — Contours + Supplemental")
+    print("TrollMap Coastal Pipeline — Contours + Supplemental")
     print(f"Output:  {out_dir}")
     print(f"Zooms:   {args.zooms}")
-    if args.lake:
-        print(f"Filter:  {args.lake}")
+    if args.zone:
+        print(f"Filter:  {args.zone}")
     print("=" * 70)
 
-    # ── Step 1: Extract everything ────────────────────────────────────────────
-    folders = [job for job in PBF_FOLDERS]
     (contour_features, depth_areas, fishing_lines,
-     fishing_points, pois, shorelines) = extract_all(folders, args.zooms, args.lake)
+     fishing_points, pois, shorelines) = extract_all(PBF_FOLDERS, args.zooms, args.zone)
 
     print(f"\n✅ Extracted {len(contour_features):,} contour features")
 
-    # ── Step 2: Dedup contours (high-detail first) ────────────────────────────
+    # Dedup
     print("\nDeduplicating contours...")
     contour_features.sort(key=lambda f: -len(f.get('geometry', {}).get('coordinates', [])))
     seen = set()
@@ -515,93 +521,90 @@ def main():
             deduped.append(f)
     print(f"  {len(contour_features):,} → {len(deduped):,} after dedup")
 
-    # ── Step 3: Assign contours to lakes ─────────────────────────────────────
-    print("\nAssigning contours to lakes...")
+    # Assign to zones
+    print("\nAssigning contours to coastal zones...")
     contour_buckets, unmatched = assign_contours_with_propagation(deduped, args.max_cove_dist)
 
-    # ── Step 4: Write contours ────────────────────────────────────────────────
+    # Write contours
     print("\n=== Writing contours ===")
     contour_inventory = []
-    for lake_key, feats in sorted(contour_buckets.items()):
-        if args.lake and lake_key != args.lake:
+    for zone_key, feats in sorted(contour_buckets.items()):
+        if args.zone and zone_key != args.zone:
             continue
         if len(feats) < args.min_features:
             continue
-        path = out_dir / f"{lake_key}.geojson"
+        path = out_dir / f"{zone_key}.geojson"
         size = write_geojson(path, feats)
         depths = sorted(set(round(f['properties'].get('depth_ft', 0)) for f in feats))
         dstr = f"{min(depths)}-{max(depths)}ft" if depths else "?"
-        lake_name = LAKE_CATALOG.get(lake_key, {}).get('name', lake_key)
-        print(f"  ✅ {lake_key:<35} {len(feats):>7,} feats  {size:>8}  {dstr}")
-        contour_inventory.append({'lake_key': lake_key, 'features': len(feats), 'size': size, 'depths': dstr})
+        zone_name = COASTAL_CATALOG.get(zone_key, {}).get('name', zone_key)
+        print(f"  ✅ {zone_key:<40} {len(feats):>7,} feats  {size:>8}  {dstr}")
+        contour_inventory.append({'zone_key': zone_key, 'features': len(feats), 'size': size, 'depths': dstr})
 
     if unmatched:
-        path = out_dir / '_unmatched.geojson'
+        path = out_dir / '_unmatched_coastal.geojson'
         write_geojson(path, unmatched)
-        print(f"\n  ⚠️  {len(unmatched):,} unmatched contours → _unmatched.geojson")
+        print(f"\n  ⚠️  {len(unmatched):,} unmatched contours → _unmatched_coastal.geojson")
 
-    # ── Step 5: Write supplemental ────────────────────────────────────────────
+    # Write supplemental
     print("\n=== Writing supplemental layers ===")
-    all_lakes = sorted(set(
+    all_zones = sorted(set(
         list(depth_areas) + list(fishing_lines) + list(fishing_points) +
         list(pois) + list(shorelines)
     ))
-    all_pois_combined = []
     supp_inventory = []
 
-    for lake_key in all_lakes:
-        if args.lake and lake_key != args.lake:
+    for zone_key in all_zones:
+        if args.zone and zone_key != args.zone:
             continue
-        lake_name = LAKE_CATALOG.get(lake_key, {}).get('name', lake_key)
-        da = depth_areas.get(lake_key, [])
-        fl = fishing_lines.get(lake_key, [])
-        fp = fishing_points.get(lake_key, [])
-        po = pois.get(lake_key, [])
-        sh = shorelines.get(lake_key, [])
+        zone_name = COASTAL_CATALOG.get(zone_key, {}).get('name', zone_key)
+        da = depth_areas.get(zone_key, [])
+        fl = fishing_lines.get(zone_key, [])
+        fp = fishing_points.get(zone_key, [])
+        po = pois.get(zone_key, [])
+        sh = shorelines.get(zone_key, [])
         total = len(da) + len(fl) + len(fp) + len(po) + len(sh)
         if total == 0:
             continue
 
-        lake_supp_dir = supp_dir / lake_key
-        print(f"\n  ✅ {lake_key} ({lake_name})")
+        zone_supp_dir = supp_dir / zone_key
+        print(f"\n  ✅ {zone_key} ({zone_name})")
 
         if da:
-            s = write_geojson(lake_supp_dir / 'depth_areas.geojson', da)
+            s = write_geojson(zone_supp_dir / 'depth_areas.geojson', da)
             print(f"    depth_areas    {len(da):>6,}  {s}")
         if fl:
-            s = write_geojson(lake_supp_dir / 'fishing_lines.geojson', fl)
+            s = write_geojson(zone_supp_dir / 'fishing_lines.geojson', fl)
             print(f"    fishing_lines  {len(fl):>6,}  {s}")
         if fp:
-            s = write_geojson(lake_supp_dir / 'fishing_points.geojson', fp)
-            print(f"    fishing_points {len(fp):>6,}  {s}")
+            soundings = [f for f in fp if f['properties'].get('feature_type') == 'depth_sounding']
+            pts = [f for f in fp if f['properties'].get('feature_type') != 'depth_sounding']
+            if pts:
+                s = write_geojson(zone_supp_dir / 'fishing_points.geojson', pts)
+                print(f"    fishing_points {len(pts):>6,}  {s}")
+            if soundings:
+                s = write_geojson(zone_supp_dir / 'depth_soundings.geojson', soundings)
+                print(f"    depth_soundings {len(soundings):>5,}  {s}")
         if po:
-            s = write_geojson(lake_supp_dir / 'pois.geojson', po)
+            s = write_geojson(zone_supp_dir / 'pois.geojson', po)
             print(f"    pois           {len(po):>6,}  {s}")
-            all_pois_combined.extend(po)
         if sh:
-            s = write_geojson(lake_supp_dir / 'shoreline.geojson', sh)
+            s = write_geojson(zone_supp_dir / 'shoreline.geojson', sh)
             print(f"    shoreline      {len(sh):>6,}  {s}")
 
         supp_inventory.append({
-            'lake_key': lake_key, 'lake_name': lake_name,
+            'zone_key': zone_key, 'zone_name': zone_name,
             'depth_areas': len(da), 'fishing_lines': len(fl),
             'fishing_points': len(fp), 'pois': len(po), 'shoreline': len(sh),
         })
 
-    # Combined POI file
-    if all_pois_combined:
-        all_dir = supp_dir / '_all'
-        s = write_geojson(all_dir / 'pois.geojson', all_pois_combined)
-        print(f"\n  🗺️  _all/pois.geojson: {len(all_pois_combined):,} total POIs  {s}")
-
-    # Inventories
-    with open(out_dir / '_contour_inventory.json', 'w') as f:
+    with open(out_dir / '_contour_inventory_coastal.json', 'w') as f:
         json.dump(contour_inventory, f, indent=2)
-    with open(supp_dir / '_supplemental_inventory.json', 'w') as f:
+    with open(supp_dir / '_supplemental_inventory_coastal.json', 'w') as f:
         json.dump(supp_inventory, f, indent=2)
 
     print(f"\n{'='*70}")
-    print(f"Done. {len(contour_inventory)} lakes with contours, {len(supp_inventory)} lakes with supplemental.")
+    print(f"Done. {len(contour_inventory)} zones with contours, {len(supp_inventory)} zones with supplemental.")
     print(f"Output: {out_dir}")
     print(f"{'='*70}")
 

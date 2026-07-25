@@ -1,25 +1,22 @@
 #!/usr/bin/env python3
 """
-upload_to_r2.py — Upload all TrollMap pipeline outputs to R2 in clean structure.
+upload_to_r2_coastal.py — Upload TrollMap coastal pipeline outputs to R2.
 
 New R2 layout (flat per-slug):
-  {slug}/contours.geojson
-  {slug}/depth_areas.geojson
-  {slug}/fishing_lines.geojson
-  {slug}/fishing_points.geojson
-  {slug}/pois.geojson
-  {slug}/shoreline.geojson
-  {slug}/osm-structures.geojson
-  {slug}/boundary.geojson
-  _all/pois.geojson
+  {zone_slug}/contours.geojson
+  {zone_slug}/depth_areas.geojson
+  {zone_slug}/depth_soundings.geojson
+  {zone_slug}/fishing_lines.geojson
+  {zone_slug}/fishing_points.geojson
+  {zone_slug}/pois.geojson
+  {zone_slug}/shoreline.geojson
 
 Usage:
-    py upload_to_r2.py --all              # upload everything
-    py upload_to_r2.py --contours         # contours only
-    py upload_to_r2.py --supplemental     # supplemental layers only
-    py upload_to_r2.py --boundaries       # boundary files only
-    py upload_to_r2.py --lake lake_wateree_fishing_creek  # single lake
-    py upload_to_r2.py --dry-run --all    # show what would upload
+    py upload_to_r2_coastal.py --all
+    py upload_to_r2_coastal.py --contours
+    py upload_to_r2_coastal.py --supplemental
+    py upload_to_r2_coastal.py --zone coast_charleston_sc
+    py upload_to_r2_coastal.py --dry-run --all
 """
 
 import subprocess
@@ -43,7 +40,7 @@ SUPPLEMENTAL_LAYERS = [
     'shoreline.geojson',
 ]
 
-SKIP_SLUGS = {'sc_ga_coastal', 'saluda_river_arm'}
+SKIP_SLUGS = set()
 
 
 def wrangler_put(local_path, r2_key, dry_run=False):
@@ -117,13 +114,13 @@ def upload_all_pois(dry_run=False):
     wrangler_put(path, '_all/pois.geojson', dry_run)
 
 
-def get_slugs(lake_arg=None):
+def get_slugs(zone_arg=None):
     try:
         import sys
         sys.path.insert(0, str(Path(__file__).parent))
-        from lake_catalog import LAKE_CATALOG
-        if lake_arg:
-            return [lake_arg] if lake_arg in LAKE_CATALOG else []
+        from coastal_catalog import COASTAL_CATALOG as LAKE_CATALOG
+        if zone_arg:
+            return [zone_arg] if zone_arg in LAKE_CATALOG else []
         return [s for s in LAKE_CATALOG if s not in SKIP_SLUGS]
     except ImportError:
         print('ERROR: lake_catalog.py not found')
@@ -136,7 +133,7 @@ def main():
     ap.add_argument('--contours',     action='store_true')
     ap.add_argument('--supplemental', action='store_true')
     ap.add_argument('--boundaries',   action='store_true')
-    ap.add_argument('--lake',         help='Single slug')
+    ap.add_argument('--lake', '--zone', help='Single coastal zone slug')
     ap.add_argument('--dry-run',      action='store_true')
     args = ap.parse_args()
 
@@ -148,7 +145,7 @@ def main():
         print('\nSpecify at least one of: --all --contours --supplemental --boundaries')
         sys.exit(1)
 
-    slugs = get_slugs(args.lake)
+    slugs = get_slugs(args.lake if hasattr(args, 'lake') else None)
     mode = 'DRY RUN' if args.dry_run else 'UPLOAD'
     print(f'TrollMap R2 Upload — {mode}')
     print(f'Bucket: {BUCKET}')
