@@ -500,11 +500,42 @@ export function getSupplementalContext(lat, lon, radiusMi = 0.5) {
  * Called by coastal-layers.js after a tide sync.
  */
 export function refreshDepthAreaColors(tideHeightFt) {
-  if (!_activeLakeKey?.startsWith('coast_')) return;
+  if (!_activeLakeKey?.startsWith('coast_')) {
+    // Depth areas may still be loading — retry once after a short delay
+    setTimeout(() => {
+      if (_activeLakeKey?.startsWith('coast_') && _depthAreaGeoJSON) {
+        refreshDepthAreaColors(tideHeightFt);
+      }
+    }, 1500);
+    return;
+  }
   _coastalTideHeightFt = Number.isFinite(tideHeightFt) ? tideHeightFt : null;
   if (!_depthAreaGeoJSON || !mapReady()) return;
-  // Re-render using cached GeoJSON — no fetch needed
-  loadDepthAreas(_activeLakeKey);
+  // Re-render directly from cached GeoJSON — no fetch
+  const gj = _depthAreaGeoJSON;
+  const isCoastal = true;
+  if (_depthAreaLayer) { getMap().removeLayer(_depthAreaLayer); _depthAreaLayer = null; }
+  const features = gj.features.filter(f => (f.properties?.depth_max_ft ?? 0) > 0);
+  _depthAreaLayer = L.geoJSON({ ...gj, features }, {
+    renderer: _canvasRenderer,
+    smoothFactor: 1.5,
+    style(feat) {
+      const p = feat.properties || {};
+      const chartedFt = p.depth_max_ft ?? p.depth_min_ft ?? p.depth_ft ?? 0;
+      const depthFt = Number.isFinite(_coastalTideHeightFt)
+        ? chartedFt + _coastalTideHeightFt
+        : chartedFt;
+      const color = depthAreaColor(depthFt, isCoastal);
+      return { fillColor: color, fillOpacity: 0.55, color, weight: 0.5, opacity: 0.5 };
+    },
+    onEachFeature(feat, layer) {
+      const p = feat.properties || {};
+      layer.bindTooltip(`Depth zone: ${p.depth_min_ft ?? '?'}–${p.depth_max_ft ?? '?'} ft`, { sticky: true, direction: 'top', opacity: 0.85 });
+    },
+  });
+  if (_depthAreaVisible) _depthAreaLayer.addTo(getMap());
+  window.SUPPLEMENTAL_DEPTH_LAYER = _depthAreaLayer;
+  console.log(`[supplemental] depth_areas re-colored: tide ${_coastalTideHeightFt}ft`);
 }
 window.refreshDepthAreaColors = refreshDepthAreaColors;
 
