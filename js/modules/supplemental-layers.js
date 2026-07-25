@@ -34,8 +34,20 @@ const DEPTH_BANDS = [
   { max: Infinity, color: '#ffffff' },
 ];
 
-function depthAreaColor(ft) {
-  for (const band of DEPTH_BANDS) {
+// NOAA ENC DEPARE uses metric-derived breaks: 5.9, 11.8, 17.7, 29.9, 35.8, 59.7ft
+const DEPTH_BANDS_COASTAL = [
+  { max: 5.9,      color: '#e63946' },
+  { max: 11.8,     color: '#f4a261' },
+  { max: 17.7,     color: '#e9c46a' },
+  { max: 29.9,     color: '#2a9d8f' },
+  { max: 35.8,     color: '#00e5ff' },
+  { max: 59.7,     color: '#0077b6' },
+  { max: Infinity, color: '#7b2d8b' },
+];
+
+function depthAreaColor(ft, coastal = false) {
+  const bands = coastal ? DEPTH_BANDS_COASTAL : DEPTH_BANDS;
+  for (const band of bands) {
     if (ft <= band.max) return band.color;
   }
   return '#ffffff';
@@ -144,8 +156,7 @@ async function loadDepthAreas(lakeKey) {
       style(feat) {
         const p      = feat.properties || {};
         const depthFt = p.depth_max_ft ?? p.depth_min_ft ?? p.depth_ft ?? 0;
-        const color   = depthAreaColor(depthFt);
-        // Higher opacity for coastal so deeper polygons visually cover shallower ones
+        const color   = depthAreaColor(depthFt, isCoastal);
         const fillOpacity = isCoastal ? 0.80 : 0.30;
         return { fillColor: color, fillOpacity, color, weight: 0.5, opacity: 0.6 };
       },
