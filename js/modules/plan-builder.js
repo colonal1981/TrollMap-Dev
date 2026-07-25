@@ -100,6 +100,131 @@ export function collectPlan(){
   const coastalKey = resolveR2Key(lakeVal);
   const isCoastal = isCoastalKey(coastalKey);
   const phaseSpeeds = normalizedPhaseSpeeds(window._smartPlanPhaseRoutes);
+
+  // ── Unified Timeline capture (single source of truth) ────────────────────
+  // window._smartPlanTimeline is built by smart-plan-ui.js buildUnifiedTimeline()
+  // It already interleaves troll passes and stop-and-cast stops in chronological order.
+  let unifiedTimeline = null;
+  try {
+    if (Array.isArray(window._smartPlanTimeline) && window._smartPlanTimeline.length) {
+      // Deep clone for JSON but preserve key fields for bait recommendations and positioning notes
+      unifiedTimeline = window._smartPlanTimeline.map(e => {
+        if (e.type === 'troll') {
+          return {
+            step: e.step,
+            type: e.type,
+            key: e.key,
+            label: e.label,
+            shortLabel: e.shortLabel,
+            icon: e.icon,
+            color: e.color,
+            desc: e.desc,
+            speedMph: e.speedMph,
+            depthMin: e.depthMin,
+            depthMax: e.depthMax,
+            port: e.port,
+            starboard: e.starboard,
+            portColor: e.portColor,
+            starboardColor: e.starboardColor,
+            portLeadFt: e.portLeadFt,
+            starboardLeadFt: e.starboardLeadFt,
+            why: e.why,
+            phaseName: e.phaseName,
+            stats: e.stats,
+            // rods hold full spread info for this pass
+            rods: (e.rods||[]).map(r=>({
+              side: r.side,
+              lure: r.lure,
+              color: r.color,
+              depth: r.depth,
+              lead: r.lead,
+              reel: r.reel,
+              rod: r.rod,
+              trailerSize: r.trailerSize,
+              arigWeight: r.arigWeight,
+              jigWeight: r.jigWeight,
+              notes: r.notes,
+            })),
+          };
+        } else {
+          // stop_and_cast
+          return {
+            step: e.step,
+            type: e.type,
+            subType: e.subType,
+            id: e.id,
+            name: e.name,
+            targetStructure: e.targetStructure,
+            targetDepth: e.targetDepth,
+            presentation: e.presentation,
+            recommendedLures: Array.isArray(e.recommendedLures) ? e.recommendedLures.slice() : [],
+            tacticalNote: e.tacticalNote,
+            positioning: e.positioning || e.tacticalNote,
+            lat: e.lat,
+            lon: e.lon,
+            routeContext: e.routeContext || null,
+            score: e.score,
+            reason: e.reason,
+            typeDetail: e.typeDetail,
+          };
+        }
+      });
+    }
+  } catch (err) {
+    console.warn('[plan-builder] unifiedTimeline capture failed', err.message);
+  }
+
+  // Fallback for older plans or when timeline not yet built — use raw Groq timeline if available
+  if (!unifiedTimeline) {
+    try {
+      const raw = window._smartPlanTimeline || window._smartPlanRouteRods ? null : null;
+      // try to pull from last groq plan if stored elsewhere
+      if (window._groqPlanTimeline && Array.isArray(window._groqPlanTimeline)) {
+        unifiedTimeline = window._groqPlanTimeline;
+      }
+    } catch (_){}
+  }
+
+  // Capture stop candidates with positioning and bait recs as separate field for backward compat
+  let castingStops = [];
+  try {
+    const src = window._smartPlanStopCandidates || [];
+    castingStops = src.map(s=>({
+      name: s.name,
+      type: s.type,
+      lat: s.lat,
+      lon: s.lon,
+      score: s.score,
+      reason: s.reason,
+      structureType: s.structureType,
+      routeContext: s.routeContext || null,
+      recommendedLures: s.recommendedLures || [],
+      tacticalNote: s.tacticalNote || s.reason || '',
+    }));
+  } catch (_){}
+
+  // Route rods capture per key
+  let routeRodsCapture = null;
+  try {
+    if (window._smartPlanRouteRods) {
+      routeRodsCapture = {};
+      for (const k of Object.keys(window._smartPlanRouteRods)) {
+        routeRodsCapture[k] = (window._smartPlanRouteRods[k]||[]).map(r=>({
+          side: r.side,
+          lure: r.lure,
+          color: r.color,
+          depth: r.depth,
+          lead: r.lead,
+          reel: r.reel,
+          rod: r.rod,
+          trailerSize: r.trailerSize,
+          arigWeight: r.arigWeight,
+          jigWeight: r.jigWeight,
+        }));
+      }
+    }
+  } catch (_){}
+
   return {
     meta:{
       name: gV('planName', 'Fishing Plan'),
@@ -133,8 +258,6 @@ export function collectPlan(){
       species,
     },
     trolling:{
-      // Legacy single speed remains for older plans; Smart Plan saves its
-      // per-band pass speeds as the authoritative values.
       speed: gV('planSpeed', '2.4'),
       phaseSpeeds,
       targetDepth: gV('planTargetDepth'),
@@ -144,18 +267,29 @@ export function collectPlan(){
     tackle: gV('planTackle'),
     safety: gV('planSafety'),
     notes: gV('planNotes'),
-    // FIX (2026-07-03): this was never being captured at all, even though
-    // the Preview template referenced a `rationaleHtml` variable that was
-    // supposed to come from it — a fully broken ReferenceError every time,
-    // since nothing anywhere ever declared that variable. Smart Plan writes
-    // its rationale text into #planSmartPlanOutput; capture it here so it
-    // round-trips through save/load and the Preview can actually use it.
     rationale: window._smartPlanRationale || document.getElementById('planSmartPlanOutput')?.value || '',
+    // ── Unified timeline (single chronological source) ────────────────────
+    // This is the new canonical field per refactor brief: captures full
+    // trip order including trolling spreads/leads/speeds and stop-and-cast
+    // structure/depth/baits/positioning notes, no duplicate rendering.
+    timeline: unifiedTimeline,
+    unifiedTimeline: unifiedTimeline, // alias for forward compatibility
+    castingStops,
+    routeRods: routeRodsCapture,
+    routeSpeeds: window._smartPlanRouteSpeeds || null,
     gpx: {
       waypoints: state.DATA.waypoints.length,
       tracks: state.DATA.tracks.length,
       trackPoints: state.DATA.tracks.reduce((a,t)=>a+t.pts.length,0),
-      waypointList: state.DATA.waypoints.map(w=>({name:w.name, lat:w.lat, lon:w.lon})),
+      // Interleaved waypoint list now includes stop-and-cast CAST: waypoints in route order (from smart-plan-ui sorting)
+      waypointList: state.DATA.waypoints.map(w=>({
+        name:w.name, lat:w.lat, lon:w.lon,
+        sym: w.sym || 'Waypoint',
+        castingStop: !!w.castingStop,
+        depth: w.depth || null,
+        structureType: w.structureType || null,
+        tacticalNote: w.tacticalNote || null,
+      })),
       trackList: state.DATA.tracks.map(t=>({name:t.name, points:t.pts.length}))
     },
     savedAt: new Date().toISOString()
@@ -245,6 +379,34 @@ export async function buildPlanPreviewHtml(p){
     ? `<pre style="white-space:pre-wrap;font-family:inherit;background:#f7f9fb;padding:10px;border-radius:6px;font-size:13px;border-left:4px solid #0d4f8b">${esc(p.rationale)}</pre>`
     : '';
   const phaseSpeedSummary = formatPhaseSpeeds(p.trolling?.phaseSpeeds, p.trolling?.speed || '2.4');
+
+  // ── Unified timeline preview (single chronological component) ─────────────
+  let unifiedPreviewHtml = '';
+  const unifiedSrc = p.timeline || p.unifiedTimeline || null;
+  if (Array.isArray(unifiedSrc) && unifiedSrc.length) {
+    const rows = unifiedSrc.map((e, i) => {
+      if (e.type === 'troll') {
+        const icon = e.icon || (e.key?.includes('Ph1 Out') ? '🌅' : e.key?.includes('Ph1 In') ? '↩️' : e.key?.includes('Ph2 Out') ? '☀️' : '🏠');
+        const label = e.label || e.key || `Troll ${i+1}`;
+        const speed = e.speedMph ? `${e.speedMph} mph` : (p.trolling?.speed||'') + ' mph';
+        const depth = e.depthMin != null && e.depthMax != null ? `${e.depthMin}–${e.depthMax}ft` : (e.depthMin ? `${e.depthMin}ft` : '');
+        const rods = (e.rods||[]).map(r=> `${esc(r.side||'')}: ${esc(r.lure||'')} ${esc(r.lead||'')?`@ ${esc(r.lead)}ft`:''}`).join('<br>');
+        return `<tr style="background:#eef7ff"><td><b>${icon} TROLL — ${esc(label)}</b><br><span class="rp-small">${esc(e.desc||e.phaseName||'')}</span></td><td>${esc(speed)}<br>${esc(depth)}</td><td class="rp-small">${rods || `${esc(e.port||'')} / ${esc(e.starboard||'')}`}</td><td class="rp-small">${esc(e.why||'')}</td></tr>`;
+      } else {
+        const lures = (e.recommendedLures||[]).map(l=> {
+          const name = l.name || l.lure || l;
+          const conf = l.confidence ? ` (${esc(l.confidence)})` : '';
+          return `${esc(String(name))}${conf}`;
+        }).join(', ');
+        const coord = e.lat != null ? `${Number(e.lat).toFixed(4)}, ${Number(e.lon).toFixed(4)}` : 'No GPS';
+        return `<tr style="background:#fff8e1"><td><b>🎯 STOP & CAST — ${esc(e.name||'Structure')}</b><br><span class="rp-small">${esc(e.targetStructure||'')} · ${esc(String(e.targetDepth||''))}ft · ${esc(coord)}</span></td><td colspan="2"><b>Presentation:</b> ${esc(e.presentation||'')}<br><b>Casting Baits:</b> ${esc(lures)||'—'}<br><b style="color:#b06a00">Positioning:</b> ${esc(e.tacticalNote||e.positioning||'')}</td><td class="rp-small">${esc(e.reason||'')}${e.routeContext ? `<br>${esc(e.routeContext.trackName)} ~${e.routeContext.etaMin}min` : ''}</td></tr>`;
+      }
+    }).join('');
+    unifiedPreviewHtml = `
+    <h2>🧭 Unified Trip Timeline — Interleaved Trolling & Stop-and-Cast (Chronological)</h2>
+    <p class="rp-small">Single source of truth — trolling passes and casting stops in the order you will encounter them on the water. No duplicate blocks.</p>
+    <table><thead><tr style="background:#eef4fa"><th>Step</th><th>Speed / Depth</th><th>Spread / Baits / Leads / Positioning</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
 
   // ── Clarity tactical ──────────────────────────────────────────────────────
   const clarity = p.meta.clarity || 'Clear';
@@ -1128,6 +1290,9 @@ ${twilightHtml?`<h2>4 · Light &amp; Bite Feed Triggers</h2>${twilightHtml}`:''}
 </div>
 
 ${rationaleHtml ? `<h2>5.5 · Smart Plan Rationale</h2>${rationaleHtml}` : ''}
+
+${unifiedPreviewHtml}
+
 <h2>6 · The Professional Spread — Rod by Rod</h2>
 <table>
   <thead><tr style="background:#eef4fa">

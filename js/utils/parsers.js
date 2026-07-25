@@ -88,6 +88,9 @@ export function parseGPX(text) {
 
 /**
  * Serialize a working GPX file from the given waypoints/tracks.
+ * Supports unified timeline: when state.DATA.waypoints has been sorted
+ * by smart-plan-ui to interleave CAST waypoints with trolling waypoints
+ * in route order, this function preserves that chronological order.
  *
  * @param {{ waypoints: Array, tracks: Array }} data
  * @returns {string} GPX XML
@@ -95,19 +98,28 @@ export function parseGPX(text) {
 export function buildGPX(data) {
   const lines = [
     `<?xml version="1.0" encoding="UTF-8"?>`,
-    `<gpx version="1.1" creator="TrollMap GPX Studio"`,
+    `<gpx version="1.1" creator="TrollMap GPX Studio — Unified Timeline"`,
     `  xmlns="http://www.topografix.com/GPX/1/1"`,
     `  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"`,
     `  xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">`,
   ];
 
+  // Waypoints are already in interleaved route order if Smart Plan has run
+  // (see smart-plan-ui.js). Preserve that order verbatim.
   for (const w of data.waypoints) {
+    const sym = w.castingStop ? 'Fishing Area' : (w.sym || 'Waypoint');
+    const typeVal = w.castingStop ? 'CAST' : (w.role === 'launch_ramp' ? 'LAUNCH' : 'TROLL');
     lines.push(
       `  <wpt lat="${w.lat.toFixed(7)}" lon="${w.lon.toFixed(7)}">`,
       `    <name>${esc(w.name)}</name>`,
-      `    <sym>${esc(w.sym || 'Waypoint')}</sym>`,
-      `  </wpt>`,
+      `    <sym>${esc(sym)}</sym>`,
+      `    <type>${esc(typeVal)}</type>`,
     );
+    if (w.castingStop) {
+      if (w.structureType) lines.push(`    <cmt>${esc(w.structureType)}${w.depth ? ` ${w.depth}ft` : ''}</cmt>`);
+      if (w.tacticalNote) lines.push(`    <desc>${esc(w.tacticalNote.slice(0, 200))}</desc>`);
+    }
+    lines.push(`  </wpt>`);
   }
 
   for (const t of data.tracks) {

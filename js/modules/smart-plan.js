@@ -1432,6 +1432,14 @@ Return ONLY valid JSON, no markdown:
     console.warn('[smart-plan] Stop candidate build failed:', stopErr.message);
   }
 
+  // Persist raw Groq timeline for debugging and for collectPlan fallback
+  try {
+    window._groqPlanTimeline = groqPlan.timeline ? JSON.parse(JSON.stringify(groqPlan.timeline)) : null;
+    window._smartPlanStopCandidates = stopCandidates.slice();
+    window._smartPlanRouteRods = routeRods;
+    window._smartPlanRouteSpeeds = routeSpeeds;
+  } catch (_) {}
+
   const b1p=routeRods['Ph1 Outbound'][0], b1s=routeRods['Ph1 Outbound'][1];
   const b2p=routeRods['Ph2 Outbound'][0], b2s=routeRods['Ph2 Outbound'][1];
 
@@ -1479,8 +1487,11 @@ Return ONLY valid JSON, no markdown:
     phases: phaseInfo.phases,
     solunar: solunarStr,
     stopCandidates,
-    timeline: groqPlan.timeline || null, // INJECTED HERE
+    timeline: groqPlan.timeline || null, // Unified timeline source
   });
+
+  // After UI builds unified timeline and interleaves CAST waypoints, re-render map to show new ordering
+  try { renderAll(); } catch (_) {}
 
   const intelSection=document.getElementById('planIntelSection');
   if (intelSection) intelSection.style.display='block';
