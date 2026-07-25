@@ -180,9 +180,15 @@ async function loadDepthAreas(lakeKey) {
     window.SUPPLEMENTAL_DEPTH_LAYER       = _depthAreaLayer;
     window.SUPPLEMENTAL_DEPTH_GEOJSON     = gj;
     console.log(`[supplemental] depth_areas loaded: ${features.length} features for ${lakeKey}`);
-    // If tide height already set (auto-sync beat the load), re-apply colors immediately
-    if (isCoastal && Number.isFinite(_coastalTideHeightFt)) {
-      refreshDepthAreaColors(_coastalTideHeightFt);
+    // Apply tide-adjusted colors — check immediately and again after a delay
+    // to handle the race between depth area load and tide auto-sync
+    if (isCoastal) {
+      const applyTide = () => {
+        const tideFt = _coastalTideHeightFt ?? window._trollmapTide?.heightFt ?? null;
+        if (Number.isFinite(tideFt)) refreshDepthAreaColors(tideFt);
+      };
+      applyTide();
+      setTimeout(applyTide, 2000);
     }
   } catch (e) {
     if (!e.message.includes('404') && !e.message.includes('empty')) {
@@ -408,6 +414,21 @@ export async function loadSupplementalForLake(displayName) {
   _updateButtonState('btnPOI', false);
 
   await loadDepthAreas(lakeKey);
+
+  // For coastal zones: fetch current tide height and apply color adjustment.
+  // This covers the Map tab where noaa-tides.js auto-sync doesn't fire.
+  if (lakeKey.startsWith('coast_')) {
+    const { getTideStateForZone } = await import('./tide-engine.js').catch(() => ({}));
+    if (getTideStateForZone) {
+      getTideStateForZone(lakeKey).then(tide => {
+        if (tide?.heightFt != null && Number.isFinite(tide.heightFt)) {
+          window._trollmapTide = tide;
+          refreshDepthAreaColors(tide.heightFt);
+          window.refreshSoundingLabels?.(tide.heightFt);
+        }
+      }).catch(() => {});
+    }
+  }
 
   // Coastal-only layers (oyster beds / marsh edges / soundings). The module
   // clears itself for freshwater keys, so this is safe to call unconditionally.
