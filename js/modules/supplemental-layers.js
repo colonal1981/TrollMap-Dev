@@ -10,6 +10,8 @@ import { distMiFromCoords as distMi } from '../utils/geo.js';
 
 // Canvas renderer — shared for all supplemental polygon/line layers
 const _canvasRenderer = L.canvas({ padding: 0.5 });
+// SVG renderer for coastal depth areas — SVG preserves z-order per feature like QGIS
+const _svgRenderer = L.svg({ padding: 0.5 });
 
 // ── Unified resolvers ───────────────────────────────────────────────────
 // Previously resolveBoundaryKey duplicated the fuzzy logic from lake-keys.js
@@ -154,10 +156,10 @@ async function loadDepthAreas(lakeKey) {
         });
         if (!bandFeatures.length) continue;
         L.geoJSON({ type: 'FeatureCollection', features: bandFeatures }, {
-          renderer: L.canvas({ padding: 0.5 }),
+          renderer: _svgRenderer,
           smoothFactor: 1.5,
           style() {
-            return { fillColor: band.color, fillOpacity: 0.55, color: band.color, weight: 0.5, opacity: 0.5 };
+            return { fillColor: band.color, fillOpacity: 0.85, color: band.color, weight: 0.5, opacity: 0.6 };
           },
           onEachFeature(feat, layer) {
             const p = feat.properties || {};
