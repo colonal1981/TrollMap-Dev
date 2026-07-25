@@ -23,6 +23,18 @@ import { SCDNR_STATE_LAKES } from './scdnr-state-lakes.js';
 import { USER_KNOWN_LAKES } from './user-known-lakes.js';
 import { COASTAL_ZONES } from './coastal-zones.js';
 
+// Manual coastal ramps not in DNR ArcGIS feed — add here when a known
+// kayak/small-boat launch is missing from the official database.
+const COASTAL_MANUAL_RAMPS = [
+  {
+    zoneName: 'Murrells Inlet / Pawleys Island, SC',
+    name: 'Oyster Landing (Kayak/Sm Boat)',
+    lat: 33.54751,
+    lon: -79.04484,
+    note: 'Open beach kayak/small boat launch at end of dirt road near Huntington State Park entrance',
+  },
+];
+
 const STATES = ['SC', 'NC', 'GA', 'TN'];
 const ACCESS_SOURCES = [
   { path: '/ramps', label: 'Boat ramp', marker: '🛥️' },
@@ -297,6 +309,20 @@ async function buildAccessIndex() {
     const diff = lakeStatePriority(a) - lakeStatePriority(b);
     return diff !== 0 ? diff : a.localeCompare(b);
   });
+
+  // Merge manual coastal ramps not in DNR feed
+  for (const ramp of COASTAL_MANUAL_RAMPS) {
+    addAccessItem(index, ramp.zoneName, {
+      name: ramp.name,
+      lat: ramp.lat,
+      lon: ramp.lon,
+      typeLabel: 'Kayak/Small Boat Launch',
+      sourcePath: 'manual',
+      sourceState: 'SC',
+      marker: '🛶',
+      meta: { note: ramp.note },
+    });
+  }
 
   if (failures.length) {
     console.warn('[access-index] Some worker access feeds failed:', failures);
