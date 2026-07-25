@@ -21,7 +21,7 @@ async function handleResearchLimnologyData(request, env) {
   if (bboxNorth == null || bboxSouth == null || bboxEast == null || bboxWest == null) {
     try {
       const lakeKey = resolveSupplementalKeyWorker(lakeName);
-      const shorelineObj = await env.R2_TROLLMAP_CHARTPACKS.get(`supplemental/${lakeKey}/shoreline.geojson`);
+      const shorelineObj = await env.R2_TROLLMAP_CHARTPACKS.get(`${lakeKey}/shoreline.geojson`);
       if (!shorelineObj) throw new Error(`no shoreline.geojson in R2 for ${lakeKey}`);
       const geo = JSON.parse(await shorelineObj.text());
       const coords = [];
