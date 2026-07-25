@@ -1008,7 +1008,42 @@ async function fetchOpenMeteoRain(lat, lon, tripDate) {
 }
 async function getLakeClarity(lakeName, tripDate) {
   const key = lakeKeyFromName(lakeName);
-  const profile = LAKE_CLARITY_PROFILES[key] || { displayName: lakeName, center: [34, -81], defaultNote: "No custom clarity model yet; generic creek/runoff model used.", zones: [{ name: "Creeks/upper arms", sensitivity: 1.2, base: 6, likely: "stain first", ramps: [] }, { name: "Main lake/lower basin", sensitivity: 0.75, base: 2, likely: "clearest available water", ramps: [] }] };
+
+  const isCoastal = (
+    String(lakeName || "").toLowerCase().startsWith('coast_') ||
+    String(lakeName || "").toLowerCase().includes('coast') ||
+    String(lakeName || "").toLowerCase().includes('inlet') ||
+    String(lakeName || "").toLowerCase().includes('sound') ||
+    String(lakeName || "").toLowerCase().includes('delta') ||
+    String(lakeName || "").toLowerCase().includes('harbor') ||
+    String(lakeName || "").toLowerCase().includes('basin') ||
+    String(lakeName || "").toLowerCase().includes('port royal')
+  );
+
+  let defaultProfile = null;
+  if (isCoastal) {
+    defaultProfile = {
+      displayName: lakeName,
+      center: [32.77, -79.93], // Default center (Charleston area)
+      defaultNote: "Tidal flush regulates clarity. Upper/marsh creeks stain after heavy local runoff; inlets and open sounds stay clearer via ocean exchange.",
+      zones: [
+        { name: "Inshore Creeks / Upper Marsh", sensitivity: 1.2, base: 10, likely: "stains first from land/marsh runoff after rain", ramps: [] },
+        { name: "Inlets / Outer Sound / Open Water", sensitivity: 0.7, base: 3, likely: "clearest water via ocean tidal exchange", ramps: [] }
+      ]
+    };
+  } else {
+    defaultProfile = {
+      displayName: lakeName,
+      center: [34, -81],
+      defaultNote: "No custom clarity model yet; generic creek/runoff model used.",
+      zones: [
+        { name: "Creeks/upper arms", sensitivity: 1.2, base: 6, likely: "stain first", ramps: [] },
+        { name: "Main lake/lower basin", sensitivity: 0.75, base: 2, likely: "clearest available water", ramps: [] }
+      ]
+    };
+  }
+
+  const profile = LAKE_CLARITY_PROFILES[key] || defaultProfile;
   const [lat, lon] = profile.center;
   const rain = await fetchOpenMeteoRain(lat, lon, tripDate);
   const rainIn = rain?.weighted72_in ?? 0;
@@ -1067,27 +1102,75 @@ function getLakeIntelSourceRegistry(key) {
 async function getLakeIntel(lakeName) {
   const key = lakeKeyFromName(lakeName);
   const sourceRegistry = getLakeIntelSourceRegistry(key);
-  const profile = LAKE_INTEL[key] || {
-    displayName: lakeName || key || "Unknown lake",
-    primarySportFish: [],
-    forage: [],
-    stocking: "VERIFY: No curated stocking profile yet. Check state DNR stocking, creel-limit, and lake-management pages before relying on this.",
-    spottedBass: "No verified spotted-bass note yet.",
-    habitat: "No curated habitat profile yet.",
-    bottom: "Unknown / verify with Navionics, sonar logs, local reports, and state habitat maps.",
-    hazards: "Unknown / verify ramps, lake level, stump fields, timber, shoals, and boat traffic locally.",
-    seasonalPattern: "Use current water temperature, forage, and recent reports to build a pattern.",
-    tacticalNotes: ["No verified curated profile yet \u2014 treat this as a research checklist, not a fact sheet."]
-  };
+
+  const isCoastal = (
+    String(lakeName || "").toLowerCase().startsWith('coast_') ||
+    String(lakeName || "").toLowerCase().includes('coast') ||
+    String(lakeName || "").toLowerCase().includes('inlet') ||
+    String(lakeName || "").toLowerCase().includes('sound') ||
+    String(lakeName || "").toLowerCase().includes('delta') ||
+    String(lakeName || "").toLowerCase().includes('harbor') ||
+    String(lakeName || "").toLowerCase().includes('basin') ||
+    String(lakeName || "").toLowerCase().includes('port royal')
+  );
+
+  let profile;
+  if (LAKE_INTEL[key]) {
+    profile = LAKE_INTEL[key];
+  } else if (isCoastal) {
+    profile = {
+      displayName: lakeName || key || "Coastal Zone",
+      primarySportFish: ["Red Drum (Redfish)", "Spotted Seatrout (Speckled Trout)", "Southern Flounder"],
+      forage: ["Shrimp", "Finger Mullet", "Mud Minnows", "Menhaden", "Blue Crab"],
+      stocking: "VERIFY: No curated marine stocking profile yet. Check state saltwater regulations before relying on this.",
+      spottedBass: "N/A \u2014 Inshore Marine / Estuary.",
+      habitat: "Salt marsh edges (Spartina), oyster reefs/rakes, tidal creek mouths, mud flats, and dock pilings.",
+      bottom: "Silt, mud, sand, and oyster shell bars. Verify local navigation paths on MLLW nautical charts.",
+      hazards: "Severe tidal swings, oyster rakes (extremely sharp, severe kayak hazard), strong tidal currents, wind-driven chop, and shoals.",
+      seasonalPattern: "Tides drive all inshore patterns. Flood tide: target flooded grass marsh edges with gold spoons/topwaters. Ebb tide: target creek mouths, drop-offs, and oyster points with soft plastic paddletails.",
+      tacticalNotes: [
+        "Inshore Marine \u2014 NOT a freshwater lake/reservoir.",
+        "Strictly restricted to inshore waters. Do NOT go past the jetties on a kayak.",
+        "Always sync tides before launching. Low tide drains the creeks and can leave a kayak stranded on mud flats."
+      ]
+    };
+  } else {
+    profile = {
+      displayName: lakeName || key || "Unknown lake",
+      primarySportFish: [],
+      forage: [],
+      stocking: "VERIFY: No curated stocking profile yet. Check state DNR stocking, creel-limit, and lake-management pages before relying on this.",
+      spottedBass: "No verified spotted-bass note yet.",
+      habitat: "No curated habitat profile yet.",
+      bottom: "Unknown / verify with Navionics, sonar logs, local reports, and state habitat maps.",
+      hazards: "Unknown / verify ramps, lake level, stump fields, timber, shoals, and boat traffic locally.",
+      seasonalPattern: "Use current water temperature, forage, and recent reports to build a pattern.",
+      tacticalNotes: ["No verified curated profile yet \u2014 treat this as a research checklist, not a fact sheet."]
+    };
+  }
+
   const lakeCfg = LAKES[key];
   const latestReport = lakeCfg?.ahq ? await fetchAhqFishingReport(lakeCfg.ahq) : null;
   const lakeMonster = await fetchLakeMonsterIntel(key);
-  const sources = [
+
+  const stateCode = (
+    String(lakeName || "").toLowerCase().includes('sc') ? 'SC' :
+    String(lakeName || "").toLowerCase().includes('ga') ? 'GA' :
+    String(lakeName || "").toLowerCase().includes('nc') ? 'NC' : 'SC'
+  );
+
+  const sources = isCoastal ? [
+    stateCode === 'SC' ? { label: "SCDNR Saltwater Finfish Regulations", url: "https://www.dnr.sc.gov/regs/saltwaterfinfish.html" } :
+    stateCode === 'GA' ? { label: "Georgia DNR Coastal Resources Division", url: "https://coastalgadnr.org/commercial-recreational-fishing-regulations" } :
+    { label: "NC DMF Saltwater Fishing Regulations", url: "https://deq.nc.gov/about/divisions/marine-fisheries/recreational-rules-limits" }
+  ] : [
     { label: "State fisheries / regulations", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits" }
   ];
+
   if (latestReport?.source) sources.push({ label: "Angler's Headquarters fishing report (VERIFY: third-party scraped text)", url: latestReport.source });
   if (lakeMonster?.source) sources.push({ label: "LakeMonster lake context (VERIFY: third-party aggregate/model)", url: lakeMonster.source });
   if (lakeCfg) sources.push({ label: "TrollMap live level worker", url: `/lake?lake=${encodeURIComponent(key)}` });
+  
   return {
     lake: profile.displayName || lakeName,
     key,
@@ -1097,7 +1180,7 @@ async function getLakeIntel(lakeName) {
     sourceRegistry,
     sources,
     timestamp: (new Date()).toISOString(),
-    confidence: LAKE_INTEL[key] ? "curated_profile_plus_live_scrape_when_available" : "generic_unverified_profile"
+    confidence: (LAKE_INTEL[key] || isCoastal) ? "curated_profile_plus_live_scrape_when_available" : "generic_unverified_profile"
   };
 }
 var RIVERS = {

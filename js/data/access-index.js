@@ -21,6 +21,7 @@
 import { state } from '../core/state.js';
 import { SCDNR_STATE_LAKES } from './scdnr-state-lakes.js';
 import { USER_KNOWN_LAKES } from './user-known-lakes.js';
+import { COASTAL_ZONES } from './coastal-zones.js';
 
 const STATES = ['SC', 'NC', 'GA', 'TN'];
 const ACCESS_SOURCES = [
@@ -213,6 +214,28 @@ async function buildAccessIndex() {
           meta: raw.meta || {},
           raw,
         });
+
+        // Map coastal ramps from state FWC / DNR APIs to our coastal zones based on bounding box and state
+        if (source.path === '/ramps') {
+          for (const [zoneKey, zone] of Object.entries(COASTAL_ZONES)) {
+            if (zone.state === stateCode && zone.bbox) {
+              const [[south, west], [north, east]] = zone.bbox;
+              if (lat >= south && lat <= north && lon >= west && lon <= east) {
+                addAccessItem(index, zone.name, {
+                  name,
+                  lat,
+                  lon,
+                  typeLabel: 'Coastal ramp',
+                  sourcePath: source.path,
+                  sourceState: stateCode,
+                  marker: '⛵',
+                  meta: raw.meta || {},
+                  raw,
+                });
+              }
+            }
+          }
+        }
       });
     });
   });
@@ -352,6 +375,9 @@ window.getUniversalLakeNames = function getUniversalLakeNames() {
 window.getUniversalLakeNamesAsync = async function getUniversalLakeNamesAsync() {
   const idx = await loadAccessIndex();
   return idx.lakeNames;
+};
+window.getLoadedAccessIndex = function getLoadedAccessIndex() {
+  return accessIndex;
 };
 
 // Kick off the load immediately — don't block module loading. Both

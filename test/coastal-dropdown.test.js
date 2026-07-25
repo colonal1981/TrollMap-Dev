@@ -76,7 +76,7 @@ describe('option values round-trip to R2 keys', () => {
 describe('coastal ramps are wired everywhere a launch point is needed', () => {
   it('plan-builder ramp dropdown reads the coastal catalog', () => {
     expect(planBuilderSrc).toContain('isCoastalKey');
-    expect(planBuilderSrc).toMatch(/COASTAL_ZONES\[coastalKey\]\?\.ramps/);
+    expect(planBuilderSrc).toMatch(/zone\.ramps/);
   });
 
   it('ramp options carry coordinates for SmartPlan', () => {

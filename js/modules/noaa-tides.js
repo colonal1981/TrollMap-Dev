@@ -85,7 +85,7 @@ function wire() {
 
   // ── Reveal the panel + preselect the station for coastal zones ──────────
   function syncToSelectedZone() {
-    const lakeName = document.getElementById('lakeSelect')?.value || '';
+    const lakeName = document.getElementById('planLake')?.value || document.getElementById('lakeSelect')?.value || '';
     const key = lakeName ? resolveR2Key(lakeName) : null;
 
     if (!isCoastalKey(key)) {
@@ -187,6 +187,7 @@ function wire() {
   });
   syncBtn.addEventListener('click', fetchTides);
   document.getElementById('lakeSelect')?.addEventListener('change', syncToSelectedZone);
+  document.getElementById('planLake')?.addEventListener('change', syncToSelectedZone);
   document.getElementById('planDate')?.addEventListener('change', () => {
     if (stationSel.value) fetchTides();
   });
