@@ -564,6 +564,12 @@
         <button id="btnAttractors" data-active-color="#00e5ff" title="Toggle submerged attractors">📍 Attractors</button>
         <button id="btnFishingSpots" title="Toggle community fishing spots (i-Boating crowdsourced)">🎣 Fishing Spots</button>
         <button id="btnPOI" title="Toggle points of interest (landings, place names, attractors)">📌 POI</button>
+        <!-- Coastal-only layers — hidden unless a coast_* zone is selected -->
+        <span id="coastalLayerGroup" style="display:none">
+          <button id="btnOysterBeds" title="Toggle oyster beds (SCDNR / NCDMF) — redfish on moving water">🦪 Oyster</button>
+          <button id="btnMarshEdges" title="Toggle Spartina marsh edges (ESI 9/10) — flood-tide redfish">🌾 Marsh</button>
+          <button id="btnSoundings" title="Toggle depth soundings, tide-corrected (zoom 13+)">🔢 Soundings</button>
+        </span>
         <button id="btnCustomVectors" title="Load custom GeoJSON structure layer">🗂 Structure</button>
         <button id="btnFetchOsm" data-active-color="#76ff03" title="Fetch OSM waterways and historic structures">🌐 OSM</button>
         <button id="btnShowCatches" title="Plot catch journal on map">🐟 Catches</button>
@@ -917,7 +923,7 @@
               <input type="hidden" id="planSpeed" value="1.8">
               <div>
                 <label>Target Species</label>
-                <div id="planSpeciesChecks" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px">
+                <div id="planSpeciesChecks" data-mode="fresh" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px">
                   <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="Striped Bass" checked> Striped Bass</label>
                   <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="Hybrid"> Hybrid</label>
                   <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="Largemouth Bass"> Largemouth</label>
@@ -926,6 +932,52 @@
                   <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="White Bass"> White Bass</label>
                   <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="Bowfin"> Bowfin</label>
                 </div>
+              </div>
+            </div>
+
+            <!-- ── TIDE PANEL (coastal zones) ─────────────────────────────
+                 Auto-shown by noaa-tides.js when a coast_* zone is selected.
+                 Station is auto-filled from js/data/coastal-zones.js. -->
+            <div id="tidePanel" class="card plan-section" style="display:none;margin-top:8px">
+              <h4 style="margin:0 0 6px;color:var(--accent2);font-size:12px;text-transform:uppercase;letter-spacing:.05em">
+                🌊 Tides — NOAA CO-OPS
+              </h4>
+              <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end">
+                <div>
+                  <label>Coastal Reference Station</label>
+                  <select id="noaaStationSelect" style="width:100%">
+                    <option value="">— select station —</option>
+                  </select>
+                </div>
+                <button id="syncTidesBtn" type="button" class="small" style="height:32px;font-size:11px;white-space:nowrap">
+                  ⟳ Sync
+                </button>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+                <div>
+                  <label>Current Stage</label>
+                  <input id="liveTideStageReadout" readonly placeholder="—"
+                    style="width:100%;font-weight:700;background:#030810">
+                </div>
+                <div>
+                  <label>Height (ft MLLW)</label>
+                  <input id="liveTideHeightReadout" readonly placeholder="—"
+                    style="width:100%;font-family:monospace;font-weight:700;background:#030810">
+                </div>
+              </div>
+              <div id="tideSyncStatus" style="font-size:11px;color:var(--muted);margin-top:6px">Offline</div>
+              <div id="tidesAssessmentTableWrap" style="display:none;margin-top:8px;overflow-x:auto">
+                <table style="width:100%;border-collapse:collapse;font-size:12px">
+                  <thead>
+                    <tr style="text-align:left;color:var(--muted);font-size:11px">
+                      <th style="padding:4px">TIDE</th>
+                      <th style="padding:4px">TIME</th>
+                      <th style="padding:4px">HEIGHT</th>
+                      <th style="padding:4px">TACTICS</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tidesAssessmentBody"></tbody>
+                </table>
               </div>
             </div>
 

@@ -1,126 +1,220 @@
 /**
- * NOAA Coastal Tides — fetch tide predictions for the trip date
- * from NOAA's CO-OPS API and render them in the Plan tab.
+ * NOAA Coastal Tides — Plan-tab tide panel.
  *
- * Supports SC, NC, and GA coastal stations. Each prediction row
- * includes tactical advice (fish-flood-in-grass, fish-pull-to-deep, etc.).
+ * Renders the tide table, current stage and current height for the selected
+ * coastal zone. All NOAA fetching / interpolation / stage classification now
+ * lives in tide-engine.js so coastal SmartPlan can share it; this file is
+ * only the DOM layer.
+ *
+ * The panel auto-reveals when a `coast_*` zone is chosen in #lakeSelect and
+ * auto-selects that zone's NOAA station, so the angler never has to know
+ * which station serves their water.
  */
 
 import { esc } from '../utils/escape.js';
+import {
+  COASTAL_ZONES,
+  COASTAL_SLUGS,
+  isCoastalKey,
+} from '../data/coastal-zones.js';
+import { resolveR2Key } from '../data/lake-keys.js';
+import { getTideState, stageLabel } from './tide-engine.js';
 
-function fmtNoaaTime(str) {
-  if (!str) return '—';
-  const parts = str.split(' ');
-  if (parts.length < 2) return str;
-  const [h, m] = parts[1].split(':').map(Number);
+function fmtTime(date) {
+  if (!date) return '—';
+  const h = date.getHours();
+  const m = date.getMinutes();
   return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
 }
 
-function wireButtons() {
+/**
+ * Unique stations across the catalog, labelled by the zones they serve.
+ * Several adjacent zones legitimately share one station (e.g. 8670870 covers
+ * St. Helena, Beaufort and Hilton Head), so we group rather than duplicate.
+ */
+function buildStationOptions() {
+  const byStation = new Map();
+  for (const slug of COASTAL_SLUGS) {
+    const z = COASTAL_ZONES[slug];
+    if (!byStation.has(z.tideStation)) {
+      byStation.set(z.tideStation, { state: z.state, zones: [] });
+    }
+    byStation.get(z.tideStation).zones.push(z.name.replace(/,\s*[A-Z]{2}$/, ''));
+  }
+  return [...byStation.entries()].map(([id, info]) => ({
+    id,
+    label: `${info.zones[0]} (${id})`,
+    title: `${info.state} — serves: ${info.zones.join(', ')}`,
+  }));
+}
+
+function populateStations(sel) {
+  if (!sel || sel.dataset.populated === '1') return;
+  const frag = document.createDocumentFragment();
+  for (const opt of buildStationOptions()) {
+    const o = document.createElement('option');
+    o.value = opt.id;
+    o.textContent = opt.label;
+    o.title = opt.title;
+    frag.appendChild(o);
+  }
+  sel.appendChild(frag);
+  sel.dataset.populated = '1';
+}
+
+function wire() {
+  const panel     = document.getElementById('tidePanel');
+  const stationSel = document.getElementById('noaaStationSelect');
   const syncBtn   = document.getElementById('syncTidesBtn');
   const statusEl  = document.getElementById('tideSyncStatus');
-  const stationSel = document.getElementById('noaaStationSelect');
   const stageEl   = document.getElementById('liveTideStageReadout');
+  const heightEl  = document.getElementById('liveTideHeightReadout');
   const tableWrap = document.getElementById('tidesAssessmentTableWrap');
   const tbody     = document.getElementById('tidesAssessmentBody');
-  if (!syncBtn) return;
+  if (!panel || !stationSel || !syncBtn) return;
 
-  function say(msg, isErr) {
+  populateStations(stationSel);
+
+  function say(msg, kind) {
     if (!statusEl) return;
     statusEl.textContent = msg;
-    statusEl.style.color = isErr ? 'var(--bad)' : 'var(--accent2)';
+    statusEl.style.color =
+      kind === 'err' ? 'var(--bad)' :
+      kind === 'ok'  ? 'var(--accent2)' : 'var(--muted)';
   }
 
-  stationSel?.addEventListener('change', (e) => {
-    if (e.target.value) fetchNoaaTideData();
-    else {
-      if (tableWrap) tableWrap.style.display = 'none';
-      if (stageEl) stageEl.value = '';
-      say('Offline', false);
-    }
-  });
-  syncBtn.addEventListener('click', fetchNoaaTideData);
+  // ── Reveal the panel + preselect the station for coastal zones ──────────
+  function syncToSelectedZone() {
+    const lakeName = document.getElementById('lakeSelect')?.value || '';
+    const key = lakeName ? resolveR2Key(lakeName) : null;
 
-  async function fetchNoaaTideData() {
-    const stationId = stationSel?.value || '';
-    if (!stationId) { alert('Select a Coastal Reference Station first.'); return; }
-    say('Fetching NOAA CO-OPS API…', false);
-    syncBtn.style.background = 'var(--accent)';
-    syncBtn.style.color = '#000';
+    if (!isCoastalKey(key)) {
+      panel.style.display = 'none';
+      return;
+    }
+    panel.style.display = '';
+    const zone = COASTAL_ZONES[key];
+    if (zone && stationSel.value !== zone.tideStation) {
+      stationSel.value = zone.tideStation;
+      say(`Station auto-set for ${zone.name}`, null);
+      fetchTides();
+    }
+  }
+
+  async function fetchTides() {
+    const stationId = stationSel.value;
+    if (!stationId) { say('Select a station first', 'err'); return; }
+
+    say('Fetching NOAA CO-OPS…', null);
+    if (tableWrap) tableWrap.style.display = 'block';
     if (tbody) {
       tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#888">⏳ Processing tidal harmonics…</td></tr>';
     }
-    if (tableWrap) tableWrap.style.display = 'block';
 
-    const tripDate = document.getElementById('planDate')?.value || new Date().toISOString().slice(0, 10);
-    const noaaDate = tripDate.replace(/-/g, '');
+    const dateStr = document.getElementById('planDate')?.value
+      || new Date().toISOString().slice(0, 10);
 
     try {
-      const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?begin_date=${noaaDate}&range=24&station=${stationId}&product=predictions&datum=MLLW&time_zone=lst_ldt&interval=hilo&units=english&application=TrollMapStudio&format=json`;
-      const res = await fetch(url);
-      const data = await res.json();
-      if (data?.error) throw new Error(data.error.message || 'Station unavailable');
-      if (!data?.predictions?.length) throw new Error('No tide predictions for this date');
+      const tide = await getTideState({ station: stationId, dateStr });
 
-      const preds = data.predictions;
-      const now = new Date();
-      const upcoming = preds.find((p) => new Date(p.t.replace(' ', 'T')) > now);
-      if (stageEl) {
-        stageEl.value = upcoming
-          ? (upcoming.type === 'H' ? 'Incoming / Flood 🌊' : 'Outgoing / Ebb 📉')
-          : 'Slack / Stable';
+      if (stageEl)  stageEl.value = tide.stageLabel || '—';
+      if (heightEl) {
+        heightEl.value = Number.isFinite(tide.heightFt)
+          ? `${tide.heightFt.toFixed(1)} ft`
+          : '—';
       }
 
       if (tbody) {
-        tbody.innerHTML = preds.map((p) => {
+        const rows = tide.hilo.map((p) => {
           const isHigh = p.type === 'H';
+          const at = p.t;
           const bg  = isHigh ? 'rgba(0,229,255,.08)' : 'rgba(255,82,82,.06)';
           const col = isHigh ? 'var(--accent)' : 'var(--bad)';
           const note = isHigh
-            ? '🌊 Fish flood into grass/marsh. Over-bar kayak runs safe. Work creek mouths and oyster points.'
-            : '📉 Fish pull to deep channels and holes. Watch oyster bar clearance on kayak.';
+            ? '🌊 Fish flood into grass/marsh. Work creek mouths and oyster points.'
+            : '📉 Fish pull to deep channels and holes. Watch oyster bar clearance.';
+          const timeStr = fmtTime(
+            (() => { const m = String(at).match(/(\d{2}):(\d{2})/);
+                     if (!m) return null;
+                     const d = new Date(); d.setHours(+m[1], +m[2], 0, 0); return d; })()
+          );
           return `<tr style="background:${bg}">
-            <td><b style="color:${col}">${isHigh ? '▲ HIGH' : '▼ LOW'}</b></td>
-            <td><b>${fmtNoaaTime(p.t)}</b></td>
-            <td style="font-family:monospace;font-weight:700">${parseFloat(p.v).toFixed(1)} ft</td>
-            <td class="muted" style="font-size:12px">${note}</td>
+            <td style="padding:4px"><b style="color:${col}">${isHigh ? '▲ HIGH' : '▼ LOW'}</b></td>
+            <td style="padding:4px"><b>${esc(timeStr)}</b></td>
+            <td style="padding:4px;font-family:monospace;font-weight:700">${parseFloat(p.v).toFixed(1)} ft</td>
+            <td style="padding:4px" class="muted" style="font-size:12px">${note}</td>
           </tr>`;
         }).join('');
+        tbody.innerHTML = rows || '<tr><td colspan="4" style="text-align:center;color:#888">No events</td></tr>';
       }
 
+      // Cache for plan-builder.js / offline use.
       if (window.DB?.db) {
         try {
           await window.DB.put('settings', {
-            key: `tide_${stationId}_${noaaDate}`,
-            predictions: preds,
-            stage: stageEl?.value || '',
+            key: `tide_${stationId}_${dateStr.replace(/-/g, '')}`,
+            predictions: tide.hilo,
+            stage: tide.stageLabel,
+            heightFt: tide.heightFt,
             syncedAt: new Date().toISOString(),
           });
-        } catch (_) {}
+        } catch (_) { /* cache is best-effort */ }
       }
 
-      say(`✓ ${preds.length} events synced`, false);
+      const rangeTxt = Number.isFinite(tide.rangeFt) ? ` · range ${tide.rangeFt.toFixed(1)} ft` : '';
+      say(`✓ ${tide.hilo.length} events synced${rangeTxt}`, 'ok');
+      window._trollmapTide = tide;
+
+      // Re-label depth soundings against the new tide so the numbers on the
+      // map reflect actual water rather than charted MLLW.
+      window.refreshSoundingLabels?.(tide.heightFt);
     } catch (err) {
-      say('API Error — check station', true);
-      if (tbody) tbody.innerHTML = `<tr><td colspan="4" style="color:var(--bad);text-align:center">❌ ${esc(err.message)}</td></tr>`;
-    } finally {
-      setTimeout(() => { syncBtn.style.background = ''; syncBtn.style.color = ''; }, 1000);
+      say(`API error — ${err.message}`, 'err');
+      if (tbody) {
+        tbody.innerHTML = `<tr><td colspan="4" style="color:var(--bad);text-align:center">❌ ${esc(err.message)}</td></tr>`;
+      }
     }
   }
+
+  stationSel.addEventListener('change', () => {
+    if (stationSel.value) fetchTides();
+    else {
+      if (tableWrap) tableWrap.style.display = 'none';
+      if (stageEl) stageEl.value = '';
+      if (heightEl) heightEl.value = '';
+      say('Offline', null);
+    }
+  });
+  syncBtn.addEventListener('click', fetchTides);
+  document.getElementById('lakeSelect')?.addEventListener('change', syncToSelectedZone);
+  document.getElementById('planDate')?.addEventListener('change', () => {
+    if (stationSel.value) fetchTides();
+  });
+
+  syncToSelectedZone();
 }
 
-wireButtons();
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', wire, { once: true });
+} else {
+  wire();
+}
 
-// Expose for the plan-preview module to read the cached table
+// ── Back-compat accessors used by plan-builder.js ───────────────────────────
 window.getNoaaTideRows = function () {
   const tbody = document.getElementById('tidesAssessmentBody');
   return tbody ? tbody.innerHTML : '';
 };
 window.getNoaaTideStage = function () {
-  const stageEl = document.getElementById('liveTideStageReadout');
-  return stageEl ? stageEl.value : '';
+  return document.getElementById('liveTideStageReadout')?.value || '';
 };
 window.getNoaaStationName = function () {
   const sel = document.getElementById('noaaStationSelect');
   return sel?.selectedOptions[0]?.text || '';
 };
+/** Current tide state object (or null) for SmartPlan depth adjustment. */
+window.getTideState = function () {
+  return window._trollmapTide || null;
+};
+
+export { stageLabel };

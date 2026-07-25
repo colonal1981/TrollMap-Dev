@@ -46,10 +46,19 @@ export const REGULATIONS = {
     },
   },
 
+  // NOTE: saltwater rules now live in js/data/coastal-regulations.js, keyed by
+  // STATE rather than by waterbody, and are applied through
+  // checkCoastalRegulations(). This entry is retained only so any legacy
+  // caller passing the literal string 'Coastal SC Inshore' still resolves.
+  //
+  // Do not add coastal zones here: resolveLakeKey() never matched the real
+  // zone names ('Charleston Harbor, SC' etc.) against this key, so coastal
+  // trips silently returned legal:true. The red drum numbers below are also
+  // superseded — SC moved to an 18-25" slot at 1/day on 2026-07-01.
   'Coastal SC Inshore': {
-    'Red Drum (Redfish)': { creelLimit: 3, sizeLimit: { min: 15, max: 23 }, note: 'SC slot 15-23", 3/day, 1 over 23" prohibited – check current' },
-    'Speckled Trout (Spotted Seatrout)': { creelLimit: 10, sizeLimit: { min: 14 }, note: '14" TL min, 10/day – verify cold-stun closures' },
-    'Flounder': { creelLimit: 5, sizeLimit: { min: 16 }, note: 'Southern Flounder – verify seasonal closure, was closed Nov-Dec historically' },
+    'Red Drum (Redfish)': { creelLimit: 1, sizeLimit: { min: 18, max: 25 }, note: 'SUPERSEDED — see coastal-regulations.js. SC slot 18-25", 1/day, 2/boat as of 2026-07-01.' },
+    'Speckled Trout (Spotted Seatrout)': { creelLimit: 10, sizeLimit: { min: 14 }, note: 'See coastal-regulations.js. 14" TL min, 10/day – verify cold-stun closures.' },
+    'Flounder': { creelLimit: 5, sizeLimit: { min: 16 }, note: 'See coastal-regulations.js. SC 16" TL min, 5/day, 10/boat.' },
   }
 };
 

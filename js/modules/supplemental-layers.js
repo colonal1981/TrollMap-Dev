@@ -372,6 +372,10 @@ export async function loadSupplementalForLake(displayName) {
 
   await loadDepthAreas(lakeKey);
 
+  // Coastal-only layers (oyster beds / marsh edges / soundings). The module
+  // clears itself for freshwater keys, so this is safe to call unconditionally.
+  window.loadCoastalLayersForZone?.(lakeKey);
+
   // Fishing spots and POIs are lazy — only fetch when user toggles them on.
   // Preloading 90K+ fishing features on large lakes kills scroll/zoom performance.
   loadLakeBoundary(displayName).catch(() => {});
