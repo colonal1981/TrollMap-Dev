@@ -25,6 +25,15 @@ import { getLoadedAccessIndex } from '../data/access-index.js';
 import { LAKE_DB } from '../data/lakes.js';
 import { geoDistanceFt, bearing as geoBearing, distToRingFt as distToRingGeneric, distFtFromCoords as distFtGeneric } from '../utils/geo.js';
 
+// ── Coastal / tidal support ────────────────────────────────────────────────
+import { resolveR2Key } from '../data/lake-keys.js';
+import { COASTAL_ZONES, isCoastalKey } from '../data/coastal-zones.js';
+import { getTideStateForZone } from './tide-engine.js';
+import { assessZoneIntrusion } from './usgs-gauges.js';
+import {
+  normalizeCoastalSpecies, classifyStructure, tacticalNote, DEPTH_BANDS,
+} from './coastal-scoring.js';
+
 const BATTERY_AH_DEFAULT = 100;
 const MOTOR_AMP_AVG      = 6;
 const PHASE_1_END_OFFSET_MIN = 60;
@@ -548,6 +557,110 @@ export function applyStoredSmartPlanDepth() {
   if (maxEl) maxEl.value=p1.depthMax;
 }
 
+// ── Coastal mode ───────────────────────────────────────────────────────────
+
+/**
+ * Detect tidal saltwater from the selected waterbody.
+ * All coastal chartpack slugs are prefixed `coast_` by the pipeline, so the
+ * R2 key doubles as the mode flag.
+ */
+export function detectCoastalZone(lakeName) {
+  const key = lakeName ? resolveR2Key(lakeName) : null;
+  return isCoastalKey(key) ? key : null;
+}
+
+/**
+ * Assemble everything coastal SmartPlan needs: tide state at launch, the
+ * salinity picture, and the structure set to score against.
+ *
+ * Every leg degrades independently — no tide sync, a dead USGS gauge or a
+ * missing habitat layer each reduce the plan's precision without failing it.
+ */
+export async function buildCoastalContext({ zoneKey, dateStr, launchTime, species }) {
+  const zone = COASTAL_ZONES[zoneKey];
+  if (!zone) return null;
+
+  // Launch time -> Date, so tide height is for when we are actually fishing.
+  let when = new Date(`${dateStr}T12:00:00`);
+  const hm = String(launchTime || '').match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+  if (hm) {
+    let h = parseInt(hm[1], 10);
+    const m = parseInt(hm[2], 10);
+    const ap = (hm[3] || '').toUpperCase();
+    if (ap === 'PM' && h < 12) h += 12;
+    if (ap === 'AM' && h === 12) h = 0;
+    when = new Date(`${dateStr}T00:00:00`);
+    when.setHours(h, m, 0, 0);
+  }
+
+  const [tideRes, intrusionRes] = await Promise.allSettled([
+    getTideStateForZone(zoneKey, { dateStr, when }),
+    assessZoneIntrusion(zoneKey),
+  ]);
+
+  const tide = tideRes.status === 'fulfilled' ? tideRes.value : null;
+  const intrusion = intrusionRes.status === 'fulfilled'
+    ? intrusionRes.value
+    : { active: false, severity: 0, message: null, sites: [], rivers: [] };
+
+  // Structures come from the already-loaded OSM/habitat data.
+  const structures = [];
+  for (const feat of (window.getOsmStructures?.() || [])) {
+    const type = classifyStructure(feat);
+    const c = feat.geometry?.coordinates;
+    if (!type || !c) continue;
+    structures.push({ type, lat: c[1], lon: c[0] });
+  }
+
+  const primary = normalizeCoastalSpecies(species?.[0]);
+  const stage = tide?.stage || null;
+
+  return {
+    zoneKey, zone, tide, stage, intrusion, structures,
+    species: primary,
+    tideHeightFt: tide?.heightFt ?? null,
+    depthBand: (primary && stage) ? DEPTH_BANDS[primary]?.[stage] : null,
+    note: (primary && stage) ? tacticalNote(primary, stage) : '',
+  };
+}
+
+/** Prompt block describing tide/salinity conditions for the Groq call. */
+export function buildCoastalPromptBlock(ctx) {
+  if (!ctx) return '';
+  const L = [];
+  L.push(`\n🌊 COASTAL / TIDAL MODE — ${ctx.zone.name} (${ctx.zone.state})`);
+  L.push(`NOAA station ${ctx.zone.tideStation}. Depths are MLLW-referenced; add tide height for actual water.`);
+
+  if (ctx.tide) {
+    const h = Number.isFinite(ctx.tide.heightFt) ? `${ctx.tide.heightFt.toFixed(1)} ft` : 'unknown';
+    L.push(`Tide at launch: ${ctx.tide.stageLabel || ctx.stage || 'unknown'} · height ${h} above MLLW`);
+    if (ctx.tide.nextEvent) {
+      const e = ctx.tide.nextEvent;
+      const t = e.at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      L.push(`Next turn: ${e.type.toUpperCase()} at ${t} (${e.heightFt.toFixed(1)} ft)`);
+    }
+    if (Number.isFinite(ctx.tide.rangeFt)) L.push(`Daily range: ${ctx.tide.rangeFt.toFixed(1)} ft`);
+  } else {
+    L.push('Tide data unavailable — treat charted depths as MLLW minimums and stay conservative on the flats.');
+  }
+
+  if (ctx.depthBand) L.push(`Target depth band for this species/stage: ${ctx.depthBand[0]}–${ctx.depthBand[1]} ft (tide-corrected)`);
+  if (ctx.note) L.push(`Tactic: ${ctx.note}`);
+
+  if (ctx.structures.length) {
+    const counts = ctx.structures.reduce((a, s) => { a[s.type] = (a[s.type] || 0) + 1; return a; }, {});
+    L.push(`Structure available: ${Object.entries(counts).map(([k, v]) => `${k} x${v}`).join(', ')}`);
+  }
+
+  if (ctx.intrusion?.active) {
+    const rivers = ctx.intrusion.rivers?.length ? ` (${ctx.intrusion.rivers.join(', ')})` : '';
+    L.push(`⚠ FRESHWATER INTRUSION${rivers}: ${ctx.intrusion.message}`);
+    L.push('Penalise upper creeks; favour inlet-adjacent structure.');
+  }
+
+  return L.join('\n');
+}
+
 // ── Main entry point ──────────────────────────────────────────────────────────
 export async function runSmartPlan() {
   const {lakeName,dateStr,launchTime,returnTime,waterTempF,speedMph,species}=readPlanInputs();
@@ -576,11 +689,17 @@ export async function runSmartPlan() {
 
   // ── Fetch full Open-Meteo forecast BEFORE reading planWeather (bug fix)
   // Ensures Groq prompt always has fresh wind/conditions even if Preview was never opened.
+  // Coastal zones resolve their centre from COASTAL_ZONES: only 9 of the 21
+  // exist in LAKE_DB, so the other 12 would otherwise silently get no forecast.
+  const coastalZoneKey = detectCoastalZone(lakeName);
+
   let weatherStr = document.getElementById('planWeather')?.value || '';
   try {
+    const coastalCenter = coastalZoneKey ? COASTAL_ZONES[coastalZoneKey]?.center : null;
     const lakeEntry = LAKE_DB[lakeName] || Object.values(LAKE_DB).find(e => lakeName.toLowerCase().includes((e.name||'').toLowerCase().split(',')[0]));
-    if (lakeEntry && lakeEntry.center) {
-      const [lat, lon] = lakeEntry.center;
+    const center = coastalCenter || lakeEntry?.center;
+    if (center) {
+      const [lat, lon] = center;
       const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
         `&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,windspeed_10m_max,winddirection_10m_dominant,precipitation_sum` +
         `&timezone=auto&start_date=${dateStr}&end_date=${dateStr}`;
@@ -601,6 +720,27 @@ export async function runSmartPlan() {
       }
     }
   } catch (_) { /* non-fatal: fall back to whatever is already in the field */ }
+
+  // ── Coastal context: tide state at launch + salinity proxy ──────────────
+  // Non-fatal by design: an unreachable NOAA or USGS endpoint costs precision,
+  // not the plan. Freshwater lakes skip this entirely.
+  let coastalCtx = null;
+  let coastalBlock = '';
+  if (coastalZoneKey) {
+    setStatus('Reading tides + river gauges…', true);
+    try {
+      coastalCtx = await buildCoastalContext({
+        zoneKey: coastalZoneKey, dateStr, launchTime, species,
+      });
+      coastalBlock = buildCoastalPromptBlock(coastalCtx);
+      window._coastalContext = coastalCtx;
+      if (coastalCtx?.tide?.heightFt != null) {
+        window.refreshSoundingLabels?.(coastalCtx.tide.heightFt);
+      }
+    } catch (err) {
+      console.warn('[smart-plan] coastal context failed:', err.message);
+    }
+  }
 
   // ── Universal DNR Ramp Lookup ───────────────────────────────────────────
   clearExistingSmartPlanTracks();
@@ -767,6 +907,7 @@ You must evaluate the weather and wind forecast against the platform (12.5ft Kay
 - If conditions are unsafe, set "isGo" to false and explain why in "safetyWarning".
 ${speciesIntelBlock}
 ${catchBlock}
+${coastalBlock}
 
 ${researchedBlock}
 

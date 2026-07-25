@@ -3,6 +3,10 @@ import { JSON_HEADERS, callLLM, extractLLMText } from '../worker-core.js';
 import { LAKES, lakeKeyFromName } from '../worker-data.js';
 import { fetchStateRegulations, getLakeRegulations } from './clients.js';
 import { extractJsonPossibly } from './keys.js';
+import {
+  COASTAL_AGENTS, COASTAL_AGENT_HINTS, COASTAL_SKIPPED_AGENTS,
+  isCoastalZone, coastalAgentPlan,
+} from './coastal-agents.js';
 
 var RESEARCH_AGENTS = {
   identity: {
@@ -1028,9 +1032,16 @@ async function handleResearchAgent(request, env) {
     }), { headers: JSON_HEADERS });
   }
 
-  const systemPrompt = agent.system;
+  // Coastal zones reuse the shared habitat/biology agents but need saltwater
+  // framing, otherwise they report brush piles and shad for a salt marsh.
+  const coastalTarget = isCoastalZone(body.zoneKey || body.lakeKey || '')
+    || isCoastalZone(previousResults?._zoneMeta?.slug || '');
+  const systemPrompt = (coastalTarget && COASTAL_AGENT_HINTS[agentKey])
+    ? agent.system + COASTAL_AGENT_HINTS[agentKey]
+    : agent.system;
   const userPrompt = agent.userTemplate(lakeName, state, groundedPrev);
-  
+
+
   // Safety check — if prompt is too large, truncate _extractedFacts further
   const promptLen = systemPrompt.length + userPrompt.length;
   if (promptLen > 80000 && groundedPrev._extractedFacts?.length > 5) {
@@ -1256,4 +1267,15 @@ async function handleResearchAgent(request, env) {
     raw: rawText.slice(0, 2000)
   }), {headers: JSON_HEADERS});
 }
-export { RESEARCH_AGENTS, calculateSectionConfidence, gateOverallConfidence, hasStructuredTrollingIntel, handleResearchAgent };
+// Coastal agents share the RESEARCH_AGENTS registry so handleResearchAgent,
+// the section-confidence scorer and the review UI in lake-research-ui.js pick
+// them up with no special-casing. They are additive: freshwater lakes never
+// select them because coastalAgentPlan() is only consulted for coast_* keys.
+Object.assign(RESEARCH_AGENTS, COASTAL_AGENTS);
+
+export {
+  RESEARCH_AGENTS, calculateSectionConfidence, gateOverallConfidence,
+  hasStructuredTrollingIntel, handleResearchAgent,
+  COASTAL_AGENTS, COASTAL_AGENT_HINTS, COASTAL_SKIPPED_AGENTS,
+  isCoastalZone, coastalAgentPlan,
+};

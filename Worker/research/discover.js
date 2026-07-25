@@ -264,6 +264,9 @@ const AGENT_DISCOVERY_QUERIES = {
     navigation:  (lake, st) => `Find authoritative navigation hazards, shoals, channel markers, and access information for ${lake} in ${st}. Reject generic boating pages that do not name this lake.`,
     regulations: (lake, st) => `Find authoritative fishing regulations, creel limits, and size limits for ${lake} in ${st}. Prefer state fish agency regulation digests.`,
     fisheries:   (lake, st) => `Find authoritative seasonal fishing patterns, current fishing reports, and angler catch data for ${lake} in ${st}. Reject social media and generic aggregation pages.`,
+    estuary:     (zone, st) => `Find authoritative estuarine geomorphology, salt marsh extent, inlet and tidal creek information for ${zone} on the ${st} coast. Prefer NOAA, USGS, National Estuarine Research Reserve and state coastal agencies. This is a tidal estuary, not a reservoir — reject documents about freshwater lakes or dams.`,
+    tidal:       (zone, st) => `Find authoritative tidal range, salinity, current velocity and flushing time data for ${zone} on the ${st} coast. Prefer NOAA CO-OPS, USGS and peer-reviewed estuarine studies. Reject reservoir thermocline and dissolved-oxygen studies — this system does not thermally stratify.`,
+    saltwater_regulations: (zone, st) => `Find the most recent SALTWATER recreational fishing regulation changes for ${st} affecting red drum, spotted seatrout and southern flounder — especially in-season amendments, proclamations and slot-limit changes that postdate the annual printed digest. Prefer the state marine fisheries agency. Reject freshwater inland regulations and third-party summaries.`,
   },
   habitat: {
     SC: (lake) => [
@@ -328,8 +331,69 @@ const AGENT_DISCOVERY_QUERIES = {
   },
   // Fisheries query 0 gets recency window (45 days primary); query 1 is evergreen
   _fisheries_recency: [64800, null],
-  summary: { SC: () => [], NC: () => [], GA: () => [], TN: () => [] }
+  summary: { SC: () => [], NC: () => [], GA: () => [], TN: () => [] },
+
+  // ── COASTAL AGENTS ────────────────────────────────────────────────────
+  // Saltwater zones need marine sources: NOAA, the state MARINE division
+  // (which is a different agency from the inland freshwater one in NC and
+  // GA), ASMFC for interstate stock assessments, and the NERR reserves for
+  // estuarine water quality. Searching dnr.sc.gov for tidal range or
+  // salinity returns freshwater reservoir documents.
+  estuary: {
+    SC: (zone) => [
+      `"${zone}" estuary salt marsh acreage tidal creek NERR OR "National Estuarine Research Reserve"`,
+      `"${zone}" inlet shoaling barrier island geomorphology site:noaa.gov OR site:usgs.gov`,
+    ],
+    GA: (zone) => [
+      `"${zone}" estuary salt marsh acreage tidal creek site:coastalgadnr.org OR site:gadnr.org`,
+      `"${zone}" sound inlet barrier island geomorphology site:noaa.gov OR site:usgs.gov`,
+    ],
+    NC: (zone) => [
+      `"${zone}" estuary salt marsh sound tidal creek site:deq.nc.gov OR site:nccoastalreserve.net`,
+      `"${zone}" inlet shoaling barrier island geomorphology site:noaa.gov OR site:usgs.gov`,
+    ],
+  },
+  tidal: {
+    SC: (zone) => [
+      `"${zone}" tidal range salinity stratification estuary site:noaa.gov OR site:usgs.gov`,
+      `"${zone}" salinity gradient flushing time water quality filetype:pdf`,
+    ],
+    GA: (zone) => [
+      `"${zone}" tidal range salinity stratification estuary site:noaa.gov OR site:usgs.gov`,
+      `"${zone}" salinity gradient flushing time water quality filetype:pdf`,
+    ],
+    NC: (zone) => [
+      `"${zone}" tidal range salinity stratification estuary site:noaa.gov OR site:usgs.gov`,
+      `"${zone}" salinity gradient flushing time water quality filetype:pdf`,
+    ],
+  },
+  saltwater_regulations: {
+    // The R2 digest is the baseline (injected deterministically by the agent).
+    // These queries exist to catch mid-cycle amendments the annual PDF cannot
+    // carry: SC changed red drum limits on 2026-07-01, and NC closes seatrout
+    // and flounder by proclamation. Recency-windowed below.
+    SC: (zone) => [
+      `South Carolina saltwater red drum spotted seatrout flounder size limit change site:dnr.sc.gov OR site:saltwaterfishing.sc.gov`,
+      `SCDNR saltwater regulation amendment red drum slot limit ${new Date().getFullYear()}`,
+    ],
+    GA: (zone) => [
+      `Georgia saltwater red drum spotted seatrout flounder creel size limit site:coastalgadnr.org`,
+      `Georgia DNR Coastal Resources saltwater regulation change ${new Date().getFullYear()}`,
+    ],
+    NC: (zone) => [
+      `NCDMF proclamation spotted seatrout flounder red drum harvest closure site:deq.nc.gov`,
+      `North Carolina Marine Fisheries proclamation season closure ${new Date().getFullYear()}`,
+    ],
+  },
+  // Regulation amendments are only useful if recent — 180 days covers a
+  // mid-season proclamation without dredging up superseded rules.
+  _saltwater_regs_recency: [15552000, 15552000],
 };
+
+// Coastal zones use the marine agent set. Freshwater lakes never reach these
+// because the plan is only consulted for coast_* keys.
+const COASTAL_AGENT_KEYS = new Set(['estuary', 'tidal', 'saltwater_regulations']);
+
 const AGENT_TO_TAGS = {
   identity: ['identity'],
   limnology: ['limnology'],
@@ -338,7 +402,10 @@ const AGENT_TO_TAGS = {
   navigation: ['navigation'],
   regulations: ['regulations'],
   fisheries: ['fisheries'],
-  summary: ['summary']
+  summary: ['summary'],
+  estuary: ['estuary', 'identity'],
+  tidal: ['tidal', 'limnology'],
+  saltwater_regulations: ['saltwater_regulations', 'regulations']
 };
 
   const seenUrls = new Set();
@@ -667,7 +734,20 @@ const AGENT_TO_TAGS = {
 
   // ── STEP 3: Agent-specific search queries ───────────────────────────────
   const agent = String(body.agent || "").trim().toLowerCase();
-  const agentsToDiscover = agent ? [agent] : Object.keys(AGENT_DISCOVERY_QUERIES);
+
+  // Coastal zones and freshwater lakes use disjoint agent sets. Without this
+  // split a lake would run estuary/tidal/saltwater_regulations queries (and
+  // burn searches on salt marsh acreage for Lake Murray), and a coastal zone
+  // would run identity/limnology queries looking for a dam and a thermocline.
+  const isCoastalTarget = String(body.zoneKey || body.lakeKey || '').startsWith('coast_');
+  const agentsToDiscover = agent
+    ? [agent]
+    : Object.keys(AGENT_DISCOVERY_QUERIES).filter((k) => {
+        if (k.startsWith('_')) return false;
+        const coastalOnly = COASTAL_AGENT_KEYS.has(k);
+        const freshwaterOnly = k === 'identity' || k === 'limnology' || k === 'regulations';
+        return isCoastalTarget ? !freshwaterOnly : !coastalOnly;
+      });
   
   // Cross-category candidate pool — all agents deposit here; dedup by canonical URL
   // before returning so a URL requested by multiple agents is fetched only once.
@@ -705,8 +785,14 @@ const AGENT_TO_TAGS = {
       const domainTypes = AGENT_DISCOVERY_QUERIES._domainTypes?.[agentKey];
       const domainType = domainTypes?.[qIndex] || 'web';
 
-      // Fisheries: first query gets recency window (45d primary), second is evergreen
-      const recencyWindows = agentKey === 'fisheries' ? AGENT_DISCOVERY_QUERIES._fisheries_recency : null;
+      // Fisheries: first query gets recency window (45d primary), second is evergreen.
+      // Saltwater regs: both queries are recency-bounded (180d) because we are
+      // hunting in-season amendments that supersede the annual digest, not the
+      // digest itself.
+      const recencyWindows =
+        agentKey === 'fisheries' ? AGENT_DISCOVERY_QUERIES._fisheries_recency :
+        agentKey === 'saltwater_regulations' ? AGENT_DISCOVERY_QUERIES._saltwater_regs_recency :
+        null;
       const recencyMinutes = recencyWindows ? recencyWindows[qIndex] : null;
 
       try {
