@@ -125,30 +125,29 @@ async function loadDepthAreas(lakeKey) {
   if (_depthAreaLayer) { getMap().removeLayer(_depthAreaLayer); _depthAreaLayer = null; }
   try {
     const gj = await loadLayer(lakeKey, 'depth_areas');
-    // Sort shallow → deep so deeper polygons render on top (matching QGIS draw order).
-    // Canvas renderer draws in insertion order — last in = drawn on top.
-    const sorted = {
-      ...gj,
-      features: [...gj.features].sort((a, b) =>
-        (a.properties?.depth_max_ft ?? 0) - (b.properties?.depth_max_ft ?? 0)
-      ),
-    };
+
+    // For NOAA ENC coastal zones: filter intertidal (depth_max_ft <= 0) and
+    // sort shallow→deep so deeper polygons render on top, matching QGIS draw order.
+    // Use depth_max_ft for classification — it represents the deepest water in the zone.
+    const isCoastal = lakeKey.startsWith('coast_');
+    let features = gj.features;
+    if (isCoastal) {
+      features = features
+        .filter(f => (f.properties?.depth_max_ft ?? 0) > 0)
+        .sort((a, b) => (a.properties?.depth_max_ft ?? 0) - (b.properties?.depth_max_ft ?? 0));
+    }
+    const sorted = { ...gj, features };
+
     _depthAreaLayer = L.geoJSON(sorted, {
       renderer: _canvasRenderer,
-      smoothFactor: 1.5,  // simplify at render time — raw GeoJSON in IDB stays intact
-      filter(feat) {
-        const maxFt = feat.properties?.depth_max_ft;
-        return maxFt == null || maxFt > 0;
-      },
+      smoothFactor: 1.5,
       style(feat) {
-        const p     = feat.properties || {};
-        const maxFt = p.depth_max_ft;
-        const minFt = p.depth_min_ft;
-        const depthFt = (maxFt != null && minFt != null && minFt > 0)
-          ? (minFt + maxFt) / 2
-          : (maxFt ?? minFt ?? 0);
+        const p      = feat.properties || {};
+        const depthFt = p.depth_max_ft ?? p.depth_min_ft ?? p.depth_ft ?? 0;
         const color   = depthAreaColor(depthFt);
-        return { fillColor: color, fillOpacity: 0.30, color, weight: 0.5, opacity: 0.5 };
+        // Higher opacity for coastal so deeper polygons visually cover shallower ones
+        const fillOpacity = isCoastal ? 0.80 : 0.30;
+        return { fillColor: color, fillOpacity, color, weight: 0.5, opacity: 0.6 };
       },
       onEachFeature(feat, layer) {
         const p = feat.properties || {};
