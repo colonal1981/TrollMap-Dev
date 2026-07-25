@@ -1268,10 +1268,10 @@ document.querySelectorAll('#panel-plan .subtabs button').forEach(btn=>{
     document.querySelectorAll('#panel-plan .subtabs button').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
     const tab = btn.dataset.plansub;
-    document.getElementById('plan-builder').classList.toggle('hidden', tab!=='builder');
-    document.getElementById('plan-preview').classList.toggle('hidden', tab!=='preview');
-    document.getElementById('plan-library').classList.toggle('hidden', tab!=='library');
-    if(tab==='library') refreshPlanLibrary();
+    document.getElementById('plan-builder')?.classList.toggle('hidden', tab!=='builder');
+    document.getElementById('plan-preview')?.classList.toggle('hidden', tab!=='preview');
+    document.getElementById('plan-library')?.classList.toggle('hidden', tab!=='library');
+    if(tab==='library') refreshPlanLibrary?.();
   });
 });
 
