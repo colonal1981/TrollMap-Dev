@@ -564,6 +564,12 @@
         <button id="btnAttractors" data-active-color="#00e5ff" title="Toggle submerged attractors">📍 Attractors</button>
         <button id="btnFishingSpots" title="Toggle community fishing spots (i-Boating crowdsourced)">🎣 Fishing Spots</button>
         <button id="btnPOI" title="Toggle points of interest (landings, place names, attractors)">📌 POI</button>
+        <!-- Coastal-only layers — hidden unless a coast_* zone is selected -->
+        <span id="coastalLayerGroup" style="display:none">
+          <button id="btnOysterBeds" title="Toggle oyster beds (SCDNR / NCDMF) — redfish on moving water">🦪 Oyster</button>
+          <button id="btnMarshEdges" title="Toggle Spartina marsh edges (ESI 9/10) — flood-tide redfish">🌾 Marsh</button>
+          <button id="btnSoundings" title="Toggle depth soundings, tide-corrected (zoom 13+)">🔢 Soundings</button>
+        </span>
         <button id="btnCustomVectors" title="Load custom GeoJSON structure layer">🗂 Structure</button>
         <button id="btnFetchOsm" data-active-color="#76ff03" title="Fetch OSM waterways and historic structures">🌐 OSM</button>
         <button id="btnShowCatches" title="Plot catch journal on map">🐟 Catches</button>

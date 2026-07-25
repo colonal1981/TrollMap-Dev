@@ -164,6 +164,10 @@ function wire() {
       const rangeTxt = Number.isFinite(tide.rangeFt) ? ` · range ${tide.rangeFt.toFixed(1)} ft` : '';
       say(`✓ ${tide.hilo.length} events synced${rangeTxt}`, 'ok');
       window._trollmapTide = tide;
+
+      // Re-label depth soundings against the new tide so the numbers on the
+      // map reflect actual water rather than charted MLLW.
+      window.refreshSoundingLabels?.(tide.heightFt);
     } catch (err) {
       say(`API error — ${err.message}`, 'err');
       if (tbody) {
