@@ -1,5 +1,6 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { _state, runFullPipeline, runResume, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log, renderLog } from './lake-research-engine.js';
+import { coastalNamesByState, COASTAL_ZONES } from '../data/coastal-zones.js';
 
 
 function renderContradictionsAlert(contradictions, lakeName) {
@@ -171,6 +172,21 @@ async function populateResearchLakeDropdown() {
     else if (window.getUniversalLakeNames) lakes = window.getUniversalLakeNames();
   } catch (err) {
     console.warn('[research] Unable to load the shared access index:', err);
+  }
+
+  // Append coastal zones so the research UI can reach them. The research
+  // pipeline stores profiles under the canonical lake name; coastal zones use
+  // the same R2 key scheme as inland lakes (coast_<slug>), so they
+  // are fully compatible with the research worker routes.
+  try {
+    const coastalByState = coastalNamesByState();
+    const coastalNames = [...coastalByState.SC, ...coastalByState.GA, ...coastalByState.NC];
+    // Only add names that aren't already present (defensive — should never collide).
+    for (const name of coastalNames) {
+      if (!lakes.includes(name)) lakes.push(name);
+    }
+  } catch (err) {
+    console.warn('[research] Unable to load coastal zone names:', err);
   }
 
   const current = sel.value;
