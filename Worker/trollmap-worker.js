@@ -1596,14 +1596,14 @@ var trollmap_worker_default = {
       if (path === "/chartpacks/lake-boundary" && request.method === "GET") {
         const lakeName = url.searchParams.get("lake") || "";
         if (!lakeName) return new Response(JSON.stringify({ error: "missing lake param" }), { status: 400, headers: JSON_HEADERS });
-        // Boundaries stored under boundaries/ prefix with _3dhp suffix
         const safeId = sanitizeLakeId(lakeName);
         const shortKey = lakeKeyFromName(lakeName);
+        // New clean structure: {slug}/boundary.geojson
+        // Fallback to old boundaries/ prefix for any files not yet migrated
         const candidates = [
-          `boundaries/${safeId}_3dhp.geojson`,
-          `boundaries/lake_${shortKey}_3dhp.geojson`,
-          `boundaries/${safeId}.geojson`,
-          `boundaries/${shortKey}.geojson`,
+          `${safeId}/boundary.geojson`,
+          `${shortKey}/boundary.geojson`,
+          `lake_${shortKey}/boundary.geojson`,
         ];
         let geoObj = null;
         for (const key of candidates) {
@@ -1654,8 +1654,8 @@ var trollmap_worker_default = {
         for (const key of CATALOG_KEYS) {
           if (seen.has(key)) continue;
           seen.add(key);
-          const listed = await env.R2_TROLLMAP_CHARTPACKS.list({ prefix: `supplemental/${key}/` });
-          const files = listed.objects.map(o => o.key.replace(`supplemental/${key}/`, ''));
+          const listed = await env.R2_TROLLMAP_CHARTPACKS.list({ prefix: `${key}/` });
+          const files = listed.objects.map(o => o.key.replace(`${key}/`, ''));
           const hasContours = files.some(f => CONTOUR_FILES.includes(f));
           const hasShoreline = files.includes('shoreline.geojson');
           const hasDepthAreas = files.includes('depth_areas.geojson');
