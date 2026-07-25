@@ -180,6 +180,10 @@ async function loadDepthAreas(lakeKey) {
     window.SUPPLEMENTAL_DEPTH_LAYER       = _depthAreaLayer;
     window.SUPPLEMENTAL_DEPTH_GEOJSON     = gj;
     console.log(`[supplemental] depth_areas loaded: ${features.length} features for ${lakeKey}`);
+    // If tide height already set (auto-sync beat the load), re-apply colors immediately
+    if (isCoastal && Number.isFinite(_coastalTideHeightFt)) {
+      refreshDepthAreaColors(_coastalTideHeightFt);
+    }
   } catch (e) {
     if (!e.message.includes('404') && !e.message.includes('empty')) {
       console.warn(`[supplemental] depth_areas fetch failed for ${lakeKey}:`, e.message);
