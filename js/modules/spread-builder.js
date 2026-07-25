@@ -32,27 +32,46 @@ export const LURE_PRESETS = [
   'A-Rig Medium (~2.65oz) – 4.6" Swimbait',
   'A-Rig Heavy (~3.5oz) – 5" Swimbait',
   '— Crankbaits —',
-  'Flicker Minnow 11 – Crankbait',
-  'Deep Hit Stick – Crankbait',
-  'Bandit 300 Series – Crankbait',
-  'Rapala DT-10 – Crankbait',
-  'Rapala DT-14 – Crankbait',
-  '— Swimbaits —',
+  'Squarebill Crankbait',
+  'SR Crankbait (3-5ft)',
+  'MR Crankbait (6-12ft)',
+  'DD1 Crankbait (14-18ft)',
+  'DD2 Crankbait (16-20ft)',
+  'DD3 Crankbait (20-25ft)',
+  'DD4 Crankbait (25ft+)',
+  '— Swimbaits & Underspins —',
   'Swimbait 3.8" – Jighead',
   'Swimbait 4.6" – Jighead',
   'Swimbait 5" – Jighead',
+  'Underspin Jig (Flashy Swimmer)',
+  '1/8oz Road Runner / Beetle Spin',
+  '1/4oz Road Runner / Beetle Spin',
+  '3/8oz Road Runner / Beetle Spin',
   '— Spoons —',
-  'Flutter Spoon 2oz',
-  'Flutter Spoon 3oz',
-  'Kastmaster 3/4oz',
+  'Nichols Lake Fork Flutter Spoon 3/4oz',
+  'Dr.Fish Diamond Jig / Jigging Spoon 1oz',
   '— Topwater —',
-  'Choppo 90 – Topwater',
-  'Zara Spook – Topwater',
-  'Whopper Plopper 110 – Topwater',
+  'Walking Bait / Spook',
+  'Prop Bait / Choppo',
+  'Whopper Plopper',
+  'Wake Bait',
+  'Popper / Chugger',
+  'Buzzbait',
+  'Hollow Body Frog',
   '— Jigs —',
-  'ChatterBait 3/4oz',
-  'Bucktail Jig 1oz',
-  'Marabou Jig 3/4oz',
+  '1/4oz Spinnerbait',
+  '3/8oz Spinnerbait',
+  '1/2oz Spinnerbait',
+  '1/4oz Chatterbait',
+  '3/8oz Chatterbait',
+  '1/2oz Chatterbait',
+  '3/4oz Bucktail Jig',
+  '1oz Bucktail Jig',
+  '3/4oz Marabou Jig',
+  'Football Jig (Craw/Bluegill Trailer)',
+  'Ned Rig / Finesse Jig',
+  '— Saltwater —',
+  'Popping Cork with Gulp/Vudu Shrimp',
 ];
 
 export const COLOR_PRESETS = [
@@ -110,28 +129,45 @@ export const LURE_DIVE_DEPTHS = {
   'A-Rig Light (~1.65oz) – 3.8" Swimbait':  { minDive: 2,  maxDive: 40, needsWeight: false },
   'A-Rig Medium (~2.65oz) – 4.6" Swimbait': { minDive: 2,  maxDive: 45, needsWeight: false },
   'A-Rig Heavy (~3.5oz) – 5" Swimbait':     { minDive: 2,  maxDive: 50, needsWeight: false },
-  // Crankbaits — fixed dive curve, lead shortens but doesn't shorten below minDive
-  'Flicker Minnow 11 – Crankbait':           { minDive: 4,  maxDive: 14, needsWeight: true  },
-  'Deep Hit Stick – Crankbait':              { minDive: 12, maxDive: 22, needsWeight: true  },
-  'Bandit 300 Series – Crankbait':           { minDive: 8,  maxDive: 14, needsWeight: true  },
-  'Rapala DT-10 – Crankbait':               { minDive: 8,  maxDive: 12, needsWeight: true  },
-  'Rapala DT-14 – Crankbait':               { minDive: 10, maxDive: 16, needsWeight: true  },
+  // Crankbaits
+  'Squarebill Crankbait':                    { minDive: 2,  maxDive: 5,  needsWeight: true  },
+  'SR Crankbait (3-5ft)':                    { minDive: 3,  maxDive: 5,  needsWeight: true  },
+  'MR Crankbait (6-12ft)':                   { minDive: 6,  maxDive: 12, needsWeight: true  },
+  'DD1 Crankbait (14-18ft)':                 { minDive: 14, maxDive: 18, needsWeight: true  },
+  'DD2 Crankbait (16-20ft)':                 { minDive: 16, maxDive: 20, needsWeight: true  },
+  'DD3 Crankbait (20-25ft)':                 { minDive: 20, maxDive: 25, needsWeight: true  },
+  'DD4 Crankbait (25ft+)':                   { minDive: 25, maxDive: 35, needsWeight: true  },
   // Swimbaits on jighead — fully depth-controlled by lead + jig weight
   'Swimbait 3.8" – Jighead':                { minDive: 2,  maxDive: 30, needsWeight: false },
   'Swimbait 4.6" – Jighead':                { minDive: 2,  maxDive: 35, needsWeight: false },
   'Swimbait 5" – Jighead':                  { minDive: 2,  maxDive: 40, needsWeight: false },
-  // Spoons — sink rate controlled by speed/lead
-  'Flutter Spoon 2oz':                       { minDive: 4,  maxDive: 45, needsWeight: false },
-  'Flutter Spoon 3oz':                       { minDive: 6,  maxDive: 55, needsWeight: false },
-  'Kastmaster 3/4oz':                        { minDive: 2,  maxDive: 30, needsWeight: false },
+  'Underspin Jig (Flashy Swimmer)':          { minDive: 2,  maxDive: 35, needsWeight: false },
+  // Spoons
+  'Nichols Lake Fork Flutter Spoon 3/4oz':   { minDive: 4,  maxDive: 45, needsWeight: false },
+  'Dr.Fish Diamond Jig / Jigging Spoon 1oz': { minDive: 4,  maxDive: 50, needsWeight: false },
   // Topwater — surface only
-  'Choppo 90 – Topwater':                   { minDive: 0,  maxDive: 1,  needsWeight: false },
-  'Zara Spook – Topwater':                  { minDive: 0,  maxDive: 1,  needsWeight: false },
-  'Whopper Plopper 110 – Topwater':         { minDive: 0,  maxDive: 1,  needsWeight: false },
+  'Walking Bait / Spook':                    { minDive: 0,  maxDive: 1,  needsWeight: false },
+  'Prop Bait / Choppo':                      { minDive: 0,  maxDive: 1,  needsWeight: false },
+  'Whopper Plopper':                         { minDive: 0,  maxDive: 1,  needsWeight: false },
+  'Wake Bait':                               { minDive: 0,  maxDive: 2,  needsWeight: false },
+  'Popper / Chugger':                        { minDive: 0,  maxDive: 1,  needsWeight: false },
+  'Buzzbait':                                { minDive: 0,  maxDive: 1,  needsWeight: false },
+  'Hollow Body Frog':                        { minDive: 0,  maxDive: 1,  needsWeight: false },
   // Jigs
-  'ChatterBait 3/4oz':                       { minDive: 1,  maxDive: 20, needsWeight: false },
-  'Bucktail Jig 1oz':                        { minDive: 2,  maxDive: 35, needsWeight: false },
-  'Marabou Jig 3/4oz':                       { minDive: 2,  maxDive: 30, needsWeight: false },
+  '1/4oz Spinnerbait':                       { minDive: 1,  maxDive: 20, needsWeight: false },
+  '3/8oz Spinnerbait':                       { minDive: 1,  maxDive: 22, needsWeight: false },
+  '1/2oz Spinnerbait':                       { minDive: 1,  maxDive: 25, needsWeight: false },
+  '1/4oz Chatterbait':                       { minDive: 1,  maxDive: 20, needsWeight: false },
+  '3/8oz Chatterbait':                       { minDive: 1,  maxDive: 22, needsWeight: false },
+  '1/2oz Chatterbait':                       { minDive: 1,  maxDive: 25, needsWeight: false },
+  '3/4oz Bucktail Jig':                      { minDive: 2,  maxDive: 35, needsWeight: false },
+  '1oz Bucktail Jig':                        { minDive: 2,  maxDive: 40, needsWeight: false },
+  '3/4oz Marabou Jig':                       { minDive: 2,  maxDive: 30, needsWeight: false },
+  '1/8oz Road Runner / Beetle Spin':         { minDive: 1,  maxDive: 15, needsWeight: false },
+  '1/4oz Road Runner / Beetle Spin':         { minDive: 1,  maxDive: 18, needsWeight: false },
+  '3/8oz Road Runner / Beetle Spin':         { minDive: 1,  maxDive: 20, needsWeight: false },
+  // Saltwater
+  'Popping Cork with Gulp/Vudu Shrimp':      { minDive: 2,  maxDive: 6,  needsWeight: false },
 };
 
 // ── Per-row select builders (return HTML strings) ─────────────────────────
@@ -228,9 +264,6 @@ export function autoCalculateLead(rod, speedMph) {
   if (isNaN(depth)) return rod.lead || '';
 
   const spd = speedMph || 2.4;
-  // A-Rig lead calc: 5-wire umbrella rigs have massive drag at trolling speed.
-  // At 1.8mph, 3/16oz jigs: ~7.5ft of lead per foot of depth for light, ~6.5 for medium, ~5.5 for heavy.
-  // These are calibrated for 1.8-2.0mph. At higher speeds lures run shallower — add lead.
   const speedFactor = spd > 2.2 ? 1.15 : spd < 1.6 ? 0.88 : 1.0;
   if (lure.includes('light') || lure.includes('1.65')) return Math.round(depth * 7.5 * speedFactor);
   if (lure.includes('medium') || lure.includes('2.65')) return Math.round(depth * 6.5 * speedFactor);
@@ -289,11 +322,6 @@ export function renderSpread() {
     }
   });
 
-  // Post-render explicit value sync for trailer/arig/jig selects.
-  // The 'selected' attrs in arigDetailRow HTML sometimes don't take for the
-  // dynamically appended detail <tr> after loadPlanIntoForm/renderSpread.
-  // This guarantees the swimbait trailer profile (and A-rig weights) survive
-  // load/save and appear correctly in the editable table.
   state.SPREAD.forEach((rod, i) => {
     const trailerSel = tbody.querySelector(`select[data-f="trailerSize"][data-i="${i}"]`);
     if (trailerSel) trailerSel.value = rod.trailerSize || '';
@@ -305,7 +333,6 @@ export function renderSpread() {
     if (jigSel) jigSel.value = rod.jigWeight || '';
   });
 
-  // Wire change handlers
   tbody.querySelectorAll('input,select').forEach((el) => {
     el.addEventListener('change', (e) => {
       const i = +e.target.dataset.i;
@@ -313,7 +340,6 @@ export function renderSpread() {
       if (!state.SPREAD[i]) return;
       state.SPREAD[i][f] = e.target.value;
 
-      // Re-calc lead if lure/depth/speed changed
       if (f === 'lure' || f === 'depth') {
         const spd = parseFloat(document.getElementById('planSpeed')?.value) || 2.4;
         state.SPREAD[i].lead = String(autoCalculateLead(state.SPREAD[i], spd));
@@ -322,7 +348,6 @@ export function renderSpread() {
     });
   });
 
-  // Delete button
   tbody.querySelectorAll('[data-del]').forEach((el) => {
     el.addEventListener('click', (e) => {
       const i = +e.target.dataset.del;
@@ -344,15 +369,14 @@ function wireButtons() {
     state.SPREAD = [
       newRodRow({ side: 'Port', position: 'Bow', reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader', lure: 'A-Rig Medium (~2.65oz) – 4.6" Swimbait', color: 'Blueback Herring', depth: '25', lead: '95', notes: 'Port ledge channel' }),
       newRodRow({ side: 'Starboard', position: 'Bow', reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader', lure: 'A-Rig Medium (~2.65oz) – 4.6" Swimbait', color: 'Natural Pearl / Smoke', depth: '25', lead: '95', notes: 'Starboard ledge' }),
-      newRodRow({ side: 'Port', position: 'Mid', reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader', lure: 'Flicker Minnow 11 – Crankbait', color: 'Blue / Silver Herring', depth: '28', lead: '106', notes: 'Port secondary bottom drop' }),
-      newRodRow({ side: 'Starboard', position: 'Mid', reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader', lure: 'Flicker Minnow 11 – Crankbait', color: 'Sexy Shad', depth: '28', lead: '106', notes: 'Starboard secondary bottom drop' }),
-      newRodRow({ side: 'Port', position: 'Stern', reel: 'Spinning / 30lb 8-strand braid directly tied to swivel snap', lure: 'Flutter Spoon 2oz', color: 'Shattered Glass Silver', depth: '32', lead: '112', notes: 'Port deep flutter tail' }),
-      newRodRow({ side: 'Starboard', position: 'Stern', reel: 'Spinning / 30lb 8-strand braid directly tied to swivel snap', lure: 'Flutter Spoon 2oz', color: 'Chrome / Silver', depth: '32', lead: '112', notes: 'Starboard deep flutter tail' }),
+      newRodRow({ side: 'Port', position: 'Mid', reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader', lure: 'MR Crankbait (6-12ft)', color: 'Blue / Silver Herring', depth: '10', lead: '30', notes: 'Port secondary bottom drop' }),
+      newRodRow({ side: 'Starboard', position: 'Mid', reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader', lure: 'MR Crankbait (6-12ft)', color: 'Sexy Shad', depth: '10', lead: '30', notes: 'Starboard secondary bottom drop' }),
+      newRodRow({ side: 'Port', position: 'Stern', reel: 'Spinning / 30lb 8-strand braid directly tied to swivel snap', lure: 'Nichols Lake Fork Flutter Spoon 3/4oz', color: 'Shattered Glass Silver', depth: '32', lead: '112', notes: 'Port deep flutter tail' }),
+      newRodRow({ side: 'Starboard', position: 'Stern', reel: 'Spinning / 30lb 8-strand braid directly tied to swivel snap', lure: 'Nichols Lake Fork Flutter Spoon 3/4oz', color: 'Chrome / Silver', depth: '32', lead: '112', notes: 'Starboard deep flutter tail' }),
     ];
     renderSpread();
   });
 
-  // Re-calculate all leads when trolling speed changes
   document.getElementById('planSpeed')?.addEventListener('change', (e) => {
     const spd = parseFloat(e.target.value) || 2.4;
     state.SPREAD.forEach((rod) => {

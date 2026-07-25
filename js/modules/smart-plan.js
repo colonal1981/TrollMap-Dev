@@ -3,6 +3,10 @@
  *
  * Scout waypoint mode: Groq picks depth bands + lures, contour data places
  * waypoints, 4 out-and-back routes are built. Coach reviews the full plan.
+ *
+ * Updated 2026-07-25: Redesigned around "Stop-and-Cast" chronological timeline
+ * and "Presentation-First" matching philosophy, fully supporting Newport NK180 Pro
+ * (No Spot-Lock) manual positioning.
  */
 
 import { state, CF_WORKER_URL } from '../core/state.js';
@@ -42,9 +46,9 @@ const PHASE_2_END_OFFSET_MIN = 210;
 
 // ── Dynamic inventory name list (loaded from tackle-inventory.js at runtime) ──
 let _cachedTrollableNames = null;
+let _cachedCastableNames = null;
 
 // Maps annotated prompt string → clean inventory name
-// e.g. "SR Crankbait (3-5ft) [3-5ft dive | 1.2-1.8mph]" → "SR Crankbait (3-5ft)"
 let _cachedAnnotatedToClean = null;
 
 async function getTrollableNames() {
@@ -63,21 +67,21 @@ async function getTrollableNames() {
   return _cachedTrollableNames;
 }
 
+async function getCastableNames() {
+  if (_cachedCastableNames) return _cachedCastableNames;
+  const inv = await getInventory();
+  _cachedCastableNames = inv.filter(l => l.castable).map(l => l.name);
+  return _cachedCastableNames;
+}
+
 // Strip the [...] annotation bracket from a lure name returned by Groq
 function stripLureAnnotation(raw) {
   if (!raw) return raw;
-  // Remove everything from " [" onward
   return String(raw).replace(/\s*\[.*$/, '').trim();
 }
 
 /**
  * Apply the physical speed ceiling for one trolling pass.
- *
- * A pass has exactly two lures in the water, so its boat speed is limited by
- * the lower trollSpeedMax of that pass's port and starboard lures.  This is
- * deliberately per-pass: Band 1's lures must not constrain Band 2, and vice
- * versa.  The returned speed is safe to use for both the outbound and inbound
- * route for that band.
  */
 export function capPassSpeed(requestedSpeed, lureNames, inventory, fallbackSpeed = 1.8) {
   const requested = Number.parseFloat(requestedSpeed);
@@ -109,9 +113,7 @@ export function capPassSpeed(requestedSpeed, lureNames, inventory, fallbackSpeed
 // ── Groq lure name sanitizer ──────────────────────────────────────────────────
 function sanitizeGroqLureName(raw, targetDepthFt, inventoryNames) {
   if (!raw) return depthFallbackLure(targetDepthFt, inventoryNames);
-  // Strip the annotation bracket Groq sometimes returns with the name
   const stripped = stripLureAnnotation(raw);
-  // Also check direct map from annotated string
   if (_cachedAnnotatedToClean) {
     const direct = _cachedAnnotatedToClean[String(raw).toLowerCase().trim()];
     if (direct) return direct;
@@ -150,9 +152,6 @@ function depthFallbackLure(depthFt, inventoryNames) {
   if (d < 26) return findMatch('dd2', 'dd3', 'a-rig heavy', 'swimbait 5"', 'flutter spoon') || inventoryNames[0];
   return findMatch('dd3', 'dd4', 'flutter spoon', 'bucktail') || inventoryNames[0];
 }
-
-// ── Geo helpers (now from utils/geo.js) ─────────────────────────────────────
-// geoDistanceFt, bearing, distToRingFt, distFt all canonical in js/utils/geo.js
 
 // ── Sunrise & Solunar ─────────────────────────────────────────────────────────
 function computeSunrise(lat, lon, dateStr) {
@@ -242,7 +241,7 @@ function computePhases(launchTimeStr, returnTimeStr, dateStr, lat, lon) {
   };
 }
 
-// ── Per-phase species-intel lookup (fallback context for rationale) ────────────
+// ── Per-phase species-intel lookup ───────────────────────────────────────────
 function getPhaseRecommendation(species, lakeName, season, phaseNum, waterTempF) {
   const v2sp = SPECIES_BEHAVIOR_V2?.[species];
   if (v2sp) {
@@ -288,7 +287,7 @@ function stitchContourFragments(fragments, TOL_FT = 50) {
     const dlat=(a[0]-b[0])*364000, dlon=(a[1]-b[1])*364000*Math.cos(a[0]*Math.PI/180);
     return Math.sqrt(dlat*dlat+dlon*dlon);
   }
-  const bearing = geoBearing; // from utils/geo.js (canonical)
+  const bearing = geoBearing;
   function angleDiff(a, b) { let d=Math.abs(a-b)%360; return d>180?360-d:d; }
 
   for (let s=0; s<segs.length; s++) {
@@ -334,7 +333,6 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
   const gj = contour?.smart || contour?.raw;
   if (!gj?.features?.length) return [];
 
-  // Build boundary ring once at the top — used for both chain scoring and walk filtering
   let boundaryRing = null;
   try {
     const bgj = window.LAKE_BOUNDARY_GEOJSON;
@@ -353,7 +351,7 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
     }
   } catch (_) {}
 
-  function distToRingFt(lat, lon) { return distToRingGeneric(lat, lon, boundaryRing, true); } // from utils/geo.js
+  function distToRingFt(lat, lon) { return distToRingGeneric(lat, lon, boundaryRing, true); }
 
   const inRange = gj.features.filter(f => {
     const d = f.properties?.depth_ft;
@@ -383,7 +381,6 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
         const d2=geoDistanceFt(refLat,refLon,chain[i][0],chain[i][1]);
         if (d2<closest) closest=d2;
       }
-      // Compute average distance from shore — channel chains score higher than bank-huggers
       let avgShoreDist = 0;
       if (boundaryRing) {
         const sampleStep = Math.max(1, Math.floor(chain.length / 20));
@@ -399,8 +396,6 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
   }
   if (!allChains.length) return [];
 
-  // Score: prefer chains that are close to ramp, long, AND furthest from shore (channel preference)
-  // avgShoreDist bonus is capped at 500ft so it doesn't overwhelm proximity on wide open water
   allChains.sort((a,b) => {
     const scoreA = a.closest*2 - a.len - Math.min(a.avgShoreDist, 500);
     const scoreB = b.closest*2 - b.len - Math.min(b.avgShoreDist, 500);
@@ -414,8 +409,6 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
     const d=geoDistanceFt(refLat,refLon,best.chain[i][0],best.chain[i][1]);
     if (d<nearDist) { nearDist=d; nearIdx=i; }
   }
-
-  const SHORE_STANDOFF_FT = 100;
 
   const walk = (start, dir) => {
     const pts=[{lat:best.chain[start][0],lon:best.chain[start][1],depth:best.depth}];
@@ -465,8 +458,6 @@ async function generateScoutWaypoints(phases, bands, rampLat, rampLon, rangeMile
     const safePassSpeed = Number.isFinite(Number(passSpeed)) && Number(passSpeed) > 0
       ? Number(passSpeed)
       : 2.0;
-    // Each band has its own out-and-back pass, so size its waypoint budget at
-    // that pass's applied speed rather than borrowing speed from the other band.
     const budgetFt=Math.min(totalDurH/2*safePassSpeed*5280*0.8,3.0*5280);
     const pts=walkContourForWaypoints(band.depthMin,band.depthMax,rampLat,rampLon,maxDistFt,budgetFt,STEP_FT);
     if (!pts.length) { console.warn(`[scout] Ph${band.phase}: no waypoints for ${band.depthMin}-${band.depthMax}ft`); continue; }
@@ -560,28 +551,15 @@ export function applyStoredSmartPlanDepth() {
 
 // ── Coastal mode ───────────────────────────────────────────────────────────
 
-/**
- * Detect tidal saltwater from the selected waterbody.
- * All coastal chartpack slugs are prefixed `coast_` by the pipeline, so the
- * R2 key doubles as the mode flag.
- */
 export function detectCoastalZone(lakeName) {
   const key = lakeName ? resolveR2Key(lakeName) : null;
   return isCoastalKey(key) ? key : null;
 }
 
-/**
- * Assemble everything coastal SmartPlan needs: tide state at launch, the
- * salinity picture, and the structure set to score against.
- *
- * Every leg degrades independently — no tide sync, a dead USGS gauge or a
- * missing habitat layer each reduce the plan's precision without failing it.
- */
 export async function buildCoastalContext({ zoneKey, dateStr, launchTime, species }) {
   const zone = COASTAL_ZONES[zoneKey];
   if (!zone) return null;
 
-  // Launch time -> Date, so tide height is for when we are actually fishing.
   let when = new Date(`${dateStr}T12:00:00`);
   const hm = String(launchTime || '').match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
   if (hm) {
@@ -604,7 +582,6 @@ export async function buildCoastalContext({ zoneKey, dateStr, launchTime, specie
     ? intrusionRes.value
     : { active: false, severity: 0, message: null, sites: [], rivers: [] };
 
-  // Structures come from the already-loaded OSM/habitat data.
   const structures = [];
   for (const feat of (window.getOsmStructures?.() || [])) {
     const type = classifyStructure(feat);
@@ -628,7 +605,6 @@ export async function buildCoastalContext({ zoneKey, dateStr, launchTime, specie
   };
 }
 
-/** Prompt block describing tide/salinity conditions for the Groq call. */
 export function buildCoastalPromptBlock(ctx) {
   if (!ctx) return '';
   const L = [];
@@ -685,11 +661,6 @@ export async function runSmartPlan() {
   const date=new Date(dateStr+'T12:00:00');
   const sp=species[0];
 
-  // Regulation gate. Coastal zones are checked against the saltwater table:
-  // the freshwater REGULATIONS map is keyed by lake and has no entry any
-  // coastal zone name resolves to, so checkRegulations() would return
-  // legal:true for a closed fishery (e.g. NC seatrout during a cold-stun
-  // proclamation closure). Same return shape, so the block below is shared.
   const _coastalKeyForRegs = detectCoastalZone(lakeName);
   const _coastalState = _coastalKeyForRegs ? COASTAL_ZONES[_coastalKeyForRegs]?.state : null;
   const regCheck = _coastalState
@@ -702,7 +673,6 @@ export async function runSmartPlan() {
     return;
   }
 
-  // Non-blocking advisories: gear-specific closures and stale digests.
   const regWarnings = regCheck.warnings || [];
   if (regWarnings.length) {
     console.warn('[smart-plan] regulation advisories:', regWarnings);
@@ -715,10 +685,6 @@ export async function runSmartPlan() {
   const clarity   =document.getElementById('planClarity')?.value||'Clear';
   const rampName  =document.getElementById('planRamp')?.value||'unknown ramp';
 
-  // ── Fetch full Open-Meteo forecast BEFORE reading planWeather (bug fix)
-  // Ensures Groq prompt always has fresh wind/conditions even if Preview was never opened.
-  // Coastal zones resolve their centre from COASTAL_ZONES: only 9 of the 21
-  // exist in LAKE_DB, so the other 12 would otherwise silently get no forecast.
   const coastalZoneKey = detectCoastalZone(lakeName);
 
   let weatherStr = document.getElementById('planWeather')?.value || '';
@@ -747,11 +713,8 @@ export async function runSmartPlan() {
         }
       }
     }
-  } catch (_) { /* non-fatal: fall back to whatever is already in the field */ }
+  } catch (_) {}
 
-  // ── Coastal context: tide state at launch + salinity proxy ──────────────
-  // Non-fatal by design: an unreachable NOAA or USGS endpoint costs precision,
-  // not the plan. Freshwater lakes skip this entirely.
   let coastalCtx = null;
   let coastalBlock = '';
   if (coastalZoneKey) {
@@ -777,8 +740,6 @@ export async function runSmartPlan() {
   let rampLat=null, rampLon=null;
   const idx = getLoadedAccessIndex();
 
-  // Coastal ramps are pulled from the fish & wildlife API via the worker access index.
-  // We fall back to the hardcoded ones if the API results are empty.
   const _coastalZoneForRamp = coastalZoneKey ? COASTAL_ZONES[coastalZoneKey] : null;
   let lakePoints = idx.byLake.get(lakeName) || [];
   if (lakePoints.length === 0 && _coastalZoneForRamp) {
@@ -796,9 +757,6 @@ export async function runSmartPlan() {
     if (opt && opt.dataset.lat) { rampLat = parseFloat(opt.dataset.lat); rampLon = parseFloat(opt.dataset.lon); }
   }
   if (rampLat == null) {
-    // Last resort. The old hardcoded 34.0/-81.0 is inland Columbia, which for
-    // a coastal zone would put the launch point hundreds of miles from salt
-    // water and produce a nonsense plan.
     const c = _coastalZoneForRamp?.center;
     if (c) { rampLat = c[0]; rampLon = c[1]; }
     else { rampLat = 34.0; rampLon = -81.0; }
@@ -807,8 +765,10 @@ export async function runSmartPlan() {
   const phaseInfo = computePhases(launchTime, returnTime, dateStr, rampLat, rampLon);
   const sol       = phaseInfo.solunar;
   let rangeMiles= computeRangeMiles(speedMph);
-  const inventoryNames = await getTrollableNames();
+  
   const inventory = await getInventory();
+  const inventoryNames = await getTrollableNames();
+  const castableNames = await getCastableNames();
 
   function hStr(h){
     const hh=Math.floor(((h%24)+24)%24),mm=String(Math.round((h%1)*60)).padStart(2,'0');
@@ -818,7 +778,6 @@ export async function runSmartPlan() {
   const solunarStr=`Majors: ${hStr(sol.major1)}, ${hStr(sol.major2)} · Minors: ${hStr(sol.minor1)}, ${hStr(sol.minor2)}`;
   const totalDurH=phaseInfo.phases.length?(phaseInfo.phases[phaseInfo.phases.length-1].end-phaseInfo.phases[0].start):6;
 
-  // ── Pull our local intel FIRST ───────────────────────────────────────
   const fishingContext = await buildFishingContext({
     species: sp, lakeName, season, clarity, waterTempF,
     speedMph: speedMph,
@@ -830,22 +789,16 @@ export async function runSmartPlan() {
   const hasResearched = fishingContext?.hasResearchedProfile || false;
   const researchedMeta = fishingContext?.researchedProfile?.metadata || null;
 
-  // ── Unified Groq Call (State-Agnostic Prompt + Guided Creativity) ─────
-  // Token-optimized: only inject target species slice, not entire trolling intel map
   let researchedTrollingSlice = null;
   if (hasResearched && researchedTrolling) {
-    // researchedTrolling structure: { "Striped Bass": {summer:{...}}, "Largemouth Bass": {...}, ... }
-    // Extract only the target species + 1-2 additional common species to keep token low
     const targetKey = Object.keys(researchedTrolling).find(k => k.toLowerCase().includes(sp.toLowerCase().split(' ')[0]) || sp.toLowerCase().includes(k.toLowerCase().split(' ')[0]));
     if (targetKey) {
       researchedTrollingSlice = { [targetKey]: researchedTrolling[targetKey] };
     } else {
-      // species not covered in researched profile — will fall back to generic, note it
       researchedTrollingSlice = { _note: `Research profile exists but does not contain ${sp}. Use generic species intel for ${sp}.`, availableSpecies: Object.keys(researchedTrolling).slice(0,6) };
     }
   }
 
-  // ── Pull lake-specific species behavior from research profile ─────────
   const speciesBehavior = fishingContext?.researchedProfile?.biology?.speciesBehavior || null;
   const targetBehavior = speciesBehavior
     ? Object.entries(speciesBehavior).find(([k]) =>
@@ -860,11 +813,8 @@ Summary: ${String(researchedSummary||'').slice(0,350)}
 ${researchedTrollingSlice ? `Trolling (target species only ${sp}): ${JSON.stringify(researchedTrollingSlice, null, 0).slice(0,900)}` : ''}
 Limnology: archetype=${String(fishingContext.researchedProfile?.archetype||'').slice(0,60)} trophic=${String(fishingContext.researchedProfile?.limnology?.trophicStatus||'')} thermocline=${fishingContext.researchedProfile?.limnology?.thermocline?.summerDepthFt ? `${fishingContext.researchedProfile.limnology.thermocline.summerDepthFt}ft (${fishingContext.researchedProfile.limnology.thermocline.strength||'unknown strength'})` : 'unknown'} anoxicBelow=${fishingContext.researchedProfile?.limnology?.oxygen?.anoxicBelowFt ? `${fishingContext.researchedProfile.limnology.oxygen.anoxicBelowFt}ft` : 'unknown'} clarity=${String(fishingContext.researchedProfile?.limnology?.waterClarity?.typical||'unknown')}${fishingContext.researchedProfile?.limnology?.waterClarity?.secchiFt ? ` secchi=${fishingContext.researchedProfile.limnology.waterClarity.secchiFt}ft` : ''} flow=${String(fishingContext.researchedProfile?.limnology?.flowCharacteristics||'').slice(0,120)||'none'}${fishingContext.researchedProfile?.limnology?.dailyFluctuationFt ? ` dailySwing=${fishingContext.researchedProfile.limnology.dailyFluctuationFt}ft` : ''}
 Habitat key: ${String(fishingContext.researchedProfile?.habitat?.structuralElements ? Object.values(fishingContext.researchedProfile.habitat.structuralElements).join('; ').slice(0,200) : '').slice(0,200)}
-Note: This profile is authoritative for permanent lake characteristics (type, structure, forage, thermocline). For dynamic species behavior, blend researched baseline with generic species intel and today's water temp/weather. If researched conflicts with generic, prefer researched for permanent facts, generic for dynamic.
 ` : '';
 
-
-  // ── Pull species-intel-v2 data for this species + season ─────────────
   const v2sp = SPECIES_BEHAVIOR_V2?.[sp];
   const oxygenFloor = fishingContext?.researchedProfile?.limnology?.oxygen?.anoxicBelowFt || null;
   const oxygenConstraint = oxygenFloor
@@ -873,7 +823,6 @@ Note: This profile is authoritative for permanent lake characteristics (type, st
 
   let speciesIntelBlock = '';
   if (targetBehavior) {
-    // Lake-specific behavior from research profile — overrides generic species intel
     const sb = targetBehavior[season] || targetBehavior.summer || {};
     const depth = Array.isArray(sb.depthRange) ? `${sb.depthRange[0]}–${sb.depthRange[1]}ft` : null;
     const structs = Array.isArray(sb.structure) ? sb.structure.join(', ') : null;
@@ -882,14 +831,13 @@ Note: This profile is authoritative for permanent lake characteristics (type, st
       : null;
     const lakeNote = targetBehavior.lakeSpecificNotes || null;
     speciesIntelBlock = `
-SPECIES INTEL — ${sp} in ${season} on ${lakeName} (LAKE-SPECIFIC from verified research — prioritize over generic defaults):
+SPECIES INTEL — ${sp} in ${season} on ${lakeName} (LAKE-SPECIFIC from verified research):
 ${depth ? `- Preferred depth range: ${depth}` : ''}
 ${structs ? `- Key structure: ${structs}` : ''}
 ${sb.notes ? `- Notes: ${sb.notes}` : ''}
 ${spawnNote ? `- ${spawnNote}` : ''}
 ${lakeNote ? `- Lake context: ${lakeNote}` : ''}
-${oxygenConstraint}
-CRITICAL: Both depth bands MUST stay within ${depth || 'the above range'}. Do NOT create a second band deeper than ${Array.isArray(sb.depthRange) ? sb.depthRange[1] : 10}ft — lake-specific research does not support deeper patterns for ${sp} in ${season} on this lake.`;
+${oxygenConstraint}`;
   } else if (v2sp) {
     const lakeKeyV2 = (resolveLakeKey
       ? (resolveLakeKey(lakeName, v2sp) || 'default_SC_reservoir')
@@ -902,38 +850,39 @@ CRITICAL: Both depth bands MUST stay within ${depth || 'the above range'}. Do NO
         ? sNode.preferredSpeed : [sNode.preferredSpeed || 1.8, sNode.preferredSpeed || 1.8];
       const notes = Array.isArray(sNode.notes) ? sNode.notes.join(' · ') : (sNode.notes || '');
       speciesIntelBlock = `
-SPECIES INTEL — ${sp} in ${season} on ${lakeName} (use this as your primary depth/speed/structure baseline):
+SPECIES INTEL — ${sp} in ${season} on ${lakeName}:
 - Preferred depth range: ${depthRange[0]}–${depthRange[1]}ft
 - Preferred trolling speed: ${speedRange[0]}–${speedRange[1]} mph
 - Key structure: ${(sNode.preferredStructure || []).join(', ') || 'general structure'}
 - Presentations: ${(sNode.preferredPresentation || []).join(', ') || 'general trolling'}
 - Lure families: ${(sNode.lureFamilies || []).join(', ') || 'see tackle list'}
 - Colors: ${(sNode.preferredColors || []).join(', ') || 'match forage'}
-${notes ? `- Notes: ${notes}` : ''}
-
-Use this as your baseline. Today's conditions — water temp, clarity, wind, and solunar — should drive your final depth and speed decisions within this general range. You may adjust outside it if conditions strongly support doing so.`;
+${notes ? `- Notes: ${notes}` : ''}`;
     }
   }
 
-  // ── Catch history context ─────────────────────────────────────────────
   const catchSummary = fishingContext?.catchSummary;
   let catchBlock = '';
   if (catchSummary && catchSummary.totalCatches > 0) {
     catchBlock = `
-ANGLER CATCH HISTORY — ${sp} on ${lakeName} in ${season} (${catchSummary.totalCatches} same-season catches logged):
+ANGLER CATCH HISTORY — ${sp} on ${lakeName} in ${season} (${catchSummary.totalCatches} catches logged):
 - Average catch depth: ${catchSummary.avgDepthFt != null ? catchSummary.avgDepthFt + 'ft' : 'unknown'}
 - Best time of day: ${catchSummary.bestTime || 'unknown'}
-- Top lures: ${catchSummary.topLures.map(l => `${l.lure} (${l.count}x)`).join(', ') || 'none logged'}
-NOTE: Catch history is supplemental only. If SPECIES INTEL above specifies a different depth range, prioritize the research data over catch averages.`;
+- Top lures: ${catchSummary.topLures.map(l => `${l.lure} (${l.count}x)`).join(', ') || 'none logged'}`;
   }
 
-  // ── Unified Groq Call (Species-Driven Prompt) ─────────────────────────
   const coastalSafetyBlock = coastalZoneKey
     ? `\n- COASTAL KAYAK RESTRICTION: You are strictly restricted to INSHORE areas (marshes, tidal creeks, estuary mouths, oyster bars, and shallow flats). NEVER plan routes or suggest traveling past the jetties, into the open ocean, or into high-energy open-water surf areas. Safety first: stay in sheltered, inshore waters.`
     : '';
 
+  // Format pre-Groq stop candidates lists
+  const preGroqStructures = fishingContext?.nearbyStructures || [];
+  const candidateList = preGroqStructures.length > 0 ? preGroqStructures.map((s, i) => {
+    return `${i+1}) ${s.name || s.type} at [${s.lat.toFixed(4)}, ${s.lon.toFixed(4)}]`;
+  }).join('\n') : 'None mapped nearby.';
+
   const planPrompt=`You are an expert fishing guide for ${lakeName}.
-Build a trolling plan for today targeting ${sp}.
+Build a hybrid trolling and casting plan for today targeting ${sp}.
 
 TRIP & CONDITIONS:
 - Date: ${dateStr}
@@ -958,19 +907,27 @@ ${coastalBlock}
 ${researchedBlock}
 
 YOUR ROLE:
-You are the expert guide on the water *today*. The SPECIES INTEL above is your starting point — use it to understand where this species generally holds in this season, then make your own call based on today's actual conditions. A good guide doesn't just read a data sheet; he reads the water.
+You are the expert guide on the water *today*. Leverage the SPECIES INTEL baseline and verified research to form sequential depth bands for trolling, but ALSO define highly-strategic chronologically woven "Casting Stops" where the angler stops the motor and casts to key structures.
 
-PLATFORM CONSTRAINTS (STRICT - DO NOT BREAK THESE):
-- Kayak (Native Watersports Slayer Propel Max 12.5, pedal drive + electric motor)
-- 2 rods max in water simultaneously (port + starboard)
-- No live bait, no downriggers, no planer boards, spinning rods only${coastalSafetyBlock}
+KAYAK STEERING & ACTIVE BOAT POSITIONING CONSTRAINTS:
+- Kayak: Native Watersports Slayer Propel Max 12.5 with a manual pedal drive and a Newport NK180 Pro stern-mounted electric motor.
+- **IMPORTANT**: Your Newport NK180 Pro trolling motor has **NO Spot-Lock / GPS auto-anchor** capability.
+- **ADVANTAGE**: The pedal drive is a Propel drive which features instant mechanical reverse (pedal backward to instantly reverse).
+- In any stop_and_cast "tacticalNote", you must detail the exact manual boat control strategy:
+  - If deep/open-water structure in wind/current: suggest using the instant-reverse pedals to "Pedal-Hover" hands-free.
+  - If standing timber, brush piles, or docks: suggest using a physical "Brush Gripper" clamp or dock ropes to tie off silently.
+  - If shallow flats: suggest using a physical stakeout pole or anchoring with a trolley line.
+  - If drifting parallel to shore/riprap: suggest natural wind drifts with 5% NK180 steer control.
+- 2 rods max in water simultaneously while trolling (port + starboard). No live bait, no downriggers, spinning rods only.${coastalSafetyBlock}
 
-AVAILABLE TACKLE — use ONLY these exact names, no others:
+AVAILABLE TACKLE FOR TROLLING — use ONLY these exact names for trolling:
 ${inventoryNames.join(', ')}
 
-TROLLING-SPEED LIMITS (HARD): Every tackle name above includes its physical trolling-speed range in brackets. Pick a separate speed for each band. Band 1's speed applies to BOTH its outbound and inbound pass; Band 2's speed applies to BOTH its outbound and inbound pass. A band's speed must never exceed the lower maximum speed of its selected port and starboard lures. The two bands may use different speeds.
+AVAILABLE TACKLE FOR STOP-AND-CAST — use ONLY these exact names for casting:
+${castableNames.join(', ')}
 
-ROUTE STRUCTURE: Pick two depth bands that reflect where ${sp} actually hold during ${season}. Do not default to a shallow-then-deep morning pattern unless the species intel supports it.${targetBehavior && targetBehavior[season]?.depthRange ? ` LAKE-SPECIFIC MAX DEPTH: ${targetBehavior[season].depthRange[1]}ft — both bands must stay at or above this based on verified research for this lake.` : ''}
+MAPPED STRUCTURES NEAR YOUR ROUTE:
+${candidateList}
 
 Return ONLY valid JSON, no markdown:
 {
@@ -982,7 +939,7 @@ Return ONLY valid JSON, no markdown:
   "band1": {
     "depthMin": <ft>, "depthMax": <ft>, "speed": <mph>,
     "speedRationale": "<why this pass speed fits both selected lures>",
-    "port": "<exact inventory name>", "starboard": "<exact inventory name>",
+    "port": "<exact name from AVAILABLE_TROLLING_TACKLE>", "starboard": "<exact name from AVAILABLE_TROLLING_TACKLE>",
     "portColor": "<color>", "starboardColor": "<color>",
     "portLeadFt": <ft>, "starboardLeadFt": <ft>,
     "why": "<one sentence species behavior>"
@@ -990,7 +947,7 @@ Return ONLY valid JSON, no markdown:
   "band2": {
     "depthMin": <ft>, "depthMax": <ft>, "speed": <mph>,
     "speedRationale": "<why this pass speed fits both selected lures>",
-    "port": "<exact inventory name>", "starboard": "<exact inventory name>",
+    "port": "<exact name from AVAILABLE_TROLLING_TACKLE>", "starboard": "<exact name from AVAILABLE_TROLLING_TACKLE>",
     "portColor": "<color>", "starboardColor": "<color>",
     "portLeadFt": <ft>, "starboardLeadFt": <ft>,
     "why": "<one sentence species behavior>"
@@ -998,7 +955,32 @@ Return ONLY valid JSON, no markdown:
   "structureFocus": "<fishfinder signature to find>",
   "adjustmentTip": "<if no bites after 30min, do this>",
   "scoutNotes": "<2-3 sentence tactical overview>",
-  "fishfinderNarrative": "<A short 150-word narrative telling the angler what to look for on the sonar screen during these routes, and how to work the specific lures rigged.>"
+  "fishfinderNarrative": "<A short 150-word narrative telling the angler what to look for on the sonar screen during these routes, and how to work the specific lures rigged.>",
+  "timeline": [
+    {
+      "step": 1,
+      "type": "troll",
+      "phaseName": "Dawn Shallow",
+      "depthMin": <ft>, "depthMax": <ft>, "speed": <mph>,
+      "port": "<exact name from AVAILABLE_TROLLING_TACKLE>", "starboard": "<exact name from AVAILABLE_TROLLING_TACKLE>",
+      "portColor": "<color>", "starboardColor": "<color>",
+      "portLeadFt": <ft>, "starboardLeadFt": <ft>,
+      "why": "<one sentence behavior>"
+    },
+    {
+      "step": 2,
+      "type": "stop_and_cast",
+      "name": "Dutchmans Point Ledge",
+      "targetStructure": "rocky point / shallow flat",
+      "targetDepth": 6,
+      "presentation": "Upper water column, high-vibe baitfish profile (aggressive morning bite)",
+      "recommendedLures": [
+        { "name": "<exact name from AVAILABLE_CASTING_TACKLE>", "confidence": "95%" },
+        { "name": "<exact name from AVAILABLE_CASTING_TACKLE>", "confidence": "92%" }
+      ],
+      "tacticalNote": "Position the kayak 40 yards downwind off the point. Use Propel instant-reverse pedals to hover against the wind while casting a walking bait."
+    }
+  ]
 }`;
 
   let groqPlan=null;
@@ -1069,6 +1051,52 @@ Return ONLY valid JSON, no markdown:
     const fallPort2  = depthFallbackLure(r2.depthMin + 2, inventoryNames);
     const fallStbd2  = depthFallbackLure(r2.depthMax - 2, inventoryNames);
     
+    const defaultFallbackTimeline = [
+      {
+        step: 1,
+        type: 'troll',
+        phaseName: 'Dawn Shallow Patrol',
+        depthMin: r1.depthMin,
+        depthMax: r1.depthMax,
+        speed: r1.speed || 1.8,
+        port: fallPort1,
+        starboard: fallStbd1,
+        portColor: 'Natural',
+        starboardColor: 'Metallic',
+        portLeadFt: 40,
+        starboardLeadFt: 50,
+        why: 'Fallback: mid-depth morning run'
+      },
+      {
+        step: 2,
+        type: 'stop_and_cast',
+        name: 'Dutchman Creek Shallow Point',
+        targetStructure: 'rocky point / shallow flat',
+        targetDepth: 6,
+        presentation: 'Upper water column, high-vibe baitfish profile (aggressive morning bite)',
+        recommendedLures: [
+          { name: 'Walking Bait / Spook', confidence: '95%' },
+          { name: 'Underspin Jig (Flashy Swimmer)', confidence: '92%' }
+        ],
+        tacticalNote: 'Position the kayak 40 yards downwind off the point. Use Propel instant-reverse pedals to hover against the wind while casting a walking bait.'
+      },
+      {
+        step: 3,
+        type: 'troll',
+        phaseName: 'Mid-Morning Transition',
+        depthMin: r2.depthMin,
+        depthMax: r2.depthMax,
+        speed: r2.speed || 1.8,
+        port: fallPort2,
+        starboard: fallStbd2,
+        portColor: 'Natural',
+        starboardColor: 'Natural',
+        portLeadFt: 50,
+        starboardLeadFt: 60,
+        why: 'Fallback: deep mid-morning run'
+      }
+    ];
+
     groqPlan={
       isGo: true,
       safetyWarning: `Groq API Failed (${e.message}). Proceed with caution.`,
@@ -1079,7 +1107,8 @@ Return ONLY valid JSON, no markdown:
       structureFocus:'Look for baitfish marks suspended over channel edges on the fishfinder.',
       adjustmentTip:'Shorten lead 10ft and slow to 1.5mph if no bites.',
       scoutNotes:`Groq API Failed (${e.message}). Running Fallback Plan.`,
-      fishfinderNarrative: `⚠ Groq Narrative Failed. Fallback: Look for baitfish marks suspended over drop-offs.`
+      fishfinderNarrative: `⚠ Groq Narrative Failed. Fallback: Look for baitfish marks suspended over drop-offs.`,
+      timeline: defaultFallbackTimeline
     };
   }
 
@@ -1105,9 +1134,23 @@ Return ONLY valid JSON, no markdown:
   groqPlan.band2.port      =sanitizeGroqLureName(groqPlan.band2.port,      b2mid-2, inventoryNames);
   groqPlan.band2.starboard =sanitizeGroqLureName(groqPlan.band2.starboard,  b2mid+2, inventoryNames);
 
-  // Speed is guarded per pass, not across all four lures. Each band keeps its
-  // own speed for its outbound + inbound run, capped only by the two lures
-  // actually in the water during that run.
+  // Sanitize chronological timeline items
+  if (groqPlan.timeline && Array.isArray(groqPlan.timeline)) {
+    groqPlan.timeline.forEach(step => {
+      if (step.type === 'troll') {
+        const stepMid = (step.depthMin + step.depthMax)/2 || 15;
+        step.port = sanitizeGroqLureName(step.port, stepMid - 2, inventoryNames);
+        step.starboard = sanitizeGroqLureName(step.starboard, stepMid + 2, inventoryNames);
+      } else if (step.type === 'stop_and_cast') {
+        if (step.recommendedLures && Array.isArray(step.recommendedLures)) {
+          step.recommendedLures.forEach(lure => {
+            lure.name = sanitizeGroqLureName(lure.name, step.targetDepth || 8, castableNames);
+          });
+        }
+      }
+    });
+  }
+
   const band1SpeedGuard = capPassSpeed(
     groqPlan.band1?.speed ?? groqPlan.speed,
     [groqPlan.band1.port, groqPlan.band1.starboard],
@@ -1133,8 +1176,6 @@ Return ONLY valid JSON, no markdown:
     return `⚠ ${label} speed capped at ${guard.appliedMph} mph (Groq requested ${guard.requestedMph} mph; ${limitingNames} max ${guard.maxMph} mph).`;
   });
 
-  // Keep the normalized speeds on the plan so every downstream consumer uses
-  // the applied, lure-safe value. Root speed remains a Band 1 legacy fallback.
   groqPlan.band1.speed = band1Speed;
   groqPlan.band2.speed = band2Speed;
   groqPlan.speed = band1Speed;
@@ -1145,14 +1186,11 @@ Return ONLY valid JSON, no markdown:
     'Ph2 Inbound': band2Speed,
   };
   const speedEl = document.getElementById('planSpeed');
-  // #planSpeed is retained for older saved-plan consumers; phase speeds below
-  // are the source of truth for this Smart Plan.
   if (speedEl) speedEl.value = String(band1Speed);
   rangeMiles = computeRangeMiles(Math.max(band1Speed, band2Speed));
 
   // ── Build rod rows ────────────────────────────────────────────────────────
   function buildRodFromGroq(lureName,colorName,depthFt,slotIdx,phaseLabel,bandSpeedMph) {
-    // Strip annotation bracket in case it leaked through sanitizer
     const cleanLureName = stripLureAnnotation(lureName);
     const bareNames = inventoryNames.map(n => stripLureAnnotation(n));
     const finalLure = bareNames.includes(cleanLureName)
@@ -1173,20 +1211,14 @@ Return ONLY valid JSON, no markdown:
       rod.trailerSize=isLight?'3.8" swimbait':isMedium?'4.6" swimbait':'5" swimbait';
       rod.jigWeight  =isLight?'1/8oz × 5':isMedium?'3/16oz × 5':'1/4oz × 5';
     }
-    // Always use physics-based lead — ignore Groq's lead suggestion
     let calcLead = autoCalculateLead(rod, bandSpeedMph || band1Speed);
-    // Cap variable-depth lures (A-rigs, spoons, swimbaits etc) at 80ft on a kayak
     const lureL = (rod.lure||'').toLowerCase();
-    // Variable-depth lures: A-rigs, spoons, swimbaits, spinnerbaits etc.
-    // These are depth-controlled by lead length — cap at 80ft on a kayak.
     const isVarDepth = lureL.includes('a-rig') || lureL.includes('swimbait') ||
       lureL.includes('spoon') || lureL.includes('spinnerbait') ||
       lureL.includes('chatterbait') || lureL.includes('bucktail') ||
       lureL.includes('marabou') || lureL.includes('jighead') ||
       lureL.includes('road runner');
     if (isVarDepth && calcLead > 80) calcLead = 80;
-    // Crankbaits have a physical dive curve — long lead doesn't make them go deeper,
-    // it just puts them farther back. Cap at 100ft on a kayak (realistic maximum).
     const isCrankbait = lureL.includes('crankbait') || lureL.includes('lipless') ||
       lureL.includes('blade vibe');
     if (isCrankbait && calcLead > 100) calcLead = 100;
@@ -1221,7 +1253,6 @@ Return ONLY valid JSON, no markdown:
     rampLat,rampLon,rangeMiles,[band1Speed, band2Speed],phaseInfo
   );
 
-  // Expose phase timing for notifications module
   if (phaseInfo?.phases?.length) {
     window._trollmapPhases = phaseInfo.phases.map(p => ({ startH: p.start, endH: p.end, num: p.num }));
     if (window.trollmapLoadPhaseNotifications) window.trollmapLoadPhaseNotifications(phaseInfo.phases);
@@ -1231,7 +1262,6 @@ Return ONLY valid JSON, no markdown:
     { phase:2, phaseName:'Deep',    depthMin:groqPlan.band2.depthMin, depthMax:groqPlan.band2.depthMax, speed:band2Speed, window:'Band 2' },
   ];
   applyStoredSmartPlanDepth();
-  // Populate targetDepth display field from band depths
   const targetDepthEl = document.getElementById('planTargetDepth');
   if (targetDepthEl) {
     targetDepthEl.value = `${groqPlan.band1.depthMin}-${groqPlan.band1.depthMax}ft / ${groqPlan.band2.depthMin}-${groqPlan.band2.depthMax}ft`;
@@ -1240,17 +1270,12 @@ Return ONLY valid JSON, no markdown:
   window._smartPlanRouteRods=routeRods;
 
   // ── Build route-aware casting stop candidates ───────────────────────────
-  // Only structures that lie within STOP_RADIUS_FT of the actual route
-  // tracks are included. Each stop carries phase + approximate elapsed
-  // time so the coach knows WHEN and WHERE to tell the angler to pause.
-  const STOP_RADIUS_FT = 250; // how close to the route a structure must be
+  const STOP_RADIUS_FT = 250;
   const stopCandidates = [];
-  const addedCoords = []; // dedup by proximity
+  const addedCoords = [];
 
-  const distFt = distFtGeneric; // from utils/geo.js (canonical)
+  const distFt = distFtGeneric;
 
-  // For a given lat/lon, find the closest point on any smart plan track.
-  // Returns { distFt, trackName, ptIdx, progressPct } or null.
   function nearestRoutePoint(lat, lon) {
     const tracks = (state.DATA?.tracks || []).filter(t => t.smartPlan);
     let best = null;
@@ -1266,29 +1291,23 @@ Return ONLY valid JSON, no markdown:
     return best;
   }
 
-  // Estimate elapsed time at a route point given track speed
   function etaMinutes(trackName, progressPct, rangeMiles, phaseSpeeds) {
     const speed = trackName?.includes('Ph2') ? (phaseSpeeds?.band2 || 2) : (phaseSpeeds?.band1 || 1.8);
-    const trackMiles = rangeMiles / 4; // 4 tracks total
+    const trackMiles = rangeMiles / 4;
     const elapsedMiles = trackMiles * progressPct / 100;
     return Math.round(elapsedMiles / speed * 60);
   }
 
   function tryAddStop(candidate) {
     if (!candidate.lat || !candidate.lon) {
-      // No coords — research profile structural notes, include without route filter
-      // but cap at 2 of these since they have no spatial grounding
       const ungrounded = stopCandidates.filter(s => !s.lat);
       if (ungrounded.length >= 2) return;
       stopCandidates.push(candidate);
       return;
     }
-    // Dedup — skip if we already have a stop within 300ft of this one
     if (addedCoords.some(c => distFt(candidate.lat, candidate.lon, c.lat, c.lon) < 300)) return;
-    // Route proximity check
     const nearest = nearestRoutePoint(candidate.lat, candidate.lon);
     if (!nearest || nearest.distFt > STOP_RADIUS_FT) return;
-    // Enrich with route context
     candidate.routeContext = {
       trackName: nearest.trackName,
       distFromRouteFt: Math.round(nearest.distFt),
@@ -1305,13 +1324,10 @@ Return ONLY valid JSON, no markdown:
     const biology = researchedProfile?.biology || {};
     const season = fishingContext?.season || getSeason(new Date());
 
-    // ── 1. Supplemental attractors — GPS-grounded, highest priority ──
     if (rampLat && rampLon && window.getSupplementalContext) {
       try {
-        // Search the full route extent, not just the ramp
         const routeTracks = (state.DATA?.tracks || []).filter(t => t.smartPlan);
         const allPts = routeTracks.flatMap(t => t.pts || []);
-        // Compute route bounding box center for a broader search
         if (allPts.length) {
           const lats = allPts.map(p => p[0]);
           const lons = allPts.map(p => p[1]);
@@ -1347,7 +1363,6 @@ Return ONLY valid JSON, no markdown:
       } catch (_) {}
     }
 
-    // ── 2. My Structures (QuickDraw pins) — GPS-grounded ──
     if (window.getMyStructures) {
       try {
         for (const s of window.getMyStructures()) {
@@ -1364,7 +1379,6 @@ Return ONLY valid JSON, no markdown:
       } catch (_) {}
     }
 
-    // ── 3. Contour-derived humps and ledges — GPS-grounded from geospatial adapter ──
     const structuralElements = researchedProfile?.habitat?.structuralElements || {};
     for (const hump of (structuralElements.humpCoordinates || [])) {
       if (!hump.lat || !hump.lon) continue;
@@ -1373,7 +1387,7 @@ Return ONLY valid JSON, no markdown:
         name: `Offshore Hump ${hump.id?.replace('hump_', '#') || ''}${hump.areaAcres ? ` (~${hump.areaAcres}ac)` : ''}`,
         lat: hump.lat, lon: hump.lon,
         score: 8,
-        reason: `Closed contour loop — offshore high spot${hump.depth ? ` at ~${hump.depth}ft` : ''}. Stripers and suspended fish stage over humps in summer.`,
+        reason: `Closed contour loop — offshore high spot${hump.depth ? ` at ~${hump.depth}ft` : ''}.`,
         structureType: 'offshore hump',
       });
     }
@@ -1384,19 +1398,18 @@ Return ONLY valid JSON, no markdown:
         name: `Depth Ledge / Drop-off ${ledge.id?.replace('ledge_', '#') || ''}`,
         lat: ledge.lat, lon: ledge.lon,
         score: 7,
-        reason: `High contour density (${ledge.contourDensity} contours) — active depth break. Fish transition through here as conditions change.`,
+        reason: `High contour density (${ledge.contourDensity} contours) — active depth break.`,
         structureType: 'channel ledge / drop-off',
       });
     }
 
-    // ── 4. Research profile structural notes — ungrounded, max 2 ──
     const attractorCount = habitat.artificialHabitatDetails?.attractorCount;
     if (attractorCount > 0) {
       tryAddStop({
         type: 'fish_attractor',
         name: `${attractorCount} Mapped Fish Attractors (lake-wide)`,
         score: 7,
-        reason: `${attractorCount} official attractors on this lake — watch sonar for brushpile signatures`,
+        reason: `${attractorCount} official attractors on this lake — watch sonar`,
         structureType: 'artificial attractor',
       });
     }
@@ -1407,7 +1420,7 @@ Return ONLY valid JSON, no markdown:
         type: 'spawn_flat',
         name: 'Spawning Flats / Coves',
         score: 8,
-        reason: `${sp} spawn timing: ${targetSpawn} — shallow coves and flats are primary targets this season`,
+        reason: `${sp} spawn timing: ${targetSpawn} — shallow coves/flats spawn targets`,
         structureType: 'shallow flat / spawning area',
       });
     }
@@ -1419,7 +1432,6 @@ Return ONLY valid JSON, no markdown:
     console.warn('[smart-plan] Stop candidate build failed:', stopErr.message);
   }
 
-  // Build the Hybrid Report: Beautiful readable text on top, raw JSON on bottom
   const b1p=routeRods['Ph1 Outbound'][0], b1s=routeRods['Ph1 Outbound'][1];
   const b2p=routeRods['Ph2 Outbound'][0], b2s=routeRods['Ph2 Outbound'][1];
 
@@ -1456,7 +1468,6 @@ Return ONLY valid JSON, no markdown:
     rawGroqText || JSON.stringify(groqPlan, null, 2)
   ].filter(l=>l!==null&&l!==undefined).join('\n');
 
-  // Write completed plan to textarea + store for plan-builder.js
   if (outEl) outEl.value = scoutText;
   window._smartPlanRationale = scoutText;
 
@@ -1468,16 +1479,14 @@ Return ONLY valid JSON, no markdown:
     phases: phaseInfo.phases,
     solunar: solunarStr,
     stopCandidates,
+    timeline: groqPlan.timeline || null, // INJECTED HERE
   });
 
-  // ── Intel displays ────────────────────────────────────────────────────────
   const intelSection=document.getElementById('planIntelSection');
   if (intelSection) intelSection.style.display='block';
   const solunarDisplay=document.getElementById('planSolunarDisplay');
   if (solunarDisplay) solunarDisplay.textContent=solunarStr;
-  // Store solunar for plan-builder.js to read when saving the plan
   window._smartPlanSolunar = solunarStr;
-  // Also write to the hidden solunar meta field if it exists
   const solunarMetaEl = document.getElementById('planSolunar');
   if (solunarMetaEl) solunarMetaEl.value = solunarStr;
   const lakeIntelVal=document.getElementById('planLakeIntel')?.value||'';
@@ -1491,13 +1500,11 @@ Return ONLY valid JSON, no markdown:
     safetyDisplay.innerHTML=['• File a float plan with someone onshore before launching.','• Kayak: Native Watersports Slayer Propel Max 12.5 — confirm bilge plug is in.','• Motor: NK180 Pro 24V — check battery level before launch.','• PFD on at all times. Phone in dry bag.','• Check weather before launch — conditions can change rapidly on open water.',`• Return time: ${document.getElementById('planReturnTime')?.value||'set return time'}`].map(s=>`<div style="margin-bottom:4px">${s}</div>`).join('');
   }
 
-  // ── Groq Coach ────────────────────────────────────────────────────────────
   try {
     const coachSpread=Object.entries(routeRods).flatMap(([routeName,rods])=>
       rods.map(r=>({route:routeName,side:r.side,rod:r.rod||'',lure:r.lure||'',color:r.color||'',depth:r.depth||'',lead:r.lead||'',notes:(r.notes||'').slice(0,80)}))
     );
 
-    // ADDED: speed and speedRationale passed explicitly into planState
     const coachPayload=buildGroqCoachPayload(fishingContext,{
       phases:phaseInfo.phases,
       phaseRecs:[
@@ -1524,7 +1531,6 @@ Return ONLY valid JSON, no markdown:
       : '⚠ No waypoints — load contour data first (Contour Data tab)';
   setStatus(wayptMsg,totalWaypoints>0 && !isFallback);
 
-  // Reload notification session with fresh plan data
   if (window.trollmapReloadNotificationSession) window.trollmapReloadNotificationSession();
   return {groqPlan,phaseInfo,rangeMiles};
 }

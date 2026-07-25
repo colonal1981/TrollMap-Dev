@@ -1,5 +1,5 @@
 /**
- * smart-plan-ui.js — Plan UI rebuilt around Smart Plan's 4-route output
+ * smart-plan-ui.js — Plan UI rebuilt around Smart Plan's 4-route output and hybrid timeline
  *
  * Renders route cards with rod assignments directly into the Plan tab.
  * Self-injects a container before the spread table if one doesn't exist.
@@ -7,10 +7,8 @@
  * One rule: A-rig or spoon -> straight braid to swivel snap
  *           Everything else -> fluoro leader
  *
- * Exported:
- *   renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeeds, phases, solunar })
- *   assignRouteRods(phaseRecs, tracks, speedMph, season, clarity, species)
- *   syncSpread(cards, routeRods)
+ * Updated 2026-07-25: Restructured to render sequential chronological hybrid timeline
+ * containing trolling passes and casting stops with active kayak boat control suggestions.
  */
 
 import { state } from '../core/state.js';
@@ -24,7 +22,7 @@ export function reelForLure(lureName) {
   const l = lureName.toLowerCase();
   if (l.includes('a-rig') || l.includes('umbrella') ||
       l.includes('flutter spoon') || l.includes('kastmaster') ||
-      l.includes('torpedo')) {
+      l.includes('torpedo') || l.includes('diamond')) {
     return 'Spinning / 30lb 8-strand braid directly tied to swivel snap';
   }
   return 'Spinning / 30lb 8-strand braid + 20lb fluoro leader';
@@ -108,8 +106,7 @@ function rodSlotHtml(rod, cardIdx, slotIdx) {
 }
 
 // ── Main render ───────────────────────────────────────────────────────────────
-export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeeds = {}, phases, solunar, stopCandidates }) {
-  // Self-inject container before spread table if needed
+export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeeds = {}, phases, solunar, stopCandidates, timeline }) {
   let container = document.getElementById('smartPlanUIContainer');
   if (!container) {
     container = document.createElement('div');
@@ -145,6 +142,71 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
 
   if (solunar) {
     html += `<div style="background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:11px;color:var(--muted)">🌙 ${esc(solunar)}</div>`;
+  }
+
+  // ── Render Chronological Hybrid Timeline (If Present) ──────────────────────
+  if (timeline && Array.isArray(timeline) && timeline.length > 0) {
+    html += `
+    <div style="background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px">
+      <div style="font-size:11px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;display:flex;align-items:center;gap:6px">
+        🏆 Chronological Trip Timeline (Troll & Cast)
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px;position:relative;padding-left:10px;border-left:2px solid var(--line)">`;
+
+    timeline.forEach((step, idx) => {
+      if (step.type === 'troll') {
+        html += `
+        <div style="position:relative;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px">
+          <!-- Dot marker -->
+          <div style="position:absolute;left:-16px;top:16px;width:10px;height:10px;border-radius:50%;background:#00e5ff;box-shadow:0 0 0 3px var(--panel)"></div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <span style="font-size:12px;font-weight:700;color:#00e5ff">🌅 STEP ${step.step || idx+1}: TROLLING (${esc(step.phaseName || 'Pass')})</span>
+            <span style="font-size:11px;font-weight:600;color:var(--muted);background:rgba(0,229,255,0.15);padding:2px 6px;border-radius:4px">${step.speed || speedMph} mph</span>
+          </div>
+          <div style="font-size:12px;color:var(--text);margin-bottom:4px">Targeting depth: <b>${step.depthMin}–${step.depthMax}ft</b></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
+            <div style="font-size:11px;background:rgba(255,255,255,0.03);border:1px solid var(--line);border-radius:6px;padding:4px 8px">
+              <span style="color:var(--muted)">🔵 Port:</span> <b style="color:var(--text)">${esc(step.port)}</b>
+              <div style="color:var(--muted);font-size:10px;margin-top:2px">Lead: ${step.portLeadFt || 50}ft</div>
+            </div>
+            <div style="font-size:11px;background:rgba(255,255,255,0.03);border:1px solid var(--line);border-radius:6px;padding:4px 8px">
+              <span style="color:var(--muted)">🔴 Stbd:</span> <b style="color:var(--text)">${esc(step.starboard)}</b>
+              <div style="color:var(--muted);font-size:10px;margin-top:2px">Lead: ${step.starboardLeadFt || 60}ft</div>
+            </div>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-top:6px;font-style:italic">Why: ${esc(step.why || '')}</div>
+        </div>`;
+      } else if (step.type === 'stop_and_cast') {
+        html += `
+        <div style="position:relative;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px">
+          <!-- Dot marker -->
+          <div style="position:absolute;left:-16px;top:16px;width:10px;height:10px;border-radius:50%;background:#ffb300;box-shadow:0 0 0 3px var(--panel)"></div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <span style="font-size:12px;font-weight:700;color:#ffb300">🎯 STEP ${step.step || idx+1}: STOP & CAST (${esc(step.name || 'Structure Stop')})</span>
+            <span style="font-size:10px;font-weight:600;color:#ffb300;background:rgba(255,179,0,0.15);padding:2px 6px;border-radius:4px;text-transform:uppercase">No Spot-Lock</span>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Target: <b>${esc(step.targetStructure || '')}</b> | Depth: <b>${step.targetDepth || 6}ft</b></div>
+          <div style="font-size:11px;color:var(--text);margin-bottom:8px">Presentation: <i>${esc(step.presentation || '')}</i></div>
+          
+          <div style="font-size:11px;font-weight:700;color:var(--accent);margin-bottom:4px">✨ Recommended Casting Baits:</div>
+          <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:8px">
+            ${(step.recommendedLures || []).map(lure => `
+            <div style="display:flex;justify-content:space-between;font-size:11px;background:rgba(255,179,0,0.05);border:1px solid rgba(255,179,0,0.15);border-radius:4px;padding:4px 8px">
+              <span style="color:var(--text)">🎣 ${esc(lure.name)}</span>
+              <span style="color:#76ff03;font-weight:700">${esc(lure.confidence || '90%')} Match</span>
+            </div>`).join('')}
+          </div>
+
+          <div style="font-size:11px;background:rgba(0,0,0,0.15);border:1px solid var(--line);border-radius:6px;padding:8px;color:var(--text);line-height:1.4">
+            <b style="color:#ffb300">🛶 Active Positioning Plan:</b> ${esc(step.tacticalNote || '')}
+          </div>
+        </div>`;
+      }
+    });
+
+    html += `
+      </div>
+    </div>`;
   }
 
   html += `<div style="display:flex;flex-direction:column;gap:12px">`;
@@ -191,7 +253,7 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
   const ungroundedStops = (stopCandidates || []).filter(s => !s.lat || !s.lon);
 
   if (!stopCandidates) {
-    // stopCandidates not passed — older plan or not yet built
+    // skip
   } else if (!groundedStops.length && !ungroundedStops.length) {
     html += `
     <div style="margin-top:14px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:11px;color:var(--muted)">
@@ -262,9 +324,8 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
     rod.lure  = picked;
     rod.reel  = reelForLure(picked);
     rod.color = getLureColor(picked, 'clear');
-    // Preserve the pass-specific speed when recalculating lead after an edit.
     rod.lead  = String(autoCalculateLead({ ...rod, lure: picked }, card.speedMph));
-    renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeeds, phases, solunar });
+    renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeeds, phases, solunar, stopCandidates, timeline });
     syncSpread(cards, routeRods, routeSpeeds);
   };
 }
@@ -295,22 +356,22 @@ const LURE_MAP = {
   'umbrella_rig_light':      'A-Rig Light (~1.65oz) – 3.8" Swimbait',
   'umbrella_rig_medium':     'A-Rig Medium (~2.65oz) – 4.6" Swimbait',
   'umbrella_rig_heavy':      'A-Rig Heavy (~3.5oz) – 5" Swimbait',
-  'flutter_spoon':           'Flutter Spoon 2oz',
-  'jigging_spoon':           'Flutter Spoon 2oz',
-  'Flutter Spoon':           'Flutter Spoon 2oz',
-  'Bucktail':                'Bucktail Jig 1oz',
-  'bucktail':                'Bucktail Jig 1oz',
-  'bucktail_jig':            'Bucktail Jig 1oz',
-  'deep_diving_crankbait':   'Deep Hit Stick – Crankbait',
-  'medium_diving_crankbait': 'Rapala DT-14 – Crankbait (medium/deep, ~14ft)',
-  'spinnerbait':             'Spinnerbait 1/2oz',
-  'Spinnerbait':             'Spinnerbait 1/2oz',
-  'lipless_crankbait':       'Lipless Crankbait 1/2oz',
-  'chatterbait':             'ChatterBait 3/4oz',
+  'flutter_spoon':           'Nichols Lake Fork Flutter Spoon 3/4oz',
+  'jigging_spoon':           'Dr.Fish Diamond Jig / Jigging Spoon 1oz',
+  'Flutter Spoon':           'Nichols Lake Fork Flutter Spoon 3/4oz',
+  'Bucktail':                '1oz Bucktail Jig',
+  'bucktail':                '1oz Bucktail Jig',
+  'bucktail_jig':            '1oz Bucktail Jig',
+  'deep_diving_crankbait':   'DD2 Crankbait (16-20ft)',
+  'medium_diving_crankbait': 'MR Crankbait (6-12ft)',
+  'spinnerbait':             '1/2oz Spinnerbait',
+  'Spinnerbait':             '1/2oz Spinnerbait',
+  'lipless_crankbait':       '3" Lipless Crankbait',
+  'chatterbait':             '1/2oz Chatterbait',
   'paddle_tail':             'Swimbait 4.6" – Jighead',
   'swimbait_jighead':        'Swimbait 4.6" – Jighead',
-  'topwater_walker':         'Zara Spook – Topwater',
-  'Choppo 90':               'Choppo 90 – Topwater',
+  'topwater_walker':         'Walking Bait / Spook',
+  'Choppo 90':               'Prop Bait / Choppo',
 };
 
 function resolveLureName(raw) {
@@ -321,45 +382,40 @@ function resolveLureName(raw) {
 }
 
 function fallbackLure(depth, exclude, slotIdx = 0) {
-  // Vary rod 1 vs rod 2 deliberately — don't put same lure family on both
-  // Rod 1 (slotIdx 0): A-rig / umbrella family
-  // Rod 2 (slotIdx 1): crankbait or spoon — different presentation
   const opts = depth < 10
-    ? [['Lipless Crankbait 1/2oz', 'Spinnerbait 1/2oz'],
-       ['Flicker Minnow 11 – Crankbait', 'Lipless Crankbait 1/2oz']]
+    ? [['3" Lipless Crankbait', '1/2oz Spinnerbait'],
+       ['MR Crankbait (6-12ft)', '3" Lipless Crankbait']]
     : depth < 18
     ? [['A-Rig Light (~1.65oz) – 3.8" Swimbait', 'A-Rig Medium (~2.65oz) – 4.6" Swimbait'],
-       ['Rapala DT-10 – Crankbait (shallow/medium, ~10ft)', 'Flutter Spoon 2oz']]
+       ['MR Crankbait (6-12ft)', 'Nichols Lake Fork Flutter Spoon 3/4oz']]
     : depth < 26
     ? [['A-Rig Medium (~2.65oz) – 4.6" Swimbait', 'A-Rig Heavy (~3.5oz) – 5" Swimbait'],
-       ['Rapala DT-14 – Crankbait (medium/deep, ~14ft)', 'Flutter Spoon 2oz']]
-    : [['A-Rig Heavy (~3.5oz) – 5" Swimbait', 'Bucktail Jig 1oz'],
-       ['Deep Hit Stick – Crankbait', 'Flutter Spoon 3oz']];
+       ['DD2 Crankbait (16-20ft)', 'Nichols Lake Fork Flutter Spoon 3/4oz']]
+    : [['A-Rig Heavy (~3.5oz) – 5" Swimbait', '1oz Bucktail Jig'],
+       ['DD4 Crankbait (25ft+)', 'Dr.Fish Diamond Jig / Jigging Spoon 1oz']];
   const slotOpts = opts[Math.min(slotIdx, opts.length - 1)];
   return slotOpts.find(l => l !== exclude) || slotOpts[0];
 }
 
 function buildOneRod(targetDepth, rec, timeOfDay, clarityKey, speedMph, slotIdx, excludeLure) {
-  // Try to pick a lure from species-intel recommendations that fits the depth
   const candidates = (rec?.lures || [])
     .map(l => resolveLureName(l))
     .filter(l => l && l !== excludeLure)
     .filter(l => {
       const dive = LURE_DIVE_DEPTHS?.[l];
-      if (!dive) return true; // no depth data, include it
+      if (!dive) return true;
       return targetDepth >= dive.minDive - 3 && targetDepth <= dive.maxDive + 3;
     });
 
   let lureName = candidates[slotIdx] || candidates[0] || fallbackLure(targetDepth, excludeLure, slotIdx);
 
-  // Dawn + shallow -> topwater on port rod (depth band starts under 22ft)
   if (slotIdx === 0 && timeOfDay === 'dawn' && targetDepth < 22) {
     const topwaterMap = {
-      clear:   'Zara Spook – Topwater',
-      stained: 'Whopper Plopper 110 – Topwater',
-      muddy:   'Whopper Plopper 110 – Topwater',
+      clear:   'Walking Bait / Spook',
+      stained: 'Whopper Plopper',
+      muddy:   'Whopper Plopper',
     };
-    lureName = topwaterMap[clarityKey] || 'Whopper Plopper 110 – Topwater';
+    lureName = topwaterMap[clarityKey] || 'Whopper Plopper';
   }
 
   const color = getLureColor(lureName, clarityKey);
