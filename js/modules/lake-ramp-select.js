@@ -15,6 +15,8 @@
 import { state } from '../core/state.js';
 import { loadAccessIndex } from '../data/access-index.js';
 import { loadContourForLake } from './contour-data.js';
+import { COASTAL_ZONES, isCoastalKey, coastalNamesByState } from '../data/coastal-zones.js';
+import { resolveR2Key } from '../data/lake-keys.js';
 
 // ── Populate lake dropdown ───────────────────────────────────────────────
 
@@ -30,14 +32,37 @@ async function populateLakeSelect() {
   const placeholder = lakeSelect.querySelector('option[value=""]')?.outerHTML || '<option value="">-- Select lake / waterbody --</option>';
   lakeSelect.innerHTML = placeholder;
 
+  const inlandGroup = document.createElement('optgroup');
+  inlandGroup.label = 'Lakes / Reservoirs';
   idx.lakeNames.forEach((lakeName) => {
     const opt = document.createElement('option');
     opt.value = lakeName;
     opt.textContent = lakeName;
-    lakeSelect.appendChild(opt);
+    inlandGroup.appendChild(opt);
   });
+  lakeSelect.appendChild(inlandGroup);
 
-  if (currentValue && idx.byLake.has(currentValue)) lakeSelect.value = currentValue;
+  // Coastal / tidal zones. The worker access index only covers inland DNR
+  // boat ramps, so without this the 21 coastal zones are unreachable from the
+  // map toolbar and none of the tide / oyster / marsh layers can be loaded.
+  const coastalByState = coastalNamesByState();
+  for (const [stateCode, label] of [['SC', 'SC Coast'], ['GA', 'GA Coast'], ['NC', 'NC Coast']]) {
+    const names = coastalByState[stateCode];
+    if (!names?.length) continue;
+    const grp = document.createElement('optgroup');
+    grp.label = label;
+    names.forEach((name) => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name.replace(/,\s*[A-Z]{2}$/, '');
+      grp.appendChild(opt);
+    });
+    lakeSelect.appendChild(grp);
+  }
+
+  if (currentValue && (idx.byLake.has(currentValue) || isCoastalKey(resolveR2Key(currentValue)))) {
+    lakeSelect.value = currentValue;
+  }
 }
 
 // ── Lake change handler ──────────────────────────────────────────────────
@@ -57,10 +82,23 @@ async function onLakeChange(selLakeName) {
   }
 
   const idx = await loadAccessIndex();
-  const accessPoints = idx.byLake.get(selLakeName) || [];
+  const coastalKey = resolveR2Key(selLakeName);
+  const zone = isCoastalKey(coastalKey) ? COASTAL_ZONES[coastalKey] : null;
 
-  // Fly map to available worker-provided access points for this waterbody.
-  if (state.MAP_OK && accessPoints.length) {
+  // Coastal ramps come from the generated catalog; the worker access index
+  // only covers inland DNR boat ramps.
+  const accessPoints = zone
+    ? Object.entries(zone.ramps || {}).map(([name, c]) => ({
+        name, lat: c[0], lon: c[1], typeLabel: 'Coastal ramp', marker: '⛵',
+        sourcePath: 'coastal-zones', sourceState: zone.state,
+      }))
+    : (idx.byLake.get(selLakeName) || []);
+
+  // Fly the map to the zone bbox for coastal (a sound is far larger than its
+  // handful of ramps), or to the access points for inland lakes.
+  if (state.MAP_OK && zone) {
+    state.MAP.fitBounds(zone.bbox, { padding: [40, 40] });
+  } else if (state.MAP_OK && accessPoints.length) {
     const coords = accessPoints.map((p) => [p.lat, p.lon]);
     if (coords.length === 1) {
       state.MAP.setView(coords[0], 15);
