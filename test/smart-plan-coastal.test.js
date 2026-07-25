@@ -40,6 +40,12 @@ describe('smart-plan coastal mode — integration contract', () => {
   it('re-labels soundings with the launch-time tide height', () => {
     expect(src).toContain('refreshSoundingLabels');
   });
+
+  it('enforces strict inshore kayak safety constraints for coastal zones', () => {
+    expect(src).toContain('coastalSafetyBlock');
+    expect(src).toContain('COASTAL KAYAK RESTRICTION');
+    expect(src).toContain('STRICT SAFETY CONSTRAINT');
+  });
 });
 
 describe('coastal weather lookup gap', () => {

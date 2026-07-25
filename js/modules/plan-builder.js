@@ -97,13 +97,15 @@ export function collectPlan(){
   const species = [...document.querySelectorAll('#planSpeciesChecks input:checked')].map(c=>c.value);
   const lakeVal = gV('planLake');
   const isRiv = isPlanRiverValue(lakeVal);
+  const coastalKey = resolveR2Key(lakeVal);
+  const isCoastal = isCoastalKey(coastalKey);
   const phaseSpeeds = normalizedPhaseSpeeds(window._smartPlanPhaseRoutes);
   return {
     meta:{
       name: gV('planName', 'Fishing Plan'),
       date: gV('planDate'),
       lake: lakeVal,
-      waterbodyType: isRiv ? 'river' : 'lake',
+      waterbodyType: isRiv ? 'river' : (isCoastal ? 'coastal' : 'lake'),
       waterbodyLabel: isRiv ? (getPlanRiverDef(lakeVal)?.label || lakeVal) : lakeVal,
       ramp: gV('planRamp'),
       riverSummary: gV('planRiverSummary'),
@@ -117,9 +119,9 @@ export function collectPlan(){
       launchTime: gV('planLaunchTime', '06:00'),
       returnTime: gV('planReturnTime', '12:00'),
       waterTemp: gV('planWaterTemp'),
-      fullPool: isRiv ? '' : gV('planFullPool'),
-      poolLevel: isRiv ? '' : gV('planPoolLevel'),
-      poolUnit: isRiv ? '' : (typeof getPlanLakeLevelUnit === 'function' ? getPlanLakeLevelUnit() : 'ft'),
+      fullPool: (isRiv || isCoastal) ? '' : gV('planFullPool'),
+      poolLevel: (isRiv || isCoastal) ? '' : gV('planPoolLevel'),
+      poolUnit: (isRiv || isCoastal) ? '' : (typeof getPlanLakeLevelUnit === 'function' ? getPlanLakeLevelUnit() : 'ft'),
       weather: gV('planWeather'),
       clarity: gV('planClarity', 'Clear'),
       motor: gV('planMotor', 'NK180 Pro 24V, 100Ah LiFePO4'),
@@ -1387,6 +1389,7 @@ export async function populatePlanLakeDropdown(){
   }
 
   lakeNames.forEach(lakeName => {
+    if (isCoastalKey(resolveR2Key(lakeName))) return;
     const opt = document.createElement('option');
     opt.value = lakeName; opt.textContent = lakeName;
     lakesGroup.appendChild(opt);
@@ -1437,17 +1440,30 @@ export function populatePlanRampDropdown(waterbodyName){
     if(current) sel.value = current;
     return;
   }
-  // Coastal zones: ramps come from the generated catalog. LAKE_DB only holds
-  // 9 of the 21 zones, so relying on it left 12 zones with an empty ramp list
-  // and no launch coordinates for SmartPlan to route from.
+  // Coastal zones: ramps are dynamically loaded from the worker access-index first.
+  // We fall back to the hardcoded ones if no ramps are loaded.
   const coastalKey = resolveR2Key(waterbodyName || '');
   if (isCoastalKey(coastalKey)) {
-    const ramps = COASTAL_ZONES[coastalKey]?.ramps || {};
-    Object.entries(ramps).forEach(([name, coords]) => {
+    const zone = COASTAL_ZONES[coastalKey];
+    let accessPoints = [];
+    if (window.getLoadedAccessIndex) {
+      const idx = window.getLoadedAccessIndex();
+      accessPoints = idx.byLake.get(waterbodyName) || [];
+    }
+    
+    if (accessPoints.length === 0 && zone) {
+      accessPoints = Object.entries(zone.ramps || {}).map(([name, coords]) => ({
+        name,
+        lat: coords[0],
+        lon: coords[1]
+      }));
+    }
+
+    accessPoints.forEach(point => {
       const opt = document.createElement('option');
-      opt.value = name; opt.textContent = name;
-      opt.dataset.lat = coords[0];
-      opt.dataset.lon = coords[1];
+      opt.value = point.name; opt.textContent = point.name;
+      opt.dataset.lat = point.lat;
+      opt.dataset.lon = point.lon;
       sel.appendChild(opt);
     });
     if(current) sel.value = current;
@@ -1465,13 +1481,25 @@ export function populatePlanRampDropdown(waterbodyName){
 document.getElementById('planLake')?.addEventListener('change', e=>{
   const v=e.target.value;
   const isRiver=isPlanRiverValue(v);
-  setLakeOnlyFieldsVisible(!isRiver);
+  const coastalKey=resolveR2Key(v);
+  const isCoastal=isCoastalKey(coastalKey);
+  setLakeOnlyFieldsVisible(!isRiver && !isCoastal);
   populatePlanRampDropdown(v);
   if(isRiver){
     ['planFullPool','planPoolLevel'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
     const def=getPlanRiverDef(v);
     if(def && state.MAP_OK) state.MAP.setView([def.center[0], def.center[1]], def.center[2]||11);
     if(window.syncPlanRiverData) window.syncPlanRiverData();
+  } else if (isCoastal) {
+    ['planFullPool','planPoolLevel'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+    ['planRiverSafety','planRiverFlow','planRiverGauge','planRiverTemp','planRiverRise','planRiverSurgeEta','planRiverSchedule','planRiverSummary'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+    const zone = COASTAL_ZONES[coastalKey];
+    if (zone && state.MAP_OK) {
+      state.MAP.fitBounds(zone.bbox, { padding: [40, 40] });
+    }
+    // Auto-run lake intelligence and clarity forecast
+    if(window.syncLakeIntelData) setTimeout(window.syncLakeIntelData, 500);
+    if(window.syncClarityIntelData) setTimeout(window.syncClarityIntelData, 800);
   } else {
     ['planRiverSafety','planRiverFlow','planRiverGauge','planRiverTemp','planRiverRise','planRiverSurgeEta','planRiverSchedule','planRiverSummary'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
     const lk = LAKE_DB[v];

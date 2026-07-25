@@ -1,6 +1,7 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { _state, runFullPipeline, runResume, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log, renderLog } from './lake-research-engine.js';
-import { coastalNamesByState, COASTAL_ZONES } from '../data/coastal-zones.js';
+import { coastalNamesByState, COASTAL_ZONES, isCoastalKey } from '../data/coastal-zones.js';
+import { resolveR2Key } from '../data/lake-keys.js';
 
 
 function renderContradictionsAlert(contradictions, lakeName) {
@@ -165,36 +166,46 @@ async function populateResearchLakeDropdown() {
   // alternate R2 IDs for the same lake and defeat the canonical dropdown.
   let lakes = [];
   try {
-    // access-index.js owns the shared in-flight load and exposes this global
-    // for legacy modules. Do not import it here: deployment layouts may serve
-    // research modules from a different asset base than access-index.js.
     if (window.getUniversalLakeNamesAsync) lakes = await window.getUniversalLakeNamesAsync();
     else if (window.getUniversalLakeNames) lakes = window.getUniversalLakeNames();
   } catch (err) {
     console.warn('[research] Unable to load the shared access index:', err);
   }
 
-  // Append coastal zones so the research UI can reach them. The research
-  // pipeline stores profiles under the canonical lake name; coastal zones use
-  // the same R2 key scheme as inland lakes (coast_<slug>), so they
-  // are fully compatible with the research worker routes.
-  try {
-    const coastalByState = coastalNamesByState();
-    const coastalNames = [...coastalByState.SC, ...coastalByState.GA, ...coastalByState.NC];
-    // Only add names that aren't already present (defensive — should never collide).
-    for (const name of coastalNames) {
-      if (!lakes.includes(name)) lakes.push(name);
-    }
-  } catch (err) {
-    console.warn('[research] Unable to load coastal zone names:', err);
+  const current = sel.value;
+  sel.innerHTML = '<option value="">— select lake or zone —</option>';
+
+  const inlandGroup = document.createElement('optgroup');
+  inlandGroup.label = 'Lakes / Reservoirs';
+  
+  // Filter out any coastal names from the inland lakes list
+  const inlandLakes = lakes.filter(name => !isCoastalKey(resolveR2Key(name)));
+  inlandLakes.forEach(name => {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    inlandGroup.appendChild(opt);
+  });
+  sel.appendChild(inlandGroup);
+
+  const coastalByState = coastalNamesByState();
+  for (const [stateCode, label] of [['SC', 'SC Coast'], ['GA', 'GA Coast'], ['NC', 'NC Coast']]) {
+    const names = coastalByState[stateCode];
+    if (!names?.length) continue;
+    const grp = document.createElement('optgroup');
+    grp.label = label;
+    names.forEach((name) => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name.replace(/,\s*[A-Z]{2}$/, '');
+      grp.appendChild(opt);
+    });
+    sel.appendChild(grp);
   }
 
-  const current = sel.value;
-  const placeholder = Array.from(sel.options).find(o => !o.value);
-  sel.replaceChildren();
-  sel.appendChild(placeholder || new Option('Select a lake…', ''));
-  for (const name of lakes) sel.appendChild(new Option(name, name));
-  if (lakes.includes(current)) sel.value = current;
+  if (current) {
+    sel.value = current;
+  }
 }
 
 async function fetchResearchList() {

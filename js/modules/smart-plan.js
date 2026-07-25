@@ -633,6 +633,7 @@ export function buildCoastalPromptBlock(ctx) {
   if (!ctx) return '';
   const L = [];
   L.push(`\n🌊 COASTAL / TIDAL MODE — ${ctx.zone.name} (${ctx.zone.state})`);
+  L.push(`STRICT SAFETY CONSTRAINT: You are strictly restricted to INSHORE areas (marshes, tidal creeks, estuary mouths, oyster bars, and shallow flats). NEVER plan routes or suggest traveling past the jetties, into the open ocean, or into high-energy open-water surf areas. This is a 12.5ft kayak, not an offshore boat.`);
   L.push(`NOAA station ${ctx.zone.tideStation}. Depths are MLLW-referenced; add tide height for actual water.`);
 
   if (ctx.tide) {
@@ -776,12 +777,13 @@ export async function runSmartPlan() {
   let rampLat=null, rampLon=null;
   const idx = getLoadedAccessIndex();
 
-  // Coastal ramps live in the generated catalog, not the worker access index
-  // (which only covers inland DNR boat ramps).
+  // Coastal ramps are pulled from the fish & wildlife API via the worker access index.
+  // We fall back to the hardcoded ones if the API results are empty.
   const _coastalZoneForRamp = coastalZoneKey ? COASTAL_ZONES[coastalZoneKey] : null;
-  const lakePoints = _coastalZoneForRamp
-    ? Object.entries(_coastalZoneForRamp.ramps || {}).map(([name, c]) => ({ name, lat: c[0], lon: c[1] }))
-    : (idx.byLake.get(lakeName) || []);
+  let lakePoints = idx.byLake.get(lakeName) || [];
+  if (lakePoints.length === 0 && _coastalZoneForRamp) {
+    lakePoints = Object.entries(_coastalZoneForRamp.ramps || {}).map(([name, c]) => ({ name, lat: c[0], lon: c[1] }));
+  }
   
   const normN = v => String(v||'').toLowerCase().replace(/[_-]+/g,' ').replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
   const rampMatch = (a,b) => { const x=normN(a), y=normN(b); return !!x && !!y && (x===y || x.includes(y) || y.includes(x)); };
@@ -926,6 +928,10 @@ NOTE: Catch history is supplemental only. If SPECIES INTEL above specifies a dif
   }
 
   // ── Unified Groq Call (Species-Driven Prompt) ─────────────────────────
+  const coastalSafetyBlock = coastalZoneKey
+    ? `\n- COASTAL KAYAK RESTRICTION: You are strictly restricted to INSHORE areas (marshes, tidal creeks, estuary mouths, oyster bars, and shallow flats). NEVER plan routes or suggest traveling past the jetties, into the open ocean, or into high-energy open-water surf areas. Safety first: stay in sheltered, inshore waters.`
+    : '';
+
   const planPrompt=`You are an expert fishing guide for ${lakeName}.
 Build a trolling plan for today targeting ${sp}.
 
@@ -957,7 +963,7 @@ You are the expert guide on the water *today*. The SPECIES INTEL above is your s
 PLATFORM CONSTRAINTS (STRICT - DO NOT BREAK THESE):
 - Kayak (Native Watersports Slayer Propel Max 12.5, pedal drive + electric motor)
 - 2 rods max in water simultaneously (port + starboard)
-- No live bait, no downriggers, no planer boards, spinning rods only
+- No live bait, no downriggers, no planer boards, spinning rods only${coastalSafetyBlock}
 
 AVAILABLE TACKLE — use ONLY these exact names, no others:
 ${inventoryNames.join(', ')}

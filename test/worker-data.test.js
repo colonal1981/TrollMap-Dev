@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { lakeKeyFromName } from '../Worker/worker-data.js';
+import { lakeKeyFromName, getLakeIntel, getLakeClarity } from '../Worker/worker-data.js';
 
 describe('lakeKeyFromName — LAKES table key (different from R2 key)', () => {
   // This is separate registry from js/data/lake-keys.js R2 keys
@@ -35,5 +35,25 @@ describe('lakeKeyFromName — LAKES table key (different from R2 key)', () => {
   it('is case-insensitive', () => {
     expect(lakeKeyFromName('LAKE WATEREE')).toBe(lakeKeyFromName('Lake Wateree'));
     expect(lakeKeyFromName('lake murray')).toBe(lakeKeyFromName('Lake Murray, SC'));
+  });
+});
+
+describe('getLakeIntel and getLakeClarity for coastal/saltwater zones', () => {
+  it('returns saltwater specific metadata for coastal zones in getLakeIntel', async () => {
+    const res = await getLakeIntel('Murrells Inlet / Pawleys Island, SC');
+    expect(res).toBeDefined();
+    expect(res.profile.primarySportFish).toContain('Red Drum (Redfish)');
+    expect(res.profile.forage).toContain('Shrimp');
+    expect(res.profile.habitat).toContain('Salt marsh edges (Spartina)');
+    expect(res.sources[0].label).toBe('SCDNR Saltwater Finfish Regulations');
+  });
+
+  it('returns saltwater specific zones and notes in getLakeClarity', async () => {
+    const res = await getLakeClarity('Murrells Inlet / Pawleys Island, SC', '2026-07-25');
+    expect(res).toBeDefined();
+    expect(res.note).toContain('Tidal flush regulates clarity');
+    const zoneNames = res.zones.map(z => z.name);
+    expect(zoneNames).toContain('Inshore Creeks / Upper Marsh');
+    expect(zoneNames).toContain('Inlets / Outer Sound / Open Water');
   });
 });

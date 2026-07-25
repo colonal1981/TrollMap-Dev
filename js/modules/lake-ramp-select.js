@@ -35,6 +35,7 @@ async function populateLakeSelect() {
   const inlandGroup = document.createElement('optgroup');
   inlandGroup.label = 'Lakes / Reservoirs';
   idx.lakeNames.forEach((lakeName) => {
+    if (isCoastalKey(resolveR2Key(lakeName))) return;
     const opt = document.createElement('option');
     opt.value = lakeName;
     opt.textContent = lakeName;
@@ -85,14 +86,20 @@ async function onLakeChange(selLakeName) {
   const coastalKey = resolveR2Key(selLakeName);
   const zone = isCoastalKey(coastalKey) ? COASTAL_ZONES[coastalKey] : null;
 
-  // Coastal ramps come from the generated catalog; the worker access index
-  // only covers inland DNR boat ramps.
-  const accessPoints = zone
-    ? Object.entries(zone.ramps || {}).map(([name, c]) => ({
+  // Coastal ramps are pulled from the fish & wildlife API via the worker access index.
+  // We fall back to the hardcoded ones if the API results are empty.
+  let accessPoints = [];
+  if (zone) {
+    accessPoints = idx.byLake.get(selLakeName) || [];
+    if (accessPoints.length === 0) {
+      accessPoints = Object.entries(zone.ramps || {}).map(([name, c]) => ({
         name, lat: c[0], lon: c[1], typeLabel: 'Coastal ramp', marker: '⛵',
         sourcePath: 'coastal-zones', sourceState: zone.state,
-      }))
-    : (idx.byLake.get(selLakeName) || []);
+      }));
+    }
+  } else {
+    accessPoints = idx.byLake.get(selLakeName) || [];
+  }
 
   // Fly the map to the zone bbox for coastal (a sound is far larger than its
   // handful of ramps), or to the access points for inland lakes.
