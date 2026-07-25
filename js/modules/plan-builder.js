@@ -14,6 +14,8 @@ import { LAKE_DB } from "../data/lakes.js";
 import { renderSpread } from "./spread-builder.js";
 import { newRodRow } from "../utils/rod-row.js";
 import { getFilename, setFilename } from "../core/map-init.js";
+import { COASTAL_ZONES, isCoastalKey, coastalNamesByState } from "../data/coastal-zones.js";
+import { resolveR2Key } from "../data/lake-keys.js";
 
 // ─────────────────────────────────────────────────────────────
 // FIX: calcTrollTimes was referenced but never defined (the exact
@@ -1398,6 +1400,24 @@ export async function populatePlanLakeDropdown(){
     riversGroup.appendChild(opt);
   });
   sel.appendChild(riversGroup);
+
+  // Coastal / tidal zones, grouped by state. These come from the generated
+  // catalog rather than the worker access index, which only indexes inland
+  // DNR boat ramps and has no coastal coverage.
+  const coastalByState = coastalNamesByState();
+  for (const [stateCode, label] of [['SC','SC Coast'], ['GA','GA Coast'], ['NC','NC Coast']]) {
+    const names = coastalByState[stateCode];
+    if (!names?.length) continue;
+    const grp = document.createElement('optgroup');
+    grp.label = label;
+    names.forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name; opt.textContent = name.replace(/,\s*[A-Z]{2}$/, '');
+      grp.appendChild(opt);
+    });
+    sel.appendChild(grp);
+  }
+
   if(current) sel.value = current;
   setLakeOnlyFieldsVisible(!isPlanRiverValue(sel.value));
 }
@@ -1412,6 +1432,22 @@ export function populatePlanRampDropdown(waterbodyName){
     getPlanRiverRamps(def).forEach(r=>{
       const opt=document.createElement('option');
       opt.value=r.name; opt.textContent=r.name;
+      sel.appendChild(opt);
+    });
+    if(current) sel.value = current;
+    return;
+  }
+  // Coastal zones: ramps come from the generated catalog. LAKE_DB only holds
+  // 9 of the 21 zones, so relying on it left 12 zones with an empty ramp list
+  // and no launch coordinates for SmartPlan to route from.
+  const coastalKey = resolveR2Key(waterbodyName || '');
+  if (isCoastalKey(coastalKey)) {
+    const ramps = COASTAL_ZONES[coastalKey]?.ramps || {};
+    Object.entries(ramps).forEach(([name, coords]) => {
+      const opt = document.createElement('option');
+      opt.value = name; opt.textContent = name;
+      opt.dataset.lat = coords[0];
+      opt.dataset.lon = coords[1];
       sel.appendChild(opt);
     });
     if(current) sel.value = current;

@@ -775,7 +775,13 @@ export async function runSmartPlan() {
 
   let rampLat=null, rampLon=null;
   const idx = getLoadedAccessIndex();
-  const lakePoints = idx.byLake.get(lakeName) || [];
+
+  // Coastal ramps live in the generated catalog, not the worker access index
+  // (which only covers inland DNR boat ramps).
+  const _coastalZoneForRamp = coastalZoneKey ? COASTAL_ZONES[coastalZoneKey] : null;
+  const lakePoints = _coastalZoneForRamp
+    ? Object.entries(_coastalZoneForRamp.ramps || {}).map(([name, c]) => ({ name, lat: c[0], lon: c[1] }))
+    : (idx.byLake.get(lakeName) || []);
   
   const normN = v => String(v||'').toLowerCase().replace(/[_-]+/g,' ').replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
   const rampMatch = (a,b) => { const x=normN(a), y=normN(b); return !!x && !!y && (x===y || x.includes(y) || y.includes(x)); };
@@ -787,7 +793,14 @@ export async function runSmartPlan() {
     const opt = document.querySelector('#planRamp option:checked');
     if (opt && opt.dataset.lat) { rampLat = parseFloat(opt.dataset.lat); rampLon = parseFloat(opt.dataset.lon); }
   }
-  if (rampLat == null) { rampLat = 34.0; rampLon = -81.0; }
+  if (rampLat == null) {
+    // Last resort. The old hardcoded 34.0/-81.0 is inland Columbia, which for
+    // a coastal zone would put the launch point hundreds of miles from salt
+    // water and produce a nonsense plan.
+    const c = _coastalZoneForRamp?.center;
+    if (c) { rampLat = c[0]; rampLon = c[1]; }
+    else { rampLat = 34.0; rampLon = -81.0; }
+  }
 
   const phaseInfo = computePhases(launchTime, returnTime, dateStr, rampLat, rampLon);
   const sol       = phaseInfo.solunar;
