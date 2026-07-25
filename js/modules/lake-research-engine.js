@@ -24,12 +24,17 @@ import { resolveR2Key } from './contour-data.js';
 import { resolveSupplementalKey, resolveBoundaryKey } from './supplemental-layers.js';
 import { geoDistanceFt } from '../utils/geo.js';
 import { coerceStockingsArray, coerceSpeciesArray } from '../utils/coerce.js';
+import { isCoastalKey, COASTAL_ZONES } from '../data/coastal-zones.js';
+import { resolveR2Key as resolveR2KeyFromLakeKeys } from '../data/lake-keys.js';
 
 // Setup global caches and references
 window.TROLLMAP_RESEARCHED_CACHE = window.TROLLMAP_RESEARCHED_CACHE || {};
 
+const FRESHWATER_RESEARCH_ORDER = ['identity', 'limnology', 'biology', 'habitat', 'navigation', 'regulations', 'fisheries', 'summary'];
+const COASTAL_RESEARCH_ORDER = ['estuary', 'tidal', 'biology', 'habitat', 'navigation', 'saltwater_regulations', 'fisheries', 'summary'];
+// Default export kept for backwards compatibility — callers should use getResearchOrderForLake()
+const RESEARCH_ORDER = FRESHWATER_RESEARCH_ORDER;
 
-const RESEARCH_ORDER = ['identity', 'limnology', 'biology', 'habitat', 'navigation', 'regulations', 'fisheries', 'summary'];
 const RESEARCH_LABELS = {
   identity: '🆔 Identity',
   limnology: '🌊 Limnology',
@@ -38,7 +43,10 @@ const RESEARCH_LABELS = {
   navigation: '🧭 Navigation',
   regulations: '📜 Regulations',
   fisheries: '🧠 Species Intelligence',
-  summary: '📝 AI Summary'
+  summary: '📝 AI Summary',
+  estuary: '🏖️ Estuary Identity',
+  tidal: '🌊 Tidal Dynamics',
+  saltwater_regulations: '📜 Saltwater Regs',
 };
 
 // Agent definitions with target fields for validation
@@ -75,7 +83,59 @@ const AGENT_DEFINITIONS = {
     label: '📝 AI Summary',
     targetFields: ['summary'],
   },
+  // ── Coastal agents (saltwater estuary counterparts) ─────────────────────
+  estuary: {
+    label: '🏖️ Estuary Identity',
+    coastal: true,
+    targetFields: ['estuary.waterBodyType', 'estuary.meanTidalRangeFt', 'estuary.primaryInlets', 'estuary.tributaryRivers', 'estuary.marshAcreage', 'estuary.oysterPresence', 'identity.surfaceAreaAcres', 'identity.maxDepthFt'],
+  },
+  tidal: {
+    label: '🌊 Tidal Dynamics',
+    coastal: true,
+    targetFields: ['tidal.datum', 'tidal.stratificationType', 'tidal.salinityPpt', 'tidal.tidalCurrentKts', 'tidal.flushingTimeDays', 'tidal.waterTempF', 'tidal.turbidity'],
+  },
+  saltwater_regulations: {
+    label: '📜 Saltwater Regs',
+    coastal: true,
+    targetFields: ['saltwaterRegulations', 'regulations.generalStateRegulations', 'regulations.lakeSpecificRegulations'],
+  },
 };
+
+// ── Coastal detection helpers (frontend) ──────────────────────────────────
+function getCoastalR2Key(lakeName) {
+  try {
+    // Prefer the canonical lake-keys resolver (118 entries) when available
+    const k1 = resolveR2KeyFromLakeKeys(lakeName);
+    if (k1 && isCoastalKey(k1)) return k1;
+    // Fallback to contour-data resolver
+    const k2 = resolveR2Key(lakeName);
+    if (k2 && isCoastalKey(k2)) return k2;
+    // Final fallback: direct lowercased check
+    const low = String(lakeName || '').toLowerCase();
+    if (low.startsWith('coast_')) return low;
+    return null;
+  } catch {
+    try {
+      const k = resolveR2Key(lakeName);
+      return (k && isCoastalKey(k)) ? k : null;
+    } catch { return null; }
+  }
+}
+
+function isCoastalLake(lakeName) {
+  const key = getCoastalR2Key(lakeName);
+  return !!key;
+}
+
+function getResearchOrderForLake(lakeName) {
+  return isCoastalLake(lakeName) ? COASTAL_RESEARCH_ORDER : FRESHWATER_RESEARCH_ORDER;
+}
+
+function getCoastalZoneMeta(lakeName) {
+  const key = getCoastalR2Key(lakeName);
+  if (!key) return null;
+  return COASTAL_ZONES[key] || null;
+}
 
 const _state = {
   currentProfile: null,
@@ -879,6 +939,19 @@ const VALIDATION_FIELD_PATHS = [
   'navigation.ramps', 'navigation.hazards', 'navigation.notes'
 ];
 
+const COASTAL_VALIDATION_FIELD_PATHS = [
+  'estuary.waterBodyType', 'estuary.meanTidalRangeFt', 'estuary.primaryInlets',
+  'estuary.tributaryRivers', 'estuary.marshAcreage', 'estuary.oysterPresence',
+  'tidal.datum', 'tidal.stratificationType', 'tidal.salinityPpt', 'tidal.tidalCurrentKts',
+  'tidal.flushingTimeDays', 'tidal.waterTempF', 'tidal.turbidity',
+  'biology.primaryForage', 'biology.secondaryForage', 'biology.predatorSpecies',
+  'biology.speciesAbundance', 'biology.baitfishMovement', 'biology.spawnTiming', 'biology.forageSpatial',
+  'habitat.bottomComposition', 'habitat.cover', 'habitat.vegetation',
+  'habitat.riprapLocations', 'habitat.namedCreekMouths', 'habitat.shallowFlatAreas',
+  'navigation.ramps', 'navigation.hazards', 'navigation.notes',
+  'saltwaterRegulations', 'saltwater_regulations', 'regulations'
+];
+
 function valueAtPath(obj, path) {
   return path.split('.').reduce((value, key) => value == null ? undefined : value[key], obj);
 }
@@ -931,8 +1004,12 @@ async function validateExistingFacts(lakeName, callbacks = {}) {
     profile.limnology = profile.limnology || {};
     profile.habitat = profile.habitat || {};
     profile.navigation = profile.navigation || {};
+    profile.estuary = profile.estuary || {};
+    profile.tidal = profile.tidal || {};
+    profile.saltwaterRegulations = profile.saltwaterRegulations || profile.saltwater_regulations || {};
 
-    const nullFields = VALIDATION_FIELD_PATHS.filter(path => isValidationGap(valueAtPath(profile, path)));
+    const _validationPaths = isCoastalLake(lakeName) ? COASTAL_VALIDATION_FIELD_PATHS : VALIDATION_FIELD_PATHS;
+    const nullFields = _validationPaths.filter(path => isValidationGap(valueAtPath(profile, path)));
     log(`Saved facts: ${facts.length}. Empty supported fields: ${nullFields.length}.`);
     if (!nullFields.length) {
       log('✔ No supported validation gaps remain; no LLM call or save needed.');
@@ -1281,11 +1358,16 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     // ── STEP 1: Discover sources for this agent ──────────────────────────────
     log(`  [${agentKey}] Discovering sources...`);
     let discoverRes;
+    const coastalKeyForAgent = getCoastalR2Key(lakeName);
     const discoverPayload = {
       lakeName, state: stateName, agent: agentKey,
       reservoirOwner: previousResults.reservoirOwner || null,
       predatorSpecies: previousResults.predatorSpecies || [],
+      ...(coastalKeyForAgent ? { zoneKey: coastalKeyForAgent, lakeKey: coastalKeyForAgent } : {}),
     };
+    if (coastalKeyForAgent) {
+      log(`  [${agentKey}] Coastal zone detected: ${coastalKeyForAgent} — using marine agent set`);
+    }
     try {
       discoverRes = await fetch(`${CF_WORKER_URL}/research/discover`, {
         method: 'POST',
@@ -1318,7 +1400,8 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     // Sources without prefetchScore get a default of 3 so they're not unfairly cut.
     const AGENT_SOURCE_CAPS = {
       identity: 8, limnology: 12, biology: 12, habitat: 8,
-      navigation: 8, regulations: 5, fisheries: 10, summary: 0
+      navigation: 8, regulations: 5, fisheries: 10, summary: 0,
+      estuary: 8, tidal: 12, saltwater_regulations: 5,
     };
     const cap = AGENT_SOURCE_CAPS[agentKey] ?? 10;
     const guaranteed = sources.filter(s => s.priority === 1);
@@ -1827,10 +1910,15 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
     _state.deterministicProfile = null;
     try {
       const stateName = sanitizeStateFromLakeName(lakeName);
+      const coastalKeyResume = getCoastalR2Key(lakeName);
       const detRes = await fetch(`${CF_WORKER_URL}/research/deterministic-facts`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lakeName, state: stateName })
+        body: JSON.stringify({
+          lakeName, state: stateName,
+          ...(coastalKeyResume ? { zoneKey: coastalKeyResume, lakeKey: coastalKeyResume } : {})
+        })
       });
+      if (coastalKeyResume) log(`🌊 Coastal zone ${coastalKeyResume} detected for deterministic facts (resume)`);
       if (detRes.ok) {
         const detData = await detRes.json();
         if (detData.ok && detData.profile) {
@@ -1941,14 +2029,20 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
     } catch (e) { log(`⚠️ WQP fetch failed: ${e.message}`); }
   }
 
+  // ── Dynamic order / waves based on freshwater vs coastal ─────────────────
+  const coastalForRun = isCoastalLake(lakeName);
+  const effectiveOrder = coastalForRun ? COASTAL_RESEARCH_ORDER : FRESHWATER_RESEARCH_ORDER;
+  if (coastalForRun) {
+    log(`🌊 Coastal zone ${getCoastalR2Key(lakeName)} detected — using marine agent set [${effectiveOrder.join(', ')}]`);
+  }
+
   // Summary always runs last — separate it from the parallel batch
   const hasSummary = agentKeys.includes('summary');
   let parallelAgents = agentKeys.filter(k => k !== 'summary');
-  // Always sort agents by canonical RESEARCH_ORDER so dependencies are respected
-  // regardless of UI selection order or resume call order.
+  // Always sort agents by canonical order (freshwater or coastal) so dependencies are respected
   parallelAgents = parallelAgents.sort((a, b) => {
-    const ai = RESEARCH_ORDER.indexOf(a);
-    const bi = RESEARCH_ORDER.indexOf(b);
+    const ai = effectiveOrder.indexOf(a);
+    const bi = effectiveOrder.indexOf(b);
     return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
   });
   const total = agentKeys.length;
@@ -1956,11 +2050,15 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
   log(`=== RUN AGENTS: [${agentKeys.join(', ')}] (${mode}) ===`);
 
   const results = [];
-  // Wave structure:
-  // Wave 1 — fully concurrent: identity, limnology, habitat, navigation, regulations
-  // Wave 2 — serial: biology then fisheries (fisheries needs biology output)
-  // Wave 3 — summary (always last, handled separately)
-  const WAVE1_AGENTS = ['identity', 'limnology', 'habitat', 'navigation', 'regulations'];
+  // Wave structure freshwater:
+  //   Wave1: identity, limnology, habitat, navigation, regulations
+  //   Wave2: biology → fisheries (serial)
+  // Wave structure coastal (per COASTAL_IMPLEMENTATION_NOTES §5):
+  //   Wave1: estuary (replaces identity), tidal (replaces limnology), habitat, navigation, saltwater_regulations (replaces regulations)
+  //   Wave2: biology, fisheries (shared, with coastal hints)
+  const FRESH_WAVE1 = ['identity', 'limnology', 'habitat', 'navigation', 'regulations'];
+  const COASTAL_WAVE1 = ['estuary', 'tidal', 'habitat', 'navigation', 'saltwater_regulations'];
+  const WAVE1_AGENTS = coastalForRun ? COASTAL_WAVE1 : FRESH_WAVE1;
   const WAVE2_AGENTS = ['biology', 'fisheries'];
   const wave1 = parallelAgents.filter(k => WAVE1_AGENTS.includes(k));
   const wave2 = parallelAgents.filter(k => WAVE2_AGENTS.includes(k));
@@ -2092,10 +2190,15 @@ async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
     // STEP 1b: Deterministic facts (owner, ramps, species, regulations from APIs)
     setProgress('Step 1b: Loading deterministic facts...', 10);
     try {
+      const coastalKeyForDet = getCoastalR2Key(lakeName);
       const detRes = await fetch(`${CF_WORKER_URL}/research/deterministic-facts`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lakeName, state: stateName })
+        body: JSON.stringify({
+          lakeName, state: stateName,
+          ...(coastalKeyForDet ? { zoneKey: coastalKeyForDet, lakeKey: coastalKeyForDet } : {})
+        })
       });
+      if (coastalKeyForDet) log(`🌊 Coastal zone ${coastalKeyForDet} detected for deterministic facts`);
       if (detRes.ok) {
         const detData = await detRes.json();
         if (detData.ok && detData.profile) {
@@ -2261,6 +2364,7 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   }
 
   // Build section map — start from existing/deterministic, then layer in new agent results
+  // For coastal zones we also preserve estuary/tidal/saltwaterRegulations sections
   const agentSections = {
     identity:             cloneJson(existingSavedProfile.identity     || det.identity     || {}),
     biology:              cloneJson(existingSavedProfile.biology       || det.biology      || {}),
@@ -2270,6 +2374,9 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     limnology:            applyWqpToLimnology(existingSavedProfile.limnology || det.limnology || {}, wqp),
     summary:              cloneJson(existingSavedProfile.summary      || det.summary      || {}),
     trollingIntelligence: existingSavedProfile.trollingIntelligence   || null,
+    estuary:              cloneJson(existingSavedProfile.estuary       || {}),
+    tidal:                cloneJson(existingSavedProfile.tidal         || {}),
+    saltwaterRegulations: cloneJson(existingSavedProfile.saltwaterRegulations || existingSavedProfile.saltwater_regulations || {}),
   };
 
   const evidence = mergeEvidenceMaps(det.evidence || {}, buildWqpEvidence(wqp));
@@ -2520,6 +2627,9 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     habitat:    ['habitat.bottomComposition','habitat.cover','habitat.vegetation','habitat.standingTimber','habitat.dockDensity','habitat.riprapLocations','habitat.namedCreekMouths','habitat.timberFields','habitat.shallowFlatAreas','habitat.artificialHabitat','habitat.artificialHabitatDetails.attractorCount','habitat.artificialHabitatDetails.attractorTypes'],
     navigation: ['navigation.ramps','navigation.hazards','navigation.notes'],
     fisheries:  ['trollingIntelligence'],
+    estuary:    ['estuary.waterBodyType','estuary.meanTidalRangeFt','estuary.primaryInlets','estuary.tributaryRivers','estuary.marshAcreage','estuary.oysterPresence'],
+    tidal:      ['tidal.datum','tidal.stratificationType','tidal.salinityPpt','tidal.tidalCurrentKts','tidal.flushingTimeDays','tidal.waterTempF','tidal.turbidity'],
+    saltwater_regulations: ['saltwaterRegulations','saltwater_regulations','regulations'],
   };
   // Map agent keys to their section paths for validation — fisheries writes to trollingIntelligence
   const agentSectionPath = (section) => section === 'fisheries' ? 'trollingIntelligence' : section;
@@ -2648,4 +2758,4 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   return { contradictions };
 }
 
-export { runFullPipeline, runAgents, runAgent, runResume, assembleAndSaveProfile, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, renderLog, _state, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log };
+export { runFullPipeline, runAgents, runAgent, runResume, assembleAndSaveProfile, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, renderLog, _state, RESEARCH_ORDER, FRESHWATER_RESEARCH_ORDER, COASTAL_RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log, getCoastalR2Key, isCoastalLake, getResearchOrderForLake, getCoastalZoneMeta };

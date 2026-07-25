@@ -1,5 +1,5 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
-import { _state, runFullPipeline, runResume, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log, renderLog } from './lake-research-engine.js';
+import { _state, runFullPipeline, runResume, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, RESEARCH_ORDER, FRESHWATER_RESEARCH_ORDER, COASTAL_RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log, renderLog, isCoastalLake, getResearchOrderForLake } from './lake-research-engine.js';
 import { coastalNamesByState, COASTAL_ZONES, isCoastalKey } from '../data/coastal-zones.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 
@@ -268,6 +268,20 @@ function renderEmpty(lakeName) {
 
 function esc(s) { return String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
+function getEffectiveResearchOrderForRender() {
+  try {
+    const name = _state.currentLakeName || '';
+    if (isCoastalLake(name)) return COASTAL_RESEARCH_ORDER;
+    // Also check if profile itself looks coastal (has estuary)
+    const prof = _state.currentProfile;
+    if (prof && (prof.estuary || prof.tidal || prof.saltwaterRegulations || prof.saltwater_regulations)) return COASTAL_RESEARCH_ORDER;
+    // Fallback: check R2 key via display name
+    const r2 = resolveR2Key(name);
+    if (r2 && isCoastalKey(r2)) return COASTAL_RESEARCH_ORDER;
+  } catch {}
+  return FRESHWATER_RESEARCH_ORDER;
+}
+
 function renderProfile(profile) {
   if (!profile) { renderEmpty(_state.currentLakeName); return; }
   const meta = document.getElementById('researchMeta');
@@ -297,11 +311,15 @@ function renderProfile(profile) {
     deleteBtn.style.display = 'inline-flex';
   }
 
-  // Store merged profile and parts in _state for section editors
+  // Store merged profile and parts in _state for section editors — dynamic order coastal-aware
   _state.mergedProfile = cloneJson(profile);
+  const effectiveOrder = getEffectiveResearchOrderForRender();
   const parts = {};
-  for (const key of RESEARCH_ORDER) {
+  for (const key of effectiveOrder) {
     if (key === 'identity') parts[key] = profile.identity || {};
+    else if (key === 'estuary') parts[key] = profile.estuary || {};
+    else if (key === 'tidal') parts[key] = profile.tidal || {};
+    else if (key === 'saltwater_regulations' || key === 'saltwaterRegulations') parts[key] = profile.saltwaterRegulations || profile.saltwater_regulations || profile.regulations || {};
     else if (key === 'biology') parts[key] = profile.forage || profile.biology || {};
     else if (key === 'fisheries') parts[key] = profile.trollingIntelligence || profile.trolling || {};
     else parts[key] = profile[key] || {};
@@ -732,6 +750,84 @@ function formatHumanReadableSection(key, data) {
     return html;
   }
 
+  if (key === 'estuary') {
+    const d = data.estuary || data;
+    return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;font-size:12px;">
+      <div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+        <b>🏖️ Water Body</b><br>
+        Type: ${esc(d.waterBodyType || '—')}<br>
+        Mean Tidal Range: ${d.meanTidalRangeFt != null ? `${d.meanTidalRangeFt} ft` : '—'}<br>
+        Spring Range: ${d.springTidalRangeFt != null ? `${d.springTidalRangeFt} ft` : '—'}<br>
+        Marsh: ${d.marshAcreage ? `${Number(d.marshAcreage).toLocaleString()} ac` : '—'}<br>
+        Oyster: ${esc(d.oysterPresence || '—')}<br>
+        ICW: ${d.icwAccess != null ? (d.icwAccess ? 'Yes' : 'No') : '—'}
+      </div>
+      <div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+        <b>🌊 Inlets & Rivers</b><br>
+        Inlets: ${esc(Array.isArray(d.primaryInlets) ? d.primaryInlets.join(', ') : (d.primaryInlets || '—'))}<br>
+        Rivers: ${esc(Array.isArray(d.tributaryRivers) ? d.tributaryRivers.join(', ') : (d.tributaryRivers || '—'))}<br>
+        Shoals: ${esc(Array.isArray(d.notableShoals) ? d.notableShoals.join(', ') : (d.notableShoals || d.bottomComposition || '—'))}
+      </div>
+      ${d.description ? `<div style="grid-column:1/-1;background:rgba(255,255,255,.03);padding:6px;border-radius:6px"><b>📝 Description:</b> ${esc(d.description)}</div>` : ''}
+    </div>`;
+  }
+
+  if (key === 'tidal') {
+    const d = data.tidal || data;
+    const sal = d.salinityPpt || {};
+    const cur = d.tidalCurrentKts || {};
+    const temp = d.waterTempF || {};
+    const turb = d.turbidity || {};
+    return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;font-size:12px;">
+      <div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+        <b>🌊 Tidal & Salinity</b><br>
+        Datum: ${esc(d.datum || 'MLLW')}<br>
+        Stratification: ${esc(d.stratificationType || '—')}<br>
+        Salinity typical: ${sal.typical != null ? `${sal.typical} ppt` : '—'}<br>
+        Wet: ${sal.wetSeason != null ? `${sal.wetSeason} ppt` : '—'} Dry: ${sal.drySeason != null ? `${sal.drySeason} ppt` : '—'}<br>
+        Current flood: ${cur.flood != null ? `${cur.flood} kts` : '—'} ebb: ${cur.ebb != null ? `${cur.ebb} kts` : '—'}<br>
+        Flushing: ${d.flushingTimeDays != null ? `${d.flushingTimeDays} days` : '—'}
+      </div>
+      <div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
+        <b>🌡️ Temp & Turbidity</b><br>
+        Summer: ${temp.summer != null ? `${temp.summer}°F` : '—'} Winter: ${temp.winter != null ? `${temp.winter}°F` : '—'}<br>
+        Turbidity: ${esc(turb.typical || '—')} ${turb.secchiFt ? `(${turb.secchiFt} ft Secchi)` : ''}<br>
+        Freshwater Influence: ${esc(d.freshwaterInfluence || '—')}<br>
+        ${d.coldStunRisk ? `<span style="color:#ff7043">Cold-stun risk: ${esc(d.coldStunRisk)}</span>` : ''}
+      </div>
+      ${d.note ? `<div style="grid-column:1/-1;background:rgba(255,255,255,.03);padding:6px;border-radius:6px"><b>📝 Note:</b> ${esc(d.note)}</div>` : ''}
+    </div>`;
+  }
+
+  if (key === 'saltwater_regulations' || key === 'saltwaterRegulations') {
+    const d = data.saltwaterRegulations || data.saltwater_regulations || data.regulations || data;
+    const species = d.species || d.saltwaterRegulations?.species || {};
+    const other = d.otherSpecies || {};
+    let html = `<div style="font-size:12px;">`;
+    html += `<div style="margin-bottom:8px"><b>📍 State:</b> ${esc(d.state || '—')}${d.digestPublished ? ` · <span class="muted">Digest ${esc(d.digestPublished)}</span>` : ''}${d.verificationRequired ? ` · <span style="color:#ff7043">verification required</span>` : ''}${d.supersededByProclamation ? ` · <span style="color:#ff7043">superseded by proclamation</span>` : ''}</div>`;
+    if (d.amendmentNote) html += `<div style="background:rgba(255,82,82,.08);padding:6px;border-radius:6px;margin-bottom:8px"><b>⚠️ Amendment:</b> ${esc(d.amendmentNote)}</div>`;
+    const allSpec = { ...species, ...other };
+    if (Object.keys(allSpec).length) {
+      html += `<div style="display:grid;grid-template-columns:1.2fr .8fr .8fr .8fr .6fr;gap:2px 8px;margin-top:4px;font-size:11px;background:rgba(255,255,255,.03);padding:6px;border-radius:6px">`;
+      html += `<div class="muted" style="font-weight:700">Species</div><div class="muted" style="font-weight:700">Size</div><div class="muted" style="font-weight:700">Creel</div><div class="muted" style="font-weight:700">Vessel</div><div class="muted" style="font-weight:700">Status</div>`;
+      for (const [sp, lim] of Object.entries(allSpec).sort((a,b)=>a[0].localeCompare(b[0]))) {
+        if (!lim || typeof lim !== 'object') continue;
+        const size = lim.minSizeIn != null ? `${lim.minSizeIn}${lim.maxSizeIn ? `–${lim.maxSizeIn}` : ''}${lim.measurement ? ` ${lim.measurement}` : ''}"` : '—';
+        const daily = lim.dailyLimit != null ? `${lim.dailyLimit}/day` : '—';
+        const vessel = lim.vesselLimit != null ? `${lim.vesselLimit}/boat` : '—';
+        const closed = lim.harvestClosed ? `<span style="color:#ff7043">CLOSED${lim.closedSeason ? ` (${esc(lim.closedSeason)})` : ''}</span>` : 'Open';
+        html += `<div><b>${esc(sp)}</b></div><div>${esc(size)}</div><div>${esc(daily)}</div><div>${esc(vessel)}</div><div>${closed}</div>`;
+      }
+      html += `</div>`;
+    }
+    if (Array.isArray(d.gearRestrictions) && d.gearRestrictions.length) {
+      html += `<div style="margin-top:8px"><b>🎣 Gear Restrictions:</b> ${esc(d.gearRestrictions.join('; '))}</div>`;
+    }
+    if (d.licenseNotes) html += `<div style="margin-top:6px"><b>🪪 License:</b> ${esc(d.licenseNotes)}</div>`;
+    html += `</div>`;
+    return html;
+  }
+
   if (key === 'summary') {
     const d = data.summary || data;
     const text = typeof d === 'string' ? d : (d.text || d.overview || '');
@@ -769,7 +865,8 @@ function renderSections(profile) {
   const container = document.getElementById('researchSections');
   if (!container) return;
   let html = '';
-  for (const key of RESEARCH_ORDER) {
+  const effectiveOrder = getEffectiveResearchOrderForRender();
+  for (const key of effectiveOrder) {
     const label = RESEARCH_LABELS[key] || key;
     let sectionData;
     if (key === 'identity') {
@@ -788,11 +885,20 @@ function renderSections(profile) {
         county: profile.county,
         aliases: profile.aliases,
       };
+    } else if (key === 'estuary') {
+      sectionData = profile.estuary || {};
+    } else if (key === 'tidal') {
+      sectionData = profile.tidal || {};
+    } else if (key === 'saltwater_regulations') {
+      sectionData = profile.saltwaterRegulations || profile.saltwater_regulations || profile.regulations || {};
     } else {
       sectionData = profile[key] || (key === 'biology' ? profile.forage : '') || (key === 'fisheries' ? (profile.trollingIntelligence || profile.trolling) : null) || {};
     }
     const has = !!(key === 'identity'
       ? (profile.identity || profile.lakeName)
+      : key === 'estuary' ? (profile.estuary && Object.keys(profile.estuary).length)
+      : key === 'tidal' ? (profile.tidal && Object.keys(profile.tidal).length)
+      : key === 'saltwater_regulations' ? (profile.saltwaterRegulations || profile.saltwater_regulations || profile.regulations)
       : (profile[key] || (key === 'biology' ? profile.forage : null) || (key === 'fisheries' ? (profile.trollingIntelligence || profile.trolling) : null)));
     const okIcon = has ? '✔' : '◻';
 
@@ -1260,30 +1366,25 @@ function initLakeResearch() {
       document.body.appendChild(modal);
     }
 
-    const AGENT_LABELS = {
-      identity:    '🆔 Identity',
-      limnology:   '🌊 Limnology',
-      biology:     '🐟 Fisheries Biology',
-      habitat:     '🌿 Habitat',
-      navigation:  '🧭 Navigation',
-      regulations: '📜 Regulations',
-      fisheries:   '🧠 Species Intelligence',
-      summary:     '📝 AI Summary'
-    };
+    const currentLakeForModal = document.getElementById('researchLakeSelect')?.value || _state.currentLakeName || '';
+    const coastalForModal = (() => {
+      try { return isCoastalLake(currentLakeForModal); } catch { return false; }
+    })();
+    const effectiveOrderForModal = coastalForModal ? COASTAL_RESEARCH_ORDER : FRESHWATER_RESEARCH_ORDER;
 
-    const title = mode === 'full' ? '🔬 Full Pipeline — Select Agents' : '⚡ Resume — Select Agents';
+    const title = mode === 'full' ? `🔬 Full Pipeline — Select Agents${coastalForModal ? ' 🌊 Coastal' : ''}` : `⚡ Resume — Select Agents${coastalForModal ? ' 🌊 Coastal' : ''}`;
     const desc = mode === 'full'
-      ? 'Runs discovery, downloads, and extraction for selected agents. Uses Firecrawl credits.'
-      : 'Uses existing normalized documents from R2. No downloads, no Firecrawl credits.';
+      ? `Runs discovery, downloads, and extraction for selected agents. Uses Firecrawl credits.${coastalForModal ? ` Coastal zone detected (${currentLakeForModal}) — marine agents will run.` : ''}`
+      : `Uses existing normalized documents from R2. No downloads, no Firecrawl credits.${coastalForModal ? ` Coastal zone: ${currentLakeForModal}` : ''}`;
 
     document.getElementById('agentModalTitle').textContent = title;
     document.getElementById('agentModalDesc').textContent = desc;
 
     const list = document.getElementById('agentCheckboxList');
-    list.innerHTML = RESEARCH_ORDER.map(key => `
+    list.innerHTML = effectiveOrderForModal.map(key => `
       <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px">
         <input type="checkbox" name="agentSelect" value="${key}" checked style="width:16px;height:16px">
-        <span>${AGENT_LABELS[key] || key}</span>
+        <span>${RESEARCH_LABELS[key] || key}</span>
       </label>
     `).join('');
 
