@@ -128,8 +128,20 @@ async function loadDepthAreas(lakeKey) {
     _depthAreaLayer = L.geoJSON(gj, {
       renderer: _canvasRenderer,
       smoothFactor: 1.5,  // simplify at render time — raw GeoJSON in IDB stays intact
+      filter(feat) {
+        // NOAA ENC depth_areas include intertidal/exposed polygons with depth_max_ft <= 0.
+        // These are not navigable water — skip them so they don't flood the map red.
+        const maxFt = feat.properties?.depth_max_ft;
+        return maxFt == null || maxFt > 0;
+      },
       style(feat) {
-        const depthFt = feat.properties?.depth_max_ft ?? feat.properties?.depth_min_ft ?? 0;
+        const p      = feat.properties || {};
+        const maxFt  = p.depth_max_ft;
+        const minFt  = p.depth_min_ft;
+        // Use midpoint when both bounds present; fall back to whichever is available.
+        const depthFt = (maxFt != null && minFt != null && minFt > 0)
+          ? (minFt + maxFt) / 2
+          : (maxFt ?? minFt ?? 0);
         const color   = depthAreaColor(depthFt);
         return { fillColor: color, fillOpacity: 0.30, color, weight: 0.5, opacity: 0.5 };
       },
