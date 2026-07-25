@@ -10,8 +10,6 @@ import { distMiFromCoords as distMi } from '../utils/geo.js';
 
 // Canvas renderer — shared for all supplemental polygon/line layers
 const _canvasRenderer = L.canvas({ padding: 0.5 });
-// SVG renderer for coastal depth areas — SVG preserves z-order per feature like QGIS
-const _svgRenderer = L.svg({ padding: 0.5 });
 
 // ── Unified resolvers ───────────────────────────────────────────────────
 // Previously resolveBoundaryKey duplicated the fuzzy logic from lake-keys.js
@@ -129,8 +127,7 @@ let _osmStructureData = null;
 export function getDepthAreaGeoJSON() { return _depthAreaGeoJSON; }
 export function getLakeBoundaryGeoJSON() { return _boundaryGeoJSON; }
 export function bringDepthAreasToBack() {
-  if (!_depthAreaLayer) return;
-  if (typeof _depthAreaLayer.bringToBack === 'function') _depthAreaLayer.bringToBack();
+  if (_depthAreaLayer) _depthAreaLayer.bringToBack();
 }
 window.bringDepthAreasToBack = bringDepthAreasToBack;
 
@@ -144,29 +141,20 @@ async function loadDepthAreas(lakeKey) {
     const gj = await loadLayer(lakeKey, 'depth_areas');
     const isCoastal = lakeKey.startsWith('coast_');
 
-    // For coastal zones: filter intertidal (depth_max_ft <= 0) and
-    // sort by range size descending so most precise polygons render last (on top).
-    // For freshwater: use as-is.
-    let features = gj.features;
-    if (isCoastal) {
-      features = features
-        .filter(f => (f.properties?.depth_max_ft ?? 0) > 0)
-        .sort((a, b) => {
-          const rangeA = (a.properties.depth_max_ft - a.properties.depth_min_ft);
-          const rangeB = (b.properties.depth_max_ft - b.properties.depth_min_ft);
-          return rangeB - rangeA; // coarse polygons first, precise on top
-        });
-    }
+    // For coastal zones: filter intertidal (depth_max_ft <= 0).
+    // Features are pre-sorted scale 4→5 in the GeoJSON so scale 5 renders on top.
+    const features = isCoastal
+      ? gj.features.filter(f => (f.properties?.depth_max_ft ?? 0) > 0)
+      : gj.features;
 
     _depthAreaLayer = L.geoJSON({ ...gj, features }, {
-      renderer: _svgRenderer,
+      renderer: _canvasRenderer,
       smoothFactor: 1.5,
       style(feat) {
         const p = feat.properties || {};
         const depthFt = p.depth_max_ft ?? p.depth_min_ft ?? p.depth_ft ?? 0;
         const color = depthAreaColor(depthFt, isCoastal);
-        const fillOpacity = isCoastal ? 0.75 : 0.30;
-        return { fillColor: color, fillOpacity, color, weight: 0.5, opacity: 0.5 };
+        return { fillColor: color, fillOpacity: 0.55, color, weight: 0.5, opacity: 0.5 };
       },
       onEachFeature(feat, layer) {
         const p = feat.properties || {};
@@ -522,7 +510,7 @@ window.toggleDepthAreas = function(visible) {
   if (!_depthAreaLayer) return;
   if (visible) {
     _depthAreaLayer.addTo(getMap());
-    if (typeof _depthAreaLayer.bringToBack === 'function' && !_activeLakeKey?.startsWith('coast_')) _depthAreaLayer.bringToBack();
+    if (!_activeLakeKey?.startsWith('coast_')) _depthAreaLayer.bringToBack();
     window.SUPPLEMENTAL_DEPTH_LAYER = _depthAreaLayer;
   } else {
     getMap()?.removeLayer(_depthAreaLayer);
