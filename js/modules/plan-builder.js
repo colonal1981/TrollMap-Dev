@@ -1354,7 +1354,8 @@ function getSelectedPlanRiverRamp(){
 function setLakeOnlyFieldsVisible(show){
   ['planFullPool','planPoolLevel'].forEach(id=>{
     const el=document.getElementById(id);
-    if(el && el.parentElement) el.parentElement.style.display = show ? '' : 'none';
+    // Only hide the parent if it's a visible container, not the whole inputs card
+    if(el && el.parentElement && el.type !== 'hidden') el.parentElement.style.display = show ? '' : 'none';
   });
   const box=document.getElementById('utilityAssessmentBox');
   if(box && !show) box.style.display='none';

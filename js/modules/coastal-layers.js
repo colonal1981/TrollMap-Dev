@@ -200,6 +200,8 @@ export function refreshSoundingLabels(tideHeightFt) {
   if (_soundingLayer) getMap().removeLayer(_soundingLayer);
   _soundingLayer = buildSoundingMarkers(_soundingData, _tideHeightFt);
   if (wasOn) applySoundingVisibility();
+  // Also re-render depth area polygons with tide-adjusted colors
+  window.refreshDepthAreaColors?.(_tideHeightFt);
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────

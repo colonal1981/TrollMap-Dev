@@ -123,6 +123,7 @@ let _visionVisible    = false;
 let _poiVisible       = false;
 let _boundaryGeoJSON  = null;
 let _osmStructureData = null;
+let _coastalTideHeightFt = null; // set by refreshDepthAreaColors after tide sync
 
 export function getDepthAreaGeoJSON() { return _depthAreaGeoJSON; }
 export function getLakeBoundaryGeoJSON() { return _boundaryGeoJSON; }
@@ -152,7 +153,12 @@ async function loadDepthAreas(lakeKey) {
       smoothFactor: 1.5,
       style(feat) {
         const p = feat.properties || {};
-        const depthFt = p.depth_max_ft ?? p.depth_min_ft ?? p.depth_ft ?? 0;
+        const chartedFt = p.depth_max_ft ?? p.depth_min_ft ?? p.depth_ft ?? 0;
+        // For coastal zones shift color by current tide height so polygons reflect
+        // actual water depth at time of trip, not charted MLLW.
+        const depthFt = (isCoastal && Number.isFinite(_coastalTideHeightFt))
+          ? chartedFt + _coastalTideHeightFt
+          : chartedFt;
         const color = depthAreaColor(depthFt, isCoastal);
         return { fillColor: color, fillOpacity: 0.55, color, weight: 0.5, opacity: 0.5 };
       },
@@ -488,6 +494,19 @@ export function getSupplementalContext(lat, lon, radiusMi = 0.5) {
   }
   return results;
 }
+
+/**
+ * Re-render coastal depth area polygons with tide-adjusted colors.
+ * Called by coastal-layers.js after a tide sync.
+ */
+export function refreshDepthAreaColors(tideHeightFt) {
+  if (!_activeLakeKey?.startsWith('coast_')) return;
+  _coastalTideHeightFt = Number.isFinite(tideHeightFt) ? tideHeightFt : null;
+  if (!_depthAreaGeoJSON || !mapReady()) return;
+  // Re-render using cached GeoJSON — no fetch needed
+  loadDepthAreas(_activeLakeKey);
+}
+window.refreshDepthAreaColors = refreshDepthAreaColors;
 
 function init() {
   const btnFishing = document.getElementById('btnFishingSpots');
