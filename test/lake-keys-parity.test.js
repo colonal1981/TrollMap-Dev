@@ -3,9 +3,11 @@ import { LAKE_NAME_TO_R2_KEY as frontendMap, resolveR2Key } from '../js/data/lak
 import { SUPPLEMENTAL_KEY_MAP, resolveSupplementalKeyWorker } from '../Worker/research/limnology.js';
 
 describe('lake-keys parity — frontend and worker must stay identical (P1 dedupe guard)', () => {
-  it('frontend map size == worker map size == 101', () => {
-    expect(Object.keys(frontendMap).length).toBe(101);
-    expect(Object.keys(SUPPLEMENTAL_KEY_MAP).length).toBe(101);
+  it('frontend map size == worker map size == 118', () => {
+    // 97 freshwater + 21 coastal. Both copies must grow together — this is the
+    // guard that caught the original 101 vs 74 drift.
+    expect(Object.keys(frontendMap).length).toBe(118);
+    expect(Object.keys(SUPPLEMENTAL_KEY_MAP).length).toBe(118);
   });
 
   it('maps are deep equal', () => {

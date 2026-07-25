@@ -1,19 +1,33 @@
 import { describe, it, expect } from 'vitest';
 import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../js/data/lake-keys.js';
 
-describe('LAKE_NAME_TO_R2_KEY — single source of truth (101 entries)', () => {
-  it('has 101 entries (full map, not truncated worker copy)', () => {
-    expect(Object.keys(LAKE_NAME_TO_R2_KEY).length).toBe(101);
+describe('LAKE_NAME_TO_R2_KEY — single source of truth (118 entries)', () => {
+  it('has 118 entries (full map, not truncated worker copy)', () => {
+    // 97 freshwater + 21 coastal zones. Was 101 before the coastal expansion
+    // split the single `sc_ga_coastal` key into 21 per-zone `coast_*` keys.
+    expect(Object.keys(LAKE_NAME_TO_R2_KEY).length).toBe(118);
   });
 
   it('contains critical keys that were missing in old worker copy', () => {
     // These were missing in old Worker/research/limnology.js 74-entry copy
     expect(LAKE_NAME_TO_R2_KEY['Catawba Narrows, SC/NC']).toBe('catawba_narrows');
     expect(LAKE_NAME_TO_R2_KEY['Fort Loudoun Lake, TN']).toBe('fort_loudoun_lake');
-    expect(LAKE_NAME_TO_R2_KEY['Fort Loundon Reservoir, TN']).toBe('fort_loudoun_lake'); // typo alias
-    expect(LAKE_NAME_TO_R2_KEY['ACE Basin / Edisto, SC']).toBe('sc_ga_coastal');
+    expect(LAKE_NAME_TO_R2_KEY['Fort Loudoun Reservoir, TN']).toBe('fort_loudoun_lake');
     expect(LAKE_NAME_TO_R2_KEY['Lake Bowen, SC']).toBe('lake_bowen');
     expect(LAKE_NAME_TO_R2_KEY['Lake Blalock, SC']).toBe('lake_blalock');
+  });
+
+  it('maps each coastal zone to its own per-zone R2 key', () => {
+    // The coastal expansion replaced the shared `sc_ga_coastal` chartpack with
+    // one prefix per zone, so every zone gets its own contours / oyster_beds /
+    // marsh_edges / depth_soundings under `chartpacks/{slug}/`.
+    expect(LAKE_NAME_TO_R2_KEY['ACE Basin / Edisto, SC']).toBe('coast_ace_basin_sc');
+    expect(LAKE_NAME_TO_R2_KEY['Charleston Harbor, SC']).toBe('coast_charleston_sc');
+    expect(LAKE_NAME_TO_R2_KEY['Pamlico Sound / Neuse River, NC']).toBe('coast_pamlico_sound_nc');
+    expect(LAKE_NAME_TO_R2_KEY['Savannah River / Savannah, GA']).toBe('coast_savannah_ga');
+
+    const coastal = Object.values(LAKE_NAME_TO_R2_KEY).filter((k) => k.startsWith('coast_'));
+    expect(new Set(coastal).size).toBe(21);
   });
 
   it('contains Wateree chain and Russell chain aliases', () => {
@@ -42,8 +56,8 @@ describe('resolveR2Key — fuzzy resolver (canonical)', () => {
     ['Tellico Lake, TN', 'tellico_lake'],
     ['Lake Norman, NC', 'lake_norman_mountain_island'],
     ['Mountain Island Lake, NC', 'lake_norman_mountain_island'],
-    ['ACE Basin / Edisto, SC', 'sc_ga_coastal'],
-    ['Charleston Harbor, SC', 'sc_ga_coastal'],
+    ['ACE Basin / Edisto, SC', 'coast_ace_basin_sc'],
+    ['Charleston Harbor, SC', 'coast_charleston_sc'],
     ['Lake Hickory, NC', 'lake_hickory_rhodhiss'],
     ['Lake James, NC', 'lake_james'],
     ['Lake Lanier, GA', 'lake_lanier'],
