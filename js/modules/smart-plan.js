@@ -74,6 +74,31 @@ async function getCastableNames() {
   return _cachedCastableNames;
 }
 
+/**
+ * Build a casting tackle description that includes jighead weight guidance
+ * for swimbait presentations based on target depth.
+ * Depth → jighead weight: <8ft=1/4oz, 8-15ft=3/8oz, 15-25ft=1/2oz, >25ft=3/4oz
+ */
+function castingTackleBlock(castableNames, targetDepth) {
+  const jigOz = !targetDepth ? '3/8oz' :
+    targetDepth < 8  ? '1/4oz'  :
+    targetDepth < 15 ? '3/8oz'  :
+    targetDepth < 25 ? '1/2oz'  : '3/4oz';
+
+  const swimbaitNote = `CASTING ROD RULES:
+- You have 6 rods total. 2 are trolling (port + starboard). 2 stowed rods are PRE-RIGGED as dedicated cast rods before launch.
+- The angler has ONE of each lure. If a lure appears in band1 or band2 trolling spread it CANNOT also be a cast rod — pick different lures.
+- Trolling rods use inline weight systems and cannot be repurposed for casting without full re-rigging.
+- When recommending a swimbait for casting at ~${targetDepth||15}ft, specify a ${jigOz} jighead (cast, count down, slow retrieve or hop).
+- Output a "castRods" array with exactly 2 entries — the 2 pre-rigged stowed rods ready to grab at any casting stop.
+- Each castRod entry: { "rod": 1or2, "lure": "<exact name>", "rigging": "<e.g. direct braid to snap, no weight>", "jigheadWeight": "<oz if swimbait, else null>", "presentation": "<one sentence>" }`;
+
+  return `AVAILABLE TACKLE FOR STOP-AND-CAST — use ONLY these exact names for casting:
+${castableNames.join(', ')}
+
+${swimbaitNote}`;
+}
+
 // Strip the [...] annotation bracket from a lure name returned by Groq
 function stripLureAnnotation(raw) {
   if (!raw) return raw;
@@ -954,8 +979,7 @@ KAYAK STEERING & ACTIVE BOAT POSITIONING CONSTRAINTS:
 AVAILABLE TACKLE FOR TROLLING — use ONLY these exact names for trolling:
 ${inventoryNames.join(', ')}
 
-AVAILABLE TACKLE FOR STOP-AND-CAST — use ONLY these exact names for casting:
-${castableNames.join(', ')}
+${castingTackleBlock(castableNames, fishingContext?.stopTargetDepth || 15)}
 
 MAPPED STRUCTURES NEAR YOUR ROUTE:
 ${candidateList}
@@ -983,6 +1007,10 @@ Return ONLY valid JSON, no markdown:
     "portLeadFt": <ft>, "starboardLeadFt": <ft>,
     "why": "<one sentence species behavior>"
   },
+  "castRods": [
+    { "rod": 1, "lure": "<exact name from AVAILABLE_CASTING_TACKLE not used in band1/band2>", "rigging": "<e.g. direct braid to snap, no weight>", "jigheadWeight": "<oz or null>", "presentation": "<one sentence>" },
+    { "rod": 2, "lure": "<exact name from AVAILABLE_CASTING_TACKLE not used in band1/band2>", "rigging": "<e.g. 20lb fluoro leader>", "jigheadWeight": "<oz or null>", "presentation": "<one sentence>" }
+  ],
   "structureFocus": "<fishfinder signature to find>",
   "adjustmentTip": "<if no bites after 30min, do this>",
   "scoutNotes": "<2-3 sentence tactical overview>",
