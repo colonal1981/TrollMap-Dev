@@ -1497,6 +1497,7 @@ Return ONLY valid JSON, no markdown:
     window._smartPlanStopCandidates = stopCandidates.slice();
     window._smartPlanRouteRods = routeRods;
     window._smartPlanRouteSpeeds = routeSpeeds;
+    window._smartPlanCastRods = Array.isArray(groqPlan.castRods) ? groqPlan.castRods : [];
   } catch (_) {}
 
   const b1p=routeRods['Ph1 Outbound'][0], b1s=routeRods['Ph1 Outbound'][1];

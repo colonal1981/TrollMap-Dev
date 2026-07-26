@@ -310,6 +310,7 @@ export function collectPlan(){
     timeline: unifiedTimeline,
     unifiedTimeline: unifiedTimeline, // alias for forward compatibility
     castingStops,
+    castRods: window._smartPlanCastRods || [],
     routeRods: routeRodsCapture,
     routeSpeeds: window._smartPlanRouteSpeeds || null,
     gpx: {
@@ -441,6 +442,22 @@ export async function buildPlanPreviewHtml(p){
     <h2>🧭 Unified Trip Timeline — Interleaved Trolling & Stop-and-Cast (Chronological)</h2>
     <p class="rp-small">Single source of truth — trolling passes and casting stops in the order you will encounter them on the water. No duplicate blocks.</p>
     <table><thead><tr style="background:#eef4fa"><th>Step</th><th>Speed / Depth</th><th>Spread / Baits / Leads / Positioning</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  // ── Cast Rods Pre-Rig ─────────────────────────────────────────────────────
+  let castRodsHtml = '';
+  const castRods = p.castRods || [];
+  if (castRods.length) {
+    const rows = castRods.map(r => `<tr>
+      <td><b>Cast Rod ${esc(String(r.rod||''))}</b></td>
+      <td>${esc(r.lure||'—')}</td>
+      <td>${esc(r.rigging||'—')}${r.jigheadWeight ? ` · <b>${esc(r.jigheadWeight)} jighead</b>` : ''}</td>
+      <td>${esc(r.presentation||'—')}</td>
+    </tr>`).join('');
+    castRodsHtml = `
+    <h2>🎣 Pre-Rig Before Launch — Dedicated Casting Rods</h2>
+    <p class="rp-small">Stow these 2 rods in the cockpit before departure. Grab them at any Stop &amp; Cast — do not repurpose trolling rods.</p>
+    <table><thead><tr style="background:#eef4fa"><th>Rod</th><th>Lure</th><th>Rigging</th><th>Presentation</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
 
   // ── Clarity tactical ──────────────────────────────────────────────────────
@@ -1332,6 +1349,8 @@ ${twilightHtml?`<h2>4 · Light &amp; Bite Feed Triggers</h2>${twilightHtml}`:''}
 
 ${rationaleHtml ? `<h2>5.5 · Smart Plan Rationale</h2>${rationaleHtml}` : ''}
 
+${castRodsHtml}
+
 ${unifiedPreviewHtml}
 
 <h2>6 · The Professional Spread — Rod by Rod</h2>
@@ -1871,27 +1890,9 @@ document.getElementById('printPlanBtn')?.addEventListener('click', async () => {
   setTimeout(() => window.print(), 400);
 });
 
-document.getElementById('exportPlanHtmlBtn')?.addEventListener('click', async () => {
-  const p = collectPlan();
-  const inner = await buildPlanPreviewHtml(p);
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(p.meta.name)}</title></head><body style="background:#f3f6f9;margin:0;padding:20px">${inner}</body></html>`;
-  const blob = new Blob([html], { type: 'text/html' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = (p.meta.name || 'fishing_plan').replace(/\s+/g, '_') + '.html';
-  a.click();
-  URL.revokeObjectURL(a.href);
-});
+;
 
-document.getElementById('exportPlanJsonBtn')?.addEventListener('click', () => {
-  const p = collectPlan();
-  const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = (p.meta.name || 'fishing_plan').replace(/\s+/g, '_') + '.json';
-  a.click();
-  URL.revokeObjectURL(a.href);
-});
+;
 
 document.getElementById('importPlanFile')?.addEventListener('change', (e) => {
   const f = e.target.files[0];
