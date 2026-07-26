@@ -123,6 +123,7 @@ let _visionVisible    = false;
 let _poiVisible       = false;
 let _boundaryGeoJSON  = null;
 let _osmStructureData = null;
+let _structureMarkerLayer = null;
 let _coastalTideHeightFt = null; // set by refreshDepthAreaColors after tide sync
 
 export function getDepthAreaGeoJSON() { return _depthAreaGeoJSON; }
@@ -392,6 +393,47 @@ async function loadLakeBoundary(displayName) {
   }
 }
 
+function renderStructureMarkers(displayName) {
+  if (!mapReady()) return;
+  if (_structureMarkerLayer) { getMap().removeLayer(_structureMarkerLayer); _structureMarkerLayer = null; }
+  const profile = window.getResearchedProfile?.(displayName);
+  if (!profile) return;
+  const se = profile.habitat?.structuralElements || {};
+  const humps  = se.humpCoordinates  || [];
+  const ledges = se.ledgeCoordinates || [];
+  if (!humps.length && !ledges.length) return;
+
+  const group = L.layerGroup();
+
+  for (const h of humps) {
+    if (!h.lat || !h.lon) continue;
+    L.circleMarker([h.lat, h.lon], {
+      renderer: _canvasRenderer,
+      radius: 6, color: '#ffb300', weight: 2,
+      fillColor: '#ffb300', fillOpacity: 0.5,
+    }).bindTooltip(
+      `🏔 Hump${h.id ? ' ' + h.id.replace('hump_','#') : ''}${h.areaAcres ? ' ~' + h.areaAcres + 'ac' : ''}${h.depth ? ' @' + h.depth + 'ft' : ''}`,
+      { sticky: true, direction: 'top', opacity: 0.9 }
+    ).addTo(group);
+  }
+
+  for (const l of ledges) {
+    if (!l.lat || !l.lon) continue;
+    L.circleMarker([l.lat, l.lon], {
+      renderer: _canvasRenderer,
+      radius: 5, color: '#00e5ff', weight: 2,
+      fillColor: '#00e5ff', fillOpacity: 0.5,
+    }).bindTooltip(
+      `📐 Ledge${l.id ? ' ' + l.id.replace('ledge_','#') : ''}${l.contourDensity ? ' (' + l.contourDensity + ' contours)' : ''}`,
+      { sticky: true, direction: 'top', opacity: 0.9 }
+    ).addTo(group);
+  }
+
+  _structureMarkerLayer = group;
+  group.addTo(getMap());
+  console.log(`[supplemental] structure markers: ${humps.length} humps, ${ledges.length} ledges for ${displayName}`);
+}
+
 export async function loadSupplementalForLake(displayName) {
   if (!displayName || displayName.startsWith('river:')) return;
 
@@ -404,9 +446,10 @@ export async function loadSupplementalForLake(displayName) {
   _osmStructureData = null;
   window.dispatchEvent(new CustomEvent('trollmap:lakeChanged'));
 
-  if (_fishingLayer) { getMap()?.removeLayer(_fishingLayer); _fishingLayer = null; }
-  if (_poiLayer)     { getMap()?.removeLayer(_poiLayer);     _poiLayer     = null; }
-  if (_visionLayer)  { getMap()?.removeLayer(_visionLayer);  _visionLayer  = null; _visionVisible = false; }
+  if (_fishingLayer)        { getMap()?.removeLayer(_fishingLayer);        _fishingLayer        = null; }
+  if (_poiLayer)            { getMap()?.removeLayer(_poiLayer);            _poiLayer            = null; }
+  if (_visionLayer)         { getMap()?.removeLayer(_visionLayer);         _visionLayer         = null; _visionVisible = false; }
+  if (_structureMarkerLayer){ getMap()?.removeLayer(_structureMarkerLayer); _structureMarkerLayer = null; }
 
   _fishingVisible = false;
   _poiVisible     = false;
@@ -414,6 +457,9 @@ export async function loadSupplementalForLake(displayName) {
   _updateButtonState('btnPOI', false);
 
   await loadDepthAreas(lakeKey);
+
+  // Render hump/ledge markers from research profile
+  renderStructureMarkers(displayName);
 
   // For coastal zones: fetch current tide height and apply color adjustment.
   // This covers the Map tab where noaa-tides.js auto-sync doesn't fire.
