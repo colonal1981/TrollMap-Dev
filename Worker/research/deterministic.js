@@ -120,11 +120,54 @@ async function handleResearchDeterministicFacts(request, env) {
   // For coastal zones, seed with correct saltwater species and forage, not freshwater
   const coastalPredators = ['Red Drum (Redfish)', 'Spotted Seatrout (Speckled Trout)', 'Southern Flounder', 'Black Drum', 'Sheepshead'];
   const coastalForage = ['Shrimp', 'Finger Mullet', 'Mud Minnows (Mummichog)', 'Menhaden', 'Blue Crab', 'Juvenile Spot/Croaker'];
+  // Geometry and tide-station metadata are available even where a small inlet
+  // has no searchable report. This is deliberately qualitative: unknown
+  // measurements remain null rather than becoming invented research facts.
+  const COASTAL_ZONE_FALLBACKS = {
+    coast_murrells_inlet_sc: {
+      estuary: {
+        waterBodyType: 'bar-built tidal inlet and back-barrier estuary',
+        primaryInlets: ['Murrells Inlet'], tributaryRivers: [], marshAcreage: null,
+        oysterPresence: null, icwAccess: true, bottomComposition: null,
+        notableShoals: [], description: 'Murrells Inlet and the adjacent Pawleys Island coastal zone; use charted channels and tide-aware routing.'
+      },
+      tidal: {
+        datum: 'MLLW', stratificationType: null,
+        salinityPpt: { typical: null, wetSeason: null, drySeason: null },
+        tidalCurrentKts: { flood: null, ebb: null }, flushingTimeDays: null,
+        waterTempF: { summer: null, winter: null },
+        turbidity: { typical: null, secchiFt: null }, freshwaterInfluence: null,
+        coldStunRisk: null, note: 'Tide predictions use NOAA station 8661070; confirm local current and depth conditions before transit.'
+      }
+    }
+  };
+  const genericCoastalFallback = isCoastal ? {
+    estuary: {
+      waterBodyType: 'tidal coastal estuary', primaryInlets: [], tributaryRivers: [],
+      marshAcreage: null, oysterPresence: null, icwAccess: null,
+      bottomComposition: null, notableShoals: [],
+      description: 'Coastal-zone chart fallback. Confirm local habitat, access, and navigation details from chart data and current conditions.'
+    },
+    tidal: {
+      datum: 'MLLW', stratificationType: null,
+      salinityPpt: { typical: null, wetSeason: null, drySeason: null },
+      tidalCurrentKts: { flood: null, ebb: null }, flushingTimeDays: null,
+      waterTempF: { summer: null, winter: null }, turbidity: { typical: null, secchiFt: null },
+      freshwaterInfluence: null, coldStunRisk: null,
+      note: 'Use the zone tide station and current chart data; no local measured tidal or salinity values are assumed.'
+    }
+  } : null;
+  const coastalFallback = isCoastal ? COASTAL_ZONE_FALLBACKS[zoneKey] || genericCoastalFallback : null;
 
   const profile = {
     lakeName,
     state,
     identity: { aliases: [], counties: [] },
+    // A deterministic fallback keeps coastal sections useful when discovery has
+    // no local web corpus. LLM agents can enrich these fields but must not
+    // fabricate the null measurement fields.
+    estuary: coastalFallback?.estuary || {},
+    tidal: coastalFallback?.tidal || {},
     biology: {
       primaryForage: isCoastal ? coastalForage.slice(0,3) : [],
       secondaryForage: isCoastal ? coastalForage.slice(3) : [],

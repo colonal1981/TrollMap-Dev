@@ -1,7 +1,7 @@
 // research/agents.js — split from worker-research.js (behavior-preserving) 
 import { JSON_HEADERS, callLLM, extractLLMText } from '../worker-core.js';
 import { LAKES, lakeKeyFromName } from '../worker-data.js';
-import { fetchStateRegulations, getLakeRegulations } from './clients.js';
+import { fetchStateRegulations, getLakeRegulations, STATE_REGULATIONS_CONFIG, tinyfishFetch } from './clients.js';
 import { extractJsonPossibly } from './keys.js';
 import {
   COASTAL_AGENTS, COASTAL_AGENT_HINTS, COASTAL_SKIPPED_AGENTS,
@@ -804,6 +804,33 @@ async function handleResearchAgent(request, env) {
     }
   }
 
+  // Saltwater regulations use the same approved R2 digest, but need its raw
+  // marine section rather than the freshwater parser's lake-limit object.
+  // This makes the digest a guaranteed baseline even when amendment discovery
+  // finds nothing for a small inlet.
+  if (agentKey === 'saltwater_regulations') {
+    try {
+      const digest = STATE_REGULATIONS_CONFIG[state]?.pages?.[0];
+      if (digest?.url) {
+        const result = await tinyfishFetch({ urls: [digest.url], format: 'markdown', ttl: 86400 }, env);
+        const content = String(result.results?.[0]?.text || '');
+        if (content.length >= 200) {
+          groundedPrev = {
+            ...groundedPrev,
+            _regsSource: {
+              url: digest.url,
+              content,
+              published: /2026_2027/.test(digest.url) ? '2026-2027' : '2025-2026',
+              note: 'APPROVED R2 REGULATIONS DIGEST — extract the saltwater finfish section only.'
+            }
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('saltwater R2 regulations load failed: ' + e.message);
+    }
+  }
+
   // Inject document text for agents that benefit from reading source material directly
   // limnology gets the EPA/water quality docs; biology gets the fisheries docs
   // fisheries gets fishing guide/report docs — seasonal behavior lives in these, not the profile
@@ -814,10 +841,10 @@ async function handleResearchAgent(request, env) {
     const docFilter = {
       limnology: /epa|nscep|water.?qual|characteriz|nutrient|limnol/i,
       identity:  /epa|nscep|water.?qual|characteriz|sc.?lake|dnr/i,
-      biology:   /striped.?bass|fisheries|biology|annual|species|stocking|fish|bass|crappie|catfish|pattern|forage|shad|herring|omnia|conventional|sportsman|tactic|guide/i,
-      habitat:   /habitat|attractor|structure|dnr|sc.?lake/i,
-      fisheries: /fish|bass|crappie|striper|catfish|pattern|season|depth|behavior|report|tactic|guide|omnia|conventional|sportsman/i,
-      summary:   /lake|reservoir|water.?quality|fisher|biology|habitat|navigation|regulation|report|plan|assessment|dnr|duke|owner|dam/i,
+      biology:   /striped.?bass|fisheries|biology|annual|species|stocking|fish|bass|crappie|catfish|pattern|forage|shad|herring|red.?drum|redfish|seatrout|speckled.?trout|flounder|mullet|shrimp|oyster|marsh/i,
+      habitat:   /habitat|attractor|structure|dnr|sc.?lake|marsh|oyster|seagrass|tidal.?creek|inlet|shoreline|estuar/i,
+      fisheries: /fish|bass|crappie|striper|catfish|pattern|season|depth|behavior|report|tactic|guide|omnia|conventional|sportsman|red.?drum|redfish|seatrout|speckled.?trout|flounder|tidal|inlet/i,
+      summary:   /lake|reservoir|water.?quality|fisher|biology|habitat|navigation|regulation|report|plan|assessment|dnr|duke|owner|dam|estuar|tidal|marsh|oyster|inlet|sound|harbor/i,
     };
     const filter = docFilter[agentKey];
     // Gemini free-tier requests must stay comfortably below token-per-minute
@@ -895,6 +922,7 @@ async function handleResearchAgent(request, env) {
       catfish: ['Catfish', 'Blue Catfish', 'Flathead Catfish', 'Channel Catfish', 'Bullhead'],
       panfish: ['Bream', 'Bluegill', 'Redear Sunfish (Shellcracker)', 'Bowfin', 'White Perch', 'Yellow Perch', 'Walleye', 'Sauger'],
       other:   ['Pickerel', 'Chain Pickerel', 'Pike', 'Muskie', 'Trout', 'Brown Trout', 'Rainbow Trout', 'Brook Trout'],
+      marine:  ['Red Drum', 'Redfish', 'Spotted Seatrout', 'Speckled Trout', 'Southern Flounder', 'Black Drum', 'Sheepshead', 'Tarpon'],
     };
 
     // Assign each confirmed species to a group

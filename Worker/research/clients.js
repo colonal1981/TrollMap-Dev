@@ -7,6 +7,9 @@ import { callLLM, extractLLMText } from '../worker-core.js';
 // ─── TINYFISH API CLIENT ───
 const TINYFISH_BASE = 'https://api.search.tinyfish.ai';
 const TINYFISH_FETCH_BASE = 'https://api.fetch.tinyfish.ai';
+// TinyFish rejects values above this ceiling. Keep the guard in the API client,
+// rather than relying on every discovery caller to know its validation rule.
+const TINYFISH_MAX_RECENCY_MINUTES = 5_256_000;
 
 async function tinyfishSearch({ query, domain_type = 'web', purpose, location, language, recency_minutes, after_date, before_date }, env) {
   const key = env.TINYFISH_API_KEY;
@@ -17,7 +20,13 @@ async function tinyfishSearch({ query, domain_type = 'web', purpose, location, l
   if (purpose) params.set('purpose', purpose);
   if (location) params.set('location', location);
   if (language) params.set('language', language);
-  if (recency_minutes) params.set('recency_minutes', String(recency_minutes));
+  // A bad window must not make an entire research agent silently skip its
+  // discovery phase. Clamp positive numeric values at TinyFish's documented
+  // maximum; omit malformed/non-positive values.
+  const requestedRecency = Number(recency_minutes);
+  if (Number.isFinite(requestedRecency) && requestedRecency > 0) {
+    params.set('recency_minutes', String(Math.min(Math.floor(requestedRecency), TINYFISH_MAX_RECENCY_MINUTES)));
+  }
   if (after_date) params.set('after_date', after_date);
   if (before_date) params.set('before_date', before_date);
   
@@ -540,4 +549,4 @@ function getLakeRegulations(stateRegulations, lakeName) {
 // seasonal drawdown schedules, and operations facts from the authority that
 // actually manages the water.
 
-export { TINYFISH_BASE, TINYFISH_FETCH_BASE, tinyfishSearch, tinyfishFetch, FIRECRAWL_HARD_STOP, FIRECRAWL_KV_KEY, checkFirecrawlBudget, recordFirecrawlUsage, scrapeDoFetch, REGS_R2_BASE, REGS_2026_EFFECTIVE, USE_2026, STATE_REGULATIONS_CONFIG, extractMarkdownTables, parseSCTable, parseNCTable, parseGATable, parseTNStatewide, parseTNExceptions, parseTNRegion, PARSERS, normalizeLakeName, parseNCRegulationsWithLLM, parseRegulationsWithLLM, fetchStateRegulations, getLakeRegulations };
+export { TINYFISH_BASE, TINYFISH_FETCH_BASE, TINYFISH_MAX_RECENCY_MINUTES, tinyfishSearch, tinyfishFetch, FIRECRAWL_HARD_STOP, FIRECRAWL_KV_KEY, checkFirecrawlBudget, recordFirecrawlUsage, scrapeDoFetch, REGS_R2_BASE, REGS_2026_EFFECTIVE, USE_2026, STATE_REGULATIONS_CONFIG, extractMarkdownTables, parseSCTable, parseNCTable, parseGATable, parseTNStatewide, parseTNExceptions, parseTNRegion, PARSERS, normalizeLakeName, parseNCRegulationsWithLLM, parseRegulationsWithLLM, fetchStateRegulations, getLakeRegulations };
