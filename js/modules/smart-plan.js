@@ -1016,6 +1016,7 @@ Return ONLY valid JSON, no markdown:
   "scoutNotes": "<2-3 sentence tactical overview>",
   "fishfinderNarrative": "<A short 150-word narrative telling the angler what to look for on the sonar screen during these routes, and how to work the specific lures rigged.>",
   "timeline": [
+    NOTE: The timeline MUST have 4 troll entries (Ph1 Out, Ph1 In, Ph2 Out, Ph2 In) AND at least 2-3 stop_and_cast entries interleaved between them. Place stops where structure warrants — between Ph1 Out and Ph1 In, between Ph1 In and Ph2 Out, and/or between Ph2 Out and Ph2 In. Never return only 1 stop_and_cast.
     {
       "step": 1,
       "type": "troll",
@@ -1038,6 +1039,24 @@ Return ONLY valid JSON, no markdown:
         { "name": "<exact name from AVAILABLE_CASTING_TACKLE>", "confidence": "92%" }
       ],
       "tacticalNote": "Position the kayak 40 yards downwind off the point. Use Propel instant-reverse pedals to hover against the wind while casting a walking bait."
+    },
+    {
+      "step": 3,
+      "type": "troll",
+      "phaseName": "Ph1 Inbound",
+      ...
+    },
+    {
+      "step": 4,
+      "type": "stop_and_cast",
+      "name": "Channel Swing Drop",
+      ...
+    },
+    {
+      "step": 5, "type": "troll", "phaseName": "Ph2 Outbound", ...
+    },
+    {
+      "step": 6, "type": "troll", "phaseName": "Ph2 Inbound", ...
     }
   ]
 }`;
@@ -1329,7 +1348,7 @@ Return ONLY valid JSON, no markdown:
   window._smartPlanRouteRods=routeRods;
 
   // ── Build route-aware casting stop candidates ───────────────────────────
-  const STOP_RADIUS_FT = 250;
+  const STOP_RADIUS_FT = 1500; // kayak casting range — structures within ~0.3mi of route are reachable
   const stopCandidates = [];
   const addedCoords = [];
 
