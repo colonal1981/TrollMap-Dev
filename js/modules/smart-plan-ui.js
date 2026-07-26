@@ -118,6 +118,34 @@ export function buildUnifiedTimeline({ routeRods, timeline, stopCandidates, rout
     return String(raw).replace(/\s*\[.*$/, '').trim();
   }
 
+  // Extract coordinates embedded in a name string like "Hazard at [34.3758, -80.7366]"
+  function extractCoordsFromName(name) {
+    if (!name) return null;
+    const m = String(name).match(/\[\s*(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)\s*\]/);
+    if (!m) return null;
+    const lat = parseFloat(m[1]), lon = parseFloat(m[2]);
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+    return { lat, lon };
+  }
+
+  // Match a stop name against candidates to get coordinates
+  function resolveStopCoords(step) {
+    if (step.lat && step.lon) return { lat: step.lat, lon: step.lon };
+    // Try extracting from name string
+    const fromName = extractCoordsFromName(step.name);
+    if (fromName) return fromName;
+    // Try fuzzy name match against candidates
+    if (!Array.isArray(stopCandidates)) return { lat: null, lon: null };
+    const stepName = (step.name || '').toLowerCase().trim();
+    const match = stopCandidates.find(c => {
+      if (!c.lat || !c.lon) return false;
+      const candName = (c.name || '').toLowerCase().trim();
+      return candName === stepName || stepName.includes(candName) || candName.includes(stepName);
+    });
+    if (match) return { lat: match.lat, lon: match.lon };
+    return { lat: null, lon: null };
+  }
+
   function makeTrollEntry(key, overrides = {}) {
     const card = cardMap[key];
     const rods = routeRods?.[key] || [];
@@ -148,19 +176,22 @@ export function buildUnifiedTimeline({ routeRods, timeline, stopCandidates, rout
   }
 
   function makeStopFromGroq(step, idx) {
+    const coords = resolveStopCoords(step);
+    // Clean name — strip embedded coordinates from name string
+    const cleanName = (step.name || `Structure Stop ${idx+1}`).replace(/\s*at\s*\[.*?\]\s*/i, '').trim();
     return {
       type: 'stop_and_cast',
       subType: 'groq',
-      id: `groq-${idx}-${(step.name||'').replace(/\W+/g,'_')}`,
-      name: step.name || `Structure Stop ${idx+1}`,
+      id: `groq-${idx}-${cleanName.replace(/\W+/g,'_')}`,
+      name: cleanName,
       targetStructure: step.targetStructure || step.structureType || '',
       targetDepth: step.targetDepth ?? step.depth ?? 6,
       presentation: step.presentation || '',
       recommendedLures: Array.isArray(step.recommendedLures) ? step.recommendedLures : [],
       tacticalNote: step.tacticalNote || step.tactical || '',
       positioning: step.tacticalNote || '',
-      lat: step.lat ?? null,
-      lon: step.lon ?? null,
+      lat: coords.lat,
+      lon: coords.lon,
       routeContext: step.routeContext || null,
       original: step,
     };
