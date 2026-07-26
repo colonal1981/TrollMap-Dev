@@ -2619,6 +2619,241 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     if (geoId._bathymetryMeta) id._bathymetryMeta = geoId._bathymetryMeta;
   }
 
+  // ── Coastal fact→schema mapping ──────────────────────────────────────
+  // The saltwater agent set extracts facts under coastal categories that don't
+  // land in the freshwater regulations/identity/limnology schema on their own.
+  // Map them here so the downstream UI (which reads regulations.lengthLimits,
+  // identity.tideStation, limnology.salinity, etc.) sees the data.
+  // Guarded by isCoastalLake(lakeName) so freshwater assembly is untouched.
+  if (isCoastalLake(lakeName)) {
+    const zoneMeta = getCoastalZoneMeta(lakeName);
+    const factsByCat = (cats) => {
+      const set = new Set(cats.map(c => c.toLowerCase()));
+      return allFacts.filter(f => set.has(String(f.category || '').toLowerCase()));
+    };
+    const firstNum = (facts) => {
+      for (const f of facts) {
+        const m = String(f.fact || '').match(/-?\d+(?:\.\d+)?/);
+        if (m) { const n = parseFloat(m[0]); if (isFinite(n)) return { value: n, fact: f }; }
+      }
+      return null;
+    };
+
+    // ── (1) Regulations mapping: sizeLimit_general / creelLimit_general /
+    //        closedSeason / saltwaterRegulation → regulations.generalStateRegulations
+    //        + lakeSpecificRegulations
+    const reg = agentSections.regulations = agentSections.regulations || {
+      state: stateName,
+      generalStateRegulations: { lengthLimits: {}, creelLimits: {} },
+      lakeSpecificRegulations: { hasExceptions: null, creelLimits: {}, sizeLimits: {}, specialRules: [], closedSeasons: [] },
+      notes: null
+    };
+    reg.generalStateRegulations = reg.generalStateRegulations || { lengthLimits: {}, creelLimits: {} };
+    reg.generalStateRegulations.lengthLimits = reg.generalStateRegulations.lengthLimits || {};
+    reg.generalStateRegulations.creelLimits  = reg.generalStateRegulations.creelLimits  || {};
+    reg.lakeSpecificRegulations = reg.lakeSpecificRegulations || { hasExceptions: null, creelLimits: {}, sizeLimits: {}, specialRules: [], closedSeasons: [] };
+    reg.lakeSpecificRegulations.specialRules = reg.lakeSpecificRegulations.specialRules || [];
+    reg.lakeSpecificRegulations.closedSeasons = reg.lakeSpecificRegulations.closedSeasons || [];
+
+    // Recognize saltwater species names in fact text
+    const SPECIES_PATTERNS = [
+      { key: 'Red Drum (Redfish)',    re: /\b(redfish|red\s*drum)\b/i },
+      { key: 'Spotted Seatrout',      re: /\b(spotted\s*sea\s*trout|spotted\s*seatrout|speckled\s*(sea\s*)?trout)\b/i },
+      { key: 'Southern Flounder',     re: /\b(southern\s*flounder|summer\s*flounder|flounder)\b/i },
+      { key: 'Black Drum',            re: /\bblack\s*drum\b/i },
+      { key: 'Sheepshead',            re: /\bsheepshead\b/i },
+      { key: 'Cobia',                 re: /\bcobia\b/i },
+      { key: 'Tarpon',                re: /\btarpon\b/i },
+      { key: 'King Mackerel',         re: /\bking\s*mackerel\b/i },
+      { key: 'Spanish Mackerel',      re: /\bspanish\s*mackerel\b/i },
+    ];
+    const speciesFromText = (text) => {
+      const t = String(text || '');
+      for (const s of SPECIES_PATTERNS) if (s.re.test(t)) return s.key;
+      return null;
+    };
+    // "12–27 inch slot", "12 inch minimum", "14 inch minimum", "no minimum", "16\" (Total Length)"
+    const parseLengthLimit = (text) => {
+      const t = String(text || '').replace(/[""]/g, '"');
+      if (/no\s*minimum/i.test(t)) return { text: 'No minimum size limit', type: 'none' };
+      // slot: NN–NN inch(es), NN-NN in
+      let m = t.match(/(\d+(?:\.\d+)?)\s*[–\-to]{1,4}\s*(\d+(?:\.\d+)?)\s*(?:in(?:ch(?:es)?)?|")\s*(?:slot|tl|total\s*length)?/i);
+      if (m) return { text: `${m[1]}–${m[2]}" slot`, type: 'slot', min: parseFloat(m[1]), max: parseFloat(m[2]) };
+      // min–max in separate phrases (Min NN Max NN)
+      const mMin = t.match(/min(?:imum)?\s*size?\s*[:=]?\s*(\d+(?:\.\d+)?)/i);
+      const mMax = t.match(/max(?:imum)?\s*size?\s*[:=]?\s*(\d+(?:\.\d+)?)/i);
+      if (mMin && mMax) return { text: `${mMin[1]}–${mMax[1]}" slot`, type: 'slot', min: parseFloat(mMin[1]), max: parseFloat(mMax[1]) };
+      // "NN inch minimum", "NN" minimum"
+      m = t.match(/(\d+(?:\.\d+)?)\s*(?:in(?:ch(?:es)?)?|")\s*(?:min(?:imum)?|tl|total\s*length)/i);
+      if (m) return { text: `${m[1]}" minimum`, type: 'min', min: parseFloat(m[1]) };
+      // "size limit of NN inches minimum" / "min size NN"
+      m = t.match(/(?:size\s*limit|min(?:imum)?\s*size)[^.]*?(\d+(?:\.\d+)?)/i);
+      if (m) return { text: `${m[1]}" minimum`, type: 'min', min: parseFloat(m[1]) };
+      return null;
+    };
+    // "bag limit 1", "daily bag limit 5", "10 fish per person"
+    const parseCreelLimit = (text) => {
+      const t = String(text || '');
+      let m = t.match(/(?:daily\s*)?bag\s*limit[^0-9]*(\d+)/i);
+      if (m) return { text: `${m[1]} per day`, count: parseInt(m[1], 10) };
+      m = t.match(/(\d+)\s*fish\s*per\s*(?:person|day|angler)/i);
+      if (m) return { text: `${m[1]} per day`, count: parseInt(m[1], 10) };
+      m = t.match(/limit\s*of\s*(\d+)/i);
+      if (m) return { text: `${m[1]} per day`, count: parseInt(m[1], 10) };
+      return null;
+    };
+
+    const sizeFacts  = factsByCat(['sizeLimit_general', 'sizeLimit_lakeSpecific']);
+    const creelFacts = factsByCat(['creelLimit_general', 'creelLimit_lakeSpecific']);
+    const closedFacts = factsByCat(['closedSeason']);
+    const swRegFacts = factsByCat(['saltwaterRegulation']);
+
+    let regMapCount = 0;
+    for (const f of sizeFacts) {
+      const sp = speciesFromText(f.fact) || speciesFromText(f.quote);
+      const parsed = parseLengthLimit(f.fact) || parseLengthLimit(f.quote);
+      if (!sp || !parsed) continue;
+      if (!reg.generalStateRegulations.lengthLimits[sp]) {
+        reg.generalStateRegulations.lengthLimits[sp] = parsed.text;
+        regMapCount++;
+      }
+    }
+    for (const f of creelFacts) {
+      const sp = speciesFromText(f.fact) || speciesFromText(f.quote);
+      const parsed = parseCreelLimit(f.fact) || parseCreelLimit(f.quote);
+      if (!sp || !parsed) continue;
+      if (!reg.generalStateRegulations.creelLimits[sp]) {
+        reg.generalStateRegulations.creelLimits[sp] = parsed.text;
+        regMapCount++;
+      }
+    }
+    for (const f of closedFacts) {
+      const entry = { note: f.fact, source: f.source || null };
+      const exists = reg.lakeSpecificRegulations.closedSeasons.some(x => (x?.note || x) === entry.note);
+      if (!exists) { reg.lakeSpecificRegulations.closedSeasons.push(entry); regMapCount++; }
+    }
+    for (const f of swRegFacts) {
+      const rule = String(f.fact || '').trim();
+      if (!rule) continue;
+      if (!reg.lakeSpecificRegulations.specialRules.includes(rule)) {
+        reg.lakeSpecificRegulations.specialRules.push(rule);
+        regMapCount++;
+      }
+    }
+    // Merge saltwaterRegulations agent structured output into generalStateRegulations
+    const swAgent = agentSections.saltwaterRegulations || {};
+    if (swAgent && typeof swAgent === 'object' && swAgent.species && typeof swAgent.species === 'object') {
+      const speciesKeyMap = {
+        redDrum: 'Red Drum (Redfish)',
+        spottedSeatrout: 'Spotted Seatrout',
+        southernFlounder: 'Southern Flounder',
+        blackDrum: 'Black Drum',
+        sheepshead: 'Sheepshead',
+        tripletail: 'Tripletail',
+        cobia: 'Cobia',
+      };
+      for (const [swKey, entry] of Object.entries(swAgent.species)) {
+        const label = speciesKeyMap[swKey] || swKey;
+        if (entry && typeof entry === 'object') {
+          if (entry.minSizeIn != null && entry.maxSizeIn != null) {
+            if (!reg.generalStateRegulations.lengthLimits[label]) {
+              reg.generalStateRegulations.lengthLimits[label] = `${entry.minSizeIn}–${entry.maxSizeIn}" slot`;
+              regMapCount++;
+            }
+          } else if (entry.minSizeIn != null) {
+            if (!reg.generalStateRegulations.lengthLimits[label]) {
+              reg.generalStateRegulations.lengthLimits[label] = `${entry.minSizeIn}" minimum`;
+              regMapCount++;
+            }
+          }
+          if (entry.dailyLimit != null && !reg.generalStateRegulations.creelLimits[label]) {
+            reg.generalStateRegulations.creelLimits[label] = `${entry.dailyLimit} per day`;
+            regMapCount++;
+          }
+          if (entry.harvestClosed && entry.closedSeason) {
+            const noteText = `${label}: closed ${entry.closedSeason}`;
+            const exists = reg.lakeSpecificRegulations.closedSeasons.some(x => (x?.note || x) === noteText);
+            if (!exists) { reg.lakeSpecificRegulations.closedSeasons.push({ note: noteText, source: 'saltwater_regulations agent' }); regMapCount++; }
+          }
+        }
+      }
+      if (Array.isArray(swAgent.gearRestrictions)) {
+        for (const gr of swAgent.gearRestrictions) {
+          const rule = String(gr || '').trim();
+          if (rule && !reg.lakeSpecificRegulations.specialRules.includes(rule)) {
+            reg.lakeSpecificRegulations.specialRules.push(rule);
+            regMapCount++;
+          }
+        }
+      }
+      if (swAgent.amendmentNote && !reg.notes) reg.notes = swAgent.amendmentNote;
+    }
+    // hasExceptions flag: true if we captured any lake-specific rule or closure
+    if (reg.lakeSpecificRegulations.specialRules.length || reg.lakeSpecificRegulations.closedSeasons.length) {
+      reg.lakeSpecificRegulations.hasExceptions = true;
+    }
+
+    // ── (2) Identity mapping: bodyType / zoneType / tideStation ──
+    const id = agentSections.identity = agentSections.identity || {};
+    const est = agentSections.estuary || {};
+    // bodyType: prefer extracted waterBodyType fact, fall back to estuary agent field
+    if (id.bodyType == null) {
+      const btFacts = factsByCat(['waterBodyType']);
+      const btText = btFacts[0]?.fact || est.waterBodyType || null;
+      if (btText) id.bodyType = String(btText).trim();
+    }
+    // zoneType from coastal zone catalog (bar-built, drowned river valley, sound, etc.)
+    if (id.zoneType == null) {
+      const bt = String(id.bodyType || est.waterBodyType || '').toLowerCase();
+      if (/sound/i.test(bt)) id.zoneType = 'sound';
+      else if (/bar[\s-]?built|inlet/i.test(bt)) id.zoneType = 'bar-built estuary';
+      else if (/drowned\s*river/i.test(bt)) id.zoneType = 'drowned river valley';
+      else if (/lagoon/i.test(bt)) id.zoneType = 'coastal lagoon';
+      else if (/harbor|bay/i.test(bt)) id.zoneType = 'coastal bay';
+      else if (isCoastalLake(lakeName)) id.zoneType = 'coastal estuary';
+    }
+    // tideStation from coastal zone catalog
+    if (id.tideStation == null && zoneMeta?.tideStation) {
+      id.tideStation = zoneMeta.tideStation;
+    }
+    // county from extracted facts (helpful for coastal ID)
+    if (!id.county) {
+      const cFact = allFacts.find(f => String(f.category||'').toLowerCase() === 'county');
+      if (cFact) {
+        const m = String(cFact.fact || '').match(/([A-Z][a-zA-Z\-]+(?:\s+[A-Z][a-zA-Z\-]+)*)\s+County/);
+        if (m) id.county = m[1];
+      }
+    }
+
+    // ── (3) Limnology mapping: salinity + tidalRange ──
+    const lim = agentSections.limnology = agentSections.limnology || {};
+    if (lim.salinity == null) {
+      const salFacts = factsByCat(['salinity']);
+      const s = firstNum(salFacts);
+      if (s) {
+        // Preserve unit (ppt / ‰) if present
+        const unitMatch = String(s.fact.fact || '').match(/(‰|ppt|parts?\s*per\s*thousand)/i);
+        const unit = unitMatch ? (unitMatch[1] === '‰' ? '‰' : 'ppt') : 'ppt';
+        lim.salinity = { value: s.value, unit, source: s.fact.source || null };
+      } else if (agentSections.tidal?.salinityPpt?.typical != null) {
+        lim.salinity = { value: agentSections.tidal.salinityPpt.typical, unit: 'ppt', source: 'tidal agent' };
+      }
+    }
+    if (lim.tidalRange == null) {
+      const trFacts = factsByCat(['tidalRange']);
+      const t = firstNum(trFacts);
+      if (t) {
+        lim.tidalRange = { meanFt: t.value, source: t.fact.source || null };
+      } else if (agentSections.estuary?.meanTidalRangeFt != null) {
+        lim.tidalRange = { meanFt: agentSections.estuary.meanTidalRangeFt, source: 'estuary agent' };
+      }
+    }
+
+    if (regMapCount > 0) log(`  🧭 Coastal assembler: mapped ${regMapCount} regulation fact(s) → schema (lengthLimits, creelLimits, specialRules, closedSeasons)`);
+    if (id.bodyType || id.zoneType || id.tideStation) log(`  🧭 Coastal assembler: identity.bodyType=${id.bodyType || 'null'}, zoneType=${id.zoneType || 'null'}, tideStation=${id.tideStation || 'null'}`);
+    if (lim.salinity || lim.tidalRange) log(`  🧭 Coastal assembler: limnology.salinity=${lim.salinity?.value ?? 'null'}${lim.salinity ? ' ' + lim.salinity.unit : ''}, tidalRange=${lim.tidalRange?.meanFt ?? 'null'}${lim.tidalRange ? ' ft' : ''}`);
+  }
+
   // Validation pass — only runs when we have facts, only checks fields for agents that ran
   const ALL_VALIDATION_FIELDS = {
     identity:   ['identity.surfaceAreaAcres','identity.maxDepthFt','identity.averageDepthFt','identity.normalPoolFt','identity.reservoirOwner','identity.riverSystem','identity.damName','identity.yearImpounded','identity.county','identity.archetype'],
@@ -2627,9 +2862,9 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     habitat:    ['habitat.bottomComposition','habitat.cover','habitat.vegetation','habitat.standingTimber','habitat.dockDensity','habitat.riprapLocations','habitat.namedCreekMouths','habitat.timberFields','habitat.shallowFlatAreas','habitat.artificialHabitat','habitat.artificialHabitatDetails.attractorCount','habitat.artificialHabitatDetails.attractorTypes'],
     navigation: ['navigation.ramps','navigation.hazards','navigation.notes'],
     fisheries:  ['trollingIntelligence'],
-    estuary:    ['estuary.waterBodyType','estuary.meanTidalRangeFt','estuary.primaryInlets','estuary.tributaryRivers','estuary.marshAcreage','estuary.oysterPresence'],
-    tidal:      ['tidal.datum','tidal.stratificationType','tidal.salinityPpt','tidal.tidalCurrentKts','tidal.flushingTimeDays','tidal.waterTempF','tidal.turbidity'],
-    saltwater_regulations: ['saltwaterRegulations','saltwater_regulations','regulations'],
+    estuary:    ['estuary.waterBodyType','estuary.meanTidalRangeFt','estuary.primaryInlets','estuary.tributaryRivers','estuary.marshAcreage','estuary.oysterPresence','identity.bodyType','identity.zoneType','identity.tideStation'],
+    tidal:      ['tidal.datum','tidal.stratificationType','tidal.salinityPpt','tidal.tidalCurrentKts','tidal.flushingTimeDays','tidal.waterTempF','tidal.turbidity','limnology.salinity','limnology.tidalRange'],
+    saltwater_regulations: ['saltwaterRegulations','saltwater_regulations','regulations','regulations.generalStateRegulations.lengthLimits','regulations.generalStateRegulations.creelLimits'],
   };
   // Map agent keys to their section paths for validation — fisheries writes to trollingIntelligence
   const agentSectionPath = (section) => section === 'fisheries' ? 'trollingIntelligence' : section;
