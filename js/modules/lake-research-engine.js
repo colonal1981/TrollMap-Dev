@@ -449,6 +449,30 @@ function flattenLineCoords(geom) {
   return [];
 }
 
+/**
+ * Minimum distance in degrees from a point to any segment of a ring.
+ * Used to reject hump/ledge candidates that sit on or near the shoreline
+ * (islands, shoreline points) rather than in open water.
+ */
+function minDistToRingDeg(lon, lat, ring) {
+  let minD = Infinity;
+  for (let i = 0; i < ring.length - 1; i++) {
+    const [x1, y1] = ring[i];
+    const [x2, y2] = ring[i + 1];
+    const dx = x2 - x1, dy = y2 - y1;
+    const lenSq = dx * dx + dy * dy;
+    let t = lenSq > 0 ? ((lon - x1) * dx + (lat - y1) * dy) / lenSq : 0;
+    t = Math.max(0, Math.min(1, t));
+    const px = x1 + t * dx, py = y1 + t * dy;
+    const d = Math.sqrt((lon - px) ** 2 + (lat - py) ** 2);
+    if (d < minD) minD = d;
+  }
+  return minD;
+}
+
+// ~0.003° ≈ 300m — humps/ledges must be at least this far from the shoreline
+const MIN_OFFSHORE_DEG = 0.003;
+
 function deriveContourStructures(contourGeo, boundaryRing = null) {
   const result = {};
   if (!contourGeo?.features?.length) return result;
@@ -466,6 +490,8 @@ function deriveContourStructures(contourGeo, boundaryRing = null) {
       if (areaAcres < 0.5 || areaAcres > 500) continue;
       const [lon, lat] = centroidLonLat(coords);
       if (boundaryRing && !pointInPolygonLonLat(lon, lat, boundaryRing)) continue;
+      // Reject candidates too close to shoreline — islands/points not offshore humps
+      if (boundaryRing && minDistToRingDeg(lon, lat, boundaryRing) < MIN_OFFSHORE_DEG) continue;
       humpCandidates.push({ lon, lat, areaAcres, depth: depth ?? null });
     }
   }
@@ -486,6 +512,7 @@ function deriveContourStructures(contourGeo, boundaryRing = null) {
       if (coords.length < 4) continue;
       const [lon, lat] = centroidLonLat(coords);
       if (boundaryRing && !pointInPolygonLonLat(lon, lat, boundaryRing)) continue;
+      if (boundaryRing && minDistToRingDeg(lon, lat, boundaryRing) < MIN_OFFSHORE_DEG) continue;
       const key = `${Math.round(lat / LEDGE_GRID)},${Math.round(lon / LEDGE_GRID)}`;
       if (!ledgeGrid[key]) ledgeGrid[key] = { lats: [], lons: [], count: 0 };
       ledgeGrid[key].lats.push(lat);
