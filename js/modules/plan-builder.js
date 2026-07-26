@@ -186,14 +186,41 @@ export function collectPlan(){
   }
 
   // Capture stop candidates with positioning and bait recs as separate field for backward compat
+  // New: always include timeline stop_and_cast entries, even if geographic candidates are empty.
   let castingStops = [];
   try {
+    const fromTimeline = [];
+    if (Array.isArray(unifiedTimeline)) {
+      for (const e of unifiedTimeline) {
+        if (e.type === 'stop_and_cast' || e.type === 'stop' || e.type === 'cast') {
+          fromTimeline.push({
+            name: e.name,
+            type: e.type,
+            subType: e.subType || null,
+            lat: e.lat ?? null,
+            lon: e.lon ?? null,
+            targetStructure: e.targetStructure || null,
+            targetDepth: e.targetDepth ?? null,
+            presentation: e.presentation || null,
+            score: e.score ?? null,
+            reason: e.reason || e.tacticalNote || '',
+            structureType: e.targetStructure || e.typeDetail || null,
+            routeContext: e.routeContext || null,
+            recommendedLures: Array.isArray(e.recommendedLures) ? e.recommendedLures.slice() : [],
+            tacticalNote: e.tacticalNote || e.positioning || e.reason || '',
+          });
+        }
+      }
+    }
     const src = window._smartPlanStopCandidates || [];
-    castingStops = src.map(s=>({
+    const fromCandidates = src.map(s=>({
       name: s.name,
       type: s.type,
       lat: s.lat,
       lon: s.lon,
+      targetStructure: s.structureType || s.targetStructure || null,
+      targetDepth: s.targetDepth ?? null,
+      presentation: s.presentation || null,
       score: s.score,
       reason: s.reason,
       structureType: s.structureType,
@@ -201,6 +228,14 @@ export function collectPlan(){
       recommendedLures: s.recommendedLures || [],
       tacticalNote: s.tacticalNote || s.reason || '',
     }));
+    // Merge, prefer timeline entries (they have full presentation data), dedup by name+lat/lon
+    const seen = new Map();
+    const merged = [...fromTimeline, ...fromCandidates];
+    for (const s of merged) {
+      const key = `${(s.name||'').toLowerCase()}|${s.lat ?? ''}|${s.lon ?? ''}`;
+      if (!seen.has(key)) seen.set(key, s);
+    }
+    castingStops = [...seen.values()];
   } catch (_){}
 
   // Route rods capture per key
@@ -1241,8 +1276,14 @@ ${twilightHtml?`<h2>4 · Light &amp; Bite Feed Triggers</h2>${twilightHtml}`:''}
         function trackBearingDeg(t) {
           const pts = t.pts || [];
           if (pts.length < 2) return null;
-          const a = pts[0], b = pts[pts.length - 1];
-          const dLat = b.lat - a.lat, dLon = (b.lon - a.lon) * Math.cos(a.lat * Math.PI / 180);
+          const aRaw = pts[0], bRaw = pts[pts.length - 1];
+          // Track points are [lat, lon] arrays (per parsers.js) but can also be {lat, lon} objects
+          const aLat = Array.isArray(aRaw) ? aRaw[0] : aRaw.lat;
+          const aLon = Array.isArray(aRaw) ? aRaw[1] : aRaw.lon;
+          const bLat = Array.isArray(bRaw) ? bRaw[0] : bRaw.lat;
+          const bLon = Array.isArray(bRaw) ? bRaw[1] : bRaw.lon;
+          if (!Number.isFinite(aLat) || !Number.isFinite(aLon) || !Number.isFinite(bLat) || !Number.isFinite(bLon)) return null;
+          const dLat = bLat - aLat, dLon = (bLon - aLon) * Math.cos(aLat * Math.PI / 180);
           let brng = Math.atan2(dLon, dLat) * 180 / Math.PI;
           return (brng + 360) % 360;
         }

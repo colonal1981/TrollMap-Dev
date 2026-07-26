@@ -65,9 +65,88 @@ export async function syncLakeIntelData() {
     // Habitat / cover / bottom
     if(rp?.habitat) {
       const h = rp.habitat;
+
+      // Helper: format a single coordinate object as lat/lon pair
+      const fmtCoord = (c) => {
+        if (!c || typeof c !== 'object') return String(c);
+        const lat = Number(c.lat);
+        const lon = Number(c.lon);
+        if (Number.isFinite(lat) && Number.isFinite(lon)) {
+          // Extra context if available (id, acres, depth, density) but keep primary as lat/lon
+          const extras = [];
+          if (c.areaAcres != null) extras.push(`~${c.areaAcres}ac`);
+          if (c.depth != null) extras.push(`@${c.depth}ft`);
+          if (c.contourDensity != null) extras.push(`density ${c.contourDensity}`);
+          const base = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+          return extras.length ? `${base} (${extras.join(' ')})` : base;
+        }
+        // Fallback for generic object
+        return JSON.stringify(c);
+      };
+
+      // Helper: format any structural element value into human-readable lat/lon or text
+      const fmtStructVal = (v) => {
+        if (v == null) return '';
+        if (Array.isArray(v)) {
+          if (!v.length) return '';
+          if (typeof v[0] === 'object' && v[0] !== null && ('lat' in v[0] || 'lon' in v[0])) {
+            // Array of coordinate objects -> format as lat/lon pairs
+            return v.map(fmtCoord).join('; ');
+          }
+          if (typeof v[0] === 'string') return v.join(', ');
+          // Mixed / generic objects
+          return v.map(item => {
+            if (item && typeof item === 'object' && 'lat' in item && 'lon' in item) return fmtCoord(item);
+            if (typeof item === 'string') return item;
+            return JSON.stringify(item);
+          }).join('; ');
+        }
+        if (typeof v === 'string') return v;
+        if (typeof v === 'object') {
+          if ('lat' in v && 'lon' in v) return fmtCoord(v);
+          // Generic object map — show key: value, filtering low/empty
+          const entries = Object.entries(v).filter(([k, val]) => k !== 'note' && val && val !== 'low');
+          if (!entries.length) return '';
+          return entries.map(([k2, val2]) => {
+            if (typeof val2 === 'object') return `${k2}: ${fmtStructVal(val2)}`;
+            return `${k2} (${val2})`;
+          }).join(', ');
+        }
+        return String(v);
+      };
+
       if(h.cover?.length) lines.push(`Habitat / cover: ${h.cover.join(', ')}`);
-      if(h.structuralElements) lines.push(`Structure: ${Object.entries(h.structuralElements).map(([k,v])=>`${k}: ${v}`).join('; ')}`);
-      if(h.bottomComposition) lines.push(`Bottom composition: ${Object.entries(h.bottomComposition).filter(([k,v])=>k!=='note'&&v&&v!=='low').map(([k,v])=>`${k} (${v})`).join(', ')}`);
+      if(h.structuralElements && typeof h.structuralElements === 'object') {
+        const structParts = Object.entries(h.structuralElements)
+          .map(([k, v]) => {
+            const formatted = fmtStructVal(v);
+            if (!formatted) return null;
+            return `${k}: ${formatted}`;
+          })
+          .filter(Boolean);
+        if (structParts.length) lines.push(`Structure: ${structParts.join('; ')}`);
+      }
+      if(h.bottomComposition) {
+        const bc = h.bottomComposition;
+        if (typeof bc === 'string') {
+          lines.push(`Bottom composition: ${bc}`);
+        } else if (Array.isArray(bc)) {
+          // Array of strings or objects
+          const txt = bc.map(item => typeof item === 'string' ? item : fmtStructVal(item)).filter(Boolean).join(', ');
+          if (txt) lines.push(`Bottom composition: ${txt}`);
+        } else if (typeof bc === 'object') {
+          const entries = Object.entries(bc).filter(([k, v]) => k !== 'note' && v && v !== 'low');
+          if (entries.length) {
+            const txt = entries.map(([k, v]) => {
+              if (typeof v === 'object') return `${k}: ${fmtStructVal(v)}`;
+              return `${k} (${v})`;
+            }).join(', ');
+            if (txt) lines.push(`Bottom composition: ${txt}`);
+          } else if (bc.note) {
+            lines.push(`Bottom composition: ${bc.note}`);
+          }
+        }
+      }
       if(h.notes) lines.push(`Habitat notes: ${h.notes}`);
     } else {
       if(p.habitat) lines.push(`Habitat / cover: ${p.habitat}`);
