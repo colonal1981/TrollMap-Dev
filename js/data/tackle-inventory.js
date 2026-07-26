@@ -90,21 +90,21 @@ export const TACKLE_INVENTORY = [
 
   // ── A-Rigs / Umbrella Rigs ────────────────────────────────────────────────
   { id:'arig_light',  name:'A-Rig Light (~1.65oz) – 3.8" Swimbait',
-    type:'umbrella_rig', trollable:true, castable:false, weightOz:1.65,
+    type:'umbrella_rig', trollable:true, castable:true, weightOz:1.65,
     jigWeights:[0.125,0.1875,0.25], sizes:['3.8"'],
     diveDepthMin:null, diveDepthMax:null,
     trollSpeedMin:1.4, trollSpeedMax:2.0,
     presentationSignature: { noise:'high_vibe', flash:'high', profile:'baitfish', water_column:'middle', cover_friendly:['open_water'] } },
 
   { id:'arig_medium', name:'A-Rig Medium (~2.65oz) – 4.6" Swimbait',
-    type:'umbrella_rig', trollable:true, castable:false, weightOz:2.65,
+    type:'umbrella_rig', trollable:true, castable:true, weightOz:2.65,
     jigWeights:[0.1875,0.25,0.375], sizes:['4.6"'],
     diveDepthMin:null, diveDepthMax:null,
     trollSpeedMin:1.4, trollSpeedMax:2.0,
     presentationSignature: { noise:'high_vibe', flash:'high', profile:'baitfish', water_column:'middle', cover_friendly:['open_water'] } },
 
   { id:'arig_heavy',  name:'A-Rig Heavy (~3.5oz) – 5" Swimbait',
-    type:'umbrella_rig', trollable:true, castable:false, weightOz:3.5,
+    type:'umbrella_rig', trollable:true, castable:true, weightOz:3.5,
     jigWeights:[0.25,0.375,0.5], sizes:['5"'],
     diveDepthMin:null, diveDepthMax:null,
     trollSpeedMin:1.4, trollSpeedMax:2.0,
