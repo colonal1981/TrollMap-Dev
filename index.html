@@ -37,7 +37,10 @@
     background: var(--panel); border-bottom: 1px solid var(--line);
     display: flex; align-items: center; gap: 6px; padding: 0 10px;
     z-index: 1000; font-size: 13px; flex-wrap: nowrap;
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
   }
+  #topbar::-webkit-scrollbar { display: none; }
   #topbar h1 { margin: 0; font-size: 15px; color: var(--accent); white-space: nowrap; }
   #topbar .file {
     flex: 1; min-width: 80px; overflow: hidden; text-overflow: ellipsis;
