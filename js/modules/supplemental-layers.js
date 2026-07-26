@@ -458,8 +458,22 @@ export async function loadSupplementalForLake(displayName) {
 
   await loadDepthAreas(lakeKey);
 
-  // Render hump/ledge markers from research profile
-  renderStructureMarkers(displayName);
+  // Render hump/ledge markers from research profile.
+  // If profile not cached yet, load it silently then render markers.
+  if (window.getResearchedProfile?.(displayName)) {
+    renderStructureMarkers(displayName);
+  } else if (window.loadProfile) {
+    window.loadProfile(displayName, true).then(() => renderStructureMarkers(displayName)).catch(() => {});
+  } else {
+    // loadProfile not yet available — retry after delay
+    setTimeout(() => {
+      if (window.getResearchedProfile?.(displayName)) {
+        renderStructureMarkers(displayName);
+      } else {
+        window.loadProfile?.(displayName, true).then(() => renderStructureMarkers(displayName)).catch(() => {});
+      }
+    }, 2000);
+  }
 
   // For coastal zones: fetch current tide height and apply color adjustment.
   // This covers the Map tab where noaa-tides.js auto-sync doesn't fire.
@@ -616,6 +630,13 @@ function init() {
   if (!btnFishing || !btnPOI) { setTimeout(init, 300); return; }
   wireFishingButton();
   wirePOIButton();
+
+  // Re-render structure markers when research profile finishes loading
+  window.addEventListener('trollmap:profileLoaded', (e) => {
+    const name = e.detail?.lakeName || _activeLakeKey;
+    if (name) renderStructureMarkers(name);
+  });
+
   console.log('[supplemental-layers] module ready');
 }
 

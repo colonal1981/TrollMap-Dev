@@ -1831,3 +1831,4 @@ window.getResearchedProfile = function getResearchedProfile(lakeName) {
 };
 
 export { initLakeResearch, loadProfile, saveCurrentResearchProfile, populateResearchLakeDropdown };
+window.loadProfile = loadProfile;
