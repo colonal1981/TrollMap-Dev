@@ -91,7 +91,8 @@ function castingTackleBlock(castableNames, targetDepth) {
 - Trolling rods use inline weight systems and cannot be repurposed for casting without full re-rigging.
 - When recommending a swimbait for casting at ~${targetDepth||15}ft, specify a ${jigOz} jighead (cast, count down, slow retrieve or hop).
 - Output a "castRods" array with exactly 2 entries — the 2 pre-rigged stowed rods ready to grab at any casting stop.
-- Each castRod entry: { "rod": 1or2, "lure": "<exact name>", "rigging": "<e.g. direct braid to snap, no weight>", "jigheadWeight": "<oz if swimbait, else null>", "presentation": "<one sentence>" }`;
+- Each castRod entry: { "rod": 1or2, "lure": "<exact name>", "rigging": "<e.g. direct braid to snap, no weight>", "jigheadWeight": "<oz if swimbait, else null>", "presentation": "<one sentence>" }
+- CRITICAL: castRods lures must be DIFFERENT from the lures you assign to band1 and band2 trolling. The angler has ONE of each lure. If a lure is trolling it cannot also be a cast rod. Choose cast rod lures that are NOT in the trolling spread.`;
 
   return `AVAILABLE TACKLE FOR STOP-AND-CAST — use ONLY these exact names for casting:
 ${castableNames.join(', ')}
@@ -981,8 +982,10 @@ ${inventoryNames.join(', ')}
 
 ${castingTackleBlock(castableNames, fishingContext?.stopTargetDepth || 15)}
 
-MAPPED STRUCTURES NEAR YOUR ROUTE:
+MAPPED STRUCTURES NEAR YOUR ROUTE (use these EXACT names for stop_and_cast entries that target these locations):
 ${candidateList}
+
+CRITICAL: When creating a stop_and_cast that targets one of the mapped structures above, use the EXACT name from the list (e.g. "Depth Ledge / Drop-off #1") so the waypoint can be placed on the map. You may add additional LLM-generated stops with creative names for structures not in the list.
 
 Return ONLY valid JSON, no markdown:
 {
