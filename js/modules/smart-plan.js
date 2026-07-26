@@ -111,34 +111,46 @@ export function capPassSpeed(requestedSpeed, lureNames, inventory, fallbackSpeed
 }
 
 // ── Groq lure name sanitizer ──────────────────────────────────────────────────
+// Always returns the CLEAN inventory name (no [...] annotation). The prompt
+// sends annotated names for depth/speed context, but the UI and JSON export
+// must never contain the bracket annotation — it caused the reported bug where
+// timeline port/starboard showed "[6-12ft dive | 1.4-2mph]" etc.
 function sanitizeGroqLureName(raw, targetDepthFt, inventoryNames) {
-  if (!raw) return depthFallbackLure(targetDepthFt, inventoryNames);
+  if (!raw) return stripLureAnnotation(depthFallbackLure(targetDepthFt, inventoryNames));
   const stripped = stripLureAnnotation(raw);
   if (_cachedAnnotatedToClean) {
     const direct = _cachedAnnotatedToClean[String(raw).toLowerCase().trim()];
     if (direct) return direct;
+    const directStripped = _cachedAnnotatedToClean[stripped.toLowerCase().trim()];
+    if (directStripped) return directStripped;
   }
   const r = String(stripped).toLowerCase().trim();
 
-  const exact = inventoryNames.find(n => n.toLowerCase() === r);
-  if (exact) return exact;
+  // Compare against CLEAN names (strip annotation from inventory list)
+  const cleanMap = inventoryNames.map(orig => ({
+    orig,
+    clean: stripLureAnnotation(orig),
+  }));
 
-  const substr = inventoryNames.find(n => {
-    const nl = n.toLowerCase();
+  const exact = cleanMap.find(m => m.clean.toLowerCase() === r);
+  if (exact) return exact.clean;
+
+  const substr = cleanMap.find(m => {
+    const nl = m.clean.toLowerCase();
     return nl.includes(r) || r.includes(nl);
   });
-  if (substr) return substr;
+  if (substr) return substr.clean;
 
   const rWords = r.replace(/[^a-z0-9"]/g, ' ').split(/\s+/).filter(w => w.length > 2);
   let bestName = null, bestScore = 0;
-  for (const name of inventoryNames) {
-    const nl = name.toLowerCase();
+  for (const { clean } of cleanMap) {
+    const nl = clean.toLowerCase();
     const score = rWords.filter(w => nl.includes(w)).length;
-    if (score > bestScore) { bestScore = score; bestName = name; }
+    if (score > bestScore) { bestScore = score; bestName = clean; }
   }
   if (bestScore >= 1) return bestName;
 
-  return depthFallbackLure(targetDepthFt, inventoryNames);
+  return stripLureAnnotation(depthFallbackLure(targetDepthFt, inventoryNames));
 }
 
 function depthFallbackLure(depthFt, inventoryNames) {
@@ -146,11 +158,15 @@ function depthFallbackLure(depthFt, inventoryNames) {
   const findMatch = (...keywords) => {
     return inventoryNames.find(n => keywords.some(k => n.toLowerCase().includes(k)));
   };
-  if (d < 8)  return findMatch('squarebill', 'sr crankbait', 'lipless', 'spinnerbait') || inventoryNames[0];
-  if (d < 14) return findMatch('mr crankbait', 'dd1', 'a-rig light', 'swimbait 3.8') || inventoryNames[0];
-  if (d < 20) return findMatch('dd1', 'dd2', 'a-rig medium', 'swimbait 4.6', 'umbrella') || inventoryNames[0];
-  if (d < 26) return findMatch('dd2', 'dd3', 'a-rig heavy', 'swimbait 5"', 'flutter spoon') || inventoryNames[0];
-  return findMatch('dd3', 'dd4', 'flutter spoon', 'bucktail') || inventoryNames[0];
+  let picked = null;
+  if (d < 8)  picked = findMatch('squarebill', 'sr crankbait', 'lipless', 'spinnerbait');
+  else if (d < 14) picked = findMatch('mr crankbait', 'dd1', 'a-rig light', 'swimbait 3.8');
+  else if (d < 20) picked = findMatch('dd1', 'dd2', 'a-rig medium', 'swimbait 4.6', 'umbrella');
+  else if (d < 26) picked = findMatch('dd2', 'dd3', 'a-rig heavy', 'swimbait 5"', 'flutter spoon');
+  else picked = findMatch('dd3', 'dd4', 'flutter spoon', 'bucktail');
+  picked = picked || inventoryNames[0] || 'DD1 Crankbait (14-18ft)';
+  // Always return CLEAN name
+  return stripLureAnnotation(picked);
 }
 
 // ── Sunrise & Solunar ─────────────────────────────────────────────────────────
@@ -812,7 +828,22 @@ export async function runSmartPlan() {
 Summary: ${String(researchedSummary||'').slice(0,350)}
 ${researchedTrollingSlice ? `Trolling (target species only ${sp}): ${JSON.stringify(researchedTrollingSlice, null, 0).slice(0,900)}` : ''}
 Limnology: archetype=${String(fishingContext.researchedProfile?.archetype||'').slice(0,60)} trophic=${String(fishingContext.researchedProfile?.limnology?.trophicStatus||'')} thermocline=${fishingContext.researchedProfile?.limnology?.thermocline?.summerDepthFt ? `${fishingContext.researchedProfile.limnology.thermocline.summerDepthFt}ft (${fishingContext.researchedProfile.limnology.thermocline.strength||'unknown strength'})` : 'unknown'} anoxicBelow=${fishingContext.researchedProfile?.limnology?.oxygen?.anoxicBelowFt ? `${fishingContext.researchedProfile.limnology.oxygen.anoxicBelowFt}ft` : 'unknown'} clarity=${String(fishingContext.researchedProfile?.limnology?.waterClarity?.typical||'unknown')}${fishingContext.researchedProfile?.limnology?.waterClarity?.secchiFt ? ` secchi=${fishingContext.researchedProfile.limnology.waterClarity.secchiFt}ft` : ''} flow=${String(fishingContext.researchedProfile?.limnology?.flowCharacteristics||'').slice(0,120)||'none'}${fishingContext.researchedProfile?.limnology?.dailyFluctuationFt ? ` dailySwing=${fishingContext.researchedProfile.limnology.dailyFluctuationFt}ft` : ''}
-Habitat key: ${String(fishingContext.researchedProfile?.habitat?.structuralElements ? Object.values(fishingContext.researchedProfile.habitat.structuralElements).join('; ').slice(0,200) : '').slice(0,200)}
+Habitat key: ${(() => {
+  const se = fishingContext.researchedProfile?.habitat?.structuralElements;
+  if (!se) return '';
+  const fmt = (v) => {
+    if (Array.isArray(v)) {
+      if (!v.length) return '';
+      if (v[0] && typeof v[0] === 'object' && 'lat' in v[0] && 'lon' in v[0]) {
+        return v.slice(0,3).map(c => `${Number(c.lat).toFixed(4)}, ${Number(c.lon).toFixed(4)}`).join('; ');
+      }
+      return v.slice(0,4).map(x => typeof x==='string'?x:JSON.stringify(x)).join(', ');
+    }
+    if (typeof v === 'string') return v.slice(0,80);
+    return String(v).slice(0,80);
+  };
+  return Object.entries(se).map(([k,v])=>`${k}: ${fmt(v)}`).join('; ').slice(0,200);
+})()}
 ` : '';
 
   const v2sp = SPECIES_BEHAVIOR_V2?.[sp];

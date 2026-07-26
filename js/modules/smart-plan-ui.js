@@ -113,6 +113,11 @@ export function buildUnifiedTimeline({ routeRods, timeline, stopCandidates, rout
   const cards = buildCards(speedMph, routeSpeeds);
   const cardMap = Object.fromEntries(cards.map(c => [c.key, c]));
 
+  function stripAnnotation(raw) {
+    if (!raw) return raw;
+    return String(raw).replace(/\s*\[.*$/, '').trim();
+  }
+
   function makeTrollEntry(key, overrides = {}) {
     const card = cardMap[key];
     const rods = routeRods?.[key] || [];
@@ -129,8 +134,8 @@ export function buildUnifiedTimeline({ routeRods, timeline, stopCandidates, rout
       stats: card?.stats || { distMi: null, timeMin: null },
       depthMin: overrides.depthMin ?? null,
       depthMax: overrides.depthMax ?? null,
-      port: overrides.port || rods[0]?.lure || '',
-      starboard: overrides.starboard || rods[1]?.lure || '',
+      port: stripAnnotation(overrides.port || rods[0]?.lure || ''),
+      starboard: stripAnnotation(overrides.starboard || rods[1]?.lure || ''),
       portColor: overrides.portColor || rods[0]?.color || '',
       starboardColor: overrides.starboardColor || rods[1]?.color || '',
       portLeadFt: overrides.portLeadFt ?? rods[0]?.lead ?? '',
