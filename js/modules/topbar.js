@@ -107,17 +107,22 @@ function wireButtons() {
     if (e.key === 'Enter') document.getElementById('searchGo')?.click();
   });
 
-  // Jump to coordinates
+  // Jump to coordinates — accepts "34.377, -80.731" or "34.377 -80.731" or DMS
   document.getElementById('coordGo')?.addEventListener('click', () => {
     const raw = document.getElementById('coordInput')?.value?.trim();
     if (!raw || !state.MAP) return;
-    const parts = raw.split(/[\s,]+/);
+    // Split on comma or whitespace, but keep negative signs attached to numbers
+    const parts = raw.split(/[,\s]+/).filter(Boolean);
     if (parts.length >= 2) {
       const lat = parseFloat(parts[0]);
       const lon = parseFloat(parts[1]);
-      if (!isNaN(lat) && !isNaN(lon)) {
+      if (!isNaN(lat) && !isNaN(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
         state.MAP.setView([lat, lon], 16);
         closeModal();
+      } else {
+        const coordEl = document.getElementById('coordInput');
+        if (coordEl) coordEl.style.borderColor = 'var(--bad)';
+        setTimeout(() => { if (coordEl) coordEl.style.borderColor = ''; }, 2000);
       }
     }
   });

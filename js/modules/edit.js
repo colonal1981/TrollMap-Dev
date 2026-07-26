@@ -35,8 +35,8 @@ export function renderEditTables() {
       <td><input type="checkbox" data-sel="${i}"></td>
       <td><input value="${esc(w.name || '')}" data-wn="${i}"></td>
       <td><input value="${esc(w.sym || '')}" data-ws="${i}"></td>
-      <td class="muted">${w.lat.toFixed(5)}</td>
-      <td class="muted">${w.lon.toFixed(5)}</td>
+      <td><input type="number" step="0.00001" value="${w.lat.toFixed(5)}" data-wlat="${i}" style="width:90px"></td>
+      <td><input type="number" step="0.00001" value="${w.lon.toFixed(5)}" data-wlon="${i}" style="width:90px"></td>
     </tr>`;
   });
   html += `</tbody></table>`;
@@ -60,6 +60,14 @@ export function renderEditTables() {
   }));
   host.querySelectorAll('[data-ws]').forEach((el) => el.addEventListener('input', (e) => {
     state.DATA.waypoints[+e.target.dataset.ws].sym = e.target.value;
+  }));
+  host.querySelectorAll('[data-wlat]').forEach((el) => el.addEventListener('change', (e) => {
+    const v = parseFloat(e.target.value);
+    if (!isNaN(v)) { state.DATA.waypoints[+e.target.dataset.wlat].lat = v; renderMap(); }
+  }));
+  host.querySelectorAll('[data-wlon]').forEach((el) => el.addEventListener('change', (e) => {
+    const v = parseFloat(e.target.value);
+    if (!isNaN(v)) { state.DATA.waypoints[+e.target.dataset.wlon].lon = v; renderMap(); }
   }));
   host.querySelectorAll('[data-tn]').forEach((el) => el.addEventListener('input', (e) => {
     state.DATA.tracks[+e.target.dataset.tn].name = e.target.value;
