@@ -8,6 +8,7 @@ async function handleResearchAnalyzeFacts(request, env) {
   const lakeName = String(body.lakeName || "").trim();
   const baseName = String(body.baseName || body.lakeName || "").replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i,'').trim() || lakeName;
   const state = String(body.state||'SC').trim();
+  const coastalTarget = String(body.zoneKey || body.lakeKey || '').toLowerCase().startsWith('coast_');
   const documents = body.documents || [];
   // Optional low-cost Smart Plan recovery mode. Documents still come from the
   // caller's saved R2 normalized corpus; this merely narrows extraction focus.
@@ -109,6 +110,15 @@ async function handleResearchAnalyzeFacts(request, env) {
     const isGrokipedia = /grokipedia\.com/i.test(doc.url || '');
 
     const focusParts = [];
+    if (coastalTarget) focusParts.push(`
+COASTAL / ESTUARY PRIORITY FIELDS — this target is a tidal estuary, inlet, sound, or harbor, NOT a reservoir:
+- Estuary identity: water-body class, named inlet(s), tidal creeks, tributaries, marsh/oyster presence, ICW access, shoals and bottom type
+- Tidal dynamics: tide datum/range, current, salinity, mixing/stratification, flushing/residence time, freshwater runoff effects, turbidity and water temperature
+- Marine biology: red drum/redfish, spotted seatrout/speckled trout, southern flounder, black drum, sheepshead; shrimp, mullet, mud minnows, menhaden, crab and spot/croaker forage
+- Estuarine habitat: Spartina marsh, oyster reef/rake, seagrass/grass flats, creek mouths, dock/pier pilings, channel edges and inlet throats
+- Navigation: marked channels, shoals, bars, jetties, bridges, ramps, tide-dependent hazards
+- Saltwater rules: marine size/bag limits and proclamation closures for red drum, spotted seatrout, and southern flounder.
+Do not look for dams, normal pool, thermoclines, freshwater stockings, brush piles, or reservoir attractors.`);
     if (isGrokipedia) focusParts.push(`
 PRIORITY FIELDS for this Grokipedia reference article — extract ALL of the following if present:
 
@@ -262,7 +272,13 @@ PRIORITY FIELDS — extract any of the following present in this document:
       'lake hartwell': ['Lake Hartwell', 'Hartwell Lake', 'Hartwell Reservoir'],
     };
     const _aliasKey = _baseNameStripped.toLowerCase().replace(/,\s*(sc|nc|ga|tn)(\/[a-z]{2})?\s*$/i, '').trim();
-    const _docAliases = DOCUMENT_ALIASES[_aliasKey] || [];
+    const _freshwaterAliases = DOCUMENT_ALIASES[_aliasKey] || [];
+    // Coastal catalog labels are coverage areas; documents usually use only a
+    // constituent inlet/sound name (for example, "Murrells Inlet").
+    const _coastalAliases = coastalTarget
+      ? _baseNameStripped.split('/').map(a => a.trim()).filter(a => a.length >= 4)
+      : [];
+    const _docAliases = [...new Set([..._freshwaterAliases, ..._coastalAliases])];
     const _aliasClause = _docAliases.length
       ? ` OR any of these known aliases: ${_docAliases.map(a => `"${a}"`).join(', ')}`
       : '';
@@ -291,7 +307,7 @@ ${(doc.text || '').slice(0, 150000)}
 Return ONLY:
 {"extracted_facts": [{"fact": "concise sentence", "page": 1, "confidence": 85, "source": "${doc.title.slice(0,80)}", "quote": "verbatim text", "category": "category_name"}]}
 
-Categories: surfaceArea, maxDepthFt, averageDepthFt, thermocline, oxygen, secchi, trophicStatus, hydraulicRetentionDays, predatorSpecies, primaryForage, stocking, standingStock, speciesAbundance, creelLimit_general, creelLimit_lakeSpecific, sizeLimit_general, sizeLimit_lakeSpecific, closedSeason, poolLevel, drawdownSchedule, habitatCover, structuralElement, ramp, hazard, reservoirOwner, damName, yearImpounded, riverSystem, county, consumptionAdvisory, summary
+Categories: surfaceArea, maxDepthFt, averageDepthFt, thermocline, oxygen, secchi, trophicStatus, hydraulicRetentionDays, predatorSpecies, primaryForage, stocking, standingStock, speciesAbundance, creelLimit_general, creelLimit_lakeSpecific, sizeLimit_general, sizeLimit_lakeSpecific, closedSeason, poolLevel, drawdownSchedule, habitatCover, structuralElement, ramp, hazard, reservoirOwner, damName, yearImpounded, riverSystem, county, consumptionAdvisory, summary, estuaryIdentity, waterBodyType, tidalRange, tideDatum, salinity, tidalCurrent, flushingTime, freshwaterInfluence, marshHabitat, oysterHabitat, seagrassHabitat, creekMouth, channelEdge, navigationMarker, shoal, saltwaterRegulation
 CRITICAL CATEGORY RULES:
 - thermocline: MUST include the actual depth in feet or meters (e.g. 'thermocline at 4-6m', 'epilimnion extends to 20 feet'). Do NOT file vague facts like 'thermocline is present' without a depth.
 - oxygen: MUST include the depth where DO drops below 2 mg/L (e.g. 'DO < 2 mg/L below 5 meters'). Do NOT file vague facts like 'oxygen depletion occurs' without a depth.
@@ -358,6 +374,9 @@ CRITICAL CATEGORY RULES:
         'high rock lake': ['high rock lake', 'high rock reservoir'],
         'blewett falls lake': ['blewett falls lake', 'blewett falls reservoir'],
       })[_qfAliasKey2] || [];
+      if (coastalTarget) {
+        _qfAliases.push(...baseName.split('/').map(a => a.trim().toLowerCase()).filter(a => a.length >= 4));
+      }
       const kept = facts.filter(f => {
         if (generalCats.has(f.category) || /general|creel|size.?limit|regulation/i.test(f.category)) return true;
         const combined = `${f.fact} ${f.quote} ${f.source}`.toLowerCase();

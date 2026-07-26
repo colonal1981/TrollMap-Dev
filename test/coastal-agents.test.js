@@ -195,9 +195,20 @@ describe('coastal discovery queries target marine sources', () => {
     expect(discoverSrc).toMatch(/noaa\.gov/);
   });
 
-  it('bounds regulation-amendment searches by recency', () => {
-    // Amendments only matter if they postdate the printed digest.
-    expect(discoverSrc).toContain('_saltwater_regs_recency');
+  it('bounds regulation-amendment searches by a valid TinyFish recency window', () => {
+    // Amendments only matter if they postdate the printed digest, but TinyFish
+    // rejects values above 5,256,000 minutes.
+    expect(discoverSrc).toContain('_saltwater_regs_recency: [259200, 259200]');
+    const clientsSrc = readFileSync(path.join(REPO, 'Worker/research/clients.js'), 'utf8');
+    expect(clientsSrc).toContain('TINYFISH_MAX_RECENCY_MINUTES = 5_256_000');
+    expect(clientsSrc).toContain('Math.min(Math.floor(requestedRecency), TINYFISH_MAX_RECENCY_MINUTES)');
+  });
+
+  it('uses marine species queries and constituent coastal-place aliases for shared agents', () => {
+    expect(discoverSrc).toContain('COASTAL_SHARED_DISCOVERY_QUERIES');
+    expect(discoverSrc).toMatch(/red drum spotted seatrout southern flounder/);
+    expect(discoverSrc).toContain("queryLake.split('/')");
+    expect(discoverSrc).not.toMatch(/coast_murrells[\s\S]{0,300}bass crappie striped bass/);
   });
 
   it('keeps coastal and freshwater agent sets disjoint', () => {

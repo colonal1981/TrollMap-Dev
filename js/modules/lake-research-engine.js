@@ -1748,7 +1748,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            lakeName, baseName, state: stateName, docIndex: 0,
+            lakeName, baseName, state: stateName, zoneKey: coastalKeyForAgent || undefined, docIndex: 0,
             documents: normalizedDocuments.slice(0, 12).map(d => ({
               title: d.title, url: d.url || '',
               text: (d.fullText || '').slice(0, 150000)

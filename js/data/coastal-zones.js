@@ -51,7 +51,6 @@ export const COASTAL_ZONES = {
     "ramps": {
       "Morse Park Landing": [33.553, -79.047],
       "Garden City Boat Ramp": [33.601, -79.007],
-      "Oyster Landing (Kayak/Sm Boat)": [33.54751, -79.04484],
     },
     "usgsGauges": [],
     "usgsRivers": [],
