@@ -985,6 +985,9 @@ ${castingTackleBlock(castableNames, fishingContext?.stopTargetDepth || 15)}
 MAPPED STRUCTURES NEAR YOUR ROUTE (use these EXACT names for stop_and_cast entries that target these locations):
 ${candidateList}
 
+HAZARD ZONES (do NOT plan stops near these — route around them):
+${hazardZones.length ? hazardZones.map(h => `[${h.lat}, ${h.lon}] — 500ft exclusion zone`).join('\n') : 'None marked'}
+
 CRITICAL: When creating a stop_and_cast that targets one of the mapped structures above, use the EXACT name from the list (e.g. "Depth Ledge / Drop-off #1") so the waypoint can be placed on the map. You may add additional LLM-generated stops with creative names for structures not in the list.
 
 Return ONLY valid JSON, no markdown:
@@ -1355,6 +1358,20 @@ Return ONLY valid JSON, no markdown:
   const stopCandidates = [];
   const addedCoords = [];
 
+  // Build hazard exclusion list from user waypoints with hazard names/symbols
+  const HAZARD_PATTERNS = /hazard|danger|shallow|rock|snag|stump|no.go|avoid|warning/i;
+  const HAZARD_SYMS = ['Hazard', 'Skull and Crossbones', 'Block, Red', 'Pin, Red', 'Danger'];
+  const hazardZones = (state.DATA?.waypoints || [])
+    .filter(w => !w.scoutWaypoint && (
+      HAZARD_PATTERNS.test(w.name || '') ||
+      HAZARD_SYMS.includes(w.sym || '')
+    ))
+    .map(w => ({ lat: w.lat, lon: w.lon }));
+
+  function isNearHazard(lat, lon, radiusFt = 500) {
+    return hazardZones.some(h => distFtGeneric(lat, lon, h.lat, h.lon) < radiusFt);
+  }
+
   const distFt = distFtGeneric;
 
   function nearestRoutePoint(lat, lon) {
@@ -1380,12 +1397,16 @@ Return ONLY valid JSON, no markdown:
   }
 
   function tryAddStop(candidate) {
+    // Skip hazard waypoints and anything named like a hazard
+    if (HAZARD_PATTERNS.test(candidate.name || '') || HAZARD_SYMS.includes(candidate.sym || '')) return;
     if (!candidate.lat || !candidate.lon) {
       const ungrounded = stopCandidates.filter(s => !s.lat);
       if (ungrounded.length >= 2) return;
       stopCandidates.push(candidate);
       return;
     }
+    // Skip candidates within 500ft of a user-marked hazard
+    if (isNearHazard(candidate.lat, candidate.lon)) return;
     if (addedCoords.some(c => distFt(candidate.lat, candidate.lon, c.lat, c.lon) < 300)) return;
     const nearest = nearestRoutePoint(candidate.lat, candidate.lon);
     if (!nearest || nearest.distFt > STOP_RADIUS_FT) return;
