@@ -261,6 +261,23 @@ export function buildContourDataPanel(container) {
       </label>
     </div>
     <div style="border-top:1px solid var(--line);padding-top:10px;margin-top:10px">
+      <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Load raw QDC folder</div>
+      <div style="font-size:10px;color:var(--muted);margin-bottom:6px">Point directly at a Quickdraw C (Community) or U (User) folder — decoded in-browser, no external tool needed</div>
+      <select id="cdQdcLayer" style="width:100%;height:26px;font-size:11px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:5px;margin-bottom:6px">
+        <option value="1" selected>Layer 1 - Recommended</option>
+        <option value="0">Layer 0 - Raw (finest)</option>
+        <option value="2">Layer 2</option>
+        <option value="3">Layer 3</option>
+        <option value="4">Layer 4</option>
+        <option value="5">Layer 5 - Coarsest</option>
+      </select>
+      <label style="display:block;width:100%;cursor:pointer">
+        <div style="width:100%;height:28px;font-size:11px;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:5px;display:flex;align-items:center;justify-content:center;cursor:pointer;box-sizing:border-box">📂 Load QDC folder</div>
+        <input type="file" id="cdQdcFolder" webkitdirectory multiple style="display:none">
+      </label>
+      <div id="cdQdcStatus" style="font-size:10px;color:var(--muted);margin-top:6px"></div>
+    </div>
+    <div style="border-top:1px solid var(--line);padding-top:10px;margin-top:10px">
       <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Cache</div>
       <button id="cdClearCache" style="width:100%;height:28px;font-size:11px;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:5px;cursor:pointer">🗑 Clear contour cache (force re-fetch)</button>
     </div>
@@ -289,6 +306,48 @@ export function buildContourDataPanel(container) {
       notifyChange(); renderContourLayer(true, false);
       updateStatusPanel('loaded', file.name, gj.features.length);
     } catch (err) { alert('Could not parse GeoJSON: ' + err.message); }
+    e.target.value = '';
+  });
+
+  document.getElementById('cdQdcFolder')?.addEventListener('change', async e => {
+    const allFiles = Array.from(e.target.files);
+    const qdcFiles = allFiles.filter(f => f.name.toLowerCase().endsWith('.qdc'));
+    const statusEl = document.getElementById('cdQdcStatus');
+
+    if (!qdcFiles.length) {
+      if (statusEl) statusEl.textContent = 'No .qdc files found in selected folder.';
+      e.target.value = '';
+      return;
+    }
+
+    const layer = parseInt(document.getElementById('cdQdcLayer')?.value) || 1;
+    if (statusEl) statusEl.textContent = `Found ${qdcFiles.length} QDC files. Decoding...`;
+
+    try {
+      const { parseQDCFolder, buildDepthGrid, contourGrid } = await import('./qdc-decoder.js');
+
+      const pts = await parseQDCFolder(qdcFiles, layer, (cur, total, stage) => {
+        if (statusEl) statusEl.textContent = `${stage}: ${cur}/${total}`;
+      });
+      if (statusEl) statusEl.textContent = `Decoded ${pts.length} depth points. Building contours...`;
+
+      const gridGeo = buildDepthGrid(pts, 140, true, true);
+      if (!gridGeo) throw new Error('Grid build failed — check point spread/density.');
+
+      const contourFC = contourGrid(gridGeo, 2, 4, 120);
+      if (!contourFC.features.length) throw new Error('No contour lines generated.');
+
+      const key = `qdc:${qdcFiles.length}files`;
+      state.ACTIVE_CONTOUR = { smart: contourFC, raw: null };
+      state.ACTIVE_CONTOUR_KEY = key;
+      notifyChange(); renderContourLayer(true, false);
+      updateStatusPanel('loaded', key, contourFC.features.length);
+
+      if (statusEl) statusEl.textContent = `Done — ${contourFC.features.length} contour lines from ${pts.length} points.`;
+    } catch (err) {
+      if (statusEl) statusEl.textContent = `Error: ${err.message}`;
+      console.error('[contour-data] QDC decode/contour error', err);
+    }
     e.target.value = '';
   });
 
