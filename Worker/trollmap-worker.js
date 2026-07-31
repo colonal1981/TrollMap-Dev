@@ -624,7 +624,11 @@ async function handleContourGeojsonGet(env, lake) {
   const key = contourGeojsonKey(lake);
   const obj = await env.R2_TROLLMAP_CHARTPACKS.get(key);
   if (!obj) return new Response(JSON.stringify({ error: "no vectorized contours for this lake yet" }), { headers: JSON_HEADERS, status: 404 });
-  return new Response(obj.body, { headers: { ...CORS, "Content-Type": "application/json", "Cache-Control": "no-store" } });
+  const vcHeaders = new Headers(CORS);
+  obj.writeHttpMetadata(vcHeaders);              // carry Content-Encoding (see chartpack route)
+  vcHeaders.set("Content-Type", "application/json");
+  vcHeaders.set("Cache-Control", "no-store");
+  return new Response(obj.body, { headers: vcHeaders });
 }
 async function handleContourGeojsonPut(request, env, lake) {
   const body = await request.arrayBuffer();
@@ -1699,8 +1703,15 @@ var trollmap_worker_default = {
           if (!obj) return new Response('{"error":"not found"}', { headers: JSON_HEADERS, status: 404 });
           let ct = "application/octet-stream";
           if (file.endsWith(".png")) ct = "image/png";
-          else if (file.endsWith(".json")) ct = "application/json";
-          const headers = { ...CORS, "Content-Type": ct, "Cache-Control": "no-store" };
+          else if (file.endsWith(".json") || file.endsWith(".geojson")) ct = "application/json";
+          // writeHttpMetadata carries the stored Content-Encoding through. Without it a
+          // gzipped object is streamed as-is under a plain Content-Type, so the browser
+          // hands raw gzip bytes to r.json() and it throws. The pipeline uploads gzipped
+          // by default (depth_areas 24.2 MB -> 6.2 MB), so this is load-bearing.
+          const headers = new Headers(CORS);
+          obj.writeHttpMetadata(headers);
+          headers.set("Content-Type", ct);
+          headers.set("Cache-Control", "no-store");
           return new Response(obj.body, { headers });
         }
         if (request.method === "POST") {
