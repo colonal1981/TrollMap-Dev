@@ -192,9 +192,8 @@ async function loadDepthAreas(lakeKey) {
       },
       onEachFeature(feat, layer) {
         const p = feat.properties || {};
-        const minFt = p.depth_min_ft ?? '?';
-        const maxFt = p.depth_max_ft ?? '?';
-        layer.bindTooltip(`Depth zone: ${minFt}–${maxFt} ft`, { sticky: true, direction: 'top', opacity: 0.85 });
+        layer.bindTooltip(`Depth zone: ${ftLabel(p.depth_min_ft)}–${ftLabel(p.depth_max_ft)} ft`,
+                          { sticky: true, direction: 'top', opacity: 0.85 });
       },
     });
 
@@ -316,6 +315,64 @@ function poiStyleFor(type) {
   return POI_STYLE[type] || (/^garmin_/.test(type) ? POI_STYLE_UNKNOWN : POI_STYLE.place_name);
 }
 
+// Human wording for the types whose key is not something to show a person. Without this a
+// popup on an unnamed record reads `place_name` or `garmin_3_26` — the internal key, echoed
+// back — because the title falls through to the type when there is no name.
+const POI_LABEL = {
+  place_name:       'Unlabelled point',
+  garmin_3_26:      'Unidentified chart symbol',
+  height_marker:    'Height marker',
+  road_shield:      'Highway marker',
+  submerged_bridge: 'Submerged bridge',
+  flooded_timber:   'Flooded timber',
+  shallow_area:     'Shallow area',
+  hazard_area:      'Hazard area',
+  road_bed:         'Submerged road bed',
+  creek_bed:        'Creek bed',
+  river_bed:        'River bed',
+  slow_no_wake:     'No wake',
+  restricted_area:  'No boats / restricted',
+  mile_marker:      'Marker number',
+  marine_dealer:    'Marine dealer',
+  fuel_dock:        'Fuel dock',
+  boat_club:        'Boat club',
+  water_access:     'Water access',
+  boat_ramp:        'Boat ramp',
+  fish_attractor:   'Fish attractor',
+};
+
+function poiLabel(type) {
+  if (POI_LABEL[type]) return POI_LABEL[type];
+  // garmin_3_26 -> "Unidentified symbol · mode 3/26". The mode is the useful part: it is what
+  // identifies the class on the chart, and what a later decode will be keyed on.
+  const m = /^garmin_(\d+)_(\d+)$/.exec(type);
+  if (m) return `Unidentified symbol · mode ${m[1]}/${m[2]}`;
+  return type.replace(/_/g, ' ');
+}
+
+// Garmin stores depth in DECIMETRES on a nominal 1 ft ladder, so the ft conversion lands just
+// off a whole number: 3 dm = 0.98 ft, 30 dm = 9.84, 34 dm = 11.15. Displaying that raw shows
+// "29.9" and "34.1" where the plotter shows 30 and 34. Rounding recovers Garmin's own value
+// exactly — the ladder really is whole feet, the fraction is only the metric round-trip.
+function ftLabel(v) {
+  return (v == null || !Number.isFinite(v)) ? '?' : String(Math.round(v));
+}
+
+// Decoded but unidentified. Hidden by default: an unnamed symbol whose meaning nobody knows
+// is clutter on a fishing map -- it takes up space and answers no question.
+//
+// It stays in the DATA regardless. The records carry their raw bytes in the archive, so when a
+// class is finally named it can be relabelled without re-reading the card, which is the whole
+// reason unidentified records are emitted at all.
+//
+// Mode 3/26 -- Ryan's purple triangles, 122 on Wateree -- is measured to sit ON DOCKS: median
+// 0.2 m to the nearest mode-1/1 dock polygon, p25 0.0 (i.e. inside one), 106 of 122 within 10 m,
+// against a median 2,301 m to the nearest ramp. It marks about 4% of docks, so it is a property
+// OF a dock rather than the dock itself. Name still unknown; that is B5.
+const HIDDEN_TYPES = new Set(['garmin_3_26']);
+function isUnidentified(t) { return HIDDEN_TYPES.has(t) || /^garmin_\d+_\d+$/.test(t); }
+let _showUnidentified = false;
+
 // Structure classes worth surfacing to Smart Plan and the tap-context panel.
 const STRUCTURE_TYPES = new Set(
   Object.entries(POI_STYLE).filter(([, v]) => v.structure).map(([k]) => k));
@@ -408,14 +465,150 @@ window._removeVisionStructure = async function(featureId) {
   }
 };
 
+// ── Chart text ────────────────────────────────────────────────────────────────
+//
+// Garmin does not draw a place name as a clickable pin, and neither should we. Two behaviours,
+// both driven off the same label pass:
+//
+//   place names   text only, no marker, from LABEL_MIN_ZOOM
+//   structure     marker always, plus text alongside it from STRUCT_TEXT_MIN_ZOOM
+//
+// GARMIN REPEATS A NAME AS LABEL *CANDIDATES*, and this is the thing that makes a naive render
+// look wrong. `Lake Wateree` appears 16 times spread over 21 km and `97` ten times over 39 km --
+// those are not sixteen lakes, they are sixteen places the plotter is allowed to draw the word,
+// so it can put it wherever there is room at the current zoom and pan. Drawing every candidate
+// gives sixteen identical grey pins down the middle of the lake. The declutter below picks one
+// and suppresses the rest, which is what the candidates are for.
+const LABEL_MIN_ZOOM       = 11;
+const STRUCT_TEXT_MIN_ZOOM = 15;
+const LABEL_CLEAR_PX       = 60;   // any two labels
+const SAME_NAME_CLEAR_PX   = 320;  // two labels bearing the SAME name
+const LABEL_MAX_ON_SCREEN  = 220;
+
+let _poiLabelGroup = null;
+let _labelHooked   = false;
+
+function _labelHtml(text, color, size, weight) {
+  // Halo via text-shadow: these sit over satellite imagery and the depth fill, and a plain
+  // white or plain dark label is unreadable over one or the other.
+  return `<span style="font-size:${size}px;font-weight:${weight};color:${color};`
+       + `white-space:nowrap;text-shadow:0 0 3px #000,0 0 3px #000,0 0 5px #000;`
+       + `transform:translate(-50%,-50%);display:inline-block">${esc(text)}</span>`;
+}
+
+function renderPoiLabels() {
+  const map = getMap();
+  if (!map || !_poiGeoJSON) return;
+  if (_poiLabelGroup) { map.removeLayer(_poiLabelGroup); _poiLabelGroup = null; }
+  if (!_poiVisible) return;
+  const z = map.getZoom();
+  if (z < LABEL_MIN_ZOOM) return;
+
+  const group = L.layerGroup();
+  const bounds = map.getBounds().pad(0.15);
+  const placed = [];            // [{pt, name}]
+  const showStruct = z >= STRUCT_TEXT_MIN_ZOOM;
+  let count = 0;
+
+  const far = (pt, name) => {
+    for (const p of placed) {
+      const d = Math.hypot(p.pt.x - pt.x, p.pt.y - pt.y);
+      if (d < LABEL_CLEAR_PX) return false;
+      if (p.name === name && d < SAME_NAME_CLEAR_PX) return false;
+    }
+    return true;
+  };
+
+  for (const f of _poiGeoJSON.features) {
+    if (count >= LABEL_MAX_ON_SCREEN) break;
+    const p = f.properties || {};
+    if (_poiOnWaterOnly && p.on_water === false) continue;
+    const type = p.ramp_subtype || p.poi_type || 'place_name';
+    const isPlace = type === 'place_name';
+    if (!isPlace && !(showStruct && STRUCTURE_TYPES.has(type))) continue;
+    const name = p.name || p.card;
+    if (!name) continue;                       // 68 unnamed place records: nothing to draw
+    if (isPlace && p._labelFor) continue;      // it is a feature's label, drawn by the feature
+    const c = f.geometry?.coordinates;
+    if (!c || !bounds.contains([c[1], c[0]])) continue;
+    const pt = map.latLngToLayerPoint([c[1], c[0]]);
+    if (!far(pt, name)) continue;
+    const style = poiStyleFor(type);
+    const icon = L.divIcon({
+      className: 'poi-lbl',
+      html: isPlace ? _labelHtml(name, '#e8f1f8', z >= 14 ? 13 : 12, 600)
+                    : _labelHtml(name, style.color, 12, 700),
+      iconSize: null,
+    });
+    L.marker([c[1], c[0]], { icon, interactive: false, keyboard: false, zIndexOffset: 400 })
+      .addTo(group);
+    placed.push({ pt, name });
+    count++;
+  }
+  _poiLabelGroup = group.addTo(map);
+}
+
+function hookLabelRedraw() {
+  if (_labelHooked) return;
+  const map = getMap();
+  if (!map) return;
+  map.on('moveend zoomend', renderPoiLabels);
+  _labelHooked = true;
+}
+
+/**
+ * Mark the place-name records that are really LABELS for a classed feature.
+ *
+ * Ryan's `Lakeside Marina` case: one mode-83/0 marina carrying a services card, and three
+ * mode-5/1 records with the identical name sitting 90, 160 and 240 m along the shoreline. The
+ * three are label candidates for the marina, not three marinas. Any place-name record whose
+ * name matches a classed feature within LABEL_FOR_M is flagged and never drawn on its own --
+ * the marina's own symbol and text carry the name.
+ */
+const LABEL_FOR_M = 400;
+function markFeatureLabels(features) {
+  const classed = [];
+  for (const f of features) {
+    const p = f.properties || {};
+    const t = p.ramp_subtype || p.poi_type;
+    if (!t || t === 'place_name') continue;
+    const n = norm(p.name || p.card);
+    if (n) classed.push({ n, c: f.geometry?.coordinates });
+  }
+  let flagged = 0;
+  for (const f of features) {
+    const p = f.properties || {};
+    if ((p.ramp_subtype || p.poi_type) !== 'place_name') continue;
+    const n = norm(p.name);
+    if (!n) continue;
+    const c = f.geometry?.coordinates;
+    if (!c) continue;
+    for (const k of classed) {
+      if (k.n === n && k.c && haversineM(c, k.c) <= LABEL_FOR_M) { p._labelFor = true; flagged++; break; }
+    }
+  }
+  return flagged;
+}
+
+function norm(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function haversineM(a, b) {
+  return Math.hypot((b[0] - a[0]) * Math.cos(a[1] * Math.PI / 180) * 111320,
+                    (b[1] - a[1]) * 110540);
+}
+
 async function loadPOIs(lakeKey) {
   if (!mapReady()) return;
   if (_poiLayer) { getMap().removeLayer(_poiLayer); _poiLayer = null; }
+  if (_poiLabelGroup) { getMap().removeLayer(_poiLabelGroup); _poiLabelGroup = null; }
   try {
     const gj = await loadLayer(lakeKey, 'pois');
     _poiGeoJSON = gj;
+    const nLabelFor = markFeatureLabels(gj.features);
     const group = L.layerGroup();
-    let shown = 0, hidden = 0;
+    let shown = 0, hidden = 0, asText = 0, unknown = 0;
     gj.features.forEach(feat => {
       const coords = feat.geometry?.coordinates;
       if (!coords) return;
@@ -426,8 +619,17 @@ async function loadPOIs(lakeKey) {
       // this map is for, so they are off by default rather than dropped.
       if (_poiOnWaterOnly && p.on_water === false) { hidden++; return; }
       const type  = p.ramp_subtype || p.poi_type || 'place_name';
+      // A place name is TEXT, not a pin. Drawing it as a grey circle you have to click to be
+      // told it says "Lake Wateree" is the thing Garmin conspicuously does not do. These are
+      // handled by renderPoiLabels(); an unnamed one has nothing to draw at all.
+      if (type === 'place_name') { asText++; return; }
+      if (!_showUnidentified && isUnidentified(type)) { unknown++; return; }
       const style = poiStyleFor(type);
-      const name  = p.name || p.card || type;
+      const label = poiLabel(type);
+      // Title is the name when Garmin or ActiveCaptain gave one, and the human class name
+      // otherwise -- never the raw type key.
+      const name  = p.name || p.card || label;
+      const sub   = (p.name || p.card) ? label : (p.mode ? `Garmin mode ${p.mode}` : '');
       const m = L.circleMarker([coords[1], coords[0]], { radius: 5, color: '#ffffff', weight: 1.5, fillColor: style.color, fillOpacity: 0.9 });
       m.bindTooltip(`${style.emoji} ${esc(name)}`, { sticky: true, direction: 'top', opacity: 0.9 });
       // Garmin business cards carry a service list (20 of 25 marinas list a Ramp) and free
@@ -436,15 +638,19 @@ async function loadPOIs(lakeKey) {
         ? `<br><span style="color:#8bc34a;font-size:11px">${esc(p.services.join(' · '))}</span>` : '';
       const lines = Array.isArray(p.card_lines) && p.card_lines.length
         ? `<br><span style="color:#bbb;font-size:11px">${esc(p.card_lines.slice(0, 4).join('<br>'))}</span>`.replace(/&lt;br&gt;/g, '<br>') : '';
-      const src = p.source ? `<br><span style="color:#777;font-size:10px">${esc(p.source)}</span>` : '';
-      m.bindPopup(`<b style="color:${style.color}">${style.emoji} ${esc(name)}</b><br><span style="color:#aaa;font-size:11px">${esc(type.replace(/_/g, ' '))}</span>${svc}${lines}<br><span style="color:#aaa;font-size:10px">${coords[1].toFixed(5)}, ${coords[0].toFixed(5)}</span>${src}`);
+      const src = p.source ? `<br><span style="color:#777;font-size:10px">${esc(p.source)}${p.mode && p.source !== 'ActiveCaptain' ? ' · mode ' + esc(p.mode) : ''}</span>` : '';
+      const subLine = sub ? `<br><span style="color:#aaa;font-size:11px">${esc(sub)}</span>` : '';
+      m.bindPopup(`<b style="color:${style.color}">${style.emoji} ${esc(name)}</b>${subLine}${svc}${lines}<br><span style="color:#aaa;font-size:10px">${coords[1].toFixed(5)}, ${coords[0].toFixed(5)}</span>${src}`);
       m.feature = feat;   // getSupplementalContext reads l.feature.properties
       group.addLayer(m); shown++;
     });
     _poiLayer = group;
     if (_poiVisible) _poiLayer.addTo(getMap());
-    console.log(`[supplemental] pois loaded: ${shown} shown, ${hidden} off-water hidden `
-              + `(window.togglePoiOffWater() to show) for ${lakeKey}`);
+    hookLabelRedraw();
+    renderPoiLabels();
+    console.log(`[supplemental] pois loaded: ${shown} symbols, ${asText} drawn as chart text, `
+              + `${nLabelFor} suppressed as labels for a named feature, `
+              + `${hidden} off-water hidden, ${unknown} unidentified hidden for ${lakeKey}`);
   } catch (e) {
     if (!e.message.includes('404') && !e.message.includes('empty')) {
       console.warn(`[supplemental] pois fetch failed for ${lakeKey}:`, e.message);
@@ -540,6 +746,17 @@ window.toggleGarminChart = async function (visible) {
   return want;
 };
 
+/** Show or hide decoded-but-unnamed Garmin symbol classes (mode 3/26 and friends). */
+window.toggleUnidentified = function (show) {
+  _showUnidentified = show === undefined ? !_showUnidentified : !!show;
+  if (_activeLakeKey && _poiLayer) {
+    getMap()?.removeLayer(_poiLayer);
+    _poiLayer = null;
+    loadPOIs(_activeLakeKey).then(() => { if (_poiVisible) _poiLayer?.addTo(getMap()); });
+  }
+  return _showUnidentified;
+};
+
 /** Show or hide Garmin's land classes (highway shields, stores, parking, height markers). */
 window.togglePoiOffWater = function (showOffWater) {
   _poiOnWaterOnly = showOffWater === undefined ? !_poiOnWaterOnly : !showOffWater;
@@ -552,12 +769,94 @@ window.togglePoiOffWater = function (showOffWater) {
 };
 
 function clearGarminLayers() {
-  for (const [n, lyr] of Object.entries(_garminLayers)) {
+  for (const lyr of Object.values(_garminLayers)) {
     if (lyr) getMap()?.removeLayer(lyr);
-    _updateButtonState('btnGarmin_' + n, false);
   }
   _garminLayers = {};
   _garminVisible = {};
+  _paintGarminButtons();
+}
+
+// ── Structure Intel panel section ─────────────────────────────────────────────
+//
+// Injected into `#customVectorPanel`, which custom-vectors.js builds and appends to
+// `#panel-map` at module load. Injecting rather than editing that file keeps ownership where
+// it belongs: these layers are fetched, cached and styled here, so their controls live here
+// too, and custom-vectors.js needs no knowledge of chartpacks.
+//
+// Every one starts OFF and fetches on first click. That is the difference Ryan asked for
+// against the existing Structure Intel behaviour, which loads eagerly and offers a Hide.
+// Docks alone is 2,839 polygons on Wateree; on a lake with no Garmin pack the fetch 404s and
+// the button simply reports nothing to show.
+const GARMIN_PANEL_ID = 'garminChartSection';
+
+function _garminBtnStyle(on, color) {
+  return `width:100%;padding:5px;border-radius:5px;border:1px solid ${color};`
+       + `background:${on ? color : 'transparent'};color:${on ? '#04121e' : color};`
+       + `font-size:11px;font-weight:700;cursor:pointer;text-align:left;padding-left:8px`;
+}
+
+function _paintGarminButtons() {
+  for (const [name, spec] of Object.entries(GARMIN_LAYERS)) {
+    const b = document.getElementById('btnGarmin_' + name);
+    if (!b) continue;
+    const on = !!_garminVisible[name];
+    const n = _garminLayers[name]?.getLayers?.().length;
+    b.style.cssText = _garminBtnStyle(on, spec.style.color);
+    b.textContent = `${on ? '◉' : '○'} ${spec.label}${on && n ? ` (${n})` : ''}`;
+  }
+}
+
+function injectGarminPanel() {
+  const panel = document.getElementById('customVectorPanel');
+  if (!panel || document.getElementById(GARMIN_PANEL_ID)) return !!panel;
+  const box = document.createElement('div');
+  box.id = GARMIN_PANEL_ID;
+  box.style.cssText = 'border-top:1px solid var(--line);padding-top:8px;margin-bottom:8px';
+  box.innerHTML =
+    `<div style="font-size:10px;color:var(--muted);margin-bottom:5px">`
+  + `\u{1F5FA} GARMIN CHART — click to load</div>`
+  + `<div style="display:flex;flex-direction:column;gap:3px">`
+  + Object.entries(GARMIN_LAYERS).map(([name, spec]) =>
+      `<button id="btnGarmin_${name}" style="${_garminBtnStyle(false, spec.style.color)}">`
+    + `○ ${spec.label}</button>`).join('')
+  + `</div>`
+  + `<button id="btnGarminPoiLand" style="width:100%;margin-top:4px;padding:4px;border-radius:5px;`
+  + `border:1px solid var(--line);background:transparent;color:var(--muted);font-size:10px;`
+  + `cursor:pointer">○ Show Garmin land POIs</button>`
+  + `<button id="btnGarminUnknown" style="width:100%;margin-top:3px;padding:4px;border-radius:5px;`
+  + `border:1px solid var(--line);background:transparent;color:var(--muted);font-size:10px;`
+  + `cursor:pointer" title="Decoded symbols whose meaning is not yet known — mode 3/26 sits on docks">`
+  + `○ Show unidentified symbols</button>`;
+  // Above the layer list so it reads as chart data, not as one of the user's own files.
+  const anchor = panel.querySelector('#vectorLayerList')?.parentElement;
+  if (anchor) panel.insertBefore(box, anchor); else panel.appendChild(box);
+
+  for (const name of Object.keys(GARMIN_LAYERS)) {
+    document.getElementById('btnGarmin_' + name)?.addEventListener('click', async () => {
+      const b = document.getElementById('btnGarmin_' + name);
+      if (!_activeLakeKey) { if (b) b.title = 'Select a lake first'; return; }
+      if (b) b.textContent = '◌ loading…';
+      const on = await window.toggleGarminLayer(name);
+      if (!on && !_garminLayers[name] && b) b.title = 'No Garmin data for this lake';
+      _paintGarminButtons();
+    });
+  }
+  const ub = document.getElementById('btnGarminUnknown');
+  ub?.addEventListener('click', () => {
+    const on = window.toggleUnidentified();
+    ub.textContent = `${on ? '◉' : '○'} ${on ? 'Hide' : 'Show'} unidentified symbols`;
+    ub.style.color = on ? 'var(--accent)' : 'var(--muted)';
+  });
+
+  const lb = document.getElementById('btnGarminPoiLand');
+  lb?.addEventListener('click', () => {
+    const showing = window.togglePoiOffWater();
+    lb.textContent = `${showing ? '◉' : '○'} `
+                   + `${showing ? 'Hide' : 'Show'} Garmin land POIs`;
+    lb.style.color = showing ? 'var(--accent)' : 'var(--muted)';
+  });
+  return true;
 }
 
 async function loadLakeBoundary(displayName) {
@@ -647,6 +946,7 @@ export async function loadSupplementalForLake(displayName) {
 
   if (_fishingLayer)        { getMap()?.removeLayer(_fishingLayer);        _fishingLayer        = null; }
   if (_poiLayer)            { getMap()?.removeLayer(_poiLayer);            _poiLayer            = null; _poiGeoJSON = null; }
+  if (_poiLabelGroup)       { getMap()?.removeLayer(_poiLabelGroup);       _poiLabelGroup       = null; }
   clearGarminLayers();
   if (_visionLayer)         { getMap()?.removeLayer(_visionLayer);         _visionLayer         = null; _visionVisible = false; }
   if (_structureMarkerLayer){ getMap()?.removeLayer(_structureMarkerLayer); _structureMarkerLayer = null; }
@@ -742,6 +1042,7 @@ function wirePOIButton() {
     } else {
       if (_poiLayer) getMap().removeLayer(_poiLayer);
     }
+    renderPoiLabels();   // labels follow the same toggle as the symbols
   });
 }
 
@@ -822,7 +1123,8 @@ export function refreshDepthAreaColors(tideHeightFt) {
     },
     onEachFeature(feat, layer) {
       const p = feat.properties || {};
-      layer.bindTooltip(`Depth zone: ${p.depth_min_ft ?? '?'}–${p.depth_max_ft ?? '?'} ft`, { sticky: true, direction: 'top', opacity: 0.85 });
+      layer.bindTooltip(`Depth zone: ${ftLabel(p.depth_min_ft)}–${ftLabel(p.depth_max_ft)} ft`,
+                        { sticky: true, direction: 'top', opacity: 0.85 });
     },
   });
   if (_depthAreaVisible) _depthAreaLayer.addTo(getMap());
@@ -837,6 +1139,9 @@ function init() {
   if (!btnFishing || !btnPOI) { setTimeout(init, 300); return; }
   wireFishingButton();
   wirePOIButton();
+  // custom-vectors.js builds #customVectorPanel at module load and it logs "armed" before this
+  // module does, so it is normally present already. Retry anyway rather than assume load order.
+  if (!injectGarminPanel()) setTimeout(injectGarminPanel, 800);
 
   // Re-render structure markers when research profile finishes loading
   window.addEventListener('trollmap:profileLoaded', (e) => {

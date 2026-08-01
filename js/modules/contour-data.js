@@ -174,6 +174,22 @@ const _canvasRenderer = L.svg({ padding: 0.5 });
 // Zoom threshold below which contour lines are hidden (depth areas still show)
 const CONTOUR_MIN_ZOOM = 11;
 
+// Garmin stores depth in DECIMETRES on a nominal 1 ft ladder, so converting to feet lands just
+// off a whole number: 3 dm = 0.98 ft, 30 dm = 9.84, 34 dm = 11.15. Two consequences, and the
+// second is the one that is easy to miss:
+//
+//   1. Labels read "29.9" and "34.1" where the plotter reads 30 and 34.
+//   2. The round-interval filter below tests `ft % interval`. With ft = 29.9 and interval = 5
+//      that is 4.9, so the line is skipped -- and since essentially NO Garmin depth is an exact
+//      multiple of 5, zoom levels 12-14 would label almost nothing at all.
+//
+// Rounding recovers Garmin's own value exactly. The ladder really is whole feet; the fraction is
+// only the metric round-trip.
+function ftOf(feat) {
+  const v = feat?.properties?.depth_ft;
+  return (v == null || !Number.isFinite(v)) ? null : Math.round(v);
+}
+
 // ── Inline depth labels on contour lines ──────────────────────────────────────
 // Depth areas own HOVER (sticky tooltip in supplemental-layers.js); contour lines own
 // LABELS. Splitting the two means the fill readout and the line readout never compete
@@ -287,10 +303,10 @@ function renderContourLabels(layers) {
 
     for (const feat of feats) {
       if (count >= LABEL_MAX) break;
-      const ft = feat.properties?.depth_ft;
+      const ft = ftOf(feat);
       if (ft == null) continue;
       // Round intervals only, until the zoom is close enough to carry every line.
-      if (interval > 1 && Math.abs(ft % interval) > 0.001) continue;
+      if (interval > 1 && ft % interval !== 0) continue;
 
       for (const ring of _ringsOf(feat.geometry)) {
         if (count >= LABEL_MAX) break;
@@ -376,14 +392,14 @@ export function renderContourLayer(showSmart = true, showRaw = false) {
       renderer: _canvasRenderer,
       smoothFactor,
       style(feat) {
-        const depth = feat.properties?.depth_ft || 0;
+        const depth = ftOf(feat) ?? 0;
         return { color: depthColor(depth), weight: 1.5, opacity: 0.85, dashArray: dashed ? '4,4' : null };
       },
       onEachFeature(feat, layer) {
         // Depth now reads off the inline labels drawn below, so no gesture is required.
         // The click popup is kept only as a fallback for lines the label pass skipped
         // (a contour off the round interval, or one decluttered away in a busy spot).
-        const d = feat.properties?.depth_ft;
+        const d = ftOf(feat);
         const name = feat.properties?.name;
         const tip = name ? name : (d != null ? `${d} ft` : null);
         if (tip) layer.bindPopup(tip, { closeButton: false, className: 'contour-popup' });
