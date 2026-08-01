@@ -58,6 +58,16 @@ const IDB_STORE   = 'layers';
 const IDB_VERSION = 1;
 const CACHE_TTL   = 24 * 60 * 60 * 1000;
 
+// Bump this whenever the SHAPE of a chartpack changes — new layers, renamed properties, a
+// different source. It is part of every cache key, so bumping it orphans every stale entry at
+// once.
+//
+// Without it, replacing a lake's objects in R2 is invisible for up to 24 hours: loadLayer()
+// returns the IndexedDB copy before it ever fetches, so an upload followed by a reload shows
+// the OLD data and reads as "the upload didn't work". That is the single most likely way a
+// correct chartpack looks broken. v2 = the Garmin RGN2/RGN3/RGN4 pack (2026-08-01).
+const CACHE_SCHEMA = 2;
+
 let _db = null;
 async function openDB() {
   if (_db) return _db;
@@ -96,7 +106,7 @@ async function fetchSupplemental(lakeKey, layer) {
 }
 
 async function loadLayer(lakeKey, layer) {
-  const cacheKey = `${lakeKey}/${layer}`;
+  const cacheKey = `v${CACHE_SCHEMA}/${lakeKey}/${layer}`;
   // Coastal depth_areas bypass IDB — file updates happen frequently during development
   const bypassIdb = lakeKey.startsWith('coast_') && layer === 'depth_areas';
   if (!bypassIdb) {
@@ -125,6 +135,10 @@ let _boundaryGeoJSON  = null;
 let _osmStructureData = null;
 let _structureMarkerLayer = null;
 let _coastalTideHeightFt = null; // set by refreshDepthAreaColors after tide sync
+let _poiGeoJSON       = null;
+let _poiOnWaterOnly   = true;    // Garmin ships land classes too; see loadPOIs
+let _garminLayers     = {};      // name -> L.GeoJSON
+let _garminVisible    = {};      // name -> bool
 
 export function getDepthAreaGeoJSON() { return _depthAreaGeoJSON; }
 export function getLakeBoundaryGeoJSON() { return _boundaryGeoJSON; }
@@ -149,6 +163,18 @@ async function loadDepthAreas(lakeKey) {
       ? gj.features.filter(f => (f.properties?.depth_max_ft ?? 0) > 0)
       : gj.features;
 
+    // STROKE WIDTH HAS TO FOLLOW BAND RESOLUTION.
+    //
+    // The i-Boating packs carried a handful of wide bands, where a 0.5 px outline reads as a
+    // clean edge. The Garmin pack carries 66 one-foot bands and 8,085 polygons over the same
+    // water, so every band is a thin ring nested inside the next — outlining all of them turns
+    // the lake into a grey mesh and buries the contour lines that are supposed to carry the
+    // linework. Above ~20 distinct bands the fill alone is the right rendering.
+    const bandCount = new Set(features.map(f => f.properties?.band
+                                             ?? f.properties?.depth_max_ft)).size;
+    const fineBands = bandCount > 20;
+    const strokeW = fineBands ? 0 : 0.5;
+
     _depthAreaLayer = L.geoJSON({ ...gj, features }, {
       renderer: _canvasRenderer,
       smoothFactor: 1.5,
@@ -161,7 +187,8 @@ async function loadDepthAreas(lakeKey) {
           ? chartedFt + _coastalTideHeightFt
           : chartedFt;
         const color = depthAreaColor(depthFt, isCoastal);
-        return { fillColor: color, fillOpacity: 0.55, color, weight: 0.5, opacity: 0.5 };
+        return { fillColor: color, fillOpacity: 0.55, color, weight: strokeW,
+                 opacity: strokeW ? 0.5 : 0, stroke: strokeW > 0 };
       },
       onEachFeature(feat, layer) {
         const p = feat.properties || {};
@@ -180,7 +207,8 @@ async function loadDepthAreas(lakeKey) {
     globalThis.SUPPLEMENTAL_DEPTH_GEOJSON = gj;
     window.SUPPLEMENTAL_DEPTH_LAYER       = _depthAreaLayer;
     window.SUPPLEMENTAL_DEPTH_GEOJSON     = gj;
-    console.log(`[supplemental] depth_areas loaded: ${features.length} features for ${lakeKey}`);
+    console.log(`[supplemental] depth_areas loaded: ${features.length} features, `
+              + `${bandCount} bands, stroke ${strokeW} for ${lakeKey}`);
     // Apply tide-adjusted colors — check immediately and again after a delay
     // to handle the race between depth area load and tide auto-sync
     if (isCoastal) {
@@ -243,7 +271,54 @@ const POI_STYLE = {
   nav_light:       { emoji: '💡', color: '#FFEB3B' },
   mile_marker:     { emoji: '📍', color: '#9E9E9E' },
   place_name:      { emoji: '📌', color: '#aaaaaa' },
+
+  // ── Garmin RGN4 classes (chartpack schema v2) ──────────────────────────
+  // SUBMERGED STRUCTURE — Garmin's own labels off mode 5/1, and the reason the layer exists.
+  // Colours match VISION_STYLE where the two describe the same thing (flooded timber, bridge)
+  // so an AI-detected dock cluster and a charted one read as the same kind of thing.
+  road_bed:         { emoji: '🛣️', color: '#8d6e63', structure: true },
+  creek_bed:        { emoji: '🏞️', color: '#26a69a', structure: true },
+  river_bed:        { emoji: '🏞️', color: '#00897b', structure: true },
+  submerged_bridge: { emoji: '🌉', color: '#9C27B0', structure: true },
+  flooded_timber:   { emoji: '🪵', color: '#795548', structure: true },
+  shallow_area:     { emoji: '🟨', color: '#ffd54f', structure: true },
+  rock:             { emoji: '🪨', color: '#9e9e9e', structure: true },
+  wreck:            { emoji: '🚢', color: '#546e7a', structure: true },
+  pile:             { emoji: '🧱', color: '#6d4c41', structure: true },
+  obstruction:      { emoji: '⛔', color: '#d84315', structure: true },
+  hazard_area:      { emoji: '⚠️',  color: '#e53935' },
+  dam:              { emoji: '🏗️', color: '#607d8b' },
+  // ── on-water services ──
+  marina:           { emoji: '⚓', color: '#03A9F4' },
+  fuel_dock:        { emoji: '⛽', color: '#43a047' },
+  boat_club:        { emoji: '🏛️', color: '#5c6bc0' },
+  recreation:       { emoji: '🏕️', color: '#7cb342' },
+  campground:       { emoji: '⛺', color: '#8bc34a' },
+  picnic:           { emoji: '🧺', color: '#8bc34a' },
+  // ── land, kept but filtered out by default (see _poiOnWaterOnly) ──
+  store:            { emoji: '🏬', color: '#90a4ae' },
+  marine_dealer:    { emoji: '🛠️', color: '#78909c' },
+  parking:          { emoji: '🅿️', color: '#90a4ae' },
+  height_marker:    { emoji: '📏', color: '#b0bec5' },
+  road_shield:      { emoji: '🛣️', color: '#b0bec5' },
+  // ── decoded geometry, undecoded meaning ──
+  // `garmin_3_26` is the purple triangle Ryan counts about a hundred of on Wateree: one symbol
+  // class, position confirmed, name still unknown. It gets a real symbol rather than the grey
+  // generic pin precisely BECAUSE it is unidentified — a class nobody can see on the map is a
+  // class nobody can identify from the chart.
+  garmin_3_26:      { emoji: '🔺', color: '#ab47bc' },
 };
+// Any `garmin_<mode>` the table has not been taught yet. Falling through to `place_name` would
+// hide a whole undecoded class among the lake names.
+const POI_STYLE_UNKNOWN = { emoji: '❔', color: '#8e8e8e' };
+
+function poiStyleFor(type) {
+  return POI_STYLE[type] || (/^garmin_/.test(type) ? POI_STYLE_UNKNOWN : POI_STYLE.place_name);
+}
+
+// Structure classes worth surfacing to Smart Plan and the tap-context panel.
+const STRUCTURE_TYPES = new Set(
+  Object.entries(POI_STYLE).filter(([, v]) => v.structure).map(([k]) => k));
 
 const VISION_STYLE = {
   DOCK_CLUSTER:    { emoji: '⚓', color: '#03A9F4', label: 'Dock Cluster' },
@@ -338,27 +413,151 @@ async function loadPOIs(lakeKey) {
   if (_poiLayer) { getMap().removeLayer(_poiLayer); _poiLayer = null; }
   try {
     const gj = await loadLayer(lakeKey, 'pois');
+    _poiGeoJSON = gj;
     const group = L.layerGroup();
+    let shown = 0, hidden = 0;
     gj.features.forEach(feat => {
       const coords = feat.geometry?.coordinates;
       if (!coords) return;
       const p     = feat.properties || {};
+      // `on_water === false` is set by the extractor for Garmin's land classes: highway
+      // shields, Lowes and Target, marine dealers, parking, flood-plane height markers.
+      // They are decoded correctly and kept in the file on purpose, but they are not what
+      // this map is for, so they are off by default rather than dropped.
+      if (_poiOnWaterOnly && p.on_water === false) { hidden++; return; }
       const type  = p.ramp_subtype || p.poi_type || 'place_name';
-      const style = POI_STYLE[type] || POI_STYLE.place_name;
-      const name  = p.name || type;
+      const style = poiStyleFor(type);
+      const name  = p.name || p.card || type;
       const m = L.circleMarker([coords[1], coords[0]], { radius: 5, color: '#ffffff', weight: 1.5, fillColor: style.color, fillOpacity: 0.9 });
       m.bindTooltip(`${style.emoji} ${esc(name)}`, { sticky: true, direction: 'top', opacity: 0.9 });
-      m.bindPopup(`<b style="color:${style.color}">${style.emoji} ${esc(name)}</b><br><span style="color:#aaa;font-size:11px">${esc(type.replace(/_/g, ' '))}</span><br><span style="color:#aaa;font-size:10px">${coords[1].toFixed(5)}, ${coords[0].toFixed(5)}</span>`);
-      group.addLayer(m);
+      // Garmin business cards carry a service list (20 of 25 marinas list a Ramp) and free
+      // text. Both are worth showing — they are the reason a marina is identifiable as a ramp.
+      const svc = Array.isArray(p.services) && p.services.length
+        ? `<br><span style="color:#8bc34a;font-size:11px">${esc(p.services.join(' · '))}</span>` : '';
+      const lines = Array.isArray(p.card_lines) && p.card_lines.length
+        ? `<br><span style="color:#bbb;font-size:11px">${esc(p.card_lines.slice(0, 4).join('<br>'))}</span>`.replace(/&lt;br&gt;/g, '<br>') : '';
+      const src = p.source ? `<br><span style="color:#777;font-size:10px">${esc(p.source)}</span>` : '';
+      m.bindPopup(`<b style="color:${style.color}">${style.emoji} ${esc(name)}</b><br><span style="color:#aaa;font-size:11px">${esc(type.replace(/_/g, ' '))}</span>${svc}${lines}<br><span style="color:#aaa;font-size:10px">${coords[1].toFixed(5)}, ${coords[0].toFixed(5)}</span>${src}`);
+      m.feature = feat;   // getSupplementalContext reads l.feature.properties
+      group.addLayer(m); shown++;
     });
     _poiLayer = group;
     if (_poiVisible) _poiLayer.addTo(getMap());
-    console.log(`[supplemental] pois loaded: ${gj.features.length} features for ${lakeKey}`);
+    console.log(`[supplemental] pois loaded: ${shown} shown, ${hidden} off-water hidden `
+              + `(window.togglePoiOffWater() to show) for ${lakeKey}`);
   } catch (e) {
     if (!e.message.includes('404') && !e.message.includes('empty')) {
       console.warn(`[supplemental] pois fetch failed for ${lakeKey}:`, e.message);
     }
   }
+}
+
+// ── Garmin chart vector layers (chartpack schema v2) ──────────────────────────
+//
+// These are new R2 objects and none of them collides with anything already in the bucket:
+// `garmin_shoreline` is deliberately NOT `shoreline`, which is a different source.
+//
+// All four are LAZY. `docks` alone is 2,839 polygons on Wateree and `waterbody` is 2,103, and
+// the module already learned on fishing_points that eagerly loading tens of thousands of
+// features on lake-select destroys pan and zoom. Nothing here loads until it is switched on.
+const GARMIN_LAYERS = {
+  docks: {
+    label: 'Docks & piers',
+    // Garmin mode 1/1: median 48 m2, 97.9% within 15 m of the water edge, one per lot down
+    // every developed cove. These are Ryan's "actual docks", not the purple triangles.
+    style: { color: '#ffb74d', weight: 1, opacity: 0.9, fillColor: '#ffb74d', fillOpacity: 0.45 },
+    tip:   () => '🛥 Dock / pier',
+  },
+  waterbody: {
+    label: 'Charted water body',
+    style: { color: '#4dd0e1', weight: 0.8, opacity: 0.55, fillColor: '#4dd0e1', fillOpacity: 0.05 },
+    tip:   p => p.named ? `Charted water body (lake id ${p.lake_id})` : 'Charted water body',
+  },
+  hydrography: {
+    label: 'Streams',
+    style: { color: '#4fc3f7', weight: 1, opacity: 0.7 },
+    tip:   p => p.name ? `〰 ${p.name}` : '〰 Stream',
+  },
+  garmin_shoreline: {
+    label: 'Charted shoreline',
+    style: { color: '#ffffff', weight: 1, opacity: 0.65 },
+    tip:   () => 'Charted shoreline',
+  },
+};
+
+async function loadGarminLayer(lakeKey, name) {
+  if (!mapReady() || _garminLayers[name]) return _garminLayers[name] || null;
+  const spec = GARMIN_LAYERS[name];
+  if (!spec) return null;
+  try {
+    const gj = await loadLayer(lakeKey, name);
+    const lyr = L.geoJSON(gj, {
+      renderer: _canvasRenderer,
+      smoothFactor: 1.2,
+      style: () => spec.style,
+      onEachFeature(feat, layer) {
+        layer.bindTooltip(spec.tip(feat.properties || {}),
+                          { sticky: true, direction: 'top', opacity: 0.85 });
+      },
+    });
+    _garminLayers[name] = lyr;
+    console.log(`[supplemental] ${name} loaded: ${gj.features.length} features for ${lakeKey}`);
+    return lyr;
+  } catch (e) {
+    // A lake with no Garmin pack 404s here. That is the normal case for most lakes right now
+    // and must stay silent, or every lake select logs four warnings.
+    if (!/404|empty/.test(e.message || '')) {
+      console.warn(`[supplemental] ${name} fetch failed for ${lakeKey}:`, e.message);
+    }
+    return null;
+  }
+}
+
+/** Toggle one Garmin vector layer. Callable from the console today; wire a button later. */
+window.toggleGarminLayer = async function (name, visible) {
+  if (!_activeLakeKey || !GARMIN_LAYERS[name]) return false;
+  const want = visible === undefined ? !_garminVisible[name] : !!visible;
+  _garminVisible[name] = want;
+  if (want) {
+    const lyr = _garminLayers[name] || await loadGarminLayer(_activeLakeKey, name);
+    if (!lyr) { _garminVisible[name] = false; return false; }
+    lyr.addTo(getMap());
+    // Order matters: depth shading is the bottom fill, these sit above it, contours and their
+    // labels stay on top. Without this, docks vanish under the depth polygons.
+    _depthAreaLayer?.bringToBack();
+  } else if (_garminLayers[name]) {
+    getMap()?.removeLayer(_garminLayers[name]);
+  }
+  _updateButtonState('btnGarmin_' + name, want);
+  return want;
+};
+
+/** Turn the whole Garmin chart overlay on or off in one call. */
+window.toggleGarminChart = async function (visible) {
+  const names = Object.keys(GARMIN_LAYERS);
+  const want = visible === undefined ? !names.some(n => _garminVisible[n]) : !!visible;
+  for (const n of names) await window.toggleGarminLayer(n, want);
+  return want;
+};
+
+/** Show or hide Garmin's land classes (highway shields, stores, parking, height markers). */
+window.togglePoiOffWater = function (showOffWater) {
+  _poiOnWaterOnly = showOffWater === undefined ? !_poiOnWaterOnly : !showOffWater;
+  if (_activeLakeKey && _poiLayer) {
+    getMap()?.removeLayer(_poiLayer);
+    _poiLayer = null;
+    loadPOIs(_activeLakeKey).then(() => { if (_poiVisible) _poiLayer?.addTo(getMap()); });
+  }
+  return !_poiOnWaterOnly;
+};
+
+function clearGarminLayers() {
+  for (const [n, lyr] of Object.entries(_garminLayers)) {
+    if (lyr) getMap()?.removeLayer(lyr);
+    _updateButtonState('btnGarmin_' + n, false);
+  }
+  _garminLayers = {};
+  _garminVisible = {};
 }
 
 async function loadLakeBoundary(displayName) {
@@ -447,7 +646,8 @@ export async function loadSupplementalForLake(displayName) {
   window.dispatchEvent(new CustomEvent('trollmap:lakeChanged'));
 
   if (_fishingLayer)        { getMap()?.removeLayer(_fishingLayer);        _fishingLayer        = null; }
-  if (_poiLayer)            { getMap()?.removeLayer(_poiLayer);            _poiLayer            = null; }
+  if (_poiLayer)            { getMap()?.removeLayer(_poiLayer);            _poiLayer            = null; _poiGeoJSON = null; }
+  clearGarminLayers();
   if (_visionLayer)         { getMap()?.removeLayer(_visionLayer);         _visionLayer         = null; _visionVisible = false; }
   if (_structureMarkerLayer){ getMap()?.removeLayer(_structureMarkerLayer); _structureMarkerLayer = null; }
 
@@ -547,18 +747,25 @@ function wirePOIButton() {
 
 export function getSupplementalContext(lat, lon, radiusMi = 0.5) {
   // distMi now from utils/geo.js (canonical)
-  const results = { attractors: [], fishingPoints: [], pois: [] };
+  const results = { attractors: [], fishingPoints: [], pois: [], structures: [] };
   if (!_activeLakeKey) return results;
-  if (_poiLayer) {
-    _poiLayer.eachLayer(l => {
-      const ll = l.getLatLng?.();
-      if (!ll) return;
-      if (distMi(lat, lon, ll.lat, ll.lng) <= radiusMi) {
-        const p = l.feature?.properties || {};
-        if (p.poi_type === 'fish_attractor') results.attractors.push(p);
-        else results.pois.push(p);
-      }
-    });
+  // Read from the GeoJSON, not the rendered layer.
+  //
+  // The old form walked `_poiLayer`, which meant Smart Plan saw nothing at all unless the user
+  // had toggled the POI button on, and saw nothing off-water even then. The data is in memory
+  // either way once the layer has been fetched.
+  const src = _poiGeoJSON?.features
+    ? _poiGeoJSON.features.map(f => ({ p: f.properties || {}, c: f.geometry?.coordinates }))
+    : [];
+  for (const { p, c } of src) {
+    if (!c || distMi(lat, lon, c[1], c[0]) > radiusMi) continue;
+    const t = p.ramp_subtype || p.poi_type;
+    if (t === 'fish_attractor') results.attractors.push(p);
+    // Garmin's own submerged-structure labels -- road beds, creek beds, submerged bridges,
+    // flooded timber, shallow areas. These are the highest-value thing in the pack for a
+    // fishing plan and they were previously invisible to it.
+    else if (STRUCTURE_TYPES.has(t)) results.structures.push({ ...p, lat: c[1], lon: c[0] });
+    else if (p.on_water !== false) results.pois.push(p);
   }
   if (_fishingLayer) {
     _fishingLayer.eachLayer(l => {
