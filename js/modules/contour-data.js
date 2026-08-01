@@ -185,7 +185,8 @@ const CONTOUR_MIN_ZOOM = 11;
 // gets several and a short one gets one.
 const CONTOUR_LABEL_MIN_ZOOM = 12;
 const LABEL_MAX = 400;          // hard ceiling per render; Wateree has ~12k features
-const LABEL_CLEAR_PX = 44;      // a label is skipped if one already sits this close
+// Declutter spacing scales with the font: bigger numbers need more room or they collide.
+const LABEL_CLEAR_PX = 56;      // a label is skipped if one already sits this close
 
 // z -> label every N ft. 1 = every contour we have.
 function labelIntervalFt(z) {
@@ -200,7 +201,11 @@ function labelSpacingPx(z) {
   if (z >= 14) return 190;
   return 240;
 }
-function labelFontPx(z) { return z >= 15 ? 12 : 11; }
+// Chart labels are read at arm's length on a boat, often in sunlight, so these are
+// deliberately larger than a typical web map's. Bump CONTOUR_LABEL_SCALE if they are still
+// too small -- everything downstream (declutter spacing, halo) scales off the font size.
+const CONTOUR_LABEL_SCALE = 1.0;
+function labelFontPx(z) { return Math.round((z >= 15 ? 17 : 15) * CONTOUR_LABEL_SCALE); }
 
 let _labelLayer = null;
 let _labelCssDone = false;
@@ -220,9 +225,11 @@ function ensureLabelCss() {
     display: inline-block;
     position: absolute;
     left: 0; top: 0;
-    font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    color: #10333f;
-    text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 2px #fff, 0 0 2px #fff;
+    font: 700 15px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #0d2b35;
+    /* A heavier halo than a web map would use: the numbers sit directly on the contour line
+       and over the depth-area fill, and a thin halo disappears against the mid-tone bands. */
+    text-shadow: 0 0 4px #fff, 0 0 4px #fff, 0 0 3px #fff, 0 0 3px #fff, 0 0 2px #fff;
     white-space: nowrap;
     pointer-events: none;
     user-select: none;
