@@ -174,6 +174,177 @@ const _canvasRenderer = L.svg({ padding: 0.5 });
 // Zoom threshold below which contour lines are hidden (depth areas still show)
 const CONTOUR_MIN_ZOOM = 11;
 
+// ── Inline depth labels on contour lines ──────────────────────────────────────
+// Depth areas own HOVER (sticky tooltip in supplemental-layers.js); contour lines own
+// LABELS. Splitting the two means the fill readout and the line readout never compete
+// for the same gesture, and neither needs a click.
+//
+// Density scales with zoom the way a paper chart does: zoomed out, only the round
+// intervals are labelled so the chart stays legible; zoomed in, every contour gets
+// numbers. Labels are placed along each line at a pixel interval, so a long contour
+// gets several and a short one gets one.
+const CONTOUR_LABEL_MIN_ZOOM = 12;
+const LABEL_MAX = 400;          // hard ceiling per render; Wateree has ~12k features
+const LABEL_CLEAR_PX = 44;      // a label is skipped if one already sits this close
+
+// z -> label every N ft. 1 = every contour we have.
+function labelIntervalFt(z) {
+  if (z >= 16) return 1;
+  if (z >= 15) return 2;
+  if (z >= 14) return 5;
+  return 10;
+}
+// z -> distance along the line between successive labels, in screen pixels
+function labelSpacingPx(z) {
+  if (z >= 16) return 150;
+  if (z >= 14) return 190;
+  return 240;
+}
+function labelFontPx(z) { return z >= 15 ? 12 : 11; }
+
+let _labelLayer = null;
+let _labelCssDone = false;
+
+function ensureLabelCss() {
+  if (_labelCssDone) return;
+  _labelCssDone = true;
+  const s = document.createElement('style');
+  // No background, no border: just the number with a white halo, which is how a chart
+  // draws it and what keeps it readable over both the fill colours and the line itself.
+  s.textContent = `
+  /* iconSize is null so Leaflet sets no anchor and the div's top-left lands on the
+     point. translate(-50%,-50%) on the span re-centres it on the line regardless of
+     how wide the number is, which matters because "8" and "48" differ in width. */
+  .contour-lbl { background: none !important; border: none !important; width: 0; height: 0; }
+  .contour-lbl span {
+    display: inline-block;
+    position: absolute;
+    left: 0; top: 0;
+    font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #10333f;
+    text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 2px #fff, 0 0 2px #fff;
+    white-space: nowrap;
+    pointer-events: none;
+    user-select: none;
+  }`;
+  document.head.appendChild(s);
+}
+
+function _ringsOf(geom) {
+  if (!geom) return [];
+  if (geom.type === 'LineString') return [geom.coordinates];
+  if (geom.type === 'MultiLineString') return geom.coordinates;
+  if (geom.type === 'Polygon') return geom.coordinates;
+  if (geom.type === 'MultiPolygon') return geom.coordinates.flat();
+  return [];
+}
+
+/**
+ * Place depth numbers along the contour lines currently in view.
+ *
+ * Everything here is viewport-culled and capped. Wateree alone is ~12k contour
+ * features; placing a marker per feature would stall the map, so labels are only
+ * generated for lines whose points fall inside the padded viewport, spaced along the
+ * line in pixel space, and dropped when they would collide with one already placed.
+ */
+function renderContourLabels(layers) {
+  if (!state.MAP_OK || !state.MAP) return;
+  ensureLabelCss();
+  if (_labelLayer) { state.MAP.removeLayer(_labelLayer); _labelLayer = null; }
+
+  const map = state.MAP;
+  const zoom = map.getZoom();
+  if (zoom < CONTOUR_LABEL_MIN_ZOOM) return;
+
+  const interval = labelIntervalFt(zoom);
+  const spacing  = labelSpacingPx(zoom);
+  const font     = labelFontPx(zoom);
+  const bounds   = map.getBounds().pad(0.15);
+
+  const placed = [];                    // screen points of labels already drawn
+  const group  = L.layerGroup();
+  let count = 0;
+
+  const farEnough = (p) => {
+    for (let i = 0; i < placed.length; i++) {
+      const q = placed[i];
+      if (Math.abs(q.x - p.x) < LABEL_CLEAR_PX && Math.abs(q.y - p.y) < LABEL_CLEAR_PX) return false;
+    }
+    return true;
+  };
+
+  for (const { gj, dashed } of layers) {
+    if (dashed) continue;                            // never label the raw overlay
+    const feats = gj?.features;
+    if (!feats?.length) continue;
+
+    for (const feat of feats) {
+      if (count >= LABEL_MAX) break;
+      const ft = feat.properties?.depth_ft;
+      if (ft == null) continue;
+      // Round intervals only, until the zoom is close enough to carry every line.
+      if (interval > 1 && Math.abs(ft % interval) > 0.001) continue;
+
+      for (const ring of _ringsOf(feat.geometry)) {
+        if (count >= LABEL_MAX) break;
+        if (!ring || ring.length < 2) continue;
+
+        // Project once per ring, culling by the padded viewport as we go.
+        let pts = null;
+        for (let i = 0; i < ring.length; i++) {
+          const c = ring[i];
+          if (bounds.contains([c[1], c[0]])) { pts = ring; break; }
+        }
+        if (!pts) continue;
+
+        const scr = new Array(pts.length);
+        for (let i = 0; i < pts.length; i++) {
+          scr[i] = map.latLngToLayerPoint([pts[i][1], pts[i][0]]);
+        }
+
+        let acc = spacing * 0.5;                      // first label part-way in
+        for (let i = 1; i < scr.length && count < LABEL_MAX; i++) {
+          const a = scr[i - 1], b = scr[i];
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const seg = Math.hypot(dx, dy);
+          if (seg < 1e-6) continue;
+          acc += seg;
+          if (acc < spacing) continue;
+          acc = 0;
+
+          const mid = L.point((a.x + b.x) / 2, (a.y + b.y) / 2);
+          if (!farEnough(mid)) continue;
+          const ll = map.layerPointToLatLng(mid);
+          if (!bounds.contains(ll)) continue;
+
+          // Align the number to the line, but never let it read upside down.
+          let deg = Math.atan2(dy, dx) * 180 / Math.PI;
+          if (deg > 90) deg -= 180;
+          if (deg < -90) deg += 180;
+
+          const icon = L.divIcon({
+            className: 'contour-lbl',
+            html: `<span style="font-size:${font}px;transform:translate(-50%,-50%) rotate(${deg.toFixed(1)}deg)">${ft}</span>`,
+            iconSize: null,
+          });
+          // interactive:false so a label can never swallow the depth-area hover beneath it
+          L.marker(ll, { icon, interactive: false, keyboard: false, zIndexOffset: 500 })
+            .addTo(group);
+          placed.push(mid);
+          count++;
+        }
+      }
+    }
+  }
+
+  if (count) { _labelLayer = group; group.addTo(map); }
+}
+
+export function clearContourLabels() {
+  if (_labelLayer && state.MAP) { state.MAP.removeLayer(_labelLayer); }
+  _labelLayer = null;
+}
+
 export function renderContourLayer(showSmart = true, showRaw = false) {
   if (!state.MAP_OK) return;
   if (state.CONTOUR_LAYER) state.MAP.removeLayer(state.CONTOUR_LAYER);
@@ -184,7 +355,7 @@ export function renderContourLayer(showSmart = true, showRaw = false) {
 
   // Below CONTOUR_MIN_ZOOM, hide contour lines — depth area polygons carry the visual at low zoom
   const zoom = state.MAP.getZoom();
-  if (zoom < CONTOUR_MIN_ZOOM) return;
+  if (zoom < CONTOUR_MIN_ZOOM) { clearContourLabels(); return; }
 
   const smoothFactor = zoom >= 14 ? 0.5 : zoom >= 12 ? 1.0 : 1.5;
 
@@ -202,7 +373,9 @@ export function renderContourLayer(showSmart = true, showRaw = false) {
         return { color: depthColor(depth), weight: 1.5, opacity: 0.85, dashArray: dashed ? '4,4' : null };
       },
       onEachFeature(feat, layer) {
-        // Use click popup instead of sticky tooltip — sticky tooltips on canvas are expensive
+        // Depth now reads off the inline labels drawn below, so no gesture is required.
+        // The click popup is kept only as a fallback for lines the label pass skipped
+        // (a contour off the round interval, or one decluttered away in a busy spot).
         const d = feat.properties?.depth_ft;
         const name = feat.properties?.name;
         const tip = name ? name : (d != null ? `${d} ft` : null);
@@ -210,6 +383,8 @@ export function renderContourLayer(showSmart = true, showRaw = false) {
       },
     }).addTo(state.CONTOUR_LAYER);
   }
+
+  renderContourLabels(layers);
 
   // Depth areas stay beneath contours — do NOT call bringDepthAreasToBack() here.
 }
@@ -220,6 +395,20 @@ function _wireZoomHandler() {
   state.MAP.on('zoomend', () => {
     const showLayer = document.getElementById('cdShowContourLayer')?.checked !== false;
     if (showLayer && state.ACTIVE_CONTOUR) renderContourLayer(true, false);
+  });
+  // Labels are viewport-culled, so a pan leaves the newly exposed water unlabelled and
+  // keeps stale labels off-screen. Re-place them on pan — but only the labels, not the
+  // contour geometry, which is the expensive part and does not change when panning.
+  let panTimer = null;
+  state.MAP.on('moveend', () => {
+    if (state.MAP.getZoom() < CONTOUR_LABEL_MIN_ZOOM) return;
+    const showLayer = document.getElementById('cdShowContourLayer')?.checked !== false;
+    const contour = state.ACTIVE_CONTOUR;
+    if (!showLayer || !contour?.smart) return;
+    clearTimeout(panTimer);
+    panTimer = setTimeout(() => {
+      renderContourLabels([{ gj: contour.smart, dashed: false }]);
+    }, 120);
   });
 }
 _wireZoomHandler();
@@ -287,12 +476,17 @@ export function buildContourDataPanel(container) {
     state.ACTIVE_CONTOUR = null; state.ACTIVE_CONTOUR_KEY = null;
     if (state.CONTOUR_LAYER) state.MAP?.removeLayer(state.CONTOUR_LAYER);
     state.CONTOUR_LAYER = null;
+    clearContourLabels();          // labels live in their own layer group
     notifyChange(); updateStatusPanel('idle');
   });
 
   document.getElementById('cdShowContourLayer')?.addEventListener('change', e => {
     if (e.target.checked) { renderContourLayer(true, false); window.toggleDepthAreas?.(true); }
-    else if (state.CONTOUR_LAYER) { state.MAP?.removeLayer(state.CONTOUR_LAYER); window.toggleDepthAreas?.(false); }
+    else if (state.CONTOUR_LAYER) {
+      state.MAP?.removeLayer(state.CONTOUR_LAYER);
+      clearContourLabels();        // otherwise the numbers hang in mid-air with no lines
+      window.toggleDepthAreas?.(false);
+    }
   });
 
   document.getElementById('cdLocalFile')?.addEventListener('change', async e => {
