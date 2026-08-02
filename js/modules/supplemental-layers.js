@@ -285,7 +285,10 @@ async function loadFishingSpots(lakeKey) {
 }
 
 const POI_STYLE = {
-  fish_attractor:  { emoji: '🎯', color: '#00e5ff' },
+  fish_attractor:      { emoji: '🎯', color: '#00e5ff' },
+  // Garmin's charted marker buoy. Distinct symbol from the DNR attractor record
+  // it sits above -- one is a float you can see, the other is brush on the bottom.
+  fish_attractor_buoy: { emoji: '🎯', color: '#00e5ff' },
   boat_ramp:       { emoji: '⛵', color: '#4fc3f7' },
   trailer_ramp:    { emoji: '⛵', color: '#4fc3f7' },
   generic_ramp:    { emoji: '⛵', color: '#4fc3f7' },
@@ -367,7 +370,8 @@ const POI_LABEL = {
   boat_club:        'Boat club',
   water_access:     'Water access',
   boat_ramp:        'Boat ramp',
-  fish_attractor:   'Fish attractor',
+  fish_attractor:      'Fish attractor',
+  fish_attractor_buoy: 'Fish attractor buoy',
 };
 
 function poiLabel(type) {
@@ -514,9 +518,12 @@ const STRUCT_TEXT_MIN_ZOOM = 15;   // submerged structure, only when you are wor
 
 // Named places you go TO. These keep their symbol AND get their name written beside it: on a
 // fishing map "which ramp is that" is a question you answer by looking, not by hovering.
+// NOT fish_attractor_buoy. A facility is somewhere you navigate TO by name -- a ramp, a
+// marina, a dam. A marker buoy is a symbol; writing "Fish Attractor Buoy, Spar/Spindle Buoy"
+// beside it is noise, and because facility names are drawn as chart FURNITURE it appeared
+// even with the attractor layer switched off. That was Ryan's report on 2026-08-02.
 const FACILITY_TYPES = new Set(['boat_ramp', 'water_access', 'marina', 'fuel_dock', 'trailer_ramp',
-                                'generic_ramp', 'boat_club', 'campground', 'recreation', 'dam',
-                                'fish_attractor']);
+                                'generic_ramp', 'boat_club', 'campground', 'recreation', 'dam']);
 const LABEL_CLEAR_PX       = 60;   // any two labels
 const SAME_NAME_CLEAR_PX   = 320;  // two labels bearing the SAME name
 const LABEL_MAX_ON_SCREEN  = 220;
@@ -1318,7 +1325,9 @@ export function getSupplementalContext(lat, lon, radiusMi = 0.5) {
   for (const { p, c } of src) {
     if (!c || distMi(lat, lon, c[1], c[0]) > radiusMi) continue;
     const t = p.ramp_subtype || p.poi_type;
-    if (t === 'fish_attractor') results.attractors.push(p);
+    // Both names accepted: packs already in R2 carry the old `fish_attractor`, and re-uploading
+    // every lake is not a prerequisite for the app being correct.
+    if (t === 'fish_attractor' || t === 'fish_attractor_buoy') results.attractors.push(p);
     // Garmin's own submerged-structure labels -- road beds, creek beds, submerged bridges,
     // flooded timber, shallow areas. These are the highest-value thing in the pack for a
     // fishing plan and they were previously invisible to it.
