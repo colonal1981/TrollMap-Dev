@@ -28,6 +28,13 @@ const TYPE_LABELS = {
   road_runner:          'Road Runner / Beetle Spin',
   topwater_troll:       'Topwater (Troll)',
   topwater_cast:        'Topwater (Cast)',
+  underspin:            'Underspin Jig',
+  spoon_casting:        'Casting / Jigging Spoon',
+  vertical_jig:         'Vertical / Knife Jig',
+  inline_spinner:       'Inline Spinner',
+  jig_football:         'Football Jig',
+  jig_finesse_ned:      'Ned / Finesse Jig',
+  popping_cork:         'Popping Cork Rig',
   cast_only:            'Cast Only',
 };
 

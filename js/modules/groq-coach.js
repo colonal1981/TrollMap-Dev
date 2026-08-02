@@ -528,6 +528,41 @@ function renderSuggestionCard(container, s) {
 }
 
 // ── Apply suggestion to plan ──────────────────────────────────────────────────
+/**
+ * Resolve a coach-chosen structure to a real position.
+ *
+ * The model selects by `structure_id` from the charted-structure inventory it was given; the
+ * coordinates come from OUR table, never from the model. Asked for a lat/lon directly, a
+ * language model will produce a plausible-looking one, and a casting stop invented 200 m inland
+ * is worse than no stop at all -- on the map it is indistinguishable from a real one.
+ *
+ * Returns null when the id is unknown, which is treated as "no position" rather than falling
+ * back to whatever the model echoed.
+ */
+function resolveStructureId(id) {
+  if (!id) return null;
+  const idx = _coachPayload?.chartedStructureIndex
+           || _coachPayload?.payload?.chartedStructureIndex
+           || window._smartPlanFishingContext?.chartedStructureIndex;
+  const hit = idx?.[id];
+  if (!hit || !Number.isFinite(hit.lat) || !Number.isFinite(hit.lon)) {
+    console.warn(`[coach] structure_id "${id}" not in the charted inventory — stop not placed`);
+    return null;
+  }
+  return hit;
+}
+
+/** A human name for a resolved structure, so the waypoint reads like a place and not an id. */
+function structureLabel(hit, fallback) {
+  if (!hit) return fallback || 'Structure';
+  if (hit.count) {
+    return hit.run_m > 600
+      ? `Dockline · ${hit.count} docks, ${hit.run_m} m ${hit.bearing}`
+      : `Dock pocket · ${hit.count} docks`;
+  }
+  return hit.name || fallback || 'Charted structure';
+}
+
 function applyCoachSuggestion(s) {
   const { field, phase, rod, recommended_value } = s;
 
@@ -577,6 +612,15 @@ function applyCoachSuggestion(s) {
       const stopMins = stopData?.stopMinutes || 10;
       const targetSp = stopData?.targetSpecies || 'fish';
       const lures = Array.isArray(stopData?.suggestedLures) ? stopData.suggestedLures.join(', ') : '';
+
+      // If the coach picked a charted structure, take the position from our own inventory.
+      // A model-supplied lat/lon is only used when there is no structure_id at all, which is
+      // the pre-existing behaviour for free-text suggestions.
+      const picked = resolveStructureId(stopData?.structure_id || s.structure_id);
+      if (picked) {
+        stopData = { ...stopData, lat: picked.lat, lon: picked.lon,
+                     location: stopData?.location || structureLabel(picked) };
+      }
 
       // Add as a waypoint with casting stop info
       if (!state.DATA) state.DATA = {};

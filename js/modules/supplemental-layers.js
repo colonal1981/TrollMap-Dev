@@ -137,8 +137,36 @@ let _structureMarkerLayer = null;
 let _coastalTideHeightFt = null; // set by refreshDepthAreaColors after tide sync
 let _poiGeoJSON       = null;
 let _poiOnWaterOnly   = true;    // Garmin ships land classes too; see loadPOIs
-let _garminLayers     = {};      // name -> L.GeoJSON
+let _garminLayers     = {};      // name -> L.GeoJSON  (rendered)
 let _garminVisible    = {};      // name -> bool
+let _garminData       = {};      // name -> GeoJSON    (fetched, may not be rendered)
+
+// FETCHING AND RENDERING ARE SEPARATE, AND THEY HAVE OPPOSITE COSTS.
+//
+// Rendering is the expensive half: 2,839 dock polygons on the canvas is what hurts pan and
+// zoom, which is why the Garmin layers only draw when their button is clicked. Fetching is
+// cheap -- docks is 126 KB gzipped and POIs are 10 KB -- and it is what Smart Plan, the tap
+// context panel and notifications actually read.
+//
+// Tying the two together meant `getSupplementalContext()` returned nothing at all unless the
+// user had happened to toggle the layer on BEFORE running a plan. A planner silently missing
+// every dock and every piece of charted structure, depending on which buttons were clicked in
+// which order, is the kind of bug that never announces itself.
+//
+// So: prefetch the data on lake select, draw only on demand.
+const PREFETCH_LAYERS = ['pois', 'docks'];
+
+async function ensureData(lakeKey, layer) {
+  if (_garminData[layer]) return _garminData[layer];
+  try {
+    const gj = await loadLayer(lakeKey, layer);
+    _garminData[layer] = gj;
+    return gj;
+  } catch (e) {
+    _garminData[layer] = null;      // remember the miss; most lakes have no Garmin pack yet
+    return null;
+  }
+}
 
 export function getDepthAreaGeoJSON() { return _depthAreaGeoJSON; }
 export function getLakeBoundaryGeoJSON() { return _boundaryGeoJSON; }
@@ -604,7 +632,8 @@ async function loadPOIs(lakeKey) {
   if (_poiLayer) { getMap().removeLayer(_poiLayer); _poiLayer = null; }
   if (_poiLabelGroup) { getMap().removeLayer(_poiLabelGroup); _poiLabelGroup = null; }
   try {
-    const gj = await loadLayer(lakeKey, 'pois');
+    const gj = await ensureData(lakeKey, 'pois');
+    if (!gj) throw new Error('empty');
     _poiGeoJSON = gj;
     const nLabelFor = markFeatureLabels(gj.features);
     const group = L.layerGroup();
@@ -674,18 +703,36 @@ const GARMIN_LAYERS = {
     style: { color: '#ffb74d', weight: 1, opacity: 0.9, fillColor: '#ffb74d', fillOpacity: 0.45 },
     tip:   () => '🛥 Dock / pier',
   },
+  // NOT SHOWN IN THE PANEL. Measured against what is already on screen, this layer draws
+  // nothing new: its union is 70.18 km2 against depth_areas' 71.11 km2, and the water it covers
+  // that depth shading does NOT is 0.024 km2 -- 2.4 hectares out of 70 km2. The untagged half
+  // (116 farm ponds and the river channel, 21.6 km2) is no better: 0.002 km2 uncovered.
+  //
+  // Its real job is upstream. Mode 6/20 is what carries the lake id -- `c6 02` = Wateree on
+  // 1,830 of these polygons -- which is how a chartpack gets attributed to a lake at all. That
+  // makes it essential to the pipeline and useless as a chart layer, so it stays in the pack and
+  // out of the panel. Still reachable as window.toggleGarminLayer('waterbody') for debugging.
   waterbody: {
     label: 'Charted water body',
-    style: { color: '#4dd0e1', weight: 0.8, opacity: 0.55, fillColor: '#4dd0e1', fillOpacity: 0.05 },
-    tip:   p => p.named ? `Charted water body (lake id ${p.lake_id})` : 'Charted water body',
+    panel: false,
+    style: { color: '#4dd0e1', weight: 1, opacity: 0.8, fillColor: '#4dd0e1', fillOpacity: 0.08 },
+    tip:   p => p.lake_id ? `Charted water body (lake id ${p.lake_id})` : 'Charted water body (unnamed)',
   },
+  // NOT "streams". Measured, 539.7 km of it splits 404 km (75%) of creeks and river channel
+  // running inland, and 136 km (25%) tracing the waterline itself -- which is why it reads as
+  // "the shoreline in blue" if you only look at the lake. The creek channels are the useful
+  // part: a channel swing is structure.
   hydrography: {
-    label: 'Streams',
+    label: 'Creeks & water edge',
     style: { color: '#4fc3f7', weight: 1, opacity: 0.7 },
-    tip:   p => p.name ? `〰 ${p.name}` : '〰 Stream',
+    tip:   p => p.name ? `〰 ${p.name}` : '〰 Creek / water edge',
   },
+  // NOT SHOWN IN THE PANEL. 96% of its 156 km lies inside hydrography already (150.5 km within
+  // 25 m); only 5.5 km is unique to it. Two buttons drawing the same white-and-blue line over
+  // each other is worse than one, so this stays in the pack and out of the panel.
   garmin_shoreline: {
     label: 'Charted shoreline',
+    panel: false,
     style: { color: '#ffffff', weight: 1, opacity: 0.65 },
     tip:   () => 'Charted shoreline',
   },
@@ -696,7 +743,8 @@ async function loadGarminLayer(lakeKey, name) {
   const spec = GARMIN_LAYERS[name];
   if (!spec) return null;
   try {
-    const gj = await loadLayer(lakeKey, name);
+    const gj = await ensureData(lakeKey, name);
+    if (!gj) throw new Error('empty');
     const lyr = L.geoJSON(gj, {
       renderer: _canvasRenderer,
       smoothFactor: 1.2,
@@ -740,7 +788,7 @@ window.toggleGarminLayer = async function (name, visible) {
 
 /** Turn the whole Garmin chart overlay on or off in one call. */
 window.toggleGarminChart = async function (visible) {
-  const names = Object.keys(GARMIN_LAYERS);
+  const names = Object.entries(GARMIN_LAYERS).filter(([, s]) => s.panel !== false).map(([n]) => n);
   const want = visible === undefined ? !names.some(n => _garminVisible[n]) : !!visible;
   for (const n of names) await window.toggleGarminLayer(n, want);
   return want;
@@ -774,6 +822,8 @@ function clearGarminLayers() {
   }
   _garminLayers = {};
   _garminVisible = {};
+  _garminData = {};
+  _dockClusters = null;
   _paintGarminButtons();
 }
 
@@ -817,7 +867,7 @@ function injectGarminPanel() {
     `<div style="font-size:10px;color:var(--muted);margin-bottom:5px">`
   + `\u{1F5FA} GARMIN CHART — click to load</div>`
   + `<div style="display:flex;flex-direction:column;gap:3px">`
-  + Object.entries(GARMIN_LAYERS).map(([name, spec]) =>
+  + Object.entries(GARMIN_LAYERS).filter(([, spec]) => spec.panel !== false).map(([name, spec]) =>
       `<button id="btnGarmin_${name}" style="${_garminBtnStyle(false, spec.style.color)}">`
     + `○ ${spec.label}</button>`).join('')
   + `</div>`
@@ -832,7 +882,8 @@ function injectGarminPanel() {
   const anchor = panel.querySelector('#vectorLayerList')?.parentElement;
   if (anchor) panel.insertBefore(box, anchor); else panel.appendChild(box);
 
-  for (const name of Object.keys(GARMIN_LAYERS)) {
+  for (const [name, spec] of Object.entries(GARMIN_LAYERS)) {
+    if (spec.panel === false) continue;
     document.getElementById('btnGarmin_' + name)?.addEventListener('click', async () => {
       const b = document.getElementById('btnGarmin_' + name);
       if (!_activeLakeKey) { if (b) b.title = 'Select a lake first'; return; }
@@ -997,6 +1048,15 @@ export async function loadSupplementalForLake(displayName) {
   // Fishing spots and POIs are lazy — only fetch when user toggles them on.
   // Preloading 90K+ fishing features on large lakes kills scroll/zoom performance.
   loadLakeBoundary(displayName).catch(() => {});
+  // Prefetch the Garmin data Smart Plan reads, WITHOUT drawing it. See ensureData().
+  Promise.all(PREFETCH_LAYERS.map(l => ensureData(lakeKey, l))).then(([pois, docks]) => {
+    if (pois) { _poiGeoJSON = pois; markFeatureLabels(pois.features); }
+    const n = (pois?.features?.length || 0) + (docks?.features?.length || 0);
+    if (n) console.log(`[supplemental] garmin context prefetched: `
+                     + `${pois?.features?.length || 0} pois, ${docks?.features?.length || 0} docks `
+                     + `(not drawn) for ${lakeKey}`);
+  }).catch(() => {});
+
   // Preload OSM structures for getSupplementalContext and Smart Plan
   fetch(`${CF_WORKER_URL}/chartpacks/${lakeKey}/osm-structures.geojson`)
     .then(r => r.ok ? r.json() : null)
@@ -1046,9 +1106,80 @@ function wirePOIButton() {
   });
 }
 
+// ── Dock clustering ───────────────────────────────────────────────────────────
+//
+// 2,839 individual docks is not a thing a person -- or a language model -- can plan against.
+// A fisherman sees a DOCKLINE, and the useful unit is "the run of docks along the east shore"
+// or "the pocket of a dozen at the back of that cove". Single-linkage at 100 m produces exactly
+// that split on Wateree: 50 runs of 20+ docks, 55 pockets of 8-19, and the rest small groups.
+//
+// `run_m` is what separates the two readings, so it is reported rather than pre-judged: a
+// 66-dock cluster spanning 1,537 m is a shoreline to troll, while 12 docks inside 200 m is a
+// spot to stop and work. The planner decides which it is; this just measures.
+const DOCK_CLUSTER_GAP_M = 100;
+let _dockClusters = null;
+
+function clusterDocks(features) {
+  const K = Math.cos(34.4 * Math.PI / 180) * 111320, KY = 110540;
+  const pts = [];
+  for (const f of features) {
+    const ring = f.geometry?.coordinates?.[0];
+    if (!ring?.length) continue;
+    let x = 0, y = 0;
+    for (const c of ring) { x += c[0]; y += c[1]; }
+    pts.push([x / ring.length, y / ring.length]);
+  }
+  const cw = DOCK_CLUSTER_GAP_M / K, ch = DOCK_CLUSTER_GAP_M / KY;
+  const grid = new Map();
+  pts.forEach(([x, y], i) => {
+    const k = `${Math.floor(x / cw)},${Math.floor(y / ch)}`;
+    (grid.get(k) || grid.set(k, []).get(k)).push(i);
+  });
+  const seen = new Array(pts.length).fill(false), out = [];
+  for (let i = 0; i < pts.length; i++) {
+    if (seen[i]) continue;
+    const stack = [i], grp = []; seen[i] = true;
+    while (stack.length) {
+      const j = stack.pop(); grp.push(j);
+      const [xj, yj] = pts[j];
+      const cx = Math.floor(xj / cw), cy = Math.floor(yj / ch);
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+        for (const k of (grid.get(`${cx + dx},${cy + dy}`) || [])) {
+          if (seen[k]) continue;
+          const [xk, yk] = pts[k];
+          if (Math.hypot((xk - xj) * K, (yk - yj) * KY) <= DOCK_CLUSTER_GAP_M) {
+            seen[k] = true; stack.push(k);
+          }
+        }
+      }
+    }
+    const xs = grp.map(g => pts[g][0]), ys = grp.map(g => pts[g][1]);
+    const w = (Math.max(...xs) - Math.min(...xs)) * K;
+    const h = (Math.max(...ys) - Math.min(...ys)) * KY;
+    const brg = (Math.atan2(w, h) * 180 / Math.PI + 360) % 180;
+    out.push({
+      count: grp.length,
+      lat: ys.reduce((a, b) => a + b, 0) / ys.length,
+      lon: xs.reduce((a, b) => a + b, 0) / xs.length,
+      run_m: Math.round(Math.hypot(w, h)),
+      bearing: ['N-S', 'NNE-SSW', 'NE-SW', 'ENE-WSW', 'E-W', 'WNW-ESE', 'NW-SE', 'NNW-SSE'
+               ][Math.floor((brg + 11.25) / 22.5) % 8],
+    });
+  }
+  return out.sort((a, b) => b.count - a.count);
+}
+
+function dockClusters() {
+  if (_dockClusters) return _dockClusters;
+  const f = _garminData.docks?.features;
+  if (!f) return [];
+  _dockClusters = clusterDocks(f);
+  return _dockClusters;
+}
+
 export function getSupplementalContext(lat, lon, radiusMi = 0.5) {
   // distMi now from utils/geo.js (canonical)
-  const results = { attractors: [], fishingPoints: [], pois: [], structures: [] };
+  const results = { attractors: [], fishingPoints: [], pois: [], structures: [], docks: [] };
   if (!_activeLakeKey) return results;
   // Read from the GeoJSON, not the rendered layer.
   //
@@ -1074,6 +1205,13 @@ export function getSupplementalContext(lat, lon, radiusMi = 0.5) {
       if (!ll) return;
       if (distMi(lat, lon, ll.lat, ll.lng) <= radiusMi) results.fishingPoints.push({ lat: ll.lat, lon: ll.lng });
     });
+  }
+  // Charted docks (Garmin mode 1/1). Prefetched, so this answers whether the layer is DRAWN or
+  // not. A polygon is reduced to its first vertex -- a dock is ~5 x 10 m, so any vertex is
+  // within a boat length of the centre and the extra precision would be noise at plan scale.
+  // Clusters, not the 2,839 individual polygons. See clusterDocks().
+  for (const c of dockClusters()) {
+    if (distMi(lat, lon, c.lat, c.lon) <= radiusMi) results.docks.push(c);
   }
   if (_osmStructureData && _osmStructureData.length) {
     for (const feat of _osmStructureData) {

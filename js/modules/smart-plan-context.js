@@ -202,12 +202,78 @@ export async function buildFishingContext(params = {}) {
   const catchSummary = summarizeCatches(catchHistory);
 
   // ── Supplemental (attractors + fishing spots) ─────────────────────────────
-  let supplementalContext = { attractors: [], fishingPoints: [], pois: [] };
+  let supplementalContext = { attractors: [], fishingPoints: [], pois: [], structures: [], docks: [] };
   if (centerLat && centerLon && window.getSupplementalContext) {
     try {
       supplementalContext = window.getSupplementalContext(centerLat, centerLon, 2.0);
     } catch (_) {}
   }
+
+  // ── Charted structure, from the Garmin chartpack ──────────────────────────
+  //
+  // The research profile says WHAT matters for a species -- habitat.dockDensity,
+  // standingTimber, timberFields, namedCreekMouths, shallowFlatAreas. This says WHERE it
+  // actually is, measured off the chart. The two are the halves of one answer, and neither is
+  // useful alone: knowing largemouth hold on docks is worthless without the docklines, and 287
+  // dock clusters mean nothing without knowing the angler is after catfish today.
+  //
+  // NOTHING IS SCORED OR FILTERED HERE, deliberately. Which structure a species wants is
+  // knowledge that belongs in the research profile where Ryan can correct it, not a constant
+  // baked into a planner. Hand the model the full inventory and its own research, and let it
+  // choose: catfish and live bait means route the bridge pilings, largemouth means work the
+  // dock line, crappie means the brush piles.
+  const chartedStructure = (() => {
+    const byType = {};
+    let n = 0;
+    for (const st of (supplementalContext.structures || [])) {
+      const t = st.poi_type || 'unknown';
+      // STABLE ID PER ENTRY. The model picks by id and we resolve the position from this table;
+      // it never supplies a coordinate itself. A language model asked for a lat/lon will happily
+      // produce a plausible one, and a waypoint invented 200 m inland is worse than no waypoint
+      // -- it looks exactly like a real one on the map.
+      (byType[t] = byType[t] || []).push({
+        id: `st_${t}_${n++}`, lat: st.lat, lon: st.lon, name: st.name || null,
+      });
+    }
+    const counts = {};
+    for (const [t, v] of Object.entries(byType)) counts[t] = v.length;
+    const docks = (supplementalContext.docks || []).map((c, i) => ({ id: `dk_${i}`, ...c }));
+    return {
+      counts,
+      // Nearest handful per type. A model cannot plan against hundreds of coordinates, and the
+      // count already carries "there is a lot of this here".
+      byType: Object.fromEntries(Object.entries(byType).map(([t, v]) => [t, v.slice(0, 12)])),
+      // Docks arrive as CLUSTERS, not 2,839 polygons. `run_m` is what tells a long shoreline
+      // dockline apart from a tight pocket worth stopping on.
+      dockClusters: docks.slice(0, 12),
+      dockClusterCount: docks.length,
+      dockTotal: docks.reduce((a, c) => a + (c.count || 0), 0),
+      source: 'Garmin LakeVu chart decode',
+    };
+  })();
+
+  // Flat id -> position lookup, so an accepted suggestion resolves against OUR data.
+  const chartedStructureIndex = {};
+  for (const v of Object.values(chartedStructure.byType)) {
+    for (const e of v) chartedStructureIndex[e.id] = e;
+  }
+  for (const c of chartedStructure.dockClusters) chartedStructureIndex[c.id] = c;
+
+  const chartedStructureSummary = (() => {
+    const bits = [];
+    const d = chartedStructure.dockClusters;
+    if (d.length) {
+      const lines = d.filter(c => c.run_m > 600).length;
+      const pockets = d.filter(c => c.run_m <= 600 && c.count >= 8).length;
+      bits.push(`${chartedStructure.dockTotal} charted docks in ${chartedStructure.dockClusterCount} clusters`
+              + (lines ? `, ${lines} long docklines` : '')
+              + (pockets ? `, ${pockets} tight pockets` : ''));
+    }
+    for (const [t, n] of Object.entries(chartedStructure.counts)) {
+      bits.push(`${n} ${t.replace(/_/g, ' ')}`);
+    }
+    return bits.length ? bits.join('; ') : null;
+  })();
 
   // ── Researched Lake Intelligence (from Lake Research module) ──────────────
   let researchedProfile = null;
@@ -258,6 +324,11 @@ export async function buildFishingContext(params = {}) {
     attractorCount:      supplementalContext.attractors.length,
     fishingSpotCount:    supplementalContext.fishingPoints.length,
 
+    // Charted structure (Garmin) — inventory only, unscored. See the comment above.
+    chartedStructure,
+    chartedStructureSummary,
+    chartedStructureIndex,
+
     // Lake Research — permanent intelligence
     researchedProfile,
     hasResearchedProfile,
@@ -275,6 +346,7 @@ export function buildGroqCoachPayload(fishingContext, planState) {
     species, speciesDisplay, lakeName, season, clarity, waterTempF,
     catchSummary, structureSummary, attractorCount, fishingSpotCount,
     nearbyStructures, nearbyAttractors,
+    chartedStructure, chartedStructureSummary,
   } = fishingContext;
 
   const {
@@ -303,6 +375,24 @@ export function buildGroqCoachPayload(fishingContext, planState) {
       poolLevel,
       solunar:   solunarStr,
     },
+
+    // Charted structure actually present on this water, from the Garmin chart decode.
+    // Paired with the researched habitat profile below, this is what lets the model pick
+    // structure BY SPECIES rather than by a hardcoded score: bridge pilings for catfish,
+    // docklines for largemouth, brush piles for crappie. Unfiltered on purpose -- the model
+    // needs the alternatives to fall back on when the primary pattern is dead.
+    chartedStructure: chartedStructure ? {
+      summary:      chartedStructureSummary,
+      counts:       chartedStructure.counts,
+      byType:       chartedStructure.byType,
+      dockClusters: chartedStructure.dockClusters,
+      note: 'Positions decoded from the Garmin LakeVu chart. dockClusters carry `count`, '
+          + '`run_m` and `bearing`: a long run is a shoreline to troll, a short run with a '
+          + 'high count is a pocket to stop and work. Choose structure using the researched '
+          + 'habitat and species profile; do not assume every type suits the target species. '
+          + 'To place a casting stop on one of these, return its `id` as `structure_id` in the '
+          + 'suggestion and DO NOT invent lat/lon — the app resolves the position from the id.',
+    } : null,
 
         // Plan phases
     phases: phases?.map((phase, i) => {
