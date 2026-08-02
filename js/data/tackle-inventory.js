@@ -8,8 +8,15 @@
  * Strict boundaries:
  *   ✅ What lures Ryan owns
  *   ✅ Physical specs (weight, sizes, jighead options)
- *   ✅ Trolling speed range (physics — not tactics)
- *   ✅ Dive depth range (physical dive curve at normal trolling speeds)
+ *   ❌ NO trolling speed -- moved to lure-knowledge.js. Speed is a HARD limit only
+ *      for lipped baits (>3mph and they leave their rated depth). For everything
+ *      else speed is a math game against lead length, and the real ceiling is
+ *      FISHING_STYLE.rigging.maxLeadFt, which is a rig fact, not a lure fact.
+ *   ❌ NO dive depth -- moved to lure-knowledge.js. Depth is a stored number
+ *      only when it is printed on the lure (crankbait bills). Everything else is
+ *      f(weight, speed, lead) and lived in THREE files until 2026-08-02.
+ *   ❌ NO presentationSignature -- it was written here on all 58 entries, read
+ *      here zero times, and had already drifted from the knowledge copy on 11.
  *   ✅ IDB persistence
  *   ✅ Planner API (selectBestLure — delegates scoring to lure-knowledge)
  *   ❌ No color logic
@@ -22,305 +29,199 @@ export const TACKLE_INVENTORY = [
 
   // ── Crankbaits ────────────────────────────────────────────────────────────
   { id:'cb_squarebill', name:'Squarebill Crankbait',
-    type:'crankbait_squarebill', trollable:true, castable:true, weightOz:0.375,
-    diveDepthMin:2,  diveDepthMax:5,
-    trollSpeedMin:1.4, trollSpeedMax:2.2,
-    presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'upper', cover_friendly:['wood','rock','shallow_flat'] } },
+    type:'crankbait_squarebill', trollable:true, castable:true, weightOz:0.375 },
 
   { id:'cb_sr', name:'SR Crankbait (3-5ft)',
-    type:'crankbait_sr', trollable:true, castable:true, weightOz:0.25,
-    diveDepthMin:3,  diveDepthMax:5,
-    trollSpeedMin:1.2, trollSpeedMax:1.8,
-    presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'upper', cover_friendly:['open_water','rock'] } },
+    type:'crankbait_sr', trollable:true, castable:true, weightOz:0.25 },
 
   { id:'cb_mr', name:'MR Crankbait (6-12ft)',
-    type:'crankbait_mr', trollable:true, castable:true, weightOz:0.5,
-    diveDepthMin:6,  diveDepthMax:12,
-    trollSpeedMin:1.4, trollSpeedMax:2.0,
-    presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'middle', cover_friendly:['open_water','rock'] } },
+    type:'crankbait_mr', trollable:true, castable:true, weightOz:0.5 },
 
   { id:'cb_dd1', name:'DD1 Crankbait (14-18ft)',
-    type:'crankbait_dd1', trollable:true, castable:true, weightOz:0.75,
-    diveDepthMin:14, diveDepthMax:18,
-    trollSpeedMin:1.6, trollSpeedMax:2.2,
-    presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'lower', cover_friendly:['open_water','rock'] } },
+    type:'crankbait_dd1', trollable:true, castable:true, weightOz:0.75 },
 
   { id:'cb_dd2', name:'DD2 Crankbait (16-20ft)',
-    type:'crankbait_dd2', trollable:true, castable:true, weightOz:0.75,
-    diveDepthMin:16, diveDepthMax:20,
-    trollSpeedMin:1.6, trollSpeedMax:2.2,
-    presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'lower', cover_friendly:['open_water','rock'] } },
+    type:'crankbait_dd2', trollable:true, castable:true, weightOz:0.75 },
 
   { id:'cb_dd3', name:'DD3 Crankbait (20-25ft)',
-    type:'crankbait_dd3', trollable:true, castable:true, weightOz:1.0,
-    diveDepthMin:20, diveDepthMax:25,
-    trollSpeedMin:1.8, trollSpeedMax:2.4,
-    presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'lower', cover_friendly:['open_water','rock'] } },
+    type:'crankbait_dd3', trollable:true, castable:true, weightOz:1.0 },
 
   { id:'cb_dd4', name:'DD4 Crankbait (25ft+)',
-    type:'crankbait_dd4', trollable:true, castable:true, weightOz:1.25,
-    diveDepthMin:25, diveDepthMax:35,
-    trollSpeedMin:1.8, trollSpeedMax:2.4,
-    presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'lower', cover_friendly:['open_water','rock'] } },
+    type:'crankbait_dd4', trollable:true, castable:true, weightOz:1.25 },
 
   // ── Lipless & Blade Vibes ─────────────────────────────────────────────────
   { id:'lipless_2in', name:'2" Lipless Crankbait',
-    type:'lipless', trollable:true, castable:true, weightOz:0.25, sizes:['2"'],
-    diveDepthMin:3,  diveDepthMax:10,
-    trollSpeedMin:1.4, trollSpeedMax:2.0,
-    presentationSignature: { noise:'high_vibe', flash:'medium', profile:'baitfish', water_column:'middle', cover_friendly:['grass','open_water'] } },
+    type:'lipless', trollable:true, castable:true, weightOz:0.25, sizes:['2"'] },
 
   { id:'lipless_3in', name:'3" Lipless Crankbait',
-    type:'lipless', trollable:true, castable:true, weightOz:0.5, sizes:['3"'],
-    diveDepthMin:4,  diveDepthMax:12,
-    trollSpeedMin:1.4, trollSpeedMax:2.0,
-    presentationSignature: { noise:'high_vibe', flash:'medium', profile:'baitfish', water_column:'middle', cover_friendly:['grass','open_water'] } },
+    type:'lipless', trollable:true, castable:true, weightOz:0.5, sizes:['3"'] },
 
   { id:'lipless_4in', name:'4" Lipless Crankbait',
-    type:'lipless', trollable:true, castable:true, weightOz:0.75, sizes:['4"'],
-    diveDepthMin:5,  diveDepthMax:14,
-    trollSpeedMin:1.4, trollSpeedMax:2.0,
-    presentationSignature: { noise:'high_vibe', flash:'medium', profile:'baitfish', water_column:'middle', cover_friendly:['grass','open_water'] } },
+    type:'lipless', trollable:true, castable:true, weightOz:0.75, sizes:['4"'] },
 
   { id:'blade_3in', name:'3" Blade Vibe Bait',
-    type:'blade_vibe', trollable:true, castable:true, weightOz:0.5, sizes:['3"'],
-    diveDepthMin:4,  diveDepthMax:12,
-    trollSpeedMin:1.4, trollSpeedMax:2.2,
-    presentationSignature: { noise:'high_vibe', flash:'medium', profile:'baitfish', water_column:'middle', cover_friendly:['open_water','rock'] } },
+    type:'blade_vibe', trollable:true, castable:true, weightOz:0.5, sizes:['3"'] },
 
   // ── A-Rigs / Umbrella Rigs ────────────────────────────────────────────────
   { id:'arig_light',  name:'A-Rig Light (~1.65oz) – 3.8" Swimbait',
     type:'umbrella_rig', trollable:true, castable:true, weightOz:1.65,
-    jigWeights:[0.125,0.1875,0.25], sizes:['3.8"'],
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.4, trollSpeedMax:2.0,
-    presentationSignature: { noise:'high_vibe', flash:'high', profile:'baitfish', water_column:'middle', cover_friendly:['open_water'] } },
+    jigWeights:[0.125,0.1875,0.25], sizes:['3.8"'] },
 
   { id:'arig_medium', name:'A-Rig Medium (~2.65oz) – 4.6" Swimbait',
     type:'umbrella_rig', trollable:true, castable:true, weightOz:2.65,
-    jigWeights:[0.1875,0.25,0.375], sizes:['4.6"'],
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.4, trollSpeedMax:2.0,
-    presentationSignature: { noise:'high_vibe', flash:'high', profile:'baitfish', water_column:'middle', cover_friendly:['open_water'] } },
+    jigWeights:[0.1875,0.25,0.375], sizes:['4.6"'] },
 
   { id:'arig_heavy',  name:'A-Rig Heavy (~3.5oz) – 5" Swimbait',
     type:'umbrella_rig', trollable:true, castable:true, weightOz:3.5,
-    jigWeights:[0.25,0.375,0.5], sizes:['5"'],
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.4, trollSpeedMax:2.0,
-    presentationSignature: { noise:'high_vibe', flash:'high', profile:'baitfish', water_column:'middle', cover_friendly:['open_water'] } },
+    jigWeights:[0.25,0.375,0.5], sizes:['5"'] },
 
   // ── Swimbaits (Paddle Tail) ───────────────────────────────────────────────
   { id:'swimbait_3in', name:'Swimbait 3.8" – Jighead',
     type:'swimbait_paddle', trollable:true, castable:true, weightOz:null,
-    jigWeights:[0.125,0.1875,0.25], sizes:['3"'],
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.4, trollSpeedMax:2.2,
-    presentationSignature: { noise:'silent', flash:'low', profile:'baitfish', water_column:'middle', cover_friendly:['open_water','grass'] } },
+    jigWeights:[0.125,0.1875,0.25], sizes:['3"'] },
 
   { id:'swimbait_4in', name:'Swimbait 4.6" – Jighead',
     type:'swimbait_paddle', trollable:true, castable:true, weightOz:null,
-    jigWeights:[0.1875,0.25,0.375,0.5], sizes:['4"'],
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.4, trollSpeedMax:2.2,
-    presentationSignature: { noise:'silent', flash:'low', profile:'baitfish', water_column:'middle', cover_friendly:['open_water','grass'] } },
+    jigWeights:[0.1875,0.25,0.375,0.5], sizes:['4"'] },
 
   { id:'swimbait_5in', name:'Swimbait 5" – Jighead',
     type:'swimbait_paddle', trollable:true, castable:true, weightOz:null,
-    jigWeights:[0.25,0.375,0.5,0.75], sizes:['5"'],
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.4, trollSpeedMax:2.2,
-    presentationSignature: { noise:'silent', flash:'low', profile:'baitfish', water_column:'middle', cover_friendly:['open_water','grass'] } },
+    jigWeights:[0.25,0.375,0.5,0.75], sizes:['5"'] },
 
   // ── Underspins ────────────────────────────────────────────────────────────
   { id:'underspin_owner', name:'Underspin Jig (Flashy Swimmer)',
-    type:'underspin', trollable:true, castable:true, weightOz:0.375,
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.4, trollSpeedMax:2.2,
-    presentationSignature: { noise:'silent', flash:'medium', profile:'baitfish', water_column:'middle', cover_friendly:['open_water','grass','rock'] } },
+    type:'underspin', trollable:true, castable:true, weightOz:0.375 },
 
   // ── Spoons (Preserving spoon_3quarter, Adding Jigging/Diamond Spoon) ──────
   { id:'spoon_3quarter', name:'Nichols Lake Fork Flutter Spoon 3/4oz',
-    type:'flutter_spoon', trollable:true, castable:true, weightOz:0.75,
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.3, trollSpeedMax:2.2,
-    presentationSignature: { noise:'silent', flash:'high', profile:'baitfish', water_column:'lower', cover_friendly:['open_water'] } },
+    type:'flutter_spoon', trollable:true, castable:true, weightOz:0.75 },
 
   { id:'spoon_casting_dr_fish', name:'Dr.Fish Diamond Jig / Jigging Spoon 1oz',
-    type:'spoon_casting', trollable:true, castable:true, weightOz:1.0,
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.6, trollSpeedMax:2.8,
-    presentationSignature: { noise:'silent', flash:'high', profile:'baitfish', water_column:'bottom', cover_friendly:['open_water','rock'] } },
+    type:'spoon_casting', trollable:true, castable:true, weightOz:1.0 },
+
+  { id:'spoon_nichols_118', name:'Nichols Lake Fork Flutter Spoon 5" 1-1/8oz (FS14-118)',
+    type:'flutter_spoon', trollable:true, castable:true, weightOz:1.125 },
+
+  { id:'spoon_laser_minnow_2oz', name:'P-Line Laser Minnow 2oz (PLM2)',
+    type:'spoon_casting', trollable:true, castable:true, weightOz:2.0 },
+
+  // ── Vertical / Knife Jigs ────────────────────────────────────
+  // Trollable, not cast-only — a dense wire-through body holds depth at speed.
+  // 2-3oz is not heavy in context: a 1oz bucktail behind a 2oz trolling weight is
+  // already 3oz through the water. Depth comes from lead length, so diveDepth stays
+  // null and the planner works it out from tacticalDepth.
+  { id:'jig_haruki_21', name:'P-Line Haruki Jig 2.1oz (PHJ21)',
+    type:'vertical_jig', trollable:true, castable:true, weightOz:2.1 },
+
+  { id:'jig_haruki_29', name:'P-Line Haruki Jig 2.9oz (PHJ29)',
+    type:'vertical_jig', trollable:true, castable:true, weightOz:2.9 },
 
   // ── Spinnerbaits ──────────────────────────────────────────────────────────
   { id:'spinner_quarter',  name:'1/4oz Spinnerbait',
-    type:'spinnerbait', trollable:true, castable:true, weightOz:0.25,
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.6, trollSpeedMax:2.4,
-    presentationSignature: { noise:'high_vibe', flash:'high', profile:'baitfish', water_column:'middle', cover_friendly:['wood','grass'] } },
+    type:'spinnerbait', trollable:true, castable:true, weightOz:0.25 },
 
   { id:'spinner_3eighth',  name:'3/8oz Spinnerbait',
-    type:'spinnerbait', trollable:true, castable:true, weightOz:0.375,
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.6, trollSpeedMax:2.4,
-    presentationSignature: { noise:'high_vibe', flash:'high', profile:'baitfish', water_column:'middle', cover_friendly:['wood','grass'] } },
+    type:'spinnerbait', trollable:true, castable:true, weightOz:0.375 },
 
   { id:'spinner_half',     name:'1/2oz Spinnerbait',
-    type:'spinnerbait', trollable:true, castable:true, weightOz:0.5,
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.6, trollSpeedMax:2.4,
-    presentationSignature: { noise:'high_vibe', flash:'high', profile:'baitfish', water_column:'middle', cover_friendly:['wood','grass'] } },
+    type:'spinnerbait', trollable:true, castable:true, weightOz:0.5 },
 
   // ── Chatterbaits ──────────────────────────────────────────────────────────
   { id:'chatter_quarter',  name:'1/4oz Chatterbait',
-    type:'chatterbait', trollable:true, castable:true, weightOz:0.25,
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.6, trollSpeedMax:2.4,
-    presentationSignature: { noise:'high_vibe', flash:'medium', profile:'baitfish', water_column:'middle', cover_friendly:['grass','wood'] } },
+    type:'chatterbait', trollable:true, castable:true, weightOz:0.25 },
 
   { id:'chatter_3eighth',  name:'3/8oz Chatterbait',
-    type:'chatterbait', trollable:true, castable:true, weightOz:0.375,
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.6, trollSpeedMax:2.4,
-    presentationSignature: { noise:'high_vibe', flash:'medium', profile:'baitfish', water_column:'middle', cover_friendly:['grass','wood'] } },
+    type:'chatterbait', trollable:true, castable:true, weightOz:0.375 },
 
   { id:'chatter_half',     name:'1/2oz Chatterbait',
-    type:'chatterbait', trollable:true, castable:true, weightOz:0.5,
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.6, trollSpeedMax:2.4,
-    presentationSignature: { noise:'high_vibe', flash:'medium', profile:'baitfish', water_column:'middle', cover_friendly:['grass','wood'] } },
+    type:'chatterbait', trollable:true, castable:true, weightOz:0.5 },
 
   // ── Bucktail & Marabou Jigs ───────────────────────────────────────────────
   { id:'bucktail_3quarter', name:'3/4oz Bucktail Jig',
-    type:'bucktail', trollable:true, castable:true, weightOz:0.75,
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.6, trollSpeedMax:2.8,
-    presentationSignature: { noise:'silent', flash:'low', profile:'baitfish', water_column:'lower', cover_friendly:['open_water','rock'] } },
+    type:'bucktail', trollable:true, castable:true, weightOz:0.75 },
 
-  { id:'bucktail_1oz',      name:'1oz Bucktail Jig',
-    type:'bucktail', trollable:true, castable:true, weightOz:1.0,
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.6, trollSpeedMax:2.8,
-    presentationSignature: { noise:'silent', flash:'low', profile:'baitfish', water_column:'lower', cover_friendly:['open_water','rock'] } },
+  { id:'bucktail_1oz',      name:'SPRO Prime Bucktail Jig 1oz (SBTJ-1)',
+    type:'bucktail', trollable:true, castable:true, weightOz:1.0 },
+
+  { id:'bucktail_3oz',      name:'SPRO Prime Bucktail Jig 3oz (SBTJ-3)',
+    type:'bucktail', trollable:true, castable:true, weightOz:3.0 },
+
+  { id:'bucktail_shark_shooter', name:'Shark Shooter Bucktail w/ Spinner 3/4oz',
+    type:'bucktail', trollable:true, castable:true, weightOz:0.75 },
 
   { id:'marabou_3quarter',  name:'3/4oz Marabou Jig',
-    type:'marabou_jig', trollable:true, castable:true, weightOz:0.75,
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.4, trollSpeedMax:2.4,
-    presentationSignature: { noise:'silent', flash:'none', profile:'baitfish', water_column:'middle', cover_friendly:['open_water','brush_pile'] } },
+    type:'marabou_jig', trollable:true, castable:true, weightOz:0.75 },
 
   // ── Jigheads ─────────────────────────────────────────────────────────────
   { id:'jighead_quarter',  name:'1/4oz Jighead',
-    type:'jighead', trollable:true, castable:true, weightOz:0.25,
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.4, trollSpeedMax:2.2,
-    presentationSignature: { noise:'silent', flash:'none', profile:'baitfish', water_column:'middle', cover_friendly:['open_water','rock','brush_pile'] } },
+    type:'jighead', trollable:true, castable:true, weightOz:0.25 },
 
   { id:'jighead_3eighth',  name:'3/8oz Jighead',
-    type:'jighead', trollable:true, castable:true, weightOz:0.375,
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.4, trollSpeedMax:2.2,
-    presentationSignature: { noise:'silent', flash:'none', profile:'baitfish', water_column:'middle', cover_friendly:['open_water','rock','brush_pile'] } },
+    type:'jighead', trollable:true, castable:true, weightOz:0.375 },
 
   { id:'jighead_half',     name:'1/2oz Jighead',
-    type:'jighead', trollable:true, castable:true, weightOz:0.5,
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.4, trollSpeedMax:2.2,
-    presentationSignature: { noise:'silent', flash:'none', profile:'baitfish', water_column:'middle', cover_friendly:['open_water','rock','brush_pile'] } },
+    type:'jighead', trollable:true, castable:true, weightOz:0.5 },
 
   { id:'jighead_3quarter', name:'3/4oz Jighead',
-    type:'jighead', trollable:true, castable:true, weightOz:0.75,
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.4, trollSpeedMax:2.2,
-    presentationSignature: { noise:'silent', flash:'none', profile:'baitfish', water_column:'middle', cover_friendly:['open_water','rock','brush_pile'] } },
+    type:'jighead', trollable:true, castable:true, weightOz:0.75 },
 
   { id:'jighead_1oz',      name:'1oz Jighead',
-    type:'jighead', trollable:true, castable:true, weightOz:1.0,
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.4, trollSpeedMax:2.2,
-    presentationSignature: { noise:'silent', flash:'none', profile:'baitfish', water_column:'middle', cover_friendly:['open_water','rock','brush_pile'] } },
+    type:'jighead', trollable:true, castable:true, weightOz:1.0 },
 
   // ── Finesse and Heavy Casting Jigs (New Casting) ──────────────────────────
   { id:'jig_football', name:'Football Jig (Craw/Bluegill Trailer)',
-    type:'jig_football', trollable:false, castable:true, weightOz:0.5,
-    presentationSignature: { noise:'silent', flash:'none', profile:'crawfish', water_column:'bottom', cover_friendly:['rock','gravel'] } },
+    type:'jig_football', trollable:false, castable:true, weightOz:0.5 },
 
   { id:'jig_finesse_ned', name:'Ned Rig / Finesse Jig',
-    type:'jig_finesse_ned', trollable:false, castable:true, weightOz:0.1875,
-    presentationSignature: { noise:'silent', flash:'none', profile:'worm', water_column:'bottom', cover_friendly:['rock','wood','dock_edge'] } },
+    type:'jig_finesse_ned', trollable:false, castable:true, weightOz:0.1875 },
+
+  // ── Inline Spinners ───────────────────────────────────────────
+  // NOT a Road Runner and not a spinnerbait. Blade spins around a straight shaft,
+  // which generates lift: it rides high and the blade fouls above ~2mph.
+  { id:'inline_rooster_3quarter', name:"Worden's Joe Thomas Rooster Tail 3/4oz (217JT)",
+    type:'inline_spinner', trollable:true, castable:true, weightOz:0.75 },
 
   // ── Road Runner / Beetle Spin ─────────────────────────────────────────────
   { id:'road_runner_eighth',  name:'1/8oz Road Runner / Beetle Spin',
-    type:'road_runner', trollable:true, castable:true, weightOz:0.125,
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.2, trollSpeedMax:2.0,
-    presentationSignature: { noise:'silent', flash:'medium', profile:'baitfish', water_column:'upper', cover_friendly:['wood','dock_edge','laydown'] } },
+    type:'road_runner', trollable:true, castable:true, weightOz:0.125 },
 
   { id:'road_runner_quarter', name:'1/4oz Road Runner / Beetle Spin',
-    type:'road_runner', trollable:true, castable:true, weightOz:0.25,
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.2, trollSpeedMax:2.0,
-    presentationSignature: { noise:'silent', flash:'medium', profile:'baitfish', water_column:'upper', cover_friendly:['wood','dock_edge','laydown'] } },
+    type:'road_runner', trollable:true, castable:true, weightOz:0.25 },
 
   { id:'road_runner_3eighth', name:'3/8oz Road Runner / Beetle Spin',
-    type:'road_runner', trollable:true, castable:true, weightOz:0.375,
-    diveDepthMin:null, diveDepthMax:null,
-    trollSpeedMin:1.2, trollSpeedMax:2.0,
-    presentationSignature: { noise:'silent', flash:'medium', profile:'baitfish', water_column:'upper', cover_friendly:['wood','dock_edge','laydown'] } },
+    type:'road_runner', trollable:true, castable:true, weightOz:0.375 },
 
   // ── Popping Cork Rig (Restored & Enhanced Coastal/Inshore) ───────────────
   { id:'popping_cork_rig', name:'Popping Cork with Gulp/Vudu Shrimp',
-    type:'popping_cork', trollable:true, castable:true, weightOz:0.75,
-    diveDepthMin:2, diveDepthMax:6,
-    trollSpeedMin:1.0, trollSpeedMax:1.6,
-    presentationSignature: { noise:'high_vibe', flash:'low', profile:'shrimp', water_column:'upper', cover_friendly:['grass','shallow_flat','oyster_bar'] } },
+    type:'popping_cork', trollable:true, castable:true, weightOz:0.75 },
 
   // ── Topwater (Surface Action) ─────────────────────────────────────────────
   { id:'tw_walker',  name:'Walking Bait / Spook',
-    type:'topwater_troll', trollable:true, castable:true, weightOz:0.75,
-    diveDepthMin:0, diveDepthMax:1,
-    trollSpeedMin:1.6, trollSpeedMax:2.4,
-    presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'surface', cover_friendly:['open_water'] } },
+    type:'topwater_troll', trollable:true, castable:true, weightOz:0.75 },
 
   { id:'tw_prop',    name:'Prop Bait / Choppo',
-    type:'topwater_troll', trollable:true, castable:true, weightOz:0.5,
-    diveDepthMin:0, diveDepthMax:1,
-    trollSpeedMin:1.8, trollSpeedMax:2.6,
-    presentationSignature: { noise:'high_vibe', flash:'low', profile:'baitfish', water_column:'surface', cover_friendly:['open_water','grass'] } },
+    type:'topwater_troll', trollable:true, castable:true, weightOz:0.5 },
 
   { id:'tw_plopper', name:'Whopper Plopper',
-    type:'topwater_troll', trollable:true, castable:true, weightOz:0.625,
-    diveDepthMin:0, diveDepthMax:1,
-    trollSpeedMin:1.8, trollSpeedMax:2.6,
-    presentationSignature: { noise:'high_vibe', flash:'low', profile:'baitfish', water_column:'surface', cover_friendly:['open_water','grass'] } },
+    type:'topwater_troll', trollable:true, castable:true, weightOz:0.625 },
 
   { id:'tw_wake',    name:'Wake Bait',
-    type:'topwater_troll', trollable:true, castable:true, weightOz:0.75,
-    diveDepthMin:0, diveDepthMax:2,
-    trollSpeedMin:1.6, trollSpeedMax:2.2,
-    presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'surface', cover_friendly:['open_water','shallow_flat'] } },
+    type:'topwater_troll', trollable:true, castable:true, weightOz:0.75 },
 
-  { id:'tw_popper',      name:'Popper / Chugger',       type:'topwater_cast', trollable:false, castable:true, weightOz:0.375,
-    presentationSignature: { noise:'rattle', flash:'low', profile:'baitfish', water_column:'surface', cover_friendly:['open_water','wood','rock'] } },
+  { id:'tw_popper',      name:'Popper / Chugger',       type:'topwater_cast', trollable:false, castable:true, weightOz:0.375 },
 
-  { id:'tw_buzzbait',    name:'Buzzbait',               type:'topwater_cast', trollable:false, castable:true, weightOz:0.5,
-    presentationSignature: { noise:'high_vibe', flash:'high', profile:'baitfish', water_column:'surface', cover_friendly:['grass','wood'] } },
+  { id:'tw_buzzbait',    name:'Buzzbait',               type:'topwater_cast', trollable:false, castable:true, weightOz:0.5 },
 
-  { id:'tw_frog',        name:'Hollow Body Frog',       type:'topwater_cast', trollable:false, castable:true, weightOz:0.625,
-    presentationSignature: { noise:'silent', flash:'none', profile:'unknown', water_column:'surface', cover_friendly:['grass','wood'] } },
+  { id:'tw_frog',        name:'Hollow Body Frog',       type:'topwater_cast', trollable:false, castable:true, weightOz:0.625 },
 
   // ── Soft Plastics / Cast Only ─────────────────────────────────────────────
-  { id:'cast_stickbait', name:'Stick Bait (Senko)',     type:'cast_only',     trollable:false, castable:true, weightOz:0.375,
-    presentationSignature: { noise:'silent', flash:'none', profile:'worm', water_column:'bottom', cover_friendly:['wood','grass','rock','dock_edge'] } },
+  { id:'cast_stickbait', name:'Stick Bait (Senko)',     type:'cast_only',     trollable:false, castable:true, weightOz:0.375 },
 
-  { id:'cast_worm',      name:'Plastic Worm',           type:'cast_only',     trollable:false, castable:true, weightOz:0.25,
-    presentationSignature: { noise:'silent', flash:'none', profile:'worm', water_column:'bottom', cover_friendly:['wood','grass','rock','dock_edge'] } },
+  { id:'cast_worm',      name:'Plastic Worm',           type:'cast_only',     trollable:false, castable:true, weightOz:0.25 },
 
-  { id:'cast_creature',  name:'Creature Bait / Craw',  type:'cast_only',     trollable:false, castable:true, weightOz:0.5,
-    presentationSignature: { noise:'silent', flash:'none', profile:'crawfish', water_column:'bottom', cover_friendly:['wood','grass','rock','dock_edge'] } },
+  { id:'cast_creature',  name:'Creature Bait / Craw',  type:'cast_only',     trollable:false, castable:true, weightOz:0.5 },
 
-  { id:'cast_fluke',     name:'Fluke / Soft Jerkbait', type:'cast_only',     trollable:false, castable:true, weightOz:0.375,
-    presentationSignature: { noise:'silent', flash:'none', profile:'baitfish', water_column:'upper', cover_friendly:['grass','wood'] } },
+  { id:'cast_fluke',     name:'Fluke / Soft Jerkbait', type:'cast_only',     trollable:false, castable:true, weightOz:0.375 },
 ];
 
 // ── IDB persistence ───────────────────────────────────────────────────────────
@@ -359,10 +260,59 @@ export async function saveInventory(inv) {
   } catch {}
 }
 
+const IDB_SEEN_KEY = 'builtin_ids_seen';
+
+async function idbGet(key) {
+  try {
+    const db = await openDB();
+    return new Promise((res, rej) => {
+      const req = db.transaction(IDB_STORE).objectStore(IDB_STORE).get(key);
+      req.onsuccess = () => res(req.result?.value ?? null);
+      req.onerror   = () => rej(req.error);
+    });
+  } catch { return null; }
+}
+
+async function idbPut(key, value) {
+  try {
+    const db = await openDB();
+    db.transaction(IDB_STORE,'readwrite').objectStore(IDB_STORE).put({ key, value });
+  } catch {}
+}
+
+/**
+ * Merge newly shipped built-in lures into a saved inventory.
+ *
+ * Without this, adding a lure to TACKLE_INVENTORY does NOTHING for anyone who has
+ * ever opened the Plan tab: getInventory() returned the IndexedDB copy wholesale and
+ * the new entry was never seen.
+ *
+ * A lure is added only if its id is absent from the saved inventory AND has never
+ * been merged before, so a lure the user deleted in the UI stays deleted.
+ */
+async function mergeNewBuiltins(saved) {
+  const seen  = (await idbGet(IDB_SEEN_KEY)) || [];
+  const have  = new Set(saved.map(l => l.id));
+  const known = new Set(seen);
+  const added = TACKLE_INVENTORY.filter(l => !have.has(l.id) && !known.has(l.id));
+  const allIds = TACKLE_INVENTORY.map(l => l.id);
+  if (!added.length) {
+    if (seen.length !== allIds.length) await idbPut(IDB_SEEN_KEY, allIds);
+    return saved;
+  }
+  const merged = saved.concat(JSON.parse(JSON.stringify(added)));
+  await idbPut(IDB_SEEN_KEY, allIds);
+  await saveInventory(merged);
+  console.log(`[tackle-inventory] merged ${added.length} new lure(s): ${added.map(l=>l.name).join(', ')}`);
+  return merged;
+}
+
 export async function getInventory() {
   if (_inventory) return _inventory;
   const saved = await idbLoad();
-  _inventory = saved || JSON.parse(JSON.stringify(TACKLE_INVENTORY));
+  _inventory = saved ? await mergeNewBuiltins(saved)
+                     : JSON.parse(JSON.stringify(TACKLE_INVENTORY));
+  if (!saved) await idbPut(IDB_SEEN_KEY, TACKLE_INVENTORY.map(l => l.id));
   return _inventory;
 }
 

@@ -42,7 +42,15 @@ const BACKGROUND_REFRESH_MS = 6 * 24 * 60 * 60 * 1000; // 6 days
 // ── The live export — starts empty, populated async ──────────────────────────
 // Consumers can use this directly; it will be populated before most UI
 // interactions occur (within ~1s on network, instantly from IndexedDB cache).
-export const TRISTATE_MASTER_RAMPS = { SC: {}, GA: {}, NC: {} };
+// TN was missing here while the worker has served it all along -- `/ramps` carries a full
+// Tennessee Wildlife Resources Agency source (Boat_Launch_Sites, with lanes, courtesy dock, fee,
+// restrooms, handicap parking and canoe landing), and `access-index.js` has always requested
+// ['SC','NC','GA','TN'] for the toolbar and planner dropdowns. Only this loader -- which feeds
+// the map's ramp LAYER, and now the shoreline ramp labels in supplemental-layers.js -- stopped
+// at three. So Tennessee ramps appeared in the dropdowns and nowhere on the map.
+//
+// The name TRISTATE_ is now wrong; it is kept because several modules import it by that name.
+export const TRISTATE_MASTER_RAMPS = { SC: {}, GA: {}, NC: {}, TN: {} };
 
 // Legacy parallel exports kept for any code that might reference them
 export const TRISTATE_MASTER_BANK_PIER = [];
@@ -113,7 +121,7 @@ async function fetchState(state) {
 
 // ── Main init ─────────────────────────────────────────────────────────────────
 async function initRamps() {
-  const STATES = ['SC', 'GA', 'NC'];
+  const STATES = ['SC', 'GA', 'NC', 'TN'];
   const now = Date.now();
 
   // Cache shape is now: { SC: { data, fetchedAt }, GA: {...}, NC: {...} }

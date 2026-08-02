@@ -23,91 +23,119 @@ export const LURE_KNOWLEDGE = {
 
   crankbait_squarebill: {
     label: 'Squarebill Crankbait',
-    physicalDepth: { min: 2, max: 5 },
+    depthMode: 'rated',
+    ratedDepth: { min: 2, max: 5 },
+    leadRatio: { byDepthFt: [[12, 3.0], [20, 3.8], [null, 5.2]] },
+    speedAffectsLead: false,
     tacticalDepth: { ideal: 3 },
     species:   { striped_bass:5, largemouth_bass:9, smallmouth_bass:7, crappie:1, bowfin:5, catfish:1, redfish:7 },
     season:    { spring:10, summer:6, fall:8, winter:3 },
     clarity:   { clear:7, stained:9, muddy:6 },
     structure: ['riprap','dock','laydown','shallow_flat','creek_arm','point'],
-    speed:     { min:1.8, ideal:2.4, max:3.2 },
+    speed:     { min:1.8, ideal:2.4, max:3.0 },
+    speedIsHardLimit: true,
     technique: 'Deflects off wood and rock — slow roll over shallow cover',
     presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'upper', cover_friendly:['wood','rock','shallow_flat'] }
   },
 
   crankbait_sr: {
     label: 'SR Crankbait (Shallow Runner)',
-    physicalDepth: { min:3, max:5 },
+    depthMode: 'rated',
+    ratedDepth: { min:3, max:5 },
+    leadRatio: { byDepthFt: [[12, 3.0], [20, 3.8], [null, 5.2]] },
+    speedAffectsLead: false,
     tacticalDepth: { ideal:4 },
     species:   { striped_bass:5, largemouth_bass:8, smallmouth_bass:7, crappie:2, bowfin:4, catfish:1, redfish:6 },
     season:    { spring:9, summer:5, fall:8, winter:3 },
     clarity:   { clear:8, stained:7, muddy:4 },
     structure: ['point','flat','dock_edge','creek_mouth','riprap'],
-    speed:     { min:2.0, ideal:2.5, max:3.5 },
+    speed:     { min:2.0, ideal:2.5, max:3.0 },
+    speedIsHardLimit: true,
     technique: 'Shallow flat runner — points and creek mouths at dawn',
     presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'upper', cover_friendly:['open_water','rock'] }
   },
 
   crankbait_mr: {
     label: 'MR Crankbait (Medium Runner)',
-    physicalDepth: { min:6, max:12 },
+    depthMode: 'rated',
+    ratedDepth: { min:6, max:12 },
+    leadRatio: { byDepthFt: [[12, 3.0], [20, 3.8], [null, 5.2]] },
+    speedAffectsLead: false,
     tacticalDepth: { ideal:9 },
     species:   { striped_bass:7, largemouth_bass:9, smallmouth_bass:8, crappie:2, bowfin:3, catfish:1 },
     season:    { spring:9, summer:7, fall:9, winter:5 },
     clarity:   { clear:8, stained:8, muddy:5 },
     structure: ['ledge_edge','secondary_point','hump_top','channel_swing','flat'],
-    speed:     { min:1.8, ideal:2.4, max:3.2 },
+    speed:     { min:1.8, ideal:2.4, max:3.0 },
+    speedIsHardLimit: true,
     technique: 'Mid-range ledge runner — secondary points and hump tops',
     presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'middle', cover_friendly:['open_water','rock'] }
   },
 
   crankbait_dd1: {
     label: 'DD1 Deep Diver (14-18ft)',
-    physicalDepth: { min:14, max:18 },
+    depthMode: 'rated',
+    ratedDepth: { min:14, max:18 },
+    leadRatio: { byDepthFt: [[12, 3.0], [20, 3.8], [null, 5.2]] },
+    speedAffectsLead: false,
     tacticalDepth: { ideal:16 },
     species:   { striped_bass:8, largemouth_bass:9, smallmouth_bass:8, crappie:1, bowfin:2, catfish:1 },
     season:    { spring:7, summer:9, fall:8, winter:6 },
     clarity:   { clear:9, stained:7, muddy:3 },
     structure: ['channel_ledge','main_lake_point','hump','channel_swing'],
     speed:     { min:1.6, ideal:2.2, max:2.8 },
+    speedIsHardLimit: true,
     technique: 'Primary ledge crankbait — run on channel swing drop-offs',
     presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'lower', cover_friendly:['open_water','rock'] }
   },
 
   crankbait_dd2: {
     label: 'DD2 Deep Diver (16-20ft)',
-    physicalDepth: { min:16, max:20 },
+    depthMode: 'rated',
+    ratedDepth: { min:16, max:20 },
+    leadRatio: { byDepthFt: [[12, 3.0], [20, 3.8], [null, 5.2]] },
+    speedAffectsLead: false,
     tacticalDepth: { ideal:18 },
     species:   { striped_bass:9, largemouth_bass:8, smallmouth_bass:7, crappie:1, bowfin:1, catfish:1 },
     season:    { spring:6, summer:10, fall:8, winter:6 },
     clarity:   { clear:9, stained:6, muddy:2 },
     structure: ['channel_ledge','main_lake_point','hump','thermocline_zone'],
     speed:     { min:1.5, ideal:2.0, max:2.6 },
+    speedIsHardLimit: true,
     technique: 'Deep ledge and thermocline zone — summer striper primary',
     presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'lower', cover_friendly:['open_water','rock'] }
   },
 
   crankbait_dd3: {
     label: 'DD3 Deep Diver (20-25ft)',
-    physicalDepth: { min:20, max:25 },
+    depthMode: 'rated',
+    ratedDepth: { min:20, max:25 },
+    leadRatio: { byDepthFt: [[12, 3.0], [20, 3.8], [null, 5.2]] },
+    speedAffectsLead: false,
     tacticalDepth: { ideal:22 },
     species:   { striped_bass:9, largemouth_bass:6, smallmouth_bass:5, crappie:1, bowfin:1, catfish:1 },
     season:    { spring:5, summer:10, fall:7, winter:5 },
     clarity:   { clear:10, stained:5, muddy:1 },
     structure: ['deep_channel','hump_edge','dam_face','thermocline_zone'],
     speed:     { min:1.4, ideal:1.8, max:2.4 },
+    speedIsHardLimit: true,
     technique: 'Deep channel and hump edges — thermocline bottom in peak summer',
     presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'lower', cover_friendly:['open_water','rock'] }
   },
 
   crankbait_dd4: {
     label: 'DD4 Deep Diver (25ft+)',
-    physicalDepth: { min:25, max:35 },
+    depthMode: 'rated',
+    ratedDepth: { min:25, max:35 },
+    leadRatio: { byDepthFt: [[12, 3.0], [20, 3.8], [null, 5.2]] },
+    speedAffectsLead: false,
     tacticalDepth: { ideal:28 },
     species:   { striped_bass:8, largemouth_bass:4, smallmouth_bass:3, crappie:1, bowfin:1, catfish:1 },
     season:    { spring:4, summer:9, fall:6, winter:5 },
     clarity:   { clear:10, stained:4, muddy:1 },
     structure: ['deep_channel','dam_face','main_lake_point_deep'],
     speed:     { min:1.3, ideal:1.6, max:2.0 },
+    speedIsHardLimit: true,
     technique: 'Deepest available — dam face and thermocline bottom in peak summer',
     presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'lower', cover_friendly:['open_water','rock'] }
   },
@@ -116,143 +144,221 @@ export const LURE_KNOWLEDGE = {
 
   lipless: {
     label: 'Lipless Crankbait',
-    physicalDepth: null,
+    depthMode: 'lead',
+    ratedDepth: null,
+    leadRatio: 4.0,
+    speedAffectsLead: false,
     tacticalDepth: { ideal:6 },
     species:   { striped_bass:6, largemouth_bass:8, smallmouth_bass:7, crappie:4, bowfin:5, catfish:1, redfish:8, trout:8 },
     season:    { spring:9, summer:6, fall:9, winter:8 },
     clarity:   { clear:7, stained:9, muddy:7 },
     structure: ['grass_edge','flat','point','channel_swing','dock_edge'],
     speed:     { min:1.6, ideal:2.2, max:3.0 },
+    speedIsHardLimit: false,
     technique: 'Vibration/rattle — depth by lead and speed — excellent cold/stained water',
     presentationSignature: { noise:'high_vibe', flash:'medium', profile:'baitfish', water_column:'middle', cover_friendly:['grass','open_water'] }
   },
 
   blade_vibe: {
     label: 'Blade Vibe Bait',
-    physicalDepth: null,
+    depthMode: 'lead',
+    ratedDepth: null,
+    leadRatio: 4.0,
+    speedAffectsLead: false,
     tacticalDepth: { ideal:5 },
     species:   { striped_bass:5, largemouth_bass:7, smallmouth_bass:8, crappie:6, bowfin:4, catfish:1 },
     season:    { spring:8, summer:5, fall:9, winter:9 },
     clarity:   { clear:6, stained:9, muddy:8 },
     structure: ['flat','point','grass_edge','riprap'],
     speed:     { min:1.4, ideal:1.8, max:2.4 },
+    speedIsHardLimit: false,
     technique: 'Maximum vibration — stained/cold water — variable depth by lead',
     presentationSignature: { noise:'high_vibe', flash:'medium', profile:'baitfish', water_column:'middle', cover_friendly:['open_water','rock'] }
   },
 
   umbrella_rig: {
     label: 'A-Rig / Umbrella Rig',
-    physicalDepth: null,
+    depthMode: 'lead',
+    ratedDepth: null,
+    leadRatio: { byWeightOz: [[1.65, 7.5], [2.65, 6.5], [3.5, 5.5]] },
+    speedAffectsLead: true,
     tacticalDepth: { ideal:16 },
     species:   { striped_bass:10, largemouth_bass:7, smallmouth_bass:6, crappie:1, bowfin:3, catfish:1 },
     season:    { spring:8, summer:10, fall:9, winter:6 },
     clarity:   { clear:9, stained:8, muddy:5 },
     structure: ['open_water','channel','suspended_bait','main_lake_point','thermocline_zone'],
     speed:     { min:1.4, ideal:1.8, max:2.4 },
+    speedIsHardLimit: false,
     technique: 'Schooling bait mimic — most effective open-water striper presentation',
     presentationSignature: { noise:'high_vibe', flash:'high', profile:'baitfish', water_column:'middle', cover_friendly:['open_water'] }
   },
 
   swimbait_paddle: {
     label: 'Paddle Tail Swimbait',
-    physicalDepth: null,
+    depthMode: 'lead',
+    ratedDepth: null,
+    leadRatio: 4.0,
+    speedAffectsLead: false,
     tacticalDepth: { ideal:14 },
     species:   { striped_bass:8, largemouth_bass:8, smallmouth_bass:7, crappie:5, bowfin:6, catfish:2, redfish:9, trout:9, flounder:7 },
     season:    { spring:8, summer:9, fall:8, winter:5 },
     clarity:   { clear:9, stained:7, muddy:4 },
     structure: ['open_water','channel','suspended_bait','point','flat','grass_edge','oyster_bar'],
     speed:     { min:1.4, ideal:1.8, max:2.4 },
+    speedIsHardLimit: false,
     technique: 'Natural baitfish profile — depth via jighead weight and lead',
     presentationSignature: { noise:'silent', flash:'low', profile:'baitfish', water_column:'middle', cover_friendly:['open_water','grass'] }
   },
 
   flutter_spoon: {
     label: 'Flutter Spoon',
-    physicalDepth: null,
+    depthMode: 'lead',
+    ratedDepth: null,
+    leadRatio: 3.5,
+    speedAffectsLead: false,
     tacticalDepth: { ideal:20 },
     species:   { striped_bass:10, largemouth_bass:6, smallmouth_bass:5, crappie:3, bowfin:4, catfish:1 },
     season:    { spring:7, summer:10, fall:9, winter:7 },
     clarity:   { clear:10, stained:7, muddy:3 },
     structure: ['channel','suspended_bait','thermocline_zone','dam_face','main_lake_point'],
     speed:     { min:1.3, ideal:1.7, max:2.2 },
+    speedIsHardLimit: false,
     technique: 'Flash + flutter at slow troll — primary deep striper presentation in clear water',
     presentationSignature: { noise:'silent', flash:'high', profile:'baitfish', water_column:'lower', cover_friendly:['open_water'] }
   },
 
   spinnerbait: {
     label: 'Spinnerbait',
-    physicalDepth: null,
+    depthMode: 'lead',
+    ratedDepth: null,
+    leadRatio: 4.0,
+    speedAffectsLead: false,
     tacticalDepth: { ideal:5 },
     species:   { striped_bass:4, largemouth_bass:9, smallmouth_bass:7, crappie:3, bowfin:6, catfish:1 },
     season:    { spring:10, summer:6, fall:8, winter:3 },
     clarity:   { clear:6, stained:10, muddy:8 },
     structure: ['dock_edge','point','flat','riprap','laydown','creek_arm'],
     speed:     { min:1.4, ideal:2.0, max:2.8 },
+    speedIsHardLimit: false,
     technique: 'Vibration and flash — stained water specialist — slow-roll near cover',
     presentationSignature: { noise:'high_vibe', flash:'high', profile:'baitfish', water_column:'middle', cover_friendly:['wood','grass'] }
   },
 
   chatterbait: {
     label: 'Chatterbait',
-    physicalDepth: null,
+    depthMode: 'lead',
+    ratedDepth: null,
+    leadRatio: 4.0,
+    speedAffectsLead: false,
     tacticalDepth: { ideal:4 },
     species:   { striped_bass:3, largemouth_bass:9, smallmouth_bass:7, crappie:2, bowfin:7, catfish:1 },
     season:    { spring:10, summer:6, fall:8, winter:4 },
     clarity:   { clear:5, stained:10, muddy:8 },
     structure: ['grass_edge','dock_edge','laydown','flat','creek_arm'],
     speed:     { min:1.4, ideal:2.0, max:2.8 },
+    speedIsHardLimit: false,
     technique: 'Maximum vibration/flash — stained water bass — vegetation edges',
     presentationSignature: { noise:'high_vibe', flash:'medium', profile:'baitfish', water_column:'middle', cover_friendly:['grass','wood'] }
   },
 
+  vertical_jig: {
+    label: 'Vertical / Knife Jig',
+    depthMode: 'lead',
+    ratedDepth: null,
+    leadRatio: 4.0,
+    speedAffectsLead: false,
+    tacticalDepth: { ideal: 30 },
+    species:   { striped_bass:9, largemouth_bass:5, smallmouth_bass:6, crappie:2, bowfin:2, catfish:3, redfish:6, flounder:5, trout:4 },
+    season:    { spring:6, summer:9, fall:9, winter:9 },
+    clarity:   { clear:9, stained:6, muddy:3 },
+    structure: ['deep_channel','channel_ledge','hump','suspended_bait','dam_face','thermocline_zone','open_water'],
+    speed:     { min:1.5, ideal:2.2, max:3.0 },
+    speedIsHardLimit: false,
+    technique: 'Dense wire-through chrome body. Drops fast and HOLDS depth at speed instead of planing up, so it trolls deep on a long lead as well as it jigs vertically. Depth is lead and speed, not a dive lip.',
+    presentationSignature: { noise:'silent', flash:'high', profile:'baitfish', water_column:'bottom', cover_friendly:['open_water','rock'] }
+  },
+
+  inline_spinner: {
+    label: 'Inline Spinner',
+    depthMode: 'lead',
+    ratedDepth: null,
+    leadRatio: 4.0,
+    speedAffectsLead: false,
+    tacticalDepth: { ideal: 6 },
+    species:   { striped_bass:6, largemouth_bass:7, smallmouth_bass:8, crappie:7, bowfin:6, catfish:3, redfish:5, trout:9 },
+    season:    { spring:9, summer:7, fall:8, winter:5 },
+    clarity:   { clear:8, stained:8, muddy:5 },
+    structure: ['creek_arm','creek_mouth','flat','shallow_flat','point','laydown','current_seam','brush_pile'],
+    speed:     { min:1.0, ideal:1.5, max:2.0 },
+    speedIsHardLimit: false,
+    technique: 'Blade turns around a straight shaft, so it generates constant LIFT — it rides high and the blade stalls and fouls above about 2mph. Long lead or an inline keel weight to get it down; never the fast rod in a spread.',
+    presentationSignature: { noise:'high_vibe', flash:'high', profile:'baitfish', water_column:'upper', cover_friendly:['open_water','wood','laydown'] }
+  },
+
   bucktail: {
     label: 'Bucktail Jig',
-    physicalDepth: null,
+    depthMode: 'lead',
+    ratedDepth: null,
+    leadRatio: 4.0,
+    speedAffectsLead: false,
     tacticalDepth: { ideal:18 },
     species:   { striped_bass:9, largemouth_bass:6, smallmouth_bass:7, crappie:4, bowfin:5, catfish:2, redfish:8 },
     season:    { spring:8, summer:9, fall:9, winter:7 },
     clarity:   { clear:8, stained:7, muddy:5 },
     structure: ['channel','open_water','suspended_bait','dam_face','current_seam','bridge_piling'],
     speed:     { min:1.3, ideal:1.7, max:2.2 },
+    speedIsHardLimit: false,
     technique: 'Pulsing hair action — classic striper slow-troll — depth by lead',
     presentationSignature: { noise:'silent', flash:'low', profile:'baitfish', water_column:'lower', cover_friendly:['open_water','rock','bridge_piling'] }
   },
 
   marabou_jig: {
     label: 'Marabou Jig',
-    physicalDepth: null,
+    depthMode: 'lead',
+    ratedDepth: null,
+    leadRatio: 4.0,
+    speedAffectsLead: false,
     tacticalDepth: { ideal:10 },
     species:   { striped_bass:6, largemouth_bass:6, smallmouth_bass:6, crappie:9, bowfin:5, catfish:3 },
     season:    { spring:9, summer:7, fall:8, winter:8 },
     clarity:   { clear:8, stained:7, muddy:5 },
     structure: ['brush_pile','dock','channel_edge','flat','point'],
     speed:     { min:1.2, ideal:1.6, max:2.0 },
+    speedIsHardLimit: false,
     technique: 'Pulsing soft action — crappie and bass — slow troll near structure',
     presentationSignature: { noise:'silent', flash:'none', profile:'baitfish', water_column:'middle', cover_friendly:['open_water','brush_pile'] }
   },
 
   road_runner: {
     label: 'Road Runner / Beetle Spin',
-    physicalDepth: null,
+    depthMode: 'lead',
+    ratedDepth: null,
+    leadRatio: 4.0,
+    speedAffectsLead: false,
     tacticalDepth: { ideal:4 },
     species:   { striped_bass:4, largemouth_bass:7, smallmouth_bass:7, crappie:8, bowfin:9, catfish:4 },
     season:    { spring:9, summer:8, fall:8, winter:6 },
     clarity:   { clear:7, stained:8, muddy:7 },
     structure: ['dock_edge','laydown','creek_arm','flat','brush_pile'],
     speed:     { min:1.2, ideal:1.6, max:2.2 },
+    speedIsHardLimit: false,
     technique: 'Spinner + soft plastic trailer — bowfin and bass in shallow cover',
     presentationSignature: { noise:'silent', flash:'medium', profile:'baitfish', water_column:'upper', cover_friendly:['wood','dock_edge','laydown'] }
   },
 
   jighead: {
     label: 'Jighead (bare or with swimbait)',
-    physicalDepth: null,
+    depthMode: 'lead',
+    ratedDepth: null,
+    leadRatio: 4.0,
+    speedAffectsLead: false,
     tacticalDepth: { ideal:12 },
     species:   { striped_bass:7, largemouth_bass:7, smallmouth_bass:6, crappie:7, bowfin:5, catfish:2, redfish:8, trout:8 },
     season:    { spring:7, summer:8, fall:7, winter:6 },
     clarity:   { clear:8, stained:7, muddy:5 },
     structure: ['open_water','channel','point','flat','brush_pile'],
     speed:     { min:1.2, ideal:1.7, max:2.2 },
+    speedIsHardLimit: false,
     technique: 'Depth controlled by head weight and lead — versatile year-round',
     presentationSignature: { noise:'silent', flash:'none', profile:'baitfish', water_column:'middle', cover_friendly:['open_water','rock','brush_pile'] }
   },
@@ -261,39 +367,47 @@ export const LURE_KNOWLEDGE = {
 
   topwater_troll: {
     label: 'Topwater (Trollable)',
-    physicalDepth: { min:0, max:1 },
+    depthMode: 'surface',
+    ratedDepth: { min:0, max:1 },
     tacticalDepth: { ideal:0 },
     species:   { striped_bass:8, largemouth_bass:9, smallmouth_bass:7, crappie:1, bowfin:6, catfish:1 },
     season:    { spring:8, summer:9, fall:8, winter:2 },
     clarity:   { clear:9, stained:7, muddy:4 },
     structure: ['open_water','flat','point','creek_mouth','dock_edge'],
     speed:     { min:1.2, ideal:1.6, max:2.0 },
+    speedIsHardLimit: true,
     technique: 'Surface troll at dawn — schooling striper and largemouth — slow retrieve',
     presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'surface', cover_friendly:['open_water'] }
   },
 
   topwater_cast: {
     label: 'Topwater (Cast Only)',
-    physicalDepth: { min:0, max:0 },
+    depthMode: 'surface',
+    ratedDepth: { min:0, max:0 },
     tacticalDepth: { ideal:0 },
     species:   { striped_bass:5, largemouth_bass:10, smallmouth_bass:7, crappie:1, bowfin:7, catfish:1, redfish:9, trout:8 },
     season:    { spring:9, summer:8, fall:8, winter:1 },
     clarity:   { clear:8, stained:7, muddy:5 },
     structure: ['grass_mat','lily_pad','dock','shallow_flat','creek_arm','grass_edge'],
     speed:     null,
+    speedIsHardLimit: false,   // never trolled — no trolling speed to cap
     technique: 'Cast only — suggest as casting stop near shallow cover',
     presentationSignature: { noise:'rattle', flash:'low', profile:'baitfish', water_column:'surface', cover_friendly:['open_water','wood','rock'] }
   },
 
   cast_only: {
     label: 'Cast Only (Soft Plastics)',
-    physicalDepth: null,
+    depthMode: 'lead',
+    ratedDepth: null,
+    leadRatio: 4.0,
+    speedAffectsLead: false,
     tacticalDepth: { ideal:6 },
     species:   { striped_bass:3, largemouth_bass:10, smallmouth_bass:8, crappie:5, bowfin:6, catfish:3, redfish:8, trout:7 },
     season:    { spring:9, summer:7, fall:8, winter:6 },
     clarity:   { clear:8, stained:7, muddy:6 },
     structure: ['dock','laydown','grass','brush_pile','rock'],
     speed:     null,
+    speedIsHardLimit: false,   // never trolled — no trolling speed to cap
     technique: 'Cast only — suggest as casting stop at structure',
     presentationSignature: { noise:'silent', flash:'none', profile:'worm', water_column:'bottom', cover_friendly:['wood','grass','rock','dock_edge'] }
   },
@@ -302,65 +416,85 @@ export const LURE_KNOWLEDGE = {
 
   underspin: {
     label: 'Underspin Jig',
-    physicalDepth: null,
+    depthMode: 'lead',
+    ratedDepth: null,
+    leadRatio: 4.0,
+    speedAffectsLead: false,
     tacticalDepth: { ideal: 10 },
     species:   { striped_bass:8, largemouth_bass:8, smallmouth_bass:8, crappie:4, bowfin:4, catfish:1 },
     season:    { spring:8, summer:9, fall:8, winter:6 },
     clarity:   { clear:9, stained:8, muddy:4 },
     structure: ['point', 'rocky_point', 'channel_ledge', 'suspended_bait', 'flat'],
     speed:     { min:1.4, ideal:1.8, max:2.2 },
+    speedIsHardLimit: false,
     technique: 'Rotating belly blade provides flash on steady retrieve or slow troll',
     presentationSignature: { noise:'silent', flash:'medium', profile:'baitfish', water_column:'middle', cover_friendly:['open_water','grass','rock'] }
   },
 
   spoon_casting: {
     label: 'Casting Spoon / Diamond Jig',
-    physicalDepth: null,
+    depthMode: 'lead',
+    ratedDepth: null,
+    leadRatio: 3.5,
+    speedAffectsLead: false,
     tacticalDepth: { ideal: 18 },
     species:   { striped_bass:9, largemouth_bass:6, smallmouth_bass:7, crappie:2, bowfin:3, catfish:2 },
     season:    { spring:7, summer:9, fall:9, winter:8 },
     clarity:   { clear:9, stained:7, muddy:3 },
     structure: ['deep_channel', 'channel_ledge', 'hump', 'suspended_bait', 'open_water'],
     speed:     { min:1.6, ideal:2.2, max:2.8 },
+    speedIsHardLimit: false,
     technique: 'Heavy casting or vertical jigging - high speed or deep flutter',
     presentationSignature: { noise:'silent', flash:'high', profile:'baitfish', water_column:'bottom', cover_friendly:['open_water','rock'] }
   },
 
   jig_football: {
     label: 'Football Jig',
-    physicalDepth: null,
+    depthMode: 'lead',
+    ratedDepth: null,
+    leadRatio: 4.0,
+    speedAffectsLead: false,
     tacticalDepth: { ideal: 12 },
     species:   { striped_bass:2, largemouth_bass:10, smallmouth_bass:9, crappie:1, bowfin:4, catfish:2 },
     season:    { spring:9, summer:8, fall:8, winter:7 },
     clarity:   { clear:8, stained:9, muddy:5 },
     structure: ['rocky_point', 'channel_ledge', 'hump', 'clay_bank', 'point'],
     speed:     null,
+    speedIsHardLimit: false,   // never trolled — no trolling speed to cap
     technique: 'Cast and drag slowly over deep rock or gravel points, deflecting off structure',
     presentationSignature: { noise:'silent', flash:'none', profile:'crawfish', water_column:'bottom', cover_friendly:['rock','gravel'] }
   },
 
   jig_finesse_ned: {
     label: 'Ned Rig / Finesse Jig',
-    physicalDepth: null,
+    depthMode: 'lead',
+    ratedDepth: null,
+    leadRatio: 4.0,
+    speedAffectsLead: false,
     tacticalDepth: { ideal: 8 },
     species:   { striped_bass:3, largemouth_bass:9, smallmouth_bass:10, crappie:6, bowfin:4, catfish:3 },
     season:    { spring:9, summer:7, fall:8, winter:8 },
     clarity:   { clear:9, stained:8, muddy:4 },
     structure: ['dock', 'dock_edge', 'rock', 'laydown', 'point'],
     speed:     null,
+    speedIsHardLimit: false,   // never trolled — no trolling speed to cap
     technique: 'Dead-stick or hop slowly on bottom - highly effective under tough/cold conditions',
     presentationSignature: { noise:'silent', flash:'none', profile:'worm', water_column:'bottom', cover_friendly:['rock','wood','dock_edge'] }
   },
 
   popping_cork: {
     label: 'Popping Cork Rig',
-    physicalDepth: { min:2, max:6 },
+    depthMode: 'rated',
+    ratedDepth: { min:2, max:6 },
+    leadRatio: 4.0,
+    speedAffectsLead: false,
     tacticalDepth: { ideal: 4 },
     species:   { striped_bass:6, largemouth_bass:6, smallmouth_bass:4, crappie:2, bowfin:4, catfish:1, redfish:10, trout:10, flounder:7 },
     season:    { spring:9, summer:10, fall:9, winter:4 },
     clarity:   { clear:8, stained:10, muddy:6 },
     structure: ['grass_edge', 'shallow_flat', 'oyster_bar', 'creek_mouth', 'creek_arm'],
     speed:     { min:1.0, ideal:1.3, max:1.6 },
+    speedIsHardLimit: true,
     technique: 'Troll or cast near grass/oysters. Heavy pop sound triggers fish, keeping lure suspended',
     presentationSignature: { noise:'high_vibe', flash:'low', profile:'shrimp', water_column:'upper', cover_friendly:['grass','shallow_flat','oyster_bar'] }
   },
@@ -396,8 +530,8 @@ export function scoreLureForContext(lureType, context = {}) {
   const disqualifiers = [];
 
   // ── 1. Physical depth hard gate (crankbaits + topwater only) ─────────────
-  if (knowledge.physicalDepth !== null && targetDepthFt !== undefined) {
-    const pd = knowledge.physicalDepth;
+  if (knowledge.ratedDepth !== null && targetDepthFt !== undefined) {
+    const pd = knowledge.ratedDepth;
     if (targetDepthFt < pd.min || targetDepthFt > pd.max) {
       const msg = `Cannot physically reach ${targetDepthFt}ft (range: ${pd.min}–${pd.max}ft)`;
       disqualifiers.push(msg);
@@ -428,7 +562,7 @@ export function scoreLureForContext(lureType, context = {}) {
   else if (clarityScore <= 4) warnings.push(`Less effective in ${clarityKey} water`);
 
   // ── 5. Tactical depth suitability (variable-depth lures only) ────────────
-  if (knowledge.physicalDepth === null && knowledge.tacticalDepth && targetDepthFt !== undefined) {
+  if (knowledge.ratedDepth === null && knowledge.tacticalDepth && targetDepthFt !== undefined) {
     const ideal = knowledge.tacticalDepth.ideal;
     const delta = Math.abs(ideal - targetDepthFt);
     const depthScore = Math.max(0, 10 - delta * 0.8);
@@ -534,9 +668,14 @@ export function scoreLureForContext(lureType, context = {}) {
 
 // ── Color recommendations ─────────────────────────────────────────────────────
 
-export function getLureColor(lureType, clarityKey) {
-  const c = clarityKey || 'clear';
-  const colorMap = {
+/**
+ * Colour recommendation per type per clarity.
+ * EXPORTED so test/tackle-parity.test.js can assert every inventory type has an
+ * entry. Reached only through getLureColor() the fallback is invisible: a missing
+ * type silently returns 'Natural Pearl / Smoke', which is a legal answer for some
+ * types, so the gap cannot be detected from the outside.
+ */
+export const LURE_COLORS = {
     umbrella_rig:         { clear:'Blueback Herring',      stained:'Chartreuse / White',  muddy:'Dark Shad' },
     crankbait_squarebill: { clear:'Natural Pearl / Smoke', stained:'Chartreuse / Shad',   muddy:'Black / Blue' },
     crankbait_sr:         { clear:'Blue / Silver Herring', stained:'Chartreuse / Shad',   muddy:'Black / Blue' },
@@ -551,6 +690,8 @@ export function getLureColor(lureType, clarityKey) {
     swimbait_paddle:      { clear:'Blueback Herring',      stained:'Chartreuse / White',  muddy:'Dark Shad' },
     spinnerbait:          { clear:'White / UV',            stained:'Chartreuse / White',  muddy:'Black / Blue' },
     chatterbait:          { clear:'Natural Pearl / Smoke', stained:'Chartreuse / White',  muddy:'Black / Blue' },
+    vertical_jig:         { clear:'Chrome / Blue',          stained:'Chartreuse / Chrome', muddy:'Gold / Chartreuse' },
+    inline_spinner:       { clear:'White / Silver Blade',   stained:'Chartreuse / Gold',   muddy:'Black / Copper' },
     bucktail:             { clear:'Natural Pearl / Smoke', stained:'Chartreuse / White',  muddy:'Black / Blue' },
     marabou_jig:          { clear:'Natural Pearl / Smoke', stained:'Chartreuse / White',  muddy:'Black / Blue' },
     road_runner:          { clear:'White / UV',            stained:'Chartreuse / White',  muddy:'Black / Blue' },
@@ -563,8 +704,11 @@ export function getLureColor(lureType, clarityKey) {
     jig_football:         { clear:'Green Pumpkin',         stained:'Green Pumpkin Candy', muddy:'Black / Blue' },
     jig_finesse_ned:      { clear:'Green Pumpkin',         stained:'Coppertreuse',        muddy:'Black / Blue' },
     popping_cork:         { clear:'Natural Shrimp',        stained:'Vudu Orange',         muddy:'Gulp Chartreuse' },
-  };
-  return colorMap[lureType]?.[c] || 'Natural Pearl / Smoke';
+};
+
+export function getLureColor(lureType, clarityKey) {
+  const c = clarityKey || 'clear';
+  return LURE_COLORS[lureType]?.[c] || 'Natural Pearl / Smoke';
 }
 
 // ── Jighead selection ─────────────────────────────────────────────────────────
@@ -595,4 +739,138 @@ export function getSeason(date) {
   if (m >= 6 && m <= 8)  return 'summer';
   if (m >= 9 && m <= 11) return 'fall';
   return 'winter';
+}
+
+
+// ── Depth: one source, three modes ────────────────────────────────────────────
+//
+// Ryan's rule, 2026-08-02: "for things that have fixed depths by category —
+// crankbaits — saying that a SR runs 3-5ft makes sense, it is printed right on
+// the bill. Almost everything else directly depends on speed and lineout.
+// Sinking lures you slow down and they are going to go to the bottom."
+//
+// So depth is a STORED number only when someone printed it on the lure. Everything
+// else is a function of weight, speed and lead. Storing the result of that function
+// is what put dive depths in three files (tackle-inventory.js, lure-knowledge.js and
+// spread-builder.js's name-keyed LURE_DIVE_DEPTHS) and let them drift apart.
+//
+//   'rated'   the lip/leader fixes it. Band comes from ratedDepth. Casting and
+//             trolling agree, because the lip does not care how it got there.
+//   'lead'    sinking bait. depth = f(lead, speed, weight) via leadRatio.
+//   'surface' on top. ratedDepth is 0-1ft and lead is a flat setback.
+//
+// leadRatio is feet of lead per foot of depth, seeded from the numbers
+// autoCalculateLead() already used so this refactor changes NO behaviour. The
+// ratios are working values, not measurements — calibrate against sonar before
+// treating any of them as fact.
+
+// NOTE — speedAffectsLead reproduces a quirk of the old autoCalculateLead(): it
+// multiplied by a speed factor for the three A-rig branches ONLY, and ignored speed
+// for spoons, crankbaits and the default branch. That is almost certainly wrong —
+// speed changes the depth of everything you tow — but this refactor is meant to move
+// the numbers, not change them. Flipping the rest to true is a one-line change and
+// is on the same ledger as the eight speed-window disagreements.
+
+function speedFactor(speedMph) {
+  const s = speedMph || 2.4;                    // autoCalculateLead's default
+  return s > 2.2 ? 1.15 : s < 1.6 ? 0.88 : 1.0;
+}
+
+function resolveLeadRatio(lr, { weightOz, targetDepthFt }) {
+  if (lr == null) return 4.0;
+  if (typeof lr === 'number') return lr;
+  if (lr.byWeightOz) {
+    const pts = lr.byWeightOz;
+    if (weightOz == null) return pts[Math.floor(pts.length / 2)][1];
+    let best = pts[0];
+    for (const p of pts) if (Math.abs(p[0] - weightOz) < Math.abs(best[0] - weightOz)) best = p;
+    return best[1];
+  }
+  if (lr.byDepthFt) {
+    for (const [cap, v] of lr.byDepthFt) if (cap == null || targetDepthFt <= cap) return v;
+  }
+  return 4.0;
+}
+
+/**
+ * Feet of lead to put the lure at targetDepthFt. Replaces autoCalculateLead()'s
+ * substring matching on the display name with a type lookup plus weight.
+ */
+export function leadForDepth(lure, targetDepthFt, speedMph) {
+  const k = LURE_KNOWLEDGE[lure?.type];
+  if (!k) return Math.round(targetDepthFt * 4.0);
+  if (k.depthMode === 'surface') return 80;                 // flat-line topwater setback
+  // A rated bait CANNOT be leaded past its bill. The old autoCalculateLead would
+  // happily hand an SR crankbait 76ft of lead for a 20ft target, which buys you
+  // nothing but a longer tangle -- it still runs 3-5ft.
+  if (k.depthMode === 'rated' && k.ratedDepth) {
+    targetDepthFt = Math.min(targetDepthFt, k.ratedDepth.max);
+  }
+  const ratio = resolveLeadRatio(k.leadRatio, { weightOz: lure.weightOz, targetDepthFt });
+  const sf = k.speedAffectsLead ? speedFactor(speedMph) : 1;
+  return Math.round(targetDepthFt * ratio * sf);
+}
+
+/**
+ * Where this lure actually runs. `rated` returns the printed band regardless of
+ * lead. `lead` inverts leadForDepth. `surface` is the top.
+ * Returns { min, max, mode, controlledBy }.
+ */
+export function depthWindow(lure, { speedMph, leadFt } = {}) {
+  const k = LURE_KNOWLEDGE[lure?.type];
+  if (!k) return { min: null, max: null, mode: 'unknown', controlledBy: 'unknown' };
+  if (k.depthMode !== 'lead') {
+    const d = k.ratedDepth || { min: 0, max: 1 };
+    return { ...d, mode: k.depthMode,
+             controlledBy: k.depthMode === 'surface' ? 'surface' : 'the lure itself' };
+  }
+  if (leadFt == null) {
+    return { min: null, max: null, mode: 'lead', controlledBy: 'lead length + speed + weight' };
+  }
+  const sf = speedFactor(speedMph);
+  const guess = d => leadForDepth(lure, d, speedMph);
+  let lo = 0, hi = 120;                                     // invert numerically; ratio may be banded
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    if (guess(mid) < leadFt) lo = mid; else hi = mid;
+  }
+  const d = Math.round(lo);
+  return { min: Math.max(0, d - 2), max: d + 2, mode: 'lead',
+           controlledBy: 'lead length + speed + weight', speedFactor: sf };
+}
+
+/** True when depth comes from lead rather than from the lure. */
+export function isLeadControlled(lure) {
+  return LURE_KNOWLEDGE[lure?.type]?.depthMode === 'lead';
+}
+
+/**
+ * Can this lure be put at this depth, at this speed, within the lead you are
+ * willing to run? Returns what stops you, if anything.
+ *
+ * This replaces "is the boat speed inside the lure's window?" as the feasibility
+ * question, because for everything except a lipped bait the speed window was never
+ * the real constraint.
+ */
+export function canReachDepth(lure, depthFt, speedMph, { maxLeadFt } = {}) {
+  const k = LURE_KNOWLEDGE[lure?.type];
+  if (!k) return { ok: false, limitedBy: 'unknown lure type' };
+
+  if (k.speedIsHardLimit && speedMph > k.speed.max) {
+    return { ok: false, limitedBy: 'speed',
+             detail: `${k.label} runs outside its rated depth above ${k.speed.max}mph` };
+  }
+  if (k.depthMode === 'surface') return { ok: depthFt <= 2, leadFt: 80, limitedBy: null };
+  if (k.depthMode === 'rated') {
+    const within = depthFt >= k.ratedDepth.min && depthFt <= k.ratedDepth.max;
+    return { ok: within, leadFt: leadForDepth(lure, depthFt, speedMph),
+             limitedBy: within ? null : 'rating',
+             detail: within ? null : `${k.label} is rated ${k.ratedDepth.min}-${k.ratedDepth.max}ft` };
+  }
+  const leadFt = leadForDepth(lure, depthFt, speedMph);
+  if (maxLeadFt != null && leadFt > maxLeadFt) {
+    return { ok: false, leadFt, limitedBy: 'lead',
+             detail: `needs ${leadFt}ft of lead, limit is ${maxLeadFt}ft — slow down or go heavier` };
+  }
+  return { ok: true, leadFt, limitedBy: null };
 }
