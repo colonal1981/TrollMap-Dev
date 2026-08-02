@@ -224,6 +224,19 @@ export const TACKLE_INVENTORY = [
   { id:'cast_fluke',     name:'Fluke / Soft Jerkbait', type:'cast_only',     trollable:false, castable:true, weightOz:0.375 },
 ];
 
+/**
+ * Resolve a display name to its inventory entry. Rod rows, Groq output and the
+ * spread UI all carry names rather than ids, so this is the one place that
+ * conversion happens. Exact match first, then containment for annotated names.
+ */
+export function lureByName(name) {
+  if (!name) return null;
+  const n = String(name).toLowerCase().trim();
+  return TACKLE_INVENTORY.find(l => l.name.toLowerCase() === n)
+      || TACKLE_INVENTORY.find(l => n.includes(l.name.toLowerCase()))
+      || null;
+}
+
 // ── IDB persistence ───────────────────────────────────────────────────────────
 const IDB_NAME    = 'trollmap-tackle';
 const IDB_STORE   = 'inventory';

@@ -9,8 +9,15 @@
  *
  * Sources pulled from the worker:
  *   /ramps       — boat ramps
- * (paddle / bank-pier / attractors are defined in ACCESS_SOURCES below but
- *  commented out by default — see note there before enabling.)
+ *   /paddle      — SCDNR paddling access sites (enabled 2026-08-02)
+ * (/bank-pier and /attractors are defined in ACCESS_SOURCES below but stay off —
+ *  see the note there.)
+ *
+ * Plus, since 2026-08-02, the offline-built 3DHP lake registry (data/lake-registry.js).
+ * That is what lets the picker show a lake no state agency lists a ramp on — Wittee Lake
+ * being the case that proved it: SCDNR HAS a ramp there, and the app could not show the
+ * lake, so the ramp was unreachable. The registry is merged last and deduped against the
+ * worker data, so it only ever adds.
  *
  * This module intentionally does NOT import ../data/lakes.js or
  * ../data/ramps.js. Mixing those old curated/static lists with the worker
@@ -22,6 +29,8 @@ import { state } from '../core/state.js';
 import { SCDNR_STATE_LAKES } from './scdnr-state-lakes.js';
 import { USER_KNOWN_LAKES } from './user-known-lakes.js';
 import { COASTAL_ZONES } from './coastal-zones.js';
+import { loadLakeRegistry, filterLakes, accessPointsFor } from './lake-registry.js';
+import { registerR2Key } from './lake-keys.js';
 
 // Manual coastal ramps not in DNR ArcGIS feed — add here when a known
 // kayak/small-boat launch is missing from the official database.
@@ -38,19 +47,31 @@ const COASTAL_MANUAL_RAMPS = [
 const STATES = ['SC', 'NC', 'GA', 'TN'];
 const ACCESS_SOURCES = [
   { path: '/ramps', label: 'Boat ramp', marker: '🛥️' },
-  // NOTE: /bank-pier and /attractors NC field-mappings haven't been verified
-  // against the live ArcGIS schema the way /ramps and /paddle have (see
-  // trollmap-worker.js RAMP_SOURCES.NC comment, fixed 2026-07-03). Enable
-  // these once confirmed, or they may silently under-report NC like /ramps
-  // did.
-  // { path: '/paddle', label: 'Paddle launch', marker: '🛶' },
+  // /paddle enabled 2026-08-02. Its NC field mapping was verified alongside /ramps in the
+  // 2026-07-03 worker fix (see trollmap-worker.js RAMP_SOURCES.NC), which is what the note
+  // below was waiting on. It is a purpose-built paddling-launch feed — 131 sites over 67
+  // waterbodies in SC — and a kayak launch is often the ONLY access a small impoundment has.
+  { path: '/paddle', label: 'Paddle launch', marker: '🛶' },
+  // /bank-pier stays off: Ryan's explicit call, a bank/pier point is not a launch and would
+  // make lakes look reachable by boat when they are not. /attractors NC field mappings are
+  // still unverified against the live ArcGIS schema.
   // { path: '/bank-pier', label: 'Bank / pier access', marker: '🎣' },
 ];
+
+// Registry lakes shown by default. `reachableOnly` keeps this to lakes that are not
+// known-closed AND have either public land on the bank or a ramp in some source (~550 of
+// 1,551). NOT the stricter 322 open-only set: Wittee and Ferry are Restricted Access
+// because their banks are state forest, and they are the whole point.
+const REGISTRY_DEFAULT_FILTER = { reachableOnly: true };
 
 let accessIndexPromise = null;
 let accessIndex = {
   lakeNames: [],
   byLake: new Map(),
+  // slug -> registry record, and lake display name -> registry record, for every lake the
+  // registry contributed. Callers that need a centroid, an access verdict or an R2 slug read
+  // these; byLake stays what it always was, a name -> access-point list.
+  registryByName: new Map(),
 };
 
 // ── Worker URL helpers ──────────────────────────────────────────────────
@@ -186,7 +207,7 @@ async function fetchAccessSource(source, stateCode) {
 }
 
 async function buildAccessIndex() {
-  const index = { lakeNames: [], byLake: new Map() };
+  const index = { lakeNames: [], byLake: new Map(), registryByName: new Map() };
 
   const jobs = [];
   ACCESS_SOURCES.forEach((source) => {
@@ -310,6 +331,45 @@ async function buildAccessIndex() {
     return diff !== 0 ? diff : a.localeCompare(b);
   });
 
+  // ── 3DHP lake registry ────────────────────────────────────────────────
+  //
+  // Merged LAST and deliberately: findExistingLakeKey() folds a registry lake into a
+  // worker-derived entry when the names match and a known access point is within 15 miles,
+  // so Wateree does not appear twice. What survives as a new entry is genuinely new — the
+  // lakes no state ramp feed lists. On 2026-08-02 that is the difference between 213 lakes
+  // and 322 accessible ones, including Wittee (SCDNR has the ramp; the LAKE was missing),
+  // Ferry and Dawhoo.
+  //
+  // Awaited rather than fired-and-forgotten so the first populateLakeSelect() sees the full
+  // list. loadLakeRegistry() swallows its own failure and returns an empty registry, so a
+  // missing or unreachable index degrades to exactly the previous behaviour.
+  try {
+    await loadLakeRegistry();
+    let added = 0;
+    for (const rec of filterLakes(REGISTRY_DEFAULT_FILTER)) {
+      const existingKey = findExistingLakeKey(index, rec.name, rec.lat, rec.lon);
+      const lakeName = existingKey || rec.displayName;
+      if (!existingKey) added += 1;
+      index.registryByName.set(lakeName, rec);
+      // Teach lake-keys.js the slug so contour/chartpack loads resolve without fuzzy
+      // matching. Curated names already in LAKE_NAME_TO_R2_KEY are left alone.
+      registerR2Key(lakeName, rec.slug);
+
+      const pts = accessPointsFor(rec);
+      for (const p of pts) addAccessItem(index, lakeName, p);
+
+      // A lake with no mapped ramp still has to be selectable and still has to fly the map
+      // somewhere — that IS the discovery case, 141 of the 322. Without a point here the
+      // entry would exist with an empty access list and the map would not move.
+      if (!pts.length && !index.byLake.has(lakeName)) {
+        index.byLake.set(lakeName, []);
+      }
+    }
+    if (added) console.info(`[access-index] registry contributed ${added} lakes not in the DNR feeds`);
+  } catch (e) {
+    console.warn('[access-index] registry merge skipped:', e?.message || e);
+  }
+
   // Merge manual coastal ramps not in DNR feed
   for (const ramp of COASTAL_MANUAL_RAMPS) {
     addAccessItem(index, ramp.zoneName, {
@@ -324,11 +384,24 @@ async function buildAccessIndex() {
     });
   }
 
+  // Rebuild the name list LAST. The earlier sort ran before the registry and the manual
+  // coastal ramps were merged, so anything added after it would exist in byLake and never
+  // appear in the dropdown — a silent omission of exactly the new lakes this is for.
+  index.lakeNames = [...index.byLake.keys()].sort((a, b) => {
+    const diff = lakeStatePriority(a) - lakeStatePriority(b);
+    return diff !== 0 ? diff : a.localeCompare(b);
+  });
+
   if (failures.length) {
     console.warn('[access-index] Some worker access feeds failed:', failures);
   }
 
   return index;
+}
+
+/** The registry record behind a picker entry, or null if it came from a DNR feed. */
+export function registryRecordFor(lakeName) {
+  return accessIndex.registryByName?.get(lakeName) || null;
 }
 
 /**

@@ -180,10 +180,42 @@ const _NORM_MAP = Object.entries(LAKE_NAME_TO_R2_KEY)
   .map(([k, v]) => [_normalize(k), v])
   .filter(([kn]) => kn.length > 0);
 
+// display name (and its lowercase form) -> registry slug. Populated by access-index.js once
+// lake_index.json loads; a curated entry in LAKE_NAME_TO_R2_KEY still wins if it is the
+// SAME key, and differs only where the curated map has a legacy name we want to keep.
+const _REGISTRY_KEYS = new Map();
+
+/**
+ * Teach resolveR2Key() about the registry. Called once per lake as the index is built.
+ * Existing curated names are not overwritten — those keys are what is already in R2 and
+ * renaming them would orphan live chartpacks.
+ */
+export function registerR2Key(displayName, slug) {
+  if (!displayName || !slug) return;
+  const t = String(displayName).trim();
+  if (!t) return;
+  if (LAKE_NAME_TO_R2_KEY[t]) return;          // curated wins; do not orphan an R2 object
+  _REGISTRY_KEYS.set(t, slug);
+  _REGISTRY_KEYS.set(t.toLowerCase(), slug);
+}
+
 export function resolveR2Key(displayName) {
   if (!displayName || typeof displayName !== 'string') return null;
   const trimmed = displayName.trim();
   if (!trimmed) return null;
+
+  // Pass 0 — the 3DHP registry slug, which is authoritative when it exists.
+  //
+  // It goes FIRST because the fuzzy pass below is the wrong tool at 1,551 lakes. Pass 4
+  // matches on substring containment and prefers the longest canonical key, so a registry
+  // lake called "Lake Wallace, SC" would happily resolve to whatever curated key contains
+  // "wallace" — and SC has TWO Lake Wallaces, at 273 and 155 acres. The registry key is a
+  // GNIS-derived slug, so it is unique by construction and needs no guessing.
+  //
+  // Registered lazily by access-index.js as the registry loads; before that this is empty
+  // and behaviour is exactly as it was.
+  const slug = _REGISTRY_KEYS.get(trimmed) || _REGISTRY_KEYS.get(trimmed.toLowerCase());
+  if (slug) return slug;
 
   // Pass 1 — exact match
   if (LAKE_NAME_TO_R2_KEY[trimmed]) return LAKE_NAME_TO_R2_KEY[trimmed];
