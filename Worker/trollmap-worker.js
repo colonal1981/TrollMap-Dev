@@ -972,6 +972,23 @@ YOU MUST NEVER SUGGEST CHANGES TO:
 lure_color for flutter spoon, species, lake, launch_ramp, weather, safety_limits,
 battery_limits, gear_not_owned, live_bait, conventional_reels
 
+CHARTED STRUCTURE — how to place a casting stop on a real feature:
+The plan may include a \`chartedStructure\` block decoded from the Garmin chart. It lists what is
+actually on this water — dock clusters, flooded timber, submerged road beds, creek beds, bridge
+pilings, shallow areas, obstructions — each with an \`id\`.
+
+- CHOOSE BY SPECIES, using the researched habitat and biology in the plan. Do not assume every
+  structure type suits the target species. Catfish and sunfish stack on bridge pilings; largemouth
+  work dock lines and flooded timber; crappie hold on brush piles and standing timber; a creek
+  channel bend matters in cold water. The research profile is the authority, not a general rule.
+- \`dockClusters\` carry \`count\`, \`run_m\` and \`bearing\`. A long run is a shoreline to TROLL along;
+  a short run with a high count is a pocket to STOP and work systematically.
+- To place a casting stop on one of these, set \`suggestion.structure_id\` to that entry's \`id\`.
+  DO NOT invent or copy lat/lon — the app resolves the position from the id. A suggestion with a
+  made-up coordinate will be discarded.
+- If nothing in \`chartedStructure\` fits the species and conditions, say so and suggest something
+  else. An honest "no good structure on this route" beats a stop on the wrong cover.
+
 RESPONSE FORMAT \u2014 return ONLY this JSON object, no other text:
 {
   "has_suggestion": true,
