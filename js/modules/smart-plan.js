@@ -13,7 +13,7 @@ import { state, CF_WORKER_URL } from '../core/state.js';
 import { renderAll } from '../core/map-init.js';
 import { esc } from '../utils/escape.js';
 import { newRodRow } from '../utils/rod-row.js';
-import { renderSpread, autoCalculateLead, LURE_DIVE_DEPTHS } from './spread-builder.js';
+import { renderSpread, autoCalculateLead } from './spread-builder.js';
 import { getActiveContour } from './contour-data.js';
 import { selectBestLure, getInventory } from '../data/tackle-inventory.js';
 import { getLureColor, depthWindow, LURE_KNOWLEDGE } from '../data/lure-knowledge.js';

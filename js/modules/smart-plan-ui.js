@@ -15,8 +15,10 @@
 
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
-import { LURE_PRESETS, LURE_DIVE_DEPTHS, autoCalculateLead } from './spread-builder.js';
-import { getLureColor } from '../data/lure-knowledge.js';
+import { LURE_PRESETS, autoCalculateLead } from './spread-builder.js';
+import { getLureColor, canReachDepth } from '../data/lure-knowledge.js';
+import { lureByName } from '../data/tackle-inventory.js';
+import { FISHING_STYLE } from '../data/fishing-style-profile.js';
 
 // ── Reel assignment rule ──────────────────────────────────────────────────────
 export function reelForLure(lureName) {
@@ -718,9 +720,14 @@ function buildOneRod(targetDepth, rec, timeOfDay, clarityKey, speedMph, slotIdx,
     .map(l => resolveLureName(l))
     .filter(l => l && l !== excludeLure)
     .filter(l => {
-      const dive = LURE_DIVE_DEPTHS?.[l];
-      if (!dive) return true;
-      return targetDepth >= dive.minDive - 3 && targetDepth <= dive.maxDive + 3;
+      // Was: a lookup in spread-builder's LURE_DIVE_DEPTHS, keyed by display
+      // name. Now asks the lure whether it can actually fish this depth --
+      // a rated bait is filtered by its bill, a sinking bait by whether the
+      // lead it needs fits inside FISHING_STYLE.rigging.maxLeadFt.
+      const entry = lureByName(l);
+      if (!entry) return true;
+      return canReachDepth(entry, targetDepth, speedMph,
+                           { maxLeadFt: FISHING_STYLE.rigging.maxLeadFt }).ok;
     });
 
   let lureName = candidates[slotIdx] || candidates[0] || fallbackLure(targetDepth, excludeLure, slotIdx);

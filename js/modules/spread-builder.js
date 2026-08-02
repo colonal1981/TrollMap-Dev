@@ -14,15 +14,7 @@ import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { newRodRow } from '../utils/rod-row.js';
 import { depthWindow, leadForDepth, isLeadControlled } from '../data/lure-knowledge.js';
-import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
-
-/** Rod rows carry a display name; resolve it to the inventory entry. */
-function _inventoryByName(name) {
-  if (!name) return null;
-  const n = String(name).toLowerCase().trim();
-  return TACKLE_INVENTORY.find(l => l.name.toLowerCase() === n)
-      || TACKLE_INVENTORY.find(l => n.includes(l.name.toLowerCase())) || null;
-}
+import { lureByName } from '../data/tackle-inventory.js';
 
 // ── Catalog of presets ────────────────────────────────────────────────────
 
@@ -236,7 +228,7 @@ function arigDetailRow(rod, i) {
 export function autoCalculateLead(rod, speedMph) {
   const depth = parseFloat(rod.depth);
   if (isNaN(depth)) return rod.lead || '';
-  const lure = _inventoryByName(rod.lure);
+  const lure = lureByName(rod.lure);
   if (!lure) return Math.round((depth > 0 ? depth : 20) * 4.0);
   return leadForDepth(lure, depth, speedMph);
 }
