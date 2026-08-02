@@ -13,6 +13,16 @@
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { newRodRow } from '../utils/rod-row.js';
+import { depthWindow, leadForDepth, isLeadControlled } from '../data/lure-knowledge.js';
+import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
+
+/** Rod rows carry a display name; resolve it to the inventory entry. */
+function _inventoryByName(name) {
+  if (!name) return null;
+  const n = String(name).toLowerCase().trim();
+  return TACKLE_INVENTORY.find(l => l.name.toLowerCase() === n)
+      || TACKLE_INVENTORY.find(l => n.includes(l.name.toLowerCase())) || null;
+}
 
 // ── Catalog of presets ────────────────────────────────────────────────────
 
@@ -124,51 +134,11 @@ export const TRAILER_SIZES = [
  * needsWeight: true if reaching deeper requires inline weight
  * weightPerFoot: approximate ft of depth per oz of inline weight added
  */
-export const LURE_DIVE_DEPTHS = {
-  // A-Rigs — depth controlled entirely by lead length + jighead weight
-  'A-Rig Light (~1.65oz) – 3.8" Swimbait':  { minDive: 2,  maxDive: 40, needsWeight: false },
-  'A-Rig Medium (~2.65oz) – 4.6" Swimbait': { minDive: 2,  maxDive: 45, needsWeight: false },
-  'A-Rig Heavy (~3.5oz) – 5" Swimbait':     { minDive: 2,  maxDive: 50, needsWeight: false },
-  // Crankbaits
-  'Squarebill Crankbait':                    { minDive: 2,  maxDive: 5,  needsWeight: true  },
-  'SR Crankbait (3-5ft)':                    { minDive: 3,  maxDive: 5,  needsWeight: true  },
-  'MR Crankbait (6-12ft)':                   { minDive: 6,  maxDive: 12, needsWeight: true  },
-  'DD1 Crankbait (14-18ft)':                 { minDive: 14, maxDive: 18, needsWeight: true  },
-  'DD2 Crankbait (16-20ft)':                 { minDive: 16, maxDive: 20, needsWeight: true  },
-  'DD3 Crankbait (20-25ft)':                 { minDive: 20, maxDive: 25, needsWeight: true  },
-  'DD4 Crankbait (25ft+)':                   { minDive: 25, maxDive: 35, needsWeight: true  },
-  // Swimbaits on jighead — fully depth-controlled by lead + jig weight
-  'Swimbait 3.8" – Jighead':                { minDive: 2,  maxDive: 30, needsWeight: false },
-  'Swimbait 4.6" – Jighead':                { minDive: 2,  maxDive: 35, needsWeight: false },
-  'Swimbait 5" – Jighead':                  { minDive: 2,  maxDive: 40, needsWeight: false },
-  'Underspin Jig (Flashy Swimmer)':          { minDive: 2,  maxDive: 35, needsWeight: false },
-  // Spoons
-  'Nichols Lake Fork Flutter Spoon 3/4oz':   { minDive: 4,  maxDive: 45, needsWeight: false },
-  'Dr.Fish Diamond Jig / Jigging Spoon 1oz': { minDive: 4,  maxDive: 50, needsWeight: false },
-  // Topwater — surface only
-  'Walking Bait / Spook':                    { minDive: 0,  maxDive: 1,  needsWeight: false },
-  'Prop Bait / Choppo':                      { minDive: 0,  maxDive: 1,  needsWeight: false },
-  'Whopper Plopper':                         { minDive: 0,  maxDive: 1,  needsWeight: false },
-  'Wake Bait':                               { minDive: 0,  maxDive: 2,  needsWeight: false },
-  'Popper / Chugger':                        { minDive: 0,  maxDive: 1,  needsWeight: false },
-  'Buzzbait':                                { minDive: 0,  maxDive: 1,  needsWeight: false },
-  'Hollow Body Frog':                        { minDive: 0,  maxDive: 1,  needsWeight: false },
-  // Jigs
-  '1/4oz Spinnerbait':                       { minDive: 1,  maxDive: 20, needsWeight: false },
-  '3/8oz Spinnerbait':                       { minDive: 1,  maxDive: 22, needsWeight: false },
-  '1/2oz Spinnerbait':                       { minDive: 1,  maxDive: 25, needsWeight: false },
-  '1/4oz Chatterbait':                       { minDive: 1,  maxDive: 20, needsWeight: false },
-  '3/8oz Chatterbait':                       { minDive: 1,  maxDive: 22, needsWeight: false },
-  '1/2oz Chatterbait':                       { minDive: 1,  maxDive: 25, needsWeight: false },
-  '3/4oz Bucktail Jig':                      { minDive: 2,  maxDive: 35, needsWeight: false },
-  '1oz Bucktail Jig':                        { minDive: 2,  maxDive: 40, needsWeight: false },
-  '3/4oz Marabou Jig':                       { minDive: 2,  maxDive: 30, needsWeight: false },
-  '1/8oz Road Runner / Beetle Spin':         { minDive: 1,  maxDive: 15, needsWeight: false },
-  '1/4oz Road Runner / Beetle Spin':         { minDive: 1,  maxDive: 18, needsWeight: false },
-  '3/8oz Road Runner / Beetle Spin':         { minDive: 1,  maxDive: 20, needsWeight: false },
-  // Saltwater
-  'Popping Cork with Gulp/Vudu Shrimp':      { minDive: 2,  maxDive: 6,  needsWeight: false },
-};
+// LURE_DIVE_DEPTHS DELETED 2026-08-02. It was a third copy of dive depth, keyed by
+// DISPLAY NAME -- renaming a lure silently orphaned its entry, which happened on
+// 2026-08-01. Depth now comes from lure-knowledge.js, keyed by type.
+// Re-exported so existing importers keep working.
+export { depthWindow, leadForDepth, isLeadControlled };
 
 // ── Per-row select builders (return HTML strings) ─────────────────────────
 
@@ -255,27 +225,20 @@ function arigDetailRow(rod, i) {
  * @param {number} speedMph — trolling speed
  * @returns {number} lead length in feet
  */
+// autoCalculateLead used substring matching on the lure's DISPLAY NAME to pick a
+// lead ratio. Measured 2026-08-02 across 2,646 (lure, depth, speed) combinations:
+// 2,382 agreed with the type-keyed version and 264 did not -- and in every one of
+// those 264 the name-matching was wrong. 'Prop Bait / Choppo' got an 8ft lead
+// instead of an 80ft topwater setback because "Choppo" is not in the magic word
+// list; all three lipless got the LIPPED crankbait ratio because "Crankbait" is in
+// their name; the Laser Minnow missed the spoon ratio because it does not say
+// "spoon". Now a type lookup plus weight.
 export function autoCalculateLead(rod, speedMph) {
   const depth = parseFloat(rod.depth);
-  const lure = (rod.lure || '').toLowerCase();
-  if (depth <= 0 || lure.includes('topwater') || lure.includes('plopper') || lure.includes('wake') || lure.includes('buzz') || lure.includes('spook')) {
-    return 80;  // professional flat-line topwater setback
-  }
   if (isNaN(depth)) return rod.lead || '';
-
-  const spd = speedMph || 2.4;
-  const speedFactor = spd > 2.2 ? 1.15 : spd < 1.6 ? 0.88 : 1.0;
-  if (lure.includes('light') || lure.includes('1.65')) return Math.round(depth * 7.5 * speedFactor);
-  if (lure.includes('medium') || lure.includes('2.65')) return Math.round(depth * 6.5 * speedFactor);
-  if (lure.includes('heavy') || lure.includes('3.5')) return Math.round(depth * 5.5 * speedFactor);
-  if (lure.includes('spoon') || lure.includes('flutter')) return Math.round(depth * 3.5);
-  if (lure.includes('flicker minnow 11') || lure.includes('crankbait')) {
-    if (depth <= 12) return Math.round(depth * 3.0);
-    if (depth <= 20) return Math.round(depth * 3.8);
-    return Math.round(depth * 5.2);
-  }
-  if (lure.includes('hit stick') || lure.includes('rapala')) return Math.round(depth * 4.2);
-  return Math.round(depth * 4.0);
+  const lure = _inventoryByName(rod.lure);
+  if (!lure) return Math.round((depth > 0 ? depth : 20) * 4.0);
+  return leadForDepth(lure, depth, speedMph);
 }
 
 // ── Main renderer ─────────────────────────────────────────────────────────
@@ -386,4 +349,8 @@ function wireButtons() {
   });
 }
 
-wireButtons();
+// Guarded so this module can be imported outside a browser — test/tackle-parity.test.js
+// asserts LURE_DIVE_DEPTHS against the inventory, and vitest runs environment:'node'.
+// An unguarded call here made the whole module unimportable, which is why the table
+// it exports had never been checked against anything.
+if (typeof document !== 'undefined') wireButtons();

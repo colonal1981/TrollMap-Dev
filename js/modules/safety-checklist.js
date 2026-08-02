@@ -2,7 +2,14 @@
  * Autonomous Safety Checklist — auto-compiles a tactical safety
  * briefing based on water temperature, wind forecast, precip, and
  * launch time. Writes into the Plan tab's Safety textarea.
+ *
+ * Reads FISHING_STYLE.gear rather than asserting equipment. Every line below
+ * that names a piece of kit is gated on whether it is actually on the boat.
+ * A checklist that says "verify your drift sock" to someone who owns no drift
+ * sock teaches you to skim, and the lines you cannot afford to skim are the
+ * PFD and the float plan.
  */
+import { FISHING_STYLE } from '../data/fishing-style-profile.js';
 
 function updateAutonomousSafetyChecklist() {
   const waterTempEl = document.getElementById('planWaterTemp');
@@ -25,9 +32,27 @@ function updateAutonomousSafetyChecklist() {
   items.push('Float plan filed & shared (launch ramp, return time, emergency contact)');
 
   if (wTemp < 55) {
-    items.push('🔴 DANGEROUS COLD WATER (Hypothermia Threat) → Survival time < 60 mins. Mandatory dry suit or heavy waders with high wading belt.');
-    items.push('🔴 Kayak emergency self-rescue re-entry ladder deployed and unclipped.');
-    items.push('🔴 Pack full spare dry change of clothes in sealed stern dry bag.');
+    const g = FISHING_STYLE.gear;
+    items.push(`🔴 DANGEROUS COLD WATER (${wTemp}°F) → in-water survival well under 60 min.`);
+
+    if (g.drySuit || g.wadersWithBelt) {
+      items.push('🔴 Dry suit / waders + high wading belt ON before launch — not stowed.');
+    } else {
+      items.push('🔴 NO DRY SUIT OR WADERS ON BOARD → you are dressed for the air, not the water.');
+    }
+
+    if (g.selfRescueLadder) {
+      items.push('🔴 Self-rescue re-entry ladder deployed and unclipped.');
+    } else {
+      items.push('🔴 NO RE-ENTRY LADDER → assume a capsize means you are swimming, not remounting.');
+      items.push('🔴 Therefore: stay inside swimming distance of a landable bank all trip. No open-water crossings, no main-lake points.');
+    }
+
+    if (g.spareClothes === 'at_vehicle') {
+      items.push('🔴 Dry clothes are AT THE TRUCK, not on the kayak → a swim ends the trip. Plan the shortest line back to the launch, and tell your float-plan contact that.');
+    } else if (g.spareClothes) {
+      items.push('🔴 Spare dry change sealed in the stern dry bag.');
+    }
   } else if (wTemp > 86) {
     items.push('🔴 EXTREME HEAT ADVISORY → Mandatory 1 Gallon (4L) water/electrolytes minimum per angler.');
     items.push('🔴 High heat stroke threat. Pack SPF50+ sunscreen, long-sleeve UV shirt, wide-brim sun hat, and polarized sunglasses.');
@@ -38,7 +63,13 @@ function updateAutonomousSafetyChecklist() {
   if (windMph >= 15 || windStr.includes('gust') || windStr.includes('advisory') || windStr.includes('warning')) {
     items.push(`🔴 HIGH KAYAK WIND WARNING (${windMph || '15+'} mph) → Restrict all trolling passes strictly to the protected Lee side of the reservoir or inside sheltered creek arms.`);
     items.push('🔴 Secure all active deck gear, pliers, and tackle boxes with heavy-duty safety leashes.');
-    items.push('🔴 Verify kayak drift sock, anchor trolley system, and 30ft quick-release anchor rope before un-docking.');
+    const g = FISHING_STYLE.gear;
+    if (g.driftSock) {
+      items.push('🔴 Drift sock rigged and quick-release checked before un-docking.');
+    } else {
+      items.push(`🔴 NO DRIFT SOCK → you cannot slow a drift. At ${windMph || '15+'} mph the wind sets your speed: fish the lee side, go heavier on the jig, or troll instead of drifting.`);
+    }
+    items.push(`🔴 Anchoring is ${g.anchorRopeFt}ft of rope and an ${g.stakeoutPoleFt}ft pole — stationary only in water under ~${g.maxStationaryDepthFt}ft. Do not plan a hold in deeper water.`);
   } else {
     items.push(`✓ Safe wind forecast (${windMph || '< 12'} mph) — Manageable kayak open-water trolling.`);
   }
@@ -52,10 +83,15 @@ function updateAutonomousSafetyChecklist() {
   }
 
   if (isNight) {
-    items.push('🔴 NIGHT / FOG NAVIGATION → Mandatory 360° white stern visibility light clipped to kayak crate + high-output LED headlamp.');
+    const g = FISHING_STYLE.gear;
+    items.push(g.sternLight360 && g.headlamp
+      ? '🔴 NIGHT / FOG NAVIGATION → 360° white stern light clipped to the crate and switched ON, headlamp on your head with fresh cells.'
+      : '🔴 NIGHT / FOG NAVIGATION → required lighting NOT on the boat. Do not launch in the dark.');
   }
 
-  items.push('Perform Coast Guard emergency air whistle check (clipped directly to PFD front shoulder strap)');
+  if (FISHING_STYLE.gear.whistle) {
+    items.push('Sound check the air whistle — clipped to the PFD front shoulder strap, not in the crate');
+  }
   items.push('Perform battery health Bluetooth app check (NK180 Pro app) before un-docking');
   items.push('Inspect trolling motor prop for discarded fishing line or weed wrapping');
 

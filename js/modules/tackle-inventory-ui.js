@@ -7,7 +7,14 @@
 import { getInventory, saveInventory } from '../data/tackle-inventory.js';
 import { LURE_KNOWLEDGE } from '../data/lure-knowledge.js';
 
-const TYPE_LABELS = {
+/**
+ * Short display names for the inventory table's narrow Type column.
+ * These deliberately differ from LURE_KNOWLEDGE[type].label -- 'Squarebill' vs
+ * 'Squarebill Crankbait', 'A-Rig' vs 'A-Rig / Umbrella Rig'. That is an
+ * abbreviation, not drift, so it is a real second fact and it stays. Exported so
+ * the parity test can assert every inventory type has one.
+ */
+export const TYPE_LABELS = {
   crankbait_squarebill: 'Squarebill',
   crankbait_sr:         'SR Crankbait',
   crankbait_mr:         'MR Crankbait',

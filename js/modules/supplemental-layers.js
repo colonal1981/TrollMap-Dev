@@ -7,6 +7,7 @@ import { state, CF_WORKER_URL } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../data/lake-keys.js';
 import { distMiFromCoords as distMi } from '../utils/geo.js';
+import { TRISTATE_MASTER_RAMPS, rampsReady } from '../data/ramps-loader.js';
 
 // Canvas renderer — shared for all supplemental polygon/line layers
 const _canvasRenderer = L.canvas({ padding: 0.5 });
@@ -507,28 +508,40 @@ window._removeVisionStructure = async function(featureId) {
 // so it can put it wherever there is room at the current zoom and pan. Drawing every candidate
 // gives sixteen identical grey pins down the middle of the lake. The declutter below picks one
 // and suppresses the rest, which is what the candidates are for.
-const LABEL_MIN_ZOOM       = 11;
-const STRUCT_TEXT_MIN_ZOOM = 15;
+const LABEL_MIN_ZOOM       = 11;   // place names: creeks, islands, coves, water bodies
+const FACILITY_TEXT_MIN_ZOOM = 13; // ramps, marinas, fuel docks -- the ones you navigate to
+const STRUCT_TEXT_MIN_ZOOM = 15;   // submerged structure, only when you are working an area
+
+// Named places you go TO. These keep their symbol AND get their name written beside it: on a
+// fishing map "which ramp is that" is a question you answer by looking, not by hovering.
+const FACILITY_TYPES = new Set(['boat_ramp', 'water_access', 'marina', 'fuel_dock', 'trailer_ramp',
+                                'generic_ramp', 'boat_club', 'campground', 'recreation', 'dam',
+                                'fish_attractor']);
 const LABEL_CLEAR_PX       = 60;   // any two labels
 const SAME_NAME_CLEAR_PX   = 320;  // two labels bearing the SAME name
 const LABEL_MAX_ON_SCREEN  = 220;
 
 let _poiLabelGroup = null;
 let _labelHooked   = false;
+// Chart names are FURNITURE, not a POI overlay. Garmin draws creek and cove names whether or
+// not you have asked for buoys, and gating them behind the POI symbol toggle meant the map had
+// no names on it at all until you switched something else on. They get their own switch.
+let _labelsVisible = true;
 
-function _labelHtml(text, color, size, weight) {
+function _labelHtml(text, color, size, weight, dy = 0) {
   // Halo via text-shadow: these sit over satellite imagery and the depth fill, and a plain
   // white or plain dark label is unreadable over one or the other.
+  // `dy` lifts the text off a marker that shares its position.
   return `<span style="font-size:${size}px;font-weight:${weight};color:${color};`
        + `white-space:nowrap;text-shadow:0 0 3px #000,0 0 3px #000,0 0 5px #000;`
-       + `transform:translate(-50%,-50%);display:inline-block">${esc(text)}</span>`;
+       + `transform:translate(-50%,calc(-50% + ${dy}px));display:inline-block">${esc(text)}</span>`;
 }
 
 function renderPoiLabels() {
   const map = getMap();
   if (!map || !_poiGeoJSON) return;
   if (_poiLabelGroup) { map.removeLayer(_poiLabelGroup); _poiLabelGroup = null; }
-  if (!_poiVisible) return;
+  if (!_labelsVisible) return;
   const z = map.getZoom();
   if (z < LABEL_MIN_ZOOM) return;
 
@@ -536,6 +549,8 @@ function renderPoiLabels() {
   const bounds = map.getBounds().pad(0.15);
   const placed = [];            // [{pt, name}]
   const showStruct = z >= STRUCT_TEXT_MIN_ZOOM;
+  const showFacility = z >= FACILITY_TEXT_MIN_ZOOM;
+  const rampsPillsOn = !!window.__rampsLayerVisible;
   let count = 0;
 
   const far = (pt, name) => {
@@ -553,7 +568,13 @@ function renderPoiLabels() {
     if (_poiOnWaterOnly && p.on_water === false) continue;
     const type = p.ramp_subtype || p.poi_type || 'place_name';
     const isPlace = type === 'place_name';
-    if (!isPlace && !(showStruct && STRUCTURE_TYPES.has(type))) continue;
+    const isFacility = FACILITY_TYPES.has(type);
+    // The btnRamps layer draws its own named pills. Two labels on one ramp reads as a bug.
+    if (rampsPillsOn && (type === 'boat_ramp' || type === 'water_access')) continue;
+    if (!isPlace
+        && !(showFacility && isFacility)
+        && !(showStruct && STRUCTURE_TYPES.has(type))) continue;
+    if (!_showUnidentified && isUnidentified(type)) continue;
     const name = p.name || p.card;
     if (!name) continue;                       // 68 unnamed place records: nothing to draw
     if (isPlace && p._labelFor) continue;      // it is a feature's label, drawn by the feature
@@ -562,10 +583,13 @@ function renderPoiLabels() {
     const pt = map.latLngToLayerPoint([c[1], c[0]]);
     if (!far(pt, name)) continue;
     const style = poiStyleFor(type);
+    // A place name sits ON its position -- there is no symbol under it. A facility or structure
+    // name is lifted clear of its own marker, or the text lands on top of the circle.
+    const dy = isPlace ? 0 : -14;
     const icon = L.divIcon({
       className: 'poi-lbl',
-      html: isPlace ? _labelHtml(name, '#e8f1f8', z >= 14 ? 13 : 12, 600)
-                    : _labelHtml(name, style.color, 12, 700),
+      html: isPlace ? _labelHtml(name, '#e8f1f8', z >= 14 ? 13 : 12, 600, dy)
+                    : _labelHtml(name, style.color, isFacility ? 12 : 11, 700, dy),
       iconSize: null,
     });
     L.marker([c[1], c[0]], { icon, interactive: false, keyboard: false, zIndexOffset: 400 })
@@ -581,7 +605,91 @@ function hookLabelRedraw() {
   const map = getMap();
   if (!map) return;
   map.on('moveend zoomend', renderPoiLabels);
+  window.addEventListener('trollmap:rampsToggled', renderPoiLabels);
   _labelHooked = true;
+}
+
+// ── Ramp sources: DNR is live, Garmin is static, and each has what the other lacks ──────────
+//
+// Official state DNR (SCDNR / GA DNR WRD / NC WRC, refreshed weekly through the worker) is the
+// authority on WHERE the public ramps are and WHAT they are called -- 1,288+ tri-state against
+// ActiveCaptain's 8 on Wateree. But it carries no amenities, and Garmin's business cards do:
+// 20 of 25 marinas list a `Ramp` service, plus Fuel, Restrooms, Slipway, Mechanical assistance.
+// ActiveCaptain adds phone and address.
+//
+// So they merge rather than replace, and the merge has to happen HERE, at runtime, not in the
+// chartpack build. The DNR feed updates on a 7-day cycle; baking it into a static pack would
+// freeze a live source and the pack would quietly drift out of date with no signal.
+//
+// Names are chosen by SPECIFICITY, not by source rank -- the same rule the chartpack uses to
+// pick `Clearwater Cove Marina` over `Wateree Boat Ramp ( Launch Site)`. Neither source is
+// reliably better at naming; one of them just happens to have the better string each time.
+const _GENERIC_NAME_WORDS = new Set(['boat', 'ramp', 'ramps', 'launch', 'site', 'access',
+                                     'public', 'landing', 'lake', 'the', 'at', 'of', 'point',
+                                     'area', 'dock', 'pier']);
+
+function nameQuality(name, lakeWords) {
+  if (!name) return 0;
+  const words = name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const specific = words.filter(w => !_GENERIC_NAME_WORDS.has(w) && !lakeWords.has(w));
+  return (specific.length ? 1000 : 0) + specific.length * 10 + (name.includes('(') ? 0 : 1);
+}
+
+const RAMP_MERGE_M = 150;
+
+/**
+ * Fold the live DNR ramp list into the POI set: upgrade names where DNR's is more specific,
+ * and add the ramps Garmin and ActiveCaptain never had.
+ */
+function mergeDnrRamps(lakeKey) {
+  if (!_poiGeoJSON?.features) return 0;
+  const lakeWords = new Set(String(lakeKey || '').toLowerCase().split(/[^a-z]+/).filter(Boolean));
+  const existing = _poiGeoJSON.features.filter(
+    f => ['boat_ramp', 'water_access', 'marina', 'trailer_ramp', 'generic_ramp']
+           .includes(f.properties?.poi_type));
+  let added = 0, renamed = 0;
+  for (const st of Object.keys(TRISTATE_MASTER_RAMPS || {})) {
+    for (const [waterbody, ramps] of Object.entries(TRISTATE_MASTER_RAMPS[st] || {})) {
+      for (const [rampName, coords] of Object.entries(ramps || {})) {
+        const lat = Array.isArray(coords) ? coords[0] : coords?.lat;
+        const lon = Array.isArray(coords) ? coords[1] : coords?.lon;
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+        let hit = null;
+        for (const f of existing) {
+          const c = f.geometry?.coordinates;
+          if (!c) continue;
+          if (haversineM([lon, lat], c) <= RAMP_MERGE_M) { hit = f; break; }
+        }
+        if (hit) {
+          const p = hit.properties;
+          if (nameQuality(rampName, lakeWords) > nameQuality(p.name, lakeWords)) {
+            if (p.name && p.name !== rampName) {
+              p.also_known_as = [...new Set([...(p.also_known_as || []), p.name])];
+            }
+            p.name = rampName; renamed++;
+          } else if (p.name !== rampName) {
+            p.also_known_as = [...new Set([...(p.also_known_as || []), rampName])];
+          }
+          p.source = [...new Set(String(p.source || '').split('+').filter(Boolean)
+                                 .concat(`${st} DNR`))].join('+');
+          p.dnr_verified = true;
+        } else {
+          _poiGeoJSON.features.push({
+            type: 'Feature',
+            properties: { name: rampName, poi_type: 'boat_ramp', on_water: true,
+                          source: `${st} DNR`, dnr_verified: true, waterbody },
+            geometry: { type: 'Point', coordinates: [lon, lat] },
+          });
+          added++;
+        }
+      }
+    }
+  }
+  if (added || renamed) {
+    console.log(`[supplemental] DNR ramps merged: ${added} added, ${renamed} renamed `
+              + `from the official ${Object.keys(TRISTATE_MASTER_RAMPS).join('/')} feeds`);
+  }
+  return added;
 }
 
 /**
@@ -874,6 +982,9 @@ function injectGarminPanel() {
   + `<button id="btnGarminPoiLand" style="width:100%;margin-top:4px;padding:4px;border-radius:5px;`
   + `border:1px solid var(--line);background:transparent;color:var(--muted);font-size:10px;`
   + `cursor:pointer">○ Show Garmin land POIs</button>`
+  + `<button id="btnGarminNames" style="width:100%;margin-top:4px;padding:4px;border-radius:5px;`
+  + `border:1px solid var(--line);background:transparent;color:var(--accent);font-size:10px;`
+  + `cursor:pointer">◉ Chart names</button>`
   + `<button id="btnGarminUnknown" style="width:100%;margin-top:3px;padding:4px;border-radius:5px;`
   + `border:1px solid var(--line);background:transparent;color:var(--muted);font-size:10px;`
   + `cursor:pointer" title="Decoded symbols whose meaning is not yet known — mode 3/26 sits on docks">`
@@ -893,6 +1004,14 @@ function injectGarminPanel() {
       _paintGarminButtons();
     });
   }
+  const nb = document.getElementById('btnGarminNames');
+  nb?.addEventListener('click', () => {
+    _labelsVisible = !_labelsVisible;
+    nb.textContent = `${_labelsVisible ? '◉' : '○'} Chart names`;
+    nb.style.color = _labelsVisible ? 'var(--accent)' : 'var(--muted)';
+    renderPoiLabels();
+  });
+
   const ub = document.getElementById('btnGarminUnknown');
   ub?.addEventListener('click', () => {
     const on = window.toggleUnidentified();
@@ -1050,7 +1169,14 @@ export async function loadSupplementalForLake(displayName) {
   loadLakeBoundary(displayName).catch(() => {});
   // Prefetch the Garmin data Smart Plan reads, WITHOUT drawing it. See ensureData().
   Promise.all(PREFETCH_LAYERS.map(l => ensureData(lakeKey, l))).then(([pois, docks]) => {
-    if (pois) { _poiGeoJSON = pois; markFeatureLabels(pois.features); }
+    if (pois) {
+      _poiGeoJSON = pois;
+      // Wait for the DNR feed before labelling, so ramp names come from the authority rather
+      // than from whichever static source happened to have one.
+      rampsReady.then(() => { mergeDnrRamps(lakeKey); markFeatureLabels(_poiGeoJSON.features);
+                              hookLabelRedraw(); renderPoiLabels(); })
+                .catch(() => { markFeatureLabels(pois.features); hookLabelRedraw(); renderPoiLabels(); });
+    }
     const n = (pois?.features?.length || 0) + (docks?.features?.length || 0);
     if (n) console.log(`[supplemental] garmin context prefetched: `
                      + `${pois?.features?.length || 0} pois, ${docks?.features?.length || 0} docks `

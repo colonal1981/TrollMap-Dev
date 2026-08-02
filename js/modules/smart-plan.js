@@ -16,7 +16,7 @@ import { newRodRow } from '../utils/rod-row.js';
 import { renderSpread, autoCalculateLead, LURE_DIVE_DEPTHS } from './spread-builder.js';
 import { getActiveContour } from './contour-data.js';
 import { selectBestLure, getInventory } from '../data/tackle-inventory.js';
-import { getLureColor } from '../data/lure-knowledge.js';
+import { getLureColor, depthWindow, LURE_KNOWLEDGE } from '../data/lure-knowledge.js';
 import { getPhaseDepth, getStrategySpeed, normalizeSpecies, getPresentationPriority, getPhaseNotes } from '../data/species-strategies.js';
 import { SPECIES_BEHAVIOR, SPECIES_BEHAVIOR_V2, getSeason, checkRegulations, resolveLakeKey } from '../data/species-intel.js';
 import { isLiveBaitAvailable } from '../data/fishing-style-profile.js';
@@ -56,10 +56,14 @@ async function getTrollableNames() {
   const inv = await getInventory();
   _cachedAnnotatedToClean = {};
   _cachedTrollableNames = inv.filter(l => l.trollable).map(l => {
-    const depthStr = (l.diveDepthMin != null && l.diveDepthMax != null)
-      ? (l.diveDepthMin === 0 ? 'surface' : `${l.diveDepthMin}-${l.diveDepthMax}ft dive`)
+    const w = depthWindow(l);
+    const depthStr = w.mode === 'surface' ? 'surface'
+      : w.mode === 'rated' ? `${w.min}-${w.max}ft rated dive`
       : 'variable depth (lead controls)';
-    const speedStr = `${l.trollSpeedMin}-${l.trollSpeedMax}mph`;
+    const sk = LURE_KNOWLEDGE[l.type]?.speed;
+    const speedStr = sk
+      ? `${sk.min}-${sk.max}mph${LURE_KNOWLEDGE[l.type].speedIsHardLimit ? ' MAX' : ' pref'}`
+      : 'any speed';
     const annotated = `${l.name} [${depthStr} | ${speedStr}]`;
     _cachedAnnotatedToClean[annotated.toLowerCase()] = l.name;
     return annotated;
@@ -118,13 +122,22 @@ export function capPassSpeed(requestedSpeed, lureNames, inventory, fallbackSpeed
       lure?.trollable && String(lure.name || '').toLowerCase() === cleanName,
     );
   }).filter(Boolean);
+  // Only a lure whose speed limit is PHYSICAL caps the pass. A lipped bait above
+  // ~3mph leaves its rated depth, so it does. A bucktail does not — you can pull it
+  // as fast as you like, you just need more lead, and lead is checked separately
+  // against FISHING_STYLE.rigging.maxLeadFt. Before 2026-08-02 every lure's
+  // inventory trollSpeedMax capped the pass, so a bucktail in the spread quietly
+  // pinned the whole spread to 2.2mph.
   const maxSpeeds = selectedLures
-    .map((lure) => Number.parseFloat(lure.trollSpeedMax))
+    .map((lure) => LURE_KNOWLEDGE[lure.type])
+    .filter((k) => k?.speedIsHardLimit)
+    .map((k) => k.speed.max)
     .filter((speed) => Number.isFinite(speed) && speed > 0);
   const maxMph = maxSpeeds.length ? Math.min(...maxSpeeds) : null;
   const appliedMph = maxMph == null ? requestedMph : Math.min(requestedMph, maxMph);
   const limitingLures = maxMph == null ? [] : selectedLures
-    .filter((lure) => Number.parseFloat(lure.trollSpeedMax) === maxMph);
+    .filter((lure) => LURE_KNOWLEDGE[lure.type]?.speedIsHardLimit
+                   && LURE_KNOWLEDGE[lure.type].speed.max === maxMph);
 
   return {
     requestedMph,

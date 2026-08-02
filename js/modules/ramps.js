@@ -1,5 +1,5 @@
 /**
- * Boat-ramp layer (1,288+ concrete ramps across SC/NC/GA).
+ * Boat-ramp layer (concrete ramps across SC/NC/GA/TN, live from state DNR feeds).
  * Uses bounds-based filtering to only render ramps visible on screen.
  */
 
@@ -21,7 +21,7 @@ function prepareRampData() {
   // NOTE: LAKE_DB hardcoded ramps have been removed to prevent duplicate/ghost pins.
   // The map now exclusively relies on the live, official State DNR coordinates.
 
-  for (const st of ['SC', 'NC', 'GA']) {
+  for (const st of ['SC', 'NC', 'GA', 'TN']) {
     const stateRamps = TRISTATE_MASTER_RAMPS?.[st] || {};
     for (const [lk, rObj] of Object.entries(stateRamps)) {
       for (const [rName, c] of Object.entries(rObj || {})) {
@@ -105,6 +105,11 @@ export function toggleRampLayer() {
     updateRampMarkers(); // Immediately populate visible area
     if (btn) { btn.style.background = 'var(--accent)'; btn.style.color = '#000'; }
   }
+  // These pills already carry the ramp NAME. supplemental-layers.js also writes ramp names as
+  // chart text, so without this flag turning this layer on prints every name twice, offset by a
+  // few pixels — which reads as a rendering bug rather than as two layers agreeing.
+  window.__rampsLayerVisible = RAMPS_VISIBLE;
+  window.dispatchEvent(new CustomEvent('trollmap:rampsToggled'));
 }
 
 export function toggleChartLayersPanel() {
