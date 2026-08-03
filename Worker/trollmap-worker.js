@@ -5,6 +5,54 @@ import { handleGisRoute } from './core/arcgis.js';
 import { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine, handleResearchVisionScan, handleResearchVisionScanSave, handleResearchVisionScanStatus } from './worker-research.js';
 
 
+/**
+ * Routes that CHANGE stored state and must carry the shared token.
+ *
+ * WHY A LIST AT THE ROUTER RATHER THAN A CHECK PER HANDLER
+ *
+ * isAuthorized() was called at exactly three places -- /sync/*, the contour upload and the
+ * chartpack upload -- and NOWHERE in research/*.js. So until 2026-08-03 anyone who knew the
+ * URL could POST /research/save to overwrite a lake's entire research profile, POST
+ * /research/approve to mark an unverified profile verified, or POST /research/delete to remove
+ * a lake's master profile, every version of it and all its package files from R2. No token, no
+ * check, next to a /sync surface that was gated.
+ *
+ * A per-handler check is one more thing to forget the next time a route is added, and
+ * forgetting is exactly what happened. One gate, one list, and the list is the thing to review.
+ *
+ * NOT deny-by-default on method, deliberately: several POST routes are read-shaped LLM and
+ * search proxies the app calls with no token (/groq-query, /coach-plan, /identify-catch,
+ * /research/discover), and blanket-gating them would break the app in ways only clicking every
+ * button would reveal. Deny-by-default becomes safe once every client call goes through one
+ * helper -- see utils/worker-auth.js. This list is precise instead.
+ */
+const MUTATING_ROUTES = [
+  "/research/save",
+  "/research/approve",
+  "/research/delete",
+  "/research/delete-normalized-doc",
+  "/research/save-normalized",
+  "/research/shared/store",
+  "/research/shared/publish",
+  "/research/shared/quarantine",
+  "/research/vision-scan-save",
+  // Writes env.TROLLMAP_DATA, a binding wrangler.toml does not declare -- so the write throws
+  // into a `catch (_) {}` and has never once succeeded. Listed anyway: the day that binding is
+  // added, this becomes a live unauthenticated write, and nobody would think to come back here.
+  "/research/dataset-hunt",
+];
+
+/**
+ * True when this request is allowed to proceed. Non-mutating requests always are.
+ */
+async function allowMutation(request, url, path, env) {
+  let mutating = MUTATING_ROUTES.includes(path);
+  // A GET that deletes three KV entries is still a write, whatever the verb says.
+  if (path === "/debug/regs-cache" && url.searchParams.get("bust")) mutating = true;
+  if (!mutating) return true;
+  return await isAuthorized(request, env);
+}
+
 function chartpackKey(lake, filename) {
   const safeLake = String(lake).toLowerCase().replace(/[^a-z0-9_\-]/g, "_");
   const safeFile = String(filename).replace(/[^a-z0-9_.\-\/]/gi, "_");
@@ -1082,6 +1130,13 @@ var trollmap_worker_default = {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "") || "/";
     const lake = (url.searchParams.get("lake") || "").toLowerCase();
+
+    // One gate for every route that changes stored state. See MUTATING_ROUTES above.
+    if (!(await allowMutation(request, url, path, env))) {
+      return new Response(JSON.stringify({ error: "unauthorized", path }),
+                          { status: 401, headers: JSON_HEADERS });
+    }
+
     try {
       if (path === "/identify-catch" && request.method === "POST") {
         try {
