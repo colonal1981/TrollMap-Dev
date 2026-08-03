@@ -28,6 +28,7 @@ import { renderSmartPlanUI, syncSpread, reelForLure } from './smart-plan-ui.js';
 import { getLoadedAccessIndex } from '../data/access-index.js';
 import { lakeDbEntryFor } from '../data/lake-registry.js';
 import { geoDistanceFt, bearing as geoBearing, distToRingFt as distToRingGeneric, distFtFromCoords as distFtGeneric } from '../utils/geo.js';
+import { solunarFor } from '../utils/solunar.js';
 
 // ── Coastal / tidal support ────────────────────────────────────────────────
 import { resolveR2Key } from '../data/lake-keys.js';
@@ -227,17 +228,12 @@ function computeSunrise(lat, lon, dateStr) {
   return ((t / 60) + 24) % 24 - 5;
 }
 
-function computeSolunar(lat, lon, dateStr) {
-  const d = new Date(dateStr + 'T00:00:00');
-  const JD = Math.floor(d / 86400000) + 2440587.5;
-  const T = (JD - 2451545.0) / 36525;
-  const Lm = 218.3164 + 481267.8812 * T;
-  const moonTransitUT = (360 - (Lm % 360)) / 15;
-  const offsetH = lon / 15;
-  const major1 = ((moonTransitUT + offsetH + 24) % 24) - 5;
-  const major2 = (major1 + 12) % 24;
-  return { major1, major2, minor1: (major1 + 6) % 24, minor2: (major1 + 18) % 24 };
-}
+// computeSolunar() lived here until 2026-08-03. It used the moon's mean longitude with no
+// hour-angle correction and a hardcoded `- 5` baking in Eastern time, and it disagreed with
+// plan-builder.js's model by up to ELEVEN HOURS for the same lake and date. The Smart Plan
+// timeline showed these numbers while notifications.js fired bite alerts on the other set.
+// Both now call utils/solunar.js. See that file for the two-year diff proving the surviving
+// model was moved intact.
 
 function computeRangeMiles(speedMph) {
   const spd = speedMph || 2.0;
@@ -250,7 +246,7 @@ function computeRangeMiles(speedMph) {
 // ── Phase boundaries ──────────────────────────────────────────────────────────
 function computePhases(launchTimeStr, returnTimeStr, dateStr, lat, lon) {
   const sunriseH = computeSunrise(lat, lon, dateStr);
-  const sol = computeSolunar(lat, lon, dateStr);
+  const sol = solunarFor(dateStr, lat, lon);
 
   function parseT(t) {
     if (!t) return null;
@@ -1617,7 +1613,9 @@ Return ONLY valid JSON, no markdown:
   if (intelSection) intelSection.style.display='block';
   const solunarDisplay=document.getElementById('planSolunarDisplay');
   if (solunarDisplay) solunarDisplay.textContent=solunarStr;
-  window._smartPlanSolunar = solunarStr;
+  // `window._smartPlanSolunar` was written here and read by nothing -- grep the tree.
+  // The global that actually drives the bite alerts is `_trollmapSolunar`,
+  // written by plan-builder.js. Removed 2026-08-03.
   const solunarMetaEl = document.getElementById('planSolunar');
   if (solunarMetaEl) solunarMetaEl.value = solunarStr;
   const lakeIntelVal=document.getElementById('planLakeIntel')?.value||'';

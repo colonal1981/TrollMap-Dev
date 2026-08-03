@@ -10,6 +10,7 @@
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { renderCatchLog } from './catch-journal.js';
+import { put as dbPut } from '../utils/db.js';
 
 /**
  * Classify a waypoint's species from the name/symbol text. Returns
@@ -94,7 +95,7 @@ function wireInput() {
 
       if (imported) {
         renderCatchLog();
-        await window.DB?.put?.('journal', { name: 'catches', data: state.CATCHES }).catch(() => {});
+        await dbPut('journal', { name: 'catches', data: state.CATCHES }).catch(() => {});
         document.querySelector('#bottomNav button[data-tab="plan"]')?.click();
         setTimeout(() => { document.getElementById('catchLog')?.scrollIntoView({ behavior: 'smooth' }); }, 400);
         alert(`✅ Imported ${imported} catch${imported > 1 ? 'es' : ''} from ${file.name}\nDate: ${tripDate}\nCheck your Catch Journal.`);

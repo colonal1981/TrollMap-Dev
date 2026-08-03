@@ -8,6 +8,7 @@ import { esc } from '../utils/escape.js';
 import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../data/lake-keys.js';
 import { distMiFromCoords as distMi } from '../utils/geo.js';
 import { TRISTATE_MASTER_RAMPS, rampsReady } from '../data/ramps-loader.js';
+import { workerHeaders } from '../utils/worker-auth.js';
 
 // Canvas renderer — shared for all supplemental polygon/line layers
 const _canvasRenderer = L.canvas({ padding: 0.5 });
@@ -483,7 +484,7 @@ window._removeVisionStructure = async function(featureId) {
     gj.metadata.structuresFound = gj.features.length;
     await fetch(`${CF_WORKER_URL}/research/vision-scan-save`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: workerHeaders(),
       body: JSON.stringify({
         lakeName: gj.metadata?.lakeName || _activeLakeKey,
         features: gj.features,

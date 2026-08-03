@@ -24,6 +24,8 @@ import { resolveR2Key } from "../data/lake-keys.js";
 // scope check over the modules this refactor touched, not by the refactor itself.
 import { fetchDamLevels } from "./duke-energy.js";
 import { distFt } from "../utils/geo.js";
+import { solunarFor } from "../utils/solunar.js";
+import { get as dbGet, put as dbPut, getAll as dbGetAll, del as dbDel, isReady as dbIsReady } from '../utils/db.js';
 
 // ─────────────────────────────────────────────────────────────
 // FIX: calcTrollTimes was referenced but never defined (the exact
@@ -744,67 +746,11 @@ export async function buildPlanPreviewHtml(p){
       return map[code] || 'Forecast condition unavailable';
     }
 
-    // Solunar calculation (pure JS — no API needed)
-    // Moon transits = major periods, moon rise/set = minor periods
-    function calcSolunar(dateStr, lat, lon){
-      // Julian date
-      const d = new Date(dateStr+'T12:00:00Z');
-      const JD = d.getTime()/86400000 + 2440587.5;
-      const T = (JD - 2451545.0) / 36525;
-      // Moon's mean longitude and anomaly
-      const L0 = (218.316 + 13.176396 * (JD-2451545.0)) % 360;
-      const M  = (134.963 + 13.064993 * (JD-2451545.0)) % 360;
-      const F  = (93.272  + 13.229350 * (JD-2451545.0)) % 360;
-      const Mrad = M*Math.PI/180, Frad = F*Math.PI/180;
-      // Moon's ecliptic longitude (simplified)
-      const lam = L0 + 6.289*Math.sin(Mrad) - 1.274*Math.sin(2*Frad-Mrad) + 0.658*Math.sin(2*Frad);
-      // Moon RA/Dec approximation
-      const lamR = lam*Math.PI/180;
-      const eps = 23.439*Math.PI/180;
-      const ra  = Math.atan2(Math.cos(eps)*Math.sin(lamR), Math.cos(lamR)) * 180/Math.PI;
-      const dec = Math.asin(Math.sin(eps)*Math.sin(lamR)) * 180/Math.PI;
-      // Moon transit time (local noon when moon crosses meridian)
-      const GMST = (280.46061837 + 360.98564736629*(JD-2451545.0)) % 360;
-      const LHA  = (GMST + lon - ra + 360) % 360;
-      const transitUT = (12 - LHA/15 + 24) % 24; // hours UT
-      // Convert to local offset (rough: use lon)
-      const offsetH = lon / 15;
-      const major1 = (transitUT + offsetH + 24) % 24;
-      const major2 = (major1 + 12) % 24;
-      // Minor periods = 90 min after rise/set (approx 6hr from major)
-      const minor1 = (major1 + 6) % 24;
-      const minor2 = (major1 + 18) % 24;
-      // Moon illumination
-      const sunL = (280.460 + 0.9856474*(JD-2451545.0)) % 360;
-      const sunM = (357.528 + 0.9856003*(JD-2451545.0)) % 360;
-      const sunLam = sunL + 1.915*Math.sin(sunM*Math.PI/180) + 0.020*Math.sin(2*sunM*Math.PI/180);
-      const phase = (lam - sunLam + 360) % 360;
-      const illum = Math.round((1 - Math.cos(phase*Math.PI/180))/2 * 100);
-      // Phase name
-      let phaseName = '';
-      if(phase < 22.5||phase >= 337.5) phaseName='New Moon';
-      else if(phase < 67.5)  phaseName='Waxing Crescent';
-      else if(phase < 112.5) phaseName='First Quarter';
-      else if(phase < 157.5) phaseName='Waxing Gibbous';
-      else if(phase < 202.5) phaseName='Full Moon';
-      else if(phase < 247.5) phaseName='Waning Gibbous';
-      else if(phase < 292.5) phaseName='Last Quarter';
-      else                   phaseName='Waning Crescent';
-
-      function hToStr(h){ const hh=Math.floor(h%24); const mm=Math.round((h%1)*60); const ap=hh>=12?'PM':'AM'; return `${hh%12||12}:${String(mm).padStart(2,'0')} ${ap}`; }
-
-      // Solunar rating: new/full moon = BEST, quarter = GOOD
-      const isNewFull = phaseName.includes('New')||phaseName.includes('Full');
-      const isQuarter = phaseName.includes('Quarter');
-      const rating = isNewFull ? 'BEST' : isQuarter ? 'GOOD' : 'STRONG';
-      const ratingClass = isNewFull ? 'rp-best' : isQuarter ? 'rp-good-p' : 'rp-strong';
-
-      return { major1, major2, minor1, minor2, phaseName, illum, rating, ratingClass,
-               major1Str:hToStr(major1), major2Str:hToStr(major2),
-               minor1Str:hToStr(minor1), minor2Str:hToStr(minor2) };
-    }
-
-    const sol = calcSolunar(date, lat, lon);
+    // calcSolunar() was defined inline here. It has moved to utils/solunar.js unchanged --
+    // a two-year date-by-date diff in that file's header shows zero divergence -- because
+    // smart-plan.js had a SECOND, cruder implementation that disagreed with it by up to
+    // eleven hours, and only one of the two reached the bite alerts.
+    const sol = solunarFor(date, lat, lon);
     moonPhase = sol.phaseName; moonIllum = sol.illum;
     // Expose solunar times for notifications module
     window._trollmapSolunar = { major1: sol.major1, major2: sol.major2, minor1: sol.minor1, minor2: sol.minor2 };
@@ -1943,7 +1889,7 @@ document.getElementById('savePlanBtn')?.addEventListener('click', async () => {
   const p = collectPlan();
   if (!p.meta.name) { alert('Give the plan a name first.'); return; }
   try {
-    await window.DB.put('plans', p);
+    await dbPut('plans', p);
     alert('Plan saved.');
     refreshPlanLibrary();
     // Push to cloud sync. Stable key so re-saves update the same D1 record.
@@ -1955,7 +1901,7 @@ async function refreshPlanLibrary() {
   const host = document.getElementById('planLibraryList');
   if (!host) return;
   let plans = [];
-  if (window.DB?.db) { try { plans = await window.DB.getAll('plans'); } catch (_) {} }
+  if (dbIsReady()) { try { plans = await dbGetAll('plans'); } catch (_) {} }
   if (!plans.length) { host.innerHTML = '<p class="muted">No saved plans yet.</p>'; return; }
   plans.reverse();
   host.innerHTML = plans.map((p) => `
@@ -1971,8 +1917,8 @@ async function refreshPlanLibrary() {
 }
 
 window.loadPlanById = async function (id) {
-  if (!window.DB?.db) return;
-  const p = await window.DB.get('plans', id);
+  if (!dbIsReady()) return;
+  const p = await dbGet('plans', id);
   if (p) {
     loadPlanIntoForm(p);
     document.querySelector('#panel-plan .subtabs button[data-plansub="builder"]')?.click();
@@ -1983,8 +1929,8 @@ window.loadPlanById = async function (id) {
 window.deletePlanById = async function (id) {
   if (!confirm('Delete plan?')) return;
   // Read the plan BEFORE deleting -- the sync key is derived from its name.
-  const p = await window.DB.get('plans', id).catch(() => null);
-  await window.DB.del('plans', id);
+  const p = await dbGet('plans', id).catch(() => null);
+  await dbDel('plans', id);
   // Tombstone in D1 so it doesn't come back on the next pull.
   //
   // This used to be a hand-rolled fetch with `X-Sync-Token: 'trollmap-sync-9a8b7c6d5e'` -- a

@@ -19,6 +19,7 @@ import {
 } from '../data/coastal-zones.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { getTideState, stageLabel } from './tide-engine.js';
+import { put as dbPut, isReady as dbIsReady } from '../utils/db.js';
 
 function fmtTime(date) {
   if (!date) return '—';
@@ -149,9 +150,9 @@ function wire() {
       }
 
       // Cache for plan-builder.js / offline use.
-      if (window.DB?.db) {
+      if (dbIsReady()) {
         try {
-          await window.DB.put('settings', {
+          await dbPut('settings', {
             key: `tide_${stationId}_${dateStr.replace(/-/g, '')}`,
             predictions: tide.hilo,
             stage: tide.stageLabel,

@@ -15,6 +15,7 @@ import { esc } from '../utils/escape.js';
 import { getLoadedRegistry } from '../data/lake-registry.js';
 import { loadAccessIndex, nearestLakeByAccessPoint } from '../data/access-index.js';
 import { LURE_PRESETS } from './spread-builder.js';
+import { get as dbGet, put as dbPut } from '../utils/db.js';
 
 const DEFAULT_HELPER = 'http://127.0.0.1:8787';
 const QUEUE_DB_KEY = 'catch_import_queue';
@@ -344,18 +345,18 @@ function normalizeCsvRow(row, importedFrom = 'csv') {
 }
 
 async function saveCatches() {
-  try { await window.DB?.put('journal', { name: CATCHES_DB_KEY, data: getCatches() }); } catch (_) {}
+  try { await dbPut('journal', { name: CATCHES_DB_KEY, data: getCatches() }); } catch (_) {}
   // Sync to cloud so catches are available across devices
   try { window.pushItemOnSave?.('catch', CATCHES_DB_KEY, { name: CATCHES_DB_KEY, data: getCatches() }); } catch (_) {}
 }
 async function saveQueue() {
-  try { await window.DB?.put('journal', { name: QUEUE_DB_KEY, data: getQueue() }); } catch (_) {}
+  try { await dbPut('journal', { name: QUEUE_DB_KEY, data: getQueue() }); } catch (_) {}
 }
 export async function loadCatches() {
   try {
-    const r = await window.DB?.get('journal', CATCHES_DB_KEY);
+    const r = await dbGet('journal', CATCHES_DB_KEY);
     if (r) setCatches(r.data || []);
-    const q = await window.DB?.get('journal', QUEUE_DB_KEY);
+    const q = await dbGet('journal', QUEUE_DB_KEY);
     if (q) setQueue(q.data || []);
   } catch (_) {}
   renderCatchCenter();

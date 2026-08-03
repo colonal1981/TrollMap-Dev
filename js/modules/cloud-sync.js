@@ -22,10 +22,12 @@
  */
 
 import { state, CF_WORKER_URL } from '../core/state.js';
+import { get as dbGet, put as dbPut, getAll as dbGetAll, del as dbDel, isReady as dbIsReady } from '../utils/db.js';
+import { SYNC_TOKEN } from '../utils/worker-auth.js';
 
-// Per-install secret token. Regenerate if compromised. For multi-tenant,
-// move to Cloudflare Access auth header instead.
-const SYNC_TOKEN = 'trollmap2026';
+// The token lives in utils/worker-auth.js. It was spelled out here AND, differently, in
+// plan-builder.js -- `trollmap-sync-9a8b7c6d5e`, which the worker rejected on every call.
+// One spelling, one file.
 
 // Map item type → IndexedDB store name. Don't pluralize by string
 // manipulation — `'catch' + 's' = 'catchs'` is wrong.
@@ -59,10 +61,10 @@ function setStatus(msg, isError = false) {
  * Each entry is { type, id, payload, attempts }.
  */
 async function drainPendingQueue() {
-  if (!window.DB?.db) return;
+  if (!dbIsReady()) return;
   let queue = [];
   try {
-    const rec = await window.DB.get('settings', 'pending_sync');
+    const rec = await dbGet('settings', 'pending_sync');
     queue = rec?.queue || [];
   } catch (_) {}
   if (!queue.length) return;
@@ -93,7 +95,7 @@ async function drainPendingQueue() {
     }
   }
   try {
-    await window.DB.put('settings', { key: 'pending_sync', queue: remaining });
+    await dbPut('settings', { key: 'pending_sync', queue: remaining });
   } catch (_) {}
   if (remaining.length === 0) setStatus('☁️ Queued items synced');
 }
@@ -105,17 +107,17 @@ async function drainPendingQueue() {
  * DELETE. Without it a queued delete would be replayed as a POST and put the record back.
  */
 async function queueForLater(type, id, payload, deleted = false) {
-  if (!window.DB?.db) return;
+  if (!dbIsReady()) return;
   let queue = [];
   try {
-    const rec = await window.DB.get('settings', 'pending_sync');
+    const rec = await dbGet('settings', 'pending_sync');
     queue = rec?.queue || [];
   } catch (_) {}
   // Dedupe: if same key already queued, replace it.
   queue = queue.filter((q) => !(q.type === type && q.id === id));
   queue.push({ type, id, payload, attempts: 0, deleted });
   try {
-    await window.DB.put('settings', { key: 'pending_sync', queue });
+    await dbPut('settings', { key: 'pending_sync', queue });
   } catch (_) {}
 }
 
@@ -175,7 +177,7 @@ export async function pullUpdatesOnLoad() {
 
   try {
     // 0 means "fetch everything" on first run.
-    const localRec = await window.DB?.get('settings', 'lastSyncTimestamp');
+    const localRec = await dbGet('settings', 'lastSyncTimestamp');
     const localLastSync = localRec?.value || 0;
 
     // 1. Ask server for the list of updates since our timestamp.
@@ -226,7 +228,7 @@ export async function pullUpdatesOnLoad() {
 
         // Tombstone: server says this item was deleted.
         if (data?.deleted === true) {
-          try { await window.DB.del(store, id); } catch (_) {}
+          try { await dbDel(store, id); } catch (_) {}
           merged.push({ type, id, deleted: true });
         } else {
           // Strip sync metadata before saving to local store
@@ -236,37 +238,37 @@ export async function pullUpdatesOnLoad() {
           // for journal "catches" the id is row.id. Pick what fits the store.
           if (store === 'journal') {
             // catches are stored as a single record named 'catches' with data array
-            const cur = await window.DB.get('journal', 'catches');
+            const cur = await dbGet('journal', 'catches');
             const data2 = cur?.data || [];
             const idx = data2.findIndex((c) => c.key === id || c.id === id);
             const merged2 = [...data2];
             if (idx >= 0) merged2[idx] = { ...merged2[idx], ...local };
             else merged2.push(local);
-            await window.DB.put('journal', { name: 'catches', data: merged2 });
+            await dbPut('journal', { name: 'catches', data: merged2 });
           } else if (store === 'charts') {
             // charts is one record '__all__' with array
-            const cur = await window.DB.get('charts', '__all__');
+            const cur = await dbGet('charts', '__all__');
             const arr = cur?.charts || [];
             const idx = arr.findIndex((c) => c.name === id);
             const arr2 = [...arr];
             if (idx >= 0) arr2[idx] = { ...arr2[idx], ...local };
             else arr2.push(local);
-            await window.DB.put('charts', { name: '__all__', charts: arr2, savedAt: new Date().toISOString() });
+            await dbPut('charts', { name: '__all__', charts: arr2, savedAt: new Date().toISOString() });
           } else {
             // plans, spreads, layers — keyed by id/name
             // For plans: check if a record with same name already exists locally
             // to avoid duplicates when the cloud key differs from local auto-increment id
             if (store === 'plans' && local.meta?.name) {
-              const existing = await window.DB.getAll('plans').catch(() => []);
+              const existing = await dbGetAll('plans').catch(() => []);
               const match = existing.find(p => (p.meta?.name || p.name) === local.meta.name);
               if (match) {
                 // Update existing record in place rather than creating a new one
-                await window.DB.put(store, { ...match, ...local, _syncedAt: Date.now() });
+                await dbPut(store, { ...match, ...local, _syncedAt: Date.now() });
               } else {
-                await window.DB.put(store, record);
+                await dbPut(store, record);
               }
             } else {
-              await window.DB.put(store, record);
+              await dbPut(store, record);
             }
           }
           merged.push({ type, id, deleted: false });
@@ -281,7 +283,7 @@ export async function pullUpdatesOnLoad() {
     }
 
     // 3. Update our high-water mark.
-    await window.DB?.put('settings', {
+    await dbPut('settings', {
       key: 'lastSyncTimestamp',
       value: typeof latestTimestamp === 'string'
         ? new Date(latestTimestamp).getTime()
@@ -309,12 +311,12 @@ export async function pullUpdatesOnLoad() {
  * that needs to migrate to D1.
  */
 export async function pushAllLocalToCloud() {
-  if (!window.DB?.db) return;
+  if (!dbIsReady()) return;
   const stores = ['plans', 'spreads', 'journal', 'layers']; // charts live in R2, not D1
   let count = 0;
   for (const store of stores) {
     try {
-      const all = await window.DB.getAll(store);
+      const all = await dbGetAll(store);
       for (const rec of all) {
         const id = rec.key ?? rec.name ?? rec.id ?? 'unknown';
         const type = Object.entries(STORE_BY_TYPE).find(([, v]) => v === store)?.[0];

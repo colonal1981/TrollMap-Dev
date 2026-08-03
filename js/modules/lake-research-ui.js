@@ -2,6 +2,7 @@ import { state, CF_WORKER_URL } from '../core/state.js';
 import { _state, runFullPipeline, runResume, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, RESEARCH_ORDER, FRESHWATER_RESEARCH_ORDER, COASTAL_RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log, renderLog, isCoastalLake, getResearchOrderForLake } from './lake-research-engine.js';
 import { coastalNamesByState, COASTAL_ZONES, isCoastalKey } from '../data/coastal-zones.js';
 import { resolveR2Key } from '../data/lake-keys.js';
+import { workerHeaders } from '../utils/worker-auth.js';
 
 
 function renderContradictionsAlert(contradictions, lakeName) {
@@ -133,7 +134,7 @@ function renderContradictionsAlert(contradictions, lakeName) {
     try {
       const res = await fetch(`${CF_WORKER_URL}/research/save`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: workerHeaders(),
         body: JSON.stringify({
           lakeName: _state.currentLakeName,
           profile: patched,
@@ -981,7 +982,7 @@ function renderSections(profile) {
             if (agent === 'biology') fullProfile.forage = parsed;
             if (agent === 'fisheries') fullProfile.trollingIntelligence = parsed;
             const res = await fetch(`${CF_WORKER_URL}/research/save`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              method: 'POST', headers: workerHeaders(),
               body: JSON.stringify({
                 lakeName: _state.currentLakeName,
                 profile: fullProfile,
@@ -1051,7 +1052,7 @@ function renderSources(profile) {
       try {
         const res = await fetch(`${CF_WORKER_URL}/research/delete-normalized-doc`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: workerHeaders(),
           body: JSON.stringify({ lakeName, url: docUrl })
         });
         const data = await res.json();
@@ -1258,7 +1259,7 @@ function ensureJsonModal() {
           btn.disabled = true; btn.textContent = '…';
           try {
             const res = await fetch(`${CF_WORKER_URL}/research/delete-normalized-doc`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              method: 'POST', headers: workerHeaders(),
               body: JSON.stringify({ lakeName: lake, url: docUrl })
             });
             const data = await res.json();
@@ -1284,7 +1285,7 @@ async function saveCurrentResearchProfile(status = 'draft') {
   if (status === 'verified') merged.metadata.verifiedAt = new Date().toISOString();
   const res = await fetch(`${CF_WORKER_URL}/research/save`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: workerHeaders(),
     body: JSON.stringify({
       lakeName: _state.currentLakeName,
       profile: merged,
@@ -1506,7 +1507,7 @@ function initLakeResearch() {
         }
       }
       const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: workerHeaders(),
         body: JSON.stringify({ lakeName: lake, profile, status: profile?.metadata?.status || 'draft', requestedBy: 'Geospatial Rerun' })
       });
       if (!saveRes.ok) throw new Error(`Save failed: ${saveRes.status}`);
@@ -1711,7 +1712,7 @@ function initLakeResearch() {
       const parsed = JSON.parse(ta.value);
       if (st) { st.textContent = 'Saving…'; st.style.color = 'var(--accent)'; }
       const res = await fetch(`${CF_WORKER_URL}/research/save`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: workerHeaders(),
         body: JSON.stringify({
           lakeName: _state.currentLakeName,
           profile: parsed,
@@ -1745,7 +1746,7 @@ function initLakeResearch() {
       const importedLake = parsed.lakeName || parsed.identity?.lakeName || _state.currentLakeName;
       if (!importedLake) throw new Error('Imported JSON missing lakeName');
       const res = await fetch(`${CF_WORKER_URL}/research/save`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: workerHeaders(),
         body: JSON.stringify({ lakeName: importedLake, profile: parsed, status: parsed?.metadata?.status || 'draft', notes: parsed?.notes || '', requestedBy: 'Lake Research Import' })
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1771,7 +1772,7 @@ function initLakeResearch() {
     if (!confirm(`Delete researched profile for ${_state.currentLakeName}? This removes the master JSON, package parts, and versions from R2.`)) return;
     try {
       const res = await fetch(`${CF_WORKER_URL}/research/delete`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: workerHeaders(),
         body: JSON.stringify({ lakeName: _state.currentLakeName })
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

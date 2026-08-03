@@ -16,6 +16,7 @@
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { setBanner } from '../core/map-init.js';
+import { get as dbGet, put as dbPut, isReady as dbIsReady } from '../utils/db.js';
 
 // Exposed so chart-overlay.js and others can push to the saved list.
 export function addChartLayer(name, img, bounds, opacity, rotation) {
@@ -230,7 +231,7 @@ function onChartAction(el) {
 // ── Persistence (IndexedDB) ───────────────────────────────────────────────
 
 export async function persistCharts() {
-  if (!window.DB?.db) return;
+  if (!dbIsReady()) return;
   try {
     // Strip Leaflet layer objects — only persist the data.
     const minimal = state.CHARTS.map((c) => ({
@@ -244,7 +245,7 @@ export async function persistCharts() {
       opacity: c.opacity,
       rotation: c.rotation,
     }));
-    await window.DB.put('charts', {
+    await dbPut('charts', {
       name: '__all__',
       charts: minimal,
       savedAt: new Date().toISOString(),
@@ -255,9 +256,9 @@ export async function persistCharts() {
 }
 
 export async function restoreCharts() {
-  if (!window.DB?.db) return;
+  if (!dbIsReady()) return;
   try {
-    const rec = await window.DB.get('charts', '__all__');
+    const rec = await dbGet('charts', '__all__');
     if (!rec || !Array.isArray(rec.charts)) return;
     rec.charts.forEach((c) => {
       state.CHARTS.push({

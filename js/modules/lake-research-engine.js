@@ -26,6 +26,7 @@ import { geoDistanceFt } from '../utils/geo.js';
 import { coerceStockingsArray, coerceSpeciesArray } from '../utils/coerce.js';
 import { isCoastalKey, COASTAL_ZONES } from '../data/coastal-zones.js';
 import { resolveR2Key as resolveR2KeyFromLakeKeys } from '../data/lake-keys.js';
+import { workerHeaders } from '../utils/worker-auth.js';
 
 // Setup global caches and references
 window.TROLLMAP_RESEARCHED_CACHE = window.TROLLMAP_RESEARCHED_CACHE || {};
@@ -1053,7 +1054,7 @@ async function validateExistingFacts(lakeName, callbacks = {}) {
       setProgress(`Validating existing facts (${index}/${batches})…`, 15 + index / batches * 65);
       log(`Validation batch ${index}/${batches}: ${batch.join(', ')}`);
       const res = await fetch(`${CF_WORKER_URL}/research/validation-pass`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: workerHeaders(),
         body: JSON.stringify({ lakeName, state: sanitizeStateFromLakeName(lakeName), nullFields: batch, extractedFacts: facts })
       });
       if (!res.ok) throw new Error(`Validation HTTP ${res.status}`);
@@ -1081,7 +1082,7 @@ async function validateExistingFacts(lakeName, callbacks = {}) {
 
     setProgress('Saving validated profile…', 90);
     const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: workerHeaders(),
       body: JSON.stringify({ lakeName, profile, status: profile.metadata.status || 'draft', requestedBy: 'Validate Existing Facts' })
     });
     if (!saveRes.ok) throw new Error(`Save HTTP ${saveRes.status}`);
@@ -1198,7 +1199,7 @@ async function recoverSmartPlanFacts(lakeName, callbacks = {}) {
       setProgress(`Targeted extraction ${i + 1}/${selected.length}…`, 12 + (i / Math.max(1, selected.length)) * 48);
       log(`Targeted document ${i + 1}/${selected.length}: ${doc.title}`);
       const res = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: workerHeaders(),
         body: JSON.stringify({ lakeName, state: sanitizeStateFromLakeName(lakeName), targetFields, documents: [{ title: doc.title, url: doc.url, text: String(doc.fullText || doc.text || '').slice(0, 200000) }] })
       });
       if (!res.ok) { log(`⚠️ Targeted extraction HTTP ${res.status}; continuing.`); continue; }
@@ -1208,7 +1209,7 @@ async function recoverSmartPlanFacts(lakeName, callbacks = {}) {
     }
     let facts = [...(profile._extractedFacts || []), ...newFacts];
     if (newFacts.length) {
-      const dedupeRes = await fetch(`${CF_WORKER_URL}/research/dedupe-contradictions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ facts }) });
+      const dedupeRes = await fetch(`${CF_WORKER_URL}/research/dedupe-contradictions`, { method: 'POST', headers: workerHeaders(), body: JSON.stringify({ facts }) });
       if (dedupeRes.ok) facts = (await dedupeRes.json()).deduplicated_facts || facts;
     }
     profile._extractedFacts = facts;
@@ -1219,7 +1220,7 @@ async function recoverSmartPlanFacts(lakeName, callbacks = {}) {
     const filled = {};
     for (let start = 0; start < targetFields.length; start += 10) {
       const batch = targetFields.slice(start, start + 10);
-      const res = await fetch(`${CF_WORKER_URL}/research/validation-pass`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lakeName, state: sanitizeStateFromLakeName(lakeName), nullFields: batch, extractedFacts: facts }) });
+      const res = await fetch(`${CF_WORKER_URL}/research/validation-pass`, { method: 'POST', headers: workerHeaders(), body: JSON.stringify({ lakeName, state: sanitizeStateFromLakeName(lakeName), nullFields: batch, extractedFacts: facts }) });
       if (!res.ok) throw new Error(`Validation HTTP ${res.status}`);
       const data = await res.json();
       if (!data.success) throw new Error(data.error || 'Validation failed');
@@ -1250,7 +1251,7 @@ async function recoverSmartPlanFacts(lakeName, callbacks = {}) {
     profile.metadata.lastSmartPlanRecoveryAt = new Date().toISOString();
     profile.metadata.smartPlanRecovery = { targetedDocuments: selected.map(d => d.title), newFacts: newFacts.length, applied, finalized };
     setProgress('Saving Smart Plan recovery profile…', 92);
-    const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lakeName, profile, status: profile.metadata.status || 'draft', requestedBy: 'Smart Plan Targeted Recovery' }) });
+    const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, { method: 'POST', headers: workerHeaders(), body: JSON.stringify({ lakeName, profile, status: profile.metadata.status || 'draft', requestedBy: 'Smart Plan Targeted Recovery' }) });
     if (!saveRes.ok) throw new Error(`Save HTTP ${saveRes.status}`);
     log(`✔ Smart Plan recovery applied ${applied}; finalized ${finalized} reviewed gap(s).`);
     setProgress('Smart Plan recovery complete.', 100);
@@ -1398,7 +1399,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     try {
       discoverRes = await fetch(`${CF_WORKER_URL}/research/discover`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: workerHeaders(),
         body: JSON.stringify(discoverPayload)
       });
     } catch (e) {
@@ -1407,7 +1408,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
       try {
         discoverRes = await fetch(`${CF_WORKER_URL}/research/discover`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: workerHeaders(),
           body: JSON.stringify(discoverPayload)
         });
       } catch (retryErr) {
@@ -1528,7 +1529,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
 
         try {
           const checkRes = await fetch(`${CF_WORKER_URL}/research/shared/check`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: workerHeaders(),
             body: JSON.stringify({ canonicalUrl: src.canonicalUrl })
           });
           if (!checkRes.ok) continue;
@@ -1537,7 +1538,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
 
           // Pull relevant sections from shared registry
           const queryRes = await fetch(`${CF_WORKER_URL}/research/shared/query`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: workerHeaders(),
             body: JSON.stringify({ canonicalUrl: src.canonicalUrl, lakeSlug, categories: [agentKey] })
           });
           if (!queryRes.ok) continue;
@@ -1588,7 +1589,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
         if (src.canonicalUrl) {
           try {
             const checkRes = await fetch(`${CF_WORKER_URL}/research/shared/check`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              method: 'POST', headers: workerHeaders(),
               body: JSON.stringify({ canonicalUrl: src.canonicalUrl })
             });
             if (checkRes.ok) {
@@ -1603,7 +1604,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
         if (sharedDoc) {
           try {
             const queryRes = await fetch(`${CF_WORKER_URL}/research/shared/query`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              method: 'POST', headers: workerHeaders(),
               body: JSON.stringify({ canonicalUrl: src.canonicalUrl, lakeSlug, categories: [agentKey] })
             });
             if (queryRes.ok) {
@@ -1650,7 +1651,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
         try {
           const batchRes = await fetch(`${CF_WORKER_URL}/research/proxy-download-batch`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: workerHeaders(),
             body: JSON.stringify({ urls: batchPayload })
           });
 
@@ -1675,7 +1676,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
                 // Store in shared registry fire-and-forget
                 if (src.canonicalUrl) {
                   fetch(`${CF_WORKER_URL}/research/shared/store`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    method: 'POST', headers: workerHeaders(),
                     body: JSON.stringify({
                       canonicalUrl: src.canonicalUrl, requestedUrl: src.url,
                       title: src.title, fullText: result.text,
@@ -1727,7 +1728,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
               // Store in shared registry fire-and-forget
               if (src.canonicalUrl) {
                 fetch(`${CF_WORKER_URL}/research/shared/store`, {
-                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  method: 'POST', headers: workerHeaders(),
                   body: JSON.stringify({
                     canonicalUrl: src.canonicalUrl, requestedUrl: src.url,
                     title: src.title, fullText: text,
@@ -1753,7 +1754,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
         const merged = [...untouched, ...normalizedDocuments];
         await fetch(`${CF_WORKER_URL}/research/save-normalized`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: workerHeaders(),
           body: JSON.stringify({ lakeName, documents: merged })
         });
       }
@@ -1773,7 +1774,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
       try {
         const analyzeRes = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: workerHeaders(),
           body: JSON.stringify({
             lakeName, baseName, state: stateName, zoneKey: coastalKeyForAgent || undefined, docIndex: 0,
             documents: normalizedDocuments.slice(0, 12).map(d => ({
@@ -1791,7 +1792,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
             try {
               const dedupeRes = await fetch(`${CF_WORKER_URL}/research/dedupe-contradictions`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: workerHeaders(),
                 body: JSON.stringify({ facts: rawFacts })
               });
               if (dedupeRes.ok) {
@@ -1845,7 +1846,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     const llmDocChars = agentKey === 'fisheries' ? 150000 : agentKey === 'summary' ? 12000 : 40000;
     const agentRes = await fetch(`${CF_WORKER_URL}/research/agent-llm`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: workerHeaders(),
       body: JSON.stringify({
         lakeName, state: stateName,
         agent: agentKey,
@@ -1867,7 +1868,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
         await new Promise(r => setTimeout(r, 5000));
         const retry = await fetch(`${CF_WORKER_URL}/research/agent-llm`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: workerHeaders(),
           body: JSON.stringify({
             lakeName, state: stateName, agent: agentKey,
             previousResults: {
@@ -1939,7 +1940,7 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
       const stateName = sanitizeStateFromLakeName(lakeName);
       const coastalKeyResume = getCoastalR2Key(lakeName);
       const detRes = await fetch(`${CF_WORKER_URL}/research/deterministic-facts`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: workerHeaders(),
         body: JSON.stringify({
           lakeName, state: stateName,
           ...(coastalKeyResume ? { zoneKey: coastalKeyResume, lakeKey: coastalKeyResume } : {})
@@ -2035,7 +2036,7 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
       }
       if (bbox) {
         const wqpRes = await fetch(`${CF_WORKER_URL}/research/limnology-data`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: workerHeaders(),
           body: JSON.stringify({ lakeName, ...bbox })
         });
         if (wqpRes.ok) {
@@ -2162,7 +2163,7 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
             if (existingData.profile) {
               const patched = { ...existingData.profile, summary: summaryResult.section };
               await fetch(`${CF_WORKER_URL}/research/save`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                method: 'POST', headers: workerHeaders(),
                 body: JSON.stringify({ lakeName, profile: patched, status: patched.metadata?.status || 'draft', requestedBy: 'Summary agent patch' })
               });
               log('✔ Summary section merged into saved profile');
@@ -2219,7 +2220,7 @@ async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
     try {
       const coastalKeyForDet = getCoastalR2Key(lakeName);
       const detRes = await fetch(`${CF_WORKER_URL}/research/deterministic-facts`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: workerHeaders(),
         body: JSON.stringify({
           lakeName, state: stateName,
           ...(coastalKeyForDet ? { zoneKey: coastalKeyForDet, lakeKey: coastalKeyForDet } : {})
@@ -2317,7 +2318,7 @@ async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
         }
         if (bbox) {
           const wqpRes = await fetch(`${CF_WORKER_URL}/research/limnology-data`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: workerHeaders(),
             body: JSON.stringify({ lakeName, ...bbox })
           });
           if (wqpRes.ok) {
@@ -2910,7 +2911,7 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
       for (let i = 0; i < nullFields.length; i += batchSize) {
         const fieldBatch = nullFields.slice(i, i + batchSize);
         const valRes = await fetch(`${CF_WORKER_URL}/research/validation-pass`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: workerHeaders(),
           body: JSON.stringify({ lakeName, state: stateName, nullFields: fieldBatch, profile: agentSections, extractedFacts: allFacts })
         });
         if (!valRes.ok) throw new Error(`HTTP ${valRes.status}`);
@@ -3000,7 +3001,7 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
 
   log(`Saving profile (facts=${totalFactsExtracted} extracted server-side, species=${finalSpecies.length}, agents=[${agentResults.map(r=>r.agent).join(',')}])...`);
   const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: workerHeaders(),
     body: JSON.stringify({
       lakeName, profile: researchPacket,
       status: saveStatus,

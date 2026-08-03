@@ -1,3 +1,4 @@
+import { get as dbGet, put as dbPut, isReady as dbIsReady } from '../utils/db.js';
 /**
  * Personal Gear Autopilot — saves the user motor (NK180 Pro) and
  * sonar (Garmin ECHOMAP UHD2 93sv) profile to IndexedDB so it
@@ -11,9 +12,9 @@
     const sonarEl = document.getElementById('planSonar');
     if(!motorEl || !sonarEl) return;
     // Load saved profile
-    if(window.DB?.db){
+    if(dbIsReady()){
       try {
-        const saved = await window.DB.get('settings', 'personal_gear_profile');
+        const saved = await dbGet('settings', 'personal_gear_profile');
         if(saved){
           if(saved.motor) motorEl.value = saved.motor;
           if(saved.sonar) sonarEl.value = saved.sonar;
@@ -22,9 +23,9 @@
     }
     // Save on any change
     async function saveGear(){
-      if(!window.DB?.db) return;
+      if(!dbIsReady()) return;
       try {
-        await window.DB.put('settings', {
+        await dbPut('settings', {
           key: 'personal_gear_profile',
           motor: motorEl.value,
           sonar: sonarEl.value,

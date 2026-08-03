@@ -22,6 +22,7 @@ import { depthColor, simplifyLine, guessDepthProp } from '../utils/geo.js';
 import { parseKML, kmlToGeoJSON, parseGPX, geoJSONToLines } from '../utils/parsers.js';
 import { addChartLayer, persistCharts } from './chart-mosaic.js';
 import { setBanner } from '../core/map-init.js';
+import { put as dbPut, getAll as dbGetAll, del as dbDel, isReady as dbIsReady } from '../utils/db.js';
 
 const CONTOUR_LAYERS = {};
 
@@ -72,9 +73,9 @@ async function handleLayerFile(file) {
       depthProp = guessDepthProp(geo.features[0].properties);
     }
 
-    if (window.DB?.db) {
+    if (dbIsReady()) {
       try {
-        await window.DB.put('layers', { name, geo, depthProp });
+        await dbPut('layers', { name, geo, depthProp });
       } catch (_) {}
     }
 
@@ -89,7 +90,7 @@ async function handleLayerFile(file) {
 
 // ── Add / remove a contour layer ─────────────────────────────────────────
 
-function addContourLayer(name, geo, depthProp) {
+export function addContourLayer(name, geo, depthProp) {
   if (!state.MAP_OK) return;
   removeContourLayer(name);
 
@@ -155,9 +156,9 @@ function addContourLayer(name, geo, depthProp) {
         m.setLatLng(newLL);
         const readout = document.getElementById(`popupCoords_${spotKey}`);
         if (readout) readout.textContent = `${newLL.lat.toFixed(5)}, ${newLL.lng.toFixed(5)}`;
-        if (window.DB?.db) {
+        if (dbIsReady()) {
           try {
-            await window.DB.put('settings', {
+            await dbPut('settings', {
               key: `custom_gis_${spotName}`,
               lat: newLL.lat,
               lon: newLL.lng,
@@ -253,8 +254,8 @@ async function renderLayerList() {
 
 export async function loadAllLayers() {
   let all = [];
-  if (window.DB?.db) {
-    try { all = await window.DB.getAll('layers'); console.log('[IDB] layers found:', all.length); }
+  if (dbIsReady()) {
+    try { all = await dbGetAll('layers'); console.log('[IDB] layers found:', all.length); }
     catch (e) { console.warn('[IDB] layers error:', e); }
   }
   for (const rec of all) addContourLayer(rec.name, rec.geo, rec.depthProp);
@@ -266,10 +267,10 @@ async function clearAllLayers() {
   if (!names.length) return;
   if (!confirm(`Delete ALL ${names.length} contour/GIS layers?\nThis cannot be undone.`)) return;
   for (const n of [...names]) removeContourLayer(n);
-  if (window.DB?.db) {
+  if (dbIsReady()) {
     try {
-      const all = await window.DB.getAll('layers');
-      for (const rec of all) await window.DB.del('layers', rec.name);
+      const all = await dbGetAll('layers');
+      for (const rec of all) await dbDel('layers', rec.name);
     } catch (e) { console.warn('[IDB] clear layers failed:', e); }
   }
   renderLayerList();
@@ -295,8 +296,8 @@ window.toggleLayer = function toggleLayer(name) {
 window.deleteLayer = function deleteLayer(name) {
   if (!confirm(`Delete layer "${name}"?`)) return;
   removeContourLayer(name);
-  if (window.DB?.db) {
-    window.DB.del('layers', name).catch((e) => console.warn('[IDB] layer delete failed:', e));
+  if (dbIsReady()) {
+    dbDel('layers', name).catch((e) => console.warn('[IDB] layer delete failed:', e));
   }
   renderLayerList();
 };

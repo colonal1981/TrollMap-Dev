@@ -7,14 +7,15 @@ import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { setBanner } from '../core/map-init.js';
 import { renderSpread } from './spread-builder.js';
+import { put as dbPut, getAll as dbGetAll, del as dbDel, isReady as dbIsReady } from '../utils/db.js';
 
 // Module-level cache mirroring what's in IndexedDB.
 let SAVED_SPREADS = {};
 
 export async function loadSavedSpreads() {
-  if (!window.DB?.db) return;
+  if (!dbIsReady()) return;
   try {
-    const all = await window.DB.getAll('spreads');
+    const all = await dbGetAll('spreads');
     console.log('[IDB] spreads found:', all.length);
     SAVED_SPREADS = {};
     all.forEach((s) => { SAVED_SPREADS[s.name] = s.rods; });
@@ -37,9 +38,9 @@ async function saveCurrentSpread() {
   const name = prompt('Save spread as:', defaultName);
   if (!name) return;
   SAVED_SPREADS[name] = state.SPREAD.map((r) => Object.assign({}, r));
-  if (window.DB?.db) {
+  if (dbIsReady()) {
     try {
-      await window.DB.put('spreads', { name, rods: SAVED_SPREADS[name] });
+      await dbPut('spreads', { name, rods: SAVED_SPREADS[name] });
       setBanner(`✅ Spread "${name}" saved`);
       setTimeout(() => setBanner(''), 2500);
     } catch (e) {
@@ -56,8 +57,8 @@ async function deleteSavedSpread() {
   if (!name) { alert('Select a spread first'); return; }
   if (!confirm(`Delete "${name}"?`)) return;
   delete SAVED_SPREADS[name];
-  if (window.DB?.db) {
-    try { await window.DB.del('spreads', name); } catch (_) {}
+  if (dbIsReady()) {
+    try { await dbDel('spreads', name); } catch (_) {}
   }
   refreshSpreadsSelect();
 }

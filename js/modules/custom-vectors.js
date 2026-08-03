@@ -20,6 +20,7 @@
 
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
+import { get as dbGet, put as dbPut, isReady as dbIsReady } from '../utils/db.js';
 
 // ── Structure type registry ───────────────────────────────────────────────────
 
@@ -58,9 +59,9 @@ let structuresVisible = true; // track show/hide state
 let myStructuresGeo = { type: 'FeatureCollection', features: [] };
 
 async function loadMyStructures() {
-  if (!window.DB?.db) return;
+  if (!dbIsReady()) return;
   try {
-    const stored = await window.DB.get('layers', MY_STRUCTURES_KEY);
+    const stored = await dbGet('layers', MY_STRUCTURES_KEY);
     if (stored?.geo?.features?.length) {
       myStructuresGeo = stored.geo;
       rebuildMyStructuresLayer();
@@ -71,9 +72,9 @@ async function loadMyStructures() {
 }
 
 async function saveMyStructures() {
-  if (!window.DB?.db) return;
+  if (!dbIsReady()) return;
   const rec = { name: MY_STRUCTURES_KEY, geo: myStructuresGeo, importedAt: new Date().toISOString() };
-  try { await window.DB.put('layers', rec); } catch (_) {}
+  try { await dbPut('layers', rec); } catch (_) {}
   // Sync to cloud so structures are available across devices
   window.pushItemOnSave?.('layer', MY_STRUCTURES_KEY, rec);
 }
@@ -338,9 +339,9 @@ window.addCustomVectorLayer = function addCustomVectorLayer(layerName, geojson) 
   VECTOR_LAYERS[layerName] = layer;
   try { map.fitBounds(layer.getBounds(), { padding: [30, 30] }); } catch (_) {}
   renderVectorList();
-  if (window.DB?.db) {
+  if (dbIsReady()) {
     const rec = { name: layerName, geo: geojson, importedAt: new Date().toISOString() };
-    try { window.DB.put('layers', rec); } catch (_) {}
+    try { dbPut('layers', rec); } catch (_) {}
     window.pushItemOnSave?.('layer', layerName, rec);
   }
 

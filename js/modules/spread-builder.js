@@ -13,7 +13,9 @@
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { newRodRow } from '../utils/rod-row.js';
-import { depthWindow, leadForDepth, isLeadControlled } from '../data/lure-knowledge.js';
+import { depthWindow, leadForDepth, isLeadControlled, jigheadForSwimbait }
+  from '../data/lure-knowledge.js';
+import { FISHING_STYLE } from '../data/fishing-style-profile.js';
 import { lureByName } from '../data/tackle-inventory.js';
 
 // ── Catalog of presets ────────────────────────────────────────────────────
@@ -230,7 +232,27 @@ export function autoCalculateLead(rod, speedMph) {
   if (isNaN(depth)) return rod.lead || '';
   const lure = lureByName(rod.lure);
   if (!lure) return Math.round((depth > 0 ? depth : 20) * 4.0);
+  // A paddle tail has no weight of its own -- the jighead is the weight, and lead
+  // scales by w^-0.4, so a 1/4oz head needs ~74% more line than a 1oz for the same
+  // depth. Without pairing first, leadForDepth sees weightOz null and falls back to
+  // the 1oz-equivalent ratio for every size of head.
+  const paired = jigheadForSwimbait(lure, depth, speedMph,
+                                    { maxLeadFt: FISHING_STYLE.rigging?.maxLeadFt });
+  if (paired) return paired.leadFt;
   return leadForDepth(lure, depth, speedMph);
+}
+
+/**
+ * The jighead the spread picked for a paddle tail, or null for anything else.
+ * Exposed so the UI can show WHICH head, and say "go to a longer bait" rather than
+ * "cannot reach" when the hook-size cap is what is binding.
+ */
+export function jigheadForRod(rod, speedMph) {
+  const lure = lureByName(rod.lure);
+  const depth = parseFloat(rod.depth);
+  if (!lure || isNaN(depth)) return null;
+  return jigheadForSwimbait(lure, depth, speedMph,
+                            { maxLeadFt: FISHING_STYLE.rigging?.maxLeadFt });
 }
 
 // ── Main renderer ─────────────────────────────────────────────────────────
