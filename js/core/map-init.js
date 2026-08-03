@@ -19,6 +19,7 @@
 
 import { state } from './state.js';
 import { esc } from '../utils/escape.js';
+import { get as dbGet, put as dbPut, isReady as dbIsReady } from '../utils/db.js';
 
 // Tile-layer presets. Esri World Imagery for satellite, OSM for street.
 // Both with attribution per the providers' terms.
@@ -398,10 +399,9 @@ export function showPreview(tracks) {
  */
 export async function persistWorkingData() {
   if (RESTORING_WORKING_DATA) return;
-  const db = window.DB;  // legacy alias expected by some older modules
-  if (!db?.db) return;
+  if (!dbIsReady()) return;
   try {
-    await db.put('settings', {
+    await dbPut('settings', {
       key: 'working_gpx_data',
       filename: FILENAME,
       data: JSON.parse(JSON.stringify(state.DATA)),
@@ -420,10 +420,9 @@ export async function persistWorkingData() {
  * overwritten by an older autosave).
  */
 export async function restoreWorkingData() {
-  const db = window.DB;
-  if (!db?.db) return;
+  if (!dbIsReady()) return;
   try {
-    const rec = await db.get('settings', 'working_gpx_data');
+    const rec = await dbGet('settings', 'working_gpx_data');
     if (!rec || !rec.data) return;
     if ((state.DATA.waypoints?.length) || (state.DATA.tracks?.length)) return;
 
