@@ -147,7 +147,7 @@ export const LURE_KNOWLEDGE = {
     depthMode: 'lead',
     ratedDepth: null,
     leadRatio: 4.0,
-    speedAffectsLead: false,
+    speedAffectsLead: true,
     tacticalDepth: { ideal:6 },
     species:   { striped_bass:6, largemouth_bass:8, smallmouth_bass:7, crappie:4, bowfin:5, catfish:1, redfish:8, trout:8 },
     season:    { spring:9, summer:6, fall:9, winter:8 },
@@ -164,7 +164,7 @@ export const LURE_KNOWLEDGE = {
     depthMode: 'lead',
     ratedDepth: null,
     leadRatio: 4.0,
-    speedAffectsLead: false,
+    speedAffectsLead: true,
     tacticalDepth: { ideal:5 },
     species:   { striped_bass:5, largemouth_bass:7, smallmouth_bass:8, crappie:6, bowfin:4, catfish:1 },
     season:    { spring:8, summer:5, fall:9, winter:9 },
@@ -198,7 +198,16 @@ export const LURE_KNOWLEDGE = {
     depthMode: 'lead',
     ratedDepth: null,
     leadRatio: 4.0,
-    speedAffectsLead: false,
+    // Ryan, 2026-08-03: "larger weights have larger hooks that would rip apart a
+    // smaller swimbait... for 2-3 inch nothing more than 1/2 oz, for 3-4 inch
+    // nothing more than 1oz... for the 1.25 or 1.5 those would go with 5+".
+    //
+    // This is a HOOK-SIZE cap, not a depth cap, and the difference decides what the
+    // app should say when it binds. The bait is not failing to reach the fish; it is
+    // being torn apart by the hook it is sitting on. So the answer when you run out
+    // of head weight is a LONGER swimbait, never a heavier head. `lengthIn <= cap`.
+    jigheadMaxOzByLengthIn: [[3.0, 0.5], [4.9, 1.0], [null, 1.5]],
+    speedAffectsLead: true,
     tacticalDepth: { ideal:14 },
     species:   { striped_bass:8, largemouth_bass:8, smallmouth_bass:7, crappie:5, bowfin:6, catfish:2, redfish:9, trout:9, flounder:7 },
     season:    { spring:8, summer:9, fall:8, winter:5 },
@@ -214,8 +223,8 @@ export const LURE_KNOWLEDGE = {
     label: 'Flutter Spoon',
     depthMode: 'lead',
     ratedDepth: null,
-    leadRatio: 3.5,
-    speedAffectsLead: false,
+    leadRatio: { base: 3.5, refOz: 0.75 },   // quoted for the 3/4oz Nichols
+    speedAffectsLead: true,
     tacticalDepth: { ideal:20 },
     species:   { striped_bass:10, largemouth_bass:6, smallmouth_bass:5, crappie:3, bowfin:4, catfish:1 },
     season:    { spring:7, summer:10, fall:9, winter:7 },
@@ -232,7 +241,7 @@ export const LURE_KNOWLEDGE = {
     depthMode: 'lead',
     ratedDepth: null,
     leadRatio: 4.0,
-    speedAffectsLead: false,
+    speedAffectsLead: true,
     tacticalDepth: { ideal:5 },
     species:   { striped_bass:4, largemouth_bass:9, smallmouth_bass:7, crappie:3, bowfin:6, catfish:1 },
     season:    { spring:10, summer:6, fall:8, winter:3 },
@@ -249,7 +258,7 @@ export const LURE_KNOWLEDGE = {
     depthMode: 'lead',
     ratedDepth: null,
     leadRatio: 4.0,
-    speedAffectsLead: false,
+    speedAffectsLead: true,
     tacticalDepth: { ideal:4 },
     species:   { striped_bass:3, largemouth_bass:9, smallmouth_bass:7, crappie:2, bowfin:7, catfish:1 },
     season:    { spring:10, summer:6, fall:8, winter:4 },
@@ -266,7 +275,7 @@ export const LURE_KNOWLEDGE = {
     depthMode: 'lead',
     ratedDepth: null,
     leadRatio: 4.0,
-    speedAffectsLead: false,
+    speedAffectsLead: true,
     tacticalDepth: { ideal: 30 },
     species:   { striped_bass:9, largemouth_bass:5, smallmouth_bass:6, crappie:2, bowfin:2, catfish:3, redfish:6, flounder:5, trout:4 },
     season:    { spring:6, summer:9, fall:9, winter:9 },
@@ -283,7 +292,7 @@ export const LURE_KNOWLEDGE = {
     depthMode: 'lead',
     ratedDepth: null,
     leadRatio: 4.0,
-    speedAffectsLead: false,
+    speedAffectsLead: true,
     tacticalDepth: { ideal: 6 },
     species:   { striped_bass:6, largemouth_bass:7, smallmouth_bass:8, crappie:7, bowfin:6, catfish:3, redfish:5, trout:9 },
     season:    { spring:9, summer:7, fall:8, winter:5 },
@@ -300,7 +309,7 @@ export const LURE_KNOWLEDGE = {
     depthMode: 'lead',
     ratedDepth: null,
     leadRatio: 4.0,
-    speedAffectsLead: false,
+    speedAffectsLead: true,
     tacticalDepth: { ideal:18 },
     species:   { striped_bass:9, largemouth_bass:6, smallmouth_bass:7, crappie:4, bowfin:5, catfish:2, redfish:8 },
     season:    { spring:8, summer:9, fall:9, winter:7 },
@@ -317,7 +326,7 @@ export const LURE_KNOWLEDGE = {
     depthMode: 'lead',
     ratedDepth: null,
     leadRatio: 4.0,
-    speedAffectsLead: false,
+    speedAffectsLead: true,
     tacticalDepth: { ideal:10 },
     species:   { striped_bass:6, largemouth_bass:6, smallmouth_bass:6, crappie:9, bowfin:5, catfish:3 },
     season:    { spring:9, summer:7, fall:8, winter:8 },
@@ -334,7 +343,7 @@ export const LURE_KNOWLEDGE = {
     depthMode: 'lead',
     ratedDepth: null,
     leadRatio: 4.0,
-    speedAffectsLead: false,
+    speedAffectsLead: true,
     tacticalDepth: { ideal:4 },
     species:   { striped_bass:4, largemouth_bass:7, smallmouth_bass:7, crappie:8, bowfin:9, catfish:4 },
     season:    { spring:9, summer:8, fall:8, winter:6 },
@@ -351,7 +360,7 @@ export const LURE_KNOWLEDGE = {
     depthMode: 'lead',
     ratedDepth: null,
     leadRatio: 4.0,
-    speedAffectsLead: false,
+    speedAffectsLead: true,
     tacticalDepth: { ideal:12 },
     species:   { striped_bass:7, largemouth_bass:7, smallmouth_bass:6, crappie:7, bowfin:5, catfish:2, redfish:8, trout:8 },
     season:    { spring:7, summer:8, fall:7, winter:6 },
@@ -400,7 +409,7 @@ export const LURE_KNOWLEDGE = {
     depthMode: 'lead',
     ratedDepth: null,
     leadRatio: 4.0,
-    speedAffectsLead: false,
+    speedAffectsLead: true,
     tacticalDepth: { ideal:6 },
     species:   { striped_bass:3, largemouth_bass:10, smallmouth_bass:8, crappie:5, bowfin:6, catfish:3, redfish:8, trout:7 },
     season:    { spring:9, summer:7, fall:8, winter:6 },
@@ -419,7 +428,7 @@ export const LURE_KNOWLEDGE = {
     depthMode: 'lead',
     ratedDepth: null,
     leadRatio: 4.0,
-    speedAffectsLead: false,
+    speedAffectsLead: true,
     tacticalDepth: { ideal: 10 },
     species:   { striped_bass:8, largemouth_bass:8, smallmouth_bass:8, crappie:4, bowfin:4, catfish:1 },
     season:    { spring:8, summer:9, fall:8, winter:6 },
@@ -435,8 +444,8 @@ export const LURE_KNOWLEDGE = {
     label: 'Casting Spoon / Diamond Jig',
     depthMode: 'lead',
     ratedDepth: null,
-    leadRatio: 3.5,
-    speedAffectsLead: false,
+    leadRatio: { base: 3.5, refOz: 1.0 },    // quoted for the 1oz Dr.Fish diamond jig
+    speedAffectsLead: true,
     tacticalDepth: { ideal: 18 },
     species:   { striped_bass:9, largemouth_bass:6, smallmouth_bass:7, crappie:2, bowfin:3, catfish:2 },
     season:    { spring:7, summer:9, fall:9, winter:8 },
@@ -453,7 +462,7 @@ export const LURE_KNOWLEDGE = {
     depthMode: 'lead',
     ratedDepth: null,
     leadRatio: 4.0,
-    speedAffectsLead: false,
+    speedAffectsLead: true,
     tacticalDepth: { ideal: 12 },
     species:   { striped_bass:2, largemouth_bass:10, smallmouth_bass:9, crappie:1, bowfin:4, catfish:2 },
     season:    { spring:9, summer:8, fall:8, winter:7 },
@@ -470,7 +479,7 @@ export const LURE_KNOWLEDGE = {
     depthMode: 'lead',
     ratedDepth: null,
     leadRatio: 4.0,
-    speedAffectsLead: false,
+    speedAffectsLead: true,
     tacticalDepth: { ideal: 8 },
     species:   { striped_bass:3, largemouth_bass:9, smallmouth_bass:10, crappie:6, bowfin:4, catfish:3 },
     season:    { spring:9, summer:7, fall:8, winter:8 },
@@ -764,21 +773,60 @@ export function getSeason(date) {
 // ratios are working values, not measurements — calibrate against sonar before
 // treating any of them as fact.
 
-// NOTE — speedAffectsLead reproduces a quirk of the old autoCalculateLead(): it
-// multiplied by a speed factor for the three A-rig branches ONLY, and ignored speed
-// for spoons, crankbaits and the default branch. That is almost certainly wrong —
-// speed changes the depth of everything you tow — but this refactor is meant to move
-// the numbers, not change them. Flipping the rest to true is a one-line change and
-// is on the same ledger as the eight speed-window disagreements.
+// speedAffectsLead was, until 2026-08-03, a faithful reproduction of a quirk in the
+// old autoCalculateLead(): it multiplied by a speed factor for the three A-rig
+// branches ONLY, and ignored speed for spoons, crankbaits and the default branch.
+// The refactor that lifted these numbers deliberately preserved it, on the grounds
+// that moving the numbers and changing them in the same pass makes both unreviewable.
+//
+// Ryan settled it: "the faster you go the more line you have to out." So every
+// depthMode:'lead' type now has it true, and the A-rigs are the rule rather than the
+// exception. Rated baits stay false on purpose — a crankbait's depth is its bill, and
+// its speed is a hard cap (nothing over 3 mph) rather than a lead input.
+//
+// speedFactor itself is still a three-step function, not a curve, and STILL
+// UNCALIBRATED. It says 15% more line above 2.2 mph and 12% less below 1.6. That
+// shape is a working value inherited from autoCalculateLead, not a measurement.
 
 function speedFactor(speedMph) {
   const s = speedMph || 2.4;                    // autoCalculateLead's default
   return s > 2.2 ? 1.15 : s < 1.6 ? 0.88 : 1.0;
 }
 
+// ── Weight ────────────────────────────────────────────────────────────────────
+// Depth for a sinking bait scales with weight, and leadRatio alone could not say
+// so: a 1/8oz Road Runner and a 1oz jighead both claimed 30ft, which is nonsense.
+//
+// The exponent is not invented. Two independent derivations agree:
+//   * fitting ratio = C * w^-a across all 21 entries of the old name-keyed
+//     LURE_DIVE_DEPTHS table                      -> a = 0.391  (R2 0.745)
+//   * the A-rig series alone, which came from autoCalculateLead and reflects
+//     Ryan's actual working leads rather than that table
+//                                                 -> a = 0.412
+// Different sources, written at different times by different means, landing 5%
+// apart. Call it 0.4.
+//
+// The residuals are structured rather than random, and that structure is the
+// argument for keeping a per-type ratio as well: the model runs 5-10ft DEEP on
+// A-rigs (five baits of drag) and 10-13ft SHALLOW on spoons and diamond jigs
+// (dense, low drag). Weight is universal physics; drag belongs to the shape. So
+// weight gets one exponent and each shape keeps its own constant.
+//
+// STILL UNCALIBRATED against sonar. A defensible shape with a working constant,
+// not a measurement.
+const WEIGHT_EXPONENT = 0.4;
+
+/** Scale a ratio quoted at refOz to the actual weight. Heavier needs less lead. */
+function applyWeight(ratio, weightOz, refOz) {
+  if (!weightOz || weightOz <= 0) return ratio;
+  return ratio * Math.pow(weightOz / refOz, -WEIGHT_EXPONENT);
+}
+
 function resolveLeadRatio(lr, { weightOz, targetDepthFt }) {
   if (lr == null) return 4.0;
-  if (typeof lr === 'number') return lr;
+  // A plain number is a ratio quoted at refOz (default 1oz); scale by weight.
+  if (typeof lr === 'number') return applyWeight(lr, weightOz, 1.0);
+  if (lr.base != null) return applyWeight(lr.base, weightOz, lr.refOz ?? 1.0);
   if (lr.byWeightOz) {
     const pts = lr.byWeightOz;
     if (weightOz == null) return pts[Math.floor(pts.length / 2)][1];
@@ -837,6 +885,63 @@ export function depthWindow(lure, { speedMph, leadFt } = {}) {
   const d = Math.round(lo);
   return { min: Math.max(0, d - 2), max: d + 2, mode: 'lead',
            controlledBy: 'lead length + speed + weight', speedFactor: sf };
+}
+
+/**
+ * Which jighead to clip on a paddle tail, and how much lead it then needs.
+ *
+ * Two independent constraints, and they fail differently:
+ *   * DEPTH wants the lightest head that still reaches, because a head heavier
+ *     than the job kills the action for nothing.
+ *   * HOOK SIZE caps how heavy you may go at all, by the bait's length. Exceed it
+ *     and the hook tears the plastic apart.
+ *
+ * When the cap is what stops you, `cappedBy` is 'length' and the fix is a longer
+ * bait -- reporting that as "cannot reach depth" would send you looking for more
+ * weight, which is exactly the thing that destroys the bait.
+ *
+ * Weight is not cosmetic here: leadRatio 4.0 is quoted at 1oz and scales by
+ * w^-0.4, so a 1/4oz head needs ~74% more lead than a 1oz head for the same depth.
+ */
+export const JIGHEADS_OWNED_OZ = [0.25, 0.375, 0.5, 0.75, 1.0, 1.25, 1.5];
+
+export function jigheadCapOz(lengthIn, type = 'swimbait_paddle') {
+  const table = LURE_KNOWLEDGE[type]?.jigheadMaxOzByLengthIn;
+  if (!table) return Infinity;
+  if (lengthIn == null) return table[table.length - 1][1];   // unknown length: least restrictive
+  for (const [cap, maxOz] of table) if (cap == null || lengthIn <= cap) return maxOz;
+  return table[table.length - 1][1];
+}
+
+export function jigheadForSwimbait(swimbait, targetDepthFt, speedMph, opts = {}) {
+  // Returns null for anything that is not a paddle tail. Without this the function
+  // defaults the type and happily prices a jighead for a crankbait -- and the caller
+  // in spread-builder, which uses a truthy result to override the lead, would then
+  // hand every lure in the box a swimbait's lead.
+  if (!LURE_KNOWLEDGE[swimbait?.type]?.jigheadMaxOzByLengthIn) return null;
+  const maxLeadFt = opts.maxLeadFt ?? 120;
+  const heads = [...(opts.jigheads || JIGHEADS_OWNED_OZ)].sort((a, b) => a - b);
+  const cap = jigheadCapOz(swimbait?.lengthIn, swimbait?.type || 'swimbait_paddle');
+  const legal = heads.filter(w => w <= cap);
+  const lead = w => leadForDepth({ type: swimbait?.type || 'swimbait_paddle', weightOz: w },
+                                 targetDepthFt, speedMph);
+
+  if (!legal.length) {
+    return { weightOz: null, leadFt: null, capOz: cap, cappedBy: 'length',
+             note: `no owned jighead is light enough for a ${swimbait?.lengthIn}" bait` };
+  }
+  for (const w of legal) {
+    const l = lead(w);
+    if (l <= maxLeadFt) return { weightOz: w, leadFt: l, capOz: cap, cappedBy: null, note: null };
+  }
+  const w = legal[legal.length - 1];
+  return {
+    weightOz: w, leadFt: lead(w), capOz: cap,
+    cappedBy: cap < heads[heads.length - 1] ? 'length' : 'lead',
+    note: cap < heads[heads.length - 1]
+      ? `${cap}oz is the most a ${swimbait?.lengthIn}" bait will carry — go to a longer swimbait for ${targetDepthFt}ft`
+      : `even ${w}oz needs more than ${maxLeadFt}ft of lead at ${targetDepthFt}ft`
+  };
 }
 
 /** True when depth comes from lead rather than from the lure. */

@@ -51,12 +51,25 @@ export const LAKE_NAME_TO_R2_KEY = {
   'Lake Hickory, NC':                   'lake_hickory_rhodhiss',
   'Lake Rhodhiss, NC':                  'lake_hickory_rhodhiss',
   'Lake James, NC':                     'lake_james',
-  'High Rock Lake, NC':                 'yadkin_river_chain',
-  'Badin Lake, NC':                     'yadkin_river_chain',
-  'Lake Tillery, NC':                   'yadkin_river_chain',
-  'Blewett Falls Lake, NC':             'yadkin_river_chain',
+  // The Yadkin chain was served as ONE key, High Rock down to Blewett Falls. That key was
+  // pruned from R2 on 2026-08-03 because Badin and Tillery had superseded it with their own
+  // per-lake packs -- which is true for those two and false for the other two. 3DHP names
+  // Badin and Tillery; it does not name High Rock or Blewett Falls, so those two had no
+  // registry record to be superseded BY, and pointing them at the chain key now returns 404.
+  //
+  // Badin and Tillery are repointed here because their packs exist today. High Rock and
+  // Blewett Falls are left OUT rather than pointed at a slug that has not been built yet: an
+  // absent name falls through to the resolver and the lake is simply not offered, which is
+  // honest. A name bound to a slug with no pack is a lake that appears in the list and then
+  // fails to load, which is worse. Add these two back when the packs are in R2:
+  //   'High Rock Lake, NC':     'high_rock_lake',
+  //   'Blewett Falls Lake, NC': 'blewett_falls_lake',
+  'Badin Lake, NC':                     'badin_lake',
+  'Lake Tillery, NC':                   'lake_tillery',
   'Jordan Lake, NC':                    'jordan_lake',
-  // Explicit: "falls" normalizes to match "blewett falls" → yadkin without this
+  // Explicit, and it stays explicit: "falls" normalizes into "blewett falls", so without
+  // this line Falls Lake resolves to Blewett Falls. That is dormant while Blewett Falls is
+  // unbuilt and comes straight back the moment it returns to the registry.
   'Falls Lake, NC':                     'falls_lake',
   'W. Kerr Scott Reservoir, NC':        'w_kerr_scott_reservoir',
   // Explicit: "kerr" alone matches "w kerr scott" without this

@@ -78,15 +78,15 @@ export const TACKLE_INVENTORY = [
   // ── Swimbaits (Paddle Tail) ───────────────────────────────────────────────
   { id:'swimbait_3in', name:'Swimbait 3.8" – Jighead',
     type:'swimbait_paddle', trollable:true, castable:true, weightOz:null,
-    jigWeights:[0.125,0.1875,0.25], sizes:['3"'] },
+    jigWeights:[0.125,0.1875,0.25], sizes:['3"'], lengthIn: 3.8 },
 
   { id:'swimbait_4in', name:'Swimbait 4.6" – Jighead',
     type:'swimbait_paddle', trollable:true, castable:true, weightOz:null,
-    jigWeights:[0.1875,0.25,0.375,0.5], sizes:['4"'] },
+    jigWeights:[0.1875,0.25,0.375,0.5], sizes:['4"'], lengthIn: 4.6 },
 
   { id:'swimbait_5in', name:'Swimbait 5" – Jighead',
     type:'swimbait_paddle', trollable:true, castable:true, weightOz:null,
-    jigWeights:[0.25,0.375,0.5,0.75], sizes:['5"'] },
+    jigWeights:[0.25,0.375,0.5,0.75], sizes:['5"'], lengthIn: 5.0 },
 
   // ── Underspins ────────────────────────────────────────────────────────────
   { id:'underspin_owner', name:'Underspin Jig (Flashy Swimmer)',
@@ -167,6 +167,10 @@ export const TACKLE_INVENTORY = [
 
   { id:'jighead_1oz',      name:'1oz Jighead',
     type:'jighead', trollable:true, castable:true, weightOz:1.0 },
+
+  { id:'jighead_1_25oz', name:'1-1/4oz Jighead', type:'jighead', trollable:true, castable:true, weightOz:1.25 },
+
+  { id:'jighead_1_5oz',  name:'1-1/2oz Jighead', type:'jighead', trollable:true, castable:true, weightOz:1.5 },
 
   // ── Finesse and Heavy Casting Jigs (New Casting) ──────────────────────────
   { id:'jig_football', name:'Football Jig (Craw/Bluegill Trailer)',
