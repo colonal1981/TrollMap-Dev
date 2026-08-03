@@ -341,33 +341,30 @@ const AGENT_DISCOVERY_QUERIES = {
   // salinity returns freshwater reservoir documents.
   estuary: {
     SC: (zone) => [
-      `"${zone}" salt marsh tidal creek estuary South Carolina`,
-      `"${zone}" inlet shoreline oyster reef habitat`,
-      `"${zone}" coastal management plan water quality`,
+      `"${zone}" estuary salt marsh acreage tidal creek NERR OR "National Estuarine Research Reserve"`,
+      `"${zone}" inlet shoaling barrier island geomorphology site:noaa.gov OR site:usgs.gov`,
     ],
     GA: (zone) => [
-      `"${zone}" salt marsh tidal creek estuary Georgia coast`,
-      `"${zone}" sound inlet oyster reef habitat`,
-      `"${zone}" coastal management plan water quality`,
+      `"${zone}" estuary salt marsh acreage tidal creek site:coastalgadnr.org OR site:gadnr.org`,
+      `"${zone}" sound inlet barrier island geomorphology site:noaa.gov OR site:usgs.gov`,
     ],
     NC: (zone) => [
-      `"${zone}" salt marsh tidal creek estuary North Carolina`,
-      `"${zone}" sound inlet oyster reef habitat`,
-      `"${zone}" coastal management plan water quality`,
+      `"${zone}" estuary salt marsh sound tidal creek site:deq.nc.gov OR site:nccoastalreserve.net`,
+      `"${zone}" inlet shoaling barrier island geomorphology site:noaa.gov OR site:usgs.gov`,
     ],
   },
   tidal: {
     SC: (zone) => [
-      `"${zone}" tide current salinity coastal water quality`,
-      `"${zone}" NOAA tide station tidal creek site:noaa.gov`,
+      `"${zone}" tidal range salinity stratification estuary site:noaa.gov OR site:usgs.gov`,
+      `"${zone}" salinity gradient flushing time water quality filetype:pdf`,
     ],
     GA: (zone) => [
-      `"${zone}" tide current salinity coastal water quality`,
-      `"${zone}" NOAA tide station tidal creek site:noaa.gov`,
+      `"${zone}" tidal range salinity stratification estuary site:noaa.gov OR site:usgs.gov`,
+      `"${zone}" salinity gradient flushing time water quality filetype:pdf`,
     ],
     NC: (zone) => [
-      `"${zone}" tide current salinity coastal water quality`,
-      `"${zone}" NOAA tide station tidal creek site:noaa.gov`,
+      `"${zone}" tidal range salinity stratification estuary site:noaa.gov OR site:usgs.gov`,
+      `"${zone}" salinity gradient flushing time water quality filetype:pdf`,
     ],
   },
   saltwater_regulations: {
@@ -389,38 +386,13 @@ const AGENT_DISCOVERY_QUERIES = {
     ],
   },
   // Regulation amendments are only useful if recent — 180 days covers a
-  // mid-season proclamation without dredging up superseded rules. This is
-  // deliberately below TinyFish's 5,256,000-minute API ceiling.
-  _saltwater_regs_recency: [259200, 259200],
+  // mid-season proclamation without dredging up superseded rules.
+  _saltwater_regs_recency: [15552000, 15552000],
 };
 
 // Coastal zones use the marine agent set. Freshwater lakes never reach these
 // because the plan is only consulted for coast_* keys.
 const COASTAL_AGENT_KEYS = new Set(['estuary', 'tidal', 'saltwater_regulations']);
-
-// Shared agents need a marine vocabulary when their target is a coast_ zone.
-// Keeping these separate prevents a freshwater lake from ever searching for
-// redfish, while avoiding the old bass/crappie/striped-bass queries for an
-// estuary. `{zone}` is intentionally a short local alias (e.g. "Murrells
-// Inlet"), because slash-form catalog names are rarely used by source pages.
-const COASTAL_SHARED_DISCOVERY_QUERIES = {
-  biology: (zone, state) => [
-    `"${zone}" red drum spotted seatrout southern flounder survey ${state} fisheries`,
-    `"${zone}" redfish trout flounder shrimp mullet habitat`,
-  ],
-  fisheries: (zone) => [
-    `"${zone}" redfish speckled trout flounder fishing report -site:facebook.com -site:instagram.com -site:youtube.com`,
-    `"${zone}" red drum spotted seatrout southern flounder seasonal fishing`,
-  ],
-  habitat: (zone) => [
-    `"${zone}" salt marsh oyster reef seagrass tidal creek habitat`,
-    `"${zone}" oyster beds marsh shoreline habitat assessment`,
-  ],
-  navigation: (zone) => [
-    `"${zone}" channel markers shoals boat ramp navigation`,
-    `"${zone}" local notice to mariners inlet channel`,
-  ],
-};
 
 const AGENT_TO_TAGS = {
   identity: ['identity'],
@@ -457,7 +429,7 @@ const AGENT_TO_TAGS = {
   // Seed relevance map: which agents care about each seed type
   const agentForSeeds = String(body.agent || '').trim().toLowerCase() || null;
   const wantsGrokipedia   = !agentForSeeds || ['identity','limnology','biology','habitat'].includes(agentForSeeds);
-  const wantsRegs         = !agentForSeeds || agentForSeeds === 'regulations' || agentForSeeds === 'saltwater_regulations';
+  const wantsRegs         = !agentForSeeds || agentForSeeds === 'regulations';
   const wantsNepis        = !agentForSeeds || ['limnology'].includes(agentForSeeds);
 
   // Grokipedia is allowed, but never receives lake-specific routing. Try the
@@ -480,7 +452,7 @@ const AGENT_TO_TAGS = {
   if (wantsRegs) {
     // R2 digest primary (user uploaded, stable, free via TinyFish)
     if (r2RegsUrl) {
-      addSeed({ title: `${state} Regulations Digest (R2)`, type: 'PDF', authority: dnrName, url: r2RegsUrl, priority: 1, agentTags: agentForSeeds === 'saltwater_regulations' ? ['saltwater_regulations', 'regulations'] : ['regulations'] });
+      addSeed({ title: `${state} Freshwater Regulations Digest (R2)`, type: 'PDF', authority: dnrName, url: r2RegsUrl, priority: 1, agentTags: ['regulations'] });
     }
   }
 
@@ -787,21 +759,11 @@ const AGENT_TO_TAGS = {
     const stateQueries = AGENT_DISCOVERY_QUERIES[agentKey][state];
     if (!stateQueries) continue;
 
-    // Catalog display names often join two nearby places with a slash, while
-    // agency documents use just one ("Murrells Inlet", not "Murrells Inlet /
-    // Pawleys Island"). Search each meaningful local name and retain each as a
-    // relevance alias so good local sources do not fail the full-name gate.
-    const coastalShortNames = isCoastalTarget
-      ? queryLake.split('/').map(part => part.trim()).filter(part => part.length >= 4)
-      : [];
-    const discoveryLakeNames = [...new Set([queryLake, ...coastalShortNames])];
-    const coastalSharedBuilder = isCoastalTarget ? COASTAL_SHARED_DISCOVERY_QUERIES[agentKey] : null;
+    const discoveryLakeNames = [queryLake];
     const queryCandidates = [];
     for (const name of discoveryLakeNames) {
       try {
-        queryCandidates.push(...(coastalSharedBuilder
-          ? coastalSharedBuilder(name, state)
-          : (stateQueries(name) || [])));
+        queryCandidates.push(...(stateQueries(name) || []));
       } catch (e) {
         queryLog.push(`[${agentKey}] query builder failed for ${name}: ${e.message}`);
       }

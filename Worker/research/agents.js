@@ -1,7 +1,8 @@
 // research/agents.js — split from worker-research.js (behavior-preserving) 
 import { JSON_HEADERS, callLLM, extractLLMText } from '../worker-core.js';
 import { LAKES, lakeKeyFromName } from '../worker-data.js';
-import { fetchStateRegulations, getLakeRegulations, STATE_REGULATIONS_CONFIG, tinyfishFetch } from './clients.js';
+import { fetchStateRegulations, getLakeRegulations,
+         fetchSaltwaterRegulations, fetchLiveRegsAmendments } from './clients.js';
 import { extractJsonPossibly } from './keys.js';
 import {
   COASTAL_AGENTS, COASTAL_AGENT_HINTS, COASTAL_SKIPPED_AGENTS,
@@ -804,30 +805,41 @@ async function handleResearchAgent(request, env) {
     }
   }
 
-  // Saltwater regulations use the same approved R2 digest, but need its raw
-  // marine section rather than the freshwater parser's lake-limit object.
-  // This makes the digest a guaranteed baseline even when amendment discovery
-  // finds nothing for a small inlet.
+  // The saltwater agent was built around two inputs it was never handed. `_regsSource`
+  // was populated only under `agentKey === 'regulations'` above, so `saltwater_regulations`
+  // always took its "No R2 digest available -- do not guess limits; return nulls" branch;
+  // and `_liveRegsSource` had no writer anywhere in the tree, so it always took "No live
+  // amendment source supplied" as well. Every coastal run hit both fallbacks, which is why
+  // saltwater limits came back null with `verificationRequired` set and looked like a
+  // cautious agent rather than an unwired one.
+  //
+  // It gets digest TEXT, not the freshwater parse: `fetchStateRegulations` runs a prompt
+  // whose species list is entirely freshwater, and its output has no red drum in it.
   if (agentKey === 'saltwater_regulations') {
-    try {
-      const digest = STATE_REGULATIONS_CONFIG[state]?.pages?.[0];
-      if (digest?.url) {
-        const result = await tinyfishFetch({ urls: [digest.url], format: 'markdown', ttl: 86400 }, env);
-        const content = String(result.results?.[0]?.text || '');
-        if (content.length >= 200) {
-          groundedPrev = {
-            ...groundedPrev,
-            _regsSource: {
-              url: digest.url,
-              content,
-              published: /2026_2027/.test(digest.url) ? '2026-2027' : '2025-2026',
-              note: 'APPROVED R2 REGULATIONS DIGEST — extract the saltwater finfish section only.'
-            }
-          };
-        }
-      }
-    } catch (e) {
-      console.warn('saltwater R2 regulations load failed: ' + e.message);
+    const [digest, live] = await Promise.all([
+      fetchSaltwaterRegulations(state, env).catch(e => {
+        console.warn('saltwater digest load failed: ' + e.message); return null;
+      }),
+      fetchLiveRegsAmendments(state, env).catch(e => {
+        console.warn('live amendment check failed: ' + e.message); return null;
+      })
+    ]);
+    groundedPrev = { ...(groundedPrev || previousResults) };
+    if (digest) {
+      groundedPrev._regsSource = {
+        url: digest.url,
+        published: digest.published,
+        content: digest.content,
+        note: 'APPROVED R2 SALTWATER DIGEST SECTION -- this is the annual baseline. Never invent limits.'
+      };
+    }
+    if (live) {
+      groundedPrev._liveRegsSource = {
+        url: (live.urls || []).join(' '),
+        checkedFrom: live.after,
+        content: live.content,
+        note: 'LIVE AMENDMENT SEARCH -- results published after the digest took effect. Where these conflict with the digest, these win.'
+      };
     }
   }
 
@@ -841,10 +853,10 @@ async function handleResearchAgent(request, env) {
     const docFilter = {
       limnology: /epa|nscep|water.?qual|characteriz|nutrient|limnol/i,
       identity:  /epa|nscep|water.?qual|characteriz|sc.?lake|dnr/i,
-      biology:   /striped.?bass|fisheries|biology|annual|species|stocking|fish|bass|crappie|catfish|pattern|forage|shad|herring|red.?drum|redfish|seatrout|speckled.?trout|flounder|mullet|shrimp|oyster|marsh/i,
-      habitat:   /habitat|attractor|structure|dnr|sc.?lake|marsh|oyster|seagrass|tidal.?creek|inlet|shoreline|estuar/i,
-      fisheries: /fish|bass|crappie|striper|catfish|pattern|season|depth|behavior|report|tactic|guide|omnia|conventional|sportsman|red.?drum|redfish|seatrout|speckled.?trout|flounder|tidal|inlet/i,
-      summary:   /lake|reservoir|water.?quality|fisher|biology|habitat|navigation|regulation|report|plan|assessment|dnr|duke|owner|dam|estuar|tidal|marsh|oyster|inlet|sound|harbor/i,
+      biology:   /striped.?bass|fisheries|biology|annual|species|stocking|fish|bass|crappie|catfish|pattern|forage|shad|herring|omnia|conventional|sportsman|tactic|guide/i,
+      habitat:   /habitat|attractor|structure|dnr|sc.?lake/i,
+      fisheries: /fish|bass|crappie|striper|catfish|pattern|season|depth|behavior|report|tactic|guide|omnia|conventional|sportsman/i,
+      summary:   /lake|reservoir|water.?quality|fisher|biology|habitat|navigation|regulation|report|plan|assessment|dnr|duke|owner|dam/i,
     };
     const filter = docFilter[agentKey];
     // Gemini free-tier requests must stay comfortably below token-per-minute
@@ -922,7 +934,6 @@ async function handleResearchAgent(request, env) {
       catfish: ['Catfish', 'Blue Catfish', 'Flathead Catfish', 'Channel Catfish', 'Bullhead'],
       panfish: ['Bream', 'Bluegill', 'Redear Sunfish (Shellcracker)', 'Bowfin', 'White Perch', 'Yellow Perch', 'Walleye', 'Sauger'],
       other:   ['Pickerel', 'Chain Pickerel', 'Pike', 'Muskie', 'Trout', 'Brown Trout', 'Rainbow Trout', 'Brook Trout'],
-      marine:  ['Red Drum', 'Redfish', 'Spotted Seatrout', 'Speckled Trout', 'Southern Flounder', 'Black Drum', 'Sheepshead', 'Tarpon'],
     };
 
     // Assign each confirmed species to a group

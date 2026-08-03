@@ -143,15 +143,6 @@ async function handleResearchSave(request, env) {
     navigation: incomingProfile.navigation || packageParts.navigation || {},
     regulations: incomingProfile.regulations || packageParts.regulations || {},
     trollingIntelligence: incomingProfile.trollingIntelligence || incomingProfile.trolling || incomingProfile.fisheries || packageParts.trollingIntelligence || packageParts.trolling || packageParts.fisheries || null,
-    // Coastal-only sections — freshwater profiles leave these undefined so the
-    // saved JSON stays compact. Persist whichever the assembler produced so
-    // downstream consumers (UI, exporter, tide widgets) can read estuary
-    // identity, tidal dynamics, and saltwater regulation objects verbatim.
-    ...(incomingProfile.estuary || packageParts.estuary ? { estuary: incomingProfile.estuary || packageParts.estuary || {} } : {}),
-    ...(incomingProfile.tidal || packageParts.tidal ? { tidal: incomingProfile.tidal || packageParts.tidal || {} } : {}),
-    ...(incomingProfile.saltwaterRegulations || incomingProfile.saltwater_regulations || packageParts.saltwaterRegulations
-      ? { saltwaterRegulations: incomingProfile.saltwaterRegulations || incomingProfile.saltwater_regulations || packageParts.saltwaterRegulations || {} }
-      : {}),
     summary: incomingProfile.summary || packageParts.summary || {},
     evidence: incomingProfile.evidence || packageParts.evidence || {},
     fieldStatus: incomingProfile.fieldStatus || {},

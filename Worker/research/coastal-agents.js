@@ -40,16 +40,12 @@ const COASTAL_AGENTS = {
       const zoneMeta = prev?._zoneMeta
         ? `\nTROLLMAP ZONE BASELINE (authoritative for geometry):\n${JSON.stringify(prev._zoneMeta)}`
         : '';
-      const fallback = prev?.estuary && Object.keys(prev.estuary).length
-        ? `\nDETERMINISTIC COASTAL FALLBACK (internal chart/catalog metadata; preserve non-null values unless documentary evidence corrects them, and leave null measurements null):\n${JSON.stringify(prev.estuary)}`
-        : '';
 
       return `Describe the estuarine system at ${zoneName} (${state} coast).
 
 EXTRACTED FACTS:
-${factsBlock || 'No document facts extracted. Use the deterministic coastal fallback when supplied; otherwise use null where unsure.'}
+${factsBlock || 'No facts extracted — rely on well-established geography only, and use null where unsure.'}
 ${zoneMeta}
-${fallback}
 
 INSTRUCTIONS:
 1. waterBodyType: estuarine class, not "reservoir".
@@ -107,16 +103,12 @@ JSON only.`;
         ? `\nUSGS gauges feeding this system: ${prev._zoneMeta.usgsRivers.join(', ')}. ` +
           `Discharge above ~130% of the 30-day mean depresses salinity.`
         : '';
-      const fallback = prev?.tidal && Object.keys(prev.tidal).length
-        ? `\nDETERMINISTIC COASTAL FALLBACK (internal chart/catalog metadata; preserve non-null values unless documentary evidence corrects them, and leave null measurements null):\n${JSON.stringify(prev.tidal)}`
-        : '';
 
       return `Extract tidal and salinity data for ${zoneName} (${state} coast).
 
 EXTRACTED FACTS:
-${factsBlock || 'No document facts extracted. Use the deterministic coastal fallback when supplied; otherwise use null where unsure.'}
+${factsBlock || 'No facts extracted — use null where unsure rather than guessing.'}
 ${gauges}
-${fallback}
 
 INSTRUCTIONS:
 1. stratificationType: 'salt wedge', 'partially mixed', 'well mixed', or null.

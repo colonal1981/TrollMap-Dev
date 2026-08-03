@@ -2,14 +2,15 @@
   "name": "trollmap-dev",
   "version": "1.0.0",
   "type": "module",
-  "description": "TrollMap — Kayak Fishing Intelligence Platform — refactor safety net",
+  "description": "TrollMap \u2014 Kayak Fishing Intelligence Platform \u2014 refactor safety net",
   "scripts": {
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
-    "lint:keys": "node test/check-lake-keys-parity.mjs"
-  },
-  "devDependencies": {
-    "vitest": "^1.6.1"
+    "test": "node --test \"test/*.test.js\"",
+    "test:watch": "node --test --watch \"test/*.test.js\"",
+    "lint:keys": "node test/check-lake-keys-parity.mjs",
+    "lint:tackle": "node test/check-tackle-parity.mjs",
+    "lint:imports": "node test/check-imports.mjs",
+    "lint": "npm run lint:imports && npm run lint:tackle && npm run lint:keys && npm run lint:smoke",
+    "check": "npm run lint && npm test",
+    "lint:smoke": "node test/registry_smoke.mjs && node test/keys_smoke.mjs && node test/sync_smoke.mjs"
   }
 }
