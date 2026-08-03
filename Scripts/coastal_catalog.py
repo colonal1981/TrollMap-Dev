@@ -39,6 +39,10 @@ COASTAL_CATALOG = {
         'ramps': {
             'Morse Park Landing':    [33.553, -79.047],
             'Garden City Boat Ramp': [33.601, -79.007],
+            # Added 2026-08-03. It went into js/data/coastal-zones.js by hand first, which
+            # is a GENERATED file -- the next gen_coastal_zones_js.py run would have deleted
+            # it without a word. Ramps belong here; the .js is an output.
+            'Oyster Landing (Kayak/Sm Boat)': [33.54751, -79.04484],
         }
     },
     'coast_santee_delta_sc': {
