@@ -48,6 +48,24 @@ export function openDB() {
   });
 }
 
+/**
+ * Is the database actually open right now?
+ *
+ * WHY THIS EXISTS. Twelve modules guarded their DB work with `if (!window.DB?.db) return;`,
+ * which reads exactly like "bail if the database is not ready" and **can never be true**.
+ * `window.DB.db` was a getter returning `openDB()` -- a Promise, and a Promise is always
+ * truthy. So the guard never fired; the code fell through and called put/get, which silently
+ * no-op when `_db` is null (returning null, [] or undefined). "The database is not open yet"
+ * and "the store is empty" were indistinguishable to every caller in the app.
+ *
+ * Synchronous on purpose: it replaces a synchronous test. Anything that wants to WAIT should
+ * await `ready()` instead of polling this.
+ */
+export function isReady() {
+  return !!_db;
+}
+
+
 function tx(store, mode = 'readonly') {
   if (!_db) throw new Error('DB not open');
   return _db.transaction(store, mode).objectStore(store);
