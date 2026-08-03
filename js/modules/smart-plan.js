@@ -26,7 +26,7 @@ import { renderSmartPlanUI, syncSpread, reelForLure } from './smart-plan-ui.js';
 
 // Pull from the universal worker-backed access database
 import { getLoadedAccessIndex } from '../data/access-index.js';
-import { LAKE_DB } from '../data/lakes.js';
+import { lakeDbEntryFor } from '../data/lake-registry.js';
 import { geoDistanceFt, bearing as geoBearing, distToRingFt as distToRingGeneric, distFtFromCoords as distFtGeneric } from '../utils/geo.js';
 
 // ── Coastal / tidal support ────────────────────────────────────────────────
@@ -745,7 +745,11 @@ export async function runSmartPlan() {
   let weatherStr = document.getElementById('planWeather')?.value || '';
   try {
     const coastalCenter = coastalZoneKey ? COASTAL_ZONES[coastalZoneKey]?.center : null;
-    const lakeEntry = LAKE_DB[lakeName] || Object.values(LAKE_DB).find(e => lakeName.toLowerCase().includes((e.name||'').toLowerCase().split(',')[0]));
+    // Was: exact LAKE_DB hit, else a substring scan over its 50 keys. That matcher was one
+    // of four written independently across the app, and they did not agree -- the planner and
+    // the journal could resolve the same lake name to different entries. lakeDbEntryFor() is
+    // the single resolver, and it returns null instead of guessing.
+    const lakeEntry = lakeDbEntryFor(lakeName);
     const center = coastalCenter || lakeEntry?.center;
     if (center) {
       const [lat, lon] = center;

@@ -13,7 +13,7 @@
  */
 
 import { state, CF_WORKER_URL } from '../core/state.js';
-import { LAKE_DB } from '../data/lakes.js';
+import { lakeDbEntryFor } from '../data/lake-registry.js';
 import { fetchDamLevels } from './duke-energy.js';
 
 // ── Lake → Utility-feed map ──────────────────────────────────────────────
@@ -61,10 +61,9 @@ function lookupFeed(cleanStr) {
   return Object.keys(UTILITY_FEEDS).find((k) => cleanStr.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(cleanStr.toLowerCase()));
 }
 
-/** Same, but for LAKE_DB. */
-function lookupLakeDbKey(cleanStr) {
-  return Object.keys(LAKE_DB || {}).find((k) => cleanStr.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(cleanStr.toLowerCase()));
-}
+// The LAKE_DB substring lookup that used to live here is gone -- lakeDbEntryFor() resolves
+// exactly, over the whole registry rather than 50 curated names. UTILITY_FEEDS keeps its own
+// lookup because those keys are Duke/Dominion basin names, not lakes.
 
 function say(msg, isErr) {
   const statusEl = document.getElementById('utilitySyncStatus');
@@ -108,8 +107,7 @@ export async function syncUtilityData() {
   const cleanStr = lakeStr.split(',')[0].trim();
   const lKey = lookupFeed(cleanStr);
   const feed = lKey ? UTILITY_FEEDS[lKey] : null;
-  const lkDbKey = lookupLakeDbKey(cleanStr);
-  const lkEntry = lkDbKey ? LAKE_DB[lkDbKey] : null;
+  const lkEntry = lakeDbEntryFor(lakeStr) || lakeDbEntryFor(cleanStr);
 
   say('Syncing USGS / Utility streams…', false);
   const syncBtn = document.getElementById('syncDukeBtn');

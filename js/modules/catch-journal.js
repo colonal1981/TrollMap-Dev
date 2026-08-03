@@ -12,7 +12,7 @@
 
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
-import { LAKE_DB } from '../data/lakes.js';
+import { getLoadedRegistry } from '../data/lake-registry.js';
 import { loadAccessIndex, nearestLakeByAccessPoint } from '../data/access-index.js';
 import { LURE_PRESETS } from './spread-builder.js';
 
@@ -189,12 +189,15 @@ function nearestLakeAndContour(latRaw, lonRaw) {
       out.lakeSource = 'access-index';
       out.lakeMatchDistanceMi = accessMatch.distanceMi;
     } else {
-      const db = LAKE_DB || {};
+      // Nearest-centroid fallback, now over the whole registry rather than 50 curated
+      // lakes. Same 20-mile rule; a far larger haystack, so an imported catch on a small
+      // impoundment resolves instead of falling through to nothing.
+      const db = Object.fromEntries(getLoadedRegistry().list.map(r => [r.displayName, r]));
       let bestName = '', bestDist = Infinity;
       for (const [name, info] of Object.entries(db)) {
-        if (!info?.center) continue;
-        const cLat = Array.isArray(info.center) ? info.center[0] : info.center.lat;
-        const cLon = Array.isArray(info.center) ? info.center[1] : info.center.lon;
+        if (!Number.isFinite(info?.lat)) continue;
+        const cLat = info.lat;
+        const cLon = info.lon;
         if (!isFinite(cLat) || !isFinite(cLon)) continue;
         const d = Math.hypot((lat - cLat) * 69, (lon - cLon) * 69 * Math.cos(lat * Math.PI / 180));
         const radius = info.radiusMi || info.radius || 20;

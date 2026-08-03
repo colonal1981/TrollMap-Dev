@@ -10,12 +10,20 @@
 
 import { state } from "../core/state.js";
 import { esc } from "../utils/escape.js";
-import { LAKE_DB } from "../data/lakes.js";
+import { lakeDbEntryFor, lakeNamesForPicker } from "../data/lake-registry.js";
 import { renderSpread } from "./spread-builder.js";
 import { newRodRow } from "../utils/rod-row.js";
 import { getFilename, setFilename } from "../core/map-init.js";
 import { COASTAL_ZONES, isCoastalKey, coastalNamesByState } from "../data/coastal-zones.js";
 import { resolveR2Key } from "../data/lake-keys.js";
+// Both of these were CALLED below but never imported -- latent ReferenceErrors that predate
+// the registry refactor. fetchDamLevels() sits inside `try{...}catch(e){}`, so the Duke /
+// Dominion / Santee Cooper block of every generated plan has been rendering empty in silence.
+// distFt() is not guarded: renderPlanStats() dies at the distance line whenever a track has
+// two or more points, so planDist and planGroups never fill in. Found 2026-08-02 by a
+// scope check over the modules this refactor touched, not by the refactor itself.
+import { fetchDamLevels } from "./duke-energy.js";
+import { distFt } from "../utils/geo.js";
 
 // ─────────────────────────────────────────────────────────────
 // FIX: calcTrollTimes was referenced but never defined (the exact
@@ -706,8 +714,9 @@ export async function buildPlanPreviewHtml(p){
   let damHtml = '', tidesHtml = '', usgsHtml = '';
   const lake = p.meta.waterbodyLabel || p.meta.lake || '';
   const cleanLake = lake.split(',')[0].trim();
-  const matchedKey = Object.keys(LAKE_DB).find(k => cleanLake.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(cleanLake.toLowerCase()));
-  const lakeEntry = LAKE_DB[matchedKey] || LAKE_DB[cleanLake] || LAKE_DB[lake];
+  // Substring-matched against LAKE_DB's keys before this. `cleanLake.includes(k)` matches on
+  // any shared fragment, so a short key could claim an unrelated lake; one resolver, exact.
+  const lakeEntry = lakeDbEntryFor(lake) || lakeDbEntryFor(cleanLake);
 
   if(lakeEntry && p.meta.date){
     const lat = lakeEntry.center[0], lon = lakeEntry.center[1];
@@ -1606,12 +1615,13 @@ export async function populatePlanLakeDropdown(){
   } else if (window.getUniversalLakeNames) {
     lakeNames = window.getUniversalLakeNames();
   } else {
-    lakeNames = Object.keys(LAKE_DB).sort();
+    // Was Object.keys(LAKE_DB).sort() -- a SEVENTH lake list in the UI, 50 curated names,
+    // silently different from the map toolbar's. Same registry, same filter, same list.
+    lakeNames = lakeNamesForPicker();
   }
-  
-  // If it's somehow still empty, fallback to LAKE_DB just in case so it's never blank
+
   if (lakeNames.length === 0) {
-    lakeNames = Object.keys(LAKE_DB).sort();
+    lakeNames = lakeNamesForPicker();
   }
 
   lakeNames.forEach(lakeName => {
@@ -1695,8 +1705,9 @@ export function populatePlanRampDropdown(waterbodyName){
     if(current) sel.value = current;
     return;
   }
-  if(!waterbodyName || !LAKE_DB[waterbodyName] || !LAKE_DB[waterbodyName].ramps) return;
-  Object.keys(LAKE_DB[waterbodyName].ramps).forEach(r=>{
+  const wbEntry = waterbodyName ? lakeDbEntryFor(waterbodyName) : null;
+  if(!wbEntry || !wbEntry.ramps) return;
+  Object.keys(wbEntry.ramps).forEach(r=>{
     const opt = document.createElement('option');
     opt.value = r; opt.textContent = r;
     sel.appendChild(opt);
@@ -1728,8 +1739,12 @@ document.getElementById('planLake')?.addEventListener('change', e=>{
     if(window.syncClarityIntelData) setTimeout(window.syncClarityIntelData, 800);
   } else {
     ['planRiverSafety','planRiverFlow','planRiverGauge','planRiverTemp','planRiverRise','planRiverSurgeEta','planRiverSchedule','planRiverSummary'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
-    const lk = LAKE_DB[v];
-    if(lk && state.MAP_OK) state.MAP.setView([lk.center[0], lk.center[1]], lk.center[2]||11);
+    // Was LAKE_DB[v] -- an exact-key hit against the 50 curated names, so selecting any of
+    // the other ~380 shipped lakes left the map wherever it was. Registry lookup covers all
+    // of them; center is derived from the registry geometry, so guard it rather than trust it.
+    const lk = lakeDbEntryFor(v);
+    if(lk && Number.isFinite(lk.center[0]) && Number.isFinite(lk.center[1]) && state.MAP_OK)
+      state.MAP.setView([lk.center[0], lk.center[1]], lk.center[2]||11);
     // Trigger utility sync (Duke/USGS lake levels) when lake changes
     if(window.syncUtilityData) {
       setTimeout(window.syncUtilityData, 300);
@@ -1751,8 +1766,9 @@ document.getElementById('planRamp')?.addEventListener('change', e=>{
     if(window.syncPlanRiverData) window.syncPlanRiverData();
     return;
   }
-  if(!waterbodyName || !rampName || !LAKE_DB[waterbodyName]) return;
-  const coords = LAKE_DB[waterbodyName].ramps[rampName];
+  if(!waterbodyName || !rampName) return;
+  const wb = lakeDbEntryFor(waterbodyName);
+  const coords = wb?.ramps?.[rampName];
   if(coords && state.MAP_OK) state.MAP.setView(coords, 15);
 });
 
@@ -1909,6 +1925,20 @@ document.getElementById('importPlanFile')?.addEventListener('change', (e) => {
   e.target.value = '';
 });
 
+/**
+ * The D1 sync key for a plan. ONE definition, because push and delete must agree.
+ *
+ * They did not. The save path used `p.meta.name.replace(...) || 'plan'`, so a name made only
+ * of punctuation fell back to the literal 'plan'. The delete path used
+ * `(p.meta?.name || p.name || String(id)).replace(...)` with no fallback, so the same plan
+ * produced an EMPTY key -- and `/sync/item/plan/` does not match the worker's item route at
+ * all. Two derivations of one identifier is one too many.
+ */
+function planSyncKey(p, id) {
+  const raw = p?.meta?.name || p?.name || (id == null ? '' : String(id));
+  return raw.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'plan';
+}
+
 document.getElementById('savePlanBtn')?.addEventListener('click', async () => {
   const p = collectPlan();
   if (!p.meta.name) { alert('Give the plan a name first.'); return; }
@@ -1916,10 +1946,8 @@ document.getElementById('savePlanBtn')?.addEventListener('click', async () => {
     await window.DB.put('plans', p);
     alert('Plan saved.');
     refreshPlanLibrary();
-    // Push to cloud sync
-    // Use stable key so re-saves update the same D1 record
-    const planKey = p.meta.name.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'plan';
-    if (window.pushItemOnSave) window.pushItemOnSave('plan', planKey, p);
+    // Push to cloud sync. Stable key so re-saves update the same D1 record.
+    if (window.pushItemOnSave) window.pushItemOnSave('plan', planSyncKey(p), p);
   } catch (e) { alert('Save failed: ' + e); }
 });
 
@@ -1954,18 +1982,18 @@ window.loadPlanById = async function (id) {
 
 window.deletePlanById = async function (id) {
   if (!confirm('Delete plan?')) return;
-  // Get plan name for stable key before deleting
+  // Read the plan BEFORE deleting -- the sync key is derived from its name.
   const p = await window.DB.get('plans', id).catch(() => null);
   await window.DB.del('plans', id);
-  // Tombstone in D1 so it doesn't come back on next pull
-  if (p && window.pushItemOnSave) {
-    const planKey = (p.meta?.name || p.name || String(id)).replace(/[^a-z0-9]/gi, '_').toLowerCase();
-    // Send tombstone via DELETE to worker
-    fetch(`${window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev'}/sync/item/plan/${encodeURIComponent(planKey)}`, {
-      method: 'DELETE',
-      headers: { 'X-Sync-Token': 'trollmap-sync-9a8b7c6d5e' },
-    }).catch(() => {});
-  }
+  // Tombstone in D1 so it doesn't come back on the next pull.
+  //
+  // This used to be a hand-rolled fetch with `X-Sync-Token: 'trollmap-sync-9a8b7c6d5e'` -- a
+  // literal that appears nowhere else in the app. The worker's isAuthorized() is a strict
+  // equality check against SYNC_TOKEN ('trollmap2026'), so every one of these came back 401,
+  // and `.catch(() => {})` threw the error away. The plan disappeared from the library, the
+  // server never learned it was deleted, and pullUpdatesOnLoad() put it straight back on the
+  // next page load. cloud-sync.js owns the token and now owns the tombstone too.
+  if (p && window.deleteItemOnDelete) window.deleteItemOnDelete('plan', planSyncKey(p, id));
   refreshPlanLibrary();
 };
 

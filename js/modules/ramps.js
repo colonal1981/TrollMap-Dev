@@ -5,7 +5,6 @@
 
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
-import { LAKE_DB } from '../data/lakes.js';
 import { TRISTATE_MASTER_RAMPS } from '../data/ramps-loader.js';
 import { dedupeLaunchesList } from '../utils/dedupe.js';
 
@@ -20,6 +19,10 @@ function prepareRampData() {
 
   // NOTE: LAKE_DB hardcoded ramps have been removed to prevent duplicate/ghost pins.
   // The map now exclusively relies on the live, official State DNR coordinates.
+  //
+  // The `import { LAKE_DB }` that sat at the top of this file went with them on 2026-08-02 --
+  // it had outlived the code it fed and was the last thing in the app still reading
+  // data/lakes.js, which is what was keeping that file alive.
 
   for (const st of ['SC', 'NC', 'GA', 'TN']) {
     const stateRamps = TRISTATE_MASTER_RAMPS?.[st] || {};

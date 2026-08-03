@@ -19,7 +19,7 @@
  */
 
 import { state, CF_WORKER_URL } from '../core/state.js';
-import { LAKE_DB } from '../data/lakes.js';
+// LAKE_DB import removed 2026-08-02: it was imported and never referenced.
 import { resolveR2Key } from './contour-data.js';
 import { resolveSupplementalKey, resolveBoundaryKey } from './supplemental-layers.js';
 import { geoDistanceFt } from '../utils/geo.js';

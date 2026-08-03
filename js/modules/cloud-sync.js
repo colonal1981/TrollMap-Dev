@@ -71,11 +71,18 @@ async function drainPendingQueue() {
   const remaining = [];
   for (const item of queue) {
     try {
-      const r = await fetch(`${CF_WORKER_URL}/sync/item/${item.type}/${encodeURIComponent(item.id)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Sync-Token': SYNC_TOKEN },
-        body: JSON.stringify({ ...item.payload, lastModified: new Date().toISOString() }),
-      });
+      // A queued DELETE is a tombstone, not a push -- sending it as a POST would RESURRECT
+      // the record it is supposed to bury.
+      const r = item.deleted
+        ? await fetch(`${CF_WORKER_URL}/sync/item/${item.type}/${encodeURIComponent(item.id)}`, {
+            method: 'DELETE',
+            headers: { 'X-Sync-Token': SYNC_TOKEN },
+          })
+        : await fetch(`${CF_WORKER_URL}/sync/item/${item.type}/${encodeURIComponent(item.id)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Sync-Token': SYNC_TOKEN },
+            body: JSON.stringify({ ...item.payload, lastModified: new Date().toISOString() }),
+          });
       if (!r.ok) {
         item.attempts = (item.attempts || 0) + 1;
         if (item.attempts < 10) remaining.push(item);
@@ -92,9 +99,12 @@ async function drainPendingQueue() {
 }
 
 /**
- * Queue a push for later (called when the live push fails).
+ * Queue a push -- or a tombstone -- for later (called when the live request fails).
+ *
+ * `deleted` rides along on the queue entry so drainPendingQueue() knows to replay this as a
+ * DELETE. Without it a queued delete would be replayed as a POST and put the record back.
  */
-async function queueForLater(type, id, payload) {
+async function queueForLater(type, id, payload, deleted = false) {
   if (!window.DB?.db) return;
   let queue = [];
   try {
@@ -103,7 +113,7 @@ async function queueForLater(type, id, payload) {
   } catch (_) {}
   // Dedupe: if same key already queued, replace it.
   queue = queue.filter((q) => !(q.type === type && q.id === id));
-  queue.push({ type, id, payload, attempts: 0 });
+  queue.push({ type, id, payload, attempts: 0, deleted });
   try {
     await window.DB.put('settings', { key: 'pending_sync', queue });
   } catch (_) {}
@@ -319,5 +329,50 @@ export async function pushAllLocalToCloud() {
   console.log(`☁️ Queued ${count} items for cloud upload.`);
 }
 
+/**
+ * Tombstone one item in the cloud, so a delete on this device propagates to the others.
+ *
+ * WHY THIS EXISTS. The module docstring has always promised tombstones, but there was no
+ * function to send one -- so plan-builder.js hand-rolled its own DELETE, and it sent
+ * `X-Sync-Token: trollmap-sync-9a8b7c6d5e`, a literal that appears nowhere else in the app.
+ * The worker's isAuthorized() is a strict `got === want` against SYNC_TOKEN, so that request
+ * came back 401 every time, and the call site swallowed it with `.catch(() => {})`.
+ *
+ * The failure was invisible and self-repairing in the worst way: the plan vanished from the
+ * library, the server never learned it was deleted, and pullUpdatesOnLoad() restored it on
+ * the next page load. Deleting a plan looked like it worked until you reloaded.
+ *
+ * Ryan confirmed 2026-08-02 that `trollmap2026` is the correct token. It lives in exactly one
+ * place in this file and nothing outside this module should ever spell it out again.
+ *
+ * @param {string} type      - 'plan', 'spread', 'catch', 'layer'
+ * @param {string|number} id - the SAME id the item was pushed under
+ */
+export function deleteItemOnDelete(type, id) {
+  if (!type || id == null || id === '') return;
+  if (type === 'chart' || type === 'charts') return;   // charts live in R2, never in D1
+
+  fetch(`${CF_WORKER_URL}/sync/item/${type}/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: { 'X-Sync-Token': SYNC_TOKEN },
+  })
+    .then((r) => {
+      if (r.ok) {
+        setStatus('☁️ Delete synced');
+        drainPendingQueue().catch((_) => {});
+      } else {
+        console.warn(`Cloud tombstone for ${type}/${id} returned ${r.status}`);
+        setStatus('☁️ Delete queued (offline?)', true);
+        queueForLater(type, id, null, true);
+      }
+    })
+    .catch((err) => {
+      console.warn(`Cloud tombstone for ${type}/${id} failed:`, err);
+      setStatus('☁️ Delete queued (offline?)', true);
+      queueForLater(type, id, null, true);
+    });
+}
+
 // Convenience for old monolithic code paths that call window.pushItemOnSave
 window.pushItemOnSave = pushItemOnSave;
+window.deleteItemOnDelete = deleteItemOnDelete;

@@ -32,7 +32,7 @@ const filters = {
   state: '',        // '' = all
   size: '',         // '' | 'small' (<200 ac) | 'mid' (200-1000) | 'big' (>1000)
   rampOnly: false,
-  chartedOnly: false,
+  wellCharted: false,
 };
 
 const SIZE_BANDS = {
@@ -57,9 +57,10 @@ function passesFilters(lakeName) {
     if (!(rec.areaAcres >= lo && rec.areaAcres < hi)) return false;
   }
   if (filters.rampOnly && !rec.rampSources) return false;
-  // charted === null means the Garmin extraction has not run for this lake yet. Treating
-  // that as "no soundings" would empty the list entirely until the card-wide run finishes.
-  if (filters.chartedOnly && rec.charted !== null && !(rec.charted > 0)) return false;
+  // The picker already defaults to shipped lakes, so this box narrows further: only lakes
+  // whose soundings cover most of their surface. Median charted fraction across the 434 is
+  // 0.59, so a 0.5 cut is roughly the better half.
+  if (filters.wellCharted && !(rec.charted >= 0.5)) return false;
   return true;
 }
 
@@ -75,7 +76,7 @@ function lakeBadge(lakeName) {
   // formality; "Fort Bragg" tells you to bring your ID and check in.
   if (rec.accessForMe === 'Open With Credential') bits.push(`ID: ${rec.accessVia || 'credential'}`);
   else if (rec.accessForMe && rec.accessForMe !== 'Open Access') bits.push(rec.accessForMe);
-  if (rec.charted === 0) bits.push('no soundings');
+  if (rec.charted != null && rec.charted > 0) bits.push(`${Math.round(rec.charted * 100)}% charted`);
   return bits.length ? `  — ${bits.join(', ')}` : '';
 }
 
@@ -289,8 +290,9 @@ function buildFilterBar() {
   const rampWrap = check('lakeFilterRamp', 'has ramp',
     'Only lakes with a launch in at least one source. Absence is not evidence — Wee Tee has '
     + 'a ramp Ryan has used that OSM and Garmin both miss.');
-  const chartWrap = check('lakeFilterCharted', 'has soundings',
-    'Only lakes with Garmin depth data. Lakes not yet measured are kept, not hidden.');
+  const chartWrap = check('lakeFilterCharted', 'well charted',
+    'Only lakes whose soundings cover at least half their surface. The list already shows '
+    + 'only lakes that have contours at all.');
 
   const count = document.createElement('span');
   count.id = 'lakeFilterCount';
@@ -303,7 +305,7 @@ function buildFilterBar() {
     filters.state = stateSel.value;
     filters.size = sizeSel.value;
     filters.rampOnly = document.getElementById('lakeFilterRamp').checked;
-    filters.chartedOnly = document.getElementById('lakeFilterCharted').checked;
+    filters.wellCharted = document.getElementById('lakeFilterCharted').checked;
     populateLakeSelect().catch((e) => console.error('[lake-ramp-select] refilter failed:', e));
   };
   stateSel.addEventListener('change', refresh);
@@ -312,10 +314,25 @@ function buildFilterBar() {
 
   loadAccessIndex().then(() => {
     const s = registryStats();
-    if (!s.total) return;                      // registry unavailable; leave the bar quiet
-    count.textContent = `${s.reachable} reachable of ${s.total}`;
-    count.title = `Registry: ${s.total} lakes, ${s.open} open to the public, ${s.reachable} `
-                + `reachable (incl. permit/unknown), ${s.ramps} with a mapped ramp.`;
+    if (!s.total) {
+      // No registry loaded. The filters would silently do NOTHING -- passesFilters() lets
+      // every lake through when it has no registry record, which is correct (it protects the
+      // DNR lakes) but reads as broken checkboxes. Say so instead of leaving the user to
+      // discover it by ticking a box and watching the list not change.
+      count.textContent = 'registry not loaded — filters unavailable';
+      count.title = 'lake_index.json did not load; check the browser console. The lake list '
+                  + 'is running on the DNR feeds alone, exactly as it did before.';
+      bar.querySelectorAll('input,select').forEach((el) => {
+        if (el === stateSel) return;           // state still works on the DNR names
+        el.disabled = true;
+        el.title = 'needs lake_index.json';
+      });
+      stateSel.disabled = true;
+      return;
+    }
+    count.textContent = `${s.shipped} charted of ${s.total}`;
+    count.title = `Registry: ${s.total} lakes, ${s.shipped} with Garmin soundings and a `
+                + `chartpack, ${s.open} open to the public, ${s.ramps} with a mapped ramp.`;
   }).catch(() => {});
 }
 
