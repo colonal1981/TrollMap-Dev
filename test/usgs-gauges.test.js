@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from './expect-shim.mjs';
 import { extractValues, mean } from '../js/modules/usgs-gauges.js';
 
 // Shape of a real NWIS waterservices JSON response, trimmed.

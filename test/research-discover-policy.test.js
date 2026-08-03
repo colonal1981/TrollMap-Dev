@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from './expect-shim.mjs';
+import { STATE_REGULATIONS_CONFIG } from '../Worker/research/clients.js';
 import { handleResearchDiscover } from '../Worker/research/discover.js';
 
 const originalFetch = globalThis.fetch;
@@ -58,8 +59,12 @@ describe('research discovery source policy', () => {
     const data = await response.json();
 
     expect(data.success).toBe(true);
-    const r2Digest = data.sources.find(source => /\.r2\.dev\/regulations\/sc_digest_2025_2026\.pdf$/.test(source.url));
-    expect(r2Digest).toBeTruthy();
+    // Assert against the CONFIGURED digest, not a hardcoded year. This test was pinned
+    // to sc_digest_2025_2026.pdf and broke the moment SC published 2026-2027 — a test
+    // that has to be edited every August is a test that gets edited without thinking.
+    const expectedUrl = STATE_REGULATIONS_CONFIG.SC.pages[0].url;
+    const r2Digest = data.sources.find(source => source.url === expectedUrl);
+    expect(r2Digest, `expected the configured SC digest ${expectedUrl}`).toBeTruthy();
     expect(r2Digest.priority).toBe(1);
   });
 

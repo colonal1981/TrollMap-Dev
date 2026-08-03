@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from './expect-shim.mjs';
 import { parseLakeBaseName, expandLakeAbbrev } from '../Worker/research/keys.js';
 
 // Bug #1: TWRA seed not firing.

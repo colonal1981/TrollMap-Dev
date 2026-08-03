@@ -1,0 +1,2583 @@
+{
+ "wateree_lake": {
+  "slug": "wateree_lake",
+  "name": "Wateree Lake",
+  "state": "SC",
+  "display_name": "Wateree Lake (Kershaw Co, SC)",
+  "legacy_display_name": "Wateree Lake, SC",
+  "legacy_display_names": [
+   "Wateree Lake, SC",
+   "Lake Wateree, SC"
+  ],
+  "county": "Kershaw",
+  "gnis": "gnis:1227425",
+  "source": [
+   "3dhp",
+   "lake_db"
+  ],
+  "area_acres": 11756.3,
+  "centroid": [
+   -80.818179,
+   34.437616
+  ],
+  "bounds_wsen": [
+   -80.937286,
+   34.333131,
+   -80.699072,
+   34.5421
+  ],
+  "access": "Open Access",
+  "access_for_me": "Open Access",
+  "access_via": null,
+  "access_units": [
+   "Catawba-Pee Dee Region - Liberty Hill",
+   "Lake Wateree State Park"
+  ],
+  "proclamation": [],
+  "ramps": {
+   "natl": [
+    {
+     "name": "June Creek",
+     "wb": "Wateree River - Lake Wateree",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 34.391163,
+     "lon": -80.829342
+    },
+    {
+     "name": "Taylor Creek",
+     "wb": "Taylor Creek - Lake Wateree",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 34.437712,
+     "lon": -80.875777
+    },
+    {
+     "name": "Debutary",
+     "wb": "Fishing Creek",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 34.539099,
+     "lon": -80.89034
+    }
+   ],
+   "osm": [
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    }
+   ],
+   "curated": [
+    {
+     "name": "Clearwater Cove",
+     "lat": 34.37927,
+     "lon": -80.72881
+    },
+    {
+     "name": "Lake Wateree State Park",
+     "lat": 34.4363,
+     "lon": -80.8641
+    },
+    {
+     "name": "SCDNR Beaver Creek Access",
+     "lat": 34.4328,
+     "lon": -80.8584
+    }
+   ]
+  },
+  "ramp_sources": 3,
+  "charted": 0.6594,
+  "shipped": true,
+  "pack_mb": 42.62,
+  "usgs": {
+   "site": "02148000",
+   "params": "00010"
+  }
+ },
+ "lake_murray": {
+  "slug": "lake_murray",
+  "name": "Lake Murray",
+  "state": "SC",
+  "display_name": "Lake Murray (Lexington Co, SC)",
+  "legacy_display_name": "Lake Murray, SC",
+  "legacy_display_names": [
+   "Lake Murray, SC"
+  ],
+  "county": "Lexington",
+  "gnis": "gnis:1224900",
+  "source": [
+   "3dhp",
+   "lake_db"
+  ],
+  "area_acres": 48761,
+  "centroid": [
+   -81.453299,
+   34.085736
+  ],
+  "bounds_wsen": [
+   -81.690075,
+   33.999872,
+   -81.216523,
+   34.1716
+  ],
+  "access": "Open Access",
+  "access_for_me": "Open Access",
+  "access_via": null,
+  "access_units": [
+   "Dreher Island State Park",
+   "Lake Murray Public Park 1"
+  ],
+  "proclamation": [],
+  "ramps": {
+   "natl": [
+    {
+     "name": "Rocky Point",
+     "wb": "Saluda River - Lake Murray",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 34.09591,
+     "lon": -81.38447
+    },
+    {
+     "name": "Lake Murray Dam",
+     "wb": "Saluda River - Lake Murray",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 34.065169,
+     "lon": -81.222581
+    },
+    {
+     "name": "Kempsons Bridge",
+     "wb": "Saluda River",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 34.140155,
+     "lon": -81.630403
+    }
+   ],
+   "osm": [
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    }
+   ],
+   "curated": [
+    {
+     "name": "Hilton Recreation Area",
+     "lat": 34.09421,
+     "lon": -81.32882
+    },
+    {
+     "name": "Larry Koon Landing",
+     "lat": 34.04694,
+     "lon": -81.36083
+    },
+    {
+     "name": "Lake Murray Dam (Irmo)",
+     "lat": 34.0539,
+     "lon": -81.2559
+    }
+   ]
+  },
+  "ramp_sources": 3,
+  "charted": 0.8343,
+  "shipped": true,
+  "pack_mb": 362.81,
+  "usgs": {
+   "site": "02168500",
+   "params": "00062,62615"
+  }
+ },
+ "dawhoo_lake": {
+  "slug": "dawhoo_lake",
+  "name": "Dawhoo Lake",
+  "state": "SC",
+  "display_name": "Dawhoo Lake (Georgetown Co, SC)",
+  "legacy_display_name": "Dawhoo Lake, SC",
+  "legacy_display_names": [
+   "Dawhoo Lake, SC"
+  ],
+  "county": "Georgetown",
+  "gnis": "gnis:1229625",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 33.9,
+  "centroid": [
+   -79.598823,
+   33.302908
+  ],
+  "bounds_wsen": [
+   -79.609145,
+   33.299401,
+   -79.588502,
+   33.306414
+  ],
+  "access": null,
+  "access_for_me": null,
+  "access_via": null,
+  "access_units": [],
+  "proclamation": [],
+  "ramps": {
+   "osm": [
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    }
+   ]
+  },
+  "ramp_sources": 1,
+  "charted": 0.8364,
+  "shipped": true,
+  "pack_mb": 0.55
+ },
+ "wittee_lake": {
+  "slug": "wittee_lake",
+  "name": "Wittee Lake",
+  "state": "SC",
+  "display_name": "Wittee Lake (Williamsburg Co, SC)",
+  "legacy_display_name": "Wittee Lake, SC",
+  "legacy_display_names": [
+   "Wittee Lake, SC"
+  ],
+  "county": "Williamsburg",
+  "gnis": "gnis:1230468",
+  "source": [
+   "3dhp",
+   "user_known"
+  ],
+  "area_acres": 114.7,
+  "centroid": [
+   -79.784776,
+   33.384627
+  ],
+  "bounds_wsen": [
+   -79.811221,
+   33.348411,
+   -79.758331,
+   33.420843
+  ],
+  "access": "Restricted Access",
+  "access_for_me": "Restricted Access",
+  "access_via": null,
+  "access_units": [
+   "Wee Tee State Forest",
+   "Wee Tee State Forest"
+  ],
+  "proclamation": [],
+  "ramps": {
+   "natl": [
+    {
+     "name": "Wee Tee Landing",
+     "wb": "Wee Tee Lake",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 33.393795,
+     "lon": -79.779465
+    }
+   ]
+  },
+  "ramp_sources": 1,
+  "charted": 0.2815,
+  "shipped": true,
+  "pack_mb": 1.03,
+  "note": "Oxbow of the Santee River, Wee Tee State Forest; bowfin water"
+ },
+ "ferry_lake": {
+  "slug": "ferry_lake",
+  "name": "Ferry Lake",
+  "state": "SC",
+  "display_name": "Ferry Lake (Williamsburg Co, SC)",
+  "legacy_display_name": "Ferry Lake, SC",
+  "legacy_display_names": [
+   "Ferry Lake, SC"
+  ],
+  "county": "Williamsburg",
+  "gnis": "gnis:1706297",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 25,
+  "centroid": [
+   -79.684747,
+   33.318007
+  ],
+  "bounds_wsen": [
+   -79.690626,
+   33.306102,
+   -79.678867,
+   33.329913
+  ],
+  "access": "Restricted Access",
+  "access_for_me": "Restricted Access",
+  "access_via": null,
+  "access_units": [
+   "Wee Tee State Forest",
+   "Wee Tee State Forest"
+  ],
+  "proclamation": [],
+  "ramps": {
+   "natl": [
+    {
+     "name": "Lenuds (US17 Bridge)",
+     "wb": "Santee River",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 33.304291,
+     "lon": -79.678956
+    }
+   ]
+  },
+  "ramp_sources": 1,
+  "charted": 0.4352,
+  "shipped": true,
+  "pack_mb": 1.03
+ },
+ "bates_old_river_sc": {
+  "slug": "bates_old_river_sc",
+  "name": "Bates Old River",
+  "state": "SC",
+  "display_name": "Bates Old River (Richland/Calhoun Co, SC)",
+  "gnis": null,
+  "source": [
+   "user_known"
+  ],
+  "area_acres": null,
+  "centroid": [
+   -80.63639,
+   33.78583
+  ],
+  "bounds_wsen": null,
+  "access": null,
+  "access_for_me": null,
+  "access_via": null,
+  "access_units": [],
+  "proclamation": [],
+  "ramps": {},
+  "ramp_sources": 0,
+  "charted": null,
+  "shipped": false,
+  "pack_mb": null,
+  "county": "Richland/Calhoun",
+  "note": "Long oxbow of the Congaree River off Hwy 601; bowfin water",
+  "needs_boundary": true
+ },
+ "forest_lake": {
+  "slug": "forest_lake",
+  "name": "Forest Lake",
+  "state": "SC",
+  "display_name": "Forest Lake (Florence Co, SC)",
+  "legacy_display_name": "Forest Lake, SC",
+  "legacy_display_names": [
+   "Forest Lake, SC"
+  ],
+  "county": "Florence",
+  "gnis": "gnis:1237858",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 169.3,
+  "centroid": [
+   -79.841868,
+   34.157116
+  ],
+  "bounds_wsen": [
+   -79.855017,
+   34.153844,
+   -79.828718,
+   34.160388
+  ],
+  "access": "Restricted Access",
+  "access_for_me": "Restricted Access",
+  "access_via": null,
+  "access_units": [
+   "Pettigrew Millpond Conservation Area"
+  ],
+  "proclamation": [],
+  "ramps": {},
+  "ramp_sources": 0,
+  "charted": 0.2932,
+  "shipped": true,
+  "pack_mb": 0.12
+ },
+ "forest_lake_2": {
+  "slug": "forest_lake_2",
+  "name": "Forest Lake",
+  "state": "SC",
+  "display_name": "Forest Lake (Richland Co, SC)",
+  "legacy_display_name": "Forest Lake, SC",
+  "legacy_display_names": [
+   "Forest Lake, SC"
+  ],
+  "county": "Richland",
+  "gnis": "gnis:1245724",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 127.3,
+  "centroid": [
+   -80.957204,
+   34.029315
+  ],
+  "bounds_wsen": [
+   -80.963407,
+   34.021862,
+   -80.951001,
+   34.036768
+  ],
+  "access": null,
+  "access_for_me": null,
+  "access_via": null,
+  "access_units": [],
+  "proclamation": [],
+  "ramps": {},
+  "ramp_sources": 0,
+  "charted": 0.0267,
+  "shipped": true,
+  "pack_mb": 0.2
+ },
+ "long_lake": {
+  "slug": "long_lake",
+  "name": "Long Lake",
+  "state": "NC",
+  "display_name": "Long Lake (Craven Co, NC)",
+  "legacy_display_name": "Long Lake, NC",
+  "legacy_display_names": [
+   "Long Lake, NC"
+  ],
+  "county": "Craven",
+  "gnis": "gnis:1013161",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 1146.6,
+  "centroid": [
+   -77.000349,
+   34.889611
+  ],
+  "bounds_wsen": [
+   -77.016215,
+   34.878306,
+   -76.984482,
+   34.900917
+  ],
+  "access": "Open Access",
+  "access_for_me": "Open Access",
+  "access_via": null,
+  "access_units": [
+   "Croatan National Forest",
+   "Sheep Ridge Wilderness"
+  ],
+  "proclamation": [
+   "Croatan National Forest"
+  ],
+  "ramps": {},
+  "ramp_sources": 0,
+  "charted": 0.0387,
+  "shipped": true,
+  "pack_mb": 0.2
+ },
+ "long_lake_7": {
+  "slug": "long_lake_7",
+  "name": "Long Lake",
+  "state": "NC",
+  "display_name": "Long Lake (Stanly Co, NC)",
+  "legacy_display_name": "Long Lake, NC",
+  "legacy_display_names": [
+   "Long Lake, NC"
+  ],
+  "county": "Stanly",
+  "gnis": "gnis:998862",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 74.1,
+  "centroid": [
+   -80.23166,
+   35.354433
+  ],
+  "bounds_wsen": [
+   -80.237962,
+   35.349326,
+   -80.225358,
+   35.35954
+  ],
+  "access": "Open Access",
+  "access_for_me": "Open Access",
+  "access_via": null,
+  "access_units": [
+   "City of Albermarle - Long Lake",
+   "City of Albermarle - City Lake Park"
+  ],
+  "proclamation": [],
+  "ramps": {},
+  "ramp_sources": 0,
+  "charted": 0.6515,
+  "shipped": true,
+  "pack_mb": 0.28
+ },
+ "city_lake_3": {
+  "slug": "city_lake_3",
+  "name": "City Lake",
+  "state": "NC",
+  "display_name": "City Lake (Davidson Co, NC)",
+  "legacy_display_name": "City Lake, NC",
+  "legacy_display_names": [
+   "City Lake, NC"
+  ],
+  "county": "Davidson",
+  "gnis": "gnis:1024771",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 52.4,
+  "centroid": [
+   -80.213691,
+   35.86469
+  ],
+  "bounds_wsen": [
+   -80.216414,
+   35.858435,
+   -80.210968,
+   35.870946
+  ],
+  "access": "Open Access",
+  "access_for_me": "Open Access",
+  "access_via": null,
+  "access_units": [
+   "City of Lexington - City Lake",
+   "Davidson County Open Space"
+  ],
+  "proclamation": [],
+  "ramps": {},
+  "ramp_sources": 0,
+  "charted": 0.2938,
+  "shipped": true,
+  "pack_mb": 0.17
+ },
+ "city_lake_4": {
+  "slug": "city_lake_4",
+  "name": "City Lake",
+  "state": "NC",
+  "display_name": "City Lake (Richmond Co, NC)",
+  "legacy_display_name": "City Lake, NC",
+  "legacy_display_names": [
+   "City Lake, NC"
+  ],
+  "county": "Richmond",
+  "gnis": "gnis:998178",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 40,
+  "centroid": [
+   -79.689343,
+   34.885715
+  ],
+  "bounds_wsen": [
+   -79.692895,
+   34.882857,
+   -79.685791,
+   34.888573
+  ],
+  "access": "Unknown",
+  "access_for_me": "Unknown",
+  "access_via": null,
+  "access_units": [
+   "City of Hamlet - City Lake",
+   "City of Hamlet - City of Hamlet Baseball Complex"
+  ],
+  "proclamation": [],
+  "ramps": {
+   "osm": [
+    {
+     "name": null,
+     "access": "private",
+     "tag": "leisure=slipway"
+    }
+   ]
+  },
+  "ramp_sources": 1,
+  "charted": 0,
+  "shipped": false,
+  "pack_mb": null
+ },
+ "lake_oconee": {
+  "slug": "lake_oconee",
+  "name": "Lake Oconee",
+  "state": "GA",
+  "display_name": "Lake Oconee (Greene Co, GA)",
+  "legacy_display_name": "Lake Oconee, GA",
+  "legacy_display_names": [
+   "Lake Oconee, GA"
+  ],
+  "county": "Greene",
+  "gnis": "gnis:330982",
+  "source": [
+   "3dhp",
+   "lake_db"
+  ],
+  "area_acres": 17435.9,
+  "centroid": [
+   -83.248544,
+   33.504586
+  ],
+  "bounds_wsen": [
+   -83.358145,
+   33.343734,
+   -83.138944,
+   33.665438
+  ],
+  "access": "Open Access",
+  "access_for_me": "Open Access",
+  "access_via": null,
+  "access_units": [
+   "Redlands Wildlife Management Area",
+   "Redlands Wma"
+  ],
+  "proclamation": [
+   "Oconee National Forest"
+  ],
+  "ramps": {
+   "natl": [
+    {
+     "name": "Armour Bridge",
+     "wb": "Oconee River - Lake Oconee",
+     "type": "Public",
+     "src": "Georgia Department of Natural Resources",
+     "lat": 33.44989,
+     "lon": -83.197953
+    },
+    {
+     "name": "Dyar Pasture",
+     "wb": "Oconee River",
+     "type": "Public",
+     "src": "Georgia Department of Natural Resources",
+     "lat": 33.64636,
+     "lon": -83.289422
+    },
+    {
+     "name": "Long Shoals",
+     "wb": "Oconee River - Lake Oconee",
+     "type": "Public",
+     "src": "Georgia Department of Natural Resources",
+     "lat": 33.386793,
+     "lon": -83.199343
+    }
+   ],
+   "osm": [
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    }
+   ],
+   "curated": [
+    {
+     "name": "Sugar Creek Marina",
+     "lat": 33.312,
+     "lon": -83.164
+    },
+    {
+     "name": "Parks Ferry",
+     "lat": 33.345,
+     "lon": -83.21
+    }
+   ]
+  },
+  "ramp_sources": 3,
+  "charted": 0.7155,
+  "shipped": true,
+  "pack_mb": 102.01
+ },
+ "lake_oconee_2": {
+  "slug": "lake_oconee_2",
+  "name": "Lake Oconee",
+  "state": "GA",
+  "display_name": "Lake Oconee (Oconee Co, GA)",
+  "legacy_display_name": "Lake Oconee, GA",
+  "legacy_display_names": [
+   "Lake Oconee, GA"
+  ],
+  "county": "Oconee",
+  "gnis": "gnis:319902",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 38.8,
+  "centroid": [
+   -83.576784,
+   33.873479
+  ],
+  "bounds_wsen": [
+   -83.580536,
+   33.869702,
+   -83.573032,
+   33.877255
+  ],
+  "access": null,
+  "access_for_me": null,
+  "access_via": null,
+  "access_units": [],
+  "proclamation": [],
+  "ramps": {},
+  "ramp_sources": 0,
+  "charted": 0,
+  "shipped": false,
+  "pack_mb": null
+ },
+ "lake_wallace": {
+  "slug": "lake_wallace",
+  "name": "Lake Wallace",
+  "state": "SC",
+  "display_name": "Lake Wallace (Marlboro Co, SC)",
+  "legacy_display_name": "Lake Wallace, SC",
+  "legacy_display_names": [
+   "Lake Wallace, SC"
+  ],
+  "county": "Marlboro",
+  "gnis": "gnis:1238497",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 273.3,
+  "centroid": [
+   -79.674596,
+   34.638466
+  ],
+  "bounds_wsen": [
+   -79.680812,
+   34.629757,
+   -79.668381,
+   34.647175
+  ],
+  "access": "Open Access",
+  "access_for_me": "Open Access",
+  "access_via": null,
+  "access_units": [
+   "Lake Paul Wallace"
+  ],
+  "proclamation": [],
+  "ramps": {
+   "natl": [
+    {
+     "name": "Fishing Area",
+     "wb": "Lake Wallace",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 34.634306,
+     "lon": -79.672619
+    },
+    {
+     "name": "Lower Impoundment",
+     "wb": "Lake Wallace",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 34.647242,
+     "lon": -79.670204
+    },
+    {
+     "name": "Sewanee Street",
+     "wb": "Lake Wallace",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 34.634919,
+     "lon": -79.683013
+    }
+   ]
+  },
+  "ramp_sources": 1,
+  "charted": 0.4009,
+  "shipped": true,
+  "pack_mb": 0.27
+ },
+ "lake_wallace_2": {
+  "slug": "lake_wallace_2",
+  "name": "Lake Wallace",
+  "state": "SC",
+  "display_name": "Lake Wallace (Marlboro Co, SC)",
+  "legacy_display_name": "Lake Wallace, SC",
+  "legacy_display_names": [
+   "Lake Wallace, SC"
+  ],
+  "county": "Marlboro",
+  "gnis": "gnis:1251313",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 154.9,
+  "centroid": [
+   -79.675869,
+   34.642995
+  ],
+  "bounds_wsen": [
+   -79.684423,
+   34.630505,
+   -79.667315,
+   34.655486
+  ],
+  "access": "Open Access",
+  "access_for_me": "Open Access",
+  "access_via": null,
+  "access_units": [
+   "Lake Paul Wallace"
+  ],
+  "proclamation": [],
+  "ramps": {
+   "natl": [
+    {
+     "name": "Fishing Area",
+     "wb": "Lake Wallace",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 34.634306,
+     "lon": -79.672619
+    },
+    {
+     "name": "Lower Impoundment",
+     "wb": "Lake Wallace",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 34.647242,
+     "lon": -79.670204
+    },
+    {
+     "name": "Sewanee Street",
+     "wb": "Lake Wallace",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 34.634919,
+     "lon": -79.683013
+    }
+   ],
+   "osm": [
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    }
+   ]
+  },
+  "ramp_sources": 2,
+  "charted": 0,
+  "shipped": false,
+  "pack_mb": null
+ },
+ "long_pond": {
+  "slug": "long_pond",
+  "name": "Long Pond",
+  "state": "GA",
+  "display_name": "Long Pond (Lowndes Co, GA)",
+  "legacy_display_name": "Long Pond, GA",
+  "legacy_display_names": [
+   "Long Pond, GA"
+  ],
+  "county": "Lowndes",
+  "gnis": "gnis:317378",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 301.2,
+  "centroid": [
+   -83.195377,
+   30.69468
+  ],
+  "bounds_wsen": [
+   -83.205957,
+   30.687969,
+   -83.184797,
+   30.70139
+  ],
+  "access": null,
+  "access_for_me": null,
+  "access_via": null,
+  "access_units": [],
+  "proclamation": [],
+  "ramps": {},
+  "ramp_sources": 0,
+  "charted": 0.6505,
+  "shipped": true,
+  "pack_mb": 0.64
+ },
+ "long_pond_3": {
+  "slug": "long_pond_3",
+  "name": "Long Pond",
+  "state": "GA",
+  "display_name": "Long Pond (Baker Co, GA)",
+  "legacy_display_name": "Long Pond, GA",
+  "legacy_display_names": [
+   "Long Pond, GA"
+  ],
+  "county": "Baker",
+  "gnis": "gnis:317379",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 159.4,
+  "centroid": [
+   -84.412016,
+   31.351137
+  ],
+  "bounds_wsen": [
+   -84.421256,
+   31.347291,
+   -84.402776,
+   31.354984
+  ],
+  "access": null,
+  "access_for_me": null,
+  "access_via": null,
+  "access_units": [],
+  "proclamation": [],
+  "ramps": {},
+  "ramp_sources": 0,
+  "charted": 0,
+  "shipped": false,
+  "pack_mb": null
+ },
+ "long_pond_4": {
+  "slug": "long_pond_4",
+  "name": "Long Pond",
+  "state": "GA",
+  "display_name": "Long Pond (Terrell Co, GA)",
+  "legacy_display_name": "Long Pond, GA",
+  "legacy_display_names": [
+   "Long Pond, GA"
+  ],
+  "county": "Terrell",
+  "gnis": "gnis:317382",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 66.7,
+  "centroid": [
+   -84.39835,
+   31.660163
+  ],
+  "bounds_wsen": [
+   -84.404066,
+   31.658188,
+   -84.392634,
+   31.662139
+  ],
+  "access": null,
+  "access_for_me": null,
+  "access_via": null,
+  "access_units": [],
+  "proclamation": [],
+  "ramps": {},
+  "ramp_sources": 0,
+  "charted": 0,
+  "shipped": false,
+  "pack_mb": null
+ },
+ "long_pond_5": {
+  "slug": "long_pond_5",
+  "name": "Long Pond",
+  "state": "GA",
+  "display_name": "Long Pond (Baker Co, GA)",
+  "legacy_display_name": "Long Pond, GA",
+  "legacy_display_names": [
+   "Long Pond, GA"
+  ],
+  "county": "Baker",
+  "gnis": "gnis:317380",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 66,
+  "centroid": [
+   -84.347684,
+   31.410995
+  ],
+  "bounds_wsen": [
+   -84.351991,
+   31.407094,
+   -84.343377,
+   31.414895
+  ],
+  "access": null,
+  "access_for_me": null,
+  "access_via": null,
+  "access_units": [],
+  "proclamation": [],
+  "ramps": {},
+  "ramp_sources": 0,
+  "charted": 0,
+  "shipped": false,
+  "pack_mb": null
+ },
+ "lake_wylie": {
+  "slug": "lake_wylie",
+  "name": "Lake Wylie",
+  "state": "NC",
+  "display_name": "Lake Wylie (York Co, NC/SC)",
+  "legacy_display_name": "Lake Wylie, NC/SC",
+  "legacy_display_names": [
+   "Lake Wylie, NC/SC",
+   "Lake Wylie, SC/NC"
+  ],
+  "county": "York",
+  "gnis": "gnis:1227721",
+  "source": [
+   "3dhp",
+   "lake_db"
+  ],
+  "area_acres": 9565.6,
+  "centroid": [
+   -81.047489,
+   35.131319
+  ],
+  "bounds_wsen": [
+   -81.112292,
+   35.012494,
+   -80.982685,
+   35.250145
+  ],
+  "access": "Open Access",
+  "access_for_me": "Open Access",
+  "access_via": null,
+  "access_units": [
+   "Mecklenburg County Open Space - McDowell Nature Preserve",
+   "McDowell Nature Preserve Dedicated Nature Preserve"
+  ],
+  "proclamation": [],
+  "ramps": {
+   "natl": [
+    {
+     "name": "South Point",
+     "wb": "Catawba River (Lake Wylie)",
+     "type": "Public",
+     "src": "North Carolina Wildlife Resources Commission",
+     "lat": 35.155714,
+     "lon": -81.012204
+    },
+    {
+     "name": "Copperhead Island Boat Launch",
+     "wb": "Catawba River",
+     "type": "Public",
+     "src": "U.S. Geological Survey",
+     "lat": 35.10738,
+     "lon": -81.025653
+    },
+    {
+     "name": "Allison Creek",
+     "wb": "Allison Creek - Lake Wylie",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 35.042149,
+     "lon": -81.089765
+    }
+   ],
+   "osm": [
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": "Terry's Marina Slipway",
+     "access": "private",
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": "Long Cove Slipway",
+     "access": "customers",
+     "tag": "leisure=slipway"
+    }
+   ],
+   "curated": [
+    {
+     "name": "Buster Boyd Access",
+     "lat": 35.1026,
+     "lon": -81.0366
+    },
+    {
+     "name": "Ebenezer Park",
+     "lat": 35.0315,
+     "lon": -81.0454
+    },
+    {
+     "name": "Allison Creek",
+     "lat": 35.0441,
+     "lon": -81.0664
+    }
+   ]
+  },
+  "ramp_sources": 3,
+  "charted": 0.8047,
+  "shipped": true,
+  "pack_mb": 72.01,
+  "duke": "lake wylie",
+  "normalPool": 569.4,
+  "minPool": 566
+ },
+ "tugaloo_lake": {
+  "slug": "tugaloo_lake",
+  "name": "Tugaloo Lake",
+  "state": "SC",
+  "display_name": "Tugaloo Lake (Rabun Co, SC/GA)",
+  "legacy_display_name": "Tugaloo Lake, SC/GA",
+  "legacy_display_names": [
+   "Tugaloo Lake, SC/GA"
+  ],
+  "county": "Rabun",
+  "gnis": "gnis:330060",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 501.6,
+  "centroid": [
+   -83.346819,
+   34.735001
+  ],
+  "bounds_wsen": [
+   -83.368062,
+   34.713711,
+   -83.325576,
+   34.756291
+  ],
+  "access": "Open Access",
+  "access_for_me": "Open Access",
+  "access_via": null,
+  "access_units": [
+   "Tallulah Gorge State Park",
+   "Tallulah Gorge Sp"
+  ],
+  "proclamation": [
+   "Sumter National Forest",
+   "Sumter National Forest"
+  ],
+  "ramps": {
+   "natl": [
+    {
+     "name": "Stoneplace",
+     "wb": "Chattooga River - Lake Tugalo",
+     "type": "Public",
+     "src": "Georgia Department of Natural Resources",
+     "lat": 34.736858,
+     "lon": -83.356789
+    }
+   ],
+   "osm": [
+    {
+     "name": "Tugaloo Boat Ramp",
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": "Tugaloo Boat Ramp",
+     "access": null,
+     "tag": "leisure=slipway"
+    }
+   ]
+  },
+  "ramp_sources": 2,
+  "charted": 0.8244,
+  "shipped": true,
+  "pack_mb": 7.88
+ },
+ "yonah_lake": {
+  "slug": "yonah_lake",
+  "name": "Yonah Lake",
+  "state": "SC",
+  "display_name": "Yonah Lake (Habersham Co, SC/GA)",
+  "legacy_display_name": "Yonah Lake, SC/GA",
+  "legacy_display_names": [
+   "Yonah Lake, SC/GA"
+  ],
+  "county": "Habersham",
+  "gnis": "gnis:356656",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 283.7,
+  "centroid": [
+   -83.345558,
+   34.697426
+  ],
+  "bounds_wsen": [
+   -83.355384,
+   34.680962,
+   -83.335732,
+   34.71389
+  ],
+  "access": null,
+  "access_for_me": null,
+  "access_via": null,
+  "access_units": [],
+  "proclamation": [
+   "Sumter National Forest",
+   "Chattahoochee National Forest"
+  ],
+  "ramps": {
+   "natl": [
+    {
+     "name": "Lake Yonah",
+     "wb": "Panther Creek - Lake Yonah",
+     "type": "Public",
+     "src": "Georgia Department of Natural Resources",
+     "lat": 34.680814,
+     "lon": -83.348725
+    },
+    {
+     "name": "Yonah Campground",
+     "wb": "Savannah River - Lake Yonah",
+     "type": "Public",
+     "src": "Georgia Department of Natural Resources",
+     "lat": 34.709445,
+     "lon": -83.3514
+    }
+   ]
+  },
+  "ramp_sources": 1,
+  "charted": 0.9515,
+  "shipped": true,
+  "pack_mb": 7.07
+ },
+ "webster_lake": {
+  "slug": "webster_lake",
+  "name": "Webster Lake",
+  "state": "GA",
+  "display_name": "Webster Lake (Hampton Co, GA/SC)",
+  "legacy_display_name": "Webster Lake, GA/SC",
+  "legacy_display_names": [
+   "Webster Lake, GA/SC"
+  ],
+  "county": "Hampton",
+  "gnis": "gnis:1227856",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 36.1,
+  "centroid": [
+   -81.290841,
+   32.55993
+  ],
+  "bounds_wsen": [
+   -81.293769,
+   32.553918,
+   -81.287913,
+   32.565943
+  ],
+  "access": "Open Access",
+  "access_for_me": "Open Access",
+  "access_via": null,
+  "access_units": [
+   "Palachucola Wildlife Management Area",
+   "Palachucola Wildlife Management Area"
+  ],
+  "proclamation": [],
+  "ramps": {},
+  "ramp_sources": 0,
+  "charted": 0.5403,
+  "shipped": true,
+  "pack_mb": 0.82
+ },
+ "lake_sidney_lanier": {
+  "slug": "lake_sidney_lanier",
+  "name": "Lake Sidney Lanier",
+  "state": "GA",
+  "display_name": "Lake Sidney Lanier (Hall Co, GA)",
+  "legacy_display_name": "Lake Sidney Lanier, GA",
+  "legacy_display_names": [
+   "Lake Sidney Lanier, GA",
+   "Lake Lanier, GA"
+  ],
+  "county": "Hall",
+  "gnis": "gnis:322971",
+  "source": [
+   "3dhp",
+   "lake_db"
+  ],
+  "area_acres": 38292.6,
+  "centroid": [
+   -83.905142,
+   34.293063
+  ],
+  "bounds_wsen": [
+   -84.121103,
+   34.146262,
+   -83.689181,
+   34.439863
+  ],
+  "access": "Open Access",
+  "access_for_me": "Open Access",
+  "access_via": null,
+  "access_units": [
+   "Sidney Lanier Recreation Area",
+   "Lake Sidney Lanier"
+  ],
+  "proclamation": [],
+  "ramps": {
+   "natl": [
+    {
+     "name": "Bald Ridge Creek",
+     "wb": "Chattahoochee River - Lake Lanier",
+     "type": "Public",
+     "src": "Georgia Department of Natural Resources",
+     "lat": 34.208645,
+     "lon": -84.084365
+    },
+    {
+     "name": "Balus Creek Park",
+     "wb": "Chattahoochee River - Lake Lanier",
+     "type": "Public",
+     "src": "Georgia Department of Natural Resources",
+     "lat": 34.252264,
+     "lon": -83.916067
+    },
+    {
+     "name": "Bethel Park",
+     "wb": "Chattahoochee River - Lake Lanier",
+     "type": "Public",
+     "src": "Georgia Department of Natural Resources",
+     "lat": 34.227224,
+     "lon": -83.991639
+    }
+   ],
+   "osm": [
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    }
+   ],
+   "curated": [
+    {
+     "name": "Van Pugh South",
+     "lat": 34.211,
+     "lon": -83.959
+    },
+    {
+     "name": "Little Hall Park",
+     "lat": 34.288,
+     "lon": -83.895
+    }
+   ]
+  },
+  "ramp_sources": 3,
+  "charted": 0.8603,
+  "shipped": true,
+  "pack_mb": 488.27
+ },
+ "hartwell_lake": {
+  "slug": "hartwell_lake",
+  "name": "Hartwell Lake",
+  "state": "SC",
+  "display_name": "Hartwell Lake (Oconee Co, SC/GA)",
+  "legacy_display_name": "Hartwell Lake, SC/GA",
+  "legacy_display_names": [
+   "Hartwell Lake, SC/GA",
+   "Lake Hartwell, SC/GA"
+  ],
+  "county": "Oconee",
+  "gnis": "gnis:356215",
+  "source": [
+   "3dhp",
+   "lake_db"
+  ],
+  "area_acres": 33596,
+  "centroid": [
+   -83.042243,
+   34.493594
+  ],
+  "bounds_wsen": [
+   -83.282599,
+   34.337566,
+   -82.801888,
+   34.649621
+  ],
+  "access": "Open Access",
+  "access_for_me": "Open Access",
+  "access_via": null,
+  "access_units": [
+   "Hartwell Recreation Area",
+   "Hartwell Lake"
+  ],
+  "proclamation": [],
+  "ramps": {
+   "natl": [
+    {
+     "name": "Big Oaks Recreation Area",
+     "wb": "Savannah River - Lake Hartwell",
+     "type": "Public",
+     "src": "Georgia Department of Natural Resources",
+     "lat": 34.342319,
+     "lon": -82.832088
+    },
+    {
+     "name": "Carters Ferry",
+     "wb": "Savannah River - Lake Hartwell",
+     "type": "Public",
+     "src": "Georgia Department of Natural Resources",
+     "lat": 34.409666,
+     "lon": -82.864125
+    },
+    {
+     "name": "Cleveland Access",
+     "wb": "Savannah River - Lake Hartwell",
+     "type": "Public",
+     "src": "Georgia Department of Natural Resources",
+     "lat": 34.369625,
+     "lon": -82.94731
+    }
+   ],
+   "osm": [
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    }
+   ],
+   "curated": [
+    {
+     "name": "Green Pond Landing",
+     "lat": 34.5422,
+     "lon": -82.7845
+    },
+    {
+     "name": "Broyles Rec Area",
+     "lat": 34.5381,
+     "lon": -82.8094
+    },
+    {
+     "name": "Singing Pines",
+     "lat": 34.3934,
+     "lon": -82.8587
+    }
+   ]
+  },
+  "ramp_sources": 3,
+  "charted": 0.8523,
+  "shipped": true,
+  "pack_mb": 160.57
+ },
+ "b_everett_jordan_lake": {
+  "slug": "b_everett_jordan_lake",
+  "name": "B. Everett Jordan Lake",
+  "state": "NC",
+  "display_name": "B. Everett Jordan Lake (Chatham Co, NC)",
+  "legacy_display_name": "B. Everett Jordan Lake, NC",
+  "legacy_display_names": [
+   "B. Everett Jordan Lake, NC",
+   "Jordan Lake, NC"
+  ],
+  "county": "Chatham",
+  "gnis": "gnis:980401",
+  "source": [
+   "3dhp",
+   "lake_db"
+  ],
+  "area_acres": 13119,
+  "centroid": [
+   -79.034623,
+   35.757275
+  ],
+  "bounds_wsen": [
+   -79.107851,
+   35.640627,
+   -78.961395,
+   35.873924
+  ],
+  "access": "Open Access",
+  "access_for_me": "Open Access",
+  "access_via": null,
+  "access_units": [
+   "B. Everett Jordan Dam and Lake",
+   "B. Everett Jordan Lake"
+  ],
+  "proclamation": [],
+  "ramps": {
+   "natl": [
+    {
+     "name": "Farrington Point",
+     "wb": "New Hope River (Lake Jordan)",
+     "type": "Public",
+     "src": "North Carolina Wildlife Resources Commission",
+     "lat": 35.798953,
+     "lon": -79.018043
+    },
+    {
+     "name": "Robeson Creek Boat Ramp",
+     "wb": "Haw River (Robeson Creek)",
+     "type": "Public",
+     "src": "U.S. Geological Survey",
+     "lat": 35.703304,
+     "lon": -79.100159
+    },
+    {
+     "name": "Vista Point Boat Launch",
+     "wb": "Haw River (Jordan River)",
+     "type": "Public",
+     "src": "U.S. Geological Survey",
+     "lat": 35.703656,
+     "lon": -79.046533
+    }
+   ],
+   "osm": [
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": "Robeson Creek Boat Ramp",
+     "access": null,
+     "tag": "leisure=slipway"
+    }
+   ],
+   "curated": [
+    {
+     "name": "Ebenezer Church",
+     "lat": 35.702,
+     "lon": -79.033
+    },
+    {
+     "name": "Farrington Point",
+     "lat": 35.8,
+     "lon": -79.018
+    }
+   ]
+  },
+  "ramp_sources": 3,
+  "charted": 0.5843,
+  "shipped": true,
+  "pack_mb": 39.17
+ },
+ "j_strom_thurmond_reservoir": {
+  "slug": "j_strom_thurmond_reservoir",
+  "name": "J. Strom Thurmond Reservoir",
+  "state": "GA",
+  "display_name": "J. Strom Thurmond Reservoir (Lincoln Co, GA/SC)",
+  "legacy_display_name": "J. Strom Thurmond Reservoir, GA/SC",
+  "legacy_display_names": [
+   "J. Strom Thurmond Reservoir, GA/SC",
+   "Clarks Hill / Thurmond, SC/GA"
+  ],
+  "county": "Lincoln",
+  "gnis": "gnis:335836",
+  "source": [
+   "3dhp",
+   "lake_db"
+  ],
+  "area_acres": 67890.9,
+  "centroid": [
+   -82.414605,
+   33.80056
+  ],
+  "bounds_wsen": [
+   -82.648224,
+   33.576024,
+   -82.180986,
+   34.025096
+  ],
+  "access": "Open Access",
+  "access_for_me": "Open Access",
+  "access_via": null,
+  "access_units": [
+   "J. Strom Thurmond Recreation Area",
+   "J. Strom Thurmond Lake"
+  ],
+  "proclamation": [],
+  "ramps": {
+   "natl": [
+    {
+     "name": "Amity Recreation Area",
+     "wb": "Little River - Clarks Hill Lake",
+     "type": "Public",
+     "src": "Georgia Department of Natural Resources",
+     "lat": 33.64613,
+     "lon": -82.47713
+    },
+    {
+     "name": "Below Clarkes Hill Dam",
+     "wb": "Savannah River",
+     "type": "Public",
+     "src": "Georgia Department of Natural Resources",
+     "lat": 33.656651,
+     "lon": -82.200803
+    },
+    {
+     "name": "Big Hart Park",
+     "wb": "Hart Creek - Clarks Hill Lake",
+     "type": "Public",
+     "src": "Georgia Department of Natural Resources",
+     "lat": 33.615858,
+     "lon": -82.511389
+    }
+   ],
+   "curated": [
+    {
+     "name": "Clarks Hill Rec Area",
+     "lat": 33.662,
+     "lon": -82.199
+    },
+    {
+     "name": "Elijah Clark State Park GA",
+     "lat": 33.652,
+     "lon": -82.363
+    },
+    {
+     "name": "Modoc Ramp",
+     "lat": 33.72,
+     "lon": -82.22
+    }
+   ]
+  },
+  "ramp_sources": 2,
+  "charted": 0.7817,
+  "shipped": true,
+  "pack_mb": 8.14
+ },
+ "lake_marion": {
+  "slug": "lake_marion",
+  "name": "Lake Marion",
+  "state": "SC",
+  "display_name": "Lake Marion (Clarendon Co, SC)",
+  "legacy_display_name": "Lake Marion, SC",
+  "legacy_display_names": [
+   "Lake Marion, SC"
+  ],
+  "county": "Clarendon",
+  "gnis": "gnis:1224315",
+  "source": [
+   "3dhp",
+   "lake_db"
+  ],
+  "area_acres": 80199.2,
+  "centroid": [
+   -80.384859,
+   33.561345
+  ],
+  "bounds_wsen": [
+   -80.630906,
+   33.379487,
+   -80.138812,
+   33.743202
+  ],
+  "access": "Unknown",
+  "access_for_me": "Unknown",
+  "access_via": null,
+  "access_units": [
+   "Sparkleberry Swamp"
+  ],
+  "proclamation": [],
+  "ramps": {
+   "natl": [
+    {
+     "name": "Spiers",
+     "wb": "Lake Marion",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 33.395666,
+     "lon": -80.197467
+    },
+    {
+     "name": "Wilsons",
+     "wb": "Santee River",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 33.448276,
+     "lon": -80.158328
+    },
+    {
+     "name": "C. Alex Harvin III",
+     "wb": "Lake Marion",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 33.558897,
+     "lon": -80.2039
+    }
+   ],
+   "curated": [
+    {
+     "name": "Santee State Park",
+     "lat": 33.5181,
+     "lon": -80.4889
+    },
+    {
+     "name": "Rimini / Pack's Landing",
+     "lat": 33.6706,
+     "lon": -80.5367
+    },
+    {
+     "name": "C. Alex Harvin III Landing",
+     "lat": 33.5589,
+     "lon": -80.2039
+    }
+   ]
+  },
+  "ramp_sources": 2,
+  "charted": 0,
+  "shipped": false,
+  "pack_mb": null,
+  "usgs": {
+   "site": "02169921",
+   "params": "00062"
+  }
+ },
+ "lake_moultrie": {
+  "slug": "lake_moultrie",
+  "name": "Lake Moultrie",
+  "state": "SC",
+  "display_name": "Lake Moultrie (Berkeley Co, SC)",
+  "legacy_display_name": "Lake Moultrie, SC",
+  "legacy_display_names": [
+   "Lake Moultrie, SC"
+  ],
+  "county": "Berkeley",
+  "gnis": "gnis:1230046",
+  "source": [
+   "3dhp",
+   "lake_db"
+  ],
+  "area_acres": 56827.7,
+  "centroid": [
+   -80.065538,
+   33.313067
+  ],
+  "bounds_wsen": [
+   -80.165388,
+   33.210524,
+   -79.965688,
+   33.415611
+  ],
+  "access": "Open Access",
+  "access_for_me": "Open Access",
+  "access_via": null,
+  "access_units": [
+   "Moultrie Hunt Unit Wildlife Management Area",
+   "Hatchery Wildlife Management Area"
+  ],
+  "proclamation": [
+   "Joint Base Charleston",
+   "Francis Marion National Forest"
+  ],
+  "ramps": {
+   "natl": [
+    {
+     "name": "Thornley Forest II",
+     "wb": "Lake Moultrie",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 33.218785,
+     "lon": -80.029991
+    },
+    {
+     "name": "Hatchery",
+     "wb": "Lake Moultrie",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 33.268526,
+     "lon": -80.103029
+    },
+    {
+     "name": "William Dennis",
+     "wb": "Tail Race Canal",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 33.213096,
+     "lon": -79.973463
+    }
+   ],
+   "osm": [
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    }
+   ],
+   "curated": [
+    {
+     "name": "Short Stay Recreation Area",
+     "lat": 33.2425,
+     "lon": -79.9926
+    },
+    {
+     "name": "Bonneau Ferry Ramp",
+     "lat": 33.3262,
+     "lon": -79.9701
+    },
+    {
+     "name": "Amos Lee Gourdine (Russellville)",
+     "lat": 33.3283,
+     "lon": -80.0381
+    }
+   ]
+  },
+  "ramp_sources": 3,
+  "charted": 0.4759,
+  "shipped": true,
+  "pack_mb": 67.51,
+  "usgs": {
+   "site": "02172000",
+   "params": "00062"
+  }
+ },
+ "lake_norman": {
+  "slug": "lake_norman",
+  "name": "Lake Norman",
+  "state": "NC",
+  "display_name": "Lake Norman (Catawba Co, NC)",
+  "legacy_display_name": "Lake Norman, NC",
+  "legacy_display_names": [
+   "Lake Norman, NC"
+  ],
+  "county": "Catawba",
+  "gnis": "gnis:991183",
+  "source": [
+   "3dhp",
+   "lake_db"
+  ],
+  "area_acres": 30797.5,
+  "centroid": [
+   -80.962578,
+   35.574627
+  ],
+  "bounds_wsen": [
+   -81.080705,
+   35.427214,
+   -80.844451,
+   35.722041
+  ],
+  "access": "Open Access",
+  "access_for_me": "Open Access",
+  "access_via": null,
+  "access_units": [
+   "Lake Norman State Park",
+   "Catawba County Open Space"
+  ],
+  "proclamation": [],
+  "ramps": {
+   "natl": [
+    {
+     "name": "Hager Creek",
+     "wb": "Catawba River (Lake Norman)",
+     "type": "Public",
+     "src": "North Carolina Wildlife Resources Commission",
+     "lat": 35.56083,
+     "lon": -80.952302
+    },
+    {
+     "name": "Beatties Ford",
+     "wb": "Catawba River (Lake Norman)",
+     "type": "Public",
+     "src": "North Carolina Wildlife Resources Commission",
+     "lat": 35.482439,
+     "lon": -80.956635
+    },
+    {
+     "name": "Little Creek",
+     "wb": "Catawba River (Lake Norman)",
+     "type": "Public",
+     "src": "North Carolina Wildlife Resources Commission",
+     "lat": 35.538684,
+     "lon": -80.980313
+    }
+   ],
+   "osm": [
+    {
+     "name": null,
+     "access": "customers",
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": "Cowan's Ford Boat Ramp",
+     "access": "private",
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    }
+   ],
+   "curated": [
+    {
+     "name": "Blythe Landing",
+     "lat": 35.451,
+     "lon": -80.952
+    },
+    {
+     "name": "Beatty's Ford",
+     "lat": 35.526,
+     "lon": -80.946
+    },
+    {
+     "name": "Pinnacle Access",
+     "lat": 35.584,
+     "lon": -80.885
+    }
+   ]
+  },
+  "ramp_sources": 3,
+  "charted": 0.8826,
+  "shipped": true,
+  "pack_mb": 253.24,
+  "duke": "lake norman",
+  "normalPool": 760,
+  "minPool": 745
+ },
+ "lake_keowee": {
+  "slug": "lake_keowee",
+  "name": "Lake Keowee",
+  "state": "SC",
+  "display_name": "Lake Keowee (Oconee Co, SC)",
+  "legacy_display_name": "Lake Keowee, SC",
+  "legacy_display_names": [
+   "Lake Keowee, SC"
+  ],
+  "county": "Oconee",
+  "gnis": "gnis:1238598",
+  "source": [
+   "3dhp",
+   "lake_db"
+  ],
+  "area_acres": 16882.5,
+  "centroid": [
+   -82.921481,
+   34.830611
+  ],
+  "bounds_wsen": [
+   -83.009289,
+   34.69731,
+   -82.833672,
+   34.963912
+  ],
+  "access": "Open Access",
+  "access_for_me": "Open Access",
+  "access_via": null,
+  "access_units": [
+   "Mile Creek Park",
+   "Jocassee Gorges"
+  ],
+  "proclamation": [],
+  "ramps": {
+   "natl": [
+    {
+     "name": "Lawrence Bridge",
+     "wb": "Seneca River - Lake Hartwell",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 34.735012,
+     "lon": -82.87467
+    },
+    {
+     "name": "Keowee Town Access",
+     "wb": "Keowee River - Lake Keowee",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 34.85657,
+     "lon": -82.908574
+    },
+    {
+     "name": "Stamp Creek",
+     "wb": "Little River - Lake Keowee",
+     "type": "Public",
+     "src": "South Carolina Department of Natural Resources",
+     "lat": 34.828129,
+     "lon": -82.941233
+    }
+   ],
+   "osm": [
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    }
+   ],
+   "curated": [
+    {
+     "name": "South Cove Park",
+     "lat": 34.648,
+     "lon": -82.918
+    },
+    {
+     "name": "High Falls Park",
+     "lat": 34.767,
+     "lon": -82.881
+    },
+    {
+     "name": "Warpath Landing",
+     "lat": 34.8,
+     "lon": -82.885
+    }
+   ]
+  },
+  "ramp_sources": 3,
+  "charted": 0.891,
+  "shipped": true,
+  "pack_mb": 253.27,
+  "duke": "lake keowee",
+  "normalPool": 800,
+  "minPool": 790
+ },
+ "kentucky_lake": {
+  "slug": "kentucky_lake",
+  "name": "Kentucky Lake",
+  "state": "TN",
+  "display_name": "Kentucky Lake (Benton Co, TN/KY)",
+  "legacy_display_name": "Kentucky Lake, TN/KY",
+  "legacy_display_names": [
+   "Kentucky Lake, TN/KY"
+  ],
+  "county": "Benton",
+  "gnis": "gnis:1269701",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 144085.6,
+  "centroid": [
+   -88.068581,
+   36.041049
+  ],
+  "bounds_wsen": [
+   -88.319962,
+   35.061457,
+   -87.8172,
+   37.020641
+  ],
+  "access": "Open Access",
+  "access_for_me": "Open Access",
+  "access_via": null,
+  "access_units": [
+   "Tennessee Valley Authority (TVA)",
+   "Tennessee National Wildlife Refuge"
+  ],
+  "proclamation": [
+   "Shiloh National Military Park",
+   "Tennessee National Wildlife Refuge"
+  ],
+  "ramps": {
+   "natl": [
+    {
+     "name": "Big Sandy",
+     "wb": "Tennessee River - Kentucky Lake",
+     "type": "Public",
+     "src": "Tennessee Wildlife Resources Agency",
+     "lat": 36.236002,
+     "lon": -88.098204
+    },
+    {
+     "name": "Eva Beach Recreation Area",
+     "wb": "Tennessee River - Kentucky Lake",
+     "type": "Public",
+     "src": "Tennessee Wildlife Resources Agency",
+     "lat": 36.063207,
+     "lon": -87.997005
+    },
+    {
+     "name": "Birdsong Creek",
+     "wb": "Tennessee River - Kentucky Lake",
+     "type": "Public",
+     "src": "Tennessee Wildlife Resources Agency",
+     "lat": 35.967597,
+     "lon": -88.051405
+    }
+   ],
+   "osm": [
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    }
+   ]
+  },
+  "ramp_sources": 2,
+  "charted": 0.6457,
+  "shipped": true,
+  "pack_mb": 110.19
+ },
+ "smith_lake_5": {
+  "slug": "smith_lake_5",
+  "name": "Smith Lake",
+  "state": "GA",
+  "display_name": "Smith Lake (Houston Co, GA)",
+  "legacy_display_name": "Smith Lake, GA",
+  "legacy_display_names": [
+   "Smith Lake, GA"
+  ],
+  "county": "Houston",
+  "gnis": "gnis:340975",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 48.9,
+  "centroid": [
+   -83.644083,
+   32.518298
+  ],
+  "bounds_wsen": [
+   -83.648708,
+   32.514459,
+   -83.639457,
+   32.522137
+  ],
+  "access": null,
+  "access_for_me": null,
+  "access_via": null,
+  "access_units": [],
+  "proclamation": [],
+  "ramps": {},
+  "ramp_sources": 0,
+  "charted": 0,
+  "shipped": false,
+  "pack_mb": null
+ },
+ "smith_lake_6": {
+  "slug": "smith_lake_6",
+  "name": "Smith Lake",
+  "state": "GA",
+  "display_name": "Smith Lake (Jefferson Co, GA)",
+  "legacy_display_name": "Smith Lake, GA",
+  "legacy_display_names": [
+   "Smith Lake, GA"
+  ],
+  "county": "Jefferson",
+  "gnis": "gnis:340991",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 40,
+  "centroid": [
+   -82.448383,
+   32.899557
+  ],
+  "bounds_wsen": [
+   -82.452259,
+   32.89623,
+   -82.444508,
+   32.902884
+  ],
+  "access": null,
+  "access_for_me": null,
+  "access_via": null,
+  "access_units": [],
+  "proclamation": [],
+  "ramps": {},
+  "ramp_sources": 0,
+  "charted": 0,
+  "shipped": false,
+  "pack_mb": null
+ },
+ "mclaurins_millpond": {
+  "slug": "mclaurins_millpond",
+  "name": "McLaurins Millpond",
+  "state": "SC",
+  "display_name": "McLaurins Millpond (Marlboro Co, SC)",
+  "legacy_display_name": "McLaurins Millpond, SC",
+  "legacy_display_names": [
+   "McLaurins Millpond, SC"
+  ],
+  "county": "Marlboro",
+  "gnis": "gnis:1246604",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 56.8,
+  "centroid": [
+   -79.758682,
+   34.678912
+  ],
+  "bounds_wsen": [
+   -79.761414,
+   34.675447,
+   -79.75595,
+   34.682378
+  ],
+  "access": null,
+  "access_for_me": null,
+  "access_via": null,
+  "access_units": [],
+  "proclamation": [],
+  "ramps": {},
+  "ramp_sources": 0,
+  "charted": 0,
+  "shipped": false,
+  "pack_mb": null
+ },
+ "mclaurins_millpond_2": {
+  "slug": "mclaurins_millpond_2",
+  "name": "McLaurins Millpond",
+  "state": "SC",
+  "display_name": "McLaurins Millpond (Marlboro Co, SC)",
+  "legacy_display_name": "McLaurins Millpond, SC",
+  "legacy_display_names": [
+   "McLaurins Millpond, SC"
+  ],
+  "county": "Marlboro",
+  "gnis": "gnis:1246605",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 46.2,
+  "centroid": [
+   -79.53909,
+   34.653663
+  ],
+  "bounds_wsen": [
+   -79.54334,
+   34.651569,
+   -79.534839,
+   34.655757
+  ],
+  "access": null,
+  "access_for_me": null,
+  "access_via": null,
+  "access_units": [],
+  "proclamation": [],
+  "ramps": {},
+  "ramp_sources": 0,
+  "charted": 0,
+  "shipped": false,
+  "pack_mb": null
+ },
+ "persimmon_lake": {
+  "slug": "persimmon_lake",
+  "name": "Persimmon Lake",
+  "state": "NC",
+  "display_name": "Persimmon Lake (Cherokee Co, NC)",
+  "legacy_display_name": "Persimmon Lake, NC",
+  "legacy_display_names": [
+   "Persimmon Lake, NC"
+  ],
+  "county": "Cherokee",
+  "gnis": "gnis:1016964",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 5914.5,
+  "centroid": [
+   -84.112903,
+   35.112249
+  ],
+  "bounds_wsen": [
+   -84.202732,
+   35.038496,
+   -84.023074,
+   35.186003
+  ],
+  "access": "Open Access",
+  "access_for_me": "Open Access",
+  "access_via": null,
+  "access_units": [
+   "Nantahala National Forest",
+   "Tennessee Valley Authority - Hiwassee Dam"
+  ],
+  "proclamation": [
+   "Eastern Cherokee Reservation",
+   "Nantahala National Forest"
+  ],
+  "ramps": {
+   "natl": [
+    {
+     "name": "Apalachia",
+     "wb": "Hiwasee River (Apalachia Lake)",
+     "type": "Public",
+     "src": "North Carolina Wildlife Resources Commission",
+     "lat": 35.146807,
+     "lon": -84.18009
+    },
+    {
+     "name": "Grape Creek",
+     "wb": "Hiwassee River (Hiwassee Lake)",
+     "type": "Public",
+     "src": "North Carolina Wildlife Resources Commission",
+     "lat": 35.124326,
+     "lon": -84.120177
+    },
+    {
+     "name": "Hanging Dog",
+     "wb": "Hiwassee River (Hiwassee Lake)",
+     "type": "Public",
+     "src": "North Carolina Wildlife Resources Commission",
+     "lat": 35.097373,
+     "lon": -84.092614
+    }
+   ],
+   "osm": [
+    {
+     "name": "Payne Street Slipway",
+     "access": "yes",
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": "Grape Creek Slipway",
+     "access": "yes",
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": "Duke's Hideaway Marina Slipway",
+     "access": "customers",
+     "tag": "leisure=slipway"
+    }
+   ]
+  },
+  "ramp_sources": 2,
+  "charted": 0.7169,
+  "shipped": true,
+  "pack_mb": 72.38
+ },
+ "cherokee_lake": {
+  "slug": "cherokee_lake",
+  "name": "Cherokee Lake",
+  "state": "TN",
+  "display_name": "Cherokee Lake (Hawkins Co, TN)",
+  "legacy_display_name": "Cherokee Lake, TN",
+  "legacy_display_names": [
+   "Cherokee Lake, TN"
+  ],
+  "county": "Hawkins",
+  "gnis": "gnis:1280322",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 29436.4,
+  "centroid": [
+   -83.062042,
+   36.337612
+  ],
+  "bounds_wsen": [
+   -83.516084,
+   36.126827,
+   -82.608001,
+   36.548397
+  ],
+  "access": "Open Access",
+  "access_for_me": "Open Access",
+  "access_via": null,
+  "access_units": [
+   "Tennessee Valley Authority (TVA)",
+   "Panther Creek"
+  ],
+  "proclamation": [
+   "Holston Army Ammunition Plant"
+  ],
+  "ramps": {
+   "natl": [
+    {
+     "name": "Laurel Run Park",
+     "wb": "Holston River",
+     "type": "Public",
+     "src": "Tennessee Wildlife Resources Agency",
+     "lat": 36.495957,
+     "lon": -82.687524
+    },
+    {
+     "name": "Church Hill City Park",
+     "wb": "Holston River",
+     "type": "Public",
+     "src": "Tennessee Wildlife Resources Agency",
+     "lat": 36.524347,
+     "lon": -82.682694
+    },
+    {
+     "name": "City of Kingsport",
+     "wb": "South Fork Holston River",
+     "type": "Public",
+     "src": "Tennessee Wildlife Resources Agency",
+     "lat": 36.550387,
+     "lon": -82.610044
+    }
+   ],
+   "osm": [
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    }
+   ]
+  },
+  "ramp_sources": 2,
+  "charted": 0.7831,
+  "shipped": true,
+  "pack_mb": 272.69
+ },
+ "norris_lake": {
+  "slug": "norris_lake",
+  "name": "Norris Lake",
+  "state": "TN",
+  "display_name": "Norris Lake (Union Co, TN)",
+  "legacy_display_name": "Norris Lake, TN",
+  "legacy_display_names": [
+   "Norris Lake, TN"
+  ],
+  "county": "Union",
+  "gnis": "gnis:1269832",
+  "source": [
+   "3dhp"
+  ],
+  "area_acres": 23594.4,
+  "centroid": [
+   -83.811172,
+   36.32189
+  ],
+  "bounds_wsen": [
+   -84.194217,
+   36.223746,
+   -83.428127,
+   36.420034
+  ],
+  "access": "Open Access",
+  "access_for_me": "Open Access",
+  "access_via": null,
+  "access_units": [
+   "Tennessee Valley Authority (TVA)",
+   "Big Ridge State Park"
+  ],
+  "proclamation": [],
+  "ramps": {
+   "natl": [
+    {
+     "name": "Post Master Road",
+     "wb": "Clinch River - Norris Lake",
+     "type": "Public",
+     "src": "Tennessee Wildlife Resources Agency",
+     "lat": 36.342307,
+     "lon": -83.758204
+    },
+    {
+     "name": "Point 19",
+     "wb": "Clinch River - Norris Lake",
+     "type": "Public",
+     "src": "Tennessee Wildlife Resources Agency",
+     "lat": 36.269318,
+     "lon": -83.963535
+    },
+    {
+     "name": "Union County Dock",
+     "wb": "Powell River - Norris Lake",
+     "type": "Public",
+     "src": "Tennessee Wildlife Resources Agency",
+     "lat": 36.405607,
+     "lon": -83.843704
+    }
+   ],
+   "osm": [
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    },
+    {
+     "name": null,
+     "access": null,
+     "tag": "leisure=slipway"
+    }
+   ]
+  },
+  "ramp_sources": 2,
+  "charted": 0.8121,
+  "shipped": true,
+  "pack_mb": 308.45
+ }
+}

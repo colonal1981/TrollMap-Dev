@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from './expect-shim.mjs';
 import { coerceStockingsArray, coerceSpeciesArray } from '../js/utils/coerce.js';
 
 // Regression coverage for the "biology.knownStockings.map is not a function"

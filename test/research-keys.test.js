@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from './expect-shim.mjs';
 import {
   sanitizeLakeId,
   RESEARCH_CANONICAL_IDS,

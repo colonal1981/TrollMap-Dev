@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from './expect-shim.mjs';
 import { getLakeRegulations, normalizeLakeName } from '../Worker/research/clients.js';
 
 describe('lake-specific regulation matching', () => {

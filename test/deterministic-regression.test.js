@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from './expect-shim.mjs';
 import { handleResearchDeterministicFacts } from '../Worker/research/deterministic.js';
 
 describe('deterministic facts regression', () => {

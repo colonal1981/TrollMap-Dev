@@ -1,11 +1,21 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from './expect-shim.mjs';
 import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../js/data/lake-keys.js';
 
-describe('LAKE_NAME_TO_R2_KEY — single source of truth (118 entries)', () => {
-  it('has 118 entries (full map, not truncated worker copy)', () => {
+describe('LAKE_NAME_TO_R2_KEY — single source of truth (116 entries)', () => {
+  it('has 116 entries (full map, not truncated worker copy)', () => {
     // 97 freshwater + 21 coastal zones. Was 101 before the coastal expansion
     // split the single `sc_ga_coastal` key into 21 per-zone `coast_*` keys.
-    expect(Object.keys(LAKE_NAME_TO_R2_KEY).length).toBe(118);
+        // 116 = 95 freshwater + 21 coastal. Was 118 until 2026-08-03, when 'High Rock
+    // Lake, NC' and 'Blewett Falls Lake, NC' were removed: the R2 prune retired
+    // `yadkin_river_chain` and 3DHP never named those two, so they have no
+    // replacement pack. A name bound to a slug with no pack is a lake that appears
+    // in the list and then fails to load, which is worse than an absent name.
+    // Goes back to 118 once high_rock_lake and blewett_falls_lake are built --
+    // see claude/YADKIN_ORPHANS_RECOVERY_2026-08-03.md.
+    //
+    // This literal is doing its job. It is not a nuisance to be silenced: it fired
+    // the moment two lakes left the data, which is exactly when someone should look.
+    expect(Object.keys(LAKE_NAME_TO_R2_KEY).length).toBe(116);
   });
 
   it('contains critical keys that were missing in old worker copy', () => {

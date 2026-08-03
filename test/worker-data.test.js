@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from './expect-shim.mjs';
 import { lakeKeyFromName, getLakeIntel, getLakeClarity } from '../Worker/worker-data.js';
 
 describe('lakeKeyFromName — LAKES table key (different from R2 key)', () => {
