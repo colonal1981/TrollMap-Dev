@@ -29,7 +29,7 @@ import { state } from '../core/state.js';
 import { SCDNR_STATE_LAKES } from './scdnr-state-lakes.js';
 import { USER_KNOWN_LAKES } from './user-known-lakes.js';
 import { COASTAL_ZONES } from './coastal-zones.js';
-import { loadLakeRegistry, filterLakes, accessPointsFor } from './lake-registry.js';
+import { loadLakeRegistry, filterLakes, accessPointsFor, getLoadedRegistry } from './lake-registry.js';
 import { registerR2Key } from './lake-keys.js';
 
 // Manual coastal ramps not in DNR ArcGIS feed — add here when a known
@@ -344,12 +344,40 @@ async function buildAccessIndex() {
   // missing or unreachable index degrades to exactly the previous behaviour.
   try {
     await loadLakeRegistry();
+
+    // PASS 1 -- KNOW about every lake. Adds nothing to the dropdown.
+    //
+    // This used to be folded into pass 2, so only the ~448 lakes the picker OFFERS ever got a
+    // registryByName entry. Everything else in the list came from the DNR ramp feeds with no
+    // registry record behind it -- and lake-ramp-select.js's passesFilters() opens with
+    // `if (!rec) return true`, so those lakes ignored the state dropdown, the size band and
+    // both checkboxes. Ryan, 2026-08-03: "your state dropdown, size, and check boxes do not
+    // seem to have any effect". Measured on his live index: 1,089 names in the dropdown, 448
+    // filterable, 641 immune. A filter bar that silently governs 41% of a list is worse than
+    // no filter bar.
+    //
+    // A DNR-fed lake that 3DHP also named now carries its record, so the filters reach it.
+    // `getLoadedRegistry().list` is sorted shipped-first then largest-first, and
+    // findExistingLakeKey() matches on name AND position, so a small namesake cannot claim a
+    // DNR entry that belongs to the big lake next to it.
+    const all = getLoadedRegistry().list;
+    for (const rec of all) {
+      const key = findExistingLakeKey(index, rec.name, rec.lat, rec.lon) || rec.displayName;
+      if (!index.registryByName.has(key)) index.registryByName.set(key, rec);
+    }
+
+    // PASS 2 -- OFFER the lakes the picker should show, and only those.
+    //
+    // R2 keys are registered HERE, not in pass 1, and that is deliberate: an unshipped lake
+    // has no pack in R2, and resolveR2Key() treats a registry slug as authoritative over the
+    // curated map. Registering one for an unshipped lake would take a name that currently
+    // resolves to a real curated pack and point it at a 404.
     let added = 0;
     for (const rec of filterLakes(REGISTRY_DEFAULT_FILTER)) {
       const existingKey = findExistingLakeKey(index, rec.name, rec.lat, rec.lon);
       const lakeName = existingKey || rec.displayName;
       if (!existingKey) added += 1;
-      index.registryByName.set(lakeName, rec);
+      index.registryByName.set(lakeName, rec);   // shipped record wins over a pass-1 namesake
       // Teach lake-keys.js the slug so contour/chartpack loads resolve without fuzzy
       // matching. Curated names already in LAKE_NAME_TO_R2_KEY are left alone.
       registerR2Key(lakeName, rec.slug);
@@ -365,6 +393,8 @@ async function buildAccessIndex() {
       }
     }
     if (added) console.info(`[access-index] registry contributed ${added} lakes not in the DNR feeds`);
+    console.info(`[access-index] ${index.registryByName.size} of ${index.byLake.size} lake names `
+               + `carry a registry record and are therefore filterable`);
   } catch (e) {
     console.warn('[access-index] registry merge skipped:', e?.message || e);
   }
