@@ -35,7 +35,12 @@ import './utils/geo.js';
 import './utils/dedupe.js';
 import './utils/rod-row.js';
 import './data/ramps-loader.js';
-import './data/lakes.js';
+// `import './data/lakes.js'` was here. It was a bare side-effect import of a file whose only
+// content is `export const LAKE_DB = {...}` -- so it had no side effect to run, and once
+// ramps.js dropped its unused LAKE_DB import on 2026-08-02 nothing in the app read the file
+// at all. Removed so `data/lakes.js` is fully orphaned and can be deleted; the 50 curated
+// lakes, their gauge ids, pool curves and ramps were folded into lake_index.json by
+// consolidate_lake_index.py, which is what made the file removable in the first place.
 
 // Feature modules (each wires its own button handlers on import)
 import './modules/gps.js';
@@ -121,16 +126,17 @@ window.pushAllLocalToCloud = pushAllLocalToCloud;
 window.isPlanRiverValue = isPlanRiverValue;
 window.getPlanRiverDef = getPlanRiverDef;
 
-// ── DB legacy alias — some older modules reference window.DB ──
-//    instead of importing { put, get, ... } from utils/db.js. ──
-window.DB = {
-  get db() { return openDB(); },  // returns the cached promise
-  put: (...args) => import('./utils/db.js').then((m) => m.put(...args)),
-  get: (...args) => import('./utils/db.js').then((m) => m.get(...args)),
-  getAll: (...args) => import('./utils/db.js').then((m) => m.getAll(...args)),
-  del: (...args) => import('./utils/db.js').then((m) => m.del(...args)),
-  clear: (...args) => import('./utils/db.js').then((m) => m.clear(...args)),
-};
+// `window.DB` lived here. It was labelled a "legacy alias — some older modules reference
+// window.DB instead of importing from utils/db.js", but the migration it implied had never
+// happened in either direction: this file was the ONLY place that imported utils/db.js
+// directly, and all twelve consumers reached the store exclusively through the global. Every
+// read and write paid a `import('./utils/db.js').then(...)` round trip that a static import
+// does for free, which is the "no actual code base changes that make things run more
+// efficiently" Ryan was describing.
+//
+// It also hid a bug. `db` was a getter returning `openDB()`, i.e. a Promise, so the
+// `if (!window.DB?.db) return;` readiness guard used at 21 call sites could never be true.
+// utils/db.js now exports isReady() for that. Removed 2026-08-03.
 
 // ── Bootstrap ────────────────────────────────────────────────────────
 
