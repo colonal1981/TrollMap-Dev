@@ -194,9 +194,30 @@ export function registerR2Key(displayName, slug) {
   if (!displayName || !slug) return;
   const t = String(displayName).trim();
   if (!t) return;
-  if (LAKE_NAME_TO_R2_KEY[t]) return;          // curated wins; do not orphan an R2 object
-  _REGISTRY_KEYS.set(t, slug);
-  _REGISTRY_KEYS.set(t.toLowerCase(), slug);
+  // THE REGISTRY SLUG WINS, including over a curated name.
+  //
+  // This used to defer to LAKE_NAME_TO_R2_KEY on the theory that a curated key was already
+  // serving a live chartpack and overriding it would orphan the object. That had it exactly
+  // backwards. The curated keys exist because lakes could not be cleanly separated out of
+  // 3DHP -- which is why several of them are COMBINED packs covering two lakes at once
+  // (lake_wateree_fishing_creek, lake_norman_mountain_island, lake_hickory_rhodhiss). The
+  // registry now separates them, one pack per lake, and deferring to the old key would keep
+  // the app reading a merged pack while the correct per-lake one sat unused beside it.
+  //
+  // Ryan, 2026-08-02: "i want the lakes to be separated... nothing on R2 is irreplaceable."
+  //
+  // FIRST writer wins, though. Display names are not unique -- 40 of them in the index belong
+  // to two or more lakes -- and the caller walks the registry list in priority order (shipped
+  // first, then largest). Last-writer-wins meant the 39-acre `Lake Oconee, GA` registered
+  // after the 17,436-acre one and took the name off it, so selecting Oconee fetched
+  // `lake_oconee_2`. Ten shipped lakes resolved to a namesake's pack that way, silently: the
+  // key is well-formed, the fetch succeeds, and the wrong lake's contours draw.
+  //
+  // Genuine shipped-vs-shipped collisions never reach here -- lake-registry.js gives those a
+  // distinguishing suffix, so both members arrive with names of their own.
+  if (!_REGISTRY_KEYS.has(t)) _REGISTRY_KEYS.set(t, slug);
+  const lower = t.toLowerCase();
+  if (!_REGISTRY_KEYS.has(lower)) _REGISTRY_KEYS.set(lower, slug);
 }
 
 export function resolveR2Key(displayName) {

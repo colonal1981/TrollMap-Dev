@@ -55,12 +55,20 @@ export const DEFAULT_FILTER = {
   states: null,          // null = all; else e.g. new Set(['SC'])
   minAcres: 0,
   maxAcres: Infinity,
-  // Show a lake if it is not known-closed AND something suggests you can get to it: public
-  // land on the bank in any class, or a ramp in any source. Roughly 550 of 1,551.
-  reachableOnly: true,
+  // CONTOURS ARE THE LIST. Ryan, 2026-08-02: "i want a list of lakes with contours... i am
+  // willing to bet if it has contours i can fish it... i highly doubt garmin mapped private
+  // property." The extraction measured it: 434 of 1,551 have soundings, and 14 of 14 lakes
+  // sampled as charted came back PAD-US Open Access.
+  //
+  // So the default is `shipped` -- a chartpack exists in R2 -- not an access class. Access
+  // is something the record CARRIES and the badge displays; it is not what decides whether
+  // the lake is in the list. Every access-based default tried before this hid a lake Ryan
+  // fishes: openOnly dropped Wittee and Ferry (state forest, Restricted), and any of them
+  // would have dropped Bates Old River, which 3DHP never named and Garmin charted anyway.
+  shippedOnly: true,
+  reachableOnly: false,  // not known-closed AND land on the bank or a ramp somewhere
   openOnly: false,       // stricter: public or credentialed only
   rampOnly: false,       // only lakes with at least one mapped ramp
-  chartedOnly: false,    // only lakes with Garmin soundings (no-op while charted is null)
 };
 
 let registryPromise = null;
@@ -117,13 +125,76 @@ async function fetchRegistry() {
       rampSources: Number(rec.ramp_sources) || 0,
       inR2: !!rec.in_r2,
       charted: rec.charted === null || rec.charted === undefined ? null : Number(rec.charted),
+      shipped: !!rec.shipped,
+      packMb: rec.pack_mb ?? null,
+      legacyDisplayName: rec.legacy_display_name || null,
+      // A lake can have more than one former name: the "Name, ST" it carried before
+      // consolidate_lake_index.py started naming by county, and the curated LAKE_DB key it
+      // binds to. Both may be sitting in a saved plan or catch, so both stay resolvable.
+      legacyDisplayNames: Array.isArray(rec.legacy_display_names) ? rec.legacy_display_names
+                        : (rec.legacy_display_name ? [rec.legacy_display_name] : []),
+      usgs: rec.usgs || null,
+      duke: rec.duke || null,
+      dominion: rec.dominion || null,
+      normalPool: rec.normalPool ?? null,
+      minPool: rec.minPool ?? null,
+      county: rec.county || null,
+      note: rec.note || null,
+      sources: rec.source || [],
     };
     if (!Number.isFinite(entry.lat) || !Number.isFinite(entry.lon)) continue;
     bySlug.set(slug, entry);
-    byName.set(entry.displayName, entry);
     list.push(entry);
   }
+
+  // Shipped first, then largest. Slugs are unique; DISPLAY NAMES ARE NOT -- 40 names in the
+  // 1,565-record index are shared by two or more lakes, and 12 of those groups contain a lake
+  // that shipped. `Long Pond, GA` is four different ponds, one of them 301 ac and three under
+  // 160.
+  //
+  // byName used to be filled inside the loop above, which made it LAST-writer-wins in whatever
+  // order the JSON happened to enumerate, while normIndex() below was first-writer-wins over
+  // this sorted list. The two disagreed, so the same string could resolve to two different
+  // lakes depending on which function you asked -- and asking for `Lake Oconee, GA` could hand
+  // back the 39-acre namesake instead of the 17,436-acre reservoir, with the app then fetching
+  // the wrong pack. Building the map here, first-writer-wins, gives both paths one rule.
+  //
+  // `shipped` outranks area because a shipped lake is one the user can actually open. That
+  // alone resolves 9 of the 12 groups. The remaining 3 are shipped-vs-shipped and need a
+  // distinguishable LABEL, not a tie-break -- see disambiguateDisplayNames() below.
+  list.sort((a, b) => (Number(b.shipped) - Number(a.shipped))
+                   || ((b.areaAcres || 0) - (a.areaAcres || 0)));
+  disambiguateDisplayNames(list);
+  for (const entry of list) if (!byName.has(entry.displayName)) byName.set(entry.displayName, entry);
   return { bySlug, byName, list, loaded: true };
+}
+
+/**
+ * Give every lake a display name no other lake shares.
+ *
+ * Only collisions among SHIPPED lakes actually reach the user -- those are the ones the picker
+ * offers, so two identical rows are two rows you cannot tell apart. Unshipped namesakes are
+ * left alone; the sort above already guarantees the shipped one wins the lookup.
+ *
+ * The suffix is surface area. `county` is null for every colliding record in the index, so it
+ * is not available to disambiguate with, and acreage is the one field that is always present,
+ * always differs, and actually means something on the water: Forest Lake, SC is 169 ac or
+ * 127 ac and Ryan knows which one he fishes.
+ */
+function disambiguateDisplayNames(list) {
+  const groups = new Map();
+  for (const r of list) {
+    if (!r.shipped) continue;
+    if (!groups.has(r.displayName)) groups.set(r.displayName, []);
+    groups.get(r.displayName).push(r);
+  }
+  for (const [name, rs] of groups) {
+    if (rs.length < 2) continue;
+    for (const r of rs) {
+      r.legacyDisplayName = r.legacyDisplayName || name;   // keep the old string resolvable
+      r.displayName = `${name} (${Math.round(r.areaAcres).toLocaleString()} ac)`;
+    }
+  }
 }
 
 export function loadLakeRegistry() {
@@ -161,15 +232,16 @@ export function filterLakes(opts = {}) {
     .filter((r) => {
       if (f.states && !f.states.has(r.state)) return false;
       if (r.areaAcres < f.minAcres || r.areaAcres > f.maxAcres) return false;
+      // shipped is the primary gate: a pack exists, so selecting the lake shows you data.
+      // charted === null still means "never measured" and must not read as "no soundings" --
+      // the 14 lakes with no boundary polygon are in that state.
+      if (f.shippedOnly && !r.shipped && r.charted !== null) return false;
       if (f.openOnly && !ACCESS_OPEN.has(r.accessForMe)) return false;
       if (f.reachableOnly && !f.openOnly) {
         if (r.accessForMe === 'Closed Access') return false;
         if (!ACCESS_REACHABLE.has(r.accessForMe) && !r.rampSources) return false;
       }
       if (f.rampOnly && !r.rampSources) return false;
-      // charted === null means "not measured yet", which is not the same as "no soundings".
-      // Filtering it out would hide every lake until the extraction finishes.
-      if (f.chartedOnly && r.charted !== null && !(r.charted > 0)) return false;
       return true;
     })
     .sort((a, b) => {
@@ -181,7 +253,7 @@ export function filterLakes(opts = {}) {
 /** Counts for the filter UI, so it can show what each toggle would cost. */
 export function registryStats() {
   const s = { total: registry.list.length, byState: {},
-              open: 0, reachable: 0, ramps: 0, charted: 0, closed: 0 };
+              open: 0, reachable: 0, ramps: 0, charted: 0, closed: 0, shipped: 0 };
   for (const r of registry.list) {
     s.byState[r.state] = (s.byState[r.state] || 0) + 1;
     if (ACCESS_OPEN.has(r.accessForMe)) s.open += 1;
@@ -189,6 +261,7 @@ export function registryStats() {
     else if (ACCESS_REACHABLE.has(r.accessForMe) || r.rampSources) s.reachable += 1;
     if (r.rampSources) s.ramps += 1;
     if (r.charted > 0) s.charted += 1;
+    if (r.shipped) s.shipped += 1;
   }
   return s;
 }
@@ -228,4 +301,98 @@ export function accessPointsFor(rec) {
     }
   }
   return out;
+}
+
+
+// ── ONE RESOLVER, USED BY EVERYTHING ─────────────────────────────────────────
+//
+// Before this, four modules each rolled their own name matcher against LAKE_DB and they did
+// not agree with each other:
+//
+//   smart-plan.js:748     Object.values(LAKE_DB).find(e => lakeName.includes(e.name.split(',')[0]))
+//   plan-builder.js:709   Object.keys(LAKE_DB).find(k => cleanLake.includes(k) || k.includes(cleanLake))
+//   utility-sync.js:66    the same substring test, written again
+//   catch-journal.js:192  nearest curated centroid within 20 miles
+//
+// Three different substring rules means the same lake name can resolve to different entries
+// in the planner and in the journal. Substring matching is also actively wrong at this
+// scale: "Lake Wallace" is a substring of nothing useful and SC has two of them, 273 and 155
+// acres.
+//
+// So: exact lookups only, in a defined order, and a null when nothing matches. A null is a
+// better answer than a confidently wrong lake -- a caller can fall back, but it cannot
+// detect that it was handed the wrong reservoir's pool level.
+
+function normName(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/\(.*?\)/g, ' ')
+    .replace(/,\s*[a-z]{2}(\/[a-z]{2})*\s*$/, '')
+    .replace(/\b(lake|lakes|reservoir|rsvr|pond|millpond|impoundment|the|of)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(' ').filter(Boolean).sort().join(' ');
+}
+
+let _normIndex = null;
+function normIndex() {
+  if (_normIndex && _normIndex.size) return _normIndex;
+  _normIndex = new Map();
+  for (const r of registry.list) {
+    for (const n of [r.name, r.displayName, r.legacyDisplayName, ...r.legacyDisplayNames]) {
+      if (!n) continue;
+      const k = normName(n);
+      // First writer wins, and the list is sorted largest-first below, so a 30-acre namesake
+      // cannot claim the key belonging to the reservoir everyone means.
+      if (k && !_normIndex.has(k)) _normIndex.set(k, r);
+    }
+  }
+  return _normIndex;
+}
+
+/**
+ * The record for a lake, given a slug, a display name, a legacy LAKE_DB key, or a plain name.
+ * Returns null rather than guessing.
+ */
+export function lakeRecordFor(query) {
+  if (!query || typeof query !== 'string') return null;
+  const q = query.trim();
+  if (!q) return null;
+  return registry.bySlug.get(q)
+      || registry.byName.get(q)
+      || normIndex().get(normName(q))
+      || null;
+}
+
+/**
+ * LAKE_DB-shaped view of a registry record, so the modules that consumed `data/lakes.js` can
+ * switch import without rewriting how they read it. `center` and `bounds` are derived from
+ * the registry geometry; usgs/duke/dominion/normalPool/minPool and the curated ramp list are
+ * carried through by consolidate_lake_index.py, which is why lakes.js can be deleted at all.
+ */
+export function lakeDbEntryFor(query) {
+  const r = lakeRecordFor(query);
+  if (!r) return null;
+  const b = r.boundsWSEN;
+  const ramps = {};
+  for (const item of (r.ramps?.curated || r.ramps?.natl || [])) {
+    if (Number.isFinite(item.lat) && Number.isFinite(item.lon)) ramps[item.name] = [item.lat, item.lon];
+  }
+  return {
+    slug: r.slug,
+    name: r.displayName,
+    center: [r.lat, r.lon, r.areaAcres > 5000 ? 11 : r.areaAcres > 500 ? 12 : 13],
+    bounds: Array.isArray(b) && b.length === 4 ? [[b[1], b[0]], [b[3], b[2]]] : null,
+    usgs: r.usgs || null,
+    duke: r.duke || null,
+    dominion: r.dominion || null,
+    normalPool: r.normalPool ?? null,
+    minPool: r.minPool ?? null,
+    ramps,
+  };
+}
+
+/** Display names for a dropdown, largest first within state. Replaces Object.keys(LAKE_DB). */
+export function lakeNamesForPicker(opts) {
+  return filterLakes(opts).map((r) => r.displayName);
 }

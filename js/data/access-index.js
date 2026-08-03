@@ -58,11 +58,10 @@ const ACCESS_SOURCES = [
   // { path: '/bank-pier', label: 'Bank / pier access', marker: '🎣' },
 ];
 
-// Registry lakes shown by default. `reachableOnly` keeps this to lakes that are not
-// known-closed AND have either public land on the bank or a ramp in some source (~550 of
-// 1,551). NOT the stricter 322 open-only set: Wittee and Ferry are Restricted Access
-// because their banks are state forest, and they are the whole point.
-const REGISTRY_DEFAULT_FILTER = { reachableOnly: true };
+// Registry lakes shown by default: the ones with a chartpack, i.e. with Garmin soundings.
+// 434 of 1,551. Access is a badge on the record, never the gate -- see lake-registry.js
+// DEFAULT_FILTER for why every access-based default hid a lake Ryan actually fishes.
+const REGISTRY_DEFAULT_FILTER = { shippedOnly: true };
 
 let accessIndexPromise = null;
 let accessIndex = {
