@@ -6,6 +6,9 @@ import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../data/lake-keys.js';
 
 export { LAKE_NAME_TO_R2_KEY, resolveR2Key };
 
+import { depthColor } from '../utils/depth-palette.js';
+import { displayDepth } from './tide-engine.js';
+import { isCoastalKey } from '../data/coastal-zones.js';
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { callSafely } from '../utils/call-global.js';
 
@@ -131,25 +134,13 @@ export async function loadContourForLake(displayName) {
     return;
   }
   console.log(`[contour-data] "${displayName}" → ${r2Key}`);
+  setContourTidal(isCoastalKey(r2Key));
   await loadContourByR2Key(r2Key);
 }
 
 // ── Contour layer rendering ───────────────────────────────────────────────────
-const DEPTH_COLORS = [
-  { max: 10,       color: '#e63946' },
-  { max: 20,       color: '#f4a261' },
-  { max: 28,       color: '#e9c46a' },
-  { max: 36,       color: '#2a9d8f' },
-  { max: 45,       color: '#00e5ff' },
-  { max: 55,       color: '#0077b6' },
-  { max: 65,       color: '#7b2d8b' },
-  { max: Infinity, color: '#ffffff' },
-];
-
-function depthColor(ft) {
-  for (const band of DEPTH_COLORS) { if (ft <= band.max) return band.color; }
-  return '#ffffff';
-}
+// Palette moved to js/utils/depth-palette.js -- this table was one of three that disagreed
+// about what a given depth looks like. See that file for the measurement that prompted it.
 
 // SVG renderer for contour lines — SVG layers sit above canvas in DOM,
 // so contours render on top of canvas depth areas automatically.
@@ -172,6 +163,22 @@ const CONTOUR_MIN_ZOOM = 11;
 function ftOf(feat) {
   const v = feat?.properties?.depth_ft;
   return (v == null || !Number.isFinite(v)) ? null : Math.round(v);
+}
+
+// Whether the water currently loaded is tidal. Set when a pack loads, because that is the
+// only place the R2 key is known; every depth drawn below routes through displayDepth(),
+// which refuses to apply a tide unless this says the water has one. A stale coastal tide
+// leaking onto a lake would add feet to every contour on Murray and look merely generous.
+let _isTidal = false;
+export function setContourTidal(isCoastal) { _isTidal = !!isCoastal; }
+
+// What to DRAW for a contour: charted feet on a lake, tide-corrected feet on tidal water.
+// Rounded after correction so the label stays a whole number the way the plotter shows it.
+function shownFt(feat) {
+  const charted = ftOf(feat);
+  if (charted == null) return null;
+  const d = displayDepth(charted, _isTidal);
+  return d == null ? null : Math.round(d);
 }
 
 // ── Inline depth labels on contour lines ──────────────────────────────────────
@@ -287,7 +294,7 @@ function renderContourLabels(layers) {
 
     for (const feat of feats) {
       if (count >= LABEL_MAX) break;
-      const ft = ftOf(feat);
+      const ft = shownFt(feat);
       if (ft == null) continue;
       // Round intervals only, until the zoom is close enough to carry every line.
       if (interval > 1 && ft % interval !== 0) continue;
@@ -376,7 +383,7 @@ export function renderContourLayer(showSmart = true, showRaw = false) {
       renderer: _canvasRenderer,
       smoothFactor,
       style(feat) {
-        const depth = ftOf(feat) ?? 0;
+        const depth = shownFt(feat) ?? 0;
         return { color: depthColor(depth), weight: 1.5, opacity: 0.85, dashArray: dashed ? '4,4' : null };
       },
       onEachFeature(feat, layer) {

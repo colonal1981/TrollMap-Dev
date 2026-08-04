@@ -22,7 +22,8 @@ import { isCoastalKey } from '../data/coastal-zones.js';
 import {
   registerLayer, isVisible, getLayer, replaceLayer, dropAll, refreshButtons, wireAll,
 } from '../core/layer-registry.js';
-import { tideAdjustedDepth } from './tide-engine.js';
+import { displayDepth, setDisplayTide } from './tide-engine.js';
+import { depthColor } from '../utils/depth-palette.js';
 
 const _renderer = L.canvas({ padding: 0.5 });
 
@@ -126,11 +127,12 @@ async function buildMarshLayer(zoneKey) {
 // ── Depth soundings ─────────────────────────────────────────────────────────
 function soundingLabelHtml(chartedFt, adjustedFt) {
   const shown = Number.isFinite(adjustedFt) ? adjustedFt : chartedFt;
-  // Colour by actual runnable water, not charted datum.
-  const color =
-    shown < 2  ? '#e53935' :
-    shown < 4  ? '#fb8c00' :
-    shown < 8  ? '#fdd835' : '#4fc3f7';
+  // Colour by actual runnable water, not charted datum -- and on the SAME ladder as the
+  // contour lines and depth polygons. This was the third of three private palettes: a 6 ft
+  // sounding drew #fdd835 while the 6 ft contour under it drew #e63946 and the polygon
+  // around both drew something else again. Its 2 / 4 / 8 ft breaks were the good idea in it,
+  // and they are now the shallow end of the shared ladder.
+  const color = depthColor(shown);
   return `<span style="
     color:${color};font-size:10px;font-weight:700;
     text-shadow:0 0 3px #000,0 0 2px #000;white-space:nowrap;
@@ -138,13 +140,16 @@ function soundingLabelHtml(chartedFt, adjustedFt) {
 }
 
 function buildSoundingMarkers(features, tideFt) {
+  // The caller's tide height becomes THE tide height, so soundings, polygons and contour
+  // labels cannot drift apart mid-render. Previously each layer held its own copy.
+  setDisplayTide(tideFt);
   const group = L.layerGroup();
   for (const feat of features) {
     const coords = feat.geometry?.coordinates;
     if (!coords) continue;
     const charted = Number(feat.properties?.depth_ft);
     if (!Number.isFinite(charted)) continue;
-    const adjusted = tideAdjustedDepth(charted, tideFt);
+    const adjusted = displayDepth(charted, true);
 
     const marker = L.marker([coords[1], coords[0]], {
       interactive: true,

@@ -1,14 +1,10 @@
 import { describe, it, expect } from './expect-shim.mjs';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { COASTAL_ZONES, COASTAL_SLUGS } from '../js/data/coastal-zones.js';
 import { resolveR2Key } from '../js/data/lake-keys.js';
-// Still imported: LAKE_DB is dead to the app but alive to the pipeline. See the
-// 'LAKE_DB is dead to the app' test below for why the file is not deleted yet.
-import { LAKE_DB } from '../js/data/lakes.js';
 
-const sep = path.sep;
 const JS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'js');
 function walkJs(dir, out = []) {
   for (const e of readdirSync(dir)) {
@@ -62,15 +58,6 @@ describe('smart-plan coastal mode — integration contract', () => {
 });
 
 describe('coastal weather lookup gap', () => {
-  it('only 9 of the 21 coastal zones exist in LAKE_DB', () => {
-    // This is why the forecast fetch cannot rely on LAKE_DB alone.
-    const inDb = COASTAL_SLUGS.filter((slug) => {
-      const name = COASTAL_ZONES[slug].name;
-      return Boolean(LAKE_DB[name]);
-    });
-    expect(inDb.length).toBeLessThan(COASTAL_SLUGS.length);
-  });
-
   it('every coastal zone has a centre for the forecast call', () => {
     // COASTAL_ZONES is the fallback that closes the gap.
     for (const slug of COASTAL_SLUGS) {
@@ -80,43 +67,34 @@ describe('coastal weather lookup gap', () => {
     }
   });
 
-  it('smart-plan prefers the coastal centre over LAKE_DB', () => {
+  it('smart-plan prefers the coastal centre over any curated centre', () => {
     expect(src).toContain('coastalCenter');
     expect(src).toMatch(/coastalCenter\s*\|\|/);
   });
 
-  it('LAKE_DB is dead to the app', () => {
-    // This replaced a test that asserted LAKE_DB's coastal bounds AGREE with the generated
-    // catalog. That test was guarding a corpse. Every reference to LAKE_DB left in js/ is a
-    // comment recording its removal -- ramps.js, plan-builder.js, smart-plan.js,
-    // lake-research-engine.js and utility-sync.js all say so in their own words -- and
-    // nothing outside test/ imports data/lakes.js at all. Ryan, plainly: "LAKE_DB is dead
-    // abandoned code."
+  it('nothing in the app imports js/data/lakes.js — the file is gone', () => {
+    // js/data/lakes.js was deleted 2026-08-04. It had been listed as dead code three times
+    // and was not dead: consolidate_lake_index.py read it as the ONLY source of USGS gauge
+    // sites (Marion, Moultrie, Murray, Parr Shoals, Wateree), Duke and Dominion basin
+    // bindings, normal/min pool elevations, and the curated ramp lists on 38 index rows.
+    // Deleting it as written would have stripped all of that silently, because the index
+    // still builds — it just builds without gauges.
     //
-    // Keeping the sync test meant every edit to coastal_catalog.py forced a matching edit to
-    // a structure with no readers, and going green depended on maintaining data nothing uses.
-    // The real invariant is that it stays unused, so that is what is asserted.
-    // NOT "the file is gone" -- not yet. It is dead to the APP but still live to the
-    // PIPELINE: consolidate_lake_index.py reads `lake_db` out of registry/js_lists.json,
-    // which js/data/dump_js_lists.mjs generates from this file, and two registry entries --
-    // "Congaree River (to SC-601)" and "Wateree River" -- currently list lake_db as their
-    // ONLY source. Deleting it today would drop them from the index silently.
-    //
-    // Both are rivers, so make_river_boundaries.py should produce them from the DNR ramp
-    // feeds. Once it does and they carry a second source, the file goes -- see DELETION_TAB.
-    // Until then the invariant is narrower: nothing in the running app may read it.
+    // The data moved to registry/curated_lakes.json, beside the index it feeds, where it is
+    // obviously pipeline input rather than an orphaned app module. What this test guards is
+    // that it never comes BACK into js/ — a re-added lakes.js would be read by nothing and
+    // would start the same misdiagnosis over.
     const offenders = [];
     for (const f of walkJs(JS)) {
-      const src = readFileSync(f, 'utf8')
+      const cleaned = readFileSync(f, 'utf8')
         .replace(/\/\*[\s\S]*?\*\//g, '')
         .replace(/\/\/.*$/gm, '');
-      // dump_js_lists.mjs is the pipeline generator, not app code -- it is allowed.
-      if (f.endsWith(`${sep}lakes.js`) || f.endsWith(`${sep}dump_js_lists.mjs`)) continue;
-      if (/from\s+['"][^'"]*data\/lakes\.js['"]/.test(src) || /\bLAKE_DB\b/.test(src)) {
+      if (/from\s+['"][^'"]*data\/lakes\.js['"]/.test(cleaned) || /\bLAKE_DB\b/.test(cleaned)) {
         offenders.push(f.slice(JS.length + 1));
       }
     }
     expect(offenders).toEqual([]);
+    expect(existsSync(path.join(JS, 'data', 'lakes.js'))).toBe(false);
   });
 });
 

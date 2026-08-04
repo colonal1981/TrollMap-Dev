@@ -10,6 +10,8 @@ import {
   invalidate as layerInvalidate, wireButton as layerWireButton,
 } from '../core/layer-registry.js';
 import { esc } from '../utils/escape.js';
+import { depthColor } from '../utils/depth-palette.js';
+import { displayDepth, setDisplayTide, isTideCorrected } from './tide-engine.js';
 import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../data/lake-keys.js';
 import { distMiFromCoords as distMi } from '../utils/geo.js';
 import { TRISTATE_MASTER_RAMPS, rampsReady } from '../data/ramps-loader.js';
@@ -31,34 +33,29 @@ export const resolveBoundaryKey = resolveR2Key;
 // Re-export map for back-compat
 export { LAKE_NAME_TO_R2_KEY, resolveR2Key };
 
-const DEPTH_BANDS = [
-  { max: 10,       color: '#e63946' },
-  { max: 20,       color: '#f4a261' },
-  { max: 28,       color: '#e9c46a' },
-  { max: 36,       color: '#2a9d8f' },
-  { max: 45,       color: '#00e5ff' },
-  { max: 55,       color: '#0077b6' },
-  { max: 65,       color: '#7b2d8b' },
-  { max: Infinity, color: '#ffffff' },
-];
+// Both band tables lived here: DEPTH_BANDS (freshwater) and DEPTH_BANDS_COASTAL, whose
+// thresholds were chosen to land on NOAA ENC DEPARE's polygon edges. Those polygons are
+// Garmin's now in the six primary zones, so the coastal edges were falling mid-interval and
+// the fill did not line up with its own linework. One ladder now, in
+// js/utils/depth-palette.js, shared with the contour lines and the soundings.
+//
+// The `coastal` argument is gone deliberately rather than kept and ignored: a parameter that
+// no longer changes the answer is how the next person concludes the two are still different.
 
-// NOAA ENC DEPARE uses metric-derived breaks: 5.9, 11.8, 17.7, 29.9, 35.8, 59.7ft
-const DEPTH_BANDS_COASTAL = [
-  { max: 5.9,      color: '#e63946' },
-  { max: 11.8,     color: '#f4a261' },
-  { max: 17.7,     color: '#e9c46a' },
-  { max: 29.9,     color: '#2a9d8f' },
-  { max: 35.8,     color: '#00e5ff' },
-  { max: 59.7,     color: '#0077b6' },
-  { max: Infinity, color: '#7b2d8b' },
-];
+// One tooltip string for a depth band, so the hover can never disagree with the fill.
+function depthZoneLabel(p, isCoastal) {
+  const lo = p.depth_min_ft;
+  const hi = p.depth_max_ft;
+  const charted = `${ftLabel(lo)}\u2013${ftLabel(hi)} ft`;
+  if (!isCoastal || !isTideCorrected()) return `Depth zone: ${charted}`;
+  const lo2 = displayDepth(lo, true);
+  const hi2 = displayDepth(hi, true);
+  return `Depth zone: ${ftLabel(lo2)}\u2013${ftLabel(hi2)} ft`
+       + `<br><span style="font-size:10px;color:#aaa">charted ${charted} MLLW</span>`;
+}
 
-function depthAreaColor(ft, coastal = false) {
-  const bands = coastal ? DEPTH_BANDS_COASTAL : DEPTH_BANDS;
-  for (const band of bands) {
-    if (ft <= band.max) return band.color;
-  }
-  return '#ffffff';
+function depthAreaColor(ft) {
+  return depthColor(ft);
 }
 
 // Was its own database, `trollmap-supplemental`, with its own openDB/idbGet/idbSet. Folded
@@ -210,18 +207,17 @@ async function loadDepthAreas(lakeKey) {
       style(feat) {
         const p = feat.properties || {};
         const chartedFt = p.depth_max_ft ?? p.depth_min_ft ?? p.depth_ft ?? 0;
-        // For coastal zones shift color by current tide height so polygons reflect
-        // actual water depth at time of trip, not charted MLLW.
-        const depthFt = (isCoastal && Number.isFinite(_coastalTideHeightFt))
-          ? chartedFt + _coastalTideHeightFt
-          : chartedFt;
-        const color = depthAreaColor(depthFt, isCoastal);
+        const depthFt = displayDepth(chartedFt, isCoastal) ?? chartedFt;
+        const color = depthAreaColor(depthFt);
         return { fillColor: color, fillOpacity: 0.55, color, weight: strokeW,
                  opacity: strokeW ? 0.5 : 0, stroke: strokeW > 0 };
       },
       onEachFeature(feat, layer) {
         const p = feat.properties || {};
-        layer.bindTooltip(`Depth zone: ${ftLabel(p.depth_min_ft)}–${ftLabel(p.depth_max_ft)} ft`,
+        // The hover used to report the CHARTED band while the fill beside it was already
+        // tide-shifted, so the two contradicted each other on every flood tide. Say the same
+        // thing the colour says, and show the charted figure underneath rather than dropping it.
+        layer.bindTooltip(depthZoneLabel(p, isCoastal),
                           { sticky: true, direction: 'top', opacity: 0.85 });
       },
     });
@@ -1389,7 +1385,7 @@ export function refreshDepthAreaColors(tideHeightFt) {
     }, 1500);
     return;
   }
-  _coastalTideHeightFt = Number.isFinite(tideHeightFt) ? tideHeightFt : null;
+  _coastalTideHeightFt = setDisplayTide(tideHeightFt);
   if (!_depthAreaGeoJSON || !mapReady()) return;
   // Re-render directly from cached GeoJSON — no fetch
   const gj = _depthAreaGeoJSON;
@@ -1402,15 +1398,13 @@ export function refreshDepthAreaColors(tideHeightFt) {
     style(feat) {
       const p = feat.properties || {};
       const chartedFt = p.depth_max_ft ?? p.depth_min_ft ?? p.depth_ft ?? 0;
-      const depthFt = Number.isFinite(_coastalTideHeightFt)
-        ? chartedFt + _coastalTideHeightFt
-        : chartedFt;
-      const color = depthAreaColor(depthFt, isCoastal);
+      const depthFt = displayDepth(chartedFt, isCoastal) ?? chartedFt;
+      const color = depthAreaColor(depthFt);
       return { fillColor: color, fillOpacity: 0.55, color, weight: 0.5, opacity: 0.5 };
     },
     onEachFeature(feat, layer) {
       const p = feat.properties || {};
-      layer.bindTooltip(`Depth zone: ${ftLabel(p.depth_min_ft)}–${ftLabel(p.depth_max_ft)} ft`,
+      layer.bindTooltip(depthZoneLabel(p, isCoastal),
                         { sticky: true, direction: 'top', opacity: 0.85 });
     },
   });
