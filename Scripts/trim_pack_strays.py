@@ -112,13 +112,37 @@ def main():
         except Exception:
             state = {}
 
+    # A DRY RUN CHANGES NOTHING, SO IT HAS NOTHING TO RESUME.
+    #
+    # This file used to be written unconditionally. A dry run therefore recorded all 1,516
+    # packs, and the --go that followed skipped every one and reported "scanned 1516 packs,
+    # 0 needed work" -- which reads exactly like "your chartpacks are clean". Ryan ran the
+    # dry run, saw 563 packs needing work, ran --go, and was told there was nothing to do.
+    #
+    # Entries now carry the mode that produced them:
+    #   'skip'          a missing boundary or ring. A fact about the data, true in any mode.
+    #   'dry': True     what WOULD change. A decision, not a repair. Discard before writing.
+    #   neither         written by a real --go pass, or by a build predating this fix.
+    #
+    # On --go, keep only the skips and the repairs. Untagged entries are discarded too: their
+    # provenance is unknowable, and re-scanning costs minutes while trusting them costs a
+    # silent no-op that looks like success.
+    if a.go and state:
+        drop = [k for k, v in state.items() if 'skip' not in v and not v.get('repaired')]
+        for k in drop:
+            del state[k]
+        if drop:
+            print('  ignoring %d resume entries not written by a completed --go pass' % len(drop))
+
     slugs = a.lake or sorted(d for d in os.listdir(a.chartpack)
                              if os.path.isdir(os.path.join(a.chartpack, d)))
     t0 = time.time()
     touched = tot_trim = tot_drop = 0
     worst = []
+    skipped = 0
     for slug in slugs:
         if not a.lake and slug in state:
+            skipped += 1
             continue
         if a.seconds and time.time() - t0 > a.seconds:
             print('  ... stopping at the time limit, progress saved')
@@ -179,6 +203,9 @@ def main():
                 tmp = fp + '.tmp'
                 json.dump(doc, open(tmp, 'w', encoding='utf-8'), ensure_ascii=False)
                 os.replace(tmp, fp)
+        # Marked only on a pass that actually wrote. See the resume-file note above.
+        if a.go:
+            rec['repaired'] = True
         state[slug] = rec
         if rec['trim'] or rec['drop']:
             touched += 1
@@ -186,8 +213,16 @@ def main():
             worst.append((rec['worst_km'], slug, rec['trim'], rec['drop'], rec['feats']))
 
     json.dump(state, open(statep, 'w'))
-    scanned = sum(1 for v in state.values() if 'skip' not in v)
+    # `scanned` used to be counted off the STATE dict, so a pass that opened nothing still
+    # reported the full 1,516. Count what THIS pass actually looked at.
+    scanned = len(slugs) - skipped
     print('\nscanned %d packs, %d needed work' % (scanned, touched))
+    if skipped:
+        print('skipped %d packs already recorded in %s' % (skipped, os.path.basename(statep)))
+    if scanned == 0 and skipped:
+        print('\n  !! THIS RUN EXAMINED NOTHING -- every pack was already in the resume file.')
+        print('     That is not the same as "nothing needed doing". Delete')
+        print('     %s to force a full pass.' % statep)
     print('%d features trimmed, %d dropped' % (tot_trim, tot_drop))
     worst.sort(reverse=True)
     if worst:
