@@ -16,7 +16,7 @@ Each entry contains:
 COASTAL_CATALOG = {
     'coast_winyah_bay_sc': {
         'name': 'Winyah Bay / Georgetown, SC',
-        'bbox': (33.15, 33.55, -79.50, -79.10),
+        'bbox': (33.325, 33.571, -79.586, -79.093),
         'center': (33.35, -79.28),
         'priority': 8,
         'coastal': True,
@@ -30,13 +30,14 @@ COASTAL_CATALOG = {
     },
     'coast_murrells_inlet_sc': {
         'name': 'Murrells Inlet / Pawleys Island, SC',
-        'bbox': (33.45, 33.65, -79.20, -78.92),
+        'bbox': (33.499, 33.854, -79.178, -78.6),
         'center': (33.55, -79.05),
         'priority': 8,
         'coastal': True,
         'tide_station': '8661070',
         'state': 'SC',
         'ramps': {
+            'Oyster Landing (Kayak/Sm Boat)': [33.54751, -79.04484],
             'Morse Park Landing':    [33.553, -79.047],
             'Garden City Boat Ramp': [33.601, -79.007],
         }
@@ -62,7 +63,7 @@ COASTAL_CATALOG = {
     },
     'coast_santee_delta_sc': {
         'name': 'Santee River Delta / North Inlet, SC',
-        'bbox': (33.05, 33.35, -79.55, -79.15),
+        'bbox': (32.99, 33.327, -79.622, -79.158),
         'center': (33.18, -79.35),
         'priority': 8,
         'coastal': True,
@@ -74,7 +75,7 @@ COASTAL_CATALOG = {
     },
     'coast_charleston_sc': {
         'name': 'Charleston Harbor, SC',
-        'bbox': (32.60, 32.95, -80.10, -79.75),
+        'bbox': (32.623, 33.115, -80.19, -79.734),
         'center': (32.77, -79.93),
         'priority': 8,
         'coastal': True,
@@ -88,7 +89,7 @@ COASTAL_CATALOG = {
     },
     'coast_ace_basin_sc': {
         'name': 'ACE Basin / Edisto, SC',
-        'bbox': (32.35, 32.75, -80.70, -80.25),
+        'bbox': (32.296, 32.76, -80.709, -80.129),
         'center': (32.55, -80.47),
         'priority': 8,
         'coastal': True,
@@ -115,7 +116,7 @@ COASTAL_CATALOG = {
     },
     'coast_beaufort_sc': {
         'name': 'Beaufort / Port Royal Sound, SC',
-        'bbox': (32.25, 32.65, -80.90, -80.45),
+        'bbox': (32.25, 32.65, -80.92, -80.45),
         'center': (32.43, -80.67),
         'priority': 8,
         'coastal': True,
