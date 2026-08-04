@@ -214,6 +214,47 @@ export function pruneAccessToRecord(index, lakeName, rec, marginKm = 5) {
   return pts.length - keep.length;
 }
 
+// One water, several DNR names, TWO feeds.
+//
+// `findExistingLakeKey` returns ONE key and stops, which is right for choosing what to call
+// the lake and wrong for cleaning up after it. Fishing Creek Reservoir arrives twice: as
+// "Fishing Creek Reservoir" on /ramps and as "Fishing Creek" on /paddle. Pass A matches the
+// first exactly, returns, and the paddle entry is orphaned in the picker as its own row with
+// one access point and no pack behind it -- so it looks like a lake with no contours.
+//
+// So after a record has claimed its entry, absorb the OTHER entries that are demonstrably the
+// same water: same loose name, and EVERY one of their points inside this lake's bounds.
+//
+// "Every", not "some", on purpose. A creek that runs past a reservoir and out the other side
+// has points outside it and is genuinely different water -- Fishing Creek the creek is not
+// Fishing Creek Reservoir. Requiring all of them means a name only collapses when there is
+// nothing left of it outside the lake.
+export function absorbDuplicateEntries(index, lakeName, rec) {
+  const b = rec && rec.boundsWSEN;
+  if (!Array.isArray(b) || b.length !== 4 || !index.byLake.has(lakeName)) return 0;
+  const target = lakeNameLooseKey(lakeName);
+  if (!target || target.length < 3) return 0;
+  const keep = index.byLake.get(lakeName);
+  let absorbed = 0;
+  for (const other of [...index.byLake.keys()]) {
+    if (other === lakeName) continue;
+    if (lakeNameLooseKey(other) !== target) continue;
+    const pts = index.byLake.get(other) || [];
+    if (!pts.length) continue;
+    if (!pts.every((p) => pointInRecordBounds(rec, p.lat, p.lon))) continue;
+    for (const p of pts) {
+      const dup = keep.some((q) => q.name === p.name
+        && Math.abs((q.lat || 0) - (p.lat || 0)) < 1e-6
+        && Math.abs((q.lon || 0) - (p.lon || 0)) < 1e-6);
+      if (!dup) keep.push(p);
+    }
+    index.byLake.delete(other);
+    index.registryByName.delete(other);
+    absorbed += 1;
+  }
+  return absorbed;
+}
+
 // Look for an existing lake in the index (typically worker-derived) whose name matches a
 // supplemental lake we're about to add, so we merge into it instead of creating a
 // visually-duplicate second dropdown entry.
@@ -481,12 +522,14 @@ async function buildAccessIndex() {
     // resolves to a real curated pack and point it at a 404.
     let added = 0;
     let pruned = 0;
+    let folded = 0;
     for (const rec of filterLakes(REGISTRY_DEFAULT_FILTER)) {
       const existingKey = findExistingLakeKey(index, rec.name, rec.lat, rec.lon, 15, rec);
       const lakeName = existingKey || rec.displayName;
       if (!existingKey) added += 1;
       index.registryByName.set(lakeName, rec);   // shipped record wins over a pass-1 namesake
       pruned += pruneAccessToRecord(index, lakeName, rec);
+      folded += absorbDuplicateEntries(index, lakeName, rec);
       // Teach lake-keys.js the slug so contour/chartpack loads resolve without fuzzy
       // matching. Curated names already in LAKE_NAME_TO_R2_KEY are left alone.
       registerR2Key(lakeName, rec.slug);
@@ -503,6 +546,7 @@ async function buildAccessIndex() {
     }
     if (added) console.info(`[access-index] registry contributed ${added} lakes not in the DNR feeds`);
     if (pruned) console.info(`[access-index] dropped ${pruned} access point(s) that sit outside the lake they were filed under`);
+    if (folded) console.info(`[access-index] folded ${folded} duplicate DNR name(s) into the lake they belong to`);
     // Was `registryByName.size of byLake.size`, which printed "1560 of 1104" — more than
     // all of them. The two maps are keyed differently: registryByName holds every registry
     // NAME VARIANT, byLake holds DNR waterbody names, and neither contains the other. The
