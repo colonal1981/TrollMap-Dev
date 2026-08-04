@@ -1,7 +1,7 @@
 import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized, chartpackKey, handleChartpackList } from './worker-core.js'; 
 import { LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard } from './worker-data.js';
 import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality } from './worker-species.js';
-import { handleGisRoute } from './core/arcgis.js';
+import { handleGisRoute, flagIsYes, hasText } from './core/arcgis.js';
 import { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine, handleResearchVisionScan, handleResearchVisionScanSave, handleResearchVisionScanStatus } from './worker-research.js';
 
 
@@ -1282,7 +1282,7 @@ var trollmap_worker_default = {
           GA: {
             url: "https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/WRD_Water_Access_Points/FeatureServer/0/query",
             idField: "FID",
-            filter: (p) => String(p.Ramp || "").toUpperCase() === "Y" && !["closed", "inactive"].includes(String(p.Status || "").toLowerCase()),
+            filter: (p) => flagIsYes(p.Ramp) && !["closed", "inactive"].includes(String(p.Status || "").toLowerCase()),
             name: (p) => p.Name,
             wb: (p) => p.Waterbody,
             lat: (p) => p.Latitude,
@@ -1346,7 +1346,7 @@ var trollmap_worker_default = {
           GA: {
             url: "https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/WRD_Water_Access_Points/FeatureServer/0/query",
             idField: "FID",
-            filter: (p) => String(p.CanoeAcc || "").toLowerCase() === "y" && !["closed", "inactive"].includes(String(p.Status || "").toLowerCase()),
+            filter: (p) => flagIsYes(p.CanoeAcc) && !["closed", "inactive"].includes(String(p.Status || "").toLowerCase()),
             name: (p) => p.Name,
             wb: (p) => p.Waterbody,
             lat: (p) => p.Latitude,
@@ -1356,7 +1356,13 @@ var trollmap_worker_default = {
           },
           NC: {
             url: "https://services1.arcgis.com/YfqBAUM5nWR3yhGP/arcgis/rest/services/NCWRC_Boating_Access_Areas_view/FeatureServer/0/query",
-            filter: (p) => (String(p.Non_Motorized_Access || "").toLowerCase() === "yes" || String(p.Portable_Boat_Access_Type || "").length > 0) && String(p.Site_Status || "").toLowerCase() === "open",
+            // Non_Motorized_Access is a coded-value domain: the viewer shows YES/NO,
+            // the REST response returns 1/0. Comparing it to "yes" matched NOTHING --
+            // the only sites getting through were the 11 with free-text
+            // Portable_Boat_Access_Type, out of 136 that qualify. Verified 2026-08-04:
+            // `where=Non_Motorized_Access=1 AND Site_Status='OPEN'` returns 136.
+            // Site_Status IS stored as text ('OPEN'), so that half stays a string compare.
+            filter: (p) => (flagIsYes(p.Non_Motorized_Access) || hasText(p.Portable_Boat_Access_Type)) && String(p.Site_Status || "").toLowerCase() === "open",
             name: (p) => p.BAA_Name,
             wb: (p) => p.Water_Access,
             lat: (p) => p.Latitude,
@@ -1365,8 +1371,17 @@ var trollmap_worker_default = {
             metaNested: true,
           },
           TN: {
-            url: "https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/Paddling_Access_Sites/FeatureServer/0/query",
-            filter: (p) => p.IncludeWeb === "Yes",
+            // Paddling_Access_Sites is a VIEW over TWRA's AllAccessSites layer, and its
+            // viewDefinitionQuery is already "(Type = 'Paddling') AND (IncludeWeb = 'Yes')".
+            // Both halves are applied server-side. IncludeWeb is not in the layer's field
+            // list, so it never comes back in the response -- p.IncludeWeb was `undefined`
+            // on every row and this filter rejected all 34 sites. Verified 2026-08-04
+            // against the layer definition. Type IS returned, so re-checking it here is a
+            // real assertion rather than a tautology: if TWRA ever repoints this view at
+            // the unfiltered layer, we still only take paddling sites.
+            // Do NOT filter on CanoeLanding -- it is "No" or null on legitimate paddle
+            // sites (Black Fox and Dodd Hollow, among others).
+            filter: (p) => p.Type === "Paddling",
             name: (p) => p.Name,
             wb: (p) => p.Waterway,
             lat: (p) => p.Latitude,
@@ -1394,7 +1409,7 @@ var trollmap_worker_default = {
         const BANKPIER_SOURCES = {
           SC: {
             url: "https://services.arcgis.com/acgZYxoN5Oj8pDLa/arcgis/rest/services/South_Carolina_Public_Water_Access_PUBLIC_VIEW/FeatureServer/0/query",
-            filter: (p) => (p.WaterAccessType === "Bank" || p.WaterAccessType === "Pier" || String(p.FishingPier || "").toLowerCase() === "yes") && p.Status?.toLowerCase() === "active" && p.PublicAccess?.toLowerCase() !== "closed",
+            filter: (p) => (p.WaterAccessType === "Bank" || p.WaterAccessType === "Pier" || flagIsYes(p.FishingPier)) && p.Status?.toLowerCase() === "active" && p.PublicAccess?.toLowerCase() !== "closed",
             name: (p) => p.WaterAccessName,
             wb: (p) => p.Waterbody,
             lat: (p) => p.Latitude,
@@ -1405,7 +1420,7 @@ var trollmap_worker_default = {
           GA: {
             url: "https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/WRD_Water_Access_Points/FeatureServer/0/query",
             idField: "FID",
-            filter: (p) => (String(p.BankFish || "").toLowerCase() === "y" || String(p.PierFish || "").toLowerCase() === "y") && !["closed", "inactive"].includes(String(p.Status || "").toLowerCase()),
+            filter: (p) => (flagIsYes(p.BankFish) || flagIsYes(p.PierFish)) && !["closed", "inactive"].includes(String(p.Status || "").toLowerCase()),
             name: (p) => p.Name,
             wb: (p) => p.Waterbody,
             lat: (p) => p.Latitude,
@@ -1425,7 +1440,12 @@ var trollmap_worker_default = {
           },
           TN: {
             url: "https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/Fishing_Sites/FeatureServer/0/query",
-            filter: (p) => p.IncludeWeb === "Yes",
+            // Same bug as TN paddle. Fishing_Sites is a view over AllAccessSites whose
+            // viewDefinitionQuery is "(Type = 'Fishing Site') AND (IncludeWeb = 'Yes')",
+            // and IncludeWeb is NOT in the view's field list -- so this rejected all 118
+            // sites. (The TN /ramps view, Boat_Launch_Sites, DOES expose IncludeWeb,
+            // which is why that one feed kept working and hid the pattern.)
+            filter: (p) => p.Type === "Fishing Site",
             name: (p) => p.Name,
             wb: (p) => p.Waterway,
             lat: (p) => p.Latitude,
