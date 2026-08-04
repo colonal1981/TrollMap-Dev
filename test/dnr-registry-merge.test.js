@@ -2,7 +2,8 @@ import { describe, it, expect } from './expect-shim.mjs';
 // access-index.js publishes legacy global helpers on `window` at module scope, so it needs
 // one before it can be imported under node. Same shim the registry and cloud-sync tests use.
 if (typeof globalThis.window === 'undefined') globalThis.window = globalThis;
-const { lakeNameLooseKey, findExistingLakeKey } = await import('../js/data/access-index.js');
+const { lakeNameLooseKey, findExistingLakeKey, pruneAccessToRecord } =
+  await import('../js/data/access-index.js');
 
 /**
  * The DNR feeds and 3DHP call the same water different things, so the picker showed one lake
@@ -106,5 +107,52 @@ describe('pass B — loose name, but only with the point inside the lake', () =>
   it('declines when the existing entry has no access points to corroborate with', () => {
     const i = idx([['Murray Pond, SC', []]]);
     expect(findExistingLakeKey(i, looseOnly.name, 34.06, -80.94, 15, looseOnly)).toBe(null);
+  });
+});
+
+describe('an access point belongs to a lake because it is ON it', () => {
+  // SC DNR files two unrelated lakes under "Lake Robinson": J. Verne Smith Park on
+  // Greenville Water's lake, and the Duke cooling lake on Black Creek 203 km away. The
+  // picker made one entry, the map fitted both, and selecting it zoomed out across the state.
+  const robinson = {
+    name: 'Lake Robinson',
+    displayName: 'Lake Robinson (Chesterfield Co, SC)',
+    legacyDisplayNames: [],
+    boundsWSEN: [-80.1742, 34.4008, -80.1419, 34.4903],
+  };
+  const bothRamps = () => [
+    { name: 'J. Verne Smith Park', lat: 34.9926, lon: -82.2967 },  // 203 km away
+    { name: 'Lake Robinson',       lat: 34.4689, lon: -80.1685 },  // on the water
+  ];
+
+  it('drops the ramp that is on a different lake of the same name', () => {
+    const i = { byLake: new Map([['Lake Robinson, SC', bothRamps()]]) };
+    const dropped = pruneAccessToRecord(i, 'Lake Robinson, SC', robinson);
+    const kept = i.byLake.get('Lake Robinson, SC');
+    expect(dropped).toBe(1);
+    expect(kept).toHaveLength(1);
+    expect(kept[0].name).toBe('Lake Robinson');
+  });
+
+  it('never empties an entry, even if every point looks wrong', () => {
+    const i = { byLake: new Map([['Lake Robinson, SC', [
+      { name: 'a', lat: 34.99, lon: -82.29 }, { name: 'b', lat: 35.01, lon: -82.31 },
+    ]]]) };
+    expect(pruneAccessToRecord(i, 'Lake Robinson, SC', robinson)).toBe(0);
+    expect(i.byLake.get('Lake Robinson, SC')).toHaveLength(2);
+  });
+
+  it('leaves a record with no bounds alone — nothing to judge against', () => {
+    const i = { byLake: new Map([['Lake Robinson, SC', bothRamps()]]) };
+    expect(pruneAccessToRecord(i, 'Lake Robinson, SC', { ...robinson, boundsWSEN: null })).toBe(0);
+    expect(i.byLake.get('Lake Robinson, SC')).toHaveLength(2);
+  });
+
+  it('keeps a ramp just outside the bbox — 5 km of margin for tributaries and access roads', () => {
+    const i = { byLake: new Map([['Lake Robinson, SC', [
+      { name: 'on the water', lat: 34.4689, lon: -80.1685 },
+      { name: 'up a creek',   lat: 34.4903 + 0.03, lon: -80.1600 },   // ~3.3 km north
+    ]]]) };
+    expect(pruneAccessToRecord(i, 'Lake Robinson, SC', robinson)).toBe(0);
   });
 });
