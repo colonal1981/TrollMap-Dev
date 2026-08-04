@@ -4,6 +4,7 @@
  */
 
 import { setBase, fitMap, renderMap } from '../core/map-init.js';
+import { searchWaters, selectWater, invalidateWaterIndex } from './water-search.js';
 import { state } from '../core/state.js';
 import { pushAllLocalToCloud, pullUpdatesOnLoad } from './cloud-sync.js';
 
@@ -66,27 +67,41 @@ function wireButtons() {
     if (e.target === modal) closeModal();
   });
 
-  // Quick pick dropdown — jump to preset location
-  document.getElementById('quickPick')?.addEventListener('change', (e) => {
-    const val = e.target.value;
-    if (!val || !state.MAP) return;
-    const parts = val.split(',');
-    if (parts.length >= 2) {
-      const lat = parseFloat(parts[0]);
-      const lon = parseFloat(parts[1]);
-      const zoom = parts[2] ? parseInt(parts[2]) : 14;
-      state.MAP.setView([lat, lon], zoom);
-      closeModal();
-    }
-    e.target.value = '';
-  });
+  // The "Murray quick picks" dropdown was nine hardcoded <option> tags of Lake Murray
+  // coordinates in index.html, under a label that said so. Built to jump around one lake
+  // during testing and never generalised. Removed 2026-08-04 -- the search below now covers
+  // every water, zone, coastal pointer and ramp the app knows, which is what a quick-pick
+  // list was standing in for.
 
   // OSM search
   document.getElementById('searchGo')?.addEventListener('click', async () => {
     const q = document.getElementById('searchInput')?.value?.trim();
     if (!q) return;
     const resultsEl = document.getElementById('searchResults');
-    if (resultsEl) resultsEl.innerHTML = 'Searching…';
+
+    // OUR data first. The registry, the zones, the 158 coastal pointers and every ramp are
+    // already in memory; asking a global geocoder about water this app owns was the bug.
+    invalidateWaterIndex();
+    const local = searchWaters(q);
+    if (local.length && resultsEl) {
+      const ICON = { water: 'W', zone: 'Z', pointer: '>', ramp: 'R' };
+      resultsEl.innerHTML = local.map((e, i) =>
+        `<div data-local="${i}" style="padding:5px 0;cursor:pointer;border-bottom:1px solid var(--line);font-size:12px;color:var(--text)">`
+        + `<span style="color:var(--muted)">${ICON[e.kind] || '-'}</span> ${e.label}`
+        + (e.sublabel ? `<span style="color:var(--muted);font-size:11px"> &mdash; ${e.sublabel}</span>` : '')
+        + `</div>`).join('');
+      resultsEl.querySelectorAll('[data-local]').forEach((el) => {
+        el.addEventListener('click', () => {
+          selectWater(local[Number(el.dataset.local)]);
+          closeModal();
+        });
+      });
+      return;
+    }
+
+    // Only now, and labelled, so a place that is not water stays reachable without the result
+    // pretending to be one of your lakes.
+    if (resultsEl) resultsEl.innerHTML = 'No match in TrollMap &mdash; searching places...';
     try {
       const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=5`);
       const data = await r.json();
@@ -95,9 +110,10 @@ function wireButtons() {
         return;
       }
       if (resultsEl) {
-        resultsEl.innerHTML = data.map((d, i) =>
-          `<div data-idx="${i}" style="padding:4px 0;cursor:pointer;border-bottom:1px solid var(--line);font-size:12px;color:var(--text)" data-lat="${d.lat}" data-lon="${d.lon}">${d.display_name}</div>`
-        ).join('');
+        resultsEl.innerHTML = '<div style="color:var(--muted);font-size:11px;padding-bottom:4px">Places (OpenStreetMap) &mdash; moves the map, does not select a water</div>'
+          + data.map((d, i) =>
+            `<div data-idx="${i}" style="padding:4px 0;cursor:pointer;border-bottom:1px solid var(--line);font-size:12px;color:var(--text)" data-lat="${d.lat}" data-lon="${d.lon}">${d.display_name}</div>`
+          ).join('');
         resultsEl.querySelectorAll('[data-lat]').forEach(el => {
           el.addEventListener('click', () => {
             state.MAP?.setView([parseFloat(el.dataset.lat), parseFloat(el.dataset.lon)], 14);
@@ -106,10 +122,10 @@ function wireButtons() {
         });
       }
     } catch (e) {
-      // The box shows a red 'search failed' line -- that it broke, never why.
-      // Nominatim rate-limits aggressively, which is worth being able to see.
-      console.warn(`[topbar] place search failed:`, e && e.message);
-      if (resultsEl) resultsEl.innerHTML = '<div style="color:var(--bad);font-size:11px">Search failed</div>';
+      // Nominatim rate-limits aggressively and this is now the FALLBACK, so a failure means
+      // "the place lookup broke", not "search is broken".
+      console.warn(`[topbar] place fallback failed:`, e && e.message);
+      if (resultsEl) resultsEl.innerHTML = '<div style="color:var(--bad);font-size:11px">No TrollMap match, and the place lookup failed</div>';
     }
   });
 
