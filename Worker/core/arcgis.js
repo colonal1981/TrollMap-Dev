@@ -5,6 +5,38 @@
 const PAGE_SIZE = 1000;
 
 /**
+ * Is this ArcGIS yes/no flag set?
+ *
+ * Read this before writing another state filter by hand.
+ *
+ * ArcGIS coded-value domains store a CODE and display a DESCRIPTION. The web
+ * viewer -- which is where every one of these filters was written from -- shows
+ * you "YES". The REST response gives you `1`. Both of those are the same field.
+ * A filter that compares the response against the label the viewer showed
+ * matches nothing at all, forever, and the only symptom is a feed that looks
+ * like a state with no access sites.
+ *
+ * Confirmed instances, all the same root cause:
+ *   - GA ramps compared 'yes'/'no' against a column carrying Y/N.
+ *   - NC paddle compared Non_Motorized_Access against 'yes'; the layer returns
+ *     the numeric code 1. 136 qualifying sites came through as 11 -- the 11 were
+ *     picked up by the OR's other branch, so it never even looked empty.
+ *
+ * Accept every encoding these agencies actually use, and let the field's
+ * presence, not its spelling, decide.
+ */
+export function flagIsYes(v) {
+  if (v === true || v === 1) return true;
+  const s = String(v == null ? '' : v).trim().toLowerCase();
+  return s === 'y' || s === 'yes' || s === '1' || s === 'true' || s === 't';
+}
+
+/** Non-empty free-text field (NC uses these alongside the coded flags). */
+export function hasText(v) {
+  return String(v == null ? '' : v).trim().length > 0;
+}
+
+/**
  * Fetch all features from an ArcGIS FeatureServer query endpoint.
  * Handles pagination via resultOffset/resultRecordCount.
  * @param {string} baseUrl - FeatureServer .../query URL
@@ -67,16 +99,27 @@ export async function getCachedGis(env, cacheKey, ttlDays) {
  * Group ArcGIS features into waterbodies map using source mappers.
  * @param {Array} features - GeoJSON features
  * @param {Object} source - { filter, name, wb, lat, lon, meta?, type?, ... }
- * @param {Object} opts - { useGeometryFallback: boolean }
- * Returns waterbodies object: { [waterbodyName]: Array<{name, lat, lon, ...meta}> }
+ * Returns { waterbodies, stats } where stats is
+ *   { fetched, kept, filtered, dropped, mapperErrors, filterRejectedAll }
+ *
+ * The stats are not decoration. A `filter` that names a field the layer does not
+ * return -- because the field was renamed, or because it only ever existed inside
+ * the layer's own viewDefinitionQuery -- evaluates against `undefined` on every
+ * row, rejects the entire feed, and produces `count: 0` with an empty waterbodies
+ * object. That is byte-identical to "this state genuinely has no access sites",
+ * so it survives every smoke test and every eyeball. It has now happened twice:
+ * GA ramps checked 'yes'/'no' against a Y/N column, and TN paddle checked
+ * `IncludeWeb`, which is server-side-only on that layer. `filterRejectedAll`
+ * exists so the third time is loud instead of silent.
  */
 export function groupFeaturesByWaterbody(features, source) {
   const waterbodies = {};
   let dropped = 0;         // features with no usable lat/lon
   let mapperErrors = 0;    // source.lat / source.lon threw -- a schema change upstream
+  let filtered = 0;        // features rejected by source.filter
   for (const feat of features) {
     const p = feat.properties || {};
-    if (!source.filter(p)) continue;
+    if (!source.filter(p)) { filtered++; continue; }
     // lat/lon: prefer source.lat/lon mappers, fallback to geometry
     let lat = null;
     let lon = null;
@@ -135,12 +178,24 @@ export function groupFeaturesByWaterbody(features, source) {
   // Report the losses once, with the totals that make them interpretable. A handful of
   // dropped features is ordinary data quality; a `dropped` close to the feature count, or any
   // `mapperErrors` at all, means the upstream schema moved and this feed is now empty.
+  const kept = Object.values(waterbodies).reduce((n, v) => n + v.length, 0);
   if (dropped || mapperErrors) {
-    const kept = Object.values(waterbodies).reduce((n, v) => n + v.length, 0);
     console.warn(`[arcgis] kept ${kept}, dropped ${dropped} with no usable lat/lon`
                  + (mapperErrors ? `, ${mapperErrors} lat/lon mapper errors -- upstream schema may have changed` : ''));
   }
-  return waterbodies;
+  // Total rejection of a non-empty feed is never correct data. The server returned rows;
+  // our predicate said none of them count. That is a broken predicate, not an empty state.
+  const filterRejectedAll = features.length > 0 && filtered === features.length;
+  if (filterRejectedAll) {
+    const sample = features[0]?.properties || {};
+    console.error(`[arcgis] FILTER REJECTED ALL ${features.length} features -- the source filter`
+                  + ` names a field this layer does not return. Available fields: `
+                  + Object.keys(sample).join(', '));
+  }
+  return {
+    waterbodies,
+    stats: { fetched: features.length, kept, filtered, dropped, mapperErrors, filterRejectedAll },
+  };
 }
 
 /**
@@ -206,9 +261,17 @@ export async function handleGisRoute({ env, url, cachePrefix, ttlDays, sources, 
   try {
     const idField = source.idField || 'OBJECTID';
     const allFeatures = await fetchArcGisAllFeatures(source.url, idField);
-    const waterbodies = groupFeaturesByWaterbody(allFeatures, source);
-    const flatCount = Object.values(waterbodies).reduce((s, arr) => s + arr.length, 0);
+    const { waterbodies, stats } = groupFeaturesByWaterbody(allFeatures, source);
+    const flatCount = stats.kept;
     const result = buildResult(state, source, waterbodies, flatCount, allFeatures.length);
+    // Surfaced in the JSON body, not just the Worker log, because the only way anyone
+    // looks at this data is `curl .../paddle?state=TN` -- and a bare `count: 0` reads as
+    // "TN has no paddle access" when it actually means "the filter is broken".
+    if (stats.filterRejectedAll) {
+      result.warning = `filter rejected all ${stats.fetched} features returned by the source`
+                       + ` -- the filter likely names a field this layer does not return`;
+      result.fetchedFeatures = stats.fetched;
+    }
     const body = JSON.stringify(result);
     // Store with metadata for cache age checks
     await env.R2_TROLLMAP_CHARTPACKS.put(cacheKey, body, {
