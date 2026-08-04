@@ -4,12 +4,25 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { COASTAL_ZONES, COASTAL_SLUGS, coastalNamesByState } from '../js/data/coastal-zones.js';
 import { resolveR2Key } from '../js/data/lake-keys.js';
-import { LAKE_DB } from '../js/data/lakes.js';
+import { appendCoastalOptgroups } from '../js/utils/coastal-optgroups.js';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const planBuilderSrc = readFileSync(path.join(REPO, 'js/modules/plan-builder.js'), 'utf8');
 const rampSelectSrc = readFileSync(path.join(REPO, 'js/modules/lake-ramp-select.js'), 'utf8');
+const researchUiSrc = readFileSync(path.join(REPO, 'js/modules/lake-research-ui.js'), 'utf8');
 const smartPlanSrc = readFileSync(path.join(REPO, 'js/modules/smart-plan.js'), 'utf8');
+
+/**
+ * The smallest DOM that appendCoastalOptgroups touches: createElement, appendChild and the
+ * label / value / textContent properties. Enough to assert what it builds without pulling a
+ * whole DOM implementation into the suite for three element types.
+ */
+function makeSelect() {
+  const node = () => ({ children: [], appendChild(c) { this.children.push(c); } });
+  globalThis.document = globalThis.document || {};
+  globalThis.document.createElement = node;
+  return node();
+}
 
 /**
  * Regression guard for the "everything works but nothing is selectable" class
@@ -25,33 +38,68 @@ describe('the gap this closes', () => {
     expect(rampSelectSrc).toContain('loadAccessIndex');
   });
 
-  it('LAKE_DB alone cannot back a coastal ramp list', () => {
-    const missing = COASTAL_SLUGS.filter((s) => !LAKE_DB[COASTAL_ZONES[s].name]);
-    // 12 of 21 zones absent -> an empty ramp dropdown and no launch coords.
-    expect(missing.length).toBeGreaterThan(0);
+  it('the coastal zones are the only source of coastal ramps', () => {
+    // This used to assert that LAKE_DB covered only 10 of the 22 zones, so it could not back
+    // a coastal ramp list on its own. That is still true and no longer worth testing: the
+    // file is deleted. What matters now is that every zone can supply what the dropdown
+    // needs, since nothing else can.
+    for (const slug of COASTAL_SLUGS) {
+      const z = COASTAL_ZONES[slug];
+      expect(Boolean(z && z.name), `${slug} name`).toBe(true);
+      expect(Array.isArray(z.center) && z.center.length >= 2, `${slug} center`).toBe(true);
+    }
   });
 });
 
 describe('both waterbody dropdowns offer coastal zones', () => {
-  it('plan-builder groups coastal zones by state', () => {
-    expect(planBuilderSrc).toContain('coastalNamesByState');
-    for (const label of ['SC Coast', 'GA Coast', 'NC Coast']) {
-      expect(planBuilderSrc, `plan-builder missing "${label}"`).toContain(label);
+  // This used to assert that each module's SOURCE contained `coastalNamesByState` and the
+  // three group labels -- which was really a test that the loop had been copy-pasted into
+  // that file. It had been, THREE times: lake-ramp-select.js, lake-research-ui.js and
+  // plan-builder.js each built the same optgroups from the same call, byte for byte apart
+  // from the variable holding the <select>. The duplication audit only saw two of them,
+  // because plan-builder's copy put `opt.value` and `opt.textContent` on one line and fell
+  // under the 8-line window.
+  //
+  // They now share js/utils/coastal-optgroups.js, so the test asserts what actually matters:
+  // every dropdown calls the one builder, and the one builder produces the three groups.
+  const CALLERS = [
+    ['plan-builder', planBuilderSrc],
+    ['lake-ramp-select', rampSelectSrc],
+    ['lake-research-ui', researchUiSrc],
+  ];
+
+  it('every waterbody dropdown builds its coastal groups from the shared helper', () => {
+    for (const [name, src] of CALLERS) {
+      expect(src, `${name} does not call appendCoastalOptgroups`).toContain('appendCoastalOptgroups');
+      expect(src, `${name} still has its own copy of the loop`).not.toContain('coastalNamesByState()');
     }
   });
 
-  it('map toolbar groups coastal zones by state', () => {
-    expect(rampSelectSrc).toContain('coastalNamesByState');
-    for (const label of ['SC Coast', 'GA Coast', 'NC Coast']) {
-      expect(rampSelectSrc, `lake-ramp-select missing "${label}"`).toContain(label);
-    }
+  it('the shared helper groups coastal zones by state', () => {
+    const select = makeSelect();
+    const added = appendCoastalOptgroups(select);
+    expect(added).toBe(22);
+    const labels = select.children.map((c) => c.label);
+    expect(labels).toEqual(['SC Coast', 'GA Coast', 'NC Coast']);
   });
 
-  it('the grouping covers all 21 zones exactly once', () => {
+  it('the option value keeps the state suffix, the visible label drops it', () => {
+    const select = makeSelect();
+    appendCoastalOptgroups(select);
+    const opts = select.children.flatMap((g) => g.children);
+    const winyah = opts.find((o) => o.value.startsWith('Winyah Bay'));
+    expect(Boolean(winyah)).toBe(true);
+    expect(winyah.value).toBe('Winyah Bay / Georgetown, SC');
+    expect(winyah.textContent).toBe('Winyah Bay / Georgetown');
+    // The VALUE is what resolveR2Key() keys off; trimming it would break layer + tide loading.
+    expect(resolveR2Key(winyah.value)).toBe('coast_winyah_bay_sc');
+  });
+
+  it('the grouping covers all 22 zones exactly once', () => {
     const g = coastalNamesByState();
     const all = [...g.SC, ...g.GA, ...g.NC];
-    expect(all).toHaveLength(21);
-    expect(new Set(all).size).toBe(21);
+    expect(all).toHaveLength(22);
+    expect(new Set(all).size).toBe(22);
   });
 });
 
@@ -68,9 +116,9 @@ describe('option values round-trip to R2 keys', () => {
     }
   });
 
-  it('the visible label drops the state suffix but the value keeps it', () => {
-    expect(planBuilderSrc).toMatch(/opt\.value = name;.*replace\(\/,\\s\*\[A-Z\]\{2\}\$\//s);
-  });
+  // The "label drops the suffix, value keeps it" assertion that used to live here read
+  // plan-builder's source for the literal regex. It now lives one describe up, against the
+  // shared helper's actual output, which is the thing that has to hold.
 });
 
 describe('coastal ramps are wired everywhere a launch point is needed', () => {

@@ -20,6 +20,22 @@ const _here = new URL('.', import.meta.url).pathname;
 const _repo = _here.replace(/\/test\/$/, '/');
 const [indexPath = process.env.LAKE_INDEX || _repo + '../registry/lake_index.json',
        treeRoot  = _repo + 'js'] = process.argv.slice(2);
+const SMOKE_NAME = 'registry_smoke';
+// The registry is a pipeline OUTPUT, not a repo file -- it sits next to the checkout on the
+// machine that runs the extraction. Anywhere else (a fresh clone, CI, a review sandbox)
+// `npm run check` used to die on a bare ENOENT stack trace, which reads as "the test suite
+// is broken" rather than "this check needs an artifact you do not have".
+//
+// Skipping is only correct for a MISSING file. A registry that exists and will not parse is
+// a real failure and still throws.
+import { existsSync } from 'node:fs';
+if (!existsSync(indexPath)) {
+  console.log(`SKIP  ${SMOKE_NAME}: no lake_index.json at ${indexPath}`);
+  console.log('      This check needs the pipeline registry. Point LAKE_INDEX at it, or pass');
+  console.log('      the path as the first argument, to run it.');
+  process.exit(0);
+}
+
 const raw = JSON.parse(readFileSync(indexPath, 'utf8'));
 
 globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => raw });

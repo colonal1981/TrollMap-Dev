@@ -3,10 +3,11 @@ import { LAKE_NAME_TO_R2_KEY as frontendMap, resolveR2Key } from '../js/data/lak
 import { SUPPLEMENTAL_KEY_MAP, resolveSupplementalKeyWorker } from '../Worker/research/limnology.js';
 
 describe('lake-keys parity — frontend and worker must stay identical (P1 dedupe guard)', () => {
-  it('frontend map size == worker map size == 116', () => {
+  it('frontend map size == worker map size == 117', () => {
     // Both copies must move together — this is the guard that caught the original
     // 101 vs 74 drift.
-    // 116 = 95 freshwater + 21 coastal. Was 118 until 2026-08-03, when 'High Rock
+    // 117 = 95 freshwater + 22 coastal (Cape Romain / Bulls Bay added 2026-08-03,
+    // a stretch that previously fell in the gap between the Charleston and Santee boxes). Was 118 until 2026-08-03, when 'High Rock
     // Lake, NC' and 'Blewett Falls Lake, NC' were removed: the R2 prune retired
     // `yadkin_river_chain` and 3DHP never named those two, so they have no
     // replacement pack. A name bound to a slug with no pack is a lake that appears
@@ -16,8 +17,8 @@ describe('lake-keys parity — frontend and worker must stay identical (P1 dedup
     //
     // This literal is doing its job. It is not a nuisance to be silenced: it fired
     // the moment two lakes left the data, which is exactly when someone should look.
-    expect(Object.keys(frontendMap).length).toBe(116);
-    expect(Object.keys(SUPPLEMENTAL_KEY_MAP).length).toBe(116);
+    expect(Object.keys(frontendMap).length).toBe(117);
+    expect(Object.keys(SUPPLEMENTAL_KEY_MAP).length).toBe(117);
   });
 
   it('maps are deep equal', () => {

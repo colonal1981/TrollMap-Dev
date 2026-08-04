@@ -36,6 +36,19 @@ function walk(dir, out = []) {
 }
 const FILES = walk(JS);
 
+/**
+ * Source with comments removed. Every check in this file is about what the code DOES, and
+ * the first test in it says so outright: "Comments may still explain the history; executable
+ * references may not exist." Two of the three tests stripped comments and the third did not,
+ * which made db.js itself register as a consumer of db.js the moment its own documentation
+ * quoted `dbPut(...)` while explaining the bug that documentation exists to prevent.
+ */
+function codeOnly(file) {
+  return readFileSync(file, 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')   // block comments, including JSDoc
+    .replace(/\/\/.*$/gm, '');          // line comments
+}
+
 describe('persistence — the global alias is gone and stays gone', () => {
   it('no module reads or writes window.DB', () => {
     // Comments may still explain the history; executable references may not exist.
@@ -61,10 +74,10 @@ describe('persistence — the global alias is gone and stays gone', () => {
   it('every consumer imports it statically', () => {
     // If a module persists anything, it must say so at the top of the file.
     const consumers = FILES.filter((f) =>
-      /\bdb(Get|Put|GetAll|Del|Clear|IsReady)\s*\(/.test(readFileSync(f, 'utf8')));
+      /\bdb(Get|Put|GetAll|Del|Clear|IsReady)\s*\(/.test(codeOnly(f)));
     expect(consumers.length).toBeGreaterThan(5);
     const missing = consumers
-      .filter((f) => !/from ['"][^'"]*utils\/db\.js['"]/.test(readFileSync(f, 'utf8')))
+      .filter((f) => !/from ['"][^'"]*utils\/db\.js['"]/.test(codeOnly(f)))
       .map((f) => f.slice(JS.length + 1));
     expect(missing).toEqual([]);
   });

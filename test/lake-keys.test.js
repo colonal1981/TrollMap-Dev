@@ -2,10 +2,11 @@ import { describe, it, expect } from './expect-shim.mjs';
 import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../js/data/lake-keys.js';
 
 describe('LAKE_NAME_TO_R2_KEY — single source of truth (116 entries)', () => {
-  it('has 116 entries (full map, not truncated worker copy)', () => {
+  it('has 117 entries (full map, not truncated worker copy)', () => {
     // 97 freshwater + 21 coastal zones. Was 101 before the coastal expansion
     // split the single `sc_ga_coastal` key into 21 per-zone `coast_*` keys.
-        // 116 = 95 freshwater + 21 coastal. Was 118 until 2026-08-03, when 'High Rock
+        // 117 = 95 freshwater + 22 coastal (Cape Romain / Bulls Bay added 2026-08-03,
+    // a stretch that previously fell in the gap between the Charleston and Santee boxes). Was 118 until 2026-08-03, when 'High Rock
     // Lake, NC' and 'Blewett Falls Lake, NC' were removed: the R2 prune retired
     // `yadkin_river_chain` and 3DHP never named those two, so they have no
     // replacement pack. A name bound to a slug with no pack is a lake that appears
@@ -15,7 +16,7 @@ describe('LAKE_NAME_TO_R2_KEY — single source of truth (116 entries)', () => {
     //
     // This literal is doing its job. It is not a nuisance to be silenced: it fired
     // the moment two lakes left the data, which is exactly when someone should look.
-    expect(Object.keys(LAKE_NAME_TO_R2_KEY).length).toBe(116);
+    expect(Object.keys(LAKE_NAME_TO_R2_KEY).length).toBe(117);
   });
 
   it('contains critical keys that were missing in old worker copy', () => {
@@ -37,7 +38,7 @@ describe('LAKE_NAME_TO_R2_KEY — single source of truth (116 entries)', () => {
     expect(LAKE_NAME_TO_R2_KEY['Savannah River / Savannah, GA']).toBe('coast_savannah_ga');
 
     const coastal = Object.values(LAKE_NAME_TO_R2_KEY).filter((k) => k.startsWith('coast_'));
-    expect(new Set(coastal).size).toBe(21);
+    expect(new Set(coastal).size).toBe(22);
   });
 
   it('contains Wateree chain and Russell chain aliases', () => {

@@ -37,8 +37,8 @@ describe('coastal-zones.js — generated catalog stays in sync with coastal_cata
     expect(['ok', 'skipped']).toContain(result);
   });
 
-  it('has all 21 coastal zones', () => {
-    expect(COASTAL_SLUGS).toHaveLength(21);
+  it('has all 22 coastal zones', () => {
+    expect(COASTAL_SLUGS).toHaveLength(22);
   });
 
   it('every slug is prefixed coast_ so isCoastalKey() detection is reliable', () => {
@@ -146,10 +146,10 @@ describe('coastal-zones.js — generated catalog stays in sync with coastal_cata
     expect(getCoastalZone(undefined)).toBeNull();
   });
 
-  it('state grouping covers all 21 zones with no leaks', () => {
+  it('state grouping covers all 22 zones with no leaks', () => {
     const grouped = coastalNamesByState();
     const total = grouped.SC.length + grouped.GA.length + grouped.NC.length;
-    expect(total).toBe(21);
+    expect(total).toBe(22);
     expect(coastalZonesByState('SC')).toHaveLength(grouped.SC.length);
     expect(coastalZonesByState('ga')).toHaveLength(grouped.GA.length);
     expect(coastalZonesByState('XX')).toHaveLength(0);

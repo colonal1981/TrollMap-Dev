@@ -1,10 +1,23 @@
 import { describe, it, expect } from './expect-shim.mjs';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { COASTAL_ZONES, COASTAL_SLUGS } from '../js/data/coastal-zones.js';
-import { LAKE_DB } from '../js/data/lakes.js';
 import { resolveR2Key } from '../js/data/lake-keys.js';
+// Still imported: LAKE_DB is dead to the app but alive to the pipeline. See the
+// 'LAKE_DB is dead to the app' test below for why the file is not deleted yet.
+import { LAKE_DB } from '../js/data/lakes.js';
+
+const sep = path.sep;
+const JS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'js');
+function walkJs(dir, out = []) {
+  for (const e of readdirSync(dir)) {
+    const p = path.join(dir, e);
+    if (statSync(p).isDirectory()) walkJs(p, out);
+    else if (e.endsWith('.js')) out.push(p);
+  }
+  return out;
+}
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const src = readFileSync(path.join(REPO, 'js/modules/smart-plan.js'), 'utf8');
@@ -72,19 +85,38 @@ describe('coastal weather lookup gap', () => {
     expect(src).toMatch(/coastalCenter\s*\|\|/);
   });
 
-  it('LAKE_DB coastal entries agree with the generated catalog', () => {
-    // Where both exist they must not disagree, or the forecast would be for
-    // a different piece of water than the tides.
-    for (const slug of COASTAL_SLUGS) {
-      const zone = COASTAL_ZONES[slug];
-      const dbEntry = LAKE_DB[zone.name];
-      if (!dbEntry?.center) continue;
-      expect(dbEntry.center[0], `${slug} lat`).toBeCloseTo(zone.center[0], 1);
-      expect(dbEntry.center[1], `${slug} lon`).toBeCloseTo(zone.center[1], 1);
-      if (dbEntry.tideStation) {
-        expect(dbEntry.tideStation, `${slug} station`).toBe(zone.tideStation);
+  it('LAKE_DB is dead to the app', () => {
+    // This replaced a test that asserted LAKE_DB's coastal bounds AGREE with the generated
+    // catalog. That test was guarding a corpse. Every reference to LAKE_DB left in js/ is a
+    // comment recording its removal -- ramps.js, plan-builder.js, smart-plan.js,
+    // lake-research-engine.js and utility-sync.js all say so in their own words -- and
+    // nothing outside test/ imports data/lakes.js at all. Ryan, plainly: "LAKE_DB is dead
+    // abandoned code."
+    //
+    // Keeping the sync test meant every edit to coastal_catalog.py forced a matching edit to
+    // a structure with no readers, and going green depended on maintaining data nothing uses.
+    // The real invariant is that it stays unused, so that is what is asserted.
+    // NOT "the file is gone" -- not yet. It is dead to the APP but still live to the
+    // PIPELINE: consolidate_lake_index.py reads `lake_db` out of registry/js_lists.json,
+    // which js/data/dump_js_lists.mjs generates from this file, and two registry entries --
+    // "Congaree River (to SC-601)" and "Wateree River" -- currently list lake_db as their
+    // ONLY source. Deleting it today would drop them from the index silently.
+    //
+    // Both are rivers, so make_river_boundaries.py should produce them from the DNR ramp
+    // feeds. Once it does and they carry a second source, the file goes -- see DELETION_TAB.
+    // Until then the invariant is narrower: nothing in the running app may read it.
+    const offenders = [];
+    for (const f of walkJs(JS)) {
+      const src = readFileSync(f, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\/\/.*$/gm, '');
+      // dump_js_lists.mjs is the pipeline generator, not app code -- it is allowed.
+      if (f.endsWith(`${sep}lakes.js`) || f.endsWith(`${sep}dump_js_lists.mjs`)) continue;
+      if (/from\s+['"][^'"]*data\/lakes\.js['"]/.test(src) || /\bLAKE_DB\b/.test(src)) {
+        offenders.push(f.slice(JS.length + 1));
       }
     }
+    expect(offenders).toEqual([]);
   });
 });
 

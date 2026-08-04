@@ -26,7 +26,8 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  STATE_REGULATIONS_CONFIG, REGS_EFFECTIVE, useDigest2026,
+  STATE_REGULATIONS_CONFIG, REGS_EFFECTIVE, REGS_DATE_VERIFIED, useDigest2026,
+  freshwaterRegionOf,
   sliceSaltwaterSection, extractSaltwaterDigest, DIGEST_BUDGET,
   fetchSaltwaterRegulations, fetchLiveRegsAmendments,
 } from '../Worker/research/clients.js';
@@ -219,6 +220,94 @@ describe('sliceSaltwaterSection', () => {
     assert.equal(r.located, false);
     assert.equal(r.text, null);
   });
+});
+
+
+// ── 2b. the extractor survives a different text extractor ────────────────────
+describe('extractSaltwaterDigest degrades instead of failing', () => {
+  // The running head is an assumption about ONE text extractor. These digests are
+  // read by the Worker through TinyFish as markdown, not through pdftotext, and a
+  // markdown renderer may well emit "## Saltwater Fishing" for a letter-spaced caps
+  // banner. Under the first version that missed match returned null, so SC and GA
+  // would have had no digest at all — permanently, silently, and looking exactly
+  // like an agent correctly declining to guess.
+  const restyled = {
+    'title-case markdown header': DIGEST_TEXT.replace(
+      /S\s*A\s*L\s*T\s*W\s*A\s*T\s*E\s*R\s+F\s*I\s*S\s*H\s*I\s*N\s*G/g, '## Saltwater Fishing'),
+    'head removed entirely': DIGEST_TEXT.replace(
+      /S\s*A\s*L\s*T\s*W\s*A\s*T\s*E\s*R\s+F\s*I\s*S\s*H\s*I\s*N\s*G/g, '**Saltwater**'),
+  };
+
+  test('the caps head is used when it survives extraction', () => {
+    const r = extractSaltwaterDigest('SC', DIGEST_TEXT);
+    assert.equal(r.located, true);
+    assert.equal(r.anchor, 'head', 'the precise path should win when it is available');
+  });
+
+  for (const [label, text] of Object.entries(restyled)) {
+    test(`still returns the limits when the head is lost — ${label}`, () => {
+      const r = extractSaltwaterDigest('SC', text);
+      assert.equal(r.located, true, 'a lost running head must not mean no digest');
+      assert.equal(r.anchor, 'whole');
+      assert.match(r.text, /Red Drum/i);
+      assert.match(r.text, /Spotted Seatrout/i);
+    });
+
+    test(`the fallback pulls no freshwater with it — ${label}`, () => {
+      // Safe only because it is measured: zero saltwater species names fall in the
+      // freshwater half of either book, so whole-document windows cannot reach them.
+      const r = extractSaltwaterDigest('SC', text);
+      assert.equal((r.text.match(/Largemouth Bass/gi) || []).length, 0);
+    });
+  }
+});
+
+// ── 2c. the freshwater parse can no longer read a saltwater table ────────────
+describe('freshwaterRegionOf', () => {
+  // parseRegulationsWithLLM slices 35,000 characters forward from its first species
+  // hit, through a prompt whose species vocabulary is entirely freshwater. Now that
+  // the SC and GA digests CONTAIN their saltwater sections, that window can cross the
+  // boundary and hand a red drum table to a largemouth-bass parser. Today's digests
+  // are long enough that it does not — which is arithmetic about one extractor, not a
+  // property of the data.
+  test('cuts a combined digest at the saltwater boundary', () => {
+    const fw = freshwaterRegionOf(DIGEST_TEXT);
+    assert.ok(fw.length < DIGEST_TEXT.length, 'a combined digest must be cut');
+    assert.equal((fw.match(/Red Drum/gi) || []).length, 0);
+    assert.match(fw, /Largemouth Bass/, 'the freshwater half must survive intact');
+  });
+
+  test('leaves a digest with no saltwater section alone', () => {
+    // NC is the case that matters: its coastal species live INSIDE the freshwater
+    // table by design, so there is no boundary and nothing may be cut.
+    assert.equal(freshwaterRegionOf(NC_DIGEST), NC_DIGEST);
+  });
+
+  test('never truncates into uselessness', () => {
+    const salted = 'SALTWATER FISHING limits red drum 18 inch';
+    assert.equal(freshwaterRegionOf(salted), salted, 'a sub-500-char head is not a real freshwater half');
+  });
+});
+
+// ── 2d. which effective dates were actually read ─────────────────────────────
+describe('effective-date provenance is recorded, not assumed', () => {
+  test('SC and GA are verified against their own covers', () => {
+    assert.equal(REGS_DATE_VERIFIED.SC, true);
+    assert.equal(REGS_DATE_VERIFIED.GA, true);
+  });
+
+  test('NC and TN are still marked unverified', () => {
+    // They kept August 1 because that is what the old shared constant held — the same
+    // unexamined inheritance that had SC switching eleven days early. Flipping either
+    // of these to true should require reading a cover, so this test exists to make
+    // that flip a deliberate act rather than a tidy-up.
+    assert.equal(REGS_DATE_VERIFIED.NC, false);
+    assert.equal(REGS_DATE_VERIFIED.TN, false);
+  });
+
+  test('every configured state declares its provenance either way', () =>
+    Object.keys(STATE_REGULATIONS_CONFIG).forEach(st =>
+      assert.equal(typeof REGS_DATE_VERIFIED[st], 'boolean', `${st} has no provenance flag`)));
 });
 
 // ── 3. fetchSaltwaterRegulations returns the fields the template reads ──────
