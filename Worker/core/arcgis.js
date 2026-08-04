@@ -5,6 +5,18 @@
 const PAGE_SIZE = 1000;
 
 /**
+ * Which build of THIS file is live.
+ *
+ * Bump on every edit to this module. `/build` reports it next to the marker in
+ * trollmap-worker.js, so one curl answers "is the deployed bundle actually the
+ * code in main?" -- a question that cost most of an afternoon on 2026-08-04,
+ * when the live Worker was emitting a warning string that existed in no commit
+ * on main. The two markers being out of step means the bundle is stale or the
+ * build did not pick this file up.
+ */
+export const ARCGIS_BUILD = 'arcgis-2026-08-04c';
+
+/**
  * Is this ArcGIS yes/no flag set?
  *
  * Read this before writing another state filter by hand.
