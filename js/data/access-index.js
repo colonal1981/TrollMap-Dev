@@ -182,6 +182,38 @@ function pointInRecordBounds(rec, lat, lon, padDeg = 0.005) {
   return lat >= s - padDeg && lat <= n + padDeg && lon >= w - padDeg && lon <= e + padDeg;
 }
 
+// A DNR waterbody name can cover two lakes that have nothing to do with each other.
+// SC's "Lake Robinson" carries two ramps 203 km apart -- J. Verne Smith Park on Greenville
+// Water's Lake Robinson, and the Duke cooling lake on Black Creek near Hartsville. GA's
+// "Lake Russell" and "White Oak Creek" do the same at 345 and 352 km. The picker built ONE
+// entry from the name, the map fitted every point in it, and selecting the lake zoomed out
+// to a viewport spanning both.
+//
+// Splitting the NAME into clusters would be guesswork. The registry record already knows
+// where its water is, so once a record has claimed an entry, drop the points that are not
+// on it. Bounds plus a 5 km margin, because a ramp can sit up a tributary or down an access
+// road; on a big reservoir the bbox is large and nothing is dropped.
+//
+// Deliberately conservative: it never empties an entry, and it never touches an entry no
+// registry record claimed -- a river or the Intracoastal SHOULD span 300 km, and those have
+// no bounds to be judged against anyway.
+export function pruneAccessToRecord(index, lakeName, rec, marginKm = 5) {
+  const b = rec && rec.boundsWSEN;
+  if (!Array.isArray(b) || b.length !== 4) return 0;
+  const pts = index.byLake.get(lakeName);
+  if (!pts || pts.length < 2) return 0;
+  const [w, s, e, n] = b;
+  const dLat = marginKm / 111;
+  const keep = pts.filter((p) => {
+    if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return true;
+    const dLon = marginKm / (111 * Math.max(0.1, Math.cos(p.lat * Math.PI / 180)));
+    return p.lat >= s - dLat && p.lat <= n + dLat && p.lon >= w - dLon && p.lon <= e + dLon;
+  });
+  if (!keep.length || keep.length === pts.length) return 0;
+  index.byLake.set(lakeName, keep);
+  return pts.length - keep.length;
+}
+
 // Look for an existing lake in the index (typically worker-derived) whose name matches a
 // supplemental lake we're about to add, so we merge into it instead of creating a
 // visually-duplicate second dropdown entry.
@@ -448,11 +480,13 @@ async function buildAccessIndex() {
     // curated map. Registering one for an unshipped lake would take a name that currently
     // resolves to a real curated pack and point it at a 404.
     let added = 0;
+    let pruned = 0;
     for (const rec of filterLakes(REGISTRY_DEFAULT_FILTER)) {
       const existingKey = findExistingLakeKey(index, rec.name, rec.lat, rec.lon, 15, rec);
       const lakeName = existingKey || rec.displayName;
       if (!existingKey) added += 1;
       index.registryByName.set(lakeName, rec);   // shipped record wins over a pass-1 namesake
+      pruned += pruneAccessToRecord(index, lakeName, rec);
       // Teach lake-keys.js the slug so contour/chartpack loads resolve without fuzzy
       // matching. Curated names already in LAKE_NAME_TO_R2_KEY are left alone.
       registerR2Key(lakeName, rec.slug);
@@ -468,6 +502,7 @@ async function buildAccessIndex() {
       }
     }
     if (added) console.info(`[access-index] registry contributed ${added} lakes not in the DNR feeds`);
+    if (pruned) console.info(`[access-index] dropped ${pruned} access point(s) that sit outside the lake they were filed under`);
     // Was `registryByName.size of byLake.size`, which printed "1560 of 1104" — more than
     // all of them. The two maps are keyed differently: registryByName holds every registry
     // NAME VARIANT, byLake holds DNR waterbody names, and neither contains the other. The
