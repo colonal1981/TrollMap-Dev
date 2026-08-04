@@ -8,3 +8,7 @@ dist/
 *.log
 coverage/
 wateree_zones_overlay.geojson
+
+# Python bytecode from Scripts/*.py (coastal_catalog is imported to read zone bboxes)
+__pycache__/
+*.pyc
