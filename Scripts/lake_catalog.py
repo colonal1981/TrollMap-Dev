@@ -35,6 +35,23 @@ LAKE_CATALOG = {
         'center': (34.30, -81.32),
         'priority': 12
     },
+    # The Yadkin chain was catalogued as ONE key covering High Rock -> Blewett Falls, which
+    # is how the app has always served it. That works until the combined pack is retired:
+    # 3DHP names Badin and Tillery but NOT High Rock or Blewett Falls, so deleting
+    # yadkin_river_chain from R2 would orphan a 15,000-acre reservoir with nothing to replace
+    # it. NHD does name both. Bounds taken from LAKE_DB, which has carried them all along.
+    'high_rock_lake': {
+        'name': 'High Rock Lake',
+        'bbox': (35.45, 35.70, -80.35, -80.15),
+        'center': (35.60, -80.25),
+        'priority': 12
+    },
+    'blewett_falls_lake': {
+        'name': 'Blewett Falls Lake',
+        'bbox': (34.88, 35.02, -79.95, -79.75),
+        'center': (34.95, -79.85),
+        'priority': 12
+    },
     'yadkin_river_chain': {
         'name': 'Yadkin River Chain (High Rock to Blewett Falls)',
         'bbox': (34.87, 35.76, -80.46, -79.77),
@@ -52,6 +69,19 @@ LAKE_CATALOG = {
         'bbox': (34.323131, 34.694091, -80.947286, -80.689072),
         'center': (34.40, -80.88),
         'priority': 12
+    },
+    # Lake Juliette, GA -- the ~3,600 acre half of the retired combined entry. Its
+    # centre is taken verbatim from lake_juliette_high_falls' 'center', which points at
+    # Juliette while that entry's bbox points at High Falls: the combined record carried
+    # one lake's box and the other's centre, which is why selecting the pair only ever
+    # returned High Falls (562 ac). The window here is that centre padded to the extent
+    # of Garmin tile B4E0E8, so it is derived from data on this card rather than typed.
+    # The 'juliette' name filter picks the polygon; the box only bounds the query.
+    'lake_juliette': {
+        'name': 'Lake Juliette',
+        'bbox': (32.95, 33.25, -84.00, -83.70),
+        'center': (33.10, -83.85),
+        'priority': 10
     },
     'lake_juliette_high_falls': {
         'name': 'Lake Juliette & High Falls Chain',

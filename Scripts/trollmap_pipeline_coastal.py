@@ -244,7 +244,47 @@ def depare_props(raw_props):
     }
 
 # ── Main extraction ───────────────────────────────────────────────────────────
-def extract_all(pbf_folders, zooms, zone_filter=None):
+# ── Best zoom pre-scan ────────────────────────────────────────────────────────
+def find_best_zoom_per_zone(pbf_folders, zone_filter=None):
+    from collections import Counter
+    print("\n🔍 Pre-scanning zoom levels for contour density...")
+    if zone_filter:
+        zones = {zone_filter: COASTAL_CATALOG[zone_filter]} if zone_filter in COASTAL_CATALOG else {}
+    else:
+        zones = COASTAL_CATALOG
+    zoom_counts = {k: Counter() for k in zones}
+    for job in pbf_folders:
+        folder = Path(job['folder'])
+        if not folder.exists(): continue
+        for p in folder.rglob('*.pbf'):
+            m = re.search(r'[/\\](\d+)[/\\](\d+)[/\\](\d+)\.pbf$', str(p))
+            if not m: continue
+            z, x, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            ts, tn, tw, te = tile_bbox(z, x, y)
+            matching = [k for k, zc in zones.items()
+                       if tw < zc['bbox'][3] and te > zc['bbox'][2]
+                       and ts < zc['bbox'][1] and tn > zc['bbox'][0]]
+            if not matching: continue
+            try:
+                with open(p, 'rb') as f:
+                    tile = mapbox_vector_tile.decode(f.read())
+            except Exception: continue
+            n = len(tile.get('layer_depcnt', {}).get('features', []))
+            if n == 0: continue
+            for k in matching:
+                zoom_counts[k][z] += n
+    best_zoom = {}
+    for k, counts in zoom_counts.items():
+        if counts:
+            best = counts.most_common(1)[0][0]
+            best_zoom[k] = best
+            print(f"  {k}: best zoom={best} ({counts[best]:,} features)")
+        else:
+            best_zoom[k] = None
+    return best_zoom
+
+
+def extract_all(pbf_folders, zooms, zone_filter=None, best_zoom_map=None, contours_only=False):
     contour_features = []
     depth_areas    = defaultdict(list)
     fishing_lines  = defaultdict(list)
@@ -297,6 +337,23 @@ def extract_all(pbf_folders, zooms, zone_filter=None):
             if not m: continue
             z, x, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
 
+            # Tile-level zoom filter: skip tile if z is not the best zoom
+            # for any zone whose bbox overlaps this tile
+            if best_zoom_map:
+                ts, tn, tw, te = tile_bbox(z, x, y)
+                tile_wanted = False
+                for zone_key, zc in COASTAL_CATALOG.items():
+                    if zone_filter and zone_key != zone_filter:
+                        continue
+                    fs, fn, fw, fe = zc['bbox']
+                    if tw < fe and te > fw and ts < fn and tn > fs:
+                        best = best_zoom_map.get(zone_key)
+                        if best is None or best == z:
+                            tile_wanted = True
+                            break
+                if not tile_wanted:
+                    continue
+
             try:
                 t = make_transformer(x, y, z)
                 with open(pbf, 'rb') as f:
@@ -320,9 +377,8 @@ def extract_all(pbf_folders, zooms, zone_filter=None):
                     if len(line) < 2: continue
                     coords = [[round(float(c[0]), 7), round(float(c[1]), 7)] for c in line]
                     if len(coords) < 2: continue
-                    n_pts = len(coords)
-                    sample = [coords[0], coords[n_pts//4], coords[n_pts//2], coords[3*n_pts//4], coords[-1]]
-                    sig = tuple(round(p[i], 4) for p in sample for i in range(2)) + (dft,)
+                    mid = coords[len(coords) // 2]
+                    sig = (round(mid[0], 4), round(mid[1], 4), dft)
                     if sig in seen_contours: continue
                     seen_contours.add(sig)
                     contour_features.append({
@@ -331,7 +387,9 @@ def extract_all(pbf_folders, zooms, zone_filter=None):
                         'properties': {'depth_ft': dft, 'depth_m': round(float(dm), 3)}
                     })
 
-            # ── Depth areas ───────────────────────────────────────────────────
+            # ── Supplemental layers (skipped if contours_only) ────────────────
+            if contours_only:
+                continue
             for feat in tile.get('layer_areas', {}).get('features', []):
                 props = feat.get('properties', {})
                 if props.get('type') != 'DEPARE': continue
@@ -483,6 +541,8 @@ def main():
     parser.add_argument('--zone', default=None, help='Single zone key to extract')
     parser.add_argument('--zooms', type=int, nargs='+', default=DEFAULT_ZOOMS,
                         help='Zoom levels to scan (default: all)')
+    parser.add_argument('--contours-only', action='store_true',
+                        help='Extract contours only, skip supplemental layers')
     parser.add_argument('--max-cove-dist', type=float, default=0.015)
     parser.add_argument('--min-features', type=int, default=MIN_CONTOUR_FEATURES)
     args = parser.parse_args()
@@ -500,30 +560,17 @@ def main():
         print(f"Filter:  {args.zone}")
     print("=" * 70)
 
+    best_zoom_map = find_best_zoom_per_zone(PBF_FOLDERS, args.zone)
+
     (contour_features, depth_areas, fishing_lines,
-     fishing_points, pois, shorelines) = extract_all(PBF_FOLDERS, args.zooms, args.zone)
+     fishing_points, pois, shorelines) = extract_all(PBF_FOLDERS, args.zooms, args.zone,
+                                                      best_zoom_map, contours_only=args.contours_only)
 
-    print(f"\n✅ Extracted {len(contour_features):,} contour features")
-
-    # Dedup
-    print("\nDeduplicating contours...")
-    contour_features.sort(key=lambda f: -len(f.get('geometry', {}).get('coordinates', [])))
-    seen = set()
-    deduped = []
-    for f in tqdm(contour_features, desc="Dedup"):
-        c = f['geometry']['coordinates']
-        d = f['properties']['depth_ft']
-        n = len(c)
-        sample = [c[0], c[n//4], c[n//2], c[3*n//4], c[-1]]
-        sig = tuple(round(p[i], 4) for p in sample for i in range(2)) + (d,)
-        if sig not in seen:
-            seen.add(sig)
-            deduped.append(f)
-    print(f"  {len(contour_features):,} → {len(deduped):,} after dedup")
+    print(f"\n✅ {len(contour_features):,} contours extracted (fingerprint dedup applied inline)")
 
     # Assign to zones
     print("\nAssigning contours to coastal zones...")
-    contour_buckets, unmatched = assign_contours_with_propagation(deduped, args.max_cove_dist)
+    contour_buckets, unmatched = assign_contours_with_propagation(contour_features, args.max_cove_dist)
 
     # Write contours
     print("\n=== Writing contours ===")
@@ -547,66 +594,69 @@ def main():
         print(f"\n  ⚠️  {len(unmatched):,} unmatched contours → _unmatched_coastal.geojson")
 
     # Write supplemental
-    print("\n=== Writing supplemental layers ===")
-    all_zones = sorted(set(
-        list(depth_areas) + list(fishing_lines) + list(fishing_points) +
-        list(pois) + list(shorelines)
-    ))
-    supp_inventory = []
+    if args.contours_only:
+        print("\n⏭  Skipping supplemental layers (--contours-only)")
+    else:
+        print("\n=== Writing supplemental layers ===")
+        all_zones = sorted(set(
+            list(depth_areas) + list(fishing_lines) + list(fishing_points) +
+            list(pois) + list(shorelines)
+        ))
+        supp_inventory = []
 
-    for zone_key in all_zones:
-        if args.zone and zone_key != args.zone:
-            continue
-        zone_name = COASTAL_CATALOG.get(zone_key, {}).get('name', zone_key)
-        da = depth_areas.get(zone_key, [])
-        fl = fishing_lines.get(zone_key, [])
-        fp = fishing_points.get(zone_key, [])
-        po = pois.get(zone_key, [])
-        sh = shorelines.get(zone_key, [])
-        total = len(da) + len(fl) + len(fp) + len(po) + len(sh)
-        if total == 0:
-            continue
+        for zone_key in all_zones:
+            if args.zone and zone_key != args.zone:
+                continue
+            zone_name = COASTAL_CATALOG.get(zone_key, {}).get('name', zone_key)
+            da = depth_areas.get(zone_key, [])
+            fl = fishing_lines.get(zone_key, [])
+            fp = fishing_points.get(zone_key, [])
+            po = pois.get(zone_key, [])
+            sh = shorelines.get(zone_key, [])
+            total = len(da) + len(fl) + len(fp) + len(po) + len(sh)
+            if total == 0:
+                continue
 
-        zone_supp_dir = supp_dir / zone_key
-        print(f"\n  ✅ {zone_key} ({zone_name})")
+            zone_supp_dir = supp_dir / zone_key
+            print(f"\n  ✅ {zone_key} ({zone_name})")
 
-        if da:
-            s = write_geojson(zone_supp_dir / 'depth_areas.geojson', da)
-            print(f"    depth_areas    {len(da):>6,}  {s}")
-        if fl:
-            s = write_geojson(zone_supp_dir / 'fishing_lines.geojson', fl)
-            print(f"    fishing_lines  {len(fl):>6,}  {s}")
-        if fp:
-            soundings = [f for f in fp if f['properties'].get('feature_type') == 'depth_sounding']
-            pts = [f for f in fp if f['properties'].get('feature_type') != 'depth_sounding']
-            if pts:
-                s = write_geojson(zone_supp_dir / 'fishing_points.geojson', pts)
-                print(f"    fishing_points {len(pts):>6,}  {s}")
-            if soundings:
-                s = write_geojson(zone_supp_dir / 'depth_soundings.geojson', soundings)
-                print(f"    depth_soundings {len(soundings):>5,}  {s}")
-        if po:
-            s = write_geojson(zone_supp_dir / 'pois.geojson', po)
-            print(f"    pois           {len(po):>6,}  {s}")
-        if sh:
-            s = write_geojson(zone_supp_dir / 'shoreline.geojson', sh)
-            print(f"    shoreline      {len(sh):>6,}  {s}")
+            if da:
+                s = write_geojson(zone_supp_dir / 'depth_areas.geojson', da)
+                print(f"    depth_areas    {len(da):>6,}  {s}")
+            if fl:
+                s = write_geojson(zone_supp_dir / 'fishing_lines.geojson', fl)
+                print(f"    fishing_lines  {len(fl):>6,}  {s}")
+            if fp:
+                soundings = [f for f in fp if f['properties'].get('feature_type') == 'depth_sounding']
+                pts = [f for f in fp if f['properties'].get('feature_type') != 'depth_sounding']
+                if pts:
+                    s = write_geojson(zone_supp_dir / 'fishing_points.geojson', pts)
+                    print(f"    fishing_points {len(pts):>6,}  {s}")
+                if soundings:
+                    s = write_geojson(zone_supp_dir / 'depth_soundings.geojson', soundings)
+                    print(f"    depth_soundings {len(soundings):>5,}  {s}")
+            if po:
+                s = write_geojson(zone_supp_dir / 'pois.geojson', po)
+                print(f"    pois           {len(po):>6,}  {s}")
+            if sh:
+                s = write_geojson(zone_supp_dir / 'shoreline.geojson', sh)
+                print(f"    shoreline      {len(sh):>6,}  {s}")
 
-        supp_inventory.append({
-            'zone_key': zone_key, 'zone_name': zone_name,
-            'depth_areas': len(da), 'fishing_lines': len(fl),
-            'fishing_points': len(fp), 'pois': len(po), 'shoreline': len(sh),
-        })
+            supp_inventory.append({
+                'zone_key': zone_key, 'zone_name': zone_name,
+                'depth_areas': len(da), 'fishing_lines': len(fl),
+                'fishing_points': len(fp), 'pois': len(po), 'shoreline': len(sh),
+            })
 
-    with open(out_dir / '_contour_inventory_coastal.json', 'w') as f:
-        json.dump(contour_inventory, f, indent=2)
-    with open(supp_dir / '_supplemental_inventory_coastal.json', 'w') as f:
-        json.dump(supp_inventory, f, indent=2)
+        with open(out_dir / '_contour_inventory_coastal.json', 'w') as f:
+            json.dump(contour_inventory, f, indent=2)
+        with open(supp_dir / '_supplemental_inventory_coastal.json', 'w') as f:
+            json.dump(supp_inventory, f, indent=2)
 
-    print(f"\n{'='*70}")
-    print(f"Done. {len(contour_inventory)} zones with contours, {len(supp_inventory)} zones with supplemental.")
-    print(f"Output: {out_dir}")
-    print(f"{'='*70}")
+        print(f"\n{'='*70}")
+        print(f"Done. {len(contour_inventory)} zones with contours, {len(supp_inventory)} zones with supplemental.")
+        print(f"Output: {out_dir}")
+        print(f"{'='*70}")
 
 if __name__ == '__main__':
     main()

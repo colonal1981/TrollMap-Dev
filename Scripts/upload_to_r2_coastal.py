@@ -42,6 +42,49 @@ SUPPLEMENTAL_LAYERS = [
 
 SKIP_SLUGS = set()
 
+# ── Coastal tiers ─────────────────────────────────────────────────────────────
+#
+# This script had no tier filter at all. `upload_garmin_to_r2.py` has carried one
+# since 2026-08-03 -- COASTAL_PRIMARY plus layers_for() -- but there are TWO roads
+# to R2 and only that one was gated. Run this script with --contours or --all and
+# it pushed contours and depth_areas for every zone in the catalog: roughly 124 MB
+# each across the sixteen zones the filter exists to exclude.
+#
+# Ryan, 2026-08-03: "any saltwater from edisto beach to murrells inlet should be
+# what we call primary... the other areas are perfectly fine with NOAA and the
+# garmin poi/docks." Confirmed again 2026-08-04: six zones, not two.
+#
+# The list is IMPORTED rather than copied. A second copy of a set like this is how
+# the 118-vs-116 lake-key drift happened, and a tier list that disagrees with
+# itself between two uploaders would be invisible until the bill arrived.
+try:
+    from upload_garmin_to_r2 import COASTAL_PRIMARY
+except ImportError as exc:      # never fall back to "no filter" -- that IS the bug
+    print('FATAL: cannot import COASTAL_PRIMARY from upload_garmin_to_r2.py (%s).' % exc)
+    print('Refusing to run unfiltered -- that would ship ~2 GB of contours for')
+    print('secondary coastal zones. Fix the import rather than removing this guard.')
+    sys.exit(2)
+
+# The two scripts speak different layer vocabularies: the Garmin pack uses
+# {docks, pois, garmin_shoreline}, this pipeline writes *.geojson filenames. These
+# are the same tier expressed in this script's names -- structure yes, bathymetry no.
+COASTAL_SECONDARY_LAYERS = {
+    'pois.geojson', 'shoreline.geojson', 'fishing_points.geojson', 'fishing_lines.geojson',
+}
+HEAVY_LAYERS = {'contours.geojson', 'depth_areas.geojson', 'depth_soundings.geojson'}
+
+
+def is_primary(slug):
+    """A non-coastal slug is unaffected; a coastal one must be in the primary band."""
+    return (not slug.startswith('coast_')) or slug in COASTAL_PRIMARY
+
+
+def layers_for(slug):
+    """Which supplemental layers of this zone actually go to R2."""
+    if is_primary(slug):
+        return list(SUPPLEMENTAL_LAYERS)
+    return [l for l in SUPPLEMENTAL_LAYERS if l in COASTAL_SECONDARY_LAYERS]
+
 
 def wrangler_put(local_path, r2_key, dry_run=False):
     size_kb = Path(local_path).stat().st_size // 1024
@@ -75,6 +118,9 @@ def best_boundary_file(slug):
 
 
 def upload_contours(slug, dry_run=False):
+    if not is_primary(slug):
+        print('  contours skipped — %s is a secondary coastal zone' % slug)
+        return True, 'skipped-tier'
     path = OUTPUT_DIR / f'{slug}.geojson'
     if not path.exists():
         return False, 'missing'
@@ -87,7 +133,12 @@ def upload_supplemental(slug, dry_run=False):
     if not supp_dir.exists():
         return 0, 0
     ok = fail = 0
-    for layer in SUPPLEMENTAL_LAYERS:
+    want = layers_for(slug)
+    dropped = [l for l in SUPPLEMENTAL_LAYERS if l not in want]
+    if dropped:
+        print('  tier: shipping %d of %d layers (holding back %s)'
+              % (len(want), len(SUPPLEMENTAL_LAYERS), ', '.join(sorted(dropped))))
+    for layer in want:
         path = supp_dir / layer
         if not path.exists():
             continue
@@ -150,6 +201,10 @@ def main():
     print(f'TrollMap R2 Upload — {mode}')
     print(f'Bucket: {BUCKET}')
     print(f'Slugs:  {len(slugs)}')
+    prim = sorted(s for s in slugs if s.startswith('coast_') and s in COASTAL_PRIMARY)
+    sec  = sorted(s for s in slugs if s.startswith('coast_') and s not in COASTAL_PRIMARY)
+    print(f'Coastal primary   ({len(prim)}, all layers): ' + ', '.join(prim))
+    print(f'Coastal secondary ({len(sec)}, structure only): ' + ', '.join(sec))
     print(f'{"─"*60}')
 
     c_ok = c_fail = c_skip = 0
