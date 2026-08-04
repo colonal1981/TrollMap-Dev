@@ -16,7 +16,7 @@ Each entry contains:
 COASTAL_CATALOG = {
     'coast_winyah_bay_sc': {
         'name': 'Winyah Bay / Georgetown, SC',
-        'bbox': (33.15, 33.55, -79.50, -79.10),
+        'bbox': (33.325, 33.571, -79.586, -79.093),
         'center': (33.35, -79.28),
         'priority': 8,
         'coastal': True,
@@ -30,7 +30,11 @@ COASTAL_CATALOG = {
     },
     'coast_murrells_inlet_sc': {
         'name': 'Murrells Inlet / Pawleys Island, SC',
-        'bbox': (33.45, 33.65, -79.20, -78.92),
+        'bbox': (33.499, 33.854, -79.178, -78.600),  # east edge extended 2026-08-03: the ICW
+                 # at Hwy 22/17, North Myrtle Beach and Cherry Grove (Williams Creek) are
+                 # saltwater ramps that fell in NO zone at -78.832, so those names would
+                 # have resolved to nothing. Still SECONDARY tier -- Ryan's primary run is
+                 # Edisto Beach to Murrells Inlet, and this is north of it.
         'center': (33.55, -79.05),
         'priority': 8,
         'coastal': True,
@@ -47,7 +51,7 @@ COASTAL_CATALOG = {
     },
     'coast_santee_delta_sc': {
         'name': 'Santee River Delta / North Inlet, SC',
-        'bbox': (33.05, 33.35, -79.55, -79.15),
+        'bbox': (32.99, 33.327, -79.622, -79.158),
         'center': (33.18, -79.35),
         'priority': 8,
         'coastal': True,
@@ -57,9 +61,36 @@ COASTAL_CATALOG = {
             'Santee Coastal Reserve Ramp': [33.172, -79.358],
         }
     },
+    # ── Cape Romain / Bulls Bay ──────────────────────────────────────────────
+    # ADDED 2026-08-03. This stretch had NO ZONE AT ALL: Bulls Bay, Awendaw, Bulls Island
+    # and Five Fathom Creek fell in the gap between Charleston's east edge and the Santee
+    # delta's west edge. Cape Romain NWR is prime redfish water, and it was unreachable in
+    # the app -- not because Garmin lacks data, but because no polygon claimed it.
+    #
+    # Tide station 8665530 (Charleston) is the NEAREST available, not a station in the bay.
+    # High water at Bulls Bay runs a little behind Charleston; treat the timing as
+    # approximate until a closer station is wired in.
+    'coast_cape_romain_sc': {
+        'name': 'Cape Romain / Bulls Bay, SC',
+        'bbox': (32.85, 33.156, -79.836, -79.536),
+        # Bulls Bay itself, not the geometric centre of the box -- the centre is what the
+        # tide and forecast lookups key on, so it should be water you would actually fish.
+        'center': (32.94, -79.66),
+        'priority': 8,
+        'coastal': True,
+        'tide_station': '8665530',
+        'state': 'SC',
+        # Coordinates taken verbatim from osm_ramps_sc.geojson (leisure=slipway) inside this
+        # box, with the OSM id kept so each can be checked. Not typed from memory.
+        'ramps': {
+            'Garris Landing (Bulls Bay)':   [32.93974, -79.65744],   # osm 1216036501
+            'Buck Hall Landing (Awendaw)':  [33.03846, -79.56095],   # osm 1489969156
+            'Five Fathom Creek Ramp':       [33.01592, -79.58791],   # osm 10283985379
+        }
+    },
     'coast_charleston_sc': {
         'name': 'Charleston Harbor, SC',
-        'bbox': (32.60, 32.95, -80.10, -79.75),
+        'bbox': (32.623, 33.115, -80.19, -79.734),
         'center': (32.77, -79.93),
         'priority': 8,
         'coastal': True,
@@ -73,7 +104,7 @@ COASTAL_CATALOG = {
     },
     'coast_ace_basin_sc': {
         'name': 'ACE Basin / Edisto, SC',
-        'bbox': (32.35, 32.75, -80.70, -80.25),
+        'bbox': (32.296, 32.76, -80.709, -80.129),
         'center': (32.55, -80.47),
         'priority': 8,
         'coastal': True,
@@ -100,7 +131,9 @@ COASTAL_CATALOG = {
     },
     'coast_beaufort_sc': {
         'name': 'Beaufort / Port Royal Sound, SC',
-        'bbox': (32.25, 32.65, -80.90, -80.45),
+        'bbox': (32.25, 32.65, -80.92, -80.45),  # west edge nudged 0.02 deg 2026-08-03:
+                 # the Coosawhatchie's Dawson Creek ramp sat 800 m outside at -80.9082,
+                 # so that name would have pointed at no zone at all.
         'center': (32.43, -80.67),
         'priority': 8,
         'coastal': True,
@@ -123,19 +156,6 @@ COASTAL_CATALOG = {
         'ramps': {
             'Broad Creek Marina': [32.197, -80.747],
             'Shelter Cove':       [32.209, -80.722],
-        }
-    },
-    'coast_savannah_ga': {
-        'name': 'Savannah River / Savannah, GA',
-        'bbox': (31.90, 32.25, -81.25, -80.90),
-        'center': (32.08, -81.09),
-        'priority': 8,
-        'coastal': True,
-        'tide_station': '8670659',
-        'state': 'GA',
-        'ramps': {
-            'Houlihan Bridge Ramp': [32.134, -81.107],
-            'Port Wentworth Ramp':  [32.155, -81.167],
         }
     },
     # ── Georgia Coastal Zones ─────────────────────────────────────────────────
