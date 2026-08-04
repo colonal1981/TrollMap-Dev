@@ -13,7 +13,7 @@
  */
 
 import { state } from '../core/state.js';
-import { loadAccessIndex, registryRecordFor } from '../data/access-index.js';
+import { loadAccessIndex, registryRecordFor, getLoadedAccessIndex } from '../data/access-index.js';
 import { loadContourForLake } from './contour-data.js';
 import { COASTAL_ZONES, isCoastalKey } from '../data/coastal-zones.js';
 import { appendCoastalOptgroups } from '../utils/coastal-optgroups.js';
@@ -69,16 +69,35 @@ function passesFilters(lakeName) {
 /** Short suffix telling you what is known about a lake before you select it. */
 function lakeBadge(lakeName) {
   const rec = registryRecordFor(lakeName);
-  if (!rec) return '';
+
+  // Count what the picker ACTUALLY holds for this name, not what the offline access index
+  // recorded months ago.
+  //
+  // `rec.rampSources` comes from lake_access.json, baked at index-build time. Every waterbody
+  // whose boundary was cut after that file was last rebuilt has `ramp_sources: 0` -- which is
+  // true about the file and false about the world. Congaree River read "no ramp listed" while
+  // the Access dropdown directly beneath it listed five, because the SC DNR feed names three
+  // ramps on it and /paddle adds more. A badge that contradicts the list under it is worse
+  // than no badge: Ryan's rule is that access is a DISPLAYED ATTRIBUTE, and a displayed
+  // attribute has to be true.
+  //
+  // The live index is authoritative because it is the same data the Access dropdown is built
+  // from. rampSources stays as the fallback for a lake the feeds do not mention at all.
+  const pts = getLoadedAccessIndex()?.byLake?.get(lakeName) || [];
+  const ramps = pts.filter(p => /ramp/i.test(p.typeLabel || '')).length;
+
+  if (!rec && !pts.length) return '';
   const bits = [];
-  if (rec.areaAcres) bits.push(`${Math.round(rec.areaAcres)} ac`);
-  if (rec.rampSources) bits.push(rec.rampSources > 1 ? `${rec.rampSources} ramp srcs` : 'ramp');
+  if (rec?.areaAcres) bits.push(`${Math.round(rec.areaAcres)} ac`);
+  if (ramps) bits.push(ramps === 1 ? '1 ramp' : `${ramps} ramps`);
+  else if (pts.length) bits.push(pts.length === 1 ? '1 access pt' : `${pts.length} access pts`);
+  else if (rec?.rampSources) bits.push(rec.rampSources > 1 ? `${rec.rampSources} ramp srcs` : 'ramp');
   else bits.push('no ramp listed');
   // Say WHICH credential opened it. "Open With Credential" on its own reads like a
   // formality; "Fort Bragg" tells you to bring your ID and check in.
-  if (rec.accessForMe === 'Open With Credential') bits.push(`ID: ${rec.accessVia || 'credential'}`);
-  else if (rec.accessForMe && rec.accessForMe !== 'Open Access') bits.push(rec.accessForMe);
-  if (rec.charted != null && rec.charted > 0) bits.push(`${Math.round(rec.charted * 100)}% charted`);
+  if (rec?.accessForMe === 'Open With Credential') bits.push(`ID: ${rec.accessVia || 'credential'}`);
+  else if (rec?.accessForMe && rec.accessForMe !== 'Open Access') bits.push(rec.accessForMe);
+  if (rec?.charted != null && rec.charted > 0) bits.push(`${Math.round(rec.charted * 100)}% charted`);
   return bits.length ? `  — ${bits.join(', ')}` : '';
 }
 
