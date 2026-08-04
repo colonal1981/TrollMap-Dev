@@ -186,14 +186,33 @@ export function groupFeaturesByWaterbody(features, source) {
   // Total rejection of a non-empty feed is never correct data. The server returned rows;
   // our predicate said none of them count. That is a broken predicate, not an empty state.
   const filterRejectedAll = features.length > 0 && filtered === features.length;
+  let sampleKeys = null;
+  let sampleRow = null;
   if (filterRejectedAll) {
-    const sample = features[0]?.properties || {};
-    console.error(`[arcgis] FILTER REJECTED ALL ${features.length} features -- the source filter`
-                  + ` names a field this layer does not return. Available fields: `
-                  + Object.keys(sample).join(', '));
+    // Naming the failure is not enough -- "the filter names a field this layer does not
+    // return" is a hypothesis, and the first time this fired for real (TN paddle) the
+    // hypothesis was wrong: the field WAS in a direct query. What you actually need is
+    // the row as the Worker received it, because the difference between what a browser
+    // query returns and what this fetch returns is exactly where these bugs live.
+    // `properties` is checked explicitly: an f=json response nests attributes under
+    // `attributes`, and reading `.properties` off it yields undefined for every row --
+    // which looks like a filter bug and is not one.
+    const first = features[0] || {};
+    const sample = first.properties || {};
+    sampleKeys = Object.keys(sample);
+    if (!sampleKeys.length) sampleKeys = Object.keys(first).map((k) => `<no properties; feature keys: ${k}>`);
+    sampleRow = {};
+    for (const k of Object.keys(sample).slice(0, 60)) {
+      const v = sample[k];
+      sampleRow[k] = (v && typeof v === 'object') ? '[object]' : v;
+    }
+    console.error(`[arcgis] FILTER REJECTED ALL ${features.length} features.`
+                  + ` Keys on the first row: ${sampleKeys.join(', ') || '(none)'}`);
   }
   return {
     waterbodies,
+    sampleKeys,
+    sampleRow,
     stats: { fetched: features.length, kept, filtered, dropped, mapperErrors, filterRejectedAll },
   };
 }
@@ -261,16 +280,17 @@ export async function handleGisRoute({ env, url, cachePrefix, ttlDays, sources, 
   try {
     const idField = source.idField || 'OBJECTID';
     const allFeatures = await fetchArcGisAllFeatures(source.url, idField);
-    const { waterbodies, stats } = groupFeaturesByWaterbody(allFeatures, source);
+    const { waterbodies, stats, sampleKeys, sampleRow } = groupFeaturesByWaterbody(allFeatures, source);
     const flatCount = stats.kept;
     const result = buildResult(state, source, waterbodies, flatCount, allFeatures.length);
     // Surfaced in the JSON body, not just the Worker log, because the only way anyone
     // looks at this data is `curl .../paddle?state=TN` -- and a bare `count: 0` reads as
     // "TN has no paddle access" when it actually means "the filter is broken".
     if (stats.filterRejectedAll) {
-      result.warning = `filter rejected all ${stats.fetched} features returned by the source`
-                       + ` -- the filter likely names a field this layer does not return`;
+      result.warning = `filter rejected all ${stats.fetched} features returned by the source`;
       result.fetchedFeatures = stats.fetched;
+      result.availableFields = sampleKeys;
+      result.sampleRow = sampleRow;
     }
     const body = JSON.stringify(result);
     // Store with metadata for cache age checks
