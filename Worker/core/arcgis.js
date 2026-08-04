@@ -14,7 +14,7 @@ const PAGE_SIZE = 1000;
  * on main. The two markers being out of step means the bundle is stale or the
  * build did not pick this file up.
  */
-export const ARCGIS_BUILD = 'arcgis-2026-08-04c';
+export const ARCGIS_BUILD = 'arcgis-2026-08-04e';
 
 /**
  * Is this ArcGIS yes/no flag set?
@@ -258,6 +258,22 @@ export async function handleGisRoute({ env, url, cachePrefix, ttlDays, sources, 
     });
   }
 
+  // A source with no url produces `fetch('undefined?outFields=*&...')`, which throws,
+  // which lands in the stale-cache fallback below and hands back a body some earlier
+  // build wrote -- so a config typo renders as plausible-looking data from the past.
+  // That is how a dropped `url:` line survived four deploys on 2026-08-04. Refuse it
+  // here, by name, before anything can paper over it.
+  for (const key of ['url', 'filter', 'name', 'wb']) {
+    if (source[key] == null) {
+      const { JSON_HEADERS } = await import('../worker-core.js');
+      return new Response(JSON.stringify({
+        error: `${cachePrefix} source for ${state} is missing "${key}"`,
+        hint: 'This is a Worker config bug, not an upstream outage. No cached fallback'
+              + ' is served for it, deliberately -- stale data would hide it.',
+      }), { headers: JSON_HEADERS, status: 500 });
+    }
+  }
+
   // Try cache
   if (!forceRefresh) {
     const cached = await getCachedGis(env, cacheKey, ttlDays);
@@ -323,11 +339,39 @@ export async function handleGisRoute({ env, url, cachePrefix, ttlDays, sources, 
     };
     return new Response(body, { headers });
   } catch (err) {
-    // Try to serve stale cache on failure (old ramps logic did this)
+    // Try to serve stale cache on failure (old ramps logic did this).
+    //
+    // Serving stale on an upstream blip is right. Serving it in a body that looks
+    // exactly like a fresh one is not, and it cost an afternoon on 2026-08-04: TN
+    // paddle returned a body written by a build from three commits earlier, complete
+    // with that build's warning text, while `X-Cache: STALE` and the actual error sat
+    // in headers that `curl` does not print without -i. Every conclusion drawn from
+    // that body was a conclusion about code that was no longer deployed.
+    //
+    // So the staleness goes IN THE BODY. Headers are for machines; the body is what a
+    // person reads.
     try {
       const stale = await env.R2_TROLLMAP_CHARTPACKS.get(cacheKey);
       if (stale) {
-        const body = await stale.text();
+        const raw = await stale.text();
+        let body = raw;
+        try {
+          const parsed = JSON.parse(raw);
+          const uploaded = stale.uploaded ? new Date(stale.uploaded) : null;
+          parsed.stale = true;
+          parsed.staleError = err.message;
+          parsed.staleFetchedAt = stale.customMetadata?.fetchedAt
+                                  || (uploaded ? uploaded.toISOString() : null);
+          parsed.staleAgeHours = uploaded
+            ? Math.round((Date.now() - uploaded.getTime()) / 36e5) : null;
+          parsed.note = 'THIS IS CACHED DATA. The live fetch failed; every other field'
+                        + ' below was produced by whatever code was deployed at'
+                        + ' staleFetchedAt, not by the current build.';
+          body = JSON.stringify(parsed);
+        } catch (_) {
+          // Not JSON, or not an object. Hand back exactly what was stored rather than
+          // wrapping it -- callers that were parsing it before must keep working.
+        }
         return new Response(body, {
           headers: {
             'Content-Type': 'application/json',
