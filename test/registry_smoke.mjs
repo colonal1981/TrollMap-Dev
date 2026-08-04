@@ -84,14 +84,48 @@ check('no duplicates', new Set(names).size === names.length,
 check('all strings, none blank', names.every(n => typeof n === 'string' && n.trim()));
 console.log(`  first 5: ${names.slice(0, 5).join(' | ')}`);
 
-console.log('\n-- the acreage fallback must be a NO-OP now that county names the lakes --');
-const renamed = R.list.filter((r) => / \([\d,]+ ac\)$/.test(r.displayName));
-check('disambiguateDisplayNames() renamed nothing', renamed.length === 0,
-  renamed.map((r) => r.displayName).join(' | '));
-check('every shipped name carries a county', R.list.filter(r => r.shipped)
-  .every(r => / \(.+ Co, [A-Z/]+\)$/.test(r.displayName)),
-  R.list.filter(r => r.shipped && !/ \(.+ Co, [A-Z/]+\)$/.test(r.displayName))
+console.log('\n-- no two shipped lakes may share a display name --');
+// This replaces "the acreage fallback must be a NO-OP now that county names the lakes",
+// which asserted disambiguateDisplayNames() never fires. County does NOT resolve every
+// collision: Lake Wallace (Marlboro Co, SC) is 273 ac and 155 ac, Long Pond (Baker Co, GA)
+// is 159 and 66, McLaurins Millpond (Marlboro Co, SC) is 57 and 46 — same name, same
+// county, different water. The acreage suffix is the only thing that tells them apart, so
+// the fallback firing is correct behaviour and asserting it never fires forbade the fix.
+//
+// The invariant that actually matters is uniqueness. How it was reached — county, or
+// county plus acreage — is an implementation detail.
+{
+  const seen = new Map();
+  const dupes = [];
+  for (const r of R.list.filter(r => r.shipped)) {
+    if (seen.has(r.displayName)) dupes.push(`${r.displayName}  [${seen.get(r.displayName)} vs ${r.slug}]`);
+    else seen.set(r.displayName, r.slug);
+  }
+  check('shipped display names are unique', dupes.length === 0, dupes.slice(0, 4).join(' | '));
+  const renamed = R.list.filter((r) => / \([\d,]+ ac\)$/.test(r.displayName));
+  console.log(`  info  ${renamed.length} needed the acreage suffix: ${renamed.map(r => r.displayName).join(' | ') || '(none)'}`);
+}
+
+// A coastal zone is a sound, a bay or an inlet. Its centroid is open water and falls
+// outside every county polygon, so it can never carry a county and must not be required
+// to. Requiring it is what let `Pamlico Sound / Neuse River, NC, NC` through — the name
+// already ended in the state and the fallback appended it again.
+check('every shipped freshwater name carries a county', R.list.filter(r => r.shipped && !r.slug.startsWith('coast_'))
+  .every(r => / \(.+ Co, [A-Z/]+\)( \([\d,]+ ac\))?$/.test(r.displayName)),
+  R.list.filter(r => r.shipped && !r.slug.startsWith('coast_')
+                  && !/ \(.+ Co, [A-Z/]+\)( \([\d,]+ ac\))?$/.test(r.displayName))
         .slice(0,4).map(r => r.displayName).join(' | '));
+
+// Fixed in consolidate_lake_index.py on 2026-08-04 (display_with_county no longer
+// appends a suffix the name already ends with). The INDEX still carries the old strings
+// until it is regenerated, so this failing means "the index is stale", not "the code is
+// broken" — re-run consolidate_lake_index.py and it clears.
+{
+  const dbl = R.list.filter(r => /,\s*([A-Z]{2})(\/[A-Z]{2})?,\s*\1(\/[A-Z]{2})?$/.test(r.displayName));
+  check('no display name doubles its state suffix', dbl.length === 0,
+    dbl.slice(0, 5).map(r => r.displayName).join(' | ')
+    + (dbl.length ? '   <-- STALE INDEX: re-run consolidate_lake_index.py' : ''));
+}
 
 console.log('\n-- legacy names from saved plans and catches still resolve --');
 for (const q of ['Wateree Lake, SC', 'Lake Wateree, SC', 'Forest Lake, SC', 'Lake Lanier, GA',

@@ -6,7 +6,7 @@ import { handleResearchThermoclineSearch, handleResearchLimnologyData, handleRes
 
 
 /**
- * Routes that CHANGE stored state and must carry the shared token. 
+ * Routes that CHANGE stored state and must carry the shared token.
  *
  * WHY A LIST AT THE ROUTER RATHER THAN A CHECK PER HANDLER
  *
