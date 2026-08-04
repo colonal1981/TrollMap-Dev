@@ -377,7 +377,12 @@ async function handleResearchDatasetHunt(request, env) {
             else if (/usace\.army\.mil/.test(host))authority = 'USACE';
             else if (/nepis\.epa\.gov|epa\.gov/.test(host)) authority = 'EPA NSCEP';
             else if (/edu$/.test(host))            authority = 'Academic';
-          } catch (_) {}
+          } catch (_) {
+            // Intentionally silent: `authority` is initialised to 'Web' above, so a URL too
+            // malformed to parse keeps the lowest-trust label -- which is the right answer
+            // for it. Audited 2026-08-03. Note this is NOT the shape discover.js had, where
+            // the same ladder started at '' and an unparseable URL slipped the filter.
+          }
           discovered.push({
             url: r.url,
             title: (r.title || '').slice(0, 180),
@@ -405,7 +410,11 @@ async function handleResearchDatasetHunt(request, env) {
       JSON.stringify({ lakeName, state, datasets: discovered, cachedAt: new Date().toISOString() }),
       { expirationTtl: 60 * 60 * 24 * 7 }
     );
-  } catch (_) {}
+  } catch (err) {
+    // A failed cache write has no symptom except that the next request repeats the whole
+    // dataset hunt. It never gets faster and nothing says why.
+    console.warn(`[dataset] hunt cache write failed for ${lakeName}:`, err && err.message);
+  }
 
   return new Response(JSON.stringify({
     ok: true,

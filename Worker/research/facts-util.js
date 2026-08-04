@@ -1,17 +1,11 @@
 // research/facts-util.js — split from worker-research.js (behavior-preserving)
 import { callLLM, extractLLMText } from '../worker-core.js';
+import { hasResearchValue } from '../../js/utils/coerce.js';
 
 function normalizeResearchName(s) {
   return String(s || '').toLowerCase().replace(/&amp;/g, '&').replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
 }
 
-function hasResearchValue(v) {
-  if (v == null) return false;
-  if (typeof v === 'string') return v.trim().length > 0;
-  if (Array.isArray(v)) return v.length > 0;
-  if (typeof v === 'object') return Object.keys(v).length > 0;
-  return true;
-}
 
 function buildEvidence(sourceType, sourceLabel, sourceUrl, quote, method, extra = {}) {
   return { sourceType, sourceLabel, sourceUrl, quote: quote || null, method, ...extra };
@@ -361,7 +355,13 @@ async function fetchArcGISGrouped(env, cacheKey, sourceDef, buildRecord) {
       const txt = await cached.text();
       return JSON.parse(txt);
     }
-  } catch (_) {}
+  } catch (err) {
+    // Falling through to a full re-fetch is the right recovery, and the write at the end of
+    // this function overwrites a corrupt entry, so this self-heals. What it must not do is
+    // heal quietly: a cache that throws on every read turns a one-request answer into a
+    // full ArcGIS paginate every single time, and the only symptom is that it feels slow.
+    console.warn(`[facts] cache read failed for ${cacheKey}, refetching:`, err && err.message);
+  }
   const allFeatures = [];
   let offset = 0;
   const pageSize = 1000;
@@ -388,7 +388,11 @@ async function fetchArcGISGrouped(env, cacheKey, sourceDef, buildRecord) {
   const result = { waterbodies };
   try {
     await env.R2_TROLLMAP_CHARTPACKS.put(cacheKey, JSON.stringify(result), { httpMetadata: { contentType: 'application/json' }, customMetadata: { fetchedAt: new Date().toISOString() } });
-  } catch (_) {}
+  } catch (err) {
+    // Same shape as the dataset-hunt cache: the answer is still correct, it is just never
+    // cached, so every call re-fetches the whole ArcGIS feed.
+    console.warn(`[facts] cache write failed for ${cacheKey}:`, err && err.message);
+  }
   return result;
 }
 

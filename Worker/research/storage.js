@@ -32,18 +32,33 @@ async function handleResearchGet(env, lakeId) {
   if (!obj) return new Response(JSON.stringify({ok:false, error:`no profile for ${lakeId} (${safe})`}), {status:404, headers:JSON_HEADERS});
   const text = await obj.text();
   let data;
-  try { data = JSON.parse(text); } catch { data = {raw:text}; }
+  try {
+    data = JSON.parse(text);
+  } catch (err) {
+    // `{raw: text}` is served with ok:true and looks like a profile to every caller, so a
+    // corrupted object in R2 reads as a lake that mysteriously has no facts rather than as
+    // a broken file. The shape is kept -- it lets a human recover the bytes -- but the fact
+    // that this lake's stored profile no longer parses has to reach the log.
+    console.error(`[storage] profile for ${safe} is not valid JSON (${text.length} bytes):`, err && err.message);
+    data = { raw: text, parseError: err && err.message };
+  }
   // also try to list package files
   let packageFiles = [];
   try {
     const pkgListed = await env.R2_TROLLMAP_CHARTPACKS.list({prefix: `lake_packages/${safe}/`});
     packageFiles = pkgListed.objects.map(o=>({key:o.key, size:o.size, name:o.key.split('/').pop()}));
-  } catch {}
+  } catch (err) {
+    // An empty list is a legitimate answer; a failed list is not the same thing, and the
+    // caller cannot tell them apart from the response.
+    console.warn(`[storage] package list failed for ${safe}:`, err && err.message);
+  }
   let versionList = [];
   try {
     const vListed = await env.R2_TROLLMAP_CHARTPACKS.list({prefix: `lakes/versions/${safe}/`});
     versionList = vListed.objects.map(o=>({key:o.key, size:o.size, version: (o.key.match(/v(\d+)\.json/)||[])[1]||null})).sort((a,b)=> (parseInt(b.version||0)-parseInt(a.version||0)));
-  } catch {}
+  } catch (err) {
+    console.warn(`[storage] version list failed for ${safe}:`, err && err.message);
+  }
   return new Response(JSON.stringify({ok:true, lakeId: lakeId, sanitized: safe, masterKey, profile: data, packageFiles, versions: versionList}), {headers: JSON_HEADERS});
 }
 
@@ -79,7 +94,17 @@ async function handleResearchSave(request, env) {
         nextVersion = maxV+1 || 2;
       }
     }
-  } catch {}
+  } catch (err) {
+    // DO NOT DEFAULT TO 1 HERE. `nextVersion` is initialised to 1, so swallowing this left it
+    // at 1 whenever the read failed for a reason that had nothing to do with the profile being
+    // new -- a transient R2 error, a throttle, a malformed existing document. The save then
+    // wrote lakes/versions/<lake>/v1.json ON TOP of the real version 1 and reset the counter,
+    // losing history with no error anywhere.
+    //
+    // A version number we could not determine is not a version number. Fail the save.
+    console.error(`[storage] version lookup failed for ${safe}:`, err && err.message);
+    throw new Error(`cannot determine next version for ${safe}: ${err && err.message}`);
+  }
 
   // Calculate confidence per section if not provided
   // Canonical sections only — skip aliased duplicates (forage=biology, trollingIntelligence=trolling)
@@ -275,13 +300,30 @@ async function handleResearchDelete(request, env) {
   try {
     const pkg = await env.R2_TROLLMAP_CHARTPACKS.list({ prefix: `lake_packages/${safe}/` });
     for (const o of pkg.objects) keys.push(o.key);
-  } catch {}
+  } catch (err) {
+    // Worth shouting about: a failed list here means those objects are NOT in `keys`, so the
+    // delete below leaves them behind while reporting a clean run.
+    console.error(`[storage] package list failed during delete for ${safe}:`, err && err.message);
+  }
   try {
     const vers = await env.R2_TROLLMAP_CHARTPACKS.list({ prefix: `lakes/versions/${safe}/` });
     for (const o of vers.objects) keys.push(o.key);
-  } catch {}
+  } catch (err) {
+    console.error(`[storage] version list failed during delete for ${safe}:`, err && err.message);
+  }
+  // Collect failures instead of swallowing them. This loop used to report success to the
+  // caller whether or not anything was actually deleted.
+  const failed = [];
   for (const key of keys) {
-    try { await env.R2_TROLLMAP_CHARTPACKS.delete(key); } catch {}
+    try {
+      await env.R2_TROLLMAP_CHARTPACKS.delete(key);
+    } catch (err) {
+      console.error(`[storage] delete failed: ${key}`, err && err.message);
+      failed.push(key);
+    }
+  }
+  if (failed.length) {
+    console.error(`[storage] ${failed.length} of ${keys.length} deletes failed for ${safe}`);
   }
   return new Response(JSON.stringify({ ok:true, lakeName, deleted: keys.length }), { headers: JSON_HEADERS });
 }
@@ -337,7 +379,9 @@ async function handleEnhancedLakeIntel(lakeName, env) {
         fullProfile: researchedProfile
       };
     }
-  } catch {}
+  } catch (err) {
+    console.warn('[storage] researched profile merge failed:', err && err.message);
+  }
   return {...curated, researched, hasResearchedProfile: !!researched};
 }
 

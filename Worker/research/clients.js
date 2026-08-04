@@ -131,6 +131,20 @@ const REGS_EFFECTIVE = {
   NC: new Date('2026-08-01'),
   TN: new Date('2026-08-01')
 };
+
+// Which of those dates were actually read off the document, and which are inherited.
+//
+// SC and GA are quoted: Regs2627.pdf page 1 says "August 14, 2026-August 14, 2027",
+// and 26GAAB-LR.pdf says "effective for the period of July 1, 2026 through June 30,
+// 2027". NC and TN are NOT verified. They kept August 1 because that is the date the
+// old shared constant happened to hold — the same unexamined inheritance that had SC
+// switching eleven days early. Both digests on the drive are page-range excerpts that
+// do not include their covers, and neither NCWRC's nor TWRA's site states a date
+// plainly enough to rely on.
+//
+// This is recorded rather than guessed because an unverified date that looks like a
+// verified one is how the SC bug survived. Checking costs one look at each cover.
+const REGS_DATE_VERIFIED = { SC: true, GA: true, NC: false, TN: false };
 // Kept for existing importers. NC/TN keep the original date, so this is unchanged.
 const REGS_2026_EFFECTIVE = REGS_EFFECTIVE.NC;
 const useDigest2026 = (state) => new Date() >= (REGS_EFFECTIVE[state] || REGS_2026_EFFECTIVE);
@@ -527,6 +541,12 @@ async function fetchStateRegulations(state, env) {
   
   const config = STATE_REGULATIONS_CONFIG[state];
   if (!config) return { general: {}, lakeSpecific: {} };
+
+  if (useDigest2026(state) && REGS_DATE_VERIFIED[state] === false) {
+    console.warn(`fetchStateRegulations(${state}): serving the 2026-2027 digest on an ` +
+                 `UNVERIFIED effective date (${REGS_EFFECTIVE[state].toISOString().slice(0,10)} ` +
+                 `was inherited, not read off the cover).`);
+  }
   
   const pages = config.pages;
   const urls = pages.map(p => p.url);
@@ -540,7 +560,7 @@ async function fetchStateRegulations(state, env) {
   // All states now use LLM-based extraction from R2 digest PDFs
   for (let i = 0; i < pages.length; i++) {
     const page = pages[i];
-    const text = result.results?.[i]?.text || '';
+    const text = freshwaterRegionOf(result.results?.[i]?.text || '');
     if (text.length < 500) {
       console.warn(`fetchStateRegulations(${state}): page ${i} returned insufficient text (${text.length} chars)`);
       continue;
@@ -653,24 +673,59 @@ const SALTWATER_SPECIES =
 // would cut a slot limit away from the number that bounds it.
 const WIN_BEFORE = 1200, WIN_AFTER = 2000;
 
+// A window reaching 1,200 characters BACKWARDS can cross out of the saltwater section
+// and pull freshwater limits in with it. On the shipped books it does not, because
+// both saltwater sections open with pages of licence and gear text before the first
+// species name -- so the reach back lands on more saltwater. That is luck about this
+// year's layout, not a property of the format, and it is the same "arithmetic, not a
+// guarantee" that the freshwater 35,000-character window had.
+//
+// So a window may not reach back past the last FRESHWATER species name before it. The
+// purpose of reaching back at all is to catch the table header above a row
+// ("SIZE LIMIT  DAILY CREEL LIMIT"), and a header never sits on the far side of
+// another species' row.
+const FRESHWATER_ONLY =
+  /largemouth|smallmouth|spotted bass|crappie|walleye|bluegill|bream|redear|muskellunge|sauger|kokanee|mountain trout|rock bass|chain pickerel|white perch|yellow perch|bullhead/gi;
+
 function extractSaltwaterDigest(state, text) {
   const cfg = SALTWATER_DIGEST[state];
   if (!cfg) return { text: null, located: false };
 
-  let body = text;
+  // 'section' is a PREFERENCE, not a requirement. The running head is precise when it
+  // is there -- it keeps the section's licence and gear pages, which carry no species
+  // name and would otherwise be dropped. But it is an assumption about one text
+  // extractor's output, and the Worker reads these through TinyFish as markdown, not
+  // through pdftotext. If markdown renders the head as "## Saltwater Fishing" the
+  // case-sensitive match fails, and the old code then returned null -- meaning SC and
+  // GA would have silently had no digest at all, permanently, while looking like a
+  // careful agent declining to guess. That is the exact failure this whole file was
+  // written to remove.
+  //
+  // So a missed head degrades to the species-window pass over the whole document,
+  // which is what NC uses and needs no head. Safe here because it is measured: in both
+  // SC and GA, zero occurrences of "red drum", "seatrout" or "flounder" fall in the
+  // freshwater half, so whole-document windows pull no freshwater content.
+  let body = text, anchor = 'whole';
   if (cfg.scope === 'section') {
     const sliced = sliceSaltwaterSection(text);
-    if (!sliced.located) return { text: null, located: false };
-    body = sliced.text;
+    if (sliced.located) { body = sliced.text; anchor = 'head'; }
+    else console.warn('extractSaltwaterDigest: no running head — falling back to species windows');
   }
 
   // Collect a window round every target species mention, then merge the overlaps.
+  // End positions of every freshwater species name, so a window can be floored at the
+  // nearest one behind it.
+  FRESHWATER_ONLY.lastIndex = 0;
+  const fwEnds = [...body.matchAll(FRESHWATER_ONLY)].map(m => m.index + m[0].length);
+
   const spans = [];
   SALTWATER_SPECIES.lastIndex = 0;
   for (const m of body.matchAll(SALTWATER_SPECIES)) {
-    spans.push([Math.max(0, m.index - WIN_BEFORE), Math.min(body.length, m.index + WIN_AFTER)]);
+    let floor = 0;
+    for (const e of fwEnds) { if (e >= m.index) break; floor = e; }
+    spans.push([Math.max(0, floor, m.index - WIN_BEFORE), Math.min(body.length, m.index + WIN_AFTER)]);
   }
-  if (!spans.length) return { text: null, located: false };
+  if (!spans.length) return { text: null, located: false, anchor };
 
   const merged = [];
   for (const s of spans.sort((a, b) => a[0] - b[0])) {
@@ -695,30 +750,50 @@ function extractSaltwaterDigest(state, text) {
   }
   // Hard cap. The '[...]' joiners are not free and the per-chunk accounting above
   // does not charge for them, so the budget is enforced once more on the result.
-  return { text: (preamble + parts.join('\n[...]\n')).slice(0, DIGEST_BUDGET), located: true };
+  return { text: (preamble + parts.join('\n[...]\n')).slice(0, DIGEST_BUDGET), located: true, anchor };
 }
 
+// The saltwater section's RUNNING HEAD, matched case-sensitively. Both books set it
+// in caps -- SC letter-spaced ("S A L T W A T E R  F I S H I N G"), GA plain
+// ("SALTWATER FISHING REGULATIONS") -- so the pattern tolerates whitespace and
+// markdown punctuation between letters but not a change of case.
+//
+// Case matters more than it looks. A case-insensitive search matched the sentence
+// "...saltwater fishing license. If fishing in both fresh and saltwaters..." in the
+// middle of SC's FRESHWATER nongame rules, 18,000 characters before the real
+// section, and produced a slice that read as saltwater and was mostly trotline law.
+// Measured on the shipped digests, the case-sensitive head matches 5 times in SC and
+// 12 in GA, every one inside the saltwater section: zero occurrences of "red drum",
+// "seatrout" or "flounder" fall before the first hit, and zero occurrences of
+// "largemouth" fall after it.
+const SALTWATER_HEAD =
+  /S[\s#*_>|-]*A[\s#*_>|-]*L[\s#*_>|-]*T[\s#*_>|-]*W[\s#*_>|-]*A[\s#*_>|-]*T[\s#*_>|-]*E[\s#*_>|-]*R[\s#*_>|-]+F[\s#*_>|-]*I[\s#*_>|-]*S[\s#*_>|-]*H[\s#*_>|-]*I[\s#*_>|-]*N[\s#*_>|-]*G/;
+
 function sliceSaltwaterSection(text) {
-  // The marker is the section's RUNNING HEAD, matched case-sensitively. Both books
-  // set it in caps -- SC letter-spaced ("S A L T W A T E R  F I S H I N G"), GA
-  // plain ("SALTWATER FISHING REGULATIONS") -- so the pattern tolerates arbitrary
-  // whitespace between letters but not a change of case.
-  //
-  // Case matters more than it looks. A case-insensitive search matched the sentence
-  // "...saltwater fishing license. If fishing in both fresh and saltwaters..." in the
-  // middle of SC's FRESHWATER nongame rules, 18,000 characters before the real
-  // section, and produced a slice that read as saltwater and was mostly trotline law.
-  // Measured on the shipped digests, the case-sensitive head matches 5 times in SC and
-  // 12 in GA, every one of them inside the saltwater section: zero occurrences of
-  // "red drum", "seatrout" or "flounder" fall before the first hit, and zero
-  // occurrences of "largemouth" fall after it.
-  const head = /S\s*A\s*L\s*T\s*W\s*A\s*T\s*E\s*R\s+F\s*I\s*S\s*H\s*I\s*N\s*G/;
-  const m = head.exec(text);
+  const m = SALTWATER_HEAD.exec(text);
   // No head, no slice. Returning the tail as a guess would hand the agent a document
-  // that is labelled the saltwater baseline and is not one; a null lets it take its
-  // own honest "No R2 digest available -- do not guess limits; return nulls" branch.
+  // that is labelled the saltwater baseline and is not one.
   if (!m) return { text: null, located: false };
   return { text: text.slice(m.index), located: true };
+}
+
+// Everything before the saltwater running head.
+//
+// The freshwater parser slices 35,000 characters forward from its first species hit,
+// and the SC and GA digests now CONTAIN their saltwater sections -- so for the first
+// time that window can run past the boundary and feed a saltwater limits table to a
+// prompt whose species vocabulary is freshwater. Today it does not, because those
+// digests extract to ~108k and ~118k characters and the boundary sits past the
+// window. That is arithmetic about one text extractor, not a property of the data:
+// a more compact extraction, or a digest with a shorter freshwater half, moves it.
+//
+// Cutting at the head makes it structural. When no head is found nothing is
+// truncated, so a digest with no saltwater section is unaffected.
+function freshwaterRegionOf(text) {
+  const m = SALTWATER_HEAD.exec(text);
+  if (!m) return text;
+  const head = text.slice(0, m.index);
+  return head.length >= 500 ? head : text;   // never truncate into uselessness
 }
 
 async function fetchSaltwaterRegulations(state, env) {
@@ -746,7 +821,8 @@ async function fetchSaltwaterRegulations(state, env) {
       console.warn(`fetchSaltwaterRegulations(${state}): no saltwater species rows found in the digest -- not caching`);
       return null;
     }
-    out = { url: page.url, digestId, published: cfg.published, located: true, content: ext.text };
+    out = { url: page.url, digestId, published: cfg.published, located: true,
+            anchor: ext.anchor, content: ext.text };
   } catch (e) {
     console.warn(`fetchSaltwaterRegulations(${state}) failed: ${e.message}`);
     return null;  // a failure is not "this state has no saltwater rules"
@@ -808,4 +884,4 @@ async function fetchLiveRegsAmendments(state, env) {
   return out;
 }
 
-export { TINYFISH_BASE, TINYFISH_FETCH_BASE, tinyfishSearch, tinyfishFetch, FIRECRAWL_HARD_STOP, FIRECRAWL_KV_KEY, checkFirecrawlBudget, recordFirecrawlUsage, scrapeDoFetch, REGS_R2_BASE, REGS_2026_EFFECTIVE, REGS_EFFECTIVE, useDigest2026, USE_2026, STATE_REGULATIONS_CONFIG, SALTWATER_DIGEST, sliceSaltwaterSection, extractSaltwaterDigest, DIGEST_BUDGET, fetchSaltwaterRegulations, fetchLiveRegsAmendments, extractMarkdownTables, parseSCTable, parseNCTable, parseGATable, parseTNStatewide, parseTNExceptions, parseTNRegion, PARSERS, normalizeLakeName, parseNCRegulationsWithLLM, parseRegulationsWithLLM, fetchStateRegulations, getLakeRegulations };
+export { TINYFISH_BASE, TINYFISH_FETCH_BASE, tinyfishSearch, tinyfishFetch, FIRECRAWL_HARD_STOP, FIRECRAWL_KV_KEY, checkFirecrawlBudget, recordFirecrawlUsage, scrapeDoFetch, REGS_R2_BASE, REGS_2026_EFFECTIVE, REGS_EFFECTIVE, REGS_DATE_VERIFIED, useDigest2026, USE_2026, STATE_REGULATIONS_CONFIG, SALTWATER_DIGEST, SALTWATER_HEAD, FRESHWATER_ONLY, sliceSaltwaterSection, freshwaterRegionOf, extractSaltwaterDigest, DIGEST_BUDGET, fetchSaltwaterRegulations, fetchLiveRegsAmendments, extractMarkdownTables, parseSCTable, parseNCTable, parseGATable, parseTNStatewide, parseTNExceptions, parseTNRegion, PARSERS, normalizeLakeName, parseNCRegulationsWithLLM, parseRegulationsWithLLM, fetchStateRegulations, getLakeRegulations };

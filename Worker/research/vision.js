@@ -2,6 +2,8 @@
 import { JSON_HEADERS } from '../worker-core.js';
 import { resolveSupplementalKeyWorker } from './limnology.js';
 
+import { boundsOf } from '../../js/utils/geojson-coords.js';
+
 async function handleResearchVisionScan(request, env) {
   const body = await request.json().catch(() => ({}));
   const { lakeName, tileBounds } = body;
@@ -30,22 +32,10 @@ async function handleResearchVisionScan(request, env) {
     if (!geo) return new Response(JSON.stringify({ ok: false, error: `no shoreline or 3DHP boundary found for ${resolvedKey}` }), { status: 400, headers: JSON_HEADERS });
     console.log(`[vision-scan] using ${boundarySource} for tile plan: ${resolvedKey}`);
 
-    const coords = [];
-    const extractCoords = (obj) => {
-      if (!obj) return;
-      if (obj.type === 'Feature') extractCoords(obj.geometry);
-      else if (obj.type === 'FeatureCollection') obj.features?.forEach(extractCoords);
-      else if (obj.coordinates) {
-        const flat = obj.coordinates.flat(Infinity);
-        const stride = (flat.length % 3 === 0 && flat.length % 2 !== 0) ? 3 : 2;
-        for (let i = 0; i < flat.length - stride + 1; i += stride) coords.push([flat[i], flat[i+1]]);
-      }
-    };
-    extractCoords(geo);
-    if (!coords.length) return new Response(JSON.stringify({ ok: false, error: `no coords in ${boundarySource}` }), { status: 400, headers: JSON_HEADERS });
-    const lons = coords.map(c => c[0]), lats = coords.map(c => c[1]);
-    const bboxW = Math.min(...lons), bboxE = Math.max(...lons);
-    const bboxS = Math.min(...lats), bboxN = Math.max(...lats);
+    const b = boundsOf(geo);
+    if (!b) return new Response(JSON.stringify({ ok: false, error: `no coords in ${boundarySource}` }), { status: 400, headers: JSON_HEADERS });
+    const bboxW = b.west, bboxE = b.east;
+    const bboxS = b.south, bboxN = b.north;
     // Scale tile size to lake extent — target ~8x8 grid
     const latSpan = bboxN - bboxS;
     const lonSpan = bboxE - bboxW;
@@ -81,7 +71,11 @@ async function handleResearchVisionScan(request, env) {
         JSON.stringify({ status: 'scanning', lakeName, lakeKey: resolvedKey, boundarySource, tilesTotal: tiles.length, tilesProcessed: 0, structuresFound: 0, startedAt: new Date().toISOString() }),
         { httpMetadata: { contentType: 'application/json' } }
       );
-    } catch (_) {}
+    } catch (err) {
+      // This is the STATUS document a long scan reports progress through. If it never lands,
+      // the scan runs fine and the UI shows nothing happening.
+      console.error(`[vision] scan-status write failed for ${resolvedKey}:`, err && err.message);
+    }
     return new Response(JSON.stringify({ ok: true, tiles, lakeKey: resolvedKey }), { headers: JSON_HEADERS });
   }
 

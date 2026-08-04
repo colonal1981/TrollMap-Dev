@@ -8,6 +8,8 @@ import { JSON_HEADERS } from '../worker-core.js';
 import { handleResearchThermoclineSearch } from './storage.js';
 import { LAKE_NAME_TO_R2_KEY as SUPPLEMENTAL_KEY_MAP, resolveR2Key } from '../../js/data/lake-keys.js';
 
+import { boundsOf } from '../../js/utils/geojson-coords.js';
+
 function resolveSupplementalKeyWorker(lakeName) {
   return resolveR2Key(lakeName);
 }
@@ -24,25 +26,12 @@ async function handleResearchLimnologyData(request, env) {
       const shorelineObj = await env.R2_TROLLMAP_CHARTPACKS.get(`${lakeKey}/shoreline.geojson`);
       if (!shorelineObj) throw new Error(`no shoreline.geojson in R2 for ${lakeKey}`);
       const geo = JSON.parse(await shorelineObj.text());
-      const coords = [];
-      const extractCoords = (obj) => {
-        if (!obj) return;
-        if (obj.type === 'Feature') extractCoords(obj.geometry);
-        else if (obj.type === 'FeatureCollection') obj.features?.forEach(extractCoords);
-        else if (obj.coordinates) {
-          const flat = obj.coordinates.flat(Infinity);
-          const stride = (flat.length % 3 === 0 && flat.length % 2 !== 0) ? 3 : 2;
-          for (let i = 0; i < flat.length - stride + 1; i += stride) coords.push([flat[i], flat[i+1]]);
-        }
-      };
-      extractCoords(geo);
-      if (!coords.length) throw new Error('no coordinates extracted from shoreline');
-      const lons = coords.map(c => c[0]);
-      const lats = coords.map(c => c[1]);
-      bboxWest  = Math.min(...lons);
-      bboxEast  = Math.max(...lons);
-      bboxSouth = Math.min(...lats);
-      bboxNorth = Math.max(...lats);
+      const b = boundsOf(geo);
+      if (!b) throw new Error('no coordinates extracted from shoreline');
+      bboxWest  = b.west;
+      bboxEast  = b.east;
+      bboxSouth = b.south;
+      bboxNorth = b.north;
       console.log(`[limnology-data] bbox self-derived from shoreline: W${bboxWest.toFixed(4)} S${bboxSouth.toFixed(4)} E${bboxEast.toFixed(4)} N${bboxNorth.toFixed(4)}`);
     } catch (e) {
       return new Response(JSON.stringify({ ok: false, error: `bbox not provided and shoreline self-derive failed: ${e.message}` }), { status: 400, headers: JSON_HEADERS });

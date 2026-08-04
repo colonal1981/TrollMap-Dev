@@ -253,7 +253,12 @@ async function getSharedPointer(env) {
     const obj = await env.R2_TROLLMAP_CHARTPACKS.get(`${SHARED_ROOT}/pointers/current.json`);
     if (!obj) return null;
     return JSON.parse(await obj.text());
-  } catch { return null; }
+  } catch {
+    // Intentionally silent: no pointer object is the normal state before the first shared
+    // document is stored, and every caller treats null as "nothing shared yet".
+    // Audited 2026-08-03 -- this reports a real absence rather than hiding a failure.
+    return null;
+  }
 }
 
 async function getSharedDocument(env, docId, versionId) {
@@ -264,7 +269,12 @@ async function getSharedDocument(env, docId, versionId) {
     const obj = await env.R2_TROLLMAP_CHARTPACKS.get(key);
     if (!obj) return null;
     return JSON.parse(await obj.text());
-  } catch { return null; }
+  } catch {
+    // Intentionally silent: asking for a document (or a specific version of one) that was
+    // never stored is a normal miss, and the caller renders "not found" from the null.
+    // Audited 2026-08-03 -- this reports a real absence rather than hiding a failure.
+    return null;
+  }
 }
 
 async function storeSharedDocument(env, docRecord) {
@@ -282,7 +292,12 @@ async function getSharedRegistryEntry(env, canonicalUrl) {
     const obj = await env.R2_TROLLMAP_CHARTPACKS.get(`${SHARED_ROOT}/documents/${docId}/latest.json`);
     if (!obj) return null;
     return JSON.parse(await obj.text());
-  } catch { return null; }
+  } catch {
+    // Intentionally silent: the registry lookup exists precisely to answer "has anyone
+    // already fetched this URL?", and null is the legitimate "no" that the caller acts on.
+    // Audited 2026-08-03 -- this reports a real absence rather than hiding a failure.
+    return null;
+  }
 }
 
 // ── POST /research/shared/check ───────────────────────────────────────────────

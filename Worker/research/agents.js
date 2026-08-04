@@ -8,6 +8,7 @@ import {
   COASTAL_AGENTS, COASTAL_AGENT_HINTS, COASTAL_SKIPPED_AGENTS,
   isCoastalZone, coastalAgentPlan,
 } from './coastal-agents.js';
+import { coerceNum } from '../../js/utils/coerce.js';
 
 var RESEARCH_AGENTS = {
   identity: {
@@ -1122,19 +1123,6 @@ async function handleResearchAgent(request, env) {
   // Sanitize limnology output — coerce string "null" and range strings to proper types
   if (agentKey === 'limnology' && sectionData) {
     const lim = sectionData;
-    const coerceNum = (v) => {
-      if (v === null || v === undefined) return null;
-      if (typeof v === 'number') return v;
-      if (typeof v === 'string') {
-        if (v === 'null' || v === '' || v === 'unknown') return null;
-        // Range string like "16-22" — take midpoint
-        const rangeMatch = v.match(/^([\d.]+)\s*[-–]\s*([\d.]+)$/);
-        if (rangeMatch) return Math.round((parseFloat(rangeMatch[1]) + parseFloat(rangeMatch[2])) / 2);
-        const num = parseFloat(v);
-        return isFinite(num) ? num : null;
-      }
-      return null;
-    };
     if (lim.thermocline) {
       lim.thermocline.summerDepthFt = coerceNum(lim.thermocline.summerDepthFt);
     }

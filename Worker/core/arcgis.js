@@ -72,6 +72,8 @@ export async function getCachedGis(env, cacheKey, ttlDays) {
  */
 export function groupFeaturesByWaterbody(features, source) {
   const waterbodies = {};
+  let dropped = 0;         // features with no usable lat/lon
+  let mapperErrors = 0;    // source.lat / source.lon threw -- a schema change upstream
   for (const feat of features) {
     const p = feat.properties || {};
     if (!source.filter(p)) continue;
@@ -81,14 +83,19 @@ export function groupFeaturesByWaterbody(features, source) {
     try {
       lat = source.lat ? source.lat(p) : null;
       if (lat == null && feat.geometry?.coordinates?.[1] != null) lat = feat.geometry.coordinates[1];
-    } catch (_) {}
+    } catch (err) { mapperErrors++; }
     try {
       lon = source.lon ? source.lon(p) : null;
       if (lon == null && feat.geometry?.coordinates?.[0] != null) lon = feat.geometry.coordinates[0];
-    } catch (_) {}
+    } catch (err) { mapperErrors++; }
     lat = Number(lat);
     lon = Number(lon);
-    if (!lat || !lon || Number.isNaN(lat) || Number.isNaN(lon)) continue;
+    // A ramp without usable coordinates is DROPPED here, silently, one `continue` at a time.
+    // When a state changes its field names the mapper throws on every feature and the whole
+    // feed empties out -- and the only symptom is an empty ramp dropdown, which looks exactly
+    // like a lake that has no ramps. Counted rather than logged per feature: 438 SC ramps
+    // would be 438 lines.
+    if (!lat || !lon || Number.isNaN(lat) || Number.isNaN(lon)) { dropped++; continue; }
     const wbRaw = source.wb ? source.wb(p) : 'Unknown';
     let wb = String(wbRaw || 'Unknown Waterbody').trim() || 'Unknown Waterbody';
     let name = String((source.name ? source.name(p) : 'Unnamed') || 'Unnamed').trim() || 'Unnamed';
@@ -124,6 +131,14 @@ export function groupFeaturesByWaterbody(features, source) {
   // Sort each waterbody by name
   for (const wb of Object.keys(waterbodies)) {
     waterbodies[wb].sort((a, b) => a.name.localeCompare(b.name));
+  }
+  // Report the losses once, with the totals that make them interpretable. A handful of
+  // dropped features is ordinary data quality; a `dropped` close to the feature count, or any
+  // `mapperErrors` at all, means the upstream schema moved and this feed is now empty.
+  if (dropped || mapperErrors) {
+    const kept = Object.values(waterbodies).reduce((n, v) => n + v.length, 0);
+    console.warn(`[arcgis] kept ${kept}, dropped ${dropped} with no usable lat/lon`
+                 + (mapperErrors ? `, ${mapperErrors} lat/lon mapper errors -- upstream schema may have changed` : ''));
   }
   return waterbodies;
 }
@@ -178,7 +193,11 @@ export async function handleGisRoute({ env, url, cachePrefix, ttlDays, sources, 
         try {
           const parsed = JSON.parse(cached.body);
           if (parsed.count) headers['X-Ramp-Count'] = String(parsed.count);
-        } catch (_) {}
+        } catch (_) {
+          // Intentionally silent: X-Ramp-Count is a debugging convenience on a cache HIT and
+          // the body is returned intact either way, so a failure here costs a header nobody
+          // reads. Audited 2026-08-03 -- logging it would put a line on every cached request.
+        }
       }
       return new Response(cached.body, { headers });
     }
@@ -223,7 +242,14 @@ export async function handleGisRoute({ env, url, cachePrefix, ttlDays, sources, 
           },
         });
       }
-    } catch (_) {}
+    } catch (staleErr) {
+      // The stale-cache fallback is the last thing standing between an upstream outage and a
+      // 502. If IT fails too, that is worth saying out loud -- otherwise the 502 below looks
+      // like the feed simply being down, rather than the feed being down AND the cache being
+      // unreadable.
+      console.error(`[arcgis] stale-cache fallback failed for ${state} ${cachePrefix}:`,
+                    staleErr && staleErr.message);
+    }
     const { JSON_HEADERS } = await import('../worker-core.js');
     return new Response(JSON.stringify({ error: `Failed to fetch ${state} ${cachePrefix} data: ${err.message}` }), {
       headers: JSON_HEADERS,

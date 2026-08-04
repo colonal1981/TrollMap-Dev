@@ -4,6 +4,45 @@ import { STATE_REGULATIONS_CONFIG, tinyfishFetch, tinyfishSearch } from './clien
 import { KNOWN_BAD_NEPIS_IDS, buildNepisSearchUrl } from './dataset.js';
 import { parseLakeBaseName } from './keys.js';
 
+// Which organisation stands behind a URL. Two callers below -- Grok citations and Wikipedia
+// citations -- carried byte-identical copies of this ladder, so a domain added to one was
+// silently missing from the other.
+//
+// The `catch` those copies ended in is why this is a function and not just a shared constant.
+// Both left `authority` at its initial '' when `new URL()` threw, and the filter downstream
+// tests `authority === 'Web'`. An empty string is not 'Web', so a URL too malformed to parse
+// skipped the low-value filter entirely and got seeded as a high-value source -- the one
+// input that should never have passed was the only one that always did. Returning 'Web' for
+// an unparseable URL puts it back on the rejected side, where it belongs.
+//
+// `baseLower` is the lowercased lake base name; a .edu domain only counts as academic when
+// the URL actually mentions the lake, otherwise every university host would rate.
+function authorityForUrl(urlStr, baseLower) {
+  let host;
+  try {
+    host = new URL(urlStr).hostname;
+  } catch {
+    return 'Web';
+  }
+  if (/usace\.army\.mil/.test(host)) return 'USACE';
+  if (/epa\.gov|nepis/.test(host)) return 'EPA';
+  if (/usgs\.gov/.test(host)) return 'USGS';
+  if (/osti\.gov/.test(host)) return 'Academic';
+  if (/noaa\.gov/.test(host)) return 'Academic';
+  if (/dnr\.sc\.gov/.test(host)) return 'SCDNR';
+  if (/ncwildlife\.gov|ncwildlife\.org/.test(host)) return 'NCWRC';
+  if (/georgiawildlife\.com/.test(host)) return 'GADNR';
+  if (/tn\.gov/.test(host)) return 'TWRA';
+  if (/duke-energy\.com/.test(host)) return 'Duke Energy';
+  if (/ferc\.gov/.test(host)) return 'FERC';
+  if (/santeecooper\.com/.test(host)) return 'Santee Cooper';
+  if (/seafwa\.org|apms\.org/.test(host)) return 'Academic';
+  if (/\.edu$/.test(host) && String(urlStr).toLowerCase().includes(baseLower)) return 'Academic';
+  if (/tva\.com|tva\.gov/.test(host)) return 'TVA';
+  if (/southcarolinaparks\.com|scprt|state\.sc\.us|greenwoodcounty-sc\.gov|des\.sc\.gov/i.test(host)) return 'SC State';
+  return 'Web';
+}
+
 async function handleResearchDiscover(request, env) {
   let body;
   try { body = await request.json(); } catch { body = {}; }
@@ -167,7 +206,11 @@ async function handleResearchDiscover(request, env) {
       const host = new URL(candidate.url).hostname.toLowerCase();
       if (/\.gov$|usace\.army\.mil|epa\.gov|usgs\.gov|ferc\.gov|tva\.com|tva\.gov|osti\.gov|noaa\.gov|santeecooper\.com|duke-energy\.com|georgiapower\.com/.test(host)) score += 3;
       else if (/\.edu$/.test(host) && (candidate.url.toLowerCase().includes(baseLower) || title.includes(baseLower))) score += 2;
-    } catch {}
+    } catch {
+      // Intentionally silent: this block only ADDS a domain bonus. An unparseable URL simply
+      // does not earn one, and the title/snippet signals above and the negative signals below
+      // still score it. Audited 2026-08-03 -- no branch downstream reads "did the host parse".
+    }
 
     // Document type bonuses
     if (/report|assessment|survey|management.plan|study|investigation/.test(title + snippet)) score += 2;
@@ -612,27 +655,7 @@ const AGENT_TO_TAGS = {
 
           // Authority-aware filtering — only seed high-value domains from citations
           // Skip generic/commercial domains that won't have lake intelligence
-          let authority = '';
-          try {
-            const host = new URL(citUrl).hostname;
-            if (/usace\.army\.mil/.test(host)) authority = 'USACE';
-            else if (/epa\.gov|nepis/.test(host)) authority = 'EPA';
-            else if (/usgs\.gov/.test(host)) authority = 'USGS';
-            else if (/osti\.gov/.test(host)) authority = 'Academic';
-            else if (/noaa\.gov/.test(host)) authority = 'Academic';
-            else if (/dnr\.sc\.gov/.test(host)) authority = 'SCDNR';
-            else if (/ncwildlife\.gov|ncwildlife\.org/.test(host)) authority = 'NCWRC';
-            else if (/georgiawildlife\.com/.test(host)) authority = 'GADNR';
-            else if (/tn\.gov/.test(host)) authority = 'TWRA';
-            else if (/duke-energy\.com/.test(host)) authority = 'Duke Energy';
-            else if (/ferc\.gov/.test(host)) authority = 'FERC';
-            else if (/santeecooper\.com/.test(host)) authority = 'Santee Cooper';
-            else if (/seafwa\.org|apms\.org/.test(host)) authority = 'Academic';
-            else if (/\.edu$/.test(host) && citUrl.toLowerCase().includes(baseLower)) authority = 'Academic';
-            else if (/tva\.com|tva\.gov/.test(host)) authority = 'TVA';
-            else if (/southcarolinaparks\.com|scprt|state\.sc\.us|greenwoodcounty-sc\.gov|des\.sc\.gov/i.test(host)) authority = 'SC State';
-            else authority = 'Web';
-          } catch {}
+          const authority = authorityForUrl(citUrl, baseLower);
 
           if (authority === 'Web') {
             queryLog.push(`  ✗ grok citation skipped (low-value): ${citUrl.slice(0,80)}`);
@@ -680,27 +703,7 @@ const AGENT_TO_TAGS = {
             if (!urlStr || urlStr.includes('wikipedia.org') || urlStr.includes('wikimedia.org') || urlStr.includes('wikidata.org')) continue;
             if (/facebook\.com|twitter\.com|youtube\.com|instagram\.com|geohack|archive\.org/i.test(urlStr)) continue;
 
-            let authority = '';
-            try {
-              const host = new URL(urlStr).hostname;
-              if (/usace\.army\.mil/.test(host)) authority = 'USACE';
-              else if (/epa\.gov|nepis/.test(host)) authority = 'EPA';
-              else if (/usgs\.gov/.test(host)) authority = 'USGS';
-              else if (/osti\.gov/.test(host)) authority = 'Academic';
-              else if (/noaa\.gov/.test(host)) authority = 'Academic';
-              else if (/dnr\.sc\.gov/.test(host)) authority = 'SCDNR';
-              else if (/ncwildlife\.gov|ncwildlife\.org/.test(host)) authority = 'NCWRC';
-              else if (/georgiawildlife\.com/.test(host)) authority = 'GADNR';
-              else if (/tn\.gov/.test(host)) authority = 'TWRA';
-              else if (/duke-energy\.com/.test(host)) authority = 'Duke Energy';
-              else if (/ferc\.gov/.test(host)) authority = 'FERC';
-              else if (/santeecooper\.com/.test(host)) authority = 'Santee Cooper';
-              else if (/seafwa\.org|apms\.org/.test(host)) authority = 'Academic';
-              else if (/\.edu$/.test(host) && urlStr.toLowerCase().includes(baseLower)) authority = 'Academic';
-              else if (/tva\.com|tva\.gov/.test(host)) authority = 'TVA';
-              else if (/southcarolinaparks\.com|scprt|state\.sc\.us|greenwoodcounty-sc\.gov|des\.sc\.gov/i.test(host)) authority = 'SC State';
-              else authority = 'Web';
-            } catch {}
+            const authority = authorityForUrl(urlStr, baseLower);
 
             if (authority === 'Web') {
               queryLog.push(`  ✗ wiki citation skipped (low-value): ${urlStr.slice(0,80)}`);
@@ -896,7 +899,13 @@ const AGENT_TO_TAGS = {
             else if (/tva\.com|tva\.gov/.test(host)) authority = 'TVA';
             else if (/osti\.gov/.test(host)) authority = 'Academic';
             else if (/noaa\.gov/.test(host)) authority = 'Academic';
-          } catch {}
+          } catch {
+            // Intentionally silent: `authority` is initialised to 'Web' above, so an
+            // unparseable URL keeps the lowest-trust label. Audited 2026-08-03. This ladder
+            // is deliberately NOT authorityForUrl() -- it carries 'Fishing Guide',
+            // 'Grokipedia' and the state `dnrName`, which are appropriate for search results
+            // but not for the citation paths, where anything below an agency is dropped.
+          }
 
           queryLog.push(`  ✓ found (score ${prefetchScore}): ${(r.title||r.url).slice(0,80)}`);
 
@@ -944,4 +953,4 @@ const AGENT_TO_TAGS = {
   return new Response(JSON.stringify({ success: true, sources: finalList, baseName, filteredCount: 0, queryLog }), { headers: JSON_HEADERS });
 }
 
-export { handleResearchDiscover };
+export { handleResearchDiscover, authorityForUrl };

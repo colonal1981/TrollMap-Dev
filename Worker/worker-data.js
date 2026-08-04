@@ -163,6 +163,10 @@ async function fetchUsgs(site, paramCd, periodDays = 2) {
       }
     }
   } catch (_) {
+    // Intentionally silent: this is the JSON attempt, and the RDB request immediately below
+    // is its designed fallback -- USGS serves the same values in both formats and the older
+    // RDB endpoint is the more reliable of the two. Audited 2026-08-03. A warning here would
+    // fire on every gauge that only answers RDB, which is a routine condition, not a fault.
   }
   if (out.tempC != null || out.gageHeight != null || out.elevation != null) return out;
   try {
@@ -193,7 +197,12 @@ async function fetchUsgs(site, paramCd, periodDays = 2) {
       if (code === "00060" && out.streamflow == null) out.streamflow = v;
     }
     if (!out.timestamp && last[2]) out.timestamp = `${last[2]} ${last[3] || ""}`.trim();
-  } catch (_) {
+  } catch (err) {
+    // Unlike the JSON attempt above, this one has nothing after it. Whatever `out` holds at
+    // this point is what the gauge reports, and an empty `out` renders as a gauge with no
+    // reading -- identical to a gauge that is genuinely offline. They are not the same
+    // problem and only one of them is ours to fix.
+    console.warn(`[usgs] RDB fallback failed for site ${site}:`, err && err.message);
   }
   return out;
 }

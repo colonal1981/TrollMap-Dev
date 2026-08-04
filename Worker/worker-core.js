@@ -347,4 +347,8 @@ async function handleChartpackList(env) {
   return { chartpacks: out, count: out.length };
 }
 
-export { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, isAuthorized };
+// chartpackKey and handleChartpackList were defined here AND, byte for byte, again in
+// trollmap-worker.js -- and the copies here were not exported and not called, so this file
+// carried thirty lines that could never run while the live copy drifted independently.
+// Exported now; trollmap-worker.js imports them.
+export { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, isAuthorized, chartpackKey, handleChartpackList };

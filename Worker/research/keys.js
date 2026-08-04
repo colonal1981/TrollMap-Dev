@@ -73,11 +73,18 @@ function extractJsonPossibly(txt) {
   let t = String(txt).trim();
   // strip code fences
   t = t.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
+  // Both catches here are intentionally silent, and this is the one place in the Worker where
+  // that is the whole design rather than an oversight. This function exists BECAUSE an LLM
+  // returns not-quite-JSON: the first parse is the optimistic path, the brace-slice is the
+  // salvage attempt, and null is the honest "no object in there". A failed parse is the
+  // expected input, not an error -- logging it would fire on every prose-wrapped reply.
+  // Audited 2026-08-03. What the caller must not do is treat null as an empty object.
   try { return JSON.parse(t); } catch (_) {}
   // find first { ... last }
   const s = t.indexOf('{');
   const e = t.lastIndexOf('}');
   if (s >=0 && e > s) {
+    // The salvage attempt. Audited 2026-08-03 -- see the note above; silence is the design.
     try { return JSON.parse(t.slice(s, e+1)); } catch (_) {}
   }
   return null;

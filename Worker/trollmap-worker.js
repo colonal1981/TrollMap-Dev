@@ -1,4 +1,4 @@
-import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized } from './worker-core.js'; 
+import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized, chartpackKey, handleChartpackList } from './worker-core.js'; 
 import { LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard } from './worker-data.js';
 import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality } from './worker-species.js';
 import { handleGisRoute } from './core/arcgis.js';
@@ -53,35 +53,6 @@ async function allowMutation(request, url, path, env) {
   return await isAuthorized(request, env);
 }
 
-function chartpackKey(lake, filename) {
-  const safeLake = String(lake).toLowerCase().replace(/[^a-z0-9_\-]/g, "_");
-  const safeFile = String(filename).replace(/[^a-z0-9_.\-\/]/gi, "_");
-  return `${safeLake}/${safeFile}`;
-}
-async function handleChartpackList(env) {
-  const out = [];
-  let cursor;
-  do {
-    const listed = await env.R2_TROLLMAP_CHARTPACKS.list({ cursor });
-    for (const obj of listed.objects) {
-      const slash = obj.key.indexOf("/");
-      if (slash < 0) continue;
-      const lake = obj.key.slice(0, slash);
-      const file = obj.key.slice(slash + 1);
-      let entry = out.find((e) => e.name === lake);
-      if (!entry) {
-        entry = { name: lake, files: [], bytes: 0 };
-        out.push(entry);
-      }
-      entry.files.push(file);
-      entry.bytes += obj.size || 0;
-    }
-    cursor = listed.truncated ? listed.cursor : null;
-  } while (cursor);
-  for (const e of out) e.files.sort();
-  out.sort((a, b) => a.name.localeCompare(b.name));
-  return { chartpacks: out, count: out.length };
-}
 function assessKayakSafety(riverKey, gaugeData, thresholds) {
   const t = thresholds;
   const reasons = [];
@@ -219,7 +190,11 @@ async function getRiver(key, opts = {}) {
         full_pool_ft: lakeData.full_pool_ft,
         special_message: lakeData.special_message
       };
-    } catch (_) {
+    } catch (err) {
+      // The upstream lake's level is half of reading a dam report -- whether they are
+      // generating is mostly a question of how full the pool above is. Dropping it silently
+      // hands back a report that looks complete and is missing the causal half.
+      console.warn(`[gauges] upstream lake ${cfg.damLakeKey} unavailable:`, err && err.message);
     }
   }
   if (cfg.dukeBasinId) {
@@ -1112,8 +1087,12 @@ Return ONLY the JSON object. Find the single highest-confidence improvement, or 
     let suggestion = {};
     try {
       suggestion = JSON.parse(data.choices?.[0]?.message?.content || "{}");
-    } catch (_) {
-      suggestion = { has_suggestion: false, no_suggestion_reason: "Parse error" };
+    } catch (err) {
+      // "Parse error" with no detail is indistinguishable from the model genuinely having
+      // no suggestion, which is the answer the UI renders. Carry the reason so a coach that
+      // has started returning prose can be told apart from one that is simply satisfied.
+      console.warn('[coach] suggestion JSON did not parse:', err && err.message);
+      suggestion = { has_suggestion: false, no_suggestion_reason: `Parse error: ${err && err.message}` };
     }
     return new Response(JSON.stringify({ success: true, ...suggestion }), { headers: JSON_HEADERS });
   } catch (e) {
@@ -1568,7 +1547,13 @@ var trollmap_worker_default = {
         try {
           const enhanced = await handleEnhancedLakeIntel(name, env);
           return new Response(JSON.stringify(enhanced, null, 2), { headers: JSON_HEADERS });
-        } catch {
+        } catch (err) {
+          // Falling back to base intel is correct -- some intel beats a 500. But the two
+          // responses have the same shape, so a permanently broken enhanced path degrades
+          // every lake to the unresearched answer and nothing anywhere says so. This is the
+          // most consequential silent catch in the Worker: it hides the researched profile,
+          // which is the thing the whole research pipeline exists to produce.
+          console.error(`[lake-intel] enhanced path failed for ${name}, serving base intel:`, err && err.message);
           const intel = await getLakeIntel(name);
           return new Response(JSON.stringify(intel, null, 2), { headers: JSON_HEADERS });
         }
