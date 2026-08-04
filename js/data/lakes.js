@@ -147,9 +147,13 @@ export const LAKE_DB = {
       "Elberton Park GA": [34.12, -82.70]
     }
   },
+  // Centre and bounds corrected 2026-08-04. They were 34.08/-82.60 with a box from
+  // 34.02 to 34.14 -- 0.23 deg south of Secession Lake, sitting on Richard B. Russell
+  // water. Placed when this name pointed at the COMBINED lake_thurmond_russell pack;
+  // the packs are split now and the pin never moved. Taken from the index.
   "Lake Secession, SC": {
-    center: [34.08, -82.60, 13],
-    bounds: [[34.02, -82.65],[34.14, -82.55]],
+    center: [34.307, -82.589, 13],
+    bounds: [[34.257, -82.616],[34.358, -82.562]],
     ramps: { "Secession Landing": [34.081, -82.595] }
   },
   "Lake Monticello, SC": {

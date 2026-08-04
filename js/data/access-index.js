@@ -393,7 +393,13 @@ async function buildAccessIndex() {
       }
     }
     if (added) console.info(`[access-index] registry contributed ${added} lakes not in the DNR feeds`);
-    console.info(`[access-index] ${index.registryByName.size} of ${index.byLake.size} lake names `
+    // Was `registryByName.size of byLake.size`, which printed "1560 of 1104" — more than
+    // all of them. The two maps are keyed differently: registryByName holds every registry
+    // NAME VARIANT, byLake holds DNR waterbody names, and neither contains the other. The
+    // number that means something is how many pickable names actually resolve.
+    let filterable = 0;
+    for (const name of index.byLake.keys()) if (index.registryByName.has(name)) filterable++;
+    console.info(`[access-index] ${filterable} of ${index.byLake.size} pickable lake names `
                + `carry a registry record and are therefore filterable`);
   } catch (e) {
     console.warn('[access-index] registry merge skipped:', e?.message || e);

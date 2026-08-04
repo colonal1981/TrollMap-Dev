@@ -52,7 +52,7 @@ export const WATER_TO_R2_KEY = {
   "Bull River": "coast_savannah_ga",
   "Capers Creek": "coast_st_helena_sc",
   "Cashie River": "coast_albemarle_sound_nc",
-  "Catawba River": "lake_wylie",
+  "Catawba River": "catawba_river_2",
   "Champney River": "coast_sapelo_altamaha_ga",
   "Chechessee River": "coast_beaufort_sc",
   "Chehaw River": "coast_beaufort_sc",

@@ -26,35 +26,40 @@ export const LAKE_NAME_TO_R2_KEY = {
   'Lake Marion, SC':                    'lake_marion',
   'Lake Moultrie, SC':                  'lake_moultrie',
   'Lake Murray, SC':                    'lake_murray',
-  'Lake Wateree, SC':                   'lake_wateree_fishing_creek',
-  'Fishing Creek Reservoir, SC':        'lake_wateree_fishing_creek',
+  'Lake Wateree, SC':                   'wateree_lake',
+  'Fishing Creek Reservoir, SC':        'fishing_creek_reservoir',
   'Lake Wylie, SC/NC':                  'lake_wylie',
-  'Catawba Narrows, SC/NC':             'catawba_narrows',
-  'Lake Hartwell, SC/GA':               'lake_hartwell',
-  'Lake Greenwood, SC':                 'lake_greenwood_secession',
+  'Catawba Narrows, SC/NC':             'lake_wylie',   // aliased 2026-08-04 -- the reach IS Wylie's water
+  'Lake Hartwell, SC/GA':               'hartwell_lake',
+  'Lake Greenwood, SC':                 'lake_greenwood',
   'Lake Keowee, SC':                    'lake_keowee',
   'Lake Jocassee, SC/NC':               'lake_jocassee',
-  'Lake Secession, SC':                 'lake_thurmond_russell',
-  'Secession Lake, SC':                 'lake_thurmond_russell',
-  'Lake Russell, SC/GA':                'lake_thurmond_russell',
-  'Lake Russell, GA':                   'lake_thurmond_russell',
-  'Lake Russell, SC':                   'lake_thurmond_russell',
-  'Richard B. Russell Lake, GA':        'lake_thurmond_russell',
-  'Clarks Hill / Thurmond, SC/GA':      'lake_thurmond_russell',
-  'Lake Thurmond, SC':                  'lake_thurmond_russell',
-  'Clarks Hill Lake, GA':               'lake_thurmond_russell',
-  'Lake Monticello, SC':                'lake_monticello_parr',
-  'Parr Reservoir, SC':                 'lake_monticello_parr',
-  'Lake Robinson, SC':                  'north_saluda_reservoir',
-  'Lake Bowen, SC':                     'lake_bowen',
-  'Lake Blalock, SC':                   'lake_blalock',
+  'Lake Secession, SC':                 'secession_lake',
+  'Secession Lake, SC':                 'secession_lake',
+  'Lake Russell, SC/GA':                'richard_b_russell_lake',
+  'Lake Russell, GA':                   'richard_b_russell_lake',
+  'Lake Russell, SC':                   'richard_b_russell_lake',
+  'Richard B. Russell Lake, GA':        'richard_b_russell_lake',
+  'Clarks Hill / Thurmond, SC/GA':      'j_strom_thurmond_reservoir',
+  'Lake Thurmond, SC':                  'j_strom_thurmond_reservoir',
+  'Clarks Hill Lake, GA':               'j_strom_thurmond_reservoir',
+  'Lake Monticello, SC':                'monticello_reservoir',
+  'Parr Reservoir, SC':                 'parr_shoals_reservoir',
+  // 2026-08-04: was 'north_saluda_reservoir'. LAKE_DB puts Lake Robinson at
+  // 34.45/-80.15, which is 0.009 deg from lake_robinson (Chesterfield Co, 2,099 ac)
+  // and 2.35 deg -- about 160 miles -- from North Saluda Reservoir in Greenville
+  // County. Greenville Water runs both a Lake Robinson and North Saluda, which is
+  // where the confusion came from, but Ryan's is the Duke one on the Black Creek.
+  'Lake Robinson, SC':                  'lake_robinson',
+  'Lake Bowen, SC':                     'lake_william_c_bowen',
+  'Lake Blalock, SC':                   'lake_blalock',   // shipped 2026-08-04
 
   // ── NC Lakes ────────────────────────────────────────────────────────────────
-  'Lake Norman, NC':                    'lake_norman_mountain_island',
-  'Mountain Island Lake, NC':           'lake_norman_mountain_island',
+  'Lake Norman, NC':                    'lake_norman',
+  'Mountain Island Lake, NC':           'mountain_island_lake',
   'Lake Norman (South), NC':            'lake_norman',
-  'Lake Hickory, NC':                   'lake_hickory_rhodhiss',
-  'Lake Rhodhiss, NC':                  'lake_hickory_rhodhiss',
+  'Lake Hickory, NC':                   'lake_hickory',
+  'Lake Rhodhiss, NC':                  'rhodhiss_lake',
   'Lake James, NC':                     'lake_james',
   // The Yadkin chain was served as ONE key, High Rock down to Blewett Falls. That key was
   // pruned from R2 on 2026-08-03 because Badin and Tillery had superseded it with their own
@@ -71,53 +76,65 @@ export const LAKE_NAME_TO_R2_KEY = {
   //   'Blewett Falls Lake, NC': 'blewett_falls_lake',
   'Badin Lake, NC':                     'badin_lake',
   'Lake Tillery, NC':                   'lake_tillery',
-  'Jordan Lake, NC':                    'jordan_lake',
+  'High Rock Lake, NC':                 'high_rock_lake',   // shipped 2026-08-04
+  'Blewett Falls Lake, NC':             'blewett_falls_lake',   // shipped 2026-08-04
+  'Lookout Shoals Lake, NC':            'lookout_shoals_lake',   // shipped 2026-08-04
+  'Jordan Lake, NC':                    'b_everett_jordan_lake',
   // Explicit, and it stays explicit: "falls" normalizes into "blewett falls", so without
   // this line Falls Lake resolves to Blewett Falls. That is dormant while Blewett Falls is
   // unbuilt and comes straight back the moment it returns to the registry.
-  'Falls Lake, NC':                     'falls_lake',
+  'Falls Lake, NC':                     'falls_lake',   // shipped 2026-08-04
   'W. Kerr Scott Reservoir, NC':        'w_kerr_scott_reservoir',
   // Explicit: "kerr" alone matches "w kerr scott" without this
-  'Kerr Lake, NC':                      'kerr_lake',
-  'John H. Kerr Reservoir, NC':         'kerr_lake',
+  'Kerr Lake, NC':                      'kerr_lake',   // shipped 2026-08-04
+  'John H. Kerr Reservoir, NC':         'kerr_lake',   // shipped 2026-08-04
   'Shearon Harris Reservoir, NC':       'shearon_harris_reservoir',
-  'Randleman Lake, NC':                 'randleman_lake',
-  'Lake Mackintosh, NC':                'lake_mackintosh',
+  'Randleman Lake, NC':                 'randleman_lake',   // shipped 2026-08-04
+  // 'Lake Mackintosh, NC': 'lake_mackintosh',   // not in lake_index.json -- no pack; unmapped on purpose
   'Lake Townsend, NC':                  'lake_townsend',
-  'Lake Michie / Little River, NC':     'lake_michie',
-  'Lake Reidsville, NC':                'lake_reidsville',
+  // 'Lake Michie / Little River, NC': 'lake_michie',   // not in lake_index.json -- no pack; unmapped on purpose
+  // 'Lake Reidsville, NC': 'lake_reidsville',   // not in lake_index.json -- no pack; unmapped on purpose
   'North Fork Reservoir, NC':           'north_fork_reservoir',
   'Belews Lake, NC':                    'belews_lake',
   'Hyco Lake, NC':                      'hyco_lake',
-  'Mayo Lake, NC':                      'mayo_lake',
-  'Auman Lake, NC':                     'auman_lake',
-  'Bonnie Doone Lake, NC':              'bonnie_doone_lake',
-  'John D. Long Lake, NC':              'john_d_long_lake',
-  'John H. Moss Lake, NC':              'john_h_moss_lake',
-  'Oak Hollow / Higgins Lake, NC':      'oak_hollow_higgins',
+  'Mayo Lake, NC':                      'mayo_reservoir',
+  // 'Auman Lake, NC': 'auman_lake',   // not in lake_index.json -- no pack; unmapped on purpose
+  'Bonnie Doone Lake, NC':              'bonnie_doone_lake',   // shipped 2026-08-04
+  'John D. Long Lake, NC':              'lake_john_d_long_sc',
+  'John H. Moss Lake, NC':              'john_h_moss_lake',   // shipped 2026-08-04
+  'Oak Hollow Lake, NC':                'oak_hollow_lake',
+  'Lake Higgins, NC':                   'lake_higgins',
+  // 'Oak Hollow / Higgins Lake, NC' split 2026-08-04 -- one display name cannot point at two packs
   'Lake Summit, NC':                    'lake_summit',
   'Lake Waccamaw, NC':                  'lake_waccamaw',
   'Nantahala Lake, NC':                 'nantahala_lake',
-  'Lake Santeetlah, NC':                'lake_santeetlah',
-  'Hiwassee Lake, NC':                  'hiwassee_lake',
+  'Lake Santeetlah, NC':                'santeetlah_lake',
+  'Hiwassee Lake, NC':                  'hiwassee_lake',   // shipped 2026-08-04
   'Fontana Lake, NC':                   'fontana_lake',
-  'Lake Cheoah, NC':                    'lake_cheoah',
+  'Lake Cheoah, NC':                    'cheoah_lake',   // shipped 2026-08-04
 
   // ── GA Lakes ────────────────────────────────────────────────────────────────
   'Lake Oconee, GA':                    'lake_oconee',
+  'Lake Juliette, GA':                  'lake_juliette',   // shipped 2026-08-04
   'Lake Sinclair, GA':                  'lake_sinclair',
-  'Lake Lanier, GA':                    'lake_lanier',
+  // 2026-08-04: was 'lake_lanier', which is Lake Lanier in GREENVILLE COUNTY, SC --
+  // 85 acres. Lake Lanier GA is Lake Sidney Lanier, 38,293 acres in Hall Co, one of
+  // the largest reservoirs in the state. LAKE_DB puts it at 34.23/-83.95, inside
+  // lake_sidney_lanier's bounds and 1.96 deg from the SC pond. A 450x size error in
+  // the wrong state, found by coordinates after the name had passed every check.
+  'Lake Lanier, GA':                    'lake_sidney_lanier',
   // Explicit: "jackson" alone matches "lake jackson" → juliette chain without this
-  'Lake Jackson, GA':                   'lake_juliette_high_falls',
-  'Lake Juliette / High Falls, GA':     'lake_juliette_high_falls',
+  'Lake Jackson, GA':                   'jackson_lake',
+  'High Falls Lake, GA':                'high_falls_lake',
+  // 'Lake Juliette / High Falls, GA' split 2026-08-04 -- one display name cannot point at two packs
   'Lake Blackshear, GA':                'lake_blackshear',
-  'Lake Allatoona, GA':                 'lake_allatoona',
-  'Tobesofkee Reservoir, GA':           'tobesofkee_reservoir',
+  'Lake Allatoona, GA':                 'allatoona_lake',
+  'Tobesofkee Reservoir, GA':           'lake_tobesofkee',
   'Kornbow Lake, GA':                   'kornbow_lake',
-  'Lake Blue Ridge, GA':                'lake_blue_ridge',
-  'Lake Nottely, GA':                   'lake_nottely',
+  'Lake Blue Ridge, GA':                'blue_ridge_lake',
+  'Lake Nottely, GA':                   'nottely_lake',
   'Lake Burton, GA':                    'lake_burton',
-  'Lake Chatuge, GA/NC':                'lake_chatuge',
+  'Lake Chatuge, GA/NC':                'chatuge_lake',
 
   // ── TN / NC Mountain ────────────────────────────────────────────────────────
   'Norris Lake, TN':                    'norris_lake',
@@ -134,12 +151,12 @@ export const LAKE_NAME_TO_R2_KEY = {
   'Melton Hill Reservoir, TN':          'melton_hill_lake',
   'South Holston Lake, TN':             'south_holston_lake',
   'South Holston Reservoir, TN':        'south_holston_lake',
-  'Lake Chilhowee, TN':                 'lake_chilhowee',
-  'Lake Cheoah, TN/NC':                 'lake_cheoah',
-  'Watauga Lake, TN':                   'watauga_boone_chain',
-  'Boone Lake, TN':                     'watauga_boone_chain',
-  'Boone Reservoir, TN':                'watauga_boone_chain',
-  'Watauga / Boone Chain, TN/NC':       'watauga_boone_chain',
+  'Lake Chilhowee, TN':                 'chilhowee_lake',
+  'Lake Cheoah, TN/NC':                 'cheoah_lake',   // shipped 2026-08-04
+  'Watauga Lake, TN':                   'watauga_lake',
+  'Boone Lake, TN':                     'boone_lake',
+  'Boone Reservoir, TN':                'boone_lake',
+  // 'Watauga / Boone Chain, TN/NC': removed 2026-08-04 -- both halves now have their own entries
   'Watts Bar Lake, TN':                 'watts_bar_lake',
   'Watts Bar Reservoir, TN':            'watts_bar_lake',
 
@@ -239,10 +256,61 @@ export function registerR2Key(displayName, slug) {
   if (!_REGISTRY_KEYS.has(lower)) _REGISTRY_KEYS.set(lower, slug);
 }
 
+/**
+ * Names with no chartpack, that must resolve to NOTHING.
+ *
+ * Commenting an entry out of the map above is NOT enough, and assuming it was is a
+ * bug this file already shipped once. With no explicit entry the resolver falls
+ * through to the fuzzy pass, which answers anyway — and answers wrong:
+ *
+ *     'Kerr Lake, NC'  ->  w_kerr_scott_reservoir
+ *
+ * Kerr Lake (John H. Kerr / Buggs Island) is ~50,000 acres on the NC/VA line.
+ * W. Kerr Scott Reservoir is 1,280 acres in Wilkes County. Different lake, 1/40th
+ * the size, and the app would have drawn its contours with nothing in the UI saying
+ * so. Removing a mapping makes the answer worse than leaving it wrong-but-known,
+ * unless the name is also refused explicitly.
+ *
+ * A name leaves this set when its pack is built, not before.
+ */
+export const LAKE_NAMES_WITHOUT_PACK = new Set([
+  // 2026-08-04: fourteen names left this set when their packs were built and installed --
+  // Randleman, Kerr, High Rock, Falls, John H. Moss, Bonnie Doone, Blewett Falls, Hiwassee,
+  // Cheoah, Lookout Shoals, Juliette and Blalock. Removing them here is not optional
+  // bookkeeping: hasNoPack() is consulted BEFORE any matching runs, so a name left in this
+  // set is refused no matter what LAKE_NAME_TO_R2_KEY says about it.
+  // What stays below has no pack and no way to get one -- no DNR ramp to seed a boundary
+  // from, or a combined name whose halves are separately selectable.
+  // Removed by the R2 prune / never built. Listed explicitly so the fuzzy pass
+  // cannot answer for them later.
+  // Combined names whose halves are now selectable on their own. Both used to
+  // resolve to ONE half silently -- 'Lake Juliette / High Falls' returned High
+  // Falls (562 ac) while Juliette (~3,600 ac) is the half most people mean.
+  'Lake Juliette / High Falls, GA',
+  'Watauga / Boone Chain, TN/NC',
+  'Auman Lake, NC',
+  'Lake Mackintosh, NC',
+  'Lake Michie / Little River, NC',
+  'Lake Reidsville, NC',
+]);
+
+/** Normalised membership test — the set is keyed by display name, users are not. */
+function hasNoPack(name) {
+  const n = String(name).trim().toLowerCase();
+  for (const k of LAKE_NAMES_WITHOUT_PACK) {
+    const kk = k.toLowerCase();
+    if (n === kk || n === kk.replace(/,\s*[a-z]{2}(\/[a-z]{2})?$/, '').trim()) return true;
+  }
+  return false;
+}
+
 export function resolveR2Key(displayName) {
   if (!displayName || typeof displayName !== 'string') return null;
   const trimmed = displayName.trim();
   if (!trimmed) return null;
+
+  // Refused before any matching runs. See LAKE_NAMES_WITHOUT_PACK above.
+  if (hasNoPack(trimmed)) return null;
 
   // Pass 0 — the 3DHP registry slug, which is authoritative when it exists.
   //
@@ -294,10 +362,32 @@ export function resolveR2Key(displayName) {
   const dn = _normalize(trimmed);
   if (!dn) return null;
 
+  // A river is not a lake, and Pass 4 could never tell.
+  //
+  // The substring test has no notion of water type, so a name whose subject is moving
+  // water matched whatever impoundment happened to contain its letters:
+  //
+  //     Catawba River  -> lake_wylie                 (an impoundment ON the Catawba)
+  //     May River      -> mayo_lake                  (NC, ~400 km away)
+  //     Black Creek    -> lake_blackshear            (Georgia)
+  //     South Creek    -> south_holston_lake         (Tennessee)
+  //
+  // Pass 3.5 now places the 170 names the cutter generates, but any OTHER river or
+  // creek name still falls to here — and this surfaced again the moment a curated
+  // entry was removed: with 'Catawba Narrows' gone, 'Catawba River' immediately began
+  // resolving to Lake Wylie. Removing a bad mapping is not neutral while Pass 4 will
+  // answer in its place.
+  //
+  // So the type has to agree. Flowing water and standing water never match each other.
+  const FLOWING = /\b(river|creek|run|branch|fork|stream|canal|slough|bayou)\b/i;
+  const dnFlowing = FLOWING.test(trimmed);
+
   let best = null;
   let bestLen = 0;
   for (const [kn, v] of _NORM_MAP) {
     if (dn === kn || dn.includes(kn) || kn.includes(dn)) {
+      // `kn` is normalised, which strips the generic word — test the key it came from.
+      if (dnFlowing !== FLOWING.test(v)) continue;
       if (kn.length > bestLen) {
         bestLen = kn.length;
         best = v;
