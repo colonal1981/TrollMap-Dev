@@ -2,7 +2,7 @@ import { describe, it, expect } from './expect-shim.mjs';
 // access-index.js publishes legacy global helpers on `window` at module scope, so it needs
 // one before it can be imported under node. Same shim the registry and cloud-sync tests use.
 if (typeof globalThis.window === 'undefined') globalThis.window = globalThis;
-const { lakeNameLooseKey, findExistingLakeKey, pruneAccessToRecord } =
+const { lakeNameLooseKey, findExistingLakeKey, pruneAccessToRecord, absorbDuplicateEntries } =
   await import('../js/data/access-index.js');
 
 /**
@@ -154,5 +154,54 @@ describe('an access point belongs to a lake because it is ON it', () => {
       { name: 'up a creek',   lat: 34.4903 + 0.03, lon: -80.1600 },   // ~3.3 km north
     ]]]) };
     expect(pruneAccessToRecord(i, 'Lake Robinson, SC', robinson)).toBe(0);
+  });
+});
+
+describe('one water can arrive under several DNR names, across two feeds', () => {
+  // Fishing Creek Reservoir is "Fishing Creek Reservoir" on /ramps and "Fishing Creek" on
+  // /paddle. Pass A matches the first exactly and returns, so the paddle entry was orphaned
+  // as its own picker row with one point and no pack -- a lake that looks like it has no
+  // contours. Nitrolee Access Area is genuinely inside the reservoir's bounds.
+  const fcr = {
+    name: 'Fishing Creek Reservoir',
+    displayName: 'Fishing Creek Reservoir (Lancaster Co, SC)',
+    legacyDisplayNames: [],
+    boundsWSEN: [-80.9029, 34.6006, -80.8682, 34.6841],
+  };
+  const idx = () => ({
+    byLake: new Map([
+      ['Fishing Creek Reservoir, SC', [{ name: 'Great Falls', lat: 34.64, lon: -80.885 }]],
+      ['Fishing Creek, SC', [{ name: 'Nitrolee Access Area', lat: 34.601257, lon: -80.896701 }]],
+    ]),
+    registryByName: new Map(),
+  });
+
+  it('folds the paddle-feed name into the lake it belongs to', () => {
+    const i = idx();
+    expect(absorbDuplicateEntries(i, 'Fishing Creek Reservoir, SC', fcr)).toBe(1);
+    expect(i.byLake.has('Fishing Creek, SC')).toBe(false);
+    expect(i.byLake.get('Fishing Creek Reservoir, SC')).toHaveLength(2);
+  });
+
+  it('refuses when ANY of the other entry\'s points lie outside the lake', () => {
+    // the creek continues past the reservoir -- different water, keep it separate
+    const i = idx();
+    i.byLake.get('Fishing Creek, SC').push({ name: 'upstream', lat: 34.80, lon: -80.95 });
+    expect(absorbDuplicateEntries(i, 'Fishing Creek Reservoir, SC', fcr)).toBe(0);
+    expect(i.byLake.has('Fishing Creek, SC')).toBe(true);
+  });
+
+  it('does not duplicate a point that is already there', () => {
+    const i = idx();
+    i.byLake.get('Fishing Creek Reservoir, SC').push(
+      { name: 'Nitrolee Access Area', lat: 34.601257, lon: -80.896701 });
+    absorbDuplicateEntries(i, 'Fishing Creek Reservoir, SC', fcr);
+    expect(i.byLake.get('Fishing Creek Reservoir, SC')).toHaveLength(2);
+  });
+
+  it('leaves a record with no bounds alone', () => {
+    const i = idx();
+    expect(absorbDuplicateEntries(i, 'Fishing Creek Reservoir, SC',
+                                  { ...fcr, boundsWSEN: null })).toBe(0);
   });
 });
