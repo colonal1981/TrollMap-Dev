@@ -288,6 +288,49 @@
     min-height: 52px; padding: 6px 12px; display: flex; flex-wrap: wrap; gap: 8px;
     align-items: center; justify-content: space-between; z-index: 1000;
   }
+  /* ── Map layer panel ──────────────────────────────────────────────────────────
+     Thirteen overlay toggles used to sit inline in .map-toolbar, which on a phone
+     meant a horizontally-scrolling strip of buttons eating the bottom of the map.
+     They are the SAME button elements, relocated -- every module still finds its
+     own by id -- grouped, and given one consistent size instead of two layouts. */
+  .layers-panel {
+    position: absolute; left: 10px; bottom: 62px; z-index: 1200;
+    background: rgba(11,22,35,.97); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 12px 12px; font-size: 12px;
+    width: min(360px, calc(100vw - 20px)); max-height: min(72vh, 560px); overflow-y: auto;
+    box-shadow: 0 6px 24px rgba(0,0,0,.5);
+  }
+  .layers-panel-head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--line);
+  }
+  .layer-group-title {
+    color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .06em; margin: 10px 0 5px; display: flex; align-items: baseline; gap: 6px;
+  }
+  .layer-group-title:first-of-type { margin-top: 2px; }
+  .layer-group-sub { text-transform: none; letter-spacing: 0; font-weight: 400; opacity: .65; }
+  /* Two columns where there is room, one where there is not. Thirteen full-width rows
+     came to ~600px, which does not fit a phone without scrolling past half the layers.
+     Targets stay 38px tall for wet hands -- the grid takes width, not height. */
+  .layers-panel > div:not(.layer-group-title),
+  .layers-panel > span {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(142px, 1fr)); gap: 5px;
+  }
+  .layers-panel div > button,
+  .layers-panel span > button {
+    display: flex; align-items: center; min-height: 38px; width: 100%;
+    margin: 0; padding: 0 10px; gap: 7px;
+    font-size: 12px; font-weight: 600; text-align: left; line-height: 1.15;
+    border: 1px solid var(--line); border-radius: 6px;
+    background: var(--panel2); color: var(--text); cursor: pointer;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .layers-panel button[aria-pressed="true"] { border-color: var(--accent); }
+  .layers-panel button[disabled] { cursor: default; }
+  @media (max-width: 640px) {
+    .layers-panel { left: 6px; right: 6px; width: auto; bottom: 52px; max-height: 68vh; }
+  }
   .toolbar-select {
     padding: 4px 6px; font-size: 12px; border-radius: 6px; height: 28px;
     border: 1px solid var(--line); background: var(--panel2); color: var(--text);
@@ -559,26 +602,43 @@
       </div>
 
      <!-- ── MAP TOOLBAR — single row, uniform buttons ── -->
-      <div id="mapToolBar" class="map-toolbar no-print">
-        <!-- Layer toggles -->
-        <button id="btnRamps" title="Toggle boat launch ramps">⛵ Ramps</button>
-        <button id="btnBankPier" title="Toggle bank &amp; pier fishing locations">🎣 Bank/Pier</button>
-        <button id="btnPaddle" title="Toggle kayak launches">🛶 Kayak</button>
-        <button id="btnAttractors" data-active-color="#00e5ff" title="Toggle submerged attractors">📍 Attractors</button>
-        <button id="btnFishingSpots" title="Toggle community fishing spots (i-Boating crowdsourced)">🎣 Fishing Spots</button>
-        <button id="btnPOI" title="Toggle points of interest (landings, place names, attractors)">📌 POI</button>
-        <!-- Coastal-only layers — hidden unless a coast_* zone is selected -->
+            <!-- Layer panel: every map overlay toggle, one place, one style. The BUTTONS ARE THE
+           ORIGINALS, relocated -- each module still finds its own by id, so nothing rewires. -->
+      <div id="layersPanel" class="layers-panel no-print" style="display:none">
+        <div class="layers-panel-head">
+          <span style="color:var(--accent);font-weight:700">🗺️ Map Layers</span>
+          <button id="closeLayersBtn" title="Close" style="background:none;border:none;color:var(--muted);font-size:14px;padding:0 4px;cursor:pointer">✕</button>
+        </div>
+        <div class="layer-group-title">Access<span class="layer-group-sub">How you get on the water</span></div>
+        <div>
+            <button id="btnRamps" title="Toggle boat launch ramps">⛵ Ramps</button>
+            <button id="btnBankPier" title="Toggle bank &amp; pier fishing locations">🎣 Bank/Pier</button>
+            <button id="btnPaddle" title="Toggle kayak launches">🛶 Kayak</button>
+        </div>
+        <div class="layer-group-title">Structure<span class="layer-group-sub">Where fish hold</span></div>
+        <div>
+            <button id="btnAttractors" data-active-color="#00e5ff" title="Toggle submerged attractors">📍 Attractors</button>
+            <button id="btnFishingSpots" title="Toggle community fishing spots (i-Boating crowdsourced)">🎣 Fishing Spots</button>
+            <button id="btnPOI" title="Toggle points of interest (landings, place names, attractors)">📌 POI</button>
+            <button id="btnCustomVectors" data-opens-panel title="Load custom GeoJSON structure layer">🗂 Structure</button>
+            <button id="btnFetchOsm" data-active-color="#76ff03" title="Fetch OSM waterways and historic structures">🌐 OSM</button>
+        </div>
+        <div class="layer-group-title">Coastal<span class="layer-group-sub">Saltwater only</span></div>
         <span id="coastalLayerGroup" style="display:none">
-          <button id="btnOysterBeds" title="Toggle oyster beds (SCDNR / NCDMF) — redfish on moving water">🦪 Oyster</button>
-          <button id="btnMarshEdges" title="Toggle Spartina marsh edges (ESI 9/10) — flood-tide redfish">🌾 Marsh</button>
-          <button id="btnSoundings" title="Toggle depth soundings, tide-corrected (zoom 13+)">🔢 Soundings</button>
+            <button id="btnOysterBeds" title="Toggle oyster beds (SCDNR / NCDMF) — redfish on moving water">🦪 Oyster</button>
+            <button id="btnMarshEdges" title="Toggle Spartina marsh edges (ESI 9/10) — flood-tide redfish">🌾 Marsh</button>
+            <button id="btnSoundings" title="Toggle depth soundings, tide-corrected (zoom 13+)">🔢 Soundings</button>
         </span>
-        <button id="btnCustomVectors" title="Load custom GeoJSON structure layer">🗂 Structure</button>
-        <button id="btnFetchOsm" data-active-color="#76ff03" title="Fetch OSM waterways and historic structures">🌐 OSM</button>
-        <button id="btnShowCatches" title="Plot catch journal on map">🐟 Catches</button>
+        <div class="layer-group-title">Mine<span class="layer-group-sub">Your own marks</span></div>
+        <div>
+            <button id="btnShowCatches" title="Plot catch journal on map">🐟 Catches</button>
+            <button id="btnCastingRings" title="Draw casting rings around waypoints">⭕ Cast Rings</button>
+        </div>
+      </div>
+      <div id="mapToolBar" class="map-toolbar no-print">
+        <button id="btnLayers" title="Show and hide map layers">🗺️ Layers</button>
         <label id="btnGarminParser" style="cursor:pointer;height:30px;font-size:11px;font-weight:600;border:1px solid var(--line);border-radius:5px;background:var(--panel2);color:var(--text);display:inline-flex;align-items:center;padding:0 10px;gap:4px;white-space:nowrap;box-sizing:border-box;flex-shrink:0" title="Import Garmin GPX catch waypoints">📥 GPX Catches<input type="file" id="garminParserInput" accept=".gpx" class="hidden"></label>
         <button id="btnQuickdrawKey" data-active-color="#ffb703" title="Toggle depth color key">🌈 Depth Key</button>
-        <button id="btnCastingRings" title="Draw casting rings around waypoints">⭕ Cast Rings</button>
 
 
         <!-- GPS popup -->
