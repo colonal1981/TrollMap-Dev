@@ -4,12 +4,18 @@
  */
 
 import { state, CF_WORKER_URL } from '../core/state.js';
+import {
+  registerLayer as layerRegister, show as layerShow, hide as layerHide,
+  isVisible as layerIsVisible, getLayer as layerGet, dropAll as layerDropAll,
+  invalidate as layerInvalidate, wireButton as layerWireButton,
+} from '../core/layer-registry.js';
 import { esc } from '../utils/escape.js';
 import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../data/lake-keys.js';
 import { distMiFromCoords as distMi } from '../utils/geo.js';
 import { TRISTATE_MASTER_RAMPS, rampsReady } from '../data/ramps-loader.js';
 import { workerHeaders } from '../utils/worker-auth.js';
 
+import { cacheGet, cacheSet } from '../utils/db.js';
 // Canvas renderer — shared for all supplemental polygon/line layers
 const _canvasRenderer = L.canvas({ padding: 0.5 });
 
@@ -55,10 +61,11 @@ function depthAreaColor(ft, coastal = false) {
   return '#ffffff';
 }
 
-const IDB_NAME    = 'trollmap-supplemental';
-const IDB_STORE   = 'layers';
-const IDB_VERSION = 1;
-const CACHE_TTL   = 24 * 60 * 60 * 1000;
+// Was its own database, `trollmap-supplemental`, with its own openDB/idbGet/idbSet. Folded
+// into the shared `cache` store: every layer here is re-fetchable from R2, so there was
+// nothing to migrate.
+const CACHE_NS  = 'supplemental';
+const CACHE_TTL = 24 * 60 * 60 * 1000;
 
 // Bump this whenever the SHAPE of a chartpack changes — new layers, renamed properties, a
 // different source. It is part of every cache key, so bumping it orphans every stale entry at
@@ -69,36 +76,6 @@ const CACHE_TTL   = 24 * 60 * 60 * 1000;
 // the OLD data and reads as "the upload didn't work". That is the single most likely way a
 // correct chartpack looks broken. v2 = the Garmin RGN2/RGN3/RGN4 pack (2026-08-01).
 const CACHE_SCHEMA = 2;
-
-let _db = null;
-async function openDB() {
-  if (_db) return _db;
-  return new Promise((res, rej) => {
-    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
-    req.onupgradeneeded = e => e.target.result.createObjectStore(IDB_STORE, { keyPath: 'key' });
-    req.onsuccess = e => { _db = e.target.result; res(_db); };
-    req.onerror   = e => rej(e.target.error);
-  });
-}
-
-async function idbGet(key) {
-  try {
-    const db = await openDB();
-    return new Promise((res, rej) => {
-      const req = db.transaction(IDB_STORE).objectStore(IDB_STORE).get(key);
-      req.onsuccess = () => res(req.result || null);
-      req.onerror   = () => rej(req.error);
-    });
-  } catch (_) { return null; }
-}
-
-async function idbSet(key, value) {
-  try {
-    const db = await openDB();
-    const tx = db.transaction(IDB_STORE, 'readwrite');
-    tx.objectStore(IDB_STORE).put({ key, value, ts: Date.now() });
-  } catch (_) {}
-}
 
 async function fetchSupplemental(lakeKey, layer) {
   const url = `${CF_WORKER_URL}/chartpacks/${lakeKey}/${layer}.geojson?v=${Date.now()}`;
@@ -112,35 +89,54 @@ async function loadLayer(lakeKey, layer) {
   // Coastal depth_areas bypass IDB — file updates happen frequently during development
   const bypassIdb = lakeKey.startsWith('coast_') && layer === 'depth_areas';
   if (!bypassIdb) {
-    const cached = await idbGet(cacheKey);
-    if (cached?.ts && (Date.now() - cached.ts) < CACHE_TTL && cached.value?.features?.length) {
-      return cached.value;
+    const cached = await cacheGet(CACHE_NS, cacheKey, CACHE_TTL);
+    if (cached?.features?.length) {
+      return cached;
     }
   }
   const gj = await fetchSupplemental(lakeKey, layer);
   if (!gj?.features?.length) throw new Error('empty');
-  if (!bypassIdb) await idbSet(cacheKey, gj);
+  if (!bypassIdb) await cacheSet(CACHE_NS, cacheKey, gj);
   return gj;
 }
 
+// THREE LAYERS STAY OUT OF THE REGISTRY, ON PURPOSE. `fishingSpots` and `pois` went in
+// (see the registrations below `GARMIN_LAYERS`); these did not, and the reason is per-layer
+// rather than "we ran out of time":
+//
+//   _depthAreaLayer       starts VISIBLE, is recoloured in place by refreshDepthAreaColors()
+//                         when the tide syncs, must be sent to the back whenever anything
+//                         else is added, and is published as window.SUPPLEMENTAL_DEPTH_LAYER
+//                         for the chart-import and route code. The registry models build /
+//                         show / hide, not "already up and mutated by a feed".
+//   _visionLayer          rebuilt per FEATURE by window._removeVisionStructure. There is no
+//                         invalidate-one-marker, and invalidating the whole layer to delete
+//                         one structure would refetch a vision scan.
+//   _structureMarkerLayer seeded from OUTSIDE this module by _seedOsmStructureData, so its
+//                         build has no single owner to hang on the registry.
+//
+// Forcing any of the three through registerLayer today would mean adding a concept to the
+// registry to suit one caller, which is the trade Ryan has said not to make.
 let _activeLakeKey    = null;
 let _depthAreaLayer   = null;
 let _depthAreaVisible = true;
 let _depthAreaGeoJSON = null;
-let _fishingLayer     = null;
-let _fishingVisible   = false;
-let _poiLayer         = null;
 let _visionLayer      = null;
 let _visionVisible    = false;
-let _poiVisible       = false;
 let _boundaryGeoJSON  = null;
 let _osmStructureData = null;
 let _structureMarkerLayer = null;
 let _coastalTideHeightFt = null; // set by refreshDepthAreaColors after tide sync
 let _poiGeoJSON       = null;
 let _poiOnWaterOnly   = true;    // Garmin ships land classes too; see loadPOIs
-let _garminLayers     = {};      // name -> L.GeoJSON  (rendered)
-let _garminVisible    = {};      // name -> bool
+// The Garmin vector layers live in core/layer-registry.js under `garmin_<name>` ids. This
+// file used to keep BOTH a `name -> L.GeoJSON` map and a parallel `name -> bool`, which is
+// the same handle/flag pair every other module carried, times eight.
+//
+// The buttons keep their own painter (_paintGarminButtons) because each carries its layer's
+// colour and a live feature count -- the registry owns WHETHER a layer is up, this file owns
+// what that looks like.
+const GID = (name) => 'garmin_' + name;
 let _garminData       = {};      // name -> GeoJSON    (fetched, may not be rendered)
 
 // FETCHING AND RENDERING ARE SEPARATE, AND THEY HAVE OPPOSITE COSTS.
@@ -164,8 +160,11 @@ async function ensureData(lakeKey, layer) {
     const gj = await loadLayer(lakeKey, layer);
     _garminData[layer] = gj;
     return gj;
-  } catch (e) {
-    _garminData[layer] = null;      // remember the miss; most lakes have no Garmin pack yet
+  } catch (_) {
+    // Audited 2026-08-04 -- a 404 is the common case, not a fault: most lakes have no Garmin
+    // pack for this layer and loadLayer throws on the miss. Caching null is what stops every
+    // toggle re-requesting a file that is not there. loadLayer reports anything worse.
+    _garminData[layer] = null;
     return null;
   }
 }
@@ -255,9 +254,15 @@ async function loadDepthAreas(lakeKey) {
   }
 }
 
-async function loadFishingSpots(lakeKey) {
-  if (!mapReady()) return;
-  if (_fishingLayer) { getMap().removeLayer(_fishingLayer); _fishingLayer = null; }
+/**
+ * Community fishing points + paths for one lake.
+ *
+ * Returns the layer instead of assigning a singleton and adding it to the map: the layer
+ * registry owns build-once, add/remove, the visibility flag and the button paint, which is
+ * what the hand-rolled version of all four in wireFishingButton() was doing by hand.
+ */
+async function buildFishingLayer(lakeKey) {
+  if (!mapReady() || !lakeKey) return null;
   const group = L.layerGroup();
   let total = 0;
   try {
@@ -269,7 +274,11 @@ async function loadFishingSpots(lakeKey) {
       m.bindTooltip('Community fishing spot', { sticky: true, direction: 'top', opacity: 0.85 });
       group.addLayer(m); total++;
     });
-  } catch (_) {}
+  } catch (err) {
+    // Community fishing points. `total` stays 0 and the caller logs "no fishing spots data",
+    // which reads as an empty lake rather than a failed fetch -- so say which it was.
+    console.warn('[supplemental] community fishing points failed to load:', err);
+  }
   try {
     const lines = await loadLayer(lakeKey, 'fishing_lines');
     L.geoJSON(lines, {
@@ -278,11 +287,17 @@ async function loadFishingSpots(lakeKey) {
       style() { return { color: '#76ff03', weight: 1.5, opacity: 0.55, dashArray: '4,4' }; },
       onEachFeature(feat, layer) { layer.bindTooltip('Community fishing path', { sticky: true, direction: 'top', opacity: 0.85 }); },
     }).eachLayer(l => { group.addLayer(l); total++; });
-  } catch (_) {}
-  if (total === 0) { console.log(`[supplemental] no fishing spots data for ${lakeKey}`); return; }
-  _fishingLayer = group;
-  if (_fishingVisible) _fishingLayer.addTo(getMap());
+  } catch (err) {
+    console.warn('[supplemental] community fishing lines failed to load:', err);
+  }
+  if (total === 0) {
+    // null, not an empty group: the registry reads null as "no data here" and puts the
+    // emptyMessage on the button instead of leaving it looking switched on with nothing drawn.
+    console.log(`[supplemental] no fishing spots data for ${lakeKey}`);
+    return null;
+  }
   console.log(`[supplemental] fishing spots loaded: ${total} features for ${lakeKey}`);
+  return group;
 }
 
 const POI_STYLE = {
@@ -743,9 +758,17 @@ function haversineM(a, b) {
                     (b[1] - a[1]) * 110540);
 }
 
-async function loadPOIs(lakeKey) {
-  if (!mapReady()) return;
-  if (_poiLayer) { getMap().removeLayer(_poiLayer); _poiLayer = null; }
+/**
+ * Garmin POI symbols for one lake. Returns the layer; the registry owns the rest.
+ *
+ * The labels are a SEPARATE Leaflet group that has to follow this layer's visibility, which
+ * is why the registration below carries onShow/onHide rather than this function drawing them
+ * itself -- a build that painted labels would leave them on the map when the layer was built
+ * but not shown.
+ */
+async function buildPoiLayer(lakeKey) {
+  if (!mapReady() || !lakeKey) return null;
+
   if (_poiLabelGroup) { getMap().removeLayer(_poiLabelGroup); _poiLabelGroup = null; }
   try {
     const gj = await ensureData(lakeKey, 'pois');
@@ -789,17 +812,16 @@ async function loadPOIs(lakeKey) {
       m.feature = feat;   // getSupplementalContext reads l.feature.properties
       group.addLayer(m); shown++;
     });
-    _poiLayer = group;
-    if (_poiVisible) _poiLayer.addTo(getMap());
     hookLabelRedraw();
-    renderPoiLabels();
     console.log(`[supplemental] pois loaded: ${shown} symbols, ${asText} drawn as chart text, `
               + `${nLabelFor} suppressed as labels for a named feature, `
               + `${hidden} off-water hidden, ${unknown} unidentified hidden for ${lakeKey}`);
+    return shown ? group : null;
   } catch (e) {
     if (!e.message.includes('404') && !e.message.includes('empty')) {
       console.warn(`[supplemental] pois fetch failed for ${lakeKey}:`, e.message);
     }
+    return null;
   }
 }
 
@@ -854,8 +876,48 @@ const GARMIN_LAYERS = {
   },
 };
 
+// One registration per Garmin layer. `build` closes over the CURRENT lake, and
+// clearGarminLayers() drops the built handles when the lake changes, so the next show
+// refetches rather than redrawing the previous lake.
+for (const name of Object.keys(GARMIN_LAYERS)) {
+  layerRegister({
+    id: GID(name),
+    enabled: () => !!_activeLakeKey && mapReady(),
+    build: () => loadGarminLayer(_activeLakeKey, name),
+    // Depth shading is the bottom fill; these sit above it and contours stay on top.
+    // Without this, docks vanish under the depth polygons.
+    onShow: () => { _depthAreaLayer?.bringToBack(); },
+  });
+}
+
+// The two older singleton layers, now on the same footing as the Garmin ones.
+//
+// Each used to carry a hand-rolled copy of what the registry does: its own `_*Layer` handle,
+// its own `_*Visible` flag, its own button-painting helper and its own click listener that
+// lazily built on first show. Four behaviours, duplicated twice, and they had already drifted
+// -- the POI toggle remembered to redraw the labels and the fishing toggle had no equivalent
+// to forget.
+layerRegister({
+  id: 'fishingSpots', button: 'btnFishingSpots',
+  enabled: () => !!_activeLakeKey && mapReady(),
+  emptyMessage: 'No community fishing data for this lake',
+  build: () => buildFishingLayer(_activeLakeKey),
+  onShow: () => { _depthAreaLayer?.bringToBack(); },
+});
+
+layerRegister({
+  id: 'pois', button: 'btnPOI',
+  enabled: () => !!_activeLakeKey && mapReady(),
+  emptyMessage: 'No Garmin POIs for this lake',
+  build: () => buildPoiLayer(_activeLakeKey),
+  // Labels are their own Leaflet group and follow the symbols, which is what the old click
+  // handler did by calling renderPoiLabels() after every toggle.
+  onShow: () => { _depthAreaLayer?.bringToBack(); renderPoiLabels(); },
+  onHide: () => { renderPoiLabels(); },
+});
+
 async function loadGarminLayer(lakeKey, name) {
-  if (!mapReady() || _garminLayers[name]) return _garminLayers[name] || null;
+  if (!mapReady()) return null;
   const spec = GARMIN_LAYERS[name];
   if (!spec) return null;
   try {
@@ -870,7 +932,6 @@ async function loadGarminLayer(lakeKey, name) {
                           { sticky: true, direction: 'top', opacity: 0.85 });
       },
     });
-    _garminLayers[name] = lyr;
     console.log(`[supplemental] ${name} loaded: ${gj.features.length} features for ${lakeKey}`);
     return lyr;
   } catch (e) {
@@ -886,58 +947,52 @@ async function loadGarminLayer(lakeKey, name) {
 /** Toggle one Garmin vector layer. Callable from the console today; wire a button later. */
 window.toggleGarminLayer = async function (name, visible) {
   if (!_activeLakeKey || !GARMIN_LAYERS[name]) return false;
-  const want = visible === undefined ? !_garminVisible[name] : !!visible;
-  _garminVisible[name] = want;
-  if (want) {
-    const lyr = _garminLayers[name] || await loadGarminLayer(_activeLakeKey, name);
-    if (!lyr) { _garminVisible[name] = false; return false; }
-    lyr.addTo(getMap());
-    // Order matters: depth shading is the bottom fill, these sit above it, contours and their
-    // labels stay on top. Without this, docks vanish under the depth polygons.
-    _depthAreaLayer?.bringToBack();
-  } else if (_garminLayers[name]) {
-    getMap()?.removeLayer(_garminLayers[name]);
-  }
-  _updateButtonState('btnGarmin_' + name, want);
-  return want;
+  const id = GID(name);
+  const want = visible === undefined ? !layerIsVisible(id) : !!visible;
+  const got = want ? await layerShow(id) : (layerHide(id), false);
+  _paintGarminButtons();
+  return got;
 };
 
 /** Turn the whole Garmin chart overlay on or off in one call. */
 window.toggleGarminChart = async function (visible) {
   const names = Object.entries(GARMIN_LAYERS).filter(([, s]) => s.panel !== false).map(([n]) => n);
-  const want = visible === undefined ? !names.some(n => _garminVisible[n]) : !!visible;
+  const want = visible === undefined ? !names.some(n => layerIsVisible(GID(n))) : !!visible;
   for (const n of names) await window.toggleGarminLayer(n, want);
   return want;
 };
 
+/**
+ * Both POI filters change what the layer CONTAINS, not whether it is shown. Drop the built
+ * layer so the next show refetches through the new filter, and if it is on screen right now,
+ * put the new one up immediately.
+ */
+function rebuildPois() {
+  if (!_activeLakeKey) return;
+  const wasVisible = layerIsVisible('pois');
+  layerInvalidate('pois');
+  if (wasVisible) layerShow('pois');
+}
+
 /** Show or hide decoded-but-unnamed Garmin symbol classes (mode 3/26 and friends). */
 window.toggleUnidentified = function (show) {
   _showUnidentified = show === undefined ? !_showUnidentified : !!show;
-  if (_activeLakeKey && _poiLayer) {
-    getMap()?.removeLayer(_poiLayer);
-    _poiLayer = null;
-    loadPOIs(_activeLakeKey).then(() => { if (_poiVisible) _poiLayer?.addTo(getMap()); });
-  }
+  rebuildPois();
   return _showUnidentified;
 };
 
 /** Show or hide Garmin's land classes (highway shields, stores, parking, height markers). */
 window.togglePoiOffWater = function (showOffWater) {
   _poiOnWaterOnly = showOffWater === undefined ? !_poiOnWaterOnly : !showOffWater;
-  if (_activeLakeKey && _poiLayer) {
-    getMap()?.removeLayer(_poiLayer);
-    _poiLayer = null;
-    loadPOIs(_activeLakeKey).then(() => { if (_poiVisible) _poiLayer?.addTo(getMap()); });
-  }
+  rebuildPois();
   return !_poiOnWaterOnly;
 };
 
 function clearGarminLayers() {
-  for (const lyr of Object.values(_garminLayers)) {
-    if (lyr) getMap()?.removeLayer(lyr);
-  }
-  _garminLayers = {};
-  _garminVisible = {};
+  // dropAll hides each layer AND forgets the built handle, so the next show refetches for the
+  // new lake. Previously this cleared three parallel maps by hand and any one of them going
+  // stale left the previous lake's docks on the map.
+  layerDropAll(Object.keys(GARMIN_LAYERS).map(GID));
   _garminData = {};
   _dockClusters = null;
   _paintGarminButtons();
@@ -966,8 +1021,8 @@ function _paintGarminButtons() {
   for (const [name, spec] of Object.entries(GARMIN_LAYERS)) {
     const b = document.getElementById('btnGarmin_' + name);
     if (!b) continue;
-    const on = !!_garminVisible[name];
-    const n = _garminLayers[name]?.getLayers?.().length;
+    const on = layerIsVisible(GID(name));
+    const n = layerGet(GID(name))?.getLayers?.().length;
     b.style.cssText = _garminBtnStyle(on, spec.style.color);
     b.textContent = `${on ? '◉' : '○'} ${spec.label}${on && n ? ` (${n})` : ''}`;
   }
@@ -1008,7 +1063,7 @@ function injectGarminPanel() {
       if (!_activeLakeKey) { if (b) b.title = 'Select a lake first'; return; }
       if (b) b.textContent = '◌ loading…';
       const on = await window.toggleGarminLayer(name);
-      if (!on && !_garminLayers[name] && b) b.title = 'No Garmin data for this lake';
+      if (!on && !layerGet(GID(name)) && b) b.title = 'No Garmin data for this lake';
       _paintGarminButtons();
     });
   }
@@ -1042,9 +1097,9 @@ async function loadLakeBoundary(displayName) {
   if (!boundaryKey) return;
   const cacheKey = `boundary/${boundaryKey}`;
   try {
-    const cached = await idbGet(cacheKey);
-    if (cached?.ts && (Date.now() - cached.ts) < CACHE_TTL && cached.value?.features?.length) {
-      _boundaryGeoJSON = cached.value;
+    const cached = await cacheGet(CACHE_NS, cacheKey, CACHE_TTL);
+    if (cached?.features?.length) {
+      _boundaryGeoJSON = cached;
       window.LAKE_BOUNDARY_GEOJSON = _boundaryGeoJSON;
       console.log(`[supplemental] boundary loaded from cache: ${boundaryKey}`);
       return;
@@ -1061,7 +1116,7 @@ async function loadLakeBoundary(displayName) {
       return a > (best?.properties?.shape_Area || best?.properties?.areasqkm || 0) ? f : best;
     }, gj.features[0]);
     _boundaryGeoJSON = { type: 'FeatureCollection', features: [main] };
-    await idbSet(cacheKey, _boundaryGeoJSON);
+    await cacheSet(CACHE_NS, cacheKey, _boundaryGeoJSON);
     window.LAKE_BOUNDARY_GEOJSON = _boundaryGeoJSON;
     console.log(`[supplemental] boundary loaded: ${boundaryKey}`);
   } catch (e) {
@@ -1122,17 +1177,15 @@ export async function loadSupplementalForLake(displayName) {
   _osmStructureData = null;
   window.dispatchEvent(new CustomEvent('trollmap:lakeChanged'));
 
-  if (_fishingLayer)        { getMap()?.removeLayer(_fishingLayer);        _fishingLayer        = null; }
-  if (_poiLayer)            { getMap()?.removeLayer(_poiLayer);            _poiLayer            = null; _poiGeoJSON = null; }
+  // dropAll hides, removes and forgets the built layer, so the next show refetches for the
+  // new lake -- which is the whole of what the four hand-written lines per layer used to do,
+  // including resetting the button, which is why the _updateButtonState calls are gone.
+  layerDropAll(['fishingSpots', 'pois']);
+  _poiGeoJSON = null;
   if (_poiLabelGroup)       { getMap()?.removeLayer(_poiLabelGroup);       _poiLabelGroup       = null; }
   clearGarminLayers();
   if (_visionLayer)         { getMap()?.removeLayer(_visionLayer);         _visionLayer         = null; _visionVisible = false; }
   if (_structureMarkerLayer){ getMap()?.removeLayer(_structureMarkerLayer); _structureMarkerLayer = null; }
-
-  _fishingVisible = false;
-  _poiVisible     = false;
-  _updateButtonState('btnFishingSpots', false);
-  _updateButtonState('btnPOI', false);
 
   await loadDepthAreas(lakeKey);
 
@@ -1198,47 +1251,6 @@ export async function loadSupplementalForLake(displayName) {
     .catch(() => { _osmStructureData = []; });
 }
 
-function _updateButtonState(id, active) {
-  const btn = document.getElementById(id);
-  if (!btn) return;
-  btn.style.background = active ? 'var(--accent)' : '';
-  btn.style.color      = active ? '#000' : '';
-}
-
-function wireFishingButton() {
-  const btn = document.getElementById('btnFishingSpots');
-  if (!btn) return;
-  btn.addEventListener('click', async () => {
-    if (!mapReady()) return;
-    if (!_activeLakeKey) { btn.title = 'Select a lake first'; return; }
-    _fishingVisible = !_fishingVisible;
-    _updateButtonState('btnFishingSpots', _fishingVisible);
-    if (_fishingVisible) {
-      if (!_fishingLayer) await loadFishingSpots(_activeLakeKey);
-      if (_fishingLayer)  _fishingLayer.addTo(getMap());
-    } else {
-      if (_fishingLayer) getMap().removeLayer(_fishingLayer);
-    }
-  });
-}
-
-function wirePOIButton() {
-  const btn = document.getElementById('btnPOI');
-  if (!btn) return;
-  btn.addEventListener('click', async () => {
-    if (!mapReady()) return;
-    if (!_activeLakeKey) { btn.title = 'Select a lake first'; return; }
-    _poiVisible = !_poiVisible;
-    _updateButtonState('btnPOI', _poiVisible);
-    if (_poiVisible) {
-      if (!_poiLayer) await loadPOIs(_activeLakeKey);
-      if (_poiLayer)  _poiLayer.addTo(getMap());
-    } else {
-      if (_poiLayer) getMap().removeLayer(_poiLayer);
-    }
-    renderPoiLabels();   // labels follow the same toggle as the symbols
-  });
-}
 
 // ── Dock clustering ───────────────────────────────────────────────────────────
 //
@@ -1335,8 +1347,9 @@ export function getSupplementalContext(lat, lon, radiusMi = 0.5) {
     else if (STRUCTURE_TYPES.has(t)) results.structures.push({ ...p, lat: c[1], lon: c[0] });
     else if (p.on_water !== false) results.pois.push(p);
   }
-  if (_fishingLayer) {
-    _fishingLayer.eachLayer(l => {
+  const fishing = layerGet('fishingSpots');
+  if (fishing) {
+    fishing.eachLayer(l => {
       const ll = l.getLatLng?.();
       if (!ll) return;
       if (distMi(lat, lon, ll.lat, ll.lng) <= radiusMi) results.fishingPoints.push({ lat: ll.lat, lon: ll.lng });
@@ -1411,8 +1424,9 @@ function init() {
   const btnFishing = document.getElementById('btnFishingSpots');
   const btnPOI     = document.getElementById('btnPOI');
   if (!btnFishing || !btnPOI) { setTimeout(init, 300); return; }
-  wireFishingButton();
-  wirePOIButton();
+  // The registry wires both buttons: one click handler, one visibility flag, one paint.
+  layerWireButton('fishingSpots');
+  layerWireButton('pois');
   // custom-vectors.js builds #customVectorPanel at module load and it logs "armed" before this
   // module does, so it is normally present already. Retry anyway rather than assume load order.
   if (!injectGarminPanel()) setTimeout(injectGarminPanel, 800);

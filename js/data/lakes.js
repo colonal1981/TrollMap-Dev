@@ -324,7 +324,7 @@ export const LAKE_DB = {
   // ── SC & GA Coastal / Tidal Fishing Areas ────────────────────────────────
   "ACE Basin / Edisto, SC": {
     center: [32.55, -80.47, 11],
-    bounds: [[32.35, -80.70],[32.75, -80.25]],
+    bounds: [[32.296, -80.709],[32.76, -80.129]],
     coastal: true, tideStation: '8665530',
     ramps: {
       "Edisto Beach State Park Ramp": [32.489, -80.309],
@@ -334,7 +334,7 @@ export const LAKE_DB = {
   },
   "Charleston Harbor, SC": {
     center: [32.77, -79.93, 11],
-    bounds: [[32.60, -80.10],[32.95, -79.75]],
+    bounds: [[32.623, -80.19],[33.115, -79.734]],
     coastal: true, tideStation: '8665530',
     ramps: {
       "Brittlebank Park Ramp": [32.774, -79.959],
@@ -344,7 +344,7 @@ export const LAKE_DB = {
   },
   "Winyah Bay / Georgetown, SC": {
     center: [33.35, -79.28, 11],
-    bounds: [[33.15, -79.50],[33.55, -79.10]],
+    bounds: [[33.325, -79.586],[33.571, -79.093]],
     coastal: true, tideStation: '8661070',
     ramps: {
       "Sampit River Ramp (Georgetown)": [33.357, -79.282],
@@ -354,7 +354,7 @@ export const LAKE_DB = {
   },
   "Murrells Inlet / Pawleys Island, SC": {
     center: [33.55, -79.05, 12],
-    bounds: [[33.45, -79.20],[33.65, -78.92]],
+    bounds: [[33.499, -79.178],[33.854, -78.832]],
     coastal: true, tideStation: '8661070',
     ramps: {
       "Morse Park Landing": [33.553, -79.047],
@@ -363,7 +363,7 @@ export const LAKE_DB = {
   },
   "Beaufort / Port Royal Sound, SC": {
     center: [32.43, -80.67, 11],
-    bounds: [[32.25, -80.90],[32.65, -80.45]],
+    bounds: [[32.25, -80.9],[32.65, -80.45]],
     coastal: true, tideStation: '8670870',
     ramps: {
       "Henry C. Chambers Waterfront": [32.431, -80.671],
@@ -373,7 +373,7 @@ export const LAKE_DB = {
   },
   "St. Helena Sound, SC": {
     center: [32.37, -80.43, 11],
-    bounds: [[32.20, -80.65],[32.55, -80.20]],
+    bounds: [[32.2, -80.65],[32.55, -80.2]],
     coastal: true, tideStation: '8670870',
     ramps: {
       "Edding's Point Ramp": [32.393, -80.434],
@@ -382,7 +382,7 @@ export const LAKE_DB = {
   },
   "Hilton Head / Calibogue Sound, SC": {
     center: [32.18, -80.75, 12],
-    bounds: [[32.05, -80.90],[32.32, -80.60]],
+    bounds: [[32.05, -80.9],[32.32, -80.6]],
     coastal: true, tideStation: '8670870',
     ramps: {
       "Broad Creek Marina": [32.197, -80.747],
@@ -391,7 +391,7 @@ export const LAKE_DB = {
   },
   "Santee River Delta / North Inlet, SC": {
     center: [33.18, -79.35, 11],
-    bounds: [[33.05, -79.55],[33.35, -79.15]],
+    bounds: [[32.99, -79.622],[33.327, -79.158]],
     coastal: true, tideStation: '8661070',
     ramps: {
       "Santee Coastal Reserve Ramp": [33.172, -79.358],
@@ -399,7 +399,7 @@ export const LAKE_DB = {
   },
   "Savannah River / Savannah, GA": {
     center: [32.08, -81.09, 11],
-    bounds: [[31.90, -81.25],[32.25, -80.90]],
+    bounds: [[31.9, -81.25],[32.25, -80.9]],
     coastal: true, tideStation: '8670659',
     ramps: {
       "Houlihan Bridge Ramp": [32.134, -81.107],

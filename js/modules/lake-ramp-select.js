@@ -15,8 +15,10 @@
 import { state } from '../core/state.js';
 import { loadAccessIndex, registryRecordFor } from '../data/access-index.js';
 import { loadContourForLake } from './contour-data.js';
-import { COASTAL_ZONES, isCoastalKey, coastalNamesByState } from '../data/coastal-zones.js';
+import { COASTAL_ZONES, isCoastalKey } from '../data/coastal-zones.js';
+import { appendCoastalOptgroups } from '../utils/coastal-optgroups.js';
 import { resolveR2Key } from '../data/lake-keys.js';
+import { waterZoneCandidates } from '../data/water-aliases.js';
 import { registryStats } from '../data/lake-registry.js';
 
 // ── Filter state ─────────────────────────────────────────────────────────
@@ -112,20 +114,7 @@ async function populateLakeSelect() {
   // Coastal / tidal zones. The worker access index only covers inland DNR
   // boat ramps, so without this the 21 coastal zones are unreachable from the
   // map toolbar and none of the tide / oyster / marsh layers can be loaded.
-  const coastalByState = coastalNamesByState();
-  for (const [stateCode, label] of [['SC', 'SC Coast'], ['GA', 'GA Coast'], ['NC', 'NC Coast']]) {
-    const names = coastalByState[stateCode];
-    if (!names?.length) continue;
-    const grp = document.createElement('optgroup');
-    grp.label = label;
-    names.forEach((name) => {
-      const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = name.replace(/,\s*[A-Z]{2}$/, '');
-      grp.appendChild(opt);
-    });
-    lakeSelect.appendChild(grp);
-  }
+  appendCoastalOptgroups(lakeSelect);
 
   if (currentValue && (idx.byLake.has(currentValue) || isCoastalKey(resolveR2Key(currentValue)))) {
     lakeSelect.value = currentValue;
@@ -139,6 +128,37 @@ function formatAccessLabel(item) {
   return `${prefix}${item.name}${item.typeLabel ? ` — ${item.typeLabel}` : ''}`;
 }
 
+/**
+ * Narrow a coastal key using the waterbody's own landings.
+ *
+ * Eight DNR names span more than one zone. water-aliases.js can only offer a default -- the
+ * zone with the most landings -- and for the Wando, which has one ramp in Cape Romain and one
+ * in Charleston, that default is decided alphabetically. The Intracoastal Waterway has
+ * landings in eight zones and no default is meaningful at all.
+ *
+ * The access points for the selected name settle it: count how many fall inside each candidate
+ * zone's bbox and take the winner. Ties keep the incoming key so the answer stays stable.
+ */
+function refineCoastalKey(name, key, accessPoints) {
+  if (!isCoastalKey(key) || !accessPoints?.length) return key;
+  const cands = waterZoneCandidates(name).filter(isCoastalKey);
+  if (cands.length < 2) return key;
+
+  let best = key;
+  let bestHits = -1;
+  for (const slug of cands) {
+    const bbox = COASTAL_ZONES[slug]?.bbox;
+    if (!bbox) continue;
+    const [[south, west], [north, east]] = bbox;
+    let hits = 0;
+    for (const p of accessPoints) {
+      if (p.lat >= south && p.lat <= north && p.lon >= west && p.lon <= east) hits += 1;
+    }
+    if (hits > bestHits) { bestHits = hits; best = slug; }
+  }
+  return bestHits > 0 ? best : key;
+}
+
 async function onLakeChange(selLakeName) {
   const rampSel = document.getElementById('rampSelect');
   if (rampSel) rampSel.innerHTML = '<option value="">-- Access Points Index --</option>';
@@ -149,27 +169,35 @@ async function onLakeChange(selLakeName) {
   }
 
   const idx = await loadAccessIndex();
-  const coastalKey = resolveR2Key(selLakeName);
+  let accessPoints = idx.byLake.get(selLakeName) || [];
+
+  // Which zone, when the name spans several. Eight DNR names do: there are three North
+  // Rivers, two Wando Rivers, and an Intracoastal Waterway with landings in eight zones.
+  // water-aliases.js can only offer a default (the zone with the most landings), and for the
+  // Wando that default is a coin toss between Cape Romain and Charleston.
+  //
+  // Here we can do better than a default, because the ramps for THIS name have just been
+  // looked up: whichever zone contains most of them is the one being asked about. No new data
+  // and no guessing — the landings say where the water is.
+  const coastalKey = refineCoastalKey(selLakeName, resolveR2Key(selLakeName), accessPoints);
   const zone = isCoastalKey(coastalKey) ? COASTAL_ZONES[coastalKey] : null;
 
   // Coastal ramps are pulled from the fish & wildlife API via the worker access index.
   // We fall back to the hardcoded ones if the API results are empty.
-  let accessPoints = [];
-  if (zone) {
-    accessPoints = idx.byLake.get(selLakeName) || [];
-    if (accessPoints.length === 0) {
-      accessPoints = Object.entries(zone.ramps || {}).map(([name, c]) => ({
-        name, lat: c[0], lon: c[1], typeLabel: 'Coastal ramp', marker: '⛵',
-        sourcePath: 'coastal-zones', sourceState: zone.state,
-      }));
-    }
-  } else {
-    accessPoints = idx.byLake.get(selLakeName) || [];
+  if (zone && accessPoints.length === 0) {
+    accessPoints = Object.entries(zone.ramps || {}).map(([name, c]) => ({
+      name, lat: c[0], lon: c[1], typeLabel: 'Coastal ramp', marker: '⛵',
+      sourcePath: 'coastal-zones', sourceState: zone.state,
+    }));
   }
 
-  // Fly the map to the zone bbox for coastal (a sound is far larger than its
-  // handful of ramps), or to the access points for inland lakes.
-  if (state.MAP_OK && zone) {
+  // Fly the map to the zone bbox when the ZONE itself was selected — a sound is far larger
+  // than its handful of ramps. But 158 DNR waterbody names now resolve to a zone as well, and
+  // for those the zone box is the wrong frame: picking "Shem Creek" and being shown the whole
+  // of Charleston Harbour is not an answer to the question. Those get their own landings,
+  // which is exactly where the creek is.
+  const zoneItself = zone && zone.name === selLakeName;
+  if (state.MAP_OK && zone && (zoneItself || !accessPoints.length)) {
     state.MAP.fitBounds(zone.bbox, { padding: [40, 40] });
   } else if (state.MAP_OK && accessPoints.length) {
     const coords = accessPoints.map((p) => [p.lat, p.lon]);

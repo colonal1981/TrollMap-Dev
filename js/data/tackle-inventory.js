@@ -270,11 +270,25 @@ async function idbLoad() {
 }
 
 export async function saveInventory(inv) {
+  // Ryan's tackle box. Unlike every other store in the app this cannot be re-fetched from
+  // anywhere -- it is typed in by hand, once. Two things were wrong: the failure was
+  // swallowed, and the put was never awaited, so this resolved before the transaction
+  // committed and a failure afterwards had nowhere to go at all.
   try {
     const db = await openDB();
-    db.transaction(IDB_STORE,'readwrite').objectStore(IDB_STORE).put({ key:IDB_KEY, value:inv });
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put({ key: IDB_KEY, value: inv });
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error || new Error('tackle inventory write failed'));
+      tx.onabort = () => reject(tx.error || new Error('tackle inventory write aborted'));
+    });
     _inventory = inv;
-  } catch {}
+    return true;
+  } catch (err) {
+    console.error('[tackle] inventory NOT saved — your changes are in memory only:', err && err.message);
+    return false;
+  }
 }
 
 const IDB_SEEN_KEY = 'builtin_ids_seen';
@@ -294,7 +308,11 @@ async function idbPut(key, value) {
   try {
     const db = await openDB();
     db.transaction(IDB_STORE,'readwrite').objectStore(IDB_STORE).put({ key, value });
-  } catch {}
+  } catch (err) {
+    // A WRITE. The same rule as js/utils/db.js: a read may fall back to a default, a write
+    // may not fail in silence -- the user's tackle box appears to save and does not.
+    console.error('[tackle-inventory] could not persist %s:', key, err);
+  }
 }
 
 /**

@@ -76,6 +76,7 @@ import './modules/waypoint-to-generator.js';
 import './modules/spot-repositioning.js';
 import './modules/safety-checklist.js';
 import './modules/gis-toggles.js';
+import './modules/layers-panel.js';
 import './modules/ble-motor.js';
 import './modules/wet-hands-remote.js';
 import './modules/gear-autopilot.js';
@@ -162,7 +163,12 @@ async function boot() {
         try {
           const lake = document.getElementById('planLake')?.value;
           if (lake) populatePlanRampDropdown(lake);
-        } catch (e) {}
+        } catch (err) {
+          // A retry a second after load, for the case where restoreWorkingData had not yet
+          // set planLake. If it throws, the ramp dropdown stays empty and looks like the lake
+          // has no access points.
+          console.warn('[main] delayed ramp population failed:', err);
+        }
       }, 1000);
     });
 

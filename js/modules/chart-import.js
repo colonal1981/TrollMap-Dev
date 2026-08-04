@@ -22,7 +22,7 @@ import { depthColor, simplifyLine, guessDepthProp } from '../utils/geo.js';
 import { parseKML, kmlToGeoJSON, parseGPX, geoJSONToLines } from '../utils/parsers.js';
 import { addChartLayer, persistCharts } from './chart-mosaic.js';
 import { setBanner } from '../core/map-init.js';
-import { put as dbPut, getAll as dbGetAll, del as dbDel, isReady as dbIsReady } from '../utils/db.js';
+import { getAll as dbGetAll, del as dbDel, isReady as dbIsReady, tryPut } from '../utils/db.js';
 
 const CONTOUR_LAYERS = {};
 
@@ -74,9 +74,7 @@ async function handleLayerFile(file) {
     }
 
     if (dbIsReady()) {
-      try {
-        await dbPut('layers', { name, geo, depthProp });
-      } catch (_) {}
+      await tryPut('layers', { name, geo, depthProp }, `imported layer "${name}"`);
     }
 
     addContourLayer(name, geo, depthProp);
@@ -156,17 +154,23 @@ export function addContourLayer(name, geo, depthProp) {
         m.setLatLng(newLL);
         const readout = document.getElementById(`popupCoords_${spotKey}`);
         if (readout) readout.textContent = `${newLL.lat.toFixed(5)}, ${newLL.lng.toFixed(5)}`;
-        if (dbIsReady()) {
-          try {
-            await dbPut('settings', {
-              key: `custom_gis_${spotName}`,
-              lat: newLL.lat,
-              lon: newLL.lng,
-              correctedAt: new Date().toISOString(),
-            });
-          } catch (_) {}
-        }
-        alert(`Saved custom corrected GPS coordinates for "${spotName}".\nNew verified position: [${newLL.lat.toFixed(5)}, ${newLL.lng.toFixed(5)}].\nThis spot will remain locked on this coordinate for all future trips.`);
+        // The alert below promises this position is locked in for all future trips. That
+        // promise was printed whether or not the write happened -- the catch swallowed the
+        // failure and the dialog fired anyway. A GPS correction you made on the water, told
+        // you was permanent, and silently lost is the worst outcome this file can produce.
+        //
+        // The old `if (dbIsReady())` guard is gone with it: db.js writes now await the open
+        // instead of no-opping, so a correction dragged in the first second after load lands
+        // rather than being skipped. That guard was the thing making early writes vanish.
+        const saved = await tryPut('settings', {
+          key: `custom_gis_${spotName}`,
+          lat: newLL.lat,
+          lon: newLL.lng,
+          correctedAt: new Date().toISOString(),
+        }, `corrected GPS for "${spotName}"`);
+        alert(saved
+          ? `Saved custom corrected GPS coordinates for "${spotName}".\nNew verified position: [${newLL.lat.toFixed(5)}, ${newLL.lng.toFixed(5)}].\nThis spot will remain locked on this coordinate for all future trips.`
+          : `COULD NOT SAVE the corrected position for "${spotName}".\nThe marker has moved on screen, but the correction is NOT stored and will be gone on reload.\nSee the console for why.`);
         m.dragging.disable();
       });
 
@@ -359,10 +363,20 @@ document.getElementById('batchImportInput')?.addEventListener('change', (e) => {
         addChartLayer(base, pev.target.result, bounds, 0.75, 0);
         loaded++;
         if (loaded === total) {
-          setBanner(`✅ Imported ${total} chart tiles`);
-          setTimeout(() => setBanner(''), 3000);
-          // Persist to IndexedDB so contours survive a page refresh.
-          try { await persistCharts(); } catch (_) {}
+          // Persist BEFORE claiming success. The banner used to say "Imported N chart tiles"
+          // and then swallow the write that makes them survive a refresh, so an import that
+          // did not stick was indistinguishable from one that did -- until the next reload.
+          let persisted = true;
+          try {
+            await persistCharts();
+          } catch (err) {
+            persisted = false;
+            console.error('[chart-import] persistCharts failed; tiles are in memory only:', err && err.message);
+          }
+          setBanner(persisted
+            ? `✅ Imported ${total} chart tiles`
+            : `⚠️ Imported ${total} tiles, but they could NOT be saved — they will be gone on reload`);
+          setTimeout(() => setBanner(''), persisted ? 3000 : 8000);
           // Fit map to imported tiles
           const lats = [], lons = [];
           state.CHARTS.slice(-total).forEach((c) => {

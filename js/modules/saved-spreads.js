@@ -7,7 +7,7 @@ import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { setBanner } from '../core/map-init.js';
 import { renderSpread } from './spread-builder.js';
-import { put as dbPut, getAll as dbGetAll, del as dbDel, isReady as dbIsReady } from '../utils/db.js';
+import { put as dbPut, getAll as dbGetAll, isReady as dbIsReady, tryDel } from '../utils/db.js';
 
 // Module-level cache mirroring what's in IndexedDB.
 let SAVED_SPREADS = {};
@@ -58,7 +58,9 @@ async function deleteSavedSpread() {
   if (!confirm(`Delete "${name}"?`)) return;
   delete SAVED_SPREADS[name];
   if (dbIsReady()) {
-    try { await dbDel('spreads', name); } catch (_) {}
+    // The in-memory delete above already happened. If the store write fails silently the
+    // spread reappears on the next load, which reads as the delete button not working.
+    await tryDel('spreads', name, `spread "${name}"`);
   }
   refreshSpreadsSelect();
 }

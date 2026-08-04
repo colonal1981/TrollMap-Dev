@@ -34,8 +34,14 @@
 
 import { CF_WORKER_URL } from '../core/state.js';
 
-const IDB_STORE = 'ramps_cache';
-const IDB_KEY   = 'tristate_ramps';
+import { cacheGet, cacheSet, cacheClear } from '../utils/db.js';
+// Was its own database, `TrollMapRamps`, with its own open/get/put -- the third copy of the
+// same forty lines, alongside contour-data.js and supplemental-layers.js. The ramp list is
+// always re-fetchable from the Worker, so folding into the shared `cache` store needed no
+// migration. NOTE: the per-state `fetchedAt` migration below is a separate thing and still
+// applies -- it is about the shape of the cached VALUE, not where it is stored.
+const CACHE_NS  = 'ramps';
+const CACHE_KEY = 'tristate_ramps';
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const BACKGROUND_REFRESH_MS = 6 * 24 * 60 * 60 * 1000; // 6 days
 
@@ -60,39 +66,6 @@ export const TRISTATE_MASTER_HOTSPOTS  = [];
 // Promise that resolves when ramp data is fully loaded
 let _resolveReady;
 export const rampsReady = new Promise(resolve => { _resolveReady = resolve; });
-
-// ── IDB helpers ───────────────────────────────────────────────────────────────
-async function idbGet(key) {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open('TrollMapRamps', 1);
-    req.onupgradeneeded = e => e.target.result.createObjectStore(IDB_STORE);
-    req.onsuccess = e => {
-      try {
-        const tx = e.target.result.transaction(IDB_STORE, 'readonly');
-        const r = tx.objectStore(IDB_STORE).get(key);
-        r.onsuccess = () => resolve(r.result);
-        r.onerror = () => resolve(null);
-      } catch { resolve(null); }
-    };
-    req.onerror = () => resolve(null);
-  });
-}
-
-async function idbPut(key, value) {
-  return new Promise((resolve) => {
-    const req = indexedDB.open('TrollMapRamps', 1);
-    req.onupgradeneeded = e => e.target.result.createObjectStore(IDB_STORE);
-    req.onsuccess = e => {
-      try {
-        const tx = e.target.result.transaction(IDB_STORE, 'readwrite');
-        tx.objectStore(IDB_STORE).put(value, key);
-        tx.oncomplete = () => resolve(true);
-        tx.onerror = () => resolve(false);
-      } catch { resolve(false); }
-    };
-    req.onerror = () => resolve(false);
-  });
-}
 
 // ── Merge worker response into TRISTATE_MASTER_RAMPS ─────────────────────────
 // Worker returns { waterbodies: { 'Lake Wateree': [{name, lat, lon, ...}] } }
@@ -125,12 +98,9 @@ async function initRamps() {
   const now = Date.now();
 
   // Cache shape is now: { SC: { data, fetchedAt }, GA: {...}, NC: {...} }
-  let cached = null;
-  try {
-    cached = await idbGet(IDB_KEY);
-  } catch (e) {
-    console.warn('[ramps] IDB read failed:', e);
-  }
+  // The TTL is applied per state below, not here, because each state carries its own
+  // fetchedAt -- so this read deliberately does NOT pass a maxAge.
+  let cached = await cacheGet(CACHE_NS, CACHE_KEY);
 
   // Migrate old single-fetchedAt cache shape if present, so existing users
   // don't lose their SC/GA cache just because the format changed.
@@ -190,7 +160,7 @@ async function initRamps() {
         }
       });
 
-      await idbPut(IDB_KEY, toCache);
+      await cacheSet(CACHE_NS, CACHE_KEY, toCache);
     } catch (e) {
       console.warn('[ramps] worker fetch failed:', e);
     }
@@ -213,15 +183,24 @@ console.log('[ramps] module ready');
 // IndexedDB cache and re-fetches from the worker.
 window.forceRefreshRamps = async function forceRefreshRamps() {
   console.log('[ramps] forceRefreshRamps: clearing IDB cache...');
-  try {
-    await new Promise((resolve) => {
+  // Deleting a whole database is no longer the right move: this cache shares `TrollMapDB`
+  // with the catch journal, saved plans and spreads. cacheClear touches only this namespace.
+  const ok = await cacheClear(CACHE_NS);
+
+  // The old standalone database is left behind by the fold. Removing it here means the one
+  // command a person runs when ramps look wrong is also the command that reclaims the space,
+  // rather than orphaning it forever. Harmless when it was never created.
+  await new Promise((resolve) => {
+    try {
       const req = indexedDB.deleteDatabase('TrollMapRamps');
-      req.onsuccess = () => resolve();
-      req.onerror = () => resolve();
-      req.onblocked = () => resolve();
-    });
-  } catch (e) {
-    console.warn('[ramps] IDB delete failed:', e);
-  }
-  console.log('[ramps] IDB cleared. Reload the page to re-fetch all states fresh.');
+      req.onsuccess = req.onerror = req.onblocked = () => resolve();
+    } catch (e) {
+      console.warn('[ramps] could not remove the retired TrollMapRamps database:', e && e.message);
+      resolve();
+    }
+  });
+
+  console.log(ok
+    ? '[ramps] cache cleared. Reload the page to re-fetch all states fresh.'
+    : '[ramps] cache clear reported a failure — see the [db] message above.');
 };

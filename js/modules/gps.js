@@ -7,6 +7,7 @@
  */
 
 import { state } from '../core/state.js';
+import { callGlobal } from '../utils/call-global.js';
 
 /**
  * Start watching the device's GPS position. Idempotent: if already
@@ -96,7 +97,7 @@ export function wireGpsButtons() {
         state.MAP.removeLayer(state.GPS_LINE);
         state.GPS_LINE = null;
       }
-      try { window.renderAll?.(); } catch (_) {}
+      callGlobal('renderAll');
     }
   });
 }

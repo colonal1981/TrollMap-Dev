@@ -855,13 +855,27 @@ function _loadEdgeCache(cacheKey) {
       _depthEdgeCache.set(cacheKey, edges);
       return edges;
     }
+  // Intentionally silent: a sessionStorage miss, a stale entry or unparseable JSON all mean
+  // the same thing -- recompute the edges. Nothing downstream can tell the difference and
+  // nothing needs to. Audited 2026-08-03.
   } catch (_) {}
   return null;
 }
 
 function _saveEdgeCache(cacheKey, edges) {
   _depthEdgeCache.set(cacheKey, edges);
-  try { sessionStorage.setItem(_EDGE_CACHE_PREFIX + cacheKey, JSON.stringify(edges)); } catch (_) {}
+  try {
+    sessionStorage.setItem(_EDGE_CACHE_PREFIX + cacheKey, JSON.stringify(edges));
+  } catch (_) {
+    // Audited 2026-08-03 -- intentionally silent. _depthEdgeCache above is the real cache and
+    // already holds this; sessionStorage is only a cross-reload bonus and it throws routinely
+    // (Safari private mode disables it outright, and edge sets blow the quota on a big lake).
+    // Nothing downstream can tell whether this succeeded, by design.
+    //
+    // The marker has to stay on ONE line -- audit_silent_catches.mjs matches
+    // /Audited \d{4}-\d{2}-\d{2}/, so wrapping the date onto the next line, which is what
+    // this comment used to do, silently loses the sign-off and the block reads as a swallow.
+  }
 }
 
 function getDepthPolygonEdges(depthMinFt, depthMaxFt) {
@@ -1132,6 +1146,10 @@ function generateDepthPolygonRoutes(cfg) {
 
   // Pick best spine
   const spine = candidates[0];
+    // Intentionally silent: window._routeDebug is scratch instrumentation you attach from the
+    // console when a route comes out wrong. Nothing reads it in normal operation, so failing
+    // here costs a debugging convenience and nothing else -- and logging it would put noise on
+    // every route build for a facility that is usually not even present. Audited 2026-08-03.
   try {
     if (window._routeDebug?.length) {
       window._routeDebug[window._routeDebug.length-1].polySpine = `trollScore=${spine?.trollScore?.toFixed(0)} len=${spine?.len?.toFixed(0)} closest=${spine?._closestFt?.toFixed(0)}`;
@@ -1165,9 +1183,14 @@ function generateDepthPolygonRoutes(cfg) {
   const _dbgPrepEnd = _dbgPrep.slice(-3).map(p=>`(${p[0].toFixed(5)},${p[1].toFixed(5)})`).join('→');
   console.log(`[SPINE-DEBUG] prepared: ${_dbgPrep.length}pts start=${_dbgPrepStart} end=${_dbgPrepEnd}`);
   // Write to a visible element so it can be read without console
+    // Intentionally silent: window._routeDebug is scratch instrumentation you attach from the
+    // console when a route comes out wrong. Nothing reads it in normal operation, so failing
+    // here costs a debugging convenience and nothing else -- and logging it would put noise on
+    // every route build for a facility that is usually not even present. Audited 2026-08-03.
   try {
     if (typeof window.logSpineDebug === 'function') {
-      const entry = window.logSpineDebug(cfg.depthMin + '-' + cfg.depthMax + 'ft', _dbgRaw, _dbgPrep);
+      // The return value used to be captured into `entry` and never read.
+      window.logSpineDebug(cfg.depthMin + '-' + cfg.depthMax + 'ft', _dbgRaw, _dbgPrep);
     }
     if (window._routeDebug?.length && window._routeDebug_sLat) {
       const d = window._routeDebug_sLat;
@@ -1176,7 +1199,11 @@ function generateDepthPolygonRoutes(cfg) {
       window._routeDebug[window._routeDebug.length-1].cfgStartLat = d.cfgStartLat;
       window._routeDebug[window._routeDebug.length-1].cfgRampLat = d.cfgRampLat;
     }
-  } catch(_) {}
+  } catch (_) {
+    // Audited 2026-08-04 -- writes into a debug array that only exists when someone has
+    // turned route debugging on. Reporting a failure to record diagnostics would be noise
+    // about noise; the route itself is unaffected.
+  }
 
   // Apply pattern along the (now properly bounded) spine
   // Smart Plan always uses straight pattern — sine causes clipping artifacts
@@ -1340,6 +1367,10 @@ function prepareSpineForPhase(spine, cfg) {
   const sLat = cfg.startLat != null ? cfg.startLat : cfg.rampLat;
   const sLon = cfg.startLon != null ? cfg.startLon : cfg.rampLon;
   // Store sLat for debug panel
+    // Intentionally silent: window._routeDebug is scratch instrumentation you attach from the
+    // console when a route comes out wrong. Nothing reads it in normal operation, so failing
+    // here costs a debugging convenience and nothing else -- and logging it would put noise on
+    // every route build for a facility that is usually not even present. Audited 2026-08-03.
   try { window._routeDebug_sLat = { sLat, sLon, cfgStartLat: cfg.startLat, cfgRampLat: cfg.rampLat, lockedBearing: cfg.lockedBearing }; } catch(_) {}
   const eLat = cfg.endLat;
   const eLon = cfg.endLon;
@@ -1351,13 +1382,19 @@ function prepareSpineForPhase(spine, cfg) {
   const forwardHalf = spine.slice(nearIdx);   // from nearest point to end
   const reverseHalf = spine.slice(0, nearIdx + 1).reverse(); // from nearest point back to start
   // Debug: store half lengths
+    // Intentionally silent: window._routeDebug is scratch instrumentation you attach from the
+    // console when a route comes out wrong. Nothing reads it in normal operation, so failing
+    // here costs a debugging convenience and nothing else -- and logging it would put noise on
+    // every route build for a facility that is usually not even present. Audited 2026-08-03.
   try {
     if (window._routeDebug?.length) {
       window._routeDebug[window._routeDebug.length-1].nearIdx = nearIdx;
       window._routeDebug[window._routeDebug.length-1].fwdLen = forwardHalf.length;
       window._routeDebug[window._routeDebug.length-1].revLen = reverseHalf.length;
     }
-  } catch(_) {}
+  } catch (_) {
+    // Audited 2026-08-04 -- same debug-array write as above. Optional by construction.
+  }
   // Always include both full-spine directions
   candidates.push(spine);
   candidates.push(spine.slice().reverse());

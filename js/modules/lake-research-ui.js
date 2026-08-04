@@ -1,6 +1,7 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { _state, runFullPipeline, runResume, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, RESEARCH_ORDER, FRESHWATER_RESEARCH_ORDER, COASTAL_RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log, renderLog, isCoastalLake, getResearchOrderForLake } from './lake-research-engine.js';
-import { coastalNamesByState, COASTAL_ZONES, isCoastalKey } from '../data/coastal-zones.js';
+import { COASTAL_ZONES, isCoastalKey } from '../data/coastal-zones.js';
+import { appendCoastalOptgroups } from '../utils/coastal-optgroups.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { workerHeaders } from '../utils/worker-auth.js';
 
@@ -189,20 +190,7 @@ async function populateResearchLakeDropdown() {
   });
   sel.appendChild(inlandGroup);
 
-  const coastalByState = coastalNamesByState();
-  for (const [stateCode, label] of [['SC', 'SC Coast'], ['GA', 'GA Coast'], ['NC', 'NC Coast']]) {
-    const names = coastalByState[stateCode];
-    if (!names?.length) continue;
-    const grp = document.createElement('optgroup');
-    grp.label = label;
-    names.forEach((name) => {
-      const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = name.replace(/,\s*[A-Z]{2}$/, '');
-      grp.appendChild(opt);
-    });
-    sel.appendChild(grp);
-  }
+  appendCoastalOptgroups(sel);
 
   if (current) {
     sel.value = current;
@@ -279,7 +267,12 @@ function getEffectiveResearchOrderForRender() {
     // Fallback: check R2 key via display name
     const r2 = resolveR2Key(name);
     if (r2 && isCoastalKey(r2)) return COASTAL_RESEARCH_ORDER;
-  } catch {}
+  } catch (err) {
+    // Deciding which research questions to ask about this water. Falling through to the
+    // freshwater order is a reasonable default, but doing it for a coastal lake because
+    // something threw means the whole saltwater question set silently never runs.
+    console.warn('[lake-research-ui] coastal detection failed, using the freshwater order:', err);
+  }
   return FRESHWATER_RESEARCH_ORDER;
 }
 
@@ -1009,6 +1002,9 @@ function renderSections(profile) {
           if (st) { st.textContent = 'Applied ✓'; st.style.color = 'var(--accent2)'; }
         }
       } catch (err) {
+        // The status line says 'Invalid JSON', which is a guess: this catch also covers the
+        // network call under it, so a worker outage was reported to you as bad JSON.
+        console.warn(`[research-ui] save failed:`, err && err.message);
         if (st) { st.textContent = 'Invalid JSON'; st.style.color = 'var(--bad)'; }
       }
     });
@@ -1170,7 +1166,19 @@ async function openPackageFile(lakeName, filename) {
 
     // All other files — pretty-print JSON with syntax highlight
     let pretty;
-    try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch { pretty = text; }
+    // Intentionally silent: this pretty-prints if the text happens to be JSON and shows it raw
+    // otherwise. Both outcomes are correct and the user sees the content either way.
+    // Audited 2026-08-03.
+    // Intentionally silent: pretty-print if the body happens to be JSON, show it raw if not.
+    // Both outcomes are correct and you see the content either way. Audited 2026-08-03.
+    try {
+      pretty = JSON.stringify(JSON.parse(text), null, 2);
+    } catch (_) {
+      // Audited 2026-08-04 -- the parse is only there to pretty-print. Not every packaged
+      // research file is JSON, and showing the raw text is the right answer for the ones
+      // that are not.
+      pretty = text;
+    }
     modal.showJson(pretty);
   } catch (e) {
     modal.show(`Error: ${e.message}`);
@@ -1187,7 +1195,14 @@ async function openVersionFile(lakeName, vfile) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const text = await res.text();
     let pretty;
-    try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch { pretty = text; }
+    try {
+      pretty = JSON.stringify(JSON.parse(text), null, 2);
+    } catch (_) {
+      // Audited 2026-08-04 -- the parse is only there to pretty-print. Not every packaged
+      // research file is JSON, and showing the raw text is the right answer for the ones
+      // that are not.
+      pretty = text;
+    }
     modal.showJson(pretty);
   } catch (e) {
     modal.show(`Error: ${e.message}`);

@@ -2,10 +2,13 @@
  * Shared lake display-name → R2 key map.
  * Single source of truth for contour-data.js and supplemental-layers.js.
  *
- * resolveR2Key() uses a 4-pass strategy:
+ * resolveR2Key() uses a 5-pass strategy:
  *   1. Exact match
  *   2. Case-insensitive exact match (handles all-caps feed names like "FALLS LAKE, NC")
  *   3. State-suffix-stripped exact + case-insensitive
+ *   3.5 water-aliases.js — the DNR waterbody names the river cutter placed, coastal
+ *      pointers and river aliases. Ahead of the fuzzy pass on purpose; see the comment
+ *      at the call site.
  *   4. Normalized fuzzy match — strips "Lake/Reservoir/etc", punctuation, state
  *      suffixes, and compares core name tokens. Handles word-order inversions
  *      ("Allatoona Lake" ↔ "Lake Allatoona"), all-caps, abbreviations, and
@@ -16,6 +19,8 @@
  * display name gives no hint of the R2 slug (multi-lake chains, coastal
  * catch-alls, border lakes with fixed canonical IDs).
  */
+import { resolveWaterKey } from './water-aliases.js';
+
 export const LAKE_NAME_TO_R2_KEY = {
   // ── SC Lakes ────────────────────────────────────────────────────────────────
   'Lake Marion, SC':                    'lake_marion',
@@ -142,6 +147,7 @@ export const LAKE_NAME_TO_R2_KEY = {
   'Winyah Bay / Georgetown, SC':              'coast_winyah_bay_sc',
   'Murrells Inlet / Pawleys Island, SC':      'coast_murrells_inlet_sc',
   'Santee River Delta / North Inlet, SC':     'coast_santee_delta_sc',
+  'Cape Romain / Bulls Bay, SC':              'coast_cape_romain_sc',
   'Charleston Harbor, SC':                    'coast_charleston_sc',
   'ACE Basin / Edisto, SC':                   'coast_ace_basin_sc',
   'St. Helena Sound, SC':                     'coast_st_helena_sc',
@@ -264,6 +270,22 @@ export function resolveR2Key(displayName) {
     if (LAKE_NAME_TO_R2_KEY[stripped]) return LAKE_NAME_TO_R2_KEY[stripped];
     if (_LOWER_MAP[stripped.toLowerCase()]) return _LOWER_MAP[stripped.toLowerCase()];
   }
+
+  // Pass 3.5 — the DNR waterbody names the river cutter placed.
+  //
+  // 158 coastal names and 12 river aliases, generated into water-aliases.js from
+  // _coastal_pointers.json and _river_aliases.json. They come from the worker's /ramps feed,
+  // so none of them is in the curated map or the registry, and every one of them used to fall
+  // into Pass 4.
+  //
+  // It goes BEFORE Pass 4 rather than after because Pass 4 does not decline to answer.
+  // Measured 2026-08-04 over all 170: 128 resolved to nothing, 9 to the right place, and 21 to
+  // the WRONG water -- "May River" in Bluffton SC to Mayo Lake in North Carolina, "Black
+  // Creek" on the Pee Dee to Lake Blackshear in Georgia, "South Creek" on the Pamlico to South
+  // Holston in Tennessee. A substring match with no notion of distance or state will always
+  // beat an empty answer, and it should not.
+  const placed = resolveWaterKey(trimmed);
+  if (placed) return placed;
 
   // Pass 4 — normalized fuzzy match
   // Derives R2 key from core lake name, handling word-order inversions,

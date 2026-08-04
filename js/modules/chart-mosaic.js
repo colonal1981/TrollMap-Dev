@@ -114,7 +114,12 @@ function removeChartLayerObj(c) {
   try {
     if (c.type === 'affine') c.affine?.remove();
     else if (c.overlay && state.MAP.hasLayer(c.overlay)) state.MAP.removeLayer(c.overlay);
-    else if (c.overlay) { try { state.MAP.removeLayer(c.overlay); } catch (_) {} }
+    else if (c.overlay) {
+      // Audited 2026-08-04 -- last-ditch removal of a layer the map says it does not have.
+      // Leaflet throws if it never held it, which is the case being handled; the outer catch
+      // reports anything that is actually a problem.
+      try { state.MAP.removeLayer(c.overlay); } catch (_) {}
+    }
   } catch (e) {
     console.warn('chart layer remove failed', e);
   }

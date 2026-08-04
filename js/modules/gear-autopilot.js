@@ -1,4 +1,4 @@
-import { get as dbGet, put as dbPut, isReady as dbIsReady } from '../utils/db.js';
+import { get as dbGet, isReady as dbIsReady, tryPut } from '../utils/db.js';
 /**
  * Personal Gear Autopilot — saves the user motor (NK180 Pro) and
  * sonar (Garmin ECHOMAP UHD2 93sv) profile to IndexedDB so it
@@ -19,19 +19,21 @@ import { get as dbGet, put as dbPut, isReady as dbIsReady } from '../utils/db.js
           if(saved.motor) motorEl.value = saved.motor;
           if(saved.sonar) sonarEl.value = saved.sonar;
         }
-      } catch(_){}
+      } catch (err) {
+        // The saved motor/sonar profile. Silence here shows factory defaults and reads as
+        // "it forgot my gear", which is worth a line in the console.
+        console.warn('[gear-autopilot] could not load the saved gear profile:', err);
+      }
     }
     // Save on any change
     async function saveGear(){
       if(!dbIsReady()) return;
-      try {
-        await dbPut('settings', {
-          key: 'personal_gear_profile',
-          motor: motorEl.value,
-          sonar: sonarEl.value,
-          savedAt: new Date().toISOString()
-        });
-      } catch(_){}
+      await tryPut('settings', {
+        key: 'personal_gear_profile',
+        motor: motorEl.value,
+        sonar: sonarEl.value,
+        savedAt: new Date().toISOString()
+      }, 'gear profile');
     }
     motorEl.addEventListener('change', saveGear);
     sonarEl.addEventListener('change', saveGear);

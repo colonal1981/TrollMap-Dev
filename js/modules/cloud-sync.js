@@ -22,7 +22,7 @@
  */
 
 import { state, CF_WORKER_URL } from '../core/state.js';
-import { get as dbGet, put as dbPut, getAll as dbGetAll, del as dbDel, isReady as dbIsReady } from '../utils/db.js';
+import { get as dbGet, put as dbPut, getAll as dbGetAll, isReady as dbIsReady, tryPut, tryDel } from '../utils/db.js';
 import { SYNC_TOKEN } from '../utils/worker-auth.js';
 
 // The token lives in utils/worker-auth.js. It was spelled out here AND, differently, in
@@ -66,7 +66,11 @@ async function drainPendingQueue() {
   try {
     const rec = await dbGet('settings', 'pending_sync');
     queue = rec?.queue || [];
-  } catch (_) {}
+  } catch (err) {
+    // An unreadable queue is treated as an empty one, which is the only thing that keeps sync
+    // moving -- but it also means anything already queued is about to be forgotten. Say so.
+    console.warn('[cloud-sync] could not read the pending queue, treating it as empty:', err);
+  }
   if (!queue.length) return;
 
   console.log(`☁️ Draining ${queue.length} queued sync items…`);
@@ -94,9 +98,9 @@ async function drainPendingQueue() {
       if (item.attempts < 10) remaining.push(item);
     }
   }
-  try {
-    await dbPut('settings', { key: 'pending_sync', queue: remaining });
-  } catch (_) {}
+  // If this write is lost the queue reverts to its pre-drain contents on the next load and
+  // every item already pushed is pushed again.
+  await tryPut('settings', { key: 'pending_sync', queue: remaining }, 'pending sync queue');
   if (remaining.length === 0) setStatus('☁️ Queued items synced');
 }
 
@@ -112,13 +116,17 @@ async function queueForLater(type, id, payload, deleted = false) {
   try {
     const rec = await dbGet('settings', 'pending_sync');
     queue = rec?.queue || [];
-  } catch (_) {}
+  } catch (err) {
+    // An unreadable queue is treated as an empty one, which is the only thing that keeps sync
+    // moving -- but it also means anything already queued is about to be forgotten. Say so.
+    console.warn('[cloud-sync] could not read the pending queue, treating it as empty:', err);
+  }
   // Dedupe: if same key already queued, replace it.
   queue = queue.filter((q) => !(q.type === type && q.id === id));
   queue.push({ type, id, payload, attempts: 0, deleted });
-  try {
-    await dbPut('settings', { key: 'pending_sync', queue });
-  } catch (_) {}
+  // queueForLater() is the fallback for a failed live push. If the fallback itself fails
+  // silently, the item is gone from both paths at once.
+  await tryPut('settings', { key: 'pending_sync', queue }, 'pending sync queue');
 }
 
 /**
@@ -228,7 +236,7 @@ export async function pullUpdatesOnLoad() {
 
         // Tombstone: server says this item was deleted.
         if (data?.deleted === true) {
-          try { await dbDel(store, id); } catch (_) {}
+          await tryDel(store, id, `tombstone for ${type} "${id}"`);
           merged.push({ type, id, deleted: true });
         } else {
           // Strip sync metadata before saving to local store

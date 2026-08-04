@@ -23,10 +23,11 @@ import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from './contour-data.js';
 import { resolveSupplementalKey, resolveBoundaryKey } from './supplemental-layers.js';
 import { geoDistanceFt } from '../utils/geo.js';
-import { coerceStockingsArray, coerceSpeciesArray } from '../utils/coerce.js';
+import { coerceStockingsArray, coerceSpeciesArray, coerceNum, hasResearchValue } from '../utils/coerce.js';
 import { isCoastalKey, COASTAL_ZONES } from '../data/coastal-zones.js';
-import { resolveR2Key as resolveR2KeyFromLakeKeys } from '../data/lake-keys.js';
 import { workerHeaders } from '../utils/worker-auth.js';
+
+import { boundsOf } from '../utils/geojson-coords.js';
 
 // Setup global caches and references
 window.TROLLMAP_RESEARCHED_CACHE = window.TROLLMAP_RESEARCHED_CACHE || {};
@@ -104,23 +105,17 @@ const AGENT_DEFINITIONS = {
 
 // ── Coastal detection helpers (frontend) ──────────────────────────────────
 function getCoastalR2Key(lakeName) {
-  try {
-    // Prefer the canonical lake-keys resolver (118 entries) when available
-    const k1 = resolveR2KeyFromLakeKeys(lakeName);
-    if (k1 && isCoastalKey(k1)) return k1;
-    // Fallback to contour-data resolver
-    const k2 = resolveR2Key(lakeName);
-    if (k2 && isCoastalKey(k2)) return k2;
-    // Final fallback: direct lowercased check
-    const low = String(lakeName || '').toLowerCase();
-    if (low.startsWith('coast_')) return low;
-    return null;
-  } catch {
-    try {
-      const k = resolveR2Key(lakeName);
-      return (k && isCoastalKey(k)) ? k : null;
-    } catch { return null; }
-  }
+  // There was never a second resolver here. `contour-data.js` re-exports lake-keys.js's
+  // `resolveR2Key` verbatim, so the "prefer the canonical resolver, fall back to the
+  // contour-data one" ladder called the SAME function twice and could not have disagreed with
+  // itself -- wrapped, for good measure, in a try/catch whose handler called it a third time.
+  // resolveR2Key does string work and map lookups and returns null rather than throwing, so
+  // there is nothing here to guard against.
+  const key = resolveR2Key(lakeName);
+  if (key && isCoastalKey(key)) return key;
+  // A caller may hand us the slug itself rather than a display name.
+  const low = String(lakeName || '').toLowerCase();
+  return low.startsWith('coast_') ? low : null;
 }
 
 function isCoastalLake(lakeName) {
@@ -217,13 +212,6 @@ function cleanLakeBaseName(lakeName) {
 
 
 
-function hasResearchValue(v) {
-  if (v == null) return false;
-  if (typeof v === 'string') return v.trim().length > 0;
-  if (Array.isArray(v)) return v.length > 0;
-  if (typeof v === 'object') return Object.keys(v).length > 0;
-  return true;
-}
 
 function cloneJson(v) {
   return v == null ? v : JSON.parse(JSON.stringify(v));
@@ -1331,7 +1319,9 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
             log(`  [identity] Loaded geometry-derived bathymetry from saved profile (max ${savedId.maxDepthFt} ft, avg ${savedId.averageDepthFt} ft, area ${savedId.surfaceAreaAcres != null ? savedId.surfaceAreaAcres + " ac" : "N/A"})`);
           }
         }
-      } catch (_) {}
+      } catch (_) {
+        console.warn(`[research] saved profile id fetch failed:`, _ && _.message);
+      }
     }
 
     // When fisheries runs without biology in the same batch (e.g. resume on
@@ -1348,7 +1338,11 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
             log(`  [fisheries] Loaded ${savedBiology.predatorSpecies.length} species from saved profile for LLM context`);
           }
         }
-      } catch (_) {}
+      } catch (_) {
+        // Same shape as the Worker's /lake-intel bug: a permanently failing fetch here degrades
+        // every lake to 'not researched yet' with nothing anywhere saying so.
+        console.warn(`[research] saved profile fetch failed:`, _ && _.message);
+      }
     }
 
     // Summary runs after the profile has already been assembled and saved. It
@@ -1559,7 +1553,9 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
           cachedUrls.add(normUrl);
           sharedHits++;
           log(`  📚 [${normalizedDocuments.length}] ${src.title?.slice(0, 70)} (shared registry, ${queryData.matchedSections} sections)`);
-        } catch (_) {}
+        } catch (_) {
+          console.warn(`[research] shared check failed:`, _ && _.message);
+        }
       }
 
       if (sharedHits > 0) {
@@ -1598,7 +1594,9 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
                 sharedDoc = checkData.document;
               }
             }
-          } catch (_) {}
+          } catch (_) {
+            console.warn(`[research] shared check failed:`, _ && _.message);
+          }
         }
 
         if (sharedDoc) {
@@ -1621,7 +1619,9 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
                 continue;
               }
             }
-          } catch (_) {}
+          } catch (_) {
+            console.warn(`[research] shared query failed:`, _ && _.message);
+          }
           // Fall through to real fetch if shared query fails
         }
 
@@ -2015,23 +2015,16 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
       let bbox = null;
       if (geoRes.ok) {
         const geo = await geoRes.json();
-        const coords = [];
-        const extractCoords = (obj) => {
-          if (!obj) return;
-          if (obj.type === 'Feature') extractCoords(obj.geometry);
-          else if (obj.type === 'FeatureCollection') obj.features?.forEach(extractCoords);
-          else if (obj.coordinates) {
-            const flat = obj.coordinates.flat(Infinity);
-            const step = (flat.length >= 3 && flat[2] === 0.0) || (flat.length % 3 === 0 && flat.length % 2 !== 0) ? 3 : 2;
-            for (let i = 0; i < flat.length - 1; i += step) coords.push([flat[i], flat[i+1]]);
-          }
-        };
-        extractCoords(geo);
-        if (coords.length) {
-          const lons = coords.map(c => c[0]);
-          const lats = coords.map(c => c[1]);
+        const b = boundsOf(geo);
+        if (b) {
           // 0.01° padding (~0.7mi) ensures monitoring stations near the shoreline edge are captured
-          bbox = { bboxNorth: Math.max(...lats) + 0.01, bboxSouth: Math.min(...lats) - 0.01, bboxEast: Math.max(...lons) + 0.01, bboxWest: Math.min(...lons) - 0.01 };
+          const PAD = 0.01;
+          bbox = {
+            bboxNorth: b.north + PAD,
+            bboxSouth: b.south - PAD,
+            bboxEast:  b.east  + PAD,
+            bboxWest:  b.west  - PAD,
+          };
         }
       }
       if (bbox) {
@@ -2297,23 +2290,16 @@ async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
         let bbox = null;
         if (geoRes.ok) {
           const geo = await geoRes.json();
-          const coords = [];
-          const extractCoords = (obj) => {
-            if (!obj) return;
-            if (obj.type === 'Feature') extractCoords(obj.geometry);
-            else if (obj.type === 'FeatureCollection') obj.features?.forEach(extractCoords);
-            else if (obj.coordinates) {
-              const flat = obj.coordinates.flat(Infinity);
-              const step = (flat.length >= 3 && flat[2] === 0.0) || (flat.length % 3 === 0 && flat.length % 2 !== 0) ? 3 : 2;
-              for (let i = 0; i < flat.length - 1; i += step) coords.push([flat[i], flat[i+1]]);
-            }
-          };
-          extractCoords(geo);
-          if (coords.length) {
-            const lons = coords.map(c => c[0]);
-            const lats = coords.map(c => c[1]);
+          const b = boundsOf(geo);
+          if (b) {
             // 0.01° padding (~0.7mi) ensures monitoring stations near the shoreline edge are captured
-            bbox = { bboxNorth: Math.max(...lats) + 0.01, bboxSouth: Math.min(...lats) - 0.01, bboxEast: Math.max(...lons) + 0.01, bboxWest: Math.min(...lons) - 0.01 };
+            const PAD = 0.01;
+            bbox = {
+              bboxNorth: b.north + PAD,
+              bboxSouth: b.south - PAD,
+              bboxEast:  b.east  + PAD,
+              bboxWest:  b.west  - PAD,
+            };
           }
         }
         if (bbox) {
@@ -2369,7 +2355,12 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
       const existingData = await existingRes.json();
       if (existingData.profile) existingSavedProfile = existingData.profile;
     }
-  } catch (e) { /* non-fatal */ }
+  } catch (e) {
+    // Marked /* non-fatal */, and it is -- but a failure means the caller believes no profile
+    // exists and starts a fresh research run over one already done.
+    console.warn(`[research] existing-profile check failed:`, e && e.message);
+    /* non-fatal */
+  }
 
   // Saved profiles now include a nested identity section (with _geometryDerived
   // flag and _bathymetryMeta). For older profiles that only have flat fields,
@@ -2471,19 +2462,7 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
           merged[subKey] = mergedSub;
         }
       }
-      // Coerce string types left over from prior runs or LLM output
-      const coerceNum = (v) => {
-        if (v === null || v === undefined) return null;
-        if (typeof v === 'number') return v;
-        if (typeof v === 'string') {
-          if (v === 'null' || v === '' || v === 'unknown') return null;
-          const rangeMatch = v.match(/^([\d.]+)\s*[-–]\s*([\d.]+)$/);
-          if (rangeMatch) return Math.round((parseFloat(rangeMatch[1]) + parseFloat(rangeMatch[2])) / 2);
-          const num = parseFloat(v);
-          return isFinite(num) ? num : null;
-        }
-        return null;
-      };
+      // Coerce string types left over from prior runs or LLM output -- see utils/coerce.js
       if (merged.thermocline) merged.thermocline.summerDepthFt = coerceNum(merged.thermocline.summerDepthFt);
       if (merged.oxygen) {
         merged.oxygen.depletionDepthFt = coerceNum(merged.oxygen.depletionDepthFt);

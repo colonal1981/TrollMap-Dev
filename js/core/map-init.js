@@ -20,6 +20,7 @@
 import { state } from './state.js';
 import { esc } from '../utils/escape.js';
 import { get as dbGet, put as dbPut, isReady as dbIsReady } from '../utils/db.js';
+import { callGlobal } from '../utils/call-global.js';
 
 // Tile-layer presets. Esri World Imagery for satellite, OSM for street.
 // Both with attribution per the providers' terms.
@@ -77,7 +78,7 @@ export function initMap() {
   // Leaflet rewrites raster image CSS transforms during zoom/pan; re-apply
   // chart overlay rotation so committed overlays don't visually drift.
   state.MAP.on('zoom zoomend moveend viewreset resize', () => {
-    try { window.refreshChartOverlayTransforms?.(); } catch (_) {}
+    callGlobal('refreshChartOverlayTransforms');
   });
 
   wireZoomIndicator();
@@ -120,6 +121,9 @@ function wireStorageIndicator() {
         `Total quota: ${fmtMB(quota)} · Used: ${fmtMB(usage)} · Free: ${fmtMB(avail)}` +
         (persistent ? ' · Persistent: yes' : ' · Persistent: NO (click to request)');
     } catch (_) {
+      // Audited 2026-08-04 -- this IS the report. navigator.storage.estimate() is absent or
+      // blocked on plenty of browsers, and the indicator says "storage n/a" on screen, which
+      // is more use to the person holding the phone than a console line they will never see.
       storageIndicator.textContent = 'storage n/a';
       storageIndicator.style.color = 'var(--muted)';
     }
@@ -195,7 +199,7 @@ export function onMapClick(e) {
     return;
   }
   if (window.georefState) {
-    try { window.handleGeorefClick?.(e); } catch (_) {}
+    callGlobal('handleGeorefClick', e);
     return;
   }
   const mode = editMode();
@@ -345,8 +349,8 @@ export function renderMap() {
         const ll = ev.target.getLatLng();
         state.DATA.waypoints[i].lat = ll.lat;
         state.DATA.waypoints[i].lon = ll.lng;
-        try { window.renderEditTables?.(); } catch (_) {}
-        try { window.renderPlanStats?.(); } catch (_) {}
+        callGlobal('renderEditTables');
+        callGlobal('renderPlanStats');
       });
     }
     bounds.push([w.lat, w.lon]);
@@ -358,8 +362,8 @@ export function renderMap() {
 /** Render map + edit table + plan stats, then autosave. */
 export function renderAll() {
   renderMap();
-  try { window.renderEditTables?.(); } catch (_) {}
-  try { window.renderPlanStats?.(); } catch (_) {}
+  callGlobal('renderEditTables');
+  callGlobal('renderPlanStats');
   persistWorkingData();
 }
 
@@ -434,8 +438,8 @@ export async function restoreWorkingData() {
       fl.textContent = `Restored autosave — ${state.DATA.waypoints.length} wpts, ${state.DATA.tracks.length} tracks`;
     }
     renderMap();
-    try { window.renderEditTables?.(); } catch (_) {}
-    try { window.renderPlanStats?.(); } catch (_) {}
+    callGlobal('renderEditTables');
+    callGlobal('renderPlanStats');
     RESTORING_WORKING_DATA = false;
   } catch (e) {
     console.warn('Working GPX restore failed', e);

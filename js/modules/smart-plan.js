@@ -39,6 +39,7 @@ import {
   normalizeCoastalSpecies, classifyStructure, tacticalNote, DEPTH_BANDS,
 } from './coastal-scoring.js';
 import { checkCoastalRegulations, formatCoastalLimit } from '../data/coastal-regulations.js';
+import { callSafely } from '../utils/call-global.js';
 
 const BATTERY_AH_DEFAULT = 100;
 const MOTOR_AMP_AVG      = 6;
@@ -400,7 +401,12 @@ function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, 
       }
       if (bestRing) boundaryRing = bestRing;
     }
-  } catch (_) {}
+  } catch (err) {
+    // The boundary ring is what every distance-to-shore number in the plan is measured
+    // against. Losing it does not throw downstream -- distToRingFt just stops discriminating
+    // -- so without this line a plan built against no shoreline looks like a normal plan.
+    console.warn('[smart-plan] could not derive the boundary ring:', err);
+  }
 
   function distToRingFt(lat, lon) { return distToRingGeneric(lat, lon, boundaryRing, true); }
 
@@ -768,7 +774,9 @@ export async function runSmartPlan() {
         }
       }
     }
-  } catch (_) {}
+  } catch (_) {
+    console.warn(`[smart-plan] coastal zone lookup failed:`, _ && _.message);
+  }
 
   let coastalCtx = null;
   let coastalBlock = '';
@@ -1475,12 +1483,19 @@ Return ONLY valid JSON, no markdown:
             });
           }
         }
-      } catch (_) {}
+      } catch (err) {
+        // Community spots are a bonus layer over the plan. Non-fatal, but a silent failure
+        // here is indistinguishable from "nobody has marked anything on this lake".
+        console.warn('[smart-plan] community spot scoring failed:', err);
+      }
     }
 
-    if (window.getMyStructures) {
+    {
+      // Your own marked structures. If getMyStructures() throws, the plan comes back
+      // complete-looking with none of your pins in it -- silently, and only you would know
+      // they were missing.
       try {
-        for (const s of window.getMyStructures()) {
+        for (const s of (callGlobal('getMyStructures') || [])) {
           if (!s.lat || !s.lon) continue;
           tryAddStop({
             type: s.type || 'custom_pin',
@@ -1491,7 +1506,10 @@ Return ONLY valid JSON, no markdown:
             structureType: s.type || 'custom',
           });
         }
-      } catch (_) {}
+      } catch (err) {
+        // The user's own marked structures, same shape as the community spots above.
+        console.warn('[smart-plan] angler-marked structure scoring failed:', err);
+      }
     }
 
     const structuralElements = researchedProfile?.habitat?.structuralElements || {};
@@ -1554,7 +1572,12 @@ Return ONLY valid JSON, no markdown:
     window._smartPlanRouteRods = routeRods;
     window._smartPlanRouteSpeeds = routeSpeeds;
     window._smartPlanCastRods = Array.isArray(groqPlan.castRods) ? groqPlan.castRods : [];
-  } catch (_) {}
+  } catch (_) {
+    // This is JSON.parse(JSON.stringify(x)) -- a deep clone, not a parse of foreign input.
+    // It can only throw on a cycle or a non-serialisable value, which is a bug in whatever
+    // built the timeline, not a bad feed. Silence turned that into an empty plan.
+    console.warn(`[smart-plan] timeline clone failed:`, _ && _.message);
+  }
 
   const b1p=routeRods['Ph1 Outbound'][0], b1s=routeRods['Ph1 Outbound'][1];
   const b2p=routeRods['Ph2 Outbound'][0], b2s=routeRods['Ph2 Outbound'][1];
@@ -1607,7 +1630,7 @@ Return ONLY valid JSON, no markdown:
   });
 
   // After UI builds unified timeline and interleaves CAST waypoints, re-render map to show new ordering
-  try { renderAll(); } catch (_) {}
+  callSafely(renderAll, 'renderAll (post-timeline map refresh)');
 
   const intelSection=document.getElementById('planIntelSection');
   if (intelSection) intelSection.style.display='block';

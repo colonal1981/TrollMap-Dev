@@ -19,6 +19,7 @@
 
 import { state } from '../core/state.js';
 import { setBanner } from '../core/map-init.js';
+import { callGlobal } from '../utils/call-global.js';
 
 // Module-only — never read by other modules.
 let IMG_NATSIZE = null;
@@ -395,7 +396,7 @@ function wireButtons() {
     const name = prompt('Waypoint name:', `WPT${state.DATA.waypoints.length + 1}`);
     if (name === null) return;
     state.DATA.waypoints.push({ lat: ll.lat, lon: ll.lng, name: name || 'WPT', sym: 'Waypoint' });
-    try { window.renderAll?.(); } catch (_) {}
+    callGlobal('renderAll');
   });
 
   // Clear working image

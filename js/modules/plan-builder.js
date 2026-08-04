@@ -14,7 +14,8 @@ import { lakeDbEntryFor, lakeNamesForPicker } from "../data/lake-registry.js";
 import { renderSpread } from "./spread-builder.js";
 import { newRodRow } from "../utils/rod-row.js";
 import { getFilename, setFilename } from "../core/map-init.js";
-import { COASTAL_ZONES, isCoastalKey, coastalNamesByState } from "../data/coastal-zones.js";
+import { COASTAL_ZONES, isCoastalKey } from "../data/coastal-zones.js";
+import { appendCoastalOptgroups } from "../utils/coastal-optgroups.js";
 import { resolveR2Key } from "../data/lake-keys.js";
 // Both of these were CALLED below but never imported -- latent ReferenceErrors that predate
 // the registry refactor. fetchDamLevels() sits inside `try{...}catch(e){}`, so the Duke /
@@ -192,7 +193,11 @@ export function collectPlan(){
       if (window._groqPlanTimeline && Array.isArray(window._groqPlanTimeline)) {
         unifiedTimeline = window._groqPlanTimeline;
       }
-    } catch (_){}
+    } catch (_) {
+      // Audited 2026-08-04 -- reading optional window globals another module may never have
+      // set. There is nothing to report: no timeline is a normal state, and the caller
+      // already handles it.
+    }
   }
 
   // Capture stop candidates with positioning and bait recs as separate field for backward compat
@@ -246,7 +251,11 @@ export function collectPlan(){
       if (!seen.has(key)) seen.set(key, s);
     }
     castingStops = [...seen.values()];
-  } catch (_){}
+  } catch (err) {
+    // Not optional data: this is the merged casting-stop list the plan is built from, and an
+    // empty one silently produces a plan with no stops in it.
+    console.warn('[plan-builder] could not assemble casting stops:', err);
+  }
 
   // Route rods capture per key
   let routeRodsCapture = null;
@@ -268,7 +277,11 @@ export function collectPlan(){
         }));
       }
     }
-  } catch (_){}
+  } catch (err) {
+    // Same reasoning as the casting stops above -- the plan still renders, just without the
+    // rod setup the user configured, which looks like the app forgot it.
+    console.warn('[plan-builder] could not capture route rods:', err);
+  }
 
   return {
     meta:{
@@ -829,7 +842,11 @@ export async function buildPlanPreviewHtml(p){
           </div>`;
         }
       }
-    } catch(e){ weatherHtml = 'Weather fetch failed — check internet connection.'; }
+    } catch(e){
+      // The panel already says so. The reason -- DNS, CORS, a 500 -- only lived here.
+      console.warn(`[plan] weather fetch failed:`, e && e.message);
+      weatherHtml = 'Weather fetch failed — check internet connection.';
+    }
 
     // Module F — Duke Energy / Dominion / Santee Cooper dam levels
     let damHtml = '';
@@ -877,7 +894,11 @@ export async function buildPlanPreviewHtml(p){
           }
         }
       }
-    } catch(e){}
+    } catch (err) {
+      // Third-party feed via the Worker. The plan is still worth reading without a pool
+      // level, but "no dam callout" and "the dam call failed" look identical on screen.
+      console.warn('[plan-builder] Santee Cooper dam levels unavailable:', err);
+    }
 
     // Module E — NOAA Tides from builder cache
     let tidesHtml = '';
@@ -940,7 +961,12 @@ export async function buildPlanPreviewHtml(p){
             usgsHtml = `<div class="rp-callout rp-info"><b>${usgsTitle}</b><br>${parts.join(' · ')}<br><span class="rp-small">Data provisional — subject to USGS revision. Managed-lake pool level may come from a different utility source.</span></div>`;
           }
         }
-      } catch(e){ usgsHtml = ''; /* USGS optional, fail silently */ }
+      } catch(e){
+        // Optional, but 'no gauge on this lake' and 'USGS is down' produced the same empty
+        // panel, and only one of those is worth waiting out.
+        console.warn(`[plan] USGS water data fetch failed:`, e && e.message);
+        usgsHtml = ''; /* USGS optional, fail silently */
+      }
     }
 
     // GO / NO-GO calculation (needs weather data)
@@ -968,7 +994,11 @@ export async function buildPlanPreviewHtml(p){
       if(noGoReasons.length >= 2){ goNoGo='NO-GO'; goClass=''; }
       else if(noGoReasons.length === 1){ goNoGo='CAUTION'; goClass='rp-warn'; }
       else { goNoGo='GO'; goClass='rp-good'; }
-    } catch(e){}
+    } catch (err) {
+      // This block decides GO / CAUTION / NO-GO. If it throws, the verdict falls back to
+      // whatever it was initialised to -- which is a safety call being made by an accident.
+      console.error('[plan-builder] go/no-go assessment failed:', err);
+    }
 
     // Final autonomous trip decision — always produce GO / CAUTION / NO-GO even
     // when the weather API fails. This folds in weather, lake level, water temp,
@@ -1065,7 +1095,11 @@ export async function buildPlanPreviewHtml(p){
           if(set)  moonsetStr  = fmt12(set.time);
         }
       }
-    } catch(e){ /* USNO optional */ }
+    } catch(e){
+      // Optional -- the plan renders without solunar times.
+      console.warn(`[plan] USNO solunar fetch failed:`, e && e.message);
+      /* USNO optional */
+    }
   }
 
   // ── Civil / Nautical twilight ────────────────────────────────────────────
@@ -1589,19 +1623,7 @@ export async function populatePlanLakeDropdown(){
   // Coastal / tidal zones, grouped by state. These come from the generated
   // catalog rather than the worker access index, which only indexes inland
   // DNR boat ramps and has no coastal coverage.
-  const coastalByState = coastalNamesByState();
-  for (const [stateCode, label] of [['SC','SC Coast'], ['GA','GA Coast'], ['NC','NC Coast']]) {
-    const names = coastalByState[stateCode];
-    if (!names?.length) continue;
-    const grp = document.createElement('optgroup');
-    grp.label = label;
-    names.forEach(name => {
-      const opt = document.createElement('option');
-      opt.value = name; opt.textContent = name.replace(/,\s*[A-Z]{2}$/, '');
-      grp.appendChild(opt);
-    });
-    sel.appendChild(grp);
-  }
+  appendCoastalOptgroups(sel);
 
   if(current) sel.value = current;
   setLakeOnlyFieldsVisible(!isPlanRiverValue(sel.value));
@@ -1755,7 +1777,12 @@ window.syncPlanRiverData = async function syncPlanRiverData(){
           tripWindowNote = 'Scheduled surge is after planned return window; verify if trip runs late.';
         }
       }
-    } catch(_) {}
+    } catch (err) {
+      // Dam-surge timing relative to the trip window. Failing here leaves the stricter
+      // original status in place, which is the safe direction -- but say why it was not
+      // relaxed rather than letting it look like the surge was never considered.
+      console.warn('[plan-builder] surge-window check failed, keeping the stricter status:', err);
+    }
     const status = effectiveStatus ? effectiveStatus.toUpperCase() : 'UNKNOWN';
     const icon = effectiveStatus==='no-go' ? '🛑 ' : effectiveStatus==='caution' ? '⚠️ ' : effectiveStatus==='go' ? '✅ ' : '';
     put('planRiverSafety', icon + status);
@@ -1901,7 +1928,15 @@ async function refreshPlanLibrary() {
   const host = document.getElementById('planLibraryList');
   if (!host) return;
   let plans = [];
-  if (dbIsReady()) { try { plans = await dbGetAll('plans'); } catch (_) {} }
+  if (dbIsReady()) {
+    try {
+      plans = await dbGetAll('plans');
+    } catch (err) {
+      // An unreadable plan store renders "No saved plans yet", which is indistinguishable
+      // from having none. The user's own saved work deserves better than that.
+      console.error('[plan-builder] could not read saved plans:', err);
+    }
+  }
   if (!plans.length) { host.innerHTML = '<p class="muted">No saved plans yet.</p>'; return; }
   plans.reverse();
   host.innerHTML = plans.map((p) => `

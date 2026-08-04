@@ -159,7 +159,12 @@ function wire() {
             heightFt: tide.heightFt,
             syncedAt: new Date().toISOString(),
           });
-        } catch (_) { /* cache is best-effort */ }
+        } catch (err) {
+          // Genuinely best-effort: the tide values are already rendered and already in
+          // window._trollmapTide. Losing the write costs plan-builder its offline copy, which
+          // is worth a line but not a dialog. Audited 2026-08-03.
+          console.warn(`[tides] offline cache write failed for ${stationId}:`, err && err.message);
+        }
       }
 
       const rangeTxt = Number.isFinite(tide.rangeFt) ? ` · range ${tide.rangeFt.toFixed(1)} ft` : '';

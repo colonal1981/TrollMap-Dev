@@ -7,7 +7,9 @@ import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../data/lake-keys.js';
 export { LAKE_NAME_TO_R2_KEY, resolveR2Key };
 
 import { state, CF_WORKER_URL } from '../core/state.js';
+import { callSafely } from '../utils/call-global.js';
 
+import { cacheGet, cacheSet, cacheClear } from '../utils/db.js';
 const CHAIN_DESCRIPTIONS = {
   'lake_thurmond_russell':          'Clarks Hill / Thurmond + Russell Chain',
   'lake_greenwood_secession':       'Lake Greenwood + Secession Chain',
@@ -42,38 +44,12 @@ const CHAIN_DESCRIPTIONS = {
 };
 
 // ── IndexedDB cache ───────────────────────────────────────────────────────────
-const IDB_NAME  = 'trollmap_contours';
-const IDB_STORE = 'geojson';
+// Was its own database, `trollmap_contours`, with its own openDB/idbGet/idbSet -- forty lines
+// that were also present, near-identically, in supplemental-layers.js and ramps-loader.js.
+// Contours are always re-fetchable from R2, so folding into the shared `cache` store needed
+// no migration: the worst case is one refetch.
+const CACHE_NS  = 'contours';
 const CACHE_TTL = 24 * 60 * 60 * 1000;
-
-function openDB() {
-  return new Promise((res, rej) => {
-    const req = indexedDB.open(IDB_NAME, 1);
-    req.onupgradeneeded = e => e.target.result.createObjectStore(IDB_STORE, { keyPath: 'key' });
-    req.onsuccess = e => res(e.target.result);
-    req.onerror   = e => rej(e.target.error);
-  });
-}
-
-async function idbGet(key) {
-  try {
-    const db  = await openDB();
-    const tx  = db.transaction(IDB_STORE, 'readonly');
-    const req = tx.objectStore(IDB_STORE).get(key);
-    return await new Promise((res, rej) => {
-      req.onsuccess = () => res(req.result || null);
-      req.onerror   = () => rej(req.error);
-    });
-  } catch (_) { return null; }
-}
-
-async function idbSet(key, value) {
-  try {
-    const db = await openDB();
-    const tx = db.transaction(IDB_STORE, 'readwrite');
-    tx.objectStore(IDB_STORE).put({ key, value, ts: Date.now() });
-  } catch (_) {}
-}
 
 let changeListeners = [];
 let _loadingKey     = null;
@@ -87,7 +63,10 @@ export function onContourChange(fn) {
 }
 
 function notifyChange() {
-  changeListeners.forEach(fn => { try { fn(state.ACTIVE_CONTOUR); } catch (_) {} });
+  // One bad subscriber must not stop the others -- but it also must not disappear. A
+  // listener that throws here leaves whatever it renders showing the PREVIOUS lake's
+  // contours, which looks like data rather than like a failure.
+  changeListeners.forEach((fn, i) => callSafely(fn, `contour change listener #${i}`, state.ACTIVE_CONTOUR));
   window._smartRouteGeoJSON = state.ACTIVE_CONTOUR?.smart || state.ACTIVE_CONTOUR?.raw || null;
 }
 
@@ -106,14 +85,14 @@ export async function loadContourByR2Key(r2Key) {
   updateStatusPanel('loading', r2Key);
 
   try {
-    const cached = await idbGet(r2Key);
-    if (cached && cached.ts && (Date.now() - cached.ts) < CACHE_TTL && cached.value?.features?.length) {
-      console.log(`[contour-data] cache hit: ${r2Key} (${cached.value.features.length} features)`);
-      state.ACTIVE_CONTOUR     = { smart: cached.value, raw: null };
+    const cached = await cacheGet(CACHE_NS, r2Key, CACHE_TTL);
+    if (cached?.features?.length) {
+      console.log(`[contour-data] cache hit: ${r2Key} (${cached.features.length} features)`);
+      state.ACTIVE_CONTOUR     = { smart: cached, raw: null };
       state.ACTIVE_CONTOUR_KEY = r2Key;
       notifyChange();
       renderContourLayer(true, false);
-      updateStatusPanel('loaded', r2Key, cached.value.features.length);
+      updateStatusPanel('loaded', r2Key, cached.features.length);
       _loadingKey = null;
       return;
     }
@@ -122,7 +101,7 @@ export async function loadContourByR2Key(r2Key) {
     const gj = await fetchFromR2(r2Key);
     if (!gj?.features?.length) throw new Error('empty response');
 
-    await idbSet(r2Key, gj);
+    await cacheSet(CACHE_NS, r2Key, gj);
     state.ACTIVE_CONTOUR     = { smart: gj, raw: null };
     state.ACTIVE_CONTOUR_KEY = r2Key;
     notifyChange();
@@ -571,14 +550,16 @@ export function buildContourDataPanel(container) {
   document.getElementById('cdClearCache')?.addEventListener('click', async () => {
     const btn = document.getElementById('cdClearCache');
     btn.textContent = 'Clearing...'; btn.disabled = true;
-    try {
-      const db = await openDB();
-      const tx = db.transaction(IDB_STORE, 'readwrite');
-      tx.objectStore(IDB_STORE).clear();
-      await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
+    // cacheClear drops only this namespace. The old code called objectStore.clear() on a
+    // database it had to itself; the shared store holds other callers' entries too, and
+    // "clear contour cache" must not take the ramp list with it.
+    const ok = await cacheClear(CACHE_NS);
+    if (ok) {
       btn.textContent = '✅ Cache cleared';
       setTimeout(() => { btn.textContent = '🗑 Clear contour cache (force re-fetch)'; btn.disabled = false; }, 2000);
-    } catch (e) { btn.textContent = '❌ Failed'; btn.disabled = false; }
+    } else {
+      btn.textContent = '❌ Failed'; btn.disabled = false;
+    }
   });
 
   const c = state.ACTIVE_CONTOUR;

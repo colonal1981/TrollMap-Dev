@@ -117,6 +117,9 @@ async function checkServer() {
     if (dot) dot.style.background = '#76ff03';
     if (status) status.textContent = `Server ready${data.job ? ' — job running' : ''}`;
   } catch (_) {
+    // Audited 2026-08-04 -- the expected state, not a fault. trollmap_capture_server.py runs
+    // on Ryan's desktop only while he is capturing; the rest of the time this fetch is meant
+    // to fail, and the panel says so on screen.
     if (dot) dot.style.background = '#e63946';
     if (status) status.textContent = 'Server offline — start trollmap_capture_server.py';
   }
@@ -308,7 +311,9 @@ function wireCapturePanel() {
     try {
       await fetch(`${LOCAL_SERVER}/cancel`, { method: 'POST' });
       setJobStatus('Cancelling…');
-    } catch (_) {}
+    } catch (_) {
+      console.warn(`[capture] cancel request failed:`, _ && _.message);
+    }
   });
 
   // Import after capture
@@ -377,7 +382,11 @@ function pollJobStatus() {
         const elapsed = data.elapsed_seconds ? ` · ${data.elapsed_seconds}s` : '';
         setJobStatus(`${stage}${tile}${elapsed}`);
       }
-    } catch (_) {
+    } catch (err) {
+      // Reported on screen too, but this one ends the poll mid-job -- worth the console line,
+      // because "lost connection" three tiles in and "lost connection" at the end are very
+      // different mornings.
+      console.warn('[capture-panel] lost the capture server mid-job:', err);
       clearInterval(serverPollTimer);
       setJobStatus('Lost connection to server');
       document.getElementById('cpRun').style.display = '';

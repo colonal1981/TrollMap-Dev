@@ -20,6 +20,7 @@ import { state } from '../core/state.js';
 import { distMiFromCoords as distMi } from '../utils/geo.js';
 import { normalizeSpecies } from '../data/species-strategies.js';
 
+import { callGlobal } from '../utils/call-global.js';
 // distMi now from utils/geo.js (canonical)
 
 /**
@@ -203,10 +204,13 @@ export async function buildFishingContext(params = {}) {
 
   // ── Supplemental (attractors + fishing spots) ─────────────────────────────
   let supplementalContext = { attractors: [], fishingPoints: [], pois: [], structures: [], docks: [] };
-  if (centerLat && centerLon && window.getSupplementalContext) {
-    try {
-      supplementalContext = window.getSupplementalContext(centerLat, centerLon, 2.0);
-    } catch (_) {}
+  if (centerLat && centerLon) {
+    // The `if (window.getSupplementalContext)` guard that used to wrap this handled ABSENCE
+    // correctly -- callGlobal keeps that behaviour. What neither handled was the function
+    // existing and throwing: the plan then built with the empty default above and looked
+    // exactly like a plan for a lake that genuinely has no supplemental data.
+    supplementalContext = callGlobal('getSupplementalContext', centerLat, centerLon, 2.0)
+      || supplementalContext;
   }
 
   // ── Charted structure, from the Garmin chartpack ──────────────────────────
@@ -278,12 +282,13 @@ export async function buildFishingContext(params = {}) {
   // ── Researched Lake Intelligence (from Lake Research module) ──────────────
   let researchedProfile = null;
   let hasResearchedProfile = false;
-  try {
-    if (typeof window.getResearchedProfile === 'function' && lakeName) {
-      researchedProfile = window.getResearchedProfile(lakeName);
-      hasResearchedProfile = !!researchedProfile && (researchedProfile.metadata?.status === 'verified' || researchedProfile.metadata?.verified);
-    }
-  } catch {}
+  // A profile that throws on load is not the same as a lake with no profile, and producing
+  // these is what the whole research pipeline is for. Absence stays silent; a failure does not.
+  if (lakeName) {
+    researchedProfile = callGlobal('getResearchedProfile', lakeName);
+    hasResearchedProfile = !!researchedProfile
+      && (researchedProfile.metadata?.status === 'verified' || researchedProfile.metadata?.verified);
+  }
 
   // ── Clarity key ───────────────────────────────────────────────────────────
   const clarityKey = (clarity || 'Clear').toLowerCase().includes('mud') ? 'muddy'

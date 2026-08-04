@@ -4,12 +4,12 @@
  */
 
 import { state } from '../core/state.js';
+import { registerLayer, wireButton, toggle, show, isVisible } from '../core/layer-registry.js';
 import { esc } from '../utils/escape.js';
 import { TRISTATE_MASTER_RAMPS } from '../data/ramps-loader.js';
 import { dedupeLaunchesList } from '../utils/dedupe.js';
 
-let RAMP_LAYER = null;
-let RAMPS_VISIBLE = false;
+// Layer handle and visibility live in core/layer-registry.js.
 let RAMP_DATA = null;
 
 function prepareRampData() {
@@ -46,8 +46,8 @@ function prepareRampData() {
   return RAMP_DATA;
 }
 
-function updateRampMarkers() {
-  if (!state.MAP_OK || !RAMP_LAYER || !RAMPS_VISIBLE) return;
+function updateRampMarkers(RAMP_LAYER) {
+  if (!state.MAP_OK || !RAMP_LAYER || !isVisible('ramps')) return;
   
   RAMP_LAYER.clearLayers();
   const bounds = state.MAP.getBounds().pad(0.5); // Buffer slightly off-screen
@@ -82,38 +82,36 @@ function updateRampMarkers() {
   }
 }
 
-export function buildRampLayer() {
-  if (RAMP_LAYER) return;
-  RAMP_LAYER = L.layerGroup();
-  prepareRampData();
-  
-  // Attach the update listener so it refreshes on pan/zoom
-  if (state.MAP_OK) {
-    state.MAP.on('moveend', updateRampMarkers);
-  }
-}
+registerLayer({
+  id: 'ramps',
+  button: 'btnRamps',
+  enabled: () => !!state.MAP_OK,
+  build: () => {
+    const group = L.layerGroup();
+    prepareRampData();
+    // Refresh on pan/zoom. Bound once at build, as before.
+    if (state.MAP_OK) state.MAP.on('moveend', () => updateRampMarkers(group));
+    return group;
+  },
+  onShow: (group) => { updateRampMarkers(group); announce(true); },
+  onHide: () => announce(false),
+});
 
-export function toggleRampLayer() {
-  if (!state.MAP_OK) return;
-  buildRampLayer();
-  
-  const btn = document.getElementById('btnRamps');
-  if (RAMPS_VISIBLE) {
-    state.MAP.removeLayer(RAMP_LAYER);
-    RAMPS_VISIBLE = false;
-    if (btn) { btn.style.background = ''; btn.style.color = ''; }
-  } else {
-    RAMP_LAYER.addTo(state.MAP);
-    RAMPS_VISIBLE = true;
-    updateRampMarkers(); // Immediately populate visible area
-    if (btn) { btn.style.background = 'var(--accent)'; btn.style.color = '#000'; }
-  }
-  // These pills already carry the ramp NAME. supplemental-layers.js also writes ramp names as
-  // chart text, so without this flag turning this layer on prints every name twice, offset by a
-  // few pixels — which reads as a rendering bug rather than as two layers agreeing.
-  window.__rampsLayerVisible = RAMPS_VISIBLE;
+/**
+ * Tell supplemental-layers.js whether the ramp pills are up.
+ *
+ * These pills already carry the ramp NAME, and supplemental-layers.js also writes ramp names
+ * as chart text. Without this flag, turning the layer on prints every name twice offset by a
+ * few pixels -- which reads as a rendering bug rather than as two layers agreeing.
+ */
+function announce(visible) {
+  window.__rampsLayerVisible = visible;
   window.dispatchEvent(new CustomEvent('trollmap:rampsToggled'));
 }
+
+/** Kept as an export: it was public API before the registry and callers may still exist. */
+export function toggleRampLayer() { return toggle('ramps'); }
+export function buildRampLayer() { return show('ramps'); }
 
 export function toggleChartLayersPanel() {
   const wrap = document.getElementById('chartLayersWrap');
@@ -128,7 +126,7 @@ export function toggleChartLayersPanel() {
 }
 
 function wireButtons() {
-  document.getElementById('btnRamps')?.addEventListener('click', toggleRampLayer);
+  wireButton('ramps');
   document.getElementById('btnChartLayers')?.addEventListener('click', toggleChartLayersPanel);
   document.getElementById('closeChartLayersBtn')?.addEventListener('click', () => {
     const wrap = document.getElementById('chartLayersWrap');

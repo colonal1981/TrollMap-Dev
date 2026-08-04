@@ -16,6 +16,7 @@
  */
 
 import { state } from './state.js';
+import { callGlobal } from '../utils/call-global.js';
 
 export function initTabs() {
   document.querySelectorAll('#bottomNav button').forEach((btn) => {
@@ -36,12 +37,12 @@ export function initTabs() {
       // Edit tab — re-render the waypoint/track table each time it opens
       // so newly added waypoints show up without a page refresh.
       if (tab === 'edit') {
-        try { window.renderEditTables?.(); } catch (_) {}
+        callGlobal('renderEditTables');
       }
 
       // Plan tab — refresh stats and auto-sync worker data blocks.
       if (tab === 'plan') {
-        try { window.renderPlanStats?.(); } catch (_) {}
+        callGlobal('renderPlanStats');
 
         const planLakeVal = document.getElementById('planLake')?.value;
         if (!planLakeVal) return;
@@ -63,6 +64,6 @@ export function initTabs() {
   });
 
   document.getElementById('clearAllLayersBtn')?.addEventListener('click', () => {
-    try { window.clearAllLayers?.(); } catch (_) {}
+    callGlobal('clearAllLayers');
   });
 }

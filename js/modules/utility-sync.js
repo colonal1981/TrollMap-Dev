@@ -140,7 +140,9 @@ export async function syncUtilityData() {
         }
         if (typeof lj.water_temperature_F === 'number') tempResult = lj.water_temperature_F;
       }
-    } catch (_) {}
+    } catch (_) {
+      console.warn(`[utility-sync] lake lookup failed:`, _ && _.message);
+    }
 
     // 1. Duke live dashboard (preferred for Duke lakes)
     if (poolResult !== poolResult /* NaN check */ && feed && (feed.utility || '').toLowerCase().includes('duke')) {
@@ -158,7 +160,12 @@ export async function syncUtilityData() {
             }
           }
         }
-      } catch (_) {}
+      } catch (err) {
+        // Duke's dashboard is a scrape of somebody else's page and it does fall over. There
+        // are fallbacks below, so this is not fatal -- but a pool level that quietly comes
+        // from USGS instead of Duke is a different number, and the console should say which.
+        console.warn('[utility-sync] Duke dashboard lookup failed, falling through:', err);
+      }
     }
 
     // 2. USGS temperature fallback (only)

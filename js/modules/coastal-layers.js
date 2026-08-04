@@ -19,6 +19,9 @@
 
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { isCoastalKey } from '../data/coastal-zones.js';
+import {
+  registerLayer, isVisible, getLayer, replaceLayer, dropAll, refreshButtons, wireAll,
+} from '../core/layer-registry.js';
 import { tideAdjustedDepth } from './tide-engine.js';
 
 const _renderer = L.canvas({ padding: 0.5 });
@@ -57,14 +60,16 @@ async function fetchCoastalLayer(zoneKey, layer) {
 }
 
 // ── Layer state ─────────────────────────────────────────────────────────────
+//
+// Three layer handles and three visibility flags used to live here, driven by a toggle(kind)
+// that was the same eleven lines pasted three times with the nouns changed. Both now live in
+// core/layer-registry.js; COASTAL_IDS below is all that is left of the list.
+//
+// _soundingData stays because soundings are re-labelled in place when the tide moves, which
+// is a different operation from rebuilding them for a new zone.
+const COASTAL_IDS = ['oyster', 'marsh', 'soundings'];
 let _activeZoneKey  = null;
-let _oysterLayer    = null;
-let _marshLayer     = null;
-let _soundingLayer  = null;
 let _soundingData   = null;
-let _oysterVisible  = false;
-let _marshVisible   = false;
-let _soundingVisible = false;
 let _zoomHandlerBound = false;
 
 /** Current tide height in ft, or null. Set by refreshSoundingLabels(). */
@@ -163,16 +168,17 @@ function buildSoundingMarkers(features, tideFt) {
 }
 
 function soundingsShouldRender() {
-  return _soundingVisible && mapReady() && getMap().getZoom() >= SOUNDING_MIN_ZOOM;
+  return isVisible('soundings') && mapReady() && getMap().getZoom() >= SOUNDING_MIN_ZOOM;
 }
 
 function applySoundingVisibility() {
   if (!mapReady()) return;
   const map = getMap();
+  const layer = getLayer('soundings');
   if (soundingsShouldRender()) {
-    if (_soundingLayer && !map.hasLayer(_soundingLayer)) _soundingLayer.addTo(map);
-  } else if (_soundingLayer && map.hasLayer(_soundingLayer)) {
-    map.removeLayer(_soundingLayer);
+    if (layer && !map.hasLayer(layer)) layer.addTo(map);
+  } else if (layer && map.hasLayer(layer)) {
+    map.removeLayer(layer);
   }
 }
 
@@ -196,9 +202,11 @@ async function buildSoundingLayer(zoneKey) {
 export function refreshSoundingLabels(tideHeightFt) {
   _tideHeightFt = Number.isFinite(tideHeightFt) ? tideHeightFt : null;
   if (!_soundingData || !mapReady()) return;
-  const wasOn = _soundingLayer && getMap().hasLayer(_soundingLayer);
-  if (_soundingLayer) getMap().removeLayer(_soundingLayer);
-  _soundingLayer = buildSoundingMarkers(_soundingData, _tideHeightFt);
+  const old = getLayer('soundings');
+  const wasOn = old && getMap().hasLayer(old);
+  if (old) getMap().removeLayer(old);
+  // Swap the markers under the registry's handle; identity stays, contents change.
+  replaceLayer('soundings', buildSoundingMarkers(_soundingData, _tideHeightFt));
   if (wasOn) applySoundingVisibility();
   // Also re-render depth area polygons with tide-adjusted colors
   window.refreshDepthAreaColors?.(_tideHeightFt);
@@ -221,51 +229,12 @@ export async function loadCoastalLayersForZone(zoneKey) {
 }
 
 export function clearCoastalLayers() {
-  const map = mapReady() ? getMap() : null;
-  for (const layer of [_oysterLayer, _marshLayer, _soundingLayer]) {
-    if (layer && map) map.removeLayer(layer);
-  }
-  _oysterLayer = _marshLayer = _soundingLayer = null;
+  // dropAll() hides each layer and forgets the built handle, so the next show() rebuilds
+  // against the new zone. Switching estuary -> lake used to leave marsh lines on the map
+  // whenever a rebuild path missed one of the three handles.
+  dropAll(COASTAL_IDS);
   _soundingData = null;
-  _oysterVisible = _marshVisible = _soundingVisible = false;
   _activeZoneKey = null;
-  updateCoastalButtons();
-}
-
-async function toggle(kind) {
-  if (!mapReady() || !_activeZoneKey) return;
-  const map = getMap();
-
-  if (kind === 'oyster') {
-    _oysterVisible = !_oysterVisible;
-    if (_oysterVisible) {
-      if (!_oysterLayer) _oysterLayer = await buildOysterLayer(_activeZoneKey);
-      if (_oysterLayer) _oysterLayer.addTo(map);
-      else notifyEmpty('btnOysterBeds', 'No oyster data for this zone');
-    } else if (_oysterLayer) map.removeLayer(_oysterLayer);
-  }
-
-  if (kind === 'marsh') {
-    _marshVisible = !_marshVisible;
-    if (_marshVisible) {
-      if (!_marshLayer) _marshLayer = await buildMarshLayer(_activeZoneKey);
-      if (_marshLayer) _marshLayer.addTo(map);
-      else notifyEmpty('btnMarshEdges', 'No marsh data for this zone');
-    } else if (_marshLayer) map.removeLayer(_marshLayer);
-  }
-
-  if (kind === 'soundings') {
-    _soundingVisible = !_soundingVisible;
-    if (_soundingVisible && !_soundingLayer) {
-      _soundingLayer = await buildSoundingLayer(_activeZoneKey);
-      if (!_soundingLayer) notifyEmpty('btnSoundings', 'No sounding data for this zone');
-    }
-    applySoundingVisibility();
-    if (_soundingVisible && _soundingLayer && getMap().getZoom() < SOUNDING_MIN_ZOOM) {
-      notifyEmpty('btnSoundings', `Zoom to ${SOUNDING_MIN_ZOOM}+ to see depth labels`);
-    }
-  }
-
   updateCoastalButtons();
 }
 
@@ -286,9 +255,12 @@ function setBtn(id, active, enabled) {
 
 function updateCoastalButtons() {
   const on = !!_activeZoneKey;
-  setBtn('btnOysterBeds', _oysterVisible, on);
-  setBtn('btnMarshEdges', _marshVisible, on);
-  setBtn('btnSoundings',  _soundingVisible, on);
+  // The registry paints active/inactive from its own state; setBtn here only carries the
+  // enabled/disabled dimension, which is "is there a coastal zone at all".
+  refreshButtons();
+  setBtn('btnOysterBeds', isVisible('oyster'), on);
+  setBtn('btnMarshEdges', isVisible('marsh'), on);
+  setBtn('btnSoundings',  isVisible('soundings'), on);
 
   // Hide the whole group for freshwater so the toolbar stays uncluttered.
   const grp = document.getElementById('coastalLayerGroup');
@@ -318,9 +290,9 @@ export function getCoastalLayerState() {
   return {
     zoneKey: _activeZoneKey,
     tideHeightFt: _tideHeightFt,
-    oysterVisible: _oysterVisible,
-    marshVisible: _marshVisible,
-    soundingVisible: _soundingVisible,
+    oysterVisible: isVisible('oyster'),
+    marshVisible: isVisible('marsh'),
+    soundingVisible: isVisible('soundings'),
     soundingCount: _soundingData?.length || 0,
   };
 }
@@ -330,9 +302,33 @@ function init() {
   const grp = document.getElementById('coastalLayerGroup');
   if (!grp) { setTimeout(init, 300); return; }
 
-  document.getElementById('btnOysterBeds')?.addEventListener('click', () => toggle('oyster'));
-  document.getElementById('btnMarshEdges')?.addEventListener('click', () => toggle('marsh'));
-  document.getElementById('btnSoundings')?.addEventListener('click', () => toggle('soundings'));
+  registerLayer({
+    id: 'oyster', button: 'btnOysterBeds',
+    enabled: () => !!_activeZoneKey,
+    emptyMessage: 'No oyster data for this zone',
+    build: () => buildOysterLayer(_activeZoneKey),
+  });
+  registerLayer({
+    id: 'marsh', button: 'btnMarshEdges',
+    enabled: () => !!_activeZoneKey,
+    emptyMessage: 'No marsh data for this zone',
+    build: () => buildMarshLayer(_activeZoneKey),
+  });
+  registerLayer({
+    id: 'soundings', button: 'btnSoundings',
+    enabled: () => !!_activeZoneKey,
+    emptyMessage: 'No sounding data for this zone',
+    build: () => buildSoundingLayer(_activeZoneKey),
+    // Soundings are the only layer with a zoom floor: the registry puts them on the map,
+    // then this decides whether they are allowed to render at the current zoom.
+    onShow: () => {
+      applySoundingVisibility();
+      if (mapReady() && getMap().getZoom() < SOUNDING_MIN_ZOOM) {
+        notifyEmpty('btnSoundings', `Zoom to ${SOUNDING_MIN_ZOOM}+ to see depth labels`);
+      }
+    },
+  });
+  wireAll();
 
   updateCoastalButtons();
   console.log('[coastal-layers] module ready');

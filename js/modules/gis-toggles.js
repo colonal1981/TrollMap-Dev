@@ -1,16 +1,16 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { setBanner } from '../core/map-init.js';
+import { registerLayer, isVisible, wireAll } from '../core/layer-registry.js';
 
-let BANK_LAYER = null;
-let BANK_VISIBLE = false;
-
-let PADDLE_LAYER = null;
-let PADDLE_VISIBLE = false;
-
-let ATTRACTOR_LAYER = null;
-let ATTRACTOR_VISIBLE = false;
-
+// This file used to carry THREE verbatim copies of the same state machine -- BANK_LAYER /
+// BANK_VISIBLE / BANK_DATA, then PADDLE_*, then ATTRACTOR_* -- plus three near-identical
+// build functions and a seven-argument wireToggleButton() that took getter and setter
+// closures because the caller still owned the flag.
+//
+// The layer handle and the visible flag now live in core/layer-registry.js. What stays here
+// is what is actually specific to this module: how to FETCH each dataset and how to DRAW it.
+// LAYERS below is the whole difference between the three.
 let BANK_DATA = null;
 let PADDLE_DATA = null;
 let ATTRACTOR_DATA = null;
@@ -125,147 +125,102 @@ async function loadHotspots() {
   return ATTRACTOR_DATA;
 }
 
-function updateBankMarkers() {
-  if (!mapReady() || !BANK_LAYER || !BANK_VISIBLE || !BANK_DATA) return;
-  BANK_LAYER.clearLayers();
+// ── drawing ────────────────────────────────────────────────────────────────────────
+//
+// Each layer differs in exactly two ways: where its rows come from, and what marker one row
+// becomes. Everything else -- the visibility guard, clearLayers, the padded-bounds filter,
+// the moveend redraw -- was pasted three times. It is written once here.
+
+const LAYERS = [
+  {
+    id: 'bankPier', button: 'btnBankPier',
+    load: loadBankPier, rows: () => BANK_DATA,
+    marker: (b, lat, lon) => {
+      const type = b.type || '';
+      const isPier = String(type).toUpperCase().includes('PIER');
+      const ico = isPier ? '\u{1F3A3}' : '\u{1F332}';
+      const bgCol = isPier ? '#0e7c7b' : '#2e7d32';
+      const m = L.marker([lat, lon], {
+        icon: L.divIcon({
+          className: 'custom-gis-marker',
+          html: `<div style="background:${bgCol};color:#fff;font-size:11px;font-weight:700;padding:2px 6px;border-radius:4px;border:1px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5);white-space:nowrap;display:inline-block;cursor:pointer">${ico} ${esc(b.name || 'Bank/Pier').split(' (')[0]}</div>`,
+          iconAnchor: [0, 8],
+        }),
+      });
+      m.bindPopup(buildPopup(b.name || 'Bank/Pier', type, lat, lon, ico, '#aed581'));
+      return m;
+    },
+  },
+  {
+    id: 'paddle', button: 'btnPaddle',
+    load: loadPaddle, rows: () => PADDLE_DATA,
+    marker: (p, lat, lon) => {
+      const type = p.type || '';
+      const m = L.marker([lat, lon], {
+        icon: L.divIcon({
+          className: 'custom-gis-marker',
+          html: `<div style="background:#ffb703;color:#000;font-size:11px;font-weight:700;padding:2px 6px;border-radius:4px;border:1px solid #b06a00;box-shadow:0 1px 4px rgba(0,0,0,.5);white-space:nowrap;display:inline-block;cursor:pointer">\u{1F6F6} ${esc(p.name || 'Paddle Launch').split(' (')[0]}</div>`,
+          iconAnchor: [0, 8],
+        }),
+      });
+      m.bindPopup(buildPopup(p.name || 'Paddle Launch', type, lat, lon, '\u{1F6F6}', '#ffb703'));
+      return m;
+    },
+  },
+  {
+    id: 'attractors', button: 'btnAttractors',
+    load: loadHotspots, rows: () => ATTRACTOR_DATA,
+    marker: (h, lat, lon) => {
+      const type = h.type || 'Hardwood Brush Pile / Sunk PVC Tree Habitat';
+      const isTree = /PVC|TREE/i.test(String(type));
+      const ico = isTree ? '\u{1F3AF}' : '\u{1F4CD}';
+      const color = isTree ? '#00e5ff' : '#ef5350';
+      const m = L.circleMarker([lat, lon], {
+        radius: isTree ? 6 : 5, color: '#ffffff', weight: 1.5,
+        fillColor: color, fillOpacity: 0.95,
+      });
+      m.bindTooltip(`${ico} ${esc(h.name || 'Attractor')}`, { sticky: true, direction: 'top', opacity: 0.95 });
+      m.bindPopup(buildPopup(h.name || 'Attractor', type, lat, lon, ico, color));
+      return m;
+    },
+  },
+];
+
+/** Redraw one layer's markers for the current viewport. */
+function redraw(spec, group) {
+  if (!mapReady() || !group || !isVisible(spec.id)) return;
+  const rows = spec.rows();
+  if (!rows) return;
+  group.clearLayers();
   const bounds = getMap().getBounds().pad(0.5);
-  
-  BANK_DATA.forEach((b) => {
-    const ll = getLatLng(b);
+  rows.forEach((row) => {
+    const ll = getLatLng(row);
     if (!ll || !bounds.contains(ll)) return;
-
-    const [lat, lon] = ll;
-    const type = b.type || '';
-    const isPier = String(type).toUpperCase().includes('PIER');
-    const ico = isPier ? '🎣' : '🌲';
-    const bgCol = isPier ? '#0e7c7b' : '#2e7d32';
-
-    const marker = L.marker([lat, lon], {
-      icon: L.divIcon({
-        className: 'custom-gis-marker',
-        html: `<div style="background:${bgCol};color:#fff;font-size:11px;font-weight:700;padding:2px 6px;border-radius:4px;border:1px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5);white-space:nowrap;display:inline-block;cursor:pointer">${ico} ${esc(b.name || 'Bank/Pier').split(' (')[0]}</div>`,
-        iconAnchor: [0, 8],
-      }),
-    });
-    marker.bindPopup(buildPopup(b.name || 'Bank/Pier', type, lat, lon, ico, '#aed581'));
-    BANK_LAYER.addLayer(marker);
-  });
-}
-
-function updatePaddleMarkers() {
-  if (!mapReady() || !PADDLE_LAYER || !PADDLE_VISIBLE || !PADDLE_DATA) return;
-  PADDLE_LAYER.clearLayers();
-  const bounds = getMap().getBounds().pad(0.5);
-
-  PADDLE_DATA.forEach((p) => {
-    const ll = getLatLng(p);
-    if (!ll || !bounds.contains(ll)) return;
-
-    const [lat, lon] = ll;
-    const type = p.type || '';
-
-    const marker = L.marker([lat, lon], {
-      icon: L.divIcon({
-        className: 'custom-gis-marker',
-        html: `<div style="background:#ffb703;color:#000;font-size:11px;font-weight:700;padding:2px 6px;border-radius:4px;border:1px solid #b06a00;box-shadow:0 1px 4px rgba(0,0,0,.5);white-space:nowrap;display:inline-block;cursor:pointer">🛶 ${esc(p.name || 'Paddle Launch').split(' (')[0]}</div>`,
-        iconAnchor: [0, 8],
-      }),
-    });
-    marker.bindPopup(buildPopup(p.name || 'Paddle Launch', type, lat, lon, '🛶', '#ffb703'));
-    PADDLE_LAYER.addLayer(marker);
-  });
-}
-
-function updateAttractorMarkers() {
-  if (!mapReady() || !ATTRACTOR_LAYER || !ATTRACTOR_VISIBLE || !ATTRACTOR_DATA) return;
-  ATTRACTOR_LAYER.clearLayers();
-  const bounds = getMap().getBounds().pad(0.5);
-
-  ATTRACTOR_DATA.forEach((h) => {
-    const ll = getLatLng(h);
-    if (!ll || !bounds.contains(ll)) return;
-
-    const [lat, lon] = ll;
-    const type = h.type || 'Hardwood Brush Pile / Sunk PVC Tree Habitat';
-    const isTree = /PVC|TREE/i.test(String(type));
-    const ico = isTree ? '🎯' : '📍';
-    const color = isTree ? '#00e5ff' : '#ef5350';
-
-    const marker = L.circleMarker([lat, lon], {
-      radius: isTree ? 6 : 5,
-      color: '#ffffff',
-      weight: 1.5,
-      fillColor: color,
-      fillOpacity: 0.95,
-    });
-    marker.bindTooltip(`${ico} ${esc(h.name || 'Attractor')}`, { sticky: true, direction: 'top', opacity: 0.95 });
-    marker.bindPopup(buildPopup(h.name || 'Attractor', type, lat, lon, ico, color));
-    ATTRACTOR_LAYER.addLayer(marker);
-  });
-}
-
-async function buildBankLayer() {
-  if (BANK_LAYER) return BANK_LAYER;
-  await loadBankPier();
-  BANK_LAYER = L.layerGroup();
-  getMap().on('moveend', updateBankMarkers);
-  return BANK_LAYER;
-}
-
-async function buildPaddleLayer() {
-  if (PADDLE_LAYER) return PADDLE_LAYER;
-  await loadPaddle();
-  PADDLE_LAYER = L.layerGroup();
-  getMap().on('moveend', updatePaddleMarkers);
-  return PADDLE_LAYER;
-}
-
-async function buildAttractorLayer() {
-  if (ATTRACTOR_LAYER) return ATTRACTOR_LAYER;
-  await loadHotspots();
-  ATTRACTOR_LAYER = L.layerGroup();
-  getMap().on('moveend', updateAttractorMarkers);
-  return ATTRACTOR_LAYER;
-}
-
-function wireToggleButton(btn, getVisible, setVisible, buildFn, updateFn, activeBg = 'var(--accent)', activeColor = '#000') {
-  btn?.addEventListener('click', async () => {
-    if (!mapReady()) return;
-
-    const map = getMap();
-    const layer = await buildFn();
-    if (!layer) return;
-
-    if (getVisible()) {
-      map.removeLayer(layer);
-      setVisible(false);
-      btn.style.background = '';
-      btn.style.color = '';
-    } else {
-      layer.addTo(map);
-      setVisible(true);
-      updateFn(); // Immediately draw visible markers
-      btn.style.background = activeBg;
-      btn.style.color = activeColor;
-    }
+    group.addLayer(spec.marker(row, ll[0], ll[1]));
   });
 }
 
 function init() {
-  const btnBank = document.getElementById('btnBankPier');
-  const btnPad = document.getElementById('btnPaddle');
-  const btnAttr = document.getElementById('btnAttractors');
-
-  if (!btnBank || !btnPad || !btnAttr) {
-    setTimeout(init, 250);
-    return;
+  for (const spec of LAYERS) {
+    registerLayer({
+      id: spec.id,
+      button: spec.button,
+      enabled: mapReady,
+      build: async () => {
+        await spec.load();
+        const group = L.layerGroup();
+        // Bind moveend ONCE, at build time, exactly as the three build*Layer functions did.
+        getMap().on('moveend', () => redraw(spec, group));
+        return group;
+      },
+      // Draw immediately on show; the old code called updateFn() right after addTo.
+      onShow: (group) => redraw(spec, group),
+    });
   }
 
-  wireToggleButton(btnBank, () => BANK_VISIBLE, (v) => { BANK_VISIBLE = v; }, buildBankLayer, updateBankMarkers);
-  wireToggleButton(btnPad, () => PADDLE_VISIBLE, (v) => { PADDLE_VISIBLE = v; }, buildPaddleLayer, updatePaddleMarkers);
-  wireToggleButton(btnAttr, () => ATTRACTOR_VISIBLE, (v) => { ATTRACTOR_VISIBLE = v; }, buildAttractorLayer, updateAttractorMarkers);
-
-  console.log('✓ GIS toggles module armed (Bounds-Filtered)');
+  // One retry loop for all three buttons, replacing this file's setTimeout(init, 250).
+  wireAll();
+  console.log('\u2713 GIS toggles module armed (Bounds-Filtered)');
 }
 
 init();

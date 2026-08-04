@@ -70,7 +70,11 @@ export function parseDukeText(text, basinId) {
       };
     }
     if (Object.keys(lakes).length) return { duke: lakes };
-  } catch (_) {}
+  } catch (_) {
+    // Duke publishes a bare text table with no version marker. If its shape changes this
+    // returns nothing, which is indistinguishable from a lake with no reading.
+    console.warn(`[duke] lake-level text did not parse:`, _ && _.message);
+  }
 
   // 2. Worker-synthesized text: "Lake Wateree · 220.76 · 97.90% · target 98 · full 225.5"
   const synthRe = /Lake\s+([A-Za-z\s]+?)\s*[·•]\s*([\d.]+)\s*[·•][^\n]*?full\s+([\d.]+)/gi;
@@ -145,7 +149,9 @@ async function fetchDukeDirect() {
       const text = await res.text();
       const parsed = parseDukeText(text, basinId);
       if (parsed) Object.assign(lakes, parsed.duke || {});
-    } catch (_) {}
+    } catch (_) {
+      console.warn(`[duke] direct fetch failed, trying the worker:`, _ && _.message);
+    }
   }
   return Object.keys(lakes).length ? { duke: lakes } : null;
 }
@@ -164,7 +170,10 @@ export async function fetchDamLevels() {
         const parsed = parseDukeText(text, basin);
         if (parsed && Object.keys(parsed.duke || {}).length) return parsed;
       }
-    } catch (_) {}
+    } catch (_) {
+      // The second of two attempts, and nothing follows it -- the end of the road for dam data.
+      console.warn(`[duke] worker fallback failed:`, _ && _.message);
+    }
   }
   return await fetchDukeDirect();
 }

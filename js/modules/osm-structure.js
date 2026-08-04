@@ -11,6 +11,7 @@
 
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { esc } from '../utils/escape.js';
+import { registerLayer, wireButton, dropAll, refreshButton } from '../core/layer-registry.js';
 
 (function initOsmStructureModule() {
   const btn = document.getElementById('btnFetchOsm');
@@ -32,8 +33,9 @@ import { esc } from '../utils/escape.js';
 
   const DEFAULT_STYLE = { emoji: '📍', color: '#9E9E9E', label: 'Structure', radius: 5 };
 
-  let _osmLayer   = null;
-  let _visible    = false;
+  // The layer handle and its visibility live in core/layer-registry.js. What stays local is
+  // _loading, which is button feedback rather than layer state, and _lakeKey, which is the
+  // reason this layer gets dropped when you switch lakes.
   let _loading    = false;
   let _lakeKey    = null;   // lake key for currently loaded layer
 
@@ -95,86 +97,48 @@ import { esc } from '../utils/escape.js';
     return group;
   }
 
-  function setBtn(state) {
-    if (state === 'on') {
-      btn.textContent = '🏗️ Hide Structure';
-      btn.style.background = '#4CAF50';
-      btn.style.color = '#fff';
-    } else if (state === 'loading') {
-      btn.textContent = '⏳ Loading...';
-      btn.style.background = 'var(--accent)';
-      btn.style.color = '#000';
-    } else {
-      btn.textContent = '🏗️ Structure';
-      btn.style.background = '';
-      btn.style.color = '';
-    }
-  }
+  // setBtn() is gone: the registry paints background/colour from `activeBg`/`activeColor`
+  // and the text from `label`, so on/off/loading can no longer disagree with each other.
 
-  async function load() {
-    const map = getMap();
-    if (!mapReady() || !map) { alert('Map not ready.'); return; }
-
-    const lakeKey = getActiveLakeKey();
-    if (!lakeKey) { alert('Select a lake first.'); return; }
-
-    // If already loaded for this lake, just show it
-    if (_osmLayer && _lakeKey === lakeKey) {
-      _osmLayer.addTo(map);
-      _visible = true;
-      setBtn('on');
-      return;
-    }
-
-    // New lake or first load
-    if (_osmLayer) { map.removeLayer(_osmLayer); _osmLayer = null; }
-    _loading = true;
-    setBtn('loading');
-
-    try {
-      const gj = await fetchOsmStructures(lakeKey);
-      _osmLayer = buildLayer(gj);
-      _lakeKey  = lakeKey;
-      _osmLayer.addTo(map);
-      _visible  = true;
-      setBtn('on');
-      console.log(`[osm-structure] loaded ${gj.features.length} features for ${lakeKey}`);
-    } catch (e) {
-      console.warn('[osm-structure]', e.message);
-      setBtn('off');
-      if (e.message.includes('404') || e.message.includes('no OSM')) {
-        alert(`No OSM structure data for this lake yet.\nRun fetch_osm_structures.py to populate it.`);
-      } else {
-        alert(`Failed to load OSM structures: ${e.message}`);
+  registerLayer({
+    id: 'osmStructures',
+    button: 'btnFetchOsm',
+    activeBg: '#4CAF50',
+    activeColor: '#fff',
+    label: (on) => (_loading ? '\u23F3 Loading...' : (on ? '\u{1F3D7}\uFE0F Hide Structure' : '\u{1F3D7}\uFE0F Structure')),
+    enabled: () => mapReady() && !_loading,
+    build: async () => {
+      const lakeKey = getActiveLakeKey();
+      if (!lakeKey) { alert('Select a lake first.'); return null; }
+      _loading = true;
+      refreshButton('osmStructures');           // paint "Loading..." before the await
+      try {
+        const gj = await fetchOsmStructures(lakeKey);
+        _lakeKey = lakeKey;
+        console.log(`[osm-structure] loaded ${gj.features.length} features for ${lakeKey}`);
+        return buildLayer(gj);
+      } catch (e) {
+        console.warn('[osm-structure]', e.message);
+        if (e.message.includes('404') || e.message.includes('no OSM')) {
+          alert(`No OSM structure data for this lake yet.\nRun fetch_osm_structures.py to populate it.`);
+        } else {
+          alert(`Failed to load OSM structures: ${e.message}`);
+        }
+        return null;                            // registry leaves the button off
+      } finally {
+        _loading = false;
+        refreshButton('osmStructures');
       }
-    }
-
-    _loading = false;
-  }
-
-  function toggle() {
-    const map = getMap();
-    if (!map || _loading) return;
-
-    if (_visible && _osmLayer) {
-      map.removeLayer(_osmLayer);
-      _visible = false;
-      setBtn('off');
-    } else {
-      load();
-    }
-  }
-
-  // Re-clear layer when lake changes so next click fetches fresh data
-  window.addEventListener('trollmap:lakeChanged', () => {
-    const map = getMap();
-    if (_osmLayer && map) { map.removeLayer(_osmLayer); }
-    _osmLayer = null;
-    _visible  = false;
-    _lakeKey  = null;
-    setBtn('off');
+    },
   });
 
-  btn.addEventListener('click', toggle);
+  // A different lake means different structures. Dropping the built layer makes the next
+  // click re-fetch; the old code did this by hand and had to remember three variables.
+  window.addEventListener('trollmap:lakeChanged', () => {
+    dropAll(['osmStructures']);
+    _lakeKey = null;
+  });
+
+  wireButton('osmStructures');
   console.log('✓ OSM Structure module armed');
 })();

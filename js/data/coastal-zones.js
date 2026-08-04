@@ -29,7 +29,7 @@ export const COASTAL_ZONES = {
     "coastal": true,
     "tideStation": "8661070",
     "center": [33.35, -79.28],
-    "bbox": [[33.15, -79.5], [33.55, -79.1]],
+    "bbox": [[33.325, -79.586], [33.571, -79.093]],
     "priority": 8,
     "ramps": {
       "Sampit River Ramp (Georgetown)": [33.357, -79.282],
@@ -46,7 +46,7 @@ export const COASTAL_ZONES = {
     "coastal": true,
     "tideStation": "8661070",
     "center": [33.55, -79.05],
-    "bbox": [[33.45, -79.2], [33.65, -78.92]],
+    "bbox": [[33.499, -79.178], [33.854, -78.6]],
     "priority": 8,
     "ramps": {
       "Morse Park Landing": [33.553, -79.047],
@@ -63,13 +63,30 @@ export const COASTAL_ZONES = {
     "coastal": true,
     "tideStation": "8661070",
     "center": [33.18, -79.35],
-    "bbox": [[33.05, -79.55], [33.35, -79.15]],
+    "bbox": [[32.99, -79.622], [33.327, -79.158]],
     "priority": 8,
     "ramps": {
       "Santee Coastal Reserve Ramp": [33.172, -79.358],
     },
     "usgsGauges": ["02171700"],
     "usgsRivers": ["Santee River"],
+  },
+  "coast_cape_romain_sc": {
+    "slug": "coast_cape_romain_sc",
+    "name": "Cape Romain / Bulls Bay, SC",
+    "state": "SC",
+    "coastal": true,
+    "tideStation": "8665530",
+    "center": [32.94, -79.66],
+    "bbox": [[32.85, -79.836], [33.156, -79.536]],
+    "priority": 8,
+    "ramps": {
+      "Garris Landing (Bulls Bay)": [32.93974, -79.65744],
+      "Buck Hall Landing (Awendaw)": [33.03846, -79.56095],
+      "Five Fathom Creek Ramp": [33.01592, -79.58791],
+    },
+    "usgsGauges": [],
+    "usgsRivers": [],
   },
   "coast_charleston_sc": {
     "slug": "coast_charleston_sc",
@@ -78,7 +95,7 @@ export const COASTAL_ZONES = {
     "coastal": true,
     "tideStation": "8665530",
     "center": [32.77, -79.93],
-    "bbox": [[32.6, -80.1], [32.95, -79.75]],
+    "bbox": [[32.623, -80.19], [33.115, -79.734]],
     "priority": 8,
     "ramps": {
       "Brittlebank Park Ramp": [32.774, -79.959],
@@ -95,7 +112,7 @@ export const COASTAL_ZONES = {
     "coastal": true,
     "tideStation": "8665530",
     "center": [32.55, -80.47],
-    "bbox": [[32.35, -80.7], [32.75, -80.25]],
+    "bbox": [[32.296, -80.709], [32.76, -80.129]],
     "priority": 8,
     "ramps": {
       "Edisto Beach State Park Ramp": [32.489, -80.309],
@@ -128,7 +145,7 @@ export const COASTAL_ZONES = {
     "coastal": true,
     "tideStation": "8670870",
     "center": [32.43, -80.67],
-    "bbox": [[32.25, -80.9], [32.65, -80.45]],
+    "bbox": [[32.25, -80.92], [32.65, -80.45]],
     "priority": 8,
     "ramps": {
       "Henry C. Chambers Waterfront": [32.431, -80.671],

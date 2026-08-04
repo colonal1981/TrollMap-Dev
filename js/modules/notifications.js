@@ -20,6 +20,7 @@
 import { state } from '../core/state.js';
 import { geoDistanceFt as distFt } from '../utils/geo.js';
 
+import { callGlobal } from '../utils/call-global.js';
 // ── Config ────────────────────────────────────────────────────────────────────
 const PROXIMITY_RADIUS_FT = 300;   // fire when within 300ft of a pin
 const PROXIMITY_CHECK_MS  = 15000; // check position every 15 seconds
@@ -159,9 +160,11 @@ function checkProximity(lat, lon) {
   }
 
   // Supplemental fishing spots
-  if (window.getSupplementalContext) {
+  {
     try {
-      const ctx = window.getSupplementalContext(lat, lon, 0.1); // 0.1 mi = ~530ft
+      // 0.1 mi = ~530ft. These are proximity alerts: one that never fires is invisible, so a
+      // throwing implementation has to reach the console rather than the void.
+      const ctx = callGlobal('getSupplementalContext', lat, lon, 0.1) || {};
       for (const spot of (ctx.fishingPoints || [])) {
         const id = `spot-${spot.lat?.toFixed(5)},${spot.lon?.toFixed(5)}`;
         if (_firedPins.has(id)) continue;
@@ -181,7 +184,11 @@ function checkProximity(lat, lon) {
           fire(`🪵 ${name}`, `${Math.round(ft)}ft ahead.`, id);
         }
       }
-    } catch (_) {}
+    } catch (err) {
+      // Proximity alerts for attractors. Silence here means no alerts ever fire and the
+      // feature looks switched off rather than broken.
+      console.warn('[notifications] attractor proximity check failed:', err);
+    }
   }
 }
 

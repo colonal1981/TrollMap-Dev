@@ -36,7 +36,12 @@ function wireButtons() {
     btn.textContent = '☁️ Pushing...';
     btn.disabled = true;
     try { await pushAllLocalToCloud(); btn.textContent = '✅ Pushed'; }
-    catch (e) { btn.textContent = '❌ Failed'; }
+    catch (err) {
+      // The button says ❌ and nothing else. That is enough to know it broke and useless for
+      // knowing why, and this one moves the user's data.
+      console.error('[topbar] cloud push failed:', err);
+      btn.textContent = '❌ Failed';
+    }
     setTimeout(() => { btn.textContent = '☁️ Push'; btn.disabled = false; }, 3000);
   });
 
@@ -45,7 +50,10 @@ function wireButtons() {
     btn.textContent = '⬇️ Pulling...';
     btn.disabled = true;
     try { await pullUpdatesOnLoad(); btn.textContent = '✅ Pulled'; }
-    catch (e) { btn.textContent = '❌ Failed'; }
+    catch (err) {
+      console.error('[topbar] cloud pull failed:', err);
+      btn.textContent = '❌ Failed';
+    }
     setTimeout(() => { btn.textContent = '⬇️ Pull'; btn.disabled = false; }, 3000);
   });
 
@@ -98,6 +106,9 @@ function wireButtons() {
         });
       }
     } catch (e) {
+      // The box shows a red 'search failed' line -- that it broke, never why.
+      // Nominatim rate-limits aggressively, which is worth being able to see.
+      console.warn(`[topbar] place search failed:`, e && e.message);
       if (resultsEl) resultsEl.innerHTML = '<div style="color:var(--bad);font-size:11px">Search failed</div>';
     }
   });

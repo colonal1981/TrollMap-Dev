@@ -344,6 +344,9 @@ Return ONLY the JSON array, nothing else.`;
     appendMessage('assistant', `Applied to plan: ${applied.join(', ')}`);
 
   } catch (e) {
+    // The button already says 'Extract failed'. What it cannot say is whether the model
+    // returned prose, an empty body, or something that half-parsed.
+    console.warn(`[coach] extract JSON did not parse:`, e && e.message);
     btn.textContent = '⚠ Extract failed';
     btn.disabled = true;
     setTimeout(() => { btn.textContent = '⚡ Apply this to plan'; btn.disabled = false; }, 2000);
@@ -430,6 +433,9 @@ function renderSuggestionCard(container, s) {
     let stopData;
     try {
       stopData = typeof s.recommended_value === 'string' ? JSON.parse(s.recommended_value) : s.recommended_value;
+    // Intentionally silent: recommended_value arrives as either a JSON string or an already
+    // parsed object, so a parse failure means it was the plain-text form -- which the fallback
+    // below handles by design. Audited 2026-08-03.
     } catch (_) {
       stopData = { location: s.recommended_value, reason: s.reasons?.[0] || '' };
     }
@@ -605,6 +611,7 @@ function applyCoachSuggestion(s) {
       let stopData;
       try {
         stopData = typeof recommended_value === 'string' ? JSON.parse(recommended_value) : recommended_value;
+      // Same shape as above: JSON string or plain text, both expected. Audited 2026-08-03.
       } catch (_) {
         stopData = { location: recommended_value, reason: s.reasons?.[0] || '', stopMinutes: 10 };
       }

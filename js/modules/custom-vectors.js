@@ -20,7 +20,7 @@
 
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
-import { get as dbGet, put as dbPut, isReady as dbIsReady } from '../utils/db.js';
+import { get as dbGet, isReady as dbIsReady, tryPut } from '../utils/db.js';
 
 // ── Structure type registry ───────────────────────────────────────────────────
 
@@ -68,13 +68,17 @@ async function loadMyStructures() {
       pinCount = myStructuresGeo.features.length;
       updateHUD();
     }
-  } catch (_) {}
+  } catch (err) {
+    // The user's own saved structure pins. Failing quietly here shows an empty map and looks
+    // like they never saved anything.
+    console.error('[custom-vectors] could not load saved structures:', err);
+  }
 }
 
 async function saveMyStructures() {
   if (!dbIsReady()) return;
   const rec = { name: MY_STRUCTURES_KEY, geo: myStructuresGeo, importedAt: new Date().toISOString() };
-  try { await dbPut('layers', rec); } catch (_) {}
+  await tryPut('layers', rec, 'my structures');
   // Sync to cloud so structures are available across devices
   window.pushItemOnSave?.('layer', MY_STRUCTURES_KEY, rec);
 }
@@ -337,11 +341,18 @@ window.addCustomVectorLayer = function addCustomVectorLayer(layerName, geojson) 
   }).addTo(map);
 
   VECTOR_LAYERS[layerName] = layer;
-  try { map.fitBounds(layer.getBounds(), { padding: [30, 30] }); } catch (_) {}
+  try {
+    map.fitBounds(layer.getBounds(), { padding: [30, 30] });
+  } catch (_) {
+    // Audited 2026-08-04 -- deliberately silent. getBounds() throws on a layer with no
+    // drawable features, and an
+    // import of attribute-only rows is a real thing a user can do. The layer is added either
+    // way; all that is lost is the auto-zoom, which the fit button beside it will do later.
+  }
   renderVectorList();
   if (dbIsReady()) {
     const rec = { name: layerName, geo: geojson, importedAt: new Date().toISOString() };
-    try { dbPut('layers', rec); } catch (_) {}
+    void tryPut('layers', rec, `imported vector layer "${layerName}"`);
     window.pushItemOnSave?.('layer', layerName, rec);
   }
 
@@ -581,7 +592,13 @@ function renderVectorList() {
   host.querySelectorAll('[data-vfit]').forEach(el => {
     el.addEventListener('click', () => {
       const n = el.dataset.vfit;
-      try { if (VECTOR_LAYERS[n]) state.MAP?.fitBounds(VECTOR_LAYERS[n].getBounds(), { padding: [30, 30] }); } catch (_) {}
+      try {
+        if (VECTOR_LAYERS[n]) state.MAP?.fitBounds(VECTOR_LAYERS[n].getBounds(), { padding: [30, 30] });
+      } catch (_) {
+        // Audited 2026-08-04 -- same as the fit on import: an empty layer has no bounds and
+        // Leaflet throws. Nothing
+        // to report -- the user pressed a zoom button and there is nothing to zoom to.
+      }
     });
   });
 }

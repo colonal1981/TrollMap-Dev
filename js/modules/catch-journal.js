@@ -15,8 +15,9 @@ import { esc } from '../utils/escape.js';
 import { getLoadedRegistry } from '../data/lake-registry.js';
 import { loadAccessIndex, nearestLakeByAccessPoint } from '../data/access-index.js';
 import { LURE_PRESETS } from './spread-builder.js';
-import { get as dbGet, put as dbPut } from '../utils/db.js';
+import { get as dbGet, tryPut } from '../utils/db.js';
 
+import { callGlobal } from '../utils/call-global.js';
 const DEFAULT_HELPER = 'http://127.0.0.1:8787';
 const QUEUE_DB_KEY = 'catch_import_queue';
 const CATCHES_DB_KEY = 'catches';
@@ -210,7 +211,12 @@ function nearestLakeAndContour(latRaw, lonRaw) {
         out.lakeMatchDistanceMi = bestDist;
       }
     }
-  } catch (_) {}
+  } catch (err) {
+    // Best-effort enrichment: the catch is still saved, it just has no lake name on it.
+    // Worth a line anyway -- a catch with no lake is the thing Ryan notices weeks later in
+    // the journal, and "nothing was thrown" is not the same as "no lake was near".
+    console.warn('[catch-journal] nearest-lake lookup failed:', err);
+  }
 
   // Nearest loaded contour from TrollMap contour layer.
   try {
@@ -253,7 +259,12 @@ function nearestLakeAndContour(latRaw, lonRaw) {
       const relation = closestDist < 0.10 ? 'on' : closestDist < 0.25 ? 'near' : 'near';
       out.depthBand = `~${closestDepth}ft contour (${relation}, ${closestDist.toFixed(2)} mi)`;
     }
-  } catch (_) {}
+  } catch (err) {
+    // Same shape as the lake lookup above: the catch saves without a depth band rather than
+    // failing. Reported because a journal full of blank depths looks like missing contours
+    // when it may be a thrown error on every single row.
+    console.warn('[catch-journal] nearest-contour depth lookup failed:', err);
+  }
   return out;
 }
 
@@ -345,12 +356,19 @@ function normalizeCsvRow(row, importedFrom = 'csv') {
 }
 
 async function saveCatches() {
-  try { await dbPut('journal', { name: CATCHES_DB_KEY, data: getCatches() }); } catch (_) {}
+  // The single most costly thing this app can lose. A catch is logged once, on the water,
+  // often with the phone about to go in a dry bag -- there is no second chance to re-enter it
+  // and no way to notice it is gone until you look for it weeks later.
+  await tryPut('journal', { name: CATCHES_DB_KEY, data: getCatches() }, 'catch journal');
   // Sync to cloud so catches are available across devices
-  try { window.pushItemOnSave?.('catch', CATCHES_DB_KEY, { name: CATCHES_DB_KEY, data: getCatches() }); } catch (_) {}
+  // Absent is fine (cloud-sync may not have loaded); throwing is not -- it means the catch
+  // saved locally and never left the device, which looks identical to a synced one.
+  callGlobal('pushItemOnSave', 'catch', CATCHES_DB_KEY, { name: CATCHES_DB_KEY, data: getCatches() });
 }
 async function saveQueue() {
-  try { await dbPut('journal', { name: QUEUE_DB_KEY, data: getQueue() }); } catch (_) {}
+  // The queue is what replays catches to the cloud once there is signal again. Losing it
+  // silently means the catches stay local forever and look synced.
+  await tryPut('journal', { name: QUEUE_DB_KEY, data: getQueue() }, 'catch sync queue');
 }
 export async function loadCatches() {
   try {
@@ -358,7 +376,12 @@ export async function loadCatches() {
     if (r) setCatches(r.data || []);
     const q = await dbGet('journal', QUEUE_DB_KEY);
     if (q) setQueue(q.data || []);
-  } catch (_) {}
+  } catch (err) {
+    // NOT best-effort. Swallowing here renders an empty journal that looks like "no catches
+    // yet" rather than "your catches could not be read", which is the difference between a
+    // quiet morning and thinking you lost the lot.
+    console.error('[catch-journal] could not load saved catches:', err);
+  }
   renderCatchCenter();
 }
 
@@ -425,7 +448,14 @@ async function recheckJournalLakes(body = document.getElementById('catchCenterBo
   if (!catches.length) { if (status) status.textContent = 'No confirmed catches to check.'; return; }
 
   if (status) status.textContent = 'Loading lake database…';
-  try { await loadAccessIndex(); } catch (_) {}
+  try {
+    await loadAccessIndex();
+  } catch (err) {
+    // access-index.js logs its own initial failure once, but that happens at import time and
+    // this is a user-initiated batch. Say so here too: everything below still runs, it just
+    // falls back to LAKE_DB and produces worse lake names, which is invisible otherwise.
+    console.warn('[catch-journal] lake index unavailable, using the curated fallback list:', err);
+  }
 
   let filled = 0, changed = 0, noGps = 0, stillBlank = 0;
   catches.forEach((c) => {
@@ -803,7 +833,14 @@ async function enrichMissingHistoricalData(body = document.getElementById('catch
   // Make sure the worker-backed lake index has resolved at least once before
   // running lake lookups on a batch, so early items in the batch don't get
   // pushed into the LAKE_DB fallback just because the fetch hadn't finished.
-  try { await loadAccessIndex(); } catch (_) {}
+  try {
+    await loadAccessIndex();
+  } catch (err) {
+    // access-index.js logs its own initial failure once, but that happens at import time and
+    // this is a user-initiated batch. Say so here too: everything below still runs, it just
+    // falls back to LAKE_DB and produces worse lake names, which is invisible otherwise.
+    console.warn('[catch-journal] lake index unavailable, using the curated fallback list:', err);
+  }
   let depthUpdated = 0, weatherUpdated = 0, failed = 0;
   const targets = queue.filter(q => q.status !== 'rejected' && q.status !== 'rejected_candidate');
   for (let i = 0; i < targets.length; i++) {
@@ -868,7 +905,14 @@ async function importCsvFiles(files) {
   // Same reasoning as enrichMissingHistoricalData: make sure the worker-backed
   // lake index has resolved at least once before running lookups on rows
   // that are about to be enriched from GPS.
-  try { await loadAccessIndex(); } catch (_) {}
+  try {
+    await loadAccessIndex();
+  } catch (err) {
+    // access-index.js logs its own initial failure once, but that happens at import time and
+    // this is a user-initiated batch. Say so here too: everything below still runs, it just
+    // falls back to LAKE_DB and produces worse lake names, which is invisible otherwise.
+    console.warn('[catch-journal] lake index unavailable, using the curated fallback list:', err);
+  }
   let added = 0, skipped = 0, skippedHandheld = 0;
   let autoApproved = 0;
   for (const file of files) {
