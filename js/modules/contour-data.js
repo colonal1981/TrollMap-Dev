@@ -24,6 +24,11 @@ const CHAIN_DESCRIPTIONS = {
   'coast_murrells_inlet_sc':        'Murrells Inlet / Pawleys Island',
   'coast_santee_delta_sc':          'Santee River Delta / North Inlet',
   'coast_charleston_sc':            'Charleston Harbor',
+  // Added 2026-08-04. Cape Romain was in coastal-zones.js, lake_index.json and
+  // COASTAL_PRIMARY, and missing from BOTH coastal_catalog.py and this map -- so the
+  // zone was offered in the picker, promised every layer by the upload tier, and had
+  // no slug -> label entry to fetch contours with. Fourth list it was absent from.
+  'coast_cape_romain_sc':           'Cape Romain / Bulls Bay',
   'coast_ace_basin_sc':             'ACE Basin / Edisto',
   'coast_st_helena_sc':             'St. Helena Sound',
   'coast_beaufort_sc':              'Beaufort / Port Royal Sound',
