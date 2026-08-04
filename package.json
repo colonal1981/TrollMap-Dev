@@ -9,8 +9,9 @@
     "lint:keys": "node test/check-lake-keys-parity.mjs",
     "lint:tackle": "node test/check-tackle-parity.mjs",
     "lint:imports": "node test/check-imports.mjs",
-    "lint": "npm run lint:imports && npm run lint:tackle && npm run lint:keys && npm run lint:smoke",
+    "lint": "npm run lint:imports && npm run lint:tackle && npm run lint:keys && npm run lint:geo && npm run lint:smoke",
     "check": "npm run lint && npm test",
-    "lint:smoke": "node test/registry_smoke.mjs && node test/keys_smoke.mjs && node test/sync_smoke.mjs"
+    "lint:smoke": "node test/registry_smoke.mjs && node test/keys_smoke.mjs && node test/sync_smoke.mjs",
+    "lint:geo": "node test/check-lake-geo.mjs"
   }
 }
