@@ -137,21 +137,96 @@ function lakeNameDedupKey(name) {
     .trim();
 }
 
-// Look for an existing lake in the index (typically worker-derived) whose
-// name matches a supplemental lake we're about to add, so we merge into it
-// instead of creating a visually-duplicate second dropdown entry. A loose
-// distance sanity check guards against merging two different lakes that
-// happen to share a name in different regions.
-function findExistingLakeKey(index, plainName, lat, lon, maxMiles = 15) {
-  const targetKey = lakeNameDedupKey(plainName);
-  if (!targetKey) return null;
+// Generic waterbody words carry no identity. "Parr Shoals" and "Parr Shoals Reservoir" are one
+// water; "Lake Wateree" and "Wateree Lake" are one water. Stripping these is what lets a DNR
+// name meet a 3DHP name in the middle.
+//
+// It is NOT safe on its own and must never be used without the bbox check below: `Lake Murray`
+// (48,761 ac) and `Murray Pond` (148 ac) both reduce to "murray", they are 12 miles apart, and
+// the 15-mile radius test would happily merge them. The audit called that pair out by name.
+const GENERIC_WATER_WORDS = /\b(lake|lakes|reservoir|pond|millpond|mill\s+pond|impoundment|sp|state\s+park|the)\b/g;
+
+export function lakeNameLooseKey(name) {
+  return lakeNameDedupKey(name).replace(GENERIC_WATER_WORDS, ' ').replace(/[^a-z0-9]+/g, '');
+}
+
+// Every name a registry record answers to, not just its primary one.
+//
+// This is the fix for the duplicate rows. `lake_index.json` already ships the curated
+// disagreements as `legacy_display_names` -- wateree_lake carries ['Wateree Lake, SC',
+// 'Lake Wateree, SC'], lake_william_c_bowen carries 'Lake Bowen, SC' -- and lake-registry.js
+// already indexes all of them. findExistingLakeKey was only ever handed `rec.name`, so the
+// variants were downloaded on every page load and never consulted, and the DNR name sat in the
+// picker beside the registry name as a second row for the same water.
+function recordNameVariants(rec, plainName) {
+  const out = [];
+  const push = (n) => { if (n && !out.includes(n)) out.push(n); };
+  push(plainName);
+  if (rec) {
+    push(rec.name);
+    push(rec.displayName);
+    push(rec.legacyDisplayName);
+    for (const n of (rec.legacyDisplayNames || [])) push(n);
+  }
+  return out;
+}
+
+// Is this access point inside the lake's own bounding box? Padded, because a boat ramp sits on
+// the SHORE -- strictly outside the water polygon -- and an unpadded box rejects most of them.
+// 0.005 deg is about 550 m, the same order as the river cutter's --ramp-tol.
+function pointInRecordBounds(rec, lat, lon, padDeg = 0.005) {
+  const b = rec && rec.boundsWSEN;
+  if (!Array.isArray(b) || b.length !== 4) return false;
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
+  const [w, s, e, n] = b;
+  return lat >= s - padDeg && lat <= n + padDeg && lon >= w - padDeg && lon <= e + padDeg;
+}
+
+// Look for an existing lake in the index (typically worker-derived) whose name matches a
+// supplemental lake we're about to add, so we merge into it instead of creating a
+// visually-duplicate second dropdown entry.
+//
+// TWO passes, and they cover different things -- neither is redundant:
+//
+//   A. exact name, any variant, + the 15-mile radius. Handles the curated disagreements that
+//      no rule could derive: Clarks Hill Lake is J. Strom Thurmond Reservoir; the DNR's
+//      "Lake Bowen" is lake_william_c_bowen in SC and NOT the Bowen Lake in Evans Co, GA.
+//   B. loose name + the point actually inside this lake's bbox. Handles mechanical variation
+//      no table should have to enumerate -- Lake X / X Lake, apostrophes, "SP Lake", Pond vs
+//      Millpond -- which matters because the DNR feeds are a LIVE ArcGIS pull. A name that
+//      changes upstream next month still merges without anyone regenerating a file.
+//
+// Pass B refuses on geometry where a name alone would say yes, which is the point: on the live
+// feeds it merges 24 more waterbodies while correctly declining Lake Bowen -> Bowen Lake (GA),
+// LAKE JORDAN -> Jordan Millpond (GA), Blalock Reservoir -> Lake Blalock (SC), and
+// Fox Lake (GA) -> Fox Reservoir (NC).
+export function findExistingLakeKey(index, plainName, lat, lon, maxMiles = 15, rec = null) {
+  const variants = recordNameVariants(rec, plainName);
+  const exactKeys = new Set(variants.map(lakeNameDedupKey).filter(Boolean));
+  if (!exactKeys.size) return null;
+
+  const pointsFor = (existingName) => index.byLake.get(existingName) || [];
+
+  // Pass A — exact on any variant, guarded by distance.
   for (const existingName of index.byLake.keys()) {
-    if (lakeNameDedupKey(existingName) !== targetKey) continue;
+    if (!exactKeys.has(lakeNameDedupKey(existingName))) continue;
     if (Number.isFinite(lat) && Number.isFinite(lon)) {
-      const pts = index.byLake.get(existingName) || [];
-      const anyClose = pts.some(p => approxMiles(lat, lon, p.lat, p.lon) <= maxMiles);
+      const anyClose = pointsFor(existingName)
+        .some(p => approxMiles(lat, lon, p.lat, p.lon) <= maxMiles);
       if (!anyClose) continue; // same name, too far away — different lake, keep separate
     }
+    return existingName;
+  }
+
+  // Pass B — loose name, guarded by containment rather than radius. Requires a record with
+  // real bounds; without them there is no second signal and we decline rather than guess.
+  const looseKeys = new Set(variants.map(lakeNameLooseKey).filter(k => k && k.length >= 3));
+  if (!looseKeys.size || !rec || !Array.isArray(rec.boundsWSEN)) return null;
+  for (const existingName of index.byLake.keys()) {
+    if (!looseKeys.has(lakeNameLooseKey(existingName))) continue;
+    const pts = pointsFor(existingName);
+    if (!pts.length) continue;                       // nothing to corroborate with
+    if (!pts.some(p => pointInRecordBounds(rec, p.lat, p.lon))) continue;
     return existingName;
   }
   return null;
@@ -362,7 +437,7 @@ async function buildAccessIndex() {
     // DNR entry that belongs to the big lake next to it.
     const all = getLoadedRegistry().list;
     for (const rec of all) {
-      const key = findExistingLakeKey(index, rec.name, rec.lat, rec.lon) || rec.displayName;
+      const key = findExistingLakeKey(index, rec.name, rec.lat, rec.lon, 15, rec) || rec.displayName;
       if (!index.registryByName.has(key)) index.registryByName.set(key, rec);
     }
 
@@ -374,7 +449,7 @@ async function buildAccessIndex() {
     // resolves to a real curated pack and point it at a 404.
     let added = 0;
     for (const rec of filterLakes(REGISTRY_DEFAULT_FILTER)) {
-      const existingKey = findExistingLakeKey(index, rec.name, rec.lat, rec.lon);
+      const existingKey = findExistingLakeKey(index, rec.name, rec.lat, rec.lon, 15, rec);
       const lakeName = existingKey || rec.displayName;
       if (!existingKey) added += 1;
       index.registryByName.set(lakeName, rec);   // shipped record wins over a pass-1 namesake
