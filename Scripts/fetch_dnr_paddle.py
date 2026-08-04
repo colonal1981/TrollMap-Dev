@@ -42,6 +42,20 @@ def _s(v):
     return '' if v is None else str(v)
 
 
+def flag_yes(v):
+    """Is this ArcGIS yes/no flag set?
+
+    ArcGIS coded-value domains store a CODE and display a DESCRIPTION.  The web
+    viewer shows "YES"; the REST response returns 1.  Filters written by reading
+    the viewer match nothing at all.  NC's Non_Motorized_Access is exactly this:
+    136 qualifying sites, 11 delivered.  Mirrors flagIsYes() in
+    Worker/core/arcgis.js -- keep the two in step.
+    """
+    if v is True or v == 1:
+        return True
+    return _s(v).strip().lower() in ('y', 'yes', '1', 'true', 't')
+
+
 # Mirrors PADDLE_SOURCES in Worker/trollmap-worker.js.  Keep the predicates in
 # lockstep with that file -- if they drift, the --compare check below fails,
 # which is the point.
@@ -61,8 +75,12 @@ SOURCES = {
     'nc': {
         'url': 'https://services1.arcgis.com/YfqBAUM5nWR3yhGP/arcgis/rest/services/'
                'NCWRC_Boating_Access_Areas_view/FeatureServer/0/query',
-        'filter': lambda p: ((_s(p.get('Non_Motorized_Access')).lower() == 'yes'
-                              or len(_s(p.get('Portable_Boat_Access_Type'))) > 0)
+        # Non_Motorized_Access is a coded domain: viewer shows YES/NO, REST returns
+        # 1/0.  Site_Status IS stored as text ('OPEN'), so that half stays a string
+        # compare.  Verified 2026-08-04: where=Non_Motorized_Access=1 AND
+        # Site_Status='OPEN' returns 136; the old predicate delivered 11.
+        'filter': lambda p: ((flag_yes(p.get('Non_Motorized_Access'))
+                              or len(_s(p.get('Portable_Boat_Access_Type')).strip()) > 0)
                              and _s(p.get('Site_Status')).lower() == 'open'),
         'name': lambda p: p.get('BAA_Name'),
         'wb': lambda p: p.get('Water_Access'),
@@ -74,7 +92,7 @@ SOURCES = {
         'url': 'https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/'
                'WRD_Water_Access_Points/FeatureServer/0/query',
         'id_field': 'FID',
-        'filter': lambda p: (_s(p.get('CanoeAcc')).lower() == 'y'
+        'filter': lambda p: (flag_yes(p.get('CanoeAcc'))
                              and _s(p.get('Status')).lower() not in ('closed', 'inactive')),
         'name': lambda p: p.get('Name'),
         'wb': lambda p: p.get('Waterbody'),
