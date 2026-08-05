@@ -177,10 +177,6 @@ REVIEW_NOTE = {
     'garmin_lake_inventory.py': 'reads the card\'s own waterbody list — useful for the '
                                 'undecoded-tile work still open.',
     'garmin_access_scan.py': 'same vintage as garmin_lake_inventory.py.',
-    'trollmap_garmin_bridge.py': 'in the repo already; unclear whether anything still '
-                                 'calls it.',
-    'gmp_lake_mapper.py': 'in the repo already; tile-to-lake mapping predating '
-                          'tile_lake_map.py.',
     'trollmap_qa2.py': 'contour QA with a crossing metric — worth keeping if you ever '
                        're-check decode quality.',
     'trollmap_r2_clean.py': 'wipes R2. Dangerous and rarely wanted, but not stale.',

@@ -68,6 +68,9 @@ from pathlib import Path
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
+# Sibling module. Every road into trollmap-chartpacks compresses the same way -- see r2_gzip.py.
+from r2_gzip import prepared
+
 try:
     import osmium
 except ImportError:
@@ -666,14 +669,27 @@ def build_pip(slug):
 _print_lock = threading.Lock()
 
 
-def upload_to_r2(slug, path, retries=1):
+def upload_to_r2(slug, path, retries=1, gz=True):
+    """Push one osm-structures.geojson.
+
+    GZIPPED SINCE 2026-08-05, like every other road into this bucket. This was the FOURTH
+    uploader and it was missed in the first pass: upload_garmin_to_r2.py, upload_to_r2_coastal.py
+    and upload_boundaries_to_r2.py were all converted while 1,555 osm-structures objects kept
+    going up raw. Nothing would have broken -- r2Body() checks the stored encoding per object,
+    so a raw one still serves correctly -- which is exactly why it would have gone unnoticed
+    while it quietly held a share of the bucket the audit was reporting as unavoidable.
+
+    If a fifth road into trollmap-chartpacks ever appears, it imports r2_gzip.prepared too.
+    """
     r2_key = f"{slug}/osm-structures.geojson"
-    cmd =['node', WRANGLER_JS, 'r2', 'object', 'put', f'{R2_BUCKET}/{r2_key}',
-           '--file', str(path), '--content-type', 'application/json', '--remote']
     last = ''
     for attempt in range(retries + 1):
         try:
-            r = subprocess.run(cmd, capture_output=True, timeout=180)
+            with prepared(path, gz) as (src, extra):
+                cmd = ['node', WRANGLER_JS, 'r2', 'object', 'put', f'{R2_BUCKET}/{r2_key}',
+                       '--file', str(src), '--content-type', 'application/json',
+                       '--remote', *extra]
+                r = subprocess.run(cmd, capture_output=True, timeout=180)
             out = (r.stdout.decode('utf-8', 'replace') +
                    r.stderr.decode('utf-8', 'replace'))
             if r.returncode == 0 or 'success' in out.lower():
@@ -728,7 +744,7 @@ def build_and_upload(slug, entry, collector, args):
         TMP_DIR.mkdir(parents=True, exist_ok=True)
         tmp = TMP_DIR / f'_osm_{slug}.geojson'
         tmp.write_text(text, encoding='utf-8')
-        ok, msg = upload_to_r2(slug, tmp)
+        ok, msg = upload_to_r2(slug, tmp, gz=not args.no_gzip)
         if not args.keep_tmp:
             tmp.unlink(missing_ok=True)
 
@@ -749,6 +765,8 @@ def main():
                          'Repeatable: --lake a --lake b. Topping up after new packs are '
                          'registered still costs a full scan, but one scan, not one each.')
     ap.add_argument('--dry-run', action='store_true', help='Build files but do not upload')
+    ap.add_argument('--no-gzip', action='store_true',
+                    help='upload raw -- only if the Worker predates r2Body()')
     ap.add_argument('--list', action='store_true', help='List the work list and exit')
     ap.add_argument('--out-dir', help='Also write each GeoJSON here')
     ap.add_argument('--catalog-only', action='store_true',

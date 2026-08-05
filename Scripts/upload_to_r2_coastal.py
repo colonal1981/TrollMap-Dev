@@ -25,6 +25,12 @@ import sys
 import json
 from pathlib import Path
 
+# Same bucket as upload_garmin_to_r2.py, so the same encoding. A coastal zone stored raw next
+# to a lake stored gzipped would still WORK -- r2Body() checks per object -- but it would put
+# the bucket back over the free tier one zone at a time, which is what this whole change is
+# about. See r2_gzip.py.
+from r2_gzip import prepared
+
 WRANGLER_JS   = r'C:\Users\Ryan\AppData\Roaming\npm\node_modules\wrangler\bin\wrangler.js'
 BUCKET        = 'trollmap-chartpacks'
 OUTPUT_DIR    = Path(r'F:\TrollMapPipeline\split_output3')
@@ -86,23 +92,26 @@ def layers_for(slug):
     return [l for l in SUPPLEMENTAL_LAYERS if l in COASTAL_SECONDARY_LAYERS]
 
 
-def wrangler_put(local_path, r2_key, dry_run=False):
+def wrangler_put(local_path, r2_key, dry_run=False, gz=True):
     size_kb = Path(local_path).stat().st_size // 1024
     if dry_run:
-        print(f'  [DRY] {r2_key} ({size_kb} KB)')
+        print(f'  [DRY] {r2_key} ({size_kb} KB raw)')
         return True
-    cmd = [
-        'node', WRANGLER_JS, 'r2', 'object', 'put',
-        f'{BUCKET}/{r2_key}',
-        '--file', str(local_path),
-        '--content-type', 'application/json',
-        '--remote',
-    ]
-    r = subprocess.run(cmd, capture_output=True, timeout=600)
+    with prepared(local_path, gz) as (src, extra):
+        sent_kb = src.stat().st_size // 1024
+        cmd = [
+            'node', WRANGLER_JS, 'r2', 'object', 'put',
+            f'{BUCKET}/{r2_key}',
+            '--file', str(src),
+            '--content-type', 'application/json',
+            '--remote', *extra,
+        ]
+        r = subprocess.run(cmd, capture_output=True, timeout=600)
     out = (r.stdout + r.stderr).decode('utf-8', errors='replace')
     ok = r.returncode == 0 or 'success' in out.lower()
     status = '✅' if ok else '❌'
-    print(f'  {status} {r2_key} ({size_kb} KB)')
+    shown = f'{size_kb} KB' if not gz else f'{sent_kb} KB gz, {size_kb} KB raw'
+    print(f'  {status} {r2_key} ({shown})')
     if not ok:
         print(f'     {out.strip()[:200]}')
     return ok
@@ -117,18 +126,18 @@ def best_boundary_file(slug):
     return None
 
 
-def upload_contours(slug, dry_run=False):
+def upload_contours(slug, dry_run=False, gz=True):
     if not is_primary(slug):
         print('  contours skipped — %s is a secondary coastal zone' % slug)
         return True, 'skipped-tier'
     path = OUTPUT_DIR / f'{slug}.geojson'
     if not path.exists():
         return False, 'missing'
-    ok = wrangler_put(path, f'{slug}/contours.geojson', dry_run)
+    ok = wrangler_put(path, f'{slug}/contours.geojson', dry_run, gz)
     return ok, 'ok' if ok else 'failed'
 
 
-def upload_supplemental(slug, dry_run=False):
+def upload_supplemental(slug, dry_run=False, gz=True):
     supp_dir = OUTPUT_DIR / 'supplemental' / slug
     if not supp_dir.exists():
         return 0, 0
@@ -142,27 +151,27 @@ def upload_supplemental(slug, dry_run=False):
         path = supp_dir / layer
         if not path.exists():
             continue
-        if wrangler_put(path, f'{slug}/{layer}', dry_run):
+        if wrangler_put(path, f'{slug}/{layer}', dry_run, gz):
             ok += 1
         else:
             fail += 1
     return ok, fail
 
 
-def upload_boundary(slug, dry_run=False):
+def upload_boundary(slug, dry_run=False, gz=True):
     path = best_boundary_file(slug)
     if not path:
         return False, 'missing'
-    ok = wrangler_put(path, f'{slug}/boundary.geojson', dry_run)
+    ok = wrangler_put(path, f'{slug}/boundary.geojson', dry_run, gz)
     return ok, 'ok' if ok else 'failed'
 
 
-def upload_all_pois(dry_run=False):
+def upload_all_pois(dry_run=False, gz=True):
     path = OUTPUT_DIR / 'supplemental' / '_all' / 'pois.geojson'
     if not path.exists():
         print('  _all/pois.geojson not found — skipping')
         return
-    wrangler_put(path, '_all/pois.geojson', dry_run)
+    wrangler_put(path, '_all/pois.geojson', dry_run, gz)
 
 
 def get_slugs(zone_arg=None):
@@ -186,6 +195,8 @@ def main():
     ap.add_argument('--boundaries',   action='store_true')
     ap.add_argument('--lake', '--zone', help='Single coastal zone slug')
     ap.add_argument('--dry-run',      action='store_true')
+    ap.add_argument('--no-gzip',      action='store_true',
+                    help='upload raw -- only if the Worker predates r2Body()')
     args = ap.parse_args()
 
     if args.all:
@@ -196,6 +207,7 @@ def main():
         print('\nSpecify at least one of: --all --contours --supplemental --boundaries')
         sys.exit(1)
 
+    gz = not args.no_gzip
     slugs = get_slugs(args.lake if hasattr(args, 'lake') else None)
     mode = 'DRY RUN' if args.dry_run else 'UPLOAD'
     print(f'TrollMap R2 Upload — {mode}')
@@ -215,24 +227,24 @@ def main():
         print(f'\n{slug}:')
 
         if args.contours:
-            ok, status = upload_contours(slug, args.dry_run)
+            ok, status = upload_contours(slug, args.dry_run, gz)
             if status == 'missing': c_skip += 1
             elif ok: c_ok += 1
             else: c_fail += 1
 
         if args.supplemental:
-            ok, fail = upload_supplemental(slug, args.dry_run)
+            ok, fail = upload_supplemental(slug, args.dry_run, gz)
             s_ok += ok; s_fail += fail
 
         if args.boundaries:
-            ok, status = upload_boundary(slug, args.dry_run)
+            ok, status = upload_boundary(slug, args.dry_run, gz)
             if status == 'missing': b_skip += 1
             elif ok: b_ok += 1
             else: b_fail += 1
 
     if args.supplemental:
         print(f'\n_all/pois:')
-        upload_all_pois(args.dry_run)
+        upload_all_pois(args.dry_run, gz)
 
     print(f'\n{"─"*60}')
     if args.contours:

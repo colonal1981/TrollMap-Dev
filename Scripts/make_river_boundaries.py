@@ -1369,15 +1369,62 @@ def main():
     # covering six names would otherwise overwrite the river run's 158 coastal pointers and
     # 12 aliases with a near-empty file -- silently, since both are just "the output".
     aux = '_lake' if a.lakes else '_river'
-    if coastal:
-        cp = os.path.join(a.out, '_coastal_pointers.json' if not a.lakes
-                          else '_lake_coastal_pointers.json')
-        json.dump(coastal, open(cp, 'w', encoding='utf-8'), indent=2, sort_keys=True)
-        print('  -> %s  (%d names pointing at coastal zones)' % (cp, len(coastal)))
-    if aliases:
-        ap_fp = os.path.join(a.out, aux + '_aliases.json')
-        json.dump(aliases, open(ap_fp, 'w', encoding='utf-8'), indent=2, sort_keys=True)
-        print('  -> %s  (%d aliases)' % (ap_fp, len(aliases)))
+
+    # ...AND --only IS THE SAME HAZARD AS --lakes, which is why this is not a plain dump.
+    #
+    # These two files are WHOLE-RUN aggregates. An --only run computes them for the handful of
+    # names it was asked about, so writing them out flat replaces every other name's entry with
+    # nothing. On 2026-08-05 exactly that happened: `--only "Catawba River,Pee Dee River" --go`
+    # took _river_aliases.json from 33 aliases to 1, and the only reason it was noticed is that
+    # the run printed the count. There is no error, no warning, and the file it leaves behind is
+    # perfectly valid -- it just silently un-places 32 waterbodies the next time
+    # gen_water_aliases_js.py runs.
+    #
+    # --only is documented as "a filter on what gets WRITTEN". For a per-name file that means
+    # writing those names' files; for an aggregate it has to mean merging those names' entries.
+    # So: drop every existing record whose name is in scope (it may legitimately have gone away
+    # -- a name that used to be an alias can own water now), then layer this run's answers on
+    # top, and leave every out-of-scope record exactly as it was.
+    def _merge_aux(fp, fresh, what):
+        old_recs = {}
+        if os.path.exists(fp):
+            try:
+                old_recs = json.load(open(fp, encoding='utf-8'))
+            except Exception as exc:
+                # Refuse rather than silently treating an unreadable aggregate as empty --
+                # that is the clobber this whole block exists to prevent.
+                sys.exit('%s exists but will not parse (%s: %s).\n'
+                         'Refusing to overwrite it from an --only run. Move it aside and do a '
+                         'full run if it is genuinely corrupt.' % (fp, type(exc).__name__, exc))
+        kept = {k: v for k, v in old_recs.items() if not _in_scope(v)}
+        dropped = len(old_recs) - len(kept)
+        kept.update(fresh)
+        json.dump(kept, open(fp, 'w', encoding='utf-8'), indent=2, sort_keys=True)
+        print('  -> %s  (%d %s; %d from this run, %d in-scope replaced, %d left untouched)'
+              % (fp, len(kept), what, len(fresh), dropped, len(kept) - len(fresh)))
+
+    def _in_scope(rec):
+        # want holds the squashed form of each --only name; a record's name may carry the
+        # cutter's " (2)" disambiguator, which is not part of the name the user asked for.
+        nm = re.sub(r'\s\(\d+\)$', '', (rec.get('name') or ''))
+        return re.sub(r'[^a-z0-9]', '', nm.lower()) in (want or set())
+
+    cp = os.path.join(a.out, '_coastal_pointers.json' if not a.lakes
+                      else '_lake_coastal_pointers.json')
+    ap_fp = os.path.join(a.out, aux + '_aliases.json')
+    if want is not None:
+        # Always merge-write both on an --only run, even when this run produced none of that
+        # kind: a name that used to be a coastal pointer and is now a river has to LOSE its
+        # pointer, and skipping the write would leave the stale one in place.
+        _merge_aux(cp, coastal, 'names pointing at coastal zones')
+        _merge_aux(ap_fp, aliases, 'aliases')
+    else:
+        if coastal:
+            json.dump(coastal, open(cp, 'w', encoding='utf-8'), indent=2, sort_keys=True)
+            print('  -> %s  (%d names pointing at coastal zones)' % (cp, len(coastal)))
+        if aliases:
+            json.dump(aliases, open(ap_fp, 'w', encoding='utf-8'), indent=2, sort_keys=True)
+            print('  -> %s  (%d aliases)' % (ap_fp, len(aliases)))
     for r in made:
         if r.get('aliased_to'):
             continue

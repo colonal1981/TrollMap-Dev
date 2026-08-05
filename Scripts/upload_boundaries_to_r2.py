@@ -18,6 +18,9 @@ import argparse
 import time
 from pathlib import Path
 
+# Same bucket, same encoding as the pack and coastal uploaders. See r2_gzip.py.
+from r2_gzip import prepared
+
 # ── Config ────────────────────────────────────────────────────────────────────
 # registry/boundaries/ is the source, not lake_boundaries/.
 #
@@ -60,7 +63,7 @@ R2_KEY_FOR = lambda slug: f"{slug}/boundary.geojson"
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def upload_file(slug: str, filepath: Path, dry_run: bool = False) -> bool:
+def upload_file(slug: str, filepath: Path, dry_run: bool = False, gz: bool = True) -> bool:
     r2_key = R2_KEY_FOR(slug)
     size_kb = filepath.stat().st_size // 1024
     print(f"  → {r2_key}  ({size_kb:,} KB) ...", end=' ', flush=True)
@@ -68,15 +71,6 @@ def upload_file(slug: str, filepath: Path, dry_run: bool = False) -> bool:
     if dry_run:
         print("DRY RUN")
         return True
-
-    cmd = [
-        'node', r'C:\Users\Ryan\AppData\Roaming\npm\node_modules\wrangler\bin\wrangler.js',
-        'r2', 'object', 'put',
-        f"{R2_BUCKET}/{r2_key}",
-        '--file', str(filepath),
-        '--content-type', 'application/json',
-        '--remote',
-    ]
 
     try:
         # BYTES, not text=True. wrangler writes UTF-8 with box-drawing and spinner glyphs;
@@ -86,7 +80,16 @@ def upload_file(slug: str, filepath: Path, dry_run: bool = False) -> bool:
         # -- 1,517 tracebacks interleaved with 1,517 green ticks. The output is merely lost,
         # but it looks exactly like a failing run. Decode here, explicitly, and never crash on
         # a glyph.
-        result = subprocess.run(cmd, capture_output=True, timeout=120)
+        with prepared(filepath, gz) as (src, extra):
+            cmd = [
+                'node', r'C:\Users\Ryan\AppData\Roaming\npm\node_modules\wrangler\bin\wrangler.js',
+                'r2', 'object', 'put',
+                f"{R2_BUCKET}/{r2_key}",
+                '--file', str(src),
+                '--content-type', 'application/json',
+                '--remote', *extra,
+            ]
+            result = subprocess.run(cmd, capture_output=True, timeout=120)
         stdout = result.stdout.decode('utf-8', errors='replace')
         stderr = result.stderr.decode('utf-8', errors='replace')
         if result.returncode == 0:
@@ -114,6 +117,8 @@ def main():
     ap = argparse.ArgumentParser(description='Upload 3DHP boundaries to R2')
     ap.add_argument('--lake', help='Upload a single lake by slug (without _3dhp.geojson)')
     ap.add_argument('--dry-run', action='store_true', help='Print what would be uploaded without uploading')
+    ap.add_argument('--no-gzip', action='store_true',
+                    help='upload raw -- only if the Worker predates r2Body()')
     args = ap.parse_args()
 
     if not BOUNDARIES_DIR.exists():
@@ -163,7 +168,7 @@ def main():
 
     ok = fail = 0
     for slug, fp in files:
-        if upload_file(slug, fp, dry_run=args.dry_run):
+        if upload_file(slug, fp, dry_run=args.dry_run, gz=not args.no_gzip):
             ok += 1
         else:
             fail += 1

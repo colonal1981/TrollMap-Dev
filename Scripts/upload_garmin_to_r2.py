@@ -24,26 +24,43 @@ things differently:
   * SKIP UNCHANGED -- a local manifest keyed by (r2_key -> sha256, size) means a re-run after
     a partial failure only pushes what actually changed. Re-running is cheap, so run it again
     rather than trying to work out where it stopped.
-  * GZIP -- OFF BY DEFAULT, and that is deliberate. See below.
+  * GZIP -- ON BY DEFAULT since 2026-08-05. See below.
 
-WHY GZIP IS NOT THE DEFAULT (measured 2026-08-01, do not turn it back on without re-testing)
+GZIP: WHAT WAS ACTUALLY BROKEN, AND WHAT WAS ASSUMED
 
-Pre-compressing and uploading with `--content-encoding gzip` produces a body that arrives at the
-browser DOUBLE-COMPRESSED, and every individual piece of the chain looks correct while it happens:
+Until 2026-08-05 this script uploaded raw, and the docstring said so at length. The measurement
+behind that was real. The conclusion drawn from it was not.
+
+What was measured on 2026-08-01: uploading with `--content-encoding gzip` produced a body that
+arrived at the browser DOUBLE-COMPRESSED, and every piece of the chain looked correct --
 
     R2 holds exactly one gzip layer, with the right contentEncoding metadata
-    the Worker echoes it: `Content-Encoding: gzip` is present in the response headers
-    ...and Cloudflare's edge then compresses the Worker's response AGAIN on the way out
+    the Worker echoed it: `Content-Encoding: gzip` present in the response headers
+    ...and Cloudflare's edge then compressed the Worker's output AGAIN on the way out
 
-There is only ONE Content-Encoding header, so the client unwraps exactly one layer and is left
-holding a gzip stream. `r.json()` throws. The tell, if this ever recurs: `curl --compressed` on
-the object prints binary containing the string `r2up_<pid>_<hash>` -- that is THIS SCRIPT's temp
-filename, written into the inner gzip header as its FNAME field, visible only because the outer
-layer has already been stripped.
+One Content-Encoding header, two layers, so the client unwrapped one and was left holding a gzip
+stream. `r.json()` threw. (The tell, if this ever recurs: `curl --compressed` prints binary
+containing `r2up_<pid>_<hash>` -- THIS SCRIPT's temp filename, written into the inner gzip header
+as its FNAME field, visible only because the outer layer is already stripped.)
 
-Uploaded raw, Cloudflare compresses application/json at the edge on its own, so the wire size is
-the same ~6x saving with none of the ambiguity. The only cost is R2 storage, which is measured in
-cents per lake. `--gzip` re-enables the old behaviour if the edge configuration ever changes.
+What was ASSUMED from it: "so storage is the only cost, and storage is cheap." Nobody who pays
+the bill was asked. It was not cheap -- raw chartpacks were 9.17 GB of an 11.49 GB bucket against
+a 10 GB free tier, and the fix for that was going to be dropping a whole state.
+
+What the measurement actually proved is that PASSTHROUGH breaks. Unwrapping in the Worker was
+never tried. It works: `r2Body()` / `r2Text()` in Worker/worker-core.js strip the stored layer
+before the response leaves the Worker, the edge compresses once as it always did, and the browser
+sees plain JSON. Storage drops, wire size is unchanged, and there is no ambiguity left to hedge
+against. Measured on real pack files, gzip -6 lands between 13% and 24% of raw, the biggest files
+compressing best: 42.6 MB -> 6.0 MB, 113.8 MB -> 15.0 MB.
+
+`--no-gzip` still uploads raw. THE WORKER MUST BE DEPLOYED FIRST -- a gzipped object served by a
+Worker that predates r2Body() is the 2026-08-01 failure again, this time on live data.
+
+The manifest tracks the gzip state per key, so flipping this flag re-uploads what was stored the
+other way WITHOUT --force. That is deliberate: the manifest keys off (size, mtime) of the LOCAL
+file, which does not change when the encoding does, so without that check turning gzip on would
+have silently skipped all 12,972 objects already in the bucket and appeared to succeed.
 
 Nothing here is Garmin-specific except the default layer list, so it works for the i-Boating
 outputs too.
@@ -52,9 +69,14 @@ Personal use only, not for distribution or resale. NOT FOR NAVIGATION.
 """
 from __future__ import annotations
 
-import argparse, gzip, hashlib, json, os, re, shutil, subprocess, sys, tempfile, time
+import argparse, hashlib, json, os, re, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+# Sibling module, so this resolves from any cwd: Python puts the script's own directory on
+# sys.path[0]. Compression lives there because upload_to_r2_coastal.py and
+# upload_boundaries_to_r2.py write to the same bucket and must encode the same way.
+from r2_gzip import prepared
 
 WRANGLER_JS = os.environ.get(
     "WRANGLER_JS",
@@ -203,35 +225,22 @@ def wrangler_error(out):
 
 def put(local, key, gz, dry, timeout):
     """One wrangler put. Returns (ok, bytes_sent, message)."""
-    tmp = None
     try:
-        src = Path(local)
-        if gz:
-            tmp = Path(tempfile.gettempdir()) / f"r2up_{os.getpid()}_{abs(hash(key))}.gz"
-            with open(src, "rb") as fi, gzip.open(tmp, "wb", compresslevel=6) as fo:
-                shutil.copyfileobj(fi, fo)
-            src = tmp
-        n = src.stat().st_size
-        if dry:
-            return True, n, "dry"
-        cmd = ["node", WRANGLER_JS, "r2", "object", "put", f"{BUCKET}/{key}",
-               "--file", str(src), "--content-type", "application/json", "--remote"]
-        if gz:
-            cmd += ["--content-encoding", "gzip"]
-        r = subprocess.run(cmd, capture_output=True, timeout=timeout)
-        out = (r.stdout + r.stderr).decode("utf-8", "replace")
-        ok = r.returncode == 0 or "success" in out.lower()
-        return ok, n, ("" if ok else wrangler_error(out))
+        with prepared(local, gz) as (src, extra):
+            n = src.stat().st_size
+            if dry:
+                return True, n, "dry"
+            cmd = ["node", WRANGLER_JS, "r2", "object", "put", f"{BUCKET}/{key}",
+                   "--file", str(src), "--content-type", "application/json",
+                   "--remote", *extra]
+            r = subprocess.run(cmd, capture_output=True, timeout=timeout)
+            out = (r.stdout + r.stderr).decode("utf-8", "replace")
+            ok = r.returncode == 0 or "success" in out.lower()
+            return ok, n, ("" if ok else wrangler_error(out))
     except subprocess.TimeoutExpired:
         return False, 0, "wrangler timed out"
     except Exception as exc:
         return False, 0, f"{type(exc).__name__}: {exc}"
-    finally:
-        if tmp is not None:
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
 
 
 def main():
@@ -244,11 +253,11 @@ def main():
     ap.add_argument("--lake", nargs="*", default=None, help="only these slugs")
     ap.add_argument("--prefix", default="", help="prepend to every R2 key, e.g. garmin/")
     ap.add_argument("--jobs", type=int, default=6, help="parallel wrangler processes")
-    # --no-gzip is now the default and is kept only so existing commands keep working.
-    ap.add_argument("--no-gzip", action="store_true", help="(default; kept for compatibility)")
-    ap.add_argument("--gzip", action="store_true",
-                    help="pre-compress and set Content-Encoding -- see the module docstring, "
-                         "this double-compresses behind Cloudflare's edge compression")
+    # gzip is the default as of 2026-08-05; --gzip is kept only so existing commands keep working.
+    ap.add_argument("--gzip", action="store_true", help="(default; kept for compatibility)")
+    ap.add_argument("--no-gzip", action="store_true",
+                    help="upload raw. Only needed if the Worker serving this bucket predates "
+                         "r2Body() in worker-core.js -- see the module docstring")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--force", action="store_true", help="ignore the manifest, push everything")
     ap.add_argument("--manifest", default=None, help="default <root>/_r2_manifest.json")
@@ -290,7 +299,7 @@ def main():
     print("coastal secondary ships only: " + ", ".join(sorted(COASTAL_SECONDARY_LAYERS)))
 
     slugs = set(args.lake) if args.lake else None
-    gz = args.gzip and not args.no_gzip
+    gz = not args.no_gzip
 
     mpath = Path(args.manifest) if args.manifest else root / "_r2_manifest.json"
     manifest = {}
@@ -368,7 +377,15 @@ def main():
             key = f"{args.prefix}{slug}/{LAYERS[layer]}"
             st = f.stat()
             prev = manifest.get(key)
-            if prev and prev.get("size") == st.st_size and prev.get("mtime") == int(st.st_mtime):
+            # bool(prev.get("gzip")) is part of the identity of what is IN the bucket. The
+            # size/mtime pair describes the LOCAL file and does not move when the encoding
+            # changes, so without this the 2026-08-05 gzip flip would have skipped all 12,972
+            # existing objects and printed "nothing to do" -- a no-op that reads as success.
+            # Entries written before the flag existed have no "gzip" key; bool(None) is False,
+            # which is correct, because those were uploaded raw.
+            if (prev and prev.get("size") == st.st_size
+                    and prev.get("mtime") == int(st.st_mtime)
+                    and bool(prev.get("gzip")) == gz):
                 skipped += 1
                 continue
             jobs.append((str(f), key, slug, layer))
