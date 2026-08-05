@@ -1,12 +1,15 @@
-import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized, chartpackKey, handleChartpackList, r2Body } from './worker-core.js';
+// r2Text is used by /chartpacks/lake-boundary (line ~1711). It was added to worker-core.js
+// and exported there, but never added to this import list -- so that route threw
+// `ReferenceError: r2Text is not defined` and returned HTTP 500 for every lake.
+import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized, chartpackKey, handleChartpackList, r2Body, r2Text } from './worker-core.js';
 
 // Bump on every edit to this file. See ARCGIS_BUILD in core/arcgis.js.
-const WORKER_BUILD = 'worker-2026-08-05a';
+const WORKER_BUILD = 'worker-2026-08-06g';
 
 import { LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard } from './worker-data.js';
 import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality } from './worker-species.js';
 import { handleGisRoute, flagIsYes, hasText, ARCGIS_BUILD } from './core/arcgis.js';
-import { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine, handleResearchVisionScan, handleResearchVisionScanSave, handleResearchVisionScanStatus } from './worker-research.js';
+import { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
 
 
 /**
@@ -39,7 +42,6 @@ const MUTATING_ROUTES = [
   "/research/shared/store",
   "/research/shared/publish",
   "/research/shared/quarantine",
-  "/research/vision-scan-save",
   // Writes env.TROLLMAP_DATA, a binding wrangler.toml does not declare -- so the write throws
   // into a `catch (_) {}` and has never once succeeded. Listed anyway: the day that binding is
   // added, this becomes a live unauthenticated write, and nobody would think to come back here.
@@ -1276,9 +1278,6 @@ var trollmap_worker_default = {
         }
       }
       if (path === '/research/validation-pass' && request.method === 'POST') return handleResearchValidationPass(request, env);
-      if (path === '/research/vision-scan' && request.method === 'POST') return handleResearchVisionScan(request, env);
-      if (path === '/research/vision-scan-save' && request.method === 'POST') return handleResearchVisionScanSave(request, env);
-      if (path === '/research/vision-scan-status' && request.method === 'GET') return handleResearchVisionScanStatus(request, env);
 
 
       if (path === "/ramps") {
@@ -1486,6 +1485,14 @@ var trollmap_worker_default = {
       }
 
       if (path === "/attractors") {
+        // Read verbatim from the service's own cvd_attractor_code domain, 2026-08-06.
+        const GA_ATTRACTOR_CODES = {
+          AJK: "A Jack", ADU: "Air Diffuser Unit", BLD: "Boulders", CON: "Concrete",
+          CRT: "Crate", GVL: "Gravel", HNH: "Honeyhole", MBK: "Mossback Trophy Tree XL",
+          PAL: "Plastic Pallet Tent", PCP: "Porcupine Balls", PVC: "PVC Cube",
+          PVT: "PVC Trees", RRP: "Rip Rap", STB: "Stake Bed", TRE: "Trees/Brush",
+          UNK: "Unknown", OTH: "Other", other: "Other",
+        };
         const ATTRACTOR_SOURCES = {
           SC: {
             url: "https://services.arcgis.com/acgZYxoN5Oj8pDLa/arcgis/rest/services/SCDNR_Freshwater_Fish_Attractors_Public_Web_App/FeatureServer/0/query",
@@ -1497,14 +1504,24 @@ var trollmap_worker_default = {
             type: (p) => p.Material,
             metaMode: "type",
           },
+          // GA carried `lat: () => null, lon: () => null` -- every one of its 2,202
+          // attractors came back with no position and was dropped by the client's
+          // isFinite guard. It went unnoticed because the front end took GA from a
+          // static snapshot instead of this route. Field names verified against the
+          // service: lowercase `latitude` / `longitude`, esriFieldTypeDouble.
           GA: {
             url: "https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/Fish_Attractors_for_Download/FeatureServer/0/query",
             filter: (p) => true,
-            name: (p) => p.note,
+            name: (p) => (p.note || "").trim() || `${p.waterbody || "GA"} attractor`,
             wb: (p) => p.waterbody,
-            lat: (p) => null,
-            lon: (p) => null,
-            type: (p) => `${p.attractor_code || ""} ${p.attractor_code_other || ""}`.trim(),
+            lat: (p) => p.latitude,
+            lon: (p) => p.longitude,
+            // attractor_code is a coded-value domain; the raw code ("TRE", "PAL") is
+            // meaningless to a user AND defeats the PVC/TREE icon test in gis-toggles.
+            type: (p) => GA_ATTRACTOR_CODES[p.attractor_code]
+              || (p.attractor_code_other || "").trim()
+              || p.attractor_code
+              || "Unknown",
             metaMode: "type",
           },
           NC: {
@@ -1565,7 +1582,7 @@ var trollmap_worker_default = {
         const name = url.searchParams.get("lake") || url.searchParams.get("waterbody") || "";
         const dateParam = url.searchParams.get("date") || (new Date()).toISOString().slice(0, 10);
         if (!name) return new Response(JSON.stringify({ error: "missing lake" }), { headers: JSON_HEADERS, status: 400 });
-        const data = await getLakeClarity(name, dateParam);
+        const data = await getLakeClarity(name, dateParam, env);
         return new Response(JSON.stringify(data, null, 2), { headers: JSON_HEADERS });
       }
       if (path === "/lake-intel-sources") {
@@ -1720,55 +1737,6 @@ var trollmap_worker_default = {
       }
       if (path === "/debug/regs-cache") {
         return handleResearchRegsDebug(request, env);
-      }
-      if (path === "/chartpacks/supplemental-audit") {
-        // Check each catalog key for contour data presence in R2
-        const CATALOG_KEYS = [
-          'lake_thurmond_russell','lake_hickory_rhodhiss','lake_greenwood_secession',
-          'lake_monticello_parr','yadkin_river_chain','lake_norman_mountain_island',
-          'lake_wateree_fishing_creek','lake_juliette_high_falls','lake_marion','lake_moultrie',
-          'lake_murray','saluda_river_arm','lake_hartwell','lake_wylie','mountain_island_lake',
-          'lake_norman','high_point_lake','bear_creek_reservoir_ga','john_d_long_lake',
-          'prestwood_lake','hb_robinson_lake','lake_jocassee','lake_keowee','lake_summit',
-          'north_fork_reservoir','lake_adger','lake_robinson_greenville','north_saluda_reservoir',
-          'lake_cunningham','lake_blalock','lake_bowen','lake_lure','lake_james','john_h_moss_lake',
-          'lookout_shoals_lake','w_kerr_scott_reservoir','belews_lake','randleman_lake',
-          'shearon_harris_reservoir','buckhorn_reservoir','mayo_lake','hyco_lake','lake_michie',
-          'kerr_lake','lake_gaston','lake_townsend','lake_mackintosh','lake_reidsville',
-          'oak_hollow_higgins','lake_brandt','auman_lake','jordan_lake','falls_lake',
-          'bonnie_doone_lake','kornbow_lake','fort_loudoun_lake','tellico_lake','melton_hill_lake',
-          'watts_bar_lake','lake_chilhowee','chickamauga_lake','nickajack_lake','fontana_lake',
-          'hiwassee_lake','lake_chatuge','watauga_lake','norris_lake','douglas_lake',
-          'cherokee_lake','boone_lake','south_holston_lake','nantahala_lake','lake_santeetlah',
-          'lake_cheoah','lake_glenville','lake_toxaway','bear_creek_lake','lake_lanier',
-          'lake_allatoona','lake_blue_ridge','lake_nottely','lake_burton','lake_seed',
-          'parksville_lake','west_point_lake','lake_sinclair','lake_oconee','lake_jackson_ga',
-          'tobesofkee_reservoir','lake_blackshear','watauga_boone_chain','catawba_narrows',
-          'lake_lure','lake_cunningham','lake_brandt','lake_gaston','lake_michie',
-          'lake_reidsville','lookout_shoals_lake',
-        ];
-        const CONTOUR_FILES = ['depth_areas.geojson','contours.pbf','contours.geojson'];
-        const results = [];
-        const seen = new Set();
-        for (const key of CATALOG_KEYS) {
-          if (seen.has(key)) continue;
-          seen.add(key);
-          const listed = await env.R2_TROLLMAP_CHARTPACKS.list({ prefix: `${key}/` });
-          const files = listed.objects.map(o => o.key.replace(`${key}/`, ''));
-          const hasContours = files.some(f => CONTOUR_FILES.includes(f));
-          const hasShoreline = files.includes('shoreline.geojson');
-          const hasDepthAreas = files.includes('depth_areas.geojson');
-          results.push({ key, files, hasContours, hasShoreline, hasDepthAreas });
-        }
-        const withContours = results.filter(r => r.hasContours).map(r => r.key).sort();
-        const withoutContours = results.filter(r => !r.hasContours).map(r => ({ key: r.key, files: r.files }));
-        return new Response(JSON.stringify({
-          total: results.length,
-          withContours: withContours.length,
-          withoutContours: withoutContours.length,
-          researchable: withContours,
-          noContourData: withoutContours,
-        }, null, 2), { headers: { ...CORS, ...JSON_HEADERS, 'Cache-Control': 'no-store' } });
       }
       const idxMatch = path.match(/^\/chartpacks\/([^/]+)\/index\.json$/);
       if (idxMatch) {

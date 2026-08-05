@@ -14,7 +14,24 @@ function resolveSupplementalKeyWorker(lakeName) {
   return resolveR2Key(lakeName);
 }
 
-async function handleResearchLimnologyData(request, env) {
+/**
+ * @param opts.secchiOnly  Return as soon as the water-clarity numbers are known.
+ *
+ * WHY THE FLAG RATHER THAN AN EXTRACTED FUNCTION
+ *
+ * getLakeClarity() needs the secchi summary this function already computes, and nothing else
+ * from it. Pulling the WQP fetch and CSV parse out into a shared helper is the tidier change,
+ * but it is surgery in the middle of a 336-line handler that works, and this codebase's own
+ * history is refactors that stop half done. Copying the parse into a second function is worse
+ * still -- that is how the attractor config ended up in two files and drifted for a month.
+ *
+ * So: one optional flag, and the existing call path is byte-identical when it is absent.
+ *
+ * It matters that this returns EARLY. Past the secchi block this function may fire an inline
+ * Firecrawl guide-article search for the thermocline, which the code below deliberately gates
+ * to avoid burning credits on small lakes. Clarity would trigger that on every cache miss.
+ */
+async function handleResearchLimnologyData(request, env, opts = {}) {
   const body = await request.json().catch(() => ({}));
   let { lakeName, bboxNorth, bboxSouth, bboxEast, bboxWest } = body;
   if (!lakeName) return new Response(JSON.stringify({ ok: false, error: 'missing lakeName' }), { status: 400, headers: JSON_HEADERS });
@@ -45,10 +62,18 @@ async function handleResearchLimnologyData(request, env) {
     'Dissolved oxygen (DO)',
     'Dissolved oxygen',
     'Depth, Secchi disk depth',
+    // Turbidity was NOT requested here, so `recentTurbidityNTU` below was always null and the
+    // clarity fallback that depends on it could never fire. Measured 2026-08-06: 122 of our
+    // lakes have turbidity and NO secchi -- Lake Norman and every TVA reservoir among them.
+    'Turbidity',
   ];
   const wqpUrl = 'https://www.waterqualitydata.us/data/Result/search?' + [
     `bBox=${bboxWest},${bboxSouth},${bboxEast},${bboxNorth}`,
-    `siteType=${enc('Lake, Reservoir, Impoundment')}`,
+    // NO siteType FILTER. WQP types five of Lake Norman's clarity stations as `Stream` because
+    // they sit on the Catawba corridor; filtering to lakes drops them and reports a 30,000-acre
+    // reservoir as unmonitored. The bBox already constrains this to the lake -- geometry decides,
+    // not the supplier's label. Same reasoning as Scripts/wqp_clarity_coverage.py.
+
     ...wqpChars.map(c => `characteristicName=${enc(c)}`),
     `startDateLo=01-01-2015`,
     `startDateHi=12-31-2026`,
@@ -301,6 +326,18 @@ async function handleResearchLimnologyData(request, env) {
   };
 
 
+  // Clarity only ever wants these. Return before the Firecrawl-backed thermocline search below.
+  if (opts.secchiOnly) {
+    return new Response(JSON.stringify({
+      ok: true,
+      lakeName,
+      recordCount: records.length,
+      secchi,
+      recentTurbidityNTU: surfaceWater.recentTurbidityNTU,
+      lastObserved: records.map(r => r.date).filter(Boolean).sort().slice(-1)[0] || null,
+    }), { headers: JSON_HEADERS });
+  }
+
   const surfaceOnlyNote = !thermocline && !depthRecords.length
     ? 'Monitoring data were found, but available records are surface/grab samples only — no vertical depth profiles. Thermocline cannot be derived from this source.'
     : null;
@@ -350,4 +387,76 @@ async function handleResearchLimnologyData(request, env) {
   return new Response(JSON.stringify(out), { headers: JSON_HEADERS });
 }
 
-export { SUPPLEMENTAL_KEY_MAP, resolveSupplementalKeyWorker, handleResearchLimnologyData };
+/**
+ * Measured water clarity for one lake, cached in R2.
+ *
+ * The Water Quality Portal takes up to 25 seconds for a large lake, so it cannot be called
+ * while somebody is waiting for a clarity answer. It is also monitored roughly MONTHLY -- Lake
+ * Murray has 39 secchi readings across two years -- so a fresh fetch per request would be 25
+ * seconds spent re-reading a number that changes twelve times a year.
+ *
+ * Cached in R2 rather than committed to the repo as a data file. A committed snapshot is what
+ * `data/tristate-*.json` were, and they shadowed the live DNR feeds for a month without anyone
+ * noticing. A cache with a TTL goes stale loudly (the timestamp is in the payload) and heals
+ * itself; a file in git goes stale silently and needs a human to remember.
+ *
+ * Returns null when there is no measurement -- which is NOT the same as clear water, and the
+ * caller has to keep those apart. SC and GA are well covered; NC is thin; TN reservoirs have
+ * effectively nothing, because TVA does not submit secchi to WQP under these characteristic
+ * names. See USGS_NOAA_DATASET_SWEEP_2026-08-06.md.
+ */
+const SECCHI_TTL_MS = 30 * 24 * 60 * 60 * 1000;   // monthly sampling; 30 days is already generous
+
+async function getSecchiSummary(env, lakeName) {
+  if (!lakeName || !env?.R2_TROLLMAP_CHARTPACKS) return null;
+  const key = `clarity-cache/${resolveSupplementalKeyWorker(lakeName)}.json`;
+
+  try {
+    const hit = await env.R2_TROLLMAP_CHARTPACKS.get(key);
+    if (hit) {
+      const cached = JSON.parse(await r2Text(hit));
+      if (cached.fetchedAt && Date.now() - Date.parse(cached.fetchedAt) < SECCHI_TTL_MS) return cached;
+      // Stale. Fall through and refetch, but keep it as the fallback if WQP is down --
+      // a month-old measurement beats a guess.
+      var stale = cached;
+    }
+  } catch (e) {
+    console.warn(`[clarity] cache read failed for ${lakeName}: ${e.message}`);
+  }
+
+  try {
+    const req = new Request('internal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lakeName }),
+    });
+    const res = await handleResearchLimnologyData(req, env, { secchiOnly: true });
+    const data = await res.json();
+    // Secchi OR turbidity. Measured 2026-08-06 across 512 inland lakes: 170 have secchi, 288
+    // have turbidity, and 122 have turbidity and no secchi -- including Lake Norman and every
+    // TVA reservoir. Requiring secchi threw all of those away and fell back to guessing.
+    if (!data.ok || (!data.secchi && data.recentTurbidityNTU == null)) {
+      console.log(`[clarity] no clarity measurements for ${lakeName} (${data.recordCount || 0} WQP records)`);
+      return (typeof stale !== 'undefined' && stale) || null;
+    }
+    const out = {
+      lakeName,
+      fetchedAt: new Date().toISOString(),
+      ...(data.secchi || {}),
+      recentTurbidityNTU: data.recentTurbidityNTU ?? null,
+      basis: data.secchi ? 'secchi' : 'turbidity',
+      lastObserved: data.lastObserved || null,
+    };
+    await env.R2_TROLLMAP_CHARTPACKS.put(key, JSON.stringify(out), {
+      httpMetadata: { contentType: 'application/json' },
+    }).catch(e => console.warn(`[clarity] cache write failed for ${lakeName}: ${e.message}`));
+    return out;
+  } catch (e) {
+    // Distinguish "no data" from "lookup failed" -- returning null for both is the defect
+    // Stage 5 of the refactor plan is about. A stale reading is a real measurement; say so.
+    console.warn(`[clarity] WQP lookup failed for ${lakeName}: ${e.message}`);
+    return (typeof stale !== 'undefined' && stale) || null;
+  }
+}
+
+export { SUPPLEMENTAL_KEY_MAP, resolveSupplementalKeyWorker, handleResearchLimnologyData, getSecchiSummary };

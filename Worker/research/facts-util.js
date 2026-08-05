@@ -313,15 +313,19 @@ const RESEARCH_ATTRACTOR_SOURCES = {
     lon: (p) => p.lon_dd,
     type: (p) => p.Material
   },
+  // Same null-coordinate defect that was in trollmap-worker.js's /attractors config.
+  // Field names verified against the service: lowercase `latitude` / `longitude`.
+  // NOTE: this table duplicates ATTRACTOR_SOURCES in trollmap-worker.js -- see
+  // test/arcgis-mapping.test.js. Fix both or collapse them; do not fix one.
   GA: {
     url: "https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/Fish_Attractors_for_Download/FeatureServer/0/query",
     label: 'Georgia DNR Fish Attractors',
     idField: 'OBJECTID',
     filter: () => true,
-    name: (p) => p.note,
+    name: (p) => (p.note || '').trim() || `${p.waterbody || 'GA'} attractor`,
     wb: (p) => p.waterbody,
-    lat: () => null,
-    lon: () => null,
+    lat: (p) => p.latitude,
+    lon: (p) => p.longitude,
     type: (p) => `${p.attractor_code || ''} ${p.attractor_code_other || ''}`.trim()
   },
   NC: {

@@ -37,17 +37,58 @@ describe('golden fixtures — researchdocs and data files exist for characteriza
     expect(json).toHaveProperty('limnology');
   });
 
-  it('data/tristate-*.json GIS caches exist', () => {
-    expect(fs.existsSync('data/tristate-bank-pier.json')).toBe(true);
-    expect(fs.existsSync('data/tristate-paddle.json')).toBe(true);
-    expect(fs.existsSync('data/tristate-hotspots.json')).toBe(true);
+  // These three files were snapshots of DNR ArcGIS services the Worker already
+  // proxies live. They could only ever be staler than the feed, and they masked a
+  // real bug for a month: the Worker's GA attractor config returned null lat/lon,
+  // so /attractors served Georgia with no coordinates -- invisible, because the
+  // front end read Georgia from the snapshot instead. bank-pier, paddle and
+  // attractors are now fetched live for all four states in gis-toggles.js.
+  //
+  // The test is inverted on purpose. It used to assert these existed; it now
+  // asserts they are gone AND that no code reaches for them, so re-adding a
+  // snapshot fails CI instead of quietly reintroducing the drift.
+  const DEAD_SNAPSHOTS = [
+    'data/tristate-bank-pier.json',
+    'data/tristate-paddle.json',
+    'data/tristate-hotspots.json',
+  ];
+
+  it('the tristate-*.json GIS snapshots are gone (live from the Worker now)', () => {
+    for (const f of DEAD_SNAPSHOTS) {
+      expect(fs.existsSync(f)).toBe(false);
+    }
   });
 
-  it('tristate GIS samples have expected shape', () => {
-    const bankPier = JSON.parse(fs.readFileSync('data/tristate-bank-pier.json', 'utf8'));
-    // Could be array or object — just check not empty
-    const size = Array.isArray(bankPier) ? bankPier.length : Object.keys(bankPier).length;
-    expect(size).toBeGreaterThan(0);
+  it('no source file references a dead tristate snapshot', () => {
+    const roots = ['js', 'Worker', 'index.html'];
+    const offenders = [];
+    const walk = (p) => {
+      if (!fs.existsSync(p)) return;
+      if (fs.statSync(p).isDirectory()) {
+        for (const e of fs.readdirSync(p)) walk(`${p}/${e}`);
+        return;
+      }
+      if (!/\.(js|mjs|html)$/.test(p)) return;
+      const src = fs.readFileSync(p, 'utf8');
+      for (const f of DEAD_SNAPSHOTS) {
+        const base = f.split('/').pop();
+        // Ignore comments explaining why they are gone.
+        for (const line of src.split('\n')) {
+          if (line.includes(base) && !/^\s*(\/\/|\*|\/\*)/.test(line)) {
+            offenders.push(`${p}: ${line.trim().slice(0, 90)}`);
+          }
+        }
+      }
+      for (const sym of ['TRISTATE_MASTER_BANK_PIER', 'TRISTATE_MASTER_PADDLE', 'TRISTATE_MASTER_HOTSPOTS']) {
+        for (const line of src.split('\n')) {
+          if (line.includes(sym) && !/^\s*(\/\/|\*|\/\*)/.test(line)) {
+            offenders.push(`${p}: ${line.trim().slice(0, 90)}`);
+          }
+        }
+      }
+    };
+    roots.forEach(walk);
+    expect(offenders).toEqual([]);
   });
 
   it('wateree_zones_overlay.geojson is still in repo (P1 hygiene task to move)', () => {

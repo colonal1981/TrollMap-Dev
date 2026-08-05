@@ -98,7 +98,7 @@ describe('worker auth — every mutating route is gated', () => {
   const ROUTES = ['/research/save', '/research/approve', '/research/delete',
                   '/research/delete-normalized-doc', '/research/save-normalized',
                   '/research/shared/store', '/research/shared/publish',
-                  '/research/shared/quarantine', '/research/vision-scan-save'];
+                  '/research/shared/quarantine'];
 
   it('the gate runs before any route matching', () => {
     const gateAt = worker.indexOf('await allowMutation(');
@@ -164,7 +164,7 @@ describe('worker auth — the client signs what the Worker checks', () => {
     const gated = ['/research/save', '/research/approve', '/research/delete',
                    '/research/delete-normalized-doc', '/research/save-normalized',
                    '/research/shared/store', '/research/shared/publish',
-                   '/research/shared/quarantine', '/research/vision-scan-save'];
+                   '/research/shared/quarantine'];
     const bare = [];
     for (const f of files) {
       const lines = readFileSync(f, 'utf8').split('\n');

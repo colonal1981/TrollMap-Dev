@@ -8,5 +8,6 @@ export { handleResearchDeterministicFacts, handleResearchSaveNormalized, handleR
 export { handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, GAP_QUERIES } from './research/extract.js';
 export { handleResearchAgent, RESEARCH_AGENTS } from './research/agents.js';
 export { sanitizeLakeId, lakeResearchMasterKey, lakePackageKey } from './research/keys.js';
-export { handleResearchVisionScan, handleResearchVisionScanSave, handleResearchVisionScanStatus } from './research/vision.js';
+// research/vision.js (Gemini chart-photo scanner) deleted 2026-08-06: 3 routes, 222 lines,
+// zero callers anywhere in js/, Scripts/ or test/. Found by tools/audit.mjs.
 export { handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine, handleResearchRegsDebug } from './research/shared.js';

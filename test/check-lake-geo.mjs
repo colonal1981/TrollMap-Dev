@@ -25,7 +25,6 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { LAKE_DB } from '../js/data/lakes.js';
 import { resolveR2Key } from '../js/data/lake-keys.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -35,6 +34,33 @@ if (!existsSync(INDEX)) {
   process.exit(0);
 }
 const idx = JSON.parse(readFileSync(INDEX, 'utf8'));
+
+// The 50 hand-placed centres used to come from `js/data/lakes.js`, which was deleted on
+// 2026-08-04 with its data moved verbatim to registry/curated_lakes.json. This file kept
+// importing the deleted module, so `npm run lint` has been dying on ERR_MODULE_NOT_FOUND on a
+// clean checkout ever since -- which also means the geo check that exists to catch
+// `Lake Lanier -> an 85-acre SC pond` has not run since the day it was written.
+//
+// It reads the JSON directly now, and REFUSES AN EMPTY FILE rather than passing. A curated
+// file that lost its contents would otherwise make this lint succeed trivially, which is the
+// exact shape of failure it exists to catch.
+const CURATED = resolve(ROOT, '..', 'registry', 'curated_lakes.json');
+if (!existsSync(CURATED)) {
+  console.log('\nlake geo — registry/curated_lakes.json not beside this checkout, skipped\n');
+  process.exit(0);
+}
+const curatedRaw = JSON.parse(readFileSync(CURATED, 'utf8'));
+// The entries live under `lakes`. The file also carries `_README` and `_note_coastal`, and
+// reading the whole document instead iterates those three string keys, finds no `center` on
+// any of them, and reports "0 curated centres checked" as a PASS. Same accessor order as
+// consolidate_lake_index.py:305, so the two cannot disagree about where the data is.
+const LAKE_DB = (curatedRaw && (curatedRaw.lakes || curatedRaw.lake_db)) || curatedRaw;
+if (!LAKE_DB || typeof LAKE_DB !== 'object' || !Object.keys(LAKE_DB).length) {
+  console.error('\nlake geo — registry/curated_lakes.json is empty or unreadable.\n'
+              + 'That is a failure, not a skip: this lint is the only thing checking that a\n'
+              + 'curated name maps to a lake in the right PLACE.\n');
+  process.exit(1);
+}
 
 const problems = [];
 let checked = 0, unresolved = 0, noBounds = 0;
@@ -81,6 +107,19 @@ if (problems.length) {
   console.error('');
   for (const p of problems) console.error(`  FAIL  ${p}`);
   console.error(`\n${problems.length} name(s) map to a lake in the wrong place\n`);
+  process.exit(1);
+}
+// A run that checked NOTHING is a failure, not a pass.
+//
+// On 2026-08-06 this printed "0 curated centres checked" followed by "ok", because the curated
+// file had been re-shaped and the reader was looking one level too high. Every assertion below
+// held vacuously. A lint whose only failure mode is "I found something wrong" cannot tell you
+// it stopped looking -- and this one exists to catch `Lake Lanier -> an 85-acre SC pond`.
+if (!checked) {
+  console.error('\n  FAIL  0 curated centres were checked.\n'
+              + '        The curated file parsed but yielded no usable {center: [lat, lon]}\n'
+              + '        entries, so every check below passed by not running. Look at the\n'
+              + '        shape of registry/curated_lakes.json before trusting this lint.\n');
   process.exit(1);
 }
 console.log('  ok    every curated name maps to a lake containing its own centre\n');

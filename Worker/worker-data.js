@@ -1015,7 +1015,25 @@ async function fetchOpenMeteoRain(lat, lon, tripDate) {
     return null;
   }
 }
-async function getLakeClarity(lakeName, tripDate) {
+/**
+ * Water clarity for a lake, measured where a measurement exists and modelled where it does not.
+ *
+ * WHAT CHANGED 2026-08-06
+ *
+ * This used to be rainfall ONLY. `Worker/research/limnology.js` was already fetching secchi
+ * depth from the Water Quality Portal and computing avg/min/max -- and this function, the one
+ * that answers "how clear is the water", never looked at any of it. Lake Murray has 39 real
+ * readings since 2024 running 11.8 ft in spring to 3.6 ft in late summer; none of it reached
+ * the app.
+ *
+ * Now: the measured secchi average sets each zone's BASELINE, and the rain model moves it from
+ * there. Where there is no measurement the behaviour is exactly what it was before, so nothing
+ * regresses on the lakes WQP does not cover.
+ *
+ * `measured: false` is not "clear water" -- it is "nobody has looked". The response says which
+ * it is, and the UI has to keep them apart. TN reservoirs are all in the second bucket.
+ */
+async function getLakeClarity(lakeName, tripDate, env) {
   const key = lakeKeyFromName(lakeName);
 
   const isCoastal = (
@@ -1057,8 +1075,52 @@ async function getLakeClarity(lakeName, tripDate) {
   const rain = await fetchOpenMeteoRain(lat, lon, tripDate);
   const rainIn = rain?.weighted72_in ?? 0;
   const rainScore = rain ? Math.min(100, rainIn * 35 + rain.precip24_mm / 25.4 * 25 + rain.precipTrip_mm / 25.4 * 20) : 20;
+
+  // MEASURED BASELINE. Secchi is a depth in feet -- more feet is clearer -- while this model's
+  // score runs the other way, 0 clear to 100 muddy. Map across the range the classifier's own
+  // bands imply: 12 ft of visibility is Clear (score ~5), 1 ft is Muddy (score ~75). Linear
+  // between, clamped, because the classifier's bands are linear too.
+  //
+  // The zone `base` values stay as the FALLBACK for lakes with no measurement. They are hand-
+  // authored guesses; a real reading beats them, and only for the lake it was taken on.
+  // NOT ON COASTAL ZONES. Measured 2026-08-06: the coastal slugs have enormous bounding boxes --
+  // ACE Basin is 693,000 acres and catches 70 WQP stations, Charleston Harbor 37, Beaufort/Port
+  // Royal 74. Averaging stations spread across a whole estuary into one number is not a clarity
+  // reading for anywhere in particular, and tidal exchange means the inlet and the upper marsh
+  // creeks genuinely differ by more than the average could ever express. The zone model already
+  // says exactly that in its own note.
+  //
+  // A per-zone nearest-station join would work here. Until that exists, coastal keeps the
+  // rainfall+tide model it has, rather than being handed a confident average of the wrong thing.
+  let measured = null;
+  try {
+    if (env && !isCoastal) {
+      const { getSecchiSummary } = await import('./research/limnology.js');
+      measured = await getSecchiSummary(env, lakeName);
+    }
+  } catch (e) {
+    console.warn(`[clarity] measured baseline unavailable for ${lakeName}: ${e.message}`);
+  }
+  const secchiFt = measured?.avgSecchiDepthFt ?? null;
+  const ntu = measured?.recentTurbidityNTU ?? null;
+
+  // Secchi if we have it, turbidity if we do not. Turbidity is log-distributed -- the step from
+  // 1 to 5 NTU matters as much as 20 to 100 -- so it maps through log10 rather than linearly,
+  // landing on the SAME Clear / Slight stain / Stained / Muddy bands the classifier already uses:
+  //     1 NTU -> Clear      5 -> Slight stain      25 -> Stained      100+ -> Muddy
+  // Published NTU bands, not a curve fitted to our own data. A fitted curve would look more
+  // precise than it is; 166 lakes carry both measurements and can CHECK these bands instead.
+  const measuredBase =
+      secchiFt != null ? Math.max(0, Math.min(100, 75 - (secchiFt - 1) * (70 / 11)))
+    : ntu != null      ? Math.max(0, Math.min(100, 35 * Math.log10(Math.max(ntu, 0.5)) + 5))
+    : null;
+
   const zones = profile.zones.map((z) => {
-    const score = Math.max(0, Math.min(100, z.base + rainScore * z.sensitivity));
+    // A zone's own character still applies: a creek arm is dirtier than the main lake even when
+    // the lake-wide average is clear. Keep the zone's offset from its profile's own mean.
+    const profileMean = profile.zones.reduce((a, x) => a + x.base, 0) / Math.max(1, profile.zones.length);
+    const base = measuredBase == null ? z.base : Math.max(0, measuredBase + (z.base - profileMean));
+    const score = Math.max(0, Math.min(100, base + rainScore * z.sensitivity));
     const cls = classifyClarity(score);
     const pack2 = clarityLurePack(cls.clarity);
     return { ...z, score: Math.round(score), clarity: cls.clarity, select: cls.select, lureColors: pack2.colors, tactics: pack2.tactics };
@@ -1078,8 +1140,29 @@ async function getLakeClarity(lakeName, tripDate) {
     lake: profile.displayName || lakeName,
     key,
     tripDate,
-    confidence: rain ? "medium: forecast/rainfall model, verify at ramp" : "low: no rainfall feed, generic model",
-    summary: rain ? `${profile.displayName || lakeName}: ${rain.weighted72_in}" weighted rain/runoff signal. ${overall.clarity} overall predicted; upper/creek arms likely dirtier than lower/main lake.` : `${profile.displayName || lakeName}: generic clarity estimate. Verify locally.`,
+    // Say which of the three this is. "Modelled" and "measured then adjusted" deserve different
+    // trust, and "no measurement exists" must never render as "the water is clear".
+    confidence: measured && rain ? "good: measured secchi baseline + rainfall adjustment, verify at ramp"
+              : measured ? "medium: measured secchi baseline, no rainfall feed"
+              : rain ? "medium: forecast/rainfall model only \u2014 no clarity measurements for this water"
+              : "low: no rainfall feed, generic model",
+    measured: measured ? {
+      avgSecchiDepthFt: measured.avgSecchiDepthFt,
+      minSecchiDepthFt: measured.minSecchiDepthFt,
+      maxSecchiDepthFt: measured.maxSecchiDepthFt,
+      sampleCount: measured.sampleCount,
+      lastObserved: measured.lastObserved,
+      recentTurbidityNTU: measured.recentTurbidityNTU ?? null,
+      fetchedAt: measured.fetchedAt,
+      source: "Water Quality Portal (waterqualitydata.us) \u2014 NWIS + STORET",
+    } : null,
+    measuredNote: measured
+      ? null
+      : "No secchi measurements published for this water. The estimate below is a rainfall model, "
+        + "not an observation \u2014 absence of data is not clear water.",
+    summary: measured
+      ? `${profile.displayName || lakeName}: typically ${measured.avgSecchiDepthFt} ft visibility (${measured.sampleCount} readings, ${measured.minSecchiDepthFt}\u2013${measured.maxSecchiDepthFt} ft). ${rain ? `${rain.weighted72_in}" weighted rain signal moves it to ` : ''}${overall.clarity} for this trip; creek arms dirtier than the main lake.`
+      : rain ? `${profile.displayName || lakeName}: ${rain.weighted72_in}" weighted rain/runoff signal. ${overall.clarity} overall predicted; upper/creek arms likely dirtier than lower/main lake.` : `${profile.displayName || lakeName}: generic clarity estimate. Verify locally.`,
     overall: { clarity: overall.clarity, select: overall.select, score: Math.round(avg), lureColors: pack.colors, tactics: pack.tactics },
     rain,
     zones,
