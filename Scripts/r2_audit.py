@@ -51,6 +51,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import urllib.error
 import urllib.request
 from collections import defaultdict
 from pathlib import Path
@@ -89,10 +90,31 @@ NON_PACK_PREFIXES = ("research", "lake_packages", "lakes", "regulations", "bound
 
 
 def fetch_listing(worker: str) -> dict:
+    """Read the whole bucket listing off the Worker.
+
+    THE USER-AGENT IS LOAD-BEARING. Python's default is `Python-urllib/3.x`, and Cloudflare's
+    edge answers that with a bare 403 before the request ever reaches the Worker -- which reads
+    as "the route is broken" or "you need a token", and is neither. curl.exe on the identical URL
+    works, because curl sends a UA the edge does not treat as a bot. Measured 2026-08-05.
+    """
     url = f"{worker.rstrip('/')}/chartpacks/list?detail=1"
     print(f"reading {url}", file=sys.stderr)
-    with urllib.request.urlopen(url, timeout=300) as r:
-        return json.loads(r.read().decode("utf-8"))
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "trollmap-r2-audit/1.0 (+personal use; https://github.com/colonal1981/TrollMap-Dev)",
+        "Accept": "application/json",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=300) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 403:
+            raise SystemExit(
+                "403 from the edge, not from the Worker -- Cloudflare rejected the request "
+                "before it got there.\n"
+                "If this recurs, fetch it with curl and read the file instead:\n"
+                '  curl.exe -s "%s" -o _r2_listing.json\n'
+                "  py .\\r2_audit.py --from _r2_listing.json" % url)
+        raise SystemExit("%s returned HTTP %d: %s" % (url, exc.code, exc.reason))
 
 
 def human(n: float) -> str:
@@ -104,7 +126,14 @@ def human(n: float) -> str:
 
 
 def is_pack(name: str) -> bool:
-    return not name.startswith(NON_PACK_PREFIXES)
+    """`name` is already the whole first path segment, so this is an EXACT match, not a prefix.
+
+    It was `startswith(NON_PACK_PREFIXES)`, which quietly swallowed any slug beginning with one
+    of those words -- `lakeside_reservoir` starts with `lakes`, so it was reported as its own
+    top-level prefix and, worse, excluded from the deletion analysis, because every rule sits
+    behind `if is_pack(name)`. Found in Ryan's first live run, 2026-08-05.
+    """
+    return name not in NON_PACK_PREFIXES
 
 
 def deletable(name: str, fname: str) -> str | None:

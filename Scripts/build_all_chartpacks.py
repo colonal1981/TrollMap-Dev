@@ -212,6 +212,15 @@ def main():
     ap.add_argument('--min-charted', type=float, default=0.0,
                     help='skip a lake whose charted fraction is <= this (default 0 = skip only '
                          'lakes with no soundings at all)')
+    ap.add_argument('--only-layers',
+                    help='comma-separated SHIP layer names to re-cut, e.g. "pois". Reads and '
+                         'writes ONLY these; every other layer already on disk is left alone. '
+                         'Use after re-extracting one layer -- a full run re-cuts contours and '
+                         'depth_areas that did not change, which is most of the wall clock. '
+                         'REQUIRES an existing --report: everything measured from the layers '
+                         'this run does not read (charted, counts, mb, shipped) is carried '
+                         'forward from it, never recomputed, so a scoped run cannot blank the '
+                         'index. A lake with no prior record is skipped, not degraded.')
     ap.add_argument('--limit', type=int, help='stop after N lakes, for a smoke test')
     ap.add_argument('--only-tiles',
                     help='comma list, a file path, or @file of tile ids. Rebuilds ONLY the lakes sitting on '
@@ -279,6 +288,30 @@ def main():
             print('merging into existing report: %d lakes already recorded' % len(report))
         except Exception as e:
             print('existing report unreadable (%s) -- starting fresh' % str(e)[:50])
+
+    # --only-layers: resolve, validate, and REFUSE to run without a prior report.
+    #
+    # Everything this script records about a lake -- charted fraction, counts, counts_core, the
+    # ship decision, pack mb -- is measured from depth_areas and contours. A run that does not
+    # READ those layers cannot measure them, and writing the un-measured value would set
+    # charted:0 and shipped:false across the whole index while looking like a successful build.
+    # That is the same shape as the --only run that emptied _river_aliases.json on 2026-08-05.
+    # So: carry forward, never recompute, and hard-exit if there is nothing to carry forward
+    # from. Same principle already applied to `mb` under --report-only.
+    a.layer_set = None
+    if a.only_layers:
+        want_layers = [s.strip() for s in a.only_layers.split(',') if s.strip()]
+        bad = [l for l in want_layers if l not in SHIP]
+        if bad:
+            sys.exit('--only-layers: unknown layer(s) %s. Known: %s'
+                     % (', '.join(bad), ', '.join(SHIP)))
+        a.layer_set = set(want_layers)
+        if not report:
+            sys.exit('--only-layers needs an existing --report to carry forward charted/counts/'
+                     'mb from. Run a full build first, or drop --only-layers.')
+        print('--only-layers: re-cutting %s only; %d other layer(s) left untouched on disk'
+              % (', '.join(want_layers), len(SHIP) - len(a.layer_set)))
+
     masks, acc, remaining = {}, defaultdict(dict), {}
     dropped = defaultdict(int)
     for s in todo:
@@ -318,6 +351,8 @@ def main():
         # every lake from it, then freeing it caps the peak at the largest SINGLE layer
         # (depth_areas), which is roughly a third of that.
         for layer, (letter, _obj) in SHIP.items():
+            if a.layer_set is not None and layer not in a.layer_set:
+                continue          # --only-layers: not read, so nothing derived from it moves
             fp = os.path.join(a.extract, layer, letter + base)
             src = None
             for suf in ('.geojson.gz', '.geojson'):
@@ -395,6 +430,17 @@ def _flush(slug, layers, mask, meta, a, report):
         report[slug] = rec
         return
 
+    # --only-layers: this run read a subset of the layers, so it is not entitled to an opinion
+    # about anything measured from the others. Take the previous answer verbatim.
+    scoped = getattr(a, 'layer_set', None) is not None
+    prev = dict(report.get(slug) or {})
+    if scoped and not prev:
+        # Never seen before. Writing it now would record charted:None and no counts for a lake
+        # that may well be fully charted -- an absence indistinguishable from a real one.
+        rec['skipped'] = 'not in the prior report; run a full build for this lake first'
+        report[slug] = rec
+        return
+
     # Drop line features longer than the lake, before anything is measured or written.
     # It runs HERE and not beside drop_long_segments(): that one is per-tile and has no
     # idea how big the lake is, and the lake's own size is the only threshold that needs
@@ -411,10 +457,30 @@ def _flush(slug, layers, mask, meta, a, report):
               % (slug, span_dropped))
         rec['oversized_lines_dropped'] = span_dropped
 
-    frac = mask.charted_fraction(
-        [f for l in CHARTED_LAYERS for f in layers.get(l, [])])
-    rec['charted'] = frac
-    rec['counts'] = {k: len(v) for k, v in layers.items() if v}
+    if scoped:
+        # CARRY FORWARD. charted comes from depth_areas; counts_core from contours+depth_areas.
+        # A pois-only run reads neither, so recomputing here would write 0 over a real number.
+        frac = prev.get('charted')
+        rec['charted'] = frac
+        rec['counts'] = dict(prev.get('counts') or {})
+        rec['counts'].update({k: len(v) for k, v in layers.items() if v})
+        rec['counts_core'] = dict(prev.get('counts_core') or {})
+        if prev.get('mb') is not None:
+            rec['mb'] = prev['mb']
+        rec['shipped'] = bool(prev.get('shipped'))
+        if prev.get('skipped'):
+            rec['skipped'] = prev['skipped']
+        if not rec['shipped']:
+            # It did not ship before and this run cannot change that verdict -- it has not
+            # looked at the layers the verdict is made from. Record and move on without
+            # writing a partial pack into a directory that has none.
+            report[slug] = rec
+            return
+    else:
+        frac = mask.charted_fraction(
+            [f for l in CHARTED_LAYERS for f in layers.get(l, [])])
+        rec['charted'] = frac
+        rec['counts'] = {k: len(v) for k, v in layers.items() if v}
 
     # `counts` above is features touching the boundary PLUS the 250 m buffer, because that is
     # what the clip keeps. `counts_core` is features with at least one vertex inside the lake
@@ -424,19 +490,27 @@ def _flush(slug, layers, mask, meta, a, report):
     # contradiction -- it is a mountaintop reservoir whose 250 m ring clips the Tennessee River
     # below it. Every one of those features is a neighbour's. `counts_core` says 0 and the
     # story reads correctly.
-    core = {}
-    for layer in ('contours', 'depth_areas'):
-        n = 0
-        for f in layers.get(layer) or []:
-            for x, y in verts(f['geometry']):
-                if mask.cell_of(x, y) in mask.core:
-                    n += 1
-                    break
-        if n:
-            core[layer] = n
-    rec['counts_core'] = core
+    if scoped:
+        # counts_core was carried forward above. Recomputing it from layers this run did not
+        # read would return {} and turn every shipped lake into "no garmin data inside the lake"
+        # at the gate below -- which is why the gate is skipped too.
+        core = rec['counts_core']
+    else:
+        core = {}
+        for layer in ('contours', 'depth_areas'):
+            n = 0
+            for f in layers.get(layer) or []:
+                for x, y in verts(f['geometry']):
+                    if mask.cell_of(x, y) in mask.core:
+                        n += 1
+                        break
+            if n:
+                core[layer] = n
+        rec['counts_core'] = core
 
-    if not frac or frac <= a.min_charted:
+    if scoped:
+        pass          # ship decision carried forward; this run did not read the layers it needs
+    elif not frac or frac <= a.min_charted:
         # THE SHIP RULE. Settled 2026-08-03: **any contours count as bathymetry.**
         #
         #   Ryan: "i want a list of lakes with contours... i am willing to bet if it has
@@ -494,8 +568,12 @@ def _flush(slug, layers, mask, meta, a, report):
     os.makedirs(outdir, exist_ok=True)
     total = 0.0
     for layer, (_letter, objname) in SHIP.items():
+        if a.layer_set is not None and layer not in a.layer_set:
+            continue          # leave the existing file on disk exactly as it is
         feats = layers.get(layer) or []
         if not feats:
+            # NOTE: a layer with no features is SKIPPED, not truncated. That is what makes
+            # --only-layers safe -- the other six files are never opened for writing.
             continue
         if layer == 'pois':
             # Garmin repeats a ramp label once per zoom level; the same collapse the
@@ -513,7 +591,14 @@ def _flush(slug, layers, mask, meta, a, report):
             json.dump(doc, f, ensure_ascii=False)
         total += os.path.getsize(fp) / 1e6
     rec['shipped'] = True
-    rec['mb'] = round(total, 2)
+    if scoped:
+        # `total` here is only the layers this run rewrote. Overwriting mb with it would report
+        # a 3 MB pack as 0.2 MB, and consolidate would carry that into lake_index.json. Same
+        # reasoning as the --report-only branch above: a partial pass must not shrink data.
+        if prev.get('mb') is not None:
+            rec['mb'] = prev['mb']
+    else:
+        rec['mb'] = round(total, 2)
     report[slug] = rec
 
 

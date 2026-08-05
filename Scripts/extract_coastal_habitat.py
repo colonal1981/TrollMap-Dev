@@ -27,6 +27,9 @@ import tempfile
 from pathlib import Path
 from collections import defaultdict
 
+# Sibling module. Every road into trollmap-chartpacks compresses the same way -- r2_gzip.py.
+from r2_gzip import prepared
+
 try:
     import geopandas as gpd
     from shapely.geometry import box
@@ -121,7 +124,20 @@ def gdf_to_geojson(gdf):
     return json.dumps({'type': 'FeatureCollection', 'features': features}, separators=(',', ':'))
 
 
-def upload_to_r2(slug, layer_name, geojson_str, dry_run=False):
+def upload_to_r2(slug, layer_name, geojson_str, dry_run=False, gz=True):
+    """Push one habitat layer.
+
+    GZIPPED SINCE 2026-08-05. This was the FIFTH road into trollmap-chartpacks and the last one
+    found -- upload_garmin_to_r2.py, upload_to_r2_coastal.py, upload_boundaries_to_r2.py and
+    fetch_osm_structures.py were all converted before anyone noticed this one existed. It was
+    holding 208 MB raw across 37 objects (marsh_edges 114.7 MB / 21, oyster_beds 93.3 MB / 16),
+    and the audit could not see it because those two filenames are in neither uploader's layer
+    vocabulary, so no rule had an opinion about them.
+
+    Ryan, 2026-08-05: "they can be encrypted the worker is what fetches them" -- and that is the
+    whole argument. Every read path is covered: r2Body() for anything the browser pulls through
+    the chartpack route, r2Text() for anything the Worker parses itself.
+    """
     r2_key = f"{slug}/{layer_name}"
     size_kb = len(geojson_str.encode()) // 1024
     tmp = Path(f'_habitat_tmp_{slug}_{layer_name}')
@@ -133,14 +149,15 @@ def upload_to_r2(slug, layer_name, geojson_str, dry_run=False):
         print("DRY RUN")
         return True
 
-    cmd = [
-        'node', WRANGLER_JS, 'r2', 'object', 'put', f'{R2_BUCKET}/{r2_key}',
-        '--file', str(tmp),
-        '--content-type', 'application/json',
-        '--remote',
-    ]
     try:
-        result = subprocess.run(cmd, capture_output=True, timeout=UPLOAD_TIMEOUT)
+        with prepared(tmp, gz) as (src, extra):
+            cmd = [
+                'node', WRANGLER_JS, 'r2', 'object', 'put', f'{R2_BUCKET}/{r2_key}',
+                '--file', str(src),
+                '--content-type', 'application/json',
+                '--remote', *extra,
+            ]
+            result = subprocess.run(cmd, capture_output=True, timeout=UPLOAD_TIMEOUT)
         out = (result.stdout + result.stderr).decode('utf-8', errors='replace')
         tmp.unlink()
         if result.returncode == 0 or 'success' in out.lower():
@@ -202,7 +219,7 @@ def load_esi_layers(gdb_path, target_layers):
 
 
 def process_zone(slug, zone, oyster_sc, oyster_nc, esi_sc, esi_nc, esi_ga,
-                 dry_run=False, skip_upload=False):
+                 dry_run=False, skip_upload=False, gz=True):
     state = zone.get('state', '')
     print(f"\n  {slug}: {zone['name']} ({state})")
 
@@ -317,7 +334,7 @@ def process_zone(slug, zone, oyster_sc, oyster_nc, esi_sc, esi_nc, esi_ga,
 
     ok = 0
     for fname, gj in results.items():
-        if upload_to_r2(slug, fname, gj, dry_run=dry_run):
+        if upload_to_r2(slug, fname, gj, dry_run=dry_run, gz=gz):
             ok += 1
     return ok
 
@@ -327,6 +344,8 @@ def main():
     ap.add_argument('--zone',        help='Process single zone by slug')
     ap.add_argument('--zones',       nargs='+', help='Process multiple zones by slug')
     ap.add_argument('--dry-run',     action='store_true')
+    ap.add_argument('--no-gzip',     action='store_true',
+                    help='upload raw -- only if the Worker predates r2Body()')
     ap.add_argument('--skip-upload', action='store_true', help='Save locally instead of uploading')
     ap.add_argument('--list-layers', action='store_true', help='List ESI GDB layers and exit')
     args = ap.parse_args()
@@ -425,7 +444,8 @@ def main():
     total = 0
     for slug, zone in zones:
         n = process_zone(slug, zone, oyster_sc, oyster_nc, esi_sc, esi_nc, esi_ga,
-                         dry_run=args.dry_run, skip_upload=args.skip_upload)
+                         dry_run=args.dry_run, skip_upload=args.skip_upload,
+                         gz=not args.no_gzip)
         total += n
 
     # Cleanup temp dirs

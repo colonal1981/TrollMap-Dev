@@ -15,7 +15,10 @@ $ErrorActionPreference = 'Stop'
 $REG = 'F:\TrollMapPipeline\registry'
 $BND = 'F:\TrollMapPipeline\lake_boundaries'
 $LBL = 'F:\TrollMapPipeline\extract\labels'
-$CAT = 'F:\TrollMapPipeline\TrollMap-Dev-main\Scripts\coastal_catalog.py'
+# Points at the LIVE catalog, not the downloaded repo zip. TrollMap-Dev-main is a
+# snapshot that goes stale the moment scripts\coastal_catalog.py is edited, and on
+# 2026-08-04 the two had diverged in both directions. Generate from the file you edit.
+$CAT = 'F:\TrollMapPipeline\scripts\coastal_catalog.py'
 # NOT `$goFlag = if ($Go) { @('--go') }` -- PowerShell collapses a one-element array to a
 # scalar there, and `@goFlag` on a string splats it one CHARACTER at a time. That is where
 # `unrecognized arguments: - - g o` came from. Build the array, then add to it.

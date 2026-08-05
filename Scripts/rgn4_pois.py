@@ -518,8 +518,31 @@ def extract(path):
     #
     # 2 sub-blocks state no usable count and are skipped rather than searched, since a stride
     # found by search is exactly the kind of fit the count exists to retire.
-    if nav_ok:
-        for hdr, b, sd in bym.get((2, 7), []):
+    # THE GATE USED TO BE `if nav_ok:` AND IT COST 94% OF THE NAVAIDS.
+    #
+    # navaid_vocab() requires its recovered phrases to tokenise the tile's text regions EXACTLY,
+    # and one unmatched byte anywhere set ok=False. The whole tile's mode 2/7 records were then
+    # dropped, leaving a single stat counter behind. Measured 2026-08-06 over the full
+    # four-state extract: 8 tiles of 143 passed, 451 navaids survived out of 249,405 POIs, and
+    # B4E0F1 had 68 while B4E0F0 next door -- same lake system, 3,288 POIs -- had none. Ryan,
+    # correctly: "there is 0 chance this is right."
+    #
+    # The intent was sound and is kept: a mis-tokenised vocabulary can map a reference to the
+    # WRONG phrase, and poi_type() falls back to 'nav_buoy' for any navaid string it cannot
+    # classify -- so residue could silently invent buoys. The fix is to narrow the blast radius
+    # from the tile to the record.
+    #
+    #   clean tile  (nav_ok)  -- unchanged. Every record emitted, nav_buoy fallback intact.
+    #   tile with residue     -- emit only records whose phrase POSITIVELY classifies against
+    #                            NAVAID_CLASS. Anything relying on the fallback is counted and
+    #                            dropped, because that is the one that could be residue.
+    #
+    # Note the per-record guard three lines below (`if nm is None: continue`) already discards a
+    # reference that resolves to nothing. The tile gate was never protecting against that; it
+    # was throwing away the thousands that DID resolve alongside the one that did not.
+    if not nav_ok:
+        st['navaid_vocab_residue_strict_mode'] = 1
+    for hdr, b, sd in bym.get((2, 7), []):
             w, h = max(sd['width'], 1), max(sd['height'], 1)
             stride = sb_reclen(hdr, b)
             if not stride or stride < 8:
@@ -532,7 +555,14 @@ def extract(path):
             for hh in range(ph, len(b) - stride + 1, stride):
                 if hh + ro + 3 > len(b): continue
                 nm = nav.get(int.from_bytes(b[hh+ro:hh+ro+3], 'little'))
-                if nm is None: continue
+                if nm is None:
+                    st['navaid_ref_unresolved'] += 1; continue
+                if not nav_ok:
+                    # Strict mode: only phrases NAVAID_CLASS can name. Same test poi_type() runs,
+                    # so a record kept here classifies to the same thing it would on a clean tile.
+                    low = nm.strip().lower().strip('"')
+                    if not any(key in low for key, _t in NAVAID_CLASS):
+                        st['navaid_unclassified_dropped'] += 1; continue
                 dx, dy = s16(b, hh+1), s16(b, hh+3)
                 if abs(dx) > w or abs(dy) > h:
                     st['box_violation'] += 1; continue
@@ -544,8 +574,6 @@ def extract(path):
                                        'class': nm.split(',')[0].strip(),
                                        'source': 'RGN4 pool-2 ref at stride-4',
                                        'raw': b[hh:hh + stride].hex()}))
-    else:
-        st['navaids_gated_out_vocab_residue'] = 1
 
     # ---- dedupe: same thing at several zooms, keep the most detailed --------
     # The same POI is emitted at every zoom level, and the copies differ by only a few metres

@@ -6,6 +6,7 @@ at trollmap-chartpacks/boundaries/<slug>_3dhp.geojson via wrangler CLI.
 Usage:
     python upload_boundaries_to_r2.py
     python upload_boundaries_to_r2.py --lake lake_wateree_fishing_creek
+    python upload_boundaries_to_r2.py --lake catawba_river --lake duck_river,elk_river
     python upload_boundaries_to_r2.py --dry-run
 
 Requires: wrangler installed and authenticated (wrangler whoami should work).
@@ -115,7 +116,11 @@ def upload_file(slug: str, filepath: Path, dry_run: bool = False, gz: bool = Tru
 
 def main():
     ap = argparse.ArgumentParser(description='Upload 3DHP boundaries to R2')
-    ap.add_argument('--lake', help='Upload a single lake by slug (without _3dhp.geojson)')
+    ap.add_argument('--lake', action='append', default=[],
+                    help='Upload these slugs only. Repeatable, and accepts a comma list: '
+                         '--lake a --lake b,c. This script keeps NO manifest -- every full run '
+                         're-pushes all ~1,563 boundaries -- so retrying the handful that hit a '
+                         'wrangler network error should not cost a whole pass.')
     ap.add_argument('--dry-run', action='store_true', help='Print what would be uploaded without uploading')
     ap.add_argument('--no-gzip', action='store_true',
                     help='upload raw -- only if the Worker predates r2Body()')
@@ -126,12 +131,20 @@ def main():
         sys.exit(1)
 
     if args.lake:
-        slug = args.lake.replace('.geojson', '')
-        fp = BOUNDARIES_DIR / f"{slug}.geojson"
-        if not fp.exists():
-            print(f"❌ No boundary for {slug} in {BOUNDARIES_DIR}")
+        slugs, missing, files = [], [], []
+        for raw in args.lake:
+            for part in str(raw).split(','):
+                part = part.strip().replace('.geojson', '')
+                if part and part not in slugs:
+                    slugs.append(part)
+        for slug in slugs:
+            fp = BOUNDARIES_DIR / f"{slug}.geojson"
+            (files.append((slug, fp)) if fp.exists() else missing.append(slug))
+        if missing:
+            # Every named slug or none. A partial retry that silently skipped two of the five
+            # you asked for would look exactly like a successful retry.
+            print(f"❌ No boundary in {BOUNDARIES_DIR} for: {', '.join(missing)}")
             sys.exit(1)
-        files = [(slug, fp)]
     else:
         # Only what the app can actually ask for: a built pack, or a river a water
         # alias points at. registry/boundaries/ holds 3,194 files, more than twice
