@@ -933,20 +933,35 @@ export async function buildPlanPreviewHtml(p){
         const safeParams = params.includes('00065') && (site === '02148000' || (lakeEntry.name||'').toLowerCase().includes('wateree'))
           ? '00010' 
           : params;
-        const usgsUrl = `https://waterservices.usgs.gov/nwis/iv/?sites=${site}&parameterCd=${safeParams}&format=json&period=P2D`;
+        // api.waterdata.usgs.gov -- waterservices is decommissioned Q1 2027. latest-continuous
+        // returns every parameter at the site, so safeParams narrows it server-side exactly as
+        // parameterCd did, and the "temperature only" guard above still does its job.
+        const usgsSite = String(site).startsWith('USGS-') ? site : `USGS-${site}`;
+        const usgsUrl = `https://api.waterdata.usgs.gov/ogcapi/v0/collections/latest-continuous/items`
+          + `?monitoring_location_id=${encodeURIComponent(usgsSite)}`
+          + `&parameter_code=${encodeURIComponent(safeParams)}&limit=50&f=json`;
         const uController = new AbortController();
         const uTimeoutId = setTimeout(() => uController.abort(), 4000);
         const ur = await fetch(usgsUrl, { signal: uController.signal });
         clearTimeout(uTimeoutId);
         const ud = await ur.json();
-        if(ud && ud.value && ud.value.timeSeries){
-          const series = ud.value.timeSeries;
-          const tempSeries  = series.find(s=>s.variable.variableCode[0].value==='00010');
+        // OGC returns one feature per observation with the code on it, so the old
+        // s.variable.variableCode[0].value walk is gone.
+        const feats = Array.isArray(ud?.features) ? ud.features : [];
+        if (feats.length) {
+          const pick = (code) => {
+            for (const f of feats) {
+              const pr = (f && f.properties) || {};
+              if (pr.parameter_code !== code) continue;
+              if (pr.value === null || pr.value === undefined || pr.value === '') continue;
+              const n = Number(pr.value);              // value is a string by design
+              if (Number.isFinite(n) && n > -999999) return n;
+            }
+            return null;
+          };
+          const tempC = pick('00010');
           let parts = [];
-          if(tempSeries){
-            const vals = tempSeries.values[0].value;
-            const latest = vals[vals.length-1];
-            const tempC = parseFloat(latest.value);
+          if (tempC != null) {
             const tempF = Math.round(tempC * 9/5 + 32);
             parts.push(`Water temp: <b>${tempF}°F</b> (${tempC.toFixed(1)}°C)`);
             // Auto-fill water temp field if empty

@@ -6,8 +6,8 @@
  * only the current reading. The 30-day baseline needs the daily-values
  * service, so this module queries both:
  *
- *   /nwis/iv/  parameterCd=00060                  -> current discharge (cfs)
- *   /nwis/dv/  parameterCd=00060&statCd=00003     -> 30 days of daily means
+ *   latest-continuous  parameter_code=00060                      -> current discharge (cfs)
+ *   daily              parameter_code=00060 statistic_id=00003   -> 30 days of daily means
  *
  * Zones with no gauge (see coastal-zones.js usgsGauges) simply skip the
  * check; guessing from an unrelated basin would be worse than no signal.
@@ -16,8 +16,11 @@
 import { COASTAL_ZONES, isCoastalKey } from '../data/coastal-zones.js';
 import { assessFreshwaterIntrusion } from './coastal-scoring.js';
 
-const IV_BASE = 'https://waterservices.usgs.gov/nwis/iv/';
-const DV_BASE = 'https://waterservices.usgs.gov/nwis/dv/';
+// Migrated off waterservices.usgs.gov on 2026-08-06; that host is decommissioned in Q1 2027.
+// The browser can call this directly -- api.waterdata.usgs.gov answers with
+// `Access-Control-Allow-Origin: *`, checked before the change rather than assumed, because a
+// missing CORS header fails only in a real browser and passes every test in this file.
+const OGC = 'https://api.waterdata.usgs.gov/ogcapi/v0/collections';
 const DISCHARGE = '00060';
 const MEAN_STAT = '00003';
 
@@ -32,21 +35,47 @@ function cacheGet(key) {
 }
 function cacheSet(key, value) { _cache.set(key, { ts: Date.now(), value }); }
 
-/** Pull every numeric value out of a NWIS timeSeries payload. */
+/**
+ * Pull every numeric value out of a USGS payload, in either shape.
+ *
+ * The OGC API returns a GeoJSON FeatureCollection, one feature per observation. The old NWIS
+ * WaterML-JSON nested them under value.timeSeries[].values[].value[]. Both are handled: NWIS
+ * survives until its Q1 2027 decommission, and the tests that pin the -999999 sentinel and the
+ * "Ice" case are written against it, so they keep proving those rules through the transition.
+ *
+ * `value` is a STRING in both shapes -- deliberately in OGC's case, "to preserve precision".
+ */
 export function extractValues(payload) {
+  const out = [];
+  const push = (raw) => {
+    // '' and null must not reach Number(): Number('') is 0, and a phantom 0 cfs in a 30-day
+    // mean is the difference between a flooding river and a drought.
+    if (raw === null || raw === undefined || raw === '') return;
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > -999999) out.push(n);
+  };
+
+  const feats = Array.isArray(payload) ? payload
+              : (Array.isArray(payload?.features) ? payload.features : null);
+  if (feats) {
+    for (const f of feats) push(((f && f.properties) || f || {}).value);
+    return out;
+  }
+
   const series = payload?.value?.timeSeries;
   if (!Array.isArray(series)) return [];
-  const out = [];
   for (const s of series) {
     for (const block of s.values || []) {
-      for (const v of block.value || []) {
-        const n = parseFloat(v.value);
-        // NWIS uses -999999 as its no-data sentinel.
-        if (Number.isFinite(n) && n > -999999) out.push(n);
-      }
+      for (const v of block.value || []) push(v.value);
     }
   }
   return out;
+}
+
+/** `02171700` -> `USGS-02171700`, and leave an already-qualified id alone. */
+function locId(siteId) {
+  const s = String(siteId);
+  return s.startsWith('USGS-') ? s : `USGS-${s}`;
 }
 
 export function mean(values) {
@@ -62,17 +91,20 @@ async function getJson(url) {
 
 /** Most recent instantaneous discharge (cfs) for a site, or null. */
 export async function fetchCurrentDischarge(siteId) {
-  const url = `${IV_BASE}?sites=${encodeURIComponent(siteId)}` +
-    `&parameterCd=${DISCHARGE}&format=json&siteStatus=all`;
+  const url = `${OGC}/latest-continuous/items?monitoring_location_id=${encodeURIComponent(locId(siteId))}` +
+    `&parameter_code=${DISCHARGE}&limit=10&f=json`;
   const values = extractValues(await getJson(url));
   return values.length ? values[values.length - 1] : null;
 }
 
 /** Mean of the last `days` daily-mean discharges for a site, or null. */
 export async function fetchMeanDischarge(siteId, days = 30) {
-  const url = `${DV_BASE}?sites=${encodeURIComponent(siteId)}` +
-    `&parameterCd=${DISCHARGE}&statCd=${MEAN_STAT}` +
-    `&period=P${days}D&format=json&siteStatus=all`;
+  // `period=P30D` has no OGC equivalent -- it takes an explicit RFC 3339 interval, and `..`
+  // is its spelling of "to now".
+  const since = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10);
+  const url = `${OGC}/daily/items?monitoring_location_id=${encodeURIComponent(locId(siteId))}` +
+    `&parameter_code=${DISCHARGE}&statistic_id=${MEAN_STAT}` +
+    `&datetime=${encodeURIComponent(since + '/..')}&limit=${days + 10}&f=json`;
   return mean(extractValues(await getJson(url)));
 }
 

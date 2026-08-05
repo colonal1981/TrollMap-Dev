@@ -54,20 +54,39 @@ function getWorkerBase() {
   return String(window.TROLLMAP_WORKER_URL || window.TROLLMAP_WORKER_BASE || window.WORKER_URL || window.API_BASE || CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev').replace(/\/$/, '');
 }
 
-// GIS toggles historically use preloaded static tri-state arrays. Those arrays
-// do not include TN, so append the live TWRA worker feed before a layer is
-// built. The worker response is grouped by waterbody; flatten it into the
-// shape this renderer already consumes.
-async function loadTnWorkerRows(path, type) {
-  const res = await fetch(`${getWorkerBase()}${path}?state=TN`, { cache: 'no-store' });
-  if (!res.ok) throw new Error(`${path}?state=TN returned HTTP ${res.status}`);
+// Every state comes live from the Worker. The three static files this used to read
+// (data/tristate-hotspots.json, tristate-paddle.json, tristate-bank-pier.json) are
+// dead -- they were point-in-time snapshots of the same DNR services the Worker
+// already proxies, so they could only ever be staler than the live feed.
+//
+// This previously fetched `?state=TN` ONLY, and took SC/NC/GA from the snapshots.
+// That is why a new SCDNR attractor never appeared without someone regenerating a
+// JSON file by hand.
+//
+// The Worker caches each state in R2 and serves stale-on-upstream-failure
+// (see getCachedGis in Worker/core/arcgis.js), so the resilience the static files
+// used to provide already lives one layer down. Do not reintroduce a local fallback
+// here -- a second stale copy is how the snapshots drifted unnoticed in the first place.
+const GIS_STATES = ['SC', 'NC', 'GA', 'TN'];
+
+const STATE_SOURCE = { SC: 'SCDNR', NC: 'NCWRC', GA: 'GA DNR WRD', TN: 'TWRA' };
+
+// The Worker groups its response by waterbody; flatten to the shape this renderer
+// consumes. Returns [] rather than throwing so one bad state cannot blank the layer.
+async function loadWorkerRowsForState(path, type, state) {
+  const res = await fetch(`${getWorkerBase()}${path}?state=${state}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`${path}?state=${state} returned HTTP ${res.status}`);
   const payload = await res.json();
   const rows = [];
+  let dropped = 0;
   for (const [waterbody, items] of Object.entries(payload?.waterbodies || {})) {
     for (const item of normalizeRows(items)) {
       const lat = Number(item.lat);
       const lon = Number(item.lon);
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      // A source whose lat/lon accessors return null lands here and silently
+      // empties the state. Count it and say so -- Georgia's attractor config
+      // did exactly this and it was masked by the snapshot for a month.
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) { dropped++; continue; }
       rows.push({
         ...item,
         lat,
@@ -75,10 +94,14 @@ async function loadTnWorkerRows(path, type) {
         name: item.name || `${waterbody} ${type}`,
         type: item.type || type,
         waterbody,
-        state: 'TN',
-        source: 'TWRA'
+        state,
+        source: STATE_SOURCE[state] || state
       });
     }
+  }
+  if (dropped) {
+    console.warn(`[gis-toggles] ${state} ${type}: dropped ${dropped} record(s) with no usable lat/lon `
+      + `-- check the lat/lon accessors for ${state} in the Worker's ${path} config.`);
   }
   return rows;
 }
@@ -93,35 +116,56 @@ function appendUniqueRows(base, additions) {
   return out;
 }
 
-async function loadLayerRows(existingLoader, staticRows, workerPath, type) {
-  const base = existingLoader ? normalizeRows(await existingLoader()) : normalizeRows(staticRows);
-  try {
-    const tnRows = await loadTnWorkerRows(workerPath, type);
-    console.log(`[gis-toggles] Added ${tnRows.length} live TWRA ${type} records.`);
-    return appendUniqueRows(base, tnRows);
-  } catch (err) {
-    // Preserve existing SC/NC/GA functionality if a worker deployment is
-    // temporarily unavailable; TN will become available as soon as it is up.
-    console.warn(`[gis-toggles] TN ${type} feed unavailable:`, err.message);
-    return base;
+// All four states, in parallel, from the Worker. appendUniqueRows still runs because
+// a point can legitimately appear in two states' feeds on a border water (Wylie,
+// Hartwell, Thurmond, Chickamauga), and because SC/GA both publish some Savannah
+// River access.
+async function loadLayerRows(workerPath, type) {
+  const settled = await Promise.allSettled(
+    GIS_STATES.map(s => loadWorkerRowsForState(workerPath, type, s))
+  );
+
+  let rows = [];
+  const tally = [];
+  const failed = [];
+  settled.forEach((r, i) => {
+    const state = GIS_STATES[i];
+    if (r.status === 'fulfilled') {
+      tally.push(`${state} ${r.value.length}`);
+      rows = appendUniqueRows(rows, r.value);
+    } else {
+      failed.push(state);
+      console.warn(`[gis-toggles] ${state} ${type} feed unavailable:`, r.reason?.message || r.reason);
+    }
+  });
+
+  console.log(`[gis-toggles] ${type}: ${rows.length} live records (${tally.join(', ')})`
+    + (failed.length ? ` -- FAILED: ${failed.join(', ')}` : ''));
+
+  // Every state failing means the Worker is down or the route is broken, not that
+  // the data is empty. Say so loudly rather than drawing an empty layer that looks
+  // like "there is nothing here".
+  if (!rows.length && failed.length === GIS_STATES.length) {
+    console.error(`[gis-toggles] ${type}: ALL states failed -- layer will be empty. Check the Worker.`);
   }
+  return rows;
 }
 
 async function loadBankPier() {
   if (BANK_DATA) return BANK_DATA;
-  BANK_DATA = await loadLayerRows(window.TrollMapData?.loadBankPier, window.TRISTATE_MASTER_BANK_PIER, '/bank-pier', 'Bank / pier access');
+  BANK_DATA = await loadLayerRows('/bank-pier', 'Bank / pier access');
   return BANK_DATA;
 }
 
 async function loadPaddle() {
   if (PADDLE_DATA) return PADDLE_DATA;
-  PADDLE_DATA = await loadLayerRows(window.TrollMapData?.loadPaddle, window.TRISTATE_MASTER_PADDLE, '/paddle', 'Paddle launch');
+  PADDLE_DATA = await loadLayerRows('/paddle', 'Paddle launch');
   return PADDLE_DATA;
 }
 
 async function loadHotspots() {
   if (ATTRACTOR_DATA) return ATTRACTOR_DATA;
-  ATTRACTOR_DATA = await loadLayerRows(window.TrollMapData?.loadHotspots, window.TRISTATE_MASTER_HOTSPOTS, '/attractors', 'Fish attractor');
+  ATTRACTOR_DATA = await loadLayerRows('/attractors', 'Fish attractor');
   return ATTRACTOR_DATA;
 }
 

@@ -74,19 +74,27 @@ function say(msg, isErr) {
 
 /** Pull the latest temperature from a USGS gauge (00010 param). */
 async function fetchUsgsTemp(siteId) {
-  const url = `https://waterservices.usgs.gov/nwis/iv/?sites=${siteId}&parameterCd=00010&format=json&period=P1D`;
+  // api.waterdata.usgs.gov -- waterservices is decommissioned Q1 2027.
+  const id = String(siteId).startsWith('USGS-') ? siteId : `USGS-${siteId}`;
+  const url = 'https://api.waterdata.usgs.gov/ogcapi/v0/collections/latest-continuous/items'
+    + `?monitoring_location_id=${encodeURIComponent(id)}&parameter_code=00010&limit=10&f=json`;
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 4000);
     const res = await fetch(url, { signal: ctrl.signal });
     clearTimeout(timer);
     const data = await res.json();
-    const ts = data?.value?.timeSeries?.find((s) => s.variable.variableCode[0].value === '00010');
-    const vals = ts?.values?.[0]?.values || [];
-    const good = vals.filter((v) => v.value !== '' && v.value !== '-999999' && v.value != null);
-    if (!good.length) return null;
-    const tempC = parseFloat(good[good.length - 1].value);
-    return isFinite(tempC) ? Math.round(tempC * 9 / 5 + 32) : null;
+    // One feature per observation now; the code is on the feature rather than nested under
+    // variable.variableCode[0].value. `value` is a string, so guard '' before Number().
+    const feats = Array.isArray(data?.features) ? data.features : [];
+    for (const f of feats) {
+      const pr = (f && f.properties) || {};
+      if (pr.parameter_code !== '00010') continue;
+      if (pr.value === null || pr.value === undefined || pr.value === '') continue;
+      const tempC = Number(pr.value);
+      if (Number.isFinite(tempC) && tempC > -999999) return Math.round(tempC * 9 / 5 + 32);
+    }
+    return null;
   } catch (_) {
     return null;
   }
