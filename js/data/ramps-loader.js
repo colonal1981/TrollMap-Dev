@@ -58,10 +58,12 @@ const BACKGROUND_REFRESH_MS = 6 * 24 * 60 * 60 * 1000; // 6 days
 // The name TRISTATE_ is now wrong; it is kept because several modules import it by that name.
 export const TRISTATE_MASTER_RAMPS = { SC: {}, GA: {}, NC: {}, TN: {} };
 
-// Legacy parallel exports kept for any code that might reference them
-export const TRISTATE_MASTER_BANK_PIER = [];
-export const TRISTATE_MASTER_PADDLE    = [];
-export const TRISTATE_MASTER_HOTSPOTS  = [];
+// TRISTATE_MASTER_BANK_PIER / _PADDLE / _HOTSPOTS were here as empty arrays,
+// "kept for any code that might reference them". Nothing did except gis-toggles.js,
+// which passed them as a fallback that could only ever be empty. Bank-pier, paddle
+// and attractors are now fetched live from the Worker for all four states.
+// Deleted rather than left empty: an exported [] reads like a valid data source
+// and silently produces a blank layer instead of an error.
 
 // Promise that resolves when ramp data is fully loaded
 let _resolveReady;
