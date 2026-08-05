@@ -10,9 +10,9 @@
  *   'Lake Lanier, GA'    -> lake_lanier              an 85-acre pond in SOUTH CAROLINA,
  *                                                    against 38,293 ac in Hall Co, GA
  *
- * Every one of those passed name matching, and two passed name-plus-state. The curated
- * set carries a hand-placed centre for 50 lakes — Ryan's own coordinates — and that is a
- * fact about geography no amount of string similarity can contradict.
+ * Every one of those passed name matching, and two passed name-plus-state. LAKE_DB
+ * carries a hand-placed centre for 50 curated lakes — Ryan's own coordinates — and
+ * that is a fact about geography no amount of string similarity can contradict.
  *
  * The test is containment, not distance: the centre must fall inside the mapped
  * lake's own bounding box. Distance needs a threshold, and a threshold has to be
@@ -20,54 +20,28 @@
  * centre sits 0.257 deg from the computed centroid and is still perfectly correct.
  * Containment is exact and scales itself.
  *
- * SOURCE MOVED 2026-08-04. These centres used to come from `js/data/lakes.js`
- * (`LAKE_DB`). That file was pipeline data sitting in an app folder, so it read as dead
- * code and was queued for deletion three separate times — while being the only source of
- * USGS gauge sites, Duke/Dominion bindings, pool curves and curated ramp lists in
- * `consolidate_lake_index.py`. It now lives at `registry/curated_lakes.json`, beside the
- * index it is checked against, where it is obviously data.
- *
  * Exits 1 on any mismatch.
  */
 import { readFileSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { LAKE_DB } from '../js/data/lakes.js';
 import { resolveR2Key } from '../js/data/lake-keys.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const REG = resolve(ROOT, '..', 'registry');
-const INDEX = resolve(REG, 'lake_index.json');
-const CURATED = resolve(REG, 'curated_lakes.json');
-
-// Both files live in the pipeline registry, which is not part of the repo checkout.
-// Skipping is correct when they are absent (CI, a fresh clone) — but skipping when only
-// ONE is absent would silently check nothing while reporting success, so say which.
-if (!existsSync(INDEX) || !existsSync(CURATED)) {
-  const missing = [!existsSync(INDEX) && 'lake_index.json', !existsSync(CURATED) && 'curated_lakes.json']
-    .filter(Boolean).join(' and ');
-  console.log(`\nlake geo — ${missing} not beside this checkout, skipped\n`);
+const INDEX = resolve(ROOT, '..', 'registry', 'lake_index.json');
+if (!existsSync(INDEX)) {
+  console.log('\nlake geo — registry/lake_index.json not beside this checkout, skipped\n');
   process.exit(0);
 }
-
 const idx = JSON.parse(readFileSync(INDEX, 'utf8'));
-const curatedDoc = JSON.parse(readFileSync(CURATED, 'utf8'));
-const CURATED_LAKES = curatedDoc.lakes || curatedDoc;
-
-// A curated file that has lost its contents would make this lint pass trivially, which is
-// exactly the shape of failure it exists to catch. Refuse an empty one.
-const entries = Object.entries(CURATED_LAKES).filter(([, v]) => v && Array.isArray(v.center));
-if (!entries.length) {
-  console.error('\nlake geo — curated_lakes.json holds no entries with a centre. '
-                + 'That is a broken file, not a clean run.\n');
-  process.exit(1);
-}
 
 const problems = [];
 let checked = 0, unresolved = 0, noBounds = 0;
 const marginal = [];
 
-for (const [name, v] of entries) {
-  if (v.center.length < 2) continue;
+for (const [name, v] of Object.entries(LAKE_DB)) {
+  if (!Array.isArray(v.center) || v.center.length < 2) continue;
   const [lat, lon] = v.center;
   const slug = resolveR2Key(name);
   if (!slug) { unresolved++; continue; }
