@@ -1,7 +1,7 @@
-import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized, chartpackKey, handleChartpackList } from './worker-core.js'; 
+import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized, chartpackKey, handleChartpackList, r2Body } from './worker-core.js';
 
 // Bump on every edit to this file. See ARCGIS_BUILD in core/arcgis.js.
-const WORKER_BUILD = 'worker-2026-08-04f';
+const WORKER_BUILD = 'worker-2026-08-05a';
 
 import { LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard } from './worker-data.js';
 import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality } from './worker-species.js';
@@ -652,10 +652,11 @@ async function handleContourGeojsonGet(env, lake) {
   const obj = await env.R2_TROLLMAP_CHARTPACKS.get(key);
   if (!obj) return new Response(JSON.stringify({ error: "no vectorized contours for this lake yet" }), { headers: JSON_HEADERS, status: 404 });
   const vcHeaders = new Headers(CORS);
-  obj.writeHttpMetadata(vcHeaders);              // carry Content-Encoding (see chartpack route)
+  obj.writeHttpMetadata(vcHeaders);
+  const vcBody = r2Body(obj, vcHeaders);         // unwrap gzip here (see chartpack route)
   vcHeaders.set("Content-Type", "application/json");
   vcHeaders.set("Cache-Control", "no-store");
-  return new Response(obj.body, { headers: vcHeaders });
+  return new Response(vcBody, { headers: vcHeaders });
 }
 async function handleContourGeojsonPut(request, env, lake) {
   const body = await request.arrayBuffer();
@@ -1707,12 +1708,14 @@ var trollmap_worker_default = {
           if (geoObj) break;
         }
         if (!geoObj) return new Response(JSON.stringify({ error: "no boundary data found", lake: lakeName, tried: candidates }), { status: 404, headers: JSON_HEADERS });
-        const geoText = await geoObj.text();
+        const geoText = await r2Text(geoObj);
         return new Response(geoText, { headers: { ...CORS, "Content-Type": "application/json", "Cache-Control": "public, max-age=86400" } });
       }
 
       if (path === "/chartpacks/list") {
-        const data = await handleChartpackList(env);
+        // ?detail=1 adds a size and the stored encoding per object. Scripts/r2_audit.py needs
+        // both: one to say what a deletion frees, the other to verify a gzip re-upload landed.
+        const data = await handleChartpackList(env, { detail: url.searchParams.has("detail") });
         return new Response(JSON.stringify(data, null, 2), { headers: JSON_HEADERS });
       }
       if (path === "/debug/regs-cache") {
@@ -1796,15 +1799,17 @@ var trollmap_worker_default = {
           let ct = "application/octet-stream";
           if (file.endsWith(".png")) ct = "image/png";
           else if (file.endsWith(".json") || file.endsWith(".geojson")) ct = "application/json";
-          // writeHttpMetadata carries the stored Content-Encoding through. Without it a
-          // gzipped object is streamed as-is under a plain Content-Type, so the browser
-          // hands raw gzip bytes to r.json() and it throws. The pipeline uploads gzipped
-          // by default (depth_areas 24.2 MB -> 6.2 MB), so this is load-bearing.
+          // The pipeline uploads gzipped (depth_areas 24.2 MB -> 3.4 MB in R2). r2Body strips
+          // that layer here rather than echoing Content-Encoding, because the edge compresses
+          // the Worker's output again and the browser only unwraps once -- see the long note
+          // on r2Body in worker-core.js. writeHttpMetadata still runs first so anything else
+          // stored on the object survives; r2Body removes only what it invalidates.
           const headers = new Headers(CORS);
           obj.writeHttpMetadata(headers);
+          const body = r2Body(obj, headers);
           headers.set("Content-Type", ct);
           headers.set("Cache-Control", "no-store");
-          return new Response(obj.body, { headers });
+          return new Response(body, { headers });
         }
         if (request.method === "POST") {
           if (!await isAuthorized(request, env)) {

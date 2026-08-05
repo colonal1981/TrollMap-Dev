@@ -1,5 +1,5 @@
 // research/shared.js — split from worker-research.js (behavior-preserving)
-import { JSON_HEADERS } from '../worker-core.js';
+import { JSON_HEADERS, r2Text } from '../worker-core.js';
 import { STATE_REGULATIONS_CONFIG, fetchStateRegulations, getLakeRegulations, tinyfishFetch } from './clients.js';
 
 const SHARED_ROOT = 'research/shared';
@@ -252,7 +252,7 @@ async function getSharedPointer(env) {
   try {
     const obj = await env.R2_TROLLMAP_CHARTPACKS.get(`${SHARED_ROOT}/pointers/current.json`);
     if (!obj) return null;
-    return JSON.parse(await obj.text());
+    return JSON.parse(await r2Text(obj));
   } catch {
     // Intentionally silent: no pointer object is the normal state before the first shared
     // document is stored, and every caller treats null as "nothing shared yet".
@@ -261,14 +261,62 @@ async function getSharedPointer(env) {
   }
 }
 
+/**
+ * latest.json is an INDEX ENTRY, not a second copy of the document.
+ *
+ * It used to be the identical bytes: storeSharedDocument() wrote the full record to
+ * versions/<versionId>.json and then wrote it again, verbatim, to latest.json. 1,616 shared
+ * documents were stored as 3,375 objects, and roughly half a gigabyte of an 11.49 GB bucket
+ * was the same text twice, growing by a full copy every time a document changed.
+ *
+ * A pointer alone would have cost an extra GET on every publish -- handleSharedPublish walks
+ * every latest.json to build the generation manifest, and the manifest wants exactly these
+ * fields. So latest.json carries them inline and points at the version for the rest. Publish
+ * stays at one GET per document; the sections, which are all of the weight, live once.
+ *
+ * MIGRATION IS BY READ, NOT BY SCRIPT. Every latest.json written before 2026-08-05 is a full
+ * inline record with no `pointer` flag, and isLatestPointer() sorts them out. They rewrite
+ * themselves into the new shape the next time their document is stored. Nothing has to be
+ * backfilled and nothing breaks if it never is.
+ */
+function isLatestPointer(v) {
+  return !!(v && v.pointer === true && typeof v.versionId === 'string');
+}
+
+/** The manifest/index fields, lifted off a full record. Keep in step with handleSharedPublish. */
+function latestPointerFor(doc) {
+  return {
+    pointer: true,
+    id: doc.id,
+    versionId: doc.versionId,
+    canonicalUrl: doc.canonicalUrl,
+    title: doc.title,
+    authority: doc.authority,
+    scope: doc.scope,
+    lakeSlugs: doc.lakeSlugs,
+    indexStatus: doc.indexStatus,
+    sections: doc.sections?.length || 0,
+    contentFingerprint: doc.contentFingerprint,
+    fetchedAt: doc.fetchedAt,
+    lastCheckedAt: doc.lastCheckedAt,
+  };
+}
+
+async function readSharedKey(env, key) {
+  const obj = await env.R2_TROLLMAP_CHARTPACKS.get(key);
+  if (!obj) return null;
+  return JSON.parse(await r2Text(obj));
+}
+
 async function getSharedDocument(env, docId, versionId) {
   try {
-    const key = versionId
-      ? `${SHARED_ROOT}/documents/${docId}/versions/${versionId}.json`
-      : `${SHARED_ROOT}/documents/${docId}/latest.json`;
-    const obj = await env.R2_TROLLMAP_CHARTPACKS.get(key);
-    if (!obj) return null;
-    return JSON.parse(await obj.text());
+    if (versionId) {
+      return await readSharedKey(env, `${SHARED_ROOT}/documents/${docId}/versions/${versionId}.json`);
+    }
+    const latest = await readSharedKey(env, `${SHARED_ROOT}/documents/${docId}/latest.json`);
+    if (!latest) return null;
+    if (!isLatestPointer(latest)) return latest;   // pre-2026-08-05 inline copy
+    return await readSharedKey(env, `${SHARED_ROOT}/documents/${docId}/versions/${latest.versionId}.json`);
   } catch {
     // Intentionally silent: asking for a document (or a specific version of one) that was
     // never stored is a normal miss, and the caller renders "not found" from the null.
@@ -277,21 +325,34 @@ async function getSharedDocument(env, docId, versionId) {
   }
 }
 
+/** Just the index entry, without paying for the sections. Resolves either stored shape. */
+async function getSharedLatestSummary(env, docId) {
+  try {
+    const latest = await readSharedKey(env, `${SHARED_ROOT}/documents/${docId}/latest.json`);
+    if (!latest) return null;
+    return isLatestPointer(latest) ? latest : latestPointerFor(latest);
+  } catch {
+    return null;
+  }
+}
+
 async function storeSharedDocument(env, docRecord) {
   const { id, versionId } = docRecord;
   const vKey = `${SHARED_ROOT}/documents/${id}/versions/${versionId}.json`;
   const latestKey = `${SHARED_ROOT}/documents/${id}/latest.json`;
-  const json = JSON.stringify(docRecord, null, 2);
-  await env.R2_TROLLMAP_CHARTPACKS.put(vKey, json, { httpMetadata: { contentType: 'application/json' } });
-  await env.R2_TROLLMAP_CHARTPACKS.put(latestKey, json, { httpMetadata: { contentType: 'application/json' } });
+  // The version is the document. Written first, so a failure between the two puts leaves the
+  // old pointer aimed at a version that still exists rather than a new one that does not.
+  await env.R2_TROLLMAP_CHARTPACKS.put(vKey, JSON.stringify(docRecord, null, 2),
+    { httpMetadata: { contentType: 'application/json' } });
+  await env.R2_TROLLMAP_CHARTPACKS.put(latestKey, JSON.stringify(latestPointerFor(docRecord), null, 2),
+    { httpMetadata: { contentType: 'application/json' } });
 }
 
 async function getSharedRegistryEntry(env, canonicalUrl) {
   try {
     const docId = await urlToDocId(canonicalUrl);
-    const obj = await env.R2_TROLLMAP_CHARTPACKS.get(`${SHARED_ROOT}/documents/${docId}/latest.json`);
-    if (!obj) return null;
-    return JSON.parse(await obj.text());
+    // Full record: handleSharedCheck and handleSharedQuery both read doc.sections off this.
+    return await getSharedDocument(env, docId);
   } catch {
     // Intentionally silent: the registry lookup exists precisely to answer "has anyone
     // already fetched this URL?", and null is the legitimate "no" that the caller acts on.
@@ -328,12 +389,30 @@ async function handleSharedStore(request, env) {
   const fp = await contentFingerprint(title || '', fullText);
   const versionId = `v${Date.now()}`;
 
-  // Check if we already have this fingerprint — avoid re-storing unchanged content
-  const existing = await getSharedRegistryEntry(env, canonicalUrl);
+  // Check if we already have this fingerprint — avoid re-storing unchanged content.
+  //
+  // The summary carries contentFingerprint, so this is the cheap path: the common case for a
+  // re-crawl is "nothing changed", and it no longer costs a read of every section to find that
+  // out. It also stops rewriting the version record. A version is content at a point in time
+  // and the comment above this handler has always called it immutable; bumping lastCheckedAt
+  // on it made that untrue, and made an unchanged re-check a full-document WRITE.
+  const existing = await getSharedLatestSummary(env, docId);
   if (existing?.contentFingerprint === fp) {
-    // Update lastCheckedAt only
     existing.lastCheckedAt = new Date().toISOString();
-    await storeSharedDocument(env, existing);
+    // Narrowing a legacy inline latest.json down to a pointer THROWS AWAY the only copy of the
+    // sections if the version object it names is not actually there. head() is one cheap op
+    // against a data loss that has no undo; if the version is missing, leave the inline record
+    // alone and let it keep being the document.
+    const vExists = await env.R2_TROLLMAP_CHARTPACKS
+      .head(`${SHARED_ROOT}/documents/${docId}/versions/${existing.versionId}.json`)
+      .catch(() => null);
+    if (vExists) {
+      await env.R2_TROLLMAP_CHARTPACKS.put(
+        `${SHARED_ROOT}/documents/${docId}/latest.json`,
+        JSON.stringify({ ...existing, pointer: true }, null, 2),
+        { httpMetadata: { contentType: 'application/json' } }
+      );
+    }
     return new Response(JSON.stringify({ ok: true, docId, versionId: existing.versionId, unchanged: true }), { headers: JSON_HEADERS });
   }
 
@@ -427,21 +506,70 @@ async function handleSharedPublish(request, env) {
 
   const genId = `gen-${Date.now()}`;
   try {
-    // List all shared documents
-    const listed = await env.R2_TROLLMAP_CHARTPACKS.list({ prefix: `${SHARED_ROOT}/documents/` });
-    const latestKeys = listed.objects.filter(o => o.key.endsWith('/latest.json'));
+    // R2 list() returns at most 1,000 keys per call and sets truncated. This asked once and
+    // filtered what came back, so with 3,375 objects under research/shared/documents/ the
+    // "manifest of all stored documents" has been covering whatever the first page happened to
+    // contain -- and a short manifest looks exactly like a small registry. Paginate.
+    const latestKeys = [];
+    let cursor;
+    do {
+      const listed = await env.R2_TROLLMAP_CHARTPACKS.list({ prefix: `${SHARED_ROOT}/documents/`, cursor });
+      for (const o of listed.objects) if (o.key.endsWith('/latest.json')) latestKeys.push(o);
+      cursor = listed.truncated ? listed.cursor : null;
+    } while (cursor);
 
+    // Compaction is bounded per run. Rewriting 1,616 inline records in one invocation is a lot
+    // of parse work for a Worker on the free plan's CPU budget, and a publish that dies halfway
+    // through leaves no manifest at all. A budget means each publish makes definite progress and
+    // finishes; `inlineRemaining` in the response says how many are left, so it is obvious that
+    // running it again does something.
+    const COMPACT_BUDGET = 250;
     const manifest = { generationId: genId, publishedAt: new Date().toISOString(), documents: [] };
+    let compacted = 0, compactedBytes = 0, orphanVersions = 0, inlineRemaining = 0;
     for (const obj of latestKeys) {
       const docObj = await env.R2_TROLLMAP_CHARTPACKS.get(obj.key);
       if (!docObj) continue;
-      const doc = JSON.parse(await docObj.text());
+      const stored = JSON.parse(await r2Text(docObj));
+      // Since 2026-08-05 latest.json IS these fields; before that it was the whole document
+      // and `sections` was the array rather than its length. latestPointerFor() flattens the
+      // old shape into the new one, so this loop reads one object either way.
+      const doc = isLatestPointer(stored) ? stored : latestPointerFor(stored);
+
+      // PUBLISH IS THE MIGRATION. Every latest.json written before 2026-08-05 is a byte-for-byte
+      // second copy of its version object -- about half a gigabyte across 1,616 documents. They
+      // would otherwise only shrink when their document happened to be re-crawled, which for a
+      // dead upstream URL is never. This loop is already reading each one, it is authenticated,
+      // and it is the operation whose whole job is "make the shared registry consistent", so it
+      // is the right place. head() first: narrowing an inline record whose version object is
+      // missing would delete the only copy of its sections.
+      if (!isLatestPointer(stored)) {
+        if (compacted >= COMPACT_BUDGET) {
+          inlineRemaining++;
+        } else {
+          const vKey = `${SHARED_ROOT}/documents/${doc.id}/versions/${doc.versionId}.json`;
+          const vExists = doc.versionId ? await env.R2_TROLLMAP_CHARTPACKS.head(vKey).catch(() => null) : null;
+          if (vExists) {
+            await env.R2_TROLLMAP_CHARTPACKS.put(obj.key, JSON.stringify(doc, null, 2),
+              { httpMetadata: { contentType: 'application/json' } });
+            compacted++;
+            compactedBytes += Math.max(0, (obj.size || 0) - JSON.stringify(doc).length);
+          } else {
+            orphanVersions++;
+          }
+        }
+      }
+
       manifest.documents.push({
         id: doc.id, versionId: doc.versionId, canonicalUrl: doc.canonicalUrl,
         title: doc.title, authority: doc.authority, scope: doc.scope,
         lakeSlugs: doc.lakeSlugs, indexStatus: doc.indexStatus,
-        sections: doc.sections?.length || 0, fetchedAt: doc.fetchedAt
+        sections: doc.sections, fetchedAt: doc.fetchedAt
       });
+    }
+    if (compacted || orphanVersions || inlineRemaining) {
+      console.log(`[shared-publish] compacted ${compacted} inline latest.json (~${(compactedBytes / 1e6).toFixed(1)} MB freed), `
+                  + `${orphanVersions} left inline because their version object is missing, `
+                  + `${inlineRemaining} left for the next run`);
     }
 
     // Write generation manifest
@@ -454,7 +582,7 @@ async function handleSharedPublish(request, env) {
     // Rotate pointers — previous ← current, current ← new
     const currentObj = await env.R2_TROLLMAP_CHARTPACKS.get(`${SHARED_ROOT}/pointers/current.json`);
     if (currentObj) {
-      const current = await currentObj.text();
+      const current = await r2Text(currentObj);
       await env.R2_TROLLMAP_CHARTPACKS.put(`${SHARED_ROOT}/pointers/previous.json`, current, { httpMetadata: { contentType: 'application/json' } });
     }
     await env.R2_TROLLMAP_CHARTPACKS.put(
@@ -464,7 +592,10 @@ async function handleSharedPublish(request, env) {
     );
 
     console.log(`[shared-publish] generation ${genId} published — ${manifest.documents.length} documents`);
-    return new Response(JSON.stringify({ ok: true, generationId: genId, documentCount: manifest.documents.length }), { headers: JSON_HEADERS });
+    return new Response(JSON.stringify({
+      ok: true, generationId: genId, documentCount: manifest.documents.length,
+      compacted, compactedBytes, orphanVersions, inlineRemaining,
+    }), { headers: JSON_HEADERS });
   } catch (e) {
     return new Response(JSON.stringify({ ok: false, error: e.message }), { status: 500, headers: JSON_HEADERS });
   }
@@ -474,9 +605,33 @@ async function handleSharedPublish(request, env) {
 async function handleSharedStatus(request, env) {
   if (!sharedEnabled(env)) return new Response(JSON.stringify({ ok: true, enabled: false }), { headers: JSON_HEADERS });
   const pointer = await getSharedPointer(env);
-  const listed = await env.R2_TROLLMAP_CHARTPACKS.list({ prefix: `${SHARED_ROOT}/documents/` }).catch(() => ({ objects: [] }));
-  const latestCount = listed.objects.filter(o => o.key.endsWith('/latest.json')).length;
-  return new Response(JSON.stringify({ ok: true, enabled: true, pointer, storedDocuments: latestCount }), { headers: JSON_HEADERS });
+  // Paginated for the same reason as publish: one list() call caps at 1,000 keys, and this
+  // number is the one thing anyone checks to answer "how much is in the shared registry?"
+  let latestCount = 0, inlineCount = 0, bytes = 0, cursor;
+  do {
+    const listed = await env.R2_TROLLMAP_CHARTPACKS
+      .list({ prefix: `${SHARED_ROOT}/documents/`, cursor })
+      .catch(() => ({ objects: [], truncated: false }));
+    for (const o of listed.objects) {
+      bytes += o.size || 0;
+      if (!o.key.endsWith('/latest.json')) continue;
+      latestCount++;
+      // A compacted pointer is well under 2 KB; anything bigger is still an inline copy of its
+      // whole document. Size is a good enough proxy to avoid 1,616 GETs just to report a count.
+      if ((o.size || 0) > 2048) inlineCount++;
+    }
+    cursor = listed.truncated ? listed.cursor : null;
+  } while (cursor);
+  return new Response(JSON.stringify({
+    ok: true, enabled: true, pointer,
+    storedDocuments: latestCount,
+    bytes,
+    inlineLatestRemaining: inlineCount,
+    note: inlineCount
+      ? `${inlineCount} latest.json objects are still full inline copies of their version. `
+        + 'POST /research/shared/publish compacts up to 250 per run.'
+      : undefined,
+  }), { headers: JSON_HEADERS });
 }
 
 // ── POST /research/shared/quarantine ─────────────────────────────────────────
@@ -537,4 +692,5 @@ async function handleResearchRegsDebug(request, env) {
   }
 }
 
-export { SHARED_ROOT, SHARED_ENABLED_DEFAULT, sharedEnabled, contentFingerprint, urlToDocId, SECTION_HEADING_PREFIXES, CHUNK_SIZE, CHUNK_OVERLAP, segmentDocument, chunkText, LAKE_CATALOG, tagSectionsWithLakes, CATEGORY_KEYWORDS, tagSectionsWithCategories, getSharedPointer, getSharedDocument, storeSharedDocument, getSharedRegistryEntry, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine, isQuarantined, handleResearchRegsDebug };
+export { isLatestPointer, latestPointerFor, getSharedLatestSummary,
+  SHARED_ROOT, SHARED_ENABLED_DEFAULT, sharedEnabled, contentFingerprint, urlToDocId, SECTION_HEADING_PREFIXES, CHUNK_SIZE, CHUNK_OVERLAP, segmentDocument, chunkText, LAKE_CATALOG, tagSectionsWithLakes, CATEGORY_KEYWORDS, tagSectionsWithCategories, getSharedPointer, getSharedDocument, storeSharedDocument, getSharedRegistryEntry, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine, isQuarantined, handleResearchRegsDebug };

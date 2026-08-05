@@ -4,7 +4,7 @@
 // generated generic lake_${base} keys on miss, masking missing entries and
 // causing shoreline.geojson R2 misses → bbox self-derive failed → geospatial
 // adapter / thermocline pipeline silently skipped. Fixed by importing canonical map.
-import { JSON_HEADERS } from '../worker-core.js';
+import { JSON_HEADERS, r2Text } from '../worker-core.js';
 import { handleResearchThermoclineSearch } from './storage.js';
 import { LAKE_NAME_TO_R2_KEY as SUPPLEMENTAL_KEY_MAP, resolveR2Key } from '../../js/data/lake-keys.js';
 
@@ -25,7 +25,7 @@ async function handleResearchLimnologyData(request, env) {
       const lakeKey = resolveSupplementalKeyWorker(lakeName);
       const shorelineObj = await env.R2_TROLLMAP_CHARTPACKS.get(`${lakeKey}/shoreline.geojson`);
       if (!shorelineObj) throw new Error(`no shoreline.geojson in R2 for ${lakeKey}`);
-      const geo = JSON.parse(await shorelineObj.text());
+      const geo = JSON.parse(await r2Text(shorelineObj));
       const b = boundsOf(geo);
       if (!b) throw new Error('no coordinates extracted from shoreline');
       bboxWest  = b.west;

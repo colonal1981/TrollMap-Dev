@@ -322,33 +322,111 @@ function chartpackKey(lake, filename) {
   const safeFile = String(filename).replace(/[^a-z0-9_.\-\/]/gi, "_");
   return `${safeLake}/${safeFile}`;
 }
-async function handleChartpackList(env) {
-  const out = [];
+/**
+ * Every object in the bucket, grouped by the prefix before the first slash.
+ *
+ * `detail` turns each `files` entry from a bare name into { name, bytes, gzip }. Scripts/r2_audit.py
+ * is the caller: working out what can be deleted needs a size per OBJECT, and a per-lake total
+ * cannot answer "how much would dropping waterbody.geojson everywhere actually free?". `gzip`
+ * reports the stored Content-Encoding so a re-upload can be checked for having landed rather
+ * than assumed -- the 2026-08-05 storage work is invisible from the outside otherwise.
+ *
+ * The default shape is unchanged, because a summary of 12,972 objects should not cost 12,972
+ * inline records unless someone asked for them.
+ */
+async function handleChartpackList(env, { detail = false } = {}) {
+  const byName = new Map();
   let cursor;
+  let objects = 0;
   do {
-    const listed = await env.R2_TROLLMAP_CHARTPACKS.list({ cursor });
+    const listed = await env.R2_TROLLMAP_CHARTPACKS.list({
+      cursor,
+      include: detail ? ["httpMetadata"] : undefined,
+    });
     for (const obj of listed.objects) {
       const slash = obj.key.indexOf("/");
       if (slash < 0) continue;
       const lake = obj.key.slice(0, slash);
       const file = obj.key.slice(slash + 1);
-      let entry = out.find((e) => e.name === lake);
+      let entry = byName.get(lake);
       if (!entry) {
         entry = { name: lake, files: [], bytes: 0 };
-        out.push(entry);
+        byName.set(lake, entry);   // Map, not out.find() -- that was O(n^2) over 1,567 prefixes
       }
-      entry.files.push(file);
+      entry.files.push(detail
+        ? { name: file, bytes: obj.size || 0, gzip: obj.httpMetadata?.contentEncoding === "gzip" }
+        : file);
       entry.bytes += obj.size || 0;
+      objects++;
     }
     cursor = listed.truncated ? listed.cursor : null;
   } while (cursor);
-  for (const e of out) e.files.sort();
+  const out = [...byName.values()];
+  for (const e of out) {
+    e.files.sort((a, b) => String(detail ? a.name : a).localeCompare(String(detail ? b.name : b)));
+  }
   out.sort((a, b) => a.name.localeCompare(b.name));
-  return { chartpacks: out, count: out.length };
+  return {
+    chartpacks: out,
+    count: out.length,
+    objects,
+    bytes: out.reduce((n, e) => n + e.bytes, 0),
+  };
+}
+
+/**
+ * Body stream for an R2 object, decompressed here if it was stored gzipped.
+ *
+ * WHY THE WORKER UNWRAPS INSTEAD OF PASSING THE ENCODING THROUGH
+ *
+ * The old chartpack route called obj.writeHttpMetadata(headers) and streamed obj.body straight
+ * out. For a gzipped object that copies `Content-Encoding: gzip` onto the response -- and
+ * Cloudflare's edge then compresses the Worker's output AGAIN on the way to the browser. Two
+ * gzip layers arrive under one header, the browser unwraps exactly one, and r.json() gets a
+ * gzip stream and throws. That was measured on 2026-08-01 and the conclusion drawn from it was
+ * "storage is cheap, upload raw" -- which threw away 85% of the chartpack bytes to avoid a
+ * header problem. What the measurement actually proved is that PASSTHROUGH breaks. Unwrapping
+ * in the Worker was never tried.
+ *
+ * So: R2 stores one gzip layer, this strips it, and the edge re-compresses on the wire exactly
+ * as it already does for raw JSON. Storage drops, wire size is unchanged, and the browser sees
+ * plain JSON. DecompressionStream is a streaming transform -- it does not buffer the object
+ * and it does not read against the Worker's CPU budget the way a manual inflate would.
+ *
+ * Content-Length is deleted with the encoding: R2 reports the COMPRESSED size, and announcing
+ * it over a decompressed body truncates the response at the stored byte count. That failure
+ * looks like a corrupt JSON tail, not like a header bug, so it is worth the extra line.
+ *
+ * Safe on raw objects: no contentEncoding means the body is returned untouched.
+ */
+function r2Body(obj, headers) {
+  const enc = obj && obj.httpMetadata && obj.httpMetadata.contentEncoding;
+  if (!enc || String(enc).toLowerCase() !== "gzip") return obj.body;
+  headers.delete("Content-Encoding");
+  headers.delete("Content-Length");
+  return obj.body.pipeThrough(new DecompressionStream("gzip"));
+}
+
+/**
+ * Text of an R2 object, decompressed here if it was stored gzipped.
+ *
+ * obj.text() and obj.json() do NOT honour the stored Content-Encoding -- R2 hands back the
+ * bytes it holds, so on a gzipped object obj.text() returns gzip framing as mojibake and the
+ * JSON.parse after it throws "Unexpected token" on byte 0x1f. Every read-and-parse in this
+ * Worker goes through here so that whether a given key happens to be gzipped stops being
+ * something a caller has to know.
+ *
+ * Returns null for a missing object so `if (!obj)` callers can keep their shape.
+ */
+async function r2Text(obj) {
+  if (!obj) return null;
+  const enc = obj.httpMetadata && obj.httpMetadata.contentEncoding;
+  if (!enc || String(enc).toLowerCase() !== "gzip") return obj.text();
+  return new Response(obj.body.pipeThrough(new DecompressionStream("gzip"))).text();
 }
 
 // chartpackKey and handleChartpackList were defined here AND, byte for byte, again in
 // trollmap-worker.js -- and the copies here were not exported and not called, so this file
 // carried thirty lines that could never run while the live copy drifted independently.
 // Exported now; trollmap-worker.js imports them.
-export { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, isAuthorized, chartpackKey, handleChartpackList };
+export { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, isAuthorized, chartpackKey, handleChartpackList, r2Body, r2Text };

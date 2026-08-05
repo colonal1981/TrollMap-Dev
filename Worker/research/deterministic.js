@@ -1,5 +1,5 @@
 // research/deterministic.js — split from worker-research.js (behavior-preserving)
-import { JSON_HEADERS } from '../worker-core.js';
+import { JSON_HEADERS, r2Text } from '../worker-core.js';
 import { researchStorageId } from './keys.js';
 import { buildEvidence, buildFactualSummary, getAttractorFacts, getRampSpeciesFacts, uniqueResearchSpecies } from './facts-util.js';
 
@@ -168,7 +168,7 @@ async function handleResearchGetNormalized(env, lakeName) {
     if (obj) safe = LEGACY_PROFILE_KEYS[safe];
   }
   if (!obj) return new Response(JSON.stringify({ok:false, error:`no normalized documents for ${lakeName}`}), {status:404, headers:JSON_HEADERS});
-  const text = await obj.text();
+  const text = await r2Text(obj);
   let docs;
   try { docs = JSON.parse(text); } catch { return new Response(JSON.stringify({ok:false, error:"corrupt normalized documents"}), {status:500, headers:JSON_HEADERS}); }
   return new Response(JSON.stringify({ok:true, lakeName, count: docs.length, documents: docs}), {headers:JSON_HEADERS});

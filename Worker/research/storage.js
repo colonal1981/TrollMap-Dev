@@ -1,5 +1,5 @@
 // research/storage.js — split from worker-research.js (behavior-preserving)
-import { CORS, JSON_HEADERS, callLLM, extractLLMText } from '../worker-core.js';
+import { CORS, JSON_HEADERS, callLLM, extractLLMText, r2Text, r2Body } from '../worker-core.js';
 import { getLakeIntel, lakeKeyFromName } from '../worker-data.js';
 import { tinyfishSearch } from './clients.js';
 import { extractJsonPossibly, researchStorageId } from './keys.js';
@@ -30,7 +30,7 @@ async function handleResearchGet(env, lakeId) {
   const masterKey = `lakes/${safe}.json`;
   const obj = await env.R2_TROLLMAP_CHARTPACKS.get(masterKey);
   if (!obj) return new Response(JSON.stringify({ok:false, error:`no profile for ${lakeId} (${safe})`}), {status:404, headers:JSON_HEADERS});
-  const text = await obj.text();
+  const text = await r2Text(obj);
   let data;
   try {
     data = JSON.parse(text);
@@ -78,7 +78,7 @@ async function handleResearchSave(request, env) {
   try {
     const existingObj = await env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${safe}.json`);
     if (existingObj) {
-      const txt = await existingObj.text();
+      const txt = await r2Text(existingObj);
       const existing = JSON.parse(txt);
       existingMeta = existing.metadata || {};
       const v = parseInt(existingMeta.version || existingMeta.versionNumber || 0);
@@ -247,7 +247,7 @@ async function handleResearchApprove(request, env) {
   const masterKey = `lakes/${safe}.json`;
   const obj = await env.R2_TROLLMAP_CHARTPACKS.get(masterKey);
   if (!obj) return new Response(JSON.stringify({ok:false, error:`no profile for ${lakeName}`}), {status:404, headers:JSON_HEADERS});
-  const txt = await obj.text();
+  const txt = await r2Text(obj);
   let profile;
   try { profile = JSON.parse(txt); } catch { return new Response(JSON.stringify({ok:false, error:"corrupt JSON"}), {status:500, headers:JSON_HEADERS}); }
   profile.metadata = profile.metadata||{};
@@ -276,7 +276,7 @@ async function handleResearchDeleteNormalizedDoc(request, env) {
   if (!obj) return new Response(JSON.stringify({ ok: false, error: 'no normalized documents found' }), { status: 404, headers: JSON_HEADERS });
 
   let docs;
-  try { docs = JSON.parse(await obj.text()); } catch { return new Response(JSON.stringify({ ok: false, error: 'corrupt normalized documents' }), { status: 500, headers: JSON_HEADERS }); }
+  try { docs = JSON.parse(await r2Text(obj)); } catch { return new Response(JSON.stringify({ ok: false, error: 'corrupt normalized documents' }), { status: 500, headers: JSON_HEADERS }); }
 
   const normTarget = docUrl.split('?')[0].toLowerCase();
   const before = docs.length;
@@ -345,9 +345,9 @@ async function handleResearchPackageFile(env, lakeId, filename) {
   const key = `lake_packages/${safe}/${filename}`;
   const obj = await env.R2_TROLLMAP_CHARTPACKS.get(key);
   if (!obj) return new Response(JSON.stringify({ok:false, error:`no file ${filename} for ${lakeId}`}), {status:404, headers:JSON_HEADERS});
-  const body = await obj.arrayBuffer();
   const ct = filename.endsWith('.json') ? 'application/json' : filename.endsWith('.md') ? 'text/markdown' : 'application/octet-stream';
-  return new Response(body, {headers: {...CORS, "Content-Type": ct, "Cache-Control":"no-store"}});
+  const pkgHeaders = new Headers({...CORS, "Content-Type": ct, "Cache-Control": "no-store"});
+  return new Response(r2Body(obj, pkgHeaders), {headers: pkgHeaders});
 }
 
 async function handleEnhancedLakeIntel(lakeName, env) {
@@ -365,7 +365,7 @@ async function handleEnhancedLakeIntel(lakeName, env) {
       obj = await env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${safeKey}.json`);
     }
     if (obj) {
-      const txt = await obj.text();
+      const txt = await r2Text(obj);
       researchedProfile = JSON.parse(txt);
       researched = {
         exists: true,

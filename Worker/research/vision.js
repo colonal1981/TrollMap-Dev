@@ -1,5 +1,5 @@
 // research/vision.js — split from worker-research.js (behavior-preserving)
-import { JSON_HEADERS } from '../worker-core.js';
+import { JSON_HEADERS, r2Text } from '../worker-core.js';
 import { resolveSupplementalKeyWorker } from './limnology.js';
 
 import { boundsOf } from '../../js/utils/geojson-coords.js';
@@ -20,12 +20,12 @@ async function handleResearchVisionScan(request, env) {
     let boundarySource = null;
     const shorelineObj = await env.R2_TROLLMAP_CHARTPACKS.get(`supplemental/${resolvedKey}/shoreline.geojson`);
     if (shorelineObj) {
-      geo = JSON.parse(await shorelineObj.text());
+      geo = JSON.parse(await r2Text(shorelineObj));
       boundarySource = 'shoreline';
     } else {
       const boundaryObj = await env.R2_TROLLMAP_CHARTPACKS.get(`boundaries/${resolvedKey}_3dhp.geojson`);
       if (boundaryObj) {
-        geo = JSON.parse(await boundaryObj.text());
+        geo = JSON.parse(await r2Text(boundaryObj));
         boundarySource = '3dhp_boundary';
       }
     }
@@ -201,7 +201,7 @@ async function handleResearchVisionScanStatus(request, env) {
   try {
     const statusObj = await env.R2_TROLLMAP_CHARTPACKS.get(`supplemental/${resolvedKey}/vision-scan-status.json`);
     if (!statusObj) return new Response(JSON.stringify({ ok: true, status: 'not_started' }), { headers: JSON_HEADERS });
-    const status = JSON.parse(await statusObj.text());
+    const status = JSON.parse(await r2Text(statusObj));
     // Check if GeoJSON result also exists
     const resultObj = await env.R2_TROLLMAP_CHARTPACKS.head(`supplemental/${resolvedKey}/vision-structure.geojson`);
     return new Response(JSON.stringify({ ok: true, ...status, hasResult: !!resultObj }), { headers: JSON_HEADERS });

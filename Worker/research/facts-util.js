@@ -1,5 +1,5 @@
 // research/facts-util.js — split from worker-research.js (behavior-preserving)
-import { callLLM, extractLLMText } from '../worker-core.js';
+import { callLLM, extractLLMText, r2Text } from '../worker-core.js';
 import { hasResearchValue } from '../../js/utils/coerce.js';
 
 function normalizeResearchName(s) {
@@ -352,7 +352,7 @@ async function fetchArcGISGrouped(env, cacheKey, sourceDef, buildRecord) {
   try {
     const cached = await env.R2_TROLLMAP_CHARTPACKS.get(cacheKey);
     if (cached) {
-      const txt = await cached.text();
+      const txt = await r2Text(cached);
       return JSON.parse(txt);
     }
   } catch (err) {

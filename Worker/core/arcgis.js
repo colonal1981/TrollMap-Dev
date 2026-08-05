@@ -2,6 +2,8 @@
 // Extracted from trollmap-worker.js 4 copy-paste blocks (Phase P1 dedupe)
 // Behavior-preserving: same pagination, same cache TTL, same waterbody grouping, same R2 keys
 
+import { r2Text } from '../worker-core.js';
+
 const PAGE_SIZE = 1000;
 
 /**
@@ -14,7 +16,7 @@ const PAGE_SIZE = 1000;
  * on main. The two markers being out of step means the bundle is stale or the
  * build did not pick this file up.
  */
-export const ARCGIS_BUILD = 'arcgis-2026-08-04e';
+export const ARCGIS_BUILD = 'arcgis-2026-08-05a';
 
 /**
  * Is this ArcGIS yes/no flag set?
@@ -98,7 +100,7 @@ export async function getCachedGis(env, cacheKey, ttlDays) {
     const ageMs = fetchedAt ? Date.now() - fetchedAt.getTime() : Infinity;
     const ttlMs = ttlDays * 24 * 60 * 60 * 1000;
     if (ageMs < ttlMs) {
-      const body = await cached.text();
+      const body = await r2Text(cached);
       return { hit: true, body, ageMs, meta, uploaded: cached.uploaded };
     }
     return { hit: false, stale: cached, ageMs };
@@ -353,7 +355,7 @@ export async function handleGisRoute({ env, url, cachePrefix, ttlDays, sources, 
     try {
       const stale = await env.R2_TROLLMAP_CHARTPACKS.get(cacheKey);
       if (stale) {
-        const raw = await stale.text();
+        const raw = await r2Text(stale);
         let body = raw;
         try {
           const parsed = JSON.parse(raw);
