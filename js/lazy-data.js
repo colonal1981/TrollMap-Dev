@@ -51,16 +51,11 @@ async function loadJsonRows(path) {
   }
 }
 
-window.TrollMapData = {
-  async loadBankPier() {
-    return await loadJsonRows('./data/tristate-bank-pier.json');
-  },
-
-  async loadPaddle() {
-    return await loadJsonRows('./data/tristate-paddle.json');
-  },
-
-  async loadHotspots() {
-    return await loadJsonRows('./data/tristate-hotspots.json');
-  },
-};
+// loadBankPier / loadPaddle / loadHotspots lived here and read
+// data/tristate-bank-pier.json, tristate-paddle.json and tristate-hotspots.json.
+// All three were point-in-time snapshots of DNR ArcGIS services the Worker already
+// proxies live, and they were the reason a new SCDNR attractor never appeared
+// without someone regenerating a file by hand. gis-toggles.js now pulls all four
+// states from the Worker. The loaders and the files are deleted, deliberately --
+// re-adding a local snapshot reintroduces the drift.
+window.TrollMapData = {};

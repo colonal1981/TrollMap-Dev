@@ -101,12 +101,19 @@ LAYERS = {
     "hydrography":      "hydrography.geojson",
     "garmin_shoreline": "garmin_shoreline.geojson",
     "pois":             "pois.geojson",
+    # The MAR routing graph. BINARY, not JSON -- see the content type below and
+    # build_water_graphs.py for the format. Opt-in, because it is built by a separate
+    # pass and a routine pack upload should not silently expect it to exist.
+    "water_graph":      "water_graph.bin",
+    # Humps, ledges and slope, computed by build_structure.py from the contours in
+    # this same pack. Opt-in for the same reason: a separate pass builds it.
+    "structure":        "structure.geojson",
     "areas":            "areas.geojson",
     "boundary":         "boundary.geojson",
 }
 # Not uploaded unless named explicitly with --layers. `boundary` would replace the NHD/3DHP
 # polygon the app renders as the lake outline.
-LAYERS_OPT_IN = {"boundary", "areas"}
+LAYERS_OPT_IN = {"boundary", "areas", "water_graph", "structure"}
 
 # ── What R2 does not need ─────────────────────────────────────────────────────────────
 #
@@ -230,8 +237,13 @@ def put(local, key, gz, dry, timeout):
             n = src.stat().st_size
             if dry:
                 return True, n, "dry"
+            # Content type follows the OBJECT, not the script. Everything here was JSON until
+            # water_graph.bin, and serving a binary graph as application/json would have the
+            # Worker and the browser both reading it as text.
+            ctype = ("application/octet-stream" if key.endswith(".bin")
+                     else "application/json")
             cmd = ["node", WRANGLER_JS, "r2", "object", "put", f"{BUCKET}/{key}",
-                   "--file", str(src), "--content-type", "application/json",
+                   "--file", str(src), "--content-type", ctype,
                    "--remote", *extra]
             r = subprocess.run(cmd, capture_output=True, timeout=timeout)
             out = (r.stdout + r.stderr).decode("utf-8", "replace")

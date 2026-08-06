@@ -268,66 +268,6 @@ export async function getTideStateForZone(zoneKey, { dateStr, when } = {}) {
  * Returns the charted depth unchanged when no tide height is available, so
  * callers degrade to conservative MLLW numbers rather than NaN.
  */
-/**
- * The one tide height every depth-drawing layer reads.
- *
- * Three layers used to answer "what does tide do?" three different ways: soundings shifted
- * value and colour, depth polygons shifted colour but not their printed range, and contour
- * lines did nothing at all. Two of them kept their own copy of the number --
- * `_coastalTideHeightFt` in supplemental-layers.js and a `tideFt` argument threaded through
- * coastal-layers.js -- with a `window._trollmapTide` global read as a third fallback. Ryan,
- * looking at Murrells Inlet: "only the soundings change for the tide so it looks off."
- *
- * One owner, set once when tides sync, read by everyone.
- */
-let _displayTideFt = null;
-
-/** Set (or clear, with null) the tide height every layer will apply. */
-export function setDisplayTide(ft) {
-  // Number(null) is 0 and 0 is a perfectly valid tide height, so clearing the tide by
-  // passing null would otherwise pin every layer to "dead low" instead of "unknown" --
-  // and isTideCorrected() would report true with no tide data behind it.
-  if (ft === null || ft === undefined || ft === '') {
-    _displayTideFt = null;
-    return null;
-  }
-  const v = Number(ft);
-  _displayTideFt = Number.isFinite(v) ? v : null;
-  return _displayTideFt;
-}
-
-export function getDisplayTide() {
-  return _displayTideFt;
-}
-
-/** True when depths on screen are tide-corrected rather than charted MLLW. */
-export function isTideCorrected() {
-  return Number.isFinite(_displayTideFt);
-}
-
-/**
- * What a layer should DRAW for a charted depth.
- *
- * `isCoastal` is required rather than inferred, deliberately. A stale coastal tide leaking
- * onto a freshwater lake would silently add five feet to every contour on Murray, and the
- * only symptom would be depths that look slightly generous -- the worst kind of wrong on a
- * chart. Lakes never tide-correct; the caller has to say the water is tidal.
- *
- * Verified 2026-08-04 that this is sound for the primary band: Garmin's coastal contours are
- * MLLW-referenced like NOAA's soundings, measured against 1,018 soundings in Murrells Inlet
- * (offset collapses to a median of 0.00 ft as the match tightens, and shows no trend with
- * depth). Same datum, so one offset is correct for all three layers.
- * See COASTAL_DATUM_AND_THREE_PALETTES_2026-08-04.md.
- */
-export function displayDepth(chartedFt, isCoastal) {
-  if (!isCoastal) {
-    if (chartedFt === null || chartedFt === undefined || chartedFt === '') return null;
-    const d = Number(chartedFt);
-    return Number.isFinite(d) ? d : null;
-  }
-  return tideAdjustedDepth(chartedFt, _displayTideFt);
-}
-
 export function tideAdjustedDepth(chartedDepthFt, tideHeightFt) {
   // Guard null/'' explicitly: Number(null) and Number('') are both 0, which
   // would quietly turn "no depth recorded" into "0 ft of water".

@@ -39,7 +39,7 @@ CALIBRATED, NOT TABULATED
   two-pool note, 21 with tail 8 in the unified-grammar note). Scanning for u32 values that land
   on a real <gml> start settles it from the data.
 """
-import argparse, json, os, re, struct, sys
+import argparse, bisect, json, os, re, struct, sys
 from collections import Counter, defaultdict
 
 # Resolve sibling modules from this file's own directory, not a hardcoded path, so the
@@ -144,6 +144,14 @@ NAME_CLASS_5_1 = (
 NAME_CLASS_VETO = re.compile(r'\bruins?\b|\bclosed\b|\bformer\b|\bldg line\b', re.I)
 # Mode 2/7, matched as a SUBSTRING of the pool-2 string. Order matters: the first hit wins, so
 # the specific classes precede the bare shape names that every string ends with.
+# Is a pool-2 phrase a charted aid / regulatory marker, as opposed to a business card fragment
+# or chart prose? Same vocabulary NAVAID_CLASS keys on, plus the shape names Garmin appends.
+NAVAID_HINT = re.compile(
+    r'buoy|beacon|light|daybeacon|marker|no wake|minimum wake|reduced wake|hazard|caution|'
+    r'warning|danger|prohibit|restricted|keep clear|swim|intake|obstruct|no boats|'
+    r'spar/spindle|cylindrical/can|conical/nun|pillar|spherical|stake/pole|lattice|'
+    r'landmark|shoal|wreck|fish attractor', re.I)
+
 NAVAID_CLASS = (
     ('no wake',                 'slow_no_wake'),
     ('minimum wake',            'slow_no_wake'),
@@ -290,29 +298,91 @@ def card(det, off):
     return {'name': name or (lines[0] if lines else None), 'lines': body, 'services': svc}
 
 
-def navaid_vocab(det):
-    """Recover the plain navaid phrases between the cards, and require them to tokenise the
-    region EXACTLY. A tile whose vocabulary leaves residue is gated out rather than guessed at."""
-    spans = [(m.start(), m.end()) for m in re.finditer(rb'<gml>.*?</gml>', det, re.S)]
-    regions = []; prev = 0
-    for s, e in spans:
-        if s > prev: regions.append((prev, s))
-        prev = e
-    if prev < len(det): regions.append((prev, len(det)))
-    regions = [(s, e) for s, e in regions if e - s > 4]
-    text = ''.join(det[s:e].decode('latin1') for s, e in regions)
-    vocab = sorted({p for p in re.split(r'(?<=[a-z\)])(?=[A-Z"])', text) if 3 <= len(p) <= 60},
-                   key=len, reverse=True)
-    starts = {}; ok = True
-    for s, e in regions:
-        t = det[s:e].decode('latin1'); p = 0
-        while p < len(t):
-            for v in vocab:
-                if t.startswith(v, p):
-                    starts[s + p] = v; p += len(v); break
-            else:
-                ok = False; p += 1
-    return starts, ok
+# A pool-2 phrase begins where the previous one ends, and pool 2 marks that with a CASE CHANGE
+# rather than a delimiter: "...Spar/Spindle BuoyShallow Area, Spar/Spindle Buoy". Lower, digit,
+# paren or period, followed by upper or quote. Spaces protect the inside of a phrase, so
+# "Stono River Light 55, Stake/Pole, permanent" survives whole while the next phrase splits off.
+# NOT `.` in the lookbehind. A period before a capital is usually an abbreviation, not a
+# boundary: `Maintained by U.S. Navy` split at `U.` and delivered
+# `Cooper River Monitoring Station Obstruction Light D, Maintained by U.` -- a real light,
+# truncated, and then thrown away by the chart-note filter for ending in a full stop.
+# Real aid descriptions end in a lowercase word (`permanent`, `private`) or a shape, so
+# lower/digit/paren before a capital is enough to find every genuine boundary.
+_PHRASE_BREAK = re.compile(rb'(?<=[a-z\)\d"])(?=[A-Z"])')
+
+
+# CHART NOTES ARE NOT LABELS.
+#
+# Pool 2 carries per-cell chart prose alongside the aid descriptions, and the references land
+# on it the same way. The commonest by a wide margin is
+#
+#     "The location of all buoys within this cell were accurate at the time of source date.
+#      Buoys should always be used with caution as they may be carried off position."
+#
+# -- 1,519 records in a 300-tile sample, every one of them typed `caution_buoy` because
+# NAVAID_CLASS matched the word "caution" in a disclaimer. Card-wide that is roughly 13,000
+# invented caution buoys, each labelled with a paragraph.
+#
+# The tell is the full stop. A real aid description ends in a shape or a status token --
+# `Stake/Pole, permanent`, `Pillar Buoy, Periodically/intermittent`, `None/Unknown` -- never in
+# a sentence. That keeps the aids whose description merely OPENS with a long remark, which are
+# real and common: `Higher intensity on rangeline, Doubling Point Rear Range Light, ...,
+# Beacon Tower, permanent`.
+def _is_chart_note(t):
+    return len(t) > 60 and t.rstrip().endswith('.')
+
+
+def navaid_phrases(det):
+    """Index pool 2 by phrase start: {byte_offset: text}.
+
+    THE REFERENCE IS A DIRECT BYTE OFFSET INTO POOL 2 and it lands on a phrase start --
+    measured on B4E0FC (Charleston): mode 1/0 205 records 100%, 2/19 125 records 100%,
+    2/20 110 records 99%, 2/10 87 records 98%, 2/9 59 records 100%, 2/7 64 records 98%.
+
+    The previous implementation did not use that. It rebuilt a vocabulary by splitting the whole
+    region on case transitions, greedily re-tokenised the region with it, and returned ok=False
+    if a single byte was left over -- and `extract()` gated the ENTIRE navaid layer on that flag.
+    Wateree's 8,907-byte pool with 176 phrases tokenises cleanly and passes. Charleston's
+    318,924-byte pool with 1,145 phrases does not, so every light, daybeacon and buoy in the
+    harbour was discarded, each having resolved correctly. Card-wide the cost was 2,193 of
+    2,589 tiles emitting zero navaids -- and it is why the i-Boating comparison reported that
+    Garmin matched 4.5% of i-Boating's POIs when 57% of them are navaids.
+
+    Indexing by start needs no reference list and cannot be gated out: a reference either lands
+    on a phrase or it does not, per record, and a miss costs that record only.
+    """
+    if not det: return {}
+    stops = sorted({0, len(det)}
+                   | {m.start() for m in _PHRASE_BREAK.finditer(det)}
+                   | {m.start() for m in re.finditer(rb'<gml>', det)}
+                   | {m.end()   for m in re.finditer(rb'</gml>', det)})
+    out = {}
+    for i, a in enumerate(stops[:-1]):
+        seg = det[a:min(stops[i + 1], a + 300)]
+        if seg[:5] == b'<gml>':          # a business card, resolved by card() not here
+            continue
+        t = seg.decode('latin1')
+        # Chart prose is appended to some phrases as HTML -- `Landmark, None/Unknown<P>RESTRICTED
+        # AREA<BR>NAVIGATION REGULATIONS...`. The phrase is the part before the first tag; the
+        # prose is a page of CFR text that belongs on no pin.
+        cut = t.find('<')
+        if cut > 0: t = t[:cut]
+        t = t.strip()
+        if len(t) >= 3 and any(c.isalpha() for c in t) and not _is_chart_note(t):
+            out[a] = t
+    return out
+
+
+def phrase_ref(b, off, reclen):
+    """The pool-2 pointer sits at `reclen - 4`, 3 bytes little-endian, in EVERY mode.
+
+    Session A established this for mode 2/7 and it was applied there and nowhere else. On a
+    coastal tile that is one mode out of eleven: 1/0, 2/6, 2/9, 2/10, 2/19, 2/20, 2/21, 2/22,
+    2/23 and 2/11 all carry it, all resolve at 87-100%, and all were being emitted as
+    `place_name` with a pool-1 label or no label at all.
+    """
+    p = off + reclen - 4
+    return int.from_bytes(b[p:p + 3], 'little') if reclen >= 8 and p + 3 <= len(b) else None
 
 
 def uniform(b, reclen):
@@ -379,21 +449,43 @@ def frame(hdr, b, mode, pool, cards, default, w=None, h=None):
         if rl and rl >= 5:
             return uniform(b, rl), None, 'uniform'
 
-    # No usable count. Fall back to the pre-count scorer, which is what this file did before.
+    # THE FALLBACK, AND WHY EXACT CLOSURE WAS THE WRONG TEST.
+    #
+    # This path used to require `used == len(b)` -- the walk had to consume the payload to the
+    # last byte. Measured on the worst-affected 5/1 sub-block of B4E0FC (stated count 51,
+    # 512-byte payload):
+    #
+    #     tail  records  used  in-box  labels resolving
+    #        0       49   508      43                43     <- obviously right, REJECTED
+    #        3       35   512       3                 3     <- obviously wrong, ACCEPTED
+    #
+    # Tail 0 leaves a 4-byte remainder, so it was thrown out, and tail 3 -- which closes to the
+    # byte and puts 3 records of 35 inside their own subdivision -- won by default. Every
+    # record in that sub-block then failed the box check and was discarded.
+    #
+    # Closure was only ever a proxy for correct framing. The direct evidence is already
+    # computed below: how many records land inside the subdivision they belong to, and how many
+    # label references resolve to a real string. A trailing remainder is a sub-block trailer,
+    # not a decode failure, so allow one and let the evidence decide.
+    CLOSURE_SLACK = 16
     best = None
     for tail in sorted({default} | set(range(0, 26))):
         _G.MODE_TAIL[mode] = tail
         recs, used = walk(b, mode)
-        if used != len(b) or not recs: continue
+        if not recs or used > len(b) or used < len(b) - CLOSURE_SLACK: continue
         nres = sum(1 for r in recs if r['ref'] is not None and B.label(pool, r['ref']))
         nbad = sum(1 for r in recs if w is not None and (abs(r['dx']) > w or abs(r['dy']) > h))
         ncard = sum(1 for r in recs for off in range(0, r['len'] - 3)
                     if r['off'] + off + 4 <= len(b) and u32(b, r['off'] + off) in cards)
-        score = (-nbad, nres, ncard, tail == default)
+        # In-box fraction leads, then labels, then cards; a tail that closes exactly is
+        # preferred only as a tie-break, which is the weight closure actually deserves.
+        score = (-nbad, nres, ncard, used == len(b), tail == default)
         if best is None or score > best[0]: best = (score, tail, recs)
     _G.MODE_TAIL[mode] = default
     if best is None:
-        return walk(b, mode)[0], None, 'fit'
+        # Nothing framed. Emitting the default walk here put arbitrary coordinates into the
+        # output and left the box check to bin them one by one; say so instead.
+        return [], None, 'unframed'
     return best[2], best[1], 'fit'
 
 
@@ -429,7 +521,6 @@ def extract(path):
     pool = B.lbl_pool(path)
     det = detail_pool(path)
     cards = card_starts(det)
-    nav, nav_ok = navaid_vocab(det)
     pr, _ = poi_rows(T)
     N, E = s24(T.tre, 0x15) * UNIT24, s24(T.tre, 0x18) * UNIT24
     S, W = s24(T.tre, 0x1B) * UNIT24, s24(T.tre, 0x1E) * UNIT24
@@ -441,6 +532,8 @@ def extract(path):
         if not sbs: continue
         for hdr, b in sbs:
             bym[(hdr[0], hdr[1])].append((hdr, b, sd))
+
+    nav = navaid_phrases(det)
 
     card_off = calibrate_card_offset(bym, det, cards, pool)
     st = Counter(); out = []
@@ -473,6 +566,17 @@ def extract(path):
                 # unsolved symbol class into a re-extraction of the whole card.
                 name = B.label(pool, r['ref']) if r['ref'] is not None else None
                 if name and not OKTEXT.match(name): name = None
+                # POOL-2 PHRASE, EVERY MODE -- not just 2/7. See phrase_ref().
+                # It is richer than the pool-1 label (`Stono River Light 55, Stake/Pole,
+                # permanent` vs nothing) and it is what NAVAID_CLASS is written to read, so it
+                # wins when both are present.
+                pr2 = phrase_ref(b, r['off'], r['len'])
+                phrase = nav.get(pr2) if pr2 is not None else None
+                if phrase and NAVAID_HINT.search(phrase):
+                    name = phrase
+                    st['navaid_pool2_' + m] += 1
+                else:
+                    phrase = None
                 if name: st['named'] += 1
                 else: st['unnamed'] += 1
                 if abs(r['dx']) > w or abs(r['dy']) > h:
@@ -496,6 +600,10 @@ def extract(path):
                 # with the record rather than being folded into the mode name.
                 if 'cls' in r: p['class_byte'] = r['cls']
                 if name: p['name'] = name.replace('\n', ' ')
+                if phrase:
+                    p['navaid'] = True
+                    p['class'] = phrase.split(',')[0].strip()
+                    p['source'] = 'RGN4 pool-2 phrase at reclen-4'
                 if mode in card_off:
                     cp = r['off'] + card_off[mode]
                     if cp + 4 <= len(b) and u32(b, cp) in cards:
@@ -518,62 +626,31 @@ def extract(path):
     #
     # 2 sub-blocks state no usable count and are skipped rather than searched, since a stride
     # found by search is exactly the kind of fit the count exists to retire.
-    # THE GATE USED TO BE `if nav_ok:` AND IT COST 94% OF THE NAVAIDS.
-    #
-    # navaid_vocab() requires its recovered phrases to tokenise the tile's text regions EXACTLY,
-    # and one unmatched byte anywhere set ok=False. The whole tile's mode 2/7 records were then
-    # dropped, leaving a single stat counter behind. Measured 2026-08-06 over the full
-    # four-state extract: 8 tiles of 143 passed, 451 navaids survived out of 249,405 POIs, and
-    # B4E0F1 had 68 while B4E0F0 next door -- same lake system, 3,288 POIs -- had none. Ryan,
-    # correctly: "there is 0 chance this is right."
-    #
-    # The intent was sound and is kept: a mis-tokenised vocabulary can map a reference to the
-    # WRONG phrase, and poi_type() falls back to 'nav_buoy' for any navaid string it cannot
-    # classify -- so residue could silently invent buoys. The fix is to narrow the blast radius
-    # from the tile to the record.
-    #
-    #   clean tile  (nav_ok)  -- unchanged. Every record emitted, nav_buoy fallback intact.
-    #   tile with residue     -- emit only records whose phrase POSITIVELY classifies against
-    #                            NAVAID_CLASS. Anything relying on the fallback is counted and
-    #                            dropped, because that is the one that could be residue.
-    #
-    # Note the per-record guard three lines below (`if nm is None: continue`) already discards a
-    # reference that resolves to nothing. The tile gate was never protecting against that; it
-    # was throwing away the thousands that DID resolve alongside the one that did not.
-    if not nav_ok:
-        st['navaid_vocab_residue_strict_mode'] = 1
     for hdr, b, sd in bym.get((2, 7), []):
-            w, h = max(sd['width'], 1), max(sd['height'], 1)
-            stride = sb_reclen(hdr, b)
-            if not stride or stride < 8:
-                st['navaid_no_count'] += 1; continue
-            ro = stride - 4
-            ph = 0
-            st['navaid_stride_%d' % stride] += 1
-            q = 360.0 / (1 << sd['bits'])
-            clon, clat = sd['lon_raw'] * UNIT24, sd['lat_raw'] * UNIT24
-            for hh in range(ph, len(b) - stride + 1, stride):
-                if hh + ro + 3 > len(b): continue
-                nm = nav.get(int.from_bytes(b[hh+ro:hh+ro+3], 'little'))
-                if nm is None:
-                    st['navaid_ref_unresolved'] += 1; continue
-                if not nav_ok:
-                    # Strict mode: only phrases NAVAID_CLASS can name. Same test poi_type() runs,
-                    # so a record kept here classifies to the same thing it would on a clean tile.
-                    low = nm.strip().lower().strip('"')
-                    if not any(key in low for key, _t in NAVAID_CLASS):
-                        st['navaid_unclassified_dropped'] += 1; continue
-                dx, dy = s16(b, hh+1), s16(b, hh+3)
-                if abs(dx) > w or abs(dy) > h:
-                    st['box_violation'] += 1; continue
-                lat, lon = clat + dy * q, clon + dx * q
-                if not (S <= lat <= N and W <= lon <= E):
-                    st['out_of_tile'] += 1; continue
-                out.append((lat, lon, {'name': nm, 'mode': '2/7', 'type_byte': b[hh],
-                                       'zoom': 24 - sd['bits'], 'navaid': True,
-                                       'class': nm.split(',')[0].strip(),
-                                       'source': 'RGN4 pool-2 ref at stride-4',
-                                       'raw': b[hh:hh + stride].hex()}))
+        w, h = max(sd['width'], 1), max(sd['height'], 1)
+        stride = sb_reclen(hdr, b)
+        if not stride or stride < 8:
+            st['navaid_no_count'] += 1; continue
+        ro = stride - 4
+        st['navaid_stride_%d' % stride] += 1
+        q = 360.0 / (1 << sd['bits'])
+        clon, clat = sd['lon_raw'] * UNIT24, sd['lat_raw'] * UNIT24
+        for hh in range(0, len(b) - stride + 1, stride):
+            if hh + ro + 3 > len(b): continue
+            nm = nav.get(int.from_bytes(b[hh+ro:hh+ro+3], 'little'))
+            if nm is None:
+                st['navaid_ref_unresolved'] += 1; continue
+            dx, dy = s16(b, hh+1), s16(b, hh+3)
+            if abs(dx) > w or abs(dy) > h:
+                st['box_violation'] += 1; continue
+            lat, lon = clat + dy * q, clon + dx * q
+            if not (S <= lat <= N and W <= lon <= E):
+                st['out_of_tile'] += 1; continue
+            out.append((lat, lon, {'name': nm, 'mode': '2/7', 'type_byte': b[hh],
+                                   'zoom': 24 - sd['bits'], 'navaid': True,
+                                   'class': nm.split(',')[0].strip(),
+                                   'source': 'RGN4 pool-2 ref at stride-4',
+                                   'raw': b[hh:hh + stride].hex()}))
 
     # ---- dedupe: same thing at several zooms, keep the most detailed --------
     # The same POI is emitted at every zoom level, and the copies differ by only a few metres
