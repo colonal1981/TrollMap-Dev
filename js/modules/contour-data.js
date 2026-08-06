@@ -7,6 +7,9 @@ import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../data/lake-keys.js';
 export { LAKE_NAME_TO_R2_KEY, resolveR2Key };
 
 import { state, CF_WORKER_URL } from '../core/state.js';
+import { depthColor } from '../utils/depth-palette.js';
+import { displayDepth } from './tide-engine.js';
+import { isCoastalKey } from '../data/coastal-zones.js';
 import { callSafely } from '../utils/call-global.js';
 
 import { cacheGet, cacheSet, cacheClear } from '../utils/db.js';
@@ -135,21 +138,9 @@ export async function loadContourForLake(displayName) {
 }
 
 // ── Contour layer rendering ───────────────────────────────────────────────────
-const DEPTH_COLORS = [
-  { max: 10,       color: '#e63946' },
-  { max: 20,       color: '#f4a261' },
-  { max: 28,       color: '#e9c46a' },
-  { max: 36,       color: '#2a9d8f' },
-  { max: 45,       color: '#00e5ff' },
-  { max: 55,       color: '#0077b6' },
-  { max: 65,       color: '#7b2d8b' },
-  { max: Infinity, color: '#ffffff' },
-];
-
-function depthColor(ft) {
-  for (const band of DEPTH_COLORS) { if (ft <= band.max) return band.color; }
-  return '#ffffff';
-}
+// The private DEPTH_COLORS table that used to live here is gone. It broke at 10 ft where the
+// polygons broke at 11.8 and the soundings at 8, so one depth drew up to three colours
+// depending on which layer you were looking at. depth-palette.js owns the ladder now.
 
 // SVG renderer for contour lines — SVG layers sit above canvas in DOM,
 // so contours render on top of canvas depth areas automatically.
@@ -376,8 +367,15 @@ export function renderContourLayer(showSmart = true, showRaw = false) {
       renderer: _canvasRenderer,
       smoothFactor,
       style(feat) {
-        const depth = ftOf(feat) ?? 0;
-        return { color: depthColor(depth), weight: 1.5, opacity: 0.85, dashArray: dashed ? '4,4' : null };
+        // Two changes from the old `ftOf(feat) ?? 0`:
+        //   - No `?? 0`. Zero is the shallowest, reddest band, so a contour with no depth
+        //     recorded was drawn as "you are aground here". depthColor() answers white for
+        //     null, which is what unsurveyed water should look like.
+        //   - Tide correction, in coastal zones only. A charted MLLW depth understates the
+        //     actual water by the tide height, and the contour has to move with the polygon
+        //     under it and the sounding on top of it or the three disagree on screen.
+        const shown = displayDepth(ftOf(feat), isCoastalKey(state.ACTIVE_CONTOUR_KEY));
+        return { color: depthColor(shown), weight: 1.5, opacity: 0.85, dashArray: dashed ? '4,4' : null };
       },
       onEachFeature(feat, layer) {
         // Depth now reads off the inline labels drawn below, so no gesture is required.

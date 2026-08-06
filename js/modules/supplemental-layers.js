@@ -14,6 +14,8 @@ import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../data/lake-keys.js';
 import { distMiFromCoords as distMi } from '../utils/geo.js';
 import { TRISTATE_MASTER_RAMPS, rampsReady } from '../data/ramps-loader.js';
 import { workerHeaders } from '../utils/worker-auth.js';
+import { depthColor } from '../utils/depth-palette.js';
+import { displayDepth, setDisplayTide } from './tide-engine.js';
 
 import { cacheGet, cacheSet } from '../utils/db.js';
 // Canvas renderer — shared for all supplemental polygon/line layers
@@ -31,35 +33,15 @@ export const resolveBoundaryKey = resolveR2Key;
 // Re-export map for back-compat
 export { LAKE_NAME_TO_R2_KEY, resolveR2Key };
 
-const DEPTH_BANDS = [
-  { max: 10,       color: '#e63946' },
-  { max: 20,       color: '#f4a261' },
-  { max: 28,       color: '#e9c46a' },
-  { max: 36,       color: '#2a9d8f' },
-  { max: 45,       color: '#00e5ff' },
-  { max: 55,       color: '#0077b6' },
-  { max: 65,       color: '#7b2d8b' },
-  { max: Infinity, color: '#ffffff' },
-];
-
-// NOAA ENC DEPARE uses metric-derived breaks: 5.9, 11.8, 17.7, 29.9, 35.8, 59.7ft
-const DEPTH_BANDS_COASTAL = [
-  { max: 5.9,      color: '#e63946' },
-  { max: 11.8,     color: '#f4a261' },
-  { max: 17.7,     color: '#e9c46a' },
-  { max: 29.9,     color: '#2a9d8f' },
-  { max: 35.8,     color: '#00e5ff' },
-  { max: 59.7,     color: '#0077b6' },
-  { max: Infinity, color: '#7b2d8b' },
-];
-
-function depthAreaColor(ft, coastal = false) {
-  const bands = coastal ? DEPTH_BANDS_COASTAL : DEPTH_BANDS;
-  for (const band of bands) {
-    if (ft <= band.max) return band.color;
-  }
-  return '#ffffff';
-}
+// Two private band tables lived here, one freshwater and one coastal, and depth_areas picked
+// between them. The coastal one used NOAA ENC DEPARE's metric-derived breaks -- 5.9, 11.8,
+// 17.7, 29.9, 35.8, 59.7 ft -- which existed to land on ENC's own polygon edges. Those
+// polygons are Garmin's now in the six primary zones, so the band edges fell mid-interval and
+// the fill did not line up with the linework drawn over it.
+//
+// One ladder for every layer now, and depth-palette.js owns it. `coastal` is no longer a
+// palette question at all; it is only a question about DATUM, which is displayDepth()'s job.
+const depthAreaColor = depthColor;
 
 // Was its own database, `trollmap-supplemental`, with its own openDB/idbGet/idbSet. Folded
 // into the shared `cache` store: every layer here is re-fetchable from R2, so there was
@@ -210,12 +192,12 @@ async function loadDepthAreas(lakeKey) {
       style(feat) {
         const p = feat.properties || {};
         const chartedFt = p.depth_max_ft ?? p.depth_min_ft ?? p.depth_ft ?? 0;
-        // For coastal zones shift color by current tide height so polygons reflect
-        // actual water depth at time of trip, not charted MLLW.
-        const depthFt = (isCoastal && Number.isFinite(_coastalTideHeightFt))
-          ? chartedFt + _coastalTideHeightFt
-          : chartedFt;
-        const color = depthAreaColor(depthFt, isCoastal);
+        // For coastal zones shift colour by current tide height so polygons reflect actual
+        // water depth at time of trip, not charted MLLW. The addition used to be written out
+        // by hand here and again in refreshDepthAreaColors(); displayDepth() is the one place
+        // that decides now, so the polygon, the contour over it and the sounding on top of it
+        // cannot drift apart.
+        const color = depthAreaColor(displayDepth(chartedFt, isCoastal));
         return { fillColor: color, fillOpacity: 0.55, color, weight: strokeW,
                  opacity: strokeW ? 0.5 : 0, stroke: strokeW > 0 };
       },
@@ -1389,6 +1371,12 @@ export function refreshDepthAreaColors(tideHeightFt) {
     }, 1500);
     return;
   }
+  // ONE tide, published where every layer can see it. This module used to be the only holder
+  // of the height, so contours and soundings could not correct even when depth areas had, and
+  // the three layers disagreed on screen about the same water. setDisplayTide() rejects junk
+  // rather than turning it into a 0 ft correction, which reads identically to "no correction"
+  // downstream and is not the same claim.
+  setDisplayTide(tideHeightFt);
   _coastalTideHeightFt = Number.isFinite(tideHeightFt) ? tideHeightFt : null;
   if (!_depthAreaGeoJSON || !mapReady()) return;
   // Re-render directly from cached GeoJSON — no fetch
@@ -1402,10 +1390,7 @@ export function refreshDepthAreaColors(tideHeightFt) {
     style(feat) {
       const p = feat.properties || {};
       const chartedFt = p.depth_max_ft ?? p.depth_min_ft ?? p.depth_ft ?? 0;
-      const depthFt = Number.isFinite(_coastalTideHeightFt)
-        ? chartedFt + _coastalTideHeightFt
-        : chartedFt;
-      const color = depthAreaColor(depthFt, isCoastal);
+      const color = depthAreaColor(displayDepth(chartedFt, isCoastal));
       return { fillColor: color, fillOpacity: 0.55, color, weight: 0.5, opacity: 0.5 };
     },
     onEachFeature(feat, layer) {

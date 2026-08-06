@@ -23,6 +23,7 @@ import {
   registerLayer, isVisible, getLayer, replaceLayer, dropAll, refreshButtons, wireAll,
 } from '../core/layer-registry.js';
 import { tideAdjustedDepth } from './tide-engine.js';
+import { depthColor } from '../utils/depth-palette.js';
 
 const _renderer = L.canvas({ padding: 0.5 });
 
@@ -126,11 +127,12 @@ async function buildMarshLayer(zoneKey) {
 // ── Depth soundings ─────────────────────────────────────────────────────────
 function soundingLabelHtml(chartedFt, adjustedFt) {
   const shown = Number.isFinite(adjustedFt) ? adjustedFt : chartedFt;
-  // Colour by actual runnable water, not charted datum.
-  const color =
-    shown < 2  ? '#e53935' :
-    shown < 4  ? '#fb8c00' :
-    shown < 8  ? '#fdd835' : '#4fc3f7';
+  // Colour by actual runnable water, not charted datum -- and from the SHARED ladder, so a
+  // sounding, the contour crossing it and the depth polygon under it all answer the same
+  // depth with the same colour. This carried its own 2/4/8 table until depth-palette.js took
+  // those breaks over for every layer, fresh and salt alike; keeping a private copy here is
+  // what made 15 ft render three different colours in Murrells Inlet.
+  const color = depthColor(shown);
   return `<span style="
     color:${color};font-size:10px;font-weight:700;
     text-shadow:0 0 3px #000,0 0 2px #000;white-space:nowrap;

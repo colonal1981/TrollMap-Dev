@@ -280,3 +280,56 @@ export function tideAdjustedDepth(chartedDepthFt, tideHeightFt) {
   if (!Number.isFinite(t)) return d;
   return d + t;
 }
+
+/* ── the one tide rule ──────────────────────────────────────────────────────
+ *
+ * Added 2026-08-07. test/depth-palette.test.js has imported displayDepth,
+ * setDisplayTide, getDisplayTide and isTideCorrected since the 2026-08-04
+ * coastal-datum work; nothing ever exported them, so the whole test file threw
+ * on import and every assertion in it — including the ones about the depth
+ * ladder, which have nothing to do with tides — silently never ran.
+ * `lint:imports` could not see it either, because check-imports.mjs did not
+ * scan test/. Both of those are fixed.
+ *
+ * tideAdjustedDepth() above is the arithmetic. This pair is the POLICY, and the
+ * policy is the part that was getting written by hand in two places:
+ *
+ *   - Correction applies to tidal water only. A stale coastal tide leaking onto
+ *     Murray adds feet to every contour, and the only symptom is depths that
+ *     look slightly generous. `isTidal` is a required decision by the caller,
+ *     not something inferred from whether a tide happens to be loaded.
+ *   - No tide synced means fall back to charted MLLW, not to zero. An
+ *     uncorrected charted depth is still a true depth; it is just at a datum.
+ *   - Junk in stays null. setDisplayTide('high') must not become 0 ft, because
+ *     0 ft of correction and "no correction" read identically downstream and
+ *     only one of them is honest.
+ */
+let _displayTideFt = null;
+
+/** Set the tide height (ft above MLLW) every layer corrects against. Junk -> null. */
+export function setDisplayTide(ft) {
+  const n = (ft === null || ft === undefined || ft === '') ? NaN : Number(ft);
+  _displayTideFt = Number.isFinite(n) ? n : null;
+  return _displayTideFt;
+}
+
+export function getDisplayTide() {
+  return _displayTideFt;
+}
+
+export function isTideCorrected() {
+  return _displayTideFt !== null;
+}
+
+/**
+ * The depth to DRAW and to LABEL — charted feet, tide-corrected when the water
+ * is tidal and a tide is loaded, and never otherwise.
+ *
+ * Colour and label must both come through here or they can disagree with each
+ * other on the same feature, which is the class of bug depth-palette.js exists
+ * to end.
+ */
+export function displayDepth(chartedFt, isTidal = false) {
+  const tide = (isTidal && _displayTideFt !== null) ? _displayTideFt : NaN;
+  return tideAdjustedDepth(chartedFt, tide);
+}

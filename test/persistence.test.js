@@ -37,25 +37,42 @@ function walk(dir, out = []) {
 const FILES = walk(JS);
 
 /**
- * Source with comments removed. Every check in this file is about what the code DOES, and
- * the first test in it says so outright: "Comments may still explain the history; executable
- * references may not exist." Two of the three tests stripped comments and the third did not,
- * which made db.js itself register as a consumer of db.js the moment its own documentation
- * quoted `dbPut(...)` while explaining the bug that documentation exists to prevent.
+ * Source with comments removed, one line per entry, line numbers preserved.
+ *
+ * Every check in this file is about what the code DOES, and the first test in it says so
+ * outright: "Comments may still explain the history; executable references may not exist."
+ * Three tests each stripped comments their own way and two of the three were wrong.
+ *
+ * WHAT WAS WRONG (fixed 2026-08-07). The per-line strippers were written `/\/\/.*$/` with no
+ * `m` flag, against a tree that is CRLF. `split('\n')` leaves the `\r` on the end of every
+ * line; in JavaScript `\r` is a line terminator, so `.` does not match it, and an unanchored
+ * `$` only matches the very end of the string — which the `.*` can no longer reach. The
+ * pattern therefore matched NOTHING and every `//` comment in js/ survived stripping. Both
+ * tests then failed on the five lines that DOCUMENT the removal of window.DB: a grep
+ * characterisation failing on its own changelog, which is the exact trap `DELETION_TAB.md`
+ * describes. `codeOnly` below happened to carry the `m` flag, which is the only reason the
+ * third test passed and the other two did not.
+ *
+ * Block comments are blanked rather than deleted, and `//` bodies are dropped without their
+ * newline, so `${file}:${i + 1}` still points at the line it names. A `//` preceded by `:` is
+ * left alone so `https://…` inside a string does not eat the rest of a real line of code.
  */
-function codeOnly(file) {
+function codeLines(file) {
   return readFileSync(file, 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '')   // block comments, including JSDoc
-    .replace(/\/\/.*$/gm, '');          // line comments
+    .replace(/\r\n?/g, '\n')                                  // CRLF -> LF, see above
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))  // block comments, JSDoc
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1')                     // line comments, sparing URLs
+    .split('\n');
 }
+
+const codeOnly = (file) => codeLines(file).join('\n');
 
 describe('persistence — the global alias is gone and stays gone', () => {
   it('no module reads or writes window.DB', () => {
     // Comments may still explain the history; executable references may not exist.
     const offenders = [];
     for (const f of FILES) {
-      for (const [i, line] of readFileSync(f, 'utf8').split('\n').entries()) {
-        const code = line.replace(/\/\/.*$/, '').replace(/^\s*\*.*$/, '');
+      for (const [i, code] of codeLines(f).entries()) {
         if (/window\.DB\b/.test(code)) offenders.push(`${f.slice(JS.length + 1)}:${i + 1}`);
       }
     }
@@ -63,11 +80,9 @@ describe('persistence — the global alias is gone and stays gone', () => {
   });
 
   it('nothing dynamically imports the db module', () => {
-    const offenders = FILES.filter((f) => {
-      const src = readFileSync(f, 'utf8')
-        .split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
-      return /import\(\s*['"][^'"]*utils\/db\.js['"]\s*\)/.test(src);
-    }).map((f) => f.slice(JS.length + 1));
+    const offenders = FILES.filter((f) =>
+      /import\(\s*['"][^'"]*utils\/db\.js['"]\s*\)/.test(codeOnly(f))
+    ).map((f) => f.slice(JS.length + 1));
     expect(offenders).toEqual([]);
   });
 

@@ -12,18 +12,18 @@ Python side will read as dead here and may not be. See the `lakes.js` near miss 
 
 | metric | count |
 |---|---|
-| files | 223 |
+| files | 236 |
 | jsModules | 176 |
-| pyScripts | 45 |
-| routes | 62 |
-| routesUncalled | 16 |
-| routesMutatingUngated | 20 |
+| pyScripts | 58 |
+| routes | 58 |
+| routesUncalled | 13 |
+| routesMutatingUngated | 19 |
 | feeds | 72 |
-| deadExports | 155 |
-| orphanModules | 3 |
+| deadExports | 157 |
+| orphanModules | 4 |
 | duplicateFnNames | 26 |
 | crossModuleGlobals | 48 |
-| unresolvedImports | 1 |
+| unresolvedImports | 0 |
 
 ## Worker routes
 
@@ -32,9 +32,8 @@ Python side will read as dead here and may not be. See the `lakes.js` near miss 
 | `/attractors` | ANY | open | services.arcgis.com<br>services6.arcgis.com<br>services1.arcgis.com | — | gis-toggles.js |
 | `/bank-pier` | ANY | open | services.arcgis.com<br>services6.arcgis.com<br>services1.arcgis.com | — | gis-toggles.js |
 | `/build` | POST | open | — | — | **nothing** |
-| `/chartpacks/lake-boundary` | GET | open | — | R2_TROLLMAP_CHARTPACKS.get | lake-research-engine.js<br>supplemental-layers.js |
-| `/chartpacks/list` | ANY | open | — | R2_TROLLMAP_CHARTPACKS.list | **nothing** |
-| `/chartpacks/supplemental-audit` | ANY | open | — | R2_TROLLMAP_CHARTPACKS.list | **nothing** |
+| `/chartpacks/lake-boundary` | GET | open | — | R2_TROLLMAP_CHARTPACKS.get<br>R2_TROLLMAP_CHARTPACKS.list | lake-research-engine.js<br>supplemental-layers.js |
+| `/chartpacks/list` | ANY | **REQUIRED (inline)** | — | R2_TROLLMAP_CHARTPACKS.list<br>R2_TROLLMAP_CHARTPACKS.get | **nothing** |
 | `/coach-plan` | POST | open | — | — | groq-coach.js |
 | `/debug/regs-cache` | ANY | **REQUIRED (inline)** | — | — | **nothing** |
 | `/dominion-saluda` | ANY | **REQUIRED (inline)** | — | — | **nothing** |
@@ -54,10 +53,10 @@ Python side will read as dead here and may not be. See the `lakes.js` near miss 
 | `/ramps` | ANY | open | services.arcgis.com<br>services6.arcgis.com<br>services1.arcgis.com | — | access-index.js<br>ramps-loader.js<br>main.js |
 | `/research/agent-llm` | POST | open | — | — | lake-research-engine.js |
 | `/research/analyze-facts` | POST | open | — | — | lake-research-engine.js |
-| `/research/approve` | POST | **REQUIRED (list)** | — | — | **nothing** |
+| `/research/approve` | POST | **REQUIRED (list)** | services.arcgis.com | — | **nothing** |
 | `/research/dataset-hunt` | POST | **REQUIRED (list)** | — | — | **nothing** |
 | `/research/dedupe-contradictions` | POST | open | — | — | lake-research-engine.js |
-| `/research/delete` | POST | **REQUIRED (list)** | — | — | lake-research-ui.js |
+| `/research/delete` | POST | **REQUIRED (list)** | services.arcgis.com | — | lake-research-ui.js |
 | `/research/delete-normalized-doc` | POST | **REQUIRED (list)** | services.arcgis.com | — | lake-research-ui.js |
 | `/research/deterministic-facts` | POST | open | — | — | lake-research-engine.js |
 | `/research/discover` | POST | open | — | — | lake-research-engine.js |
@@ -68,22 +67,19 @@ Python side will read as dead here and may not be. See the `lakes.js` near miss 
 | `/research/limnology-data` | POST | open | — | — | lake-research-engine.js |
 | `/research/list` | GET | open | — | — | lake-research-ui.js |
 | `/research/map-facts` | POST | open | — | — | **nothing** |
-| `/research/package` | GET | open | services.arcgis.com<br>services6.arcgis.com | — | lake-research-ui.js |
+| `/research/package` | GET | open | services.arcgis.com<br>services6.arcgis.com<br>services1.arcgis.com | — | lake-research-ui.js |
 | `/research/proxy-download` | GET | open | — | — | lake-research-engine.js |
 | `/research/proxy-download-batch` | POST | open | services.arcgis.com | — | lake-research-engine.js |
-| `/research/save` | POST | **REQUIRED (list)** | — | — | lake-research-engine.js<br>lake-research-ui.js |
+| `/research/save` | POST | **REQUIRED (list)** | services.arcgis.com | — | lake-research-engine.js<br>lake-research-ui.js |
 | `/research/save-normalized` | POST | **REQUIRED (list)** | — | — | lake-research-engine.js |
-| `/research/shared/check` | POST | open | services.arcgis.com | — | lake-research-engine.js |
+| `/research/shared/check` | POST | open | services.arcgis.com<br>services6.arcgis.com | — | lake-research-engine.js |
 | `/research/shared/publish` | POST | **REQUIRED (list)** | services.arcgis.com<br>services6.arcgis.com | — | **nothing** |
-| `/research/shared/quarantine` | POST | **REQUIRED (list)** | services.arcgis.com<br>services6.arcgis.com | — | **nothing** |
-| `/research/shared/query` | POST | open | services.arcgis.com | — | lake-research-engine.js |
+| `/research/shared/quarantine` | POST | **REQUIRED (list)** | services.arcgis.com<br>services6.arcgis.com<br>services1.arcgis.com | — | **nothing** |
+| `/research/shared/query` | POST | open | services.arcgis.com<br>services6.arcgis.com | — | lake-research-engine.js |
 | `/research/shared/status` | GET | open | services.arcgis.com<br>services6.arcgis.com | — | **nothing** |
-| `/research/shared/store` | POST | **REQUIRED (list)** | services.arcgis.com | — | lake-research-engine.js |
+| `/research/shared/store` | POST | **REQUIRED (list)** | services.arcgis.com<br>services6.arcgis.com | — | lake-research-engine.js |
 | `/research/thermocline-search` | POST | open | — | — | **nothing** |
 | `/research/validation-pass` | POST | open | services.arcgis.com<br>services6.arcgis.com<br>services1.arcgis.com | — | lake-research-engine.js |
-| `/research/vision-scan` | POST | open | services.arcgis.com<br>services6.arcgis.com<br>services1.arcgis.com | — | **nothing** |
-| `/research/vision-scan-save` | POST | **REQUIRED (list)** | services.arcgis.com<br>services6.arcgis.com<br>services1.arcgis.com | — | supplemental-layers.js |
-| `/research/vision-scan-status` | GET | open | services.arcgis.com<br>services6.arcgis.com<br>services1.arcgis.com | — | **nothing** |
 | `/river` | ANY | **REQUIRED (inline)** | — | — | plan-builder.js |
 | `/rivers` | ANY | **REQUIRED (inline)** | — | — | **nothing** |
 | `/sync` | ANY | **REQUIRED (prefix)** | — | — | cloud-sync.js |
@@ -97,45 +93,41 @@ Python side will read as dead here and may not be. See the `lakes.js` near miss 
 Read-shaped POSTs (LLM proxies, search) are deliberately open — see the comment above
 `MUTATING_ROUTES`. Anything here that WRITES is a hole.
 
-- `POST /build` — Worker/trollmap-worker.js:1132
-- `POST /identify-catch` — Worker/trollmap-worker.js:1138
-- `POST /identify-catch-v2` — Worker/trollmap-worker.js:1146
-- `POST /coach-plan` — Worker/trollmap-worker.js:1153
-- `POST /groq-query` — Worker/trollmap-worker.js:1156
-- `POST /research/thermocline-search` — Worker/trollmap-worker.js:1173
-- `POST /research/limnology-data` — Worker/trollmap-worker.js:1178
-- `POST /research/deterministic-facts` — Worker/trollmap-worker.js:1181
-- `POST /research/discover` — Worker/trollmap-worker.js:1184
-- `POST /research/analyze-facts` — Worker/trollmap-worker.js:1201
-- `POST /research/dedupe-contradictions` — Worker/trollmap-worker.js:1204
-- `POST /research/map-facts` — Worker/trollmap-worker.js:1207
-- `POST /research/gap-analysis` — Worker/trollmap-worker.js:1210
-- `POST /research/gap-search` — Worker/trollmap-worker.js:1213
-- `POST /research/agent-llm` — Worker/trollmap-worker.js:1216
-- `POST /research/proxy-download-batch` — Worker/trollmap-worker.js:1239
-- `POST /research/shared/check` — Worker/trollmap-worker.js:1243
-- `POST /research/shared/query` — Worker/trollmap-worker.js:1249
-- `POST /research/validation-pass` — Worker/trollmap-worker.js:1281
-- `POST /research/vision-scan` — Worker/trollmap-worker.js:1282
+- `POST /build` — Worker/trollmap-worker.js:1131
+- `POST /identify-catch` — Worker/trollmap-worker.js:1137
+- `POST /identify-catch-v2` — Worker/trollmap-worker.js:1145
+- `POST /coach-plan` — Worker/trollmap-worker.js:1152
+- `POST /groq-query` — Worker/trollmap-worker.js:1155
+- `POST /research/thermocline-search` — Worker/trollmap-worker.js:1172
+- `POST /research/limnology-data` — Worker/trollmap-worker.js:1177
+- `POST /research/deterministic-facts` — Worker/trollmap-worker.js:1180
+- `POST /research/discover` — Worker/trollmap-worker.js:1183
+- `POST /research/analyze-facts` — Worker/trollmap-worker.js:1200
+- `POST /research/dedupe-contradictions` — Worker/trollmap-worker.js:1203
+- `POST /research/map-facts` — Worker/trollmap-worker.js:1206
+- `POST /research/gap-analysis` — Worker/trollmap-worker.js:1209
+- `POST /research/gap-search` — Worker/trollmap-worker.js:1212
+- `POST /research/agent-llm` — Worker/trollmap-worker.js:1215
+- `POST /research/proxy-download-batch` — Worker/trollmap-worker.js:1238
+- `POST /research/shared/check` — Worker/trollmap-worker.js:1242
+- `POST /research/shared/query` — Worker/trollmap-worker.js:1248
+- `POST /research/validation-pass` — Worker/trollmap-worker.js:1280
 
 ## Routes nothing calls
 
-- `/build` (Worker/trollmap-worker.js:1132)
-- `/research/thermocline-search` (Worker/trollmap-worker.js:1173)
-- `/research/dataset-hunt` (Worker/trollmap-worker.js:1187)
-- `/research/map-facts` (Worker/trollmap-worker.js:1207)
-- `/research/gap-analysis` (Worker/trollmap-worker.js:1210)
-- `/research/gap-search` (Worker/trollmap-worker.js:1213)
-- `/lakes/list` (Worker/trollmap-worker.js:1219)
-- `/research/shared/status` (Worker/trollmap-worker.js:1255)
-- `/research/vision-scan` (Worker/trollmap-worker.js:1282)
-- `/research/vision-scan-status` (Worker/trollmap-worker.js:1284)
-- `/lake-intel-sources` (Worker/trollmap-worker.js:1592)
-- `/duke-flow-arrivals` (Worker/trollmap-worker.js:1639)
-- `/dominion-saluda` (Worker/trollmap-worker.js:1645)
-- `/rivers` (Worker/trollmap-worker.js:1650)
-- `/sync/migrate` (Worker/trollmap-worker.js:1671)
-- `/chartpacks/supplemental-audit` (Worker/trollmap-worker.js:1745)
+- `/build` (Worker/trollmap-worker.js:1131)
+- `/research/thermocline-search` (Worker/trollmap-worker.js:1172)
+- `/research/dataset-hunt` (Worker/trollmap-worker.js:1186)
+- `/research/map-facts` (Worker/trollmap-worker.js:1206)
+- `/research/gap-analysis` (Worker/trollmap-worker.js:1209)
+- `/research/gap-search` (Worker/trollmap-worker.js:1212)
+- `/lakes/list` (Worker/trollmap-worker.js:1218)
+- `/research/shared/status` (Worker/trollmap-worker.js:1254)
+- `/lake-intel-sources` (Worker/trollmap-worker.js:1588)
+- `/duke-flow-arrivals` (Worker/trollmap-worker.js:1635)
+- `/dominion-saluda` (Worker/trollmap-worker.js:1641)
+- `/rivers` (Worker/trollmap-worker.js:1646)
+- `/sync/migrate` (Worker/trollmap-worker.js:1667)
 
 ## External feeds
 
@@ -143,53 +135,52 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 |---|---|---|---|
 | pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev | worker | 42 | Worker/research/clients.js:120 |
 | www.dnr.sc.gov | worker, browser | 12 | Worker/research/dataset.js:6 |
-| lakes.hydro-derived.duke-energy.app | worker, browser | 12 | Worker/trollmap-worker.js:382 |
-| www.eregulations.com | worker, browser | 12 | Worker/worker-data.js:448 |
 | trollmap-worker.colonal1981.workers.dev | pipeline, browser | 11 | Scripts/make_river_boundaries.py:8 |
-| www.anglersheadquarters.com | worker | 11 | Worker/worker-data.js:416 |
 | api.firecrawl.dev | worker | 9 | Worker/research/dataset.js:269 |
-| waterservices.usgs.gov | worker, browser | 8 | Worker/trollmap-worker.js:332 |
 | services.arcgis.com | pipeline, worker | 7 | Scripts/fetch_dnr_paddle.py:64 |
 | services1.arcgis.com | pipeline, worker | 7 | Scripts/fetch_dnr_paddle.py:76 |
 | services6.arcgis.com | pipeline, worker | 7 | Scripts/fetch_dnr_paddle.py:92 |
 | services3.arcgis.com | pipeline, worker | 7 | Scripts/fetch_dnr_paddle.py:102 |
-| www.santeecooper.com | worker, browser | 7 | Worker/worker-data.js:272 |
 | nepis.epa.gov | worker, browser | 6 | Worker/research/dataset.js:10 |
-| waterdata.usgs.gov | worker, browser | 6 | Worker/worker-data.js:472 |
-| lakemonster.com | worker | 6 | Worker/worker-data.js:496 |
+| lakes.hydro-derived.duke-energy.app | worker, browser | 6 | Worker/trollmap-worker.js:381 |
 | www.topografix.com | browser | 6 | js/modules/garmin-export.js:65 |
-| water.sas.usace.army.mil | worker | 5 | Worker/worker-data.js:293 |
-| data-scdnr.opendata.arcgis.com | worker | 5 | Worker/worker-data.js:480 |
+| www.waterqualitydata.us | pipeline, worker, browser | 4 | Scripts/wqp_clarity_coverage.py:49 |
 | grokipedia.com | worker | 4 | Worker/research/discover.js:481 |
-| www.dominionenergy.com | worker, browser | 4 | Worker/trollmap-worker.js:425 |
 | unpkg.com | browser | 4 | index.html:8 |
 | worker | browser | 4 | test/deterministic-regression.test.js:6 |
+| dash.cloudflare.com | pipeline | 3 | Scripts/trollmap_r2_clean.py:6 |
 | api.scrape.do | worker | 3 | Worker/research/clients.js:89 |
-| www.waterqualitydata.us | worker, browser | 3 | Worker/research/limnology.js:49 |
 | generativelanguage.googleapis.com | worker | 3 | Worker/research/vision.js:126 |
-| api.hydro-derived.duke-energy.app | worker | 3 | Worker/trollmap-worker.js:375 |
-| api.open-meteo.com | worker, browser | 3 | Worker/worker-data.js:987 |
+| www.dominionenergy.com | worker, browser | 3 | Worker/trollmap-worker.js:424 |
+| api.waterdata.usgs.gov | browser | 3 | js/modules/plan-builder.js:940 |
+| www.santeecooper.com | browser | 3 | js/modules/utility-sync.js:49 |
 | x | browser | 3 | test/arcgis-filter-guard.test.js:176 |
 | w.dev | browser | 3 | test/shared-latest-pointer.test.js:73 |
+| github.com | pipeline | 2 | Scripts/r2_audit.py:103 |
 | api.search.tinyfish.ai | worker, browser | 2 | Worker/research/clients.js:8 |
 | api.fetch.tinyfish.ai | worker, browser | 2 | Worker/research/clients.js:9 |
 | georgiawildlife.com | worker, browser | 2 | Worker/research/dataset.js:17 |
-| coastalgadnr.org | worker, browser | 2 | Worker/worker-data.js:1173 |
-| deq.nc.gov | worker, browser | 2 | Worker/worker-data.js:1174 |
+| waterservices.usgs.gov | worker | 2 | Worker/trollmap-worker.js:331 |
+| coastalgadnr.org | worker, browser | 2 | Worker/worker-data.js:1256 |
+| deq.nc.gov | worker, browser | 2 | Worker/worker-data.js:1257 |
+| www.eregulations.com | worker, browser | 2 | Worker/worker-data.js:1259 |
 | server.arcgisonline.com | browser | 2 | js/core/map-init.js:29 |
 | 127.0.0.1 | browser | 2 | js/modules/capture-panel.js:14 |
 | cdnjs.cloudflare.com | browser | 2 | js/modules/lake-research-engine.js:825 |
+| api.open-meteo.com | browser | 2 | js/modules/plan-builder.js:778 |
 | cofc.edu | browser | 2 | test/discover-authority.test.js:45 |
+| wiki.openstreetmap.org | pipeline | 1 | Scripts/fetch_osm_coastal.py:343 |
 | prd-tnm.s3.amazonaws.com | pipeline | 1 | Scripts/trollmap_nhd_boundaries.py:33 |
+| api.cloudflare.com | pipeline | 1 | Scripts/trollmap_r2_clean.py:39 |
 | www.ncwildlife.org | worker | 1 | Worker/research/dataset.js:13 |
 | r.jina.ai | worker | 1 | Worker/research/download.js:384 |
 | api.tavily.com | worker | 1 | Worker/research/extract.js:763 |
 | services.arcgisonline.com | worker | 1 | Worker/research/vision.js:91 |
+| api.hydro-derived.duke-energy.app | worker | 1 | Worker/trollmap-worker.js:374 |
 | api.groq.com | worker | 1 | Worker/worker-core.js:126 |
 | openrouter.ai | worker | 1 | Worker/worker-core.js:139 |
 | trollmap.dev | worker | 1 | Worker/worker-core.js:152 |
 | api.cerebras.ai | worker | 1 | Worker/worker-core.js:159 |
-| cwms-data.usace.army.mil | worker | 1 | Worker/worker-data.js:312 |
 | static.cloudflareinsights.com | browser | 1 | index.html:1146 |
 | tile.openstreetmap.org | browser | 1 | js/core/map-init.js:33 |
 | saltwaterfishing.sc.gov | browser | 1 | js/data/coastal-regulations.js:53 |
@@ -198,11 +189,12 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 | cdn.jsdelivr.net | browser | 1 | js/modules/catch-journal.js:1067 |
 | lakes.duke-energy.com | browser | 1 | js/modules/duke-energy.js:147 |
 | www.garmin.com | browser | 1 | js/modules/garmin-export.js:66 |
-| aa.usno.navy.mil | browser | 1 | js/modules/plan-builder.js:1086 |
+| aa.usno.navy.mil | browser | 1 | js/modules/plan-builder.js:1101 |
 | www.openstreetmap.org | browser | 1 | js/modules/ramps.js:58 |
 | api.tidesandcurrents.noaa.gov | browser | 1 | js/modules/tide-engine.js:22 |
 | nominatim.openstreetmap.org | browser | 1 | js/modules/topbar.js:106 |
 | www.sad.usace.army.mil | browser | 1 | test/discover-authority.test.js:20 |
+| waterdata.usgs.gov | browser | 1 | test/discover-authority.test.js:22 |
 | www.osti.gov | browser | 1 | test/discover-authority.test.js:23 |
 | tidesandcurrents.noaa.gov | browser | 1 | test/discover-authority.test.js:24 |
 | www.ncwildlife.gov | browser | 1 | test/discover-authority.test.js:26 |
@@ -226,7 +218,9 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 | get | ``lake_packages/${LEGACY_PROFILE_KEYS[safe]}/normalized_documents.json`` | Worker/research/deterministic.js:167 |
 | get | `cacheKey` | Worker/research/facts-util.js:357 |
 | put | `cacheKey` | Worker/research/facts-util.js:394 |
-| get | ``${lakeKey}/shoreline.geojson`` | Worker/research/limnology.js:26 |
+| get | ``${lakeKey}/shoreline.geojson`` | Worker/research/limnology.js:43 |
+| get | `key` | Worker/research/limnology.js:415 |
+| put | `key` | Worker/research/limnology.js:450 |
 | get | ``${SHARED_ROOT}/pointers/current.json`` | Worker/research/shared.js:253 |
 | get | `key` | Worker/research/shared.js:306 |
 | put | `vKey` | Worker/research/shared.js:345 |
@@ -274,13 +268,12 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 | put | ``supplemental/${resolvedKey}/vision-scan-status.json`` | Worker/research/vision.js:188 |
 | get | ``supplemental/${resolvedKey}/vision-scan-status.json`` | Worker/research/vision.js:202 |
 | head | ``supplemental/${resolvedKey}/vision-structure.geojson`` | Worker/research/vision.js:206 |
-| get | `key` | Worker/trollmap-worker.js:655 |
-| put | `key` | Worker/trollmap-worker.js:670 |
-| get | `key` | Worker/trollmap-worker.js:1728 |
-| list | `{ prefix: `${key}/` }` | Worker/trollmap-worker.js:1777 |
-| list | `{ prefix }` | Worker/trollmap-worker.js:1798 |
-| get | `key` | Worker/trollmap-worker.js:1818 |
-| put | `key` | Worker/trollmap-worker.js:1843 |
+| get | `key` | Worker/trollmap-worker.js:654 |
+| put | `key` | Worker/trollmap-worker.js:669 |
+| get | `key` | Worker/trollmap-worker.js:1724 |
+| list | `{ prefix }` | Worker/trollmap-worker.js:1745 |
+| get | `key` | Worker/trollmap-worker.js:1765 |
+| put | `key` | Worker/trollmap-worker.js:1790 |
 | list | `{ cursor` | Worker/worker-core.js:342 |
 
 ## Data files — who reads them
@@ -311,14 +304,14 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 | `Worker/research/extract.js` | 829 | 6 | 1 | 0 | research/extract.js — split from worker-research.js (behavior-preserving) |
 | `Worker/research/facts-util.js` | 682 | 22 | 1 | **17** | research/facts-util.js — split from worker-research.js (behavior-preserving) |
 | `Worker/research/keys.js` | 94 | 8 | 8 | 0 | research/keys.js — split from worker-research.js (behavior-preserving) |
-| `Worker/research/limnology.js` | 354 | 3 | 4 | 0 | research/limnology.js — split from worker-research.js (behavior-preserving) |
+| `Worker/research/limnology.js` | 463 | 4 | 5 | 0 | research/limnology.js — split from worker-research.js (behavior-preserving) |
 | `Worker/research/shared.js` | 697 | 29 | 2 | **16** | research/shared.js — split from worker-research.js (behavior-preserving) |
 | `Worker/research/storage.js` | 576 | 11 | 2 | 0 | research/storage.js — split from worker-research.js (behavior-preserving) |
-| `Worker/research/vision.js` | 222 | 3 | 1 | 0 | research/vision.js — split from worker-research.js (behavior-preserving) |
-| `Worker/trollmap-worker.js` | 1908 | 1 | 0 | 0 | r2Text is used by /chartpacks/lake-boundary (line ~1711). It was added to worker-core.js |
+| `Worker/research/vision.js` | 222 | 3 | 0 | **3** | research/vision.js — split from worker-research.js (behavior-preserving) |
+| `Worker/trollmap-worker.js` | 1855 | 1 | 0 | 0 | r2Text is used by /chartpacks/lake-boundary (line ~1711). It was added to worker-core.js |
 | `Worker/worker-core.js` | 433 | 10 | 18 | 0 | worker-core.js — Shared infrastructure: CORS headers, LLM provider chain, fetchText |
-| `Worker/worker-data.js` | 1451 | 20 | 4 | 0 | worker-data.js — Static lake/river data extracted from trollmap-worker.js |
-| `Worker/worker-research.js` | 13 | 40 | 1 | 0 | worker-research.js — public API barrel (impl in Worker/research/*) |
+| `Worker/worker-data.js` | 1534 | 20 | 4 | 0 | worker-data.js — Static lake/river data extracted from trollmap-worker.js |
+| `Worker/worker-research.js` | 14 | 37 | 1 | 0 | worker-research.js — public API barrel (impl in Worker/research/*) |
 | `Worker/worker-species.js` | 230 | 10 | 1 | 0 | worker-species.js — Species lists and ecological validation |
 | `js/core/layer-registry.js` | 300 | 18 | 9 | **6** | core/layer-registry.js — one owner for every toggleable map layer. |
 | `js/core/map-init.js` | 453 | 17 | 17 | **4** | Leaflet map initialization + base-layer switching + waypoint/track |
@@ -353,9 +346,9 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 | `js/modules/chart-mosaic.js` | 435 | 5 | 3 | **2** | Chart mosaic — saved depth-contour overlay layers. |
 | `js/modules/chart-overlay.js` | 492 | 1 | 1 | **1** | Chart overlay — the SINGLE working image being georeferenced. |
 | `js/modules/cloud-sync.js` | 389 | 4 | 3 | 0 | Cloud Sync — auto-push on save, auto-pull on load. |
-| `js/modules/coastal-layers.js` | 348 | 5 | 1 | **5** | coastal-layers.js — oyster beds, marsh edges and depth soundings. |
+| `js/modules/coastal-layers.js` | 345 | 5 | 1 | **5** | coastal-layers.js — oyster beds, marsh edges and depth soundings. |
 | `js/modules/coastal-scoring.js` | 289 | 15 | 3 | **1** | coastal-scoring.js — tide- and structure-aware spot scoring for inshore |
-| `js/modules/contour-data.js` | 594 | 11 | 7 | **5** | contour-data.js — Contour dataset lazy loader + lake selector integration. |
+| `js/modules/contour-data.js` | 585 | 10 | 7 | **4** | contour-data.js — Contour dataset lazy loader + lake selector integration. |
 | `js/modules/custom-vectors.js` | 615 | 0 | 1 | 0 | custom-vectors.js — Structure Intel Layer |
 | `js/modules/duke-energy.js` | 180 | 2 | 3 | **1** | Duke Energy scraper — proxies the live Duke Energy lake-level |
 | `js/modules/edit.js` | 253 | 1 | 2 | 0 | Edit tab — table-based view of waypoints + tracks with inline |
@@ -378,7 +371,7 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 | `js/modules/notifications.js` | 376 | 6 | 1 | **6** | notifications.js — On-water alerts for TrollMap |
 | `js/modules/osm-structure.js` | 145 | 0 | 1 | 0 | osm-structure.js — OSM Structure Layer Toggle |
 | `js/modules/pinch-point-finder.js` | 337 | 0 | 1 | 0 | Pinch Point Finder — analyzes vectorized depth contours to locate |
-| `js/modules/plan-builder.js` | 2002 | 7 | 6 | 0 | Plan Builder — the Plan tab form, save/load, preview rendering, |
+| `js/modules/plan-builder.js` | 2017 | 7 | 6 | 0 | Plan Builder — the Plan tab form, save/load, preview rendering, |
 | `js/modules/plan-tab-wiring.js` | 64 | 0 | 1 | 0 | plan-tab-wiring.js |
 | `js/modules/qdc-decoder.js` | 356 | 3 | 1 | 0 | qdc-decoder.js — pure functions: raw .qdc folder → grid → contour GeoJSON. |
 | `js/modules/quickdraw-key.js` | 50 | 0 | 1 | 0 | Garmin Quickdraw 8-Band Depth Key — a floating legend showing |
@@ -394,14 +387,14 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 | `js/modules/species-selector.js` | 169 | 1 | 1 | **1** | species-selector.js — swap the Plan tab's target-species checkboxes between |
 | `js/modules/spot-repositioning.js` | 33 | 0 | 1 | 0 | Spot Repositioning — drag a marker (GIS spot, ramp, attractor) |
 | `js/modules/spread-builder.js` | 371 | 13 | 8 | **10** | Rod Spread Builder — the table UI in the Plan tab where each rod |
-| `js/modules/supplemental-layers.js` | 1455 | 11 | 3 | **8** | supplemental-layers.js — Supplemental PBF-extracted layer integration. |
+| `js/modules/supplemental-layers.js` | 1446 | 11 | 3 | **8** | supplemental-layers.js — Supplemental PBF-extracted layer integration. |
 | `js/modules/sw-register.js` | 13 | 0 | 1 | 0 | Service Worker registration — registers ./sw.js once the page |
 | `js/modules/tackle-inventory-ui.js` | 170 | 2 | 3 | 0 | tackle-inventory-ui.js — Collapsible tackle inventory panel in the Plan tab. |
-| `js/modules/tide-engine.js` | 343 | 14 | 9 | 0 | tide-engine.js — NOAA CO-OPS tide data as a reusable module. |
+| `js/modules/tide-engine.js` | 336 | 14 | 9 | 0 | tide-engine.js — NOAA CO-OPS tide data as a reusable module. |
 | `js/modules/topbar.js` | 163 | 0 | 1 | 0 | Topbar dropdown controls — basemap selector, edit-mode dropdown, |
 | `js/modules/track-reverse.js` | 60 | 0 | 1 | 0 | Track Reversal Studio — append a reversed copy of the first |
-| `js/modules/usgs-gauges.js` | 138 | 6 | 2 | **3** | usgs-gauges.js — river discharge as a salinity proxy for coastal zones. |
-| `js/modules/utility-sync.js` | 259 | 1 | 2 | 0 | Live Utility & USGS sync — pulls real-time lake pool elevation |
+| `js/modules/usgs-gauges.js` | 170 | 6 | 2 | **3** | usgs-gauges.js — river discharge as a salinity proxy for coastal zones. |
+| `js/modules/utility-sync.js` | 267 | 1 | 2 | 0 | Live Utility & USGS sync — pulls real-time lake pool elevation |
 | `js/modules/water-search.js` | 201 | 4 | 2 | 0 | water-search.js — search everything TrollMap knows, not everything OpenStreetMap knows. |
 | `js/modules/waypoint-to-generator.js` | 33 | 0 | 1 | 0 | One-Click Waypoint → Lane Connect — clicking a waypoint popup |
 | `js/modules/wet-hands-remote.js` | 101 | 0 | 1 | 0 | Wet Hands Remote — keyboard + gamepad navigation shortcuts so |
@@ -421,9 +414,9 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 | `sw.js` | 71 | 0 | 0 | 0 | TrollMap service worker — v17 (evidence pipeline fixes, 2026-07-12) |
 | `test/arcgis-filter-guard.test.js` | 203 | 0 | 0 | 0 |  |
 | `test/arcgis-mapping.test.js` | 86 | 0 | 0 | 0 |  |
-| `test/check-imports.mjs` | 103 | 0 | 0 | 0 | check-imports.mjs — every named import across js/ must resolve to a real export. |
-| `test/check-lake-geo.mjs` | 87 | 0 | 0 | 0 | check-lake-geo.mjs — a curated name must map to a lake in the right PLACE. |
-| `test/check-lake-keys-parity.mjs` | 57 | 0 | 0 | 0 | Simple parity checker for lake-keys — can be run without vitest: node test/check-lake-keys |
+| `test/check-imports.mjs` | 123 | 0 | 0 | 0 | check-imports.mjs — every named import across js/ must resolve to a real export. |
+| `test/check-lake-geo.mjs` | 126 | 0 | 0 | 0 | check-lake-geo.mjs — a curated name must map to a lake in the right PLACE. |
+| `test/check-lake-keys-parity.mjs` | 57 | 0 | 0 | 0 | !/usr/bin/env node |
 | `test/check-tackle-parity.mjs` | 244 | 0 | 0 | 0 | check-tackle-parity.mjs — runner-free tackle parity check. |
 | `test/cloud-sync.test.js` | 131 | 0 | 0 | 0 | test/cloud-sync.test.js -- a deleted plan must actually tombstone in the cloud. |
 | `test/coastal-agents.test.js` | 213 | 0 | 0 | 0 |  |
@@ -451,7 +444,7 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 | `test/lake-registry.test.js` | 189 | 0 | 0 | 0 | test/lake-registry.test.js -- the registry resolves lake names to the right lake. |
 | `test/layer-registry.test.js` | 331 | 0 | 0 | 0 | test/layer-registry.test.js — one owner for layer visibility, and it stays one. |
 | `test/layers-panel.test.js` | 148 | 0 | 0 | 0 | test/layers-panel.test.js — the bar stays slim and no toggle goes missing. |
-| `test/persistence.test.js` | 127 | 0 | 0 | 0 | test/persistence.test.js — one persistence path, and a readiness check that can actually f |
+| `test/persistence.test.js` | 142 | 0 | 0 | 0 | test/persistence.test.js — one persistence path, and a readiness check that can actually f |
 | `test/r2-gzip.test.js` | 149 | 0 | 0 | 0 | r2-gzip.test.js — the Worker must unwrap what the pipeline compresses. |
 | `test/registry_smoke.mjs` | 163 | 0 | 0 | 0 | registry_smoke.mjs -- run the REAL lake_index.json through the REAL lake-registry.js and |
 | `test/regulations-matching.test.js` | 27 | 0 | 0 | 0 |  |
@@ -466,19 +459,20 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 | `test/sync_smoke.mjs` | 121 | 0 | 0 | 0 | sync_smoke.mjs -- prove a deleted plan actually tombstones in the cloud. |
 | `test/tackle-parity.test.js` | 242 | 0 | 0 | 0 |  |
 | `test/tide-engine.test.js` | 182 | 0 | 0 | 0 |  |
-| `test/usgs-gauges.test.js` | 64 | 0 | 0 | 0 |  |
+| `test/usgs-gauges.test.js` | 108 | 0 | 0 | 0 |  |
 | `test/water-aliases.test.js` | 124 | 0 | 0 | 0 |  |
 | `test/water-search.test.js` | 63 | 0 | 0 | 0 |  |
 | `test/worker-auth.test.js` | 200 | 0 | 0 | 0 | test/worker-auth.test.js — writes to the Worker are gated, and the client can get through. |
 | `test/worker-data.test.js` | 60 | 0 | 0 | 0 |  |
 | `test/worker-external-imports.test.js` | 109 | 0 | 0 | 0 | test/worker-external-imports.test.js — the Worker bundle's reach outside Worker/. |
 | `tools/audit.mjs` | 489 | 0 | 0 | 0 | tools/audit.mjs — generate the map of this codebase, from the codebase. |
-| `tools/audit_duplication.mjs` | 159 | 0 | 0 | 0 | Find duplicated logic across the front end and the Worker. |
-| `tools/audit_silent_catches.mjs` | 240 | 0 | 0 | 0 | Audit every `catch` block in the repo and classify what it does when it fires. |
+| `tools/audit_duplication.mjs` | 159 | 0 | 0 | 0 | !/usr/bin/env node |
+| `tools/audit_silent_catches.mjs` | 240 | 0 | 0 | 0 | !/usr/bin/env node |
 
 ### Modules nothing imports
 
 - `Scripts/make_counties.mjs` — 49 lines, 0 exports
+- `Worker/research/vision.js` — 222 lines, 3 exports
 - `js/data/dump_js_lists.mjs` — 38 lines, 0 exports
 - `sw.js` — 71 lines, 0 exports
 
@@ -489,6 +483,7 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 - `Worker/research/dataset.js`: DATASET_HUNT_TARGETS, DATASET_KEYWORDS, scoreDatasetUrl, buildNepisQueryVariants
 - `Worker/research/facts-util.js`: normalizeResearchName, hasResearchValue, titleCaseWords, RESEARCH_SPECIES_CANON, canonicalizeResearchSpecies, NON_GAME_SPECIES, splitSpeciesText, parseSCDNRDescriptionFacts, RESEARCH_RAMP_SOURCES, RESEARCH_ATTRACTOR_SOURCES, fetchArcGISGrouped, waterbodyMatchesLake, stripHtmlPreserveTables, extractHtmlTableRows, extractMarkdownTableRows, slicePdfPageRange, parseSCRegulationsFromHtml
 - `Worker/research/shared.js`: SHARED_ENABLED_DEFAULT, sharedEnabled, contentFingerprint, urlToDocId, SECTION_HEADING_PREFIXES, CHUNK_SIZE, CHUNK_OVERLAP, segmentDocument, chunkText, LAKE_CATALOG, tagSectionsWithLakes, CATEGORY_KEYWORDS, tagSectionsWithCategories, getSharedPointer, getSharedRegistryEntry, isQuarantined
+- `Worker/research/vision.js`: handleResearchVisionScan, handleResearchVisionScanSave, handleResearchVisionScanStatus
 - `js/core/layer-registry.js`: setMapAccessor, hasLayer, layerIds, isEnabled, invalidate, _reset
 - `js/core/map-init.js`: onMapClick, fillCoord, suggestName, startPick
 - `js/data/fishing-style-profile.js`: isLiveBaitTechnique, isSaltwaterBait, canHoldStation
@@ -503,7 +498,7 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 - `js/modules/chart-overlay.js`: refreshChartOverlayTransforms
 - `js/modules/coastal-layers.js`: refreshSoundingLabels, loadCoastalLayersForZone, clearCoastalLayers, getSoundingsNear, getCoastalLayerState
 - `js/modules/coastal-scoring.js`: COASTAL_SPECIES
-- `js/modules/contour-data.js`: loadContourByR2Key, setContourTidal, clearContourLabels, renderContourLayer, LAKE_NAME_TO_R2_KEY
+- `js/modules/contour-data.js`: loadContourByR2Key, clearContourLabels, renderContourLayer, LAKE_NAME_TO_R2_KEY
 - `js/modules/duke-energy.js`: parseDukeText
 - `js/modules/garmin-export.js`: exportGarminGPX
 - `js/modules/gps.js`: startGPS, stopGPS, wireGpsButtons
@@ -525,14 +520,14 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 ## Same function name in more than one file
 
 - `wireButtons()` — js/modules/catch-journal.js:1378, js/modules/chart-mosaic.js:390, js/modules/chart-overlay.js:387, js/modules/edit.js:236, js/modules/file-io.js:51, js/modules/ramps.js:126, js/modules/saved-spreads.js:73, js/modules/spread-builder.js:335, js/modules/topbar.js:9
-- `init()` — js/modules/coastal-layers.js:303, js/modules/gis-toggles.js:245, js/modules/layers-panel.js:70, js/modules/pinch-point-finder.js:314, js/modules/routes-panel.js:126, js/modules/species-selector.js:151, js/modules/supplemental-layers.js:1415
-- `walk()` — test/check-imports.mjs:28, test/persistence.test.js:27, test/worker-auth.test.js:29, test/worker-external-imports.test.js:43, tools/audit.mjs:56, tools/audit_duplication.mjs:73, tools/audit_silent_catches.mjs:189
-- `getMap()` — js/modules/coastal-layers.js:36, js/modules/gis-toggles.js:16, js/modules/osm-structure.js:40, js/modules/supplemental-layers.js:174
-- `mapReady()` — js/modules/coastal-layers.js:38, js/modules/gis-toggles.js:20, js/modules/osm-structure.js:42, js/modules/supplemental-layers.js:176
+- `init()` — js/modules/coastal-layers.js:300, js/modules/gis-toggles.js:245, js/modules/layers-panel.js:70, js/modules/pinch-point-finder.js:314, js/modules/routes-panel.js:126, js/modules/species-selector.js:151, js/modules/supplemental-layers.js:1406
+- `walk()` — test/check-imports.mjs:48, test/persistence.test.js:27, test/worker-auth.test.js:29, test/worker-external-imports.test.js:43, tools/audit.mjs:56, tools/audit_duplication.mjs:73, tools/audit_silent_catches.mjs:189
+- `getMap()` — js/modules/coastal-layers.js:36, js/modules/gis-toggles.js:16, js/modules/osm-structure.js:40, js/modules/supplemental-layers.js:159
+- `mapReady()` — js/modules/coastal-layers.js:38, js/modules/gis-toggles.js:20, js/modules/osm-structure.js:42, js/modules/supplemental-layers.js:161
 - `say()` — js/modules/lake-intel.js:19, js/modules/lake-intel.js:252, js/modules/noaa-tides.js:77, js/modules/utility-sync.js:62
 - `setStatus()` — js/modules/cloud-sync.js:42, js/modules/route-builder.js:2071, js/modules/smart-plan.js:712
-- `cacheGet()` — js/modules/tide-engine.js:27, js/modules/usgs-gauges.js:25, js/utils/db.js:273
-- `cacheSet()` — js/modules/tide-engine.js:37, js/modules/usgs-gauges.js:32, js/utils/db.js:288
+- `cacheGet()` — js/modules/tide-engine.js:27, js/modules/usgs-gauges.js:28, js/utils/db.js:273
+- `cacheSet()` — js/modules/tide-engine.js:37, js/modules/usgs-gauges.js:35, js/utils/db.js:288
 - `isEnabled()` — js/core/layer-registry.js:97, js/modules/notifications.js:288
 - `toggle()` — js/core/layer-registry.js:167, js/modules/layers-panel.js:68
 - `getWorkerBase()` — js/data/access-index.js:74, js/modules/gis-toggles.js:51
@@ -543,12 +538,12 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 - `wire()` — js/modules/lake-ramp-select.js:384, js/modules/noaa-tides.js:64
 - `setAtPath()` — js/modules/lake-research-engine.js:979, js/modules/lake-research-ui.js:63
 - `esc()` — js/modules/lake-research-ui.js:256, js/utils/escape.js:1
-- `put()` — js/modules/plan-builder.js:1751, js/utils/db.js:113
+- `put()` — js/modules/plan-builder.js:1766, js/utils/db.js:113
 - `destination()` — js/modules/route-builder.js:44, js/utils/geo.js:124
 - `angleDiff()` — js/modules/route-builder.js:376, js/modules/smart-plan.js:342
 - `hStr()` — js/modules/smart-plan.js:278, js/modules/smart-plan.js:834
 - `distToRingFt()` — js/modules/smart-plan.js:409, js/utils/geo.js:149
-- `norm()` — js/modules/supplemental-layers.js:746, js/modules/water-search.js:42
+- `norm()` — js/modules/supplemental-layers.js:732, js/modules/water-search.js:42
 - `depthColor()` — js/utils/depth-palette.js:50, js/utils/geo.js:276
 
 ## Cross-module state on `window`
@@ -608,52 +603,61 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 
 | script | flags | purpose |
 |---|---|---|
-| `Scripts/area_audit.py` | — | Same audit, applied to the AREAS region (TRE7 column +0). |
-| `Scripts/audit_scripts.py` | --dir --manifest --sort --go --files | audit_scripts.py — which of the 239 scripts in scripts/ are still load-bearing. |
+| `Scripts/area_audit.py` | — | !/usr/bin/env python3 |
+| `Scripts/audit_scripts.py` | --dir --manifest --sort --go --files | !/usr/bin/env python3 |
 | `Scripts/build_all_chartpacks.py` | --extract --registry --map --out --report --buffer-m --states --min-charted --only-layers --limit --only-tiles --ship-list --require-depth-area --report-only --only-lakes --max-segment-m | build_all_chartpacks.py - cut every registry lake out of the per-tile extract, in one pass. |
-| `Scripts/build_chartpack.py` | --extract --key --bbox --boundary --buffer-m --ac --out --archive | build_chartpack.py - turn per-tile extractor output into one lake's R2 chartpack. |
-| `Scripts/check_pipeline_parity.py` | — | check_pipeline_parity.py — the lists that must agree, checked before a build. |
+| `Scripts/build_chartpack.py` | --extract --key --bbox --boundary --buffer-m --ac --out --archive | !/usr/bin/env python3 |
+| `Scripts/build_structure.py` | --packs --registry --report --only-lakes --limit --min-score | build_structure.py - humps, ledges and slope for every lake, from geometry alone. |
+| `Scripts/build_water_graphs.py` | --tiles --registry --map --out --layer --seam-m --buffer-m --only-lakes --limit --report | build_water_graphs.py - a routing graph over navigable water, one per lake. |
+| `Scripts/check_pipeline_parity.py` | — | !/usr/bin/env python3 |
 | `Scripts/classify_salt_fresh.py` | --line --feeds --self-test --show | !/usr/bin/env python3 |
-| `Scripts/coastal_catalog.py` | — | coastal_catalog.py — TrollMap coastal/tidal zone definitions for SC, GA, and NC. |
-| `Scripts/consolidate_lake_index.py` | --registry --js-lists --charted --out --states --max-km --names --aliases --counties | consolidate_lake_index.py - fold every lake list in the app into ONE record per lake. |
-| `Scripts/extract_coastal_habitat.py` | --zone --zones --dry-run --skip-upload --list-layers | extract_coastal_habitat.py — Extract and clip coastal habitat data to TrollMap |
-| `Scripts/fetch_dnr_paddle.py` | --state --out --stdout --compare | Pull paddle-launch access sites straight from the four state DNR ArcGIS feeds. |
+| `Scripts/coastal_catalog.py` | — | !/usr/bin/env python3 |
+| `Scripts/consolidate_lake_index.py` | --registry --js-lists --charted --out --states --max-km --names --aliases --counties | !/usr/bin/env python3 |
+| `Scripts/derived_bboxes.py` | — | Generated by trollmap_bbox_derivation.py |
+| `Scripts/dump_lbl_pool.py` | --navaids-only --walk --limit | dump_lbl_pool.py - print a GMP tile's label pool as plain text. |
+| `Scripts/extract_coastal_habitat.py` | --zone --zones --dry-run --no-gzip --skip-upload --list-layers | extract_coastal_habitat.py — Extract and clip coastal habitat data to TrollMap |
+| `Scripts/fetch_dnr_paddle.py` | --state --out --stdout --compare | !/usr/bin/env python3 |
+| `Scripts/fetch_osm_coastal.py` | --zone --dry-run --list | fetch_osm_coastal.py — Extracts fishing-relevant OSM structures for TrollMap |
 | `Scripts/fetch_osm_structures.py` | --lake --dry-run --no-gzip --list --out-dir --catalog-only --from-cache --jobs --index --pbf --keep-tmp | !/usr/bin/env python3 |
-| `Scripts/gen_coastal_zones_js.py` | — | gen_coastal_zones_js.py — generate js/data/coastal-zones.js from coastal_catalog.py. |
+| `Scripts/gen_coastal_zones_js.py` | — | !/usr/bin/env python3 |
 | `Scripts/gen_water_aliases_js.py` | --dir --index --lake-keys --registry-boundaries --check | !/usr/bin/env python3 |
-| `Scripts/gmapmf_areas_v51.py` | — | GMAPMF area-region (RGN1) record walk. B2, 2026-08-01, partial. |
-| `Scripts/gmapmf_decode_v40.py` | --out --level | gmapmf_decode_v40.py — firmware-exact GMAPMF depth-contour decoder (B and C tiles). |
-| `Scripts/gmapmf_labels_v50.py` | — | GMAPMF label resolution -- SOLVED 2026-07-31, Session B. |
-| `Scripts/gmapmf_lines_v50.py` | — | GMAPMF line-region decoder v50 -- chain by closure, tag-priority records. |
-| `Scripts/gmapmf_regions_v51.py` | — | Tile-level decoders for the LINE and AREA regions, on the corrected framing. |
+| `Scripts/gmapmf_areas_v51.py` | — | !/usr/bin/env python3 |
+| `Scripts/gmapmf_decode_v40.py` | --out --level | !/usr/bin/env python3 |
+| `Scripts/gmapmf_labels_v50.py` | — | !/usr/bin/env python3 |
+| `Scripts/gmapmf_lines_v50.py` | — | !/usr/bin/env python3 |
+| `Scripts/gmapmf_mar_v1.py` | — | GARMIN NGSR MAR reader — the auto-guidance safe-water mesh that ships |
+| `Scripts/gmapmf_regions_v51.py` | — | !/usr/bin/env python3 |
 | `Scripts/install_registry_boundary.py` | --registry --boundaries --labels --lake --state --name --go | !/usr/bin/env python3 |
-| `Scripts/lake_catalog.py` | — | lake_catalog.py — Complete Comprehensive Source of Truth for all TrollMap lake definitions. |
+| `Scripts/lake_catalog.py` | — | !/usr/bin/env python3 |
 | `Scripts/make_coastal_boundaries.py` | --catalog --out --only --go | !/usr/bin/env python3 |
-| `Scripts/make_key_map.py` | --lake-keys --slugs --out --max-km | make_key_map.py - decide which R2 key each registry lake writes to, BEFORE anything uploads. |
+| `Scripts/make_key_map.py` | --lake-keys --slugs --out --max-km | !/usr/bin/env python3 |
 | `Scripts/make_osm_ramps_by_lake.py` | --registry --ramps --margin-m --go | !/usr/bin/env python3 |
 | `Scripts/make_river_boundaries.py` | --gpkg --feeds --out --index --only --narrow-region --flowing-only --ramp-tol --join-tol --no-split --salt-line --catalog --coastal-slack-km --extract --garmin-cache --max-reach-km --pad-km --min-km2 --lakes --go | !/usr/bin/env python3 |
-| `Scripts/osm_ramps.py` | --pbf --out | osm_ramps.py - every boat ramp OSM knows about, from the .pbf files already on the drive. |
-| `Scripts/poi_audit.py` | — | RGN4 (points) with chain-by-closure, and hunt for the LBL pool reference. |
-| `Scripts/prune_r2_keys.py` | --key-map --packs --dry-run --go --force | prune_r2_keys.py - delete the superseded chartpack keys from R2. |
-| `Scripts/prune_r2_objects.py` | --list --go --stop-on-error | prune_r2_objects.py — delete an EXPLICIT list of R2 keys, one per line. |
+| `Scripts/mar_route.py` | — | mar_route.py - turn a MAR layer into a navigable-water routing graph and route on it. |
+| `Scripts/osm_ramps.py` | --pbf --out | !/usr/bin/env python3 |
+| `Scripts/poi_audit.py` | — | !/usr/bin/env python3 |
+| `Scripts/poi_source_compare.py` | --garmin --iboating --out --radius-m --verbose | poi_source_compare.py - does Garmin already have i-Boating's POIs? |
+| `Scripts/prune_r2_keys.py` | --key-map --packs --dry-run --go --force | !/usr/bin/env python3 |
+| `Scripts/prune_r2_objects.py` | --list --go --stop-on-error | !/usr/bin/env python3 |
 | `Scripts/r2_audit.py` | --worker --from --save --delete-list --registry | r2_audit.py — what is actually in the R2 bucket, and what of it can go. |
-| `Scripts/r2_gzip.py` | — | r2_gzip.py — one place that decides how a file gets compressed on its way into R2. |
-| `Scripts/recompute_charted.py` | --packs --registry --report --buffer-m --no-prune | recompute_charted.py - fix the charted fraction from the BUILT packs. No rebuild. |
-| `Scripts/rgn4_grammar.py` | — | One RGN4 record grammar for every mode. |
+| `Scripts/r2_gzip.py` | — | !/usr/bin/env python3 |
+| `Scripts/recompute_charted.py` | --packs --registry --report --buffer-m --no-prune | !/usr/bin/env python3 |
+| `Scripts/rgn4_grammar.py` | — | !/usr/bin/env python3 |
 | `Scripts/rgn4_pois.py` | --out | rgn4_pois.py - the POI stage. Every labelled RGN4 point, correctly placed. |
 | `Scripts/suggest_name_aliases.py` | --registry --max-edits --min-key --write | !/usr/bin/env python3 |
-| `Scripts/tile_lake_map.py` | --labels --registry --out --states --index --accessible-only --tiles-out | tile_lake_map.py - which GMP tiles cover which registry lakes, and vice versa. |
+| `Scripts/tile_lake_map.py` | --labels --registry --out --states --index --accessible-only --tiles-out | !/usr/bin/env python3 |
 | `Scripts/trim_pack_strays.py` | --chartpack --boundaries --buffer-m --lake --state-file --seconds --go | !/usr/bin/env python3 |
-| `Scripts/trollmap_extract_all.py` | --out --layers --letters --jobs --limit --tiles --zoom0-only --min-area --force --gzip | trollmap_extract_all.py - ONE pass over a Garmin GMAPMF tile (or the whole card) that |
-| `Scripts/trollmap_nhd_boundaries.py` | --lake --overwrite --dump-names --list | trollmap_nhd_boundaries.py — Extract lake boundaries from NHDPlus HR GDB files |
-| `Scripts/trollmap_pipeline_coastal.py` | --output --zone --zooms --contours-only --max-cove-dist --min-features | trollmap_pipeline_coastal.py — TrollMap Coastal Zone Extraction Pipeline |
+| `Scripts/trollmap_extract_all.py` | --out --layers --letters --jobs --limit --tiles --zoom0-only --min-area --force --gzip | !/usr/bin/env python3 |
+| `Scripts/trollmap_lake_boundaries.py` | --lake --list --overwrite --dump-names | trollmap_lake_boundaries.py - Extract lake boundaries from USGS 3DHP GeoPackage |
+| `Scripts/trollmap_nhd_boundaries.py` | --lake --overwrite --dump-names --list | !/usr/bin/env python3 |
+| `Scripts/trollmap_pipeline.py` | --output --lake --zooms --max-cove-dist --min-features | trollmap_pipeline.py — Unified TrollMap Extraction Pipeline |
+| `Scripts/trollmap_pipeline_coastal.py` | --output --zone --zooms --contours-only --max-cove-dist --min-features | !/usr/bin/env python3 |
+| `Scripts/trollmap_r2_clean.py` | --all --contours --supplemental --boundaries --dry-run --list | trollmap_r2_clean.py — Wipe TrollMap R2 data using Cloudflare API. |
 | `Scripts/upload_boundaries_to_r2.py` | --lake --dry-run --no-gzip | upload_boundaries_to_r2.py — Uploads 3DHP lake boundary GeoJSONs to R2 |
 | `Scripts/upload_garmin_to_r2.py` | --root --layers --all --lake --prefix --jobs --gzip --no-gzip --dry-run --force --manifest --timeout --registry --with-pipeline-layers --coastal-primary --max-mb | upload_garmin_to_r2.py — push the Garmin-derived layers to R2, fast and resumably. |
-| `Scripts/upload_to_r2_coastal.py` | --all --contours --supplemental --boundaries --lake --dry-run --no-gzip | upload_to_r2_coastal.py — Upload TrollMap coastal pipeline outputs to R2. |
+| `Scripts/upload_to_r2.py` | --all --contours --supplemental --boundaries --lake --dry-run | upload_to_r2.py — Upload all TrollMap pipeline outputs to R2 in clean structure. |
+| `Scripts/upload_to_r2_coastal.py` | --all --contours --supplemental --boundaries --lake --dry-run --no-gzip | !/usr/bin/env python3 |
 | `Scripts/verify_river_boundaries.py` | --dir --overlap-report --max-gap-km | !/usr/bin/env python3 |
+| `Scripts/wqp_clarity_coverage.py` | --registry --out --states --characteristic --since --min-acres --timeout | wqp_clarity_coverage.py - which of our lakes actually have a clarity measurement. |
 | `Scripts/zone_coverage.py` | --catalog --feeds --line --out | !/usr/bin/env python3 |
 | `test/verify_grokipedia_windows.py` | — | Windows-friendly Python test for Grokipedia/Wikipedia citation extraction |
-
-## Imports that do not resolve
-
-- `test/check-lake-geo.mjs` imports `../js/data/lakes.js` → `js/data/lakes.js` **(missing)**

@@ -25,7 +25,27 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // LAKE_NAME_TO_R2_KEY from ../../js/data/lake-keys.js -- a Cloudflare Worker reaching across
 // the deploy boundary into the front-end tree -- so a rename in js/data/ can break the Worker
 // build, and nothing was watching that edge.
-const SCAN = ['js', 'Worker'];
+// test/ was outside this check until 2026-08-07, and that gap is why
+// depth-palette.test.js imported four symbols tide-engine.js has never exported and
+// `lint:imports` still reported PASS. A test file is the one place a broken import is
+// SUPPOSED to be caught, and it was the one directory nothing looked at.
+const SCAN = ['js', 'Worker', 'test'];
+
+/**
+ * Comments blanked, newlines kept.
+ *
+ * Added 2026-08-07 in the same breath as scanning test/, because the very first run over this
+ * directory failed on THIS FILE: the header below documents the shape it matches with
+ * `// import { a, b as c } from './x.js'`, and the scanner dutifully reported an unresolved
+ * import from a file that has never existed. A checker that cannot tell code from prose
+ * eventually reports its own examples — the same trap persistence.test.js fell into against
+ * its own changelog.
+ */
+function code(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
 
 function walk(dir, out = []) {
   for (const e of readdirSync(dir)) {
@@ -42,7 +62,7 @@ function exportsOf(file, seen = new Set()) {
   if (seen.has(file)) return new Set();
   seen.add(file);
   if (!existsSync(file)) return null;
-  const src = readFileSync(file, 'utf8');
+  const src = code(readFileSync(file, 'utf8'));
   const names = new Set();
 
   for (const m of src.matchAll(/^\s*export\s+(?:async\s+)?(?:const|let|var|function\*?|class)\s+([A-Za-z_$][\w$]*)/gm)) {
@@ -71,7 +91,7 @@ const problems = [];
 let checked = 0;
 
 for (const file of files) {
-  const src = readFileSync(file, 'utf8');
+  const src = code(readFileSync(file, 'utf8'));
   // import { a, b as c } from './x.js'   (relative specifiers only — bare ones are deps)
   for (const m of src.matchAll(/import\s*\{([^}]*)\}\s*from\s*['"](\.[^'"]+)['"]/g)) {
     const target = resolve(dirname(file), m[2]);
