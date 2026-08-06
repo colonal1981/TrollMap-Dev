@@ -11,6 +11,7 @@ import {
 } from '../core/layer-registry.js';
 import { esc } from '../utils/escape.js';
 import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../data/lake-keys.js';
+import { cull } from '../utils/viewport-cull.js';
 import { distMiFromCoords as distMi } from '../utils/geo.js';
 import { TRISTATE_MASTER_RAMPS, rampsReady } from '../data/ramps-loader.js';
 import { workerHeaders } from '../utils/worker-auth.js';
@@ -103,6 +104,18 @@ let _activeLakeKey    = null;
 let _depthAreaLayer   = null;
 let _depthAreaVisible = true;
 let _depthAreaGeoJSON = null;
+// Everything the redraw needs, so a pan or a zoom rebuilds the layer from the features that
+// are actually on screen instead of all 26,288 of them. See js/utils/viewport-cull.js.
+let _depthAreaAll     = null;   // the full filtered feature array for the loaded water
+let _depthAreaShell   = null;   // the GeoJSON envelope, minus features
+let _depthAreaOpts    = null;   // the L.geoJSON options, built once
+let _depthAreaCoastal = false;
+
+// Coastal zones clip to a RECTANGLE, so their packs carry open Atlantic out to the seaward edge
+// of the box. Murrells Inlet: 26,288 depth polygons and 29,676 contours, against 7,512 contours
+// on Wateree -- a large lake. Leaflet's canvas is comfortable to ~10,000 paths. Until those
+// zones get a real inshore boundary, the polygons do not start until the view can use them.
+const COASTAL_DEPTH_MIN_ZOOM = 13;
 let _visionLayer      = null;
 let _visionVisible    = false;
 let _boundaryGeoJSON  = null;
@@ -186,7 +199,10 @@ async function loadDepthAreas(lakeKey) {
     const fineBands = bandCount > 20;
     const strokeW = fineBands ? 0 : 0.5;
 
-    _depthAreaLayer = L.geoJSON({ ...gj, features }, {
+    _depthAreaAll = features;
+    _depthAreaShell = { ...gj, features: [] };
+    _depthAreaCoastal = isCoastal;
+    _depthAreaOpts = {
       renderer: _canvasRenderer,
       smoothFactor: 1.5,
       style(feat) {
@@ -206,17 +222,12 @@ async function loadDepthAreas(lakeKey) {
         layer.bindTooltip(`Depth zone: ${ftLabel(p.depth_min_ft)}–${ftLabel(p.depth_max_ft)} ft`,
                           { sticky: true, direction: 'top', opacity: 0.85 });
       },
-    });
+    };
 
-    if (_depthAreaVisible) {
-      _depthAreaLayer.addTo(getMap());
-      if (!isCoastal) _depthAreaLayer.bringToBack();
-    }
     _depthAreaGeoJSON = gj;
-    globalThis.SUPPLEMENTAL_DEPTH_LAYER   = _depthAreaLayer;
     globalThis.SUPPLEMENTAL_DEPTH_GEOJSON = gj;
-    window.SUPPLEMENTAL_DEPTH_LAYER       = _depthAreaLayer;
     window.SUPPLEMENTAL_DEPTH_GEOJSON     = gj;
+    redrawDepthAreas();
     console.log(`[supplemental] depth_areas loaded: ${features.length} features, `
               + `${bandCount} bands, stroke ${strokeW} for ${lakeKey}`);
     // Apply tide-adjusted colors — check immediately and again after a delay
@@ -235,6 +246,52 @@ async function loadDepthAreas(lakeKey) {
     }
   }
 }
+
+/**
+ * Rebuild the depth-area layer from the polygons currently on screen.
+ *
+ * Called on load, and again on every pan and zoom. Rebuilding sounds worse than it is: the
+ * whole point is that the rebuild only ever touches what fits in the viewport, so it is
+ * bounded by screen size rather than by pack size. Drawing all of Charleston once costs more
+ * than drawing one screen of it fifty times.
+ */
+export function redrawDepthAreas() {
+  if (!mapReady() || !_depthAreaAll || !_depthAreaOpts) return;
+  const map = getMap();
+  if (_depthAreaLayer) { map.removeLayer(_depthAreaLayer); _depthAreaLayer = null; }
+
+  // Below the coastal floor, draw nothing rather than 26,288 polygons of open Atlantic.
+  if (_depthAreaCoastal && map.getZoom() < COASTAL_DEPTH_MIN_ZOOM) {
+    globalThis.SUPPLEMENTAL_DEPTH_LAYER = null;
+    window.SUPPLEMENTAL_DEPTH_LAYER     = null;
+    return;
+  }
+
+  const shown = cull(_depthAreaAll, map);
+  _depthAreaLayer = L.geoJSON({ ..._depthAreaShell, features: shown }, _depthAreaOpts);
+  if (_depthAreaVisible) {
+    _depthAreaLayer.addTo(map);
+    if (!_depthAreaCoastal) _depthAreaLayer.bringToBack();
+  }
+  globalThis.SUPPLEMENTAL_DEPTH_LAYER = _depthAreaLayer;
+  window.SUPPLEMENTAL_DEPTH_LAYER     = _depthAreaLayer;
+
+  // The tide shifts every polygon's colour, and a freshly built layer has not had it applied.
+  if (_depthAreaCoastal) {
+    const tideFt = _coastalTideHeightFt ?? window._trollmapTide?.heightFt ?? null;
+    if (Number.isFinite(tideFt)) refreshDepthAreaColors(tideFt);
+  }
+}
+
+let _depthRedrawTimer = null;
+function _wireDepthAreaRedraw() {
+  if (!mapReady()) { setTimeout(_wireDepthAreaRedraw, 500); return; }
+  getMap().on('moveend zoomend', () => {
+    clearTimeout(_depthRedrawTimer);
+    _depthRedrawTimer = setTimeout(redrawDepthAreas, 120);
+  });
+}
+_wireDepthAreaRedraw();
 
 /**
  * Community fishing points + paths for one lake.

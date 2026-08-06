@@ -3,6 +3,7 @@
  */
 
 import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../data/lake-keys.js';
+import { viewFilter } from '../utils/viewport-cull.js';
 
 export { LAKE_NAME_TO_R2_KEY, resolveR2Key };
 
@@ -148,6 +149,11 @@ const _canvasRenderer = L.svg({ padding: 0.5 });
 
 // Zoom threshold below which contour lines are hidden (depth areas still show)
 const CONTOUR_MIN_ZOOM = 11;
+// Coastal zones are clipped to a RECTANGLE, so their packs carry the open Atlantic out to the
+// seaward edge of the box -- 29,676 contours on Murrells Inlet against 7,512 on Wateree, a
+// large lake. Until those zones get a real inshore boundary, the linework does not begin until
+// the view is small enough for it to mean something. Same floor the facility labels use.
+const COASTAL_CONTOUR_MIN_ZOOM = 13;
 
 // Garmin stores depth in DECIMETRES on a nominal 1 ft ladder, so converting to feet lands just
 // off a whole number: 3 dm = 0.98 ft, 30 dm = 9.84, 34 dm = 11.15. Two consequences, and the
@@ -353,7 +359,9 @@ export function renderContourLayer(showSmart = true, showRaw = false) {
 
   // Below CONTOUR_MIN_ZOOM, hide contour lines — depth area polygons carry the visual at low zoom
   const zoom = state.MAP.getZoom();
-  if (zoom < CONTOUR_MIN_ZOOM) { clearContourLabels(); return; }
+  const floor = isCoastalKey(state.ACTIVE_CONTOUR_KEY) ? COASTAL_CONTOUR_MIN_ZOOM
+                                                       : CONTOUR_MIN_ZOOM;
+  if (zoom < floor) { clearContourLabels(); return; }
 
   const smoothFactor = zoom >= 14 ? 0.5 : zoom >= 12 ? 1.0 : 1.5;
 
@@ -361,9 +369,13 @@ export function renderContourLayer(showSmart = true, showRaw = false) {
   if (showSmart && contour.smart) layers.push({ gj: contour.smart, dashed: false });
   if (showRaw   && contour.raw)   layers.push({ gj: contour.raw,   dashed: true  });
 
+  // Draw what is on screen, not what is in the file. See js/utils/viewport-cull.js.
+  const inView = viewFilter(state.MAP);
   for (const { gj, dashed } of layers) {
     if (!gj?.features?.length) continue;
-    L.geoJSON(gj, {
+    const shown = inView ? gj.features.filter(inView) : gj.features;
+    if (!shown.length) continue;
+    L.geoJSON({ ...gj, features: shown }, {
       renderer: _canvasRenderer,
       smoothFactor,
       style(feat) {
@@ -404,16 +416,16 @@ function _wireZoomHandler() {
   // Labels are viewport-culled, so a pan leaves the newly exposed water unlabelled and
   // keeps stale labels off-screen. Re-place them on pan — but only the labels, not the
   // contour geometry, which is the expensive part and does not change when panning.
+  // Geometry is now viewport-culled too, so a pan changes WHICH lines exist, not just where
+  // the labels sit. Re-render the lines as well -- that used to be "the expensive part that
+  // does not change when panning", and with culling it is neither expensive nor unchanged.
   let panTimer = null;
   state.MAP.on('moveend', () => {
-    if (state.MAP.getZoom() < CONTOUR_LABEL_MIN_ZOOM) return;
     const showLayer = document.getElementById('cdShowContourLayer')?.checked !== false;
     const contour = state.ACTIVE_CONTOUR;
-    if (!showLayer || !contour?.smart) return;
+    if (!showLayer || !contour) return;
     clearTimeout(panTimer);
-    panTimer = setTimeout(() => {
-      renderContourLabels([{ gj: contour.smart, dashed: false }]);
-    }, 120);
+    panTimer = setTimeout(() => { renderContourLayer(true, false); }, 120);
   });
 }
 _wireZoomHandler();

@@ -15,6 +15,7 @@ import { renderSpread } from "./spread-builder.js";
 import { newRodRow } from "../utils/rod-row.js";
 import { getFilename, setFilename } from "../core/map-init.js";
 import { COASTAL_ZONES, isCoastalKey } from "../data/coastal-zones.js";
+import { landOnCoastalZone } from "../utils/viewport-cull.js";
 import { appendCoastalOptgroups } from "../utils/coastal-optgroups.js";
 import { resolveR2Key } from "../data/lake-keys.js";
 // Both of these were CALLED below but never imported -- latent ReferenceErrors that predate
@@ -1715,7 +1716,7 @@ document.getElementById('planLake')?.addEventListener('change', e=>{
     ['planRiverSafety','planRiverFlow','planRiverGauge','planRiverTemp','planRiverRise','planRiverSurgeEta','planRiverSchedule','planRiverSummary'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
     const zone = COASTAL_ZONES[coastalKey];
     if (zone && state.MAP_OK) {
-      state.MAP.fitBounds(zone.bbox, { padding: [40, 40] });
+      landOnCoastalZone(state.MAP, zone.bbox);
     }
     // Auto-run lake intelligence and clarity forecast
     if(window.syncLakeIntelData) setTimeout(window.syncLakeIntelData, 500);
