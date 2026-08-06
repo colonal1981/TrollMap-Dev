@@ -256,8 +256,16 @@ def main():
                          'is not dropped')
     ap.add_argument('--only-lakes', help='comma list or @file of slugs')
     ap.add_argument('--limit', type=int)
-    ap.add_argument('--report', help='write a JSON summary here')
+    ap.add_argument('--report', help='write a JSON summary here; DEFAULTS to '
+                                     '<registry>/_water_graphs.json')
     a = ap.parse_args()
+
+    # The report used to be opt-in, and on 2026-08-07 a full card rebuild ran without it. The
+    # graphs on disk were the new halo ones; the report beside them still held the PRE-halo
+    # numbers from six hours earlier, and read as current. A run must never be able to leave a
+    # stale report standing for the state it just replaced -- so this defaults rather than asks.
+    if not a.report:
+        a.report = os.path.join(a.registry, '_water_graphs.json')
 
     tm = json.load(open(a.map, encoding='utf-8'))
     by_lake = tm['by_lake']
@@ -289,6 +297,7 @@ def main():
         mask = build_mask(rings, a.buffer_m / 111320.0)
         nodes, owner, edges, depths = [], [], [], []
         tiles_used = 0
+        halo_added = 0          # cells kept because they bridge, not because they are inside
         for t in by_lake[slug]:
             tid = t.upper()
             tid = tid[1:] if tid[0].isalpha() and len(tid) > 1 else tid
@@ -307,11 +316,48 @@ def main():
             tn, te, tdep = cache[tid]
             if not tn: continue
             tiles_used += 1
-            keep = {}
+            # ── ONE-RING HALO ───────────────────────────────────────────────────────────
+            #
+            # Cells used to be kept only if their centroid landed in `mask.core`, and an edge
+            # only if BOTH its endpoints did. That severed the graph at every cell the polygon
+            # happened to exclude -- and a cell sitting in the channel between two kept
+            # stretches takes the channel with it when it goes.
+            #
+            # Measured on edisto_river, 2026-08-07: its two tiles hold 7,336 cells and 7,628
+            # edges; the graph kept 3,013 nodes and 2,878 edges. Fewer edges than nodes, so it
+            # could not be connected whatever the geometry said -- 138 components. Rivers were
+            # worst because a river boundary is a ribbon and the routing mesh does not know it
+            # exists; coastal worse still, at 70 components median and not one zone connected.
+            #
+            # So: keep one ring of cells beyond the boundary -- a cell that is ADJACENT to a
+            # kept cell, and no further. Those are water Garmin surveyed as navigable, and the
+            # polygon is an approximation of the lake, not of the water. Same reasoning as the
+            # 250 m buffer on point layers, applied to the one layer where a wrong exclusion
+            # severs connectivity instead of merely misplacing a dot.
+            #
+            # One ring and no more: a cell two rings out is still excluded unless it is itself
+            # adjacent to something inside, so this cannot walk into the next water body.
+            #
+            # This is what restitch_water_graphs.py was compensating for. Its joins came in at
+            # a median of 11-20 m -- the MAR cell spacing -- because it was re-deriving by
+            # distance guessing the very edges Garmin states outright in ADJ. See
+            # WATER_GRAPHS_WERE_SEVERED_BY_THE_CLIP_2026-08-07.md.
+            inside = set()
             for i, c in enumerate(tn):
                 if mask.cell_of(c[0], c[1]) in mask.core:
-                    keep[i] = len(nodes)
-                    nodes.append(c); owner.append(tid); depths.append(tdep[i])
+                    inside.add(i)
+            halo = set()
+            if inside:
+                for u, v in te:
+                    if u in inside and v not in inside:
+                        halo.add(v)
+                    elif v in inside and u not in inside:
+                        halo.add(u)
+            keep = {}
+            for i in sorted(inside | halo):
+                keep[i] = len(nodes)
+                nodes.append(tn[i]); owner.append(tid); depths.append(tdep[i])
+            halo_added += len(halo)
             for u, v in te:
                 if u in keep and v in keep:
                     x, y = keep[u], keep[v]
@@ -321,6 +367,42 @@ def main():
                             'tiles': len(by_lake[slug])}
             skipped += 1; continue
         joins, edges = stitch(nodes, edges, owner, a.seam_m)
+
+        # NODES WITH NO EDGES IS NOT A SPARSE GRAPH, IT IS LOOSE POINTS. Every route on it
+        # fails. Writing the file makes the Worker load it and then fail anyway; not writing it
+        # makes the Worker say "no water graph", which is the truth and is already handled.
+        # Seen 2026-08-07 on coast_st_helena_sc (239 nodes / 0 edges) and coast_cape_romain_sc
+        # (148 / 0) -- their tiles decode cells but hand back an empty ADJ table, so there is
+        # nothing for the halo to bridge. That is a tile problem, not a clip problem.
+        if not edges:
+            report[slug] = {'skipped': 'nodes but zero edges - unroutable',
+                            'nodes': len(nodes), 'edges': 0,
+                            'halo': halo_added, 'tiles': tiles_used}
+            skipped += 1
+            continue
+
+        # THE REAL COMPONENT COUNT, not the arithmetic lower bound. edges < nodes-1 PROVES
+        # disconnection and can never prove connection -- wateree_lake passed that test while
+        # carrying 844 orphan nodes, which is how the 2026-08-06 diagnosis went wrong. Union-
+        # find is cheap and it is the number that decides whether trolling runs can be built
+        # on this water, so compute it rather than leaving the next reader to infer it.
+        parent = list(range(len(nodes)))
+
+        def _find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        for _u, _v in edges:
+            ru, rv = _find(_u), _find(_v)
+            if ru != rv:
+                parent[ru] = rv
+        sizes = defaultdict(int)
+        for i in range(len(nodes)):
+            sizes[_find(i)] += 1
+        biggest = max(sizes.values())
+
         outdir = os.path.join(a.out, slug)
         os.makedirs(outdir, exist_ok=True)
         size = write_graph(os.path.join(outdir, 'water_graph.bin'),
@@ -331,8 +413,15 @@ def main():
         for ft in (0, 3, 6, 9, 12, 15, 18, 24, 30):
             n_at = sum(1 for d in depths if d >= ft)
             if n_at: hist[ft] = n_at
+        # `halo` and `components` are recorded so the next person can check this without
+        # decoding anything: edges < nodes-1 means disconnected, whatever the geometry says.
         report[slug] = {'nodes': len(nodes), 'edges': len(edges), 'seam_joins': joins,
-                        'tiles': tiles_used, 'bytes': size, 'cells_at_depth_ft': hist}
+                        'halo': halo_added, 'tiles': tiles_used, 'bytes': size,
+                        'min_edges_for_connected': max(len(nodes) - 1, 0),
+                        'components': len(sizes),
+                        'largest_component_pct': round(100.0 * biggest / len(nodes), 1),
+                        'orphan_nodes': len(nodes) - biggest,
+                        'cells_at_depth_ft': hist}
         made += 1
         if n % 25 == 0 or n == len(slugs):
             print('  %d/%d  %d written, %d skipped, %.1f min'
@@ -348,6 +437,19 @@ def main():
         multi = [r for r in report.values() if r.get('seam_joins')]
         print('   %d lakes needed seam joins, %d joins total'
               % (len(multi), sum(r['seam_joins'] for r in multi)))
+        # Connectivity, stated plainly, because this is the gate on build_trolling_runs.py.
+        conn = [r for r in report.values() if 'components' in r]
+        whole = [r for r in conn if r['components'] == 1]
+        orph = sum(r['orphan_nodes'] for r in conn)
+        print('   %d of %d graphs are a single component; %d orphan nodes (%.2f%%) card-wide'
+              % (len(whole), len(conn), orph, 100.0 * orph / max(nn, 1)))
+        worst = sorted(conn, key=lambda r: -r['orphan_nodes'])[:8]
+        if worst and worst[0]['orphan_nodes']:
+            print('   most fragmented:')
+            for slug_, r in sorted(((s, r) for s, r in report.items() if 'components' in r),
+                                   key=lambda kv: -kv[1]['orphan_nodes'])[:8]:
+                print('      %-30s %5d comps, largest holds %5.1f%%, %d orphans'
+                      % (slug_, r['components'], r['largest_component_pct'], r['orphan_nodes']))
     why = defaultdict(int)
     for r in report.values():
         if r.get('skipped'): why[r['skipped']] += 1

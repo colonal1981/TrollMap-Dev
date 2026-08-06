@@ -4,7 +4,7 @@ r"""make_coastal_boundaries.py - give the 21 coastal zones a boundary so they ca
 Personal use only, not for distribution or resale; not for navigation.
 
     py .\make_coastal_boundaries.py `
-       --catalog "F:\TrollMapPipeline\TrollMap-Dev-main\Scripts\coastal_catalog.py" `
+       --catalog "F:\TrollMapPipeline\TrollMap-Dev\Scripts\coastal_catalog.py" `
        --out     "F:\TrollMapPipeline\lake_boundaries"
     # then install them into the registry:
     py .\install_registry_boundary.py --registry ... --boundaries ... --labels ... `

@@ -12,16 +12,16 @@ Python side will read as dead here and may not be. See the `lakes.js` near miss 
 
 | metric | count |
 |---|---|
-| files | 236 |
-| jsModules | 176 |
-| pyScripts | 58 |
+| files | 244 |
+| jsModules | 178 |
+| pyScripts | 64 |
 | routes | 58 |
 | routesUncalled | 13 |
 | routesMutatingUngated | 19 |
-| feeds | 72 |
-| deadExports | 157 |
+| feeds | 77 |
+| deadExports | 159 |
 | orphanModules | 4 |
-| duplicateFnNames | 26 |
+| duplicateFnNames | 27 |
 | crossModuleGlobals | 48 |
 | unresolvedImports | 0 |
 
@@ -33,7 +33,7 @@ Python side will read as dead here and may not be. See the `lakes.js` near miss 
 | `/bank-pier` | ANY | open | services.arcgis.com<br>services6.arcgis.com<br>services1.arcgis.com | — | gis-toggles.js |
 | `/build` | POST | open | — | — | **nothing** |
 | `/chartpacks/lake-boundary` | GET | open | — | R2_TROLLMAP_CHARTPACKS.get<br>R2_TROLLMAP_CHARTPACKS.list | lake-research-engine.js<br>supplemental-layers.js |
-| `/chartpacks/list` | ANY | **REQUIRED (inline)** | — | R2_TROLLMAP_CHARTPACKS.list<br>R2_TROLLMAP_CHARTPACKS.get | **nothing** |
+| `/chartpacks/list` | ANY | open | — | R2_TROLLMAP_CHARTPACKS.list<br>R2_TROLLMAP_CHARTPACKS.get | **nothing** |
 | `/coach-plan` | POST | open | — | — | groq-coach.js |
 | `/debug/regs-cache` | ANY | **REQUIRED (inline)** | — | — | **nothing** |
 | `/dominion-saluda` | ANY | **REQUIRED (inline)** | — | — | **nothing** |
@@ -93,41 +93,41 @@ Python side will read as dead here and may not be. See the `lakes.js` near miss 
 Read-shaped POSTs (LLM proxies, search) are deliberately open — see the comment above
 `MUTATING_ROUTES`. Anything here that WRITES is a hole.
 
-- `POST /build` — Worker/trollmap-worker.js:1131
-- `POST /identify-catch` — Worker/trollmap-worker.js:1137
-- `POST /identify-catch-v2` — Worker/trollmap-worker.js:1145
-- `POST /coach-plan` — Worker/trollmap-worker.js:1152
-- `POST /groq-query` — Worker/trollmap-worker.js:1155
-- `POST /research/thermocline-search` — Worker/trollmap-worker.js:1172
-- `POST /research/limnology-data` — Worker/trollmap-worker.js:1177
-- `POST /research/deterministic-facts` — Worker/trollmap-worker.js:1180
-- `POST /research/discover` — Worker/trollmap-worker.js:1183
-- `POST /research/analyze-facts` — Worker/trollmap-worker.js:1200
-- `POST /research/dedupe-contradictions` — Worker/trollmap-worker.js:1203
-- `POST /research/map-facts` — Worker/trollmap-worker.js:1206
-- `POST /research/gap-analysis` — Worker/trollmap-worker.js:1209
-- `POST /research/gap-search` — Worker/trollmap-worker.js:1212
-- `POST /research/agent-llm` — Worker/trollmap-worker.js:1215
-- `POST /research/proxy-download-batch` — Worker/trollmap-worker.js:1238
-- `POST /research/shared/check` — Worker/trollmap-worker.js:1242
-- `POST /research/shared/query` — Worker/trollmap-worker.js:1248
-- `POST /research/validation-pass` — Worker/trollmap-worker.js:1280
+- `POST /build` — Worker/trollmap-worker.js:1133
+- `POST /identify-catch` — Worker/trollmap-worker.js:1139
+- `POST /identify-catch-v2` — Worker/trollmap-worker.js:1147
+- `POST /coach-plan` — Worker/trollmap-worker.js:1154
+- `POST /groq-query` — Worker/trollmap-worker.js:1157
+- `POST /research/thermocline-search` — Worker/trollmap-worker.js:1174
+- `POST /research/limnology-data` — Worker/trollmap-worker.js:1179
+- `POST /research/deterministic-facts` — Worker/trollmap-worker.js:1182
+- `POST /research/discover` — Worker/trollmap-worker.js:1185
+- `POST /research/analyze-facts` — Worker/trollmap-worker.js:1202
+- `POST /research/dedupe-contradictions` — Worker/trollmap-worker.js:1205
+- `POST /research/map-facts` — Worker/trollmap-worker.js:1208
+- `POST /research/gap-analysis` — Worker/trollmap-worker.js:1211
+- `POST /research/gap-search` — Worker/trollmap-worker.js:1214
+- `POST /research/agent-llm` — Worker/trollmap-worker.js:1217
+- `POST /research/proxy-download-batch` — Worker/trollmap-worker.js:1240
+- `POST /research/shared/check` — Worker/trollmap-worker.js:1244
+- `POST /research/shared/query` — Worker/trollmap-worker.js:1250
+- `POST /research/validation-pass` — Worker/trollmap-worker.js:1282
 
 ## Routes nothing calls
 
-- `/build` (Worker/trollmap-worker.js:1131)
-- `/research/thermocline-search` (Worker/trollmap-worker.js:1172)
-- `/research/dataset-hunt` (Worker/trollmap-worker.js:1186)
-- `/research/map-facts` (Worker/trollmap-worker.js:1206)
-- `/research/gap-analysis` (Worker/trollmap-worker.js:1209)
-- `/research/gap-search` (Worker/trollmap-worker.js:1212)
-- `/lakes/list` (Worker/trollmap-worker.js:1218)
-- `/research/shared/status` (Worker/trollmap-worker.js:1254)
-- `/lake-intel-sources` (Worker/trollmap-worker.js:1588)
-- `/duke-flow-arrivals` (Worker/trollmap-worker.js:1635)
-- `/dominion-saluda` (Worker/trollmap-worker.js:1641)
-- `/rivers` (Worker/trollmap-worker.js:1646)
-- `/sync/migrate` (Worker/trollmap-worker.js:1667)
+- `/build` (Worker/trollmap-worker.js:1133)
+- `/research/thermocline-search` (Worker/trollmap-worker.js:1174)
+- `/research/dataset-hunt` (Worker/trollmap-worker.js:1188)
+- `/research/map-facts` (Worker/trollmap-worker.js:1208)
+- `/research/gap-analysis` (Worker/trollmap-worker.js:1211)
+- `/research/gap-search` (Worker/trollmap-worker.js:1214)
+- `/lakes/list` (Worker/trollmap-worker.js:1220)
+- `/research/shared/status` (Worker/trollmap-worker.js:1256)
+- `/lake-intel-sources` (Worker/trollmap-worker.js:1590)
+- `/duke-flow-arrivals` (Worker/trollmap-worker.js:1637)
+- `/dominion-saluda` (Worker/trollmap-worker.js:1643)
+- `/rivers` (Worker/trollmap-worker.js:1648)
+- `/sync/migrate` (Worker/trollmap-worker.js:1669)
 
 ## External feeds
 
@@ -142,25 +142,29 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 | services6.arcgis.com | pipeline, worker | 7 | Scripts/fetch_dnr_paddle.py:92 |
 | services3.arcgis.com | pipeline, worker | 7 | Scripts/fetch_dnr_paddle.py:102 |
 | nepis.epa.gov | worker, browser | 6 | Worker/research/dataset.js:10 |
-| lakes.hydro-derived.duke-energy.app | worker, browser | 6 | Worker/trollmap-worker.js:381 |
+| lakes.hydro-derived.duke-energy.app | worker, browser | 6 | Worker/trollmap-worker.js:383 |
 | www.topografix.com | browser | 6 | js/modules/garmin-export.js:65 |
+| api.waterdata.usgs.gov | pipeline, browser | 4 | Scripts/build_water_bindings.py:97 |
 | www.waterqualitydata.us | pipeline, worker, browser | 4 | Scripts/wqp_clarity_coverage.py:49 |
 | grokipedia.com | worker | 4 | Worker/research/discover.js:481 |
 | unpkg.com | browser | 4 | index.html:8 |
 | worker | browser | 4 | test/deterministic-regression.test.js:6 |
+| mapservices.weather.noaa.gov | pipeline, worker | 3 | Scripts/build_lake_drainage.py:152 |
+| waterservices.usgs.gov | pipeline, worker | 3 | Scripts/build_water_bindings.py:98 |
 | dash.cloudflare.com | pipeline | 3 | Scripts/trollmap_r2_clean.py:6 |
 | api.scrape.do | worker | 3 | Worker/research/clients.js:89 |
 | generativelanguage.googleapis.com | worker | 3 | Worker/research/vision.js:126 |
-| www.dominionenergy.com | worker, browser | 3 | Worker/trollmap-worker.js:424 |
-| api.waterdata.usgs.gov | browser | 3 | js/modules/plan-builder.js:940 |
+| www.dominionenergy.com | worker, browser | 3 | Worker/trollmap-worker.js:426 |
 | www.santeecooper.com | browser | 3 | js/modules/utility-sync.js:49 |
 | x | browser | 3 | test/arcgis-filter-guard.test.js:176 |
 | w.dev | browser | 3 | test/shared-latest-pointer.test.js:73 |
+| www.tva.com | pipeline, browser | 2 | Scripts/build_water_bindings.py:93 |
+| api.tidesandcurrents.noaa.gov | pipeline, browser | 2 | Scripts/build_water_bindings.py:96 |
 | github.com | pipeline | 2 | Scripts/r2_audit.py:103 |
+| aa.usno.navy.mil | worker, browser | 2 | Worker/conditions.js:116 |
 | api.search.tinyfish.ai | worker, browser | 2 | Worker/research/clients.js:8 |
 | api.fetch.tinyfish.ai | worker, browser | 2 | Worker/research/clients.js:9 |
 | georgiawildlife.com | worker, browser | 2 | Worker/research/dataset.js:17 |
-| waterservices.usgs.gov | worker | 2 | Worker/trollmap-worker.js:331 |
 | coastalgadnr.org | worker, browser | 2 | Worker/worker-data.js:1256 |
 | deq.nc.gov | worker, browser | 2 | Worker/worker-data.js:1257 |
 | www.eregulations.com | worker, browser | 2 | Worker/worker-data.js:1259 |
@@ -169,14 +173,18 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 | cdnjs.cloudflare.com | browser | 2 | js/modules/lake-research-engine.js:825 |
 | api.open-meteo.com | browser | 2 | js/modules/plan-builder.js:778 |
 | cofc.edu | browser | 2 | test/discover-authority.test.js:45 |
+| hydro.nationalmap.gov | pipeline | 1 | Scripts/build_lake_drainage.py:61 |
+| api.water.noaa.gov | pipeline | 1 | Scripts/build_water_bindings.py:92 |
+| cwms-data.usace.army.mil | pipeline | 1 | Scripts/build_water_bindings.py:94 |
 | wiki.openstreetmap.org | pipeline | 1 | Scripts/fetch_osm_coastal.py:343 |
 | prd-tnm.s3.amazonaws.com | pipeline | 1 | Scripts/trollmap_nhd_boundaries.py:33 |
 | api.cloudflare.com | pipeline | 1 | Scripts/trollmap_r2_clean.py:39 |
+| forecast.weather.gov | worker | 1 | Worker/conditions.js:151 |
 | www.ncwildlife.org | worker | 1 | Worker/research/dataset.js:13 |
 | r.jina.ai | worker | 1 | Worker/research/download.js:384 |
 | api.tavily.com | worker | 1 | Worker/research/extract.js:763 |
 | services.arcgisonline.com | worker | 1 | Worker/research/vision.js:91 |
-| api.hydro-derived.duke-energy.app | worker | 1 | Worker/trollmap-worker.js:374 |
+| api.hydro-derived.duke-energy.app | worker | 1 | Worker/trollmap-worker.js:376 |
 | api.groq.com | worker | 1 | Worker/worker-core.js:126 |
 | openrouter.ai | worker | 1 | Worker/worker-core.js:139 |
 | trollmap.dev | worker | 1 | Worker/worker-core.js:152 |
@@ -189,9 +197,7 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 | cdn.jsdelivr.net | browser | 1 | js/modules/catch-journal.js:1067 |
 | lakes.duke-energy.com | browser | 1 | js/modules/duke-energy.js:147 |
 | www.garmin.com | browser | 1 | js/modules/garmin-export.js:66 |
-| aa.usno.navy.mil | browser | 1 | js/modules/plan-builder.js:1101 |
 | www.openstreetmap.org | browser | 1 | js/modules/ramps.js:58 |
-| api.tidesandcurrents.noaa.gov | browser | 1 | js/modules/tide-engine.js:22 |
 | nominatim.openstreetmap.org | browser | 1 | js/modules/topbar.js:106 |
 | www.sad.usace.army.mil | browser | 1 | test/discover-authority.test.js:20 |
 | waterdata.usgs.gov | browser | 1 | test/discover-authority.test.js:22 |
@@ -202,7 +208,6 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 | lakelevels.duke-energy.com | browser | 1 | test/discover-authority.test.js:29 |
 | elibrary.ferc.gov | browser | 1 | test/discover-authority.test.js:30 |
 | seafwa.org | browser | 1 | test/discover-authority.test.js:32 |
-| www.tva.com | browser | 1 | test/discover-authority.test.js:33 |
 | southcarolinaparks.com | browser | 1 | test/discover-authority.test.js:34 |
 | www.whitehouse.gov | browser | 1 | test/discover-authority.test.js:83 |
 
@@ -268,12 +273,14 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 | put | ``supplemental/${resolvedKey}/vision-scan-status.json`` | Worker/research/vision.js:188 |
 | get | ``supplemental/${resolvedKey}/vision-scan-status.json`` | Worker/research/vision.js:202 |
 | head | ``supplemental/${resolvedKey}/vision-structure.geojson`` | Worker/research/vision.js:206 |
-| get | `key` | Worker/trollmap-worker.js:654 |
-| put | `key` | Worker/trollmap-worker.js:669 |
-| get | `key` | Worker/trollmap-worker.js:1724 |
-| list | `{ prefix }` | Worker/trollmap-worker.js:1745 |
-| get | `key` | Worker/trollmap-worker.js:1765 |
-| put | `key` | Worker/trollmap-worker.js:1790 |
+| get | `key` | Worker/trollmap-worker.js:656 |
+| put | `key` | Worker/trollmap-worker.js:671 |
+| get | `key` | Worker/trollmap-worker.js:1733 |
+| list | `{ prefix }` | Worker/trollmap-worker.js:1754 |
+| get | `key` | Worker/trollmap-worker.js:1783 |
+| put | `key` | Worker/trollmap-worker.js:1819 |
+| get | `chartpackKey(slug` | Worker/water.js:76 |
+| get | `chartpackKey(slug` | Worker/water.js:87 |
 | list | `{ cursor` | Worker/worker-core.js:342 |
 
 ## Data files — who reads them
@@ -293,6 +300,7 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 | module | lines | exports | imported by | dead exports | purpose |
 |---|---|---|---|---|---|
 | `Scripts/make_counties.mjs` | 49 | 0 | 0 | 0 | make_counties.mjs -- flatten us-atlas counties-10m TopoJSON into a GeoJSON the Python |
+| `Worker/conditions.js` | 313 | 2 | 1 | **1** | Worker/conditions.js — one call that answers "what is this water doing right now". |
 | `Worker/core/arcgis.js` | 401 | 7 | 2 | **2** | Worker/core/arcgis.js — shared ArcGIS helper for ramps/paddle/bank-pier/attractors |
 | `Worker/research/agents.js` | 1309 | 10 | 4 | **5** | research/agents.js — split from worker-research.js (behavior-preserving) |
 | `Worker/research/clients.js` | 888 | 38 | 10 | 0 | research/clients.js — split from worker-research.js (behavior-preserving) |
@@ -308,8 +316,9 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 | `Worker/research/shared.js` | 697 | 29 | 2 | **16** | research/shared.js — split from worker-research.js (behavior-preserving) |
 | `Worker/research/storage.js` | 576 | 11 | 2 | 0 | research/storage.js — split from worker-research.js (behavior-preserving) |
 | `Worker/research/vision.js` | 222 | 3 | 0 | **3** | research/vision.js — split from worker-research.js (behavior-preserving) |
-| `Worker/trollmap-worker.js` | 1855 | 1 | 0 | 0 | r2Text is used by /chartpacks/lake-boundary (line ~1711). It was added to worker-core.js |
-| `Worker/worker-core.js` | 433 | 10 | 18 | 0 | worker-core.js — Shared infrastructure: CORS headers, LLM provider chain, fetchText |
+| `Worker/trollmap-worker.js` | 1886 | 1 | 0 | 0 | r2Text is used by /chartpacks/lake-boundary (line ~1711). It was added to worker-core.js |
+| `Worker/water.js` | 739 | 2 | 1 | **1** | Worker/water.js — the compute plane over the static pack layers. |
+| `Worker/worker-core.js` | 433 | 10 | 20 | 0 | worker-core.js — Shared infrastructure: CORS headers, LLM provider chain, fetchText |
 | `Worker/worker-data.js` | 1534 | 20 | 4 | 0 | worker-data.js — Static lake/river data extracted from trollmap-worker.js |
 | `Worker/worker-research.js` | 14 | 37 | 1 | 0 | worker-research.js — public API barrel (impl in Worker/research/*) |
 | `Worker/worker-species.js` | 230 | 10 | 1 | 0 | worker-species.js — Species lists and ecological validation |
@@ -478,12 +487,14 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 
 ### Exported but never imported by name
 
+- `Worker/conditions.js`: CONDITIONS_ROUTES
 - `Worker/core/arcgis.js`: fetchArcGisAllFeatures, getCachedGis
 - `Worker/research/agents.js`: COASTAL_AGENTS, COASTAL_AGENT_HINTS, COASTAL_SKIPPED_AGENTS, isCoastalZone, coastalAgentPlan
 - `Worker/research/dataset.js`: DATASET_HUNT_TARGETS, DATASET_KEYWORDS, scoreDatasetUrl, buildNepisQueryVariants
 - `Worker/research/facts-util.js`: normalizeResearchName, hasResearchValue, titleCaseWords, RESEARCH_SPECIES_CANON, canonicalizeResearchSpecies, NON_GAME_SPECIES, splitSpeciesText, parseSCDNRDescriptionFacts, RESEARCH_RAMP_SOURCES, RESEARCH_ATTRACTOR_SOURCES, fetchArcGISGrouped, waterbodyMatchesLake, stripHtmlPreserveTables, extractHtmlTableRows, extractMarkdownTableRows, slicePdfPageRange, parseSCRegulationsFromHtml
 - `Worker/research/shared.js`: SHARED_ENABLED_DEFAULT, sharedEnabled, contentFingerprint, urlToDocId, SECTION_HEADING_PREFIXES, CHUNK_SIZE, CHUNK_OVERLAP, segmentDocument, chunkText, LAKE_CATALOG, tagSectionsWithLakes, CATEGORY_KEYWORDS, tagSectionsWithCategories, getSharedPointer, getSharedRegistryEntry, isQuarantined
 - `Worker/research/vision.js`: handleResearchVisionScan, handleResearchVisionScanSave, handleResearchVisionScanStatus
+- `Worker/water.js`: WATER_ROUTES
 - `js/core/layer-registry.js`: setMapAccessor, hasLayer, layerIds, isEnabled, invalidate, _reset
 - `js/core/map-init.js`: onMapClick, fillCoord, suggestName, startPick
 - `js/data/fishing-style-profile.js`: isLiveBaitTechnique, isSaltwaterBait, canHoldStation
@@ -522,12 +533,13 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 - `wireButtons()` — js/modules/catch-journal.js:1378, js/modules/chart-mosaic.js:390, js/modules/chart-overlay.js:387, js/modules/edit.js:236, js/modules/file-io.js:51, js/modules/ramps.js:126, js/modules/saved-spreads.js:73, js/modules/spread-builder.js:335, js/modules/topbar.js:9
 - `init()` — js/modules/coastal-layers.js:300, js/modules/gis-toggles.js:245, js/modules/layers-panel.js:70, js/modules/pinch-point-finder.js:314, js/modules/routes-panel.js:126, js/modules/species-selector.js:151, js/modules/supplemental-layers.js:1406
 - `walk()` — test/check-imports.mjs:48, test/persistence.test.js:27, test/worker-auth.test.js:29, test/worker-external-imports.test.js:43, tools/audit.mjs:56, tools/audit_duplication.mjs:73, tools/audit_silent_catches.mjs:189
+- `cacheGet()` — Worker/water.js:47, js/modules/tide-engine.js:27, js/modules/usgs-gauges.js:28, js/utils/db.js:273
+- `cacheSet()` — Worker/water.js:55, js/modules/tide-engine.js:37, js/modules/usgs-gauges.js:35, js/utils/db.js:288
 - `getMap()` — js/modules/coastal-layers.js:36, js/modules/gis-toggles.js:16, js/modules/osm-structure.js:40, js/modules/supplemental-layers.js:159
 - `mapReady()` — js/modules/coastal-layers.js:38, js/modules/gis-toggles.js:20, js/modules/osm-structure.js:42, js/modules/supplemental-layers.js:161
 - `say()` — js/modules/lake-intel.js:19, js/modules/lake-intel.js:252, js/modules/noaa-tides.js:77, js/modules/utility-sync.js:62
 - `setStatus()` — js/modules/cloud-sync.js:42, js/modules/route-builder.js:2071, js/modules/smart-plan.js:712
-- `cacheGet()` — js/modules/tide-engine.js:27, js/modules/usgs-gauges.js:28, js/utils/db.js:273
-- `cacheSet()` — js/modules/tide-engine.js:37, js/modules/usgs-gauges.js:35, js/utils/db.js:288
+- `getJson()` — Worker/conditions.js:62, js/modules/usgs-gauges.js:84
 - `isEnabled()` — js/core/layer-registry.js:97, js/modules/notifications.js:288
 - `toggle()` — js/core/layer-registry.js:167, js/modules/layers-panel.js:68
 - `getWorkerBase()` — js/data/access-index.js:74, js/modules/gis-toggles.js:51
@@ -604,12 +616,17 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 | script | flags | purpose |
 |---|---|---|
 | `Scripts/area_audit.py` | — | !/usr/bin/env python3 |
+| `Scripts/audit_packs.py` | --packs --registry --report --baseline --tolerance --strict --only --limit -v | audit_packs.py - is the pipeline making the packs better or worse? |
 | `Scripts/audit_scripts.py` | --dir --manifest --sort --go --files | !/usr/bin/env python3 |
-| `Scripts/build_all_chartpacks.py` | --extract --registry --map --out --report --buffer-m --states --min-charted --only-layers --limit --only-tiles --ship-list --require-depth-area --report-only --only-lakes --max-segment-m | build_all_chartpacks.py - cut every registry lake out of the per-tile extract, in one pass. |
+| `Scripts/build_all_chartpacks.py` | --extract --registry --map --out --report --buffer-m --states --min-charted --only-layers --limit --only-tiles --ship-list --require-depth-area --report-only --only-lakes --keep-zoom --max-segment-m | build_all_chartpacks.py - cut every registry lake out of the per-tile extract, in one pass. |
 | `Scripts/build_chartpack.py` | --extract --key --bbox --boundary --buffer-m --ac --out --archive | !/usr/bin/env python3 |
+| `Scripts/build_lake_drainage.py` | --registry --min-order --max-reaches --no-reaches --out --only --limit --min-acres -v | build_lake_drainage.py - derive each lake's catchment, and with it how fast it stains. |
 | `Scripts/build_structure.py` | --packs --registry --report --only-lakes --limit --min-score | build_structure.py - humps, ledges and slope for every lake, from geometry alone. |
+| `Scripts/build_trolling_runs.py` | --packs --min-len-m --simplify-m --reach-m --annotate-m --only --report | build_trolling_runs.py - turn stored contour fragments into runs a boat can actually troll. |
+| `Scripts/build_water_bindings.py` | --registry --cache --out --report --stage --margin-km --force | build_water_bindings.py - bind every water in the registry to its gauges and operator. |
+| `Scripts/build_water_features.py` | --packs --relief-m --curve-m --probe-m --min-bulge-m --sep-m --mouth-m --annotate-m --only --report | build_water_features.py - derive the structure types the fishing intel actually asks for. |
 | `Scripts/build_water_graphs.py` | --tiles --registry --map --out --layer --seam-m --buffer-m --only-lakes --limit --report | build_water_graphs.py - a routing graph over navigable water, one per lake. |
-| `Scripts/check_pipeline_parity.py` | — | !/usr/bin/env python3 |
+| `Scripts/check_pipeline_parity.py` | — | check_pipeline_parity.py — the lists that must agree, checked before a build. |
 | `Scripts/classify_salt_fresh.py` | --line --feeds --self-test --show | !/usr/bin/env python3 |
 | `Scripts/coastal_catalog.py` | — | !/usr/bin/env python3 |
 | `Scripts/consolidate_lake_index.py` | --registry --js-lists --charted --out --states --max-km --names --aliases --counties | !/usr/bin/env python3 |
@@ -630,7 +647,7 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 | `Scripts/install_registry_boundary.py` | --registry --boundaries --labels --lake --state --name --go | !/usr/bin/env python3 |
 | `Scripts/lake_catalog.py` | — | !/usr/bin/env python3 |
 | `Scripts/make_coastal_boundaries.py` | --catalog --out --only --go | !/usr/bin/env python3 |
-| `Scripts/make_key_map.py` | --lake-keys --slugs --out --max-km | !/usr/bin/env python3 |
+| `Scripts/make_key_map.py` | --lake-keys --slugs --out --max-km | make_key_map.py - decide which R2 key each registry lake writes to, BEFORE anything uploads. |
 | `Scripts/make_osm_ramps_by_lake.py` | --registry --ramps --margin-m --go | !/usr/bin/env python3 |
 | `Scripts/make_river_boundaries.py` | --gpkg --feeds --out --index --only --narrow-region --flowing-only --ramp-tol --join-tol --no-split --salt-line --catalog --coastal-slack-km --extract --garmin-cache --max-reach-km --pad-km --min-km2 --lakes --go | !/usr/bin/env python3 |
 | `Scripts/mar_route.py` | — | mar_route.py - turn a MAR layer into a navigable-water routing graph and route on it. |
@@ -642,6 +659,7 @@ Read-shaped POSTs (LLM proxies, search) are deliberately open — see the commen
 | `Scripts/r2_audit.py` | --worker --from --save --delete-list --registry | r2_audit.py — what is actually in the R2 bucket, and what of it can go. |
 | `Scripts/r2_gzip.py` | — | !/usr/bin/env python3 |
 | `Scripts/recompute_charted.py` | --packs --registry --report --buffer-m --no-prune | !/usr/bin/env python3 |
+| `Scripts/restitch_water_graphs.py` | --packs --max-m --warn-m --report --dry-run | restitch_water_graphs.py - repair severed water graphs in place, without rebuilding them. |
 | `Scripts/rgn4_grammar.py` | — | !/usr/bin/env python3 |
 | `Scripts/rgn4_pois.py` | --out | rgn4_pois.py - the POI stage. Every labelled RGN4 point, correctly placed. |
 | `Scripts/suggest_name_aliases.py` | --registry --max-edits --min-key --write | !/usr/bin/env python3 |

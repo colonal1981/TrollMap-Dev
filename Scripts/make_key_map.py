@@ -4,7 +4,7 @@
 Personal use only, not for distribution or resale; not for navigation.
 
     py .\\make_key_map.py `
-       --lake-keys "F:\\TrollMapPipeline\\TrollMap-Dev-main\\js\\data\\lake-keys.js" `
+       --lake-keys "F:\\TrollMapPipeline\\TrollMap-Dev\\js\\data\\lake-keys.js" `
        --slugs     "F:\\TrollMapPipeline\\registry\\slug_names.json" `
        --out       "F:\\TrollMapPipeline\\registry\\key_map.json"
 

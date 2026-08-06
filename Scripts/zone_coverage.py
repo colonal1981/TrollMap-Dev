@@ -4,7 +4,7 @@ r"""zone_coverage.py - does every SALTWATER ramp land in a coastal zone?
 Personal use only, not for distribution or resale; not for navigation.
 
     py .\zone_coverage.py `
-       --catalog "F:\TrollMapPipeline\TrollMap-Dev-main\Scripts\coastal_catalog.py" `
+       --catalog "F:\TrollMapPipeline\TrollMap-Dev\Scripts\coastal_catalog.py" `
        --feeds   "F:\TrollMapPipeline\registry" `
        --line    "F:\TrollMapPipeline\Saltwater_Freshwater_Dividing_Line.geojson"
 

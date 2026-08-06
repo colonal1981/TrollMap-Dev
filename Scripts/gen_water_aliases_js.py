@@ -48,7 +48,7 @@ which is exact, and is the only thing that makes the Intracoastal answerable at 
 INPUTS
 
 Default to `<repo>/../lake_boundaries`, which is where the pipeline writes them
-(F:\TrollMapPipeline\lake_boundaries next to F:\TrollMapPipeline\TrollMap-Dev-main). When the
+(F:\TrollMapPipeline\lake_boundaries next to F:\TrollMapPipeline\TrollMap-Dev). When the
 inputs are absent this exits 0 and leaves the JS alone, so a checkout without the pipeline
 beside it is not a failure.
 """

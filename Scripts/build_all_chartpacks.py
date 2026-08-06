@@ -49,6 +49,56 @@ CHARTED_LAYERS = ('depth_areas',)
 # ring is legitimately kilometres around, and the extractor's A1/A2 filters already cover them.
 LINE_LAYERS = ('contours', 'hydrography', 'shoreline')
 
+# Judged against the lake ITSELF, not the lake plus --buffer-m. Bathymetry belongs in
+# water. Point layers are deliberately absent: the buffer is doing real work there,
+# because a dock or a ramp really does sit just off the bank.
+CORE_ONLY_LAYERS = ('contours', 'depth_areas')
+
+
+# ── Garmin ships every lake at six levels of detail ──────────────────────────
+#
+# `zoom` is a DETAIL LEVEL, not extra survey. Garmin stores the same water at
+# 0 (finest) through 5 (crudest overview), and the packs were shipping all of them
+# stacked on top of each other for the app to draw at once. Measured on Moultrie:
+#
+#     contours          zoom 0:13389  1:6853  2:348  3:306  4:24  5:36
+#     depth_areas       zoom 0:11963  1:4883  2:702  3:421  4:41  5:42
+#     garmin_shoreline  zoom 0:658    1:411   2:505  3:198  4:54
+#
+# A coarse level is a generalisation: it cuts corners, merges depth bands and bulges
+# past the true shoreline, because that is what an overview is for. Drawn together
+# with zoom 0 it reads as blocky polygons with no contours under them, depths that
+# contradict their surroundings, and shapes sitting on land -- which is exactly what
+# Ryan reported on Moultrie: a "24-36 ft" polygon over water the fine contours read
+# at 39-49.
+#
+# The pipeline already knew Garmin does this. See the ramp-label collapse further
+# down: "Garmin repeats a ramp label once per zoom level". That fix was written for
+# ramps and never applied to bathymetry.
+#
+# Keeping zoom 0 alone is safe, and measured rather than assumed: it covers 99.6% of
+# Moultrie's extent and 97.7-97.9% of Wateree's. What it misses is edge slivers --
+# 147 cells out of 32,682 on Moultrie.
+#
+# Features with no `zoom` property are kept untouched.
+# 'shoreline' is the SHIP KEY; 'garmin_shoreline' is its output FILENAME. The loop below
+# tests the key, so the filename never matched and this filter has never once run on the
+# shoreline layer -- four of five cleaned, one silently skipped. It shipped as blue lines
+# scattered over dry land: zoom 0 is 0.0% on land, zooms 1-5 are 22-48%.
+# See HYDROGRAPHY_IS_NOT_CREEKS_2026-08-06.md.
+ZOOM_LAYERS = ('contours', 'depth_areas', 'shoreline', 'hydrography', 'waterbody')
+
+
+def keep_zoom(feats, level):
+    """Drop detail levels other than `level`. Returns (kept, dropped)."""
+    out, dropped = [], 0
+    for f in feats:
+        z = (f.get('properties') or {}).get('zoom')
+        if z is None or z == level:
+            out.append(f)
+        else:
+            dropped += 1
+    return out, dropped
 
 def max_segment_m(coords):
     mx = 0.0
@@ -242,9 +292,16 @@ def main():
                     help='comma list, a file path, or @file of SLUGS. Rebuilds only those lakes and only the '
                          'tiles they sit on. Use after a boundary fix, when you know exactly '
                          'which lakes were wrong and a full 50-minute pass is wasted effort.')
+    ap.add_argument('--keep-zoom', type=int, default=0,
+                    help='Garmin detail level to ship: 0 is finest, 5 the crudest overview. '
+                         'They are redraws of the same water, not extra coverage, and drawing '
+                         'them together is what puts blocky polygons over the real contours. '
+                         'Pass -1 to keep every level (the old behaviour).')
     ap.add_argument('--max-segment-m', type=float, default=2000.0,
                     help='drop a line feature carrying a segment longer than this (0 = off)')
     a = ap.parse_args()
+    if a.keep_zoom is not None and a.keep_zoom < 0:
+        a.keep_zoom = None
 
     want = {s.strip().upper() for s in a.states.split(',')}
     reg = json.load(open(os.path.join(a.registry, 'lakes.json'), encoding='utf-8'))
@@ -366,6 +423,15 @@ def main():
             except Exception as e:
                 print('   %s %s -> %s' % (tid, layer, str(e)[:60]))
                 continue
+            # The detail-level filter USED to run here, per tile, and that was wrong.
+            #
+            # A tile serves many lakes. Filtering to zoom 0 here throws away a small pond's
+            # only survey the moment it shares a tile with a big lake that happens to carry
+            # zoom 0 -- the pond never gets a say, because by the time _flush() sees it the
+            # coarse features are already gone. Measured 2026-08-06: 71 packs came out of the
+            # rebuild with zero contours for exactly this reason, kept their pre-fix file on
+            # disk because an empty layer was skipped rather than deleted, and shipped to R2
+            # looking current. See the per-lake filter in _flush().
             if a.max_segment_m and layer in LINE_LAYERS:
                 feats, nlong = drop_long_segments(feats, a.max_segment_m)
                 if nlong:
@@ -391,6 +457,28 @@ def main():
     for s in list(acc):                       # anything whose tile set was incomplete
         _flush(s, acc.pop(s), masks.pop(s, None), meta[s], a, report)
 
+    # Summed from the per-lake records, because the filter is now a per-lake decision.
+    _zt = sum(r.get('zoom_dropped') or 0 for r in report.values())
+    if _zt:
+        _fb = [s for s, r in report.items()
+               if any(v != a.keep_zoom for v in (r.get('zoom_kept') or {}).values())]
+        print('\ncoarser Garmin detail levels dropped (target zoom %s): %d feature(s)'
+              % (a.keep_zoom, _zt))
+        if _fb:
+            print('  %d lake(s) kept a level other than %s -- either it is not in their tiles '
+                  'or it had nothing inside the lake: %s'
+                  % (len(_fb), a.keep_zoom, ', '.join(sorted(_fb)[:8])
+                     + (' ...' if len(_fb) > 8 else '')))
+    _rt = [s for s, r in report.items() if r.get('retracted')]
+    if _rt:
+        print('\n%d lake(s) had a layer go empty; the stale file was REMOVED: %s'
+              % (len(_rt), ', '.join(sorted(_rt)[:8]) + (' ...' if len(_rt) > 8 else '')))
+    _sk = [s for s, r in report.items() if r.get('stale_kept')]
+    if _sk:
+        print('\n!! %d lake(s) have an EMPTY layer whose stale file could not be deleted.'
+              % len(_sk))
+        print('   These will upload as though they were current. Remove by hand: %s'
+              % ', '.join(sorted(_sk)[:8]) + (' ...' if len(_sk) > 8 else ''))
     if dropped:
         print('\nblown-out line features dropped (>%.0f m segment): %s'
               % (a.max_segment_m, dict(dropped)))
@@ -446,6 +534,117 @@ def _flush(slug, layers, mask, meta, a, report):
     # idea how big the lake is, and the lake's own size is the only threshold that needs
     # no tuning. Doing it before charted_fraction() also keeps a 35-mile stray out of the
     # coverage number.
+    # ── Features that are not in the lake at all ─────────────────────────────
+    #
+    # The clip keeps anything with a vertex inside the mask, and the mask is the lake
+    # PLUS --buffer-m (default 250 m). That buffer exists for point layers: a dock or a
+    # ramp genuinely sits just off the bank and would be lost without it.
+    #
+    # For contours and depth areas it is a disaster on a convoluted lake, and the size of
+    # it is arithmetic, not bad luck. Wateree is 49 km2 of water with a **257 km**
+    # shoreline. A 250 m collar on 257 km adds ~64 km2 -- more land than there is lake --
+    # so the mask runs about 2.3x the water, and on the narrow peninsulas between coves
+    # the collars from opposite banks meet and swallow the headland whole. Garmin tiles
+    # carry land contours; the mask kept them.
+    #
+    # Measured on the shipped Wateree pack against the true boundary:
+    #     contours     11,326 features, 1,956 (17.3%) ENTIRELY outside the lake
+    #     depth_areas   9,123 features, 1,234 (13.5%) ENTIRELY outside
+    #
+    # This is what Ryan saw as "contours and shapes on land" -- dense, correctly drawn,
+    # and hundreds of metres from any water. It scales with shoreline complexity, so the
+    # lakes it ruins are exactly the good ones: Wateree, Murray, Marion, Hartwell.
+    #
+    # The rule needs no threshold and so nothing to tune: a bathymetric feature with ZERO
+    # vertices in the actual water is not a feature of that lake. `mask.core` is the lake
+    # before the buffer, and it is already computed -- it is the denominator of `charted`.
+    # Anything straddling the bank keeps at least one vertex inside and is untouched.
+    # ── Garmin detail levels, decided PER LAKE ──────────────────────────────
+    #
+    # `zoom` is a DETAIL level, not extra survey: 0 is the fine one, 3-5 are coarse
+    # generalised overviews of the same water. Shipping all six stacked them on top of each
+    # other -- 37-41% of every pack, blocky polygons over real contours.
+    #
+    # But zoom 0 is not universal. Garmin surveyed plenty of small water at 1, 2 or 3 and
+    # never at 0: buffalo_pond is (1,2), lake_mattamuskeet is (3,4), upper_summerhouse_pond
+    # is (1,2,4,5). Asking those for zoom 0 returns NOTHING, which is not "drop the coarse
+    # duplicates", it is "drop the lake". So take --keep-zoom when the lake actually has it
+    # and the finest level it DOES have otherwise. Where zoom 0 exists this changes nothing,
+    # because 0 is already the finest.
+    #
+    # Per lake, and after accumulation, for the reason in the tile loop. Retaining every
+    # level until here costs memory -- and costs exactly what the 2026-08-05 build already
+    # paid, since that one accumulated all six levels and completed.
+    # Choosing the level needs one more test than "is it present", for contours and depth
+    # areas. broglin_slough HAS zoom 0 -- 23 features, every one of them outside the lake,
+    # dragged in by the 250 m buffer from a neighbour. Its actual survey is 133 features at
+    # zoom 1. Preferring 0 because it exists keeps the neighbour's scraps, drops the pond's
+    # own bathymetry, and then retracts the layer as empty. So for the layers judged against
+    # `mask.core`, take the finest level with anything IN the lake. Other layers -- shoreline
+    # is the bank, so core membership means little there -- take the finest present.
+    def _has_core(_fs):
+        for _f in _fs:
+            for _x, _y in verts(_f['geometry']):
+                if mask.cell_of(_x, _y) in mask.core:
+                    return True
+        return False
+
+    if a.keep_zoom is not None:
+        _zk = {}
+        _zdrop = 0
+        for _layer in ZOOM_LAYERS:
+            _feats = layers.get(_layer)
+            if not _feats:
+                continue
+            _by = {}
+            for _f in _feats:
+                _by.setdefault((_f.get('properties') or {}).get('zoom'), []).append(_f)
+            _levels = sorted(z for z in _by if z is not None)
+            if not _levels:
+                continue          # unlevelled layer; keep_zoom passes zoom=None through anyway
+            if _layer in CORE_ONLY_LAYERS:
+                _want = next((z for z in _levels if _has_core(_by[z])), None)
+                if _want is None:                       # nothing anywhere is in the lake
+                    _want = a.keep_zoom if a.keep_zoom in _by else _levels[0]
+                elif a.keep_zoom in _by and _has_core(_by[a.keep_zoom]):
+                    _want = a.keep_zoom
+            else:
+                _want = a.keep_zoom if a.keep_zoom in _by else _levels[0]
+            layers[_layer], _n = keep_zoom(_feats, _want)
+            if _n:
+                _zdrop += _n
+                _zk[_layer] = _want
+        if _zdrop:
+            rec['zoom_dropped'] = _zdrop
+            rec['zoom_kept'] = _zk
+            _fell = {k: v for k, v in _zk.items() if v != a.keep_zoom}
+            if _fell:
+                # Say WHICH reason. "no zoom 0" and "zoom 0 had nothing in the lake" are
+                # different findings and only one of them is about missing data.
+                for _k, _v in _fell.items():
+                    _why = ('no zoom %s present' % a.keep_zoom) if a.keep_zoom not in _by \
+                           else ('zoom %s had nothing inside the lake' % a.keep_zoom)
+                    print('   %s: %s -- %s, kept zoom %s' % (slug, _k, _why, _v))
+
+    core_dropped = 0
+    for _layer in CORE_ONLY_LAYERS:
+        _feats = layers.get(_layer)
+        if not _feats:
+            continue
+        _keep = []
+        for _f in _feats:
+            for _x, _y in verts(_f['geometry']):
+                if mask.cell_of(_x, _y) in mask.core:
+                    _keep.append(_f)
+                    break
+            else:
+                core_dropped += 1
+        layers[_layer] = _keep
+    if core_dropped:
+        print('   %s: dropped %d feature(s) with no vertex in the lake itself'
+              % (slug, core_dropped))
+        rec['off_lake_dropped'] = core_dropped
+
     span_dropped = 0
     bounds = meta.get('bounds_wsen')
     for _layer in LINE_LAYERS:
@@ -572,8 +771,31 @@ def _flush(slug, layers, mask, meta, a, report):
             continue          # leave the existing file on disk exactly as it is
         feats = layers.get(layer) or []
         if not feats:
-            # NOTE: a layer with no features is SKIPPED, not truncated. That is what makes
-            # --only-layers safe -- the other six files are never opened for writing.
+            # A layer with no features is not truncated -- but it IS retracted.
+            #
+            # The --only-layers guard immediately above already skipped every layer this run
+            # did not read, so reaching here means the layer WAS read and genuinely came back
+            # empty. That is an answer, not an absence, and leaving yesterday's file on disk
+            # publishes the old answer as the current one.
+            #
+            # This is how 71 packs shipped pre-fix contours on 2026-08-06. The rebuild
+            # produced zero contours for them, wrote nothing, left the 2026-08-05 file in
+            # place, and the uploader pushed it to R2 as though it were fresh. A rebuild that
+            # can only overwrite and never retract cannot be trusted to have rebuilt anything.
+            stale = os.path.join(outdir, objname)
+            if os.path.exists(stale):
+                # NEVER fatal. A locked file, a read-only mount or an antivirus hold would
+                # otherwise kill the whole run -- and dying at pack 3 of 1,566 to protect one
+                # stale file is a far worse outcome than carrying on and saying so. Caught
+                # 2026-08-07 when the first test run aborted on exactly this.
+                try:
+                    os.remove(stale)
+                    print('   %s: %s is empty now -- removed the stale file' % (slug, objname))
+                    rec.setdefault('retracted', []).append(objname)
+                except OSError as e:
+                    print('   %s: %s is empty but the stale file COULD NOT BE REMOVED (%s)'
+                          % (slug, objname, str(e)[:60]))
+                    rec.setdefault('stale_kept', []).append(objname)
             continue
         if layer == 'pois':
             # Garmin repeats a ramp label once per zoom level; the same collapse the

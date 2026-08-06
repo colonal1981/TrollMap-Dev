@@ -8,6 +8,7 @@ import { registerLayer, wireButton, toggle, show, isVisible } from '../core/laye
 import { esc } from '../utils/escape.js';
 import { TRISTATE_MASTER_RAMPS } from '../data/ramps-loader.js';
 import { dedupeLaunchesList } from '../utils/dedupe.js';
+import { attachRampCameras } from './ramp-cameras.js';
 
 // Layer handle and visibility live in core/layer-registry.js.
 let RAMP_DATA = null;
@@ -75,7 +76,17 @@ function updateRampMarkers(RAMP_LAYER) {
         <span style="font-family:monospace;font-size:11px">${r.lat.toFixed(5)}, ${r.lon.toFixed(5)}</span><br>
         <a href="${osmUrl}" target="_blank" style="font-size:12px;display:block;margin-top:4px">🗺 Verify on OpenStreetMap ↗</a>
         <button onclick="window.enableSpotRepositioning(this, '${esc(r.name).replace(/'/g, "\\'")}')" class="small warn" style="margin-top:8px">✥ Re-Position Launch Spot</button>
+        <div class="ramp-cam"></div>
       `);
+
+      // Filled on OPEN, not on build. updateRampMarkers() runs on every map move and
+      // rebuilds every marker in view, so fetching a frame at build time would fire a
+      // request per visible ramp per pan. attachRampCameras removes the placeholder
+      // when this ramp has no camera, so the popup is unchanged in the common case.
+      marker.on('popupopen', (ev) => {
+        const el = ev.popup && ev.popup.getElement ? ev.popup.getElement() : null;
+        if (el) attachRampCameras(el, r);
+      });
 
       RAMP_LAYER.addLayer(marker);
     }

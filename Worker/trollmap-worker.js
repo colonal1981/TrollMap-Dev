@@ -4,11 +4,14 @@
 import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized, chartpackKey, handleChartpackList, r2Body, r2Text } from './worker-core.js';
 
 // Bump on every edit to this file. See ARCGIS_BUILD in core/arcgis.js.
-const WORKER_BUILD = 'worker-2026-08-06g';
+const WORKER_BUILD = 'worker-2026-08-07a';
 
 import { LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard } from './worker-data.js';
 import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality } from './worker-species.js';
 import { handleGisRoute, flagIsYes, hasText, ARCGIS_BUILD } from './core/arcgis.js';
+import { handleWaterRoute } from './water.js';
+import { handleConditions } from './conditions.js';
+import { handleCameras } from './cameras.js';
 import { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
 
 
@@ -1707,6 +1710,17 @@ var trollmap_worker_default = {
           return handleContourGeojsonPut(request, env, lakeArg);
         }
       }
+      // Compute plane over the pack layers, and the conditions envelope. Both return
+      // null when the path is not theirs, so neither can shadow an existing route.
+      const waterRes = await handleWaterRoute(request, env, url);
+      if (waterRes) return waterRes;
+      const condRes = await handleConditions(request, env, url);
+      if (condRes) return condRes;
+      // Same contract again: null when the path is not ours. The camera roster is baked
+      // into js/data/cameras.js at build time -- this serves only the CURRENT FRAME.
+      const camRes = await handleCameras(request, env, url);
+      if (camRes) return camRes;
+
       if (path === "/chartpacks/lake-boundary" && request.method === "GET") {
         const lakeName = url.searchParams.get("lake") || "";
         if (!lakeName) return new Response(JSON.stringify({ error: "missing lake param" }), { status: 400, headers: JSON_HEADERS });
@@ -1762,8 +1776,26 @@ var trollmap_worker_default = {
         const [, lakeName, file] = cpMatch;
         const key = chartpackKey(lakeName, file);
         if (request.method === "GET") {
-          const obj = await env.R2_TROLLMAP_CHARTPACKS.get(key);
+          // Packs are immutable between uploads, yet this served `no-store`, so Wateree's
+          // 9.7 MB of contours and 18.6 MB of depth areas came down again on EVERY load --
+          // no edge cache, no browser cache -- with trolling_runs and water_features now on
+          // top. ETag plus a short max-age: inside five minutes the browser does not ask, and
+          // after that it revalidates and gets a bodyless 304 unless the pack was rebuilt.
+          // Five minutes rather than a day because packs are rebuilt daily right now, and a
+          // stale contour set after a build is worse than a re-fetch.
+          const inm = request.headers.get("If-None-Match");
+          const want = inm ? inm.replace(/^W\//, "").replace(/"/g, "").trim() : null;
+          const obj = await env.R2_TROLLMAP_CHARTPACKS.get(
+            key, want ? { onlyIf: { etagDoesNotMatch: want } } : undefined);
           if (!obj) return new Response('{"error":"not found"}', { headers: JSON_HEADERS, status: 404 });
+          // R2 returns an R2Object with NO body when onlyIf fails -- the etag matched and the
+          // client's copy is current. That is the 304, and it is the whole saving.
+          if (!obj.body) {
+            const h304 = new Headers(CORS);
+            h304.set("ETag", obj.httpEtag);
+            h304.set("Cache-Control", "public, max-age=300, must-revalidate");
+            return new Response(null, { status: 304, headers: h304 });
+          }
           let ct = "application/octet-stream";
           if (file.endsWith(".png")) ct = "image/png";
           else if (file.endsWith(".json") || file.endsWith(".geojson")) ct = "application/json";
@@ -1776,7 +1808,9 @@ var trollmap_worker_default = {
           obj.writeHttpMetadata(headers);
           const body = r2Body(obj, headers);
           headers.set("Content-Type", ct);
-          headers.set("Cache-Control", "no-store");
+          // After writeHttpMetadata, which copies stored metadata over these two.
+          headers.set("Cache-Control", "public, max-age=300, must-revalidate");
+          headers.set("ETag", obj.httpEtag);
           return new Response(body, { headers });
         }
         if (request.method === "POST") {
@@ -1789,7 +1823,9 @@ var trollmap_worker_default = {
           }
           await env.R2_TROLLMAP_CHARTPACKS.put(key, buf, {
             httpMetadata: {
-              contentType: file.endsWith(".png") ? "image/png" : "application/json",
+              contentType: file.endsWith(".png") ? "image/png"
+                         : file.endsWith(".bin") ? "application/octet-stream"
+                         : "application/json",
               cacheControl: "public, max-age=3600"
             }
           });

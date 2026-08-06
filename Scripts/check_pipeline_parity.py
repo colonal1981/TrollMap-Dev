@@ -24,6 +24,33 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+def _app_tree(root):
+    """Find the app checkout instead of naming it.
+
+    It was hardcoded to `TrollMap-Dev-main`, which was renamed to `TrollMap-Dev` on
+    2026-08-06 with the old copy left beside it as `TrollMap-Dev-main-NO_LONGER_USED`.
+    A hardcoded name does not just break — it can find the RETIRED tree and compare
+    against a stale copy while reporting success.
+
+    Newest candidate wins, and anything marked NO_LONGER_USED is refused outright.
+    """
+    import os
+    cands = []
+    for name in os.listdir(root):
+        p = os.path.join(root, name)
+        if not os.path.isdir(p) or not name.startswith('TrollMap-Dev'):
+            continue
+        if 'NO_LONGER_USED' in name.upper():
+            continue
+        if not os.path.isdir(os.path.join(p, 'js', 'data')):
+            continue
+        cands.append((os.path.getmtime(p), p))
+    if not cands:
+        raise SystemExit('FATAL: no app checkout under %s (looked for TrollMap-Dev*/js/data). '
+                         'Refusing to run rather than compare against nothing.' % root)
+    return max(cands)[1]
+
+
 FAILURES = []
 
 
@@ -45,12 +72,14 @@ idx_all = set(index)
 idx_coastal = {k for k in idx_all if k.startswith("coast_")}
 cat = set(COASTAL_CATALOG)
 
-js_path = ROOT / "TrollMap-Dev-main" / "js" / "data" / "coastal-zones.js"
+APP = Path(_app_tree(str(ROOT)))
+print(f"app tree            {APP.name}")
+js_path = APP / "js" / "data" / "coastal-zones.js"
 js_src = js_path.read_text(encoding="utf-8")
 import re                                              # noqa: E402
 js_zones = set(re.findall(r'["\'](coast_[a-z0-9_]+)["\']\s*:', js_src))
 
-keys_path = ROOT / "TrollMap-Dev-main" / "js" / "data" / "lake-keys.js"
+keys_path = APP / "js" / "data" / "lake-keys.js"
 keys_src = keys_path.read_text(encoding="utf-8")
 body = keys_src[keys_src.index("LAKE_NAME_TO_R2_KEY = {"):]
 body = body[:body.index("\n};")]

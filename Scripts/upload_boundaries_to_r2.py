@@ -32,7 +32,21 @@ from r2_gzip import prepared
 # reading it instead left 1,386 lakes with contours and no outline.
 BOUNDARIES_DIR = Path(r'F:\TrollMapPipeline\registry\boundaries')
 CHARTPACK_DIR  = Path(r'F:\TrollMapPipeline\chartpack')
-ALIASES_JS     = Path(r'F:\TrollMapPipeline\TrollMap-Dev-main\js\data\water-aliases.js')
+# Resolved, not named. The app tree was `TrollMap-Dev-main` until 2026-08-06 and is
+# `TrollMap-Dev` now, with the old one kept beside it as *-NO_LONGER_USED. Naming it
+# risks silently reading the retired copy.
+def _aliases_js():
+    root = Path(r'F:\TrollMapPipeline')
+    best = None
+    for d in root.glob('TrollMap-Dev*'):
+        if not d.is_dir() or 'NO_LONGER_USED' in d.name.upper():
+            continue
+        fp = d / 'js' / 'data' / 'water-aliases.js'
+        if fp.exists() and (best is None or d.stat().st_mtime > best[0]):
+            best = (d.stat().st_mtime, fp)
+    return best[1] if best else None
+
+ALIASES_JS     = _aliases_js()
 R2_BUCKET      = 'trollmap-chartpacks'
 
 # ── The key this writes MUST be the key the Worker reads ──────────────────────
@@ -150,7 +164,7 @@ def main():
         # alias points at. registry/boundaries/ holds 3,194 files, more than twice
         # what shipped, and uploading the rest is 1,700 objects nothing will fetch.
         wanted = {d.name for d in CHARTPACK_DIR.iterdir() if d.is_dir()} if CHARTPACK_DIR.is_dir() else set()
-        if ALIASES_JS.exists():
+        if ALIASES_JS and ALIASES_JS.exists():
             import re as _re
             for tgt in _re.findall(r'"[^"]+":\s*"([^"]+)"', ALIASES_JS.read_text(encoding='utf-8')):
                 if not tgt.startswith('coast_'):

@@ -108,12 +108,17 @@ LAYERS = {
     # Humps, ledges and slope, computed by build_structure.py from the contours in
     # this same pack. Opt-in for the same reason: a separate pass builds it.
     "structure":        "structure.geojson",
+    # Contour fragments stitched into runs a boat can follow, each annotated with what
+    # it passes and whether it is reachable. build_trolling_runs.py.
+    "trolling_runs":    "trolling_runs.geojson",
+    # Points, coves and named creek mouths. build_water_features.py.
+    "water_features":   "water_features.geojson",
     "areas":            "areas.geojson",
     "boundary":         "boundary.geojson",
 }
 # Not uploaded unless named explicitly with --layers. `boundary` would replace the NHD/3DHP
 # polygon the app renders as the lake outline.
-LAYERS_OPT_IN = {"boundary", "areas", "water_graph", "structure"}
+LAYERS_OPT_IN = {"boundary", "areas", "water_graph", "structure", "trolling_runs", "water_features"}
 
 # ── What R2 does not need ─────────────────────────────────────────────────────────────
 #
