@@ -40,8 +40,14 @@ async function handleResearchLimnologyData(request, env, opts = {}) {
   if (bboxNorth == null || bboxSouth == null || bboxEast == null || bboxWest == null) {
     try {
       const lakeKey = resolveSupplementalKeyWorker(lakeName);
-      const shorelineObj = await env.R2_TROLLMAP_CHARTPACKS.get(`${lakeKey}/shoreline.geojson`);
-      if (!shorelineObj) throw new Error(`no shoreline.geojson in R2 for ${lakeKey}`);
+      // TWO SPELLINGS, TWO PIPELINES. `shoreline.geojson` comes from the i-Boating coastal
+      // pipeline (upload_to_r2_coastal.py) and exists for COASTAL ZONES ONLY. Every freshwater
+      // pack ships `garmin_shoreline.geojson` from upload_garmin_to_r2.py instead. The comment
+      // above says "available for all lakes" and it never was, which is why the note at the top
+      // of this file records shoreline.geojson R2 misses killing the bbox self-derive.
+      const shorelineObj = await env.R2_TROLLMAP_CHARTPACKS.get(`${lakeKey}/shoreline.geojson`)
+                        || await env.R2_TROLLMAP_CHARTPACKS.get(`${lakeKey}/garmin_shoreline.geojson`);
+      if (!shorelineObj) throw new Error(`no shoreline.geojson or garmin_shoreline.geojson in R2 for ${lakeKey}`);
       const geo = JSON.parse(await r2Text(shorelineObj));
       const b = boundsOf(geo);
       if (!b) throw new Error('no coordinates extracted from shoreline');

@@ -153,14 +153,22 @@ PIPELINE_ONLY = {"waterbody", "hydrography"}
 #
 # EXTRACT EVERYTHING, SHIP SELECTIVELY. The full pack stays on disk, so promoting a zone
 # later is an upload and not a rebuild.
-COASTAL_PRIMARY = {
-    "coast_ace_basin_sc",        # Edisto
-    "coast_charleston_sc",
-    "coast_cape_romain_sc",      # Bulls Bay / Awendaw -- added 2026-08-03, had no zone
-    "coast_santee_delta_sc",
-    "coast_winyah_bay_sc",
-    "coast_murrells_inlet_sc",
-}
+# THE TIER IS OFF BY DEFAULT AS OF 2026-08-07. Every coastal zone ships every layer.
+#
+# It existed to save R2 storage, and storage stopped being the constraint: the bucket holds
+# 1.38 GB against a 10 GB free tier, and giving all sixteen secondary zones their heavy layers
+# costs about 122 MB gzipped -- 14% used goes to 15%. Measured, not estimated: this upload
+# compressed to 7% of raw, not the 13-24% the docstring assumes.
+#
+# Meanwhile the tier cost something real. THE CLIENT DOES NOT KNOW THE TIER EXISTS. A secondary
+# zone 404s its boundary and its depth data, so Pamlico Sound loses its outline entirely and
+# reads as broken rather than as "no bathymetry here". Ryan, 2026-08-07: "with r2 storage now a
+# 0 issue is there any reason to hold back the coastal for the non primary?" There is not.
+#
+# The mechanism is KEPT, not deleted, because it is three lines and the day storage matters
+# again it should not have to be rediscovered. It is now opt-IN: pass --coastal-primary to
+# restrict, and nothing is restricted unless you ask.
+COASTAL_PRIMARY = set()          # empty = every coastal zone is primary
 COASTAL_SECONDARY_LAYERS = {"docks", "pois", "garmin_shoreline"}
 
 
@@ -169,8 +177,11 @@ def layers_for(slug, want, primary, secondary_layers, with_pipeline):
     keep = set(want)
     if not with_pipeline:
         keep -= PIPELINE_ONLY
-    # A coastal zone outside the primary band ships structure only.
-    if slug.startswith("coast_") and slug not in primary:
+    # A coastal zone outside the primary band ships the secondary set only. An EMPTY primary
+    # set means the tier is off and every zone ships everything -- which is the default now.
+    # Written as an explicit guard rather than relying on `not in set()` being False, because
+    # the old behaviour was one absent name away from silently stripping a zone.
+    if primary and slug.startswith("coast_") and slug not in primary:
         keep &= secondary_layers
     return keep
 SKIP_SLUGS = {"sc_ga_coastal", "saluda_river_arm"}
@@ -313,7 +324,11 @@ def main():
         print("pipeline-only layers held back (nothing reads them from R2): "
               + ", ".join(sorted(PIPELINE_ONLY)))
     print("coastal primary (all layers): " + ", ".join(sorted(primary)))
-    print("coastal secondary ships only: " + ", ".join(sorted(COASTAL_SECONDARY_LAYERS)))
+    if primary:
+        print("coastal secondary ships only: " + ", ".join(sorted(COASTAL_SECONDARY_LAYERS)))
+    else:
+        print("coastal tier OFF -- every coastal zone ships every layer "
+              "(pass --coastal-primary to restrict)")
 
     slugs = set(args.lake) if args.lake else None
     gz = not args.no_gzip

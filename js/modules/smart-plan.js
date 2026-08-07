@@ -32,6 +32,7 @@ import { solunarFor } from '../utils/solunar.js';
 
 // ── Coastal / tidal support ────────────────────────────────────────────────
 import { resolveR2Key } from '../data/lake-keys.js';
+import { requestPlan, renderPlan, describePlan } from './smart-plan-route.js';
 import { COASTAL_ZONES, isCoastalKey } from '../data/coastal-zones.js';
 import { getTideStateForZone } from './tide-engine.js';
 import { assessZoneIntrusion } from './usgs-gauges.js';
@@ -328,247 +329,74 @@ function getPhaseRecommendation(species, lakeName, season, phaseNum, waterTempF)
     ? seasonData.depthBand(waterTempF) : [...seasonData.depthBand];
   return { depthMin:Math.round(dMin), depthMax:Math.round(dMax), lures:tod.lures||[], speed:tod.speed||2.0, notes:tod.notes||'' };
 }
-
-// ── Contour walk ──────────────────────────────────────────────────────────────
-function stitchContourFragments(fragments, TOL_FT = 50) {
-  const segs = fragments.filter(c => c.length >= 2).map(c => c.map(([lo, la]) => [la, lo]));
-  const used = new Array(segs.length).fill(false);
-  const chains = [];
-
-  function dist2(a, b) {
-    const dlat=(a[0]-b[0])*364000, dlon=(a[1]-b[1])*364000*Math.cos(a[0]*Math.PI/180);
-    return Math.sqrt(dlat*dlat+dlon*dlon);
-  }
-  const bearing = geoBearing;
-  function angleDiff(a, b) { let d=Math.abs(a-b)%360; return d>180?360-d:d; }
-
-  for (let s=0; s<segs.length; s++) {
-    if (used[s]) continue;
-    used[s] = true;
-    let chain = segs[s].slice(), grew = true;
-    while (grew) {
-      grew = false;
-      const head=chain[0], tail=chain[chain.length-1];
-      const tBrng=chain.length>=2?bearing(chain[chain.length-2],tail):0;
-      const hBrng=chain.length>=2?bearing(chain[1],head):0;
-      let bJ=-1, bScore=Infinity, bOp=null;
-      for (let j=0; j<segs.length; j++) {
-        if (used[j]) continue;
-        const c=segs[j], a=c[0], b=c[c.length-1];
-        const cands=[
-          {d:dist2(tail,a),op:'TA',turn:angleDiff(tBrng,bearing(a,c[Math.min(1,c.length-1)]))},
-          {d:dist2(tail,b),op:'TB',turn:angleDiff(tBrng,bearing(b,c[Math.max(0,c.length-2)]))},
-          {d:dist2(head,a),op:'HA',turn:angleDiff(hBrng,bearing(a,c[Math.min(1,c.length-1)]))},
-          {d:dist2(head,b),op:'HB',turn:angleDiff(hBrng,bearing(b,c[Math.max(0,c.length-2)]))},
-        ];
-        for (const cand of cands) {
-          if (cand.d>TOL_FT||cand.turn>90) continue;
-          const sc=cand.d+cand.turn;
-          if (sc<bScore) { bScore=sc; bJ=j; bOp=cand.op; }
-        }
-      }
-      if (bJ>=0) {
-        const c=segs[bJ].slice(); used[bJ]=true; grew=true;
-        if (bOp==='TA') chain=chain.concat(c);
-        else if (bOp==='TB') chain=chain.concat(c.reverse());
-        else if (bOp==='HA') chain=c.reverse().concat(chain);
-        else chain=c.concat(chain);
-      }
-    }
-    chains.push(chain);
-  }
-  return chains;
-}
-
-function walkContourForWaypoints(depthMin, depthMax, refLat, refLon, maxDistFt, budgetFt, stepFt=150) {
-  const contour = getActiveContour();
-  const gj = contour?.smart || contour?.raw;
-  if (!gj?.features?.length) return [];
-
-  let boundaryRing = null;
-  try {
-    const bgj = window.LAKE_BOUNDARY_GEOJSON;
-    if (bgj?.features?.length) {
-      let bestRing = null, bestLen = 0;
-      for (const feat of bgj.features) {
-        const geom = feat.geometry;
-        const rings = geom?.type === 'Polygon' ? [geom.coordinates[0]]
-          : geom?.type === 'MultiPolygon' ? geom.coordinates.map(p => p[0])
-          : [];
-        for (const ring of rings) {
-          if (ring?.length > bestLen) { bestRing = ring; bestLen = ring.length; }
-        }
-      }
-      if (bestRing) boundaryRing = bestRing;
-    }
-  } catch (err) {
-    // The boundary ring is what every distance-to-shore number in the plan is measured
-    // against. Losing it does not throw downstream -- distToRingFt just stops discriminating
-    // -- so without this line a plan built against no shoreline looks like a normal plan.
-    console.warn('[smart-plan] could not derive the boundary ring:', err);
-  }
-
-  function distToRingFt(lat, lon) { return distToRingGeneric(lat, lon, boundaryRing, true); }
-
-  const inRange = gj.features.filter(f => {
-    const d = f.properties?.depth_ft;
-    if (d==null||d<depthMin||d>depthMax) return false;
-    const coords = f.geometry?.coordinates;
-    if (!coords?.length) return false;
-    return coords.some(([lo,la]) => geoDistanceFt(refLat,refLon,la,lo)<=maxDistFt);
-  });
-  if (!inRange.length) return [];
-
-  const byDepth = new Map();
-  for (const f of inRange) {
-    const d=f.properties.depth_ft;
-    if (!byDepth.has(d)) byDepth.set(d,[]);
-    byDepth.get(d).push(f.geometry.coordinates);
-  }
-
-  const allChains = [];
-  for (const [depth, frags] of byDepth) {
-    for (const chain of stitchContourFragments(frags)) {
-      if (chain.length<2) continue;
-      let len=0;
-      for (let i=1; i<chain.length; i++) len+=geoDistanceFt(chain[i-1][0],chain[i-1][1],chain[i][0],chain[i][1]);
-      if (len<stepFt*2) continue;
-      let closest=Infinity;
-      for (let i=0; i<chain.length; i+=Math.max(1,Math.floor(chain.length/40))) {
-        const d2=geoDistanceFt(refLat,refLon,chain[i][0],chain[i][1]);
-        if (d2<closest) closest=d2;
-      }
-      let avgShoreDist = 0;
-      if (boundaryRing) {
-        const sampleStep = Math.max(1, Math.floor(chain.length / 20));
-        let sampleCount = 0;
-        for (let i = 0; i < chain.length; i += sampleStep) {
-          avgShoreDist += distToRingFt(chain[i][0], chain[i][1]);
-          sampleCount++;
-        }
-        avgShoreDist = sampleCount ? avgShoreDist / sampleCount : 0;
-      }
-      if (closest<=maxDistFt) allChains.push({chain,len,closest,depth,avgShoreDist});
-    }
-  }
-  if (!allChains.length) return [];
-
-  allChains.sort((a,b) => {
-    const scoreA = a.closest*2 - a.len - Math.min(a.avgShoreDist, 500);
-    const scoreB = b.closest*2 - b.len - Math.min(b.avgShoreDist, 500);
-    return scoreA - scoreB;
-  });
-  const best=allChains[0];
-  console.log(`[scout] best chain: depth=${best.depth}ft len=${Math.round(best.len)}ft closest=${Math.round(best.closest)}ft avgShoreDist=${Math.round(best.avgShoreDist)}ft`);
-
-  let nearIdx=0, nearDist=Infinity;
-  for (let i=0; i<best.chain.length; i++) {
-    const d=geoDistanceFt(refLat,refLon,best.chain[i][0],best.chain[i][1]);
-    if (d<nearDist) { nearDist=d; nearIdx=i; }
-  }
-
-  const walk = (start, dir) => {
-    const pts=[{lat:best.chain[start][0],lon:best.chain[start][1],depth:best.depth}];
-    let traveled=0, carry=0;
-    for (let i=start+dir; dir>0?i<best.chain.length:i>=0; i+=dir) {
-      const prev=best.chain[i-dir], curr=best.chain[i];
-      const segFt=geoDistanceFt(prev[0],prev[1],curr[0],curr[1]);
-      carry+=segFt; traveled+=segFt;
-      if (traveled>=budgetFt) break;
-      if (carry>=stepFt) {
-        const ptLat=curr[0], ptLon=curr[1];
-        pts.push({lat:ptLat,lon:ptLon,depth:best.depth});
-        carry=0;
-      }
-    }
-    return pts;
-  };
-
-  const fwd=walk(nearIdx,1), rev=walk(nearIdx,-1);
-  return fwd.length>=rev.length ? fwd : rev;
-}
+// stitchContourFragments() and walkContourForWaypoints() were here until 2026-08-07.
+//
+// They joined contour fragments in the browser and walked the join dropping a waypoint every
+// 150 ft -- roughly 160 lines re-deriving, per plan, on a phone, what build_trolling_runs.py
+// now does once against the whole pack. The pipeline version is not just faster, it is better:
+// it stitches Garmin's 12.1 ft line on Wateree into 45.34 km and records for each run whether
+// it is REACHABLE FROM WATER, which the browser had no way to know.
+//
+// Their caller now sends intent to POST /water/{slug}/plan. See smart-plan-route.js.
 
 async function generateScoutWaypoints(phases, bands, rampLat, rampLon, rangeMiles, speedsMph=2.0, phaseInfo) {
-  if (!state.DATA) state.DATA={};
-  if (!Array.isArray(state.DATA.waypoints)) state.DATA.waypoints=[];
-  state.DATA.waypoints=state.DATA.waypoints.filter(w=>!w.scoutWaypoint);
-  if (!state.DATA.tracks) state.DATA.tracks=[];
-  state.DATA.tracks=state.DATA.tracks.filter(t=>!t.scoutRoute);
+  // THE ROUTE IS NO LONGER BUILT HERE. It is built by POST /water/{slug}/plan against the water
+  // graph and the stitched trolling runs, and this function only turns the model's depth bands
+  // into that request and renders what comes back.
+  //
+  // What used to live in these lines: stitchContourFragments() joined contour pieces in the
+  // browser, walkContourForWaypoints() walked the join dropping a waypoint every 150 ft, and
+  // buildScoutRoutes() connected those waypoints with straight lines plus a 20 ft sine wave so
+  // the result LOOKED like trolling passes. The sine wave is the tell -- it was decoration on a
+  // route that was never following anything.
+  //
+  // All three of Ryan's complaints came from that: it could not follow a contour (i-Boating's
+  // longest run was 1.68 km), it could not leave the boat positioned for the next leg (a leg
+  // had an end coordinate but no end state), and it drew connecting lines over land (a straight
+  // line goes wherever a straight line goes). See PHASE3_THE_LEG_MODEL_2026-08-06.md.
+  const p = phaseInfo?.phases || phases;
+  const totalDurH = p.length ? (p[p.length - 1].end - p[0].start) : 6;
 
-  if (Number.isFinite(rampLat)&&Number.isFinite(rampLon)) {
-    state.DATA.waypoints.push({name:'Launch',lat:rampLat,lon:rampLon,sym:'Boat Ramp',role:'launch_ramp',scoutWaypoint:true});
-  }
+  // How far the angler can actually fish in each phase, which is the ONLY thing the old code
+  // computed that is still wanted. Halved because a phase is out and back, capped at 3 miles.
+  const budgetsFt = (bands || []).map((_, i) => {
+    const raw = Array.isArray(speedsMph) ? speedsMph[i] : speedsMph;
+    const spd = Number.isFinite(Number(raw)) && Number(raw) > 0 ? Number(raw) : 2.0;
+    return Math.min(totalDurH / 2 * spd * 5280 * 0.8, 3.0 * 5280);
+  });
 
-  const p=phaseInfo?.phases||phases;
-  const totalDurH=p.length?(p[p.length-1].end-p[0].start):6;
-  const maxDistFt=Math.min(rangeMiles,4.0)*5280;
-  const STEP_FT=150;
+  // Same source the rest of this file uses (readPlanInputs), not the map toolbar picker:
+  // the Plan tab's lake is what the plan is FOR, and the two can legitimately differ while
+  // you are looking at one lake and planning another. #lakeSelect is the fallback only.
+  const lakeName = document.getElementById('planLake')?.value
+                || document.getElementById('lakeSelect')?.value || '';
+  const res = await requestPlan({ lakeName, bands, rampLat, rampLon, rangeMiles, budgetsFt });
 
-  bands=(bands||[]).map((b,i)=>({...b,phase:i+1}));
-  let totalAdded=0;
-  const phaseWaypoints={};
-
-  for (const band of bands) {
-    const passSpeed = Array.isArray(speedsMph)
-      ? speedsMph[band.phase - 1]
-      : speedsMph;
-    const safePassSpeed = Number.isFinite(Number(passSpeed)) && Number(passSpeed) > 0
-      ? Number(passSpeed)
-      : 2.0;
-    const budgetFt=Math.min(totalDurH/2*safePassSpeed*5280*0.8,3.0*5280);
-    const pts=walkContourForWaypoints(band.depthMin,band.depthMax,rampLat,rampLon,maxDistFt,budgetFt,STEP_FT);
-    if (!pts.length) { console.warn(`[scout] Ph${band.phase}: no waypoints for ${band.depthMin}-${band.depthMax}ft`); continue; }
-    phaseWaypoints[band.phase]=pts.map(pt=>[pt.lat,pt.lon]);
-    pts.forEach((pt,j)=>{
-      state.DATA.waypoints.push({name:`Ph${band.phase}-${j+1}`,lat:pt.lat,lon:pt.lon,sym:'Fishing Area',scoutWaypoint:true,phase:band.phase,depth:pt.depth});
-      totalAdded++;
-    });
-    console.log(`[scout] Ph${band.phase} (${band.depthMin}-${band.depthMax}ft): ${pts.length} waypoints`);
-  }
-
-  buildScoutRoutes(phaseWaypoints);
-  renderAll();
-  return totalAdded;
-}
-
-function buildScoutRoutes(phaseWaypoints) {
-  if (!state.DATA.tracks) state.DATA.tracks=[];
-  state.DATA.tracks=state.DATA.tracks.filter(t=>!t.scoutRoute);
-  
-  const amplitude = 20, wave = 500;
-  const inboundOffset = 30; 
-
-  function makeTrack(waypoints, name, offset = 0) {
-    const out=[]; let totalDist=0;
-    for (let i=0; i<waypoints.length-1; i++) {
-      const p1=waypoints[i], p2=waypoints[i+1];
-      const dlat=p2[0]-p1[0], dlon=p2[1]-p1[1];
-      const latM=(p1[0]+p2[0])/2, cosLat=Math.cos(latM*Math.PI/180);
-      const segFt=Math.sqrt((dlat*364000)**2+(dlon*364000*cosLat)**2);
-      if (segFt<5) continue;
-      const brng=Math.atan2(dlon*cosLat,dlat), perp=brng+Math.PI/2;
-      const pLat=Math.cos(perp)/364000, pLon=Math.sin(perp)/(364000*cosLat);
-      const steps=Math.max(2,Math.ceil(segFt/50));
-      
-      for (let s=(i===0?0:1); s<=steps; s++) {
-        const t=s/steps, lat=p1[0]+dlat*t, lon=p1[1]+dlon*t;
-        const d=totalDist+segFt*t;
-        const swing = (amplitude * Math.sin(2*Math.PI*d/wave)) + offset;
-        out.push([lat+swing*pLat,lon+swing*pLon]);
-      }
-      totalDist+=segFt;
+  if (!res.ok) {
+    // Loudly, and with no fallback. The old walker is the thing being removed; reaching for it
+    // on failure would keep it alive forever, and a plan drawn over land is worse than none.
+    console.warn('[smart-plan] no route: ' + res.reason);
+    window._smartPlanRouteError = res.reason;
+    clearExistingSmartPlanTracks();
+    if (Number.isFinite(rampLat) && Number.isFinite(rampLon)) {
+      if (!state.DATA) state.DATA = {};
+      if (!Array.isArray(state.DATA.waypoints)) state.DATA.waypoints = [];
+      state.DATA.waypoints = state.DATA.waypoints.filter(w => !w.scoutWaypoint);
+      state.DATA.waypoints.push({ name: 'Launch', lat: rampLat, lon: rampLon,
+                                  sym: 'Boat Ramp', role: 'launch_ramp', scoutWaypoint: true });
     }
-    return {name,pts:out,scoutRoute:true,smartPlan:true};
+    renderAll();
+    return 0;
   }
 
-  for (const [phNum,pts] of Object.entries(phaseWaypoints).sort()) {
-    if (pts.length<2) continue;
-    const out = makeTrack(pts, `Ph${phNum} Outbound`, 0);
-    if (out.pts.length>=2) { state.DATA.tracks.push(out); console.log(`[scout-routes] Ph${phNum} Outbound: ${out.pts.length}pts`); }
-    
-    const inn = makeTrack([...pts].reverse(), `Ph${phNum} Inbound`, inboundOffset);
-    if (inn.pts.length>=2) { state.DATA.tracks.push(inn); console.log(`[scout-routes] Ph${phNum} Inbound: ${inn.pts.length}pts`); }
-  }
+  window._smartPlanRouteError = null;
+  window._smartPlanLastPlan = res.plan;
+  const counts = renderPlan(res.plan, { rampLat, rampLon });
+  console.log('[smart-plan] ' + describePlan(res.plan)
+            + ` — ${counts.trollN} troll, ${counts.transitN} transit`);
+  for (const n of (res.plan.notes || [])) console.warn('[smart-plan] ' + n);
+  renderAll();
+  return counts.waypoints;
 }
 
 function isSmartPlanTrack(t) {
@@ -1351,7 +1179,7 @@ Return ONLY valid JSON, no markdown:
   };
 
   // ── Generate waypoints ────────────────────────────────────────────────────
-  setStatus('Building contour waypoints…',true);
+  setStatus('Routing over the water graph…',true);
   const totalWaypoints=await generateScoutWaypoints(
     phaseInfo.phases,
     [{depthMin:groqPlan.band1.depthMin,depthMax:groqPlan.band1.depthMax},{depthMin:groqPlan.band2.depthMin,depthMax:groqPlan.band2.depthMax}],

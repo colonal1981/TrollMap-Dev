@@ -462,93 +462,87 @@ function minDistToRingDeg(lon, lat, ring) {
 // ~0.003° ≈ 300m — humps/ledges must be at least this far from the shoreline
 const MIN_OFFSHORE_DEG = 0.003;
 
-function deriveContourStructures(contourGeo, boundaryRing = null) {
-  const result = {};
-  if (!contourGeo?.features?.length) return result;
-  let midDepthCount = 0;
+function structuresFromPack(structGeo) {
+  // READS structure.geojson. It used to be deriveContourStructures(), which grid-bucketed
+  // contour centroids in the browser and kept eight humps and eight ledges per lake, per
+  // research run. build_structure.py derives the same things offline from contour NESTING --
+  // which is what actually makes a hump a hump -- and Wateree's file holds 395 humps and 6,915
+  // ledges with relief, area and crown depth on every one.
+  //
+  // build_structure.py prints the comparison itself: "the old adapter would have kept 8 and 8
+  // per lake, in the browser, per research run."
+  const out = {};
+  const feats = structGeo?.features;
+  if (!feats?.length) return out;
 
-  // ── Hump detection — closed interior contour loops ───────────────────────
-  // A closed contour loop entirely inside the lake boundary = offshore hump or high spot
-  const humpCandidates = [];
-  for (const f of contourGeo.features) {
-    const depth = f?.properties?.depth_ft;
-    if (depth != null && depth >= 15 && depth <= 35) midDepthCount++;
-    for (const coords of flattenLineCoords(f.geometry)) {
-      if (!isClosedContour(coords)) continue;
-      const areaAcres = polygonAreaAcresLonLat(coords);
-      if (areaAcres < 0.5 || areaAcres > 500) continue;
-      const [lon, lat] = centroidLonLat(coords);
-      if (boundaryRing && !pointInPolygonLonLat(lon, lat, boundaryRing)) continue;
-      // Reject candidates too close to shoreline — islands/points not offshore humps
-      if (boundaryRing && minDistToRingDeg(lon, lat, boundaryRing) < MIN_OFFSHORE_DEG) continue;
-      humpCandidates.push({ lon, lat, areaAcres, depth: depth ?? null });
-    }
+  const humps = [], ledges = [];
+  for (const f of feats) {
+    const p = f.properties || {};
+    (p.kind === 'hump' ? humps : p.kind === 'ledge' ? ledges : []).push?.(p);
   }
 
-  // ── Ledge detection — find depth inflection zones ────────────────────────
-  // Group mid-depth contours by proximity; dense clusters = ledge/drop-off zones
-  const ledgeCandidates = [];
-  const midDepthFeatures = contourGeo.features.filter(f => {
-    const d = f?.properties?.depth_ft;
-    return d != null && d >= 12 && d <= 40;
-  });
-
-  // Cluster mid-depth contour centroids into ledge zones using simple grid bucketing
-  const LEDGE_GRID = 0.003; // ~300m grid cells
-  const ledgeGrid = {};
-  for (const f of midDepthFeatures) {
-    for (const coords of flattenLineCoords(f.geometry)) {
-      if (coords.length < 4) continue;
-      const [lon, lat] = centroidLonLat(coords);
-      if (boundaryRing && !pointInPolygonLonLat(lon, lat, boundaryRing)) continue;
-      if (boundaryRing && minDistToRingDeg(lon, lat, boundaryRing) < MIN_OFFSHORE_DEG) continue;
-      const key = `${Math.round(lat / LEDGE_GRID)},${Math.round(lon / LEDGE_GRID)}`;
-      if (!ledgeGrid[key]) ledgeGrid[key] = { lats: [], lons: [], count: 0 };
-      ledgeGrid[key].lats.push(lat);
-      ledgeGrid[key].lons.push(lon);
-      ledgeGrid[key].count++;
-    }
-  }
-  for (const cell of Object.values(ledgeGrid)) {
-    if (cell.count < 3) continue; // need density to call it a ledge
-    const lat = cell.lats.reduce((a,b) => a+b, 0) / cell.lats.length;
-    const lon = cell.lons.reduce((a,b) => a+b, 0) / cell.lons.length;
-    ledgeCandidates.push({ lat, lon, density: cell.count });
+  if (humps.length) {
+    // Ranked by RELIEF, not by count. A hump is worth reporting because it stands proud of the
+    // bottom around it; how many there are says nothing about which one matters.
+    const top = humps.filter(h => Number.isFinite(Number(h.relief_ft)))
+                     .sort((a, b) => Number(b.relief_ft) - Number(a.relief_ft))
+                     .slice(0, 8);
+    const desc = top.map(h => {
+      const bits = [`${Math.round(Number(h.relief_ft))} ft relief`];
+      if (Number.isFinite(Number(h.depth_ft))) bits.push(`crown ${Number(h.depth_ft).toFixed(1)} ft`);
+      if (Number.isFinite(Number(h.area_acres))) bits.push(`${Number(h.area_acres).toFixed(1)} ac`);
+      return bits.join(', ');
+    });
+    out.humps = `${humps.length} charted humps; largest by relief — ${desc.join('; ')}`;
   }
 
-  // Sort and cap — top humps by area, top ledges by contour density
-  humpCandidates.sort((a, b) => b.areaAcres - a.areaAcres);
-  ledgeCandidates.sort((a, b) => b.density - a.density);
-  const topHumps = humpCandidates.slice(0, 8);
-  const topLedges = ledgeCandidates.slice(0, 8);
-
-  // Build text summaries (existing behavior)
-  if (midDepthCount >= 25) result.channelLedges = 'mid-depth contour density indicates multiple ledges / drop-offs';
-  else if (midDepthCount >= 10) result.channelLedges = 'contours indicate at least some ledges / depth breaks';
-  if (humpCandidates.length >= 5) result.humps = 'multiple closed contour loops suggest several offshore humps or high spots';
-  else if (humpCandidates.length >= 1) result.humps = 'at least one closed contour loop suggests offshore hump / high-spot structure';
-
-  // Add coordinate arrays for Smart Plan casting stop integration
-  if (topHumps.length) {
-    result.humpCoordinates = topHumps.map((h, i) => ({
-      id: `hump_${i+1}`,
-      lat: Math.round(h.lat * 100000) / 100000,
-      lon: Math.round(h.lon * 100000) / 100000,
-      areaAcres: Math.round(h.areaAcres * 10) / 10,
-      depth: h.depth,
-    }));
+  if (ledges.length) {
+    // LEDGES DO NOT DISCRIMINATE. Wateree has 6,915, so every stretch of water passes 90-140 of
+    // them and a list of "the best ledges" is noise dressed as a finding. Report the shape of
+    // the distribution and let the season and species decide which band matters.
+    const ft = ledges.map(l => Number(l.depth_ft)).filter(Number.isFinite).sort((a, b) => a - b);
+    const rel = ledges.map(l => Number(l.relief_ft)).filter(Number.isFinite).sort((a, b) => a - b);
+    const q = (arr, f) => arr.length ? arr[Math.floor((arr.length - 1) * f)] : null;
+    const parts = [`${ledges.length} charted ledges`];
+    if (ft.length) parts.push(`depths ${ft[0].toFixed(1)}–${ft[ft.length - 1].toFixed(1)} ft, median ${q(ft, 0.5).toFixed(1)} ft`);
+    if (rel.length) parts.push(`relief median ${q(rel, 0.5).toFixed(1)} ft, steepest ${rel[rel.length - 1].toFixed(1)} ft`);
+    out.ledges = parts.join('; ');
   }
-  if (topLedges.length) {
-    result.ledgeCoordinates = topLedges.map((l, i) => ({
-      id: `ledge_${i+1}`,
-      lat: Math.round(l.lat * 100000) / 100000,
-      lon: Math.round(l.lon * 100000) / 100000,
-      contourDensity: l.density,
-    }));
-  }
-
-  return result;
+  return out;
 }
+
+function waterFeaturesFromPack(featGeo) {
+  // READS water_features.geojson -- points, coves and named creek mouths, which research has
+  // never seen at all. Counting Wateree's own trollingIntelligence, humps and ledges are 7 of
+  // 104 structure citations; points, coves and creek mouths are most of the rest.
+  const out = {};
+  const feats = featGeo?.features;
+  if (!feats?.length) return out;
+
+  const byKind = {};
+  for (const f of feats) {
+    const k = f.properties?.kind;
+    if (!k) continue;
+    (byKind[k] = byKind[k] || []).push(f);
+  }
+
+  if (byKind.point?.length) {
+    const rel = byKind.point.map(f => Number(f.properties?.deep_side_ft)).filter(Number.isFinite);
+    out.points = `${byKind.point.length} charted points`
+      + (rel.length ? `; deep side runs to ${Math.max(...rel).toFixed(1)} ft` : '');
+  }
+  if (byKind.cove?.length) out.coves = `${byKind.cove.length} charted coves`;
+  if (byKind.creek_mouth?.length) {
+    // Named ones only -- an unnamed creek mouth is a shape, a named one is a place you can be
+    // told to go.
+    const named = byKind.creek_mouth.map(f => f.properties?.name).filter(Boolean);
+    out.creekMouths = named.length
+      ? `${byKind.creek_mouth.length} creek mouths including ${named.slice(0, 6).join(', ')}`
+      : `${byKind.creek_mouth.length} charted creek mouths`;
+  }
+  return out;
+}
+
 
 function deriveDepthAreaStructures(depthGeo) {
   const result = {};
@@ -707,34 +701,96 @@ function deriveDepthStatistics(contourGeo, depthGeo, boundaryRing) {
   return out;
 }
 
+// deriveDepthStatistics falls back to contour geometry when the depth-area polygons do not
+// cover enough of the lake. Asking first means a pack with good depth areas -- which is most of
+// them, 1,513 of 1,566 -- never downloads contours at all during research.
+function depthStats_needsContours(depthGeo) {
+  return !(depthGeo?.features?.length > 0);
+}
+
 function derivePoiStructures(poiGeo) {
+  // THIS USED TO KEEP ONLY BRIDGE NAMES. Fourteen lines whose entire output was one string:
+  // it mapped every POI to its name, filtered for /bridge/i, and discarded the rest. Murrells
+  // Inlet loads 2,353 POIs; research kept the bridges.
+  //
+  // What it was throwing away is precisely what Ryan pointed at on 2026-08-06: "there are garmin
+  // POI labels that say submerged timber... fish attractors aren't going to show you stump
+  // fields or submerged timber they will just show where dnr has dropped a brushpile... hazard
+  // buoys for rocks, or sudden shallow areas is another place to look." On Wateree that is 55
+  // Flooded Timber, 61 Shallow Area and 45 hazard marks, all fetched, all parsed, all dropped.
   const result = {};
-  if (!poiGeo?.features?.length) return result;
-  const names = poiGeo.features.map(f => String(f.properties?.name || '')).filter(Boolean);
-  const bridgeNames = names.filter(n => /bridge/i.test(n));
-  if (bridgeNames.length >= 2) result.bridges = `bridge-related POIs include ${bridgeNames.slice(0, 3).join(', ')}`;
-  else if (bridgeNames.length === 1) result.bridges = `bridge-related POI includes ${bridgeNames[0]}`;
+  const feats = poiGeo?.features;
+  if (!feats?.length) return result;
+
+  // Grouped by the layer's own poi_type. `on_water` is already a field in the pack -- use it
+  // rather than re-deriving it, and keep land POIs out of a structure summary. Ramps and
+  // parking are legitimately on land and belong to the access index, not here.
+  const counts = {};
+  const named = {};
+  for (const f of feats) {
+    const p = f.properties || {};
+    if (p.on_water === false) continue;
+    const t = String(p.poi_type || p.class || '').trim();
+    if (!t) continue;
+    counts[t] = (counts[t] || 0) + 1;
+    if (p.name) (named[t] = named[t] || []).push(String(p.name));
+  }
+
+  // The kinds the intel actually cites. Anything else is still counted below, but these get
+  // named, because "Flooded Timber" is a place you fish and "Buoy" is furniture.
+  const CITED = [/timber/i, /shallow/i, /hazard/i, /attractor/i, /pile/i, /bridge/i, /wreck/i, /reef/i];
+  const cited = Object.keys(counts).filter(t => CITED.some(re => re.test(t)));
+  if (cited.length) {
+    result.chartedStructurePois = cited
+      .sort((a, b) => counts[b] - counts[a])
+      .map(t => `${counts[t]} ${t}`)
+      .join('; ');
+  }
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  if (total) {
+    const top = Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 6);
+    result.chartedPoiMix = `${total} on-water charted POIs — ${top.map(t => `${counts[t]} ${t}`).join(', ')}`;
+  }
+  // Kept because it was here and it is genuinely useful on a river.
+  const bridges = (named.Bridge || []).concat(
+    Object.entries(named).filter(([t]) => /bridge/i.test(t)).flatMap(([, v]) => v));
+  if (bridges.length) {
+    result.bridges = bridges.length >= 2
+      ? `bridge-related POIs include ${[...new Set(bridges)].slice(0, 3).join(', ')}`
+      : `bridge-related POI includes ${bridges[0]}`;
+  }
   return result;
 }
+
 
 async function deriveGeospatialStructureFacts(lakeName) {
   const contourKey = resolveR2Key(lakeName);
   const supplementalKey = resolveSupplementalKey(lakeName);
   const boundaryKey = resolveBoundaryKey(lakeName);
-  const [contourGeo, depthGeo, poiGeo, boundaryGeo] = await Promise.all([
-    contourKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${contourKey}/contours.geojson?v=${Date.now()}`) : Promise.resolve(null),
-    supplementalKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${supplementalKey}/depth_areas.geojson?v=${Date.now()}`) : Promise.resolve(null),
-    supplementalKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${supplementalKey}/pois.geojson?v=${Date.now()}`) : Promise.resolve(null),
+  // structure.geojson and water_features.geojson are what build_structure.py and
+  // build_water_features.py already derived from this exact pack, offline, against the whole
+  // lake. Research used to re-derive humps and ledges from raw contours in the browser and
+  // never saw points, coves or creek mouths at all.
+  //
+  // NO CACHE-BUSTER. Every one of these carried `?v=${Date.now()}`, which defeated the Worker's
+  // ETag + max-age=300 BY CONSTRUCTION -- it could never hit cache, so a Wateree research run
+  // re-downloaded 9.7 MB of contours and 18.6 MB of depth areas every time. Packs change only
+  // when the uploader runs; five minutes of staleness is the right trade.
+  const [structGeo, featGeo, depthGeo, poiGeo, boundaryGeo] = await Promise.all([
+    contourKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${contourKey}/structure.geojson`) : Promise.resolve(null),
+    contourKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${contourKey}/water_features.geojson`) : Promise.resolve(null),
+    supplementalKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${supplementalKey}/depth_areas.geojson`) : Promise.resolve(null),
+    supplementalKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${supplementalKey}/pois.geojson`) : Promise.resolve(null),
     // Boundary files in R2 use a _3dhp suffix (USGS 3D Hydrography Program).
     // Try _3dhp first, fall back to bare key for older boundary files.
-    boundaryKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${boundaryKey}/boundary.geojson?v=${Date.now()}`)
-      .then(gj => gj || fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${boundaryKey}/boundary.geojson?v=${Date.now()}`))
+    boundaryKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${boundaryKey}/boundary.geojson`)
       : Promise.resolve(null),
   ]);
   const ring = getBoundaryOuterRing(boundaryGeo);
   const structuralElements = {
     ...summarizePointComplexityFromBoundary(ring),
-    ...deriveContourStructures(contourGeo, ring),
+    ...structuresFromPack(structGeo),
+    ...waterFeaturesFromPack(featGeo),
     ...deriveDepthAreaStructures(depthGeo),
     ...derivePoiStructures(poiGeo),
   };
@@ -742,6 +798,12 @@ async function deriveGeospatialStructureFacts(lakeName) {
   // Geometry-derived identity facts (surface area, max depth, average depth).
   // These are preferred over LLM/sourced numbers when bathymetric polygon
   // coverage meets the threshold defined in deriveDepthStatistics.
+  // Surface area / max depth / average depth is a DIFFERENT job from structure, and it is the
+  // only thing that still wants the raw contour geometry. Fetched here rather than above so the
+  // structure path no longer pays for it on packs that have structure.geojson.
+  const contourGeo = depthStats_needsContours(depthGeo)
+    ? await fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${contourKey}/contours.geojson`)
+    : null;
   const depthStats = deriveDepthStatistics(contourGeo, depthGeo, ring);
 
   const identityFacts = {};
@@ -795,7 +857,7 @@ async function deriveGeospatialStructureFacts(lakeName) {
 
   const evidence = { habitat: {}, identity: identityEvidence };
   for (const field of Object.keys(structuralElements)) {
-    evidence.habitat[`structuralElements.${field}`] = [buildEvidenceEntry('internal_geospatial_layer', 'TrollMap contour/supplemental/boundary layers', 'internal:contours+supplemental+boundaries', null, 'geometry_derived_structure_classification', { lakeName })];
+    evidence.habitat[`structuralElements.${field}`] = [buildEvidenceEntry('internal_geospatial_layer', 'TrollMap structure / water_features / POI / boundary layers', 'internal:structure+water_features+pois+boundaries', null, 'pipeline_derived_structure_layers', { lakeName })];
   }
 
   const habitatSection = hasStructure ? {
@@ -809,7 +871,7 @@ async function deriveGeospatialStructureFacts(lakeName) {
     habitat: habitatSection,
     identity: identitySection,
     evidence,
-    sources: [{ label: 'TrollMap contour / supplemental / boundary layers', url: 'internal:contours+supplemental+boundaries', trust: 'OFFICIAL_GIS', sourceType: 'internal_geospatial_layer' }],
+    sources: [{ label: 'TrollMap structure / water_features / POI / boundary layers', url: 'internal:contours+supplemental+boundaries', trust: 'OFFICIAL_GIS', sourceType: 'internal_geospatial_layer' }],
     depthStats,
   };
 }
