@@ -462,6 +462,9 @@ function minDistToRingDeg(lon, lat, ring) {
 // ~0.003° ≈ 300m — humps/ledges must be at least this far from the shoreline
 const MIN_OFFSHORE_DEG = 0.003;
 
+// Wateree carries 6,915 ledges. Only the steepest earn a marker and a stop candidate.
+const LEDGE_MARKER_CAP = 200;
+
 function structuresFromPack(structGeo) {
   // READS structure.geojson. It used to be deriveContourStructures(), which grid-bucketed
   // contour centroids in the browser and kept eight humps and eight ledges per lake, per
@@ -478,7 +481,13 @@ function structuresFromPack(structGeo) {
   const humps = [], ledges = [];
   for (const f of feats) {
     const p = f.properties || {};
-    (p.kind === 'hump' ? humps : p.kind === 'ledge' ? ledges : []).push?.(p);
+    // build_structure.py emits Points, so the coordinate IS the structure -- carry it.
+    const c = f.geometry?.coordinates;
+    const rec = Array.isArray(c) && c.length >= 2
+      ? { ...p, lon: Number(c[0]), lat: Number(c[1]) }
+      : { ...p };
+    if (p.kind === 'hump') humps.push(rec);
+    else if (p.kind === 'ledge') ledges.push(rec);
   }
 
   if (humps.length) {
@@ -508,6 +517,38 @@ function structuresFromPack(structGeo) {
     if (rel.length) parts.push(`relief median ${q(rel, 0.5).toFixed(1)} ft, steepest ${rel[rel.length - 1].toFixed(1)} ft`);
     out.ledges = parts.join('; ');
   }
+
+  // ---------------------------------------------------------------------
+  // COORDINATES, not just prose.
+  //
+  // supplemental-layers.js:renderStructureMarkers() draws humpCoordinates and
+  // ledgeCoordinates as map markers, and smart-plan.js turns them into casting-stop
+  // candidates. The old browser adapter wrote both. When this function replaced it and
+  // emitted only summary strings, nothing errored -- the markers simply stopped existing
+  // on the next research run, silently, on a map that still showed the STALE cached ones.
+  //
+  // Every hump ships: 395 on Wateree, and a hump is rare enough that each one is worth a
+  // pin. Ledges are capped at the steepest LEDGE_MARKER_CAP because there are 6,915 of them
+  // and, as the note above says, they do not discriminate -- slope is what separates a break
+  // worth stopping on from a contour that happens to be near another contour.
+  const num = v => (Number.isFinite(Number(v)) ? Number(v) : null);
+  const placed = r => Number.isFinite(r.lat) && Number.isFinite(r.lon);
+
+  out.humpCoordinates = humps.filter(placed).map(h => ({
+    id: h.id, lat: h.lat, lon: h.lon,
+    depth: num(h.depth_ft), areaAcres: num(h.area_acres),
+    reliefFt: num(h.relief_ft), levels: num(h.levels),
+  }));
+
+  out.ledgeCoordinates = ledges.filter(placed)
+    .sort((a, b) => (num(b.slope_ft_per_100ft) ?? 0) - (num(a.slope_ft_per_100ft) ?? 0))
+    .slice(0, LEDGE_MARKER_CAP)
+    .map(l => ({
+      id: l.id, lat: l.lat, lon: l.lon,
+      depth: num(l.depth_ft), slopeFtPer100Ft: num(l.slope_ft_per_100ft),
+      dropFt: num(l.drop_ft), runFt: num(l.run_ft),
+    }));
+
   return out;
 }
 

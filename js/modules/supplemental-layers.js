@@ -1191,7 +1191,7 @@ function renderStructureMarkers(displayName) {
       radius: 6, color: '#ffb300', weight: 2,
       fillColor: '#ffb300', fillOpacity: 0.5,
     }).bindTooltip(
-      `🏔 Hump${h.id ? ' ' + h.id.replace('hump_','#') : ''}${h.areaAcres ? ' ~' + h.areaAcres + 'ac' : ''}${h.depth ? ' @' + h.depth + 'ft' : ''}`,
+      `🏔 Hump${h.id ? ' ' + h.id.replace('hump_','#') : ''}${h.reliefFt ? ' — ' + h.reliefFt + 'ft relief' : ''}${h.areaAcres ? ' ~' + h.areaAcres + 'ac' : ''}${h.depth ? ' crown @' + h.depth + 'ft' : ''}`,
       { sticky: true, direction: 'top', opacity: 0.9 }
     ).addTo(group);
   }
@@ -1203,7 +1203,7 @@ function renderStructureMarkers(displayName) {
       radius: 5, color: '#00e5ff', weight: 2,
       fillColor: '#00e5ff', fillOpacity: 0.5,
     }).bindTooltip(
-      `📐 Ledge${l.id ? ' ' + l.id.replace('ledge_','#') : ''}${l.contourDensity ? ' (' + l.contourDensity + ' contours)' : ''}`,
+      `📐 Ledge${l.id ? ' ' + l.id.replace('ledge_','#') : ''}${l.slopeFtPer100Ft ? ' — ' + l.slopeFtPer100Ft + ' ft/100ft' : ''}${l.depth ? ' @' + l.depth + 'ft' : ''}`,
       { sticky: true, direction: 'top', opacity: 0.9 }
     ).addTo(group);
   }

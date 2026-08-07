@@ -1335,7 +1335,7 @@ Return ONLY valid JSON, no markdown:
         name: `Offshore Hump ${hump.id?.replace('hump_', '#') || ''}${hump.areaAcres ? ` (~${hump.areaAcres}ac)` : ''}`,
         lat: hump.lat, lon: hump.lon,
         score: 8,
-        reason: `Closed contour loop — offshore high spot${hump.depth ? ` at ~${hump.depth}ft` : ''}.`,
+        reason: `Offshore high spot${hump.reliefFt ? `, ${hump.reliefFt}ft of relief` : ''}${hump.depth ? `, crown at ~${hump.depth}ft` : ''}.`,
         structureType: 'offshore hump',
       });
     }
@@ -1346,7 +1346,7 @@ Return ONLY valid JSON, no markdown:
         name: `Depth Ledge / Drop-off ${ledge.id?.replace('ledge_', '#') || ''}`,
         lat: ledge.lat, lon: ledge.lon,
         score: 7,
-        reason: `High contour density (${ledge.contourDensity} contours) — active depth break.`,
+        reason: `${ledge.dropFt ?? '?'} ft drop over ${ledge.runFt ?? '?'} ft — ${ledge.slopeFtPer100Ft ?? '?'} ft per 100 ft of bottom.`,
         structureType: 'channel ledge / drop-off',
       });
     }
