@@ -979,3 +979,104 @@ export function canReachDepth(lure, depthFt, speedMph, { maxLeadFt } = {}) {
   }
   return { ok: true, leadFt, limitedBy: null };
 }
+
+
+/* ==============================================================================================
+ * TERMINAL CONNECTION — whether a lure may hang off a swivel snap.
+ *
+ * This is not a preference and it is not about convenience. Ryan, 2026-08-07:
+ *
+ *   "certain lures should not have a swivel snap added to them because the weight and the extra
+ *    metal messes with it... crankbaits, topwater, spinnerbaits, buzz baits... lipless crankbaits
+ *    it effect less... for the swivel snap i use those with A-rig, spoons, the spoon trolling rig
+ *    that has a trolling weight tied on, blade baits, bladed jigs (chatterbait), bucktails"
+ *
+ * The snap adds mass and hardware right at the nose, which kills the action of anything that
+ * swims on its own lip or blade. So it is a property of the LURE, and the app can enforce it
+ * rather than hoping the model remembers.
+ *
+ * WHY IT MATTERS TO A PLAN: four of the six rods carry a 20 lb fluoro leader and two carry swivel
+ * snaps, permanently. A lure that cannot take a snap must therefore be TIED to one of the four,
+ * and changing it later costs a knot. Which two rods end up in the water is a consequence of this
+ * — pick two deep divers and the snap rods sit behind the seat all day; pick a spoon and an A-rig
+ * and the leader rods do.
+ *
+ *   'snap'  — fine on a swivel snap. May go on either kind of rod.
+ *   'tie'   — must be tied direct. Leader rods only.
+ *   'either'— the snap measurably affects it less. Ryan said this of lipless crankbaits only.
+ *
+ * Every type in the inventory as of 2026-08-07 has been ruled on by Ryan directly. Anything ADDED
+ * later and not listed defaults to 'tie', which is the safe direction: tying a lure on never
+ * hurts how it swims, and clipping the wrong one does. `unratedTypes()` names any such gaps so
+ * they get answered rather than quietly assumed.
+ * ============================================================================================ */
+
+export const TERMINAL_CONNECTION = {
+  // Ryan's snap list, verbatim: A-rig, spoons, the spoon trolling rig with a trolling weight tied
+  // on, blade baits, bladed jigs (chatterbait), bucktails.
+  umbrella_rig: 'snap',
+  flutter_spoon: 'snap',
+  spoon_casting: 'snap',
+  blade_vibe: 'snap',
+  chatterbait: 'snap',
+  bucktail: 'snap',
+
+  // "crankbaits, topwater, spinnerbaits, buzz baits" — buzzbaits live under topwater_cast here.
+  crankbait_sr: 'tie', crankbait_mr: 'tie', crankbait_squarebill: 'tie',
+  crankbait_dd1: 'tie', crankbait_dd2: 'tie', crankbait_dd3: 'tie', crankbait_dd4: 'tie',
+  topwater_troll: 'tie', topwater_cast: 'tie',
+  spinnerbait: 'tie',
+
+  // "lipless crankbaits it effect less"
+  lipless: 'either',
+
+  // Ruled on individually, 2026-08-07, going down the inventory.
+  cast_only: 'tie',            // Senko, plastic worm, creature bait, fluke
+  jig_finesse_ned: 'tie',
+  jig_football: 'tie',
+  inline_spinner: 'snap',      // Rooster Tail
+  jighead: 'snap',             // "those go with swimbaits so swivel snap"
+  swimbait_paddle: 'snap',     // same answer as the jigheads they ride on
+  marabou_jig: 'snap',         // "just a weird spoon to me lol"
+  popping_cork: 'snap',
+  road_runner: 'snap',
+  underspin: 'snap',
+  vertical_jig: 'snap',
+};
+
+/**
+ * THE CONSTRAINT THAT ACTUALLY BITES. Ryan, 2026-08-07:
+ *
+ *   "honestly i am going to choose the rod and put the right bait on it... the only way this can
+ *    get screwed up is if you try to do 6 things that all should be direct tie... that would
+ *    require me to cut off the swivel snap, tie on a leader, and then tie the leader to the lure
+ *    — prefer not to do that on the water... night before different story."
+ *
+ * Four leader rods and two snap rods. So a loadout is legal as long as no more than FOUR of the
+ * six lures must be tied direct; the other two can be anything, because a snap rod will take a
+ * snap-friendly lure and a leader rod will take anything at all. Five ties means cutting a snap
+ * off in a moving kayak.
+ */
+export const MAX_TIE_ONLY = 4;
+
+/** 'snap' | 'tie' | 'either' — unlisted types are 'tie'. See the note above. */
+export function connectionFor(lureType) {
+  return TERMINAL_CONNECTION[lureType] || 'tie';
+}
+
+/** Can this lure hang off one of the two snap rods? */
+export function canTakeSnap(lureType) {
+  return connectionFor(lureType) !== 'tie';
+}
+
+/**
+ * The lure types nobody has ruled on yet, so the gap is visible instead of hiding inside the
+ * 'tie' default. Pass the inventory; get back the types it holds that are not in the table.
+ */
+export function unratedTypes(inventory) {
+  const out = new Set();
+  for (const l of (inventory || [])) {
+    if (l && l.type && !(l.type in TERMINAL_CONNECTION)) out.add(l.type);
+  }
+  return [...out].sort();
+}
