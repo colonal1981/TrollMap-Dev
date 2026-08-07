@@ -781,6 +781,16 @@ ANGLER CATCH HISTORY — ${sp} on ${lakeName} in ${season} (${catchSummary.total
     ? `\n- COASTAL KAYAK RESTRICTION: You are strictly restricted to INSHORE areas (marshes, tidal creeks, estuary mouths, oyster bars, and shallow flats). NEVER plan routes or suggest traveling past the jetties, into the open ocean, or into high-energy open-water surf areas. Safety first: stay in sheltered, inshore waters.`
     : '';
 
+  // Build hazard exclusion list from user waypoints with hazard names/symbols
+  const HAZARD_PATTERNS = /hazard|danger|shallow|rock|snag|stump|no.go|avoid|warning/i;
+  const HAZARD_SYMS = ['Hazard', 'Skull and Crossbones', 'Block, Red', 'Pin, Red', 'Danger'];
+  const hazardZones = (state.DATA?.waypoints || [])
+    .filter(w => !w.scoutWaypoint && (
+      HAZARD_PATTERNS.test(w.name || '') ||
+      HAZARD_SYMS.includes(w.sym || '')
+    ))
+    .map(w => ({ lat: w.lat, lon: w.lon }));
+
   // Format pre-Groq stop candidates lists
   const preGroqStructures = fishingContext?.nearbyStructures || [];
   const candidateList = preGroqStructures.length > 0 ? preGroqStructures.map((s, i) => {
@@ -1207,15 +1217,8 @@ Return ONLY valid JSON, no markdown:
   const stopCandidates = [];
   const addedCoords = [];
 
-  // Build hazard exclusion list from user waypoints with hazard names/symbols
-  const HAZARD_PATTERNS = /hazard|danger|shallow|rock|snag|stump|no.go|avoid|warning/i;
-  const HAZARD_SYMS = ['Hazard', 'Skull and Crossbones', 'Block, Red', 'Pin, Red', 'Danger'];
-  const hazardZones = (state.DATA?.waypoints || [])
-    .filter(w => !w.scoutWaypoint && (
-      HAZARD_PATTERNS.test(w.name || '') ||
-      HAZARD_SYMS.includes(w.sym || '')
-    ))
-    .map(w => ({ lat: w.lat, lon: w.lon }));
+  // hazardZones is built ABOVE, before planPrompt -- the prompt reads it.
+
 
   function isNearHazard(lat, lon, radiusFt = 500) {
     return hazardZones.some(h => distFtGeneric(lat, lon, h.lat, h.lon) < radiusFt);
