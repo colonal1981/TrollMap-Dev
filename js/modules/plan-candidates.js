@@ -222,27 +222,75 @@ function scoreWindow(near, fromM, toM, weights, maxOffM) {
 }
 
 /**
- * Slide a window along one run and keep the best placement.
- * Runs shorter than `minM` are offered whole rather than discarded — a 400 m pass over a hump
- * is a legitimate thing to fish, it just is not a whole leg on its own.
+ * LET THE WATER DECIDE HOW LONG A LEG IS.
+ *
+ * Ryan, 2026-08-07, asked whether a pass should be 2, 4 or 6 km: "let the water decide — stop
+ * forcing a fixed window, fish whatever the run offers."
+ *
+ * The first cut fixed every leg at `targetM` = 4,000 m, so every candidate on Wateree came back
+ * exactly 4,000 m long whether the structure ran for eight kilometres or stopped after one. That
+ * is a number I chose showing up in the plan as if the lake had said it.
+ *
+ * So: find the densest stretch the run has, then grow it outward until the water goes quiet.
+ *
+ * FIRST ATTEMPT, AND WHY IT FAILED, because the failure is instructive. The rule was "accept a
+ * step if it carries at least some fraction of the density the leg already has." But the seed is
+ * by construction the DENSEST stretch of the run, so every comparison was against the peak and
+ * almost nothing qualified: on Wateree every candidate came back 1,500-2,000 m — the minimum —
+ * at every threshold from 0.15 to 0.7. Swapping a fixed 4,000 m for a fixed 1,500 m is not
+ * letting the water decide, it just moves which number of mine is doing the deciding.
+ *
+ * So the test is absolute, not relative: keep going while there is anything out there, and stop
+ * after `quietM` metres of nothing. Then drop the quiet tail, so a leg never ends with half a
+ * kilometre of blank water tacked on. A run with structure the whole way grows until it runs out
+ * or hits `maxM`; a run with one good pocket and four kilometres of nothing stops at the pocket.
+ *
+ * `maxM` is a ceiling on a single leg, not on the day — at 2 mph, 8 km is about two and a half
+ * hours on one line, and Wateree's longest stitched run is 50,637 m. It is the only fixed length
+ * left, and it is there so one run cannot eat the whole trip.
+ *
+ * Runs shorter than `minM` are skipped, not offered whole: a 400 m pass over a hump is a
+ * legitimate thing to fish but it is not a leg, and offering it as one is what filled the first
+ * shortlist with 500 m stubs.
  */
 function bestWindow(run, opts) {
   const p = run.properties || {};
   const total = p.length_m || 0;
   const near = p.near || [];
-  const { targetM, minM, stepM, weights, maxOffM } = opts;
+  const { minM, maxM, stepM, weights, maxOffM, quietM } = opts;
+  if (total < minM) return null;
 
-  if (total <= targetM) {
-    if (total < minM) return null;
-    const { score, hits } = scoreWindow(near, 0, total, weights, maxOffM);
-    return { startM: 0, lengthM: total, score, hits, whole: true };
+  const ceiling = Math.min(total, maxM);
+  const at = (a, b) => scoreWindow(near, a, b, weights, maxOffM);
+
+  // Seed: the densest `minM` the run has. Ties go to the earlier one, which keeps the result
+  // stable when a run passes nothing at all.
+  let lo = 0, hi = Math.min(minM, ceiling), seed = at(lo, hi).score;
+  for (let s = stepM; s + minM <= total; s += stepM) {
+    const sc = at(s, s + minM).score;
+    if (sc > seed) { lo = s; hi = s + minM; seed = sc; }
   }
-  let best = null;
-  for (let s = 0; s + targetM <= total; s += stepM) {
-    const { score, hits } = scoreWindow(near, s, s + targetM, weights, maxOffM);
-    if (!best || score > best.score) best = { startM: s, lengthM: targetM, score, hits, whole: false };
-  }
-  return best;
+
+  // Forward, then backward. Each end walks until it has gone `quietM` with nothing, then falls
+  // back to the last step that had something on it.
+  const grow = (from, dir) => {
+    let edge = from, lastGood = from, quiet = 0;
+    while (quiet < quietM) {
+      if (dir > 0 ? edge >= total : edge <= 0) break;
+      if ((dir > 0 ? edge - lo : hi - edge) >= ceiling) break;
+      const next = dir > 0 ? Math.min(total, edge + stepM) : Math.max(0, edge - stepM);
+      const got = dir > 0 ? at(edge, next).score : at(next, edge).score;
+      edge = next;
+      if (got > 0) { quiet = 0; lastGood = edge; } else quiet += stepM;
+    }
+    return lastGood;
+  };
+  hi = grow(hi, +1);
+  lo = grow(lo, -1);
+
+  const win = at(lo, hi);
+  return { startM: lo, lengthM: hi - lo, score: win.score, hits: win.hits,
+           whole: lo === 0 && hi >= total };
 }
 
 /**
@@ -270,12 +318,16 @@ export function sliceLine(coords, cum, fromM, toM) {
 
 export function selectCandidates(runs, o) {
   const opts = {
-    targetM: o.targetM ?? 4000,
     // A LEG IS A TROLLING PASS, NOT A STUB. First cut allowed 400 m and every candidate came
     // back a 500 m fragment, because short runs cost almost no battery and any per-Ah ranking
     // rewards that hardest. A pass you would actually set two rods for is over a kilometre.
     minM: o.minM ?? 1500,
+    // The one fixed length left, and it is a ceiling rather than a target — see bestWindow().
+    maxM: o.maxM ?? 8000,
     stepM: o.stepM ?? 250,
+    // How much blank water ends a leg. 500 m is four minutes of trolling over nothing, which is
+    // about as far as anyone would carry a set of rods on faith.
+    quietM: o.quietM ?? 500,
     maxOffM: o.maxOffM ?? 100,
     weights: o.weights || DEFAULT_WEIGHTS,
   };
