@@ -125,16 +125,29 @@ export function packFetcher(workerUrl) {
 }
 
 /**
- * The default model caller: the same /groq-query route the v1 planner has used through several
- * provider changes, in JSON-object mode.
+ * The default model caller.
+ *
+ * The Worker route is still spelled `/groq-query` and it has not called Groq in some time — the
+ * chain resolves to Gemini. The route name is history and renaming it would break every existing
+ * caller, so it stays; this function is named for what it does. If you are debugging and the
+ * X-LLM-Provider header says gemini, that is not a fallback firing, that is normal.
+ *
+ * JSON mode does survive the hop: `Worker/worker-core.js` translates
+ * `response_format: {type:'json_object'}` into Gemini's `responseMimeType: 'application/json'`,
+ * and passes `max_tokens` through as `maxOutputTokens`.
  */
-export function groqAsker(workerUrl, opts = {}) {
+export function modelAsker(workerUrl, opts = {}) {
   return async ({ system, user }) => {
     const r = await fetch(`${workerUrl}/groq-query`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
-        max_tokens: opts.maxTokens ?? 4000,
+        // Six rods with a reason each, a leg per candidate, stops carrying presentation and
+        // positioning, and a 150-word sonar narrative. Truncation here does not degrade the
+        // answer, it DESTROYS it — a cut-off JSON object will not parse, and this path has no
+        // fallback plan on purpose. Worker/worker-core.js passes this straight through as
+        // Gemini's maxOutputTokens, so it is the real ceiling and it is cheap to be generous.
+        max_tokens: opts.maxTokens ?? 8000,
         temperature: opts.temperature ?? 0.25,
         response_format: { type: 'json_object' },
       }),
