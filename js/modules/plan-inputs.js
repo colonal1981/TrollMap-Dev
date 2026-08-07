@@ -208,9 +208,15 @@ export function researchIntel(profile, species, season) {
     const key = Object.keys(ti).find((k) => norm(k).includes(norm(species)) || norm(species).includes(norm(k)));
     const node = key && ti[key] && ti[key][s];
     if (node) {
+      // FIELD NAMES CHECKED AGAINST A REAL PROFILE, 2026-08-07 — Lake Wateree, Striped Bass.
+      // The pipeline writes `structures`, `forage` and `recommendedPresentations`. My first
+      // guesses were `preferredStructure` and `preferredPresentation`, which matched nothing, so
+      // the richest part of the profile silently produced an empty line. The alternates are kept
+      // because older profiles may predate the current agent, but the real names come first.
       out.push(`Researched for ${key}, ${s}: ${band.band[0]}-${band.band[1]} ft`);
-      put('  presentation', node.preferredPresentation || node.presentation);
-      put('  structure', node.preferredStructure || node.structure);
+      put('  structures', node.structures || node.preferredStructure || node.structure);
+      put('  forage here, this season', node.forage);
+      put('  presentations', node.recommendedPresentations || node.preferredPresentation || node.presentation);
       put('  notes', node.notes);
     }
   }

@@ -184,3 +184,61 @@ describe('researchIntel — the rest of the profile, which v2 was throwing away'
     expect(researchIntel({}, 'Striped Bass', 'summer')).toBe(null);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Against a REAL profile, verbatim.
+//
+// Lake Wateree's trollingIntelligence for Striped Bass, pasted from R2 by Ryan
+// on 2026-08-07. Everything above this point was written against a fixture I
+// invented, and two of my field names were wrong: the pipeline writes
+// `structures` and `recommendedPresentations`, not `preferredStructure` and
+// `preferredPresentation`. Those lines silently produced nothing.
+//
+// It also settles what was at stake. The research says stripers are 15-40 ft
+// on Wateree in summer. The built-in table says 10-16. Those are different
+// fish in different water, and the research is the one that looked at THIS
+// lake.
+// ---------------------------------------------------------------------------
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+
+const TI = JSON.parse(readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'wateree-trolling-intel.json'), 'utf8'));
+const REAL = { metadata: { status: 'verified' }, trollingIntelligence: TI };
+
+describe('against Lake Wateree\'s real researched profile', () => {
+  it('reads every season\'s band', () => {
+    expect(researchedBand(REAL, 'Striped Bass', 'summer').band).toEqual([15, 40]);
+    expect(researchedBand(REAL, 'Striped Bass', 'spring').band).toEqual([10, 25]);
+    expect(researchedBand(REAL, 'Striped Bass', 'fall').band).toEqual([10, 25]);
+    expect(researchedBand(REAL, 'Striped Bass', 'winter').band).toEqual([15, 25]);
+  });
+
+  it('beats the built-in table, which disagrees with it materially', () => {
+    const r = depthBandFor('Striped Bass', 'Lake Wateree, SC', 'summer', 84, REAL);
+    const t = depthBandFor('Striped Bass', 'Lake Wateree, SC', 'summer', 84);
+    expect(r.source).toBe('research');
+    expect(r.band).toEqual([15, 40]);
+    expect(t.source).toBe('table');
+    // The disagreement is the reason this precedence matters, not a rounding difference.
+    expect(t.band[1] < r.band[1] - 10).toBe(true);
+  });
+
+  it('carries the structures, forage, presentations and notes into the prompt', () => {
+    const s = researchIntel(REAL, 'Striped Bass', 'summer');
+    expect(s.includes('main lake points')).toBe(true);
+    expect(s.includes('lower lake basin')).toBe(true);
+    expect(s.includes('Blueback herring')).toBe(true);
+    expect(s.includes('downlines')).toBe(true);
+    expect(s.includes('topwater lures')).toBe(true);
+    expect(s.includes('Schooling activity common early and late')).toBe(true);
+    expect(s.includes('15-40 ft')).toBe(true);
+  });
+
+  it('does not leak another season\'s advice into today', () => {
+    const s = researchIntel(REAL, 'Striped Bass', 'summer');
+    expect(s.includes('planer boards')).toBe(false);      // spring and fall only
+    expect(s.includes('move up the river to spawn')).toBe(false);
+  });
+});

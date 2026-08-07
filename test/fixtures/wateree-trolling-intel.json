@@ -1,0 +1,24 @@
+{
+  "Striped Bass": {
+    "spring": { "preferredDepth": [10, 25],
+      "structures": ["river channel", "creek mouths", "current breaks"],
+      "forage": ["Threadfin shad", "Gizzard shad", "Blueback herring"],
+      "recommendedPresentations": ["downlines", "freelines", "planer boards"],
+      "notes": "Fish move up the river to spawn. Anchoring or drifting cut shad is effective." },
+    "summer": { "preferredDepth": [15, 40],
+      "structures": ["main lake points", "creek mouths", "lower lake basin"],
+      "forage": ["Threadfin shad", "Blueback herring"],
+      "recommendedPresentations": ["downlines", "freelines", "topwater lures"],
+      "notes": "Congregate in the lower half of the lake. Schooling activity common early and late." },
+    "fall": { "preferredDepth": [10, 25],
+      "structures": ["main lake points", "creek mouths"],
+      "forage": ["Threadfin shad", "Gizzard shad"],
+      "recommendedPresentations": ["downlines", "freelines", "planer boards"],
+      "notes": "Feeding heavily to fatten up for winter. Look for surface activity and bait pods." },
+    "winter": { "preferredDepth": [15, 25],
+      "structures": ["river channel", "main lake"],
+      "forage": ["Threadfin shad", "Gizzard shad"],
+      "recommendedPresentations": ["downlines", "freelines"],
+      "notes": "Fish are scattered but can be found in the main lake and river channel." }
+  }
+}
