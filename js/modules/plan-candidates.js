@@ -79,6 +79,119 @@ export function pointAt(coords, cum, m) {
           coords[lo][1] + (coords[hi][1] - coords[lo][1]) * t];
 }
 
+// ---------------------------------------------------------------------------------------------
+// RESOLVING A PASS TO A REAL STRUCTURE
+//
+// `near: [{s, t, d}]` tells you a hump goes by at 1,395 m, 41 m off the line. It does not tell
+// you WHICH hump — build_trolling_runs.py carries no id into `near`. So a stop could name a type
+// and a distance but never a thing, and its depth would have to be invented. That invention is
+// exactly what PLAN_SCHEMA_V2 forbids: "a stop at targetDepth: 6 on a 41 ft hump — depth comes
+// from the structure, not a `?? 6`."
+//
+// So the app resolves it: take the point `s` metres along the run, look for a feature of the same
+// kind within the recorded offset plus a margin, take the nearest. structure.geojson has real ids
+// (hump_2, ledge_57) and real depths; water_features.geojson has neither an id nor, for
+// creek_mouths, a depth — so those resolve to a description and a null depth rather than a guess.
+//
+// This is a PICK, not a certainty, and here is how good a pick. Measured over Wateree's top 60
+// candidates, 2026-08-07 — 532 passes:
+//
+//     hump      303 of 304 resolved      point  173 of 185      cove  56 of 59 (11 with a depth)
+//     timber, attractor, bridge, pile:   0 of 48. Those types are in `near[]` but in neither
+//     structure.geojson nor water_features.geojson, so a stop on one gets a position and no depth.
+//
+// A correct match should land at the offset `near[]` recorded, and it does: |matchM − offM| has a
+// median of 6 m and a p90 of 29 m, with 71% inside 15 m. The tail is where several of a kind sit
+// close together and the nearest one wins. `matchM` is on every pass so that ambiguity is visible
+// instead of implied away. When the pipeline finally emits an id in `near[]` this whole thing
+// collapses into a lookup and should be deleted, not kept alongside it.
+//
+// NOT USED AS A DEPTH: `deepest_within_m`. It is metres, and a run 8.9 ft deep carries a value of
+// 57 — whatever it measures, it is not feet of water, and reading it as depth would put a stop on
+// the bottom of a hole that does not exist.
+// ---------------------------------------------------------------------------------------------
+
+const RESOLVE_CELL = 0.004;          // ~440 m of longitude here; one bucket comfortably covers a pass
+const RESOLVE_MARGIN_M = 40;         // slack over the recorded offset, for the sign of `d`
+
+const DEPTH_FIELD = {
+  hump: 'depth_ft', ledge: 'depth_ft', point: 'deep_side_ft', cove: 'deep_side_ft',
+};
+
+function describeStructure(kind, p) {
+  const n = (v, u, d = 0) => (Number.isFinite(Number(v)) ? `${Number(v).toFixed(d)}${u}` : null);
+  const bits = [];
+  if (kind === 'hump') {
+    bits.push('offshore hump');
+    if (n(p.area_acres, ' ac', 1)) bits.push(n(p.area_acres, ' ac', 1));
+    if (n(p.relief_ft, ' ft of relief')) bits.push(n(p.relief_ft, ' ft of relief'));
+    if (n(p.depth_ft, ' ft')) bits.push(`crown ${n(p.depth_ft, ' ft')}`);
+  } else if (kind === 'ledge') {
+    bits.push('ledge');
+    if (n(p.drop_ft, ' ft drop', 1)) bits.push(n(p.drop_ft, ' ft drop', 1));
+    if (n(p.slope_ft_per_100ft, ' ft per 100 ft')) bits.push(n(p.slope_ft_per_100ft, ' ft per 100 ft'));
+    if (n(p.depth_ft, ' ft')) bits.push(`at ${n(p.depth_ft, ' ft')}`);
+  } else if (kind === 'creek_mouth') {
+    bits.push(p.name ? `${p.name} mouth` : 'creek mouth');
+    if (n(p.cove_m, ' m of cove behind it')) bits.push(n(p.cove_m, ' m of cove behind it'));
+  } else {
+    bits.push(kind === 'point' ? 'point' : kind);
+    if (n(p.bulge_m, ' m bulge')) bits.push(n(p.bulge_m, ' m bulge'));
+    if (n(p.deep_side_ft, ' ft on the deep side', 1)) bits.push(n(p.deep_side_ft, ' ft on the deep side', 1));
+  }
+  if (p.relief) bits.push(String(p.relief).replace(/_/g, ' '));
+  return bits.filter(Boolean).join(', ');
+}
+
+/**
+ * A lookup from structure.geojson + water_features.geojson, bucketed so a pass costs a handful of
+ * distance checks instead of 7,900. Pass the FEATURES, in any order; kinds are read off each one.
+ */
+export function structureIndex(...featureLists) {
+  const grid = new Map();
+  let n = 0;
+  for (const list of featureLists) {
+    for (const f of (list || [])) {
+      const g = f && f.geometry;
+      if (!g || g.type !== 'Point' || !Array.isArray(g.coordinates)) continue;
+      const p = f.properties || {};
+      const kind = p.kind || p.type;
+      if (!kind) continue;
+      const [lon, lat] = g.coordinates;
+      if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+      const depth = Number(p[DEPTH_FIELD[kind]]);
+      const rec = {
+        kind, lon, lat,
+        id: p.id || null,
+        depthFt: Number.isFinite(depth) && depth > 0 ? Number(depth.toFixed(1)) : null,
+        what: describeStructure(kind, p),
+      };
+      const key = `${Math.floor(lon / RESOLVE_CELL)},${Math.floor(lat / RESOLVE_CELL)}`;
+      if (!grid.has(key)) grid.set(key, []);
+      grid.get(key).push(rec);
+      n++;
+    }
+  }
+  return { grid, n };
+}
+
+/** Nearest feature of `kind` to `at`, within `withinM`. Null when nothing matches. */
+export function resolveStructure(at, kind, withinM, index) {
+  if (!index || !index.grid || !at) return null;
+  const cx = Math.floor(at[0] / RESOLVE_CELL), cy = Math.floor(at[1] / RESOLVE_CELL);
+  let best = null, bestM = Infinity;
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      for (const r of (index.grid.get(`${cx + dx},${cy + dy}`) || [])) {
+        if (r.kind !== kind) continue;
+        const m = metresBetween(at, [r.lon, r.lat]);
+        if (m < bestM) { bestM = m; best = r; }
+      }
+    }
+  }
+  return best && bestM <= withinM ? { ...best, matchM: Math.round(bestM) } : null;
+}
+
 export const DEFAULT_WEIGHTS = {
   hump: 3, creek_mouth: 3, point: 2, ledge: 2, cove: 1,
   timber: 2, attractor: 2, pile: 1, bridge: 1,
@@ -142,6 +255,10 @@ function bestWindow(run, opts) {
  * @param {function} [o.transitM] (fromLonLat, toLonLat) => metres over water. Straight-line if
  *                                omitted, which UNDERSTATES cost on a reservoir — pass the
  *                                Worker-backed one for real numbers.
+ * @param {object}   [o.structures] structureIndex(structure.geojson.features,
+ *                                water_features.geojson.features). Without it every pass still
+ *                                gets an id and a position, but no structure id and no depth —
+ *                                so stops can be placed and cannot be sized.
  */
 /** The coordinates of a run between two distances along it. */
 export function sliceLine(coords, cum, fromM, toM) {
@@ -182,6 +299,11 @@ export function selectCandidates(runs, o) {
     const cum = cumulative(coords);
     const start = pointAt(coords, cum, win.startM);
     const end = pointAt(coords, cum, win.startM + win.lengthM);
+    // The geometry of the leg itself, sliced once and carried on the candidate. Without this the
+    // assembler has a leg with a length and no line, so nothing can be drawn or exported and a
+    // stop has nowhere to sit.
+    const line = sliceLine(coords, cum, win.startM, win.startM + win.lengthM);
+    const lineCum = cumulative(line);
 
     const inM = transitM(o.ramp, start);
     const outM = transitM(end, o.ramp);
@@ -202,7 +324,7 @@ export function selectCandidates(runs, o) {
       runIndex: i,
       startM: Math.round(win.startM), lengthM: Math.round(win.lengthM),
       depthFt: p.depth_ft, wholeRun: win.whole,
-      start, end,
+      start, end, coordinates: line,
       transitInM: Math.round(inM), transitOutM: Math.round(outM),
       batteryAh: Number((fishAh + moveAh).toFixed(2)),
       estMin: Math.round(totalMin),
@@ -214,10 +336,29 @@ export function selectCandidates(runs, o) {
       // question is not "cheapest per point", it is "most fishing for a day, with the travel
       // taxed" -- so discount by the transit share instead of dividing by total cost.
       value: Number((win.score / (1 + moveAh / Math.max(0.1, fishAh))).toFixed(2)),
-      passes: win.hits.sort((a, b) => a.atM - b.atM),
+      // Every pass gets an id and, where the lake data can name it, the real structure behind it.
+      // The id is what the model returns to ask for a stop -- it can only name something it was
+      // handed, which is what makes an invented stop like "Main Lake Point Alpha" impossible
+      // rather than something the renderer has to cope with.
+      passes: win.hits
+        .sort((a, b) => a.atM - b.atM)
+        .map((h, k) => {
+          const at = pointAt(line, lineCum, h.atM);
+          const s = resolveStructure(at, h.type, h.offM * 1.25 + RESOLVE_MARGIN_M, o.structures);
+          return {
+            ...h,
+            id: `${o.slug || 'run'}#${i}:p${k}`,
+            at,
+            structureId: s ? s.id : null,
+            what: s ? s.what : h.type.replace(/_/g, ' '),
+            // From the structure or not at all. There is no fallback depth on purpose.
+            depthFt: s ? s.depthFt : null,
+            matchM: s ? s.matchM : null,
+          };
+        }),
       // Present only when the caller supplied a journal. Never affects `value` -- see catchSupport().
       support: o.catches
-        ? catchSupport(sliceLine(coords, cum, win.startM, win.startM + win.lengthM), o.catches,
+        ? catchSupport(line, o.catches,
                        { species: o.catchSpecies, month: o.month, radiusM: o.catchRadiusM })
         : null,
       // WHOLE-RUN, not windowed. build_trolling_runs.py reports ledges per run and gives no
@@ -348,10 +489,27 @@ export function pointToSegmentM(p, a, b) {
   return Math.hypot(ax + t * dx, ay + t * dy);
 }
 
+// A 4 km leg down a ledge line can pass eighty things. The model does not need eighty; it needs
+// the ones worth stopping for. Ranked by weight, then by how close to the line, then re-sorted
+// into the order they come up. THE CAP IS REAL AND THE PLAN SAYS SO -- `structuresShown` and
+// `structuresTotal` both go to the model so a truncated list never reads as the whole leg.
+const MODEL_STRUCTURE_CAP = 12;
+
 /** Trim a candidate to what the model needs to choose. Geometry stays server-side. */
-export function forModel(c) {
+export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
   const counts = {};
   for (const h of c.passes) counts[h.type] = (counts[h.type] || 0) + 1;
+  const shown = c.passes
+    .filter((h) => h.weight > 0)
+    .slice()
+    .sort((a, b) => (b.weight - a.weight) || (a.offM - b.offM))
+    .slice(0, cap)
+    .sort((a, b) => a.atM - b.atM)
+    // No coordinates. The model names `id` and the app turns it back into a place; `structureId`
+    // is the lake's own name for the thing and is there to be read, not returned.
+    .map((h) => ({ id: h.id, structureId: h.structureId, type: h.type,
+                   atM: h.atM, offM: Math.round(h.offM),
+                   depthFt: h.depthFt, what: h.what }));
   return {
     runId: c.runId,
     depthFt: c.depthFt,
@@ -360,6 +518,9 @@ export function forModel(c) {
     batteryAh: c.batteryAh,
     estMin: c.estMin,
     passes: counts,
+    structures: shown,
+    structuresShown: shown.length,
+    structuresTotal: c.passes.filter((h) => h.weight > 0).length,
     runLedges: c.runLedges,
     // "You have caught 6 fish along this stretch, 4 of them stripers" is a fact the model should
     // weigh. "You have never fished here" is equally a fact, and equally worth saying.

@@ -1,0 +1,340 @@
+import { describe, it, expect } from './expect-shim.mjs';
+import {
+  assemblePlan, parseClock, formatClock, planRoute, planCues, validatePlan,
+} from '../js/modules/plan-assemble.js';
+import { structureIndex, resolveStructure, selectCandidates, forModel } from '../js/modules/plan-candidates.js';
+
+// ---------------------------------------------------------------------------
+// Why this test exists
+//
+// PLAN_SCHEMA_V2.md lists what the schema is meant to make IMPOSSIBLE:
+//
+//   - a lure that is not on a rod; a seventh rod
+//   - a change with no cost attached
+//   - a cast stop the app cannot place on a run
+//   - a stop at targetDepth: 6 on a 41 ft hump
+//   - a route drawn anywhere the model chose
+//   - a notification that fires on the clock while the boat is still two miles back
+//
+// "Impossible" is a claim about code, so each one gets a test that tries it and
+// checks it was refused. The distance spine gets the most attention: it is what
+// the phone reads, and Ryan's whole reason for it is that the clock starts
+// drifting the moment he hooks a fish and never catches up.
+// ---------------------------------------------------------------------------
+
+const LAUNCH = [-80.7300, 34.3800];
+
+// Two legs of known length, laid out east of the ramp. Coordinates are degrees;
+// at this latitude 0.001 deg lon is about 92 m.
+function leg(id, fromLon, toLon, lat, passes = []) {
+  const coordinates = [];
+  for (let i = 0; i <= 10; i++) coordinates.push([fromLon + (toLon - fromLon) * i / 10, lat]);
+  const lengthM = Math.abs(toLon - fromLon) * 111320 * Math.cos(lat * Math.PI / 180);
+  return {
+    runId: id, runIndex: Number(id.split('#')[1]),
+    startM: 0, lengthM, depthFt: 22.4,
+    start: coordinates[0], end: coordinates[coordinates.length - 1],
+    coordinates,
+    passes: passes.map((p, k) => ({
+      id: `${id}:p${k}`, atM: p.atM, type: p.type, offM: p.offM ?? 30, weight: p.weight ?? 3,
+      at: [fromLon + (toLon - fromLon) * (p.atM / lengthM), lat],
+      structureId: p.structureId ?? null, what: p.what ?? p.type, depthFt: p.depthFt ?? null,
+      matchM: 12,
+    })),
+    support: null,
+  };
+}
+
+const LOADOUT = {
+  rods: [
+    { id: 'R1', rig: 'fluoro', role: 'troll', lure: 'A-Rig Medium', color: 'Blueback Herring' },
+    { id: 'R2', rig: 'fluoro', role: 'troll', lure: 'Swimbait', color: 'Shad' },
+    { id: 'R3', rig: 'fluoro', role: 'troll', lure: 'Deep Crank', color: 'Citrus' },
+    { id: 'R4', rig: 'fluoro', role: 'troll', lure: 'Umbrella', color: 'White' },
+    { id: 'R5', rig: 'snap', role: 'troll', lure: 'Flutter Spoon 3/4oz', color: 'Chrome' },
+    { id: 'R6', rig: 'snap', role: 'cast', lure: 'Walking Bait', color: 'Bone' },
+  ],
+};
+
+const A = leg('w#1', -80.7200, -80.6800, 34.3800, [
+  { atM: 1200, type: 'hump', structureId: 'hump_7', what: 'offshore hump, 5.6 ac, crown 41 ft', depthFt: 41 },
+  { atM: 2600, type: 'ledge', structureId: 'ledge_88', what: 'ledge, 6 ft drop, at 32 ft', depthFt: 32.2 },
+]);
+const B = leg('w#2', -80.6700, -80.6400, 34.3850, [
+  { atM: 900, type: 'creek_mouth', what: 'Crooked Creek mouth', depthFt: null },
+]);
+
+function basePlan(extra = {}) {
+  return assemblePlan({
+    candidates: [A, B], launch: LAUNCH, loadout: LOADOUT,
+    slug: 'wateree_lake', water: 'Lake Wateree, SC', ramp: 'Clearwater Cove',
+    launchTime: '06:00', returnTime: '15:00', usableAh: 80,
+    deploy: { 'w#1': { port: 'R1', starboard: 'R5' }, 'w#2': { port: 'R2', starboard: 'R5' } },
+    ...extra,
+  });
+}
+
+describe('plan-assemble — the distance spine', () => {
+  it('reads a clock and refuses nonsense', () => {
+    expect(parseClock('06:00')).toBe(360);
+    expect(parseClock('15:45')).toBe(945);
+    expect(parseClock('25:00')).toBe(null);
+    expect(parseClock('06:99')).toBe(null);
+    expect(parseClock('')).toBe(null);
+    expect(formatClock(945)).toBe('15:45');
+    expect(formatClock(null)).toBe(null);
+  });
+
+  it('is gapless: every leg starts where the last one ended', () => {
+    const plan = basePlan();
+    expect(validatePlan(plan).length).toBe(0);
+    let at = 0;
+    for (const l of plan.legs) { expect(l.startM).toBe(at); at += l.lengthM; }
+    expect(plan.budget.totalM).toBe(at);
+  });
+
+  it('keeps the spine in integers so nothing drifts a metre', () => {
+    const plan = basePlan();
+    for (const l of plan.legs) {
+      expect(Number.isInteger(l.startM)).toBe(true);
+      expect(Number.isInteger(l.lengthM)).toBe(true);
+    }
+    expect(plan.budget.fishingM + plan.budget.transitM).toBe(plan.budget.totalM);
+  });
+
+  it('labels every clock value as an estimate, and only the window as real', () => {
+    const plan = basePlan();
+    for (const l of plan.legs) {
+      expect('estStartTime' in l).toBe(true);
+      expect('estDurationMin' in l).toBe(true);
+      expect('startTime' in l).toBe(false);
+      expect('durationMin' in l).toBe(false);
+    }
+    expect(plan.budget.windowMin).toBe(540);
+    expect('estPlannedMin' in plan.budget).toBe(true);
+  });
+
+  it('has no inbound, outbound or return_to_launch leg', () => {
+    const plan = basePlan();
+    const types = new Set(plan.legs.map((l) => l.type));
+    expect([...types].every((t) => t === 'troll' || t === 'transit')).toBe(true);
+    const json = JSON.stringify(plan);
+    for (const word of ['return_to_launch', 'inbound', 'outbound', 'out-and-back']) {
+      expect(json.includes(word)).toBe(false);
+    }
+  });
+});
+
+describe('plan-assemble — what the model may not do', () => {
+  it('refuses a stop on a structure it was not handed', () => {
+    const plan = basePlan({
+      stops: [{ runId: 'w#1', structureId: 'Main Lake Point Alpha', rods: ['R6'], why: 'invented' }],
+    });
+    expect(plan.legs.filter((l) => l.type === 'troll').every((l) => l.stops.length === 0)).toBe(true);
+    expect(plan.warnings.some((w) => w.includes('no structure'))).toBe(true);
+  });
+
+  it('refuses a stop on a run that is not in the plan', () => {
+    const plan = basePlan({ stops: [{ runId: 'w#999', structureId: 'w#999:p0' }] });
+    expect(plan.warnings.some((w) => w.includes('not in the plan'))).toBe(true);
+  });
+
+  it('places a real stop from the id alone — the model supplies no coordinate', () => {
+    const plan = basePlan({
+      stops: [{ runId: 'w#1', structureId: 'w#1:p0', rods: ['R6'], durationMin: 20,
+                why: 'crown stands proud', presentation: 'count down 12 seconds',
+                positioning: 'pedal-hover into the wind' }],
+    });
+    const s = plan.legs.find((l) => l.id === 'L1').stops[0];
+    expect(s.atM).toBe(1200);
+    expect(s.at.length).toBe(2);
+    expect(s.structureId).toBe('hump_7');
+    expect(s.structureRef).toBe('w#1:p0');
+    expect(s.durationMin).toBe(20);
+    expect(validatePlan(plan).length).toBe(0);
+  });
+
+  it('takes stop depth from the structure and never defaults it to 6', () => {
+    const plan = basePlan({
+      stops: [{ runId: 'w#1', structureId: 'w#1:p0' }, { runId: 'w#2', structureId: 'w#2:p0' }],
+    });
+    const onHump = plan.legs.find((l) => l.runId === 'w#1').stops[0];
+    const onCreek = plan.legs.find((l) => l.runId === 'w#2').stops[0];
+    expect(onHump.depthFt).toBe(41);
+    // The pipeline has no depth for a creek mouth. Null is the honest answer; 6 is a lie that
+    // would then size the jighead.
+    expect(onCreek.depthFt).toBe(null);
+  });
+
+  it('refuses a seventh rod, in a change and in a deploy', () => {
+    const plan = basePlan({
+      changes: [{ beforeRunId: 'w#2', rodId: 'R7', to: 'Alabama Rig', why: 'a rod he does not own' }],
+      deploy: { 'w#1': { port: 'R1', starboard: 'R9' } },
+    });
+    expect(plan.changes.length).toBe(0);
+    expect(plan.warnings.some((w) => w.includes('no such rod'))).toBe(true);
+    expect(plan.warnings.some((w) => w.includes('R9'))).toBe(true);
+  });
+
+  it('costs a change from the rod it is on, not from the model saying so', () => {
+    const plan = basePlan({
+      changes: [
+        { beforeRunId: 'w#2', rodId: 'R5', to: 'DD1 Crankbait', why: 'fish moved up' },
+        { beforeRunId: 'w#2', rodId: 'R1', to: 'Bucktail', why: 'retie' },
+      ],
+    });
+    const byRod = Object.fromEntries(plan.changes.map((c) => [c.rodId, c.cost]));
+    expect(byRod.R5).toBe('snap');       // R5 is on a snap
+    expect(byRod.R1).toBe('fluoro');     // R1 is on a 20 lb leader
+    expect(plan.changes.every((c) => !!c.cost)).toBe(true);
+    // A change happens where the boat is, before the leg — so it lands on a leg boundary.
+    const starts = new Set(plan.legs.map((l) => l.startM));
+    expect(plan.changes.every((c) => starts.has(c.atM))).toBe(true);
+  });
+});
+
+describe('plan-assemble — saying when it does not fit', () => {
+  it('warns when the plan is over the battery', () => {
+    const plan = basePlan({ usableAh: 2 });
+    expect(plan.warnings.some((w) => w.includes('over budget'))).toBe(true);
+  });
+
+  it('warns when the plan runs past the return time', () => {
+    const plan = basePlan({ launchTime: '06:00', returnTime: '06:30' });
+    expect(plan.warnings.some((w) => w.includes('min window'))).toBe(true);
+  });
+
+  it('warns when the last leg ends away from the ramp, and does not add a leg to fix it', () => {
+    const plan = basePlan();
+    expect(plan.warnings.some((w) => w.includes('from the ramp'))).toBe(true);
+    expect(plan.legs[plan.legs.length - 1].type).toBe('troll');
+  });
+
+  it('warns at three fluoro reties', () => {
+    const plan = basePlan({
+      changes: [
+        { beforeRunId: 'w#1', rodId: 'R1', to: 'a' }, { beforeRunId: 'w#1', rodId: 'R2', to: 'b' },
+        { beforeRunId: 'w#2', rodId: 'R3', to: 'c' }, { beforeRunId: 'w#2', rodId: 'R5', to: 'd' },
+      ],
+    });
+    expect(plan.warnings.some((w) => w.includes('fluoro reties'))).toBe(true);
+  });
+
+  it('assembles an empty plan without inventing anything', () => {
+    const plan = assemblePlan({ candidates: [], launch: LAUNCH, loadout: LOADOUT });
+    expect(plan.legs.length).toBe(0);
+    expect(plan.budget.totalM).toBe(0);
+    expect(plan.warnings.length).toBe(0);
+    expect(validatePlan(plan).length).toBe(0);
+  });
+});
+
+describe('plan-assemble — what the phone and the GPX read', () => {
+  it('walks the legs for the route, with no duplicated joins', () => {
+    const route = planRoute(basePlan());
+    expect(route.length > 10).toBe(true);
+    for (let i = 1; i < route.length; i++) {
+      expect(route[i][0] === route[i - 1][0] && route[i][1] === route[i - 1][1]).toBe(false);
+    }
+  });
+
+  it('orders every cue by distance along the day, not by leg', () => {
+    const plan = basePlan({
+      stops: [{ runId: 'w#2', structureId: 'w#2:p0' }, { runId: 'w#1', structureId: 'w#1:p1' },
+              { runId: 'w#1', structureId: 'w#1:p0' }],
+      changes: [{ beforeRunId: 'w#2', rodId: 'R5', to: 'DD1' }],
+    });
+    const cues = planCues(plan);
+    expect(cues.length).toBe(4);
+    for (let i = 1; i < cues.length; i++) expect(cues[i].atM >= cues[i - 1].atM).toBe(true);
+    expect(cues[0].kind).toBe('stop');
+    expect(cues.some((c) => c.kind === 'change')).toBe(true);
+  });
+
+  it('gives every leg geometry, so nothing has to guess where it went', () => {
+    const plan = basePlan();
+    expect(plan.legs.every((l) => Array.isArray(l.coordinates) && l.coordinates.length >= 2)).toBe(true);
+  });
+});
+
+describe('plan-candidates — resolving a pass to a real structure', () => {
+  const features = [
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [-80.7000, 34.3800] },
+      properties: { kind: 'hump', id: 'hump_7', depth_ft: 41, area_acres: 5.6, relief_ft: 28 } },
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [-80.6500, 34.3900] },
+      properties: { kind: 'ledge', id: 'ledge_88', depth_ft: 32.2, drop_ft: 6.3, slope_ft_per_100ft: 38.4 } },
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [-80.6100, 34.3700] },
+      properties: { kind: 'creek_mouth', name: 'Crooked Creek', cove_m: 451, deepest_within_m: 9 } },
+  ];
+  const idx = structureIndex(features);
+
+  it('indexes only what it can place', () => {
+    expect(idx.n).toBe(3);
+    expect(structureIndex(null, undefined).n).toBe(0);
+  });
+
+  it('finds the structure and carries its id and depth', () => {
+    const hit = resolveStructure([-80.70005, 34.38002], 'hump', 60, idx);
+    expect(hit.id).toBe('hump_7');
+    expect(hit.depthFt).toBe(41);
+    expect(hit.what.includes('crown 41 ft')).toBe(true);
+    expect(hit.matchM <= 60).toBe(true);
+  });
+
+  it('will not return the wrong kind, or one that is too far', () => {
+    expect(resolveStructure([-80.70005, 34.38002], 'ledge', 60, idx)).toBe(null);
+    expect(resolveStructure([-80.7500, 34.3800], 'hump', 60, idx)).toBe(null);
+    expect(resolveStructure([-80.7000, 34.3800], 'hump', 60, null)).toBe(null);
+  });
+
+  it('never reads deepest_within_m as a depth', () => {
+    // A creek mouth carries `deepest_within_m: 9`. That is metres of something, not 9 ft of
+    // water, and reading it as depth would put a stop on a hole that is not there.
+    const hit = resolveStructure([-80.6100, 34.3700], 'creek_mouth', 60, idx);
+    expect(hit.depthFt).toBe(null);
+    expect(hit.what.includes('Crooked Creek')).toBe(true);
+  });
+});
+
+describe('plan-candidates — what reaches the model', () => {
+  const runs = [{
+    type: 'Feature',
+    geometry: { type: 'LineString', coordinates: Array.from({ length: 41 }, (_, i) => [-80.72 + i * 0.001, 34.38]) },
+    properties: {
+      depth_ft: 22, length_m: 3690, routable: true, ledge_n: 4, ledge_min_ft: 8, ledge_max_ft: 40,
+      near: Array.from({ length: 30 }, (_, k) => ({ s: 100 + k * 110, t: k % 2 ? 'hump' : 'point', d: 20 + k })),
+    },
+  }];
+
+  it('hands the model ids, never coordinates', () => {
+    const [c] = selectCandidates(runs, { ramp: LAUNCH, slug: 'w', usableAh: 200, windowMin: 600 });
+    const m = forModel(c);
+    const json = JSON.stringify(m);
+    expect(json.includes('-80.7')).toBe(false);
+    expect(json.includes('coordinates')).toBe(false);
+    expect(m.structures.every((s) => typeof s.id === 'string')).toBe(true);
+  });
+
+  it('caps the list and says that it did', () => {
+    const [c] = selectCandidates(runs, { ramp: LAUNCH, slug: 'w', usableAh: 200, windowMin: 600 });
+    const m = forModel(c);
+    expect(m.structuresShown).toBe(12);
+    expect(m.structuresTotal > m.structuresShown).toBe(true);
+    // Shown in the order the boat meets them, even though they were picked by weight.
+    for (let i = 1; i < m.structures.length; i++) {
+      expect(m.structures[i].atM >= m.structures[i - 1].atM).toBe(true);
+    }
+  });
+
+  it('gives the candidate a line, so a leg can be drawn and a stop can be placed', () => {
+    const [c] = selectCandidates(runs, { ramp: LAUNCH, slug: 'w', usableAh: 200, windowMin: 600 });
+    expect(Array.isArray(c.coordinates) && c.coordinates.length >= 2).toBe(true);
+    expect(c.passes.every((p) => Array.isArray(p.at) && p.at.length === 2)).toBe(true);
+    expect(c.passes.every((p) => typeof p.id === 'string')).toBe(true);
+  });
+
+  it('leaves depth null when no structure file was supplied, rather than guessing', () => {
+    const [c] = selectCandidates(runs, { ramp: LAUNCH, slug: 'w', usableAh: 200, windowMin: 600 });
+    expect(c.passes.every((p) => p.depthFt === null && p.structureId === null)).toBe(true);
+  });
+});
