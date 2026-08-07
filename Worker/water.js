@@ -442,6 +442,147 @@ function pathPreferringDepth(g, ai, bi, minDepth) {
   return { ...p, min_depth_held: minDepth > 0 ? false : undefined };
 }
 
+// ── shoreline clearance ─────────────────────────────────────────────────────────────────────
+//
+// Garmin's auto-guidance does NOT smooth a path afterwards. There is no funnel, no string-pull
+// and no simplification anywhere in its routing module -- verified across the whole firmware
+// image. It searches a space that ALREADY has a land buffer applied: `nav_land_dist_restrict`,
+// default 152.4 m, which is exactly 500 ft. See GARMIN_AUTOGUIDANCE_DECODED_2026-08-07.md.
+//
+// That one constant explains both behaviours Ryan described. Water narrower than twice the
+// clearance has no freedom left, so the line is forced to the middle of the creek or cove;
+// wider water leaves slack and the shortest path takes over as a straight shot.
+//
+// We cannot search a buffered mesh here -- the shipped graph carries cell centroids and no
+// portal geometry -- so we take the graph's cell path and pull it straight wherever the straight
+// line stays on water and at least `clearance` off the bank. Same observable behaviour.
+//
+// WHY THIS MATTERS: rendering raw cell centroids produced a 13.95 km saw-tooth for a 4.97 km hop
+// on Wateree, reversing direction 27 times -- 530 m out and 527 m back to advance 140 m. The
+// cell SEQUENCE was right the whole time; the polyline through it was not.
+//
+// FAILS OPEN at every step. No boundary object, no usable ring, no valid straightening -- return
+// the path exactly as the graph gave it. A poor line beats no route.
+
+const RING_CELL = 0.002;            // ~200 m grid over the boundary ring
+const SAMPLE_M = 20;                // clearance is tested every 20 m along a candidate segment
+const CLEARANCE_DEFAULT_M = 12;     // a kayak, not Garmin's 152.4 m powerboat default
+
+function ringsFromGeoJson(gj) {
+  const polys = [];
+  for (const f of (gj.features || [gj])) {
+    const geom = f.geometry || f;
+    if (!geom || !geom.coordinates) continue;
+    if (geom.type === 'Polygon') polys.push(geom.coordinates);
+    else if (geom.type === 'MultiPolygon') for (const q of geom.coordinates) polys.push(q);
+  }
+  // The lake is the biggest ring. Boundary files carry stray slivers on some packs.
+  let best = null;
+  for (const q of polys) if (q[0] && (!best || q[0].length > best[0].length)) best = q;
+  return best;
+}
+
+async function boundaryIndex(env, slug) {
+  const k = `bidx:${slug}`;
+  const hit = cacheGet(k);
+  if (hit !== null) return hit;
+  let gj = null;
+  try { gj = await packJson(env, slug, 'boundary.geojson'); } catch { gj = null; }
+  if (!gj) return cacheSet(k, false);
+  const poly = ringsFromGeoJson(gj);
+  if (!poly || !poly[0] || poly[0].length < 4) return cacheSet(k, false);
+
+  // Two indexes over the same rings: y-buckets for inside/outside, a grid of vertices for
+  // distance-to-shore. Wateree's ring is 17,282 vertices; scanning it per sample is not viable.
+  const yb = new Map(), vg = new Map();
+  for (const ring of poly) {
+    for (let i = 0; i < ring.length - 1; i++) {
+      const [x1, y1] = ring[i], [x2, y2] = ring[i + 1];
+      const lo = Math.floor(Math.min(y1, y2) / RING_CELL), hi = Math.floor(Math.max(y1, y2) / RING_CELL);
+      for (let b = lo; b <= hi; b++) {
+        let a = yb.get(b); if (!a) yb.set(b, a = []);
+        a.push(x1, y1, x2, y2);
+      }
+      const gk = `${Math.floor(x1 / RING_CELL)}:${Math.floor(y1 / RING_CELL)}`;
+      let v = vg.get(gk); if (!v) vg.set(gk, v = []);
+      v.push(x1, y1);
+    }
+  }
+
+  const inside = (lon, lat) => {
+    const a = yb.get(Math.floor(lat / RING_CELL));
+    if (!a) return false;
+    let ins = false;
+    for (let i = 0; i < a.length; i += 4) {
+      const x1 = a[i], y1 = a[i + 1], x2 = a[i + 2], y2 = a[i + 3];
+      if ((y1 > lat) !== (y2 > lat) && lon < (x2 - x1) * (lat - y1) / (y2 - y1) + x1) ins = !ins;
+    }
+    return ins;
+  };
+
+  // Distance to the nearest ring VERTEX, not the nearest segment. The ring is dense enough that
+  // the difference is under the sampling noise, and it keeps this O(1) per query.
+  const distShore = (lon, lat) => {
+    const gx = Math.floor(lon / RING_CELL), gy = Math.floor(lat / RING_CELL);
+    const kx = 111320 * Math.cos(lat * Math.PI / 180), ky = 110540;
+    let best = Infinity;
+    for (let dx = -2; dx <= 2; dx++) {
+      for (let dy = -2; dy <= 2; dy++) {
+        const v = vg.get(`${gx + dx}:${gy + dy}`);
+        if (!v) continue;
+        for (let i = 0; i < v.length; i += 2) {
+          const ex = (lon - v[i]) * kx, ey = (lat - v[i + 1]) * ky;
+          const d = ex * ex + ey * ey;
+          if (d < best) best = d;
+        }
+      }
+    }
+    return best === Infinity ? Infinity : Math.sqrt(best);
+  };
+
+  return cacheSet(k, { inside, distShore });
+}
+
+/** Straighten a graph path, holding `clearance` metres off the bank. Never lengthens it. */
+function straighten(coords, idx, clearance) {
+  if (!idx || !Array.isArray(coords) || coords.length < 3) return coords;
+  const okAt = (lon, lat) => idx.inside(lon, lat) && idx.distShore(lon, lat) >= clearance;
+  const clear = (a, b) => {
+    const d = metres(a[0], a[1], b[0], b[1]);
+    const n = Math.max(2, Math.ceil(d / SAMPLE_M));
+    for (let k = 1; k < n; k++) {
+      const t = k / n;
+      if (!okAt(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)) return false;
+    }
+    return true;
+  };
+  const out = [coords[0]];
+  let i = 0, guard = 0;
+  while (i < coords.length - 1 && guard++ < 10000) {
+    let j = coords.length - 1;
+    while (j > i + 1 && !clear(coords[i], coords[j])) j--;
+    out.push(coords[j]);
+    i = j;
+  }
+  // The endpoints are snapped graph nodes and may themselves sit inside the clearance band -- a
+  // ramp is against the bank by definition. If nothing could be joined, keep the original.
+  return out.length >= 2 && out.length <= coords.length ? out : coords;
+}
+
+function pathLength(coords) {
+  let m = 0;
+  for (let i = 0; i < coords.length - 1; i++) m += metres(coords[i][0], coords[i][1], coords[i + 1][0], coords[i + 1][1]);
+  return Math.round(m);
+}
+
+/** pathPreferringDepth + straightening. `idx` may be false; then this is a no-op. */
+function waterPath(g, ai, bi, minDepth, idx, clearance) {
+  const p = pathPreferringDepth(g, ai, bi, minDepth);
+  if (!p || !idx) return p;
+  const s = straighten(p.coordinates, idx, clearance);
+  if (s === p.coordinates || s.length >= p.coordinates.length) return p;
+  return { ...p, coordinates: s, distance_m: pathLength(s), raw_vertices: p.coordinates.length };
+}
 async function handleRoute(env, slug, request) {
   const g = await graph(env, slug);
   if (!g) return json({ error: 'no water graph for this water', slug }, 404);
@@ -453,7 +594,10 @@ async function handleRoute(env, slug, request) {
   const a = nearestNode(g, from[0], from[1]);
   const b = nearestNode(g, to[0], to[1]);
   if (a.i < 0 || b.i < 0) return json({ error: 'graph is empty', slug }, 500);
-  const p = pathPreferringDepth(g, a.i, b.i, Number(body.min_depth_ft) || 0);
+  const clearance = Number.isFinite(Number(body.clearance_m))
+    ? Math.max(0, Number(body.clearance_m)) : CLEARANCE_DEFAULT_M;
+  const bidx = await boundaryIndex(env, slug);
+  const p = waterPath(g, a.i, b.i, Number(body.min_depth_ft) || 0, bidx, clearance);
   if (!p) return json({ ...UNREACHABLE, slug }, 422);
   const straight = metres(from[0], from[1], to[0], to[1]);
   return json({
@@ -523,6 +667,11 @@ async function handlePlan(env, slug, request) {
   const want = Array.isArray(body.legs) ? body.legs.slice(0, 12) : [];
   if (!want.length) return json({ error: 'legs must be a non-empty array' }, 400);
   const minDepth = Number(body.min_depth_ft) || 0;
+  // Straightening index. Fetched once per plan; false when the pack has no boundary,
+  // in which case waterPath() returns the raw graph path unchanged.
+  const clearance = Number.isFinite(Number(body.clearance_m))
+    ? Math.max(0, Number(body.clearance_m)) : CLEARANCE_DEFAULT_M;
+  const bidx = await boundaryIndex(env, slug);
   const maxTotal = Number(body.max_total_m) || Infinity;
   // Derived from this lake's own mesh unless the caller overrides it — see graph().
   const offWaterM = Number(body.off_water_m) || g.offWaterM;
@@ -611,7 +760,7 @@ async function handlePlan(env, slug, request) {
     // Transit from where we are to the head of the leg, over water.
     const sn = nearestNode(g, legStart[0], legStart[1]);
     if (curNode.i !== sn.i) {
-      const p = pathPreferringDepth(g, curNode.i, sn.i, minDepth);
+      const p = waterPath(g, curNode.i, sn.i, minDepth, bidx, clearance);
       if (!p) return json({ ...UNREACHABLE, slug, at: `transit to leg ${li + 1}`,
                             steps_built: steps.length }, 422);
       if (p.min_depth_held === false && !relaxed.has(li + 1)) {
@@ -649,7 +798,7 @@ async function handlePlan(env, slug, request) {
   if (body.return_to_launch) {
     const ln = nearestNode(g, launch[0], launch[1]);
     if (curNode.i !== ln.i) {
-      const p = pathPreferringDepth(g, curNode.i, ln.i, minDepth);
+      const p = waterPath(g, curNode.i, ln.i, minDepth, bidx, clearance);
       if (!p) return json({ ...UNREACHABLE, slug, at: 'return to launch',
                             steps_built: steps.length }, 422);
       if (p.min_depth_held === false) notes.push(`return to launch: could not hold ${minDepth} ft minimum`);
