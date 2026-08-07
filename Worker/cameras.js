@@ -32,6 +32,8 @@
 //   /cameras?camId= call yields both the prefix and the filename, so this makes one request
 //   per popup, not two.
 
+import { CORS, JSON_HEADERS } from "./worker-core.js";
+
 const NIMS = "https://api.waterdata.usgs.gov/nims/v0";
 const S3 = "https://usgs-nims-images.s3.amazonaws.com";
 
@@ -45,11 +47,19 @@ const EDGE_TTL = 120;
 // than in the browser so every consumer agrees on the threshold.
 const STALE_MIN = 90;
 
+// CORS COMES FROM worker-core.js, LIKE EVERY OTHER ROUTE. This function used to build its own
+// header object with just content-type and cache-control, and the browser refused every
+// response: the app is served from trollmap-dev.pages.dev and the Worker is a different origin,
+// so without Access-Control-Allow-Origin the fetch never reaches JS. The popup said
+// "Congaree River at US HWY 601 near Fort Motte — unreachable" while the route was answering
+// perfectly.
+//
+// It shipped because it was verified with curl, and curl is the one client that cannot see a
+// CORS failure -- it has no origin and does not enforce the policy. **Verify a browser route
+// FROM A BROWSER, or at least assert the header.** worker-cors.test.js now does the latter.
 function json(body, status = 200, ttl = 0) {
-  const headers = {
-    "content-type": "application/json; charset=utf-8",
-    "cache-control": ttl ? `public, max-age=${ttl}` : "no-store",
-  };
+  const headers = { ...CORS, ...JSON_HEADERS };
+  if (ttl) headers["Cache-Control"] = `public, max-age=${ttl}`;
   return new Response(JSON.stringify(body), { status, headers });
 }
 
@@ -150,9 +160,11 @@ export async function handleCameraFrame(request, env, url) {
 // anything about this module's internals.
 export function handleCameras(request, env, url) {
   const p = url.pathname;
-  if (p === "/cameras/frame" && request.method === "GET") {
-    return handleCameraFrame(request, env, url);
-  }
+  if (p !== "/cameras/frame") return null;
+  // A plain GET with no custom headers is a "simple request" and gets no preflight, but the
+  // handler is here so a later caller that adds a header does not hit a wall.
+  if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
+  if (request.method === "GET") return handleCameraFrame(request, env, url);
   return null;
 }
 
