@@ -160,7 +160,7 @@ Each candidate is a stretch of a real trolling run, already filtered to water he
 depths that matter today, and ranked by what it passes. \`structures\` lists what each leg goes by
 in the order you meet them, with \`atM\` metres from the start of that leg.
 
-${JSON.stringify(o.candidates || [], null, 1)}
+${JSON.stringify(o.candidates || [])}
 
 RULES THAT ARE NOT NEGOTIABLE
 1. Name legs by \`runId\` and stops by a structure \`id\`, both copied exactly from the list above.
