@@ -23,12 +23,18 @@ const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(here, '..');
 const HTML = readFileSync(join(ROOT, 'index.html'), 'utf8');
 
-/** The 13 overlay toggles that must live inside the panel. */
+/**
+ * The overlay toggles that must live inside the panel.
+ *
+ * Was 13. btnCastingRings went with casting-rings.js on 2026-08-07 -- and this list is why
+ * that deletion could not be done quietly: the count is asserted, so removing a button
+ * without removing it here fails rather than passing with one fewer control on screen.
+ */
 const TOGGLES = [
   'btnRamps', 'btnBankPier', 'btnPaddle',
-  'btnAttractors', 'btnFishingSpots', 'btnPOI', 'btnCustomVectors', 'btnFetchOsm',
+  'btnAttractors', 'btnFishingSpots', 'btnPOI', 'btnFetchOsm',
   'btnOysterBeds', 'btnMarshEdges', 'btnSoundings',
-  'btnShowCatches', 'btnCastingRings',
+  'btnShowCatches',
 ];
 
 function panelHtml() {
@@ -60,7 +66,9 @@ describe('layers panel — every toggle survived the move', () => {
     });
   }
 
-  it('the panel holds all 13 and nothing else', () => {
+  // Counted from TOGGLES rather than written out, so the number in the name cannot go stale
+  // the way "all 13" did the moment a button was removed.
+  it(`the panel holds all ${TOGGLES.length} and nothing else`, () => {
     const ids = [...panelHtml().matchAll(/<button id="(btn\w+)"/g)].map((m) => m[1]);
     expect(ids.sort()).toEqual([...TOGGLES].sort());
   });
@@ -104,13 +112,23 @@ describe('layers panel — the pieces other modules depend on', () => {
     expect(HTML.includes('id="closeLayersBtn"')).toBe(true);
   });
 
-  it('a button that opens its own panel is marked, so the layers panel steps aside', () => {
-    // #btnCustomVectors opens the custom-vectors panel rather than toggling an overlay.
-    // Without this marker two panels stack over the map and the one underneath is the one
-    // the user has finished with.
-    expect(HTML.includes('id="btnCustomVectors" data-opens-panel')).toBe(true);
+  it('the layers panel still steps aside for a button that opens its own panel', () => {
+    // A panel-opening button carries `data-opens-panel` and layers-panel.js closes itself when
+    // one is clicked; without it two panels stack over the map and the one underneath is the
+    // one you have finished with.
+    //
+    // #btnCustomVectors was the only marked button and it went with the QuickDraw structure
+    // mapper on 2026-08-07, so ZERO buttons carry the attribute today. The handler is kept and
+    // asserted anyway: it is three lines, a panel-opening button is a normal thing to add back,
+    // and a mechanism deleted for being unused is a bug waiting to be re-discovered.
+    //
+    // Every marked button that DOES exist must be inside the panel -- vacuously true at zero,
+    // and the assertion that starts working the moment one is added.
     const src = readFileSync(join(ROOT, 'js/modules/layers-panel.js'), 'utf8');
     expect(src.includes('[data-opens-panel]')).toBe(true);
+    const marked = [...HTML.matchAll(/id="([^"]+)"\s+data-opens-panel/g)].map(m => m[1]);
+    const inPanel = panelHtml();
+    expect(marked.filter(id => !inPanel.includes(`id="${id}"`))).toEqual([]);
   });
 
   it('the panel starts hidden', () => {

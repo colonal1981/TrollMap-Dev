@@ -1,17 +1,21 @@
 /**
- * routes-panel.js — Right slide-in panel shell with 3 tabs:
- *   Capture | Contour Data | Route Builder
+ * routes-panel.js — the right slide-in panel.
  *
- * Builds the panel DOM, wires the toolbar button, and calls each
- * sub-module to populate its tab.
+ * ONE TAB NOW. The Route Builder tab was removed 2026-08-07 with the manual routing it hosted.
+ * Ryan: "manual routing is the route builder portion of contours and routes... it is basically
+ * what trollmap was built on... that was another AI designed thing that i haven't used."
+ *
+ * The tab machinery is kept rather than flattened, because a second tab is a plausible thing to
+ * want back and the shell costs nothing. The BAR hides itself below two tabs — a tab strip with
+ * one tab in it reads as a broken control, not as a simple one.
+ *
+ * Builds the panel DOM, wires the toolbar button, and calls each sub-module to populate its tab.
  */
 
 import { buildContourDataPanel }  from './contour-data.js';
-import { buildRouteBuilderPanel } from './route-builder.js';
 
 const TABS = [
   { id: 'contourData',  label: '🗂 Contour Data'   },
-  { id: 'routeBuilder', label: '🗺️ Route Builder'  },
 ];
 
 function buildShell() {
@@ -41,7 +45,7 @@ function buildShell() {
   const header = document.createElement('div');
   header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:9px 14px;border-bottom:1px solid var(--line);flex-shrink:0;background:var(--panel)';
   header.innerHTML = `
-    <span style="color:var(--accent);font-weight:700;font-size:13px">🗺️ Contours &amp; Routes</span>
+    <span style="color:var(--accent);font-weight:700;font-size:13px">🗂 Contour Data</span>
     <button id="rpClose" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:0 4px;line-height:1">✕</button>
   `;
   shell.appendChild(header);
@@ -49,7 +53,9 @@ function buildShell() {
   // Tab bar
   const tabBar = document.createElement('div');
   tabBar.id = 'rpTabBar';
-  tabBar.style.cssText = 'display:flex;border-bottom:1px solid var(--line);flex-shrink:0;background:var(--panel)';
+  // A one-tab tab bar is a control that looks like it does something and does not.
+  tabBar.style.cssText = (TABS.length > 1 ? 'display:flex;' : 'display:none;')
+    + 'border-bottom:1px solid var(--line);flex-shrink:0;background:var(--panel)';
   TABS.forEach(tab => {
     const btn = document.createElement('button');
     btn.dataset.tab = tab.id;
@@ -102,7 +108,6 @@ function openPanel(shell, tabId) {
     const pane = document.getElementById(`rpPane-${tabId}`);
     if (pane) {
       if (tabId === 'contourData')  buildContourDataPanel(pane);
-      if (tabId === 'routeBuilder') buildRouteBuilderPanel(pane);
     }
     tabsPopulated[tabId] = true;
   }

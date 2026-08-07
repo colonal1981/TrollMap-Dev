@@ -5,7 +5,6 @@
  * that smart-plan.js uses for lure selection, rationale, and Groq coaching.
  *
  * Sources:
- *   - window.getMyStructures()     QuickDraw pins (docks, brush piles, etc)
  *   - state.CATCHES                Catch journal with GPS/species/depth/lure
  *   - window.getSupplementalContext() Attractors + fishing points near coord
  *   - state.MAP                    Current map bounds / lake area
@@ -27,9 +26,15 @@ import { callGlobal } from '../utils/call-global.js';
  * Get all QuickDraw structures within radiusMi of a coordinate.
  * Returns array of { type, lat, lon, name } objects.
  */
+// SOURCE REMOVED 2026-08-07. This read window.getMyStructures() -- the QuickDraw pin store,
+// deleted with the structure mapper. Left returning [] rather than deleted outright because its
+// CALLER below feeds lure scoring by structure type, and that wiring is what a rebuilt SmartPlan
+// should point at water_features.geojson and the Garmin POI layer. Those carry points, coves,
+// creek mouths, timber, hazards and attractors -- everything the pins carried except riprap, and
+// measured rather than hand-dropped. Tracked in APP_CHANGE_REQUESTS.md.
 function getNearbyStructures(lat, lon, radiusMi = 2.0) {
   try {
-    const all = window.getMyStructures?.() || [];
+    const all = [];
     return all
       .filter(s => {
         const sLat = s.lat ?? s.geometry?.coordinates?.[1];

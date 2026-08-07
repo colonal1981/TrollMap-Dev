@@ -5,7 +5,7 @@ Personal use only, not for distribution or resale; not for navigation.
 
     py .\\build_water_features.py --packs "F:\\TrollMapPipeline\\chartpack"
 
-Run AFTER restitch_water_graphs.py and build_trolling_runs.py. Writes
+Run AFTER build_water_graphs.py and build_trolling_runs.py. Writes
 `<slug>/water_features.geojson`, and annotates `<slug>/trolling_runs.geojson` in place with the
 relief character of each run.
 

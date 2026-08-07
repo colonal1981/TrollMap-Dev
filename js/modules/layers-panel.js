@@ -82,7 +82,10 @@ function init() {
   // Clicking a layer button must NOT close the panel — turning on three layers in a row is
   // the normal case, and re-opening between each is exactly the fiddliness this replaces.
   //
-  // The exception is a button that opens a panel of its own (#btnCustomVectors). Leaving this
+  // The exception is a button that opens a panel of its own. #btnCustomVectors was the only
+  // one and it went with the QuickDraw structure mapper on 2026-08-07, so nothing carries
+  // `data-opens-panel` today -- the handler stays because it is three lines and a
+  // panel-opening button is a normal thing to add back. Leaving this
   // one up would stack two panels over the map, and the one underneath is the one the user
   // has finished with. Marked in index.html with `data-opens-panel` rather than by id, so the
   // next one added does not need this file edited.

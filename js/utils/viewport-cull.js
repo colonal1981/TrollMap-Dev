@@ -84,10 +84,45 @@ export function cull(features, map, pad = 0.25) {
 // then vanishes without a word. coastal-zones-parity.test.js caught this within one run.
 export const COASTAL_LANDING_ZOOM = 14;
 
-export function landOnCoastalZone(map, bbox) {
-  if (!map || !Array.isArray(bbox) || bbox.length !== 2) return false;
+// TAKE THE ZONE, NOT ITS BBOX. The first version of this centred on the middle of the clip
+// rectangle and Murrells Inlet landed on MYRTLE BEACH -- the box runs lat 33.499..33.854, its
+// midpoint is 33.68, and the inlet is at 33.55. Every zone already carries a hand-set `center`
+// that names the place the zone is named after; the bbox is a clip artifact and its midpoint is
+// not a location anyone chose. Ryan: "murrells inlet doesn't zoom to murrells inlet it zooms to
+// myrtle beach."
+//
+// The bbox midpoint stays only as a fallback for a zone with no center, where landing somewhere
+// in the right rectangle beats not moving at all.
+export function landOnCoastalZone(map, zone) {
+  if (!map || !zone) return false;
+  const c = zone.center;
+  if (Array.isArray(c) && c.length >= 2 && Number.isFinite(c[0]) && Number.isFinite(c[1])) {
+    map.setView([c[0], c[1]], COASTAL_LANDING_ZOOM);
+    return true;
+  }
+  const bbox = zone.bbox;
+  if (!Array.isArray(bbox) || bbox.length !== 2) return false;
   const [[s, w], [n, e]] = bbox;
   if (![s, w, n, e].every(Number.isFinite)) return false;
   map.setView([(s + n) / 2, (w + e) / 2], COASTAL_LANDING_ZOOM);
+  return true;
+}
+
+// Centre on a ramp WITHOUT ever reducing detail.
+//
+// onRampChange() hard-set zoom 15. That was harmless while a coastal zone opened at zoom 11 --
+// you were always zooming in. With the zoom-13 floor you now arrive already zoomed in, so
+// picking "Oyster Landing" while looking at the creek at zoom 17 threw you back out to 15.
+// Ryan: "when i select oyster landing it doesn't zoom to the ramp it actually zooms out."
+//
+// Choosing the place you are going to launch from is a request to look CLOSER at it, or at
+// worst to stay where you are. It is never a request to see less, so the target zoom is a
+// floor rather than a setting.
+export const RAMP_MIN_ZOOM = 15;
+
+export function focusRamp(map, lat, lon, minZoom = RAMP_MIN_ZOOM) {
+  if (!map || !Number.isFinite(lat) || !Number.isFinite(lon)) return false;
+  const now = typeof map.getZoom === 'function' ? map.getZoom() : null;
+  map.setView([lat, lon], Number.isFinite(now) ? Math.max(now, minZoom) : minZoom);
   return true;
 }

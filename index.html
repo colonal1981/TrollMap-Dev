@@ -601,7 +601,6 @@
             <button id="btnAttractors" data-active-color="#00e5ff" title="Toggle submerged attractors">📍 Attractors</button>
             <button id="btnFishingSpots" title="Toggle community fishing spots (i-Boating crowdsourced)">🎣 Fishing Spots</button>
             <button id="btnPOI" title="Toggle points of interest (landings, place names, attractors)">📌 POI</button>
-            <button id="btnCustomVectors" data-opens-panel title="Load custom GeoJSON structure layer">🗂 Structure</button>
             <button id="btnFetchOsm" data-active-color="#76ff03" title="Fetch OSM waterways and historic structures">🌐 OSM</button>
         </div>
         <div class="layer-group-title">Coastal<span class="layer-group-sub">Saltwater only</span></div>
@@ -613,7 +612,6 @@
         <div class="layer-group-title">Mine<span class="layer-group-sub">Your own marks</span></div>
         <div>
             <button id="btnShowCatches" title="Plot catch journal on map">🐟 Catches</button>
-            <button id="btnCastingRings" title="Draw casting rings around waypoints">⭕ Cast Rings</button>
         </div>
       </div>
       <div id="mapToolBar" class="map-toolbar no-print">
@@ -626,7 +624,7 @@
         <button id="btnGpsPanel" title="GPS controls">📡 GPS</button>
 
         <!-- Contours & Routes — opens the right slide panel -->
-        <button id="btnContourRoutes" title="Open Contours &amp; Routes">🗺️ Contours &amp; Routes</button>
+        <button id="btnContourRoutes" title="Open Contour Data">🗂 Contour Data</button>
 
         <div style="width:1px;background:var(--line);height:20px;margin:0 4px;flex-shrink:0"></div>
 
@@ -644,7 +642,6 @@
         <span id="storageIndicator" title="Storage" style="background:var(--panel2);color:var(--muted);padding:0 8px;border-radius:6px;font-family:monospace;font-size:11px;height:30px;display:inline-flex;align-items:center;cursor:pointer;border:1px solid var(--line);flex-shrink:0">— MB</span>
         <div id="coordReadout2" style="height:30px;display:inline-flex;align-items:center;flex-shrink:0;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:0 8px;font-family:monospace;font-size:12px;color:var(--muted)">-- , --</div>
 
-        <input type="file" id="customVectorInput" accept=".geojson,.json" class="hidden">
       </div>
 
       <!-- ── GPS POPUP ── -->

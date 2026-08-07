@@ -1490,27 +1490,11 @@ Return ONLY valid JSON, no markdown:
       }
     }
 
-    {
-      // Your own marked structures. If getMyStructures() throws, the plan comes back
-      // complete-looking with none of your pins in it -- silently, and only you would know
-      // they were missing.
-      try {
-        for (const s of (callGlobal('getMyStructures') || [])) {
-          if (!s.lat || !s.lon) continue;
-          tryAddStop({
-            type: s.type || 'custom_pin',
-            name: s.name || 'My Structure',
-            lat: s.lat, lon: s.lon,
-            score: Math.min(10, (s.quality || 5) + 2),
-            reason: `Angler-marked structure (quality ${s.quality || '?'}/10)`,
-            structureType: s.type || 'custom',
-          });
-        }
-      } catch (err) {
-        // The user's own marked structures, same shape as the community spots above.
-        console.warn('[smart-plan] angler-marked structure scoring failed:', err);
-      }
-    }
+    // The angler-marked structure block was here until 2026-08-07. It read getMyStructures()
+    // -- the QuickDraw pin store, deleted with the structure mapper. Its replacement is
+    // water_features.geojson and the Garmin POI layer, which carry the same kinds measured
+    // rather than hand-dropped, and which this planner does not read yet. Tracked in
+    // APP_CHANGE_REQUESTS.md under the SmartPlan rebuild.
 
     const structuralElements = researchedProfile?.habitat?.structuralElements || {};
     for (const hump of (structuralElements.humpCoordinates || [])) {

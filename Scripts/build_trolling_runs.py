@@ -52,7 +52,8 @@ matters -- whether that node is in the graph's largest connected component. A ru
 pocket is real water with a real contour that a boat cannot get to, and SmartPlan needs to know
 that before it plans a leg there rather than after it fails to find a route.
 
-**Run `restitch_water_graphs.py` before this**, or `routable` will be pessimistic. On Wateree,
+**Rebuild the water graphs before this** (`build_water_graphs.py`, which carries the one-ring
+halo), or `routable` will be pessimistic. On Wateree,
 9.5% of the graph was severed by dropped sub-block portals until that repair ran; see
 WATER_GRAPHS_WERE_SEVERED_2026-08-06.md.
 """
@@ -474,15 +475,39 @@ def main():
         print('   routable %d   NOT reachable from the main graph %d'
               % (tot['routable'], tot['unroutable']))
         if tot['unroutable'] > tot['routable'] * 0.05:
-            print('   !! more than 5%% unreachable -- run restitch_water_graphs.py first')
+            # This used to say "run restitch_water_graphs.py first". That script is RETRACTED --
+            # it re-derived by distance the very edges Garmin states in ADJ and the boundary clip
+            # deleted, and at --max-m 75 it welded water above a dam to water below it on 178
+            # lakes. See WATER_GRAPHS_WERE_SEVERED_BY_THE_CLIP_2026-08-07.md.
+            print('   !! more than 5%% unreachable. That is the water GRAPH, not these runs.')
+            print('      Lakes sit near 5.6%% and are fine. Rivers run ~38%% because a river')
+            print('      boundary is a ribbon and the routing mesh does not know it exists --')
+            print('      the fix is cutting those boundaries wider, NOT widening the halo.')
     rp = a.report or os.path.join(os.path.dirname(a.packs.rstrip('\\/')), 'registry',
                                   '_trolling_runs.json')
     try:
         os.makedirs(os.path.dirname(rp), exist_ok=True)
+        # A --only run MERGES into the report instead of replacing it. Running the 19 stale
+        # packs through a PowerShell loop on 2026-08-07 rewrote the card-wide report nineteen
+        # times, each with a single pond, and left a file describing `whittakers_lake` where a
+        # reader would find 1,560 packs. Same shape as the graphs report going stale: a partial
+        # run must update the rows it touched and leave the rest alone, or the report quietly
+        # becomes a claim about the card that is true of one lake.
+        merged = report
+        if a.only and os.path.exists(rp):
+            try:
+                with open(rp, encoding='utf-8') as fh:
+                    prev = json.load(fh)
+                if isinstance(prev.get('lakes'), dict):
+                    merged = dict(prev['lakes'])
+                    merged.update(report)
+            except (OSError, ValueError):
+                pass                      # unreadable previous report is not worth failing over
         with open(rp, 'w', encoding='utf-8') as fh:
             json.dump({'minLenM': a.min_len_m, 'simplifyM': a.simplify_m,
-                       'reachM': a.reach_m, 'lakes': report}, fh, indent=1)
-        print('-> %s' % rp)
+                       'reachM': a.reach_m, 'partial': bool(a.only) or None,
+                       'lakes': merged}, fh, indent=1)
+        print('-> %s%s' % (rp, '  (merged, %d packs)' % len(merged) if a.only else ''))
     except Exception as e:
         print('could not write report: %s' % e)
 

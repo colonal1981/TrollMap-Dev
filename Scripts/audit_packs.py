@@ -37,7 +37,7 @@ WHAT IT CHECKS
                    rather than assumed.
 
   graph health     Orphan nodes as a share of the water graph. 9.5% of Wateree was unroutable
-                   until restitch_water_graphs.py ran; a leg planned into one of those pockets
+                   until the graphs were rebuilt with the one-ring halo; a leg planned into one
                    fails with no explanation a user could act on.
 
   run reachability Share of trolling runs marked unroutable. Rises the moment a graph
@@ -272,7 +272,12 @@ def audit_one(pack, acres=None):
     if g:
         out['graph'] = g
         if g.get('orphan_pct', 0) > 1.0:
-            out['issues'].append('water graph has %.1f%% orphan nodes — run restitch_water_graphs.py'
+            # NOT "run restitch_water_graphs.py" -- that script is RETRACTED. It guessed by
+            # distance the edges Garmin states in ADJ and the boundary clip deleted, and at
+            # --max-m 75 it welded water above a dam to water below it on 178 lakes.
+            out['issues'].append('water graph has %.1f%% orphan nodes (lakes run ~5.6%%, rivers '
+                                 '~38%% because a river boundary is a ribbon -- widen the '
+                                 'BOUNDARY, do not widen the halo)'
                                  % g['orphan_pct'])
     runs = load(pack, 'trolling_runs.geojson')
     if runs:

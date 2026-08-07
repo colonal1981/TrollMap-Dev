@@ -4,6 +4,7 @@
 
 import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../data/lake-keys.js';
 import { viewFilter } from '../utils/viewport-cull.js';
+import { addCustomVectorLayer, setVectorListHost } from './custom-vectors.js';
 
 export { LAKE_NAME_TO_R2_KEY, resolveR2Key };
 
@@ -484,6 +485,10 @@ export function buildContourDataPanel(container) {
       <div id="cdQdcStatus" style="font-size:10px;color:var(--muted);margin-top:6px"></div>
     </div>
     <div style="border-top:1px solid var(--line);padding-top:10px;margin-top:10px">
+      <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Imported layers</div>
+      <div id="vectorLayerList"><p style="color:var(--muted);font-size:11px;margin:0">No imported layers.</p></div>
+    </div>
+    <div style="border-top:1px solid var(--line);padding-top:10px;margin-top:10px">
       <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Cache</div>
       <button id="cdClearCache" style="width:100%;height:28px;font-size:11px;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:5px;cursor:pointer">🗑 Clear contour cache (force re-fetch)</button>
     </div>
@@ -497,6 +502,10 @@ export function buildContourDataPanel(container) {
     notifyChange(); updateStatusPanel('idle');
   });
 
+  // The imported-layer list is rendered by custom-vectors.js into whatever host it is given.
+  // It owns the layers; this panel only owns a place to put the list.
+  setVectorListHost(document.getElementById('vectorLayerList'));
+
   document.getElementById('cdShowContourLayer')?.addEventListener('change', e => {
     if (e.target.checked) { renderContourLayer(true, false); window.toggleDepthAreas?.(true); }
     else if (state.CONTOUR_LAYER) {
@@ -506,16 +515,45 @@ export function buildContourDataPanel(container) {
     }
   });
 
+  // ONE PICKER, AND IT DECIDES. Ryan, 2026-08-07: "i would prefer the merge... 1 picker and it
+  // chooses what to do with it." This used to load every file as contours and there was a second
+  // picker, in a different panel, for everything else.
+  //
+  // The test is on the CONTENT, never the filename. `contours.geojson` is a convention, not a
+  // guarantee, and the whole point of one picker is that you do not have to know which kind of
+  // file you are holding before you open it.
+  //
+  // A contour file is LineStrings carrying a depth. Anything else -- a track, a waypoint set,
+  // someone else's marks, polygons -- becomes an imported vector layer.
   document.getElementById('cdLocalFile')?.addEventListener('change', async e => {
     const file = e.target.files[0];
     if (!file) return;
     try {
       const gj = JSON.parse(await file.text());
       if (!gj?.features?.length) throw new Error('no features found');
-      state.ACTIVE_CONTOUR = { smart: gj, raw: null };
-      state.ACTIVE_CONTOUR_KEY = file.name;
-      notifyChange(); renderContourLayer(true, false);
-      updateStatusPanel('loaded', file.name, gj.features.length);
+
+      const DEPTH_KEYS = ['depth_ft', 'depth_dm', 'depth_m', 'depth', 'ft', 'DEPTH'];
+      const lines = gj.features.filter(f => f.geometry?.type?.includes('Line'));
+      const withDepth = lines.filter((f) => {
+        const p = f.properties || {};
+        // Present and numeric. `p.depth_ft != null` alone would accept '' and let
+        // Number('') === 0 tag the whole file as a 0 ft contour set.
+        return DEPTH_KEYS.some(k => p[k] !== null && p[k] !== undefined && p[k] !== ''
+                                    && Number.isFinite(Number(p[k])));
+      });
+      const isContours = withDepth.length >= Math.max(1, gj.features.length * 0.5);
+
+      if (isContours) {
+        state.ACTIVE_CONTOUR = { smart: gj, raw: null };
+        state.ACTIVE_CONTOUR_KEY = file.name;
+        notifyChange(); renderContourLayer(true, false);
+        updateStatusPanel('loaded', file.name, gj.features.length);
+      } else {
+        // Say which branch was taken. A file that silently loads as the wrong kind is worse
+        // than one that gets rejected, because nothing on screen contradicts it.
+        addCustomVectorLayer(file.name.replace(/\.[^.]+$/, ''), gj);
+        updateStatusPanel('loaded', file.name + ' → vector layer', gj.features.length);
+      }
     } catch (err) { alert('Could not parse GeoJSON: ' + err.message); }
     e.target.value = '';
   });

@@ -159,9 +159,18 @@ describe('coastal ramps are wired everywhere a launch point is needed', () => {
 });
 
 describe('selecting a coastal zone reaches the coastal subsystems', () => {
-  it('map toolbar fits the zone bbox rather than the ramp cluster', () => {
-    // A sound is far larger than its two or three ramps.
-    expect(rampSelectSrc).toContain('zone.bbox');
+  it('map toolbar frames the zone, not the ramp cluster', () => {
+    // A sound is far larger than its two or three ramps, so selecting the zone must not
+    // reframe on the ramps. It used to fitBounds(zone.bbox); it now hands the whole zone to
+    // landOnCoastalZone(), which lands on the zone's own center at a fixed zoom because the
+    // bbox is a clip rectangle whose midpoint is 20.5 km from Murrells Inlet.
+    //
+    // THIS ASSERTION IS A GREP AND THAT IS THE PROBLEM WITH IT. It passed for as long as the
+    // string 'zone.bbox' survived anywhere in the file, and it failed on a change that kept
+    // the behaviour it exists to protect. The behaviour itself is covered properly, against
+    // the real function and real zone data, in coastal-landing.test.js. Kept only as a cheap
+    // guard that the call site still passes the ZONE and not a ramp list.
+    expect(rampSelectSrc).toMatch(/landOnCoastalZone\(\s*state\.MAP\s*,\s*zone\s*\)/);
   });
 
   it('zone selection still triggers contour + supplemental loading', () => {

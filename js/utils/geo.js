@@ -125,7 +125,10 @@ export function bearingFromCoords(lat1, lon1, lat2, lon2) {
 
 /**
  * Destination point given start, bearing, and distance.
- * Used by route-builder.js for S-pattern generation.
+ * ORPHANED 2026-08-07. Its only caller was route-builder.js, which went with the manual
+ * routing. Left in place rather than deleted because it is 12 lines of correct spherical
+ * geometry beside nine siblings that ARE used, and a SmartPlan rebuild that lays out legs
+ * wants exactly this. Listed on DELETION_TAB.md so it is a decision and not an oversight.
  * @param {number} lat - start lat degrees
  * @param {number} lon - start lon degrees
  * @param {number} bearingDeg - bearing degrees (0 = north, 90 = east)

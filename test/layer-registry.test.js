@@ -302,8 +302,10 @@ describe('layer-registry — migrated modules keep no private visibility state',
   // that keeps its own flag alongside is the drift coming back.
   const MIGRATED = [
     'js/modules/gis-toggles.js', 'js/modules/coastal-layers.js',
-    'js/modules/ramps.js', 'js/modules/catch-plot.js', 'js/modules/casting-rings.js',
+    'js/modules/ramps.js', 'js/modules/catch-plot.js',
     'js/modules/osm-structure.js',
+    // casting-rings.js was here until 2026-08-07. Ryan: "cast rings can get completely
+    // deleted when we have time." Superseded by the structure pipeline and the Garmin POIs.
   ];
   // supplemental-layers.js is PARTIALLY migrated and deliberately not in that list. Its eight
   // GARMIN_LAYERS entries lost their handle/flag pair to the registry on 2026-08-03; five

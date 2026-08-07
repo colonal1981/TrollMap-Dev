@@ -142,22 +142,10 @@ function stopProximityWatch() {
 }
 
 function checkProximity(lat, lon) {
-  // QuickDraw pins
-  const pins = window.getMyStructures?.() || [];
-  for (const pin of pins) {
-    const pLat = pin.lat ?? pin.geometry?.coordinates?.[1];
-    const pLon = pin.lon ?? pin.geometry?.coordinates?.[0];
-    if (!pLat || !pLon) continue;
-    const id = pin.id || `${pLat.toFixed(5)},${pLon.toFixed(5)}`;
-    if (_firedPins.has(id)) continue;
-    const ft = distFt(lat, lon, pLat, pLon);
-    if (ft <= PROXIMITY_RADIUS_FT) {
-      _firedPins.add(id);
-      const type = pin.type || pin.properties?.type || 'Structure';
-      const name = pin.name || pin.properties?.name || type;
-      fire(`📍 ${name} Ahead`, `${Math.round(ft)}ft — ${type.replace(/_/g, ' ')}`, `pin-${id}`);
-    }
-  }
+  // The QuickDraw pin block was here until 2026-08-07. It read window.getMyStructures(),
+  // which went with the structure mapper. Deleted rather than left in place: it used
+  // optional chaining with an empty-array fallback, so it would have gone on looking
+  // alive forever while contributing nothing. The alerts below run on real data.
 
   // Supplemental fishing spots
   {

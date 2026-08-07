@@ -67,7 +67,6 @@ import './modules/edit.js';
 import './modules/track-reverse.js';
 import './modules/contour-data.js';
 import './modules/capture-panel.js';
-import './modules/route-builder.js';
 import './modules/routes-panel.js';
 import './modules/fishing-index.js';
 import './modules/measure-tool.js';
@@ -81,7 +80,6 @@ import './modules/ble-motor.js';
 import './modules/wet-hands-remote.js';
 import './modules/gear-autopilot.js';
 import './modules/auto-crop.js';
-import './modules/casting-rings.js';
 import './modules/catch-photo.js';
 import './modules/osm-structure.js';
 import './modules/quickdraw-key.js';
@@ -91,10 +89,8 @@ import './modules/coastal-layers.js';
 import './modules/species-selector.js';
 import './modules/groq-coach.js';
 import './modules/notifications.js';
-import './modules/route-debug.js';
 import './modules/plan-tab-wiring.js';
 import { pullUpdatesOnLoad, pushAllLocalToCloud } from './modules/cloud-sync.js';
-import './modules/pinch-point-finder.js'; // still used by route-builder.js
 import { initTackleInventoryPanel } from './modules/tackle-inventory-ui.js'
 import './modules/lake-research.js';
 

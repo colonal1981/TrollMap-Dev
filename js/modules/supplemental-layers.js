@@ -1039,7 +1039,8 @@ function clearGarminLayers() {
 
 // ── Structure Intel panel section ─────────────────────────────────────────────
 //
-// Injected into `#customVectorPanel`, which custom-vectors.js builds and appends to
+// Injected into `#layersPanel`. It used to go into `#customVectorPanel`, which
+// custom-vectors.js builds and appends to
 // `#panel-map` at module load. Injecting rather than editing that file keeps ownership where
 // it belongs: these layers are fetched, cached and styled here, so their controls live here
 // too, and custom-vectors.js needs no knowledge of chartpacks.
@@ -1068,14 +1069,22 @@ function _paintGarminButtons() {
 }
 
 function injectGarminPanel() {
-  const panel = document.getElementById('customVectorPanel');
+  // MOVED 2026-08-07 out of #customVectorPanel and into the Layers panel.
+  //
+  // Ryan: "i want the garmin POI buttons pulled out of the selector that they were added to and
+  // just put in the layers panel." They had been living in the custom-vector IMPORT panel --
+  // where a user's own uploaded files are managed. Chart data is not one of the user's files,
+  // and nobody looks for a layer toggle inside an importer.
+  //
+  // Every button id is unchanged, so nothing rewires. Same relocation, and the same reasoning,
+  // that layers-panel.js already documents for the original sixteen toggles.
+  const panel = document.getElementById('layersPanel');
   if (!panel || document.getElementById(GARMIN_PANEL_ID)) return !!panel;
   const box = document.createElement('div');
   box.id = GARMIN_PANEL_ID;
-  box.style.cssText = 'border-top:1px solid var(--line);padding-top:8px;margin-bottom:8px';
   box.innerHTML =
-    `<div style="font-size:10px;color:var(--muted);margin-bottom:5px">`
-  + `\u{1F5FA} GARMIN CHART — click to load</div>`
+    `<div class="layer-group-title">Garmin Chart`
+  + `<span class="layer-group-sub">From the chartpack, click to load</span></div>`
   + `<div style="display:flex;flex-direction:column;gap:3px">`
   + Object.entries(GARMIN_LAYERS).filter(([, spec]) => spec.panel !== false).map(([name, spec]) =>
       `<button id="btnGarmin_${name}" style="${_garminBtnStyle(false, spec.style.color)}">`
@@ -1091,9 +1100,9 @@ function injectGarminPanel() {
   + `border:1px solid var(--line);background:transparent;color:var(--muted);font-size:10px;`
   + `cursor:pointer" title="Decoded symbols whose meaning is not yet known — mode 3/26 sits on docks">`
   + `○ Show unidentified symbols</button>`;
-  // Above the layer list so it reads as chart data, not as one of the user's own files.
-  const anchor = panel.querySelector('#vectorLayerList')?.parentElement;
-  if (anchor) panel.insertBefore(box, anchor); else panel.appendChild(box);
+  // Last group in the panel: these load on demand and only exist once a water is selected, so
+  // they belong under the toggles that are always live rather than above them.
+  panel.appendChild(box);
 
   for (const [name, spec] of Object.entries(GARMIN_LAYERS)) {
     if (spec.panel === false) continue;
@@ -1469,8 +1478,9 @@ function init() {
   // The registry wires both buttons: one click handler, one visibility flag, one paint.
   layerWireButton('fishingSpots');
   layerWireButton('pois');
-  // custom-vectors.js builds #customVectorPanel at module load and it logs "armed" before this
-  // module does, so it is normally present already. Retry anyway rather than assume load order.
+  // #layersPanel is static markup in index.html, so it is present before any module runs and
+  // this lands first time. The retry stays because the cost of one extra timeout is nothing and
+  // the cost of the panel silently never appearing is a feature that looks deleted.
   if (!injectGarminPanel()) setTimeout(injectGarminPanel, 800);
 
   // Re-render structure markers when research profile finishes loading

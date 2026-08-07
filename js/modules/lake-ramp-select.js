@@ -16,7 +16,7 @@ import { state } from '../core/state.js';
 import { loadAccessIndex, registryRecordFor, getLoadedAccessIndex } from '../data/access-index.js';
 import { loadContourForLake } from './contour-data.js';
 import { COASTAL_ZONES, isCoastalKey } from '../data/coastal-zones.js';
-import { landOnCoastalZone } from '../utils/viewport-cull.js';
+import { landOnCoastalZone, focusRamp } from '../utils/viewport-cull.js';
 import { appendCoastalOptgroups } from '../utils/coastal-optgroups.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { waterZoneCandidates } from '../data/water-aliases.js';
@@ -218,7 +218,7 @@ async function onLakeChange(selLakeName) {
   // which is exactly where the creek is.
   const zoneItself = zone && zone.name === selLakeName;
   if (state.MAP_OK && zone && (zoneItself || !accessPoints.length)) {
-    landOnCoastalZone(state.MAP, zone.bbox);
+    landOnCoastalZone(state.MAP, zone);
   } else if (state.MAP_OK && accessPoints.length) {
     const coords = accessPoints.map((p) => [p.lat, p.lon]);
     if (coords.length === 1) {
@@ -279,7 +279,7 @@ async function onLakeChange(selLakeName) {
 function onRampChange(selOpt) {
   if (!selOpt.value || !selOpt.dataset.coords || !state.MAP_OK) return;
   const [lat, lon] = selOpt.dataset.coords.split(',').map(Number);
-  state.MAP.setView([lat, lon], 15);
+  focusRamp(state.MAP, lat, lon);
   const planRampEl = document.getElementById('planRamp');
   if (planRampEl) planRampEl.value = selOpt.value;
 }
