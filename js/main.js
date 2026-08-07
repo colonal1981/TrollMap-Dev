@@ -90,6 +90,8 @@ import './modules/species-selector.js';
 import './modules/groq-coach.js';
 import './modules/notifications.js';
 import './modules/plan-tab-wiring.js';
+// SmartPlan v2 — wires its own button; v1 above is untouched until this has been fished.
+import './modules/smart-plan-v2-wiring.js';
 import { pullUpdatesOnLoad, pushAllLocalToCloud } from './modules/cloud-sync.js';
 import { initTackleInventoryPanel } from './modules/tackle-inventory-ui.js'
 import './modules/lake-research.js';

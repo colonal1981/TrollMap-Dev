@@ -17,6 +17,54 @@
 
 import { planCues } from './plan-assemble.js';
 
+/**
+ * The stylesheet for the markup below, exported rather than written into a global sheet so the
+ * renderer and its styles cannot drift apart. The wiring injects it once. Colours come from the
+ * app's own variables where they exist, so this follows the theme rather than fighting it.
+ *
+ * The two that are not themed are deliberate: a snap rod and a leader rod are told apart by
+ * colour, because "which of these is seconds to change" is the thing being read at a glance.
+ */
+export const PLAN_V2_CSS = `
+.plan-v2{max-width:900px}
+.plan-v2 h2{margin:0 0 4px;font-size:20px}
+.plan-v2 h3{margin:24px 0 10px;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted,#93a4b8)}
+.plan-v2 .pv-sub{margin:0 0 16px;color:var(--muted,#93a4b8)}
+.plan-v2 .pv-go{padding:10px 14px;border-left:3px solid var(--accent2,#3fb27f);background:rgba(63,178,127,.07);border-radius:4px}
+.plan-v2 .pv-nogo{padding:10px 14px;border-left:3px solid var(--bad,#e05c4b);background:rgba(224,92,75,.1);border-radius:4px}
+.plan-v2 .pv-warnings{margin:14px 0;padding:10px 14px 10px 30px;background:rgba(224,161,59,.09);border-left:3px solid var(--warn,#e0a13b);border-radius:4px}
+.plan-v2 .pv-rods{list-style:none;padding:0;margin:0}
+.plan-v2 .pv-rods li{padding:9px 0;border-bottom:1px solid var(--line,#25344a);display:flex;flex-wrap:wrap;gap:10px;align-items:baseline}
+.plan-v2 .pv-rod{font-size:13px;padding:2px 9px;border-radius:11px;border:1px solid var(--line,#25344a)}
+.plan-v2 .pv-rod.pv-snap{border-color:#3fb27f;color:#b9e8d2}
+.plan-v2 .pv-rod.pv-fluoro{border-color:#c9922f;color:#f0dcae}
+.plan-v2 .pv-staged{opacity:.5}
+.plan-v2 .pv-staged-note,.plan-v2 .pv-band,.plan-v2 .pv-note,.plan-v2 .pv-why{color:var(--muted,#93a4b8);font-size:13px}
+.plan-v2 .pv-note{display:block;width:100%}
+.plan-v2 table{border-collapse:collapse;width:100%}
+.plan-v2 th{text-align:left;color:var(--muted,#93a4b8);font-weight:500;padding:7px 16px 7px 0;width:110px}
+.plan-v2 td{padding:7px 0}
+.plan-v2 tr.pv-over td{color:var(--bad,#e05c4b)}
+.plan-v2 .pv-fineprint{color:var(--muted,#6d7f93);font-size:12.5px;margin-top:12px;opacity:.85}
+.plan-v2 .pv-rows{list-style:none;padding:0;margin:0}
+.plan-v2 .pv-rows>li{display:flex;gap:16px;padding:13px 0;border-bottom:1px solid var(--line,#25344a)}
+.plan-v2 .pv-at{flex:0 0 74px;color:var(--muted,#93a4b8);font-variant-numeric:tabular-nums;font-size:13px;padding-top:2px}
+.plan-v2 .pv-body{flex:1}
+.plan-v2 .pv-meta{display:block;color:var(--muted,#93a4b8);font-size:13px;margin-top:2px}
+.plan-v2 .pv-est{opacity:.7}
+.plan-v2 .pv-transit .pv-body b{font-weight:500;color:var(--muted,#93a4b8)}
+.plan-v2 .pv-spread{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.plan-v2 .pv-hist{display:block;margin-top:7px;font-size:13px;color:#8fc9a8}
+.plan-v2 .pv-stops{list-style:none;padding:0;margin:11px 0 0}
+.plan-v2 .pv-stop{display:flex;gap:14px;padding:10px 0 10px 14px;border-left:2px solid var(--warn,#e0a13b);margin-bottom:6px;background:rgba(255,255,255,.02);border-radius:0 4px 4px 0}
+.plan-v2 .pv-change{background:rgba(255,255,255,.02)}
+.plan-v2 .pv-unknown{color:var(--warn,#e0a13b);font-style:italic;font-size:13px}
+.plan-v2 .pv-problems{margin-top:24px;color:var(--muted,#93a4b8);font-size:13px}
+.plan-v2 .pv-problems summary{cursor:pointer;padding:8px 0}
+.pv-cues{list-style:none;padding:0;margin:16px 0}
+.pv-cues li{display:flex;gap:16px;padding:9px 0;border-bottom:1px solid var(--line,#25344a);font-size:14px}
+`;
+
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -141,8 +189,9 @@ export function renderPlan(plan, opts = {}) {
     ? `<div class="pv-nogo"><b>NO-GO</b> ${esc(safety.warning || 'Conditions are unsafe for a kayak.')}</div>`
     : `<div class="pv-go">${esc(safety.rampEvaluation || 'Conditions look workable.')}</div>`}
 
-  ${(plan.warnings || []).length ? `<ul class="pv-warnings">${
-    plan.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
+  ${[...(plan.warnings || []), ...(opts.notes || [])].length ? `<ul class="pv-warnings">${
+    [...(plan.warnings || []), ...(opts.notes || [])].map((w) => `<li>${esc(w)}</li>`).join('')
+  }</ul>` : ''}
 
   ${loadoutSection(plan.loadout)}
 
