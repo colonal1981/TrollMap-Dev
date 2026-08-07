@@ -144,7 +144,97 @@ export async function parseQDCFolder(files, layer = 1, onProgress = null) {
 // Grid building (bin, smooth, fringe-fill)
 // ═══════════════════════════════════════════════════════════════════════
 
-export function buildDepthGrid(pts, n, doSmooth = true, doFringe = true) {
+/**
+ * Split points into separate bodies of water.
+ *
+ * WHY THIS EXISTS. buildDepthGrid() lays ONE grid over the bounding box of every point it is
+ * given. A QuickDraw folder is not one lake -- Ryan's holds four, spread over 39 x 92 km. A
+ * fixed 140 x 140 grid across that is 276 m x 660 m per cell, so 15,162 soundings recorded at
+ * ~2.4 m spacing collapsed into SEVENTEEN occupied cells, and marching squares turned those into
+ * two contour lines lying in a forest. Measured 2026-08-07 against ryan_personal.csv.
+ *
+ * Flood-fill on a coarse grid, 8-connected. `linkM` is how close two soundings must be to count
+ * as the same water; a kilometre separates lakes without splitting a long river.
+ */
+export function clusterPoints(pts, linkM = 1000) {
+  const cell = linkM / 111320;             // degrees, near enough at these latitudes
+  const occ = new Map();
+  for (let i = 0; i < pts.length; i++) {
+    const k = `${Math.round(pts[i].lon / cell)}:${Math.round(pts[i].lat / cell)}`;
+    let a = occ.get(k); if (!a) occ.set(k, a = []);
+    a.push(i);
+  }
+  const seen = new Set(); const out = [];
+  for (const k of occ.keys()) {
+    if (seen.has(k)) continue;
+    const stack = [k]; seen.add(k); const members = [];
+    while (stack.length) {
+      const c = stack.pop();
+      for (const i of occ.get(c)) members.push(pts[i]);
+      const [cx, cy] = c.split(':').map(Number);
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          const nb = `${cx + dx}:${cy + dy}`;
+          if (occ.has(nb) && !seen.has(nb)) { seen.add(nb); stack.push(nb); }
+        }
+      }
+    }
+    out.push(members);
+  }
+  out.sort((a, b) => b.length - a.length);
+  return out;
+}
+
+/**
+ * Grid size for a target cell edge, rather than a fixed count.
+ *
+ * n = 140 was fixed regardless of extent, and the two failure modes hide each other:
+ *
+ *   one 39 x 92 km grid at n=140  ->  276 m cells, 17 occupied, 2 contour lines
+ *   one  1 x 1.6 km grid at n=140 ->    7 m cells, 2,333 occupied, ZERO survive MIN_PTS
+ *
+ * Fix the clustering alone and you get nothing at all. Measured on the largest of Ryan's four
+ * water bodies (8,686 points, 0.96 x 1.56 km), cells of ~15 m put n near 60-80, which keeps
+ * 400-600 cells and 99% of the points.
+ */
+export function gridSizeFor(pts, targetCellM = 15, min = 24, max = 250) {
+  let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+  for (const p of pts) {
+    if (p.lat < minLat) minLat = p.lat; if (p.lat > maxLat) maxLat = p.lat;
+    if (p.lon < minLon) minLon = p.lon; if (p.lon > maxLon) maxLon = p.lon;
+  }
+  const midLat = (minLat + maxLat) / 2;
+  const widthM = (maxLon - minLon) * 111320 * Math.cos((midLat * Math.PI) / 180);
+  const heightM = (maxLat - minLat) * 110570;
+  const span = Math.max(widthM, heightM);
+  if (!isFinite(span) || span <= 0) return min;
+  return Math.max(min, Math.min(max, Math.round(span / targetCellM)));
+}
+
+/**
+ * Points -> contour FeatureCollection, one water body at a time.
+ *
+ * Replaces `buildDepthGrid(pts, 140) -> contourGrid(...)` at the call site. Returns the merged
+ * features plus a per-cluster report, because the old importer's real sin was SILENCE: it threw
+ * away 99.9% of the detail and said 'Done'.
+ */
+export function contoursFromPoints(pts, o = {}) {
+  const interval = o.interval ?? 2, minD = o.minD ?? 4, maxD = o.maxD ?? 120;
+  const clusters = clusterPoints(pts, o.linkM ?? 1000)
+    .filter((c) => c.length >= (o.minClusterPts ?? 40));
+  const features = []; const report = [];
+  for (const c of clusters) {
+    const n = gridSizeFor(c, o.targetCellM ?? 15);
+    const g = buildDepthGrid(c, n, true, true, o.minPts ?? 3);
+    if (!g) { report.push({ points: c.length, n, features: 0, note: 'grid build failed' }); continue; }
+    const fc = contourGrid(g, interval, minD, maxD);
+    features.push(...fc.features);
+    report.push({ points: c.length, n, features: fc.features.length });
+  }
+  return { type: 'FeatureCollection', features, report,
+           clusters: clusters.length, points: pts.length };
+}
+export function buildDepthGrid(pts, n, doSmooth = true, doFringe = true, minPts = 3) {
   if (!pts.length) return null;
   let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
   pts.forEach((p) => {
@@ -164,7 +254,10 @@ export function buildDepthGrid(pts, n, doSmooth = true, doFringe = true) {
   let grid = sum.map((row, y) => row.map((s, x) => (cnt[y][x] > 0 ? s / cnt[y][x] : NaN)));
   let has_data = cnt.map((row) => row.map((c) => c > 0));
 
-  const MIN_PTS = 10;
+  // WAS A HARDCODED 10. At the ~15 m cells this decoder now uses, a cell holds a handful of
+  // soundings and a threshold of 10 discards every one of them -- measured: 2,333 occupied cells,
+  // zero survivors. 3 keeps 99% of the points while still rejecting single-ping noise.
+  const MIN_PTS = minPts;
   for (let y = 0; y < n; y++) {
     for (let x = 0; x < n; x++) {
       if (cnt[y][x] > 0 && cnt[y][x] < MIN_PTS) {

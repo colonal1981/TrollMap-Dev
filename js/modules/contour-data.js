@@ -573,18 +573,24 @@ export function buildContourDataPanel(container) {
     if (statusEl) statusEl.textContent = `Found ${qdcFiles.length} QDC files. Decoding...`;
 
     try {
-      const { parseQDCFolder, buildDepthGrid, contourGrid } = await import('./qdc-decoder.js');
+      const { parseQDCFolder, contoursFromPoints } = await import('./qdc-decoder.js');
 
       const pts = await parseQDCFolder(qdcFiles, layer, (cur, total, stage) => {
         if (statusEl) statusEl.textContent = `${stage}: ${cur}/${total}`;
       });
       if (statusEl) statusEl.textContent = `Decoded ${pts.length} depth points. Building contours...`;
 
-      const gridGeo = buildDepthGrid(pts, 140, true, true);
-      if (!gridGeo) throw new Error('Grid build failed — check point spread/density.');
-
-      const contourFC = contourGrid(gridGeo, 2, 4, 120);
-      if (!contourFC.features.length) throw new Error('No contour lines generated.');
+      // ONE GRID PER BODY OF WATER, sized to the data rather than fixed at 140.
+      //
+      // The old call laid a single 140x140 grid over every point in the folder. Ryan's holds four
+      // separate waters across 39 x 92 km, so each cell was 276 m x 660 m and 15,162 soundings
+      // became 17 occupied cells -- two contour lines, drawn over a forest. See
+      // QDC_IMPORTER_MISALIGNS_2026-08-07.md.
+      const contourFC = contoursFromPoints(pts, { interval: 2, minD: 4, maxD: 120 });
+      if (!contourFC.features.length) {
+        throw new Error(`No contour lines from ${pts.length} points across `
+                      + `${contourFC.clusters} water bod${contourFC.clusters === 1 ? 'y' : 'ies'}.`);
+      }
 
       const key = `qdc:${qdcFiles.length}files`;
       state.ACTIVE_CONTOUR = { smart: contourFC, raw: null };
@@ -592,7 +598,17 @@ export function buildContourDataPanel(container) {
       notifyChange(); renderContourLayer(true, false);
       updateStatusPanel('loaded', key, contourFC.features.length);
 
-      if (statusEl) statusEl.textContent = `Done — ${contourFC.features.length} contour lines from ${pts.length} points.`;
+      // SAY WHAT HAPPENED PER WATER BODY. The old importer's real failure was silence: it
+      // averaged away 99.9% of the detail and reported 'Done'.
+      if (statusEl) {
+        const parts = contourFC.report
+          .map((r) => `${r.features} lines / ${r.points} pts @ n=${r.n}`)
+          .join('  ·  ');
+        statusEl.textContent = `Done — ${contourFC.features.length} contour lines from `
+          + `${pts.length} points across ${contourFC.clusters} water `
+          + `bod${contourFC.clusters === 1 ? 'y' : 'ies'}:  ${parts}`;
+      }
+      console.log('[contour-data] QDC per-water-body:', contourFC.report);
     } catch (err) {
       if (statusEl) statusEl.textContent = `Error: ${err.message}`;
       console.error('[contour-data] QDC decode/contour error', err);
