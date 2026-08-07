@@ -15,7 +15,7 @@ import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { getLoadedAccessIndex } from '../data/access-index.js';
 import { getSeason } from '../data/species-intel.js';
-import { depthBandFor, usableAhFrom } from './plan-inputs.js';
+import { depthBandFor, usableAhFrom, researchIntel } from './plan-inputs.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { solunarFor } from '../utils/solunar.js';
 import { buildSmartPlanV2, packFetcher, modelAsker } from './smart-plan-v2.js';
@@ -95,7 +95,14 @@ export async function runSmartPlanV2() {
   const date = new Date(`${inp.dateStr}T12:00:00`);
   const season = getSeason(date);
   const species = inp.species[0];
-  const depth = depthBandFor(species, inp.lakeName, season, inp.waterTempF);
+
+  // THE RESEARCH PROFILE IS THE POINT OF THE RESEARCH PIPELINE. The first version of this file
+  // ignored it entirely and used the four-lake built-in table — worse than v1, which at least put
+  // the research prose in its prompt. Try the in-memory cache the research tab fills, then ask
+  // the Worker, because the planner should not depend on someone having opened that tab first.
+  const researched = await loadResearchedProfile(inp.lakeName);
+
+  const depth = depthBandFor(species, inp.lakeName, season, inp.waterTempF, researched);
   if (!depth) return say(`No depth profile for ${species} in ${season}`, true), null;
 
   const sol = solunarFor(inp.dateStr, ramp[1], ramp[0]);
@@ -117,6 +124,9 @@ export async function runSmartPlanV2() {
         depthBand: { ft: depth.band, basis: depth.basis, lakeSpecific: !depth.generic },
       },
       catches: state.CATCHES || [],
+      // What the research pipeline actually found about this water — thermocline, oxygen,
+      // forage, habitat, the lot. v2 was sending none of it.
+      intel: researchIntel(researched, species, season),
       tackle: castableOrTrollable.map((l) => l.name),
       inventory: castableOrTrollable,
       fetchJson: packFetcher(CF_WORKER_URL),
@@ -147,6 +157,31 @@ export async function runSmartPlanV2() {
   window._planV2 = r.plan;
   window._planV2Result = r;
   return r;
+}
+
+/**
+ * The lake's researched profile: the cache the research tab fills, else the Worker.
+ *
+ * Absence is normal and silent — most lakes have not been researched. A FAILURE is not absence
+ * and gets logged, because producing these is what the whole research pipeline is for and a
+ * profile that exists but will not load should be visible, not shrugged off.
+ */
+async function loadResearchedProfile(lakeName) {
+  if (!lakeName) return null;
+  try {
+    const cached = window.getResearchedProfile?.(lakeName);
+    if (cached) return cached;
+  } catch (e) { console.warn('[plan-v2] researched cache threw', e.message); }
+  try {
+    const r = await fetch(`${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`);
+    if (r.status === 404) return null;
+    if (!r.ok) { console.warn(`[plan-v2] /research/get returned ${r.status} for ${lakeName}`); return null; }
+    const d = await r.json();
+    return d?.profile || d?.data || d || null;
+  } catch (e) {
+    console.warn('[plan-v2] could not load the researched profile:', e.message);
+    return null;
+  }
 }
 
 let cssDone = false;

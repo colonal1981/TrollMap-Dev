@@ -1,5 +1,5 @@
 import { describe, it, expect } from './expect-shim.mjs';
-import { depthBandFor, usableAhFrom } from '../js/modules/plan-inputs.js';
+import { depthBandFor, usableAhFrom, researchedBand, researchIntel } from '../js/modules/plan-inputs.js';
 import { SPECIES_BEHAVIOR_V2, getSeason } from '../js/data/species-intel.js';
 
 // ---------------------------------------------------------------------------
@@ -25,10 +25,47 @@ import { SPECIES_BEHAVIOR_V2, getSeason } from '../js/data/species-intel.js';
 const PROFILED = Object.keys(SPECIES_BEHAVIOR_V2['Striped Bass']);
 
 describe('depthBandFor — the species depth band for a whole day', () => {
-  it('uses the lake\'s own profile when the table has it', () => {
+  it('uses the RESEARCHED profile before anything hardcoded', () => {
+    // The whole point of the research pipeline. Ryan: "i thought that whole thing was supposed
+    // to be replaced by the research pipeline... please tell me we are using all of that great
+    // data that is sitting there." It was not being used at all, on a lake the table also knows.
+    const profile = { trollingIntelligence: { 'Striped Bass': { summer: { preferredDepth: [26, 34] } } } };
+    const r = depthBandFor('Striped Bass', 'Lake Wateree, SC', 'summer', 84, profile);
+    expect(r.source).toBe('research');
+    expect(r.band).toEqual([26, 34]);
+    const table = depthBandFor('Striped Bass', 'Lake Wateree, SC', 'summer', 84);
+    expect(table.source).toBe('table');
+    expect(table.band).not.toEqual(r.band);   // and they really do disagree
+  });
+
+  it('matches species names loosely, because an LLM wrote the keys', () => {
+    for (const key of ['Striped Bass', 'striped bass', 'STRIPED BASS', 'Striped-Bass']) {
+      const p = { trollingIntelligence: { [key]: { summer: { preferredDepth: [26, 34] } } } };
+      expect(researchedBand(p, 'Striped Bass', 'summer').band).toEqual([26, 34]);
+    }
+  });
+
+  it('falls past a profile that has nothing for this species or season', () => {
+    const p = { trollingIntelligence: { Crappie: { summer: { preferredDepth: [8, 14] } } } };
+    expect(researchedBand(p, 'Striped Bass', 'summer')).toBe(null);
+    const p2 = { trollingIntelligence: { 'Striped Bass': { winter: { preferredDepth: [8, 14] } } } };
+    expect(researchedBand(p2, 'Striped Bass', 'summer')).toBe(null);
+    // ...and the table catches it, rather than the planner refusing.
+    expect(depthBandFor('Striped Bass', 'Lake Wateree, SC', 'summer', 84, p2).source).toBe('table');
+  });
+
+  it('ignores a malformed researched band instead of trusting it', () => {
+    for (const bad of [[30], ['a', 'b'], [40, 20], 'deep', null, {}]) {
+      const p = { trollingIntelligence: { 'Striped Bass': { summer: { preferredDepth: bad } } } };
+      expect(researchedBand(p, 'Striped Bass', 'summer')).toBe(null);
+    }
+  });
+
+  it('uses the lake\'s own table entry when there is no research', () => {
     const r = depthBandFor('Striped Bass', 'Lake Wateree, SC', 'summer', 84);
     expect(r.generic).toBe(false);
-    expect(r.basis).toBe('Lake Wateree');
+    expect(r.basis).toBe('built-in table, Lake Wateree');
+    expect(r.source).toBe('table');
     expect(r.band.length).toBe(2);
     expect(r.band[1] > r.band[0]).toBe(true);
   });
@@ -58,7 +95,8 @@ describe('depthBandFor — the species depth band for a whole day', () => {
   it('falls back to what the species does elsewhere, and says that it did', () => {
     const r = depthBandFor('Striped Bass', 'Lake Hartwell', 'summer', 84);
     expect(r.generic).toBe(true);
-    expect(r.basis.includes('Lake Hartwell is not one of them')).toBe(true);
+    expect(r.basis.includes('Lake Hartwell has no researched profile')).toBe(true);
+    expect(r.source).toBe('table-union');
     // The union of profiled lakes, so it is wider than any one of them. Wide is the safe
     // direction for a filter: the model still picks inside it, and a narrow band would quietly
     // remove the whole lake.
@@ -94,5 +132,55 @@ describe('usableAhFrom — the reserve comes off before anyone sees the number',
     expect(usableAhFrom('')).toBe(80);
     expect(usableAhFrom(null)).toBe(80);
     expect(usableAhFrom('some motor')).toBe(80);
+  });
+});
+
+describe('researchIntel — the rest of the profile, which v2 was throwing away', () => {
+  const profile = {
+    metadata: { status: 'verified' },
+    identity: { archetype: 'Piedmont storage reservoir', maxDepthFt: 90 },
+    limnology: {
+      thermocline: { summerDepthFt: 22, strength: 'strong' },
+      oxygen: { anoxicBelowFt: 30 },
+      waterClarity: { typical: 'stained', secchiFt: 3 },
+      seasonalDrawdownFt: 4,
+    },
+    biology: { primaryForage: 'Blueback herring', baitfishMovement: 'suspend over the channel by August' },
+    habitat: { standingTimber: 'extensive in the upper end', artificialHabitatDetails: { attractorCount: 31 } },
+    trollingIntelligence: { 'Striped Bass': { summer: { preferredDepth: [26, 34], notes: 'stay on the old river channel' } } },
+    summary: { text: 'A long narrow reservoir on the Catawba.' },
+  };
+
+  it('carries the two facts that decide where fish can physically be', () => {
+    const s = researchIntel(profile, 'Striped Bass', 'summer');
+    expect(s.includes('Thermocline in summer: 22 ft')).toBe(true);
+    expect(s.includes('Anoxic below: 30 ft')).toBe(true);
+  });
+
+  it('carries forage, habitat and the fisheries agent\'s own notes', () => {
+    const s = researchIntel(profile, 'Striped Bass', 'summer');
+    expect(s.includes('Blueback herring')).toBe(true);
+    expect(s.includes('31')).toBe(true);
+    expect(s.includes('old river channel')).toBe(true);
+    expect(s.includes('26-34 ft')).toBe(true);
+  });
+
+  it('says out loud when a profile has not been verified', () => {
+    expect(researchIntel(profile, 'Striped Bass', 'summer').includes('(verified)')).toBe(true);
+    const unver = { ...profile, metadata: {} };
+    expect(researchIntel(unver, 'Striped Bass', 'summer').includes('NOT yet verified')).toBe(true);
+  });
+
+  it('omits what the research could not establish rather than emitting a blank', () => {
+    const thin = { identity: { archetype: 'farm pond' } };
+    const s = researchIntel(thin, 'Striped Bass', 'summer');
+    expect(s.includes('Thermocline')).toBe(false);
+    expect(s.includes('Anoxic')).toBe(false);
+    expect(s.includes('farm pond')).toBe(true);
+  });
+
+  it('returns null when there is no profile at all', () => {
+    expect(researchIntel(null, 'Striped Bass', 'summer')).toBe(null);
+    expect(researchIntel({}, 'Striped Bass', 'summer')).toBe(null);
   });
 });
