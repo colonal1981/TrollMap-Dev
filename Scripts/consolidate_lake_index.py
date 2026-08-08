@@ -281,7 +281,49 @@ def main():
               % (_rn, _ex, os.path.basename(npath)))
 
     reg = json.load(open(os.path.join(R, 'lakes.json'), encoding='utf-8'))
-    lakes = [x for x in reg['lakes'] if (x.get('state') or '').upper() in want]
+    # A BORDER LAKE IS IN THE REGION IF ANY OF ITS STATES IS.
+    #
+    # This tested only the PRIMARY state, which 3DHP assigns from the centroid. So a reservoir
+    # whose middle happens to sit over the line was dropped entire, even with a boundary already
+    # installed and Garmin contours already extracted for it. Sixteen waters, ~204,000 acres:
+    #
+    #     Guntersville Lake      AL/TN       65,603 ac
+    #     Lake Barkley           KY/TN       49,741 ac
+    #     John H. Kerr Reservoir VA/NC       44,895 ac
+    #     Pickwick Lake          AL/MS/TN    34,470 ac
+    #     Bartletts Ferry, Oliver, Goat Rock  AL/GA
+    #
+    # Kerr is the one that shows the cost. DELETION_TAB lists `kerr_lake` as DO NOT DELETE and
+    # records `Kerr Lake, NC` resolving to `w_kerr_scott_reservoir` -- 1,280 acres standing in
+    # for ~50,000 -- because the real one was never in the index to be resolved to.
+    #
+    # `states` is already on every one of the 3,258 rows and `state_suffix()` already renders
+    # `NC/SC` for Wylie, Tugaloo, Yonah and Webster. The list was there; only this line ignored
+    # it. Ryan, 2026-08-08: "if the lakes are in the tiles we already extracted and they are a
+    # border lake/river then put them into trollmap with state and everything it needs."
+    def _in_region(x):
+        if (x.get('state') or '').upper() in want:
+            return True
+        return bool(want & {(s or '').upper() for s in (x.get('states') or [])})
+
+    lakes = [x for x in reg['lakes'] if _in_region(x)]
+
+    # ...AND IT MUST GROUP UNDER A STATE THE PICKER SHOWS. lake-ramp-select.js builds its
+    # optgroups from STATE_ORDER = SC, NC, GA, TN, so a row left as `state: 'AL'` would pass the
+    # filter and then fall out of every group -- present in the index, invisible in the app.
+    # Promote the in-region state to primary; `states` keeps the full list, so state_suffix()
+    # still renders `AL/TN` and nothing about the display is lost.
+    _promoted = 0
+    for x in lakes:
+        if (x.get('state') or '').upper() not in want:
+            for s in (x.get('states') or []):
+                if (s or '').upper() in want:
+                    x['state'] = s.upper()
+                    _promoted += 1
+                    break
+    if _promoted:
+        print('border waters admitted on a secondary state: %d (primary state promoted so the '
+              'picker can group them)' % _promoted)
     # utf-8-sig, not utf-8. If the dumper's output was ever produced by a PowerShell `>`
     # redirect it arrives as UTF-16LE with a BOM and plain utf-8 dies on byte 0xff at
     # position 0. Sniff the BOM and decode accordingly rather than making the caller
