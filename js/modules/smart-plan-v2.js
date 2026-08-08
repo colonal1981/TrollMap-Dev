@@ -62,6 +62,8 @@ export async function buildSmartPlanV2(o) {
     ramp: o.ramp, slug: o.r2Key, depthFt: o.depthFt,
     usableAh: o.usableAh, windowMin: o.windowMin,
     structures, catches: o.catches, catchSpecies: o.species, month: o.month,
+    // Per species, per season, per lake, from the research profile — see structureWeights().
+    weights: o.weights, reliefWeights: o.reliefWeights,
     transitM: o.transitM, limit: CANDIDATE_LIMIT,
   });
   if (!candidates.length) {

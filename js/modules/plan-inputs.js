@@ -45,7 +45,7 @@ export function depthBandFor(species, lakeName, season, waterTempF, researched) 
   // plan. Normalise here rather than trusting six call sites to agree.
   const seasonKey = String(season || '').toLowerCase();
   const fromResearch = researchedBand(researched, species, seasonKey);
-  if (fromResearch) return fromResearch;
+  if (fromResearch) return clampToOxygen(fromResearch, researched);
 
   const sp = SPECIES_BEHAVIOR_V2?.[species];
   if (!sp) return null;
@@ -65,7 +65,7 @@ export function depthBandFor(species, lakeName, season, waterTempF, researched) 
 
   const key = resolveLakeKey(lakeName, sp);
   const own = key && sp[key] ? read(sp[key][s]) : null;
-  if (own) return { band: own, basis: `built-in table, ${key}`, generic: false, source: 'table' };
+  if (own) return clampToOxygen({ band: own, basis: `built-in table, ${key}`, generic: false, source: 'table' }, researched);
 
   // ---------------------------------------------------------------------------------------
   // THE TABLE COVERS FOUR LAKES. THE APP SHIPS FIFTEEN HUNDRED PACKS.
@@ -88,14 +88,66 @@ export function depthBandFor(species, lakeName, season, waterTempF, researched) 
   // ---------------------------------------------------------------------------------------
   const across = Object.keys(sp).map((k) => read(sp[k] && sp[k][s])).filter(Boolean);
   if (!across.length) return null;
-  return {
+  return clampToOxygen({
     band: [Math.min(...across.map((x) => x[0])), Math.max(...across.map((x) => x[1]))],
     basis: `${s} across the ${across.length} lakes in the built-in table — `
          + `${lakeName} has no researched profile and is not one of them`,
     generic: true,
     source: 'table-union',
+  }, researched);
+}
+
+/**
+ * NOTHING LIVES UNDER THE ANOXIC LAYER, SO DO NOT OFFER LEGS THERE.
+ *
+ * Ryan's call, 2026-08-07, asked directly: clamp the band to the anoxic depth. On a stratified
+ * reservoir in late summer the water below the oxygen line is empty, and a band that reaches into
+ * it spends candidate slots on legs no fish can be holding along.
+ *
+ * The clamp is stated, never silent — `basis` says it happened and `clampedByOxygenFt` carries
+ * the number, so a 15-40 ft band showing up as 15-30 is explainable rather than mysterious.
+ *
+ * ONE CASE IS NOT CLAMPED: an anoxic depth at or above the top of the band. That is the profile
+ * contradicting itself — it would leave no fishable water at all — and quietly returning an empty
+ * or inverted band would be worse than saying so. The band stands and `oxygenConflict` is set.
+ */
+function clampToOxygen(result, researched) {
+  const anoxic = Number(researched?.limnology?.oxygen?.anoxicBelowFt);
+  if (!result || !Number.isFinite(anoxic) || anoxic <= 0) return result;
+  const [lo, hi] = result.band;
+  if (anoxic >= hi) return result;                       // band already sits in living water
+  if (anoxic <= lo) {
+    return { ...result,
+      oxygenConflict: `the profile puts anoxic water above ${lo} ft, which would leave nothing `
+                    + 'fishable — band left alone, check the profile',
+      anoxicBelowFt: anoxic };
+  }
+  return {
+    ...result,
+    band: [lo, anoxic],
+    basis: `${result.basis}, clamped from ${hi} ft to the ${anoxic} ft anoxic line`,
+    clampedByOxygenFt: anoxic,
   };
 }
+
+// ---------------------------------------------------------------------------------------------
+// WEIGHTING THE WATER BY WHAT THE RESEARCH SAYS MATTERS HERE
+//
+// `selectCandidates` ranks legs by what they pass, using DEFAULT_WEIGHTS: hump 3, creek_mouth 3,
+// point 2, ledge 2, cove 1 — the same on every lake, for every species, in every season. That
+// table decides which legs are even OFFERED to the model, and it is a guess.
+//
+// The research profile answers exactly that question per lake and season. Wateree, summer,
+// Striped Bass: "main lake points, creek mouths, lower lake basin". So boost the types the
+// research named instead of pretending every lake is the same.
+//
+// A BOOST, NOT A REPLACEMENT. The research names a handful of structure kinds in prose; it is not
+// a complete ranking, and zeroing everything it failed to mention would throw away a hump because
+// an LLM wrote three bullet points instead of five.
+//
+// Phrases it cannot map are RETURNED, not dropped. "lower lake basin" and "current breaks" have
+// no equivalent in the pipeline's `near[]` vocabulary, and that gap should be visible.
+// ---------------------------------------------------------------------------------------------
 
 /**
  * The lake's own researched answer, which beats anything hardcoded.
@@ -136,6 +188,86 @@ export function researchedBand(profile, species, seasonKey) {
 export function usableAhFrom(motorField) {
   const m = String(motorField || '').match(/(\d+)\s*ah/i);
   return (m ? parseInt(m[1], 10) : 100) * 0.8;
+}
+
+// The lead a named structure gets over an unnamed one. Set to the top of the measured citation
+// table, so ANY type the profile named for this species and season outranks ANY type it did not,
+// while the measured counts still order things within each group. A multiplier would not do
+// that: timber's base of 27 beats a doubled point at 22, so the profile naming points and not
+// timber would still have handed back a timber leg.
+export const RESEARCH_LEAD = 27;
+
+const STRUCTURE_PHRASES = [
+  [/creek\s*mouth|tributary mouth|feeder creek/i, ['creek_mouth']],
+  [/\bpoint/i, ['point']],
+  [/\bcove|pocket\b|\bbasin\b|\barm\b/i, ['cove']],
+  [/hump|offshore structure|sunken island|shoal|high spot/i, ['hump']],
+  [/ledge|drop\s*-?\s*off|break\s*line|breakline|\bbluff/i, ['ledge']],
+  [/timber|laydown|stump|brush|wood|treetop/i, ['timber', 'attractor']],
+  [/attractor|fish habitat|reef ball|brush\s*pile/i, ['attractor', 'pile']],
+  [/bridge|causeway|piling/i, ['bridge', 'pile']],
+  [/\bflat|shallow|shoreline/i, ['shallow']],
+];
+
+// Relief is a property of the run, not a feature on it, so the phrases that describe the WATER
+// rather than a thing in it map here instead. "river channel" is the second most-cited item in
+// the whole table and has no `near[]` type at all — it is relief.
+const RELIEF_PHRASES = [
+  [/river channel|channel|current break|\bcut\b|old river/i, ['channel_edge']],
+  [/\bflat/i, ['flat']],
+  [/steep|bluff|wall/i, ['steep_bank']],
+  [/break/i, ['break']],
+];
+
+/**
+ * Weights for THIS species, THIS season, on THIS lake.
+ *
+ * TROLLING_RUNS_THE_LINE_WAS_ALWAYS_THERE_2026-08-06.md put the judgement here on purpose:
+ * "Whether six stands of flooded timber beat nine humps depends on the species, the season and
+ * where the forage is, and that judgement lives in the app's trollingIntelligence, not in a
+ * pipeline script." A constant table in the app is that same mistake moved one file over, so the
+ * constants are only the fallback for a lake nobody has researched.
+ *
+ * A LEAD, NOT A REPLACEMENT. The profile names a handful of structure kinds in prose; it is not a
+ * complete ranking, and zeroing everything it failed to mention would throw away a timber stand
+ * because an LLM wrote three bullet points instead of five.
+ *
+ * Phrases that map to nothing are RETURNED, not dropped. "lower lake basin" and "current breaks"
+ * had no equivalent when this was written, and that gap belongs in the open.
+ *
+ * @param {object}   base           DEFAULT_WEIGHTS
+ * @param {object}   baseRelief     DEFAULT_RELIEF_WEIGHTS
+ * @param {string[]} structures     the researched `structures` list for this species and season
+ */
+export function structureWeights(base, baseRelief, structures) {
+  const weights = { ...base };
+  const reliefWeights = { ...baseRelief };
+  const matched = new Set();
+  const unmatched = [];
+
+  for (const phrase of (structures || [])) {
+    const text = String(phrase || '');
+    if (!text.trim()) continue;
+    let hit = false;
+
+    for (const [re, types] of STRUCTURE_PHRASES) {
+      if (!re.test(text)) continue;
+      for (const t of types) {
+        // Only lead something the ranker already scores. Inventing a weight for a type the
+        // pipeline never emits would look like it worked and do nothing — which is exactly the
+        // shape of the docks gap, and that one is recorded rather than faked.
+        if (base[t] > 0) { weights[t] = base[t] + RESEARCH_LEAD; matched.add(t); hit = true; }
+      }
+    }
+    for (const [re, kinds] of RELIEF_PHRASES) {
+      if (!re.test(text)) continue;
+      for (const k of kinds) {
+        if (baseRelief[k] > 0) { reliefWeights[k] = baseRelief[k] + RESEARCH_LEAD; matched.add(`relief:${k}`); hit = true; }
+      }
+    }
+    if (!hit) unmatched.push(text);
+  }
+  return { weights, reliefWeights, matched: [...matched].sort(), unmatched };
 }
 
 /**
@@ -186,6 +318,10 @@ export function researchIntel(profile, species, season) {
   put('Seasonal drawdown', lim.seasonalDrawdownFt, ' ft');
   put('Flow', lim.flowCharacteristics);
 
+  // Ryan's call, 2026-08-07: these belong in the plan. What else is in the lake and how
+  // abundant the target actually is are both arguments about lure and presentation.
+  put('Other predators here', bio.predatorSpecies);
+  put('How abundant the target is', bio.speciesAbundance);
   put('Primary forage', bio.primaryForage);
   put('Secondary forage', bio.secondaryForage);
   put('Baitfish movement', bio.baitfishMovement);

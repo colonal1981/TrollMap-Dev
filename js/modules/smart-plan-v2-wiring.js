@@ -15,7 +15,8 @@ import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { getLoadedAccessIndex } from '../data/access-index.js';
 import { getSeason } from '../data/species-intel.js';
-import { depthBandFor, usableAhFrom, researchIntel } from './plan-inputs.js';
+import { depthBandFor, usableAhFrom, researchIntel, structureWeights } from './plan-inputs.js';
+import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS } from './plan-candidates.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { solunarFor } from '../utils/solunar.js';
 import { buildSmartPlanV2, packFetcher, modelAsker } from './smart-plan-v2.js';
@@ -105,6 +106,17 @@ export async function runSmartPlanV2() {
   const depth = depthBandFor(species, inp.lakeName, season, inp.waterTempF, researched);
   if (!depth) return say(`No depth profile for ${species} in ${season}`, true), null;
 
+  // What THIS species wants on THIS lake in THIS season, per the research. Falls back to the
+  // measured citation table when there is no profile — see DEFAULT_WEIGHTS.
+  const ti = researched && (researched.trollingIntelligence || researched.trolling);
+  const norm = (v) => String(v || '').toLowerCase().replace(/[^a-z]/g, '');
+  const spKey = ti && Object.keys(ti).find((k) => norm(k).includes(norm(species)) || norm(species).includes(norm(k)));
+  const researchedStructures = (spKey && ti[spKey]?.[season]?.structures) || null;
+  const w = structureWeights(DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS, researchedStructures);
+  if (w.unmatched.length) {
+    console.warn('[plan-v2] no structure type for:', w.unmatched.join(', '));
+  }
+
   const sol = solunarFor(inp.dateStr, ramp[1], ramp[0]);
   const castableOrTrollable = TACKLE_INVENTORY.filter((l) => l.trollable || l.castable);
 
@@ -116,6 +128,7 @@ export async function runSmartPlanV2() {
       launchTime: inp.launchTime, returnTime: inp.returnTime,
       windowMin: minutesBetween(inp.launchTime, inp.returnTime),
       species, depthFt: depth.band, month: date.getMonth() + 1,
+      weights: w.weights, reliefWeights: w.reliefWeights,
       usableAh: usableAhFrom(inp.motor),
       conditions: {
         ...conditionsFrom(inp, ramp, sol),

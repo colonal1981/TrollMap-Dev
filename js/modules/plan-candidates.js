@@ -192,10 +192,69 @@ export function resolveStructure(at, kind, withinM, index) {
   return best && bestM <= withinM ? { ...best, matchM: Math.round(bestM) } : null;
 }
 
+// ---------------------------------------------------------------------------------------------
+// WEIGHTS COME FROM trollingIntelligence. THIS TABLE IS THE FALLBACK, AND IT IS MEASURED.
+//
+// Corrected 2026-08-08 after Ryan: "i already answered how to weight each of the types of
+// structure... this should have already been in the build docs... did you even build it to spec?"
+// He had, it was, and I had not.
+//
+// TROLLING_RUNS_THE_LINE_WAS_ALWAYS_THERE_2026-08-06.md is explicit on both counts. On where the
+// score belongs: "There is deliberately no score. Whether six stands of flooded timber beat nine
+// humps depends on the species, the season and where the forage is, and that judgement lives in
+// the app's trollingIntelligence, not in a pipeline script." Putting a constant table in the app
+// instead is the same mistake moved one file over.
+//
+// And on the ranking itself, counted from Wateree's own trollingIntelligence across 11 species
+// and 4 seasons — 104 structure citations:
+//
+//     brush / wood / stumps          27 cites, 5 species
+//     river channel / channel edge   12 cites, 7 species
+//     points                         11 cites, 6 species
+//     docks                          10 cites, 4 species
+//     creek mouths                   10 cites, 6 species
+//     flats                           8 cites, 6 species
+//     ledges                          4 cites, 2 species
+//     humps                           3 cites, 3 species
+//
+// My first table put HUMPS TOP at 3 and flats at 0, described in a comment as "navigational
+// marks, not targets". The measurement says humps are last, 3 of 104, and flats are cited by more
+// species than anything but the channel edge. The doc says it in one line: "Humps and ledges — the
+// whole of structure.geojson — are 7 of 104. The layer answers a question the intel is barely
+// asking." Every candidate ranking produced before this commit was ordered by that inversion.
+//
+// These numbers are the citation counts, used directly. They are a measurement, not a taste, so
+// there is nothing to tune — if the ranking should change, recount it on more lakes.
+//
+// TWO KNOWN GAPS, both visible rather than papered over:
+//   - DOCKS are 10 cites across 4 species and are NOT in `near[]`. docks.geojson exists and the
+//     pipeline never joins it to the runs. Until it does, no weight here can reach them.
+//   - `hazard` stays 0. Hazard marks are things to avoid; that is not a citation ranking, it is
+//     the one place where "not a target" is the right reading.
+// ---------------------------------------------------------------------------------------------
 export const DEFAULT_WEIGHTS = {
-  hump: 3, creek_mouth: 3, point: 2, ledge: 2, cove: 1,
-  timber: 2, attractor: 2, pile: 1, bridge: 1,
-  shallow: 0, hazard: 0,        // navigational marks, not targets
+  timber: 27,          // brush / wood / stumps — the most-cited thing on the lake
+  attractor: 27,       // DNR brushpiles are the same ask; Garmin's timber outnumbers them 14:1
+  point: 11,
+  creek_mouth: 10,
+  shallow: 8,          // flats. Cited by six species. NOT a navigational mark.
+  ledge: 4,
+  hump: 3,
+  pile: 3,             // counted within brush/wood; scarce, so it keeps its own low weight
+  bridge: 3,
+  cove: 8,             // coves are how creek arms and flats present on this lake
+  hazard: 0,           // things to steer around, not fish
+};
+
+// `relief` is a property of the whole run, not a feature it passes, so it is scored once per leg
+// rather than per hit. It carries the SECOND most-cited thing in the table above — river channel
+// and channel edge, 12 cites across 7 species, more species than anything else — and until now
+// nothing scored it at all.
+export const DEFAULT_RELIEF_WEIGHTS = {
+  channel_edge: 12,
+  break: 6,
+  flat: 8,
+  steep_bank: 4,
 };
 
 /**
@@ -330,6 +389,7 @@ export function selectCandidates(runs, o) {
     quietM: o.quietM ?? 500,
     maxOffM: o.maxOffM ?? 100,
     weights: o.weights || DEFAULT_WEIGHTS,
+    reliefWeights: o.reliefWeights || DEFAULT_RELIEF_WEIGHTS,
   };
   const trollMph = o.trollMph ?? 2.0;
   const transitMph = o.transitMph ?? 3.5;
@@ -346,7 +406,13 @@ export function selectCandidates(runs, o) {
     if (!Array.isArray(coords) || coords.length < 2) continue;
 
     const win = bestWindow(run, opts);
-    if (!win || win.score <= 0) continue;
+    if (!win) continue;
+    // Relief is a property of the whole run, so it is added once rather than per hit. River
+    // channel and channel edge are 12 cites across 7 species -- more species than anything else
+    // in the count -- and nothing scored them until 2026-08-08.
+    const reliefScore = opts.reliefWeights[p.relief] || 0;
+    win.score += reliefScore;
+    if (win.score <= 0) continue;
 
     const cum = cumulative(coords);
     const start = pointAt(coords, cum, win.startM);
@@ -381,6 +447,7 @@ export function selectCandidates(runs, o) {
       batteryAh: Number((fishAh + moveAh).toFixed(2)),
       estMin: Math.round(totalMin),
       score: Number(win.score.toFixed(1)),
+      reliefScore,
       // Rank on structure passed, discounted by how much of the trip is deadhead.
       //
       // NOT score/Ah. That was the first version and it ranked 500 m stubs top of the list,
