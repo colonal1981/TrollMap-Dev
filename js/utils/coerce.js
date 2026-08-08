@@ -70,8 +70,8 @@ export function coerceSpeciesArray(v) {
  * copies of a coercion rule is how a range like "16-22" starts meaning 19 on one side of the
  * wire and NaN on the other.
  *
- * The Worker already imports from js/utils and js/data (see research/vision.js and
- * research/limnology.js), so one definition serves both.
+ * The Worker already imports from js/utils and js/data (see research/limnology.js), so one
+ * definition serves both.
  *
  * A range takes its midpoint, rounded — the caller wants a depth to fish, not an interval.
  *

@@ -92,9 +92,6 @@ async function loadLayer(lakeKey, layer) {
 //                         else is added, and is published as window.SUPPLEMENTAL_DEPTH_LAYER
 //                         for the chart-import and route code. The registry models build /
 //                         show / hide, not "already up and mutated by a feed".
-//   _visionLayer          rebuilt per FEATURE by window._removeVisionStructure. There is no
-//                         invalidate-one-marker, and invalidating the whole layer to delete
-//                         one structure would refetch a vision scan.
 //   _structureMarkerLayer seeded from OUTSIDE this module by _seedOsmStructureData, so its
 //                         build has no single owner to hang on the registry.
 //
@@ -116,8 +113,6 @@ let _depthAreaCoastal = false;
 // on Wateree -- a large lake. Leaflet's canvas is comfortable to ~10,000 paths. Until those
 // zones get a real inshore boundary, the polygons do not start until the view can use them.
 const COASTAL_DEPTH_MIN_ZOOM = 13;
-let _visionLayer      = null;
-let _visionVisible    = false;
 let _boundaryGeoJSON  = null;
 let _osmStructureData = null;
 let _structureMarkerLayer = null;
@@ -360,7 +355,8 @@ const POI_STYLE = {
 
   // ── Garmin RGN4 classes (chartpack schema v2) ──────────────────────────
   // SUBMERGED STRUCTURE — Garmin's own labels off mode 5/1, and the reason the layer exists.
-  // Colours match VISION_STYLE where the two describe the same thing (flooded timber, bridge)
+  // Colours were chosen to match the old vision-scan palette for the types the two shared
+  // (flooded timber, bridge). That scanner is gone; the colours stay because they read well.
   // so an AI-detected dock cluster and a charted one read as the same kind of thing.
   road_bed:         { emoji: '🛣️', color: '#8d6e63', structure: true },
   creek_bed:        { emoji: '🏞️', color: '#26a69a', structure: true },
@@ -464,94 +460,6 @@ let _showUnidentified = false;
 // Structure classes worth surfacing to Smart Plan and the tap-context panel.
 const STRUCTURE_TYPES = new Set(
   Object.entries(POI_STYLE).filter(([, v]) => v.structure).map(([k]) => k));
-
-const VISION_STYLE = {
-  DOCK_CLUSTER:    { emoji: '⚓', color: '#03A9F4', label: 'Dock Cluster' },
-  RIPRAP:          { emoji: '🪨', color: '#FF9800', label: 'Riprap' },
-  BRIDGE:          { emoji: '🌉', color: '#9C27B0', label: 'Bridge / Pilings' },
-  FLOODED_TIMBER:  { emoji: '🪵', color: '#795548', label: 'Flooded Timber' },
-};
-
-async function loadVisionStructures(lakeKey) {
-  if (!mapReady()) return;
-  if (_visionLayer) { getMap().removeLayer(_visionLayer); _visionLayer = null; }
-  try {
-    const url = `${CF_WORKER_URL}/chartpacks/${lakeKey}/vision-structure.geojson?v=${Date.now()}`;
-    const r = await fetch(url, { cache: 'no-store' });
-    if (!r.ok) return;
-    const gj = await r.json();
-    if (!gj?.features?.length) return;
-    const group = L.layerGroup();
-    gj.features.forEach(feat => {
-      const coords = feat.geometry?.coordinates;
-      if (!coords) return;
-      const p = feat.properties || {};
-      const style = VISION_STYLE[p.structure_type] || { emoji: '📍', color: '#9E9E9E', label: p.structure_type || 'Structure' };
-      const conf = p.confidence ? ` (${Math.round(p.confidence * 100)}%)` : '';
-      const dockNote = p.dock_count_estimate ? ` ~${p.dock_count_estimate} docks` : '';
-      const m = L.circleMarker([coords[1], coords[0]], {
-        radius: 7, color: '#fff', weight: 1.5,
-        fillColor: style.color, fillOpacity: 0.85
-      });
-      const featureId = `${coords[0].toFixed(6)},${coords[1].toFixed(6)}`;
-      m.bindTooltip(`${style.emoji} ${style.label}${dockNote}${conf}`, { sticky: true, direction: 'top', opacity: 0.9 });
-      m.bindPopup(`<b style="color:${style.color}">${style.emoji} ${esc(style.label)}</b>${dockNote}<br>
-        <span style="font-size:11px">${esc(p.description || '')}</span><br>
-        <span style="color:#aaa;font-size:10px">Confidence: ${conf} · AI vision detection</span><br>
-        <button onclick="window._removeVisionStructure('${featureId}')"
-          style="margin-top:6px;font-size:11px;padding:3px 10px;background:var(--bad,#b3261e);color:#fff;border:none;border-radius:4px;cursor:pointer">
-          🗑 Remove
-        </button>`);
-      m.featureId = featureId;
-      group.addLayer(m);
-    });
-    _visionLayer = group;
-    _visionLayer.addTo(getMap());
-    console.log(`[supplemental] vision-structure loaded: ${gj.features.length} features for ${lakeKey}`);
-  } catch (e) {
-    if (!e.message?.includes('404')) console.warn(`[supplemental] vision-structure fetch failed:`, e.message);
-  }
-}
-
-// Remove a single vision structure by coordinate ID — patches R2 GeoJSON
-window._removeVisionStructure = async function(featureId) {
-  if (!_activeLakeKey || !_visionLayer) return;
-  // Remove from map
-  _visionLayer.eachLayer(l => {
-    if (l.featureId === featureId) {
-      _visionLayer.removeLayer(l);
-      l.closePopup();
-    }
-  });
-  // Patch R2
-  try {
-    const url = `${CF_WORKER_URL}/chartpacks/${_activeLakeKey}/vision-structure.geojson?v=${Date.now()}`;
-    const r = await fetch(url, { cache: 'no-store' });
-    if (!r.ok) return;
-    const gj = await r.json();
-    const [flon, flat] = featureId.split(',').map(Number);
-    gj.features = gj.features.filter(f => {
-      const [lon, lat] = f.geometry?.coordinates || [];
-      return !(Math.abs(lon - flon) < 0.000001 && Math.abs(lat - flat) < 0.000001);
-    });
-    gj.metadata = gj.metadata || {};
-    gj.metadata.structuresFound = gj.features.length;
-    await fetch(`${CF_WORKER_URL}/research/vision-scan-save`, {
-      method: 'POST',
-      headers: workerHeaders(),
-      body: JSON.stringify({
-        lakeName: gj.metadata?.lakeName || _activeLakeKey,
-        features: gj.features,
-        tilesTotal: gj.metadata?.tilesTotal,
-        tilesProcessed: gj.metadata?.tilesProcessed,
-        tilesSkipped: gj.metadata?.tilesSkipped,
-      })
-    });
-    console.log(`[supplemental] vision structure removed: ${featureId}`);
-  } catch (e) {
-    console.warn(`[supplemental] vision remove failed:`, e.message);
-  }
-};
 
 // ── Chart text ────────────────────────────────────────────────────────────────
 //
@@ -1232,7 +1140,6 @@ export async function loadSupplementalForLake(displayName) {
   _poiGeoJSON = null;
   if (_poiLabelGroup)       { getMap()?.removeLayer(_poiLabelGroup);       _poiLabelGroup       = null; }
   clearGarminLayers();
-  if (_visionLayer)         { getMap()?.removeLayer(_visionLayer);         _visionLayer         = null; _visionVisible = false; }
   if (_structureMarkerLayer){ getMap()?.removeLayer(_structureMarkerLayer); _structureMarkerLayer = null; }
 
   await loadDepthAreas(lakeKey);

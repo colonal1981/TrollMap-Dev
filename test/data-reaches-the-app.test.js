@@ -107,7 +107,6 @@ describe('every layer the app fetches is one we actually ship', () => {
         .map((m) => m[1]));
     const KNOWN_EXTERNAL = new Set([
       'osm-structures.geojson',      // fetch_osm_structures.py
-      'vision-structure.geojson',    // vision.js, queued for deletion in DELETION_TAB.md
       'oyster_beds.geojson',         // trollmap_pipeline_coastal.py
       'marsh_edges.geojson',         // trollmap_pipeline_coastal.py
       'depth_soundings.geojson',     // trollmap_pipeline_coastal.py
