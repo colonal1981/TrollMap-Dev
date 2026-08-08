@@ -19,10 +19,10 @@ import { depthBandFor, usableAhFrom, researchIntel, structureWeights } from './p
 import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS } from './plan-candidates.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { solunarFor } from '../utils/solunar.js';
+import { checkPlanLegality, fetchForecast } from './plan-preflight.js';
 import { buildSmartPlanV2, packFetcher, modelAsker } from './smart-plan-v2.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
-import { checkPlanLegality, fetchForecast } from './plan-preflight.js';
 
 export { depthBandFor, usableAhFrom };
 
@@ -98,6 +98,7 @@ export async function runSmartPlanV2() {
 
   const date = new Date(`${inp.dateStr}T12:00:00`);
   const season = getSeason(date);
+
   const species = inp.species[0];
 
   // THE LAW FIRST, BEFORE A MODEL CALL IS SPENT ON IT. Ryan: "reg check is needed so we don't
@@ -197,6 +198,13 @@ export async function runSmartPlanV2() {
     depthBand: depth.band,
     rationale: (r.plan.notes && (r.plan.notes.scoutNotes || r.plan.notes.sonar)) || '',
   });
+  // Regulation advisories ride WITH the plan, not into a console nobody opens. A slot limit or
+  // a gear restriction is something you want on the water. checkPlanLegality returns these
+  // separately from `legal` on purpose: a warning is not a block.
+  if (legality.warnings && legality.warnings.length) {
+    r.problems = [...legality.warnings, ...(r.problems || [])];
+  }
+
   installTimeline(window, built);
 
   renderSmartPlanUI({
