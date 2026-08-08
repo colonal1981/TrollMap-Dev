@@ -20,7 +20,9 @@ import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS } from './plan-candidates.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { solunarFor } from '../utils/solunar.js';
 import { buildSmartPlanV2, packFetcher, modelAsker } from './smart-plan-v2.js';
-import { renderPlan, PLAN_V2_CSS } from './plan-render.js';
+import { planToTimeline, installTimeline } from './plan-to-timeline.js';
+import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
+import { checkPlanLegality, fetchForecast } from './plan-preflight.js';
 
 export { depthBandFor, usableAhFrom };
 
@@ -78,8 +80,9 @@ function conditionsFrom(inp, ramp, sol) {
 
 /** Build a plan and put it on the screen. Returns the result so a test or the console can read it. */
 export async function runSmartPlanV2() {
-  const status = $('smartPlanV2Status');
-  const out = $('smartPlanV2Container');
+  // v1's status line and v1's container. There is no second set any more.
+  const status = $('smartPlanStatus');
+  const out = $('smartPlanUIContainer');
   const say = (msg, bad) => {
     if (status) { status.textContent = msg; status.style.color = bad ? 'var(--warn)' : 'var(--muted)'; }
   };
@@ -96,6 +99,29 @@ export async function runSmartPlanV2() {
   const date = new Date(`${inp.dateStr}T12:00:00`);
   const season = getSeason(date);
   const species = inp.species[0];
+
+  // THE LAW FIRST, BEFORE A MODEL CALL IS SPENT ON IT. Ryan: "reg check is needed so we don't
+  // plan on closed waters." A block returns here — there is no point costing a Gemini call, a
+  // battery budget and a morning on a species that cannot be kept today.
+  const legality = checkPlanLegality(inp.lakeName, species, date);
+  if (!legality.legal) {
+    say(`${species} not legal here today`, true);
+    if (out) out.innerHTML = `<p style="color:var(--warn);font-size:12px">REGULATION BLOCK — `
+      + `${String(legality.reason || 'closed season or closed water').replace(/[&<>]/g, '')}</p>`;
+    return { plan: null, problems: [`regulation block: ${legality.reason}`] };
+  }
+
+  // Wind is what the safety rule in the prompt is judged on — over 15 sustained or 20 gusting is
+  // a no-go for a 12.5 ft kayak — and before this the model was being asked to rule on wind it
+  // had never been shown. Failure is silent and empty on purpose: no forecast is a worse plan,
+  // not a cancelled one.
+  say('Checking the forecast…');
+  const forecast = await fetchForecast(inp.lakeName, inp.dateStr);
+  if (forecast) {
+    inp.weather = forecast;
+    const wEl = $('planWeather');
+    if (wEl) wEl.value = forecast;
+  }
 
   // THE RESEARCH PROFILE IS THE POINT OF THE RESEARCH PIPELINE. The first version of this file
   // ignored it entirely and used the four-lake built-in table — worse than v1, which at least put
@@ -151,17 +177,40 @@ export async function runSmartPlanV2() {
     return null;
   }
 
-  injectCss();
   if (!r.plan) {
     say(r.problems[0] || 'No plan', true);
-    if (out) out.innerHTML = `<div class="plan-v2"><ul class="pv-warnings">${
-      r.problems.map((p) => `<li>${p.replace(/[&<>]/g, '')}</li>`).join('')}</ul></div>`;
+    if (out) out.innerHTML = `<ul style="color:var(--warn);font-size:12px">${
+      r.problems.map((p) => `<li>${String(p).replace(/[&<>]/g, '')}</li>`).join('')}</ul>`;
     return r;
   }
 
-  const notes = depth.generic
-    ? [`Depth band ${depth.band[0]}–${depth.band[1]} ft is generic: ${depth.basis}.`] : [];
-  if (out) out.innerHTML = renderPlan(r.plan, { problems: r.problems, notes });
+  // ONE PATH TO THE SCREEN, AND IT IS THE ONE THAT WAS ALREADY THERE.
+  //
+  // v2 used to draw its own markup into its own container behind its own button, which is why
+  // Preview, Print, ⬇JSON and ⬇HTML all came up empty for it: every one of those reads
+  // collectPlan(), and collectPlan() reads window._smartPlanTimeline. Nothing downstream ever
+  // looked at v2's DOM. So the plan is converted to timeline entries, installed on the globals
+  // the tab already reads, and drawn by the renderer that draws everything else.
+  if (legality.warnings.length) r.problems = [...legality.warnings, ...r.problems];
+
+  const built = planToTimeline(r.plan, {
+    depthBand: depth.band,
+    rationale: (r.plan.notes && (r.plan.notes.scoutNotes || r.plan.notes.sonar)) || '',
+  });
+  installTimeline(window, built);
+
+  renderSmartPlanUI({
+    routeRods: built.routeRods, routeSpeeds: built.routeSpeeds,
+    speedMph: built.cards[0] ? built.cards[0].speedMph : 2.0,
+    stopCandidates: built.stopCandidates,
+    scoutReport: built.rationale,
+    solunar: sol ? `Majors ${conditionsFrom(inp, ramp, sol).solunar.majors.join(', ')}` : '',
+    // The two that make this v2's plan rather than a four-phase day: one card per leg, and a
+    // timeline the assembler already ordered.
+    cardDefs: built.cards, unified: built.timeline,
+  });
+  syncSpread(built.cards, built.routeRods, built.routeSpeeds);
+
   say(`${r.plan.legs.filter((l) => l.type === 'troll').length} legs · `
     + `${(r.plan.budget.totalM / 1609.34).toFixed(1)} mi · ${r.plan.budget.plannedAh} Ah`
     + (depth.generic ? ' · generic depth band' : ''));
@@ -197,20 +246,19 @@ async function loadResearchedProfile(lakeName) {
   }
 }
 
-let cssDone = false;
-function injectCss() {
-  if (cssDone || document.getElementById('plan-v2-css')) return;
-  const el = document.createElement('style');
-  el.id = 'plan-v2-css';
-  el.textContent = PLAN_V2_CSS;
-  document.head.appendChild(el);
-  cssDone = true;
-}
-
 export function wireSmartPlanV2() {
-  const btn = $('runSmartPlanV2Btn');
-  if (!btn || btn.dataset.wired) return;
-  btn.dataset.wired = '1';
+  // THE SAME BUTTON, NOT A SECOND ONE BESIDE IT.
+  //
+  // Ryan, 2026-08-08: "just use the same button and the same area instead of bolting on this new
+  // idea next to it." v2 had its own #runSmartPlanV2Btn and its own container, which is how a
+  // rewrite ended up presented as an alternative to the thing it replaces.
+  //
+  // v1 binds this button from a setTimeout in smart-plan.js, so the flag is set here and checked
+  // there rather than trying to removeEventListener a handler nobody kept a reference to.
+  window.__smartPlanV2Owns = true;
+  const btn = $('runSmartPlanBtn');
+  if (!btn || btn.dataset.v2wired) return;
+  btn.dataset.v2wired = '1';
   btn.addEventListener('click', async () => {
     btn.disabled = true;
     try { await runSmartPlanV2(); } finally { btn.disabled = false; }

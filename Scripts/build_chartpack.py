@@ -242,7 +242,41 @@ class LakeMask:
     def cell_of(self, x, y):
         return (int((x - self.w) / self.cell), int((y - self.s) / self.cell))
 
-    def charted_fraction(self, features):
+    # A depth area whose band is 0-1 ft is not evidence of a survey. It is the waterbody edge
+    # Garmin draws around every piece of water, sounded or not. `SHOAL_DM` is the top of that
+    # band: depth_max_dm 3 is 0.3 m.
+    SHOAL_DM = 3
+
+    @staticmethod
+    def _has_soundings(features, contours=None):
+        """
+        Did anyone actually sound this water?
+
+        2026-08-08, measured on the shipped packs. Willow Lake reads 0.9327 charted, Everetts
+        0.9083, Bear Garden Swamp 0.8549, Lommond 0.9406, Yohola 0.8263, Kolomoki 0.8933 -- and
+        every one of them has ZERO contours and exactly one depth band, `(0, 3)`, one to three
+        polygons of it. That band is the shoreline outline, not a survey, and filling it reported
+        most of the lake as charted.
+
+        Wateree, genuinely surveyed, carries bands from `(0, 3)` to `(70, 73)` across 7,512
+        contours. So the discriminator is not "how much (0,3) is there" but "is there anything
+        BELOW it", and that is a gate rather than a filter: once a lake passes, every one of its
+        bands counts toward coverage exactly as before, including the shallow margin, which on a
+        surveyed lake really was sounded. Wateree's number does not move.
+
+        This is Ryan's ship rule, measured properly: "if it has bathymetry ship it."
+        """
+        for f in (contours or []):
+            g = f.get('geometry') or {}
+            if (g.get('coordinates') or []) and g.get('type') in ('LineString', 'MultiLineString'):
+                return True
+        for f in features or []:
+            hi = (f.get('properties') or {}).get('depth_max_dm')
+            if hi is not None and hi > LakeMask.SHOAL_DM:
+                return True
+        return False
+
+    def charted_fraction(self, features, contours=None):
         """What share of the lake's own surface is actually surveyed.
 
         MEASURE THE DEPTH BANDS, NOT THE CONTOURS. The first version counted cells containing
@@ -266,6 +300,10 @@ class LakeMask:
         """
         if not self.core:
             return None
+        # Nothing below the 0-1 ft edge band means nothing was ever sounded here. Zero, not a
+        # fraction of the outline -- see _has_soundings.
+        if not self._has_soundings(features, contours):
+            return 0.0
         hit = set()
         for f in features:
             g = f.get('geometry') or {}

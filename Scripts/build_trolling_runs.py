@@ -90,6 +90,160 @@ def ring_area_m2(c):
     return abs(s) / 2.0
 
 
+# ── Making a contour into a line a boat can steer ────────────────────────────────────────────
+#
+# 2026-08-08. Ryan, looking at the rendered runs over the satellite layer, with a red line drawn
+# on top of what he would actually do: "i would never actually do what this is showing... i know
+# we have this just blindly following a contour but that isn't what a fisherman would do."
+#
+# He is right, and it is not a tuning problem. A contour is a cartographer's line: it enters every
+# pocket, wraps every dock cut and comes back out, because that is what the depth does. A boat
+# holding two rods at 2 mph does not, and cannot -- each of those reversals swings the spread out
+# of the zone and tangles it. What he drew instead was a chord straight across the mouth of the
+# cove, and a straight run holding the band rather than tracing its wiggle.
+#
+# The obvious fix -- raise --simplify-m from 5 to 60 -- is wrong and would put him on the rocks.
+# Douglas-Peucker is shape-blind. It has no idea which side of the line is water, so a chord that
+# skips a headland cuts straight over the point. A shortcut across a cove mouth and a shortcut
+# across a point look identical to RDP and are opposite in the only way that matters.
+#
+# So the shortcut is tested against the pack's own `depth_areas.geojson` instead of against
+# geometry alone: a chord is allowed only where every point along it sits in charted water at
+# least as deep as the contour being shortcutted. Cove mouths pass, because the water off the
+# mouth is deeper than the line going into it. Points fail, because the water over a point is
+# shallower. That distinction is the whole feature.
+
+
+class DepthIndex:
+    """
+    Where is the water, and how deep, from `depth_areas.geojson`.
+
+    A grid of polygon bounding boxes so a lookup touches a handful of candidates rather than all
+    of them. Holes are honoured: a ring inside a polygon is an island, and an island is not water.
+    """
+
+    def __init__(self, features, cell_deg=0.004):
+        self.cell = cell_deg
+        self.grid = defaultdict(list)
+        self.polys = []
+        for f in features or []:
+            g = f.get('geometry') or {}
+            t = g.get('type')
+            if t not in ('Polygon', 'MultiPolygon'):
+                continue
+            pr = f.get('properties') or {}
+            hi = pr.get('depth_max_dm')
+            if hi is None:
+                continue
+            parts = [g.get('coordinates')] if t == 'Polygon' else (g.get('coordinates') or [])
+            for rings in parts:
+                if not rings or not rings[0]:
+                    continue
+                xs = [p[0] for p in rings[0]]
+                ys = [p[1] for p in rings[0]]
+                box = (min(xs), min(ys), max(xs), max(ys))
+                i = len(self.polys)
+                self.polys.append((rings, int(hi), box))
+                for gx in range(int(box[0] / cell_deg), int(box[2] / cell_deg) + 1):
+                    for gy in range(int(box[1] / cell_deg), int(box[3] / cell_deg) + 1):
+                        self.grid[(gx, gy)].append(i)
+
+    def __len__(self):
+        return len(self.polys)
+
+    @staticmethod
+    def _in_ring(ring, x, y):
+        inside = False
+        n = len(ring)
+        j = n - 1
+        for i in range(n):
+            xi, yi = ring[i][0], ring[i][1]
+            xj, yj = ring[j][0], ring[j][1]
+            if (yi > y) != (yj > y):
+                if x < (xj - xi) * (y - yi) / (yj - yi + 1e-18) + xi:
+                    inside = not inside
+            j = i
+        return inside
+
+    def shallowest_dm(self, x, y):
+        """
+        SHALLOWEST charted band containing this point, or None where nothing is charted.
+
+        Shallowest, not deepest, and the difference is the whole safety argument. Garmin's depth
+        areas usually tile the lake as adjacent bands, so a point falls in exactly one and it does
+        not matter -- but where they overlap or nest, a shoal drawn inside a larger deep polygon
+        would be invisible to a max(). The first version of this took the deepest and a test lake
+        with a 3 ft point sitting in 20 ft water reported 20 ft over the point, which is precisely
+        the chord that runs a boat aground. If anything charted says this water is thin, it is
+        thin.
+        """
+        best = None
+        for i in self.grid.get((int(x / self.cell), int(y / self.cell)), ()):
+            rings, hi, box = self.polys[i]
+            if not (box[0] <= x <= box[2] and box[1] <= y <= box[3]):
+                continue
+            if not self._in_ring(rings[0], x, y):
+                continue
+            if any(self._in_ring(h, x, y) for h in rings[1:]):
+                continue          # an island
+            if best is None or hi < best:
+                best = hi
+        return best
+
+
+def chord_ok(a, b, dm, dindex, samples, tol_dm):
+    """Would a straight run from a to b stay in water at least as deep as the dm contour?"""
+    n = max(2, samples)
+    for i in range(1, n):
+        t = i / float(n)
+        x = a[0] + (b[0] - a[0]) * t
+        y = a[1] + (b[1] - a[1]) * t
+        hi = dindex.shallowest_dm(x, y)
+        if hi is None or hi < dm - tol_dm:
+            return False
+    return True
+
+
+def steer(run, dm, dindex, max_chord_m, samples, tol_dm):
+    """
+    Replace the contour's wander with the longest legal straight lines.
+
+    Exponential reach then a binary refine, rather than trying every j: a 400 m chord over 5 m
+    vertices is 80 candidates, and testing all of them for every vertex of every run of every
+    depth of 1,500 lakes is the difference between a coffee and an afternoon. Validity is not
+    strictly monotonic in reach -- a longer chord can clear a shoal a shorter one clipped -- so
+    this can leave a slightly shorter line than the true optimum. It is a trolling pass, not a
+    packing problem.
+    """
+    n = len(run)
+    if dindex is None or len(dindex) == 0 or n < 3:
+        return None
+    out = [run[0]]
+    i = 0
+    while i < n - 1:
+        lo = i + 1                                   # always legal: it is the contour itself
+        step = 1
+        while True:                                  # reach out while it holds
+            j = i + step * 2
+            if j >= n or metres(run[i], run[j]) > max_chord_m:
+                break
+            if not chord_ok(run[i], run[j], dm, dindex, samples, tol_dm):
+                break
+            lo = j
+            step *= 2
+        hi = min(n - 1, i + step * 2)
+        while lo + 1 < hi:                           # then close the gap
+            mid = (lo + hi) // 2
+            if metres(run[i], run[mid]) <= max_chord_m and \
+               chord_ok(run[i], run[mid], dm, dindex, samples, tol_dm):
+                lo = mid
+            else:
+                hi = mid
+        out.append(run[lo])
+        i = lo
+    return out
+
+
 def rdp(pts, eps_m):
     """Douglas-Peucker. A trolling line does not need centimetre fidelity; 5 m keeps the shape
     a plotter draws and drops roughly three quarters of the vertices."""
@@ -279,7 +433,8 @@ def load_points(pack):
     return pts
 
 
-def build_one(pack, min_len, simplify, reach_m, annotate_m=100.0):
+def build_one(pack, min_len, simplify, reach_m, annotate_m=100.0,
+              chord_m=0.0, chord_samples=6, chord_tol_dm=3):
     cpath = os.path.join(pack, 'contours.geojson')
     if not os.path.isfile(cpath):
         return None
@@ -296,6 +451,22 @@ def build_one(pack, min_len, simplify, reach_m, annotate_m=100.0):
             nodes, edges = g
             idx = NodeIndex(nodes)
             mainset = main_component(len(nodes), edges)
+
+    # The chord validator. Absent depth areas this stays None and every run falls back to plain
+    # RDP -- which is the old behaviour, and is what 988 packs with no soundings will get.
+    dindex = None
+    if chord_m > 0:
+        dpath = os.path.join(pack, 'depth_areas.geojson')
+        if os.path.isfile(dpath):
+            try:
+                with open(dpath, 'r', encoding='utf-8') as fh:
+                    dindex = DepthIndex((json.load(fh) or {}).get('features') or [])
+                if len(dindex) == 0:
+                    dindex = None
+            except Exception as e:
+                print('   !! %s depth_areas unreadable (%s) -- contours kept as drawn'
+                      % (os.path.basename(pack), str(e)[:60]))
+                dindex = None
 
     pts = load_points(pack)
     pcell = max(annotate_m, 50.0) / 111320.0 * 1.5
@@ -315,7 +486,8 @@ def build_one(pack, min_len, simplify, reach_m, annotate_m=100.0):
         by[dm].append(gm['coordinates'])
 
     out, stats = [], {'runs': 0, 'kept': 0, 'closed': 0, 'routable': 0, 'unroutable': 0,
-                      'v_raw': 0, 'v_out': 0, 'depths': len(by)}
+                      'v_raw': 0, 'v_out': 0, 'depths': len(by),
+                      'steered': 0, 'v_chord': 0}
     for dm in sorted(by):
         for run in stitch(by[dm]):
             stats['runs'] += 1
@@ -325,6 +497,15 @@ def build_one(pack, min_len, simplify, reach_m, annotate_m=100.0):
             closed = metres(run[0], run[-1]) < 2.0
             stats['v_raw'] += len(run)
             geom = rdp(run, simplify)
+            if dindex is not None:
+                # Straighten what the water allows. Done AFTER rdp so the chord search walks
+                # tens of vertices rather than thousands, and the result is checked for length:
+                # a chord that shortens a run below --min-len-m has cut away the fishing.
+                st = steer(geom, dm, dindex, chord_m, chord_samples, chord_tol_dm)
+                if st and len(st) >= 2 and length_m(st) >= min_len:
+                    stats['steered'] += 1
+                    stats['v_chord'] += len(geom) - len(st)
+                    geom = st
             if closed and geom[0] != geom[-1]:
                 geom.append(geom[0])
             stats['v_out'] += len(geom)
@@ -429,6 +610,16 @@ def main():
                     help='how close a graph node must be for a run to count as reachable')
     ap.add_argument('--annotate-m', type=float, default=100.0,
                     help='how far off the line a feature is still "on" the run (default 100)')
+    ap.add_argument('--chord-m', type=float, default=400.0,
+                    help='longest straight shortcut allowed across a bend, in metres (default '
+                         '400; 0 disables and restores the raw contour). A chord is only taken '
+                         'where the pack says the water under it is at least as deep as the '
+                         'contour being shortcutted, so cove mouths are cut and points are not.')
+    ap.add_argument('--chord-tol-dm', type=int, default=3,
+                    help='how much shallower than the contour a chord may pass, in decimetres '
+                         '(default 3, about a foot). Absorbs the step between depth bands.')
+    ap.add_argument('--chord-samples', type=int, default=6,
+                    help='points tested along each candidate chord (default 6)')
     ap.add_argument('--only', default=None, help='one slug, for testing')
     ap.add_argument('--report', default=None)
     a = ap.parse_args()
@@ -443,7 +634,8 @@ def main():
     for k, slug in enumerate(slugs, 1):
         pack = os.path.join(a.packs, slug)
         try:
-            r = build_one(pack, a.min_len_m, a.simplify_m, a.reach_m, a.annotate_m)
+            r = build_one(pack, a.min_len_m, a.simplify_m, a.reach_m, a.annotate_m,
+                          a.chord_m, a.chord_samples, a.chord_tol_dm)
         except Exception as e:
             report[slug] = {'error': '%s: %s' % (type(e).__name__, e)}
             skipped += 1
@@ -471,6 +663,16 @@ def main():
     if tot['v_raw']:
         print('   vertices %d -> %d  (%.0f%% after %g m simplify)'
               % (tot['v_raw'], tot['v_out'], 100.0 * tot['v_out'] / tot['v_raw'], a.simplify_m))
+    if a.chord_m > 0:
+        # Say what was straightened and what was left alone. A run the water would not let us
+        # chord is not a failure -- it is a shoreline with nothing to cut across -- but a run
+        # count of zero across a whole region means depth_areas never loaded, and that should
+        # look different from "the lake is straight".
+        print('   steered %d of %d runs, %d vertices removed by chording (<=%g m chords)'
+              % (tot.get('steered', 0), tot.get('kept', 0), tot.get('v_chord', 0), a.chord_m))
+        if tot.get('kept') and not tot.get('steered'):
+            print('   !! nothing was steered at all -- check that depth_areas.geojson exists in '
+                  'the packs, because without it every run is the raw contour')
     if tot['routable'] or tot['unroutable']:
         print('   routable %d   NOT reachable from the main graph %d'
               % (tot['routable'], tot['unroutable']))

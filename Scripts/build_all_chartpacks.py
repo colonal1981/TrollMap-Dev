@@ -676,8 +676,12 @@ def _flush(slug, layers, mask, meta, a, report):
             report[slug] = rec
             return
     else:
+        # Contours are passed as corroborating evidence, not as the measurement. A lake whose
+        # only depth band is the 0-1 ft shoreline outline scores 0 unless something was actually
+        # sounded -- see LakeMask._has_soundings.
         frac = mask.charted_fraction(
-            [f for l in CHARTED_LAYERS for f in layers.get(l, [])])
+            [f for l in CHARTED_LAYERS for f in layers.get(l, [])],
+            layers.get('contours') or [])
         rec['charted'] = frac
         rec['counts'] = {k: len(v) for k, v in layers.items() if v}
 

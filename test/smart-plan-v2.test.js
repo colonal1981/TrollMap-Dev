@@ -1,6 +1,5 @@
 import { describe, it, expect } from './expect-shim.mjs';
 import { buildSmartPlanV2, CANDIDATE_LIMIT } from '../js/modules/smart-plan-v2.js';
-import { renderPlan, renderCues, metres } from '../js/modules/plan-render.js';
 
 // ---------------------------------------------------------------------------
 // Why this test exists
@@ -171,61 +170,3 @@ describe('smart-plan-v2 — the whole path with no network', () => {
   });
 });
 
-describe('plan-render — drawing it', () => {
-  it('leads with distance and marks every clock value as an estimate', async () => {
-    const r = await buildSmartPlanV2({ ...OPTS, askModel: goodModel() });
-    const html = renderPlan(r.plan, { problems: r.problems });
-    expect(html.includes('The day, by distance')).toBe(true);
-    expect(html.includes('pv-est')).toBe(true);
-    expect(html.includes('est ')).toBe(true);
-  });
-
-  it('says what a rod change costs, from the rod', async () => {
-    const r = await buildSmartPlanV2({ ...OPTS, askModel: goodModel() });
-    const html = renderPlan(r.plan);
-    expect(html.includes('snap — seconds')).toBe(true);
-  });
-
-  it('shows what it had to fix rather than hiding it', async () => {
-    const model = goodModel((a) => { a.legs.push({ runId: 'nope' }); return a; });
-    const r = await buildSmartPlanV2({ ...OPTS, askModel: model });
-    const html = renderPlan(r.plan, { problems: r.problems });
-    expect(html.includes('the app had to')).toBe(true);
-    expect(html.includes('no such run')).toBe(true);
-  });
-
-  it('escapes anything the model wrote', () => {
-    const plan = { planVersion: 2, meta: { water: '<img src=x onerror=alert(1)>' },
-                   legs: [], changes: [], budget: {}, loadout: { rods: [] }, safety: {}, warnings: [] };
-    const html = renderPlan(plan);
-    expect(html.includes('<img')).toBe(false);
-    expect(html.includes('&lt;img')).toBe(true);
-  });
-
-  it('never prints a made-up depth', () => {
-    const plan = { planVersion: 2, meta: {}, changes: [], budget: {}, safety: {}, warnings: [],
-      loadout: { rods: [] },
-      legs: [{ id: 'L1', type: 'troll', startM: 0, lengthM: 100, depthFt: null, speedMph: 2,
-               batteryAh: 1, estDurationMin: 1, estStartTime: '06:00', deploy: {}, coordinates: [],
-               stops: [{ id: 'S1.1', atM: 10, depthFt: null, durationMin: 15, structure: 'creek mouth' }] }] };
-    const html = renderPlan(plan);
-    expect(html.includes('depth not charted')).toBe(true);
-    expect(/\b6 ft\b/.test(html)).toBe(false);
-  });
-
-  it('renders cues in distance order for the phone', async () => {
-    const r = await buildSmartPlanV2({ ...OPTS, askModel: goodModel() });
-    const html = renderCues(r.plan);
-    expect(html.includes('pv-cue-stop') || html.includes('pv-cue-change')).toBe(true);
-  });
-
-  it('speaks in kilometres out on the water and metres up close', () => {
-    expect(metres(480)).toBe('480 m');
-    expect(metres(4820)).toBe('4.8 km');
-  });
-
-  it('says so plainly when there is no plan', () => {
-    expect(renderPlan(null).includes('No plan')).toBe(true);
-    expect(renderPlan({ planVersion: 1 }).includes('No plan')).toBe(true);
-  });
-});

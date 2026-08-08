@@ -170,7 +170,10 @@ RULES THAT ARE NOT NEGOTIABLE
    is because you ordered it that way. Deadheading costs half again as much battery per mile as
    trolling, so wandering is expensive.
 4. A stop is a pause ON a leg, not instead of one. Stop where the structure is better cast at
-   than trolled over.
+   than trolled over — a hump crown, a dock line, a creek mouth, a laydown. Judge every leg's
+   structures on their own merits: a day that passes a dozen castable features and stops at one
+   of them has ignored the water the app just handed you. Do not pad the list to hit a number
+   either. Stop at what earns it, leg by leg, and the count will take care of itself.
 5. \`depthFt\` on a structure is that structure's own depth — size the presentation from it. Where
    it is null the pipeline has no depth for that kind of feature; say so rather than guessing.
 6. Two rods in the water per leg. Exactly one port, one starboard.
@@ -199,11 +202,14 @@ RETURN EXACTLY THIS SHAPE
       "why": "one sentence on why this water, now" }
   ],
   "stops": [
-    { "runId": "copied exactly", "structureId": "copied exactly from that leg's structures",
+    { "runId": "copied exactly", "id": "that structure's \`id\`, copied exactly",
       "rods": ["R6"], "durationMin": 15,
       "why": "why this is worth stopping for rather than trolling over",
       "presentation": "how to work it",
       "positioning": "how to hold the boat there, given no spot-lock" }
+    // ONE ENTRY PER STRUCTURE WORTH STOPPING AT, across the whole day. Several is normal; one
+    // for a whole day almost never is. Copy \`id\` — NOT \`structureId\`, which is the lake's own
+    // name for the feature and is there to be read, not returned.
   ],
   "changes": [
     { "beforeRunId": "copied exactly", "rodId": "R5", "to": "exact name from the list",
@@ -379,12 +385,24 @@ export function planArgsFrom(res, candidates, ctx = {}) {
   // --- stops and changes ----------------------------------------------------------------------
   // Only shape is checked here. Whether a structure id exists on its leg is assemblePlan's job,
   // because that is where the leg's own pass list lives.
+  // TAKE THE STRUCTURE REFERENCE FROM EITHER FIELD.
+  //
+  // 2026-08-08. Ryan: the plan "only gave 1 spot to stop and cast". The shape block asked for a
+  // field called `structureId`, and the candidate data the model reads ALSO has a field called
+  // `structureId` — the lake's own name for the feature, `hump_7`. So the model copied the
+  // obvious one, assemblePlan looked it up in a map keyed on `id`, missed, and dropped the stop
+  // into a collapsed warnings block. The stops that survived were the ones on timber, attractors
+  // and docks, because those carry `structureId: null` and the model had nothing to copy but
+  // `id`. Hence exactly one stop, on the unnamed feature.
+  //
+  // The shape block now says `id`. This accepts either, because a prompt is a request and a
+  // parser should not lose a day's fishing over which of two field names a model reached for.
   const stops = (Array.isArray(res.stops) ? res.stops : []).filter((s) => {
-    if (s && str(s.runId) && str(s.structureId)) return true;
-    problems.push(`dropped a stop with no runId or structureId: ${JSON.stringify(s)}`);
+    if (s && str(s.runId) && (str(s.id) || str(s.structureId))) return true;
+    problems.push(`dropped a stop with no runId or structure reference: ${JSON.stringify(s)}`);
     return false;
   }).map((s) => ({
-    runId: s.runId, structureId: s.structureId,
+    runId: s.runId, structureId: str(s.id) || str(s.structureId),
     rods: Array.isArray(s.rods)
       ? s.rods.map(reseat).filter((x) => ROD_IDS.includes(x) && usable(x, `a stop on ${s.runId}`))
       : [],

@@ -1502,7 +1502,13 @@ Return ONLY valid JSON, no markdown:
   return {groqPlan,phaseInfo,rangeMiles};
 }
 
-setTimeout(()=>{ document.getElementById('runSmartPlanBtn')?.addEventListener('click',runSmartPlan); },800);
+// v2 owns Generate now. It sets the flag when it binds, and both modules load before this fires.
+// Checked rather than unbound because this handler was attached anonymously from a setTimeout and
+// there is no reference left to removeEventListener with. When v1 is deleted this goes with it.
+setTimeout(()=>{
+  if (window.__smartPlanV2Owns) { console.log('[smart-plan] v2 owns Generate — v1 not bound'); return; }
+  document.getElementById('runSmartPlanBtn')?.addEventListener('click',runSmartPlan);
+},800);
 
 window.runSmartPlan=runSmartPlan;
 window.applyStoredSmartPlanDepth=applyStoredSmartPlanDepth;

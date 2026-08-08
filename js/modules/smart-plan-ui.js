@@ -53,17 +53,35 @@ function getTrackStats(trackName, speedMph) {
 }
 
 // ── Route card definitions (still used for building troll entries) ────────────
-function buildCards(fallbackSpeedMph, routeSpeeds = {}) {
+/**
+ * The cards a plan is made of.
+ *
+ * The four below are v1's shape and v1's story — dawn shallow, out, back, deeper, home. That was
+ * never a fact about fishing, it was the only route the old generator could build. A v2 plan is N
+ * legs in whatever order the day is best fished, so it passes its own `cardDefs` and none of this
+ * applies to it.
+ *
+ * Ryan, 2026-08-08, when I treated this list as a contract to satisfy rather than a layout to
+ * borrow: "use the original as a guide not a rule... just the general layout idea stays not the
+ * out and back or that the morning needs to be more shallow all of that can go."
+ *
+ * What genuinely stays is everything below the header — the card, the depth and spread tiles, the
+ * two rod slots, the italic why. That is entry-driven already and does not care how many there
+ * are or what they are called.
+ */
+function buildCards(fallbackSpeedMph, routeSpeeds = {}, cardDefs = null) {
   const fallbackSpeed = Number(fallbackSpeedMph) || 1.8;
-  return [
+  return (cardDefs || [
     { key: 'Ph1 Outbound', label: 'Phase 1 Outbound', shortLabel: 'Ph1 Out', icon: '🌅', color: '#00e5ff', desc: 'Dawn Shallow — heading out', longDesc: 'Dawn Shallow' },
     { key: 'Ph1 Inbound',  label: 'Phase 1 Inbound',  shortLabel: 'Ph1 In',  icon: '↩️',  color: '#00bcd4', desc: 'Return pass on same depth', longDesc: 'Return' },
     { key: 'Ph2 Outbound', label: 'Phase 2 Outbound', shortLabel: 'Ph2 Out', icon: '☀️',  color: '#ffb300', desc: 'Mid-depth ledge run — heading out', longDesc: 'Mid-Depth Ledge' },
     { key: 'Ph2 Inbound',  label: 'Phase 2 Inbound',  shortLabel: 'Ph2 In',  icon: '🏠',  color: '#ff9800', desc: 'Heading Home — deeper channel', longDesc: 'Heading Home' },
-  ].map((card) => {
+  ]).map((card) => {
     const routeSpeed = Number(routeSpeeds?.[card.key]);
     const speedMph = Number.isFinite(routeSpeed) && routeSpeed > 0 ? routeSpeed : fallbackSpeed;
-    return { ...card, speedMph, stats: getTrackStats(card.key, speedMph) };
+    // A caller that already knows its distance and time says so. getTrackStats() reads
+    // state.DATA.tracks by name, which only ever holds v1's four phase tracks.
+    return { ...card, speedMph, stats: card.stats || getTrackStats(card.key, speedMph) };
   });
 }
 
@@ -379,7 +397,16 @@ export function buildUnifiedTimeline({ routeRods, timeline, stopCandidates, rout
 }
 
 // ── Unified Timeline Renderer (single component, no separate blocks) ─────────
-export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeeds = {}, phases, solunar, stopCandidates, timeline }) {
+/**
+ * @param {object[]} [o.cardDefs] one card per leg, in order. v2 supplies these; v1 omits them and
+ *                               gets its four phases.
+ * @param {object[]} [o.unified]  an already-ordered timeline. Supplied, it is used AS IS —
+ *                               `buildUnifiedTimeline()` weaves stops into phases by guessing
+ *                               from `progressPct`, and v2's assembler already placed every stop
+ *                               at its own `atM` along its own leg. Weaving it twice would move
+ *                               stops the plan had put in the right place.
+ */
+export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeeds = {}, phases, solunar, stopCandidates, timeline, cardDefs = null, unified = null }) {
   let container = document.getElementById('smartPlanUIContainer');
   if (!container) {
     container = document.createElement('div');
@@ -392,14 +419,15 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
   }
   if (!container) return;
 
-  const cards = buildCards(speedMph || 1.8, routeSpeeds);
+  const cards = buildCards(speedMph || 1.8, routeSpeeds, cardDefs);
   const totalTime = cards.reduce((s, c) => s + (c.stats.timeMin || 0), 0);
   const totalDist = cards.reduce((s, c) => s + parseFloat(c.stats.distMi || 0), 0);
   const passSpeeds = [...new Set(cards.map((card) => card.speedMph))];
   const speedSummary = passSpeeds.join(' / ');
 
-  // Build canonical unified timeline once
-  const unifiedTimeline = buildUnifiedTimeline({ routeRods, timeline, stopCandidates, routeSpeeds, speedMph });
+  // Build canonical unified timeline once — unless the caller already has one in order.
+  const unifiedTimeline = unified
+    || buildUnifiedTimeline({ routeRods, timeline, stopCandidates, routeSpeeds, speedMph });
   // Persist for collectPlan and GPX interleaving
   window._smartPlanTimeline = unifiedTimeline;
   window._smartPlanRouteRods = routeRods;
@@ -543,8 +571,8 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
           </div>
           <!-- Rods -->
           <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:8px">
-            ${rodSlotHtml(rods[0] || null, phaseOrderIndex(entry.key), 0)}
-            ${rodSlotHtml(rods[1] || null, phaseOrderIndex(entry.key), 1)}
+            ${rodSlotHtml(rods[0] || null, phaseOrderIndex(entry.key, cards), 0)}
+            ${rodSlotHtml(rods[1] || null, phaseOrderIndex(entry.key, cards), 1)}
           </div>
           ${entry.why ? `<div style="font-size:11px;color:var(--muted);font-style:italic;border-top:1px dashed var(--line);padding-top:6px">💡 ${esc(entry.why)}</div>` : ''}
         </div>`;
@@ -642,10 +670,14 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
   };
 }
 
-function phaseOrderIndex(key) {
-  const order = ['Ph1 Outbound','Ph1 Inbound','Ph2 Outbound','Ph2 Inbound'];
-  const idx = order.indexOf(key);
-  return idx >=0 ? idx : 0;
+// Which card a rod-edit click belongs to. Was a lookup in the hardcoded four, which meant any key
+// outside them silently returned 0 and the pencil edited the FIRST leg's rod instead of the one
+// under your finger. Indexes the cards actually on screen now, so it holds for a plan of any
+// length; -1 rather than 0 when there is no match, and the caller disables the control.
+function phaseOrderIndex(key, cards) {
+  const idx = (cards || []).findIndex((c) => c.key === key);
+  if (idx >= 0) return idx;
+  return ['Ph1 Outbound', 'Ph1 Inbound', 'Ph2 Outbound', 'Ph2 Inbound'].indexOf(key);
 }
 
 // ── Sync to state.SPREAD ──────────────────────────────────────────────────────

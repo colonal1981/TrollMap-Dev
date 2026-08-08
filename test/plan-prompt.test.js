@@ -294,3 +294,91 @@ describe('plan-prompt — straight into the assembler', () => {
     expect(plan.changes[0].from).toBe(SNAP);
   });
 });
+
+// ---------------------------------------------------------------------------
+// THE DAY THAT CAME BACK WITH ONE STOP ON IT
+//
+// 2026-08-08. Ryan, on the first plan he ran through v2: it "only gave 1 spot to stop and cast".
+//
+// Two things caused it and only one was the prompt. The shape block asked the model for a field
+// called `structureId`, and the candidate data it reads ALSO carries a field called `structureId`
+// — the lake's own name for the feature, `hump_9`, sitting right next to the `id` the app
+// actually resolves. The model copied the one whose name matched the request. assemblePlan looked
+// it up in a Map keyed on `id`, missed, and dropped the stop into a collapsed warnings block.
+//
+// The reason it came back as exactly ONE rather than none: `structureId` is null for every type
+// the packs cannot name — timber, attractors, docks — so on those the model had nothing to copy
+// but `id`, and those stops survived. A whole day of humps and points thrown away, one stop left
+// standing on an unnamed snag.
+//
+// Neither half of that is visible from a unit test of either module alone, which is why this one
+// runs the round trip. The prompt now asks for `id`; the parser and the assembler take either.
+// ---------------------------------------------------------------------------
+describe('plan-prompt — a stop named the lake\'s way still lands', () => {
+  const TWO_PASS = [
+    { runId: 'w#1', runIndex: 1, lengthM: 2500, depthFt: 24,
+      start: [-80.72, 34.38], end: [-80.70, 34.38],
+      coordinates: [[-80.72, 34.38], [-80.70, 34.38]],
+      passes: [
+        { id: 'w#1:p0', atM: 900, type: 'hump', offM: 30, weight: 3, at: [-80.71, 34.38],
+          structureId: 'hump_9', what: 'offshore hump, crown 18 ft', depthFt: 18 },
+        // No structureId — the packs cannot name timber. This is the one that used to survive.
+        { id: 'w#1:p1', atM: 1600, type: 'timber', offM: 15, weight: 27, at: [-80.705, 34.38],
+          structureId: null, what: 'standing timber', depthFt: null },
+      ] },
+  ];
+  const build = (stops) => assemblePlan({
+    ...planArgsFrom({
+      safety: { isGo: true }, loadout: { rods: [rod('R1', TIE), rod('R5', SNAP)] },
+      legs: [{ runId: 'w#1', deploy: { port: 'R1', starboard: 'R5' }, why: 'the hump line' }],
+      stops,
+    }, TWO_PASS, { tackle: TACKLE, connectionOf }),
+    launch: [-80.73, 34.38], slug: 'w', launchTime: '06:00', returnTime: '15:00', usableAh: 80,
+  });
+
+  it('resolves a stop that copied structureId instead of id', () => {
+    const plan = build([{ runId: 'w#1', structureId: 'hump_9', rods: ['R5'], durationMin: 15 }]);
+    const stops = plan.legs.find((l) => l.runId === 'w#1').stops;
+    expect(stops.length).toBe(1);
+    expect(stops[0].structureId).toBe('hump_9');
+    expect(stops[0].depthFt).toBe(18);          // resolved to the real pass, not guessed
+    expect(plan.warnings.some((w) => w.includes('no structure'))).toBe(false);
+  });
+
+  it('still resolves a stop that copied id, which is what the prompt asks for', () => {
+    const plan = build([{ runId: 'w#1', id: 'w#1:p0', rods: ['R5'], durationMin: 15 }]);
+    const stops = plan.legs.find((l) => l.runId === 'w#1').stops;
+    expect(stops.length).toBe(1);
+    expect(stops[0].structureId).toBe('hump_9');
+  });
+
+  it('keeps EVERY stop on a leg, however each one was named', () => {
+    // The exact shape of the bug: one stop names the lake's way, one names the app's way. Before
+    // the fix the named structure vanished and only the unnamed snag came through.
+    const plan = build([
+      { runId: 'w#1', structureId: 'hump_9', rods: ['R5'], durationMin: 15 },
+      { runId: 'w#1', id: 'w#1:p1', rods: ['R5'], durationMin: 10 },
+    ]);
+    const stops = plan.legs.find((l) => l.runId === 'w#1').stops;
+    expect(stops.length).toBe(2);
+    expect(stops.map((s) => s.atM)).toEqual([900, 1600]);        // sorted along the leg
+    expect(stops.map((s) => s.id)).toEqual(['S1.1', 'S1.2']);    // renumbered after the sort
+    expect(validatePlan(plan).length).toBe(0);
+  });
+
+  it('still refuses a structure that is not on that leg', () => {
+    // The guard this was always for must survive the loosening.
+    const plan = build([{ runId: 'w#1', structureId: 'hump_404', rods: ['R5'], durationMin: 15 }]);
+    expect(plan.legs.find((l) => l.runId === 'w#1').stops.length).toBe(0);
+    expect(plan.warnings.some((w) => w.includes('no structure "hump_404"'))).toBe(true);
+  });
+
+  it('asks the model for id, and says several stops are normal', () => {
+    // The prompt half of the fix. If the shape block goes back to naming `structureId`, the
+    // model goes back to copying the wrong field and only the parser leniency saves it.
+    const req = buildPlanRequest({ candidates: TWO_PASS, water: 'Wateree', tackle: TACKLE });
+    expect(req.user).toContain('"id": "that structure\'s `id`, copied exactly"');
+    expect(req.user).not.toContain('"structureId": "copied exactly from that leg\'s structures"');
+    expect(req.user).toMatch(/ONE ENTRY PER STRUCTURE WORTH STOPPING AT/);
+  });
+});

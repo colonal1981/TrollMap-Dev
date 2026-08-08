@@ -142,7 +142,16 @@ export function assemblePlan(o) {
     const legLen = Math.round(c.lengthM);
     const mins = minutesFor(c.lengthM, trollMph);
     const a = ampHours(c.lengthM, trollMph);
-    const byId = new Map((c.passes || []).map((h) => [h.id, h]));
+    // BOTH NAMES RESOLVE TO THE SAME PASS. `id` is the app's handle (`wateree_lake#412:p3`);
+    // `structureId` is the lake's own name for the thing (`hump_7`) and is null for every type
+    // the packs cannot name. The model is shown both and asked for `id`, so a stop that arrives
+    // carrying the other one is a naming slip, not an invented structure — resolving it costs
+    // one extra map and saves the stop. `id` wins on a collision; it is unique by construction.
+    const byId = new Map();
+    for (const h of (c.passes || [])) {
+      if (h.structureId != null && !byId.has(h.structureId)) byId.set(h.structureId, h);
+    }
+    for (const h of (c.passes || [])) byId.set(h.id, h);
 
     const stops = [];
     for (const s of (stopsByRun.get(c.runId) || [])) {

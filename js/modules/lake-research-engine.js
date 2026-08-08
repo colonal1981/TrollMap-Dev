@@ -2110,9 +2110,19 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
   if (mode === 'resume' && agentKeys.includes('limnology')) {
     setProgress('WQP limnology data...', 5);
     try {
-      const supplementalKey = resolveSupplementalKey(lakeName);
-      const shorelineUrl = supplementalKey
-        ? `${CF_WORKER_URL}/chartpacks/${supplementalKey}/shoreline.geojson?v=${Date.now()}`
+      // GARMIN'S SHORELINE, NOT I-BOATING'S.
+      //
+      // `shoreline.geojson` is the old i-Boating supplemental and is not in the uploader's
+      // LAYERS, so this fetch 404s — and a 404 here reads exactly like "this lake has no
+      // boundary", which silently drops the bbox and takes WQP limnology down with it.
+      // `garmin_shoreline.geojson` is deliberately spelled differently because the bucket holds
+      // both, and it is the one we actually ship, keyed by the chartpack key rather than the
+      // supplemental one. Ryan, 2026-08-08: "we do not want to add shoreline.geojson to the
+      // uploads.. those are the old i-boating shoreline files... we need to change the app to
+      // use the garmin ones that we already uploaded."
+      const boundaryKey = resolveBoundaryKey(lakeName);
+      const shorelineUrl = boundaryKey
+        ? `${CF_WORKER_URL}/chartpacks/${boundaryKey}/garmin_shoreline.geojson?v=${Date.now()}`
         : `${CF_WORKER_URL}/chartpacks/lake-boundary?lake=${encodeURIComponent(lakeName)}`;
       const geoRes = await fetch(shorelineUrl);
       let bbox = null;
@@ -2385,9 +2395,19 @@ async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
     if (!selectedAgents || selectedAgents.includes('limnology')) {
       setProgress('Step 1d: WQP limnology data...', 20);
       try {
-        const supplementalKey = resolveSupplementalKey(lakeName);
-        const shorelineUrl = supplementalKey
-          ? `${CF_WORKER_URL}/chartpacks/${supplementalKey}/shoreline.geojson?v=${Date.now()}`
+        // GARMIN'S SHORELINE, NOT I-BOATING'S.
+        //
+        // `shoreline.geojson` is the old i-Boating supplemental and is not in the uploader's
+        // LAYERS, so this fetch 404s — and a 404 here reads exactly like "this lake has no
+        // boundary", which silently drops the bbox and takes WQP limnology down with it.
+        // `garmin_shoreline.geojson` is deliberately spelled differently because the bucket holds
+        // both, and it is the one we actually ship, keyed by the chartpack key rather than the
+        // supplemental one. Ryan, 2026-08-08: "we do not want to add shoreline.geojson to the
+        // uploads.. those are the old i-boating shoreline files... we need to change the app to
+        // use the garmin ones that we already uploaded."
+        const boundaryKey = resolveBoundaryKey(lakeName);
+        const shorelineUrl = boundaryKey
+          ? `${CF_WORKER_URL}/chartpacks/${boundaryKey}/garmin_shoreline.geojson?v=${Date.now()}`
           : `${CF_WORKER_URL}/chartpacks/lake-boundary?lake=${encodeURIComponent(lakeName)}`;
         const geoRes = await fetch(shorelineUrl);
         let bbox = null;
