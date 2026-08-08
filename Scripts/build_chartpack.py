@@ -38,6 +38,38 @@ import argparse, gzip, json, math, os, glob, re, sys, time
 from collections import Counter, defaultdict
 
 
+try:
+    import orjson as _oj
+except ImportError:                       # optional; the pipeline runs without it, just slower
+    _oj = None
+
+
+def _loads(data: bytes):
+    """
+    Parse a tile. THIS IS THE WHOLE RUNTIME OF A REBUILD.
+
+    Measured 2026-08-08 on C4E0FB's contours, 44.4 MB gzipped, 189,185 features, 6.8 M vertices:
+
+        gunzip                 0.88 s
+        json.loads             5.36 s     <- 82% of it
+        walk every vertex      0.24 s     <- 4%
+
+    A full recut reads roughly ten layers across 169 tiles, so the standard-library JSON parser
+    was most of a two-hour run. I had been about to vectorise the per-vertex clip loop, which is
+    the 4%.
+
+    orjson parses the same bytes 3-5x faster and returns identical Python objects, so nothing
+    downstream changes. It is optional on purpose -- absent, this falls back and the only cost is
+    the wall clock:
+
+        pip install orjson
+
+    Bytes, not text: orjson takes bytes directly, and handing the stdlib parser bytes skips a
+    decode pass too, so the fallback path also gets slightly quicker.
+    """
+    return _oj.loads(data) if _oj is not None else json.loads(data)
+
+
 def read_fc(path):
     """Read a per-tile collection, gzipped or not.
 
@@ -47,9 +79,10 @@ def read_fc(path):
     failure as the area layer-name drift. Accept both suffixes.
     """
     if path.endswith('.gz'):
-        with gzip.open(path, 'rt', encoding='utf-8') as f:
-            return json.load(f)
-    return json.load(open(path, encoding='utf-8'))
+        with gzip.open(path, 'rb') as f:
+            return _loads(f.read())
+    with open(path, 'rb') as f:
+        return _loads(f.read())
 
 
 def _rings(geom):
@@ -134,20 +167,23 @@ class BboxMask:
 
     def charted_fraction(self, features, contours=None):
         """
-        None on purpose, for the reason in the class docstring — but the SIGNATURE has to match
-        LakeMask's or the zone never ships.
+        None on purpose, per the class docstring — but the SIGNATURE must match LakeMask's or the
+        zone never ships.
 
-        2026-08-08. The charted fix gave LakeMask.charted_fraction a second argument, `contours`,
-        so a lake whose only depth band is the 0-1 ft shoreline outline could not claim coverage.
-        _flush was updated to pass it. This override was not, and it is the mask used for exactly
-        one thing: coastal zone rectangles. So every coastal zone died in _flush with
-        `TypeError: takes 2 positional arguments but 3 were given`, unhandled, before a single
-        file was written — which is why coast_st_helena_sc and coast_core_sound_nc held nothing
-        but a water_graph.bin written by a different script, while tile B4E0FB had 83,106 contours
-        sitting inside St Helena's own box.
+        2026-08-08. The charted fix gave LakeMask.charted_fraction a second argument so a 0-1 ft
+        shoreline outline could not pass as coverage, and _flush was updated to pass it. This
+        override was not, and it is the mask used for exactly one thing: coastal zone rectangles.
+        Every coastal zone then died in _flush with `TypeError: takes 2 positional arguments but 3
+        were given`, unhandled, before a file was written -- and unhandled means a full recut never
+        reaches the line that writes charted.json.
 
-        Ryan found it by asking why ACE Basin showed nothing in the app. 981 tests did not,
-        because not one of them builds a pack and looks at it.
+        coast_st_helena_sc held nothing but a 2 KB water_graph.bin while tile B4E0FB had 83,106
+        contours inside its own box. After the fix it builds to 186 MB and 50,614 contours; ACE
+        Basin went from 1,126 contours to 71,139.
+
+        Ryan found it by asking why ACE Basin drew nothing in the app. 981 tests did not, because
+        none of them builds a pack and looks at it. Scripts/tests/test_charted.py now compares the
+        two masks' signatures directly.
         """
         return None
 
