@@ -98,6 +98,43 @@ def index_extraction(root: str):
     return grid
 
 
+def exact_in_box(extract_root: str, tiles, b) -> int:
+    """
+    Contour FEATURES with a vertex genuinely inside this box, read from the lake's own tiles.
+
+    THE GRID CANNOT ANSWER THIS FOR A SMALL LAKE, and pretending otherwise is how the first
+    version of this file cried wolf. CELL is 0.01 deg -- about 1.1 km -- and King River Pond's
+    box is 0.0089 x 0.0058 deg, smaller than a single cell. So the grid counted every vertex in
+    the cells the box touched, which is water up to a kilometre away, and reported 8,468 vertices
+    "available" for a pond with none. Barnishee Bayou the same, at 6,129.
+
+    So the grid is a SCREEN, not a verdict: cheap, one pass over every tile, good for saying
+    "look here". This confirms, by reading only the handful of tiles the lake actually sits on.
+    Two stages, because the fast test and the true test are different tests.
+    """
+    total = 0
+    for t in (tiles or []):
+        tid = t[1:].upper() if t and t[0].upper() in 'BCG' else str(t).upper()
+        for suf in ('.geojson.gz', '.geojson'):
+            fp = os.path.join(extract_root, 'contours', 'C%s%s' % (tid, suf))
+            if not os.path.exists(fp):
+                continue
+            try:
+                feats = (read_json(fp) or {}).get('features') or []
+            except Exception:
+                break
+            for f in feats:
+                g = f.get('geometry') or {}
+                cs = g.get('coordinates') or []
+                lines = [cs] if g.get('type') == 'LineString' else cs
+                for ln in lines:
+                    if any(b[0] <= q[0] <= b[2] and b[1] <= q[1] <= b[3] for q in ln):
+                        total += 1
+                        break
+            break
+    return total
+
+
 def in_box(grid, b) -> int:
     w, s, e, n = b
     t = 0
@@ -132,6 +169,8 @@ def main() -> int:
     ap.add_argument('--extract', required=True, help='extraction root (holds contours/)')
     ap.add_argument('--packs', required=True, help='chartpack root')
     ap.add_argument('--registry', required=True, help='folder holding lake_index.json')
+    ap.add_argument('--map', help='tile_lake_map.json. Without it the grid screen is the only '
+                                  'test, and it over-reports every lake smaller than ~1 km.')
     ap.add_argument('--min-vertices', type=int, default=500,
                     help='how full a box must be before an empty pack counts as a violation '
                          '(default 500). A bbox is generous, so a handful of vertices can be the '
@@ -148,7 +187,17 @@ def main() -> int:
     grid = index_extraction(os.path.join(a.extract, 'contours'))
     print('  %d occupied cells' % len(grid))
 
-    violations, thin, ok, nobox = [], [], 0, 0
+    by_lake = None
+    if a.map:
+        try:
+            by_lake = json.load(open(a.map, encoding='utf-8'))['by_lake']
+            print('tile map loaded: exact confirmation is ON')
+        except Exception as e:
+            print('  !! could not read --map (%s); falling back to the grid alone' % str(e)[:50],
+                  file=sys.stderr)
+    else:
+        print('no --map given: grid screen only, which OVER-REPORTS small lakes')
+    violations, thin, ok, nobox, screened_out = [], [], 0, 0, 0
     for r in rows:
         b = r.get('bounds_wsen')
         if not (isinstance(b, list) and len(b) == 4):
@@ -159,10 +208,17 @@ def main() -> int:
             continue                      # nothing was there to lose
         got = pack_counts(os.path.join(a.packs, r['slug']))
         n = got.get('contours', 0)
-        if n == 0:
-            violations.append((avail, r, got))
-        elif n < 0:
-            violations.append((avail, r, got))
+        if n <= 0:
+            # CONFIRM BEFORE CLAIMING. The grid said look; now read the lake's own tiles and
+            # count only what is really inside its box.
+            if by_lake is not None:
+                real = exact_in_box(a.extract, by_lake.get(r['slug']), b)
+                if real == 0:
+                    screened_out += 1
+                    continue
+                violations.append((real, r, got))
+            else:
+                violations.append((avail, r, got))
         else:
             ok += 1
             # A pack holding a hundredth of what its box offers is not proof of anything -- the
@@ -175,6 +231,9 @@ def main() -> int:
     print('checked %d lakes with a box and something in it' % (ok + len(violations)))
     print('  packs holding contours          %d' % ok)
     print('  VIOLATIONS, empty or unreadable %d' % len(violations))
+    if screened_out:
+        print('  (%d flagged by the grid and cleared on exact check -- boxes smaller than the'
+              ' 1.1 km grid cell, counting the water next door)' % screened_out)
     if nobox:
         print('  (%d rows have no bounds and were skipped)' % nobox)
 
