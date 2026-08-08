@@ -132,7 +132,23 @@ class BboxMask:
     def cell_of(self, x, y):
         return (int((x - self.w) / self.cell), int((y - self.s) / self.cell))
 
-    def charted_fraction(self, features):
+    def charted_fraction(self, features, contours=None):
+        """
+        None on purpose, for the reason in the class docstring — but the SIGNATURE has to match
+        LakeMask's or the zone never ships.
+
+        2026-08-08. The charted fix gave LakeMask.charted_fraction a second argument, `contours`,
+        so a lake whose only depth band is the 0-1 ft shoreline outline could not claim coverage.
+        _flush was updated to pass it. This override was not, and it is the mask used for exactly
+        one thing: coastal zone rectangles. So every coastal zone died in _flush with
+        `TypeError: takes 2 positional arguments but 3 were given`, unhandled, before a single
+        file was written — which is why coast_st_helena_sc and coast_core_sound_nc held nothing
+        but a water_graph.bin written by a different script, while tile B4E0FB had 83,106 contours
+        sitting inside St Helena's own box.
+
+        Ryan found it by asking why ACE Basin showed nothing in the app. 981 tests did not,
+        because not one of them builds a pack and looks at it.
+        """
         return None
 
     def __contains__(self, pt):
