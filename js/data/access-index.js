@@ -589,8 +589,58 @@ async function buildAccessIndex() {
 }
 
 /** The registry record behind a picker entry, or null if it came from a DNR feed. */
+/**
+ * The registry row behind a picker name.
+ *
+ * WAS AN EXACT MAP LOOKUP, and that is a bug with a visible symptom. Broadway Lake is in the
+ * registry at 310 acres, but the picker showed "Broadway Lake, SC — 1 ramp" with no acreage,
+ * because the name it offers is not byte-identical to any key `registryByName` was built with.
+ * Fishing Creek Reservoir, with the same ", SC" suffix, matched. Which of the two happened
+ * depended on which pass stored the entry.
+ *
+ * That miss is not cosmetic: `lake-ramp-select.js` passes anything without a record through
+ * EVERY filter unfiltered, so a lookup failure turns a 310-acre lake into an entry that shows
+ * up under "over 1000 acres". The two defects compound, which is why the filter bar has now
+ * been reported as not working twice.
+ *
+ * So: exact first, then a normalised key. Normalisation only folds punctuation, case and the
+ * state suffix — NOT the water-type word, and NOT token order. "Lake Wallace" and "Wallace
+ * Lake" are two different waters in SC, and there are two Lake Wallaces besides.
+ */
 export function registryRecordFor(lakeName) {
-  return accessIndex.registryByName?.get(lakeName) || null;
+  if (!lakeName) return null;
+  const direct = accessIndex.registryByName?.get(lakeName);
+  if (direct) return direct;
+  const norm = registryNameIndex();
+  return norm ? norm.get(normalizeRegistryKey(lakeName)) || null : null;
+}
+
+/** Case, punctuation and a trailing state suffix. Nothing that could merge two real waters. */
+function normalizeRegistryKey(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/\(([^)]*)\)/g, ' ')          // "(Darlington Co, SC)"
+    .replace(/,\s*[a-z]{2}\s*$/, ' ')      // trailing ", sc"
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+// Built once per index load and thrown away with it.
+let _normIndex = null;
+let _normFor = null;
+function registryNameIndex() {
+  if (!accessIndex.registryByName) return null;
+  if (_normFor === accessIndex.registryByName) return _normIndex;
+  const m = new Map();
+  for (const [name, rec] of accessIndex.registryByName) {
+    const k = normalizeRegistryKey(name);
+    // First writer wins. registryByName is populated shipped-first, largest-first, so a small
+    // namesake cannot displace the big lake it shares a normalised key with.
+    if (k && !m.has(k)) m.set(k, rec);
+  }
+  _normIndex = m;
+  _normFor = accessIndex.registryByName;
+  return m;
 }
 
 /**

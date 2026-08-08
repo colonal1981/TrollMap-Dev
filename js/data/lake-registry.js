@@ -127,6 +127,10 @@ async function fetchRegistry() {
       charted: rec.charted === null || rec.charted === undefined ? null : Number(rec.charted),
       shipped: !!rec.shipped,
       packMb: rec.pack_mb ?? null,
+      // lake | river | coastal. Computed on all 1,722 registry rows and, until 2026-08-08, read
+      // by nothing — which is why Catawba River, Congaree River, Edisto River, Great Pee Dee and
+      // Fishing Creek Reservoir all sat in a dropdown group labelled "Lakes / Reservoirs".
+      featureType: rec.feature_type || null,
       legacyDisplayName: rec.legacy_display_name || null,
       // A lake can have more than one former name: the "Name, ST" it carried before
       // consolidate_lake_index.py started naming by county, and the curated LAKE_DB key it

@@ -62,17 +62,38 @@ describe('both waterbody dropdowns offer coastal zones', () => {
   //
   // They now share js/utils/coastal-optgroups.js, so the test asserts what actually matters:
   // every dropdown calls the one builder, and the one builder produces the three groups.
-  const CALLERS = [
+  //
+  // 2026-08-08: the map picker no longer uses the helper, and that is not drift.
+  //
+  // Ryan: "i want lakes then rivers then coastal for each state." The picker now builds twelve
+  // groups -- SC/NC/GA/TN x Lakes/Rivers/Coast -- so its coastal zones sit under their own
+  // state beside that state's lakes and rivers, not in three groups bolted on the end. There is
+  // no shape of `appendCoastalOptgroups` that produces that, because the helper owns the
+  // grouping and the picker needs to own it instead.
+  //
+  // What still has to hold is the thing the duplication was actually risking: every dropdown
+  // gets its zones from the SAME SOURCE, so none of them can quietly go stale. So the picker is
+  // required to call `coastalNamesByState` and the other two to call the helper -- and the count
+  // check below still pins all 22 zones reaching a dropdown.
+  const HELPER_CALLERS = [
     ['plan-builder', planBuilderSrc],
-    ['lake-ramp-select', rampSelectSrc],
     ['lake-research-ui', researchUiSrc],
   ];
 
-  it('every waterbody dropdown builds its coastal groups from the shared helper', () => {
-    for (const [name, src] of CALLERS) {
+  it('the dropdowns that share a grouping share the builder', () => {
+    for (const [name, src] of HELPER_CALLERS) {
       expect(src, `${name} does not call appendCoastalOptgroups`).toContain('appendCoastalOptgroups');
       expect(src, `${name} still has its own copy of the loop`).not.toContain('coastalNamesByState()');
     }
+  });
+
+  it('the map picker groups coastal by state itself, from the same source', () => {
+    expect(rampSelectSrc, 'picker no longer sources zones from coastal-zones.js')
+      .toContain('coastalNamesByState');
+    expect(rampSelectSrc, 'picker should not also append the helper groups')
+      .not.toContain('appendCoastalOptgroups');
+    // The grouping it replaced the helper with.
+    expect(rampSelectSrc).toContain("STATE_ORDER = ['SC', 'NC', 'GA', 'TN']");
   });
 
   it('the shared helper groups coastal zones by state', () => {

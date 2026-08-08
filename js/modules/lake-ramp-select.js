@@ -17,7 +17,7 @@ import { loadAccessIndex, registryRecordFor, getLoadedAccessIndex } from '../dat
 import { loadContourForLake } from './contour-data.js';
 import { COASTAL_ZONES, isCoastalKey } from '../data/coastal-zones.js';
 import { landOnCoastalZone, focusRamp } from '../utils/viewport-cull.js';
-import { appendCoastalOptgroups } from '../utils/coastal-optgroups.js';
+import { coastalNamesByState } from '../data/coastal-zones.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { waterZoneCandidates } from '../data/water-aliases.js';
 import { registryStats } from '../data/lake-registry.js';
@@ -44,26 +44,82 @@ const SIZE_BANDS = {
   big: [1000, Infinity],
 };
 
+// SC first because that is where Ryan fishes, then the rest of the coverage area in his order.
+export const STATE_ORDER = ['SC', 'NC', 'GA', 'TN'];
+// Lakes, rivers, coast — within each state. Ryan, 2026-08-08: "i want lakes then rivers then
+// coastal for each state... i actually don't like how it is now."
+export const TYPE_ORDER = [['lake', 'Lakes'], ['river', 'Rivers'], ['coastal', 'Coast']];
+
+const RIVERISH = /\b(river|creek|branch|run|fork|canal|slough|bayou|prong|swamp)\b/i;
+
+/** SC / NC / GA / TN for any picker entry, registry-backed or not. */
+export function stateOf(lakeName, rec) {
+  if (rec?.state) return rec.state;
+  // Every DNR name gets a ", SC" suffix from displayLakeName(), and coastal zone names carry
+  // one too. That is the only state signal a registry-less entry has, and it is reliable
+  // because the feeds are fetched per state.
+  const m = /,\s*([A-Z]{2})\s*$/.exec(String(lakeName || ''));
+  return m ? m[1] : null;
+}
+
+/**
+ * lake / river / coastal.
+ *
+ * `feature_type` is authoritative and comes from the registry — 1,471 lakes, 229 rivers, 22
+ * coastal across the index. For an entry with no registry row there is nothing to read, so the
+ * NAME is used, and only to decide which heading it sits under. It is a display grouping, not a
+ * claim about the water: putting Enoree River under "Lakes / Reservoirs" is the thing being
+ * fixed, and guessing from the word "River" is strictly better than that.
+ */
+export function typeOf(lakeName, rec) {
+  if (isCoastalKey(resolveR2Key(lakeName))) return 'coastal';
+  if (rec?.featureType) return rec.featureType;
+  return RIVERISH.test(String(lakeName || '')) ? 'river' : 'lake';
+}
+
 /**
  * True if a picker entry survives the current filters.
  *
- * A lake with NO registry record — i.e. one that came from a DNR feed — always passes.
- * Those are the 213 that already worked, and silently filtering them out because the
- * registry has nothing to say about them would be a regression disguised as a feature.
+ * AN ENTRY THE FILTER CANNOT ANSWER FOR NOW FAILS THAT FILTER. It used to pass everything:
+ * `if (!rec) return true`. Ryan, 2026-08-08: "if i choose >1000 acres i still get tiny little
+ * mill ponds that do not have contours because they are only being fed by DNR list." Adams Grist
+ * Mill Lake, Biggin Creek, Buggy Branch and Horseshoe Creek have no registry row at all, so
+ * nothing knows their size — and they were showing under "over 1000 acres" regardless.
+ *
+ * State and has-ramp ARE answerable without a registry row: the state comes off the name suffix
+ * and the ramps are counted from the live access index, which is the same data the Access
+ * dropdown under it is built from. Only size and charted are unanswerable, and those are exactly
+ * the two that now exclude.
+ *
+ * This is the second attempt at this bug — see the pass-1 note in access-index.js, which fixed
+ * the 641 lakes that HAD a registry row the lookup could not find. What is left after that fix
+ * is the genuinely registry-less, and this is what to do about them.
  */
-function passesFilters(lakeName) {
+export function passesFilters(lakeName, f = filters) {
   const rec = registryRecordFor(lakeName);
-  if (!rec) return true;
-  if (filters.state && rec.state !== filters.state) return false;
-  if (filters.size) {
-    const [lo, hi] = SIZE_BANDS[filters.size] || [0, Infinity];
+
+  if (f.state && stateOf(lakeName, rec) !== f.state) return false;
+
+  if (!rec) {
+    // Nothing knows its acreage or its soundings. Asking for either means asking for something
+    // this entry cannot demonstrate.
+    if (f.size || f.wellCharted) return false;
+    if (f.rampOnly) {
+      const pts = getLoadedAccessIndex()?.byLake?.get(lakeName) || [];
+      return pts.some((p) => /ramp/i.test(p.typeLabel || ''));
+    }
+    return true;
+  }
+
+  if (f.size) {
+    const [lo, hi] = SIZE_BANDS[f.size] || [0, Infinity];
     if (!(rec.areaAcres >= lo && rec.areaAcres < hi)) return false;
   }
-  if (filters.rampOnly && !rec.rampSources) return false;
+  if (f.rampOnly && !rec.rampSources) return false;
   // The picker already defaults to shipped lakes, so this box narrows further: only lakes
   // whose soundings cover most of their surface. Median charted fraction across the 434 is
   // 0.59, so a 0.5 cut is roughly the better half.
-  if (filters.wellCharted && !(rec.charted >= 0.5)) return false;
+  if (f.wellCharted && !(rec.charted >= 0.5)) return false;
   return true;
 }
 
@@ -116,25 +172,77 @@ async function populateLakeSelect() {
   const placeholder = lakeSelect.querySelector('option[value=""]')?.outerHTML || '<option value="">-- Select lake / waterbody --</option>';
   lakeSelect.innerHTML = placeholder;
 
-  const inlandGroup = document.createElement('optgroup');
-  inlandGroup.label = 'Lakes / Reservoirs';
-  let shown = 0;
-  idx.lakeNames.forEach((lakeName) => {
-    if (isCoastalKey(resolveR2Key(lakeName))) return;
-    if (!passesFilters(lakeName)) return;
-    const opt = document.createElement('option');
-    opt.value = lakeName;
-    opt.textContent = lakeName + lakeBadge(lakeName);
-    inlandGroup.appendChild(opt);
-    shown += 1;
-  });
-  inlandGroup.label = `Lakes / Reservoirs (${shown})`;
-  lakeSelect.appendChild(inlandGroup);
+  // ── Twelve groups: SC, NC, GA, TN — Lakes, Rivers, Coast within each ──────────────────
+  //
+  // Was ONE group headed "Lakes / Reservoirs (483)" holding every inland name, plus three
+  // coastal groups appended after it. That heading was wrong about its own contents: Catawba
+  // River, Congaree River, Edisto River, Great Pee Dee River and Fishing Creek Reservoir are all
+  // `feature_type: 'river'` and all sat under it.
+  //
+  // Coastal zones are folded in here rather than appended by coastal-optgroups.js, because they
+  // belong under their state alongside its lakes and rivers. That util still serves the research
+  // dropdown, which has not been reworked.
+  const buckets = new Map();          // `${state}|${type}` -> string[]
+  const put = (state, type, name) => {
+    if (!state) return;
+    const k = `${state}|${type}`;
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push(name);
+  };
 
-  // Coastal / tidal zones. The worker access index only covers inland DNR
-  // boat ramps, so without this the 21 coastal zones are unreachable from the
-  // map toolbar and none of the tide / oyster / marsh layers can be loaded.
-  appendCoastalOptgroups(lakeSelect);
+  idx.lakeNames.forEach((lakeName) => {
+    if (!passesFilters(lakeName)) return;
+    const rec = registryRecordFor(lakeName);
+    put(stateOf(lakeName, rec), typeOf(lakeName, rec), lakeName);
+  });
+
+  // Coastal zones are not in the access index — the worker only covers inland DNR ramps — so
+  // without this the tide, oyster and marsh layers are unreachable from the picker.
+  const coastal = coastalNamesByState();
+  for (const [stateCode, names] of Object.entries(coastal || {})) {
+    for (const name of (names || [])) {
+      // A zone has no acreage and no registry row, so it answers the same filters a DNR-fed
+      // name does — and must not vanish just because the state box is set to its own state.
+      if (filters.state && filters.state !== stateCode) continue;
+      if (filters.size || filters.wellCharted) continue;
+      put(stateCode, 'coastal', name);
+    }
+  }
+
+  let total = 0;
+  for (const stateCode of STATE_ORDER) {
+    for (const [type, typeLabel] of TYPE_ORDER) {
+      const names = buckets.get(`${stateCode}|${type}`);
+      if (!names?.length) continue;
+      const grp = document.createElement('optgroup');
+      grp.label = `${stateCode} — ${typeLabel} (${names.length})`;
+      for (const name of names) {
+        const opt = document.createElement('option');
+        opt.value = name;
+        // The group heading already says the state, so the suffix is noise on every row.
+        opt.textContent = name.replace(/,\s*[A-Z]{2}$/, '') + lakeBadge(name);
+        grp.appendChild(opt);
+      }
+      lakeSelect.appendChild(grp);
+      total += names.length;
+    }
+  }
+
+  // Anything the state suffix could not place. Better visible under a plain heading than
+  // silently dropped -- a name that vanishes from the picker reads as lost data.
+  const orphans = [];
+  for (const [k, names] of buckets) if (!STATE_ORDER.includes(k.split('|')[0])) orphans.push(...names);
+  if (orphans.length) {
+    const grp = document.createElement('optgroup');
+    grp.label = `Other (${orphans.length})`;
+    for (const name of orphans) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name + lakeBadge(name);
+      grp.appendChild(opt);
+    }
+    lakeSelect.appendChild(grp);
+  }
 
   if (currentValue && (idx.byLake.has(currentValue) || isCoastalKey(resolveR2Key(currentValue)))) {
     lakeSelect.value = currentValue;
