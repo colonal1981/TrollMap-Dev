@@ -43,10 +43,13 @@ export const CANDIDATE_LIMIT = 12;
  */
 export async function buildSmartPlanV2(o) {
   const base = o.chartpackBase || '';
-  const [runsFc, structFc, waterFc] = await Promise.all([
+  const [runsFc, structFc, waterFc, docksFc] = await Promise.all([
     o.fetchJson(`${base}/${o.r2Key}/trolling_runs.geojson`),
     o.fetchJson(`${base}/${o.r2Key}/structure.geojson`),
     o.fetchJson(`${base}/${o.r2Key}/water_features.geojson`),
+    // Docks are fourth in the citation count and the pipeline never joined them to the runs.
+    // Joined app-side until it does — see dockHits() in plan-candidates.js.
+    o.fetchJson(`${base}/${o.r2Key}/docks.geojson`),
   ]);
   const runs = (runsFc && runsFc.features) || [];
   if (!runs.length) {
@@ -56,14 +59,16 @@ export async function buildSmartPlanV2(o) {
   }
 
   const structures = structureIndex(
-    (structFc && structFc.features) || [], (waterFc && waterFc.features) || []);
+    (structFc && structFc.features) || [], (waterFc && waterFc.features) || [],
+    (docksFc && docksFc.features) || []);
+  const docks = structureIndex((docksFc && docksFc.features) || []);
 
   const candidates = selectCandidates(runs, {
     ramp: o.ramp, slug: o.r2Key, depthFt: o.depthFt,
     usableAh: o.usableAh, windowMin: o.windowMin,
     structures, catches: o.catches, catchSpecies: o.species, month: o.month,
     // Per species, per season, per lake, from the research profile — see structureWeights().
-    weights: o.weights, reliefWeights: o.reliefWeights,
+    weights: o.weights, reliefWeights: o.reliefWeights, docks,
     transitM: o.transitM, limit: CANDIDATE_LIMIT,
   });
   if (!candidates.length) {

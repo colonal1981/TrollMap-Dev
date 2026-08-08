@@ -111,6 +111,19 @@ export function pointAt(coords, cum, m) {
 // the bottom of a hole that does not exist.
 // ---------------------------------------------------------------------------------------------
 
+/** Mean of a polygon's outer ring. Good enough for a boathouse; these are metres across. */
+function ringCentroid(g) {
+  const ring = g.type === 'Polygon' ? g.coordinates[0]
+    : g.type === 'MultiPolygon' ? g.coordinates[0] && g.coordinates[0][0] : null;
+  if (!Array.isArray(ring) || !ring.length) return [null, null];
+  let x = 0, y = 0, n = 0;
+  for (const c of ring) {
+    if (!Array.isArray(c) || !Number.isFinite(c[0]) || !Number.isFinite(c[1])) continue;
+    x += c[0]; y += c[1]; n++;
+  }
+  return n ? [x / n, y / n] : [null, null];
+}
+
 const RESOLVE_CELL = 0.004;          // ~440 m of longitude here; one bucket comfortably covers a pass
 const RESOLVE_MARGIN_M = 40;         // slack over the recorded offset, for the sign of `d`
 
@@ -134,6 +147,9 @@ function describeStructure(kind, p) {
   } else if (kind === 'creek_mouth') {
     bits.push(p.name ? `${p.name} mouth` : 'creek mouth');
     if (n(p.cove_m, ' m of cove behind it')) bits.push(n(p.cove_m, ' m of cove behind it'));
+  } else if (kind === 'dock_line' || kind === 'dock_cluster' || kind === 'dock') {
+    bits.push(kind === 'dock_line' ? 'line of docks'
+      : kind === 'dock_cluster' ? 'cluster of docks' : 'dock');
   } else {
     bits.push(kind === 'point' ? 'point' : kind);
     if (n(p.bulge_m, ' m bulge')) bits.push(n(p.bulge_m, ' m bulge'));
@@ -153,11 +169,15 @@ export function structureIndex(...featureLists) {
   for (const list of featureLists) {
     for (const f of (list || [])) {
       const g = f && f.geometry;
-      if (!g || g.type !== 'Point' || !Array.isArray(g.coordinates)) continue;
+      if (!g || !Array.isArray(g.coordinates)) continue;
       const p = f.properties || {};
-      const kind = p.kind || p.type;
+      // `layer` is how docks.geojson names itself; it carries no kind, no type and no id.
+      const kind = p.kind || p.type || (p.layer === 'docks' ? 'dock' : null);
       if (!kind) continue;
-      const [lon, lat] = g.coordinates;
+      // Docks are POLYGONS. Everything else in the packs is a point, so reduce to a centroid
+      // rather than adding polygon maths the rest of this file would never use.
+      const [lon, lat] = g.type === 'Point' ? g.coordinates : ringCentroid(g);
+      if (lon === null) continue;
       if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
       const depth = Number(p[DEPTH_FIELD[kind]]);
       const rec = {
@@ -237,6 +257,10 @@ export const DEFAULT_WEIGHTS = {
   attractor: 27,       // DNR brushpiles are the same ask; Garmin's timber outnumbers them 14:1
   point: 11,
   creek_mouth: 10,
+  // Docks are 10 cites across 4 species. Grouped rather than counted -- see groupDocks().
+  dock_line: 10,       // a stretch to run a bait down
+  dock_cluster: 10,    // a pocket to stop and cast at
+  dock: 4,             // a lone dock. Real, but not the ask -- the ask is a line or a pocket.
   shallow: 8,          // flats. Cited by six species. NOT a navigational mark.
   ledge: 4,
   hump: 3,
@@ -264,9 +288,25 @@ export const DEFAULT_RELIEF_WEIGHTS = {
  * 1 km leg passing two, and the caller is already spending battery per metre. Dividing by length
  * would make a 200 m stub with one hump outrank a real trolling pass.
  */
-function scoreWindow(near, fromM, toM, weights, maxOffM) {
+// A LEG CANNOT BE TWENTY TIMES BETTER FOR HAVING TWENTY TIMES THE DOCKS.
+//
+// Wateree carries 2,796 docks. Scored one for one they returned 1,560 passes across twelve
+// candidates and 191 on a single leg, so any dock-lined shoreline outscored everything else on
+// the lake by an order of magnitude and nothing else could move the ranking.
+//
+// This is the same failure TROLLING_RUNS_THE_LINE_WAS_ALWAYS_THERE recorded for ledges --
+// "Ledges ran 36-55 on every single leg, which is the discrimination problem in one line" -- and
+// the pipeline solved it by collapsing them to a count. Docks need their positions kept, because
+// a dock is a legitimate cast target, so the SCORE is capped instead of the list.
+//
+// SUPERSEDED FOR DOCKS by clustering -- see groupDocks(). Kept as a general backstop, because any
+// type that ever arrives listed rather than summarised would swamp the ranking the same way.
+const SCORE_CAP_PER_TYPE = 8;
+
+function scoreWindow(near, fromM, toM, weights, maxOffM, capPerType = SCORE_CAP_PER_TYPE) {
   let score = 0;
   const hits = [];
+  const counted = {};
   for (const n of near) {
     if (n.s < fromM || n.s > toM) continue;
     if (n.d > maxOffM) continue;
@@ -274,10 +314,121 @@ function scoreWindow(near, fromM, toM, weights, maxOffM) {
     if (!w) continue;
     // Something 20 m off the line is worth more than the same thing 95 m off it.
     const proximity = 1 - (n.d / maxOffM) * 0.5;
-    score += w * proximity;
-    hits.push({ atM: Math.round(n.s - fromM), type: n.t, offM: n.d, weight: w });
+    counted[n.t] = (counted[n.t] || 0) + 1;
+    if (counted[n.t] <= capPerType) score += w * proximity;
+    // The hit is kept either way: it is still a place to stop, it just stops adding to the score.
+    hits.push({ atM: Math.round(n.s - fromM), type: n.t, offM: n.d, weight: w,
+                n: n.n, spanM: n.spanM, scored: counted[n.t] <= capPerType });
   }
   return { score, hits };
+}
+
+// ---------------------------------------------------------------------------------------------
+// DOCKS ARE 10 CITATIONS ACROSS 4 SPECIES AND THE PIPELINE NEVER JOINED THEM.
+//
+// Ryan, 2026-08-08: "docks should definitely be factored in, especially for largemouth bass."
+//
+// TROLLING_RUNS_THE_LINE_WAS_ALWAYS_THERE puts docks fourth in the citation count, above creek
+// mouths, flats, ledges and humps. `docks.geojson` ships in every pack — 2,796 polygons on
+// Wateree — and `build_trolling_runs.py` does not join it to the runs, so `near[]` has no dock
+// entry and no weight in the app could ever reach one.
+//
+// The right long-term fix is in the pipeline, beside the joins that produced `near` in the first
+// place. Doing it there means re-running across 1,566 packs and re-uploading them, so until that
+// happens this joins docks to a run in the app, in exactly the `near` shape, and everything
+// downstream — scoring, passes, stops — treats them like any other feature.
+//
+// WHEN THE PIPELINE EMITS DOCKS, DELETE THIS. Two implementations of the same join will drift,
+// which is the reason build_trolling_runs.py refuses to re-derive hump-versus-basin.
+// ---------------------------------------------------------------------------------------------
+
+/** A shallow copy of a run with extra `near` entries merged in, leaving the original alone. */
+function withNear(run, extra) {
+  return { ...run, properties: { ...run.properties, near: [...(run.properties.near || []), ...extra] } };
+}
+
+function dockHits(coords, cum, index, maxOffM) {
+  if (!index || !index.grid) return [];
+  const out = [];
+  const seen = new Set();
+  const cell = RESOLVE_CELL;
+  for (let i = 0; i < coords.length; i++) {
+    const [lon, lat] = coords[i];
+    const cx = Math.floor(lon / cell), cy = Math.floor(lat / cell);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (const r of (index.grid.get(`${cx + dx},${cy + dy}`) || [])) {
+          if (r.kind !== 'dock') continue;
+          const key = `${r.lon},${r.lat}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          // Nearest point on the RUN, not the nearest vertex -- a dock beside a long straight
+          // segment would otherwise measure to whichever end happened to be closer.
+          let best = Infinity, bestAt = 0;
+          for (let k = 0; k < coords.length - 1; k++) {
+            const d = pointToSegmentM([r.lon, r.lat], coords[k], coords[k + 1]);
+            if (d < best) { best = d; bestAt = cum[k]; }
+          }
+          if (best <= maxOffM) out.push({ s: bestAt, t: 'dock', d: best });
+        }
+      }
+    }
+  }
+  return groupDocks(out);
+}
+
+// ---------------------------------------------------------------------------------------------
+// A DOCK ON ITS OWN IS NOISE. A LINE OF THEM IS A TROLL, A CLUSTER IS A CAST.
+//
+// Ryan, 2026-08-08: "do them as clusters... or a long line of them... that would be great to
+// troll past... cluster to cast at... that sort of thing."
+//
+// Scoring 2,796 individual docks was wrong in a way a cap only softened: it treated a dock as a
+// unit of value, so a leg with 191 of them read as 191 times better than a leg with one. What
+// actually differs is the SHAPE. Docks strung along 600 m of residential shoreline are water to
+// troll past with a crankbait; eight packed into a pocket are somewhere to stop and cast.
+//
+// So docks are grouped along the run and each group becomes ONE feature with a type that says
+// which it is. Everything downstream — scoring, the model's structure list, stops — then reads a
+// dock line and a dock cluster as the different things they are.
+//
+// The numbers are shoreline geometry, not tuning knobs: residential docks sit 30-60 m apart, so
+// a gap over 120 m is a break between groups rather than a wider berth. 250 m is about where a
+// row of docks stops being a spot and starts being a stretch you would run a bait down.
+// ---------------------------------------------------------------------------------------------
+
+const DOCK_GAP_M = 120;
+const DOCK_LINE_M = 250;
+const DOCK_LINE_MIN = 4;
+
+export function groupDocks(hits) {
+  if (!hits.length) return [];
+  const sorted = [...hits].sort((a, b) => a.s - b.s);
+  const groups = [];
+  let cur = [sorted[0]];
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i].s - cur[cur.length - 1].s <= DOCK_GAP_M) cur.push(sorted[i]);
+    else { groups.push(cur); cur = [sorted[i]]; }
+  }
+  groups.push(cur);
+
+  return groups.map((g) => {
+    const span = g[g.length - 1].s - g[0].s;
+    const d = Math.min(...g.map((x) => x.d));
+    // Three shapes, not two. A single dock that grouped with nothing is not a cluster -- calling
+    // it "a cluster of 1 dock" is how a plan starts sounding like it is padding.
+    const kind = span >= DOCK_LINE_M && g.length >= DOCK_LINE_MIN ? 'dock_line'
+      : g.length > 1 ? 'dock_cluster' : 'dock';
+    return {
+      // A line is placed at its start, because that is where you begin running it. A cluster or a
+      // single dock is placed at its middle, because that is what you are stopping on.
+      s: kind === 'dock_line' ? g[0].s : (g[0].s + g[g.length - 1].s) / 2,
+      t: kind,
+      d,
+      n: g.length,
+      spanM: Math.round(span),
+    };
+  });
 }
 
 /**
@@ -405,7 +556,11 @@ export function selectCandidates(runs, o) {
     const coords = run.geometry && run.geometry.coordinates;
     if (!Array.isArray(coords) || coords.length < 2) continue;
 
-    const win = bestWindow(run, opts);
+    // Docks join here rather than in the pipeline -- see dockHits(). Merged into `near` before
+    // the window slides, so a dock counts toward WHICH window is chosen, not just what the chosen
+    // one happens to contain.
+    const docks = o.docks ? dockHits(coords, cumulative(coords), o.docks, opts.maxOffM) : [];
+    const win = bestWindow(docks.length ? withNear(run, docks) : run, opts);
     if (!win) continue;
     // Relief is a property of the whole run, so it is added once rather than per hit. River
     // channel and channel edge are 12 cites across 7 species -- more species than anything else
@@ -469,7 +624,11 @@ export function selectCandidates(runs, o) {
             id: `${o.slug || 'run'}#${i}:p${k}`,
             at,
             structureId: s ? s.id : null,
-            what: s ? s.what : h.type.replace(/_/g, ' '),
+            what: s ? s.what
+              : h.type === 'dock_line' ? `line of ${h.n} docks over ${h.spanM} m — run a bait down it`
+              : h.type === 'dock_cluster' ? `cluster of ${h.n} docks — worth stopping on`
+              : h.type === 'dock' ? 'a single dock'
+              : h.type.replace(/_/g, ' '),
             // From the structure or not at all. There is no fallback depth on purpose.
             depthFt: s ? s.depthFt : null,
             matchM: s ? s.matchM : null,

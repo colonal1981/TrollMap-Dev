@@ -47,8 +47,30 @@ export function depthBandFor(species, lakeName, season, waterTempF, researched) 
   const fromResearch = researchedBand(researched, species, seasonKey);
   if (fromResearch) return clampToOxygen(fromResearch, researched);
 
-  const sp = SPECIES_BEHAVIOR_V2?.[species];
-  if (!sp) return null;
+  // ---------------------------------------------------------------------------------------
+  // THE PICKER AND THE TABLE DO NOT USE THE SAME NAMES, AND NOBODY NOTICED.
+  //
+  // Ryan, 2026-08-08, looking at the Plan tab: "how many species did you say there was when you
+  // were talking about structure... good thing i can plan for all of them huh."
+  //
+  // The picker offers seven freshwater species. The table keys three of them differently:
+  //
+  //     picker "Hybrid"      table "White Bass / Hybrid"
+  //     picker "White Bass"  table "White Bass / Hybrid"
+  //     picker "Catfish"     table "Blue Catfish", "Channel Catfish", "Flathead Catfish"
+  //
+  // An exact lookup returns undefined for all three, `depthBandFor` returns null, and the planner
+  // refuses with "No depth profile" before it reads the pack. THREE OF THE SEVEN SPECIES IN THE
+  // PICKER COULD NOT PRODUCE A PLAN AT ALL. Loose matching was already written for the research
+  // profile — where an LLM writes the keys — and the built-in table needed it just as badly.
+  //
+  // When a picker name spans several table keys, as "Catfish" does, the bands are UNIONED rather
+  // than one being picked. Choosing blue over flathead on alphabetical order would be inventing a
+  // fish, and the union is the honest read of "catfish" as an ask.
+  // ---------------------------------------------------------------------------------------
+  const keys = matchSpeciesKeys(SPECIES_BEHAVIOR_V2, species);
+  if (!keys.length) return null;
+  const sp = SPECIES_BEHAVIOR_V2[keys[0]];
   const s = seasonKey;
 
   const read = (node) => {
@@ -63,9 +85,40 @@ export function depthBandFor(species, lakeName, season, waterTempF, researched) 
     return Number.isFinite(a) && Number.isFinite(b) && b > a ? [a, b] : null;
   };
 
-  const key = resolveLakeKey(lakeName, sp);
-  const own = key && sp[key] ? read(sp[key][s]) : null;
-  if (own) return clampToOxygen({ band: own, basis: `built-in table, ${key}`, generic: false, source: 'table' }, researched);
+  // Across every table key this picker name matched: the lake's own entry, then the species-wide
+  // default.
+  //
+  // CORRECTION, 2026-08-08. An earlier comment here claimed there was no `default_SC_reservoir`
+  // key "despite three places reaching for one". Wrong: TWELVE of the table's thirteen species
+  // have exactly that key, and the two saltwater ones have `Coastal SC Inshore`. Only Striped
+  // Bass is keyed per lake. v1 walked lake -> default -> nothing; I dropped the middle step when
+  // I rewrote this, which sent every species but stripers down the union fallback for no reason.
+  const DEFAULTS = ['default_SC_reservoir', 'Coastal SC Inshore'];
+  const owns = [];
+  for (const k of keys) {
+    const node = SPECIES_BEHAVIOR_V2[k];
+    const lakeKey = resolveLakeKey(lakeName, node);
+    if (lakeKey && node[lakeKey]) {
+      const b = read(node[lakeKey][s]);
+      if (b) { owns.push({ key: k, band: b, lakeKey, lakeSpecific: true }); continue; }
+    }
+    for (const d of DEFAULTS) {
+      const b = node[d] ? read(node[d][s]) : null;
+      if (b) { owns.push({ key: k, band: b, lakeKey: d, lakeSpecific: false }); break; }
+    }
+  }
+  if (owns.length) {
+    const band = [Math.min(...owns.map((x) => x.band[0])), Math.max(...owns.map((x) => x.band[1]))];
+    const named = owns.map((x) => x.key).join(' + ');
+    // A species-wide default is not a lake-specific answer, and must not be dressed as one.
+    const lakeSpecific = owns.every((x) => x.lakeSpecific);
+    return clampToOxygen({
+      band,
+      basis: `built-in table, ${owns.map((x) => x.lakeKey).join(' / ')}`
+           + `${owns.length > 1 ? ` — ${named} combined` : ''}`,
+      generic: !lakeSpecific, source: 'table',
+    }, researched);
+  }
 
   // ---------------------------------------------------------------------------------------
   // THE TABLE COVERS FOUR LAKES. THE APP SHIPS FIFTEEN HUNDRED PACKS.
@@ -86,7 +139,8 @@ export function depthBandFor(species, lakeName, season, waterTempF, researched) 
   // get dropped on the way through; a generic band presented as a lake-specific one is exactly
   // the sort of quiet fiction this rebuild exists to remove.
   // ---------------------------------------------------------------------------------------
-  const across = Object.keys(sp).map((k) => read(sp[k] && sp[k][s])).filter(Boolean);
+  const across = keys.flatMap((k) => Object.keys(SPECIES_BEHAVIOR_V2[k])
+    .map((lk) => read(SPECIES_BEHAVIOR_V2[k][lk] && SPECIES_BEHAVIOR_V2[k][lk][s]))).filter(Boolean);
   if (!across.length) return null;
   return clampToOxygen({
     band: [Math.min(...across.map((x) => x[0])), Math.max(...across.map((x) => x[1]))],
@@ -158,17 +212,30 @@ function clampToOxygen(result, researched) {
  * Bass", "striped bass" and "Striper" all have to find each other, or the profile silently does
  * nothing and we fall back to a table that does not know this lake.
  */
+/**
+ * Every key in a species table that a picker name could mean.
+ *
+ * Exact first. Then containment either way, which is what makes "Hybrid" find
+ * "White Bass / Hybrid" and "Catfish" find all three catfish. Returns ALL matches, because
+ * collapsing three catfish to one on alphabetical order would be picking a fish for him.
+ */
+export function matchSpeciesKeys(table, species) {
+  if (!table || !species) return [];
+  if (table[species]) return [species];
+  const norm = (v) => String(v || '').toLowerCase().replace(/[^a-z]/g, '');
+  const want = norm(species);
+  if (!want) return [];
+  return Object.keys(table).filter((k) => {
+    const n = norm(k);
+    return n === want || n.includes(want) || want.includes(n);
+  });
+}
+
 export function researchedBand(profile, species, seasonKey) {
   const ti = profile && (profile.trollingIntelligence || profile.trolling);
   if (!ti || typeof ti !== 'object') return null;
 
-  const norm = (v) => String(v || '').toLowerCase().replace(/[^a-z]/g, '');
-  const want = norm(species);
-  if (!want) return null;
-  const hit = Object.keys(ti).find((k) => {
-    const n = norm(k);
-    return n === want || n.includes(want) || want.includes(n);
-  });
+  const hit = matchSpeciesKeys(ti, species)[0];
   if (!hit) return null;
 
   const band = ti[hit] && ti[hit][seasonKey] && ti[hit][seasonKey].preferredDepth;
