@@ -30,56 +30,52 @@ import { solunarFor } from "../utils/solunar.js";
 import { get as dbGet, put as dbPut, getAll as dbGetAll, del as dbDel, isReady as dbIsReady } from '../utils/db.js';
 
 // ─────────────────────────────────────────────────────────────
-// FIX: calcTrollTimes was referenced but never defined (the exact
-// error you saw: "calcTrollTimes is not defined" at buildPlanPreviewHtml).
-// Safe self-contained version using loaded tracks.
-function calcTrollTimes(phaseSpeeds = []) {
-  try {
-    const tracks = (state && state.DATA && state.DATA.tracks) || [];
-    if (!tracks.length) return [];
-
-    const fallbackSpeed = parseFloat(document.getElementById('planSpeed')?.value) || 2.4;
-
-    return tracks.map((t, i) => {
-      const speedMph = speedForTrack(t.name, phaseSpeeds, fallbackSpeed);
-      const pts = t.pts || [];
-      let distMi = 1.2;
-
-      if (pts.length > 1) {
-        let totalFt = 0;
-        for (let j = 1; j < pts.length; j++) {
-          const a = pts[j - 1];
-          const b = pts[j];
-          // Track points are stored as plain [lat, lon] arrays (see
-          // utils/parsers.js pts.push([lat, lon])), NOT {lat, lon} objects.
-          // The previous a.lat/a.lon access was always undefined, which is
-          // why every Lane Telemetry row showed "NaN mi / NaN min".
-          const aLat = Array.isArray(a) ? a[0] : a.lat;
-          const aLon = Array.isArray(a) ? a[1] : a.lon;
-          const bLat = Array.isArray(b) ? b[0] : b.lat;
-          const bLon = Array.isArray(b) ? b[1] : b.lon;
-          const dLat = (bLat - aLat) * 69;
-          const dLon = (bLon - aLon) * 69;
-          totalFt += Math.hypot(dLat, dLon) * 5280;
-        }
-        // Statute miles (5280 ft/mi) — was previously dividing by 6076.12
-        // (the nautical-mile conversion), which under-reported distance.
-        distMi = totalFt / 5280;
-      }
-
-      const mins = Math.max(4, Math.round((distMi / Math.max(0.8, speedMph)) * 60));
-      return {
-        name: t.name || `Lane ${i + 1}`,
-        distMi: distMi.toFixed(1),
-        speedMph,
-        mins
-      };
+// LANE TELEMETRY, READ OFF THE PLAN.
+//
+// What was here before computed its own numbers. It walked `state.DATA.tracks`, measured each
+// track's polyline itself, and priced every one of them at a single speed taken from
+// `#planSpeed` or from a v1 `Ph<n>` phase-speed table that the v2 path never writes. On the
+// report Ryan generated on 2026-08-09 that produced a table which contradicted the timeline
+// standing three inches above it:
+//
+//     every lane at 1.8 mph, INCLUDING the transits, which the plan runs at 3.5
+//     L1 at 5.0 mi, where the plan's own leg says 4.5
+//     T2 at 224 min, where the plan says 103
+//
+// This is the same disease as the three-conflicting-depths bug fixed in bb980af, and the rule
+// from that fix applies unchanged: anything in this document that can be read off the plan MUST
+// be, and anything that cannot be read off the plan and cannot be measured stays empty. So there
+// is no track walking here and no fallback speed. Legs, or no table.
+//
+// `estDurationMin` on a troll leg already includes its cast stops -- see assemblePlan(). That is
+// why a leg's run time can exceed its distance divided by its speed, and it is the number the
+// timeline shows, which is the point.
+export function laneTelemetry(plan) {
+  const legs = (plan && Array.isArray(plan.legs)) ? plan.legs : [];
+  const out = [];
+  for (const l of legs) {
+    const lengthM = Number(l.lengthM);
+    if (!Number.isFinite(lengthM)) continue;
+    const mph = Number(l.speedMph);
+    const mins = Number(l.estDurationMin);
+    const ah = Number(l.batteryAh);
+    out.push({
+      id: l.id,
+      // The label the leg already carries. `role: 'return'` is a label on a transit, not a third
+      // leg type -- see the route-home block in plan-assemble.js.
+      kind: l.type === 'transit'
+        ? (l.role === 'return' ? 'Transit — back to the ramp' : 'Transit — nothing in the water')
+        : (l.depthFt != null ? `Troll · ${l.depthFt} ft` : 'Troll'),
+      distMi: (lengthM / 1609.34).toFixed(2),
+      speedMph: Number.isFinite(mph) ? mph.toFixed(1) : '—',
+      mins: Number.isFinite(mins) ? mins : '—',
+      batteryAh: Number.isFinite(ah) ? ah.toFixed(2) : '—',
+      transit: l.type === 'transit',
     });
-  } catch (e) {
-    console.warn('[plan-builder] calcTrollTimes fallback:', e);
-    return [];
   }
+  return out;
 }
+
 // ─────────────────────────────────────────────────────────────
 
 function normalizedPhaseSpeeds(phaseSpeeds) {
@@ -89,11 +85,10 @@ function normalizedPhaseSpeeds(phaseSpeeds) {
     : [];
 }
 
-function speedForTrack(trackName, phaseSpeeds, fallbackSpeed) {
-  const phase = String(trackName || '').match(/^Ph(\d+)\b/i)?.[1];
-  const savedPass = normalizedPhaseSpeeds(phaseSpeeds).find((pass) => String(pass.phase) === phase);
-  return savedPass?.speed || fallbackSpeed;
-}
+// speedForTrack() lived here until 2026-08-09. It matched a track name against `Ph<n>` -- v1's
+// four-phase naming, which the v2 path never writes -- and fell back to `#planSpeed` for anything
+// it could not match, which was every track. That fallback is where the Lane Telemetry table's
+// "1.8 mph on every lane, transits included" came from. Its only caller now reads plan.legs.
 
 function formatPhaseSpeeds(phaseSpeeds, fallbackSpeed) {
   const savedPasses = normalizedPhaseSpeeds(phaseSpeeds);
@@ -439,6 +434,9 @@ export function collectPlan(){
       warnings: Array.isArray(v2.warnings) ? v2.warnings.slice() : [],
       legs: (v2.legs || []).map((l) => ({
         id: l.id, type: l.type, runId: l.runId ?? null,
+        // `role: 'return'` is a label on a transit, not a leg type. Carried so the report can say
+        // "back to the ramp" instead of printing the way home as an anonymous deadhead.
+        role: l.role ?? undefined,
         startM: l.startM, lengthM: l.lengthM,
         depthFt: l.depthFt ?? null, speedMph: l.speedMph,
         batteryAh: l.batteryAh, estDurationMin: l.estDurationMin, estStartTime: l.estStartTime ?? null,
@@ -877,12 +875,23 @@ export async function buildPlanPreviewHtml(p){
   // We'll populate this from weather data after fetch — placeholder for now
   // (populated below after weather fetch section)
 
-  // ── Troll lane time calculator ────────────────────────────────────────────
-  // Uses the top-level safe implementation (defined above)
-  const trollTimes = calcTrollTimes(p.trolling?.phaseSpeeds);
+  // ── Lane telemetry, one row per leg of the plan ───────────────────────────
+  // Reads p.plan.legs. No tracks are walked and no speed is guessed -- see laneTelemetry().
+  const trollTimes = laneTelemetry(p.plan);
   let trollTimeRows = '';
   if(trollTimes && trollTimes.length){
-    trollTimeRows = trollTimes.map(t=>`<tr><td>${esc(t.name)}</td><td>${t.distMi} mi</td><td>${esc(t.speedMph)} mph</td><td><b>${t.mins} min</b></td></tr>`).join('');
+    trollTimeRows = trollTimes.map(t=>`<tr${t.transit?' style="color:#666"':''}><td><b>${esc(t.id)}</b></td><td>${esc(t.kind)}</td><td>${t.distMi} mi</td><td>${esc(t.speedMph)} mph</td><td><b>${t.mins} min</b></td><td>${t.batteryAh} Ah</td></tr>`).join('');
+    // The day's own totals, off the budget the assembler wrote -- not a sum of the rows above,
+    // so a row that disagrees with the budget shows up as the disagreement it is.
+    const b = p.plan && p.plan.budget;
+    if (b && Number.isFinite(Number(b.totalM))) {
+      trollTimeRows += `<tr style="border-top:2px solid var(--accent);font-weight:700">`
+        + `<td colspan="2">Whole day — ${(Number(b.fishingM||0)/1609.34).toFixed(2)} mi fishing, `
+        + `${(Number(b.transitM||0)/1609.34).toFixed(2)} mi getting there</td>`
+        + `<td>${(Number(b.totalM)/1609.34).toFixed(2)} mi</td><td>—</td>`
+        + `<td>${Number.isFinite(Number(b.estPlannedMin))?Math.round(Number(b.estPlannedMin)):'—'} min</td>`
+        + `<td>${Number.isFinite(Number(b.plannedAh))?Number(b.plannedAh).toFixed(2):'—'} Ah</td></tr>`;
+    }
   }
 
 
@@ -1530,9 +1539,10 @@ ${unifiedPreviewHtml}
 </table>
 <p class="rp-small" style="margin-top:4px">Port = Left side of cockpit · Starboard = Right side of cockpit</p>
 
-${trollTimeRows?`<h3>Lane Telemetry — Run Times by Pass Speed</h3>
-<table><thead><tr style="background:#eef4fa"><th>Lane / Track</th><th>Distance</th><th>Speed</th><th>Run Time</th></tr></thead>
-<tbody>${trollTimeRows}</tbody></table>`:''}
+${trollTimeRows?`<h3>Lane Telemetry — Every Leg, Read Off The Plan</h3>
+<table><thead><tr style="background:#eef4fa"><th>Leg</th><th>What it is</th><th>Distance</th><th>Speed</th><th>Run Time</th><th>Battery</th></tr></thead>
+<tbody>${trollTimeRows}</tbody></table>
+<p class="rp-small">Every figure here is the plan's own — the same lengths, speeds and estimates the timeline shows. A troll leg's run time includes its cast stops. ${p.batteryCurve?esc(p.batteryCurve):''}</p>`:''}
 
 ${p.meta.structure?`<h2>🗺 Structure Notes Per Lane</h2>
 <pre style="white-space:pre-wrap;font-family:inherit;background:#f7f9fb;padding:10px;border-radius:6px;font-size:13px;border-left:4px solid #0d4f8b">${esc(p.meta.structure)}</pre>`:''}

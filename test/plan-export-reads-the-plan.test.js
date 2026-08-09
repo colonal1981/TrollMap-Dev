@@ -61,7 +61,7 @@ globalThis.document = globalThis.document || {
   getElementById: () => null, querySelector: () => null, querySelectorAll: () => [],
   createElement: () => ({ style: {}, dataset: {} }), addEventListener: noop, readyState: 'complete',
 };
-const { collectPlan } = await import('../js/modules/plan-builder.js');
+const { collectPlan, laneTelemetry } = await import('../js/modules/plan-builder.js');
 
 describe('the export reads the plan instead of re-deriving it', () => {
   state.DATA = { waypoints: [], tracks: [] };
@@ -201,5 +201,82 @@ describe('a transit is rendered as a transit', () => {
     }
     // and no transit leaks into routeRods, which is what fills the two rod slots
     for (const t of transits) expect(built.routeRods[t.key]).toBe(undefined);
+  });
+});
+
+
+// -----------------------------------------------------------------------------------------------
+// THE LANE TELEMETRY TABLE CONTRADICTED THE TIMELINE THREE INCHES ABOVE IT, 2026-08-09.
+//
+// In the report Ryan printed:
+//
+//     every lane at 1.8 mph, INCLUDING the transits, which the plan runs at 3.5
+//     L1 at 5.0 mi, where the plan's own leg says 4.5
+//     T2 at 224 min, where the plan says 103
+//
+// Same disease as the three depths above: the table walked state.DATA.tracks, measured the
+// polylines itself, and priced every one of them at #planSpeed or at a v1 `Ph<n>` phase-speed
+// table the v2 path never writes. The plan had all four numbers on every leg.
+// -----------------------------------------------------------------------------------------------
+describe('lane telemetry is the plan, not a second opinion about it', () => {
+  const rows = laneTelemetry(PLAN);
+
+  it('has one row per leg, in the order the boat meets them', () => {
+    expect(rows.length).toBe(PLAN.legs.length);
+    expect(rows.map((r) => r.id)).toEqual(PLAN.legs.map((l) => l.id));
+  });
+
+  it('prices a transit at the transit speed, which was the headline error', () => {
+    const troll = rows.filter((r) => !r.transit);
+    const transit = rows.filter((r) => r.transit);
+    expect(transit.length).toBeGreaterThan(0);
+    expect(troll.length).toBeGreaterThan(0);
+    // Not one speed for the whole table.
+    expect(new Set(rows.map((r) => r.speedMph)).size).toBeGreaterThan(1);
+    for (const r of transit) expect(r.speedMph).toBe('3.5');
+    for (const r of troll) expect(r.speedMph).toBe('2.0');
+  });
+
+  it('takes distance and run time off the leg rather than measuring anything', () => {
+    for (let i = 0; i < rows.length; i++) {
+      const leg = PLAN.legs[i];
+      expect(rows[i].distMi).toBe((leg.lengthM / 1609.34).toFixed(2));
+      expect(rows[i].mins).toBe(leg.estDurationMin);
+      expect(rows[i].batteryAh).toBe(leg.batteryAh.toFixed(2));
+    }
+  });
+
+  it('names the leg for what it is, including the way home', () => {
+    expect(rows.find((r) => !r.transit).kind).toContain('Troll');
+    expect(rows.find((r) => !r.transit).kind).toContain('22.4 ft');
+    const home = PLAN.legs.find((l) => l.role === 'return');
+    expect(!!home).toBe(true);
+    expect(rows.find((r) => r.id === home.id).kind).toContain('back to the ramp');
+  });
+
+  it('survives the export shape, which drops geometry but keeps the numbers', () => {
+    // The report renders collectPlan()'s `plan`, not the raw plan object, so the row source has
+    // to be that shape — same fields, geometry dropped.
+    state.DATA = { waypoints: [], tracks: [] };
+    globalThis.window._planV2 = PLAN;
+    const exported = laneTelemetry(collectPlan().plan);
+    expect(exported.map((r) => r.id)).toEqual(rows.map((r) => r.id));
+    expect(exported.map((r) => r.kind)).toEqual(rows.map((r) => r.kind));
+    expect(exported.map((r) => r.speedMph)).toEqual(rows.map((r) => r.speedMph));
+  });
+
+  it('prints no table at all rather than a guessed one', () => {
+    // "Anything that cannot be read off the plan and cannot be measured stays empty."
+    expect(laneTelemetry(null)).toEqual([]);
+    expect(laneTelemetry({})).toEqual([]);
+    expect(laneTelemetry({ legs: [] })).toEqual([]);
+  });
+
+  it('no longer walks the tracks or reaches for a fallback speed', () => {
+    expect(BUILDER).toContain('const trollTimes = laneTelemetry(p.plan)');
+    expect(BUILDER.includes('function calcTrollTimes')).toBe(false);
+    expect(BUILDER.includes('function speedForTrack')).toBe(false);
+    // The heading no longer promises one pass speed for the whole day.
+    expect(BUILDER.includes('Run Times by Pass Speed')).toBe(false);
   });
 });
