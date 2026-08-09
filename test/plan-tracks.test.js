@@ -2,6 +2,7 @@ import { describe, it, expect } from './expect-shim.mjs';
 import { assemblePlan, planRoute } from '../js/modules/plan-assemble.js';
 import { state } from '../js/core/state.js';
 import { materialisePlan, planTracks, planWaypoints, trackName } from '../js/modules/plan-tracks.js';
+import { metresBetween } from '../js/modules/plan-candidates.js';
 
 // ---------------------------------------------------------------------------
 // Why this test exists
@@ -89,6 +90,8 @@ describe('plan-tracks — the route reaches state.DATA', () => {
   it('names a track for a 4-inch screen, not for a report', () => {
     expect(trackName({ id: 'L1', type: 'troll', depthFt: 16.1 })).toBe('L1 · 16.1 ft');
     expect(trackName({ id: 'T2', type: 'transit' })).toBe('T2 · transit');
+    // The run home is the leg he most needs to find on the unit at the end of the day.
+    expect(trackName({ id: 'T3', type: 'transit', role: 'return' })).toBe('T3 · home');
     // A leg the pack could not sound keeps its identity rather than printing a bare "ft".
     expect(trackName({ id: 'L3', type: 'troll', depthFt: null })).toBe('L3 · troll');
     for (const t of planTracks(plan())) expect(t.name.length).toBeLessThanOrEqual(24);
@@ -182,5 +185,53 @@ describe('plan-tracks — ACCEPTANCE: the plan can be exported', () => {
     materialisePlan(p, { launch: LAUNCH, win: globalThis.window });
     expect(collectPlan().gpx.tracks).toBe(p.legs.length);
     expect(collectPlan().gpx.waypoints).toBeGreaterThan(0);
+  });
+});
+
+
+// -----------------------------------------------------------------------------------------------
+// THE ROUTE HOME REACHES THE UNIT, 2026-08-09.
+//
+// Ryan: "this entire plan leaves me stranded miles from the ramp with no timing included for
+// getting home and no route to do it." The plan he took out ended 2.8 km from Clearwater Cove
+// and the GPX had no track back. A leg that is not in `state.DATA.tracks` is not on the
+// chartplotter, and a route home that is not on the chartplotter is not a route home.
+// -----------------------------------------------------------------------------------------------
+describe('plan-tracks — the way back is on the unit', () => {
+  const routed = (a, b) => ({ distanceM: metresBetween(a, b), coordinates: [a, b] });
+
+  function withHome() {
+    return assemblePlan({
+      transit: routed,
+      candidates: [A, B], launch: LAUNCH, loadout: LOADOUT,
+      slug: 'wateree_lake', water: 'Lake Wateree, SC', ramp: 'Clearwater Cove',
+      launchTime: '06:00', returnTime: '15:00', usableAh: 80,
+      deploy: { 'w#1': { port: 'R1', starboard: 'R5' }, 'w#2': { port: 'R1', starboard: 'R5' } },
+    });
+  }
+
+  it('the return leg gets its own track, named for what it is', () => {
+    const p = withHome();
+    const home = p.legs.find((l) => l.role === 'return');
+    expect(Boolean(home)).toBe(true);
+    const t = planTracks(p, 'run1').find((x) => x.legId === home.id);
+    expect(t.name).toBe(`${home.id} · home`);
+    expect(t.legRole).toBe('return');
+    expect(t.pts.length).toBeGreaterThan(1);
+    // and it finishes at the ramp, in [lat, lon]
+    expect(t.pts[t.pts.length - 1]).toEqual([LAUNCH[1], LAUNCH[0]]);
+  });
+
+  it('the day\'s route ends at the ramp, so the GPX does too', () => {
+    const route = planRoute(withHome());
+    expect(route[route.length - 1]).toEqual(LAUNCH);
+  });
+
+  it('materialising the plan puts the way home in state.DATA', () => {
+    reset();
+    const p = withHome();
+    const out = materialisePlan(p, { launch: LAUNCH, win: {} });
+    expect(out.tracks).toBe(p.legs.length);
+    expect(state.DATA.tracks.some((t) => t.legRole === 'return')).toBe(true);
   });
 });

@@ -174,8 +174,10 @@ describe('a transit is rendered as a transit', () => {
   });
 
   it('the card does not call a deadhead a troll', () => {
-    expect(UI).toContain('TRANSIT — ${esc(entry.label)}');
-    expect(BUILDER).toContain('TRANSIT — ${esc(label)}');
+    expect(UI).toContain("entry.role === 'return' ? 'RETURN' : 'TRANSIT'");
+    expect(UI).toContain('— ${esc(entry.label)}');
+    expect(BUILDER).toContain("e.role === 'return' ? 'RETURN' : 'TRANSIT'");
+    expect(BUILDER).toContain('${kind} — ${esc(label)}');
   });
 
   it('the printed report gives a transit no depth column and no rod column', () => {

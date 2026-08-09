@@ -167,6 +167,9 @@ export function collectPlan(){
             // is a list of times that are wrong by 09:00. `step` numbers legs and only legs.
             legId: e.legId ?? e.key,
             legType: e.legType || 'troll',
+            // The run home is a transit with a name. Without this the printed report calls it
+            // TRANSIT and the map has nothing to colour it by.
+            role: e.role || null,
             atM: e.atM ?? null,
             startM: e.startM ?? null,
             lengthM: e.lengthM ?? null,
@@ -568,7 +571,8 @@ export async function buildPlanPreviewHtml(p){
         if (e.legType === 'transit') {
           const dist = e.stats?.distMi != null ? `${esc(String(e.stats.distMi))} mi` : '';
           const est = e.estDurationMin != null ? `est ${esc(String(e.estDurationMin))} min` : '';
-          return `<tr style="background:#f2f4f6"><td><b>${icon} TRANSIT — ${esc(label)}</b>`
+          const kind = e.role === 'return' ? 'RETURN' : 'TRANSIT';
+          return `<tr style="background:#f2f4f6"><td><b>${icon} ${kind} — ${esc(label)}</b>`
                + `<br><span class="rp-small">${esc(e.desc||'')}</span></td>`
                + `<td>${esc(speed)}<br><span class="rp-small">${dist}</span></td>`
                + `<td class="rp-small">Nothing in the water</td>`

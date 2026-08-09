@@ -570,7 +570,7 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
             <div style="display:flex;align-items:center;gap:8px">
               <span style="font-size:18px">${entry.icon}</span>
               <div>
-                <div style="font-size:12px;font-weight:800;color:${entry.color};letter-spacing:.02em">TRANSIT — ${esc(entry.label)}</div>
+                <div style="font-size:12px;font-weight:800;color:${entry.color};letter-spacing:.02em">${entry.role === 'return' ? 'RETURN' : 'TRANSIT'} — ${esc(entry.label)}</div>
                 <div style="font-size:11px;color:var(--muted)">${esc(entry.desc || '')}</div>
               </div>
             </div>

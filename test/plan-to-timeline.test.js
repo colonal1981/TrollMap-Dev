@@ -120,6 +120,16 @@ describe('plan-to-timeline — a v2 plan in the shape the export path reads', ()
     expect(t.desc).toContain('3.5 mph');
   });
 
+  it('the run home says it is the run home', () => {
+    const home = JSON.parse(JSON.stringify(PLAN));
+    home.legs.find((l) => l.id === 'T1').role = 'return';
+    const t = planToTimeline(home).timeline.find((e) => e.key === 'T1');
+    expect(t.role).toBe('return');
+    expect(t.label).toBe('1.1 mi to the ramp');
+    expect(t.desc).toContain('back to the launch');
+    expect(t.rods).toEqual([]);           // still a transit: no spread on it
+  });
+
   it('a transit the router could not answer for says so on the card', () => {
     const straight = JSON.parse(JSON.stringify(PLAN));
     straight.legs.find((l) => l.id === 'T1').unrouted = true;

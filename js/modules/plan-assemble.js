@@ -257,6 +257,58 @@ export function assemblePlan(o) {
     cursor = c.end;
   }
 
+  // ── THE ROUTE HOME ───────────────────────────────────────────────────────────────────────────
+  //
+  // Ryan, 2026-08-09, off the water: "this entire plan leaves me stranded miles from the ramp
+  // with no timing included for getting home and no route to do it." Measured off that GPX: the
+  // last leg ended 2.8 km from Clearwater Cove, and the plan carried no track home, no minutes
+  // for it and no amp-hours for it. What it carried was a warning, in a list he never sees.
+  //
+  // THIS REVERSES A CLAUSE OF PLAN_SCHEMA_V2, ON PURPOSE, AND ONLY HALF OF IT. The schema says
+  // "No return_to_launch ... when it does not [end at the ramp], the plan warns and adds
+  // nothing", and it was right at the time: what it deleted was an INVENTED leg — a straight
+  // line drawn from wherever the day finished back to the ramp, costed as if a kayak flies. That
+  // stays deleted. What is added here is the same thing every other transit in the plan is: a
+  // water-routed path from the transit router, with its own distance, its own amp-hours off the
+  // curve and its own minutes, in `budget`, in `planRoute()` so it reaches the GPX, and on the
+  // map. It is not a special kind of leg; it is a transit that happens to end at the ramp, and
+  // `role: 'return'` is a label on it so the card can say "back to the ramp" and the map can
+  // colour it, NOT a second leg type.
+  //
+  // When the router will not answer for this pair the straight line is still refused as a
+  // finished answer: the leg is marked `unrouted`, validatePlan() fails it the way it fails any
+  // other unrouted transit, and the warning says plainly that the way home has not been checked
+  // for land. A straight line home is exactly the invention the schema deleted, so it is never
+  // presented as a route — only as the shape of the problem.
+  //
+  // The over-battery and past-return-time checks below run on the budget AFTER this leg is in
+  // it, which is the point: the trip home is now something the day can fail to afford.
+  if (candidates.length && Array.isArray(o.launch)) {
+    const gap = metresBetween(cursor, o.launch);
+    if (gap > HOME_TOLERANCE_M) {
+      const p = transit(cursor, o.launch) || straight(cursor, o.launch);
+      const len = Math.round(p.distanceM);
+      const mins = minutesFor(p.distanceM, transitMph);
+      const a = ampHours(p.distanceM, transitMph);
+      const homeLeg = {
+        id: `T${++ti}`, type: 'transit', role: 'return',
+        startM: runM, lengthM: len,
+        speedMph: transitMph, batteryAh: round2(a),
+        estDurationMin: Math.round(mins), estStartTime: formatClock(clock),
+        coordinates: p.coordinates,
+      };
+      if (p.unrouted) {
+        homeLeg.unrouted = true;
+        warnings.push(`THE ROUTE HOME IS NOT WATER-ROUTED — ${homeLeg.id} is a straight line from `
+                    + `the last leg to the ramp, ${(len / 1000).toFixed(1)} km of it. It can cross `
+                    + 'land and it understates the amp-hours. Do not follow it.');
+      }
+      legs.push(homeLeg);
+      runM += len; transitM += len; ah += a; clock += mins;
+      cursor = o.launch;
+    }
+  }
+
   const windowMin = returnMin != null ? returnMin - launchMin : null;
   const plan = {
     planVersion: 2,
@@ -286,13 +338,9 @@ export function assemblePlan(o) {
   if (windowMin && plan.budget.estPlannedMin > windowMin) {
     warnings.push(`estimated ${plan.budget.estPlannedMin} min against a ${windowMin} min window`);
   }
-  if (candidates.length) {
-    const home = metresBetween(cursor, o.launch);
-    if (home > HOME_TOLERANCE_M) {
-      warnings.push(`last leg ends ${(home / 1000).toFixed(1)} km from the ramp — `
-                  + `${round2(ampHours(home, transitMph))} Ah to get back, not in the plan`);
-    }
-  }
+  // The old warning that lived here -- "last leg ends 2.8 km from the ramp ... not in the plan"
+  // -- is gone because the thing it warned about is now in the plan. `cursor` is the ramp by
+  // the time it gets here, unless the last leg finished inside HOME_TOLERANCE_M of it.
   const fluoro = changes.filter((c) => c.cost === 'fluoro').length;
   if (fluoro >= FLUORO_RETIE_WARN) {
     warnings.push(`${fluoro} fluoro reties — each one is a knot in a moving kayak`);

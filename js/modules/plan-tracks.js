@@ -55,7 +55,9 @@ const trim = (s, n) => {
 /** `L1 · 16.1 ft` / `T2 · transit`. Readable at a glance on a 4-inch screen. */
 export function trackName(leg) {
   if (!leg) return '';
-  if (leg.type === 'transit') return `${leg.id} · transit`;
+  // The run home is the leg he most needs to find on the unit at 19:00, so it says so rather
+  // than being the third thing called "transit".
+  if (leg.type === 'transit') return `${leg.id} · ${leg.role === 'return' ? 'home' : 'transit'}`;
   return leg.depthFt != null ? `${leg.id} · ${leg.depthFt} ft` : `${leg.id} · troll`;
 }
 
@@ -79,7 +81,7 @@ export function planTracks(plan, runId = null) {
       name: trackName(leg),
       pts: toLatLon(leg.coordinates),
       scoutRoute: true, smartPlan: true, planRunId: runId,
-      planStep: leg.type, legId: leg.id, legIndex: i,
+      planStep: leg.type, legRole: leg.role || null, legId: leg.id, legIndex: i,
       startM: leg.startM, lengthM: leg.lengthM,
     };
     if (leg.depthFt != null) t.depthFt = leg.depthFt;

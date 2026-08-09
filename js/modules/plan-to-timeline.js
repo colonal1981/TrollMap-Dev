@@ -166,15 +166,24 @@ export function planToTimeline(plan, o = {}) {
       // information." Four fields, every one of them a dash, describing a spread that does not
       // exist — under a heading that calls a deadhead a troll. `unrouted` comes along so the card
       // can say when the line is straight because the router would not answer.
+      // The run home is a transit like any other, and it is also the one he asked for by name,
+      // so it is labelled as itself: "1.7 mi to the ramp", not the third "Run 1.7 mi" on the card
+      // stack. `role` rides along for the renderer's heading and for the map's colour.
+      const home = leg.role === 'return';
       const card = {
         ...common,
-        label: `Run ${mi.toFixed(1)} mi`, shortLabel: `Run ${mi.toFixed(1)}mi`,
+        label: home ? `${mi.toFixed(1)} mi to the ramp` : `Run ${mi.toFixed(1)} mi`,
+        shortLabel: home ? `Home ${mi.toFixed(1)}mi` : `Run ${mi.toFixed(1)}mi`,
+        role: leg.role || null,
         unrouted: !!leg.unrouted,
-        icon: '➡️', color: TRANSIT_COLOR,
-        desc: `From ${mark} in · deadhead at ${leg.speedMph} mph · ${leg.batteryAh} Ah`
-            + ` · est ${leg.estDurationMin} min`,
-        longDesc: leg.unrouted ? 'Moving between legs — STRAIGHT LINE, not water-routed'
-                               : 'Moving between legs, nothing in the water',
+        icon: home ? '🏁' : '➡️', color: TRANSIT_COLOR,
+        desc: `From ${mark} in · ${home ? 'back to the launch' : 'deadhead'} at ${leg.speedMph} mph`
+            + ` · ${leg.batteryAh} Ah · est ${leg.estDurationMin} min`,
+        longDesc: leg.unrouted
+          ? (home ? 'THE ROUTE HOME IS A STRAIGHT LINE — not water-routed, do not follow it'
+                  : 'Moving between legs — STRAIGHT LINE, not water-routed')
+          : (home ? 'The run back to the ramp, nothing in the water'
+                  : 'Moving between legs, nothing in the water'),
         speedMph: leg.speedMph,
       };
       cards.push(card);

@@ -226,9 +226,14 @@ describe('smart-plan-v2 — transits are routed over water, or they say they are
       asked.push([a, b]);
       return { distanceM: 42, coordinates: [a, b] };
     });
-    expect(asked.length).toBe(2);
+    // Three pairs, not two: launch -> head, tail -> head, and the LAST leg's tail back to the
+    // ramp. That third one is the route home, and it became a real leg on 2026-08-09 -- a pair
+    // nobody prefetches comes back null, which would leave the one leg he cannot do without as
+    // a straight line on every single plan.
+    expect(asked.length).toBe(3);
     expect(asked[0][0]).toEqual([-80.73, 34.38]);       // launch -> first leg's head
     expect(asked[1][0]).toEqual([-80.70, 34.38]);       // first leg's tail -> second leg's head
+    expect(asked[2]).toEqual([[-80.66, 34.39], [-80.73, 34.38]]);   // last leg's tail -> the ramp
     expect(lookup([-80.73, 34.38], [-80.72, 34.38]).distanceM).toBe(42);
     // A pair nobody routed is null, not a guess -- assemblePlan then draws a marked straight line.
     expect(lookup([0, 0], [1, 1])).toBe(null);

@@ -254,10 +254,67 @@ describe('plan-assemble — saying when it does not fit', () => {
     expect(plan.warnings.some((w) => w.includes('min window'))).toBe(true);
   });
 
-  it('warns when the last leg ends away from the ramp, and does not add a leg to fix it', () => {
+  // 2026-08-09. This test used to assert the opposite: that the plan WARNS the last leg ends away
+  // from the ramp and adds nothing. That was PLAN_SCHEMA_V2's clause and it was right about the
+  // thing it deleted -- an invented straight line home, costed as if a kayak flies. It was wrong
+  // about what to do instead. Ryan: "this entire plan leaves me stranded miles from the ramp with
+  // no timing included for getting home and no route to do it." A warning in a list he never sees
+  // is not a route home.
+  it('routes him home and puts it in the budget, instead of warning and adding nothing', () => {
     const plan = basePlan();
-    expect(plan.warnings.some((w) => w.includes('from the ramp'))).toBe(true);
+    const last = plan.legs[plan.legs.length - 1];
+    expect(last.type).toBe('transit');
+    expect(last.role).toBe('return');
+    expect(last.unrouted).toBeUndefined();               // the router answered; nothing is faked
+    expect(last.lengthM).toBeGreaterThan(0);
+    expect(last.batteryAh).toBeGreaterThan(0);
+    expect(last.estDurationMin).toBeGreaterThan(0);
+    // it ends AT the ramp
+    const end = last.coordinates[last.coordinates.length - 1];
+    expect(metresBetween(end, LAUNCH) < 1).toBe(true);
+    // and the day's arithmetic counts it
+    expect(plan.budget.transitM).toBeGreaterThanOrEqual(last.lengthM);
+    expect(plan.budget.totalM).toBe(last.startM + last.lengthM);
+    expect(validatePlan(plan).length).toBe(0);
+    // the old warning is gone because the thing it warned about is in the plan
+    expect(plan.warnings.some((w) => w.includes('not in the plan'))).toBe(false);
+  });
+
+  it('adds nothing when the last leg already finishes at the ramp', () => {
+    // HOME_TOLERANCE_M is 500 m. A leg that ends on the ramp needs no leg home, and inventing a
+    // zero-length one would put an empty track on the unit.
+    const backHome = leg('w#9', -80.7200, -80.7300, 34.3800);
+    const plan = assemblePlan({
+      transit: routed, candidates: [backHome], launch: LAUNCH, loadout: LOADOUT,
+      launchTime: '06:00', returnTime: '15:00', usableAh: 80,
+    });
+    expect(plan.legs.filter((l) => l.role === 'return').length).toBe(0);
     expect(plan.legs[plan.legs.length - 1].type).toBe('troll');
+  });
+
+  it('never draws the way home as a straight line without saying so', () => {
+    // The invention PLAN_SCHEMA_V2 deleted was exactly this: a straight line from wherever the
+    // day finished back to the ramp. When the router will not answer for this pair, the leg is
+    // still refused as a finished answer -- marked, warned about loudly, and failed by
+    // validatePlan() the same as any other unrouted transit.
+    const plan = assemblePlan({
+      candidates: [A, B], launch: LAUNCH, loadout: LOADOUT,
+      launchTime: '06:00', returnTime: '15:00', usableAh: 80,
+    });
+    const home = plan.legs.find((l) => l.role === 'return');
+    expect(home.unrouted).toBe(true);
+    expect(plan.warnings.some((w) => w.includes('THE ROUTE HOME IS NOT WATER-ROUTED'))).toBe(true);
+    expect(validatePlan(plan).some((b) => b.includes(`${home.id} is not water-routed`))).toBe(true);
+  });
+
+  it('the trip home is something the day can now fail to afford', () => {
+    // The point of putting it in the budget rather than in a warning: the over-battery and
+    // past-return-time checks see it.
+    const plan = basePlan();
+    const home = plan.legs.find((l) => l.role === 'return');
+    const withoutHome = plan.budget.plannedAh - home.batteryAh;
+    const tight = basePlan({ usableAh: Number((withoutHome + home.batteryAh / 2).toFixed(2)) });
+    expect(tight.warnings.some((w) => w.includes('over budget'))).toBe(true);
   });
 
   it('warns at three fluoro reties', () => {

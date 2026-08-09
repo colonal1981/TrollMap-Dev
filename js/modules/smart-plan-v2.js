@@ -119,7 +119,7 @@ export async function buildSmartPlanV2(o) {
   //
   // assemblePlan() is synchronous and its transit hook is synchronous, so the routes are fetched
   // HERE, up front, for the pairs the ordered plan will ask for -- launch to the first leg's
-  // head, then each leg's tail to the next leg's head. The lookup handed to the assembler is a
+  // head, each leg's tail to the next leg's head, and the last leg's tail back to the ramp. The lookup handed to the assembler is a
   // plain map read. A pair the router could not answer returns null and the assembler falls back
   // to a straight line that MARKS ITSELF unrouted; nothing pretends a straight line was routed.
   const transit = o.transit || await prefetchTransits(args.candidates, o.ramp, o.routeWater);
@@ -212,6 +212,10 @@ export async function prefetchTransits(candidates, launch, routeWater) {
     if (Array.isArray(cursor) && Array.isArray(c.start)) pairs.push([cursor, c.start]);
     cursor = c.end;
   }
+  // AND THE PAIR HOME. assemblePlan() asks for the last leg's tail back to the ramp now that the
+  // route home is a real leg, and a pair nobody prefetched comes back null -- which would leave
+  // the one leg he cannot do without as a straight line every single time.
+  if (Array.isArray(cursor) && Array.isArray(launch)) pairs.push([cursor, launch]);
   const routed = new Map();
   await Promise.all(pairs.map(async ([a, b]) => {
     try {
