@@ -109,6 +109,11 @@ from build_trolling_runs import metres, length_m, NodeIndex, read_graph, main_co
 
 M_PER_DEG_LAT = 110540.0
 
+# Sampling a segment finer than the raster it is read from buys nothing but calls: consecutive
+# samples land in the same cell and return the same number. The grid is 12 m and thin water is
+# already widened by a full cell, so 10 m is as fine as the answer can actually be.
+SMOOTH_SAMPLE_M = 10.0
+
 
 def m_per_deg_lon(lat):
     return 111320.0 * math.cos(math.radians(lat))
@@ -201,6 +206,7 @@ class DepthRaster:
         n = np.hypot(gxg, gyg)
         n = np.where(n < 1e-9, 1.0, n)
         self.gx, self.gy = gxg / n, gyg / n
+        self._inv = 1.0 / self.step
 
     @staticmethod
     def _erode(dm, k):
@@ -238,8 +244,13 @@ class DepthRaster:
         return np.where(big < 0, np.nan, big).astype(np.float32)
 
     def _ij(self, xy):
-        i = np.clip(np.round((xy[:, 0] - self.x0) / self.step).astype(int), 0, self.nx - 1)
-        j = np.clip(np.round((xy[:, 1] - self.y0) / self.step).astype(int), 0, self.ny - 1)
+        # Hand-rolled rather than np.round + np.clip. This is the hottest function in the whole
+        # script -- 95,000 calls for three runs -- and np.clip goes through three layers of numpy
+        # Python wrapper per call, which cost more than the arithmetic it was guarding.
+        i = ((xy[:, 0] - self.x0) * self._inv + 0.5).astype(np.intp)
+        j = ((xy[:, 1] - self.y0) * self._inv + 0.5).astype(np.intp)
+        np.clip(i, 0, self.nx - 1, out=i)
+        np.clip(j, 0, self.ny - 1, out=j)
         return i, j
 
     def at(self, xy):
@@ -355,17 +366,19 @@ def smooth(xy0, depth, floor_dm, target_dm, iters, deep_bias_m):
         if float(np.abs(step).max()) < 0.25:
             break
 
-        cur_seg = _no_licence(_seg_min(depth, xy[:-1], xy[1:]))
-        cur_pt = _no_licence(depth.at(xy))
+        # ONE SCAN, NOT TWO. `_seg_min` samples each segment from t=0 to t=1 inclusive, so the
+        # vertices are already in it -- the separate per-point lookup that used to sit here was
+        # asking the raster the same question a second time, and raster lookups are what this
+        # loop is made of. A point is judged by the segments it owns, which is what actually
+        # matters: the boat travels along them, it does not teleport between vertices.
+        cur_seg = _no_licence(_seg_min(depth, xy[:-1], xy[1:], sample_m=SMOOTH_SAMPLE_M))
         alpha = np.ones(len(xy))
 
         def bad_at(al):
             cand = xy + step * al[:, None]
-            dp = depth.at(cand)
-            dp = np.where(np.isnan(dp), -1.0, dp)
-            b = (dp < floor_dm) & (dp < cur_pt)
-            sm = _seg_min(depth, cand[:-1], cand[1:])
+            sm = _seg_min(depth, cand[:-1], cand[1:], sample_m=SMOOTH_SAMPLE_M)
             seg = (sm < floor_dm) & (sm < cur_seg)
+            b = np.zeros(len(xy), bool)
             b[:-1] |= seg                       # a point owns the segments on either side
             b[1:] |= seg
             return b
@@ -434,28 +447,38 @@ def chord_pass(xy, depth, floor_dm, max_turn_deg, max_chord_m=2500.0):
             v = xy[i] - xy[out[-2]]
             if np.hypot(*v) > 1e-6:
                 heading = math.degrees(math.atan2(v[1], v[0]))
+        # EVERY CANDIDATE END IN ONE BATCH. Testing them one at a time meant one _seg_min call
+        # per candidate, ~25 per vertex, each its own numpy round trip.
+        far = np.hypot(*(xy[i + 1:] - xy[i]).T)
+        reach = int(np.searchsorted(np.maximum.accumulate(far), max_chord_m, side='right'))
+        hi = min(n - 1, i + 1 + reach)
+        js = [j for j in range(i + 1, hi + 1)
+              if j == i + 1 or j == hi or (j - i - 1) % stride == 0]
+        if not js:
+            js = [min(i + 1, n - 1)]
+        ends = xy[js]
+        starts = np.repeat(xy[i][None, :], len(js), axis=0)
+        gots = _seg_min(depth, starts, ends, sample_m=10.0)
+        # `was` for a chord i..j is the shallowest segment of the line it replaces -- a running
+        # minimum, so one accumulate instead of a scan per candidate.
+        wasrun = np.minimum.accumulate(seg_min_all[i:hi]) if hi > i else np.array([np.inf])
+        wlens = np.hypot(*(ends - xy[i]).T)
+        if heading is None:
+            turns = np.zeros(len(js))
+        else:
+            turns = np.abs((np.degrees(np.arctan2(ends[:, 1] - xy[i][1], ends[:, 0] - xy[i][0]))
+                            - heading + 180) % 360 - 180)
+            turns[wlens <= 1e-6] = 0.0
+
         in_cap = out_cap = None
-        was = float('inf')
-        j = i + 1
-        while j < n:
-            was = min(was, float(seg_min_all[j - 1]))
-            if j > i + 1 and (j - i - 1) % stride and j < n - 1:
-                j += 1
-                continue
-            w = xy[j] - xy[i]
-            wlen = float(np.hypot(*w))
-            if wlen > max_chord_m:
-                break
-            turn = 0.0
-            if wlen > 1e-6 and heading is not None:
-                turn = abs((math.degrees(math.atan2(w[1], w[0])) - heading + 180) % 360 - 180)
-            got = float(_seg_min(depth, xy[i:i + 1], xy[j:j + 1], sample_m=10.0)[0])
+        for k, j in enumerate(js):
+            got, wlen, turn = float(gots[k]), float(wlens[k]), float(turns[k])
+            was = float(wasrun[min(max(j - 1 - i, 0), len(wasrun) - 1)])
             # STRICT, and this replaced a rule that leaked badly. Allowing a chord to be "no
             # worse than the shallowest point of the stretch it replaces" meant ONE thin spot
-            # anywhere in a stretch licensed the whole chord to run that shallow: on Wateree
-            # River it put 12 of 21 fitted runs more than 6 ft above their own target depth and
-            # threw away half the length doing it. A brief dip is not permission for a sustained
-            # shallow mile. `was` is still computed and still bounds the short fallback below.
+            # anywhere licensed the whole chord to run that shallow: on Wateree River it put 12
+            # of 21 fitted runs more than 6 ft above their own target depth. A brief dip is not
+            # permission for a sustained shallow mile. `was` still bounds the short fallback.
             if got >= floor_dm or (got >= was and wlen <= 400.0):
                 if turn <= max_turn_deg:
                     # Longest wins; a chord within 5% of it that runs DEEPER wins over it.
@@ -465,7 +488,7 @@ def chord_pass(xy, depth, floor_dm, max_turn_deg, max_chord_m=2500.0):
                         in_cap = (j, wlen, turn, got)
                 elif out_cap is None or turn < out_cap[2]:
                     out_cap = (j, wlen, turn, got)
-            j += 1
+
         pick = in_cap or out_cap or (i + 1, 0.0, 0.0, 0.0)
         out.append(pick[0])
         i = pick[0]
@@ -812,7 +835,20 @@ def fit_pack(pack, a):
         # to be worth smoothing"; whether it is a trolling pass is decided on the finished line.
         for stretch in split_at_thin_water(seeded, depth, floor, a.min_stretch_m,
                                            bridge_m=a.bridge_m, bridge_dm=a.bridge_dm):
-            even, _ = _resample(stretch, a.resample_m)
+            # BOUND THE POINT COUNT, NOT JUST THE SPACING.
+            #
+            # At a fixed 25 m, a 12 km stretch is 480 points and the smoother is O(points x
+            # iterations x raster reads) -- so cost grew with the SQUARE of stretch length while
+            # the answer did not. Wateree took thirty times parr_shoals' runtime for three times
+            # its data, entirely here.
+            #
+            # A long stretch does not need finer vertices than a short one: it is being replaced
+            # by straight chords at the end regardless, and this is a guideline steered by hand.
+            # Capping at `max_pts` makes a 12 km stretch 60 m-spaced instead of 25, which is well
+            # inside what can be held without GPS steering.
+            slen = float(_seglens(stretch).sum())
+            step = max(a.resample_m, slen / max(20, a.max_pts))
+            even, _ = _resample(stretch, step)
             sm = smooth(even, depth, floor, float(pr['depth_dm']), a.iters, a.deep_bias_m)
             ch = chord_pass(sm, depth, floor, a.max_turn_deg)
             pieces.extend(split_at_hard_corners(ch, a.max_turn_deg, a.min_leg_m))
@@ -945,6 +981,9 @@ def main():
                     help='in-band stretch short enough not to bother smoothing; the real test '
                          'is --min-leg-m on the finished pass')
     ap.add_argument('--resample-m', type=float, default=25.0)
+    ap.add_argument('--max-pts', type=int, default=200,
+                    help='most vertices the smoother will carry for one stretch; longer '
+                         'stretches get proportionally coarser spacing rather than more points')
     ap.add_argument('--grid-m', type=float, default=12.0)
     ap.add_argument('--max-cells', type=float, default=40_000_000)
     ap.add_argument('--safety-cells', type=int, default=1)
