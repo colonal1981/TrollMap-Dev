@@ -611,9 +611,15 @@ export function selectCandidates(runs, o) {
     if (o.windowMin && totalMin > o.windowMin) continue;
 
     out.push({
-      // NOTE: index-based. build_trolling_runs.py emits no stable id, so this reference breaks
-      // if the pipeline reruns. Wants a real id in the pack.
-      runId: `${o.slug || 'run'}#${i}`,
+      // THE PACK'S OWN ID WHEN IT HAS ONE, the array index only as a fallback.
+      //
+      // This used to be index-based unconditionally, with a note saying it breaks whenever the
+      // pipeline reruns because build_trolling_runs.py emits no stable id. fit_trolling_runs.py
+      // now writes one, and it has to: fitting SPLITS a run into passes where the lake turns too
+      // hard to tow through, so a re-fit changes what every later index means and silently
+      // repoints every saved plan at different water. A pack without ids still works exactly as
+      // before -- it just keeps the old fragility until it is refitted.
+      runId: p.id || `${o.slug || 'run'}#${i}`,
       runIndex: i,
       startM: Math.round(win.startM), lengthM: Math.round(win.lengthM),
       depthFt: p.depth_ft, wholeRun: win.whole,

@@ -227,10 +227,13 @@ describe('plan-assemble — what the model may not do', () => {
   });
 
   it('costs a change from the rod it is on, not from the model saying so', () => {
+    // R5 is starboard on w#2 and R1 is port on w#1, so both swaps are for a rod that goes back
+    // in the water. That is not decoration in the fixture -- a change on a rod with nothing
+    // downstream of it is refused now, and this test is about COST, not about justification.
     const plan = basePlan({
       changes: [
         { beforeRunId: 'w#2', rodId: 'R5', to: 'DD1 Crankbait', why: 'fish moved up' },
-        { beforeRunId: 'w#2', rodId: 'R1', to: 'Bucktail', why: 'retie' },
+        { beforeRunId: 'w#1', rodId: 'R1', to: 'Bucktail', why: 'retie' },
       ],
     });
     const byRod = Object.fromEntries(plan.changes.map((c) => [c.rodId, c.cost]));
@@ -318,13 +321,45 @@ describe('plan-assemble — saying when it does not fit', () => {
   });
 
   it('warns at three fluoro reties', () => {
+    // R3 is put in the water on w#1 here so its retie is a real one. Three fluoro knots with wet
+    // hands is the thing being warned about, and it only counts changes that survive.
     const plan = basePlan({
+      deploy: { 'w#1': { port: 'R1', starboard: 'R3' }, 'w#2': { port: 'R2', starboard: 'R5' } },
       changes: [
-        { beforeRunId: 'w#1', rodId: 'R1', to: 'a' }, { beforeRunId: 'w#1', rodId: 'R2', to: 'b' },
-        { beforeRunId: 'w#2', rodId: 'R3', to: 'c' }, { beforeRunId: 'w#2', rodId: 'R5', to: 'd' },
+        { beforeRunId: 'w#1', rodId: 'R1', to: 'a' }, { beforeRunId: 'w#1', rodId: 'R3', to: 'b' },
+        { beforeRunId: 'w#2', rodId: 'R2', to: 'c' }, { beforeRunId: 'w#2', rodId: 'R5', to: 'd' },
       ],
     });
     expect(plan.warnings.some((w) => w.includes('fluoro reties'))).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------------------------
+  // Ryan, 2026-08-09: "has me change a lure for what reason i can't tell... as there is no other
+  // stop and cast planned after it has me change it." Measured off that plan: C1 swapped R5 at
+  // 8,993 m, the day's only stop was at 6,705 m, and R5 was never in the water or at a stop
+  // again. A retie that buys nothing is a defect the app can see without the model's help.
+  // -------------------------------------------------------------------------------------------
+  it('refuses a lure change on a rod that is never used again', () => {
+    const plan = basePlan({
+      changes: [
+        // R1 is port on w#1 only. Changing it before w#2 is a knot tied for nothing.
+        { beforeRunId: 'w#2', rodId: 'R1', to: 'Bucktail', why: 'the wind picked up' },
+        // R5 is starboard on w#2, so this one is real and must survive alongside it.
+        { beforeRunId: 'w#2', rodId: 'R5', to: 'DD1 Crankbait', why: 'fish moved up' },
+      ],
+    });
+    expect(plan.changes.map((c) => c.rodId)).toEqual(['R5']);
+    expect(plan.warnings.some((w) => w.includes('R1') && w.includes('never trolled or cast')))
+      .toBe(true);
+  });
+
+  it('keeps a change justified by a later stop rather than by the spread', () => {
+    // R6 is the cast rod -- it is never deployed, so only a stop can justify touching it.
+    const plan = basePlan({
+      stops: [{ runId: 'w#2', structureId: 'ledge_3', rods: ['R6'], durationMin: 15 }],
+      changes: [{ beforeRunId: 'w#2', rodId: 'R6', to: 'Walking Bait', why: 'for the stop' }],
+    });
+    expect(plan.changes.map((c) => c.rodId)).toEqual(['R6']);
   });
 
   // ---------------------------------------------------------------------------------------------

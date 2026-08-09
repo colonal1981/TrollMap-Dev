@@ -122,6 +122,32 @@ export function assemblePlan(o) {
     if (!changeByRun.has(c.beforeRunId)) changeByRun.set(c.beforeRunId, []);
     changeByRun.get(c.beforeRunId).push(c);
   }
+  // WHERE IS EACH ROD USED, AND HOW LATE?
+  //
+  // Ryan, 2026-08-09, on a plan that swapped R5 at 8,993 m: "has me change a lure for what
+  // reason i can't tell... as there is no other stop and cast planned after it has me change
+  // it." He was right -- the day's only stop was at 6,705 m, BEFORE the swap, and R5 was never
+  // in the water or at a stop again. The reason given ("maintain vertical contact with fish
+  // holding deeper") was a presentation argument for a rod that would not be presented.
+  //
+  // This is checkable without asking the model to behave better, so it is checked here: a change
+  // is justified only if the rod it touches is deployed on, or cast at, a leg at or after the
+  // one the change happens before. Stops are read RAW here, before structure resolution -- a
+  // change justified by a stop that is later refused stays, because dropping a legitimate change
+  // is a worse failure than keeping a marginal one.
+  const legOrder = new Map(candidates.map((c, i) => [c.runId, i]));
+  const rodLastUsed = new Map();
+  const useRod = (id, i) => {
+    if (!id) return;
+    if (!rodLastUsed.has(id) || rodLastUsed.get(id) < i) rodLastUsed.set(id, i);
+  };
+  candidates.forEach((c, i) => {
+    const d = (o.deploy && o.deploy[c.runId]) || {};
+    useRod(d.port, i);
+    useRod(d.starboard, i);
+    for (const s of (stopsByRun.get(c.runId) || [])) for (const r of (s.rods || [])) useRod(r, i);
+  });
+
   const planned = new Set(candidates.map((c) => c.runId));
   for (const s of (o.stops || [])) {
     if (!planned.has(s.runId)) warnings.push(`dropped a stop on ${s.runId} — that run is not in the plan`);
@@ -142,6 +168,13 @@ export function assemblePlan(o) {
     for (const ch of (changeByRun.get(c.runId) || [])) {
       const rod = rods.find((r) => r.id === ch.rodId);
       if (!rod) { warnings.push(`dropped a lure change on ${ch.rodId} — no such rod in the loadout`); continue; }
+      const usedAt = rodLastUsed.has(ch.rodId) ? rodLastUsed.get(ch.rodId) : -1;
+      if (usedAt < (legOrder.get(c.runId) ?? 0)) {
+        warnings.push(`dropped a lure change on ${ch.rodId} before ${c.runId} — that rod is `
+                    + 'never trolled or cast again after it, so the swap costs a retie and '
+                    + 'buys nothing');
+        continue;
+      }
       changes.push({
         id: `C${changes.length + 1}`, atM: runM, rodId: ch.rodId,
         cost: rod.rig === 'fluoro' ? 'fluoro' : 'snap',
