@@ -32,6 +32,18 @@ Every check here earns its place by having already shipped a real bug:
                    written by different steps and drift silently -- and every bbox measurement
                    in the pipeline trusts the index, not the file.
 
+  REACHABLE        A row the app offers, with a boundary to cut from, must be on a tile; and if
+                   it is on a tile it must have been measured. Needs --map and --report.
+
+                   This one exists because ONE line -- `state in want`, where `state` is the
+                   CENTROID's state -- was wrong in three separate scripts, and each dropped the
+                   sixteen border lakes at a different point. Lake Barkley (49,741 ac), John H.
+                   Kerr (44,895), Pickwick (34,470) and Guntersville (65,603) read KY, VA, AL and
+                   AL, so every stage that filtered on it lost them; fixing one script only moved
+                   the symptom to the next. Four of the biggest reservoirs in range, offered in
+                   the picker and undrawable, for weeks. Checking the RESULT catches the fourth
+                   copy of that line before it is written.
+
 WHAT IT WILL NOT DO
 -------------------
 It will not flag a big lake for being in pieces. 3DHP stores Kentucky Lake as 6 polygons spread
@@ -40,7 +52,9 @@ test is separation against the square root of the lake's own area, so the questi
 water plausibly span that far", not "is it in more than one piece". Kentucky Lake comes out at
 4.2x its own root; Evans Lake at 780x.
 
-    py scripts\check_registry_invariants.py --registry F:\TrollMapPipeline\registry
+    py scripts\check_registry_invariants.py --registry F:\TrollMapPipeline\registry `
+         --map F:\TrollMapPipeline\registry\tile_lake_map.json `
+         --report F:\TrollMapPipeline\registry\charted.json
 
 Reads only. Exit code 1 if any invariant is violated, so it can gate a build.
 """
@@ -101,6 +115,8 @@ def main() -> int:
     ap.add_argument('--registry', required=True)
     ap.add_argument('--spread-factor', type=float, default=SPREAD_FACTOR)
     ap.add_argument('--quiet', action='store_true', help='print only violations')
+    ap.add_argument('--map', help='tile_lake_map.json. Adds the REACHABLE check.')
+    ap.add_argument('--report', help='charted.json. Adds the MEASURED check.')
     a = ap.parse_args()
 
     with open(os.path.join(a.registry, 'lake_index.json'), encoding='utf-8') as fh:
@@ -140,8 +156,63 @@ def main() -> int:
             if far > limit:
                 split.append((far / limit, far, limit, len(cents), acres, r))
 
+    # ── a row the app offers must be reachable and must have been measured ────────────────────
+    #
+    # 2026-08-09. The same one-line filter -- `state in want`, where `state` is the CENTROID's
+    # state -- was wrong in THREE scripts, and each one dropped border lakes at a different point
+    # in the chain. Fixing one only moved the symptom: Lake Barkley was first missing from the
+    # index, then present with no tiles, then present with tiles and refused by --only-lakes.
+    # Nobody noticed for weeks, because a lake that is quietly absent looks exactly like a lake
+    # Garmin never surveyed.
+    #
+    # No amount of fixing filters prevents a fourth copy. This checks the RESULT instead: if the
+    # index offers a water and it has a boundary to cut from, then it must have tiles, and if it
+    # has tiles it must have been measured. That is true no matter which script goes wrong, and
+    # it is the difference between "the app offers 1,732 waters" and "the app can draw them".
+    #
+    # A row with NO boundary is exempt and counted separately: the 14 SCDNR and user-known waters
+    # 3DHP never named are a known gap with its own entry, not a regression.
+    unreachable, unmeasured, noboundary = [], [], 0
+    if a.map:
+        tmap = (json.load(open(a.map, encoding='utf-8')) or {}).get('by_lake') or {}
+        creport = {}
+        if a.report and os.path.exists(a.report):
+            creport = json.load(open(a.report, encoding='utf-8')) or {}
+        for r in rows:
+            slug = r.get('slug')
+            if not os.path.exists(os.path.join(bdir, '%s.geojson' % slug)):
+                noboundary += 1
+                continue
+            if not tmap.get(slug):
+                unreachable.append(r)
+            elif a.report and slug not in creport:
+                unmeasured.append(r)
+
     print('registry rows: %d   boundaries read: %d' % (len(rows), checked))
     fails = 0
+
+    if unreachable:
+        fails += len(unreachable)
+        unreachable.sort(key=lambda r: -(r.get('area_acres') or 0))
+        print()
+        print('OFFERED BY THE APP, WITH A BOUNDARY, AND ON NO TILE — cannot be drawn:')
+        for r in unreachable[:20]:
+            print('  %-34s %-5s %9.0f ac   %s'
+                  % (str(r.get('name'))[:34], r.get('state', '--'), r.get('area_acres') or 0,
+                     '/'.join(r.get('states') or [])))
+        if len(unreachable) > 20:
+            print('  ... and %d more' % (len(unreachable) - 20))
+
+    if unmeasured:
+        fails += len(unmeasured)
+        unmeasured.sort(key=lambda r: -(r.get('area_acres') or 0))
+        print()
+        print('ON A TILE AND NEVER CUT — no record in the report at all:')
+        for r in unmeasured[:20]:
+            print('  %-34s %-5s %9.0f ac'
+                  % (str(r.get('name'))[:34], r.get('state', '--'), r.get('area_acres') or 0))
+        if len(unmeasured) > 20:
+            print('  ... and %d more' % (len(unmeasured) - 20))
 
     if split:
         fails += len(split)
@@ -171,15 +242,29 @@ def main() -> int:
         for why, r in drifted[:10]:
             print('  %-32s %s' % (str(r.get('name'))[:32], why))
 
+    if noboundary and not a.quiet:
+        print()
+        print('(%d rows have no boundary polygon and were exempted from the reachable check --'
+              % noboundary)
+        print(' the SCDNR and user-known waters 3DHP never named. A known gap, not a regression.)')
+
     print()
     if not fails:
         print('all invariants hold.')
         return 0
     print('%d violation(s).' % fails)
-    print()
-    print('A water in several pieces is NORMAL — 3DHP stores Kentucky Lake as 6 polygons over')
-    print('101 km. The test is separation against the square root of the water\'s own area, so')
-    print('Kentucky Lake scores 4.2x and passes. Anything listed above cannot be one lake.')
+    # Say the RIGHT thing about what failed. The multipart note below is about the PARTS
+    # TOGETHER check and reads as nonsense under a list of lakes that simply were never cut.
+    if split:
+        print()
+        print('A water in several pieces is NORMAL — 3DHP stores Kentucky Lake as 6 polygons over')
+        print('101 km. The test is separation against the square root of the water\'s own area, so')
+        print('Kentucky Lake scores 4.2x and passes. Anything under PIECES TOO FAR APART cannot')
+        print('be one lake.')
+    if unreachable or unmeasured:
+        print()
+        print('A water listed above is one the picker offers and the app cannot draw. Fix it by')
+        print('cutting the pack, not by hiding the row — the row is right, the pipeline skipped it.')
     return 1
 
 
