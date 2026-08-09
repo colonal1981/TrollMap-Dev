@@ -400,8 +400,15 @@ async function generateScoutWaypoints(phases, bands, rampLat, rampLon, rangeMile
 }
 
 function isSmartPlanTrack(t) {
+  // A SmartPlan track from an EARLIER run. The run-id test is the whole point: renderPlan stamps
+  // planRunId on what it builds, so a track carrying the current id is this run's output and must
+  // survive no matter when the cleaner happens to run. Without that test this function matched
+  // the tracks renderPlan had just created and the plan shipped with zero.
   const name=String(t?.name||'');
-  return !!(t?.smartPlan||name.startsWith('Phase ')||name.startsWith('Connector:'));
+  const isOurs = !!(t?.smartPlan||name.startsWith('Phase ')||name.startsWith('Connector:'));
+  if (!isOurs) return false;
+  const cur = (typeof window !== 'undefined') ? window._smartPlanRunId : null;
+  return !(cur && t?.planRunId === cur);
 }
 
 function clearExistingSmartPlanTracks() {

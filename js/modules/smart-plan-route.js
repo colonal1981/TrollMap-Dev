@@ -116,6 +116,18 @@ export async function requestPlan({ lakeName, bands, rampLat, rampLon, rangeMile
  * once, and nowhere else.
  */
 export function renderPlan(plan, { rampLat, rampLon } = {}) {
+  // Every track and waypoint this call creates is stamped with the SAME id, and the id is
+  // published so the cleaner can tell THIS run's output from a previous one's.
+  //
+  // 2026-08-09: without it, SmartPlan built four tracks on every run and shipped zero. renderPlan
+  // tags its tracks `smartPlan: true`; isSmartPlanTrack() in smart-plan.js matches that exact
+  // flag; so clearExistingSmartPlanTracks(), whose job is wiping the PREVIOUS run, could not tell
+  // the two apart and deleted what had just been built. The console said "2 troll, 2 transit"
+  // and the GPX said `"tracks": 0`. Reordering the calls would also fix it and would be one
+  // refactor away from breaking again -- an id cannot be undone by call order.
+  const runId = `sp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  if (typeof window !== 'undefined') window._smartPlanRunId = runId;
+
   if (!state.DATA) state.DATA = {};
   if (!Array.isArray(state.DATA.waypoints)) state.DATA.waypoints = [];
   if (!Array.isArray(state.DATA.tracks)) state.DATA.tracks = [];
@@ -140,7 +152,7 @@ export function renderPlan(plan, { rampLat, rampLon } = {}) {
       if (step.closed) bits.push('ring');
       state.DATA.tracks.push({
         name: `${bits.join(' · ')} — ${(step.length_m / 1000).toFixed(1)} km`,
-        pts, scoutRoute: true, smartPlan: true, planStep: 'troll',
+        pts, scoutRoute: true, smartPlan: true, planRunId: runId, planStep: 'troll',
         phase: step.leg, depthFt: ft,
       });
       // One waypoint at the head of each leg, so the existing GPX export and the plan timeline
@@ -148,13 +160,13 @@ export function renderPlan(plan, { rampLat, rampLon } = {}) {
       // geometry, which is the inversion this whole rebuild is about.
       state.DATA.waypoints.push({
         name: `Leg${step.leg} ${ft}ft`, lat: pts[0][0], lon: pts[0][1],
-        sym: 'Fishing Area', scoutWaypoint: true, phase: step.leg, depth: ft,
+        sym: 'Fishing Area', scoutWaypoint: true, planRunId: runId, phase: step.leg, depth: ft,
       });
     } else {
       transitN += 1;
       state.DATA.tracks.push({
         name: step.to === 'launch' ? 'Return to launch' : `Transit ${transitN}`,
-        pts, scoutRoute: true, smartPlan: true, planStep: 'transit',
+        pts, scoutRoute: true, smartPlan: true, planRunId: runId, planStep: 'transit',
       });
     }
   }
