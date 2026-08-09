@@ -1,6 +1,6 @@
 import { describe, it, expect } from './expect-shim.mjs';
-import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS, selectCandidates, overlapFraction }
-  from '../js/modules/plan-candidates.js';
+import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS, selectCandidates, overlapFraction, forModel,
+  metresBetween } from '../js/modules/plan-candidates.js';
 import { structureWeights, RESEARCH_LEAD } from '../js/modules/plan-inputs.js';
 
 // ---------------------------------------------------------------------------
@@ -270,5 +270,80 @@ describe('two legs on one shoreline are one leg', () => {
     expect(overlapFraction(null, [[0, 0], [1, 1]])).toBe(0);
     expect(overlapFraction([[0, 0]], [[0, 0], [1, 1]])).toBe(0);
     expect(overlapFraction([[0, 0], [0, 0]], [[0, 0], [1, 1]])).toBe(0);
+  });
+});
+
+
+// -----------------------------------------------------------------------------------------------
+// TRANSIT BETWEEN LEGS IS A COST AND NOTHING WAS COSTING IT.
+//
+// Measured off the plan of 2026-08-09 (wateree_lake, Clearwater Cove):
+//
+//     budget   totalM 28040   fishingM 15250   transitM 12790     46% of the day deadheading
+//     T2 alone 9687 m, 103 min, 22.97 Ah — 43% of the day's whole 54.02 Ah, on one transit
+//     L1 = wateree_lake#27, L2 = wateree_lake#34, chosen independently, about six miles apart
+//
+// Both legs were near the ramp. The ramp bias was working. What nothing looked at was the gap
+// BETWEEN them, because every number on a candidate described the candidate alone.
+//
+// PLAN_SCHEMA_V2's "MODEL DECIDES" table gives the order to the model — "which runId, in which
+// order" — so the fix is not to reorder behind it. It is to hand it the distances and say so in
+// the prompt. These tests pin the distances; test/plan-prompt.test.js pins the saying.
+// -----------------------------------------------------------------------------------------------
+describe('the gap between consecutive legs is measured and handed over', () => {
+  function eastWest(lon0, lat, pts) {
+    const coords = Array.from({ length: pts }, (_, k) => [lon0 + k * 0.0006, lat]);
+    return { type: 'Feature', geometry: { type: 'LineString', coordinates: coords },
+      properties: { depth_ft: 20, length_m: (pts - 1) * 55, routable: true, relief: 'flat',
+        near: Array.from({ length: 6 },
+                         (_, k) => ({ s: 200 + k * 400, t: (k % 2 ? 'hump' : 'point'), d: 25 })) } };
+  }
+  // Two legs of equal merit, both about the same distance from the ramp, ~5 km from each other.
+  // This is the shape of the plan he took out: each leg fine on its own, the pair expensive.
+  const A = eastWest(-80.760, 34.3800, 41);
+  const B = eastWest(-80.700, 34.3800, 41);
+  const opts = { ramp: [-80.73, 34.38], slug: 'w', depthFt: [0, 99], usableAh: 999, windowMin: 9999 };
+
+  it('every candidate carries the deadhead to every other candidate it could precede', () => {
+    const out = selectCandidates([A, B], opts);
+    expect(out.length).toBe(2);
+    for (const c of out) {
+      const others = out.filter((k) => k.runId !== c.runId).map((k) => k.runId).sort();
+      expect(Object.keys(c.transitToM).sort()).toEqual(others);
+      // never a distance to itself — that hop does not exist
+      expect(c.transitToM[c.runId]).toBe(undefined);
+    }
+  });
+
+  it('the distance is END of this leg to START of that one, because that is what the boat travels',
+    () => {
+      const out = selectCandidates([A, B], opts);
+      const [a, b] = out;
+      expect(a.transitToM[b.runId]).toBe(Math.round(metresBetween(a.end, b.start)));
+      expect(b.transitToM[a.runId]).toBe(Math.round(metresBetween(b.end, a.start)));
+      // Directional on purpose: A→B and B→A are different hops and generally different lengths.
+      expect(a.transitToM[b.runId] === b.transitToM[a.runId]).toBe(false);
+    });
+
+  it('measures the real gap rather than a token — these two are kilometres apart', () => {
+    const out = selectCandidates([A, B], opts);
+    const worst = Math.max(...out.map((c) => Math.max(...Object.values(c.transitToM))));
+    expect(worst).toBeGreaterThan(3000);
+  });
+
+  it('only names candidates that survived the dedupe and the limit', () => {
+    const out = selectCandidates([A, B], { ...opts, limit: 1 });
+    expect(out.length).toBe(1);
+    // Nothing to hop to, and no key pointing at water the model was never shown.
+    expect(Object.keys(out[0].transitToM)).toEqual([]);
+  });
+
+  it('forModel ships them, since the model is the thing that owns the order', () => {
+    const out = selectCandidates([A, B], opts);
+    const m = forModel(out[0]);
+    expect(m.transitToM[out[1].runId]).toBe(out[0].transitToM[out[1].runId]);
+    // and the way home, which the day pays once and which the ordering also decides
+    expect(m.transitToRampM).toBe(out[0].transitOutM);
+    expect(m.transitFromRampM).toBe(out[0].transitInM);
   });
 });

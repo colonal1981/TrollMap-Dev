@@ -169,6 +169,31 @@ describe('plan-prompt — the request', () => {
     expect(/"lat"|"lon"|latitude:/.test(req.user)).toBe(false);
   });
 
+  // -------------------------------------------------------------------------------------------
+  // PLAN_SCHEMA_V2's "MODEL DECIDES" table gives the model "which runId, in which order". So
+  // when the plan of 2026-08-09 came back spending 46% of the day deadheading — 12790 m of
+  // 28040, with one 9687 m hop between two legs that were each near the ramp — the answer was
+  // not to reorder behind it. It was that nothing had ever told it what a hop costs. These
+  // assertions are the telling; test/plan-weights.test.js pins the distances themselves.
+  // -------------------------------------------------------------------------------------------
+  it('hands the model the distances between legs and tells it they are the cost of the order', () => {
+    const withHops = buildPlanRequest({
+      candidates: [{ runId: 'w#1', lengthM: 2500, depthFt: 24, transitFromRampM: 400,
+                     transitToRampM: 5200, transitToM: { 'w#2': 9687 }, structures: [] },
+                   { runId: 'w#2', lengthM: 2200, depthFt: 26, transitFromRampM: 600,
+                     transitToRampM: 2800, transitToM: { 'w#1': 9420 }, structures: [] }],
+      water: 'Lake Wateree, SC', tackle: TACKLE,
+    });
+    // the numbers reach it at all
+    expect(withHops.user).toContain('9687');
+    // and it is told what they are for
+    expect(withHops.user).toContain('transitToM');
+    expect(withHops.user).toContain('transitToRampM');
+    expect(withHops.user).toMatch(/ORDER THE LEGS TO SPEND AS LITTLE OF THE DAY DEADHEADING/);
+    // the specific trap: near the ramp is not the same as near each other
+    expect(withHops.user).toMatch(/close\s+to the ramp can still be six miles from EACH OTHER/);
+  });
+
   it('carries the day and the candidates as data, not prose', () => {
     expect(req.user.includes('"waterTempF": 84')).toBe(true);
     expect(req.user.includes('w#1:p0')).toBe(true);

@@ -45,6 +45,20 @@ const round2 = (v) => Number(Number(v).toFixed(2));
 // the budget. 500 m is a few minutes of pedalling; anything past that is a real cost being hidden.
 const HOME_TOLERANCE_M = 500;
 
+// The share of the day's distance that may be deadhead before the plan says so out loud.
+//
+// THIS IS A JUDGEMENT AND NOT A MEASUREMENT. Nothing measured where a day stops being a fishing
+// trip and starts being a commute, and Ryan has never been asked to put a number on it. It is set
+// at a third because the plan of 2026-08-09 came in at 46% — totalM 28040, fishingM 15250,
+// transitM 12790 — and he called that stranded and wasteful, while the schema's own worked
+// example in PLAN_SCHEMA_V2 sits at 18% (2697 of 14697) and reads as a normal day. A third is
+// between them and nearer the good one. If a plan that is genuinely fine starts tripping this,
+// that is this number and not the plan.
+//
+// It is a WARNING and never a filter. Some water is far apart and some days are worth the ride;
+// the plan's job is to say what it costs, not to refuse it.
+const TRANSIT_SHARE_WARN = 0.35;
+
 // Three reties is where a rig plan stops being a plan. Ryan's own framing: a snap change is
 // seconds, a fluoro leader is a knot with cold wet hands in a moving kayak.
 const FLUORO_RETIE_WARN = 3;
@@ -341,6 +355,18 @@ export function assemblePlan(o) {
   // The old warning that lived here -- "last leg ends 2.8 km from the ramp ... not in the plan"
   // -- is gone because the thing it warned about is now in the plan. `cursor` is the ramp by
   // the time it gets here, unless the last leg finished inside HOME_TOLERANCE_M of it.
+  // HOW MUCH OF THE DAY IS SPENT GETTING THERE. The budget has separated fishingM from transitM
+  // since the schema was written and nothing ever read the split back. The ordering is the
+  // model's (PLAN_SCHEMA_V2, "MODEL DECIDES: which runId, in which order") and it is now shown
+  // the inter-leg distances to order on — see `transitToM` in plan-candidates.js — so this is
+  // the check on whether it used them, in the plan where Ryan will see it rather than in a
+  // console.
+  if (plan.budget.totalM > 0 && transitM / plan.budget.totalM > TRANSIT_SHARE_WARN) {
+    const pct = Math.round((transitM / plan.budget.totalM) * 100);
+    warnings.push(`${pct}% of the day is deadheading — ${(transitM / 1000).toFixed(1)} km of `
+                + `${(plan.budget.totalM / 1000).toFixed(1)} km with nothing in the water. `
+                + 'The legs are good ones; the order they are in is expensive.');
+  }
   const fluoro = changes.filter((c) => c.cost === 'fluoro').length;
   if (fluoro >= FLUORO_RETIE_WARN) {
     warnings.push(`${fluoro} fluoro reties — each one is a knot in a moving kayak`);

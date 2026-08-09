@@ -718,6 +718,37 @@ export function selectCandidates(runs, o) {
     if (!duplicate) kept.push(c);
     if (o.limit && kept.length >= o.limit) break;
   }
+
+  // ── WHAT IT COSTS TO GO FROM THIS LEG TO THE NEXT ONE ────────────────────────────────────────
+  //
+  // Every number on a candidate up to this point describes the candidate ALONE: its structure,
+  // its length, its distance from the ramp. Nothing here or anywhere downstream costed the gap
+  // BETWEEN two legs, and PLAN_SCHEMA_V2 gives the ordering to the model -- so the model was
+  // being asked to order a day while being shown nothing about what the ordering costs.
+  //
+  // The plan Ryan took out on 2026-08-09 is what that produces. Measured off it: totalM 28040,
+  // fishingM 15250, transitM 12790 -- 46% of the day deadheading. L1 was `wateree_lake#27` and
+  // L2 was `wateree_lake#34`, each a fine leg near Clearwater Cove on its own merits, and about
+  // six miles from each other. T2 between them was 9687 m, 103 minutes and 22.97 Ah: 43% of the
+  // day's whole 54.02 Ah budget spent on one leg with nothing in the water.
+  //
+  // So the matrix goes to the model, because the model owns the order. `transitToM[runId]` is
+  // metres from THIS leg's end to THAT leg's start -- directional, because that is exactly what
+  // the assembler will travel: it trolls each candidate start → end and transits between them.
+  // `transitToRampM` closes the day, since the route home is a real leg now and its cost is the
+  // ordering's too.
+  //
+  // Only over `kept`, so the keys are exactly the candidates the model is shown and it can never
+  // be handed a distance to a leg it may not choose. n <= o.limit (12 in the app), so this is at
+  // most ~144 calls of an already-cheap function.
+  for (const a of kept) {
+    const to = {};
+    for (const b of kept) {
+      if (b.runId === a.runId) continue;
+      to[b.runId] = Math.round(transitM(a.end, b.start));
+    }
+    a.transitToM = to;
+  }
   return kept;
 }
 
@@ -896,6 +927,13 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
     depthFt: c.depthFt,
     lengthM: c.lengthM,
     transitFromRampM: c.transitInM,
+    // WHAT THE ORDERING COSTS. `transitToM` is metres of deadhead from the END of this leg to the
+    // START of each other leg it could be followed by; `transitToRampM` is metres from the end of
+    // this leg back to the launch, which the day pays once. The model owns the order
+    // (PLAN_SCHEMA_V2, "MODEL DECIDES: which runId, in which order"), so the model is the thing
+    // that has to see these -- see selectCandidates() for what happens when it does not.
+    transitToM: c.transitToM || undefined,
+    transitToRampM: c.transitOutM,
     batteryAh: c.batteryAh,
     estMin: c.estMin,
     passes: counts,

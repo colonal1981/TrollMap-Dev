@@ -327,6 +327,40 @@ describe('plan-assemble — saying when it does not fit', () => {
     expect(plan.warnings.some((w) => w.includes('fluoro reties'))).toBe(true);
   });
 
+  // ---------------------------------------------------------------------------------------------
+  // "46% of the day is deadheading" is a fact the budget could always have stated and never did.
+  // Measured off the plan of 2026-08-09: totalM 28040, fishingM 15250, transitM 12790, with one
+  // 9687 m transit between two legs that were each near the ramp. The ordering belongs to the
+  // model (PLAN_SCHEMA_V2), so this is not a reorder — it is the plan saying what its own order
+  // cost, in the warnings Ryan sees.
+  // ---------------------------------------------------------------------------------------------
+  it('says so when most of the day is spent getting there', () => {
+    // One short leg, reached from a long way off: the transit dominates the distance.
+    const far = leg('w#9', -80.4000, -80.3980, 34.3800);
+    const plan = assemblePlan({
+      transit: routed, candidates: [far], launch: LAUNCH, loadout: LOADOUT,
+      launchTime: '06:00', returnTime: '15:00',
+    });
+    expect(plan.budget.transitM / plan.budget.totalM > 0.35).toBe(true);
+    const w = plan.warnings.find((x) => x.includes('deadheading'));
+    expect(!!w).toBe(true);
+    // The number in the warning is the plan's own, not a re-derivation.
+    expect(w.includes(`${Math.round((plan.budget.transitM / plan.budget.totalM) * 100)}%`)).toBe(true);
+  });
+
+  it('does not cry wolf on a day that is mostly fishing', () => {
+    // Out along one leg and back along the next, finishing beside the ramp — the shape the
+    // ordering is supposed to find, and the one the warning must stay quiet about.
+    const outbound = leg('w#7', -80.7200, -80.6800, 34.3800);
+    const homebound = leg('w#8', -80.6800, -80.7250, 34.3805);
+    const plan = assemblePlan({
+      transit: routed, candidates: [outbound, homebound], launch: LAUNCH, loadout: LOADOUT,
+      launchTime: '06:00', returnTime: '15:00',
+    });
+    expect(plan.budget.transitM / plan.budget.totalM < 0.35).toBe(true);
+    expect(plan.warnings.some((w) => w.includes('deadheading'))).toBe(false);
+  });
+
   it('assembles an empty plan without inventing anything', () => {
     const plan = assemblePlan({ candidates: [], launch: LAUNCH, loadout: LOADOUT });
     expect(plan.legs.length).toBe(0);

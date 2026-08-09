@@ -238,15 +238,28 @@ Each candidate is a stretch of a real trolling run, already filtered to water he
 depths that matter today, and ranked by what it passes. \`structures\` lists what each leg goes by
 in the order you meet them, with \`atM\` metres from the start of that leg.
 
+WHAT THE ORDER COSTS. Each candidate also carries \`transitToM\` — metres of deadhead from the END
+of that leg to the START of every other leg — \`transitFromRampM\` from the ramp to its start, and
+\`transitToRampM\` from its end back to the ramp. Those are the only numbers that change when you
+reorder the day, and they are yours to spend: the app computes the legs, you choose the sequence.
+
 ${JSON.stringify(o.candidates || [])}
 
 RULES THAT ARE NOT NEGOTIABLE
 1. Name legs by \`runId\` and stops by a structure \`id\`, both copied exactly from the list above.
    Anything invented is thrown away and the plan comes up short.
 2. NEVER write a latitude, a longitude, or a place name of your own. The app owns every position.
-3. Order the legs so the day flows. There is no "out and back" — if you finish near the ramp it
-   is because you ordered it that way. Deadheading costs half again as much battery per mile as
-   trolling, so wandering is expensive.
+3. ORDER THE LEGS TO SPEND AS LITTLE OF THE DAY DEADHEADING AS YOU CAN. Add up
+   \`transitFromRampM\` for the leg you start with, \`transitToM\` for each hop between
+   consecutive legs, and \`transitToRampM\` for the leg you finish on — that total is time and
+   battery with nothing in the water. Trolling costs about 2.5 Ah per mile; deadheading at 3.5 mph
+   costs about 3.8 Ah, half again as much for water you do not fish. Two legs that are each close
+   to the ramp can still be six miles from EACH OTHER, and a day that spends nearly half its
+   distance travelling is a day half wasted — that is a real plan, from 2026-08-09, and it is what
+   \`transitToM\` is here to stop. There is no "out and back": you finish near the ramp because
+   you ordered it that way. Prefer a slightly weaker leg next door to a slightly better one across
+   the lake, and if the good water genuinely is far apart, fish fewer legs rather than commuting
+   between them.
 4. A stop is a pause ON a leg, not instead of one. Stop where the structure is better cast at
    than trolled over — a hump crown, a dock line, a creek mouth, a laydown. Judge every leg's
    structures on their own merits: a day that passes a dozen castable features and stops at one
