@@ -685,13 +685,85 @@ export function selectCandidates(runs, o) {
   // returned twelve candidates inside 800 m of the ramp and offered the model no choice at all.
   // Greedy: take the best, then require each next one to start a real distance from every
   // candidate already kept.
+  //
+  // COMPARING START POINTS IS NOT ENOUGH, and the plan he took out on 2026-08-09 is the proof:
+  //
+  //     L1 · 23 ft    runs WEST from -80.7337 to -80.7856
+  //     L2 · 25.9 ft  starts at -80.7666 and runs EAST back through -80.7337
+  //
+  // Roughly half of L2 retraces L1's water in the opposite direction, two feet deeper. Their
+  // START points are 2.7 km apart, so the distance rule waved it through -- a start-point test
+  // cannot see an overlap, only a coincidence. Ryan: "from what i can tell the 2 routes fish
+  // almost the exact same water." Two legs on one shoreline a few feet apart are one leg.
+  //
+  // So the geometry is compared as well: a candidate that spends more than `dedupeOverlap` of
+  // its length inside a corridor around a candidate already kept is the same water and is
+  // dropped. Both directions, because a short leg swallowed by a long one and a long leg that
+  // swallows a short one are the same duplicate seen from either end.
+  //
+  // BOTH NUMBERS BELOW ARE ESTIMATES FROM THAT ONE MEASURED CASE. 100 m is wider than the gap
+  // between two contours a few feet apart on a reservoir bank and narrower than the width of an
+  // arm, so opposite banks of a creek stay two legs. 0.35 catches "about half of it retraces"
+  // while letting two legs that merely cross stand. Both are options; if plans start losing water
+  // that is genuinely separate, widen the overlap threshold before touching the corridor.
   const apart = o.dedupeM ?? 1200;
+  const corridorM = o.dedupeCorridorM ?? 100;
+  const maxOverlap = o.dedupeOverlap ?? 0.35;
   const kept = [];
   for (const c of out) {
-    if (kept.every((k) => metresBetween(k.start, c.start) >= apart)) kept.push(c);
+    const duplicate = kept.some((k) =>
+      metresBetween(k.start, c.start) < apart
+      || overlapFraction(c.coordinates, k.coordinates, corridorM) >= maxOverlap
+      || overlapFraction(k.coordinates, c.coordinates, corridorM) >= maxOverlap);
+    if (!duplicate) kept.push(c);
     if (o.limit && kept.length >= o.limit) break;
   }
   return kept;
+}
+
+/**
+ * How much of `line` runs inside a corridor `corridorM` wide around `other`, as a fraction of
+ * `line`'s length. Direction-blind on purpose: a contour run east and the same contour run west
+ * are the same water.
+ *
+ * Sampled at even intervals rather than tested vertex by vertex, because the two lines come off
+ * different contours and their vertices do not correspond -- a vertex test would report the
+ * density of the source geometry, not the overlap.
+ *
+ * @param {number[][]} line      [lon, lat] the line being judged
+ * @param {number[][]} other     [lon, lat] the line it might be duplicating
+ * @param {number}     corridorM half-width of the corridor, metres
+ * @param {number}     samples   points along `line` to test
+ */
+export function overlapFraction(line, other, corridorM = 100, samples = 25) {
+  if (!Array.isArray(line) || line.length < 2) return 0;
+  if (!Array.isArray(other) || other.length < 2) return 0;
+
+  // Cheap rejection first: boxes that do not touch cannot overlap, and most pairs do not touch.
+  // The padding is degrees, deliberately generous -- it only decides whether to do the real work.
+  const box = (l) => l.reduce((a, p) => [Math.min(a[0], p[0]), Math.min(a[1], p[1]),
+                                         Math.max(a[2], p[0]), Math.max(a[3], p[1])],
+                              [Infinity, Infinity, -Infinity, -Infinity]);
+  const A = box(line), B = box(other);
+  const pad = corridorM / 85000;
+  if (A[0] > B[2] + pad || B[0] > A[2] + pad || A[1] > B[3] + pad || B[1] > A[3] + pad) return 0;
+
+  const cum = cumulative(line);
+  const total = cum[cum.length - 1];
+  if (!(total > 0)) return 0;
+
+  let inside = 0;
+  for (let i = 0; i < samples; i++) {
+    const p = pointAt(line, cum, (total * (i + 0.5)) / samples);
+    let best = Infinity;
+    for (let k = 1; k < other.length; k++) {
+      const d = pointToSegmentM(p, other[k - 1], other[k]);
+      if (d < best) best = d;
+      if (best <= corridorM) break;
+    }
+    if (best <= corridorM) inside++;
+  }
+  return inside / samples;
 }
 
 

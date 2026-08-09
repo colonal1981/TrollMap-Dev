@@ -1,5 +1,6 @@
 import { describe, it, expect } from './expect-shim.mjs';
-import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS, selectCandidates } from '../js/modules/plan-candidates.js';
+import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS, selectCandidates, overlapFraction }
+  from '../js/modules/plan-candidates.js';
 import { structureWeights, RESEARCH_LEAD } from '../js/modules/plan-inputs.js';
 
 // ---------------------------------------------------------------------------
@@ -203,5 +204,71 @@ describe('distance from the ramp is a cost, not just a filter', () => {
     const far = out.find((c) => c.runIndex === 1);
     expect(near.proximity).toBeGreaterThan(far.proximity);
     expect(far.proximity).toBeGreaterThan(0.2);
+  });
+});
+
+
+// -----------------------------------------------------------------------------------------------
+// "from what i can tell the 2 routes fish almost the exact same water." -- Ryan, 2026-08-09
+//
+// Measured off that GPX:
+//
+//     L1 · 23 ft    runs WEST from -80.7337 to -80.7856
+//     L2 · 25.9 ft  starts at -80.7666 and runs EAST back through -80.7337
+//
+// Roughly half of L2 retraces L1, two feet deeper, in the opposite direction. The dedupe compared
+// START POINTS -- 2.7 km apart -- and waved it through. A start-point test cannot see an overlap,
+// only a coincidence.
+// -----------------------------------------------------------------------------------------------
+describe('two legs on one shoreline are one leg', () => {
+  const line = (lonA, lonB, lat, n) =>
+    Array.from({ length: n }, (_, k) => [lonA + (lonB - lonA) * k / (n - 1), lat]);
+  const feat = (coords, depth, hits, lenM) => ({
+    type: 'Feature', geometry: { type: 'LineString', coordinates: coords },
+    properties: { depth_ft: depth, length_m: lenM, routable: true, relief: 'flat',
+      near: Array.from({ length: hits },
+                       (_, k) => ({ s: 300 + k * 450, t: (k % 2 ? 'hump' : 'point'), d: 25 })) },
+  });
+
+  // The two legs from the plan, and a third on the far bank of the same arm ~440 m away.
+  const L1 = feat(line(-80.7337, -80.7856, 34.3600, 60), 23, 10, 4775);
+  const L2 = feat(line(-80.7666, -80.7337, 34.3603, 40), 25.9, 6, 3027);
+  const FAR_BANK = feat(line(-80.7666, -80.7337, 34.3640, 40), 24, 6, 3027);
+  const opts = { ramp: [-80.7300, 34.3600], slug: 'w', depthFt: [0, 99],
+                 usableAh: 999, windowMin: 9999 };
+
+  it('the start-point rule alone lets the duplicate through — that is the bug', () => {
+    // dedupeOverlap above 1 can never trigger, so this is the ranking as it was before.
+    const out = selectCandidates([L1, L2], { ...opts, dedupeOverlap: 1.1 });
+    expect(out.length).toBe(2);
+  });
+
+  it('the deeper twin is dropped, and the better one is what survives', () => {
+    const out = selectCandidates([L1, L2], opts);
+    expect(out.length).toBe(1);
+    expect(out[0].depthFt).toBe(23);
+  });
+
+  it('the far bank of the same arm is still two legs, not one', () => {
+    // 440 m apart. A dedupe that merges opposite banks would cost him half the water on any
+    // narrow arm, which is worse than the duplicate it is fixing.
+    const out = selectCandidates([L1, FAR_BANK], opts);
+    expect(out.length).toBe(2);
+  });
+
+  it('overlapFraction is direction-blind and measures what it says', () => {
+    const a = L1.geometry.coordinates, b = L2.geometry.coordinates;
+    // L2 lies entirely inside L1's span, running the other way.
+    expect(overlapFraction(b, a)).toBe(1);
+    // and L1 is only partly inside L2, because it is longer
+    expect(overlapFraction(a, b)).toBeGreaterThan(0.4);
+    expect(overlapFraction(a, b)).toBeLessThan(0.8);
+    expect(overlapFraction(FAR_BANK.geometry.coordinates, a)).toBe(0);
+  });
+
+  it('survives geometry it cannot measure rather than throwing', () => {
+    expect(overlapFraction(null, [[0, 0], [1, 1]])).toBe(0);
+    expect(overlapFraction([[0, 0]], [[0, 0], [1, 1]])).toBe(0);
+    expect(overlapFraction([[0, 0], [0, 0]], [[0, 0], [1, 1]])).toBe(0);
   });
 });
