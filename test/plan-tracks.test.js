@@ -4,7 +4,8 @@ import { assemblePlan, planRoute } from '../js/modules/plan-assemble.js';
 import { state } from '../js/core/state.js';
 import { materialisePlan, planTracks, planWaypoints, trackName, legColor } from '../js/modules/plan-tracks.js';
 import { metresBetween } from '../js/modules/plan-candidates.js';
-import { planToTimeline } from '../js/modules/plan-to-timeline.js';
+import { planToTimeline, LEG_COLORS, TRANSIT_COLOR, RETURN_COLOR }
+  from '../js/modules/plan-to-timeline.js';
 
 // ---------------------------------------------------------------------------
 // Why this test exists
@@ -289,6 +290,61 @@ describe('plan-tracks — troll, transit and the way home are told apart', () =>
       const card = cards.find((c) => c.key === t.legId);
       expect(card.color, `${t.legId} card colour`).toBe(t.color);
     }
+  });
+
+  // ---------------------------------------------------------------------------------------------
+  // "the 2 trolling lanes themselves need to be different colors from each other" -- Ryan,
+  // 2026-08-09, AFTER 36dbb56 had already given every leg its own palette entry.
+  //
+  // It had. The entries were `#00e5ff` and `#00bcd4`: two hex values, one colour to the eye. A
+  // test that only asserts `!==` passes on two shades of the same cyan, which is exactly what
+  // shipped, so this measures hue instead.
+  //
+  // THE 75-DEGREE FLOOR IS A JUDGEMENT AND NOT A MEASUREMENT. Nothing tested how far apart two
+  // lines must be to read as different on the water. It is comfortably past the ~10 degrees
+  // between the two cyans and the ~15 between the two ambers that followed them.
+  // ---------------------------------------------------------------------------------------------
+  const hue = (hex) => {
+    const n = parseInt(hex.slice(1), 16);
+    const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+    if (!d) return null;                                  // grey has no hue
+    const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return ((h * 60) % 360 + 360) % 360;
+  };
+  const apart = (a, b) => { const d = Math.abs(hue(a) - hue(b)); return Math.min(d, 360 - d); };
+  const HUE_FLOOR = 75;
+
+  it('consecutive troll legs are different COLOURS, not just different hex values', () => {
+    for (let i = 1; i < LEG_COLORS.length; i++) {
+      expect(apart(LEG_COLORS[i - 1], LEG_COLORS[i]),
+             `${LEG_COLORS[i - 1]} and ${LEG_COLORS[i]} are the same colour family`)
+        .toBeGreaterThan(HUE_FLOOR);
+    }
+    // and the cycle does not put a twin next to leg 1 when it wraps
+    expect(apart(LEG_COLORS[LEG_COLORS.length - 1], LEG_COLORS[0])).toBeGreaterThan(HUE_FLOOR);
+    // the specific pairs that shipped and were reported
+    expect(LEG_COLORS.includes('#00bcd4')).toBe(false);
+    expect(LEG_COLORS.includes('#ffb300')).toBe(false);
+  });
+
+  it('the first two legs — the ones a real day has — are as far apart as colours get', () => {
+    expect(apart(LEG_COLORS[0], LEG_COLORS[1])).toBeGreaterThan(120);
+  });
+
+  it('no troll colour is a shade of the transit grey or the return green', () => {
+    for (const c of LEG_COLORS) {
+      expect(c).not.toBe(TRANSIT_COLOR);
+      expect(c).not.toBe(RETURN_COLOR);
+      // TRANSIT_COLOR is deliberately desaturated so it recedes; every leg colour is saturated.
+      expect(apart(c, RETURN_COLOR), `${c} is the return colour's hue`).toBeGreaterThan(30);
+    }
+  });
+
+  it('a real two-leg plan draws two lanes the eye can separate', () => {
+    const troll = planTracks(built()).filter((t) => t.planStep === 'troll');
+    expect(troll.length).toBe(2);
+    expect(apart(troll[0].color, troll[1].color)).toBeGreaterThan(HUE_FLOOR);
   });
 
   it('legColor is total — an unknown leg still gets a colour rather than undefined', () => {

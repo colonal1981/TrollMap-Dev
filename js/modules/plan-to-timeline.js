@@ -72,9 +72,30 @@ import { planCues } from './plan-assemble.js';
 // called `L1 · 22.4 ft` or `T2 · transit`, so all of them fell through to the default. On the
 // card stack they already had these colours. Exporting them is what lets a line on the water and
 // a card on the screen be the same colour, which is the whole of what he asked for.
-/** Distinct enough to tell apart at a glance, and it repeats rather than running out. */
-export const LEG_COLORS = ['#00e5ff', '#00bcd4', '#ffb300', '#ff9800', '#7e57c2', '#26a69a',
-                           '#ec407a', '#66bb6a', '#5c6bc0', '#ffa726'];
+/**
+ * ONE COLOUR PER TROLL LEG, AND CONSECUTIVE LEGS MUST NOT BE THE SAME COLOUR FAMILY.
+ *
+ * 36dbb56 gave every leg its own entry from this list and that was necessary, not sufficient.
+ * The list it gave them was `#00e5ff, #00bcd4, #ffb300, #ff9800, ...` — cyan then a darker cyan,
+ * amber then a slightly redder amber. A two-leg day therefore drew two cyan lines, which are two
+ * different hex values and one colour to the eye at 2.5 px on a chart in daylight. Ryan,
+ * 2026-08-09, after 36dbb56 shipped: "the 2 trolling lanes themselves need to be different colors
+ * from each other."
+ *
+ * So the ORDER is the fix, not the count. The six hues below are spread around the wheel and then
+ * sequenced so that every consecutive pair is at least 75 degrees of hue apart — legs 1 and 2 are
+ * 160 degrees apart, which is as far as two colours get. The near-twins that caused this are
+ * gone. Positions 5 and 6 exist so a long day does not wrap early; a plan has never had more than
+ * three troll legs.
+ *
+ * The 75-degree floor IS A JUDGEMENT AND NOT A MEASUREMENT. Nothing tested how far apart two
+ * lines have to be to read as different on the water; 75 is simply comfortably past the 10 and 30
+ * degrees that produced the complaint, and it is asserted in plan-tracks.test.js so a future
+ * addition to this list cannot quietly reintroduce a twin.
+ *
+ *   1 cyan   2 orange   3 violet   4 green   5 pink   6 yellow
+ */
+export const LEG_COLORS = ['#00e5ff', '#ff6d00', '#7c4dff', '#76ff03', '#ff4081', '#ffea00'];
 /** A deadhead: grey, because nothing is in the water and it should recede. */
 export const TRANSIT_COLOR = '#78909c';
 /** The run home: its own colour, and not one the leg cycle reaches in a normal day. */
