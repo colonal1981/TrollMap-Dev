@@ -152,11 +152,24 @@ export function planToTimeline(plan, o = {}) {
       //
       // It rides in as a `troll` entry because the preview branches `if (e.type === 'troll')` and
       // renders anything else as a stop row (plan-builder.js:448). `legType` says what it really
-      // is for anything that wants to know. No rods, so the card shows the two dashed "no lure
-      // assigned" slots, which is exactly right for a deadhead.
+      // is, and BOTH renderers now branch on it.
+      //
+      // 2026-08-09, off the water. They did not, and the card read:
+      //
+      //     ➡️ TROLL — Run — 0.8 mi
+      //     Target Depth —
+      //     Spread / Leads   Port —ft · Stbd —ft
+      //     🔵 Port — no lure assigned
+      //     🔴 Stbd — no lure assigned
+      //
+      // Ryan: "if this is the leg to get to the start of the first troll run it doesn't need this
+      // information." Four fields, every one of them a dash, describing a spread that does not
+      // exist — under a heading that calls a deadhead a troll. `unrouted` comes along so the card
+      // can say when the line is straight because the router would not answer.
       const card = {
         ...common,
-        label: `Run — ${mi.toFixed(1)} mi`, shortLabel: `Run ${mi.toFixed(1)}mi`,
+        label: `Run ${mi.toFixed(1)} mi`, shortLabel: `Run ${mi.toFixed(1)}mi`,
+        unrouted: !!leg.unrouted,
         icon: '➡️', color: TRANSIT_COLOR,
         desc: `From ${mark} in · deadhead at ${leg.speedMph} mph · ${leg.batteryAh} Ah`
             + ` · est ${leg.estDurationMin} min`,

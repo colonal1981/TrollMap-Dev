@@ -549,6 +549,42 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
       // Where this leg starts on the day's spine. Distance is the spine; the clock starts
       // drifting the moment he hooks a fish and never catches up.
       const markBadge = entry.atM != null ? `${(entry.atM / 1609.34).toFixed(2)} mi in` : '';
+
+      // A TRANSIT IS NOT A TROLL AND HAS NO SPREAD.
+      //
+      // Ryan, off the water 2026-08-09: "if this is the leg to get to the start of the first
+      // troll run it doesn't need this information." The deadhead card was rendering the full
+      // trolling body — Target Depth, Spread / Leads, and two "no lure assigned" rod rows — all
+      // four of them dashes, because there is nothing in the water. Under a heading that read
+      // "TROLL — Run", which is a contradiction on its face.
+      //
+      // A transit card is distance, speed, battery and time. That is the whole of it.
+      if (entry.legType === 'transit') {
+        const note = entry.unrouted
+          ? `<div style="font-size:11px;color:var(--bad,#ef5350);font-weight:600;border-top:1px dashed var(--line);padding-top:6px;margin-top:6px">⚠ ${esc(entry.longDesc || entry.why || '')}</div>`
+          : (entry.why ? `<div style="font-size:11px;color:var(--muted);font-style:italic;border-top:1px dashed var(--line);padding-top:6px;margin-top:6px">💡 ${esc(entry.why)}</div>` : '');
+        html += `
+        <div style="position:relative;background:var(--panel);border:1px dashed ${entry.color}66;border-radius:10px;padding:10px 14px;overflow:hidden">
+          <div style="position:absolute;left:-16px;top:16px;width:12px;height:12px;border-radius:50%;background:${entry.color};box-shadow:0 0 0 3px var(--panel2)"></div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:18px">${entry.icon}</span>
+              <div>
+                <div style="font-size:12px;font-weight:800;color:${entry.color};letter-spacing:.02em">TRANSIT — ${esc(entry.label)}</div>
+                <div style="font-size:11px;color:var(--muted)">${esc(entry.desc || '')}</div>
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px">
+              <span style="font-size:11px;font-weight:700;color:${entry.color};background:${entry.color}18;border:1px solid ${entry.color}44;padding:2px 7px;border-radius:999px">${esc(speedLabel)}</span>
+              ${statsBadge ? `<span style="font-size:10px;color:var(--muted)">${esc(statsBadge)}</span>` : ''}
+              ${markBadge ? `<span style="font-size:10px;color:var(--muted)">📏 ${esc(markBadge)}</span>` : ''}
+            </div>
+          </div>
+          ${note}
+        </div>`;
+        return;
+      }
+
       html += `
         <div style="position:relative;background:var(--panel);border:1px solid ${entry.color}44;border-radius:10px;padding:12px 14px;overflow:hidden">
           <div style="position:absolute;left:-16px;top:18px;width:12px;height:12px;border-radius:50%;background:${entry.color};box-shadow:0 0 0 3px var(--panel2),0 0 8px ${entry.color}66"></div>

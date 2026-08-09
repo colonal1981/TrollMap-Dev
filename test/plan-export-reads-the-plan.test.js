@@ -6,6 +6,7 @@ import { metresBetween } from '../js/modules/plan-candidates.js';
 import { state } from '../js/core/state.js';
 
 const BUILDER = readFileSync(new URL('../js/modules/plan-builder.js', import.meta.url), 'utf8');
+const UI = readFileSync(new URL('../js/modules/smart-plan-ui.js', import.meta.url), 'utf8');
 
 // ---------------------------------------------------------------------------
 // Why this test exists
@@ -140,5 +141,63 @@ describe('the leg card shows the contour, not the band', () => {
     expect(first.depthMax).toBe(22.4);
     expect(first.depthFt).toBe(22.4);
     expect(first.speciesBandFt).toEqual([15, 27]);   // along for the ride, under its own name
+  });
+});
+
+
+// -----------------------------------------------------------------------------------------------
+// A transit card claimed a spread it does not have, 2026-08-09.
+//
+//     ➡️ TROLL — Run — 0.8 mi
+//     Target Depth —
+//     Spread / Leads   Port —ft · Stbd —ft
+//     🔵 Port — no lure assigned
+//     🔴 Stbd — no lure assigned
+//
+// Ryan: "if this is the leg to get to the start of the first troll run it doesn't need this
+// information." Both renderers take the same `type: 'troll'` entry -- that is deliberate, it is
+// how a transit gets a leg row instead of a stop row -- so `legType` is the only thing that can
+// separate them, and both of them have to look at it. These are source assertions because the
+// renderers build HTML strings against a live DOM; the data half is pinned properly in
+// plan-to-timeline.test.js.
+// -----------------------------------------------------------------------------------------------
+describe('a transit is rendered as a transit', () => {
+  it('the timeline card branches on legType before it draws a spread', () => {
+    const branch = UI.indexOf("entry.legType === 'transit'");
+    expect(branch, 'no transit branch in the timeline renderer').toBeGreaterThan(-1);
+    // Everything a spread needs is drawn AFTER the branch, so the branch's `return` skips it.
+    for (const spreadMarkup of ['>Target Depth</div>', '>Spread / Leads</div>',
+                                'rodSlotHtml(rods[0]']) {
+      expect(UI.indexOf(spreadMarkup), `${spreadMarkup} is drawn before the transit branch`)
+        .toBeGreaterThan(branch);
+    }
+  });
+
+  it('the card does not call a deadhead a troll', () => {
+    expect(UI).toContain('TRANSIT — ${esc(entry.label)}');
+    expect(BUILDER).toContain('TRANSIT — ${esc(label)}');
+  });
+
+  it('the printed report gives a transit no depth column and no rod column', () => {
+    const branch = BUILDER.indexOf("e.legType === 'transit'");
+    expect(branch, 'no transit branch in the printed timeline').toBeGreaterThan(-1);
+    expect(BUILDER).toContain('Nothing in the water');
+    // The rods string for a troll row is built after the transit branch has already returned.
+    expect(BUILDER.indexOf('const rods = (e.rods||[])')).toBeGreaterThan(branch);
+  });
+
+  it('a real assembled plan produces a transit entry with nothing to put in a spread', () => {
+    const built = planToTimeline(PLAN);
+    const transits = built.timeline.filter((e) => e.legType === 'transit');
+    expect(transits.length).toBeGreaterThan(0);
+    for (const t of transits) {
+      expect(t.rods).toEqual([]);
+      expect(t.depthMin).toBe(null);
+      expect(t.portLeadFt).toBe('');
+      expect(t.label).not.toContain('Leg');
+      expect(Number(t.stats.distMi) >= 0).toBe(true);
+    }
+    // and no transit leaks into routeRods, which is what fills the two rod slots
+    for (const t of transits) expect(built.routeRods[t.key]).toBe(undefined);
   });
 });

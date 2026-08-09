@@ -562,6 +562,18 @@ export async function buildPlanPreviewHtml(p){
         const depth = e.depthMin != null && e.depthMax != null
           ? (e.depthMin === e.depthMax ? `${e.depthMin}ft` : `${e.depthMin}–${e.depthMax}ft`)
           : (e.depthMin ? `${e.depthMin}ft` : '');
+        // A TRANSIT HAS NO SPREAD, SO IT PRINTS NONE. Same fix as the on-screen card: the
+        // deadhead row was printing a depth column and a rod column it has nothing to put in,
+        // under the word TROLL. Distance, speed and time is the whole of a transit.
+        if (e.legType === 'transit') {
+          const dist = e.stats?.distMi != null ? `${esc(String(e.stats.distMi))} mi` : '';
+          const est = e.estDurationMin != null ? `est ${esc(String(e.estDurationMin))} min` : '';
+          return `<tr style="background:#f2f4f6"><td><b>${icon} TRANSIT — ${esc(label)}</b>`
+               + `<br><span class="rp-small">${esc(e.desc||'')}</span></td>`
+               + `<td>${esc(speed)}<br><span class="rp-small">${dist}</span></td>`
+               + `<td class="rp-small">Nothing in the water</td>`
+               + `<td class="rp-small">${est}${e.why ? `<br>${esc(e.why)}` : ''}</td></tr>`;
+        }
         const rods = (e.rods||[]).map(r=> `${esc(r.side||'')}: ${esc(r.lure||'')} ${esc(r.lead||'')?`@ ${esc(r.lead)}ft`:''}`).join('<br>');
         return `<tr style="background:#eef7ff"><td><b>${icon} TROLL — ${esc(label)}</b><br><span class="rp-small">${esc(e.desc||e.phaseName||'')}</span></td><td>${esc(speed)}<br>${esc(depth)}</td><td class="rp-small">${rods || `${esc(e.port||'')} / ${esc(e.starboard||'')}`}</td><td class="rp-small">${esc(e.why||'')}</td></tr>`;
       } else if (e.type === 'change') {

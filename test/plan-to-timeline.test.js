@@ -90,9 +90,42 @@ describe('plan-to-timeline — a v2 plan in the shape the export path reads', ()
   it('shows the run between legs rather than swallowing it', () => {
     // The one part of v2 Ryan liked was the return leg. A deadhead is real battery and real time.
     const t = built.timeline.find((e) => e.key === 'T1');
-    expect(t.label).toBe('Run — 1.1 mi');
+    expect(t.label).toBe('Run 1.1 mi');
     expect(t.rods).toEqual([]);
     expect(t.desc).toContain('4.2 Ah');
+  });
+
+  it('a transit says it is a transit, and carries no spread to render', () => {
+    // 2026-08-09. The card read "TROLL — Run — 0.8 mi" over a Target Depth of "—", a
+    // "Port —ft · Stbd —ft" spread and two "no lure assigned" rod rows. Ryan: "if this is the
+    // leg to get to the start of the first troll run it doesn't need this information."
+    //
+    // The entry still rides in as type 'troll' -- that is what both renderers branch on to get
+    // a leg row rather than a stop row -- so `legType` is the only thing that can tell them
+    // apart, and every field a spread would need must stay empty.
+    const t = built.timeline.find((e) => e.key === 'T1');
+    expect(t.legType).toBe('transit');
+    expect(t.label).not.toContain('Troll');
+    expect(t.rods).toEqual([]);
+    expect(t.port).toBe('');
+    expect(t.starboard).toBe('');
+    expect(t.portLeadFt).toBe('');
+    expect(t.starboardLeadFt).toBe('');
+    expect(t.depthMin).toBe(null);
+    expect(t.depthMax).toBe(null);
+    // What it DOES carry: distance, speed, battery and time.
+    expect(t.stats.distMi).toBe('1.1');
+    expect(t.speedMph).toBe(3.5);
+    expect(t.estDurationMin != null).toBe(true);
+    expect(t.desc).toContain('3.5 mph');
+  });
+
+  it('a transit the router could not answer for says so on the card', () => {
+    const straight = JSON.parse(JSON.stringify(PLAN));
+    straight.legs.find((l) => l.id === 'T1').unrouted = true;
+    const t = planToTimeline(straight).timeline.find((e) => e.key === 'T1');
+    expect(t.unrouted).toBe(true);
+    expect(t.why).toContain('STRAIGHT LINE');
   });
 
   it('carries a stop\'s position as lat/lon together or not at all', () => {
