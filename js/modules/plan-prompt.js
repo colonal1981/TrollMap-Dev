@@ -75,6 +75,84 @@ export const SIDES = ['port', 'starboard'];
 const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
 
+// ── The tackle-name resolver, moved from smart-plan.js:111-196 ────────────────────────────────
+//
+// WHAT WAS WRONG. planArgsFrom() checked the model's lure against `new Set(ctx.tackle)` with
+// `Set.has()` — an exact string match. The inventory calls it 'DD3 Crankbait (20-25ft)'; the
+// model, handed that exact string in the prompt, answered "DD3 Crankbait". So the plan Ryan took
+// on the water said
+//
+//     R1: "DD3 Crankbait" is not in the tackle inventory
+//     R2: "DD2 Crankbait" is not in the tackle inventory
+//
+// about two lures that were sitting in the bag. His reply was "i see them in the inventory."
+// A warning that fires on good data teaches him to ignore warnings, which is worse than no
+// warning at all.
+//
+// WHY THIS IS V1'S MATCHER AND NOT A NEW ONE. v1 never had this bug, because
+// `sanitizeGroqLureName()` (smart-plan.js:160-196) resolved in tiers and its third tier is a
+// substring test in BOTH directions (`:181-182`) — which is exactly this case. It and
+// `stripLureAnnotation()` are moved here tier for tier.
+//
+// THE ONE DELIBERATE DIFFERENCE. v1's final tier is `depthFallbackLure()`: when nothing matches
+// it picks a lure out of the inventory by depth keyword, because v1 had to put SOMETHING on the
+// rod. Here an unresolved name must stay unresolved — the entire purpose of this call site is to
+// report a lure the boat does not carry, and a resolver that always succeeds cannot do that. So
+// the fallback tier is not brought across: this returns null instead, and it returns WHICH tier
+// matched, so a word-overlap guess can be reported as a guess rather than passed off as a hit.
+//
+// v1's copy is left where it is. smart-plan.js still calls it from `runSmartPlan()`, and that
+// file is scheduled for deletion as a whole rather than hollowed out a function at a time.
+
+/** Strip the `[...]` annotation bracket a prompt may have hung on a lure name. */
+export function stripLureAnnotation(raw) {
+  if (!raw) return raw;
+  return String(raw).replace(/\s*\[.*$/, '').trim();
+}
+
+/**
+ * Resolve a lure name the model returned against the inventory's own names.
+ *
+ * @param   {string}   raw             what the model said
+ * @param   {string[]} inventoryNames  the names the prompt handed it
+ * @returns {{name: string, tier: 'exact'|'substring'|'words'}|null} null when nothing matches
+ */
+export function resolveTackleName(raw, inventoryNames) {
+  const stripped = stripLureAnnotation(raw);
+  if (!stripped) return null;
+  const r = String(stripped).toLowerCase().trim();
+  if (!r) return null;
+
+  const cleanMap = (inventoryNames || [])
+    .map((orig) => ({ orig, clean: stripLureAnnotation(orig) }))
+    .filter((m) => m.clean);
+  if (!cleanMap.length) return null;
+
+  const exact = cleanMap.find((m) => m.clean.toLowerCase() === r);
+  if (exact) return { name: exact.clean, tier: 'exact' };
+
+  // THE TIER THAT FIXES THE BUG. 'DD3 Crankbait' is inside 'DD3 Crankbait (20-25ft)', and a
+  // model asked for a shorter name than the inventory's is the common direction — but the
+  // reverse happens too ("DD3 Crankbait (20-25 ft) deep diver"), so both are tested.
+  const substr = cleanMap.find((m) => {
+    const nl = m.clean.toLowerCase();
+    return nl.includes(r) || r.includes(nl);
+  });
+  if (substr) return { name: substr.clean, tier: 'substring' };
+
+  const rWords = r.replace(/[^a-z0-9"]/g, ' ').split(/\s+/).filter((w) => w.length > 2);
+  let bestName = null;
+  let bestScore = 0;
+  for (const { clean } of cleanMap) {
+    const nl = clean.toLowerCase();
+    const score = rWords.filter((w) => nl.includes(w)).length;
+    if (score > bestScore) { bestScore = score; bestName = clean; }
+  }
+  if (bestScore >= 1) return { name: bestName, tier: 'words' };
+
+  return null;
+}
+
 /**
  * Build the two messages for POST /groq-query.
  *
@@ -314,7 +392,7 @@ export function seatRods(rods, connOf) {
 export function planArgsFrom(res, candidates, ctx = {}) {
   const problems = [];
   const byRun = new Map((candidates || []).map((c) => [c.runId, c]));
-  const tackle = ctx.tackle && ctx.tackle.length ? new Set(ctx.tackle) : null;
+  const tackleNames = ctx.tackle && ctx.tackle.length ? ctx.tackle : null;
 
   // --- the six rods, seated on rods that can carry them ---------------------------------------
   const given = new Map();
@@ -326,9 +404,21 @@ export function planArgsFrom(res, candidates, ctx = {}) {
   // and are added back by seatRods() as staged — their absence is not a problem to report.
   const claimed = ROD_IDS.filter((id) => given.has(id)).map((id) => {
     const r = given.get(id);
-    const lure = str(r.lure);
-    if (!lure) problems.push(`${id} is in the loadout with no lure — dropped`);
-    if (lure && tackle && !tackle.has(lure)) problems.push(`${id}: "${lure}" is not in the tackle inventory`);
+    const asked = str(r.lure);
+    if (!asked) problems.push(`${id} is in the loadout with no lure — dropped`);
+    const hit = asked && tackleNames ? resolveTackleName(asked, tackleNames) : null;
+    if (asked && tackleNames && !hit) {
+      problems.push(`${id}: "${asked}" is not in the tackle inventory`);
+    } else if (hit && hit.tier === 'words') {
+      // Reported, because this tier is a guess: it matched on shared words, not on the name.
+      problems.push(`${id}: read "${asked}" as "${hit.name}" — nothing in the inventory is `
+                  + 'called that, and this is the closest thing by shared words');
+    }
+    // The plan carries the INVENTORY's name so anything downstream that looks a lure up finds
+    // it. When nothing resolves, the model's own words are kept rather than a substitute — the
+    // problem above says the bag does not hold it, and swapping in a different lure would be
+    // choosing his tackle for him.
+    const lure = (hit && hit.name) || asked;
     return {
       id, role: r.role === 'cast' ? 'cast' : 'troll',
       lure, color: str(r.color), why: str(r.why),
@@ -416,7 +506,19 @@ export function planArgsFrom(res, candidates, ctx = {}) {
       return false;
     }
     return usable(reseat(str(c.rodId)), `a lure change before ${c.beforeRunId}`);
-  }).map((c) => ({ beforeRunId: c.beforeRunId, rodId: reseat(c.rodId), to: c.to, why: str(c.why) }));
+  }).map((c) => {
+    // A change ties on a lure too, and this was never checked against the bag at all.
+    const asked = str(c.to);
+    const hit = tackleNames ? resolveTackleName(asked, tackleNames) : null;
+    if (asked && tackleNames && !hit) {
+      problems.push(`a lure change on ${reseat(str(c.rodId))} ties on "${asked}", which is not `
+                  + 'in the tackle inventory');
+    }
+    return {
+      beforeRunId: c.beforeRunId, rodId: reseat(c.rodId),
+      to: (hit && hit.name) || asked, why: str(c.why),
+    };
+  });
 
   const safety = res.safety || {};
   return {

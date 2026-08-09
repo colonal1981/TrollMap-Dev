@@ -1,6 +1,7 @@
 import { describe, it, expect } from './expect-shim.mjs';
 import {
   buildPlanRequest, parsePlanResponse, seatRods, planArgsFrom,
+  resolveTackleName, stripLureAnnotation,
   ROD_IDS, ROD_RIG, FLUORO_RODS, SNAP_RODS,
 } from '../js/modules/plan-prompt.js';
 import { assemblePlan, validatePlan } from '../js/modules/plan-assemble.js';
@@ -256,6 +257,52 @@ describe('plan-prompt — turning the answer into assembler arguments', () => {
     expect(a.loadout.rods.some((r) => r.lure === 'Rapala Imagination Minnow')).toBe(true);
   });
 
+  // -------------------------------------------------------------------------------------------
+  // THE FALSE WARNING RYAN GOT ON THE WATER, 2026-08-09.
+  //
+  // The inventory calls it 'DD3 Crankbait (20-25ft)'. The model, handed that exact string, said
+  // "DD3 Crankbait". Set.has() said no, and the plan told him two lures that were in the bag
+  // were not. These pin the resolver that replaced it.
+  // -------------------------------------------------------------------------------------------
+  it('the depth suffix on an inventory name is not a missing lure', () => {
+    const res = JSON.parse(JSON.stringify(good));
+    res.loadout.rods[0].lure = 'DD2 Crankbait';          // TIE is 'DD2 Crankbait (16-20ft)'
+    const a = planArgsFrom(res, CANDS, { tackle: TACKLE, connectionOf });
+    expect(a.problems.some((p) => p.includes('not in the tackle inventory'))).toBe(false);
+    // and the plan carries the inventory's own name from here on
+    expect(a.loadout.rods.find((r) => r.id === 'R1').lure).toBe(TIE);
+  });
+
+  it('matches in the other direction too, when the model says more than the inventory', () => {
+    const res = JSON.parse(JSON.stringify(good));
+    res.loadout.rods[1].lure = `${SNAP} in chrome`;
+    const a = planArgsFrom(res, CANDS, { tackle: TACKLE, connectionOf });
+    expect(a.problems.some((p) => p.includes('not in the tackle inventory'))).toBe(false);
+    expect(a.loadout.rods.find((r) => r.id === 'R5').lure).toBe(SNAP);
+  });
+
+  it('a lure resolved on shared words alone is reported as the guess it is', () => {
+    const res = JSON.parse(JSON.stringify(good));
+    res.loadout.rods[0].lure = 'Deep Crankbait, chartreuse';
+    const a = planArgsFrom(res, CANDS, { tackle: TACKLE, connectionOf });
+    expect(a.problems.some((p) => p.includes('closest thing by shared words'))).toBe(true);
+    expect(a.problems.some((p) => p.includes('not in the tackle inventory'))).toBe(false);
+  });
+
+  it('a lure change ties on something the bag has, or says so', () => {
+    const res = JSON.parse(JSON.stringify(good));
+    res.changes[0].to = 'Nichols Lake Fork Flutter Spoon';   // SNAP without the weight
+    const a = planArgsFrom(res, CANDS, { tackle: TACKLE, connectionOf });
+    expect(a.changes[0].to).toBe(SNAP);
+    expect(a.problems.some((p) => p.includes('ties on'))).toBe(false);
+
+    const bad = JSON.parse(JSON.stringify(good));
+    bad.changes[0].to = 'Rapala Imagination Minnow';
+    const b = planArgsFrom(bad, CANDS, { tackle: TACKLE, connectionOf });
+    expect(b.problems.some((p) => p.includes('ties on'))).toBe(true);
+    expect(b.changes[0].to).toBe('Rapala Imagination Minnow');
+  });
+
   it('survives an empty or hostile answer without inventing a plan', () => {
     const a = planArgsFrom({}, CANDS, { tackle: TACKLE, connectionOf });
     expect(a.candidates.length).toBe(0);
@@ -388,5 +435,36 @@ describe('plan-prompt — a stop named the lake\'s way still lands', () => {
     expect(req.user).toContain('"id": "that structure\'s `id`, copied exactly"');
     expect(req.user).not.toContain('"structureId": "copied exactly from that leg\'s structures"');
     expect(req.user).toMatch(/ONE ENTRY PER STRUCTURE WORTH STOPPING AT/);
+  });
+});
+
+
+// -----------------------------------------------------------------------------------------------
+// The resolver on its own. v1's tiers, minus the depth fallback -- see the comment above
+// resolveTackleName(). The tier is part of the answer because the last tier is a guess.
+// -----------------------------------------------------------------------------------------------
+describe('resolveTackleName', () => {
+  it('exact beats everything', () => {
+    expect(resolveTackleName(TIE, TACKLE)).toEqual({ name: TIE, tier: 'exact' });
+  });
+
+  it('substring works in both directions', () => {
+    expect(resolveTackleName('DD2 Crankbait', TACKLE).tier).toBe('substring');
+    expect(resolveTackleName('DD2 Crankbait', TACKLE).name).toBe(TIE);
+    expect(resolveTackleName(`${TIE3} deep diver`, TACKLE).name).toBe(TIE3);
+  });
+
+  it('returns null rather than inventing a lure', () => {
+    // v1's last tier picked one out of the bag by depth keyword. That is exactly what must NOT
+    // happen here: this call site exists to report a lure the boat does not carry.
+    expect(resolveTackleName('Rapala Imagination Minnow', TACKLE)).toBe(null);
+    expect(resolveTackleName('', TACKLE)).toBe(null);
+    expect(resolveTackleName(null, TACKLE)).toBe(null);
+    expect(resolveTackleName(TIE, [])).toBe(null);
+  });
+
+  it('strips a prompt annotation bracket before matching', () => {
+    expect(stripLureAnnotation('DD2 Crankbait [16-20ft dive | 1.4-2mph]')).toBe('DD2 Crankbait');
+    expect(resolveTackleName('DD2 Crankbait [16-20ft dive]', TACKLE).name).toBe(TIE);
   });
 });
