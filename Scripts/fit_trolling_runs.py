@@ -321,19 +321,30 @@ def _no_licence(v):
     return np.where(np.isnan(v) | (v < 0), np.inf, v)
 
 
-def _seg_min(depth, a, b, sample_m=5.0):
-    """Shallowest charted water anywhere along each segment. Uncharted sorts below every real
-    depth, because unsurveyed is not the same as deep and must never win a comparison."""
+def _seg_min(depth, a, b, sample_m=5.0, raw=False):
+    """
+    Shallowest water anywhere along each segment. Uncharted sorts below every real depth,
+    because unsurveyed is not the same as deep and must never win a comparison.
+
+    `raw=True` reads the chart; the default reads the chart with thin water widened. Which one
+    is wanted follows the standing rule in this file: a safety margin belongs in a DECISION, a
+    measurement reads the chart.
+
+    ONE RASTER LOOKUP FOR THE WHOLE THING, not one per sample step. The loop this replaced was
+    fine in the smoother -- n is about five there and each call covered every segment at once --
+    and a disaster in chord_pass, where a 2.5 km chord is ONE segment and 250 steps, so it made
+    250 numpy calls on one-element arrays and call overhead dwarfed the work.
+    """
     seg = b - a
     L = np.hypot(seg[:, 0], seg[:, 1])
     if not len(L):
         return np.array([])
     n = max(1, int(math.ceil(float(L.max()) / sample_m)))
-    out = np.full(len(a), np.inf)
-    for i in range(n + 1):
-        d = depth.at(a + seg * (i / n))
-        out = np.fmin(out, np.where(np.isnan(d), -1.0, d))
-    return out
+    t = np.linspace(0.0, 1.0, n + 1)
+    pts = a[:, None, :] + seg[:, None, :] * t[None, :, None]
+    look = depth.at_raw if raw else depth.at
+    d = look(pts.reshape(-1, 2)).reshape(len(a), n + 1)
+    return np.where(np.isnan(d), -1.0, d).min(axis=1)
 
 
 def smooth(xy0, depth, floor_dm, target_dm, iters, deep_bias_m):
@@ -415,7 +426,7 @@ def smooth(xy0, depth, floor_dm, target_dm, iters, deep_bias_m):
     return xy
 
 
-def chord_pass(xy, depth, floor_dm, max_turn_deg, max_chord_m=2500.0):
+def chord_pass(xy, depth, floor_dm, max_turn_deg, max_chord_m=2500.0, bridge_dm=6.0):
     """
     Long straight pulls joined by corners no sharper than `max_turn_deg`.
 
@@ -434,7 +445,6 @@ def chord_pass(xy, depth, floor_dm, max_turn_deg, max_chord_m=2500.0):
     # Precomputed once: the shallowest water on each SEGMENT of the input line. `was` for a chord
     # i..j is then a running minimum instead of a fresh scan, which is the difference between
     # O(n^2) sampling and O(n). Wateree River timed out on the scan-per-candidate version.
-    seg_min_all = _no_licence(_seg_min(depth, xy[:-1], xy[1:]))
     # And candidates are strided: the chord end is tried every ~100 m rather than every 25 m
     # vertex. A guideline steered by hand does not need its corner placed to a quarter of a boat
     # length, and it cuts the chord tests by four.
@@ -458,10 +468,19 @@ def chord_pass(xy, depth, floor_dm, max_turn_deg, max_chord_m=2500.0):
             js = [min(i + 1, n - 1)]
         ends = xy[js]
         starts = np.repeat(xy[i][None, :], len(js), axis=0)
-        gots = _seg_min(depth, starts, ends, sample_m=10.0)
-        # `was` for a chord i..j is the shallowest segment of the line it replaces -- a running
-        # minimum, so one accumulate instead of a scan per candidate.
-        wasrun = np.minimum.accumulate(seg_min_all[i:hi]) if hi > i else np.array([np.inf])
+        # TWO TESTS, EACH ON THE RASTER THAT ANSWERS IT.
+        #
+        # In band: the CHART, against the same floor-minus-bridge the in-band split already
+        # used, so a chord may not put the line anywhere the stretch it replaces could not have
+        # been. On water: the BUFFER, purely to reject a chord that clips land or unsurveyed
+        # ground, which is what the safety margin is for.
+        #
+        # What used to be here was "no worse than the shallowest point of the stretch you
+        # replace", measured on the buffer -- and the buffer sits a band or more below the chart
+        # near a drop-off, so a 400 m chord was licensed into 24 ft water on a 39 ft floor.
+        # That clause has now leaked twice. It is gone rather than tightened.
+        gots = _seg_min(depth, starts, ends, sample_m=10.0, raw=True)
+        safe = _seg_min(depth, starts, ends, sample_m=10.0)
         wlens = np.hypot(*(ends - xy[i]).T)
         if heading is None:
             turns = np.zeros(len(js))
@@ -473,13 +492,12 @@ def chord_pass(xy, depth, floor_dm, max_turn_deg, max_chord_m=2500.0):
         in_cap = out_cap = None
         for k, j in enumerate(js):
             got, wlen, turn = float(gots[k]), float(wlens[k]), float(turns[k])
-            was = float(wasrun[min(max(j - 1 - i, 0), len(wasrun) - 1)])
             # STRICT, and this replaced a rule that leaked badly. Allowing a chord to be "no
             # worse than the shallowest point of the stretch it replaces" meant ONE thin spot
             # anywhere licensed the whole chord to run that shallow: on Wateree River it put 12
             # of 21 fitted runs more than 6 ft above their own target depth. A brief dip is not
             # permission for a sustained shallow mile. `was` still bounds the short fallback.
-            if got >= floor_dm or (got >= was and wlen <= 400.0):
+            if got >= floor_dm - bridge_dm and safe[k] >= 0.0:
                 if turn <= max_turn_deg:
                     # Longest wins; a chord within 5% of it that runs DEEPER wins over it.
                     if in_cap is None or wlen > in_cap[1] * 1.05:
@@ -540,6 +558,19 @@ def seed_deep(xy, depth, target_dm, max_push_m=30.0, step_m=3.0):
             best_d[take] = cd[take]
         off += step_m
     return best
+
+
+def _turns_aligned(xy):
+    """Heading change at each interior vertex, index-aligned: t[k] is the turn at xy[k+1].
+    A zero-length segment has no heading, so its turn is reported as 0 rather than dropped."""
+    d = np.diff(xy, axis=0)
+    L = np.hypot(d[:, 0], d[:, 1])
+    if len(d) < 2:
+        return np.array([])
+    h = np.degrees(np.arctan2(d[:, 1], d[:, 0]))
+    t = np.abs((np.diff(h) + 180) % 360 - 180)
+    t[(L[:-1] <= 0.5) | (L[1:] <= 0.5)] = 0.0
+    return t
 
 
 def split_at_thin_water(xy, depth, floor_dm, min_leg_m, step_m=10.0, bridge_m=40.0,
@@ -608,8 +639,12 @@ def split_at_thin_water(xy, depth, floor_dm, min_leg_m, step_m=10.0, bridge_m=40
 
 def split_at_hard_corners(xy, max_turn_deg, min_leg_m):
     """A corner that will not smooth is not a turn, it is the end of a pass."""
-    t = _turns(xy)
-    bounds = [0] + [i + 1 for i, a in enumerate(t) if a > max_turn_deg] + [len(xy) - 1]
+    # ALIGNED TURNS. `_turns` drops segments under 0.5 m before differencing, so every index
+    # after a dropped one is shifted -- and this function maps those indices straight back onto
+    # the vertex array to decide where to cut. One short segment and it cuts in the wrong place,
+    # which is how a pass came back containing a 55 degree corner under a 35 degree cap.
+    t = _turns_aligned(xy)
+    bounds = [0] + [k + 1 for k, a in enumerate(t) if a > max_turn_deg] + [len(xy) - 1]
     pieces = []
     for a, b in zip(bounds[:-1], bounds[1:]):
         if b - a < 1:
@@ -761,6 +796,24 @@ def fit_pack(pack, a):
     dpath = os.path.join(pack, 'depth_areas.geojson')
     if not os.path.isfile(rpath):
         return None
+    # IDEMPOTENT BY DEFAULT, BECAUSE RUNNING THIS TWICE DESTROYS WATER.
+    #
+    # 2026-08-09: Ryan re-ran Wateree to pick up a fix and it fitted the ALREADY-FITTED file --
+    # 1,820 runs in, not the original 1,632. A second pass smooths an already-smoothed line and
+    # re-applies the minimum-leg rule to pieces that have already been trimmed once, so the
+    # length went 3,114 km -> 1,168 -> 902. Nothing errored and the summary looked healthy,
+    # because every number it printed was measured against the wrong baseline.
+    #
+    # So a pack that has been through is SKIPPED unless --refit says otherwise. Every feature
+    # this script writes carries a `fitted` flag, true or false, and no other producer writes
+    # that key, so its presence is an unambiguous record. Read from the head of the file, not
+    # the whole thing, because the point is to skip cheaply.
+    #
+    # This also makes a card-wide pass resumable for free: a machine that reboots four hours in
+    # picks up where it stopped instead of starting over.
+    if not a.refit and _already_fitted(rpath):
+        return {'slug': slug, 'skipped': 'already fitted -- pass --refit to do it again, but '
+                                         'restore the original first or it fits its own output'}
     if not os.path.isfile(dpath):
         return {'slug': slug, 'skipped': 'no depth_areas.geojson'}
 
@@ -865,8 +918,20 @@ def fit_pack(pack, a):
                 step = max(a.resample_m, step / 2.0)
                 even, _ = _resample(stretch, step)
             sm = smooth(even, depth, floor, float(pr['depth_dm']), a.iters, a.deep_bias_m)
-            ch = chord_pass(sm, depth, floor, a.max_turn_deg)
-            pieces.extend(split_at_hard_corners(ch, a.max_turn_deg, a.min_leg_m))
+            ch = chord_pass(sm, depth, floor, a.max_turn_deg, bridge_dm=a.bridge_dm)
+            for piece in split_at_hard_corners(ch, a.max_turn_deg, a.min_leg_m):
+                # ASSERT THE INVARIANT ON THE OUTPUT, not only along the way.
+                #
+                # Every stage enforces the depth rule against the line it was handed, and every
+                # time one of those baselines turned out to be fabricated -- an erosion, a
+                # resample, an uncharted cell -- the guarantee quietly stopped holding while
+                # each stage still reported success. Three separate bugs, same shape.
+                #
+                # So the finished pass is re-tested against the chart from scratch, and any part
+                # of it that is not in band is cut off. Cheap, and it makes the guarantee a
+                # property of the OUTPUT rather than a claim about the process.
+                pieces.extend(split_at_thin_water(piece, depth, floor, a.min_leg_m,
+                                                  bridge_m=a.bridge_m, bridge_dm=a.bridge_dm))
         if not pieces:
             st['kept_thin'] += 1
             pr['fit_note'] = ('no fitted pass of %.0f m survived: this contour is not %.1f ft '
@@ -974,6 +1039,16 @@ def _hms(sec):
     return '%d:%02d' % (int(sec // 60), int(round(sec % 60)))
 
 
+def _already_fitted(path, probe=200_000):
+    """Has this pack been through the fitter? Reads the head of the file, not all of it."""
+    try:
+        with open(path, 'r', encoding='utf-8') as fh:
+            head = fh.read(probe)
+        return '"fitted"' in head
+    except Exception:
+        return False
+
+
 def ship_only_slugs(registry):
     p = os.path.join(registry, 'charted.json')
     with open(p, 'r', encoding='utf-8') as fh:
@@ -1032,6 +1107,10 @@ def main():
                     help='where the original trolling_runs.geojson goes; default '
                          '<packs>/../_to_delete/pre_fit_runs')
     ap.add_argument('--limit', type=int, default=0, help='stop after N packs; for testing')
+    ap.add_argument('--refit', action='store_true',
+                    help='fit a pack that has already been fitted. Restore the original from '
+                         '_to_delete/pre_fit_runs first -- otherwise it smooths its own output '
+                         'and trims already-trimmed passes, and the summary will not say so')
     ap.add_argument('--dry-run', action='store_true')
     ap.add_argument('--report', default=None)
     a = ap.parse_args()
