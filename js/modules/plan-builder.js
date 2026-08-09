@@ -104,8 +104,44 @@ function formatPhaseSpeeds(phaseSpeeds, fallbackSpeed) {
     .join(' · ');
 }
 
+/**
+ * The v2 plan itself, if one has been generated this session.
+ *
+ * WHY THIS IS HERE. collectPlan() rebuilt `meta` and `trolling` from form fields, and
+ * `#planTargetDepth` is a hidden input only v1 ever wrote (smart-plan.js:1214). On the v2 path it
+ * is empty, so the HTML fell through to hardcoded literals -- '25–35' in the sonar table and the
+ * summary row, '18–28' in the AI-reasoning box -- while the timeline said 15–27. Ryan got a
+ * document with three different target depths in it, none of which was the depth the legs
+ * actually follow.
+ *
+ * A plan is a document about one day. Anything in it that can be read off the plan MUST be, and
+ * anything that cannot be read off the plan and cannot be measured stays empty.
+ */
+function planV2() {
+  try { return (typeof window !== 'undefined' && window._planV2) || null; } catch { return null; }
+}
+
+/** "22.4" for one contour, "22.4–31" for several. Never a band the species is using. */
+function contourRange(plan) {
+  const ft = (plan.legs || []).filter((l) => l.type === 'troll' && l.depthFt != null)
+    .map((l) => Number(l.depthFt)).filter(Number.isFinite);
+  if (!ft.length) return '';
+  const lo = Math.min(...ft), hi = Math.max(...ft);
+  return lo === hi ? String(lo) : `${lo}–${hi}`;
+}
+
+/** The day's speeds as a range. There is no plan-level trolling speed -- each leg has its own. */
+function speedRange(plan) {
+  const v = (plan.legs || []).filter((l) => l.type === 'troll')
+    .map((l) => Number(l.speedMph)).filter((n) => Number.isFinite(n) && n > 0);
+  if (!v.length) return '';
+  const lo = Math.min(...v), hi = Math.max(...v);
+  return lo === hi ? String(lo) : `${lo}–${hi}`;
+}
+
 export function collectPlan(){
   function gV(id, fb = '') { const el = document.getElementById(id); return el ? el.value : fb; }
+  const v2 = planV2();
   const species = [...document.querySelectorAll('#planSpeciesChecks input:checked')].map(c=>c.value);
   const lakeVal = gV('planLake');
   const isRiv = isPlanRiverValue(lakeVal);
@@ -346,16 +382,28 @@ export function collectPlan(){
       clarity: gV('planClarity', 'Clear'),
       motor: gV('planMotor', 'NK180 Pro 24V, 100Ah LiFePO4'),
       sonar: gV('planSonar', 'Garmin ECHOMAP UHD2 93sv'),
-      solunar: gV('planSolunar'),
+      // The HTML renders a full solunar table while meta.solunar exported as an empty string,
+      // which is the same contract violation as the depths: the document computing what the plan
+      // already knows. conditions.solunar is on the plan; use it when the form is empty.
+      solunar: gV('planSolunar') || (v2 && v2.conditions && v2.conditions.solunar
+        ? `Majors ${(v2.conditions.solunar.majors || []).join(', ')} · `
+          + `Minors ${(v2.conditions.solunar.minors || []).join(', ')}` : ''),
       structure: gV('planStructure'),
       lakeIntel: gV('planLakeIntel'),
       clarityIntel: gV('planClarityIntel'),
       species,
     },
     trolling:{
-      speed: gV('planSpeed', '2.4'),
+      // ONE DEPTH, AND IT IS THE CONTOUR THE LEGS FOLLOW. `targetDepth` used to come from a
+      // hidden input only v1 wrote, so on the v2 path it was empty and the HTML printed
+      // literals. The species band is a different fact and is exported under its own name --
+      // it is what the fish are using, not what the boat is following.
+      speed: speedRange(v2 || {}) || gV('planSpeed', '2.4'),
       phaseSpeeds,
-      targetDepth: gV('planTargetDepth'),
+      targetDepth: contourRange(v2 || {}) || gV('planTargetDepth'),
+      speciesBandFt: (v2 && v2.conditions && v2.conditions.depthBand
+                      && v2.conditions.depthBand.ft) || null,
+      legSpeeds: v2 ? (v2.legs || []).map((l) => ({ legId: l.id, type: l.type, speedMph: l.speedMph })) : null,
       pattern: gV('planPattern', 'Straight lanes'),
     },
     spread: (state.SPREAD || []).slice(),
@@ -373,6 +421,32 @@ export function collectPlan(){
     castRods: window._smartPlanCastRods || [],
     routeRods: routeRodsCapture,
     routeSpeeds: window._smartPlanRouteSpeeds || null,
+    // THE PLAN, AS THE SCHEMA DEFINES IT. Everything above is the form's view of the day;
+    // this is the plan's own. budget, conditions, meta, safety and warnings had no route into
+    // any export at all -- the budget reached the screen as a status one-liner and nothing else,
+    // and every warning the assembler produced died at the boundary. `coordinates` are left off
+    // the legs on purpose: the geometry ships as tracks in the GPX, and duplicating it here
+    // would be a second copy to fall out of sync with.
+    plan: v2 ? {
+      planVersion: v2.planVersion,
+      meta: v2.meta,
+      conditions: v2.conditions,
+      budget: v2.budget,
+      safety: v2.safety,
+      warnings: Array.isArray(v2.warnings) ? v2.warnings.slice() : [],
+      legs: (v2.legs || []).map((l) => ({
+        id: l.id, type: l.type, runId: l.runId ?? null,
+        startM: l.startM, lengthM: l.lengthM,
+        depthFt: l.depthFt ?? null, speedMph: l.speedMph,
+        batteryAh: l.batteryAh, estDurationMin: l.estDurationMin, estStartTime: l.estStartTime ?? null,
+        unrouted: l.unrouted === true ? true : undefined,
+        stopIds: (l.stops || []).map((x) => x.id),
+      })),
+      changes: (v2.changes || []).slice(),
+    } : null,
+    // The one caveat every amp-hour figure in this document needs, carried WITH the figures.
+    batteryCurve: v2 ? 'amps(mph) = 5.0 * (mph/2.0)**1.756 — a two-point fit to two observed '
+                     + 'readings (3–7 A at 1.8–2.2 mph, 25 A at ~5 mph), not a measurement' : null,
     gpx: {
       waypoints: state.DATA.waypoints.length,
       tracks: state.DATA.tracks.length,
@@ -485,7 +559,9 @@ export async function buildPlanPreviewHtml(p){
         const icon = e.icon || (e.key?.includes('Ph1 Out') ? '🌅' : e.key?.includes('Ph1 In') ? '↩️' : e.key?.includes('Ph2 Out') ? '☀️' : '🏠');
         const label = e.label || e.key || `Troll ${i+1}`;
         const speed = e.speedMph ? `${e.speedMph} mph` : (p.trolling?.speed||'') + ' mph';
-        const depth = e.depthMin != null && e.depthMax != null ? `${e.depthMin}–${e.depthMax}ft` : (e.depthMin ? `${e.depthMin}ft` : '');
+        const depth = e.depthMin != null && e.depthMax != null
+          ? (e.depthMin === e.depthMax ? `${e.depthMin}ft` : `${e.depthMin}–${e.depthMax}ft`)
+          : (e.depthMin ? `${e.depthMin}ft` : '');
         const rods = (e.rods||[]).map(r=> `${esc(r.side||'')}: ${esc(r.lure||'')} ${esc(r.lead||'')?`@ ${esc(r.lead)}ft`:''}`).join('<br>');
         return `<tr style="background:#eef7ff"><td><b>${icon} TROLL — ${esc(label)}</b><br><span class="rp-small">${esc(e.desc||e.phaseName||'')}</span></td><td>${esc(speed)}<br>${esc(depth)}</td><td class="rp-small">${rods || `${esc(e.port||'')} / ${esc(e.starboard||'')}`}</td><td class="rp-small">${esc(e.why||'')}</td></tr>`;
       } else if (e.type === 'change') {
@@ -652,12 +728,16 @@ export async function buildPlanPreviewHtml(p){
 
   // ── Sonar settings per lane ───────────────────────────────────────────────
   const sonarUnit = p.meta.sonar || 'Garmin ECHOMAP UHD2 93sv';
-  const targetDepth = p.trolling.targetDepth || '25–35';
+  // No literal fallback. A depth this document cannot read off the plan is a depth it does not
+  // know, and printing a plausible number for it is how the same document ended up claiming
+  // 15–27, 18–28 and 25–35 ft on one morning.
+  const targetDepth = p.trolling.targetDepth || '';
+  const sonarRange = targetDepth ? `${targetDepth} ft` : 'Full depth';
   const sonarRows = [
-    ['Dawn / Structure scan',   '2D 200kHz CHIRP', targetDepth+' ft', '8–9', 'Auto', 'On — structure ID'],
-    ['Mid-morning troll lanes', '2D 77kHz CHIRP',  targetDepth+' ft', '7–8', 'Auto', 'Zoom 2× bottom third'],
-    ['Locating school',         'Down Imaging',    'Full depth',       '9',   'Auto', 'Max sensitivity, look for bait cloud'],
-    ['On fish / fighting',      '2D 200kHz',       targetDepth+' ft', '7',   'Manual lock', 'Bottom lock off — watch split screen'],
+    ['Dawn / Structure scan',   '2D 200kHz CHIRP', sonarRange, '8–9', 'Auto', 'On — structure ID'],
+    ['Mid-morning troll lanes', '2D 77kHz CHIRP',  sonarRange, '7–8', 'Auto', 'Zoom 2× bottom third'],
+    ['Locating school',         'Down Imaging',    'Full depth', '9',   'Auto', 'Max sensitivity, look for bait cloud'],
+    ['On fish / fighting',      '2D 200kHz',       sonarRange, '7',   'Manual lock', 'Bottom lock off — watch split screen'],
   ].map(([phase, freq, range, sens, scroll, notes])=>
     `<tr><td><b>${phase}</b></td><td>${freq}</td><td>${range}</td><td>${sens}</td><td>${scroll}</td><td class="rp-small">${notes}</td></tr>`
   ).join('');
@@ -1290,7 +1370,7 @@ ${pressureHtml}
       <b style="color:#76ff03;font-size:14.5px;display:block;margin-bottom:6px">🎯 Therefore Protocol Recommendations</b>
       <div style="display:flex;flex-direction:column;gap:5px">
         <span>• <b>Trolling Velocity</b>: Maintain the pass-specific speed: <b>${esc(phaseSpeedSummary)}</b>, so each lure stays within its physical trolling limit.</span>
-        <span>• <b>Target Drop-Off</b>: Deploy Core Rod Matrix exactly across <b>${esc(p.trolling.targetDepth||'18–28')} ft</b> ledge drop-offs using automated wire let-out helpers.</span>
+        <span>• <b>Target Drop-Off</b>: Deploy Core Rod Matrix exactly across <b>${esc(p.trolling.targetDepth||'the charted contour')}${p.trolling.targetDepth ? ' ft' : ''}</b> ledge drop-offs using automated wire let-out helpers.</span>
         <span>• <b>Match-the-Hatch Profile</b>: Force swimbait profile sizing to exactly <b>${parseFloat(p.meta.waterTemp)<65?'3.8" Finesse Threadfin':parseFloat(p.meta.waterTemp)<80?'4.6" Finesse Blueback Herring':'6" Gizzard Shad'}</b>.</span>
         <span>• <b>Color Penetration</b>: ${(p.meta.clarity||'')==='Stained'?'Prioritize <b style="color:#76ff03">Firetiger / Chartreuse UV</b> due to suspended particulate light limits.':(p.meta.clarity||'')==='Muddy'?'Deploy loud rattles and dark Black/Blue silhouettes.':'Focus entirely on natural <b style="color:#fff">Bone / Pearl Flash</b> with fluoro leaders.'}</span>
         <span>• <b>Structure Engagement</b>: Cross directly over creek mouth swings and submerged roadbed intersections.</span>
@@ -1340,7 +1420,7 @@ ${twilightHtml?`<h2>4 · Light &amp; Bite Feed Triggers</h2>${twilightHtml}`:''}
     <tr style="background:#eef4fa"><th>Target Trolling Speed</th><th>Target Drop-Off Depth</th><th>Tactical Pattern</th></tr>
   </thead>
   <tbody>
-    <tr><td><b style="font-size:15px;color:#0d4f8b">${esc(phaseSpeedSummary)}</b></td><td><b style="font-size:15px;color:#0d4f8b">${esc(p.trolling.targetDepth||'25–35')} ft</b></td><td><b style="font-size:15px">${esc(p.trolling.pattern||'—')}</b></td></tr>
+    <tr><td><b style="font-size:15px;color:#0d4f8b">${esc(phaseSpeedSummary)}</b></td><td><b style="font-size:15px;color:#0d4f8b">${p.trolling.targetDepth ? `${esc(p.trolling.targetDepth)} ft` : '—'}</b></td><td><b style="font-size:15px">${esc(p.trolling.pattern||'—')}</b></td></tr>
   </tbody>
 </table>
 

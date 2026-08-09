@@ -539,7 +539,10 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
     if (entry.type === 'troll') {
       const cardDef = cards.find(c => c.key === entry.key) || {};
       const rods = entry.rods || routeRods?.[entry.key] || [];
-      const depthLabel = entry.depthMin != null && entry.depthMax != null ? `${entry.depthMin}–${entry.depthMax}ft` : (entry.depthMin ? `${entry.depthMin}ft` : '—');
+      // One contour reads as one number. "22.4–22.4ft" is what a range formatter does to a line.
+      const depthLabel = entry.depthMin != null && entry.depthMax != null
+        ? (entry.depthMin === entry.depthMax ? `${entry.depthMin}ft` : `${entry.depthMin}–${entry.depthMax}ft`)
+        : (entry.depthMin ? `${entry.depthMin}ft` : '—');
       const speedLabel = entry.speedMph ? `${entry.speedMph} mph` : `${speedMph} mph`;
       const estMin = entry.stats?.estTimeMin ?? entry.stats?.timeMin;
       const statsBadge = entry.stats?.distMi != null ? `${entry.stats.distMi}mi · est ${estMin}min` : '';

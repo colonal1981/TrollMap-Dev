@@ -196,16 +196,30 @@ export function planToTimeline(plan, o = {}) {
     cards.push(card);
     routeRods[key] = rods;
     routeSpeeds[key] = leg.speedMph;
+    // phaseRoutes is the legacy shape: the route builder's depth inputs and the notification
+    // band labels read it, and both want a RANGE. The species band stays here for them. What the
+    // user reads -- the leg card and every export -- gets the contour, below.
     phaseRoutes.push({
       phase: trollN, phaseName: card.label,
       depthMin: band ? band[0] : leg.depthFt, depthMax: band ? band[1] : leg.depthFt,
+      depthFt: leg.depthFt ?? null,
       speed: leg.speedMph, estWindow: leg.estStartTime ? `${leg.estStartTime}+` : '',
     });
 
+    // THE LEG HEADER SHOWS THE CONTOUR THE LEG FOLLOWS, NOT THE SPECIES BAND.
+    //
+    // Ryan's document carried three target depths: 15–27 ft on the timeline (the band), 25–35 ft
+    // in the sonar table and the summary, 18–28 ft in the reasoning box (two hardcoded literals
+    // the HTML fell back to). Two of the three were wrong and none was the depth the boat is
+    // actually on. The leg follows one charted line -- 22.4 ft -- and that is the number that
+    // belongs on the leg. The band is what the fish are using; it rides along under its own name
+    // so nothing has to guess which is which.
     legEntries.push({
       ...card, type: 'troll', rods,
-      depthMin: band ? band[0] : leg.depthFt,
-      depthMax: band ? band[1] : leg.depthFt,
+      depthMin: leg.depthFt ?? (band ? band[0] : null),
+      depthMax: leg.depthFt ?? (band ? band[1] : null),
+      depthFt: leg.depthFt ?? null,
+      speciesBandFt: band,
       port: rods[0] ? rods[0].lure : '', starboard: rods[1] ? rods[1].lure : '',
       portColor: rods[0] ? rods[0].color : '', starboardColor: rods[1] ? rods[1].color : '',
       portLeadFt: rods[0] ? rods[0].lead : '', starboardLeadFt: rods[1] ? rods[1].lead : '',
