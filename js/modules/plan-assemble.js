@@ -49,6 +49,13 @@ const HOME_TOLERANCE_M = 500;
 // seconds, a fluoro leader is a knot with cold wet hands in a moving kayak.
 const FLUORO_RETIE_WARN = 3;
 
+// Sane bounds on a speed the model asked for, taken from the amps curve's own two anchors: 2.0
+// mph is the trolling anchor, 5.0 mph is 100% throttle. Outside 0.5-5.0 is not a speed this boat
+// has. Nothing upstream bounds it -- plan-prompt.js:369 only checks that it is a number -- so the
+// range is enforced here.
+const TROLL_MPH_MIN = 0.5;
+const TROLL_MPH_MAX = 5.0;
+
 /**
  * @param {object}   o
  * @param {object[]} o.candidates  from selectCandidates(), IN THE ORDER THE MODEL CHOSE
@@ -58,6 +65,7 @@ const FLUORO_RETIE_WARN = 3;
  * @param {object[]} [o.stops]     [{runId, structureId, rods, durationMin, why, presentation,
  *                                 positioning}] — structureId names a pass the app supplied
  * @param {object[]} [o.changes]   [{beforeRunId, rodId, from, to, why}]
+ * @param {number}   [o.trollMph]  DEFAULT ONLY, for a leg the model gave no `speedMph` for
  * @param {function} [o.transit]   (fromLonLat, toLonLat) => {distanceM, coordinates} or null.
  *                                 MUST be supplied, backed by POST /water/<slug>/route. When it
  *                                 is missing, or answers null for a pair, the leg is a straight
@@ -153,11 +161,25 @@ export function assemblePlan(o) {
       runM += len; transitM += len; ah += a; clock += mins;
     }
 
-    // The trolling leg.
+    // The trolling leg, AT THE SPEED THE MODEL SET FOR IT. `trollMph` was a scaffold from before
+    // the prompt asked for a speed at all, and it outlived its reason: plan-prompt.js validates
+    // `speedMph` on every leg and rides it in on the candidate, and this file used to overwrite it
+    // with one day-wide number -- so a day running one leg at 1.8 and the next at 2.2 reported
+    // both at 2.0 and budgeted both at 2.0. It is a DEFAULT now, used only for a leg the model
+    // gave no speed for, and the minutes and the amp-hours come from the leg's own speed. A speed
+    // outside the bounds is refused the way everything else here is refused: ignored, said out
+    // loud, fallen back from.
+    let legMph = trollMph;
+    if (c.speedMph != null) {
+      const want = Number(c.speedMph);
+      if (want >= TROLL_MPH_MIN && want <= TROLL_MPH_MAX) legMph = want;
+      else warnings.push(`${c.runId} asked for ${c.speedMph} mph -- outside `
+                       + `${TROLL_MPH_MIN}-${TROLL_MPH_MAX} mph, trolled at ${trollMph} instead`);
+    }
     const legStartM = runM;
     const legLen = Math.round(c.lengthM);
-    const mins = minutesFor(c.lengthM, trollMph);
-    const a = ampHours(c.lengthM, trollMph);
+    const mins = minutesFor(c.lengthM, legMph);
+    const a = ampHours(c.lengthM, legMph);
     // BOTH NAMES RESOLVE TO THE SAME PASS. `id` is the app's handle (`wateree_lake#412:p3`);
     // `structureId` is the lake's own name for the thing (`hump_7`) and is null for every type
     // the packs cannot name. The model is shown both and asked for `id`, so a stop that arrives
@@ -216,7 +238,7 @@ export function assemblePlan(o) {
       id: `L${++li}`, type: 'troll',
       runId: c.runId, runIndex: c.runIndex,
       startM: legStartM, lengthM: legLen,
-      depthFt: c.depthFt, speedMph: trollMph,
+      depthFt: c.depthFt, speedMph: legMph,
       deploy,
       batteryAh: round2(a),
       estDurationMin: Math.round(mins + stopMin), estStartTime: formatClock(clock),

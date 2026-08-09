@@ -135,6 +135,46 @@ describe('plan-assemble — the distance spine', () => {
   });
 });
 
+describe('plan-assemble — the speed is the model\'s, per leg', () => {
+  // PLAN_SCHEMA_V2.md's MODEL DECIDES table grants `legs[].speedMph` to the model. The assembler
+  // used to parse it, carry it across a module boundary and then overwrite every leg with one
+  // day-wide `trollMph` -- which is why a plan reported 1.8 while both legs ran 2. These two legs
+  // are the SAME LENGTH, so the only thing that can make their numbers differ is their speed.
+  const SLOW = leg('w#1', -80.7200, -80.6800, 34.3800);
+  const FAST = leg('w#2', -80.6700, -80.6300, 34.3800);
+
+  it('costs each leg at its own speed, not one number for the day', () => {
+    const plan = basePlan({ candidates: [{ ...SLOW, speedMph: 1.6 }, { ...FAST, speedMph: 2.4 }] });
+    const [a, b] = plan.legs.filter((l) => l.type === 'troll');
+    expect(a.lengthM).toBe(b.lengthM);
+    expect(a.speedMph).toBe(1.6);
+    expect(b.speedMph).toBe(2.4);
+    // Same water, two speeds: the slow leg takes longer and the fast one costs more amp-hours.
+    expect(a.estDurationMin > b.estDurationMin).toBe(true);
+    expect(a.batteryAh < b.batteryAh).toBe(true);
+    expect(validatePlan(plan).length).toBe(0);
+  });
+
+  it('falls back to trollMph for a leg the model gave no speed for, and changes nothing else', () => {
+    const mixed = basePlan({ candidates: [{ ...SLOW, speedMph: 2.4 }, FAST] });
+    const [a, b] = mixed.legs.filter((l) => l.type === 'troll');
+    expect(a.speedMph).toBe(2.4);
+    expect(b.speedMph).toBe(2.0);            // the default, untouched
+
+    // A silent model must produce exactly what it produced before this changed.
+    const silent = basePlan({ candidates: [SLOW, FAST] });
+    const told = basePlan({ candidates: [{ ...SLOW, speedMph: 2.0 }, { ...FAST, speedMph: 2.0 }] });
+    expect(JSON.stringify(silent.legs)).toBe(JSON.stringify(told.legs));
+  });
+
+  it('refuses a speed this boat does not have and says so', () => {
+    const plan = basePlan({ candidates: [{ ...SLOW, speedMph: 40 }, { ...FAST, speedMph: 0 }] });
+    expect(plan.legs.filter((l) => l.type === 'troll').every((l) => l.speedMph === 2.0)).toBe(true);
+    expect(plan.warnings.some((w) => w.includes('40 mph'))).toBe(true);
+    expect(plan.warnings.some((w) => w.includes('0 mph'))).toBe(true);
+  });
+});
+
 describe('plan-assemble — what the model may not do', () => {
   it('refuses a stop on a structure it was not handed', () => {
     const plan = basePlan({
