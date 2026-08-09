@@ -39,6 +39,20 @@
  */
 
 import { state } from '../core/state.js';
+import { LEG_COLORS, TRANSIT_COLOR, RETURN_COLOR } from './plan-to-timeline.js';
+
+/**
+ * The colour a leg draws in, on the map and on its card. One palette, one function, so a line on
+ * the water and a card on the screen cannot drift apart.
+ *
+ * @param {object} leg
+ * @param {number} trollOrdinal 0-based count of TROLL legs before this one; ignored for transits
+ */
+export function legColor(leg, trollOrdinal = 0) {
+  if (!leg) return TRANSIT_COLOR;
+  if (leg.type === 'transit') return leg.role === 'return' ? RETURN_COLOR : TRANSIT_COLOR;
+  return LEG_COLORS[trollOrdinal % LEG_COLORS.length];
+}
 
 /**
  * Plan coordinates are [lon, lat] (GeoJSON order, the order every geometry in the packs uses).
@@ -76,14 +90,21 @@ export function stopName(stop) {
  * screen as one, not silently absent from the export.
  */
 export function planTracks(plan, runId = null) {
+  let trollN = 0;
   return ((plan && plan.legs) || []).map((leg, i) => {
     const t = {
       name: trackName(leg),
       pts: toLatLon(leg.coordinates),
       scoutRoute: true, smartPlan: true, planRunId: runId,
       planStep: leg.type, legRole: leg.role || null, legId: leg.id, legIndex: i,
+      // THE COLOUR TRAVELS WITH THE TRACK. renderMap() used to derive one by matching the track
+      // NAME against v1's phase names, which no v2 track has, so every leg of every v2 plan drew
+      // in the same fallback magenta -- troll, deadhead and the run home indistinguishable.
+      color: legColor(leg, leg.type === 'troll' ? trollN : 0),
+      dashed: leg.type === 'transit',
       startM: leg.startM, lengthM: leg.lengthM,
     };
+    if (leg.type === 'troll') trollN += 1;
     if (leg.depthFt != null) t.depthFt = leg.depthFt;
     return t;
   });

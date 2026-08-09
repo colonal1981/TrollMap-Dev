@@ -64,10 +64,21 @@
 
 import { planCues } from './plan-assemble.js';
 
+// THE MAP AND THE CARD SHARE ONE PALETTE, and this is where it lives.
+//
+// Ryan, 2026-08-09: "the 2 routes and the transits need to be in different colors... i can't
+// tell what is what." On the map they were all the same magenta, because map-init.js coloured a
+// track by matching its NAME against v1's phase names ("Phase 1 Dawn") and every v2 track is
+// called `L1 · 22.4 ft` or `T2 · transit`, so all of them fell through to the default. On the
+// card stack they already had these colours. Exporting them is what lets a line on the water and
+// a card on the screen be the same colour, which is the whole of what he asked for.
 /** Distinct enough to tell apart at a glance, and it repeats rather than running out. */
-const LEG_COLORS = ['#00e5ff', '#00bcd4', '#ffb300', '#ff9800', '#7e57c2', '#26a69a',
-                    '#ec407a', '#66bb6a', '#5c6bc0', '#ffa726'];
-const TRANSIT_COLOR = '#78909c';
+export const LEG_COLORS = ['#00e5ff', '#00bcd4', '#ffb300', '#ff9800', '#7e57c2', '#26a69a',
+                           '#ec407a', '#66bb6a', '#5c6bc0', '#ffa726'];
+/** A deadhead: grey, because nothing is in the water and it should recede. */
+export const TRANSIT_COLOR = '#78909c';
+/** The run home: its own colour, and not one the leg cycle reaches in a normal day. */
+export const RETURN_COLOR = '#00e676';
 const CHANGE_COLOR = '#ffd54f';
 
 const M_PER_MILE = 1609.34;
@@ -176,7 +187,7 @@ export function planToTimeline(plan, o = {}) {
         shortLabel: home ? `Home ${mi.toFixed(1)}mi` : `Run ${mi.toFixed(1)}mi`,
         role: leg.role || null,
         unrouted: !!leg.unrouted,
-        icon: home ? '🏁' : '➡️', color: TRANSIT_COLOR,
+        icon: home ? '🏁' : '➡️', color: home ? RETURN_COLOR : TRANSIT_COLOR,
         desc: `From ${mark} in · ${home ? 'back to the launch' : 'deadhead'} at ${leg.speedMph} mph`
             + ` · ${leg.batteryAh} Ah · est ${leg.estDurationMin} min`,
         longDesc: leg.unrouted

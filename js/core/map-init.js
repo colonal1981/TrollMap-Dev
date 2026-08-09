@@ -262,6 +262,18 @@ export function renderMap() {
     2: '#ffb300',  // Phase 2 Transition — amber
     3: '#ff4081',  // Phase 3 Deep — pink/magenta
   };
+  // COLOUR IS A PROPERTY OF THE LEG, NOT OF ITS NAME.
+  //
+  // Ryan, 2026-08-09, looking at a v2 plan on the map: "the 2 routes and the transits need to be
+  // in different colors... i can't tell what is what." He could not, and the reason is below:
+  // this function decides by matching the track NAME against v1's phase names, and every v2
+  // track is called `L1 · 22.4 ft`, `T2 · transit` or `T3 · home`. None of them match, so all of
+  // them fell through to the default magenta -- trolling legs, deadheads and the run home drawn
+  // identically on top of each other.
+  //
+  // plan-tracks.js now puts `color` and `dashed` on every track it writes, off the same palette
+  // the timeline cards use, so a line on the water is the colour of its card. This stays for
+  // tracks that carry no colour: v1's phase routes and anything the user loaded from a GPX.
   function getTrackColor(trackName) {
     if (!trackName) return '#ff00e6';
     const n = String(trackName);
@@ -274,10 +286,15 @@ export function renderMap() {
   for (const t of state.DATA.tracks) {
     if (t.pts.length > 1) {
       const isConnector = t.connector || /^Connector:|^Retrace Return:/i.test(t.name || '');
-      const color = getTrackColor(t.name);
+      const color = t.color || getTrackColor(t.name);
       if (isConnector) {
         // Connectors: thin dashed line, dimmed
         L.polyline(t.pts, { color, weight: 1.5, opacity: 0.4, dashArray: '6,8' }).addTo(state.LAYER);
+      } else if (t.dashed) {
+        // A transit is not fishing. Dashed says that at a glance from across the screen, before
+        // the colour has to be read -- and the run home carries its own colour on top of it.
+        L.polyline(t.pts, { color: '#000', weight: 5, opacity: 0.4 }).addTo(state.LAYER);
+        L.polyline(t.pts, { color, weight: 2.5, opacity: 0.95, dashArray: '10,7' }).addTo(state.LAYER);
       } else {
         // Fishing tracks: full weight with black halo
         L.polyline(t.pts, { color: '#000', weight: 6, opacity: 0.55 }).addTo(state.LAYER);

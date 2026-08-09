@@ -1,8 +1,10 @@
 import { describe, it, expect } from './expect-shim.mjs';
+import { readFileSync } from 'node:fs';
 import { assemblePlan, planRoute } from '../js/modules/plan-assemble.js';
 import { state } from '../js/core/state.js';
-import { materialisePlan, planTracks, planWaypoints, trackName } from '../js/modules/plan-tracks.js';
+import { materialisePlan, planTracks, planWaypoints, trackName, legColor } from '../js/modules/plan-tracks.js';
 import { metresBetween } from '../js/modules/plan-candidates.js';
+import { planToTimeline } from '../js/modules/plan-to-timeline.js';
 
 // ---------------------------------------------------------------------------
 // Why this test exists
@@ -233,5 +235,74 @@ describe('plan-tracks — the way back is on the unit', () => {
     const out = materialisePlan(p, { launch: LAUNCH, win: {} });
     expect(out.tracks).toBe(p.legs.length);
     expect(state.DATA.tracks.some((t) => t.legRole === 'return')).toBe(true);
+  });
+});
+
+
+// -----------------------------------------------------------------------------------------------
+// "i can't tell what is what", 2026-08-09.
+//
+// Every leg of every v2 plan drew in the same magenta, because renderMap() decided a track's
+// colour by matching its NAME against v1's phase names ("Phase 1 Dawn") and no v2 track is called
+// that. Two trolling legs, the deadheads between them and the run home were one indistinguishable
+// tangle. The colour is a property of the leg now, off the same palette the timeline cards use.
+// -----------------------------------------------------------------------------------------------
+describe('plan-tracks — troll, transit and the way home are told apart', () => {
+  const routed = (a, b) => ({ distanceM: metresBetween(a, b), coordinates: [a, b] });
+  const built = () => assemblePlan({
+    transit: routed, candidates: [A, B], launch: LAUNCH, loadout: LOADOUT,
+    launchTime: '06:00', returnTime: '15:00', usableAh: 80,
+    deploy: { 'w#1': { port: 'R1', starboard: 'R5' }, 'w#2': { port: 'R1', starboard: 'R5' } },
+  });
+
+  it('every track carries its own colour, and no two kinds share one', () => {
+    const tracks = planTracks(built(), 'run1');
+    const troll = tracks.filter((t) => t.planStep === 'troll');
+    const transit = tracks.filter((t) => t.planStep === 'transit' && t.legRole !== 'return');
+    const home = tracks.filter((t) => t.legRole === 'return');
+    expect(troll.length).toBeGreaterThan(1);
+    expect(transit.length).toBeGreaterThan(0);
+    expect(home).toHaveLength(1);
+
+    for (const t of tracks) expect(/^#[0-9a-f]{6}$/i.test(t.color)).toBe(true);
+    // the two trolling legs are not the same colour as each other
+    expect(troll[0].color).not.toBe(troll[1].color);
+    // and none of the three kinds shares a colour with another kind
+    const trollColors = new Set(troll.map((t) => t.color));
+    expect(trollColors.has(transit[0].color)).toBe(false);
+    expect(trollColors.has(home[0].color)).toBe(false);
+    expect(home[0].color).not.toBe(transit[0].color);
+  });
+
+  it('a transit is dashed and a trolling leg is not', () => {
+    for (const t of planTracks(built())) {
+      expect(t.dashed).toBe(t.planStep === 'transit');
+    }
+  });
+
+  it('the line on the water is the colour of its card', () => {
+    // planToTimeline() builds the cards from the same palette. A card the user matches to a line
+    // by colour is the entire point, so the two are asserted equal rather than asserted separately.
+    const plan = built();
+    const cards = planToTimeline(plan).cards;
+    for (const t of planTracks(plan)) {
+      const card = cards.find((c) => c.key === t.legId);
+      expect(card.color, `${t.legId} card colour`).toBe(t.color);
+    }
+  });
+
+  it('legColor is total — an unknown leg still gets a colour rather than undefined', () => {
+    expect(/^#/.test(legColor(null))).toBe(true);
+    expect(/^#/.test(legColor({ type: 'troll' }, 999))).toBe(true);
+  });
+
+  it('the map draws the track\'s own colour, not one derived from its name', () => {
+    // renderMap() needs Leaflet and a live map, so this is a source assertion. What it protects
+    // is the line that made every v2 leg magenta: `const color = getTrackColor(t.name)`.
+    const map = readFileSync(new URL('../js/core/map-init.js', import.meta.url), 'utf8');
+    expect(map).toContain('t.color || getTrackColor(t.name)');
+    expect(map).toContain('t.dashed');
+    // the name-matching fallback stays for v1 routes and user-loaded GPX, but it is the fallback
+    expect(map).not.toContain('const color = getTrackColor(t.name);');
   });
 });
