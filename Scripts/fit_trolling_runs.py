@@ -303,6 +303,25 @@ def _resample(xy, step):
     return np.column_stack([np.interp(s, cum, xy[:, 0]), np.interp(s, cum, xy[:, 1])]), total
 
 
+def _seg_max(depth, a, b, sample_m=5.0):
+    """
+    DEEPEST water anywhere along each segment -- the ceiling's half of the band test.
+
+    Uncharted sorts LOW here, the opposite of _seg_min, and for the same reason: on this side of
+    the comparison a big number is the failure, so unsurveyed must not manufacture one. Land is
+    caught by the floor test; it is not this function's job.
+    """
+    seg = b - a
+    L = np.hypot(seg[:, 0], seg[:, 1])
+    if not len(L):
+        return np.array([])
+    n = max(1, int(math.ceil(float(L.max()) / sample_m)))
+    t = np.linspace(0.0, 1.0, n + 1)
+    pts = a[:, None, :] + seg[:, None, :] * t[None, :, None]
+    d = depth.at_raw(pts.reshape(-1, 2)).reshape(len(a), n + 1)
+    return np.where(np.isnan(d), -1.0, d).max(axis=1)
+
+
 def _no_licence(v):
     """
     Uncharted water must never GRANT permission, only ever withhold it.
@@ -347,7 +366,7 @@ def _seg_min(depth, a, b, sample_m=5.0, raw=False):
     return np.where(np.isnan(d), -1.0, d).min(axis=1)
 
 
-def smooth(xy0, depth, floor_dm, target_dm, iters, deep_bias_m):
+def smooth(xy0, depth, floor_dm, ceil_dm, target_dm, iters, deep_bias_m):
     """Constrained Laplacian. See the module docstring for why each constraint is the shape it
     is; every one of them replaced a version that measured better and fished worse."""
     xy = xy0.copy()
@@ -383,12 +402,18 @@ def smooth(xy0, depth, floor_dm, target_dm, iters, deep_bias_m):
         # loop is made of. A point is judged by the segments it owns, which is what actually
         # matters: the boat travels along them, it does not teleport between vertices.
         cur_seg = _no_licence(_seg_min(depth, xy[:-1], xy[1:], sample_m=SMOOTH_SAMPLE_M))
+        cur_max = _seg_max(depth, xy[:-1], xy[1:], sample_m=SMOOTH_SAMPLE_M)
         alpha = np.ones(len(xy))
 
         def bad_at(al):
             cand = xy + step * al[:, None]
             sm = _seg_min(depth, cand[:-1], cand[1:], sample_m=SMOOTH_SAMPLE_M)
-            seg = (sm < floor_dm) & (sm < cur_seg)
+            sx = _seg_max(depth, cand[:-1], cand[1:], sample_m=SMOOTH_SAMPLE_M)
+            # Monotone on BOTH sides: a move may not go shallower than the floor unless it was
+            # already, and may not go deeper than the ceiling unless it was already. Corner
+            # cutting on a contour is inherently outward, toward the deep side, so without the
+            # second half the smoother walks the whole line off the ledge one iteration at a time.
+            seg = ((sm < floor_dm) & (sm < cur_seg)) | ((sx > ceil_dm) & (sx > cur_max))
             b = np.zeros(len(xy), bool)
             b[:-1] |= seg                       # a point owns the segments on either side
             b[1:] |= seg
@@ -426,7 +451,8 @@ def smooth(xy0, depth, floor_dm, target_dm, iters, deep_bias_m):
     return xy
 
 
-def chord_pass(xy, depth, floor_dm, max_turn_deg, max_chord_m=2500.0, bridge_dm=6.0):
+def chord_pass(xy, depth, floor_dm, ceil_dm, target_dm, max_turn_deg, max_chord_m=2500.0,
+               bridge_dm=6.0):
     """
     Long straight pulls joined by corners no sharper than `max_turn_deg`.
 
@@ -480,6 +506,7 @@ def chord_pass(xy, depth, floor_dm, max_turn_deg, max_chord_m=2500.0, bridge_dm=
         # near a drop-off, so a 400 m chord was licensed into 24 ft water on a 39 ft floor.
         # That clause has now leaked twice. It is gone rather than tightened.
         gots = _seg_min(depth, starts, ends, sample_m=10.0, raw=True)
+        deep = _seg_max(depth, starts, ends, sample_m=10.0)
         safe = _seg_min(depth, starts, ends, sample_m=10.0)
         wlens = np.hypot(*(ends - xy[i]).T)
         if heading is None:
@@ -497,15 +524,20 @@ def chord_pass(xy, depth, floor_dm, max_turn_deg, max_chord_m=2500.0, bridge_dm=
             # anywhere licensed the whole chord to run that shallow: on Wateree River it put 12
             # of 21 fitted runs more than 6 ft above their own target depth. A brief dip is not
             # permission for a sustained shallow mile. `was` still bounds the short fallback.
-            if got >= floor_dm - bridge_dm and safe[k] >= 0.0:
+            if got >= floor_dm - bridge_dm and float(deep[k]) <= ceil_dm + bridge_dm \
+                    and safe[k] >= 0.0:
                 if turn <= max_turn_deg:
-                    # Longest wins; a chord within 5% of it that runs DEEPER wins over it.
+                    # Longest wins, and the tiebreak now prefers the chord CLOSEST TO TARGET.
+                    # It used to prefer the deeper one, on the reasoning that deep is safe --
+                    # true of grounding, false of fishing. Between two equal chords, the one
+                    # nearer the depth being trolled is the better line, in both directions.
+                    off = abs(float(deep[k] + got) / 2.0 - target_dm)
                     if in_cap is None or wlen > in_cap[1] * 1.05:
-                        in_cap = (j, wlen, turn, got)
-                    elif wlen > in_cap[1] * 0.95 and got > in_cap[3]:
-                        in_cap = (j, wlen, turn, got)
+                        in_cap = (j, wlen, turn, off)
+                    elif wlen > in_cap[1] * 0.95 and off < in_cap[3]:
+                        in_cap = (j, wlen, turn, off)
                 elif out_cap is None or turn < out_cap[2]:
-                    out_cap = (j, wlen, turn, got)
+                    out_cap = (j, wlen, turn, 0.0)
 
         pick = in_cap or out_cap or (i + 1, 0.0, 0.0, 0.0)
         out.append(pick[0])
@@ -513,7 +545,7 @@ def chord_pass(xy, depth, floor_dm, max_turn_deg, max_chord_m=2500.0, bridge_dm=
     return xy[out]
 
 
-def seed_deep(xy, depth, target_dm, max_push_m=30.0, step_m=3.0):
+def seed_deep(xy, depth, target_dm, ceil_dm, max_push_m=30.0, step_m=3.0):
     """
     Step the line off the band boundary and onto the deep side of it, before anything else runs.
 
@@ -553,7 +585,10 @@ def seed_deep(xy, depth, target_dm, max_push_m=30.0, step_m=3.0):
             # Only ever accept a step that both improves the reading AND is still short of the
             # target -- once a point is in its own band it stops moving, so the line ends up just
             # outside the contour rather than out in the middle of the channel.
-            take = (cd > best_d) & (best_d < target_dm)
+            # Only step toward the target, and never past the ceiling. The old test was
+            # "deeper is better as long as we have not reached the target yet", which happily
+            # jumped a point from 12 ft to 40 ft in one move because 40 is also > 12.
+            take = (cd > best_d) & (best_d < target_dm) & (cd <= ceil_dm)
             best[take] = cand[take]
             best_d[take] = cd[take]
         off += step_m
@@ -573,8 +608,8 @@ def _turns_aligned(xy):
     return t
 
 
-def split_at_thin_water(xy, depth, floor_dm, min_leg_m, step_m=10.0, bridge_m=40.0,
-                        bridge_dm=6.0):
+def split_to_band(xy, depth, floor_dm, ceil_dm, min_leg_m, step_m=10.0, bridge_m=40.0,
+                  bridge_dm=6.0):
     """
     Cut the run into the stretches that are ACTUALLY at the depth they claim, and drop the rest.
 
@@ -595,7 +630,12 @@ def split_at_thin_water(xy, depth, floor_dm, min_leg_m, step_m=10.0, bridge_m=40
     # `at_raw`, deliberately. Which stretches are in band is a MEASUREMENT; the safety buffer
     # belongs in deciding where the boat may move, not in deciding what the chart says.
     d = depth.at_raw(even)
-    ok = ~(np.isnan(d) | (d < floor_dm))
+    # A BAND, NOT A FLOOR. Every test in this file used to guard only against going shallow, so
+    # nothing stopped the line drifting off the ledge into the channel: Wateree's 18 ft leg came
+    # back with a median of 29.9 ft under it and a maximum of 41. Ryan: "it pulled me too
+    # deep... the 16 and 18ft run spends more the day nowhere near 16 or 18ft water". A contour
+    # you are trolling is a depth to STAY ON, and that has two sides.
+    ok = ~(np.isnan(d) | (d < floor_dm) | (d > ceil_dm))
     # CLOSE THE PINHOLES BEFORE CUTTING ON THEM.
     #
     # 92% of run #27's contour reads at or below its floor on the raw chart -- but the other 8%
@@ -618,7 +658,8 @@ def split_at_thin_water(xy, depth, floor_dm, min_leg_m, step_m=10.0, bridge_m=40
         while j < n and not ok[j]:
             j += 1
         if (j - i) <= gap and i > 0 and j < n \
-                and float(dfill[i:j].min()) >= floor_dm - bridge_dm:
+                and float(dfill[i:j].min()) >= floor_dm - bridge_dm \
+                and float(dfill[i:j].max()) <= ceil_dm + bridge_dm:
             ok[i:j] = True
         i = j
     out, i = [], 0
@@ -878,7 +919,8 @@ def fit_pack(pack, a):
         st['corners_before'] += int(np.sum(_turns(_resample(xy0, 10.0)[0]) > 12))
 
         pieces = []
-        seeded = seed_deep(xy0, depth, float(pr['depth_dm']), a.seed_push_m)
+        ceil = float(pr['depth_dm']) + a.ceiling_dm
+        seeded = seed_deep(xy0, depth, float(pr['depth_dm']), ceil, a.seed_push_m)
         # ONE MEANINGFUL THRESHOLD, APPLIED ONCE, AT THE END.
         #
         # Gating the in-band stretch at `min_leg_m` AND the finished pass at `min_leg_m` rejected
@@ -887,8 +929,8 @@ def fit_pack(pack, a):
         # had already passed. after_bay_reservoir fitted nothing at all for this reason while
         # carrying 13 runs with in-band water in them. The stretch gate is now only "long enough
         # to be worth smoothing"; whether it is a trolling pass is decided on the finished line.
-        for stretch in split_at_thin_water(seeded, depth, floor, a.min_stretch_m,
-                                           bridge_m=a.bridge_m, bridge_dm=a.bridge_dm):
+        for stretch in split_to_band(seeded, depth, floor, ceil, a.min_stretch_m,
+                                     bridge_m=a.bridge_m, bridge_dm=a.bridge_dm):
             # BOUND THE POINT COUNT, NOT JUST THE SPACING.
             #
             # At a fixed 25 m, a 12 km stretch is 480 points and the smoother is O(points x
@@ -917,8 +959,9 @@ def fit_pack(pack, a):
                     bool((_seg_min(depth, even[:-1], even[1:], SMOOTH_SAMPLE_M) < floor).any()):
                 step = max(a.resample_m, step / 2.0)
                 even, _ = _resample(stretch, step)
-            sm = smooth(even, depth, floor, float(pr['depth_dm']), a.iters, a.deep_bias_m)
-            ch = chord_pass(sm, depth, floor, a.max_turn_deg, bridge_dm=a.bridge_dm)
+            sm = smooth(even, depth, floor, ceil, float(pr['depth_dm']), a.iters, a.deep_bias_m)
+            ch = chord_pass(sm, depth, floor, ceil, float(pr['depth_dm']), a.max_turn_deg,
+                            bridge_dm=a.bridge_dm)
             for piece in split_at_hard_corners(ch, a.max_turn_deg, a.min_leg_m):
                 # ASSERT THE INVARIANT ON THE OUTPUT, not only along the way.
                 #
@@ -930,8 +973,8 @@ def fit_pack(pack, a):
                 # So the finished pass is re-tested against the chart from scratch, and any part
                 # of it that is not in band is cut off. Cheap, and it makes the guarantee a
                 # property of the OUTPUT rather than a claim about the process.
-                pieces.extend(split_at_thin_water(piece, depth, floor, a.min_leg_m,
-                                                  bridge_m=a.bridge_m, bridge_dm=a.bridge_dm))
+                pieces.extend(split_to_band(piece, depth, floor, ceil, a.min_leg_m,
+                                            bridge_m=a.bridge_m, bridge_dm=a.bridge_dm))
         if not pieces:
             st['kept_thin'] += 1
             pr['fit_note'] = ('no fitted pass of %.0f m survived: this contour is not %.1f ft '
@@ -1096,7 +1139,12 @@ def main():
     ap.add_argument('--seed-push-m', type=float, default=20.0,
                     help='how far the line may be stepped onto the deep side of its own contour '
                          'before fitting starts')
-    ap.add_argument('--tol-dm', type=float, default=3.0)
+    ap.add_argument('--tol-dm', type=float, default=3.0,
+                    help='how far BELOW its own depth a pass may run (decimetres)')
+    ap.add_argument('--ceiling-dm', type=float, default=24.0,
+                    help='how far ABOVE its own depth a pass may run; 24 dm is about 8 ft, so '
+                         'an 18 ft line stays roughly 17-26 ft. Without this the line drifts '
+                         'off the ledge into the channel, which is not what is being trolled')
     ap.add_argument('--iters', type=int, default=250)
     ap.add_argument('--jobs', type=int, default=1,
                     help='packs in parallel. Each one is independent -- its own raster, its own '
