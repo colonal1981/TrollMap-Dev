@@ -19,14 +19,34 @@
  * time the OBSERVATION was made, because those are different questions and conflating them is
  * how a five-week-old reading gets presented as current.
  *
- * WHAT IS NOT HERE YET
+ * THE REGISTRY HALF — WATER LEVEL, FLOW AND TIDE
  *
- * Water level, flow, tide and currents need `registry/water_bindings.json` — which gauge, which
- * CO-OPS station, which NWM reach serves which water. Today the registry carries 9 bindings
- * across 1,722 waters, so those slots are declared and empty rather than faked. See
- * GAUGE_AND_UTILITY_PLAN_2026-08-06.md and build_water_bindings.py.
+ * Everything above keys on a lat/lon alone. Level, flow and tide cannot: they need to know WHICH
+ * gauge and WHICH CO-OPS station serve this particular water, and no coordinate answers that.
+ * That answer lives in `registry/water_bindings.json`, built offline by build_water_bindings.py
+ * on the rule this codebase applies to ramps — name relation AND geometry, never either alone.
  *
- * Everything below keys on a lat/lon alone, which every water already has.
+ * It is read here from R2 at `_registry/water_bindings.json`, once per Worker isolate per hour,
+ * because it is one object serving every request. 244 of the registry's 1,746 waters carry a
+ * row: 102 lakes, 121 rivers, 21 of the 22 coastal zones. Every one of those 244 has at least a
+ * pool, a tailwater or a gauge, so a bound water always produces a real reading. A water with no
+ * row returns `pending` naming itself — that is a gap in the registry, not a gap in the code,
+ * and it is fixed by rerunning the builder, not by editing this file.
+ *
+ * VERIFIED 2026-08-09 against live upstreams:
+ *
+ *   NWPS      /nwps/v1/gauges/IRMS1 → status.observed {primary 356.93, primaryUnit "ft",
+ *             secondary -999, floodCategory "no_flooding", validTime}; flood.categories
+ *             action 359 / minor 360 / moderate 363 / major 365; datums.vertical NAVD88 -1.31.
+ *             /nwps/v1/gauges/MEMT1 additionally carries usgsId 07032000 and reachId 7474830 —
+ *             so the NWM COMID comes back FROM the gauge call and needs no second lookup.
+ *   CO-OPS    predictions/hilo at 8665737 → {"predictions":[{"t","v","type"}]};
+ *             currents_predictions/MAX_SLACK at ACT7846 → current_predictions.cp
+ *             [{Type "slack|flood|ebb", Time, meanFloodDir, meanEbbDir}].
+ *
+ * -999 AND -9999 ARE NOT MEASUREMENTS. NWPS uses them for "no data" and CO-OPS thresholds use
+ * -9999 for "no flow stage defined". Both are dropped to null here. A river showing 0 cfs when
+ * the gauge simply is not reporting flow is the exact failure this endpoint exists to avoid.
  *
  * VERIFIED 2026-08-06 against Wateree's centroid (34.437616, -80.818179)
  *
@@ -39,14 +59,21 @@
  * NOTE THAT USNO IS THE US NAVY, NOT NOAA. NOAA has no sun/moon API — its solar calculator is
  * client-side JavaScript. This is the authoritative source and it is a different agency.
  */
-import { CORS, JSON_HEADERS } from './worker-core.js';
+import { CORS, JSON_HEADERS, r2Text } from './worker-core.js';
 
 const UA = 'TrollMap/1.0 (personal fishing app)';
 
 // Per-source TTL, not one global number. A convective outlook and a moonrise do not go stale at
 // the same rate, and caching them together means either re-fetching the almanac every five
 // minutes or serving a four-hour-old storm risk.
-const TTL = { usno: 6 * 3600, point: 1800, spc: 900, wwa: 300, nwm: 900 };  // WWA 5 min, NWM hourly
+//
+// `gauge` is 900 because NWPS republishes on a 15-minute cadence; asking more often returns the
+// same row. `tide` is six hours because a high-water time is astronomy — it was correct last
+// week and will be correct next week. `level` is a MEASURED water level, which is weather.
+const TTL = {
+  usno: 6 * 3600, point: 1800, spc: 900, wwa: 300, nwm: 900,
+  bindings: 3600, gauge: 900, tide: 6 * 3600, level: 600,
+};
 
 const _cache = new Map();
 
@@ -327,6 +354,270 @@ async function rivers(lat, lon, boxDeg) {
   };
 }
 
+// ── the bindings: which gauge, which station, actually serves this water ────────────────────
+
+const BINDINGS_KEY = '_registry/water_bindings.json';
+
+// Deliberately NOT in `_cache`. That map evicts at 64 entries on a first-in rule, and this is
+// one large object that every request touches — it would be thrown away by a run of lake
+// lookups and re-fetched from R2 for no reason. One slot, one hour, its own variables.
+let _bindings = null;
+let _bindingsAt = 0;
+
+/**
+ * The registry, read from the bucket rather than bundled into the Worker.
+ *
+ * Bundling it would mean a Worker deploy every time the pipeline learns about a gauge, and this
+ * repo auto-deploys on push — so a registry change would become a code change. It is an R2
+ * object for the same reason lake_index.json is: the pipeline owns it, and publishing it is
+ * `upload_garmin_to_r2.py`, not `git push`.
+ *
+ * The object is stored gzipped, so it goes through r2Text rather than obj.text().
+ */
+async function waterBindings(env, fresh) {
+  const now = Date.now();
+  if (!fresh && _bindings && now - _bindingsAt < TTL.bindings * 1000) return _bindings;
+  const bucket = env && env.R2_TROLLMAP_CHARTPACKS;
+  if (!bucket) throw new Error('R2_TROLLMAP_CHARTPACKS is not bound to this Worker');
+  const obj = await bucket.get(BINDINGS_KEY);
+  if (!obj) throw new Error(`${BINDINGS_KEY} is not in the bucket — run upload_garmin_to_r2.py`);
+  const parsed = JSON.parse(await r2Text(obj));
+  const b = parsed && (parsed.bindings || parsed);
+  if (!b || typeof b !== 'object' || Array.isArray(b)) {
+    throw new Error(`${BINDINGS_KEY} has no \`bindings\` object`);
+  }
+  _bindings = b;
+  _bindingsAt = now;
+  return b;
+}
+
+// -999 is NWPS for "no reading"; -9999 is its flood table for "no flow stage defined". Neither
+// is a number anyone should see. NaN lands here too, which is what Number(undefined) gives when
+// an optional CO-OPS field is absent.
+const NO_DATA = new Set([-999, -9999, -99999]);
+const num = (v) => {
+  const n = typeof v === 'string' ? Number(v) : v;
+  return typeof n === 'number' && Number.isFinite(n) && !NO_DATA.has(n) ? n : null;
+};
+
+function kmBetween(aLat, aLon, bLat, bLon) {
+  const R = 6371, r = Math.PI / 180;
+  const dLat = (bLat - aLat) * r, dLon = (bLon - aLon) * r;
+  const s = Math.sin(dLat / 2) ** 2
+          + Math.cos(aLat * r) * Math.cos(bLat * r) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+
+const round1 = (n) => Math.round(n * 10) / 10;
+
+/**
+ * Nearest to the point the CLIENT asked about — its selected ramp or centroid — not nearest to
+ * the water's own centroid.
+ *
+ * This is the answer to the open question in GAUGE_AND_UTILITY_PLAN_2026-08-06.md §"What counts
+ * as a binding for a river". A lake has one gauge; a 90 km river reach may have four and the
+ * useful one depends on where you launch. Picking by the requested point makes that decision
+ * per request instead of per registry row, and the ones not picked are still listed in
+ * `other_gauges` so nothing is hidden.
+ */
+function nearest(list, lat, lon) {
+  let best = null, bestKm = Infinity;
+  for (const x of list || []) {
+    if (!x || !Number.isFinite(x.lat) || !Number.isFinite(x.lon)) continue;
+    const d = kmBetween(lat, lon, x.lat, x.lon);
+    if (d < bestKm) { best = x; bestKm = d; }
+  }
+  return best ? { ...best, km: round1(bestKm) } : null;
+}
+
+/**
+ * One NWPS gauge, read whole.
+ *
+ * `/gauges/{lid}` is used rather than `/gauges/{lid}/stageflow` on purpose: stageflow returns
+ * roughly 470 rows of 15-minute history to answer "what is it now", while this returns the
+ * current value, the forecast, the flood thresholds, the datum, the USGS site and the NWM reach
+ * id in one object. The reach id matters — the gauge plan recorded that a COMID could only be
+ * reached via a gauge lookup, and this IS that lookup, so the NWM binding comes back free.
+ */
+async function nwpsGauge(lid, role, bound, lat, lon) {
+  const j = await cached(`nwps:${lid}`, TTL.gauge,
+    () => getJson(`https://api.water.noaa.gov/nwps/v1/gauges/${encodeURIComponent(lid)}`));
+  const st = (j.status && j.status.observed) || {};
+  const fc = (j.status && j.status.forecast) || {};
+  const cats = (j.flood && j.flood.categories) || {};
+
+  const thresholds = {};
+  for (const k of ['action', 'minor', 'moderate', 'major']) {
+    const s = num(cats[k] && cats[k].stage);
+    if (s !== null) thresholds[k] = s;
+  }
+  const vert = (((j.datums || {}).vertical || {}).value || [])[0] || null;
+  const fcStage = num(fc.primary);
+
+  return {
+    lid,
+    role,                                     // pool | tailwater | gauge
+    name: j.name || (bound && bound.name) || null,
+    stage: num(st.primary),
+    stage_units: st.primaryUnit || (j.flood && j.flood.stageUnits) || null,
+    flow: num(st.secondary),
+    flow_units: st.secondaryUnit || (j.flood && j.flood.flowUnits) || null,
+    // The OBSERVATION time, not the fetch time. NWPS writes year 0001 for "never".
+    observed_at: st.validTime && !String(st.validTime).startsWith('0001') ? st.validTime : null,
+    flood_category: st.floodCategory || null,
+    flood_thresholds: Object.keys(thresholds).length ? thresholds : null,
+    forecast: fcStage === null ? null : {
+      stage: fcStage,
+      units: fc.primaryUnit || null,
+      valid: fc.validTime || null,
+      flood_category: fc.floodCategory || null,
+    },
+    datum: vert ? { abbrev: vert.abbrev || null, value: num(vert.value) } : null,
+    in_service: (j.inService || {}).enabled !== false,
+    out_of_service_message: ((j.inService || {}).message) || null,
+    usgs_site: j.usgsId || null,
+    reach_comid: j.reachId || null,
+    // Registry fields, passed through: TVA's own numbers for the dam this pool sits behind, and
+    // how the binding was made. `name+geom` is a stronger claim than `geom_only_inside` and the
+    // caller is entitled to know which one it got.
+    tva: (bound && bound.tva) || null,
+    binding_confidence: (bound && bound.confidence) || null,
+    km_from_point: bound && Number.isFinite(bound.lat) && Number.isFinite(bound.lon)
+      ? round1(kmBetween(lat, lon, bound.lat, bound.lon)) : null,
+  };
+}
+
+/**
+ * Level and flow for one water.
+ *
+ * Three reads at most — pool, tailwater, and the gauge nearest the requested point — in
+ * parallel, each failing on its own. A dam has two numbers that mean different things: the pool
+ * is what you launch onto and the tailwater is what the release is doing, and collapsing them
+ * into one "level" throws away the half that decides whether the fish are moving.
+ */
+async function waterBlock(b, lat, lon) {
+  const picks = [];
+  if (b.pool && b.pool.lid) picks.push(['pool', b.pool]);
+  if (b.tailwater && b.tailwater.lid) picks.push(['tailwater', b.tailwater]);
+  const near = nearest(b.gauges, lat, lon);
+  if (near && near.lid && !picks.some(([, g]) => g.lid === near.lid)) picks.push(['gauge', near]);
+
+  const settled = await Promise.allSettled(
+    picks.map(([role, g]) => nwpsGauge(g.lid, role, g, lat, lon)));
+
+  const out = {
+    slug: b.slug, display_name: b.display_name, state: b.state, feature_type: b.feature_type,
+    pool: null, tailwater: null, gauge: null, failed: [],
+  };
+  settled.forEach((r, i) => {
+    if (r.status === 'fulfilled') out[picks[i][0]] = r.value;
+    else out.failed.push({ lid: picks[i][1].lid, role: picks[i][0],
+                           error: String((r.reason && r.reason.message) || r.reason) });
+  });
+
+  const used = new Set(picks.map(([, g]) => g.lid));
+  out.other_gauges = (b.gauges || [])
+    .filter((g) => g && g.lid && !used.has(g.lid) && Number.isFinite(g.lat))
+    .map((g) => ({ lid: g.lid, name: g.name, lat: g.lat, lon: g.lon,
+                   km_from_point: round1(kmBetween(lat, lon, g.lat, g.lon)) }))
+    .sort((x, y) => x.km_from_point - y.km_from_point);
+
+  // Declared, not fetched. The NWM reach and the CWMS locations already have callers elsewhere
+  // (worker-data.js fetchCwmsLakeLevel, and /rivers above); repeating those fetches here would
+  // be two code paths that can disagree about the same number.
+  out.reach = b.reach || null;
+  out.usace = b.usace || null;
+  out.curated = b.curated || null;
+  // Whether `tide: null` on this response is a FACT or a GAP. An inland lake has no tide and
+  // that is the right answer; a coastal zone with no station bound is a hole in the registry.
+  out.tidal = !!(b.tides || []).length;
+  out.source = 'NWPS — api.water.noaa.gov/nwps/v1/gauges/{lid}';
+  return out;
+}
+
+// ── tide and currents ───────────────────────────────────────────────────────────────────────
+
+const COOPS = 'https://api.tidesandcurrents.noaa.gov/api/prod/datagetter';
+
+function dayAfter(d) {
+  const t = new Date(`${d}T12:00:00Z`);
+  t.setUTCDate(t.getUTCDate() + 1);
+  return t.toISOString().slice(0, 10);
+}
+
+/**
+ * Highs, lows, and — where a station exists — slack and max current.
+ *
+ * The window is the trip date PLUS the following day, deliberately. A trip that ends at dusk
+ * still runs on the evening cycle, and the last low of a day frequently falls after midnight;
+ * asking for one calendar day drops the tide that ends the trip.
+ *
+ * Times come back on the station's own local clock (`lst_ldt`) because that is the clock a
+ * launch time is written in. Converting them to UTC here would mean converting them back in
+ * every renderer.
+ */
+async function tideBlock(b, lat, lon, date) {
+  const all = b.tides || [];
+  const levels = all.filter((t) => t && (t.kind === 'tidepredictions' || t.kind === 'waterlevels'));
+  const st = nearest(levels, lat, lon);
+  if (!st || !st.id) return null;
+  const cur = nearest(all.filter((t) => t && t.kind === 'currentpredictions'), lat, lon);
+
+  const b1 = date.replace(/-/g, '');
+  const b2 = dayAfter(date).replace(/-/g, '');
+  const q = (extra) => `${COOPS}?application=TrollMap&time_zone=lst_ldt&units=english`
+                     + `&format=json&${extra}`;
+  const soft = (p) => p.catch((e) => ({ __err: String((e && e.message) || e) }));
+
+  const [p, c, w] = await Promise.all([
+    soft(cached(`tide:${st.id}:${date}`, TTL.tide, () => getJson(q(
+      `product=predictions&interval=hilo&datum=MLLW&station=${st.id}`
+      + `&begin_date=${b1}&end_date=${b2}`)))),
+    cur && cur.id
+      ? soft(cached(`cur:${cur.id}:${date}`, TTL.tide, () => getJson(q(
+          `product=currents_predictions&interval=MAX_SLACK&station=${cur.id}`
+          + `&begin_date=${b1}&end_date=${b2}`))))
+      : Promise.resolve(null),
+    // Only for the 10 stations the registry marks `measured`. A predicted tide is astronomy; a
+    // measured one carries the surge, and on a blow that is the difference that matters.
+    st.measured
+      ? soft(cached(`wl:${st.id}`, TTL.level, () => getJson(q(
+          `product=water_level&datum=MLLW&station=${st.id}&date=latest`))))
+      : Promise.resolve(null),
+  ]);
+
+  // CO-OPS answers a bad request with HTTP 200 and {"error":{"message":...}}, so a thrown error
+  // is not the only failure mode to check for.
+  const errOf = (x) => (x && (x.__err || (x.error && (x.error.message || x.error)))) || null;
+  const preds = (p && p.predictions) || [];
+  const wl = (w && w.data && w.data.length) ? w.data[w.data.length - 1] : null;
+
+  return {
+    station: { id: st.id, name: st.name || null, lat: st.lat, lon: st.lon,
+               km_from_point: st.km, measured: !!st.measured },
+    datum: 'MLLW',
+    time_zone: 'station local (lst_ldt)',
+    covers: [date, dayAfter(date)],
+    highs_lows: preds.map((x) => ({ time: x.t, ft: num(x.v), type: x.type })),
+    predictions_error: errOf(p),
+    measured_level: wl ? { ft: num(wl.v), at: wl.t } : null,
+    measured_level_error: errOf(w),
+    currents: (c && c.current_predictions) ? {
+      station: { id: cur.id, name: cur.name || null, km_from_point: cur.km },
+      units: c.current_predictions.units || null,
+      events: (c.current_predictions.cp || []).map((x) => ({
+        time: x.Time, type: x.Type,
+        speed_kn: num(x.Velocity_Major),
+        mean_flood_dir: x.meanFloodDir ?? null,
+        mean_ebb_dir: x.meanEbbDir ?? null,
+      })),
+    } : null,
+    currents_error: errOf(c),
+    other_stations: levels.length - 1,
+    source: 'NOAA CO-OPS — api.tidesandcurrents.noaa.gov',
+  };
+}
+
 // ── assembly ────────────────────────────────────────────────────────────────────────────────
 
 function nowIso() { return new Date().toISOString(); }
@@ -350,13 +641,38 @@ export async function handleConditions(request, env, url) {
   const tz = Number(url.searchParams.get('tz')) || -4;
   const date = url.searchParams.get('date') || new Date().toISOString().slice(0, 10);
 
+  // Started here, awaited by the two jobs below. Resolving to a shape rather than rejecting
+  // keeps one failed R2 read from being three separate unhandled rejections.
+  //
+  // `?fresh=1` skips the hour-long isolate cache. The registry changes when the PIPELINE
+  // uploads, not when the Worker deploys, so after a `upload_garmin_to_r2.py` run there is no
+  // event that would otherwise clear it and a new binding stays invisible for up to an hour.
+  const bindingsP = waterBindings(env, url.searchParams.get('fresh') === '1').then(
+    (all) => ({ all }),
+    (e) => ({ err: String((e && e.message) || e) }));
+
   // allSettled, never all: one dead upstream degrades a field, not the response.
+  //
+  // `water` and `tide` need the registry before they know what to ask for, so they chain off
+  // bindingsP rather than starting cold — but they still land in the same settle and the same
+  // `sources[]` as everything else, because a gauge that failed and a forecast that failed are
+  // the same kind of event and should be reported the same way.
   const jobs = [
     ['almanac', skyAlmanac(lat, lon, date, tz)],
     ['forecast', pointForecast(lat, lon)],
     ['convective', convective(lat, lon)],
     ['hazards', hazards(lat, lon)],
     ['rivers', rivers(lat, lon, Number(url.searchParams.get('box')))],
+    ['water', bindingsP.then(({ all, err }) => {
+      if (err) throw new Error(err);
+      const b = all[slug];
+      return b ? waterBlock(b, lat, lon) : null;
+    })],
+    ['tide', bindingsP.then(({ all, err }) => {
+      if (err) throw new Error(err);
+      const b = all[slug];
+      return (b && (b.tides || []).length) ? tideBlock(b, lat, lon, date) : null;
+    })],
   ];
   const settled = await Promise.allSettled(jobs.map((j) => j[1]));
 
@@ -372,15 +688,26 @@ export async function handleConditions(request, env, url) {
     }
   });
 
-  // Declared, not faked. These need registry/water_bindings.json — which gauge, which CO-OPS
-  // station, which NWM reach serves this water. Returning nulls with a reason is honest; a
-  // missing key reads as "the app forgot", and a zero reads as a measurement.
-  out.water = null;
-  out.tide = null;
-  out.pending = {
-    water: 'needs water_bindings.json (gauge / pool / tailwater / NWM reach)',
-    tide: 'needs water_bindings.json (CO-OPS tide and currents station); coastal waters only',
-  };
+  // `pending` was once unconditional, which meant a water with a working gauge still announced
+  // that gauges were not built yet. It now carries only what is genuinely absent, and the key
+  // is omitted entirely when nothing is — a permanent "not built" on a field that works is the
+  // same lie as a zero on a field that does not.
+  //
+  // Note what is NOT pending: an inland lake with `tide: null`. That is the right answer, and
+  // `water.tidal` says whether the null is a fact or a gap.
+  const bres = await bindingsP;
+  if (bres.err) {
+    out.pending = {
+      water: `${BINDINGS_KEY} could not be read: ${bres.err}`,
+      tide: `${BINDINGS_KEY} could not be read: ${bres.err}`,
+    };
+  } else if (!bres.all[slug]) {
+    out.pending = {
+      water: `no row for "${slug}" in ${BINDINGS_KEY} — `
+           + `${Object.keys(bres.all).length} waters are bound; `
+           + 'add one by rerunning build_water_bindings.py, not by editing the Worker',
+    };
+  }
 
   return new Response(JSON.stringify(out), {
     headers: { ...CORS, ...JSON_HEADERS, 'Cache-Control': 'public, max-age=300' },
@@ -388,5 +715,5 @@ export async function handleConditions(request, env, url) {
 }
 
 export const CONDITIONS_ROUTES = [
-  '/conditions/<slug>?lat=&lon=&date=YYYY-MM-DD&tz=-4  — sun, moon, solunar, forecast, storm risk, warnings, live river flow',
+  '/conditions/<slug>?lat=&lon=&date=YYYY-MM-DD&tz=-4  — sun, moon, solunar, forecast, storm risk, warnings, live river flow, pool/tailwater level from NWPS, tide and currents from CO-OPS',
 ];
