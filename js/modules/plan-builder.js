@@ -2086,13 +2086,33 @@ document.getElementById('autoNameBtn')?.addEventListener('click', () => {
   if (el) el.value = `${lake}${ramp ? ' – ' + ramp : ''} ${session} Troll${dateShort ? ' ' + dateShort : ''}`;
 });
 
+// STRAIGHT TO A RENDERED PREVIEW, NOT TO THE PREVIEW SUBTAB.
+//
+// Ryan, 2026-08-09: "you wired in a different button the one next to the json html and that went
+// straight to a preview instead of the preview tab... this morning or last night when you tied
+// smartplan v2 into those buttons is when it started going back to the preview tab."
+//
+// The `#panel-plan .subtabs [data-plansub="preview"]` pane has been broken since SmartPlan first
+// landed, and this button existed precisely to route around it. Pointing it back at that pane
+// when v2 was wired in undid the workaround and handed him the blank tab again.
+//
+// So it opens the built document in its own window, the same HTML the export writes to disk.
+// Nothing on the Plan tab is touched and the broken pane is not involved.
 document.getElementById('buildPreviewBtn')?.addEventListener('click', async () => {
   const p = collectPlan();
+  const w = window.open('', '_blank');
+  if (w) w.document.write('<p style="font:14px system-ui;color:#888;padding:20px">Building preview…</p>');
+  const inner = await buildPlanPreviewHtml(p);
+  const doc = `<!DOCTYPE html><html><head><meta charset="utf-8">`
+            + `<title>${p.meta?.name || 'Fishing Plan'}</title></head>`
+            + `<body style="background:#f3f6f9;margin:0;padding:20px">${inner}</body></html>`;
+  if (w) { w.document.open(); w.document.write(doc); w.document.close(); return; }
+  // Popup blocked. Fall back to the in-page pane rather than losing the preview entirely, and
+  // say which one happened so a blank tab is never the only signal.
+  console.warn('[plan-builder] preview popup was blocked — falling back to the in-page pane');
   const previewEl = document.getElementById('planPreviewHtml');
-  if (previewEl) previewEl.innerHTML = '<p style="color:#888;padding:20px">⏳ Building preview…</p>';
+  if (previewEl) previewEl.innerHTML = inner;
   document.querySelector('#panel-plan .subtabs button[data-plansub="preview"]')?.click();
-  if (previewEl) previewEl.innerHTML = await buildPlanPreviewHtml(p);
-  if (state.MAP) setTimeout(() => state.MAP.invalidateSize(), 50);
 });
 
 document.getElementById('printPlanBtn')?.addEventListener('click', async () => {

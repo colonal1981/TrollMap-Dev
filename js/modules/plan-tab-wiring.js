@@ -23,15 +23,10 @@ document.getElementById('backToBuilderBtn')?.addEventListener('click', () => {
   document.querySelector('#planSubtabs button[data-plansub="plan"]')?.click();
 });
 
-// Preview button auto-generates preview and switches tab
-document.getElementById('buildPreviewBtn')?.addEventListener('click', async () => {
-  const { collectPlan, buildPlanPreviewHtml } = await import('./plan-builder.js');
-  const p = collectPlan();
-  const previewEl = document.getElementById('planPreviewHtml');
-  if (previewEl) previewEl.innerHTML = '<p style="color:#888;padding:20px">⏳ Building preview…</p>';
-  document.querySelector('#planSubtabs button[data-plansub="preview"]')?.click();
-  if (previewEl) previewEl.innerHTML = await buildPlanPreviewHtml(p);
-});
+// #buildPreviewBtn is bound in plan-builder.js, which owns buildPlanPreviewHtml. A second
+// listener lived here doing the same job, so every click built the report TWICE and raced to
+// write the result -- which is why one click produced two identical console errors. One button,
+// one handler, in the module that owns the function.
 
 // Export buttons
 document.getElementById('exportPlanHtmlBtn')?.addEventListener('click', async () => {
