@@ -246,6 +246,49 @@ describe('plan-assemble — what the model may not do', () => {
   });
 });
 
+describe('plan-assemble — the route is continuous', () => {
+  // -----------------------------------------------------------------------------------------
+  // Ryan, 2026-08-09: "the transit legs do not actually connect to the trolling legs". Measured
+  // off that plan's GPX: T1 ended 70 m short of L1, L1 ended 77 m short of T2, L2 ended 55 m
+  // short of T3. The water router returns a path of GRAPH CELL CENTROIDS, so its ends are the
+  // centres of the cells containing the endpoints rather than the endpoints themselves.
+  // -----------------------------------------------------------------------------------------
+  const centroidish = (a, b) => ({
+    // A router that answers with points NEAR the ends rather than ON them — which is what the
+    // real one does, and what nothing downstream used to correct for.
+    distanceM: metresBetween(a, b),
+    coordinates: [[a[0] + 0.0006, a[1] + 0.0006], [b[0] - 0.0006, b[1] - 0.0006]],
+  });
+
+  it('every leg starts exactly where the one before it ended', () => {
+    const plan = basePlan({ transit: centroidish });
+    for (let i = 1; i < plan.legs.length; i++) {
+      const prev = plan.legs[i - 1].coordinates;
+      const here = plan.legs[i].coordinates;
+      const gap = metresBetween(prev[prev.length - 1], here[0]);
+      expect(gap < 1).toBe(true);
+    }
+  });
+
+  it('the first leg starts at the launch and the last ends there', () => {
+    const plan = basePlan({ transit: centroidish });
+    const first = plan.legs[0].coordinates;
+    const last = plan.legs[plan.legs.length - 1].coordinates;
+    expect(metresBetween(first[0], LAUNCH) < 1).toBe(true);
+    expect(metresBetween(last[last.length - 1], LAUNCH) < 1).toBe(true);
+  });
+
+  it('counts the metres it stitched on rather than reporting the router number', () => {
+    const plan = basePlan({ transit: centroidish });
+    const t1 = plan.legs.find((l) => l.type === 'transit');
+    let walked = 0;
+    for (let i = 1; i < t1.coordinates.length; i++) {
+      walked += metresBetween(t1.coordinates[i - 1], t1.coordinates[i]);
+    }
+    expect(Math.abs(walked - t1.lengthM) <= 1).toBe(true);
+  });
+});
+
 describe('plan-assemble — saying when it does not fit', () => {
   it('warns when the plan is over the battery', () => {
     const plan = basePlan({ usableAh: 2 });

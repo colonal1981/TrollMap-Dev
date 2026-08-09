@@ -1,5 +1,6 @@
 import { describe, it, expect } from './expect-shim.mjs';
 import { buildSmartPlanV2, CANDIDATE_LIMIT, prefetchTransits, waterRouter } from '../js/modules/smart-plan-v2.js';
+import { metresBetween } from '../js/modules/plan-candidates.js';
 
 // ---------------------------------------------------------------------------
 // Why this test exists
@@ -185,10 +186,23 @@ describe('smart-plan-v2 — the whole path with no network', () => {
 describe('smart-plan-v2 — transits are routed over water, or they say they are not', () => {
   // Stands in for the Worker: bends every route through one point, so a routed leg is
   // recognisable by its geometry rather than by a flag the test itself set.
+  //
+  // NOTE THE distanceM IS A LIE, DELIBERATELY. It claims 500 m for a path its own coordinates
+  // put at about 5.3 km. This used to be asserted verbatim, which meant the suite was checking
+  // that the app repeats whatever number the router hands it. The assembler now measures the
+  // geometry instead -- it has to, because it stitches the true endpoints onto the routed path
+  // and those metres are real -- so the test asserts the length MATCHES THE LINE.
   const BEND = [-80.7100, 34.4000];
   const routeWater = async (from, to) => ({
     distanceM: 500, coordinates: [from, BEND, to],
   });
+  // metresBetween, not a second distance formula written here. A test that measures the line a
+  // different way than the code does is testing the two formulas against each other.
+  const walk = (c) => {
+    let d = 0;
+    for (let i = 1; i < c.length; i++) d += metresBetween(c[i - 1], c[i]);
+    return d;
+  };
 
   it('routes them when the endpoint answers', async () => {
     const r = await buildSmartPlanV2({ ...OPTS, askModel: goodModel(), routeWater });
@@ -197,7 +211,7 @@ describe('smart-plan-v2 — transits are routed over water, or they say they are
     for (const t of transits) {
       expect(t.unrouted).toBeUndefined();
       expect(t.coordinates.some((c) => c[0] === BEND[0] && c[1] === BEND[1])).toBe(true);
-      expect(t.lengthM).toBe(500);
+      expect(Math.abs(t.lengthM - walk(t.coordinates)) <= 2).toBe(true);
     }
     expect(r.problems.some((p) => p.includes('not water-routed'))).toBe(false);
   });

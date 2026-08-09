@@ -96,6 +96,36 @@ export function assemblePlan(o) {
   // makes it impossible to forget: every straight line the assembler produces carries the flag,
   // whether it came from a missing router or from a router that could not answer this pair.
   const straight = (a, b) => ({ distanceM: metresBetween(a, b), coordinates: [a, b], unrouted: true });
+
+  /**
+   * MAKE THE TRANSIT ACTUALLY TOUCH WHAT IT CONNECTS.
+   *
+   * Ryan, 2026-08-09: "the transit legs do not actually connect to the trolling legs". Measured
+   * off that plan's GPX: T1 ends 70 m from where L1 starts, L1 ends 77 m from T2, L2 ends 55 m
+   * from T3. The dashed line stops short of the cyan one and nothing carries the boat the last
+   * two hundred feet.
+   *
+   * The router walks the water graph and returns a path of CELL CENTROIDS, so its first and last
+   * points are the centres of the cells containing the endpoints -- not the endpoints. That is
+   * the same centroid-versus-geometry mistake as the old zigzag, surviving at the two ends after
+   * being fixed in the middle.
+   *
+   * So the true endpoints are stitched back on. The joining hop is tens of metres between two
+   * points already known to be on water -- a graph cell centre, and a vertex of a fitted trolling
+   * line that lives inside its own depth band -- which is a far better bet than a visible gap the
+   * boat is left to guess at. The distance is recomputed from the joined geometry so the budget
+   * counts the metres it just added.
+   */
+  const joinEnds = (p, from, to) => {
+    const c = (p.coordinates || []).slice();
+    if (!c.length) return { ...p, coordinates: [from, to] };
+    const same = (a, b) => a && b && metresBetween(a, b) < 1;
+    if (!same(c[0], from)) c.unshift(from);
+    if (!same(c[c.length - 1], to)) c.push(to);
+    let d = 0;
+    for (let i = 1; i < c.length; i++) d += metresBetween(c[i - 1], c[i]);
+    return { ...p, coordinates: c, distanceM: d };
+  };
   const transit = o.transit || straight;
   const candidates = o.candidates || [];
 
@@ -183,7 +213,7 @@ export function assemblePlan(o) {
     }
 
     // Transit to the head of the leg.
-    const p = transit(cursor, c.start) || straight(cursor, c.start);
+    const p = joinEnds(transit(cursor, c.start) || straight(cursor, c.start), cursor, c.start);
     if (p.distanceM > 1) {
       const len = Math.round(p.distanceM);
       const mins = minutesFor(p.distanceM, transitMph);
@@ -333,7 +363,8 @@ export function assemblePlan(o) {
   if (candidates.length && Array.isArray(o.launch)) {
     const gap = metresBetween(cursor, o.launch);
     if (gap > HOME_TOLERANCE_M) {
-      const p = transit(cursor, o.launch) || straight(cursor, o.launch);
+      const p = joinEnds(transit(cursor, o.launch) || straight(cursor, o.launch),
+                         cursor, o.launch);
       const len = Math.round(p.distanceM);
       const mins = minutesFor(p.distanceM, transitMph);
       const a = ampHours(p.distanceM, transitMph);
