@@ -23,6 +23,8 @@ import { checkPlanLegality, fetchForecast } from './plan-preflight.js';
 import { buildSmartPlanV2, packFetcher, modelAsker } from './smart-plan-v2.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
+import { materialisePlan } from './plan-tracks.js';
+import { renderAll } from '../core/map-init.js';
 
 export { depthBandFor, usableAhFrom };
 
@@ -219,8 +221,23 @@ export async function runSmartPlanV2() {
   });
   syncSpread(built.cards, built.routeRods, built.routeSpeeds);
 
+  // THE PLAN HAS TO LEAVE THE APP OR IT IS NOT A PLAN.
+  //
+  // Ryan's last generated plan: `"gpx": { "tracks": 0, "trackPoints": 0 }` on a day describing
+  // ten miles of trolling. The geometry was on `plan.legs[].coordinates` the whole time and
+  // nothing copied it into `state.DATA.tracks`, which is the only thing collectPlan() — and so
+  // the GPX writer, the map, the wind-exposure panel and the Tracks table — reads.
+  //
+  // This runs AFTER renderSmartPlanUI on purpose. That function makes its own `CAST:` waypoints
+  // from the timeline; materialisePlan replaces them with one waypoint per stop at the stop's
+  // own `at`, so the export carries the plan's positions rather than a second set derived from
+  // them. Last writer wins, and the plan should be the last writer.
+  const gpx = materialisePlan(r.plan, { launch: ramp, win: window });
+  try { renderAll(); } catch (e) { console.warn('[plan-v2] map redraw failed:', e.message); }
+
   say(`${r.plan.legs.filter((l) => l.type === 'troll').length} legs · `
     + `${(r.plan.budget.totalM / 1609.34).toFixed(1)} mi · ${r.plan.budget.plannedAh} Ah`
+    + ` · ${gpx.tracks} tracks`
     + (depth.generic ? ' · generic depth band' : ''));
 
   // For the console, and for whatever reads a plan next — GPX, the map, the phone.
