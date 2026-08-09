@@ -335,15 +335,25 @@ def smooth(xy0, depth, floor_dm, target_dm, iters, deep_bias_m):
         prop = xy.copy()
         prop[1:-1] = xy[1:-1] + lam * (xy[:-2] + xy[2:] - 2 * xy[1:-1])
         if deep_bias_m > 0 and target_dm is not None:
-            d_now = depth.at(prop)
+            # `at_raw`. Whether a point has REACHED its target depth is a measurement, and the
+            # safety buffer reads about a band shallower than the chart everywhere -- so testing
+            # against it meant `want` stayed true for most of the line forever, the bias pushed
+            # every iteration, the line never settled, and the convergence exit could never fire.
+            # That was the whole runtime: 4.9 s per run doing nothing after the first second.
+            d_now = depth.at_raw(prop)
             want = np.isnan(d_now) | (d_now < target_dm)
             if want.any():
                 prop[want] = prop[want] + depth.deeper_dir(prop[want]) * deep_bias_m
         prop[0], prop[-1] = xy0[0], xy0[-1]
 
         step = prop - xy
-        if float(np.abs(step).max()) < 0.02:
-            break                               # settled; more iterations buy nothing
+        # 0.25 m, not 0.02. Laplacian smoothing converges geometrically, so the last stretch to a
+        # centimetre costs more iterations than everything before it and moves the line by less
+        # than a paddle width. Ryan is hand-steering this without GPS on the trolling motor -- a
+        # quarter metre is two orders of magnitude finer than he can hold. Chasing 2 cm was most
+        # of the runtime.
+        if float(np.abs(step).max()) < 0.25:
+            break
 
         cur_seg = _no_licence(_seg_min(depth, xy[:-1], xy[1:]))
         cur_pt = _no_licence(depth.at(xy))
@@ -361,7 +371,7 @@ def smooth(xy0, depth, floor_dm, target_dm, iters, deep_bias_m):
             return b
 
         bad = bad_at(alpha)
-        for _ in range(8):
+        for _ in range(5):                      # 5 halvings bottoms out at 1/32 of the step
             if not bad.any():
                 break
             alpha[bad] *= 0.5
@@ -370,7 +380,7 @@ def smooth(xy0, depth, floor_dm, target_dm, iters, deep_bias_m):
         # the settle can chase itself. An unconverged iteration is DISCARDED -- `xy` is legal on
         # entry, so keeping it is always a safe answer.
         clean = False
-        for _ in range(20):
+        for _ in range(6):
             if not bad.any():
                 clean = True
                 break
@@ -792,7 +802,15 @@ def fit_pack(pack, a):
 
         pieces = []
         seeded = seed_deep(xy0, depth, float(pr['depth_dm']), a.seed_push_m)
-        for stretch in split_at_thin_water(seeded, depth, floor, a.min_leg_m,
+        # ONE MEANINGFUL THRESHOLD, APPLIED ONCE, AT THE END.
+        #
+        # Gating the in-band stretch at `min_leg_m` AND the finished pass at `min_leg_m` rejected
+        # everything that only just qualified: smoothing shortens a line by cutting its corners,
+        # so a 1,319 m stretch comes out at about 1,150 m and vanishes against the same gate it
+        # had already passed. after_bay_reservoir fitted nothing at all for this reason while
+        # carrying 13 runs with in-band water in them. The stretch gate is now only "long enough
+        # to be worth smoothing"; whether it is a trolling pass is decided on the finished line.
+        for stretch in split_at_thin_water(seeded, depth, floor, a.min_stretch_m,
                                            bridge_m=a.bridge_m, bridge_dm=a.bridge_dm):
             even, _ = _resample(stretch, a.resample_m)
             sm = smooth(even, depth, floor, float(pr['depth_dm']), a.iters, a.deep_bias_m)
@@ -800,8 +818,9 @@ def fit_pack(pack, a):
             pieces.extend(split_at_hard_corners(ch, a.max_turn_deg, a.min_leg_m))
         if not pieces:
             st['kept_thin'] += 1
-            pr['fit_note'] = ('no stretch of this contour is %.1f ft deep for %.0f m at a time'
-                              % (floor / 3.048, a.min_leg_m))
+            pr['fit_note'] = ('no fitted pass of %.0f m survived: this contour is not %.1f ft '
+                              'deep for that far at a time'
+                              % (a.min_leg_m, floor / 3.048))
             # Every piece came out under min_leg_m: the water here does not hold a pass. Keep the
             # contour rather than inventing one, and say so in the properties.
             pr['fitted'] = False
@@ -916,10 +935,15 @@ def main():
     ap.add_argument('--registry', default=None)
     ap.add_argument('--max-turn-deg', type=float, default=35.0,
                     help='sharpest corner the line may ask for; sharper than this ends the pass')
-    ap.add_argument('--min-leg-m', type=float, default=1200.0,
-                    help='a piece shorter than this is not a trolling pass')
+    ap.add_argument('--min-leg-m', type=float, default=1500.0,
+                    help='a piece shorter than this is not a trolling pass. 1500 m is not a '
+                         'taste: it is selectCandidates() own floor (plan-candidates.js, '
+                         'minM 1500), so anything shorter is a pass the app will never offer')
     ap.add_argument('--min-fit-m', type=float, default=800.0,
                     help='runs shorter than this keep the contour geometry')
+    ap.add_argument('--min-stretch-m', type=float, default=500.0,
+                    help='in-band stretch short enough not to bother smoothing; the real test '
+                         'is --min-leg-m on the finished pass')
     ap.add_argument('--resample-m', type=float, default=25.0)
     ap.add_argument('--grid-m', type=float, default=12.0)
     ap.add_argument('--max-cells', type=float, default=40_000_000)
@@ -934,7 +958,10 @@ def main():
                     help='how far the line may be stepped onto the deep side of its own contour '
                          'before fitting starts')
     ap.add_argument('--tol-dm', type=float, default=3.0)
-    ap.add_argument('--iters', type=int, default=400)
+    ap.add_argument('--iters', type=int, default=250)
+    ap.add_argument('--jobs', type=int, default=1,
+                    help='packs in parallel. Each one is independent -- its own raster, its own '
+                         'file -- so this scales with cores and nothing is shared')
     ap.add_argument('--annotate-m', type=float, default=100.0)
     ap.add_argument('--reach-m', type=float, default=120.0)
     ap.add_argument('--backup-dir', default=None,
@@ -965,28 +992,39 @@ def main():
                 print('--ship-only: could not read charted.json: %s' % e); sys.exit(2)
             slugs = [s for s in slugs if s in keep]
 
-    print('%d pack(s)%s' % (len(slugs), ' [DRY RUN]' if a.dry_run else ''))
+    if a.limit:
+        slugs = slugs[:a.limit]
+    print('%d pack(s)%s%s' % (len(slugs), ' [DRY RUN]' if a.dry_run else '',
+                              ('  x%d jobs' % a.jobs) if a.jobs > 1 else ''))
     rows, t0 = [], time.time()
-    for n, s in enumerate(slugs, 1):
-        if a.limit and n > a.limit:
-            print('  ... stopping at --limit %d of %d packs' % (a.limit, len(slugs)))
-            break
-        r = fit_pack(os.path.join(a.packs, s), a)
+
+    if a.jobs > 1:
+        from multiprocessing import Pool
+        with Pool(a.jobs) as pool:
+            results = pool.starmap(fit_pack,
+                                   [(os.path.join(a.packs, s), a) for s in slugs], chunksize=1)
+    else:
+        results = (fit_pack(os.path.join(a.packs, s), a) for s in slugs)
+
+    for s, r in zip(slugs, results):
         if r is None:
             continue
         rows.append(r)
         if 'skipped' in r:
             print('  %-40s SKIP %s' % (s, r['skipped']))
             continue
-        kept = 100.0 * r['m_out'] / r['m_in'] if r['m_in'] else 100.0
-        print('  %-40s %4d -> %4d runs   fitted %4d  split %3d  thin %3d   corners %5d -> %5d'
-              '   %.0f%% of fitted length kept   %.1fs%s'
-              % (s, r['in'], r['out'], r['fitted'], r['split'], r['kept_thin'],
-                 r['corners_before'], r['corners_after'], kept, r['raster_s'],
-                 '  [grid %.0f m]' % r['grid_m'] if r['coarsened'] > 1.01 else ''))
+        # A percentage of nothing is not 100%. A pack that fitted no runs used to report
+        # "100% removed / 100% kept", which reads as a clean sweep and is the opposite.
+        tail = ('   corners %5d -> %5d   %.0f%% of fitted length kept'
+                % (r['corners_before'], r['corners_after'], 100.0 * r['m_out'] / r['m_in'])
+                ) if r['fitted'] else '   nothing fitted'
+        print('  %-40s %4d -> %4d runs   fitted %4d  split %3d  thin %3d%s   %.1fs%s'
+              % (s, r['in'], r['out'], r['fitted'], r['split'], r['kept_thin'], tail,
+                 r['raster_s'], '  [grid %.0f m]' % r['grid_m'] if r['coarsened'] > 1.01 else ''))
 
     done = [r for r in rows if 'skipped' not in r]
     if done:
+        done = [r for r in done if r['fitted']] or done
         cb = sum(r['corners_before'] for r in done)
         ca = sum(r['corners_after'] for r in done)
         print('\n%d packs, %d runs in, %d out, %d split into passes'
