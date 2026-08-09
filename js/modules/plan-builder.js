@@ -946,6 +946,18 @@ export async function buildPlanPreviewHtml(p){
       <tr><td><span class="rp-pill rp-strong">MINOR</span></td><td>${sol.minor1Str} &amp; ${sol.minor2Str}</td><td>Secondary feeding activity — maintain coverage.</td></tr>
       <tr><td colspan="3" class="rp-small">Moon: <b>${sol.phaseName}</b> (${sol.illum}% illuminated) — Overall rating: <span class="rp-pill ${sol.ratingClass}">${sol.rating}</span></td></tr>`;
 
+    // HOISTED, because the go/no-go block below is a DIFFERENT try block and cannot see a
+    // `const` declared inside this one. It read `data.daily.temperature_2m_max[0]` from a
+    // variable that has never been in scope there, so the safety verdict threw a ReferenceError
+    // on every single run since it was written, landed in its own catch, and fell through to
+    // whatever `goNoGo` was initialised to. The console said so every time:
+    //
+    //   [plan-builder] go/no-go assessment failed: ReferenceError: data is not defined
+    //
+    // Ryan, 2026-08-09: "preview button is broken takes me to the preview/print tab with
+    // nothing showing".
+    let wxData = null;
+
     // Fetch Open-Meteo: daily + hourly in one call
     try {
       const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}`+
@@ -957,6 +969,7 @@ export async function buildPlanPreviewHtml(p){
       const res = await fetch(url, { signal: controller.signal });
       clearTimeout(timeoutId);
       const data = await res.json();
+      wxData = data;
 
       if(data && data.daily){
         const D = data.daily;
@@ -1159,11 +1172,16 @@ export async function buildPlanPreviewHtml(p){
 
     // GO / NO-GO calculation (needs weather data)
     try {
-      const tmaxF = Math.round(data.daily.temperature_2m_max[0] * 9/5 + 32);
-      const windMph = Math.round(data.daily.windspeed_10m_max[0] * 0.621371);
-      const precip = data.daily.precipitation_sum[0];
-      const uvMax = data.daily.uv_index_max[0];
-      const maxPP = data.hourly ? Math.max(...data.hourly.precipitation_probability.slice(0,14)) : 0;
+      if (!wxData || !wxData.daily) {
+        // No weather is not a GO. Saying so out loud beats a verdict assembled from nothing.
+        noGoReasons.push('Weather forecast unavailable — check conditions yourself before launching');
+        throw new Error('no forecast');
+      }
+      const tmaxF = Math.round(wxData.daily.temperature_2m_max[0] * 9/5 + 32);
+      const windMph = Math.round(wxData.daily.windspeed_10m_max[0] * 0.621371);
+      const precip = wxData.daily.precipitation_sum[0];
+      const uvMax = wxData.daily.uv_index_max[0];
+      const maxPP = wxData.hourly ? Math.max(...wxData.hourly.precipitation_probability.slice(0,14)) : 0;
 
       if(windMph >= 20) noGoReasons.push(`Wind ${windMph}mph — unsafe for kayak`);
       else if(windMph >= 15) goReasons.push(`Wind ${windMph}mph — manageable, stay near shore`);
