@@ -97,7 +97,28 @@ def main():
 
     want = {s.strip().upper() for s in a.states.split(',')}
     reg = json.load(open(os.path.join(a.registry, 'lakes.json'), encoding='utf-8'))
-    lakes = [x for x in reg['lakes'] if (x.get('state') or '').upper() in want]
+
+    def _in_region(x):
+        """A border lake counts if ANY of its states is in region, not just the centroid's.
+
+        2026-08-09. This is the same defect commit 7ca3f78 fixed in consolidate_lake_index.py,
+        left standing here, and it is why the four biggest entries in the pack audit had empty
+        packs: `lakes.json` records `state` as the CENTROID's state, so
+
+            Lake Barkley            state=KY  states=['KY','TN']   49,741 ac
+            John H. Kerr Reservoir  state=VA  states=['VA','NC']   44,895 ac
+            Pickwick Lake           state=AL  states=['AL','MS','TN']
+            Guntersville Lake       state=AL  states=['AL','TN']   65,603 ac
+
+        were dropped here, got no tiles, and so were never cut -- while the consolidator, which
+        does apply the rule, admitted them to the index. A row in the index with no tiles is a
+        lake the app offers and cannot draw.
+        """
+        if (x.get('state') or '').upper() in want:
+            return True
+        return bool(want & {(s or '').upper() for s in (x.get('states') or [])})
+
+    lakes = [x for x in reg['lakes'] if _in_region(x)]
 
     if a.accessible_only:
         if not a.index:
