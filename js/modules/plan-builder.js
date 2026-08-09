@@ -1600,6 +1600,23 @@ ${regsRows?`<h2>📋 SC Fishing Regulations — ${esc(lakeForRegs.split(',')[0]|
 </table>
 <p class="rp-small">Source: SCDNR / SC Code § 50-13 via <a href="https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits" target="_blank">eRegulations – SC Freshwater Size & Possession Limits</a>. Always verify current regulations at <strong>eregulations.com/southcarolina/fishing</strong> and <strong>dnr.sc.gov</strong> before fishing. Emergency closures may apply.</p>`:''}
 
+<h2>🎣 WHEN A FISH IS IN THE BOAT — the thirty seconds that make the next plan smarter</h2>
+<div class="rp-callout rp-warn" style="border-left-width:6px">
+  <b style="font-size:15px">1 · MARK IT ON THE UNIT. Before the hook comes out.</b><br>
+  A fish you did not mark is a fish this plan can never learn from. The mark is the only thing
+  that ties the catch to the water — the leg, the depth, the structure it came off.
+  <br><br>
+  <b style="font-size:15px">2 · TWO PHOTOS, IN THIS ORDER, INSIDE 90 SECONDS.</b><br>
+  <b>Fish on the board first. Lure second, on its own.</b> Not the lure in the fish photo —
+  TrollMap pairs the two shots by timestamp, reads species and length off the fish photo, and
+  lets you name the lure yourself while looking at it. Shoot them the other way round or minutes
+  apart and the pairing has to be fixed by hand in review.
+  <br><br>
+  <span class="rp-small">Why it is worth the thirty seconds: every marked catch with a named
+  lure is one more row that outranks the model next time this water is planned. The research
+  profile is a starting guess. <b>Your catch history is the correction, and it wins.</b></span>
+</div>
+
 <h2>🐟 Fish-Fight Protocol</h2>
 <table>
   <tr><th>Hit on</th><th>Immediate</th><th>Secondary</th></tr>
