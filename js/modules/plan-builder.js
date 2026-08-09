@@ -478,10 +478,39 @@ export async function buildPlanPreviewHtml(p){
       <td>${esc(r.rigging||'—')}${r.jigheadWeight ? ` · <b>${esc(r.jigheadWeight)} jighead</b>` : ''}</td>
       <td>${esc(r.presentation||'—')}</td>
     </tr>`).join('');
+    // The TROLLING rods belong here too. Ryan, 2026-08-09: "i was expecting the troll rod callout
+    // to be in the pre-rig before launch section not just in the trolling section... just know
+    // that those 2 crankbaits are part of the 4 with fluro leader... it doesn't say that anywhere
+    // in the plan."
+    //
+    // This section answers ONE question -- what do I tie on before I leave the truck -- and it was
+    // only answering it for half the boat. The trolling rods appeared solely in the spread table
+    // further down, which is a reference for what is in the water, not a rigging list. And nothing
+    // anywhere stated which rods carry a leader and which carry a snap.
+    //
+    // THE BOAT IS SIX RODS AND NEVER CHANGES: four on a 20 lb fluoro leader, two on swivel snaps.
+    // Two rods are in the water while trolling, one port and one starboard.
+    const trollByRod = new Map();
+    for (const r of (p.spread || [])) {
+      const id = String(r.rod || '').trim();
+      if (!id || trollByRod.has(id)) continue;      // same rod repeats once per leg
+      trollByRod.set(id, r);
+    }
+    const trollRows = [...trollByRod.values()].map(r => `<tr>
+      <td><b>Troll Rod ${esc(String(r.rod||''))}</b> <span class="rp-small">(${esc(r.side||'')})</span></td>
+      <td>${esc(r.lure||'—')}${r.color ? ` · ${esc(r.color)}` : ''}</td>
+      <td>${esc(r.reel||'—')}</td>
+      <td>${r.lead ? `${esc(String(r.lead))} ft lead · ` : ''}${esc(r.depth||'—')} ft</td>
+    </tr>`).join('');
+
+    const nCast = castRods.filter(r => r.lure).length;
     castRodsHtml = `
-    <h2>🎣 Pre-Rig Before Launch — Dedicated Casting Rods</h2>
-    <p class="rp-small">Stow these 2 rods in the cockpit before departure. Grab them at any Stop &amp; Cast — do not repurpose trolling rods.</p>
-    <table><thead><tr style="background:#eef4fa"><th>Rod</th><th>Lure</th><th>Rigging</th><th>Presentation</th></tr></thead><tbody>${rows}</tbody></table>`;
+    <h2>🎣 Pre-Rig Before Launch — Every Rod on the Boat</h2>
+    <p class="rp-small">Six rods: <b>four on a 20 lb fluoro leader</b>, <b>two on swivel snaps</b>.
+      Two are in the water while trolling, one port and one starboard. Tie all of this before you
+      leave — ${nCast} casting rod(s) stowed in the cockpit for any Stop &amp; Cast, and the
+      trolling rods ready to deploy off the launch.</p>
+    <table><thead><tr style="background:#eef4fa"><th>Rod</th><th>Lure</th><th>Rigging / Reel</th><th>Presentation / Lead</th></tr></thead><tbody>${trollRows}${rows}</tbody></table>`;
   }
 
   // ── Clarity tactical ──────────────────────────────────────────────────────
