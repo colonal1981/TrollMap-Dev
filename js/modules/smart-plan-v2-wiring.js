@@ -24,6 +24,7 @@ import { buildSmartPlanV2, packFetcher, modelAsker } from './smart-plan-v2.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
 import { materialisePlan } from './plan-tracks.js';
+import { planIssuesHtml } from './plan-issues.js';
 import { renderAll } from '../core/map-init.js';
 
 export { depthBandFor, usableAhFrom };
@@ -194,8 +195,6 @@ export async function runSmartPlanV2() {
   // collectPlan(), and collectPlan() reads window._smartPlanTimeline. Nothing downstream ever
   // looked at v2's DOM. So the plan is converted to timeline entries, installed on the globals
   // the tab already reads, and drawn by the renderer that draws everything else.
-  if (legality.warnings.length) r.problems = [...legality.warnings, ...r.problems];
-
   const built = planToTimeline(r.plan, {
     depthBand: depth.band,
     rationale: (r.plan.notes && (r.plan.notes.scoutNotes || r.plan.notes.sonar)) || '',
@@ -235,14 +234,31 @@ export async function runSmartPlanV2() {
   const gpx = materialisePlan(r.plan, { launch: ramp, win: window });
   try { renderAll(); } catch (e) { console.warn('[plan-v2] map redraw failed:', e.message); }
 
+  // The warnings go in ABOVE the timeline, after the renderer has written the container --
+  // renderSmartPlanUI sets innerHTML, so anything put there first is wiped.
+  const issues = planIssuesHtml(r.plan, r.problems);
+  if (issues && out) out.insertAdjacentHTML('afterbegin', issues);
+
+  if (r.plan.safety && r.plan.safety.isGo === false) {
+    window._planV2NoGo = true;
+    return say(`🚨 NO-GO — ${r.plan.safety.warning || 'unsafe conditions for a kayak'}`, true),
+           finish(r, gpx);
+  }
+  window._planV2NoGo = false;
+
   say(`${r.plan.legs.filter((l) => l.type === 'troll').length} legs · `
     + `${(r.plan.budget.totalM / 1609.34).toFixed(1)} mi · ${r.plan.budget.plannedAh} Ah`
     + ` · ${gpx.tracks} tracks`
     + (depth.generic ? ' · generic depth band' : ''));
 
-  // For the console, and for whatever reads a plan next — GPX, the map, the phone.
+  return finish(r, gpx);
+}
+
+/** For the console, and for whatever reads a plan next — GPX, the map, the phone. */
+function finish(r, gpx) {
   window._planV2 = r.plan;
   window._planV2Result = r;
+  window._planV2Gpx = gpx;
   return r;
 }
 
