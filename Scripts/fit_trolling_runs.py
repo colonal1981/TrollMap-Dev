@@ -850,6 +850,20 @@ def fit_pack(pack, a):
             slen = float(_seglens(stretch).sum())
             step = max(a.resample_m, slen / max(20, a.max_pts))
             even, _ = _resample(stretch, step)
+            # ...BUT A COARSER SAMPLING OF A BEND IS A CHORD ACROSS IT.
+            #
+            # Resampled points sit on the original line, the straight segments between them do
+            # not, and at 60 m one of those can cut the inside of a bend into water the contour
+            # never touched. That line then becomes the smoother's own baseline, and the
+            # monotone rule faithfully preserves it -- which is how one Wateree pass came back
+            # 16 ft above its 40 ft target while every constraint downstream was satisfied.
+            #
+            # So the coarsening has to earn itself: halve the spacing until no segment of the
+            # resampled line leaves the band. Bounded, and it only pays where it matters.
+            while step > a.resample_m and len(even) > 2 and \
+                    bool((_seg_min(depth, even[:-1], even[1:], SMOOTH_SAMPLE_M) < floor).any()):
+                step = max(a.resample_m, step / 2.0)
+                even, _ = _resample(stretch, step)
             sm = smooth(even, depth, floor, float(pr['depth_dm']), a.iters, a.deep_bias_m)
             ch = chord_pass(sm, depth, floor, a.max_turn_deg)
             pieces.extend(split_at_hard_corners(ch, a.max_turn_deg, a.min_leg_m))
