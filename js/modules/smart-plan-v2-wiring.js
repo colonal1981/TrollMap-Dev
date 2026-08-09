@@ -68,11 +68,17 @@ function minutesBetween(a, b) {
 }
 
 /** Only what the model can use: no raw objects, no half-populated research blobs. */
-function conditionsFrom(inp, ramp, sol) {
+function conditionsFrom(inp, ramp, sol, forecast) {
   const c = { clarity: inp.clarity };
   if (inp.waterTempF) c.waterTempF = inp.waterTempF;
   if (inp.weather) c.forecast = inp.weather;
   if (inp.poolLevel) c.poolLevel = inp.poolLevel;
+  // THE HOURS, NOT THE DAILY MAXIMUM. The prompt asks the model to rule on wind for a 12.5 ft
+  // kayak; a daily max makes a calm dawn and a blown-out noon the same number.
+  if (forecast && forecast.windByHour && forecast.windByHour.length) {
+    c.windByHour = forecast.windByHour;
+  }
+  if (forecast && forecast.sunrise) c.sunrise = forecast.sunrise;
   if (sol) {
     const hh = (h) => `${String(Math.floor(((h % 24) + 24) % 24)).padStart(2, '0')}:`
                     + `${String(Math.round((h % 1) * 60)).padStart(2, '0')}`;
@@ -120,11 +126,14 @@ export async function runSmartPlanV2() {
   // had never been shown. Failure is silent and empty on purpose: no forecast is a worse plan,
   // not a cancelled one.
   say('Checking the forecast…');
-  const forecast = await fetchForecast(inp.lakeName, inp.dateStr);
+  const forecast = await fetchForecast(inp.lakeName, inp.dateStr,
+    { launchTime: inp.launchTime, returnTime: inp.returnTime });
   if (forecast) {
-    inp.weather = forecast;
+    // The line goes in the form field; the HOURS go to the model. A daily maximum cannot answer
+    // "is 06:00 fishable" -- see fetchForecast().
+    inp.weather = forecast.summary;
     const wEl = $('planWeather');
-    if (wEl) wEl.value = forecast;
+    if (wEl) wEl.value = forecast.summary;
   }
 
   // THE RESEARCH PROFILE IS THE POINT OF THE RESEARCH PIPELINE. The first version of this file
@@ -161,7 +170,7 @@ export async function runSmartPlanV2() {
       weights: w.weights, reliefWeights: w.reliefWeights,
       usableAh: usableAhFrom(inp.motor),
       conditions: {
-        ...conditionsFrom(inp, ramp, sol),
+        ...conditionsFrom(inp, ramp, sol, forecast),
         // The model is told where the band came from, so a generic one cannot be mistaken for a
         // lake-specific one by the thing writing the reasoning.
         depthBand: { ft: depth.band, basis: depth.basis, lakeSpecific: !depth.generic },
@@ -219,7 +228,7 @@ export async function runSmartPlanV2() {
     speedMph: built.cards[0] ? built.cards[0].speedMph : 2.0,
     stopCandidates: built.stopCandidates,
     scoutReport: built.rationale,
-    solunar: sol ? `Majors ${conditionsFrom(inp, ramp, sol).solunar.majors.join(', ')}` : '',
+    solunar: sol ? `Majors ${conditionsFrom(inp, ramp, sol, null).solunar.majors.join(', ')}` : '',
     // The two that make this v2's plan rather than a four-phase day: one card per leg, and a
     // timeline the assembler already ordered.
     cardDefs: built.cards, unified: built.timeline,
@@ -239,6 +248,15 @@ export async function runSmartPlanV2() {
   // them. Last writer wins, and the plan should be the last writer.
   const gpx = materialisePlan(r.plan, { launch: ramp, win: window });
   try { renderAll(); } catch (e) { console.warn('[plan-v2] map redraw failed:', e.message); }
+
+  // A safety call made on a daily maximum is a safety call made on the wrong number, and the
+  // plan should say which one it made. Never silently: the model was asked to rule on wind
+  // either way.
+  if (!(forecast && forecast.windByHour && forecast.windByHour.length)) {
+    r.problems = [...(r.problems || []),
+      'no hourly wind for this water — the safety call was made on a daily maximum, '
+      + 'which cannot tell a calm dawn from a blown-out noon'];
+  }
 
   // The warnings go in ABOVE the timeline, after the renderer has written the container --
   // renderSmartPlanUI sets innerHTML, so anything put there first is wiped.

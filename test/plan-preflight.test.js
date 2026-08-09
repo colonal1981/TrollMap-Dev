@@ -1,6 +1,6 @@
 import { describe, it, expect } from './expect-shim.mjs';
 import { readFileSync } from 'node:fs';
-import { checkPlanLegality, fetchForecast, detectCoastalZone } from '../js/modules/plan-preflight.js';
+import { checkPlanLegality, fetchForecast, detectCoastalZone, hourlyWind } from '../js/modules/plan-preflight.js';
 
 // ---------------------------------------------------------------------------
 // Ryan, 2026-08-08, after a day where every layer had something wrong under it:
@@ -41,17 +41,91 @@ describe('plan-preflight — regulations', () => {
 });
 
 describe('plan-preflight — the forecast', () => {
-  it('returns empty rather than throwing when there is no centre to ask about', async () => {
-    expect(await fetchForecast('Nowhere Pond That Has No Entry', '2026-08-08')).toBe('');
+  it('returns nothing rather than throwing when there is no centre to ask about', async () => {
+    // null, not a partly-filled object: a caller cannot tell a missing forecast from a calm
+    // morning otherwise, and one of those is a reason not to trust the safety call.
+    expect(await fetchForecast('Nowhere Pond That Has No Entry', '2026-08-08')).toBe(null);
   });
 
-  it('returns empty rather than throwing when the network is gone', async () => {
+  it('returns nothing rather than throwing when the network is gone', async () => {
     // No forecast is a worse plan, not a cancelled one.
     const realFetch = globalThis.fetch;
     globalThis.fetch = async () => { throw new Error('offline'); };
     try {
-      expect(await fetchForecast('Lake Wateree', '2026-08-08')).toBe('');
+      expect(await fetchForecast('Lake Wateree', '2026-08-08')).toBe(null);
     } finally { globalThis.fetch = realFetch; }
+  });
+
+  // -------------------------------------------------------------------------
+  // THE HOURS, NOT THE DAILY MAXIMUM
+  //
+  // The request asked for `daily=windspeed_10m_max,winddirection_10m_dominant` and flattened it
+  // to one sentence, and the prompt then asks the model to rule on wind safety for a 12.5 ft
+  // kayak against it. A calm 06:00 and a 15 mph noon were the same number. PLAN_SCHEMA_V2 asks
+  // for conditions.windByHour and the app was computing something else and calling it
+  // conditions.
+  // -------------------------------------------------------------------------
+  const HOURLY = {
+    time: Array.from({ length: 24 }, (_, h) => `2026-08-10T${String(h).padStart(2, '0')}:00`),
+    windspeed_10m: Array.from({ length: 24 }, (_, h) => h * 2),          // km/h
+    winddirection_10m: Array.from({ length: 24 }, () => 250),
+    windgusts_10m: Array.from({ length: 24 }, (_, h) => h * 3),
+  };
+
+  it('keeps one entry per hour, converted to mph', () => {
+    const w = hourlyWind(HOURLY);
+    expect(w.length).toBe(24);
+    expect(w[0]).toEqual({ hour: 0, mph: 0, deg: 250, gustMph: 0 });
+    expect(w[10].mph).toBe(Math.round(20 * 0.621371));   // km/h in, mph out
+    expect(w[10].gustMph).toBe(Math.round(30 * 0.621371));
+  });
+
+  it('clips to the trip window — wind at 22:00 is not a fact about a 06:00–15:00 day', () => {
+    const w = hourlyWind(HOURLY, '06:00', '15:00');
+    expect(w[0].hour).toBe(6);
+    expect(w[w.length - 1].hour).toBe(15);
+    expect(w.length).toBe(10);
+  });
+
+  it('survives an API that answers with no hourly block at all', () => {
+    expect(hourlyWind(null)).toEqual([]);
+    expect(hourlyWind({ time: ['2026-08-10T06:00'] })).toEqual([]);   // no speeds — nothing to say
+  });
+
+  it('reads the whole shape off one Open-Meteo answer', async () => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      expect(String(url)).toContain('hourly=windspeed_10m,winddirection_10m');
+      return { ok: true, json: async () => ({
+        daily: { windspeed_10m_max: [24], winddirection_10m_dominant: [250],
+                 precipitation_sum: [0], temperature_2m_max: [33],
+                 sunrise: ['2026-08-10T06:41'], sunset: ['2026-08-10T20:15'] },
+        hourly: HOURLY,
+      }) };
+    };
+    try {
+      // A coastal zone, because it carries its own centre. The lake registry is a Worker feed
+      // and there is no network in here.
+      const f = await fetchForecast('Winyah Bay / Georgetown, SC', '2026-08-10',
+                                    { launchTime: '06:00', returnTime: '15:00' });
+      expect(f.summary).toContain('mph');
+      expect(f.windByHour.length).toBe(10);
+      expect(f.windByHour[0].hour).toBe(6);
+      expect(f.sunrise).toBe('06:41');       // the first leg is a dawn leg
+      expect(f.sunset).toBe('20:15');
+    } finally { globalThis.fetch = realFetch; }
+  });
+});
+
+describe('plan-preflight — the hours reach the model', () => {
+  it('the wiring passes the trip window in and windByHour out', () => {
+    expect(SRC).toContain('launchTime: inp.launchTime, returnTime: inp.returnTime');
+    expect(SRC).toContain('c.windByHour = forecast.windByHour');
+    expect(SRC).toContain('forecast.summary');
+  });
+
+  it('says so when it had to fall back to a daily maximum', () => {
+    expect(SRC).toContain('made on a daily maximum');
   });
 });
 
