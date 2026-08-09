@@ -755,6 +755,7 @@ def annotate(props, coords, grid, cell, annotate_m, depth, lat0):
 # ── one pack ────────────────────────────────────────────────────────────────────────────────
 
 def fit_pack(pack, a):
+    t_pack = time.time()
     slug = os.path.basename(pack.rstrip('/\\'))
     rpath = os.path.join(pack, 'trolling_runs.geojson')
     dpath = os.path.join(pack, 'depth_areas.geojson')
@@ -925,6 +926,7 @@ def fit_pack(pack, a):
         f['properties']['id'] = '%s#%d' % (slug, i)
 
     st.update({'slug': slug, 'out': len(out), 'raster_s': round(t_raster, 1),
+               'pack_s': round(time.time() - t_pack, 1),
                'grid_m': round(depth.step, 1), 'coarsened': round(depth.coarsened, 2),
                'poi_kinds': sorted({q[2] for q in pts})})
     if a.dry_run:
@@ -947,6 +949,15 @@ def fit_pack(pack, a):
         json.dump({'type': 'FeatureCollection', 'features': out}, fh)
     os.replace(tmp, rpath)
     return st
+
+
+def _hms(sec):
+    """Seconds under a minute, m:ss over it. `0.1 min` is six seconds of resolution on a number
+    someone is watching to decide whether to let the card-wide run continue."""
+    sec = float(sec)
+    if sec < 60:
+        return '%.1fs' % sec
+    return '%d:%02d' % (int(sec // 60), int(round(sec % 60)))
 
 
 def ship_only_slugs(registry):
@@ -1057,9 +1068,13 @@ def main():
         tail = ('   corners %5d -> %5d   %.0f%% of fitted length kept'
                 % (r['corners_before'], r['corners_after'], 100.0 * r['m_out'] / r['m_in'])
                 ) if r['fitted'] else '   nothing fitted'
-        print('  %-40s %4d -> %4d runs   fitted %4d  split %3d  thin %3d%s   %.1fs%s'
+        # WALL CLOCK FOR THE PACK, with the raster called out separately. This used to print
+        # `raster_s` alone, which reads as the pack's cost and is not -- on a big lake the raster
+        # is seconds and the fitting is minutes, so the one number shown was the small one.
+        print('  %-40s %4d -> %4d runs   fitted %4d  split %3d  thin %3d%s   %s (raster %.1fs)%s'
               % (s, r['in'], r['out'], r['fitted'], r['split'], r['kept_thin'], tail,
-                 r['raster_s'], '  [grid %.0f m]' % r['grid_m'] if r['coarsened'] > 1.01 else ''))
+                 _hms(r['pack_s']), r['raster_s'],
+                 '  [grid %.0f m]' % r['grid_m'] if r['coarsened'] > 1.01 else ''))
 
     done = [r for r in rows if 'skipped' not in r]
     if done:
@@ -1071,8 +1086,14 @@ def main():
                  sum(r['split'] for r in done)))
         mi = sum(r['m_in'] for r in done)
         mo = sum(r['m_out'] for r in done)
-        print('corners on fitted runs: %d -> %d (%.0f%% removed) in %.1f min'
-              % (cb, ca, 100.0 * (cb - ca) / cb if cb else 0, (time.time() - t0) / 60))
+        el = time.time() - t0
+        slowest = max(done, key=lambda r: r['pack_s'])
+        print('corners on fitted runs: %d -> %d (%.0f%% removed) in %s wall clock'
+              % (cb, ca, 100.0 * (cb - ca) / cb if cb else 0, _hms(el)))
+        print('slowest pack: %s at %s;  median %s;  %s of CPU across %d packs'
+              % (slowest['slug'], _hms(slowest['pack_s']),
+                 _hms(sorted(r['pack_s'] for r in done)[len(done) // 2]),
+                 _hms(sum(r['pack_s'] for r in done)), len(done)))
         print('fitted length: %.0f km in, %.0f km out (%.0f%% kept; the rest was pieces under '
               'the %.0f m minimum leg)' % (mi / 1000, mo / 1000,
                                            100.0 * mo / mi if mi else 100.0, a.min_leg_m))
