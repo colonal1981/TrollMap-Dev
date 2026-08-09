@@ -392,6 +392,30 @@ def main():
             print(f"!! {ip} not found -- the app reads this file; build it with "
                   f"consolidate_lake_index.py before publishing")
 
+        # water_bindings.json -- WHICH GAUGE BELONGS TO WHICH WATER.
+        #
+        # 2026-08-09. Ryan: "you had me register all of the gauges... where did that go". It went
+        # nowhere: build_water_bindings.py matched 105 of the 150 pickable rivers on name AND
+        # geometry, refusing name-only matches, and the file has sat on the drive ever since
+        # because nothing published it. Worker/conditions.js:381 answers every level, flow and
+        # tide request with `pending: needs water_bindings.json`, so the app can only read gauges
+        # for the six rivers hardcoded in Worker/worker-data.js -- six of a hundred and fifty.
+        #
+        # A registry file the app needs and the uploader does not ship is indistinguishable from
+        # work that was never done. lake_index.json above carries the same lesson in its own
+        # comment; this is the second file to learn it.
+        wb = Path(args.registry) / "water_bindings.json"
+        if wb.exists():
+            reg_jobs.append((str(wb), f"{args.prefix}_registry/water_bindings.json",
+                             "_registry", "water_bindings"))
+            _wbd = json.load(open(wb, encoding="utf-8"))
+            _n = len(_wbd.get("bindings") or _wbd) if isinstance(_wbd, dict) else len(_wbd)
+            print(f"gauges:   {_n:,} water bindings -> {args.prefix}_registry/water_bindings.json "
+                  f"({wb.stat().st_size/1024:.0f} KB before gzip)")
+        else:
+            print(f"!! {wb} not found -- gauges, pool level and tide stay pending in the Worker; "
+                  f"build it with build_water_bindings.py")
+
     jobs, skipped, oversize = [], 0, 0
     for d in sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith("_")):
         slug = d.name
