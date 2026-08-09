@@ -136,3 +136,72 @@ describe('the weights actually change which legs get offered', () => {
     expect(onChannel.reliefScore).toBe(DEFAULT_RELIEF_WEIGHTS.channel_edge);
   });
 });
+
+
+// -----------------------------------------------------------------------------------------------
+// "why would i launch at clearwater cove and then go fish the opposite side of the lake in the
+// cove where colonel creek boat ramp is????"  -- Ryan, 2026-08-09
+//
+// Distance from the ramp was in the ranking already, as a discount by TRANSIT SHARE:
+// score / (1 + moveAh/fishAh). But that is a ratio, and a long leg has a large fishAh, so the
+// deadhead is diluted in the denominator -- a 6 km leg four miles out was barely taxed while a
+// 2 km leg the same distance out was taxed hard. Distance from the ramp is not a property of how
+// long the leg is and must not be scaled by it.
+//
+// It is a PREFERENCE, not a filter. The far water is still offered; it just loses to good water
+// nearby. The feasibility cuts (usableAh, windowMin) are separate and still hard.
+// -----------------------------------------------------------------------------------------------
+describe('distance from the ramp is a cost, not just a filter', () => {
+  function run(lon0, lat, pts, hits) {
+    const coords = Array.from({ length: pts }, (_, k) => [lon0 + k * 0.0006, lat]);
+    return { type: 'Feature', geometry: { type: 'LineString', coordinates: coords },
+      properties: { depth_ft: 20, length_m: (pts - 1) * 55, routable: true, relief: 'flat',
+        near: Array.from({ length: hits },
+                         (_, k) => ({ s: 200 + k * 400, t: (k % 2 ? 'hump' : 'point'), d: 25 })) } };
+  }
+  // 2.2 km of water off the ramp, and 6.5 km of BETTER water four miles away.
+  const nearRun = run(-80.720, 34.3800, 41, 6);
+  const farRun = run(-80.760, 34.4400, 120, 16);
+  const opts = { ramp: [-80.73, 34.38], slug: 'w', depthFt: [0, 99], usableAh: 999, windowMin: 9999 };
+
+  it('the far water genuinely scores higher — this is not a fixture that decides itself', () => {
+    const out = selectCandidates([nearRun, farRun], opts);
+    const near = out.find((c) => c.runIndex === 0);
+    const far = out.find((c) => c.runIndex === 1);
+    expect(far.score).toBeGreaterThan(near.score);
+    expect(far.fromRampM).toBeGreaterThan(6000);
+    expect(near.fromRampM).toBeLessThan(1500);
+  });
+
+  it('without the ramp bias the far leg wins, which is the bug', () => {
+    // rampBiasM enormous => proximity ~1 => the ranking as it was before this commit.
+    const out = selectCandidates([nearRun, farRun], { ...opts, rampBiasM: 1e9 });
+    expect(out[0].runIndex).toBe(1);
+  });
+
+  it('with it, the water off the ramp wins', () => {
+    const out = selectCandidates([nearRun, farRun], opts);
+    expect(out[0].runIndex).toBe(0);
+  });
+
+  it('but the far water is still offered, because this is a preference', () => {
+    const out = selectCandidates([nearRun, farRun], opts);
+    expect(out.length).toBe(2);
+    expect(out.some((c) => c.runIndex === 1)).toBe(true);
+  });
+
+  it('carries what it did and why, so the ordering can be argued with', () => {
+    const out = selectCandidates([nearRun, farRun], opts);
+    for (const c of out) {
+      expect(Number.isInteger(c.fromRampM)).toBe(true);
+      expect(c.proximity > 0 && c.proximity <= 1).toBe(true);
+      // the nearer end of the leg, not whichever end the contour happens to start at
+      expect(c.fromRampM).toBe(Math.min(c.transitInM, c.transitOutM));
+    }
+    // and the factor falls off with distance rather than switching
+    const near = out.find((c) => c.runIndex === 0);
+    const far = out.find((c) => c.runIndex === 1);
+    expect(near.proximity).toBeGreaterThan(far.proximity);
+    expect(far.proximity).toBeGreaterThan(0.2);
+  });
+});

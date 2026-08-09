@@ -544,6 +544,21 @@ export function selectCandidates(runs, o) {
   };
   const trollMph = o.trollMph ?? 2.0;
   const transitMph = o.transitMph ?? 3.5;
+  // THIS NUMBER IS A GUESS AND IT NEEDS RYAN'S EYE.
+  //
+  // It is the distance from the ramp at which a leg is worth HALF what the identical leg would be
+  // worth right off the ramp: `proximity = 1 / (1 + fromRampM / rampBiasM)`. At 4 km (2.5 mi) a
+  // leg is worth half, at 1 km about four fifths, at 8 km a third. Nothing measured it -- it is
+  // set where it is because 2.5 miles is the range at which he stopped describing water as
+  // "near the ramp" in the on-the-water notes, and because it puts the Colonel Creek cove (about
+  // 4 miles from Clearwater Cove) at a third of its face value rather than at zero.
+  //
+  // What it is NOT is a feasibility filter -- those are the usableAh and windowMin checks below
+  // and they still cut hard. This is a preference, and it must stay one: if the best water on
+  // the lake genuinely is four miles away it should still be offered, just outranked by good
+  // water nearby. Raise it to flatten the preference, lower it to sharpen it, and if the plans
+  // start hugging the ramp when they should not, that is this number.
+  const rampBiasM = o.rampBiasM ?? 4000;
   const [dMin, dMax] = o.depthFt || [0, Infinity];
   const straight = (a, b) => metresBetween(a, b);
   const transitM = o.transitM || straight;
@@ -580,6 +595,11 @@ export function selectCandidates(runs, o) {
 
     const inM = transitM(o.ramp, start);
     const outM = transitM(end, o.ramp);
+    // HOW FAR THIS WATER IS FROM THE RAMP HE PICKED. The nearer end, because a leg can be run in
+    // either direction and what matters is how far out the water is, not which way the contour
+    // happens to be drawn.
+    const fromRampM = Math.min(inM, outM);
+    const proximity = 1 / (1 + fromRampM / rampBiasM);
     const fishAh = ampHours(win.lengthM, trollMph);
     const moveAh = ampHours(inM + outM, transitMph);
     const totalAh = fishAh + moveAh;
@@ -599,17 +619,28 @@ export function selectCandidates(runs, o) {
       depthFt: p.depth_ft, wholeRun: win.whole,
       start, end, coordinates: line,
       transitInM: Math.round(inM), transitOutM: Math.round(outM),
+      fromRampM: Math.round(fromRampM),
+      proximity: Number(proximity.toFixed(3)),
       batteryAh: Number((fishAh + moveAh).toFixed(2)),
       estMin: Math.round(totalMin),
       score: Number(win.score.toFixed(1)),
       reliefScore,
-      // Rank on structure passed, discounted by how much of the trip is deadhead.
+      // Rank on structure passed, discounted by how much of the trip is deadhead, and again by
+      // how far the water is from the ramp he actually launched at.
       //
       // NOT score/Ah. That was the first version and it ranked 500 m stubs top of the list,
       // because a stub costs almost nothing and any per-cost ratio therefore loves it. The
       // question is not "cheapest per point", it is "most fishing for a day, with the travel
       // taxed" -- so discount by the transit share instead of dividing by total cost.
-      value: Number((win.score / (1 + moveAh / Math.max(0.1, fishAh))).toFixed(2)),
+      //
+      // The transit share alone was not enough, and the plan he took out proves it: launched at
+      // Clearwater Cove, sent across the lake to the cove beside Colonel Creek ramp. "why would i
+      // launch at clearwater cove and then go fish the opposite side of the lake in the cove
+      // where colonel creek boat ramp is????" The transit share is a RATIO -- a long leg has a
+      // large fishAh, which dilutes the deadhead in the denominator, so an 8 km leg four miles
+      // out is barely taxed while a 2 km leg four miles out is taxed hard. Distance from the ramp
+      // is not a property of the leg's length and should not be scaled by it.
+      value: Number((win.score / (1 + moveAh / Math.max(0.1, fishAh)) * proximity).toFixed(2)),
       // Every pass gets an id and, where the lake data can name it, the real structure behind it.
       // The id is what the model returns to ask for a stop -- it can only name something it was
       // handed, which is what makes an invented stop like "Main Lake Point Alpha" impossible
