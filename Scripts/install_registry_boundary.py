@@ -102,6 +102,7 @@ def measure(geoms):
     # and outside the state. The centroid feeds the county lookup that names the lake, so a
     # wrong one is a wrongly-named lake, not just a cosmetic slip.
     moment_area = 0.0
+    ring_centroids = []
     for g in geoms:
         parts += _parts(g)
         for ring, is_hole in _rings(g):
@@ -110,6 +111,8 @@ def measure(geoms):
             if is_hole:
                 continue
             moment_area += a
+            ring_centroids.append((sum(p[0] for p in ring) / len(ring),
+                                   sum(p[1] for p in ring) / len(ring)))
             # Centroid of the ring's own bbox, weighted by ring area. A true polygon
             # centroid on a multipart lake can land on dry ground between two arms; this
             # is only used for display and for the county lookup, and it stays in-bounds.
@@ -121,6 +124,37 @@ def measure(geoms):
             s, n = min(s, rs), max(n, rn)
     if not parts or area <= 0 or moment_area <= 0 or w == float('inf'):
         return None
+
+    # TWO LAKES WITH ONE NAME MUST NOT BECOME ONE LAKE.
+    #
+    # 2026-08-08. `evans_lake` held two polygons 289 km apart -- one near Tifton, one near
+    # Athens. Two different Georgia waters sharing a GNIS name, merged into a single 33-acre row
+    # claiming a 2,014,458-acre bounding box, mapped to five tiles, and cut into one pack from
+    # both. Blair Pond (60 ac, 102 km) and Whiddons Millpond (50 ac, 95 km) are the same failure.
+    #
+    # A lake in several pieces is NORMAL -- 3DHP stores Kentucky Lake as 6 polygons spread over
+    # 101 km. So the test is separation against the square root of the water's OWN area, which
+    # asks "could this water plausibly span that far" rather than "is it in more than one piece".
+    # Kentucky Lake scores 4.2x its own root and passes; Evans Lake scores 780x.
+    #
+    # Refused rather than trimmed, for the same reason the centroid assertion below refuses: the
+    # right answer is two rows with county-distinct names, and only the caller can decide which
+    # piece is which lake. Writing a plausible-looking wrong boundary is the failure mode this
+    # whole function is built to avoid.
+    if len(ring_centroids) >= 2:
+        _lim = max(5.0, 25.0 * math.sqrt(area))
+        _far = 0.0
+        for _i, _a in enumerate(ring_centroids):
+            for _b in ring_centroids[_i + 1:]:
+                _d = math.hypot((_b[1] - _a[1]) * 110.574,
+                                (_b[0] - _a[0]) * 111.320 * math.cos(math.radians((_a[1] + _b[1]) / 2)))
+                _far = max(_far, _d)
+        if _far > _lim:
+            raise AssertionError(
+                'boundary parts %.0f km apart but this water is only %.1f km2 (limit %.0f km) -- '
+                'these are almost certainly two different waters sharing a name. Split them into '
+                'separate slugs with county-distinct names rather than installing the merge.'
+                % (_far, area, _lim))
     lon, lat = cx / moment_area, cy / moment_area
     # A weighted mean of in-bounds points cannot leave the bounds. If it has, the weights
     # and the divisor have come from different sets again -- fail loudly rather than write
