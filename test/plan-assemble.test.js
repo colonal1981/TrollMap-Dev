@@ -3,6 +3,7 @@ import {
   assemblePlan, parseClock, formatClock, planRoute, planCues, validatePlan,
 } from '../js/modules/plan-assemble.js';
 import { structureIndex, resolveStructure, selectCandidates, forModel } from '../js/modules/plan-candidates.js';
+import { metresBetween } from '../js/modules/plan-candidates.js';
 
 // ---------------------------------------------------------------------------
 // Why this test exists
@@ -64,8 +65,17 @@ const B = leg('w#2', -80.6700, -80.6400, 34.3850, [
   { atM: 900, type: 'creek_mouth', what: 'Crooked Creek mouth', depthFt: null },
 ]);
 
+/**
+ * A stand-in for POST /water/{slug}/route. Same straight geometry, so every distance below is
+ * unchanged -- but ROUTED, so the plan is not flagged `unrouted`. Without a transit function the
+ * assembler draws a straight line between two leg ends, marks it, warns, and validatePlan()
+ * lists it: a straight line is water only by luck and on a reservoir it crosses points.
+ */
+const routed = (a, b) => ({ distanceM: metresBetween(a, b), coordinates: [a, b] });
+
 function basePlan(extra = {}) {
   return assemblePlan({
+    transit: routed,
     candidates: [A, B], launch: LAUNCH, loadout: LOADOUT,
     slug: 'wateree_lake', water: 'Lake Wateree, SC', ramp: 'Clearwater Cove',
     launchTime: '06:00', returnTime: '15:00', usableAh: 80,
@@ -336,5 +346,65 @@ describe('plan-candidates — what reaches the model', () => {
   it('leaves depth null when no structure file was supplied, rather than guessing', () => {
     const [c] = selectCandidates(runs, { ramp: LAUNCH, slug: 'w', usableAh: 200, windowMin: 600 });
     expect(c.passes.every((p) => p.depthFt === null && p.structureId === null)).toBe(true);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// TRANSIT IS ROUTED OVER WATER, OR IT SAYS IT IS NOT — 2026-08-09
+//
+// PLAN_SCHEMA_V2 has carried "Transit is still straight-line ... wire waterPath in" as advice
+// through three revisions and it was built in none, so every transit in every plan Ryan has run
+// was a straight line between two leg ends. That understates the amp-hours on a reservoir and it
+// can cross land. Troll legs are safe by provenance -- they are stitched contour geometry out of
+// trolling_runs.geojson -- and transits never were.
+// ---------------------------------------------------------------------------
+describe('plan-assemble — an unrouted transit says so', () => {
+  it('marks a straight line, warns about it, and fails validatePlan', () => {
+    const plan = assemblePlan({
+      candidates: [A, B], launch: LAUNCH, loadout: LOADOUT,
+      slug: 'wateree_lake', water: 'Lake Wateree, SC', ramp: 'Clearwater Cove',
+      launchTime: '06:00', returnTime: '15:00', usableAh: 80,
+    });
+    const transits = plan.legs.filter((l) => l.type === 'transit');
+    expect(transits.length).toBeGreaterThan(0);
+    for (const t of transits) expect(t.unrouted).toBe(true);
+    expect(plan.warnings.some((w) => w.includes('straight line'))).toBe(true);
+    const bad = validatePlan(plan);
+    expect(bad.some((b) => b.includes('not water-routed'))).toBe(true);
+  });
+
+  it('says nothing when the router answered', () => {
+    const plan = basePlan();
+    for (const l of plan.legs) expect(l.unrouted).toBeUndefined();
+    expect(plan.warnings.some((w) => w.includes('straight line'))).toBe(false);
+    expect(validatePlan(plan).length).toBe(0);
+  });
+
+  it('falls back per pair — a router that answers null for one leg marks only that leg', () => {
+    let n = 0;
+    const flaky = (a, b) => (n++ === 0 ? null : routed(a, b));
+    const plan = assemblePlan({
+      transit: flaky,
+      candidates: [A, B], launch: LAUNCH, loadout: LOADOUT,
+      slug: 'wateree_lake', water: 'Lake Wateree, SC', ramp: 'Clearwater Cove',
+      launchTime: '06:00', returnTime: '15:00', usableAh: 80,
+    });
+    const transits = plan.legs.filter((l) => l.type === 'transit');
+    expect(transits[0].unrouted).toBe(true);
+    expect(transits.slice(1).every((t) => t.unrouted === undefined)).toBe(true);
+  });
+
+  it('a routed transit keeps the geometry the router gave it', () => {
+    const bend = [-80.7250, 34.3900];
+    const viaBend = (a, b) => ({ distanceM: metresBetween(a, bend) + metresBetween(bend, b),
+                                 coordinates: [a, bend, b] });
+    const plan = basePlan({ transit: viaBend });
+    const t = plan.legs.find((l) => l.type === 'transit');
+    expect(t.coordinates.length).toBe(3);
+    expect(t.coordinates[1]).toEqual(bend);
+    // The spine still adds up over a longer path -- lengthM is the routed distance, not the
+    // straight one, which is the whole point of routing it.
+    expect(validatePlan(plan).length).toBe(0);
   });
 });

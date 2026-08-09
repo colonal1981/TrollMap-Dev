@@ -1,5 +1,5 @@
 import { describe, it, expect } from './expect-shim.mjs';
-import { buildSmartPlanV2, CANDIDATE_LIMIT } from '../js/modules/smart-plan-v2.js';
+import { buildSmartPlanV2, CANDIDATE_LIMIT, prefetchTransits, waterRouter } from '../js/modules/smart-plan-v2.js';
 
 // ---------------------------------------------------------------------------
 // Why this test exists
@@ -170,3 +170,95 @@ describe('smart-plan-v2 — the whole path with no network', () => {
   });
 });
 
+
+
+// ---------------------------------------------------------------------------
+// THE TRANSITS — 2026-08-09
+//
+// "Transit is still straight-line in both selectCandidates and assemblePlan ... Both take the
+// router as an injected function; wire waterPath from Worker/water.js into them." Carried as
+// advice through three revisions of PLAN_SCHEMA_V2 and built in none: buildSmartPlanV2 was
+// called with no transit at all, so `transit: o.transit` forwarded undefined and every transit
+// in every plan was a straight line between two leg ends. Worker/water.js has answered
+// POST /water/<slug>/route since it was written and nothing in js/ ever called it.
+// ---------------------------------------------------------------------------
+describe('smart-plan-v2 — transits are routed over water, or they say they are not', () => {
+  // Stands in for the Worker: bends every route through one point, so a routed leg is
+  // recognisable by its geometry rather than by a flag the test itself set.
+  const BEND = [-80.7100, 34.4000];
+  const routeWater = async (from, to) => ({
+    distanceM: 500, coordinates: [from, BEND, to],
+  });
+
+  it('routes them when the endpoint answers', async () => {
+    const r = await buildSmartPlanV2({ ...OPTS, askModel: goodModel(), routeWater });
+    const transits = r.plan.legs.filter((l) => l.type === 'transit');
+    expect(transits.length).toBeGreaterThan(0);
+    for (const t of transits) {
+      expect(t.unrouted).toBeUndefined();
+      expect(t.coordinates.some((c) => c[0] === BEND[0] && c[1] === BEND[1])).toBe(true);
+      expect(t.lengthM).toBe(500);
+    }
+    expect(r.problems.some((p) => p.includes('not water-routed'))).toBe(false);
+  });
+
+  it('marks them and says so when there is no router', async () => {
+    const r = await buildSmartPlanV2({ ...OPTS, askModel: goodModel() });
+    const transits = r.plan.legs.filter((l) => l.type === 'transit');
+    expect(transits.every((t) => t.unrouted === true)).toBe(true);
+    // Both halves: the plan's own warning, and validatePlan's problem. Both reach the screen.
+    expect(r.plan.warnings.some((w) => w.includes('straight line'))).toBe(true);
+    expect(r.problems.some((p) => p.includes('not water-routed'))).toBe(true);
+  });
+
+  it('does not fake a route when the router throws', async () => {
+    const r = await buildSmartPlanV2({ ...OPTS, askModel: goodModel(),
+                                       routeWater: async () => { throw new Error('502'); } });
+    expect(r.plan.legs.filter((l) => l.type === 'transit').every((t) => t.unrouted === true)).toBe(true);
+    expect(r.problems.some((p) => p.includes('not water-routed'))).toBe(true);
+  });
+
+  it('asks for exactly the pairs the ordered plan walks, once each', async () => {
+    const asked = [];
+    const cands = [{ start: [-80.72, 34.38], end: [-80.70, 34.38] },
+                   { start: [-80.69, 34.39], end: [-80.66, 34.39] }];
+    const lookup = await prefetchTransits(cands, [-80.73, 34.38], async (a, b) => {
+      asked.push([a, b]);
+      return { distanceM: 42, coordinates: [a, b] };
+    });
+    expect(asked.length).toBe(2);
+    expect(asked[0][0]).toEqual([-80.73, 34.38]);       // launch -> first leg's head
+    expect(asked[1][0]).toEqual([-80.70, 34.38]);       // first leg's tail -> second leg's head
+    expect(lookup([-80.73, 34.38], [-80.72, 34.38]).distanceM).toBe(42);
+    // A pair nobody routed is null, not a guess -- assemblePlan then draws a marked straight line.
+    expect(lookup([0, 0], [1, 1])).toBe(null);
+  });
+
+  it('hands back nothing rather than a half-empty lookup when no pair answered', async () => {
+    expect(await prefetchTransits([{ start: [0, 0], end: [1, 1] }], [2, 2], async () => null)).toBe(null);
+    expect(await prefetchTransits([{ start: [0, 0], end: [1, 1] }], [2, 2], undefined)).toBe(null);
+  });
+
+  it('posts [lon, lat] to /water/{slug}/route and reads the Worker\'s own field names', async () => {
+    const calls = [];
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), body: JSON.parse(init.body), method: init.method });
+      return { ok: true, json: async () => ({ distance_m: 812, coordinates: [[-80.7, 34.3], [-80.6, 34.4]] }) };
+    };
+    try {
+      const out = await waterRouter('https://w.example', 'wateree_lake')([-80.7, 34.3], [-80.6, 34.4]);
+      expect(calls[0].url).toBe('https://w.example/water/wateree_lake/route');
+      expect(calls[0].method).toBe('POST');
+      expect(calls[0].body).toEqual({ from: [-80.7, 34.3], to: [-80.6, 34.4] });
+      expect(out.distanceM).toBe(812);
+      expect(out.coordinates.length).toBe(2);
+    } finally { delete globalThis.fetch; }
+  });
+
+  it('returns null on a 404 — a pack with no water graph is a real state, not a crash', async () => {
+    globalThis.fetch = async () => ({ ok: false, json: async () => ({ error: 'no water graph' }) });
+    try {
+      expect(await waterRouter('https://w.example', 'nowhere')([0, 0], [1, 1])).toBe(null);
+    } finally { delete globalThis.fetch; }
+  });
+});

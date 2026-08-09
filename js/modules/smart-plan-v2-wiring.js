@@ -20,7 +20,7 @@ import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS } from './plan-candidates.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { solunarFor } from '../utils/solunar.js';
 import { checkPlanLegality, fetchForecast } from './plan-preflight.js';
-import { buildSmartPlanV2, packFetcher, modelAsker } from './smart-plan-v2.js';
+import { buildSmartPlanV2, packFetcher, modelAsker, waterRouter } from './smart-plan-v2.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
 import { materialisePlan } from './plan-tracks.js';
@@ -173,6 +173,12 @@ export async function runSmartPlanV2() {
       tackle: castableOrTrollable.map((l) => l.name),
       inventory: castableOrTrollable,
       fetchJson: packFetcher(CF_WORKER_URL),
+      // Transits go over the water graph instead of straight through whatever is in the way.
+      // Worker/water.js has answered POST /water/<slug>/route since it was written and nothing
+      // in the browser had ever called it, so every transit in every plan Ryan has seen was a
+      // straight line between two leg ends. When the endpoint cannot answer, the leg says
+      // `unrouted: true`, the plan warns, and validatePlan() lists it -- it is never faked.
+      routeWater: waterRouter(CF_WORKER_URL, r2Key),
       askModel: async (req) => { say('Asking the model…'); return modelAsker(CF_WORKER_URL)(req); },
     });
   } catch (e) {

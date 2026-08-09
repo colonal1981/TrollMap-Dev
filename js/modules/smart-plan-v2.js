@@ -40,6 +40,10 @@ export const CANDIDATE_LIMIT = 12;
  * @param {function} o.askModel     ({system, user}) => Promise<string>  raw text
  * @param {function} [o.transitM]   (a, b) => metres over water. Straight line if omitted, which
  *                                  UNDERSTATES cost on a reservoir.
+ * @param {function} [o.routeWater] async (from, to) => {distanceM, coordinates} | null, backed by
+ *                                  POST /water/<slug>/route. Without it every transit is a
+ *                                  straight line between two leg ends, which can cross land.
+ * @param {function} [o.transit]    a synchronous transit function, for tests. Wins over routeWater.
  */
 export async function buildSmartPlanV2(o) {
   const base = o.chartpackBase || '';
@@ -104,13 +108,29 @@ export async function buildSmartPlanV2(o) {
   }
 
   const args = planArgsFrom(res, candidates, { tackle: o.tackle, connectionOf });
+
+  // THE TRANSITS ARE ROUTED OVER WATER, OR THEY SAY THEY ARE NOT.
+  //
+  // PLAN_SCHEMA_V2 has carried "Transit is still straight-line ... wire waterPath from
+  // Worker/water.js into them" as advice through three revisions and it was built in none. Every
+  // transit in every shipped plan was a straight line between two leg ends: it understates the
+  // amp-hours on a reservoir, and it can cross land. The Worker has answered this since
+  // Worker/water.js:579 and nothing in js/ had ever called it.
+  //
+  // assemblePlan() is synchronous and its transit hook is synchronous, so the routes are fetched
+  // HERE, up front, for the pairs the ordered plan will ask for -- launch to the first leg's
+  // head, then each leg's tail to the next leg's head. The lookup handed to the assembler is a
+  // plain map read. A pair the router could not answer returns null and the assembler falls back
+  // to a straight line that MARKS ITSELF unrouted; nothing pretends a straight line was routed.
+  const transit = o.transit || await prefetchTransits(args.candidates, o.ramp, o.routeWater);
+
   const plan = assemblePlan({
     ...args,
     launch: o.ramp, slug: o.r2Key, water: o.water, ramp: o.rampName, date: o.date,
     launchTime: o.launchTime, returnTime: o.returnTime,
     species: o.species ? [].concat(o.species) : [],
     conditions: o.conditions, usableAh: o.usableAh,
-    transit: o.transit,
+    transit,
   });
   plan.notes = args.notes;
 
@@ -168,5 +188,65 @@ export function modelAsker(workerUrl, opts = {}) {
       : (raw || data.output_text || '');
     if (!content) throw new Error(`empty content (finish_reason=${data.choices?.[0]?.finish_reason})`);
     return content;
+  };
+}
+
+
+/** Six decimals is ~11 cm — the same point twice always lands on the same key. */
+const pairKey = (a, b) => `${a[0].toFixed(6)},${a[1].toFixed(6)}>${b[0].toFixed(6)},${b[1].toFixed(6)}`;
+
+/**
+ * Fetch every transit the ordered plan will ask for, in parallel, and hand back a synchronous
+ * lookup. Returns null when there is no router or nothing answered, which leaves assemblePlan on
+ * its straight-line fallback — and that fallback marks itself.
+ *
+ * A router that throws or times out is not an error worth failing a plan over: the plan is still
+ * fishable, it just has a transit nobody water-tested, and the leg, the warnings list and
+ * validatePlan() all say so.
+ */
+export async function prefetchTransits(candidates, launch, routeWater) {
+  if (typeof routeWater !== 'function' || !Array.isArray(candidates) || !candidates.length) return null;
+  const pairs = [];
+  let cursor = launch;
+  for (const c of candidates) {
+    if (Array.isArray(cursor) && Array.isArray(c.start)) pairs.push([cursor, c.start]);
+    cursor = c.end;
+  }
+  const routed = new Map();
+  await Promise.all(pairs.map(async ([a, b]) => {
+    try {
+      const r = await routeWater(a, b);
+      if (r && Array.isArray(r.coordinates) && r.coordinates.length >= 2 && Number.isFinite(r.distanceM)) {
+        routed.set(pairKey(a, b), { distanceM: r.distanceM, coordinates: r.coordinates });
+      }
+    } catch (e) {
+      console.warn('[plan-v2] transit not routed:', e.message);
+    }
+  }));
+  if (!routed.size) return null;
+  return (a, b) => routed.get(pairKey(a, b)) || null;
+}
+
+/**
+ * The default water router: POST /water/{slug}/route, the endpoint Worker/water.js has answered
+ * since it was written and that nothing in the browser had ever called.
+ *
+ * Coordinates in and out are [lon, lat], which is what the plan uses everywhere. A 404 means this
+ * pack has no water_graph — a real and common state while an upload catches up — and it is not
+ * distinguished from any other failure here, because the caller's response to all of them is the
+ * same: leave the transit unrouted and say so.
+ */
+export function waterRouter(workerUrl, slug, opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? 12000;
+  return async (from, to) => {
+    const r = await fetch(`${workerUrl}/water/${encodeURIComponent(slug)}/route`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ from, to }),
+      signal: AbortSignal.timeout?.(timeoutMs),
+    });
+    if (!r.ok) return null;
+    const d = await r.json();
+    if (!Array.isArray(d.coordinates) || d.coordinates.length < 2) return null;
+    return { distanceM: Number(d.distance_m) || 0, coordinates: d.coordinates };
   };
 }

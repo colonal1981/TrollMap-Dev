@@ -267,6 +267,13 @@ describe('plan-prompt — turning the answer into assembler arguments', () => {
   });
 });
 
+// A stand-in for POST /water/{slug}/route. Without a transit function the assembler draws a
+// straight line between two leg ends, marks it `unrouted`, and validatePlan() lists it -- which
+// is correct, and not what these tests are about.
+const routedTransit = (a, b) => ({
+  distanceM: Math.hypot((b[0] - a[0]) * 91000, (b[1] - a[1]) * 111320), coordinates: [a, b],
+});
+
 describe('plan-prompt — straight into the assembler', () => {
   it('produces a valid plan with no translation in between', () => {
     const res = {
@@ -280,7 +287,7 @@ describe('plan-prompt — straight into the assembler', () => {
     const args = planArgsFrom(res, CANDS, { tackle: TACKLE, connectionOf });
     const plan = assemblePlan({
       ...args, launch: [-80.73, 34.38], slug: 'w', ramp: 'Clearwater Cove',
-      launchTime: '06:00', returnTime: '15:00', usableAh: 80,
+      launchTime: '06:00', returnTime: '15:00', usableAh: 80, transit: routedTransit,
     });
 
     expect(validatePlan(plan).length).toBe(0);
@@ -334,6 +341,7 @@ describe('plan-prompt — a stop named the lake\'s way still lands', () => {
       stops,
     }, TWO_PASS, { tackle: TACKLE, connectionOf }),
     launch: [-80.73, 34.38], slug: 'w', launchTime: '06:00', returnTime: '15:00', usableAh: 80,
+    transit: routedTransit,
   });
 
   it('resolves a stop that copied structureId instead of id', () => {

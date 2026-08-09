@@ -58,16 +58,22 @@ const FLUORO_RETIE_WARN = 3;
  * @param {object[]} [o.stops]     [{runId, structureId, rods, durationMin, why, presentation,
  *                                 positioning}] — structureId names a pass the app supplied
  * @param {object[]} [o.changes]   [{beforeRunId, rodId, from, to, why}]
- * @param {function} [o.transit]   (fromLonLat, toLonLat) => {distanceM, coordinates}. Straight
- *                                 line if omitted — pass the Worker-backed one for real water
- *                                 routing, which is the whole point of the straightening fix.
+ * @param {function} [o.transit]   (fromLonLat, toLonLat) => {distanceM, coordinates} or null.
+ *                                 MUST be supplied, backed by POST /water/<slug>/route. When it
+ *                                 is missing, or answers null for a pair, the leg is a straight
+ *                                 line, is marked `unrouted: true`, warns, and fails
+ *                                 validatePlan() — a straight line between two leg ends
+ *                                 understates cost on a reservoir and can cross land.
  */
 export function assemblePlan(o) {
   const trollMph = o.trollMph ?? 2.0;
   const transitMph = o.transitMph ?? 3.5;
   const launchMin = parseClock(o.launchTime) ?? 6 * 60;
   const returnMin = parseClock(o.returnTime);
-  const straight = (a, b) => ({ distanceM: metresBetween(a, b), coordinates: [a, b] });
+  // `unrouted` travels with the geometry. Marking it here rather than at the call site is what
+  // makes it impossible to forget: every straight line the assembler produces carries the flag,
+  // whether it came from a missing router or from a router that could not answer this pair.
+  const straight = (a, b) => ({ distanceM: metresBetween(a, b), coordinates: [a, b], unrouted: true });
   const transit = o.transit || straight;
   const candidates = o.candidates || [];
 
@@ -127,13 +133,23 @@ export function assemblePlan(o) {
       const len = Math.round(p.distanceM);
       const mins = minutesFor(p.distanceM, transitMph);
       const a = ampHours(p.distanceM, transitMph);
-      legs.push({
+      const tleg = {
         id: `T${++ti}`, type: 'transit',
         startM: runM, lengthM: len,
         speedMph: transitMph, batteryAh: round2(a),
         estDurationMin: Math.round(mins), estStartTime: formatClock(clock),
         coordinates: p.coordinates,
-      });
+      };
+      // Troll legs are safe by provenance — they are stitched contour geometry out of
+      // trolling_runs.geojson. Transits are not: a straight line between two leg ends is water
+      // only by luck, and on Wateree it crosses points and islands. Say so on the leg and out
+      // loud, rather than drawing it and hoping.
+      if (p.unrouted) {
+        tleg.unrouted = true;
+        warnings.push(`${tleg.id} is a straight line, not a water-routed path — it can cross `
+                    + 'land and it understates the amp-hours');
+      }
+      legs.push(tleg);
       runM += len; transitM += len; ah += a; clock += mins;
     }
 
@@ -308,6 +324,17 @@ export function validatePlan(plan) {
     }
     if (!Array.isArray(leg.coordinates) || leg.coordinates.length < 2) {
       bad.push(`${leg.id} has no geometry`);
+    }
+    // NAVIGABILITY. "A plan is emitted only if every vertex of every leg lies in navigable
+    // water", and "leg" means every entry in plan.legs, transits included. The full test — every
+    // vertex, and every vertex densified at 60 m along a transit, resolved against the pack's
+    // water_graph.bin — lives in Worker/water.js:839-857 and needs the graph, which the browser
+    // does not have. What IS knowable here is provenance: a routed leg came off the graph, an
+    // unrouted one is a straight line nothing water-tested. That is the assertion, and it is not
+    // a stand-in for the vertex test: it is the half that can be made without inventing data.
+    if (leg.unrouted) {
+      bad.push(`${leg.id} is not water-routed — a straight line between two leg ends is never a `
+             + 'valid transit');
     }
   }
   if (plan.budget && plan.budget.totalM !== expect) {
