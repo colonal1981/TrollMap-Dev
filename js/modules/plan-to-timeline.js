@@ -7,26 +7,42 @@
  * version, it looks visually different in smart plan doesn't work with the json, html or preview
  * buttons... it is pretty much an after thought and worse than what i had before by a lot."
  *
- * He was right, and the diagnosis was smaller than the complaint. Preview, Print, ⬇JSON and ⬇HTML
- * never read v2's markup — they read `collectPlan()`, and `collectPlan()` reads
- * `window._smartPlanTimeline`. v2 wrote its own DOM into its own container behind its own button
- * and never touched that global, so it COULD NOT export. It did not need a renderer. It needed to
- * speak the one shape the tab already understands.
+ * Preview, Print, ⬇JSON and ⬇HTML never read v2's markup — they read `collectPlan()`, and
+ * `collectPlan()` reads `window._smartPlanTimeline`. So the plan is converted here into the one
+ * shape the tab already understands, and drawn by the renderer that draws everything else.
  *
- * THE PART THAT IS NOT A SIMPLE TRANSLATION
- * -----------------------------------------
- * `buildUnifiedTimeline()` in smart-plan-ui.js is not a neutral container. It is an out-and-back
- * with exactly four slots — `Ph1 Outbound`, `Ph1 Inbound`, `Ph2 Outbound`, `Ph2 Inbound` — with
- * labels baked in ("Dawn Shallow", "Heading Home"), an `orderMap` over those four keys, and
- * `phaseOrder[trollCursor] || phaseOrder[length-1]`, which quietly stacks every leg past the
- * fourth onto `Ph2 Inbound`.
+ * WHAT CHANGED ON 2026-08-09, AND WHY
+ * -----------------------------------
+ * The first version of this file walked `plan.legs` and keyed everything on time. PLAN_SCHEMA_V2
+ * says the opposite twice:
  *
- * A v2 plan is N legs in an order the model chose, with no outbound and no inbound — rule 3 of the
- * prompt is literally "There is no 'out and back'". Feeding it through four phase slots would
- * throw away the thing v2 was built for. So this module emits the timeline DIRECTLY, one entry per
- * leg, keyed by the leg's own id. Nothing here interleaves: the assembler already placed every
- * stop at its `atM` along its leg, which is the job `buildUnifiedTimeline` was doing by guesswork
- * from `progressPct`.
+ *   "THE PLAN IS INDEXED BY DISTANCE, NOT TIME"
+ *   "planCues(plan) — every stop and change in the order the boat meets them, keyed on distance
+ *    along the day. The timeline and the phone's notifications read this, not the legs directly."
+ *
+ * Ryan's reason for the rule: "every time i catch a fish i am going to slow down or stop
+ * completely so more like it needs to be a distance from thing not a time to thing." The clock
+ * starts drifting the moment he hooks a fish and never catches up.
+ *
+ * The old adapter computed the spine correctly upstream and then deleted it at this boundary. Not
+ * one metre value survived into the timeline, the exported JSON or the HTML. What DID survive was
+ * `routeContext.etaMin` — and it was not even the stop's own position, it was the whole leg's
+ * `estDurationMin` copied onto every stop on that leg, so two stops three kilometres apart
+ * carried the same number and the cards read "~45min in" for both.
+ *
+ * So this version:
+ *
+ *   - takes stop and change order, and every absolute `atM`, from `planCues(plan)`;
+ *   - puts `atM` and `legId` on EVERY entry, and sorts on `atM` and nothing else;
+ *   - emits `changes` as entries. A day with three lure swaps used to ship as a day with none:
+ *     the change objects were built correctly by the assembler and then dropped here;
+ *   - carries `parentLegId` on a stop, and `stopIds` on its leg, because a stop is a pause
+ *     INSIDE a leg. The array is a render ORDER, not a claim that a stop is a peer of a leg;
+ *   - numbers `step` on LEGS ONLY. A stop keeps the schema's own `S<leg>.<n>` identity and is
+ *     never renumbered into a flat sequence;
+ *   - names every time-shaped field `est*`. The prefix exists so no code can treat an estimate
+ *     as authoritative without the name arguing back, and that protection was being lost one hop
+ *     downstream the moment `estDurationMin` was copied into a key called `etaMin`.
  *
  * WHAT READS WHAT (measured, not assumed)
  * ---------------------------------------
@@ -36,6 +52,7 @@
  *   plan-builder.js:264   p.routeRods            <- window._smartPlanRouteRods
  *   plan-builder.js:329   p.rationale            <- window._smartPlanRationale
  *   plan-builder.js:114   p.trolling.phaseSpeeds <- window._smartPlanPhaseRoutes
+ *   smart-plan-ui.js:534  the timeline cards     <- the `unified` argument
  *
  * `_groqPlanTimeline` must be cleared. plan-builder.js:194 falls back to it when the unified
  * timeline is empty and assigns the raw generator timeline straight through — entries with no
@@ -45,15 +62,23 @@
  * Pure. No DOM, no window. The caller installs the result — see smart-plan-v2-wiring.js.
  */
 
+import { planCues } from './plan-assemble.js';
+
 /** Distinct enough to tell apart at a glance, and it repeats rather than running out. */
 const LEG_COLORS = ['#00e5ff', '#00bcd4', '#ffb300', '#ff9800', '#7e57c2', '#26a69a',
                     '#ec407a', '#66bb6a', '#5c6bc0', '#ffa726'];
 const TRANSIT_COLOR = '#78909c';
+const CHANGE_COLOR = '#ffd54f';
 
 const M_PER_MILE = 1609.34;
 
 const miles = (m) => (Number(m) || 0) / M_PER_MILE;
 const clean = (s) => (s == null ? '' : String(s));
+
+/** "1.24 mi" — how far into the day this is. The only sort key, and the only cue the phone needs. */
+export function markMi(atM) {
+  return `${miles(atM).toFixed(2)} mi`;
+}
 
 /**
  * Rod ids to the display shape `rodSlotHtml()` and the preview both read.
@@ -94,17 +119,31 @@ export function planToTimeline(plan, o = {}) {
   const rodsById = new Map(((plan.loadout && plan.loadout.rods) || []).map((r) => [r.id, r]));
   const band = Array.isArray(o.depthBand) && o.depthBand.length === 2 ? o.depthBand : null;
 
-  const timeline = [];
   const routeRods = {};
   const routeSpeeds = {};
   const phaseRoutes = [];
   const cards = [];
   const stopCandidates = [];
+
+  // Legs first, keyed by their own start on the day's spine. `step` counts legs and only legs.
+  const legEntries = [];
+  const legById = new Map();
   let trollN = 0;
 
   for (const leg of plan.legs) {
     const key = leg.id;                                   // 'L3' / 'T2' — unique by construction
     const mi = miles(leg.lengthM);
+    const mark = markMi(leg.startM);
+    legById.set(leg.id, leg);
+
+    const common = {
+      key, legId: leg.id, legType: leg.type,
+      atM: leg.startM, startM: leg.startM, lengthM: leg.lengthM,
+      endM: leg.startM + leg.lengthM,
+      estDurationMin: leg.estDurationMin, estStartTime: leg.estStartTime || null,
+      stats: { distMi: mi.toFixed(1), estTimeMin: leg.estDurationMin },
+      stopIds: (leg.stops || []).map((s) => s.id),
+    };
 
     if (leg.type === 'transit') {
       // TRANSIT IS SHOWN, NOT SWALLOWED. Ryan, on the one part of v2 he did like: "i pretty much
@@ -112,25 +151,27 @@ export function planToTimeline(plan, o = {}) {
       // real distance, and hiding it is how a plan starts lying about the day.
       //
       // It rides in as a `troll` entry because the preview branches `if (e.type === 'troll')` and
-      // renders anything else as a stop row (plan-builder.js:448). A third type would need a
-      // third branch in a file this change is deliberately not touching. No rods, so the card
-      // shows the two dashed "no lure assigned" slots, which is exactly right for a deadhead.
+      // renders anything else as a stop row (plan-builder.js:448). `legType` says what it really
+      // is for anything that wants to know. No rods, so the card shows the two dashed "no lure
+      // assigned" slots, which is exactly right for a deadhead.
       const card = {
-        key, label: `Run — ${mi.toFixed(1)} mi`, shortLabel: `Run ${mi.toFixed(1)}mi`,
+        ...common,
+        label: `Run — ${mi.toFixed(1)} mi`, shortLabel: `Run ${mi.toFixed(1)}mi`,
         icon: '➡️', color: TRANSIT_COLOR,
-        desc: `Deadhead at ${leg.speedMph} mph · ${leg.batteryAh} Ah · ${leg.estDurationMin} min`,
-        longDesc: 'Moving between legs, nothing in the water',
+        desc: `From ${mark} in · deadhead at ${leg.speedMph} mph · ${leg.batteryAh} Ah`
+            + ` · est ${leg.estDurationMin} min`,
+        longDesc: leg.unrouted ? 'Moving between legs — STRAIGHT LINE, not water-routed'
+                               : 'Moving between legs, nothing in the water',
         speedMph: leg.speedMph,
-        stats: { distMi: mi.toFixed(1), timeMin: leg.estDurationMin },
       };
       cards.push(card);
       routeSpeeds[key] = leg.speedMph;
-      timeline.push({
+      legEntries.push({
         ...card, type: 'troll', rods: [],
         depthMin: null, depthMax: null,
         port: '', starboard: '', portColor: '', starboardColor: '',
         portLeadFt: '', starboardLeadFt: '',
-        why: `Transit — ${leg.estStartTime}`, phaseName: card.label,
+        why: card.longDesc, phaseName: card.label,
       });
       continue;
     }
@@ -144,14 +185,13 @@ export function planToTimeline(plan, o = {}) {
     // Both go in, in the place each reads best — the band in the depth column because it IS a
     // band, the leg's line in the description because "trolling the 24 ft line" is the sentence.
     const card = {
-      key, label: `Leg ${trollN} — ${mi.toFixed(1)} mi`, shortLabel: `Leg ${trollN}`,
+      ...common,
+      label: `Leg ${trollN} — ${mi.toFixed(1)} mi`, shortLabel: `Leg ${trollN}`,
       icon: '🎣', color: LEG_COLORS[(trollN - 1) % LEG_COLORS.length],
-      desc: leg.depthFt != null
-        ? `The ${leg.depthFt} ft line · ${leg.speedMph} mph · ${leg.batteryAh} Ah`
-        : `${leg.speedMph} mph · ${leg.batteryAh} Ah`,
+      desc: (leg.depthFt != null ? `The ${leg.depthFt} ft line · ` : '')
+          + `from ${mark} in · ${leg.speedMph} mph · ${leg.batteryAh} Ah`,
       longDesc: clean(leg.why),
       speedMph: leg.speedMph,
-      stats: { distMi: mi.toFixed(1), timeMin: leg.estDurationMin },
     };
     cards.push(card);
     routeRods[key] = rods;
@@ -159,10 +199,10 @@ export function planToTimeline(plan, o = {}) {
     phaseRoutes.push({
       phase: trollN, phaseName: card.label,
       depthMin: band ? band[0] : leg.depthFt, depthMax: band ? band[1] : leg.depthFt,
-      speed: leg.speedMph, window: `${leg.estStartTime}+`,
+      speed: leg.speedMph, estWindow: leg.estStartTime ? `${leg.estStartTime}+` : '',
     });
 
-    timeline.push({
+    legEntries.push({
       ...card, type: 'troll', rods,
       depthMin: band ? band[0] : leg.depthFt,
       depthMax: band ? band[1] : leg.depthFt,
@@ -171,18 +211,34 @@ export function planToTimeline(plan, o = {}) {
       portLeadFt: rods[0] ? rods[0].lead : '', starboardLeadFt: rods[1] ? rods[1].lead : '',
       why: clean(leg.why), phaseName: card.label,
     });
+  }
 
-    // Stops are ALREADY in order along the leg — plan-assemble.js:176 sorts them by `atM` and
-    // renumbers. Nothing to weave.
-    for (const s of (leg.stops || [])) {
+  // Stops and changes come from planCues(), which is the schema's named read interface for
+  // exactly this: "every stop and change in the order the boat meets them, keyed on distance
+  // along the day. The timeline and the phone's notifications read this, not the legs directly."
+  // The cue carries the ORDER and the absolute `atM`; the id resolves back to the object.
+  const stopById = new Map();
+  for (const leg of plan.legs) {
+    for (const s of (leg.stops || [])) stopById.set(s.id, { stop: s, leg });
+  }
+  const changeById = new Map(((plan.changes) || []).map((c) => [c.id, c]));
+  const legAt = (atM) => plan.legs.find((l) => atM >= l.startM && atM <= l.startM + l.lengthM) || null;
+
+  const cueEntries = [];
+  for (const cue of planCues(plan)) {
+    if (cue.kind === 'stop') {
+      const found = stopById.get(cue.ref);
+      if (!found) continue;
+      const { stop: s, leg } = found;
       const at = Array.isArray(s.at) && s.at.length === 2 ? s.at : null;
+      const card = legEntries.find((e) => e.legId === leg.id);
       const entry = {
-        // The leg this stop is on. The v1 shape leaves `key` off stops entirely, which is fine
-        // for the four-phase renderer — it reads `key` only on trolls — but it means a stop in an
-        // exported plan cannot say which leg it belonged to, and v2 has as many legs as the day
-        // needs rather than four named ones. Nothing downstream branches on it for a stop, so
-        // carrying it is free and makes the entry self-describing.
-        key, type: 'stop_and_cast', subType: 'v2', id: s.id,
+        // A STOP IS NOT A PEER OF A LEG. `parentLegId` says which leg it is a pause inside, and
+        // the leg carries `stopIds` back the other way. The array below is a render ORDER.
+        legId: leg.id, parentLegId: leg.id, key: leg.id,
+        type: 'stop_and_cast', subType: 'v2', id: s.id,
+        atM: cue.atM, atLegM: s.atM, mark: markMi(cue.atM),
+        estDurationMin: s.durationMin ?? null,
         name: s.structure || s.structureType || `Structure ${s.id}`,
         targetStructure: clean(s.structureType),
         // v2 refuses to invent a depth for a feature type the packs cannot sound, and that `null`
@@ -202,19 +258,51 @@ export function planToTimeline(plan, o = {}) {
         // `lat` and `lon` must be set together or neither — plan-builder.js:461 guards only on
         // `lat != null` and then calls Number(e.lon).toFixed(4), which turns a null lon into
         // "0.0000" and an undefined one into "NaN".
-        routeContext: { trackName: card.label, etaMin: leg.estDurationMin,
-                        distFromRouteFt: Math.round(s.offM * 3.28084), progressPct: null },
+        //
+        // NO etaMin AND NO progressPct. A notification that fires on the clock while the boat is
+        // still two miles back is the exact failure PLAN_SCHEMA_V2 lists as impossible by design.
+        routeContext: { trackName: card ? card.label : leg.id, legId: leg.id,
+                        atM: cue.atM, atLegM: s.atM, mark: markMi(cue.atM),
+                        distFromRouteFt: Math.round((s.offM || 0) * 3.28084) },
         score: null, reason: clean(s.why), typeDetail: clean(s.structureType),
       };
       if (entry.lat == null || entry.lon == null) { entry.lat = null; entry.lon = null; }
-      timeline.push(entry);
+      cueEntries.push(entry);
       if (entry.lat != null) stopCandidates.push(entry);
+      continue;
     }
+
+    // A CHANGE IS AN EVENT WITH A COST, AND IT USED TO SHIP AS NOTHING AT ALL. The assembler
+    // builds these correctly — the cost is always read off the rod's own rig, never from the
+    // model — and the old adapter never looked at `plan.changes`, so a day with three lure swaps
+    // reached the water as a day with none.
+    const c = changeById.get(cue.ref);
+    if (!c) continue;
+    const leg = legAt(c.atM);
+    cueEntries.push({
+      legId: leg ? leg.id : null, type: 'change', id: c.id,
+      atM: c.atM, mark: markMi(c.atM),
+      rodId: c.rodId, cost: c.cost, from: clean(c.from), to: clean(c.to),
+      why: clean(c.why),
+      label: `${c.rodId} → ${clean(c.to)}`,
+      icon: '🔁', color: CHANGE_COLOR,
+      // A snap is seconds; a fluoro retie is a knot with cold wet hands in a moving kayak. That
+      // difference is the whole reason changes are modelled as events at all.
+      costLabel: c.cost === 'fluoro' ? 'retie — 20 lb fluoro leader' : 'swivel snap',
+    });
   }
 
-  // `step` is rendered literally as `Step ${entry.step}` on every stop card, so a gap shows up as
-  // "Step undefined". 1-based across ALL entries, trolls included.
-  timeline.forEach((e, i) => { e.step = i + 1; });
+  // ONE SORT KEY, AND IT IS DISTANCE. At the same metre: a change happens where the boat is
+  // before the next leg starts, then the leg, then anything sitting on it.
+  const rank = (e) => (e.type === 'change' ? 0 : e.type === 'troll' ? 1 : 2);
+  const timeline = [...legEntries, ...cueEntries]
+    .sort((a, b) => (a.atM - b.atM) || (rank(a) - rank(b)));
+
+  // `step` numbers LEGS ONLY. A stop is not a step of its own — it is a pause inside one, and it
+  // keeps the assembler's `S<leg>.<n>` identity. Renumbering stops into a flat sequence is how
+  // "a stop is a pause INSIDE a leg" turned into "a stop is a step beside one" on every card.
+  let stepN = 0;
+  for (const e of timeline) if (e.type === 'troll') e.step = ++stepN;
 
   // Rods the plan never puts in the water are the ones to rig at the truck. `staged` is set by
   // seatRods() for exactly that: chosen, not deployed.

@@ -41,19 +41,29 @@ const PLAN = {
 describe('plan-to-timeline — a v2 plan in the shape the export path reads', () => {
   const built = planToTimeline(PLAN, { depthBand: [18, 28], rationale: 'shad up on the flats' });
 
-  it('emits every leg and every stop, in plan order', () => {
+  it('emits every leg and every stop, in the order the boat meets them', () => {
     expect(built.timeline.map((e) => e.type))
       .toEqual(['troll', 'stop_and_cast', 'stop_and_cast', 'troll', 'troll']);
-    expect(built.timeline.map((e) => e.step)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('numbers LEGS only — a stop is a pause inside one, not a step beside it', () => {
+    // Was [1,2,3,4,5] across every entry, which made a cast stop "Step 2" and the leg it sits
+    // on "Step 1" — two peers, when the schema says one is inside the other.
+    expect(built.timeline.filter((e) => e.type === 'troll').map((e) => e.step)).toEqual([1, 2, 3]);
+    for (const s of built.timeline.filter((e) => e.type === 'stop_and_cast')) {
+      expect(s.step).toBeUndefined();
+      expect(s.parentLegId).toBe('L1');
+      expect(/^S\d+\.\d+$/.test(s.id)).toBe(true);   // keeps the assembler's own identity
+    }
+    // And the leg points back at them, so a renderer can nest without re-deriving.
+    expect(built.timeline.find((e) => e.key === 'L1').stopIds).toEqual(['S1.1', 'S1.2']);
+    expect(built.timeline.find((e) => e.key === 'L2').stopIds).toEqual([]);
   });
 
   it('gives every entry the fields the renderer interpolates raw', () => {
-    // `color` goes straight into a style attribute (smart-plan-ui.js:515) and `step` is printed
-    // as "Step ${entry.step}" — a missing one renders "undefined44" or "Step undefined".
+    // `color` goes straight into a style attribute (smart-plan-ui.js:515).
     for (const e of built.timeline) {
-      expect(typeof e.step).toBe('number');
-      expect(typeof e.key).toBe('string');
-      expect(e.key.length > 0).toBe(true);
+      expect(typeof e.key === 'string' || e.type === 'change').toBe(true);
     }
     for (const e of built.timeline.filter((x) => x.type === 'troll')) {
       expect(typeof e.color).toBe('string');
@@ -134,5 +144,94 @@ describe('plan-to-timeline — a v2 plan in the shape the export path reads', ()
     expect(planToTimeline(null).timeline).toEqual([]);
     expect(planToTimeline({}).timeline).toEqual([]);
     expect(planToTimeline({ legs: [] }).cards).toEqual([]);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// DISTANCE IS THE SPINE — 2026-08-09
+//
+// PLAN_SCHEMA_V2: "THE PLAN IS INDEXED BY DISTANCE, NOT TIME", and "planCues(plan) ... The
+// timeline and the phone's notifications read this, not the legs directly."
+//
+// The old adapter computed the spine upstream and deleted it here: not one metre value reached
+// the timeline, the JSON or the HTML. What did reach them was `routeContext.etaMin` — the whole
+// LEG's estimated duration, copied onto every stop on that leg, so two stops 3 km apart carried
+// the same number. Ryan's reason for the rule is that the clock starts drifting the moment he
+// hooks a fish and never catches up.
+// ---------------------------------------------------------------------------
+const WITH_CHANGES = {
+  ...PLAN,
+  changes: [
+    { id: 'C1', atM: 2500, rodId: 'R5', cost: 'snap', from: 'Flutter Spoon', to: 'DD1 Crankbait',
+      why: 'fish moved up once the sun hit the bank' },
+    { id: 'C2', atM: 4300, rodId: 'R1', cost: 'fluoro', from: 'DT-6', to: 'A-Rig',
+      why: 'deeper channel edge wants weight' },
+  ],
+};
+
+describe('plan-to-timeline — the distance spine reaches the screen', () => {
+  const built = planToTimeline(WITH_CHANGES, { depthBand: [18, 28] });
+
+  it('puts atM and legId on every derived entry', () => {
+    for (const e of built.timeline) {
+      expect(Number.isFinite(e.atM)).toBe(true);
+      expect(typeof e.legId).toBe('string');
+    }
+  });
+
+  it('places a stop at its own position on the day, not at its leg’s duration', () => {
+    const a = built.timeline.find((e) => e.id === 'S1.1');
+    const b = built.timeline.find((e) => e.id === 'S1.2');
+    expect(a.atM).toBe(900);            // leg L1 starts at 0
+    expect(b.atM).toBe(1600);
+    expect(a.atM === b.atM).toBe(false); // two stops on one leg are not the same cue
+    expect(a.atLegM).toBe(900);
+    expect(a.routeContext.atM).toBe(900);
+    expect(a.mark).toBe('0.56 mi');
+  });
+
+  it('emits changes as entries — a day with two swaps used to ship as a day with none', () => {
+    const changes = built.timeline.filter((e) => e.type === 'change');
+    expect(changes.map((c) => c.id)).toEqual(['C1', 'C2']);
+    expect(changes[0].rodId).toBe('R5');
+    expect(changes[0].to).toBe('DD1 Crankbait');
+    // The cost is never the model's — it is read off the rod's own rig by the assembler. A snap
+    // is seconds; a fluoro retie is a knot with cold wet hands in a moving kayak.
+    expect(changes[1].cost).toBe('fluoro');
+    expect(changes[1].costLabel).toContain('retie');
+  });
+
+  it('sorts on atM and nothing else, with a swap before the leg it precedes', () => {
+    const order = built.timeline.map((e) => e.id || e.key);
+    expect(order).toEqual(['L1', 'S1.1', 'S1.2', 'C1', 'T1', 'C2', 'L2']);
+    let last = -1;
+    for (const e of built.timeline) { expect(e.atM >= last).toBe(true); last = e.atM; }
+  });
+
+  it('forbids the time-shaped key names the est prefix exists to prevent', () => {
+    // "The est prefix travels with the value." estDurationMin -> etaMin -> "~45min" on a stop
+    // card is three legal-looking steps to an authoritative-looking time.
+    const banned = ['eta', 'etaMin', 'timeMin', 'progressPct'];
+    const walk = (o) => {
+      if (!o || typeof o !== 'object') return;
+      for (const k of Object.keys(o)) {
+        expect(banned.includes(k)).toBe(false);
+        walk(o[k]);
+      }
+    };
+    for (const e of built.timeline) walk(e);
+    for (const c of built.cards) walk(c);
+  });
+
+  it('reads planCues(), so a stop the assembler dropped cannot reappear here', () => {
+    // planCues() is the schema's named read interface. Walking plan.legs directly is the one
+    // thing that clause forbids, and it is what put a stop with no atM on the screen.
+    const orphan = { ...WITH_CHANGES, changes: [{ id: 'C9', atM: 99999, rodId: 'R5', cost: 'snap',
+                                                  from: 'x', to: 'y', why: 'off the end' }] };
+    const out = planToTimeline(orphan);
+    const c9 = out.timeline.find((e) => e.id === 'C9');
+    expect(c9.legId).toBe(null);        // no leg contains 99999 m — said, not invented
+    expect(c9.atM).toBe(99999);
   });
 });

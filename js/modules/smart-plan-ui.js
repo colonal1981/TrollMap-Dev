@@ -420,7 +420,10 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
   if (!container) return;
 
   const cards = buildCards(speedMph || 1.8, routeSpeeds, cardDefs);
-  const totalTime = cards.reduce((s, c) => s + (c.stats.timeMin || 0), 0);
+  // `estTimeMin` is v2's; `timeMin` is what v1's getTrackStats() still returns. The `est`
+  // prefix travels with the value -- an estimate that loses its name downstream is an
+  // estimate nothing can argue with.
+  const totalTime = cards.reduce((s, c) => s + (c.stats.estTimeMin ?? c.stats.timeMin ?? 0), 0);
   const totalDist = cards.reduce((s, c) => s + parseFloat(c.stats.distMi || 0), 0);
   const passSpeeds = [...new Set(cards.map((card) => card.speedMph))];
   const speedSummary = passSpeeds.join(' / ');
@@ -538,7 +541,11 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
       const rods = entry.rods || routeRods?.[entry.key] || [];
       const depthLabel = entry.depthMin != null && entry.depthMax != null ? `${entry.depthMin}–${entry.depthMax}ft` : (entry.depthMin ? `${entry.depthMin}ft` : '—');
       const speedLabel = entry.speedMph ? `${entry.speedMph} mph` : `${speedMph} mph`;
-      const statsBadge = entry.stats?.distMi != null ? `${entry.stats.distMi}mi · ${entry.stats.timeMin}min` : '';
+      const estMin = entry.stats?.estTimeMin ?? entry.stats?.timeMin;
+      const statsBadge = entry.stats?.distMi != null ? `${entry.stats.distMi}mi · est ${estMin}min` : '';
+      // Where this leg starts on the day's spine. Distance is the spine; the clock starts
+      // drifting the moment he hooks a fish and never catches up.
+      const markBadge = entry.atM != null ? `${(entry.atM / 1609.34).toFixed(2)} mi in` : '';
       html += `
         <div style="position:relative;background:var(--panel);border:1px solid ${entry.color}44;border-radius:10px;padding:12px 14px;overflow:hidden">
           <div style="position:absolute;left:-16px;top:18px;width:12px;height:12px;border-radius:50%;background:${entry.color};box-shadow:0 0 0 3px var(--panel2),0 0 8px ${entry.color}66"></div>
@@ -554,6 +561,7 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px">
               <span style="font-size:11px;font-weight:700;color:${entry.color};background:${entry.color}18;border:1px solid ${entry.color}44;padding:2px 7px;border-radius:999px">${esc(speedLabel)}</span>
               ${statsBadge ? `<span style="font-size:10px;color:var(--muted)">${esc(statsBadge)}</span>` : ''}
+              ${markBadge ? `<span style="font-size:10px;color:var(--muted)">📏 ${esc(markBadge)}</span>` : ''}
             </div>
           </div>
           <!-- Body meta -->
@@ -587,24 +595,34 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
       }).join('');
       const hasCoords = entry.lat != null && entry.lon != null;
       const ctx = entry.routeContext;
+      // A STOP IS A PAUSE INSIDE A LEG, NOT A STEP BESIDE ONE. It is indented under the leg it
+      // sits on and keeps the assembler's own S<leg>.<n> name -- renumbering stops into the leg
+      // sequence is what made "Step 3" a cast stop and "Step 4" the rest of the leg it is on.
+      const nest = entry.parentLegId ? 'margin-left:22px;' : '';
+      const parentCard = entry.parentLegId ? cards.find(c => c.key === entry.parentLegId) : null;
+      const stopId = entry.id ? String(entry.id) : '';
+      const mark = ctx && ctx.mark ? ctx.mark : (entry.atM != null ? `${(entry.atM / 1609.34).toFixed(2)} mi` : '');
+      const stopLine = [stopId ? `${stopId}${parentCard ? ` on ${parentCard.shortLabel}` : ''}` : '',
+                        mark ? `${mark} in` : '',
+                        entry.targetStructure || entry.typeDetail || 'Structure'].filter(Boolean).join(' · ');
       const geoBadge = hasCoords
         ? `<span style="font-size:10px;color:#ffb300;background:rgba(255,179,0,0.12);border:1px solid rgba(255,179,0,0.25);padding:2px 6px;border-radius:999px">📍 ${Number(entry.lat).toFixed(4)}, ${Number(entry.lon).toFixed(4)}</span>`
         : `<span style="font-size:10px;color:var(--muted);background:rgba(255,255,255,0.04);border:1px solid var(--line);padding:2px 6px;border-radius:999px">No GPS — visual target</span>`;
-      const ctxLine = ctx ? `<span style="font-size:10px;color:#00e5ff;background:rgba(0,229,255,0.12);padding:2px 6px;border-radius:999px;border:1px solid rgba(0,229,255,0.2)">${esc(ctx.trackName)} · ~${ctx.etaMin}min in · ${ctx.distFromRouteFt}ft off</span>` : '';
+      const ctxLine = ctx ? `<span style="font-size:10px;color:#00e5ff;background:rgba(0,229,255,0.12);padding:2px 6px;border-radius:999px;border:1px solid rgba(0,229,255,0.2)">${esc(ctx.trackName)}${ctx.mark ? ` · ${esc(ctx.mark)} in` : ''} · ${ctx.distFromRouteFt}ft off</span>` : '';
       html += `
-        <div style="position:relative;background:linear-gradient(135deg,rgba(255,179,0,0.06),rgba(255,179,0,0.01));border:1px solid rgba(255,179,0,0.28);border-radius:10px;padding:12px 14px;overflow:hidden">
+        <div style="position:relative;${nest}background:linear-gradient(135deg,rgba(255,179,0,0.06),rgba(255,179,0,0.01));border:1px solid rgba(255,179,0,0.28);border-radius:10px;padding:12px 14px;overflow:hidden">
           <div style="position:absolute;left:-16px;top:18px;width:12px;height:12px;border-radius:50%;background:#ffb300;box-shadow:0 0 0 3px var(--panel2),0 0 8px rgba(255,179,0,0.5)"></div>
           <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;flex-wrap:wrap">
             <div style="display:flex;align-items:center;gap:8px">
               <span style="font-size:18px">🎯</span>
               <div>
                 <div style="font-size:12px;font-weight:800;color:#ffb300;letter-spacing:.02em">STOP & CAST — ${esc(entry.name)}</div>
-                <div style="font-size:11px;color:var(--muted)">Step ${entry.step} · ${esc(entry.targetStructure || entry.typeDetail || 'Structure')}</div>
+                <div style="font-size:11px;color:var(--muted)">${esc(stopLine)}</div>
               </div>
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
               <span style="font-size:10px;font-weight:700;color:#ffb300;background:rgba(255,179,0,0.14);padding:3px 7px;border-radius:999px;border:1px solid rgba(255,179,0,0.25);text-transform:uppercase">No Spot-Lock</span>
-              ${hasCoords ? `<span style="font-size:10px;color:#00e5ff;background:rgba(0,229,255,0.12);padding:3px 7px;border-radius:999px;border:1px solid rgba(0,229,255,0.2)">⏱ ${ctx?.etaMin != null ? `~${ctx.etaMin}min` : 'On route'}</span>` : ''}
+              ${hasCoords ? `<span style="font-size:10px;color:#00e5ff;background:rgba(0,229,255,0.12);padding:3px 7px;border-radius:999px;border:1px solid rgba(0,229,255,0.2)">📏 ${esc(mark ? `${mark} in` : 'On route')}</span>` : ''}
             </div>
           </div>
 
@@ -634,6 +652,24 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
             ${ctxLine}
             ${entry.reason ? `<span style="font-size:10px;color:var(--muted);background:rgba(255,255,255,0.03);border:1px solid var(--line);padding:2px 6px;border-radius:999px">${esc(entry.reason).slice(0,120)}</span>` : ''}
           </div>
+        </div>`;
+    } else if (entry.type === 'change') {
+      // A LURE CHANGE IS AN EVENT WITH A COST. These were built correctly by the assembler and
+      // then dropped at the timeline boundary, so a day with three swaps shipped as a day with
+      // none. A snap is seconds; a fluoro retie is a knot with cold wet hands in a moving kayak,
+      // which is why the cost is on the card and not just in the object.
+      const mark = entry.mark || (entry.atM != null ? `${(entry.atM / 1609.34).toFixed(2)} mi` : '');
+      html += `
+        <div style="position:relative;background:rgba(255,213,79,0.05);border:1px dashed rgba(255,213,79,0.4);border-radius:10px;padding:9px 12px">
+          <div style="position:absolute;left:-15px;top:14px;width:10px;height:10px;border-radius:50%;background:${entry.color || '#ffd54f'};box-shadow:0 0 0 3px var(--panel2)"></div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+            <div style="font-size:12px;font-weight:700;color:#ffd54f">🔁 SWAP — ${esc(entry.rodId || '')}: ${esc(entry.from || '—')} → ${esc(entry.to || '')}</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              ${mark ? `<span style="font-size:10px;color:var(--muted)">📏 ${esc(mark)} in</span>` : ''}
+              <span style="font-size:10px;color:#ffd54f;background:rgba(255,213,79,0.12);border:1px solid rgba(255,213,79,0.25);padding:2px 6px;border-radius:999px">${esc(entry.costLabel || entry.cost || '')}</span>
+            </div>
+          </div>
+          ${entry.why ? `<div style="font-size:11px;color:var(--muted);font-style:italic;margin-top:4px">💡 ${esc(entry.why)}</div>` : ''}
         </div>`;
     }
   });

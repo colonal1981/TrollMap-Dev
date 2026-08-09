@@ -126,6 +126,18 @@ export function collectPlan(){
             step: e.step,
             type: e.type,
             key: e.key,
+            // THE SPINE, EXPORTED. Every derived entry carries `atM` and `legId`; without them
+            // the phone cannot answer "what is next" from a GPS position and the exported plan
+            // is a list of times that are wrong by 09:00. `step` numbers legs and only legs.
+            legId: e.legId ?? e.key,
+            legType: e.legType || 'troll',
+            atM: e.atM ?? null,
+            startM: e.startM ?? null,
+            lengthM: e.lengthM ?? null,
+            endM: e.endM ?? null,
+            stopIds: Array.isArray(e.stopIds) ? e.stopIds.slice() : [],
+            estDurationMin: e.estDurationMin ?? null,
+            estStartTime: e.estStartTime ?? null,
             label: e.label,
             shortLabel: e.shortLabel,
             icon: e.icon,
@@ -158,13 +170,37 @@ export function collectPlan(){
               notes: r.notes,
             })),
           };
-        } else {
-          // stop_and_cast
+        } else if (e.type === 'change') {
+          // A lure change is an event with a cost, at a distance. It was built by the assembler
+          // and dropped at the timeline boundary, so a day with three swaps exported as a day
+          // with none.
           return {
-            step: e.step,
+            type: e.type,
+            id: e.id,
+            legId: e.legId ?? null,
+            atM: e.atM ?? null,
+            mark: e.mark || null,
+            rodId: e.rodId,
+            cost: e.cost,
+            costLabel: e.costLabel || null,
+            from: e.from,
+            to: e.to,
+            why: e.why,
+          };
+        } else {
+          // stop_and_cast — a pause INSIDE a leg, so it carries `parentLegId` and no step of its
+          // own. It keeps the assembler's S<leg>.<n> identity rather than being renumbered into
+          // the leg sequence.
+          return {
             type: e.type,
             subType: e.subType,
             id: e.id,
+            legId: e.legId ?? null,
+            parentLegId: e.parentLegId ?? null,
+            atM: e.atM ?? null,
+            atLegM: e.atLegM ?? null,
+            mark: e.mark || null,
+            estDurationMin: e.estDurationMin ?? null,
             name: e.name,
             targetStructure: e.targetStructure,
             targetDepth: e.targetDepth,
@@ -452,6 +488,8 @@ export async function buildPlanPreviewHtml(p){
         const depth = e.depthMin != null && e.depthMax != null ? `${e.depthMin}–${e.depthMax}ft` : (e.depthMin ? `${e.depthMin}ft` : '');
         const rods = (e.rods||[]).map(r=> `${esc(r.side||'')}: ${esc(r.lure||'')} ${esc(r.lead||'')?`@ ${esc(r.lead)}ft`:''}`).join('<br>');
         return `<tr style="background:#eef7ff"><td><b>${icon} TROLL — ${esc(label)}</b><br><span class="rp-small">${esc(e.desc||e.phaseName||'')}</span></td><td>${esc(speed)}<br>${esc(depth)}</td><td class="rp-small">${rods || `${esc(e.port||'')} / ${esc(e.starboard||'')}`}</td><td class="rp-small">${esc(e.why||'')}</td></tr>`;
+      } else if (e.type === 'change') {
+        return `<tr style="background:#fffde7"><td><b>🔁 SWAP — ${esc(String(e.rodId||''))}</b><br><span class="rp-small">${esc(e.mark||'')} in</span></td><td colspan="2">${esc(e.from||'—')} → <b>${esc(e.to||'')}</b><br><span class="rp-small">${esc(e.costLabel||e.cost||'')}</span></td><td class="rp-small">${esc(e.why||'')}</td></tr>`;
       } else {
         const lures = (e.recommendedLures||[]).map(l=> {
           const name = l.name || l.lure || l;
@@ -459,7 +497,7 @@ export async function buildPlanPreviewHtml(p){
           return `${esc(String(name))}${conf}`;
         }).join(', ');
         const coord = e.lat != null ? `${Number(e.lat).toFixed(4)}, ${Number(e.lon).toFixed(4)}` : 'No GPS';
-        return `<tr style="background:#fff8e1"><td><b>🎯 STOP & CAST — ${esc(e.name||'Structure')}</b><br><span class="rp-small">${esc(e.targetStructure||'')} · ${esc(String(e.targetDepth||''))}ft · ${esc(coord)}</span></td><td colspan="2"><b>Presentation:</b> ${esc(e.presentation||'')}<br><b>Casting Baits:</b> ${esc(lures)||'—'}<br><b style="color:#b06a00">Positioning:</b> ${esc(e.tacticalNote||e.positioning||'')}</td><td class="rp-small">${esc(e.reason||'')}${e.routeContext ? `<br>${esc(e.routeContext.trackName)} ~${e.routeContext.etaMin}min` : ''}</td></tr>`;
+        return `<tr style="background:#fff8e1"><td><b>🎯 STOP & CAST — ${esc(e.name||'Structure')}</b><br><span class="rp-small">${esc(e.targetStructure||'')} · ${esc(String(e.targetDepth||''))}ft · ${esc(coord)}</span></td><td colspan="2"><b>Presentation:</b> ${esc(e.presentation||'')}<br><b>Casting Baits:</b> ${esc(lures)||'—'}<br><b style="color:#b06a00">Positioning:</b> ${esc(e.tacticalNote||e.positioning||'')}</td><td class="rp-small">${esc(e.reason||'')}${e.routeContext ? `<br>${esc(e.routeContext.trackName)}${e.routeContext.mark ? ` · ${esc(e.routeContext.mark)} in` : ''}` : ''}</td></tr>`;
       }
     }).join('');
     unifiedPreviewHtml = `
