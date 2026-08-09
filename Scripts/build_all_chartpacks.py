@@ -305,7 +305,28 @@ def main():
 
     want = {s.strip().upper() for s in a.states.split(',')}
     reg = json.load(open(os.path.join(a.registry, 'lakes.json'), encoding='utf-8'))
-    meta = {x['slug']: x for x in reg['lakes'] if (x.get('state') or '').upper() in want}
+
+    def _in_region(x):
+        """A border lake counts on ANY of its states, not just the one its centroid is in.
+
+        2026-08-09, and this is the THIRD place the same line has been wrong: 7ca3f78 fixed it in
+        consolidate_lake_index.py, dae726e in tile_lake_map.py, and it was still here. `state` in
+        lakes.json is the CENTROID's state, so Lake Barkley reads KY, Kerr reads VA, Pickwick and
+        Guntersville read AL -- and each stage that filtered on it dropped them at a different
+        point. The symptom moves as you fix them: first they were missing from the index, then
+        they had no tiles, then --only-lakes reported "0 of 16 requested slugs are in the
+        registry" for slugs that were plainly sitting in lake_index.json.
+
+        Three copies means there will be a fourth, so the real guard is not here -- it is the
+        result-level check in check_registry_invariants.py, which asks whether every row the app
+        offers actually has tiles and a pack. A filter can be wrong in a new file; the result
+        cannot be wrong in a new way.
+        """
+        if (x.get('state') or '').upper() in want:
+            return True
+        return bool(want & {(s or '').upper() for s in (x.get('states') or [])})
+
+    meta = {x['slug']: x for x in reg['lakes'] if _in_region(x)}
     tm = json.load(open(a.map, encoding='utf-8'))
     by_tile, by_lake = tm['by_tile'], tm['by_lake']
 
