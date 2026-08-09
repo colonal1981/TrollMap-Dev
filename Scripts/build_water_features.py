@@ -88,6 +88,24 @@ But Garmin names them. Wateree carries 18 creek- and branch-named POIs with coor
 cove detection already puts a cove beside most of them. So a creek mouth here is a named creek
 POI paired with its nearest cove -- read, not invented.
 
+--SHIP-ONLY, AND WHY THIS IS THE SCRIPT THAT NEEDED IT
+
+Of the three derived-layer builders this is the one that was genuinely burning time on lakes
+nobody will ever download. Measured card-wide 2026-08-09: **1579 packs opened, 1577 written,
+36.2 min**. It runs off `depth_areas.geojson`, which exists in **733 shipping packs and 844
+NON-shipping ones** -- so **844 of those 1577 outputs, more than half the run, are for lakes
+that will never be uploaded**. (`build_structure.py` and `build_trolling_runs.py` need
+`contours.geojson`, which no non-shipping pack has, so they were already bailing out instantly.)
+
+`registry/charted.json` has known which is which the whole time -- **734 of 1732 lakes ship**,
+the other 998 carry a `skipped` reason from `build_all_chartpacks.py` -- and nothing here read
+it. Ryan, 2026-08-09: *"why are we running all of that on stuff that we aren't going to ship."*
+
+`--ship-only` reads it and processes the 733 that ship, which is roughly half the wall clock.
+OFF by default, so an existing command line is unchanged. With the flag set and `charted.json`
+missing or unreadable the script EXITS rather than quietly doing all 1577, which is the failure
+the flag exists to prevent.
+
 NOTE ON `hydrography.geojson`
 
 Despite the name, mode 1/13 is the **water edge**, not creeks: 119 of 125 lines lie entirely
@@ -96,7 +114,7 @@ enclosing 60-87% dry ground, which are islands. That is why enabling "creeks" in
 line around every island. It is the right layer to walk for points and coves; it is the wrong
 name. See HYDROGRAPHY_IS_NOT_CREEKS_2026-08-06.md.
 """
-import argparse, json, math, os, time
+import argparse, json, math, os, sys, time
 from collections import Counter, defaultdict
 
 CELL_M = 25.0
@@ -268,6 +286,32 @@ def points_and_coves(edge_feats, grid, win_m, probe_m, min_bulge_m, sep_m):
 
 # ── per-pack ────────────────────────────────────────────────────────────────────────────────
 
+def ship_only_slugs(registry):
+    """The lakes that actually get uploaded, read from `<registry>/charted.json`.
+
+    `build_all_chartpacks.py` already decided this and wrote it down: a lake ships when its
+    record carries NO `skipped` reason and a non-null `charted`. A skip reason, a null `charted`,
+    or no record at all means it is passed over. Nothing is re-derived here -- a second
+    implementation of the ship test is how the two copies drift apart.
+
+    Unreadable file is fatal on purpose. The whole point of the flag is not doing the work; a
+    quiet fallback to "process everything" would be the failure it exists to prevent.
+    """
+    path = os.path.join(registry, 'charted.json')
+    try:
+        with open(path, encoding='utf-8') as fh:
+            rows = json.load(fh)
+    except (OSError, ValueError) as e:
+        sys.exit('--ship-only: cannot read %s (%s: %s)\n'
+                 '             refusing to run, because without it this processes every pack'
+                 % (path, type(e).__name__, e))
+    if not isinstance(rows, dict) or not rows:
+        sys.exit('--ship-only: %s is not a slug->record map' % path)
+    ship = {k for k, v in rows.items()
+            if isinstance(v, dict) and not v.get('skipped') and v.get('charted') is not None}
+    return ship, len(rows)
+
+
 def load(pack, name):
     p = os.path.join(pack, name)
     if not os.path.isfile(p):
@@ -408,10 +452,32 @@ def main():
     ap.add_argument('--annotate-m', type=float, default=100.0)
     ap.add_argument('--only', default=None)
     ap.add_argument('--report', default=None)
+    ap.add_argument('--registry', default=None,
+                    help='folder holding charted.json. Required by --ship-only; not guessed '
+                         'from --packs, because guessing it wrong is a silent full run.')
+    ap.add_argument('--ship-only', action='store_true',
+                    help='process only the lakes that actually ship, per '
+                         '<registry>/charted.json (734 of 1732 today). Off by default. Exits if '
+                         'charted.json cannot be read rather than quietly processing every '
+                         'pack. An explicit --only <slug> wins over this.')
     a = ap.parse_args()
+    if a.ship_only and not a.registry:
+        ap.error('--ship-only needs --registry (the folder holding charted.json)')
 
     slugs = [d for d in sorted(os.listdir(a.packs))
              if os.path.isdir(os.path.join(a.packs, d)) and (not a.only or d == a.only)]
+    if a.ship_only:
+        if a.only:
+            print('--ship-only: not applied, --only %s names a lake explicitly' % a.only)
+        else:
+            ship, total = ship_only_slugs(a.registry)
+            kept = [s for s in slugs if s in ship]
+            # Say the number out loud. A cap that prints nothing reads as "covered everything".
+            print('--ship-only: %d of %d packs ship; %d passed over'
+                  % (len(ship), total, total - len(ship)))
+            print('             %d of %d packs on disk selected; %d never uploaded, not built'
+                  % (len(kept), len(slugs), len(slugs) - len(kept)))
+            slugs = kept
     print('%d packs' % len(slugs))
     rep, t0 = {}, time.time()
     tot = Counter()
@@ -439,9 +505,28 @@ def main():
                                   '_water_features.json')
     try:
         os.makedirs(os.path.dirname(rp), exist_ok=True)
+        # A ship-only run touches 734 of 1732 lakes. Writing that straight over the card-wide
+        # report leaves a file that reads as a statement about the card but describes half of
+        # it -- the same trap build_trolling_runs.py records for --only. So a ship-only run
+        # updates the rows it touched, leaves the rest alone, and says it was partial. A full
+        # run writes exactly what it always did, key and all.
+        merged = rep
+        if a.ship_only and not a.only and os.path.exists(rp):
+            try:
+                with open(rp, encoding='utf-8') as fh:
+                    prev = json.load(fh)
+                if isinstance(prev.get('lakes'), dict):
+                    merged = dict(prev['lakes'])
+                    merged.update(rep)
+            except (OSError, ValueError):
+                pass              # unreadable previous report is not worth failing over
+        doc = {'lakes': merged}
+        if a.ship_only and not a.only:
+            doc['partial'] = 'ship-only'
         with open(rp, 'w', encoding='utf-8') as fh:
-            json.dump({'lakes': rep}, fh, indent=1)
-        print('-> %s' % rp)
+            json.dump(doc, fh, indent=1)
+        print('-> %s%s' % (rp, '  (merged, %d packs)' % len(merged)
+                           if a.ship_only and not a.only else ''))
     except Exception as e:
         print('could not write report: %s' % e)
 

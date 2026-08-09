@@ -46,6 +46,29 @@ Also worth recording: switching to Garmin contours made hump detection **7.5x be
 Wateree (84 candidates from i-Boating, 632 from Garmin) because closed loops actually close in
 the Garmin decode. All of that gain was being thrown away by the cap.
 
+--SHIP-ONLY, AND WHAT IT ACTUALLY SAVES HERE
+
+`registry/charted.json` carries the ship decision `build_all_chartpacks.py` already made:
+**734 of 1732 lakes ship**, the other 998 hold a `skipped` reason. This walk never read it.
+Ryan, 2026-08-09: *"why are we running all of that on stuff that we aren't going to ship... and
+then only when we get to actually uploading them do we cut out the lakes we already knew we
+weren't going to use."*
+
+Measured before believing it, card-wide 2026-08-09: **1579 packs opened, 590 written, 22.6 min**
+-- and all 590 are already shipping lakes, because `contours.geojson` exists in **590 shipping
+packs and 0 non-shipping ones**. The loop above returns at `no contours` before it computes
+anything. So the 22.6 min was never being spent on lakes we will not upload; what `--ship-only`
+removes today is 989 pointless directory probes, which is seconds.
+
+It is still worth having. The run stops reporting `1579 packs` when it means 590, and the day a
+non-shipping lake gets contours this script will not quietly start building it. The real waste
+is next door in `build_water_features.py`, which does reach 844 non-shipping packs.
+
+OFF by default so an existing command line still means what it always meant, and because the
+decision is not permanent -- a lake that gets bathymetry later has to be rebuilt anyway. With
+the flag set and `charted.json` missing or unreadable the script EXITS; falling back to
+"everything" is the failure the flag exists to prevent.
+
 THE OUTPUT
 
 `<slug>/structure.geojson` -- Points, every candidate, ranked, nothing capped. The client takes
@@ -322,6 +345,32 @@ def read_json(p):
         return None
 
 
+def ship_only_slugs(registry):
+    """The lakes that actually get uploaded, read from `<registry>/charted.json`.
+
+    `build_all_chartpacks.py` already decided this and wrote it down: a lake ships when its
+    record carries NO `skipped` reason and a non-null `charted`. A skip reason, a null `charted`,
+    or no record at all means it is passed over. Nothing is re-derived here -- a second
+    implementation of the ship test is how the two copies drift apart.
+
+    Unreadable file is fatal on purpose. The whole point of the flag is not doing the work; a
+    quiet fallback to "process everything" would be the failure it exists to prevent.
+    """
+    path = os.path.join(registry, 'charted.json')
+    try:
+        with open(path, encoding='utf-8') as fh:
+            rows = json.load(fh)
+    except (OSError, ValueError) as e:
+        sys.exit('--ship-only: cannot read %s (%s: %s)\n'
+                 '             refusing to run, because without it this builds every pack'
+                 % (path, type(e).__name__, e))
+    if not isinstance(rows, dict) or not rows:
+        sys.exit('--ship-only: %s is not a slug->record map' % path)
+    ship = {k for k, v in rows.items()
+            if isinstance(v, dict) and not v.get('skipped') and v.get('charted') is not None}
+    return ship, len(rows)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -330,6 +379,11 @@ def main():
     ap.add_argument('--report')
     ap.add_argument('--only-lakes')
     ap.add_argument('--limit', type=int)
+    ap.add_argument('--ship-only', action='store_true',
+                    help='build only the lakes that actually ship, per <registry>/charted.json '
+                         '(734 of 1732 today). Off by default. Exits if charted.json cannot be '
+                         'read rather than quietly building every pack. --only-lakes names lakes '
+                         'explicitly and wins over this.')
     ap.add_argument('--min-score', type=float, default=0.0,
                     help='drop candidates below this. Default 0 -- ship everything ranked and '
                          'let the client choose, because a cap in the data is a decision made '
@@ -344,6 +398,18 @@ def main():
         elif os.path.exists(src): src = open(src, encoding='utf-8').read()
         want = {s.strip() for s in src.replace('\n', ',').split(',') if s.strip()}
         slugs = [s for s in slugs if s in want]
+    if a.ship_only:
+        if a.only_lakes:
+            print('--ship-only: not applied, --only-lakes already names the lakes to build')
+        else:
+            ship, total = ship_only_slugs(a.registry)
+            kept = [s for s in slugs if s in ship]
+            # Say the number out loud. A cap that prints nothing reads as "covered everything".
+            print('--ship-only: %d of %d packs ship; %d passed over'
+                  % (len(ship), total, total - len(ship)))
+            print('             %d of %d packs on disk selected; %d never uploaded, not built'
+                  % (len(kept), len(slugs), len(slugs) - len(kept)))
+            slugs = kept
     if a.limit: slugs = slugs[:a.limit]
     print('%d packs' % len(slugs))
 
@@ -398,8 +464,11 @@ def main():
     print('   %d humps, %d ledges across every pack' % (th, tl))
     print('   the old adapter would have kept 8 and 8 per lake, in the browser, per research run')
     if a.report:
-        json.dump({'generatedBy': 'build_structure.py', 'note': NOTE, 'lakes': report},
-                  open(a.report, 'w', encoding='utf-8'), indent=1)
+        doc = {'generatedBy': 'build_structure.py', 'note': NOTE, 'lakes': report}
+        # A ship-only run covers 734 of 1732 lakes. Mark it, so a reader does not take this
+        # report for a statement about the whole card. The key is absent on a full run.
+        if a.ship_only and not a.only_lakes: doc['partial'] = 'ship-only'
+        json.dump(doc, open(a.report, 'w', encoding='utf-8'), indent=1)
         print('-> %s' % a.report)
 
 

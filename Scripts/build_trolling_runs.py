@@ -56,8 +56,29 @@ that before it plans a leg there rather than after it fails to find a route.
 halo), or `routable` will be pessimistic. On Wateree,
 9.5% of the graph was severed by dropped sub-block portals until that repair ran; see
 WATER_GRAPHS_WERE_SEVERED_2026-08-06.md.
+
+--SHIP-ONLY, AND WHAT IT ACTUALLY SAVES HERE
+
+`registry/charted.json` says **734 of 1732 lakes ship**; the other 998 carry a `skipped` reason
+from `build_all_chartpacks.py`, and nothing here read it. Ryan, 2026-08-09: *"why are we running
+all of that on stuff that we aren't going to ship... if those lakes ever did get bathymetry we
+would have to do it all over again anyways."*
+
+Measured before believing it: `build_one` returns on its first two lines when a pack has no
+`contours.geojson`, and contours exist in **590 shipping packs and 0 non-shipping ones**. A
+card-wide run therefore never stitched a lake we are not going to upload -- the 989 non-shipping
+packs cost one failed `isfile` each. `--ship-only` makes that selection explicit and keeps it
+true if contours ever land in a pack we are not shipping. It does not make today's run faster.
+
+What makes this script slow is per-lake cost on the lakes that DO ship: **12.4 min for one
+mid-sized lake** (2026-08-09). 590 of those is days, not an overnight run, and no flag here
+fixes it -- that is the stitcher itself, and it is the thing to attack next.
+
+OFF by default, so nothing anyone already runs changes. `--only <slug>` still wins -- naming a
+lake means you want that lake, shipping or not. With the flag set and `charted.json` missing or
+unreadable the script EXITS rather than falling back to the full card.
 """
-import argparse, json, math, os, struct, time
+import argparse, json, math, os, struct, sys, time
 from collections import defaultdict
 
 MAGIC = b'TMWG'
@@ -598,6 +619,32 @@ def build_one(pack, min_len, simplify, reach_m, annotate_m=100.0,
     return out, stats
 
 
+def ship_only_slugs(registry):
+    """The lakes that actually get uploaded, read from `<registry>/charted.json`.
+
+    `build_all_chartpacks.py` already decided this and wrote it down: a lake ships when its
+    record carries NO `skipped` reason and a non-null `charted`. A skip reason, a null `charted`,
+    or no record at all means it is passed over. Nothing is re-derived here -- a second
+    implementation of the ship test is how the two copies drift apart.
+
+    Unreadable file is fatal on purpose. The whole point of the flag is not doing the work; a
+    quiet fallback to "build everything" would be the failure it exists to prevent.
+    """
+    path = os.path.join(registry, 'charted.json')
+    try:
+        with open(path, encoding='utf-8') as fh:
+            rows = json.load(fh)
+    except (OSError, ValueError) as e:
+        sys.exit('--ship-only: cannot read %s (%s: %s)\n'
+                 '             refusing to run, because without it this builds every pack'
+                 % (path, type(e).__name__, e))
+    if not isinstance(rows, dict) or not rows:
+        sys.exit('--ship-only: %s is not a slug->record map' % path)
+    ship = {k for k, v in rows.items()
+            if isinstance(v, dict) and not v.get('skipped') and v.get('charted') is not None}
+    return ship, len(rows)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -620,12 +667,35 @@ def main():
                          '(default 3, about a foot). Absorbs the step between depth bands.')
     ap.add_argument('--chord-samples', type=int, default=6,
                     help='points tested along each candidate chord (default 6)')
-    ap.add_argument('--only', default=None, help='one slug, for testing')
+    ap.add_argument('--only', default=None, help='one slug, for testing. Wins over --ship-only.')
     ap.add_argument('--report', default=None)
+    ap.add_argument('--registry', default=None,
+                    help='folder holding charted.json. Required by --ship-only; not guessed '
+                         'from --packs, because guessing it wrong is a silent full run.')
+    ap.add_argument('--ship-only', action='store_true',
+                    help='build only the lakes that actually ship, per <registry>/charted.json '
+                         '(734 of 1732 today). Off by default. Exits if charted.json cannot be '
+                         'read rather than quietly building every pack. An explicit --only '
+                         '<slug> names a lake and wins over this.')
     a = ap.parse_args()
+    if a.ship_only and not a.registry:
+        ap.error('--ship-only needs --registry (the folder holding charted.json)')
 
     slugs = [d for d in sorted(os.listdir(a.packs))
              if os.path.isdir(os.path.join(a.packs, d)) and (not a.only or d == a.only)]
+    ship_filtered = bool(a.ship_only) and not a.only
+    if a.ship_only:
+        if a.only:
+            print('--ship-only: not applied, --only %s names a lake explicitly' % a.only)
+        else:
+            ship, total = ship_only_slugs(a.registry)
+            kept = [s for s in slugs if s in ship]
+            # Say the number out loud. A cap that prints nothing reads as "covered everything".
+            print('--ship-only: %d of %d packs ship; %d passed over'
+                  % (len(ship), total, total - len(ship)))
+            print('             %d of %d packs on disk selected; %d never uploaded, not built'
+                  % (len(kept), len(slugs), len(slugs) - len(kept)))
+            slugs = kept
     print('%d packs' % len(slugs))
 
     report, t0 = {}, time.time()
@@ -695,8 +765,12 @@ def main():
         # reader would find 1,560 packs. Same shape as the graphs report going stale: a partial
         # run must update the rows it touched and leave the rest alone, or the report quietly
         # becomes a claim about the card that is true of one lake.
+        #
+        # --ship-only is partial for exactly the same reason: it touches 734 of 1732 lakes, so
+        # it merges and marks itself too. A full run is unaffected -- `partial` stays null.
+        partial_run = bool(a.only) or ship_filtered
         merged = report
-        if a.only and os.path.exists(rp):
+        if partial_run and os.path.exists(rp):
             try:
                 with open(rp, encoding='utf-8') as fh:
                     prev = json.load(fh)
@@ -707,9 +781,10 @@ def main():
                 pass                      # unreadable previous report is not worth failing over
         with open(rp, 'w', encoding='utf-8') as fh:
             json.dump({'minLenM': a.min_len_m, 'simplifyM': a.simplify_m,
-                       'reachM': a.reach_m, 'partial': bool(a.only) or None,
+                       'reachM': a.reach_m,
+                       'partial': ('ship-only' if ship_filtered else bool(a.only)) or None,
                        'lakes': merged}, fh, indent=1)
-        print('-> %s%s' % (rp, '  (merged, %d packs)' % len(merged) if a.only else ''))
+        print('-> %s%s' % (rp, '  (merged, %d packs)' % len(merged) if partial_run else ''))
     except Exception as e:
         print('could not write report: %s' % e)
 
