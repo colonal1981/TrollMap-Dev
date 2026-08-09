@@ -17,7 +17,7 @@
  * the seams between six modules stay honest.
  */
 
-import { selectCandidates, structureIndex, forModel } from './plan-candidates.js';
+import { selectCandidates, structureIndex, forModel, orientLegs } from './plan-candidates.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom } from './plan-prompt.js';
 import { assemblePlan, validatePlan } from './plan-assemble.js';
 import { connectionFor } from '../data/lure-knowledge.js';
@@ -208,9 +208,17 @@ export async function prefetchTransits(candidates, launch, routeWater) {
   if (typeof routeWater !== 'function' || !Array.isArray(candidates) || !candidates.length) return null;
   const pairs = [];
   let cursor = launch;
-  for (const c of candidates) {
-    if (Array.isArray(cursor) && Array.isArray(c.start)) pairs.push([cursor, c.start]);
-    cursor = c.end;
+  // THE SAME ORIENTATION THE ASSEMBLER WILL WALK. A pass can be trolled either way and the app
+  // picks which (orientLegs, plan-candidates.js) — so this cannot assume start → end. It did, and
+  // the moment the assembler started flipping legs the prefetched pair no longer matched the pair
+  // it asked for: `routed.get()` missed, the transit fell back to a straight line and marked
+  // itself unrouted. Both callers now read the decision from one place rather than each deriving
+  // its own, which is the only way they cannot drift apart.
+  const facing = orientLegs(candidates, launch);
+  for (const [i, c] of candidates.entries()) {
+    const f = facing[i] || { start: c.start, end: c.end };
+    if (Array.isArray(cursor) && Array.isArray(f.start)) pairs.push([cursor, f.start]);
+    cursor = f.end;
   }
   // AND THE PAIR HOME. assemblePlan() asks for the last leg's tail back to the ramp now that the
   // route home is a real leg, and a pair nobody prefetched comes back null -- which would leave

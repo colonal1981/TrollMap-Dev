@@ -1,6 +1,6 @@
 import { describe, it, expect } from './expect-shim.mjs';
 import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS, selectCandidates, overlapFraction, forModel,
-  metresBetween } from '../js/modules/plan-candidates.js';
+  metresBetween, orientLegs } from '../js/modules/plan-candidates.js';
 import { structureWeights, RESEARCH_LEAD } from '../js/modules/plan-inputs.js';
 
 // ---------------------------------------------------------------------------
@@ -315,15 +315,32 @@ describe('the gap between consecutive legs is measured and handed over', () => {
     }
   });
 
-  it('the distance is END of this leg to START of that one, because that is what the boat travels',
-    () => {
-      const out = selectCandidates([A, B], opts);
-      const [a, b] = out;
-      expect(a.transitToM[b.runId]).toBe(Math.round(metresBetween(a.end, b.start)));
-      expect(b.transitToM[a.runId]).toBe(Math.round(metresBetween(b.end, a.start)));
-      // Directional on purpose: A→B and B→A are different hops and generally different lengths.
-      expect(a.transitToM[b.runId] === b.transitToM[a.runId]).toBe(false);
-    });
+  // REWRITTEN 2026-08-09. This used to pin `a.end → b.start` and say, in as many words, that the
+  // number was directional "because that is what the boat travels". That stopped being true the
+  // day orientLegs() landed: a pass is a depth contour and fishes both ways, so the app picks the
+  // direction and the boat travels whichever hop that choice produces.
+  //
+  // The obvious replacement — the smallest of the four end-pairings — is WRONG and is asserted
+  // against below. A leg's two ends are not independent: the end you enter by fixes the end you
+  // leave by, and the day still has to get home. Measured on the plan of 2026-08-09, the four-way
+  // minimum between L1 and L2 was 1442 m while every realisable ordering paid at least 5357, so
+  // that shortcut would quote two pieces of water five kilometres apart as neighbours.
+  it('the distance is the hop the APP WILL ACTUALLY PAY, once it has chosen the directions', () => {
+    const out = selectCandidates([A, B], opts);
+    const [a, b] = out;
+    for (const [x, y] of [[a, b], [b, a]]) {
+      const [fx, fy] = orientLegs([x, y], opts.ramp);
+      expect(x.transitToM[y.runId]).toBe(Math.round(metresBetween(fx.end, fy.start)));
+    }
+    // Never below what a real route can achieve. The four-way minimum is a lower bound the boat
+    // cannot reach, and quoting it would make sprawling days look cheap — the exact complaint
+    // this whole area exists to answer.
+    const floor = (x, y) => Math.min(
+      metresBetween(x.end, y.start), metresBetween(x.end, y.end),
+      metresBetween(x.start, y.start), metresBetween(x.start, y.end));
+    expect(a.transitToM[b.runId]).toBeGreaterThanOrEqual(Math.round(floor(a, b)));
+    expect(b.transitToM[a.runId]).toBeGreaterThanOrEqual(Math.round(floor(b, a)));
+  });
 
   it('measures the real gap rather than a token — these two are kilometres apart', () => {
     const out = selectCandidates([A, B], opts);
@@ -342,8 +359,112 @@ describe('the gap between consecutive legs is measured and handed over', () => {
     const out = selectCandidates([A, B], opts);
     const m = forModel(out[0]);
     expect(m.transitToM[out[1].runId]).toBe(out[0].transitToM[out[1].runId]);
-    // and the way home, which the day pays once and which the ordering also decides
+    // And the way home, which the day pays once. AS DRAWN, and deliberately not the nearer end:
+    // on a single leg the direction cannot save a metre — the boat leaves the ramp and comes back
+    // to it, so it pays in + out either way and only the order of the two changes. Taking the
+    // minimum here while `transitFromRampM` still quoted the other end would describe a day
+    // cheaper at both ends than any route that exists.
     expect(m.transitToRampM).toBe(out[0].transitOutM);
     expect(m.transitFromRampM).toBe(out[0].transitInM);
+  });
+});
+
+
+// -----------------------------------------------------------------------------------------------
+// WHICH WAY ROUND EACH PASS GETS TROLLED — 2026-08-09
+//
+// Ryan, off the water, on fishing_plan 5: "the distance trolling is significantly less than the
+// time transiting in this plan." Measured off it: fishingM 4750, transitM 7318 — 61% of the day
+// deadheading — and T3 alone was 6313 m, 3.9 miles, getting home from where the last leg happened
+// to end.
+//
+// It ended there for no reason at all. A trolling pass is a depth contour and fishes both ways;
+// the direction was simply whichever way the geometry got stitched in the chartpack months
+// earlier. selectCandidates already knew this and ranked with `Math.min(inM, outM)` — the comment
+// is still there saying "a leg can be run in either direction" — and the assembler ignored it and
+// ran start → end every time.
+//
+// So the direction is the APP's now, and the order stays the model's. That split is the whole
+// point: order is a fishing call about light and time of day, direction is travel arithmetic.
+// See claude/WHAT_SMARTPLAN_IS_2026-08-09.md.
+// -----------------------------------------------------------------------------------------------
+describe('the app chooses which way round each pass is trolled', () => {
+  // A ramp, and one leg drawn running AWAY from it. Trolled as drawn the boat crosses the whole
+  // leg to reach its head, fishes back past the ramp, and then has to come all the way home.
+  const RAMP = [-80.73, 34.38];
+
+  // A ONE-LEG DAY IS AN EXACT TIE, and that is arithmetic rather than a shortcut: the boat leaves
+  // the ramp and comes back to it, so it pays `ramp→one end` plus `other end→ramp` whichever way
+  // round it fishes — the same two distances, added in the other order. Nothing is on the table
+  // until there is a second leg to be well-placed for.
+  //
+  // Pinned for two reasons. The obvious intuition — "surely you start at the near end" — is
+  // wrong, and a future reader who acts on it will make plans worse while believing otherwise.
+  // And this is the tie-break: a `<` comparison must never displace an equal-cost forward state,
+  // or plans sprout `trolledReversed` flags that buy zero metres and send a reader hunting for a
+  // reason that is not there.
+  it('leaves a lone leg exactly as drawn, because the direction cannot buy anything', () => {
+    for (const drawn of [{ start: [-80.68, 34.38], end: [-80.62, 34.38] },      // pointing away
+                         { start: [-80.62, 34.38], end: [-80.68, 34.38] }]) {   // pointing back
+      const [f] = orientLegs([drawn], RAMP);
+      expect(f.flipped).toBe(false);
+      expect(f.start).toEqual(drawn.start);
+      expect(f.end).toEqual(drawn.end);
+    }
+  });
+
+  // THE FIRST LEG FLIPS TOO. Guarding against a fix that only ever looks at the run home: the
+  // expensive thing on 2026-08-09 was the last leg, and it would be easy to build something that
+  // only ever tidies the end of the day. Here the ramp is at the EAST end of leg 1 and leg 2 is
+  // off its west end, so the boat should hop onto leg 1's near end, fish west onto leg 2, and
+  // never cross the same water twice. Drawn as-is it does the whole thing backwards.
+  it('flips the FIRST leg when that is what the rest of the day wants', () => {
+    const legs = [{ start: [-80.70, 34.38], end: [-80.62, 34.38] },
+                  { start: [-80.72, 34.38], end: [-80.74, 34.38] }];
+    const facing = orientLegs(legs, [-80.60, 34.38]);
+    expect(facing[0].flipped).toBe(true);
+    expect(facing[0].start).toEqual([-80.62, 34.38]);
+  });
+
+  // THE ONE A GREEDY RULE GETS WRONG.
+  //
+  // Leg 1 is cheapest to enter at its west end. Leg 2 sits east of it. Taking the cheap entry on
+  // leg 1 leaves the boat at the wrong end for leg 2 and for the ramp, and the day pays for it
+  // twice. Deciding one leg at a time cannot see that; a two-row shortest path over the whole
+  // chain can, and it costs four comparisons per leg to do it properly.
+  it('optimises the whole chain, not one leg at a time', () => {
+    const legs = [{ start: [-80.72, 34.38], end: [-80.70, 34.38] },
+                  { start: [-80.69, 34.39], end: [-80.66, 34.39] }];
+    const facing = orientLegs(legs, RAMP);
+    const total = (fs) => {
+      let d = 0, cursor = RAMP;
+      fs.forEach((f) => { d += metresBetween(cursor, f.start); cursor = f.end; });
+      return d + metresBetween(cursor, RAMP);
+    };
+    const asDrawn = legs.map((c) => ({ flipped: false, start: c.start, end: c.end }));
+    expect(total(facing)).toBeLessThan(total(asDrawn));
+    // and it is the true optimum, checked against all four assignments by brute force
+    const all = [];
+    for (const a of [0, 1]) for (const b of [0, 1]) {
+      all.push(total([a ? { start: legs[0].end, end: legs[0].start } : legs[0],
+                      b ? { start: legs[1].end, end: legs[1].start } : legs[1]]));
+    }
+    expect(Math.round(total(facing))).toBe(Math.round(Math.min(...all)));
+  });
+
+  it('is a pure function of the geometry, so both callers get the same answer', () => {
+    // prefetchTransits() asks the router for pairs and assemblePlan() looks them up. They call
+    // this separately and must not be able to disagree — a mismatch does not throw, it silently
+    // downgrades every flipped transit to an unrouted straight line.
+    const legs = [{ start: [-80.72, 34.38], end: [-80.70, 34.38] },
+                  { start: [-80.69, 34.39], end: [-80.66, 34.39] }];
+    expect(orientLegs(legs, RAMP)).toEqual(orientLegs(legs, RAMP));
+  });
+
+  it('does not throw on an empty list or on a candidate with no ends', () => {
+    expect(orientLegs([], RAMP)).toEqual([]);
+    expect(orientLegs(undefined, RAMP)).toEqual([]);
+    const [f] = orientLegs([{ start: undefined, end: undefined }], RAMP);
+    expect(f.flipped).toBe(false);
   });
 });

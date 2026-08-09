@@ -23,7 +23,7 @@
  * leg this file invents.
  */
 
-import { ampHours, minutesFor, metresBetween, cumulative, pointAt } from './plan-candidates.js';
+import { ampHours, minutesFor, metresBetween, cumulative, pointAt, orientLegs } from './plan-candidates.js';
 
 /** "06:00" → minutes since midnight. */
 export function parseClock(s) {
@@ -190,7 +190,13 @@ export function assemblePlan(o) {
 
   const rods = (o.loadout && o.loadout.rods) || [];
 
-  for (const c of candidates) {
+  // WHICH WAY ROUND EACH PASS IS TROLLED — decided once, in plan-candidates.js, from straight-line
+  // distance only. prefetchTransits() calls the same function on the same list before it asks the
+  // router for anything, so the pairs it fetched are exactly the pairs walked below. If this ever
+  // stops matching, every flipped leg silently degrades to an unrouted straight line.
+  const facing = orientLegs(candidates, o.launch);
+
+  for (const [ci, c] of candidates.entries()) {
     // A lure change happens where the boat is, before the leg starts — so it carries the current
     // cumulative distance, not a time. Cost comes from the rod's rig, not from the model's
     // opinion: a snap is seconds, a fluoro leader is a knot with wet hands. A change naming a rod
@@ -212,8 +218,10 @@ export function assemblePlan(o) {
       });
     }
 
+    const { flipped, start: legStart, end: legEnd } = facing[ci];
+
     // Transit to the head of the leg.
-    const p = joinEnds(transit(cursor, c.start) || straight(cursor, c.start), cursor, c.start);
+    const p = joinEnds(transit(cursor, legStart) || straight(cursor, legStart), cursor, legStart);
     if (p.distanceM > 1) {
       const len = Math.round(p.distanceM);
       const mins = minutesFor(p.distanceM, transitMph);
@@ -279,7 +287,11 @@ export function assemblePlan(o) {
       }
       stops.push({
         id: `S${li + 1}.${stops.length + 1}`,
-        atM: hit.atM,
+        // `hit.atM` is metres along the line AS DRAWN. Trolled the other way, the same piece of
+        // structure sits the same distance from the OTHER end — so the mark has to be mirrored or
+        // every stop on a flipped leg lands at its own reflection. `at` is a coordinate and does
+        // not move; only the distance along does.
+        atM: flipped ? Math.max(0, Math.round(c.lengthM - hit.atM)) : hit.atM,
         at: hit.at,
         structureId: hit.structureId,          // hump_2 / ledge_57, when the lake data names it
         structureRef: hit.id,                  // what the model asked for
@@ -320,7 +332,13 @@ export function assemblePlan(o) {
       batteryAh: round2(a),
       estDurationMin: Math.round(mins + stopMin), estStartTime: formatClock(clock),
       why: c.why ?? null,
-      coordinates: c.coordinates || [c.start, c.end],
+      // Drawn the way it will be RUN. The GPX, the map and the phone's "what is next" all read
+      // this array in order, so a flipped leg whose geometry still ran the other way would draw
+      // the boat backwards along its own track.
+      coordinates: flipped
+        ? (c.coordinates ? c.coordinates.slice().reverse() : [legStart, legEnd])
+        : (c.coordinates || [legStart, legEnd]),
+      trolledReversed: flipped || undefined,
       stops,
       // Reported, never scored. See catchSupport() in plan-candidates.js for why this is kept
       // out of the ranking, and why the resolution is "in this pocket" and not "on this line".
@@ -331,7 +349,7 @@ export function assemblePlan(o) {
         : undefined,
     });
     runM += legLen; fishingM += legLen; ah += a; clock += mins + stopMin;
-    cursor = c.end;
+    cursor = legEnd;
   }
 
   // ── THE ROUTE HOME ───────────────────────────────────────────────────────────────────────────

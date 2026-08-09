@@ -59,6 +59,75 @@ export function metresBetween(a, b) {
   return 2 * R * Math.asin(Math.sqrt(x));
 }
 
+/**
+ * WHICH WAY ROUND EACH PASS GETS TROLLED.
+ *
+ * Ryan, 2026-08-09, on a day that fished 4.7 km and drove 7.3, of which 6.3 was the single run
+ * home: "the distance trolling is significantly less than the time transiting in this plan".
+ *
+ * A trolling pass is fishable in BOTH directions — it is a depth contour, not a one-way street —
+ * and until now the direction was whichever way the geometry happened to have been stitched in
+ * the pack. selectCandidates() already knew that and ranked with `Math.min(inM, outM)`, saying so
+ * in as many words; the assembler then ignored it and always ran start → end. So an artefact of
+ * how a contour was drawn decided where the day ended, and one day ended four miles from the ramp.
+ *
+ * THE ORDER STAYS THE MODEL'S. It is a fishing call — light, time of day, which water fishes when
+ * — and it is not this function's business. The DIRECTION is fishing-neutral travel arithmetic,
+ * so the app takes it. That is the same split PLAN_SCHEMA_V2 draws everywhere else: judgement to
+ * the model, computation to the app.
+ *
+ * It is solved exactly rather than greedily. With the order fixed, each leg has two states and
+ * the cost of a state depends only on the one before it, so this is a two-row shortest path and
+ * the optimum falls out in 4n comparisons — cheaper than the greedy lookahead it replaces and
+ * with no case where a locally cheap flip strands the day. The run home is part of the chain,
+ * because it is a real leg now and it was the expensive one.
+ *
+ * STRAIGHT-LINE DISTANCE ON PURPOSE, never the water router. This has to reproduce identically in
+ * prefetchTransits() — which decides which pairs to ask the router for — and in assemblePlan(),
+ * which walks them. Two callers, one answer, no network in between: if the router were consulted
+ * here the two could disagree and every flipped leg would fall back to an unrouted straight line.
+ *
+ * @param {{start:number[], end:number[]}[]} candidates  IN THE ORDER THE MODEL CHOSE
+ * @param {number[]} launch                              [lon, lat] of the ramp
+ * @returns {{flipped:boolean, start:number[], end:number[]}[]}  one per candidate, in order
+ */
+export function orientLegs(candidates, launch) {
+  const legs = Array.isArray(candidates) ? candidates : [];
+  const n = legs.length;
+  if (!n) return [];
+  // A candidate with an end missing cannot be costed and must not throw. Treating the hop as free
+  // leaves it where it was drawn, which is exactly the old behaviour for exactly that leg.
+  const hop = (a, b) => (Array.isArray(a) && Array.isArray(b) ? metresBetween(a, b) : 0);
+  // [ where it starts if forward, where it ends if forward ]. Reversed swaps the two.
+  const enter = (i, o) => (o ? legs[i].end : legs[i].start);
+  const leave = (i, o) => (o ? legs[i].start : legs[i].end);
+
+  const cost = [], from = [];
+  for (let i = 0; i < n; i++) { cost.push([Infinity, Infinity]); from.push([0, 0]); }
+  for (let o = 0; o < 2; o++) cost[0][o] = hop(launch, enter(0, o));
+  for (let i = 1; i < n; i++) {
+    for (let o = 0; o < 2; o++) {
+      for (let p = 0; p < 2; p++) {
+        const t = cost[i - 1][p] + hop(leave(i - 1, p), enter(i, o));
+        if (t < cost[i][o]) { cost[i][o] = t; from[i][o] = p; }
+      }
+    }
+  }
+  let best = 0, bestCost = Infinity;
+  for (let o = 0; o < 2; o++) {
+    const t = cost[n - 1][o] + hop(leave(n - 1, o), launch);
+    if (t < bestCost) { bestCost = t; best = o; }
+  }
+  // Ties go to the drawn direction: `<` never displaces an equal-cost forward state, so a plan
+  // does not sprout `trolledReversed` flags that buy nothing.
+  const chosen = new Array(n);
+  for (let i = n - 1; i >= 0; i--) { chosen[i] = best; best = from[i][best]; }
+  return legs.map((c, i) => {
+    const flipped = chosen[i] === 1;
+    return { flipped, start: flipped ? c.end : c.start, end: flipped ? c.start : c.end };
+  });
+}
+
 /** Cumulative distance along a LineString, so `s` from the pipeline resolves to a coordinate. */
 export function cumulative(coords) {
   const out = [0];
@@ -739,19 +808,36 @@ export function selectCandidates(runs, o) {
   // day's whole 54.02 Ah budget spent on one leg with nothing in the water.
   //
   // So the matrix goes to the model, because the model owns the order. `transitToM[runId]` is
-  // metres from THIS leg's end to THAT leg's start -- directional, because that is exactly what
-  // the assembler will travel: it trolls each candidate start → end and transits between them.
-  // `transitToRampM` closes the day, since the route home is a real leg now and its cost is the
-  // ordering's too.
+  // what it costs to follow THIS leg with THAT one. `transitToRampM` closes the day, since the
+  // route home is a real leg now and its cost is the ordering's too.
+  //
+  // THE HOP THE APP WILL ACTUALLY PAY, not the one the geometry happened to be drawn in. Since
+  // 2026-08-09 the app picks which way round each pass is trolled (orientLegs, above), so quoting
+  // `a.end → b.start` describes a boat that no longer exists: the assembler may well troll `a`
+  // the other way and start `b` from its far end, and the model was ordering the day around a
+  // price it would never be charged.
+  //
+  // So the number comes from orientLegs itself, run on the two-leg day this pair would be. That
+  // matters more than it looks. The tempting shortcut -- take the smallest of the four end
+  // pairings -- is a LOWER BOUND AND NOT REACHABLE, because a leg's two ends are not independent:
+  // the end you enter by decides the end you leave by, and the day still has to get home. On the
+  // plan of 2026-08-09 the four-way minimum for L1→L2 was 1442 m while every realisable ordering
+  // paid at least 5357, so two pieces of water five kilometres apart would have been quoted to
+  // the model as neighbours. That is the same class of mistake as the one being fixed, pointing
+  // the other way, and it is worse: it invites exactly the sprawling day Ryan objected to.
+  //
+  // Running the real chooser on a two-leg day cannot drift from what the assembler does, because
+  // it IS what the assembler does.
   //
   // Only over `kept`, so the keys are exactly the candidates the model is shown and it can never
   // be handed a distance to a leg it may not choose. n <= o.limit (12 in the app), so this is at
-  // most ~144 calls of an already-cheap function.
+  // most ~144 solves of a four-comparison problem.
   for (const a of kept) {
     const to = {};
     for (const b of kept) {
       if (b.runId === a.runId) continue;
-      to[b.runId] = Math.round(transitM(a.end, b.start));
+      const [fa, fb] = orientLegs([a, b], o.ramp);
+      to[b.runId] = Math.round(transitM(fa.end, fb.start));
     }
     a.transitToM = to;
   }
@@ -933,12 +1019,18 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
     depthFt: c.depthFt,
     lengthM: c.lengthM,
     transitFromRampM: c.transitInM,
-    // WHAT THE ORDERING COSTS. `transitToM` is metres of deadhead from the END of this leg to the
-    // START of each other leg it could be followed by; `transitToRampM` is metres from the end of
-    // this leg back to the launch, which the day pays once. The model owns the order
-    // (PLAN_SCHEMA_V2, "MODEL DECIDES: which runId, in which order"), so the model is the thing
-    // that has to see these -- see selectCandidates() for what happens when it does not.
+    // WHAT THE ORDERING COSTS. `transitToM` is metres of deadhead from this leg to each other leg
+    // it could be followed by, priced for the orientation the app will actually choose -- see
+    // selectCandidates() above. The model owns the order (PLAN_SCHEMA_V2, "MODEL DECIDES: which
+    // runId, in which order"), so the model is the thing that has to see these -- and see
+    // selectCandidates() for what happened when it did not.
     transitToM: c.transitToM || undefined,
+    // `transitToRampM` is metres from the end of this leg back to the launch, which the day pays
+    // once. LEFT AS DRAWN ON PURPOSE, even though the app may troll the pass the other way. On a
+    // single leg the direction cannot save a metre: the boat leaves the ramp and returns to it, so
+    // it pays `transitInM + transitOutM` either way round and only the order of the two changes.
+    // Quoting the nearer end here would understate the pair while `transitFromRampM` still quoted
+    // the other -- a day that looks cheaper at both ends than any route can be.
     transitToRampM: c.transitOutM,
     batteryAh: c.batteryAh,
     estMin: c.estMin,

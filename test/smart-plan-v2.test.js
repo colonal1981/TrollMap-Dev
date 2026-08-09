@@ -244,10 +244,20 @@ describe('smart-plan-v2 — transits are routed over water, or they say they are
     // ramp. That third one is the route home, and it became a real leg on 2026-08-09 -- a pair
     // nobody prefetches comes back null, which would leave the one leg he cannot do without as
     // a straight line on every single plan.
+    //
+    // AND THE PAIRS ARE THE ORIENTED ONES. The second leg here is drawn west-to-east, which would
+    // finish the day at [-80.66] and 6519 m from the ramp. Trolled the other way it finishes at
+    // [-80.69] and 3835 m out; the extra 2393 m of getting to its far end first is well under the
+    // 2684 m saved on the way home, so orientLegs() flips it and the day is 291 m shorter. What
+    // matters more than the 291 m is that this function and assemblePlan() now ask the SAME
+    // question of the SAME helper -- when this asked for start → end and the assembler trolled
+    // end → start, the prefetched pair never matched the pair looked up and the transit fell back
+    // to an unrouted straight line.
     expect(asked.length).toBe(3);
     expect(asked[0][0]).toEqual([-80.73, 34.38]);       // launch -> first leg's head
     expect(asked[1][0]).toEqual([-80.70, 34.38]);       // first leg's tail -> second leg's head
-    expect(asked[2]).toEqual([[-80.66, 34.39], [-80.73, 34.38]]);   // last leg's tail -> the ramp
+    expect(asked[1][1]).toEqual([-80.66, 34.39]);       // ...which is its EAST end, because it flips
+    expect(asked[2]).toEqual([[-80.69, 34.39], [-80.73, 34.38]]);   // last leg's tail -> the ramp
     expect(lookup([-80.73, 34.38], [-80.72, 34.38]).distanceM).toBe(42);
     // A pair nobody routed is null, not a guess -- assemblePlan then draws a marked straight line.
     expect(lookup([0, 0], [1, 1])).toBe(null);
