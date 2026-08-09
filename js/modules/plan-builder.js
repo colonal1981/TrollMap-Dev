@@ -1606,11 +1606,12 @@ ${regsRows?`<h2>📋 SC Fishing Regulations — ${esc(lakeForRegs.split(',')[0]|
   A fish you did not mark is a fish this plan can never learn from. The mark is the only thing
   that ties the catch to the water — the leg, the depth, the structure it came off.
   <br><br>
-  <b style="font-size:15px">2 · TWO PHOTOS, IN THIS ORDER, INSIDE 90 SECONDS.</b><br>
-  <b>Fish on the board first. Lure second, on its own.</b> Not the lure in the fish photo —
-  TrollMap pairs the two shots by timestamp, reads species and length off the fish photo, and
-  lets you name the lure yourself while looking at it. Shoot them the other way round or minutes
-  apart and the pairing has to be fixed by hand in review.
+  <b style="font-size:15px">2 · GET THE LURE IN A PHOTO.</b><br>
+  Lay it on the board beside the fish and shoot one frame, or shoot the fish and then the lure
+  separately — either works. <b>What matters is that the lure is on camera before it goes back in
+  the water</b>, because a catch with no lure attached to it can tell the next plan where the fish
+  was and not what took it. Two separate shots inside about 90 seconds get paired by timestamp on
+  their own; one combined shot needs nothing paired at all.
   <br><br>
   <span class="rp-small">Why it is worth the thirty seconds: every marked catch with a named
   lure is one more row that outranks the model next time this water is planned. The research
