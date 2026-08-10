@@ -609,7 +609,7 @@ def _turns_aligned(xy):
 
 
 def split_to_band(xy, depth, floor_dm, ceil_dm, min_leg_m, step_m=10.0, bridge_m=40.0,
-                  bridge_dm=6.0):
+                  bridge_dm=6.0, deep_bridge_m=None, deep_bridge_dm=None):
     """
     Cut the run into the stretches that are ACTUALLY at the depth they claim, and drop the rest.
 
@@ -623,7 +623,43 @@ def split_to_band(xy, depth, floor_dm, ceil_dm, min_leg_m, step_m=10.0, bridge_m
     to the fitter is at or below its own floor for its entire length, so every pass that comes
     out the far side is too. It also replaces the tenth-percentile gate this used to have -- a
     run does not pass or fail as a whole, it contributes the parts of itself that qualify.
+
+    ── THE TWO SIDES ARE NOT THE SAME RULE. 2026-08-10. ──────────────────────────────────────
+
+    This function was the single largest source of fragmentation in the whole pipeline, and
+    nothing else came close. Measured on 60 Wateree contours: about 9% of 10 m samples fall
+    outside the band, but they are SCATTERED SINGLETONS rather than shoals, and the bridge that
+    exists to paper over them spanned 40 m and tolerated 2 ft. So most of them cut anyway. A 4 km
+    run with 36 scattered failures came out as 37 pieces averaging 108 m, and `--min-leg-m` then
+    swept up the debris -- which is why three days were spent arguing about a length threshold
+    that was never the cause.
+
+        bridge 40 m / 2 ft   (as shipped)   752 pieces   median  116 m   482 km kept
+        bridge 150 m / 5 ft                 303 pieces   median  399 m   504 km kept
+        bridge 300 m / 8 ft                 142 pieces   median  964 m   526 km kept
+
+    More water kept AND five times fewer pieces. The fragmentation was pure loss.
+
+    But the two sides of the band are different rules and must not be loosened together:
+
+    THE FLOOR IS A SAFETY RULE. A genuine shoal at bait depth ends a pass, and bridging over one
+    puts baits on the bottom. It stays tight: bridge chart noise, never a shoal.
+
+    THE CEILING IS NOT. Water deeper than a contour's label is no hazard to a kayak, it is just
+    deeper water -- and under the eligibility rule in js/modules/plan-candidates.js, for
+    suspended fish it is exactly where the fish are. Roughly 5% of samples per run exceed the
+    ceiling, and every one of them was cutting a pass in half for no safety reason at all.
+
+    The ceiling still exists, because Ryan's original complaint was real -- "it pulled me too
+    deep... the 16 and 18ft run spends more the day nowhere near 16 or 18ft water" -- but the
+    answer to that is HONESTY, not amputation. The pass carries `shallowest_ft`, `deepest_ft` and
+    `mean_depth_ft`, so a route that drifts to 30 ft can say so and be judged on it. A route
+    labelled "18-30 ft" answers his complaint; a route chopped into eleven pieces does not.
     """
+    if deep_bridge_m is None:
+        deep_bridge_m = bridge_m
+    if deep_bridge_dm is None:
+        deep_bridge_dm = bridge_dm
     even, total = _resample(xy, step_m)
     if total <= 0:
         return []
@@ -648,6 +684,7 @@ def split_to_band(xy, depth, floor_dm, ceil_dm, min_leg_m, step_m=10.0, bridge_m
     # a sampling artefact. A dip of one band is the raster clipping an edge; a dip of four is a
     # shoal, and a shoal ends the pass no matter how narrow it is.
     gap = max(1, int(round(bridge_m / step_m)))
+    deep_gap = max(1, int(round(deep_bridge_m / step_m)))
     dfill = np.where(np.isnan(d), -1.0, d)
     i, n = 0, len(ok)
     while i < n:
@@ -657,9 +694,21 @@ def split_to_band(xy, depth, floor_dm, ceil_dm, min_leg_m, step_m=10.0, bridge_m
         j = i
         while j < n and not ok[j]:
             j += 1
-        if (j - i) <= gap and i > 0 and j < n \
-                and float(dfill[i:j].min()) >= floor_dm - bridge_dm \
-                and float(dfill[i:j].max()) <= ceil_dm + bridge_dm:
+        # WHICH SIDE FAILED DECIDES WHICH BRIDGE APPLIES. A gap that is purely too deep is
+        # allowed a far longer and far more generous span than one that involves shallow water
+        # or uncharted cells, because only the second can put a bait on the bottom. A MIXED gap
+        # -- some too shallow, some too deep -- is treated as shallow: the strict rule wins any
+        # time it is implicated at all.
+        seg = dfill[i:j]
+        nan_here = bool(np.isnan(d[i:j]).any())
+        all_deep = (not nan_here) and bool((seg > ceil_dm).all())
+        if all_deep:
+            fits = (j - i) <= deep_gap and float(seg.max()) <= ceil_dm + deep_bridge_dm
+        else:
+            fits = ((j - i) <= gap
+                    and float(seg.min()) >= floor_dm - bridge_dm
+                    and float(seg.max()) <= ceil_dm + bridge_dm)
+        if fits and i > 0 and j < n:
             ok[i:j] = True
         i = j
     out, i = [], 0
@@ -930,7 +979,9 @@ def fit_pack(pack, a):
         # carrying 13 runs with in-band water in them. The stretch gate is now only "long enough
         # to be worth smoothing"; whether it is a trolling pass is decided on the finished line.
         for stretch in split_to_band(seeded, depth, floor, ceil, a.min_stretch_m,
-                                     bridge_m=a.bridge_m, bridge_dm=a.bridge_dm):
+                                     bridge_m=a.bridge_m, bridge_dm=a.bridge_dm,
+                                     deep_bridge_m=a.deep_bridge_m,
+                                     deep_bridge_dm=a.deep_bridge_dm):
             # BOUND THE POINT COUNT, NOT JUST THE SPACING.
             #
             # At a fixed 25 m, a 12 km stretch is 480 points and the smoother is O(points x
@@ -974,7 +1025,9 @@ def fit_pack(pack, a):
                 # of it that is not in band is cut off. Cheap, and it makes the guarantee a
                 # property of the OUTPUT rather than a claim about the process.
                 pieces.extend(split_to_band(piece, depth, floor, ceil, a.min_leg_m,
-                                            bridge_m=a.bridge_m, bridge_dm=a.bridge_dm))
+                                            bridge_m=a.bridge_m, bridge_dm=a.bridge_dm,
+                                            deep_bridge_m=a.deep_bridge_m,
+                                            deep_bridge_dm=a.deep_bridge_dm))
         if not pieces:
             st['kept_thin'] += 1
             pr['fit_note'] = ('no fitted pass of %.0f m survived: this contour is not %.1f ft '
@@ -1219,6 +1272,17 @@ def main():
     ap.add_argument('--max-cells', type=float, default=40_000_000)
     ap.add_argument('--safety-cells', type=int, default=1)
     ap.add_argument('--deep-bias-m', type=float, default=1.5)
+    # THE DEEP SIDE GETS ITS OWN, MUCH LOOSER PAIR. See split_to_band: a gap that is only too
+    # deep cannot put a bait on the bottom, and cutting on it was the largest single source of
+    # fragmentation in the pipeline. 300 m and 30 dm (about 10 ft) came off the measured sweep on
+    # 60 Wateree contours -- it takes stage one from 752 pieces at a 116 m median to 142 at 964 m
+    # while KEEPING more water, not less. Set them equal to --bridge-m/--bridge-dm to get the old
+    # symmetric behaviour back.
+    ap.add_argument('--deep-bridge-m', type=float, default=300.0,
+                    help='how far a purely-too-deep gap may be bridged; the shallow side uses '
+                         '--bridge-m and stays tight because only it is a safety rule')
+    ap.add_argument('--deep-bridge-dm', type=float, default=30.0,
+                    help='how far past the ceiling a bridged gap may reach')
     ap.add_argument('--bridge-m', type=float, default=40.0,
                     help='a thin patch shorter than this MAY be raster noise, not a shoal')
     ap.add_argument('--bridge-dm', type=float, default=6.0,
