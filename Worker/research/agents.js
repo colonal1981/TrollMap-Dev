@@ -481,7 +481,7 @@ JSON only. Never output a string or array for creelLimits or sizeLimits.`;
   fisheries: {
     label: "Species Intelligence",
     order: 7,
-    system: "You are a fisheries biologist and professional fishing guide. You are given a verified lake profile AND raw text from source documents (fishing guides, reports, agency surveys). Extract seasonal species behavior from BOTH the profile AND the source documents. DEPTH MEANS THE FISH, NOT THE BOTTOM — THIS IS THE MOST IMPORTANT RULE HERE. preferredDepth is the depth BELOW THE SURFACE at which the fish are holding. It is NEVER the depth of the water they are over. Those are different numbers and sources routinely give both: 'suspended at 20 ft over 35 ft of water' means preferredDepth [20,20] and waterDepthFt [35,35]. Record both when both are stated; never collapse them into one range and never substitute one for the other. holding says what the fish are relating to: 'bottom' when they are on or within a few feet of the bottom, 'suspended' when they are up in the water column with open water beneath them, 'both' when a source describes two groups. Bottom-relating and suspended fish at the SAME stated depth call for completely different water, so if the sources do not say, return null for holding rather than inferring it. CONSENSUS RULE: When multiple sources cover the same species/season, use the depth range and structure that appears in the majority of sources. If sources contradict (e.g. 3 say 15-25ft and 1 says 5ft), use the majority position and note the discrepancy in the notes field. Do not average contradicting values — pick the consensus. Do not invent data when sources are silent — return null for that season. Prioritize official agency documents over fishing guide content when they conflict. Do NOT recommend routes, speeds, or specific lure colors. CRITICAL: Only include species listed in the biology.predatorSpecies array. SPECIES NAME RESOLUTION — CRITICAL: Agency documents frequently use GROUP TERMS that cover multiple species. You MUST split these into individual species keys. NEVER use a group term as a JSON key. Group terms and their individual species mappings: 'Black Bass' or 'black bass (largemouth, smallmouth, spotted)' → split into Largemouth Bass, Smallmouth Bass, Spotted Bass individually. 'Catfish (all species)' or 'Catfish' → split into Blue Catfish, Channel Catfish, Flathead Catfish as applicable. 'Crappie (all species)' → split into Crappie (or Black Crappie / White Crappie if individually listed). 'Bream/Sunfish' or 'Bluegill/Warmouth and other sunfishes' → split into Bluegill, Redear Sunfish (Shellcracker), Warmouth as applicable. When a document has a group heading like 'Black Bass' followed by individual species tips (e.g. 'Largemouthbass - Spring: ... Summer: ... Fall: ... Winter: ...'), parse EACH species line separately and assign to the correct individual species key. If generic group-level data has no species-specific breakdown, replicate that data to each individual species from the confirmed list that belongs to that group. NEVER output 'Black Bass', 'Catfish (all species)', or any other group term as a species key — always use the exact individual species name from the confirmed species list. Return JSON only.",
+    system: "You are a fisheries biologist and professional fishing guide. You are given a verified lake profile AND raw text from source documents (fishing guides, reports, agency surveys). Extract seasonal species behavior from BOTH the profile AND the source documents. DEPTH MEANS THE FISH, NOT THE BOTTOM — THIS IS THE MOST IMPORTANT RULE HERE. preferredDepth is the depth BELOW THE SURFACE at which the fish are holding. It is NEVER the depth of the water they are over. Those are different numbers and sources routinely give both: 'suspended at 20 ft over 35 ft of water' means preferredDepth [20,20] and waterDepthFt [35,35]. Record both when both are stated; never collapse them into one range and never substitute one for the other. holding says what the fish are relating to: 'bottom' when they are on or within a few feet of the bottom, 'suspended' when they are up in the water column with open water beneath them, 'both' when a source describes two groups. Bottom-relating and suspended fish at the SAME stated depth call for completely different water, so if the sources do not say, return null for holding rather than inferring it. EVERY SEASON ENTRY MUST CITE THE SENTENCE IT CAME FROM. sourceQuote is the verbatim sentence from a source document or a PARSED OBSERVATION that supports the depth and holding you are reporting. Copy it exactly; do not paraphrase it, do not stitch two sentences together, and do not write a quote that is not in the material you were given. If you are reporting a value from general knowledge of the species rather than from anything in front of you, set sourceQuote to null -- that is a legitimate answer and it is far more useful than an invented citation. A quoted range and a reported range must MATCH: if the sentence says 12 to 22 feet, preferredDepth is [12,22] and not [15,40]. CONSENSUS RULE: When multiple sources cover the same species/season, use the depth range and structure that appears in the majority of sources. If sources contradict (e.g. 3 say 15-25ft and 1 says 5ft), use the majority position and note the discrepancy in the notes field. Do not average contradicting values — pick the consensus. Do not invent data when sources are silent — return null for that season. Prioritize official agency documents over fishing guide content when they conflict. Do NOT recommend routes, speeds, or specific lure colors. CRITICAL: Only include species listed in the biology.predatorSpecies array. SPECIES NAME RESOLUTION — CRITICAL: Agency documents frequently use GROUP TERMS that cover multiple species. You MUST split these into individual species keys. NEVER use a group term as a JSON key. Group terms and their individual species mappings: 'Black Bass' or 'black bass (largemouth, smallmouth, spotted)' → split into Largemouth Bass, Smallmouth Bass, Spotted Bass individually. 'Catfish (all species)' or 'Catfish' → split into Blue Catfish, Channel Catfish, Flathead Catfish as applicable. 'Crappie (all species)' → split into Crappie (or Black Crappie / White Crappie if individually listed). 'Bream/Sunfish' or 'Bluegill/Warmouth and other sunfishes' → split into Bluegill, Redear Sunfish (Shellcracker), Warmouth as applicable. When a document has a group heading like 'Black Bass' followed by individual species tips (e.g. 'Largemouthbass - Spring: ... Summer: ... Fall: ... Winter: ...'), parse EACH species line separately and assign to the correct individual species key. If generic group-level data has no species-specific breakdown, replicate that data to each individual species from the confirmed list that belongs to that group. NEVER output 'Black Bass', 'Catfish (all species)', or any other group term as a species key — always use the exact individual species name from the confirmed species list. Return JSON only.",
     userTemplate: (lakeName, state, prev) => {
       const bio = prev?.biology || prev?.forage || {};
       const confirmedSpecies = Array.isArray(bio.predatorSpecies) ? bio.predatorSpecies : [];
@@ -577,6 +577,10 @@ SCHEMA RULES — every season entry MUST follow this exact structure, no excepti
                                           Take it from a PARSED OBSERVATION whenever one applies
   "waterDepthFt": [minFt, maxFt],      ← depth of the WATER the pattern happens over, when a
                                           source states it. null when it does not. Never omit
+  "sourceQuote": "verbatim sentence",  ← the exact sentence supporting preferredDepth/holding,
+                                          or null if this entry is general species knowledge.
+                                          NEVER invent one. A widened range with a quote that
+                                          does not contain it is worse than no quote at all
   "structures": [],                    ← array of strings, never omit this key
   "forage": [],                        ← array of strings, never omit this key
   "recommendedPresentations": [],      ← array of strings, never omit this key
@@ -595,6 +599,7 @@ Return ONLY:
         "preferredDepth": [12,18],
         "holding": "suspended",
         "waterDepthFt": [25,45],
+        "sourceQuote": "he works the 12- to 22-foot range but said the most-productive depths vary",
         "structures": ["channel ledges","creek mouths","long points"],
         "forage": ["Threadfin Shad"],
         "recommendedPresentations": ["MR Crankbait","DD Crankbait","A-Rig"],
@@ -1232,6 +1237,14 @@ async function handleResearchAgent(request, env) {
 holding: coerceHolding(entry.holding, holdingRejects),
             waterDepthFt: Array.isArray(entry.waterDepthFt) && entry.waterDepthFt.length === 2
               ? entry.waterDepthFt : null,
+            // THE EVIDENCE TRAVELS WITH THE VALUE. An audit of 2026-08-10 found striper summer
+            // reported as [15,40] when the only source in the corpus said "he works the 12- to
+            // 22-foot range" -- and 40 ft is below this lake's own anoxic line. Nothing in the
+            // output showed the drift, because a number with no sentence behind it looks the
+            // same whether it was read or invented. null here means general species knowledge
+            // and is an honest answer; a quote is a checkable one.
+            sourceQuote: typeof entry.sourceQuote === 'string' && entry.sourceQuote.trim()
+              ? entry.sourceQuote.trim().slice(0, 400) : null,
             structures: Array.isArray(entry.structures) ? entry.structures : [],
             forage: Array.isArray(entry.forage) ? entry.forage : [],
             recommendedPresentations: Array.isArray(entry.recommendedPresentations) ? entry.recommendedPresentations : [],
@@ -1459,6 +1472,7 @@ holding: coerceHolding(entry.holding, holdingRejects),
             preferredDepth: entry,
             holding: null,
             waterDepthFt: null,
+            sourceQuote: null,
             structures: [],
             forage: [],
             recommendedPresentations: [],
@@ -1482,6 +1496,14 @@ holding: coerceHolding(entry.holding, holdingRejects),
 holding: coerceHolding(entry.holding, holdingRejects),
             waterDepthFt: Array.isArray(entry.waterDepthFt) && entry.waterDepthFt.length === 2
               ? entry.waterDepthFt : null,
+            // THE EVIDENCE TRAVELS WITH THE VALUE. An audit of 2026-08-10 found striper summer
+            // reported as [15,40] when the only source in the corpus said "he works the 12- to
+            // 22-foot range" -- and 40 ft is below this lake's own anoxic line. Nothing in the
+            // output showed the drift, because a number with no sentence behind it looks the
+            // same whether it was read or invented. null here means general species knowledge
+            // and is an honest answer; a quote is a checkable one.
+            sourceQuote: typeof entry.sourceQuote === 'string' && entry.sourceQuote.trim()
+              ? entry.sourceQuote.trim().slice(0, 400) : null,
             structures: Array.isArray(entry.structures) ? entry.structures : [],
             forage: Array.isArray(entry.forage) ? entry.forage : [],
             recommendedPresentations: Array.isArray(entry.recommendedPresentations) ? entry.recommendedPresentations : [],

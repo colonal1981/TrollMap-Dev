@@ -741,6 +741,20 @@ function formatHumanReadableSection(key, data) {
             const overWater = Array.isArray(s.waterDepthFt)
               ? ` over ${s.waterDepthFt[0]}–${s.waterDepthFt[1]}ft of water` : '';
             const holdColor = s.holding ? 'var(--accent2)' : 'var(--muted)';
+            // THE SENTENCE, OR THE ADMISSION THAT THERE ISN'T ONE.
+            //
+            // Audited 2026-08-10: of 35 populated season entries on Wateree, six traced to a
+            // quotable source. Striper summer read [15,40] while the only document covering it
+            // said "he works the 12- to 22-foot range", and the warmouth and redbreast entries
+            // had no supporting text anywhere — those species appear in the corpus exactly once
+            // each, inside a size-limit table.
+            //
+            // None of that was visible on this card, because a number with no sentence behind it
+            // renders identically whether it was read or invented. So the quote is shown when
+            // there is one, and "no source — species knowledge" when there is not. The second
+            // label is the important one: it is the difference between what this lake's
+            // documents say and what the model knows about fish in general.
+            const cited = typeof s.sourceQuote === 'string' && s.sourceQuote.trim();
             const structs = Array.isArray(s.structures) ? s.structures.slice(0,3).join(', ') : (s.structures || '');
             const forage = Array.isArray(s.forage) ? s.forage.join(', ') : (s.forage || '');
             const pres = Array.isArray(s.recommendedPresentations) ? s.recommendedPresentations.slice(0,2).join(', ') : '';
@@ -752,6 +766,9 @@ function formatHumanReadableSection(key, data) {
               ${forage ? `<div style="font-size:11px">🦟 ${esc(forage)}</div>` : ''}
               ${pres ? `<div style="font-size:11px;color:var(--accent2)">🎣 ${esc(pres)}</div>` : ''}
               ${s.notes ? `<div style="font-size:10px;color:var(--muted);margin-top:3px">${esc(s.notes)}</div>` : ''}
+              ${cited
+                ? `<div style="font-size:10px;color:var(--muted);margin-top:3px;border-left:2px solid var(--accent2);padding-left:5px">“${esc(String(s.sourceQuote).slice(0,180))}”</div>`
+                : `<div style="font-size:10px;color:#c62828;margin-top:3px">⚠ no source — species knowledge, not this lake</div>`}
             </div>`;
           });
           html += `</div></div>`;
