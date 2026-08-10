@@ -12,3 +12,7 @@ wateree_zones_overlay.geojson
 # Python bytecode from Scripts/*.py (coastal_catalog is imported to read zone bboxes)
 __pycache__/
 *.pyc
+
+# Local quarantine. device_bash cannot delete, so files on their way out get MOVED here
+# and deleted by hand later (see claude/DELETION_TAB.md). None of it belongs in the repo.
+_to_delete/
