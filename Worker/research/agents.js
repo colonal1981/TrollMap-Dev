@@ -4,6 +4,7 @@ import { LAKES, lakeKeyFromName } from '../worker-data.js';
 import { fetchStateRegulations, getLakeRegulations,
          fetchSaltwaterRegulations, fetchLiveRegsAmendments } from './clients.js';
 import { extractJsonPossibly } from './keys.js';
+import { parseBehaviour, behaviourBlock } from './behaviour.js';
 import {
   COASTAL_AGENTS, COASTAL_AGENT_HINTS, COASTAL_SKIPPED_AGENTS,
   isCoastalZone, coastalAgentPlan,
@@ -29,31 +30,6 @@ function cleanProfile(prev) {
   delete out._normalizedDocuments;
   if (Array.isArray(out._extractedFacts)) out._extractedFacts = out._extractedFacts.slice(0, 80);
   return out;
-}
-
-/**
- * The model's answer to "where are these fish sitting", made robust.
- *
- * The first version accepted exactly 'suspended', 'bottom' or 'both' and turned anything else
- * into null -- which in the saved profile is indistinguishable from the model declining to
- * answer. "Suspended", "suspended/bottom", "near bottom" and "water column" would all have been
- * discarded in silence, and the next move would have been to reword the prompt again.
- *
- * So it coerces what a language model actually writes, and REPORTS anything it cannot place
- * rather than swallowing it. A value that lands in `rejected` is a vocabulary gap in this
- * function, not a refusal by the agent, and telling those two apart is the entire point.
- */
-function coerceHolding(v, rejected) {
-  if (v == null || v === '') return null;
-  const t = String(v).toLowerCase().trim();
-  if (/unknown|unclear|not stated|n\/a|^none$|^null$/.test(t)) return null;
-  const susp = /suspend|water column|above the thermocline|open water|pelagic|up off|mid.?water/.test(t);
-  const bott = /bottom|benthic|on the floor|hugging|substrate/.test(t);
-  if ((susp && bott) || /\bboth\b|mixed|two groups/.test(t)) return 'both';
-  if (susp) return 'suspended';
-  if (bott) return 'bottom';
-  if (Array.isArray(rejected)) rejected.push(String(v).slice(0, 60));
-  return null;
 }
 
 var RESEARCH_AGENTS = {
@@ -481,7 +457,7 @@ JSON only. Never output a string or array for creelLimits or sizeLimits.`;
   fisheries: {
     label: "Species Intelligence",
     order: 7,
-    system: "You are a fisheries biologist and professional fishing guide. You are given a verified lake profile AND raw text from source documents (fishing guides, reports, agency surveys). Extract seasonal species behavior from BOTH the profile AND the source documents. CONSENSUS RULE: When multiple sources cover the same species/season, use the depth range and structure that appears in the majority of sources. If sources contradict (e.g. 3 say 15-25ft and 1 says 5ft), use the majority position and note the discrepancy in the notes field. Do not average contradicting values — pick the consensus. Do not invent data when sources are silent — return null for that season. Prioritize official agency documents over fishing guide content when they conflict. Do NOT recommend routes, speeds, or specific lure colors. CRITICAL: Only include species listed in the biology.predatorSpecies array. SPECIES NAME RESOLUTION — CRITICAL: Agency documents frequently use GROUP TERMS that cover multiple species. You MUST split these into individual species keys. NEVER use a group term as a JSON key. Group terms and their individual species mappings: 'Black Bass' or 'black bass (largemouth, smallmouth, spotted)' → split into Largemouth Bass, Smallmouth Bass, Spotted Bass individually. 'Catfish (all species)' or 'Catfish' → split into Blue Catfish, Channel Catfish, Flathead Catfish as applicable. 'Crappie (all species)' → split into Crappie (or Black Crappie / White Crappie if individually listed). 'Bream/Sunfish' or 'Bluegill/Warmouth and other sunfishes' → split into Bluegill, Redear Sunfish (Shellcracker), Warmouth as applicable. When a document has a group heading like 'Black Bass' followed by individual species tips (e.g. 'Largemouthbass - Spring: ... Summer: ... Fall: ... Winter: ...'), parse EACH species line separately and assign to the correct individual species key. If generic group-level data has no species-specific breakdown, replicate that data to each individual species from the confirmed list that belongs to that group. NEVER output 'Black Bass', 'Catfish (all species)', or any other group term as a species key — always use the exact individual species name from the confirmed species list. Return JSON only.",
+    system: "You are a fisheries biologist and professional fishing guide. You are given a verified lake profile AND raw text from source documents (fishing guides, reports, agency surveys). Extract seasonal species behavior from BOTH the profile AND the source documents. DEPTH MEANS THE FISH, NOT THE BOTTOM — THIS IS THE MOST IMPORTANT RULE HERE. preferredDepth is the depth BELOW THE SURFACE at which the fish are holding. It is NEVER the depth of the water they are over. Those are different numbers and sources routinely give both: 'suspended at 20 ft over 35 ft of water' means preferredDepth [20,20] and waterDepthFt [35,35]. Record both when both are stated; never collapse them into one range and never substitute one for the other. holding says what the fish are relating to: 'bottom' when they are on or within a few feet of the bottom, 'suspended' when they are up in the water column with open water beneath them, 'both' when a source describes two groups. Bottom-relating and suspended fish at the SAME stated depth call for completely different water, so if the sources do not say, return null for holding rather than inferring it. CONSENSUS RULE: When multiple sources cover the same species/season, use the depth range and structure that appears in the majority of sources. If sources contradict (e.g. 3 say 15-25ft and 1 says 5ft), use the majority position and note the discrepancy in the notes field. Do not average contradicting values — pick the consensus. Do not invent data when sources are silent — return null for that season. Prioritize official agency documents over fishing guide content when they conflict. Do NOT recommend routes, speeds, or specific lure colors. CRITICAL: Only include species listed in the biology.predatorSpecies array. SPECIES NAME RESOLUTION — CRITICAL: Agency documents frequently use GROUP TERMS that cover multiple species. You MUST split these into individual species keys. NEVER use a group term as a JSON key. Group terms and their individual species mappings: 'Black Bass' or 'black bass (largemouth, smallmouth, spotted)' → split into Largemouth Bass, Smallmouth Bass, Spotted Bass individually. 'Catfish (all species)' or 'Catfish' → split into Blue Catfish, Channel Catfish, Flathead Catfish as applicable. 'Crappie (all species)' → split into Crappie (or Black Crappie / White Crappie if individually listed). 'Bream/Sunfish' or 'Bluegill/Warmouth and other sunfishes' → split into Bluegill, Redear Sunfish (Shellcracker), Warmouth as applicable. When a document has a group heading like 'Black Bass' followed by individual species tips (e.g. 'Largemouthbass - Spring: ... Summer: ... Fall: ... Winter: ...'), parse EACH species line separately and assign to the correct individual species key. If generic group-level data has no species-specific breakdown, replicate that data to each individual species from the confirmed list that belongs to that group. NEVER output 'Black Bass', 'Catfish (all species)', or any other group term as a species key — always use the exact individual species name from the confirmed species list. Return JSON only.",
     userTemplate: (lakeName, state, prev) => {
       const bio = prev?.biology || prev?.forage || {};
       const confirmedSpecies = Array.isArray(bio.predatorSpecies) ? bio.predatorSpecies : [];
@@ -500,7 +476,7 @@ JSON only. Never output a string or array for creelLimits or sizeLimits.`;
 Lake: ${lakeName}
 Lake profile (use for confirmed species, forage, limnology context):
 ${JSON.stringify(cleanProfile(prev), null, 2).slice(0, 12000)}
-${docSection}
+${docSection}${prev?._behaviourBlock || ''}
 
 CONFIRMED SPECIES (ONLY these — do not add others):
 ${speciesList.join(', ')}
@@ -541,6 +517,25 @@ Task: For each confirmed species, extract seasonal depth ranges, key structures,
 CRITICAL SPECIES COVERAGE: Every species in the confirmed list MUST appear in trollingIntelligence, even if some seasons are null. For species with seasonal closures (e.g. Striped Bass closed June-August on Lake Marion), still include all four seasons — use null for closed/unknown seasons, but populate open seasons from document evidence. Do not silently omit any confirmed species.
 
 SPECIFIC EXTRACTION TARGETS — look for these in the source documents:
+
+- HOLDING PATTERN — EVERY species, EVERY season. THIS IS A SEPARATE SEARCH FROM DEPTH and it is
+  the one most often missed, because a document can state a depth without ever saying what the
+  fish are relating to. Do not treat depth extraction as having answered it. Hunt the text for:
+    suspended · in the water column · above the thermocline · over the channel · over deep water ·
+    up off the bottom · schooling on top · open water                    → holding "suspended"
+    on the bottom · hugging bottom · dragging · bumping bottom · anchoring ·
+    holding tight to · relating to the bottom · on the ledge itself      → holding "bottom"
+  Also read behaviour that implies it WITHOUT those words: "downlines over 40 feet of water" is
+  suspended; "dragging cut bait on the flats" is bottom; "topwater schooling" is suspended;
+  "vertical jigging on the ledge" is bottom. Two groups at once ("some suspended near the
+  thermocline, others deep on the bottom") is "both". Leave holding null when the sources genuinely
+  do not say — but never leave it null because you did not go looking.
+
+- BOTH DEPTH NUMBERS WHEN A SOURCE GIVES BOTH. Hunt for phrasings carrying the fish depth AND the
+  water depth in one sentence: "suspended at 20 ft in 35 feet of water", "holding 25 down over 60",
+  "30 feet down on a 55 foot bottom". preferredDepth takes the FISH number, waterDepthFt takes the
+  WATER number. Dropping the second is the single most common extraction error on this task.
+
 - Striped Bass spring: look for "pre-spawn", "staging", "spawning tributaries", "spring run", "March", "April", "May", "58-68°F" — extract depth, structure, forage from that context
 - Striped Bass fall: look for "October", "fall striper", "post-closure", "schooling" — extract what you find
 - Largemouth Bass winter: look for "cold water", "winter bass", "January", "February", "deep timber", "creek channels in winter", "jigs spoons worms" — if a doc says "bass move back to deep water where jigs, spoons and heavily weighted worms are productive" that is winter LMB data; populate notes even if no explicit depth is given
@@ -551,7 +546,13 @@ If a document gives specific depth ranges or seasonal behavior for a species on 
 
 SCHEMA RULES — every season entry MUST follow this exact structure, no exceptions:
 {
-  "preferredDepth": [minFt, maxFt],   ← 2-element number array, or null if truly unknown
+  "preferredDepth": [minFt, maxFt],   ← depth of the FISH below the surface. NOT water depth.
+                                          If a PARSED OBSERVATION covers this species and season,
+                                          its value is the answer — copy it, do not adjust it
+  "holding": "suspended",              ← "bottom" | "suspended" | "both" | null. Never omit.
+                                          Take it from a PARSED OBSERVATION whenever one applies
+  "waterDepthFt": [minFt, maxFt],      ← depth of the WATER the pattern happens over, when a
+                                          source states it. null when it does not. Never omit
   "structures": [],                    ← array of strings, never omit this key
   "forage": [],                        ← array of strings, never omit this key
   "recommendedPresentations": [],      ← array of strings, never omit this key
@@ -568,14 +569,16 @@ Return ONLY:
     "${exampleSpecies}": {
       "summer": {
         "preferredDepth": [12,18],
+        "holding": "suspended",
+        "waterDepthFt": [25,45],
         "structures": ["channel ledges","creek mouths","long points"],
         "forage": ["Threadfin Shad"],
         "recommendedPresentations": ["MR Crankbait","DD Crankbait","A-Rig"],
         "notes": "behavior notes drawn from source documents"
       },
-      "fall": {"preferredDepth":[8,15],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""},
-      "winter": {"preferredDepth":[20,35],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""},
-      "spring": {"preferredDepth":[5,15],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""}
+      "fall": {"preferredDepth":[8,15],"holding":"suspended","waterDepthFt":[15,30],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""},
+      "winter": {"preferredDepth":[20,35],"holding":"bottom","waterDepthFt":[20,35],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""},
+      "spring": {"preferredDepth":[5,15],"holding":null,"waterDepthFt":null,"structures":[],"forage":[],"recommendedPresentations":[],"notes":""}
     }
   },
   "sources": [{"label":"Derived from lake profile and source documents","trust":"DERIVED"}]
@@ -987,6 +990,34 @@ async function handleResearchAgent(request, env) {
     };
   }
 
+  // ── THE PARSER OWNS THE VALUES, THE AGENT OWNS THE PLACEMENT ──────────────────────────────
+  //
+  // Ryan, 2026-08-10: "why do we need the agent at all for this... the information is there why
+  // not just use a parser" -- and then the shape of the answer: "pass the parsed info to the
+  // agent to put into the right place."
+  //
+  // Four consecutive runs of the same documents returned striper summer as [15,40], [16,20],
+  // [16,25] and [15,40], with `holding` null every time, while the same model wrote "anchoring
+  // cut bait on the bottom" into the notes beside it. A holding pattern is three words and a
+  // depth is two numbers; neither needs a language model, and asking for them bought only
+  // variance. What a regex genuinely cannot do is decide that a sentence about pre-spawn staging
+  // in March belongs to striped bass in spring when the document labels neither -- so the agent
+  // keeps that and loses the rest.
+  //
+  // The observations come from `_extractedFacts`, not from raw article text: those are already
+  // one claim per entry, already attributed to this lake, and already carry the verbatim quote
+  // that has to travel with any value the app later acts on. The biology agent has worked this
+  // way since it was written -- "Map extracted facts to the biology JSON" -- and fisheries was
+  // the one agent still doing its own extraction.
+  if (agentKey === 'fisheries' && Array.isArray(groundedPrev._extractedFacts)) {
+    const observations = parseBehaviour(groundedPrev._extractedFacts);
+    if (observations.length) {
+      console.log(`[research:fisheries] ${observations.length} parsed observation(s) from `
+                + `${groundedPrev._extractedFacts.length} facts`);
+      groundedPrev = { ...groundedPrev, _behaviourBlock: behaviourBlock(observations) };
+    }
+  }
+
   // ── Fisheries agent: run one LLM call per species group for focused extraction ──
   // Running all 17 species in one call causes token budget compression — striper spring
   // and other minority-season data gets dropped. Split into groups, merge results.
@@ -1148,10 +1179,6 @@ async function handleResearchAgent(request, env) {
 
     // Run normalization pass (same as post-processing below)
     const SEASONS = ['spring', 'summer', 'fall', 'winter'];
-    // Anything the model put in `holding` that coerceHolding could not place. Empty is the good
-    // outcome; non-empty means the agent answered and this file failed to understand it, which
-    // is a fix here rather than another round of prompt wording.
-    const holdingRejects = [];
     const normalizedMerged = {};
     for (const [species, seasons] of Object.entries(mergedIntelligence)) {
       if (!seasons || typeof seasons !== 'object') { normalizedMerged[species] = seasons; continue; }
@@ -1176,7 +1203,8 @@ async function handleResearchAgent(request, env) {
             //
             // A normaliser that enumerates keys is a whitelist whether or not anyone meant it as
             // one. Anything added to the fisheries schema has to be added here in the same commit.
-            holding: coerceHolding(entry.holding, holdingRejects),
+            holding: entry.holding === 'suspended' || entry.holding === 'bottom' || entry.holding === 'both'
+              ? entry.holding : null,
             waterDepthFt: Array.isArray(entry.waterDepthFt) && entry.waterDepthFt.length === 2
               ? entry.waterDepthFt : null,
             structures: Array.isArray(entry.structures) ? entry.structures : [],
@@ -1213,9 +1241,6 @@ async function handleResearchAgent(request, env) {
       // Surfaced where the client's log will show it. A run that lost a quarter of the lake's
       // species must not print a tick and nothing else.
       warnings: [
-        ...(holdingRejects.length
-            ? [`fisheries: ${holdingRejects.length} holding value(s) the normaliser could not read — `
-             + `${[...new Set(holdingRejects)].slice(0, 6).join(', ')}`] : []),
         ...failedGroups.map((g) => `fisheries group "${g.group}" returned nothing (${g.reason}) — `
                                  + `${g.species.join(', ')} have no trolling intelligence from this run`),
         ...(missingSpecies.length && !failedGroups.length
@@ -1388,10 +1413,6 @@ async function handleResearchAgent(request, env) {
     }
 
     const SEASONS = ['spring', 'summer', 'fall', 'winter'];
-    // Its own sink — this is the single-call path, a different scope from the group path above.
-    // Sharing a name across two scopes without declaring it in both is a ReferenceError at
-    // runtime and a 500 on the only route that populates trolling intelligence.
-    const holdingRejects = [];
     const normalized = {};
     for (const [species, seasons] of Object.entries(sectionData)) {
       if (species === 'sources') { normalized[species] = seasons; continue; }
@@ -1427,7 +1448,8 @@ async function handleResearchAgent(request, env) {
             //
             // A normaliser that enumerates keys is a whitelist whether or not anyone meant it as
             // one. Anything added to the fisheries schema has to be added here in the same commit.
-            holding: coerceHolding(entry.holding, holdingRejects),
+            holding: entry.holding === 'suspended' || entry.holding === 'bottom' || entry.holding === 'both'
+              ? entry.holding : null,
             waterDepthFt: Array.isArray(entry.waterDepthFt) && entry.waterDepthFt.length === 2
               ? entry.waterDepthFt : null,
             structures: Array.isArray(entry.structures) ? entry.structures : [],
