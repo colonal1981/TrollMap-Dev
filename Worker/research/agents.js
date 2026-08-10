@@ -10,6 +10,27 @@ import {
 } from './coastal-agents.js';
 import { coerceNum } from '../../js/utils/coerce.js';
 
+/**
+ * The profile WITHOUT the transient carriers, for prompts that dump it as JSON.
+ *
+ * `prev` arrives carrying `_documentContext` -- the full text of every selected document -- and
+ * `_normalizedDocuments`, which is that same text a second time. The fisheries prompt dumped
+ * `JSON.stringify(prev).slice(0, 12000)` at the top and then appended `_documentContext` in full
+ * below it, so the "lake profile" the agent was handed was mostly a truncated duplicate of the
+ * documents, and the limnology, forage and biology it was actually told to use fell off the end
+ * of the 12,000 character slice.
+ *
+ * The summary agent already deleted these by hand before its own dump. This is that, shared.
+ */
+function cleanProfile(prev) {
+  const out = { ...(prev || {}) };
+  delete out._documentContext;
+  delete out._documentContextNote;
+  delete out._normalizedDocuments;
+  if (Array.isArray(out._extractedFacts)) out._extractedFacts = out._extractedFacts.slice(0, 80);
+  return out;
+}
+
 var RESEARCH_AGENTS = {
   identity: {
     label: "Lake Identity",
@@ -453,7 +474,7 @@ JSON only. Never output a string or array for creelLimits or sizeLimits.`;
 
 Lake: ${lakeName}
 Lake profile (use for confirmed species, forage, limnology context):
-${JSON.stringify(prev, null, 2).slice(0, 12000)}
+${JSON.stringify(cleanProfile(prev), null, 2).slice(0, 12000)}
 ${docSection}
 
 CONFIRMED SPECIES (ONLY these — do not add others):
@@ -495,30 +516,6 @@ Task: For each confirmed species, extract seasonal depth ranges, key structures,
 CRITICAL SPECIES COVERAGE: Every species in the confirmed list MUST appear in trollingIntelligence, even if some seasons are null. For species with seasonal closures (e.g. Striped Bass closed June-August on Lake Marion), still include all four seasons — use null for closed/unknown seasons, but populate open seasons from document evidence. Do not silently omit any confirmed species.
 
 SPECIFIC EXTRACTION TARGETS — look for these in the source documents:
-
-- HOLDING PATTERN — EVERY species, EVERY season. THIS IS A SEPARATE SEARCH FROM DEPTH and it is
-  the one most often missed, because a document can state a depth without ever saying what the
-  fish are relating to. Do not treat depth extraction as having answered it. Hunt the text for:
-    suspended · suspending · in the water column · above the thermocline · over the channel ·
-    over deep water · up off the bottom · riding above · schooling on top · open water
-      → holding "suspended"
-    on the bottom · hugging bottom · bottom-hugging · dragging · bumping bottom · on the floor ·
-    holding tight to · relating to the bottom · hard bottom · on the ledge itself
-      → holding "bottom"
-  Also read behaviour that implies it WITHOUT using those words: "downlines over 40 feet of water"
-  is suspended; "dragging cut bait on the flats" is bottom; "topwater schooling activity" is
-  suspended; "vertical jigging on the ledge" is bottom. If a source describes two groups at once
-  ("some suspended near the thermocline, others deep on the bottom near the dam") use "both".
-  Leave holding null when the sources genuinely do not say — but never leave it null because you
-  did not go looking.
-
-- BOTH DEPTH NUMBERS WHEN A SOURCE GIVES BOTH. Hunt specifically for phrasings that carry the fish
-  depth AND the water depth in one sentence: "suspended at 20 ft in 35 feet of water", "holding 25
-  down over 60", "fish at 18 over the 40 foot channel", "30 feet down on a 55 foot bottom".
-  preferredDepth takes the FISH number, waterDepthFt takes the WATER number. Dropping the second
-  one is the single most common extraction error on this task — when you see two depths in a
-  sentence, stop and work out which is which rather than picking one.
-
 - Striped Bass spring: look for "pre-spawn", "staging", "spawning tributaries", "spring run", "March", "April", "May", "58-68°F" — extract depth, structure, forage from that context
 - Striped Bass fall: look for "October", "fall striper", "post-closure", "schooling" — extract what you find
 - Largemouth Bass winter: look for "cold water", "winter bass", "January", "February", "deep timber", "creek channels in winter", "jigs spoons worms" — if a doc says "bass move back to deep water where jigs, spoons and heavily weighted worms are productive" that is winter LMB data; populate notes even if no explicit depth is given
@@ -889,20 +886,66 @@ async function handleResearchAgent(request, env) {
     // excerpts are enough for table/profile confirmation; summary gets short
     // excerpts from several documents because it also receives the saved profile.
     const maxDocs = agentKey === 'limnology' ? 2 : agentKey === 'fisheries' ? 8 : agentKey === 'summary' ? 8 : 8;
-    const charsPerDoc = agentKey === 'limnology' ? 15000 : agentKey === 'fisheries' ? 150000 : agentKey === 'summary' ? 8000 : 40000;
-    const relevantDocs = previousResults._normalizedDocuments
-      .filter(d => !filter || filter.test(d.title + ' ' + d.url))
-      .slice(0, maxDocs);
+    // 150,000 CHARACTERS PER DOCUMENT WAS NOT A BUDGET, IT WAS THE ABSENCE OF ONE.
+    //
+    // Eight documents at that cap is 1.2 million characters -- roughly 300,000 tokens of raw
+    // source text -- and the profile dump at the top of the prompt embedded a truncated copy of
+    // the same text on top of it. Two attempts to add fields to the fisheries schema produced
+    // perfectly well-formed output with the new keys absent from all 31 populated entries, twice,
+    // with the prompt confirmed deployed both times. A single line of schema at the end of a
+    // quarter-million tokens does not steer a model; it writes from its priors and returns
+    // something that looks right.
+    //
+    // A fishing report says everything useful about where fish sit in its first few thousand
+    // characters. The agency survey PDFs that were eating the budget are the right source for
+    // population and stocking and say nothing about holding depth at all.
+    const charsPerDoc = agentKey === 'limnology' ? 15000 : agentKey === 'fisheries' ? 20000 : agentKey === 'summary' ? 8000 : 40000;
+    const matched = previousResults._normalizedDocuments
+      .filter(d => !filter || filter.test(d.title + ' ' + d.url));
+
+    // RANK, DO NOT TRUNCATE. The frontend sends 25 documents for fisheries and this kept the
+    // first 8 that matched a regex, in whatever order discovery returned them. Ryan, 2026-08-10:
+    // "are articles that contain this information being thrown out?" They can be, and nothing
+    // said so. Wateree's run had "Winter Crappie Fishing with Will Hinson", "Winter Catfishing
+    // with Captain Rodger Taylor", the AHQ summer report and Carolina Sportsman in its corpus --
+    // exactly the prose that describes whether fish are on the bottom or up in the column -- and
+    // they were competing for eight slots against "Fisheries Investigations in Lakes and Streams
+    // 2012/2016/2017", which match the same filter and are vastly longer.
+    //
+    // So fisheries documents are ordered by how much BEHAVIOUR language they actually contain,
+    // per unit length. Density and not raw count, or a three-hundred-page survey wins by being
+    // long. This ranks on the thing that is missing rather than guessing from the source type,
+    // and a guide article that never discusses depth correctly loses to one that does.
+    let ordered = matched;
+    if (agentKey === 'fisheries') {
+      const BEHAVIOUR = /suspend\w*|thermocline|water column|holding|relat\w+ to the bottom|hugging|on the bottom|off the bottom|down ?line\w*|free ?line\w*|drag\w*|troll\w*|school\w*|feet of water|ft of water|deep water|top ?water|vertical jig\w*/gi;
+      ordered = matched
+        .map((d) => {
+          const t = String(d.text || '');
+          const hits = (t.match(BEHAVIOUR) || []).length;
+          return { d, hits, density: hits / Math.max(1, t.length / 10000) };
+        })
+        .sort((a, b) => b.density - a.density || b.hits - a.hits)
+        .map((x) => x.d);
+    }
+    const relevantDocs = ordered.slice(0, maxDocs);
     if (relevantDocs.length) {
       const docContext = relevantDocs
         .map(d => `=== ${d.title} ===\n${d.text?.slice(0, charsPerDoc) || ''}`)
         .join('\n\n');
+      // NO SILENT TRUNCATION. Eight of twenty-five quietly becoming the entire evidence base is
+      // how a question gets answered "the sources do not say" when three of the sources did.
+      const dropped = matched.length - relevantDocs.length;
+      const droppedNote = dropped > 0
+        ? ` ${dropped} further matching document(s) were not included in this prompt.` : '';
+      console.log(`[research:${agentKey}] ${relevantDocs.length} of ${matched.length} matching docs, `
+                + `${charsPerDoc} chars each: ${relevantDocs.map(d => d.title).join(' | ')}`);
       groundedPrev = {
         ...groundedPrev,
         _documentContext: docContext,
         _documentContextNote: agentKey === 'summary'
-          ? `Cached source excerpts from ${relevantDocs.length} document(s) — use to ground wording and cite no facts beyond the saved profile/evidence.`
-          : `Raw document text from ${relevantDocs.length} source(s) — use this for specific measurements, tables, and depth profiles. Prioritize this over training knowledge.`
+          ? `Cached source excerpts from ${relevantDocs.length} document(s) — use to ground wording and cite no facts beyond the saved profile/evidence.${droppedNote}`
+          : `Raw document text from ${relevantDocs.length} source(s) — use this for specific measurements, tables, and depth profiles. Prioritize this over training knowledge.${droppedNote}`
       };
     }
   }
@@ -981,6 +1024,20 @@ async function handleResearchAgent(request, env) {
       return agent.userTemplate(lakeName, state, groupPrev);
     };
 
+    // A GROUP THAT COMES BACK EMPTY MUST NOT LOOK LIKE A GROUP THAT HAD NOTHING TO SAY.
+    //
+    // Ryan, 2026-08-10: "this time it didn't even find striped bass or largemouth". Both are in
+    // the `bass` group, that one call returned nothing, and the run logged
+    // "✔ Species Intelligence agent complete (59 facts, 10 docs)" followed by
+    // "✔ All agents complete: 1/1 succeeded". A quarter of the lake's species disappeared and
+    // every line on the screen said success -- because a failed group returns `{}` here and an
+    // empty object merges into nothing at all.
+    //
+    // The catch below already console.warn'd it, but a Worker console line is not somewhere he
+    // is ever going to look. So the outcome of every group is collected and returned, and the
+    // response carries which confirmed species did not survive the round trip.
+    const groupOutcomes = [];
+
     // Run all groups concurrently
     const groupPromises = groupEntries.map(async ([groupName, groupSpecies]) => {
       const userPrompt = buildGroupPrompt(groupSpecies);
@@ -999,11 +1056,17 @@ async function handleResearchAgent(request, env) {
         const parsed = extractJsonPossibly(rawText);
         if (!parsed) {
           console.warn(`fisheries group ${groupName}: non-JSON response`);
+          groupOutcomes.push({ group: groupName, species: groupSpecies, ok: false, reason: 'non-JSON response' });
           return {};
         }
-        return parsed.trollingIntelligence || parsed[agentKey] || parsed || {};
+        const section = parsed.trollingIntelligence || parsed[agentKey] || parsed || {};
+        const got = Object.keys(section).filter((k) => k !== 'sources');
+        groupOutcomes.push({ group: groupName, species: groupSpecies, ok: got.length > 0,
+                             returned: got, reason: got.length ? null : 'empty section' });
+        return section;
       } catch (e) {
         console.warn(`fisheries group ${groupName} failed: ${e.message}`);
+        groupOutcomes.push({ group: groupName, species: groupSpecies, ok: false, reason: e.message });
         return {};
       }
     });
@@ -1069,10 +1132,25 @@ async function handleResearchAgent(request, env) {
         if (entry === null || entry === undefined) {
           normSeasons[season] = null;
         } else if (Array.isArray(entry) && entry.length === 2 && typeof entry[0] === 'number') {
-          normSeasons[season] = { preferredDepth: entry, structures: [], forage: [], recommendedPresentations: [], notes: null };
+          normSeasons[season] = { preferredDepth: entry, holding: null, waterDepthFt: null, structures: [], forage: [], recommendedPresentations: [], notes: null };
         } else if (typeof entry === 'object' && !Array.isArray(entry)) {
           normSeasons[season] = {
             preferredDepth: Array.isArray(entry.preferredDepth) && entry.preferredDepth.length === 2 ? entry.preferredDepth : null,
+            // KEPT, NOT REBUILT AWAY. This normaliser lists the keys of a season entry and
+            // constructs a fresh object from them, so any key it does not name is silently
+            // discarded no matter what the model returned. `holding` and `waterDepthFt` were
+            // added to the agent's schema, its examples and its extraction targets across three
+            // separate attempts on 2026-08-10, and every run came back with them absent -- from
+            // here, not from the model. The evidence was in the notes the whole time: "they
+            // suspend near the bottom in high sun", "they relate to the bottom in 20-30+ feet of
+            // water". The agent had the answer and this threw it away on the way out.
+            //
+            // A normaliser that enumerates keys is a whitelist whether or not anyone meant it as
+            // one. Anything added to the fisheries schema has to be added here in the same commit.
+            holding: entry.holding === 'suspended' || entry.holding === 'bottom' || entry.holding === 'both'
+              ? entry.holding : null,
+            waterDepthFt: Array.isArray(entry.waterDepthFt) && entry.waterDepthFt.length === 2
+              ? entry.waterDepthFt : null,
             structures: Array.isArray(entry.structures) ? entry.structures : [],
             forage: Array.isArray(entry.forage) ? entry.forage : [],
             recommendedPresentations: Array.isArray(entry.recommendedPresentations) ? entry.recommendedPresentations : [],
@@ -1085,13 +1163,34 @@ async function handleResearchAgent(request, env) {
       normalizedMerged[species] = normSeasons;
     }
 
+    // Which confirmed species did not survive the round trip, whatever the reason -- a failed
+    // call, an empty section, or a name the model quietly renamed. Compared against what was
+    // asked for rather than against the exceptions caught, because the bass group did not throw.
+    const returnedSet = new Set(Object.keys(normalizedMerged).map((k) => k.toLowerCase()));
+    const missingSpecies = deduped.filter((s2) => !returnedSet.has(s2.toLowerCase()));
+    const failedGroups = groupOutcomes.filter((g) => !g.ok);
+    if (missingSpecies.length) {
+      console.warn(`[research:fisheries] ${missingSpecies.length} confirmed species missing from `
+                 + `the result: ${missingSpecies.join(', ')}`);
+    }
+
     const elapsed = Date.now();
     return new Response(JSON.stringify({
       success: true,
       agent: agentKey,
       section: normalizedMerged,
       confidence: { percent: 35 },
-      meta: { model: 'multi-group', provider: 'gemini-free' },
+      meta: { model: 'multi-group', provider: 'gemini-free',
+              groups: groupOutcomes, failedGroups, missingSpecies },
+      // Surfaced where the client's log will show it. A run that lost a quarter of the lake's
+      // species must not print a tick and nothing else.
+      warnings: [
+        ...failedGroups.map((g) => `fisheries group "${g.group}" returned nothing (${g.reason}) — `
+                                 + `${g.species.join(', ')} have no trolling intelligence from this run`),
+        ...(missingSpecies.length && !failedGroups.length
+            ? [`fisheries: ${missingSpecies.length} confirmed species missing from the result — `
+             + `${missingSpecies.join(', ')}`] : []),
+      ],
       sources: [{ label: 'Derived from lake profile and source documents', trust: 'DERIVED' }]
     }), { headers: JSON_HEADERS });
   }
@@ -1271,6 +1370,8 @@ async function handleResearchAgent(request, env) {
           // Bare depth array — promote to full season object
           normSeasons[season] = {
             preferredDepth: entry,
+            holding: null,
+            waterDepthFt: null,
             structures: [],
             forage: [],
             recommendedPresentations: [],
@@ -1280,6 +1381,21 @@ async function handleResearchAgent(request, env) {
           // Full object — ensure all required keys present
           normSeasons[season] = {
             preferredDepth: Array.isArray(entry.preferredDepth) && entry.preferredDepth.length === 2 ? entry.preferredDepth : null,
+            // KEPT, NOT REBUILT AWAY. This normaliser lists the keys of a season entry and
+            // constructs a fresh object from them, so any key it does not name is silently
+            // discarded no matter what the model returned. `holding` and `waterDepthFt` were
+            // added to the agent's schema, its examples and its extraction targets across three
+            // separate attempts on 2026-08-10, and every run came back with them absent -- from
+            // here, not from the model. The evidence was in the notes the whole time: "they
+            // suspend near the bottom in high sun", "they relate to the bottom in 20-30+ feet of
+            // water". The agent had the answer and this threw it away on the way out.
+            //
+            // A normaliser that enumerates keys is a whitelist whether or not anyone meant it as
+            // one. Anything added to the fisheries schema has to be added here in the same commit.
+            holding: entry.holding === 'suspended' || entry.holding === 'bottom' || entry.holding === 'both'
+              ? entry.holding : null,
+            waterDepthFt: Array.isArray(entry.waterDepthFt) && entry.waterDepthFt.length === 2
+              ? entry.waterDepthFt : null,
             structures: Array.isArray(entry.structures) ? entry.structures : [],
             forage: Array.isArray(entry.forage) ? entry.forage : [],
             recommendedPresentations: Array.isArray(entry.recommendedPresentations) ? entry.recommendedPresentations : [],

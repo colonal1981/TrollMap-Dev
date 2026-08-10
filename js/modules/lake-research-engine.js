@@ -2005,6 +2005,19 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
       log(`  [biology] LLM-added species beyond deterministic input: ${addedSpecies.join(', ') || 'NONE'}`);
     }
 
+    // AN AGENT'S OWN WARNINGS REACH THE LOG BEFORE ITS TICK DOES.
+    //
+    // The fisheries agent splits its species into groups and runs a call per group, and a group
+    // that returns nothing merges into nothing. On 2026-08-10 the bass group came back empty --
+    // taking Largemouth, White Bass/Hybrid and Striped Bass with it -- and the run printed
+    // "✔ Species Intelligence agent complete (59 facts, 10 docs)" and then "✔ All agents
+    // complete: 1/1 succeeded". Ryan found it by noticing the species were gone from the card.
+    //
+    // The Worker knew. It console.warn'd into a log nobody opens. Anything an agent reports as a
+    // warning is printed here, above the success line, so a run that quietly lost a quarter of
+    // the lake cannot look like a clean one.
+    for (const w of (agentData.warnings || [])) log(`  ⚠️ [${agentKey}] ${w}`);
+
     log(`✔ ${def.label} agent complete (${uniqueFacts.length} facts, ${normalizedDocuments.length} docs)`);
     if (callbacks.onComplete) await callbacks.onComplete(lakeName);
     return { ...agentData, _extractedFacts: uniqueFacts, factsCount: uniqueFacts.length, docsUsed: normalizedDocuments.length, queryLog };
