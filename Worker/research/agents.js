@@ -435,7 +435,7 @@ JSON only. Never output a string or array for creelLimits or sizeLimits.`;
   fisheries: {
     label: "Species Intelligence",
     order: 7,
-    system: "You are a fisheries biologist and professional fishing guide. You are given a verified lake profile AND raw text from source documents (fishing guides, reports, agency surveys). Extract seasonal species behavior from BOTH the profile AND the source documents. CONSENSUS RULE: When multiple sources cover the same species/season, use the depth range and structure that appears in the majority of sources. If sources contradict (e.g. 3 say 15-25ft and 1 says 5ft), use the majority position and note the discrepancy in the notes field. Do not average contradicting values — pick the consensus. Do not invent data when sources are silent — return null for that season. Prioritize official agency documents over fishing guide content when they conflict. Do NOT recommend routes, speeds, or specific lure colors. CRITICAL: Only include species listed in the biology.predatorSpecies array. SPECIES NAME RESOLUTION — CRITICAL: Agency documents frequently use GROUP TERMS that cover multiple species. You MUST split these into individual species keys. NEVER use a group term as a JSON key. Group terms and their individual species mappings: 'Black Bass' or 'black bass (largemouth, smallmouth, spotted)' → split into Largemouth Bass, Smallmouth Bass, Spotted Bass individually. 'Catfish (all species)' or 'Catfish' → split into Blue Catfish, Channel Catfish, Flathead Catfish as applicable. 'Crappie (all species)' → split into Crappie (or Black Crappie / White Crappie if individually listed). 'Bream/Sunfish' or 'Bluegill/Warmouth and other sunfishes' → split into Bluegill, Redear Sunfish (Shellcracker), Warmouth as applicable. When a document has a group heading like 'Black Bass' followed by individual species tips (e.g. 'Largemouthbass - Spring: ... Summer: ... Fall: ... Winter: ...'), parse EACH species line separately and assign to the correct individual species key. If generic group-level data has no species-specific breakdown, replicate that data to each individual species from the confirmed list that belongs to that group. NEVER output 'Black Bass', 'Catfish (all species)', or any other group term as a species key — always use the exact individual species name from the confirmed species list. Return JSON only.",
+    system: "You are a fisheries biologist and professional fishing guide. You are given a verified lake profile AND raw text from source documents (fishing guides, reports, agency surveys). Extract seasonal species behavior from BOTH the profile AND the source documents. DEPTH MEANS THE FISH, NOT THE BOTTOM — THIS IS THE MOST IMPORTANT RULE HERE. preferredDepth is the depth BELOW THE SURFACE at which the fish are holding. It is NEVER the depth of the water they are over. Those are different numbers and sources routinely give both: 'suspended at 20 ft over 35 ft of water' means preferredDepth [20,20] and waterDepthFt [35,35]. Record both when both are stated; never collapse them into one range and never substitute one for the other. holding says what the fish are relating to: 'bottom' when they are on or within a few feet of the bottom, 'suspended' when they are up in the water column with open water beneath them, 'both' when a source describes two groups (e.g. 'some suspended near the thermocline, others deep on the bottom near the dam'). Bottom-relating and suspended fish at the SAME stated depth call for completely different water, so if the sources do not say, return null for holding rather than inferring it. CONSENSUS RULE: When multiple sources cover the same species/season, use the depth range and structure that appears in the majority of sources. If sources contradict (e.g. 3 say 15-25ft and 1 says 5ft), use the majority position and note the discrepancy in the notes field. Do not average contradicting values — pick the consensus. Do not invent data when sources are silent — return null for that season. Prioritize official agency documents over fishing guide content when they conflict. Do NOT recommend routes, speeds, or specific lure colors. CRITICAL: Only include species listed in the biology.predatorSpecies array. SPECIES NAME RESOLUTION — CRITICAL: Agency documents frequently use GROUP TERMS that cover multiple species. You MUST split these into individual species keys. NEVER use a group term as a JSON key. Group terms and their individual species mappings: 'Black Bass' or 'black bass (largemouth, smallmouth, spotted)' → split into Largemouth Bass, Smallmouth Bass, Spotted Bass individually. 'Catfish (all species)' or 'Catfish' → split into Blue Catfish, Channel Catfish, Flathead Catfish as applicable. 'Crappie (all species)' → split into Crappie (or Black Crappie / White Crappie if individually listed). 'Bream/Sunfish' or 'Bluegill/Warmouth and other sunfishes' → split into Bluegill, Redear Sunfish (Shellcracker), Warmouth as applicable. When a document has a group heading like 'Black Bass' followed by individual species tips (e.g. 'Largemouthbass - Spring: ... Summer: ... Fall: ... Winter: ...'), parse EACH species line separately and assign to the correct individual species key. If generic group-level data has no species-specific breakdown, replicate that data to each individual species from the confirmed list that belongs to that group. NEVER output 'Black Bass', 'Catfish (all species)', or any other group term as a species key — always use the exact individual species name from the confirmed species list. Return JSON only.",
     userTemplate: (lakeName, state, prev) => {
       const bio = prev?.biology || prev?.forage || {};
       const confirmedSpecies = Array.isArray(bio.predatorSpecies) ? bio.predatorSpecies : [];
@@ -503,9 +503,26 @@ SPECIFIC EXTRACTION TARGETS — look for these in the source documents:
 
 If a document gives specific depth ranges or seasonal behavior for a species on ${lakeName}, use it — do not replace document evidence with generic inferences.
 
+DEPTH: TWO DIFFERENT NUMBERS, AND THEY MUST NOT BE MIXED UP
+"20 feet" can mean the fish are 20 ft down, or the water is 20 ft deep. Those are different facts
+and a plan built on the wrong one sends a boat to the wrong water. Read the sentence around the
+number and decide which it is.
+• "stripers suspended at 20 ft over the old river channel"  → preferredDepth [20,20], holding "suspended"
+• "fish holding on the bottom in 20 feet"                    → preferredDepth [20,20], holding "bottom", waterDepthFt [20,20]
+• "suspended at 20 ft in 35 ft of water"                     → preferredDepth [20,20], waterDepthFt [35,35], holding "suspended"
+• "working the 20 foot contour"                              → waterDepthFt [20,20]; preferredDepth only if the fish depth is stated separately
+Phrases that mean SUSPENDED: suspended, above the thermocline, over the channel, over deep water,
+in the water column, over 40 feet, riding above, up off the bottom.
+Phrases that mean BOTTOM: on the bottom, hugging bottom, bottom-hugging, dragging, on the floor,
+bumping bottom, hard bottom, on the ledge itself, holding tight to.
+If nothing in the sources says which, holding is null. Do not guess it from the species.
+
 SCHEMA RULES — every season entry MUST follow this exact structure, no exceptions:
 {
-  "preferredDepth": [minFt, maxFt],   ← 2-element number array, or null if truly unknown
+  "preferredDepth": [minFt, maxFt],   ← depth of the FISH below the surface. NOT water depth. null if unknown
+  "holding": "suspended",              ← "bottom" | "suspended" | "both" | null. Never omit this key
+  "waterDepthFt": [minFt, maxFt],      ← depth of the WATER the pattern happens over, when a source
+                                          states it. null when it does not. Never omit this key
   "structures": [],                    ← array of strings, never omit this key
   "forage": [],                        ← array of strings, never omit this key
   "recommendedPresentations": [],      ← array of strings, never omit this key
@@ -522,14 +539,16 @@ Return ONLY:
     "${exampleSpecies}": {
       "summer": {
         "preferredDepth": [12,18],
+        "holding": "suspended",
+        "waterDepthFt": [25,45],
         "structures": ["channel ledges","creek mouths","long points"],
         "forage": ["Threadfin Shad"],
         "recommendedPresentations": ["MR Crankbait","DD Crankbait","A-Rig"],
         "notes": "behavior notes drawn from source documents"
       },
-      "fall": {"preferredDepth":[8,15],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""},
-      "winter": {"preferredDepth":[20,35],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""},
-      "spring": {"preferredDepth":[5,15],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""}
+      "fall": {"preferredDepth":[8,15],"holding":"suspended","waterDepthFt":[15,30],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""},
+      "winter": {"preferredDepth":[20,35],"holding":"bottom","waterDepthFt":[20,35],"structures":[],"forage":[],"recommendedPresentations":[],"notes":""},
+      "spring": {"preferredDepth":[5,15],"holding":null,"waterDepthFt":null,"structures":[],"forage":[],"recommendedPresentations":[],"notes":""}
     }
   },
   "sources": [{"label":"Derived from lake profile and source documents","trust":"DERIVED"}]
