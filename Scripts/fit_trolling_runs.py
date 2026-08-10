@@ -1114,6 +1114,62 @@ def _hms(sec):
     return '%d:%02d' % (int(sec // 60), int(round(sec % 60)))
 
 
+def _fit_one(args):
+    """`Pool.imap_unordered` passes one argument, so unpack here.
+
+    MODULE LEVEL ON PURPOSE. Windows starts workers with `spawn`, not `fork`, which pickles the
+    callable by qualified name -- a closure or a local would not survive the trip.
+    """
+    return fit_pack(*args)
+
+
+def _absorb(r, rows, a, total):
+    """One finished pack: record it, print its line, flush the report.
+
+    PRINTED AS IT LANDS, NOT AT THE END. The single-job path was always a generator, so it
+    streamed. `--jobs > 1` used `Pool.starmap`, which blocks until every pack is finished, so a
+    card-wide run printed its header and then went silent for hours -- no way to tell grinding
+    from hung. `_hms` above exists precisely because this is "a number someone is watching to
+    decide whether to let the card-wide run continue", and the parallel path was the one place
+    that number could never arrive in time to be watched.
+
+    `imap_unordered` is what fixes it, and it is why the slug is read off the RESULT rather than
+    zipped against the input order: results now arrive in whatever order the pool finishes them,
+    which is the whole point. Every return path from `fit_pack` already carries `slug`.
+    """
+    if r is None:
+        return                     # no trolling_runs.geojson here; nothing to say about it
+    rows.append(r)
+    n = len(rows)
+    if 'skipped' in r:
+        print('  [%d/%d] %-40s SKIP %s' % (n, total, r['slug'], r['skipped']), flush=True)
+    else:
+        # A percentage of nothing is not 100%. A pack that fitted no runs used to report
+        # "100% removed / 100% kept", which reads as a clean sweep and is the opposite.
+        tail = ('   corners %5d -> %5d   %.0f%% of fitted length kept'
+                % (r['corners_before'], r['corners_after'], 100.0 * r['m_out'] / r['m_in'])
+                ) if r['fitted'] else '   nothing fitted'
+        # WALL CLOCK FOR THE PACK, with the raster called out separately. This used to print
+        # `raster_s` alone, which reads as the pack's cost and is not -- on a big lake the raster
+        # is seconds and the fitting is minutes, so the one number shown was the small one.
+        print('  [%d/%d] %-40s %4d -> %4d runs   fitted %4d  split %3d  thin %3d%s   %s '
+              '(raster %.1fs)%s'
+              % (n, total, r['slug'], r['in'], r['out'], r['fitted'], r['split'], r['kept_thin'],
+                 tail, _hms(r['pack_s']), r['raster_s'],
+                 '  [grid %.0f m]' % r['grid_m'] if r['coarsened'] > 1.01 else ''), flush=True)
+    # THE REPORT SURVIVES A KILL. Rewritten after every pack rather than once at the end: this
+    # run is hours long, and a machine that reboots at hour six used to leave nothing behind.
+    # The fitted packs themselves were always safe -- each writes its own file and
+    # `_already_fitted` makes the run resumable -- so this closes the last gap. Swallowing the
+    # error is deliberate: a locked or full report file must not kill six hours of fitting.
+    if a.report:
+        try:
+            with open(a.report, 'w', encoding='utf-8') as fh:
+                json.dump(rows, fh, indent=1)
+        except Exception:
+            pass
+
+
 def _already_fitted(path, probe=200_000):
     """Has this pack been through the fitter? Reads the head of the file, not all of it."""
     try:
@@ -1221,33 +1277,17 @@ def main():
                               ('  x%d jobs' % a.jobs) if a.jobs > 1 else ''))
     rows, t0 = [], time.time()
 
+    # ONE PACK, ONE LINE, AS SOON AS IT IS DONE -- on both paths. See `_absorb`.
+    total = len(slugs)
     if a.jobs > 1:
         from multiprocessing import Pool
         with Pool(a.jobs) as pool:
-            results = pool.starmap(fit_pack,
-                                   [(os.path.join(a.packs, s), a) for s in slugs], chunksize=1)
+            for r in pool.imap_unordered(
+                    _fit_one, [(os.path.join(a.packs, s), a) for s in slugs], chunksize=1):
+                _absorb(r, rows, a, total)
     else:
-        results = (fit_pack(os.path.join(a.packs, s), a) for s in slugs)
-
-    for s, r in zip(slugs, results):
-        if r is None:
-            continue
-        rows.append(r)
-        if 'skipped' in r:
-            print('  %-40s SKIP %s' % (s, r['skipped']))
-            continue
-        # A percentage of nothing is not 100%. A pack that fitted no runs used to report
-        # "100% removed / 100% kept", which reads as a clean sweep and is the opposite.
-        tail = ('   corners %5d -> %5d   %.0f%% of fitted length kept'
-                % (r['corners_before'], r['corners_after'], 100.0 * r['m_out'] / r['m_in'])
-                ) if r['fitted'] else '   nothing fitted'
-        # WALL CLOCK FOR THE PACK, with the raster called out separately. This used to print
-        # `raster_s` alone, which reads as the pack's cost and is not -- on a big lake the raster
-        # is seconds and the fitting is minutes, so the one number shown was the small one.
-        print('  %-40s %4d -> %4d runs   fitted %4d  split %3d  thin %3d%s   %s (raster %.1fs)%s'
-              % (s, r['in'], r['out'], r['fitted'], r['split'], r['kept_thin'], tail,
-                 _hms(r['pack_s']), r['raster_s'],
-                 '  [grid %.0f m]' % r['grid_m'] if r['coarsened'] > 1.01 else ''))
+        for s in slugs:
+            _absorb(fit_pack(os.path.join(a.packs, s), a), rows, a, total)
 
     done = [r for r in rows if 'skipped' not in r]
     if done:
