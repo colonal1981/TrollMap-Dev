@@ -636,6 +636,34 @@ export function selectCandidates(runs, o) {
   for (let i = 0; i < runs.length; i++) {
     const run = runs[i], p = run.properties || {};
     if (p.routable === false) continue;
+    // ⚠ KNOWN WRONG, AND LEFT ALONE ON PURPOSE UNTIL THE RESEARCH CAN ANSWER IT.
+    //
+    // `p.depth_ft` is the WATER depth of the contour this run traces. `dMin`/`dMax` come from
+    // depthBandFor(), and that band is where the FISH are. Those are not the same quantity and
+    // this line has compared them since it was written.
+    //
+    // Ryan, 2026-08-10: "fish absolutely could be suspended at 25ft in 40ft of water... so
+    // realistically the baits need to not exceed that depth... not the boat."
+    //
+    // The proof is inside one profile. SPECIES_BEHAVIOR_V2['Striped Bass']['Lake Wateree'].summer
+    // gives `preferredDepth: tempF > 84 ? [14,16] : [10,16]` -- a two-foot band -- while the same
+    // node's notes say the thermocline sits at 18-24 ft and the fish suspend at its edge, and its
+    // `preferredStructure` leads with `channel_ledge` and `creek_channel_swing`, which on Wateree
+    // is 30-50 ft of water. So the profile names channel ledges as the target and this line then
+    // excludes every contour deep enough to be one. clampToOxygen() is a third witness: cutting a
+    // band at the anoxic line is right for a fish depth and meaningless for a water depth.
+    //
+    // A CEILING WAS BUILT HERE AND TAKEN BACK OUT, 2026-08-10. It read the fitted pass's measured
+    // mean and max and required both inside the band. It was worse than this line, not better: it
+    // deleted precisely the deep water that suspended fish live over, which on Wateree in summer
+    // is the entire pattern. Wrong sign. The rule it should have been -- water deeper than the
+    // baits, by some clearance, with NO deep limit at all -- needs a bait depth, and a bait depth
+    // needs the research to say which of the two numbers it is quoting.
+    //
+    // fit_trolling_runs.py now stamps `shallowest_ft`, `deepest_ft`, `mean_depth_ft` and
+    // `charted_frac` on every fitted pass, so the measurement is ready and waiting. Nothing reads
+    // them yet, and nothing should until the research distinguishes "fish at 20 ft" from "over
+    // 35 ft of water". Guessing which one a single number means is what produced this line.
     if (!(p.depth_ft >= dMin && p.depth_ft <= dMax)) continue;
     const coords = run.geometry && run.geometry.coordinates;
     if (!Array.isArray(coords) || coords.length < 2) continue;
@@ -667,6 +695,25 @@ export function selectCandidates(runs, o) {
     // HOW FAR THIS WATER IS FROM THE RAMP HE PICKED. The nearer end, because a leg can be run in
     // either direction and what matters is how far out the water is, not which way the contour
     // happens to be drawn.
+    //
+    // TRIED AND REVERTED, 2026-08-10 -- leaving the note so it is not tried a third time. The
+    // direction fix established that a leg costs `inM + outM` whichever way it is trolled, and it
+    // looked like the min was therefore understating a long leg pointing away from the ramp: on
+    // the plan Ryan objected to, L2's near end was 2.5 km out and its far end 6.3 km, and it
+    // scored as 2.5 km water.
+    //
+    // Replacing it with the midpoint made things WORSE, and the suite said so immediately. The min
+    // and the midpoint answer different questions: min says HOW CLOSE this water comes to the
+    // ramp, the midpoint says WHERE IT SITS. Because a far leg's two ends are both far while a
+    // near leg's are near and not-so-near, the midpoint COMPRESSES the gap between them -- near
+    // water went from 8x closer to 3.7x closer, its proximity dropped from 0.81 to 0.67, and 6.5
+    // km of better water four miles out took first place over 2.2 km beside the ramp. That is
+    // "why would i launch at clearwater cove and then go fish the opposite side of the lake",
+    // reintroduced by a change meant to help.
+    //
+    // The cost of the far end is real, and it is already charged -- `moveAh` below uses
+    // `inM + outM`, and the model is quoted the honest run home. This factor is not a cost. It is
+    // a preference about location, and the min is the right shape for that.
     const fromRampM = Math.min(inM, outM);
     const proximity = 1 / (1 + fromRampM / rampBiasM);
     const fishAh = ampHours(win.lengthM, trollMph);

@@ -468,3 +468,4 @@ describe('the app chooses which way round each pass is trolled', () => {
     expect(f.flipped).toBe(false);
   });
 });
+

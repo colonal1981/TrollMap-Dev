@@ -1014,9 +1014,41 @@ def fit_pack(pack, a):
             tt = _turns(_resample(piece, 10.0)[0])
             st['corners_after'] += int(np.sum(tt > 12))
             p2['worst_corner_deg'] = round(float(tt.max()), 1) if len(tt) else 0.0
+            # WHAT WATER IS ACTUALLY UNDER THIS PASS.
+            #
+            # Ryan, 2026-08-10: "if the app thinks the fish are somewhere between 17 and 25 then
+            # that means that the average depth of that trolling run needs to be between that
+            # number... if the fish are not deeper than 25 ft and i can safely stay below 25ft
+            # then the trolling run should not run deeper than 25 feet... and that number needs
+            # to be flexible because it will be different on every lake at different times of the
+            # year."
+            #
+            # WHICH water to troll is a fishing decision. It changes with the lake, the season and
+            # the species, and this script runs once, months before anyone knows what will be
+            # planned on it, so it cannot make that call and must not try. What it CAN do is the
+            # measurement, and that is all this is: the real chart depth every 10 m along the
+            # finished pass, reduced to numbers the app can decide with.
+            #
+            # `at_raw` and never `at`. `at` is the chart with thin water widened a cell for
+            # safety, which is the right input to a DECISION about where the boat may go and the
+            # wrong input to a REPORT of how deep the water is. Reporting off the eroded raster is
+            # what once had a contour "dipping to 5.9 ft" where the chart says 15.1.
+            #
+            # The 10 m spacing is even, which is what makes the mean length-weighted instead of
+            # vertex-weighted: a bend carries more vertices per metre and would otherwise pull the
+            # average toward itself.
             draw = depth.at_raw(_resample(piece, 10.0)[0])
-            if np.any(~np.isnan(draw)):
-                p2['shallowest_ft'] = round(float(np.nanmin(draw)) / 3.048, 1)
+            ok = ~np.isnan(draw)
+            if np.any(ok):
+                good = draw[ok]
+                p2['shallowest_ft'] = round(float(good.min()) / 3.048, 1)
+                p2['deepest_ft'] = round(float(good.max()) / 3.048, 1)
+                p2['mean_depth_ft'] = round(float(good.mean()) / 3.048, 1)
+                # Uncharted water is not shallow water and it is not deep water -- it is water
+                # nobody sounded, and it has already caused two bugs by being treated as one or
+                # the other. So the share that IS charted is stated, and the app can tell a mean
+                # taken over the whole pass from one taken over a third of it.
+                p2['charted_frac'] = round(float(ok.mean()), 3)
 
             # Reachability is a property of a PASS, not of the run it was cut from: one half can
             # sit in a pocket the other half can be reached from.
