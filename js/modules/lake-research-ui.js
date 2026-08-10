@@ -719,12 +719,35 @@ function formatHumanReadableSection(key, data) {
             const s = seasons[season];
             if (!s) return;
             const depth = Array.isArray(s.preferredDepth) ? `${s.preferredDepth[0]}–${s.preferredDepth[1]}ft` : (s.preferredDepth || '—');
+            // THE FISH DEPTH AND THE WATER DEPTH, SHOWN AS TWO DIFFERENT THINGS.
+            //
+            // `preferredDepth` is where the FISH are. It always was — Wateree's striper summer
+            // entry gives 14–16 ft while its own notes put the thermocline at 18–24 and its
+            // structures are channel ledges in 30–50 ft of water — but nothing in this panel or
+            // the agent prompt ever said so, and selectCandidates has been matching it against
+            // the depth of the lake bottom since it was written.
+            //
+            // So the holding pattern is rendered right next to the number, and "unknown" is
+            // rendered LOUDLY rather than left blank. A blank reads as "fine"; this question
+            // being unanswered is the difference between water with fish over it and water with
+            // fish on it, so it has to look like the gap it is. It is also the tell for whether
+            // the agent is doing its job: the sources are silent on holding for most
+            // species/season pairs, so a run that comes back with no unknowns at all is one that
+            // inferred them from the species — which the prompt explicitly forbids.
+            const hold = s.holding === 'suspended' ? '🎣 suspended'
+                       : s.holding === 'bottom'    ? '⚓ on the bottom'
+                       : s.holding === 'both'      ? '🎣⚓ both — two groups'
+                       : '❓ holding unknown';
+            const overWater = Array.isArray(s.waterDepthFt)
+              ? ` over ${s.waterDepthFt[0]}–${s.waterDepthFt[1]}ft of water` : '';
+            const holdColor = s.holding ? 'var(--accent2)' : 'var(--muted)';
             const structs = Array.isArray(s.structures) ? s.structures.slice(0,3).join(', ') : (s.structures || '');
             const forage = Array.isArray(s.forage) ? s.forage.join(', ') : (s.forage || '');
             const pres = Array.isArray(s.recommendedPresentations) ? s.recommendedPresentations.slice(0,2).join(', ') : '';
             html += `<div style="background:rgba(255,255,255,.04);padding:6px;border-radius:4px">
               <div style="font-weight:600;margin-bottom:3px">${SEASON_EMOJI[season]} ${season.charAt(0).toUpperCase()+season.slice(1)}</div>
-              ${depth ? `<div style="font-size:11px">📏 ${esc(depth)}</div>` : ''}
+              ${depth ? `<div style="font-size:11px">📏 ${esc(depth)} <span style="color:var(--muted)">fish</span></div>` : ''}
+              <div style="font-size:11px;color:${holdColor}">${esc(hold + overWater)}</div>
               ${structs ? `<div style="font-size:11px">🏗 ${esc(structs)}</div>` : ''}
               ${forage ? `<div style="font-size:11px">🦟 ${esc(forage)}</div>` : ''}
               ${pres ? `<div style="font-size:11px;color:var(--accent2)">🎣 ${esc(pres)}</div>` : ''}
