@@ -477,10 +477,14 @@ async function resolveLake(lakeName) {
     const lake = await getDukeLake(cfg.duke);
     if (lake) {
       if (lake.ft != null) out.elevation_ft = lake.ft;
-      if (lake.pct != null) out.percent_full = lake.pct;
+      // `index` is Duke's own published number and `display_full_pool` 100 is the scale it sits
+      // on, so the card shows what his own lake page shows and he can check one against the other.
+      // The unit is NOT a percentage -- see normalizeDukeRow: it is feet inside a 100 ft band
+      // hung under full pond, which is why 100 minus it is a drawdown in feet.
+      if (lake.index != null) out.display_level = lake.index;
+      out.below_full_pool_ft = lake.belowFullPoolFt;
       out.full_pool_ft = lake.fullPool;
-      out.display_level = lake.pct;
-      out.display_unit = "% full pond";
+      out.display_unit = "ft below full pond scale (100 = full)";
       out.display_full_pool = 100;
       if (isFinite(lake.target)) out.target = lake.target;
       out.sources.push("Duke API /lakes/current-level");

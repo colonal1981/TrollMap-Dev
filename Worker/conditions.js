@@ -60,6 +60,7 @@
  * client-side JavaScript. This is the authoritative source and it is a different agency.
  */
 import { CORS, JSON_HEADERS, r2Text } from './worker-core.js';
+import { getDukeLake } from './worker-data.js';
 
 const UA = 'TrollMap/1.0 (personal fishing app)';
 
@@ -409,6 +410,9 @@ function kmBetween(aLat, aLon, bLat, bLon) {
 }
 
 const round1 = (n) => Math.round(n * 10) / 10;
+// Hundredths, because the whole point of the chart-datum block is a difference of a few feet and
+// rounding it to tenths before anyone has decided whether to trust it throws away the evidence.
+const round2 = (n) => Math.round(n * 100) / 100;
 
 /**
  * Nearest to the point the CLIENT asked about — its selected ramp or centroid — not nearest to
@@ -532,6 +536,95 @@ async function waterBlock(b, lat, lon) {
   // that is the right answer; a coastal zone with no station bound is a hole in the registry.
   out.tidal = !!(b.tides || []).length;
   out.source = 'NWPS — api.water.noaa.gov/nwps/v1/gauges/{lid}';
+  out.chart_datum = await chartDatum(b);
+  return out;
+}
+
+/**
+ * HOW FAR THE WATER IS BELOW THE LEVEL THE CHART WAS DRAWN AT.
+ *
+ * Garmin states it plainly: LakeVü and Navionics reference soundings and contours to the lake's
+ * FULL POOL elevation, and seasonal change, drought and managed drawdowns are not factored in.
+ * So every depth in every chartpack is a full-pool depth, and on a drawn-down lake every one of
+ * them reads deeper than the water actually is. That is not a chart error; it is a datum, and a
+ * datum only becomes a correction once you know today's level against it.
+ *
+ * REPORTED, NEVER APPLIED. Nothing subtracts this from a depth, here or downstream. Reporting a
+ * measurement and acting on it are different commitments, and only the first one is earned yet.
+ *
+ * THE NUMBER, AND HOW LONG IT TOOK TO STOP GETTING IT WRONG.
+ *
+ * Duke's `Actual` for Wateree is "98.00" and `Elevation` is "225.5 ft (AMSL, NGVD 29 datum".
+ * `Actual` is feet inside a 100 ft band hung under full pond -- see normalizeDukeRow() in
+ * worker-data.js for why `Min` and Norman settle that -- so the drawdown is 100 minus it: 2.00 ft,
+ * and the level is 223.50 ft AMSL.
+ *
+ * Three independent things agree with 2.00 and nothing disagrees. NWPS WATS1 read 97.86 on its
+ * own datum. Third-party trackers publish 2.13 ft below full pool. And Ryan, from the water:
+ * "im about 95% sure the depths are about 2ft lower than the what the map says everywhere i go".
+ *
+ * What disagreed was a number this codebase computed about itself. The old normalizeDukeRow
+ * treated the index as a fraction of the elevation above sea level and returned 220.99 ft, which
+ * implies 4.51 ft of drawdown. That value was then read back OUT of the Worker during this
+ * session and cited as evidence of what Duke serves. It never was. It was an assumption written
+ * into a parser months earlier, laundered through code, and returned looking like a source.
+ *
+ * Ryan, 2026-08-10, on being shown that number: "what are the chances that our worker was
+ * programmed by claude with the information that claude just cited as fact". Near certainty. The
+ * rule this leaves behind is worth more than the fix: A DERIVED VALUE IN THIS CODEBASE IS NOT
+ * EVIDENCE ABOUT THE WORLD. The raw upstream response is. When those two disagree, fetch the raw
+ * row -- do not reason about which of your own outputs is more plausible.
+ *
+ * COVERAGE IS WHATEVER THE FEED RETURNS, which is not a number to be hardcoded here. Duke's
+ * /lakes/current-level takes no basin argument -- fetchDukeApi() requests the bare URL and gets
+ * every Duke reservoir it publishes across SC and NC in one response, which getDukeLake() then
+ * matches by name. An earlier draft of this comment said "the eleven Catawba-Wateree reservoirs",
+ * counted off a screenshot of one basin. That is the same mistake as the one this block exists to
+ * document, at a smaller scale: stating as fact something never actually checked.
+ *
+ * A water the feed does not name returns a null offset saying so, the same way an unbound water
+ * returns `pending`. A gap that is visible is a gap that can be closed.
+ *
+ * (Vestigial, noted not fixed: fetchDamLevels() in js/modules/duke-energy.js loops basins 1, 2
+ * and 3 and the /duke route forwards a `basin` parameter, but fetchDukeApi ignores it and every
+ * one of those calls returns the identical full list. Three requests for one answer.)
+ */
+async function chartDatum(b) {
+  const out = {
+    // True of every Garmin-derived pack in R2, not just the ones with a level feed.
+    charted_at: 'full_pool',
+    charted_at_source: 'Garmin — soundings and contours are referenced to full pool; drawdown is '
+                     + 'not applied to the base map',
+    applied: false,
+    below_full_pool_ft: null,
+    full_pool_ft: null,
+    level_ft: null,
+    source: null,
+    pending: null,
+  };
+  if (b.feature_type && b.feature_type !== 'lake') {
+    out.pending = 'not a lake — a river or coastal zone has no full pool to be below';
+    return out;
+  }
+  const name = String(b.display_name || '').replace(/,.*$/, '').trim();
+  if (!name) { out.pending = 'no display name to match against the level feed'; return out; }
+  let d = null;
+  try {
+    d = await cached(`duke:${name.toLowerCase()}`, 900, () => getDukeLake(name.toLowerCase()));
+  } catch (e) {
+    out.pending = `level feed failed: ${String((e && e.message) || e)}`;
+    return out;
+  }
+  if (!d || !Number.isFinite(d.belowFullPoolFt) || !Number.isFinite(d.fullPool)) {
+    out.pending = 'no full-pool level feed names this water — Duke\'s /lakes/current-level is the '
+                + 'only one wired, and it publishes its own reservoirs in SC and NC';
+    return out;
+  }
+  out.level_ft = d.ft;
+  out.full_pool_ft = d.fullPool;
+  out.below_full_pool_ft = round2(d.belowFullPoolFt);
+  out.source = 'Duke Energy — api.hydro-derived.duke-energy.app/lakes/current-level; `Actual` is '
+             + 'feet inside a 100 ft band under full pond, so the drawdown is 100 minus it';
   return out;
 }
 

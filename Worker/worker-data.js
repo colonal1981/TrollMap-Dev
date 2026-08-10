@@ -230,17 +230,45 @@ function normalizeDukeRow(row) {
   const elevMatch = String(row.Elevation || "").match(/([0-9]+(?:\.[0-9]+)?)/);
   const fullPool = elevMatch ? parseFloat(elevMatch[1]) : null;
   if (!isFinite(actual)) return null;
-  let pct = null, ft = null;
-  if (actual > 100 || fullPool && Math.abs(actual - fullPool) < fullPool * 0.1 && actual > 50) {
+  const maxRaw = parseFloat(row.Max);
+  // DUKE'S NUMBER IS FEET, AND IT IS FEET BELOW FULL POND, AND IT LOOKS EXACTLY LIKE A PERCENTAGE.
+  //
+  // A live Wateree row: Actual "98.00", Min "92.50", Max "100.00", Elevation "225.5 ft (AMSL,
+  // NGVD 29 datum". Every lake in the feed has Max 100, from Lake James at about 1,200 ft of real
+  // elevation down to Wateree at 225.5, which is what makes it read as a percentage.
+  //
+  // It is not one. Duke hangs a HUNDRED-FOOT BAND under each full pond and reports position
+  // inside it, so the number is feet above that band's floor AND a percentage of the band, at the
+  // same time, numerically identical. Wateree's floor is 125.5 and its full pond is 225.5.
+  //
+  // `Min` proves it and Norman proves it twice. Wateree's Min of 92.50 as a percentage of
+  // elevation is 208.6 ft -- 17 ft of drawdown, which this reservoir has never seen -- while as
+  // `100 - value` it is 7.5 ft, which is a Low Inflow Protocol minimum. Norman's Min of 91 is
+  // either 69 ft down or 9 ft down, and Norman's operating range is about 10.
+  //
+  // The old code did `actual / 100 * fullPool`, treating the index as a fraction of the elevation
+  // above SEA LEVEL. For Wateree that returned 220.99 ft instead of 223.50 -- and 220.99 is so
+  // close to a plausible reading that it survived review twice, including once by someone who had
+  // just been handed the raw row. On Norman it returned 735.07 instead of about 751, a 16 ft
+  // error. Nothing about that formula was ever right; it was only ever unfalsifiable.
+  //
+  // Garmin references its soundings to full pond and does not adjust for drawdown, so this
+  // number is what stands between a charted depth and the water actually under the boat.
+  let belowFullPoolFt = null, ft = null;
+  if (maxRaw === 100 && actual <= 100) {
+    belowFullPoolFt = 100 - actual;
+    ft = fullPool != null ? fullPool - belowFullPoolFt : null;
+  } else if (fullPool != null) {
+    // The other convention Duke documents: the value already IS feet above sea level.
     ft = actual;
-    pct = fullPool ? actual / fullPool * 100 : null;
-  } else {
-    pct = actual;
-    ft = fullPool ? actual / 100 * fullPool : null;
+    belowFullPoolFt = fullPool - actual;
   }
   return {
     name: row.LakeDisplayName || row.LakeName || "",
-    pct: pct != null ? Math.round(pct * 100) / 100 : null,
+    // The raw index, under a name that cannot be mistaken for a share of anything. Kept because
+    // it is the number printed on Duke's own site, so it is the one a person can check against.
+    index: actual,
+    belowFullPoolFt: belowFullPoolFt != null ? Math.round(belowFullPoolFt * 100) / 100 : null,
     ft: ft != null ? Math.round(ft * 100) / 100 : null,
     fullPool,
     target: parseFloat(row.Target),
@@ -263,7 +291,7 @@ async function fetchDukeDashboard(basin = "1") {
   const lines = arr.map((r) => {
     const n = normalizeDukeRow(r);
     if (!n) return "";
-    return `${n.name} \xB7 ${n.ft != null ? n.ft.toFixed(2) : "NA"} \xB7 ${n.pct != null ? n.pct.toFixed(2) + "%" : "NA"} \xB7 target ${isFinite(n.target) ? n.target : "NA"} \xB7 full ${n.fullPool || "NA"}`;
+    return `${n.name} \xB7 ${n.ft != null ? n.ft.toFixed(2) + " ft AMSL" : "NA"} \xB7 ${n.belowFullPoolFt != null ? n.belowFullPoolFt.toFixed(2) + " ft below full pond" : "NA"} \xB7 index ${n.index} \xB7 target ${isFinite(n.target) ? n.target : "NA"} \xB7 full ${n.fullPool || "NA"}`;
   }).filter(Boolean);
   return { url: "https://api.hydro-derived.duke-energy.app/lakes/current-level", text: lines.join("\n"), json: arr };
 }
