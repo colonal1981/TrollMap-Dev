@@ -31,6 +31,31 @@ function cleanProfile(prev) {
   return out;
 }
 
+/**
+ * The model's answer to "where are these fish sitting", made robust.
+ *
+ * The first version accepted exactly 'suspended', 'bottom' or 'both' and turned anything else
+ * into null -- which in the saved profile is indistinguishable from the model declining to
+ * answer. "Suspended", "suspended/bottom", "near bottom" and "water column" would all have been
+ * discarded in silence, and the next move would have been to reword the prompt again.
+ *
+ * So it coerces what a language model actually writes, and REPORTS anything it cannot place
+ * rather than swallowing it. A value that lands in `rejected` is a vocabulary gap in this
+ * function, not a refusal by the agent, and telling those two apart is the entire point.
+ */
+function coerceHolding(v, rejected) {
+  if (v == null || v === '') return null;
+  const t = String(v).toLowerCase().trim();
+  if (/unknown|unclear|not stated|n\/a|^none$|^null$/.test(t)) return null;
+  const susp = /suspend|water column|above the thermocline|open water|pelagic|up off|mid.?water/.test(t);
+  const bott = /bottom|benthic|on the floor|hugging|substrate/.test(t);
+  if ((susp && bott) || /\bboth\b|mixed|two groups/.test(t)) return 'both';
+  if (susp) return 'suspended';
+  if (bott) return 'bottom';
+  if (Array.isArray(rejected)) rejected.push(String(v).slice(0, 60));
+  return null;
+}
+
 var RESEARCH_AGENTS = {
   identity: {
     label: "Lake Identity",
@@ -1123,6 +1148,10 @@ async function handleResearchAgent(request, env) {
 
     // Run normalization pass (same as post-processing below)
     const SEASONS = ['spring', 'summer', 'fall', 'winter'];
+    // Anything the model put in `holding` that coerceHolding could not place. Empty is the good
+    // outcome; non-empty means the agent answered and this file failed to understand it, which
+    // is a fix here rather than another round of prompt wording.
+    const holdingRejects = [];
     const normalizedMerged = {};
     for (const [species, seasons] of Object.entries(mergedIntelligence)) {
       if (!seasons || typeof seasons !== 'object') { normalizedMerged[species] = seasons; continue; }
@@ -1147,8 +1176,7 @@ async function handleResearchAgent(request, env) {
             //
             // A normaliser that enumerates keys is a whitelist whether or not anyone meant it as
             // one. Anything added to the fisheries schema has to be added here in the same commit.
-            holding: entry.holding === 'suspended' || entry.holding === 'bottom' || entry.holding === 'both'
-              ? entry.holding : null,
+            holding: coerceHolding(entry.holding, holdingRejects),
             waterDepthFt: Array.isArray(entry.waterDepthFt) && entry.waterDepthFt.length === 2
               ? entry.waterDepthFt : null,
             structures: Array.isArray(entry.structures) ? entry.structures : [],
@@ -1185,6 +1213,9 @@ async function handleResearchAgent(request, env) {
       // Surfaced where the client's log will show it. A run that lost a quarter of the lake's
       // species must not print a tick and nothing else.
       warnings: [
+        ...(holdingRejects.length
+            ? [`fisheries: ${holdingRejects.length} holding value(s) the normaliser could not read — `
+             + `${[...new Set(holdingRejects)].slice(0, 6).join(', ')}`] : []),
         ...failedGroups.map((g) => `fisheries group "${g.group}" returned nothing (${g.reason}) — `
                                  + `${g.species.join(', ')} have no trolling intelligence from this run`),
         ...(missingSpecies.length && !failedGroups.length
@@ -1357,6 +1388,10 @@ async function handleResearchAgent(request, env) {
     }
 
     const SEASONS = ['spring', 'summer', 'fall', 'winter'];
+    // Its own sink — this is the single-call path, a different scope from the group path above.
+    // Sharing a name across two scopes without declaring it in both is a ReferenceError at
+    // runtime and a 500 on the only route that populates trolling intelligence.
+    const holdingRejects = [];
     const normalized = {};
     for (const [species, seasons] of Object.entries(sectionData)) {
       if (species === 'sources') { normalized[species] = seasons; continue; }
@@ -1392,8 +1427,7 @@ async function handleResearchAgent(request, env) {
             //
             // A normaliser that enumerates keys is a whitelist whether or not anyone meant it as
             // one. Anything added to the fisheries schema has to be added here in the same commit.
-            holding: entry.holding === 'suspended' || entry.holding === 'bottom' || entry.holding === 'both'
-              ? entry.holding : null,
+            holding: coerceHolding(entry.holding, holdingRejects),
             waterDepthFt: Array.isArray(entry.waterDepthFt) && entry.waterDepthFt.length === 2
               ? entry.waterDepthFt : null,
             structures: Array.isArray(entry.structures) ? entry.structures : [],
