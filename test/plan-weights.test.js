@@ -117,7 +117,7 @@ describe('the weights actually change which legs get offered', () => {
         near: Array.from({ length: 6 }, (_, k) => ({ s: 200 + k * 300, t: kind, d: 25 })) } };
   }
   const runs = [run('timber', 'flat', -80.720), run('point', 'channel_edge', -80.764)];
-  const opts = { ramp: [-80.73, 34.38], slug: 'w', depthFt: [0, 99], usableAh: 999, windowMin: 9999 };
+  const opts = { ramp: [-80.73, 34.38], slug: 'w', fishDepthFt: [0, 99], holding: 'bottom', usableAh: 999, windowMin: 9999 };
 
   it('ranks the timber leg first on the measured defaults', () => {
     const out = selectCandidates(runs, opts);
@@ -163,7 +163,7 @@ describe('distance from the ramp is a cost, not just a filter', () => {
   // 2.2 km of water off the ramp, and 6.5 km of BETTER water four miles away.
   const nearRun = run(-80.720, 34.3800, 41, 6);
   const farRun = run(-80.760, 34.4400, 120, 16);
-  const opts = { ramp: [-80.73, 34.38], slug: 'w', depthFt: [0, 99], usableAh: 999, windowMin: 9999 };
+  const opts = { ramp: [-80.73, 34.38], slug: 'w', fishDepthFt: [0, 99], holding: 'bottom', usableAh: 999, windowMin: 9999 };
 
   it('the far water genuinely scores higher — this is not a fixture that decides itself', () => {
     const out = selectCandidates([nearRun, farRun], opts);
@@ -234,7 +234,7 @@ describe('two legs on one shoreline are one leg', () => {
   const L1 = feat(line(-80.7337, -80.7856, 34.3600, 60), 23, 10, 4775);
   const L2 = feat(line(-80.7666, -80.7337, 34.3603, 40), 25.9, 6, 3027);
   const FAR_BANK = feat(line(-80.7666, -80.7337, 34.3640, 40), 24, 6, 3027);
-  const opts = { ramp: [-80.7300, 34.3600], slug: 'w', depthFt: [0, 99],
+  const opts = { ramp: [-80.7300, 34.3600], slug: 'w', fishDepthFt: [0, 99], holding: 'bottom',
                  usableAh: 999, windowMin: 9999 };
 
   it('the start-point rule alone lets the duplicate through — that is the bug', () => {
@@ -302,7 +302,7 @@ describe('the gap between consecutive legs is measured and handed over', () => {
   // This is the shape of the plan he took out: each leg fine on its own, the pair expensive.
   const A = eastWest(-80.760, 34.3800, 41);
   const B = eastWest(-80.700, 34.3800, 41);
-  const opts = { ramp: [-80.73, 34.38], slug: 'w', depthFt: [0, 99], usableAh: 999, windowMin: 9999 };
+  const opts = { ramp: [-80.73, 34.38], slug: 'w', fishDepthFt: [0, 99], holding: 'bottom', usableAh: 999, windowMin: 9999 };
 
   it('every candidate carries the deadhead to every other candidate it could precede', () => {
     const out = selectCandidates([A, B], opts);

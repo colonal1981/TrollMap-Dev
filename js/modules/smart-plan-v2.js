@@ -31,7 +31,12 @@ export const CANDIDATE_LIMIT = 12;
  * @param {object}   o
  * @param {string}   o.r2Key        chartpack slug, e.g. 'wateree_lake'
  * @param {number[]} o.ramp         [lon, lat]
- * @param {number[]} o.depthFt      [min, max] the species is using — from trollingIntelligence
+ * @param {number[]} o.fishDepthFt  [min, max] where the FISH are — from trollingIntelligence.
+ *                                 Renamed from `depthFt` 2026-08-10: that name already meant a
+ *                                 leg's WATER depth downstream, and one name for two quantities
+ *                                 is what let a fish band be compared against a contour.
+ * @param {string}   [o.holding]   'bottom' | 'suspended' | 'both' | null — which constraint the
+ *                                 water is under. See eligibleForHolding() in plan-candidates.js.
  * @param {number}   o.usableAh     already carries the 20% LiFePO4 reserve
  * @param {string[]} o.tackle       exact lure names, from the inventory
  * @param {object[]} [o.inventory]  [{name, type}] so lure names resolve to a connection
@@ -68,7 +73,7 @@ export async function buildSmartPlanV2(o) {
   const docks = structureIndex((docksFc && docksFc.features) || []);
 
   const candidates = selectCandidates(runs, {
-    ramp: o.ramp, slug: o.r2Key, depthFt: o.depthFt,
+    ramp: o.ramp, slug: o.r2Key, fishDepthFt: o.fishDepthFt, holding: o.holding,
     usableAh: o.usableAh, windowMin: o.windowMin,
     structures, catches: o.catches, catchSpecies: o.species, month: o.month,
     // Per species, per season, per lake, from the research profile — see structureWeights().
@@ -76,9 +81,21 @@ export async function buildSmartPlanV2(o) {
     transitM: o.transitM, limit: CANDIDATE_LIMIT,
   });
   if (!candidates.length) {
+    // SAY WHICH TEST EMPTIED IT. selectCandidates now reports the rule it applied and how many
+    // runs each stage rejected, so "the band is wrong" and "this fish does not live on this lake"
+    // stop reading as the same failure. The old message named a band and a ramp and left him to
+    // guess which of the two was the problem.
+    const s = candidates.selection || {};
+    const r = s.rejected || {};
+    const [lo, hi] = o.fishDepthFt || [];
     return { plan: null, candidates: [],
-             problems: [`nothing on ${o.r2Key} is both inside ${o.depthFt?.[0]}–${o.depthFt?.[1]} ft `
-                      + 'and reachable from this ramp inside the day'] };
+             problems: [`nothing on ${o.r2Key} is both fishable for ${lo}–${hi} ft fish `
+                      + `(${s.depthRule || 'depth rule unknown'}) and reachable from this ramp `
+                      + `inside the day — of ${s.considered ?? runs.length} runs, ${r.depth ?? 0} `
+                      + `failed the depth rule, ${r.noWindow ?? 0} had no window worth trolling, `
+                      + `${r.scoreless ?? 0} passed nothing worth trolling`
+                      + (s.holdingUnknown ? ' · holding unknown for this species and season, so '
+                                          + 'the old fish-band-vs-water-depth test was used' : '')] };
   }
 
   // What the lure needs at the business end, resolved by name. Injected as a function so this

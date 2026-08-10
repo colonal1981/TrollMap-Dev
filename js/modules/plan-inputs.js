@@ -117,6 +117,11 @@ export function depthBandFor(species, lakeName, season, waterTempF, researched) 
       basis: `built-in table, ${owns.map((x) => x.lakeKey).join(' / ')}`
            + `${owns.length > 1 ? ` — ${named} combined` : ''}`,
       generic: !lakeSpecific, source: 'table',
+      // THE TABLE HAS NO ANSWER FOR THIS AND MUST NOT PRETEND TO. SPECIES_BEHAVIOR_V2 predates
+      // the fish-depth/water-depth split entirely; its `preferredDepth` numbers were written
+      // without anyone deciding which quantity they were. Stated as null rather than omitted so
+      // the consumer sees an explicit "not known" instead of an absent key it might read as false.
+      holding: null, waterDepthFt: null, sourceQuote: null,
     }, researched);
   }
 
@@ -148,6 +153,7 @@ export function depthBandFor(species, lakeName, season, waterTempF, researched) 
          + `${lakeName} has no researched profile and is not one of them`,
     generic: true,
     source: 'table-union',
+    holding: null, waterDepthFt: null, sourceQuote: null,
   }, researched);
 }
 
@@ -238,7 +244,8 @@ export function researchedBand(profile, species, seasonKey) {
   const hit = matchSpeciesKeys(ti, species)[0];
   if (!hit) return null;
 
-  const band = ti[hit] && ti[hit][seasonKey] && ti[hit][seasonKey].preferredDepth;
+  const node = (ti[hit] && ti[hit][seasonKey]) || null;
+  const band = node && node.preferredDepth;
   if (!Array.isArray(band) || band.length !== 2) return null;
   const [a, b] = band.map(Number);
   if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) return null;
@@ -248,7 +255,59 @@ export function researchedBand(profile, species, seasonKey) {
     basis: `researched profile for this lake — ${hit}, ${seasonKey}`,
     generic: false,
     source: 'research',
+    // ── THE THREE FIELDS THAT DECIDE WHICH WATER IS ELIGIBLE ──────────────────────────────
+    //
+    // `band` is where the FISH are. It is not the depth of the water, and every version of this
+    // file before 2026-08-10 handed it downstream as though it were, which is how selectCandidates
+    // came to compare a fish band against a contour's charted depth. See
+    // claude/WHAT_SMARTPLAN_IS_2026-08-09.md, "fish depth is not water depth".
+    //
+    // `holding` is what makes the two separable: 'bottom' means the floor IS the target and the
+    // water should match the band; 'suspended' means the fish are up in the column and any water
+    // deeper than them will do, with no upper limit. The research pass populates it per lake and
+    // per season, cited, which is the only reason this rule can be written at all.
+    //
+    // THIS IS ALSO WHERE THE WHITELIST BUG KEEPS COMING BACK. A normaliser that enumerates keys
+    // is a whitelist whether or not it is written as one, and this function has silently dropped
+    // every field but `preferredDepth` since it was written -- `holding` and `waterDepthFt` were
+    // populated in the profile and simply never arrived. Anything added to the season node in
+    // Worker/research/agents.js has to be named here too or it does not exist downstream.
+    holding: normaliseHolding(node.holding),
+    waterDepthFt: pairOrNull(node.waterDepthFt),
+    // The sentence the numbers came from. Carried so a plan can say WHY it thinks the fish are at
+    // 20 ft -- an uncited number and a sourced one look identical in JSON, and on Wateree the
+    // striper 15-40 that turned out to be real and the bream 1-5 that turned out to be textbook
+    // read exactly the same until the quote was there to check.
+    sourceQuote: typeof node.sourceQuote === 'string' && node.sourceQuote.trim()
+      ? node.sourceQuote.trim() : null,
+    species: hit,
+    season: seasonKey,
   };
+}
+
+/**
+ * `holding` as one of the four things it is allowed to be, or null.
+ *
+ * TOLERANT ON THE WAY IN, STRICT ON THE WAY OUT. The value is written by a language model, so it
+ * arrives as 'Suspended', 'bottom-relating', 'on the bottom' and worse. Coercing those is right.
+ * INVENTING one is not: anything unreadable becomes null, and null is a question for Ryan rather
+ * than a default, because the two rules cut in opposite directions and guessing wrong either
+ * deletes the deep water suspended fish live over or offers water no bottom fish is on.
+ */
+export function normaliseHolding(v) {
+  const s = String(v == null ? '' : v).toLowerCase().trim();
+  if (!s) return null;
+  if (/\bboth\b|either|mixed|some.*bottom.*some.*suspend|varies/.test(s)) return 'both';
+  if (/suspend|water column|off the bottom|pelagic|open water/.test(s)) return 'suspended';
+  if (/bottom|benthic|on the floor|hugging/.test(s)) return 'bottom';
+  return null;
+}
+
+/** A [min, max] pair of finite feet, or null. Same shape rule as `preferredDepth`. */
+function pairOrNull(v) {
+  if (!Array.isArray(v) || v.length !== 2) return null;
+  const [a, b] = v.map(Number);
+  return Number.isFinite(a) && Number.isFinite(b) && b >= a ? [a, b] : null;
 }
 
 /** The 20% LiFePO4 reserve is not optional, so it comes off here and never reaches the model. */

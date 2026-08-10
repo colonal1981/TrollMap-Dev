@@ -1,6 +1,6 @@
 import { describe, it, expect } from './expect-shim.mjs';
 import { buildSmartPlanV2, CANDIDATE_LIMIT, prefetchTransits, waterRouter } from '../js/modules/smart-plan-v2.js';
-import { metresBetween } from '../js/modules/plan-candidates.js';
+import { metresBetween, selectCandidates } from '../js/modules/plan-candidates.js';
 
 // ---------------------------------------------------------------------------
 // Why this test exists
@@ -49,7 +49,13 @@ const TACKLE = INVENTORY.map((l) => l.name);
 const OPTS = {
   r2Key: 'w', chartpackBase: '', ramp: RAMP, rampName: 'Clearwater Cove',
   water: 'Lake Wateree, SC', date: '2026-08-10', launchTime: '06:00', returnTime: '15:00',
-  species: 'Striped Bass', depthFt: [15, 40], usableAh: 80, windowMin: 540,
+  // WHERE THE FISH ARE, AND HOW THEY ARE HOLDING. `depthFt` until 2026-08-10, when it turned out
+  // this name already meant a leg's WATER depth downstream and the two were being compared to each
+  // other. 15-40 ft suspended is Wateree striped bass in summer, straight off the v140 research
+  // profile, quote and all: "the depths fish are marked range from 15-40 feet, but the fish are
+  // often suspended when they're active."
+  species: 'Striped Bass', fishDepthFt: [15, 40], holding: 'suspended',
+  usableAh: 80, windowMin: 540,
   conditions: { waterTempF: 84, clarity: 'Muddy' }, tackle: TACKLE, inventory: INVENTORY,
   fetchJson,
 };
@@ -164,10 +170,137 @@ describe('smart-plan-v2 — the whole path with no network', () => {
   });
 
   it('stops when nothing on the lake matches the depth band', async () => {
-    const r = await buildSmartPlanV2({ ...OPTS, depthFt: [200, 300],
+    // 200-300 ft SUSPENDED, so the suspended rule's floor (water deeper than 200 ft) is what
+    // empties it. On a reservoir with a 225 ft maximum this is water that does not exist.
+    const r = await buildSmartPlanV2({ ...OPTS, fishDepthFt: [200, 300], holding: 'suspended',
                                        askModel: async () => { throw new Error('must not be called'); } });
     expect(r.plan).toBe(null);
     expect(r.problems[0].includes('reachable from this ramp')).toBe(true);
+  });
+
+  // ── THE ELIGIBILITY RULE, END TO END — 2026-08-10 ──────────────────────────────────────────
+  //
+  // The rule these three cover is the one thing SmartPlan got wrong for months: `preferredDepth`
+  // is where the FISH are and a contour's depth is the WATER, and which of them constrains the
+  // other depends on `holding`. See claude/WHAT_SMARTPLAN_IS_2026-08-09.md.
+  //
+  // They are written against buildSmartPlanV2 rather than eligibleForHolding directly, because a
+  // unit test of the predicate would have passed happily the whole time the value never reached
+  // it -- researchedBand() dropped `holding` on the floor for as long as it existed, and the
+  // symptom was a correct rule that nothing ever invoked.
+
+  // THE FIXTURE RUNS SIT AT 22 AND 23 FT, which is what makes a 10-20 ft band the discriminator:
+  // on the bottom that water is outside the band and the day is empty; suspended, the only
+  // requirement is water deeper than 10 ft and both runs qualify. One input, two answers,
+  // decided entirely by `holding` -- which is the proof that the value survives depthBandFor,
+  // the wiring, buildSmartPlanV2 and selectCandidates rather than being dropped somewhere in
+  // between. researchedBand() dropped it silently for as long as it existed.
+  it('lets holding decide the outcome through the whole path', async () => {
+    const bottom = await buildSmartPlanV2({ ...OPTS, fishDepthFt: [10, 20], holding: 'bottom',
+                                            askModel: goodModel() });
+    expect(bottom.plan).toBe(null);
+    const susp = await buildSmartPlanV2({ ...OPTS, fishDepthFt: [10, 20], holding: 'suspended',
+                                          askModel: goodModel() });
+    expect(susp.plan).not.toBe(null);
+  });
+
+  it('says which rule emptied the day', async () => {
+    const r = await buildSmartPlanV2({ ...OPTS, fishDepthFt: [10, 20], holding: 'bottom',
+                                       askModel: goodModel() });
+    // "The band is wrong" and "this fish does not live on this lake" used to read as one failure.
+    expect(r.problems[0].includes('bottom: water must be inside 10–20 ft')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE ELIGIBILITY RULE — 2026-08-10
+//
+// `preferredDepth` is where the FISH are; a contour's depth is the WATER. Which one constrains
+// the other depends on `holding`, and comparing them directly is what SmartPlan did for months.
+// See claude/WHAT_SMARTPLAN_IS_2026-08-09.md.
+//
+// Three runs, deliberately unlike: 12 ft is too shallow to hold a fish at 15 ft at all, 22 ft is
+// inside a bottom band, and 55 ft is deep water that a bottom fish is not on and a suspended one
+// very much is. Every assertion below is about which of those three survives.
+// ---------------------------------------------------------------------------
+describe('the eligibility rule — fish depth is not water depth', () => {
+  const DEPTHS = [12, 22, 55];
+  // SEPARATED IN LATITUDE, NOT LONGITUDE. run() lays 4000 m eastward from lon0, which spans about
+  // 0.044 deg -- stepping lon0 by anything less than that makes the runs retrace each other and
+  // the spatial dedupe eats the later ones before the depth rule is ever the reason. That is what
+  // happened on the first cut of this test: 55 ft vanished and it looked like the suspended rule
+  // had rejected it. Parallel lines 0.02 deg of latitude apart are 2.2 km clear of each other,
+  // past the 1200 m dedupe, and stay the same short hop from the ramp.
+  const runsAt = () => DEPTHS.map((ft, i) => {
+    const r = run(i, -80.720, 34.380 + i * 0.02, 4000,
+                  Array.from({ length: 16 }, (_, k) => ({ s: 200 + k * 240, t: 'hump', d: ft })));
+    r.properties.depth_ft = ft;
+    return r;
+  });
+  const base = { ramp: RAMP, slug: 'w', usableAh: 200, windowMin: 600 };
+  const depthsOf = (out) => out.map((c) => c.depthFt).sort((a, b) => a - b);
+
+  it('suspended: keeps everything deeper than the fish, with no ceiling', () => {
+    const out = selectCandidates(runsAt(), { ...base, fishDepthFt: [15, 40], holding: 'suspended' });
+    // 55 ft is the one that matters. It is below the band, the old test deleted it, and it is
+    // exactly the water Ryan described: "fish absolutely could be suspended at 25ft in 40ft of
+    // water." 12 ft goes because a fish cannot suspend at 15 ft in 12 ft of water.
+    expect(depthsOf(out)).toEqual([22, 55]);
+  });
+
+  it('suspended: the floor is the top of the band, not the bottom of it', () => {
+    // 22 ft water holds a 15-40 ft fish in its shallower half. Requiring water deeper than 40
+    // would throw it away, and that is real fishable water.
+    const out = selectCandidates(runsAt(), { ...base, fishDepthFt: [15, 40], holding: 'suspended' });
+    expect(out.some((c) => c.depthFt === 22)).toBe(true);
+  });
+
+  it('bottom: the water has to match the band', () => {
+    const out = selectCandidates(runsAt(), { ...base, fishDepthFt: [18, 25], holding: 'bottom' });
+    // 55 ft is not deep water holding bottom catfish that are in 18-25 ft. It is the wrong water.
+    expect(depthsOf(out)).toEqual([22]);
+  });
+
+  it('both: exactly what suspended selects, not a compromise between the two', () => {
+    // Ryan: "yeah use the suspended number so that you could fish any portion that is deeper than
+    // the fish."
+    const b = selectCandidates(runsAt(), { ...base, fishDepthFt: [15, 40], holding: 'both' });
+    const s = selectCandidates(runsAt(), { ...base, fishDepthFt: [15, 40], holding: 'suspended' });
+    expect(depthsOf(b)).toEqual(depthsOf(s));
+  });
+
+  it('unknown holding: behaves exactly as it did before, and says so', () => {
+    // NOT A DEFAULT -- a deferral. Ryan, asked which way null should fail: "for null i dont
+    // know... cross that bridge when we get to it." So the old comparison still runs here and
+    // nowhere else, and the result is flagged rather than passed off as the researched path.
+    const out = selectCandidates(runsAt(), { ...base, fishDepthFt: [18, 25], holding: null });
+    expect(depthsOf(out)).toEqual([22]);
+    expect(out.selection.holdingUnknown).toBe(true);
+    expect(out.selection.depthRule.includes('holding unknown')).toBe(true);
+  });
+
+  it('prefers the fitted pass measurement over the contour nominal', () => {
+    // fit_trolling_runs.py stamps `mean_depth_ft` off the depth raster every 10 m along the
+    // finished pass. Where it exists it is a better answer about the water the boat is over than
+    // the value the contour was stitched at, and it is what the rule reads.
+    const [shallow] = runsAt();
+    shallow.properties.depth_ft = 12;          // nominal: too shallow for a 15 ft fish
+    shallow.properties.mean_depth_ft = 34.5;   // measured: comfortably deeper than the band's floor
+    const out = selectCandidates([shallow], { ...base, fishDepthFt: [15, 40], holding: 'suspended' });
+    expect(out.length).toBe(1);
+    expect(out[0].waterDepthFt).toBe(34.5);
+    expect(out[0].waterDepthMeasured).toBe(true);
+  });
+
+  it('refuses the old option name instead of silently dropping the filter', () => {
+    // The rename's own failure mode, pinned. A caller left on `depthFt` got `[0, Infinity]` -- no
+    // depth filter at all -- and a plan that looked perfectly normal. The suite caught it; the
+    // app would not have.
+    let threw = false;
+    try {
+      selectCandidates([], { ...base, depthFt: [15, 40] });
+    } catch (e) { threw = /fishDepthFt/.test(e.message); }
+    expect(threw).toBe(true);
   });
 });
 

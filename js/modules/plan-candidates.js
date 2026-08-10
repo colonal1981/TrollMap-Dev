@@ -573,10 +573,96 @@ function bestWindow(run, opts) {
 }
 
 /**
+ * WHAT DEPTH OF WATER THIS PASS IS OVER, measured where the measurement exists.
+ *
+ * `depth_ft` is the contour's nominal value — the number the line was stitched at. `mean_depth_ft`
+ * is what fit_trolling_runs.py measured off the depth raster every 10 m along the finished pass
+ * and length-weighted, which is a strictly better answer about the water the boat will actually
+ * be over. It only exists on FITTED passes, which on Wateree and Marion is about a quarter of the
+ * runs — the rest could not hold a leg of the minimum length inside one band and were left with
+ * their original geometry, so they fall back to the nominal value.
+ *
+ * The mixed source is stated on the candidate as `waterDepthMeasured` rather than hidden, because
+ * "this pass averages 26 ft" and "this line was drawn at the 26 ft contour" deserve different
+ * amounts of trust and only one of them was measured.
+ */
+function passWaterFt(p) {
+  const measured = Number(p && p.mean_depth_ft);
+  if (Number.isFinite(measured) && measured > 0) return { ft: measured, measured: true };
+  const nominal = Number(p && p.depth_ft);
+  return { ft: Number.isFinite(nominal) ? nominal : NaN, measured: false };
+}
+
+/**
+ * IS THIS WATER ELIGIBLE FOR FISH AT THIS DEPTH, HOLDING THIS WAY?
+ *
+ * This replaces the single line that compared a fish band against a contour's water depth and had
+ * done so since it was written. The two are different quantities; which one constrains the water
+ * depends entirely on `holding`, and until the research pass populated that field there was no
+ * honest way to write this. See claude/WHAT_SMARTPLAN_IS_2026-08-09.md.
+ *
+ * BOTTOM — the floor is the target, so the water should MATCH the band. A blue cat in 18–25 ft is
+ * on the bottom in 18–25 ft of water; 40 ft of water is not deep water holding those fish, it is
+ * the wrong water. This is the one case where the old line was accidentally right, and it is kept
+ * unchanged rather than rewritten into something equivalent.
+ *
+ * SUSPENDED — the fish are up in the column and the bottom is only a floor to stay off. Ryan,
+ * 2026-08-10: "fish absolutely could be suspended at 25ft in 40ft of water... so realistically the
+ * baits need to not exceed that depth... not the boat." So there is NO upper limit, and the only
+ * requirement is that the water be deeper than where the fish start.
+ *
+ * WHY THE FLOOR IS dMin AND NOT dMax. A 15–40 ft band means fish are found anywhere in that
+ * range. Water 25 ft deep can hold them at 15–25 ft — that is real, fishable water and requiring
+ * more than 40 ft would delete it. Water 10 ft deep cannot hold a fish at 15 ft at all. So the
+ * test is the shallow end of the band, which is exactly "any portion that is deeper than the fish".
+ *
+ * BOTH — the suspended rule, per Ryan: "yeah use the suspended number so that you could fish any
+ * portion that is deeper than the fish." The ambiguity is real and belongs on the page rather than
+ * buried in a threshold, so the plan is also made to say it in words; see the wiring module.
+ *
+ * NULL — DELIBERATELY UNDECIDED. Ryan, asked which way it should fail: "for null i dont know...
+ * cross that bridge when we get to it." So nothing is invented here. The pre-existing behaviour is
+ * kept EXACTLY as it was for this case and nowhere else, which means an unresearched lake plans
+ * today the way it planned yesterday — no silent new guess landing in water he cannot see. The
+ * `holdingUnknown` flag on the result is how the caller says so out loud.
+ *
+ * NO CLEARANCE CONSTANT ANYWHERE IN HERE. How far above the fish a bait rides is species-dependent
+ * and, in his words, "not a math equation" — a foot for bottom-hugging catfish, just above the
+ * suspension for stripers. That is the research's answer, not a number for this function, and a
+ * margin invented here would be exactly the category error this whole rewrite is undoing.
+ *
+ * @returns {{ok:boolean, waterFt:number, measured:boolean, rule:string}}
+ */
+export function eligibleForHolding(p, fishBand, holding) {
+  const [dMin, dMax] = Array.isArray(fishBand) && fishBand.length === 2
+    ? fishBand : [0, Infinity];
+  const { ft, measured } = passWaterFt(p);
+  if (!Number.isFinite(ft)) return { ok: false, waterFt: NaN, measured, rule: 'no charted depth' };
+
+  if (holding === 'suspended' || holding === 'both') {
+    return { ok: ft > dMin, waterFt: ft, measured,
+             rule: `suspended: water must be deeper than ${dMin} ft, no ceiling` };
+  }
+  if (holding === 'bottom') {
+    return { ok: ft >= dMin && ft <= dMax, waterFt: ft, measured,
+             rule: `bottom: water must be inside ${dMin}–${dMax} ft` };
+  }
+  // Unknown. The old comparison, unchanged, so behaviour on unresearched water does not move.
+  return { ok: ft >= dMin && ft <= dMax, waterFt: ft, measured,
+           rule: `holding unknown — old fish-band-vs-water-depth test, ${dMin}–${dMax} ft` };
+}
+
+/**
  * @param {object[]} runs        features from trolling_runs.geojson
  * @param {object}   o
  * @param {number[]} o.ramp      [lon, lat]
- * @param {number[]} o.depthFt   [min, max] the species is using — from trollingIntelligence
+ * @param {number[]} o.fishDepthFt [min, max] where the FISH are — from trollingIntelligence.
+ *                                Renamed from `depthFt` on 2026-08-10 because this file already
+ *                                used `depthFt` for a candidate's WATER depth, so one name meant
+ *                                both quantities in the same module. That collision is the whole
+ *                                bug in miniature and it is not surviving the fix that undoes it.
+ * @param {string}   [o.holding] 'bottom' | 'suspended' | 'both' | null — which constraint the
+ *                                water is under. See eligibleForHolding().
  * @param {number}   o.usableAh  BMS usable amp-hours (already carries the 20% reserve)
  * @param {number}   o.windowMin minutes between launch and return
  * @param {function} [o.transitM] (fromLonLat, toLonLat) => metres over water. Straight-line if
@@ -628,43 +714,54 @@ export function selectCandidates(runs, o) {
   // water nearby. Raise it to flatten the preference, lower it to sharpen it, and if the plans
   // start hugging the ramp when they should not, that is this number.
   const rampBiasM = o.rampBiasM ?? 4000;
-  const [dMin, dMax] = o.depthFt || [0, Infinity];
+  // A STALE CALLER MUST NOT FAIL QUIETLY. When `depthFt` became `fishDepthFt` the old name stopped
+  // being read, which meant any caller still passing it got `[0, Infinity]` -- no depth filter at
+  // all -- and a plan full of water for the wrong fish that looked entirely normal. The suite
+  // caught it immediately on smart-plan-v2.test.js and it would not have been caught in the app.
+  // So the old name is an error, permanently, and not an alias: the two names meant different
+  // quantities and accepting either is the ambiguity this rename exists to remove.
+  if (o.depthFt !== undefined) {
+    throw new Error('selectCandidates: `depthFt` was renamed to `fishDepthFt` on 2026-08-10 '
+                  + 'because this module already used `depthFt` for a leg\'s WATER depth. Pass '
+                  + '`fishDepthFt` (where the fish are) and `holding`.');
+  }
+  const fishBand = o.fishDepthFt || [0, Infinity];
+  const holding = o.holding || null;
+  // Counted so the caller can say WHY nothing came back. "nothing is inside 15-40 ft" and "every
+  // pass on this lake is shallower than 15 ft" are different problems with different fixes, and
+  // the old code could only report the first because it never knew which test it had applied.
+  const rejected = { depth: 0, unroutable: 0, noWindow: 0, scoreless: 0 };
+  let depthRule = null;
   const straight = (a, b) => metresBetween(a, b);
   const transitM = o.transitM || straight;
 
   const out = [];
   for (let i = 0; i < runs.length; i++) {
     const run = runs[i], p = run.properties || {};
-    if (p.routable === false) continue;
-    // ⚠ KNOWN WRONG, AND LEFT ALONE ON PURPOSE UNTIL THE RESEARCH CAN ANSWER IT.
+    if (p.routable === false) { rejected.unroutable++; continue; }
+    // THE LINE THAT WAS KNOWN WRONG FOR THREE DAYS. It read:
     //
-    // `p.depth_ft` is the WATER depth of the contour this run traces. `dMin`/`dMax` come from
-    // depthBandFor(), and that band is where the FISH are. Those are not the same quantity and
-    // this line has compared them since it was written.
+    //     if (!(p.depth_ft >= dMin && p.depth_ft <= dMax)) continue;
     //
-    // Ryan, 2026-08-10: "fish absolutely could be suspended at 25ft in 40ft of water... so
-    // realistically the baits need to not exceed that depth... not the boat."
+    // `p.depth_ft` is the WATER depth of the contour; `dMin`/`dMax` came from depthBandFor() and
+    // are where the FISH are. It compared them directly and had done so since it was written.
     //
-    // The proof is inside one profile. SPECIES_BEHAVIOR_V2['Striped Bass']['Lake Wateree'].summer
-    // gives `preferredDepth: tempF > 84 ? [14,16] : [10,16]` -- a two-foot band -- while the same
-    // node's notes say the thermocline sits at 18-24 ft and the fish suspend at its edge, and its
-    // `preferredStructure` leads with `channel_ledge` and `creek_channel_swing`, which on Wateree
-    // is 30-50 ft of water. So the profile names channel ledges as the target and this line then
-    // excludes every contour deep enough to be one. clampToOxygen() is a third witness: cutting a
-    // band at the anoxic line is right for a fish depth and meaningless for a water depth.
+    // It stayed because the fix needed a fact nobody had: which of the two quantities the
+    // research was quoting. A ceiling built here on 2026-08-10 was worse than the bug -- requiring
+    // the pass's measured mean AND max inside the band deleted exactly the deep water suspended
+    // fish live over, which on Wateree in summer is the entire pattern. Wrong sign, reverted the
+    // same day. Ryan: "fish absolutely could be suspended at 25ft in 40ft of water."
     //
-    // A CEILING WAS BUILT HERE AND TAKEN BACK OUT, 2026-08-10. It read the fitted pass's measured
-    // mean and max and required both inside the band. It was worse than this line, not better: it
-    // deleted precisely the deep water that suspended fish live over, which on Wateree in summer
-    // is the entire pattern. Wrong sign. The rule it should have been -- water deeper than the
-    // baits, by some clearance, with NO deep limit at all -- needs a bait depth, and a bait depth
-    // needs the research to say which of the two numbers it is quoting.
+    // What unblocked it was the research pass finally populating `holding` per lake and season,
+    // cited -- 35 of 35 entries on Wateree's v140 profile, 34 of them quoting the sentence they
+    // came from. So the question "does this water have to MATCH the band or merely be DEEPER than
+    // it" now has a per-lake, per-season, sourced answer, and eligibleForHolding() applies it.
     //
-    // fit_trolling_runs.py now stamps `shallowest_ft`, `deepest_ft`, `mean_depth_ft` and
-    // `charted_frac` on every fitted pass, so the measurement is ready and waiting. Nothing reads
-    // them yet, and nothing should until the research distinguishes "fish at 20 ft" from "over
-    // 35 ft of water". Guessing which one a single number means is what produced this line.
-    if (!(p.depth_ft >= dMin && p.depth_ft <= dMax)) continue;
+    // The old comparison still runs, unchanged, for exactly one case: holding unknown. That is
+    // deliberate and it is Ryan's call to make, not this file's.
+    const elig = eligibleForHolding(p, fishBand, holding);
+    if (!depthRule) depthRule = elig.rule;
+    if (!elig.ok) { rejected.depth++; continue; }
     const coords = run.geometry && run.geometry.coordinates;
     if (!Array.isArray(coords) || coords.length < 2) continue;
 
@@ -673,13 +770,13 @@ export function selectCandidates(runs, o) {
     // one happens to contain.
     const docks = o.docks ? dockHits(coords, cumulative(coords), o.docks, opts.maxOffM) : [];
     const win = bestWindow(docks.length ? withNear(run, docks) : run, opts);
-    if (!win) continue;
+    if (!win) { rejected.noWindow++; continue; }
     // Relief is a property of the whole run, so it is added once rather than per hit. River
     // channel and channel edge are 12 cites across 7 species -- more species than anything else
     // in the count -- and nothing scored them until 2026-08-08.
     const reliefScore = opts.reliefWeights[p.relief] || 0;
     win.score += reliefScore;
-    if (win.score <= 0) continue;
+    if (win.score <= 0) { rejected.scoreless++; continue; }
 
     const cum = cumulative(coords);
     const start = pointAt(coords, cum, win.startM);
@@ -738,7 +835,13 @@ export function selectCandidates(runs, o) {
       runId: p.id || `${o.slug || 'run'}#${i}`,
       runIndex: i,
       startM: Math.round(win.startM), lengthM: Math.round(win.lengthM),
+      // THIS IS THE WATER'S DEPTH, NOT THE FISH'S. Kept as `depthFt` because plan-builder,
+      // plan-to-timeline, plan-prompt and plan-assemble all read that name and renaming it is a
+      // separate change; `waterDepthFt` is emitted alongside as the unambiguous one, carrying the
+      // measured value where fit_trolling_runs.py stamped one. `waterDepthMeasured` says which.
       depthFt: p.depth_ft, wholeRun: win.whole,
+      waterDepthFt: Number.isFinite(elig.waterFt) ? Number(elig.waterFt.toFixed(1)) : null,
+      waterDepthMeasured: elig.measured,
       start, end, coordinates: line,
       transitInM: Math.round(inM), transitOutM: Math.round(outM),
       fromRampM: Math.round(fromRampM),
@@ -887,6 +990,31 @@ export function selectCandidates(runs, o) {
       to[b.runId] = Math.round(transitM(fa.end, fb.start));
     }
     a.transitToM = to;
+  }
+
+  // WHY NOTHING CAME BACK, WHEN NOTHING COMES BACK. Attached to the returned array rather than
+  // changing the return type, because eleven call sites index it, map it and read `.length`, and
+  // a shape change to carry a diagnostic would be the tail wagging the dog.
+  //
+  // It matters most in exactly the case this rewrite creates. "Nothing on this lake is inside
+  // 15-40 ft" and "every pass on this lake is shallower than 15 ft" are different problems --
+  // the first is the wrong band, the second is the wrong lake for this fish -- and until now the
+  // caller could only report the first, because it did not know which test had been applied.
+  kept.selection = {
+    considered: runs.length,
+    rejected,
+    depthRule: depthRule || 'no runs reached the depth test',
+    holding: holding || null,
+    // SAID OUT LOUD, NOT ASSUMED. When holding is unknown the old fish-band-vs-water-depth
+    // comparison is what ran, and that comparison is known to be wrong -- it is kept only because
+    // deciding the null case is Ryan's call and he has not made it. A plan built this way should
+    // be readable as such rather than looking like the researched path.
+    holdingUnknown: !holding,
+  };
+  if (!holding) {
+    console.warn('[plan-candidates] holding unknown for this species/season — water was filtered '
+               + 'with the old fish-band-vs-water-depth test. Bands from the built-in table never '
+               + 'carry holding; only a researched profile does.');
   }
   return kept;
 }
