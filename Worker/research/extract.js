@@ -61,6 +61,39 @@ async function handleResearchAnalyzeFacts(request, env) {
     /riprap|rip[- ]rapped|rocky\s+(?:bank|shoreline)|dam\s+face|causeway|bridge\s+approach/i,
     /creek\s+(?:mouth|arm)|river\s+arm|cove|tributary\s+mouth|inlet/i,
     /dock(?:s|\s+density)|marina|pier|shallow\s+flat|spawning\s+(?:flat|cove)|fish\s+attractor/i,
+
+    // ── WHERE THE FISH ARE, which nothing above was looking for ──────────────────────────────
+    //
+    // Every pattern above this line is limnology, morphometry or structure. None of them match a
+    // sentence about fish, so the single most useful line in the corpus went unflagged and was
+    // never extracted:
+    //
+    //   "15 to 40 feet, though this shifts daily. Early in the morning, they hunt near creek
+    //    mouths, points, and humps at around 10 feet deep. As the sun rises, they suspend deeper
+    //    to follow schools of shad."
+    //
+    // AHQ INSIDER Week 32. Depth, holding pattern and the reason it moves, in one sentence, for
+    // the species Ryan plans for. It does not say "Wateree" so the alias test missed it too, and
+    // the fisheries agent only ever saw it because that agent reads raw document text.
+    //
+    // Which is worth stating plainly: the facts pass is not a superset of the documents, and any
+    // design that treats it as one -- an audit, or an agent assembling only from facts -- inherits
+    // this blind spot. Two did today.
+    /suspend\w*|holding\s+(?:at|in|around|near|tight)|water\s+column|up\s+off\s+the\s+bottom/i,
+    /(?:on|near|hugging|relating\s+to)\s+the\s+bottom|bottom[- ]?hugging|dragging|bumping\s+bottom/i,
+    // ANY RANGE IN FEET, not only one followed by "deep". The first cut of this required
+    // deep/down/of-water after the unit and therefore still missed both of the sentences that
+    // started this -- "15 to 40 feet, though this shifts daily" and "he works the 12- to 22-foot
+    // range". Flagging is only prioritisation, capped at twenty sentences, so a false positive
+    // costs a line of prompt and a false negative costs the fact.
+    /\d+\s*(?:to|-|–|—)\s*\d+\s*-?\s*(?:feet|ft|foot)\b/i,
+    /\d+\s*-\s*(?:to|–)\s*\d+\s*-\s*foot/i,
+    /\d+[- ]foot\s+(?:range|depth|zone|contour|mark)/i,
+    /\d+\s*(?:feet|ft|foot)\s*(?:deep|down|of\s+water)|down\s+\d+\s*(?:feet|ft)/i,
+    /down\s?lines?|free\s?lines?|planer\s+boards?|long[- ]?line\s+troll|tight[- ]?lin|umbrella\s+rig|a[- ]rig/i,
+    /top\s?water|surface\s+(?:schooling|activity)|schooling|busting|birds?\s+(?:working|diving)/i,
+    /pre[- ]?spawn|post[- ]?spawn|spawning\s+run|staging|shad\s+spawn|fall\s+turnover|summer\s+pattern|winter\s+pattern/i,
+    /(?:bite|fish|they)\s+(?:are|will\s+be|move|moved|pull|push|drop|hold)\s+(?:up|down|out|back|deeper|shallow)/i,
   ];
 
   function harvestKeywordSentences(text, maxSentences = 20, lakeAliases = []) {
@@ -291,12 +324,18 @@ ${(doc.text || '').slice(0, 150000)}
 Return ONLY:
 {"extracted_facts": [{"fact": "concise sentence", "page": 1, "confidence": 85, "source": "${doc.title.slice(0,80)}", "quote": "verbatim text", "category": "category_name"}]}
 
-Categories: surfaceArea, maxDepthFt, averageDepthFt, thermocline, oxygen, secchi, trophicStatus, hydraulicRetentionDays, predatorSpecies, primaryForage, stocking, standingStock, speciesAbundance, creelLimit_general, creelLimit_lakeSpecific, sizeLimit_general, sizeLimit_lakeSpecific, closedSeason, poolLevel, drawdownSchedule, habitatCover, structuralElement, ramp, hazard, reservoirOwner, damName, yearImpounded, riverSystem, county, consumptionAdvisory, summary
+Categories: surfaceArea, maxDepthFt, averageDepthFt, thermocline, oxygen, secchi, trophicStatus, hydraulicRetentionDays, predatorSpecies, primaryForage, stocking, standingStock, speciesAbundance, seasonalDepth, holdingPattern, waterDepthUnderFish, seasonalPattern, creelLimit_general, creelLimit_lakeSpecific, sizeLimit_general, sizeLimit_lakeSpecific, closedSeason, poolLevel, drawdownSchedule, habitatCover, structuralElement, ramp, hazard, reservoirOwner, damName, yearImpounded, riverSystem, county, consumptionAdvisory, summary
 CRITICAL CATEGORY RULES:
 - thermocline: MUST include the actual depth in feet or meters (e.g. 'thermocline at 4-6m', 'epilimnion extends to 20 feet'). Do NOT file vague facts like 'thermocline is present' without a depth.
 - oxygen: MUST include the depth where DO drops below 2 mg/L (e.g. 'DO < 2 mg/L below 5 meters'). Do NOT file vague facts like 'oxygen depletion occurs' without a depth.
 - secchi: MUST include the actual Secchi depth value in meters or feet.
-- consumptionAdvisory: use for mercury advisories, meal frequency limits due to contamination — NOT for creel limits`;
+- consumptionAdvisory: use for mercury advisories, meal frequency limits due to contamination — NOT for creel limits
+- seasonalDepth: the depth THE FISH are holding at, for a named species and season. "stripers are running 15 to 40 feet" is seasonalDepth. Name the species and the season in the fact sentence whenever the document gives them, because that is what makes the fact usable later.
+- waterDepthUnderFish: the depth of the WATER a pattern happens over, when the document gives it separately from the fish depth. "suspended at 20 ft in 35 feet of water" is BOTH a seasonalDepth of 20 and a waterDepthUnderFish of 35 — extract two facts, never one averaged number. These are different measurements and conflating them puts a boat over the wrong water.
+- holdingPattern: whether the fish are on the bottom or up in the water column. "they suspend deeper to follow schools of shad" is holdingPattern. So is "anchoring cut bait on the bottom". Extract these even when no depth is given — where a fish sits relative to the bottom is a fact on its own.
+- seasonalPattern: how the pattern MOVES — time of day, sun angle, water temperature, a trigger. "shifts daily", "as the sun rises they go deeper", "early morning they hunt at 10 feet" all belong here. A depth with no sense of how it changes is a snapshot presented as a rule.
+
+FISHING BEHAVIOUR IS A FIRST-CLASS FACT. Sentences from guides, fishing reports and lake columns about where a species sits in a given season are the most useful thing in this corpus and were previously dropped for having no category. Extract them with the same care as a Secchi reading. A sentence naming a species, a depth and a time of year is worth more than any morphometry in the document.`;
   };
 
   for (let i = 0; i < usableDocs.length; i++) {
