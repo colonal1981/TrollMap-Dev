@@ -319,6 +319,24 @@ export async function findWater() {
   const lanes = (fc && fc.features) || [];
   if (!lanes.length) return say(`${inp.lakeName} has no trolling runs in its chartpack`, true);
 
+  // "NO RUNS" AND "RUNS THAT WERE NEVER FITTED" ARE DIFFERENT ANSWERS AND LOOKED THE SAME.
+  //
+  // Measured over the card-wide fit of 2026-08-11: 112 of 543 packs came back with zero fitted
+  // runs, and 294,493 lanes card-wide were kept CLOSED -- water where a contour is a ring around
+  // the whole pond. A closed loop has no two ends, so it is not a trolling pass and the fitter
+  // leaves it alone. That is correct behaviour, not a gap.
+  //
+  // Without this the tab reported "N charted lanes -> 0 pieces of water", which reads as a bug in
+  // this module rather than as a fact about the lake.
+  const fitted = lanes.filter((f) => f && f.properties && f.properties.fitted
+                                     && Array.isArray(f.properties.envelope_ft));
+  if (!fitted.length) {
+    return say(`${inp.lakeName} has ${lanes.length} charted lane`
+      + `${lanes.length === 1 ? '' : 's'} but none that can be trolled as a pass \u2014 on a small `
+      + `water every contour is usually a closed ring around the whole pond, and a ring has no two `
+      + `ends to run between. Nothing to pick here.`, true);
+  }
+
   const minM = Math.max(1, Math.round(Number($('wgMinPass')?.value || 0.5) * 1609.34));
   say('Measuring the water…');
   let out;
