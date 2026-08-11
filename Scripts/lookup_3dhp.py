@@ -115,7 +115,29 @@ def _report(cur, table, label, where, args, limit):
     return [dict(zip(pick, r)) for r in rows]
 
 
+def _unhyphen(argv):
+    """
+    `--near -82.31,35.01` looks like a flag to argparse, because it starts with a minus.
+
+    Every longitude in the western hemisphere starts with a minus, so this fires on literally
+    every real invocation and the error it gives ("expected one argument") points nowhere near
+    the cause. The documented workaround is `--near=-82.31,35.01`, which is a footgun the caller
+    should not have to know about, so the equals form is applied here instead.
+    """
+    out, i = [], 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ('--near',) and i + 1 < len(argv) and argv[i + 1].startswith('-'):
+            out.append('%s=%s' % (a, argv[i + 1]))
+            i += 2
+            continue
+        out.append(a)
+        i += 1
+    return out
+
+
 def main() -> int:
+    sys.argv[1:] = _unhyphen(sys.argv[1:])
     ap = argparse.ArgumentParser()
     ap.add_argument('--gpkg', default=r'3dhp_all_CONUS_20260112_GPKG\3dhp_all_CONUS_20260112_GPKG.gpkg')
     ap.add_argument('--near', default=None, help='LON,LAT in WGS84 -- uses the RTree, instant')
