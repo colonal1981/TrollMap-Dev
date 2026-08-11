@@ -407,6 +407,23 @@ export function assemblePlan(o) {
 
     const stopMin = stops.reduce((t, s) => t + (s.durationMin || 0), 0);
     const deploy = (o.deploy && o.deploy[c.runId]) || null;
+
+    // A LEG WITH NOTHING IN THE WATER IS SAID OUT LOUD. IT IS NOT FILLED IN.
+    //
+    // Ryan, 2026-08-11: "i think baits are missing in a couple of lanes." Measured off that plan:
+    // L1, L3, L5 and L7 carried rods; L2, L4 and L6 carried nothing. The model had rigged a DD2
+    // (16-20 ft) and a DD3 (20-25 ft) and deployed them only where the WATER was 16-25 ft deep,
+    // skipping the 30, 32 and 36 ft legs — it was matching bait depth to the lake bed.
+    //
+    // "the fish aren't on the bottom." A bait at 20 ft over 36 ft of water is right, and those
+    // legs should have carried the same two rods. The fix belongs in the prompt (rules 6 and 7),
+    // NOT here: carrying the previous leg's rods forward would paper over a wrong plan and make
+    // it look complete, which is the one thing worse than an empty leg. So this reports and stops.
+    if (!deploy) {
+      warnings.push(`${c.runId} has no rods in the water for `
+                  + `${(c.lengthM / 1609.34).toFixed(1)} mi. A leg is not fished by being in the `
+                  + `list — check what got rigged and for what depth.`);
+    }
     if (deploy) {
       for (const side of ['port', 'starboard']) {
         const id = deploy[side];

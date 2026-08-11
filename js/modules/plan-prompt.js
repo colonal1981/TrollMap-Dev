@@ -314,18 +314,28 @@ RULES THAT ARE NOT NEGOTIABLE
    leg, and the count will take care of itself.
 5. \`depthFt\` on a structure is that structure's own depth — size the presentation from it. Where
    it is null the pipeline has no depth for that kind of feature; say so rather than guessing.
-6. Two rods in the water per leg. Exactly one port, one starboard.
-7. \`maxRunDepthFt\` IS A CEILING ON THE BAIT, and it is the hardest number here. It is the
-   SHALLOWEST water anywhere on that leg, measured within the boat's wander — not the average and
-   not the depth in the description. A leg reading 25-31 ft of water with \`maxRunDepthFt: 20\` has
-   a 20 ft rise somewhere along it, and a bait running 26 ft drags bottom there on every single
-   pass. Both deployed rods must therefore run SHALLOWER than that number at the \`leadFt\` and
-   \`speedMph\` you give — that is what the lead is for. Shorten the lead or choose a shallower
-   bait; never raise the ceiling.
-   THE FISH ARE NOT THE CONSTRAINT. Where in the water column they are holding is what the sounder
-   answers on the day, so the depth band you were given is context, not a target to bury a bait
-   at. Put a working bait over the right water without hanging it on the bottom, and he will find
-   the fish from there.
+6. TWO RODS IN THE WATER ON EVERY SINGLE LEG. Exactly one port, one starboard, on every leg in the
+   list — there is no such thing as a leg with an empty spread. A leg you cannot rig for is a leg
+   you should say you cannot rig for, in \`safety.warning\`; it is never one you leave blank.
+7. THE FISH ARE NOT ON THE BOTTOM. This is the one that gets got wrong.
+   The bait runs at the depth THE FISH ARE HOLDING. It does not run at the depth of the lake bed.
+   A leg over 36 ft of water, with the fish holding 15-40 ft, is fished with a bait running about
+   20 ft — and that is CORRECT, not a compromise. You do not need a deeper bait for a deeper leg.
+   Do not match the bait to the bottom. Do not skip a deep leg because nothing you rigged reaches
+   the floor of it: nothing needs to.
+   \`maxRunDepthFt\` is a CEILING and nothing else. It is the SHALLOWEST water anywhere on that
+   leg, measured within the boat's wander, and it exists for one purpose — so a bait does not drag
+   on a rise you cannot see. A leg reading 25-31 ft of water with \`maxRunDepthFt: 20\` has a 20 ft
+   shoal somewhere along it, so a bait running 26 ft hangs up there on every pass. It is a number
+   you must stay ABOVE. It is not a number to aim at, and a low one never means "skip this leg".
+   FISH LOOK UP, so the error is not symmetric and this is why the ceiling is safe to obey. A bait
+   running ABOVE the fish still gets eaten — they come up to it. A bait running BELOW them is
+   behind them and out of sight, and one dragging bottom is fouled. So when the ceiling forces you
+   shallower than the band, take it and do not apologise for it: shallow is the cheap direction to
+   be wrong in, deep is the expensive one.
+   So, per leg: pick the depth from the fish, then check it against the ceiling. If the ceiling is
+   shallower than the band, fish the ceiling. Shorten the lead or take a shallower bait; never
+   raise the ceiling, and never leave the rods out of the water.
 
 SAFETY — judge it honestly for a 12.5 ft kayak
 Sustained wind over 15 mph, or gusts over 20, is a no-go. Judge ${o.ramp || 'the ramp'} against the
