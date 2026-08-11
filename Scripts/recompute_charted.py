@@ -69,49 +69,24 @@ def main():
 
     t0 = time.time()
     changed, skipped, moved, pruned = 0, 0, [], []
-    coastal = 0
     no_boundary = []
     for i, slug in enumerate(slugs, 1):
         da = os.path.join(a.packs, slug, 'depth_areas.geojson')
         bp = os.path.join(a.registry, 'boundaries', slug + '.geojson')
 
-        # ── COASTAL GETS A BOOLEAN, NOT A FRACTION ────────────────────────────────────────
+        # COASTAL RUNS THROUGH THE NORMAL PATH, and the reason is worth recording because I
+        # nearly special-cased it out.
         #
-        # `charted` is filled depth-area cells / lake core cells, measured against the boundary
-        # polygon. ALL 22 COASTAL BOUNDARIES ARE FIVE-VERTEX RECTANGLES -- re-verified
-        # 2026-08-07, COASTAL_ZONES_CLIP_TO_A_RECTANGLE. A box over Charleston contains the
-        # harbour, several tidal creeks, and a great deal of open Atlantic that Garmin has never
-        # sounded.
+        # COASTAL_ZONES_CLIP_TO_A_RECTANGLE_2026-08-07 says all 22 boundaries are five-vertex
+        # rectangles, which would make a coverage fraction meaningless -- measured against open
+        # Atlantic. I wrote a boolean branch on the strength of that doc. Checked the disk on
+        # 2026-08-11: ZERO of the 22 are rectangles now. They run 593 to 1,619 vertices. The
+        # boundary repair the doc called for was done, the doc was not updated, and the Atlantic
+        # is already clipped out.
         #
-        # So a fraction here would come back LOW, PLAUSIBLE AND MEANINGLESS -- the exact shape of
-        # the multi-part bug this script was written to fix, where j_strom_thurmond read 0.7817
-        # measured on one forty-third of the lake. "A number that cannot reveal the thing it is
-        # measuring."
-        #
-        # The registry cut only ever asks "is there bathymetry here at all". That is answerable
-        # from disk without a polygon, so coastal answers THAT and says which question it
-        # answered. A real fraction waits for real polygons.
-        if slug.startswith('coast_'):
-            has = False
-            for fn in ('depth_areas.geojson', 'contours.geojson'):
-                fp = os.path.join(a.packs, slug, fn)
-                if not os.path.exists(fp):
-                    continue
-                try:
-                    if (json.load(open(fp, encoding='utf-8')).get('features') or []):
-                        has = True
-                        break
-                except Exception:
-                    continue
-            rec = report.setdefault(slug, {})
-            rec['charted'] = 1.0 if has else 0.0
-            # Named differently ON PURPOSE, so nothing downstream can average a boolean in with
-            # 699 real fractions and believe the result.
-            rec['charted_metric'] = 'has_bathymetry_bool'
-            rec['charted_note'] = ('boundary is a rectangle, so a coverage fraction would be '
-                                   'measured against open ocean; this is presence only')
-            coastal += 1
-            continue
+        # So the fraction is honest here and coastal needs no branch at all. The lesson is the
+        # one that keeps recurring: a design doc records what was true when it was written, and
+        # the disk records what is true now.
 
         if not (os.path.exists(da) and os.path.exists(bp)):
             # A PACK WITH CONTOURS AND NO ANSWER IS WORTH SAYING OUT LOUD. 699 entries are flagged
@@ -173,8 +148,7 @@ def main():
 
     fr = sorted(v['charted'] for v in report.values()
                 if v.get('shipped') and v.get('charted') is not None)
-    print('\n%d recomputed, %d coastal (presence only), %d skipped'
-          % (changed, coastal, skipped))
+    print('\n%d recomputed, %d skipped' % (changed, skipped))
 
     # ── THE FLAG AGAINST THE DISK, BOTH DIRECTIONS ────────────────────────────────────────────
     #
