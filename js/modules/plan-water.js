@@ -484,6 +484,198 @@ export function dayCost(picked, o) {
  * @param {object[]} lanes    features from trolling_runs.geojson
  * @param {object}   o        {minM, fishBandFt, holding, ramps, ramp, usableAh}
  */
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// CAST SPOTS — the second unit, and the same object priced two different ways.
+//
+//   > those spots if they overlap a trolling lane are perfect stop and casts... so it helps with
+//   > the trolling as well
+//
+// THE_FISHERMAN_CHOOSES § 6 is exact about this and it is the whole design:
+//
+//     A spot inside a chosen route's corridor IS the stop-and-cast, at no extra travel. A spot
+//     away from every chosen route is a destination that costs the trip. Same object, priced by
+//     where it lands.
+//
+// So a spot is never "on route" or "not on route" as a property of itself. It is priced against
+// WHAT HAS BEEN TICKED, which changes every time he ticks something — which is why this takes the
+// picked set as an argument and is recomputed, rather than being stamped on once at load.
+//
+// Cast-all-day is not a mode. It is simply the day where spots are all he picks.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * CORRIDOR WIDTH IS HIS NUMBER, NOT A TUNING CONSTANT.
+ *
+ * 50 m either side, § 6. Not to be confused with the 100 m the dedupe uses to call two lanes the
+ * same water — that one is derived from the wander envelope and answers a different question.
+ */
+const CORRIDOR_M = 50;
+
+/** What the packs can name as something worth stopping on, and what to call it. */
+const SPOT_KINDS = {
+  timber:      'flooded timber',
+  attractor:   'DNR brushpile',
+  pile:        'brush pile',
+  hump:        'offshore hump',
+  ledge:       'ledge',
+  point:       'point',
+  creek_mouth: 'creek mouth',
+  cove:        'cove',
+  dock_line:   'line of docks',
+  dock_cluster:'pocket of docks',
+};
+
+/**
+ * Every markable thing on the lake, once, with its position — gathered from the lanes' own `near`
+ * arrays because that is where the pipeline has already joined structure to geometry.
+ *
+ * DEDUPED BY POSITION. A stand of timber beside eight nested contours appears in eight `near`
+ * arrays and is one stand of timber. Same failure the lanes themselves had, same fix: collapse on
+ * where it is, not on which row mentioned it.
+ */
+export function castSpots(lanes, { cellM = 40 } = {}) {
+  const seen = new Map();
+  for (const f of (lanes || [])) {
+    const p = (f && f.properties) || {};
+    const coords = (f.geometry && f.geometry.coordinates) || [];
+    const total = p.length_m || 0;
+    if (!coords.length || !total) continue;
+    for (const n of (p.near || [])) {
+      const label = SPOT_KINDS[n.t];
+      if (!label || n.s == null) continue;
+      // `near` gives metres along the lane, not a position, so the position is read off the lane's
+      // own geometry at that distance. Approximate by fraction of length -- the lanes are sampled
+      // at ~10 m and a cast spot is a place to stop, not a waypoint to steer to.
+      const at = coords[Math.max(0, Math.min(coords.length - 1,
+                                             Math.round((n.s / total) * (coords.length - 1))))];
+      if (!at) continue;
+      const key = `${n.t}:${Math.round(at[0] * 111320 / cellM)},${Math.round(at[1] * 110540 / cellM)}`;
+      const prev = seen.get(key);
+      // Keep the sighting closest to a charted line: it is the best-positioned one.
+      if (!prev || n.d < prev.offM) {
+        seen.set(key, { key: `s${seen.size}`, type: n.t, what: label, at, offM: n.d,
+                        // DEPTH ONLY WHERE THE PACK HAS ONE. Timber, piles and attractors carry
+                        // none anywhere in the packs, and the height a stand of wood rises off the
+                        // bottom is not a number that exists: "how tall is every tree claude???"
+                        depthFt: Number.isFinite(n.depth_ft) ? n.depth_ft : null });
+      }
+    }
+  }
+  return [...seen.values()];
+}
+
+/** Metres from a point to the nearest part of a piece's line. */
+function toPiece(at, piece) {
+  let best = Infinity;
+  for (const c of (piece.coords || [])) {
+    const d = metresBetween(at, c);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/**
+ * PRICE EVERY SPOT AGAINST WHAT IS CURRENTLY TICKED.
+ *
+ * Returns each spot with `onPiece` (the key of the picked water whose corridor it sits in, or
+ * null) and `detourM` — how far off the day it actually is. A spot on a picked route costs
+ * nothing but the minutes spent casting; a spot off every picked route costs the run out and back.
+ *
+ * Recompute on every tick. That is the point: the same brush pile is a free stop when he picks the
+ * water beside it and a trip when he does not, and nothing about the pile changed.
+ */
+export function priceSpots(spots, picked, { ramp, corridorM = CORRIDOR_M } = {}) {
+  return (spots || []).map((s) => {
+    let onPiece = null, best = Infinity;
+    for (const p of (picked || [])) {
+      const d = toPiece(s.at, p);
+      if (d < best) { best = d; if (d <= corridorM) onPiece = p.key; }
+    }
+    return {
+      ...s,
+      onPiece,
+      // Distance to the nearest ticked water, or to the ramp when nothing is ticked yet.
+      detourM: Number.isFinite(best) && best < Infinity ? Math.round(best)
+             : (ramp ? Math.round(metresBetween(s.at, ramp)) : null),
+      free: onPiece != null,
+    };
+  }).sort((a, b) => (a.free === b.free ? a.detourM - b.detourM : (a.free ? -1 : 1)));
+}
+
+/**
+ * THE ORDER OF THE DAY IS A SEARCH ORDER, AND IT IS THE APP'S — WITH HIS VETO.
+ *
+ * THE_FISHERMAN_CHOOSES § 14, which I asked about and should not have:
+ *
+ *     Who orders the day. Now a SEARCH order — most diagnostic first, not highest scoring. His
+ *     "maybe" was about keeping veto: "my maybe was that i have veto or override authority."
+ *
+ * And § 0, on why:
+ *
+ *     Diversity beats quality, early. Four hours on the single best-scoring stretch finds fish
+ *     more slowly than two hours across three different patterns.
+ *     The most diagnostic water goes first. The best first leg is the one that tells you the most
+ *     when it fails.
+ *
+ * THIS IS NOT dayCost()'s ORDER. That one is the cheapest realisable route and it exists for the
+ * battery hard stop -- § 9, "the check runs against the best realisable ordering of the ticked
+ * set". Cheapest and most-diagnostic are different questions and I had them as one.
+ *
+ * HOW DIAGNOSTIC IS MEASURED, from what is already on a piece.
+ *
+ * First leg: the most REPRESENTATIVE of the ticked set, because if it produces nothing it rules
+ * out the most. Representativeness is how close a piece sits to the middle of the set on the two
+ * axes the day actually turns on -- the depth of its water, and what kind of place it is.
+ *
+ * After that: whatever is most UNLIKE everything already fished, because a search learns from
+ * water that turns out to be dead and repeating a pattern learns nothing.
+ *
+ * The model is not asked. It stops choosing water and stops ordering -- § 12.
+ */
+export function searchOrder(picked) {
+  const n = (picked || []).length;
+  if (n < 3) return (picked || []).map((_, i) => i);
+  // Two axes, both already measured: how deep the water is, and what kind of place it is.
+  const depth = picked.map((p) => p.holdsFt || 0);
+  const lo = Math.min(...depth), hi = Math.max(...depth);
+  const span = hi - lo || 1;
+  const kinds = picked.map((p) => new Set((p.near || []).map((q) => q.t)));
+  const relief = picked.map((p) => String(p.relief || ''));
+  // Distance between two picks: depth difference, plus how little structure they share, plus
+  // whether they sit on the same kind of bottom.
+  const apart = (i, j) => {
+    const dd = Math.abs(depth[i] - depth[j]) / span;
+    const a = kinds[i], b = kinds[j];
+    const union = new Set([...a, ...b]).size || 1;
+    let shared = 0;
+    for (const k of a) if (b.has(k)) shared++;
+    return dd + (1 - shared / union) + (relief[i] === relief[j] ? 0 : 0.5);
+  };
+  // Most representative = smallest total distance to everything else.
+  let first = 0, bestSum = Infinity;
+  for (let i = 0; i < n; i++) {
+    let sum = 0;
+    for (let j = 0; j < n; j++) if (i !== j) sum += apart(i, j);
+    if (sum < bestSum) { bestSum = sum; first = i; }
+  }
+  // Then farthest-first: each next leg is the one least like anything already fished.
+  const order = [first];
+  const left = new Set([...Array(n).keys()]);
+  left.delete(first);
+  while (left.size) {
+    let pick = null, best = -Infinity;
+    for (const i of left) {
+      let nearest = Infinity;
+      for (const j of order) nearest = Math.min(nearest, apart(i, j));
+      if (nearest > best) { best = nearest; pick = i; }
+    }
+    left.delete(pick);
+    order.push(pick);
+  }
+  return order;
+}
+
 export function offerWater(lanes, o) {
   const minM = o.minM;
   if (!(minM > 0)) {
@@ -508,5 +700,8 @@ export function offerWater(lanes, o) {
     reasons: reasons(p, { minM, fishBandFt: o.fishBandFt, holding: o.holding,
                           partners: partners[i] }),
   }));
-  return { ...built, pieces, minM, depthAxis: 'minimum water depth, ft' };
+  // Spots are gathered here and PRICED later, by priceSpots(), because their price depends on what
+  // has been ticked and that is not known yet. Gathering is expensive; pricing is cheap.
+  const spots = castSpots(lanes);
+  return { ...built, pieces, spots, minM, depthAxis: 'minimum water depth, ft' };
 }
