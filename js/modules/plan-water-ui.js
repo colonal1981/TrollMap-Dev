@@ -43,6 +43,8 @@ import { planFromWater } from './plan-from-water.js';
 import { buildSmartPlanV2, modelAsker, waterRouter } from './smart-plan-v2.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
+import { materialisePlan } from './plan-tracks.js';
+import { renderAll } from '../core/map-init.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { readInputs, rampCoords } from './smart-plan-v2-wiring.js';
 
@@ -514,12 +516,27 @@ export async function buildFromPicked() {
   });
   syncSpread(built.cards, built.routeRods, built.routeSpeeds);
 
+  // THE PLAN HAS TO LEAVE THE APP OR IT IS NOT A PLAN, and this path had no way out.
+  //
+  // materialisePlan() had exactly one call site, in smart-plan-v2-wiring, so a day built from
+  // picked water rendered on screen and wrote NOTHING to state.DATA -- no tracks, no waypoints,
+  // and every export silently empty. That is the same failure the v2 comment records against its
+  // own earlier self: `"gpx": { "tracks": 0, "trackPoints": 0 }` on a day describing miles of
+  // trolling.
+  //
+  // `marks: true` because this is the path that was built for the Echomap comparison: charted
+  // structure goes out as waypoints so the sounder can be held against the chart.
+  const gpx = materialisePlan(r.plan, { launch: T.ramp, win: window, marks: true });
+  renderAll();
+
   // SAY THE ORDER OUT LOUD AND SAY IT IS NOT THE SHORT ONE. Silently reordering what he ticked is
   // how a search reads as a mistake -- § 14 gives him veto, and a veto needs something to look at.
   const seq = r.order.map((i) => T.pieces.indexOf(picked[i]) + 1).join(' → ');
   say(`Built ${picked.length} legs, fished ${seq} — most diagnostic first, so a leg that produces `
     + `nothing still tells you something. That is a search order, not the shortest route. `
-    + `${r.dayCost.ah} Ah of ${T.usableAh}. Open the Smart Plan tab to see it.`);
+    + `${r.dayCost.ah} Ah of ${T.usableAh}. ${gpx.tracks} tracks and ${gpx.waypoints} waypoints `
+    + `for the Echomap — the charted structure is in there to check against the sounder. `
+    + `Open the Smart Plan tab to see it.`);
   document.querySelector('#planSubtabs button[data-plansub="plan"]')?.click();
   return r;
 }

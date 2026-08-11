@@ -362,3 +362,45 @@ describe('plan-tracks — troll, transit and the way home are told apart', () =>
     expect(map).not.toContain('const color = getTrackColor(t.name);');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// CHARTED STRUCTURE AS WAYPOINTS — for checking the chart, not for fishing.
+//
+// Ryan: "so i can see them on the echomap to compare if they are actually showing where 1 garmin
+// says the structure is and 2 where the actual fish finder shows the structure is". That purpose
+// dictates every assertion below: a mark must carry the CHARTED depth unmodified, must be absent
+// where the chart has none, and must not be confusable with a place to stop.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+describe('planWaypoints — charted marks', () => {
+  const plan = { legs: [{ id: 'L1', type: 'troll', startM: 0, lengthM: 1000, stops: [],
+    marks: [{ id: 'm1', type: 'timber', what: 'flooded timber', at: [-80.72, 34.38], atM: 100,
+              depthFt: 22 },
+            { id: 'm2', type: 'hazard', what: 'hazard', at: [-80.71, 34.38], atM: 400,
+              depthFt: null }] }] };
+
+  it('writes nothing unless asked — card-wide this would be thousands', () => {
+    expect(planWaypoints(plan, null, 'r1').length).toBe(0);
+  });
+
+  it('names the charted depth where there is one and stays silent where there is not', () => {
+    const w = planWaypoints(plan, null, 'r1', { marks: true });
+    expect(w.length).toBe(2);
+    expect(/22ft/.test(w[0].name)).toBe(true);
+    // A zero would read as "the chart says zero". Nothing reads as "the chart does not say",
+    // which is the truth, and a guess would poison the comparison the waypoint exists for.
+    expect(/\d+ft/.test(w[1].name)).toBe(false);
+    expect(w[1].depth).toBe(null);
+  });
+
+  it('is not a casting stop, so nothing downstream offers it as one', () => {
+    const w = planWaypoints(plan, null, 'r1', { marks: true });
+    expect(w.every((x) => x.chartMark === true)).toBe(true);
+    expect(w.some((x) => x.castingStop)).toBe(false);
+  });
+
+  it('carries distance along the whole day, not along its own leg', () => {
+    const two = { legs: [plan.legs[0], { ...plan.legs[0], id: 'L2', startM: 1000 }] };
+    const w = planWaypoints(two, null, 'r1', { marks: true });
+    expect(w[2].atM).toBe(1100);
+  });
+});
