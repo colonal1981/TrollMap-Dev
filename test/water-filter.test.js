@@ -10,8 +10,25 @@ import { makePredicate, chartedState, hasBathymetry, isKeepAlways, PRESETS } fro
 // RUNS, on every shape of record the registry actually holds.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
+// The shape in registry/lake_index.json on disk.
 const rec = (o = {}) => ({ name: 'Somewhere Lake', slug: 'somewhere_lake', state: 'SC',
                            area_acres: 2000, charted: 0.9, feature_type: 'lake', ...o });
+
+/**
+ * The shape `registryRecordFor()` ACTUALLY hands back in the browser.
+ *
+ * `lake-registry.js` normalises every row on load: `area_acres` -> `areaAcres`, `ramp_sources` ->
+ * `rampSources`, `feature_type` -> **featureType**. The predicate read only the file's spelling,
+ * so `isRiver` was always false in the app and every river sailed through the switch meant to hold
+ * it back — Ryan, 2026-08-11: "your river filter isn't working in research."
+ *
+ * Every count I took was against the JSON file, which is snake_case, so none of them could have
+ * caught it. That is why this variant exists and why the river tests below run BOTH shapes.
+ */
+const appRec = (o = {}) => {
+  const { area_acres: a, feature_type: f, ramp_sources: rs, ...rest } = rec(o);
+  return { ...rest, areaAcres: a, featureType: f, rampSources: rs };
+};
 
 describe('every preset executes against every shape of record', () => {
   it('does not throw on charted 0, null, or a missing field', () => {
@@ -86,13 +103,27 @@ describe('the research preset — a work list, not a map', () => {
     }
   });
 
-  it('holds rivers back by default and takes them on request', () => {
+  it('holds rivers back by default and takes them on request — IN BOTH RECORD SHAPES', () => {
     // A river's acreage is the area of a RIBBON — it measures length, not whether anyone writes
     // about the fishing. 72 passed on acreage alone, including the Mississippi at 163,923 acres
     // in Tennessee and Reelfoot Lake mis-typed as a river.
-    const river = rec({ feature_type: 'river', area_acres: 5000, name: 'Judd Slough' });
-    expect(research(river, 'Judd Slough')).toBe(false);
-    expect(makePredicate('research', null, { includeRivers: true })(river, 'Judd Slough')).toBe(true);
+    //
+    // BOTH shapes, because the first version of this test used only the file's spelling and
+    // passed green while the browser let every river through. A predicate is only correct against
+    // the record its caller actually holds.
+    const withRivers = makePredicate('research', null, { includeRivers: true });
+    for (const make of [rec, appRec]) {
+      const river = make({ feature_type: 'river', area_acres: 5000, name: 'Judd Slough' });
+      expect(research(river, 'Judd Slough')).toBe(false);
+      expect(withRivers(river, 'Judd Slough')).toBe(true);
+    }
+  });
+
+  it('reads acreage and coastal off either spelling too', () => {
+    // Same normalisation, same trap. `areaAcres` is what the app holds.
+    expect(research(appRec({ area_acres: 30, name: 'Adams Mill Pond' }), 'Adams Mill Pond')).toBe(false);
+    expect(research(appRec({ area_acres: 4000 }), 'Somewhere Lake')).toBe(true);
+    expect(research(appRec({ feature_type: 'coastal', area_acres: 0, charted: 0 }), 'Cape Romain')).toBe(true);
   });
 
   it('keeps every coastal zone whatever its acreage says', () => {

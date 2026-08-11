@@ -285,12 +285,30 @@ export function makePredicate(presetName, records, cfg = {}) {
     if (!rec) return merged.keepUnresolved !== false;
 
     const bath = hasBathymetry(rec);
+    // THE FILE IS snake_case AND THE APP IS camelCase, AND THIS READ ONLY ONE OF THEM.
+    //
+    // Ryan, 2026-08-11: "your river filter isn't working in research..." It was not, and nothing
+    // I had measured could have shown it. `lake-registry.js` normalises every row on load —
+    // `area_acres` becomes `areaAcres`, `ramp_sources` becomes `rampSources`, and
+    // `feature_type` becomes **featureType** — so the record `registryRecordFor()` hands back is
+    // NOT the shape of `registry/lake_index.json`.
+    //
+    // `rec.feature_type === 'river'` is therefore always false in the browser, and every river
+    // sailed through the switch that was supposed to hold it back. `isCoastal` was broken the same
+    // way and only survived because the `coast_` slug test carries it.
+    //
+    // I counted 141 / 203 / 260 / 751 straight off the JSON file, which is snake_case, so every
+    // number I quoted was right about the file and wrong about the app. That is the trap
+    // 00_START_HERE names in as many words: describe HIS machine, not this one. Both spellings
+    // are read now, and the test uses a camelCase record because that is what the app produces.
+    const pick = (a, b) => (rec[a] !== undefined ? rec[a] : rec[b]);
+    const type = pick('feature_type', 'featureType');
     const facts = {
       bath,
       hasRamp: has(rec.ramps) || has(rec.ramp_sources) || has(rec.rampSources),
-      isCoastal: rec.feature_type === 'coastal' || String(rec.slug || '').startsWith('coast_'),
-      isRiver: rec.feature_type === 'river',
-      acres: Number(rec.area_acres || rec.areaAcres || 0),
+      isCoastal: type === 'coastal' || String(rec.slug || '').startsWith('coast_'),
+      isRiver: type === 'river',
+      acres: Number(pick('area_acres', 'areaAcres') || 0),
     };
     return Boolean(merged.keep(rec, facts, merged));
   };
