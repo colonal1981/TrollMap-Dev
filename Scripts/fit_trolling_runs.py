@@ -1136,8 +1136,13 @@ def fit_pack(pack, a):
                 offs = np.linspace(-a.envelope_m, a.envelope_m, 7)
                 probe = np.concatenate([ev + nrm * o for o in offs], axis=0)
                 v = np.asarray(depth.at_raw(probe), dtype=float).reshape(len(offs), len(ev))
-                with np.errstate(invalid='ignore'):
-                    lo = np.nanmin(np.where(np.isfinite(v), v, np.nan), axis=0) / 3.048
+                # +inf FOR UNCHARTED, NOT NaN. Both give the same answer, but `nanmin` over a
+                # station where all seven probes are unsurveyed warns "All-NaN slice encountered"
+                # -- which is true, harmless, and fires thousands of times across a card-wide run,
+                # where it would drown a warning that actually mattered. +inf never wins a minimum,
+                # so a real depth beats it and an all-uncharted station stays +inf and falls out as
+                # -1 below. The condition is removed rather than the message suppressed.
+                lo = np.where(np.isfinite(v), v, np.inf).min(axis=0) / 3.048
                 # -1 means nobody sounded it. NOT zero, and not the deepest thing nearby --
                 # uncharted has been mistaken for both in this file before and cost two bugs.
                 env = [(-1 if not np.isfinite(x) else int(round(x))) for x in lo]
