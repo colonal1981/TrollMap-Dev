@@ -88,10 +88,22 @@ def main() -> int:
     ap.add_argument('--coverage', default=os.path.join('extract', '_garmin_coverage.json'))
     ap.add_argument('--claimed', default=os.path.join('_scratch', 'sweep_claimed.json'))
     ap.add_argument('--out', default=os.path.join('outputs', 'missing_waterbodies.json'))
+    ap.add_argument('--index', default=os.path.join('registry', 'lake_index.json'),
+                    help='used only to name the nearest known water for each candidate')
     ap.add_argument('--bbox', default='-85.8,30.2,-75.3,36.9', help='W,S,E,N — the four states')
     ap.add_argument('--min-acres', type=float, default=40.0)
+    ap.add_argument('--max-acres', type=float, default=60000.0,
+                    help='above this it is a sound or an estuary, not a lake you were missing')
     ap.add_argument('--min-charted', type=float, default=0.25,
                     help='fraction of the polygon Garmin must have surveyed')
+    # 3DHP's own classification, and Ryan read it straight off the viewer: "lakes are 3", "1 and 2
+    # are rivers and canals", 4 is ocean. The first run without this returned 573 candidates whose
+    # top twelve were the Atlantic — six of them literally labelled "Atlantic Ocean", one 394,793
+    # acres. Filtering on the source's own type is better than any size cap or name match, and it
+    # cost one question to someone looking at a map, against a GROUP BY that timed out on 60 GB.
+    ap.add_argument('--featuretype', default='3',
+                    help='comma-separated 3DHP waterbody types: 3 lakes, 1/2 rivers and canals, '
+                         '4 ocean. Default 3.')
     a = ap.parse_args()
 
     for p in (a.gpkg, a.coverage, a.claimed):
@@ -128,13 +140,26 @@ def main() -> int:
     con = sqlite3.connect('file:%s?mode=ro&immutable=1' % a.gpkg.replace('\\', '/'), uri=True)
     cur = con.cursor()
     min_km2 = a.min_acres / 247.105
-    print('querying 3DHP waterbodies over %s, >= %.0f acres ...' % (a.bbox, a.min_acres), flush=True)
+    max_km2 = a.max_acres / 247.105
+    fts = [int(v) for v in str(a.featuretype).split(',') if v.strip()]
+    print('querying 3DHP waterbodies over %s, %.0f-%.0f acres, featuretype %s ...'
+          % (a.bbox, a.min_acres, a.max_acres, fts), flush=True)
     cur.execute(
         'SELECT id3dhp, gnisid, gnisidlabel, featuretype, areasqkm, shape '
         'FROM hydro_3dhp_all_waterbody WHERE fid IN ('
         '  SELECT id FROM rtree_hydro_3dhp_all_waterbody_shape '
-        '  WHERE maxx>=? AND minx<=? AND maxy>=? AND miny<=?) AND areasqkm >= ?',
-        (min(xs), max(xs), min(ys), max(ys), min_km2))
+        '  WHERE maxx>=? AND minx<=? AND maxy>=? AND miny<=?) '
+        'AND areasqkm >= ? AND areasqkm <= ? AND featuretype IN (%s)' % ','.join('?' * len(fts)),
+        [min(xs), max(xs), min(ys), max(ys), min_km2, max_km2] + fts)
+
+    known = []
+    if os.path.exists(a.index):
+        idx = json.load(open(a.index))
+        for r in (idx if isinstance(idx, list) else (idx.get('lakes') or list(idx.values()))):
+            if isinstance(r, dict) and isinstance(r.get('centroid'), list) and len(r['centroid']) == 2:
+                known.append((r['centroid'][0], r['centroid'][1], r.get('name') or r.get('slug'),
+                              r.get('state') or '?', round(r.get('area_acres') or 0)))
+        print('%d known waters loaded, for the nearest-water column' % len(known))
 
     out = []
     seen = 0
@@ -184,6 +209,29 @@ def main() -> int:
             'vertices': len(pxs),
         })
 
+    # ── WHAT IS IT NEXT TO? ───────────────────────────────────────────────────────────────────
+    #
+    # Ryan, 2026-08-11: "this is kind of tedious searching them down but is possible." It was —
+    # thirty bare coordinates, each one a click into a viewer to find out whether it is a lake or
+    # a bay or an arm of something we already own.
+    #
+    # The nearest known water answers most of it without leaving the terminal, and the two cases
+    # separate cleanly by distance. A big polygon a few km from a big lake is the HARTWELL shape:
+    # an unnamed piece of water we already have, whose boundary stops short of it — KCHBX is
+    # 19,849 acres of Hartwell that our boundary never reached. A polygon with nothing within
+    # tens of km is the ROBINSON shape: genuinely missing water.
+    #
+    # It also makes out-of-state obvious without a state polygon: nothing in the registry is near
+    # it, because the registry is four states.
+    for r in out:
+        best = None
+        for lon, lat, nm, st, ac in ((k[0], k[1], k[2], k[3], k[4]) for k in known):
+            d = math.hypot((lon - r['lon']) * math.cos(math.radians(r['lat'])), lat - r['lat']) * 111.32
+            if best is None or d < best[0]:
+                best = (d, nm, st, ac)
+        if best:
+            r['nearest'] = {'name': best[1], 'state': best[2], 'acres': best[3], 'km': round(best[0], 1)}
+
     out.sort(key=lambda r: -r['acres'])
     os.makedirs(os.path.dirname(a.out) or '.', exist_ok=True)
     json.dump(out, open(a.out, 'w'), indent=1)
@@ -191,11 +239,17 @@ def main() -> int:
     named = [r for r in out if r['gnisid']]
     print('   %d named in 3DHP, %d UNNAMED (the class the registry cannot see)'
           % (len(named), len(out) - len(named)))
-    print('\nthe 30 biggest:')
-    print('   %-8s %-30s %8s %7s   %s' % ('ID3DHP', 'NAME', 'ACRES', 'CHARTED', 'LON, LAT'))
+    print('\nthe 30 biggest. Read the last column FIRST:')
+    print('   a big one a few km from a big lake is the HARTWELL shape — an unnamed piece of water')
+    print('   you already have, whose boundary stops short of it. One with nothing for tens of km')
+    print('   is the ROBINSON shape — genuinely missing water. Nothing near it at all usually')
+    print('   means it is outside the four states.\n')
+    print('   %-8s %8s %7s  %-24s  %s' % ('ID3DHP', 'ACRES', 'CHARTED', 'LON, LAT', 'NEAREST KNOWN'))
     for r in out[:30]:
-        print('   %-8s %-30s %8d %6.0f%%   %.6f, %.6f'
-              % (r['id3dhp'], r['name'][:30], r['acres'], r['charted_frac'] * 100, r['lon'], r['lat']))
+        n = r.get('nearest')
+        print('   %-8s %8d %6.0f%%  %10.6f,%9.6f  %s'
+              % (r['id3dhp'], r['acres'], r['charted_frac'] * 100, r['lon'], r['lat'],
+                 ('%s (%s, %d ac) %.1f km' % (n['name'], n['state'], n['acres'], n['km'])) if n else '—'))
     print('\nbuild any of them with:')
     print('   py .\\scripts\\boundary_from_3dhp.py --id <ID3DHP> --slug <slug> --name "<name>" --state SC')
     return 0
