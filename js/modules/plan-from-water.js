@@ -37,6 +37,7 @@
 import { ampHours, minutesFor, metresBetween, cumulative } from './plan-candidates.js';
 import { assemblePlan } from './plan-assemble.js';
 import { buildPlanRequest, parsePlanResponse } from './plan-prompt.js';
+import { prefetchTransits } from './smart-plan-v2.js';
 import { searchOrder, dayCost, priceSpots, TROLL_MPH, TRANSIT_MPH } from './plan-water.js';
 
 /** The point on a line nearest a given position, and how far along the line it is. */
@@ -88,6 +89,19 @@ function legFrom(piece, i, ramp, slug) {
     runId: piece.runId || piece.key,
     // WHAT HE PICKED, TO THE METRE. Not a re-derived window.
     coordinates: coords,
+    // THE TWO ENDS, NAMED. `orientLegs()` is documented to take `{start, end}[]` and both
+    // assemblePlan() and prefetchTransits() read the pair back off it. This function computed
+    // `a` and `b` for the ramp transits and then never emitted them, so every leg built from
+    // picked water reached the assembler with `start: undefined, end: undefined`.
+    //
+    // That one omission produced Ryan's whole failure on 2026-08-11, and none of it named the
+    // cause. orientLegs()'s hop() guards with Array.isArray and so returns silently; the
+    // assembler then asked the water router to route to `undefined`, which the worker rejected
+    // 400 eight times; `cursor` advanced to `undefined`; and the run home finally called
+    // metresBetween(undefined, launch) -- "Cannot read properties of undefined (reading '1')",
+    // thrown three modules away from the field that was missing.
+    start: a,
+    end: b,
     lengthM,
     depthFt: piece.holdsFt,
     passes,
@@ -162,6 +176,22 @@ export async function planFromWater(o) {
     legs[i].transitToM = to;
   }
 
+  // THE ROUTER IS ASYNC AND THE ASSEMBLER IS NOT, SO THE ROUTES ARE FETCHED FIRST.
+  //
+  // assemblePlan() calls `transit(from, to)` inline and tests the result with `|| straight(...)`.
+  // Hand it `waterRouter()` directly and every call returns a PROMISE -- which is truthy, so the
+  // straight-line fallback never fires, `p.coordinates` is undefined, and the transit silently
+  // becomes a two-point line with `distanceM: undefined`. It does not throw and it does not warn;
+  // the day just quietly stops being water-routed.
+  //
+  // smart-plan-v2.js:142 has always done this correctly -- `o.transit || await prefetchTransits(...)`
+  // -- and this path was written without it, so `o.routeWater` was documented in the signature
+  // above and then never read. One resolver, both paths.
+  //
+  // A router that answers for nothing returns null, and assemblePlan falls back to straight lines
+  // that mark themselves `unrouted`. That is a worse plan, not a broken one, and it says so.
+  const transit = o.transit || await prefetchTransits(legs, o.ramp, o.routeWater);
+
   // Spots priced against the water he actually picked -- a spot in a picked corridor is a free
   // stop, one outside every corridor is a trip. § 6.
   const spots = priceSpots(o.spots || [], picked, { ramp: o.ramp });
@@ -224,7 +254,7 @@ export async function planFromWater(o) {
     launchTime: o.launchTime,
     returnTime: o.returnTime,
     usableAh: o.usableAh,
-    transit: o.transit,
+    transit,
   });
 
   return {

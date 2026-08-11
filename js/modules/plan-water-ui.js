@@ -559,7 +559,11 @@ export async function buildFromPicked() {
                                    meaning: 'where the fish are, not the depth of the water' } },
       },
       askModel: modelAsker(CF_WORKER_URL),
-      transit: waterRouter(CF_WORKER_URL, T.r2Key),
+      // `routeWater`, NOT `transit`. `transit` is the SYNCHRONOUS lookup the assembler walks leg
+      // by leg; `routeWater` is the async fetcher planFromWater() prefetches every pair with.
+      // Handing the fetcher over as `transit` is half of what broke the build on 2026-08-11 —
+      // see the note in plan-from-water.js.
+      routeWater: waterRouter(CF_WORKER_URL, T.r2Key),
     });
   } catch (e) { return say(`Failed: ${e.message}`, true); }
 
