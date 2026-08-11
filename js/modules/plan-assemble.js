@@ -24,6 +24,97 @@
  */
 
 import { ampHours, minutesFor, metresBetween, cumulative, pointAt, orientLegs } from './plan-candidates.js';
+import { depthWindow, leadForDepth } from '../data/lure-knowledge.js';
+
+/**
+ * THE SHALLOWEST WATER ON THE LEG IS A CEILING ON HOW DEEP THE BAIT MAY RUN.
+ *
+ * Ryan, 2026-08-11: "the shallowest that water runs is 20ft... well then even if the water is
+ * 25-35ft don't give me a bait that runs deeper than 20ft with the lead and speed that you gave."
+ *
+ * This is the number the model needed and never had. `holdsFt` is a THRESHOLD — the shallowest
+ * point the whole stretch clears, set by one shoal somewhere along it — so a leg described as
+ * "22-31 ft of water" can still have a single 20 ft rise on it, and a bait running 26 drags
+ * bottom there on every pass. The app has measured that number since the envelope landed; it was
+ * being shown to Ryan in the reasons and never told to the model.
+ *
+ * IT IS CHECKED, NOT ASKED FOR. Same reasoning as the lure-change validator below: a constraint
+ * stated in a prompt is a request, and this one is arithmetic the app owns outright.
+ * `depthWindow()` inverts `leadForDepth()` numerically, so it answers exactly the question in
+ * Ryan's sentence — where does THIS lure run at THIS lead and THIS speed.
+ *
+ * AND THE FIX IS TO SHORTEN THE LEAD, NOT TO REFUSE THE PLAN. `leadForDepth(lure, ceiling, mph)`
+ * is the lead that puts the same bait at the ceiling. Lead length for a target depth is
+ * computation, which is the app's half of the split PLAN_SCHEMA_V2 draws everywhere: judgement to
+ * the model, arithmetic to the app. Refusing would throw away a good bait over a number the app
+ * can just correct — and the correction is said out loud so it is never silent.
+ *
+ * Needs `o.lureByName` to resolve a rod's lure NAME to the inventory object, because that is all
+ * the loadout carries — `LURE_KNOWLEDGE` is keyed by `type` and the lead maths needs `weightOz`.
+ * Without a resolver this does nothing at all and says nothing, exactly like a pack with no
+ * shoreline: an absent input must not become a claim.
+ */
+function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warnings) {
+  if (typeof lureByName !== 'function' || !Number.isFinite(ceilingFt) || ceilingFt <= 0) return;
+  const ids = [deploy && deploy.port, deploy && deploy.starboard].filter(Boolean);
+  for (const id of ids) {
+    const rod = rods.find((r) => r.id === id);
+    if (!rod || !Number.isFinite(rod.leadFt)) continue;
+    const lure = lureByName(rod.lure);
+    if (!lure) continue;
+    const w = depthWindow(lure, { speedMph, leadFt: rod.leadFt });
+    if (!Number.isFinite(w.max)) continue;
+
+    // The model also CLAIMS a running depth. Nothing has ever checked that claim against the
+    // lead it asked for in the same breath, and the two can disagree by a lot.
+    if (Array.isArray(rod.runsDepthFt) && Number.isFinite(rod.runsDepthFt[1])
+        && Math.abs(rod.runsDepthFt[1] - w.max) > 4) {
+      warnings.push(`${id} on ${runId} says it runs to ${rod.runsDepthFt[1]} ft, but `
+                  + `${rod.leadFt} ft of lead at ${speedMph} mph puts a ${rod.lure} at `
+                  + `${w.max} ft — going with the measured number`);
+      rod.runsDepthFt = [w.min, w.max];
+    }
+
+    if (w.max <= ceilingFt) continue;
+
+    // AIMING AT THE CEILING IS NOT CLEARING IT, and the first version of this did exactly that.
+    //
+    // `leadForDepth()` places the CENTRE of the window at the depth asked for; `depthWindow()`
+    // reports a band either side. Measured on a 3" Lipless Crankbait: leadForDepth(18 ft, 2.0) is
+    // 95 ft of lead, and 95 ft of lead runs **16-20 ft**. So asking for the ceiling leaves the
+    // bottom of the bait's range 2 ft BELOW the shallowest water -- still dragging, and now with
+    // a warning saying it had been fixed, which is worse than not fixing it.
+    //
+    // So the target walks down until the WINDOW clears, because that is the thing that has to be
+    // true. Six passes is far more than the band ever needs and bounds it against a lure whose
+    // ratio makes it not converge.
+    let shorter = null;
+    for (let target = ceilingFt, i = 0; i < 6 && target > 0; i++) {
+      const lead = leadForDepth(lure, target, speedMph);
+      if (!Number.isFinite(lead) || lead <= 0) break;
+      const got = depthWindow(lure, { speedMph, leadFt: lead });
+      if (!Number.isFinite(got.max)) break;
+      if (got.max <= ceilingFt) { shorter = lead; break; }
+      target -= Math.max(1, got.max - ceilingFt);
+    }
+
+    // Lead-controlled baits can be brought up by shortening the lead. A lipped or weighted bait
+    // that dives on its own cannot, and there the honest answer is that it is the wrong bait for
+    // this leg -- said plainly rather than corrected into something it is not.
+    if (w.mode === 'lead' && shorter && shorter < rod.leadFt) {
+      warnings.push(`${id} on ${runId}: a ${rod.lure} on ${rod.leadFt} ft of lead at ${speedMph} `
+                  + `mph runs to ${w.max} ft, and the shallowest water on this leg is ${ceilingFt} `
+                  + `ft — shortened the lead to ${shorter} ft so it clears`);
+      rod.leadFt = shorter;
+      const nw = depthWindow(lure, { speedMph, leadFt: shorter });
+      if (Number.isFinite(nw.max)) rod.runsDepthFt = [nw.min, nw.max];
+    } else {
+      warnings.push(`${id} on ${runId}: a ${rod.lure} runs to ${w.max} ft and the shallowest water `
+                  + `on this leg is ${ceilingFt} ft. Its depth is ${w.controlledBy}, so lead will `
+                  + `not lift it — it is the wrong bait for this pass`);
+    }
+  }
+}
 
 /** "06:00" → minutes since midnight. */
 export function parseClock(s) {
@@ -80,6 +171,8 @@ const TROLL_MPH_MAX = 5.0;
  *                                 positioning}] — structureId names a pass the app supplied
  * @param {object[]} [o.changes]   [{beforeRunId, rodId, from, to, why}]
  * @param {number}   [o.trollMph]  DEFAULT ONLY, for a leg the model gave no `speedMph` for
+ * @param {function} [o.lureByName] (name) => inventory lure, so the bait-depth ceiling can be
+ *                                  checked. Absent = not checked, and nothing is claimed.
  * @param {function} [o.transit]   (fromLonLat, toLonLat) => {distanceM, coordinates} or null.
  *                                 MUST be supplied, backed by POST /water/<slug>/route. When it
  *                                 is missing, or answers null for a pair, the leg is a straight
@@ -322,6 +415,12 @@ export function assemblePlan(o) {
         }
       }
     }
+
+    // No bait may run deeper than the shallowest water on this leg. See capBaitDepth().
+    // `maxRunDepthFt` is preferred over `depthFt` because a caller may know a tighter ceiling
+    // than the leg's nominal depth — on the picked-water path both are the piece's `holdsFt`.
+    capBaitDepth(rods, deploy, Number(c.maxRunDepthFt ?? c.depthFt), legMph,
+                 o.lureByName, c.runId, warnings);
 
     legs.push({
       id: `L${++li}`, type: 'troll',

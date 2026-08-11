@@ -104,6 +104,11 @@ function legFrom(piece, i, ramp, slug) {
     end: b,
     lengthM,
     depthFt: piece.holdsFt,
+    // THE CEILING ON HOW DEEP A BAIT MAY RUN HERE, named separately from `depthFt` so nothing
+    // downstream has to infer that a leg's nominal depth is also a limit. `holdsFt` is the
+    // shallowest point the whole stretch clears, which is exactly the constraint — see
+    // capBaitDepth() in plan-assemble.js.
+    maxRunDepthFt: piece.holdsFt,
     passes,
     transitInM: ramp ? Math.round(metresBetween(ramp, a)) : 0,
     transitOutM: ramp ? Math.round(metresBetween(b, ramp)) : 0,
@@ -206,6 +211,7 @@ export async function planFromWater(o) {
     candidates: legs.map((l) => ({
       runId: l.runId,
       depthFt: l.depthFt,
+      maxRunDepthFt: l.maxRunDepthFt,
       lengthM: l.lengthM,
       estMin: l.estMin,
       batteryAh: l.batteryAh,
@@ -255,6 +261,9 @@ export async function planFromWater(o) {
     returnTime: o.returnTime,
     usableAh: o.usableAh,
     transit,
+    // So the assembler can check what the model's lead and speed actually put the bait at
+    // against the shallowest water on each leg. See capBaitDepth().
+    lureByName: o.lureByName,
   });
 
   return {

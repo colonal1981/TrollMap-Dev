@@ -559,6 +559,13 @@ export async function buildFromPicked() {
                                    meaning: 'where the fish are, not the depth of the water' } },
       },
       askModel: modelAsker(CF_WORKER_URL),
+      // The loadout carries a lure NAME; the depth maths needs the inventory object, because
+      // LURE_KNOWLEDGE is keyed by `type` and the lead ratio scales on `weightOz`. Without this
+      // the bait-depth ceiling is simply not checked — see capBaitDepth() in plan-assemble.js.
+      lureByName: (name) => {
+        const n = String(name || '').trim().toLowerCase();
+        return n ? TACKLE_INVENTORY.find((l) => String(l.name).toLowerCase() === n) || null : null;
+      },
       // `routeWater`, NOT `transit`. `transit` is the SYNCHRONOUS lookup the assembler walks leg
       // by leg; `routeWater` is the async fetcher planFromWater() prefetches every pair with.
       // Handing the fetcher over as `transit` is half of what broke the build on 2026-08-11 —

@@ -315,6 +315,17 @@ RULES THAT ARE NOT NEGOTIABLE
 5. \`depthFt\` on a structure is that structure's own depth — size the presentation from it. Where
    it is null the pipeline has no depth for that kind of feature; say so rather than guessing.
 6. Two rods in the water per leg. Exactly one port, one starboard.
+7. \`maxRunDepthFt\` IS A CEILING ON THE BAIT, and it is the hardest number here. It is the
+   SHALLOWEST water anywhere on that leg, measured within the boat's wander — not the average and
+   not the depth in the description. A leg reading 25-31 ft of water with \`maxRunDepthFt: 20\` has
+   a 20 ft rise somewhere along it, and a bait running 26 ft drags bottom there on every single
+   pass. Both deployed rods must therefore run SHALLOWER than that number at the \`leadFt\` and
+   \`speedMph\` you give — that is what the lead is for. Shorten the lead or choose a shallower
+   bait; never raise the ceiling.
+   THE FISH ARE NOT THE CONSTRAINT. Where in the water column they are holding is what the sounder
+   answers on the day, so the depth band you were given is context, not a target to bury a bait
+   at. Put a working bait over the right water without hanging it on the bottom, and he will find
+   the fish from there.
 
 SAFETY — judge it honestly for a 12.5 ft kayak
 Sustained wind over 15 mph, or gusts over 20, is a no-go. Judge ${o.ramp || 'the ramp'} against the
