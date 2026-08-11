@@ -44,6 +44,7 @@ import { buildSmartPlanV2, modelAsker, waterRouter } from './smart-plan-v2.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
 import { materialisePlan } from './plan-tracks.js';
+import { loadSessionFromPlan, isEnabled } from './notifications.js';
 import { renderAll } from '../core/map-init.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { readInputs, rampCoords } from './smart-plan-v2-wiring.js';
@@ -59,7 +60,7 @@ const fmtHm = (min) => `${Math.floor(min / 60)}h ${String(Math.round(min % 60)).
 const T = { pieces: [], picked: new Set(), ramp: null, rampName: '', usableAh: 0,
             windowMin: null, band: null, holding: null, sortBy: 'ramp', lake: '', limit: 25,
             spots: [], species: '', r2Key: '', dateStr: '', launchTime: '', returnTime: '',
-            windByHour: null };
+            windByHour: null, weatherByHour: null };
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // THE STRIP — distance along the water against depth.
@@ -416,6 +417,7 @@ export async function findWater() {
     pieces: out.pieces, spots: out.spots || [], picked: new Set(),
     ramp, rampName: inp.rampName || 'launch',
     species, r2Key, dateStr: inp.dateStr, windByHour: forecast ? forecast.windByHour : null,
+    weatherByHour: forecast ? forecast.weatherByHour : null,
     launchTime: inp.launchTime, returnTime: inp.returnTime,
     usableAh: usableAhFrom(inp.motor), band: depth ? depth.band : null,
     holding: depth ? depth.holding : null, lake: inp.lakeName,
@@ -529,6 +531,12 @@ export async function buildFromPicked() {
   const gpx = materialisePlan(r.plan, { launch: T.ramp, win: window, marks: true });
   renderAll();
 
+  // WHAT THE DAY HAS TO SAY, HANDED TO THE THING THAT CAN SAY IT. The phone is not the interface:
+  // "other than using it to take photos i really do not use it much... that is why we have the
+  // notifications being sent to the echomap". notifications.js forwards to the Echomap over
+  // ActiveCaptain and had zero importers, so every cue this plan produces had nowhere to go.
+  const cues = loadSessionFromPlan(r.plan, { weatherByHour: T.weatherByHour });
+
   // SAY THE ORDER OUT LOUD AND SAY IT IS NOT THE SHORT ONE. Silently reordering what he ticked is
   // how a search reads as a mistake -- § 14 gives him veto, and a veto needs something to look at.
   const seq = r.order.map((i) => T.pieces.indexOf(picked[i]) + 1).join(' → ');
@@ -536,6 +544,9 @@ export async function buildFromPicked() {
     + `nothing still tells you something. That is a search order, not the shortest route. `
     + `${r.dayCost.ah} Ah of ${T.usableAh}. ${gpx.tracks} tracks and ${gpx.waypoints} waypoints `
     + `for the Echomap — the charted structure is in there to check against the sounder. `
+    + `${cues.positionCues} alerts loaded`
+    + `${cues.weatherCues ? ` and ${cues.weatherCues} weather` : ''}`
+    + `${isEnabled() ? '' : ' (turn alerts on to get them)'}. `
     + `Open the Smart Plan tab to see it.`);
   document.querySelector('#planSubtabs button[data-plansub="plan"]')?.click();
   return r;

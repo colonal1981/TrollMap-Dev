@@ -18,6 +18,7 @@
  */
 
 import { state } from '../core/state.js';
+import { planCues, weatherCues } from './plan-assemble.js';
 import { geoDistanceFt as distFt } from '../utils/geo.js';
 
 import { callGlobal } from '../utils/call-global.js';
@@ -33,7 +34,8 @@ let _enabled = false;
 let _session = {
   solunarMajors: [],    // [{ h: 7.55, fired: false }, ...]
   solunarMinors: [],
-  bandChangeTimes: [],  // [{ h: 9.0, label: 'Band 2', fired: false }]
+  bandChangeTimes: [],
+  weatherCues: [],       // [{ h: 12.8, label: 'Thunderstorms from 14:00…', severity, fired }]
   returnTimeH: null,
   returnFired: false,
   windFired: false,
@@ -42,6 +44,8 @@ let _session = {
 let _proximityWatcher = null;
 let _tickInterval = null;
 let _firedPins = new Set(); // pin IDs already notified this session
+// The day's plan, as things to say when he gets near them. Empty until loadSessionFromPlan().
+let _planPins = [];
 
 // ── Permission ────────────────────────────────────────────────────────────────
 export async function requestNotificationPermission() {
@@ -111,6 +115,20 @@ function tick() {
     }
   }
 
+  // WEATHER, ON THE CLOCK ON PURPOSE — see weatherCues(). A storm arrives when it arrives, so
+  // this is the one alert that must not wait for the boat to reach a coordinate.
+  //
+  // FIRED AT ITS OWN HOUR, NOT TEN MINUTES BEFORE IT LIKE A BAND CHANGE. The evacuation cue has
+  // ALREADY been shifted back by the run home when it was built — "leave by 12:48" for a 14:00
+  // storm — so warning early again would double-count the lead and start nagging at noon about
+  // weather two hours out.
+  for (const w of (_session.weatherCues || [])) {
+    if (w.fired || now < w.h) continue;
+    w.fired = true;
+    fire(w.severity === 'stop' ? '⛈️ Get off the water' : '🌧️ Weather', w.label,
+         `weather-${w.severity}`);
+  }
+
   // Return time warning
   if (_session.returnTimeH && !_session.returnFired) {
     const warnReturnH = RETURN_WARN_MIN / 60;
@@ -141,7 +159,77 @@ function stopProximityWatch() {
   }
 }
 
+/**
+ * THE PLAN'S OWN CUES, LOADED FOR THE ECHOMAP.
+ *
+ * The phone is not the interface. Ryan: "other than using it to take photos i really do not use it
+ * much... that is why we have the notifications being sent to the echomap." So everything the day
+ * has to say reaches him as a notification or it does not reach him.
+ *
+ * planCues() and weatherCues() have both existed and had ZERO call sites. This connects them.
+ *
+ * FIRED ON POSITION, NOT ON PROGRESS. The cue objects carry `atM` — metres along the day — and it
+ * would be easy to fire them by tracking how far he has come. That needs a running total that
+ * drifts the moment he stops to fish, which is the whole reason PLAN_SCHEMA_V2 refuses times. Real
+ * proximity to a real coordinate has no such drift: it is right whether he took the legs in order,
+ * skipped three, or spent an hour on one stretch. The existing proximity watcher already does it.
+ *
+ * WEATHER IS THE EXCEPTION AND STAYS ON THE CLOCK, because a storm arrives when it arrives — see
+ * weatherCues(). Those ride the 30-second tick rather than the position watch.
+ */
+export function loadSessionFromPlan(plan, o = {}) {
+  _planPins = [];
+  const legAt = (id) => ((plan && plan.legs) || []).find((l) => l.id === id) || null;
+  const pointOn = (leg, atLegM) => {
+    const co = (leg && leg.coordinates) || [];
+    if (co.length < 2 || !(leg.lengthM > 0)) return co[0] || null;
+    const k = Math.max(0, Math.min(co.length - 1,
+                                   Math.round((atLegM / leg.lengthM) * (co.length - 1))));
+    return co[k];
+  };
+  try {
+    for (const cue of planCues(plan)) {
+      const leg = cue.legId ? legAt(cue.legId) : null;
+      let at = null;
+      if (cue.kind === 'stop' && leg) {
+        const s = (leg.stops || []).find((x) => x.id === cue.ref);
+        at = (s && s.at) || pointOn(leg, cue.atM - (leg.startM || 0));
+      } else if (leg) {
+        at = pointOn(leg, cue.atM - (leg.startM || 0));
+      }
+      if (!at || !Number.isFinite(at[0]) || !Number.isFinite(at[1])) continue;
+      const title = cue.kind === 'stop' ? '🎯 Stop and cast'
+                  : cue.kind === 'depth' ? '⚠️ Shallow ahead'
+                  : cue.kind === 'change' ? '🪝 Lure change'
+                  : '📍 Coming up';
+      _planPins.push({ id: `plan-${cue.kind}-${cue.ref}`, lat: at[1], lon: at[0],
+                       title, body: cue.what || '' });
+    }
+    // The clock half. One notice, at the hour it is due, and the storm one already carries the
+    // leave-by time computed from the run home.
+    _session.weatherCues = (weatherCues(plan, o.weatherByHour, { transitMph: o.transitMph }) || [])
+      .map((c) => ({ h: c.atHour, label: c.what, severity: c.severity, fired: false }));
+    console.log('[notifications] plan loaded:', _planPins.length, 'position cues,',
+                _session.weatherCues.length, 'weather cues');
+  } catch (e) {
+    console.warn('[notifications] loadSessionFromPlan failed:', e && e.message);
+  }
+  return { positionCues: _planPins.length, weatherCues: (_session.weatherCues || []).length };
+}
+
 function checkProximity(lat, lon) {
+  // THE PLAN FIRST. These are the things the day was built to tell him, and unlike the community
+  // spots below they are his own plan talking, so they go before anything else can use up the
+  // notification's moment.
+  for (const pin of _planPins) {
+    if (_firedPins.has(pin.id)) continue;
+    const ft = distFt(lat, lon, pin.lat, pin.lon);
+    if (ft <= PROXIMITY_RADIUS_FT) {
+      _firedPins.add(pin.id);
+      fire(pin.title, pin.body, pin.id);
+    }
+  }
+
   // The QuickDraw pin block was here until 2026-08-07. It read window.getMyStructures(),
   // which went with the structure mapper. Deleted rather than left in place: it used
   // optional chaining with an empty-array fallback, so it would have gone on looking
