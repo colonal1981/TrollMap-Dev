@@ -233,7 +233,7 @@ seconds, where a leader rod is a knot with wet hands.
 Colour is a free string; assume any colour combination is aboard. Use ONLY these exact lure names:
 ${(o.tackle || []).join(', ') || '(inventory unavailable)'}
 
-THE WATER YOU MAY FISH
+${o.waterIsChosen ? 'THE WATER HE CHOSE' : 'THE WATER YOU MAY FISH'}
 Each candidate is a stretch of a real trolling run, already filtered to water he can reach and
 depths that matter today, and ranked by what it passes. \`structures\` lists what each leg goes by
 in the order you meet them, with \`atM\` metres from the start of that leg.
@@ -252,12 +252,36 @@ of that leg to the START of every other leg — \`transitFromRampM\` from the ra
 reorder the day, and they are yours to spend: the app computes the legs, you choose the sequence.
 
 ${JSON.stringify(o.candidates || [])}
+${o.waterIsChosen ? `
+THE FISHERMAN ALREADY CHOSE THIS WATER AND THIS ORDER.
+He picked these stretches himself, off a map, with the reasons for and against in front of him —
+they are in \`whyThisWater\` on each one, computed from the chart, not written by you. Do not
+re-rank them, do not suggest better water, and do not reorder the day. The list above IS the day,
+first to last.
 
+The order is a SEARCH order: the most diagnostic water first, so that a leg which produces nothing
+still tells him something. That is why it is not the shortest route between them.
+
+YOUR JOB IS THE TACKLE. Baits, speeds, leads, presentation, which two rods go in the water on each
+leg, and where to pause. Nothing about which water.
+
+\`ladderPartners\` is how many other stretches sit within a turn of that one at a different depth.
+Where it is above zero, say so in the leg's notes: he can turn at the end and come back deeper or
+shallower without moving the boat, and how many laps that is worth depends on the lures you put
+out — a bait that only works 12–18 ft cannot ladder past its own range.
+${(o.freeCastSpots || []).length ? `
+CAST SPOTS ALREADY ON HIS ROUTE — ${JSON.stringify(o.freeCastSpots)}
+These sit inside the water he picked, so working one costs only the minutes spent on it. Prefer
+them over anything that would need a detour.` : ''}` : ''}
 RULES THAT ARE NOT NEGOTIABLE
 1. Name legs by \`runId\` and stops by a structure \`id\`, both copied exactly from the list above.
    Anything invented is thrown away and the plan comes up short.
 2. NEVER write a latitude, a longitude, or a place name of your own. The app owns every position.
-3. ORDER THE LEGS TO SPEND AS LITTLE OF THE DAY DEADHEADING AS YOU CAN. Add up
+3. ${o.orderIsChosen
+   ? `THE ORDER IS FIXED AND IT IS NOT YOURS. Fish them in the order given. If the deadheading
+   between two of them looks genuinely wasteful, SAY SO in the notes and leave the order alone —
+   he has veto over his own plan and does not need it exercised for him.`
+   : `ORDER THE LEGS TO SPEND AS LITTLE OF THE DAY DEADHEADING AS YOU CAN.`} Add up
    \`transitFromRampM\` for the leg you start with, \`transitToM\` for each hop between
    consecutive legs, and \`transitToRampM\` for the leg you finish on — that total is time and
    battery with nothing in the water. Trolling costs about 2.5 Ah per mile; deadheading at 3.5 mph
