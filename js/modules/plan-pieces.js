@@ -275,6 +275,27 @@ export function buildPieces(lanes, o) {
     const coords = stretchCoords(f.geometry.coordinates, step, best.from, best.to);
     entries.push({
       runId: p.id || null,
+      // THE PROFILE TRAVELS WITH THE PIECE, and until 2026-08-11 it did not.
+      //
+      // A row can say "0.55 mi at 25 ft" and still leave him blind to WHERE the shallow bit is,
+      // which hump is under the baits and which is in them. The strip view needs the raw envelope
+      // and optionality() needs both its sides; both are already measured, and carrying them costs
+      // a few hundred numbers and saves a round trip to the pack.
+      //
+      // These were dropped here, silently. plan-pieces.test.js asserts holdsFt, offers, duplicates
+      // and rampM and none of them touch the envelope, so 15 tests passed over a module that
+      // threw it away -- and the strip chart drew nothing while optionality() reported every
+      // corridor as "undefined-undefined ft, 0 ft span". Found by running the whole chain on a
+      // real pack and reading the sentences it produced.
+      envelope: p.envelope_ft,
+      // Deep side and centreline. `deep` minus `envelope` is how much depth 25 m of wander buys:
+      // narrow means relaxed water, wide means a steep edge that wants steering. `line` is what
+      // the chart says about the centreline, kept ONLY so the gap between it and the shallow side
+      // stays visible -- nothing should ever decide on it.
+      envelopeDeep: p.envelope_deep_ft || null,
+      envelopeLine: p.envelope_line_ft || null,
+      envelopeStepM: step,
+      envelopeM: p.envelope_m ?? null,
       chartedFt: p.depth_ft ?? null,
       shallowestFt: p.shallowest_ft ?? null,
       shallowestLineFt: p.shallowest_line_ft ?? null,
@@ -313,7 +334,13 @@ export function buildPieces(lanes, o) {
       chartedFrac: win.chartedFrac,
       relief: win.relief,
       near: win.near,
+      envelope: win.envelope,
+      envelopeDeep: win.envelopeDeep,
+      envelopeLine: win.envelopeLine,
+      envelopeStepM: win.envelopeStepM,
+      envelopeM: win.envelopeM,
       coords: win.coords,
+      fullCoords: win.full,
       duplicates: members.length,
     };
     if (o && Array.isArray(o.ramps) && o.ramps.length) {

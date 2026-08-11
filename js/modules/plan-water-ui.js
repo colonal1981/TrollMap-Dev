@@ -37,6 +37,7 @@ import { getSeason } from '../data/species-intel.js';
 import { depthBandFor, usableAhFrom } from './plan-inputs.js';
 import { packFetcher } from './smart-plan-v2.js';
 import { fetchForecast } from './plan-preflight.js';
+import { depthSampler, shorelineIndex } from './plan-water-index.js';
 import { offerWater, dayCost, priceSpots, searchOrder, TROLL_MPH } from './plan-water.js';
 import { planFromWater } from './plan-from-water.js';
 import { buildSmartPlanV2, modelAsker, waterRouter } from './smart-plan-v2.js';
@@ -338,7 +339,19 @@ export async function findWater() {
   const depth = depthBandFor(species, inp.lakeName, getSeason(date), inp.waterTempF, null);
 
   say('Reading the pack…');
-  const fc = await packFetcher(CF_WORKER_URL)(`/${r2Key}/trolling_runs.geojson`);
+  const get = packFetcher(CF_WORKER_URL);
+  // THREE LAYERS, IN PARALLEL, AND TWO OF THEM ARE OPTIONAL.
+  //
+  // depth_areas gives which side the bottom rises on; garmin_shoreline gives where the land is.
+  // Both already ship in every pack and are already in R2 — no refit and no pipeline change, which
+  // I offered twice before checking the bucket. 385 packs carry a shoreline against 543 carrying
+  // runs, so the shoreline is genuinely absent a lot and its absence must stay silent rather than
+  // become a claim of open water.
+  const [fc, daFc, slFc] = await Promise.all([
+    get(`/${r2Key}/trolling_runs.geojson`),
+    get(`/${r2Key}/depth_areas.geojson`).catch(() => null),
+    get(`/${r2Key}/garmin_shoreline.geojson`).catch(() => null),
+  ]);
   const lanes = (fc && fc.features) || [];
   if (!lanes.length) return say(`${inp.lakeName} has no trolling runs in its chartpack`, true);
 
@@ -385,6 +398,14 @@ export async function findWater() {
       fishBandFt: depth ? depth.band : null,
       holding: depth ? depth.holding : null,
       windByHour: forecast ? forecast.windByHour : null,
+      depthAt: daFc && daFc.features ? depthSampler(daFc.features) : null,
+      shoreIndex: slFc && slFc.features ? shorelineIndex(slFc.features) : null,
+      // Local time, for "the sun is behind the bank from 07:00". getTimezoneOffset() is minutes
+      // WEST of UTC and positive for the Americas, so the sign flips — EDT is +240 there and -4
+      // here. Taken from the machine because Ryan plans at the computer the night before, on the
+      // water he is about to fish.
+      dateUTC: Date.UTC(...inp.dateStr.split('-').map((n, i) => (i === 1 ? +n - 1 : +n))),
+      tzOffset: -new Date(`${inp.dateStr}T12:00:00`).getTimezoneOffset() / 60,
       ramps: [{ name: inp.rampName || 'launch', lonLat: ramp }],
     });
   } catch (e) { return say(e.message, true); }
@@ -404,8 +425,13 @@ export async function findWater() {
   });
   paint();
   const withLaps = out.pieces.filter((p) => p.partners.length).length;
+  const extras = [
+    daFc && daFc.features ? null : 'no depth areas, so nothing can say which way the wind sets you',
+    slFc && slFc.features ? null : 'no shoreline in this pack, so no lee and no sun-behind-the-bank',
+  ].filter(Boolean);
   say(`${out.laneCount} charted lanes → ${out.pieces.length} pieces of water, `
-    + `${withLaps} with somewhere to turn onto. Depths are MINIMUM WATER DEPTH, not bait depth.`);
+    + `${withLaps} with somewhere to turn onto. Depths are MINIMUM WATER DEPTH, not bait depth.`
+    + (extras.length ? ` — ${extras.join('; ')}.` : ''));
   return out;
 }
 
