@@ -1143,10 +1143,26 @@ def fit_pack(pack, a):
                 # so a real depth beats it and an all-uncharted station stays +inf and falls out as
                 # -1 below. The condition is removed rather than the message suppressed.
                 lo = np.where(np.isfinite(v), v, np.inf).min(axis=0) / 3.048
+                # THREE PROFILES OUT OF ONE PROBE, because all three are already in `v` and the
+                # raster work is done. They answer three different questions and the app needs
+                # all of them:
+                #
+                #   shallow  what can snag a bait          -> the decision
+                #   deep     how much depth 25 m buys      -> how steep the edge is, and so how
+                #                                             much attention this pass wants
+                #   line     what the chart says HERE      -> the centreline, kept so the gap
+                #                                             between it and `shallow` is visible
+                #
+                # The middle offset IS the line, so it costs an index rather than a lookup.
+                hi = np.where(np.isfinite(v), v, -np.inf).max(axis=0) / 3.048
+                mid = v[len(offs) // 2] / 3.048
                 # -1 means nobody sounded it. NOT zero, and not the deepest thing nearby --
                 # uncharted has been mistaken for both in this file before and cost two bugs.
-                env = [(-1 if not np.isfinite(x) else int(round(x))) for x in lo]
+                q = lambda arr: [(-1 if not np.isfinite(x) else int(round(x))) for x in arr]
+                env = q(lo)
                 p2['envelope_ft'] = env
+                p2['envelope_deep_ft'] = q(hi)
+                p2['envelope_line_ft'] = q(mid)
                 p2['envelope_m'] = a.envelope_m
                 p2['envelope_step_m'] = a.envelope_step_m
                 real = [x for x in env if x >= 0]
