@@ -350,10 +350,29 @@ export function reasons(piece, o) {
     const cross = crosswindMph(deg, wind.deg, wind.mph);
     const head = headwindMph(deg, wind.deg, wind.mph);
     if (cross >= 8) {
+      // WHICH WAY IT SETS YOU, when the bottom has a consistent shallow flank. `shallowSide` is
+      // the gradient inside the wander, not the bank -- see its note. That is the right quantity
+      // here anyway: the question is whether drifting downwind puts the baits shallower.
+      const flank = piece.shallowSide || null;
+      const windSide = flank
+        // The wind blows FROM windDeg, so it pushes toward windDeg + 180. Port of a course is
+        // course - 90. Compare the push direction to the shallow flank's direction.
+        ? (() => {
+          const push = (wind.deg + 180) % 360;
+          const portDeg = (deg + 270) % 360;
+          const toPort = Math.cos(((push - portDeg) * Math.PI) / 180) > 0;
+          return (toPort && flank.side === 'port') || (!toPort && flank.side === 'starboard');
+        })()
+        : null;
       against.push(`${Math.round(cross)} mph of today's wind comes across this line — with no GPS `
                  + `steering that sets the whole wander downwind rather than widening it, and the `
-                 + `shallowest water on the pass is ${piece.holdsFt} ft. Nothing in the pack says `
-                 + `which side the bank is, so which way it sets you is yours to read`);
+                 + `shallowest water on the pass is ${piece.holdsFt} ft.`
+                 + (windSide === true
+                    ? ` It sets you toward the shallow side, which is the bad direction here.`
+                    : windSide === false
+                    ? ` It sets you toward the deeper side, which is the forgiving direction.`
+                    : ` The bottom has no consistent shallow flank on this piece, so which way it `
+                      + `sets you is yours to read on the day.`));
     } else if (cross <= 3 && Math.abs(head) >= 6) {
       forIt.push(`the wind runs along this line rather than across it, so it costs speed rather `
                + `than steering — the easier of the two on a boat you hold by hand`);
@@ -473,6 +492,83 @@ export function headwindMph(courseDeg, windDeg, windMph) {
 export function crosswindMph(courseDeg, windDeg, windMph) {
   if (!Number.isFinite(courseDeg) || !Number.isFinite(windDeg) || !Number.isFinite(windMph)) return 0;
   return Math.abs(windMph * Math.sin(((windDeg - courseDeg) * Math.PI) / 180));
+}
+
+/** Metres per degree, matching plan-pieces.js and the pipeline's own projection. */
+const M_PER_DEG_LAT = 110540.0;
+const m_per_deg_lon = (lat) => 111320.0 * Math.cos((lat * Math.PI) / 180);
+
+/**
+ * WHICH SIDE THE BOTTOM RISES ON — AND THIS IS NOT THE BANK.
+ *
+ * Ryan, on an earlier version of this that called it bank aspect:
+ *
+ *   > i dont think just sampling 25m to left or right is going to find you a bank... it is
+ *   > possible for water to get deeper and then shallower again and not lead you to the bank...
+ *   > what if you are in the middle of the lake lol
+ *
+ * He is right and the name was the error, not the measurement. Sampling 25 m either side finds
+ * the LOCAL GRADIENT inside the wander envelope. The bank might be three hundred metres further
+ * on, or there might be no bank at all — a channel-edge leg mid-lake has deep water both ways and
+ * a shoreline nowhere near it.
+ *
+ * The local gradient is nonetheless exactly the number the crosswind question needs, because the
+ * question is "if the wind sets me sideways, do my baits get shallower or deeper" — and that is
+ * decided inside the wander, not at the shoreline. So this is measured and named honestly, and it
+ * is NOT used for shade or lee, which genuinely do need the shoreline.
+ *
+ * TWO GUARDS AGAINST READING A GRADIENT THAT IS NOT THERE:
+ *
+ *   1. SAMPLED ALONG THE WHOLE LEG, not at one midpoint. A single pair would happily report a side
+ *      for water that deepens then shallows again, which is his objection exactly. A side is only
+ *      claimed when most of the samples agree.
+ *   2. A DIFFERENCE HAS TO BE REAL. Below `minDiffFt` the two sides are the same water and the
+ *      answer is `null` — no side — rather than whichever way the rounding fell. Mid-lake water
+ *      should return null and does.
+ *
+ * @param {object[]} coords    the leg, [lon,lat] pairs
+ * @param {function} depthAt   ([lon,lat]) => ft, or null where nothing is charted
+ * @returns {?{side:'port'|'starboard', bearingDeg:number, agreement:number, diffFt:number}}
+ */
+export function shallowSide(coords, depthAt, { offM = 25, samples = 9, minDiffFt = 3,
+                                               minAgreement = 0.7 } = {}) {
+  if (!Array.isArray(coords) || coords.length < 4 || typeof depthAt !== 'function') return null;
+  let port = 0, stbd = 0, n = 0, diffSum = 0;
+  for (let k = 1; k <= samples; k++) {
+    const i = Math.floor((k / (samples + 1)) * (coords.length - 1));
+    const a = coords[Math.max(0, i - 1)], b = coords[Math.min(coords.length - 1, i + 1)];
+    const lat = coords[i][1];
+    const kx = m_per_deg_lon(lat);
+    const dx = (b[0] - a[0]) * kx, dy = (b[1] - a[1]) * M_PER_DEG_LAT;
+    const L = Math.hypot(dx, dy);
+    if (!(L > 0)) continue;
+    const nx = (-dy / L) * offM, ny = (dx / L) * offM;
+    const dp = depthAt([coords[i][0] + nx / kx, lat + ny / M_PER_DEG_LAT]);
+    const ds = depthAt([coords[i][0] - nx / kx, lat - ny / M_PER_DEG_LAT]);
+    if (!Number.isFinite(dp) || !Number.isFinite(ds)) continue;
+    n++;
+    const d = dp - ds;
+    if (Math.abs(d) < minDiffFt) continue;      // same water either side; casts no vote
+    diffSum += Math.abs(d);
+    if (d < 0) port++; else stbd++;
+  }
+  const voted = port + stbd;
+  if (!n || !voted) return null;
+  const side = port > stbd ? 'port' : 'starboard';
+  const agreement = Math.max(port, stbd) / voted;
+  // Disagreement along the leg means the bottom rises on one side here and the other side there,
+  // which is not a side -- it is a piece of water with no consistent shallow flank.
+  if (agreement < minAgreement) return null;
+  // A vote from two stations out of nine is not a finding about the leg.
+  if (voted / n < 0.5) return null;
+  const mid = Math.floor(coords.length / 2);
+  return {
+    side,
+    bearingDeg: bearingDeg(coords[Math.max(0, mid - 1)], coords[Math.min(coords.length - 1, mid + 1)]),
+    agreement: Number(agreement.toFixed(2)),
+    diffFt: Number((diffSum / voted).toFixed(1)),
+    sampled: n,
+  };
 }
 
 /** The worst wind in the window, which is what the pessimistic end is costed against. */
@@ -888,7 +984,13 @@ export function offerWater(lanes, o) {
     depths: depthLadder(o.fishBandFt),
     ramps: o.ramps,
   });
-  const keyed = built.pieces.map((p, i) => ({ ...p, key: `w${i}` }));
+  // OPTIONAL AND SILENT WHEN ABSENT. `depthAt` comes from depth_areas.geojson, which every pack
+  // already ships and R2 already holds -- no refit, no pipeline change. Without it the wind
+  // reasons simply say they do not know which way you get set, which is the honest fallback.
+  const keyed = built.pieces.map((p, i) => ({
+    ...p, key: `w${i}`,
+    shallowSide: o.depthAt ? shallowSide(p.coords, o.depthAt) : null,
+  }));
   // Partners first: a piece's best argument is usually the one next to it, so reasons() cannot
   // be written until the whole set is known.
   const partners = ladderPartners(keyed, { linkM: o.linkM ?? 100 });
