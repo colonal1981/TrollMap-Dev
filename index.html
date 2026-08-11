@@ -181,7 +181,7 @@
     .panel { display:none !important; position:static !important; overflow:visible !important; background:#fff !important; }
     #panel-plan { display:block !important; }
     #panel-plan .pad { max-width:none !important; padding:0 !important; margin:0 !important; }
-    #panel-plan .subtabs, #plan-builder, #plan-library { display:none !important; }
+    #panel-plan .subtabs, #plan-builder, #plan-water, #plan-library { display:none !important; }
     #plan-preview { display:block !important; }
     #plan-preview .card { border:none !important; background:#fff !important; padding:0 !important; margin:0 !important; }
     #planPreviewHtml { background:#fff !important; color:#000 !important; }
@@ -245,6 +245,38 @@
 
   /* ── v5 Ultimate Wide Layout & Smart Select Styles ── */
   #panel-plan .pad { max-width: 98% !important; padding: 16px 26px; }
+  /* ── Pick Water ─────────────────────────────────────────────────────────── */
+  #plan-water .wg-bar { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }
+  #plan-water .wg-bar label { display:flex; align-items:center; gap:6px; font-size:12px; }
+  #plan-water .wg-bar input[type=number] { width:70px; }
+  #plan-water .wg-status { font-size:12px; color:var(--muted); margin-top:8px; }
+  #plan-water .wg-total { margin-top:8px; font-size:12px; line-height:1.6; }
+  #plan-water .wg-sum { font-size:13px; margin-bottom:2px; }
+  #plan-water .wg-ok { color:var(--accent2); }
+  #plan-water .wg-warn { color:var(--warn); }
+  #plan-water .wg-stop { color:var(--bad); font-weight:600; }
+  #plan-water .wg-dim { color:var(--muted); }
+  #plan-water .wg-wrap { display:grid; grid-template-columns:minmax(320px,42%) 1fr; gap:14px;
+                         align-items:start; margin-top:12px; }
+  #plan-water .wg-mapbox { position:sticky; top:8px; padding:6px; }
+  #plan-water #wgMap { width:100%; }
+  #plan-water .wg-count { font-size:11px; color:var(--muted); margin-bottom:6px; }
+  #plan-water .wg-row { border:1px solid var(--line); border-radius:9px; padding:9px;
+                        margin-bottom:9px; background:var(--panel2); }
+  #plan-water .wg-row.picked { border-color:var(--accent2); background:rgba(118,255,3,.06); }
+  #plan-water .wg-head { display:flex; justify-content:space-between; gap:10px;
+                         align-items:baseline; margin-bottom:4px; }
+  #plan-water .wg-tick { display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer; }
+  #plan-water .wg-meta { font-size:11px; color:var(--muted); text-align:right; }
+  #plan-water .wg-strip { width:100%; height:96px; display:block; border-radius:5px; margin:5px 0; }
+  #plan-water .wg-for, #plan-water .wg-against { margin:3px 0; padding-left:17px; font-size:11.5px; }
+  #plan-water .wg-for li { color:#a5e887; }
+  #plan-water .wg-against li { color:#ffab91; }
+  #plan-water .wg-line { cursor:pointer; }
+  @media (max-width: 900px) {
+    #plan-water .wg-wrap { grid-template-columns:1fr; }
+    #plan-water .wg-mapbox { position:static; }
+  }
   
   #spreadTable { width: 100%; table-layout: auto; border-collapse: collapse; }
   #spreadTable th, #spreadTable td { padding: 6px 8px; vertical-align: middle; }
@@ -911,11 +943,12 @@
         <!-- Two tabs: Plan and Preview -->
         <div class="subtabs" id="planSubtabs">
           <button data-plansub="plan" class="active">🎣 Smart Plan</button>
+          <button data-plansub="water">🌊 Pick Water</button>
           <button data-plansub="preview">📄 Preview / Print</button>
         </div>
 
         <!-- ── PLAN TAB ──────────────────────────────────────────────────── -->
-        <div id="plan-builder" class="plan-sub">
+        <div id="plan-builder" class="plan-sub" data-plansub="plan">
 
           <!-- INPUTS CARD -->
           <div class="card plan-section">
@@ -1105,7 +1138,45 @@
         </div><!-- /plan-builder -->
 
         <!-- ── PREVIEW TAB ──────────────────────────────────────────────── -->
-        <div id="plan-preview" class="plan-sub hidden">
+        <!-- ── PICK WATER ────────────────────────────────────────────────────
+             THE FISHERMAN CHOOSES. This tab does not build a plan; it measures what each
+             piece of water offers, writes the reasons beside it, and lets Ryan tick the
+             ones he wants. The Smart Plan tab then assigns baits and speeds to what he
+             picked. See claude/THE_FISHERMAN_CHOOSES_2026-08-10.md.
+
+             It reads the SAME form as Smart Plan -- lake, ramp, date, species, motor -- so
+             there is one set of inputs and no second copy to drift. -->
+        <div id="plan-water" class="plan-sub hidden" data-plansub="water">
+          <div class="card plan-section">
+            <div class="wg-bar">
+              <label>Shortest pass worth having
+                <input id="wgMinPass" type="number" min="0.05" step="0.05" value="0.5"> mi</label>
+              <label>Sort by
+                <select id="wgSort">
+                  <option value="ramp">nearest the ramp</option>
+                  <option value="length">longest unbroken</option>
+                  <option value="deep">deepest water</option>
+                  <option value="laps">most to turn onto</option>
+                </select></label>
+              <label>Show
+                <select id="wgLimit">
+                  <option>25</option><option>50</option><option>100</option>
+                </select></label>
+              <button id="wgFind" class="primary">Find water</button>
+            </div>
+            <div id="wgStatus" class="wg-status"></div>
+            <div id="wgTotal" class="wg-total"></div>
+          </div>
+          <div class="wg-wrap">
+            <div class="wg-mapbox card"><div id="wgMap"></div></div>
+            <div>
+              <div id="wgCount" class="wg-count"></div>
+              <div id="wgList"></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="plan-preview" class="plan-sub hidden" data-plansub="preview">
           <div class="card">
             <div class="row no-print" style="justify-content:flex-end;gap:8px;margin-bottom:10px">
               <button id="backToBuilderBtn" class="ghost small">← Back</button>

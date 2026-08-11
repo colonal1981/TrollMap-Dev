@@ -186,15 +186,31 @@ export function ladderPartners(pieces, { linkM = 100, stepFt = 3 } = {}) {
   });
 }
 
-/** Does this piece hold water at the depth the research puts the fish at? */
-function bandOverlap(piece, bandFt, minM) {
+/**
+ * DOES THE WATER OVERLAP THE BAND THE FISH ARE IN?
+ *
+ * Answered against the CORRIDOR, not the offer curve, and the difference is not academic. The
+ * first version asked the curve, and on the first Wateree piece it drew that produced a row
+ * reading "0.60 mi in water 8 ft or deeper ... 17-24 ft inside the corridor ... none of it sits
+ * in the 15-40 ft the research puts the fish at". All three sentences were about the same water
+ * and the third one was flatly wrong: 17-24 ft is inside 15-40.
+ *
+ * `holdsFt` is a THRESHOLD -- the shallowest point the whole stretch clears, set by one shoal
+ * somewhere along it. The corridor is the WATER. Describing a piece by its threshold is how a
+ * stretch of 17-24 ft water ends up announced as 8 ft.
+ */
+function bandOverlap(piece, bandFt) {
   if (!Array.isArray(bandFt) || bandFt.length !== 2) return null;
   const [lo, hi] = bandFt;
-  const usable = (piece.offers || []).filter((o) => o.lengthM >= minM).map((o) => o.depthFt);
-  if (!usable.length) return { covers: 0, inBand: [] };
-  const inBand = usable.filter((d) => d >= lo && d <= hi);
-  // How much of the researched band this water can actually put a bait in.
-  return { covers: hi > lo ? inBand.length * 2 / (hi - lo) : (inBand.length ? 1 : 0), inBand };
+  const { fromFt, toFt } = optionality(piece);
+  if (fromFt == null) return { covers: 0, fromFt: null, toFt: null };
+  const a = Math.max(lo, fromFt), b = Math.min(hi, toFt);
+  const overlapFt = Math.max(0, b - a);
+  return {
+    covers: hi > lo ? overlapFt / (hi - lo) : (overlapFt > 0 || (fromFt >= lo && fromFt <= hi) ? 1 : 0),
+    inBand: b >= a,
+    fromFt: a, toFt: b, waterFrom: fromFt, waterTo: toFt,
+  };
 }
 
 const mi = (m) => m / 1609.34;
@@ -226,7 +242,22 @@ export function reasons(piece, o) {
   const avoid = near.filter((n) => n.t === 'hazard' || n.t === 'obstruction');
   const cover = near.filter((n) => n.t === 'timber' || n.t === 'attractor' || n.t === 'pile');
 
-  forIt.push(`${fmtMi(piece.lengthM)} unbroken in water at least ${piece.holdsFt} ft deep`);
+  // DESCRIBE THE WATER, THEN THE THING THAT LIMITS IT. `holdsFt` is a threshold set by the
+  // shallowest point on the stretch; the corridor is what he is actually fishing. Leading with
+  // the threshold is how 17-24 ft water got announced as "8 ft or deeper".
+  if (opt.fromFt != null && opt.toFt - opt.fromFt >= 2) {
+    forIt.push(`${fmtMi(piece.lengthM)} unbroken, ${opt.fromFt}–${opt.toFt} ft of water`);
+  } else if (opt.fromFt != null) {
+    forIt.push(`${fmtMi(piece.lengthM)} unbroken, about ${opt.fromFt} ft of water`);
+  } else {
+    forIt.push(`${fmtMi(piece.lengthM)} unbroken`);
+  }
+  // The shallowest point is the one that decides whether a bait clears the whole pass, so it is
+  // named separately whenever it is meaningfully shallower than the water around it.
+  if (opt.fromFt != null && opt.fromFt - piece.holdsFt >= 3) {
+    against.push(`it clears ${piece.holdsFt} ft at its shallowest — one spot that shallow is what `
+               + `sets how deep you can fish the whole ${fmtMi(piece.lengthM)}`);
+  }
 
   // THE LAPS ARE THE PARTNERS, not the offer curve — see ladderPartners(). A piece with three
   // partners is a morning; a piece with none is one pass and then a decision.
@@ -240,29 +271,32 @@ export function reasons(piece, o) {
                + `deciding where to go rather than swinging round onto the next band`);
   }
 
+  // The headline already gives the range, so this only speaks when it has something to add: the
+  // corridor is too tight to change anything by wandering, or wide enough that it does on its own.
   if (opt.spanFt <= 2) {
-    against.push(`the corridor itself only spans ${opt.spanFt} ft (${opt.fromFt}–${opt.toFt}), `
-               + `so wandering off the line does not change the water much either way`);
-  } else {
-    forIt.push(`${opt.fromFt}–${opt.toFt} ft inside the corridor, so a wander either side is `
-             + `${opt.spanFt} ft of depth without steering for it`);
+    against.push(`the corridor only spans ${opt.spanFt} ft, so wandering off the line does not `
+               + `change the water much either way — what you set is what you fish`);
+  } else if (opt.spanFt >= 6) {
+    forIt.push(`${opt.spanFt} ft of depth inside the corridor, so easing either side of the line `
+             + `changes the water without steering for it`);
   }
 
-  const ov = bandOverlap(piece, band, minM);
+  const ov = bandOverlap(piece, band);
   if (ov && band) {
-    if (!ov.inBand.length) {
+    if (!ov.inBand) {
       // NOT a filter. Suspended fish live over water deeper than the band, and `holding` is what
       // says whether that is fine -- see the eligibility rule in WHAT_SMARTPLAN_IS.
-      const deeperOnly = opt.fromFt != null && opt.fromFt > band[1];
+      const deeperOnly = ov.waterFrom != null && ov.waterFrom > band[1];
       against.push(deeperOnly && (holding === 'suspended' || holding === 'both')
         ? `all of it is deeper than the ${band[0]}–${band[1]} ft the fish are holding at — fine `
           + `for suspended fish, but the bottom here tells you nothing about them`
-        : `none of it sits in the ${band[0]}–${band[1]} ft the research puts the fish at`);
-    } else if (ov.covers >= 0.75) {
-      forIt.push(`covers most of the ${band[0]}–${band[1]} ft band the research puts the fish at`);
+        : `the water here is ${ov.waterFrom}–${ov.waterTo} ft, outside the ${band[0]}–${band[1]} ft `
+          + `the research puts the fish at`);
+    } else if (ov.covers >= 0.6) {
+      forIt.push(`${ov.fromFt}–${ov.toFt} ft of it sits inside the ${band[0]}–${band[1]} ft band `
+               + `the research puts the fish at`);
     } else {
-      forIt.push(`reaches into the ${band[0]}–${band[1]} ft band at `
-               + `${ov.inBand[0]}–${ov.inBand[ov.inBand.length - 1]} ft`);
+      forIt.push(`reaches into the ${band[0]}–${band[1]} ft band at ${ov.fromFt}–${ov.toFt} ft`);
     }
   }
 

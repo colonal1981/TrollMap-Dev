@@ -92,6 +92,11 @@ import './modules/notifications.js';
 import './modules/plan-tab-wiring.js';
 // SmartPlan v2 — wires its own button; v1 above is untouched until this has been fished.
 import './modules/smart-plan-v2-wiring.js';
+// Pick Water — the tab where the fisherman chooses the water before the model sees anything.
+// AFTER smart-plan-v2-wiring, which it imports readInputs/rampCoords from so there is one form
+// and no second copy to drift out of step. See claude/THE_FISHERMAN_CHOOSES_2026-08-10.md.
+import { initWaterTab } from './modules/plan-water-ui.js';
+initWaterTab();
 import { pullUpdatesOnLoad, pushAllLocalToCloud } from './modules/cloud-sync.js';
 import { initTackleInventoryPanel } from './modules/tackle-inventory-ui.js'
 import './modules/lake-research.js';

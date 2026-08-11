@@ -1,20 +1,29 @@
 /**
  * plan-tab-wiring.js
- * Rewires the Plan tab subtabs for the new 2-tab layout (Plan / Preview).
+ * Rewires the Plan tab subtabs.
  * Replaces the old 3-tab (Builder / Preview / Library) wiring in plan-builder.js.
  * Import this AFTER plan-builder.js in main.js.
  */
 
-// Rewire subtabs: Plan and Preview only
+// SUBTABS ARE DATA NOW, NOT A PAIR OF `toggle` CALLS.
+//
+// This used to name `plan-builder` and `plan-preview` explicitly and toggle each against the
+// clicked tab. That works for exactly two panels and fails silently for a third: the new button
+// highlights, both existing panels hide because neither matches, and the tab looks broken rather
+// than unwired. Adding Pick Water is what surfaced it.
+//
+// The panel now carries the same `data-plansub` its button does, so the two are matched on that
+// and not on the id. Matching `#plan-<name>` would have been the obvious move and it is wrong:
+// the first panel is `#plan-builder` behind a button reading `plan`, so `#plan-plan` matches
+// nothing and the default tab comes up blank. A new tab is now a button and a div, and nothing
+// here changes.
 document.querySelectorAll('#planSubtabs button').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('#planSubtabs button').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
     const tab = btn.dataset.plansub;
-    const builder = document.getElementById('plan-builder');
-    const preview = document.getElementById('plan-preview');
-    if (builder) builder.classList.toggle('hidden', tab !== 'plan');
-    if (preview) preview.classList.toggle('hidden', tab !== 'preview');
+    document.querySelectorAll('#planSubtabs button').forEach(b => b.classList.toggle('active', b === btn));
+    document.querySelectorAll('#panel-plan .plan-sub').forEach(panel => {
+      panel.classList.toggle('hidden', panel.dataset.plansub !== tab);
+    });
   });
 });
 
