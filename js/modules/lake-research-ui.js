@@ -226,8 +226,9 @@ async function populateResearchLakeDropdown() {
   sel.innerHTML = '<option value="">— select lake or zone —</option>';
 
   const inland = lakes.filter((name) => !isCoastalKey(resolveR2Key(name)));
-  const keep = makePredicate('research', null);
   const showAll = document.getElementById('researchShowAll')?.checked;
+  const withRivers = document.getElementById('researchRivers')?.checked;
+  const keep = makePredicate('research', null, { includeRivers: !!withRivers });
   const worth = showAll ? inland : inland.filter((n) => keep(registryRecordFor(n), n));
 
   const done = researchedNames(worth, await fetchResearchedIds());
@@ -256,20 +257,38 @@ async function populateResearchLakeDropdown() {
   const hidden = inland.length - worth.length;
   let bar = document.getElementById('researchFilterBar');
   if (!bar && sel.parentNode) {
-    bar = document.createElement('label');
+    bar = document.createElement('div');
     bar.id = 'researchFilterBar';
-    bar.style.cssText = 'display:block;margin-top:6px;font-size:0.8em;color:var(--muted,#888);cursor:pointer;';
-    bar.innerHTML = '<input type="checkbox" id="researchShowAll" style="vertical-align:middle;margin-right:6px;">'
-                  + '<span id="researchShowAllText"></span>';
+    bar.style.cssText = 'margin-top:6px;font-size:0.8em;color:var(--muted,#888);';
+    // RIVERS ARE OFF BY DEFAULT AND BEHIND THEIR OWN SWITCH — Ryan's call, 2026-08-11. Acreage
+    // cannot answer the river question because a river's acreage measures a ribbon's length, not
+    // whether anyone writes about the fishing. See PRESETS.research in water-filter.js.
+    bar.innerHTML = '<label style="cursor:pointer;display:block;">'
+                  + '<input type="checkbox" id="researchShowAll" style="vertical-align:middle;margin-right:6px;">'
+                  + '<span id="researchShowAllText"></span></label>'
+                  + '<label style="cursor:pointer;display:block;margin-top:3px;">'
+                  + '<input type="checkbox" id="researchRivers" style="vertical-align:middle;margin-right:6px;">'
+                  + '<span id="researchRiversText">include rivers</span></label>';
     sel.parentNode.insertBefore(bar, sel.nextSibling);
-    bar.querySelector('#researchShowAll').addEventListener('change', () => populateResearchLakeDropdown());
+    for (const id of ['researchShowAll', 'researchRivers']) {
+      bar.querySelector('#' + id).addEventListener('change', () => populateResearchLakeDropdown());
+    }
   }
   const text = document.getElementById('researchShowAllText');
   if (text) {
     text.textContent = showAll
       ? `showing all ${inland.length} — untick for coastal and impoundments over 1,000 acres`
-      : `show all ${inland.length} waters (${hidden} hidden: no bathymetry, or under 1,000 acres)`;
+      : `show all ${inland.length} waters (${hidden} hidden: unidentified, no bathymetry, `
+        + `or under 1,000 acres)`;
   }
+  const rt = document.getElementById('researchRiversText');
+  if (rt) {
+    rt.textContent = withRivers
+      ? 'rivers included — acreage measures their length, not whether anyone fishes them'
+      : 'include rivers (off — the Congaree, Wateree, Broad and Santee are listed regardless)';
+  }
+  if (showAll) { const cb = document.getElementById('researchRivers'); if (cb) cb.disabled = true; }
+  else { const cb = document.getElementById('researchRivers'); if (cb) cb.disabled = false; }
 
   if (current) {
     sel.value = current;

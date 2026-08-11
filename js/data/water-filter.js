@@ -176,7 +176,21 @@ export const PRESETS = {
    */
   map: {
     label: 'Reachable water',
-    keep: () => true,
+    /**
+     * "ANY OF THE BARS" — Ryan said it twice and the first cut of this preset ignored him.
+     *
+     *   > i dont think we need to display all of those lakes in any of the bars if they have no
+     *   > bathymetry at all they are either private or too small to worry about fishing
+     *   > ... and this needs to apply to waters that we get from dnr and not the registry as well
+     *
+     * This used to be `keep: () => true` on my own reasoning that "looking is free". That was me
+     * deciding what the map was for. What he asked for is a bar without 900 farm ponds in it.
+     *
+     * `unknown` still passes — 52 rows are null, including all 22 coastal zones, and unmeasured is
+     * not the same as empty. Only a measured zero is dropped.
+     */
+    keep: (rec, { bath, isCoastal }) => isCoastal || bath !== 'no',
+    keepUnresolved: false,
   },
 
   /**
@@ -190,6 +204,12 @@ export const PRESETS = {
     label: 'Water you can plan a day on',
     keep: (rec, { bath, hasRamp }) => (bath === 'yes' && hasRamp)
                                    || (bath === 'unknown' && hasRamp),
+    /**
+     * A water the registry cannot identify has no chartpack, so the planner cannot plan it — it
+     * is exactly the "dead end you have to click to discover" this preset exists to remove. The
+     * DNR feeds put 424 of those in the list; `#planLake` had no filter of any kind on it.
+     */
+    keepUnresolved: false,
   },
 
   /**
@@ -204,8 +224,42 @@ export const PRESETS = {
   research: {
     label: 'Worth researching',
     minAcres: 1000,
-    keep: (rec, { bath, isCoastal, acres }, cfg) =>
-      isCoastal || (bath !== 'no' && acres >= (cfg.minAcres ?? 1000)),
+    includeRivers: false,
+
+    /**
+     * AN UNRESOLVED WATER IS DROPPED HERE, AND ONLY HERE.
+     *
+     * `makePredicate` keeps a record it cannot resolve, on the reasoning that a failure to match
+     * is indistinguishable from a water that deserves cutting. That is right for the map, where
+     * looking is free — and wrong for this one, which is a work list that spends Firecrawl
+     * credits. 424 of the 1,196 pickable names carry no registry record at all (his own console:
+     * "772 of 1196 pickable lake names carry a registry record"), so under the blanket rule every
+     * one of them passed regardless of size, and the filtered list still ran past six hundred.
+     * A water the registry cannot even identify is precisely the one with nothing written about
+     * it. isKeepAlways() still runs first, so nothing he fishes can be dropped this way.
+     */
+    keepUnresolved: false,
+
+    /**
+     * RIVERS ARE THEIR OWN QUESTION AND ACREAGE CANNOT ANSWER IT.
+     *
+     * Ryan, 2026-08-11: "almost all rivers are over 1000 acres but not sure about researching
+     * them". He is right, and the number is worse than unhelpful — a river's acreage is the area
+     * of a RIBBON, so it measures length, not whether anyone writes about the fishing. The 72
+     * that passed included the Savannah, the Great Pee Dee and the Congaree beside Judd Slough
+     * and Richland Creek, plus two that are simply wrong: the Mississippi at 163,923 acres in TN,
+     * and Reelfoot Lake typed as a river.
+     *
+     * The research agents also ask lake questions — thermocline, forage, structure — where a
+     * river's answers are flow, gauge and shoals. So rivers are off by default and behind their
+     * own switch, his call. KEEP_ALWAYS still carries the Congaree, the Wateree, the Broad, the
+     * Santee and the Lower Saluda through regardless, because those are waters he fishes.
+     */
+    keep: (rec, { bath, isCoastal, isRiver, acres }, cfg) => {
+      if (isCoastal) return true;
+      if (isRiver && !cfg.includeRivers) return false;
+      return bath !== 'no' && acres >= (cfg.minAcres ?? 1000);
+    },
   },
 };
 
@@ -226,8 +280,9 @@ export function makePredicate(presetName, records, cfg = {}) {
     // Never hide the water the app exists for. Checked FIRST so no preset can reach past it.
     if (isKeepAlways(name)) return true;
     // An unresolved water — DNR sends plenty — cannot demonstrate anything, and a failure to
-    // match is indistinguishable from a water that deserves cutting. Keep it.
-    if (!rec) return true;
+    // match is indistinguishable from a water that deserves cutting. Keep it, UNLESS the preset
+    // says otherwise: see `keepUnresolved` on the research preset for why that one differs.
+    if (!rec) return merged.keepUnresolved !== false;
 
     const bath = hasBathymetry(rec);
     const facts = {

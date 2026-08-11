@@ -21,6 +21,20 @@ import { coastalNamesByState } from '../data/coastal-zones.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { waterZoneCandidates } from '../data/water-aliases.js';
 import { registryStats } from '../data/lake-registry.js';
+import { makePredicate } from '../data/water-filter.js';
+
+/**
+ * THE BASELINE GATE, ON TOP OF THE BOXES HE TICKS.
+ *
+ * Ryan: "i dont think we need to display all of those lakes in any of the bars if they have no
+ * bathymetry at all... and this needs to apply to waters that we get from dnr and not the registry
+ * as well." The filter controls below are what he ASKS for; this is what the bar never shows in
+ * the first place. Water with a measured zero for bathymetry, and DNR names the registry cannot
+ * identify at all, do not belong in a picker whose whole job is choosing water to fish.
+ *
+ * KEEP_ALWAYS runs inside the predicate and first, so nothing he fishes can be dropped here.
+ */
+const mapGate = makePredicate('map', null);
 
 // ── Filter state ─────────────────────────────────────────────────────────
 //
@@ -97,6 +111,10 @@ export function typeOf(lakeName, rec) {
  */
 export function passesFilters(lakeName, f = filters) {
   const rec = registryRecordFor(lakeName);
+
+  // The baseline gate runs before anything he ticked — see mapGate above. Coastal zones are
+  // appended separately after this loop and never reach here, so they cannot be lost to it.
+  if (!mapGate(rec, lakeName)) return false;
 
   if (f.state && stateOf(lakeName, rec) !== f.state) return false;
 

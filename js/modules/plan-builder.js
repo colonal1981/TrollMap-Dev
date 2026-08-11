@@ -18,6 +18,8 @@ import { COASTAL_ZONES, isCoastalKey } from "../data/coastal-zones.js";
 import { landOnCoastalZone, focusRamp } from "../utils/viewport-cull.js";
 import { appendCoastalOptgroups } from "../utils/coastal-optgroups.js";
 import { resolveR2Key } from "../data/lake-keys.js";
+import { makePredicate } from "../data/water-filter.js";
+import { registryRecordFor } from "../data/access-index.js";
 // Both of these were CALLED below but never imported -- latent ReferenceErrors that predate
 // the registry refactor. fetchDamLevels() sits inside `try{...}catch(e){}`, so the Duke /
 // Dominion / Santee Cooper block of every generated plan has been rendering empty in silence.
@@ -1829,12 +1831,30 @@ export async function populatePlanLakeDropdown(){
     lakeNames = lakeNamesForPicker();
   }
 
+  // THIS DROPDOWN HAD NO FILTER OF ANY KIND ON IT.
+  //
+  // `#lakeSelect` on the map toolbar has had state, size, has-ramp and well-charted controls for
+  // weeks. `#planLake` — the one you build a day from — took every name the access index returned,
+  // 1,196 of them, including the 424 that carry no registry record at all because they arrive
+  // live from the DNR ramp feeds. Ryan, 2026-08-11: "i dont think the DNR feeds are going through
+  // your filter... then once you fix that in all 3 places i will probably be happy."
+  //
+  // The planner preset is stricter than the map's on purpose: you cannot plan a trolling day on
+  // water with no contours and nowhere to launch, and every such name here is a dead end you have
+  // to click to discover. KEEP_ALWAYS still runs first inside the predicate.
+  const plannable = makePredicate('planner', null);
+  let dropped = 0;
   lakeNames.forEach(lakeName => {
     if (isCoastalKey(resolveR2Key(lakeName))) return;
+    if (!plannable(registryRecordFor(lakeName), lakeName)) { dropped += 1; return; }
     const opt = document.createElement('option');
     opt.value = lakeName; opt.textContent = lakeName;
     lakesGroup.appendChild(opt);
   });
+  if (dropped) {
+    console.info('[plan] %d water(s) left out of the planner picker — no bathymetry, no ramp, or '
+               + 'not in the registry at all', dropped);
+  }
   sel.appendChild(lakesGroup);
   const riversGroup = document.createElement('optgroup');
   riversGroup.label = 'Rivers / Tailwaters';
