@@ -319,22 +319,31 @@ export async function findWater() {
   const lanes = (fc && fc.features) || [];
   if (!lanes.length) return say(`${inp.lakeName} has no trolling runs in its chartpack`, true);
 
-  // "NO RUNS" AND "RUNS THAT WERE NEVER FITTED" ARE DIFFERENT ANSWERS AND LOOKED THE SAME.
+  // FOUR REASONS A LAKE CAN COME BACK EMPTY, AND THEY WANT FOUR DIFFERENT ANSWERS.
   //
-  // Measured over the card-wide fit of 2026-08-11: 112 of 543 packs came back with zero fitted
-  // runs, and 294,493 lanes card-wide were kept CLOSED -- water where a contour is a ring around
-  // the whole pond. A closed loop has no two ends, so it is not a trolling pass and the fitter
-  // leaves it alone. That is correct behaviour, not a gap.
+  // The first cut of this collapsed the last three into "every contour here is a closed ring",
+  // which was wrong the very first time it fired: Wateree came back empty on 2026-08-11 because
+  // R2 was still holding the 2026-08-09 pack, two days before the envelope was stamped. Telling
+  // Ryan his lake was all closed rings would have sent him looking at the fitter.
   //
-  // Without this the tab reported "N charted lanes -> 0 pieces of water", which reads as a bug in
-  // this module rather than as a fact about the lake.
-  const fitted = lanes.filter((f) => f && f.properties && f.properties.fitted
-                                     && Array.isArray(f.properties.envelope_ft));
-  if (!fitted.length) {
-    return say(`${inp.lakeName} has ${lanes.length} charted lane`
-      + `${lanes.length === 1 ? '' : 's'} but none that can be trolled as a pass \u2014 on a small `
-      + `water every contour is usually a closed ring around the whole pond, and a ring has no two `
-      + `ends to run between. Nothing to pick here.`, true);
+  // So the diagnosis is read off the data rather than assumed.
+  const props = lanes.map((f) => (f && f.properties) || {});
+  const fitted = props.filter((p) => p.fitted);
+  const enveloped = fitted.filter((p) => Array.isArray(p.envelope_ft));
+  if (!enveloped.length) {
+    const stale = `Re-run the fitter and upload — see FIT_TROLLING_RUNS_RUNBOOK.`;
+    return say(!fitted.length
+      // Nothing fitted at all. Either the pack predates the fitter, or every lane is a closed
+      // ring — and `kept_closed` is by far the commoner of the two: 294,493 lanes card-wide.
+      ? `${inp.lakeName}: ${lanes.length} charted lanes, none of them fitted. On a small water `
+        + `every contour is usually a ring around the whole pond, and a ring has no two ends to `
+        + `troll between. If this lake is not small, its pack predates the fitter. ${stale}`
+      // Fitted but no envelope: the pack was fitted BEFORE fe37479 stamped the wander envelope.
+      // This is the R2-is-behind case and it is the one that will keep happening until the
+      // card-wide upload lands.
+      : `${inp.lakeName}: ${fitted.length} fitted lanes but none carry a wander envelope, so this `
+        + `pack was fitted before the envelope was measured. The copy in R2 is older than the one `
+        + `on the pipeline machine. ${stale}`, true);
   }
 
   const minM = Math.max(1, Math.round(Number($('wgMinPass')?.value || 0.5) * 1609.34));
