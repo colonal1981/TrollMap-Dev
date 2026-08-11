@@ -617,3 +617,91 @@ describe('plan-assemble — an unrouted transit says so', () => {
     expect(validatePlan(plan).length).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// THE MODEL CANNOT STEER AROUND WHAT IT WAS NEVER SHOWN.
+//
+// `weight` answers "how much is this worth catching a fish on". A hazard's answer is zero, which
+// is right -- and both scoreWindow() and forModel() read that zero as "nothing here" and dropped
+// the mark, so the leg reached the model with no record that anything was on it. On Wateree that
+// was 1,142 hazard and 989 obstruction marks, 11% of everything the pipeline joined to the runs.
+//
+// Every test below is about the same distinction: worth fishing and worth knowing are two
+// different questions, and one number was answering both.
+// ---------------------------------------------------------------------------
+describe('plan-candidates — what the model is told to avoid', () => {
+  // Twelve targets is exactly the cap, so anything that survives beside them proves the hazard
+  // is NOT competing for a slot. Two hazards and an obstruction sit among them.
+  const near = [
+    ...Array.from({ length: 14 }, (_, k) => ({ s: 200 + k * 200, t: k % 2 ? 'timber' : 'point', d: 30 })),
+    { s: 600, t: 'hazard', d: 25 },
+    { s: 1800, t: 'hazard', d: 40 },
+    { s: 2400, t: 'obstruction', d: 55 },   // no entry in DEFAULT_WEIGHTS at all -- `?? 0`
+  ];
+  const runs = [{
+    type: 'Feature',
+    geometry: { type: 'LineString', coordinates: Array.from({ length: 41 }, (_, i) => [-80.72 + i * 0.001, 34.38]) },
+    properties: { depth_ft: 22, length_m: 3690, routable: true, near },
+  }];
+  const build = () => selectCandidates(runs, { ramp: LAUNCH, slug: 'w', usableAh: 200, windowMin: 600 });
+
+  it('keeps a zero-weight mark on the candidate instead of deleting it', () => {
+    const [c] = build();
+    const avoid = c.passes.filter((h) => h.weight === 0);
+    expect(avoid.length).toBe(3);
+    // An unweighted type is lost the same way a deliberately-zeroed one is, and matters as much.
+    expect(avoid.some((h) => h.type === 'obstruction')).toBe(true);
+  });
+
+  it('a hazard never uses up a slot a target would have had', () => {
+    const m = forModel(build()[0]);
+    // Twelve fishable, ranked and capped, plus every hazard on top of them.
+    expect(m.structures.filter((s) => s.worthFishing).length).toBe(12);
+    expect(m.structures.filter((s) => !s.worthFishing).length).toBe(3);
+    expect(m.structuresShown).toBe(15);
+  });
+
+  it('still hands them over in the order the boat meets them', () => {
+    const m = forModel(build()[0]);
+    for (let i = 1; i < m.structures.length; i++) {
+      expect(m.structures[i].atM >= m.structures[i - 1].atM).toBe(true);
+    }
+  });
+
+  it('counts the whole leg, not the fishable part of it', () => {
+    const m = forModel(build()[0]);
+    // The old count agreed with the shown list about how much was hidden and was wrong about
+    // both: it reported 14 things on a leg that has 17.
+    expect(m.structuresTotal).toBe(17);
+    expect(m.passes.hazard).toBe(2);
+    expect(m.passes.obstruction).toBe(1);
+  });
+
+  it('reports what a thing is worth and never whether to fish it', () => {
+    const m = forModel(build()[0]);
+    // "not information... TARGET!!!" -- the same stand of timber is a target under a plan that
+    // puts the bait above it and a snag under one that puts the bait into it. No verdict here.
+    const json = JSON.stringify(m.structures);
+    expect(/"avoid"|"threat"|"danger"/.test(json)).toBe(false);
+    expect(m.structures.every((s) => s.worthFishing === true || s.worthFishing === undefined)).toBe(true);
+  });
+
+  it('does not move a single leg by knowing more about it', () => {
+    // Selection walks on `score`, and a zero-weight mark adds nothing to it. So a lake full of
+    // hazards returns the same water at the same lengths as before -- it just arrives labelled.
+    const withHazards = build()[0];
+    const clean = { ...runs[0], properties: { ...runs[0].properties, near: near.slice(0, 14) } };
+    const [without] = selectCandidates([clean], { ramp: LAUNCH, slug: 'w', usableAh: 200, windowMin: 600 });
+    expect(withHazards.startM).toBe(without.startM);
+    expect(withHazards.lengthM).toBe(without.lengthM);
+    expect(withHazards.score).toBe(without.score);
+  });
+
+  it('leaves a hazard depth null rather than reading the floor under it', () => {
+    const m = forModel(build()[0]);
+    // Hazards, obstructions, timber and piles carry no depth of their own anywhere in the packs,
+    // and the height they stand off the bottom is not a number that exists. Ryan, asked whether a
+    // rule of thumb could fill it: "how tall is every tree claude??? that is the answer lol"
+    expect(m.structures.filter((s) => !s.worthFishing).every((s) => s.depthFt === null)).toBe(true);
+  });
+});

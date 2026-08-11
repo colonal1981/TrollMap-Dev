@@ -238,6 +238,14 @@ Each candidate is a stretch of a real trolling run, already filtered to water he
 depths that matter today, and ranked by what it passes. \`structures\` lists what each leg goes by
 in the order you meet them, with \`atM\` metres from the start of that leg.
 
+NOT EVERYTHING ON A LEG IS THERE TO BE FISHED. An entry carrying \`worthFishing: true\` is a
+target. An entry with no \`worthFishing\` is a hazard, an obstruction or a pile — it is on the list
+because it is on the water, not because it is worth a cast. Never put a stop on one. Say where it
+is and what it means for the pass: which side to hold, whether it forces a lead change, whether it
+is the reason a leg is worth fishing in one direction and not the other. \`structuresTotal\` counts
+everything on the leg and \`structuresShown\` counts what you were handed; where they differ, the
+list is the best of the targets plus every hazard, and there is more castable water than you see.
+
 WHAT THE ORDER COSTS. Each candidate also carries \`transitToM\` — metres of deadhead from the END
 of that leg to the START of every other leg — \`transitFromRampM\` from the ramp to its start, and
 \`transitToRampM\` from its end back to the ramp. Those are the only numbers that change when you
@@ -261,10 +269,11 @@ RULES THAT ARE NOT NEGOTIABLE
    the lake, and if the good water genuinely is far apart, fish fewer legs rather than commuting
    between them.
 4. A stop is a pause ON a leg, not instead of one. Stop where the structure is better cast at
-   than trolled over — a hump crown, a dock line, a creek mouth, a laydown. Judge every leg's
-   structures on their own merits: a day that passes a dozen castable features and stops at one
-   of them has ignored the water the app just handed you. Do not pad the list to hit a number
-   either. Stop at what earns it, leg by leg, and the count will take care of itself.
+   than trolled over — a hump crown, a dock line, a creek mouth, a laydown — and only ever on a
+   structure carrying \`worthFishing: true\`. Judge every leg's structures on their own merits: a
+   day that passes a dozen castable features and stops at one of them has ignored the water the
+   app just handed you. Do not pad the list to hit a number either. Stop at what earns it, leg by
+   leg, and the count will take care of itself.
 5. \`depthFt\` on a structure is that structure's own depth — size the presentation from it. Where
    it is null the pipeline has no depth for that kind of feature; say so rather than guessing.
 6. Two rods in the water per leg. Exactly one port, one starboard.

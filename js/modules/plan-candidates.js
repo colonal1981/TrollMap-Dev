@@ -372,6 +372,26 @@ export const DEFAULT_RELIEF_WEIGHTS = {
 // type that ever arrives listed rather than summarised would swamp the ranking the same way.
 const SCORE_CAP_PER_TYPE = 8;
 
+// ---------------------------------------------------------------------------------------------
+// WORTH FISHING AND WORTH KNOWING ARE TWO DIFFERENT QUESTIONS, AND ONE NUMBER WAS ANSWERING BOTH.
+//
+// `weight` answers the first: how much is this worth catching a fish on. A hazard's answer is
+// zero and that is CORRECT -- it is not a citation ranking, it is a thing to steer around. But
+// this loop then read that zero as "nothing here" and dropped the mark on the floor, so it never
+// reached `hits`, never reached `candidate.passes`, and never reached the model. Logged as an
+// open violation in claude/WHAT_SMARTPLAN_IS_2026-08-09.md since 2026-08-09:
+//
+//     hazards carry weight 0 ... so hazards are stripped out of the model's list entirely and it
+//     receives a bare number. It is being asked to route around things it cannot see.
+//
+// Measured on wateree_lake/trolling_runs.geojson, 2026-08-11: `near[]` carries 1,142 hazard and
+// 989 obstruction marks -- 2,131 of 19,059, ELEVEN PERCENT of everything the pipeline joined to
+// the runs -- and every one of them was being deleted here. Obstruction was lost twice over: it
+// has no entry in DEFAULT_WEIGHTS at all, so `?? 0` zeroed it and this line finished the job.
+//
+// The hit is now kept whatever it is worth. NOTHING ABOUT WHICH WATER GETS CHOSEN CHANGES: only
+// `score` walks the window (see growWindow's `got > 0`), a zero-weight mark adds nothing to it,
+// so the same legs come back at the same lengths -- they just arrive knowing what is on them.
 function scoreWindow(near, fromM, toM, weights, maxOffM, capPerType = SCORE_CAP_PER_TYPE) {
   let score = 0;
   const hits = [];
@@ -380,14 +400,18 @@ function scoreWindow(near, fromM, toM, weights, maxOffM, capPerType = SCORE_CAP_
     if (n.s < fromM || n.s > toM) continue;
     if (n.d > maxOffM) continue;
     const w = weights[n.t] ?? 0;
-    if (!w) continue;
     // Something 20 m off the line is worth more than the same thing 95 m off it.
     const proximity = 1 - (n.d / maxOffM) * 0.5;
-    counted[n.t] = (counted[n.t] || 0) + 1;
-    if (counted[n.t] <= capPerType) score += w * proximity;
+    // The per-type cap is a SCORING device -- it stops 191 docks on one leg from burying
+    // everything else. A mark worth nothing cannot swamp a ranking, so it does not use up a slot
+    // that a real target would otherwise have had.
+    if (w > 0) {
+      counted[n.t] = (counted[n.t] || 0) + 1;
+      if (counted[n.t] <= capPerType) score += w * proximity;
+    }
     // The hit is kept either way: it is still a place to stop, it just stops adding to the score.
     hits.push({ atM: Math.round(n.s - fromM), type: n.t, offM: n.d, weight: w,
-                n: n.n, spanM: n.spanM, scored: counted[n.t] <= capPerType });
+                n: n.n, spanM: n.spanM, scored: w > 0 && counted[n.t] <= capPerType });
   }
   return { score, hits };
 }
@@ -1174,21 +1198,53 @@ export function pointToSegmentM(p, a, b) {
 // `structuresTotal` both go to the model so a truncated list never reads as the whole leg.
 const MODEL_STRUCTURE_CAP = 12;
 
+/**
+ * THINGS WORTH KNOWING ABOUT EVEN THOUGH THEY ARE NOT WORTH FISHING.
+ *
+ * scoreWindow() now keeps zero-weight marks, so they reach `c.passes`. The cap must not then
+ * throw them away again. A leg that passes twelve brush piles and one rock is not improved by
+ * showing the twelve and hiding the rock -- ranking by weight puts the rock last by construction,
+ * which is the same deletion wearing a different hat.
+ *
+ * So these are added back OUTSIDE the cap. Measured on Wateree: 18% of runs carry at least one
+ * within 100 m of the line, median 1, worst case 12 -- few enough that the prompt does not
+ * notice, and the one leg where it is twelve is exactly the leg you want told.
+ */
+const ALWAYS_SHOW = new Set(['hazard', 'obstruction', 'pile', 'shallow', 'bridge']);
+
+// NOT ADDED HERE, ON PURPOSE: a `depthIsFloor` flag saying whether a mark's depth describes the
+// thing or the bottom it stands on. It would be true zero times. DEPTH_FIELD maps hump, ledge,
+// point and cove and nothing else, and all four are measured features -- every type whose depth
+// would be a floor already arrives with `depthFt: null`, which rule 5 of the prompt already tells
+// the model to say out loud rather than guess around. A flag that is never true is a claim
+// waiting to be wrong, and this file is not the place to record what the pipeline might do later.
+
 /** Trim a candidate to what the model needs to choose. Geometry stays server-side. */
 export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
   const counts = {};
   for (const h of c.passes) counts[h.type] = (counts[h.type] || 0) + 1;
-  const shown = c.passes
+  // Rank the fishable ones and take the best `cap` of them...
+  const fishable = c.passes
     .filter((h) => h.weight > 0)
     .slice()
     .sort((a, b) => (b.weight - a.weight) || (a.offM - b.offM))
-    .slice(0, cap)
+    .slice(0, cap);
+  // ...then add back everything that can cost you a lure, whatever it is worth catching a fish on.
+  const seen = new Set(fishable.map((h) => h.id));
+  const shown = fishable
+    .concat(c.passes.filter((h) => ALWAYS_SHOW.has(h.type) && !seen.has(h.id)))
     .sort((a, b) => a.atM - b.atM)
     // No coordinates. The model names `id` and the app turns it back into a place; `structureId`
     // is the lake's own name for the thing and is there to be read, not returned.
     .map((h) => ({ id: h.id, structureId: h.structureId, type: h.type,
                    atM: h.atM, offM: Math.round(h.offM),
-                   depthFt: h.depthFt, what: h.what }));
+                   depthFt: h.depthFt, what: h.what,
+                   // TARGET OR THREAT IS NOT A PROPERTY OF THE OBJECT. The same stand of timber is
+                   // a target under a plan that puts the bait above it and a snag under a plan
+                   // that puts the bait into it -- it depends entirely on where it sits against
+                   // the baits, which is a day decision. So this says what the thing is worth and
+                   // leaves the verdict to whoever is holding the rod.
+                   worthFishing: h.weight > 0 || undefined }));
   return {
     runId: c.runId,
     depthFt: c.depthFt,
@@ -1212,7 +1268,11 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
     passes: counts,
     structures: shown,
     structuresShown: shown.length,
-    structuresTotal: c.passes.filter((h) => h.weight > 0).length,
+    // EVERYTHING ON THE LEG, not everything worth fishing. This number exists so a truncated list
+    // never reads as the whole leg, and it was counting only `weight > 0` -- so it agreed with the
+    // shown list about how much was hidden and was wrong about both. `passes` above breaks the
+    // same total down by type, hazards included, so the gap is readable rather than just numeric.
+    structuresTotal: c.passes.length,
     runLedges: c.runLedges,
     // "You have caught 6 fish along this stretch, 4 of them stripers" is a fact the model should
     // weigh. "You have never fished here" is equally a fact, and equally worth saying.
