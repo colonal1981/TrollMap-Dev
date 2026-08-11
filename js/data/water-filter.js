@@ -135,7 +135,21 @@ export function isKeepAlways(name) {
  * extraction, not a name for the Congaree.
  *
  * Absent field means no duplicate was found, which is the normal case.
+ *
+ * THE BODY UNDER THIS COMMENT WAS NEVER WRITTEN. The docstring landed and the function did not,
+ * and because nothing in the app imported this module the gap was invisible: `makePredicate()`
+ * threw `ReferenceError: coveredBy is not defined` on the first record whose `charted` was 0 —
+ * which is to say it had never once been executed. Found 2026-08-11 by COUNTING the research cut
+ * rather than by reading it, thirty seconds after wiring it into the research picker.
+ *
+ * Same shape as the palette regression in 00_START_HERE: the half of a change most likely to be
+ * lost is not the new file, it is everything around it.
  */
+function coveredBy(rec) {
+  if (!rec) return null;
+  const v = rec.covered_by ?? rec.coveredBy ?? null;
+  return v ? String(v) : null;
+}
 
 /**
  * Does this water have bathymetry?

@@ -3,6 +3,9 @@ import { _state, runFullPipeline, runResume, validateExistingFacts, recoverSmart
 import { COASTAL_ZONES, isCoastalKey } from '../data/coastal-zones.js';
 import { appendCoastalOptgroups } from '../utils/coastal-optgroups.js';
 import { resolveR2Key } from '../data/lake-keys.js';
+import { makePredicate } from '../data/water-filter.js';
+import { registryRecordFor } from '../data/access-index.js';
+import { researchedNames } from '../data/research-ids.js';
 import { workerHeaders } from '../utils/worker-auth.js';
 
 
@@ -159,6 +162,51 @@ function renderContradictionsAlert(contradictions, lakeName) {
   });
 }
 
+/**
+ * WHICH LAKES ALREADY HAVE A PROFILE — one call, ids only.
+ *
+ * The Lake Status table answers the same question by fetching every profile and reading
+ * `profile.lakeName` back out: 60 round trips to label 60 rows. That is fine for a table opened
+ * on purpose and wrong for a dropdown that populates on load, so this maps the other way instead
+ * — display name to storage id, locally.
+ *
+ * A failure returns an empty set, which shows everything as unresearched. That is the safe
+ * direction: it offers Ryan a lake he has already done, which he can see at a glance, rather than
+ * hiding one he has not.
+ */
+async function fetchResearchedIds() {
+  try {
+    const r = await fetch(`${CF_WORKER_URL}/research/list`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    return Array.isArray(d.lakes) ? d.lakes : [];
+  } catch (e) {
+    console.warn('[research] could not read the profile list:', e.message);
+    return [];
+  }
+}
+
+/**
+ * THE RESEARCH PICKER, FILTERED TO WATER WORTH RESEARCHING AND SPLIT BY WHAT IS MISSING.
+ *
+ * Ryan, 2026-08-11: "the next thing owed to me is the filter for research that i asked for so i
+ * can research anything that is missing... i would like to research the large reservoirs and
+ * coastal areas... ones that actual would have material available."
+ *
+ * Two separate asks in that sentence and this does both:
+ *
+ *   WHICH WATERS   `PRESETS.research` in js/data/water-filter.js — coastal, or charted water over
+ *                  1,000 acres. That module was written days ago and imported by NOTHING, which
+ *                  is why the picker still offered all 1,196 names. Size is a poor proxy for
+ *                  "somebody has written about this" and the preset says so in its own comment;
+ *                  it is the best available until the research pass reports back.
+ *   WHICH ARE LEFT The whole point. 60 waters carry a verified profile; a picker that lists them
+ *                  mixed in with everything else makes finding the 61st a memory exercise.
+ *
+ * The filter is a checkbox, not a law. `isKeepAlways()` already protects the waters he actually
+ * fishes, but a picker that silently hides a lake he wants is worse than a long list — so the
+ * toggle is there, it says how many it is hiding, and it does not persist.
+ */
 async function populateResearchLakeDropdown() {
   const sel = document.getElementById('researchLakeSelect');
   if (!sel) return;
@@ -177,20 +225,51 @@ async function populateResearchLakeDropdown() {
   const current = sel.value;
   sel.innerHTML = '<option value="">— select lake or zone —</option>';
 
-  const inlandGroup = document.createElement('optgroup');
-  inlandGroup.label = 'Lakes / Reservoirs';
-  
-  // Filter out any coastal names from the inland lakes list
-  const inlandLakes = lakes.filter(name => !isCoastalKey(resolveR2Key(name)));
-  inlandLakes.forEach(name => {
-    const opt = document.createElement('option');
-    opt.value = name;
-    opt.textContent = name;
-    inlandGroup.appendChild(opt);
-  });
-  sel.appendChild(inlandGroup);
+  const inland = lakes.filter((name) => !isCoastalKey(resolveR2Key(name)));
+  const keep = makePredicate('research', null);
+  const showAll = document.getElementById('researchShowAll')?.checked;
+  const worth = showAll ? inland : inland.filter((n) => keep(registryRecordFor(n), n));
+
+  const done = researchedNames(worth, await fetchResearchedIds());
+  const todo = worth.filter((n) => !done.has(n));
+
+  // THE MISSING ONES FIRST, because that is the list he opened this for.
+  const group = (label, names) => {
+    if (!names.length) return;
+    const g = document.createElement('optgroup');
+    g.label = `${label} (${names.length})`;
+    for (const name of names) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      g.appendChild(opt);
+    }
+    sel.appendChild(g);
+  };
+  group('Not researched yet', todo);
+  group('✅ Already researched', worth.filter((n) => done.has(n)));
 
   appendCoastalOptgroups(sel);
+
+  // The toggle lives beside the select and is built once. Hidden count is stated, because a
+  // filter that does not say what it removed reads as a shorter world rather than a filtered one.
+  const hidden = inland.length - worth.length;
+  let bar = document.getElementById('researchFilterBar');
+  if (!bar && sel.parentNode) {
+    bar = document.createElement('label');
+    bar.id = 'researchFilterBar';
+    bar.style.cssText = 'display:block;margin-top:6px;font-size:0.8em;color:var(--muted,#888);cursor:pointer;';
+    bar.innerHTML = '<input type="checkbox" id="researchShowAll" style="vertical-align:middle;margin-right:6px;">'
+                  + '<span id="researchShowAllText"></span>';
+    sel.parentNode.insertBefore(bar, sel.nextSibling);
+    bar.querySelector('#researchShowAll').addEventListener('change', () => populateResearchLakeDropdown());
+  }
+  const text = document.getElementById('researchShowAllText');
+  if (text) {
+    text.textContent = showAll
+      ? `showing all ${inland.length} — untick for coastal and impoundments over 1,000 acres`
+      : `show all ${inland.length} waters (${hidden} hidden: no bathymetry, or under 1,000 acres)`;
+  }
 
   if (current) {
     sel.value = current;

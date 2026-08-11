@@ -505,8 +505,25 @@ export async function findWater() {
     daFc && daFc.features ? null : 'no depth areas, so nothing can say which way the wind sets you',
     slFc && slFc.features ? null : 'no shoreline in this pack, so no lee and no sun-behind-the-bank',
   ].filter(Boolean);
+  // WHERE THE DEPTH BAND CAME FROM, SAID OUT LOUD.
+  //
+  // `depthBandFor` has always returned `basis`, `source` and `generic`, and nothing has ever shown
+  // any of them. So a band derived from Ryan's own researched profile and a band read off a
+  // four-lake table written by hand looked identical on screen — which is how [14, 16] ft sat in
+  // front of him for a week reading like a finding.
+  //
+  // Ryan, 2026-08-11, on why the band is worth displaying at all: "it is nice to see to confirm
+  // that the program/llm gets it right." He cannot confirm a number whose provenance is invisible.
+  // 60 of the card's waters carry a verified profile; every other one is still answered from the
+  // table, and that difference should be legible at a glance rather than by reading source.
+  const bandNote = depth && Array.isArray(depth.band)
+    ? ` Fish at ${depth.band[0]}–${depth.band[1]} ft — ${depth.source === 'research'
+        ? `your researched profile for ${inp.lakeName}`
+        : `${depth.basis}${depth.generic ? ', NOT specific to this lake' : ''}`}.`
+    : '';
   say(`${out.laneCount} charted lanes → ${out.pieces.length} pieces of water, `
     + `${withLaps} with somewhere to turn onto. Depths are MINIMUM WATER DEPTH, not bait depth.`
+    + bandNote
     + (extras.length ? ` — ${extras.join('; ')}.` : ''));
   return out;
 }
