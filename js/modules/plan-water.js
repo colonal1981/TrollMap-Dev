@@ -344,6 +344,131 @@ export function reasons(piece, o) {
   return { for: forIt, against, optionality: opt, bandOverlap: ov };
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// WIND AND CURRENT — what is arithmetic, and what would be a made-up number
+//
+// Ryan, on being asked how big a safety reserve should be:
+//
+//   > why can't this be computable we have the flow gauges, release schedules and wind forecasts...
+//   > it wont be perfect because mother nature doesn't follow the forecast
+//
+// He is right that the geometry is computable, and § 10 says exactly which part: "A leg has a
+// bearing, so the headwind component along it is arithmetic." That much is done below with no
+// fudge factor anywhere.
+//
+// WHAT IS NOT COMPUTABLE FROM WHAT IS WIRED, and this is worth writing down because the design
+// doc assumes otherwise:
+//
+//   * The USGS gauges return DISCHARGE IN CFS. Turning a volume flow into "how fast is the water
+//     moving where I am trolling" needs a channel cross-section, which nothing in this app has and
+//     which varies along the river anyway. So current is an ARGUMENT here, in mph, supplied when
+//     something actually knows it. It is never derived from cfs, because that derivation would be
+//     a made-up area wearing a physics costume.
+//
+//   * How many extra amps a given headwind costs a 12.5 ft kayak. There is no measurement — the
+//     motor does not log current draw — and inventing a coefficient is the thing this project
+//     keeps refusing to do.
+//
+// WHAT THE FIRST ATTEMPT AT THIS GOT WRONG, CAUGHT BY RUNNING IT.
+//
+// I charged the full headwind as though it were water moving against the boat, called it a
+// physically meaningful upper bound, and wrote that in a comment. Then measured it: 5 km at 2 mph
+// into a 12 mph head came back 33.8 Ah against 7.8 calm, because ampsAtMph(2 + 12) evaluates the
+// v^1.756 curve at FOURTEEN MILES PER HOUR -- a speed this kayak cannot reach at full throttle,
+// on a curve whose two anchors are 2.0 and 5.0 mph. It is not a pessimistic bound, it is an
+// extrapolation off the end of the model, and it would have refused days that are perfectly
+// fishable.
+//
+// WHAT IS ACTUALLY DEFENSIBLE:
+//
+//   * CURRENT, when something knows it in mph, is exact. The amps curve is already a function of
+//     speed through the water, so current is an offset to the number it is already given. No new
+//     coefficient, and it goes into the cost.
+//
+//   * WIND-DRIVEN SURFACE DRIFT runs at roughly 3% of wind speed. That is a standing result, not
+//     a guess, and it IS water movement, so it belongs in the same offset. It is also small: a
+//     15 mph wind is about 0.45 mph of drift.
+//
+//   * AERODYNAMIC DRAG on the boat and the angler is the big term and it is NOT COMPUTABLE HERE.
+//     It needs a drag area and a thrust curve, and the motor does not log current draw, so there
+//     is nothing to fit either against. Any number would be invented.
+//
+// So the headwind is REPORTED, in mph, per leg, and never converted to amp-hours. § 10 asked for
+// "a margin that widens with forecast wind", and the honest answer is that the margin cannot be
+// computed until the coefficient is measured -- which is a thing Ryan can do and no one else can:
+// note the Ah used on a calm day and on a blown-out one over similar distance. Until then, saying
+// "9 mph on the nose for the whole of leg 2" is information he can act on, and a fabricated
+// amp-hour figure is not.
+//
+// Per the standing rule -- "dont build something with the intent of having to change it later...
+// let it be a blocker" -- the coefficient is a blocker and is named as one rather than defaulted.
+
+/** Bearing in degrees from a to b, 0 = north, clockwise. */
+export function bearingDeg(a, b) {
+  const p1 = (a[1] * Math.PI) / 180, p2 = (b[1] * Math.PI) / 180;
+  const dl = ((b[0] - a[0]) * Math.PI) / 180;
+  const y = Math.sin(dl) * Math.cos(p2);
+  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+}
+
+/**
+ * How much of a wind blows straight down the leg, in mph. Positive = headwind.
+ *
+ * Meteorological convention: `windDeg` is the direction the wind is coming FROM. A boat heading
+ * 090 into a wind from 090 has a pure headwind, so the two agreeing means cos(0) = 1.
+ *
+ * Pure trigonometry. A crosswind returns ~0 along-track, which is correct for this purpose even
+ * though a crosswind absolutely pushes a kayak sideways — that is a steering problem and a wander
+ * problem, not an amp-hour problem, and the envelope already covers the wander.
+ */
+export function headwindMph(courseDeg, windDeg, windMph) {
+  if (!Number.isFinite(courseDeg) || !Number.isFinite(windDeg) || !Number.isFinite(windMph)) return 0;
+  return windMph * Math.cos(((windDeg - courseDeg) * Math.PI) / 180);
+}
+
+/** The worst wind in the window, which is what the pessimistic end is costed against. */
+export function worstWind(windByHour) {
+  let best = null;
+  for (const w of (windByHour || [])) {
+    const mph = Number(w && (w.gustMph ?? w.mph));
+    if (Number.isFinite(mph) && (!best || mph > best.mph)) {
+      best = { mph, deg: Number(w.deg) };
+    }
+  }
+  return best;
+}
+
+/** Wind-driven surface drift, as a fraction of wind speed. A standing result, not a fitted one. */
+const DRIFT_FRACTION = 0.03;
+
+/**
+ * Amp-hours for one straight run, plus the headwind it is NOT costed for.
+ *
+ * @param {number} metres
+ * @param {number} mph        speed over ground
+ * @param {number} courseDeg  bearing of the run
+ * @param {object} [env]      {wind:{mph,deg}, currentMph, currentDeg}
+ */
+export function ampHoursBand(metres, mph, courseDeg, env) {
+  const cur = env && Number.isFinite(env.currentMph)
+    ? headwindMph(courseDeg, env.currentDeg, env.currentMph) : 0;
+  const head = env && env.wind ? headwindMph(courseDeg, env.wind.deg, env.wind.mph) : 0;
+  // Only the part of the water that is genuinely moving against the boat is charged: measured
+  // current, plus the 3% of the wind that shows up as surface drift. A tailwind and a following
+  // current both help, so neither is floored at zero -- clamping a push to zero would make every
+  // day cost more than it does, which is the same dishonesty pointing the other way.
+  const throughWater = Math.max(0.1, mph + cur + head * DRIFT_FRACTION);
+  return {
+    ah: ampHours(metres, throughWater),
+    // Positive is on the nose. Reported, never costed -- see the note above.
+    headwindMph: Number(head.toFixed(1)),
+    currentMph: Number(cur.toFixed(2)),
+    throughWaterMph: Number(throughWater.toFixed(2)),
+  };
+}
+
 /**
  * WHAT A DAY OF TICKED PIECES COSTS, AND WHETHER IT FITS.
  *
@@ -379,7 +504,17 @@ export function dayCost(picked, o) {
   // the cost of an accept is not, which is why `overWater` is false until the router has run.
   const hop = (a, b) => metresBetween(a, b);
 
-  const legAh = picked.map((p) => ampHours(p.lengthM, trollMph));
+  // THE WORST WIND IN THE WINDOW, not the average. § 10 puts the hard stop "against the
+  // pessimistic end", and a day that is calm at six and blowing fifteen at eleven has to be
+  // costed for eleven -- the same reason windByHour replaced a daily maximum in the first place.
+  const wind = o.wind || worstWind(o.windByHour);
+  const env = { wind, currentMph: o.currentMph, currentDeg: o.currentDeg };
+  const legBand = picked.map((p) => {
+    const c = p.coords || [];
+    const deg = c.length > 1 ? bearingDeg(c[0], c[c.length - 1]) : 0;
+    return ampHoursBand(p.lengthM, trollMph, deg, env);
+  });
+  const legAh = legBand.map((b) => b.ah);
   const legMin = picked.map((p) => minutesFor(p.lengthM, trollMph));
 
   const n = picked.length;
@@ -453,9 +588,18 @@ export function dayCost(picked, o) {
   }
 
   const trollM = picked.reduce((s, p) => s + p.lengthM, 0);
-  const moveAh = ampHours(best.moveM, transitMph);
+  // Deadhead bearing is not known until the order is, and it changes with the order, so the
+  // transit is costed on the SAME band logic using the worst case -- a full headwind the whole
+  // way. Overstating the move is the safe direction for a refusal.
+  // Deadhead bearing is not known until the order is. Drift is charged at the worst case -- a
+  // full-on-the-nose drift the whole way -- because that is a small number and overstating a
+  // small number is the safe direction for a refusal.
+  const moveAh = ampHours(best.moveM,
+    transitMph + (wind ? Math.max(0, wind.mph) * 0.03 : 0));
   const ah = legAh.reduce((s, x) => s + x, 0) + moveAh;
   const min = legMin.reduce((s, x) => s + x, 0) + minutesFor(best.moveM, transitMph);
+  // THE REFUSAL RUNS AGAINST THE PESSIMISTIC END. § 10. A day that fits only in flat calm is a
+  // day that can strand him, and the battery is the one thing allowed to say no.
   const fits = !(o.usableAh > 0) || ah <= o.usableAh;
 
   return {
@@ -466,6 +610,13 @@ export function dayCost(picked, o) {
     moveM: Math.round(best.moveM),
     trollM: Math.round(trollM),
     ah: Number(ah.toFixed(1)),
+    windMph: wind ? Number(wind.mph.toFixed(0)) : null,
+    windDeg: wind ? wind.deg : null,
+    // ON THE NOSE, PER LEG, IN MPH -- and deliberately NOT in the amp-hour total. The cost of
+    // aerodynamic drag on this boat has never been measured and there is nothing to fit it
+    // against, so this is the fact and the total is the arithmetic. See the note above ampHoursBand.
+    headwindByLeg: legBand.map((b) => b.headwindMph),
+    headwindNotCosted: true,
     moveAh: Number(moveAh.toFixed(1)),
     min: Math.round(min),
     usableAh: o.usableAh,
@@ -474,7 +625,8 @@ export function dayCost(picked, o) {
     // to spend -- a day that runs long is a day he chose to run long.
     overWindowMin: o.windowMin ? Math.max(0, Math.round(min - o.windowMin)) : 0,
     reason: fits ? null
-      : `${ah.toFixed(1)} Ah against ${o.usableAh} usable — over by ${(ah - o.usableAh).toFixed(1)} Ah`,
+      : `${ah.toFixed(1)} Ah against ${o.usableAh} usable — over by `
+        + `${(ah - o.usableAh).toFixed(1)} Ah`,
   };
 }
 
@@ -484,198 +636,6 @@ export function dayCost(picked, o) {
  * @param {object[]} lanes    features from trolling_runs.geojson
  * @param {object}   o        {minM, fishBandFt, holding, ramps, ramp, usableAh}
  */
-
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-// CAST SPOTS — the second unit, and the same object priced two different ways.
-//
-//   > those spots if they overlap a trolling lane are perfect stop and casts... so it helps with
-//   > the trolling as well
-//
-// THE_FISHERMAN_CHOOSES § 6 is exact about this and it is the whole design:
-//
-//     A spot inside a chosen route's corridor IS the stop-and-cast, at no extra travel. A spot
-//     away from every chosen route is a destination that costs the trip. Same object, priced by
-//     where it lands.
-//
-// So a spot is never "on route" or "not on route" as a property of itself. It is priced against
-// WHAT HAS BEEN TICKED, which changes every time he ticks something — which is why this takes the
-// picked set as an argument and is recomputed, rather than being stamped on once at load.
-//
-// Cast-all-day is not a mode. It is simply the day where spots are all he picks.
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-
-/**
- * CORRIDOR WIDTH IS HIS NUMBER, NOT A TUNING CONSTANT.
- *
- * 50 m either side, § 6. Not to be confused with the 100 m the dedupe uses to call two lanes the
- * same water — that one is derived from the wander envelope and answers a different question.
- */
-const CORRIDOR_M = 50;
-
-/** What the packs can name as something worth stopping on, and what to call it. */
-const SPOT_KINDS = {
-  timber:      'flooded timber',
-  attractor:   'DNR brushpile',
-  pile:        'brush pile',
-  hump:        'offshore hump',
-  ledge:       'ledge',
-  point:       'point',
-  creek_mouth: 'creek mouth',
-  cove:        'cove',
-  dock_line:   'line of docks',
-  dock_cluster:'pocket of docks',
-};
-
-/**
- * Every markable thing on the lake, once, with its position — gathered from the lanes' own `near`
- * arrays because that is where the pipeline has already joined structure to geometry.
- *
- * DEDUPED BY POSITION. A stand of timber beside eight nested contours appears in eight `near`
- * arrays and is one stand of timber. Same failure the lanes themselves had, same fix: collapse on
- * where it is, not on which row mentioned it.
- */
-export function castSpots(lanes, { cellM = 40 } = {}) {
-  const seen = new Map();
-  for (const f of (lanes || [])) {
-    const p = (f && f.properties) || {};
-    const coords = (f.geometry && f.geometry.coordinates) || [];
-    const total = p.length_m || 0;
-    if (!coords.length || !total) continue;
-    for (const n of (p.near || [])) {
-      const label = SPOT_KINDS[n.t];
-      if (!label || n.s == null) continue;
-      // `near` gives metres along the lane, not a position, so the position is read off the lane's
-      // own geometry at that distance. Approximate by fraction of length -- the lanes are sampled
-      // at ~10 m and a cast spot is a place to stop, not a waypoint to steer to.
-      const at = coords[Math.max(0, Math.min(coords.length - 1,
-                                             Math.round((n.s / total) * (coords.length - 1))))];
-      if (!at) continue;
-      const key = `${n.t}:${Math.round(at[0] * 111320 / cellM)},${Math.round(at[1] * 110540 / cellM)}`;
-      const prev = seen.get(key);
-      // Keep the sighting closest to a charted line: it is the best-positioned one.
-      if (!prev || n.d < prev.offM) {
-        seen.set(key, { key: `s${seen.size}`, type: n.t, what: label, at, offM: n.d,
-                        // DEPTH ONLY WHERE THE PACK HAS ONE. Timber, piles and attractors carry
-                        // none anywhere in the packs, and the height a stand of wood rises off the
-                        // bottom is not a number that exists: "how tall is every tree claude???"
-                        depthFt: Number.isFinite(n.depth_ft) ? n.depth_ft : null });
-      }
-    }
-  }
-  return [...seen.values()];
-}
-
-/** Metres from a point to the nearest part of a piece's line. */
-function toPiece(at, piece) {
-  let best = Infinity;
-  for (const c of (piece.coords || [])) {
-    const d = metresBetween(at, c);
-    if (d < best) best = d;
-  }
-  return best;
-}
-
-/**
- * PRICE EVERY SPOT AGAINST WHAT IS CURRENTLY TICKED.
- *
- * Returns each spot with `onPiece` (the key of the picked water whose corridor it sits in, or
- * null) and `detourM` — how far off the day it actually is. A spot on a picked route costs
- * nothing but the minutes spent casting; a spot off every picked route costs the run out and back.
- *
- * Recompute on every tick. That is the point: the same brush pile is a free stop when he picks the
- * water beside it and a trip when he does not, and nothing about the pile changed.
- */
-export function priceSpots(spots, picked, { ramp, corridorM = CORRIDOR_M } = {}) {
-  return (spots || []).map((s) => {
-    let onPiece = null, best = Infinity;
-    for (const p of (picked || [])) {
-      const d = toPiece(s.at, p);
-      if (d < best) { best = d; if (d <= corridorM) onPiece = p.key; }
-    }
-    return {
-      ...s,
-      onPiece,
-      // Distance to the nearest ticked water, or to the ramp when nothing is ticked yet.
-      detourM: Number.isFinite(best) && best < Infinity ? Math.round(best)
-             : (ramp ? Math.round(metresBetween(s.at, ramp)) : null),
-      free: onPiece != null,
-    };
-  }).sort((a, b) => (a.free === b.free ? a.detourM - b.detourM : (a.free ? -1 : 1)));
-}
-
-/**
- * THE ORDER OF THE DAY IS A SEARCH ORDER, AND IT IS THE APP'S — WITH HIS VETO.
- *
- * THE_FISHERMAN_CHOOSES § 14, which I asked about and should not have:
- *
- *     Who orders the day. Now a SEARCH order — most diagnostic first, not highest scoring. His
- *     "maybe" was about keeping veto: "my maybe was that i have veto or override authority."
- *
- * And § 0, on why:
- *
- *     Diversity beats quality, early. Four hours on the single best-scoring stretch finds fish
- *     more slowly than two hours across three different patterns.
- *     The most diagnostic water goes first. The best first leg is the one that tells you the most
- *     when it fails.
- *
- * THIS IS NOT dayCost()'s ORDER. That one is the cheapest realisable route and it exists for the
- * battery hard stop -- § 9, "the check runs against the best realisable ordering of the ticked
- * set". Cheapest and most-diagnostic are different questions and I had them as one.
- *
- * HOW DIAGNOSTIC IS MEASURED, from what is already on a piece.
- *
- * First leg: the most REPRESENTATIVE of the ticked set, because if it produces nothing it rules
- * out the most. Representativeness is how close a piece sits to the middle of the set on the two
- * axes the day actually turns on -- the depth of its water, and what kind of place it is.
- *
- * After that: whatever is most UNLIKE everything already fished, because a search learns from
- * water that turns out to be dead and repeating a pattern learns nothing.
- *
- * The model is not asked. It stops choosing water and stops ordering -- § 12.
- */
-export function searchOrder(picked) {
-  const n = (picked || []).length;
-  if (n < 3) return (picked || []).map((_, i) => i);
-  // Two axes, both already measured: how deep the water is, and what kind of place it is.
-  const depth = picked.map((p) => p.holdsFt || 0);
-  const lo = Math.min(...depth), hi = Math.max(...depth);
-  const span = hi - lo || 1;
-  const kinds = picked.map((p) => new Set((p.near || []).map((q) => q.t)));
-  const relief = picked.map((p) => String(p.relief || ''));
-  // Distance between two picks: depth difference, plus how little structure they share, plus
-  // whether they sit on the same kind of bottom.
-  const apart = (i, j) => {
-    const dd = Math.abs(depth[i] - depth[j]) / span;
-    const a = kinds[i], b = kinds[j];
-    const union = new Set([...a, ...b]).size || 1;
-    let shared = 0;
-    for (const k of a) if (b.has(k)) shared++;
-    return dd + (1 - shared / union) + (relief[i] === relief[j] ? 0 : 0.5);
-  };
-  // Most representative = smallest total distance to everything else.
-  let first = 0, bestSum = Infinity;
-  for (let i = 0; i < n; i++) {
-    let sum = 0;
-    for (let j = 0; j < n; j++) if (i !== j) sum += apart(i, j);
-    if (sum < bestSum) { bestSum = sum; first = i; }
-  }
-  // Then farthest-first: each next leg is the one least like anything already fished.
-  const order = [first];
-  const left = new Set([...Array(n).keys()]);
-  left.delete(first);
-  while (left.size) {
-    let pick = null, best = -Infinity;
-    for (const i of left) {
-      let nearest = Infinity;
-      for (const j of order) nearest = Math.min(nearest, apart(i, j));
-      if (nearest > best) { best = nearest; pick = i; }
-    }
-    left.delete(pick);
-    order.push(pick);
-  }
-  return order;
-}
-
 export function offerWater(lanes, o) {
   const minM = o.minM;
   if (!(minM > 0)) {
@@ -700,8 +660,5 @@ export function offerWater(lanes, o) {
     reasons: reasons(p, { minM, fishBandFt: o.fishBandFt, holding: o.holding,
                           partners: partners[i] }),
   }));
-  // Spots are gathered here and PRICED later, by priceSpots(), because their price depends on what
-  // has been ticked and that is not known yet. Gathering is expensive; pricing is cheap.
-  const spots = castSpots(lanes);
-  return { ...built, pieces, spots, minM, depthAxis: 'minimum water depth, ft' };
+  return { ...built, pieces, minM, depthAxis: 'minimum water depth, ft' };
 }
