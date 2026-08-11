@@ -441,6 +441,14 @@ export async function buildFromPicked() {
       launchTime: T.launchTime,
       returnTime: T.returnTime,
       planArgs: {
+        // Blank means "no opinion", which is NOT the same as zero. parseInt('') is NaN, so the
+        // guard has to be explicit or an empty box would silently ask for no stops at all.
+        castStopsWanted: (() => {
+          const raw = ($('wgStops')?.value ?? '').trim();
+          if (!raw) return null;
+          const n = parseInt(raw, 10);
+          return Number.isFinite(n) && n >= 0 ? n : null;
+        })(),
         water: T.lake, ramp: T.rampName, date: T.dateStr,
         launchTime: T.launchTime, returnTime: T.returnTime,
         species: [T.species], usableAh: T.usableAh,

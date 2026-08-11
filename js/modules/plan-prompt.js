@@ -272,7 +272,14 @@ out — a bait that only works 12–18 ft cannot ladder past its own range.
 ${(o.freeCastSpots || []).length ? `
 CAST SPOTS ALREADY ON HIS ROUTE — ${JSON.stringify(o.freeCastSpots)}
 These sit inside the water he picked, so working one costs only the minutes spent on it. Prefer
-them over anything that would need a detour.` : ''}` : ''}
+them over anything that would need a detour. Every one is listed; NONE has been pre-selected for
+you, because which water is worth stopping on today is the judgement you are here to make.` : ''}${
+o.castStopsWanted != null ? `
+
+HE ASKED FOR ${o.castStopsWanted} STOP-AND-CAST${o.castStopsWanted === 1 ? '' : 'S'} TODAY.
+That is a request, not a quota. Get as close to it as the water honestly supports: if the good
+cover runs out at two, plan two and say why rather than padding to the number. If there are five
+worth stopping on and he asked for three, pick the three and name the others as options.` : ''}` : ''}
 RULES THAT ARE NOT NEGOTIABLE
 1. Name legs by \`runId\` and stops by a structure \`id\`, both copied exactly from the list above.
    Anything invented is thrown away and the plan comes up short.

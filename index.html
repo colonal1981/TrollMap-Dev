@@ -1161,6 +1161,13 @@
             <div class="wg-bar">
               <label>Shortest pass worth having
                 <input id="wgMinPass" type="number" min="0.05" step="0.05" value="0.5"> mi</label>
+              <!-- HIS NUMBER, NOT THE APP'S. WHAT_SMARTPLAN_IS is explicit that the app must not
+                   pick a stop count -- "I kept trying to pick a number. There is no number. There
+                   is water that is worth stopping on today and water that is not." That rules out
+                   the APP choosing. It does not rule out Ryan asking, and § 2 of
+                   THE_FISHERMAN_CHOOSES puts it in the wants-first form. Blank = no opinion. -->
+              <label>Stop-and-casts
+                <input id="wgStops" type="number" min="0" max="12" step="1" placeholder="any"></label>
               <label>Sort by
                 <select id="wgSort">
                   <option value="ramp">nearest the ramp</option>

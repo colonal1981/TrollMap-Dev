@@ -185,6 +185,10 @@ export async function planFromWater(o) {
     // length -- a model handed N legs will otherwise rank them out of habit.
     waterIsChosen: true,
     orderIsChosen: true,
+    // EVERY free spot goes over, not a best-N. Which water is worth stopping on is a fishing
+    // judgement -- "There is water that is worth stopping on today and water that is not" -- so
+    // the app supplies the positions and the count he asked for, and the model does the choosing.
+    // Truncating here would be the app quietly making that call by ranking.
     freeCastSpots: freeSpots.map((s) => ({ what: s.what, onLeg: s.onPiece, offM: s.detourM })),
   });
 
