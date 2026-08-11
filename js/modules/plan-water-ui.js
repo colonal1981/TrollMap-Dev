@@ -38,7 +38,7 @@ import { depthBandFor, usableAhFrom } from './plan-inputs.js';
 import { packFetcher } from './smart-plan-v2.js';
 import { fetchForecast } from './plan-preflight.js';
 import { depthSampler, shorelineIndex } from './plan-water-index.js';
-import { offerWater, dayCost, priceSpots, searchOrder, TROLL_MPH } from './plan-water.js';
+import { offerWater, dayCost, priceSpots, searchOrder, optionality, TROLL_MPH } from './plan-water.js';
 import { planFromWater } from './plan-from-water.js';
 import { buildSmartPlanV2, modelAsker, waterRouter } from './smart-plan-v2.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
@@ -61,7 +61,9 @@ const fmtHm = (min) => `${Math.floor(min / 60)}h ${String(Math.round(min % 60)).
 const T = { pieces: [], picked: new Set(), ramp: null, rampName: '', usableAh: 0,
             windowMin: null, band: null, holding: null, sortBy: 'ramp', lake: '', limit: 25,
             spots: [], species: '', r2Key: '', dateStr: '', launchTime: '', returnTime: '',
-            windByHour: null, weatherByHour: null, pickedSpots: new Set() };
+            windByHour: null, weatherByHour: null, pickedSpots: new Set(),
+            // The water-depth filter. null means no bound — see inDepthBand().
+            depthMin: null, depthMax: null };
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // THE STRIP — distance along the water against depth.
@@ -352,8 +354,43 @@ function total() {
  * is capped and THE CAP SAYS SO -- see the count under the heading. It is not a filter on quality:
  * the sort is his, and the cap takes the top of whatever he sorted by.
  */
+/**
+ * THE DEPTH FILTER, AND WHY IT IS THE CORRIDOR AND NOT `holdsFt`.
+ *
+ * Ryan's first complaint on seeing this tab live, 2026-08-11: "no slider to decide how deep of
+ * water to display."
+ *
+ * The obvious number to filter on is `holdsFt`, and it is the wrong one. `holdsFt` is a THRESHOLD
+ * — the shallowest point the whole stretch clears, set by one shoal somewhere along it — so a
+ * piece running 22–31 ft of water with a single 18 ft rise reads as "18 ft" and a filter asking
+ * for 20 ft and deeper would throw it away. That is water he wants, hidden by its worst metre.
+ *
+ * `optionality()` gives the corridor: the median shallow and the median deep across the whole
+ * envelope, which is the water he is actually fishing. A piece is kept when its corridor OVERLAPS
+ * the asked-for band at all, not when it sits wholly inside — asking for 20–30 ft should still
+ * show you a piece running 25–40, because most of a pass through it is in the band.
+ *
+ * Cached on the piece: `shown()` runs on every repaint and `optionality` medians two arrays.
+ */
+function corridorOf(p) {
+  if (p._corr === undefined) p._corr = optionality(p);
+  return p._corr;
+}
+
+function inDepthBand(p) {
+  const lo = T.depthMin, hi = T.depthMax;
+  if (lo == null && hi == null) return true;
+  const c = corridorOf(p);
+  // A piece with no envelope cannot demonstrate its depth, and a filter must not delete water on
+  // the strength of a missing measurement — the same rule `charted: null` follows.
+  if (c.fromFt == null) return true;
+  if (hi != null && c.fromFt > hi) return false;
+  if (lo != null && c.toFt < lo) return false;
+  return true;
+}
+
 function shown() {
-  const sorted = [...T.pieces].sort((a, b) => {
+  const sorted = [...T.pieces].filter(inDepthBand).sort((a, b) => {
     if (T.sortBy === 'length') return b.lengthM - a.lengthM;
     if (T.sortBy === 'deep') return b.holdsFt - a.holdsFt;
     if (T.sortBy === 'laps') return b.partners.length - a.partners.length || b.lengthM - a.lengthM;
@@ -367,7 +404,71 @@ function shown() {
   return top.concat(sorted.filter((p) => T.picked.has(p.key) && !keys.has(p.key)));
 }
 
+/**
+ * THE SLIDER'S RANGE COMES FROM THE WATER, NOT FROM A NUMBER I PICKED.
+ *
+ * A 0–100 ft slider on a lake whose deepest corridor is 34 ft spends two thirds of its travel
+ * doing nothing, and tells him the lake is shallow before he has looked at anything. The ends are
+ * the shallowest and deepest corridor actually present, so every position on it means something —
+ * the same rule the rest of this tab follows: if the answer would be a number he has to make up,
+ * measure it and show it instead.
+ *
+ * Built in JS rather than added to index.html so the whole filter is one thing in one file, the
+ * way the research picker's toggles are.
+ */
+function buildDepthFilter() {
+  const anchor = $('wgCount');
+  if (!anchor || !anchor.parentNode || $('wgDepthBar')) return;
+  const bar = document.createElement('div');
+  bar.id = 'wgDepthBar';
+  bar.style.cssText = 'margin:6px 0;font-size:0.82em;color:var(--muted,#888);display:flex;'
+                    + 'align-items:center;gap:8px;flex-wrap:wrap;';
+  bar.innerHTML = '<span>Water depth</span>'
+    + '<input type="range" id="wgDepthLo" style="width:110px;vertical-align:middle;">'
+    + '<input type="range" id="wgDepthHi" style="width:110px;vertical-align:middle;">'
+    + '<span id="wgDepthLabel" style="min-width:120px;"></span>'
+    + '<button id="wgDepthClear" style="background:none;border:1px solid var(--line,#333);'
+    + 'color:var(--muted,#888);border-radius:3px;font-size:0.9em;padding:1px 7px;cursor:pointer;">all</button>';
+  anchor.parentNode.insertBefore(bar, anchor.nextSibling);
+  const lo = $('wgDepthLo'), hi = $('wgDepthHi');
+  const sync = (fromLo) => {
+    // The two handles cannot cross. Push the other one rather than clamping the one he is
+    // dragging — clamping fights the mouse and feels broken.
+    if (+lo.value > +hi.value) { if (fromLo) hi.value = lo.value; else lo.value = hi.value; }
+    T.depthMin = +lo.value <= +lo.min ? null : +lo.value;
+    T.depthMax = +hi.value >= +hi.max ? null : +hi.value;
+    paint();
+  };
+  lo.addEventListener('input', () => sync(true));
+  hi.addEventListener('input', () => sync(false));
+  $('wgDepthClear').addEventListener('click', () => {
+    lo.value = lo.min; hi.value = hi.max; T.depthMin = null; T.depthMax = null; paint();
+  });
+}
+
+/** Set the slider's ends from the corridors actually present, and reset it to wide open. */
+function fitDepthFilter() {
+  buildDepthFilter();
+  const lo = $('wgDepthLo'), hi = $('wgDepthHi');
+  if (!lo || !hi) return;
+  const d = T.pieces.map((p) => corridorOf(p)).filter((c) => c.fromFt != null);
+  const bar = $('wgDepthBar');
+  if (!d.length) { if (bar) bar.style.display = 'none'; return; }
+  if (bar) bar.style.display = 'flex';
+  const min = Math.floor(Math.min(...d.map((c) => c.fromFt)));
+  const max = Math.ceil(Math.max(...d.map((c) => c.toFt)));
+  for (const el of [lo, hi]) { el.min = String(min); el.max = String(max); el.step = '1'; }
+  lo.value = String(min); hi.value = String(max);
+  T.depthMin = null; T.depthMax = null;
+}
+
 function paint() {
+  const l = $('wgDepthLabel');
+  if (l) {
+    l.textContent = (T.depthMin == null && T.depthMax == null)
+      ? `all (${$('wgDepthLo')?.min ?? '?'}–${$('wgDepthHi')?.max ?? '?'} ft here)`
+      : `${T.depthMin ?? $('wgDepthLo')?.min}–${T.depthMax ?? $('wgDepthHi')?.max} ft`;
+  }
   const list = shown();
   const el = $('wgList');
   if (el) el.innerHTML = list.map(row).join('');
@@ -379,9 +480,17 @@ function paint() {
   paintSpots();
   const n = $('wgCount');
   if (n) {
-    n.textContent = T.pieces.length > T.limit
-      ? `showing ${T.limit} of ${T.pieces.length} — change the sort to see different water`
-      : `${T.pieces.length} piece${T.pieces.length === 1 ? '' : 's'}`;
+    // SAY WHAT THE DEPTH FILTER REMOVED, SEPARATELY FROM WHAT THE CAP REMOVED. They are different
+    // kinds of hiding: the cap is "there is more of this", the filter is "you asked me not to
+    // show that". Collapsing them into one number is how a filter reads as an empty lake.
+    const passing = T.pieces.filter(inDepthBand).length;
+    const cut = T.pieces.length - passing;
+    const band = (T.depthMin != null || T.depthMax != null)
+      ? ` · ${T.depthMin ?? 0}–${T.depthMax ?? '∞'} ft hides ${cut}`
+      : '';
+    n.textContent = (passing > T.limit
+      ? `showing ${T.limit} of ${passing} — change the sort to see different water`
+      : `${passing} piece${passing === 1 ? '' : 's'}`) + band;
   }
   total();
 }
@@ -510,6 +619,9 @@ export async function findWater() {
       return a != null && b != null && b > a ? b - a : null;
     })(),
   });
+  // Re-fit the depth slider to THIS lake before the first paint. A range left over from the
+  // previous water would silently hide half of this one.
+  fitDepthFilter();
   paint();
   const withLaps = out.pieces.filter((p) => p.partners.length).length;
   const extras = [
