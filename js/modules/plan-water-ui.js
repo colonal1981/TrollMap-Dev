@@ -36,6 +36,7 @@ import { resolveR2Key } from '../data/lake-keys.js';
 import { getSeason } from '../data/species-intel.js';
 import { depthBandFor, usableAhFrom } from './plan-inputs.js';
 import { packFetcher } from './smart-plan-v2.js';
+import { fetchForecast } from './plan-preflight.js';
 import { offerWater, dayCost, priceSpots, searchOrder, TROLL_MPH } from './plan-water.js';
 import { planFromWater } from './plan-from-water.js';
 import { buildSmartPlanV2, modelAsker, waterRouter } from './smart-plan-v2.js';
@@ -54,7 +55,8 @@ const fmtHm = (min) => `${Math.floor(min / 60)}h ${String(Math.round(min % 60)).
 /** Everything the tab is currently looking at. Not on `window`; the module owns it. */
 const T = { pieces: [], picked: new Set(), ramp: null, rampName: '', usableAh: 0,
             windowMin: null, band: null, holding: null, sortBy: 'ramp', lake: '', limit: 25,
-            spots: [], species: '', r2Key: '', dateStr: '', launchTime: '', returnTime: '' };
+            spots: [], species: '', r2Key: '', dateStr: '', launchTime: '', returnTime: '',
+            windByHour: null };
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // THE STRIP — distance along the water against depth.
@@ -232,7 +234,8 @@ function total() {
                  + `this says what the day costs.</span>`;
     return null;
   }
-  const d = dayCost(picked, { ramp: T.ramp, usableAh: T.usableAh, windowMin: T.windowMin });
+  const d = dayCost(picked, { ramp: T.ramp, usableAh: T.usableAh, windowMin: T.windowMin,
+                              windByHour: T.windByHour });
   const bits = [
     `<b>${picked.length}</b> piece${picked.length > 1 ? 's' : ''}`,
     `${fmtMi(d.trollM)} trolling`,
@@ -367,6 +370,13 @@ export async function findWater() {
   }
 
   const minM = Math.max(1, Math.round(Number($('wgMinPass')?.value || 0.5) * 1609.34));
+  // THE WIND BELONGS TO THE WATER, NOT JUST TO THE BATTERY. A crosswind on a line you steer by
+  // hand is a reason against that piece, so the forecast has to be in hand BEFORE the reasons are
+  // written. Failure is silence: no forecast means the wind is not mentioned, never mentioned as calm.
+  say('Checking the forecast…');
+  const forecast = await fetchForecast(inp.lakeName, inp.dateStr,
+    { launchTime: inp.launchTime, returnTime: inp.returnTime }).catch(() => null);
+
   say('Measuring the water…');
   let out;
   try {
@@ -374,6 +384,7 @@ export async function findWater() {
       minM,
       fishBandFt: depth ? depth.band : null,
       holding: depth ? depth.holding : null,
+      windByHour: forecast ? forecast.windByHour : null,
       ramps: [{ name: inp.rampName || 'launch', lonLat: ramp }],
     });
   } catch (e) { return say(e.message, true); }
@@ -381,7 +392,7 @@ export async function findWater() {
   Object.assign(T, {
     pieces: out.pieces, spots: out.spots || [], picked: new Set(),
     ramp, rampName: inp.rampName || 'launch',
-    species, r2Key, dateStr: inp.dateStr,
+    species, r2Key, dateStr: inp.dateStr, windByHour: forecast ? forecast.windByHour : null,
     launchTime: inp.launchTime, returnTime: inp.returnTime,
     usableAh: usableAhFrom(inp.motor), band: depth ? depth.band : null,
     holding: depth ? depth.holding : null, lake: inp.lakeName,
