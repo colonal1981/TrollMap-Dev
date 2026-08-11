@@ -20,13 +20,6 @@
  *                         Wateree, SC") = 33°47'09"N 80°38'11"W. Long oxbow
  *                         of the Congaree River, accessed off Hwy 601 near
  *                         the Congaree National Park / Bates Ferry Trail.
- *   - HB Robinson Lake:   Duke Energy nuclear plant cooling lake (H.B. Robinson
- *                         Steam Electric Plant), Darlington County near
- *                         Hartsville. Not in any DNR ArcGIS feed — Duke Energy
- *                         ownership means no public ramp records in SCDNR data.
- *                         Warm water discharge keeps fish active year-round;
- *                         adjacent to Prestwood Lake on Black Creek.
- *
  * The last four (Wee Tee, Dawhoo, Bates Old River are oxbow lakes; Second
  * Millpond is a mill pond) are small/river-adjacent waterbodies unlikely to
  * ever appear as "Boat Ramp" type records in the worker's ArcGIS feeds —
@@ -41,6 +34,24 @@ export const USER_KNOWN_LAKES = [
   { name: 'Lowthers Lake', county: 'Darlington', state: 'SC', lat: 34.324463, lon: -79.723411, note: "Legally 'Louther's Lake', oxbow off the Great Pee Dee River (SC Code §50-1-50)" },
   { name: 'Second Millpond', county: 'Sumter', state: 'SC', lat: 33.9253168, lon: -80.389208025, note: 'Also called Second Mill Lake; boat landing near Liberty Street bridge' },
   { name: 'Wee Tee Lake', county: 'Williamsburg', state: 'SC', lat: 33.373194, lon: -79.771922, note: 'Oxbow of the Santee River, Wee Tee State Forest; bowfin water' },
-  { name: 'HB Robinson Lake', county: 'Darlington', state: 'SC', lat: 34.385, lon: -80.100, note: 'Duke Energy nuclear cooling lake near Hartsville; warm water discharge keeps fish active year-round; adjacent to Prestwood Lake on Black Creek' },
   { name: 'Bates Old River', county: 'Richland/Calhoun', state: 'SC', lat: 33.78583, lon: -80.63639, note: 'Long oxbow of the Congaree River off Hwy 601; bowfin water' },
 ];
+
+// REMOVED 2026-08-11 — HB Robinson Lake.
+//
+// I added it. Its coordinates were 34.385, -80.100, which is not Lake Robinson: it is 1.9 km from
+// PRESTWOOD LAKE and 8.6 km from the water it was named for. The note I wrote on it even said
+// "adjacent to Prestwood Lake on Black Creek" — the description was right and the point was the
+// neighbour's.
+//
+// The water is real and already in the registry as `lake_robinson` (Chesterfield Co, 2,098 ac,
+// charted 0.96, 892 contours around Hartsville), and `registry/lake_aliases.json` has mapped
+// "HB Robinson Lake" -> lake_robinson since before this entry existed. So this row added nothing
+// but a wrong coordinate, and anything reading it — the catch journal's nearest-water lookup, the
+// map flying to a selection — was being pointed at the wrong lake.
+//
+// Ryan: "hb robinson was a manual entry put in by you... it needs to just go away."
+//
+// The lesson worth keeping: a hand-entered water needs its coordinate checked against something,
+// and "the name is right" is not that check. Nearest-neighbour would have made this worse, not
+// better — Prestwood is four times closer than the correct answer.
