@@ -101,7 +101,12 @@ export async function fetchForecast(lakeName, dateStr, o = {}) {
       + '&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,'
       + 'windspeed_10m_max,winddirection_10m_dominant,precipitation_sum'
       // The hour-by-hour wind the safety rule is actually about.
-      + '&hourly=windspeed_10m,winddirection_10m,windgusts_10m'
+      // THUNDER IS NOT A WIND PROBLEM. Ryan: "not just wind... thunderstorms/rain would be a big
+      // one too". Lightning is the one hazard a pedal kayak cannot outrun, so the hourly WMO code
+      // and the precipitation probability come back with the wind — codes 95/96/99 are
+      // thunderstorm, and they are a different question from "is it fishable".
+      + '&hourly=windspeed_10m,winddirection_10m,windgusts_10m,weather_code,'
+      + 'precipitation_probability,precipitation'
       + `&timezone=auto&start_date=${dateStr}&end_date=${dateStr}`;
     const res = await fetch(url, { signal: AbortSignal.timeout ? AbortSignal.timeout(4500) : undefined });
     if (!res.ok) return null;
@@ -117,6 +122,7 @@ export async function fetchForecast(lakeName, dateStr, o = {}) {
     return {
       summary,
       windByHour: hourlyWind(d && d.hourly, o.launchTime, o.returnTime),
+      weatherByHour: hourlyWeather(d && d.hourly, o.launchTime, o.returnTime),
       sunrise: clock((D.sunrise || [])[0]),
       sunset: clock((D.sunset || [])[0]),
     };
@@ -149,6 +155,45 @@ const hhToHour = (s) => {
  * already uses. Gusts ride along when the API gives them: the no-go rule has a separate gust
  * threshold (20 mph) and dropping them would leave half of it unanswerable.
  */
+/**
+ * The hours that are a SAFETY question rather than a fishing one.
+ *
+ * WMO weather codes: 95 is thunderstorm, 96 and 99 are thunderstorm with hail. Those are the
+ * codes that mean get off the water — lightning is the single hazard a 12.5 ft pedal kayak has no
+ * answer to, and unlike wind it does not build gradually enough to read from the seat.
+ *
+ * Rain on its own is graded, not blocked: 61-67 and 80-82 are rain and showers, which are a
+ * comfort and a visibility problem and Ryan's call, not the app's.
+ */
+export function hourlyWeather(hourly, from, to) {
+  const times = (hourly && hourly.time) || [];
+  const codes = (hourly && hourly.weather_code) || [];
+  const prob = (hourly && hourly.precipitation_probability) || [];
+  const mm = (hourly && hourly.precipitation) || [];
+  const p = (s) => { const m = /^(\d{1,2}):/.exec(String(s || '')); return m ? +m[1] : null; };
+  const lo = p(from), hi = p(to);
+  const out = [];
+  for (let i = 0; i < times.length; i++) {
+    const h = Number(String(times[i]).slice(11, 13));
+    if (!Number.isFinite(h)) continue;
+    // The whole day is kept when no window was given, but a window clips it -- a storm at 20:00
+    // is not a warning for someone off the water at 15:00.
+    if (lo != null && h < lo) continue;
+    if (hi != null && h > hi) continue;
+    const code = Number(codes[i]);
+    const e = { hour: h };
+    if (Number.isFinite(code)) {
+      e.code = code;
+      e.thunder = code >= 95;
+      e.rain = (code >= 61 && code <= 67) || (code >= 80 && code <= 82);
+    }
+    if (Number.isFinite(Number(prob[i]))) e.chancePct = Number(prob[i]);
+    if (Number.isFinite(Number(mm[i]))) e.mm = Number(mm[i]);
+    out.push(e);
+  }
+  return out;
+}
+
 export function hourlyWind(hourly, launchTime, returnTime) {
   const times = (hourly && hourly.time) || [];
   const speed = (hourly && hourly.windspeed_10m) || [];

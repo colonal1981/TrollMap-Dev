@@ -579,6 +579,76 @@ export function depthCues(plan, { spreadM = 27 } = {}) {
   return out;
 }
 
+/**
+ * WEATHER — THE ONE LEGITIMATE EXCEPTION TO DISTANCE-INDEXING, AND IT SAYS SO.
+ *
+ * PLAN_SCHEMA_V2 is emphatic that every trigger is metres, because "the clock starts drifting the
+ * moment he hooks a fish, and it never catches up". That reasoning is about the BOAT. Weather does
+ * not care where the boat is: a storm arrives at two o'clock whether he has covered three miles or
+ * eight, so a distance-keyed storm warning would fire late on exactly the day he stopped to fish.
+ *
+ * So these carry `atHour` and no `atM`, deliberately. Do not "fix" this by deriving a distance —
+ * that would reintroduce the drift the schema exists to keep out, pointing the other way.
+ *
+ * THUNDER IS NOT WEATHER, IT IS AN EVACUATION. Ryan: "not just wind... thunderstorms/rain would be
+ * a big one too". Lightning is the one hazard a pedal kayak has no answer to.
+ *
+ * AND THE LEAD TIME IS DERIVED, not chosen — the same move as the spread-length lead on a depth
+ * cue. Getting off the water takes as long as the run home takes, and the plan knows the furthest
+ * point of the day from the ramp. So the warning is "leave by", computed from that distance at
+ * transit speed. It uses the FURTHEST point rather than a guess at where he will be, because
+ * where he will be depends on the clock and the clock is the thing that cannot be trusted. A
+ * bound, not a prediction.
+ */
+export function weatherCues(plan, weatherByHour, o = {}) {
+  const transitMph = o.transitMph ?? 3.5;
+  const out = [];
+  // The furthest any leg gets from the ramp: the worst run home this plan can owe.
+  let farthestM = 0;
+  for (const leg of ((plan && plan.legs) || [])) {
+    for (const key of ['transitFromRampM', 'transitToRampM']) {
+      const v = Number(leg[key]);
+      if (Number.isFinite(v) && v > farthestM) farthestM = v;
+    }
+  }
+  if (!farthestM && Number.isFinite(o.farthestM)) farthestM = o.farthestM;
+  const homeMin = Math.round(minutesFor(farthestM, transitMph));
+  const hhmm = (h) => `${String(Math.floor(((h % 24) + 24) % 24)).padStart(2, '0')}:`
+                    + `${String(Math.round((h % 1) * 60)).padStart(2, '0')}`;
+
+  let saidThunder = false;
+  for (const w of (weatherByHour || [])) {
+    if (!w || !Number.isFinite(w.hour)) continue;
+    if (w.thunder && !saidThunder) {
+      saidThunder = true;                       // one evacuation notice, not one per stormy hour
+      const leaveBy = w.hour - homeMin / 60;
+      out.push({
+        atHour: Math.max(0, leaveBy), kind: 'weather', severity: 'stop', code: w.code,
+        what: `Thunderstorms forecast from ${hhmm(w.hour)}. The furthest this plan gets from the `
+            + `ramp is ${(farthestM / 1609.34).toFixed(1)} mi, which is ${homeMin} min home at `
+            + `${transitMph} mph — so leave by ${hhmm(leaveBy)} to be off the water before it. `
+            + `You cannot outrun lightning in a kayak.`,
+      });
+    } else if (w.rain && (w.chancePct == null || w.chancePct >= 50)) {
+      out.push({
+        atHour: w.hour, kind: 'weather', severity: 'note', code: w.code,
+        what: `Rain likely around ${hhmm(w.hour)}`
+            + (w.chancePct != null ? ` (${w.chancePct}%)` : '')
+            + ` — visibility and comfort, not a reason to come in.`,
+      });
+    }
+  }
+  // Rain hours run in blocks; the first of each block is the useful one.
+  const seen = new Set();
+  return out.filter((c) => {
+    if (c.severity === 'stop') return true;
+    const k = Math.floor(c.atHour);
+    if (seen.has(k - 1) || seen.has(k - 2)) { seen.add(k); return false; }
+    seen.add(k);
+    return true;
+  });
+}
+
 /** A plan whose distance spine is broken cannot drive the phone. Returns a list of problems. */
 export function validatePlan(plan) {
   const bad = [];

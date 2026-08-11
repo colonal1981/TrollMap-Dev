@@ -1,6 +1,6 @@
 import { describe, it, expect } from './expect-shim.mjs';
 import {
-  assemblePlan, parseClock, formatClock, planRoute, planCues, validatePlan, depthCues,
+  assemblePlan, parseClock, formatClock, planRoute, planCues, validatePlan, depthCues, weatherCues,
 } from '../js/modules/plan-assemble.js';
 import { structureIndex, resolveStructure, selectCandidates, forModel } from '../js/modules/plan-candidates.js';
 import { metresBetween } from '../js/modules/plan-candidates.js';
@@ -757,5 +757,54 @@ describe('depthCues', () => {
     const cues = planCues(p);
     const d = cues.find((c) => c.kind === 'depth');
     expect(d.atM).toBe(2373);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// WEATHER — time-keyed on purpose, and the only thing in the plan that is.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+describe('weatherCues', () => {
+  const plan = { legs: [{ id: 'L1', transitFromRampM: 1000, transitToRampM: 6800 }] };
+  const storm = [{ hour: 14, code: 95, thunder: true }];
+
+  it('carries an hour and NO distance, because a storm does not care where the boat is', () => {
+    // PLAN_SCHEMA_V2 keys everything on metres because the clock drifts the moment he hooks a
+    // fish. That reasoning is about the BOAT. A distance-keyed storm warning fires late on
+    // exactly the day he stopped to fish, which is the day it matters.
+    const [c] = weatherCues(plan, storm);
+    expect(c.atM).toBe(undefined);
+    expect(Number.isFinite(c.atHour)).toBe(true);
+  });
+
+  it('warns by the run home, derived from the furthest point of the day', () => {
+    // 6800 m at 3.5 mph is 72 min, so a 14:00 storm means leaving at 12:48.
+    const [c] = weatherCues(plan, storm);
+    expect(Math.round(c.atHour * 60)).toBe(768);          // 12:48
+    expect(/leave by 12:48/.test(c.what)).toBe(true);
+  });
+
+  it('uses the FURTHEST point, not a guess at where he will be', () => {
+    // Where he will be depends on the clock, and the clock is the thing that cannot be trusted.
+    // A bound, not a prediction.
+    const near = { legs: [{ id: 'L1', transitFromRampM: 500, transitToRampM: 800 }] };
+    expect(weatherCues(near, storm)[0].atHour > weatherCues(plan, storm)[0].atHour).toBe(true);
+  });
+
+  it('gives one evacuation notice, not one per stormy hour', () => {
+    const long = [{ hour: 14, code: 95, thunder: true }, { hour: 15, code: 95, thunder: true },
+                  { hour: 16, code: 99, thunder: true }];
+    expect(weatherCues(plan, long).filter((c) => c.severity === 'stop').length).toBe(1);
+  });
+
+  it('grades rain rather than blocking it — that call is his', () => {
+    const rain = [{ hour: 12, code: 61, rain: true, chancePct: 70 }];
+    const [c] = weatherCues(plan, rain);
+    expect(c.severity).toBe('note');
+    expect(/not a reason to come in/.test(c.what)).toBe(true);
+  });
+
+  it('says nothing when the forecast is fine, and nothing when there is no forecast', () => {
+    expect(weatherCues(plan, [{ hour: 9, code: 3 }]).length).toBe(0);
+    expect(weatherCues(plan, null).length).toBe(0);
   });
 });
