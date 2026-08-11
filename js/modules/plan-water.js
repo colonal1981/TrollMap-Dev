@@ -373,6 +373,15 @@ export function reasons(piece, o) {
                     ? ` It sets you toward the deeper side, which is the forgiving direction.`
                     : ` The bottom has no consistent shallow flank on this piece, so which way it `
                       + `sets you is yours to read on the day.`));
+      // IN THE LEE, when the land is upwind of the water. § 7's example verbatim: "First-light
+      // bank, and today's southwest puts it in the lee." Only sayable now that the shoreline is
+      // in hand -- the depth gradient could never answer it.
+      const sh = piece.shoreAspect;
+      if (sh && sh.distM <= 400 && angleBetween(sh.bearingDeg, wind.deg) <= 60) {
+        forIt.push(`the bank is upwind of this water and ${sh.distM} m off, so it is in the lee `
+                 + `today — the ${Math.round(cross)} mph will be a good deal less on the water `
+                 + `than it is on the forecast`);
+      }
     } else if (cross <= 3 && Math.abs(head) >= 6) {
       forIt.push(`the wind runs along this line rather than across it, so it costs speed rather `
                + `than steering — the easier of the two on a boat you hold by hand`);
@@ -569,6 +578,82 @@ export function shallowSide(coords, depthAt, { offM = 25, samples = 9, minDiffFt
     diffFt: Number((diffSum / voted).toFixed(1)),
     sampled: n,
   };
+}
+
+/**
+ * WHERE THE LAND IS — the real bank this time, not the depth gradient.
+ *
+ * Ryan: "we have the shoreline loaded to R2 i assume it is vectorized... you can compare current
+ * location to shore location to get which side is which correct?" Yes, and it is: Wateree's
+ * `garmin_shoreline.geojson` is 2,573 LineStrings, 26,213 vertices, 1 MB, and it already ships.
+ *
+ * This is the quantity `shallowSide()` deliberately does NOT provide. They answer different
+ * questions and must not be substituted for each other:
+ *
+ *   shallowSide   which way the bottom rises inside the wander -> does drifting cost me a bait
+ *   shoreAspect   which way the LAND is                        -> shade, and shelter from wind
+ *
+ * A channel-edge leg mid-lake has a shallow flank and no bank within half a mile. A leg tight to a
+ * bluff has both, and they can point opposite ways.
+ *
+ * COVERAGE IS PARTIAL AND THE CALLER MUST COPE. 385 packs carry a shoreline and 543 carry trolling
+ * runs; 322 carry both. So this returns null a lot, and null has to read as "not known" everywhere
+ * downstream rather than "no bank".
+ *
+ * @returns {?{bearingDeg:number, distM:number, sampled:number}} bearing FROM the water TO the land
+ */
+export function shoreAspect(coords, shoreIndex, { samples = 7, maxM = 1200 } = {}) {
+  if (!Array.isArray(coords) || coords.length < 2 || !shoreIndex || !shoreIndex.nearest) return null;
+  let sx = 0, sy = 0, dSum = 0, n = 0;
+  for (let k = 1; k <= samples; k++) {
+    const i = Math.floor((k / (samples + 1)) * (coords.length - 1));
+    const hit = shoreIndex.nearest(coords[i], maxM);
+    if (!hit) continue;
+    const b = (bearingDeg(coords[i], hit.at) * Math.PI) / 180;
+    // Averaged as unit VECTORS, not as degrees. Averaging 350 and 10 arithmetically gives 180 --
+    // the exact opposite of the answer -- and a leg running along a bank straddles north often.
+    sx += Math.sin(b); sy += Math.cos(b);
+    dSum += hit.distM; n++;
+  }
+  if (!n) return null;
+  return {
+    bearingDeg: ((Math.atan2(sx, sy) * 180) / Math.PI + 360) % 360,
+    distM: Math.round(dSum / n),
+    sampled: n,
+  };
+}
+
+/**
+ * Solar azimuth in degrees, 0 = north, clockwise. Standard NOAA solar position.
+ *
+ * Arithmetic, not a model: the sun's position for a date and a place is settled to a fraction of a
+ * degree and nothing about it is a fishing judgement. `hourUTC` is decimal hours.
+ */
+export function sunAzimuthDeg(dateUTC, lat, lon, hourUTC) {
+  // NO FLOOR. Days since J2000 must keep their fraction: J2000 is NOON on 2000-01-01, so a
+  // midnight `dateUTC` is X.5 days out and flooring it threw away half a day. Sidereal time
+  // advances ~15 deg/hour, so half a day is ~180 deg -- which is exactly what the first version
+  // did: it put the sun due west at seven in the morning. Caught by printing four hours of a
+  // real day and looking at them.
+  const d = (dateUTC - Date.UTC(2000, 0, 1, 12)) / 86400000 + hourUTC / 24;
+  const g = ((357.529 + 0.98560028 * d) * Math.PI) / 180;
+  const q = 280.459 + 0.98564736 * d;
+  const L = ((q + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * Math.PI) / 180;
+  const e = ((23.439 - 0.00000036 * d) * Math.PI) / 180;
+  const ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L));
+  const dec = Math.asin(Math.sin(e) * Math.sin(L));
+  const gmst = (18.697374558 + 24.06570982441908 * d) % 24;
+  const lst = ((gmst + lon / 15) * 15 * Math.PI) / 180;
+  const H = lst - ra;
+  const p = (lat * Math.PI) / 180;
+  const az = Math.atan2(Math.sin(H), Math.cos(H) * Math.sin(p) - Math.tan(dec) * Math.cos(p));
+  return ((az * 180) / Math.PI + 180) % 360;
+}
+
+/** Degrees between two bearings, 0-180. */
+function angleBetween(a, b) {
+  const d = Math.abs(((a - b) % 360 + 540) % 360 - 180);
+  return 180 - d;
 }
 
 /** The worst wind in the window, which is what the pessimistic end is costed against. */
@@ -990,6 +1075,9 @@ export function offerWater(lanes, o) {
   const keyed = built.pieces.map((p, i) => ({
     ...p, key: `w${i}`,
     shallowSide: o.depthAt ? shallowSide(p.coords, o.depthAt) : null,
+    // Null wherever the pack has no shoreline -- 322 of 543 run-carrying packs have one, so this
+    // is absent often and every reader treats absent as "not known", never as "no bank".
+    shoreAspect: o.shoreIndex ? shoreAspect(p.coords, o.shoreIndex) : null,
   }));
   // Partners first: a piece's best argument is usually the one next to it, so reasons() cannot
   // be written until the whole set is known.
