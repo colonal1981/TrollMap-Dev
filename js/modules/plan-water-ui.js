@@ -350,10 +350,12 @@ export async function findWater() {
   // I offered twice before checking the bucket. 385 packs carry a shoreline against 543 carrying
   // runs, so the shoreline is genuinely absent a lot and its absence must stay silent rather than
   // become a claim of open water.
-  const [fc, daFc, slFc] = await Promise.all([
+  const [fc, daFc, slFc, wfFc, stFc] = await Promise.all([
     get(`/${r2Key}/trolling_runs.geojson`),
     get(`/${r2Key}/depth_areas.geojson`).catch(() => null),
     get(`/${r2Key}/garmin_shoreline.geojson`).catch(() => null),
+    get(`/${r2Key}/water_features.geojson`).catch(() => null),
+    get(`/${r2Key}/structure.geojson`).catch(() => null),
   ]);
   const lanes = (fc && fc.features) || [];
   if (!lanes.length) return say(`${inp.lakeName} has no trolling runs in its chartpack`, true);
@@ -403,6 +405,9 @@ export async function findWater() {
       windByHour: forecast ? forecast.windByHour : null,
       depthAt: daFc && daFc.features ? depthSampler(daFc.features) : null,
       shoreIndex: slFc && slFc.features ? shorelineIndex(slFc.features) : null,
+      // The real points, coves, creek mouths, humps and ledges, so a cast spot snaps to the thing
+      // itself rather than to a guess at where along a lane it sat. See castSpots().
+      spotFeatures: [...((wfFc && wfFc.features) || []), ...((stFc && stFc.features) || [])],
       // Local time, for "the sun is behind the bank from 07:00". getTimezoneOffset() is minutes
       // WEST of UTC and positive for the Americas, so the sign flips — EDT is +240 there and -4
       // here. Taken from the machine because Ryan plans at the computer the night before, on the

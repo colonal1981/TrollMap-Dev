@@ -24,6 +24,7 @@ import { buildSmartPlanV2, packFetcher, modelAsker, waterRouter } from './smart-
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
 import { materialisePlan } from './plan-tracks.js';
+import { loadSessionFromPlan } from './notifications.js';
 import { planIssuesHtml } from './plan-issues.js';
 import { renderAll } from '../core/map-init.js';
 
@@ -281,7 +282,15 @@ export async function runSmartPlanV2() {
   // from the timeline; materialisePlan replaces them with one waypoint per stop at the stop's
   // own `at`, so the export carries the plan's positions rather than a second set derived from
   // them. Last writer wins, and the plan should be the last writer.
-  const gpx = materialisePlan(r.plan, { launch: ramp, win: window });
+  // SAME OUTPUT AS THE WATER TAB, because there is no reason for a plan to carry less just for
+  // having been chosen by the model. Pick Water gained charted-structure waypoints and Echomap
+  // alerts on 2026-08-11 and this path did not, which would have meant two plans behaving
+  // differently on the same boat on the same lake -- the sort of divergence you only discover in
+  // the garage with the Echomap in your hand.
+  const gpx = materialisePlan(r.plan, { launch: ramp, win: window, marks: true });
+  // planCues() and weatherCues() go to the thing that can actually reach him. The phone is not the
+  // interface; the Echomap is.
+  loadSessionFromPlan(r.plan, { weatherByHour: forecast ? forecast.weatherByHour : null });
   try { renderAll(); } catch (e) { console.warn('[plan-v2] map redraw failed:', e.message); }
 
   // A safety call made on a daily maximum is a safety call made on the wrong number, and the

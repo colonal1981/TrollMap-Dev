@@ -994,8 +994,8 @@ const SPOT_KINDS = {
  * arrays and is one stand of timber. Same failure the lanes themselves had, same fix: collapse on
  * where it is, not on which row mentioned it.
  */
-export function castSpots(lanes, { cellM = 40 } = {}) {
-  const seen = new Map();
+export function castSpots(lanes, { features = null, mergeM = 60 } = {}) {
+  const raw = [];
   for (const f of (lanes || [])) {
     const p = (f && f.properties) || {};
     const coords = (f.geometry && f.geometry.coordinates) || [];
@@ -1004,25 +1004,72 @@ export function castSpots(lanes, { cellM = 40 } = {}) {
     for (const n of (p.near || [])) {
       const label = SPOT_KINDS[n.t];
       if (!label || n.s == null) continue;
-      // `near` gives metres along the lane, not a position, so the position is read off the lane's
-      // own geometry at that distance. Approximate by fraction of length -- the lanes are sampled
-      // at ~10 m and a cast spot is a place to stop, not a waypoint to steer to.
       const at = coords[Math.max(0, Math.min(coords.length - 1,
                                              Math.round((n.s / total) * (coords.length - 1))))];
-      if (!at) continue;
-      const key = `${n.t}:${Math.round(at[0] * 111320 / cellM)},${Math.round(at[1] * 110540 / cellM)}`;
-      const prev = seen.get(key);
-      // Keep the sighting closest to a charted line: it is the best-positioned one.
-      if (!prev || n.d < prev.offM) {
-        seen.set(key, { key: `s${seen.size}`, type: n.t, what: label, at, offM: n.d,
-                        // DEPTH ONLY WHERE THE PACK HAS ONE. Timber, piles and attractors carry
-                        // none anywhere in the packs, and the height a stand of wood rises off the
-                        // bottom is not a number that exists: "how tall is every tree claude???"
-                        depthFt: Number.isFinite(n.depth_ft) ? n.depth_ft : null });
-      }
+      if (at) raw.push({ type: n.t, what: label, at, offM: n.d });
     }
   }
-  return [...seen.values()];
+
+  // SNAP TO THE REAL THING WHERE THE PACK HAS ONE, AND THAT IS MOST OF THEM.
+  //
+  // `near[]` gives metres along a lane, not a position, so the position above is estimated by
+  // fraction-of-length — and a lane is not uniformly sampled, so the estimate wanders. The SAME
+  // headland appears in the `near` of every nested contour that passes it, each one guessing a
+  // slightly different spot, and the first version of this deduped on a 40 m grid of those
+  // guesses. Wateree has 341 points in water_features.geojson. It reported 2,715.
+  //
+  // But the real ones are right there: water_features.geojson carries every point, cove and creek
+  // mouth with exact coordinates, and structure.geojson carries humps and ledges. So a hit is
+  // snapped to the nearest real feature of its own kind and deduped on THAT — an identity, not a
+  // guess. Timber, piles and attractors exist only in `near[]` and have no such file, so they keep
+  // the estimate and are merged by distance instead of by grid cell, because a grid puts a
+  // boundary between two marks 5 m apart roughly one time in ten.
+  const byKind = new Map();
+  for (const f of (features || [])) {
+    const g = f && f.geometry;
+    const kind = (f.properties || {}).kind;
+    if (!g || !kind || g.type !== 'Point') continue;
+    if (!byKind.has(kind)) byKind.set(kind, []);
+    byKind.get(kind).push({ at: g.coordinates, id: (f.properties || {}).id || null,
+                            depthFt: Number((f.properties || {}).depth_ft) });
+  }
+
+  const out = new Map();
+  for (const r of raw) {
+    const real = byKind.get(r.type);
+    let key = null, at = r.at, id = null, depthFt = null;
+    if (real) {
+      let best = null, bd = Infinity;
+      for (const c of real) {
+        const d = metresBetween(r.at, c.at);
+        if (d < bd) { bd = d; best = c; }
+      }
+      // Generous, because the estimate is what is loose here, not the feature.
+      if (best && bd <= 250) {
+        at = best.at; id = best.id;
+        depthFt = Number.isFinite(best.depthFt) && best.depthFt > 0 ? best.depthFt : null;
+        key = `${r.type}@${at[0].toFixed(5)},${at[1].toFixed(5)}`;
+      }
+    }
+    if (!key) {
+      // No file to snap to. Merge against what has already been kept, by real distance.
+      for (const [k, v] of out) {
+        if (v.type !== r.type) continue;
+        if (metresBetween(r.at, v.at) <= mergeM) { key = k; break; }
+      }
+      if (!key) key = `${r.type}~${r.at[0].toFixed(5)},${r.at[1].toFixed(5)}`;
+    }
+    const prev = out.get(key);
+    // Keep the sighting closest to a charted line: it is the best-positioned one.
+    if (!prev || r.offM < prev.offM) {
+      out.set(key, { key: `s${out.size}`, type: r.type, what: r.what, at, offM: r.offM,
+                     structureId: id,
+                     // DEPTH ONLY WHERE THE PACK HAS ONE. Timber, piles and attractors carry none
+                     // anywhere: "how tall is every tree claude??? that is the answer lol"
+                     depthFt });
+    }
+  }
+  return [...out.values()];
 }
 
 /** Metres from a point to the nearest part of a piece's line. */
@@ -1175,6 +1222,6 @@ export function offerWater(lanes, o) {
   }));
   // Spots are gathered here and PRICED later, by priceSpots(), because their price depends on
   // what has been ticked and that is not known yet. Gathering is expensive; pricing is cheap.
-  const spots = castSpots(lanes);
+  const spots = castSpots(lanes, { features: o.spotFeatures || null });
   return { ...built, pieces, spots, minM, depthAxis: 'minimum water depth, ft' };
 }
