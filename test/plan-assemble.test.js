@@ -1,6 +1,6 @@
 import { describe, it, expect } from './expect-shim.mjs';
 import {
-  assemblePlan, parseClock, formatClock, planRoute, planCues, validatePlan,
+  assemblePlan, parseClock, formatClock, planRoute, planCues, validatePlan, depthCues,
 } from '../js/modules/plan-assemble.js';
 import { structureIndex, resolveStructure, selectCandidates, forModel } from '../js/modules/plan-candidates.js';
 import { metresBetween } from '../js/modules/plan-candidates.js';
@@ -703,5 +703,59 @@ describe('plan-candidates — what the model is told to avoid', () => {
     // and the height they stand off the bottom is not a number that exists. Ryan, asked whether a
     // rule of thumb could fill it: "how tall is every tree claude??? that is the answer lol"
     expect(m.structures.filter((s) => !s.worthFishing).every((s) => s.depthFt === null)).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// DEPTH CUES — the fourth notification, and the one only the envelope can answer.
+//
+// "depth change, lure change, weather warnings, stop and cast coming up". The sounder finds a
+// shoal when the boat is on it, which is late: the baits are still 60-100 ft behind.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+describe('depthCues', () => {
+  const leg = (env) => ({ legs: [{ id: 'L1', startM: 0, lengthM: 1000, stops: [],
+                                   envelope: env, envelopeStepM: 40 }] });
+  const flat = () => Array(25).fill(30);
+  const withShoal = () => { const e = flat(); e[10] = 8; e[11] = 9; return e; };
+
+  it('warns one spread-length early, so the baits still have water', () => {
+    // The lead is DERIVED, not chosen: a bait reaches a spot about one spread after the boat, and
+    // the spread is a number the app already sets. Want more warning, run a longer spread.
+    const [c] = depthCues(leg(withShoal()), { spreadM: 27 });
+    expect(c.atM).toBe(373);          // shoal at 400 m, fired at 373
+    expect(c.depthFt).toBe(8);
+  });
+
+  it('fires once per shoal, not once per station', () => {
+    expect(depthCues(leg(withShoal())).length).toBe(1);
+  });
+
+  it('says nothing on flat water', () => {
+    // THE BUG THIS PINS. `min` is the shallowest station, so on flat water EVERY station is the
+    // shallowest — the first version announced "30 ft ahead, the shallowest water on this leg"
+    // every 40 m down a 30 ft leg. Noise dressed as a warning.
+    expect(depthCues(leg(flat())).length).toBe(0);
+  });
+
+  it('ignores a rise smaller than the chart can resolve', () => {
+    const gentle = flat(); gentle[10] = 29;
+    expect(depthCues(leg(gentle)).length).toBe(0);
+  });
+
+  it('never fires on uncharted water — unknown is not shallow', () => {
+    const unknown = flat(); unknown[5] = -1;
+    expect(depthCues(leg(unknown)).length).toBe(0);
+  });
+
+  it('is silent on a leg that never measured an envelope', () => {
+    expect(depthCues({ legs: [{ id: 'L1', startM: 0, stops: [] }] }).length).toBe(0);
+  });
+
+  it('reaches planCues, keyed on distance along the whole day', () => {
+    const p = leg(withShoal());
+    p.legs[0].startM = 2000;
+    const cues = planCues(p);
+    const d = cues.find((c) => c.kind === 'depth');
+    expect(d.atM).toBe(2373);
   });
 });

@@ -339,6 +339,11 @@ export function assemblePlan(o) {
         ? (c.coordinates ? c.coordinates.slice().reverse() : [legStart, legEnd])
         : (c.coordinates || [legStart, legEnd]),
       trolledReversed: flipped || undefined,
+      // Reversed with the geometry, because station 0 is the start of the line AS DRAWN and a
+      // flipped leg meets the stations the other way round. Absent on candidates that never
+      // measured one, and every reader treats absent as "not known".
+      envelope: c.envelope ? (flipped ? c.envelope.slice().reverse() : c.envelope) : undefined,
+      envelopeStepM: c.envelopeStepM,
       stops,
       // WHAT THE LEG GOES BY, not just what the model chose to stop on.
       //
@@ -507,7 +512,71 @@ export function planCues(plan) {
   for (const c of (plan.changes || [])) {
     cues.push({ atM: c.atM, kind: 'change', ref: c.id, what: `${c.rodId} → ${c.to}`, cost: c.cost });
   }
+  cues.push(...depthCues(plan));
   return cues.sort((a, b) => a.atM - b.atM);
+}
+
+/**
+ * THE SHALLOW SPOT, ANNOUNCED BEFORE YOU REACH IT.
+ *
+ * Ryan's notification list: "depth change, lure change, weather warnings, stop and cast coming
+ * up". Three of those already exist as cues. This is the fourth, and it is the one only the
+ * envelope can answer — the sounder finds a shoal when the boat is on it, which is late, because
+ * THE BAITS ARE STILL BEHIND THE BOAT.
+ *
+ * WHICH IS WHERE THE LEAD COMES FROM, and it is derived rather than invented. The spread runs
+ * 60–100 ft behind — "a number the app already sets" — so a bait reaches a spot roughly one
+ * spread-length after the boat does. Firing the cue one spread-length early means the warning
+ * arrives while there is still water between the baits and the shoal. No reaction-time constant
+ * is guessed at; if he wants more warning that is a longer spread, and the number moves with it.
+ *
+ * WHAT COUNTS AS A CHANGE is measured against the leg's own water, not a constant. A 6 ft rise on
+ * a leg that runs 40 ft deep is scenery; the same rise on a leg that holds 12 ft is the spot that
+ * decides the whole pass. So the trigger is the shallowest station on the leg and anything within
+ * a stone's throw of it, which is exactly the water `holdsFt` was already reporting.
+ *
+ * Silent when the leg carries no envelope. Absent is not flat.
+ */
+export function depthCues(plan, { spreadM = 27 } = {}) {
+  const out = [];
+  for (const leg of ((plan && plan.legs) || [])) {
+    const env = leg.envelope;
+    const step = leg.envelopeStepM;
+    if (!Array.isArray(env) || env.length < 3 || !(step > 0)) continue;
+    const real = env.filter((d) => d >= 0);
+    if (!real.length) continue;
+    const min = Math.min(...real);
+    // A DEPTH-CHANGE CUE HAS TO FIRE ON A CHANGE, and the first version did not check for one.
+    // `min` is the shallowest station, so on FLAT water every station is the shallowest and it
+    // fired at all of them -- a 30 ft leg announcing "30 ft ahead, the shallowest water on this
+    // leg" every 40 m, which is noise dressed as a warning.
+    //
+    // The bar is 2 ft below the leg's own median, and 2 ft is not a preference: the chart is
+    // contoured in feet, the corridor spans 1-4 ft on Wateree, and the pool sits about two feet
+    // down. A rise smaller than that is inside the measurement, not a shoal.
+    const sorted = real.slice().sort((a, b) => a - b);
+    const median = sorted[sorted.length >> 1];
+    if (min > median - 2) continue;
+    // Within 2 ft of the shallowest is the same spot as far as a bait is concerned.
+    let fired = -Infinity;
+    for (let i = 0; i < env.length; i++) {
+      if (env[i] < 0 || env[i] > min + 2) continue;
+      const spotM = i * step;
+      // One cue per shoal, not one per station: consecutive stations are the same shallow water.
+      if (spotM - fired < spreadM * 3) continue;
+      fired = spotM;
+      const atM = Math.max(0, spotM - spreadM);
+      out.push({
+        atM: (leg.startM || 0) + atM,
+        kind: 'depth', legId: leg.id, ref: `${leg.id}:d${i}`,
+        depthFt: env[i],
+        aheadM: spreadM,
+        what: `${env[i]} ft in ${spreadM} m — the shallowest water on this leg, and your baits `
+            + `are still behind you`,
+      });
+    }
+  }
+  return out;
 }
 
 /** A plan whose distance spine is broken cannot drive the phone. Returns a list of problems. */

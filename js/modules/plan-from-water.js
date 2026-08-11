@@ -97,6 +97,11 @@ function legFrom(piece, i, ramp, slug) {
     estMin: Math.round(minutesFor(lengthM, TROLL_MPH)),
     runLedges: null,
     support: null,
+    // THE ENVELOPE RIDES ALONG so the day can warn about a shallow spot before the sounder finds
+    // it. It is the shallowest water within the wander at every station, which is the number that
+    // decides whether a bait clears -- see plan-pieces.js.
+    envelope: piece.envelope,
+    envelopeStepM: piece.envelopeStepM,
     // Carried so the prompt can say what this water offers without recomputing it.
     offers: piece.offers,
     partners: (piece.partners || []).length,
