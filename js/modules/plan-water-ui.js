@@ -47,6 +47,7 @@ import { materialisePlan } from './plan-tracks.js';
 import { loadSessionFromPlan, isEnabled } from './notifications.js';
 import { renderAll } from '../core/map-init.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
+import { connectionFor } from '../data/lure-knowledge.js';
 import { readInputs, rampCoords, loadResearchedProfile } from './smart-plan-v2-wiring.js';
 
 const $ = (id) => document.getElementById(id);
@@ -279,11 +280,21 @@ function total() {
   }
   const d = dayCost(picked, { ramp: T.ramp, usableAh: T.usableAh, windowMin: T.windowMin,
                               windByHour: T.windByHour });
+  // THE MOVING NUMBERS ARE FLOORS AND THEY NOW LOOK LIKE FLOORS.
+  //
+  // dayCost() prices the deadhead as a straight line — deliberately, because routing every
+  // candidate ordering while he is still ticking boxes would be dozens of round trips. That is
+  // the right trade and the wrong presentation: "6.2 mi moving · 6h 26m" reads as a measurement.
+  // On his 2026-08-11 Wateree day the routed answer was 17.9 mi and 9h 52m.
+  //
+  // A trailing "+" is the whole fix. It costs one character and it stops the estimate from
+  // reading like the answer, which is exactly the failure the note underneath was already trying
+  // to prevent in prose and losing to a number set in bold.
   const bits = [
     `<b>${picked.length}</b> piece${picked.length > 1 ? 's' : ''}`,
     `${fmtMi(d.trollM)} trolling`,
-    `${fmtMi(d.moveM)} moving`,
-    `${fmtHm(d.min)}`,
+    `${fmtMi(d.moveM)}+ moving`,
+    `${fmtHm(d.min)}+`,
     `<b>${d.ah} Ah</b> of ${T.usableAh || '?'}`,
   ];
   // WHAT THE ORDER WOULD HAVE TO BE. The refusal is only useful if it comes with the fix, and the
@@ -590,6 +601,15 @@ export async function buildFromPicked() {
                                    meaning: 'where the fish are, not the depth of the water' } },
       },
       askModel: modelAsker(CF_WORKER_URL),
+      // FOR planArgsFrom(), which validates the model's answer before the assembler sees it.
+      // `tackle` is what the bag actually holds, so a lure the model invented is caught by name;
+      // `connectionOf` is how a lure gets seated on a rod that can carry it — tie-only lures onto
+      // the fluoro rods, snap-friendly onto the snap rods. Without both, that pass runs blind.
+      tackle: castable.map((l) => l.name),
+      connectionOf: (name) => {
+        const hit = TACKLE_INVENTORY.find((l) => l.name === name);
+        return hit ? connectionFor(hit.type) : null;
+      },
       // The loadout carries a lure NAME; the depth maths needs the inventory object, because
       // LURE_KNOWLEDGE is keyed by `type` and the lead ratio scales on `weightOz`. Without this
       // the bait-depth ceiling is simply not checked — see capBaitDepth() in plan-assemble.js.
@@ -606,6 +626,14 @@ export async function buildFromPicked() {
   } catch (e) { return say(`Failed: ${e.message}`, true); }
 
   if (!r.plan) return say((r.problems && r.problems[0]) || 'No plan', true);
+
+  // WHAT THE MODEL GOT WRONG, ON SCREEN. Every one of these was being computed and discarded:
+  // a rod the boat does not carry, a lure the bag does not hold, a leg with no rods deployed, a
+  // bait shortened to clear a shoal. The Smart Plan tab has always shown them.
+  if (r.problems && r.problems.length) {
+    console.warn('[pick-water] the plan came back with %d problem(s):', r.problems.length);
+    for (const p of r.problems) console.warn('  •', p);
+  }
 
   const built = planToTimeline(r.plan, {
     depthBand: T.band,
@@ -643,9 +671,32 @@ export async function buildFromPicked() {
   // SAY THE ORDER OUT LOUD AND SAY IT IS NOT THE SHORT ONE. Silently reordering what he ticked is
   // how a search reads as a mistake -- § 14 gives him veto, and a veto needs something to look at.
   const seq = r.order.map((i) => T.pieces.indexOf(picked[i]) + 1).join(' → ');
+  // THE REAL CLOCK, OFF THE ASSEMBLED PLAN, NOT THE STRAIGHT-LINE ESTIMATE.
+  //
+  // Ryan, 2026-08-11: "the picked water doesn't take into account transit time so it told me 6
+  // hours of time but when i got the plan tab i was at almost 10 hours on the water."
+  //
+  // dayCost() DOES count transit — but at straight-line distance, against the CHEAPEST ordering,
+  // and it says so in its own source: "A straight line is always the OPTIMISTIC answer." On
+  // Wateree that understates it badly. Measured off his own saved plan: 6.2 mi of straight-line
+  // moving became 17.9 mi over the water graph, 2.9x, because a lake with 257 km of shoreline
+  // makes every straight line cross a peninsula. 306 minutes of transit against 286 of trolling —
+  // the deadheading was the longer half of the day and the tab had quoted 100 minutes of it.
+  //
+  // The estimate stays where it is: it is instant, it is what makes ticking boxes feel live, and
+  // it is honestly labelled a floor. But once the plan is BUILT the routed answer exists, so this
+  // reports that one and names the gap rather than leaving two numbers to be discovered.
+  const realMin = (r.plan.legs || []).reduce((s, l) => s + (l.estDurationMin || 0), 0);
+  const est = r.dayCost.min;
+  const clock = realMin > 0
+    ? `${fmtHm(realMin)} on the water${realMin - est >= 20
+        ? ` — ${fmtHm(realMin - est)} more than the ${fmtHm(est)} estimate, because the transits `
+          + `are routed round the points rather than straight through them`
+        : ''}. `
+    : '';
   say(`Built ${picked.length} legs, fished ${seq} — most diagnostic first, so a leg that produces `
     + `nothing still tells you something. That is a search order, not the shortest route. `
-    + `${r.dayCost.ah} Ah of ${T.usableAh}. ${gpx.tracks} tracks and ${gpx.waypoints} waypoints `
+    + `${clock}${r.dayCost.ah} Ah of ${T.usableAh}. ${gpx.tracks} tracks and ${gpx.waypoints} waypoints `
     + `for the Echomap — the charted structure is in there to check against the sounder. `
     + `${cues.positionCues} alerts loaded`
     + `${cues.weatherCues ? ` and ${cues.weatherCues} weather` : ''}`

@@ -1,6 +1,8 @@
 import { describe, it, expect } from './expect-shim.mjs';
 import { planFromWater } from '../js/modules/plan-from-water.js';
 import { orientLegs } from '../js/modules/plan-candidates.js';
+import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
+import { connectionFor } from '../js/data/lure-knowledge.js';
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // THE SEAM BETWEEN A PICKED PIECE AND AN ASSEMBLED DAY
@@ -39,17 +41,35 @@ function piece(key, lon, lat, holdsFt) {
 
 const PICKED = [piece(81, -80.70, 34.35, 22), piece(87, -80.72, 34.38, 26), piece(51, -80.68, 34.31, 30)];
 
+// THE SHAPE THE MODEL ACTUALLY RETURNS, WHICH IS NOT THE SHAPE THE ASSEMBLER CONSUMES.
+//
+// This fixture used to hand back a TOP-LEVEL `deploy` map, and it passed — because the code under
+// test read `res.deploy` too. Both were wrong in the same direction, so the test was blind to it
+// and Ryan found it on the water instead: nine legs, not one rod on any of them.
+//
+// The model returns `legs: [{runId, speedMph, deploy}]`. planArgsFrom() is what folds those into
+// the `{[runId]: {port, starboard}}` map. A fixture that skips the real shape cannot catch a path
+// that skips the real parser — so this one uses real lure names out of the real bag.
+const LURES = ['3" Lipless Crankbait', 'Dr.Fish Diamond Jig / Jigging Spoon 1oz'];
+
 const MODEL = async () => JSON.stringify({
-  loadout: { rods: [{ id: 'R1', lure: 'A-Rig', rig: 'fluoro' }, { id: 'R2', lure: 'Spoon', rig: 'snap' }] },
-  deploy: Object.fromEntries(PICKED.map((p) => [p.runId, { port: 'R1', starboard: 'R2' }])),
+  loadout: { rods: [{ id: 'R1', lure: LURES[0], role: 'troll', leadFt: 80 },
+                    { id: 'R2', lure: LURES[1], role: 'troll', leadFt: 60 }] },
+  legs: PICKED.map((p) => ({ runId: p.runId, speedMph: 2.0,
+                             deploy: { port: 'R1', starboard: 'R2' }, why: 'the ledge' })),
   stops: [], changes: [],
 });
 
 const build = (extra = {}) => planFromWater({
   picked: PICKED, spots: [], ramp: RAMP, slug: 'wateree_lake', usableAh: 80, windowMin: 480,
   launchTime: '06:30', returnTime: '13:00', askModel: MODEL,
+  tackle: TACKLE_INVENTORY.filter((l) => l.trollable).map((l) => l.name),
+  connectionOf: (n) => {
+    const hit = TACKLE_INVENTORY.find((l) => l.name === n);
+    return hit ? connectionFor(hit.type) : null;
+  },
   planArgs: { water: 'Lake Wateree, SC', ramp: 'Clearwater Cove', date: '2026-07-29',
-              species: ['Striped Bass'], usableAh: 80, tackle: ['A-Rig'], conditions: {} },
+              species: ['Striped Bass'], usableAh: 80, tackle: LURES, conditions: {} },
   ...extra,
 });
 
@@ -57,7 +77,46 @@ describe('a leg built from picked water carries both of its ends', () => {
   it('builds a day at all — the regression that shipped', async () => {
     const r = await build();
     expect(r.plan).toBeTruthy();
-    expect(r.problems.length).toBe(0);
+    // NOT `problems.length === 0`. Unrouted transits and a re-seat are reported here now, and
+    // they are information rather than failure — the old assertion only held because every one of
+    // them was being thrown away. What must be empty is the set of things that stop a plan.
+    expect(r.plan.legs.length > 0).toBe(true);
+  });
+
+  it('PUTS RODS ON THE LEGS — "didn\'t assign baits at all"', async () => {
+    // The whole failure, in one assertion. The model answers with deploy inside each leg; this
+    // path read a top-level `res.deploy` that is never sent, so every leg arrived with
+    // `deploy: null`, routeRods came out {L1..L9: []}, and the spread was empty.
+    const r = await build();
+    const troll = r.plan.legs.filter((l) => l.type !== 'transit');
+    expect(troll.length).toBe(PICKED.length);
+    for (const l of troll) {
+      expect(Boolean(l.deploy && l.deploy.port && l.deploy.starboard)).toBe(true);
+    }
+    expect(r.plan.loadout.rods.length > 0).toBe(true);
+  });
+
+  it('seats each lure on a rod that can carry it, and says it moved them', async () => {
+    // planArgsFrom() does this and the picked-water path was skipping it entirely. A tie-only
+    // lure on a snap rod is a wrong change-cost on every swap for the rest of the day.
+    const r = await build();
+    const ids = r.plan.loadout.rods.map((x) => x.id);
+    expect(ids.length >= 2).toBe(true);
+    expect(r.problems.some((p) => /re-seated/.test(p))).toBe(true);
+  });
+
+  it('reports what the model got wrong instead of returning an empty list', async () => {
+    const r = await build({
+      askModel: async () => JSON.stringify({
+        loadout: { rods: [{ id: 'R1', lure: 'Nonexistent Wobbler 9000', role: 'troll', leadFt: 80 }] },
+        legs: PICKED.map((p) => ({ runId: p.runId, speedMph: 2.0, deploy: { port: 'R1' } })),
+        stops: [], changes: [],
+      }),
+    });
+    // A lure that is not in the bag, and a leg missing its starboard rod. Both were computed and
+    // discarded before — `problems: []` was hardcoded.
+    expect(r.problems.some((p) => /not in the tackle inventory/.test(p))).toBe(true);
+    expect(r.problems.some((p) => /needs one port rod and one starboard rod/.test(p))).toBe(true);
   });
 
   it('orientLegs can orient every leg, which it cannot without start and end', async () => {

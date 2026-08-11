@@ -36,7 +36,7 @@
 
 import { ampHours, minutesFor, metresBetween, cumulative } from './plan-candidates.js';
 import { assemblePlan } from './plan-assemble.js';
-import { buildPlanRequest, parsePlanResponse } from './plan-prompt.js';
+import { buildPlanRequest, parsePlanResponse, planArgsFrom } from './plan-prompt.js';
 import { prefetchTransits } from './smart-plan-v2.js';
 import { searchOrder, dayCost, priceSpots, TROLL_MPH, TRANSIT_MPH } from './plan-water.js';
 
@@ -248,15 +248,36 @@ export async function planFromWater(o) {
     return { plan: null, problems: [`The model did not answer usably: ${e.message}`], dayCost: cheapest };
   }
 
+  // THE MODEL'S ANSWER IS RAW UNTIL planArgsFrom() HAS BEEN OVER IT, AND THIS PATH SKIPPED IT.
+  //
+  // `parsePlanResponse()` is a JSON.parse and nothing more. The model returns `legs: [{runId,
+  // speedMph, deploy:{port,starboard}}]` — deploy lives INSIDE each leg — and it is planArgsFrom()
+  // that turns those into the `{[runId]: {port, starboard}}` map the assembler consumes, seats
+  // every lure on a rod that can carry it, and resolves lure names against the actual bag.
+  //
+  // This path read `res.deploy`, which the model never sends and which is therefore ALWAYS
+  // undefined. Ryan, 2026-08-11: "didn't assign baits at all". Measured off his saved plan:
+  // routeRods was {L1..L9: []} — nine legs, not one rod on any of them, while castRods filled in
+  // normally because stops are top-level and survived. Every leg reached the timeline with
+  // `deploy: null`, `rodsById.get(undefined)` returned undefined, and the spread came out empty.
+  //
+  // ITS `candidates` ARE DELIBERATELY DISCARDED. planArgsFrom() reorders to the model's leg list,
+  // and on this path the order is already Ryan's — see the header. `deploy` is keyed by runId so
+  // it does not care about order, which is what makes taking one and not the other safe.
+  //
+  // And its `problems` are returned instead of thrown away. A model that names a rod the boat
+  // does not carry, or a lure that is not in the bag, said so all along and nobody was listening.
+  const args = planArgsFrom(res, legs, { tackle: o.tackle, connectionOf: o.connectionOf });
+
   const plan = assemblePlan({
     // IN THE ORDER ALREADY DECIDED. assemblePlan documents `candidates` as "IN THE ORDER THE MODEL
     // CHOSE"; on this path the model chose nothing and the array is already the day.
     candidates: legs,
     launch: o.ramp,
-    loadout: res.loadout,
-    deploy: res.deploy,
-    stops: res.stops,
-    changes: res.changes,
+    loadout: args.loadout,
+    deploy: args.deploy,
+    stops: args.stops,
+    changes: args.changes,
     launchTime: o.launchTime,
     returnTime: o.returnTime,
     usableAh: o.usableAh,
@@ -266,9 +287,14 @@ export async function planFromWater(o) {
     lureByName: o.lureByName,
   });
 
+  plan.notes = args.notes;
+
   return {
     plan,
-    problems: [],
+    // WHAT THE MODEL GOT WRONG, SAID OUT LOUD. This was a hardcoded empty array, so a rod that is
+    // not on the boat, a lure that is not in the bag and a leg with no rods deployed all arrived
+    // silently. smart-plan-v2.js has always returned these.
+    problems: [...(args.problems || []), ...(plan.warnings || [])],
     dayCost: cheapest,
     order,
     // So the UI can say "the app put them in this order, and here is why" rather than silently
