@@ -1103,6 +1103,56 @@ def fit_pack(pack, a):
                 # taken over the whole pass from one taken over a third of it.
                 p2['charted_frac'] = round(float(ok.mean()), 3)
 
+            # ── THE NUMBER THAT DECIDES A SNAG. 2026-08-11. ────────────────────────────────
+            #
+            # Everything above measures the water ON the line. Ryan does not troll the line:
+            #
+            #     "remember i do not have gps steering... i am going to be weaving between those
+            #      lines no matter what we decide"     -- and, on how far: "call it no more than
+            #      50 meters"... later revised: "50 meters is probably too much lets try maybe
+            #      25m i dont think i sway 150 ft to a side"
+            #
+            # So the depth that matters is the SHALLOWEST WATER HE COULD REACH, not the depth
+            # underneath a centreline he cannot hold. On Wateree run #7 those differ by more
+            # than they have any right to: the line never comes shallower than 18.0 ft, and
+            # within 25 m there is 3.9 ft. A bait set from the first number is on the bottom.
+            #
+            # This is a MEASUREMENT and stays one -- no clearance, no margin, no bait depth.
+            # What clears what is a decision the app makes on the day, from the lure that is
+            # actually on the rod. See claude/WHAT_SMARTPLAN_IS_2026-08-09.md.
+            #
+            # Sampled across the pass at `envelope_step_m` and across the boat at
+            # `envelope_m` either side, perpendicular to travel. One raster call for the whole
+            # pass: the cost is a rounding error next to 250 smoothing iterations.
+            ev = _resample(piece, a.envelope_step_m)[0]
+            if len(ev) >= 2:
+                tan = np.zeros_like(ev)
+                tan[1:-1] = ev[2:] - ev[:-2]
+                tan[0] = ev[1] - ev[0]
+                tan[-1] = ev[-1] - ev[-2]
+                tl = np.hypot(tan[:, 0], tan[:, 1])
+                tl[tl == 0] = 1.0
+                nrm = np.stack([-tan[:, 1] / tl, tan[:, 0] / tl], axis=1)
+                offs = np.linspace(-a.envelope_m, a.envelope_m, 7)
+                probe = np.concatenate([ev + nrm * o for o in offs], axis=0)
+                v = np.asarray(depth.at_raw(probe), dtype=float).reshape(len(offs), len(ev))
+                with np.errstate(invalid='ignore'):
+                    lo = np.nanmin(np.where(np.isfinite(v), v, np.nan), axis=0) / 3.048
+                # -1 means nobody sounded it. NOT zero, and not the deepest thing nearby --
+                # uncharted has been mistaken for both in this file before and cost two bugs.
+                env = [(-1 if not np.isfinite(x) else int(round(x))) for x in lo]
+                p2['envelope_ft'] = env
+                p2['envelope_m'] = a.envelope_m
+                p2['envelope_step_m'] = a.envelope_step_m
+                real = [x for x in env if x >= 0]
+                if real:
+                    # THE HONEST SHALLOWEST, and it replaces the centreline one because the
+                    # centreline one describes a boat that does not exist. The old value is kept
+                    # under its own name rather than deleted -- it is still what the chart says
+                    # about the line, and the gap between the two is worth being able to see.
+                    p2['shallowest_line_ft'] = p2.get('shallowest_ft')
+                    p2['shallowest_ft'] = float(min(real))
+
             # Reachability is a property of a PASS, not of the run it was cut from: one half can
             # sit in a pocket the other half can be reached from.
             if idx is not None:
@@ -1301,6 +1351,13 @@ def main():
     ap.add_argument('--jobs', type=int, default=1,
                     help='packs in parallel. Each one is independent -- its own raster, its own '
                          'file -- so this scales with cores and nothing is shared')
+    # HOW FAR HE ACTUALLY WANDERS, and how often to ask. 25 m either side is his own revision
+    # of 50: "i dont think i sway 150 ft to a side... that is probably over stating it by a lot".
+    # 40 m along is one sample per ~20 seconds of trolling, which is finer than he can steer.
+    ap.add_argument('--envelope-m', type=float, default=25.0,
+                    help='half-width of the wander envelope the shallowest depth is read across')
+    ap.add_argument('--envelope-step-m', type=float, default=40.0,
+                    help='spacing of envelope samples along the pass')
     ap.add_argument('--annotate-m', type=float, default=100.0)
     ap.add_argument('--reach-m', type=float, default=120.0)
     ap.add_argument('--backup-dir', default=None,
