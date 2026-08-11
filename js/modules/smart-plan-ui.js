@@ -307,7 +307,13 @@ export function buildUnifiedTimeline({ routeRods, timeline, stopCandidates, rout
         const ao = a.routeContext ? (orderMap[a.routeContext.trackName] ?? 99) : 99;
         const bo = b.routeContext ? (orderMap[b.routeContext.trackName] ?? 99) : 99;
         if (ao !== bo) return ao - bo;
-        return (a.routeContext?.progressPct||a.routeContext?.etaMin||0) - (b.routeContext?.progressPct||b.routeContext?.etaMin||0);
+        // SORTED ON DISTANCE. PLAN_SCHEMA_V2: "THE PLAN IS INDEXED BY DISTANCE, NOT TIME...
+        // The clock starts drifting the moment he hooks a fish, and it never catches up."
+        // This read `progressPct || etaMin`, and plan-to-timeline stopped emitting both when the
+        // spine was fixed -- so every entry scored 0, the comparator was a no-op, and the order
+        // happened to be right only because planCues() had already sorted it. Dead keys that
+        // silently work are worse than dead keys that break.
+        return (a.atM ?? a.routeContext?.atM ?? 0) - (b.atM ?? b.routeContext?.atM ?? 0);
       });
 
       for (const stop of extra) {
@@ -321,7 +327,7 @@ export function buildUnifiedTimeline({ routeRods, timeline, stopCandidates, rout
             while (insertAt < unified.length && unified[insertAt].type === 'stop_and_cast') {
               const cur = unified[insertAt];
               if (cur.routeContext && stop.routeContext && cur.routeContext.trackName === tn) {
-                if ((cur.routeContext.progressPct||0) <= (stop.routeContext.progressPct||0)) {
+                if ((cur.atM ?? 0) <= (stop.atM ?? 0)) {
                   insertAt++;
                   continue;
                 }
@@ -352,7 +358,7 @@ export function buildUnifiedTimeline({ routeRods, timeline, stopCandidates, rout
       else grouped._between.push(e);
     });
     // Sort each by progress
-    Object.values(grouped).forEach(arr=> arr.sort((a,b)=>(a.routeContext?.progressPct||0)-(b.routeContext?.progressPct||0)));
+    Object.values(grouped).forEach(arr=> arr.sort((a,b)=>(a.atM ?? 0)-(b.atM ?? 0)));
 
     // Desired order per brief: Ph1 Out, stops, Ph1 In, stops (Channel Swing between phases), Ph2 Out, Ph2 In
     unified.push(makeTrollEntry('Ph1 Outbound'));

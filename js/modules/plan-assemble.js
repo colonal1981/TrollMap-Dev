@@ -340,6 +340,29 @@ export function assemblePlan(o) {
         : (c.coordinates || [legStart, legEnd]),
       trolledReversed: flipped || undefined,
       stops,
+      // WHAT THE LEG GOES BY, not just what the model chose to stop on.
+      //
+      // Ryan wants these on the Echomap as waypoints for a reason that is not navigation: "so i
+      // can see them on the echomap to compare if they are actually showing where 1 garmin says
+      // the structure is and 2 where the actual fish finder shows the structure is".
+      //
+      // That is a ground-truth loop, and it is the only instrument that can close the gaps this
+      // project keeps writing down as unmeasurable. `near[]` carries no depth for timber, piles or
+      // attractors, and how far a stand of wood rises off the bottom is "how tall is every tree
+      // claude??? that is the answer lol" -- but a sounder passing over a marked stand answers it
+      // one mark at a time. Same for whether the charted offsets are trustworthy at all.
+      //
+      // Mirrored on a flipped leg for the same reason `stops` are: `atM` is distance along the
+      // line AS DRAWN, and the boat may run it the other way.
+      marks: (c.passes || []).map((h) => ({
+        id: h.id, type: h.type, what: h.what, at: h.at,
+        atM: flipped ? Math.max(0, Math.round(legLen - h.atM)) : h.atM,
+        offM: h.offM,
+        // Null stays null. A waypoint labelled with a guessed depth would poison the very
+        // comparison it exists to enable.
+        depthFt: h.depthFt ?? null,
+        worthFishing: h.weight === undefined ? undefined : h.weight > 0,
+      })),
       // Reported, never scored. See catchSupport() in plan-candidates.js for why this is kept
       // out of the ranking, and why the resolution is "in this pocket" and not "on this line".
       yourHistory: c.support

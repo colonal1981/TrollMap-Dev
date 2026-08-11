@@ -111,7 +111,7 @@ export function planTracks(plan, runId = null) {
 }
 
 /** The launch, then one waypoint per stop at its own `at`, in the order the boat meets them. */
-export function planWaypoints(plan, launch = null, runId = null) {
+export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
   const out = [];
   if (Array.isArray(launch) && Number.isFinite(launch[0]) && Number.isFinite(launch[1])) {
     out.push({ name: 'Launch', lat: launch[1], lon: launch[0], sym: 'Boat Ramp',
@@ -132,6 +132,36 @@ export function planWaypoints(plan, launch = null, runId = null) {
         structureType: s.structureType || null,
         tacticalNote: s.why || s.presentation || '',
       });
+    }
+  }
+  // STRUCTURE THE LEGS GO BY, as its own waypoint class.
+  //
+  // Opt-in, because it is a different job from the stops. A stop is somewhere to fish; these are
+  // there to be CHECKED -- Garmin's charted position against what the sounder actually shows,
+  // which is the only way the packs' accuracy ever gets measured. On a Wateree leg that is a
+  // handful of marks; card-wide it would be thousands, so it is never on by default.
+  //
+  // `chartMark: true` rather than `castingStop`, so parsers.js does not turn them into CAST
+  // waypoints and smart-plan-ui does not list them as places to stop.
+  if (opts.marks) {
+    for (const leg of ((plan && plan.legs) || [])) {
+      for (const m of (leg.marks || [])) {
+        const at = Array.isArray(m.at) && m.at.length === 2 ? m.at : null;
+        if (!at || !Number.isFinite(at[0]) || !Number.isFinite(at[1])) continue;
+        // The name carries the CHARTED depth where there is one, because the whole point is to
+        // stand it next to the sounder and see whether they agree. No depth means no number in
+        // the name -- an empty field reads as "the chart does not say", a zero would not.
+        const d = Number.isFinite(m.depthFt) ? ` ${Math.round(m.depthFt)}ft` : '';
+        out.push({
+          name: `${String(m.type || 'mark').replace(/_/g, ' ')}${d}`,
+          lat: at[1], lon: at[0], sym: 'Shallow Water',
+          chartMark: true, scoutWaypoint: true, planRunId: runId,
+          legId: leg.id, markId: m.id, atM: (leg.startM || 0) + (m.atM || 0),
+          depth: m.depthFt ?? null,
+          structureType: m.type || null,
+          tacticalNote: 'charted position — compare with the sounder',
+        });
+      }
     }
   }
   return out;
@@ -156,11 +186,12 @@ export function materialisePlan(plan, o = {}) {
   if (!Array.isArray(state.DATA.waypoints)) state.DATA.waypoints = [];
 
   const tracks = planTracks(plan, runId);
-  const waypoints = planWaypoints(plan, o.launch, runId);
+  const waypoints = planWaypoints(plan, o.launch, runId, { marks: o.marks });
 
   // Everything this app generated goes; everything the user loaded stays.
   state.DATA.tracks = [...state.DATA.tracks.filter((t) => !t.scoutRoute && !t.smartPlan), ...tracks];
-  state.DATA.waypoints = [...state.DATA.waypoints.filter((w) => !w.scoutWaypoint && !w.castingStop),
+  state.DATA.waypoints = [...state.DATA.waypoints.filter((w) => !w.scoutWaypoint && !w.castingStop
+                                                                && !w.chartMark),
                           ...waypoints];
 
   return { runId, tracks: tracks.length, waypoints: waypoints.length,
