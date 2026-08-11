@@ -1138,6 +1138,16 @@
         </div><!-- /plan-builder -->
 
         <!-- ── PREVIEW TAB ──────────────────────────────────────────────── -->
+        </div><!-- /#plan-builder -- THIS CLOSER WAS MISSING.
+
+             Until 2026-08-11 `#plan-builder` had no closing tag, so `#plan-preview` was a CHILD
+             of it rather than a sibling. The two-tab wiring then hid the parent to show the
+             child, which cannot work: a descendant of a `display:none` element does not render.
+             Preview came up blank and nothing errored, because unbalanced HTML is not an error --
+             the browser just nests it and moves on.
+
+             It surfaced when Pick Water was added and came up empty for the same reason. -->
+
         <!-- ── PICK WATER ────────────────────────────────────────────────────
              THE FISHERMAN CHOOSES. This tab does not build a plan; it measures what each
              piece of water offers, writes the reasons beside it, and lets Ryan tick the

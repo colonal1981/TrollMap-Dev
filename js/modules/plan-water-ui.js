@@ -360,6 +360,16 @@ export function pickedWater() {
 }
 
 export function initWaterTab() {
+  // SAY WHAT THE TAB IS BEFORE IT HAS ANYTHING TO SHOW. An empty panel with one button reads as
+  // broken -- which is exactly how it read on 2026-08-11 when the panel really was broken, and
+  // the blankness gave no way to tell the two apart.
+  const s = $('wgStatus');
+  if (s) {
+    s.textContent = 'Set the lake, ramp, date and species on the Smart Plan tab \u2014 this reads '
+      + 'the same form \u2014 then press Find water. Depths here are MINIMUM WATER DEPTH, not '
+      + 'bait depth.';
+  }
+  total();
   $('wgFind')?.addEventListener('click', () => findWater());
   $('wgSort')?.addEventListener('change', (e) => { T.sortBy = e.target.value; paint(); });
   $('wgLimit')?.addEventListener('change', (e) => {

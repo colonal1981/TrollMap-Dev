@@ -129,9 +129,22 @@ def main() -> int:
     for name, n in sorted(by.items(), key=lambda x: -x[1]):
         print(f'     {name:26s} {n}')
 
-    # A pack that still holds structure.geojson while its contours are gone is not a clean
-    # deletion: build_structure.py derives humps and ledges FROM the contours in that same pack,
-    # so the leftover is an output whose input vanished. Worth a human deciding which way it goes.
+    # WHY A PACK'S CONTOURS GO MISSING, WHICH IS NOT A DELETION AND NOT A BUG.
+    #
+    # build_all_chartpacks.py RETRACTS a layer: when a rebuild reads that layer and it comes back
+    # with zero features, it removes the stale file, because leaving yesterday's file on disk
+    # publishes the old answer as the current one. Its own comment says why it exists -- "this is
+    # how 71 packs shipped pre-fix contours on 2026-08-06 ... a rebuild that can only overwrite and
+    # never retract cannot be trusted to have rebuilt anything."
+    #
+    # So these R2 objects are exactly what the retraction was for: the pipeline has withdrawn the
+    # answer locally and R2 is still serving it. PRUNING THEM IS THE POINT, not a risky call.
+    #
+    # What IS worth a look is the leftover below. structure.geojson is derived from the contours in
+    # its own pack and is not retracted with them -- on pacolet_river the contours came from a file
+    # dated 2026-08-05, structure was built from them at 10:46 on 08-06, and the rebuild that
+    # retracted the contours ran at 19:57 the same day. build_structure.py skips a pack with no
+    # contours, so nothing will ever refresh or remove those files on its own.
     odd = []
     for k in orphans:
         if not k.endswith('contours.geojson'):
@@ -141,9 +154,9 @@ def main() -> int:
         if os.path.isdir(d) and 'structure.geojson' in os.listdir(d):
             odd.append(slug)
     if odd:
-        print(f'\n{len(odd)} pack(s) lost their contours locally but still hold a structure.geojson '
-              f'built from them.\nThat is an output whose input is gone -- decide whether the '
-              f'contours were culled on purpose\nbefore deleting anything:')
+        print(f'\n{len(odd)} pack(s) hold a structure.geojson built from contours the pipeline has '
+              f'since retracted.\nThe contour prune above is correct; these are the leftovers, and '
+              f'nothing refreshes them\nbecause build_structure.py skips a pack with no contours:')
         for s in sorted(odd)[:15]:
             print(f'     {s}')
         if len(odd) > 15:
