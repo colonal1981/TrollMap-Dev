@@ -341,6 +341,20 @@ export function reasons(piece, o) {
 
   if (piece.relief) forIt.push(`sits on ${String(piece.relief).replace(/_/g, ' ')}`);
 
+  // BEST TIME OF DAY, as far as the geometry honestly goes. Only said when the leg is close
+  // enough to the bank for the answer to matter -- past a couple of hundred metres no plausible
+  // treeline reaches, and saying "the sun is behind the bank" about water in open sun is noise.
+  if (o.sunBehind) {
+    const hh = (x) => `${String(Math.floor(x)).padStart(2, '0')}:`
+                    + `${String(Math.round((x % 1) * 60)).padStart(2, '0')}`;
+    if (o.sunBehind.distM <= 150) {
+      forIt.push(`the sun is behind the bank here from ${hh(o.sunBehind.fromLocal)} to `
+               + `${hh(o.sunBehind.toLocal)} and you would be ${o.sunBehind.distM} m off it — `
+               + `close enough that it depends on what is growing on that bank, which is not in `
+               + `the chart`);
+    }
+  }
+
   // WIND, AGAINST THE LINE THIS LEG ACTUALLY RUNS. Only said when there is a forecast: a missing
   // forecast is silence, not a claim of calm.
   const wind = o.wind;
@@ -650,10 +664,77 @@ export function sunAzimuthDeg(dateUTC, lat, lon, hourUTC) {
   return ((az * 180) / Math.PI + 180) % 360;
 }
 
-/** Degrees between two bearings, 0-180. */
+/**
+ * Degrees between two bearings, 0-180.
+ *
+ * The `((a - b) % 360 + 540) % 360 - 180` wraps the difference into -180..180 and the abs is the
+ * separation. THE FIRST VERSION THEN RETURNED `180 - d`, which inverts it: two bearings 10 degrees
+ * apart came back 170. That flipped every caller -- the lee test shipped in a2efc5b was reading
+ * "land upwind" as "land downwind", and the shade window put east-facing banks in shadow at
+ * sunset. Caught by asking which bank ought to shade in the morning and finding the opposite.
+ */
 function angleBetween(a, b) {
-  const d = Math.abs(((a - b) % 360 + 540) % 360 - 180);
-  return 180 - d;
+  return Math.abs(((a - b) % 360 + 540) % 360 - 180);
+}
+
+/** Solar elevation above the horizon, degrees. Same NOAA position as sunAzimuthDeg. */
+export function sunElevationDeg(dateUTC, lat, lon, hourUTC) {
+  const d = (dateUTC - Date.UTC(2000, 0, 1, 12)) / 86400000 + hourUTC / 24;
+  const g = ((357.529 + 0.98560028 * d) * Math.PI) / 180;
+  const q = 280.459 + 0.98564736 * d;
+  const L = ((q + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * Math.PI) / 180;
+  const e = ((23.439 - 0.00000036 * d) * Math.PI) / 180;
+  const ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L));
+  const dec = Math.asin(Math.sin(e) * Math.sin(L));
+  const gmst = (18.697374558 + 24.06570982441908 * d) % 24;
+  const H = ((gmst + lon / 15) * 15 * Math.PI) / 180 - ra;
+  const p = (lat * Math.PI) / 180;
+  return (Math.asin(Math.sin(p) * Math.sin(dec) + Math.cos(p) * Math.cos(dec) * Math.cos(H))
+          * 180) / Math.PI;
+}
+
+/**
+ * WHEN THE SUN IS BEHIND THE BANK THIS LEG RUNS ALONG — and why that is not the same as shade.
+ *
+ * § 7 wants best-time-of-day per route: "Sun angle is exact for the date and the bank a route runs
+ * along". The angle is exact and is computed here. WHETHER THE SHADE ACTUALLY REACHES THE BOAT IS
+ * NOT, and the difference is a number nobody has.
+ *
+ * Shade reaches height / tan(elevation) out over the water. At 10 degrees of elevation that is
+ * 5.7x the height of whatever is standing on the bank — so a 20 m treeline throws about 115 m and
+ * a bare bank throws almost nothing. The height of the trees on a given Wateree shoreline is the
+ * same question as "how tall is every tree claude??? that is the answer lol", and it is not in any
+ * pack.
+ *
+ * So this returns the HOURS THE SUN IS BEHIND THE BANK, and the distance the leg sits off that
+ * bank, and refuses to convert them into a shade claim. Ryan can see 60 m and low sun and draw the
+ * obvious conclusion; he can also see 380 m and know it does not matter. Both are more useful than
+ * a confident sentence built on an invented tree.
+ *
+ * @param {object} piece      needs `shoreAspect`
+ * @param {number} dateUTC    Date.UTC(y, m, d)
+ * @param {number} tzOffset   hours to add to UTC for local time, e.g. -4 for EDT
+ * @returns {?{fromLocal:number, toLocal:number, distM:number}}
+ */
+export function sunBehindBank(piece, dateUTC, tzOffset, { withinDeg = 50, maxElevDeg = 25 } = {}) {
+  const sh = piece && piece.shoreAspect;
+  const at = piece && piece.coords && piece.coords[Math.floor(piece.coords.length / 2)];
+  if (!sh || !at) return null;
+  let from = null, to = null;
+  // Quarter-hour steps across the daylight the sun is actually low for. Stepping rather than
+  // solving because the condition is a conjunction of two angles and a root-find would be more
+  // code than it saves at 96 evaluations.
+  for (let q = 0; q < 96; q++) {
+    const local = q / 4;
+    const utc = local - tzOffset;
+    const el = sunElevationDeg(dateUTC, at[1], at[0], utc);
+    if (el <= 0 || el > maxElevDeg) continue;
+    const az = sunAzimuthDeg(dateUTC, at[1], at[0], utc);
+    if (angleBetween(az, sh.bearingDeg) > withinDeg) continue;
+    if (from === null) from = local;
+    to = local;
+  }
+  return from === null ? null : { fromLocal: from, toLocal: to, distM: sh.distM };
 }
 
 /** The worst wind in the window, which is what the pessimistic end is costed against. */
@@ -1086,7 +1167,11 @@ export function offerWater(lanes, o) {
     ...p,
     partners: partners[i],
     reasons: reasons(p, { minM, fishBandFt: o.fishBandFt, holding: o.holding,
-                          partners: partners[i], wind: o.wind || worstWind(o.windByHour) }),
+                          partners: partners[i], wind: o.wind || worstWind(o.windByHour),
+                          sunBehind: (o.dateUTC != null && o.tzOffset != null)
+                            ? sunBehindBank({ ...p, shoreAspect: p.shoreAspect, coords: p.coords },
+                                            o.dateUTC, o.tzOffset)
+                            : null }),
   }));
   // Spots are gathered here and PRICED later, by priceSpots(), because their price depends on
   // what has been ticked and that is not known yet. Gathering is expensive; pricing is cheap.
