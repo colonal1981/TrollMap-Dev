@@ -36,7 +36,12 @@ import { resolveR2Key } from '../data/lake-keys.js';
 import { getSeason } from '../data/species-intel.js';
 import { depthBandFor, usableAhFrom } from './plan-inputs.js';
 import { packFetcher } from './smart-plan-v2.js';
-import { offerWater, dayCost, TROLL_MPH } from './plan-water.js';
+import { offerWater, dayCost, priceSpots, searchOrder, TROLL_MPH } from './plan-water.js';
+import { planFromWater } from './plan-from-water.js';
+import { buildSmartPlanV2, modelAsker, waterRouter } from './smart-plan-v2.js';
+import { planToTimeline, installTimeline } from './plan-to-timeline.js';
+import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
+import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { readInputs, rampCoords } from './smart-plan-v2-wiring.js';
 
 const $ = (id) => document.getElementById(id);
@@ -48,7 +53,8 @@ const fmtHm = (min) => `${Math.floor(min / 60)}h ${String(Math.round(min % 60)).
 
 /** Everything the tab is currently looking at. Not on `window`; the module owns it. */
 const T = { pieces: [], picked: new Set(), ramp: null, rampName: '', usableAh: 0,
-            windowMin: null, band: null, holding: null, sortBy: 'ramp', lake: '', limit: 25 };
+            windowMin: null, band: null, holding: null, sortBy: 'ramp', lake: '', limit: 25,
+            spots: [], species: '', r2Key: '', dateStr: '', launchTime: '', returnTime: '' };
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // THE STRIP — distance along the water against depth.
@@ -249,6 +255,20 @@ function total() {
     notes.push(`<span class="wg-warn">${fmtHm(d.overWindowMin)} past your return time — `
              + `that is yours to spend, not a refusal.</span>`);
   }
+  // CAST SPOTS ARE PRICED BY WHAT IS TICKED, so they belong in the running total and nowhere else.
+  // § 6: "A spot inside a chosen route's corridor IS the stop-and-cast, at no extra travel."
+  const free = priceSpots(T.spots, picked, { ramp: T.ramp }).filter((s) => s.free);
+  if (free.length) {
+    const kinds = {};
+    for (const s of free) kinds[s.what] = (kinds[s.what] || 0) + 1;
+    const list = Object.entries(kinds).sort((a, b) => b[1] - a[1])
+      .map(([w, n]) => `${n} ${w}${n > 1 ? 's' : ''}`).join(', ');
+    notes.push(`<span class="wg-ok">${free.length} cast spot${free.length > 1 ? 's' : ''} already `
+             + `on this water — ${esc(list)} — so working them costs only the minutes.</span>`);
+  } else {
+    notes.push(`<span class="wg-dim">No charted cast spots inside this water; anything worth `
+             + `stopping on would be a detour.</span>`);
+  }
   notes.push(`<span class="wg-dim">Moving distance is straight-line, so it is the optimistic `
            + `number; the plan re-checks it over the water graph.</span>`);
   el.innerHTML = `<div class="wg-sum">${bits.join(' · ')}</div>${notes.join(' ')}`;
@@ -359,7 +379,10 @@ export async function findWater() {
   } catch (e) { return say(e.message, true); }
 
   Object.assign(T, {
-    pieces: out.pieces, picked: new Set(), ramp, rampName: inp.rampName || 'launch',
+    pieces: out.pieces, spots: out.spots || [], picked: new Set(),
+    ramp, rampName: inp.rampName || 'launch',
+    species, r2Key, dateStr: inp.dateStr,
+    launchTime: inp.launchTime, returnTime: inp.returnTime,
     usableAh: usableAhFrom(inp.motor), band: depth ? depth.band : null,
     holding: depth ? depth.holding : null, lake: inp.lakeName,
     windowMin: (() => {
@@ -376,14 +399,84 @@ export async function findWater() {
 }
 
 /** What the picked water is, for the plan to be built from. */
+/** The water he ticked, in the order the app would fish it. Exported so a test can read it. */
 export function pickedWater() {
   const picked = T.pieces.filter((p) => T.picked.has(p.key));
-  const d = picked.length ? dayCost(picked, { ramp: T.ramp, usableAh: T.usableAh,
-                                              windowMin: T.windowMin }) : null;
-  // ORDERED, because the ordering is arithmetic and therefore the app's — see WHAT_SMARTPLAN_IS.
-  // The model gets the water and assigns baits and speeds; it no longer chooses which water.
+  const order = searchOrder(picked);
   return { lake: T.lake, ramp: T.ramp, rampName: T.rampName, band: T.band, holding: T.holding,
-           day: d, pieces: d ? d.order.map((i) => picked[i]) : [] };
+           order, pieces: order.map((i) => picked[i]), spots: T.spots };
+}
+
+/**
+ * TURN THE TICKED WATER INTO A DAY.
+ *
+ * Everything about which water and in what order is already settled before this runs. The model
+ * is called once, for tackle -- see plan-from-water.js and THE_FISHERMAN_CHOOSES § 12.
+ *
+ * The plan is then handed to the SAME renderer, timeline and globals the Smart Plan tab uses.
+ * That is not laziness: `collectPlan()` reads `window._smartPlanTimeline`, so Preview, Print,
+ * the GPX export and both download buttons all read from there. A plan that draws its own markup
+ * into its own container is a plan that cannot leave the app -- which is exactly what v2 did
+ * before ONE_PATH_TO_THE_SCREEN, and every export came up empty.
+ */
+export async function buildFromPicked() {
+  const say = (m, bad) => {
+    const el = $('wgStatus');
+    if (el) { el.textContent = m; el.style.color = bad ? 'var(--warn)' : 'var(--muted)'; }
+  };
+  const picked = T.pieces.filter((p) => T.picked.has(p.key));
+  if (!picked.length) return say('Tick some water first — this builds the day around what you pick.', true);
+
+  const castable = TACKLE_INVENTORY.filter((l) => l.trollable || l.castable);
+  say('Asking the model for baits and speeds…');
+  let r;
+  try {
+    r = await planFromWater({
+      picked,
+      spots: T.spots,
+      ramp: T.ramp,
+      slug: T.r2Key,
+      usableAh: T.usableAh,
+      windowMin: T.windowMin,
+      launchTime: T.launchTime,
+      returnTime: T.returnTime,
+      planArgs: {
+        water: T.lake, ramp: T.rampName, date: T.dateStr,
+        launchTime: T.launchTime, returnTime: T.returnTime,
+        species: [T.species], usableAh: T.usableAh,
+        tackle: castable.map((l) => l.name),
+        conditions: { depthBand: { ft: T.band, holding: T.holding || 'unknown',
+                                   meaning: 'where the fish are, not the depth of the water' } },
+      },
+      askModel: modelAsker(CF_WORKER_URL),
+      transit: waterRouter(CF_WORKER_URL, T.r2Key),
+    });
+  } catch (e) { return say(`Failed: ${e.message}`, true); }
+
+  if (!r.plan) return say((r.problems && r.problems[0]) || 'No plan', true);
+
+  const built = planToTimeline(r.plan, {
+    depthBand: T.band,
+    rationale: (r.plan.notes && (r.plan.notes.scoutNotes || r.plan.notes.sonar)) || '',
+  });
+  installTimeline(window, built);
+  renderSmartPlanUI({
+    routeRods: built.routeRods, routeSpeeds: built.routeSpeeds,
+    speedMph: built.cards[0] ? built.cards[0].speedMph : TROLL_MPH,
+    stopCandidates: built.stopCandidates,
+    scoutReport: built.rationale,
+    cardDefs: built.cards, unified: built.timeline,
+  });
+  syncSpread(built.cards, built.routeRods, built.routeSpeeds);
+
+  // SAY THE ORDER OUT LOUD AND SAY IT IS NOT THE SHORT ONE. Silently reordering what he ticked is
+  // how a search reads as a mistake -- § 14 gives him veto, and a veto needs something to look at.
+  const seq = r.order.map((i) => T.pieces.indexOf(picked[i]) + 1).join(' → ');
+  say(`Built ${picked.length} legs, fished ${seq} — most diagnostic first, so a leg that produces `
+    + `nothing still tells you something. That is a search order, not the shortest route. `
+    + `${r.dayCost.ah} Ah of ${T.usableAh}. Open the Smart Plan tab to see it.`);
+  document.querySelector('#planSubtabs button[data-plansub="plan"]')?.click();
+  return r;
 }
 
 export function initWaterTab() {
@@ -398,6 +491,7 @@ export function initWaterTab() {
   }
   total();
   $('wgFind')?.addEventListener('click', () => findWater());
+  $('wgBuild')?.addEventListener('click', () => buildFromPicked());
   $('wgSort')?.addEventListener('change', (e) => { T.sortBy = e.target.value; paint(); });
   $('wgLimit')?.addEventListener('change', (e) => {
     T.limit = Math.max(1, parseInt(e.target.value, 10) || 25); paint();
