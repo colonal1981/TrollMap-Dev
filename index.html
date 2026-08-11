@@ -273,6 +273,11 @@
   #plan-water .wg-for li { color:#a5e887; }
   #plan-water .wg-against li { color:#ffab91; }
   #plan-water .wg-line { cursor:pointer; }
+  #plan-water #wgSpots { margin-top:14px; }
+  #plan-water .wg-spot { display:flex; justify-content:space-between; gap:10px; align-items:baseline;
+                         border:1px solid var(--line); border-radius:7px; padding:6px 9px;
+                         margin-bottom:5px; background:var(--panel2); font-size:12.5px; }
+  #plan-water .wg-spot.picked { border-color:var(--accent2); background:rgba(118,255,3,.06); }
   @media (max-width: 900px) {
     #plan-water .wg-wrap { grid-template-columns:1fr; }
     #plan-water .wg-mapbox { position:static; }
@@ -1192,6 +1197,11 @@
             <div>
               <div id="wgCount" class="wg-count"></div>
               <div id="wgList"></div>
+              <!-- CAST-ALL-DAY IS NOT A MODE. § 6: "Cast-all-day is simply the day where spots are
+                   all he picks." So spots sit beside the water and are ticked the same way; a day
+                   with no water ticked and six spots ticked IS a casting day, and nothing has to
+                   be switched. -->
+              <div id="wgSpots"></div>
             </div>
           </div>
         </div>

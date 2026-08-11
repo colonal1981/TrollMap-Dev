@@ -60,7 +60,7 @@ const fmtHm = (min) => `${Math.floor(min / 60)}h ${String(Math.round(min % 60)).
 const T = { pieces: [], picked: new Set(), ramp: null, rampName: '', usableAh: 0,
             windowMin: null, band: null, holding: null, sortBy: 'ramp', lake: '', limit: 25,
             spots: [], species: '', r2Key: '', dateStr: '', launchTime: '', returnTime: '',
-            windByHour: null, weatherByHour: null };
+            windByHour: null, weatherByHour: null, pickedSpots: new Set() };
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // THE STRIP — distance along the water against depth.
@@ -228,6 +228,45 @@ function row(p, i) {
   </div>`;
 }
 
+/**
+ * A CAST SPOT, PRICED BY WHERE IT LANDS.
+ *
+ * § 6: "A spot inside a chosen route's corridor IS the stop-and-cast, at no extra travel. A spot
+ * away from every chosen route is a destination that costs the trip. Same object, priced by where
+ * it lands." So the row changes as he ticks water, and `free` is never a property of the spot.
+ *
+ * How long a spot is worth working is NOT here. § 7 lists it, and it is a fishing judgement with
+ * no number behind it -- the model gets the spot and says, or Ryan decides on the water.
+ */
+function spotRow(s, i) {
+  const on = T.pickedSpots.has(s.key);
+  const d = s.depthFt != null ? ` · ${Math.round(s.depthFt)} ft` : '';
+  const where = s.free
+    ? `<span class="wg-ok">on water you picked, ${s.detourM} m off the line</span>`
+    : `${fmtMi(s.detourM)} off your nearest picked water`;
+  return `<div class="wg-spot${on ? ' picked' : ''}">
+    <label class="wg-tick"><input type="checkbox" data-spot="${esc(s.key)}"${on ? ' checked' : ''}>
+      <b>${i + 1}.</b> ${esc(s.what)}${d}</label>
+    <span class="wg-meta">${where}${s.structureId ? ` · ${esc(s.structureId)}` : ''}</span>
+  </div>`;
+}
+
+/** The spots, priced against what is currently ticked, best-value first. */
+function paintSpots() {
+  const el = $('wgSpots');
+  if (!el) return [];
+  const picked = T.pieces.filter((p) => T.picked.has(p.key));
+  const priced = priceSpots(T.spots, picked, { ramp: T.ramp });
+  // Free ones first, then nearest. A spot that costs a mile of paddling is still offered -- § 9,
+  // "feasibility is feedback, not a gate" -- it just does not lead.
+  const show = priced.slice(0, 30);
+  const free = priced.filter((x) => x.free).length;
+  el.innerHTML = `<div class="wg-count">${priced.length} cast spots · ${free} on water you have `
+    + `picked${priced.length > show.length ? ` · showing ${show.length}` : ''}</div>`
+    + show.map(spotRow).join('');
+  return priced;
+}
+
 /** The running total. Feedback for everything, refusal for the battery alone. */
 function total() {
   const picked = T.pieces.filter((p) => T.picked.has(p.key));
@@ -276,6 +315,19 @@ function total() {
     notes.push(`<span class="wg-dim">No charted cast spots inside this water; anything worth `
              + `stopping on would be a detour.</span>`);
   }
+  // WHAT THE TICKED SPOTS ADD. A spot on picked water costs only the minutes spent on it; one
+  // off it costs the run out and back, and that is the number worth seeing before committing.
+  if (T.pickedSpots.size) {
+    const priced = priceSpots(T.spots, picked, { ramp: T.ramp });
+    const chosen = priced.filter((x) => T.pickedSpots.has(x.key));
+    const away = chosen.filter((x) => !x.free);
+    const detourM = away.reduce((a, x) => a + x.detourM * 2, 0);
+    notes.push(`<span class="${away.length ? 'wg-warn' : 'wg-ok'}">${chosen.length} cast spot`
+             + `${chosen.length > 1 ? 's' : ''} picked — ${chosen.length - away.length} free on `
+             + `your water` + (away.length
+               ? `, ${away.length} off it costing about ${fmtMi(detourM)} of paddling there and back`
+               : `, nothing extra to paddle`) + `.</span>`);
+  }
   notes.push(`<span class="wg-dim">Moving distance is straight-line, so it is the optimistic `
            + `number; the plan re-checks it over the water graph.</span>`);
   el.innerHTML = `<div class="wg-sum">${bits.join(' · ')}</div>${notes.join(' ')}`;
@@ -313,6 +365,7 @@ function paint() {
   // row 4", and it cannot do that at lake scale.
   const map = $('wgMap')?.parentElement;
   if (map) map.innerHTML = mapSvg(list, T.picked, T.ramp);
+  paintSpots();
   const n = $('wgCount');
   if (n) {
     n.textContent = T.pieces.length > T.limit
@@ -480,6 +533,9 @@ export async function buildFromPicked() {
     r = await planFromWater({
       picked,
       spots: T.spots,
+      // WHAT HE TICKED, not what the app thinks is nearby. A spot he chose is a commitment the day
+      // has to carry; the rest are still sent so the model can suggest one, but only these are his.
+      chosenSpotKeys: [...T.pickedSpots],
       ramp: T.ramp,
       slug: T.r2Key,
       usableAh: T.usableAh,
@@ -574,6 +630,13 @@ export function initWaterTab() {
   $('wgLimit')?.addEventListener('change', (e) => {
     T.limit = Math.max(1, parseInt(e.target.value, 10) || 25); paint();
   });
+  $('wgSpots')?.addEventListener('change', (e) => {
+    const k = e.target?.dataset?.spot;
+    if (!k) return;
+    if (e.target.checked) T.pickedSpots.add(k); else T.pickedSpots.delete(k);
+    e.target.closest('.wg-spot')?.classList.toggle('picked', e.target.checked);
+    total();
+  });
   $('wgList')?.addEventListener('change', (e) => {
     const k = e.target?.dataset?.pick;
     if (!k) return;
@@ -583,6 +646,8 @@ export function initWaterTab() {
     const map = $('wgMap')?.parentElement;
     if (map) map.innerHTML = mapSvg(shown(), T.picked, T.ramp);
     e.target.closest('.wg-row')?.classList.toggle('picked', e.target.checked);
+    // Spots are priced against the ticked water, so ticking water reprices every one of them.
+    paintSpots();
     total();
   });
   // Clicking the water is the same act as ticking the row.

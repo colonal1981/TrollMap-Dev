@@ -166,6 +166,10 @@ export async function planFromWater(o) {
   // stop, one outside every corridor is a trip. § 6.
   const spots = priceSpots(o.spots || [], picked, { ramp: o.ramp });
   const freeSpots = spots.filter((s) => s.free);
+  // HIS PICKS OUTRANK THE APP'S OFFER. A spot he ticked is part of the day whether it sits on the
+  // water he chose or costs a run out to it -- that was his call and the plan carries it.
+  const chosenKeys = new Set(o.chosenSpotKeys || []);
+  const chosenSpots = spots.filter((s) => chosenKeys.has(s.key));
 
   const req = buildPlanRequest({
     ...o.planArgs,
@@ -195,6 +199,10 @@ export async function planFromWater(o) {
     // the app supplies the positions and the count he asked for, and the model does the choosing.
     // Truncating here would be the app quietly making that call by ranking.
     freeCastSpots: freeSpots.map((s) => ({ what: s.what, onLeg: s.onPiece, offM: s.detourM })),
+    chosenCastSpots: chosenSpots.length
+      ? chosenSpots.map((s) => ({ what: s.what, depthFt: s.depthFt, onLeg: s.onPiece,
+                                  offM: s.detourM, free: s.free }))
+      : undefined,
   });
 
   let res;

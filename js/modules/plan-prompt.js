@@ -274,6 +274,13 @@ CAST SPOTS ALREADY ON HIS ROUTE — ${JSON.stringify(o.freeCastSpots)}
 These sit inside the water he picked, so working one costs only the minutes spent on it. Prefer
 them over anything that would need a detour. Every one is listed; NONE has been pre-selected for
 you, because which water is worth stopping on today is the judgement you are here to make.` : ''}${
+(o.chosenCastSpots || []).length ? `
+
+HE PICKED THESE CAST SPOTS HIMSELF — ${JSON.stringify(o.chosenCastSpots)}
+These are not suggestions and they are not yours to drop. Work each one into the day, and where
+one is marked \`free: false\` it costs a run out and back that he already accepted. Say what to
+throw at each and how to hold the boat on it — there is no spot-lock, so positioning is pedal work
+against the wind or the current and you have to say which.` : ''}${
 o.castStopsWanted != null ? `
 
 HE ASKED FOR ${o.castStopsWanted} STOP-AND-CAST${o.castStopsWanted === 1 ? '' : 'S'} TODAY.
