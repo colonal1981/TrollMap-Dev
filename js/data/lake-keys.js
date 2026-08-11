@@ -23,6 +23,14 @@ import { resolveWaterKey } from './water-aliases.js';
 
 export const LAKE_NAME_TO_R2_KEY = {
   // ── SC Lakes ────────────────────────────────────────────────────────────────
+  // The Congaree, under the name Ryan actually calls it. The registry row is displayed as
+  // "Congaree River (to SC-601)" and there is a second, packless row for the same water, so
+  // resolving the plain name depended entirely on which of the two registered its slug first —
+  // and before the registry loads it resolved to NOTHING. Ryan, 2026-08-11: "congaree river is
+  // called congaree river we have it." A water he fishes should not need a load order to resolve.
+  'Congaree River':                     'congaree_river',
+  'Congaree River, SC':                 'congaree_river',
+  'Congaree River (to SC-601)':         'congaree_river',
   'Lake Marion, SC':                    'lake_marion',
   'Lake Moultrie, SC':                  'lake_moultrie',
   'Lake Murray, SC':                    'lake_murray',
@@ -304,6 +312,46 @@ function hasNoPack(name) {
   return false;
 }
 
+/**
+ * WATER WHOSE BATHYMETRY SHIPS INSIDE ANOTHER WATER'S PACK.
+ *
+ * This is NOT an alias table. An alias says two names are one water. These entries say the
+ * opposite: they are separate waters, and one of them has no pack of its own, so the only place
+ * its soundings exist is inside a neighbour's.
+ *
+ * Bates Old River is the case that forced it. Ryan, when I called it part of the Congaree:
+ *
+ *   > bates river is an oxbow off of the congaree completely separate water... that is like
+ *   > saying lake wateree isn't its own water because the wateree river connects to it
+ *
+ * He is right on the water and 3DHP disagrees with him: gnisid 1220360 is eleven FLOWLINES
+ * totalling 6.09 km and no waterbody polygon at all, seven of them filed under the Congaree's own
+ * river polygon OH8SM. `registry/boundaries/congaree_river.geojson` IS OH8SM, so when the pipeline
+ * clipped, 0.73 km of Bates — a full ladder from 0-1 ft to 22-23 ft — landed inside
+ * `chartpack/congaree_river/`. See BATES_IS_A_FLOWLINE_2026-08-11.md.
+ *
+ * So: "bates old river is part of congaree river boundary so both the congaree and bates
+ * selectors need to select both." Picking either name loads the one pack that holds both.
+ *
+ * It is consulted BEFORE the registry-slug pass, which is the point. `bates_old_river_sc` is a
+ * real registry row with no pack in R2, and Pass 0 treats a slug as authoritative — so selecting
+ * Bates resolved to that slug and fetched a 404. This is the one case where a curated answer must
+ * outrank the registry.
+ */
+export const PACK_SHARED_WITH = {
+  'bates old river': 'congaree_river',
+};
+
+/** Loose enough for a state suffix or a parenthetical, tight enough not to merge two waters. */
+function sharedPackFor(name) {
+  const n = String(name || '').toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/,\s*[a-z]{2}(\/[a-z]{2})*\s*$/, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  return PACK_SHARED_WITH[n] || null;
+}
+
 export function resolveR2Key(displayName) {
   if (!displayName || typeof displayName !== 'string') return null;
   const trimmed = displayName.trim();
@@ -311,6 +359,10 @@ export function resolveR2Key(displayName) {
 
   // Refused before any matching runs. See LAKE_NAMES_WITHOUT_PACK above.
   if (hasNoPack(trimmed)) return null;
+
+  // Before the registry slug, and only for the handful of waters above.
+  const shared = sharedPackFor(trimmed);
+  if (shared) return shared;
 
   // Pass 0 — the 3DHP registry slug, which is authoritative when it exists.
   //

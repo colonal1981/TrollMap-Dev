@@ -31,8 +31,17 @@ describe('lake-keys parity — frontend and worker must stay identical (P1 dedup
     // (Randleman, Kerr x2, High Rock, Falls, John H. Moss, Bonnie Doone, Blewett Falls,
     // Hiwassee, Cheoah x2, Lookout Shoals, Juliette, Blalock) plus Catawba Narrows, which
     // has no pack of its own and is aliased to lake_wylie because the reach IS Wylie's water.
-    expect(Object.keys(frontendMap).length).toBe(117);
-    expect(Object.keys(SUPPLEMENTAL_KEY_MAP).length).toBe(117);
+    // 120 as of 2026-08-11: three spellings of the Congaree — "Congaree River", "Congaree River,
+    // SC" and "Congaree River (to SC-601)" — all bound to `congaree_river`, the pack that exists.
+    // Ryan: "congaree river is called congaree river we have it."
+    //
+    // The plain name resolved to NOTHING before the registry loaded, and after it loaded the
+    // answer depended on which of TWO registry rows for the same water registered its slug first:
+    // the one with the pack, or the packless duplicate `congaree_river_to_sc_601`. A water he
+    // fishes should not resolve by load order. It matters doubly now that Bates Old River shares
+    // that pack — see PACK_SHARED_WITH in lake-keys.js.
+    expect(Object.keys(frontendMap).length).toBe(120);
+    expect(Object.keys(SUPPLEMENTAL_KEY_MAP).length).toBe(120);
   });
 
   it('maps are deep equal', () => {
