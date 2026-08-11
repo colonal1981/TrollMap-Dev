@@ -47,7 +47,7 @@ import { materialisePlan } from './plan-tracks.js';
 import { loadSessionFromPlan, isEnabled } from './notifications.js';
 import { renderAll } from '../core/map-init.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
-import { readInputs, rampCoords } from './smart-plan-v2-wiring.js';
+import { readInputs, rampCoords, loadResearchedProfile } from './smart-plan-v2-wiring.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
@@ -392,7 +392,21 @@ export async function findWater() {
 
   const species = inp.species[0];
   const date = new Date(`${inp.dateStr}T12:00:00`);
-  const depth = depthBandFor(species, inp.lakeName, getSeason(date), inp.waterTempF, null);
+  // THE RESEARCHED PROFILE FIRST — the same source the Smart Plan tab reads.
+  //
+  // This argument was `null`, which meant Pick Water could never reach the research pipeline and
+  // fell to SPECIES_BEHAVIOR_V2 for every lake on the card. That table covers FOUR lakes, its
+  // `preferredDepth` numbers predate the fish-depth/water-depth split, and on Wateree in summer
+  // above 84 F it returns [14, 16] while its own notes on the same object say the thermocline
+  // sits at 18-24 ft and the fish drop to its edge. Ryan, 2026-08-11: "the 4 lake hard code needs
+  // to go away... that is what the research pipeline is for."
+  //
+  // Absence is still normal and still silent — `depthBandFor` falls back exactly as before, and
+  // says which source it used in `basis`. What changes is that a researched lake now gets its
+  // researched answer here as well as there.
+  say('Reading the research…');
+  const researched = await loadResearchedProfile(inp.lakeName);
+  const depth = depthBandFor(species, inp.lakeName, getSeason(date), inp.waterTempF, researched);
 
   say('Reading the pack…');
   const get = packFetcher(CF_WORKER_URL);

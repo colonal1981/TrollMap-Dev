@@ -124,10 +124,41 @@ describe('reasons — arguments, never a verdict', () => {
     expect(r.against.some((s) => /60% of this is charted/.test(s))).toBe(true);
   });
 
-  it('does not call water outside the band useless when the fish are suspended', () => {
+  // ───────────────────────────────────────────────────────────────────────────────────────────
+  // THE BAND IS NOT A FILTER ON WATER — 2026-08-11
+  //
+  // This used to assert that water deeper than the band produced a reason AGAINST reading "fine
+  // for suspended fish, but the bottom here tells you nothing about them". The sentiment was
+  // right and the filing was wrong: it is not a mark against the water at all.
+  //
+  // Ryan, reading the tab live: "the sonar is going to tell me right away where in that 15-40 the
+  // fish are... as long as the plan puts me over water with the right features in the right depth
+  // the llm can adjust the baits to catch fish there." The constraint is the shoal, not the fish.
+  //
+  // It also hung on `holding === 'suspended'`, which SPECIES_BEHAVIOR_V2 never sets on any entry
+  // — so the kind branch could not fire from the built-in table at all, and every deep piece got
+  // the harsh sentence instead.
+  // ───────────────────────────────────────────────────────────────────────────────────────────
+  it('does not hold deep water against a piece — the band is context, not a filter', () => {
     const deep = { ...piece, holdsFt: 60, envelope: [60, 60], envelopeDeep: [62, 62] };
-    const r = reasons(deep, { minM: 600, fishBandFt: [15, 40], holding: 'suspended', partners: [] });
-    expect(r.against.some((s) => /fine for suspended fish/.test(s))).toBe(true);
+    const r = reasons(deep, { minM: 600, fishBandFt: [15, 40], partners: [] });
+    expect(r.against.some((s) => /outside the/.test(s))).toBe(false);
+    expect(r.for.some((s) => /the baits work the column/.test(s))).toBe(true);
+  });
+
+  it('does object when the band does not FIT — water shallower than the fish', () => {
+    // The one direction that is a real objection: the depth they are using does not exist here.
+    const shallow = { ...piece, holdsFt: 6, envelope: [6, 7], envelopeDeep: [7, 8] };
+    const r = reasons(shallow, { minM: 600, fishBandFt: [15, 40], partners: [] });
+    expect(r.against.some((s) => /does not exist on this piece/.test(s))).toBe(true);
+  });
+
+  it('always states the bait ceiling, because the assembler now enforces it', () => {
+    // "nice to see to confirm that the program/llm gets it right" — a constraint the app applies
+    // silently and never displays cannot be confirmed by anyone.
+    const r = reasons(piece, { minM: 600, partners: [] });
+    expect(r.for.some((s) => new RegExp(`nothing may run deeper than ${piece.holdsFt} ft`).test(s)))
+      .toBe(true);
   });
 });
 

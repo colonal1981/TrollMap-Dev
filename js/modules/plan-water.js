@@ -252,11 +252,24 @@ export function reasons(piece, o) {
   } else {
     forIt.push(`${fmtMi(piece.lengthM)} unbroken`);
   }
-  // The shallowest point is the one that decides whether a bait clears the whole pass, so it is
-  // named separately whenever it is meaningfully shallower than the water around it.
-  if (opt.fromFt != null && opt.fromFt - piece.holdsFt >= 3) {
-    against.push(`it clears ${piece.holdsFt} ft at its shallowest — one spot that shallow is what `
-               + `sets how deep you can fish the whole ${fmtMi(piece.lengthM)}`);
+  // THE SHALLOWEST POINT IS A CEILING ON THE BAIT, AND IT IS ALWAYS STATED NOW.
+  //
+  // It used to speak only when it was 3 ft or more shallower than the water around it, on the
+  // theory that it was otherwise not worth a line. That was written before the number became a
+  // hard constraint on the plan. Ryan, 2026-08-11: "the shallowest that water runs is 20ft...
+  // well then even if the water is 25-35ft don't give me a bait that runs deeper than 20ft with
+  // the lead and speed that you gave" — and the assembler now enforces exactly that, clamping the
+  // lead where the model overshoots. So this line is what he checks the plan AGAINST: "the line
+  // in the reasons is fine it is nice to see to confirm that the program/llm gets it right."
+  // A constraint the app silently applies and never displays cannot be confirmed by anyone.
+  //
+  // It sits in `for` rather than `against` because it is not a mark against the water — it is the
+  // number that makes the water fishable without hanging up.
+  if (Number.isFinite(piece.holdsFt)) {
+    const tight = opt.fromFt != null && opt.fromFt - piece.holdsFt >= 3;
+    forIt.push(`nothing may run deeper than ${piece.holdsFt} ft here — that is the shallowest `
+             + `water within a wander anywhere on the ${fmtMi(piece.lengthM)}`
+             + (tight ? `, and it is one spot, not the whole stretch` : ''));
   }
 
   // THE LAPS ARE THE PARTNERS, not the offer curve — see ladderPartners(). A piece with three
@@ -281,17 +294,36 @@ export function reasons(piece, o) {
              + `changes the water without steering for it`);
   }
 
+  // THE BAND IS NOT A FILTER ON WATER, AND SAYING SO COST A REAL ROW.
+  //
+  // Ryan, 2026-08-11, reading this tab live: "the sonar is going to tell me right away where in
+  // that 15-40 the fish are... as long as the plan puts me over water with the right features in
+  // the right depth the llm can adjust the baits to catch fish there."
+  //
+  // The row he was looking at read "the water here is 22–31 ft, outside the 14–16 ft the research
+  // puts the fish at", filed under reasons AGAINST. Both halves were wrong. It compared WATER
+  // depth against FISH depth, which are different quantities on the same axis; and 22–31 ft of
+  // water under fish holding at 14–16 is not a mark against the water, it is the ordinary case —
+  // the bait runs through their depth and the bottom is simply further down.
+  //
+  // There is one direction that IS a real objection: water SHALLOWER than the whole band. Then
+  // the depth the fish are using does not exist on this piece at all. That distinction is the
+  // whole content of this block now.
+  //
+  // The line stays visible either way, deliberately. Ryan: "the line in the reasons is fine it is
+  // nice to see to confirm that the program/llm gets it right." It is a check on the app, not a
+  // filter on the water.
   const ov = bandOverlap(piece, band);
   if (ov && band) {
     if (!ov.inBand) {
-      // NOT a filter. Suspended fish live over water deeper than the band, and `holding` is what
-      // says whether that is fine -- see the eligibility rule in WHAT_SMARTPLAN_IS.
-      const deeperOnly = ov.waterFrom != null && ov.waterFrom > band[1];
-      against.push(deeperOnly && (holding === 'suspended' || holding === 'both')
-        ? `all of it is deeper than the ${band[0]}–${band[1]} ft the fish are holding at — fine `
-          + `for suspended fish, but the bottom here tells you nothing about them`
-        : `the water here is ${ov.waterFrom}–${ov.waterTo} ft, outside the ${band[0]}–${band[1]} ft `
-          + `the research puts the fish at`);
+      const tooShallow = ov.waterTo != null && ov.waterTo < band[0];
+      if (tooShallow) {
+        against.push(`the water here tops out at ${ov.waterTo} ft and the fish are holding at `
+                   + `${band[0]}–${band[1]} ft — that depth does not exist on this piece`);
+      } else {
+        forIt.push(`${ov.waterFrom}–${ov.waterTo} ft of water under a ${band[0]}–${band[1]} ft `
+                 + `holding depth, so the baits work the column and the bottom stays clear`);
+      }
     } else if (ov.covers >= 0.6) {
       forIt.push(`${ov.fromFt}–${ov.toFt} ft of it sits inside the ${band[0]}–${band[1]} ft band `
                + `the research puts the fish at`);

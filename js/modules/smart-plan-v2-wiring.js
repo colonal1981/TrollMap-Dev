@@ -336,8 +336,14 @@ function finish(r, gpx) {
  * Absence is normal and silent — most lakes have not been researched. A FAILURE is not absence
  * and gets logged, because producing these is what the whole research pipeline is for and a
  * profile that exists but will not load should be visible, not shrugged off.
+ *
+ * EXPORTED so the Water tab uses the same loader. It was private, and plan-water-ui.js therefore
+ * passed `null` where the profile goes — which made Pick Water the four-lake built-in table by
+ * construction, unable to see the research pipeline at all. Ryan, 2026-08-11: "the 4 lake hard
+ * code needs to go away... that is what the research pipeline is for." Two planners reading two
+ * different sources for the same question is how they drift.
  */
-async function loadResearchedProfile(lakeName) {
+export async function loadResearchedProfile(lakeName) {
   if (!lakeName) return null;
   try {
     const cached = window.getResearchedProfile?.(lakeName);
