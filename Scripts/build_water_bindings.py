@@ -535,7 +535,8 @@ def parse_rdb(text):
 
 # ── bind stage ──────────────────────────────────────────────────────────────────────────────
 
-def bind(index, boundaries_dir, src, cache, force, margin_km, report):
+def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=None):
+    overrides = overrides or {}
     weak = build_weak_tokens(index)
 
     # ONE WATERSHED IS NOT AN AMBIGUITY. Counting frequency alone demoted `edisto` and
@@ -916,7 +917,7 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report):
             placed.append(entry)
             tally['usgs_bound'] += 1
 
-        # ── curated, last word ──────────────────────────────────────────────────────────
+        # ── human overrides, last word ──────────────────────────────────────────────────
         # THE TWO-SIGNAL RULE IS RIGHT AND IT CANNOT SEE EVERYTHING. Lake Robinson is fed and
         # drained by Black Creek. `BLACK CREEK NEAR HARTSVILLE` sits 0.48 km below the dam at
         # the south end and `BLACK CREEK NEAR MCBEE` sits 3.0 km up the creek at the north end
@@ -925,36 +926,44 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report):
         # name a dozen creeks share, and relaxing the rule to catch this would let all of them
         # through. What is missing is not a better rule, it is a fact only Ryan has.
         #
-        # `curated_lakes.json` is where those facts already live, and it already carried a
-        # `usgs` block for five lakes -- which reached the output as `b['curated']['usgs']` and
-        # was read by nothing. A site number nobody fetches is a note, not a gauge. Now that the
-        # Worker can read a USGS site, a curated entry becomes a real reading.
+        # These facts live in `registry/gauge_overrides.json`, keyed by SLUG, and NOT in
+        # `curated_lakes.json` -- which is where they briefly went on 2026-08-12 before that
+        # file turned out to be a 2026-06-23 bulk upload with no authored commit whose own
+        # `_README` claimed "hand-maintained by Ryan" about data Ryan did not write. A fact
+        # whose value is that a person vouched for it must not live in a file that lies about
+        # who vouched. Hence the `by`/`on` requirement in the override file.
         #
-        #   "usgs": {"site": "02130910", "params": "00065,00060", "role": "tailwater"}
-        #   "usgs": [ {...}, {...} ]          both shapes accepted; role defaults to pool
+        #   "lake_robinson": [ {"site": "02130910", "role": "tailwater", "why": ..., "by": ...} ]
+        #   role is pool | tailwater | gauge, and defaults to pool
         #
-        # Curated goes LAST and OVERRIDES. A hand-checked gauge outranks a derived one -- that
-        # is the same order the ramp merge above uses, and the whole point of curating.
-        cur = rec.get('usgs')
-        for cu in ([cur] if isinstance(cur, dict) else (cur or [])):
+        # Overrides go LAST and WIN. A gauge a person checked outranks a derived one -- the same
+        # order the ramp merge above uses, and the whole point of an override.
+        for cu in (overrides.get(slug) or []):
             site = str((cu or {}).get('site') or '').strip()
             if not USGS_SITE_RE.match(site):
                 continue
             g = usgs_sites.get(site)
             role = (cu.get('role') or 'pool').lower()
-            ce = {'usgs_site': site, 'source': 'usgs', 'confidence': 'curated',
+            ce = {'usgs_site': site, 'source': 'usgs', 'confidence': 'override',
                   'name': (g or {}).get('name') or cu.get('name') or ('USGS %s' % site),
                   'lat': (g or {}).get('lat'), 'lon': (g or {}).get('lon'),
                   'site_type': (g or {}).get('site_type'),
                   'parms': sorted((g or {}).get('parms', set()) & LEVEL_PARMS)
                            or [p.strip() for p in str(cu.get('params') or '').split(',') if p.strip()],
-                  'km_outside': 0.0}
+                  'km_outside': 0.0,
+                  'why': cu.get('why'), 'by': cu.get('by'), 'on': cu.get('on')}
+            if not (cu.get('by') and cu.get('on')):
+                # Not fatal -- the gauge is still bound -- but an override whose author is
+                # unrecorded is exactly the thing this file was created to stop.
+                print('   !! override %s -> %s has no `by`/`on`. Say who decided it and when.'
+                      % (slug, site))
+                tally['override_without_author'] += 1
             if g is None:
                 # Named by hand and absent from the catalogue: the site may be outside the four
                 # states, or report a parameter the catalogue query does not ask for. Say so
                 # rather than dropping it -- Ryan put it there on purpose.
                 ce['note'] = 'not in the USGS catalogue fetched here; curated on trust'
-                tally['curated_site_not_in_catalogue'] += 1
+                tally['override_site_not_in_catalogue'] += 1
             # Drop any derived entry for the same site so the curated one is not a duplicate.
             others = [o for o in others if o.get('usgs_site') != site]
             geom_only = [o for o in geom_only if o.get('usgs_site') != site]
@@ -964,7 +973,7 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report):
                 pool = ce
             else:
                 others.append(ce)
-            tally['curated_' + (role if role in ('pool', 'tailwater') else 'gauge')] += 1
+            tally['override_' + (role if role in ('pool', 'tailwater') else 'gauge')] += 1
 
         if not (pool or tail or others or geom_only):
             tally['unbound'] += 1
@@ -1134,6 +1143,8 @@ def main():
     ap.add_argument('--review-out', default=None,
                     help='default <registry>\\_water_bindings_review.json; the FULL '
                          'geometry-only and name-only lists, not a sample of them')
+    ap.add_argument('--overrides', default=None,
+                    help='default <registry>\\gauge_overrides.json; gauge bindings a human\n                         decided, which win over every derived pass')
     ap.add_argument('--stage', choices=('fetch', 'bind', 'all'), default='all')
     ap.add_argument('--margin-km', type=float, default=3.0,
                     help='how far outside a water a gauge may sit and still count as ON it. '
@@ -1188,8 +1199,50 @@ def main():
 
     print('\n%d waters in the index' % len(index))
 
+    # THE DEFAULT IS THE POINT. `--aliases` and `--registry` were both optional flags with no
+    # default, and both silently changed the output when omitted -- 41 curated aliases went
+    # unread for weeks, and the R2 registry publish just did not happen. The warning for a
+    # missing file has to live OUTSIDE the block it gates, or a run without it looks normal.
+    ovr_path = a.overrides or os.path.join(reg, 'gauge_overrides.json')
+    overrides = {}
+    if os.path.exists(ovr_path):
+        with open(ovr_path, encoding='utf-8') as fh:
+            doc = json.load(fh)
+        overrides = doc.get('overrides') if isinstance(doc, dict) else None
+        overrides = overrides if isinstance(overrides, dict) else {}
+        unknown = sorted(set(overrides) - set(index))
+        print('gauge overrides: %d water(s), %d entr(ies) from %s'
+              % (len(overrides), sum(len(v or []) for v in overrides.values()),
+                 os.path.basename(ovr_path)))
+        if unknown:
+            # A slug that is not in the index binds nothing and reads, from the output, exactly
+            # like an override that was never written. Say it out loud.
+            print('   !! %d override slug(s) are not in the index and will bind NOTHING: %s'
+                  % (len(unknown), ', '.join(unknown[:8])))
+        report['gauge_overrides_unknown_slugs'] = unknown
+    else:
+        print('!! NO OVERRIDE FILE at %s -- every binding will be derived.' % ovr_path)
+        print('   That is fine if nothing needs a human decision. It is NOT fine if you expect')
+        print('   Lake Robinson to have a tailwater; that gauge is named for the creek and the')
+        print('   two-signal rule refuses it on purpose.')
+    report['gauge_overrides'] = {k: [x.get('site') for x in (v or [])]
+                                 for k, v in overrides.items()}
+
+    # curated_lakes.json's `usgs` field used to be promoted here. It is not any more -- four of
+    # its five entries are now derived independently by the USGS pass and the fifth reports only
+    # water temperature. Name any row that still carries one, so a field going quiet is a line
+    # of output rather than an absence.
+    stale = sorted(s for s, r in (index.items() if isinstance(index, dict)
+                                  else ((x.get('slug'), x) for x in index))
+                   if isinstance(r, dict) and r.get('usgs') and s not in overrides)
+    if stale:
+        print('   note: %d index row(s) still carry a curated `usgs` field that this script no '
+              'longer reads: %s' % (len(stale), ', '.join(stale[:8])))
+        print('   They are derived now. Move any that are not to %s.' % os.path.basename(ovr_path))
+    report['curated_usgs_no_longer_read'] = stale
+
     bindings = bind(index, os.path.join(reg, 'boundaries'), src, cache, a.force,
-                    a.margin_km, report)
+                    a.margin_km, report, overrides)
 
     full = report.pop('_full_review_lists', None)
     if full:

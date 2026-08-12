@@ -1889,40 +1889,77 @@ export function populatePlanRampDropdown(waterbodyName){
     if(current) sel.value = current;
     return;
   }
-  // Coastal zones: ramps are dynamically loaded from the worker access-index first.
-  // We fall back to the hardcoded ones if no ramps are loaded.
+  // THE ACCESS INDEX IS FOR EVERY WATER, NOT JUST COASTAL ONES.
+  //
+  // This branch used to be gated on `isCoastalKey`, so a lake fell through to
+  // `lakeDbEntryFor(...).ramps` -- and that getter is `r.ramps?.curated || r.ramps?.natl || []`,
+  // a first-match chain that never reaches `osm` at all and, on any lake carrying a curated
+  // list, never reaches `natl` either. Measured against the shipped index on 2026-08-12: the
+  // 38 lakes with a curated list showed 97 launches here while hiding 456 `natl` and 381 `osm`.
+  // Lake Sidney Lanier offered TWO ramps out of 106. Thurmond four out of 73.
+  //
+  // Meanwhile `access-index.js` already merges the live Worker `/ramps` feed -- SCDNR, NCWRC,
+  // GA WRD and TWRA, ~2,040 state-agency launches -- with `natl`, `osm` and the registry into
+  // one `byLake` map, and `lake-ramp-select.js` and `smart-plan-v2-wiring.js` have both been
+  // reading it that way all along. This was one module on the narrow path while three were on
+  // the wide one; it is not new machinery, it is the same call the branch above already makes.
+  //
+  // Order of preference, unchanged in spirit: the loaded index first, then whatever static list
+  // the water has, so a picker opened before the index finishes loading still offers something.
   const coastalKey = resolveR2Key(waterbodyName || '');
-  if (isCoastalKey(coastalKey)) {
-    const zone = COASTAL_ZONES[coastalKey];
-    let accessPoints = [];
-    if (window.getLoadedAccessIndex) {
-      const idx = window.getLoadedAccessIndex();
-      accessPoints = idx.byLake.get(waterbodyName) || [];
-    }
-    
-    if (accessPoints.length === 0 && zone) {
-      accessPoints = Object.entries(zone.ramps || {}).map(([name, coords]) => ({
-        name,
-        lat: coords[0],
-        lon: coords[1]
-      }));
-    }
-
-    accessPoints.forEach(point => {
-      const opt = document.createElement('option');
-      opt.value = point.name; opt.textContent = point.name;
-      opt.dataset.lat = point.lat;
-      opt.dataset.lon = point.lon;
-      sel.appendChild(opt);
-    });
-    if(current) sel.value = current;
-    return;
+  const isCoastal = isCoastalKey(coastalKey);
+  let accessPoints = [];
+  if (waterbodyName && window.getLoadedAccessIndex) {
+    const idx = window.getLoadedAccessIndex();
+    accessPoints = idx?.byLake?.get(waterbodyName) || [];
   }
-  const wbEntry = waterbodyName ? lakeDbEntryFor(waterbodyName) : null;
-  if(!wbEntry || !wbEntry.ramps) return;
-  Object.keys(wbEntry.ramps).forEach(r=>{
+
+  if (!accessPoints.length) {
+    // Fallbacks, only until the index is loaded: the coastal zone's own list, or the registry
+    // record. `lakeDbEntryFor` stays the lake fallback so a cold picker is never empty.
+    if (isCoastal) {
+      const zone = COASTAL_ZONES[coastalKey];
+      accessPoints = Object.entries((zone && zone.ramps) || {})
+        .map(([name, coords]) => ({ name, lat: coords[0], lon: coords[1] }));
+    } else {
+      const wbEntry = waterbodyName ? lakeDbEntryFor(waterbodyName) : null;
+      accessPoints = Object.entries((wbEntry && wbEntry.ramps) || {})
+        .map(([name, coords]) => ({ name, lat: coords[0], lon: coords[1] }));
+    }
+  }
+
+  // FOUR SOURCES MERGED MEANS THE SAME RAMP ARRIVES MORE THAN ONCE. The state agency, the
+  // national layer and OSM all name Dreher Island; a dropdown that lists it three times is
+  // worse than one that lists it once. Collapse on the name, and on position within ~60 m for
+  // the case where two agencies spell it differently -- keeping the FIRST, because
+  // access-index.js already adds the registry and live-feed points in preference order.
+  const seenName = new Set();
+  const kept = [];
+  for (const p of accessPoints) {
+    const nm = String((p && p.name) || '').trim();
+    if (!nm) continue;
+    const key = nm.toLowerCase();
+    if (seenName.has(key)) continue;
+    if (Number.isFinite(p.lat) && Number.isFinite(p.lon)
+        && kept.some((q) => Number.isFinite(q.lat)
+          && Math.hypot((p.lon - q.lon) * 111 * Math.cos(p.lat * Math.PI / 180),
+                        (p.lat - q.lat) * 111) < 0.06)) {
+      continue;
+    }
+    seenName.add(key);
+    kept.push({ ...p, name: nm });
+  }
+  kept.sort((a, b) => a.name.localeCompare(b.name));
+
+  kept.forEach((point) => {
     const opt = document.createElement('option');
-    opt.value = r; opt.textContent = r;
+    opt.value = point.name; opt.textContent = point.name;
+    // The coords ride ON THE OPTION. The change handler used to look the name back up in
+    // `lakeDbEntryFor(...).ramps`, which only works while the names in the dropdown come from
+    // that same object -- the moment a launch arrives from the live DNR feed the lookup misses
+    // and the map does not move. dataset is how the coastal branch already carried them.
+    if (Number.isFinite(point.lat)) opt.dataset.lat = point.lat;
+    if (Number.isFinite(point.lon)) opt.dataset.lon = point.lon;
     sel.appendChild(opt);
   });
   if(current) sel.value = current;
@@ -1980,8 +2017,16 @@ document.getElementById('planRamp')?.addEventListener('change', e=>{
     return;
   }
   if(!waterbodyName || !rampName) return;
-  const wb = lakeDbEntryFor(waterbodyName);
-  const coords = wb?.ramps?.[rampName];
+  // The selected option carries its own coordinates (see populatePlanRampDropdown). Read them
+  // first: a launch from the live DNR feed is not in `lakeDbEntryFor(...).ramps` and never will
+  // be, so a name lookup there silently fails to move the map. Keep the lookup as a fallback for
+  // an option rendered before this change shipped.
+  const optEl = e.target.selectedOptions && e.target.selectedOptions[0];
+  const dLat = optEl ? Number(optEl.dataset.lat) : NaN;
+  const dLon = optEl ? Number(optEl.dataset.lon) : NaN;
+  const coords = (Number.isFinite(dLat) && Number.isFinite(dLon))
+    ? [dLat, dLon]
+    : lakeDbEntryFor(waterbodyName)?.ramps?.[rampName];
   if(coords && state.MAP_OK) state.MAP.setView(coords, 15);
 });
 
