@@ -10,14 +10,53 @@ Personal use only, not for distribution or resale; not for navigation.
        --charted  "F:\\TrollMapPipeline\\registry\\charted.json" `
        --out      "F:\\TrollMapPipeline\\registry\\lake_index.json"
 
+`--aliases`, `--names` and `--counties` are NOT in that command because all three now default
+to their file in `--registry`. THAT IS THE FIX FOR A BUG THIS DOCSTRING CAUSED, 2026-08-12.
+
+`--aliases` used to have no default, and this usage block did not pass it. So every run made
+from the copy/paste above loaded an EMPTY alias table, bound nothing, and said nothing about
+it -- while `lake_aliases.json` sat in the registry directory with the right answers in it.
+
+    lake_aliases.json   written 2026-08-04, 41 entries
+    lake_index.json     rebuilt 2026-08-09, from this command
+    -> `Lake Thicketty` still a null duplicate row beside `thicketty_creek_wcd_lake_number_26`
+
+Five of Ryan's naming complaints were one bug: Wee Tee/Wittee, Lake Thicketty, the duplicate
+Congaree River, HB Robinson, Jonesville Reservoir. Every one had a correct alias on disk that
+no run ever read. Ryan, 2026-08-11: *"wee tee = wittee for about the 100th time"* -- he had
+said it that many times because the fix kept being written to a file the run did not open.
+
+`--counties` and `--names` already defaulted and already printed a line about what they
+loaded. `--aliases` was the one of the three that stayed silent. AN OPTIONAL INPUT THAT
+CHANGES THE OUTPUT MUST SAY WHAT IT DID, OR ITS ABSENCE IS INVISIBLE.
+
 THE PROBLEM
 
 TrollMap carries SIX lake lists and each was added to patch a hole in the one before it:
 
-    data/lakes.js              LAKE_DB, 50 lakes -- and the ONLY source of USGS gauge ids,
-                               Duke/Dominion basin names, normalPool/minPool curves and 50
-                               sets of curated ramp coordinates. Imported by smart-plan,
-                               plan-builder, catch-journal, lake-research-engine, utility-sync.
+    data/lakes.js              LAKE_DB, 50 lakes. **DELETED 2026-08-04.** The data moved to
+                               registry/curated_lakes.json and is read from there below; the
+                               name `lake_db` survives ONLY as an internal dict key and a
+                               console label. Ryan, 2026-08-12: *"LAKE_DB this is dead...
+                               something replaced it."* Do not quote the name at him.
+
+                               THE OLD CLAIM WAS "the ONLY source of USGS gauge ids." That was
+                               true when written and is now the smallest source on the drive:
+
+                                   this script, from curated_lakes.json     usgs on   4 rows
+                                   registry/water_bindings.json             244 waters bound,
+                                                                            147 pool gauges
+                                                                            (123 name+geom),
+                                                                            418 gauges on 185
+                                   registry/tva_gauges.json                  43 dams, 27 at
+                                                                            name+geom
+                                   registry/_cameras.json                    25 bound sites
+
+                               EVERY ONE OF THOSE 244 BINDING KEYS IS ALREADY A SLUG IN THIS
+                               INDEX, and none of them reach a record. Folding them in is the
+                               same one-line-per-field fold `charted.json` already gets -- it
+                               is not done here yet because the confidence tier to trust is
+                               Ryan's call, not a default. See 00_START_HERE "Also open".
     data/lake-keys.js          118 display-name -> R2-key aliases, plus a _normalize() with
                                hand-written cases for "Ft." and "St." and a fuzzy substring
                                matcher. All of it exists because names were the join key.
@@ -245,7 +284,8 @@ def main():
     ap.add_argument('--names', help='JSON of slug -> display name, for water 3DHP named '
                                     'wrong. Defaults to <registry>/lake_display_names.json.')
     ap.add_argument('--aliases', help='JSON of curated-name -> registry-slug, for '
-                                      'genuine naming disagreements like Wee Tee/Wittee')
+                                      'genuine naming disagreements like Wee Tee/Wittee. '
+                                      'Defaults to <registry>/lake_aliases.json.')
     ap.add_argument('--counties', help='counties_500k.geojson from make_counties.mjs. '
                                        'Defaults to the registry dir, then its parent.')
     a = ap.parse_args()
@@ -427,10 +467,24 @@ def main():
         }
         by_norm[norm(x['name'])].append(s)
 
+    # THE ALIAS FILE DEFAULTS, AND SAYS WHAT IT DID. See the 2026-08-12 note in the module
+    # docstring: this used to be the one optional input of the three that loaded silently, so
+    # a run that forgot the flag was indistinguishable from a run with no naming disagreements
+    # to fix. `--counties` and `--names` above already work this way; this is only catching up.
+    apath = a.aliases or os.path.join(R, 'lake_aliases.json')
     aliases = {}
-    if a.aliases and os.path.exists(a.aliases):
+    if os.path.exists(apath):
         aliases = {k.lower(): v for k, v in
-                   json.load(open(a.aliases, encoding='utf-8')).items()}
+                   json.load(open(apath, encoding='utf-8')).items()}
+        print('aliases: %d curated-name -> slug from %s'
+              % (len(aliases), os.path.basename(apath)))
+    else:
+        print('!! NO ALIAS FILE at %s -- every genuine naming disagreement (Wee Tee/Wittee,'
+              % apath)
+        print('!! Lake Thicketty, the duplicate Congaree) will produce a DUPLICATE null row.')
+
+    alias_hit = set()          # keys that actually matched a curated name this run
+    alias_dead = {}            # key -> target, where the target is not a registry slug
 
     def bind(name, lat, lon):
         """registry slug for a curated entry, or None.
@@ -447,7 +501,15 @@ def main():
         for cand in ((name or '').strip(), re.sub(r',.*$', '', name or '').strip()):
             al = aliases.get(cand.lower())
             if al:
-                return al if al in idx else None
+                alias_hit.add(cand.lower())
+                # An explicit alias whose target is not a registry slug returns None rather
+                # than falling through to the positional matcher: the whole point of writing
+                # one down is that the guess was wrong. But a dead target is a typo or a slug
+                # that got renamed, and silence there is how this file rots -- so record it.
+                if al not in idx:
+                    alias_dead[cand] = al
+                    return None
+                return al
         for v in variants(name):
             for s in by_norm.get(norm(v), []):
                 c = idx[s].get('centroid') or []
@@ -615,11 +677,13 @@ def main():
         for d, ss in sorted(clash.items())[:10]:
             print('     %-44s %s' % (d, ', '.join(ss)))
     print()
-    print('LAKE_DB      %2d of %d bound to a registry lake'
+    # Labelled by its FILE, not by the dead JS symbol. `LAKE_DB` here sent a reader looking
+    # for js/data/lakes.js, which has not existed since 2026-08-04.
+    print('curated_lakes %2d of %d bound to a registry lake'
           % (stats['lake_db_bound'], len(js.get('lake_db') or {})))
     print('SCDNR lakes  %2d bound' % stats['scdnr_state_lake_bound'])
     print('user-known   %2d bound' % stats['user_known_bound'])
-    print('\ncurated fields carried over that NOTHING else has:')
+    print('\ncurated fields carried over from curated_lakes.json:')
     for f in ('usgs', 'duke', 'dominion', 'normalPool', 'minPool', 'tideStation'):
         if stats['field_' + f]:
             print('   %-12s %d lakes' % (f, stats['field_' + f]))
@@ -634,6 +698,27 @@ def main():
               % len(unbound))
         for src, n in unbound:
             print('   %-14s %s' % (src, n))
+
+    # ── WHAT THE ALIAS FILE ACTUALLY DID ─────────────────────────────────────────────────
+    #
+    # An alias that matches no curated name is not harmless: it LOOKS like the naming
+    # disagreement is handled, so the next person stops looking. 36 of the 41 entries written
+    # by 2026-08-11 match nothing this script reads -- they were aimed at name lists that have
+    # since moved -- and there was no way to see that from the output.
+    if aliases:
+        cold = sorted(k for k in aliases if k not in alias_hit)
+        print('\nalias file: %d of %d keys matched a curated name'
+              % (len(alias_hit), len(aliases)))
+        if alias_dead:
+            print('   %d point at a slug that is NOT in this index -- these bind to NOTHING '
+                  'and suppress the positional matcher too:' % len(alias_dead))
+            for k, v in sorted(alias_dead.items()):
+                print('      %-34s -> %s' % (k[:34], v))
+        if cold:
+            print('   %d matched no curated name in this run (stale, or for a list this '
+                  'script no longer reads):' % len(cold))
+            for k in cold:
+                print('      %-34s -> %s' % (k[:34], aliases[k]))
 
     if charted:
         sh = [v for v in idx.values() if v.get('shipped')]

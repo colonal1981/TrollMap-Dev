@@ -6,6 +6,13 @@ upload_garmin_to_r2.py — push the Garmin-derived layers to R2, fast and resuma
     py upload_garmin_to_r2.py --root ... --layers contours depth_regions
     py upload_garmin_to_r2.py --root ... --lake lake_wateree --dry-run
 
+    py verify_registry_r2.py            <- AFTERWARDS, EVERY TIME. See below.
+
+`--registry` is NOT in those commands because it now DEFAULTS to the `registry/` folder beside
+`--root`. It used to default to None while gating all three files the app reads out of
+`_registry/`, with every "not found" warning written inside the block it gated -- so a run
+without it shipped none of them and printed nothing. Detail at the `regdir` block in main().
+
 Same bucket, same flat per-slug key layout as `upload_to_r2.py`:
 
     {slug}/contours.geojson
@@ -246,6 +253,22 @@ def wrangler_error(out):
     return msg[:400]
 
 
+def slim_registry(full):
+    """registry/lakes.json -> the trimmed object published at _registry/lakes.json.
+
+    Module level, and NOT inlined in main(), so `verify_registry_r2.py` can import it and
+    compare what is in the bucket against what this uploader WOULD build. r2_audit.py already
+    imports its delete rules from here for the same reason: a checker that restates the rule
+    drifts from it, and then agrees with itself while both are wrong.
+    """
+    return {"count": full.get("count"), "bbox_wsen": full.get("bbox_wsen"),
+            "generated_from": full.get("generated_from"),
+            "lakes": [{"slug": r["slug"], "lake_id": r["lake_id"], "name": r["name"],
+                       "area_km2": r["area_km2"], "bounds_wsen": r["bounds_wsen"],
+                       "centroid": r["centroid"]}
+                      for r in full.get("lakes", [])]}
+
+
 def put(local, key, gz, dry, timeout):
     """One wrangler put. Returns (ok, bytes_sent, message)."""
     try:
@@ -352,18 +375,42 @@ def main():
     # endpoints by EXTENT instead, which needs one small file: slug, name and bounds for
     # every lake. Publishing it here keeps the worker on exactly the same lake identities
     # as the static layers -- the whole point of the registry.
+    # --registry DEFAULTS AS OF 2026-08-12, AND SAYS SO EITHER WAY.
+    #
+    # It gates all three files the APP reads out of _registry/ -- lakes.json, lake_index.json
+    # and water_bindings.json -- and every "!! not found" warning for those three was written
+    # INSIDE this block. So a run without the flag published none of them and printed nothing
+    # at all about it. The run looked completely normal.
+    #
+    # Ryan, 2026-08-12: "water bindings should be in r2 this was fixed like 3 different
+    # times... this shit is getting old." It WAS fixed three times -- each fix went inside the
+    # block that never executed. The bug was never in the water-bindings code.
+    #
+    # Same shape as consolidate_lake_index.py's --aliases, found the same day: an optional flag
+    # with no default, where the code that would complain sits behind the flag it is
+    # complaining about. See 00_START_HERE "THE OPTIONAL-FLAG PATTERN".
+    regdir = Path(args.registry) if args.registry else None
+    if regdir is None:
+        for cand in (root.parent / "registry", Path("registry")):
+            if (cand / "lakes.json").exists():
+                regdir = cand
+                print(f"registry: defaulting to {regdir}  (pass --registry to override)")
+                break
+    if regdir is None:
+        print("!! NO REGISTRY DIR -- looked beside --root and in ./registry.")
+        print("!! _registry/lakes.json, _registry/lake_index.json and "
+              "_registry/water_bindings.json will NOT be published.")
+        print("!! The app reads all three: lake-registry.js loads the index, and "
+              "Worker/conditions.js")
+        print("!! answers every level, flow and tide request off the bindings.")
+
     reg_jobs = []
-    if args.registry:
-        rp = Path(args.registry) / "lakes.json"
+    if regdir is not None:
+        rp = regdir / "lakes.json"
         if not rp.exists():
-            sys.exit(f"--registry given but {rp} not found")
+            sys.exit(f"registry dir {regdir} has no lakes.json")
         full = json.load(open(rp))
-        slim = {"count": full.get("count"), "bbox_wsen": full.get("bbox_wsen"),
-                "generated_from": full.get("generated_from"),
-                "lakes": [{"slug": r["slug"], "lake_id": r["lake_id"], "name": r["name"],
-                           "area_km2": r["area_km2"], "bounds_wsen": r["bounds_wsen"],
-                           "centroid": r["centroid"]}
-                          for r in full.get("lakes", [])]}
+        slim = slim_registry(full)
         tmp = Path(tempfile.gettempdir()) / "trollmap_registry_slim.json"
         tmp.write_text(json.dumps(slim, separators=(",", ":")))
         reg_jobs.append((str(tmp), f"{args.prefix}_registry/lakes.json",
@@ -381,7 +428,7 @@ def main():
         # 2026-08-02 the live object was several hours behind: it predated the charted-fraction
         # recompute and the county naming, so the app was offering lakes under names the packs
         # no longer matched. Publishing it on the same run as the packs is the fix.
-        ip = Path(args.registry) / "lake_index.json"
+        ip = regdir / "lake_index.json"
         if ip.exists():
             reg_jobs.append((str(ip), f"{args.prefix}_registry/lake_index.json",
                              "_registry", "lake_index"))
@@ -404,7 +451,7 @@ def main():
         # A registry file the app needs and the uploader does not ship is indistinguishable from
         # work that was never done. lake_index.json above carries the same lesson in its own
         # comment; this is the second file to learn it.
-        wb = Path(args.registry) / "water_bindings.json"
+        wb = regdir / "water_bindings.json"
         if wb.exists():
             reg_jobs.append((str(wb), f"{args.prefix}_registry/water_bindings.json",
                              "_registry", "water_bindings"))
