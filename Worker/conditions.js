@@ -60,7 +60,7 @@
  * client-side JavaScript. This is the authoritative source and it is a different agency.
  */
 import { CORS, JSON_HEADERS, r2Text } from './worker-core.js';
-import { getDukeLake } from './worker-data.js';
+import { getDukeLake, fetchUsgs } from './worker-data.js';
 
 const UA = 'TrollMap/1.0 (personal fishing app)';
 
@@ -492,6 +492,84 @@ async function nwpsGauge(lid, role, bound, lat, lon) {
 }
 
 /**
+ * One USGS site, read whole — the same shape `nwpsGauge` returns, from a different agency.
+ *
+ * NOT EVERY GAUGE HAS A HANDBOOK-5 ID. NWS ingests most USGS sites and republishes them under an
+ * LID, which is why `nwpsGauge` covers the great majority. But it does not ingest all of them,
+ * and the ones it misses are disproportionately the ones that matter here: reservoir-pool
+ * gauges. Monticello Reservoir, Thurmond, Blalock, Bowen, North Saluda, Table Rock, Hyco and
+ * Greenwood all have a USGS site reporting pool and no NWPS gauge on the water at all. Reading
+ * only `.lid` meant the binder could publish those bindings and this Worker would step over
+ * every one of them — data on disk, and an empty panel on the screen.
+ *
+ * `00062` is elevation of the reservoir surface above datum and `00065` is stage on a local
+ * datum. Both are "how high is the water" and which one it is travels in `stage_basis`, so the
+ * response never presents a local gage stage as an elevation above NAVD88.
+ *
+ * THE FETCH IS NOT WRITTEN HERE. `worker-data.js` already has `fetchUsgs`, audited 2026-08-03,
+ * which does the JSON read, falls back to RDB when a site only answers RDB, filters USGS's
+ * `-999999` sentinel, and knows that `62614` and `62615` are also reservoir elevation. A second
+ * implementation in this file would be two code paths that can disagree about the same number —
+ * which is the objection this file already raises against re-fetching the NWM reach. So this
+ * wraps it and shapes the result like `nwpsGauge`'s; it does not re-derive it.
+ */
+async function usgsSite(site, role, bound, lat, lon) {
+  const u = await cached(`usgs:${site}`, TTL.gauge,
+    () => fetchUsgs(site, '00062,62614,62615,00065,00060,00010'));
+  const elev = Number.isFinite(u.elevation) ? u.elevation
+             : (Number.isFinite(u.elevationNavd88) ? u.elevationNavd88 : null);
+  const stage = Number.isFinite(u.gageHeight) ? u.gageHeight : null;
+  const flow = Number.isFinite(u.streamflow) ? u.streamflow : null;
+  const level = elev !== null ? elev : stage;
+  if (level === null && flow === null) throw new Error(`no current value for USGS ${site}`);
+
+  return {
+    lid: null,
+    usgs_site: site,
+    role,
+    name: (bound && bound.name) || null,
+    stage: level,
+    stage_units: level === null ? null : 'ft',
+    // WHICH NUMBER THIS IS. A reservoir elevation above NAVD88 and a stage above a local gage
+    // datum are both feet and mean different things; saying which one it is costs one field and
+    // stops anything downstream from subtracting one from the other.
+    stage_basis: level === null ? null : (elev !== null ? 'elevation_above_datum' : 'gage_height'),
+    flow,
+    flow_units: flow === null ? null : 'ft3/s',
+    water_temp_c: Number.isFinite(u.tempC) ? u.tempC : null,
+    observed_at: u.timestamp || null,
+    // NWPS carries flood categories and a forecast; USGS publishes neither. Null here means
+    // "this agency does not report it", not "no flooding" — the field exists so the shape
+    // matches nwpsGauge and a caller cannot tell the two apart by key presence alone.
+    flood_category: null,
+    flood_thresholds: null,
+    forecast: null,
+    datum: null,
+    in_service: true,
+    out_of_service_message: null,
+    reach_comid: null,
+    source: 'usgs',
+    site_type: (bound && bound.site_type) || null,
+    tva: (bound && bound.tva) || null,
+    binding_confidence: (bound && bound.confidence) || null,
+    km_from_point: bound && Number.isFinite(bound.lat) && Number.isFinite(bound.lon)
+      ? round1(kmBetween(lat, lon, bound.lat, bound.lon)) : null,
+  };
+}
+
+/** Whichever id this binding entry actually carries. Used as its identity everywhere below. */
+function gaugeId(g) {
+  if (!g) return null;
+  return g.lid || (g.usgs_site ? `usgs:${g.usgs_site}` : null);
+}
+
+/** Dispatch on the id the entry carries, not on the one we hope it has. */
+function readGauge(g, role, lat, lon) {
+  return g.lid ? nwpsGauge(g.lid, role, g, lat, lon)
+               : usgsSite(g.usgs_site, role, g, lat, lon);
+}
+
+/**
  * Level and flow for one water.
  *
  * Three reads at most — pool, tailwater, and the gauge nearest the requested point — in
@@ -501,13 +579,15 @@ async function nwpsGauge(lid, role, bound, lat, lon) {
  */
 async function waterBlock(b, lat, lon) {
   const picks = [];
-  if (b.pool && b.pool.lid) picks.push(['pool', b.pool]);
-  if (b.tailwater && b.tailwater.lid) picks.push(['tailwater', b.tailwater]);
+  if (gaugeId(b.pool)) picks.push(['pool', b.pool]);
+  if (gaugeId(b.tailwater)) picks.push(['tailwater', b.tailwater]);
   const near = nearest(b.gauges, lat, lon);
-  if (near && near.lid && !picks.some(([, g]) => g.lid === near.lid)) picks.push(['gauge', near]);
+  if (gaugeId(near) && !picks.some(([, g]) => gaugeId(g) === gaugeId(near))) {
+    picks.push(['gauge', near]);
+  }
 
   const settled = await Promise.allSettled(
-    picks.map(([role, g]) => nwpsGauge(g.lid, role, g, lat, lon)));
+    picks.map(([role, g]) => readGauge(g, role, lat, lon)));
 
   const out = {
     slug: b.slug, display_name: b.display_name, state: b.state, feature_type: b.feature_type,
@@ -515,14 +595,16 @@ async function waterBlock(b, lat, lon) {
   };
   settled.forEach((r, i) => {
     if (r.status === 'fulfilled') out[picks[i][0]] = r.value;
-    else out.failed.push({ lid: picks[i][1].lid, role: picks[i][0],
+    else out.failed.push({ lid: picks[i][1].lid || null,
+                           usgs_site: picks[i][1].usgs_site || null, role: picks[i][0],
                            error: String((r.reason && r.reason.message) || r.reason) });
   });
 
-  const used = new Set(picks.map(([, g]) => g.lid));
+  const used = new Set(picks.map(([, g]) => gaugeId(g)));
   out.other_gauges = (b.gauges || [])
-    .filter((g) => g && g.lid && !used.has(g.lid) && Number.isFinite(g.lat))
-    .map((g) => ({ lid: g.lid, name: g.name, lat: g.lat, lon: g.lon,
+    .filter((g) => g && gaugeId(g) && !used.has(gaugeId(g)) && Number.isFinite(g.lat))
+    .map((g) => ({ lid: g.lid || null, usgs_site: g.usgs_site || null, name: g.name,
+                   lat: g.lat, lon: g.lon,
                    km_from_point: round1(kmBetween(lat, lon, g.lat, g.lon)) }))
     .sort((x, y) => x.km_from_point - y.km_from_point);
 

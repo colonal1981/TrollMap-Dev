@@ -449,6 +449,10 @@ def fetch_all(cache, force, report):
             used = used or 'ogcapi/v0 monitoring-locations'
             print('  usgs %s  %d sites (ogc, %s)' % (st, len(feats), note))
             continue
+        # `62614`/`62615` are also reservoir elevation and are deliberately NOT requested here.
+        # Every lake site this catalogue returns already carries 00062 or 00065, so adding them
+        # would re-download 30 MB of catalogue for a set of sites nobody has shown to exist. The
+        # bind stage accepts them if they ever turn up (ELEV_PARMS), which costs nothing.
         d, note = fetch('%s/site/?format=rdb&stateCd=%s&parameterCd=00060,00065,00010,00062,63680'
                         '&hasDataTypeCd=iv&siteStatus=active&seriesCatalogOutput=true'
                         % (USGS_NWIS, st), cache, 'usgs_nwis_%s' % st, force)
@@ -565,6 +569,64 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report):
     tva_by_lid = {str(t.get('LocationID')): t for t in src.get('tva', [])
                   if LID_RE.match(str(t.get('LocationID') or ''))}
 
+    # THE USGS CATALOGUE WAS FETCHED FOR TWO MONTHS AND READ BY NOBODY. `fetch_all` pulled
+    # 152,176 series rows across the four states, `report['usgs']` printed the counts so the
+    # run looked like it had them, and `bind()` never touched `src['usgs']` -- the comment on
+    # the USACE block below says so out loud ("about ten made it in") and the wiring still did
+    # not happen. Same shape as the alias file and the `--registry` default: a source that is
+    # fetched, counted, and dropped, where the only symptom is an absence.
+    #
+    # What it costs: Monticello Reservoir, 6,660 acres of Ryan's own water, had no binding at
+    # all while `MONTICELLO RES NR JENKINSVILLE, SC` (02160900, parm 00062, reporting daily)
+    # sat in the cache. And 97 of the 244 bound waters carried no `pool` -- Thurmond, Moultrie,
+    # Lanier, Walter F. George, West Point, Jordan, Greenwood -- every one of which has a USGS
+    # reservoir-elevation gauge with its own name on it.
+    #
+    # WHY THE SERIES ROWS COLLAPSE SO FAR. The NWIS request asks for `seriesCatalogOutput`, so
+    # one row is one PARAMETER at one site, not one site: 23,004 SC rows are 300-odd sites.
+    # Dedup on site_no and union the parameter codes.
+    # These are the codes the Worker's `fetchUsgs` already knows how to read, and they have to
+    # be the same list on both sides: binding a site on a parameter the Worker cannot render
+    # would put a gauge on the screen with no reading under it.
+    ELEV_PARMS = {'00062',         # elevation of reservoir water surface above datum
+                  '62614',         # lake/reservoir elevation, NGVD29
+                  '62615'}         # lake/reservoir elevation, NAVD88
+    LEVEL_PARMS = ELEV_PARMS | {'00065',   # gage height, local datum
+                                '00060'}   # discharge -- flow, not level, but it is what a
+                                           # river has, and a river's binding needs it
+    usgs_sites = {}
+    for st, rows in (src.get('usgs') or {}).items():
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            try:
+                slat = float(r.get('dec_lat_va')); slon = float(r.get('dec_long_va'))
+            except (TypeError, ValueError):
+                continue
+            no = str(r.get('site_no') or '').strip()
+            if not USGS_SITE_RE.match(no):
+                continue
+            g = usgs_sites.setdefault(no, {'site': no, 'name': (r.get('station_nm') or '').strip(),
+                                           'lat': slat, 'lon': slon, 'state': st,
+                                           'site_type': (r.get('site_tp_cd') or '').strip(),
+                                           'parms': set(), 'end': ''})
+            if r.get('parm_cd'):
+                g['parms'].add(str(r['parm_cd']).strip())
+            end = (r.get('end_date') or '').strip()
+            if end > g['end']:
+                g['end'] = end
+    # A site with a thermistor and no stage sensor is real and is of no use to anyone deciding
+    # whether to launch. Drop it here rather than filtering it in five places downstream.
+    usgs_sites = {k: v for k, v in usgs_sites.items() if v['parms'] & LEVEL_PARMS}
+    usgs_cell = defaultdict(list)
+    for g in usgs_sites.values():
+        usgs_cell[(int(g['lon']), int(g['lat']))].append(g)
+    report['usgs_sites_with_level'] = len(usgs_sites)
+    print('  usgs: %d distinct sites carry a level/flow parameter '
+          '(%d lake-elevation)' % (len(usgs_sites),
+                                   sum(1 for g in usgs_sites.values()
+                                       if g['site_type'].startswith('LK'))))
+
     bindings, tally = {}, Counter()
     rejected_name_only, review_geom_only = [], []
 
@@ -580,12 +642,13 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report):
         polys, verts = bnd if bnd else (None, None)
 
         w, s, e, n = wsen
-        cand, tcand, ucand = [], [], []
+        cand, tcand, ucand, gcand = [], [], [], []
         for ix in range(int(math.floor(w)) - 1, int(math.floor(e)) + 2):
             for iy in range(int(math.floor(s)) - 1, int(math.floor(n)) + 2):
                 cand += cell.get((ix, iy), [])
                 tcand += tide_cell.get((ix, iy), [])
                 ucand += usace_cell.get((ix, iy), [])
+                gcand += usgs_cell.get((ix, iy), [])
 
         def _how_far(lon_, lat_, _polys=polys, _verts=verts, _wsen=wsen):
             """(km outside, is_inside). Shoreline distance, never the box, when we have rings."""
@@ -661,6 +724,148 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report):
             else:
                 others.append(entry)
 
+        # ── USGS, second pass ───────────────────────────────────────────────────────────
+        # Runs AFTER the NWPS pass on purpose. NWS ingests USGS, so 911 of the 1,092 active
+        # sites are the same physical instrument already enumerated under a handbook-5 id --
+        # binding both would put one gauge on a lake twice under two names. Going second means
+        # the NWPS entry is already in hand and can be deduped against by position.
+        #
+        # 0.6 km is the colocation radius: wide enough for the two agencies' coordinates for the
+        # same structure to disagree (they routinely differ by a couple hundred metres, dam
+        # crest vs stilling well) and narrow enough that Lake Blalock's own gauge does not get
+        # eaten by the Pacolet River gauge 1.0 km away.
+        #
+        # COLOCATED IS NOT DUPLICATE. The first cut of this dropped the USGS record whenever an
+        # NWPS gauge sat on top of it, and that threw away the reading the whole change was for:
+        # Lanier's USGS site is 0.01 km from `Chattahoochee River at Lake Sidney Lanier`,
+        # Moultrie's is 0.00 km from `Lake Moultrie at Pinopolis Dam`. One physical
+        # installation, two agency records -- and it is the USGS record that carries `00062`,
+        # elevation of the reservoir surface. Dropping it left seven big lakes poolless while
+        # the pool reading sat on disk. So: MERGE the USGS identity onto the entry already
+        # placed there, and let it promote that entry to `pool` when the site type says lake and
+        # a level parameter is present.
+        placed = ([pool] if pool else []) + ([tail] if tail else []) + others + geom_only
+
+        def _colocated(lon_, lat_, _p=placed):
+            for e in _p:
+                plon, plat = e.get('lon'), e.get('lat')
+                if not isinstance(plon, (int, float)) or not isinstance(plat, (int, float)):
+                    continue
+                if math.hypot((lon_ - plon) * 111.0 * math.cos(math.radians(lat_)),
+                              (lat_ - plat) * 111.0) <= 0.6:
+                    return e
+            return None
+
+        # ORDER DECIDES WHO BECOMES `pool`, SO IT MUST NOT BE CELL-ITERATION ORDER. Table Rock
+        # has two sites 350 m apart -- the reservoir (LK, stage) and its TAILRACE (ST) -- and
+        # whichever arrived first took the slot. Sort by evidence instead: a lake site reporting
+        # elevation above datum, then a lake site reporting stage, then everything else, and
+        # site number last so a re-run cannot reshuffle a tie.
+        def _grade(g):
+            lake = g['site_type'].startswith(('LK', 'ES'))
+            return (0 if (lake and (ELEV_PARMS & g['parms'])) else
+                    1 if (lake and '00065' in g['parms']) else
+                    2 if lake else 3, g['site'])
+
+        for g in sorted(gcand, key=_grade):
+            glon, glat, gname = g['lon'], g['lat'], g['name']
+            g_level = sorted(g['parms'] & LEVEL_PARMS)
+            g_is_lake = g['site_type'].startswith(('LK', 'ES'))
+            # A LAKE SITE CARRYING A LEVEL PARAMETER IS A POOL GAUGE. `00062` is elevation above
+            # datum and `00065` is stage on a local datum -- North Saluda, Table Rock and
+            # Reelfoot report only the latter, and refusing them over the choice of datum would
+            # leave three lakes poolless on a technicality. Which one it is travels with the
+            # entry so the app can say "elevation" or "stage" rather than guess.
+            g_pool_grade = g_is_lake and bool((ELEV_PARMS | {'00065'}) & g['parms'])
+
+            # A TAILRACE IS NOT THE SAME READING AS THE POOL. The merge exists for one
+            # installation carrying two agency records; a tailrace 350 m below the dam is a
+            # second, different measurement and belongs in `tailwater`, not folded into pool.
+            g_tail = bool(TAILWATER_RE.search(gname))
+            hit = None if g_tail else _colocated(glon, glat)
+            if hit is not None:
+                if hit.get('usgs_site'):
+                    # NEVER OVERWRITE AN IDENTITY. Two USGS sites can both land inside the
+                    # colocation radius, and the second one silently replacing the first put
+                    # Table Rock's tailrace site number on a record still named for the
+                    # reservoir -- a row that reads as one gauge and cites another.
+                    hit.setdefault('usgs_also', []).append(g['site'])
+                    tally['usgs_second_site_at_same_spot'] += 1
+                    continue
+                hit['usgs_site'] = g['site']
+                hit['usgs_name'] = gname
+                hit['usgs_parms'] = g_level
+                hit['usgs_site_type'] = g['site_type']
+                tally['usgs_merged_into_nwps'] += 1
+                # Promote only into an EMPTY pool slot, and never at the expense of a tailwater:
+                # `Lake Moultrie at Pinopolis Dam` reads pool, `... Tailrace` does not.
+                if pool is None and g_pool_grade and hit is not tail:
+                    if hit in others:
+                        others.remove(hit)
+                    if hit in geom_only:
+                        geom_only.remove(hit)
+                    hit['pool_from'] = 'usgs:%s' % (sorted(ELEV_PARMS & g['parms'])[0] if (ELEV_PARMS & g['parms']) else '00065')
+                    pool = hit
+                    tally['usgs_pool_via_merge'] += 1
+                continue
+            tok = name_relation(names, gname, weak)
+            d_km, inside = _how_far(glon, glat)
+            geom = 'inside' if inside else ('near' if d_km <= margin_km else None)
+            if geom == 'near' and not verts:
+                geom = 'box'
+            is_lake_site = g_is_lake
+
+            if tok and geom:
+                conf = {'inside': 'name+geom', 'near': 'name+near', 'box': 'name+box'}[geom]
+            elif tok and not geom:
+                rejected_name_only.append({'slug': slug, 'usgs_site': g['site'], 'gauge': gname,
+                                           'token': tok, 'km_outside': round(d_km, 1)})
+                tally['rejected_name_only'] += 1
+                continue
+            elif geom == 'inside' and is_lake_site:
+                # A gauge standing IN the water binds on geometry alone -- the same rule the
+                # NWPS pass uses. Restricted to lake/estuary site types because `site_tp_cd`
+                # says what the instrument is on: an `ST` gauge inside a reservoir polygon is
+                # a feeder creek at the head of a cove, not the lake. That is the tributary
+                # noise the geom-only tier was already producing, and USGS hands us the field
+                # that distinguishes it, so there is no reason to guess.
+                review_geom_only.append({'slug': slug, 'usgs_site': g['site'], 'gauge': gname,
+                                         'geom': 'inside', 'km_outside': 0.0})
+                tally['review_geom_only'] += 1
+                geom_only.append({'usgs_site': g['site'], 'name': gname, 'lat': glat,
+                                  'lon': glon, 'confidence': 'geom_only_inside',
+                                  'km_outside': 0.0, 'source': 'usgs',
+                                  'site_type': g['site_type'], 'parms': g_level})
+                tally['geom_only_accepted'] += 1
+                continue
+            else:
+                if geom:
+                    tally['usgs_geom_only_stream_skipped'] += 1
+                continue
+
+            entry = {'usgs_site': g['site'], 'name': gname, 'lat': glat, 'lon': glon,
+                     'confidence': conf, 'km_outside': round(d_km, 1), 'source': 'usgs',
+                     'site_type': g['site_type'], 'state': g['state'],
+                     'parms': g_level, 'last_value': g['end']}
+
+            # POOL ONLY FROM A GAUGE THAT MEASURES POOL. A stream gauge with a lake's name on it
+            # is the inflow or the tailrace, and calling it `pool` would put a creek stage in
+            # the field the app reads to say how far down the lake is. The site type is the
+            # discriminator, and USGS hands it to us -- there is nothing to infer.
+            if TAILWATER_RE.search(gname) and DAM_RE.search(gname):
+                tail = entry if tail is None else tail
+            elif g_pool_grade:
+                if pool is None:
+                    entry['pool_from'] = 'usgs:%s' % (sorted(ELEV_PARMS & g['parms'])[0] if (ELEV_PARMS & g['parms']) else '00065')
+                    pool = entry
+                    tally['usgs_pool'] += 1
+                else:
+                    others.append(entry)
+            else:
+                others.append(entry)
+            placed.append(entry)
+            tally['usgs_bound'] += 1
+
         if not (pool or tail or others or geom_only):
             tally['unbound'] += 1
             continue
@@ -723,8 +928,10 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report):
         # "Hartwell-Line4b"). Both were about to be written into a field called `usgs_site`,
         # which would have put a transmission line where a gauge number belongs. So: keep the
         # raw id under its own name and promote it to `usgs_site` only when it actually looks
-        # like one. That promotion is also the only route by which any USGS site id reaches
-        # this output at all -- 152,176 sites were catalogued and about ten made it in.
+        # like one. This USED to be the only route by which any USGS site id reached the output
+        # at all -- 152,176 series rows catalogued, about ten arriving, via a field on a Corps
+        # record. The USGS pass above is now the real route; this one stays because a CWMS
+        # project legitimately cites the site it reads from, and that citation is worth keeping.
         usace, seen_u = [], set()
         for off, lo, slon, slat in ucand:
             site = str(lo.get('name') or '').strip()
@@ -762,8 +969,18 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report):
     print('\nharvesting NWM reach ids for %d bound waters' % len(bindings))
     done = 0
     for slug, b in bindings.items():
-        lid = (b.get('pool') or b.get('tailwater') or (b.get('gauges') or [{}])[0]).get('lid')
-        if not lid or not LID_RE.match(lid):
+        # THE FIRST ENTRY IS NOT NECESSARILY AN NWPS ENTRY. Once USGS sites can win `pool`,
+        # taking `pool.lid` and giving up on a miss would drop the reach for exactly the waters
+        # this change was made to improve -- Thurmond's pool is now a USGS site with no lid at
+        # all, while a perfectly good NWPS gauge sits in `gauges[]` one line down. Scan for the
+        # first entry that actually carries a handbook-5 id.
+        lid = None
+        for e in ([b.get('pool'), b.get('tailwater')] + list(b.get('gauges') or [])):
+            cand_lid = (e or {}).get('lid')
+            if cand_lid and LID_RE.match(cand_lid):
+                lid = cand_lid
+                break
+        if not lid:
             continue                                # the "WL" case -- bad input, not a 404
         d, _ = fetch('%s/gauges/%s' % (NWPS, lid), cache, 'nwps_gauge_%s' % lid, force)
         rid = str(((d or {}).get('reachId') or '')).strip()
@@ -776,6 +993,21 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report):
         done += 1
         if done % 100 == 0:
             print('  %d/%d' % (done, len(bindings)))
+
+    # A FETCHED SOURCE THAT NOTHING READS MUST NOT BE SILENT. `src['usgs']` was populated,
+    # counted into the report, printed at the end of every run, and never consulted -- for two
+    # months, while the report's own `usgs: {SC: 23004, ...}` line made the run look like it
+    # had the data. The only symptom was an absence, and an absence is the one thing no output
+    # shows. So the list of sources bind() actually reads is written down HERE, next to the
+    # code that reads them, and anything in `src` that is not in it says so loudly. Adding a
+    # source to fetch_all and forgetting to wire it up is now a line of output, not silence.
+    CONSUMED = {'nwps', 'tva', 'cwms', 'coops', 'usgs'}
+    unread = sorted(set(src) - CONSUMED)
+    if unread:
+        print('\n!! %d FETCHED SOURCE(S) NOT READ BY bind(): %s' % (len(unread), ', '.join(unread)))
+        print('   They were downloaded, cached and counted in the report. Nothing used them.')
+        print('   Either wire them into bind() or stop fetching them -- do not leave both.')
+    report['sources_fetched_but_unread'] = unread
 
     report['tally'] = dict(tally)
     report['rejected_name_only_sample'] = rejected_name_only[:60]
@@ -874,6 +1106,10 @@ def main():
           % (report['review_geom_only_total'], t.get('geom_only_accepted', 0)))
     print('   tide stations bound %d   usace projects bound %d'
           % (t.get('bound_tides', 0), t.get('bound_usace', 0)))
+    print('   usgs sites bound %d   (of which %d became a pool reading)   '
+          'deduped against nwps %d   stream-gauge-in-a-lake skipped %d'
+          % (t.get('usgs_bound', 0), t.get('usgs_pool', 0),
+             t.get('usgs_dupe_of_nwps', 0), t.get('usgs_geom_only_stream_skipped', 0)))
     if report.get('weak_tokens_rescued_as_one_watershed'):
         print('   kept as strong (one watershed, not an ambiguity): %s'
               % ', '.join(report['weak_tokens_rescued_as_one_watershed'][:12]))
