@@ -73,6 +73,11 @@ SPREAD_FLOOR_KM = 5.0        # below this, normal multipart on a small pond is n
 # under this share of its box is either merged or mis-cut. Rivers are exempt by feature_type.
 MIN_LAKE_BOX_FILL = 0.004
 
+# 55 m. Wide enough for the rounding in lakes.json (6 dp) and for a re-cut that moved nothing,
+# narrow enough that an attached arm cannot hide under it -- the smallest arm attached on
+# 2026-08-12 moved a bound by 0.002 deg, four times this.
+BOUNDS_TOLERANCE_DEG = 0.0005
+
 
 def km(lat1, lon1, lat2, lon2):
     return math.hypot((lat2 - lat1) * 110.574,
@@ -103,6 +108,31 @@ def part_centroids(path):
     return out
 
 
+def file_bounds(path):
+    """The boundary file's own extent, [w, s, e, n]. None if it cannot be read."""
+    try:
+        with open(path, encoding='utf-8') as fh:
+            doc = json.load(fh)
+    except Exception:
+        return None
+    w = s_ = float('inf')
+    e = n = float('-inf')
+    for f in (doc.get('features') or [doc]):
+        g = (f or {}).get('geometry') or {}
+        t = g.get('type')
+        parts = [g.get('coordinates')] if t == 'Polygon' else (g.get('coordinates') or [])
+        if t not in ('Polygon', 'MultiPolygon'):
+            continue
+        for part in (parts or []):
+            for ring in (part or []):
+                for q in (ring or []):
+                    if not (isinstance(q, (list, tuple)) and len(q) >= 2):
+                        continue
+                    w = min(w, q[0]); e = max(e, q[0])
+                    s_ = min(s_, q[1]); n = max(n, q[1])
+    return None if w == float('inf') else [w, s_, e, n]
+
+
 def box_acres(b):
     w, s, e, n = b
     k = math.cos(math.radians((s + n) / 2))
@@ -125,7 +155,7 @@ def main() -> int:
                                               for k, v in raw.items()]
     bdir = os.path.join(a.registry, 'boundaries')
 
-    split, oversized, drifted = [], [], []
+    split, oversized, drifted, boundsdrift = [], [], [], []
     checked = 0
 
     for r in rows:
@@ -149,6 +179,22 @@ def main() -> int:
             drifted.append(('boundary unreadable', r))
             continue
         checked += 1
+
+        # ── the row's box must be the boundary's box ──────────────────────────────────────
+        # THIS CHECK WAS DESCRIBED AT THE TOP OF THIS FILE AND WAS NEVER WRITTEN. On
+        # 2026-08-12 `attach_arms.py` added 45,959 acres to 28 boundary files in place;
+        # nothing re-measured them into lakes.json; `consolidate_lake_index.py` carried the
+        # stale numbers through (it copies bounds_wsen, it does not derive it); and this
+        # script printed "all invariants hold" over a Hartwell whose index box stops 16 km
+        # short of its own shoreline. A promised check that does not exist is worse than no
+        # check, because its silence reads as a pass.
+        fb = file_bounds(fp)
+        if fb and isinstance(b, list) and len(b) == 4 \
+                and all(isinstance(x, (int, float)) for x in b):
+            off = max(abs(b[i] - fb[i]) for i in range(4))
+            if off > BOUNDS_TOLERANCE_DEG:
+                boundsdrift.append((off, b, fb, r))
+
         if len(cents) >= 2 and acres > 0:
             limit = max(SPREAD_FLOOR_KM, a.spread_factor * math.sqrt(acres / ACRES_PER_KM2))
             far = max(km(c1[0], c1[1], c2[0], c2[1])
@@ -190,6 +236,23 @@ def main() -> int:
 
     print('registry rows: %d   boundaries read: %d' % (len(rows), checked))
     fails = 0
+
+    if boundsdrift:
+        fails += len(boundsdrift)
+        boundsdrift.sort(key=lambda x: -x[0])
+        print()
+        print('BOUNDS DO NOT MATCH THE BOUNDARY FILE — the index describes water it does not '
+              'cover:')
+        for off, b, fb, r in boundsdrift[:20]:
+            print('  %-30s %9.0f ac   off by %.4f deg (~%.1f km)'
+                  % ((r.get('slug') or '?')[:30], r.get('area_acres') or 0, off, off * 111))
+            print('  %-30s index %s' % ('', [round(x, 4) for x in b]))
+            print('  %-30s file  %s' % ('', [round(x, 4) for x in fb]))
+        if len(boundsdrift) > 20:
+            print('  ... and %d more' % (len(boundsdrift) - 20))
+        print('  FIX: py .\\scripts\\remeasure_boundaries.py --registry <registry> --go')
+        print('       then re-run consolidate_lake_index.py. lake_index.json carries these')
+        print('       values from lakes.json, it does not derive them.')
 
     if unreachable:
         fails += len(unreachable)
