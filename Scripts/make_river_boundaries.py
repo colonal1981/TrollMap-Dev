@@ -199,7 +199,8 @@ def garmin_coverage(extract, region, cache_path):
     if cache_path and os.path.exists(cache_path):
         try:
             blob = json.load(open(cache_path, encoding='utf-8'))
-            if blob.get('sig') == sig and blob.get('cell') == GARMIN_CELL:
+            if blob.get('sig') == sig and blob.get('cell') == GARMIN_CELL \
+                    and 'da_cells' in blob:
                 cells = {tuple(c) for c in blob['cells']}
                 print('  Garmin coverage read from cache: %d cells (%s)'
                       % (len(cells), os.path.basename(cache_path)), flush=True)
@@ -210,10 +211,11 @@ def garmin_coverage(extract, region, cache_path):
 
     W, S, E, N = region
     cells = set()
+    da_cells = set()          # cells backed by a real depth area, not just a contour line
     shoal_only = kept_da = 0
     t = time.time()
 
-    def _claim(coords):
+    def _claim(coords, into=None):
         """Every [lon, lat] anywhere in a coordinate tree, clipped to the region."""
         stack = [coords]
         while stack:
@@ -222,7 +224,10 @@ def garmin_coverage(extract, region, cache_path):
                     and isinstance(v[0], (int, float)) and isinstance(v[1], (int, float))):
                 lon, lat = v[0], v[1]
                 if W <= lon <= E and S <= lat <= N:
-                    cells.add((int(lon / GARMIN_CELL), int(lat / GARMIN_CELL)))
+                    c = (int(lon / GARMIN_CELL), int(lat / GARMIN_CELL))
+                    cells.add(c)
+                    if into is not None:
+                        into.add(c)
             elif isinstance(v, list):
                 stack.extend(v)
 
@@ -250,7 +255,7 @@ def garmin_coverage(extract, region, cache_path):
                         shoal_only += 1
                         continue
                     kept_da += 1
-                    _claim(((feat.get('geometry') or {}).get('coordinates')) or [])
+                    _claim(((feat.get('geometry') or {}).get('coordinates')) or [], da_cells)
         except Exception as exc:
             print('    %s unreadable (%s)' % (os.path.basename(fp), exc), flush=True)
             continue
@@ -259,10 +264,19 @@ def garmin_coverage(extract, region, cache_path):
                   % (n, len(files), len(cells), time.time() - t), flush=True)
     print('  depth areas: %d kept, %d refused as shoal-band-only (<= %d dm)'
           % (kept_da, shoal_only, SHOAL_DM), flush=True)
+    print('  %d of %d cells are backed by a depth area; the rest are contour-only'
+          % (len(da_cells), len(cells)), flush=True)
 
     if cache_path:
         try:
-            json.dump({'sig': sig, 'cell': GARMIN_CELL, 'cells': sorted(cells)},
+            # `da_cells` is the subset backed by an actual depth area. A cell that only ever
+            # saw a contour line is water by inference; a cell inside a depth polygon is water
+            # by measurement. Ryan, 2026-08-12, on a 3,050-acre "lake" that turned out to hold
+            # zero depth areas and seven contour lines: *"garmin doesn't do bathymetry surveys
+            # on these... so that theory doesn't hold."* It did not. Recording the split here
+            # costs nothing and lets every consumer tell the two apart.
+            json.dump({'sig': sig, 'cell': GARMIN_CELL, 'cells': sorted(cells),
+                       'da_cells': sorted(da_cells)},
                       open(cache_path, 'w', encoding='utf-8'))
             print('  cached to %s -- later runs skip the scan' % cache_path, flush=True)
         except Exception as exc:
