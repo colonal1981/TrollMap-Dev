@@ -47,7 +47,24 @@ is a lake island we already own; a cell wrongly released would be a phantom lake
 to build a pack for an island. If this is ever reused for something where the bias runs the other
 way, fix the hole handling first.
 
-    py .\\scripts\\sweep_unclaimed.py            # one pass, no chunking needed
+TWO GATES, ADDED 2026-08-12, BOTH FIXING THE SAME ROOT CAUSE
+
+`registry/boundaries` holds 3,392 files. `registry/lake_index.json` holds 859 rows. The
+2026-08-11 shrink cut the INDEX and never touched the FOLDER, so 2,538 files are boundaries for
+lakes TrollMap does not carry, and 1,531 of those are not even in the four states.
+
+    THE CLAIM PASS READS THE INDEX, NOT THE FOLDER.  An orphan boundary claiming a cell hides
+    real water -- the cell stops being "unclaimed" on behalf of a lake that was dropped. It also
+    satisfies `nearest_known`, which SHORT-CIRCUITS --near-km, which is how 282 clusters and
+    69,710 acres of Missouri, Alabama, Mississippi and Florida water reached this report.
+
+    THE REPORT PASS TESTS THE STATE LINE.  `registry/region_mask.json`, built by
+    make_region_mask.py from the Census TIGER states already on the drive. ANY cell inside keeps
+    the whole cluster, so Hartwell, Thurmond and Chatuge survive; a centroid test would have
+    thrown away real border lakes and called it cleaning.
+
+    py .\\scripts\\make_region_mask.py           # once, or when the state list changes
+    py .\\scripts\\sweep_unclaimed.py            # claim pass
     py .\\scripts\\sweep_unclaimed.py --report   # cluster and list
 
 Personal use only, not for distribution or resale. NOT FOR NAVIGATION.
@@ -56,11 +73,24 @@ from __future__ import annotations
 
 import argparse
 import glob
+import importlib.util
 import json
 import math
 import os
 import time
 from collections import deque, defaultdict
+
+
+def _sibling(name):
+    """Load a helper that lives next to this script, wherever the script was copied to."""
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), name + '.py')
+    spec = importlib.util.spec_from_file_location(name, p)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+InRegion = _sibling('in_region')
 
 CELL = 0.002                      # same grid the coverage cache uses
 ACRES_PER_CELL = 10.2             # a 0.002 deg square at ~34 N
@@ -138,6 +168,9 @@ def main() -> int:
     ap.add_argument('--min-fill', type=float, default=0.15,
                     help='a cluster must fill this share of its own bounding box to be called a '
                          'lake rather than a shoreline collar (default 0.15)')
+    ap.add_argument('--region-mask', default=os.path.join('registry', 'region_mask.json'))
+    ap.add_argument('--no-region', action='store_true',
+                    help='skip the four-state test entirely (says so loudly)')
     ap.add_argument('--report', action='store_true')
     a = ap.parse_args()
 
@@ -161,6 +194,41 @@ def main() -> int:
         if not files:
             print('no boundaries at %s' % a.boundaries)
             return 2
+        # THE FOLDER IS NOT THE APP.
+        #
+        # `registry/boundaries` holds 3,392 geojson files. `registry/lake_index.json` holds 859
+        # rows. The 2026-08-11 shrink cut the INDEX from 1,867 to 859 and never touched the
+        # FOLDER, so 2,538 of those files are boundaries for lakes TrollMap no longer carries --
+        # and 1,531 of the orphans are not even in SC, NC, GA or TN.
+        #
+        # Claiming from the folder does two wrong things at once. Out-of-region ghosts claim
+        # cells and then satisfy `nearest_known`, which SHORT-CIRCUITS the --near-km filter below
+        # (it is only consulted when nothing claimed is in reach), which is how 282 clusters and
+        # 69,710 acres of Missouri, Alabama, Mississippi and Florida water reached the report.
+        # In-region ghosts are worse: they claim real Garmin water for a lake that was dropped,
+        # so it never shows up as unclaimed at all. Ryan's actual question is *"i want to make
+        # sure we are accounting for all the water"*, and a ghost claim is exactly how water
+        # stops being accounted for.
+        #
+        # So the claim pass reads the INDEX and ignores everything else in the folder.
+        if os.path.exists(a.index):
+            idx = json.load(open(a.index, encoding='utf-8'))
+            slugs = set(idx if isinstance(idx, dict) else
+                        (r.get('slug') for r in idx if isinstance(r, dict)))
+            keep = [f for f in files if os.path.basename(f)[:-8] in slugs]
+            print('%d boundary file(s) in %s, %d match a row in %s -- %d orphan(s) IGNORED'
+                  % (len(files), a.boundaries, len(keep), os.path.basename(a.index),
+                     len(files) - len(keep)))
+            missing = len(slugs) - len(keep)
+            if missing > 0:
+                print('!! %d index row(s) have NO boundary file' % missing)
+            files = keep
+            if not files:
+                print('no boundary file matches any index row -- refusing to claim nothing')
+                return 2
+        else:
+            print('!! NO index at %s -- claiming from ALL %d file(s) in the folder, which is the '
+                  'behaviour that let out-of-region water through' % (a.index, len(files)))
         # WHICH lake claimed the cell, not just that one did.
         #
         # Ryan, 2026-08-12: *"i think we are probably missing pieces of lakes not actual lakes
@@ -259,10 +327,30 @@ def main() -> int:
     # is what the app offers, is the four states and 1,746 rows. So most of that 73% is real
     # unclaimed water that is simply not his.
     #
-    # A per-state bounding box would be the obvious filter and a bad one: SC's box holds chunks of
-    # Georgia and North Carolina, and the open Atlantic sits inside every coastal state's box.
-    # Proximity to water the app already knows about is better on both counts -- a lake missing
-    # from the registry sits among lakes that are in it, and the middle of the ocean does not.
+    # THE STATE LINE, WHICH NOTHING IN THIS PIPELINE HAS EVER TESTED AGAINST.
+    #
+    # Ryan, 2026-08-12: *"i dont have any of the infrastructure for the other states in the
+    # pipeline or in trollmap... doesn't make sense to expand... if they are border lakes that is
+    # one thing."* The DNR feeds, the gauge bindings and the proclamation rules exist for exactly
+    # four states.
+    #
+    # ANY CELL INSIDE KEEPS THE WHOLE CLUSTER. Hartwell, Thurmond, Chatuge and the Savannah chain
+    # straddle a state line, and a centroid test would throw away real border lakes and call it
+    # cleaning -- Lake Marion's own centroid measures 4,160 m outside Lake Marion.
+    region = None
+    if not a.no_region:
+        region = InRegion.Region.load(a.region_mask, required=False)
+        if region is None:
+            print('!! NO region mask at %s -- NOTHING is filtered by state this run. '
+                  'Build it: py .\\scripts\\make_region_mask.py' % a.region_mask)
+        else:
+            print(region.describe())
+
+    # The proximity filter below is the OLD gate and stays as a second line, because it catches
+    # what a state line cannot: water inside the four states that is nowhere near anything the app
+    # serves. A per-state bounding box would be the obvious filter and a bad one -- SC's box holds
+    # chunks of Georgia and North Carolina, and the open Atlantic sits inside every coastal
+    # state's box -- which is why the mask above is the real polygon, not a box.
     keep_near = None
     if a.near_km > 0 and os.path.exists(a.index):
         idx = json.load(open(a.index))
@@ -324,7 +412,8 @@ def main() -> int:
         return None, None
 
     out = []
-    dropped_far = 0
+    dropped_far = dropped_out = 0
+    acres_out = 0.0
     for c in comps:
         acres = len(c) * ACRES_PER_CELL
         if not (a.min_acres <= acres <= a.max_acres):
@@ -340,6 +429,12 @@ def main() -> int:
         # near known water by definition, whatever the centroid says; the centroid test survives
         # only for blobs beyond that reach, where it is doing its real job of excluding water
         # outside the region the app serves.
+        # ANY CELL, never the centroid -- that is what keeps a border lake.
+        if region is not None and not region.any_inside(
+                ((x * CELL, y * CELL) for x, y in c)):
+            dropped_out += 1
+            acres_out += acres
+            continue
         rad, who = nearest_known(c, a.near_cells)
         if rad is None and keep_near \
                 and not keep_near(sum(xs) / len(xs) * CELL, sum(ys) / len(ys) * CELL):
@@ -387,10 +482,17 @@ def main() -> int:
     free = [r for r in out if not r['touches_known']]
     solid = [r for r in free if r['fill'] >= a.min_fill and not r['narrow']
              and (not da or r['da_share'] >= a.min_da)]
+    # Every filter says what it ate. A filter that removed everything and one that removed
+    # nothing look identical from the outside, and that has cost this pipeline four bugs.
+    why = []
+    if dropped_out:
+        why.append('%d outside %s (%s ac)' % (dropped_out, '+'.join(region.states),
+                                              format(round(acres_out), ',')))
+    if dropped_far:
+        why.append('%d too far from any known water' % dropped_far)
     print('\n%d clusters total, %d between %.0f and %.0f acres%s -> %s'
           % (len(comps), len(out), a.min_acres, a.max_acres,
-             (', %d dropped as too far from any known water' % dropped_far) if dropped_far else '',
-             a.out))
+             (', dropped: ' + '; '.join(why)) if why else '', a.out))
     print()
     print('  %6d touch a boundary already in the registry  -- a rim to widen, not a lake to find'
           % len(rim))
