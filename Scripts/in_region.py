@@ -36,6 +36,25 @@ import argparse, bisect, json, os, sys
 
 DEFAULT_MASK = os.path.join('registry', 'region_mask.json')
 
+def _unhyphen(argv, flags):
+    """`--region -81.5,33.5,...` looks like a flag to argparse, because it starts with a minus.
+
+    argparse only forgives a leading minus when the value parses as a plain negative number, and
+    `-81.5,33.5,-80.5,34.5` does not -- so every western-hemisphere invocation fails with
+    "expected one argument", pointing nowhere near the cause. lookup_3dhp.py documented this for
+    `--near` and it came straight back here. The equals form is applied for the caller.
+    """
+    out, i = [], 0
+    while i < len(argv):
+        if argv[i] in flags and i + 1 < len(argv) and argv[i + 1].startswith('-'):
+            out.append('%s=%s' % (argv[i], argv[i + 1]))
+            i += 2
+            continue
+        out.append(argv[i])
+        i += 1
+    return out
+
+
 
 class Region:
     __slots__ = ('cell', 'states', 'rows', 'path', 'pad_km')
@@ -129,6 +148,7 @@ def _pts_for(rec, bdir):
 
 
 def main() -> int:
+    sys.argv[1:] = _unhyphen(sys.argv[1:], ('--check',))
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--mask', default=DEFAULT_MASK)

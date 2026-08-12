@@ -93,6 +93,21 @@ WB = 'hydro_3dhp_all_waterbody'
 FL = 'hydro_3dhp_all_flowline'
 
 
+def dd(lon: float, lat: float) -> str:
+    """The National Map's `dd` box, which is NOT two plain signed numbers.
+
+    It wants hemisphere letters and fixed-width degrees -- latitude on 2 digits, longitude on 3,
+    zero padded, both to 6 decimals: `33.694880 deg N, 083.646250 deg W`.
+
+    Ryan pasted an xy pair into this box and it came back `83.648071 S, 033.665655 E`: the widget
+    read the LONGITUDE as a latitude and flipped both hemispheres, silently, into a plausible
+    point in the Indian Ocean. That is the failure this column exists to prevent, so the
+    hemisphere letters are computed from the sign and never carried over from anything.
+    """
+    return '%09.6f\u00b0%s, %010.6f\u00b0%s' % (abs(lat), 'N' if lat >= 0 else 'S',
+                                                 abs(lon), 'E' if lon >= 0 else 'W')
+
+
 def webmercator(lon: float, lat: float):
     """EPSG:3857 metres, which is what The National Map's basemap reads.
 
@@ -329,7 +344,7 @@ def main() -> int:
         print('  because the question was never asked, and the depth test is the only thing that')
         print('  tells water Garmin SOUNDED from cells a contour line passed through.')
         print()
-        print('      py .\\scripts\\make_river_boundaries.py     # rebuilds the coverage cache')
+        print('      py .\\scripts\\build_coverage_cache.py')
         print('      py .\\scripts\\sweep_unclaimed.py')
         print('      py .\\scripts\\sweep_unclaimed.py --min-acres 20 --report')
         print()
@@ -531,11 +546,11 @@ def main() -> int:
             # apps.nationalmap.gov/viewer is where a 3DHP id gets confirmed by eye, and its
             # coordinate box takes several formats that disagree about which number comes first.
             # Guessing wrong costs a paste-and-retry every single row, so all three are here:
-            #   xy       lon, lat  -- X first. This is the widget's `xy`.
-            #   dd       lat, lon  -- Y first. Same numbers, opposite order.
+            #   xy       lon, lat, plain signed decimals. CONFIRMED WORKING 2026-08-12.
+            #   dd       lat then lon, with hemisphere letters and padded degrees -- see dd().
             #   basemap  EPSG:3857 metres, the basemap's own spatial reference.
             'xy': '%.6f, %.6f' % (r['lon'], r['lat']),
-            'dd': '%.6f, %.6f' % (r['lat'], r['lon']),
+            'dd': dd(r['lon'], r['lat']),
             'basemap': '%.2f, %.2f' % webmercator(r['lon'], r['lat']),
             'map': 'https://www.google.com/maps?q=%.5f,%.5f' % (r['lat'], r['lon']),
         })

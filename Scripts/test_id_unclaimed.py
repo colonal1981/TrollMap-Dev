@@ -200,7 +200,7 @@ def main():
     print('\n--- no depth-area share is a BLOCKER without --allow-no-da ---')
     rb = run(tmp, ['--no-allow-da'])
     check(rb.returncode != 0 and 'STOP:' in (rb.stdout + rb.stderr)
-          and 'make_river_boundaries' in (rb.stdout + rb.stderr),
+          and 'build_coverage_cache' in (rb.stdout + rb.stderr),
           'stops and names the command that rebuilds the cache (rc=%d)' % rb.returncode)
 
     check(by['A']['kind'] == 'waterbody-named' and by['A']['name'] == 'Test Named Lake'
@@ -246,8 +246,18 @@ def main():
     import math as _m
     a_ = by['A']
     check(a_['xy'] == '%.6f, %.6f' % (float(a_['lon']), float(a_['lat'])), 'xy is lon,lat (%s)' % a_['xy'])
-    check(a_['dd'] == '%.6f, %.6f' % (float(a_['lat']), float(a_['lon'])), 'dd is lat,lon (%s)' % a_['dd'])
-    check(a_['xy'] != a_['dd'], 'and they are not the same string')
+    check(a_['dd'] == '34.000000\u00b0N, 081.000000\u00b0W',
+          'dd is padded degrees + hemisphere, lat first (%s)' % a_['dd'])
+    check(IRX.dd(-83.646250, 33.694880) == '33.694880\u00b0N, 083.646250\u00b0W',
+          'dd on a real worklist row')
+    check(IRX.dd(5.5, -4.25) == '04.250000\u00b0S, 005.500000\u00b0E',
+          'dd zero-pads and flips both hemispheres (%s)' % IRX.dd(5.5, -4.25))
+    check(IRX.dd(120.0, 9.0) == '09.000000\u00b0N, 120.000000\u00b0E',
+          'dd 3-digit longitude needs no pad (%s)' % IRX.dd(120.0, 9.0))
+    check(len(IRX.dd(-83.64625, 33.69488).split(', ')[0]) == 11
+          and len(IRX.dd(-83.64625, 33.69488).split(', ')[1]) == 12,
+          'field widths are fixed: 2-digit lat, 3-digit lon')
+    check(a_['xy'] != a_['dd'], 'and xy is not dd')
     bx, byy = [float(v) for v in a_['basemap'].split(',')]
     R = 6378137.0
     lon_back = _m.degrees(bx / R)

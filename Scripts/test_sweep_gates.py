@@ -138,7 +138,7 @@ def main():
             capture_output=True, text=True)
     rn = sweep_noda()
     check(rn.returncode == 2 and 'STOP:' in rn.stdout, 'stops rather than running the depth test off')
-    check('make_river_boundaries' in rn.stdout,
+    check('build_coverage_cache' in rn.stdout,
           'names the script that rebuilds it -- this one only READS the cache')
     rn2 = sweep_noda(['--allow-no-da'])
     check(rn2.returncode == 0, '--allow-no-da runs anyway (rc=%d)' % rn2.returncode)
