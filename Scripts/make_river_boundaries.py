@@ -118,6 +118,26 @@ def wkb_exterior_rings(wkb):
 # to build objects that are thrown away immediately. Scanning the decompressed bytes for
 # coordinate pairs and dropping each into a grid cell costs ~5 minutes and constant memory.
 GARMIN_CELL = 0.002          # degrees; ~222 m N-S, ~185 m E-W at 34 N
+
+# ONE SOURCE FOR THE SHOAL BAND. `build_chartpack.LakeMask.SHOAL_DM` is the gate the pack build
+# already uses to decide whether a lake has soundings at all; importing it means this scan and
+# that build can never disagree about what "charted" means. A second hardcoded 3 here would
+# drift the first time anyone tuned one of them.
+def _shoal_dm(default=3):
+    try:
+        import importlib.util
+        fp = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'build_chartpack.py')
+        spec = importlib.util.spec_from_file_location('_bc_for_shoal', fp)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return int(mod.LakeMask.SHOAL_DM)
+    except Exception:
+        # Say so rather than silently using a copy of a number that lives somewhere else.
+        print('  !! could not read SHOAL_DM from build_chartpack.py -- using %d' % default)
+        return default
+
+
+SHOAL_DM = _shoal_dm()
 COORD_RE = re.compile(rb'\[\s*(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)\s*\]')
 
 
@@ -127,6 +147,25 @@ def garmin_coverage(extract, region, cache_path):
 
     Only `contours` and `depth_areas` count. Those say the water has been SURVEYED; pois and
     docks say only that someone put a marker near it.
+
+    AND A DEPTH AREA IS NOT A SOUNDING UNLESS IT GOES BELOW THE SHOAL BAND.
+
+    Ryan, 2026-08-12: *"just because garmin threw a label on it and a 0,3 depth area does not
+    make it charted."* He is right, and this function was the place it went wrong. It used to
+    rasterise with `COORD_RE.finditer(raw)` -- a regex over the raw bytes -- which never parses
+    a feature and therefore CANNOT tell a `depth_min_dm: 0, depth_max_dm: 3` outline from a
+    70 dm contour. Garmin draws that 0-3 band around ALL water, sounded or not; it is the
+    outline, not a measurement. `build_chartpack.LakeMask.SHOAL_DM = 3` and `_has_soundings()`
+    have encoded that since 2026-08-08, and this scan predates it and never caught up.
+
+    What it cost: `sweep_unclaimed.py` reads this grid, and reported 20,614 unclaimed water
+    bodies over 3.5 million acres as "water Garmin surveyed that no boundary claims". An
+    unknown share of that is water Garmin merely outlined. The number was quoted as an
+    opportunity; it is an upper bound.
+
+    So depth_areas are now PARSED and a feature counts only when `depth_max_dm > SHOAL_DM`.
+    Contours keep the byte-regex fast path -- a contour line exists because a depth was
+    measured, so every coordinate on one is a sounding by construction.
 
     TILE LETTER RULE, which has cost this project two debugging sessions: contours,
     depth_areas and hydrography are **C** tiles; pois, docks, garmin_shoreline and waterbody
@@ -145,13 +184,18 @@ def garmin_coverage(extract, region, cache_path):
                      + glob.glob(os.path.join(d, 'C*.geojson.gz')))
         if not got:
             print('  !! %s has no C* tiles -- contours are C tiles, not B' % layer, flush=True)
-        files += got
+        files += [(layer, g) for g in got]
     if not files:
         return set()
 
     # Cache key covers every input file's identity AND size, so a re-extract invalidates it.
-    sig = hashlib.sha1(('|'.join('%s:%d' % (os.path.basename(f), os.path.getsize(f))
-                                 for f in files)).encode()).hexdigest()[:16]
+    # THE SIG COVERS THE RULE, NOT JUST THE INPUTS. It used to hash only filenames and sizes,
+    # so changing what COUNTS as coverage left every existing cache valid and the old, wrong
+    # grid would have been read straight back. A cache key that does not cover the logic is a
+    # cache that outlives the bug.
+    sig = hashlib.sha1(('shoal>%d|' % SHOAL_DM
+                        + '|'.join('%s:%s:%d' % (lay, os.path.basename(f), os.path.getsize(f))
+                                   for lay, f in files)).encode()).hexdigest()[:16]
     if cache_path and os.path.exists(cache_path):
         try:
             blob = json.load(open(cache_path, encoding='utf-8'))
@@ -166,22 +210,55 @@ def garmin_coverage(extract, region, cache_path):
 
     W, S, E, N = region
     cells = set()
+    shoal_only = kept_da = 0
     t = time.time()
-    for n, fp in enumerate(files, 1):
+
+    def _claim(coords):
+        """Every [lon, lat] anywhere in a coordinate tree, clipped to the region."""
+        stack = [coords]
+        while stack:
+            v = stack.pop()
+            if (isinstance(v, list) and len(v) >= 2
+                    and isinstance(v[0], (int, float)) and isinstance(v[1], (int, float))):
+                lon, lat = v[0], v[1]
+                if W <= lon <= E and S <= lat <= N:
+                    cells.add((int(lon / GARMIN_CELL), int(lat / GARMIN_CELL)))
+            elif isinstance(v, list):
+                stack.extend(v)
+
+    for n, (layer, fp) in enumerate(files, 1):
+        op = gzip.open if fp.endswith('.gz') else open
         try:
-            op = gzip.open if fp.endswith('.gz') else open
-            with op(fp, 'rb') as fh:
-                raw = fh.read()
+            if layer == 'contours':
+                # A contour exists because a depth was measured. Nothing to filter, so keep
+                # the byte regex -- it is several times faster than parsing.
+                with op(fp, 'rb') as fh:
+                    raw = fh.read()
+                for m in COORD_RE.finditer(raw):
+                    lon = float(m.group(1)); lat = float(m.group(2))
+                    if W <= lon <= E and S <= lat <= N:
+                        cells.add((int(lon / GARMIN_CELL), int(lat / GARMIN_CELL)))
+            else:
+                with op(fp, 'rt', encoding='utf-8') as fh:
+                    doc = json.load(fh)
+                for feat in (doc.get('features') or []):
+                    props = (feat or {}).get('properties') or {}
+                    dmax = props.get('depth_max_dm')
+                    # No band recorded is NOT a pass. A depth area that cannot say how deep it
+                    # goes cannot be used to claim the water was sounded.
+                    if not isinstance(dmax, (int, float)) or dmax <= SHOAL_DM:
+                        shoal_only += 1
+                        continue
+                    kept_da += 1
+                    _claim(((feat.get('geometry') or {}).get('coordinates')) or [])
         except Exception as exc:
             print('    %s unreadable (%s)' % (os.path.basename(fp), exc), flush=True)
             continue
-        for m in COORD_RE.finditer(raw):
-            lon = float(m.group(1)); lat = float(m.group(2))
-            if W <= lon <= E and S <= lat <= N:
-                cells.add((int(lon / GARMIN_CELL), int(lat / GARMIN_CELL)))
         if n % 25 == 0 or n == len(files):
             print('    scanned %d/%d tiles, %d cells, %.0fs'
                   % (n, len(files), len(cells), time.time() - t), flush=True)
+    print('  depth areas: %d kept, %d refused as shoal-band-only (<= %d dm)'
+          % (kept_da, shoal_only, SHOAL_DM), flush=True)
 
     if cache_path:
         try:
