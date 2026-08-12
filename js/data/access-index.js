@@ -241,15 +241,42 @@ export function absorbDuplicateEntries(index, lakeName, rec) {
     if (lakeNameLooseKey(other) !== target) continue;
     const pts = index.byLake.get(other) || [];
     if (!pts.length) continue;
-    if (!pts.every((p) => pointInRecordBounds(rec, p.lat, p.lon))) continue;
-    for (const p of pts) {
+    // ONE RAMP OUTSIDE THE BOX USED TO DISCARD ALL OF THEM.
+    //
+    // This was `if (!pts.every(inBounds)) continue;` — all-or-nothing. The bounds test is there
+    // to stop a same-loose-key lake in another state being absorbed ("Cedar Creek Lake" exists
+    // more than once), and per-point it does that job exactly as well: a point inside THIS
+    // record's box is on THIS water whatever key it arrived under. All-or-nothing additionally
+    // threw away every good point whenever one sat on an arm the boundary does not reach.
+    //
+    // Measured against the live DNR feeds, 2026-08-12: 55 waterbodies matched a registry lake
+    // and were dropped whole over an outlier, costing 447 ramps. Lake Hartwell lost 43 because
+    // 11 were outside. Watts Bar 36, Norris 29, Barkley 28, Percy Priest 18. The Ocmulgee lost
+    // 31 because ONE was out. And Falls Lake lost all four of its NCWRC ramps over the ENO
+    // RIVER access, which sits 3 km west of the registry bbox on the arm the Eno feeds — a real
+    // Falls Lake launch that the boundary simply does not stretch to. That left
+    // curated_lakes.json as the only ramp source reaching the picker for that lake.
+    //
+    // So: take the points that pass, leave the ones that do not where they are, and retire the
+    // other key only when it has been emptied.
+    const inside = [];
+    const outside = [];
+    for (const p of pts) (pointInRecordBounds(rec, p.lat, p.lon) ? inside : outside).push(p);
+    if (!inside.length) continue;
+    for (const p of inside) {
       const dup = keep.some((q) => q.name === p.name
         && Math.abs((q.lat || 0) - (p.lat || 0)) < 1e-6
         && Math.abs((q.lon || 0) - (p.lon || 0)) < 1e-6);
       if (!dup) keep.push(p);
     }
-    index.byLake.delete(other);
-    index.registryByName.delete(other);
+    if (outside.length) {
+      // Still reachable under its own name, and still findable on the map. Absorbing it into a
+      // lake whose boundary excludes it would be asserting something the geometry denies.
+      index.byLake.set(other, outside);
+    } else {
+      index.byLake.delete(other);
+      index.registryByName.delete(other);
+    }
     absorbed += 1;
   }
   return absorbed;
