@@ -401,8 +401,29 @@ def main():
             '  Without them the index builds fine and silently loses every USGS gauge,\n'
             '  Duke/Dominion binding, pool curve and curated ramp list. Refusing to run.'
             % a.js_lists)
-    charted = json.load(open(a.charted, encoding='utf-8')) if a.charted and \
-        os.path.exists(a.charted) else {}
+    # --charted HAS A DEFAULT, AND THE WARNING LIVES OUT HERE.
+    #
+    # It did not, and that cost the registry shrink a whole run on 2026-08-12. `--charted` was
+    # optional with no default, the unbuildable filter below reads `if not a.keep_unbuildable
+    # and charted:`, and a run without the flag produced an index of 1,867 rows with 1,008
+    # unbuildable ones still in it -- a completely normal-looking run that did none of the work
+    # it was asked to do. This is the FOURTH instance of that shape found in one day: the alias
+    # file, the R2 registry publish, the USGS catalogue, and now this one, which was written
+    # that same morning by the session that had just documented the other three.
+    #
+    # The rule the other three earned: an optional flag that changes the OUTPUT gets a default,
+    # and the warning for a missing input is printed OUTSIDE the block it gates -- because a
+    # warning inside the block never fires in the case that needs it.
+    cpath = a.charted or os.path.join(R, 'charted.json')
+    charted = {}
+    if os.path.exists(cpath):
+        charted = json.load(open(cpath, encoding='utf-8'))
+        print('charted: %d slug(s) from %s' % (len(charted), os.path.basename(cpath)))
+    else:
+        print('!! NO charted.json AT %s' % cpath)
+        print('   The index will build and every unbuildable row will stay in it -- the shrink')
+        print('   is measured from this file and cannot run without it. Pass --charted, or put')
+        print('   charted.json in the registry, or accept an index the app cannot draw.')
 
     def load(fn):
         fp = os.path.join(R, fn)
