@@ -269,13 +269,46 @@ def main():
     ap.add_argument('--labels', help='extract/labels, for _bounds_cache.json. Without it '
                                      'tile_lake_map.json is left alone and the lake will not '
                                      'build until you re-run tile_lake_map.py.')
-    ap.add_argument('--lake', action='append', required=True,
+    ap.add_argument('--lake', action='append', default=[],
                     help='slug, repeatable. `slug=NC` overrides --state for that one.')
+    ap.add_argument('--from-tsv',
+                    help='a TSV with slug/name/state/acres columns -- e.g. '
+                         'outputs/batch_cut_manifest.tsv. Equivalent to one --lake and one '
+                         '--name per row, and the only practical route past a few dozen: '
+                         'cut_boundaries_batch.py produced 127 in one run, which is 254 flags '
+                         'on a single command line. Combines with --lake.')
     ap.add_argument('--state', help='two-letter state for lakes that do not carry their own')
     ap.add_argument('--name', action='append', default=[],
                     help='slug=Display Name, if the source GNIS name is wrong or absent')
     ap.add_argument('--go', action='store_true', help='actually write. Default is a dry run.')
     a = ap.parse_args()
+
+    # --from-tsv folds into the same two lists the flags fill, so every downstream code path
+    # stays identical whether the caller typed the lakes or handed over a file. A parallel
+    # branch for the bulk case is how the bulk case ends up behaving differently from the one
+    # everybody tested.
+    if a.from_tsv:
+        if not os.path.exists(a.from_tsv):
+            sys.exit('--from-tsv %s not found' % a.from_tsv)
+        import csv as _csv
+        n = 0
+        with open(a.from_tsv, encoding='utf-8') as fh:
+            for row in _csv.DictReader(fh, delimiter='\t'):
+                slug = (row.get('slug') or '').strip()
+                if not slug:
+                    continue
+                st = (row.get('state') or '').strip()
+                a.lake.append('%s=%s' % (slug, st) if st else slug)
+                nm = (row.get('name') or '').strip()
+                # A name equal to the slug carries nothing -- that is what
+                # cut_boundaries_batch.py writes for water nobody named. Let the source's own
+                # GNIS name (or the slug) stand rather than overriding it with itself.
+                if nm and nm != slug:
+                    a.name.append('%s=%s' % (slug, nm))
+                n += 1
+        print('--from-tsv %s: %d lakes' % (a.from_tsv, n))
+    if not a.lake:
+        sys.exit('nothing to do: pass --lake and/or --from-tsv')
 
     reg = a.registry
     lakes_fp = os.path.join(reg, 'lakes.json')
