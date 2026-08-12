@@ -5,6 +5,8 @@ import importlib.util, json, os, shutil, sqlite3, struct, subprocess, sys, tempf
 HERE = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location('l3', os.path.join(HERE, 'lookup_3dhp.py'))
 L3 = importlib.util.module_from_spec(spec); spec.loader.exec_module(L3)
+_s2 = importlib.util.spec_from_file_location('idu', os.path.join(HERE, 'id_unclaimed_water.py'))
+IRX = importlib.util.module_from_spec(_s2); _s2.loader.exec_module(IRX)
 
 WB, FL = 'hydro_3dhp_all_waterbody', 'hydro_3dhp_all_flowline'
 
@@ -239,6 +241,24 @@ def main():
           % (by['I']['id3dhp'], by['I']['name'], by['I']['cover']))
 
     check(by['I']['probe'] == 'bbox', 'I used the bbox probe (%s)' % by['I']['probe'])
+
+    print('\n--- coordinates for apps.nationalmap.gov ---')
+    import math as _m
+    a_ = by['A']
+    check(a_['xy'] == '%.6f, %.6f' % (float(a_['lon']), float(a_['lat'])), 'xy is lon,lat (%s)' % a_['xy'])
+    check(a_['dd'] == '%.6f, %.6f' % (float(a_['lat']), float(a_['lon'])), 'dd is lat,lon (%s)' % a_['dd'])
+    check(a_['xy'] != a_['dd'], 'and they are not the same string')
+    bx, byy = [float(v) for v in a_['basemap'].split(',')]
+    R = 6378137.0
+    lon_back = _m.degrees(bx / R)
+    lat_back = _m.degrees(2 * _m.atan(_m.exp(byy / R)) - _m.pi / 2)
+    check(abs(lon_back - float(a_['lon'])) < 1e-6 and abs(lat_back - float(a_['lat'])) < 1e-6,
+          'basemap EPSG:3857 inverts back to the same point (%s)' % a_['basemap'])
+    for lon, lat, wx, wy in ((-180.0, 0.0, -20037508.34, 0.0),
+                             (180.0, 85.05112878, 20037508.34, 20037508.34)):
+        gx, gy = IRX.webmercator(lon, lat)
+        check(abs(gx - wx) < 0.01 and abs(gy - wy) < 0.01,
+              'EPSG:3857 corner %.0f,%.5f -> %.2f, %.2f' % (lon, lat, gx, gy))
 
     print('\n--- run 1c: `pts` from the sweep beats the bbox on the same cluster ---')
     # Same geometry as I, but with the cluster's real cells carried in. Every point is water and

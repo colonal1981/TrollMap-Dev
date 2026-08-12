@@ -93,6 +93,17 @@ WB = 'hydro_3dhp_all_waterbody'
 FL = 'hydro_3dhp_all_flowline'
 
 
+def webmercator(lon: float, lat: float):
+    """EPSG:3857 metres, which is what The National Map's basemap reads.
+
+    Sanity checks, both exact: (-180, 0) -> (-20037508.34, 0), and lat 85.05113 -> y = x at 180.
+    """
+    R = 6378137.0
+    lat = max(-85.05112878, min(85.05112878, lat))
+    return (R * math.radians(lon),
+            R * math.log(math.tan(math.pi / 4 + math.radians(lat) / 2)))
+
+
 def _load(path, name):
     spec = importlib.util.spec_from_file_location(name, path)
     m = importlib.util.module_from_spec(spec)
@@ -517,6 +528,15 @@ def main() -> int:
             'areasqkm': round((pick or {}).get('areasqkm') or 0, 3),
             'reg_slug': reg.get(gnisid, ''),
             'wb_hits': len(wb), 'fl_hits': len(fl),
+            # apps.nationalmap.gov/viewer is where a 3DHP id gets confirmed by eye, and its
+            # coordinate box takes several formats that disagree about which number comes first.
+            # Guessing wrong costs a paste-and-retry every single row, so all three are here:
+            #   xy       lon, lat  -- X first. This is the widget's `xy`.
+            #   dd       lat, lon  -- Y first. Same numbers, opposite order.
+            #   basemap  EPSG:3857 metres, the basemap's own spatial reference.
+            'xy': '%.6f, %.6f' % (r['lon'], r['lat']),
+            'dd': '%.6f, %.6f' % (r['lat'], r['lon']),
+            'basemap': '%.2f, %.2f' % webmercator(r['lon'], r['lat']),
             'map': 'https://www.google.com/maps?q=%.5f,%.5f' % (r['lat'], r['lon']),
         })
         if i % 25 == 0 or i == len(todo):
@@ -525,7 +545,7 @@ def main() -> int:
 
     cols = ['acres', 'kind', 'hit', 'cover', 'probe', 'dist_m', 'name', 'alt', 'id3dhp', 'gnisid',
             'reg_slug', 'featuretype', 'areasqkm', 'da_share', 'fill', 'near_slug', 'near_km',
-            'wb_hits', 'fl_hits', 'lat', 'lon', 'map']
+            'wb_hits', 'fl_hits', 'xy', 'dd', 'basemap', 'lat', 'lon', 'map']
     os.makedirs(os.path.dirname(a.out) or '.', exist_ok=True)
     with open(a.out, 'w', encoding='utf-8') as fh:
         fh.write('\t'.join(cols) + '\n')
@@ -559,14 +579,14 @@ def main() -> int:
     if new:
         print('\nnamed by 3DHP, covering the cluster, and NOT carried by the registry:')
         for r in sorted(new, key=lambda r: -r['acres'])[:25]:
-            print('   %8s ac  cover %-5s  %-32s %s'
-                  % (format(r['acres'], ','), r['cover'], r['name'][:32], r['id3dhp']))
+            print('   %8s ac  cover %-5s  %-28s %-8s  xy %s'
+                  % (format(r['acres'], ','), r['cover'], r['name'][:28], r['id3dhp'], r['xy']))
     unn = [r for r in out if r['kind'] == 'waterbody-unnamed' and r['hit'] in ('inside', 'partial')]
     if unn:
         print('\nreal polygon, NO name -- the unnamed-polygon blind spot, biggest first:')
         for r in sorted(unn, key=lambda r: -r['acres'])[:15]:
-            print('   %8s ac  cover %-5s  %-8s %s'
-                  % (format(r['acres'], ','), r['cover'], r['id3dhp'], r['map']))
+            print('   %8s ac  cover %-5s  %-8s  xy %s'
+                  % (format(r['acres'], ','), r['cover'], r['id3dhp'], r['xy']))
     return 0
 
 
