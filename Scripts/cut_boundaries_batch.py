@@ -20,9 +20,27 @@ and the thing `boundary_from_3dhp.py` deliberately does not ask the caller for. 
 that was unavailable for a single unknown id is available for all 299 at once. Same RTree fast
 path `lookup_3dhp.py` uses; `boundary_gaps.py` uses the identical query shape.
 
-WHERE IT WRITES, AND WHY NOT registry/boundaries/
+WHERE IT WRITES, AND WHY ITS OWN FOLDER
 
-    lake_boundaries/<slug>_3dhp.geojson
+    lake_boundaries_3dhp/<slug>_3dhp.geojson
+
+**Its own folder, NOT the shared `lake_boundaries/`.** That folder already holds 325 staged
+files from an earlier pipeline, and the first version of this script keyed its resume check on
+"a file with this slug already exists" -- so a name collision with old work read as "already
+done" and the water was silently never cut. Sampled against the worklist, **4 of the 5 colliding
+slugs were the wrong water**:
+
+    lake_michie       staged     3 ac   worklist wants   472 ac   28.7 km apart
+    lake_reidsville   staged 8,908 ac                    667 ac   15.6 km
+    lake_mackintosh   staged 2,495 ac                  1,112 ac    5.8 km
+    lake_toxaway      staged   595 ac                    518 ac    2.3 km
+    auman_lake        staged 1,527 ac                    784 ac    1.0 km  (same water, looser cut)
+
+A slug is derived from a NAME, so a slug collision says nothing about whether two polygons are
+the same water -- and skipping on one is the silent-drop failure this script's own docstring
+warns about. In a dedicated folder, "the file exists" means "a previous run of THIS tool cut it",
+which is the only thing resume should ever mean. Collisions with the legacy folder are now
+REPORTED and cut anyway.
 
 **NOT into `registry/boundaries/`.** `boundary_from_3dhp.py` writes there directly and then its
 closing text tells you to hand-edit `lakes.json` and `tile_lake_map.json` -- which is exactly how
@@ -97,8 +115,11 @@ def main() -> int:
     ap.add_argument('--gpkg', default=os.path.join('3dhp_all_CONUS_20260112_GPKG',
                                                    '3dhp_all_CONUS_20260112_GPKG.gpkg'))
     ap.add_argument('--registry', default='registry')
-    ap.add_argument('--stage', default='lake_boundaries',
-                    help='where install_registry_boundary.py reads <slug>_3dhp.geojson from')
+    ap.add_argument('--stage', default='lake_boundaries_3dhp',
+                    help='output dir; pass it to install_registry_boundary.py --boundaries. '
+                         'Deliberately NOT the shared lake_boundaries/ -- see the docstring.')
+    ap.add_argument('--legacy', default='lake_boundaries',
+                    help='older staging dir, checked ONLY to report slug collisions')
     ap.add_argument('--pad-km', type=float, default=1.0,
                     help='bbox padding around the worklist coordinate. The coordinate is the '
                          'polygon CENTROID, so the pad only has to reach the RTree entry, not '
@@ -150,6 +171,7 @@ def main() -> int:
         geom = 'shape'
 
     used = set(known)
+    collisions = []
     done = miss = already = 0
     t0 = time.time()
     manifest = []
@@ -166,6 +188,11 @@ def main() -> int:
             already += 1
             used.add(slug)
             continue
+        legacy = os.path.join(a.legacy, slug + '_3dhp.geojson')
+        if os.path.exists(legacy):
+            # Reported, never obeyed. See the docstring: 4 of 5 sampled collisions were a
+            # different water, one of them 28.7 km away and 1/157th the area.
+            collisions.append((slug, rid, legacy))
 
         # RTree bbox, in Albers, around the centroid. `albers` lives in lookup_3dhp.py -- it is
         # the FORWARD projection and is not in boundary_from_3dhp, which only ever goes the
@@ -220,8 +247,15 @@ def main() -> int:
             print('   %d/%d  cut %d, already %d, missed %d, %.0fs'
                   % (i, len(todo), done, already, miss, time.time() - t0), flush=True)
 
-    print('\n%s%d boundaries -> %s   (%d already there, %d missed)'
+    print('\n%s%d boundaries -> %s   (%d from an earlier run of this tool, %d missed)'
           % ('[DRY RUN] ' if a.dry_run else '', done, a.stage, already, miss))
+    if collisions:
+        print('\n%d slug(s) also exist in %s from an EARLIER pipeline. Cut here anyway --'
+              % (len(collisions), a.legacy))
+        print('a slug comes from a NAME and says nothing about which polygon it is. Check these')
+        print('before installing, and make sure the legacy copy is not what gets registered:')
+        for slug, rid, fp in collisions:
+            print('   %-28s id3dhp %-7s legacy: %s' % (slug, rid, fp))
     if manifest and not a.dry_run:
         mp = os.path.join('outputs', 'batch_cut_manifest.tsv')
         os.makedirs('outputs', exist_ok=True)
