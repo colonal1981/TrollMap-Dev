@@ -916,6 +916,56 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report):
             placed.append(entry)
             tally['usgs_bound'] += 1
 
+        # ── curated, last word ──────────────────────────────────────────────────────────
+        # THE TWO-SIGNAL RULE IS RIGHT AND IT CANNOT SEE EVERYTHING. Lake Robinson is fed and
+        # drained by Black Creek. `BLACK CREEK NEAR HARTSVILLE` sits 0.48 km below the dam at
+        # the south end and `BLACK CREEK NEAR MCBEE` sits 3.0 km up the creek at the north end
+        # -- the tailwater and the inflow, exactly the two readings that matter. Neither name
+        # contains "Robinson", so the rule refuses both, and it is right to: "Black Creek" is a
+        # name a dozen creeks share, and relaxing the rule to catch this would let all of them
+        # through. What is missing is not a better rule, it is a fact only Ryan has.
+        #
+        # `curated_lakes.json` is where those facts already live, and it already carried a
+        # `usgs` block for five lakes -- which reached the output as `b['curated']['usgs']` and
+        # was read by nothing. A site number nobody fetches is a note, not a gauge. Now that the
+        # Worker can read a USGS site, a curated entry becomes a real reading.
+        #
+        #   "usgs": {"site": "02130910", "params": "00065,00060", "role": "tailwater"}
+        #   "usgs": [ {...}, {...} ]          both shapes accepted; role defaults to pool
+        #
+        # Curated goes LAST and OVERRIDES. A hand-checked gauge outranks a derived one -- that
+        # is the same order the ramp merge above uses, and the whole point of curating.
+        cur = rec.get('usgs')
+        for cu in ([cur] if isinstance(cur, dict) else (cur or [])):
+            site = str((cu or {}).get('site') or '').strip()
+            if not USGS_SITE_RE.match(site):
+                continue
+            g = usgs_sites.get(site)
+            role = (cu.get('role') or 'pool').lower()
+            ce = {'usgs_site': site, 'source': 'usgs', 'confidence': 'curated',
+                  'name': (g or {}).get('name') or cu.get('name') or ('USGS %s' % site),
+                  'lat': (g or {}).get('lat'), 'lon': (g or {}).get('lon'),
+                  'site_type': (g or {}).get('site_type'),
+                  'parms': sorted((g or {}).get('parms', set()) & LEVEL_PARMS)
+                           or [p.strip() for p in str(cu.get('params') or '').split(',') if p.strip()],
+                  'km_outside': 0.0}
+            if g is None:
+                # Named by hand and absent from the catalogue: the site may be outside the four
+                # states, or report a parameter the catalogue query does not ask for. Say so
+                # rather than dropping it -- Ryan put it there on purpose.
+                ce['note'] = 'not in the USGS catalogue fetched here; curated on trust'
+                tally['curated_site_not_in_catalogue'] += 1
+            # Drop any derived entry for the same site so the curated one is not a duplicate.
+            others = [o for o in others if o.get('usgs_site') != site]
+            geom_only = [o for o in geom_only if o.get('usgs_site') != site]
+            if role == 'tailwater':
+                tail = ce
+            elif role == 'pool':
+                pool = ce
+            else:
+                others.append(ce)
+            tally['curated_' + (role if role in ('pool', 'tailwater') else 'gauge')] += 1
+
         if not (pool or tail or others or geom_only):
             tally['unbound'] += 1
             continue
