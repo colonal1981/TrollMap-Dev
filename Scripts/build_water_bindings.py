@@ -86,7 +86,16 @@ UA = 'TrollMap/1.0 (personal fishing app; contact via github.com/colonal1981)'
 
 # Four states plus margin. Tiled because a server-side cap on a single huge box would look
 # exactly like "that is all the gauges there are".
-BBOX = (-90.6, 30.2, -75.2, 36.9)
+#
+# THIS IS A FLOOR, NOT THE ANSWER. It was hand-authored to "four states plus margin" while the
+# registry it serves is derived, and the two drifted: nine waters and 425,000 acres now poke out
+# of it, including Kentucky Lake (144,086 ac, reaching 37.02 N against a 36.9 N ceiling), Lake
+# Barkley and the Mississippi. Kentucky Dam's gauge sits at 37.024 -- outside the box, therefore
+# never enumerated, therefore Kentucky Lake reads as a water with no gauge rather than a water
+# whose gauge was never asked for. `bbox_covering` widens this to cover whatever the registry
+# actually holds; it never narrows it, so the offshore margin here is kept.
+BBOX_FLOOR = (-90.6, 30.2, -75.2, 36.9)
+BBOX = BBOX_FLOOR
 TILE_DEG = 1.5
 
 NWPS = 'https://api.water.noaa.gov/nwps/v1'
@@ -178,6 +187,47 @@ def fetch(url, cache, tag, force=False, tries=6, pause=None, allow_404=True):
             last = type(e).__name__
             time.sleep(2 ** attempt)
     return None, last or 'failed'
+
+
+def bbox_covering(index, floor, pad_deg=0.05):
+    """The floor box widened to contain every water in the index, plus a margin.
+
+    Only ever grows. A registry that gains a water outside the box moves the box; one that
+    loses waters does not shrink it, because the floor's offshore reach is deliberate and no
+    lake's bounds imply it.
+
+    THE PAD IS SMALL ON PURPOSE. It only has to cover `--margin-km` -- 3 km, about 0.027 deg --
+    because a gauge further outside a water than that cannot bind to it however well the name
+    matches. A generous pad reads as harmless and is not: every tile tag is built from the box
+    origin, so nudging an edge by a hundredth of a degree renames all 55 cached tiles and
+    re-downloads the entire enumeration to gain nothing. 0.05 leaves the east and west edges on
+    the floor, where the registry does not reach past them, and moves only the rows that
+    Kentucky Lake and the Chattahoochee actually need.
+    """
+    w, s, e, n = floor
+    for rec in (index.values() if isinstance(index, dict) else index):
+        b = (rec or {}).get('bounds_wsen')
+        if not (isinstance(b, list) and len(b) == 4):
+            continue
+        w = min(w, b[0] - pad_deg); s = min(s, b[1] - pad_deg)
+        e = max(e, b[2] + pad_deg); n = max(n, b[3] + pad_deg)
+    if (w, s, e, n) == tuple(floor):
+        return tuple(floor)
+
+    # GROW IN WHOLE TILES, ANCHORED ON THE FLOOR'S SOUTH-WEST CORNER. A cache tag is built from
+    # a tile's coordinates, so a box edge that moves by any amount other than a whole step
+    # renames every tile behind it. Widening south by half a degree the naive way renamed all
+    # 55 tiles and re-downloaded the entire enumeration to add one row. Snapped: the interior
+    # grid lines never move, so only the new rows and the one row whose far edge was clamped
+    # against the old ceiling are fetched again.
+    fw, fs = floor[0], floor[1]
+    w = fw - math.ceil(max(0.0, fw - w) / TILE_DEG) * TILE_DEG
+    s = fs - math.ceil(max(0.0, fs - s) / TILE_DEG) * TILE_DEG
+    if e > floor[2]:
+        e = fw + math.ceil((e - fw) / TILE_DEG) * TILE_DEG
+    if n > floor[3]:
+        n = fs + math.ceil((n - fs) / TILE_DEG) * TILE_DEG
+    return (round(w, 3), round(s, 3), round(e, 3), round(n, 3))
 
 
 def tiles(bbox, step):
@@ -1051,7 +1101,19 @@ def main():
     cache = a.cache or os.path.join(reg, '_bindings_cache')
     out = a.out or os.path.join(reg, 'water_bindings.json')
     rep_path = a.report or os.path.join(reg, '_water_bindings.json')
-    report = {'bbox': list(BBOX), 'tile_deg': TILE_DEG, 'margin_km': a.margin_km}
+
+    # THE BOX IS SIZED FROM THE REGISTRY, BEFORE ANYTHING IS FETCHED. Read the index first --
+    # it is the thing being served, so it is the thing that decides how far to look.
+    with open(os.path.join(reg, 'lake_index.json'), 'r', encoding='utf-8') as fh:
+        index = json.load(fh)
+    global BBOX
+    BBOX = bbox_covering(index, BBOX_FLOOR)
+    if BBOX != BBOX_FLOOR:
+        print('gauge box widened past the hand-authored floor to cover the registry:')
+        print('   floor  W %.3f  S %.3f  E %.3f  N %.3f' % BBOX_FLOOR)
+        print('   using  W %.3f  S %.3f  E %.3f  N %.3f' % BBOX)
+    report = {'bbox': list(BBOX), 'bbox_floor': list(BBOX_FLOOR), 'tile_deg': TILE_DEG,
+              'margin_km': a.margin_km}
 
     print('fetching (cache: %s)' % cache)
     try:
@@ -1074,8 +1136,6 @@ def main():
         print('usgs catalogue came from: %s' % report.get('usgs_catalogue_source'))
         return
 
-    with open(os.path.join(reg, 'lake_index.json'), 'r', encoding='utf-8') as fh:
-        index = json.load(fh)
     print('\n%d waters in the index' % len(index))
 
     bindings = bind(index, os.path.join(reg, 'boundaries'), src, cache, a.force,
