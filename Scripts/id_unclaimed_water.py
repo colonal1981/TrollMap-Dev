@@ -62,9 +62,14 @@ WHAT IT REPORTS, AND WHY BOTH TABLES
              UNNAMED-POLYGON BLIND SPOT: 3DHP named the river and never modelled the
              impoundment. Bates Old River is the worked case -- 11 flowlines, zero waterbody rows.
 
-  waterbody-named    3DHP has it and it may be missing from the registry. Ready to cut.
-  waterbody-unnamed  a polygon with no name. Cut it, then name it from Garmin 5/1 POIs or DNR.
-  flowline-only      no polygon exists. This is Bates. It needs a Garmin-derived cut.
+  waterbody-named    a polygon COVERS this water and 3DHP names it. Ready to cut.
+  waterbody-unnamed  a polygon COVERS it and has no name. Cut it, then name it from Garmin 5/1
+                     POIs or DNR.
+  nothing-covers-it  a polygon is nearby and none of it is over this water. NOT an identification.
+                     Read dist_m. This is most of the file, and calling it 'unnamed waterbody' --
+                     which this script did on its first real run -- turned 1,210 near-misses into
+                     what looked like 468,985 acres of findable lake.
+  flowline-only      no polygon at all, only lines. This is Bates. It needs a Garmin-derived cut.
   nothing-in-3dhp    3DHP has never heard of this water.
 
 `name` is only ever the name of the PICKED polygon. If the pick is unnamed, the biggest named
@@ -281,8 +286,10 @@ def main() -> int:
                          'is the test that failed)')
     ap.add_argument('--min-acres', type=float, default=100.0)
     ap.add_argument('--min-da', type=float, default=0.25,
-                    help='skip clusters less than this share inside a real depth area. Ignored, '
-                         'loudly, when the input carries no depth-area shares at all.')
+                    help='skip clusters less than this share inside a real depth area')
+    ap.add_argument('--allow-no-da', action='store_true',
+                    help='run even when the input carries no depth-area share, accepting that '
+                         'surveyed water cannot be told from stray contour lines')
     ap.add_argument('--include-attached', action='store_true',
                     help='also do the ones already touching a boundary (those are arms, and '
                          'attach_arms.py is the tool for them)')
@@ -301,11 +308,24 @@ def main() -> int:
     # EVERY FILTER PRINTS WHAT IT ATE. A filter that silently removes all 13,460 rows and a
     # filter that removes none look identical from the outside, and this pipeline has now been
     # bitten four times in one day by a switch whose effect was invisible.
+    # A WARNING HERE IS NOT ENOUGH; IT ALREADY SCROLLED PAST ONCE.
     has_da = any(r.get('da_share') for r in rows)
+    if not has_da and not a.allow_no_da:
+        print('STOP: %s carries no depth-area share, so --min-da %.2f would filter nothing.'
+              % (a.inp, a.min_da))
+        print()
+        print('  Every row would read da_share 0.00 -- not because the water is contour-only but')
+        print('  because the question was never asked, and the depth test is the only thing that')
+        print('  tells water Garmin SOUNDED from cells a contour line passed through.')
+        print()
+        print('      py .\\scripts\\make_river_boundaries.py     # rebuilds the coverage cache')
+        print('      py .\\scripts\\sweep_unclaimed.py')
+        print('      py .\\scripts\\sweep_unclaimed.py --min-acres 20 --report')
+        print()
+        print('  --allow-no-da runs anyway and accepts that the depth test is off.')
+        sys.exit(2)
     if not has_da:
-        print('!! %s carries no depth-area share -- --min-da %.2f is OFF for this run.'
-              % (os.path.basename(a.inp), a.min_da))
-        print('   Re-run sweep_unclaimed.py against a coverage file built with da_cells to use it.')
+        print('!! --allow-no-da: the depth test is OFF, da_share is meaningless in this output')
     drop = collections.Counter()
     todo = []
     for r in rows:
@@ -456,9 +476,19 @@ def main() -> int:
                 fl.sort(key=lambda f: f['_d'])
                 dist = round(fl[0]['_d'], 1)
 
+        # KIND FOLLOWS COVER, NOT THE PICK.
+        #
+        # It used to follow the pick, and on the 2026-08-12 run that reported 1,416
+        # 'waterbody-unnamed' rows totalling 468,985 acres when only 206 rows had ANY polygon
+        # over any part of them. The other 1,210 were `near` -- nearest polygon a median 592 m
+        # away, covering nothing -- presented in the same column as a real identification. A row
+        # whose nearest 3DHP polygon does not touch it has not been identified, and the table
+        # must not imply otherwise.
         name = ((pick or {}).get('gnisidlabel') or '').strip()
-        if pick:
+        if pick and hit in ('inside', 'partial'):
             kind = 'waterbody-named' if name else 'waterbody-unnamed'
+        elif pick:
+            kind = 'nothing-covers-it'      # a polygon is near, dist_m says how near
         elif fl:
             kind = 'flowline-only'
         else:
@@ -503,13 +533,19 @@ def main() -> int:
             fh.write('\t'.join('' if r.get(c) is None else str(r.get(c, '')) for c in cols) + '\n')
 
     c = collections.Counter(r['kind'] for r in out)
-    print('\n%-20s %6s  %10s' % ('WHAT 3DHP SAYS', 'COUNT', 'ACRES'))
-    for k in ('waterbody-named', 'waterbody-unnamed', 'flowline-only', 'nothing-in-3dhp'):
-        print('%-20s %6d  %10s'
-              % (k, c[k], format(sum(r['acres'] for r in out if r['kind'] == k), ',')))
+    print('\n%-20s %6s  %10s   %s' % ('WHAT 3DHP SAYS', 'COUNT', 'ACRES', 'MEDIAN COVER'))
+    for k in ('waterbody-named', 'waterbody-unnamed', 'nothing-covers-it', 'flowline-only',
+              'nothing-in-3dhp'):
+        mine = [r for r in out if r['kind'] == k]
+        cv = sorted(float(r['cover'] or 0) for r in mine)
+        print('%-20s %6d  %10s   %s'
+              % (k, len(mine), format(sum(r['acres'] for r in mine), ','),
+                 ('%.3f' % cv[len(cv) // 2]) if cv else '-'))
+    print('\nThe first two are identifications. `nothing-covers-it` is NOT -- 3DHP has a polygon')
+    print('somewhere nearby and none of it is over this water. Read dist_m before believing it.')
     h = collections.Counter(r['hit'] for r in out)
-    print('\nfootprint vs 3DHP polygon:  inside %d   partial %d   near %d   nothing %d'
-          % (h['inside'], h['partial'], h['near'], h['']))
+    print('\nfootprint vs 3DHP polygon:  inside(>=50%%) %d   partial %d   near(0%%) %d   '
+          'no polygon at all %d' % (h['inside'], h['partial'], h['near'], h['']))
     if weak:
         print('!! %d of %d cluster(s) carry no `pts`, so cover was scored against the BOUNDING '
               'BOX, not the water.' % (weak, len(out)))

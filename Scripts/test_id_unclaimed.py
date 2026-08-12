@@ -158,7 +158,13 @@ def run(tmp, extra=(), inp='garmin_unclaimed.json'):
     cmd = [sys.executable, os.path.join(HERE, 'id_unclaimed_water.py'),
            '--in', os.path.join(tmp, inp), '--out', os.path.join(tmp, 'out.tsv'),
            '--gpkg', os.path.join(tmp, 'fix.gpkg'),
-           '--index', os.path.join(tmp, 'lake_index.json')] + list(extra)
+           '--index', os.path.join(tmp, 'lake_index.json')]
+    extra = list(extra)
+    if '--no-allow-da' in extra:
+        extra.remove('--no-allow-da')
+    else:
+        cmd.append('--allow-no-da')
+    cmd += extra
     r = subprocess.run(cmd, capture_output=True, text=True)
     return r
 
@@ -187,7 +193,13 @@ def main():
     check('X_small' not in by, 'min-acres dropped the 50-acre cluster')
     check('X_narrow' not in by, 'narrow dropped the river channel')
     check('X_attached' not in by, 'touches_known dropped the rim')
-    check('!! ' in r.stdout and 'min-da' in r.stdout, 'warned loudly that --min-da is off')
+    check('depth test is OFF' in r.stdout, 'warned loudly that --min-da is off')
+
+    print('\n--- no depth-area share is a BLOCKER without --allow-no-da ---')
+    rb = run(tmp, ['--no-allow-da'])
+    check(rb.returncode != 0 and 'STOP:' in (rb.stdout + rb.stderr)
+          and 'make_river_boundaries' in (rb.stdout + rb.stderr),
+          'stops and names the command that rebuilds the cache (rc=%d)' % rb.returncode)
 
     check(by['A']['kind'] == 'waterbody-named' and by['A']['name'] == 'Test Named Lake'
           and by['A']['hit'] == 'inside' and by['A']['id3dhp'] == 'AAA111'
@@ -282,7 +294,7 @@ def main():
     rows4 = read_tsv(os.path.join(tmp, 'out.tsv'))
     check(r4.returncode == 0 and len(rows4) == 9,
           'all-zero da_share does NOT nuke the run (got %d)' % len(rows4))
-    check('is OFF for this run' in r4.stdout, 'said so')
+    check('depth test is OFF' in r4.stdout, 'said so')
 
     print('\n--- run 5: filters remove everything -> non-zero exit, not an empty file ---')
     r5 = run(tmp, ['--min-acres', '99999'])

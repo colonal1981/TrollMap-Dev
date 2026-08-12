@@ -122,6 +122,27 @@ def main():
     rows4 = json.load(open(os.path.join(tmp, 'unclaimed.json')))
     check(len(rows4) == 3, 'and it does pass all, which is why it has to say so (%d)' % len(rows4))
 
+    print('\n--- a coverage cache with no da_cells is a BLOCKER ---')
+    json.dump({'cells': cov, 'sig': 'test', 'cell': CELL},
+              open(os.path.join(tmp, 'no_da.json'), 'w'))
+
+    def sweep_noda(extra=()):
+        return subprocess.run(
+            [sys.executable, os.path.join(HERE, 'sweep_unclaimed.py'),
+             '--coverage', os.path.join(tmp, 'no_da.json'),
+             '--boundaries', os.path.join(tmp, 'boundaries'),
+             '--claimed', os.path.join(tmp, 'c3.json'),
+             '--index', os.path.join(tmp, 'lake_index.json'),
+             '--region-mask', mask, '--out', os.path.join(tmp, 'u3.json'),
+             '--near-km', '0', '--min-acres', '100'] + list(extra),
+            capture_output=True, text=True)
+    rn = sweep_noda()
+    check(rn.returncode == 2 and 'STOP:' in rn.stdout, 'stops rather than running the depth test off')
+    check('make_river_boundaries' in rn.stdout,
+          'names the script that rebuilds it -- this one only READS the cache')
+    rn2 = sweep_noda(['--allow-no-da'])
+    check(rn2.returncode == 0, '--allow-no-da runs anyway (rc=%d)' % rn2.returncode)
+
     print('\n--- no index: the old, contaminating behaviour, announced ---')
     r5 = subprocess.run(
         [sys.executable, os.path.join(HERE, 'sweep_unclaimed.py'),

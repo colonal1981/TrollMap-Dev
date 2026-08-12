@@ -171,6 +171,9 @@ def main() -> int:
     ap.add_argument('--region-mask', default=os.path.join('registry', 'region_mask.json'))
     ap.add_argument('--no-region', action='store_true',
                     help='skip the four-state test entirely (says so loudly)')
+    ap.add_argument('--allow-no-da', action='store_true',
+                    help='run even when the coverage cache predates da_cells, accepting that '
+                         'surveyed water cannot be told from stray contour lines')
     ap.add_argument('--report', action='store_true')
     a = ap.parse_args()
 
@@ -180,10 +183,32 @@ def main() -> int:
     # line pass through them. A 3,050-acre cluster at -78.4818, 34.7540 held ZERO depth areas
     # and seven contours -- stray lines, not a surveyed lake. An older coverage file has no such
     # split; say so rather than reporting every blob as fully measured.
+    # NO da_cells IS A BLOCKER, NOT A WARNING.
+    #
+    # It was a warning, and on 2026-08-12 that warning scrolled past. The run produced a 1,548-row
+    # worklist in which every row read da_share 0.00 -- not because the water is contour-only but
+    # because the question was never asked. Ryan had already ruled on exactly this: *"Stop having
+    # me continue with errors showing... this is how shit gets missed and you do it every time."*
+    #
+    # The trap is that the CONSUMER cannot fix it. This script only READS the coverage cache;
+    # make_river_boundaries.py writes it, and only its cache key knows to refuse the old format.
+    # So the message has to name that command, or the reader is stuck.
     da = set((p[0], p[1]) for p in (cov.get('da_cells') or []))
+    if not da and not a.allow_no_da:
+        print('STOP: %s has no da_cells.' % a.coverage)
+        print()
+        print('  Without it there is no telling water Garmin SOUNDED from cells a contour line')
+        print('  merely passed through. Every cluster reports da_share 0.00, and --min-da here')
+        print('  and in id_unclaimed_water.py both quietly stop filtering.')
+        print()
+        print('  This cache is written by make_river_boundaries.py, not by this script:')
+        print('      py .\\scripts\\make_river_boundaries.py')
+        print('  Its cache key already refuses the old format, so that rebuilds it. Then re-run.')
+        print()
+        print('  --allow-no-da runs anyway and accepts that the depth test is off.')
+        return 2
     if not da:
-        print('!! %s has no da_cells -- rebuild it (delete and re-run make_river_boundaries) to '
-              'tell measured water from stray contours' % a.coverage)
+        print('!! --allow-no-da: the depth test is OFF, da_share will be 0.00 on every row')
     rows = defaultdict(set)
     for ix, iy in cover:
         rows[iy].add(ix)
