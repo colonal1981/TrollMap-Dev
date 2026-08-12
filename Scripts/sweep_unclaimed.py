@@ -64,6 +64,7 @@ from collections import deque, defaultdict
 
 CELL = 0.002                      # same grid the coverage cache uses
 ACRES_PER_CELL = 10.2             # a 0.002 deg square at ~34 N
+PTS_PER_CLUSTER = 24              # cell centres carried into the output; see 'pts' below
 
 
 def rings(g):
@@ -128,6 +129,12 @@ def main() -> int:
     ap.add_argument('--near-km', type=float, default=25.0,
                     help='keep only clusters within this many km of a water in lake_index.json; '
                          '0 disables the filter')
+    ap.add_argument('--min-da', type=float, default=0.25,
+                    help='share of a cluster that must sit inside a real depth area before it '
+                         'counts as surveyed water rather than stray contour lines (0.25)')
+    ap.add_argument('--near-cells', type=int, default=25,
+                    help='how far to search for the nearest claimed cell, in cells (~200 m '
+                         'each). Beyond this a blob is reported as detached with no neighbour.')
     ap.add_argument('--min-fill', type=float, default=0.15,
                     help='a cluster must fill this share of its own bounding box to be called a '
                          'lake rather than a shoreline collar (default 0.15)')
@@ -136,6 +143,14 @@ def main() -> int:
 
     cov = json.load(open(a.coverage))
     cover = set((p[0], p[1]) for p in cov['cells'])
+    # Cells backed by an actual depth polygon, as opposed to cells that only ever saw a contour
+    # line pass through them. A 3,050-acre cluster at -78.4818, 34.7540 held ZERO depth areas
+    # and seven contours -- stray lines, not a surveyed lake. An older coverage file has no such
+    # split; say so rather than reporting every blob as fully measured.
+    da = set((p[0], p[1]) for p in (cov.get('da_cells') or []))
+    if not da:
+        print('!! %s has no da_cells -- rebuild it (delete and re-run make_river_boundaries) to '
+              'tell measured water from stray contours' % a.coverage)
     rows = defaultdict(set)
     for ix, iy in cover:
         rows[iy].add(ix)
@@ -146,23 +161,55 @@ def main() -> int:
         if not files:
             print('no boundaries at %s' % a.boundaries)
             return 2
-        claimed = set()
+        # WHICH lake claimed the cell, not just that one did.
+        #
+        # Ryan, 2026-08-12: *"i think we are probably missing pieces of lakes not actual lakes
+        # but until we work through it we won't know."* That is answerable, but only if a
+        # leftover blob can say what it is NEAR. A 300 m gap to Murray and a 50 km gap to
+        # nothing are both "unclaimed" without attribution, and they are completely different
+        # problems -- one is a boundary cut short, the other is a lake nobody has.
+        claimed = {}
         t0 = time.time()
         for i, fp in enumerate(files):
             try:
                 d = json.load(open(fp))
             except Exception:
                 continue
+            slug = os.path.basename(fp)[:-8]
             feats = d.get('features') if d.get('type') == 'FeatureCollection' else [d]
+            mine = set()
             for f in (feats or []):
                 for r in rings((f or {}).get('geometry') or {}):
                     if len(r) >= 4:
-                        fill_ring(r, rows, claimed, cover)
+                        fill_ring(r, rows, mine, cover)
+                        # ALSO the cells the ring itself passes through. `fill_ring` claims a
+                        # cell only when its CENTRE is inside the ring, so a boundary that
+                        # matches Garmin's coverage exactly still leaves a one-cell collar
+                        # unclaimed all the way round. In the synthetic test that showed up as
+                        # 235 phantom acres on a lake whose boundary covered every cell it had.
+                        # At scale it is a large share of the "rims" in this report, and it is
+                        # rasterisation, not water.
+                        # Walk the EDGES, not just the vertices. A rectangle has four corners
+                        # and a collar all the way round it; claiming corner cells removed 31
+                        # of 235 phantom acres in the test and left the rest. Sampling each
+                        # segment at half a cell catches every cell the line passes through.
+                        for k in range(len(r) - 1):
+                            x0, y0 = r[k][0], r[k][1]
+                            x1, y1 = r[k + 1][0], r[k + 1][1]
+                            steps = int(max(abs(x1 - x0), abs(y1 - y0)) / (CELL / 2)) + 1
+                            for t in range(steps + 1):
+                                px = x0 + (x1 - x0) * t / steps
+                                py = y0 + (y1 - y0) * t / steps
+                                cl = (int(px / CELL), int(py / CELL))
+                                if cl in cover:
+                                    mine.add(cl)
+            for c in mine:
+                claimed.setdefault(c, slug)      # first boundary to claim a cell keeps it
             if (i + 1) % 500 == 0:
                 print('  %d/%d boundaries, %d cells claimed, %.0fs'
                       % (i + 1, len(files), len(claimed), time.time() - t0), flush=True)
         os.makedirs(os.path.dirname(a.claimed) or '.', exist_ok=True)
-        json.dump([list(c) for c in claimed], open(a.claimed, 'w'))
+        json.dump([[c[0], c[1], sl] for c, sl in claimed.items()], open(a.claimed, 'w'))
         print('done in %.0fs -- %d of %d Garmin cells are inside a known boundary'
               % (time.time() - t0, len(claimed), len(cover)))
         print('now run with --report')
@@ -171,7 +218,15 @@ def main() -> int:
     if not os.path.exists(a.claimed):
         print('no %s yet -- run without --report first' % a.claimed)
         return 2
-    claimed = set(tuple(c) for c in json.load(open(a.claimed)))
+    raw = json.load(open(a.claimed))
+    if raw and len(raw[0]) == 3:
+        owner = {(c[0], c[1]): c[2] for c in raw}
+    else:
+        # An older claim file has no slugs. Still usable for the subtraction, but every blob
+        # will report its neighbour as unknown -- say so rather than pretending.
+        owner = {(c[0], c[1]): None for c in raw}
+        print('!! %s predates lake attribution -- re-run without --report to get NEAREST' % a.claimed)
+    claimed = set(owner)
     left = cover - claimed
     print('inside a known boundary: %d' % len(claimed))
     print('UNCLAIMED:               %d  (%.1f%%)' % (len(left), 100.0 * len(left) / max(len(cover), 1)))
@@ -252,13 +307,21 @@ def main() -> int:
     #            that needs finding. `attach_arms.py` is the tool for those.
     #   FILL     cells / bbox cells. A real impoundment fills a third to two thirds of its own
     #            box. A collar wrapped around 40 km of shoreline fills a few percent.
-    def touches_claimed(c):
-        for (x, y) in c:
-            for dx in (-1, 0, 1):
-                for dy in (-1, 0, 1):
-                    if (x + dx, y + dy) in claimed:
-                        return True
-        return False
+    # How far to the nearest water we already have, and WHICH one. Searched as expanding rings
+    # from the blob's own cells and stopped at --near-cells, because a blob further away than
+    # that is a separate lake by any reading and the exact figure stops mattering.
+    def nearest_known(c, cap):
+        cs = set(c)
+        for rad in range(0, cap + 1):
+            for (x, y) in c:
+                for dx in range(-rad, rad + 1):
+                    for dy in range(-rad, rad + 1):
+                        if max(abs(dx), abs(dy)) != rad:
+                            continue          # ring only, not the filled square
+                        p = (x + dx, y + dy)
+                        if p in claimed:
+                            return rad, owner.get(p)
+        return None, None
 
     out = []
     dropped_far = 0
@@ -268,7 +331,18 @@ def main() -> int:
             continue
         xs = [p[0] for p in c]
         ys = [p[1] for p in c]
-        if keep_near and not keep_near(sum(xs) / len(xs) * CELL, sum(ys) / len(ys) * CELL):
+        # BOUNDARY FIRST, CENTROID ONLY AS A FALLBACK.
+        #
+        # This test used to be centroid-only, and it dropped 7,806 clusters. A centroid is the
+        # wrong instrument for "is this near known water": Albemarle Sound measured 52 km from a
+        # point 5.53 km off its own shoreline this same morning, and a blob 2 km off the edge of
+        # a 40 km reservoir is 25 km from its middle. Anything within reach of a CLAIMED CELL is
+        # near known water by definition, whatever the centroid says; the centroid test survives
+        # only for blobs beyond that reach, where it is doing its real job of excluding water
+        # outside the region the app serves.
+        rad, who = nearest_known(c, a.near_cells)
+        if rad is None and keep_near \
+                and not keep_near(sum(xs) / len(xs) * CELL, sum(ys) / len(ys) * CELL):
             dropped_far += 1
             continue
         bw = max(xs) - min(xs) + 1
@@ -286,7 +360,22 @@ def main() -> int:
             'cells': len(c),
             'fill': round(len(c) / float(bw * bh), 3),
             'narrow': narrow,
-            'touches_known': touches_claimed(c),
+            'da_cells': sum(1 for p in c if p in da),
+            'da_share': round(sum(1 for p in c if p in da) / float(len(c)), 3),
+            'near_slug': who,
+            'near_cells': rad,
+            'near_km': None if rad is None else round(rad * CELL * 111.32, 2),
+            'touches_known': rad is not None and rad <= 1,
+            # A SAMPLE OF THE ACTUAL CELLS, because the bbox is not the cluster.
+            #
+            # id_unclaimed_water.py asks 3DHP "what polygon holds this water" and can only ask
+            # about points. Given a centroid it asks about a point that is usually on land --
+            # Lake Marion's own registry centroid measures 4,160 m outside Lake Marion's polygon.
+            # Given the bbox it asks about a box that is 46% land at the median fill here, which
+            # caps the achievable score at the fill and made a perfect match read as 0.12.
+            # These cells ARE the water, so a score against them means what it says.
+            'pts': [[round(x * CELL, 6), round(y * CELL, 6)]
+                    for x, y in sorted(c)[::max(1, len(c) // PTS_PER_CLUSTER)][:PTS_PER_CLUSTER]],
         })
     # Biggest FIRST is the wrong sort for this file -- the biggest are rims. Order by what a
     # missing lake looks like: detached from everything known, densely filled, and then large.
@@ -296,7 +385,8 @@ def main() -> int:
 
     rim = [r for r in out if r['touches_known']]
     free = [r for r in out if not r['touches_known']]
-    solid = [r for r in free if r['fill'] >= a.min_fill and not r['narrow']]
+    solid = [r for r in free if r['fill'] >= a.min_fill and not r['narrow']
+             and (not da or r['da_share'] >= a.min_da)]
     print('\n%d clusters total, %d between %.0f and %.0f acres%s -> %s'
           % (len(comps), len(out), a.min_acres, a.max_acres,
              (', %d dropped as too far from any known water' % dropped_far) if dropped_far else '',
@@ -305,17 +395,17 @@ def main() -> int:
     print('  %6d touch a boundary already in the registry  -- a rim to widen, not a lake to find'
           % len(rim))
     print('  %6d are detached from every known boundary' % len(free))
-    print('  %6d of those also fill >= %.0f%% of their own box  <-- THE LIST' 
-          % (len(solid), a.min_fill * 100))
+    print('  %6d of those also fill >= %.0f%% of their box AND are >= %.0f%% inside a real '
+          'depth area  <-- THE LIST' % (len(solid), a.min_fill * 100, a.min_da * 100))
     print()
     print('DETACHED AND SOLID, biggest first — paste lon,lat into apps.nationalmap.gov/viewer:')
-    print('   %9s %6s %8s  %s' % ('ACRES', 'FILL', 'SPAN km', 'LON, LAT'))
+    print('   %9s %6s %6s %8s  %s' % ('ACRES', 'FILL', 'DEPTH', 'SPAN km', 'LON, LAT'))
     for r in sorted(solid, key=lambda r: -r['acres'])[:30]:
         w, s_, e, n = r['bbox']
         span = math.hypot((e - w) * 111.32 * math.cos(math.radians(r['lat'])),
                           (n - s_) * 111.32)
-        print('   %9s %6.2f %8.1f  %.6f, %.6f'
-              % (format(r['acres'], ','), r['fill'], span, r['lon'], r['lat']))
+        print('   %9s %6.2f %6.2f %8.1f  %.6f, %.6f'
+              % (format(r['acres'], ','), r['fill'], r['da_share'], span, r['lon'], r['lat']))
     if not solid:
         print('   (none — every detached cluster is stringier than --min-fill)')
     return 0
