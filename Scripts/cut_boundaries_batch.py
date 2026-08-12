@@ -57,6 +57,34 @@ AND against everything cut in this run. An unnamed water falls back to `water_<i
 honest -- `lakes.json` already carries 158 rows whose `lake_id` is `slug:<slug>` rather than
 `gnis:<id>`, so unnamed water is an established shape here, not a special case.
 
+THE SOUNDINGS GATE RUNS HERE, BEFORE THE BOUNDARY EXISTS
+
+Ryan, 2026-08-12: *"i argue that the gate is in the wrong place... why have boundaries why have
+empty chartpacks why have any of this for lakes that are never going to go anywhere???"*
+
+He is right, and the cost is measurable. `build_chartpack.py` has had the correct test since
+2026-08-08 -- `LakeMask._has_soundings()`, which asks whether any depth band goes BELOW the 0-3 dm
+shoal outline Garmin draws around every piece of water, sounded or not. But it runs at BUILD time,
+which is after the boundary is cut, after the registry row is written, and after the lake is in
+the picker. Measured on the current card:
+
+    998  slugs the build refused
+    998  still carry a boundary, a lakes.json row AND a lake_index.json row
+    845  still carry a chartpack directory
+    ---> 57% of the 1,746 rows in lake_index.json can never produce a pack
+
+The disk is 25 MB and does not matter. The picker does: Ryan's acceptance test is "contours when
+I select a body of water in the right place", and more than half of what he can select has no
+contour to show him.
+
+So the same test runs HERE, on the polygon, before anything is written. **The test is IMPORTED
+from `build_chartpack.py`, never restated** -- a gate that drifts from the build's gate is worse
+than no gate, because the two would disagree silently and nobody would know which was right.
+
+Tiles are grouped so each C tile is decompressed once, not once per candidate. A refusal is
+recorded with its reason in `outputs/batch_cut_refused.tsv`, never silently dropped. `--no-gate`
+restores the old behaviour; `--gate-report` runs the gate and writes verdicts without cutting.
+
 WHAT IT SKIPS, AND SAYS SO
 
     out of region     92 of the 427 sit in FL/VA/AL/KY. The sweep's default bbox reaches into
@@ -107,6 +135,92 @@ def slugify(name, fallback):
     return s
 
 
+def tile_bounds(labels_dir):
+    """B-TILE -> (w,s,e,n). Contours and depth areas live under the C tile of the same code:
+    B4E0CE <-> C4E0CE. The sidecars are written per B tile and the bounds are identical."""
+    import glob as _g
+    out = {}
+    for fp in _g.glob(os.path.join(labels_dir, '*.json')):
+        try:
+            d = json.load(open(fp, encoding='utf-8'))
+        except Exception:
+            continue
+        b = d.get('bounds')
+        if isinstance(b, dict) and 'west' in b:
+            out[d.get('tile') or os.path.basename(fp)[:-5]] = (b['west'], b['south'],
+                                                               b['east'], b['north'])
+    return out
+
+
+def sounded_features(extract_dir, ctile, shoal_dm, _cache={}):
+    """Everything in this tile that counts as a SURVEY: a depth band below the shoal outline,
+    or any contour at all. Returns a list of (lon, lat) representative points -- one per
+    feature -- which is all the gate needs, and a hundredth of the memory of the geometry.
+
+    CACHED, AND THE CALLER MUST FEED IT IN TILE ORDER. A depth-areas tile is tens of MB
+    gzipped; decompressing one per candidate made a 2-row dry run take 40 seconds, which over
+    299 rows is hours. main() sorts the work by tile so each is opened once. The cache holds
+    two tiles -- enough for a polygon straddling a tile edge, bounded so a 299-row run cannot
+    accumulate every tile on the card."""
+    import gzip as _gz
+    key = (extract_dir, ctile, shoal_dm)
+    if key in _cache:
+        return _cache[key]
+    if len(_cache) >= 2:
+        _cache.pop(next(iter(_cache)))
+    pts = []
+    fp = os.path.join(extract_dir, 'depth_areas', '%s.geojson.gz' % ctile)
+    if os.path.exists(fp):
+        try:
+            for f in json.load(_gz.open(fp))['features']:
+                p = f.get('properties') or {}
+                if (p.get('depth_max_dm') or 0) <= shoal_dm:
+                    continue
+                for c in _flat(f.get('geometry') or {}):
+                    pts.append(c)
+                    break
+        except Exception:
+            pass
+    fp = os.path.join(extract_dir, 'contours', '%s.geojson.gz' % ctile)
+    if os.path.exists(fp):
+        try:
+            for f in json.load(_gz.open(fp))['features']:
+                for c in _flat(f.get('geometry') or {}):
+                    pts.append(c)
+                    break
+        except Exception:
+            pass
+    _cache[key] = pts
+    return pts
+
+
+def _flat(g):
+    c = g.get('coordinates')
+    out = []
+
+    def walk(x):
+        if isinstance(x, (list, tuple)) and x and isinstance(x[0], (int, float)):
+            out.append((x[0], x[1]))
+        elif isinstance(x, (list, tuple)):
+            for y in x:
+                walk(y)
+    walk(c)
+    return out
+
+
+def _in_rings(x, y, rs):
+    hit = False
+    for r in rs:
+        j = len(r) - 1
+        for i in range(len(r)):
+            xi, yi = r[i][0], r[i][1]
+            xj, yj = r[j][0], r[j][1]
+            if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / ((yj - yi) or 1e-15) + xi:
+                hit = not hit
+            j = i
+    return hit
+
+
 def main() -> int:
     here = os.path.dirname(os.path.abspath(__file__))
     ap = argparse.ArgumentParser(description=__doc__,
@@ -126,12 +240,33 @@ def main() -> int:
                          'contain the polygon.')
     ap.add_argument('--kinds', default='STANDALONE',
                     help='comma list; ARM is deliberately not the default -- see the docstring')
+    ap.add_argument('--extract', default='extract',
+                    help='extract/{depth_areas,contours}/<C-tile>.geojson.gz for the gate')
+    ap.add_argument('--labels', default=os.path.join('extract', 'labels'),
+                    help='tile bounds, to pick which C tile covers a polygon')
+    ap.add_argument('--no-gate', action='store_true',
+                    help='cut everything, sounded or not. The old behaviour.')
+    ap.add_argument('--gate-report', action='store_true',
+                    help='run the gate and write verdicts, cut NOTHING')
     ap.add_argument('--limit', type=int, default=0, help='stop after N, for a first look')
     ap.add_argument('--dry-run', action='store_true')
     a = ap.parse_args()
 
     B = _load(os.path.join(here, 'boundary_from_3dhp.py'), 'b3')
     L = _load(os.path.join(here, 'lookup_3dhp.py'), 'l3')
+
+    # IMPORTED, NEVER RESTATED. build_chartpack.py owns the definition of "is this water
+    # actually sounded" and has since 2026-08-08. A second copy of `3` in this file would drift
+    # from it the first time anyone tuned one, and the two gates would disagree in silence.
+    SHOAL_DM = 3
+    gate_src = 'fallback constant'
+    try:
+        BC = _load(os.path.join(here, 'build_chartpack.py'), 'bc')
+        SHOAL_DM = BC.LakeMask.SHOAL_DM
+        gate_src = 'build_chartpack.LakeMask.SHOAL_DM'
+    except Exception as exc:
+        print('!! could not import SHOAL_DM from build_chartpack.py (%s) -- using %d'
+              % (type(exc).__name__, SHOAL_DM))
 
     rows = list(csv.DictReader(open(a.worklist, encoding='utf-8'), delimiter='\t'))
     want_kinds = {k.strip().upper() for k in a.kinds.split(',')}
@@ -151,9 +286,21 @@ def main() -> int:
             skip_kind += 1
             continue
         todo.append(r)
-    todo.sort(key=lambda r: -int(r['acres']))
+    # SORTED BY TILE, then by acres within it. Not by acres alone: the gate opens a
+    # multi-megabyte C tile per polygon and consecutive rows must share one. Biggest-first
+    # across the whole card reads better in a log and costs hours.
     if a.limit:
+        todo.sort(key=lambda r: -int(r['acres']))
         todo = todo[:a.limit]
+    TB = tile_bounds(a.labels) if not a.no_gate else {}
+
+    def _tile_of(r):
+        lon, lat = float(r['lon']), float(r['lat'])
+        for t, (w, s2, e, n) in TB.items():
+            if w <= lon <= e and s2 <= lat <= n:
+                return t
+        return 'zzzz'
+    todo.sort(key=lambda r: (_tile_of(r), -int(r['acres'])))
 
     os.makedirs(a.stage, exist_ok=True)
     print('worklist %d rows -> %d to cut' % (len(rows), len(todo)))
@@ -172,6 +319,7 @@ def main() -> int:
 
     used = set(known)
     collisions = []
+    refused = []
     done = miss = already = 0
     t0 = time.time()
     manifest = []
@@ -224,6 +372,28 @@ def main() -> int:
             miss += 1
             continue
         acres = (hit[3] or 0) * 247.105
+
+        # THE GATE. Before the boundary exists, not after the pack is built.
+        if not a.no_gate:
+            pxs = [q[0] for p in parts for q in p]
+            pys = [q[1] for p in parts for q in p]
+            w2, s2, e2, n2 = min(pxs), min(pys), max(pxs), max(pys)
+            ctiles = ['C' + t[1:] for t, (tw, ts, te, tn) in TB.items()
+                      if not (te < w2 or tw > e2 or tn < s2 or ts > n2)]
+            found = False
+            for ct in ctiles:
+                for px, py in sounded_features(a.extract, ct, SHOAL_DM):
+                    if w2 <= px <= e2 and s2 <= py <= n2 and _in_rings(px, py, parts):
+                        found = True
+                        break
+                if found:
+                    break
+            if not found:
+                refused.append((rid, slug, round(acres), r.get('state') or '',
+                                'no depth band below %d dm and no contour inside the polygon'
+                                % SHOAL_DM))
+                continue
+
         fc = {'type': 'FeatureCollection', 'features': [{
             'type': 'Feature',
             'properties': {
@@ -249,6 +419,16 @@ def main() -> int:
 
     print('\n%s%d boundaries -> %s   (%d from an earlier run of this tool, %d missed)'
           % ('[DRY RUN] ' if a.dry_run else '', done, a.stage, already, miss))
+    if not a.no_gate:
+        print('gate: %s = %d dm, %d refused as unsounded' % (gate_src, SHOAL_DM, len(refused)))
+    if refused:
+        rp2 = os.path.join('outputs', 'batch_cut_refused.tsv')
+        os.makedirs('outputs', exist_ok=True)
+        with open(rp2, 'w', encoding='utf-8') as fh:
+            fh.write('id3dhp\tslug\tacres\tstate\treason\n')
+            for row_ in refused:
+                fh.write('%s\t%s\t%d\t%s\t%s\n' % row_)
+        print('   refusals with their reason -> %s  (NOT dropped silently)' % rp2)
     if collisions:
         print('\n%d slug(s) also exist in %s from an EARLIER pipeline. Cut here anyway --'
               % (len(collisions), a.legacy))
