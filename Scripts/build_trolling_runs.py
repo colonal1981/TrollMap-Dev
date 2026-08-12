@@ -668,6 +668,11 @@ def main():
     ap.add_argument('--chord-samples', type=int, default=6,
                     help='points tested along each candidate chord (default 6)')
     ap.add_argument('--only', default=None, help='one slug, for testing. Wins over --ship-only.')
+    ap.add_argument('--only-lakes', default=None,
+                    help='comma list or @file of slugs, matching build_all_chartpacks.py, '
+                         'build_structure.py and build_water_graphs.py. Added 2026-08-12 so a '
+                         'set of newly cut lakes can be run without walking the card: --only '
+                         'took one slug and there was no way to say "these 155".')
     ap.add_argument('--report', default=None)
     ap.add_argument('--registry', default=None,
                     help='folder holding charted.json. Required by --ship-only; not guessed '
@@ -683,6 +688,18 @@ def main():
 
     slugs = [d for d in sorted(os.listdir(a.packs))
              if os.path.isdir(os.path.join(a.packs, d)) and (not a.only or d == a.only)]
+    if a.only_lakes and not a.only:
+        raw = a.only_lakes
+        if raw.startswith('@'):
+            raw = open(raw[1:], encoding='utf-8').read()
+        want = {x.strip() for x in raw.replace('\n', ',').split(',') if x.strip()}
+        missing = want - set(slugs)
+        slugs = [d for d in slugs if d in want]
+        print('--only-lakes: %d of %d requested slugs have a pack directory' % (len(slugs), len(want)))
+        if missing:
+            # Named and absent is worth saying. A silent drop here reads as "that lake has no
+            # runs" when the truth is "that lake has no pack".
+            print('   %d named but not present: %s' % (len(missing), ', '.join(sorted(missing)[:6])))
     ship_filtered = bool(a.ship_only) and not a.only
     if a.ship_only:
         if a.only:

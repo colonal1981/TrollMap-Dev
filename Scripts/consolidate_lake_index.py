@@ -281,6 +281,11 @@ def main():
     ap.add_argument('--out', required=True)
     ap.add_argument('--states', default='SC,NC,GA,TN')
     ap.add_argument('--max-km', type=float, default=25.0)
+    ap.add_argument('--keep-unbuildable', action='store_true',
+                    help='keep rows the build refused. Default is to DROP them from the index '
+                         '-- see the note at the write, below.')
+    ap.add_argument('--dropped-report', default=None,
+                    help='write the dropped slugs here (default <registry>/_index_dropped.json)')
     ap.add_argument('--names', help='JSON of slug -> display name, for water 3DHP named '
                                     'wrong. Defaults to <registry>/lake_display_names.json.')
     ap.add_argument('--aliases', help='JSON of curated-name -> registry-slug, for '
@@ -649,7 +654,52 @@ def main():
                 rec['feature_type'] = 'lake'
         ft_counts[rec['feature_type']] = ft_counts.get(rec['feature_type'], 0) + 1
 
+    # ── DROP WHAT THE BUILD ALREADY REFUSED ───────────────────────────────────────────────
+    #
+    # Ryan, 2026-08-12, on the gate being in the wrong place: *"why have boundaries why have
+    # empty chartpacks why have any of this for lakes that are never going to go anywhere?"*
+    # Measured that day: 1,008 of 1,867 index rows carried a boundary and a picker entry while
+    # being unbuildable -- 57% of what the app OFFERS could not draw a contour. His acceptance
+    # test is "contours when I select a body of water in the right place", so more than half of
+    # the list failed the first clause.
+    #
+    # FILTERED HERE RATHER THAN DELETED FROM lakes.json, deliberately. lakes.json is the 3DHP
+    # SUPERSET -- 3,392 rows across fifteen states, the record of what EXISTS. The index is what
+    # the app OFFERS. Those are different questions and deleting from the first to fix the
+    # second throws away the answer to the first. This is also reversible: --keep-unbuildable
+    # puts every row back, which a deletion could not.
+    #
+    # The key is the build's own verdict, not a guess and not an acreage proxy: charted == 0 AND
+    # a recorded `skipped` reason. `build_chartpack.py` refused each of these and wrote down why.
+    dropped = []
+    if not a.keep_unbuildable and charted:
+        for slug in list(idx):
+            C = charted.get(slug)
+            if not C or C.get('shipped'):
+                continue
+            why = C.get('skipped')
+            if not why:
+                continue                 # no verdict recorded -- not ours to judge
+            if C.get('charted'):
+                continue                 # measured non-zero: keep it, whatever else is true
+            dropped.append({'slug': slug, 'name': idx[slug].get('name'),
+                            'state': idx[slug].get('state'),
+                            'area_acres': idx[slug].get('area_acres'), 'why': why})
+            del idx[slug]
+
     json.dump(idx, open(a.out, 'w', encoding='utf-8'), indent=1)
+    if dropped:
+        from collections import Counter as _C
+        rp = a.dropped_report or os.path.join(R, '_index_dropped.json')
+        json.dump(dropped, open(rp, 'w', encoding='utf-8'), indent=1)
+        print('\ndropped %d unbuildable rows from the index (--keep-unbuildable to keep them):'
+              % len(dropped))
+        for why, n in _C(d['why'] for d in dropped).most_common():
+            print('   %5d  %s' % (n, why))
+        print('   -> %s' % rp)
+        print('   their boundaries and chartpack dirs are UNTOUCHED, and so is lakes.json.')
+    elif a.keep_unbuildable:
+        print('\n--keep-unbuildable: unbuildable rows RETAINED in the index.')
 
     print('%d registry lakes in %s' % (len(lakes), ','.join(sorted(want))))
     print('%d records written' % len(idx))
