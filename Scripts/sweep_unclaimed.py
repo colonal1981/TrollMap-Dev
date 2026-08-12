@@ -128,6 +128,9 @@ def main() -> int:
     ap.add_argument('--near-km', type=float, default=25.0,
                     help='keep only clusters within this many km of a water in lake_index.json; '
                          '0 disables the filter')
+    ap.add_argument('--min-fill', type=float, default=0.15,
+                    help='a cluster must fill this share of its own bounding box to be called a '
+                         'lake rather than a shoreline collar (default 0.15)')
     ap.add_argument('--report', action='store_true')
     a = ap.parse_args()
 
@@ -229,6 +232,34 @@ def main() -> int:
         keep_near = near_known
         print('filtering to within %.0f km of one of %d waters in %s' % (a.near_km, len(pts), a.index))
 
+    # ── FRINGE IS NOT A MISSING LAKE ──────────────────────────────────────────────────────
+    #
+    # Ryan, 2026-08-12, on the top of this report: *"this still looks to be bullshit."* It did.
+    # The largest entries were 19,258 acres sprawling over 42 km beside Hiwassee, 17,646 over
+    # 39 km whose nearest boundary was Norris at 0.05 km, and the same shape next to Carters,
+    # Center Hill and Lanier. No such lakes exist.
+    #
+    # They are the RIM. A boundary is cut slightly tighter than Garmin's soundings reach, so
+    # every lake leaks a collar of unclaimed cells; those collars run up the feeder rivers and
+    # connect, and 8-connectivity welds the lot into one component per drainage. That has been
+    # the top of this file since the first run -- the 08-11 output had the same 19,451-acre
+    # entry at the same bbox -- so it is not new, it has just been in the way the whole time.
+    #
+    # Two things separate a rim from a lake, and both are free here:
+    #
+    #   TOUCHES  a component with a claimed cell in its 8-neighbourhood is attached to water
+    #            already in the registry. That is a boundary that needs widening, not a lake
+    #            that needs finding. `attach_arms.py` is the tool for those.
+    #   FILL     cells / bbox cells. A real impoundment fills a third to two thirds of its own
+    #            box. A collar wrapped around 40 km of shoreline fills a few percent.
+    def touches_claimed(c):
+        for (x, y) in c:
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    if (x + dx, y + dy) in claimed:
+                        return True
+        return False
+
     out = []
     dropped_far = 0
     for c in comps:
@@ -240,6 +271,12 @@ def main() -> int:
         if keep_near and not keep_near(sum(xs) / len(xs) * CELL, sum(ys) / len(ys) * CELL):
             dropped_far += 1
             continue
+        bw = max(xs) - min(xs) + 1
+        bh = max(ys) - min(ys) + 1
+        # A one-cell-wide line fills its own bounding box completely -- a straight 60x1 river
+        # scored fill 1.00 in the synthetic test and sorted above real lakes. Width is a
+        # separate question from fill and has to be asked separately.
+        narrow = min(bw, bh) < 2
         out.append({
             'acres': round(acres),
             'lon': round(sum(xs) / len(xs) * CELL, 6),
@@ -247,17 +284,40 @@ def main() -> int:
             'bbox': [round(min(xs) * CELL, 6), round(min(ys) * CELL, 6),
                      round(max(xs) * CELL, 6), round(max(ys) * CELL, 6)],
             'cells': len(c),
+            'fill': round(len(c) / float(bw * bh), 3),
+            'narrow': narrow,
+            'touches_known': touches_claimed(c),
         })
-    out.sort(key=lambda r: -r['acres'])
+    # Biggest FIRST is the wrong sort for this file -- the biggest are rims. Order by what a
+    # missing lake looks like: detached from everything known, densely filled, and then large.
+    out.sort(key=lambda r: (r['touches_known'], r['narrow'], -r['fill'], -r['acres']))
     os.makedirs(os.path.dirname(a.out) or '.', exist_ok=True)
     json.dump(out, open(a.out, 'w'), indent=1)
+
+    rim = [r for r in out if r['touches_known']]
+    free = [r for r in out if not r['touches_known']]
+    solid = [r for r in free if r['fill'] >= a.min_fill and not r['narrow']]
     print('\n%d clusters total, %d between %.0f and %.0f acres%s -> %s'
           % (len(comps), len(out), a.min_acres, a.max_acres,
              (', %d dropped as too far from any known water' % dropped_far) if dropped_far else '',
              a.out))
-    print('\nthe 30 biggest — paste lon,lat into apps.nationalmap.gov/viewer:')
-    for r in out[:30]:
-        print('   %7d ac   %.6f, %.6f' % (r['acres'], r['lon'], r['lat']))
+    print()
+    print('  %6d touch a boundary already in the registry  -- a rim to widen, not a lake to find'
+          % len(rim))
+    print('  %6d are detached from every known boundary' % len(free))
+    print('  %6d of those also fill >= %.0f%% of their own box  <-- THE LIST' 
+          % (len(solid), a.min_fill * 100))
+    print()
+    print('DETACHED AND SOLID, biggest first — paste lon,lat into apps.nationalmap.gov/viewer:')
+    print('   %9s %6s %8s  %s' % ('ACRES', 'FILL', 'SPAN km', 'LON, LAT'))
+    for r in sorted(solid, key=lambda r: -r['acres'])[:30]:
+        w, s_, e, n = r['bbox']
+        span = math.hypot((e - w) * 111.32 * math.cos(math.radians(r['lat'])),
+                          (n - s_) * 111.32)
+        print('   %9s %6.2f %8.1f  %.6f, %.6f'
+              % (format(r['acres'], ','), r['fill'], span, r['lon'], r['lat']))
+    if not solid:
+        print('   (none — every detached cluster is stringier than --min-fill)')
     return 0
 
 
