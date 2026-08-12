@@ -57,7 +57,36 @@ import argparse, json, os, re, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 OUT = os.path.join(REPO, 'js', 'data', 'water-aliases.js')
-DEFAULT_DIR = os.path.join(os.path.dirname(REPO), 'lake_boundaries')
+# registry/ FIRST as of 2026-08-12: the two sidecars moved there because they are registry
+# data, and lake_boundaries/ is a staging tray whose 321 boundary geojsons are superseded by
+# registry/boundaries/. The old path is still tried so this keeps working on a drive where the
+# move has not happened yet -- delete the fallback once lake_boundaries/ is gone.
+def _sidecar_dir():
+    """Where _coastal_pointers.json / _river_aliases.json live.
+
+    SEARCHES UPWARD rather than assuming a fixed depth. The previous form was
+    `dirname(REPO)/lake_boundaries`, which is right when this file runs from
+    TrollMap-Dev/Scripts/ and one level too high when it runs from
+    F:\TrollMapPipeline\scripts\ -- the drive keeps two copies of every script and Ryan runs
+    the second one. That is 00_START_HERE's "a script that computes its own path assumes where
+    it lives", and it resolved to /mnt/lake_boundaries on the first test after the move.
+
+    registry/ first: the sidecars are registry data. lake_boundaries/ is tried only until that
+    staging tray is deleted -- drop the second candidate then.
+    """
+    here = os.path.abspath(os.path.dirname(__file__))
+    for _ in range(4):
+        for cand in (os.path.join(here, 'registry'), os.path.join(here, 'lake_boundaries')):
+            if os.path.exists(os.path.join(cand, '_coastal_pointers.json')):
+                return cand
+        parent = os.path.dirname(here)
+        if parent == here:
+            break
+        here = parent
+    return os.path.join(os.path.dirname(REPO), 'registry')
+
+
+DEFAULT_DIR = _sidecar_dir()
 # Sibling of lake_boundaries. This is what the INSTALL wrote, i.e. what the app can actually
 # load -- see river_names() for why the difference matters.
 DEFAULT_REGISTRY = os.path.join(os.path.dirname(REPO), 'registry', 'boundaries')

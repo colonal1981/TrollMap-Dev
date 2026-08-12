@@ -102,7 +102,6 @@ except ImportError:
 PIPELINE            = Path(r'F:\TrollMapPipeline')
 PBF_DIR             = PIPELINE / 'osm_pbf'
 TMP_DIR             = PIPELINE / 'osm_tmp'
-BOUNDARIES_DIR      = PIPELINE / 'lake_boundaries'
 REGISTRY_BOUNDARIES = PIPELINE / 'registry' / 'boundaries'
 INDEX_JSON          = PIPELINE / 'registry' / 'lake_index.json'
 CHARTPACK_DIR       = PIPELINE / 'chartpack'
@@ -294,14 +293,12 @@ def best_boundary_file(slug):
     """The boundary the pack was actually clipped against, so the OSM bbox matches
     the water the contours cover. registry/boundaries/ first: it covers all 1,502
     shipped slugs, where lake_boundaries/ covers 171."""
+    # The lake_boundaries/ fallback was REMOVED 2026-08-12. Measured before removing it: 58
+    # slugs exist only there and NONE of them is in lake_index.json, so it could not fire for
+    # anything the app offers -- while the files it pointed at are demonstrably wrong water.
+    # lake_michie's copy there is a 3-acre fragment 29 km from the 472-acre lake.
     reg = REGISTRY_BOUNDARIES / f"{slug}.geojson"
-    if reg.exists():
-        return reg
-    for suffix in ('_nhd', '_3dhp', '_river'):
-        fp = BOUNDARIES_DIR / f"{slug}{suffix}.geojson"
-        if fp.exists():
-            return fp
-    return None
+    return reg if reg.exists() else None
 
 
 def _geom_bbox(path):

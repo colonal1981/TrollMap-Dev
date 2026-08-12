@@ -12,6 +12,7 @@ Personal use only, not for distribution or resale; not for navigation.
        --feeds "F:\TrollMapPipeline\registry" `
        --index "F:\TrollMapPipeline\registry\lake_index.json" `
        --out   "F:\TrollMapPipeline\lake_boundaries"
+       # sidecars land in registry/ -- see the --sidecars note in main()
     # ... reports what it would cut, writes nothing. Then --go.
 
 WHY THIS EXISTS
@@ -334,7 +335,10 @@ def main():
     ap.add_argument('--feeds', required=True,
                     help='folder holding _dnr_ramps_{sc,nc,ga,tn}.json AND '
                          '_dnr_paddle_{sc,nc,ga,tn}.json')
-    ap.add_argument('--out', required=True, help='lake_boundaries folder')
+    ap.add_argument('--out', required=True, help='folder for the boundary geojsons')
+    ap.add_argument('--sidecars', help='where _coastal_pointers.json / _river_aliases.json go. '
+                                       'Defaults to registry/ beside --out. These are read by '
+                                       'gen_water_aliases_js.py and end up in the app.')
     ap.add_argument('--index', help='lake_index.json -- skip waterbodies already in the registry')
     ap.add_argument('--only', help='comma list of DNR names. A filter on what gets WRITTEN; '
                                    'the region loaded still covers every feed so ownership is '
@@ -1409,7 +1413,19 @@ def main():
         nm = re.sub(r'\s\(\d+\)$', '', (rec.get('name') or ''))
         return re.sub(r'[^a-z0-9]', '', nm.lower()) in (want or set())
 
-    cp = os.path.join(a.out, '_coastal_pointers.json' if not a.lakes
+    # THE SIDECARS ARE REGISTRY DATA AND STOPPED LIVING IN --out ON 2026-08-12.
+    #
+    # They were written beside the boundary geojsons in lake_boundaries/, which made a
+    # staging tray undeletable: 321 boundary files there are superseded by
+    # registry/boundaries/ and only these two JSONs were still load-bearing. That is the
+    # js/data/lakes.js shape exactly -- pipeline data filed as though it were output --
+    # and it cost that file three near-deletions before anyone noticed.
+    #
+    # gen_water_aliases_js.py turns these into water-aliases.js, which the APP imports
+    # (lake-keys.js). They are as much registry as lakes.json is.
+    _sc = a.sidecars or os.path.join(os.path.dirname(a.out.rstrip('\\/')), 'registry')
+    os.makedirs(_sc, exist_ok=True)
+    cp = os.path.join(_sc, '_coastal_pointers.json' if not a.lakes
                       else '_lake_coastal_pointers.json')
     ap_fp = os.path.join(a.out, aux + '_aliases.json')
     if want is not None:

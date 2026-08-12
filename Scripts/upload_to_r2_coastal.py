@@ -34,7 +34,10 @@ from r2_gzip import prepared
 WRANGLER_JS   = r'C:\Users\Ryan\AppData\Roaming\npm\node_modules\wrangler\bin\wrangler.js'
 BUCKET        = 'trollmap-chartpacks'
 OUTPUT_DIR    = Path(r'F:\TrollMapPipeline\split_output3')
-BOUNDARY_DIR  = Path(r'F:\TrollMapPipeline\lake_boundaries')
+# registry/boundaries/ as of 2026-08-12. This pointed at lake_boundaries/, where ZERO of the
+# 22 coastal zones have a copy -- so the lookup below could never succeed and the boundary was
+# simply never uploaded. A dead read that looks like a live one.
+BOUNDARY_DIR  = Path(r'F:\TrollMapPipeline\registry\boundaries')
 
 # Supplemental layers produced by trollmap_pipeline.py
 SUPPLEMENTAL_LAYERS = [
@@ -119,8 +122,11 @@ def wrangler_put(local_path, r2_key, dry_run=False, gz=True):
 
 def best_boundary_file(slug):
     """Prefer _nhd over _3dhp."""
-    nhd = BOUNDARY_DIR / f'{slug}_nhd.geojson'
-    dhp = BOUNDARY_DIR / f'{slug}_3dhp.geojson'
+    # registry/boundaries/ files carry no suffix; the suffixed names are the staging
+    # convention. Both are tried so this works either way.
+    plain = BOUNDARY_DIR / f'{slug}.geojson'
+    nhd = plain if plain.exists() else BOUNDARY_DIR / f'{slug}_nhd.geojson'
+    dhp = plain if plain.exists() else BOUNDARY_DIR / f'{slug}_3dhp.geojson'
     if nhd.exists(): return nhd
     if dhp.exists(): return dhp
     return None

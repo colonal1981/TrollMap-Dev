@@ -5,7 +5,7 @@ Personal use only, not for distribution or resale; not for navigation.
 
     py .\make_coastal_boundaries.py `
        --catalog "F:\TrollMapPipeline\TrollMap-Dev\Scripts\coastal_catalog.py" `
-       --out     "F:\TrollMapPipeline\lake_boundaries"
+       --out     "F:\TrollMapPipeline\lake_boundaries_coastal"
     # then install them into the registry:
     py .\install_registry_boundary.py --registry ... --boundaries ... --labels ... `
        --lake coast_santee_delta_sc=SC

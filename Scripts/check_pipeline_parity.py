@@ -188,7 +188,10 @@ if pack_dir.is_dir():
 
 # ── 4. pointer files resolve, if they exist ──────────────────────────────────
 for fname in ("_coastal_pointers.json", "_river_aliases.json"):
-    p = ROOT / "lake_boundaries" / fname
+    # registry/ first; lake_boundaries/ only until that tray is deleted. 2026-08-12.
+    p = ROOT / "registry" / fname
+    if not p.exists():
+        p = ROOT / "lake_boundaries" / fname
     if not p.exists():
         print(f"  note: {fname} not present — skipped")
         continue
