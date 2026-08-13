@@ -101,6 +101,12 @@ except ImportError:
 # ── Config ────────────────────────────────────────────────────────────────────
 PIPELINE            = Path(r'F:\TrollMapPipeline')
 PBF_DIR             = PIPELINE / 'osm_pbf'
+# ALWAYS written, not only when --out-dir is passed. Ryan, 2026-08-13, before pruning R2:
+# "as long as the OSM script and the OSM pbfs are on my drive that is all that actually
+# matters". The pbfs are the input and they are on the drive; there is no reason the OUTPUT
+# should not be. --out-dir was optional, so runs without it went OSM -> memory -> R2 and left
+# 84 objects existing nowhere but the bucket. r2_vs_local.py had to be taught to forgive that.
+OSM_OUT_DIR         = PIPELINE / 'osm_out'
 TMP_DIR             = PIPELINE / 'osm_tmp'
 REGISTRY_BOUNDARIES = PIPELINE / 'registry' / 'boundaries'
 INDEX_JSON          = PIPELINE / 'registry' / 'lake_index.json'
@@ -730,10 +736,17 @@ def build_and_upload(slug, entry, collector, args):
         gj['metadata']['tide_station'] = entry.get('tide_station')
 
     text = json.dumps(gj)
-    if args.out_dir:
-        out = Path(args.out_dir)
-        out.mkdir(parents=True, exist_ok=True)
-        (out / f'{slug}.geojson').write_text(text, encoding='utf-8')
+    # The local copy is unconditional. --out-dir only chooses WHERE, never WHETHER; --no-local
+    # is the escape hatch, and it exists so that "I meant not to keep it" has to be typed.
+    if not args.no_local:
+        out = Path(args.out_dir) if args.out_dir else OSM_OUT_DIR
+        try:
+            out.mkdir(parents=True, exist_ok=True)
+            (out / f'{slug}.geojson').write_text(text, encoding='utf-8')
+        except OSError as e:
+            # Never fatal. Failing to keep a copy is worth saying and not worth losing the
+            # upload over -- the object still reaches R2 and osm_pbf/ can rebuild it.
+            print(f'   {slug}: could not write the local copy ({str(e)[:60]})')
 
     if args.dry_run:
         ok, msg = True, 'DRY RUN'
@@ -765,7 +778,12 @@ def main():
     ap.add_argument('--no-gzip', action='store_true',
                     help='upload raw -- only if the Worker predates r2Body()')
     ap.add_argument('--list', action='store_true', help='List the work list and exit')
-    ap.add_argument('--out-dir', help='Also write each GeoJSON here')
+    ap.add_argument('--out-dir',
+                    help='where to keep the local copy (default <pipeline>/osm_out). The copy '
+                         'is written whatever happens; this only moves it.')
+    ap.add_argument('--no-local', action='store_true',
+                    help='do NOT keep a local copy. Then the only copy is in R2, which is how '
+                         '84 objects ended up unrecoverable by upload.')
     ap.add_argument('--catalog-only', action='store_true',
                     help='Freshwater side limited to lake_catalog.py (96 entries)')
     ap.add_argument('--from-cache', action='store_true',
