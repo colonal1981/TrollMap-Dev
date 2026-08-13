@@ -535,7 +535,8 @@ def parse_rdb(text):
 
 # ── bind stage ──────────────────────────────────────────────────────────────────────────────
 
-def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=None):
+def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=None,
+         lake_rivers=None):
     overrides = overrides or {}
     weak = build_weak_tokens(index)
 
@@ -687,6 +688,14 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
             tally['no_bounds'] += 1
             continue
         names = [rec.get('name'), rec.get('display_name')] + list(rec.get('legacy_display_names') or [])
+        # The river the lake IS. An impoundment is almost never named after the water it
+        # impounds -- Kentucky Lake is the Tennessee River, Belews Lake is Belews Creek,
+        # Tuckertown is the Yadkin -- so every gauge on it reads "<River> at <town>" and shares
+        # no token with the lake's own name. All six Kentucky Lake gauges failed here and landed
+        # in review_geom_only. Names come from 3DHP flowlines inside the boundary, via
+        # build_lake_rivers.py. Geometry is still required, so handing the same river name to
+        # five TVA pools cannot bind a gauge to water it is not on.
+        names += ((lake_rivers or {}).get(slug, {}).get('rivers') or [])
         names = [n for n in names if n]
 
         bnd = load_boundary(os.path.join(boundaries_dir, slug + '.geojson'))
@@ -1143,6 +1152,11 @@ def main():
     ap.add_argument('--review-out', default=None,
                     help='default <registry>\\_water_bindings_review.json; the FULL '
                          'geometry-only and name-only lists, not a sample of them')
+    ap.add_argument('--lake-rivers', default=None,
+                    help='_lake_rivers.json from build_lake_rivers.py -- the river each lake '
+                         'IS, so a gauge named for the river matches the lake. DEFAULTS to '
+                         '<registry>/_lake_rivers.json and warns if it is absent: an optional '
+                         'flag that silently changes the output is how --aliases went unread.')
     ap.add_argument('--overrides', default=None,
                     help='default <registry>\\gauge_overrides.json; gauge bindings a human\n                         decided, which win over every derived pass')
     ap.add_argument('--stage', choices=('fetch', 'bind', 'all'), default='all')
@@ -1241,8 +1255,27 @@ def main():
         print('   They are derived now. Move any that are not to %s.' % os.path.basename(ovr_path))
     report['curated_usgs_no_longer_read'] = stale
 
+    # DEFAULTS, and says so when it cannot find the file. An optional flag whose absence
+    # silently changes the output is the exact shape of the --aliases bug: 41 curated aliases
+    # went unread for a week and every run looked normal.
+    lr_path = a.lake_rivers or os.path.join(reg, '_lake_rivers.json')
+    lake_rivers = None
+    if os.path.exists(lr_path):
+        try:
+            lake_rivers = json.load(open(lr_path, encoding='utf-8')).get('lakes') or {}
+            print('lake rivers: %d lake(s) carry the river they are, from %s'
+                  % (len(lake_rivers), os.path.basename(lr_path)))
+        except (OSError, ValueError) as ex:
+            print('!! %s is unreadable (%s) -- every reservoir will fail the name test again'
+                  % (lr_path, ex))
+    else:
+        print('!! no %s -- an impoundment is not named after the river it impounds, so every\n'
+              '   gauge reading "<River> at <town>" will fail the name test and land in the\n'
+              '   review pile. Build it: py .\\scripts\\build_lake_rivers.py' % lr_path)
+    report['lake_rivers_loaded'] = len(lake_rivers or {})
+
     bindings = bind(index, os.path.join(reg, 'boundaries'), src, cache, a.force,
-                    a.margin_km, report, overrides)
+                    a.margin_km, report, overrides, lake_rivers)
 
     full = report.pop('_full_review_lists', None)
     if full:
