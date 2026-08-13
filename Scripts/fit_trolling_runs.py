@@ -1369,6 +1369,9 @@ def main():
                          'an 18 ft line stays roughly 17-26 ft. Without this the line drifts '
                          'off the ledge into the channel, which is not what is being trolled')
     ap.add_argument('--iters', type=int, default=250)
+    ap.add_argument('--only-lakes', default=None,
+                    help='comma list, a file path, or @file of SLUGS, matching the four build '
+                         'scripts. Combines with --ship-only; --only still wins over both.')
     ap.add_argument('--jobs', type=int, default=1,
                     help='packs in parallel. Each one is independent -- its own raster, its own '
                          'file -- so this scales with cores and nothing is shared')
@@ -1402,6 +1405,25 @@ def main():
     else:
         slugs = sorted(d for d in os.listdir(a.packs)
                        if os.path.isdir(os.path.join(a.packs, d)))
+        if a.only_lakes:
+            # The fifth script to need this and the last to get it. --ship-only is NOT a
+            # substitute: it selects from charted.json, which still carries every lake the
+            # region cut removed, so a "scoped" fit ran 858 packs against a 455-lake card.
+            raw = a.only_lakes
+            if raw.startswith('@'):
+                raw = open(raw[1:], encoding='utf-8').read()
+            elif os.path.exists(raw):
+                raw = open(raw, encoding='utf-8').read()
+            want = {x.strip() for x in raw.replace('\n', ',').split(',') if x.strip()}
+            missing = want - set(slugs)
+            slugs = [d for d in slugs if d in want]
+            print('--only-lakes: %d of %d requested slugs have a pack directory'
+                  % (len(slugs), len(want)))
+            if missing:
+                print('   %d named but not present: %s'
+                      % (len(missing), ', '.join(sorted(missing)[:6])))
+            if not slugs:
+                sys.exit('STOP: --only-lakes matched no pack directory at all. Nothing fitted.')
         if a.ship_only:
             if not a.registry:
                 print('--ship-only needs --registry'); sys.exit(2)
