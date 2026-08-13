@@ -451,6 +451,10 @@ def main():
                     help='how close a cove must be to a creek name to be called its mouth')
     ap.add_argument('--annotate-m', type=float, default=100.0)
     ap.add_argument('--only', default=None)
+    ap.add_argument('--only-lakes', default=None,
+                    help='comma list, a file path, or @file of SLUGS -- the same shape the other '
+                         'three builders take. This was the only one of the four without it, so '
+                         'a scoped rebuild still walked all 1,705 packs on disk.')
     ap.add_argument('--report', default=None)
     ap.add_argument('--registry', default=None,
                     help='folder holding charted.json. Required by --ship-only; not guessed '
@@ -466,6 +470,25 @@ def main():
 
     slugs = [d for d in sorted(os.listdir(a.packs))
              if os.path.isdir(os.path.join(a.packs, d)) and (not a.only or d == a.only)]
+    if a.only_lakes and not a.only:
+        raw = a.only_lakes
+        if raw.startswith('@'):
+            raw = open(raw[1:], encoding='utf-8').read()
+        elif os.path.exists(raw):
+            raw = open(raw, encoding='utf-8').read()
+        want = {x.strip() for x in raw.replace('\n', ',').split(',') if x.strip()}
+        missing = want - set(slugs)
+        slugs = [d for d in slugs if d in want]
+        print('--only-lakes: %d of %d requested slugs have a pack directory'
+              % (len(slugs), len(want)))
+        if missing:
+            print('   %d named but not present: %s'
+                  % (len(missing), ', '.join(sorted(missing)[:6])))
+        if not slugs:
+            # Doing nothing is not a result, and this script rewrites `near` in trolling_runs
+            # in place -- a silent no-op here reads as "features are current" to whoever runs
+            # fit next.
+            sys.exit('STOP: --only-lakes matched no pack directory at all. Nothing was done.')
     if a.ship_only:
         if a.only:
             print('--ship-only: not applied, --only %s names a lake explicitly' % a.only)

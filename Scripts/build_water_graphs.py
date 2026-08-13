@@ -242,6 +242,26 @@ def write_graph(path, nodes, edges, depths, layer, base_ft):
     return os.path.getsize(path)
 
 
+_PS = None
+
+
+def _stamp_mod():
+    import importlib.util
+    here = os.path.dirname(os.path.abspath(__file__))
+    spec = importlib.util.spec_from_file_location('pack_stamp',
+                                                  os.path.join(here, 'pack_stamp.py'))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def _ps():
+    global _PS
+    if _PS is None:
+        _PS = _stamp_mod()
+    return _PS
+
+
 def _merge_prior_report(path, lakes, partial):
     """A scoped run must update the rows it touched and leave the rest alone.
 
@@ -280,6 +300,9 @@ def main():
                     help='same shoreline buffer the packs use, so a cell just off the boundary '
                          'is not dropped')
     ap.add_argument('--only-lakes', help='comma list or @file of slugs')
+    ap.add_argument('--force', action='store_true',
+                    help='rebuild even when the boundary, the MAR tiles and the settings are '
+                         'unchanged')
     ap.add_argument('--limit', type=int)
     ap.add_argument('--report', help='write a JSON summary here; DEFAULTS to '
                                      '<registry>/_water_graphs.json')
@@ -315,7 +338,25 @@ def main():
     report = {}
     t0 = time.time()
     made = skipped = 0
+    # A graph is derived from the registry boundary and the MAR meshes of the tiles this lake
+    # sits on -- none of which live in the pack, so both are stamped by absolute path. --layer,
+    # --seam-m and --buffer-m all change the output from identical inputs, so they are keys too.
+    GR_PARAMS = (a.layer, a.seam_m, a.buffer_m)
+    current = 0
     for n, slug in enumerate(slugs, 1):
+        outdir_s = os.path.join(a.out, slug)
+        gr_inputs = [os.path.join(a.registry, 'boundaries', slug + '.geojson')]
+        for _t in by_lake.get(slug) or []:
+            _tid = _t.upper()
+            _tid = _tid[1:] if _tid[0].isalpha() and len(_tid) > 1 else _tid
+            _d = idx.get(_tid)
+            _p = mar_path(_d) if _d else None
+            if _p:
+                gr_inputs.append(_p)
+        if (not a.force and os.path.isdir(outdir_s)
+                and _ps().is_current(outdir_s, 'water_graph.bin', gr_inputs, GR_PARAMS)):
+            current += 1
+            continue
         rings = load_boundary(a.registry, slug)
         if not rings:
             report[slug] = {'skipped': 'no boundary polygon'}; skipped += 1; continue
@@ -432,6 +473,7 @@ def main():
         os.makedirs(outdir, exist_ok=True)
         size = write_graph(os.path.join(outdir, 'water_graph.bin'),
                            nodes, edges, depths, a.layer, min(depths) if depths else 0)
+        _ps().record(outdir, 'water_graph.bin', gr_inputs, GR_PARAMS)
         # How much of the lake survives each depth filter -- the number that says whether a
         # 12 ft trolling route is even possible on this water before anyone tries to plan one.
         hist = {}
@@ -452,7 +494,10 @@ def main():
             print('  %d/%d  %d written, %d skipped, %.1f min'
                   % (n, len(slugs), made, skipped, (time.time() - t0) / 60), flush=True)
 
-    print('\n%d graphs written, %d skipped, %.1f min' % (made, skipped, (time.time() - t0) / 60))
+    print('\n%d graphs written, %d already current, %d skipped, %.1f min'
+          % (made, current, skipped, (time.time() - t0) / 60))
+    if current and not a.force:
+        print('   up to date = same boundary, same MAR tiles, same settings. --force overrides.')
     if made:
         tot = sum(r.get('bytes', 0) for r in report.values())
         nn = sum(r.get('nodes', 0) for r in report.values())
