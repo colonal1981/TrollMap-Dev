@@ -803,6 +803,14 @@ def main():
     # picker with nothing behind them. Garmin never surveyed water that small.
     #
     # "Measured and refused" and "never built" are different sentences with the same verdict.
+    by_lake_map = {}
+    _tm = os.path.join(R, 'tile_lake_map.json')
+    if os.path.exists(_tm):
+        try:
+            by_lake_map = json.load(open(_tm, encoding='utf-8')).get('by_lake') or {}
+        except (OSError, ValueError):
+            pass
+
     packless = []
     if not a.keep_packless:
         pdir = a.packs or os.path.join(os.path.dirname(R.rstrip('\\/')), 'chartpack')
@@ -824,10 +832,24 @@ def main():
             have = {d for d in os.listdir(pdir)
                     if os.path.isdir(os.path.join(pdir, d))
                     and any(os.path.exists(os.path.join(pdir, d, f)) for f in DRAWABLE)}
+            # NEVER OFFERED and NEVER BUILT look identical from here and are not the same
+            # thing. A slug in tile_lake_map.by_lake was handed to build_all_chartpacks.py as
+            # work; if it has no verdict in charted.json, the build never reached it, and the
+            # answer is to build it -- not to drop it.
+            #
+            # 2026-08-13: lake_robinson_greer (804 ac), lake_john_d_long_sc and
+            # lake_cherokee_sc all got boundaries at 08-12 00:50, all sit in by_lake, all have
+            # their C tile extracted, and none has a charted entry. Dropping them would have
+            # thrown away three lakes that need a 30-second build.
+            unbuilt = []
             for slug in list(idx):
                 if slug in have:
                     continue
                 rec = idx[slug]
+                mapped = bool(by_lake_map.get(slug)) if by_lake_map else False
+                if mapped and not (charted or {}).get(slug):
+                    unbuilt.append(slug)
+                    continue                     # keep it; it is owed a build, not a deletion
                 packless.append({'slug': slug, 'name': rec.get('name'),
                                  'state': rec.get('state'),
                                  'area_acres': rec.get('area_acres'),
@@ -835,6 +857,15 @@ def main():
                                          if os.path.isdir(os.path.join(pdir, slug))
                                          else 'no chartpack directory')})
                 del idx[slug]
+            if unbuilt:
+                print('\n!! %d row(s) are mapped to tiles and were NEVER BUILT -- kept, not '
+                      'dropped:' % len(unbuilt))
+                for slug in unbuilt:
+                    print('   %-32s tiles %s' % (slug[:32], ','.join(by_lake_map.get(slug) or [])))
+                print('   py .\\scripts\\build_all_chartpacks.py ... --only-lakes "%s"'
+                      % ','.join(unbuilt))
+                print('   then re-run this. If the build refuses them, the unbuildable filter')
+                print('   drops them with a reason, which is the honest way for them to go.')
 
     json.dump(idx, open(a.out, 'w', encoding='utf-8'), indent=1)
     if packless:
