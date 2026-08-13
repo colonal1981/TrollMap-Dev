@@ -126,25 +126,53 @@ def drive_index(root, cache_fp, max_age_h, reindex, quiet=False):
     return idx
 
 
-def find_on_drive(slug, fname, idx):
+def find_on_drive(key, idx, lower):
     """Where a missing R2 object might already be. Returns (verdict, path or '').
 
-    Strong first: the same filename under a path that names the lake. Then the per-slug naming
-    other scripts use -- osm_out/<slug>.geojson, lake_boundaries_3dhp/<slug>_3dhp.geojson. Then
-    the same filename anywhere, which is weak on its own and labelled as such.
+    `key` is the whole R2 key, because not every one is <slug>/<file>. The DNR feeds are
+    <kind>/<state>/<kind>.json -- attractors/sc/attractors.json -- and splitting on the first
+    slash called the kind a slug and 'sc/attractors.json' a filename, so nothing ever matched.
+    Their local home is registry/_dnr_<kind>_<state>.json, which is a naming scheme no amount of
+    per-slug guessing would reach.
+
+    Matching is case-insensitive: the drive is NTFS, so Shoreline.geojson and shoreline.geojson
+    are the same file and a case-sensitive miss is a fabricated loss.
     """
-    for p in idx.get(fname, []):
-        if slug in p.replace(os.sep, '/').split('/'):
-            return 'found', '%s/%s' % (p, fname)
+    parts = key.replace(os.sep, '/').split('/')
+    slug, fname = parts[0], parts[-1]
     stem = fname.rsplit('.', 1)[0]
     ext = fname[len(stem):]
+
+    # the DNR state feeds, whose key shape is <kind>/<state>/<kind>.json
+    if len(parts) == 3 and len(parts[1]) == 2:
+        for cand in ('_dnr_%s_%s%s' % (parts[0], parts[1], ext),
+                     '_dnr_%s_%s%s' % (parts[2].rsplit('.', 1)[0], parts[1], ext)):
+            for p in lower.get(cand.lower(), []):
+                return 'found', '%s/%s' % (p[0], p[1])
+
+    # the same filename under a path that names the lake -- the strongest signal there is
+    for p, real in lower.get(fname.lower(), []):
+        if slug.lower() in [x.lower() for x in p.replace(os.sep, '/').split('/')]:
+            return 'found', '%s/%s' % (p, real)
+
+    # the per-slug naming other scripts use
     for cand in (slug + ext, slug + '_3dhp' + ext, slug + '_' + stem + ext,
-                 slug + '.geojson', slug + '_3dhp.geojson'):
-        for p in idx.get(cand, []):
-            return 'found', '%s/%s' % (p, cand)
-    if idx.get(fname):
-        return 'same-name-elsewhere', '%s/%s' % (idx[fname][0], fname)
+                 slug + '.geojson', slug + '_3dhp.geojson', '_' + slug + ext):
+        for p, real in lower.get(cand.lower(), []):
+            return 'found', '%s/%s' % (p, real)
+
+    hits = lower.get(fname.lower(), [])
+    if hits:
+        return 'same-name-elsewhere', '%s/%s' % (hits[0][0], hits[0][1])
     return 'missing', ''
+
+
+def lower_index(idx):
+    """basename.lower() -> [(dir, real basename)]. Built once, not per lookup."""
+    out = {}
+    for name, dirs in idx.items():
+        out.setdefault(name.lower(), []).extend((d, name) for d in dirs)
+    return out
 
 
 def _audit():
@@ -289,10 +317,10 @@ def main():
         print()
         idx = drive_index(root, os.path.join(root, 'registry', '_drive_files.json'),
                           a.index_age_h, a.reindex)
+        lower = lower_index(idx)
         elsewhere, weak, missing = [], [], []
         for k in r2only:
-            slug, fname = k.split('/', 1)
-            verdict, where = find_on_drive(slug, fname, idx)
+            verdict, where = find_on_drive(k, idx, lower)
             if verdict == 'found':
                 elsewhere.append((k, where))
             elif verdict == 'same-name-elsewhere':
