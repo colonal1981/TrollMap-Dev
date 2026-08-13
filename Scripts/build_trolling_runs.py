@@ -690,6 +690,45 @@ def ship_only_slugs(registry):
     return ship, len(rows)
 
 
+INPUTS = ('contours.geojson', 'depth_areas.geojson', 'structure.geojson',
+          'pois.geojson', 'water_graph.bin')
+OUTPUT = 'trolling_runs.geojson'
+
+
+def _stamp(pack, params):
+    """What this pack's output was built FROM: the settings, and every input's size and mtime.
+
+    Ryan, 2026-08-13: "make the scripts so that they know if they need to rerun or not...
+    meaning if something changed or not". 00_START_HERE has said "compare mtimes of an output
+    and its inputs before concluding a rebuild is needed" since 2026-08-12; nothing enforced it,
+    so a full run recomputed 543 packs that were already current.
+
+    The SETTINGS are in the stamp, not just the mtimes. --chord-m 400 and --chord-m 0 produce
+    different runs from byte-identical inputs, so an mtime-only check would call the second run
+    unnecessary and quietly serve the first one's answer.
+    """
+    st = {'params': list(params), 'inputs': {}}
+    for f in INPUTS:
+        p = os.path.join(pack, f)
+        if os.path.exists(p):
+            i = os.stat(p)
+            st['inputs'][f] = [i.st_size, int(i.st_mtime)]
+    return st
+
+
+def _is_current(pack, params):
+    """True when trolling_runs.geojson was built from exactly these inputs and settings."""
+    out = os.path.join(pack, OUTPUT)
+    if not os.path.exists(out):
+        return False
+    try:
+        with open(out, encoding='utf-8') as fh:
+            prev = json.load(fh).get('built')
+    except (OSError, ValueError):
+        return False                       # unreadable or pre-stamp: rebuild, do not guess
+    return bool(prev) and prev == _stamp(pack, params)
+
+
 PACK_NOTE = ('depth_dm is authoritative; contours are metric-derived so round foot values '
              'mostly do not exist')
 
@@ -705,18 +744,21 @@ def _runs_one(args):
     written by the parent would serialise the one part that parallelises cleanly, and every pack
     writes to its own directory, so there is nothing to contend over.
     """
-    pack, params = args
+    pack, params, force = args
     slug = os.path.basename(pack.rstrip('\\/'))
+    if not force and _is_current(pack, params):
+        return slug, None, 'current'
     try:
         r = build_one(pack, *params)
     except Exception as e:
-        return slug, {'error': '%s: %s' % (type(e).__name__, e)}, False
+        return slug, {'error': '%s: %s' % (type(e).__name__, e)}, 'error'
     if not r or not r[0]:
-        return slug, None, False
+        return slug, None, 'nothing'
     feats, st = r
-    with open(os.path.join(pack, 'trolling_runs.geojson'), 'w', encoding='utf-8') as fh:
-        json.dump({'type': 'FeatureCollection', 'note': PACK_NOTE, 'features': feats}, fh)
-    return slug, st, True
+    with open(os.path.join(pack, OUTPUT), 'w', encoding='utf-8') as fh:
+        json.dump({'type': 'FeatureCollection', 'note': PACK_NOTE,
+                   'built': _stamp(pack, params), 'features': feats}, fh)
+    return slug, st, 'built'
 
 
 def main():
@@ -747,6 +789,8 @@ def main():
                          'build_structure.py and build_water_graphs.py. Added 2026-08-12 so a '
                          'set of newly cut lakes can be run without walking the card: --only '
                          'took one slug and there was no way to say "these 155".')
+    ap.add_argument('--force', action='store_true',
+                    help='rebuild every pack even when its inputs and settings are unchanged')
     ap.add_argument('--jobs', type=int, default=1,
                     help='packs in parallel. Each one is independent -- its own inputs, its own '
                          'output file -- and the chord steering that dominates the runtime is '
@@ -810,19 +854,21 @@ def main():
 
     report, t0 = {}, time.time()
     tot = defaultdict(int)
-    written = skipped = 0
+    written = skipped = current = 0
     params = (a.min_len_m, a.simplify_m, a.reach_m, a.annotate_m,
               a.chord_m, a.chord_samples, a.chord_tol_dm)
-    work = [(os.path.join(a.packs, s), params) for s in slugs]
+    work = [(os.path.join(a.packs, s), params, a.force) for s in slugs]
 
     def absorb(res, k):
         """One finished pack: record it and print its line AS IT LANDS."""
-        nonlocal written, skipped
-        slug, st, wrote = res
-        if st and 'error' in st:
+        nonlocal written, skipped, current
+        slug, st, how = res
+        if how == 'current':
+            current += 1
+        elif st and 'error' in st:
             report[slug] = st
             skipped += 1
-        elif not wrote:
+        elif how != 'built':
             skipped += 1
         else:
             report[slug] = st
@@ -834,8 +880,9 @@ def main():
         # lines in total. Same mistake build_garmin_water_inventory.py made with its tile scan.
         if k % 10 == 0 or k == len(slugs):
             el = (time.time() - t0) / 60
-            print('  %d/%d  %d written, %d skipped, %.1f min, ~%.0f min left'
-                  % (k, len(slugs), written, skipped, el, el / k * (len(slugs) - k)), flush=True)
+            print('  %d/%d  %d written, %d up to date, %d skipped, %.1f min, ~%.0f min left'
+                  % (k, len(slugs), written, current, skipped, el,
+                     el / k * (len(slugs) - k)), flush=True)
 
     # imap_unordered, not starmap: results have to arrive as they finish, or the parallel path
     # goes silent for the whole run and there is no way to tell grinding from hung. That is the
@@ -849,7 +896,10 @@ def main():
         for k, item in enumerate(work, 1):
             absorb(_runs_one(item), k)
 
-    print('\n%d packs written, %d skipped, %.1f min' % (written, skipped, (time.time() - t0) / 60))
+    print('\n%d packs written, %d already current, %d skipped, %.1f min'
+          % (written, current, skipped, (time.time() - t0) / 60))
+    if current and not a.force:
+        print('   up to date = same inputs, same settings. --force rebuilds them anyway.')
     print('   %d runs kept of %d stitched  (%d closed rings)'
           % (tot['kept'], tot['runs'], tot['closed']))
     if tot['v_raw']:
