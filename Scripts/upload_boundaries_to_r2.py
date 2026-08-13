@@ -8,14 +8,18 @@ Usage:
     python upload_boundaries_to_r2.py --lake lake_wateree_fishing_creek
     python upload_boundaries_to_r2.py --lake catawba_river --lake duck_river,elk_river
     python upload_boundaries_to_r2.py --dry-run
+    python upload_boundaries_to_r2.py --force        # ignore the manifest, push everything
 
 Requires: wrangler installed and authenticated (wrangler whoami should work).
-Re-running is safe — R2 PUT is idempotent.
+Re-running is safe — R2 PUT is idempotent, and a manifest means a re-run only
+pushes what changed.
 """
 
-import sys
-import subprocess
 import argparse
+import json
+import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -78,6 +82,54 @@ R2_KEY_FOR = lambda slug: f"{slug}/boundary.geojson"
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+# ── The manifest ──────────────────────────────────────────────────────────────
+#
+# Without one, every full run re-pushed all ~1,563 boundaries and `--lake` existed only so a
+# wrangler network error on three files did not cost a whole pass. The pack uploader has kept
+# a manifest for months; this was the odd one out.
+#
+# It records what THIS SCRIPT uploaded. It is not a reading of the bucket, and the two are not
+# the same thing -- verify_registry_r2.py exists because three sessions running confused a
+# local manifest for the bucket's contents. If the bucket is emptied or rewritten behind its
+# back, the manifest will happily skip everything: `--force` is the way back.
+#
+# It lives beside the other registry sidecars, not inside registry/boundaries/, so nothing that
+# walks that folder ever has to special-case it.
+MANIFEST_FP = Path(r'F:\TrollMapPipeline\registry\_r2_boundaries_manifest.json')
+
+
+def load_manifest(mpath: Path, force: bool) -> dict:
+    if force or not mpath.exists():
+        return {}
+    try:
+        return json.load(open(mpath, encoding='utf-8'))
+    except Exception as exc:
+        # Do NOT fail silently. An unreadable manifest means every boundary is about to go
+        # back up, which looks identical to a first run and costs a full pass.
+        print(f"!! manifest {mpath} is unreadable ({type(exc).__name__}: {exc})")
+        print("!! treating it as empty -- every boundary will be re-uploaded.")
+        print(f"!! if that is not what you want, stop now and restore the manifest.")
+        return {}
+
+
+def save_manifest(manifest: dict, mpath: Path) -> None:
+    """Atomic, so a Ctrl-C mid-run cannot leave a fragment behind.
+
+    `json.dump(manifest, open(mpath, 'w'))` truncates first and writes second. Interrupt it in
+    that window and what is left on disk is a fragment; load_manifest then reports it unreadable
+    and the next run re-pushes all 1,563 boundaries. Write a sibling and os.replace() it in --
+    replace is atomic on the same volume on Windows and POSIX both, so the file on disk is
+    always either the previous checkpoint or the new one, never half of either.
+    """
+    tmp = str(mpath) + '.tmp'
+    mpath.parent.mkdir(parents=True, exist_ok=True)
+    with open(tmp, 'w', encoding='utf-8') as fh:
+        json.dump(manifest, fh)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, mpath)
+
+
 def upload_file(slug: str, filepath: Path, dry_run: bool = False, gz: bool = True) -> bool:
     r2_key = R2_KEY_FOR(slug)
     size_kb = filepath.stat().st_size // 1024
@@ -132,12 +184,18 @@ def main():
     ap = argparse.ArgumentParser(description='Upload 3DHP boundaries to R2')
     ap.add_argument('--lake', action='append', default=[],
                     help='Upload these slugs only. Repeatable, and accepts a comma list: '
-                         '--lake a --lake b,c. This script keeps NO manifest -- every full run '
-                         're-pushes all ~1,563 boundaries -- so retrying the handful that hit a '
-                         'wrangler network error should not cost a whole pass.')
+                         '--lake a --lake b,c. With the manifest in place a bare run already '
+                         'pushes only what changed, so this is for naming a specific lake -- '
+                         'and it still honours the manifest, so add --force to re-push one '
+                         'that has not changed.')
     ap.add_argument('--dry-run', action='store_true', help='Print what would be uploaded without uploading')
     ap.add_argument('--no-gzip', action='store_true',
                     help='upload raw -- only if the Worker predates r2Body()')
+    ap.add_argument('--force', action='store_true',
+                    help='ignore the manifest and push everything. Use after the bucket has '
+                         'been emptied or rewritten by something other than this script.')
+    ap.add_argument('--manifest', default=None,
+                    help='override the manifest path (default registry/_r2_boundaries_manifest.json)')
     args = ap.parse_args()
 
     if not BOUNDARIES_DIR.exists():
@@ -182,29 +240,70 @@ def main():
         print(f"No boundary files found in {BOUNDARIES_DIR}")
         sys.exit(1)
 
-    total_kb = sum(fp.stat().st_size // 1024 for _, fp in files)
+    gz = not args.no_gzip
+    mpath = Path(args.manifest) if args.manifest else MANIFEST_FP
+    manifest = load_manifest(mpath, args.force)
+
+    # (size, mtime, gzip) -- the same triple the pack uploader keys on. gzip is in there
+    # because flipping --no-gzip changes the bytes in the bucket while leaving the local file
+    # untouched, and a size+mtime-only key would skip all 1,563 objects and report success.
+    todo, skipped = [], 0
+    for slug, bfp in files:
+        st = bfp.stat()
+        prev = manifest.get(R2_KEY_FOR(slug))
+        if (prev
+                and prev.get('size') == st.st_size
+                and prev.get('mtime') == int(st.st_mtime)
+                and bool(prev.get('gzip')) == gz):
+            skipped += 1
+            continue
+        todo.append((slug, bfp))
+
+    total_kb = sum(bfp.stat().st_size // 1024 for _, bfp in todo)
 
     print(f"TrollMap R2 Boundary Uploader")
     print(f"Bucket:    {R2_BUCKET}/  (keys: <slug>/boundary.geojson)")
     print(f"Source:    {BOUNDARIES_DIR}")
-    print(f"Files:     {len(files)}")
+    print(f"Manifest:  {mpath}{'  (IGNORED, --force)' if args.force else ''}")
+    print(f"Files:     {len(todo)} to upload, {skipped} unchanged, {len(files)} considered")
     print(f"Total:     {total_kb / 1024:.1f} MB")
     if args.dry_run:
         print(f"Mode:      DRY RUN")
     print(f"{'─'*60}")
 
+    if not todo:
+        print("nothing to do -- every boundary in scope is already up to date.")
+        print("Add --force to push anyway.")
+        return
+
     ok = fail = 0
-    for slug, fp in files:
-        if upload_file(slug, fp, dry_run=args.dry_run, gz=not args.no_gzip):
+    for i, (slug, bfp) in enumerate(todo, 1):
+        if upload_file(slug, bfp, dry_run=args.dry_run, gz=gz):
             ok += 1
+            if not args.dry_run:
+                st = bfp.stat()
+                manifest[R2_KEY_FOR(slug)] = {'size': st.st_size,
+                                              'mtime': int(st.st_mtime),
+                                              'gzip': gz}
+                # Checkpoint. A run killed at object 900 of 1,563 keeps its first 900 rather
+                # than starting over, which is the whole point of having a manifest.
+                if i % 25 == 0:
+                    save_manifest(manifest, mpath)
         else:
             fail += 1
         time.sleep(0.05)
 
+    if not args.dry_run:
+        save_manifest(manifest, mpath)
+
     print(f"\n{'─'*60}")
-    print(f"Done: {ok} uploaded, {fail} failed")
+    # "Done: 1,563 uploaded" after a DRY RUN is a lie the old summary told, because
+    # upload_file() returns True without sending anything in that mode.
+    verb = 'would upload' if args.dry_run else 'uploaded'
+    print(f"Done: {ok} {verb}, {fail} failed, {skipped} skipped as unchanged")
     if fail:
-        print(f"⚠  {fail} failed — re-run to retry (R2 PUT is idempotent)")
+        # A failure never reaches the manifest, so a bare re-run retries exactly these.
+        print(f"⚠  {fail} failed — re-run to retry just those (R2 PUT is idempotent)")
         sys.exit(1)
 
 
