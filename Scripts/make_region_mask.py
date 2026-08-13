@@ -194,9 +194,60 @@ def main() -> int:
     ap.add_argument('--states', default=DEFAULT_STATES)
     ap.add_argument('--cell', type=float, default=CELL)
     ap.add_argument('--pad-km', type=float, default=0.0)
+    ap.add_argument('--poly', default=None,
+                    help='a GeoJSON Polygon/MultiPolygon/Feature to use INSTEAD of state lines '
+                         '-- e.g. registry/ryans_water.geojson, the scope Ryan drew by hand. '
+                         'The mask it writes is the same shape and the same 0.002 deg cells, so '
+                         'every consumer of in_region.Region is unchanged.')
+    ap.add_argument('--label', default=None,
+                    help='what describe() calls this region. Defaults to the polygon\'s name '
+                         'property, then the filename.')
     a = ap.parse_args()
 
-    want = [s.strip().upper() for s in a.states.split(',') if s.strip()]
+    if a.poly:
+        # A hand-drawn scope, not a state list. Ryan, 2026-08-13: "worrying about lakes /
+        # rivers / coastal areas that are a days drive away doesn't make sense to me". Four
+        # states was never the question -- it was the only boundary anyone had.
+        gj = json.load(open(a.poly, encoding='utf-8'))
+        geom = gj.get('geometry', gj) if gj.get('type') != 'FeatureCollection' else \
+            (gj['features'][0].get('geometry') or {})
+        t = geom.get('type')
+        polys = ([geom.get('coordinates') or []] if t == 'Polygon'
+                 else (geom.get('coordinates') or []) if t == 'MultiPolygon' else None)
+        if not polys:
+            sys.exit('%s is a %s -- --poly needs a Polygon or MultiPolygon' % (a.poly, t))
+        rings = []
+        holes = 0
+        for poly in polys:
+            for i, ring in enumerate(poly or []):
+                if not ring or len(ring) < 4:
+                    continue
+                if i > 0:
+                    # scanline() is even-odd, so an interior ring subtracts itself for free.
+                    holes += 1
+                rings.append([c for pt in ring for c in (pt[0], pt[1])])
+        if not rings:
+            sys.exit('%s has no usable ring' % a.poly)
+        label = (a.label or (gj.get('properties') or {}).get('name')
+                 or os.path.splitext(os.path.basename(a.poly))[0])
+        pts = sum(len(r) // 2 for r in rings)
+        print('%s: %d ring(s), %d point(s)%s'
+              % (label, len(rings), pts, ', %d hole(s)' % holes if holes else ''))
+        rows = normalise(scanline(rings, a.cell))
+        want = [label]
+        source = os.path.basename(a.poly)
+    else:
+        rows = None
+        want = [s.strip().upper() for s in a.states.split(',') if s.strip()]
+        source = os.path.basename(a.shp)
+
+    if rows is None:
+        rows = _from_states(a, want)
+
+    return _write(a, rows, want, source)
+
+
+def _from_states(a, want):
     dbf = a.shp[:-4] + '.dbf'
     for p in (a.shp, dbf):
         if not os.path.exists(p):
@@ -222,8 +273,10 @@ def main() -> int:
         print('  %-3s %5d ring(s) %8d point(s) -> %9s cell(s)'
               % (st, len(rings), pts, format(cells, ',')))
         merge(rows, got)
-    rows = normalise(rows)
+    return normalise(rows)
 
+
+def _write(a, rows, want, source):
     npad = int(round(a.pad_km / 111.32 / a.cell))
     if npad:
         rows = pad(rows, npad)
@@ -239,10 +292,11 @@ def main() -> int:
           % (min(xs) * a.cell, (max(xs) + 1) * a.cell, min(ys) * a.cell, (max(ys) + 1) * a.cell))
     print('area  %s km2 at this latitude band (sanity: SC+NC+GA+TN is about 500,000)'
           % format(int(cells * (a.cell * 111.32) ** 2 * math.cos(math.radians(34))), ','))
+    # rows is already normalised by whichever branch produced it
 
     os.makedirs(os.path.dirname(a.out) or '.', exist_ok=True)
     json.dump({'cell': a.cell, 'states': want, 'pad_km': a.pad_km,
-               'source': os.path.basename(a.shp),
+               'source': source,
                'rows': {str(k): v for k, v in sorted(rows.items())}},
               open(a.out, 'w'))
     print('-> %s (%.1f MB)' % (a.out, os.path.getsize(a.out) / 1e6))

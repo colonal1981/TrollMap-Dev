@@ -272,6 +272,16 @@ def display_with_county(name, county, suffix):
     return '%s, %s' % (name, suffix)
 
 
+def _sibling_region(path):
+    """in_region.Region, loaded from the scripts/ dir beside this file."""
+    import importlib.util
+    here = os.path.dirname(os.path.abspath(__file__))
+    spec = importlib.util.spec_from_file_location('in_region', os.path.join(here, 'in_region.py'))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.Region.load(path, required=False)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -284,6 +294,15 @@ def main():
     ap.add_argument('--keep-unbuildable', action='store_true',
                     help='keep rows the build refused. Default is to DROP them from the index '
                          '-- see the note at the write, below.')
+    ap.add_argument('--region-mask', default=None,
+                    help='region_mask.json from make_region_mask.py. DEFAULTS to '
+                         '<registry>/region_mask.json and warns loudly if it is missing -- an '
+                         'optional filter that silently passes everything is the --aliases bug.')
+    ap.add_argument('--ship-keep', default=None,
+                    help='slugs that ship whatever the region says, one per line. Defaults to '
+                         '<registry>/_ship_keep.txt.')
+    ap.add_argument('--no-region', action='store_true',
+                    help='skip the scope gate entirely and index every buildable lake')
     ap.add_argument('--dropped-report', default=None,
                     help='write the dropped slugs here (default <registry>/_index_dropped.json)')
     ap.add_argument('--names', help='JSON of slug -> display name, for water 3DHP named '
@@ -708,7 +727,75 @@ def main():
                             'area_acres': idx[slug].get('area_acres'), 'why': why})
             del idx[slug]
 
+    # ── the scope gate ──────────────────────────────────────────────────────────────────
+    #
+    # Ryan drew registry/ryans_water.geojson on 2026-08-13 because the card had quietly grown
+    # to water a day's drive away: "worrying about lakes / rivers / coastal areas that are a
+    # days drive away doesn't make sense to me". This is the ONE place that decision is made.
+    # Both uploaders read lake_index.json, so gating here gates the app AND R2 together, and
+    # there is no second copy of the rule to fall out of step.
+    #
+    # It is a FILTER, never a delete: lakes.json stays the whole 3DHP superset, the boundaries
+    # and chartpack dirs stay on the drive. Putting a lake back is one line in
+    # _ship_keep.txt (or a redrawn polygon), re-run this, re-run the uploaders.
+    out_of_region = []
+    if not a.no_region:
+        a.region_mask = a.region_mask or os.path.join(R, 'region_mask.json')
+        region = _sibling_region(a.region_mask)
+        if region is None:
+            print('\n!! NO region mask at %s -- NOTHING is filtered by scope. Build it:\n'
+                  '   py .\\scripts\\make_region_mask.py --poly registry\\ryans_water.geojson'
+                  % a.region_mask)
+        else:
+            keep = set()
+            kp = a.ship_keep or os.path.join(R, '_ship_keep.txt')
+            if os.path.exists(kp):
+                for line in open(kp, encoding='utf-8'):
+                    line = line.split('#', 1)[0].strip()
+                    if line:
+                        keep.add(line)
+                print('\n%s: %d slug(s) ship regardless of scope' % (os.path.basename(kp), len(keep)))
+            print(region.describe())
+            for slug in list(idx):
+                if slug in keep:
+                    continue
+                rec = idx[slug]
+                c = rec.get('centroid') or rec.get('center')
+                b = rec.get('bounds_wsen') or rec.get('boundsWsen')
+                # A centroid can sit on land or in the next county -- Lake Marion's own is
+                # 4,160 m outside Lake Marion. Test the BOUNDS corners and midpoints too, and
+                # keep the lake if ANY of them lands in scope, which is what makes a border
+                # lake a border lake.
+                pts = []
+                if isinstance(c, (list, tuple)) and len(c) == 2:
+                    pts.append((c[0], c[1]))
+                if isinstance(b, (list, tuple)) and len(b) == 4:
+                    w, so, e, no = b
+                    mx, my = (w + e) / 2.0, (so + no) / 2.0
+                    pts += [(w, so), (w, no), (e, so), (e, no),
+                            (mx, so), (mx, no), (w, my), (e, my), (mx, my)]
+                if not pts:
+                    continue             # nothing to test -- not ours to drop
+                if region.any_inside(pts):
+                    continue
+                out_of_region.append({'slug': slug, 'name': rec.get('name'),
+                                      'state': rec.get('state'),
+                                      'area_acres': rec.get('area_acres'),
+                                      'why': 'outside %s' % '+'.join(region.states)})
+                del idx[slug]
+
     json.dump(idx, open(a.out, 'w', encoding='utf-8'), indent=1)
+    if out_of_region:
+        rp2 = os.path.join(R, '_index_out_of_region.json')
+        json.dump(out_of_region, open(rp2, 'w', encoding='utf-8'), indent=1)
+        big = sorted(out_of_region, key=lambda d: -(d.get('area_acres') or 0))[:6]
+        print('\ndropped %d row(s) as out of scope. Biggest:' % len(out_of_region))
+        for d in big:
+            print('   %-38s %-3s %10s ac' % ((d.get('name') or d['slug'])[:38], d.get('state') or '',
+                                             format(int(d.get('area_acres') or 0), ',')))
+        print('   -> %s' % rp2)
+        print('   lakes.json, the boundaries and the chartpack dirs are UNTOUCHED. This is a')
+        print('   shipping filter. Add a slug to _ship_keep.txt and re-run to put one back.')
     if dropped:
         from collections import Counter as _C
         rp = a.dropped_report or os.path.join(R, '_index_dropped.json')

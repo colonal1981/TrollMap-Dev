@@ -36,6 +36,9 @@ from r2_gzip import prepared
 # reading it instead left 1,386 lakes with contours and no outline.
 BOUNDARIES_DIR = Path(r'F:\TrollMapPipeline\registry\boundaries')
 CHARTPACK_DIR  = Path(r'F:\TrollMapPipeline\chartpack')
+# What the app offers. The unbuildable filter and the region gate both land here,
+# so reading it means this uploader inherits both without duplicating either.
+INDEX_JSON     = Path(r'F:\TrollMapPipeline\registry\lake_index.json')
 # Resolved, not named. The app tree was `TrollMap-Dev-main` until 2026-08-06 and is
 # `TrollMap-Dev` now, with the old one kept beside it as *-NO_LONGER_USED. Naming it
 # risks silently reading the retired copy.
@@ -218,15 +221,39 @@ def main():
             print(f"❌ No boundary in {BOUNDARIES_DIR} for: {', '.join(missing)}")
             sys.exit(1)
     else:
-        # Only what the app can actually ask for: a built pack, or a river a water
-        # alias points at. registry/boundaries/ holds 3,194 files, more than twice
-        # what shipped, and uploading the rest is 1,700 objects nothing will fetch.
-        wanted = {d.name for d in CHARTPACK_DIR.iterdir() if d.is_dir()} if CHARTPACK_DIR.is_dir() else set()
+        # Only what the app can actually ask for. That is lake_index.json, NOT "a chartpack
+        # directory exists".
+        #
+        # Ryan, 2026-08-13: "the boundary files do not pay attention to the registry filters so
+        # a hole bunch of boundary files for lakes that do not have chartpacks are sitting
+        # hanging out in R2". Measured that day: 1,704 pack dirs against 864 index rows, so 846
+        # packs were not offered by the app and 845 of them had a boundary file. Every one would
+        # have shipped. The index is where the unbuildable filter and the region gate both land,
+        # so reading it is how this uploader inherits BOTH without knowing about either.
+        packs = {d.name for d in CHARTPACK_DIR.iterdir() if d.is_dir()} if CHARTPACK_DIR.is_dir() else set()
+        index = set()
+        if INDEX_JSON.exists():
+            try:
+                index = set(json.load(open(INDEX_JSON, encoding='utf-8')))
+            except (OSError, ValueError) as exc:
+                print(f"❌ {INDEX_JSON} is unreadable ({exc}). Refusing to fall back to 'every "
+                      f"pack directory' -- that is how 845 unoffered boundaries ship.")
+                sys.exit(1)
+        else:
+            print(f"❌ {INDEX_JSON} not found. Run consolidate_lake_index.py first -- without it "
+                  f"there is no list of what the app offers.")
+            sys.exit(1)
+        wanted = index & packs
+        # A river a water alias points at needs its outline even when it is not its own picker
+        # row, but it still has to have been built.
         if ALIASES_JS and ALIASES_JS.exists():
             import re as _re
-            for tgt in _re.findall(r'"[^"]+":\s*"([^"]+)"', ALIASES_JS.read_text(encoding='utf-8')):
-                if not tgt.startswith('coast_'):
-                    wanted.add(tgt)
+            alias = {t for t in _re.findall(r'"[^"]+":\s*"([^"]+)"',
+                                            ALIASES_JS.read_text(encoding='utf-8'))
+                     if not t.startswith('coast_')}
+            wanted |= (alias & packs)
+        print('index %d, packs %d -> %d in scope  (%d packs the app does not offer)'
+              % (len(index), len(packs), len(wanted), len(packs - index)))
         files = sorted((fp.name[:-len('.geojson')], fp)
                        for fp in BOUNDARIES_DIR.glob('*.geojson')
                        if fp.name[:-len('.geojson')] in wanted)

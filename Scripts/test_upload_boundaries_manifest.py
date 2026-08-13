@@ -33,6 +33,7 @@ def load(tmp):
     mod.BOUNDARIES_DIR = Path(tmp) / 'boundaries'
     mod.CHARTPACK_DIR = Path(tmp) / 'chartpack'
     mod.MANIFEST_FP = Path(tmp) / '_r2_boundaries_manifest.json'
+    mod.INDEX_JSON = Path(tmp) / 'lake_index.json'
     mod.ALIASES_JS = None
     return mod
 
@@ -70,6 +71,13 @@ def build(tmp, slugs):
     # a boundary with no pack -- the app can never ask for it, so it is out of scope
     (b / 'orphan_no_pack.geojson').write_text('{"type":"FeatureCollection","features":[]}',
                                               encoding='utf-8')
+    # a pack AND a boundary, but NOT in the index: built once, then filtered out by the region
+    # gate or the unbuildable filter. This is the 845-boundary case from 2026-08-13.
+    (b / 'built_but_not_offered.geojson').write_text('{"type":"FeatureCollection","features":[]}',
+                                                     encoding='utf-8')
+    (c / 'built_but_not_offered').mkdir(exist_ok=True)
+    # lake_index.json IS the shipping decision
+    json.dump({s: {'slug': s} for s in slugs}, open(Path(tmp) / 'lake_index.json', 'w'))
 
 
 def main():
@@ -84,6 +92,8 @@ def main():
     check(code == 0, 'exit 0')
     check(sorted(sent) == SL, 'all three in-scope boundaries uploaded (%s)' % sorted(sent))
     check('orphan_no_pack' not in sent, 'a boundary with no chartpack is NOT uploaded')
+    check('built_but_not_offered' not in sent,
+          'a boundary WITH a pack but absent from lake_index.json is NOT uploaded')
     check(mf.exists(), 'the manifest was written')
     man = json.load(open(mf, encoding='utf-8'))
     check(sorted(man) == sorted('%s/boundary.geojson' % s for s in SL),
