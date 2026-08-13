@@ -146,13 +146,51 @@ def main() -> int:
     ap.add_argument('--spread-factor', type=float, default=SPREAD_FACTOR)
     ap.add_argument('--quiet', action='store_true', help='print only violations')
     ap.add_argument('--map', help='tile_lake_map.json. Adds the REACHABLE check.')
+    ap.add_argument('--source', choices=('index', 'registry', 'both'), default='both',
+                    help='what to check. index = lake_index.json, what the app offers. '
+                         'registry = lakes.json, what install_registry_boundary.py writes '
+                         'first. both (default) is the union -- anything installed since the '
+                         'last consolidate exists ONLY in lakes.json, and checking the index '
+                         'alone is how this script blessed 127 unseen rows on 2026-08-12.')
     ap.add_argument('--report', help='charted.json. Adds the MEASURED check.')
     a = ap.parse_args()
 
-    with open(os.path.join(a.registry, 'lake_index.json'), encoding='utf-8') as fh:
-        raw = json.load(fh)
-    rows = raw if isinstance(raw, list) else [{**v, 'slug': v.get('slug', k)}
-                                              for k, v in raw.items()]
+    # lake_index.json is what the app OFFERS. lakes.json is what the registry HOLDS, and it is
+    # where install_registry_boundary.py writes first -- so everything installed since the last
+    # consolidate exists only there. Checking the index alone means a freshly installed lake is
+    # invisible to every invariant below, and on 2026-08-12 this script printed "all invariants
+    # hold" over 127 rows it had never looked at.
+    #
+    # --source picks the question. `index` is "is what we serve sound", `registry` is "is what
+    # we hold sound", `both` is the union and the honest default for a run after an install.
+    src = a.source
+    idx_rows, reg_rows = [], []
+    ip = os.path.join(a.registry, 'lake_index.json')
+    if src in ('index', 'both') and os.path.exists(ip):
+        with open(ip, encoding='utf-8') as fh:
+            raw = json.load(fh)
+        idx_rows = raw if isinstance(raw, list) else [{**v, 'slug': v.get('slug', k)}
+                                                      for k, v in raw.items()]
+    lp = os.path.join(a.registry, 'lakes.json')
+    if src in ('registry', 'both') and os.path.exists(lp):
+        with open(lp, encoding='utf-8') as fh:
+            doc = json.load(fh)
+        lk = doc.get('lakes') if isinstance(doc, dict) else doc
+        if isinstance(lk, dict):
+            reg_rows = [{**v, 'slug': v.get('slug', k)} for k, v in lk.items()]
+        elif isinstance(lk, list):
+            reg_rows = list(lk)
+    seen_slugs, rows = set(), []
+    for r in idx_rows + reg_rows:
+        s = r.get('slug')
+        if s and s not in seen_slugs:
+            seen_slugs.add(s)
+            rows.append(r)
+    if not rows:
+        sys.exit('nothing to check: no lake_index.json or lakes.json under %s (--source %s)'
+                 % (a.registry, src))
+    print('checking %d row(s) from %s  (index %d, registry %d)'
+          % (len(rows), src, len(idx_rows), len(reg_rows)))
     bdir = os.path.join(a.registry, 'boundaries')
 
     split, oversized, drifted, boundsdrift = [], [], [], []
@@ -224,8 +262,24 @@ def main() -> int:
         creport = {}
         if a.report and os.path.exists(a.report):
             creport = json.load(open(a.report, encoding='utf-8')) or {}
+        # SCOPED TO WHAT IS OFFERED OR QUEUED, not to every row read.
+        #
+        # The geometry invariants above are true of any row -- a bounding box either holds its
+        # water or it does not. These two are about the BUILD, and the build was never asked to
+        # touch all 3,399 registry rows: lakes.json is the 15-state 3DHP superset and the card
+        # covers four. Running them over everything reported 1,510 lakes as unreachable that
+        # nobody ever intended to cut, and buried the three that mattered underneath.
+        #
+        # A row counts here if the app offers it (lake_index.json) or the build was told to do
+        # it (by_lake). Anything else is out of scope for a question about the build.
+        offered = {r.get('slug') for r in idx_rows}
+        scope = offered | set(tmap)
+        skipped_out_of_scope = 0
         for r in rows:
             slug = r.get('slug')
+            if slug not in scope:
+                skipped_out_of_scope += 1
+                continue
             if not os.path.exists(os.path.join(bdir, '%s.geojson' % slug)):
                 noboundary += 1
                 continue
@@ -233,6 +287,9 @@ def main() -> int:
                 unreachable.append(r)
             elif a.report and slug not in creport:
                 unmeasured.append(r)
+        if skipped_out_of_scope:
+            print('   %d registry row(s) are neither offered nor on a tile -- out of scope for '
+                  'the build checks' % skipped_out_of_scope)
 
     print('registry rows: %d   boundaries read: %d' % (len(rows), checked))
     fails = 0
