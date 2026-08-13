@@ -785,7 +785,12 @@ def main():
         #
         # --ship-only is partial for exactly the same reason: it touches 734 of 1732 lakes, so
         # it merges and marks itself too. A full run is unaffected -- `partial` stays null.
-        partial_run = bool(a.only) or ship_filtered
+        # --only-lakes was missing from this expression, so a scoped run wrote `partial: null`
+        # and REPLACED the card-wide report instead of merging into it. Measured 2026-08-13:
+        # registry/_trolling_runs.json held `lakes: {}` while 543 packs on disk had runs. That is
+        # the exact failure the paragraph above was written about, reintroduced by the flag that
+        # was added to make scoping possible.
+        partial_run = bool(a.only) or bool(a.only_lakes) or ship_filtered
         merged = report
         if partial_run and os.path.exists(rp):
             try:
@@ -799,7 +804,8 @@ def main():
         with open(rp, 'w', encoding='utf-8') as fh:
             json.dump({'minLenM': a.min_len_m, 'simplifyM': a.simplify_m,
                        'reachM': a.reach_m,
-                       'partial': ('ship-only' if ship_filtered else bool(a.only)) or None,
+                       'partial': ('ship-only' if ship_filtered
+                                   else (a.only or a.only_lakes or None)) and True or None,
                        'lakes': merged}, fh, indent=1)
         print('-> %s%s' % (rp, '  (merged, %d packs)' % len(merged) if partial_run else ''))
     except Exception as e:

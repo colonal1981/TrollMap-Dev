@@ -242,6 +242,31 @@ def write_graph(path, nodes, edges, depths, layer, base_ft):
     return os.path.getsize(path)
 
 
+def _merge_prior_report(path, lakes, partial):
+    """A scoped run must update the rows it touched and leave the rest alone.
+
+    Measured 2026-08-13: registry/_structure.json and registry/_water_graphs.json each held ONE
+    lake, and registry/_trolling_runs.json held zero, because a --only-lakes run rewrote the
+    card-wide report with just its own scope. 543 packs had trolling runs on disk at the time.
+    build_all_chartpacks.py has merged its report for months; these siblings did not, and the
+    flag that makes scoping possible is exactly the flag that destroyed the report.
+
+    Returns the lakes dict to write. A full run (partial falsy) replaces, as it should.
+    """
+    if not partial or not path or not os.path.exists(path):
+        return lakes
+    try:
+        with open(path, encoding='utf-8') as fh:
+            prev = json.load(fh)
+        if isinstance(prev.get('lakes'), dict):
+            merged = dict(prev['lakes'])
+            merged.update(lakes)
+            return merged
+    except (OSError, ValueError):
+        pass                      # an unreadable previous report is not worth failing over
+    return lakes
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -458,10 +483,17 @@ def main():
         print('   %d tile(s) failed to decode:' % len(bad_tiles))
         for t, e in list(bad_tiles.items())[:10]: print('      %-8s %s' % (t, e[:90]))
     if a.report:
-        json.dump({'generatedBy': 'build_water_graphs.py', 'layer': a.layer,
-                   'seamM': a.seam_m, 'note': NOTE, 'badTiles': bad_tiles, 'lakes': report},
-                  open(a.report, 'w', encoding='utf-8'), indent=1)
-        print('-> %s' % a.report)
+        # A --only-lakes run MERGES. Without this the card-wide graph report became a statement
+        # about one lake -- measured 2026-08-13, _water_graphs.json held cheatham_lake alone.
+        partial = 'only-lakes' if a.only_lakes else None
+        lakes = _merge_prior_report(a.report, report, partial)
+        doc = {'generatedBy': 'build_water_graphs.py', 'layer': a.layer,
+               'seamM': a.seam_m, 'note': NOTE, 'badTiles': bad_tiles, 'lakes': lakes}
+        if partial:
+            doc['partial'] = partial
+        json.dump(doc, open(a.report, 'w', encoding='utf-8'), indent=1)
+        print('-> %s%s' % (a.report,
+                           '  (merged, %d packs)' % len(lakes) if partial else ''))
 
 
 if __name__ == '__main__':

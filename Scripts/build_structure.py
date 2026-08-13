@@ -371,6 +371,31 @@ def ship_only_slugs(registry):
     return ship, len(rows)
 
 
+def _merge_prior_report(path, lakes, partial):
+    """A scoped run must update the rows it touched and leave the rest alone.
+
+    Measured 2026-08-13: registry/_structure.json and registry/_water_graphs.json each held ONE
+    lake, and registry/_trolling_runs.json held zero, because a --only-lakes run rewrote the
+    card-wide report with just its own scope. 543 packs had trolling runs on disk at the time.
+    build_all_chartpacks.py has merged its report for months; these siblings did not, and the
+    flag that makes scoping possible is exactly the flag that destroyed the report.
+
+    Returns the lakes dict to write. A full run (partial falsy) replaces, as it should.
+    """
+    if not partial or not path or not os.path.exists(path):
+        return lakes
+    try:
+        with open(path, encoding='utf-8') as fh:
+            prev = json.load(fh)
+        if isinstance(prev.get('lakes'), dict):
+            merged = dict(prev['lakes'])
+            merged.update(lakes)
+            return merged
+    except (OSError, ValueError):
+        pass                      # an unreadable previous report is not worth failing over
+    return lakes
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -465,11 +490,17 @@ def main():
     print('   the old adapter would have kept 8 and 8 per lake, in the browser, per research run')
     if a.report:
         doc = {'generatedBy': 'build_structure.py', 'note': NOTE, 'lakes': report}
-        # A ship-only run covers 734 of 1732 lakes. Mark it, so a reader does not take this
-        # report for a statement about the whole card. The key is absent on a full run.
-        if a.ship_only and not a.only_lakes: doc['partial'] = 'ship-only'
+        # A ship-only run covers 734 of 1732 lakes and --only-lakes can cover one. Mark either,
+        # so a reader does not take this report for a statement about the whole card, and MERGE
+        # rather than replace. The key is absent on a full run.
+        partial = ('ship-only' if (a.ship_only and not a.only_lakes)
+                   else ('only-lakes' if a.only_lakes else None))
+        if partial:
+            doc['partial'] = partial
+            doc['lakes'] = _merge_prior_report(a.report, report, partial)
         json.dump(doc, open(a.report, 'w', encoding='utf-8'), indent=1)
-        print('-> %s' % a.report)
+        print('-> %s%s' % (a.report,
+                           '  (merged, %d packs)' % len(doc['lakes']) if partial else ''))
 
 
 if __name__ == '__main__':
