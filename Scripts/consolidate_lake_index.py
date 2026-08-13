@@ -294,6 +294,11 @@ def main():
     ap.add_argument('--keep-unbuildable', action='store_true',
                     help='keep rows the build refused. Default is to DROP them from the index '
                          '-- see the note at the write, below.')
+    ap.add_argument('--packs', default=None,
+                    help='chartpack root. A row with no pack directory cannot draw anything, so '
+                         'it is dropped. Defaults to <registry>/../chartpack.')
+    ap.add_argument('--keep-packless', action='store_true',
+                    help='keep index rows that have no chartpack directory')
     ap.add_argument('--region-mask', default=None,
                     help='region_mask.json from make_region_mask.py. DEFAULTS to '
                          '<registry>/region_mask.json and warns loudly if it is missing -- an '
@@ -784,7 +789,48 @@ def main():
                                       'why': 'outside %s' % '+'.join(region.states)})
                 del idx[slug]
 
+    # ── no pack, no row ─────────────────────────────────────────────────────────────────────
+    #
+    # Ryan, 2026-08-13: "the SC_dnr lakes if they do not have a chartpack they need to be
+    # removed... we keep repeating the same crap". Recorded here because it kept being
+    # rediscovered as an open question.
+    #
+    # The unbuildable filter above drops a row when the build MEASURED it and refused. It cannot
+    # see a row nothing ever tried to build: no pack, no charted entry, no verdict, so
+    # `if not C: continue` lets it through. That is how the SCDNR state lakes and the
+    # user_known_lakes from js_lists.json -- Lake Cherokee 50 ac, Lake John D. Long 80 ac,
+    # Mountain Lake 2 at 7 ac, Webb Center Lakes at 17 ac, Bates Old River -- stayed in the
+    # picker with nothing behind them. Garmin never surveyed water that small.
+    #
+    # "Measured and refused" and "never built" are different sentences with the same verdict.
+    packless = []
+    if not a.keep_packless:
+        pdir = a.packs or os.path.join(os.path.dirname(R.rstrip('\\/')), 'chartpack')
+        if not os.path.isdir(pdir):
+            print('\n!! no chartpack root at %s -- rows with no pack are NOT being dropped.'
+                  % pdir)
+        else:
+            have = {d for d in os.listdir(pdir) if os.path.isdir(os.path.join(pdir, d))}
+            for slug in list(idx):
+                if slug in have:
+                    continue
+                rec = idx[slug]
+                packless.append({'slug': slug, 'name': rec.get('name'),
+                                 'state': rec.get('state'),
+                                 'area_acres': rec.get('area_acres'),
+                                 'why': 'no chartpack directory'})
+                del idx[slug]
+
     json.dump(idx, open(a.out, 'w', encoding='utf-8'), indent=1)
+    if packless:
+        rp3 = os.path.join(R, '_index_packless.json')
+        json.dump(packless, open(rp3, 'w', encoding='utf-8'), indent=1)
+        print('\ndropped %d row(s) with no chartpack directory -- nothing to draw:' % len(packless))
+        for d in sorted(packless, key=lambda d: -(d.get('area_acres') or 0))[:8]:
+            print('   %-34s %-3s %8s ac' % ((d.get('name') or d['slug'])[:34],
+                                            d.get('state') or '',
+                                            format(int(d.get('area_acres') or 0), ',')))
+        print('   -> %s   (--keep-packless to retain them)' % rp3)
     if out_of_region:
         rp2 = os.path.join(R, '_index_out_of_region.json')
         json.dump(out_of_region, open(rp2, 'w', encoding='utf-8'), indent=1)
