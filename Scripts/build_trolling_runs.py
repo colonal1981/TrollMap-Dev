@@ -645,6 +645,35 @@ def ship_only_slugs(registry):
     return ship, len(rows)
 
 
+PACK_NOTE = ('depth_dm is authoritative; contours are metric-derived so round foot values '
+             'mostly do not exist')
+
+
+def _runs_one(args):
+    """Build one pack and write its file. Returns (slug, stats_or_error_dict_or_None, wrote).
+
+    MODULE LEVEL ON PURPOSE. Windows starts workers with `spawn`, not `fork`, so the callable is
+    pickled by qualified name -- a closure or a local would not survive the trip. Same reason
+    fit_trolling_runs.py keeps `_fit_one` out here.
+
+    The WRITE happens in the worker. Handing 7,129 Wateree features back through the pool to be
+    written by the parent would serialise the one part that parallelises cleanly, and every pack
+    writes to its own directory, so there is nothing to contend over.
+    """
+    pack, params = args
+    slug = os.path.basename(pack.rstrip('\\/'))
+    try:
+        r = build_one(pack, *params)
+    except Exception as e:
+        return slug, {'error': '%s: %s' % (type(e).__name__, e)}, False
+    if not r or not r[0]:
+        return slug, None, False
+    feats, st = r
+    with open(os.path.join(pack, 'trolling_runs.geojson'), 'w', encoding='utf-8') as fh:
+        json.dump({'type': 'FeatureCollection', 'note': PACK_NOTE, 'features': feats}, fh)
+    return slug, st, True
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -673,6 +702,12 @@ def main():
                          'build_structure.py and build_water_graphs.py. Added 2026-08-12 so a '
                          'set of newly cut lakes can be run without walking the card: --only '
                          'took one slug and there was no way to say "these 155".')
+    ap.add_argument('--jobs', type=int, default=1,
+                    help='packs in parallel. Each one is independent -- its own inputs, its own '
+                         'output file -- and the chord steering that dominates the runtime is '
+                         'pure CPU. Measured 2026-08-13: lake_brandt at 268 contours takes '
+                         '12.6 s, of which 10.2 s is steering, against a card of 714 packs and '
+                         '3.7 GB of contours.')
     ap.add_argument('--report', default=None)
     ap.add_argument('--registry', default=None,
                     help='folder holding charted.json. Required by --ship-only; not guessed '
@@ -726,36 +761,48 @@ def main():
             print('             %d of %d packs on disk selected; %d never uploaded, not built'
                   % (len(kept), len(slugs), len(slugs) - len(kept)))
             slugs = kept
-    print('%d packs' % len(slugs))
+    print('%d packs%s' % (len(slugs), ('  x%d jobs' % a.jobs) if a.jobs > 1 else ''))
 
     report, t0 = {}, time.time()
     tot = defaultdict(int)
     written = skipped = 0
-    for k, slug in enumerate(slugs, 1):
-        pack = os.path.join(a.packs, slug)
-        try:
-            r = build_one(pack, a.min_len_m, a.simplify_m, a.reach_m, a.annotate_m,
-                          a.chord_m, a.chord_samples, a.chord_tol_dm)
-        except Exception as e:
-            report[slug] = {'error': '%s: %s' % (type(e).__name__, e)}
+    params = (a.min_len_m, a.simplify_m, a.reach_m, a.annotate_m,
+              a.chord_m, a.chord_samples, a.chord_tol_dm)
+    work = [(os.path.join(a.packs, s), params) for s in slugs]
+
+    def absorb(res, k):
+        """One finished pack: record it and print its line AS IT LANDS."""
+        nonlocal written, skipped
+        slug, st, wrote = res
+        if st and 'error' in st:
+            report[slug] = st
             skipped += 1
-            continue
-        if not r or not r[0]:
+        elif not wrote:
             skipped += 1
-            continue
-        feats, st = r
-        with open(os.path.join(pack, 'trolling_runs.geojson'), 'w', encoding='utf-8') as fh:
-            json.dump({'type': 'FeatureCollection',
-                       'note': 'depth_dm is authoritative; contours are metric-derived so '
-                               'round foot values mostly do not exist',
-                       'features': feats}, fh)
-        report[slug] = st
-        for key, v in st.items():
-            tot[key] += v
-        written += 1
-        if k % 100 == 0 or k == len(slugs):
-            print('  %d/%d  %d written, %d skipped, %.1f min'
-                  % (k, len(slugs), written, skipped, (time.time() - t0) / 60))
+        else:
+            report[slug] = st
+            for key, v in st.items():
+                tot[key] += v
+            written += 1
+        # Every 10, with an ETA. At ~12 s a pack the old 100-pack stride was twenty minutes of
+        # silence, which is indistinguishable from a hang -- and a 455-pack run printed four
+        # lines in total. Same mistake build_garmin_water_inventory.py made with its tile scan.
+        if k % 10 == 0 or k == len(slugs):
+            el = (time.time() - t0) / 60
+            print('  %d/%d  %d written, %d skipped, %.1f min, ~%.0f min left'
+                  % (k, len(slugs), written, skipped, el, el / k * (len(slugs) - k)), flush=True)
+
+    # imap_unordered, not starmap: results have to arrive as they finish, or the parallel path
+    # goes silent for the whole run and there is no way to tell grinding from hung. That is the
+    # exact bug _absorb() was written for in fit_trolling_runs.py.
+    if a.jobs > 1 and len(work) > 1:
+        from multiprocessing import Pool
+        with Pool(a.jobs) as pool:
+            for k, res in enumerate(pool.imap_unordered(_runs_one, work, chunksize=1), 1):
+                absorb(res, k)
+    else:
+        for k, item in enumerate(work, 1):
+            absorb(_runs_one(item), k)
 
     print('\n%d packs written, %d skipped, %.1f min' % (written, skipped, (time.time() - t0) / 60))
     print('   %d runs kept of %d stitched  (%d closed rings)'
