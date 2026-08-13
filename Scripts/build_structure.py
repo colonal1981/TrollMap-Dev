@@ -371,6 +371,33 @@ def ship_only_slugs(registry):
     return ship, len(rows)
 
 
+def _stamp_mod():
+    import importlib.util
+    here = os.path.dirname(os.path.abspath(__file__))
+    spec = importlib.util.spec_from_file_location('pack_stamp',
+                                                  os.path.join(here, 'pack_stamp.py'))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+_PS = None
+
+
+def _stamp_is_current(pack, out, inputs, params):
+    global _PS
+    if _PS is None:
+        _PS = _stamp_mod()
+    return _PS.is_current(pack, out, inputs, params)
+
+
+def _stamp_record(pack, out, inputs, params):
+    global _PS
+    if _PS is None:
+        _PS = _stamp_mod()
+    _PS.record(pack, out, inputs, params)
+
+
 def _merge_prior_report(path, lakes, partial):
     """A scoped run must update the rows it touched and leave the rest alone.
 
@@ -401,6 +428,8 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--packs', required=True, help='chartpack root')
     ap.add_argument('--registry', required=True, help='for boundaries/<slug>.geojson')
+    ap.add_argument('--force', action='store_true',
+                    help='rebuild even when contours, boundary and settings are unchanged')
     ap.add_argument('--report')
     ap.add_argument('--only-lakes')
     ap.add_argument('--limit', type=int)
@@ -440,8 +469,21 @@ def main():
 
     report = {}
     t0 = time.time()
-    made = skipped = 0
+    made = skipped = current = 0
+    # Inputs it actually reads: the contours it derives from, and the boundary that gives it the
+    # outer ring. The registry boundary is absolute, so it is stamped by full path.
+    ST_PARAMS = (a.min_score,)
     for n, slug in enumerate(slugs, 1):
+        pack = os.path.join(a.packs, slug)
+        st_inputs = ('contours.geojson',
+                     os.path.join(a.registry, 'boundaries', slug + '.geojson'))
+        if not a.force and _stamp_is_current(pack, 'structure.geojson', st_inputs, ST_PARAMS):
+            current += 1
+            if n % 25 == 0 or n == len(slugs):
+                print('  %d/%d  %d written, %d up to date, %d skipped, %.1f min'
+                      % (n, len(slugs), made, current, skipped, (time.time() - t0) / 60),
+                      flush=True)
+            continue
         cpath = os.path.join(a.packs, slug, 'contours.geojson')
         contours = read_json(cpath)
         if not contours or not (contours.get('features') or []):
@@ -477,13 +519,17 @@ def main():
                'features': feats}
         json.dump(doc, open(os.path.join(a.packs, slug, 'structure.geojson'), 'w',
                             encoding='utf-8'), ensure_ascii=False)
+        _stamp_record(pack, 'structure.geojson', st_inputs, ST_PARAMS)
         report[slug] = {'humps': len(humps), 'ledges': len(ledges), 'features': len(feats)}
         made += 1
         if n % 25 == 0 or n == len(slugs):
-            print('  %d/%d  %d written, %d skipped, %.1f min'
-                  % (n, len(slugs), made, skipped, (time.time() - t0) / 60), flush=True)
+            print('  %d/%d  %d written, %d up to date, %d skipped, %.1f min'
+                  % (n, len(slugs), made, current, skipped, (time.time() - t0) / 60), flush=True)
 
-    print('\n%d written, %d skipped, %.1f min' % (made, skipped, (time.time() - t0) / 60))
+    print('\n%d written, %d already current, %d skipped, %.1f min'
+          % (made, current, skipped, (time.time() - t0) / 60))
+    if current and not a.force:
+        print('   up to date = same contours, same boundary, same --min-score. --force overrides.')
     th = sum(r.get('humps', 0) for r in report.values())
     tl = sum(r.get('ledges', 0) for r in report.values())
     print('   %d humps, %d ledges across every pack' % (th, tl))
