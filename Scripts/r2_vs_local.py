@@ -58,8 +58,11 @@ import argparse, importlib.util, json, os, sys, time
 #
 # Same story for boundaries. Anything added to this table stops being a false alarm.
 SOURCE_MAP = {
-    'boundary.geojson':       ('registry/boundaries', '%s.geojson'),
-    'osm-structures.geojson': ('osm_out',             '%s.geojson'),
+    'boundary.geojson': [('registry/boundaries',        '%s.geojson'),
+                         ('lake_boundaries_3dhp',       '%s_3dhp.geojson'),
+                         ('_to_delete/lake_boundaries', '%s_3dhp.geojson'),
+                         ('_to_delete/lake_boundaries', '%s.geojson')],
+    'osm-structures.geojson': [('osm_out',              '%s.geojson')],
 }
 
 # ── objects that live in R2 and NOWHERE else, on purpose ────────────────────────────────────
@@ -177,11 +180,12 @@ def find_on_drive(key, idx, lower):
         if slug.lower() in [x.lower() for x in p.replace(os.sep, '/').split('/')]:
             return 'found', '%s/%s' % (p, real)
 
-    # the per-slug naming other scripts use
-    for cand in (slug + ext, slug + '_3dhp' + ext, slug + '_' + stem + ext,
-                 slug + '.geojson', slug + '_3dhp.geojson', '_' + slug + ext):
-        for p, real in lower.get(cand.lower(), []):
-            return 'found', '%s/%s' % (p, real)
+    # NO generic <slug>.geojson fallback. It was here, and it matched ANY per-slug .geojson to
+    # ANY .geojson key -- so blair_pond/boundary.geojson "found" osm_out/blair_pond.geojson, and
+    # barren_fork_river/osm-structures.geojson "found" registry/boundaries/barren_fork_river.geojson.
+    # Both are the wrong file. A false FOUND is the dangerous direction here: it says safe-to-prune
+    # about something that is not on the drive. Per-slug renaming is a real convention, but it is
+    # per key file, so it belongs in SOURCE_MAP where it can be stated exactly.
 
     hits = lower.get(fname.lower(), [])
     if hits:
@@ -286,18 +290,20 @@ def main():
     local = walk_local(packs)
 
     # Fold in every key whose local home is somewhere other than the pack directory.
-    for key_file, (subdir, pattern) in sorted(SOURCE_MAP.items()):
-        d = os.path.join(root, *subdir.split('/'))
-        if not os.path.isdir(d):
-            print('   !! %s not found -- every %s will read as R2-only' % (d, key_file))
-            continue
-        suffix = pattern % ''
-        n = 0
-        for fn in os.listdir(d):
-            if fn.endswith(suffix) and len(fn) > len(suffix):
-                local['%s/%s' % (fn[:-len(suffix)], key_file)] = os.path.getsize(os.path.join(d, fn))
-                n += 1
-        print('   %-24s <- %s  (%s file(s))' % (key_file, d, format(n, ',')))
+    for key_file, places in sorted(SOURCE_MAP.items()):
+        for subdir, pattern in places:
+            d = os.path.join(root, *subdir.split('/'))
+            if not os.path.isdir(d):
+                continue
+            suffix = pattern % ''
+            n = 0
+            for fn in os.listdir(d):
+                if fn.endswith(suffix) and len(fn) > len(suffix):
+                    k = '%s/%s' % (fn[:-len(suffix)], key_file)
+                    if k not in local:                 # first place named wins
+                        local[k] = os.path.getsize(os.path.join(d, fn))
+                        n += 1
+            print('   %-24s <- %s  (%s file(s))' % (key_file, d, format(n, ',')))
 
     both = set(r2) & set(local)
     r2only_all = set(r2) - set(local)
