@@ -133,7 +133,11 @@ if dead:
 pack_dir = ROOT / "chartpack"
 if pack_dir.is_dir():
     built = {p.name for p in pack_dir.iterdir() if p.is_dir()}
-    bdir = ROOT / "lake_boundaries"
+    # registry/boundaries/, not lake_boundaries/. The latter was retired to _to_delete/ on
+    # 2026-08-12, so this test was reading an empty set and calling every built pack
+    # "boundary but no pack" -- or rather, never calling anything that, because has_boundary()
+    # returned False for everything and the branch it guards never fired.
+    bdir = ROOT / "registry" / "boundaries"
     bfiles = {p.name for p in bdir.iterdir()} if bdir.is_dir() else set()
 
     def has_boundary(slug):
@@ -188,10 +192,8 @@ if pack_dir.is_dir():
 
 # ── 4. pointer files resolve, if they exist ──────────────────────────────────
 for fname in ("_coastal_pointers.json", "_river_aliases.json"):
-    # registry/ first; lake_boundaries/ only until that tray is deleted. 2026-08-12.
+    # registry/ only; the lake_boundaries/ fallback went with the folder on 2026-08-13.
     p = ROOT / "registry" / fname
-    if not p.exists():
-        p = ROOT / "lake_boundaries" / fname
     if not p.exists():
         print(f"  note: {fname} not present — skipped")
         continue

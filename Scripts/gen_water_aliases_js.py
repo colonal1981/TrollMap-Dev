@@ -47,20 +47,22 @@ which is exact, and is the only thing that makes the Intracoastal answerable at 
 
 INPUTS
 
-Default to `<repo>/../lake_boundaries`, which is where the pipeline writes them
-(F:\TrollMapPipeline\lake_boundaries next to F:\TrollMapPipeline\TrollMap-Dev). When the
-inputs are absent this exits 0 and leaves the JS alone, so a checkout without the pipeline
-beside it is not a failure.
+Default to `<repo>/../registry`, which is where the two sidecars live
+(F:\TrollMapPipeline\registry next to F:\TrollMapPipeline\TrollMap-Dev). They were in
+lake_boundaries/ until 2026-08-12; that tray is retired and the fallback that named it was
+deleted 2026-08-13. When the inputs are absent this exits 0 and leaves the JS alone, so a
+checkout without the pipeline beside it is not a failure.
 """
 import argparse, json, os, re, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 OUT = os.path.join(REPO, 'js', 'data', 'water-aliases.js')
-# registry/ FIRST as of 2026-08-12: the two sidecars moved there because they are registry
-# data, and lake_boundaries/ is a staging tray whose 321 boundary geojsons are superseded by
-# registry/boundaries/. The old path is still tried so this keeps working on a drive where the
-# move has not happened yet -- delete the fallback once lake_boundaries/ is gone.
+# registry/ only. The two sidecars are registry data; lake_boundaries/ was a staging tray whose
+# 321 boundary geojsons are superseded by registry/boundaries/, and it was retired to
+# _to_delete/ on 2026-08-12. The fallback that pointed at it was deleted 2026-08-13 -- it could
+# only ever resolve to a folder that is not there, and a fallback nobody can reach is a lie
+# about where the data lives.
 def _sidecar_dir():
     """Where _coastal_pointers.json / _river_aliases.json live.
 
@@ -71,14 +73,13 @@ def _sidecar_dir():
     the second one. That is 00_START_HERE's "a script that computes its own path assumes where
     it lives", and it resolved to /mnt/lake_boundaries on the first test after the move.
 
-    registry/ first: the sidecars are registry data. lake_boundaries/ is tried only until that
-    staging tray is deleted -- drop the second candidate then.
+    The sidecars are registry data and registry/ is the only place they live.
     """
     here = os.path.abspath(os.path.dirname(__file__))
     for _ in range(4):
-        for cand in (os.path.join(here, 'registry'), os.path.join(here, 'lake_boundaries')):
-            if os.path.exists(os.path.join(cand, '_coastal_pointers.json')):
-                return cand
+        cand = os.path.join(here, 'registry')
+        if os.path.exists(os.path.join(cand, '_coastal_pointers.json')):
+            return cand
         parent = os.path.dirname(here)
         if parent == here:
             break
