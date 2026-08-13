@@ -326,6 +326,50 @@ def render(exact, cands):
     return ''.join(out)
 
 
+def live_slugs(index_path):
+    """Slugs the app actually offers. Empty set means "could not tell", never "none of them"."""
+    try:
+        with open(index_path, encoding='utf-8') as fh:
+            idx = json.load(fh)
+        return set(idx) if isinstance(idx, dict) else set()
+    except (OSError, ValueError):
+        return set()
+
+
+def drop_dead_targets(exact, cands, live):
+    """Remove every alias whose TARGET is no longer in the index.
+
+    already_answered() drops a name the registry answers BETTER. Nothing dropped a name the
+    registry cannot answer AT ALL, so an alias outlived the water it pointed at. The region cut
+    of 2026-08-13 made that visible at scale: check_pipeline_parity reported 48 coastal pointers
+    and 17 river aliases aimed at slugs that no longer exist -- "Bay River" still routed to
+    coast_pamlico_sound_nc, a zone the picker had stopped offering that morning.
+
+    A dead alias is worse than a missing one. Missing falls through to the fuzzy pass and
+    usually still finds the water; dead resolves confidently to a key with nothing behind it.
+
+    With no index to read, `live` is empty and NOTHING is dropped -- a filter that cannot see
+    its reference data must not delete against it.
+    """
+    if not live:
+        return exact, cands, []
+    dead = []
+    kept = {}
+    for name, target in exact.items():
+        if target in live:
+            kept[name] = target
+        else:
+            dead.append((name, target))
+    kept_c = {}
+    for base, zones in cands.items():
+        alive = [z for z in zones if z in live]
+        if alive:
+            kept_c[base] = alive
+        else:
+            dead.append((base, ' / '.join(zones)))
+    return kept, kept_c, dead
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -352,7 +396,20 @@ def main():
     aliases = json.load(open(fp_a, encoding='utf-8')) if os.path.exists(fp_a) else {}
     owns = river_names(a.dir, a.registry_boundaries)
     answered = already_answered(a.index, a.lake_keys)
-    text = render(*build(pointers, aliases, owns, answered))
+    _exact, _cands = build(pointers, aliases, owns, answered)
+    _live = live_slugs(a.index)
+    if not _live:
+        print('  !! could not read %s -- NOTHING filtered by whether the target still exists'
+              % a.index, file=sys.stderr)
+    _exact, _cands, _dead = drop_dead_targets(_exact, _cands, _live)
+    if _dead:
+        print('  %d alias(es) dropped -- the target is no longer in the index:' % len(_dead),
+              file=sys.stderr)
+        for nm, tgt in sorted(_dead)[:12]:
+            print('     %-32s -> %s' % (nm, tgt), file=sys.stderr)
+        if len(_dead) > 12:
+            print('     ... %d more' % (len(_dead) - 12), file=sys.stderr)
+    text = render(_exact, _cands)
 
     if a.check:
         current = open(OUT, encoding='utf-8').read() if os.path.exists(OUT) else ''
