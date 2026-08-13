@@ -208,12 +208,16 @@ def main():
           and float(by['A']['cover']) == 1.0,
           'A named lake, inside, right id (%s / %s / %s)' % (by['A']['kind'], by['A']['name'], by['A']['hit']))
     check(by['A']['reg_slug'] == '', 'A not in registry')
+    check(float(by['A']['flow_frac'] or 0) < 0.5,
+          'A is a lake, so it is NOT on a channel (flow_frac %s)' % by['A']['flow_frac'])
 
     check(by['B']['kind'] == 'waterbody-unnamed' and by['B']['id3dhp'] == 'BBB222'
           and by['B']['name'] == '',
           'B unnamed polygon wins over the tiny named pond (%s / %s)' % (by['B']['kind'], by['B']['id3dhp']))
     check('Tiny Pond' in by['B']['alt'], 'B reports the pond in alt, not as the answer (%s)' % by['B']['alt'])
 
+    check(float(by['C']['flow_frac']) >= 0.5,
+          'C is measured as sitting ON the flowline (flow_frac %s)' % by['C']['flow_frac'])
     check(by['C']['kind'] == 'flowline-only' and by['C']['fl_hits'] != '0'
           and by['C']['wb_hits'] == '0',
           'C flowline-only (%s, wb=%s fl=%s)' % (by['C']['kind'], by['C']['wb_hits'], by['C']['fl_hits']))
@@ -241,6 +245,56 @@ def main():
           % (by['I']['id3dhp'], by['I']['name'], by['I']['cover']))
 
     check(by['I']['probe'] == 'bbox', 'I used the bbox probe (%s)' % by['I']['probe'])
+
+    print('\n--- a sliver is not an identification and carries no id ---')
+    # B's cluster sits inside a big unnamed polygon; shrink that polygon so it catches only a
+    # sliver, and the row must stop being called an identification.
+    sliver = [dict(c) for c in CLUSTERS]
+    for c in sliver:
+        if c['tag'] == 'A':
+            c['pts'] = [[-81.00, 34.00]] + [[-81.20, 34.00 + i * 0.001] for i in range(23)]
+    json.dump(sliver, open(os.path.join(tmp, 'sliver.json'), 'w'))
+    rs = run(tmp, [], inp='sliver.json')
+    rows_s = read_tsv(os.path.join(tmp, 'out.tsv'))
+    a_s = [x for x in rows_s if abs(float(x['lon']) + 81.0) < 1e-9 and int(x['acres']) == 400][0]
+    check(abs(float(a_s['cover']) - 1 / 24.0) < 0.01,
+          'the sliver scores 1/24 (%s)' % a_s['cover'])
+    check(a_s['kind'] == 'nothing-covers-it',
+          'and is NOT called an identification (%s)' % a_s['kind'])
+    check(a_s['id3dhp'] == '' and a_s['near_id3dhp'] == 'AAA111',
+          'id3dhp is blank; the polygon that caught it is near_id3dhp (%r / %r)'
+          % (a_s['id3dhp'], a_s['near_id3dhp']))
+    check(a_s['name'] == '' or 'Test Named Lake' not in (a_s['name'] or ''),
+          'and it does not carry that polygon\'s name either')
+    rs2 = run(tmp, ['--min-cover', '0.01'], inp='sliver.json')
+    a_s2 = [x for x in read_tsv(os.path.join(tmp, 'out.tsv'))
+            if abs(float(x['lon']) + 81.0) < 1e-9 and int(x['acres']) == 400][0]
+    check(a_s2['kind'] == 'waterbody-named' and a_s2['id3dhp'] == 'AAA111',
+          '--min-cover 0.01 lets it back through, so the floor is the knob (%s)' % a_s2['kind'])
+
+    print('\n--- the printed coordinate must be ON the water ---')
+    # A C-shaped cluster whose centroid is nowhere near any of its cells. This is the Murphy
+    # Village shape: fill low, centroid in the trees.
+    cshape = [dict(c) for c in CLUSTERS]
+    for c in cshape:
+        if c['tag'] == 'A':
+            c['pts'] = ([[-81.02, 34.00 + i * 0.002] for i in range(8)]
+                        + [[-80.98, 34.00 + i * 0.002] for i in range(8)])
+            c['lon'], c['lat'] = -81.00, 34.007      # centroid: dead between the two arms
+    json.dump(cshape, open(os.path.join(tmp, 'cshape.json'), 'w'))
+    rc = run(tmp, ['--min-cover', '0.01'], inp='cshape.json')
+    a_c = [x for x in read_tsv(os.path.join(tmp, 'out.tsv')) if int(x['acres']) == 400][0]
+    xlon, xlat = [float(v) for v in a_c['xy'].split(', ')]
+    onwater = any(abs(xlon - p[0]) < 1e-9 and abs(xlat - p[1]) < 1e-9
+                  for c in cshape if c['tag'] == 'A' for p in c['pts'])
+    check(onwater, 'xy is one of the cluster\'s OWN cells, not its centroid (%s)' % a_c['xy'])
+    check(abs(xlon - float(a_c['lon'])) > 1e-6,
+          'and it differs from the centroid, which stays in lon/lat')
+    check(int(a_c['centroid_off_m']) > 1000,
+          'centroid_off_m shows how far the centroid was from water (%s m)'
+          % a_c['centroid_off_m'])
+    check(('%.5f' % xlat) in a_c['map'] and ('%.5f' % xlon) in a_c['map'],
+          'the map link uses the wet point too')
 
     print('\n--- coordinates for apps.nationalmap.gov ---')
     import math as _m

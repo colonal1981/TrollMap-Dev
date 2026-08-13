@@ -62,13 +62,20 @@ WHAT IT REPORTS, AND WHY BOTH TABLES
              UNNAMED-POLYGON BLIND SPOT: 3DHP named the river and never modelled the
              impoundment. Bates Old River is the worked case -- 11 flowlines, zero waterbody rows.
 
-  waterbody-named    a polygon COVERS this water and 3DHP names it. Ready to cut.
-  waterbody-unnamed  a polygon COVERS it and has no name. Cut it, then name it from Garmin 5/1
-                     POIs or DNR.
-  nothing-covers-it  a polygon is nearby and none of it is over this water. NOT an identification.
-                     Read dist_m. This is most of the file, and calling it 'unnamed waterbody' --
-                     which this script did on its first real run -- turned 1,210 near-misses into
-                     what looked like 468,985 acres of findable lake.
+  waterbody-named    a polygon covers at least --min-cover of this water and 3DHP names it.
+  waterbody-unnamed  a polygon covers at least --min-cover of it and has no name. Cut it, then
+                     name it from Garmin 5/1 POIs or DNR.
+  nothing-covers-it  no polygon covers enough of this water to identify it. NOT an
+                     identification, and `id3dhp` is BLANK on these rows -- whatever polygon is
+                     nearest belongs to some other water, and it is reported as `near_id3dhp`
+                     where it cannot be mistaken for an answer.
+
+                     Both halves of that were learned the hard way on the first real run. It
+                     called 1,210 near-misses 'waterbody-unnamed', which read as 468,985 acres of
+                     findable lake; and on a 2,489-acre cluster it printed the id of an eleven-
+                     acre pond that had caught ONE of twenty-four sample cells. Ryan: *"3dhp
+                     doesn't even know there is a lake there... which is weird because you gave
+                     me a 3dhp id."*
   flowline-only      no polygon at all, only lines. This is Bates. It needs a Garmin-derived cut.
   nothing-in-3dhp    3DHP has never heard of this water.
 
@@ -311,6 +318,11 @@ def main() -> int:
                     help='NxN sample lattice across the cluster bbox (1 = centroid only, which '
                          'is the test that failed)')
     ap.add_argument('--min-acres', type=float, default=100.0)
+    ap.add_argument('--flow-m', type=float, default=300.0,
+                    help='how close a cell must be to a 3DHP flowline to count as on-channel')
+    ap.add_argument('--min-cover', type=float, default=0.25,
+                    help='share of a cluster a polygon must cover before it counts as an '
+                         'identification rather than a coincidental overlap (0.25)')
     ap.add_argument('--min-da', type=float, default=0.25,
                     help='skip clusters less than this share inside a real depth area')
     ap.add_argument('--allow-no-da', action='store_true',
@@ -459,6 +471,25 @@ def main() -> int:
         pts, on_water = samples(r)
         if not on_water:
             weak += 1
+        # THE COORDINATE HANDED TO A HUMAN MUST BE ON THE WATER.
+        #
+        # Ryan pasted a printed xy into Google Maps and got woods: *"ummm that is no there lake
+        # here"*. He was looking exactly where told. `lon`/`lat` are the cluster CENTROID, and a
+        # cluster that fills 29% of its box has a centroid in the trees -- measured, 133 m from
+        # the nearest charted cell on that row and 771 m on Hard Labor Creek. Same
+        # edge-versus-centroid error as everywhere else in this pipeline, this time pointed at
+        # the person doing the verifying, which is the most expensive place to put it.
+        #
+        # So every coordinate meant for a human -- xy, dd, basemap, the map link -- is the
+        # cluster's own cell NEAREST its centroid, which is charted water by construction.
+        # `lat`/`lon` stay the centroid, because that is what near_km and the sort are measured
+        # from and changing them would move the goalposts under the rest of the file.
+        wet_lon, wet_lat = r['lon'], r['lat']
+        if r.get('pts'):
+            wet_lon, wet_lat = min(
+                r['pts'],
+                key=lambda p: ((p[0] - r['lon']) * math.cos(math.radians(r['lat']))) ** 2
+                + (p[1] - r['lat']) ** 2)
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
         qbox = (min(xs) - a.radius, max(xs) + a.radius,
@@ -493,13 +524,33 @@ def main() -> int:
             pick, hit, cover = near[0], 'near', 0.0
             dist = round(near[0]['_d'], 1)
 
-        fl = []
-        if not wb:
-            fl = query(FL, fl_cols, qbox)
+        # FLOWLINES ARE ALWAYS ASKED FOR, NOT ONLY WHEN NOTHING ELSE ANSWERED.
+        #
+        # This used to be `if not wb`, and since there is always some pond within the search box,
+        # it never ran. So a 1,836-acre cluster at Murphy Village SC came back as an unnamed
+        # waterbody when 3DHP knew exactly what it was: id 4ZF7B, featuretype 1, CHANNEL LINE,
+        # 0.92 km, stream order 1, no gnisid, no waterbody. Ryan looked at it and said *"there is
+        # no lake here"*, and there is not -- it is a creek, and Garmin charts creek channels
+        # with depth areas the same way it charts a lake.
+        #
+        # `flow_frac` is the share of the cluster's own cells lying within --flow-m of a
+        # flowline. A dendritic creek network scores near 1.0 because every cell IS the channel;
+        # a lake scores low because its middle is nowhere near a line.
+        fl = query(FL, fl_cols, qbox)
+        flow_frac = ''
+        if fl:
+            near_n = 0
+            segs = []
             for f in fl:
-                f['_d'] = _edge_dist(_line_pts(f.pop('_blob')), cx, cy)
-            if fl:
-                fl.sort(key=lambda f: f['_d'])
+                lp = _line_pts(f.pop('_blob'))
+                segs.append(lp)
+                f['_d'] = _edge_dist(lp, cx, cy)
+            for px, py in pts:
+                if any(_edge_dist(lp, px, py) <= a.flow_m for lp in segs if lp):
+                    near_n += 1
+            flow_frac = round(near_n / float(len(pts)), 3)
+            fl.sort(key=lambda f: f['_d'])
+            if not wb:
                 dist = round(fl[0]['_d'], 1)
 
         # KIND FOLLOWS COVER, NOT THE PICK.
@@ -510,8 +561,16 @@ def main() -> int:
         # away, covering nothing -- presented in the same column as a real identification. A row
         # whose nearest 3DHP polygon does not touch it has not been identified, and the table
         # must not imply otherwise.
+        # A SLIVER IS NOT AN IDENTIFICATION, AND MUST NOT CARRY AN ID.
+        #
+        # Ryan, 2026-08-12, on a 2,489-acre row: *"3dhp doesn't even know there is a lake there
+        # ... which is weird because you gave me a 3dhp id."* It was weird. `cover` was 0.042 --
+        # one of twenty-four sample cells landing in an unnamed 0.044 km2 polygon, eleven acres --
+        # and the script printed that pond's id beside 2,489 acres of water as if it named it.
+        # `hit in (inside, partial)` was the whole test, and `partial` had no floor, so a single
+        # coincidental cell was enough to promote a row into the identification lists.
         name = ((pick or {}).get('gnisidlabel') or '').strip()
-        if pick and hit in ('inside', 'partial'):
+        if pick and hit in ('inside', 'partial') and (cover or 0) >= a.min_cover:
             kind = 'waterbody-named' if name else 'waterbody-unnamed'
         elif pick:
             kind = 'nothing-covers-it'      # a polygon is near, dist_m says how near
@@ -530,17 +589,33 @@ def main() -> int:
                 alt = '%s (cover %.2f, %.3f km2)' % (named[0]['gnisidlabel'].strip(),
                                                      named[0].get('_cov') or 0,
                                                      named[0].get('areasqkm') or 0)
-        gnisid = str((pick or {}).get('gnisid') or '')
+        # An identification carries name, gnisid and reg_slug. Nothing else may, for the same
+        # reason nothing else may carry an id: those fields describe some OTHER water, and a
+        # reader scanning the column cannot tell that from the row.
+        ident = kind in ('waterbody-named', 'waterbody-unnamed', 'flowline-only')
+        gnisid = str((pick or {}).get('gnisid') or '') if ident else ''
+        if not ident and pick is not None:
+            alt = '%s%s (cover %.2f, %.3f km2)' % (
+                pick.get('id3dhp') or '?',
+                ' "%s"' % name if name else ' unnamed',
+                pick.get('_cov') or 0, pick.get('areasqkm') or 0)
+            name = ''
         out.append({
             'acres': r['acres'], 'lat': r['lat'], 'lon': r['lon'],
             'da_share': r.get('da_share', ''), 'fill': r.get('fill', ''),
             'near_slug': r.get('near_slug') or '', 'near_km': r.get('near_km', ''),
-            'kind': kind, 'hit': hit, 'cover': cover, 'probe': 'cells' if on_water else 'bbox',
+            'kind': kind, 'hit': hit, 'cover': cover, 'flow_frac': flow_frac,
+            'probe': 'cells' if on_water else 'bbox',
             'dist_m': dist,
-            'id3dhp': (pick or (fl[0] if fl else {}) or {}).get('id3dhp') or '',
+            # Only an identification carries an id. On a near-miss or a sliver the id belongs
+            # to some other water, and printing it invites exactly the wrong conclusion.
+            'id3dhp': ((pick or (fl[0] if fl else {}) or {}).get('id3dhp') or ''
+                       if kind in ('waterbody-named', 'waterbody-unnamed', 'flowline-only')
+                       else ''),
+            'near_id3dhp': (pick or {}).get('id3dhp') or '',
             'name': name, 'gnisid': gnisid, 'alt': alt,
-            'featuretype': (pick or {}).get('featuretype', ''),
-            'areasqkm': round((pick or {}).get('areasqkm') or 0, 3),
+            'featuretype': (pick or {}).get('featuretype', '') if ident else '',
+            'areasqkm': round((pick or {}).get('areasqkm') or 0, 3) if ident else '',
             'reg_slug': reg.get(gnisid, ''),
             'wb_hits': len(wb), 'fl_hits': len(fl),
             # apps.nationalmap.gov/viewer is where a 3DHP id gets confirmed by eye, and its
@@ -549,18 +624,25 @@ def main() -> int:
             #   xy       lon, lat, plain signed decimals. CONFIRMED WORKING 2026-08-12.
             #   dd       lat then lon, with hemisphere letters and padded degrees -- see dd().
             #   basemap  EPSG:3857 metres, the basemap's own spatial reference.
-            'xy': '%.6f, %.6f' % (r['lon'], r['lat']),
-            'dd': dd(r['lon'], r['lat']),
-            'basemap': '%.2f, %.2f' % webmercator(r['lon'], r['lat']),
-            'map': 'https://www.google.com/maps?q=%.5f,%.5f' % (r['lat'], r['lon']),
+            'xy': '%.6f, %.6f' % (wet_lon, wet_lat),
+            'dd': dd(wet_lon, wet_lat),
+            'basemap': '%.2f, %.2f' % webmercator(wet_lon, wet_lat),
+            'map': 'https://www.google.com/maps?q=%.5f,%.5f' % (wet_lat, wet_lon),
+            # how far the centroid was from the water, so a big number is visible rather than
+            # merely corrected
+            'centroid_off_m': round(math.hypot(
+                (wet_lon - r['lon']) * math.cos(math.radians(r['lat'])),
+                wet_lat - r['lat']) * 111320),
         })
         if i % 25 == 0 or i == len(todo):
             print('  %d/%d' % (i, len(todo)), flush=True)
     con.close()
 
-    cols = ['acres', 'kind', 'hit', 'cover', 'probe', 'dist_m', 'name', 'alt', 'id3dhp', 'gnisid',
-            'reg_slug', 'featuretype', 'areasqkm', 'da_share', 'fill', 'near_slug', 'near_km',
-            'wb_hits', 'fl_hits', 'xy', 'dd', 'basemap', 'lat', 'lon', 'map']
+    cols = ['acres', 'kind', 'hit', 'cover', 'flow_frac', 'probe', 'dist_m', 'name', 'alt', 'id3dhp', 'gnisid',
+            'reg_slug', 'near_id3dhp', 'featuretype', 'areasqkm', 'da_share', 'fill',
+            'near_slug', 'near_km',
+            'wb_hits', 'fl_hits', 'xy', 'dd', 'basemap', 'centroid_off_m',
+            'lat', 'lon', 'map']
     os.makedirs(os.path.dirname(a.out) or '.', exist_ok=True)
     with open(a.out, 'w', encoding='utf-8') as fh:
         fh.write('\t'.join(cols) + '\n')
@@ -578,6 +660,13 @@ def main() -> int:
                  ('%.3f' % cv[len(cv) // 2]) if cv else '-'))
     print('\nThe first two are identifications. `nothing-covers-it` is NOT -- 3DHP has a polygon')
     print('somewhere nearby and none of it is over this water. Read dist_m before believing it.')
+    ch = [r for r in out if (r['flow_frac'] or 0) >= 0.5]
+    if ch:
+        print('\n%d cluster(s), %s acres, sit >=50%% ON a 3DHP flowline. Garmin charts creek'
+              % (len(ch), format(sum(r['acres'] for r in ch), ',')))
+        print('channels with depth areas exactly as it charts a lake, so these are probably')
+        print('creeks, not lakes nobody has -- but Bates Old River is flowline-only too and IS')
+        print('real water, so read fill: a creek sprawls, an oxbow is compact.')
     h = collections.Counter(r['hit'] for r in out)
     print('\nfootprint vs 3DHP polygon:  inside(>=50%%) %d   partial %d   near(0%%) %d   '
           'no polygon at all %d' % (h['inside'], h['partial'], h['near'], h['']))
@@ -594,14 +683,15 @@ def main() -> int:
     if new:
         print('\nnamed by 3DHP, covering the cluster, and NOT carried by the registry:')
         for r in sorted(new, key=lambda r: -r['acres'])[:25]:
-            print('   %8s ac  cover %-5s  %-28s %-8s  xy %s'
-                  % (format(r['acres'], ','), r['cover'], r['name'][:28], r['id3dhp'], r['xy']))
+            print('   %8s ac  cover %-5s  %-26s %-8s  xy %s   %s'
+                  % (format(r['acres'], ','), r['cover'], r['name'][:26], r['id3dhp'],
+                     r['xy'], r['map']))
     unn = [r for r in out if r['kind'] == 'waterbody-unnamed' and r['hit'] in ('inside', 'partial')]
     if unn:
         print('\nreal polygon, NO name -- the unnamed-polygon blind spot, biggest first:')
         for r in sorted(unn, key=lambda r: -r['acres'])[:15]:
-            print('   %8s ac  cover %-5s  %-8s  xy %s'
-                  % (format(r['acres'], ','), r['cover'], r['id3dhp'], r['xy']))
+            print('   %8s ac  cover %-5s  %-8s  xy %s   %s'
+                  % (format(r['acres'], ','), r['cover'], r['id3dhp'], r['xy'], r['map']))
     return 0
 
 
