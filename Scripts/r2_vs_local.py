@@ -78,6 +78,28 @@ PROTECTED = {
     'oyster_beds.geojson',
 }
 
+# ── R2-only but REGENERABLE, which is not the same as lost ──────────────────────────────────
+#
+# Ryan, 2026-08-13: "as long as the OSM script and the OSM pbfs are on my drive that is all that
+# actually matters... we couldn't get the OSM script to fetch from the internet without timeouts
+# so i downloaded the pbf files".
+#
+# That is the whole answer for osm-structures. fetch_osm_structures.py makes its local write
+# OPTIONAL (--out-dir, line 733), so a run without it went OSM -> memory -> R2 and the drive
+# never saw the output -- but the INPUT is on the drive, and the input is what matters. Deleting
+# these costs a re-run, not data.
+#
+# The DNR feeds are the same shape with a different input: the Worker pulls them live, so they
+# regenerate from the agency rather than from disk.
+REGENERABLE = {
+    'osm-structures.geojson': ('fetch_osm_structures.py --out-dir osm_out',
+                               'osm_pbf/ on this drive'),
+    'attractors.json':        ('the Worker DNR routes', 'the state agency, live'),
+    'bankpier.json':          ('the Worker DNR routes', 'the state agency, live'),
+    'ramps.json':             ('the Worker DNR routes', 'the state agency, live'),
+    'paddle.json':            ('the Worker DNR routes', 'the state agency, live'),
+}
+
 
 def drive_index(root, cache_fp, max_age_h, reindex, quiet=False):
     """Every file on the drive, indexed by basename. Cached, because the walk is the slow part.
@@ -327,12 +349,22 @@ def main():
                 weak.append((k, where))
             else:
                 missing.append(k)
+        regen = [k for k in missing if k.rsplit('/', 1)[-1] in REGENERABLE]
+        missing = [k for k in missing if k.rsplit('/', 1)[-1] not in REGENERABLE]
         print('\n  of the %s R2-only object(s):' % format(len(r2only), ','))
         print('    %6s  found elsewhere on the drive -- recoverable, just not where I looked'
               % format(len(elsewhere), ','))
         print('    %6s  a file of the same name exists but not for this lake -- check by hand'
               % format(len(weak), ','))
+        print('    %6s  regenerable from an input that IS on the drive -- not a loss'
+              % format(len(regen), ','))
         print('    %6s  NOT ANYWHERE ON THE DRIVE' % format(len(missing), ','))
+        seen_r = {}
+        for k in regen:
+            seen_r[k.rsplit('/', 1)[-1]] = seen_r.get(k.rsplit('/', 1)[-1], 0) + 1
+        for fn, n in sorted(seen_r.items(), key=lambda kv: -kv[1]):
+            how, src = REGENERABLE[fn]
+            print('      regen  %5d  %-24s  re-run %s  from %s' % (n, fn, how, src))
         for k, where in elsewhere[:a.show]:
             print('      found  %-44s -> %s' % (k, where))
         if len(elsewhere) > a.show:
