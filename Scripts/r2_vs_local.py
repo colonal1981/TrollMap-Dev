@@ -47,6 +47,106 @@ The three `_registry/` objects the app reads are NOT in this listing's shape.
 import argparse, importlib.util, json, os, sys, time
 
 
+# ── where an R2 key actually lives on the drive ─────────────────────────────────────────────
+#
+# NOT every key is chartpack/<slug>/<file>. Ryan, 2026-08-13: "where on my drive is it checking
+# for these things at?" -- and the answer was two places, which made 1,602 osm-structures objects
+# read as unrecoverable when they are sitting in osm_out/ under a different name.
+#
+#   fetch_osm_structures.py:736   writes  osm_out/<slug>.geojson
+#   fetch_osm_structures.py:681   uploads <slug>/osm-structures.geojson
+#
+# Same story for boundaries. Anything added to this table stops being a false alarm.
+SOURCE_MAP = {
+    'boundary.geojson':       ('registry/boundaries', '%s.geojson'),
+    'osm-structures.geojson': ('osm_out',             '%s.geojson'),
+}
+
+# ── objects that live in R2 and NOWHERE else, on purpose ────────────────────────────────────
+#
+# Ryan, 2026-08-13: "fishing lines, fishing points marsh edges and oyster beds need to stay...
+# they are not part of the pipeline but there is no pipeline replacement for them".
+#
+# These are reported separately and never counted as a loss, because an earlier draft of this
+# file told him deleting them "is the point". That advice was wrong and would have destroyed
+# data no script here can rebuild. r2_audit.deletable() already returns None for all four, so
+# nothing proposes them for deletion -- this is the second lock, not the first.
+PROTECTED = {
+    'fishing_lines.geojson',
+    'fishing_points.geojson',
+    'marsh_edges.geojson',
+    'oyster_beds.geojson',
+}
+
+
+def drive_index(root, cache_fp, max_age_h, reindex, quiet=False):
+    """Every file on the drive, indexed by basename. Cached, because the walk is the slow part.
+
+    Ryan, 2026-08-13: "i mean the entire drive not just random folders". SOURCE_MAP below is a
+    hand-written table of where each key lives, and a hand-written table is only ever as good as
+    the last time someone remembered to add to it -- osm_out/ was missing from it and turned
+    1,602 recoverable objects into an alarm. This is the backstop: if a copy exists ANYWHERE
+    under the drive root, say so and say where.
+
+    _to_delete/ is deliberately included. A file parked there is still on the drive, which is
+    the only question this script asks.
+    """
+    if not reindex and os.path.exists(cache_fp):
+        age_h = (time.time() - os.path.getmtime(cache_fp)) / 3600.0
+        if age_h <= max_age_h:
+            try:
+                idx = json.load(open(cache_fp, encoding='utf-8'))
+                if not quiet:
+                    print('drive index   %s  (%s name(s), %.1f h old)'
+                          % (cache_fp, format(len(idx), ','), age_h))
+                return idx
+            except (OSError, ValueError):
+                pass
+    print('drive index   walking %s ...' % root, flush=True)
+    idx, n, t0 = {}, 0, time.time()
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d != '.git']
+        rel = os.path.relpath(dirpath, root)
+        for fn in filenames:
+            idx.setdefault(fn, []).append(rel)
+            n += 1
+            if n % 20000 == 0:
+                print('              %s file(s), %.0fs' % (format(n, ','), time.time() - t0),
+                      flush=True)
+    print('              %s file(s) under %s distinct name(s), %.0fs'
+          % (format(n, ','), format(len(idx), ','), time.time() - t0))
+    try:
+        tmp = cache_fp + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as fh:
+            json.dump(idx, fh)
+        os.replace(tmp, cache_fp)
+        print('              -> %s' % cache_fp)
+    except OSError as e:
+        print('              !! could not cache the index (%s) -- next run re-walks' % e)
+    return idx
+
+
+def find_on_drive(slug, fname, idx):
+    """Where a missing R2 object might already be. Returns (verdict, path or '').
+
+    Strong first: the same filename under a path that names the lake. Then the per-slug naming
+    other scripts use -- osm_out/<slug>.geojson, lake_boundaries_3dhp/<slug>_3dhp.geojson. Then
+    the same filename anywhere, which is weak on its own and labelled as such.
+    """
+    for p in idx.get(fname, []):
+        if slug in p.replace(os.sep, '/').split('/'):
+            return 'found', '%s/%s' % (p, fname)
+    stem = fname.rsplit('.', 1)[0]
+    ext = fname[len(stem):]
+    for cand in (slug + ext, slug + '_3dhp' + ext, slug + '_' + stem + ext,
+                 slug + '.geojson', slug + '_3dhp.geojson'):
+        for p in idx.get(cand, []):
+            return 'found', '%s/%s' % (p, cand)
+    if idx.get(fname):
+        return 'same-name-elsewhere', '%s/%s' % (idx[fname][0], fname)
+    return 'missing', ''
+
+
 def _audit():
     """r2_audit.py's own vocabulary, imported rather than restated.
 
@@ -90,17 +190,31 @@ def main():
                     help='write the R2-only keys here, one per line. Default '
                          '<packs>/../registry/_r2_only.txt')
     ap.add_argument('--show', type=int, default=12, help='rows to print per section')
+    ap.add_argument('--no-drive-scan', action='store_true',
+                    help='skip the whole-drive search. Faster, and answers a smaller question.')
+    ap.add_argument('--reindex', action='store_true', help='rebuild the drive index now')
+    ap.add_argument('--index-age-h', type=float, default=24.0,
+                    help='reuse a cached drive index younger than this (default 24)')
     a = ap.parse_args()
 
-    root = os.path.dirname(a.packs.rstrip('\\/'))
-    listing = a.listing or os.path.join(root, 'registry', '_r2_listing.json')
+    # ABSOLUTE, and printed. Ryan, 2026-08-13: "unless this audit is checking
+    # f:\trollmappipelline then this audit is useless". He is right, and a tool that compares
+    # two things must say which two things it compared.
+    packs = os.path.abspath(a.packs)
+    root = os.path.dirname(packs.rstrip('\\/'))
+    listing = os.path.abspath(a.listing or os.path.join(root, 'registry', '_r2_listing.json'))
+    print('drive root   %s' % root)
+    print('packs        %s   (%s dir(s))'
+          % (packs, format(sum(1 for d in os.listdir(packs)
+                               if os.path.isdir(os.path.join(packs, d))), ',')
+             if os.path.isdir(packs) else 'MISSING'))
     if not os.path.exists(listing):
         sys.exit('no listing at %s\n'
                  '   py .\\scripts\\r2_audit.py --save "%s"' % (listing, listing))
 
     age_h = (time.time() - os.path.getmtime(listing)) / 3600.0
-    print('listing  %s' % listing)
-    print('         saved %s (%.1f h ago)'
+    print('listing      %s' % listing)
+    print('             saved %s (%.1f h ago)'
           % (time.strftime('%Y-%m-%d %H:%M', time.localtime(os.path.getmtime(listing))), age_h))
     if a.max_age_h and age_h > a.max_age_h:
         sys.exit('\nSTOP: that listing is %.1f h old and the limit is %.1f.\n'
@@ -119,20 +233,26 @@ def main():
         tgt = r2 if AU.is_pack(name) else nonpack
         for f in (pack.get('files') or []):
             tgt['%s/%s' % (name, f.get('name'))] = f.get('bytes')
-    local = walk_local(a.packs)
+    local = walk_local(packs)
 
-    # A boundary's local home is registry/boundaries/<slug>.geojson, NOT
-    # chartpack/<slug>/boundary.geojson. Without this every served boundary reads as R2-only,
-    # which is exactly the false alarm that would stop a prune for no reason.
-    bdir = os.path.join(root, 'registry', 'boundaries')
-    if os.path.isdir(bdir):
-        for fn in os.listdir(bdir):
-            if fn.endswith('.geojson'):
-                fp_b = os.path.join(bdir, fn)
-                local['%s/boundary.geojson' % fn[:-len('.geojson')]] = os.path.getsize(fp_b)
+    # Fold in every key whose local home is somewhere other than the pack directory.
+    for key_file, (subdir, pattern) in sorted(SOURCE_MAP.items()):
+        d = os.path.join(root, *subdir.split('/'))
+        if not os.path.isdir(d):
+            print('   !! %s not found -- every %s will read as R2-only' % (d, key_file))
+            continue
+        suffix = pattern % ''
+        n = 0
+        for fn in os.listdir(d):
+            if fn.endswith(suffix) and len(fn) > len(suffix):
+                local['%s/%s' % (fn[:-len(suffix)], key_file)] = os.path.getsize(os.path.join(d, fn))
+                n += 1
+        print('   %-24s <- %s  (%s file(s))' % (key_file, d, format(n, ',')))
 
     both = set(r2) & set(local)
-    r2only = sorted(set(r2) - set(local))
+    r2only_all = set(r2) - set(local)
+    protected = sorted(k for k in r2only_all if k.split('/', 1)[1] in PROTECTED)
+    r2only = sorted(r2only_all - set(protected))
     loconly = sorted(set(local) - set(r2))
 
     print()
@@ -147,7 +267,9 @@ def main():
           % format(len(both), ','))
     print('  LOCAL ONLY  %7s   never uploaded (or already pruned) -- an upload fixes it'
           % format(len(loconly), ','))
-    print('  R2 ONLY     %7s   NOT on the drive. Pruning these loses them for good.'
+    print('  PROTECTED   %7s   R2-only BY DESIGN and must stay -- %s'
+          % (format(len(protected), ','), ', '.join(sorted(PROTECTED))))
+    print('  R2 ONLY     %7s   NOT on the drive and not protected. Pruning loses them.'
           % format(len(r2only), ','))
 
     if loconly:
@@ -158,7 +280,43 @@ def main():
         for slug in sorted(by, key=lambda s: -len(by[s]))[:a.show]:
             print('   %-34s %d file(s)' % (slug, len(by[slug])))
 
-    out = a.out or os.path.join(root, 'registry', '_r2_only.txt')
+    # ── the whole-drive backstop ────────────────────────────────────────────────────────────
+    #
+    # Everything still R2-only after SOURCE_MAP gets one more chance: is a copy anywhere under
+    # the drive root, under any name, in any folder? Only what survives THAT is a real loss.
+    elsewhere, missing = [], r2only
+    if r2only and not a.no_drive_scan:
+        print()
+        idx = drive_index(root, os.path.join(root, 'registry', '_drive_files.json'),
+                          a.index_age_h, a.reindex)
+        elsewhere, weak, missing = [], [], []
+        for k in r2only:
+            slug, fname = k.split('/', 1)
+            verdict, where = find_on_drive(slug, fname, idx)
+            if verdict == 'found':
+                elsewhere.append((k, where))
+            elif verdict == 'same-name-elsewhere':
+                weak.append((k, where))
+            else:
+                missing.append(k)
+        print('\n  of the %s R2-only object(s):' % format(len(r2only), ','))
+        print('    %6s  found elsewhere on the drive -- recoverable, just not where I looked'
+              % format(len(elsewhere), ','))
+        print('    %6s  a file of the same name exists but not for this lake -- check by hand'
+              % format(len(weak), ','))
+        print('    %6s  NOT ANYWHERE ON THE DRIVE' % format(len(missing), ','))
+        for k, where in elsewhere[:a.show]:
+            print('      found  %-44s -> %s' % (k, where))
+        if len(elsewhere) > a.show:
+            print('      ... %d more' % (len(elsewhere) - a.show))
+        for k, where in weak[:4]:
+            print('      weak   %-44s -> %s' % (k, where))
+        if elsewhere:
+            print('\n    Anything on that list means SOURCE_MAP is missing an entry. Add it and the')
+            print('    alarm goes away permanently, which is what happened with osm_out/.')
+        r2only = missing
+
+    out = os.path.abspath(a.out or os.path.join(root, 'registry', '_r2_only.txt'))
     if r2only:
         by = {}
         for k in r2only:
@@ -182,20 +340,18 @@ def main():
         with open(out, 'w', encoding='utf-8') as fh:
             fh.write('\n'.join(r2only) + '\n')
         print('   -> %s' % out)
-        print('\n   Each of these is in the bucket and nowhere else. Before any prune, decide')
-        print('   per FILENAME which of the three it is:')
-        print('     regenerated by another script  osm-structures.geojson comes from')
-        print('                                    fetch_osm_structures.py, which reads OSM, not')
-        print('                                    the drive. Deleting it costs a re-run.')
-        print('     a dead layer                   shoreline / fishing_lines / oyster_beds and')
-        print('                                    the rest are names this pipeline no longer')
-        print('                                    writes. Deleting them is the point.')
-        print('     genuinely lost                 anything the current build DOES produce.')
-        print('                                    Those want a local copy first.')
+        print('\n   Each of these is in the bucket and nowhere else, and none of them is on the')
+        print('   protected list. For each FILENAME, one of two things is true:')
+        print('     it has a local home this script does not know about -- add it to SOURCE_MAP')
+        print('        and it stops being an alarm, the way osm_out/ did')
+        print('     it really is only in R2 -- pull it down before pruning, or accept the loss')
+        print('   Do NOT read this list as a delete list. It is the opposite: it is what a')
+        print('   delete list must not touch until each line above is answered.')
         return 1
 
-    print('\nNothing is R2-only. Every object in the bucket exists on the drive, so any prune')
-    print('is reversible with upload_garmin_to_r2.py --force on the affected slugs.')
+    print('\nNothing is unaccounted for. Every object in the bucket exists somewhere on the')
+    print('drive, so any prune is reversible -- upload_garmin_to_r2.py --force on the affected')
+    print('slugs, or a re-run of whatever script writes that layer.')
     return 0
 
 
