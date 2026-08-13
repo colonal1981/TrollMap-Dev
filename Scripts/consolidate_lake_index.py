@@ -810,7 +810,20 @@ def main():
             print('\n!! no chartpack root at %s -- rows with no pack are NOT being dropped.'
                   % pdir)
         else:
-            have = {d for d in os.listdir(pdir) if os.path.isdir(os.path.join(pdir, d))}
+            # A DIRECTORY IS NOT A PACK. `lake_robinson_greer` has a chartpack folder holding
+            # exactly one file, water_graph.bin, and an empty {} in charted.json -- so it passed
+            # the directory test, passed the unbuildable filter (`if not C: continue` on an
+            # empty dict), and reached the picker with nothing to draw. Ryan, 2026-08-13:
+            # "no contours should never have made it to this point... they shouldn't even be on
+            # the registry".
+            #
+            # Contours OR depth areas, because the ship rule is bathymetry from either. 51 of
+            # the 52 in-scope packs with no contours carry depth areas and are legitimate --
+            # Kannapolis Lake is 90% charted on depth areas alone. Only one has neither.
+            DRAWABLE = ('contours.geojson', 'depth_areas.geojson')
+            have = {d for d in os.listdir(pdir)
+                    if os.path.isdir(os.path.join(pdir, d))
+                    and any(os.path.exists(os.path.join(pdir, d, f)) for f in DRAWABLE)}
             for slug in list(idx):
                 if slug in have:
                     continue
@@ -818,19 +831,39 @@ def main():
                 packless.append({'slug': slug, 'name': rec.get('name'),
                                  'state': rec.get('state'),
                                  'area_acres': rec.get('area_acres'),
-                                 'why': 'no chartpack directory'})
+                                 'why': ('pack has neither contours nor depth areas'
+                                         if os.path.isdir(os.path.join(pdir, slug))
+                                         else 'no chartpack directory')})
                 del idx[slug]
 
     json.dump(idx, open(a.out, 'w', encoding='utf-8'), indent=1)
     if packless:
         rp3 = os.path.join(R, '_index_packless.json')
         json.dump(packless, open(rp3, 'w', encoding='utf-8'), indent=1)
-        print('\ndropped %d row(s) with no chartpack directory -- nothing to draw:' % len(packless))
+        print('\ndropped %d row(s) with nothing to draw:' % len(packless))
         for d in sorted(packless, key=lambda d: -(d.get('area_acres') or 0))[:8]:
             print('   %-34s %-3s %8s ac' % ((d.get('name') or d['slug'])[:34],
                                             d.get('state') or '',
                                             format(int(d.get('area_acres') or 0), ',')))
         print('   -> %s   (--keep-packless to retain them)' % rp3)
+    # Not dropped, but said out loud. `--min-charted` on build_all_chartpacks.py defaults to
+    # 0.0, so it refuses only a literal zero -- South River ships at 0.0004, four ten-thousandths
+    # of it charted. The unbuildable filter keeps them because `if C.get('charted'): continue`
+    # and any non-zero float is truthy. Whether 0.04% is worth a picker row is Ryan's call, so
+    # this reports rather than decides.
+    thin = []
+    if charted:
+        for slug in idx:
+            v = (charted.get(slug) or {}).get('charted')
+            if isinstance(v, (int, float)) and 0 < v < 0.02:
+                thin.append((v, slug, idx[slug].get('area_acres') or 0))
+    if thin:
+        thin.sort()
+        print('\n%d row(s) kept with under 2%% of the water charted -- say the word and they go:'
+              % len(thin))
+        for v, slug, ac in thin[:10]:
+            print('   %-32s charted %.4f  %s ac' % (slug[:32], v, format(int(ac), ',')))
+
     if out_of_region:
         rp2 = os.path.join(R, '_index_out_of_region.json')
         json.dump(out_of_region, open(rp2, 'w', encoding='utf-8'), indent=1)
