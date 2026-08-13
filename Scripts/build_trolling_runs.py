@@ -135,6 +135,31 @@ def ring_area_m2(c):
 # shallower. That distinction is the whole feature.
 
 
+try:
+    import numpy as _np
+except ImportError:                      # the pipeline box has it; a bare box may not
+    _np = None
+
+
+def _ring_edges(ring):
+    """Prepare one ring: (xi, yi, yj, dx, inv_dy), edge i running vertex i -> i-1.
+
+    `yj` is stored rather than rolled per call. np.roll allocates a new array every time, and
+    this runs ~93,000 times per lake -- the shifted edge does not depend on the query point, so
+    it is built once here.
+    """
+    xs = [p[0] for p in ring]
+    ys = [p[1] for p in ring]
+    n = len(xs)
+    yj = [ys[i - 1] for i in range(n)]
+    dx = [xs[i - 1] - xs[i] for i in range(n)]
+    inv = [1.0 / (ys[i - 1] - ys[i] + 1e-18) for i in range(n)]
+    if _np is None:
+        return xs, ys, yj, dx, inv
+    return (_np.asarray(xs), _np.asarray(ys), _np.asarray(yj),
+            _np.asarray(dx), _np.asarray(inv))
+
+
 class DepthIndex:
     """
     Where is the water, and how deep, from `depth_areas.geojson`.
@@ -143,7 +168,7 @@ class DepthIndex:
     of them. Holes are honoured: a ring inside a polygon is an island, and an island is not water.
     """
 
-    def __init__(self, features, cell_deg=0.004):
+    def __init__(self, features, cell_deg=0.001):
         self.cell = cell_deg
         self.grid = defaultdict(list)
         self.polys = []
@@ -164,27 +189,47 @@ class DepthIndex:
                 ys = [p[1] for p in rings[0]]
                 box = (min(xs), min(ys), max(xs), max(ys))
                 i = len(self.polys)
-                self.polys.append((rings, int(hi), box))
+                # Per-ring edge arrays, not the GeoJSON list-of-pairs. The ray cast below runs
+                # 129,212 times on a 268-contour lake and was 80% of the whole script's runtime.
+                # Everything that does not depend on the query point is computed ONCE here:
+                # the shifted edge, its run, and the reciprocal of its rise.
+                flat = [_ring_edges(r) for r in rings]
+                self.polys.append((flat, int(hi), box))
                 for gx in range(int(box[0] / cell_deg), int(box[2] / cell_deg) + 1):
                     for gy in range(int(box[1] / cell_deg), int(box[3] / cell_deg) + 1):
                         self.grid[(gx, gy)].append(i)
+        # SHALLOWEST FIRST, per cell. shallowest_dm() used to test every candidate in the cell
+        # and take the min depth. Sorted ascending, the first polygon that contains the point IS
+        # the shallowest one, so it can return immediately -- same answer, a fraction of the ray
+        # casts. The safety argument in shallowest_dm() is unchanged: a shoal nested inside a
+        # deep polygon still wins, because it sorts ahead of it.
+        for key in self.grid:
+            self.grid[key].sort(key=lambda i: self.polys[i][1])
 
     def __len__(self):
         return len(self.polys)
 
     @staticmethod
     def _in_ring(ring, x, y):
-        inside = False
-        n = len(ring)
-        j = n - 1
-        for i in range(n):
-            xi, yi = ring[i][0], ring[i][1]
-            xj, yj = ring[j][0], ring[j][1]
-            if (yi > y) != (yj > y):
-                if x < (xj - xi) * (y - yi) / (yj - yi + 1e-18) + xi:
-                    inside = not inside
-            j = i
-        return inside
+        """Ray cast against one prepared ring. THE hot loop of this script.
+
+        The numpy path tests every edge at once. Profiled on lake_brandt: 92,691 calls at 53 us
+        each in pure Python, because a depth-area ring is routinely hundreds of vertices and the
+        loop walks all of them for a single point. Vector ops do the same work in one pass.
+        """
+        xi, yi, yj, dx, inv_dy = ring
+        if _np is None:
+            inside = False
+            for i in range(len(xi)):
+                a, b = yi[i], yj[i]
+                if (a > y) != (b > y):
+                    if x < dx[i] * (y - a) * inv_dy[i] + xi[i]:
+                        inside = not inside
+            return inside
+        m = (yi > y) != (yj > y)
+        if not m.any():
+            return False
+        return bool(_np.count_nonzero(x < dx[m] * (y - yi[m]) * inv_dy[m] + xi[m]) & 1)
 
     def shallowest_dm(self, x, y):
         """
@@ -198,7 +243,8 @@ class DepthIndex:
         the chord that runs a boat aground. If anything charted says this water is thin, it is
         thin.
         """
-        best = None
+        # The cell list is sorted shallowest-first, so the FIRST containing polygon is the
+        # answer and there is nothing to gain by looking at the rest.
         for i in self.grid.get((int(x / self.cell), int(y / self.cell)), ()):
             rings, hi, box = self.polys[i]
             if not (box[0] <= x <= box[2] and box[1] <= y <= box[3]):
@@ -207,9 +253,8 @@ class DepthIndex:
                 continue
             if any(self._in_ring(h, x, y) for h in rings[1:]):
                 continue          # an island
-            if best is None or hi < best:
-                best = hi
-        return best
+            return hi
+        return None
 
 
 def chord_ok(a, b, dm, dindex, samples, tol_dm):
