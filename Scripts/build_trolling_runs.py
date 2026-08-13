@@ -690,8 +690,14 @@ def main():
              if os.path.isdir(os.path.join(a.packs, d)) and (not a.only or d == a.only)]
     if a.only_lakes and not a.only:
         raw = a.only_lakes
+        # A BARE PATH, as well as @file and a comma list. build_structure.py and
+        # build_water_graphs.py both take a bare path; this one did not, so the same command
+        # line that worked for its two siblings treated the path as a slug here, matched
+        # nothing, and reported "0 packs written" as though that were an answer. 2026-08-13.
         if raw.startswith('@'):
             raw = open(raw[1:], encoding='utf-8').read()
+        elif os.path.exists(raw):
+            raw = open(raw, encoding='utf-8').read()
         want = {x.strip() for x in raw.replace('\n', ',').split(',') if x.strip()}
         missing = want - set(slugs)
         slugs = [d for d in slugs if d in want]
@@ -700,6 +706,13 @@ def main():
             # Named and absent is worth saying. A silent drop here reads as "that lake has no
             # runs" when the truth is "that lake has no pack".
             print('   %d named but not present: %s' % (len(missing), ', '.join(sorted(missing)[:6])))
+        if not slugs:
+            # Doing nothing is not a result. Writing a report afterwards is worse, because the
+            # next reader finds a file that says the card has no runs.
+            sys.exit('STOP: --only-lakes matched no pack directory at all.\n'
+                     '      Nothing was built and no report was written.\n'
+                     '      If you meant a file, check the path -- a bare path, @file and a\n'
+                     '      comma list are all accepted.')
     ship_filtered = bool(a.ship_only) and not a.only
     if a.ship_only:
         if a.only:
