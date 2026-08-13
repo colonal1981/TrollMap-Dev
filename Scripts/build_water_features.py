@@ -323,6 +323,30 @@ def load(pack, name):
         return []
 
 
+_PS = None
+
+
+def _ps():
+    """pack_stamp, loaded from the scripts/ dir beside this file."""
+    global _PS
+    if _PS is None:
+        import importlib.util
+        here = os.path.dirname(os.path.abspath(__file__))
+        spec = importlib.util.spec_from_file_location('pack_stamp',
+                                                      os.path.join(here, 'pack_stamp.py'))
+        _PS = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_PS)
+    return _PS
+
+
+# What build_one() actually reads. trolling_runs.geojson is in here because this script
+# ANNOTATES it in place -- so a rebuilt set of runs must force the features to be redone, or
+# the runs lose their relief and their points/coves and nothing says so.
+FEAT_INPUTS = ('depth_areas.geojson', 'hydrography.geojson', 'pois.geojson',
+               'trolling_runs.geojson')
+FEAT_OUT = 'water_features.geojson'
+
+
 def build_one(pack, a):
     da = load(pack, 'depth_areas.geojson')
     if not da:
@@ -455,6 +479,8 @@ def main():
                     help='comma list, a file path, or @file of SLUGS -- the same shape the other '
                          'three builders take. This was the only one of the four without it, so '
                          'a scoped rebuild still walked all 1,705 packs on disk.')
+    ap.add_argument('--force', action='store_true',
+                    help='rebuild even when the inputs and settings are unchanged')
     ap.add_argument('--report', default=None)
     ap.add_argument('--registry', default=None,
                     help='folder holding charted.json. Required by --ship-only; not guessed '
@@ -505,7 +531,15 @@ def main():
     rep, t0 = {}, time.time()
     tot = Counter()
     done = skipped = 0
+    # The settings that change the output from identical inputs.
+    FEAT_PARAMS = (a.relief_m, a.curve_m, a.probe_m, a.min_bulge_m, a.sep_m, a.mouth_m,
+                   a.annotate_m)
+    current = 0
     for k, slug in enumerate(slugs, 1):
+        pack_d = os.path.join(a.packs, slug)
+        if not a.force and _ps().is_current(pack_d, FEAT_OUT, FEAT_INPUTS, FEAT_PARAMS):
+            current += 1
+            continue
         try:
             r = build_one(os.path.join(a.packs, slug), a)
         except Exception as e:
@@ -516,13 +550,20 @@ def main():
             skipped += 1
             continue
         rep[slug] = r
+        # RECORDED AFTER build_one(), which rewrites trolling_runs.geojson in place. Stamping
+        # before the annotation would capture the run file's OLD mtime, and the very next run
+        # would see it as changed and redo every pack forever.
+        _ps().record(pack_d, FEAT_OUT, FEAT_INPUTS, FEAT_PARAMS)
         done += 1
         for kk, vv in r['kinds'].items():
             tot[kk] += vv
         if k % 25 == 0 or k == len(slugs):
-            print('  %d/%d  %d written, %d skipped, %.1f min'
-                  % (k, len(slugs), done, skipped, (time.time() - t0) / 60))
-    print('\n%d packs, %.1f min' % (done, (time.time() - t0) / 60))
+            print('  %d/%d  %d written, %d up to date, %d skipped, %.1f min'
+                  % (k, len(slugs), done, current, skipped, (time.time() - t0) / 60), flush=True)
+    print('\n%d packs, %d already current, %.1f min'
+          % (done, current, (time.time() - t0) / 60))
+    if current and not a.force:
+        print('   up to date = same depth areas, water edge, pois, runs and settings.')
     print('   features: %s' % dict(tot))
     rp = a.report or os.path.join(os.path.dirname(a.packs.rstrip('\\/')), 'registry',
                                   '_water_features.json')
@@ -533,8 +574,15 @@ def main():
         # it -- the same trap build_trolling_runs.py records for --only. So a ship-only run
         # updates the rows it touched, leaves the rest alone, and says it was partial. A full
         # run writes exactly what it always did, key and all.
+        # PARTIAL IS MORE THAN --ship-only NOW. --only-lakes scopes it, and so does skipping
+        # packs that are already current -- a run where every pack was up to date produced a
+        # `rep` of {} and wrote it straight over the card-wide report. Same failure the three
+        # sibling builders had on 2026-08-13, arriving here by a different door.
+        partial = ('ship-only' if (a.ship_only and not a.only)
+                   else ('only-lakes' if a.only_lakes else
+                         ('only' if a.only else ('skipped-current' if current else None))))
         merged = rep
-        if a.ship_only and not a.only and os.path.exists(rp):
+        if partial and os.path.exists(rp):
             try:
                 with open(rp, encoding='utf-8') as fh:
                     prev = json.load(fh)
@@ -544,12 +592,11 @@ def main():
             except (OSError, ValueError):
                 pass              # unreadable previous report is not worth failing over
         doc = {'lakes': merged}
-        if a.ship_only and not a.only:
-            doc['partial'] = 'ship-only'
+        if partial:
+            doc['partial'] = partial
         with open(rp, 'w', encoding='utf-8') as fh:
             json.dump(doc, fh, indent=1)
-        print('-> %s%s' % (rp, '  (merged, %d packs)' % len(merged)
-                           if a.ship_only and not a.only else ''))
+        print('-> %s%s' % (rp, '  (merged, %d packs)' % len(merged) if partial else ''))
     except Exception as e:
         print('could not write report: %s' % e)
 
