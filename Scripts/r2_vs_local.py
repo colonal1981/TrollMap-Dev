@@ -97,6 +97,8 @@ PROTECTED = {
 REGENERABLE = {
     'osm-structures.geojson': ('fetch_osm_structures.py --out-dir osm_out',
                                'osm_pbf/ on this drive'),
+    # clarity-cache/<slug>.json is 225 bytes of Worker-side cache, rebuilt on demand.
+    'clarity-cache': ('the Worker, on the next request', 'nothing -- it is a cache'),
     'attractors.json':        ('the Worker DNR routes', 'the state agency, live'),
     'bankpier.json':          ('the Worker DNR routes', 'the state agency, live'),
     'ramps.json':             ('the Worker DNR routes', 'the state agency, live'),
@@ -151,6 +153,14 @@ def drive_index(root, cache_fp, max_age_h, reindex, quiet=False):
     return idx
 
 
+def _slash(p):
+    """Both separators, always. The cached index is written by whichever machine walked the
+    drive -- Windows stores 'a\\b', and os.sep on anything else is '/', so normalising by os.sep
+    alone leaves the other one intact and every path component test silently fails. That turned
+    150 correct FOUND results into 216 weak ones with no error anywhere."""
+    return p.replace('\\', '/').replace(os.sep, '/')
+
+
 def find_on_drive(key, idx, lower):
     """Where a missing R2 object might already be. Returns (verdict, path or '').
 
@@ -163,7 +173,7 @@ def find_on_drive(key, idx, lower):
     Matching is case-insensitive: the drive is NTFS, so Shoreline.geojson and shoreline.geojson
     are the same file and a case-sensitive miss is a fabricated loss.
     """
-    parts = key.replace(os.sep, '/').split('/')
+    parts = _slash(key).split('/')
     slug, fname = parts[0], parts[-1]
     stem = fname.rsplit('.', 1)[0]
     ext = fname[len(stem):]
@@ -177,7 +187,7 @@ def find_on_drive(key, idx, lower):
 
     # the same filename under a path that names the lake -- the strongest signal there is
     for p, real in lower.get(fname.lower(), []):
-        if slug.lower() in [x.lower() for x in p.replace(os.sep, '/').split('/')]:
+        if slug.lower() in [x.lower() for x in _slash(p).split('/')]:
             return 'found', '%s/%s' % (p, real)
 
     # NO generic <slug>.geojson fallback. It was here, and it matched ANY per-slug .geojson to
@@ -199,6 +209,34 @@ def lower_index(idx):
     for name, dirs in idx.items():
         out.setdefault(name.lower(), []).extend((d, name) for d in dirs)
     return out
+
+
+# ── one-off keys whose local twin is renamed beyond guessing ────────────────────────────────
+#
+# Verified by byte count on 2026-08-13, not by name: R2 zones.json is 4,617,557 bytes and so is
+# scripts/_data_2026-08-04/wateree_zones.json. Same for the spines at 3,445,929. A rename this
+# far from the key ("lake_wateree_fishing_creek/zones.json" against "wateree_zones.json") is not
+# something a pattern should be asked to find -- state it and move on.
+KEY_ALIASES = {
+    'lake_wateree_fishing_creek/zones.json':
+        'scripts/_data_2026-08-04/wateree_zones.json',
+    'lake_wateree_fishing_creek/zones_spines.json':
+        'scripts/_data_2026-08-04/wateree_zones_spines.json',
+}
+
+
+def split_parents(root):
+    """Slugs that were split into children, so their old objects are superseded, not lost.
+
+    2026-08-09 split blair_pond into blair_pond_madison and blair_pond_tift, and three others
+    the same way. R2 still holds a boundary under the parent name. That is not a missing local
+    file -- the parent does not exist any more. prune_r2_keys.py --key-map is what removes them.
+    """
+    fp = os.path.join(root, 'registry', '_split_map_2026-08-09.json')
+    try:
+        return json.load(open(fp, encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
 
 
 def _audit():
@@ -346,8 +384,23 @@ def main():
         idx = drive_index(root, os.path.join(root, 'registry', '_drive_files.json'),
                           a.index_age_h, a.reindex)
         lower = lower_index(idx)
-        elsewhere, weak, missing = [], [], []
+        splits = split_parents(root)
+        elsewhere, weak, missing, superseded = [], [], [], []
         for k in r2only:
+            if k in KEY_ALIASES:
+                p = os.path.join(root, *KEY_ALIASES[k].split('/'))
+                note = ''
+                if os.path.exists(p) and r2.get(k) == os.path.getsize(p):
+                    note = ' (byte for byte)'
+                elif os.path.exists(p):
+                    note = ' (SIZES DIFFER -- %s vs %s, look before pruning)' % (
+                        format(r2.get(k) or 0, ','), format(os.path.getsize(p), ','))
+                if os.path.exists(p):
+                    elsewhere.append((k, KEY_ALIASES[k] + note))
+                    continue
+            if k.split('/', 1)[0] in splits:
+                superseded.append((k, ', '.join(splits[k.split('/', 1)[0]])))
+                continue
             verdict, where = find_on_drive(k, idx, lower)
             if verdict == 'found':
                 elsewhere.append((k, where))
@@ -355,22 +408,30 @@ def main():
                 weak.append((k, where))
             else:
                 missing.append(k)
-        regen = [k for k in missing if k.rsplit('/', 1)[-1] in REGENERABLE]
-        missing = [k for k in missing if k.rsplit('/', 1)[-1] not in REGENERABLE]
+        def _regen_key(k):
+            tail = k.rsplit('/', 1)[-1]
+            head = k.split('/', 1)[0]
+            return tail if tail in REGENERABLE else (head if head in REGENERABLE else None)
+        regen = [k for k in missing if _regen_key(k)]
+        missing = [k for k in missing if not _regen_key(k)]
         print('\n  of the %s R2-only object(s):' % format(len(r2only), ','))
         print('    %6s  found elsewhere on the drive -- recoverable, just not where I looked'
               % format(len(elsewhere), ','))
         print('    %6s  a file of the same name exists but not for this lake -- check by hand'
               % format(len(weak), ','))
+        print('    %6s  superseded: the slug was split, so the parent no longer exists'
+              % format(len(superseded), ','))
         print('    %6s  regenerable from an input that IS on the drive -- not a loss'
               % format(len(regen), ','))
         print('    %6s  NOT ANYWHERE ON THE DRIVE' % format(len(missing), ','))
         seen_r = {}
         for k in regen:
-            seen_r[k.rsplit('/', 1)[-1]] = seen_r.get(k.rsplit('/', 1)[-1], 0) + 1
+            seen_r[_regen_key(k)] = seen_r.get(_regen_key(k), 0) + 1
         for fn, n in sorted(seen_r.items(), key=lambda kv: -kv[1]):
             how, src = REGENERABLE[fn]
             print('      regen  %5d  %-24s  re-run %s  from %s' % (n, fn, how, src))
+        for k, kids in superseded[:a.show]:
+            print('      split  %-44s -> now %s' % (k, kids))
         for k, where in elsewhere[:a.show]:
             print('      found  %-44s -> %s' % (k, where))
         if len(elsewhere) > a.show:
