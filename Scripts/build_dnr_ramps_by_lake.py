@@ -660,13 +660,51 @@ def curated_report(registry, rows, out, tol_m):
     print('   source almost exactly when it is on the water -- so "no other source has this')
     print('   position" is not evidence the position is real. It is evidence it is invented.')
 
-    keepers = [r for r in orphan if r[3] < 50]
-    print('\n%d curated ramps are BOTH unnamed by any other source AND on the bank.' % len(keepers))
-    print('   That is the whole plausible salvage -- a real launch the state feeds missed:')
-    for slug, nm, _n, off, _d in sorted(keepers, key=lambda t: t[3])[:15]:
-        print('      %-28s %5.0f m off the water   %s' % (slug, off, nm))
-    print('\nSeparately, and NOT measured here: the 50 hand-placed CENTRES are a different job')
-    print('   -- check-lake-geo.mjs uses them as its only independent oracle. See DELETION_TAB.')
+    # "ON THE BANK" IS NOT EVIDENCE EITHER, and the first version of this report said it was.
+    #
+    # It called the four that were unnamed elsewhere and within 50 m of water "the whole
+    # plausible salvage". Ryan: *"if they have no source how do you know they exist?"* I did
+    # not. A generator asked for a ramp on Lake Lure will put it on Lake Lure and call it Lake
+    # Lure Marina; near-the-water and plausibly-named is what invention looks like, not what
+    # corroboration looks like.
+    #
+    # The tell that settles it is PRECISION. A surveyed coordinate carries five or six decimal
+    # places. Measured over this registry: 50 of 91 curated ramps carry three or fewer, a ~100 m
+    # grid, against 75 of 2,806 agency ramps -- 55% versus 2.7%. "Main Ramp - US 221" on Lake
+    # Greenwood is 34.22000, -81.98000. Two decimals, and the nearest real feature of any kind
+    # is a fish attractor 751 m away.
+    def _dp(v):
+        t = ('%.10f' % float(v)).rstrip('0')
+        return len(t.split('.')[1]) if '.' in t else 0
+
+    def _coarse(pts):
+        got = [min(_dp(p['lat']), _dp(p['lon'])) for p in pts
+               if p.get('lat') is not None and p.get('lon') is not None]
+        return sum(1 for d in got if d <= 3), len(got)
+
+    cur_pts, agy_pts = [], []
+    for r in rows.values():
+        for t, v in (r.get('ramps') or {}).items():
+            (cur_pts if t == 'curated' else agy_pts).extend(v or [])
+    for kind in out:
+        for v in out[kind].values():
+            agy_pts.extend(v)
+    cc, cn = _coarse(cur_pts)
+    ac, an = _coarse(agy_pts)
+
+    print('\nCOORDINATE PRECISION -- the tell that outranks every test above.')
+    print('   A surveyed ramp carries 5 or 6 decimal places. A typed one does not.')
+    print('   curated : %3d of %4d carry 3 decimals or fewer (%.0f%%) -- a ~100 m grid'
+          % (cc, cn, 100.0 * cc / max(1, cn)))
+    print('   agency  : %3d of %4d (%.0f%%)' % (ac, an, 100.0 * ac / max(1, an)))
+    print('\n   So a curated position no other source shares is not a ramp nobody else found.')
+    print('   It is a coordinate nobody took. %d of the %d have nothing behind them at all,'
+          % (len(orphan), len(agree) + len(dup_name) + len(orphan)))
+    print('   and BEING NEAR WATER IS NOT CORROBORATION -- a generator asked for a ramp on')
+    print('   Lake Lure will put it on Lake Lure and call it Lake Lure Marina. An earlier')
+    print('   version of this report called four of those "the plausible salvage". Ryan:')
+    print('   "if they have no source how do you know they exist?" It did not know.')
+
     print('\nNothing deleted. This is the list to read before deciding.')
 
 
