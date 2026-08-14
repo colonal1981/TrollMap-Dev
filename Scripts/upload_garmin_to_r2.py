@@ -353,6 +353,14 @@ def main():
     # push should not assume they exist. It is not right as a thing `--all` cannot switch off.
     want = (set(args.layers) if args.layers
             else (set(LAYERS) if args.all else set(LAYERS) - LAYERS_OPT_IN))
+    # ONE WRITER PER KEY. `upload_boundaries_to_r2.py` owns `<slug>/boundary.geojson`, and it
+    # reads registry/boundaries/, which is where boundaries actually live -- no pack dir carries
+    # one (0 of 1,707, checked 2026-08-14). Admitting `boundary` to --all costs nothing today and
+    # would silently create a second road to that key the moment one appeared, which is exactly
+    # what put upload_to_r2_coastal.py on the deletion tab. Naming a layer explicitly still
+    # works, for the day the two scripts become one.
+    if not args.layers:
+        want.discard("boundary")
     if args.layers:
         bad = want - set(LAYERS)
         if bad:
