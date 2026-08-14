@@ -6,7 +6,8 @@
  *
  * Sources:
  *   - state.CATCHES                Catch journal with GPS/species/depth/lure
- *   - window.getSupplementalContext() Attractors + fishing points near coord
+ *   - window.getSupplementalContext() Garmin structure, dock clusters, OSM structures,
+ *                                  attractors and community fishing points near a coord
  *   - state.MAP                    Current map bounds / lake area
  *
  * Returns a context object used by:
@@ -23,32 +24,123 @@ import { callGlobal } from '../utils/call-global.js';
 // distMi now from utils/geo.js (canonical)
 
 /**
- * Get all QuickDraw structures within radiusMi of a coordinate.
- * Returns array of { type, lat, lon, name } objects.
+ * Nearby structure — REBUILT 2026-08-13.
+ *
+ * From 2026-08-07 until today this returned [] and every consumer below it was silently empty:
+ * `structureSummary` was null in the Groq payload and `stopCandidates` was []. It read
+ * window.getMyStructures(), the QuickDraw pin store, deleted with the structure mapper.
+ *
+ * The replacement is measured chart data the app ALREADY HOLDS when a plan runs.
+ * getSupplementalContext() returns all four of these, and buildFishingContext() below already
+ * calls it for the chartedStructure inventory. No new fetch, no new parameter, nothing to keep
+ * in sync with anything:
+ *
+ *   sup.structures     Garmin's own submerged-structure labels, with lat/lon
+ *   sup.docks          dock CLUSTERS from clusterDocks(), with lat/lon, count, run_m, bearing
+ *   sup.attractors     mapped fish attractors
+ *   sup.osmStructures  OSM piers, bridges, dams, jetties — written since 08-06 and, until this
+ *                      change, read by absolutely nothing
+ *
+ * NOT included, deliberately: water_features.geojson (point / cove / creek_mouth) and
+ * structure.geojson (ledge / hump). Both are richer than everything above — Wateree alone has
+ * 341 points, 279 coves, 6,926 ledges and 392 humps — and both need an r2Key that
+ * buildFishingContext is never given; it takes a display lakeName. Threading a lake key through
+ * is a decision about this function's contract, not a detail to slip in. Ryan's call.
  */
-// SOURCE REMOVED 2026-08-07. This read window.getMyStructures() -- the QuickDraw pin store,
-// deleted with the structure mapper. Left returning [] rather than deleted outright because its
-// CALLER below feeds lure scoring by structure type, and that wiring is what a rebuilt SmartPlan
-// should point at water_features.geojson and the Garmin POI layer. Those carry points, coves,
-// creek mouths, timber, hazards and attractors -- everything the pins carried except riprap, and
-// measured rather than hand-dropped. Tracked in APP_CHANGE_REQUESTS.md.
-function getNearbyStructures(lat, lon, radiusMi = 2.0) {
-  try {
-    const all = [];
-    return all
-      .filter(s => {
-        const sLat = s.lat ?? s.geometry?.coordinates?.[1];
-        const sLon = s.lon ?? s.geometry?.coordinates?.[0];
-        if (!sLat || !sLon) return false;
-        return distMi(lat, lon, sLat, sLon) <= radiusMi;
-      })
-      .map(s => ({
-        type: s.type || s.properties?.type || 'unknown',
-        lat:  s.lat ?? s.geometry?.coordinates?.[1],
-        lon:  s.lon ?? s.geometry?.coordinates?.[0],
-        name: s.name || s.properties?.name || '',
-      }));
-  } catch (_) { return []; }
+
+// getSupplementalContext is called at this radius below, so a wider number here would be a lie:
+// the data has already been clipped by the time it arrives. One constant, used in both places.
+const SUPPLEMENTAL_RADIUS_MI = 2.0;
+
+// Chart vocabulary -> the structure vocabulary in lure-knowledge.js.
+//
+// EVERY VALUE ON THE RIGHT IS A TOKEN THAT REALLY APPEARS IN A LURE'S `structure` LIST, and
+// every key on the left is a value the packs really emit. Both sides were counted, not assumed.
+// The table this replaces mapped `timber`, `cove_mouth`, `dock` and `fish_attractor` — four
+// names, none of which any pack has ever produced. A chart type with no honest match maps to
+// null: it still counts in the inventory and can still be a casting stop, it just does not
+// pretend to be a pattern the tackle box knows about.
+//
+// READ THIS BEFORE RELYING ON structureTypes: nothing consumes it. buildLureContext() in
+// species-strategies.js builds its `structure` list from the SPECIES STRATEGY, and is itself
+// never called from anywhere in the app. The comment claiming this feeds lure scoring described
+// an intention, not a wire. Left populated because the field is already exported; wiring it or
+// deleting it is a decision, not a cleanup.
+const LURE_KEY = {
+  // Garmin poi_type — the POI_STYLE entries flagged `structure` in supplemental-layers.js
+  creek_bed: 'channel_ledge',    river_bed: 'channel_ledge',
+  road_bed: 'rock',              rock: 'rock',
+  flooded_timber: 'laydown',     pile: 'bridge_piling',
+  submerged_bridge: 'bridge_piling',
+  shallow_area: 'shallow_flat',
+  obstruction: null,             wreck: null,
+  // derived here
+  dock_cluster: 'dock_edge',     fish_attractor: 'brush_pile',
+  // OSM structure_type — classify() and classify_coastal() in fetch_osm_structures.py
+  PIER: 'dock_edge',             MARINA: 'dock_edge',
+  ROAD_BRIDGE: 'bridge_piling',  RAIL_BRIDGE: 'bridge_piling',
+  FOOT_BRIDGE: 'bridge_piling',  BRIDGE: 'bridge_piling',
+  DAM: 'dam_face',
+  BREAKWATER: 'riprap',          GROYNE: 'riprap',           JETTY: 'riprap',
+  REEF_SHOAL: 'rock',            TIDAL_CHANNEL: 'channel',
+  FISH_ATTRACTOR: 'brush_pile',
+  BOAT_RAMP: null,  ISLAND: null,     SHORELINE: null,  HAZARD: null,
+  MOORING: null,    LANDMARK: null,   NAV_BEACON: null, NAV_BUOY: null,
+  NAV_LIGHT: null,  NAV_LINE: null,   HAZARD_MARKER: null,
+};
+
+// A model cannot plan against hundreds of coordinates, and PIER is 12,280 of the 27,464 OSM
+// structures on the card. Cap what is HANDED OVER, count what is THERE — the same split the
+// chartedStructure block below already makes.
+const PER_TYPE_CAP = 12;
+const TOTAL_CAP = 60;
+
+/**
+ * @param {object} sup  the object getSupplementalContext() returned
+ * @returns {{list: object[], counts: object, total: number, lureKeys: string[]}}
+ *          `list` is capped and nearest-first; `counts` and `total` describe everything found.
+ */
+export function nearbyStructuresFrom(sup, lat, lon, radiusMi = SUPPLEMENTAL_RADIUS_MI) {
+  const counts = {};
+  const hits = [];
+  const add = (type, la, lo, name, extra) => {
+    // The old guard was `if (!sLat || !sLon) return false`, which also throws away a coordinate
+    // of exactly 0. Not water anybody fishes, but the test is wrong and costs nothing to write
+    // correctly.
+    if (!Number.isFinite(la) || !Number.isFinite(lo)) return;
+    const d = distMi(lat, lon, la, lo);
+    if (!(d <= radiusMi)) return;
+    counts[type] = (counts[type] || 0) + 1;
+    hits.push({
+      type, lureKey: LURE_KEY[type] ?? null,
+      lat: la, lon: lo, name: name || '', distMi: d,
+      ...(extra || {}),
+    });
+  };
+
+  for (const st of (sup?.structures || [])) add(st.poi_type || 'unknown', st.lat, st.lon, st.name);
+  for (const c of (sup?.docks || [])) {
+    add('dock_cluster', c.lat, c.lon,
+        [c.count && `${c.count} docks`, c.run_m && `over ${c.run_m} m`, c.bearing]
+          .filter(Boolean).join(' '),
+        { count: c.count, run_m: c.run_m, bearing: c.bearing });
+  }
+  for (const a of (sup?.attractors || [])) add('fish_attractor', a.lat, a.lon, a.name);
+  for (const o of (sup?.osmStructures || [])) add(o.structure_type || 'unknown', o.lat, o.lon, o.name);
+
+  hits.sort((a, b) => a.distMi - b.distMi);
+  const seen = {};
+  const list = [];
+  for (const h of hits) {
+    seen[h.type] = (seen[h.type] || 0) + 1;
+    if (seen[h.type] > PER_TYPE_CAP) continue;
+    list.push(h);
+    if (list.length >= TOTAL_CAP) break;
+  }
+  // Types come from the FULL set, never the capped list: a pattern present three hundred times
+  // must not drop out because the handover was trimmed to twelve.
+  const lureKeys = [...new Set(Object.keys(counts).map(t => LURE_KEY[t] ?? null).filter(Boolean))];
+  return { list, counts, total: hits.length, lureKeys };
 }
 
 /**
@@ -143,16 +235,15 @@ function summarizeCatches(catches) {
 /**
  * Get structure type summary for Groq context.
  */
-function summarizeStructures(structures) {
-  if (!structures.length) return null;
-  const typeCounts = {};
-  structures.forEach(s => {
-    typeCounts[s.type] = (typeCounts[s.type] || 0) + 1;
-  });
+function summarizeStructures(near) {
+  if (!near || !near.total) return null;
   return {
-    total: structures.length,
-    types: typeCounts,
-    list: structures.slice(0, 10).map(s => `${s.type}${s.name ? ` (${s.name})` : ''}`),
+    total: near.total,
+    types: near.counts,
+    list: near.list.slice(0, 10).map(s => `${s.type}${s.name ? ` (${s.name})` : ''}`),
+    // `list` is a sample of a capped handover. Saying how many it stands for stops the model
+    // reading ten names as the whole inventory.
+    shown: Math.min(near.list.length, 10),
   };
 }
 
@@ -183,26 +274,6 @@ export async function buildFishingContext(params = {}) {
   const centerLat = rampLat || state.MAP?.getCenter()?.lat;
   const centerLon = rampLon || state.MAP?.getCenter()?.lng;
 
-  // ── Structures ────────────────────────────────────────────────────────────
-  const nearbyStructures = centerLat && centerLon
-    ? getNearbyStructures(centerLat, centerLon, 3.0)
-    : [];
-
-  // Structure type keys for lure scoring
-  const structureTypes = [...new Set(nearbyStructures.map(s => {
-    const typeMap = {
-      dock:           'dock_edge',
-      brush_pile:     'brush_pile',
-      riprap:         'riprap',
-      timber:         'laydown',
-      fish_attractor: 'brush_pile',
-      point:          'point',
-      cove_mouth:     'creek_mouth',
-      hazard:         null,
-    };
-    return typeMap[s.type] || null;
-  }).filter(Boolean))];
-
   // ── Catch history ─────────────────────────────────────────────────────────
   const catchHistory = getCatchHistory(species, lakeName, 20, season);
   const catchSummary = summarizeCatches(catchHistory);
@@ -217,6 +288,17 @@ export async function buildFishingContext(params = {}) {
     supplementalContext = callGlobal('getSupplementalContext', centerLat, centerLon, 2.0)
       || supplementalContext;
   }
+
+  // ── Structure near the plan centre ────────────────────────────────
+  //
+  // AFTER the supplemental call, because it is built out of what that call returned. It used to
+  // run BEFORE it, against a source that had already been deleted — which is how it spent a week
+  // returning nothing at all without anything looking wrong.
+  const structureNear = (centerLat && centerLon)
+    ? nearbyStructuresFrom(supplementalContext, centerLat, centerLon)
+    : { list: [], counts: {}, total: 0, lureKeys: [] };
+  const nearbyStructures = structureNear.list;
+  const structureTypes = structureNear.lureKeys;
 
   // ── Charted structure, from the Garmin chartpack ──────────────────────────
   //
@@ -322,7 +404,7 @@ export async function buildFishingContext(params = {}) {
     // Structure intelligence
     nearbyStructures,
     structureTypes,
-    structureSummary: summarizeStructures(nearbyStructures),
+    structureSummary: summarizeStructures(structureNear),
 
     // Catch history
     catchHistory,
