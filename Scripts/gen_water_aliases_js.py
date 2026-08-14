@@ -57,42 +57,67 @@ import argparse, json, os, re, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
-OUT = os.path.join(REPO, 'js', 'data', 'water-aliases.js')
-# registry/ only. The two sidecars are registry data; lake_boundaries/ was a staging tray whose
-# 321 boundary geojsons are superseded by registry/boundaries/, and it was retired to
-# _to_delete/ on 2026-08-12. The fallback that pointed at it was deleted 2026-08-13 -- it could
-# only ever resolve to a folder that is not there, and a fallback nobody can reach is a lie
-# about where the data lives.
-def _sidecar_dir():
-    """Where _coastal_pointers.json / _river_aliases.json live.
 
-    SEARCHES UPWARD rather than assuming a fixed depth. The previous form was
-    `dirname(REPO)/lake_boundaries`, which is right when this file runs from
-    TrollMap-Dev/Scripts/ and one level too high when it runs from
-    F:\TrollMapPipeline\scripts\ -- the drive keeps two copies of every script and Ryan runs
-    the second one. That is 00_START_HERE's "a script that computes its own path assumes where
-    it lives", and it resolved to /mnt/lake_boundaries on the first test after the move.
 
-    The sidecars are registry data and registry/ is the only place they live.
-    """
+# ── WHERE THINGS ARE, ASKED RATHER THAN ASSUMED ──────────────────────────────────────────────
+#
+# THE SAME BUG, FIXED ONCE, IN FIVE PLACES. On 2026-08-12 `_sidecar_dir()` was changed to search
+# upward because `dirname(REPO)/lake_boundaries` is right from TrollMap-Dev\Scripts\ and one
+# level too high from F:\TrollMapPipeline\scripts\ -- the drive keeps two copies of every
+# script and Ryan runs the second. The other four paths were left assuming the repo layout, so
+# on 2026-08-14 a runbook step resolved to F:\registry\lake_index.json and
+# F:\TrollMapPipeline\js\data\water-aliases.js, warned about both, silently fell back to
+# "registry-only" and then died on the write.
+#
+#   note: no registry/boundaries at F:\registry\boundaries
+#   note: no usable F:\registry\lake_index.json (FileNotFoundError)
+#   !! could not read F:\registry\lake_index.json -- NOTHING filtered by whether the target
+#      still exists
+#   FileNotFoundError: 'F:\TrollMapPipeline\js\data\water-aliases.js'
+#
+# Two of those are the dangerous ones. The script does not need `lake_index.json` to RUN, so had
+# the write path happened to exist it would have produced a complete-looking table with nothing
+# filtered by whether its target lake still ships -- an aliases file pointing at packs that are
+# gone, generated without an error.
+#
+# So: one search, used by everything. Look for a KNOWN FILE, at or above this script's folder,
+# and in the named siblings of each level -- the app tree is `TrollMap-Dev/` beside the pipeline
+# and `.` beside itself, and one search covers both layouts without knowing which one it is in.
+def _find(rel, siblings=('', 'TrollMap-Dev'), levels=4):
+    parts = rel.split('/')
     here = os.path.abspath(os.path.dirname(__file__))
-    for _ in range(4):
-        cand = os.path.join(here, 'registry')
-        if os.path.exists(os.path.join(cand, '_coastal_pointers.json')):
-            return cand
+    for _ in range(levels):
+        for sib in siblings:
+            base = os.path.join(here, sib) if sib else here
+            cand = os.path.join(base, *parts)
+            if os.path.exists(cand):
+                return cand
         parent = os.path.dirname(here)
         if parent == here:
             break
         here = parent
-    return os.path.join(os.path.dirname(REPO), 'registry')
+    return None
 
+
+def _sidecar_dir():
+    """Where _coastal_pointers.json / _river_aliases.json live. They are registry data and
+    registry/ is the only place they live."""
+    hit = _find('registry/_coastal_pointers.json')
+    return os.path.dirname(hit) if hit else os.path.join(os.path.dirname(REPO), 'registry')
+
+
+_INDEX     = _find('registry/lake_index.json')
+_REGISTRY  = os.path.dirname(_INDEX) if _INDEX else _sidecar_dir()
+_LAKE_KEYS = _find('js/data/lake-keys.js')
 
 DEFAULT_DIR = _sidecar_dir()
-# Sibling of lake_boundaries. This is what the INSTALL wrote, i.e. what the app can actually
-# load -- see river_names() for why the difference matters.
-DEFAULT_REGISTRY = os.path.join(os.path.dirname(REPO), 'registry', 'boundaries')
-DEFAULT_INDEX = os.path.join(os.path.dirname(REPO), 'registry', 'lake_index.json')
-DEFAULT_LAKE_KEYS = os.path.join(REPO, 'js', 'data', 'lake-keys.js')
+DEFAULT_REGISTRY = os.path.join(_REGISTRY, 'boundaries')
+DEFAULT_INDEX = _INDEX or os.path.join(_REGISTRY, 'lake_index.json')
+DEFAULT_LAKE_KEYS = _LAKE_KEYS or os.path.join(REPO, 'js', 'data', 'lake-keys.js')
+# The generated file sits beside the curated map it complements. Anchored to lake-keys.js rather
+# than computed from REPO, so it lands in the app tree from either copy of this script.
+DEFAULT_OUT = (os.path.join(os.path.dirname(_LAKE_KEYS), 'water-aliases.js') if _LAKE_KEYS
+               else os.path.join(REPO, 'js', 'data', 'water-aliases.js'))
 
 SUFFIX = re.compile(r'\s\(\d+\)$')
 
@@ -381,6 +406,8 @@ def main():
     ap.add_argument('--registry-boundaries', default=DEFAULT_REGISTRY,
                     help='registry/boundaries -- a river only outranks its coastal pointer if '
                          'its boundary actually installed. See river_names().')
+    ap.add_argument('--out', default=DEFAULT_OUT,
+                    help='js/data/water-aliases.js -- defaults beside lake-keys.js')
     ap.add_argument('--check', action='store_true', help='exit 1 if the JS is stale')
     a = ap.parse_args()
 
@@ -412,17 +439,27 @@ def main():
     text = render(_exact, _cands)
 
     if a.check:
-        current = open(OUT, encoding='utf-8').read() if os.path.exists(OUT) else ''
+        current = open(a.out, encoding='utf-8').read() if os.path.exists(a.out) else ''
         if current != text:
             print('water-aliases.js is stale -- run python3 Scripts/gen_water_aliases_js.py')
             return 1
         print('water-aliases.js is up to date')
         return 0
 
-    with open(OUT, 'w', encoding='utf-8', newline='\n') as fh:
+    out_dir = os.path.dirname(a.out)
+    if not os.path.isdir(out_dir):
+        # A traceback here reads as a code fault. It is a LAYOUT fault, and saying which turns a
+        # five-minute puzzle into a one-line answer.
+        print('ERROR: no app data folder at %s' % out_dir, file=sys.stderr)
+        print('       this script looked for js/data/lake-keys.js at and above %s' % HERE,
+              file=sys.stderr)
+        print('       pass --out explicitly, e.g. --out '
+              r'"F:\TrollMapPipeline\TrollMap-Dev\js\data\water-aliases.js"', file=sys.stderr)
+        return 2
+    with open(a.out, 'w', encoding='utf-8', newline='\n') as fh:
         fh.write(text)
     print('-> %s  (%d pointers, %d aliases, %d names deferred to their river boundary)'
-          % (OUT, len(pointers), len(aliases), len(owns & {r.get('name') for r in pointers.values()})))
+          % (a.out, len(pointers), len(aliases), len(owns & {r.get('name') for r in pointers.values()})))
     return 0
 
 
