@@ -313,6 +313,11 @@ def main():
     ap.add_argument("--force", action="store_true", help="ignore the manifest, push everything")
     ap.add_argument("--manifest", default=None, help="default <root>/_r2_manifest.json")
     ap.add_argument("--timeout", type=int, default=900)
+    ap.add_argument("--boundaries", default=None,
+                    help="registry/boundaries -- flat <slug>.geojson files, published as "
+                         "<slug>/boundary.geojson. Defaults beside --registry when it exists.")
+    ap.add_argument("--no-boundaries", action="store_true",
+                    help="skip the boundary source entirely")
     ap.add_argument("--index", default=None,
                     help="registry/lake_index.json -- ONLY these slugs ship. Defaults beside "
                          "--registry. See the gate below for why this is not optional.")
@@ -353,12 +358,10 @@ def main():
     # push should not assume they exist. It is not right as a thing `--all` cannot switch off.
     want = (set(args.layers) if args.layers
             else (set(LAYERS) if args.all else set(LAYERS) - LAYERS_OPT_IN))
-    # ONE WRITER PER KEY. `upload_boundaries_to_r2.py` owns `<slug>/boundary.geojson`, and it
-    # reads registry/boundaries/, which is where boundaries actually live -- no pack dir carries
-    # one (0 of 1,707, checked 2026-08-14). Admitting `boundary` to --all costs nothing today and
-    # would silently create a second road to that key the moment one appeared, which is exactly
-    # what put upload_to_r2_coastal.py on the deletion tab. Naming a layer explicitly still
-    # works, for the day the two scripts become one.
+    # ONE WRITER PER KEY, and as of 2026-08-14 it is this file. `<slug>/boundary.geojson` comes
+    # from the BOUNDARIES SOURCE below, which reads registry/boundaries/ -- flat <slug>.geojson
+    # files, which is where boundaries actually live. No pack dir carries one (0 of 1,707), so
+    # the pack walk cannot produce this key and must not claim it.
     if not args.layers:
         want.discard("boundary")
     if args.layers:
@@ -379,7 +382,10 @@ def main():
     # was shipping -- only what it was holding back, and not the half that mattered.
     print("layers: " + ", ".join(sorted(want - (set() if args.with_pipeline_layers
                                                 else PIPELINE_ONLY))))
-    held = (set(LAYERS) - want) - (set() if args.with_pipeline_layers else PIPELINE_ONLY)
+    # `boundary` is not held back -- the boundaries source below publishes it from
+    # registry/boundaries/, which is a different layout, not a different decision.
+    held = ((set(LAYERS) - want) - {"boundary"}
+            - (set() if args.with_pipeline_layers else PIPELINE_ONLY))
     if held:
         print("HELD BACK: " + ", ".join(sorted(held))
               + "  <- the app reads trolling_runs, structure and water_features. "
@@ -406,6 +412,7 @@ def main():
             print(f"!! treating it as EMPTY -- everything will be re-uploaded from scratch.")
             print(f"!! if that is not what you want, stop now and restore the manifest.")
             manifest = {}
+
 
     # ---- the live worker's copy of the lake list ------------------------------------
     # The state-DNR pull happens at request time in a Cloudflare worker, so it cannot do a
@@ -578,9 +585,77 @@ def main():
                 continue
             jobs.append((str(f), key, slug, layer))
 
-    jobs = reg_jobs + jobs
+    # ── BOUNDARIES ───────────────────────────────────────────────────────────────────────────
+    #
+    # Ryan, 2026-08-14: "is there a reason for the boundaries to be a separate upload path?"
+    # There was not. `upload_boundaries_to_r2.py` wrote the same bucket, the same key namespace
+    # (`<slug>/boundary.geojson`, beside `<slug>/contours.geojson`), through the same wrangler,
+    # with the same gzip helper -- and re-derived a manifest, an index gate, a dry-run and a
+    # --lake flag that already existed here. The split cost real things: the index gate had to
+    # be written twice and this file went a day without it, and --lake meant `nargs='*'` in one
+    # script and `action='append'` in the other.
+    #
+    # The only genuine difference was the LAYOUT of the source: packs are <slug>/<layer>.geojson
+    # directories, boundaries are flat <slug>.geojson files. That is this loop, and nothing else.
+    # THE OTHER SCRIPT'S RECORD IS STILL A RECORD OF THIS BUCKET. upload_boundaries_to_r2.py kept
+    # its own manifest at registry/_r2_boundaries_manifest.json -- 1,704 entries, same key shape,
+    # same size/mtime/gzip fields. Merging the two scripts without merging their manifests would
+    # re-push every boundary already in R2 on the first run: correct, and hours of wrangler for
+    # nothing. Imported, never overwritten, so anything this script already knows wins.
+    if regdir and not args.force:
+        bman = regdir / "_r2_boundaries_manifest.json"
+        if bman.exists():
+            try:
+                _b = json.load(open(bman, encoding="utf-8"))
+                _new = {k: v for k, v in _b.items() if k not in manifest}
+                manifest.update(_new)
+                print(f"manifest: imported {len(_new):,} boundary entries from {bman.name} "
+                      f"({len(_b):,} in it, {len(manifest):,} known now)")
+            except Exception as exc:
+                # Loud, because the cost of not saying so is a silent full re-push.
+                print(f"!! could not read {bman} ({type(exc).__name__}) -- boundaries already in "
+                      f"R2 will be re-uploaded.")
+
+    bdir = Path(args.boundaries) if args.boundaries else (
+        (regdir / "boundaries") if regdir and (regdir / "boundaries").is_dir() else None)
+    bjobs, bskipped, boffscope = [], 0, 0
+    if args.no_boundaries:
+        print("boundaries: skipped (--no-boundaries)")
+    elif bdir is None or not bdir.is_dir():
+        print(f"!! no boundaries dir{f' at {bdir}' if bdir else ''} -- "
+              f"<slug>/boundary.geojson will NOT be published. Pass --boundaries to point at it.")
+    else:
+        for f in sorted(bdir.glob("*.geojson")):
+            slug = f.stem
+            if slug.startswith("_") or slug in SKIP_SLUGS or (slugs and slug not in slugs):
+                continue
+            if offered is not None and not slugs and slug not in offered:
+                boffscope += 1
+                continue
+            if not f.exists() or f.stat().st_size == 0:
+                continue
+            if args.max_mb and f.stat().st_size > args.max_mb * 1e6:
+                oversize += 1
+                continue
+            key = f"{args.prefix}{slug}/boundary.geojson"
+            st = f.stat()
+            prev = manifest.get(key)
+            if (prev and prev.get("size") == st.st_size
+                    and prev.get("mtime") == int(st.st_mtime)
+                    and bool(prev.get("gzip")) == gz):
+                bskipped += 1
+                continue
+            bjobs.append((str(f), key, slug, "boundary"))
+        print(f"boundaries: {len(bjobs)} to upload, {bskipped} unchanged, "
+              f"{boffscope} not offered by the app, from {bdir}")
+
+    jobs = reg_jobs + jobs + bjobs
+    skipped += bskipped
+    # NOT added into `offscope`. A pack dir and a boundary file skipped for the same reason are
+    # still two different things counted, and summing them under the word "packs" reports 4,191
+    # of something that does not exist. The boundaries line above says its own number.
     print(f"{len(jobs)} objects to upload, {skipped} unchanged, "
-          f"{offscope} packs not offered by the app, "
+          f"{offscope} packs + {boffscope} boundaries not offered by the app, "
           f"{oversize} over --max-mb, {args.jobs} parallel, gzip={'on' if gz else 'off'}")
     if not jobs:
         print("nothing to do")
