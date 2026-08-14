@@ -17,7 +17,7 @@
  * the seams between six modules stay honest.
  */
 
-import { selectCandidates, structureIndex, forModel, orientLegs } from './plan-candidates.js';
+import { selectCandidates, structureIndex, forModel, orientLegs, poiSpotFeatures } from './plan-candidates.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom } from './plan-prompt.js';
 import { assemblePlan, validatePlan } from './plan-assemble.js';
 import { connectionFor } from '../data/lure-knowledge.js';
@@ -52,13 +52,17 @@ export const CANDIDATE_LIMIT = 12;
  */
 export async function buildSmartPlanV2(o) {
   const base = o.chartpackBase || '';
-  const [runsFc, structFc, waterFc, docksFc] = await Promise.all([
+  const [runsFc, structFc, waterFc, docksFc, poisFc] = await Promise.all([
     o.fetchJson(`${base}/${o.r2Key}/trolling_runs.geojson`),
     o.fetchJson(`${base}/${o.r2Key}/structure.geojson`),
     o.fetchJson(`${base}/${o.r2Key}/water_features.geojson`),
     // Docks are fourth in the citation count and the pipeline never joined them to the runs.
     // Joined app-side until it does — see dockHits() in plan-candidates.js.
     o.fetchJson(`${base}/${o.r2Key}/docks.geojson`),
+    // FIFTH, AND THE ONE THAT WAS MISSING. timber, shallow, hazard, attractor, pile and bridge
+    // are 17% of Wateree's near[] marks and live only here — see poiSpotFeatures(). Optional:
+    // a pack without pois is a pack whose runs carry no marks of those kinds either.
+    Promise.resolve(o.fetchJson(`${base}/${o.r2Key}/pois.geojson`)).catch(() => null),
   ]);
   const runs = (runsFc && runsFc.features) || [];
   if (!runs.length) {
@@ -69,7 +73,7 @@ export async function buildSmartPlanV2(o) {
 
   const structures = structureIndex(
     (structFc && structFc.features) || [], (waterFc && waterFc.features) || [],
-    (docksFc && docksFc.features) || []);
+    (docksFc && docksFc.features) || [], poiSpotFeatures(poisFc));
   const docks = structureIndex((docksFc && docksFc.features) || []);
 
   const candidates = selectCandidates(runs, {

@@ -196,6 +196,66 @@ function ringCentroid(g) {
 const RESOLVE_CELL = 0.004;          // ~440 m of longitude here; one bucket comfortably covers a pass
 const RESOLVE_MARGIN_M = 40;         // slack over the recorded offset, for the sign of `d`
 
+// ── The four kinds that had marks and no position ────────────────────────────────────────────
+//
+// Measured on wateree_lake, 2026-08-13: of 11,616 `near[]` marks, 1,998 — SEVENTEEN PERCENT —
+// are of a kind that exists in neither structure.geojson nor water_features.geojson. timber 654,
+// hazard 697, shallow 398, attractor 162, pile 65, bridge 22. `timber` and `attractor` carry the
+// two highest weights in DEFAULT_WEIGHTS, 27 each, because they are the most-cited things on the
+// lake. Every one of them resolved to an estimate with a null depth, and the comment above this
+// one has said so since 08-07: "timber, attractor, bridge, pile: 0 of 48."
+//
+// They were never missing. They are in `pois.geojson`, which no planner fetched.
+//
+// THIS TABLE IS COPIED FROM THE PRODUCER, NOT INVENTED HERE. build_trolling_runs.py's POI_KINDS
+// is what turned those points into marks in the first place, keyed the same way — `name`, then
+// `class`, then a poi_type containing 'timber'. Resolving against a DIFFERENT table than the one
+// that made the marks is how a hit gets snapped to a thing that is not what the pipeline saw.
+// If that table changes, this one changes with it.
+export const POI_KINDS = {
+  'Flooded Timber': 'timber',
+  'Shallow Area': 'shallow',
+  'Hazard, Spar/Spindle Buoy': 'hazard',
+  'Hazard Area': 'hazard',
+  'Pile': 'pile',
+  'Piles': 'pile',
+  'Fish Attractor Buoy, Spar/Spindle Buoy': 'attractor',
+  'Fish Attractor Buoy': 'attractor',
+  'Bridge': 'bridge',
+};
+
+/**
+ * pois.geojson -> features shaped like the pack layers, so both consumers take them unchanged.
+ *
+ * structureIndex() reads `properties.kind` and castSpots() in plan-water.js buckets on the same
+ * field, so one normalisation serves the whole app and neither matcher needed touching.
+ *
+ * NO DEPTH, deliberately. A Garmin POI carries a position and a label and not a sounding, so
+ * these resolve to a real identity and a null depth — which prompt rule 5 already tells the model
+ * to say out loud rather than guess around. DEPTH_FIELD has no entry for any of these kinds and
+ * must not grow one.
+ *
+ * NOT THE DNR ATTRACTOR FEED. build_trolling_runs.py:449 is explicit that `near[]`'s `attractor`
+ * marks come from Garmin's own Fish Attractor Buoy symbols, and Ryan drew that line on 08-06:
+ * "fish attractors aren't going to show you stump fields or submerged timber, they will just show
+ * where dnr has dropped a brushpile." The state feed has no marks in `near[]` to resolve, so
+ * feeding it in here would snap a Garmin mark onto a DNR point and call that a match.
+ */
+export function poiSpotFeatures(poisFc) {
+  const out = [];
+  for (const f of ((poisFc && poisFc.features) || [])) {
+    const p = f.properties || {};
+    const g = f.geometry;
+    if (!g || g.type !== 'Point' || !Array.isArray(g.coordinates)) continue;
+    let kind = POI_KINDS[p.name] || POI_KINDS[p.class];
+    if (!kind && String(p.poi_type || '').includes('timber')) kind = 'timber';
+    if (!kind) continue;
+    out.push({ type: 'Feature', geometry: g,
+               properties: { kind, name: p.name || null, poi_type: p.poi_type || null } });
+  }
+  return out;
+}
+
 const DEPTH_FIELD = {
   hump: 'depth_ft', ledge: 'depth_ft', point: 'deep_side_ft', cove: 'deep_side_ft',
 };
@@ -219,6 +279,11 @@ function describeStructure(kind, p) {
   } else if (kind === 'dock_line' || kind === 'dock_cluster' || kind === 'dock') {
     bits.push(kind === 'dock_line' ? 'line of docks'
       : kind === 'dock_cluster' ? 'cluster of docks' : 'dock');
+  } else if (kind === 'timber' || kind === 'shallow' || kind === 'pile'
+             || kind === 'bridge' || kind === 'attractor' || kind === 'hazard') {
+    // Garmin's own label beats the slug: "Flooded Timber" says more than "timber", and it is what
+    // is printed on the chart the angler is looking at. No depth — see poiSpotFeatures().
+    bits.push(p.name || kind);
   } else {
     bits.push(kind === 'point' ? 'point' : kind);
     if (n(p.bulge_m, ' m bulge')) bits.push(n(p.bulge_m, ' m bulge'));
