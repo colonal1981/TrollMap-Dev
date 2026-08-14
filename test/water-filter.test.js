@@ -95,12 +95,40 @@ describe('the research preset — a work list, not a map', () => {
     expect(makePredicate('map', null)(rec({ charted: null, area_acres: 300 }), 'Somewhere')).toBe(true);
   });
 
-  it('never drops water Ryan actually fishes, record or no record', () => {
-    // isKeepAlways runs before every preset, so no filter can reach past it.
+  // REWRITTEN 2026-08-14. This asserted that the keep-list reached past every preset including
+  // research. Ryan: "the whole point of the river toggle was to remove rivers from the research
+  // list if i didn't want to see them... the whole point of filtering for over 1000 acres is so
+  // that i only see researchable lakes... why have a hard override on that thought process?"
+  //
+  // No good reason. The keep-list came from the MAP, where hiding his water is the failure. A
+  // research work list is the opposite case: being absent from it hides nothing from the app.
+  it('the keep-list holds the map and the planner, and does NOT hold the work list', () => {
     for (const n of ['Bates Old River', 'Congaree River', 'Wateree Lake', 'Lower Saluda River']) {
       expect(isKeepAlways(n)).toBe(true);
-      expect(research(null, n)).toBe(true);
+      expect(makePredicate('map', null)(null, n)).toBe(true);
+      expect(makePredicate('planner', null)(null, n)).toBe(true);
+      // The work list answers with its own rules or it is not a filter.
+      expect(research(null, n)).toBe(false);
     }
+  });
+
+  it('a river named after another river is not that river', () => {
+    // `n.endsWith(' ' + k)` said "French Broad River" IS "Broad River", and "First Broad River"
+    // too. Measured against the shipped 457: the `broad river` entry alone passed five rivers
+    // through the toggle, three of them in other states.
+    for (const n of ['French Broad River', 'First Broad River', 'Little Broad River']) {
+      expect(isKeepAlways(n)).toBe(false);
+    }
+    // The leading qualifier stays — that form has real cases and cost nothing.
+    expect(isKeepAlways('Broad River')).toBe(true);
+    expect(isKeepAlways('Broad River (Cherokee Co, NC)')).toBe(true);
+  });
+
+  it('a river he fishes still goes when the toggle is off — that IS the toggle', () => {
+    const congaree = rec({ feature_type: 'river', area_acres: 9000, name: 'Congaree River' });
+    expect(research(congaree, 'Congaree River')).toBe(false);
+    const withRivers = makePredicate('research', null, { includeRivers: true });
+    expect(withRivers(congaree, 'Congaree River')).toBe(true);
   });
 
   it('holds rivers back by default and takes them on request — IN BOTH RECORD SHAPES', () => {

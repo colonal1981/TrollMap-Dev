@@ -119,7 +119,11 @@ export function isKeepAlways(name) {
     .replace(/,.*$/, '')           // and here, when there are no parentheses
     .replace(/\s+/g, ' ')
     .trim();
-  return KEEP_ALWAYS.some((k) => n === k || n.startsWith(k + ' ') || n.endsWith(' ' + k));
+  // EXACT, OR A LEADING QUALIFIER ONLY. The trailing test -- `n.endsWith(' ' + k)` -- said that
+  // "French Broad River" IS "Broad River", and "First Broad River" too. A river named after
+  // another river is not that river. The leading form stays because "Lake Murray" and
+  // "Lake Murray Dam Area" are the same water; the trailing form has no such case and cost five.
+  return KEEP_ALWAYS.some((k) => n === k || n.startsWith(k + ' '));
 }
 
 /**
@@ -175,6 +179,8 @@ export const PRESETS = {
    * for looking at water, and looking is free.
    */
   map: {
+    // The surface where hiding his water is the failure — see makePredicate().
+    keepAlways: true,
     label: 'Reachable water',
     /**
      * "ANY OF THE BARS" — Ryan said it twice and the first cut of this preset ignored him.
@@ -201,6 +207,7 @@ export const PRESETS = {
    * question, not a no.
    */
   planner: {
+    keepAlways: true,
     label: 'Water you can plan a day on',
     keep: (rec, { bath, hasRamp }) => (bath === 'yes' && hasRamp)
                                    || (bath === 'unknown' && hasRamp),
@@ -227,6 +234,22 @@ export const PRESETS = {
     includeRivers: false,
 
     /**
+     * THE ONLY PRESET THAT DOES NOT CARRY THE KEEP-LIST, AND THAT IS THE POINT.
+     *
+     * A work list whose filters can be overridden is a work list with no filters. Both of this
+     * preset's rules were asked for on purpose — rivers off because a river's acreage measures a
+     * ribbon and the research agents ask lake questions, and 1,000 acres because below that there
+     * is nothing written to find. KEEP_ALWAYS defeated both: five extra rivers rode in on the
+     * `broad river` entry alone, three of which are in other states.
+     *
+     * `keepUnresolved: false` below no longer leans on isKeepAlways() to protect anything. It
+     * does not need to: a water the registry cannot identify is exactly the water with nothing
+     * published about it, which is this list's own argument, and being absent from a research
+     * work list hides nothing from the app.
+     */
+    keepAlways: false,
+
+    /**
      * AN UNRESOLVED WATER IS DROPPED HERE, AND ONLY HERE.
      *
      * `makePredicate` keeps a record it cannot resolve, on the reasoning that a failure to match
@@ -236,7 +259,7 @@ export const PRESETS = {
      * "772 of 1196 pickable lake names carry a registry record"), so under the blanket rule every
      * one of them passed regardless of size, and the filtered list still ran past six hundred.
      * A water the registry cannot even identify is precisely the one with nothing written about
-     * it. isKeepAlways() still runs first, so nothing he fishes can be dropped this way.
+     * it. Nothing is hidden from the app by being absent here — see keepAlways above.
      */
     keepUnresolved: false,
 
@@ -277,8 +300,24 @@ export function makePredicate(presetName, records, cfg = {}) {
 
   return function keep(rec, displayName) {
     const name = displayName || (rec && (rec.display_name || rec.name)) || '';
-    // Never hide the water the app exists for. Checked FIRST so no preset can reach past it.
-    if (isKeepAlways(name)) return true;
+    // KEEP-ALWAYS IS THE MAP'S RULE, NOT EVERY SURFACE'S.
+    //
+    // Ryan, 2026-08-14: "the whole point of the river toggle was to remove rivers from the
+    // research list if i didn't want to see them... the whole point of filtering for over 1000
+    // acres is so that i only see researchable lakes... why have a hard override on that thought
+    // process?"
+    //
+    // No good reason, and the argument that put it here does not transfer. It came from the MAP
+    // filter, where hiding Wittee Lake and Ferry Lake would have hidden the two waters that
+    // motivated building the filter — on the map, hiding his water is the failure. The research
+    // picker is a WORK LIST. Dropping a river from it does not hide that river from the app; he
+    // can still pick it, plan on it and fish it. So a preset that exists to answer "what is worth
+    // researching" must be allowed to answer, and an override that reaches past its two
+    // deliberate filters is not a safety net, it is the filters not working.
+    //
+    // `keepAlways` is therefore opt-in per preset. See the research preset for the one that opts
+    // out, and why its `keepUnresolved: false` is coherent without this.
+    if (merged.keepAlways !== false && isKeepAlways(name)) return true;
     // An unresolved water — DNR sends plenty — cannot demonstrate anything, and a failure to
     // match is indistinguishable from a water that deserves cutting. Keep it, UNLESS the preset
     // says otherwise: see `keepUnresolved` on the research preset for why that one differs.
