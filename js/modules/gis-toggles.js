@@ -169,6 +169,24 @@ async function loadHotspots() {
   return ATTRACTOR_DATA;
 }
 
+/**
+ * The live attractor feed, for callers that are not the map.
+ *
+ * ATTRACTOR_DATA is populated by loadHotspots(), which only ran when the button was clicked.
+ * So Smart Plan saw the SCDNR/NCWRC/GA DNR/TWRA attractors only if the angler happened to
+ * toggle a map layer on BEFORE building a plan, and saw none of them otherwise. That is the
+ * same bug supplemental-layers.js already fixed for pois and docks with PREFETCH_LAYERS:
+ * a planner whose inputs depend on which buttons were pressed in which order.
+ *
+ * Awaiting loadHotspots() rather than reading the cache is the whole point — a null cache
+ * means "not fetched yet", not "this water has no attractors", and those are different
+ * answers.
+ */
+export async function getFishAttractors() {
+  return loadHotspots();
+}
+window.getFishAttractors = getFishAttractors;
+
 // ── drawing ────────────────────────────────────────────────────────────────────────
 //
 // Each layer differs in exactly two ways: where its rows come from, and what marker one row

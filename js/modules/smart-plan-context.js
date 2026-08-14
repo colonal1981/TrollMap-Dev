@@ -16,7 +16,8 @@
  *   - buildGroqCoachPayload() for the iterative Groq coach
  */
 
-import { state } from '../core/state.js';
+import { state, CF_WORKER_URL } from '../core/state.js';
+import { resolveR2Key } from '../data/lake-keys.js';
 import { distMiFromCoords as distMi } from '../utils/geo.js';
 import { normalizeSpecies } from '../data/species-strategies.js';
 
@@ -41,11 +42,20 @@ import { callGlobal } from '../utils/call-global.js';
  *   sup.osmStructures  OSM piers, bridges, dams, jetties — written since 08-06 and, until this
  *                      change, read by absolutely nothing
  *
- * NOT included, deliberately: water_features.geojson (point / cove / creek_mouth) and
- * structure.geojson (ledge / hump). Both are richer than everything above — Wateree alone has
- * 341 points, 279 coves, 6,926 ledges and 392 humps — and both need an r2Key that
- * buildFishingContext is never given; it takes a display lakeName. Threading a lake key through
- * is a decision about this function's contract, not a detail to slip in. Ryan's call.
+ * And three that it does not, added the same evening on Ryan's call — *"well why have the data
+ * if it isn't used"*:
+ *
+ *   water_features.geojson  point / cove / creek_mouth, with relief and both bank depths
+ *   structure.geojson       ledge / hump, with the pipeline's own score, depth and drop
+ *   the DNR attractor feed  SCDNR / NCWRC / GA DNR WRD / TWRA, live from the Worker
+ *
+ * The r2Key those first two need turned out not to be a new parameter at all: resolveR2Key()
+ * takes the display name this function is already given, which is exactly how
+ * lake-research-engine.js:808 reaches the same two files.
+ *
+ * Wateree is the scale of what was being left on the floor: 341 points, 279 coves, 8 named
+ * creek mouths, 6,926 ledges and 392 humps, against the 160 Garmin POI structures that were
+ * the only thing this saw.
  */
 
 // getSupplementalContext is called at this radius below, so a wider number here would be a lie:
@@ -87,7 +97,18 @@ const LURE_KEY = {
   BOAT_RAMP: null,  ISLAND: null,     SHORELINE: null,  HAZARD: null,
   MOORING: null,    LANDMARK: null,   NAV_BEACON: null, NAV_BUOY: null,
   NAV_LIGHT: null,  NAV_LINE: null,   HAZARD_MARKER: null,
+  // water_features.geojson `kind`, from build_water_features.py
+  point: 'point',   cove: 'creek_arm',  creek_mouth: 'creek_mouth',
+  // structure.geojson `kind`, from build_structure.py
+  ledge: 'ledge_edge',  hump: 'hump',
 };
+
+// Two of the pack layers carry the pipeline's OWN ranking in `score`, and Wateree alone has
+// 6,926 ledges. Handing over the twelve NEAREST of those is close to handing over twelve at
+// random; handing over the twelve best-scored is handing over what build_structure.py already
+// decided was worth looking at. Types with no score keep distance order, which is the right
+// answer for a dock line or a bridge.
+const SCORED_KINDS = new Set(['ledge', 'hump']);
 
 // A model cannot plan against hundreds of coordinates, and PIER is 12,280 of the 27,464 OSM
 // structures on the card. Cap what is HANDED OVER, count what is THERE — the same split the
@@ -95,12 +116,57 @@ const LURE_KEY = {
 const PER_TYPE_CAP = 12;
 const TOTAL_CAP = 60;
 
+// Two sources, one brush pile. 30 m is wider than any plausible GPS disagreement between a
+// DNR survey point and Garmin's buoy symbol, and narrower than the gap between two attractors
+// a state would bother to map separately.
+const ATTRACTOR_DEDUPE_M = 30;
+
 /**
  * @param {object} sup  the object getSupplementalContext() returned
  * @returns {{list: object[], counts: object, total: number, lureKeys: string[]}}
  *          `list` is capped and nearest-first; `counts` and `total` describe everything found.
  */
-export function nearbyStructuresFrom(sup, lat, lon, radiusMi = SUPPLEMENTAL_RADIUS_MI) {
+async function fetchGeoJsonMaybe(url) {
+  try {
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+// One fetch per lake per session. A plan gets rebuilt repeatedly while the angler changes
+// species, speed and launch time, and none of that moves a ledge.
+const _packCache = new Map();
+
+/**
+ * water_features.geojson and structure.geojson for a lake, by display name.
+ *
+ * resolveR2Key() is how lake-research-engine.js:808 already turns a display name into a
+ * chartpack key, which is why buildFishingContext does NOT need an r2Key parameter after all —
+ * it has the name, and the name resolves.
+ */
+export async function loadPackStructure(lakeName) {
+  const key = lakeName ? resolveR2Key(lakeName) : null;
+  if (!key) return { key: null, waterFeatures: [], structure: [] };
+  if (_packCache.has(key)) return _packCache.get(key);
+  const base = `${CF_WORKER_URL}/chartpacks/${key}`;
+  const [waterFc, structFc] = await Promise.all([
+    fetchGeoJsonMaybe(`${base}/water_features.geojson`),
+    fetchGeoJsonMaybe(`${base}/structure.geojson`),
+  ]);
+  const v = { key,
+              waterFeatures: waterFc?.features || [],
+              structure: structFc?.features || [] };
+  _packCache.set(key, v);
+  return v;
+}
+
+/**
+ * @param {object} sup    what getSupplementalContext() returned
+ * @param {object} [packs] { waterFeatures, structure, dnrAttractors } — the layers that are
+ *                         NOT in the supplemental context and are not clipped by its radius
+ */
+export function nearbyStructuresFrom(sup, lat, lon, radiusMi = SUPPLEMENTAL_RADIUS_MI, packs = {}) {
   const counts = {};
   const hits = [];
   const add = (type, la, lo, name, extra) => {
@@ -125,10 +191,55 @@ export function nearbyStructuresFrom(sup, lat, lon, radiusMi = SUPPLEMENTAL_RADI
           .filter(Boolean).join(' '),
         { count: c.count, run_m: c.run_m, bearing: c.bearing });
   }
-  for (const a of (sup?.attractors || [])) add('fish_attractor', a.lat, a.lon, a.name);
   for (const o of (sup?.osmStructures || [])) add(o.structure_type || 'unknown', o.lat, o.lon, o.name);
 
-  hits.sort((a, b) => a.distMi - b.distMi);
+  // THE STATE AGENCIES MAP MORE ATTRACTORS THAN GARMIN DOES. Garmin carries 8
+  // fish_attractor_buoy POIs on Wateree; the SCDNR feed carries the rest. Both are the same
+  // brush piles and PVC trees in the same water, so they are merged rather than concatenated —
+  // a double-counted attractor is a wrong number handed to the model, and the model has no way
+  // to know. DNR goes in first because it is the authority for its own habitat programme and
+  // its rows carry a name and a type; a Garmin buoy within ATTRACTOR_DEDUPE_M of one is the
+  // same object seen twice.
+  const attractorPts = [];
+  const addAttractor = (la, lo, name, source) => {
+    if (!Number.isFinite(la) || !Number.isFinite(lo)) return;
+    for (const [pa, po] of attractorPts) {
+      if (distMi(pa, po, la, lo) * 1609.344 <= ATTRACTOR_DEDUPE_M) return;
+    }
+    attractorPts.push([la, lo]);
+    add('fish_attractor', la, lo, name, { source });
+  };
+  for (const d of (packs.dnrAttractors || [])) {
+    addAttractor(Number(d.lat), Number(d.lon), d.name, d.source || 'state DNR');
+  }
+  for (const a of (sup?.attractors || [])) {
+    addAttractor(a.lat, a.lon, a.name, 'Garmin chart');
+  }
+
+  // The pack layers. These are NOT pre-clipped by the supplemental radius, so the radius test
+  // in add() is doing real work here rather than repeating a filter that already ran.
+  for (const f of (packs.waterFeatures || [])) {
+    const p = f.properties || {}, c = f.geometry?.coordinates;
+    if (!c) continue;
+    add(p.kind || 'unknown', c[1], c[0], p.name,
+        { relief: p.relief ?? null, deep_side_ft: p.deep_side_ft ?? null,
+          shallow_side_ft: p.shallow_side_ft ?? null, bulge_m: p.bulge_m ?? null });
+  }
+  for (const f of (packs.structure || [])) {
+    const p = f.properties || {}, c = f.geometry?.coordinates;
+    if (!c) continue;
+    add(p.kind || 'unknown', c[1], c[0], p.id,
+        { score: p.score ?? null, depth_ft: p.depth_ft ?? null,
+          drop_ft: p.drop_ft ?? null, relief_ft: p.relief_ft ?? null,
+          area_acres: p.area_acres ?? null,
+          slope_ft_per_100ft: p.slope_ft_per_100ft ?? null });
+  }
+
+  hits.sort((a, b) => {
+    const sa = SCORED_KINDS.has(a.type), sb = SCORED_KINDS.has(b.type);
+    if (sa && sb && a.type === b.type) return (b.score ?? -1) - (a.score ?? -1);
+    return a.distMi - b.distMi;
+  });
   const seen = {};
   const list = [];
   for (const h of hits) {
@@ -294,8 +405,30 @@ export async function buildFishingContext(params = {}) {
   // AFTER the supplemental call, because it is built out of what that call returned. It used to
   // run BEFORE it, against a source that had already been deleted — which is how it spent a week
   // returning nothing at all without anything looking wrong.
+  //
+  // Three sources that the supplemental context does not carry, gathered in parallel:
+  //   pack layers      water_features.geojson + structure.geojson, resolved off lakeName
+  //   DNR attractors   the live Worker feed, which until now only ever reached the map layer
+  //
+  // Each fails to [] on its own. A lake with no pack and a Worker that is down must both look
+  // like "no data for this", never like a broken plan — but a THROW is logged, because a feed
+  // that errors and a lake that genuinely has nothing are not the same fact.
+  const [packs, dnrAttractors] = await Promise.all([
+    loadPackStructure(lakeName).catch((e) => {
+      console.warn('[smart-plan-context] pack structure fetch failed:', e?.message);
+      return { key: null, waterFeatures: [], structure: [] };
+    }),
+    Promise.resolve(callGlobal('getFishAttractors')).catch((e) => {
+      console.warn('[smart-plan-context] DNR attractor feed failed:', e?.message);
+      return [];
+    }),
+  ]);
+
   const structureNear = (centerLat && centerLon)
-    ? nearbyStructuresFrom(supplementalContext, centerLat, centerLon)
+    ? nearbyStructuresFrom(supplementalContext, centerLat, centerLon, SUPPLEMENTAL_RADIUS_MI,
+                           { waterFeatures: packs.waterFeatures,
+                             structure: packs.structure,
+                             dnrAttractors: dnrAttractors || [] })
     : { list: [], counts: {}, total: 0, lureKeys: [] };
   const nearbyStructures = structureNear.list;
   const structureTypes = structureNear.lureKeys;
