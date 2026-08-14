@@ -399,8 +399,23 @@ describe('planWaypoints — charted marks', () => {
   });
 
   it('carries distance along the whole day, not along its own leg', () => {
+    // L2's marks MOVED 2026-08-14. The fixture used to be `{...plan.legs[0], id:'L2'}` — a leg
+    // copied wholesale, marks and all — so the second leg's marks sat on the first leg's
+    // coordinates. Waypoint writing now collapses one structure seen twice into one waypoint,
+    // and a duplicated leg is exactly that. The assertion here is about day-cumulative atM, not
+    // about duplicate positions, so the fixture moves rather than the rule bending.
+    const moved = plan.legs[0].marks.map((m) => ({ ...m, at: [m.at[0] + 0.05, m.at[1] + 0.05] }));
+    const two = { legs: [plan.legs[0], { ...plan.legs[0], id: 'L2', startM: 1000, marks: moved }] };
+    const w = planWaypoints(two, null, 'r1', { marks: true });
+    expect(w.length).toBe(4);
+    expect(w[2].atM).toBe(1100);
+  });
+
+  it('one structure passed by two legs is one waypoint', () => {
     const two = { legs: [plan.legs[0], { ...plan.legs[0], id: 'L2', startM: 1000 }] };
     const w = planWaypoints(two, null, 'r1', { marks: true });
-    expect(w[2].atM).toBe(1100);
+    // A waypoint is a POSITION, not a pass. Loading the same hump twice because two legs went
+    // past it is noise on the unit whichever leg found it.
+    expect(w.length).toBe(2);
   });
 });

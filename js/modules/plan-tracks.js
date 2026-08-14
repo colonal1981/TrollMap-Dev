@@ -144,10 +144,30 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
   // `chartMark: true` rather than `castingStop`, so parsers.js does not turn them into CAST
   // waypoints and smart-plan-ui does not list them as places to stop.
   if (opts.marks) {
+    // ONE HUMP IS ONE WAYPOINT.
+    //
+    // A structure sits in the `near[]` of every nested contour that passes it, so the same hump
+    // resolves once per mark and each resolution lands a metre or two from the last. Measured on
+    // an exported Wateree day: 29 waypoints at 17 real positions, with "hump 10ft" written
+    // FIFTEEN times across four spots inside six metres. That is what loads onto the Garmin.
+    //
+    // castSpots() in plan-water.js already solved this by collapsing on identity rather than on a
+    // grid of guesses; this writer never got it. 15 m, by kind — two humps that close are one
+    // hump seen twice, and two different kinds at one spot are two real things.
+    // CHAINED, NOT MEASURED FROM THE ONE THAT WON. The four spots in the real export span 28 m
+    // end to end but sit 9 m apart in a line, so testing each against the emitted point kept two
+    // of them. Every position seen joins the chain whether it was emitted or not, which is the
+    // single-linkage rule clusterDocks() already uses on the same kind of data.
+    const seen = [];
+    const seenBefore = (type, lon, lat) => seen.some(([t, x, y]) => t === type
+      && Math.hypot((x - lon) * 92000, (y - lat) * 111320) <= 15);
     for (const leg of ((plan && plan.legs) || [])) {
       for (const m of (leg.marks || [])) {
         const at = Array.isArray(m.at) && m.at.length === 2 ? m.at : null;
         if (!at || !Number.isFinite(at[0]) || !Number.isFinite(at[1])) continue;
+        const dup = seenBefore(m.type, at[0], at[1]);
+        seen.push([m.type, at[0], at[1]]);
+        if (dup) continue;
         // The name carries the CHARTED depth where there is one, because the whole point is to
         // stand it next to the sounder and see whether they agree. No depth means no number in
         // the name -- an empty field reads as "the chart does not say", a zero would not.

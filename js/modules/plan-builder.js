@@ -138,7 +138,31 @@ function speedRange(plan) {
 
 export function collectPlan(){
   function gV(id, fb = '') { const el = document.getElementById(id); return el ? el.value : fb; }
-  const v2 = planV2();
+  // AND IT MUST BE THIS DAY'S PLAN.
+  //
+  // `window._planV2` is a global that any surface can leave behind, and for months only one
+  // surface set it. A stale plan here is not a cosmetic mismatch: budget, legs, warnings and the
+  // safety verdict all come from it, so the document says one day and its own timeline says
+  // another, with no way for a reader to tell which is real.
+  //
+  // The tracks in state.DATA are written by materialisePlan for the run being exported and are
+  // named `L1 · …` / `T1 · transit`, so their leg ids are the ground truth for what is on screen.
+  // If the plan does not describe those legs, it is somebody else's plan and none of its numbers
+  // belong in this file.
+  const v2raw = planV2();
+  const v2 = (() => {
+    if (!v2raw || !Array.isArray(v2raw.legs)) return null;
+    const onScreen = new Set((state.DATA.tracks || [])
+      .map((t) => String(t.name || '').split('·')[0].trim()).filter(Boolean));
+    if (!onScreen.size) return v2raw;           // nothing drawn to check against
+    const planned = new Set(v2raw.legs.map((l) => l.id));
+    const shared = [...onScreen].filter((id) => planned.has(id)).length;
+    if (shared === onScreen.size) return v2raw;
+    console.warn('[plan-builder] _planV2 describes legs '
+      + `[${[...planned].join(', ')}] but the day on screen is [${[...onScreen].join(', ')}] — `
+      + 'omitting the plan block rather than exporting another day\'s numbers.');
+    return null;
+  })();
   const species = [...document.querySelectorAll('#planSpeciesChecks input:checked')].map(c=>c.value);
   const lakeVal = gV('planLake');
   const isRiv = isPlanRiverValue(lakeVal);

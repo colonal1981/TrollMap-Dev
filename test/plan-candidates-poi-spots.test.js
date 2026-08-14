@@ -201,3 +201,52 @@ test('a listed spot off every picked route is priced, not hidden', () => {
   assert.equal(priced[0].free, false);
   assert.ok(priced[0].detourM > 0, 'a spot with no picked water still has a distance');
 });
+
+// ── one hump is one waypoint, 2026-08-14 ─────────────────────────────────────────────────
+//
+// A structure sits in the near[] of every nested contour that passes it, so the same hump
+// resolved once per mark and each landed a metre or two from the last. An exported Wateree day
+// carried 29 waypoints at 17 real positions — "hump 10ft" fifteen times across four spots inside
+// six metres — and that is what loads onto the Garmin.
+import { planWaypoints } from '../js/modules/plan-tracks.js';
+
+const legWith = (marks) => ({
+  id: 'L1', type: 'troll', startM: 0, lengthM: 1000, stops: [], marks,
+  coordinates: [[-80.7325, 34.3755], [-80.7320, 34.3760]],
+});
+const mark = (type, lon, lat, depthFt = 9.8) => ({ id: `${type}_x`, type, at: [lon, lat], atM: 10, depthFt });
+
+test('the same hump resolved fifteen times is one waypoint', () => {
+  // the four spots from the real export, all inside six metres
+  const marks = [
+    mark('hump', -80.7325541692401, 34.37556873468945),
+    mark('hump', -80.7325541692401, 34.37556873468945),
+    mark('hump', -80.73266115563897, 34.37558578173703),
+    mark('hump', -80.7327681531759, 34.375602781345705),
+    mark('hump', -80.73245789626982, 34.375553329313895),
+  ];
+  const wp = planWaypoints({ legs: [legWith(marks)] }, null, null, { marks: true });
+  const humps = wp.filter((w) => w.structureType === 'hump');
+  assert.equal(humps.length, 1, 'five resolutions of one hump are one waypoint');
+});
+
+test('two different kinds at one spot are two real things', () => {
+  const wp = planWaypoints({ legs: [legWith([
+    mark('hump', -80.7325, 34.3755),
+    mark('point', -80.7325, 34.3755, 27.8),
+  ])] }, null, null, { marks: true });
+  assert.equal(wp.filter((w) => w.chartMark).length, 2);
+});
+
+test('two humps far enough apart stay two humps', () => {
+  const wp = planWaypoints({ legs: [legWith([
+    mark('hump', -80.7325, 34.3755),
+    mark('hump', -80.7355, 34.3760),   // ~280 m
+  ])] }, null, null, { marks: true });
+  assert.equal(wp.filter((w) => w.structureType === 'hump').length, 2);
+});
+
+test('marks stay opt-in', () => {
+  const wp = planWaypoints({ legs: [legWith([mark('hump', -80.7325, 34.3755)])] }, null, null, {});
+  assert.equal(wp.filter((w) => w.chartMark).length, 0);
+});

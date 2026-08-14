@@ -790,7 +790,20 @@ export async function buildFromPicked() {
   //
   // `marks: true` because this is the path that was built for the Echomap comparison: charted
   // structure goes out as waypoints so the sounder can be held against the chart.
+  // PUBLISH THE PLAN THIS DAY WAS BUILT FROM.
+  //
+  // window._planV2 was written by smart-plan-v2-wiring and by nothing else, and plan-builder's
+  // exporter reads it unconditionally. So a Pick Water day exported with the PREVIOUS Smart Plan
+  // run's budget, legs, warnings and safety attached: measured on two exports of the same lake,
+  // the Pick Water file carried 5 legs / 7,349 m / 14.08 Ah / 131 min against its own timeline of
+  // 8 legs / 29,284 m, and a warning naming `wateree_lake#304`, a leg that day never had.
+  //
+  // materialisePlan() is already being handed r.plan on the next line, so the plan was here the
+  // whole time — it simply was not the one anything downstream could see.
+  window._planV2 = r.plan;
+  window._planV2Result = r;
   const gpx = materialisePlan(r.plan, { launch: T.ramp, win: window, marks: true });
+  window._planV2Gpx = gpx;
   renderAll();
 
   // WHAT THE DAY HAS TO SAY, HANDED TO THE THING THAT CAN SAY IT. The phone is not the interface:
