@@ -13,7 +13,7 @@
  */
 
 import { state } from '../core/state.js';
-import { loadAccessIndex, registryRecordFor, getLoadedAccessIndex } from '../data/access-index.js';
+import { loadAccessIndex, registryRecordFor, liveAccessFor } from '../data/access-index.js';
 import { loadContourForLake } from './contour-data.js';
 import { COASTAL_ZONES, isCoastalKey } from '../data/coastal-zones.js';
 import { landOnCoastalZone, focusRamp } from '../utils/viewport-cull.js';
@@ -122,10 +122,7 @@ export function passesFilters(lakeName, f = filters) {
     // Nothing knows its acreage or its soundings. Asking for either means asking for something
     // this entry cannot demonstrate.
     if (f.size || f.wellCharted) return false;
-    if (f.rampOnly) {
-      const pts = getLoadedAccessIndex()?.byLake?.get(lakeName) || [];
-      return pts.some((p) => /ramp/i.test(p.typeLabel || ''));
-    }
+    if (f.rampOnly) return liveAccessFor(lakeName).ramps > 0;
     return true;
   }
 
@@ -133,7 +130,16 @@ export function passesFilters(lakeName, f = filters) {
     const [lo, hi] = SIZE_BANDS[f.size] || [0, Infinity];
     if (!(rec.areaAcres >= lo && rec.areaAcres < hi)) return false;
   }
-  if (f.rampOnly && !rec.rampSources) return false;
+  // SAME SOURCE AS THE BADGE FIFTEEN LINES BELOW, WHICH IT USED TO CONTRADICT.
+  //
+  // This read `rec.rampSources` alone — the count baked into lake_access.json on 2026-08-02 —
+  // while lakeBadge() right underneath already counted the live index. So ticking "has a ramp"
+  // hid 67 waters whose badge, in the same dropdown, said how many ramps they had. Every one of
+  // the rivers Ryan asked about was among them: Broad 4, Santee 4, Congaree 3, Wateree 3.
+  //
+  // rampSources stays as the OR, not as the AND: 63 rows carry a Garmin- or OSM-charted ramp
+  // that no state agency feed lists, and losing those would trade one wrong answer for another.
+  if (f.rampOnly && !(liveAccessFor(lakeName).ramps || rec.rampSources)) return false;
   // The picker already defaults to shipped lakes, so this box narrows further: only lakes
   // whose soundings cover most of their surface. Median charted fraction across the 434 is
   // 0.59, so a 0.5 cut is roughly the better half.
@@ -158,14 +164,17 @@ function lakeBadge(lakeName) {
   //
   // The live index is authoritative because it is the same data the Access dropdown is built
   // from. rampSources stays as the fallback for a lake the feeds do not mention at all.
-  const pts = getLoadedAccessIndex()?.byLake?.get(lakeName) || [];
-  const ramps = pts.filter(p => /ramp/i.test(p.typeLabel || '')).length;
+  //
+  // Counted through liveAccessFor() rather than here, so this badge and the has-ramp filter
+  // above it and the planner's predicate all get their number from ONE place. This was the
+  // only surface reading the live index, and it was reading it with its own inline regex.
+  const { points, ramps } = liveAccessFor(lakeName);
 
-  if (!rec && !pts.length) return '';
+  if (!rec && !points) return '';
   const bits = [];
   if (rec?.areaAcres) bits.push(`${Math.round(rec.areaAcres)} ac`);
   if (ramps) bits.push(ramps === 1 ? '1 ramp' : `${ramps} ramps`);
-  else if (pts.length) bits.push(pts.length === 1 ? '1 access pt' : `${pts.length} access pts`);
+  else if (points) bits.push(points === 1 ? '1 access pt' : `${points} access pts`);
   else if (rec?.rampSources) bits.push(rec.rampSources > 1 ? `${rec.rampSources} ramp srcs` : 'ramp');
   else bits.push('no ramp listed');
   // Say WHICH credential opened it. "Open With Credential" on its own reads like a

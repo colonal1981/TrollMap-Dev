@@ -31,6 +31,7 @@ import { USER_KNOWN_LAKES } from './user-known-lakes.js';
 import { COASTAL_ZONES } from './coastal-zones.js';
 import { loadLakeRegistry, filterLakes, accessPointsFor, getLoadedRegistry } from './lake-registry.js';
 import { registerR2Key } from './lake-keys.js';
+import { setLiveAccessSource } from './water-filter.js';
 
 // Manual coastal ramps not in DNR ArcGIS feed — add here when a known
 // kayak/small-boat launch is missing from the official database.
@@ -102,7 +103,10 @@ function normalizeWaterbodyName(name) {
     .trim();
 }
 
-function displayLakeName(rawName, stateCode) {
+// Exported so a test can build the same index the app builds. A test that reimplements this
+// tests its own copy: the DNR feeds key on a bare waterbody name and the ", SC" suffix added
+// here is half of what findExistingLakeKey() then has to match against.
+export function displayLakeName(rawName, stateCode) {
   const name = normalizeWaterbodyName(rawName);
   if (!name || /^unknown/i.test(name)) return '';
 
@@ -614,6 +618,52 @@ async function buildAccessIndex() {
 
   return index;
 }
+
+/**
+ * HOW MANY WAYS ONTO THIS WATER THE LIVE FEEDS ACTUALLY KNOW ABOUT.
+ *
+ * The single answer to "does this water have a launch", for every surface that asks. It reads
+ * `byLake`, which is what the Access dropdown is built from, so a badge, a filter and the list
+ * under them can no longer disagree — which they did: Congaree River read "no ramp listed" over
+ * a dropdown offering five.
+ *
+ * TWO COUNTS, BECAUSE THEY ANSWER TWO QUESTIONS.
+ *
+ *   `ramps`    — boat ramps only. What the has-ramp checkbox means when Ryan ticks it.
+ *   `launches` — anywhere you can put a boat in: ramps, SCDNR paddle launches, OSM slipways,
+ *                the manual coastal kayak launches. What the PLANNER means by "nowhere to
+ *                launch", because he fishes from a kayak and a paddle launch is often the only
+ *                access a small impoundment has — that is the argument that turned /paddle on
+ *                in ACCESS_SOURCES in the first place.
+ *
+ * Matched on the label rather than on sourcePath because addAccessItem() joins labels with
+ * ' / ' when one site appears in two feeds, and because the registry's own buckets arrive
+ * through accessPointsFor() with their own wording ('Boat ramp (agency)', 'Slipway (OSM)',
+ * 'Ramp (Garmin chart)'). Bank and pier points are deliberately not launches and are not
+ * counted — Ryan's call, and the reason /bank-pier stays off in ACCESS_SOURCES: "a bank/pier
+ * point is not a launch and would make lakes look reachable by boat when they are not."
+ */
+const RAMP_LABEL = /\bramp\b/i;
+const LAUNCH_LABEL = /\b(ramp|slipway|launch|landing)\b/i;
+
+export function liveAccessFor(lakeName, index = accessIndex) {
+  const pts = (index && index.byLake && index.byLake.get(lakeName)) || [];
+  let ramps = 0;
+  let launches = 0;
+  for (const p of pts) {
+    const label = String(p && p.typeLabel || '');
+    if (RAMP_LABEL.test(label)) ramps += 1;
+    if (LAUNCH_LABEL.test(label)) launches += 1;
+  }
+  return { points: pts.length, ramps, launches };
+}
+
+// Hand water-filter.js the live answer. Registered at module scope rather than after the fetch
+// resolves, because `liveAccessFor` closes over the CURRENT `accessIndex` binding: before the
+// index loads it reports zeroes, which is exactly the pre-wire behaviour, and it starts telling
+// the truth the moment buildAccessIndex() finishes. Registering later would leave whichever
+// picker rendered first reading the baked field forever.
+setLiveAccessSource((name) => liveAccessFor(name));
 
 /** The registry record behind a picker entry, or null if it came from a DNR feed. */
 /**

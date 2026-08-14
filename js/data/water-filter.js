@@ -80,6 +80,60 @@ function has(v) {
   return Boolean(v);
 }
 
+/**
+ * THE RAMP FACT COMES FROM THE FEED, NOT FROM THE FILE.
+ *
+ * Ryan, 2026-08-14: "we need to wire the live ramps to the registry... this is getting
+ * ridiculous." It was the third time in one day that a build artifact stood in for live data,
+ * and the third time it produced a confident wrong answer:
+ *
+ *   > broad river 4 ramps, congaree 3 ramps, santee 4 ramps, and wateree 3 ramps... so where
+ *   > are those coming from? the hard coded list? or are they actually in scdnr
+ *
+ * They are actually in SCDNR. `registry/lake_index.json` says `ramp_sources: 0` on every one of
+ * those rows, because `lake_access.json` was baked on 2026-08-02 from the natl/osm/garmin
+ * buckets and there has never been a DNR bucket at all. Measured over the current 457-row
+ * registry against the SC/NC/GA/TN /ramps and /paddle feeds: **67 rows the file calls
+ * launch-less have live ramps on them**, and the planner picker goes from 161 waters to 222.
+ *
+ * A SECOND SNAPSHOT WAS THE WRONG FIX, and gis-toggles.js says so in as many words: "Do not
+ * reintroduce a local fallback here — a second stale copy is how the snapshots drifted
+ * unnoticed in the first place." So nothing new is written to disk. `access-index.js` already
+ * performs the exact join at runtime — name variants, then bounds, then pruneAccessToRecord to
+ * drop what is not on this water — and `lakeBadge()` already reads it. The predicate did not.
+ * This is the socket that lets it.
+ *
+ * REGISTERED, NOT IMPORTED. This module has no imports and its test suite runs it as a pure
+ * function; importing access-index.js would drag in a module that fires eight fetches at import
+ * scope. access-index.js calls this once its index resolves, so all three surfaces — map,
+ * planner, research — pick the live answer up with no change at their call sites. That matters
+ * more than it sounds: three call sites each remembering to pass a live-ramp getter is exactly
+ * how the baked field went stale on two of them and not the third.
+ *
+ * @param {?function(string): {ramps:number, launches:number, points:number}} fn
+ */
+let liveAccessSource = null;
+export function setLiveAccessSource(fn) {
+  liveAccessSource = typeof fn === 'function' ? fn : null;
+}
+
+/**
+ * Live launches for a display name, or 0 when nothing has registered a source.
+ *
+ * NEVER SUBTRACTS. 63 registry rows carry a ramp from the natl/osm/garmin buckets that the DNR
+ * feeds do not list — a Garmin-charted ramp on a lake no state agency indexes is still a ramp.
+ * So this is unioned with the record's own field below, never substituted for it. The live feed
+ * can only ever ADD water to a picker, which is also what makes it safe to switch on: the worst
+ * case if the worker is down is exactly today's behaviour.
+ */
+function liveLaunches(name) {
+  if (!liveAccessSource || !name) return 0;
+  try {
+    const v = liveAccessSource(name);
+    return Number(v && v.launches) || 0;
+  } catch { return 0; }
+}
+
 /** Tri-state, because the two-state reading of this field is what deletes the coast. */
 export function chartedState(rec) {
   if (!rec) return 'unknown';
@@ -344,7 +398,10 @@ export function makePredicate(presetName, records, cfg = {}) {
     const type = pick('feature_type', 'featureType');
     const facts = {
       bath,
-      hasRamp: has(rec.ramps) || has(rec.ramp_sources) || has(rec.rampSources),
+      // Live first, file second, union never subtraction — see setLiveAccessSource above for
+      // the 67 rows this changes and why nothing new is written to disk to do it.
+      hasRamp: liveLaunches(name) > 0
+            || has(rec.ramps) || has(rec.ramp_sources) || has(rec.rampSources),
       isCoastal: type === 'coastal' || String(rec.slug || '').startsWith('coast_'),
       isRiver: type === 'river',
       acres: Number(pick('area_acres', 'areaAcres') || 0),

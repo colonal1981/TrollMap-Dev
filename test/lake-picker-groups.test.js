@@ -118,8 +118,22 @@ describe('a filter an entry cannot answer now excludes it', () => {
   it('still answers state and ramps for them, because both are knowable', () => {
     // State from the suffix; ramps from the live access index, which is the same data the
     // Access dropdown under it is built from.
+    //
+    // Was an inline `pts.some((p) => /ramp/i.test(p.typeLabel || ''))` here, and a second copy
+    // of the same regex in lakeBadge(), and nothing at all in the filter for entries that DO
+    // have a registry record. Three readings of one fact, and the one that mattered read a
+    // baked file. They all go through liveAccessFor() now — see
+    // test/live-ramps-reach-the-filter.test.js.
     expect(SRC.includes("if (f.state && stateOf(lakeName, rec) !== f.state) return false;")).toBe(true);
-    expect(SRC.includes("pts.some((p) => /ramp/i.test(p.typeLabel || ''))")).toBe(true);
+    expect(SRC.includes('liveAccessFor(lakeName).ramps > 0')).toBe(true);
+  });
+
+  it('asks the live index for the has-ramp box even when a registry row exists', () => {
+    // THE ROW THAT HAS A RECORD IS THE ONE THAT WAS WRONG. `rec.rampSources` is baked into
+    // lake_access.json and reads 0 on 67 waters the DNR feeds list ramps for — every river
+    // Ryan asked about among them. `rampSources` stays as the OR, never as the AND.
+    expect(SRC.includes('if (f.rampOnly && !rec.rampSources) return false;')).toBe(false);
+    expect(SRC.includes('liveAccessFor(lakeName).ramps || rec.rampSources')).toBe(true);
   });
 });
 
