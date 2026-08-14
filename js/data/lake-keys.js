@@ -219,9 +219,29 @@ function _normalize(name) {
     .trim();
 }
 
-// Pre-compute normalized forms of all keys once at module load.
+// WHICH STATE(S) A NAME OR A SLUG CLAIMS, or null for "does not say".
+//
+// A SET, not a string: Hartwell is 'SC/GA' and Kentucky Lake is 'KY/TN', and a border lake has
+// to keep matching from either bank. Null is the important value -- it means the name is silent
+// about its state, and silence must never reject anything.
+function _states(text) {
+  const m = String(text || '').match(/,\s*([A-Z]{2}(?:\/[A-Z]{2})*)\s*$/);
+  if (m) return new Set(m[1].split('/'));
+  const slug = String(text || '').match(/_(sc|nc|ga|tn|va|al|ky)$/i);
+  return slug ? new Set([slug[1].toUpperCase()]) : null;
+}
+
+function _mergeStates(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  return new Set([...a, ...b]);
+}
+
+// Pre-compute normalized forms of all keys once at module load, WITH the state each entry
+// claims -- taken from the curated name ("Lake Hickory, NC") and from the slug's own suffix
+// ("coast_topsail_new_river_nc"), unioned, because either may be the one that carries it.
 const _NORM_MAP = Object.entries(LAKE_NAME_TO_R2_KEY)
-  .map(([k, v]) => [_normalize(k), v])
+  .map(([k, v]) => [_normalize(k), v, _mergeStates(_states(k), _states(v))])
   .filter(([kn]) => kn.length > 0);
 
 // display name (and its lowercase form) -> registry slug. Populated by access-index.js once
@@ -434,12 +454,42 @@ export function resolveR2Key(displayName) {
   const FLOWING = /\b(river|creek|run|branch|fork|stream|canal|slough|bayou)\b/i;
   const dnFlowing = FLOWING.test(trimmed);
 
+  // AND A LAKE IN TENNESSEE IS NOT A LAKE IN NORTH CAROLINA.
+  //
+  // The type guard above was the first half of this lesson and it only ever covered one axis.
+  // Repointing `check-lake-geo.mjs` at the state agencies' own surveyed ramp coordinates on
+  // 2026-08-14 found 24 names this pass sends to the wrong water, and the loudest are pure
+  // cross-state namesakes:
+  //
+  //     Old Hickory Reservoir, TN  -> lake_hickory       Catawba Co NC, 580 km, 38 TWRA ramps
+  //     Normandy Reservoir, TN     -> lake_norman        571 km
+  //     Great Falls, TN            -> falls_lake         Wake Co NC, 749 km
+  //     Lake Cherokee, SC          -> cherokee_lake      Hawkins Co TN, 165 km
+  //     New Lake, TN               -> coast_topsail_new_river_nc   1,012 km
+  //
+  // Every one of those carries its state in the name the app builds -- access-index.js's
+  // displayLakeName() appends ", TN" before anything asks this function -- and every one was
+  // thrown away by Pass 3's suffix strip before Pass 4 ever looked. The state was in our hands
+  // and we dropped it on the floor.
+  //
+  // REFUSES ONLY ON A POSITIVE DISAGREEMENT. If the incoming name carries no state, or the
+  // candidate key names none, nothing is rejected -- silence is not evidence. Multi-state keys
+  // are sets, not strings, because Hartwell is 'SC/GA' and Kentucky Lake is 'KY/TN': the test
+  // is whether the two sets are DISJOINT, so a border lake still matches from either side.
+  const dnStates = _states(trimmed);
+  const disjoint = (a, b) => {
+    if (!a || !b) return false;              // one side is silent -- not a disagreement
+    for (const x of a) if (b.has(x)) return false;
+    return true;
+  };
+
   let best = null;
   let bestLen = 0;
-  for (const [kn, v] of _NORM_MAP) {
+  for (const [kn, v, kStates] of _NORM_MAP) {
     if (dn === kn || dn.includes(kn) || kn.includes(dn)) {
       // `kn` is normalised, which strips the generic word — test the key it came from.
       if (dnFlowing !== FLOWING.test(v)) continue;
+      if (disjoint(dnStates, kStates)) continue;
       if (kn.length > bestLen) {
         bestLen = kn.length;
         best = v;

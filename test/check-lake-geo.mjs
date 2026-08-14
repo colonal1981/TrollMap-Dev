@@ -201,29 +201,30 @@ if (SELF_TEST) {
  * bidirectional substring matchers ... a short name claims any longer one containing it") and
  * which are not something to start rewriting inside a lint change.
  *
+ * SHRANK FROM 24 TO 14 THE SAME DAY, and that is the list working. Pass 4 in lake-keys.js
+ * gained a state guard -- it already refused to match flowing water to standing water, and now
+ * refuses to match a Tennessee name to a North Carolina lake. Ten went, including every one
+ * that mattered: Old Hickory Reservoir and its 38 TWRA ramps, both Normandys, Great Falls TN,
+ * Lake Cherokee SC.
+ *
+ * The 14 left are a different defect and want a different fix. They are Pass 3.5 -- the coastal
+ * pointers generated into water-aliases.js -- filing small Georgia creeks onto 340,000-acre
+ * coastal zones, and SC's Waccamaw onto Brunswick County NC. Same state, so the state guard
+ * cannot see them; they are wrong DATA in a generated table, not a wrong RULE.
+ *
  * THIS LIST MAY ONLY EVER SHRINK. A new pair fails the run. A pair that stops firing is
  * reported so it gets deleted from here rather than quietly padding the allowance. That is the
  * whole difference between a baseline and an excuse, and the reason this is dated in the name.
  */
 const KNOWN_2026_08_14 = new Set([
-  'Blalock Reservoir|lake_blalock',
-  'Cherokee Lake|cherokee_lake',
   'Clarks Creek|coast_murrells_inlet_sc',
-  'County Lake|coast_brunswick_nc',
   'Ebenezer Creek|coast_savannah_ga',
-  'Great Falls|falls_lake',
   'Gunters Lake|coast_murrells_inlet_sc',
   'HYCO LAKE|hyco_lake',
   'Holbrook Pond|coast_ossabaw_st_catherines_ga',
   'Jones Creek|coast_ossabaw_st_catherines_ga',
-  'Lake Cherokee|cherokee_lake',
   'Louis Scott Stell Lake|coast_savannah_ga',
-  'Mountain Lakes|mountain_island_lake',
-  'New Lake|coast_topsail_new_river_nc',
   'New River|coast_topsail_new_river_nc',
-  'Normandy Lake|lake_norman',
-  'Normandy Reservoir|lake_norman',
-  'Old Hickory Reservoir|lake_hickory',
   'Riceboro Creek|coast_ossabaw_st_catherines_ga',
   'Richmond Hill Pond, West|coast_ossabaw_st_catherines_ga',
   'South Newport River|coast_ossabaw_st_catherines_ga',
