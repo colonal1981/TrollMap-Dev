@@ -224,7 +224,7 @@ def graph_health(pack):
 
 # ── per-pack ────────────────────────────────────────────────────────────────────────────────
 
-def audit_one(pack, acres=None):
+def audit_one(pack, acres=None, a_min_samples=200, a_min_off=3):
     da = load(pack, 'depth_areas.geojson')
     if not da:
         return {'error': 'no depth_areas.geojson'}
@@ -237,6 +237,7 @@ def audit_one(pack, acres=None):
         if reg > 0.5 and not (0.6 <= wet.km2() / reg <= 1.8):
             out['issues'].append('wet area %.1f km2 vs registry %.1f km2' % (wet.km2(), reg))
 
+    thin_skips = []
     for name in sorted(set(list(LAND_BUDGET) + list(SINGLE_ZOOM))):
         feats = load(pack, name)
         if feats is None:
@@ -264,9 +265,30 @@ def audit_one(pack, acres=None):
                 out['issues'].append(
                     '%s carries %d detail levels (%s); worst is zoom %s at %.0f%% on land'
                     % (name, len(real), ','.join(str(z) for z in sorted(real)), worst[0], worst[1]))
+        # A PERCENTAGE NEEDS ENOUGH SAMPLES TO MEAN ANYTHING.
+        #
+        # `pct` is over sampled POINTS, and this was a bare `pct > budget`. A layer with 20
+        # samples and one stray point reads as 5% and trips a 1% budget -- so ~1,600 of the
+        # 2,636 issues this script reported were percentage budgets applied to packs too small
+        # for a percentage to exist. An audit that cries wolf 60% of the time is one nobody
+        # reads, which is worse than no audit.
+        #
+        # Two floors, because they catch different nonsense: too few samples to resolve the
+        # budget at all, and too few off-water points to be a pattern rather than an edge case.
+        # The counts go IN the message -- "4.0% on land" and "2 of 50 points" are different
+        # facts and the reader needs the second one to judge the first.
         budget = LAND_BUDGET.get(name)
         if budget is not None and pct > budget:
-            out['issues'].append('%s is %.1f%% on land (budget %.1f%%)' % (name, pct, budget))
+            if tot < a_min_samples:
+                rec['budget_skipped'] = 'only %d sample(s); %d needed to resolve %.1f%%' % (
+                    tot, a_min_samples, budget)
+                thin_skips.append((name, tot, pct))
+            elif dry < a_min_off:
+                rec['budget_skipped'] = 'only %d point(s) off water' % dry
+                thin_skips.append((name, tot, pct))
+            else:
+                out['issues'].append('%s is %.1f%% on land (budget %.1f%%) -- %d of %d points'
+                                     % (name, pct, budget, dry, tot))
 
     g = graph_health(pack)
     if g:
@@ -335,6 +357,13 @@ def main():
                     help='exit non-zero on ANY issue, not only on a regression. Off by default '
                          'because most of these numbers are not zero and never will be -- the '
                          'default gate is "worse than last time", which is the question asked.')
+    ap.add_argument('--min-samples', type=int, default=200,
+                    help='a land-percentage budget is only tested when the layer has at least '
+                         'this many sampled points. Below it the percentage cannot resolve the '
+                         'budget -- 20 samples and one stray point reads as 5%%. Default 200.')
+    ap.add_argument('--min-off', type=int, default=3,
+                    help='and at least this many of them off water, so one edge case is not a '
+                         'pattern. Default 3.')
     ap.add_argument('--only', default=None)
     ap.add_argument('--limit', type=int, default=0, help='audit only the first N packs')
     ap.add_argument('-v', '--verbose', action='store_true')
@@ -370,7 +399,8 @@ def main():
     out, t0, issues = {}, time.time(), 0
     for k, slug in enumerate(slugs, 1):
         try:
-            r = audit_one(os.path.join(a.packs, slug), acres.get(slug))
+            r = audit_one(os.path.join(a.packs, slug), acres.get(slug),
+                          a.min_samples, a.min_off)
         except Exception as e:
             r = {'error': '%s: %s' % (type(e).__name__, e)}
         out[slug] = r
