@@ -30,8 +30,13 @@ const { makePredicate, setLiveAccessSource, isKeepAlways } = await import('../js
  * would pass with the Beaufort ramp counted and would not have caught a single bug this join
  * has already had.
  *
- * Every row below is verbatim from registry/lake_index.json and the SC/NC /ramps and /paddle
- * snapshots of 2026-08-12.
+ * PROVENANCE, AND THE TRAP IN IT. Every row below is verbatim from registry/lake_index.json and
+ * from registry/_dnr/. The first version of this header dated those files 2026-08-12, which is
+ * their MTIME -- the day they were moved into that folder. The `fetched` stamp INSIDE reads
+ * 2026-08-05 for SC ramps and 2026-08-09 for NC, and the paddle files carry no stamp at all
+ * because they are fetch_dnr_paddle.py output rather than saved worker responses. Read the
+ * field, not the file date. (The counts have not moved since 08-01 on three of the four states,
+ * which is a fact worth knowing before arguing about how live this data needs to be.)
  * ─────────────────────────────────────────────────────────────────────────────────────────────
  */
 
