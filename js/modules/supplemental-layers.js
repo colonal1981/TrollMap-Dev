@@ -1295,7 +1295,14 @@ export function getSupplementalContext(lat, lon, radiusMi = 0.5) {
     const t = p.ramp_subtype || p.poi_type;
     // Both names accepted: packs already in R2 carry the old `fish_attractor`, and re-uploading
     // every lake is not a prerequisite for the app being correct.
-    if (t === 'fish_attractor' || t === 'fish_attractor_buoy') results.attractors.push(p);
+    if (t === 'fish_attractor' || t === 'fish_attractor_buoy')
+      // COORDINATES, OR IT DID NOT HAPPEN. This pushed `p` — the properties object, which
+      // carries mode, zoom, source, poi_type, on_water, tile and name, and no position at
+      // all. smart-plan.js:1302 guards every attractor with `if (!a.lat || !a.lon) continue`,
+      // so EVERY mapped fish attractor was skipped on every plan, silently, while that block
+      // scored them 9 — the highest stop score it awards. Wateree has 8 of them.
+      // `structures` below already attached lat/lon for exactly this reason.
+      results.attractors.push({ ...p, lat: c[1], lon: c[0] });
     // Garmin's own submerged-structure labels -- road beds, creek beds, submerged bridges,
     // flooded timber, shallow areas. These are the highest-value thing in the pack for a
     // fishing plan and they were previously invisible to it.
