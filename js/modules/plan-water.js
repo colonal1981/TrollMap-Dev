@@ -1018,6 +1018,11 @@ const SPOT_KINDS = {
   point:       'point',
   creek_mouth: 'creek mouth',
   cove:        'cove',
+  // A source that is NOT in near[] and never could be: the state publishes it, the pipeline
+  // never saw it. Its own type so provenance stays visible -- a state survey point and a symbol
+  // Garmin drew are two different claims about the same water, and one of them is a fisheries
+  // department saying where it dropped the pile.
+  dnr_attractor: 'DNR brushpile',
   dock_line:   'line of docks',
   dock_cluster:'pocket of docks',
 };
@@ -1030,8 +1035,25 @@ const SPOT_KINDS = {
  * arrays and is one stand of timber. Same failure the lanes themselves had, same fix: collapse on
  * where it is, not on which row mentioned it.
  */
-export function castSpots(lanes, { features = null, mergeM = 60 } = {}) {
+export function castSpots(lanes, { features = null, mergeM = 60, extraSpots = null } = {}) {
   const raw = [];
+  // SPOTS THAT ARE NOT ON A LANE ARE STILL SPOTS. Ryan, 2026-08-13, on what cast spots are for:
+  // "i could set up a whole day just moving between casting spots ignoring the trolling lanes
+  // completely... or adding them into the trolling lanes like i do now." Everything else in this
+  // list is discovered by walking a lane's `near[]`, which quietly makes "worth stopping on" mean
+  // "worth stopping on while trolling past". The state attractor feed is the first source that is
+  // not in near[] at all, and it must not need a lane's permission to be listed.
+  //
+  // priceSpots() already handles the rest: a spot off every picked route gets a detour in metres
+  // rather than being hidden, and falls back to distance from the ramp when nothing is ticked.
+  //
+  // offM 0 is not "on the line" -- it is never rendered. It feeds one comparison below, which
+  // keeps the best-positioned sighting of a thing seen several times. A published survey point
+  // IS the best-positioned sighting, so it wins, which is the correct answer.
+  for (const e of (extraSpots || [])) {
+    if (!e || !Array.isArray(e.at) || !SPOT_KINDS[e.type]) continue;
+    raw.push({ type: e.type, what: e.what || SPOT_KINDS[e.type], at: e.at, offM: e.offM ?? 0 });
+  }
   for (const f of (lanes || [])) {
     const p = (f && f.properties) || {};
     const coords = (f.geometry && f.geometry.coordinates) || [];
@@ -1258,6 +1280,7 @@ export function offerWater(lanes, o) {
   }));
   // Spots are gathered here and PRICED later, by priceSpots(), because their price depends on
   // what has been ticked and that is not known yet. Gathering is expensive; pricing is cheap.
-  const spots = castSpots(lanes, { features: o.spotFeatures || null });
+  const spots = castSpots(lanes, { features: o.spotFeatures || null,
+                                   extraSpots: o.extraSpots || null });
   return { ...built, pieces, spots, minM, depthAxis: 'minimum water depth, ft' };
 }

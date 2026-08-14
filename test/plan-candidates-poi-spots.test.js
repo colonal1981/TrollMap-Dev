@@ -141,3 +141,63 @@ test('no index, no hits, no crash', () => {
   const coords = [[-80.72, 34.40], [-80.70, 34.40]];
   assert.deepEqual(kindHits(coords, cumulative(coords), null, 100, 'attractor'), []);
 });
+
+// ── cast spots that are not on a lane, 2026-08-13 ───────────────────────────────────────
+//
+// Ryan: "the thought behind casting spots is that i could set up a whole day just moving between
+// casting spots ignoring the trolling lanes completely." Everything else in the spot list is
+// found by walking a lane's near[], which quietly makes "worth stopping on" mean "worth stopping
+// on while trolling past". A published brushpile must not need a lane's permission to be listed.
+import { castSpots, priceSpots } from '../js/modules/plan-water.js';
+
+const lane = (coords, near = []) => ({
+  type: 'Feature',
+  properties: { length_m: 1000, near },
+  geometry: { type: 'LineString', coordinates: coords },
+});
+
+test('a state attractor is listed with no lanes at all', () => {
+  const spots = castSpots([], { extraSpots: [
+    { type: 'dnr_attractor', at: [-80.70, 34.40], what: 'Colonels Creek pile' },
+  ] });
+  assert.equal(spots.length, 1);
+  assert.equal(spots[0].type, 'dnr_attractor');
+  assert.equal(spots[0].what, 'Colonels Creek pile');
+  assert.deepEqual(spots[0].at, [-80.70, 34.40]);
+  assert.equal(spots[0].depthFt, null);   // a survey point is not a sounding
+});
+
+test('a spot with a type the list cannot name is refused, not printed as undefined', () => {
+  const spots = castSpots([], { extraSpots: [
+    { type: 'not_a_kind', at: [-80.70, 34.40] },
+    { type: 'dnr_attractor', at: [-80.71, 34.41] },
+    { type: 'dnr_attractor' },                      // no position
+  ] });
+  assert.equal(spots.length, 1);
+});
+
+test('lane-found spots and listed spots coexist', () => {
+  const spots = castSpots(
+    [lane([[-80.72, 34.40], [-80.70, 34.40]], [{ t: 'timber', s: 500, d: 20 }])],
+    { extraSpots: [{ type: 'dnr_attractor', at: [-80.60, 34.50] }] });
+  const kinds = spots.map((s) => s.type).sort();
+  assert.deepEqual(kinds, ['dnr_attractor', 'timber']);
+});
+
+test('two published points on the same pile are one spot', () => {
+  const spots = castSpots([], { mergeM: 60, extraSpots: [
+    { type: 'dnr_attractor', at: [-80.70000, 34.40000] },
+    { type: 'dnr_attractor', at: [-80.70020, 34.40000] },   // ~18 m
+  ] });
+  assert.equal(spots.length, 1);
+});
+
+test('a listed spot off every picked route is priced, not hidden', () => {
+  // This is what makes a casting-only day possible: nothing ticked, so every spot prices from
+  // the ramp and the list is still the whole list.
+  const spots = castSpots([], { extraSpots: [{ type: 'dnr_attractor', at: [-80.70, 34.40] }] });
+  const priced = priceSpots(spots, [], { ramp: [-80.72, 34.40] });
+  assert.equal(priced.length, 1);
+  assert.equal(priced[0].free, false);
+  assert.ok(priced[0].detourM > 0, 'a spot with no picked water still has a distance');
+});

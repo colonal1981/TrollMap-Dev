@@ -41,7 +41,7 @@ import { depthSampler, shorelineIndex } from './plan-water-index.js';
 import { offerWater, dayCost, priceSpots, searchOrder, optionality, TROLL_MPH } from './plan-water.js';
 import { planFromWater } from './plan-from-water.js';
 import { buildSmartPlanV2, modelAsker, waterRouter } from './smart-plan-v2.js';
-import { poiSpotFeatures } from './plan-candidates.js';
+import { poiSpotFeatures, attractorSpotFeatures } from './plan-candidates.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
 import { materialisePlan } from './plan-tracks.js';
@@ -587,6 +587,16 @@ export async function findWater() {
   const forecast = await fetchForecast(inp.lakeName, inp.dateStr,
     { launchTime: inp.launchTime, returnTime: inp.returnTime }).catch(() => null);
 
+  // SCDNR / NCWRC / GA DNR WRD / TWRA, live from the Worker. Awaited rather than read off
+  // gis-toggles' cache: that cache only fills when the map button is clicked, and which layers
+  // were toggled first must not decide what a plan can see. Failure is [] and a log.
+  const dnrRows = await (window.getFishAttractors?.() ?? Promise.resolve([]))
+    .catch((e) => { console.warn('[pick-water] DNR attractor feed unavailable:', e?.message); return []; });
+  const dnrSpots = attractorSpotFeatures(dnrRows, poiSpotFeatures(poFc))
+    .map((f) => ({ type: 'dnr_attractor', at: f.geometry.coordinates,
+                   what: f.properties.name || 'DNR brushpile' }));
+  if (dnrSpots.length) console.log(`[pick-water] ${dnrSpots.length} state attractors listed`);
+
   say('Measuring the water…');
   let out;
   try {
@@ -601,6 +611,9 @@ export async function findWater() {
       // itself rather than to a guess at where along a lane it sat. See castSpots().
       spotFeatures: [...((wfFc && wfFc.features) || []), ...((stFc && stFc.features) || []),
                      ...poiSpotFeatures(poFc)],
+      // The state's brushpiles, deduped against the buoys Garmin already charted. Listed whether
+      // or not a trolling lane happens to pass one -- see the note in castSpots().
+      extraSpots: dnrSpots,
       // Local time, for "the sun is behind the bank from 07:00". getTimezoneOffset() is minutes
       // WEST of UTC and positive for the Americas, so the sign flips — EDT is +240 there and -4
       // here. Taken from the machine because Ryan plans at the computer the night before, on the
