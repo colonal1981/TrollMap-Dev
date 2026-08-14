@@ -17,7 +17,7 @@
  * the seams between six modules stay honest.
  */
 
-import { selectCandidates, structureIndex, forModel, orientLegs, poiSpotFeatures } from './plan-candidates.js';
+import { selectCandidates, structureIndex, forModel, orientLegs, poiSpotFeatures, attractorSpotFeatures } from './plan-candidates.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom } from './plan-prompt.js';
 import { assemblePlan, validatePlan } from './plan-assemble.js';
 import { connectionFor } from '../data/lure-knowledge.js';
@@ -71,17 +71,22 @@ export async function buildSmartPlanV2(o) {
     return { plan: null, problems: [`${o.r2Key} has no trolling runs in its chartpack`], candidates: [] };
   }
 
+  const poiSpots = poiSpotFeatures(poisFc);
   const structures = structureIndex(
     (structFc && structFc.features) || [], (waterFc && waterFc.features) || [],
-    (docksFc && docksFc.features) || [], poiSpotFeatures(poisFc));
+    (docksFc && docksFc.features) || [], poiSpots);
   const docks = structureIndex((docksFc && docksFc.features) || []);
+  // The state's own attractors, minus the ones Garmin already charted. Injected as rows rather
+  // than fetched, like everything else this module reads, so the whole path still runs in a test
+  // with no network.
+  const attractors = structureIndex(attractorSpotFeatures(o.dnrAttractors, poiSpots));
 
   const candidates = selectCandidates(runs, {
     ramp: o.ramp, slug: o.r2Key, fishDepthFt: o.fishDepthFt, holding: o.holding,
     usableAh: o.usableAh, windowMin: o.windowMin,
     structures, catches: o.catches, catchSpecies: o.species, month: o.month,
     // Per species, per season, per lake, from the research profile — see structureWeights().
-    weights: o.weights, reliefWeights: o.reliefWeights, docks,
+    weights: o.weights, reliefWeights: o.reliefWeights, docks, attractors,
     transitM: o.transitM, limit: CANDIDATE_LIMIT,
   });
   if (!candidates.length) {

@@ -88,3 +88,56 @@ test('the charted label survives into the description', () => {
   const hit = resolveStructure([-80.70, 34.40], 'attractor', 50, idx);
   assert.equal(hit.what, 'Fish Attractor Buoy');
 });
+
+// ── the state attractor feed, 2026-08-13 ────────────────────────────────────────────────
+//
+// Garmin charts a Fish Attractor Buoy where it sees one; the state publishes where it dropped the
+// pile. Same object, two describers, both worth stopping on. Only Garmin's is in near[], because
+// only Garmin's was in the pack when the pipeline ran — so the state rows join per-run in the app
+// exactly as docks do.
+import { attractorSpotFeatures, kindHits } from '../js/modules/plan-candidates.js';
+import { cumulative } from '../js/modules/plan-candidates.js';
+
+const dnr = (lat, lon, name = 'SCDNR pile') => ({ lat, lon, name, source: 'SCDNR' });
+
+test('state rows become attractor features with their provenance intact', () => {
+  const out = attractorSpotFeatures([dnr(34.40, -80.70), dnr(34.41, -80.71)]);
+  assert.equal(out.length, 2);
+  assert.equal(out[0].properties.kind, 'attractor');
+  assert.equal(out[0].properties.source, 'SCDNR');
+  assert.deepEqual(out[0].geometry.coordinates, [-80.70, 34.40]);
+});
+
+test('a state row on top of a charted buoy is not a second attractor', () => {
+  const chartedBuoy = poiSpotFeatures(fc(poi({ name: 'Fish Attractor Buoy' }, -80.70, 34.40)));
+  // ~11 m apart — the same pile, surveyed twice
+  const out = attractorSpotFeatures([dnr(34.4001, -80.70)], chartedBuoy);
+  assert.deepEqual(out, []);
+});
+
+test('a state row well clear of any charted buoy survives', () => {
+  const chartedBuoy = poiSpotFeatures(fc(poi({ name: 'Fish Attractor Buoy' }, -80.70, 34.40)));
+  const out = attractorSpotFeatures([dnr(34.41, -80.71)], chartedBuoy);
+  assert.equal(out.length, 1);
+});
+
+test('a junk row is not an attractor at null island', () => {
+  assert.deepEqual(attractorSpotFeatures([{ lat: 'n/a', lon: null, name: 'bad' }]), []);
+  assert.deepEqual(attractorSpotFeatures(null), []);
+});
+
+test('state attractors join a run as near-shaped hits, and only when they are near it', () => {
+  // A lane running east along 34.40. One pile sits on it, one sits 2 km north.
+  const coords = [[-80.72, 34.40], [-80.70, 34.40], [-80.68, 34.40]];
+  const idx = structureIndex(attractorSpotFeatures([dnr(34.4002, -80.70), dnr(34.42, -80.70)]));
+  const hits = kindHits(coords, cumulative(coords), idx, 100, 'attractor');
+  assert.equal(hits.length, 1, 'only the pile beside the lane joins');
+  assert.equal(hits[0].t, 'attractor');       // the type near[] and DEFAULT_WEIGHTS already use
+  assert.ok(hits[0].d <= 100);
+  assert.ok(Number.isFinite(hits[0].s));      // metres along the run, same shape as a pipeline mark
+});
+
+test('no index, no hits, no crash', () => {
+  const coords = [[-80.72, 34.40], [-80.70, 34.40]];
+  assert.deepEqual(kindHits(coords, cumulative(coords), null, 100, 'attractor'), []);
+});

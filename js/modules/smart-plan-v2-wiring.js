@@ -169,6 +169,12 @@ export async function runSmartPlanV2() {
       windowMin: minutesBetween(inp.launchTime, inp.returnTime),
       species, fishDepthFt: depth.band, holding: depth.holding, month: date.getMonth() + 1,
       weights: w.weights, reliefWeights: w.reliefWeights,
+      // SCDNR / NCWRC / GA DNR WRD / TWRA, live from the Worker. Awaited rather than read off
+      // gis-toggles' cache, because that cache is only filled when the map button is clicked and
+      // a plan must not depend on which layers were toggled first. Failure is [] and a log, never
+      // a dead plan — see getFishAttractors().
+      dnrAttractors: await (window.getFishAttractors?.() ?? Promise.resolve([]))
+        .catch((e) => { console.warn('[plan-v2] DNR attractor feed unavailable:', e?.message); return []; }),
       usableAh: usableAhFrom(inp.motor),
       conditions: {
         ...conditionsFrom(inp, ramp, sol, forecast),

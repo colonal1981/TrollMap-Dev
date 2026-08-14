@@ -256,6 +256,45 @@ export function poiSpotFeatures(poisFc) {
   return out;
 }
 
+/**
+ * The state feed -> attractor features, deduped against Garmin's own.
+ *
+ * TWO SOURCES, ONE KIND OF THING. Garmin charts a Fish Attractor Buoy where it sees one; the
+ * state publishes where it dropped the brushpile. They are the same object described by two
+ * people, and both are worth stopping on. What they are NOT is submerged timber — Ryan,
+ * 2026-08-06, correcting a session that had conflated them: "fish attractors aren't going to show
+ * you stump fields or submerged timber, they will just show where dnr has dropped a brushpile or
+ * a clump of old bridge." That is a statement about what an attractor IS. It was read once as a
+ * reason to leave the state feed out of the planner, which is the opposite of what it says.
+ *
+ * Only the Garmin ones are in `near[]`, because only they were in the pack when the pipeline ran.
+ * So the state rows join per-run in the app, exactly as docks do — see dockHits().
+ *
+ * Deduped at 30 m: wider than any plausible disagreement between a state survey point and a
+ * charted buoy over the same pile, narrower than the gap between two piles anyone would bother
+ * mapping separately. Without it the same brushpile scores twice on the same leg.
+ */
+export function attractorSpotFeatures(dnrRows, poiSpots = [], dedupeM = 30) {
+  const charted = [];
+  for (const f of (poiSpots || [])) {
+    if ((f.properties || {}).kind === 'attractor' && f.geometry) charted.push(f.geometry.coordinates);
+  }
+  const out = [];
+  for (const r of (dnrRows || [])) {
+    const lon = Number(r && r.lon), lat = Number(r && r.lat);
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+    let dup = false;
+    for (const c of charted) {
+      if (metresBetween([lon, lat], c) <= dedupeM) { dup = true; break; }
+    }
+    if (dup) continue;
+    out.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] },
+               properties: { kind: 'attractor', name: r.name || null,
+                             source: r.source || 'state DNR', waterbody: r.waterbody || null } });
+  }
+  return out;
+}
+
 const DEPTH_FIELD = {
   hump: 'depth_ft', ledge: 'depth_ft', point: 'deep_side_ft', cove: 'deep_side_ft',
 };
@@ -505,7 +544,12 @@ function withNear(run, extra) {
   return { ...run, properties: { ...run.properties, near: [...(run.properties.near || []), ...extra] } };
 }
 
-function dockHits(coords, cum, index, maxOffM) {
+/**
+ * Every feature of `kind` in `index` that passes within `maxOffM` of this run, as `near`-shaped
+ * hits. Docks were the first layer to need this because the pipeline never joined them; the state
+ * attractor feed is the second, for the same reason — it is not in the pack the pipeline read.
+ */
+export function kindHits(coords, cum, index, maxOffM, kind, asType = kind) {
   if (!index || !index.grid) return [];
   const out = [];
   const seen = new Set();
@@ -516,7 +560,7 @@ function dockHits(coords, cum, index, maxOffM) {
     for (let dx = -1; dx <= 1; dx++) {
       for (let dy = -1; dy <= 1; dy++) {
         for (const r of (index.grid.get(`${cx + dx},${cy + dy}`) || [])) {
-          if (r.kind !== 'dock') continue;
+          if (r.kind !== kind) continue;
           const key = `${r.lon},${r.lat}`;
           if (seen.has(key)) continue;
           seen.add(key);
@@ -527,12 +571,16 @@ function dockHits(coords, cum, index, maxOffM) {
             const d = pointToSegmentM([r.lon, r.lat], coords[k], coords[k + 1]);
             if (d < best) { best = d; bestAt = cum[k]; }
           }
-          if (best <= maxOffM) out.push({ s: bestAt, t: 'dock', d: best });
+          if (best <= maxOffM) out.push({ s: bestAt, t: asType, d: best });
         }
       }
     }
   }
-  return groupDocks(out);
+  return out;
+}
+
+function dockHits(coords, cum, index, maxOffM) {
+  return groupDocks(kindHits(coords, cum, index, maxOffM, 'dock'));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -857,8 +905,15 @@ export function selectCandidates(runs, o) {
     // Docks join here rather than in the pipeline -- see dockHits(). Merged into `near` before
     // the window slides, so a dock counts toward WHICH window is chosen, not just what the chosen
     // one happens to contain.
-    const docks = o.docks ? dockHits(coords, cumulative(coords), o.docks, opts.maxOffM) : [];
-    const win = bestWindow(docks.length ? withNear(run, docks) : run, opts);
+    const cum0 = cumulative(coords);
+    const docks = o.docks ? dockHits(coords, cum0, o.docks, opts.maxOffM) : [];
+    // The state attractor feed joins here for the same reason docks do: it is not in the pack, so
+    // the pipeline could not have put it in `near[]`. Same `maxOffM` as docks — how far off a line
+    // a thing can be and still be on the way is one question, and it already has one answer.
+    const dnr = o.attractors
+      ? kindHits(coords, cum0, o.attractors, opts.maxOffM, 'attractor') : [];
+    const joined = docks.concat(dnr);
+    const win = bestWindow(joined.length ? withNear(run, joined) : run, opts);
     if (!win) { rejected.noWindow++; continue; }
     // Relief is a property of the whole run, so it is added once rather than per hit. River
     // channel and channel edge are 12 cites across 7 species -- more species than anything else
