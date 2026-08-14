@@ -574,10 +574,36 @@ def report(rows, out, rep, tol_m, dst_names, geometry):
     print('   liveAccessFor() will not count these points. See test/live-ramps-reach-the-filter.')
 
 
-def curated_report(rows, out, tol_m):
-    """Ryan, 2026-08-14: "measure first, decide after." Which curated ramps are genuinely the
-    only thing holding access on a lake, and which are already covered."""
-    uniq, covered, lakes_at_risk = 0, 0, []
+def curated_report(registry, rows, out, tol_m):
+    """Ryan, 2026-08-14: "measure first, decide after."
+
+    THE FIRST VERSION OF THIS FUNCTION ASKED THE WRONG QUESTION and I reported its answer as if
+    it were good news: "68 curated ramps hold a position nothing else has." Ryan: *"i thought we
+    established this as completely untrue already."*
+
+    He is right, and it is the same file we had already convicted this morning -- its 50
+    hand-placed centres are a median 6.91 km from the 3DHP centroids, *"placed by an AI"*. For a
+    source with that record, a position no other source agrees with is not unique data. It is
+    the signature of a made-up coordinate, and counting it as an asset inverts the meaning of
+    the number.
+
+    The measurement that shows it: a curated ramp agrees with another source IF AND ONLY IF it
+    is actually on the water. Every curated ramp more than 200 m from the lake it is filed on
+    is in the "unique" set -- 20 of 20 in the 200 m to 1 km band, 13 of 13 in 1 to 5 km, 7 of 7
+    beyond 5 km. Secession Landing is 19.6 km from Secession Lake.
+
+    So this reports the two things that actually decide it: HOW FAR OFF THE WATER each one sits,
+    and whether it is a ramp another source already has under the same name at a different
+    coordinate -- one ramp filed twice, which 26 of the 68 turned out to be, Chamberlain Ferry
+    by 38 km.
+    """
+    def nm_key(n):
+        n = ''.join(c if c.isalnum() else ' ' for c in _s(n).lower())
+        drop = {'boat', 'ramp', 'landing', 'access', 'area', 'park', 'the', 'public',
+                'recreation'}
+        return ' '.join(sorted(w for w in n.split() if w not in drop and len(w) > 2))
+
+    agree, dup_name, orphan = [], [], []
     for slug, r in rows.items():
         cur = (r.get('ramps') or {}).get('curated') or []
         if not cur:
@@ -587,33 +613,60 @@ def curated_report(rows, out, tol_m):
             if t != 'curated':
                 others += v or []
         others += (out['ramps'].get(slug) or []) + ((out.get('paddle') or {}).get(slug) or [])
-        alone = []
+        others = [o for o in others if o.get('lat') is not None and o.get('lon') is not None]
+        w = load_water(registry, slug, r.get('bounds_wsen'), want_geometry=True)
         for c in cur:
             try:
                 clat, clon = float(c['lat']), float(c['lon'])
             except (KeyError, TypeError, ValueError):
                 continue
             k = math.cos(math.radians(clat)) * 111320.0
-            near = any(math.hypot((float(o.get('lon', 0)) - clon) * k,
-                                  (float(o.get('lat', 0)) - clat) * 111320.0) <= tol_m
-                       for o in others if o.get('lat') is not None)
-            if near:
-                covered += 1
-            else:
-                uniq += 1
-                alone.append(c.get('name'))
-        if alone and not others:
-            lakes_at_risk.append((slug, r.get('display_name') or slug, len(alone)))
-    print('\n── curated ramp coverage, at %.0f m ──' % tol_m)
-    print('%d curated ramps are within %.0f m of a DNR/natl/osm/garmin ramp -- redundant'
-          % (covered, tol_m))
-    print('%d curated ramps have no other source near them' % uniq)
-    print('\n%d lakes would have NO access at all if the curated bucket went away:'
-          % len(lakes_at_risk))
-    for slug, disp, n in sorted(lakes_at_risk, key=lambda t: -t[2])[:25]:
-        print('   %-30s %2d curated ramp(s)   %s' % (slug, n, disp))
-    if len(lakes_at_risk) > 25:
-        print('   ... %d more' % (len(lakes_at_risk) - 25))
+            ds = [(math.hypot((float(o['lon']) - clon) * k,
+                              (float(o['lat']) - clat) * 111320.0), o) for o in others]
+            nearest = min([d for d, _ in ds] or [float('inf')])
+            off = float('inf')
+            if w is not None and w.segs:
+                off = min(_seg_dist_m(clon, clat, *sg) for sg in w.segs)
+            row = (slug, c.get('name'), nearest, off)
+            if nearest <= tol_m:
+                agree.append(row)
+                continue
+            ck = nm_key(c.get('name'))
+            hit = [d for d, o in ds if ck and nm_key(o.get('name')) == ck]
+            (dup_name if hit else orphan).append(row + (min(hit) if hit else 0,))
+
+    total = len(agree) + len(dup_name) + len(orphan)
+    print('\n── curated ramps, %d of them ──' % total)
+    print('%d sit within %.0f m of a DNR/natl/osm/garmin ramp -- redundant, delete freely'
+          % (len(agree), tol_m))
+    print('%d are the SAME NAMED RAMP another source has on that lake, at a different '
+          'coordinate' % len(dup_name))
+    print('   -- one ramp filed twice, not two ramps. Worst:')
+    for slug, nm, _n, _o, d in sorted(dup_name, key=lambda t: -t[4])[:8]:
+        print('      %-28s %7.0f m apart   %s' % (slug, d, nm))
+    print('%d carry a name no other source on that lake uses.' % len(orphan))
+
+    print('\nDISTANCE FROM THE WATER IT IS FILED ON -- the column that decides it.')
+    print('   %-30s %8s %8s' % ('', 'agrees', 'does not'))
+    bands = ((0, 50, 'on the bank, under 50 m'), (50, 200, '50 - 200 m'),
+             (200, 1000, '200 m - 1 km'), (1000, 5000, '1 - 5 km'),
+             (5000, float('inf'), 'over 5 km -- not this lake'))
+    other = dup_name + orphan
+    for lo, hi, lab in bands:
+        a = sum(1 for r in agree if lo <= r[3] < hi)
+        b = sum(1 for r in other if lo <= r[3] < hi)
+        print('   %-30s %8d %8d' % (lab, a, b))
+    print('\n   Read the two columns against each other. A curated ramp agrees with another')
+    print('   source almost exactly when it is on the water -- so "no other source has this')
+    print('   position" is not evidence the position is real. It is evidence it is invented.')
+
+    keepers = [r for r in orphan if r[3] < 50]
+    print('\n%d curated ramps are BOTH unnamed by any other source AND on the bank.' % len(keepers))
+    print('   That is the whole plausible salvage -- a real launch the state feeds missed:')
+    for slug, nm, _n, off, _d in sorted(keepers, key=lambda t: t[3])[:15]:
+        print('      %-28s %5.0f m off the water   %s' % (slug, off, nm))
+    print('\nSeparately, and NOT measured here: the 50 hand-placed CENTRES are a different job')
+    print('   -- check-lake-geo.mjs uses them as its only independent oracle. See DELETION_TAB.')
     print('\nNothing deleted. This is the list to read before deciding.')
 
 
@@ -720,7 +773,7 @@ def main():
     report(idx, out, rep, a.tol_m, dst, geometry)
 
     if a.curated_report:
-        curated_report(idx, out, max(a.tol_m, 150.0))
+        curated_report(R, idx, out, max(a.tol_m, 150.0))
 
     if a.go:
         if a.from_dump:
