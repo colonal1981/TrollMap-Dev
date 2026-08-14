@@ -454,9 +454,18 @@ def main():
         return json.load(open(fp, encoding='utf-8')) if os.path.exists(fp) else {}
 
     acc = load('lake_access.json')
+    # THE DNR BUCKETS ARE THE ONES THE FEEDS ACTUALLY KNOW ABOUT, and until 2026-08-14 there
+    # was no DNR bucket here at all -- which is why `ramp_sources` read 0 on Broad River,
+    # Congaree, Santee and Wateree while SCDNR listed ramps on every one of them. Ryan:
+    # "we need to wire the live ramps to the registry... this is getting ridiculous."
+    # Built by build_dnr_ramps_by_lake.py, which fetches the four state ArcGIS feeds live and
+    # binds each point by NAME first, geometry second. Missing files load as {} and cost
+    # nothing, so this is safe before the first run.
     ramps = {t: load(fn) for fn, t in (('natl_ramps_by_lake.json', 'natl'),
                                        ('osm_ramps_by_lake.json', 'osm'),
-                                       ('garmin_ramps_by_lake.json', 'garmin'))}
+                                       ('garmin_ramps_by_lake.json', 'garmin'),
+                                       ('dnr_ramps_by_lake.json', 'dnr'),
+                                       ('dnr_paddle_by_lake.json', 'dnr_paddle'))}
 
     idx, by_norm = {}, defaultdict(list)
     county_hits = county_miss = 0

@@ -276,10 +276,21 @@ export function registryStats() {
  * a national-CSV ramp is agency data, an OSM slipway is volunteered, and the user should
  * be able to tell them apart before driving somewhere.
  */
+// THE LABEL IS LOAD-BEARING, NOT DECORATION. `liveAccessFor()` in access-index.js classifies an
+// access point by matching /\bramp\b/ and /\b(ramp|slipway|launch|landing)\b/ against this string
+// -- so a bucket added here without a label carrying one of those words contributes a point the
+// planner will not count as somewhere to launch. Added 2026-08-14 with the dnr buckets; the
+// wording is checked by test/live-ramps-reach-the-filter.test.js.
 const SOURCE_META = {
   natl:   { label: 'Boat ramp (agency)', marker: '🛥️' },
   osm:    { label: 'Slipway (OSM)',      marker: '🛶' },
   garmin: { label: 'Ramp (Garmin chart)', marker: '⚓' },
+  // Built offline by scripts/build_dnr_ramps_by_lake.py from the same four state ArcGIS feeds
+  // the worker serves at /ramps and /paddle. These exist so the FILE knows what the live index
+  // already knew -- the Python side has no worker to ask. When both are present they describe
+  // the same launches and accessDedupeKey() collapses them to one dropdown row.
+  dnr:        { label: 'Boat ramp (DNR)',     marker: '🛥️' },
+  dnr_paddle: { label: 'Paddle launch (DNR)', marker: '🛶' },
 };
 
 export function accessPointsFor(rec) {

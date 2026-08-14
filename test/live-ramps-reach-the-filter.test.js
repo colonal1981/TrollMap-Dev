@@ -6,6 +6,7 @@ if (typeof globalThis.window === 'undefined') globalThis.window = globalThis;
 const { displayLakeName, liveAccessFor, findExistingLakeKey, pruneAccessToRecord,
         absorbDuplicateEntries } = await import('../js/data/access-index.js');
 const { makePredicate, setLiveAccessSource, isKeepAlways } = await import('../js/data/water-filter.js');
+const { accessPointsFor } = await import('../js/data/lake-registry.js');
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -289,5 +290,54 @@ describe('the planner picker stops needing the keep-list to see a river', () => 
     expect(onItsOwn(bySlug.santee_river, 'Santee River, SC')).toBe(false);
     expect(onItsOwn({ ...bySlug.santee_river, rampSources: 1 }, 'Santee River, SC')).toBe(true);
     setLiveAccessSource(null);
+  });
+});
+
+describe('every registry ramp bucket reaches the filter it feeds', () => {
+  /**
+   * THE GUARD THE SOURCE_META COMMENT PROMISES.
+   *
+   * `accessPointsFor()` labels a registry access point from SOURCE_META, and `liveAccessFor()`
+   * classifies it by matching words in that label. So a bucket added to the registry with a
+   * label that says neither "ramp" nor "launch" contributes a point the planner will not count
+   * as somewhere to launch -- silently, and only on the lakes that bucket is the sole source
+   * for. That is the exact failure mode this whole file exists about, one level down.
+   *
+   * This runs end to end: build a record carrying one point in each bucket, push it through the
+   * real accessPointsFor(), and ask the real liveAccessFor() what it sees.
+   */
+  const asIndex = (bucket) => ({
+    byLake: new Map([['Somewhere, SC', accessPointsFor({
+      lat: 34, lon: -81, state: 'SC',
+      ramps: { [bucket]: [{ name: 'A launch', lat: 34, lon: -81 }] },
+    })]]),
+  });
+
+  it('counts a point from every shipped ramp bucket as a launch', () => {
+    for (const bucket of ['natl', 'osm', 'garmin', 'dnr', 'dnr_paddle']) {
+      expect(liveAccessFor('Somewhere, SC', asIndex(bucket)).launches, bucket).toBe(1);
+    }
+  });
+
+  it('counts the ramp buckets as ramps and the paddle bucket as not-a-ramp', () => {
+    for (const bucket of ['natl', 'garmin', 'dnr']) {
+      expect(liveAccessFor('Somewhere, SC', asIndex(bucket)).ramps, bucket).toBe(1);
+    }
+    // A slipway IS a ramp in OSM's vocabulary, and this deliberately does not say so, because
+    // lakeBadge() has counted /\bramp\b/ since 08-11 and Lake Murray carries 50 coordinate-less
+    // OSM slipways. Changing what counts as a ramp is its own decision, not a thing to smuggle
+    // in beside a wiring fix.
+    expect(liveAccessFor('Somewhere, SC', asIndex('osm')).ramps).toBe(0);
+    expect(liveAccessFor('Somewhere, SC', asIndex('dnr_paddle')).ramps).toBe(0);
+  });
+
+  it('records that a CURATED ramp counts as neither, which is not yet a decision', () => {
+    // `curated` has no SOURCE_META entry, so accessPointsFor falls back to the bucket name as
+    // the label and it matches nothing. Measured 2026-08-14: 23 of 91 curated ramps sit within
+    // 250 m of another source and ZERO lakes would lose access entirely without the bucket, so
+    // nothing is broken today. Asserted so that stops being true loudly rather than quietly.
+    const idx = asIndex('curated');
+    expect(liveAccessFor('Somewhere, SC', idx).launches).toBe(0);
+    expect(liveAccessFor('Somewhere, SC', idx).points).toBe(1);
   });
 });
