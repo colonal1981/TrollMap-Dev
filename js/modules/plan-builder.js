@@ -166,7 +166,7 @@ export function collectPlan(){
   const species = [...document.querySelectorAll('#planSpeciesChecks input:checked')].map(c=>c.value);
   const lakeVal = gV('planLake');
   const isRiv = isPlanRiverValue(lakeVal);
-  const coastalKey = resolveR2Key(lakeVal);
+  const coastalKey = planWaterKey(lakeVal);
   const isCoastal = isCoastalKey(coastalKey);
   const phaseSpeeds = normalizedPhaseSpeeds(window._smartPlanPhaseRoutes);
 
@@ -502,7 +502,7 @@ function loadPlanIntoForm(p){
   sV('planDate', m.date);
   populatePlanLakeDropdown();
   sV('planLake', m.lake);
-  setLakeOnlyFieldsVisible(!isPlanRiverValue(m.lake||''));
+  setLakeOnlyFieldsVisible(!isRiverWater(m.lake||''));
   populatePlanRampDropdown(m.lake||'');
   sV('planRamp', m.ramp);
   sV('planSmartPlanOutput', p.rationale);
@@ -1746,23 +1746,47 @@ document.getElementById('backToBuilderBtn')?.addEventListener('click', ()=>{
 
 
 /* ---------- Plan tab lake/ramp dropdowns (lakes + rivers merged) ---------- */
+
+/**
+ * `slug` ADDED 2026-08-14, AND IT IS WHAT STOPS THESE BEING LISTED TWICE.
+ *
+ * These six entries predate the registry serving rivers. They are not chartpacks -- selecting
+ * one switches the tab into river mode, filling gauge, flow, rise, surge ETA and schedule, and
+ * carrying a parent lake for level data plus ramps annotated by hand ("Lugoff, just below dam",
+ * "William Dennis, temporarily closed"). None of that exists anywhere else.
+ *
+ * Then the live DNR ramps reached the planner filter (e098c9d) and the registry rows for the
+ * SAME water started passing it, because they finally had ramps. Ryan, 2026-08-14: "planning one
+ * has the hard coded rivers still in it so they are actually in there twice." Two entries per
+ * river, same name, one with gauges and no contours and one with contours and no gauges.
+ *
+ * His call was to MERGE rather than pick a winner, which is right -- they are complementary, not
+ * redundant. So the river entry now names its registry slug, the picker drops the registry row
+ * that a river entry already claims, and the pack resolves through planWaterKey() below. One
+ * entry, tailwater conditions AND trolling lanes.
+ *
+ * COOPER IS HONESTLY PARTIAL. Its label spans "Pinopolis tailrace -> Charleston Harbor" and no
+ * single registry row covers that; `tail_race_canal` is the tailrace half, charted 0.94, and the
+ * harbour end is coast_charleston_sc. The slug gives it a pack for the water you would troll and
+ * does not pretend to cover the rest.
+ */
 const PLAN_RIVERS = [
-  { key:'wateree', label:'Wateree River', worker:'wateree', center:[34.24,-80.65,11], lakeKey:'Lake Wateree', ramps:[
+  { key:'wateree', slug:'wateree_river', label:'Wateree River', worker:'wateree', center:[34.24,-80.65,11], lakeKey:'Lake Wateree', ramps:[
     {name:'Lugoff (just below dam)', lat:34.33346, lon:-80.69973},
     {name:'Highway 1 (Camden / USGS gauge)', lat:34.24486, lon:-80.65403},
     {name:'WT Billy Tolar (mid-river)', lat:33.94721, lon:-80.62891},
   ]},
-  { key:'congaree', label:'Congaree River', worker:'congaree', center:[33.99,-81.05,11], ramps:[
+  { key:'congaree', slug:'congaree_river', label:'Congaree River', worker:'congaree', center:[33.99,-81.05,11], ramps:[
     {name:'Barney Jordan (Columbia)', lat:33.96490, lon:-81.03570},
     {name:'Thomas H Newman (Columbia)', lat:33.94915, lon:-81.02951},
     {name:'Bates Bridge (near Wateree confluence)', lat:33.75342, lon:-80.64513},
   ]},
-  { key:'saluda', label:'Lower Saluda River (cold tailwater)', worker:'saluda', center:[34.02,-81.19,12], lakeKey:'Lake Murray', ramps:[
+  { key:'saluda', slug:'saluda_river_lower_saluda', label:'Lower Saluda River (cold tailwater)', worker:'saluda', center:[34.02,-81.19,12], lakeKey:'Lake Murray', ramps:[
     {name:'Hope Ferry', lat:34.04600, lon:-81.19128},
     {name:'Saluda Shoals Park', lat:34.04679, lon:-81.19058},
     {name:'Saluda Shoals Lower Boat Ramp', lat:34.04333, lon:-81.16340},
   ]},
-  { key:'broad', label:'Broad River', worker:'broad', center:[34.59,-81.42,11], ramps:[
+  { key:'broad', slug:'broad_river_2', label:'Broad River', worker:'broad', center:[34.59,-81.42,11], ramps:[
     {name:'Pick Hill Access', lat:35.04108, lon:-81.49538},
     {name:'99 Island', lat:35.02678, lon:-81.48986},
     {name:"Dalton's Landing", lat:34.93595, lon:-81.47303},
@@ -1770,14 +1794,14 @@ const PLAN_RIVERS = [
     {name:'Sandy & Broad River', lat:34.57281, lon:-81.42221},
     {name:'Shelton Ferry', lat:34.48854, lon:-81.42429},
   ]},
-  { key:'santee', label:'Santee River', worker:'santee', center:[33.42,-80.01,11], lakeKey:'Lake Marion', ramps:[
+  { key:'santee', slug:'santee_river', label:'Santee River', worker:'santee', center:[33.42,-80.01,11], lakeKey:'Lake Marion', ramps:[
     {name:'Wilsons (near Marion dam)', lat:33.44829, lon:-80.15833},
     {name:'Highway 52', lat:33.49487, lon:-79.96049},
     {name:'Arrowhead Landing', lat:33.40441, lon:-79.86331},
     {name:'Lenuds', lat:33.30431, lon:-79.67896},
     {name:'McConnels', lat:33.24514, lon:-79.52085},
   ]},
-  { key:'cooper', label:'Cooper River (Pinopolis tailrace → Charleston Harbor)', worker:'cooper', center:[33.04,-79.95,11], lakeKey:'Lake Moultrie', fishingSystem:'Cooper River system (Pinopolis tailrace → Charleston Harbor)', ramps:[
+  { key:'cooper', slug:'tail_race_canal', label:'Cooper River (Pinopolis tailrace → Charleston Harbor)', worker:'cooper', center:[33.04,-79.95,11], lakeKey:'Lake Moultrie', fishingSystem:'Cooper River system (Pinopolis tailrace → Charleston Harbor)', ramps:[
     {name:'William Dennis (Pinopolis tailrace) ⚠ temporarily closed for renovations', lat:33.21311, lon:-79.97347},
     {name:'Rembert C Dennis (Wadboo Creek)', lat:33.19601, lon:-79.95324},
     {name:'Huger Park (upper Cooper)', lat:33.13111, lon:-79.81111},
@@ -1789,6 +1813,46 @@ const PLAN_RIVERS = [
 ];
 window.PLAN_RIVERS = PLAN_RIVERS;
 export function isPlanRiverValue(v){ return String(v||'').startsWith('river:'); }
+
+/**
+ * Picker value -> R2 key, for the three places that ask what pack the selection means.
+ *
+ * `resolveR2Key('river:wateree')` is null -- it has never seen that shape -- so every river
+ * selection resolved to no pack at all. That was invisible while rivers had no packs; now they
+ * do, and it is the difference between the merged entry loading contours and not.
+ */
+/**
+ * IS THE SELECTED WATER A RIVER -- all 90 of them, not the 6 with a hardcoded entry.
+ *
+ * Ryan, 2026-08-14: "all rivers should show gauges not just those 5 what is the point of having
+ * them" and "river mode should be for all rivers".
+ *
+ * `isPlanRiverValue` answers a narrower question than its name suggests: it tests for the
+ * `river:` VALUE PREFIX, which only the six PLAN_RIVERS entries carry. Every other river in the
+ * registry -- Great Pee Dee, Edisto, Lynches, the Catawba, 84 more -- selected as an ordinary
+ * lake and got the pool-level fields and no river panel, which is wrong about all of them.
+ *
+ * It stays as it is, because `getPlanRiverDef()` depends on that prefix meaning exactly what it
+ * says. This is the separate question, asked of the registry, and it drives the MODE.
+ *
+ * THE PANEL WILL BE EMPTY FOR MOST OF THEM UNTIL THE BINDER RUNS, and that is the honest state
+ * rather than a reason to keep hiding it: 90 river rows, ZERO with a usgs/duke/dominion
+ * binding, and water_bindings.json holds two lakes from 2026-08-06. An empty gauge box on the
+ * Edisto is a visible missing binding; the pool-level box was a wrong one.
+ */
+export function isRiverWater(v){
+  if (isPlanRiverValue(v)) return true;
+  const rec = registryRecordFor(v || '');
+  return !!rec && rec.featureType === 'river';
+}
+
+export function planWaterKey(v){
+  if (isPlanRiverValue(v)) {
+    const def = getPlanRiverDef(v);
+    return (def && def.slug) || null;
+  }
+  return resolveR2Key(v || '');
+}
 export function getPlanRiverDef(v){ const key=String(v||'').replace(/^river:/,''); return PLAN_RIVERS.find(r=>r.key===key||r.worker===key); }
 function isDukePlanLakeName(v){ const clean=String(v||'').split(',')[0].trim().toLowerCase(); return ['lake wateree','lake wylie','lake norman','lake keowee','lake jocassee','lake hickory','lake james','lake rhodhiss','mountain island'].some(k=>clean.includes(k)||k.includes(clean)); }
 function getPlanLakeLevelUnit(){ return isDukePlanLakeName(document.getElementById('planLake')?.value) ? '% full pond' : 'ft'; }
@@ -1867,9 +1931,13 @@ export async function populatePlanLakeDropdown(){
   // water with no contours and nowhere to launch, and every such name here is a dead end you have
   // to click to discover. KEEP_ALWAYS still runs first inside the predicate.
   const plannable = makePredicate('planner', null);
+  // A river entry below already offers this water, with gauges on top of the pack. Listing the
+  // registry row as well is the duplicate Ryan reported on 2026-08-14.
+  const claimedByRiver = new Set(PLAN_RIVERS.map(r => r.slug).filter(Boolean));
   let dropped = 0;
   lakeNames.forEach(lakeName => {
     if (isCoastalKey(resolveR2Key(lakeName))) return;
+    if (claimedByRiver.has(resolveR2Key(lakeName))) return;
     if (!plannable(registryRecordFor(lakeName), lakeName)) { dropped += 1; return; }
     const opt = document.createElement('option');
     opt.value = lakeName; opt.textContent = lakeName;
@@ -1895,7 +1963,7 @@ export async function populatePlanLakeDropdown(){
   appendCoastalOptgroups(sel);
 
   if(current) sel.value = current;
-  setLakeOnlyFieldsVisible(!isPlanRiverValue(sel.value));
+  setLakeOnlyFieldsVisible(!isRiverWater(sel.value));
 }
 
 export function populatePlanRampDropdown(waterbodyName){
@@ -1930,7 +1998,7 @@ export function populatePlanRampDropdown(waterbodyName){
   //
   // Order of preference, unchanged in spirit: the loaded index first, then whatever static list
   // the water has, so a picker opened before the index finishes loading still offers something.
-  const coastalKey = resolveR2Key(waterbodyName || '');
+  const coastalKey = planWaterKey(waterbodyName || '');
   const isCoastal = isCoastalKey(coastalKey);
   let accessPoints = [];
   if (waterbodyName && window.getLoadedAccessIndex) {
@@ -1992,7 +2060,7 @@ export function populatePlanRampDropdown(waterbodyName){
 document.getElementById('planLake')?.addEventListener('change', e=>{
   const v=e.target.value;
   const isRiver=isPlanRiverValue(v);
-  const coastalKey=resolveR2Key(v);
+  const coastalKey=planWaterKey(v);
   const isCoastal=isCoastalKey(coastalKey);
   setLakeOnlyFieldsVisible(!isRiver && !isCoastal);
   populatePlanRampDropdown(v);
