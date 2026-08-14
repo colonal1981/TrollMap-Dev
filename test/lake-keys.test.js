@@ -35,7 +35,7 @@ describe('LAKE_NAME_TO_R2_KEY — single source of truth (102 entries)', () => {
     // two registry rows for the same water registered first — the one with the pack, or the
     // packless duplicate `congaree_river_to_sc_601`. Bates Old River now shares that pack, so the
     // Congaree resolving by load order would have taken Bates down with it.
-    expect(Object.keys(LAKE_NAME_TO_R2_KEY).length).toBe(120);
+    expect(Object.keys(LAKE_NAME_TO_R2_KEY).length).toBe(121)  // +Lake Robinson (Greenville Co, SC) 2026-08-14 -- two SC Lake Robinsons, 190 km apart;
   });
 
   it('contains critical keys that were missing in old worker copy', () => {

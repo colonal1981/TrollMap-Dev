@@ -40,8 +40,13 @@ describe('lake-keys parity — frontend and worker must stay identical (P1 dedup
     // the one with the pack, or the packless duplicate `congaree_river_to_sc_601`. A water he
     // fishes should not resolve by load order. It matters doubly now that Bates Old River shares
     // that pack — see PACK_SHARED_WITH in lake-keys.js.
-    expect(Object.keys(frontendMap).length).toBe(120);
-    expect(Object.keys(SUPPLEMENTAL_KEY_MAP).length).toBe(120);
+    // 121 as of 2026-08-14: "Lake Robinson (Greenville Co, SC)" -> lake_robinson_greer. SC has
+    // TWO Lake Robinsons, 190 km apart, and BOTH registry rows carry the legacy string
+    // "Lake Robinson, SC" -- so Pass 4 had no way to prefer either and answered Darlington for
+    // both. Same shape as the Congaree entry above: a water he can pick should not resolve by
+    // which row registered its slug first.
+    expect(Object.keys(frontendMap).length).toBe(121);
+    expect(Object.keys(SUPPLEMENTAL_KEY_MAP).length).toBe(121);
   });
 
   it('maps are deep equal', () => {
