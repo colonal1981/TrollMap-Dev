@@ -59,6 +59,26 @@ export const LAKE_NAME_TO_R2_KEY = {
   // County. Greenville Water runs both a Lake Robinson and North Saluda, which is
   // where the confusion came from, but Ryan's is the Duke one on the Black Creek.
   'Lake Robinson, SC':                  'lake_robinson',
+  // AND THE OTHER ONE, which the 08-04 note above names but never mapped. Greenville Water's
+  // Lake Robinson is its own registry row, `lake_robinson_greer`, 804 ac and shipped -- and
+  // asking Pass 4 for its full display name returned Darlington's pack, because both rows carry
+  // the legacy string 'Lake Robinson, SC' and the fuzzy pass has no way to prefer either.
+  //
+  // Pass 0 covers this in the browser once access-index registers the slug, so it is not what
+  // the picker does today; it IS what every offline consumer of resolveR2Key does, which is why
+  // keys_smoke has been reporting a shipped lake that resolves to a different slug.
+  //
+  // Recorded here rather than "fixed" in the matcher on purpose. Two real lakes 190 km apart
+  // share a name; that is a fact about South Carolina, not a bug in a rule, and an explicit
+  // mapping is the honest answer to a genuine naming disagreement -- the same argument the
+  // Wittee/Wee Tee alias is filed under.
+  //
+  // NOT a gauge risk, checked 2026-08-14: consolidate_lake_index.py's bind() requires a centroid
+  // within --max-km (25), and build_water_bindings.py requires geometry, so Darlington's Duke
+  // binding and its curated ramps could never have reached Greenville. DELETION_TAB said they
+  // could. They cannot, and the index proves it -- lake_robinson_greer carries no duke, no usgs
+  // and no curated ramps.
+  'Lake Robinson (Greenville Co, SC)':  'lake_robinson_greer',
   'Lake Bowen, SC':                     'lake_william_c_bowen',
   'Lake Blalock, SC':                   'lake_blalock',   // shipped 2026-08-04
 
@@ -219,29 +239,9 @@ function _normalize(name) {
     .trim();
 }
 
-// WHICH STATE(S) A NAME OR A SLUG CLAIMS, or null for "does not say".
-//
-// A SET, not a string: Hartwell is 'SC/GA' and Kentucky Lake is 'KY/TN', and a border lake has
-// to keep matching from either bank. Null is the important value -- it means the name is silent
-// about its state, and silence must never reject anything.
-function _states(text) {
-  const m = String(text || '').match(/,\s*([A-Z]{2}(?:\/[A-Z]{2})*)\s*$/);
-  if (m) return new Set(m[1].split('/'));
-  const slug = String(text || '').match(/_(sc|nc|ga|tn|va|al|ky)$/i);
-  return slug ? new Set([slug[1].toUpperCase()]) : null;
-}
-
-function _mergeStates(a, b) {
-  if (!a) return b;
-  if (!b) return a;
-  return new Set([...a, ...b]);
-}
-
-// Pre-compute normalized forms of all keys once at module load, WITH the state each entry
-// claims -- taken from the curated name ("Lake Hickory, NC") and from the slug's own suffix
-// ("coast_topsail_new_river_nc"), unioned, because either may be the one that carries it.
+// Pre-compute normalized forms of all keys once at module load.
 const _NORM_MAP = Object.entries(LAKE_NAME_TO_R2_KEY)
-  .map(([k, v]) => [_normalize(k), v, _mergeStates(_states(k), _states(v))])
+  .map(([k, v]) => [_normalize(k), v])
   .filter(([kn]) => kn.length > 0);
 
 // display name (and its lowercase form) -> registry slug. Populated by access-index.js once
@@ -454,42 +454,12 @@ export function resolveR2Key(displayName) {
   const FLOWING = /\b(river|creek|run|branch|fork|stream|canal|slough|bayou)\b/i;
   const dnFlowing = FLOWING.test(trimmed);
 
-  // AND A LAKE IN TENNESSEE IS NOT A LAKE IN NORTH CAROLINA.
-  //
-  // The type guard above was the first half of this lesson and it only ever covered one axis.
-  // Repointing `check-lake-geo.mjs` at the state agencies' own surveyed ramp coordinates on
-  // 2026-08-14 found 24 names this pass sends to the wrong water, and the loudest are pure
-  // cross-state namesakes:
-  //
-  //     Old Hickory Reservoir, TN  -> lake_hickory       Catawba Co NC, 580 km, 38 TWRA ramps
-  //     Normandy Reservoir, TN     -> lake_norman        571 km
-  //     Great Falls, TN            -> falls_lake         Wake Co NC, 749 km
-  //     Lake Cherokee, SC          -> cherokee_lake      Hawkins Co TN, 165 km
-  //     New Lake, TN               -> coast_topsail_new_river_nc   1,012 km
-  //
-  // Every one of those carries its state in the name the app builds -- access-index.js's
-  // displayLakeName() appends ", TN" before anything asks this function -- and every one was
-  // thrown away by Pass 3's suffix strip before Pass 4 ever looked. The state was in our hands
-  // and we dropped it on the floor.
-  //
-  // REFUSES ONLY ON A POSITIVE DISAGREEMENT. If the incoming name carries no state, or the
-  // candidate key names none, nothing is rejected -- silence is not evidence. Multi-state keys
-  // are sets, not strings, because Hartwell is 'SC/GA' and Kentucky Lake is 'KY/TN': the test
-  // is whether the two sets are DISJOINT, so a border lake still matches from either side.
-  const dnStates = _states(trimmed);
-  const disjoint = (a, b) => {
-    if (!a || !b) return false;              // one side is silent -- not a disagreement
-    for (const x of a) if (b.has(x)) return false;
-    return true;
-  };
-
   let best = null;
   let bestLen = 0;
-  for (const [kn, v, kStates] of _NORM_MAP) {
+  for (const [kn, v] of _NORM_MAP) {
     if (dn === kn || dn.includes(kn) || kn.includes(dn)) {
       // `kn` is normalised, which strips the generic word — test the key it came from.
       if (dnFlowing !== FLOWING.test(v)) continue;
-      if (disjoint(dnStates, kStates)) continue;
       if (kn.length > bestLen) {
         bestLen = kn.length;
         best = v;
