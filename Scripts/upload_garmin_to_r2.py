@@ -313,6 +313,12 @@ def main():
     ap.add_argument("--force", action="store_true", help="ignore the manifest, push everything")
     ap.add_argument("--manifest", default=None, help="default <root>/_r2_manifest.json")
     ap.add_argument("--timeout", type=int, default=900)
+    ap.add_argument("--index", default=None,
+                    help="registry/lake_index.json -- ONLY these slugs ship. Defaults beside "
+                         "--registry. See the gate below for why this is not optional.")
+    ap.add_argument("--all-packs", action="store_true",
+                    help="upload every pack dir under --root, ignoring the index. For a full "
+                         "archive push; NOT for shipping to the app.")
     ap.add_argument("--registry", default=None,
                     help="also publish <registry>/lakes.json to _registry/lakes.json, "
                          "slimmed for the live DNR worker, AND <registry>/lake_index.json "
@@ -463,10 +469,57 @@ def main():
             print(f"!! {wb} not found -- gauges, pool level and tide stay pending in the Worker; "
                   f"build it with build_water_bindings.py")
 
-    jobs, skipped, oversize = [], 0, 0
+    # ── ONLY WHAT THE APP CAN ASK FOR ────────────────────────────────────────────────────────
+    #
+    # `lake_index.json`, NOT "a chartpack directory exists". The unbuildable filter and the
+    # region gate both land in the index, so reading it means this uploader inherits both
+    # without duplicating either -- which is the identical argument, in the identical words,
+    # that `upload_boundaries_to_r2.py` has carried since 2026-08-13:
+    #
+    #   Ryan: "the boundary files do not pay attention to the registry filters so a hole bunch
+    #   of boundary files for lakes that do not have chartpacks are sitting hanging out in R2"
+    #
+    # That bug was fixed in the boundary uploader and NOT here, and this is the bigger of the
+    # two. Measured 2026-08-14: 1,707 pack dirs against a 457-row index, so 1,250 packs the app
+    # does not offer were being proposed -- `820ft`, `alexander_creek`, `alligator_river` and
+    # `banks_lake` were four of the first five slugs in the dry run.
+    #
+    # FAILS CLOSED. No readable index and no --all-packs is a hard stop, not a full push. An
+    # uploader that treats "I could not find the list of what to ship" as "ship everything" is
+    # the same shape as the aliases generator that treated "I could not read the index" as
+    # "filter nothing" -- both turn a missing input into a confident wrong answer.
+    offered = None
+    if not args.all_packs:
+        ipath = Path(args.index) if args.index else (
+            (regdir / "lake_index.json") if regdir else None)
+        try:
+            _idx = json.load(open(ipath, encoding="utf-8"))
+            offered = set(_idx if isinstance(_idx, dict) else
+                          (r.get("slug") or r.get("key") for r in _idx))
+        except Exception as e:
+            print(f"!! NO USABLE INDEX at {ipath} ({e.__class__.__name__}).")
+            print("!! Refusing to upload: without it this would push every pack dir under "
+                  f"{root}, most of which the app does not offer.")
+            print("!! Pass --index explicitly, or --all-packs if a full archive push is what "
+                  "you actually want.")
+            return 2
+        print(f"index gate: {len(offered):,} slugs offered by the app "
+              f"(--all-packs to ignore it)")
+    if slugs and offered:
+        stray = sorted(set(slugs) - offered)
+        if stray:
+            print(f"note: {len(stray)} slug(s) named with --lake are not in the index and will "
+                  f"ship anyway: {', '.join(stray[:8])}"
+                  + (" ..." if len(stray) > 8 else ""))
+
+    jobs, skipped, oversize, offscope = [], 0, 0, 0
     for d in sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith("_")):
         slug = d.name
         if slug in SKIP_SLUGS or (slugs and slug not in slugs):
+            continue
+        # An explicit --lake is a request and wins; the gate is for the sweep.
+        if offered is not None and not slugs and slug not in offered:
+            offscope += 1
             continue
         # Per-pack, because a secondary coastal zone ships a different set than a lake.
         for layer in sorted(layers_for(slug, want, primary,
@@ -495,6 +548,7 @@ def main():
 
     jobs = reg_jobs + jobs
     print(f"{len(jobs)} objects to upload, {skipped} unchanged, "
+          f"{offscope} packs not offered by the app, "
           f"{oversize} over --max-mb, {args.jobs} parallel, gzip={'on' if gz else 'off'}")
     if not jobs:
         print("nothing to do")
@@ -552,4 +606,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # sys.exit(), not a bare call. main() returns 2 when it refuses to upload, and a bare
+    # call throws that away -- so a refusal exited 0 and read as success to anything
+    # scripting this. A guard whose failure exit code is 0 is not a guard.
+    sys.exit(main() or 0)
