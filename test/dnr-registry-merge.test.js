@@ -183,12 +183,31 @@ describe('one water can arrive under several DNR names, across two feeds', () =>
     expect(i.byLake.get('Fishing Creek Reservoir, SC')).toHaveLength(2);
   });
 
-  it('refuses when ANY of the other entry\'s points lie outside the lake', () => {
-    // the creek continues past the reservoir -- different water, keep it separate
+  // REWRITTEN 2026-08-14. This asserted the all-or-nothing rule -- one point outside the box
+  // and the whole entry was refused -- and 5b2b08e replaced that rule on 08-12 with a per-point
+  // one, touching only js/data/access-index.js. The test was left behind and has been red on
+  // main ever since, which is its own finding: `npm test` had not been run in two days.
+  //
+  // The reason the rule changed is measured and is in the code: all-or-nothing dropped 55
+  // waterbodies and 447 ramps over outliers -- Hartwell lost 43 because 11 were out, and Falls
+  // Lake lost all four of its NCWRC ramps over the Eno River access, a real launch sitting 3 km
+  // outside a bbox that does not stretch up that arm.
+  //
+  // So the contract under test is now: take the points that are inside, leave the ones that are
+  // not where they are, and keep the other key alive because it still holds them.
+  it('takes the points inside the lake and leaves the outlier under its own name', () => {
+    // the creek continues past the reservoir -- that stretch is different water
     const i = idx();
     i.byLake.get('Fishing Creek, SC').push({ name: 'upstream', lat: 34.80, lon: -80.95 });
-    expect(absorbDuplicateEntries(i, 'Fishing Creek Reservoir, SC', fcr)).toBe(0);
+
+    expect(absorbDuplicateEntries(i, 'Fishing Creek Reservoir, SC', fcr)).toBe(1);
+    // Nitrolee is genuinely in the reservoir, so it moves.
+    expect(i.byLake.get('Fishing Creek Reservoir, SC')).toHaveLength(2);
+    // The upstream point does not, and its key survives holding only that.
     expect(i.byLake.has('Fishing Creek, SC')).toBe(true);
+    const left = i.byLake.get('Fishing Creek, SC');
+    expect(left).toHaveLength(1);
+    expect(left[0].name).toBe('upstream');
   });
 
   it('does not duplicate a point that is already there', () => {
