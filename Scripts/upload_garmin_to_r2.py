@@ -337,7 +337,22 @@ def main():
     root = Path(args.root)
     if not root.is_dir():
         sys.exit(f"not a directory: {root}")
-    want = set(args.layers) if args.layers else (set(LAYERS) - LAYERS_OPT_IN)
+    # --all MEANS ALL. It did not: `args.all` was never read anywhere in this file, so the flag
+    # documented as "every layer, every lake" selected nothing and `want` always came out as
+    # LAYERS - LAYERS_OPT_IN.
+    #
+    # THE OPT-IN SET IS WHAT THE APP READS. trolling_runs, structure and water_features are
+    # fetched by smart-plan-v2.js and plan-water-ui.js on every plan -- water_features and
+    # structure three times each across the tree, trolling_runs twice. So `--all` after a
+    # card-wide fit uploaded contours, depth_areas, docks, garmin_shoreline and pois, reported
+    # success, and left R2 serving the runs it already had. Fourteen hours of fitting on
+    # 2026-08-13 would have stayed on the drive, and the dry run's "1,314 unchanged" was the
+    # tell: had runs been in the set, nearly every one of the 457 packs would have been listed.
+    #
+    # Opt-in is still right as the DEFAULT -- these come from separate passes and a routine
+    # push should not assume they exist. It is not right as a thing `--all` cannot switch off.
+    want = (set(args.layers) if args.layers
+            else (set(LAYERS) if args.all else set(LAYERS) - LAYERS_OPT_IN))
     if args.layers:
         bad = want - set(LAYERS)
         if bad:
@@ -352,6 +367,15 @@ def main():
     if not args.with_pipeline_layers:
         print("pipeline-only layers held back (nothing reads them from R2): "
               + ", ".join(sorted(PIPELINE_ONLY)))
+    # PRINT THE SET. The whole failure above was invisible because the run never said what it
+    # was shipping -- only what it was holding back, and not the half that mattered.
+    print("layers: " + ", ".join(sorted(want - (set() if args.with_pipeline_layers
+                                                else PIPELINE_ONLY))))
+    held = (set(LAYERS) - want) - (set() if args.with_pipeline_layers else PIPELINE_ONLY)
+    if held:
+        print("HELD BACK: " + ", ".join(sorted(held))
+              + "  <- the app reads trolling_runs, structure and water_features. "
+                "Pass --all if this run is meant to publish them.")
     print("coastal primary (all layers): " + ", ".join(sorted(primary)))
     if primary:
         print("coastal secondary ships only: " + ", ".join(sorted(COASTAL_SECONDARY_LAYERS)))
