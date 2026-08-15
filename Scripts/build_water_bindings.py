@@ -1219,8 +1219,9 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
         #   "lake_robinson": [ {"site": "02130910", "role": "tailwater", "why": ..., "by": ...} ]
         #   role is pool | tailwater | gauge, and defaults to pool
         #
-        # Overrides go LAST and WIN. A gauge a person checked outranks a derived one -- the same
-        # order the ramp merge above uses, and the whole point of an override.
+        # Overrides go LAST and WIN. A gauge a person checked outranks a derived one, which is
+        # the whole point of an override. (This used to cite "the same order the ramp merge
+        # above uses"; that merge was deleted on 2026-08-15 as output nothing read.)
         for cu in (overrides.get(slug) or []):
             # `lid` ALONGSIDE `site`, ADDED 2026-08-15, because the worklist deals in lids.
             #
@@ -1324,19 +1325,26 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
             # of a named gauge 200 m off the bank -- which inverts the evidence.
             b['gauges'] = (b.get('gauges') or []) + sorted(geom_only, key=lambda x: x['name'])
 
-        # `natl` was the only ramp source read, so 146 of 218 bound waters shipped an empty
-        # ramp list while the index held osm and curated ramps for them. Curated first -- a
-        # hand-checked ramp outranks a harvested one -- then natl, then osm, deduped on name.
-        ramps, seen_r = [], set()
-        for rsrc in ('curated', 'natl', 'osm'):
-            for r in ((rec.get('ramps') or {}).get(rsrc) or []):
-                nm = (r.get('name') or '').strip()
-                if not isinstance(r.get('lat'), (int, float)) or nm.lower() in seen_r:
-                    continue
-                seen_r.add(nm.lower())
-                ramps.append({'name': nm, 'lat': r.get('lat'), 'lon': r.get('lon'),
-                              'source': rsrc})
-        b['ramps'] = ramps[:12]
+        # NO RAMPS HERE. There was a `b['ramps']` block: up to 12 access points per water,
+        # 410 entries and 34.3 KB of the published file. **Nothing read it.**
+        #
+        # `water_bindings.json` has exactly one consumer, `Worker/conditions.js`, and that file
+        # builds its response field by field -- slug, display_name, state, feature_type, pool,
+        # tailwater, gauge, failed, other_gauges, reach, usace, curated, tidal, source. `ramps`
+        # is not among them, and no client fetches `_registry/water_bindings.json` directly.
+        # Checked across Worker/, js/ and every Python reader on 2026-08-15.
+        #
+        # The block had already been "fixed" once. Its comment read: *"`natl` was the only ramp
+        # source read, so 146 of 218 bound waters shipped an empty ramp list while the index
+        # held osm and curated ramps for them."* Someone saw the field looking wrong and made
+        # it more correct without asking who reads it. Then on 2026-08-15 I noticed it was
+        # missing the two DNR buckets from 08-14 and was about to add those too -- a third
+        # round of work on a field with no reader. Ryan: *"why is it not tonights problem?"*
+        #
+        # THE RAMPS THE APP ACTUALLY READS come from `lake_index.json`, where
+        # `consolidate_lake_index.py` merges all five buckets -- curated, natl, osm, garmin and
+        # dnr. That path is correct and is not this one. If the Worker ever needs ramps, it can
+        # read them from the index it already publishes.
 
         # Tide stations. A measured water-level station outranks a harmonic-prediction-only
         # one, and the flag survives into the output because a prediction is a model and the
