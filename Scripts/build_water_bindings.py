@@ -115,6 +115,12 @@ USGS_SITE_RE = re.compile(r'^\d{8,15}$')
 # "above"/"below" is how pool and tailwater are told apart. Ordered longest-first so
 # "tailwater" wins over a bare "below" in the same string.
 TAILWATER_RE = re.compile(r'\b(tailrace|tailwater|below)\b', re.I)
+# Split out of TAILWATER_RE 2026-08-15. `tailrace`/`tailwater` are decisive on their own; a
+# bare `below` is not, because "<River> below <town>" is how half the roster names an ordinary
+# stage gauge. Requiring `dam` for BOTH is what let a gauge saying TAILRACE fall through to the
+# pool branch on the word ABOVE.
+TAILRACE_RE = re.compile(r'\b(tailrace|tailwater)\b', re.I)
+BELOW_RE = re.compile(r'\bbelow\b', re.I)
 POOL_RE = re.compile(r'\b(above|headwater|at\s+dam|pool)\b', re.I)
 DAM_RE = re.compile(r'\bdam\b', re.I)
 
@@ -878,8 +884,32 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
         # in review_geom_only. Names come from 3DHP flowlines inside the boundary, via
         # build_lake_rivers.py. Geometry is still required, so handing the same river name to
         # five TVA pools cannot bind a gauge to water it is not on.
-        names += ((lake_rivers or {}).get(slug, {}).get('rivers') or [])
-        names = [n for n in names if n]
+        # KEPT SEPARATE, NOT MERGED. The comment above is right that the river name is the only
+        # way most impoundments bind at all, and wrong that geometry makes it safe. Reservoirs
+        # on one river ABUT each other, and the gauge at the dam between two of them stands
+        # inside both polygons. Lake Wateree, 2026-08-15: its `_lake_rivers` list carries the
+        # tributary "Rocky Creek", which shares the token `rocky` with
+        # "Catawba River at Cedar Creek Reservoir/Rocky Ck-Cedar Ck Dam" -- a gauge on the
+        # reservoir ABOVE Wateree, sitting 0.0 km inside Wateree's polygon because that dam is
+        # Wateree's head. It scored name+geom and took `pool`. Meanwhile
+        # "Wateree River at Lake Wateree Dam", which carries the lake's OWN name, was 0.08 km
+        # outside and fell to `others`. Ryan: "this noaa gauge is above lake wateree... this
+        # noaa gauge is right before the wateree dam so in the lake."
+        #
+        # So the river list stays -- it is load-bearing for Kentucky Lake and every TVA pool --
+        # but a match that comes ONLY from it loses the pool race to one that names the water.
+        own_names = [n for n in names if n]
+        river_names = [n for n in ((lake_rivers or {}).get(slug, {}).get('rivers') or []) if n]
+        names = own_names + river_names
+        # The distinctive tokens of the water's OWN name, for the tie-break below.
+        own_tok = set()
+        for _n in own_names:
+            own_tok |= (set(tokens(_n)) - weak)
+        # WHAT A GOOD PRIMARY GAUGE IS DEPENDS ON WHAT THE WATER IS. `HP` pool height is the
+        # right reading for a reservoir and the wrong one for a river -- the Lower Saluda wants
+        # stage below Murray Dam, not Murray's pool. Ranking `HP` first everywhere swapped 20
+        # rivers off their own stage gauges onto the pool of whatever impoundment they touch.
+        want_pe = 'HP' if (rec.get('feature_type') or 'lake') == 'lake' else 'HG'
 
         bnd = load_boundary(os.path.join(boundaries_dir, slug + '.geojson'))
         polys, verts = bnd if bnd else (None, None)
@@ -904,9 +934,18 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
         pool = tail = None
         others = []
         geom_only = []
+        pool_cands, tail_cands = [], []
         for lid, g, lon, lat in cand:
             gname = g.get('name') or ''
-            tok = name_relation(names, gname, weak)
+            tok_own = name_relation(own_names, gname, weak)
+            tok = tok_own or name_relation(river_names, gname, weak)
+            # SHEF physical element, straight off the NWPS roster and never used until now.
+            # `HG` is gauge height -- river stage. `HP` is POOL height. `HT` is tailwater.
+            # 49 HG against 9 HP in one 1.5-degree tile, which is the pool/stage question
+            # answered by the agency that runs the gauge instead of by matching English words
+            # against a station name. POOL_RE's `at\s+dam` never matched "at Lake Wateree Dam"
+            # and that is why the lake's own gauge was not even pool-ELIGIBLE.
+            pe = ((g.get('pedts') or {}).get('observed') or '')[:2].upper()
             inside = bool(polys) and point_in_polys(lon, lat, polys)
             if inside:
                 d_km = 0.0
@@ -953,17 +992,39 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
                      'km_outside': round(d_km, 1),
                      'wfo': (g.get('wfo') or {}).get('abbreviation'),
                      'rfc': (g.get('rfc') or {}).get('abbreviation')}
+            entry['_own'] = bool(tok_own)
+            entry['_pe'] = pe
+            entry['_inside'] = inside
+            # How many times the water's own distinctive tokens appear in the gauge name.
+            # "Hiwassee River above Hiwassee Dam" scores 2, "Hiwassee River above Mission Dam
+            # at Brasstown" scores 1 -- which is the difference between a lake's own dam and
+            # the next dam upstream, and the only signal that separates them. Without it
+            # Hiwassee Lake took Mission Dam, because Mission sits 0.0 km inside the polygon
+            # and its own dam gauge is 0.14 km outside.
+            entry['_hits'] = sum(1 for t in tokens(gname) if t in own_tok)
             if lid in tva_by_lid:
                 t = tva_by_lid[lid]
                 entry['tva'] = {'dam': t.get('Name'), 'top_of_gates_ft': t.get('TopOfGatesFt'),
                                 'river': t.get('River'), 'river_mile': t.get('RiverMile')}
 
-            # Pool vs tailwater from the WORDING. Never synthesised from the other's id --
-            # NRST1 -> NRTT1 looks like a rule and is not; CRTT1 and DUTT1 both 404.
-            if TAILWATER_RE.search(gname) and DAM_RE.search(gname):
-                tail = entry if tail is None else tail
-            elif POOL_RE.search(gname) or inside:
-                pool = entry if pool is None else pool
+            # Pool vs tailwater. Never synthesised from the other's id -- NRST1 -> NRTT1 looks
+            # like a rule and is not; CRTT1 and DUTT1 both 404.
+            #
+            # TAILRACE AND TAILWATER ARE DECISIVE ON THEIR OWN. Requiring `dam` alongside them
+            # meant "LAKE WATEREE TAILRACE ABOVE CAMDEN, SC" -- which says TAILRACE -- failed
+            # the tailwater test for want of the word "dam", then matched POOL_RE on "ABOVE"
+            # and was one step from being published as a lake's pool level. Only a bare
+            # `below` still needs `dam`, because half the river gauges in the roster are
+            # "<River> below <town>" and that is a stage reading, not a tailrace.
+            if TAILRACE_RE.search(gname) or (BELOW_RE.search(gname) and DAM_RE.search(gname)) \
+                    or pe == 'HT':
+                tail_cands.append(entry)
+            elif POOL_RE.search(gname) or inside or (pe == want_pe and tok_own):
+                # `pe` alone is not a licence. A river-token match standing outside the polygon
+                # with the right SHEF element is a NEIGHBOUR's gauge -- it is how Tuckertown
+                # picked up High Rock's pool and `wilson_dam` picked up Lake Marion's. It has
+                # to also name this water, or stand in it.
+                pool_cands.append(entry)
             else:
                 others.append(entry)
 
@@ -987,6 +1048,36 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
         # the pool reading sat on disk. So: MERGE the USGS identity onto the entry already
         # placed there, and let it promote that entry to `pool` when the site type says lake and
         # a level parameter is present.
+        # ── choose, then demote the runners-up ──────────────────────────────────────────────
+        #
+        # This was `pool = entry if pool is None else pool` -- FIRST CANDIDATE IN ITERATION
+        # ORDER WINS, and every later one was DROPPED. Not demoted to `others`: dropped. So a
+        # lake could have its own named gauge in the candidate list and publish a neighbouring
+        # reservoir's instead, with no record that a second candidate ever existed.
+        #
+        # Ranked now, and the runners-up fall through to `others` where they are still readable.
+        #   1. a gauge that names THE WATER beats one that only names a river running through it
+        #   2. the SHEF element the water actually wants -- HP for a lake, HG for a river
+        #   3. more of the water's own tokens in the gauge name (its own dam beats the next one)
+        #   4. standing inside the polygon beats standing near it
+        #   5. then closest
+        def _rank(e):
+            pe_ = e.get('_pe') or ''
+            return (0 if e.get('_own') else 1,
+                    0 if pe_ == want_pe else (1 if pe_ in ('HG', 'HP') else 2),
+                    -(e.get('_hits') or 0),
+                    0 if e.get('_inside') else 1,
+                    e.get('km_outside') or 0.0)
+
+        pool_cands.sort(key=_rank)
+        tail_cands.sort(key=_rank)
+        if pool_cands:
+            pool = pool_cands[0]
+            others.extend(pool_cands[1:])
+        if tail_cands:
+            tail = tail_cands[0]
+            others.extend(tail_cands[1:])
+
         placed = ([pool] if pool else []) + ([tail] if tail else []) + others + geom_only
 
         def _colocated(lon_, lat_, _p=placed):
@@ -1304,7 +1395,21 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
         for legacy in ('usgs', 'duke', 'dominion', 'normalPool', 'minPool'):
             if rec.get(legacy) is not None:
                 b.setdefault('curated', {})[legacy] = rec[legacy]
-        bindings[slug] = b
+        # The ranking keys are working state, not output. Stripped here rather than never
+        # attached, because the rank has to survive from the classification loop to the sort
+        # and both live inside this function.
+        def _scrub(o):
+            if isinstance(o, dict):
+                for k in ('_own', '_pe', '_inside', '_hits'):
+                    o.pop(k, None)
+                for v in o.values():
+                    _scrub(v)
+            elif isinstance(o, list):
+                for v in o:
+                    _scrub(v)
+            return o
+
+        bindings[slug] = _scrub(b)
         tally['bound'] += 1
         tally['bound_pool'] += 1 if pool else 0
         tally['bound_tailwater'] += 1 if tail else 0
