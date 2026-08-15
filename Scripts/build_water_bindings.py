@@ -1131,11 +1131,54 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
         # Overrides go LAST and WIN. A gauge a person checked outranks a derived one -- the same
         # order the ramp merge above uses, and the whole point of an override.
         for cu in (overrides.get(slug) or []):
+            # `lid` ALONGSIDE `site`, ADDED 2026-08-15, because the worklist deals in lids.
+            #
+            # This loop only ever accepted a USGS site number, and every row
+            # triage_water_bindings.py puts in front of a human is an NWPS lid. So the one
+            # workflow that exists for recording a fact a person checked could not record the
+            # answer to any question it asked. Ryan looked at TFLG1 -- "Tallulah River above
+            # TALLULAH FALLS PWR HOUSE" -- and established it is the powerhouse feeding the head
+            # of Tugaloo: a real inflow gauge that the name rule can never derive, because
+            # "Tallulah" is not "Tugaloo". Exactly the case this file exists for, and it had
+            # nowhere to go.
+            #
+            # A lid is looked up in the NWPS roster the same way a site is looked up in the USGS
+            # catalogue, and an unknown one is reported rather than dropped -- same rule as
+            # `override_site_not_in_catalogue` below.
             site = str((cu or {}).get('site') or '').strip()
-            if not USGS_SITE_RE.match(site):
+            lid = str((cu or {}).get('lid') or '').strip().upper()
+            if not site and not lid:
+                continue
+            if site and not USGS_SITE_RE.match(site):
+                print('   !! override %s -> site %r is not a USGS site number' % (slug, site))
+                continue
+            role = (cu.get('role') or 'pool').lower()
+            if lid:
+                # src['nwps'] is already keyed by lid -- the same roster the tile sweep filled.
+                ng = (src.get('nwps') or {}).get(lid)
+                ce = {'lid': lid, 'source': 'nwps', 'confidence': 'override',
+                      'name': (ng or {}).get('name') or cu.get('name') or ('NWPS %s' % lid),
+                      'lat': (ng or {}).get('latitude'), 'lon': (ng or {}).get('longitude'),
+                      'km_outside': 0.0,
+                      'why': cu.get('why'), 'by': cu.get('by'), 'on': cu.get('on')}
+                if ng is None:
+                    ce['note'] = 'lid not in the NWPS roster fetched here; curated on trust'
+                    tally['override_lid_not_in_roster'] += 1
+                others = [o for o in others if (o.get('lid') or '').upper() != lid]
+                geom_only = [o for o in geom_only if (o.get('lid') or '').upper() != lid]
+                if not (cu.get('by') and cu.get('on')):
+                    print('   !! override %s -> %s has no `by`/`on`. Say who decided it and when.'
+                          % (slug, lid))
+                    tally['override_without_author'] += 1
+                if role == 'tailwater':
+                    tail = ce
+                elif role == 'pool':
+                    pool = ce
+                else:
+                    others.append(ce)
+                tally['override_applied'] += 1
                 continue
             g = usgs_sites.get(site)
-            role = (cu.get('role') or 'pool').lower()
             ce = {'usgs_site': site, 'source': 'usgs', 'confidence': 'override',
                   'name': (g or {}).get('name') or cu.get('name') or ('USGS %s' % site),
                   'lat': (g or {}).get('lat'), 'lon': (g or {}).get('lon'),

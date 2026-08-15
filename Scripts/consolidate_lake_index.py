@@ -876,6 +876,61 @@ def main():
                 print('   then re-run this. If the build refuses them, the unbuildable filter')
                 print('   drops them with a reason, which is the honest way for them to go.')
 
+    # ── the gauge bindings, carried the last step ───────────────────────────────────────────
+    #
+    # `water_bindings.json` has existed since 2026-08-06 and this file has never READ it -- the
+    # only mention of it in here is a line of prose in the docstring. So the whole gauge chain
+    # (build_lake_rivers -> build_water_bindings -> triage) wrote a file nothing consumed, and
+    # `rec['usgs']` came only from curated_lakes.json's five hand-written entries.
+    #
+    # Measured 2026-08-15, straight after a full chain run that bound 229 waters: the index
+    # still read **10 of 456 rows with a gauge, and 0 of 90 rivers**. Exactly the shape of the
+    # DNR ramps that morning -- the data existed, the last step did not carry it.
+    #
+    # THE NWPS BINDINGS CARRY A USGS SITE TOO. 110 of the pool bindings are NWPS-sourced, and
+    # the roster cross-references a gauge to its USGS site: Wateree River's pool is CFMS1 and
+    # also `usgs_site: 02169750`. So 212 of the 229 can supply the field the app actually
+    # reads, 62 of them rivers. Preferring the pool binding over a gauges[] entry matters --
+    # pool is the lake's own level, and a gauges[] entry may be a tributary reading.
+    #
+    # BINDINGS WIN OVER CURATED. The binder already reports `curated_usgs_no_longer_read` for
+    # the five lakes whose usgs came from that file, and curated is on the deletion tab as
+    # invented data. A derived binding with geometry behind it outranks a hand-typed one.
+    wbp = os.path.join(R, 'water_bindings.json')
+    if os.path.exists(wbp):
+        try:
+            _wb = (json.load(open(wbp, encoding='utf-8')) or {}).get('bindings') or {}
+        except Exception as _e:
+            _wb = {}
+            print('\n!! water_bindings.json unreadable (%s) -- no gauges promoted' % _e)
+        n_site = n_riv = n_over = 0
+        for _slug, _b in _wb.items():
+            _rec = idx.get(_slug)
+            if not _rec:
+                continue
+            _pool = _b.get('pool') or {}
+            _site = _pool.get('usgs_site') or next(
+                (g.get('usgs_site') for g in (_b.get('gauges') or []) if g.get('usgs_site')), None)
+            if not _site:
+                continue
+            if _rec.get('usgs') and _rec['usgs'] != _site:
+                n_over += 1
+            _rec['usgs'] = _site
+            n_site += 1
+            if _rec.get('feature_type') == 'river':
+                n_riv += 1
+        _tot = sum(1 for r in idx.values() if r.get('usgs') or r.get('duke') or r.get('dominion'))
+        _rivtot = sum(1 for r in idx.values() if r.get('feature_type') == 'river')
+        print('\nwater_bindings: %d row(s) took a usgs site from a binding (%d river(s))'
+              % (n_site, n_riv))
+        if n_over:
+            print('   %d of them replaced a curated usgs value -- the binding has geometry '
+                  'behind it' % n_over)
+        print('   index now: %d of %d rows carry a gauge, %d of %d rivers'
+              % (_tot, len(idx), n_riv, _rivtot))
+    else:
+        print('\n!! %s not beside the registry -- no gauges promoted. Run the gauge chain.' % wbp)
+
     json.dump(idx, open(a.out, 'w', encoding='utf-8'), indent=1)
     if packless:
         rp3 = os.path.join(R, '_index_packless.json')

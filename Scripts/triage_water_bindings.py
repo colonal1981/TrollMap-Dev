@@ -49,9 +49,17 @@ One question per row: is this gauge ON this water? Not near it, not upstream pas
 Two links per row answer it: a map link at the gauge's own coordinates, and its NWPS page, which
 names the river and shows the reach.
 
-`--accept` writes the single-candidate rows into `water_bindings.json` as `gauges[]` entries at
-`geom_only` confidence. It never writes `pool` -- promoting a gauge to pool is a name-and-geometry
-decision and stays a human one.
+ANSWER IN THE `keep` COLUMN, then re-run with `--accept`. y/yes/1/x keeps a row, anything else
+rejects it, and blank means unanswered. Answers survive a re-run -- the worklist is read before
+it is rewritten -- so you can do a few at a time.
+
+`--accept` writes the kept rows into `water_bindings.json` as `gauges[]` entries at `geom_only`
+confidence. With no answers at all it falls back to every single-candidate row, which is the old
+behaviour. It never writes `pool` -- promoting a gauge to pool is a name-and-geometry decision
+and stays a human one.
+
+Two candidates on one lake is the case the column exists for: mark the right one `y` and the
+other `n`, which is a thing --accept could not previously express at all.
 """
 import argparse, csv, json, os, sys
 
@@ -125,6 +133,9 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--registry', required=True)
     ap.add_argument('--out', help='TSV worklist. Default <registry>/../outputs/gauge_worklist.tsv')
+    ap.add_argument('--accept-all-singles', action='store_true',
+                    help='take every single-candidate row even though the worklist is '
+                         'unanswered. The old --accept behaviour, now explicit.')
     ap.add_argument('--accept', action='store_true',
                     help='write the single-candidate rows into water_bindings.json as gauges[] '
                          'entries. Never sets pool. Default is to write nothing.')
@@ -200,17 +211,65 @@ def main():
     out = a.out or os.path.join(os.path.dirname(reg.rstrip('\\/')), 'outputs',
                                 'gauge_worklist.tsv')
     os.makedirs(os.path.dirname(out) or '.', exist_ok=True)
+
+    # ANSWERS SURVIVE A RE-RUN. Rewriting the worklist would otherwise erase the column you
+    # just filled in, which is the one thing that must never happen to a file a human typed in.
+    # utf-8-SIG, AND A BACKUP BEFORE THE REWRITE. Both because of a real loss, 2026-08-15.
+    #
+    # Ryan answered all twelve rows n, saved from Excel, and re-ran. Excel writes a UTF-8 BOM,
+    # so with encoding='utf-8' the first fieldname parsed as '\ufeffkeep' -- row.get('keep')
+    # returned None on every row, prior came back empty, and THIS FUNCTION THEN OVERWROTE HIS
+    # FILE WITH BLANKS. --accept saw no answers, fell back to "every single-candidate row", and
+    # wrote ten bindings he had just rejected.
+    #
+    # I had written "answers survive a re-run" in the docstring one message earlier. They
+    # survive a re-run only if the read succeeds, and a silent except made a failed read look
+    # like an unanswered file. So: read the BOM, and copy the file aside before touching it, so
+    # a parse I did not anticipate costs a rename instead of somebody's work.
+    prior, parse_err, existing_rows = {}, None, 0
+    if os.path.exists(out):
+        try:
+            with open(out, encoding='utf-8-sig', newline='') as fh:
+                for row in csv.DictReader(fh, delimiter='\t'):
+                    existing_rows += 1
+                    v = (row.get('keep') or '').strip()
+                    if v and row.get('slug') and row.get('lid'):
+                        prior[(row['slug'], row['lid'])] = v
+        except Exception as e:
+            parse_err = '%s: %s' % (type(e).__name__, e)
+        try:
+            import shutil
+            shutil.copyfile(out, out + '.prev')
+        except Exception:
+            pass
+    if prior:
+        print('   carried %d answer(s) forward from the existing worklist' % len(prior))
+    elif existing_rows:
+        print('   !! the existing worklist has %d row(s) and NO answers in `keep`.' % existing_rows)
+        print('      If you filled it in, the previous copy is at %s.prev -- check the' % out)
+        print('      delimiter is still TAB and the first column header is still `keep`.')
+    if parse_err:
+        print('   !! could not parse the existing worklist (%s) -- previous copy kept at %s.prev'
+              % (parse_err, out))
+
     order = sorted(live, key=lambda s: (-(meta.get(s, {}).get('area_km2') or 0), s))
     with open(out, 'w', encoding='utf-8', newline='') as fh:
         w = csv.writer(fh, delimiter='\t')
-        w.writerow(['slug', 'lake', 'acres', 'n', 'lid', 'gauge', 'geom', 'km_outside',
+        # `keep` FIRST and EMPTY, because the answer is the point of the file. The worklist
+        # used to be write-only: it asked one question per row and --accept ignored it
+        # entirely, taking every single-candidate row instead. So there was no way to accept
+        # one, or two, or the second of two -- only all-or-nothing over rows nobody had read.
+        # Ryan, 2026-08-15: "telling me how to handle these... and how to accept 1 or 2 or none
+        # or whatever". Type y or n in this column, save, re-run with --accept.
+        w.writerow(['keep', 'slug', 'lake', 'acres', 'n', 'lid', 'gauge', 'geom', 'km_outside',
                     'xy', 'map', 'nwps'])
         for s in order:
             m = meta.get(s, {})
             ac = (m.get('area_km2') or 0) * 247.105
             for r in sorted(live[s]['rows'], key=lambda r: r.get('km_outside') or 0):
                 lon, lat = r['xy']
-                w.writerow([s, m.get('name', ''), '%.0f' % ac, len(live[s]['rows']),
+                w.writerow([prior.get((s, r['lid']), ''),
+                            s, m.get('name', ''), '%.0f' % ac, len(live[s]['rows']),
                             r['lid'], r['gauge'], r['geom'],
                             '%.2f' % (r.get('km_outside') or 0),
                             '%.6f, %.6f' % (lon, lat),
@@ -224,11 +283,46 @@ def main():
               'Add --accept for the single-candidate rows.')
         return 0
 
-    singles = [s for s in live if len(live[s]['rows']) == 1]
+    # ANSWERED ROWS WIN. With a `keep` column filled in, that is the instruction -- including
+    # for a lake with two candidates, where the whole question is WHICH one. Fall back to
+    # "every single-candidate row" only when nobody has answered anything, which is the old
+    # behaviour and is right for a first pass over a short list.
+    yes = {(sl, li) for (sl, li), v in prior.items() if v.strip().lower() in ('y', 'yes', '1', 'true', 'x')}
+    answered = {sl for sl, _li in prior}
+    picked = []
+    if yes or answered:
+        for s in live:
+            hits = [r for r in live[s]['rows'] if (s, r['lid']) in yes]
+            if len(hits) > 1:
+                print('   SKIP %s -- %d rows marked keep; a water gets one gauge per row here'
+                      % (s, len(hits)))
+                continue
+            if hits:
+                picked.append((s, hits[0]))
+        # ROWS, not slugs. This counted `answered` (a set of SLUGS) against `yes` (a set of
+        # ROWS), so twelve answers over eleven lakes printed "12 answered, 11 rejected" and
+        # left you wondering what happened to the twelfth. Tugaloo has two rows.
+        print('\n%d row(s) answered: %d kept, %d rejected'
+              % (len(prior), len(yes), len(prior) - len(yes)))
+    elif existing_rows:
+        # A worklist that EXISTS and has no answers is an unanswered worklist, not consent to
+        # bind everything in it. Writing ten rows Ryan had marked `n` is what this branch used
+        # to do. --accept-all-singles is still available, but it has to be asked for.
+        print('\nno `keep` answers found in a worklist that has %d row(s) -- writing NOTHING.'
+              % existing_rows)
+        print('   Answer the `keep` column, or pass --accept-all-singles to take every '
+              'single-candidate row.')
+        if not a.accept_all_singles:
+            return 0
+        picked = [(s, live[s]['rows'][0]) for s in live if len(live[s]['rows']) == 1]
+        print('   --accept-all-singles given: taking all %d' % len(picked))
+    else:
+        picked = [(s, live[s]['rows'][0]) for s in live if len(live[s]['rows']) == 1]
+        print('\nno worklist existed -- falling back to every single-candidate row')
+    singles = [s for s, _r in picked]
     fp = os.path.join(reg, 'water_bindings.json')
     doc = json.load(open(fp, encoding='utf-8'))
-    for s in singles:
-        r = live[s]['rows'][0]
+    for s, r in picked:
         m = meta.get(s, {})
         lon, lat = r['xy']
         doc['bindings'][s] = {
@@ -245,7 +339,7 @@ def main():
         fh.flush()
         os.fsync(fh.fileno())
     os.replace(tmp, fp)
-    print('\n%d single-candidate lake(s) written to %s with pool=None' % (len(singles), fp))
+    print('%d lake(s) written to %s with pool=None' % (len(picked), fp))
     print('   re-upload with upload_garmin_to_r2.py, then verify_registry_r2.py')
     return 0
 
