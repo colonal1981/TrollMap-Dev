@@ -225,6 +225,17 @@ async function fetchDukeApi() {
     return null;
   }
 }
+// Duke's SpecialMessage array is not ordered, and on a lake with both a standing drought notice
+// and a this-week operational one, the operational one is what matters. Sorted by EventDate,
+// newest wins; rows without a date fall to the back rather than being dropped.
+function pickNewestMessage(list) {
+  if (!Array.isArray(list)) return null;
+  const withText = list.filter((m) => m && typeof m.Text === 'string' && m.Text.trim());
+  if (!withText.length) return null;
+  const t = (m) => { const n = Date.parse(m.EventDate || ''); return Number.isFinite(n) ? n : -Infinity; };
+  return withText.slice().sort((a, b) => t(b) - t(a))[0].Text;
+}
+
 function normalizeDukeRow(row) {
   const actual = parseFloat(row.Actual);
   const elevMatch = String(row.Elevation || "").match(/([0-9]+(?:\.[0-9]+)?)/);
@@ -254,12 +265,44 @@ function normalizeDukeRow(row) {
   //
   // Garmin references its soundings to full pond and does not adjust for drawdown, so this
   // number is what stands between a charted depth and the water actually under the boat.
+  // WHICH CONVENTION A ROW USES IS NOT DECIDED BY `Max`.
+  //
+  // This read `maxRaw === 100`, and the comment above says "Every lake in the feed has Max 100".
+  // The full response, pulled 2026-08-15: 34 rows, and ELEVEN do not. Eight report true feet and
+  // have a real elevation in Max -- Belews 725.00, Hyco 410.50, Mayo 434.00, Robinson 221.65,
+  // Julian 2165.00, Harris 220.00, Sutton 10.50, Hyco Afterbay 399.00 -- and those the old test
+  // routed correctly, by accident, through the else branch.
+  //
+  // The other three are the bug. Nantahala Max 98.80, Queens Creek 93.80, Lake Glenville 96.20:
+  // index values on lakes Duke does not run all the way to full pond, so `Max` is the operating
+  // ceiling, not the band top. The old test saw Max != 100, took the else branch, and read the
+  // index as feet above sea level:
+  //
+  //     Nantahala      ft 95.10   below full pool 2,917.10 ft
+  //     Lake Glenville ft 94.30   below full pool 3,397.45 ft
+  //     Queens Creek   ft 92.80   below full pool 2,809.40 ft
+  //
+  // Nantahala and Glenville are both in the index and both ship. conditions.js `chartDatum()`
+  // gates on Number.isFinite() alone, so those numbers were publishable.
+  //
+  // Decided by the VALUE instead. The band is always 100 ft under full pond, so an index is a
+  // small number against a large full pond and true feet are within a few percent of it. The
+  // widest index ratio in the feed is Blewett Falls at 97.40/178.1 = 0.547; the lowest true-feet
+  // ratio is Hyco Afterbay at 366.71/399 = 0.919. A 0.8 cut sits in that gap with room either
+  // side, and the test asserts the margin so a new lake narrowing it fails loudly.
   let belowFullPoolFt = null, ft = null;
-  if (maxRaw === 100 && actual <= 100) {
+  const ratio = (fullPool != null && fullPool > 0) ? actual / fullPool : null;
+  const isTrueFeet = ratio != null && ratio >= 0.8;
+  if (isTrueFeet) {
+    // The value already IS feet above sea level.
+    ft = actual;
+    belowFullPoolFt = fullPool - actual;
+  } else if (actual <= 100) {
+    // Feet inside the 100 ft band hung under full pond. `Max` says how high Duke runs it, which
+    // is a different fact and is carried through separately.
     belowFullPoolFt = 100 - actual;
     ft = fullPool != null ? fullPool - belowFullPoolFt : null;
   } else if (fullPool != null) {
-    // The other convention Duke documents: the value already IS feet above sea level.
     ft = actual;
     belowFullPoolFt = fullPool - actual;
   }
@@ -273,9 +316,27 @@ function normalizeDukeRow(row) {
     fullPool,
     target: parseFloat(row.Target),
     min: parseFloat(row.Min),
-    max: parseFloat(row.Max),
+    // NOT full pond. How high Duke actually runs it -- 100 on the Catawba lakes, 98.80 on
+    // Nantahala, 96.20 on Glenville. Carried because the difference is real water.
+    max: maxRaw,
     date: row.Date,
-    specialMessage: Array.isArray(row.SpecialMessage) && row.SpecialMessage[0] ? row.SpecialMessage[0].Text : null
+    // Which Low Inflow Protocol stage the basin is in, straight off the row and read by nothing
+    // until now. 2 across Catawba-Wateree and Tuckasegee on 2026-08-15, which is why half these
+    // lakes are down: recreation flow schedules suspended, irrigation limited to two days a
+    // week, and ramps closing as levels fall. -1 and null both mean "no protocol in force".
+    lowInflowStage: Number.isFinite(parseInt(row.LowInputStage, 10)) ? parseInt(row.LowInputStage, 10) : null,
+    // THE NEWEST MESSAGE, NOT THE FIRST ONE.
+    //
+    // This took SpecialMessage[0]. Duke sends an array and it is not sorted newest-first: on
+    // 2026-08-15 Lake Wateree carried the 2026-05-01 basin-wide LIP notice at [0] and, at [1],
+    // "Due to planned maintenance at the Wateree Hydro Station the week of August 17, 2026,
+    // Lake Wateree water levels are expected to rise over the weekend and remain near 99.0 feet
+    // (local datum) during the week." Cedar Cliff is the same shape. The one a person needs
+    // before deciding whether to go is the one that was being dropped.
+    specialMessage: pickNewestMessage(row.SpecialMessage),
+    specialMessages: Array.isArray(row.SpecialMessage)
+      ? row.SpecialMessage.filter((m) => m && m.Text).map((m) => ({ text: m.Text, eventDate: m.EventDate || null }))
+      : []
   };
 }
 async function getDukeLake(nameFragment) {
@@ -1559,4 +1620,4 @@ var RIVERS = {
   }
 };
 
-export { LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard };
+export { normalizeDukeRow, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard };
