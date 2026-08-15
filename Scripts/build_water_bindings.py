@@ -119,6 +119,111 @@ POOL_RE = re.compile(r'\b(above|headwater|at\s+dam|pool)\b', re.I)
 DAM_RE = re.compile(r'\bdam\b', re.I)
 
 
+
+# ── the USGS successor, api.waterdata.usgs.gov/ogcapi/v0 ────────────────────────────────────
+
+# The same five the NWIS request asks for, so `--compare` is apples to apples. Widening this
+# set is a separate decision from migrating: change it and the two catalogues stop being
+# comparable on the one run where you most want them to be.
+USGS_PARMS = ('00060', '00065', '00010', '00062', '63680')
+
+STATE_NAMES = {'SC': 'South Carolina', 'NC': 'North Carolina',
+               'GA': 'Georgia', 'TN': 'Tennessee'}
+
+
+def _ogc_pages(url, cache, tag, force, max_pages=60):
+    """Follow the `next` cursor. Yields feature lists.
+
+    PAGINATION IS NOT OPTIONAL. The items response carries a `next` link with an opaque cursor,
+    and `limit` is a request rather than a promise -- a server that caps it returns a short page
+    and a link, which looks exactly like a complete answer if you do not follow it. A silently
+    truncated catalogue is worse than an empty one: an empty one falls back.
+    """
+    seen = 0
+    while url and seen < max_pages:
+        d, _note = fetch(url, cache, '%s_p%d' % (tag, seen), force)
+        feats = (d or {}).get('features') or []
+        if not feats:
+            return
+        yield feats
+        seen += 1
+        url = None
+        for lk in ((d or {}).get('links') or []):
+            if lk.get('rel') == 'next' and lk.get('href'):
+                url = lk['href']
+                break
+
+
+def ogc_rows_from(locs, series):
+    """(monitoring-locations features, time-series-metadata features) -> NWIS-shaped rows.
+
+    Pure, so it can be tested without a network -- which matters, because the fetch around it
+    cannot be. One row per (site, parameter), matching `seriesCatalogOutput`.
+    """
+    by_id = {}
+    for f in locs:
+        p = f.get('properties') or {}
+        no = str(p.get('monitoring_location_number') or '').strip()
+        if not no:
+            continue
+        g = f.get('geometry') or {}
+        c = g.get('coordinates') if g else None
+        if not (isinstance(c, (list, tuple)) and len(c) >= 2):
+            continue          # geometry IS null on some features; the binder needs a position
+        key = f.get('id') or p.get('id')
+        by_id[str(key)] = {'site_no': no,
+                           'station_nm': (p.get('monitoring_location_name') or '').strip(),
+                           'dec_lat_va': c[1], 'dec_long_va': c[0],
+                           'site_tp_cd': (p.get('site_type_code') or '').strip()}
+    rows = []
+    for f in series:
+        p = f.get('properties') or {}
+        site = by_id.get(str(p.get('monitoring_location_id') or ''))
+        if not site:
+            continue
+        pc = str(p.get('parameter_code') or '').strip()
+        if not pc:
+            continue
+        end = str(p.get('end') or p.get('end_utc') or '').strip()
+        r = dict(site)
+        r['parm_cd'] = pc
+        # `end_date` downstream is compared with `>` as a string, so an ISO timestamp has to be
+        # cut to the date NWIS would have returned or the comparison stops meaning anything.
+        r['end_date'] = end[:10]
+        rows.append(r)
+    return rows
+
+
+def _ogc_usgs_rows(st, cache, force):
+    """One state's catalogue from the successor, in RDB row shape. [] means fall back."""
+    name = STATE_NAMES.get(st)
+    if not name:
+        return []
+    q = urllib.parse.quote(name)
+    locs = []
+    # agency_code=USGS because the collection carries state agencies too -- the first feature
+    # it returns is an Alabama water-distribution system under AL012.
+    for page in _ogc_pages('%s/collections/monitoring-locations/items'
+                           '?state_name=%s&agency_code=USGS&limit=1000&f=json' % (USGS_OGC, q),
+                           cache, 'usgs_ogc_loc_%s' % st, force):
+        locs.extend(page)
+    if not locs:
+        return []
+    series = []
+    # One request per parameter rather than a CQL2 `IN`. Five small, cached, independently
+    # re-runnable requests beat one clever expression whose failure mode is an empty page that
+    # reads like "this state has no gauges".
+    for pc in USGS_PARMS:
+        for page in _ogc_pages('%s/collections/time-series-metadata/items'
+                               '?state_name=%s&parameter_code=%s&limit=1000&f=json'
+                               % (USGS_OGC, q, pc),
+                               cache, 'usgs_ogc_ts_%s_%s' % (st, pc), force):
+            series.extend(page)
+    if not series:
+        return []
+    return ogc_rows_from(locs, series)
+
+
 # ── plumbing ────────────────────────────────────────────────────────────────────────────────
 
 def _cache_path(cache, tag):
@@ -489,23 +594,52 @@ def fetch_all(cache, force, report):
     report['coops'] = {k: len(v) for k, v in coops.items()}
 
     # USGS catalogue: successor first, NWIS fallback, and SAY WHICH.
+    #
+    # 2026-08-15: the successor path had TWO faults and the first hid the second.
+    #
+    #   1. `state_code=SC`. That field is FIPS -- the collection stores "01" beside
+    #      "Alabama" -- so nothing matched, `features` came back empty, and all four states
+    #      fell through to NWIS on every run since this was written.
+    #   2. Even fixed, it would still have produced ZERO usable sites. The bind stage at
+    #      `usgs_sites` below reads NWIS RDB keys (site_no, station_nm, dec_lat_va,
+    #      dec_long_va, site_tp_cd, parm_cd, end_date). This branch assigned raw GeoJSON
+    #      features, which carry none of them, so every row hit the except and was skipped.
+    #
+    # Nobody would have found (2) by fixing (1): the counts would still have been zero and the
+    # honest conclusion would have been "the successor does not carry this", which is false.
+    #
+    # WHAT THE SUCCESSOR ACTUALLY NEEDS, read off its own queryables:
+    #   monitoring-locations   position, name, site type -- but NO parameter, NO period of record
+    #   time-series-metadata   parameter_code, statistic_id, begin/end, monitoring_location_id
+    # So it is a join, not a swap, and `monitoring-locations` alone was never going to be enough.
+    # That is the question the 2026-08-06 note flagged as unverifiable and guessed wrong about.
+    #
+    # `state_name` ON BOTH, and no FIPS table anywhere. monitoring-locations offers state_code
+    # AND state_name; time-series-metadata offers ONLY state_name. A FIPS map would be a third
+    # spelling of one idea to keep in step, and the first fault here was exactly that class of
+    # bug. One field, both collections.
+    #
+    # ADAPTED AT THE EDGE, into the RDB row shape. Everything downstream -- the parameter
+    # union, ELEV_PARMS, the end-date filter, the tests -- stays untouched and keeps meaning
+    # what it meant. A migration that rewrites its consumers cannot be diffed against the thing
+    # it replaces.
     usgs, used = {}, None
     for st in STATES:
-        d, note = fetch('%s/collections/monitoring-locations/items?state_code=%s&limit=10000&f=json'
-                        % (USGS_OGC, st), cache, 'usgs_ogc_%s' % st, force)
-        feats = (d or {}).get('features') or []
-        if feats:
-            usgs[st] = feats
-            used = used or 'ogcapi/v0 monitoring-locations'
-            print('  usgs %s  %d sites (ogc, %s)' % (st, len(feats), note))
+        rows = _ogc_usgs_rows(st, cache, force)
+        if rows:
+            usgs[st] = rows
+            used = used or 'ogcapi/v0 monitoring-locations + time-series-metadata'
+            sites = len({r['site_no'] for r in rows})
+            print('  usgs %s  %d series rows over %d sites (ogc)' % (st, len(rows), sites))
             continue
         # `62614`/`62615` are also reservoir elevation and are deliberately NOT requested here.
         # Every lake site this catalogue returns already carries 00062 or 00065, so adding them
         # would re-download 30 MB of catalogue for a set of sites nobody has shown to exist. The
         # bind stage accepts them if they ever turn up (ELEV_PARMS), which costs nothing.
-        d, note = fetch('%s/site/?format=rdb&stateCd=%s&parameterCd=00060,00065,00010,00062,63680'
+        d, note = fetch('%s/site/?format=rdb&stateCd=%s&parameterCd=%s'
                         '&hasDataTypeCd=iv&siteStatus=active&seriesCatalogOutput=true'
-                        % (USGS_NWIS, st), cache, 'usgs_nwis_%s' % st, force)
+                        % (USGS_NWIS, st, ','.join(USGS_PARMS)),
+                        cache, 'usgs_nwis_%s' % st, force)
         rows = parse_rdb((d or {}).get('_text') or '')
         usgs[st] = rows
         used = used or 'waterservices NWIS seriesCatalogOutput (successor returned nothing)'
