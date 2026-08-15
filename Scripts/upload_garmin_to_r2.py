@@ -2,9 +2,16 @@
 """
 upload_garmin_to_r2.py — push the Garmin-derived layers to R2, fast and resumably.
 
-    py upload_garmin_to_r2.py --root F:\\TrollMapPipeline\\split_output_garmin --all
+    py upload_garmin_to_r2.py --root F:\\TrollMapPipeline\\chartpack --all
     py upload_garmin_to_r2.py --root ... --layers contours depth_regions
-    py upload_garmin_to_r2.py --root ... --lake lake_wateree --dry-run
+    py upload_garmin_to_r2.py --root ... --lake wateree_lake --dry-run
+
+`--root` IS THE CHARTPACK FOLDER. It said `split_output_garmin`, which has never existed on the
+drive -- the name was carried in from a plan that was never built. On 2026-08-15 a session read
+that line, believed it, and handed it to Ryan as a command. Ryan: *"did you check those commands
+before giving them to me"*. It had not. The packs are at `F:\\TrollMapPipeline\\chartpack` --
+`_r2_manifest.json` sits in it, which is the tell -- and `lake_wateree` was wrong too: the slug is
+`wateree_lake`. A usage line is read as fact. A wrong one is worse than no line at all.
 
     py verify_registry_r2.py            <- AFTERWARDS, EVERY TIME. See below.
 
