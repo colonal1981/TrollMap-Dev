@@ -291,15 +291,55 @@ def fetch(url, cache, tag, force=False, tries=6, pause=None, allow_404=True):
         except Exception as e:
             last = type(e).__name__
             time.sleep(2 ** attempt)
+    # A REFUSAL THAT LEAVES A STALE FILE BEHIND MUST NOT READ AS A HIT.
+    #
+    # 2026-08-15: four tiles 429'd on a --force sweep and printed "not recorded", which was
+    # true -- nothing was written. The NEXT run without --force read the copies from 08-06 and
+    # printed "(cached)", in the same words as the 51 tiles fetched that night. Ryan: "so does
+    # that mean they were cached from before my --force run?" It did, and I had just told him
+    # the retry had succeeded. 245 files dated 08-06 against 51 dated 08-15 settled it.
+    #
+    # Nine days made no difference to those tiles -- the refetched counts came back 22, 66, 104
+    # and 0, identical. That is luck, not a reason: the point is that nothing in the output
+    # could tell you either way. Same defect as registry/_dnr holding two vintages under one
+    # name, one layer down.
+    if force:
+        pth = _cache_path(cache, tag)
+        if os.path.exists(pth):
+            try:
+                with open(pth, 'r', encoding='utf-8') as fh:
+                    age = int((time.time() - os.path.getmtime(pth)) / 86400)
+                    return json.load(fh), 'STALE %dd, %s on refresh' % (age, last or 'failed')
+            except Exception:
+                pass
     return None, last or 'failed'
 
 
 def bbox_covering(index, floor, pad_deg=0.05):
     """The floor box widened to contain every water in the index, plus a margin.
 
-    Only ever grows. A registry that gains a water outside the box moves the box; one that
-    loses waters does not shrink it, because the floor's offshore reach is deliberate and no
-    lake's bounds imply it.
+    SNAPS TO THE REGISTRY IN BOTH DIRECTIONS, on the floor's own tile grid.
+
+    It used to only ever grow, on the reasoning that "the floor's offshore reach is deliberate
+    and no lake's bounds imply it". That was right while the registry was 1,722 rows and might
+    not have covered everything it should. The region polygon is the authority on scope now, and
+    the floor is a pre-prune constant hand-authored to "four states plus margin" -- so it kept
+    sweeping water that was deliberately cut.
+
+    Measured 2026-08-15: the floor spans 15.4 x 7.5 deg; the 457 registry rows span
+    W -84.377 S 30.437 E -77.300 N 37.136, 7.1 x 6.7. **The swept box was 2.4x the area of the
+    water it was for.** 22 of its 55 tiles returned zero gauges, all Gulf, Mississippi or open
+    Atlantic, and on that night's run four tiles were lost to 429s -- two of them outside the
+    region entirely. Fewer requests is not tidiness here; it is less rate-limit pressure and
+    fewer chances to drop a tile that holds real water.
+
+    THE PAD IS STILL THE ONLY MARGIN NEEDED, and the paragraph below says why: a gauge further
+    from a water than `--margin-km` cannot bind to it however well the name matches. Padding by
+    a whole extra tile "to be safe" would buy nothing a bind could use.
+
+    SHRINKING IS SAFE FOR THE CACHE ONLY BECAUSE IT SNAPS. The anchor stays the floor's
+    south-west corner, so every surviving tile keeps its coordinates and therefore its tag --
+    the sweep simply stops earlier. Anchor anywhere else and all 55 tiles rename.
 
     THE PAD IS SMALL ON PURPOSE. It only has to cover `--margin-km` -- 3 km, about 0.027 deg --
     because a gauge further outside a water than that cannot bind to it however well the name
@@ -309,14 +349,19 @@ def bbox_covering(index, floor, pad_deg=0.05):
     the floor, where the registry does not reach past them, and moves only the rows that
     Kentucky Lake and the Chattahoochee actually need.
     """
-    w, s, e, n = floor
+    # SEEDED FROM THE REGISTRY, NOT FROM THE FLOOR. Seeding from the floor is what made this
+    # grow-only: min() against -90.6 can never move the west edge east, whatever the registry
+    # says. The floor is the fallback for an empty or unreadable index -- a box derived from no
+    # water at all should be the hand-authored one, not nothing.
+    w = s = float('inf')
+    e = n = float('-inf')
     for rec in (index.values() if isinstance(index, dict) else index):
         b = (rec or {}).get('bounds_wsen')
         if not (isinstance(b, list) and len(b) == 4):
             continue
         w = min(w, b[0] - pad_deg); s = min(s, b[1] - pad_deg)
         e = max(e, b[2] + pad_deg); n = max(n, b[3] + pad_deg)
-    if (w, s, e, n) == tuple(floor):
+    if w == float('inf'):
         return tuple(floor)
 
     # GROW IN WHOLE TILES, ANCHORED ON THE FLOOR'S SOUTH-WEST CORNER. A cache tag is built from
@@ -325,13 +370,14 @@ def bbox_covering(index, floor, pad_deg=0.05):
     # 55 tiles and re-downloaded the entire enumeration to add one row. Snapped: the interior
     # grid lines never move, so only the new rows and the one row whose far edge was clamped
     # against the old ceiling are fetched again.
+    # Snap OUTWARD to the anchor grid, in whichever direction the registry actually sits.
+    # floor() on the low edges and ceil() on the high ones, so the box always contains the
+    # padded registry and never cuts a tile in half.
     fw, fs = floor[0], floor[1]
-    w = fw - math.ceil(max(0.0, fw - w) / TILE_DEG) * TILE_DEG
-    s = fs - math.ceil(max(0.0, fs - s) / TILE_DEG) * TILE_DEG
-    if e > floor[2]:
-        e = fw + math.ceil((e - fw) / TILE_DEG) * TILE_DEG
-    if n > floor[3]:
-        n = fs + math.ceil((n - fs) / TILE_DEG) * TILE_DEG
+    w = fw + math.floor((w - fw) / TILE_DEG) * TILE_DEG
+    s = fs + math.floor((s - fs) / TILE_DEG) * TILE_DEG
+    e = fw + math.ceil((e - fw) / TILE_DEG) * TILE_DEG
+    n = fs + math.ceil((n - fs) / TILE_DEG) * TILE_DEG
     return (round(w, 3), round(s, 3), round(e, 3), round(n, 3))
 
 
@@ -524,6 +570,9 @@ def fetch_all(cache, force, report):
         url = ('%s/gauges?bbox.xmin=%s&bbox.ymin=%s&bbox.xmax=%s&bbox.ymax=%s&srid=EPSG_4326'
                % (NWPS, x0, y0, x1, y1))          # srid is REQUIRED -- see module docstring
         d, note = fetch(url, cache, 'nwps_%s_%s_%s_%s' % (x0, y0, x1, y1), force)
+        if isinstance(note, str) and note.startswith('STALE'):
+            print('  nwps %7.2f %6.2f  %4d gauges  (%s)'
+                  % (x0, y0, len(((d or {}).get('gauges') or {}).get('gages') or []), note))
         if note == 'HTTP 429':
             _consecutive_429 += 1
             print('  nwps %7.2f %6.2f  REFUSED (429) -- not recorded' % (x0, y0))
