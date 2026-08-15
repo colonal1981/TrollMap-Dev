@@ -558,6 +558,109 @@ async function usgsSite(site, role, bound, lat, lon) {
 }
 
 /** Whichever id this binding entry actually carries. Used as its identity everywhere below. */
+/**
+ * TVA, which publishes more than anybody else and was being read for one static field.
+ *
+ * `build_water_bindings.py` has fetched `www.tva.com/RestApi/locations` since the beginning and
+ * kept four columns off it -- dam, top-of-gates, river, river mile -- which travel on the
+ * binding as `tva` and, until now, were the whole of what the app knew. Ryan traced the rest of
+ * the API on 2026-08-15. It is a ServiceStack app and every route is open:
+ *
+ *   /observed-data-48-hours/{LID}  Day, Time, ReservoirElevation, TailwaterElevation,
+ *                                  AverageHourlyDischarge -- ~51 rows over 48 h
+ *   /operating-guide/{LID}         MidNightElevation + items[]: Day, TopOfGates, PrevYrElev,
+ *                                  CurYrElev, BtmOpZone, TopOpZone, FloodGuide, GuideCurve,
+ *                                  LowExptdElevRange, UpperExptdEleRange
+ *   /generation-releases/{LID}     Day, Time (a RANGE), Generators (count running)
+ *   /lake-messages/{LID}           EffectiveSince, Message, DisplayGeneration
+ *
+ * THE LID IS ALREADY THE RIGHT KEY. NWPS handbook-5 ids and TVA LocationIDs are one identifier
+ * space -- CHAN7 is Chatuge in both -- and all 17 tva-flagged binding entries carry a lid that
+ * appears in TVA's own locations list, 0 mismatches. So no registry change was needed to reach
+ * this; the binding already said which dam to ask about.
+ *
+ * WHY GuideCurve MATTERS MORE THAN TopOfGates. Top of gates is the spillway crest. Norris on
+ * 08/15: gates 1034, guide curve 1020, actual 1016.76. Publishing gates as "normal pool" reads
+ * as 17 ft down on a lake that is 3 ft under guide. Chatuge is close enough to look right
+ * (1928 / 1924.29 / 1923.36), which is exactly why one spot-check would not have caught it.
+ * TVA runs a SEASONAL curve, so the reference is a number for today's date, not for the year.
+ *
+ * THE YEAR ON `Day` IS NOT TRUSTED. `observed-data-48-hours` and `generation-releases` return
+ * 2026 dates; `operating-guide` returns 2025 while its `CurYrElev` matches today's reading.
+ * Rather than guess which is authoritative, the guide is matched on MM/DD alone.
+ */
+const TVA_API = 'https://www.tva.com/RestApi';
+
+// "1,923.38" -> 1923.38. TVA sends numbers as display strings, thousands separator included,
+// and one of them (MidnightElevation) as a bare number, so this has to take both.
+function tvaNum(v) {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v !== 'string') return null;
+  const n = Number(v.replace(/,/g, '').trim());
+  return Number.isFinite(n) ? n : null;
+}
+
+const mmdd = (day) => String(day || '').slice(0, 5);   // "08/15/2026" -> "08/15"
+
+/**
+ * Pure: everything the four responses say, shaped. Separated from the fetch so the shapes can
+ * be tested against captured fixtures without a network -- which is the only way this file gets
+ * verified at all from a sandbox that cannot reach tva.com.
+ */
+export function tvaShape(observed, guide, releases, messages, todayMmDd) {
+  const rows = Array.isArray(observed) ? observed : [];
+  const last = rows.length ? rows[rows.length - 1] : null;
+  const items = (guide && Array.isArray(guide.items)) ? guide.items : [];
+  // MM/DD only -- see the year note above. Falls back to the last item so a leap-day or a short
+  // feed reports something rather than nothing.
+  const g = items.find((x) => mmdd(x.Day) === todayMmDd) || items[items.length - 1] || null;
+
+  const elevation = last ? tvaNum(last.ReservoirElevation) : tvaNum(guide && guide.MidNightElevation);
+  const guideCurve = g ? tvaNum(g.GuideCurve) : null;
+
+  const gen = (Array.isArray(releases) ? releases : [])
+    .map((r) => ({ day: r.Day || null, time: r.Time || null, generators: tvaNum(r.Generators) }))
+    .filter((r) => r.generators !== null);
+
+  const msg = (Array.isArray(messages) ? messages : [])
+    .map((m) => (m && typeof m.Message === 'string' ? m.Message.trim() : ''))
+    .find((m) => m.length) || null;
+
+  return {
+    elevation_ft: elevation,
+    tailwater_ft: last ? tvaNum(last.TailwaterElevation) : null,
+    discharge_cfs: last ? tvaNum(last.AverageHourlyDischarge) : null,
+    observed_at: last ? [last.Day, last.Time].filter(Boolean).join(' ') || null : null,
+    guide_curve_ft: guideCurve,
+    flood_guide_ft: g ? tvaNum(g.FloodGuide) : null,
+    top_of_gates_ft: g ? tvaNum(g.TopOfGates) : null,
+    expected_range_ft: g && tvaNum(g.LowExptdElevRange) !== null
+      ? [tvaNum(g.LowExptdElevRange), tvaNum(g.UpperExptdEleRange)] : null,
+    // The number a person actually reads: how far off the seasonal target the lake is.
+    // Signed, so negative is below guide.
+    vs_guide_ft: (elevation !== null && guideCurve !== null)
+      ? round2(elevation - guideCurve) : null,
+    // Generation IS the current, and on a TVA tailwater the current is the whole question.
+    // Capped because the feed runs days out and a plan is about today.
+    generation: gen.slice(0, 12),
+    generating_now: gen.length ? gen[0].generators > 0 : null,
+    message: msg,
+    source: 'TVA — tva.com/RestApi',
+  };
+}
+
+async function tvaReservoir(lid, todayMmDd) {
+  const one = (route) => cached(`tva:${route}:${lid}`, TTL.gauge,
+    () => getJson(`${TVA_API}/${route}/${encodeURIComponent(lid)}?format=json`))
+    .catch(() => null);
+  const [observed, guide, releases, messages] = await Promise.all([
+    one('observed-data-48-hours'), one('operating-guide'),
+    one('generation-releases'), one('lake-messages'),
+  ]);
+  if (!observed && !guide) return null;
+  return { lid, ...tvaShape(observed, guide, releases, messages, todayMmDd) };
+}
+
 function gaugeId(g) {
   if (!g) return null;
   return g.lid || (g.usgs_site ? `usgs:${g.usgs_site}` : null);
@@ -614,6 +717,20 @@ async function waterBlock(b, lat, lon) {
   out.reach = b.reach || null;
   out.usace = b.usace || null;
   out.curated = b.curated || null;
+
+  // TVA, when the binding says the water sits behind one of its dams. Fetched here rather than
+  // inside nwpsGauge because it is not a gauge reading -- it is the operator's own account of
+  // the reservoir, and it answers a question NWPS cannot: how far off the seasonal guide curve
+  // the lake is, and whether they are generating. One call set per water, not per gauge.
+  const tvaLid = [b.pool, b.tailwater, ...(b.gauges || [])]
+    .find((g) => g && g.tva && g.lid);
+  if (tvaLid) {
+    const d = new Date();
+    const todayMmDd = `${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}`;
+    out.tva = await tvaReservoir(tvaLid.lid, todayMmDd).catch(() => null);
+  } else {
+    out.tva = null;
+  }
   // Whether `tide: null` on this response is a FACT or a GAP. An inland lake has no tide and
   // that is the right answer; a coastal zone with no station bound is a hole in the registry.
   out.tidal = !!(b.tides || []).length;
