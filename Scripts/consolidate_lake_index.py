@@ -417,13 +417,20 @@ def main():
     # dump_js_lists.mjs. It has moved to registry/curated_lakes.json, because a data file
     # living in js/data/ looked exactly like dead app code -- nothing in the running app has
     # read it since the registry landed -- and it was queued for deletion three times on that
-    # basis. It is not dead. It is the ONLY source of USGS gauge sites (Marion, Moultrie,
-    # Murray, Parr Shoals, Wateree), Duke and Dominion basin bindings, normal/min pool
-    # elevations, and the curated ramp lists on 38 rows.
+    # basis. It WAS the only source of USGS gauge sites, Duke and Dominion basin
+    # bindings, normal/min pool elevations and the curated ramp lists. As of 2026-08-15 it is
+    # the source of none of them -- see the carry-over block below, which now carries nothing
+    # but the legacy display name.
     #
     # Read the new location first, fall back to the old key, and REFUSE to run with neither.
-    # Silently consolidating without it produces a complete-looking index that has quietly
-    # dropped every gauge -- which is the failure mode this whole file keeps being bitten by.
+    #
+    # WHAT THE REFUSAL IS FOR NOW, 2026-08-15. It used to be the gauges: this was the only
+    # source of usgs, Duke/Dominion bindings and pool elevations, and consolidating without it
+    # silently dropped all of them. None of that is true any more -- gauges come from
+    # water_bindings.json, pool elevations from Worker/worker-data.js, ramps from the five
+    # by-lake buckets. The file supplies exactly one thing: the LEGACY DISPLAY NAME, so a lake
+    # saved in an old plan or catch still resolves. Worth refusing to run without, and a much
+    # smaller claim than this comment used to make.
     cur_fp = os.path.join(R, 'curated_lakes.json')
     if os.path.exists(cur_fp):
         doc = json.load(open_text(cur_fp))
@@ -434,10 +441,11 @@ def main():
               'registry/curated_lakes.json)' % len(js['lake_db']))
     else:
         raise SystemExit(
-            'FATAL: no curated lake facts found.\n'
+            'FATAL: no curated lake names found.\n'
             '  Looked for registry/curated_lakes.json and for a "lake_db" key in %s.\n'
-            '  Without them the index builds fine and silently loses every USGS gauge,\n'
-            '  Duke/Dominion binding, pool curve and curated ramp list. Refusing to run.'
+            '  Without them the index builds fine and silently loses the LEGACY DISPLAY\n'
+            '  NAMES, so a lake saved in an old plan or catch stops resolving. Gauges, pool\n'
+            '  elevations and ramps no longer come from here. Refusing to run.'
             % a.js_lists)
     # --charted HAS A DEFAULT, AND THE WARNING LIVES OUT HERE.
     #
@@ -636,14 +644,31 @@ def main():
             continue
         rec = idx[s]
         rec['source'].append('lake_db')
-        for f in ('usgs', 'duke', 'dominion', 'normalPool', 'minPool', 'tideStation'):
-            if v.get(f) is not None:
-                rec[f] = v[f]
-                stats['field_' + f] += 1
-        if v.get('ramps'):
-            rec.setdefault('ramps', {})['curated'] = [
-                {'name': n, 'lat': p[0], 'lon': p[1]} for n, p in v['ramps'].items()]
-            rec['ramp_sources'] = len(rec['ramps'])
+        # NOTHING IS CARRIED FROM CURATED ANY MORE. This copied usgs, duke, dominion,
+        # normalPool, minPool, tideStation and a ramp list. Ryan, 2026-08-15: "and currated
+        # lakes is dead and will never be brought back", and on the pool numbers: "why are
+        # those not in the same place every other pool elevation is... nothing curated no new
+        # anything use what is already working for other lakes." Measured before removing:
+        #
+        #   usgs         0 rows survived -- every one is overwritten by water_bindings.json
+        #                below, and has been since f0f0a9c
+        #   normalPool   3 rows (Norman 760, Keowee 800, Wylie 569.4). ALL THREE ARE ALREADY
+        #                IN Worker/worker-data.js's LAKES table, which carries normalPool for
+        #                sixteen lakes and is what the Worker serves as full_pool_ft; Duke
+        #                publishes the same number on every reading. plan-builder.js reads
+        #                that now.
+        #   minPool      3 rows, read by NOTHING -- lake-registry.js carries the field through
+        #                and no module ever asks for it
+        #   duke         4 rows, read by NOTHING. The Worker's `cfg.duke` is worker-data.js's
+        #                own LAKES table, not this field.
+        #   dominion     2 rows, same
+        #   tideStation  0 rows -- the nine curated entries are coastal zones that never bind
+        #                to a registry lake, and the readers take it off coastal-zones.js
+        #   ramps        34 rows, and ZERO depend on it: every one also carries dnr, natl or
+        #                osm. The five-bucket merge above is the live path.
+        #
+        # The file is still read for ONE thing: the legacy display name appended below, which
+        # is how a lake saved in an old plan or catch still resolves.
         # ADD the curated key, do not replace what is already there -- the pre-county
         # "Name, ST" string is just as likely to be the one in a saved plan.
         lg = rec.setdefault('legacy_display_names', [])
@@ -1091,10 +1116,11 @@ def main():
           % (stats['lake_db_bound'], len(js.get('lake_db') or {})))
     print('SCDNR lakes  %2d bound' % stats['scdnr_state_lake_bound'])
     print('user-known   %2d bound' % stats['user_known_bound'])
-    print('\ncurated fields carried over from curated_lakes.json:')
-    for f in ('usgs', 'duke', 'dominion', 'normalPool', 'minPool', 'tideStation'):
-        if stats['field_' + f]:
-            print('   %-12s %d lakes' % (f, stats['field_' + f]))
+    # The "curated fields carried over" report is gone with the fields. It printed
+    # `usgs 5 lakes / duke 4 / dominion 2 / normalPool 3 / minPool 3` on every run, which read
+    # as five live dependencies and was, by 2026-08-15, five dead ones and no live one.
+    print('curated fields carried over: NONE -- gauges come from water_bindings.json, pool '
+          'elevations from Worker/worker-data.js, ramps from the five by-lake buckets')
 
     if added:
         print('\n%d lakes ADDED that 3DHP never named -- these need a boundary cut from '

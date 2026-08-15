@@ -1075,7 +1075,22 @@ export async function buildPlanPreviewHtml(p){
           if(dukeMatch){
             const d = damData.duke[dukeMatch];
             const trendIcon = d.trend==='Rising'?'📈':d.trend==='Falling'?'📉':'➡';
-            const normalPool = lakeEntry.normalPool;
+            // DUKE'S OWN FULL POND, off the reading we just fetched.
+            //
+            // This read `lakeEntry.normalPool`, which came from curated_lakes.json via
+            // consolidate_lake_index.py and existed on exactly three lakes -- Norman 760,
+            // Keowee 800, Wylie 569.4. Every one of those numbers is ALREADY in
+            // Worker/worker-data.js's LAKES table, which carries normalPool for sixteen lakes
+            // and is what the Worker serves as full_pool_ft; and Duke publishes the same
+            // number on every reading, which duke-energy.js normalises to `fullPool` in both
+            // of its parse paths. Ryan, 2026-08-15: "why are those not in the same place every
+            // other pool elevation is... nothing curated no new anything use what is already
+            // working for other lakes."
+            //
+            // So: the live reading's own full pond. Three duplicated numbers gone, and the
+            // sixteen lakes the LAKES table already covers now behave the same as the three
+            // that had a curated copy.
+            const normalPool = d.fullPool;
             const poolStr = normalPool
               ? `Pool: <b>${d.elevation} ft</b> (normal ${normalPool} ft, ${d.elevation>normalPool?'+':''}${(d.elevation-normalPool).toFixed(1)} ft)`
               : `Pool: <b>${d.elevation} ft</b> (target ${d.target||'—'} ft)`;
