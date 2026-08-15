@@ -87,6 +87,13 @@ from collections import defaultdict
 # dropped -- a site can report forty codes and the query string is not the place to carry them.
 USGS_USEFUL_PARMS = ('00010', '00062', '62614', '62615', '00065', '00060')
 
+# A tailrace is below the dam. It is never the water the row names, whichever end of the chain
+# is choosing.
+# The separator is optional because the registry writes the canal as "Tail Race Canal", two
+# words, while every gauge name writes "TAILRACE", one. Matching only the closed form meant the
+# self-tailrace guard below never fired on the one row it was written for.
+_TAILRACE_RE = re.compile(r'\btail[\s\-]?(?:race|water)\b', re.I)
+
 STOP = {'lake', 'lakes', 'reservoir', 'rsvr', 'pond', 'millpond', 'mill', 'the', 'of',
         'impoundment'}
 STATES = {'al', 'ar', 'fl', 'ga', 'il', 'in', 'ky', 'la', 'mo', 'ms', 'nc', 'sc', 'tn',
@@ -936,7 +943,40 @@ def main():
             if _pool.get('usgs_site'):
                 _src = _pool
             else:
-                _src = next((g for g in (_b.get('gauges') or []) if g.get('usgs_site')), None)
+                # NOT `next(...)`. The fallback took the FIRST gauges[] entry carrying a usgs
+                # site, in list order, and on 2026-08-15 that handed J Strom Thurmond
+                # `02194501 LAKE THURMOND TAILRACE NEAR CLARKS HILL` -- a stream gauge below
+                # the dam -- while `02193900 THURMOND LAKE NEAR PLUM BRANCH`, site type LK
+                # reporting 00062 reservoir elevation, sat second in the same list. The
+                # binder had already been taught that first-past-the-post is not a choice;
+                # this end of the chain had not.
+                _rank_ft = (_rec.get('feature_type') or 'lake')
+                _want_type = 'LK' if _rank_ft == 'lake' else 'ST'
+                _want_parms = (('00062', '62614', '62615') if _rank_ft == 'lake'
+                               else ('00065', '00060'))
+                # UNLESS THE WATER IS ITSELF A TAILRACE. `tail_race_canal` is the Cooper's
+                # tailrace canal, and penalising the word took it off
+                # `LAKE MOULTRIE TAILRACE CANAL AT MONCKS CORNER` -- the gauge named for the
+                # exact water the row is -- and onto a branch of the Cooper. A rule about
+                # what a name means has to check the name on both sides.
+                _self_tail = bool(_TAILRACE_RE.search(
+                    '%s %s' % (_rec.get('name') or '', _rec.get('display_name') or '')))
+
+                def _gscore(_g, _i):
+                    _nm = str(_g.get('usgs_name') or _g.get('name') or '')
+                    _ty = str(_g.get('site_type') or _g.get('usgs_site_type') or '')
+                    _pm = _g.get('parms') or _g.get('usgs_parms') or []
+                    if isinstance(_pm, str):
+                        _pm = [x.strip() for x in _pm.split(',') if x.strip()]
+                    return (1 if (_TAILRACE_RE.search(_nm) and not _self_tail) else 0,
+                            0 if _ty == _want_type else 1,
+                            0 if any(x in _want_parms for x in _pm) else 1,
+                            _i)
+
+                _cands = [(g, i) for i, g in enumerate(_b.get('gauges') or [])
+                          if g.get('usgs_site')]
+                _cands.sort(key=lambda gi: _gscore(gi[0], gi[1]))
+                _src = _cands[0][0] if _cands else None
             _site = _src.get('usgs_site') if _src else None
             if not _site:
                 continue
