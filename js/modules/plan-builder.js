@@ -1180,11 +1180,27 @@ export async function buildPlanPreviewHtml(p){
             if(!p.meta.waterTemp) p.meta.waterTemp = String(tempF);
           }
           // Explicit note for Wateree river gauge
-          if (site === '02148000' && String(p.meta.lake||'').toLowerCase().includes('wateree')) {
-            parts.push(`<span class="rp-small" style="color:#c62828">(USGS 02148000 = Wateree River below dam — temperature proxy only; lake pool comes from Duke Energy)</span>`);
+          // THE CAVEAT IS ABOUT THE WATER, NOT ABOUT ONE SITE NUMBER.
+          //
+          // This was pinned to `site === '02148000'`. On 2026-08-15 consolidate_lake_index.py
+          // started taking `usgs` from water_bindings.json, and Wateree's binding has NO pool
+          // site at all -- CDCS1 carries no usgs_site -- so it falls through to the gauges[]
+          // list and lands on 02147801, LAKE WATEREE TAILRACE ABOVE CAMDEN. Also below the
+          // dam, also not pool, and the pin stopped matching, so the one sentence that stops
+          // a tailrace reading being taken for lake pool disappeared from the lake it was
+          // written for. The temperature-only guard above survived because it was already
+          // name-based; this was not.
+          //
+          // Every USGS site bound to wateree_lake is below the dam, so the name is the right
+          // test and the site number is printed rather than asserted.
+          if (String(p.meta.lake||'').toLowerCase().includes('wateree')
+              || (lakeEntry.name||'').toLowerCase().includes('wateree')) {
+            parts.push(`<span class="rp-small" style="color:#c62828">(USGS ${site} is below Wateree dam — temperature proxy only; lake pool comes from Duke Energy)</span>`);
           }
           if(parts.length){
-            const usgsTitle = (site === '02148000' && String(p.meta.lake||'').toLowerCase().includes('wateree')) ? '💧 USGS Below-Dam River Temperature Proxy' : `💧 USGS Live Water Data (site ${site})`;
+            const usgsTitle = (String(p.meta.lake||'').toLowerCase().includes('wateree')
+                               || (lakeEntry.name||'').toLowerCase().includes('wateree'))
+              ? '💧 USGS Below-Dam River Temperature Proxy' : `💧 USGS Live Water Data (site ${site})`;
             usgsHtml = `<div class="rp-callout rp-info"><b>${usgsTitle}</b><br>${parts.join(' · ')}<br><span class="rp-small">Data provisional — subject to USGS revision. Managed-lake pool level may come from a different utility source.</span></div>`;
           }
         }

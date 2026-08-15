@@ -80,6 +80,13 @@ that 3DHP never named; they are ADDED to the index as first-class records with
 import argparse, json, math, os, re, sys
 from collections import defaultdict
 
+# Parameter codes worth asking the USGS OGC API for, in the order they go into `usgs.params`.
+# 00010 water temperature is the only one the plan panel renders today and it leads for that
+# reason; the elevation and flow codes ride along because the site reports them and a renderer
+# that wants them should not need lake_index.json rebuilt first. Anything not in this list is
+# dropped -- a site can report forty codes and the query string is not the place to carry them.
+USGS_USEFUL_PARMS = ('00010', '00062', '62614', '62615', '00065', '00060')
+
 STOP = {'lake', 'lakes', 'reservoir', 'rsvr', 'pond', 'millpond', 'mill', 'the', 'of',
         'impoundment'}
 STATES = {'al', 'ar', 'fl', 'ga', 'il', 'in', 'ky', 'la', 'mo', 'ms', 'nc', 'sc', 'tn',
@@ -908,14 +915,43 @@ def main():
             _rec = idx.get(_slug)
             if not _rec:
                 continue
+            # THE SHAPE IS {site, params}, NOT A BARE SITE STRING.
+            #
+            # 2026-08-15, first cut of this block: `_rec['usgs'] = _site`. 212 rows took a
+            # string, and every consumer in the app destructures an object --
+            # plan-builder.js:1143 `const {site, params} = lakeEntry.usgs`, then
+            # `params.includes('00065')`, which on a string is TypeError inside a try/catch
+            # that sets usgsHtml = '' and warns to the console. utility-sync.js:181 reads
+            # `lkEntry?.usgs?.site`, which is undefined. So the field was populated, the run
+            # printed 212, and NOT ONE gauge could render. It also flattened the five curated
+            # objects that did work. A file is not the world, and neither is a field.
+            #
+            # `params` is a server-side filter on the OGC latest-continuous query. The plan
+            # panel only renders 00010, so 00010 must be in it or the callout stays empty --
+            # curated's `00062` for Marion, Moultrie and Murray is why those three have always
+            # shown nothing. The rest are carried because the site reports them and a later
+            # renderer should not need this file rebuilt to see them.
             _pool = _b.get('pool') or {}
-            _site = _pool.get('usgs_site') or next(
-                (g.get('usgs_site') for g in (_b.get('gauges') or []) if g.get('usgs_site')), None)
+            _src = None
+            if _pool.get('usgs_site'):
+                _src = _pool
+            else:
+                _src = next((g for g in (_b.get('gauges') or []) if g.get('usgs_site')), None)
+            _site = _src.get('usgs_site') if _src else None
             if not _site:
                 continue
-            if _rec.get('usgs') and _rec['usgs'] != _site:
+            _parms = _src.get('usgs_parms') or _src.get('parms') or []
+            if isinstance(_parms, str):
+                _parms = [p.strip() for p in _parms.split(',') if p.strip()]
+            _keep = [p for p in USGS_USEFUL_PARMS if p in set(_parms)]
+            if '00010' not in _keep:
+                _keep.insert(0, '00010')
+            _val = {'site': _site, 'params': ','.join(_keep)}
+            _prev = _rec.get('usgs')
+            _prev_site = _prev.get('site') if isinstance(_prev, dict) else _prev
+            if _prev_site and _prev_site != _site:
                 n_over += 1
-            _rec['usgs'] = _site
+            _rec['usgs'] = _val
             n_site += 1
             if _rec.get('feature_type') == 'river':
                 n_riv += 1
