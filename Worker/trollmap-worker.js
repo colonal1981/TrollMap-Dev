@@ -448,8 +448,35 @@ async function fetchDominionSaludaStatus() {
     return null;
   }
 }
+// LAKES is keyed by short nicknames -- wateree, marion, james, russell -- and this matched them
+// as bare substrings of whatever name the caller passed. Measured against the 456 display names
+// in lake_index.json on 2026-08-15, FIVE waters resolved to a different lake's utility config:
+//
+//   Wateree River                 -> "wateree"  = Lake Wateree's Duke pool, on the river BELOW it
+//   Graves Lake (Marion Co, SC)   -> "marion"   = Lake Marion, Santee Cooper
+//   Russ Lake (Marion Co, SC)     -> "marion"   = same
+//   Lake Russell                  -> "russell"  = Richard B Russell, a different lake in GA
+//   Hartwell Lake (Anderson Co)   -> "hartwell" = the arm slug, harmless and being deleted
+//
+// The county suffix is the new part. Display names gained "(Marion Co, SC)" so two lakes of the
+// same name could be told apart, and every substring matcher keyed on a short name inherited a
+// second surface to collide on. Two of the five are county names, not lake names.
+//
+// Three guards, cheapest first. This is the sixth member of the substring-matcher family the
+// deletion tab already lists; the real fix is resolving by registry slug, which needs the slug
+// to reach here.
+const FLOWING_RE = /\b(river|creek|canal|branch|run|fork|swamp|slough)\b/i;
+function resolveLakeKey(lakeName) {
+  // 1. The county parenthetical is metadata, not part of the water's name.
+  const bare = String(lakeName || '').replace(/\s*\([^)]*\)\s*/g, ' ').trim().toLowerCase();
+  // 2. Every key in LAKES is a lake. Flowing water never takes a lake's pool config -- that is
+  //    how Wateree River was being handed Lake Wateree's Duke reading.
+  if (FLOWING_RE.test(bare)) return null;
+  // 3. Whole word, so "russ lake" cannot match "russell" and a key cannot match mid-word.
+  return Object.keys(LAKES).find((k) => new RegExp(`\\b${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(bare)) || null;
+}
 async function resolveLake(lakeName) {
-  const key = Object.keys(LAKES).find((k) => lakeName.toLowerCase().includes(k));
+  const key = resolveLakeKey(lakeName);
   if (!key) return { error: `unknown lake: ${lakeName}` };
   const cfg = LAKES[key];
   const out = {
