@@ -1,7 +1,7 @@
 // research/deterministic.js — split from worker-research.js (behavior-preserving)
 import { JSON_HEADERS, r2Text } from '../worker-core.js';
 import { researchStorageId, resolveResearchStorageId } from './keys.js';
-import { buildEvidence, buildFactualSummary, getAttractorFacts, getRampSpeciesFacts, uniqueResearchSpecies } from './facts-util.js';
+import { buildEvidence, buildFactualSummary, getAttractorFacts, getRampSpeciesFacts, uniqueResearchSpecies, splitSpeciesText } from './facts-util.js';
 
 async function handleResearchDeterministicFacts(request, env) {
   let body;
@@ -38,8 +38,39 @@ async function handleResearchDeterministicFacts(request, env) {
   // digests. Do not add live, per-state URL fallbacks here.
 
   // Structured ramps/species
+  //
+  // THE CLIENT'S LIST WINS, BECAUSE THE PIPELINE BOUND IT BY GEOMETRY.
+  //
+  // getRampSpeciesFacts() below matches the raw feeds with waterbodyMatchesLake(), a
+  // bidirectional substring test on the lake's DISPLAY NAME. Counted 2026-08-16, the feeds
+  // carry nineteen different waterbody names for J. Strom Thurmond -- "Clarks Hill Lake",
+  // "Lake Thurmond", "Little River - Clarks Hill Lake" and sixteen more -- and none of them
+  // is a substring of "j strom thurmond reservoir lincoln co ga sc". The endpoint reported
+  // "ramps: 0" for a 41,000-acre reservoir that lake_index.json already has 168 ramps for.
+  //
+  // consolidate_lake_index.py did that join by geometry and got it right. Re-deriving it here
+  // by name was always the weaker method; now it is only the fallback, for a caller that
+  // cannot send the registry's answer.
+  const clientRamps = Array.isArray(body.ramps)
+    ? body.ramps.filter((r) => r && Number.isFinite(r.lat) && Number.isFinite(r.lon))
+    : [];
+  if (clientRamps.length) {
+    profile.navigation.ramps = clientRamps.map((r) => ({
+      name: r.name, lat: Math.round(r.lat * 1e6) / 1e6, lon: Math.round(r.lon * 1e6) / 1e6,
+      lanes: r.lanes ?? null, county: r.county ?? null, owner: r.owner ?? null,
+    }));
+    const species = uniqueResearchSpecies(clientRamps.flatMap((r) => splitSpeciesText(r.species || '')));
+    if (species.length) {
+      profile.biology.predatorSpecies = uniqueResearchSpecies([...(profile.biology.predatorSpecies || []), ...species]);
+    }
+    const label = 'TrollMap registry (pipeline geometry join)';
+    mergeEvidence('navigation', 'ramps', [buildEvidence('official_structured', label, 'registry:lake_index.json#ramps', null, 'structured_waterbody_aggregation', { count: profile.navigation.ramps.length })]);
+    profile.sources.push({ label, url: 'registry:lake_index.json#ramps', trust: 'OFFICIAL_GIS', sourceType: 'official_structured' });
+  }
   try {
-    const rampFacts = await getRampSpeciesFacts(env, lakeName, state);
+    // Skipped entirely when the client already supplied the answer -- a second, weaker join
+    // over the same feeds can only disagree with the first.
+    const rampFacts = clientRamps.length ? null : await getRampSpeciesFacts(env, lakeName, state);
     if (rampFacts) {
       profile.navigation.ramps = rampFacts.ramps.map(r => ({ name: r.name, lat: Math.round(r.lat * 1e6) / 1e6, lon: Math.round(r.lon * 1e6) / 1e6, lanes: r.lanes || null, county: r.county || null, owner: r.owner || null }));
       profile.biology.predatorSpecies = uniqueResearchSpecies([...(profile.biology.predatorSpecies || []), ...(rampFacts.predatorSpecies || [])]);

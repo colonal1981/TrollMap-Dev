@@ -1392,6 +1392,50 @@ async function workerFailureReason(res) {
   }
 }
 
+
+/**
+ * The ramps the PIPELINE already bound to this lake, flattened for the Worker.
+ *
+ * WHY THE WORKER CANNOT DO THIS ITSELF. deterministic.js calls waterbodyMatchesLake(), a
+ * bidirectional substring test, against the raw ramp feeds. Counted 2026-08-16, the feeds use
+ * NINETEEN different waterbody names for J. Strom Thurmond alone -- "Clarks Hill Lake",
+ * "Lake Thurmond", "Little River - Clarks Hill Lake", "Savannah River - Lake J. Strom
+ * Thurmond" and fifteen more -- and not one of them is a substring of, or contains,
+ * "j strom thurmond reservoir lincoln co ga sc". Hence "ramps: 0" on a 41,000-acre reservoir.
+ *
+ * consolidate_lake_index.py already solved this BY GEOMETRY and wrote the answer into
+ * lake_index.json: 168 ramps across three feeds, correctly attributed. The Worker was
+ * re-deriving a join the pipeline had already done, by the weaker method, and losing.
+ *
+ * So the client sends what it knows, exactly as it now does for `names` and `county`. Same
+ * reason handleConditions asks for lat/lon: the Worker has no registry.
+ */
+function registryRampsFor(lakeName) {
+  const rec = lakeRecordFor(lakeName);
+  const buckets = rec && rec.ramps;
+  if (!buckets) return null;
+  const out = [];
+  const seen = new Set();
+  // dnr first: it is the bucket carrying lanes, dock, county and owner, and a later duplicate
+  // from a thinner feed must not displace it.
+  for (const key of ['dnr', 'natl', 'dnr_paddle', 'curated', 'osm']) {
+    for (const r of (buckets[key] || [])) {
+      if (!Number.isFinite(r.lat) || !Number.isFinite(r.lon)) continue;
+      const k = `${Math.round(r.lat * 1e5)}|${Math.round(r.lon * 1e5)}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push({
+        name: r.name, lat: r.lat, lon: r.lon,
+        lanes: r.meta?.lanes ?? null, county: r.meta?.county ?? null,
+        owner: r.meta?.owner ?? null, type: r.type || null,
+        species: r.species || r.meta?.species || null,
+        source: r.src || key, waterbody: r.wb || null,
+      });
+    }
+  }
+  return out.length ? out : null;
+}
+
 async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRunAgents = false, _contextResults = {}) {
   if (!_calledFromRunAgents && _state.researchInProgress) throw new Error('A research task is already in progress.');
   if (!lakeName) throw new Error('Select a lake first.');
@@ -2092,6 +2136,8 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
         method: 'POST', headers: workerHeaders(),
         body: JSON.stringify({
           lakeName, state: stateName,
+          ramps: registryRampsFor(lakeName),
+          county: lakeRecordFor(lakeName)?.county || null,
           ...(coastalKeyResume ? { zoneKey: coastalKeyResume, lakeKey: coastalKeyResume } : {})
         })
       });
@@ -2375,6 +2421,8 @@ async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
         method: 'POST', headers: workerHeaders(),
         body: JSON.stringify({
           lakeName, state: stateName,
+          ramps: registryRampsFor(lakeName),
+          county: lakeRecordFor(lakeName)?.county || null,
           ...(coastalKeyForDet ? { zoneKey: coastalKeyForDet, lakeKey: coastalKeyForDet } : {})
         })
       });
