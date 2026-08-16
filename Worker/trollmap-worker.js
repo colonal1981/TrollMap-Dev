@@ -6,7 +6,7 @@ import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized, chartpackKey, 
 // Bump on every edit to this file. See ARCGIS_BUILD in core/arcgis.js.
 const WORKER_BUILD = 'worker-2026-08-07a';
 
-import { LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard } from './worker-data.js';
+import { dukeRowForNames, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard } from './worker-data.js';
 import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality } from './worker-species.js';
 import { handleGisRoute, flagIsYes, hasText, ARCGIS_BUILD } from './core/arcgis.js';
 import { handleWaterRoute } from './water.js';
@@ -1691,6 +1691,28 @@ var trollmap_worker_default = {
       if (path === "/lake") {
         if (!lake) return new Response('{"error":"missing lake"}', { headers: JSON_HEADERS, status: 400 });
         const result = await resolveLake(lake);
+        // resolveLake refuses anything outside the fifteen LAKES keys. The Duke feed carries
+        // thirty-four, so a water Duke publishes and the table does not name has always come
+        // back "unknown lake". Ask the FEED before answering that -- ?names=A|B|C when the
+        // client has the registry aliases, the bare lake name otherwise.
+        if (result && result.error) {
+          const names = (url.searchParams.get("names") || lake).split("|")
+            .map((x) => x.trim()).filter(Boolean);
+          const d = await dukeRowForNames(names).catch(() => null);
+          if (d) {
+            return new Response(JSON.stringify({
+              waterbody: lake, elevation_ft: d.ft, below_full_pool_ft: d.belowFullPoolFt,
+              full_pool_ft: d.fullPool, display_level: d.index, display_full_pool: 100,
+              display_unit: "ft below full pond scale (100 = full)",
+              target: isFinite(d.target) ? d.target : undefined,
+              special_message: d.specialMessage || undefined,
+              duke_feed_name: d.duke_feed_name, matched_registry_name: d.matched_registry_name,
+              resolved_by: "duke-feed-name-match",
+              sources: ["Duke API /lakes/current-level"],
+              timestamp: (new Date()).toISOString(),
+            }, null, 2), { headers: JSON_HEADERS });
+          }
+        }
         return new Response(JSON.stringify(result, null, 2), { headers: JSON_HEADERS });
       }
       if (path.startsWith("/sync")) {

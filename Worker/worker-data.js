@@ -2,6 +2,8 @@
 // worker-data.js — Static lake/river data extracted from trollmap-worker.js
 // LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS
 
+import { matchWaterName, reportTokens } from './reports.js';
+
 var LAKES = {
   wateree: { duke: "wateree", river: "02148000", normalPool: 225.5, ahq: "lake-wateree" },
   wylie: { duke: "wylie", pool: "02146000", normalPool: 569.4, ahq: "lake-wylie" },
@@ -346,6 +348,51 @@ async function getDukeLake(nameFragment) {
   const row = arr.find((r) => (r.LakeDisplayName || "").toLowerCase().includes(frag) || (r.LakeName || "").toLowerCase().includes(frag));
   return row ? normalizeDukeRow(row) : null;
 }
+/**
+ * The Duke row for a water, found in the LIVE FEED rather than in the table above.
+ *
+ * Ryan, 2026-08-16: "did you see the answer for duke... is that wired up... dont just take it
+ * off a list if that data isn't live somewhere". It was not wired up. He pasted the whole
+ * /lakes/current-level response on 08-15 -- THIRTY-FOUR lakes -- and LAKES above carries a
+ * duke binding on NINE. resolveLake() refuses any name that is not one of its fifteen keys, so
+ * Tillery, Blewett Falls, Lookout Shoals, Hyco and Robinson have been in the response and
+ * unreachable the whole time. Knowing the answer is not the same as the data being live.
+ *
+ * The feed is the list. Nothing is added to the table.
+ *
+ * WHY NOT getDukeLake: that one takes a fragment and calls .includes(), the substring family
+ * fixed in bba2a33 -- "james" claims any name containing it. This matches whole tokens, both
+ * directions, with the flowing-water guard.
+ *
+ * KNOWN AMBIGUITY, STATED RATHER THAN HIDDEN: Duke publishes "Lake Robinson" and the registry
+ * ships TWO -- lake_robinson (Darlington, 2,098 ac) and lake_robinson_greer (Greenville,
+ * 804 ac) -- which both still carry the legacy name "Lake Robinson, SC". Duke's is the
+ * Darlington one. Until that legacy name is stripped from the Greer row (deletion tab,
+ * pending) a Greer request can match it, so the feed name that answered is returned on every
+ * response and a wrong match is visible instead of silent.
+ */
+async function dukeRowForNames(waterNames) {
+  const arr = await fetchDukeApi();
+  if (!arr) return null;
+  let best = null;
+  for (const r of arr) {
+    for (const cand of [r.LakeDisplayName, r.LakeName]) {
+      if (!cand) continue;
+      // Duke never publishes an aggregate row, so the feed name may not be the broader one:
+      // "Mountain Island Lake" must not answer for "Mountain Lake".
+      const matched = matchWaterName(cand, waterNames, { sourceMayBeBroader: false });
+      if (!matched) continue;
+      const ct = reportTokens(cand); const wt = reportTokens(matched);
+      let overlap = 0;
+      for (const t of ct) if (wt.has(t)) overlap += 1;
+      if (!best || overlap > best.overlap) best = { row: r, feedName: cand, matched, overlap };
+    }
+  }
+  if (!best) return null;
+  const n = normalizeDukeRow(best.row);
+  return n ? { ...n, duke_feed_name: best.feedName, matched_registry_name: best.matched } : null;
+}
+
 async function fetchDukeDashboard(basin = "1") {
   const arr = await fetchDukeApi();
   if (!arr) return null;
@@ -1620,4 +1667,4 @@ var RIVERS = {
   }
 };
 
-export { normalizeDukeRow, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard };
+export { normalizeDukeRow, dukeRowForNames, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard };

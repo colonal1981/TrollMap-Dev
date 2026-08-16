@@ -155,7 +155,15 @@ export function namesWater(text, waterNames) {
  * Measured against the live index 2026-08-16: 17 of 128 SC waters resolve to an AHQ entry, all
  * 17 correct, against 12 under the one-way rule.
  */
-export function matchWaterName(candidate, waterNames) {
+export function matchWaterName(candidate, waterNames, opts = {}) {
+  // WHICH SIDE MAY BE BROADER IS NOT A DETAIL. Extra tokens on the REGISTRY side are usually a
+  // fuller official name -- AHQ says "charleston", the registry says "Charleston Harbor, SC".
+  // Extra tokens on the SOURCE side can mean a different water entirely: Duke publishes
+  // "Mountain Island Lake" and the registry ships "Mountain Lake", and those are not the same
+  // reservoir. Sources that aggregate need the loose direction -- AHQ's one page for
+  // "santee cooper lake marion lake moultrie" serves both Marion and Moultrie -- so it stays
+  // the default, and a source that never aggregates passes sourceMayBeBroader: false.
+  const { sourceMayBeBroader = true } = opts;
   const cand = reportTokens(candidate);
   if (!cand.size) return null;
   let best = null;
@@ -164,7 +172,7 @@ export function matchWaterName(candidate, waterNames) {
     if (!w.size) continue;
     const candInW = [...cand].every((t) => w.has(t));
     const wInCand = [...w].every((t) => cand.has(t));
-    if (!candInW && !wInCand) continue;
+    if (!candInW && !(wInCand && sourceMayBeBroader)) continue;
     const extra = candInW ? [...w].filter((t) => !cand.has(t)) : [...cand].filter((t) => !w.has(t));
     if (extra.some((t) => FLOWING_RE.test(t))) continue;
     let overlap = 0;
