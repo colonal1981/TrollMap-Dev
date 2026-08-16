@@ -41,12 +41,27 @@ the registry has never called it -- Southern Company writes "Clark Hill (Thurmon
 "Tugalo" -- that is an alias, and it belongs in registry/lake_display_names.json under `also`,
 which consolidate folds into legacy_display_names.
 
+BROOKFIELD IS ONE PAGE PER LAKE, and that is why its URL is not in this file
+----------------------------------------------------------------------------
+Cube and Southern Company each publish one table listing every lake, so one URL covers the
+operator. safewaters.com publishes a separate page per facility and links to NONE of its
+siblings -- Santeetlah's page names Calderwood and Chilhowee in prose and carries no href to
+either. So the only honest source for a facility's URL is that facility's own page, and this
+script reads it from `rel=canonical` rather than composing one from the lake name.
+
+Santeetlah, Chilhowee, Calderwood and Cheoah are ALL FOUR in the index. Save any of their page
+sources into --pagesrc under a name containing "brookfield" and the next run binds it. There is
+no table here to extend and no slug spelled out anywhere, which is the point: a guessed URL
+would have looked exactly like a correct one until the Worker fetched it.
+
 Usage:
     py .\\scripts\\bind_operator_lakes.py --registry F:\\TrollMapPipeline\\registry \\
        --pagesrc F:\\TrollMapPipeline\\_pagesrc
     py .\\scripts\\bind_operator_lakes.py --registry ... --pagesrc ... --write
+
+Tested by `scripts/test_bind_operator_lakes.py` -- 11 assertions, no network, no registry.
 """
-import argparse, json, math, os, re, sys, html as _html
+import argparse, glob, json, math, os, re, sys, html as _html
 
 STOP = {'lake', 'lakes', 'reservoir', 'res', 'the', 'a', 'of', 'at', 'near', 'on'}
 ABBREV = {'ft': 'fort', 'mt': 'mount'}
@@ -146,9 +161,41 @@ def parse_southernco(src):
     return out
 
 
+def parse_brookfield_facility(src):
+    """ONE FACILITY PAGE = ONE LAKE, so the URL cannot come from a table -- but the page
+    carries both halves itself: its own <h1> and its own rel=canonical. Nothing about a
+    facility is guessed here. safewaters.com publishes Santeetlah, Chilhowee, Calderwood and
+    Cheoah separately and ALL FOUR are in the index; saving any of their page sources into
+    --pagesrc binds that one with no code change and no new table to keep in step.
+
+    Returns [(name, url)] rather than [name] because the URL is per row for this operator.
+    """
+    m = (re.search(r'<link[^>]+rel=["\']canonical["\'][^>]+href=["\']([^"\']+)["\']', src, re.I)
+         or re.search(r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']([^"\']+)["\']', src, re.I))
+    url = _html.unescape(m.group(1)).strip() if m else None
+    name = None
+    m = re.search(r'<h1[^>]*>(.*?)</h1>', src, re.S | re.I)
+    if m:
+        name = _text(m.group(1))
+    if not name:
+        m = re.search(r'<title>(.*?)</title>', src, re.S | re.I)
+        if m:
+            name = _text(m.group(1)).split(' - ')[0].strip()
+    if not name or not url or '/facility/' not in url:
+        return []
+    return [(name, url)]
+
+
 OPERATORS = {
-    'cube': ('cube.html', parse_cube, 'https://ww4.cubecarolinas.com/lake/levels?orgID=3'),
-    'southernco': ('southernco.html', parse_southernco, 'https://lakes.southernco.com/default.aspx'),
+    'cube': {'files': 'cube.html', 'parser': parse_cube,
+             'url': 'https://ww4.cubecarolinas.com/lake/levels?orgID=3'},
+    'southernco': {'files': 'southernco.html', 'parser': parse_southernco,
+                   'url': 'https://lakes.southernco.com/default.aspx'},
+    # A GLOB, because Brookfield has no one page to parse -- save as many facility pages as
+    # you like under any name containing "brookfield". A view-source save and its unwrapped
+    # twin both match; the same canonical URL twice is one facility, not two.
+    'brookfield': {'files': '*brookfield*.html', 'parser': parse_brookfield_facility,
+                   'url': None},
 }
 
 
@@ -182,22 +229,33 @@ def main():
 
     total_bound = 0
     result = {}
-    for op, (fname, parser, url) in OPERATORS.items():
-        path = os.path.join(a.pagesrc, fname)
-        if not os.path.exists(path):
-            print('  %-12s SKIP -- %s not found' % (op, fname))
+    for op, cfg in OPERATORS.items():
+        paths = sorted(glob.glob(os.path.join(a.pagesrc, cfg['files'])))
+        if not paths:
+            print('  %-12s SKIP -- no %s in %s' % (op, cfg['files'], a.pagesrc))
             continue
-        with open(path, encoding='utf-8', errors='replace') as f:
-            src = _unwrap_view_source(f.read())
-        feed_names = parser(src)
+        feed_names, seen = [], set()
+        for path in paths:
+            with open(path, encoding='utf-8', errors='replace') as f:
+                src = _unwrap_view_source(f.read())
+            for item in cfg['parser'](src):
+                fn, u = item if isinstance(item, tuple) else (item, cfg['url'])
+                key = (fn.strip().lower(), u)
+                if key in seen:
+                    continue
+                seen.add(key)
+                feed_names.append((fn, u))
+        if not feed_names:
+            print('  %-12s read %d file(s) and found no rows' % (op, len(paths)))
+            continue
 
         # pass 1 -- every candidate, by name only
         cands = {}
-        for fn in feed_names:
+        for fn, u in feed_names:
             hits = [row for row in rows if name_matches(fn, row['names'])]
-            cands[fn] = hits
+            cands[fn] = (hits, u)
 
-        anchors = [h[0] for h in cands.values() if len(h) == 1]
+        anchors = [h[0] for h, _u in cands.values() if len(h) == 1]
         if not anchors:
             print('  %-12s no unambiguous match to anchor on' % op)
             continue
@@ -206,7 +264,7 @@ def main():
         span = max((km(p, q) for p in pts for q in pts), default=0.0)
 
         print('\n%s  (%d rows read, %d anchors, cluster span %.0f km)' % (op, len(feed_names), len(anchors), span))
-        for fn, hits in cands.items():
+        for fn, (hits, url) in cands.items():
             if not hits:
                 continue
             if len(hits) == 1:
