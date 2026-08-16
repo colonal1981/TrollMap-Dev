@@ -61,6 +61,7 @@
  */
 import { CORS, JSON_HEADERS, r2Text } from './worker-core.js';
 import { getDukeLake, fetchUsgs } from './worker-data.js';
+import { parseCubeLevels, parseSouthernCoLevels, parseBrookfieldFacility } from './operators.js';
 
 const UA = 'TrollMap/1.0 (personal fishing app)';
 
@@ -868,6 +869,98 @@ async function usaceLevels(candidates, nowMs) {
   return null;
 }
 
+/* ══ UTILITY OPERATORS THAT PUBLISH HTML ══════════════════════════════════════════════════════
+ *
+ * Duke and TVA return JSON, USACE has a REST API. Cube Carolinas, Southern Company and
+ * Brookfield render their levels server-side, so the numbers come out of the markup --
+ * Worker/operators.js does that parsing against page source Ryan saved on 2026-08-16.
+ *
+ * WHICH LAKE IS WHICH IS NOT DECIDED HERE. A feed publishes a NAME, and several registry rows
+ * can carry it: Cube's "Falls" matches three, none of them Cube's. That join needs every row's
+ * centroid and every row's existing dam bindings, which the Worker does not have, so
+ * scripts/bind_operator_lakes.py does it offline by geometry and writes the answer into
+ * water_bindings.json as `operator: {operator, feed_name, url, why}`. Same division of labour
+ * as build_water_bindings.py. This function just reads its own binding.
+ *
+ * ONE FETCH PER OPERATOR PER ISOLATE. Cube publishes four lakes on one page and Southern
+ * Company twenty on another, so a per-lake fetch would pull the same table over and over.
+ */
+const OPERATOR_PAGES = {
+  cube: { url: 'https://ww4.cubecarolinas.com/lake/levels?orgID=3', label: 'Cube Carolinas' },
+  southernco: { url: 'https://lakes.southernco.com/default.aspx', label: 'Southern Company / Georgia Power' },
+};
+const _opCache = new Map();
+
+async function operatorPage(key) {
+  const cfg = OPERATOR_PAGES[key];
+  if (!cfg) return null;
+  const hit = _opCache.get(key);
+  if (hit && Date.now() - hit.t < 15 * 60 * 1000) return hit.v;
+  let parsed = null;
+  try {
+    const r = await fetch(cfg.url, { headers: { 'User-Agent': 'TrollMap/1.0 (personal fishing app)' } });
+    if (r.ok) {
+      const html = await r.text();
+      parsed = key === 'cube' ? parseCubeLevels(html) : parseSouthernCoLevels(html);
+    }
+  } catch (_) { parsed = null; }
+  _opCache.set(key, { t: Date.now(), v: parsed });
+  return parsed;
+}
+
+/** The operator's reading for this water, or null. `b.operator` is written by the pipeline. */
+async function operatorLevel(b) {
+  const op = b && b.operator;
+  if (!op || !op.operator || !op.feed_name) return null;
+
+  if (op.operator === 'brookfield') {
+    try {
+      const r = await fetch(op.url, { headers: { 'User-Agent': 'TrollMap/1.0 (personal fishing app)' } });
+      if (!r.ok) return null;
+      const f = parseBrookfieldFacility(await r.text());
+      return f && f.elevationFt != null
+        ? { source: 'Brookfield / safewaters.com', url: op.url, feed_name: op.feed_name,
+            elevation_ft: f.elevationFt, below_full_pond_ft: f.belowFullPondFt,
+            full_pond_ft: f.fullPondFt, observed_at: f.elevationAt,
+            discharges: f.discharges, note: f.note, bound_by: op.why }
+        : null;
+    } catch (_) { return null; }
+  }
+
+  const page = await operatorPage(op.operator);
+  if (!page || !Array.isArray(page.lakes)) return null;
+  const row = page.lakes.find((l) => l.name === op.feed_name);
+  if (!row) return null;
+  const cfg = OPERATOR_PAGES[op.operator];
+
+  if (op.operator === 'cube') {
+    return {
+      source: cfg.label, url: cfg.url, feed_name: row.name,
+      elevation_ft: row.elevationFt,
+      below_full_pond_ft: row.belowFullPondFt,
+      full_pond_ft: row.fullPondFt,
+      forecast: row.forecast,
+      observed_at: page.observedAt,
+      bound_by: op.why,
+    };
+  }
+  return {
+    source: cfg.label, url: cfg.url, feed_name: row.name,
+    elevation_ft: row.currentFt,
+    full_pond_ft: row.fullFt,
+    below_full_pond_ft: (row.fullFt != null && row.currentFt != null)
+      ? Math.round((row.fullFt - row.currentFt) * 100) / 100 : null,
+    rain_in: row.rainIn,
+    generating: row.generating,
+    // A lake the operator lists but is not reading today is a different answer from a lake it
+    // does not publish, and the caller can tell them apart.
+    reporting: row.reporting,
+    observed_at: page.readingsFor,
+    last_updated: page.lastUpdated,
+    bound_by: op.why,
+  };
+}
+
 async function waterBlock(b, lat, lon) {
   const picks = [];
   if (gaugeId(b.pool)) picks.push(['pool', b.pool]);
@@ -925,6 +1018,10 @@ async function waterBlock(b, lat, lon) {
   // answer from "we did not look" -- `usace_candidates` says whether there was anything to try.
   out.usace = await usaceLevels(b.usace, Date.now()).catch(() => null);
   out.usace_candidates = (b.usace || []).length;
+
+  // Cube, Southern Company and Brookfield. Null when the pipeline bound no operator to this
+  // water -- which for Cube's "Falls" is the correct answer, not a gap.
+  out.operator = await operatorLevel(b).catch(() => null);
   // Whether `tide: null` on this response is a FACT or a GAP. An inland lake has no tide and
   // that is the right answer; a coastal zone with no station bound is a hole in the registry.
   out.tidal = !!(b.tides || []).length;

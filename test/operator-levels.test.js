@@ -119,3 +119,45 @@ test('an empty or unexpected page returns nothing rather than guessing', () => {
   assert.deepEqual(parseSouthernCoLevels('').lakes, []);
   assert.equal(parseBrookfieldFacility('<html></html>').elevationFt, null);
 });
+
+// ── the binding the pipeline writes, and what conditions.js does with it ────────────────────
+//
+// scripts/bind_operator_lakes.py resolves feed names to slugs offline by geometry and writes
+// `operator: {operator, feed_name, url, why}` into water_bindings.json. conditions.js reads
+// that and looks the row up by feed_name — an exact string, because the fuzzy part already
+// happened in the pipeline where the whole registry was available.
+test('the bound feed_name finds its row exactly', () => {
+  const sc = parseSouthernCoLevels(fx('southernco-levels.html'));
+  // These are the strings bind_operator_lakes.py actually wrote, verbatim.
+  for (const [feedName, expectFull] of [
+    ['Hartwell', 660], ['Russell', 475], ['Lanier (Buford Dam)', 1071],
+    ['Oconee (Wallace Dam)', 435], ['Sinclair', 340], ['Jackson (Lloyd Shoals Dam)', 530],
+  ]) {
+    const row = sc.lakes.find((l) => l.name === feedName);
+    assert.ok(row, `bound feed_name "${feedName}" must exist on the page`);
+    assert.equal(row.fullFt, expectFull);
+  }
+  const cu = parseCubeLevels(fx('cube-levels.html'));
+  for (const feedName of ['High Rock', 'Badin (Narrows)', 'Tuckertown']) {
+    assert.ok(cu.lakes.find((l) => l.name === feedName), `bound feed_name "${feedName}" must exist`);
+  }
+});
+
+test('below-full-pond is derived the same way on both operators', () => {
+  // Cube publishes the drawdown; Southern Company publishes current and full and it is
+  // subtracted. Both reach the caller as below_full_pond_ft so the app reads one field.
+  const cu = parseCubeLevels(fx('cube-levels.html')).lakes.find((l) => l.name === 'High Rock');
+  assert.equal(cu.belowFullPondFt, 1.60);
+  assert.equal(Math.round((cu.fullPondFt - cu.elevationFt) * 100) / 100, 1.60);
+
+  const sc = parseSouthernCoLevels(fx('southernco-levels.html')).lakes.find((l) => l.name === 'Hartwell');
+  assert.equal(Math.round((sc.fullFt - sc.currentFt) * 100) / 100, 8.31);
+});
+
+test('a lake bound to no operator is not a gap — Cube publishes four and we ship three', () => {
+  const cu = parseCubeLevels(fx('cube-levels.html'));
+  assert.equal(cu.lakes.length, 4);
+  // "Falls" is on the page and deliberately bound to nothing: Cube's Falls Reservoir is not in
+  // the index, and all three same-named candidates are other rivers.
+  assert.ok(cu.lakes.some((l) => l.name === 'Falls'));
+});
