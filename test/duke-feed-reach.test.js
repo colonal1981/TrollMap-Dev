@@ -55,3 +55,29 @@ test('a water Duke does not publish gets null, not the nearest thing', () => {
   assert.equal(pick(['Lake Murray', 'Lake Murray, SC']), null);
   assert.equal(pick(['Norris Lake', 'Norris Lake, TN']), null);
 });
+
+test('the county display name ALONE reaches the feed — a binding carries nothing else', () => {
+  // water_bindings.json has `display_name` and no legacy names, so chartDatum passes exactly
+  // one string. It must be enough on its own; the earlier code hand-cut it at the first comma
+  // and produced "Wateree Lake (Kershaw Co", which matched nothing.
+  assert.equal(dukeMatch('Lake Wateree', ['Wateree Lake (Kershaw Co, SC)']), 'Wateree Lake (Kershaw Co, SC)');
+  assert.equal(dukeMatch('Lake Norman', ['Lake Norman (Catawba Co, NC)']), 'Lake Norman (Catawba Co, NC)');
+  assert.equal(dukeMatch('Lake Tillery', ['Lake Tillery (Montgomery Co, NC)']), 'Lake Tillery (Montgomery Co, NC)');
+  assert.equal(dukeMatch('Mountain Island Lake', ['Mountain Island Lake (Gaston Co, NC)']),
+               'Mountain Island Lake (Gaston Co, NC)');
+});
+
+test('a county that is also a lake name does not make the match', () => {
+  // Duke publishes "Lake Norman". Catawba is a county AND a registry water; the parenthetical
+  // must not become a matchable token in either direction.
+  assert.equal(dukeMatch('Lake Hickory', ['Lake Norman (Catawba Co, NC)']), null);
+  assert.equal(dukeMatch('Lake Jocassee', ['Lake Keowee (Oconee Co, SC)']), null);
+});
+
+test('the broken hand-cut is what this replaces', () => {
+  // Exactly what `display_name.replace(/,.*$/, '')` produced, kept here so the regression has a
+  // name. It is not a lake name and it must not be treated as one.
+  const cut = 'Wateree Lake (Kershaw Co, SC)'.replace(/,.*$/, '');
+  assert.equal(cut, 'Wateree Lake (Kershaw Co');
+  assert.equal('Lake Wateree'.toLowerCase().includes(cut.toLowerCase()), false);
+});

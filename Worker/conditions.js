@@ -60,7 +60,7 @@
  * client-side JavaScript. This is the authoritative source and it is a different agency.
  */
 import { CORS, JSON_HEADERS, r2Text } from './worker-core.js';
-import { getDukeLake, fetchUsgs } from './worker-data.js';
+import { dukeRowForNames, fetchUsgs } from './worker-data.js';
 import { parseCubeLevels, parseSouthernCoLevels, parseBrookfieldFacility } from './operators.js';
 
 const UA = 'TrollMap/1.0 (personal fishing app)';
@@ -1055,7 +1055,7 @@ async function waterBlock(b, lat, lon) {
   // that is the right answer; a coastal zone with no station bound is a hole in the registry.
   out.tidal = !!(b.tides || []).length;
   out.source = 'NWPS — api.water.noaa.gov/nwps/v1/gauges/{lid}';
-  out.chart_datum = await chartDatum(b);
+  out.chart_datum = await chartDatum(b, out.operator);
   return out;
 }
 
@@ -1096,8 +1096,9 @@ async function waterBlock(b, lat, lon) {
  *
  * COVERAGE IS WHATEVER THE FEED RETURNS, which is not a number to be hardcoded here. Duke's
  * /lakes/current-level takes no basin argument -- fetchDukeApi() requests the bare URL and gets
- * every Duke reservoir it publishes across SC and NC in one response, which getDukeLake() then
- * matches by name. An earlier draft of this comment said "the eleven Catawba-Wateree reservoirs",
+ * every Duke reservoir it publishes across SC and NC in one response, which dukeRowForNames()
+ * then matches by whole tokens. An earlier draft of this comment said "the eleven Catawba-Wateree
+ * reservoirs",
  * counted off a screenshot of one basin. That is the same mistake as the one this block exists to
  * document, at a smaller scale: stating as fact something never actually checked.
  *
@@ -1108,7 +1109,7 @@ async function waterBlock(b, lat, lon) {
  * and 3 and the /duke route forwards a `basin` parameter, but fetchDukeApi ignores it and every
  * one of those calls returns the identical full list. Three requests for one answer.)
  */
-async function chartDatum(b) {
+export function chartDatumShape(b, sources = {}) {
   const out = {
     // True of every Garmin-derived pack in R2, not just the ones with a level feed.
     charted_at: 'full_pool',
@@ -1125,26 +1126,76 @@ async function chartDatum(b) {
     out.pending = 'not a lake — a river or coastal zone has no full pool to be below';
     return out;
   }
-  const name = String(b.display_name || '').replace(/,.*$/, '').trim();
-  if (!name) { out.pending = 'no display name to match against the level feed'; return out; }
+  if (!String(b.display_name || '').trim()) {
+    out.pending = 'no display name to match against the level feed';
+    return out;
+  }
+
+  // THE OPERATOR FIRST, because it is the dam's own account of its own reservoir and it
+  // publishes the drawdown directly rather than leaving it to be derived. Nineteen waters carry
+  // one as of 2026-08-16; Duke publishes thirty-four; the two sets barely overlap.
+  //
+  // ASSUMPTION, STATED: an operator's "full pond" is taken to be the full pool Garmin charted
+  // to. That holds for a normal-operation reservoir and is what the Duke path has always
+  // assumed. It is not a datum conversion and no vertical datum is reconciled here — which is
+  // exactly why this is REPORTED and never APPLIED.
+  const op = sources.operator;
+  if (op && Number.isFinite(op.below_full_pond_ft)) {
+    out.below_full_pool_ft = round2(op.below_full_pond_ft);
+    out.full_pool_ft = Number.isFinite(op.full_pond_ft) ? op.full_pond_ft : null;
+    out.level_ft = Number.isFinite(op.elevation_ft) ? op.elevation_ft : null;
+    out.source = `${op.source} — ${op.feed_name}`;
+    return out;
+  }
+
+  const d = sources.duke;
+  if (d && Number.isFinite(d.belowFullPoolFt) && Number.isFinite(d.fullPool)) {
+    out.level_ft = d.ft;
+    out.full_pool_ft = d.fullPool;
+    out.below_full_pool_ft = round2(d.belowFullPoolFt);
+    out.source = 'Duke Energy — api.hydro-derived.duke-energy.app/lakes/current-level; `Actual` '
+               + 'is feet inside a 100 ft band under full pond, so the drawdown is 100 minus it';
+    if (d.duke_feed_name) out.feed_name = d.duke_feed_name;
+    return out;
+  }
+
+  // NOT LISTED HERE ON PURPOSE: the Corps. `usace.conservation_pool_ft` is a TARGET, not a
+  // reading, and turning it into a drawdown needs today's elevation from a gauge whose vertical
+  // datum is not guaranteed to be the Corps'. Subtracting across two datums produces a number
+  // that looks like feet and is not. It stays out until the datums are reconciled.
+  out.pending = 'no full-pool level feed names this water — the operator feeds (Cube, Southern '
+              + 'Company, Brookfield) and Duke\'s /lakes/current-level are what is wired, and '
+              + 'between them they do not publish this reservoir';
+  return out;
+}
+
+async function chartDatum(b, operator) {
+  if ((b.feature_type && b.feature_type !== 'lake') || !String(b.display_name || '').trim()) {
+    return chartDatumShape(b, {});
+  }
+  if (operator && Number.isFinite(operator.below_full_pond_ft)) {
+    return chartDatumShape(b, { operator });
+  }
+  // THE COUNTY PARENTHETICAL BROKE THIS, and it broke it for every lake at once. The name was
+  // built with `display_name.replace(/,.*$/, '')`, written when a display name looked like
+  // "Wateree Lake, SC". It now looks like "Wateree Lake (Kershaw Co, SC)", so that strip
+  // returned "Wateree Lake (Kershaw Co" and `getDukeLake`'s `.includes()` matched nothing --
+  // measured live on 2026-08-16: every lake, including all nine Duke waters that used to work,
+  // answered `chart_datum.pending`.
+  //
+  // The fix is not a better strip. It is to stop hand-cutting names: `dukeRowForNames` tokenises
+  // through `reportTokens`, which drops the parenthetical and the state suffix already, and
+  // matches whole tokens in both directions with the flowing-water guard. It also searches the
+  // WHOLE feed rather than the nine names in the LAKES table.
   let d = null;
   try {
-    d = await cached(`duke:${name.toLowerCase()}`, 900, () => getDukeLake(name.toLowerCase()));
+    d = await cached(`duke:${b.slug}`, 900, () => dukeRowForNames([b.display_name]));
   } catch (e) {
+    const out = chartDatumShape(b, {});
     out.pending = `level feed failed: ${String((e && e.message) || e)}`;
     return out;
   }
-  if (!d || !Number.isFinite(d.belowFullPoolFt) || !Number.isFinite(d.fullPool)) {
-    out.pending = 'no full-pool level feed names this water — Duke\'s /lakes/current-level is the '
-                + 'only one wired, and it publishes its own reservoirs in SC and NC';
-    return out;
-  }
-  out.level_ft = d.ft;
-  out.full_pool_ft = d.fullPool;
-  out.below_full_pool_ft = round2(d.belowFullPoolFt);
-  out.source = 'Duke Energy — api.hydro-derived.duke-energy.app/lakes/current-level; `Actual` is '
-             + 'feet inside a 100 ft band under full pond, so the drawdown is 100 minus it';
-  return out;
+  return chartDatumShape(b, { duke: d });
 }
 
 // ── tide and currents ───────────────────────────────────────────────────────────────────────

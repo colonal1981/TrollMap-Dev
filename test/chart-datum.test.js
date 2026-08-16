@@ -1,0 +1,95 @@
+// What the chart was drawn at, versus where the water is today.
+//
+// THE COUNTY PARENTHETICAL BROKE THIS FOR EVERY LAKE AT ONCE. The Duke lookup built its search
+// name with `display_name.replace(/,.*$/, '')`, written when a display name was "Wateree Lake,
+// SC". Counties landed on 2026-08-02 and it became "Wateree Lake (Kershaw Co, SC)", so the strip
+// returned "Wateree Lake (Kershaw Co" and `.includes()` matched nothing. Measured live on
+// 2026-08-16: `chart_datum.pending` on wateree_lake, a Duke reservoir with a hardcoded binding.
+//
+// Third instance of one shape today — a display name changed and a key built from it by hand
+// stopped matching. The other two were RESEARCH_CANONICAL_IDS and parseLakeBaseName.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { chartDatumShape } from '../Worker/conditions.js';
+
+const LAKE = { slug: 'wateree_lake', display_name: 'Wateree Lake (Kershaw Co, SC)',
+               feature_type: 'lake', state: 'SC' };
+
+// normalizeDukeRow output, Wateree on 2026-08-15: Actual 98.00 inside a 100 ft band.
+const DUKE = { ft: 223.5, fullPool: 225.5, belowFullPoolFt: 2.0, duke_feed_name: 'Lake Wateree' };
+
+test('a Duke row fills the datum and names the feed row that answered', () => {
+  const out = chartDatumShape(LAKE, { duke: DUKE });
+  assert.equal(out.pending, null);
+  assert.equal(out.below_full_pool_ft, 2);
+  assert.equal(out.full_pool_ft, 225.5);
+  assert.equal(out.level_ft, 223.5);
+  assert.equal(out.feed_name, 'Lake Wateree', 'a wrong match must be visible, not silent');
+  assert.match(out.source, /Duke Energy/);
+});
+
+test('the operator wins over Duke — it is the dam\'s own account of its own reservoir', () => {
+  const operator = { source: 'Southern Company / Georgia Power', feed_name: 'Clark Hill (Thurmond Dam)',
+                     elevation_ft: 323.08, full_pond_ft: 330, below_full_pond_ft: 6.92 };
+  const out = chartDatumShape(LAKE, { operator, duke: DUKE });
+  assert.equal(out.below_full_pool_ft, 6.92);
+  assert.equal(out.full_pool_ft, 330);
+  assert.equal(out.level_ft, 323.08);
+  assert.match(out.source, /Southern Company/);
+});
+
+test('an operator with a drawdown and no elevation still sets the datum', () => {
+  // Chilhowee and Calderwood publish only feet-below-full-pool. The drawdown IS the datum
+  // offset; the absolute elevation is not needed to state it.
+  const operator = { source: 'Brookfield / safewaters.com', feed_name: 'Chilhowee',
+                     elevation_ft: null, full_pond_ft: null, below_full_pond_ft: 1.18 };
+  const out = chartDatumShape({ ...LAKE, slug: 'chilhowee_lake' }, { operator });
+  assert.equal(out.below_full_pool_ft, 1.18);
+  assert.equal(out.full_pool_ft, null);
+  assert.equal(out.level_ft, null);
+  assert.equal(out.pending, null, 'no elevation is not a failure to report');
+});
+
+test('an operator listed but not reading falls through to Duke rather than blanking', () => {
+  const operator = { source: 'Southern Company / Georgia Power', feed_name: 'Somewhere',
+                     elevation_ft: null, full_pond_ft: null, below_full_pond_ft: null,
+                     reporting: false };
+  const out = chartDatumShape(LAKE, { operator, duke: DUKE });
+  assert.match(out.source, /Duke Energy/);
+  assert.equal(out.below_full_pool_ft, 2);
+});
+
+test('nothing publishes this water — pending names both wired sources', () => {
+  const out = chartDatumShape(LAKE, {});
+  assert.equal(out.below_full_pool_ft, null);
+  assert.match(out.pending, /Brookfield/);
+  assert.match(out.pending, /Duke/);
+});
+
+test('a river or coastal zone has no full pool to be below', () => {
+  const r = chartDatumShape({ ...LAKE, feature_type: 'river' }, { duke: DUKE });
+  assert.match(r.pending, /not a lake/);
+  assert.equal(r.below_full_pool_ft, null, 'a Duke row must not fill a river');
+  const c = chartDatumShape({ ...LAKE, feature_type: 'coastal' }, { duke: DUKE });
+  assert.match(c.pending, /not a lake/);
+});
+
+test('the datum is REPORTED and never APPLIED', () => {
+  for (const src of [{ duke: DUKE }, {}]) {
+    assert.equal(chartDatumShape(LAKE, src).applied, false);
+    assert.equal(chartDatumShape(LAKE, src).charted_at, 'full_pool');
+  }
+});
+
+test('a partial Duke row is not half a datum', () => {
+  // fullPool missing means the band cannot be interpreted, so there is no offset to state.
+  const out = chartDatumShape(LAKE, { duke: { ft: 223.5, fullPool: null, belowFullPoolFt: 2 } });
+  assert.equal(out.below_full_pool_ft, null);
+  assert.ok(out.pending);
+});
+
+test('a binding with no display name says so rather than matching everything', () => {
+  const out = chartDatumShape({ slug: 'x', feature_type: 'lake', display_name: '  ' }, { duke: DUKE });
+  assert.match(out.pending, /no display name/);
+  assert.equal(out.below_full_pool_ft, null);
+});
