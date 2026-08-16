@@ -12,6 +12,31 @@ import {
 import { coerceNum } from '../../js/utils/coerce.js';
 
 /**
+ * Fit an agent prompt inside a character budget by dropping facts, MEASURING AFTER EACH CUT.
+ *
+ * Pure, and separated out precisely because the inline version could not be tested: it mutated
+ * the context object after the prompt string had already been built, so the cut never reached
+ * the wire. A budget check that does not re-measure is a log line, not a guard.
+ */
+export function fitPromptToBudget(systemPrompt, buildUser, grounded, budget = 80000) {
+  const sys = String(systemPrompt || '');
+  let g = grounded;
+  let user = buildUser(g);
+  const before = sys.length + user.length;
+  if (before <= budget) return { userPrompt: user, grounded: g, truncatedTo: null, over: false, before, size: before };
+  for (const keep of [5, 2, 0]) {
+    if (!Array.isArray(g._extractedFacts) || g._extractedFacts.length <= keep) continue;
+    g = { ...g, _extractedFacts: g._extractedFacts.slice(0, keep) };
+    user = buildUser(g);
+    const size = sys.length + user.length;
+    if (size <= budget) return { userPrompt: user, grounded: g, truncatedTo: keep, over: false, before, size };
+  }
+  const size = sys.length + user.length;
+  return { userPrompt: user, grounded: g, truncatedTo: 0, over: true, before, size };
+}
+
+
+/**
  * The profile WITHOUT the transient carriers, for prompts that dump it as JSON.
  *
  * `prev` arrives carrying `_documentContext` -- the full text of every selected document -- and
@@ -1299,14 +1324,28 @@ holding: coerceHolding(entry.holding, holdingRejects),
   const systemPrompt = (coastalTarget && COASTAL_AGENT_HINTS[agentKey])
     ? agent.system + COASTAL_AGENT_HINTS[agentKey]
     : agent.system;
-  const userPrompt = agent.userTemplate(lakeName, state, groundedPrev);
-
-
-  // Safety check — if prompt is too large, truncate _extractedFacts further
-  const promptLen = systemPrompt.length + userPrompt.length;
-  if (promptLen > 80000 && groundedPrev._extractedFacts?.length > 5) {
-    console.warn(`handleResearchAgent: ${agentKey} prompt too large (${promptLen} chars) — truncating facts`);
-    groundedPrev = { ...groundedPrev, _extractedFacts: groundedPrev._extractedFacts.slice(0, 5) };
+  // THE GUARD BELOW USED TO REPORT SUCCESS AND DO NOTHING, and that is the whole of it.
+  // `userPrompt` was a const built from groundedPrev, then the guard reassigned groundedPrev
+  // and the payload sent the ORIGINAL string. From wrangler tail, 2026-08-16, twice with the
+  // identical number because the second attempt truncated exactly as much as the first:
+  //
+  //     (warn) handleResearchAgent: habitat prompt too large (402757 chars) — truncating facts
+  //
+  // 402,757 characters is roughly 100,000 tokens, against a free-tier Flash-Lite budget of
+  // 250,000 per minute -- and wave 1 sends five of these at once. Fitting the prompt is now
+  // measured after each cut, and if it will not fit the response says so instead of the log
+  // claiming a truncation that never happened.
+  const fitted = fitPromptToBudget(systemPrompt, (g) => agent.userTemplate(lakeName, state, g), groundedPrev);
+  const userPrompt = fitted.userPrompt;
+  groundedPrev = fitted.grounded;
+  if (fitted.truncatedTo != null) {
+    console.warn(`handleResearchAgent: ${agentKey} prompt was ${fitted.before} chars — kept ${fitted.truncatedTo} facts, now ${fitted.size}`);
+  }
+  if (fitted.over) {
+    // Dropping every fact did not get it under budget, so the bulk is the profile blob or the
+    // injected document text, not the facts. Naming that is the difference between a lead and
+    // a mystery next time this shows up in the tail.
+    console.warn(`handleResearchAgent: ${agentKey} STILL ${fitted.size} chars with zero facts — the bulk is the profile or the injected documents, not _extractedFacts`);
   }
 
   const payload = {
