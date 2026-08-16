@@ -58,7 +58,7 @@ import './modules/file-io.js';
 import './modules/topbar.js';
 import './modules/lake-ramp-select.js';
 import './modules/noaa-tides.js';
-import './modules/duke-energy.js';
+import './modules/conditions-strip.js';
 import './modules/utility-sync.js';
 import './modules/lake-intel.js';
 import './modules/plan-builder.js';

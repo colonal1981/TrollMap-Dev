@@ -60,7 +60,8 @@
  * client-side JavaScript. This is the authoritative source and it is a different agency.
  */
 import { CORS, JSON_HEADERS, r2Text } from './worker-core.js';
-import { dukeRowForNames, fetchUsgs } from './worker-data.js';
+import { dukeRowForNames, fetchDukeFlowArrivals, fetchUsgs, getLakeClarity, RIVERS, lakeKeyFromName }
+  from './worker-data.js';
 import { parseCubeLevels, parseSouthernCoLevels, parseBrookfieldFacility } from './operators.js';
 
 const UA = 'TrollMap/1.0 (personal fishing app)';
@@ -990,6 +991,75 @@ async function operatorLevel(b) {
   };
 }
 
+/**
+ * WHEN THE WATER MOVES, from whichever operator says so — one shape, not three.
+ *
+ * Three sources answer this question and they answer different halves of it:
+ *
+ *   Duke     /rivers/flow-arrivals/{basin} — a PROJECTION. When the surge from a generation
+ *            run reaches a named mile marker downstream. This is the only true forecast here.
+ *   TVA      generation-releases — how many generators are running now and in the published
+ *            schedule. Already fetched for `out.tva`; reused rather than re-requested.
+ *   Brookfield  the facility page's own discharge readings — OBSERVED, this minute, not a
+ *            projection. Labelled `observed` so nothing downstream reads it as a forecast.
+ *
+ * `kind` is the field that keeps them apart. A number that says what the river WILL do and a
+ * number that says what it IS doing are not interchangeable, and collapsing them is how a
+ * person launches into a surge that already passed.
+ */
+export function releaseShape({ duke, tva, operator } = {}) {
+  if (duke && Array.isArray(duke.arrivals) && duke.arrivals.length) {
+    return {
+      kind: 'projected',
+      operator: 'Duke Energy',
+      basin: duke.basinName || null,
+      last_updated: duke.lastUpdated || null,
+      next: duke.arrivals[0] || null,
+      items: duke.arrivals.slice(0, 6),
+      source: duke.source || null,
+    };
+  }
+  if (tva && (Array.isArray(tva.generation) ? tva.generation.length : false)) {
+    return {
+      kind: 'scheduled',
+      operator: 'TVA',
+      basin: null,
+      last_updated: tva.observed_at || null,
+      next: tva.generation[0] || null,
+      items: tva.generation.slice(0, 6),
+      source: tva.source || null,
+    };
+  }
+  if (operator && Array.isArray(operator.discharges) && operator.discharges.length) {
+    return {
+      // NOT a forecast. safewaters publishes what is going through the turbines right now.
+      kind: 'observed',
+      operator: operator.source || null,
+      basin: null,
+      last_updated: operator.observed_at || null,
+      next: null,
+      items: operator.discharges,
+      source: operator.url || null,
+    };
+  }
+  return null;
+}
+
+/**
+ * The Duke basin for a water, or null.
+ *
+ * RIVERS is a hand-written table of six and only two entries carry a `dukeBasinId`. That is not
+ * a gate to delete like the LAKES one was: the surge model needs river-mile geometry that
+ * exists nowhere else, so a river Duke publishes arrivals for is genuinely unknown to us until
+ * someone measures its centerline. Stated so the next reader does not mistake it for an
+ * oversight.
+ */
+export function dukeBasinFor(name) {
+  const key = lakeKeyFromName(String(name || ''));
+  const row = key && RIVERS[key];
+  return row && row.dukeBasinId ? row.dukeBasinId : null;
+}
+
 async function waterBlock(b, lat, lon) {
   const picks = [];
   if (gaugeId(b.pool)) picks.push(['pool', b.pool]);
@@ -1051,6 +1121,12 @@ async function waterBlock(b, lat, lon) {
   // Cube, Southern Company and Brookfield. Null when the pipeline bound no operator to this
   // water -- which for Cube's "Falls" is the correct answer, not a gap.
   out.operator = await operatorLevel(b).catch(() => null);
+
+  // Release schedules. The Duke call only happens for a water that has a basin, so the common
+  // case costs nothing.
+  const basin = dukeBasinFor(b.display_name || b.slug);
+  const dukeSched = basin ? await fetchDukeFlowArrivals(basin).catch(() => null) : null;
+  out.releases = releaseShape({ duke: dukeSched, tva: out.tva, operator: out.operator });
   // Whether `tide: null` on this response is a FACT or a GAP. An inland lake has no tide and
   // that is the right answer; a coastal zone with no station bound is a hole in the registry.
   out.tidal = !!(b.tides || []).length;
@@ -1335,6 +1411,20 @@ export async function handleConditions(request, env, url) {
       if (err) throw new Error(err);
       const b = all[slug];
       return (b && (b.tides || []).length) ? tideBlock(b, lat, lon, date) : null;
+    })],
+    // CLARITY MOVED HERE from its own /lake-clarity route, so a caller that wants the state of
+    // the water makes ONE request instead of three. It is a model, not a reading: a measured
+    // Secchi or turbidity baseline from the WQP where one exists, plus 72 h of rainfall through
+    // per-zone sensitivities. `measured` inside the payload says which half answered, and the
+    // client must not print it as an observation.
+    //
+    // It takes the DISPLAY NAME rather than the slug because getLakeClarity keys its profiles
+    // through lakeKeyFromName. The registry name is the one the rest of this route uses too.
+    ['clarity', bindingsP.then(({ all, err }) => {
+      if (err) throw new Error(err);
+      const b = all[slug];
+      const nm = (b && b.display_name) || slug;
+      return getLakeClarity(nm, date, env);
     })],
   ];
   const settled = await Promise.allSettled(jobs.map((j) => j[1]));

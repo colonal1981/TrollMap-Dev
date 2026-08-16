@@ -152,3 +152,76 @@ test('a lake with no centroid never reaches the network', () => {
     assert.match(c.error, /centroid/);
   });
 });
+
+// ── the one line that has to fit ────────────────────────────────────────────────────────────
+import { conditionsStrip } from '../js/utils/water-conditions.js';
+
+const strip = (water, extra = {}) => conditionsStrip(readConditions({ slug: 's', water, ...extra }));
+
+test('a lake leads with the drawdown — the number that decides the ramp', () => {
+  const s = strip({ display_name: 'Thurmond', feature_type: 'lake',
+    chart_datum: { level_ft: 323.08, full_pool_ft: 330, below_full_pool_ft: 6.92,
+                   source: 'Southern Company / Georgia Power — Clark Hill (Thurmond Dam)' },
+    pool: { water_temp_c: 29, name: 'Modoc' } });
+  assert.match(s.text, /^6\.92 ft down/);
+  assert.match(s.text, /84\.2°F/);
+  assert.match(s.text, /Southern Company \/ Georgia Power$/, 'the source, not the feed row');
+  assert.equal(s.tone, 'ok');
+});
+
+test('a river leads with FLOW — stage alone does not say what it is doing', () => {
+  const s = strip({ display_name: 'Broad River', feature_type: 'river',
+    chart_datum: { pending: 'not a lake — a river or coastal zone has no full pool to be below' },
+    gauge: { flow: 1240.4, stage: 3.21, name: 'Alston' } });
+  assert.match(s.text, /1,240 ft³\/s/);
+  assert.match(s.text, /3\.2 ft stage/);
+});
+
+test('a projected release reaches the strip; an observed discharge does not', () => {
+  const base = { display_name: 'Wateree River', feature_type: 'river',
+                 gauge: { flow: 900, name: 'g' } };
+  const proj = strip({ ...base, releases: { kind: 'projected', operator: 'Duke Energy',
+    next: { mileMarkerName: 'Hwy 601' }, items: [] } });
+  assert.match(proj.text, /release → Hwy 601/);
+  // Brookfield's discharge IS the flow number two fields to the left. Printing it again as a
+  // schedule is exactly what `kind` exists to prevent.
+  const obs = strip({ ...base, releases: { kind: 'observed', operator: 'Brookfield',
+    next: null, items: [{ cfs: 9448 }] } });
+  assert.ok(!/release/.test(obs.text), obs.text);
+});
+
+test('a modelled clarity is marked, a measured one is not', () => {
+  const model = strip({ display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 1 } }, { clarity: { overall: { clarity: 'Stained', score: 40 }, measured: null } });
+  assert.match(model.text, /~Stained/);
+  assert.ok(model.footnotes.some((f) => /modelled from rainfall/.test(f)));
+
+  const meas = strip({ display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 1 } }, { clarity: { overall: { clarity: 'Clear', score: 5 }, measured: { avgSecchiDepthFt: 8 } } });
+  assert.match(meas.text, /· Clear/);
+  assert.ok(!/~/.test(meas.text));
+  assert.ok(!meas.footnotes.some((f) => /modelled/.test(f)));
+});
+
+test('a tailwater temperature is starred and the footnote says why', () => {
+  const s = strip({ display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 2 },
+    tailwater: { water_temp_c: 20, name: 'Below dam' } });
+  assert.match(s.text, /68°F\*/);
+  assert.ok(s.footnotes.some((f) => /below the dam/.test(f)));
+});
+
+test('at full pool says so rather than printing 0.00 ft down', () => {
+  const s = strip({ display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 0, level_ft: 225.5, full_pool_ft: 225.5 } });
+  assert.match(s.text, /at full pool/);
+});
+
+test('nothing to say is idle, and an error is bad — they look different', () => {
+  assert.equal(conditionsStrip(null).tone, 'idle');
+  assert.equal(conditionsStrip({ error: 'offline' }).tone, 'bad');
+  const empty = strip({ display_name: 'L', feature_type: 'lake',
+    chart_datum: { pending: 'no source publishes a level for this water' } });
+  assert.equal(empty.tone, 'idle');
+  assert.match(empty.text, /no source publishes/);
+});

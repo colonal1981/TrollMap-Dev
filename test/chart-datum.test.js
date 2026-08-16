@@ -93,3 +93,52 @@ test('a binding with no display name says so rather than matching everything', (
   assert.match(out.pending, /no display name/);
   assert.equal(out.below_full_pool_ft, null);
 });
+
+// ── release schedules: one shape, three operators that mean different things ─────────────────
+import { releaseShape, dukeBasinFor } from '../Worker/conditions.js';
+
+test('a Duke arrival is a PROJECTION and says so', () => {
+  const r = releaseShape({ duke: { basinName: 'Catawba-Wateree', lastUpdated: 'x',
+    source: 'u', arrivals: [{ damName: 'Wateree', mileMarkerName: 'Hwy 601', arrival: 'a' },
+                            { damName: 'Wateree', mileMarkerName: 'Sparkleberry', arrival: 'b' }] } });
+  assert.equal(r.kind, 'projected');
+  assert.equal(r.operator, 'Duke Energy');
+  assert.equal(r.next.mileMarkerName, 'Hwy 601');
+  assert.equal(r.items.length, 2);
+});
+
+test('a Brookfield discharge is OBSERVED and must never read as a forecast', () => {
+  // safewaters publishes what is going through the turbines right now. Calling that a schedule
+  // is how a person launches into a surge that already passed.
+  const r = releaseShape({ operator: { source: 'Brookfield / safewaters.com', url: 'u',
+    observed_at: 't', discharges: [{ cfs: 9448.5, into: 'Little Tennessee River' }] } });
+  assert.equal(r.kind, 'observed');
+  assert.equal(r.next, null, 'an observation has no "next"');
+  assert.equal(r.items[0].cfs, 9448.5);
+});
+
+test('TVA generation is scheduled, and Duke outranks it when both exist', () => {
+  const tva = { generation: [{ generators: 2 }], observed_at: 'now', source: 'TVA — tva.com/RestApi' };
+  assert.equal(releaseShape({ tva }).kind, 'scheduled');
+  assert.equal(releaseShape({ tva }).operator, 'TVA');
+  const both = releaseShape({ duke: { arrivals: [{ damName: 'D' }] }, tva });
+  assert.equal(both.operator, 'Duke Energy', 'a projection beats a current reading');
+});
+
+test('nothing publishing a release is null, not an empty schedule', () => {
+  assert.equal(releaseShape({}), null);
+  assert.equal(releaseShape({ duke: { arrivals: [] }, tva: { generation: [] } }), null);
+  assert.equal(releaseShape({ operator: { discharges: [] } }), null);
+  assert.equal(releaseShape(), null);
+});
+
+test('only the two rivers with a measured centerline have a Duke basin', () => {
+  // RIVERS is six hand-written entries and two carry a dukeBasinId. That is not an oversight to
+  // fix by guessing: the surge model needs river-mile geometry that exists nowhere else.
+  assert.equal(dukeBasinFor('Wateree River'), 1);
+  assert.equal(dukeBasinFor('Broad River'), 10);
+  assert.equal(dukeBasinFor('Congaree River'), null);
+  assert.equal(dukeBasinFor('Lake Murray (Lexington Co, SC)'), null);
+  assert.equal(dukeBasinFor(''), null);
+  assert.equal(dukeBasinFor(null), null);
+});

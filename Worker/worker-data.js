@@ -341,6 +341,52 @@ function normalizeDukeRow(row) {
       : []
   };
 }
+// MOVED HERE FROM trollmap-worker.js 2026-08-16. It is a Duke API fetch and every other one
+// already lives in this file; it had to move so /conditions could call it without importing
+// the router. Behaviour is unchanged.
+var DUKE_API_BASE = "https://api.hydro-derived.duke-energy.app";
+async function fetchDukeFlowArrivals(basinId) {
+  try {
+    const r = await fetch(`${DUKE_API_BASE}/rivers/flow-arrivals/${basinId}`, {
+      cf: { cacheTtl: 300, cacheEverything: true },
+      headers: {
+        "User-Agent": "TrollMap/12 Worker",
+        "Origin": "https://lakes.hydro-derived.duke-energy.app",
+        "Referer": "https://lakes.hydro-derived.duke-energy.app/"
+      }
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const out = [];
+    const now = Date.now();
+    for (const dam of j?.Dams || []) {
+      for (const ev of dam?.FlowArrivalRecessions || []) {
+        const arr = ev.Arrival ? new Date(ev.Arrival + (ev.Arrival.endsWith("Z") ? "" : "-04:00")) : null;
+        const rec = ev.Recedes ? new Date(ev.Recedes + (ev.Recedes.endsWith("Z") ? "" : "-04:00")) : null;
+        if (!arr || arr.getTime() < now - 12 * 3600 * 1e3) continue;
+        out.push({
+          damName: ev.DamName,
+          mileMarkerName: ev.MileMarkerName,
+          arrival: ev.Arrival,
+          recedes: ev.Recedes,
+          arrivalEpoch: arr ? arr.getTime() : null,
+          recedesEpoch: rec ? rec.getTime() : null
+        });
+      }
+    }
+    out.sort((a, b) => (a.arrivalEpoch || 0) - (b.arrivalEpoch || 0));
+    return {
+      basinName: j.RiverBasinName,
+      basinId: j.RiverBasinId,
+      lastUpdated: j.LastUpdated,
+      arrivals: out,
+      source: `${DUKE_API_BASE}/rivers/flow-arrivals/${basinId}`
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
 async function getDukeLake(nameFragment) {
   const arr = await fetchDukeApi();
   if (!arr) return null;
@@ -1667,4 +1713,4 @@ var RIVERS = {
   }
 };
 
-export { normalizeDukeRow, dukeRowForNames, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard };
+export { normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard };

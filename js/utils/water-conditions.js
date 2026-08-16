@@ -95,6 +95,14 @@ export function readConditions(j) {
     waterTempGauge: null,
     usaceTargetFt: null,
     usaceProject: null,
+    flowCfs: null,
+    flowGauge: null,
+    stageFt: null,
+    clarity: null,
+    clarityScore: null,
+    clarityIsMeasured: false,
+    clarityNote: null,
+    releases: null,
     featureType: null,
     pending: null,
     error: null,
@@ -144,6 +152,30 @@ export function readConditions(j) {
     out.usaceTargetFt = w.usace.conservation_pool_ft;
     out.usaceProject = w.usace.project || null;
   }
+  // FLOW AND STAGE, for a river. The pool gauge is the lake; on a river the nearest gauge is
+  // the water you are on. Flow is the number that decides a river trip and it is separate from
+  // level -- a river can be at a normal stage and pushing 8,000 cfs.
+  for (const role of ['gauge', 'tailwater', 'pool']) {
+    const g = w[role];
+    if (!g) continue;
+    if (out.flowCfs == null && Number.isFinite(g.flow)) { out.flowCfs = g.flow; out.flowGauge = g.name || null; }
+    if (out.stageFt == null && Number.isFinite(g.stage)) out.stageFt = g.stage;
+  }
+
+  out.releases = w.releases || null;
+
+  // CLARITY IS A MODEL AND THE FLAG SAYS SO. `measured` non-null means a WQP Secchi or
+  // turbidity baseline exists and the rainfall model adjusted it; null means the number is
+  // rainfall and hand-authored zone offsets alone. Ryan should never see a modelled figure
+  // printed the way a gauge reading is printed -- absence of data is not clear water, which is
+  // the sentence the Worker itself puts in `measuredNote`.
+  const cl = j.clarity || null;
+  if (cl && cl.overall) {
+    out.clarity = cl.overall.clarity || null;
+    out.clarityScore = Number.isFinite(cl.overall.score) ? cl.overall.score : null;
+    out.clarityIsMeasured = !!cl.measured;
+    out.clarityNote = cl.measuredNote || null;
+  }
   return out;
 }
 
@@ -186,4 +218,65 @@ export function levelSentence(c) {
   if (c.fullPoolFt != null) bits.push(`full pool ${c.fullPoolFt} ft`);
   const src = c.feedName ? `${c.levelSource} — ${c.feedName}` : c.levelSource;
   return `${bits.join(' · ')}${src ? ` (${src})` : ''}`;
+}
+
+/**
+ * The one line that fits in a topbar, and the reason each piece earns its place.
+ *
+ * Ryan, 2026-08-16, on what he wants to know BEFORE he starts planning: *"current level,
+ * current water temp, current water clarity... and if it is a river current flow rate and
+ * projected releases if applicable."*
+ *
+ * So a river leads with FLOW, not level: a river at a normal stage pushing 8,000 cfs is a
+ * different trip from the same stage at 400, and the stage alone does not say which. A lake
+ * leads with the drawdown, because that is the number that decides whether the ramp works.
+ *
+ * A modelled clarity carries `~`. It is one character and it is the difference between a
+ * reading and a guess.
+ */
+export function conditionsStrip(c) {
+  if (!c) return { text: 'No water selected', tone: 'idle' };
+  if (c.error) return { text: `Conditions unavailable — ${c.error}`, tone: 'bad' };
+
+  const isRiver = c.featureType === 'river';
+  const bits = [];
+
+  if (isRiver && c.flowCfs != null) {
+    bits.push(`${Math.round(c.flowCfs).toLocaleString()} ft³/s`);
+    if (c.stageFt != null) bits.push(`${c.stageFt.toFixed(1)} ft stage`);
+  } else if (c.belowFullPoolFt != null) {
+    const b = c.belowFullPoolFt;
+    bits.push(Math.abs(b) < 0.05 ? 'at full pool'
+      : b > 0 ? `${b.toFixed(2)} ft down` : `${Math.abs(b).toFixed(2)} ft up`);
+  } else if (c.levelFt != null) {
+    bits.push(`${c.levelFt.toFixed(2)} ft`);
+  }
+
+  if (c.waterTempF != null) {
+    // A tailwater temperature is the river below the dam. One character rather than silence.
+    bits.push(`${c.waterTempF}°F${c.waterTempFrom === 'tailwater' ? '*' : ''}`);
+  }
+  if (c.clarity) bits.push(`${c.clarityIsMeasured ? '' : '~'}${c.clarity}`);
+
+  // Only a PROJECTION gets a place in the strip. An observed discharge is already the flow
+  // number two fields to the left, and printing it again as though it were a schedule is the
+  // mistake `kind` exists to prevent.
+  if (c.releases && c.releases.kind === 'projected' && c.releases.next) {
+    const n = c.releases.next;
+    bits.push(`release → ${n.mileMarkerName || n.damName || 'downstream'}`);
+  }
+
+  if (!bits.length) {
+    return { text: c.pending || 'No source publishes conditions for this water', tone: 'idle' };
+  }
+  const src = c.levelSource ? c.levelSource.split(' — ')[0] : null;
+  return {
+    text: bits.join(' · ') + (src ? ` · ${src}` : ''),
+    tone: 'ok',
+    // The strip cannot carry a caveat, so it carries a mark and the expanded card explains it.
+    footnotes: [
+      c.waterTempFrom === 'tailwater' ? '* water temperature is from the tailwater gauge, below the dam — not the lake' : null,
+      c.clarity && !c.clarityIsMeasured ? '~ clarity is modelled from rainfall, not measured — absence of data is not clear water' : null,
+    ].filter(Boolean),
+  };
 }
