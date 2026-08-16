@@ -204,7 +204,7 @@ async function handleResearchSave(request, env) {
     master.metadata.verifiedAt = now;
   }
 
-  const masterJson = JSON.stringify(master, null, 2);
+  const masterJson = JSON.stringify(master);
   if (masterJson.length > 250*1024) {
     console.warn(`Lake profile ${safe} exceeds 250KB: ${masterJson.length}`);
   }

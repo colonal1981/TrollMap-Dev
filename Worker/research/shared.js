@@ -342,7 +342,7 @@ async function storeSharedDocument(env, docRecord) {
   const latestKey = `${SHARED_ROOT}/documents/${id}/latest.json`;
   // The version is the document. Written first, so a failure between the two puts leaves the
   // old pointer aimed at a version that still exists rather than a new one that does not.
-  await env.R2_TROLLMAP_CHARTPACKS.put(vKey, JSON.stringify(docRecord, null, 2),
+  await env.R2_TROLLMAP_CHARTPACKS.put(vKey, JSON.stringify(docRecord),
     { httpMetadata: { contentType: 'application/json' } });
   await env.R2_TROLLMAP_CHARTPACKS.put(latestKey, JSON.stringify(latestPointerFor(docRecord), null, 2),
     { httpMetadata: { contentType: 'application/json' } });
@@ -549,7 +549,7 @@ async function handleSharedPublish(request, env) {
           const vKey = `${SHARED_ROOT}/documents/${doc.id}/versions/${doc.versionId}.json`;
           const vExists = doc.versionId ? await env.R2_TROLLMAP_CHARTPACKS.head(vKey).catch(() => null) : null;
           if (vExists) {
-            await env.R2_TROLLMAP_CHARTPACKS.put(obj.key, JSON.stringify(doc, null, 2),
+            await env.R2_TROLLMAP_CHARTPACKS.put(obj.key, JSON.stringify(doc),
               { httpMetadata: { contentType: 'application/json' } });
             compacted++;
             compactedBytes += Math.max(0, (obj.size || 0) - JSON.stringify(doc).length);

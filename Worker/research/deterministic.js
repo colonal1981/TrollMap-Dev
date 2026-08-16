@@ -174,7 +174,11 @@ async function handleResearchSaveNormalized(request, env) {
     console.log(`save-normalized [${lakeName}]: rejected ${rejected} off-lake doc(s) of ${documents.length} total`);
   }
 
-  await env.R2_TROLLMAP_CHARTPACKS.put(key, JSON.stringify(docsWithTags, null, 2), {
+  // COMPACT, NOT PRETTY. This blob is read by code, never by a person, and it carries the full
+  // text of every document -- 12 by 150,000 characters on a big lake. Pretty-printing it was
+  // CPU spent formatting 1.8 MB that nothing will ever look at, on the exact route wrangler
+  // tail caught dying: "POST /research/save-normalized - Exceeded CPU Limit".
+  await env.R2_TROLLMAP_CHARTPACKS.put(key, JSON.stringify(docsWithTags), {
     httpMetadata: { contentType: "application/json" }
   });
 

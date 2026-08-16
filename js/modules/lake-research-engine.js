@@ -1958,17 +1958,51 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     } else if (normalizedDocuments.length > 0) {
       log(`  [${agentKey}] Extracting facts from ${normalizedDocuments.length} docs...`);
       try {
-        const analyzeRes = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
-          method: 'POST',
-          headers: workerHeaders(),
-          body: JSON.stringify({
-            lakeName, baseName, state: stateName, zoneKey: coastalKeyForAgent || undefined, docIndex: 0,
-            documents: normalizedDocuments.slice(0, 12).map(d => ({
-              title: d.title, url: d.url || '',
-              text: (d.fullText || '').slice(0, 150000)
-            }))
-          })
-        });
+        // ── ONE REQUEST PER PAIR OF DOCUMENTS, NOT TWELVE IN ONE ────────────────
+        //
+        // From wrangler tail, 2026-08-16 11:54, verbatim:
+        //
+        //     POST /research/analyze-facts - Exceeded CPU Limit
+        //     ✘ [ERROR] Error: Worker exceeded CPU time limit.
+        //
+        // and the same on /research/save-normalized and /research/shared/store. Not a rate
+        // limit, not memory, not CORS -- Ryan said a 429 would look like a 429 and he was
+        // right. It is CPU, and the arithmetic was already on the page: 12 documents by
+        // 150,000 characters is 1.8 MB of JSON to parse, scan and re-serialise in one request.
+        //
+        // NOTHING IS LOST BY SPLITTING IT. extract.js loops the documents and builds ONE LLM
+        // prompt PER DOCUMENT -- the batch was never doing joint work, only arriving together.
+        // The same text, the same prompts, ~150 KB of parsing per request instead of 1.8 MB.
+        const ANALYZE_BATCH = 2;
+        const analyzeDocs = normalizedDocuments.slice(0, 12).map(d => ({
+          title: d.title, url: d.url || '',
+          text: (d.fullText || '').slice(0, 150000)
+        }));
+        const batches = [];
+        for (let i = 0; i < analyzeDocs.length; i += ANALYZE_BATCH) batches.push(analyzeDocs.slice(i, i + ANALYZE_BATCH));
+        const collectedFacts = [];
+        let analyzeOk = false;
+        for (const [bi, batch] of batches.entries()) {
+          const res = await fetch(`${CF_WORKER_URL}/research/analyze-facts`, {
+            method: 'POST',
+            headers: workerHeaders(),
+            body: JSON.stringify({
+              lakeName, baseName, state: stateName,
+              zoneKey: coastalKeyForAgent || undefined,
+              docIndex: bi * ANALYZE_BATCH,
+              documents: batch,
+            })
+          });
+          if (res.ok) {
+            analyzeOk = true;
+            const d = await res.json();
+            collectedFacts.push(...(d.extracted_facts || []));
+          } else {
+            // Per batch, so one oversized document does not take the other eleven with it.
+            log(`  ⚠️ [${agentKey}] analyze-facts batch ${bi + 1}/${batches.length} ${await workerFailureReason(res)}`);
+          }
+        }
+        const analyzeRes = { ok: analyzeOk, json: async () => ({ extracted_facts: collectedFacts }) };
         if (analyzeRes.ok) {
           const analyzeData = await analyzeRes.json();
           const rawFacts = analyzeData.extracted_facts || [];
