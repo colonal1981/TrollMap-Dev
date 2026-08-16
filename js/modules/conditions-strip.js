@@ -86,7 +86,29 @@ function cardHtml(rec, c) {
     out.push(row('Flow', `${Math.round(c.flowCfs).toLocaleString()} ft³/s`
       + (c.flowGauge ? `<span class="cond-sub"> (${esc(c.flowGauge)})</span>` : '')));
   }
-  if (c.stageFt != null) out.push(row('Stage', `${c.stageFt.toFixed(2)} ft`));
+  if (c.stageFt != null) {
+    const vs = c.stageVsActionFt != null
+      ? `<span class="cond-sub"> — ${Math.abs(c.stageVsActionFt).toFixed(2)} ft `
+        + `${c.stageVsActionFt >= 0 ? 'ABOVE' : 'below'} action stage of ${c.floodActionFt} ft</span>`
+      : '';
+    out.push(row('Stage', `${c.stageFt.toFixed(2)} ft${vs}`));
+  }
+  if (c.floodCategory) {
+    out.push(row('Flood status', `${esc(String(c.floodCategory).replace(/_/g, ' '))}`
+      + '<span class="cond-sub"> — NWPS category</span>'));
+  }
+  if (c.flowAnomaly != null) {
+    out.push(row('Flow vs normal', `${c.flowAnomaly > 0 ? '+' : ''}${c.flowAnomaly}`
+      + `<span class="cond-sub"> — NOAA National Water Model anomaly`
+      + `${c.flowAnomalyOf ? ` on ${esc(c.flowAnomalyOf)}` : ''}, published without units or a legend. `
+      + `The sign is the usable part.</span>`));
+  }
+  if (c.gaugeOutOfService) {
+    out.push(row('Gauge', `<b>OUT OF SERVICE</b>`
+      + `<span class="cond-sub"> — ${esc(c.gaugeOutOfService.name || c.gaugeOutOfService.role)}`
+      + `${c.gaugeOutOfService.message ? `: ${esc(c.gaugeOutOfService.message)}` : ''}. `
+      + `A switched-off gauge and a gauge reading zero are not the same thing.</span>`));
+  }
 
   if (c.waterTempF != null) {
     out.push(row('Water temp', `${c.waterTempF} °F`

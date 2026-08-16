@@ -381,3 +381,45 @@ test('an all-in-the-past tide table yields no next event rather than a stale one
   assert.equal(c.nextTide, null);
   assert.equal(c.currentType, null);
 });
+
+// ── launch decisions that were already on the response ──────────────────────────────────────
+test('action stage is read, and the strip stays quiet when there is no flooding', () => {
+  const c = readConditions({ slug: 'x', water: {
+    display_name: 'Broad River', feature_type: 'river', chart_datum: { pending: 'not a lake' },
+    gauge: { name: 'Alston', stage: 3.2, flow: 1240, flood_category: 'no_flooding',
+             flood_thresholds: { action: 12, minor: 15 }, in_service: true } } });
+  assert.equal(c.floodActionFt, 12);
+  assert.equal(c.stageVsActionFt, -8.8);
+  assert.equal(c.floodCategory, 'no_flooding');
+  // Saying "no flooding" every day trains you to stop reading the line.
+  assert.ok(!/no.flood/i.test(conditionsStrip(c).text), conditionsStrip(c).text);
+});
+
+test('a real flood category reaches the strip', () => {
+  const c = readConditions({ slug: 'x', water: {
+    display_name: 'Broad River', feature_type: 'river', chart_datum: { pending: 'not a lake' },
+    gauge: { name: 'Alston', stage: 13.4, flow: 22000, flood_category: 'action',
+             flood_thresholds: { action: 12 }, in_service: true } } });
+  assert.match(conditionsStrip(c).text, /action/);
+  assert.equal(c.stageVsActionFt, 1.4);
+});
+
+test('a switched-off gauge is not a gauge reading zero', () => {
+  const c = readConditions({ slug: 'x', water: {
+    display_name: 'R', feature_type: 'river', chart_datum: { pending: 'not a lake' },
+    gauge: { name: 'Alston', stage: 0, flow: 0, in_service: false,
+             out_of_service_message: 'Gauge removed for maintenance' } } });
+  assert.equal(c.gaugeOutOfService.message, 'Gauge removed for maintenance');
+  assert.match(conditionsStrip(c).text, /gauge out of service/);
+});
+
+test('the flow anomaly is passed through with its sign and never translated', () => {
+  // NOAA's anomaly_category is a code into a legend nobody here has read. The Worker refuses to
+  // guess its direction; so does the client.
+  const c = readConditions({ slug: 'x', water: {
+    display_name: 'R', feature_type: 'river', chart_datum: { pending: 'not a lake' },
+    gauge: { flow: 1240, name: 'g' } },
+    rivers: { named: [{ name: 'Broad River', flow: 1240, anomaly: -0.38, anomaly_category: 3 }], unnamed: [] } });
+  assert.equal(c.flowAnomaly, -0.38);
+  assert.equal(c.flowAnomalyOf, 'Broad River');
+});

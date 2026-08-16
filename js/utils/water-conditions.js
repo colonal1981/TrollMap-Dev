@@ -115,6 +115,12 @@ export function readConditions(j) {
     currentStation: null,
     tideStation: null,
     nextTide: null,
+    floodCategory: null,
+    floodActionFt: null,
+    stageVsActionFt: null,
+    gaugeOutOfService: null,
+    flowAnomaly: null,
+    flowAnomalyOf: null,
     featureType: null,
     pending: null,
     error: null,
@@ -196,6 +202,41 @@ export function readConditions(j) {
   if (w.dissolved_oxygen && Number.isFinite(w.dissolved_oxygen.mg_l)) {
     out.oxygenMgL = w.dissolved_oxygen.mg_l;
     out.oxygenGauge = w.dissolved_oxygen.name || null;
+  }
+
+  // ── LAUNCH DECISIONS THAT WERE ALREADY ON THE RESPONSE ──────────────────────────────────
+  // flood_category, flood_thresholds, in_service and out_of_service_message come back on every
+  // NWPS gauge and the string never appeared anywhere in js/. "Action stage" on a river is a
+  // launch decision, and a gauge that is switched off is a different answer from a gauge
+  // reading zero.
+  for (const role of ['pool', 'tailwater', 'gauge']) {
+    const g = w[role];
+    if (!g) continue;
+    // NWPS says "no_flooding" when it is fine. That is an answer, not an absence, so it is kept
+    // and the consumer decides whether it is worth printing.
+    if (out.floodCategory == null && g.flood_category) out.floodCategory = g.flood_category;
+    const act = g.flood_thresholds && g.flood_thresholds.action;
+    if (out.floodActionFt == null && Number.isFinite(act)) {
+      out.floodActionFt = act;
+      if (Number.isFinite(g.stage)) out.stageVsActionFt = Math.round((g.stage - act) * 100) / 100;
+    }
+    if (!out.gaugeOutOfService && g.in_service === false) {
+      out.gaugeOutOfService = { name: g.name || null, role,
+                                message: g.out_of_service_message || null };
+    }
+  }
+
+  // FLOW ALONE IS NOT A FACT ABOUT TODAY. 1,240 ft3/s means nothing without knowing what this
+  // river usually runs. NOAA's anomaly_category is its own code and is deliberately NOT
+  // translated here — the Worker refuses to guess its direction and so does this.
+  const riv = j.rivers || null;
+  if (riv) {
+    const best = (riv.named || []).concat(riv.unnamed || [])
+      .find((r) => Number.isFinite(r.anomaly));
+    if (best) {
+      out.flowAnomaly = best.anomaly;
+      out.flowAnomalyOf = best.name || null;
+    }
   }
 
   out.releases = w.releases || null;
@@ -344,6 +385,12 @@ export function conditionsStrip(c) {
     bits.push(`${c.waterTempF}°F${c.waterTempFrom === 'tailwater' ? '*' : ''}`);
   }
   // A live turbidity reading is a measurement and loses the tilde. The model keeps it.
+  // A flood category worth naming. "no_flooding" is the normal state and saying it every day
+  // trains you to stop reading the line.
+  if (c.floodCategory && !/^no[_ ]?flood/i.test(c.floodCategory)) {
+    bits.push(String(c.floodCategory).replace(/_/g, ' '));
+  }
+  if (c.gaugeOutOfService) bits.push('gauge out of service');
   if (c.turbidityFnu != null) bits.push(`${c.turbidityFnu} FNU`);
   else if (c.clarity) bits.push(`${c.clarityIsMeasured ? '' : '~'}${c.clarity}`);
   if (c.oxygenMgL != null) bits.push(`${c.oxygenMgL} mg/L O₂`);
