@@ -174,6 +174,11 @@ function cardHtml(rec, c) {
     out.push(row('Rain chance', `${c.popPct}%`
       + '<span class="cond-sub"> — first forecast period.</span>'));
   }
+  if (c.unpublished) {
+    out.push(row('Not published', c.unpublished.map((u) => esc(u.label)).join(', ')
+      + '<span class="cond-sub"> — no USGS site bound to this water reports these, per the site '
+      + 'catalogue. An empty field with a reason is a gap somebody can close.</span>'));
+  }
   if (c.gaugeOutOfService) {
     out.push(row('Gauge', `<b>OUT OF SERVICE</b>`
       + `<span class="cond-sub"> — ${esc(c.gaugeOutOfService.name || c.gaugeOutOfService.role)}`

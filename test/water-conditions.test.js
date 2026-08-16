@@ -735,3 +735,22 @@ test('a lake gets no flow band — the percentile of a lake discharge is nobody\
   assert.equal(c.flowBand, null);
   assert.ok(!/pct/.test(conditionsStrip(c).text));
 });
+
+test('an empty field says WHY when the site catalogue can answer', () => {
+  const c = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 1 }, sites_catalogued: 2,
+    unpublished_parameters: [{ code: '63680', label: 'turbidity' },
+                             { code: '00480', label: 'salinity' }] } });
+  assert.equal(c.unpublished.length, 2);
+  assert.equal(c.unpublished[0].label, 'turbidity');
+  // and it stays off the one-line strip — this is a note about the registry, not the water
+  assert.ok(!/turbidity/.test(conditionsStrip(c).text));
+});
+
+test('no catalogue read means no claim about what is unpublished', () => {
+  // Silence about a field means "not fetched". Saying "nobody publishes it" without having
+  // looked would be a stronger claim than we hold.
+  const c = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 1 }, sites_catalogued: 0, unpublished_parameters: null } });
+  assert.equal(c.unpublished, null);
+});

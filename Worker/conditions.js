@@ -1248,6 +1248,58 @@ export function usgsSitesFor(b, lat, lon) {
 }
 
 /**
+ * WHICH PARAMETERS A SITE ACTUALLY PUBLISHES, instead of asking for twelve and seeing what
+ * comes back.
+ *
+ * `seriesCatalogOutput=true&outputDataTypeCd=iv` returns one row per published series with its
+ * parameter code, period of record and observation count. Verified 2026-08-16 against 02147801,
+ * the Wateree tailrace: 00010, 00060, 00065, 00300 and 63160 — exactly the five found by
+ * experiment this morning, and it also says 63160 only began on 2025-10-01.
+ *
+ * WHAT THIS IS FOR IS EXPLAINING A NULL. Until now "no water temperature on this lake" and "the
+ * temperature request failed" were the same silence. With the catalog the response can say that
+ * NO site bound to this water publishes 00010, which is a registry gap somebody can close, not
+ * a mystery. This codebase's own words: a gap that is visible is a gap that can be closed.
+ *
+ * It also stops the probe walking sites that were never going to answer.
+ *
+ * Parsed by header name for the same reason the daily-statistics parser is: `loc_web_ds` and
+ * `stat_cd` are empty on this site and counting columns drifts the moment they are not.
+ */
+export function parseSiteCatalog(rdb) {
+  const lines = String(rdb || '').split('\n').filter((l) => l && !l.startsWith('#'));
+  if (lines.length < 3) return null;
+  const head = lines[0].split('\t');
+  const iP = head.indexOf('parm_cd');
+  const iB = head.indexOf('begin_date');
+  const iE = head.indexOf('end_date');
+  const iN = head.indexOf('count_nu');
+  if (iP < 0) return null;
+  const out = {};
+  for (const line of lines.slice(2)) {
+    const f = line.split('\t');
+    const code = (f[iP] || '').trim();
+    if (!code) continue;
+    const n = Number((f[iN] || '').trim());
+    out[code] = {
+      begin: (f[iB] || '').trim() || null,
+      end: (f[iE] || '').trim() || null,
+      // Number('') is 0 and isFinite(0) is true. An empty count is not a count of zero.
+      count: (f[iN] || '').trim() && Number.isFinite(n) ? n : null,
+    };
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+async function siteParameters(site) {
+  if (!site) return null;
+  // A site's published series change on the order of years, not minutes.
+  return cached(`cat:${site}`, 24 * 3600, async () => parseSiteCatalog(await getText(
+    'https://waterservices.usgs.gov/nwis/site/?format=rdb&seriesCatalogOutput=true'
+    + `&outputDataTypeCd=iv&sites=${encodeURIComponent(site)}`)));
+}
+
+/**
  * One pass over the water's USGS sites, three readings out of it.
  *
  * Each reading records ITS OWN site, because they do not have to come from the same one: a lake
@@ -1256,9 +1308,30 @@ export function usgsSitesFor(b, lat, lon) {
  */
 async function waterProbe(b, lat, lon, seededTemp) {
   const out = { temp: seededTemp && Number.isFinite(seededTemp.c) ? seededTemp : null,
-                oxygen: null, turbidity: null, salt: null, tidalFlow: null };
+                oxygen: null, turbidity: null, salt: null, tidalFlow: null,
+                // What no bound site publishes at all, so a null can say WHY.
+                unpublished: [], catalogued: 0 };
+  const WANT = { '00010': 'water temperature', '00300': 'dissolved oxygen',
+                 '63680': 'turbidity', '00095': 'specific conductance',
+                 '00480': 'salinity', '72137': 'tidally filtered discharge' };
+  const published = new Set();
   for (const s of usgsSitesFor(b, lat, lon).slice(0, 4)) {
     if (out.temp && out.oxygen && out.turbidity && out.salt && out.tidalFlow) break;
+
+    // Ask the catalog first. A site that publishes none of what is still missing is not worth a
+    // request, and knowing that is also what lets the response explain an empty field.
+    let cat = null;
+    try { cat = await siteParameters(s.site); } catch (_) { cat = null; }
+    if (cat) {
+      out.catalogued += 1;
+      for (const code of Object.keys(cat)) published.add(code);
+      const stillWanted = [
+        !out.temp && '00010', !out.oxygen && '00300', !out.turbidity && '63680',
+        !out.salt && '00480', !out.salt && '00095', !out.tidalFlow && '72137',
+      ].filter(Boolean);
+      if (!stillWanted.some((code) => cat[code])) continue;
+    }
+
     let u = null;
     try { u = await cached(`usgs:${s.site}`, TTL.gauge, () => fetchUsgs(s.site, USGS_PARMS)); }
     catch (_) { continue; }
@@ -1291,6 +1364,13 @@ async function waterProbe(b, lat, lon, seededTemp) {
     if (!out.tidalFlow && Number.isFinite(u.tidalFlow)) {
       out.tidalFlow = { ...where, cfs: round1(u.tidalFlow), source: 'USGS — parameter 72137' };
     }
+  }
+  // Only claimed where a catalogue was actually read. Without one, silence about a field means
+  // "not fetched", and saying "nobody publishes it" would be a stronger claim than we hold.
+  if (out.catalogued) {
+    out.unpublished = Object.entries(WANT)
+      .filter(([code]) => !published.has(code))
+      .map(([code, label]) => ({ code, label }));
   }
   return out;
 }
@@ -1584,6 +1664,11 @@ async function waterBlock(b, lat, lon) {
   out.dissolved_oxygen = probe.oxygen || null;
   out.salt = probe.salt || null;
   out.tidal_flow = probe.tidalFlow || null;
+  // A null with a reason. "No USGS site bound to this water publishes dissolved oxygen" is a
+  // registry gap somebody can close; an empty field is a mystery.
+  out.unpublished_parameters = (probe.unpublished && probe.unpublished.length)
+    ? probe.unpublished : null;
+  out.sites_catalogued = probe.catalogued || 0;
   // Whether `tide: null` on this response is a FACT or a GAP. An inland lake has no tide and
   // that is the right answer; a coastal zone with no station bound is a hole in the registry.
   out.tidal = !!(b.tides || []).length;

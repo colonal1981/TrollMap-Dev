@@ -161,6 +161,7 @@ export function readConditions(j) {
     currentDirDeg: null,
     tvaDischargeCfs: null,
     tvaTailwaterFt: null,
+    unpublished: null,
     featureType: null,
     pending: null,
     error: null,
@@ -344,6 +345,11 @@ export function readConditions(j) {
     out.trendMeasures = tr.measures || null;
     out.trendCoversHours = Number.isFinite(tr.covers_hours) ? tr.covers_hours : null;
   }
+
+  // WHY A FIELD IS EMPTY, where the site catalogue can say. "No USGS site bound to this water
+  // publishes dissolved oxygen" is a registry gap somebody can close; a blank is a mystery.
+  out.unpublished = (Array.isArray(w.unpublished_parameters) && w.unpublished_parameters.length)
+    ? w.unpublished_parameters : null;
 
   out.releases = w.releases || null;
   // A projection that was REJECTED and one that was never available are different facts, and
