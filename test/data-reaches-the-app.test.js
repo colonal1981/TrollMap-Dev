@@ -172,3 +172,46 @@ describe('the client does not re-derive what the pipeline already built', () => 
     });
   }
 });
+
+/**
+ * A PLACEHOLDER PAINTED INTO MARKUP THAT DOES NOT EXIST IS THE SAME BUG, ONE LAYER IN.
+ *
+ * utility-sync.js wrote to `utilityAssessmentBox`, `utilitySyncStatus`, `uTitle`, `uDesc`,
+ * `uLink` and `syncDukeBtn` for months. All six appear ZERO times in index.html. Nothing threw,
+ * nothing went red, and the only symptom was that Ryan could not find the data anywhere in the
+ * app — which is indistinguishable from never having fetched it.
+ *
+ * The conditions strip added a camera placeholder on 2026-08-16: cardHtml() emits a
+ * `.cond-cams` div and fillCameras() finds it afterwards. Two halves in one file, either of
+ * which can be renamed without the other noticing.
+ *
+ * SCOPED ON PURPOSE. Widening this to every getElementById in every module is a real audit and
+ * a separate job; this covers the surface that has already failed this way once.
+ */
+describe('the markup a module writes into is markup that exists', () => {
+  const strip = readFileSync(path.join(ROOT, 'js/modules/conditions-strip.js'), 'utf8');
+  const html = readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+
+  it('every element the strip looks up by id is in index.html', () => {
+    const ids = [...strip.matchAll(/getElementById\('([A-Za-z0-9_-]+)'\)/g)].map((m) => m[1]);
+    expect(ids.length).toBeGreaterThan(0);
+    const missing = ids.filter((id) => !new RegExp(`id=["']${id}["']`).test(html));
+    expect(missing).toEqual([]);
+  });
+
+  it('the camera placeholder is emitted by the same file that fills it', () => {
+    expect(strip).toContain('class="cond-cams"');
+    expect(strip).toContain(".querySelector('.cond-cams')");
+  });
+
+  it('and the card is repainted through the function that emits it', () => {
+    // cardHtml() writes the placeholder; if nothing calls fillCameras after that innerHTML,
+    // the card says "reading N live views" forever.
+    expect(/e\.card\.innerHTML = cardHtml\(rec, c\)[\s\S]{0,120}fillCameras\(/.test(strip)).toBe(true);
+  });
+
+  it('the images carry the class their error handler binds to', () => {
+    expect(strip).toContain('class="cond-cam-img"');
+    expect(strip).toContain("querySelectorAll('.cond-cam-img')");
+  });
+});
