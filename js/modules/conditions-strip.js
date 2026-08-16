@@ -111,16 +111,35 @@ function cardHtml(rec, c) {
   return out.join('') || `<div class="cond-row"><span class="cond-v">Nothing published for this water.</span></div>`;
 }
 
+/**
+ * The strip is position:fixed like everything else in this layout, so it does not take space in
+ * the flow -- `--condH` is what makes room for it. Zero when there is nothing to report, which
+ * leaves the app looking exactly as it did before.
+ *
+ * The first build of this made the strip a normal-flow child of #app. #topbar and #main are BOTH
+ * position:fixed, so it rendered at the top of the document flow, underneath the fixed topbar,
+ * and Ryan saw no change at all when he picked a lake.
+ */
+const STRIP_H = '26px';
+function setRoom(on) {
+  document.documentElement.style.setProperty('--condH', on ? STRIP_H : '0px');
+}
+
 function paint(rec, c) {
   const e = els();
   if (!e.bar) return;
-  if (!rec) { e.bar.style.display = 'none'; return; }
+  if (!rec) { e.bar.style.display = 'none'; if (e.card) e.card.style.display = 'none'; setRoom(false); return; }
+  if (!rec.slug) openState = false;
   e.bar.style.display = '';
+  setRoom(true);
   const s = conditionsStrip(c);
   const name = rec.displayName || rec.name || rec.slug;
   if (e.line) e.line.innerHTML = `<b>${esc(name)}</b> · ${esc(s.text)}`;
   e.bar.dataset.tone = s.tone;
   if (e.caret) e.caret.textContent = openState ? '▴' : '▾';
+  // Leaflet sizes itself once and does not watch its container. Shrinking #main by 26px without
+  // telling it leaves the map drawing into space it no longer has.
+  setTimeout(() => { try { window.MAP?.invalidateSize?.(); } catch (_) {} }, 60);
   if (e.card) {
     e.card.style.display = openState ? '' : 'none';
     if (openState) {
@@ -153,7 +172,15 @@ export function refreshConditions(opts = {}) {
   const v = document.getElementById('lakeSelect')?.value
          || document.getElementById('planLake')?.value
          || '';
-  const rec = v ? (lakeRecordFor(v) || lakeRecordFor(v.split(',')[0].trim())) : null;
+  if (!v) { paint(null, null); return Promise.resolve(null); }
+  const rec = lakeRecordFor(v) || lakeRecordFor(v.split(',')[0].trim());
+  if (!rec) {
+    // A NAME THE PICKER OFFERS AND THE REGISTRY DOES NOT KNOW is a real defect, not a reason to
+    // show nothing. Hiding the strip here would make a registry gap look like a working app.
+    paint({ slug: null, displayName: v, name: v },
+          { ok: true, error: null, pending: `"${v}" does not resolve to a registry record` });
+    return Promise.resolve(null);
+  }
   return showConditionsFor(rec, opts);
 }
 

@@ -21,6 +21,9 @@
     --text: #e7eef6; 
     --muted: #8aa3bd;
     --topH: 52px; 
+    /* The conditions strip's height. 0 until it has a water to report on, so the layout is
+       unchanged when nothing is selected. Set by js/modules/conditions-strip.js. */
+    --condH: 0px; 
     --navH: 60px;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -64,7 +67,7 @@
   label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 3px; }
 
   /* Main / panels */
-  #main { position: fixed; top: var(--topH); bottom: var(--navH); left: 0; right: 0; overflow: hidden; }
+  #main { position: fixed; top: calc(var(--topH) + var(--condH)); bottom: var(--navH); left: 0; right: 0; overflow: hidden; }
   .panel { position: absolute; inset: 0; overflow: auto; background: var(--bg); display: none; padding-bottom: 20px; }
   .panel.active { display: block; }
   #panel-map { overflow: hidden; padding-bottom: 0; }
@@ -466,15 +469,24 @@
   #panel-research .progress-ring { display:inline-block; width:14px; height:14px; border:2px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin 0.8s linear infinite; vertical-align:middle; margin-right:6px; }
   @keyframes spin { to { transform:rotate(360deg); } }
   /* ── conditions strip ── */
-  #condStrip { display:flex; align-items:center; gap:8px; padding:5px 10px; cursor:pointer;
+  /* FIXED, LIKE EVERYTHING ELSE IN THIS LAYOUT. #topbar and #main are both position:fixed, so
+     a normal-flow child of #app renders at the top of the document flow -- underneath the fixed
+     topbar, invisible. That is exactly what happened on the first build of this strip. */
+  #condStrip { position:fixed; top:var(--topH); left:0; right:0; z-index:999;
+               box-sizing:border-box; height:var(--condH);
+               display:flex; align-items:center; gap:8px; padding:0 10px; cursor:pointer;
                font-size:12px; background:#0e1b2b; border-bottom:1px solid var(--line);
                color:var(--fg); user-select:none; }
   #condStrip[data-tone="bad"]  { background:#2a1414; }
   #condStrip[data-tone="idle"] { color:var(--muted); }
   #condStrip #condLine { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   #condStrip #condCaret { color:var(--muted); font-size:11px; }
-  #condCard { padding:8px 12px; background:#0b1623; border-bottom:1px solid var(--line);
+  /* The card OVERLAYS the map rather than pushing it, so expanding does not reflow Leaflet. */
+  #condCard { position:fixed; top:calc(var(--topH) + var(--condH)); left:0; right:0; z-index:998;
+              max-height:46vh; overflow:auto; padding:8px 12px; background:#0b1623;
+              border-bottom:1px solid var(--line); box-shadow:0 6px 18px rgba(0,0,0,.45);
               font-size:12px; }
+  @media (min-width: 950px) { #condStrip, #condCard { left:74px; } }
   #condCard .cond-row { display:flex; gap:10px; padding:3px 0; align-items:baseline; }
   #condCard .cond-k { flex:0 0 108px; color:var(--muted); }
   #condCard .cond-v { flex:1; }
