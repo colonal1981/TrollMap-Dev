@@ -2659,7 +2659,23 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     identity:             cloneJson(existingSavedProfile.identity     || det.identity     || {}),
     biology:              cloneJson(existingSavedProfile.biology       || det.biology      || {}),
     habitat:              cloneJson(existingSavedProfile.habitat      || det.habitat      || {}),
-    navigation:           cloneJson(existingSavedProfile.navigation   || det.navigation   || {}),
+    // RAMPS ARE DETERMINISTIC AND THE SAVED PROFILE MUST NOT VETO THEM.
+    //
+    // `existingSavedProfile.navigation || det.navigation` short-circuits on the OBJECT
+    // existing, not on it holding anything. Every profile saved before the ramp join worked
+    // carries `navigation: { ramps: [] }`, so the object was truthy, det.navigation was never
+    // consulted, and the 116 ramps the pipeline resolved by geometry never reached the file.
+    // Thurmond v17 shipped `"ramps": []` beside evidence reading `count: 116`.
+    //
+    // Filled only when empty: an agent or a human that put ramps there keeps them.
+    navigation:           (() => {
+      const nav = cloneJson(existingSavedProfile.navigation || det.navigation || {});
+      const detRamps = det.navigation?.ramps;
+      if ((!Array.isArray(nav.ramps) || !nav.ramps.length) && Array.isArray(detRamps) && detRamps.length) {
+        nav.ramps = cloneJson(detRamps);
+      }
+      return nav;
+    })(),
     regulations:          cloneJson(existingSavedProfile.regulations  || det.regulations  || {}),
     limnology:            applyWqpToLimnology(existingSavedProfile.limnology || det.limnology || {}, wqp),
     summary:              cloneJson(existingSavedProfile.summary      || det.summary      || {}),
