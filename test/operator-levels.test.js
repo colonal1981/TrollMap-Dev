@@ -14,6 +14,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { parseCubeLevels, parseSouthernCoLevels, parseBrookfieldFacility } from '../Worker/operators.js';
+import { brookfieldShape } from '../Worker/conditions.js';
 
 const DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'operators');
 const fx = (f) => readFileSync(path.join(DIR, f), 'utf8');
@@ -160,4 +161,56 @@ test('a lake bound to no operator is not a gap — Cube publishes four and we sh
   // "Falls" is on the page and deliberately bound to nothing: Cube's Falls Reservoir is not in
   // the index, and all three same-named candidates are other rivers.
   assert.ok(cu.lakes.some((l) => l.name === 'Falls'));
+});
+
+// ── the shape that reaches /conditions ──────────────────────────────────────────────────────
+//
+// A DRAWDOWN WITH NO ELEVATION IS A READING, NOT A FAILURE. Santeetlah and Cheoah publish both
+// conventions; Chilhowee and Calderwood publish only feet-below-full-pool. The gate in
+// operatorLevel() was `f.elevationFt != null`, which turned those two into `operator: null` and
+// discarded the number that answers "how far down is the lake".
+
+const OP = { url: 'https://www.safewaters.com/facility/chilhowee/', feed_name: 'Chilhowee',
+             why: 'unique name' };
+
+test('Brookfield: a page with only a drawdown still returns a reading', () => {
+  const out = brookfieldShape(parseBrookfieldFacility(fx('brookfield-chilhowee.html')), OP);
+  assert.ok(out, 'no elevation must not mean no answer');
+  assert.equal(out.elevation_ft, null);
+  assert.equal(out.below_full_pond_ft, 1.05);
+  assert.equal(out.full_pond_ft, null, 'full pond cannot be derived from one number');
+  assert.equal(out.observed_at, '2026-08-16 01:40:23 PM (EDT)');
+  assert.equal(out.note, null, 'nothing was told apart by magnitude, so nothing to disclose');
+});
+
+test('Brookfield: the drawdown-only page keeps its discharge', () => {
+  const out = brookfieldShape(parseBrookfieldFacility(fx('brookfield-chilhowee.html')), OP);
+  assert.equal(out.discharges.length, 1);
+  assert.equal(out.discharges[0].cfs, 9448.50);
+  assert.match(out.discharges[0].into, /Little Tennessee/);
+});
+
+test('Brookfield: a page with both stamps observed_at from the elevation, not the drawdown', () => {
+  // They are separate observations a minute apart. Stamping one with the other's time would be
+  // inventing an observation.
+  const f = parseBrookfieldFacility(fx('brookfield-santeetlah.html'));
+  const out = brookfieldShape(f, { url: 'u', feed_name: 'Santeetlah', why: 'unique name' });
+  assert.equal(out.elevation_ft, 1939.61);
+  assert.equal(out.observed_at, f.elevationAt);
+  assert.notEqual(f.elevationAt, f.drawdownAt);
+  assert.equal(out.full_pond_ft, 1940.91);
+  assert.match(out.note, /unlabelled/);
+});
+
+test('Brookfield: a page with no readings at all is still null', () => {
+  assert.equal(brookfieldShape(parseBrookfieldFacility('<h1>Nowhere</h1>'), OP), null);
+  assert.equal(brookfieldShape(null, OP), null);
+});
+
+test('Brookfield: the binding supplies the URL and why, never the page', () => {
+  const out = brookfieldShape(parseBrookfieldFacility(fx('brookfield-chilhowee.html')), OP);
+  assert.equal(out.url, OP.url);
+  assert.equal(out.feed_name, 'Chilhowee');
+  assert.equal(out.bound_by, 'unique name');
+  assert.equal(out.source, 'Brookfield / safewaters.com');
 });

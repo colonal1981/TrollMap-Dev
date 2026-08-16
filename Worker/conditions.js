@@ -908,6 +908,41 @@ async function operatorPage(key) {
   return parsed;
 }
 
+/**
+ * A parsed safewaters.com facility page as a conditions reading, or null.
+ *
+ * AN ABSOLUTE ELEVATION IS NOT THE ONLY ANSWER, and on this operator it is the rarer one.
+ * Santeetlah and Cheoah publish both conventions. Chilhowee and Calderwood publish ONLY
+ * feet-below-full-pool -- Chilhowee read `-1.05 ft` on 2026-08-16 with no elevation anywhere on
+ * the page. The gate here was `f.elevationFt != null`, which returned null for both of those
+ * lakes and threw away the number a kayak angler actually wants, which is how far down the
+ * lake is. Same shape as the empty-array and empty-set bugs found the same day: a field that is
+ * ABSENT read as a reading that FAILED.
+ *
+ * `observed_at` follows whichever reading is present and is not defaulted to the drawdown
+ * timestamp when an elevation exists -- on a page carrying both they are separate observations
+ * minutes apart, and stamping one with the other's time would be inventing an observation.
+ *
+ * Pure, so it can be tested without the network. Same reason `usaceShape` is out here.
+ */
+export function brookfieldShape(f, op) {
+  if (!f) return null;
+  const discharges = f.discharges || [];
+  if (f.elevationFt == null && f.belowFullPondFt == null && !discharges.length) return null;
+  return {
+    source: 'Brookfield / safewaters.com',
+    url: (op && op.url) || null,
+    feed_name: (op && op.feed_name) || f.facility || null,
+    elevation_ft: f.elevationFt,
+    below_full_pond_ft: f.belowFullPondFt,
+    full_pond_ft: f.fullPondFt,
+    observed_at: f.elevationAt || f.drawdownAt || null,
+    discharges,
+    note: f.note,
+    bound_by: (op && op.why) || null,
+  };
+}
+
 /** The operator's reading for this water, or null. `b.operator` is written by the pipeline. */
 async function operatorLevel(b) {
   const op = b && b.operator;
@@ -917,13 +952,7 @@ async function operatorLevel(b) {
     try {
       const r = await fetch(op.url, { headers: { 'User-Agent': 'TrollMap/1.0 (personal fishing app)' } });
       if (!r.ok) return null;
-      const f = parseBrookfieldFacility(await r.text());
-      return f && f.elevationFt != null
-        ? { source: 'Brookfield / safewaters.com', url: op.url, feed_name: op.feed_name,
-            elevation_ft: f.elevationFt, below_full_pond_ft: f.belowFullPondFt,
-            full_pond_ft: f.fullPondFt, observed_at: f.elevationAt,
-            discharges: f.discharges, note: f.note, bound_by: op.why }
-        : null;
+      return brookfieldShape(parseBrookfieldFacility(await r.text()), op);
     } catch (_) { return null; }
   }
 
