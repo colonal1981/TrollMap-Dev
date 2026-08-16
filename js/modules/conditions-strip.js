@@ -72,6 +72,16 @@ function cardHtml(rec, c) {
       + `<span class="cond-sub"> — what ${esc(c.usaceProject || 'this project')} is supposed to be at today, not a reading</span>`));
   }
 
+  if (c.currentKn != null || c.currentType) {
+    out.push(row('Current', `${esc(c.currentType || '')} ${c.currentKn != null ? `${Math.abs(c.currentKn).toFixed(2)} kn` : ''}`.trim()
+      + `<span class="cond-sub">${c.currentAt ? ` at ${esc(c.currentAt)}` : ''}`
+      + `${c.currentStation ? ` · ${esc(c.currentStation)}` : ''} — NOAA CO-OPS MAX_SLACK prediction</span>`));
+  }
+  if (c.nextTide) {
+    out.push(row('Next tide', `${esc(c.nextTide.type)} ${c.nextTide.ft != null ? `${c.nextTide.ft} ft` : ''}`.trim()
+      + `<span class="cond-sub">${c.nextTide.at ? ` at ${esc(c.nextTide.at)}` : ''}`
+      + `${c.tideStation ? ` · ${esc(c.tideStation)}` : ''} — MLLW, predicted</span>`));
+  }
   if (c.flowCfs != null) {
     out.push(row('Flow', `${Math.round(c.flowCfs).toLocaleString()} ft³/s`
       + (c.flowGauge ? `<span class="cond-sub"> (${esc(c.flowGauge)})</span>` : '')));
@@ -80,7 +90,9 @@ function cardHtml(rec, c) {
 
   if (c.waterTempF != null) {
     out.push(row('Water temp', `${c.waterTempF} °F`
-      + (c.waterTempFrom === 'tailwater'
+      + (c.waterTempFrom === 'tide_station'
+        ? `<span class="cond-sub"> — NOAA CO-OPS tide station${c.waterTempGauge ? ` (${esc(c.waterTempGauge)})` : ''}. No USGS site on this water.</span>`
+        : c.waterTempFrom === 'tailwater'
         ? `<span class="cond-sub"> — TAILWATER gauge${c.waterTempGauge ? ` (${esc(c.waterTempGauge)})` : ''}, below the dam, not the lake</span>`
         : c.waterTempGauge ? `<span class="cond-sub"> (${esc(c.waterTempGauge)})</span>` : '')));
   }

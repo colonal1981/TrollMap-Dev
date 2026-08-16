@@ -109,6 +109,12 @@ export function readConditions(j) {
     clarityNote: null,
     releases: null,
     releasesRefused: null,
+    currentKn: null,
+    currentType: null,
+    currentAt: null,
+    currentStation: null,
+    tideStation: null,
+    nextTide: null,
     featureType: null,
     pending: null,
     error: null,
@@ -203,6 +209,44 @@ export function readConditions(j) {
   // rainfall and hand-authored zone offsets alone. Ryan should never see a modelled figure
   // printed the way a gauge reading is printed -- absence of data is not clear water, which is
   // the sentence the Worker itself puts in `measuredNote`.
+  // ── TIDE AND CURRENT ────────────────────────────────────────────────────────────────────
+  // The Worker has requested currents_predictions at MAX_SLACK since tideBlock was written and
+  // nothing has ever read it. On the 16 coastal zones the current is the single biggest
+  // variable — slack water and a running ebb are different trips on the same tide.
+  const td = j.tide || null;
+  if (td) {
+    out.tideStation = (td.station && (td.station.name || td.station.id)) || null;
+    const now = Date.now();
+    // The next event, not the first of the day. A tide table you have to read past is not an
+    // answer to "what is the water doing".
+    const upcoming = (td.highs_lows || [])
+      .map((x) => ({ ...x, ms: Date.parse(String(x.time).replace(' ', 'T')) }))
+      .filter((x) => Number.isFinite(x.ms) && x.ms >= now)
+      .sort((a, b) => a.ms - b.ms);
+    if (upcoming.length) {
+      out.nextTide = { type: upcoming[0].type === 'H' ? 'high' : 'low',
+                       ft: upcoming[0].ft, at: upcoming[0].time };
+    }
+    const cev = ((td.currents && td.currents.events) || [])
+      .map((x) => ({ ...x, ms: Date.parse(String(x.time).replace(' ', 'T')) }))
+      .filter((x) => Number.isFinite(x.ms) && x.ms >= now)
+      .sort((a, b) => a.ms - b.ms);
+    if (cev.length) {
+      out.currentKn = Number.isFinite(cev[0].speed_kn) ? cev[0].speed_kn : null;
+      // CO-OPS types: flood, ebb, slack. Passed through rather than reworded.
+      out.currentType = cev[0].type || null;
+      out.currentAt = cev[0].time || null;
+      out.currentStation = (td.currents.station && (td.currents.station.name || td.currents.station.id)) || null;
+    }
+    // COASTAL WATER TEMPERATURE. A tide station answers where no USGS site exists, which on the
+    // coast is most of them. It does not outrank a USGS reading — it fills the hole.
+    if (out.waterTempF == null && td.water_temp && Number.isFinite(td.water_temp.f)) {
+      out.waterTempF = td.water_temp.f;
+      out.waterTempFrom = 'tide_station';
+      out.waterTempGauge = td.water_temp.name || null;
+    }
+  }
+
   const cl = j.clarity || null;
   if (cl && cl.overall) {
     out.clarity = cl.overall.clarity || null;
@@ -274,6 +318,15 @@ export function conditionsStrip(c) {
 
   const isRiver = c.featureType === 'river';
   const bits = [];
+
+  // A COASTAL ZONE LEADS WITH THE CURRENT. It has no full pool to be below and its "level" is a
+  // tide that is always moving; what decides the trip is which way the water is running and how
+  // hard. Same reasoning that puts flow first on a river.
+  if (c.currentKn != null || c.currentType) {
+    const kn = c.currentKn != null ? `${Math.abs(c.currentKn).toFixed(1)} kn` : '';
+    bits.push([c.currentType, kn].filter(Boolean).join(' ').trim());
+  }
+  if (c.nextTide) bits.push(`${c.nextTide.type} ${c.nextTide.at ? String(c.nextTide.at).slice(11, 16) : ''}`.trim());
 
   if (isRiver && c.flowCfs != null) {
     bits.push(`${Math.round(c.flowCfs).toLocaleString()} ft³/s`);

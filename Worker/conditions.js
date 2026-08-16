@@ -1493,7 +1493,7 @@ async function tideBlock(b, lat, lon, date) {
                      + `&format=json&${extra}`;
   const soft = (p) => p.catch((e) => ({ __err: String((e && e.message) || e) }));
 
-  const [p, c, w] = await Promise.all([
+  const [p, c, w, t] = await Promise.all([
     soft(cached(`tide:${st.id}:${date}`, TTL.tide, () => getJson(q(
       `product=predictions&interval=hilo&datum=MLLW&station=${st.id}`
       + `&begin_date=${b1}&end_date=${b2}`)))),
@@ -1508,6 +1508,17 @@ async function tideBlock(b, lat, lon, date) {
       ? soft(cached(`wl:${st.id}`, TTL.level, () => getJson(q(
           `product=water_level&datum=MLLW&station=${st.id}&date=latest`))))
       : Promise.resolve(null),
+    // WATER TEMPERATURE AT THE TIDE STATION. On a coastal zone there is frequently no USGS site
+    // at all, so 00010 cannot answer and the app has shown no water temperature on the coast
+    // since it had a coast. The tide station is already bound, already nearest-matched, and
+    // publishes this as its own product.
+    //
+    // Asked unconditionally rather than behind a flag, because the registry records which
+    // stations are `measured` for WATER LEVEL and says nothing about temperature — gating on the
+    // wrong flag would hide it at stations that do publish it. A station that does not answers
+    // with CO-OPS's 200-plus-error body, which errOf() already reads.
+    soft(cached(`wt:${st.id}`, TTL.gauge, () => getJson(q(
+      `product=water_temperature&station=${st.id}&date=latest`)))),
   ]);
 
   // CO-OPS answers a bad request with HTTP 200 and {"error":{"message":...}}, so a thrown error
@@ -1515,6 +1526,8 @@ async function tideBlock(b, lat, lon, date) {
   const errOf = (x) => (x && (x.__err || (x.error && (x.error.message || x.error)))) || null;
   const preds = (p && p.predictions) || [];
   const wl = (w && w.data && w.data.length) ? w.data[w.data.length - 1] : null;
+  // units=english on the query, so `v` is already Fahrenheit.
+  const wtRow = (t && t.data && t.data.length) ? t.data[t.data.length - 1] : null;
 
   return {
     station: { id: st.id, name: st.name || null, lat: st.lat, lon: st.lon,
@@ -1537,6 +1550,11 @@ async function tideBlock(b, lat, lon, date) {
       })),
     } : null,
     currents_error: errOf(c),
+    water_temp: (wtRow && Number.isFinite(num(wtRow.v)))
+      ? { f: num(wtRow.v), at: wtRow.t, station_id: st.id, name: st.name || null,
+          source: 'NOAA CO-OPS — water_temperature' }
+      : null,
+    water_temp_error: errOf(t),
     other_stations: levels.length - 1,
     source: 'NOAA CO-OPS — api.tidesandcurrents.noaa.gov',
   };

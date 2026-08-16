@@ -303,3 +303,81 @@ test('each reading keeps its own site — they need not come from one gauge', ()
   assert.equal(c.waterTempSite, 'AAA');
   assert.equal(c.oxygenGauge, 'Tailrace');
 });
+
+// ── tide and current: served since tideBlock was written, read by nothing until now ──────────
+const FUTURE = () => {
+  const d = new Date(Date.now() + 90 * 60 * 1000);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+const PAST = () => {
+  const d = new Date(Date.now() - 90 * 60 * 1000);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+test('the NEXT current event is used, not the first of the day', () => {
+  const c = readConditions({ slug: 'coast_charleston_sc', water: {
+    display_name: 'Charleston Harbor, SC', feature_type: 'coastal', chart_datum: { pending: 'not a lake' } },
+    tide: {
+      station: { id: '8665530', name: 'Charleston' },
+      highs_lows: [{ time: PAST(), ft: 5.4, type: 'H' }, { time: FUTURE(), ft: 0.3, type: 'L' }],
+      currents: { station: { id: 'CP0101', name: 'Fort Sumter Range' },
+        events: [{ time: PAST(), type: 'flood', speed_kn: 1.8 },
+                 { time: FUTURE(), type: 'ebb', speed_kn: -2.1 }] },
+    } });
+  assert.equal(c.currentType, 'ebb', 'a tide table you have to read past is not an answer');
+  assert.equal(c.currentKn, -2.1);
+  assert.equal(c.nextTide.type, 'low');
+  assert.equal(c.currentStation, 'Fort Sumter Range');
+});
+
+test('a coastal zone leads its strip with the current', () => {
+  const c = readConditions({ slug: 'x', water: {
+    display_name: 'Winyah Bay', feature_type: 'coastal', chart_datum: { pending: 'not a lake' } },
+    tide: { station: { id: '1', name: 'S' },
+      highs_lows: [{ time: FUTURE(), ft: 4.1, type: 'H' }],
+      currents: { station: { id: 'c' }, events: [{ time: FUTURE(), type: 'flood', speed_kn: 1.4 }] } } });
+  const s = conditionsStrip(c);
+  assert.match(s.text, /^flood 1\.4 kn/);
+  assert.match(s.text, /high /);
+});
+
+test('a tide station fills the coastal water temperature hole, and says so', () => {
+  // Most coastal zones have no USGS site at all, so 00010 can never answer there.
+  const c = readConditions({ slug: 'x', water: {
+    display_name: 'ACE Basin', feature_type: 'coastal', chart_datum: { pending: 'not a lake' } },
+    tide: { station: { id: '1', name: 'Fripp' }, highs_lows: [],
+            water_temp: { f: 84.1, at: 't', name: 'Fripp Inlet' } } });
+  assert.equal(c.waterTempF, 84.1);
+  assert.equal(c.waterTempFrom, 'tide_station');
+  assert.equal(c.waterTempGauge, 'Fripp Inlet');
+});
+
+test('a USGS reading outranks the tide station — the station fills a hole, it does not win', () => {
+  const c = readConditions({ slug: 'x', water: {
+    display_name: 'L', feature_type: 'lake', chart_datum: { below_full_pool_ft: 1 },
+    water_temp: { c: 26, f: 78.8, usgs_site: 'AAA', name: 'Mid-lake', role: 'pool', below_dam: false } },
+    tide: { station: { id: '1', name: 'S' }, highs_lows: [],
+            water_temp: { f: 84.1, at: 't', name: 'Somewhere else' } } });
+  assert.equal(c.waterTempF, 78.8);
+  assert.equal(c.waterTempFrom, 'pool');
+});
+
+test('no currents bound is silence, not a zero-knot slack', () => {
+  const c = readConditions({ slug: 'x', water: {
+    display_name: 'L', feature_type: 'coastal', chart_datum: { pending: 'not a lake' } },
+    tide: { station: { id: '1', name: 'S' }, highs_lows: [], currents: null } });
+  assert.equal(c.currentKn, null);
+  assert.equal(c.currentType, null);
+  assert.ok(!/slack/.test(conditionsStrip(c).text));
+});
+
+test('an all-in-the-past tide table yields no next event rather than a stale one', () => {
+  const c = readConditions({ slug: 'x', water: {
+    display_name: 'L', feature_type: 'coastal', chart_datum: { pending: 'not a lake' } },
+    tide: { station: { id: '1' }, highs_lows: [{ time: PAST(), ft: 5, type: 'H' }],
+            currents: { station: {}, events: [{ time: PAST(), type: 'ebb', speed_kn: 2 }] } } });
+  assert.equal(c.nextTide, null);
+  assert.equal(c.currentType, null);
+});
