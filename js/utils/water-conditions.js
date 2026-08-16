@@ -127,6 +127,11 @@ export function readConditions(j) {
     tvaGuideFt: null,
     droughtLevel: null,
     droughtLevels: null,
+    salinityPpt: null,
+    conductanceUsCm: null,
+    saltBasis: null,
+    saltGauge: null,
+    tidalFlowCfs: null,
     featureType: null,
     pending: null,
     error: null,
@@ -273,6 +278,19 @@ export function readConditions(j) {
     out.droughtLevel = lvl;
   }
 
+  // SALT. Salinity in ppt where a site publishes it, specific conductance otherwise, and
+  // `saltBasis` says which — they are not the same number and the conversion between them is
+  // deliberately not performed anywhere in this codebase.
+  if (w.salt) {
+    out.saltBasis = w.salt.basis || null;
+    out.saltGauge = w.salt.name || null;
+    if (Number.isFinite(w.salt.ppt)) out.salinityPpt = w.salt.ppt;
+    if (Number.isFinite(w.salt.us_cm)) out.conductanceUsCm = w.salt.us_cm;
+  }
+  // Net flow with the tidal sloshing removed. On a tidal river the raw discharge swings sign
+  // twice a day and its instantaneous value answers nothing.
+  if (w.tidal_flow && Number.isFinite(w.tidal_flow.cfs)) out.tidalFlowCfs = w.tidal_flow.cfs;
+
   out.releases = w.releases || null;
   // A projection that was REJECTED and one that was never available are different facts, and
   // only the first one names a table entry that needs fixing. It reaches the card so a wrong
@@ -403,8 +421,11 @@ export function conditionsStrip(c) {
   }
   if (c.nextTide) bits.push(`${c.nextTide.type} ${c.nextTide.at ? String(c.nextTide.at).slice(11, 16) : ''}`.trim());
 
-  if (isRiver && c.flowCfs != null) {
-    bits.push(`${Math.round(c.flowCfs).toLocaleString()} ft³/s`);
+  if (isRiver && (c.tidalFlowCfs != null || c.flowCfs != null)) {
+    // The tidally filtered figure wins where it exists: on a tidal river the raw discharge
+    // reverses twice a day, so its instantaneous value is not the river's flow.
+    const net = c.tidalFlowCfs != null;
+    bits.push(`${Math.round(net ? c.tidalFlowCfs : c.flowCfs).toLocaleString()} ft³/s${net ? ' net' : ''}`);
     if (c.stageFt != null) bits.push(`${c.stageFt.toFixed(1)} ft stage`);
   } else if (c.belowFullPoolFt != null) {
     const b = c.belowFullPoolFt;
@@ -433,6 +454,10 @@ export function conditionsStrip(c) {
   if (c.turbidityFnu != null) bits.push(`${c.turbidityFnu} FNU`);
   else if (c.clarity) bits.push(`${c.clarityIsMeasured ? '' : '~'}${c.clarity}`);
   if (c.oxygenMgL != null) bits.push(`${c.oxygenMgL} mg/L O₂`);
+  // On an estuary this is the line trout and redfish sit on. Conductance is shown in its own
+  // unit rather than converted, so nothing reads as a salinity that was not measured as one.
+  if (c.salinityPpt != null) bits.push(`${c.salinityPpt} ppt`);
+  else if (c.conductanceUsCm != null) bits.push(`${c.conductanceUsCm.toLocaleString()} µS/cm`);
 
   // Only a PROJECTION gets a place in the strip. An observed discharge is already the flow
   // number two fields to the left, and printing it again as though it were a schedule is the

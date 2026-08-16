@@ -487,6 +487,9 @@ async function nwpsGauge(lid, role, bound, lat, lon) {
     water_temp_c: null,
     dissolved_oxygen_mg_l: null,
     turbidity_fnu: null,
+    tidal_flow_cfs: null,
+    specific_conductance_us_cm: null,
+    salinity_ppt: null,
     usgs_site: j.usgsId || null,
     reach_comid: j.reachId || null,
     // Registry fields, passed through: TVA's own numbers for the dam this pool sits behind, and
@@ -539,12 +542,27 @@ async function nwpsGauge(lid, role, bound, lat, lon) {
 // rainfall.
 //
 // DELIBERATELY NOT REQUESTED, so the omission is a decision and not an oversight:
-//   00095 specific conductance, 00400 pH   no consumer in this app. Fetching a number nothing
-//                                          reads is how a response grows without getting better.
+//   00400 pH                               no consumer. Fetching a number nothing reads is how
+//                                          a response grows without getting better.
 //   00045 precipitation, 00025 barometric  NWS already answers both, per water, in `forecast`.
-//   00480 salinity, 72137 tidal discharge  genuinely wanted on the 16 coastal zones and not
-//                                          wired anywhere yet. Named here so it stays findable.
-const USGS_PARMS = '00062,62614,62615,63160,00065,00060,00010,00300,63680';
+//
+// ADDED FOR THE COAST, and one of them is a reversal I should own: 00095 was skipped above as
+// having no consumer. The coastal strip is the consumer. On an estuary, specific conductance is
+// what separates fresh water from brackish from salt, and trout and redfish sit on that line.
+//
+//   72137  Streamflow, tidally filtered    net flow with the tidal sloshing removed. On a tidal
+//                                          river it is the only discharge figure that means
+//                                          anything. 2 SC series live.
+//   00095  Specific conductance            8 SC series live.
+//   00480  Salinity, ppt                   REQUESTED AND EXPECTED ABSENT. The state inventory
+//                                          lists 14 SC locations, and the instantaneous-values
+//                                          service returned ZERO series for it on 2026-08-16
+//                                          while returning 8 for 00095 and 2 for 72137 — those
+//                                          14 are discrete samples, not a live feed. Asked for
+//                                          because GA and NC are separate services and because
+//                                          mapped-but-never-requested is exactly the 63160 bug.
+//                                          Its absence must never render as fresh water.
+const USGS_PARMS = '00062,62614,62615,63160,00065,00060,00010,00300,63680,72137,00095,00480';
 
 async function usgsSite(site, role, bound, lat, lon) {
   const u = await cached(`usgs:${site}`, TTL.gauge, () => fetchUsgs(site, USGS_PARMS));
@@ -572,6 +590,9 @@ async function usgsSite(site, role, bound, lat, lon) {
     // Null means THIS SITE does not publish it, not that the water has none.
     dissolved_oxygen_mg_l: Number.isFinite(u.doMgL) ? u.doMgL : null,
     turbidity_fnu: Number.isFinite(u.turbidityFnu) ? u.turbidityFnu : null,
+    tidal_flow_cfs: Number.isFinite(u.tidalFlow) ? u.tidalFlow : null,
+    specific_conductance_us_cm: Number.isFinite(u.spCond) ? u.spCond : null,
+    salinity_ppt: Number.isFinite(u.salinityPpt) ? u.salinityPpt : null,
     observed_at: u.timestamp || null,
     // NWPS carries flood categories and a forecast; USGS publishes neither. Null here means
     // "this agency does not report it", not "no flooding" — the field exists so the shape
@@ -1187,9 +1208,9 @@ export function usgsSitesFor(b, lat, lon) {
  */
 async function waterProbe(b, lat, lon, seededTemp) {
   const out = { temp: seededTemp && Number.isFinite(seededTemp.c) ? seededTemp : null,
-                oxygen: null, turbidity: null };
+                oxygen: null, turbidity: null, salt: null, tidalFlow: null };
   for (const s of usgsSitesFor(b, lat, lon).slice(0, 4)) {
-    if (out.temp && out.oxygen && out.turbidity) break;
+    if (out.temp && out.oxygen && out.turbidity && out.salt && out.tidalFlow) break;
     let u = null;
     try { u = await cached(`usgs:${s.site}`, TTL.gauge, () => fetchUsgs(s.site, USGS_PARMS)); }
     catch (_) { continue; }
@@ -1207,6 +1228,20 @@ async function waterProbe(b, lat, lon, seededTemp) {
     }
     if (!out.turbidity && Number.isFinite(u.turbidityFnu)) {
       out.turbidity = { ...where, fnu: round2(u.turbidityFnu), source: 'USGS — parameter 63680' };
+    }
+    // SALINITY IF PUBLISHED, CONDUCTANCE OTHERWISE, AND THEY ARE NOT THE SAME NUMBER.
+    // Salinity is derivable from conductance through the Practical Salinity Scale, and that
+    // conversion is deliberately not done here: a converted value would look like a measurement
+    // and would not be one. `basis` says which of the two answered.
+    if (!out.salt && Number.isFinite(u.salinityPpt)) {
+      out.salt = { ...where, basis: 'salinity', ppt: round2(u.salinityPpt),
+                   source: 'USGS — parameter 00480' };
+    } else if (!out.salt && Number.isFinite(u.spCond)) {
+      out.salt = { ...where, basis: 'specific_conductance', us_cm: Math.round(u.spCond),
+                   source: 'USGS — parameter 00095' };
+    }
+    if (!out.tidalFlow && Number.isFinite(u.tidalFlow)) {
+      out.tidalFlow = { ...where, cfs: round1(u.tidalFlow), source: 'USGS — parameter 72137' };
     }
   }
   return out;
@@ -1312,6 +1347,8 @@ async function waterBlock(b, lat, lon) {
   // must not be presented as the same kind of thing.
   out.turbidity = probe.turbidity || null;
   out.dissolved_oxygen = probe.oxygen || null;
+  out.salt = probe.salt || null;
+  out.tidal_flow = probe.tidalFlow || null;
   // Whether `tide: null` on this response is a FACT or a GAP. An inland lake has no tide and
   // that is the right answer; a coastal zone with no station bound is a hole in the registry.
   out.tidal = !!(b.tides || []).length;

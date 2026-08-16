@@ -171,6 +171,19 @@ async function fetchUsgs(site, paramCd, periodDays = 2) {
         //          otherwise runs on rainfall.
         if (code === "00300") out.doMgL = latest;
         if (code === "63680") out.turbidityFnu = latest;
+        // COASTAL. 72137 is "Streamflow, tidally filtered, ft3/s" -- the net flow with the tidal
+        // sloshing removed, which on a tidal river is the only discharge number that means
+        // anything. 00095 is specific conductance, and on the coast it is what actually
+        // separates fresh water from brackish from salt.
+        if (code === "72137") out.tidalFlow = latest;
+        if (code === "00095") out.spCond = latest;
+        // 00480 is salinity in ppt. Requested and mapped, and it is expected to be ABSENT: the
+        // state inventory lists 14 South Carolina locations for it, and the instantaneous-values
+        // service returned ZERO series for it on 2026-08-16 while returning 8 for 00095 and 2
+        // for 72137. Those 14 are discrete samples, not a live feed. Kept because GA and NC are
+        // separate services and because a mapped-but-unrequested code is the bug this file just
+        // had with 63160 -- but nothing should present its absence as fresh water.
+        if (code === "00480") out.salinityPpt = latest;
         out.timestamp = good[good.length - 1].dateTime;
       }
     }
@@ -184,7 +197,8 @@ async function fetchUsgs(site, paramCd, periodDays = 2) {
   // request it does not need. This gate listed three fields when the mapper knew five.
   if (out.tempC != null || out.gageHeight != null || out.elevation != null
       || out.elevationNavd88 != null || out.streamflow != null
-      || out.doMgL != null || out.turbidityFnu != null) return out;
+      || out.doMgL != null || out.turbidityFnu != null
+      || out.tidalFlow != null || out.spCond != null || out.salinityPpt != null) return out;
   try {
     const rdbUrl = `https://waterservices.usgs.gov/nwis/iv/?sites=${site}&parameterCd=${paramCd}&format=rdb&period=P${periodDays}D`;
     const r = await fetch(rdbUrl, { cf: { cacheTtl: 900 } });
@@ -213,6 +227,9 @@ async function fetchUsgs(site, paramCd, periodDays = 2) {
       if (code === "00060" && out.streamflow == null) out.streamflow = v;
       if (code === "00300" && out.doMgL == null) out.doMgL = v;
       if (code === "63680" && out.turbidityFnu == null) out.turbidityFnu = v;
+      if (code === "72137" && out.tidalFlow == null) out.tidalFlow = v;
+      if (code === "00095" && out.spCond == null) out.spCond = v;
+      if (code === "00480" && out.salinityPpt == null) out.salinityPpt = v;
     }
     if (!out.timestamp && last[2]) out.timestamp = `${last[2]} ${last[3] || ""}`.trim();
   } catch (err) {

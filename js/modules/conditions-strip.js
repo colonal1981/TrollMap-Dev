@@ -82,6 +82,19 @@ function cardHtml(rec, c) {
       + `<span class="cond-sub">${c.nextTide.at ? ` at ${esc(c.nextTide.at)}` : ''}`
       + `${c.tideStation ? ` · ${esc(c.tideStation)}` : ''} — MLLW, predicted</span>`));
   }
+  if (c.tidalFlowCfs != null) {
+    out.push(row('Net flow', `${Math.round(c.tidalFlowCfs).toLocaleString()} ft³/s`
+      + '<span class="cond-sub"> — tidally filtered, USGS 72137. The raw discharge on a tidal '
+      + 'river reverses twice a day; this is what is actually leaving.</span>'));
+  }
+  if (c.salinityPpt != null || c.conductanceUsCm != null) {
+    const v = c.salinityPpt != null
+      ? `${c.salinityPpt} ppt<span class="cond-sub"> — salinity, USGS 00480`
+      : `${c.conductanceUsCm.toLocaleString()} µS/cm<span class="cond-sub"> — specific conductance, `
+        + `USGS 00095. NOT converted to salinity: the conversion exists and a converted number `
+        + `would look like a measurement without being one`;
+    out.push(row('Salt', `${v}${c.saltGauge ? ` (${esc(c.saltGauge)})` : ''}.</span>`));
+  }
   if (c.flowCfs != null) {
     out.push(row('Flow', `${Math.round(c.flowCfs).toLocaleString()} ft³/s`
       + (c.flowGauge ? `<span class="cond-sub"> (${esc(c.flowGauge)})</span>` : '')));

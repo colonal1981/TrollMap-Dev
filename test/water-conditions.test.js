@@ -477,3 +477,53 @@ test('no drought levels published is silence, not "no drought"', () => {
   assert.equal(c.droughtLevels, null);
   assert.equal(c.droughtLevel, null);
 });
+
+// ── salt and net flow on the coast ──────────────────────────────────────────────────────────
+test('salinity is reported as salinity when a site publishes it', () => {
+  const c = readConditions({ slug: 'x', water: { display_name: 'Winyah Bay', feature_type: 'coastal',
+    chart_datum: { pending: 'not a lake' },
+    salt: { basis: 'salinity', ppt: 18.4, name: 'Winyah Bay at Georgetown' } } });
+  assert.equal(c.salinityPpt, 18.4);
+  assert.equal(c.saltBasis, 'salinity');
+  assert.equal(c.conductanceUsCm, null);
+  assert.match(conditionsStrip(c).text, /18\.4 ppt/);
+});
+
+test('conductance is shown in its own unit and NEVER converted to salinity', () => {
+  // The Practical Salinity Scale conversion exists. Doing it here would produce a number that
+  // looks like a measurement without being one, which is the rule this codebase keeps relearning.
+  const c = readConditions({ slug: 'x', water: { display_name: 'ACE Basin', feature_type: 'coastal',
+    chart_datum: { pending: 'not a lake' },
+    salt: { basis: 'specific_conductance', us_cm: 41200, name: 'Edisto' } } });
+  assert.equal(c.conductanceUsCm, 41200);
+  assert.equal(c.salinityPpt, null, 'a converted salinity must not appear');
+  assert.equal(c.saltBasis, 'specific_conductance');
+  assert.match(conditionsStrip(c).text, /41,200 µS\/cm/);
+  assert.ok(!/ppt/.test(conditionsStrip(c).text));
+});
+
+test('a tidal river reports the FILTERED flow, because the raw one reverses twice a day', () => {
+  const c = readConditions({ slug: 'x', water: { display_name: 'Cooper River', feature_type: 'river',
+    chart_datum: { pending: 'not a lake' },
+    gauge: { flow: -3100, stage: 2.1, name: 'g' },
+    tidal_flow: { cfs: 940.5, name: 'Cooper River at Charleston' } } });
+  assert.equal(c.tidalFlowCfs, 940.5);
+  assert.equal(c.flowCfs, -3100, 'the raw reading is still carried');
+  assert.match(conditionsStrip(c).text, /941 ft³\/s net/);
+});
+
+test('with no tidal filter the ordinary discharge is used and not labelled net', () => {
+  const c = readConditions({ slug: 'x', water: { display_name: 'Broad River', feature_type: 'river',
+    chart_datum: { pending: 'not a lake' }, gauge: { flow: 1240, name: 'g' } } });
+  assert.match(conditionsStrip(c).text, /1,240 ft³\/s/);
+  assert.ok(!/net/.test(conditionsStrip(c).text));
+});
+
+test('no salt reading is silence — absence is not fresh water', () => {
+  const c = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'coastal',
+    chart_datum: { pending: 'not a lake' } } });
+  assert.equal(c.salinityPpt, null);
+  assert.equal(c.conductanceUsCm, null);
+  assert.equal(c.saltBasis, null);
+  assert.ok(!/ppt|µS/.test(conditionsStrip(c).text));
+});
