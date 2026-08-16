@@ -1376,6 +1376,91 @@ async function waterProbe(b, lat, lon, seededTemp) {
 }
 
 /**
+ * A CWMS time series as points, in the unit CWMS SAYS IT SENT.
+ *
+ * Read live 2026-08-16 for Hartwell.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS:
+ *
+ *   { "name", "office-id", "units": "ft", "time-zone": "US/Central", "total": 0,
+ *     "value-columns": [ {"name":"date-time","ordinal":1}, {"name":"value","ordinal":2},
+ *                        {"name":"quality-code","ordinal":3} ],
+ *     "values": [] }
+ *
+ * THE UNIT IS ON THE RESPONSE, NOT THE CATALOG, AND THEY DISAGREE. The catalogue entry for this
+ * exact series declares `"units": "m"` — that is the STORAGE unit — while the data endpoint
+ * returns `"units": "ft"`. Converting on the catalogue's metres would have turned 660 ft into
+ * 2,165 ft. The trap has a mirror: reading the catalogue and assuming feet would have shown a
+ * lake at 201. Neither guess is safe, so nothing is guessed — `cwmsToFeet` is handed the unit
+ * that arrived beside the numbers.
+ *
+ * COLUMNS ARE LOCATED BY NAME. `value-columns` exists precisely so the row layout can change,
+ * and reading rows by ordinal would break silently the day it does. Same discipline as the USGS
+ * RDB parsers, which needed it for `loc_web_ds`.
+ *
+ * QUALITY CODES ARE CARRIED, NOT INTERPRETED. CWMS packs screening, validity and replacement
+ * into bit fields, and this codebase has no reference for them. Passing the integer through is
+ * honest; inventing a meaning for it is what `anomaly_category` is deliberately not doing.
+ */
+export function parseCwmsTimeseries(j) {
+  if (!j || typeof j !== 'object') return null;
+  const cols = Array.isArray(j['value-columns']) ? j['value-columns'] : [];
+  const at = (name) => {
+    const i = cols.findIndex((c) => c && c.name === name);
+    return i < 0 ? null : i;
+  };
+  const iT = at('date-time'), iV = at('value'), iQ = at('quality-code');
+  if (iT === null || iV === null) return null;
+
+  const rows = Array.isArray(j.values) ? j.values : [];
+  const points = [];
+  for (const r of rows) {
+    if (!Array.isArray(r)) continue;
+    const raw = r[iT];
+    // java.sql.Timestamp reaches JSON as epoch milliseconds on this API, but an ISO string is
+    // just as unambiguous and costs one branch to accept.
+    const t = typeof raw === 'number' ? raw : Date.parse(String(raw));
+    const v = Number(r[iV]);
+    if (!Number.isFinite(t) || !Number.isFinite(v)) continue;
+    points.push({ t, v, quality: iQ === null ? null : r[iQ] });
+  }
+  points.sort((a, b) => a.t - b.t);
+  const last = points.length ? points[points.length - 1] : null;
+  return {
+    name: j.name || null,
+    office: j['office-id'] || null,
+    units: j.units || null,
+    time_zone: j['time-zone'] || null,
+    points: points.length,
+    latest: last ? { at: new Date(last.t).toISOString(), value: last.v, quality: last.quality } : null,
+    // `total: 0` with an empty `values` is a real answer: the series exists and has nothing in
+    // the window asked for. Distinct from a failed request, and it is how we learned this SHEF
+    // series runs about two days behind.
+    empty_window: rows.length === 0,
+  };
+}
+
+/** The latest Corps reading as feet, with its age, or null. */
+export function cwmsLevel(parsed, nowMs, maxAgeHours = 48) {
+  if (!parsed || !parsed.latest) return null;
+  const ft = cwmsToFeet(parsed.latest.value, parsed.units);
+  if (ft === null) return null;
+  const ageH = Number.isFinite(nowMs)
+    ? Math.round(((nowMs - Date.parse(parsed.latest.at)) / 3600000) * 10) / 10 : null;
+  return {
+    elevation_ft: ft,
+    observed_at: parsed.latest.at,
+    age_hours: ageH,
+    // Reported, not hidden — the Charleston barometer taught this. A caller that is never told
+    // a reading is two days old cannot decide whether to use it.
+    stale: ageH != null && ageH > maxAgeHours,
+    units_reported: parsed.units,
+    series: parsed.name,
+    office: parsed.office,
+    quality_code: parsed.latest.quality,
+    source: 'USACE CWMS — /cwms-data/timeseries',
+  };
+}
+
+/**
  * PICKING THE CORPS' POOL ELEVATION SERIES OUT OF FORTY-TWO CANDIDATES.
  *
  * `/cwms-data/catalog/TIMESERIES?office=SAS&like=^Hartwell\.Elev` returns 42 entries for one

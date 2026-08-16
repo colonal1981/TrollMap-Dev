@@ -94,3 +94,100 @@ test('a non-numeric value is null rather than NaN feet', () => {
   assert.equal(cwmsToFeet(undefined, 'm'), null);
   assert.equal(cwmsToFeet(Number.NaN, 'm'), null);
 });
+
+// ── the timeseries payload, and the unit that disagrees with the catalogue ───────────────────
+//
+// FIXTURE IS REAL. Envelope read live 2026-08-16 for
+// Hartwell.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS. `values` came back empty for that window and the
+// rows here are added in the documented column order.
+import { parseCwmsTimeseries, cwmsLevel } from '../Worker/conditions.js';
+
+const ENVELOPE = (values) => ({
+  begin: '2026-08-15T00:00:00Z', 'date-version-type': 'UNVERSIONED',
+  end: '2026-08-16T23:00:00Z', interval: 'PT1H', 'interval-offset': 0,
+  name: 'Hartwell.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS', 'office-id': 'SAS',
+  'page-size': 5, 'time-zone': 'US/Central', total: values.length, units: 'ft',
+  'value-columns': [
+    { name: 'date-time', ordinal: 1, datatype: 'java.sql.Timestamp' },
+    { name: 'value', ordinal: 2, datatype: 'java.lang.Double' },
+    { name: 'quality-code', ordinal: 3, datatype: 'int' },
+  ],
+  values,
+});
+const T0 = Date.parse('2026-08-14T09:00:00Z');
+
+test('THE UNIT COMES FROM THE RESPONSE, and it disagrees with the catalogue', () => {
+  // The catalogue entry for this exact series says "units": "m". The data endpoint says "ft".
+  // Converting on the catalogue would turn 660 ft into 2,165 ft; assuming the catalogue meant
+  // feet would show the lake at 201. Neither guess is safe.
+  const p = parseCwmsTimeseries(ENVELOPE([[T0, 659.87, 0]]));
+  assert.equal(p.units, 'ft');
+  assert.equal(cwmsLevel(p, T0 + 3600000).elevation_ft, 659.87, 'feet must not be re-converted');
+});
+
+test('columns are located by name, not by ordinal', () => {
+  const env = ENVELOPE([[0, T0, 659.87]]);
+  env['value-columns'] = [
+    { name: 'quality-code', ordinal: 1 }, { name: 'date-time', ordinal: 2 },
+    { name: 'value', ordinal: 3 },
+  ];
+  const p = parseCwmsTimeseries(env);
+  assert.equal(p.latest.value, 659.87);
+  assert.equal(p.latest.quality, 0);
+});
+
+test('an ISO timestamp is accepted as readily as epoch milliseconds', () => {
+  const p = parseCwmsTimeseries(ENVELOPE([['2026-08-14T09:00:00Z', 659.87, 0]]));
+  assert.equal(p.latest.at, '2026-08-14T09:00:00.000Z');
+});
+
+test('the newest point wins regardless of the order rows arrive in', () => {
+  const p = parseCwmsTimeseries(ENVELOPE([
+    [T0, 659.87, 0], [T0 - 7200000, 660.10, 0], [T0 - 3600000, 659.95, 0]]));
+  assert.equal(p.points, 3);
+  assert.equal(p.latest.value, 659.87);
+});
+
+test('an empty window is a real answer, not a failure', () => {
+  // total 0 with values [] is how we learned this SHEF series runs about two days behind.
+  const p = parseCwmsTimeseries(ENVELOPE([]));
+  assert.equal(p.empty_window, true);
+  assert.equal(p.latest, null);
+  assert.equal(cwmsLevel(p, Date.now()), null);
+});
+
+test('a two-day-old reading is returned WITH its age and flagged stale', () => {
+  const p = parseCwmsTimeseries(ENVELOPE([[T0, 659.87, 0]]));
+  const l = cwmsLevel(p, T0 + 60 * 3600 * 1000);
+  assert.equal(l.age_hours, 60);
+  assert.equal(l.stale, true);
+  assert.equal(l.elevation_ft, 659.87, 'the value is still carried — the caller decides');
+});
+
+test('metres on the response ARE converted, because the response is what is trusted', () => {
+  const env = ENVELOPE([[T0, 201.17, 0]]);
+  env.units = 'm';
+  assert.equal(cwmsLevel(parseCwmsTimeseries(env), T0).elevation_ft, 660.01);
+});
+
+test('an unrecognised unit on the response yields no level at all', () => {
+  const env = ENVELOPE([[T0, 201.17, 0]]);
+  env.units = 'furlongs';
+  assert.equal(cwmsLevel(parseCwmsTimeseries(env), T0), null);
+});
+
+test('the quality code is carried through and never interpreted', () => {
+  // CWMS packs screening, validity and replacement into bit fields and this codebase has no
+  // reference for them. Passing the integer through is honest; inventing a meaning is not.
+  const p = parseCwmsTimeseries(ENVELOPE([[T0, 659.87, 3221225472]]));
+  assert.equal(p.latest.quality, 3221225472);
+  assert.equal(cwmsLevel(p, T0).quality_code, 3221225472);
+});
+
+test('a malformed envelope is null rather than half-parsed', () => {
+  assert.equal(parseCwmsTimeseries(null), null);
+  assert.equal(parseCwmsTimeseries({}), null);
+  const noCols = ENVELOPE([[T0, 1, 0]]);
+  delete noCols['value-columns'];
+  assert.equal(parseCwmsTimeseries(noCols), null);
+});
