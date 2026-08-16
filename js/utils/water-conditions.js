@@ -138,6 +138,12 @@ export function readConditions(j) {
     trendMeasures: null,
     trendCoversHours: null,
     pressureMb: null,
+    pressureFrom: null,
+    windMph: null,
+    windDirDeg: null,
+    gustMph: null,
+    obsStation: null,
+    obsKmAway: null,
     pressure3h: null,
     pressureStale: null,
     featureType: null,
@@ -371,6 +377,27 @@ export function readConditions(j) {
     }
   }
 
+  // ── THE NEAREST WEATHER OBSERVATION ─────────────────────────────────────────────────────
+  // MapClick returns it on a call already made for every water, and it is the only barometer
+  // available on an inland lake — CO-OPS covers the 16 coastal zones and there are 348 lakes.
+  // A coastal reading from the bound tide station is preferred where it exists, because that
+  // station is on the water and the ASOS can be 50 km inland.
+  const obs = (j.forecast && j.forecast.observation) || null;
+  if (obs) {
+    out.obsStation = obs.name || obs.station || null;
+    out.obsKmAway = Number.isFinite(obs.km_from_point) ? obs.km_from_point : null;
+    if (Number.isFinite(obs.wind_mph)) out.windMph = obs.wind_mph;
+    if (Number.isFinite(obs.wind_dir_deg)) out.windDirDeg = obs.wind_dir_deg;
+    if (Number.isFinite(obs.gust_mph)) out.gustMph = obs.gust_mph;
+    if (out.pressureMb == null && Number.isFinite(obs.pressure_mb)) {
+      out.pressureMb = obs.pressure_mb;
+      out.pressureFrom = 'nws_station';
+      // No trend from here. MapClick is one observation, not a series, and inventing a
+      // direction from a single reading is not a trend.
+    }
+  }
+  if (out.pressureMb != null && out.pressureFrom == null) out.pressureFrom = 'tide_station';
+
   const cl = j.clarity || null;
   if (cl && cl.overall) {
     out.clarity = cl.overall.clarity || null;
@@ -472,6 +499,12 @@ export function conditionsStrip(c) {
   // DIRECTION goes on the line; the absolute reading lives on the card.
   if (c.pressure3h != null && Math.abs(c.pressure3h) >= 0.5) {
     bits.push(`baro ${c.pressure3h > 0 ? '↑' : '↓'}${Math.abs(c.pressure3h).toFixed(1)}mb/3h`);
+  }
+  // Wind decides whether a bank is fishable at all. Only worth the line once it is blowing.
+  if (c.windMph != null && c.windMph >= 8) {
+    const dir = c.windDirDeg != null
+      ? ['N','NE','E','SE','S','SW','W','NW'][Math.round(((c.windDirDeg % 360) / 45)) % 8] : '';
+    bits.push(`${dir}${dir ? ' ' : ''}${Math.round(c.windMph)}${c.gustMph != null && c.gustMph > c.windMph ? `g${Math.round(c.gustMph)}` : ''} mph`);
   }
   if (c.trend24h != null) {
     const d = c.trend24h;

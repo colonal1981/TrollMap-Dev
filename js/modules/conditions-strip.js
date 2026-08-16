@@ -156,10 +156,20 @@ function cardHtml(rec, c) {
         : c.waterTempGauge ? `<span class="cond-sub"> (${esc(c.waterTempGauge)})</span>` : '')));
   }
 
+  if (c.windMph != null) {
+    out.push(row('Wind', `${Math.round(c.windMph)} mph`
+      + `${c.gustMph != null ? ` gusting ${Math.round(c.gustMph)}` : ''}`
+      + `${c.windDirDeg != null ? ` from ${Math.round(c.windDirDeg)}°` : ''}`
+      + `<span class="cond-sub"> — observed at ${esc(c.obsStation || 'the nearest station')}`
+      + `${c.obsKmAway != null ? `, ${c.obsKmAway} km from this water` : ''}.</span>`));
+  }
   if (c.pressureMb != null) {
     const d = (v) => v == null ? '—' : `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1)}`;
-    out.push(row('Barometer', `${c.pressureMb} mb`
-      + `<span class="cond-sub"> — 3 h ${d(c.pressure3h)} mb. NOAA CO-OPS at the tide station.</span>`));
+    const src = c.pressureFrom === 'nws_station'
+      ? `<span class="cond-sub"> — nearest NWS station${c.obsKmAway != null ? `, ${c.obsKmAway} km away` : ''}. `
+        + `One observation, so no trend: a direction invented from a single reading is not a trend.</span>`
+      : `<span class="cond-sub"> — 3 h ${d(c.pressure3h)} mb. NOAA CO-OPS at the tide station.</span>`;
+    out.push(row('Barometer', `${c.pressureMb} mb${src}`));
   } else if (c.pressureStale) {
     out.push(row('Barometer', '<span class="cond-sub">the station\u2019s last reading is too old to use — '
       + 'reported rather than shown, because a barometer from last week presented as now is worse '

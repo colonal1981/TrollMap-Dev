@@ -178,6 +178,21 @@ async function skyAlmanac(lat, lon, date, tz) {
 
 // ── point forecast, and the identifiers that come free with it ──────────────────────────────
 
+/**
+ * A MapClick observation value as a number, or null.
+ *
+ * Every field on `currentobservation` is a STRING, and the missing ones are the literal
+ * characters "NA" rather than null or an empty string. `Number("NA")` is NaN — survivable — but
+ * an un-guarded template prints "NA mph", which is not.
+ */
+function obsNum(v) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim();
+  if (!s || s === 'NA' || s === 'N/A' || s === '-') return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
 async function pointForecast(lat, lon) {
   const url = `https://forecast.weather.gov/MapClick.php?lat=${lat}&lon=${lon}&FcstType=json`;
   const j = await cached(`mapclick:${lat},${lon}`, TTL.point, () => getJson(url));
@@ -207,9 +222,35 @@ async function pointForecast(lat, lon) {
     radar: loc.radar || null,
     zone: loc.zone || null,
     place: loc.areaDescription || null,
+    // THE OBSERVATION BLOCK WAS BEING THROWN AWAY, and it is the only barometer this app can
+    // get on an inland lake. MapClick returns the nearest ASOS reading on the same request we
+    // already make for every water: pressure, wind, gust, dewpoint and visibility, all free.
+    // CO-OPS answers this on the 16 coastal zones; there are 348 lakes.
+    //
+    // "NA" IS A STRING SENTINEL. `Gust` and `WindChill` come back as the literal characters N and
+    // A, and every number arrives as a string. Feeding "NA" to Number() gives NaN, which is
+    // survivable, but feeding it to a template gives "NA mph" on the screen, which is not.
+    //
+    // THE STATION CAN BE A LONG WAY OFF. The point requested above was 34.41,-80.86 and the
+    // observation came back from KCUB at 33.97,-80.99 — about 50 km. The payload carries the
+    // station's own coordinates, so the distance is measured and reported rather than assumed
+    // to be small. A wind reading from 50 km away is a different claim from one at the ramp.
     observation: co.Temp ? {
       station: co.id || null, name: co.name || null,
-      temp_f: co.Temp, weather: co.Weather || null,
+      temp_f: obsNum(co.Temp), weather: co.Weather || null,
+      dewpoint_f: obsNum(co.Dewp),
+      humidity_pct: obsNum(co.Relh),
+      wind_mph: obsNum(co.Winds),
+      wind_dir_deg: obsNum(co.Windd),
+      gust_mph: obsNum(co.Gust),
+      visibility_mi: obsNum(co.Visibility),
+      // Altimeter is millibars and SLP is inches of mercury on this feed. Both are carried
+      // under names that say which, because 1016 and 30.01 are the same pressure.
+      pressure_mb: obsNum(co.Altimeter),
+      sea_level_pressure_inhg: obsNum(co.SLP),
+      wind_chill_f: obsNum(co.WindChill),
+      km_from_point: (Number.isFinite(Number(co.latitude)) && Number.isFinite(Number(co.longitude)))
+        ? round1(kmBetween(lat, lon, Number(co.latitude), Number(co.longitude))) : null,
       observed_at: co.Date || null,          // the OBSERVATION time, not the fetch time
     } : null,
     hazards: (d.hazard || []).length ? d.hazard : [],

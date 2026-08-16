@@ -575,3 +575,70 @@ test('a stale barometer is withheld from the number and reported as stale', () =
   assert.equal(c.pressureStale, true);
   assert.ok(!/baro/.test(conditionsStrip(c).text));
 });
+
+// ── the nearest weather observation, which was being parsed and thrown away ──────────────────
+const OBS = {
+  station: 'KCUB', name: 'Columbia - Jim Hamilton L.B. Owens Airport',
+  temp_f: 81, dewpoint_f: 75, humidity_pct: 82,
+  wind_mph: 14, wind_dir_deg: 225, gust_mph: 22,
+  visibility_mi: 10, pressure_mb: 1016, sea_level_pressure_inhg: 30.01,
+  wind_chill_f: null, km_from_point: 50.2, observed_at: '16 Aug 17:53 pm EDT',
+};
+
+test('an inland lake gets its barometer from the nearest NWS station', () => {
+  // CO-OPS covers the 16 coastal zones. There are 348 lakes, and this is the only barometer
+  // any of them can have.
+  const c = readConditions({ slug: 'wateree_lake', water: { display_name: 'Wateree Lake',
+    feature_type: 'lake', chart_datum: { below_full_pool_ft: 2 } },
+    forecast: { observation: OBS } });
+  assert.equal(c.pressureMb, 1016);
+  assert.equal(c.pressureFrom, 'nws_station');
+  assert.equal(c.pressure3h, null, 'one observation is not a trend');
+  assert.equal(c.obsKmAway, 50.2);
+});
+
+test('a coastal tide station outranks the inland ASOS for pressure', () => {
+  // The tide station is ON the water; the ASOS can be 50 km inland.
+  const c = readConditions({ slug: 'x', water: { display_name: 'Charleston Harbor',
+    feature_type: 'coastal', chart_datum: { pending: 'not a lake' } },
+    forecast: { observation: OBS },
+    tide: { station: { id: '1' }, highs_lows: [],
+            pressure: { mb: 1012.4, change_3h: -2.1, stale: false } } });
+  assert.equal(c.pressureMb, 1012.4);
+  assert.equal(c.pressureFrom, 'tide_station');
+  assert.equal(c.pressure3h, -2.1);
+});
+
+test('wind reaches the strip once it is blowing, with a compass point', () => {
+  const c = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 1 } }, forecast: { observation: OBS } });
+  assert.equal(c.windMph, 14);
+  assert.equal(c.gustMph, 22);
+  assert.match(conditionsStrip(c).text, /SW 14g22 mph/);
+});
+
+test('a calm day does not spend a line on the wind', () => {
+  const c = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 1 } },
+    forecast: { observation: { ...OBS, wind_mph: 3, gust_mph: null } } });
+  assert.equal(c.windMph, 3);
+  assert.ok(!/mph/.test(conditionsStrip(c).text));
+});
+
+test('a missing gust does not become a gust of nothing', () => {
+  // MapClick sends the literal string "NA"; the Worker turns that into null before it gets here.
+  const c = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 1 } },
+    forecast: { observation: { ...OBS, gust_mph: null } } });
+  assert.equal(c.gustMph, null);
+  assert.match(conditionsStrip(c).text, /SW 14 mph/);
+  assert.ok(!/g0|gNaN|gnull/.test(conditionsStrip(c).text));
+});
+
+test('no observation at all leaves every field null rather than zero', () => {
+  const c = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 1 } }, forecast: { observation: null } });
+  assert.equal(c.windMph, null);
+  assert.equal(c.pressureMb, null);
+  assert.equal(c.obsStation, null);
+});
