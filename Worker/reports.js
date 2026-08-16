@@ -94,13 +94,19 @@ const FLOWING_RE = /\b(river|creek|canal|branch|run|fork|swamp|slough|tailwater|
 
 const rx = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+// Agencies abbreviate and the registry does not. TWRA publishes "Ft. Loudoun Reservoir" and
+// "Ft Patrick Henry Reservoir"; the registry says "Fort Loudoun Lake". Two waters, one of them
+// shipped, both lost to three characters. In a water name these two are never anything else.
+const ABBREV = { ft: 'fort', mt: 'mount' };
+
 export function reportTokens(s) {
   return new Set(String(s || '')
     .replace(/\([^)]*\)/g, ' ')            // drop the county parenthetical
     .replace(/,\s*[A-Z]{2}(\/[A-Z]{2})?\b/g, ' ')
     .toLowerCase()
     .split(/[^a-z0-9]+/)
-    .filter((t) => t && !STOP.has(t)));
+    .filter((t) => t && !STOP.has(t))
+    .map((t) => ABBREV[t] || t));
 }
 
 /**

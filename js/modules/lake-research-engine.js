@@ -28,6 +28,7 @@ import { isCoastalKey, COASTAL_ZONES } from '../data/coastal-zones.js';
 import { workerHeaders } from '../utils/worker-auth.js';
 
 import { boundsOf } from '../utils/geojson-coords.js';
+import { lakeRecordFor } from '../data/lake-registry.js';
 
 // Setup global caches and references
 window.TROLLMAP_RESEARCHED_CACHE = window.TROLLMAP_RESEARCHED_CACHE || {};
@@ -1484,8 +1485,17 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     log(`  [${agentKey}] Discovering sources...`);
     let discoverRes;
     const coastalKeyForAgent = getCoastalR2Key(lakeName);
+    // The registry's alias set travels with the request. The Worker has no registry, and the
+    // agency-index resolver needs every name a state might have used: SCDNR says "Lake
+    // Thurmond" where the registry says "J. Strom Thurmond Reservoir", TWRA says "Ft. Loudoun
+    // Reservoir" where it says "Fort Loudoun Lake".
+    const recForNames = lakeRecordFor(lakeName);
     const discoverPayload = {
       lakeName, state: stateName, agent: agentKey,
+      names: recForNames
+        ? [recForNames.name, recForNames.displayName, ...(recForNames.legacyDisplayNames || [])]
+            .filter(Boolean).filter((v, i, a) => a.indexOf(v) === i)
+        : [lakeName],
       reservoirOwner: previousResults.reservoirOwner || null,
       predatorSpecies: previousResults.predatorSpecies || [],
       ...(coastalKeyForAgent ? { zoneKey: coastalKeyForAgent, lakeKey: coastalKeyForAgent } : {}),

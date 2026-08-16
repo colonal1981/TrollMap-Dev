@@ -3,6 +3,7 @@ import { JSON_HEADERS } from '../worker-core.js';
 import { STATE_REGULATIONS_CONFIG, tinyfishFetch, tinyfishSearch } from './clients.js';
 import { KNOWN_BAD_NEPIS_IDS, buildNepisSearchUrl } from './dataset.js';
 import { parseLakeBaseName } from './keys.js';
+import { resolveAgencyPage } from './agency-pages.js';
 
 // Which organisation stands behind a URL. Two callers below -- Grok citations and Wikipedia
 // citations -- carried byte-identical copies of this ladder, so a domain added to one was
@@ -57,6 +58,12 @@ async function handleResearchDiscover(request, env) {
   // live-source discovery depend on a growing per-lake alias table.
   const baseName = parseLakeBaseName(lakeName);
   const baseLower = baseName.toLowerCase();
+  // The registry's full alias set, sent by the client because the Worker has no registry --
+  // the same reason handleConditions asks for lat/lon. "Ft. Loudoun Reservoir" only reaches
+  // "Fort Loudoun Lake" because this list is wide.
+  const waterNames = (Array.isArray(body.names) ? body.names : [])
+    .map((x) => String(x || '').trim()).filter(Boolean);
+  const agencyNames = waterNames.length ? waterNames : [lakeName, baseName].filter(Boolean);
   const queryLake = lakeName.replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i, '').trim();
 
   const offLakePattern = (title, url) => {
@@ -559,6 +566,36 @@ const AGENT_TO_TAGS = {
 
   if (state === 'GA' && GADNR_LAKE_PAGES[baseLower] && (!agentForSeeds || ['identity','biology','fisheries','regulations'].includes(agentForSeeds))) {
     addSeed({ title: `${baseName} GADNR Fishing Forecast`, type: 'HTML', authority: 'GADNR', url: GADNR_LAKE_PAGES[baseLower], priority: 1, agentTags: ['identity','biology','fisheries','regulations'] });
+  }
+
+  // ── The agency's own index, for the lakes the two tables above do not name ────────────────
+  //
+  // Those tables are R2 snapshots with the lake list in the code. Measured 2026-08-16: they
+  // cover 8 of the 10 TN lakes this app ships -- Calderwood and Davy Crockett have no seed,
+  // and Davy Crockett is in region 1, which was never pulled -- and 0 of the 128 SC rows,
+  // though SCDNR publishes 31 lake descriptions and SC is the home state.
+  //
+  // This resolves through the agency's OWN index instead, so a lake the state adds tomorrow
+  // arrives without a commit. It runs only when the static table missed, so nothing that works
+  // today changes, and a failure returns null rather than throwing -- discovery must not die
+  // because a state website is down.
+  const agencyWanted = !agentForSeeds || ['identity','biology','fisheries','regulations','habitat'].includes(agentForSeeds);
+  const staticHit = (state === 'TN' && TWRA_LAKE_PAGES[baseLower]) || (state === 'GA' && GADNR_LAKE_PAGES[baseLower]);
+  if (agencyWanted && !staticHit) {
+    try {
+      const agency = await resolveAgencyPage(state, agencyNames);
+      if (agency) {
+        addSeed({
+          title: agency.title, type: 'HTML', authority: agency.authority, url: agency.url,
+          priority: 1, source: 'agency_index_seed',
+          agentTags: ['identity', 'biology', 'fisheries', 'habitat', 'regulations'],
+        });
+        queryLog.push(`agency index: ${state} "${agency.agencyName}" matched "${agency.matched}" -> ${agency.url}`);
+      }
+    } catch (e) {
+      // Said out loud. A silent miss here looks exactly like "the state publishes nothing".
+      queryLog.push(`agency index: ${state} lookup failed (${e && e.message})`);
+    }
   }
 
   // NEPIS EPA survey search — limnology only
