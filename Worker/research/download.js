@@ -3,6 +3,20 @@ import { JSON_HEADERS } from '../worker-core.js';
 import { checkFirecrawlBudget, recordFirecrawlUsage, scrapeDoFetch, tinyfishFetch } from './clients.js';
 import { KNOWN_BAD_NEPIS_IDS, toNepisRawTextUrl } from './dataset.js';
 
+/**
+ * Is this proxy target a PDF? Pure, and exported so the rule can be tested.
+ *
+ * THE URL WINS OVER THE `type` PARAM. `type=HTML` used to win unconditionally, so a caller
+ * passing it on a .pdf link forced the whole HTML scraping chain onto a binary document.
+ */
+export function isPdfTarget(target, sourceType = '') {
+  const t = String(target || '');
+  if (/\.pdf(\?|#|$)/i.test(t)) return true;
+  const st = String(sourceType || '').toUpperCase();
+  if (st === 'HTML') return false;
+  return t.toLowerCase().includes('.pdf') || st.includes('PDF');
+}
+
 async function handleResearchProxyDownload(request, env) {
   const url = new URL(request.url);
   const target = url.searchParams.get("url");
@@ -42,7 +56,22 @@ async function handleResearchProxyDownload(request, env) {
   // - PDFs → basic fetch → browser PDF.js (unchanged)
   const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
   const jinaKey = env.JINA_API_KEY || null;
-  const isHtml = sourceType.toUpperCase() === 'HTML' || (!target.toLowerCase().includes('.pdf') && !sourceType.toUpperCase().includes('PDF'));
+  // THE URL WINS OVER THE type PARAM WHEN THE URL IS A PDF.
+  //
+  // `sourceType === 'HTML'` used to win unconditionally, so a caller passing type=HTML on a
+  // .pdf link forced the entire HTML scraping chain onto a binary document. From wrangler
+  // tail, 2026-08-16, on the 2022 USACE Master Plan:
+  //
+  //     GET /research/proxy-download?url=...J_Strom_Thurmond_Project_2022_Master_Plan.pdf
+  //         ...&type=HTML - Exceeded CPU Limit
+  //     (warn) TinyFish fetch error ...: selector_unsupported
+  //     (log) [scrape.do] cost=1 remaining=477
+  //
+  // TinyFish cannot select against a PDF, then scrape.do fetched the whole thing and
+  // `.text()` decoded megabytes of binary as UTF-8 -- which is where the 10 ms went. It could
+  // never have produced HTML, it cost a scrape.do credit each time, and it SKIPPED THE USACE
+  // PDF BRANCH further down this same function that exists for exactly this document.
+  const isHtml = !isPdfTarget(target, sourceType);
   // EPA NSCEP / NEPIS ZyNET:
   //  - Search results page (ZyActionS) — harvest document links
   //  - Document landing (ZyActionD) — extract raw-text / PDF format links
