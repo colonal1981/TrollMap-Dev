@@ -176,7 +176,14 @@ check('flood thresholds kept, -9999 flow not leaked',
   r.water?.pool?.flood_thresholds);
 check('datum NAVD88 -1.31', r.water?.pool?.datum?.value === -1.31, r.water?.pool?.datum);
 check('reach comid from gauge call', r.water?.pool?.reach_comid === '9752696', r.water?.pool?.reach_comid);
-check('tailwater flow 1.9 kept', r.water?.tailwater?.flow === 1.9, r.water?.tailwater?.flow);
+// 1.9 KCFS IS 1,900 CFS. This fixture has carried `secondaryUnit: 'kcfs'` since it was written
+// and this assertion checked the raw 1.9, so the unit was recorded and never read — which is
+// exactly how the Congaree card printed "Flow 4 ft3/s" on a river running four thousand.
+// NWPS publishes discharge in kcfs; USGS publishes 00060 in ft3/s; both arrived in `flow`.
+check('tailwater flow 1.9 kcfs becomes 1900 cfs',
+      r.water?.tailwater?.flow === 1900, r.water?.tailwater?.flow);
+check('and the unit it arrived in is still reported',
+      r.water?.tailwater?.flow_reported_units === 'kcfs', r.water?.tailwater?.flow_reported_units);
 check('tailwater forecast kept', r.water?.tailwater?.forecast?.stage === 4.1, r.water?.tailwater?.forecast);
 check('tidal false', r.water?.tidal === false, r.water?.tidal);
 check('tide null', r.tide === null, r.tide);

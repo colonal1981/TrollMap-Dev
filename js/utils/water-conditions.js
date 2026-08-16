@@ -99,6 +99,8 @@ export function readConditions(j) {
     flowCfs: null,
     flowGauge: null,
     stageFt: null,
+    stageBasis: null,
+    stageGauge: null,
     clarity: null,
     turbidityFnu: null,
     turbidityGauge: null,
@@ -226,11 +228,28 @@ export function readConditions(j) {
   // FLOW AND STAGE, for a river. The pool gauge is the lake; on a river the nearest gauge is
   // the water you are on. Flow is the number that decides a river trip and it is separate from
   // level -- a river can be at a normal stage and pushing 8,000 cfs.
+  // ONE GAUGE FOR THE STAGE AND ITS THRESHOLD, ON ONE DATUM.
+  //
+  // This used to run ['gauge','tailwater','pool'] for the stage while the flood block below ran
+  // ['pool','tailwater','gauge'] for the action threshold — opposite orders, so the Congaree
+  // card printed "Stage 154.64 ft, 9.82 ft below action stage of 14 ft" where 154.64 was an
+  // ELEVATION ABOVE DATUM from one gauge and the −9.82 was a GAGE HEIGHT against another's
+  // threshold. `stage_basis` exists on that response for exactly this reason and was unread.
+  //
+  // A reservoir elevation above NAVD88 and a stage above a local gage datum are both feet and
+  // mean different things; subtracting one from the other produces a number that looks like
+  // feet and is not.
+  let stageGauge = null;
   for (const role of ['gauge', 'tailwater', 'pool']) {
     const g = w[role];
     if (!g) continue;
     if (out.flowCfs == null && Number.isFinite(g.flow)) { out.flowCfs = g.flow; out.flowGauge = g.name || null; }
-    if (out.stageFt == null && Number.isFinite(g.stage)) out.stageFt = g.stage;
+    if (out.stageFt == null && Number.isFinite(g.stage)) {
+      out.stageFt = g.stage;
+      out.stageBasis = g.stage_basis || null;
+      out.stageGauge = g.name || null;
+      stageGauge = g;
+    }
   }
 
   // A MEASURED turbidity beats a modelled clarity and is labelled differently everywhere it
@@ -256,8 +275,10 @@ export function readConditions(j) {
     // NWPS says "no_flooding" when it is fine. That is an answer, not an absence, so it is kept
     // and the consumer decides whether it is worth printing.
     if (out.floodCategory == null && g.flood_category) out.floodCategory = g.flood_category;
+    // The threshold is only comparable to the stage we are SHOWING, from the same gauge. A
+    // threshold on a different gauge is a fact about a different place.
     const act = g.flood_thresholds && g.flood_thresholds.action;
-    if (out.floodActionFt == null && Number.isFinite(act)) {
+    if (out.floodActionFt == null && Number.isFinite(act) && g === stageGauge) {
       out.floodActionFt = act;
       if (Number.isFinite(g.stage)) out.stageVsActionFt = Math.round((g.stage - act) * 100) / 100;
     }
@@ -284,11 +305,19 @@ export function readConditions(j) {
 
   const riv = j.rivers || null;
   if (riv) {
-    const best = (riv.named || []).concat(riv.unnamed || [])
-      .find((r) => Number.isFinite(r.anomaly));
-    if (best) {
-      out.flowAnomaly = best.anomaly;
-      out.flowAnomalyOf = best.name || null;
+    // THE ANOMALY HAS TO BE ABOUT THIS WATER. The NWM block returns every reach in the box, so
+    // taking the first one with a number put the BROAD RIVER's anomaly on the Congaree's card —
+    // a different river, two miles upstream of the confluence, reported as though it were this
+    // one. Match on a distinctive token of the water's own name, and say nothing otherwise.
+    const wantTok = new Set(String(w.display_name || '')
+      .replace(/\([^)]*\)/g, ' ').toLowerCase().split(/[^a-z]+/)
+      .filter((t) => t.length > 3 && !['lake', 'river', 'creek', 'reservoir', 'north', 'south'].includes(t)));
+    const named = (riv.named || []).filter((r) => Number.isFinite(r.anomaly));
+    const mine = named.find((r) => String(r.name || '').toLowerCase().split(/[^a-z]+/)
+      .some((t) => wantTok.has(t)));
+    if (mine) {
+      out.flowAnomaly = mine.anomaly;
+      out.flowAnomalyOf = mine.name || null;
     }
   }
 

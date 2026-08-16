@@ -417,11 +417,61 @@ test('the flow anomaly is passed through with its sign and never translated', ()
   // NOAA's anomaly_category is a code into a legend nobody here has read. The Worker refuses to
   // guess its direction; so does the client.
   const c = readConditions({ slug: 'x', water: {
-    display_name: 'R', feature_type: 'river', chart_datum: { pending: 'not a lake' },
-    gauge: { flow: 1240, name: 'g' } },
+    display_name: 'Broad River (Newberry Co, SC)', feature_type: 'river',
+    chart_datum: { pending: 'not a lake' }, gauge: { flow: 1240, name: 'g' } },
     rivers: { named: [{ name: 'Broad River', flow: 1240, anomaly: -0.38, anomaly_category: 3 }], unnamed: [] } });
   assert.equal(c.flowAnomaly, -0.38);
   assert.equal(c.flowAnomalyOf, 'Broad River');
+});
+
+test('ANOTHER river\'s anomaly does not appear on this water', () => {
+  // Seen live on the Congaree card 2026-08-16: "Flow vs normal +1.5 — NOAA National Water Model
+  // anomaly on Broad River". The NWM block returns every reach in the box, and taking the first
+  // one with a number reported a different river two miles above the confluence as though it
+  // were this one.
+  const c = readConditions({ slug: 'congaree_river', water: {
+    display_name: 'Congaree River (Richland Co, SC)', feature_type: 'river',
+    chart_datum: { pending: 'not a lake' }, gauge: { flow: 4000, name: 'g' } },
+    rivers: { named: [{ name: 'Broad River', anomaly: 1.5 },
+                      { name: 'Saluda River', anomaly: -0.2 }], unnamed: [] } });
+  assert.equal(c.flowAnomaly, null);
+  assert.equal(c.flowAnomalyOf, null);
+});
+
+test('the water\'s own reach is found even when it is not first in the list', () => {
+  const c = readConditions({ slug: 'congaree_river', water: {
+    display_name: 'Congaree River (Richland Co, SC)', feature_type: 'river',
+    chart_datum: { pending: 'not a lake' }, gauge: { flow: 4000, name: 'g' } },
+    rivers: { named: [{ name: 'Broad River', anomaly: 1.5 },
+                      { name: 'Congaree River', anomaly: -0.4 }], unnamed: [] } });
+  assert.equal(c.flowAnomaly, -0.4);
+  assert.equal(c.flowAnomalyOf, 'Congaree River');
+});
+
+test('a stage and its action threshold must come from the SAME gauge', () => {
+  // Seen live on the Congaree card 2026-08-16: "Stage 154.64 ft — 9.82 ft below action stage of
+  // 14 ft". 154.64 is an ELEVATION ABOVE DATUM from one gauge; the −9.82 is a GAGE HEIGHT
+  // against another gauge's threshold. Two datums, one subtraction, a number that looks like
+  // feet and is not.
+  const c = readConditions({ slug: 'x', water: {
+    display_name: 'Congaree River', feature_type: 'river', chart_datum: { pending: 'not a lake' },
+    gauge: { name: 'At the park', stage: 154.64, stage_basis: 'elevation_above_datum', flow: 4000 },
+    pool: { name: 'Elsewhere', stage: 4.18, stage_basis: 'gage_height',
+            flood_thresholds: { action: 14 } } } });
+  assert.equal(c.stageFt, 154.64);
+  assert.equal(c.stageBasis, 'elevation_above_datum');
+  assert.equal(c.stageVsActionFt, null, 'a threshold on another gauge is another place');
+  assert.equal(c.floodActionFt, null);
+});
+
+test('when the stage and the threshold ARE the same gauge, the comparison stands', () => {
+  const c = readConditions({ slug: 'x', water: {
+    display_name: 'R', feature_type: 'river', chart_datum: { pending: 'not a lake' },
+    gauge: { name: 'Alston', stage: 4.18, stage_basis: 'gage_height', flow: 1240,
+             flood_thresholds: { action: 14 } } } });
+  assert.equal(c.stageVsActionFt, -9.82);
+  assert.equal(c.floodActionFt, 14);
+  assert.equal(c.stageGauge, 'Alston');
 });
 
 // ── TVA generation and the Corps' drought state ─────────────────────────────────────────────
@@ -753,4 +803,16 @@ test('no catalogue read means no claim about what is unpublished', () => {
   const c = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'lake',
     chart_datum: { below_full_pool_ft: 1 }, sites_catalogued: 0, unpublished_parameters: null } });
   assert.equal(c.unpublished, null);
+});
+
+test('NWPS reports flow in kcfs and it must not print as ft3/s', () => {
+  // Seen live on the Congaree card 2026-08-16: "Flow 4 ft³/s" on a river running about four
+  // thousand. NWPS publishes discharge in kcfs, USGS publishes 00060 in ft3/s, and both arrived
+  // in a field called `flow`. The Worker normalises at the point the unit is known; this asserts
+  // the client is handed cfs and prints cfs.
+  const c = readConditions({ slug: 'congaree_river', water: {
+    display_name: 'Congaree River', feature_type: 'river', chart_datum: { pending: 'not a lake' },
+    gauge: { name: 'At the park', flow: 4000, flow_units: 'ft3/s', flow_reported_units: 'kcfs' } } });
+  assert.equal(c.flowCfs, 4000);
+  assert.match(conditionsStrip(c).text, /4,000 ft³\/s/);
 });

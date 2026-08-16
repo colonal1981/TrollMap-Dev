@@ -438,13 +438,6 @@ def build_weak_tokens(index, threshold=6):
     return {t for t, c in df.items() if c >= threshold}
 
 
-# A name carrying one of these describes MOVING water. Verbatim from Worker/reports.js, which
-# learned it on "Norris Tailwater" -- TWRA publishes it and Norris Lake is not it -- and from
-# scripts/bind_operator_lakes.py, which uses the same list for the same reason.
-FLOWING_RE = re.compile(r'\b(river|creek|ck|canal|branch|run|fork|swamp|slough|tailwater|tailrace)\b',
-                        re.I)
-
-
 def name_relation(water_names, gauge_name, weak):
     """The token that relates a gauge name to a water name, or None.
 
@@ -466,27 +459,7 @@ def name_relation(water_names, gauge_name, weak):
     if not shared:
         return None
     strong = sorted(shared - weak)
-    if not strong:
-        return None
-
-    # A CREEK IS NOT THE LAKE NAMED AFTER IT, and this matcher had no way to tell.
-    #
-    # Measured 2026-08-16: "Mayo Ck nr Bethel Hill, NC" bound Mayo Reservoir on the shared token
-    # `mayo`. The token is real and the waters are different -- one is the impoundment and the
-    # other is the stream feeding it, and their elevations have nothing to do with each other.
-    #
-    # This is the third file to need this guard. Worker/reports.js learned it on TWRA's "Norris
-    # Tailwater", which is not Norris Lake; scripts/bind_operator_lakes.py carries the same list
-    # for operator feeds. The rule in all three: when the SOURCE name carries a flowing-water
-    # word that the WATER's own name does not, the shared token is a place, not an identity.
-    #
-    # Deliberately one-directional. A lake legitimately called "... Creek Reservoir" or
-    # "... River Lake" keeps its match, because the flowing word is on BOTH sides and is
-    # therefore part of what the water is called rather than a claim about what it is.
-    if FLOWING_RE.search(gauge_name or ''):
-        if not any(FLOWING_RE.search(n or '') for n in water_names):
-            return None
-    return strong[0]
+    return strong[0] if strong else None
 
 
 # ── geometry ────────────────────────────────────────────────────────────────────────────────

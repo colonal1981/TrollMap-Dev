@@ -110,7 +110,11 @@ function cardHtml(rec, c) {
       ? `<span class="cond-sub"> — ${Math.abs(c.stageVsActionFt).toFixed(2)} ft `
         + `${c.stageVsActionFt >= 0 ? 'ABOVE' : 'below'} action stage of ${c.floodActionFt} ft</span>`
       : '';
-    out.push(row('Stage', `${c.stageFt.toFixed(2)} ft${vs}`));
+    const basis = c.stageBasis === 'elevation_above_datum'
+      ? '<span class="cond-sub"> — elevation above datum, not gage height</span>'
+      : c.stageBasis === 'gage_height' ? '<span class="cond-sub"> — gage height</span>' : '';
+    out.push(row('Stage', `${c.stageFt.toFixed(2)} ft${vs}${basis}`
+      + `${c.stageGauge ? `<span class="cond-sub"> (${esc(c.stageGauge)})</span>` : ''}`));
   }
   if (c.floodCategory) {
     out.push(row('Flood status', `${esc(String(c.floodCategory).replace(/_/g, ' '))}`
@@ -233,7 +237,10 @@ function cardHtml(rec, c) {
       + `Below about 4 mg/L is not holding fish.</span>`));
   }
 
-  if (c.clarity) {
+  // A MEASURED TURBIDITY AND A MODELLED CLARITY MUST NOT SIT SIDE BY SIDE DISAGREEING. The
+  // Congaree card showed "14.4 FNU — MEASURED" directly above "Clarity Clear — MODELLED", and
+  // 14.4 FNU is not clear. The strip already suppressed the model; the card did not.
+  if (c.clarity && c.turbidityFnu == null) {
     out.push(row('Clarity', `${esc(c.clarity)}`
       + (c.clarityIsMeasured
         ? '<span class="cond-sub"> — measured Secchi baseline, adjusted for recent rain</span>'

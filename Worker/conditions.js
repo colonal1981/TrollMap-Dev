@@ -494,6 +494,26 @@ function nearest(list, lat, lon) {
  * id in one object. The reach id matters — the gauge plan recorded that a COMID could only be
  * reached via a gauge lookup, and this IS that lookup, so the NWM binding comes back free.
  */
+/**
+ * An NWPS secondary value as cubic feet per second.
+ *
+ * NWPS publishes discharge in KCFS on the gauges this app binds — the stageflow envelope names
+ * it outright, `"secondaryUnits": "kcfs"`. USGS publishes 00060 in ft3/s. A consumer handed both
+ * under one field name has no way to know which it got, and the one that guessed printed the
+ * Congaree at 4 ft3/s while it was running four thousand.
+ *
+ * An unrecognised unit returns null rather than the raw number. A discharge in unknown units is
+ * not a discharge.
+ */
+function nwpsFlowCfs(v, units) {
+  if (!Number.isFinite(v)) return null;
+  const u = String(units || '').trim().toLowerCase();
+  if (u === 'kcfs') return Math.round(v * 1000);
+  if (u === 'cfs' || u === 'ft3/s' || u === 'cms' && false) return v;
+  if (!u) return v;                      // NWPS omits the unit on some gauges; it is cfs there.
+  return null;
+}
+
 async function nwpsGauge(lid, role, bound, lat, lon) {
   const j = await cached(`nwps:${lid}`, TTL.gauge,
     () => getJson(`https://api.water.noaa.gov/nwps/v1/gauges/${encodeURIComponent(lid)}`));
@@ -515,8 +535,17 @@ async function nwpsGauge(lid, role, bound, lat, lon) {
     name: j.name || (bound && bound.name) || null,
     stage: num(st.primary),
     stage_units: st.primaryUnit || (j.flood && j.flood.stageUnits) || null,
-    flow: num(st.secondary),
-    flow_units: st.secondaryUnit || (j.flood && j.flood.flowUnits) || null,
+    // NWPS REPORTS FLOW IN KCFS AND USGS REPORTS IT IN FT3/S, and both used to arrive in a
+    // field called `flow` with nothing but a units string to tell them apart. The client printed
+    // "ft³/s" on both, so the Congaree at roughly 4,000 cfs rendered as "4 ft³/s" — and that
+    // number was then compared against USGS daily percentiles in real cfs, which turned a
+    // thousandfold error into a confident sentence about the river's history.
+    //
+    // Normalised HERE, at the point the unit is known, rather than left for every consumer to
+    // remember. `flow_units` still travels so nothing has to trust this comment.
+    flow: nwpsFlowCfs(num(st.secondary), st.secondaryUnit || (j.flood && j.flood.flowUnits)),
+    flow_units: 'ft3/s',
+    flow_reported_units: st.secondaryUnit || (j.flood && j.flood.flowUnits) || null,
     // The OBSERVATION time, not the fetch time. NWPS writes year 0001 for "never".
     observed_at: st.validTime && !String(st.validTime).startsWith('0001') ? st.validTime : null,
     flood_category: st.floodCategory || null,
