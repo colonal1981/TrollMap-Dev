@@ -22,6 +22,7 @@
 import { CF_WORKER_URL } from '../core/state.js';
 import { lakeRecordFor } from '../data/lake-registry.js';
 import { fetchWaterConditions, conditionsStrip, levelSentence } from '../utils/water-conditions.js';
+import { camerasForWater, cameraFrame, ageLabel } from '../utils/cameras.js';
 
 const CACHE_MS = 5 * 60 * 1000;
 const cache = new Map();          // slug -> { at, c }
@@ -48,14 +49,102 @@ function row(label, value) {
                + `<span class="cond-v">${value}</span></div>` : '';
 }
 
+/**
+ * The cameras bound to this water, as a placeholder the card can paint synchronously.
+ *
+ * Ryan, 2026-08-16: *"for the cameras we have USGS would it be possible for those to be
+ * displayed in the top bar now with all of the other information"*. They are FIRST in the card
+ * on purpose — every other row is a number that describes the water and this is the water.
+ *
+ * A LAKE IS NOT A POINT, so this is every camera bound to the slug rather than the nearest one.
+ * The ramp popup asks a different question and gets `nearestSite` instead. On the Congaree that
+ * is four cameras from Columbia down to Fort Motte, which are four answers and not three worse
+ * copies of one.
+ *
+ * The frames are NOT fetched here. This function is called on every strip toggle and a fetch
+ * per toggle would be a request storm against a picture that changes every 15 minutes; the ids
+ * ride in a data attribute and `fillCameras` reads them once the markup is in the document.
+ */
+function cameraRow(rec) {
+  const cams = camerasForWater(rec && rec.slug, rec && (rec.displayName || rec.name));
+  if (!cams.length) return '';
+  const ids = cams.map((c) => c.camId).join(',');
+  return row('Cameras',
+    `<div class="cond-cams" data-cams="${esc(ids)}">`
+    + `<span class="cond-sub">reading ${cams.length} live view${cams.length === 1 ? '' : 's'}…</span>`
+    + `</div>`);
+}
+
+/**
+ * Replace each placeholder with the newest frame, or with why there isn't one.
+ *
+ * 22 of the 47 visible cameras in this footprint are DAYLIGHT ONLY. Open the app at 22:00 and
+ * the newest frame is from 20:15 — a real image, correctly served, and completely misleading
+ * with nothing next to it saying so. The age and the STALE flag are not decoration.
+ */
+async function fillCameras(card, token) {
+  const box = card && card.querySelector ? card.querySelector('.cond-cams') : null;
+  if (!box || box.dataset.camState) return;
+  box.dataset.camState = 'loading';
+  const ids = String(box.dataset.cams || '').split(',').filter(Boolean);
+  const worker = CF_WORKER_URL || window.CF_WORKER_URL;
+
+  const parts = [];
+  for (const camId of ids) {
+    let f = null;
+    try {
+      f = await cameraFrame(camId, { worker });
+    } catch (err) {
+      parts.push(`<div class="cond-sub" style="color:#e57373">\u{1F4F7} ${esc(camId)} — unreachable</div>`);
+      continue;
+    }
+    if (!f || !f.urls || !f.urls.small) {
+      parts.push(`<div class="cond-sub" style="color:#e57373">\u{1F4F7} ${esc(f && f.name || camId)}`
+        + ` — ${esc((f && f.error) || 'no frame')}</div>`);
+      continue;
+    }
+    parts.push(`
+      <div style="margin-top:6px">
+        <img class="cond-cam-img" src="${esc(f.urls.small)}" alt="${esc(f.name || camId)}" loading="lazy"
+             style="width:100%;max-width:340px;border-radius:4px;display:block${f.stale ? ';opacity:.6' : ''}">
+        <div class="cond-sub" style="color:${f.stale ? '#ffb74d' : '#aed581'}">\u{1F4F7} ${esc(f.name || camId)}`
+        + ` · ${esc(ageLabel(f.ageMinutes))}${f.stale ? ' · STALE' : ''}`
+        + `${f.period === 'daylight' ? ' · daylight only' : ''}</div>
+      </div>`);
+  }
+
+  // A CARD REPAINTED WHILE THESE WERE IN FLIGHT IS A DIFFERENT CARD. Writing into the old one
+  // would put the Congaree's camera under Lake Murray's numbers, which is the same class of bug
+  // the sequence guard on the conditions fetch already exists to stop.
+  if (token !== seq || !box.isConnected) return;
+  box.innerHTML = parts.join('');
+  box.dataset.camState = 'done';
+
+  // Attached rather than inlined as onerror: the handler needs the element it replaces, and an
+  // inline attribute is the first thing a content-security-policy would refuse.
+  for (const img of box.querySelectorAll('.cond-cam-img')) {
+    img.addEventListener('error', () => {
+      const d = document.createElement('div');
+      d.className = 'cond-sub';
+      d.style.color = '#e57373';
+      d.textContent = 'frame did not load';
+      img.replaceWith(d);
+    }, { once: true });
+  }
+}
+
 /** The expanded card. Every number says where it came from and when. */
 function cardHtml(rec, c) {
   if (!c || c.error) {
-    return `<div class="cond-row"><span class="cond-v">`
+    // THE CAMERA IS NOT DOWNSTREAM OF THE GAUGE. NIMS is a different agency on a different
+    // endpoint, and a water whose conditions could not be read is exactly when a picture of it
+    // is worth the most.
+    return cameraRow(rec)
+         + `<div class="cond-row"><span class="cond-v">`
          + `Live conditions could not be read${c && c.error ? `: ${esc(c.error)}` : ''}.`
          + `</span></div>`;
   }
-  const out = [];
+  const out = [cameraRow(rec)];
 
   if (c.belowFullPoolFt != null || c.levelFt != null) {
     const lines = [esc(levelSentence(c))];
@@ -294,7 +383,12 @@ function paint(rec, c) {
   setRoom(true);
   const s = conditionsStrip(c);
   const name = rec.displayName || rec.name || rec.slug;
-  if (e.line) e.line.innerHTML = `<b>${esc(name)}</b> · ${esc(s.text)}`;
+  // THE BADGE IS BUILT HERE, NOT IN conditionsStrip(). That function is pure and tested and
+  // knows nothing about cameras; teaching it would couple the sentence to the roster for one
+  // glyph. The line is the only place both facts are already in hand.
+  const nCam = camerasForWater(rec.slug, name).length;
+  const badge = nCam ? ` · \u{1F4F7}${nCam > 1 ? nCam : ''}` : '';
+  if (e.line) e.line.innerHTML = `<b>${esc(name)}</b> · ${esc(s.text)}${badge}`;
   e.bar.dataset.tone = s.tone;
   if (e.caret) e.caret.textContent = openState ? '▴' : '▾';
   // Leaflet sizes itself once and does not watch its container. Shrinking #main by 26px without
@@ -305,6 +399,7 @@ function paint(rec, c) {
     if (openState) {
       const notes = (s.footnotes || []).map((f) => `<div class="cond-note">${esc(f)}</div>`).join('');
       e.card.innerHTML = cardHtml(rec, c) + notes;
+      fillCameras(e.card, seq);
     }
   }
 }
