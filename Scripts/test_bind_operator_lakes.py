@@ -116,7 +116,10 @@ def main():
           'saving another facility page binds it -- no table to extend')
 
     # ── 4. the URL is read, never composed ───────────────────────────────────────────────
-    open(os.path.join(src, 'brookfield_calderwood.html'), 'w', encoding='utf-8').write(
+    # THE NAME THE BROWSER PROPOSES, which is what actually landed on the drive: Chrome saved
+    # these as `chilhowee_.html`, `calderwood_.html`, `cheoah_.html`. A glob of
+    # `*brookfield*.html` matched none of them and bound nothing while printing a normal run.
+    open(os.path.join(src, 'calderwood_.html'), 'w', encoding='utf-8').write(
         facility_page('Calderwood', 'calderwood-tapoco', host='safewaters.com'))
     out = run(reg, src, write=True)
     b = json.load(open(os.path.join(reg, 'water_bindings.json'), encoding='utf-8'))['bindings']
@@ -153,6 +156,15 @@ def main():
 
     # ── 8. an operator with no saved page says so and does not crash ─────────────────────
     check('cube' in out and 'SKIP' in out, 'a missing operator page is a SKIP line, not a stack trace')
+
+    # ── 9. brookfield reads every .html, so the other operators' pages must exclude themselves
+    # The brookfield glob is `*.html`, which means southernco.html is handed to the facility
+    # parser too. It has no rel=canonical under /facility/, so it returns nothing -- the page
+    # identifies itself out, and no filename convention has to hold for that to work.
+    check('brookfield  (3 rows read' in out,
+          'southernco.html in the same folder does not become a fourth facility')
+    check('-> lake_sinclair' not in out.split('brookfield')[-1],
+          'nothing from the southernco table leaks into the brookfield block')
 
     shutil.rmtree(tmp, ignore_errors=True)
     print('\n%s  %d failure(s)' % ('FAILED' if FAIL else 'ALL PASS', len(FAIL)))

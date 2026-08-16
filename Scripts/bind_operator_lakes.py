@@ -50,9 +50,10 @@ either. So the only honest source for a facility's URL is that facility's own pa
 script reads it from `rel=canonical` rather than composing one from the lake name.
 
 Santeetlah, Chilhowee, Calderwood and Cheoah are ALL FOUR in the index. Save any of their page
-sources into --pagesrc under a name containing "brookfield" and the next run binds it. There is
-no table here to extend and no slug spelled out anywhere, which is the point: a guessed URL
-would have looked exactly like a correct one until the Worker fetched it.
+sources into --pagesrc under ANY name -- the page is identified by its own rel=canonical, not by
+what the browser called the file -- and the next run binds it. There is no table here to extend
+and no slug spelled out anywhere, which is the point: a guessed URL would have looked exactly
+like a correct one until the Worker fetched it.
 
 Usage:
     py .\\scripts\\bind_operator_lakes.py --registry F:\\TrollMapPipeline\\registry \\
@@ -191,11 +192,16 @@ OPERATORS = {
              'url': 'https://ww4.cubecarolinas.com/lake/levels?orgID=3'},
     'southernco': {'files': 'southernco.html', 'parser': parse_southernco,
                    'url': 'https://lakes.southernco.com/default.aspx'},
-    # A GLOB, because Brookfield has no one page to parse -- save as many facility pages as
-    # you like under any name containing "brookfield". A view-source save and its unwrapped
-    # twin both match; the same canonical URL twice is one facility, not two.
-    'brookfield': {'files': '*brookfield*.html', 'parser': parse_brookfield_facility,
-                   'url': None},
+    # EVERY HTML FILE, because the page says what it is and a filename does not. This was
+    # '*brookfield*.html' for about an hour, and the first three pages Ryan saved came down as
+    # `chilhowee_.html`, `calderwood_.html` and `cheoah_.html` -- the names the browser
+    # proposed -- so the glob matched none of them and the run bound nothing while looking
+    # completely normal. A convention only the human has to remember is a convention that
+    # breaks. parse_brookfield_facility returns [] unless the page carries a rel=canonical
+    # containing /facility/, so cube.html and southernco.html sitting in the same folder
+    # identify themselves out of this operator at no cost. A view-source save and its
+    # unwrapped twin both match; the same canonical URL twice is one facility, not two.
+    'brookfield': {'files': '*.html', 'parser': parse_brookfield_facility, 'url': None},
 }
 
 
