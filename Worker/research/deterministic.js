@@ -112,6 +112,38 @@ async function handleResearchDeterministicFacts(request, env) {
 }
 
 async function handleResearchSaveNormalized(request, env) {
+  // ── THE FAST PATH: WRITE BYTES, DO NOT READ THEM ────────────────────────────────────────
+  //
+  // This Worker is on the Cloudflare FREE plan: 10 ms of CPU per request, and unlike the paid
+  // plan's 30 s that number cannot be raised. Parsing 1.8 MB of JSON, scanning every document
+  // and re-serialising the array does not fit in 10 ms and never did. From wrangler tail,
+  // 2026-08-16: "POST /research/save-normalized - Exceeded CPU Limit".
+  //
+  // The browser has the documents already, has no CPU ceiling, and is where they were fetched.
+  // What the Worker has that the browser does not is the R2 credential. So when the client
+  // says it has already run the gate -- ?lake=<name> -- the request body goes STRAIGHT into
+  // the bucket as a stream. No parse, no stringify, no scan. The gate itself now lives in
+  // js/utils/doc-relevance.js, where it is finally testable.
+  const _url = new URL(request.url);
+  const _preFiltered = _url.searchParams.get('lake');
+  if (_preFiltered) {
+    const safeKey = `lake_packages/${researchStorageId(_preFiltered)}/normalized_documents.json`;
+    await env.R2_TROLLMAP_CHARTPACKS.put(safeKey, request.body, {
+      httpMetadata: { contentType: 'application/json' },
+    });
+    // Counts come from the caller, because counting would mean reading the body.
+    const saved = Number(_url.searchParams.get('n'));
+    const rejected = Number(_url.searchParams.get('rejected'));
+    return new Response(JSON.stringify({
+      success: true, key: safeKey, streamed: true,
+      saved: Number.isFinite(saved) ? saved : null,
+      rejected: Number.isFinite(rejected) ? rejected : null,
+    }), { headers: JSON_HEADERS });
+  }
+
+  // ── The legacy path, for a client that has not been updated ──────────────────────────────
+  // Identical behaviour, and the reason it is kept is that the Worker deploys on push while a
+  // browser can still be running last week's bundle out of its service worker cache.
   let body;
   try { body = await request.json(); } catch { body = {}; }
   const lakeName = String(body.lakeName || "").trim();

@@ -29,6 +29,7 @@ import { workerHeaders } from '../utils/worker-auth.js';
 
 import { boundsOf } from '../utils/geojson-coords.js';
 import { lakeRecordFor } from '../data/lake-registry.js';
+import { prepareNormalizedDocuments } from '../utils/doc-relevance.js';
 
 // Setup global caches and references
 window.TROLLMAP_RESEARCHED_CACHE = window.TROLLMAP_RESEARCHED_CACHE || {};
@@ -1938,11 +1939,22 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
         const updatedUrls = new Set(normalizedDocuments.map(d => String(d.url || '').split('?')[0].toLowerCase()));
         const untouched = existingDocs.filter(d => !updatedUrls.has(String(d.url || '').split('?')[0].toLowerCase()));
         const merged = [...untouched, ...normalizedDocuments];
-        await fetch(`${CF_WORKER_URL}/research/save-normalized`, {
+        // THE GATE RUNS HERE NOW. The Worker is on the free plan -- 10 ms of CPU, not
+        // raisable -- and parsing this payload to filter it does not fit. The browser has the
+        // documents and no CPU ceiling; the Worker has the R2 credential and should only
+        // write bytes. It streams the body straight into the bucket without reading it.
+        const prepared = prepareNormalizedDocuments(merged, lakeName, []);
+        if (prepared.rejected) {
+          log(`  [${agentKey}] ${prepared.rejected} off-lake doc(s) of ${prepared.total} dropped before upload`);
+        }
+        const saveRes = await fetch(`${CF_WORKER_URL}/research/save-normalized`
+          + `?lake=${encodeURIComponent(lakeName)}`
+          + `&n=${prepared.documents.length}&rejected=${prepared.rejected}`, {
           method: 'POST',
           headers: workerHeaders(),
-          body: JSON.stringify({ lakeName, documents: merged })
+          body: JSON.stringify(prepared.documents)
         });
+        if (!saveRes.ok) log(`  ⚠️ [${agentKey}] save-normalized ${await workerFailureReason(saveRes)}`);
       }
     }
 
@@ -1973,7 +1985,9 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
         // NOTHING IS LOST BY SPLITTING IT. extract.js loops the documents and builds ONE LLM
         // prompt PER DOCUMENT -- the batch was never doing joint work, only arriving together.
         // The same text, the same prompts, ~150 KB of parsing per request instead of 1.8 MB.
-        const ANALYZE_BATCH = 2;
+        // One document per request: 10 ms of CPU does not stretch to parsing two 150,000
+        // character documents plus the JSON around them.
+        const ANALYZE_BATCH = 1;
         const analyzeDocs = normalizedDocuments.slice(0, 12).map(d => ({
           title: d.title, url: d.url || '',
           text: (d.fullText || '').slice(0, 150000)
