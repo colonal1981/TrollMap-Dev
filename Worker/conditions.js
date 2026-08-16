@@ -482,6 +482,11 @@ async function nwpsGauge(lid, role, bound, lat, lon) {
     datum: vert ? { abbrev: vert.abbrev || null, value: num(vert.value) } : null,
     in_service: (j.inService || {}).enabled !== false,
     out_of_service_message: ((j.inService || {}).message) || null,
+    // NWPS publishes none of the three. Present as null so a caller cannot tell an NWPS gauge
+    // from a USGS one by key presence — the same reason flood_category is null on usgsSite.
+    water_temp_c: null,
+    dissolved_oxygen_mg_l: null,
+    turbidity_fnu: null,
     usgs_site: j.usgsId || null,
     reach_comid: j.reachId || null,
     // Registry fields, passed through: TVA's own numbers for the dam this pool sits behind, and
@@ -518,7 +523,28 @@ async function nwpsGauge(lid, role, bound, lat, lon) {
  */
 // One parameter list, one cache key, so the temperature lookup below and the gauge read above
 // share a single request per site rather than issuing two that can disagree.
-const USGS_PARMS = '00062,62614,62615,00065,00060,00010';
+//
+// 63160 WAS ALREADY MAPPED AND NEVER REQUESTED. `fetchUsgs` has read
+// "Stream water level elevation above NAVD 1988" into `elevationNavd88` for as long as it has
+// existed, and `usgsSite` below already prefers it when 00062 is absent — but this string did
+// not ask for it. In South Carolina alone 202 sites publish it, against 244 for gage height,
+// and 02147801 — the Wateree tailrace this app reads for temperature — is one of them.
+// A capability that exists and is never reached is the same as no capability.
+//
+// 00300 and 63680 are new. Verified against this endpoint rather than from memory:
+//   00300  Dissolved oxygen, water, unfiltered, mg/L        39 SC sites
+//   63680  Turbidity, FNU (monochrome near-IR, 90 degrees)   8 SC sites
+// Both are fishing facts, not telemetry. The summer oxygen squeeze decides what depth holds
+// fish, and a measured turbidity is a real clarity number where the model otherwise runs on
+// rainfall.
+//
+// DELIBERATELY NOT REQUESTED, so the omission is a decision and not an oversight:
+//   00095 specific conductance, 00400 pH   no consumer in this app. Fetching a number nothing
+//                                          reads is how a response grows without getting better.
+//   00045 precipitation, 00025 barometric  NWS already answers both, per water, in `forecast`.
+//   00480 salinity, 72137 tidal discharge  genuinely wanted on the 16 coastal zones and not
+//                                          wired anywhere yet. Named here so it stays findable.
+const USGS_PARMS = '00062,62614,62615,63160,00065,00060,00010,00300,63680';
 
 async function usgsSite(site, role, bound, lat, lon) {
   const u = await cached(`usgs:${site}`, TTL.gauge, () => fetchUsgs(site, USGS_PARMS));
@@ -543,6 +569,9 @@ async function usgsSite(site, role, bound, lat, lon) {
     flow,
     flow_units: flow === null ? null : 'ft3/s',
     water_temp_c: Number.isFinite(u.tempC) ? u.tempC : null,
+    // Null means THIS SITE does not publish it, not that the water has none.
+    dissolved_oxygen_mg_l: Number.isFinite(u.doMgL) ? u.doMgL : null,
+    turbidity_fnu: Number.isFinite(u.turbidityFnu) ? u.turbidityFnu : null,
     observed_at: u.timestamp || null,
     // NWPS carries flood categories and a forecast; USGS publishes neither. Null here means
     // "this agency does not report it", not "no flooding" — the field exists so the shape
@@ -1149,25 +1178,38 @@ export function usgsSitesFor(b, lat, lon) {
   return out.sort((x, y) => (x.below_dam - y.below_dam) || (x.km - y.km));
 }
 
-async function waterTemp(b, lat, lon, already) {
-  if (already && Number.isFinite(already.c)) return already;
+/**
+ * One pass over the water's USGS sites, three readings out of it.
+ *
+ * Each reading records ITS OWN site, because they do not have to come from the same one: a lake
+ * can carry temperature from a mid-lake sonde and dissolved oxygen from the tailrace, and
+ * stamping both with one site would be inventing provenance.
+ */
+async function waterProbe(b, lat, lon, seededTemp) {
+  const out = { temp: seededTemp && Number.isFinite(seededTemp.c) ? seededTemp : null,
+                oxygen: null, turbidity: null };
   for (const s of usgsSitesFor(b, lat, lon).slice(0, 4)) {
+    if (out.temp && out.oxygen && out.turbidity) break;
     let u = null;
     try { u = await cached(`usgs:${s.site}`, TTL.gauge, () => fetchUsgs(s.site, USGS_PARMS)); }
     catch (_) { continue; }
-    if (!u || !Number.isFinite(u.tempC)) continue;
-    return {
-      c: round2(u.tempC),
-      f: round1(u.tempC * 9 / 5 + 32),
-      usgs_site: s.site,
-      name: s.name,
-      role: s.role,
-      below_dam: s.below_dam,
+    if (!u) continue;
+    const where = {
+      usgs_site: s.site, name: s.name, role: s.role, below_dam: s.below_dam,
       km_from_point: Number.isFinite(s.km) ? round1(s.km) : null,
-      source: 'USGS — parameter 00010',
     };
+    if (!out.temp && Number.isFinite(u.tempC)) {
+      out.temp = { ...where, c: round2(u.tempC), f: round1(u.tempC * 9 / 5 + 32),
+                   source: 'USGS — parameter 00010' };
+    }
+    if (!out.oxygen && Number.isFinite(u.doMgL)) {
+      out.oxygen = { ...where, mg_l: round2(u.doMgL), source: 'USGS — parameter 00300' };
+    }
+    if (!out.turbidity && Number.isFinite(u.turbidityFnu)) {
+      out.turbidity = { ...where, fnu: round2(u.turbidityFnu), source: 'USGS — parameter 63680' };
+    }
   }
-  return null;
+  return out;
 }
 
 async function waterBlock(b, lat, lon) {
@@ -1263,7 +1305,13 @@ async function waterBlock(b, lat, lon) {
           below_dam: role === 'tailwater', km_from_point: null, source: 'USGS — parameter 00010' }
       : null)
     .find(Boolean) || null;
-  out.water_temp = await waterTemp(b, lat, lon, seeded).catch(() => seeded);
+  const probe = await waterProbe(b, lat, lon, seeded).catch(() => ({ temp: seeded }));
+  out.water_temp = probe.temp || null;
+  // A MEASURED clarity number, where one exists. `clarity` on this response is a rainfall model
+  // over a historical Secchi baseline; this is an instrument reading from today, and the two
+  // must not be presented as the same kind of thing.
+  out.turbidity = probe.turbidity || null;
+  out.dissolved_oxygen = probe.oxygen || null;
   // Whether `tide: null` on this response is a FACT or a GAP. An inland lake has no tide and
   // that is the right answer; a coastal zone with no station bound is a hole in the registry.
   out.tidal = !!(b.tides || []).length;

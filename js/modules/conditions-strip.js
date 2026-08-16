@@ -85,6 +85,16 @@ function cardHtml(rec, c) {
         : c.waterTempGauge ? `<span class="cond-sub"> (${esc(c.waterTempGauge)})</span>` : '')));
   }
 
+  if (c.turbidityFnu != null) {
+    out.push(row('Turbidity', `${c.turbidityFnu} FNU`
+      + `<span class="cond-sub"> — MEASURED, USGS 63680${c.turbidityGauge ? ` (${esc(c.turbidityGauge)})` : ''}</span>`));
+  }
+  if (c.oxygenMgL != null) {
+    out.push(row('Dissolved O₂', `${c.oxygenMgL} mg/L`
+      + `<span class="cond-sub"> — USGS 00300${c.oxygenGauge ? ` (${esc(c.oxygenGauge)})` : ''}. `
+      + `Below about 4 mg/L is not holding fish.</span>`));
+  }
+
   if (c.clarity) {
     out.push(row('Clarity', `${esc(c.clarity)}`
       + (c.clarityIsMeasured

@@ -265,3 +265,41 @@ test('a refused release projection reaches the client, it does not vanish', () =
   // and it must not sneak into the one-line strip as though a release were coming
   assert.ok(!/release/.test(conditionsStrip(c).text), conditionsStrip(c).text);
 });
+
+test('a measured turbidity replaces the modelled clarity and loses the tilde', () => {
+  const c = readConditions({ slug: 's', water: {
+    display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 2 },
+    turbidity: { fnu: 12.4, name: 'Tailrace sonde', usgs_site: '02147801' },
+  }, clarity: { overall: { clarity: 'Stained', score: 40 }, measured: null } });
+  const s = conditionsStrip(c);
+  assert.match(s.text, /12\.4 FNU/);
+  assert.ok(!/~Stained/.test(s.text), 'a reading must not sit behind a model');
+  assert.ok(!s.footnotes.some((f) => /modelled from rainfall/.test(f)));
+});
+
+test('with no turbidity reading the modelled clarity still shows, still marked', () => {
+  const c = readConditions({ slug: 's', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 2 } },
+    clarity: { overall: { clarity: 'Stained' }, measured: null } });
+  const s = conditionsStrip(c);
+  assert.match(s.text, /~Stained/);
+  assert.ok(s.footnotes.some((f) => /modelled from rainfall/.test(f)));
+});
+
+test('dissolved oxygen reaches the strip with its unit', () => {
+  const c = readConditions({ slug: 's', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 1 },
+    dissolved_oxygen: { mg_l: 3.8, name: 'Tailrace', usgs_site: '02147801' } } });
+  assert.equal(c.oxygenMgL, 3.8);
+  assert.match(conditionsStrip(c).text, /3\.8 mg\/L O₂/);
+});
+
+test('each reading keeps its own site — they need not come from one gauge', () => {
+  const c = readConditions({ slug: 's', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 1 },
+    water_temp: { c: 26, f: 78.8, usgs_site: 'AAA', name: 'Mid-lake', role: 'pool', below_dam: false },
+    dissolved_oxygen: { mg_l: 4.1, name: 'Tailrace', usgs_site: 'BBB' } } });
+  assert.equal(c.waterTempSite, 'AAA');
+  assert.equal(c.oxygenGauge, 'Tailrace');
+});

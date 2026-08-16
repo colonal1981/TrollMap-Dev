@@ -161,6 +161,16 @@ async function fetchUsgs(site, paramCd, periodDays = 2) {
         if (code === "62615") out.elevation = latest;
         if (code === "63160") out.elevationNavd88 = latest;
         if (code === "00060") out.streamflow = latest;
+        // ADDED 2026-08-16 after Ryan asked whether we use every applicable data type USGS
+        // publishes. Verified against this same endpoint, not from memory: site 02147801 --
+        // the Wateree tailrace this app already reads for temperature -- serves 00010, 00060,
+        // 00065, 00300 and 63160 today, and we were asking for three of the five.
+        //   00300  dissolved oxygen. The summer oxygen squeeze decides what depth holds fish;
+        //          the research schema already has limnology.oxygen.depletionDepthFt for it.
+        //   63680  turbidity in FNU. A MEASURED clarity number where the clarity model
+        //          otherwise runs on rainfall.
+        if (code === "00300") out.doMgL = latest;
+        if (code === "63680") out.turbidityFnu = latest;
         out.timestamp = good[good.length - 1].dateTime;
       }
     }
@@ -170,7 +180,11 @@ async function fetchUsgs(site, paramCd, periodDays = 2) {
     // RDB endpoint is the more reliable of the two. Audited 2026-08-03. A warning here would
     // fire on every gauge that only answers RDB, which is a routine condition, not a fault.
   }
-  if (out.tempC != null || out.gageHeight != null || out.elevation != null) return out;
+  // A site that answered JSON with ONLY the newer codes must not fall through to a second
+  // request it does not need. This gate listed three fields when the mapper knew five.
+  if (out.tempC != null || out.gageHeight != null || out.elevation != null
+      || out.elevationNavd88 != null || out.streamflow != null
+      || out.doMgL != null || out.turbidityFnu != null) return out;
   try {
     const rdbUrl = `https://waterservices.usgs.gov/nwis/iv/?sites=${site}&parameterCd=${paramCd}&format=rdb&period=P${periodDays}D`;
     const r = await fetch(rdbUrl, { cf: { cacheTtl: 900 } });
@@ -197,6 +211,8 @@ async function fetchUsgs(site, paramCd, periodDays = 2) {
       if (code === "62615" && out.elevation == null) out.elevation = v;
       if (code === "63160" && out.elevationNavd88 == null) out.elevationNavd88 = v;
       if (code === "00060" && out.streamflow == null) out.streamflow = v;
+      if (code === "00300" && out.doMgL == null) out.doMgL = v;
+      if (code === "63680" && out.turbidityFnu == null) out.turbidityFnu = v;
     }
     if (!out.timestamp && last[2]) out.timestamp = `${last[2]} ${last[3] || ""}`.trim();
   } catch (err) {

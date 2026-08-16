@@ -100,6 +100,10 @@ export function readConditions(j) {
     flowGauge: null,
     stageFt: null,
     clarity: null,
+    turbidityFnu: null,
+    turbidityGauge: null,
+    oxygenMgL: null,
+    oxygenGauge: null,
     clarityScore: null,
     clarityIsMeasured: false,
     clarityNote: null,
@@ -174,6 +178,18 @@ export function readConditions(j) {
     if (!g) continue;
     if (out.flowCfs == null && Number.isFinite(g.flow)) { out.flowCfs = g.flow; out.flowGauge = g.name || null; }
     if (out.stageFt == null && Number.isFinite(g.stage)) out.stageFt = g.stage;
+  }
+
+  // A MEASURED turbidity beats a modelled clarity and is labelled differently everywhere it
+  // appears. `clarity` below is a rainfall model over a historical Secchi baseline; this is an
+  // instrument reading from today.
+  if (w.turbidity && Number.isFinite(w.turbidity.fnu)) {
+    out.turbidityFnu = w.turbidity.fnu;
+    out.turbidityGauge = w.turbidity.name || null;
+  }
+  if (w.dissolved_oxygen && Number.isFinite(w.dissolved_oxygen.mg_l)) {
+    out.oxygenMgL = w.dissolved_oxygen.mg_l;
+    out.oxygenGauge = w.dissolved_oxygen.name || null;
   }
 
   out.releases = w.releases || null;
@@ -274,7 +290,10 @@ export function conditionsStrip(c) {
     // A tailwater temperature is the river below the dam. One character rather than silence.
     bits.push(`${c.waterTempF}°F${c.waterTempFrom === 'tailwater' ? '*' : ''}`);
   }
-  if (c.clarity) bits.push(`${c.clarityIsMeasured ? '' : '~'}${c.clarity}`);
+  // A live turbidity reading is a measurement and loses the tilde. The model keeps it.
+  if (c.turbidityFnu != null) bits.push(`${c.turbidityFnu} FNU`);
+  else if (c.clarity) bits.push(`${c.clarityIsMeasured ? '' : '~'}${c.clarity}`);
+  if (c.oxygenMgL != null) bits.push(`${c.oxygenMgL} mg/L O₂`);
 
   // Only a PROJECTION gets a place in the strip. An observed discharge is already the flow
   // number two fields to the left, and printing it again as though it were a schedule is the
@@ -294,7 +313,8 @@ export function conditionsStrip(c) {
     // The strip cannot carry a caveat, so it carries a mark and the expanded card explains it.
     footnotes: [
       c.waterTempFrom === 'tailwater' ? '* water temperature is from the tailwater gauge, below the dam — not the lake' : null,
-      c.clarity && !c.clarityIsMeasured ? '~ clarity is modelled from rainfall, not measured — absence of data is not clear water' : null,
+      (c.clarity && !c.clarityIsMeasured && c.turbidityFnu == null)
+        ? '~ clarity is modelled from rainfall, not measured — absence of data is not clear water' : null,
     ].filter(Boolean),
   };
 }
