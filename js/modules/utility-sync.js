@@ -1,69 +1,28 @@
 /**
- * Live Utility & USGS sync — pulls real-time lake pool elevation
- * and water temperature for the selected Plan lake from:
+ * Live water conditions for the selected Plan lake — ONE read, one unit.
  *
- *   1. The Cloudflare worker /lake endpoint (preferred — unified
- *      datum, keeps Duke's public % full-pond scale intact)
- *   2. USGS Water Services (temperature only — never use river
- *      stage below a dam as pool elevation)
- *   3. Duke Energy live dashboard (via duke-energy.js)
+ * Personal use only, not for distribution or resale; not for navigation.
  *
- * Populates the Plan form's Full Pool / Current Level / Water Temp
- * fields and the Live Utility Callout box.
+ * Ryan, 2026-08-16: *"i will almost never want anything alongside... i hate the bolt on
+ * approach... merge reduce make better, make it smarter."*
+ *
+ * WHAT THIS FILE USED TO BE: a seven-lake hand-typed table (`UTILITY_FEEDS`, with `normalPool`
+ * and `minPool` as strings), a substring lookup into it, a `/lake` call, a Duke-dashboard call
+ * behind a second substring match, a USGS temperature call, and a fallback that filled the form
+ * with a hardcoded operating curve when everything else failed. Duke lakes came out as a
+ * PERCENT and every other lake as FEET, in the same two form fields.
+ *
+ * WHAT IT IS NOW: `/conditions/{slug}`, which resolves the level from `water_bindings.json` —
+ * 147 bound lakes, 19 of them with a live operator feed — and returns feet for all of them.
+ *
+ * THE FALLBACK IS GONE ON PURPOSE. Writing a published normal pool into the Current Level field
+ * when nothing answered makes a guess indistinguishable from a reading, and the trip decision
+ * downstream cannot tell them apart. An empty field with a stated reason is the honest answer.
  */
 
-import { state, CF_WORKER_URL } from '../core/state.js';
-import { lakeDbEntryFor } from '../data/lake-registry.js';
-import { fetchDamLevels } from './duke-energy.js';
-
-// ── Lake → Utility-feed map ──────────────────────────────────────────────
-
-const UTILITY_FEEDS = {
-  'Lake Wateree': {
-    utility: 'Duke Energy', usgsId: '02148000', normalPool: '100.0', minPool: '92.5',
-    dashUrl: 'https://lakes.hydro-derived.duke-energy.app/index.html',
-    desc: 'Duke Energy manages Lake Wateree pool elevation (authoritative). USGS 02148000 is the river gauge BELOW the dam — used ONLY for water temperature fallback. Never use river stage (00065) as pool level.',
-  },
-  'Lake Wylie': {
-    utility: 'Duke Energy', usgsId: '02146000', normalPool: '100.0', minPool: '92.6',
-    dashUrl: 'https://lakes.hydro-derived.duke-energy.app/index.html',
-    desc: 'Duke Energy manages Lake Wylie. Automated browser sync queries live water monitoring feeds.',
-  },
-  'Lake Norman': {
-    utility: 'Duke Energy', usgsId: '02142500', normalPool: '100.0', minPool: '91.0',
-    dashUrl: 'https://lakes.hydro-derived.duke-energy.app/index.html',
-    desc: 'Duke Energy manages Lake Norman. Live automated browser sync queries clean stream gauges.',
-  },
-  'Lake Keowee': {
-    utility: 'Duke Energy', usgsId: '02063000', normalPool: '100.0', minPool: '93.0',
-    dashUrl: 'https://lakes.hydro-derived.duke-energy.app/index.html',
-    desc: 'Duke Energy operational system. Sync retrieves real-time water conditions.',
-  },
-  'Lake Murray': {
-    utility: 'Dominion Energy', normalPool: '358.0', minPool: '356.0',
-    dashUrl: 'https://www.dominionenergy.com/projects-and-facilities/hydroelectric-power/lake-murray',
-    desc: 'Dominion Energy manages Lake Murray (Normal Summer Pool: 358 ft · Winter: 357 ft). Direct browser sync derives normal operating curve.',
-  },
-  'Lake Marion': {
-    utility: 'Santee Cooper', normalPool: '75.0', minPool: '73.0',
-    dashUrl: 'https://www.santeecooper.com/community/lakes-and-recreation/lake-levels.aspx',
-    desc: 'Santee Cooper manages Lake Marion (Normal Target Pool: 75.0 ft). Direct browser sync evaluates live operating curves.',
-  },
-  'Lake Moultrie': {
-    utility: 'Santee Cooper', normalPool: '74.5', minPool: '72.0',
-    dashUrl: 'https://www.santeecooper.com/community/lakes-and-recreation/lake-levels.aspx',
-    desc: 'Santee Cooper manages Lake Moultrie (Normal Target Pool: 74.5 ft). Direct browser sync evaluates live operating curves.',
-  },
-};
-
-/** Look up a UTILITY_FEEDS key by case-insensitive substring match. */
-function lookupFeed(cleanStr) {
-  return Object.keys(UTILITY_FEEDS).find((k) => cleanStr.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(cleanStr.toLowerCase()));
-}
-
-// The LAKE_DB substring lookup that used to live here is gone -- lakeDbEntryFor() resolves
-// exactly, over the whole registry rather than 50 curated names. UTILITY_FEEDS keeps its own
-// lookup because those keys are Duke/Dominion basin names, not lakes.
+import { CF_WORKER_URL } from '../core/state.js';
+import { lakeRecordFor } from '../data/lake-registry.js';
+import { fetchWaterConditions, levelSentence } from '../utils/water-conditions.js';
 
 function say(msg, isErr) {
   const statusEl = document.getElementById('utilitySyncStatus');
@@ -72,39 +31,60 @@ function say(msg, isErr) {
   statusEl.style.color = isErr ? 'var(--bad)' : 'var(--accent2)';
 }
 
-/** Pull the latest temperature from a USGS gauge (00010 param). */
-async function fetchUsgsTemp(siteId) {
-  // api.waterdata.usgs.gov -- waterservices is decommissioned Q1 2027.
-  const id = String(siteId).startsWith('USGS-') ? siteId : `USGS-${siteId}`;
-  const url = 'https://api.waterdata.usgs.gov/ogcapi/v0/collections/latest-continuous/items'
-    + `?monitoring_location_id=${encodeURIComponent(id)}&parameter_code=00010&limit=10&f=json`;
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 4000);
-    const res = await fetch(url, { signal: ctrl.signal });
-    clearTimeout(timer);
-    const data = await res.json();
-    // One feature per observation now; the code is on the feature rather than nested under
-    // variable.variableCode[0].value. `value` is a string, so guard '' before Number().
-    const feats = Array.isArray(data?.features) ? data.features : [];
-    for (const f of feats) {
-      const pr = (f && f.properties) || {};
-      if (pr.parameter_code !== '00010') continue;
-      if (pr.value === null || pr.value === undefined || pr.value === '') continue;
-      const tempC = Number(pr.value);
-      if (Number.isFinite(tempC) && tempC > -999999) return Math.round(tempC * 9 / 5 + 32);
+function setVal(id, v) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.value = v == null ? '' : String(v);
+}
+
+/** The box above the form: which source answered, what it said, and where to check it. */
+function paintAssessment(rec, c) {
+  const boxEl = document.getElementById('utilityAssessmentBox');
+  const titleEl = document.getElementById('uTitle');
+  const descEl = document.getElementById('uDesc');
+  const linkEl = document.getElementById('uLink');
+  if (!boxEl) return;
+  if (!rec) { boxEl.style.display = 'none'; return; }
+  boxEl.style.display = 'block';
+  if (titleEl) {
+    titleEl.textContent = c && c.levelSource
+      ? c.levelSource
+      : `${rec.displayName || rec.name} — no level feed bound`;
+  }
+  if (descEl) {
+    const bits = [levelSentence(c)];
+    if (c && c.observedAt) bits.push(`Observed ${c.observedAt}.`);
+    if (c && c.waterTempF != null) {
+      bits.push(c.waterTempFrom === 'tailwater'
+        // The river below the dam is not the lake, and saying so costs one clause.
+        ? `Water temp ${c.waterTempF} °F from the TAILWATER gauge${c.waterTempGauge ? ` (${c.waterTempGauge})` : ''} — below the dam, not the lake.`
+        : `Water temp ${c.waterTempF} °F${c.waterTempGauge ? ` (${c.waterTempGauge})` : ''}.`);
     }
-    return null;
-  } catch (_) {
-    return null;
+    if (c && c.usaceTargetFt != null) {
+      bits.push(`Corps target pool for ${c.usaceProject || 'this project'} today: ${c.usaceTargetFt} ft — a target, not a reading.`);
+    }
+    descEl.textContent = bits.join(' ');
+  }
+  if (linkEl) {
+    if (c && c.levelUrl) { linkEl.href = c.levelUrl; linkEl.style.display = ''; }
+    else linkEl.style.display = 'none';
   }
 }
 
-/** Main sync function — pulled live data and writes it into the form. */
+/** Resolve the Plan form's current selection to a registry record. */
+function selectedRecord() {
+  const lakeStr = document.getElementById('planLake')?.value
+                || document.getElementById('lakeSelect')?.value
+                || '';
+  if (!lakeStr) return null;
+  return lakeRecordFor(lakeStr) || lakeRecordFor(lakeStr.split(',')[0].trim()) || null;
+}
+
+/** Main sync — one request, then the form and the box say the same thing. */
 export async function syncUtilityData() {
   const lakeStr = document.getElementById('planLake')?.value
                 || document.getElementById('lakeSelect')?.value
-                || 'Lake Wateree, SC';
+                || '';
 
   // River trips delegate to syncPlanRiverData (when available)
   if (typeof window.isPlanRiverValue === 'function' && window.isPlanRiverValue(lakeStr)) {
@@ -112,111 +92,45 @@ export async function syncUtilityData() {
     return;
   }
 
-  const cleanStr = lakeStr.split(',')[0].trim();
-  const lKey = lookupFeed(cleanStr);
-  const feed = lKey ? UTILITY_FEEDS[lKey] : null;
-  const lkEntry = lakeDbEntryFor(lakeStr) || lakeDbEntryFor(cleanStr);
-
-  say('Syncing USGS / Utility streams…', false);
+  const rec = selectedRecord();
   const syncBtn = document.getElementById('syncDukeBtn');
   if (syncBtn) { syncBtn.style.background = 'var(--accent)'; syncBtn.style.color = '#000'; }
+  say('Reading live conditions…', false);
 
   try {
-    let poolResult = NaN;
-    let tempResult = NaN;
-    let liveFullPool = null;
-
-    // 0. Preferred: unified worker /lake endpoint
-    try {
-      const lakeUrl = `${CF_WORKER_URL}/lake?lake=${encodeURIComponent(cleanStr)}`;
-      const lr = await fetch(lakeUrl);
-      if (lr.ok) {
-        const lj = await lr.json();
-        const isDukeLake = feed && (feed.utility || '').toLowerCase().includes('duke');
-        if (isDukeLake && typeof lj.percent_full === 'number') {
-          poolResult = lj.percent_full;
-          liveFullPool = 100.0;
-        } else if (typeof lj.display_level === 'number') {
-          poolResult = lj.display_level;
-          liveFullPool = typeof lj.display_full_pool === 'number' ? lj.display_full_pool : (typeof lj.full_pool_ft === 'number' ? lj.full_pool_ft : liveFullPool);
-        } else if (isDukeLake && typeof lj.elevation_ft === 'number' && typeof lj.full_pool_ft === 'number' && lj.full_pool_ft > 0) {
-          poolResult = (lj.elevation_ft / lj.full_pool_ft) * 100;
-          liveFullPool = 100.0;
-        } else if (typeof lj.elevation_ft === 'number') {
-          poolResult = lj.elevation_ft;
-          if (typeof lj.full_pool_ft === 'number') liveFullPool = lj.full_pool_ft;
-        }
-        if (typeof lj.water_temperature_F === 'number') tempResult = lj.water_temperature_F;
-      }
-    } catch (_) {
-      console.warn(`[utility-sync] lake lookup failed:`, _ && _.message);
+    if (!rec) {
+      say(`"${lakeStr}" does not resolve to a lake in the registry.`, true);
+      paintAssessment(null, null);
+      return;
     }
+    const worker = CF_WORKER_URL || window.CF_WORKER_URL;
+    const planDate = document.getElementById('planDate')?.value || undefined;
+    const c = await fetchWaterConditions(worker, rec, { date: planDate });
+    paintAssessment(rec, c);
 
-    // 1. Duke live dashboard (preferred for Duke lakes)
-    if (poolResult !== poolResult /* NaN check */ && feed && (feed.utility || '').toLowerCase().includes('duke')) {
-      try {
-        const d = await fetchDamLevels();
-        if (d && d.duke) {
-          for (const [k, v] of Object.entries(d.duke)) {
-            const kk = String(k || '').toLowerCase();
-            const matchesSelectedLake = cleanStr.includes(kk) || kk.includes(cleanStr.replace(/^lake\s+/, '').trim());
-            if (matchesSelectedLake && v && typeof v.elevation === 'number') {
-              if (typeof v.percentFull === 'number') { poolResult = v.percentFull; liveFullPool = 100.0; }
-              else if (typeof v.fullPool === 'number' && v.fullPool > 0) { poolResult = (v.elevation / v.fullPool) * 100; liveFullPool = 100.0; }
-              else { poolResult = v.elevation; if (typeof v.fullPool === 'number') liveFullPool = v.fullPool; }
-              break;
-            }
-          }
-        }
-      } catch (err) {
-        // Duke's dashboard is a scrape of somebody else's page and it does fall over. There
-        // are fallbacks below, so this is not fatal -- but a pool level that quietly comes
-        // from USGS instead of Duke is a different number, and the console should say which.
-        console.warn('[utility-sync] Duke dashboard lookup failed, falling through:', err);
-      }
+    if (c.error) { say(`Live conditions unavailable: ${c.error}`, true); return; }
+
+    // FEET, ALWAYS. `planFullPool` and `planPoolLevel` were a percent on Duke lakes and feet
+    // everywhere else, which the trip decision then read through a units branch. One unit
+    // removes the branch and makes two lakes comparable.
+    setVal('planFullPool', c.fullPoolFt != null ? c.fullPoolFt.toFixed(1) : '');
+    setVal('planPoolLevel', c.levelFt != null ? c.levelFt.toFixed(1) : '');
+    // The drawdown is its own field because it is the number that survives when a lake
+    // publishes no absolute elevation — Brookfield's Chilhowee and Calderwood do exactly that.
+    setVal('planBelowFullPool', c.belowFullPoolFt != null ? c.belowFullPoolFt.toFixed(2) : '');
+    if (c.waterTempF != null && c.waterTempFrom !== 'tailwater') setVal('planWaterTemp', c.waterTempF);
+
+    if (c.belowFullPoolFt == null && c.levelFt == null) {
+      say(c.pending || 'No source publishes a level for this water.', true);
+      return;
     }
-
-    // 2. USGS temperature fallback (only)
-    if (isNaN(tempResult)) {
-      const usgsTargetId = feed?.usgsId || lkEntry?.usgs?.site;
-      if (usgsTargetId) {
-        const t = await fetchUsgsTemp(usgsTargetId);
-        if (t != null) tempResult = t;
-      }
-    }
-
-    // Prefer real Duke pool if we got one
-    if (poolResult !== poolResult /* NaN */ && feed && (feed.utility || '').toLowerCase().includes('duke')) {
-      // Already assigned above in step 1
-    }
-
-    // 3. Fallback to published normal pool
-    const normalTarget = liveFullPool || feed?.normalPool || lkEntry?.normalPool || null;
-    if (isNaN(poolResult)) {
-      if (normalTarget != null) poolResult = parseFloat(normalTarget);
-      else {
-        say(`No verified live lake-level source for ${cleanStr || 'this waterbody'}.`, true);
-        return;
-      }
-    }
-
-    // Populate form inputs
-    const fPoolEl = document.getElementById('planFullPool');
-    if (fPoolEl) fPoolEl.value = parseFloat(normalTarget).toFixed(1);
-    const poolEl = document.getElementById('planPoolLevel');
-    if (poolEl && !isNaN(poolResult)) poolEl.value = poolResult.toFixed(1);
-    const wTempEl = document.getElementById('planWaterTemp');
-    if (wTempEl && !isNaN(tempResult)) wTempEl.value = tempResult;
-
-    say(`✓ Live pull: ${(!isNaN(poolResult) ? poolResult.toFixed(1) : '—')} ft ${(!isNaN(tempResult) ? '· ' + tempResult + '°F' : '')}`, false);
+    say(`✓ ${levelSentence(c)}`, false);
   } catch (err) {
-    console.warn('Live USGS / Utility sync warning:', err);
-    say('Provisional baseline operating curves loaded.', false);
-    const normalTarget = feed?.normalPool || lkEntry?.normalPool || '100.0';
-    const poolEl = document.getElementById('planPoolLevel');
-    if (poolEl) poolEl.value = parseFloat(normalTarget).toFixed(1);
+    // No hardcoded curve gets written here. A guess in the Current Level field is
+    // indistinguishable from a reading by the time the trip decision reads it.
+    console.warn('[utility-sync] conditions read failed:', err);
+    say(`Live conditions failed: ${String((err && err.message) || err)}`, true);
   } finally {
-    const syncBtn = document.getElementById('syncDukeBtn');
     if (syncBtn) setTimeout(() => { syncBtn.style.background = ''; syncBtn.style.color = ''; }, 1000);
   }
 }
@@ -227,31 +141,8 @@ window.syncUtilityData = syncUtilityData;
 
 function wireLakeDropdown() {
   const lakeSel = document.getElementById('planLake');
-  const boxEl = document.getElementById('utilityAssessmentBox');
-  const titleEl = document.getElementById('uTitle');
-  const descEl = document.getElementById('uDesc');
-  const verifyLink = document.getElementById('uLink');
-
   if (!lakeSel) return;
-
-  lakeSel.addEventListener('change', (e) => {
-    const lakeStr = e.target.value || '';
-    const cleanStr = lakeStr.split(',')[0].trim();
-    const lKey = lookupFeed(cleanStr);
-    const feed = lKey ? UTILITY_FEEDS[lKey] : null;
-
-    if (boxEl) {
-      if (!feed) {
-        boxEl.style.display = 'none';
-      } else {
-        boxEl.style.display = 'block';
-        if (titleEl) titleEl.textContent = `${feed.utility} Management (${lKey})`;
-        if (descEl) descEl.textContent = feed.desc;
-        if (verifyLink) verifyLink.href = feed.dashUrl;
-      }
-    }
-    syncUtilityData();
-  });
+  lakeSel.addEventListener('change', () => { syncUtilityData(); });
 }
 
 function wireSyncButton() {

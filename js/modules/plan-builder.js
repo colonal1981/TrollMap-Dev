@@ -20,13 +20,15 @@ import { appendCoastalOptgroups } from "../utils/coastal-optgroups.js";
 import { resolveR2Key } from "../data/lake-keys.js";
 import { makePredicate } from "../data/water-filter.js";
 import { registryRecordFor } from "../data/access-index.js";
-// Both of these were CALLED below but never imported -- latent ReferenceErrors that predate
-// the registry refactor. fetchDamLevels() sits inside `try{...}catch(e){}`, so the Duke /
-// Dominion / Santee Cooper block of every generated plan has been rendering empty in silence.
-// distFt() is not guarded: renderPlanStats() dies at the distance line whenever a track has
-// two or more points, so planDist and planGroups never fill in. Found 2026-08-02 by a
-// scope check over the modules this refactor touched, not by the refactor itself.
-import { fetchDamLevels } from "./duke-energy.js";
+// distFt() was CALLED below and never imported -- a latent ReferenceError predating the
+// registry refactor. renderPlanStats() died at the distance line whenever a track had two or
+// more points, so planDist and planGroups never filled in. Found 2026-08-02 by a scope check
+// over the modules that refactor touched, not by the refactor itself.
+//
+// fetchDamLevels() was the other one, and it is gone rather than fixed -- Module F now reads
+// /conditions, which resolves every operator from water_bindings.json instead of four
+// hand-written substring matchers. See Module F for what that replaced.
+import { fetchWaterConditions } from "../utils/water-conditions.js";
 import { distFt } from "../utils/geo.js";
 import { solunarFor } from "../utils/solunar.js";
 import { get as dbGet, put as dbPut, getAll as dbGetAll, del as dbDel, isReady as dbIsReady } from '../utils/db.js';
@@ -401,7 +403,16 @@ export function collectPlan(){
       waterTemp: gV('planWaterTemp'),
       fullPool: (isRiv || isCoastal) ? '' : gV('planFullPool'),
       poolLevel: (isRiv || isCoastal) ? '' : gV('planPoolLevel'),
-      poolUnit: (isRiv || isCoastal) ? '' : (typeof getPlanLakeLevelUnit === 'function' ? getPlanLakeLevelUnit() : 'ft'),
+      // THE DRAWDOWN IS ITS OWN NUMBER, not `poolLevel - fullPool`. Brookfield's Chilhowee and
+      // Calderwood publish feet-below-full-pool and no absolute elevation at all, so a
+      // subtraction returns nothing on exactly the lakes that stated the answer outright.
+      belowFullPool: (isRiv || isCoastal) ? '' : gV('planBelowFullPool'),
+      // FEET, ALWAYS. This was `getPlanLakeLevelUnit()`, which returned "% full pond" for nine
+      // hardcoded Duke names and "ft" for everything else -- so the trip decision, the level
+      // row and the stage line all carried a units branch, and two lakes could not be compared.
+      // The percent was never a measurement: Duke hangs a hundred-foot band under full pond, so
+      // 98.00 IS two feet down, and normalizeDukeRow converts it in the Worker.
+      poolUnit: (isRiv || isCoastal) ? '' : 'ft',
       weather: gV('planWeather'),
       clarity: gV('planClarity', 'Clear'),
       motor: gV('planMotor', 'NK180 Pro 24V, 100Ah LiFePO4'),
@@ -519,6 +530,7 @@ function loadPlanIntoForm(p){
   sV('planWaterTemp', m.waterTemp);
   sV('planFullPool', m.fullPool);
   sV('planPoolLevel', m.poolLevel);
+  sV('planBelowFullPool', m.belowFullPool);
   sV('planWeather', m.weather);
   if(m.clarity) sV('planClarity', m.clarity);
   sV('planMotor', m.motor || 'NK180 Pro 24V, 100Ah LiFePO4');
@@ -1061,71 +1073,70 @@ export async function buildPlanPreviewHtml(p){
       weatherHtml = 'Weather fetch failed — check internet connection.';
     }
 
-    // Module F — Duke Energy / Dominion / Santee Cooper dam levels
+    // ── Module F — the state of the water, from one source ────────────────────────────────
+    //
+    // Ryan, 2026-08-16: *"i hate the bolt on approach... merge reduce make better."*
+    //
+    // This was fetchDamLevels() and a Duke / Dominion / Santee Cooper if-chain. The Duke arm
+    // matched with `lakeLower.includes(k.split(' ')[1] || k)` -- THE SECOND WORD of the feed
+    // name -- so "mountain island" reduced to `island` and any water whose name contained it
+    // took Mountain Island Lake's elevation. Dominion was `lakeLower.includes('murray')` and
+    // Santee Cooper was two more of the same. Four operators, four hand-written matchers, and
+    // no way for a fifth to arrive without a fifth branch.
+    //
+    // /conditions resolves it from water_bindings.json instead: 147 bound lakes, 19 of them
+    // with a live operator feed, matched by whole tokens against the registry name. Cube,
+    // Southern Company and Brookfield arrived without a line changing here.
     let damHtml = '';
     try {
-      const damData = await fetchDamLevels();
-      if(damData){
-        const lakeLower = (p.meta.lake||'').toLowerCase();
-        const parts = [];
-
-        // Duke Energy lakes (keyed by display name)
-        if(damData.duke){
-          const dukeKeys = Object.keys(damData.duke);
-          const dukeMatch = dukeKeys.find(k => lakeLower.includes(k.split(' ')[1]||k) || k.includes(lakeLower.split(',')[0].toLowerCase().replace('lake ','')));
-          if(dukeMatch){
-            const d = damData.duke[dukeMatch];
-            const trendIcon = d.trend==='Rising'?'📈':d.trend==='Falling'?'📉':'➡';
-            // DUKE'S OWN FULL POND, off the reading we just fetched.
-            //
-            // This read `lakeEntry.normalPool`, which came from curated_lakes.json via
-            // consolidate_lake_index.py and existed on exactly three lakes -- Norman 760,
-            // Keowee 800, Wylie 569.4. Every one of those numbers is ALREADY in
-            // Worker/worker-data.js's LAKES table, which carries normalPool for sixteen lakes
-            // and is what the Worker serves as full_pool_ft; and Duke publishes the same
-            // number on every reading, which duke-energy.js normalises to `fullPool` in both
-            // of its parse paths. Ryan, 2026-08-15: "why are those not in the same place every
-            // other pool elevation is... nothing curated no new anything use what is already
-            // working for other lakes."
-            //
-            // So: the live reading's own full pond. Three duplicated numbers gone, and the
-            // sixteen lakes the LAKES table already covers now behave the same as the three
-            // that had a curated copy.
-            const normalPool = d.fullPool;
-            const poolStr = normalPool
-              ? `Pool: <b>${d.elevation} ft</b> (normal ${normalPool} ft, ${d.elevation>normalPool?'+':''}${(d.elevation-normalPool).toFixed(1)} ft)`
-              : `Pool: <b>${d.elevation} ft</b> (target ${d.target||'—'} ft)`;
-            const parts = [`${poolStr} · ${trendIcon} ${d.trend}`];
-            if(d.specialMessage) parts.push(`<br><span class="rp-small">⚠ ${d.specialMessage}</span>`);
-            damHtml = `<div class="rp-callout rp-info"><b>💧 Duke Energy — ${dukeMatch.replace(/^\w/,c=>c.toUpperCase())}</b><br>${parts.join('')}<br><span class="rp-small">via duke-energy.com/lakes · live data</span></div>`;
+      const drec = lakeRecordFor(p.meta.waterbodyLabel || p.meta.lake || '') || lakeRecordFor(cleanLake);
+      if (drec) {
+        const worker = (typeof CF_WORKER_URL !== 'undefined' ? CF_WORKER_URL
+                        : (window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev'));
+        const c = await fetchWaterConditions(worker, drec, { date: p.meta.date || undefined });
+        if (c.error) {
+          // "No callout" and "the call failed" looked identical on screen before. They do not now.
+          damHtml = `<div class="rp-callout rp-warn"><b>💧 Water Level</b><br>`
+                  + `Live conditions could not be read: ${esc(c.error)}.<br>`
+                  + `<span class="rp-small">Verify the pool level yourself before launching.</span></div>`;
+        } else if (c.belowFullPoolFt == null && c.levelFt == null) {
+          damHtml = `<div class="rp-callout rp-info"><b>💧 Water Level</b><br>`
+                  + `${esc(c.pending || 'No source publishes a level for this water.')}</div>`;
+        } else {
+          const rows = [];
+          if (c.levelFt != null) rows.push(`Pool: <b>${c.levelFt.toFixed(2)} ft</b>`);
+          if (c.belowFullPoolFt != null) {
+            const b = c.belowFullPoolFt;
+            rows.push(Math.abs(b) < 0.05 ? '<b>at full pool</b>'
+              : b > 0 ? `<b>${b.toFixed(2)} ft below full pool</b>`
+                      : `<b>${Math.abs(b).toFixed(2)} ft above full pool</b>`);
           }
-        }
-
-        // Dominion Energy (Murray)
-        if(!damHtml && damData.dominion?.murray && lakeLower.includes('murray')){
-          const d = damData.dominion.murray;
-          const trendIcon = d.trend==='Rising'?'📈':d.trend==='Falling'?'📉':'➡';
-          damHtml = `<div class="rp-callout rp-info"><b>💧 Dominion Energy — Lake Murray</b><br>Pool: <b>${d.elevation} ft</b> · ${trendIcon} ${d.trend}<br><span class="rp-small">${d.source} · via TrollMap Worker</span></div>`;
-          if(d.temp && !p.meta.waterTemp) p.meta.waterTemp = String(d.temp);
-        }
-
-        // Santee Cooper (Marion/Moultrie)
-        if(!damHtml && damData.santee){
-          const isMarion   = lakeLower.includes('marion');
-          const isMoultrie = lakeLower.includes('moultrie');
-          const d = isMarion ? damData.santee.marion : isMoultrie ? damData.santee.moultrie : null;
-          if(d && d.elevation){
-            const lakeName = isMarion ? 'Lake Marion' : 'Lake Moultrie';
-            const tempStr = d.temp ? ` · Water temp <b>${d.temp}°F</b>` : '';
-            damHtml = `<div class="rp-callout rp-info"><b>💧 Santee Cooper — ${lakeName}</b><br>Pool: <b>${d.elevation} ft</b>${tempStr}<br><span class="rp-small">${d.source} · via TrollMap Worker</span></div>`;
-            if(d.temp && !p.meta.waterTemp) p.meta.waterTemp = String(d.temp);
+          if (c.fullPoolFt != null) rows.push(`full pool ${c.fullPoolFt} ft`);
+          // A target is not a reading, and the report says which is which.
+          const corps = c.usaceTargetFt != null
+            ? `<br><span class="rp-small">Corps target pool for ${esc(c.usaceProject || 'this project')} today: `
+              + `${c.usaceTargetFt} ft — a target, not a reading.</span>` : '';
+          // A tailwater temperature is the river below the dam. It is shown and labelled rather
+          // than being written into the plan's water temperature as though it were the lake's.
+          const temp = c.waterTempF != null
+            ? `<br><span class="rp-small">Water temp ${c.waterTempF} °F`
+              + `${c.waterTempFrom === 'tailwater' ? ' — TAILWATER gauge, below the dam' : ''}`
+              + `${c.waterTempGauge ? ` (${esc(c.waterTempGauge)})` : ''}.</span>` : '';
+          const when = c.observedAt ? ` · observed ${esc(c.observedAt)}` : '';
+          const link = c.levelUrl ? ` · <a href="${esc(c.levelUrl)}" target="_blank" rel="noopener">source page</a>` : '';
+          damHtml = `<div class="rp-callout rp-info"><b>💧 Water Level — ${esc(c.displayName || drec.displayName || drec.name)}</b><br>`
+                  + `${rows.join(' · ')}${corps}${temp}<br>`
+                  + `<span class="rp-small">${esc(c.levelSource || 'source not stated')}${when}${link}</span></div>`;
+          if (c.waterTempF != null && c.waterTempFrom !== 'tailwater' && !p.meta.waterTemp) {
+            p.meta.waterTemp = String(c.waterTempF);
           }
         }
       }
     } catch (err) {
-      // Third-party feed via the Worker. The plan is still worth reading without a pool
-      // level, but "no dam callout" and "the dam call failed" look identical on screen.
-      console.warn('[plan-builder] Santee Cooper dam levels unavailable:', err);
+      console.warn('[plan-builder] live conditions unavailable:', err);
+      damHtml = `<div class="rp-callout rp-warn"><b>💧 Water Level</b><br>`
+              + `Live conditions could not be read.<br>`
+              + `<span class="rp-small">Verify the pool level yourself before launching.</span></div>`;
     }
 
     // Module E — NOAA Tides from builder cache
@@ -1334,23 +1345,28 @@ export async function buildPlanPreviewHtml(p){
     // closed seasons, and river go/no-go / dam surge data from the Plan form.
     function addRisk(msg){ if(msg && !noGoReasons.includes(msg)) noGoReasons.push(msg); }
     function addPositive(msg){ if(msg && !goReasons.includes(msg)) goReasons.push(msg); }
+    // ONE SET OF THRESHOLDS, IN FEET. There were two, and which one ran was decided by the
+    // nine-name Duke list: eight feet down on Wateree was NO-GO while eight feet down on
+    // Hartwell was only CAUTION, for the same physical drawdown, because one was labelled a
+    // percent. Duke's band is a hundred feet, so those percents were always feet.
+    //
+    // THE STATED DRAWDOWN WINS over a subtraction. Chilhowee and Calderwood publish feet below
+    // full pool and no elevation, so `poolLevel - fullPool` is NaN on the two lakes that
+    // answered the question directly.
     const poolVal = parseFloat(p.meta.poolLevel);
     const fullVal = parseFloat(p.meta.fullPool);
-    const poolUnit = p.meta.poolUnit || 'ft';
-    if(isFinite(poolVal) && isFinite(fullVal)){
-      const diff = poolVal - fullVal;
-      if(String(poolUnit).includes('%')){
-        if(diff <= -8) addRisk(`NO-GO: ${Math.abs(diff).toFixed(1)}% below full pond — severe drawdown / ramp hazard`);
-        else if(diff <= -4) addRisk(`CAUTION: ${Math.abs(diff).toFixed(1)}% below full pond — check ramp depth and shallow hazards`);
-        else if(diff >= 2) addRisk(`CAUTION: ${diff.toFixed(1)}% above full pond — floating debris / flooded shoreline cover`);
-        else addPositive(`Lake level ${poolVal.toFixed(1)}${poolUnit} — within normal operating range`);
-      } else {
-        if(diff <= -10) addRisk(`NO-GO: lake is ${Math.abs(diff).toFixed(1)} ft below full pool — likely ramp/prop hazards`);
-        else if(diff <= -5) addRisk(`CAUTION: lake is ${Math.abs(diff).toFixed(1)} ft below full pool — verify ramps and stump fields`);
-        else if(diff >= 5) addRisk(`NO-GO: lake is ${diff.toFixed(1)} ft above full pool — flood/debris risk`);
-        else if(diff >= 2) addRisk(`CAUTION: lake is ${diff.toFixed(1)} ft above full pool — floating debris / flooded banks`);
-        else addPositive(`Lake level ${poolVal.toFixed(1)} ft — near target pool`);
-      }
+    const statedBelow = parseFloat(p.meta.belowFullPool);
+    // Positive = below full pool, matching how every operator publishes it. `diff` keeps the
+    // old sign convention (negative = down) so the sentences below read the same way.
+    const diff = isFinite(statedBelow) ? -statedBelow
+               : (isFinite(poolVal) && isFinite(fullVal)) ? poolVal - fullVal : NaN;
+    if(isFinite(diff)){
+      const at = isFinite(poolVal) ? `${poolVal.toFixed(1)} ft` : 'level';
+      if(diff <= -10) addRisk(`NO-GO: lake is ${Math.abs(diff).toFixed(1)} ft below full pool — likely ramp/prop hazards`);
+      else if(diff <= -5) addRisk(`CAUTION: lake is ${Math.abs(diff).toFixed(1)} ft below full pool — verify ramps and stump fields`);
+      else if(diff >= 5) addRisk(`NO-GO: lake is ${diff.toFixed(1)} ft above full pool — flood/debris risk`);
+      else if(diff >= 2) addRisk(`CAUTION: lake is ${diff.toFixed(1)} ft above full pool — floating debris / flooded banks`);
+      else addPositive(`Lake ${at} — ${Math.abs(diff) < 0.05 ? 'at full pool' : `${Math.abs(diff).toFixed(1)} ft ${diff < 0 ? 'below' : 'above'} full pool`}, near target`);
     } else if((p.meta.waterbodyType||'lake') === 'lake'){
       addRisk('CAUTION: no verified live lake-level source loaded — manually verify ramp depth and pool level');
     }
@@ -1528,7 +1544,19 @@ ${pressureHtml}
       <div style="display:flex;flex-direction:column;gap:5px">
         <span>• <b>Water Temperature</b>: Exactly ${p.meta.waterTemp||'72'}°F</span>
         <span>• <b>Wind Forecast / Gusts</b>: Exactly ${esc(p.meta.weather||'WSW 11 mph')}</span>
-        <span>• <b>${p.meta.waterbodyType==='river'?'River Safety / Flow':'Water Level Stage'}</b>: ${p.meta.waterbodyType==='river' ? esc([p.meta.riverSafety, p.meta.riverFlow, p.meta.riverSurgeEta].filter(Boolean).join(' · ') || 'River sync not run') : `Exactly ${esc(p.meta.poolLevel||'—')} ${esc(p.meta.poolUnit||'ft')} ${(p.meta.poolUnit||'ft').includes('%') ? '(Duke full-pond scale)' : (parseFloat(p.meta.poolLevel)<98?'(Drawdown Threat)':'(Lake Level Synced)')}`}</span>
+        <span>• <b>${p.meta.waterbodyType==='river'?'River Safety / Flow':'Water Level Stage'}</b>: ${p.meta.waterbodyType==='river' ? esc([p.meta.riverSafety, p.meta.riverFlow, p.meta.riverSurgeEta].filter(Boolean).join(' · ') || 'River sync not run') : (() => {
+          // `parseFloat(poolLevel) < 98` used to decide "Drawdown Threat". That is a test
+          // against DUKE'S PERCENT SCALE, and it was being run on feet: Lake Moultrie sits at
+          // 74.5 ft at full pool and read as a threat every single day, while Thurmond at 323
+          // never did no matter how far down it was. The drawdown itself is the test.
+          const below = parseFloat(p.meta.belowFullPool);
+          const lvl = p.meta.poolLevel ? `${esc(p.meta.poolLevel)} ft` : null;
+          if (!isFinite(below)) return lvl ? `${lvl} (Lake Level Synced)` : 'No live level source';
+          const tag = below >= 5 ? '(Drawdown Threat)' : below <= -2 ? '(Above Full Pool)' : '(Near Full Pool)';
+          const d = Math.abs(below) < 0.05 ? 'at full pool'
+                  : `${Math.abs(below).toFixed(2)} ft ${below > 0 ? 'below' : 'above'} full pool`;
+          return `${lvl ? `${lvl} · ` : ''}${d} ${tag}`;
+        })()}</span>
         <span>• <b>Tactical Clarity</b>: Exactly <b style="color:#00e5ff">${esc(p.meta.clarity||'Clear')}</b></span>
         <span>• <b>Solunar Activity</b>: ${solunarAutoRows?solunarAutoRows.split('</td>')[0].replace(/<[^>]*>?/gm, '').trim():'Major Window Active'} — ${moonPhase}</span>
       </div>
@@ -1560,8 +1588,22 @@ ${pressureHtml}
   <tr><td>Moon Phase</td><td>${moonPhase} (${moonIllum}% lit)${moonriseStr!=='--:--'?` · Rise ${moonriseStr} / Set ${moonsetStr}`:''}</td></tr>
   <tr><td>Water Clarity</td><td><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:var(--panel2);color:var(--accent);font-weight:700">${esc(clarity)}</span></td></tr>
   ${p.meta.waterbodyType!=='river' && p.meta.waterTemp?`<tr><td>Water Temperature</td><td><b>${esc(p.meta.waterTemp)} °F</b> ${lakeEntry&&lakeEntry.usgs?'<span class="rp-small" style="color:#00e5ff">(USGS Live Monitoring Relay)</span>':''}</td></tr>`:''}
-  ${p.meta.waterbodyType==='river' ? `${p.meta.riverSafety?`<tr><td>Kayak Go / No-Go</td><td><b style="color:${/NO.GO|🛑/i.test(p.meta.riverSafety)?'#c62828':/CAUTION|⚠/i.test(p.meta.riverSafety)?'#e65100':'#2e7d32'}">${esc(p.meta.riverSafety)}</b></td></tr>`:''}${p.meta.riverFlow?`<tr><td>Streamflow</td><td><b>${esc(p.meta.riverFlow)}</b> <span class="rp-small">(USGS real-time)</span></td></tr>`:''}${p.meta.riverGauge?`<tr><td>Gauge Height</td><td><b>${esc(p.meta.riverGauge)}</b></td></tr>`:''}${(p.meta.riverTemp||p.meta.waterTemp)?`<tr><td>Water Temperature</td><td><b>${esc(p.meta.riverTemp||p.meta.waterTemp).replace(/ °F$/,'')} °F</b> <span class="rp-small">(USGS)</span></td></tr>`:''}${p.meta.riverRise?`<tr><td>Rate of Rise</td><td><b>${esc(p.meta.riverRise)}</b></td></tr>`:''}${p.meta.riverSurgeEta?`<tr><td>Surge ETA @ Launch</td><td><b style="color:#e65100">${esc(p.meta.riverSurgeEta)}</b></td></tr>`:''}` : ((p.meta.fullPool || p.meta.poolLevel) ? `<tr><td>Lake Level</td><td><b>${esc(p.meta.poolLevel || '—')} ${esc(p.meta.poolUnit||'ft')}</b> <span class="rp-small">(Current Level)</span> · <b>${esc(p.meta.fullPool || '—')} ${esc(p.meta.poolUnit||'ft')}</b> <span class="rp-small">(Full Pool)</span> ${
-    (p.meta.fullPool && p.meta.poolLevel && !isNaN(p.meta.fullPool) && !isNaN(p.meta.poolLevel)) ? `<span style="display:inline-block;margin-left:8px;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:700;background:${parseFloat(p.meta.poolLevel) >= parseFloat(p.meta.fullPool) ? '#e8f5e9;color:#2e7d32' : '#ffebee;color:#c62828'}">${(parseFloat(p.meta.poolLevel) - parseFloat(p.meta.fullPool)).toFixed(1) >= 0 ? `+${(parseFloat(p.meta.poolLevel) - parseFloat(p.meta.fullPool)).toFixed(1)} ${esc(p.meta.poolUnit||'ft')} Above Full Pool` : `${(parseFloat(p.meta.poolLevel) - parseFloat(p.meta.fullPool)).toFixed(1)} ${esc(p.meta.poolUnit||'ft')} Drawdown`}</span>` : ''
+  ${p.meta.waterbodyType==='river' ? `${p.meta.riverSafety?`<tr><td>Kayak Go / No-Go</td><td><b style="color:${/NO.GO|🛑/i.test(p.meta.riverSafety)?'#c62828':/CAUTION|⚠/i.test(p.meta.riverSafety)?'#e65100':'#2e7d32'}">${esc(p.meta.riverSafety)}</b></td></tr>`:''}${p.meta.riverFlow?`<tr><td>Streamflow</td><td><b>${esc(p.meta.riverFlow)}</b> <span class="rp-small">(USGS real-time)</span></td></tr>`:''}${p.meta.riverGauge?`<tr><td>Gauge Height</td><td><b>${esc(p.meta.riverGauge)}</b></td></tr>`:''}${(p.meta.riverTemp||p.meta.waterTemp)?`<tr><td>Water Temperature</td><td><b>${esc(p.meta.riverTemp||p.meta.waterTemp).replace(/ °F$/,'')} °F</b> <span class="rp-small">(USGS)</span></td></tr>`:''}${p.meta.riverRise?`<tr><td>Rate of Rise</td><td><b>${esc(p.meta.riverRise)}</b></td></tr>`:''}${p.meta.riverSurgeEta?`<tr><td>Surge ETA @ Launch</td><td><b style="color:#e65100">${esc(p.meta.riverSurgeEta)}</b></td></tr>`:''}` : ((p.meta.fullPool || p.meta.poolLevel || p.meta.belowFullPool) ? `<tr><td>Lake Level</td><td><b>${esc(p.meta.poolLevel || '—')} ft</b> <span class="rp-small">(Current Level)</span> · <b>${esc(p.meta.fullPool || '—')} ft</b> <span class="rp-small">(Full Pool)</span> ${
+    (() => {
+      // The badge reads the STATED drawdown first. Chilhowee publishes 1.18 ft below full pool
+      // and no elevation, so the old subtraction printed no badge on a lake that had already
+      // answered. The comparison is also `>= 0` on a rounded string in the original, which made
+      // "-0.0 Drawdown" render green.
+      const stated = parseFloat(p.meta.belowFullPool);
+      const lvl = parseFloat(p.meta.poolLevel), full = parseFloat(p.meta.fullPool);
+      const below = isFinite(stated) ? stated : (isFinite(lvl) && isFinite(full)) ? full - lvl : NaN;
+      if (!isFinite(below)) return '';
+      const good = below <= 0;
+      const txt = Math.abs(below) < 0.05 ? 'At Full Pool'
+                : below > 0 ? `${below.toFixed(2)} ft Drawdown`
+                            : `+${Math.abs(below).toFixed(2)} ft Above Full Pool`;
+      return `<span style="display:inline-block;margin-left:8px;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:700;background:${good ? '#e8f5e9;color:#2e7d32' : '#ffebee;color:#c62828'}">${txt}</span>`;
+    })()
   }</td></tr>` : '')}
   ${p.meta.weather?`<tr><td>Air Temp / Wind Forecast</td><td>${esc(p.meta.weather)}</td></tr>`:''}
 </table>
@@ -1953,8 +1995,10 @@ export function planWaterKey(v){
   return resolveR2Key(v || '');
 }
 export function getPlanRiverDef(v){ const key=String(v||'').replace(/^river:/,''); return PLAN_RIVERS.find(r=>r.key===key||r.worker===key); }
-function isDukePlanLakeName(v){ const clean=String(v||'').split(',')[0].trim().toLowerCase(); return ['lake wateree','lake wylie','lake norman','lake keowee','lake jocassee','lake hickory','lake james','lake rhodhiss','mountain island'].some(k=>clean.includes(k)||k.includes(clean)); }
-function getPlanLakeLevelUnit(){ return isDukePlanLakeName(document.getElementById('planLake')?.value) ? '% full pond' : 'ft'; }
+// isDukePlanLakeName() and getPlanLakeLevelUnit() were here. They were the FOURTH copy of the
+// nine-name Duke list in this codebase, matched with `clean.includes(k)||k.includes(clean)` --
+// so "mountain island" also claimed anything containing it -- and what they decided was the
+// UNIT the whole plan rendered in. Levels are feet on every lake now, from /conditions.
 function getPlanRiverRamps(def){
   if(!def) return [];
   if(def.fishingSystem && typeof window.getFishingRamps === 'function'){
