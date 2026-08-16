@@ -225,3 +225,28 @@ test('nothing to say is idle, and an error is bad — they look different', () =
   assert.equal(empty.tone, 'idle');
   assert.match(empty.text, /no source publishes/);
 });
+
+test('the resolved water_temp wins, and a tailrace reading is still marked', () => {
+  // NWPS publishes no temperature, so Wateree's pool gauge can never answer this. The Worker
+  // resolves it from the nearest USGS site that reports 00010 — for Wateree that is
+  // "LAKE WATEREE TAILRACE ABOVE CAMDEN", which is below the dam and must say so.
+  const c = readConditions({ slug: 'wateree_lake', water: {
+    display_name: 'Wateree Lake (Kershaw Co, SC)', feature_type: 'lake',
+    chart_datum: { level_ft: 223.5, full_pool_ft: 225.5, below_full_pool_ft: 2, source: 'Duke Energy' },
+    pool: { lid: 'WATS1', name: 'Wateree River at Lake Wateree Dam', stage: 223.5 },
+    water_temp: { c: 29.4, f: 84.9, usgs_site: '02147801',
+                  name: 'LAKE WATEREE TAILRACE ABOVE CAMDEN, SC', role: 'gauge', below_dam: true },
+  } });
+  assert.equal(c.waterTempF, 84.9);
+  assert.equal(c.waterTempFrom, 'tailwater', 'below the dam is not the lake');
+  assert.equal(c.waterTempSite, '02147801');
+  assert.match(conditionsStrip(c).text, /84\.9°F\*/);
+});
+
+test('an on-lake reading is not marked as a tailrace one', () => {
+  const c = readConditions({ slug: 's', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 1 },
+    water_temp: { c: 26, f: 78.8, usgs_site: '123', name: 'Mid-lake', role: 'pool', below_dam: false } } });
+  assert.equal(c.waterTempFrom, 'pool');
+  assert.ok(!/°F\*/.test(conditionsStrip(c).text));
+});

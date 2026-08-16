@@ -515,9 +515,12 @@ async function nwpsGauge(lid, role, bound, lat, lon) {
  * which is the objection this file already raises against re-fetching the NWM reach. So this
  * wraps it and shapes the result like `nwpsGauge`'s; it does not re-derive it.
  */
+// One parameter list, one cache key, so the temperature lookup below and the gauge read above
+// share a single request per site rather than issuing two that can disagree.
+const USGS_PARMS = '00062,62614,62615,00065,00060,00010';
+
 async function usgsSite(site, role, bound, lat, lon) {
-  const u = await cached(`usgs:${site}`, TTL.gauge,
-    () => fetchUsgs(site, '00062,62614,62615,00065,00060,00010'));
+  const u = await cached(`usgs:${site}`, TTL.gauge, () => fetchUsgs(site, USGS_PARMS));
   const elev = Number.isFinite(u.elevation) ? u.elevation
              : (Number.isFinite(u.elevationNavd88) ? u.elevationNavd88 : null);
   const stage = Number.isFinite(u.gageHeight) ? u.gageHeight : null;
@@ -1060,6 +1063,73 @@ export function dukeBasinFor(name) {
   return row && row.dukeBasinId ? row.dukeBasinId : null;
 }
 
+/**
+ * WATER TEMPERATURE IS ITS OWN LOOKUP, not a byproduct of whichever gauge answered the level.
+ *
+ * Ryan, 2026-08-16: *"the only thing the topbar is missing for wateree now is the temperature...
+ * if the noaa gauges do not have it you can pull it from the usgs one from the tailrace... i
+ * think that is what we were doing before."* He is right on both counts.
+ *
+ * NWPS PUBLISHES NO TEMPERATURE AT ALL. `nwpsGauge` has no such field, and Wateree's pool is
+ * NWPS lid WATS1, so the lake's own gauge can never answer this. The old code got it from
+ * `UTILITY_FEEDS[lake].usgsId` — a seven-lake hand table whose whole purpose, per its own
+ * comment, was "the river gauge BELOW the dam, used ONLY for water temperature fallback."
+ *
+ * So this does the same thing over the BINDING instead of over seven names: every USGS site the
+ * water knows about, nearest first, until one reports 00010. Wateree Lake reaches
+ * 02147801 "LAKE WATEREE TAILRACE ABOVE CAMDEN"; Wateree River reaches the same site, which is
+ * why both were blank.
+ *
+ * `usgsSite()` cannot be reused for this: it THROWS when a site has neither a level nor a flow,
+ * so a temperature-only site never contributes one.
+ *
+ * WHERE IT CAME FROM TRAVELS WITH IT. A tailrace reading is the river below the dam, not the
+ * lake, and on a generating day they are not the same water. `below_dam` says so and the strip
+ * marks it.
+ */
+export function usgsSitesFor(b, lat, lon) {
+  const seen = new Set();
+  const out = [];
+  const add = (g, role) => {
+    const site = g && g.usgs_site;
+    if (!site || seen.has(site)) return;
+    seen.add(site);
+    out.push({
+      site,
+      name: g.name || null,
+      role,
+      km: (Number.isFinite(g.lat) && Number.isFinite(g.lon)) ? kmBetween(lat, lon, g.lat, g.lon) : Infinity,
+      below_dam: role === 'tailwater' || /tailrace|tailwater|below\b/i.test(String(g.name || '')),
+    });
+  };
+  add(b.pool, 'pool');
+  add(b.tailwater, 'tailwater');
+  for (const g of b.gauges || []) add(g, 'gauge');
+  // Nearest first, but a site on the lake itself beats a nearer one below the dam.
+  return out.sort((x, y) => (x.below_dam - y.below_dam) || (x.km - y.km));
+}
+
+async function waterTemp(b, lat, lon, already) {
+  if (already && Number.isFinite(already.c)) return already;
+  for (const s of usgsSitesFor(b, lat, lon).slice(0, 4)) {
+    let u = null;
+    try { u = await cached(`usgs:${s.site}`, TTL.gauge, () => fetchUsgs(s.site, USGS_PARMS)); }
+    catch (_) { continue; }
+    if (!u || !Number.isFinite(u.tempC)) continue;
+    return {
+      c: round2(u.tempC),
+      f: round1(u.tempC * 9 / 5 + 32),
+      usgs_site: s.site,
+      name: s.name,
+      role: s.role,
+      below_dam: s.below_dam,
+      km_from_point: Number.isFinite(s.km) ? round1(s.km) : null,
+      source: 'USGS — parameter 00010',
+    };
+  }
+  return null;
+}
+
 async function waterBlock(b, lat, lon) {
   const picks = [];
   if (gaugeId(b.pool)) picks.push(['pool', b.pool]);
@@ -1127,6 +1197,17 @@ async function waterBlock(b, lat, lon) {
   const basin = dukeBasinFor(b.display_name || b.slug);
   const dukeSched = basin ? await fetchDukeFlowArrivals(basin).catch(() => null) : null;
   out.releases = releaseShape({ duke: dukeSched, tva: out.tva, operator: out.operator });
+
+  // One resolved temperature rather than three places a caller has to look. Seeded with whatever
+  // a gauge read already produced, so the common case costs no extra request.
+  const seeded = ['pool', 'tailwater', 'gauge']
+    .map((role) => (out[role] && Number.isFinite(out[role].water_temp_c))
+      ? { c: out[role].water_temp_c, f: round1(out[role].water_temp_c * 9 / 5 + 32),
+          usgs_site: out[role].usgs_site || null, name: out[role].name || null, role,
+          below_dam: role === 'tailwater', km_from_point: null, source: 'USGS — parameter 00010' }
+      : null)
+    .find(Boolean) || null;
+  out.water_temp = await waterTemp(b, lat, lon, seeded).catch(() => seeded);
   // Whether `tide: null` on this response is a FACT or a GAP. An inland lake has no tide and
   // that is the right answer; a coastal zone with no station bound is a hole in the registry.
   out.tidal = !!(b.tides || []).length;

@@ -142,3 +142,47 @@ test('only the two rivers with a measured centerline have a Duke basin', () => {
   assert.equal(dukeBasinFor(''), null);
   assert.equal(dukeBasinFor(null), null);
 });
+
+// ── which USGS sites a water can ask for a temperature ──────────────────────────────────────
+import { usgsSitesFor } from '../Worker/conditions.js';
+
+const WATEREE = {
+  slug: 'wateree_lake',
+  pool: { lid: 'WATS1', name: 'Wateree River at Lake Wateree Dam', lat: 34.3347, lon: -80.7031 },
+  tailwater: null,
+  gauges: [
+    { lid: 'CDCS1', usgs_site: null, name: 'Catawba River at Cedar Creek Reservoir' },
+    { lid: null, usgs_site: '02147801', name: 'LAKE WATEREE TAILRACE ABOVE CAMDEN, SC', lat: 34.30, lon: -80.66 },
+  ],
+};
+
+test('a gauge with no USGS site cannot answer for temperature', () => {
+  // Wateree's pool is an NWPS lid and NWPS publishes no temperature at all, which is why the
+  // strip was blank on both Wateree Lake and Wateree River.
+  const sites = usgsSitesFor(WATEREE, 34.41, -80.86);
+  assert.deepEqual(sites.map((s) => s.site), ['02147801']);
+});
+
+test('the tailrace is recognised as below the dam', () => {
+  const [s] = usgsSitesFor(WATEREE, 34.41, -80.86);
+  assert.equal(s.below_dam, true, 'a tailrace reading is the river, not the lake');
+  assert.equal(s.role, 'gauge');
+});
+
+test('a site ON the lake outranks a nearer one below the dam', () => {
+  const b = { pool: { usgs_site: '111', name: 'Mid-lake', lat: 34.0, lon: -81.0 },
+              gauges: [{ usgs_site: '222', name: 'TAILRACE below dam', lat: 34.001, lon: -81.001 }] };
+  assert.deepEqual(usgsSitesFor(b, 34.0, -81.0).map((s) => s.site), ['111', '222']);
+});
+
+test('the same site listed twice is one site', () => {
+  const b = { pool: { usgs_site: '02147801', name: 'A' },
+              tailwater: { usgs_site: '02147801', name: 'B' },
+              gauges: [{ usgs_site: '02147801', name: 'C' }] };
+  assert.equal(usgsSitesFor(b, 34, -81).length, 1);
+});
+
+test('a water with no USGS site anywhere returns an empty list, not a throw', () => {
+  assert.deepEqual(usgsSitesFor({ pool: { lid: 'X' }, gauges: [] }, 34, -81), []);
+  assert.deepEqual(usgsSitesFor({}, 34, -81), []);
+});

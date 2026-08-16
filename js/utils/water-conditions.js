@@ -93,6 +93,7 @@ export function readConditions(j) {
     waterTempF: null,
     waterTempFrom: null,
     waterTempGauge: null,
+    waterTempSite: null,
     usaceTargetFt: null,
     usaceProject: null,
     flowCfs: null,
@@ -140,10 +141,22 @@ export function readConditions(j) {
     if (w.operator.url) out.levelUrl = w.operator.url;
   }
 
-  const t = pickWaterTemp(w);
-  out.waterTempF = t.f;
-  out.waterTempFrom = t.from;
-  out.waterTempGauge = t.name;
+  // `water.water_temp` is the RESOLVED answer: the Worker searches every USGS site the binding
+  // knows, nearest first, because NWPS publishes no temperature at all and a lake whose pool
+  // gauge is an NWPS lid can never answer this from its own gauge. Wateree is exactly that.
+  // pickWaterTemp() stays as the fallback for a response from before that field existed.
+  const wt = w.water_temp || null;
+  if (wt && Number.isFinite(wt.f)) {
+    out.waterTempF = wt.f;
+    out.waterTempFrom = wt.below_dam ? 'tailwater' : (wt.role || 'gauge');
+    out.waterTempGauge = wt.name || null;
+    out.waterTempSite = wt.usgs_site || null;
+  } else {
+    const t = pickWaterTemp(w);
+    out.waterTempF = t.f;
+    out.waterTempFrom = t.from;
+    out.waterTempGauge = t.name;
+  }
 
   // REPORTED, NEVER SUBTRACTED. The Corps publishes what the lake is SUPPOSED to be at today;
   // turning that into a drawdown needs an elevation from a gauge whose vertical datum is not
