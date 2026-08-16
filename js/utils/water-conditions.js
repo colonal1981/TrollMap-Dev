@@ -132,6 +132,11 @@ export function readConditions(j) {
     saltBasis: null,
     saltGauge: null,
     tidalFlowCfs: null,
+    trend24h: null,
+    trend7d: null,
+    trendUnits: null,
+    trendMeasures: null,
+    trendCoversHours: null,
     featureType: null,
     pending: null,
     error: null,
@@ -291,6 +296,17 @@ export function readConditions(j) {
   // twice a day and its instantaneous value answers nothing.
   if (w.tidal_flow && Number.isFinite(w.tidal_flow.cfs)) out.tidalFlowCfs = w.tidal_flow.cfs;
 
+  // A level is a point; a trip is a decision. Two feet down and steady is a different lake from
+  // two feet down and falling.
+  const tr = w.trend || null;
+  if (tr) {
+    if (Number.isFinite(tr.change_24h)) out.trend24h = tr.change_24h;
+    if (Number.isFinite(tr.change_7d)) out.trend7d = tr.change_7d;
+    out.trendUnits = tr.units || null;
+    out.trendMeasures = tr.measures || null;
+    out.trendCoversHours = Number.isFinite(tr.covers_hours) ? tr.covers_hours : null;
+  }
+
   out.releases = w.releases || null;
   // A projection that was REJECTED and one that was never available are different facts, and
   // only the first one names a table entry that needs fixing. It reaches the card so a wrong
@@ -435,6 +451,13 @@ export function conditionsStrip(c) {
     bits.push(`${c.levelFt.toFixed(2)} ft`);
   }
 
+  // The arrow is the whole point of the trend on a single line. A flat 24 h says "steady",
+  // which is an answer, not a gap.
+  if (c.trend24h != null) {
+    const d = c.trend24h;
+    bits.push(Math.abs(d) < 0.01 ? 'steady 24h'
+      : `${d > 0 ? '↑' : '↓'}${Math.abs(d).toFixed(2)}${c.trendUnits ? ` ${c.trendUnits}` : ''}/24h`);
+  }
   if (c.waterTempF != null) {
     // A tailwater temperature is the river below the dam. One character rather than silence.
     bits.push(`${c.waterTempF}°F${c.waterTempFrom === 'tailwater' ? '*' : ''}`);

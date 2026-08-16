@@ -527,3 +527,25 @@ test('no salt reading is silence — absence is not fresh water', () => {
   assert.equal(c.saltBasis, null);
   assert.ok(!/ppt|µS/.test(conditionsStrip(c).text));
 });
+
+test('the trend reaches the strip as an arrow, and steady says steady', () => {
+  const falling = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 2, level_ft: 223.5 },
+    trend: { latest: 223.5, change_24h: -0.42, change_7d: -1.9, units: 'ft',
+             measures: 'Pool Elevation', covers_hours: 720 } } });
+  assert.equal(falling.trend24h, -0.42);
+  assert.match(conditionsStrip(falling).text, /↓0\.42 ft\/24h/);
+
+  const steady = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 2 },
+    trend: { change_24h: 0, change_7d: 0.1, units: 'ft' } } });
+  assert.match(conditionsStrip(steady).text, /steady 24h/);
+});
+
+test('a trend the series cannot support does not reach the strip at all', () => {
+  const c = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 2 },
+    trend: { change_24h: null, change_7d: null, units: 'ft', covers_hours: 6 } } });
+  assert.equal(c.trend24h, null);
+  assert.ok(!/24h/.test(conditionsStrip(c).text));
+});

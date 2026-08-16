@@ -1247,6 +1247,75 @@ async function waterProbe(b, lat, lon, seededTemp) {
   return out;
 }
 
+/**
+ * WHICH WAY THE WATER HAS BEEN GOING, from `/gauges/{lid}/stageflow`.
+ *
+ * A level is a point and a trip is a decision. Two feet below full pool and steady is a
+ * different lake from two feet below and falling half a foot a week, and until now the app had
+ * no way to tell them apart. `plan-builder.js` has carried a `riverRise` field with nothing
+ * feeding it.
+ *
+ * Verified against CMDS1, CFMS1 and WATS1 on 2026-08-16. The payload carries roughly a month of
+ * observations plus its OWN unit labels — `primaryName`/`primaryUnits` and the secondary pair —
+ * so nothing here has to assume feet or kcfs.
+ *
+ * -999 IS A SENTINEL, NOT A READING. Both river gauges returned `secondary: -999` on every
+ * point. It is the same shape as USGS's -999999, which `fetchUsgs` has filtered since it was
+ * audited, and reporting it would put a flow of minus nine hundred and ninety-nine on a river.
+ * Anything at or below -998 is dropped.
+ *
+ * NO FORECAST HERE. Only `observed` came back on all three gauges. The single forecast value on
+ * the base `/gauges/{lid}` response is still the only forecast this app has.
+ */
+export function stageflowTrend(j, nowMs) {
+  const src = (j && (j.observed || j)) || null;
+  const rows = (src && Array.isArray(src.data)) ? src.data : [];
+  const pts = [];
+  for (const r of rows) {
+    const t = Date.parse(r && r.validTime);
+    const v = Number(r && r.primary);
+    if (!Number.isFinite(t) || !Number.isFinite(v) || v <= -998) continue;
+    pts.push({ t, v });
+  }
+  if (pts.length < 2) return null;
+  pts.sort((a, b) => a.t - b.t);
+  const last = pts[pts.length - 1];
+
+  // The reading nearest to N hours before the latest one, and only if the series actually
+  // reaches back that far. Extrapolating a 24 h change out of 6 h of data is inventing a trend.
+  const back = (hours) => {
+    const want = last.t - hours * 3600 * 1000;
+    if (pts[0].t > want) return null;
+    let best = null;
+    for (const p of pts) {
+      if (best === null || Math.abs(p.t - want) < Math.abs(best.t - want)) best = p;
+    }
+    return best;
+  };
+  const delta = (hours) => {
+    const p = back(hours);
+    return p ? round2(last.v - p.v) : null;
+  };
+  return {
+    latest: round2(last.v),
+    at: new Date(last.t).toISOString(),
+    units: src.primaryUnits || null,
+    measures: src.primaryName || null,
+    change_24h: delta(24),
+    change_7d: delta(24 * 7),
+    points: pts.length,
+    covers_hours: Math.round((last.t - pts[0].t) / 3600000),
+    source: 'NOAA NWPS — /nwps/v1/gauges/{lid}/stageflow',
+  };
+}
+
+async function gaugeTrend(lid) {
+  if (!lid) return null;
+  const j = await cached(`sf:${lid}`, TTL.gauge,
+    () => getJson(`https://api.water.noaa.gov/nwps/v1/gauges/${encodeURIComponent(lid)}/stageflow`));
+  return stageflowTrend(j, Date.now());
+}
+
 async function waterBlock(b, lat, lon) {
   const picks = [];
   if (gaugeId(b.pool)) picks.push(['pool', b.pool]);
@@ -1340,6 +1409,14 @@ async function waterBlock(b, lat, lon) {
           below_dam: role === 'tailwater', km_from_point: null, source: 'USGS — parameter 00010' }
       : null)
     .find(Boolean) || null;
+  // ONE gauge, not three. The series is a month long and this Worker has a 10 ms CPU ceiling on
+  // the free plan; parsing three of them per request is how the research routes started dying.
+  // The pool is the water you launch onto, so it is the one that gets the trend.
+  const trendLid = (b.pool && b.pool.lid)
+                || (picks.find(([role]) => role === 'gauge') || [])[1]?.lid
+                || (b.tailwater && b.tailwater.lid) || null;
+  out.trend = await gaugeTrend(trendLid).catch(() => null);
+
   const probe = await waterProbe(b, lat, lon, seeded).catch(() => ({ temp: seeded }));
   out.water_temp = probe.temp || null;
   // A MEASURED clarity number, where one exists. `clarity` on this response is a rainfall model

@@ -156,6 +156,15 @@ function cardHtml(rec, c) {
         : c.waterTempGauge ? `<span class="cond-sub"> (${esc(c.waterTempGauge)})</span>` : '')));
   }
 
+  if (c.trend24h != null || c.trend7d != null) {
+    const fmt = (d) => d == null ? '—'
+      : Math.abs(d) < 0.01 ? 'no change'
+      : `${d > 0 ? '+' : '−'}${Math.abs(d).toFixed(2)}${c.trendUnits ? ` ${esc(c.trendUnits)}` : ''}`;
+    out.push(row('Trend', `24 h ${fmt(c.trend24h)} · 7 d ${fmt(c.trend7d)}`
+      + `<span class="cond-sub"> — ${esc(c.trendMeasures || 'gauge reading')}, NWPS observed series`
+      + `${c.trendCoversHours ? ` covering ${Math.round(c.trendCoversHours / 24)} days` : ''}. `
+      + `A dash means the series does not reach back that far.</span>`));
+  }
   if (c.turbidityFnu != null) {
     out.push(row('Turbidity', `${c.turbidityFnu} FNU`
       + `<span class="cond-sub"> — MEASURED, USGS 63680${c.turbidityGauge ? ` (${esc(c.turbidityGauge)})` : ''}</span>`));
