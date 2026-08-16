@@ -680,6 +680,194 @@ function readGauge(g, role, lat, lon) {
  * is what you launch onto and the tailwater is what the release is doing, and collapsing them
  * into one "level" throws away the half that decides whether the fish are moving.
  */
+/* ══ USACE ═══════════════════════════════════════════════════════════════════════════════════
+ *
+ * https://cwms-data.usace.army.mil/cwms-data/levels — public, no key, no login.
+ *
+ * WHAT THIS ANSWERS is the one thing NWPS never does for a Corps lake: what elevation the lake
+ * is SUPPOSED to be at today. `Top of Conservation` is the summer/winter pool target, and like
+ * TVA's guide curve it is a SEASONAL CURVE, not a constant -- Hartwell runs 656 in winter and
+ * 660 from April to mid-October. That 660 is the number hand-typed into worker-data.js, and it
+ * no longer has to be.
+ *
+ * THE MASK RETURNS TURBINES AS WELL AS LAKES. Alongside `Hartwell` the bindings carry `HDam`,
+ * `HartwellPowerhouse`, `Hartwell-Powerhouse`, `Hartwell-Unit1` and the bare USGS site number
+ * `02187010`; Thurmond adds `Thurmond_Basin`, `Thurmond-O2System-Line3` and `Thurmond-Line1`.
+ * Guessing which is the project is how a lake ends up reporting a generator's elevation, so it
+ * is not guessed: one call per district returns EVERY location that has a Top of Conservation
+ * at all, and the candidate is chosen from that roster. Measured 2026-08-16, the whole Savannah
+ * district returns four -- Hartwell, NSBLD, Russell, Thurmond.
+ *
+ * TWO FIELDS DISAGREE WITH THEMSELVES AND ARE REPORTED RATHER THAN SMOOTHED:
+ *
+ *   Thurmond's Top of Conservation carries `interval-months: 13` while its seasonal offsets
+ *   span 0..12. Read strictly, a 13-month cycle since a 1953 origin would put summer pool
+ *   somewhere random in the calendar, and Thurmond's summer pool is 330 every year. It is
+ *   evaluated annually and the anomaly travels with the answer.
+ *
+ *   Hartwell says `interpolate-string: "T"`; Thurmond says nothing at all. A value invented
+ *   between two published set points is a derived number wearing a fact's clothes, so when the
+ *   flag is absent the previous set point is HELD, and `interpolated` says which happened.
+ */
+const CWMS = 'https://cwms-data.usace.army.mil/cwms-data';
+const TOP_OF_CONSERVATION = 'Top of Conservation';
+
+// A location that is a generator, a valve, a line, a gate or a gauge -- not the reservoir.
+const NOT_A_PROJECT = /(?:^\d+$)|(?:-(?:unit|line)\s*\d*)|powerhouse|o2system|gate|spillway|_basin\b|\bblw\b|\bbelow\b/i;
+
+/** The project segment of a dotted location-level-id: "Hartwell.Elev.Inst.0.Top of ..." */
+export function usaceProjectOf(levelId) {
+  const s = String(levelId || '');
+  const i = s.indexOf('.');
+  return i > 0 ? s.slice(0, i) : null;
+}
+
+/**
+ * Which of a binding's CWMS candidates is the reservoir. `roster` is the set of project names
+ * the district actually publishes a conservation pool for, so this never invents one.
+ */
+export function usacePickProject(candidates, roster) {
+  const ok = (candidates || [])
+    .map((c) => c && c.cwms_name)
+    .filter((n) => n && !NOT_A_PROJECT.test(n) && roster.has(n));
+  if (!ok.length) return null;
+  // Shortest wins: "Hartwell" over "HartwellPowerhouse" if both somehow survived the filter.
+  return ok.sort((a, b) => a.length - b.length || a.localeCompare(b))[0];
+}
+
+/**
+ * A CWMS seasonal level, evaluated for one instant. Pure -- `nowMs` is passed, never read.
+ *
+ * Offsets are months-and-minutes from the interval origin's anniversary. 20160 minutes is
+ * exactly 14 days, which is how Hartwell's "October 15" is expressed as month 9 + 20160.
+ */
+export function usaceSeasonalValue(level, nowMs) {
+  if (!level) return null;
+  const vals = level['seasonal-values'];
+  if (!Array.isArray(vals) || !vals.length) {
+    const c = Number(level['constant-value']);
+    return Number.isFinite(c) ? { value: c, seasonal: false, interpolated: false } : null;
+  }
+  const originMs = Date.parse(level['interval-origin'] || '');
+  if (!Number.isFinite(originMs)) return null;
+  const o = new Date(originMs);
+  const yearNow = new Date(nowMs).getUTCFullYear();
+
+  // Three cycles so a point before the first offset or after the last still has a bracket.
+  const pts = [];
+  for (const yr of [-1, 0, 1]) {
+    for (const v of vals) {
+      const base = Date.UTC(yearNow + yr, o.getUTCMonth() + Number(v['offset-months'] || 0),
+        o.getUTCDate(), o.getUTCHours(), o.getUTCMinutes());
+      pts.push({ t: base + Number(v['offset-minutes'] || 0) * 60000, value: Number(v.value) });
+    }
+  }
+  pts.sort((a, b) => a.t - b.t);
+
+  let prev = null; let next = null;
+  for (const p of pts) {
+    if (p.t <= nowMs) prev = p;
+    else { next = p; break; }
+  }
+  if (!prev) return null;
+
+  const linear = String(level['interpolate-string'] || '').toUpperCase() === 'T';
+  let value = prev.value;
+  let interpolated = false;
+  if (linear && next && next.t > prev.t && next.value !== prev.value) {
+    const f = (nowMs - prev.t) / (next.t - prev.t);
+    value = prev.value + (next.value - prev.value) * f;
+    interpolated = true;
+  }
+  const months = Number(level['interval-months']);
+  return {
+    value: Math.round(value * 100) / 100,
+    seasonal: true,
+    interpolated,
+    prev: { value: prev.value, at: new Date(prev.t).toISOString() },
+    next: next ? { value: next.value, at: new Date(next.t).toISOString() } : null,
+    // Said, not smoothed. Both of these are real in the live feed.
+    caution: [
+      Number.isFinite(months) && months !== 12
+        ? `USACE publishes interval-months ${months} on this level while its offsets span a year; evaluated annually`
+        : null,
+      linear ? null : 'no interpolate flag published — the previous set point is held, not interpolated',
+    ].filter(Boolean).join('; ') || null,
+  };
+}
+
+/** Every level for one project, shaped. Pure. */
+export function usaceShape(levels, project, nowMs) {
+  const mine = (levels || []).filter((l) => usaceProjectOf(l['location-level-id']) === project);
+  if (!mine.length) return null;
+  const by = (id) => mine.find((l) => l['specified-level-id'] === id) || null;
+  const pool = usaceSeasonalValue(by(TOP_OF_CONSERVATION), nowMs);
+  const floor = usaceSeasonalValue(by('Bottom of Conservation'), nowMs);
+  const drought = ['Drought Level 1', 'Drought Level 2', 'Drought Level 3']
+    .map((id) => {
+      const l = by(id);
+      const v = usaceSeasonalValue(l, nowMs);
+      return v ? { level: id, ft: v.value, comment: (l['level-comment'] || '').replace(/\s+/g, ' ').trim() || null } : null;
+    })
+    .filter(Boolean);
+  return {
+    project,
+    office: mine[0]['office-id'] || null,
+    // The target elevation for TODAY, which is the whole point -- a Corps lake has no single
+    // "full pool" and publishing one would be wrong for half the year.
+    conservation_pool_ft: pool ? pool.value : null,
+    conservation_pool: pool,
+    bottom_of_conservation_ft: floor ? floor.value : null,
+    drought_levels: drought,
+    levels_published: mine.map((l) => l['specified-level-id']).filter(Boolean).sort(),
+    source: `${CWMS}/levels?office=${mine[0]['office-id']}&level-id-mask=${project}.Elev.*`,
+  };
+}
+
+async function cwmsJson(url) {
+  const r = await fetch(url, { headers: { Accept: 'application/json' } });
+  if (!r.ok) throw new Error(`cwms ${r.status}`);
+  return r.json();
+}
+
+// One roster per district per isolate. Savannah's is four entries.
+const _roster = new Map();
+async function usaceRoster(office) {
+  if (_roster.has(office)) return _roster.get(office);
+  const url = `${CWMS}/levels?office=${encodeURIComponent(office)}`
+    + `&level-id-mask=${encodeURIComponent(`*.Elev.Inst.*.${TOP_OF_CONSERVATION}`)}&unit=EN&page-size=500`;
+  const set = new Set();
+  try {
+    const j = await cwmsJson(url);
+    for (const l of (j && j.levels) || []) {
+      const p = usaceProjectOf(l['location-level-id']);
+      if (p) set.add(p);
+    }
+  } catch (_) { /* an unreachable district is not a project that publishes nothing */ }
+  _roster.set(office, set);
+  return set;
+}
+
+/** The Corps' own answer for one water, or null. `candidates` is the binding's usace[]. */
+async function usaceLevels(candidates, nowMs) {
+  const list = (candidates || []).filter((c) => c && c.office && c.cwms_name);
+  if (!list.length) return null;
+  for (const office of [...new Set(list.map((c) => c.office))]) {
+    const roster = await usaceRoster(office);
+    if (!roster.size) continue;
+    const project = usacePickProject(list.filter((c) => c.office === office), roster);
+    if (!project) continue;
+    const url = `${CWMS}/levels?office=${encodeURIComponent(office)}`
+      + `&level-id-mask=${encodeURIComponent(`${project}.Elev.*`)}&unit=EN&page-size=100`;
+    try {
+      const j = await cwmsJson(url);
+      const shaped = usaceShape((j && j.levels) || [], project, nowMs);
+      if (shaped) return shaped;
+    } catch (_) { /* try the next district */ }
+  }
+  return null;
+}
+
 async function waterBlock(b, lat, lon) {
   const picks = [];
   if (gaugeId(b.pool)) picks.push(['pool', b.pool]);
@@ -731,6 +919,12 @@ async function waterBlock(b, lat, lon) {
   } else {
     out.tva = null;
   }
+
+  // The Corps publishes a target, not a reading: what this lake is SUPPOSED to be at today.
+  // Null here means the district publishes no conservation pool for it, which is a different
+  // answer from "we did not look" -- `usace_candidates` says whether there was anything to try.
+  out.usace = await usaceLevels(b.usace, Date.now()).catch(() => null);
+  out.usace_candidates = (b.usace || []).length;
   // Whether `tide: null` on this response is a FACT or a GAP. An inland lake has no tide and
   // that is the right answer; a coastal zone with no station bound is a hole in the registry.
   out.tidal = !!(b.tides || []).length;
