@@ -12,6 +12,7 @@ import { handleGisRoute, flagIsYes, hasText, ARCGIS_BUILD } from './core/arcgis.
 import { handleWaterRoute } from './water.js';
 import { handleConditions } from './conditions.js';
 import { handleCameras } from './cameras.js';
+import { handleReports } from './reports.js';
 import { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
 
 
@@ -1751,6 +1752,11 @@ var trollmap_worker_default = {
       // into js/data/cameras.js at build time -- this serves only the CURRENT FRAME.
       const camRes = await handleCameras(request, env, url);
       if (camRes) return camRes;
+      // Recent fishing reports for one water. Same null-when-not-ours contract. Nothing here
+      // goes to an LLM -- Ryan, 2026-08-15: "this doesn't need to go to the llm for anything
+      // maybe just to me in the trip html report".
+      const repRes = await handleReports(request, env, url);
+      if (repRes) return repRes;
 
       if (path === "/chartpacks/lake-boundary" && request.method === "GET") {
         const lakeName = url.searchParams.get("lake") || "";

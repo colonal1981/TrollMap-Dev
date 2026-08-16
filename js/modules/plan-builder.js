@@ -10,7 +10,7 @@
 
 import { state } from "../core/state.js";
 import { esc } from "../utils/escape.js";
-import { lakeDbEntryFor, lakeNamesForPicker } from "../data/lake-registry.js";
+import { lakeDbEntryFor, lakeNamesForPicker, lakeRecordFor } from "../data/lake-registry.js";
 import { renderSpread } from "./spread-builder.js";
 import { newRodRow } from "../utils/rod-row.js";
 import { getFilename, setFilename } from "../core/map-init.js";
@@ -926,6 +926,7 @@ export async function buildPlanPreviewHtml(p){
   let pressureHtml = '', windHtml = '', uvHtml = '', solunarAutoRows = '';
   let moonPhase = '', moonIllum = 0;
   let damHtml = '', tidesHtml = '', usgsHtml = '';
+  let reportsHtml = '';
   const lake = p.meta.waterbodyLabel || p.meta.lake || '';
   const cleanLake = lake.split(',')[0].trim();
   // Substring-matched against LAKE_DB's keys before this. `cleanLake.includes(k)` matches on
@@ -1147,6 +1148,71 @@ export async function buildPlanPreviewHtml(p){
           Low tide slack = popping cork over deeper holes ·
           Mullet pattern in fall — gold spoon or paddle tail in chartreuse/copper
         </div>`;
+    }
+
+    // ── Module F — Recent fishing reports, verbatim ───────────────────────────
+    //
+    // Ryan, 2026-08-15: "maybe a way to just scan for updated guide reports during the
+    // planning... this doesn't need to go to the llm for anything maybe just to me in the trip
+    // html report". So nothing here is summarised or scored. What a person on the water wrote,
+    // the date they wrote it, and a link.
+    //
+    // The DATE IS PRINTED OR THE ITEM SAYS IT HAS NONE. AHQ states no date anywhere, so its
+    // text is boxed separately and labelled undated -- printing "3 days ago" on a page that
+    // says nothing about when would be a derived number wearing a fact's clothes, which is the
+    // mistake that produced a wrong Duke drawdown on 2026-08-10.
+    try {
+      const rec = lakeRecordFor(p.meta.waterbodyLabel || p.meta.lake || '') || lakeRecordFor(cleanLake);
+      if (rec) {
+        const worker = (typeof CF_WORKER_URL !== 'undefined' ? CF_WORKER_URL
+                        : (window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev'));
+        const names = [rec.name, rec.displayName, ...(rec.legacyDisplayNames || [])]
+          .filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
+        const rc = new AbortController();
+        const rt = setTimeout(() => rc.abort(), 9000);
+        const rr = await fetch(`${worker}/reports/${encodeURIComponent(rec.slug)}`
+          + `?names=${encodeURIComponent(names.join('|'))}&state=${encodeURIComponent(rec.state || '')}`,
+          { signal: rc.signal });
+        clearTimeout(rt);
+        const rd = await rr.json();
+        const rows = (rd.items || []).map((it) => {
+          const when = it.published
+            ? new Date(it.published).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+            : 'no date given';
+          const days = it.published
+            ? Math.floor((Date.now() - Date.parse(it.published)) / 86400000) : null;
+          const age = days == null ? '' : days === 0 ? ' · today' : ` · ${days} day${days === 1 ? '' : 's'} old`;
+          const body = it.description ? `<br><span class="rp-small">${esc(it.description)}</span>` : '';
+          const warn = it.caution ? `<br><span class="rp-small" style="color:#b3261e">⚠ ${esc(it.caution)}</span>` : '';
+          const where = it.matched_in === 'article'
+            ? '<span class="rp-small" style="color:#94a3b8"> · named in the post body, not the headline</span>' : '';
+          return `<tr><td style="white-space:nowrap">${esc(when)}<span class="rp-small">${esc(age)}</span></td>`
+               + `<td><b>${it.link ? `<a href="${esc(it.link)}" target="_blank" rel="noopener">${esc(it.title)}</a>` : esc(it.title)}</b>`
+               + `${where}${body}${warn}</td>`
+               + `<td class="rp-small">${esc(it.source || '')}</td></tr>`;
+        }).join('');
+        const undated = (rd.undated || []).map((u) => `<div class="rp-callout rp-info" style="margin-top:8px">`
+          + `<b>${esc(u.source || '')}</b> — <b style="color:#b06a00">no date published</b>. `
+          + `Treat as background, not as current.<br><span class="rp-small">${esc(u.text || '')}</span>`
+          + `${u.link ? `<br><a href="${esc(u.link)}" target="_blank" rel="noopener">${esc(u.link)}</a>` : ''}</div>`).join('');
+        // "Nobody looked" and "nothing to report" are different answers, and the report says which.
+        const checked = (rd.checked || []).length
+          ? `Checked ${esc((rd.checked || []).join(', '))}.` : 'No source was reachable.';
+        if (rows || undated) {
+          reportsHtml = `<h2>📰 Recent Fishing Reports — ${esc(rec.displayName || rec.name)}</h2>
+            <p class="rp-small">Verbatim from the source, newest first. Nothing here has been summarised or scored. ${checked}</p>
+            ${rows ? `<table><thead><tr style="background:#eef4fa"><th>Date</th><th>Report</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
+            ${undated}`;
+        } else {
+          reportsHtml = `<div class="rp-callout rp-info"><b>📰 Recent Fishing Reports</b><br>`
+            + `<span class="rp-small">Nothing published about this water. ${checked}</span></div>`;
+        }
+      }
+    } catch (err) {
+      // Distinguished on purpose: a failed lookup must not read as "no reports exist".
+      console.warn('[plan-builder] fishing reports unavailable:', err);
+      reportsHtml = `<div class="rp-callout rp-warn"><b>📰 Recent Fishing Reports</b><br>`
+        + `<span class="rp-small">Could not be checked — the report lookup failed. This is not the same as "no reports".</span></div>`;
     }
 
     // USGS — only temperature is reliable for most lakes.
@@ -1435,6 +1501,8 @@ ${p.meta.lakeIntel ? `<div class="rp-callout rp-info"><b>🧠 Lake Intelligence 
 ${p.meta.clarityIntel ? `<div class="rp-callout rp-warn"><b>🌦 Clarity & Runoff Intelligence</b><br>${esc(p.meta.clarityIntel).replace(/\n/g,'<br>')}</div>` : ''}
 
 ${tidesHtml}
+
+${reportsHtml}
 
 <div class="rp-callout ${goClass}" style="${goNoGo==='NO-GO'?'background:#fff0f0;border-left:5px solid #b3261e':''}">
   <b style="font-size:16px">${goNoGo==='GO'?'✅':goNoGo==='CAUTION'?'⚠':'🚫'} TRIP DECISION: ${goNoGo}</b><br>
