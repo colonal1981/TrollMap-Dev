@@ -6,6 +6,7 @@ import path from 'node:path';
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const JS_ROOT = path.join(REPO, 'js');
 const ENGINE = path.join(REPO, 'js/modules/lake-research-engine.js');
+const PACK_ADAPTER = path.join(REPO, 'js/utils/structure-markers.js');
 
 // ---------------------------------------------------------------------------
 // Why this test exists
@@ -87,20 +88,36 @@ describe('structuralElements: every key read is a key the engine writes', () => 
     expect(produced.size > 5).toBe(true);
   });
 
-  it('humps and ledges ship COORDINATES, not only prose', () => {
-    // Named explicitly because losing these is the exact regression above, and
-    // the generic check below would pass if both producer and consumer were
-    // deleted together.
-    expect(produced.has('humpCoordinates')).toBe(true);
-    expect(produced.has('ledgeCoordinates')).toBe(true);
+  // ── THE PRODUCER MOVED, 2026-08-16. THE GUARD MOVES WITH IT. ──────────────
+  //
+  // This suite was written on 08-07 because the coordinates were dropped from the profile and
+  // both consumers failed soft. They are now deliberately NOT in the profile: structure.geojson
+  // is served from the pack, uncapped, because humps are SmartPlan's casting stops and a
+  // research document is the wrong place to ration them. Ryan, 2026-08-16: "how can i do all
+  // casting stops instead of trolling lanes if i want to if you cap everything out
+  // arbitrarily."
+  //
+  // So the assertion is not deleted, it is repointed. Losing the coordinates is still the
+  // regression this suite exists to catch; the file that must produce them is now the adapter.
+  it('humps and ledges ship COORDINATES, from the pack adapter', () => {
+    const adapter = readFileSync(PACK_ADAPTER, 'utf8');
+    expect(/export function humpsFromPack/.test(adapter)).toBe(true);
+    expect(/export function ledgesFromPack/.test(adapter)).toBe(true);
+    // and both consumers must go through it rather than reading the profile directly
+    for (const rel of ['js/modules/supplemental-layers.js', 'js/modules/smart-plan.js']) {
+      const src = readFileSync(path.join(REPO, rel), 'utf8');
+      expect(/structure-markers\.js/.test(src) ? 'ok' : `${rel} does not use the adapter`).toBe('ok');
+    }
   });
 
   it('coordinate entries carry lat and lon', () => {
-    const block = engineSrc.slice(
-      engineSrc.indexOf('out.humpCoordinates'),
-      engineSrc.indexOf('return out;', engineSrc.indexOf('out.humpCoordinates'))
-    );
-    expect(/lat:/.test(block) && /lon:/.test(block)).toBe(true);
+    const adapter = readFileSync(PACK_ADAPTER, 'utf8');
+    expect(/lat:/.test(adapter) && /lon:/.test(adapter)).toBe(true);
+  });
+
+  it('the profile still says HOW MANY, which is what a research document is for', () => {
+    expect(produced.has('humpCount')).toBe(true);
+    expect(produced.has('ledgeCount')).toBe(true);
   });
 
   for (const file of jsFiles(JS_ROOT)) {
@@ -110,8 +127,12 @@ describe('structuralElements: every key read is a key the engine writes', () => 
     if (!source.includes('structuralElements')) continue;
 
     it(`${rel} reads only keys the engine can write`, () => {
+      // Read off profiles SAVED BEFORE 2026-08-16, when the engine still wrote them. The
+      // adapter's fallback exists for those and for the 43 packs with no structure layer, so
+      // these two are legitimately consumed by a producer that is no longer the engine.
+      const LEGACY_PROFILE_KEYS = new Set(['humpCoordinates', 'ledgeCoordinates']);
       const missing = consumedKeys(source)
-        .filter(h => !produced.has(h.key))
+        .filter(h => !produced.has(h.key) && !LEGACY_PROFILE_KEYS.has(h.key))
         .map(h => `${h.via}.${h.key}`);
       const unique = [...new Set(missing)];
       expect(unique.length === 0 ? 'ok' : `not produced: ${unique.join(', ')}`).toBe('ok');
