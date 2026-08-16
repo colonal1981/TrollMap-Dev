@@ -1,6 +1,6 @@
 // research/deterministic.js — split from worker-research.js (behavior-preserving)
 import { JSON_HEADERS, r2Text } from '../worker-core.js';
-import { researchStorageId } from './keys.js';
+import { researchStorageId, resolveResearchStorageId } from './keys.js';
 import { buildEvidence, buildFactualSummary, getAttractorFacts, getRampSpeciesFacts, uniqueResearchSpecies } from './facts-util.js';
 
 async function handleResearchDeterministicFacts(request, env) {
@@ -160,9 +160,14 @@ async function handleResearchGetNormalized(env, lakeName) {
     'lake_russell_ga':        'lake_russell_sc',
     'lake_russell_sc_ga':     'lake_russell_sc',
   };
-  let safe = researchStorageId(lakeName);
+  // LEGACY_PROFILE_KEYS above is a third copy of the same alias idea -- keys.js has
+  // RESEARCH_CANONICAL_IDS and now the candidate list. Both are tried: the shared resolver
+  // first, this file's own map second, so nothing that resolved yesterday stops resolving.
+  const found = await resolveResearchStorageId(lakeName,
+    (id) => env.R2_TROLLMAP_CHARTPACKS.get(`lake_packages/${id}/normalized_documents.json`).catch(() => null));
+  let safe = found ? found.id : researchStorageId(lakeName);
   const key = `lake_packages/${safe}/normalized_documents.json`;
-  let obj = await env.R2_TROLLMAP_CHARTPACKS.get(key).catch(() => null);
+  let obj = found ? found.hit : null;
   if (!obj && LEGACY_PROFILE_KEYS[safe]) {
     obj = await env.R2_TROLLMAP_CHARTPACKS.get(`lake_packages/${LEGACY_PROFILE_KEYS[safe]}/normalized_documents.json`).catch(() => null);
     if (obj) safe = LEGACY_PROFILE_KEYS[safe];

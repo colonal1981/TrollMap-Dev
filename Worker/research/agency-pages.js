@@ -126,6 +126,34 @@ export function pickAgencyPage(entries, waterNames) {
   return best;
 }
 
+/**
+ * Does this page describe the water we asked for? A NAME IS NOT ENOUGH.
+ *
+ * Ryan, 2026-08-16: *"region 1 lakes are probably not eastern TN are these lakes even
+ * shipped?"* He was right, and the reason is sharper than scope. TWRA's region 1 page for
+ * "Davy Crockett Lake" describes a lake of approximately 87 acres in CROCKETT County, west
+ * Tennessee. The registry's `davy_crockett_lake` is 204.4 acres in GREENE County on the
+ * Nolichucky, 400 km east. Two lakes, one name, and the matcher happily bound them.
+ *
+ * This is the rule `build_water_bindings.py` already states in its own header -- *"name AND
+ * geometry, never either alone -- name-only matches are refused"* -- arriving late to the one
+ * place that had no geometry to check against. The page's stated county is the discriminator
+ * available here, and the registry carries a county on 452 of 454 rows.
+ *
+ * A page that names a DIFFERENT county is refused. A page that names NO county is allowed:
+ * it cannot discriminate, and refusing everything unstated would throw away the SCDNR set,
+ * which mostly gives distance-from-a-city rather than a county line.
+ */
+export function agencyPageAgrees(entry, registryRow, pageText) {
+  const county = String((registryRow && registryRow.county) || '').trim();
+  const text = String(pageText || '');
+  if (!county || !text) return true;
+  const stated = [...text.matchAll(/\b([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+)?)\s+Count(?:y|ies)\b/g)]
+    .map((m) => m[1].trim().toLowerCase());
+  if (!stated.length) return true;
+  return stated.includes(county.toLowerCase());
+}
+
 // One index fetch per state per isolate. The indexes change when an agency adds a lake, which
 // is not often, and a research run touches many lakes in a row.
 const _idx = new Map();
@@ -168,13 +196,19 @@ export async function agencyIndexEntries(state, fetchText = getText) {
  * reports route takes, and for the same reason: "Ft. Loudoun Reservoir" only reaches
  * "Fort Loudoun Lake" because the alias set is wide.
  */
-export async function resolveAgencyPage(state, waterNames, fetchText = getText) {
+export async function resolveAgencyPage(state, waterNames, fetchText = getText, registryRow = null) {
   const st = String(state || '').toUpperCase();
   const cfg = AGENCY_INDEXES[st];
   if (!cfg || !waterNames?.length) return null;
   const entries = await agencyIndexEntries(st, fetchText);
   const hit = pickAgencyPage(entries, waterNames);
   if (!hit) return null;
+  // The name matched. Now check the page is about this water and not its namesake -- see
+  // agencyPageAgrees(). One fetch, and only once a name has already matched.
+  if (registryRow && registryRow.county) {
+    const page = await fetchText(hit.url);
+    if (page && !agencyPageAgrees(hit, registryRow, strip(page))) return null;
+  }
   return {
     url: hit.url,
     title: `${hit.name} — ${cfg.label}`,

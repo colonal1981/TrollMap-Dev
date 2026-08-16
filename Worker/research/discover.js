@@ -583,7 +583,9 @@ const AGENT_TO_TAGS = {
   const staticHit = (state === 'TN' && TWRA_LAKE_PAGES[baseLower]) || (state === 'GA' && GADNR_LAKE_PAGES[baseLower]);
   if (agencyWanted && !staticHit) {
     try {
-      const agency = await resolveAgencyPage(state, agencyNames);
+      // county travels with the request so the page can be checked against it, not just named
+      const agency = await resolveAgencyPage(state, agencyNames, undefined,
+        body.county ? { county: String(body.county) } : null);
       if (agency) {
         addSeed({
           title: agency.title, type: 'HTML', authority: agency.authority, url: agency.url,

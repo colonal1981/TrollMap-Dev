@@ -1496,6 +1496,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
         ? [recForNames.name, recForNames.displayName, ...(recForNames.legacyDisplayNames || [])]
             .filter(Boolean).filter((v, i, a) => a.indexOf(v) === i)
         : [lakeName],
+      county: recForNames ? (recForNames.county || null) : null,
       reservoirOwner: previousResults.reservoirOwner || null,
       predatorSpecies: previousResults.predatorSpecies || [],
       ...(coastalKeyForAgent ? { zoneKey: coastalKeyForAgent, lakeKey: coastalKeyForAgent } : {}),

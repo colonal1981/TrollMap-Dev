@@ -429,9 +429,15 @@ export function shapeReports({ rssByState = {}, articlesByLink = {}, twraText = 
                           published: null, undated: true }] : [],
     // "Nobody looked here" and "nothing to report" are different answers.
     checked: Object.keys(rssByState).concat(twraText ? ['TN'] : [], ahqUrl ? ['AHQ'] : []),
-    // Said out loud, not applied quietly. `articles_read` under `article_limit` means the whole
-    // candidate set was read; equal to it means items were left unopened.
-    scanned: { articles_read: Object.keys(articlesByLink).length, article_limit: ARTICLE_SCAN_LIMIT },
+    // Said out loud, not applied quietly -- AND the units have to match, or the statement is
+    // worse than silence. The cap is PER FEED: a two-feed lookup legitimately reads six
+    // articles against a limit of three, and the first version of this field reported exactly
+    // that as `articles_read: 6, article_limit: 3`, which reads as a cap being violated.
+    scanned: {
+      articles_read: Object.keys(articlesByLink).length,
+      article_limit_per_feed: ARTICLE_SCAN_LIMIT,
+      feeds_scanned: Object.keys(rssByState).length,
+    },
     none_found: !items.length && !ahqText,
   };
 }

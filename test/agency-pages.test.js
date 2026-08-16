@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseScdnrIndex, parseTwraRegions, parseTwraRegion, pickAgencyPage, resolveAgencyPage, tnUrl,
+  agencyPageAgrees,
 } from '../Worker/research/agency-pages.js';
 
 // ── SCDNR: all 31 pages the index offers ────────────────────────────────────────────────────
@@ -153,13 +154,29 @@ test('TWRA abbreviates and the registry does not', () => {
   assert.ok(pickAgencyPage(e, FT_LOUDOUN).url.endsWith('/fort-loudoun-reservoir.html'));
 });
 
-test('the two shipped TN lakes the static table misses both resolve', () => {
-  // Calderwood is on region 4's index and was never copied; Davy Crockett is in region 1,
-  // which was never pulled at all. Measured 2026-08-16 against the shipped TN list.
+test('Calderwood is the one shipped TN lake the static table actually misses', () => {
+  // Nine of the ten shipped TN lakes are on region 4's index; Calderwood is the one that was
+  // never copied into the R2 static set.
   const r4 = parseTwraRegion(regionHtml('east-tennessee-r4', R4));
-  const r1 = parseTwraRegion(regionHtml('west-tennessee-r1', R1));
   assert.ok(pickAgencyPage(r4, CALDERWOOD).url.endsWith('/calderwood-lake.html'));
-  assert.ok(pickAgencyPage(r1, DAVY).url.endsWith('/davy-crockett-lake.html'));
+});
+
+test('TWRA region 1 Davy Crockett is a DIFFERENT lake and must not bind', () => {
+  // Ryan, 2026-08-16: "region 1 lakes are probably not eastern TN are these lakes even
+  // shipped?" He is right, and it is worse than scope. TWRA's r1 page describes a lake of
+  // "approximately 87 acres" in CROCKETT County, west Tennessee. The registry's
+  // davy_crockett_lake is 204.4 acres in GREENE County on the Nolichucky, 400 km east.
+  // Two lakes, one name. Name matching alone cannot tell them apart -- which is exactly why
+  // build_water_bindings.py refuses name-only matches -- so the county on the page is the
+  // discriminator, and a page that names a different county is refused.
+  const r1 = parseTwraRegion(regionHtml('west-tennessee-r1', R1));
+  const hit = pickAgencyPage(r1, DAVY);
+  assert.ok(hit, 'the name does match -- that is the trap');
+  assert.equal(agencyPageAgrees(hit, { county: 'Greene' }, 'Davy Crockett Lake is approximately 87 acres in Crockett County'), false);
+  // and the east-Tennessee lake it IS about would be accepted
+  assert.equal(agencyPageAgrees(hit, { county: 'Crockett' }, 'Davy Crockett Lake is approximately 87 acres in Crockett County'), true);
+  // a page that states no county at all cannot discriminate, so it is allowed through
+  assert.equal(agencyPageAgrees(hit, { county: 'Greene' }, 'A pleasant lake with bluegill and bass.'), true);
 });
 
 test('Cherokee and Chilhowee sit next to each other and do not swap', () => {

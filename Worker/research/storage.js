@@ -2,7 +2,7 @@
 import { CORS, JSON_HEADERS, callLLM, extractLLMText, r2Text, r2Body } from '../worker-core.js';
 import { getLakeIntel, lakeKeyFromName } from '../worker-data.js';
 import { tinyfishSearch } from './clients.js';
-import { extractJsonPossibly, researchStorageId } from './keys.js';
+import { extractJsonPossibly, researchStorageId, resolveResearchStorageId } from './keys.js';
 import { calculateSectionConfidence, gateOverallConfidence } from './agents.js';
 
 async function handleResearchList(env) {
@@ -26,9 +26,14 @@ async function handleResearchList(env) {
 }
 
 async function handleResearchGet(env, lakeId) {
-  const safe = researchStorageId(lakeId);
+  // Every key this lake could be filed under, not just the one its current display name
+  // sanitizes to. A 404 here is what sent J. Strom Thurmond back through the whole pipeline
+  // on 2026-08-16 while its verified profile sat in the bucket under the pre-county name.
+  const found = await resolveResearchStorageId(lakeId,
+    (id) => env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${id}.json`).catch(() => null));
+  const safe = found ? found.id : researchStorageId(lakeId);
   const masterKey = `lakes/${safe}.json`;
-  const obj = await env.R2_TROLLMAP_CHARTPACKS.get(masterKey);
+  const obj = found ? found.hit : null;
   if (!obj) return new Response(JSON.stringify({ok:false, error:`no profile for ${lakeId} (${safe})`}), {status:404, headers:JSON_HEADERS});
   const text = await r2Text(obj);
   let data;
@@ -329,8 +334,12 @@ async function handleResearchDelete(request, env) {
 }
 
 async function handleResearchPackage(env, lakeId) {
-  const safe = researchStorageId(lakeId);
-  const listed = await env.R2_TROLLMAP_CHARTPACKS.list({prefix: `lake_packages/${safe}/`});
+  const found = await resolveResearchStorageId(lakeId, async (id) => {
+    const l = await env.R2_TROLLMAP_CHARTPACKS.list({ prefix: `lake_packages/${id}/` }).catch(() => null);
+    return l && l.objects.length ? l : null;
+  });
+  const safe = found ? found.id : researchStorageId(lakeId);
+  const listed = found ? found.hit : { objects: [] };
   if (!listed.objects.length) return new Response(JSON.stringify({ok:false, error:`no package for ${lakeId}`}), {status:404, headers:JSON_HEADERS});
   const files = [];
   for (const o of listed.objects) {
@@ -341,9 +350,11 @@ async function handleResearchPackage(env, lakeId) {
 }
 
 async function handleResearchPackageFile(env, lakeId, filename) {
-  const safe = researchStorageId(lakeId);
+  const found = await resolveResearchStorageId(lakeId,
+    (id) => env.R2_TROLLMAP_CHARTPACKS.get(`lake_packages/${id}/${filename}`).catch(() => null));
+  const safe = found ? found.id : researchStorageId(lakeId);
   const key = `lake_packages/${safe}/${filename}`;
-  const obj = await env.R2_TROLLMAP_CHARTPACKS.get(key);
+  const obj = found ? found.hit : null;
   if (!obj) return new Response(JSON.stringify({ok:false, error:`no file ${filename} for ${lakeId}`}), {status:404, headers:JSON_HEADERS});
   const ct = filename.endsWith('.json') ? 'application/json' : filename.endsWith('.md') ? 'text/markdown' : 'application/octet-stream';
   const pkgHeaders = new Headers({...CORS, "Content-Type": ct, "Cache-Control": "no-store"});
