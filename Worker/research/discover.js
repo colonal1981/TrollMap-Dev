@@ -4,6 +4,7 @@ import { STATE_REGULATIONS_CONFIG, tinyfishFetch, tinyfishSearch } from './clien
 import { KNOWN_BAD_NEPIS_IDS, buildNepisSearchUrl } from './dataset.js';
 import { parseLakeBaseName } from './keys.js';
 import { resolveAgencyPage } from './agency-pages.js';
+import { matchWaterName, reportTokens } from '../reports.js';
 
 // Which organisation stands behind a URL. Two callers below -- Grok citations and Wikipedia
 // citations -- carried byte-identical copies of this ladder, so a domain added to one was
@@ -560,12 +561,50 @@ const AGENT_TO_TAGS = {
     'west point':       'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/west-point.html',
     'yonah':            'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/research/static/gadnr-ga/yonah.html',
   };
-  if (state === 'TN' && TWRA_LAKE_PAGES[baseLower] && (!agentForSeeds || ['identity','biology','fisheries','regulations'].includes(agentForSeeds))) {
-    addSeed({ title: `${baseName} TWRA Reservoir Profile`, type: 'HTML', authority: 'TWRA', url: TWRA_LAKE_PAGES[baseLower], priority: 1, agentTags: ['identity','biology','fisheries','regulations'] });
+  // ── The tables are keyed by the AGENCY's name for the lake, not ours ──────────────────────
+  //
+  // Ryan, 2026-08-16: "the agency pages for georgia should fix it... is it a name mismatch...
+  // not in aliases or what?" It is a name mismatch, and the alias was already there.
+  //
+  //     baseLower for J. Strom Thurmond  ->  "j. strom thurmond"
+  //     the GADNR table key              ->  "clarks hill"
+  //
+  // Georgia calls it Clarks Hill. `legacy_display_names` has carried
+  // "Clarks Hill / Thurmond, SC/GA" the whole time, and a single derived name could never see
+  // it. Looking the table up against the alias set finds it with no new alias and no new file.
+  //
+  // sourceMayBeBroader:false because a table key must be contained BY the lake's name, never
+  // the other way round -- "walter f george" must not answer for a lake called George.
+  const agencyTableHit = (table) => {
+    let best = null;
+    for (const key of Object.keys(table)) {
+      const matched = matchWaterName(key, agencyNames, { sourceMayBeBroader: false });
+      if (!matched) continue;
+      const kt = reportTokens(key); const wt = reportTokens(matched);
+      let overlap = 0;
+      for (const t of kt) if (wt.has(t)) overlap += 1;
+      if (!best || overlap > best.overlap) best = { key, url: table[key], matched, overlap };
+    }
+    // baseLower stays as the fallback: it is what worked before the alias set was sent, and a
+    // caller that sends no names still has to resolve.
+    return best || (table[baseLower] ? { key: baseLower, url: table[baseLower], matched: baseName, overlap: 0 } : null);
+  };
+  const wantsAgencyTable = !agentForSeeds || ['identity','biology','fisheries','regulations'].includes(agentForSeeds);
+
+  if (state === 'TN' && wantsAgencyTable) {
+    const hit = agencyTableHit(TWRA_LAKE_PAGES);
+    if (hit) {
+      addSeed({ title: `${baseName} TWRA Reservoir Profile`, type: 'HTML', authority: 'TWRA', url: hit.url, priority: 1, agentTags: ['identity','biology','fisheries','regulations'] });
+      queryLog.push(`agency table: TWRA "${hit.key}" matched "${hit.matched}"`);
+    }
   }
 
-  if (state === 'GA' && GADNR_LAKE_PAGES[baseLower] && (!agentForSeeds || ['identity','biology','fisheries','regulations'].includes(agentForSeeds))) {
-    addSeed({ title: `${baseName} GADNR Fishing Forecast`, type: 'HTML', authority: 'GADNR', url: GADNR_LAKE_PAGES[baseLower], priority: 1, agentTags: ['identity','biology','fisheries','regulations'] });
+  if (state === 'GA' && wantsAgencyTable) {
+    const hit = agencyTableHit(GADNR_LAKE_PAGES);
+    if (hit) {
+      addSeed({ title: `${baseName} GADNR Fishing Forecast`, type: 'HTML', authority: 'GADNR', url: hit.url, priority: 1, agentTags: ['identity','biology','fisheries','regulations'] });
+      queryLog.push(`agency table: GADNR "${hit.key}" matched "${hit.matched}"`);
+    }
   }
 
   // ── The agency's own index, for the lakes the two tables above do not name ────────────────
