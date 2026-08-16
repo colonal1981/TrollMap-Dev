@@ -19,6 +19,7 @@ import { selectBestLure, getInventory } from '../data/tackle-inventory.js';
 import { getLureColor, depthWindow, LURE_KNOWLEDGE } from '../data/lure-knowledge.js';
 import { getPhaseDepth, getStrategySpeed, normalizeSpecies, getPresentationPriority, getPhaseNotes } from '../data/species-strategies.js';
 import { SPECIES_BEHAVIOR, SPECIES_BEHAVIOR_V2, getSeason, checkRegulations, resolveLakeKey } from '../data/species-intel.js';
+import { phaseWindow } from '../utils/species-phase.js';
 import { isLiveBaitAvailable } from '../data/fishing-style-profile.js';
 import { buildFishingContext, buildGroqCoachPayload } from './smart-plan-context.js';
 import { startCoachSession } from './groq-coach.js';
@@ -296,7 +297,32 @@ function computePhases(launchTimeStr, returnTimeStr, dateStr, lat, lon) {
 }
 
 // ── Per-phase species-intel lookup ───────────────────────────────────────────
-function getPhaseRecommendation(species, lakeName, season, phaseNum, waterTempF) {
+function getPhaseRecommendation(species, lakeName, season, phaseNum, waterTempF, opts = {}) {
+  // THE RESEARCH PROFILE FIRST, where the lake has one. `trollingIntelligence[species][season]`
+  // is extracted from documents with quotes attached and covers 11 species on a run lake;
+  // SPECIES_BEHAVIOR below covers ONE species on TWO lakes and its numbers were invented by an
+  // agent before the pipeline existed. Ryan, 2026-08-16: "you were that agent that invented
+  // them in the first place."
+  //
+  // phaseWindow() narrows the measured band by LIGHT rather than by the clock, so an overcast
+  // midday fishes shallower than a bright one, and it asserts no trolling speed at all because
+  // speed is variable. See js/utils/species-phase.js for the rule in full.
+  const profNode = opts.trollingIntelligence?.[species]?.[season];
+  const fromProfile = phaseWindow(profNode, { phaseNum, weather: opts.weather });
+  if (fromProfile) {
+    return {
+      depthMin: fromProfile.depthMin, depthMax: fromProfile.depthMax,
+      lures: fromProfile.presentations,
+      // Null rather than a number. The caller keeps whatever speed it already had.
+      speed: fromProfile.speed,
+      notes: [fromProfile.notes,
+              fromProfile.topwaterViable ? 'Low light — topwater worth carrying.' : '']
+        .filter(Boolean).join(' · '),
+      structure: fromProfile.structure,
+      source: 'research profile',
+    };
+  }
+
   const v2sp = SPECIES_BEHAVIOR_V2?.[species];
   if (v2sp) {
     const lakeKeyV2 = (resolveLakeKey
@@ -993,7 +1019,12 @@ Return ONLY valid JSON, no markdown:
     console.error('[smart-plan] Groq Error:', e.message, e.stack || '');
     isFallback = true;
     
-    const phaseRecs=phaseInfo.phases.map(p=>getPhaseRecommendation(sp,lakeName,season,p.num,waterTempF));
+    // The LLM path already receives the research profile in its prompt block; this is the
+    // fallback that runs when it fails, and it had no access to it at all -- so a lake with a
+    // 96%-confidence profile fell back to a two-lake table invented before that profile existed.
+    const phaseRecs=phaseInfo.phases.map(p=>getPhaseRecommendation(
+      sp, lakeName, season, p.num, waterTempF,
+      { trollingIntelligence: researchedTrolling, weather: weatherStr }));
     const r1=phaseRecs[0]||{depthMin:12,depthMax:18,speed:1.8};
     const r2=phaseRecs[1]||{depthMin:22,depthMax:28,speed:1.8};
     
