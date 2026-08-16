@@ -104,6 +104,7 @@ export function readConditions(j) {
     clarityIsMeasured: false,
     clarityNote: null,
     releases: null,
+    releasesRefused: null,
     featureType: null,
     pending: null,
     error: null,
@@ -176,6 +177,10 @@ export function readConditions(j) {
   }
 
   out.releases = w.releases || null;
+  // A projection that was REJECTED and one that was never available are different facts, and
+  // only the first one names a table entry that needs fixing. It reaches the card so a wrong
+  // hand-typed basin id is visible rather than looking like a river Duke does not publish.
+  out.releasesRefused = w.releases_refused || null;
 
   // CLARITY IS A MODEL AND THE FLAG SAYS SO. `measured` non-null means a WQP Secchi or
   // turbidity baseline exists and the rainfall model adjusted it; null means the number is

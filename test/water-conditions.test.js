@@ -250,3 +250,18 @@ test('an on-lake reading is not marked as a tailrace one', () => {
   assert.equal(c.waterTempFrom, 'pool');
   assert.ok(!/°F\*/.test(conditionsStrip(c).text));
 });
+
+test('a refused release projection reaches the client, it does not vanish', () => {
+  const c = readConditions({ slug: 'broad_river', water: {
+    display_name: 'Broad River (Newberry Co, SC)', feature_type: 'river',
+    chart_datum: { pending: 'not a lake' },
+    releases: null,
+    releases_refused: { operator: 'Duke Energy', basin_id: 10, basin_name: 'Yadkin-Pee Dee',
+                        why: 'RIVERS.dukeBasinId 10 returned "Yadkin-Pee Dee", which does not name Broad River.' },
+  } });
+  assert.equal(c.releases, null);
+  assert.match(c.releasesRefused.why, /does not name Broad River/);
+  assert.equal(c.releasesRefused.basin_id, 10);
+  // and it must not sneak into the one-line strip as though a release were coming
+  assert.ok(!/release/.test(conditionsStrip(c).text), conditionsStrip(c).text);
+});

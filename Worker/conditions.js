@@ -63,6 +63,7 @@ import { CORS, JSON_HEADERS, r2Text } from './worker-core.js';
 import { dukeRowForNames, fetchDukeFlowArrivals, fetchUsgs, getLakeClarity, RIVERS, lakeKeyFromName }
   from './worker-data.js';
 import { parseCubeLevels, parseSouthernCoLevels, parseBrookfieldFacility } from './operators.js';
+import { reportTokens } from './reports.js';
 
 const UA = 'TrollMap/1.0 (personal fishing app)';
 
@@ -1057,6 +1058,45 @@ export function releaseShape({ duke, tva, operator } = {}) {
  * someone measures its centerline. Stated so the next reader does not mistake it for an
  * oversight.
  */
+/**
+ * DOES THE BASIN DUKE RETURNED ACTUALLY NAME THIS RIVER?
+ *
+ * Ryan, 2026-08-16: *"broad river has nothing to do with duke so that dukeBasinId doesn't make
+ * sense but ok"* — and the entry agrees with him against itself. `RIVERS.broad` reads
+ * `operator: "SCE&G / Dominion (Parr Shoals)"`, `damName: "Parr Shoals Dam"`, and then carries
+ * `dukeBasinId: 10` with a comment asserting it is Duke's Broad River basin. Nobody checked.
+ * The id was typed, not measured.
+ *
+ * It cannot be derived — a foreign key never can. But it CAN BE VERIFIED, and that is the same
+ * move `agencyPageAgrees` made this morning after TWRA region 1's "Davy Crockett Lake" bound to
+ * a Davy Crockett Lake 300 km away: do not trust the id, check that what came back names the
+ * thing you asked about.
+ *
+ * `/rivers/flow-arrivals/{id}` returns `RiverBasinName` and every arrival carries `DamName` and
+ * `MileMarkerName`. If none of them shares a distinctive token with the river, the id is wrong
+ * or the basin was renumbered, and a release projection on the wrong river is worse than none.
+ *
+ * FLOWING WORDS ARE NOT DISTINCTIVE. "river" is in every one of these names on both sides, so it
+ * is dropped before comparing — otherwise every basin agrees with every river.
+ */
+export function dukeBasinAgrees(sched, waterName) {
+  const distinctive = (s) => {
+    const out = new Set();
+    for (const t of reportTokens(s)) {
+      if (!/^(river|creek|canal|branch|run|fork|basin|dam|hydro|project)$/.test(t)) out.add(t);
+    }
+    return out;
+  };
+  const want = distinctive(waterName);
+  if (!want.size || !sched) return false;
+  const haystacks = [sched.basinName];
+  for (const a of sched.arrivals || []) haystacks.push(a.damName, a.mileMarkerName);
+  for (const h of haystacks) {
+    for (const t of distinctive(h)) if (want.has(t)) return true;
+  }
+  return false;
+}
+
 export function dukeBasinFor(name) {
   const key = lakeKeyFromName(String(name || ''));
   const row = key && RIVERS[key];
@@ -1196,7 +1236,23 @@ async function waterBlock(b, lat, lon) {
   // case costs nothing.
   const basin = dukeBasinFor(b.display_name || b.slug);
   const dukeSched = basin ? await fetchDukeFlowArrivals(basin).catch(() => null) : null;
-  out.releases = releaseShape({ duke: dukeSched, tva: out.tva, operator: out.operator });
+
+  // A hand-typed basin id has to prove itself before it is allowed to describe this river.
+  // Refused rather than dropped: a projection that was rejected and one that was never
+  // available are different facts, and only the first one names a table that needs fixing.
+  out.releases_refused = null;
+  let duke = dukeSched;
+  if (dukeSched && !dukeBasinAgrees(dukeSched, b.display_name || b.slug)) {
+    duke = null;
+    out.releases_refused = {
+      operator: 'Duke Energy',
+      basin_id: basin,
+      basin_name: dukeSched.basinName || null,
+      why: `RIVERS.dukeBasinId ${basin} returned "${dukeSched.basinName || 'an unnamed basin'}", `
+         + `which does not name ${b.display_name || b.slug}. The id is hand-typed and unverified.`,
+    };
+  }
+  out.releases = releaseShape({ duke, tva: out.tva, operator: out.operator });
 
   // One resolved temperature rather than three places a caller has to look. Seeded with whatever
   // a gauge read already produced, so the common case costs no extra request.

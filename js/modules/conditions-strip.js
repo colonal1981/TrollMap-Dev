@@ -108,6 +108,11 @@ function cardHtml(rec, c) {
       + (items.length ? `<br>${items.map(esc).join('<br>')}` : '')));
   }
 
+  if (c.releasesRefused) {
+    const r = c.releasesRefused;
+    out.push(row('Releases', `<span class="cond-sub">refused — ${esc(r.why || '')}</span>`));
+  }
+
   return out.join('') || `<div class="cond-row"><span class="cond-v">Nothing published for this water.</span></div>`;
 }
 

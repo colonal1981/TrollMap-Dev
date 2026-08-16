@@ -186,3 +186,35 @@ test('a water with no USGS site anywhere returns an empty list, not a throw', ()
   assert.deepEqual(usgsSitesFor({ pool: { lid: 'X' }, gauges: [] }, 34, -81), []);
   assert.deepEqual(usgsSitesFor({}, 34, -81), []);
 });
+
+// ── a hand-typed foreign key has to prove itself ────────────────────────────────────────────
+import { dukeBasinAgrees } from '../Worker/conditions.js';
+
+test('a basin that names the river agrees', () => {
+  assert.equal(dukeBasinAgrees({ basinName: 'Catawba-Wateree', arrivals: [] }, 'Wateree River'), true);
+  assert.equal(dukeBasinAgrees({ basinName: 'Broad River', arrivals: [] }, 'Broad River'), true);
+});
+
+test('a basin that names a DIFFERENT river is refused', () => {
+  // RIVERS.broad says operator "SCE&G / Dominion (Parr Shoals)" and then carries
+  // dukeBasinId: 10. If 10 is the Yadkin, the projection would be another river's water.
+  assert.equal(dukeBasinAgrees({ basinName: 'Yadkin-Pee Dee', arrivals: [] }, 'Broad River'), false);
+  assert.equal(dukeBasinAgrees({ basinName: 'Catawba-Wateree', arrivals: [] }, 'Broad River'), false);
+});
+
+test('"river" is not a distinctive token — otherwise every basin agrees', () => {
+  assert.equal(dukeBasinAgrees({ basinName: 'Some Other River', arrivals: [] }, 'Broad River'), false);
+  assert.equal(dukeBasinAgrees({ basinName: 'River Basin', arrivals: [] }, 'Wateree River'), false);
+});
+
+test('a dam or mile marker can carry the agreement when the basin name does not', () => {
+  const sched = { basinName: 'Basin 10',
+                  arrivals: [{ damName: 'Ninety-Nine Islands', mileMarkerName: 'Broad River at Lockhart' }] };
+  assert.equal(dukeBasinAgrees(sched, 'Broad River'), true);
+});
+
+test('nothing to check is not agreement', () => {
+  assert.equal(dukeBasinAgrees(null, 'Broad River'), false);
+  assert.equal(dukeBasinAgrees({ basinName: null, arrivals: [] }, 'Broad River'), false);
+  assert.equal(dukeBasinAgrees({ basinName: 'Broad River', arrivals: [] }, ''), false);
+});
