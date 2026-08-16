@@ -156,6 +156,15 @@ function cardHtml(rec, c) {
         : c.waterTempGauge ? `<span class="cond-sub"> (${esc(c.waterTempGauge)})</span>` : '')));
   }
 
+  if (c.pressureMb != null) {
+    const d = (v) => v == null ? '—' : `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1)}`;
+    out.push(row('Barometer', `${c.pressureMb} mb`
+      + `<span class="cond-sub"> — 3 h ${d(c.pressure3h)} mb. NOAA CO-OPS at the tide station.</span>`));
+  } else if (c.pressureStale) {
+    out.push(row('Barometer', '<span class="cond-sub">the station\u2019s last reading is too old to use — '
+      + 'reported rather than shown, because a barometer from last week presented as now is worse '
+      + 'than none.</span>'));
+  }
   if (c.trend24h != null || c.trend7d != null) {
     const fmt = (d) => d == null ? '—'
       : Math.abs(d) < 0.01 ? 'no change'

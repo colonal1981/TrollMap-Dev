@@ -549,3 +549,29 @@ test('a trend the series cannot support does not reach the strip at all', () => 
   assert.equal(c.trend24h, null);
   assert.ok(!/24h/.test(conditionsStrip(c).text));
 });
+
+test('a falling barometer reaches the strip; a flat one does not clutter it', () => {
+  const falling = readConditions({ slug: 'x', water: { display_name: 'Charleston Harbor',
+    feature_type: 'coastal', chart_datum: { pending: 'not a lake' } },
+    tide: { station: { id: '1' }, highs_lows: [],
+            pressure: { mb: 1012.4, change_3h: -2.1, stale: false } } });
+  assert.equal(falling.pressureMb, 1012.4);
+  assert.match(conditionsStrip(falling).text, /baro ↓2\.1mb\/3h/);
+
+  const flat = readConditions({ slug: 'x', water: { display_name: 'C', feature_type: 'coastal',
+    chart_datum: { pending: 'not a lake' } },
+    tide: { station: { id: '1' }, highs_lows: [],
+            pressure: { mb: 1018, change_3h: -0.2, stale: false } } });
+  assert.equal(flat.pressureMb, 1018);
+  assert.ok(!/baro/.test(conditionsStrip(flat).text), 'a 0.2 mb wobble is not news');
+});
+
+test('a stale barometer is withheld from the number and reported as stale', () => {
+  const c = readConditions({ slug: 'x', water: { display_name: 'C', feature_type: 'coastal',
+    chart_datum: { pending: 'not a lake' } },
+    tide: { station: { id: '1' }, highs_lows: [],
+            pressure: { mb: 1021.3, change_3h: null, stale: true, age_minutes: 15846 } } });
+  assert.equal(c.pressureMb, null, 'an eleven-day-old reading must not print as now');
+  assert.equal(c.pressureStale, true);
+  assert.ok(!/baro/.test(conditionsStrip(c).text));
+});

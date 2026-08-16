@@ -1594,6 +1594,66 @@ function dayAfter(d) {
  * launch time is written in. Converting them to UTC here would mean converting them back in
  * every renderer.
  */
+/**
+ * BAROMETRIC PRESSURE AND ITS TREND, from the tide station we are already bound to.
+ *
+ * A falling barometer is one of the few weather facts anglers act on directly, and it is the
+ * TREND that matters — 1018 mb tells you nothing, 1018 and down 4 in six hours tells you a lot.
+ * `datagetter` takes `range=<hours>`, so one request returns the trend rather than a point:
+ * verified at Wilmington 8658120 on 2026-08-16, `range=24` returned 240 entries six minutes
+ * apart.
+ *
+ * WHY THIS NEEDS A STALENESS GUARD, with the case that proves it. Charleston 8665530 answered
+ * `date=latest` with `2026-08-05 14:36` — an ELEVEN DAY OLD reading, returned with no error and
+ * no flag. `date=latest` means the latest that exists, not the latest that is current. A
+ * barometer reading from last week presented as now is worse than no barometer.
+ *
+ * Pressure is in millibars because the query says `units=english`; CO-OPS reports air pressure
+ * in mb regardless, so it is labelled rather than converted.
+ */
+export function pressureTrend(j, nowMs, maxAgeMin = 180) {
+  const rows = (j && Array.isArray(j.data)) ? j.data : [];
+  const pts = [];
+  for (const r of rows) {
+    // "2026-08-16 17:30" is station local time with no offset. Parsed as UTC deliberately: the
+    // AGE is a difference between two of these, and the trend is a difference between two of
+    // these, so a constant offset cancels out of both. Never use one of these as a wall clock.
+    const t = Date.parse(String(r && r.t).replace(' ', 'T') + 'Z');
+    const v = Number(r && r.v);
+    if (!Number.isFinite(t) || !Number.isFinite(v)) continue;
+    pts.push({ t, v });
+  }
+  if (!pts.length) return null;
+  pts.sort((a, b) => a.t - b.t);
+  const last = pts[pts.length - 1];
+
+  const ageMin = Number.isFinite(nowMs) ? Math.round((nowMs - last.t) / 60000) : null;
+  const stale = ageMin != null && ageMin > maxAgeMin;
+
+  const back = (hours) => {
+    const want = last.t - hours * 3600 * 1000;
+    if (pts[0].t > want) return null;
+    let best = null;
+    for (const p of pts) if (best === null || Math.abs(p.t - want) < Math.abs(best.t - want)) best = p;
+    return best;
+  };
+  const delta = (h) => { const p = back(h); return p ? Math.round((last.v - p.v) * 10) / 10 : null; };
+  return {
+    mb: Math.round(last.v * 10) / 10,
+    at: String(last.t && rows.length ? rows[rows.length - 1].t : '') || null,
+    age_minutes: ageMin,
+    // Reported rather than hidden. A caller that wants to ignore a stale reading can; a caller
+    // that is never told cannot.
+    stale,
+    change_3h: delta(3),
+    change_6h: delta(6),
+    change_24h: delta(24),
+    units: 'mb',
+    station_id: (j && j.metadata && j.metadata.id) || null,
+    source: 'NOAA CO-OPS — air_pressure',
+  };
+}
+
 async function tideBlock(b, lat, lon, date) {
   const all = b.tides || [];
   const levels = all.filter((t) => t && (t.kind === 'tidepredictions' || t.kind === 'waterlevels'));
@@ -1607,7 +1667,7 @@ async function tideBlock(b, lat, lon, date) {
                      + `&format=json&${extra}`;
   const soft = (p) => p.catch((e) => ({ __err: String((e && e.message) || e) }));
 
-  const [p, c, w, t] = await Promise.all([
+  const [p, c, w, t, ap] = await Promise.all([
     soft(cached(`tide:${st.id}:${date}`, TTL.tide, () => getJson(q(
       `product=predictions&interval=hilo&datum=MLLW&station=${st.id}`
       + `&begin_date=${b1}&end_date=${b2}`)))),
@@ -1633,6 +1693,10 @@ async function tideBlock(b, lat, lon, date) {
     // with CO-OPS's 200-plus-error body, which errOf() already reads.
     soft(cached(`wt:${st.id}`, TTL.gauge, () => getJson(q(
       `product=water_temperature&station=${st.id}&date=latest`)))),
+    // 24 hours of barometric pressure in one request. `range` rather than `date=latest` because
+    // the trend is the fishing fact and a single reading is not.
+    soft(cached(`ap:${st.id}`, TTL.gauge, () => getJson(q(
+      `product=air_pressure&station=${st.id}&range=24`)))),
   ]);
 
   // CO-OPS answers a bad request with HTTP 200 and {"error":{"message":...}}, so a thrown error
@@ -1669,6 +1733,8 @@ async function tideBlock(b, lat, lon, date) {
           source: 'NOAA CO-OPS — water_temperature' }
       : null,
     water_temp_error: errOf(t),
+    pressure: errOf(ap) ? null : pressureTrend(ap, Date.now()),
+    pressure_error: errOf(ap),
     other_stations: levels.length - 1,
     source: 'NOAA CO-OPS — api.tidesandcurrents.noaa.gov',
   };

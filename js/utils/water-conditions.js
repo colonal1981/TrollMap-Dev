@@ -137,6 +137,9 @@ export function readConditions(j) {
     trendUnits: null,
     trendMeasures: null,
     trendCoversHours: null,
+    pressureMb: null,
+    pressure3h: null,
+    pressureStale: null,
     featureType: null,
     pending: null,
     error: null,
@@ -347,6 +350,18 @@ export function readConditions(j) {
       out.currentAt = cev[0].time || null;
       out.currentStation = (td.currents.station && (td.currents.station.name || td.currents.station.id)) || null;
     }
+    // BAROMETRIC PRESSURE, and the trend is the part that matters. A stale reading is dropped
+    // rather than shown: Charleston answered `date=latest` with an eleven-day-old value on
+    // 2026-08-16, and a barometer from last week presented as now is worse than no barometer.
+    const pr = td.pressure;
+    if (pr && Number.isFinite(pr.mb) && !pr.stale) {
+      out.pressureMb = pr.mb;
+      out.pressure3h = Number.isFinite(pr.change_3h) ? pr.change_3h : null;
+      out.pressureStale = false;
+    } else if (pr && pr.stale) {
+      out.pressureStale = true;
+    }
+
     // COASTAL WATER TEMPERATURE. A tide station answers where no USGS site exists, which on the
     // coast is most of them. It does not outrank a USGS reading — it fills the hole.
     if (out.waterTempF == null && td.water_temp && Number.isFinite(td.water_temp.f)) {
@@ -453,6 +468,11 @@ export function conditionsStrip(c) {
 
   // The arrow is the whole point of the trend on a single line. A flat 24 h says "steady",
   // which is an answer, not a gap.
+  // A falling barometer is one of the few weather facts anglers act on directly. Only the
+  // DIRECTION goes on the line; the absolute reading lives on the card.
+  if (c.pressure3h != null && Math.abs(c.pressure3h) >= 0.5) {
+    bits.push(`baro ${c.pressure3h > 0 ? '↑' : '↓'}${Math.abs(c.pressure3h).toFixed(1)}mb/3h`);
+  }
   if (c.trend24h != null) {
     const d = c.trend24h;
     bits.push(Math.abs(d) < 0.01 ? 'steady 24h'
