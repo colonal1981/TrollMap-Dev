@@ -502,15 +502,31 @@ function nearest(list, lat, lon) {
  * under one field name has no way to know which it got, and the one that guessed printed the
  * Congaree at 4 ft3/s while it was running four thousand.
  *
- * An unrecognised unit returns null rather than the raw number. A discharge in unknown units is
- * not a discharge.
+ * ONLY `status.observed.secondaryUnit` MAY BE READ FOR THIS. The first version of this function
+ * fell back to `flood.flowUnits` and, failing that, treated an absent unit as cfs. Both of those
+ * are the same 1000x bug wearing a different hat, and `flood.flowUnits` is not a near-miss — it
+ * is systematically wrong. Measured 2026-08-16 against the live API:
+ *
+ *   GADS1  Congaree at Congaree NP      observed.secondaryUnit "kcfs"   flood.flowUnits "cfs"
+ *   WATS1  Wateree River at the dam     observed.secondaryUnit "kcfs"   flood.flowUnits "cfs"
+ *   AUGG1  Savannah River at Augusta    observed.secondaryUnit "kcfs"   flood.flowUnits "cfs"
+ *   KEOS1  Seneca River at Keowee Dam   observed.secondaryUnit "kcfs"   flood.flowUnits "cfs"
+ *   CLTT1  Little Tennessee at Chilhowee observed.secondaryUnit ""      flood.flowUnits "cfs"
+ *
+ * Four for four, the two fields disagree, and GADS1 settles which one is right: 4.17 kcfs is the
+ * Congaree in August and 4.17 cfs is a ditch. `flood.flowUnits` describes the units of the flood
+ * threshold table, which is a different quantity that happens to share a word. Read the field
+ * that travels with the value, never the field that describes it from somewhere else.
+ *
+ * And CLTT1 shows the empty string is real: NWPS does publish a blank unit. An empty unit is not
+ * cfs, it is silence, and it returns null here. An unrecognised or missing unit returns null
+ * rather than the raw number, because a discharge in unknown units is not a discharge.
  */
-function nwpsFlowCfs(v, units) {
+export function nwpsFlowCfs(v, units) {
   if (!Number.isFinite(v)) return null;
-  const u = String(units || '').trim().toLowerCase();
+  const u = String(units == null ? '' : units).trim().toLowerCase();
   if (u === 'kcfs') return Math.round(v * 1000);
-  if (u === 'cfs' || u === 'ft3/s' || u === 'cms' && false) return v;
-  if (!u) return v;                      // NWPS omits the unit on some gauges; it is cfs there.
+  if (u === 'cfs' || u === 'ft3/s') return v;
   return null;
 }
 
@@ -528,6 +544,7 @@ async function nwpsGauge(lid, role, bound, lat, lon) {
   }
   const vert = (((j.datums || {}).vertical || {}).value || [])[0] || null;
   const fcStage = num(fc.primary);
+  const flow = nwpsFlowCfs(num(st.secondary), st.secondaryUnit);
 
   return {
     lid,
@@ -543,9 +560,11 @@ async function nwpsGauge(lid, role, bound, lat, lon) {
     //
     // Normalised HERE, at the point the unit is known, rather than left for every consumer to
     // remember. `flow_units` still travels so nothing has to trust this comment.
-    flow: nwpsFlowCfs(num(st.secondary), st.secondaryUnit || (j.flood && j.flood.flowUnits)),
-    flow_units: 'ft3/s',
-    flow_reported_units: st.secondaryUnit || (j.flood && j.flood.flowUnits) || null,
+    flow,
+    // Null when the unit was unreadable, matching usgsSite. A flow with no units attached is
+    // worse than no flow: it renders as a number and reads as a fact.
+    flow_units: flow === null ? null : 'ft3/s',
+    flow_reported_units: st.secondaryUnit || null,
     // The OBSERVATION time, not the fetch time. NWPS writes year 0001 for "never".
     observed_at: st.validTime && !String(st.validTime).startsWith('0001') ? st.validTime : null,
     flood_category: st.floodCategory || null,

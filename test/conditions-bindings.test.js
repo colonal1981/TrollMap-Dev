@@ -69,7 +69,11 @@ const NWPS = {
       forecast: { primary: -999, primaryUnit: '', secondary: -999, secondaryUnit: '',
                   floodCategory: 'fcst_not_current', validTime: '0001-01-01T00:00:00Z' },
     },
-    flood: { stageUnits: 'ft', flowUnits: 'kcfs', categories: {
+    // 'cfs' HERE IS NOT A TYPO AND NOT THE OBSERVATION'S UNIT. Live on 2026-08-16 every gauge
+    // sampled — GADS1, WATS1, AUGG1, KEOS1, CLTT1 — publishes flood.flowUnits 'cfs' while
+    // status.observed.secondaryUnit says 'kcfs'. This fixture used to say 'kcfs' here, which
+    // agreed with the bug and so could never catch it.
+    flood: { stageUnits: 'ft', flowUnits: 'cfs', categories: {
       major: { stage: 365, flow: -9999 }, moderate: { stage: 363, flow: -9999 },
       minor: { stage: 360, flow: -9999 }, action: { stage: 359, flow: -9999 } } },
     datums: { vertical: { value: [{ label: 'NAVD88', abbrev: 'NAVD88', value: -1.31 }] } },
@@ -92,11 +96,14 @@ const NWPS = {
                           floodCategory: 'no_flooding', validTime: '2026-08-09T18:00:00Z' } },
     flood: { categories: {} }, inService: { enabled: true, message: '' },
   },
+  // THE EMPTY UNIT, WHICH IS REAL: CLTT1 publishes secondaryUnit '' live. A real secondary with
+  // a blank unit and a flood table that says 'cfs' is the exact shape that used to slip a kcfs
+  // number through labelled as cfs.
   BYBN7: {
     lid: 'BYBN7', name: 'Bay River at Bayboro', reachId: '8441999',
-    status: { observed: { primary: 1.05, primaryUnit: 'ft', secondary: -999,
+    status: { observed: { primary: 1.05, primaryUnit: 'ft', secondary: 3.2, secondaryUnit: '',
                           floodCategory: 'no_flooding', validTime: '2026-08-09T18:00:00Z' } },
-    flood: { categories: {} }, inService: { enabled: true, message: '' },
+    flood: { flowUnits: 'cfs', categories: {} }, inService: { enabled: true, message: '' },
   },
   BERN7: {
     lid: 'BERN7', name: 'Trent River at New Bern', reachId: '8441111',
@@ -199,6 +206,19 @@ check('nearest gauge picked by requested point = BERN7 or BYBN7',
   ['BERN7', 'BYBN7'].includes(r.water?.gauge?.lid), r.water?.gauge?.lid);
 check('out-of-service surfaced', r.water?.gauge?.lid !== 'BERN7' || r.water?.gauge?.in_service === false,
   r.water?.gauge?.in_service);
+// AN EMPTY UNIT IS SILENCE, NOT CFS. BYBN7 reports secondary 3.2 with secondaryUnit '' and a
+// flood table claiming 'cfs'. Neither may be used: the flow is unknown-unit and must be null,
+// and flow_units must be null with it so nothing downstream prints a bare number as a fact.
+{
+  const all = [r.water?.gauge, ...(r.water?.other_gauges || [])].filter(Boolean);
+  const bay = all.find((g) => g.lid === 'BYBN7');
+  check('BYBN7 present', !!bay, all.map((g) => g.lid));
+  check('empty secondaryUnit does not become cfs', bay?.flow === null, bay?.flow);
+  check('flow_units null when the flow is', bay?.flow_units === null, bay?.flow_units);
+  check('flow_reported_units null, not the flood table',
+    bay?.flow_reported_units === null, bay?.flow_reported_units);
+}
+
 check('other_gauges sorted by distance',
   (r.water?.other_gauges || []).every((g, i, a) => i === 0 || a[i - 1].km_from_point <= g.km_from_point),
   r.water?.other_gauges);
