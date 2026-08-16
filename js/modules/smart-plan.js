@@ -41,6 +41,7 @@ import {
 } from './coastal-scoring.js';
 import { checkCoastalRegulations, formatCoastalLimit } from '../data/coastal-regulations.js';
 import { callSafely } from '../utils/call-global.js';
+import { structureFor } from '../utils/structure-markers.js';
 
 const BATTERY_AH_DEFAULT = 100;
 const MOTOR_AMP_AVG      = 6;
@@ -1335,7 +1336,10 @@ Return ONLY valid JSON, no markdown:
     // APP_CHANGE_REQUESTS.md under the SmartPlan rebuild.
 
     const structuralElements = researchedProfile?.habitat?.structuralElements || {};
-    for (const hump of (structuralElements.humpCoordinates || [])) {
+    // Straight from the pack, uncapped -- a trip that is all casting stops needs every
+    // candidate the lake has, not the handful a research document had room for.
+    const packStructure = structureFor(window.getStructureGeoJSON?.(), structuralElements);
+    for (const hump of packStructure.humps) {
       if (!hump.lat || !hump.lon) continue;
       tryAddStop({
         type: 'hump',
@@ -1346,7 +1350,7 @@ Return ONLY valid JSON, no markdown:
         structureType: 'offshore hump',
       });
     }
-    for (const ledge of (structuralElements.ledgeCoordinates || [])) {
+    for (const ledge of packStructure.ledges) {
       if (!ledge.lat || !ledge.lon) continue;
       tryAddStop({
         type: 'ledge',

@@ -29,7 +29,6 @@ import { workerHeaders } from '../utils/worker-auth.js';
 
 import { boundsOf } from '../utils/geojson-coords.js';
 import { lakeRecordFor } from '../data/lake-registry.js';
-import { capHumps, HUMP_MARKER_CAP, LEDGE_MARKER_CAP } from '../utils/structure-markers.js';
 
 // Setup global caches and references
 window.TROLLMAP_RESEARCHED_CACHE = window.TROLLMAP_RESEARCHED_CACHE || {};
@@ -521,35 +520,26 @@ function structuresFromPack(structGeo) {
   }
 
   // ---------------------------------------------------------------------
-  // COORDINATES, not just prose.
+  // COUNTS AND PROSE. THE COORDINATES DO NOT LIVE HERE ANY MORE.
   //
-  // supplemental-layers.js:renderStructureMarkers() draws humpCoordinates and
-  // ledgeCoordinates as map markers, and smart-plan.js turns them into casting-stop
-  // candidates. The old browser adapter wrote both. When this function replaced it and
-  // emitted only summary strings, nothing errored -- the markers simply stopped existing
-  // on the next research run, silently, on a map that still showed the STALE cached ones.
+  // They did between eba1ed1 (2026-08-07) and today, and it was the wrong home. A research
+  // profile is a document: saved to R2, re-read on every load, pasted into every LLM prompt.
+  // Thurmond ships 3,531 humps and 45,876 ledges, which came to 549 KB of an 810 KB profile
+  // and most of a 402,757-character habitat prompt.
   //
-  // Every hump ships: 395 on Wateree, and a hump is rare enough that each one is worth a
-  // pin. Ledges are capped at the steepest LEDGE_MARKER_CAP because there are 6,915 of them
-  // and, as the note above says, they do not discriminate -- slope is what separates a break
-  // worth stopping on from a contour that happens to be near another contour.
-  const num = v => (Number.isFinite(Number(v)) ? Number(v) : null);
-  const placed = r => Number.isFinite(r.lat) && Number.isFinite(r.lon);
-
-  const capped = capHumps(humps.filter(placed));
-  out.humpCoordinates = capped.coordinates;
-  out.humpCount = capped.total;
-  // Never silently.
-  if (capped.note) out.humpCoordinatesNote = capped.note;
-
-  out.ledgeCoordinates = ledges.filter(placed)
-    .sort((a, b) => (num(b.slope_ft_per_100ft) ?? 0) - (num(a.slope_ft_per_100ft) ?? 0))
-    .slice(0, LEDGE_MARKER_CAP)
-    .map(l => ({
-      id: l.id, lat: l.lat, lon: l.lon,
-      depth: num(l.depth_ft), slopeFtPer100Ft: num(l.slope_ft_per_100ft),
-      dropFt: num(l.drop_ft), runFt: num(l.run_ft),
-    }));
+  // Capping them was the obvious fix and the wrong one. Ryan, 2026-08-16: "how can i do all
+  // casting stops instead of trolling lanes if i want to if you cap everything out
+  // arbitrarily". Humps ARE the casting stops -- capping them caps the trip.
+  //
+  // structure.geojson has been in every pack since the Python pipeline started building it and
+  // nothing in the client read it. It does now: supplemental-layers.js prefetches the layer and
+  // smart-plan.js takes candidates from it, uncapped, through js/utils/structure-markers.js.
+  // What the profile keeps is what a research document is for -- how many, and what that means.
+  const placedHumps = humps.filter(placed);
+  const placedLedges = ledges.filter(placed);
+  if (placedHumps.length) out.humpCount = placedHumps.length;
+  if (placedLedges.length) out.ledgeCount = placedLedges.length;
+  out.structureSource = 'chartpack structure.geojson (coordinates served from the pack, not this profile)';
 
   return out;
 }
@@ -1371,6 +1361,37 @@ async function runResume(lakeName, selectedAgents, callbacks = {}) {
 // does too much, avoiding the CPU time limit that killed handleResearchAgentPipeline.
 // Pattern: discover → proxy-download (per doc) → save-normalized → analyze-facts
 //          → dedupe-contradictions → agent (LLM only)
+
+/**
+ * The reason a Worker call failed, out of the body it already put there.
+ *
+ * A 502 FROM THIS WORKER IS NEVER A MYSTERY -- IT IS A SENTENCE WE WROTE. research/agents.js
+ * returns `{success:false, error:"LLM failed: <provider error>"}` with status 502 whenever
+ * callLLM exhausts its chain, and research/extract.js does the same for the mapping agent.
+ * Every one of those bodies names the provider and the HTTP status it got back.
+ *
+ * Until 2026-08-16 the engine logged `Agent x LLM failed: 502` and dropped the body on the
+ * floor, so a night went into guessing at rate limits and Worker memory when the answer was
+ * sitting in the response. Ryan: "if it was a rate limit issue with the LLM then i should see
+ * a 429 not a 502... so i am not sure that you are even barking up the right tree." He was
+ * right, and the body is how anyone would have known.
+ */
+async function workerFailureReason(res) {
+  try {
+    const txt = await res.clone().text();
+    if (!txt) return `HTTP ${res.status}, empty body`;
+    try {
+      const j = JSON.parse(txt);
+      const bits = [j.error, j.detail, j.raw && `raw: ${String(j.raw).slice(0, 200)}`].filter(Boolean);
+      return bits.length ? `HTTP ${res.status} — ${bits.join(' | ')}` : `HTTP ${res.status} — ${txt.slice(0, 300)}`;
+    } catch (_) { return `HTTP ${res.status} — ${txt.slice(0, 300)}`; }
+  } catch (_) {
+    // A body we cannot read is different from a body that says nothing, and only one of them
+    // means the response never arrived.
+    return `HTTP ${res.status}, body unreadable (the response may not have completed)`;
+  }
+}
+
 async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRunAgents = false, _contextResults = {}) {
   if (!_calledFromRunAgents && _state.researchInProgress) throw new Error('A research task is already in progress.');
   if (!lakeName) throw new Error('Select a lake first.');
@@ -1932,7 +1953,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
             uniqueFacts.slice(0, 5).forEach(f => log(`  💬 [${f.category}] ${String(f.fact || '').slice(0, 80)}`));
           }
         } else {
-          log(`  ⚠️ [${agentKey}] analyze-facts returned ${analyzeRes.status} — continuing with 0 facts`);
+          log(`  ⚠️ [${agentKey}] analyze-facts ${await workerFailureReason(analyzeRes)} — continuing with 0 facts`);
         }
       } catch (analyzeErr) {
         log(`  ⚠️ [${agentKey}] analyze-facts failed: ${analyzeErr.message} — continuing with 0 facts`);
@@ -1979,7 +2000,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     if (!agentRes.ok) {
       // Retry once on 502
       if (agentRes.status === 502) {
-        log(`  ⚠️ ${def.label} LLM 502 — retrying after 5s...`);
+        log(`  ⚠️ ${def.label} LLM 502: ${await workerFailureReason(agentRes)} — retrying after 5s...`);
         await new Promise(r => setTimeout(r, 5000));
         const retry = await fetch(`${CF_WORKER_URL}/research/agent-llm`, {
           method: 'POST',
@@ -1996,14 +2017,14 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
             }
           })
         });
-        if (!retry.ok) throw new Error(`Agent ${agentKey} LLM failed: ${retry.status}`);
+        if (!retry.ok) throw new Error(`Agent ${agentKey} LLM failed on retry: ${await workerFailureReason(retry)}`);
         const retryData = await retry.json();
         if (!retryData.success) throw new Error(retryData.error || 'Agent LLM failed');
         log(`✔ ${def.label} agent complete (${uniqueFacts.length} facts, ${normalizedDocuments.length} docs)`);
         if (callbacks.onComplete) await callbacks.onComplete(lakeName);
         return { ...retryData, _extractedFacts: uniqueFacts, factsCount: uniqueFacts.length, docsUsed: normalizedDocuments.length, queryLog };
       }
-      throw new Error(`Agent ${agentKey} LLM failed: ${agentRes.status}`);
+      throw new Error(`Agent ${agentKey} LLM failed: ${await workerFailureReason(agentRes)}`);
     }
 
     const agentData = await agentRes.json();

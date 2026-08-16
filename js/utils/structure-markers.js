@@ -1,64 +1,99 @@
 /**
- * structure-markers.js — how many humps and ledges earn coordinates in a research profile.
+ * structure-markers.js — humps and ledges, read from the pack the pipeline builds.
  *
  * Personal use only, not for distribution or resale; not for navigation.
  *
- * THIS IS A SEPARATE FILE BECAUSE IT HAD TO BE TESTABLE. The capping lived inside
- * lake-research-engine.js, whose import graph reaches Leaflet and window-assigning browser
- * modules, so it could not be imported under node --test at all. A rule about how much data
- * ships that cannot be exercised is a rule nobody checks.
+ * WHY THIS EXISTS, and it is a correction.
  *
- * WHY A CAP EXISTS AT ALL, counted off the real packs on 2026-08-16:
+ * These coordinates used to be derived in the browser (`deriveContourStructures()`, capped at
+ * 8 of each because grid-bucketing contours is guesswork and eight guesses was enough). The
+ * Python pipeline builds them properly now and writes `structure.geojson` into every pack.
+ * `eba1ed1` wired the real ones into the research PROFILE, and that is the part that was wrong:
+ * the profile is a research document that gets saved to R2, re-read on every load, and pasted
+ * into every LLM prompt. Thurmond ships 3,531 humps and 45,876 ledges; as profile fields that
+ * was 549 KB of an 810 KB document, and most of a 402,757-character habitat prompt.
  *
- *     wateree_lake                  392 humps  ->  humpCoordinates  60,490 bytes
- *     hartwell_lake               1,751 humps  ->                  272,525 bytes
- *     j_strom_thurmond_reservoir  3,531 humps  ->                  549,450 bytes
+ * THE ANSWER WAS NEVER A CAP. Ryan, 2026-08-16: *"how can i do all casting stops instead of
+ * trolling lanes if i want to if you cap everything out arbitrarily"*. Exactly right — humps
+ * are what SmartPlan turns into casting stops, so capping them caps the trip. The profile was
+ * simply the wrong delivery path. `structure.geojson` is already in R2 beside contours and
+ * depth areas, already served by /chartpacks/<slug>/<layer>.geojson, and until now nothing in
+ * the client ever read it.
  *
- * storage.js writes the profile with JSON.stringify(master, null, 2), so those are the bytes
- * that reach R2. Thurmond's saved profile warned at 810,424 against its own 250 KB threshold,
- * and the profile travels into every agent prompt -- which is why habitat's prompt measured
- * 402,757 characters in wrangler tail and why truncating extracted facts could not shrink it.
- * The bulk was never the facts.
- *
- * The old comment read: "Every hump ships: 395 on Wateree, and a hump is rare enough that each
- * one is worth a pin." True on Wateree. False on a 41,000-acre reservoir, and the difference
- * only shows up on the lake nobody measured.
+ * So: EVERY hump and EVERY ledge, straight from the pack, and the research profile goes back to
+ * carrying prose and counts — which is all a research document was ever for.
  */
-
-// Wateree carries 6,915 ledges. Only the steepest earn a marker and a stop candidate.
-export const LEDGE_MARKER_CAP = 200;
-
-// 400 is not chosen for neatness: it is just above Wateree's 392, which is the size this
-// feature was written against and the only size it was ever observed to work at.
-export const HUMP_MARKER_CAP = 400;
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
 
+function pointOf(feature) {
+  const g = feature && feature.geometry;
+  if (!g || g.type !== 'Point' || !Array.isArray(g.coordinates)) return null;
+  const [lon, lat] = g.coordinates;
+  return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null;
+}
+
 /**
- * The humps worth a pin, most relief first.
+ * Humps from a pack's structure.geojson, most relief first. UNCAPPED.
  *
  * Relief before area: a 6 ft rise is a place to stop, a 1 ft rise across 30 acres is the bottom
- * being slightly uneven. Same ordering idea as the ledge sort, which ranks by slope.
- *
- * Returns the count and a note as well as the coordinates, because a lake that lost 3,131 humps
- * to a cap should say so in its own profile rather than reading as a lake with 400.
+ * being slightly uneven. The order matters even without a cap, because SmartPlan takes
+ * candidates off the front of the list.
  */
-export function capHumps(placedHumps, cap = HUMP_MARKER_CAP) {
-  const all = Array.isArray(placedHumps) ? placedHumps : [];
-  const coordinates = [...all]
-    .sort((a, b) => ((num(b.relief_ft) ?? 0) - (num(a.relief_ft) ?? 0))
-                 || ((num(b.area_acres) ?? 0) - (num(a.area_acres) ?? 0)))
-    .slice(0, cap)
-    .map((h) => ({
-      id: h.id, lat: h.lat, lon: h.lon,
-      depth: num(h.depth_ft), areaAcres: num(h.area_acres),
-      reliefFt: num(h.relief_ft), levels: num(h.levels),
-    }));
-  return {
-    coordinates,
-    total: all.length,
-    note: all.length > cap
-      ? `${all.length} humps mapped; the ${cap} with the most relief carry coordinates`
-      : null,
-  };
+export function humpsFromPack(structGeo) {
+  const feats = (structGeo && structGeo.features) || [];
+  const out = [];
+  for (const f of feats) {
+    const p = (f && f.properties) || {};
+    if (String(p.kind || '').toLowerCase() !== 'hump') continue;
+    const pt = pointOf(f);
+    if (!pt) continue;
+    out.push({
+      id: p.id, lat: pt.lat, lon: pt.lon,
+      depth: num(p.depth_ft), areaAcres: num(p.area_acres),
+      reliefFt: num(p.relief_ft), levels: num(p.levels), score: num(p.score),
+    });
+  }
+  return out.sort((a, b) => ((b.reliefFt ?? 0) - (a.reliefFt ?? 0))
+                         || ((b.areaAcres ?? 0) - (a.areaAcres ?? 0)));
+}
+
+/** Ledges from the pack, steepest first. UNCAPPED — slope is what separates a break worth
+ *  stopping on from a contour that happens to be near another contour. */
+export function ledgesFromPack(structGeo) {
+  const feats = (structGeo && structGeo.features) || [];
+  const out = [];
+  for (const f of feats) {
+    const p = (f && f.properties) || {};
+    if (String(p.kind || '').toLowerCase() !== 'ledge') continue;
+    const pt = pointOf(f);
+    if (!pt) continue;
+    out.push({
+      id: p.id, lat: pt.lat, lon: pt.lon,
+      depth: num(p.depth_ft), slopeFtPer100Ft: num(p.slope_ft_per_100ft),
+      dropFt: num(p.drop_ft), runFt: num(p.run_ft), score: num(p.score),
+    });
+  }
+  return out.sort((a, b) => (b.slopeFtPer100Ft ?? 0) - (a.slopeFtPer100Ft ?? 0));
+}
+
+/**
+ * The structure a consumer should use: the pack when it has one, the profile's own arrays when
+ * it does not.
+ *
+ * The fallback is not decoration. 43 of the 454 shipped packs carry no structure.geojson, and
+ * profiles researched before this change still hold coordinates. Returning `source` means a
+ * caller — or a person reading a plan — can tell which it got.
+ */
+export function structureFor(packGeo, profileStructuralElements) {
+  const humps = humpsFromPack(packGeo);
+  const ledges = ledgesFromPack(packGeo);
+  if (humps.length || ledges.length) {
+    return { humps, ledges, source: 'pack', humpCount: humps.length, ledgeCount: ledges.length };
+  }
+  const se = profileStructuralElements || {};
+  const ph = Array.isArray(se.humpCoordinates) ? se.humpCoordinates : [];
+  const pl = Array.isArray(se.ledgeCoordinates) ? se.ledgeCoordinates : [];
+  return { humps: ph, ledges: pl, source: (ph.length || pl.length) ? 'profile' : 'none',
+           humpCount: ph.length, ledgeCount: pl.length };
 }

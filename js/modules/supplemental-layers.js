@@ -19,6 +19,7 @@ import { depthColor } from '../utils/depth-palette.js';
 import { displayDepth, setDisplayTide } from './tide-engine.js';
 
 import { cacheGet, cacheSet } from '../utils/db.js';
+import { structureFor } from '../utils/structure-markers.js';
 // Canvas renderer — shared for all supplemental polygon/line layers
 const _canvasRenderer = L.canvas({ padding: 0.5 });
 
@@ -142,7 +143,10 @@ let _garminData       = {};      // name -> GeoJSON    (fetched, may not be rend
 // which order, is the kind of bug that never announces itself.
 //
 // So: prefetch the data on lake select, draw only on demand.
-const PREFETCH_LAYERS = ['pois', 'docks'];
+// `structure` joins the prefetch because humps and ledges are no longer carried in the
+// research profile -- see js/utils/structure-markers.js. The pack has had this layer in R2
+// since the Python pipeline started building it, and until 2026-08-16 nothing here read it.
+const PREFETCH_LAYERS = ['pois', 'docks', 'structure'];
 
 async function ensureData(lakeKey, layer) {
   if (_garminData[layer]) return _garminData[layer];
@@ -159,6 +163,8 @@ async function ensureData(lakeKey, layer) {
   }
 }
 
+export function getStructureGeoJSON() { return _garminData.structure || null; }
+window.getStructureGeoJSON = getStructureGeoJSON;
 export function getDepthAreaGeoJSON() { return _depthAreaGeoJSON; }
 export function getLakeBoundaryGeoJSON() { return _boundaryGeoJSON; }
 export function bringDepthAreasToBack() {
@@ -1083,12 +1089,15 @@ async function loadLakeBoundary(displayName) {
 function renderStructureMarkers(displayName) {
   if (!mapReady()) return;
   if (_structureMarkerLayer) { getMap().removeLayer(_structureMarkerLayer); _structureMarkerLayer = null; }
+  // The pack first: every hump and every ledge the pipeline built, uncapped. The research
+  // profile is the fallback for the 43 packs with no structure layer and for profiles saved
+  // before the coordinates moved out of them.
   const profile = window.getResearchedProfile?.(displayName);
-  if (!profile) return;
-  const se = profile.habitat?.structuralElements || {};
-  const humps  = se.humpCoordinates  || [];
-  const ledges = se.ledgeCoordinates || [];
+  const { humps, ledges, source } = structureFor(_garminData.structure,
+                                                 profile?.habitat?.structuralElements);
   if (!humps.length && !ledges.length) return;
+  console.log(`[supplemental] structure markers: ${humps.length} humps, ${ledges.length} ledges `
+            + `for ${displayName} (from the ${source})`);
 
   const group = L.layerGroup();
 
