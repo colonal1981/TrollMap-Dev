@@ -144,7 +144,24 @@ def deletable(name: str, fname: str) -> str | None:
         return None                      # index.json, meta.json, vectors/... -- not ours to judge
     if FILE_TO_LAYER.get(fname) in PIPELINE_ONLY:
         return "pipeline-only"
-    if name.startswith("coast_") and name not in COASTAL_PRIMARY:
+    # THE TIER-OFF GUARD, and it is the uploader's own guard, copied verbatim in meaning.
+    # COASTAL_PRIMARY IS EMPTY BY DEFAULT AND EMPTY MEANS THE TIER IS OFF -- every zone is
+    # primary and ships every layer. Without the leading `COASTAL_PRIMARY and`, an empty set
+    # makes every coastal zone `not in COASTAL_PRIMARY` and therefore secondary, which is the
+    # exact inversion of what the constant means.
+    #
+    # Measured against the live bucket 2026-08-16, minutes after a clean upload that printed
+    # "coastal tier OFF -- every coastal zone ships every layer": the delete list held 127
+    # objects, 338.6 MB, across 16 coastal zones the app was serving that same minute --
+    # boundary.geojson among them, which is the file the map draws. Only 45 of the 172 keys
+    # were genuinely orphaned.
+    #
+    # upload_garmin_to_r2.py:198 already carried this guard and already said why: "the old
+    # behaviour was one absent name away from silently stripping a zone." This module's own
+    # docstring says the coastal rule "is imported from upload_garmin_to_r2.py rather than
+    # restated, so it cannot drift from what the uploader believes" -- and then restated it.
+    # The constant was imported; the CONDITION was not.
+    if COASTAL_PRIMARY and name.startswith("coast_") and name not in COASTAL_PRIMARY:
         if fname not in KEEP_ON_SECONDARY_COAST:
             return "coastal-secondary"
     return None
