@@ -355,6 +355,11 @@ ${factsBlock || 'No habitat facts extracted.'}
 EXISTING GEOSPATIAL DATA (from TrollMap contour/supplemental layers — preserve these exactly):
 ${JSON.stringify(existingHabitat, null, 2).slice(0, 3000)}
 
+DERIVED FIELDS ARE ALREADY STORED AND MUST NOT BE RETURNED: artificialHabitatDetails and
+structuralElements come from the chartpack's own geometry. Echoing them back is what produced
+a 402,757-character reply on 2026-08-16 -- structuralElements carried 3,531 hump coordinates at
+the time. Omit both keys; the merge preserves what you do not return.
+
 RULES:
 CASTING EXTRACTION REQUIREMENTS — these fields power the casting stop builder. Search the full document, including captions, tables, map labels, and prose. Preserve named locations verbatim and do not replace a specific location with a generic category.
 1. dockDensity: if documents describe dock concentration (e.g. "heavily docked residential shoreline", "sparse docks", "marina on north end"), capture as a descriptive string. null if not mentioned.
@@ -375,8 +380,7 @@ Return ONLY:
     "cover": [],
     "vegetation": {},
     "artificialHabitat": [],
-    "artificialHabitatDetails": ${JSON.stringify(existingHabitat.artificialHabitatDetails || null)},
-    "structuralElements": ${JSON.stringify(existingHabitat.structuralElements || {})},
+    "//": "artificialHabitatDetails and structuralElements are DERIVED FROM THE CHARTPACK and are already stored. Do not return them.",
     "dockDensity": null,
     "riprapLocations": [],
     "namedCreekMouths": [],
@@ -395,9 +399,28 @@ JSON only.`;
     label: "Navigation",
     order: 5,
     system: "You are a boating safety data assembly agent. Map ramp data and hazard facts to the navigation JSON. Return ONLY valid JSON.",
+    // THE RAMPS ARE NOT THE MODEL'S TO REPEAT.
+    //
+    // This template used to interpolate the full ramp array TWICE -- once as context and again
+    // inside the JSON skeleton it asked the model to echo back. That was survivable while
+    // deterministic ramps were coming back empty. Once the registry's geometry join started
+    // supplying them, Thurmond arrived with 116, and 116 ramps do not fit in max_tokens 3000.
+    // From Ryan's run, 2026-08-16:
+    //
+    //   ⚠️ Navigation LLM 502: HTTP 502 — Agent returned non-JSON | raw: { "navigation": {
+    //   "ramps": [ {"name": "Amity RA", ...}, {"name": "Baker Creek State Park", "lat": 33.88
+    //
+    // Cut off mid-object, so extractJsonPossibly found no closing brace and the agent 502'd --
+    // twice, because the retry sent the identical prompt.
+    //
+    // Deterministic data has no business round-tripping through a language model. The ramps
+    // are already on profile.navigation.ramps, the merge in lake-research-engine.js only
+    // overwrites keys the agent actually returns, so leaving them out preserves them exactly.
+    // What the model is for here is hazards, shoals, timber and idle zones.
     userTemplate: (lakeName, state, prev) => {
       const existingNav = prev?.navigation || {};
-      const ramps = existingNav.ramps?.length ? JSON.stringify(existingNav.ramps) : '[]';
+      const rampList = Array.isArray(existingNav.ramps) ? existingNav.ramps : [];
+      const rampSample = rampList.slice(0, 8).map(r => r?.name).filter(Boolean).join(', ');
       const facts = prev?._extractedFacts || [];
       const navFacts = facts.filter(f =>
         /ramp|hazard|shoal|navigation|timber|dam|bridge|tailwater|surge|idle|access/i.test(f.category + ' ' + f.fact)
@@ -405,8 +428,10 @@ JSON only.`;
 
       return `Navigation data for ${lakeName}.
 
-EXISTING RAMP DATA (from SCDNR — preserve exactly):
-${ramps}
+RAMPS ARE ALREADY RECORDED — DO NOT RETURN THEM.
+${rampList.length} boat ramp(s) are already stored for this lake from official GIS and the
+TrollMap registry${rampSample ? ` (for example: ${rampSample})` : ''}. They are context only.
+Repeating them will truncate your reply and it will be discarded. Omit the "ramps" key.
 
 EXTRACTED HAZARD FACTS:
 ${navFacts || 'No navigation facts extracted — derive from lake type and operator.'}
@@ -414,7 +439,6 @@ ${navFacts || 'No navigation facts extracted — derive from lake type and opera
 Return ONLY:
 {
   "navigation": {
-    "ramps": ${ramps},
     "hazards": [],
     "shoals": [],
     "standingTimberAreas": [],
