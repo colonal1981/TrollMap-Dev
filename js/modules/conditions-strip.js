@@ -116,6 +116,15 @@ function cardHtml(rec, c) {
     out.push(row('Flood status', `${esc(String(c.floodCategory).replace(/_/g, ' '))}`
       + '<span class="cond-sub"> — NWPS category</span>'));
   }
+  if (c.flowBand) {
+    out.push(row('Flow vs history', esc(c.flowBand)
+      + `<span class="cond-sub"> for today's date`
+      + `${c.flowYears ? `, over ${c.flowYears} years` : ''}`
+      + `${c.flowPeriod ? ` (${esc(c.flowPeriod)})` : ''}`
+      + `${c.flowMedian != null ? `. Median for today is ${Math.round(c.flowMedian).toLocaleString()} ft³/s` : ''}. `
+      + `USGS daily statistics — a band between published set points, not an interpolated `
+      + `percentile.</span>`));
+  }
   if (c.flowAnomaly != null) {
     out.push(row('Flow vs normal', `${c.flowAnomaly > 0 ? '+' : ''}${c.flowAnomaly}`
       + `<span class="cond-sub"> — NOAA National Water Model anomaly`

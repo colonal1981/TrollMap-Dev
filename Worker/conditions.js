@@ -98,6 +98,13 @@ async function getJson(url) {
   return r.json();
 }
 
+/** The same, for the services that answer in USGS's tab-delimited RDB rather than JSON. */
+async function getText(url) {
+  const r = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'text/plain' } });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.text();
+}
+
 // ── sun, moon and the solunar periods ───────────────────────────────────────────────────────
 
 function hhmmToMin(s) {
@@ -1357,6 +1364,108 @@ async function gaugeTrend(lid) {
   return stageflowTrend(j, Date.now());
 }
 
+/**
+ * WHERE TODAY'S FLOW SITS IN THIS RIVER'S OWN HISTORY.
+ *
+ * 1,240 ft3/s is not a fact anyone can act on. "1,240, below the 10th percentile for August 16
+ * across 96 years" is. Until now the only answer this app had was NOAA's `anomaly_category`,
+ * which conditions.js passes through untranslated and says why: it is a code into a legend
+ * nobody here has read, and guessing the direction of an anomaly is worse than not reporting it.
+ *
+ * VERIFIED 2026-08-16 against site 02148000, Wateree River near Camden. `statReportType=daily`
+ * returns one row per calendar day with `begin_yr 1930`, `end_yr 2026`, `count_nu 96` and the
+ * requested percentile columns.
+ *
+ * PARSED BY HEADER NAME, NOT BY COLUMN POSITION. `loc_web_ds` comes back empty on this site, so
+ * counting fields off the front of a row drifts by one the moment a site fills it in.
+ *
+ * A BAND, NOT A NUMBER. The published set points are p10/p25/p50/p75/p90 and this reports which
+ * pair today's flow falls between. Interpolating a precise percentile between two of them would
+ * be a derived value wearing a measurement's clothes — the same refusal usaceSeasonalValue makes
+ * about interpolating a Corps level, for the same reason.
+ */
+export function parseDailyStats(rdb, month, day) {
+  const lines = String(rdb || '').split('\n').filter((l) => l && !l.startsWith('#'));
+  if (lines.length < 3) return null;
+  const head = lines[0].split('\t');
+  const idx = (name) => head.indexOf(name);
+  const iM = idx('month_nu'), iD = idx('day_nu');
+  if (iM < 0 || iD < 0) return null;
+  for (const line of lines.slice(2)) {
+    const f = line.split('\t');
+    if (Number(f[iM]) !== month || Number(f[iD]) !== day) continue;
+    // Number('') IS 0 AND isFinite(0) IS TRUE. An RDB cell for a percentile a site has no
+    // record for comes back EMPTY, and without this guard it parses as a flow of zero — which
+    // then reads as the driest day in 96 years on a river that simply was not gauged for it.
+    // Caught by this function's own test, which is the fourth instance of this exact bug found
+    // in one day: an empty Rain cell on Southern Company, an empty saved ramps array, an empty
+    // COASTAL_PRIMARY set, and now this.
+    const num = (name) => {
+      const i = idx(name);
+      if (i < 0) return null;
+      const raw = (f[i] || '').trim();
+      if (!raw) return null;
+      const v = Number(raw);
+      return Number.isFinite(v) ? v : null;
+    };
+    const p = { p10: num('p10_va'), p25: num('p25_va'), p50: num('p50_va'),
+                p75: num('p75_va'), p90: num('p90_va') };
+    if (Object.values(p).every((v) => v === null)) return null;
+    return { ...p, begin_yr: num('begin_yr'), end_yr: num('end_yr'), years: num('count_nu'),
+             month, day, source: 'USGS — /nwis/stat, daily statistics over the period of record' };
+  }
+  return null;
+}
+
+/** Which published pair today's value falls between, in words a person can act on. */
+export function statBand(value, st) {
+  if (!st || !Number.isFinite(value)) return null;
+  const steps = [['p10', 10], ['p25', 25], ['p50', 50], ['p75', 75], ['p90', 90]]
+    .filter(([k]) => Number.isFinite(st[k]));
+  if (!steps.length) return null;
+  let label = null, below = null, above = null;
+  if (value < st[steps[0][0]]) {
+    label = `below the ${steps[0][1]}th percentile`;
+    above = steps[0][1];
+  } else if (value >= st[steps[steps.length - 1][0]]) {
+    label = `above the ${steps[steps.length - 1][1]}th percentile`;
+    below = steps[steps.length - 1][1];
+  } else {
+    for (let i = 0; i < steps.length - 1; i += 1) {
+      if (value >= st[steps[i][0]] && value < st[steps[i + 1][0]]) {
+        below = steps[i][1]; above = steps[i + 1][1];
+        label = `between the ${below}th and ${above}th percentile`;
+        break;
+      }
+    }
+  }
+  if (!label) return null;
+  return {
+    label,
+    percentile_at_least: below,
+    percentile_below: above,
+    median: Number.isFinite(st.p50) ? st.p50 : null,
+    years: st.years,
+    period: (st.begin_yr && st.end_yr) ? `${st.begin_yr}–${st.end_yr}` : null,
+    // Said out loud so nobody reads the band as a precise figure.
+    note: 'a band between published set points, not an interpolated percentile',
+    source: st.source,
+  };
+}
+
+async function flowVsHistory(site, flow, nowMs) {
+  if (!site || !Number.isFinite(flow)) return null;
+  const d = new Date(nowMs);
+  const month = d.getUTCMonth() + 1;
+  const day = d.getUTCDate();
+  // Statistics over a period of record do not change during a day; cached accordingly.
+  const rdb = await cached(`stat:${site}`, 6 * 3600, () => getText(
+    'https://waterservices.usgs.gov/nwis/stat/?format=rdb&statReportType=daily'
+    + `&statTypeCd=p10,p25,p50,p75,p90&parameterCd=00060&sites=${encodeURIComponent(site)}`));
+  const st = parseDailyStats(rdb, month, day);
+  return st ? { ...statBand(flow, st), flow_cfs: flow, usgs_site: site } : null;
+}
+
 async function waterBlock(b, lat, lon) {
   const picks = [];
   if (gaugeId(b.pool)) picks.push(['pool', b.pool]);
@@ -1457,6 +1566,14 @@ async function waterBlock(b, lat, lon) {
                 || (picks.find(([role]) => role === 'gauge') || [])[1]?.lid
                 || (b.tailwater && b.tailwater.lid) || null;
   out.trend = await gaugeTrend(trendLid).catch(() => null);
+
+  // Only where there is a flow to place. A lake's percentile of discharge is not a question
+  // anyone is asking, and the fetch is skipped rather than made and discarded.
+  const flowGauge = ['gauge', 'tailwater', 'pool']
+    .map((role) => out[role]).find((g) => g && Number.isFinite(g.flow) && g.usgs_site);
+  out.flow_vs_history = flowGauge
+    ? await flowVsHistory(flowGauge.usgs_site, flowGauge.flow, Date.now()).catch(() => null)
+    : null;
 
   const probe = await waterProbe(b, lat, lon, seeded).catch(() => ({ temp: seeded }));
   out.water_temp = probe.temp || null;

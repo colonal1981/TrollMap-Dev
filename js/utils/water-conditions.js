@@ -120,6 +120,10 @@ export function readConditions(j) {
     stageVsActionFt: null,
     gaugeOutOfService: null,
     flowAnomaly: null,
+    flowBand: null,
+    flowMedian: null,
+    flowYears: null,
+    flowPeriod: null,
     flowAnomalyOf: null,
     generatingNow: null,
     generationNext: null,
@@ -265,6 +269,18 @@ export function readConditions(j) {
   // FLOW ALONE IS NOT A FACT ABOUT TODAY. 1,240 ft3/s means nothing without knowing what this
   // river usually runs. NOAA's anomaly_category is its own code and is deliberately NOT
   // translated here — the Worker refuses to guess its direction and so does this.
+  // WHERE TODAY SITS IN THIS RIVER'S OWN HISTORY. This is what NOAA's anomaly_category was
+  // standing in for, and it is a sentence rather than a code: "below the 10th percentile for
+  // August 16, over 96 years". A band between published set points, never an interpolated
+  // figure — the Worker refuses to invent one and so does this.
+  const fh = w.flow_vs_history || null;
+  if (fh && fh.label) {
+    out.flowBand = fh.label;
+    out.flowMedian = Number.isFinite(fh.median) ? fh.median : null;
+    out.flowYears = Number.isFinite(fh.years) ? fh.years : null;
+    out.flowPeriod = fh.period || null;
+  }
+
   const riv = j.rivers || null;
   if (riv) {
     const best = (riv.named || []).concat(riv.unnamed || [])
@@ -544,6 +560,8 @@ export function conditionsStrip(c) {
   }
   if (c.nextTide) bits.push(`${c.nextTide.type} ${c.nextTide.at ? String(c.nextTide.at).slice(11, 16) : ''}`.trim());
 
+  // The band goes next to the flow, because the number means nothing without it.
+  if (isRiver && c.flowBand) bits.push(c.flowBand.replace(' percentile', 'th pct').replace(/the (\d+)th/g, '$1'));
   if (isRiver && (c.tidalFlowCfs != null || c.flowCfs != null)) {
     // The tidally filtered figure wins where it exists: on a tidal river the raw discharge
     // reverses twice a day, so its instantaneous value is not the river's flow.

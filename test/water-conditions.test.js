@@ -713,3 +713,25 @@ test("TVA's own discharge and tailwater are read", () => {
   assert.equal(c.tvaDischargeCfs, 12400);
   assert.equal(c.tvaTailwaterFt, 812.4);
 });
+
+test('the flow band reaches the strip next to the flow, because the number needs it', () => {
+  const c = readConditions({ slug: 'x', water: { display_name: 'Broad River', feature_type: 'river',
+    chart_datum: { pending: 'not a lake' },
+    gauge: { flow: 310, name: 'Alston', usgs_site: '02148000' },
+    flow_vs_history: { label: 'below the 10th percentile', median: 1500, years: 96,
+                       period: '1930–2026', flow_cfs: 310, usgs_site: '02148000',
+                       note: 'a band between published set points, not an interpolated percentile' } } });
+  assert.equal(c.flowBand, 'below the 10th percentile');
+  assert.equal(c.flowMedian, 1500);
+  assert.equal(c.flowYears, 96);
+  const s = conditionsStrip(c).text;
+  assert.match(s, /310 ft³\/s/);
+  assert.match(s, /below 10th pct/);
+});
+
+test('a lake gets no flow band — the percentile of a lake discharge is nobody\'s question', () => {
+  const c = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 2 }, flow_vs_history: null } });
+  assert.equal(c.flowBand, null);
+  assert.ok(!/pct/.test(conditionsStrip(c).text));
+});
