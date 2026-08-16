@@ -121,6 +121,12 @@ export function readConditions(j) {
     gaugeOutOfService: null,
     flowAnomaly: null,
     flowAnomalyOf: null,
+    generatingNow: null,
+    generationNext: null,
+    tvaVsGuideFt: null,
+    tvaGuideFt: null,
+    droughtLevel: null,
+    droughtLevels: null,
     featureType: null,
     pending: null,
     error: null,
@@ -237,6 +243,34 @@ export function readConditions(j) {
       out.flowAnomaly = best.anomaly;
       out.flowAnomalyOf = best.name || null;
     }
+  }
+
+  // ── TVA: the generation IS the current ──────────────────────────────────────────────────
+  // conditions.js says it in its own comment — "on a TVA tailwater the current is the whole
+  // question" — and then nothing has ever read generating_now, generation or vs_guide_ft.
+  const tva = w.tva || null;
+  if (tva) {
+    if (typeof tva.generating_now === 'boolean') out.generatingNow = tva.generating_now;
+    const gen = Array.isArray(tva.generation) ? tva.generation : [];
+    // The next entry that has units turning, not the first row of the feed.
+    out.generationNext = gen.find((g) => g && g.generators > 0) || null;
+    if (Number.isFinite(tva.vs_guide_ft)) out.tvaVsGuideFt = tva.vs_guide_ft;
+    if (Number.isFinite(tva.guide_curve_ft)) out.tvaGuideFt = tva.guide_curve_ft;
+  }
+
+  // ── The Corps' drought state ────────────────────────────────────────────────────────────
+  // A drought level is not a reading and not a target — it is the rule the lake will be run
+  // under, and the Savannah district publishes the release cut in the level's own comment.
+  const us = w.usace || null;
+  if (us && Array.isArray(us.drought_levels) && us.drought_levels.length) {
+    out.droughtLevels = us.drought_levels;
+    // Which one today's elevation has actually fallen to, if any. Levels are elevations, so the
+    // lake is IN a drought level when it sits at or below that level's elevation.
+    const lvl = Number.isFinite(out.levelFt)
+      ? us.drought_levels.filter((d) => Number.isFinite(d.ft) && out.levelFt <= d.ft)
+          .sort((a, b) => a.ft - b.ft)[0] || null
+      : null;
+    out.droughtLevel = lvl;
   }
 
   out.releases = w.releases || null;
@@ -391,6 +425,11 @@ export function conditionsStrip(c) {
     bits.push(String(c.floodCategory).replace(/_/g, ' '));
   }
   if (c.gaugeOutOfService) bits.push('gauge out of service');
+  // GENERATING is the current on a TVA tailwater, so it belongs on the line rather than behind
+  // a click. `false` is as useful as `true` here — "not generating" is why nothing is moving.
+  if (c.generatingNow === true) bits.push('generating');
+  else if (c.generatingNow === false) bits.push('not generating');
+  if (c.droughtLevel) bits.push(String(c.droughtLevel.level).toLowerCase());
   if (c.turbidityFnu != null) bits.push(`${c.turbidityFnu} FNU`);
   else if (c.clarity) bits.push(`${c.clarityIsMeasured ? '' : '~'}${c.clarity}`);
   if (c.oxygenMgL != null) bits.push(`${c.oxygenMgL} mg/L O₂`);

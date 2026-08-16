@@ -103,6 +103,30 @@ function cardHtml(rec, c) {
       + `${c.flowAnomalyOf ? ` on ${esc(c.flowAnomalyOf)}` : ''}, published without units or a legend. `
       + `The sign is the usable part.</span>`));
   }
+  if (c.generatingNow != null || c.generationNext) {
+    const now = c.generatingNow === true ? '<b>generating now</b>'
+              : c.generatingNow === false ? 'not generating' : '';
+    const nxt = c.generationNext
+      ? `<span class="cond-sub"> — next in the published schedule: `
+        + `${esc(c.generationNext.generators)} generator${c.generationNext.generators === 1 ? '' : 's'}`
+        + `${c.generationNext.day || c.generationNext.time ? ` ${esc([c.generationNext.day, c.generationNext.time].filter(Boolean).join(' '))}` : ''}</span>`
+      : '';
+    out.push(row('TVA generation', `${now}${nxt}`
+      + '<span class="cond-sub"> — on a tailwater the generation IS the current.</span>'));
+  }
+  if (c.tvaVsGuideFt != null) {
+    out.push(row('Vs guide curve', `${c.tvaVsGuideFt > 0 ? '+' : ''}${c.tvaVsGuideFt} ft`
+      + `<span class="cond-sub"> — against today's seasonal target`
+      + `${c.tvaGuideFt != null ? ` of ${c.tvaGuideFt} ft` : ''}. TVA runs a curve, not a full pool.</span>`));
+  }
+  if (c.droughtLevels && c.droughtLevels.length) {
+    const at = c.droughtLevel;
+    const lines = c.droughtLevels.map((d) =>
+      `${esc(d.level)} at ${d.ft} ft${d.comment ? ` — ${esc(d.comment)}` : ''}`).join('<br>');
+    out.push(row('Corps drought', at
+      ? `<b>at ${esc(at.level)}</b><span class="cond-sub"> — ${esc(at.comment || 'no comment published')}</span><br><span class="cond-sub">${lines}</span>`
+      : `<span class="cond-sub">above every published drought level.<br>${lines}</span>`));
+  }
   if (c.gaugeOutOfService) {
     out.push(row('Gauge', `<b>OUT OF SERVICE</b>`
       + `<span class="cond-sub"> — ${esc(c.gaugeOutOfService.name || c.gaugeOutOfService.role)}`

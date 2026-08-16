@@ -423,3 +423,57 @@ test('the flow anomaly is passed through with its sign and never translated', ()
   assert.equal(c.flowAnomaly, -0.38);
   assert.equal(c.flowAnomalyOf, 'Broad River');
 });
+
+// ── TVA generation and the Corps' drought state ─────────────────────────────────────────────
+test('generating now reaches the strip, and so does NOT generating', () => {
+  // "not generating" is why nothing is moving on a tailwater, which is as useful as the yes.
+  const on = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 1 },
+    tva: { generating_now: true, generation: [{ generators: 2, day: 'Sat', time: '14:00' }], vs_guide_ft: -1.4, guide_curve_ft: 1075 } } });
+  assert.equal(on.generatingNow, true);
+  assert.equal(on.generationNext.generators, 2);
+  assert.equal(on.tvaVsGuideFt, -1.4);
+  assert.match(conditionsStrip(on).text, /generating/);
+
+  const off = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 1 }, tva: { generating_now: false, generation: [] } } });
+  assert.equal(off.generatingNow, false);
+  assert.match(conditionsStrip(off).text, /not generating/);
+});
+
+test('the next generation entry is the next one TURNING, not the first row of the feed', () => {
+  const c = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 1 },
+    tva: { generating_now: false,
+           generation: [{ generators: 0, time: '08:00' }, { generators: 3, time: '15:00' }] } } });
+  assert.equal(c.generationNext.generators, 3);
+  assert.equal(c.generationNext.time, '15:00');
+});
+
+test('a drought level is only entered when the elevation has actually fallen to it', () => {
+  const levels = [{ level: 'Drought Level 1', ft: 656, comment: 'Reduction at Thurmond to 4200 cfs' },
+                  { level: 'Drought Level 2', ft: 654, comment: null },
+                  { level: 'Drought Level 3', ft: 650, comment: null }];
+  const above = readConditions({ slug: 'x', water: { display_name: 'Hartwell', feature_type: 'lake',
+    chart_datum: { level_ft: 658.2, full_pool_ft: 660, below_full_pool_ft: 1.8 },
+    usace: { project: 'Hartwell', conservation_pool_ft: 660, drought_levels: levels } } });
+  assert.equal(above.droughtLevel, null, 'above every level is not in one');
+  assert.equal(above.droughtLevels.length, 3);
+
+  const inIt = readConditions({ slug: 'x', water: { display_name: 'Hartwell', feature_type: 'lake',
+    chart_datum: { level_ft: 653.1, full_pool_ft: 660, below_full_pool_ft: 6.9 },
+    usace: { project: 'Hartwell', conservation_pool_ft: 660, drought_levels: levels } } });
+  // At 653.1 the lake is below both Level 1 and Level 2; the deepest one it has reached wins.
+  // 653.1 is below Level 1 (656) AND Level 2 (654) but above Level 3 (650). The answer is the
+  // DEEPEST level it has fallen past, not the first one in the published list.
+  assert.equal(inIt.droughtLevel.level, 'Drought Level 2');
+  assert.match(conditionsStrip(inIt).text, /drought level 2/);
+});
+
+test('no drought levels published is silence, not "no drought"', () => {
+  const c = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { level_ft: 100, below_full_pool_ft: 1 },
+    usace: { project: 'P', conservation_pool_ft: 101, drought_levels: [] } } });
+  assert.equal(c.droughtLevels, null);
+  assert.equal(c.droughtLevel, null);
+});
