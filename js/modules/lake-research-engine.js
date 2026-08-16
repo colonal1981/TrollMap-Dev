@@ -535,8 +535,14 @@ function structuresFromPack(structGeo) {
   // nothing in the client read it. It does now: supplemental-layers.js prefetches the layer and
   // smart-plan.js takes candidates from it, uncapped, through js/utils/structure-markers.js.
   // What the profile keeps is what a research document is for -- how many, and what that means.
-  const placedHumps = humps.filter(placed);
-  const placedLedges = ledges.filter(placed);
+  // Defined here rather than inherited: the previous version of this block declared `placed`
+  // alongside the coordinate mapping, and removing the coordinates took the helper with it.
+  // node --check cannot see a ReferenceError, and this function cannot be imported under
+  // node --test (Leaflet), so the whole geospatial adapter failed at runtime with
+  // "placed is not defined" and every habitat and species fact went with it.
+  const isPlaced = (r) => Number.isFinite(r.lat) && Number.isFinite(r.lon);
+  const placedHumps = humps.filter(isPlaced);
+  const placedLedges = ledges.filter(isPlaced);
   if (placedHumps.length) out.humpCount = placedHumps.length;
   if (placedLedges.length) out.ledgeCount = placedLedges.length;
   out.structureSource = 'chartpack structure.geojson (coordinates served from the pack, not this profile)';
