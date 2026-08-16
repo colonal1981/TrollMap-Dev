@@ -146,6 +146,17 @@ export function readConditions(j) {
     obsKmAway: null,
     pressure3h: null,
     pressureStale: null,
+    civilDawn: null,
+    civilDusk: null,
+    sunrise: null,
+    sunset: null,
+    moonPhase: null,
+    moonIllumination: null,
+    popPct: null,
+    surgeFt: null,
+    currentDirDeg: null,
+    tvaDischargeCfs: null,
+    tvaTailwaterFt: null,
     featureType: null,
     pending: null,
     error: null,
@@ -273,6 +284,8 @@ export function readConditions(j) {
     const gen = Array.isArray(tva.generation) ? tva.generation : [];
     // The next entry that has units turning, not the first row of the feed.
     out.generationNext = gen.find((g) => g && g.generators > 0) || null;
+    if (Number.isFinite(tva.discharge_cfs)) out.tvaDischargeCfs = tva.discharge_cfs;
+    if (Number.isFinite(tva.tailwater_ft)) out.tvaTailwaterFt = tva.tailwater_ft;
     if (Number.isFinite(tva.vs_guide_ft)) out.tvaVsGuideFt = tva.vs_guide_ft;
     if (Number.isFinite(tva.guide_curve_ft)) out.tvaGuideFt = tva.guide_curve_ft;
   }
@@ -349,8 +362,31 @@ export function readConditions(j) {
       .map((x) => ({ ...x, ms: Date.parse(String(x.time).replace(' ', 'T')) }))
       .filter((x) => Number.isFinite(x.ms) && x.ms >= now)
       .sort((a, b) => a.ms - b.ms);
+    // MEASURED VERSUS PREDICTED, WHICH IS THE SURGE. tideBlock has fetched the measured water
+    // level for the stations flagged `measured` since it was written, and its own comment says
+    // why: a predicted tide is astronomy, a measured one carries the wind. On a blow that
+    // difference is the whole story and nothing has ever read it.
+    if (td.measured_level && Number.isFinite(td.measured_level.ft)) {
+      const near = (td.highs_lows || [])
+        .map((x) => ({ ...x, ms: Date.parse(String(x.time).replace(' ', 'T')) }))
+        .filter((x) => Number.isFinite(x.ms) && Number.isFinite(x.ft));
+      const atMs = Date.parse(String(td.measured_level.at).replace(' ', 'T'));
+      // Only against a prediction close in time. Comparing a measured level with a high three
+      // hours away measures the tide, not the surge.
+      let best = null;
+      for (const p of near) {
+        if (!Number.isFinite(atMs)) break;
+        if (Math.abs(p.ms - atMs) > 45 * 60 * 1000) continue;
+        if (!best || Math.abs(p.ms - atMs) < Math.abs(best.ms - atMs)) best = p;
+      }
+      if (best) out.surgeFt = Math.round((td.measured_level.ft - best.ft) * 100) / 100;
+    }
     if (cev.length) {
       out.currentKn = Number.isFinite(cev[0].speed_kn) ? cev[0].speed_kn : null;
+      // The set, in degrees. CO-OPS gives the mean flood and ebb directions on every event, so
+      // which one applies depends on what the water is doing at that event.
+      const md = /flood/i.test(cev[0].type || '') ? cev[0].mean_flood_dir : cev[0].mean_ebb_dir;
+      if (Number.isFinite(Number(md))) out.currentDirDeg = Number(md);
       // CO-OPS types: flood, ebb, slack. Passed through rather than reworded.
       out.currentType = cev[0].type || null;
       out.currentAt = cev[0].time || null;
@@ -397,6 +433,31 @@ export function readConditions(j) {
     }
   }
   if (out.pressureMb != null && out.pressureFrom == null) out.pressureFrom = 'tide_station';
+
+  // ── ALMANAC ─────────────────────────────────────────────────────────────────────────────
+  // CIVIL TWILIGHT, NOT SUNRISE. The fishing day starts when you can see to launch and ends
+  // when you cannot, and in South Carolina that is roughly 25 minutes either side of the sun.
+  // Sunrise has been read for as long as this route has existed; civil dawn never has.
+  const alm = j.almanac || null;
+  if (alm) {
+    if (alm.sun) {
+      out.civilDawn = alm.sun.civil_dawn || null;
+      out.civilDusk = alm.sun.civil_dusk || null;
+      out.sunrise = alm.sun.rise || null;
+      out.sunset = alm.sun.set || null;
+    }
+    if (alm.moon) {
+      out.moonPhase = alm.moon.phase || null;
+      // USNO sends this as a string with a percent sign, e.g. "44%". Kept verbatim rather than
+      // parsed to a number, because the only thing anyone does with it is read it.
+      out.moonIllumination = alm.moon.illumination || null;
+    }
+  }
+
+  // The chance of rain for the first forecast period. `pop` can legitimately be 0, so the
+  // finite check matters — this is the Number('') family and a 0 here is a real answer.
+  const per = (j.forecast && j.forecast.periods) || [];
+  if (per.length && Number.isFinite(Number(per[0].pop_pct))) out.popPct = Number(per[0].pop_pct);
 
   const cl = j.clarity || null;
   if (cl && cl.overall) {
@@ -476,6 +537,10 @@ export function conditionsStrip(c) {
   if (c.currentKn != null || c.currentType) {
     const kn = c.currentKn != null ? `${Math.abs(c.currentKn).toFixed(1)} kn` : '';
     bits.push([c.currentType, kn].filter(Boolean).join(' ').trim());
+  }
+  // A foot of surge is not a rounding error on a two-foot tide.
+  if (c.surgeFt != null && Math.abs(c.surgeFt) >= 0.3) {
+    bits.push(`${c.surgeFt > 0 ? '+' : '−'}${Math.abs(c.surgeFt).toFixed(1)} ft vs predicted`);
   }
   if (c.nextTide) bits.push(`${c.nextTide.type} ${c.nextTide.at ? String(c.nextTide.at).slice(11, 16) : ''}`.trim());
 

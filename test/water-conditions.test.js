@@ -642,3 +642,74 @@ test('no observation at all leaves every field null rather than zero', () => {
   assert.equal(c.pressureMb, null);
   assert.equal(c.obsStation, null);
 });
+
+// ── the last of the fields that were served and never read ──────────────────────────────────
+test('civil twilight is read, because that is when the fishing day starts and ends', () => {
+  const c = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 1 } },
+    almanac: { sun: { civil_dawn: '6:23 a.m.', rise: '6:47 a.m.', set: '8:04 p.m.',
+                      civil_dusk: '8:28 p.m.' },
+               moon: { phase: 'Waning Crescent', illumination: '44%' } } });
+  assert.equal(c.civilDawn, '6:23 a.m.');
+  assert.equal(c.civilDusk, '8:28 p.m.');
+  assert.equal(c.sunrise, '6:47 a.m.');
+  assert.equal(c.moonIllumination, '44%', 'kept verbatim — the only thing done with it is read it');
+});
+
+test('a rain chance of zero is an answer, not an absence', () => {
+  // The Number('') family. 0% and "no forecast" must not look the same.
+  const zero = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 1 } },
+    forecast: { periods: [{ name: 'Today', pop_pct: 0 }] } });
+  assert.equal(zero.popPct, 0);
+
+  const none = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 1 } }, forecast: { periods: [{ name: 'Today' }] } });
+  assert.equal(none.popPct, null);
+});
+
+const TIDE = (measuredFt, atOffsetMin, predFt) => {
+  const base = Date.now();
+  const iso = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
+  return { station: { id: '8665530' },
+    highs_lows: [{ time: iso(base), ft: predFt, type: 'H' }],
+    measured_level: { ft: measuredFt, at: iso(base + atOffsetMin * 60000) } };
+};
+
+test('the surge is the measured level against the prediction for the same moment', () => {
+  const c = readConditions({ slug: 'x', water: { display_name: 'Charleston Harbor',
+    feature_type: 'coastal', chart_datum: { pending: 'not a lake' } }, tide: TIDE(6.6, 10, 5.4) });
+  assert.equal(c.surgeFt, 1.2);
+  assert.match(conditionsStrip(c).text, /\+1\.2 ft vs predicted/);
+});
+
+test('a prediction hours away measures the tide, not the surge, and is refused', () => {
+  const c = readConditions({ slug: 'x', water: { display_name: 'C', feature_type: 'coastal',
+    chart_datum: { pending: 'not a lake' } }, tide: TIDE(6.6, 180, 5.4) });
+  assert.equal(c.surgeFt, null);
+});
+
+test('a surge inside the noise floor stays off the one-line strip', () => {
+  const c = readConditions({ slug: 'x', water: { display_name: 'C', feature_type: 'coastal',
+    chart_datum: { pending: 'not a lake' } }, tide: TIDE(5.5, 5, 5.4) });
+  assert.equal(c.surgeFt, 0.1);
+  assert.ok(!/vs predicted/.test(conditionsStrip(c).text));
+});
+
+test('the current set uses the flood direction on a flood and the ebb on an ebb', () => {
+  const future = new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 16).replace('T', ' ');
+  const mk = (type) => readConditions({ slug: 'x', water: { display_name: 'C',
+    feature_type: 'coastal', chart_datum: { pending: 'not a lake' } },
+    tide: { station: { id: '1' }, highs_lows: [], currents: { station: {}, events: [
+      { time: future, type, speed_kn: 1.5, mean_flood_dir: 310, mean_ebb_dir: 130 }] } } });
+  assert.equal(mk('flood').currentDirDeg, 310);
+  assert.equal(mk('ebb').currentDirDeg, 130);
+});
+
+test("TVA's own discharge and tailwater are read", () => {
+  const c = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 1 },
+    tva: { discharge_cfs: 12400, tailwater_ft: 812.4, generating_now: true, generation: [] } } });
+  assert.equal(c.tvaDischargeCfs, 12400);
+  assert.equal(c.tvaTailwaterFt, 812.4);
+});

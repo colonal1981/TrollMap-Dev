@@ -74,8 +74,14 @@ function cardHtml(rec, c) {
 
   if (c.currentKn != null || c.currentType) {
     out.push(row('Current', `${esc(c.currentType || '')} ${c.currentKn != null ? `${Math.abs(c.currentKn).toFixed(2)} kn` : ''}`.trim()
+      + `${c.currentDirDeg != null ? ` setting ${Math.round(c.currentDirDeg)}°` : ''}`
       + `<span class="cond-sub">${c.currentAt ? ` at ${esc(c.currentAt)}` : ''}`
       + `${c.currentStation ? ` · ${esc(c.currentStation)}` : ''} — NOAA CO-OPS MAX_SLACK prediction</span>`));
+  }
+  if (c.surgeFt != null) {
+    out.push(row('Surge', `${c.surgeFt > 0 ? '+' : '−'}${Math.abs(c.surgeFt).toFixed(2)} ft`
+      + '<span class="cond-sub"> — measured level against the prediction for the same moment. '
+      + 'A predicted tide is astronomy; a measured one carries the wind.</span>'));
   }
   if (c.nextTide) {
     out.push(row('Next tide', `${esc(c.nextTide.type)} ${c.nextTide.ft != null ? `${c.nextTide.ft} ft` : ''}`.trim()
@@ -127,6 +133,13 @@ function cardHtml(rec, c) {
     out.push(row('TVA generation', `${now}${nxt}`
       + '<span class="cond-sub"> — on a tailwater the generation IS the current.</span>'));
   }
+  if (c.tvaDischargeCfs != null || c.tvaTailwaterFt != null) {
+    const bits2 = [];
+    if (c.tvaDischargeCfs != null) bits2.push(`${Math.round(c.tvaDischargeCfs).toLocaleString()} ft³/s out`);
+    if (c.tvaTailwaterFt != null) bits2.push(`tailwater ${c.tvaTailwaterFt} ft`);
+    out.push(row('TVA discharge', bits2.join(' · ')
+      + '<span class="cond-sub"> — the dam\u2019s own numbers, hourly average.</span>'));
+  }
   if (c.tvaVsGuideFt != null) {
     out.push(row('Vs guide curve', `${c.tvaVsGuideFt > 0 ? '+' : ''}${c.tvaVsGuideFt} ft`
       + `<span class="cond-sub"> — against today's seasonal target`
@@ -139,6 +152,18 @@ function cardHtml(rec, c) {
     out.push(row('Corps drought', at
       ? `<b>at ${esc(at.level)}</b><span class="cond-sub"> — ${esc(at.comment || 'no comment published')}</span><br><span class="cond-sub">${lines}</span>`
       : `<span class="cond-sub">above every published drought level.<br>${lines}</span>`));
+  }
+  if (c.civilDawn || c.civilDusk) {
+    out.push(row('Fishing light', `${esc(c.civilDawn || '—')} to ${esc(c.civilDusk || '—')}`
+      + `<span class="cond-sub"> — civil twilight, which is when you can see to launch and to`
+      + ` get off. Sun ${esc(c.sunrise || '—')} to ${esc(c.sunset || '—')}.</span>`));
+  }
+  if (c.moonPhase || c.moonIllumination) {
+    out.push(row('Moon', `${esc(c.moonPhase || '')}${c.moonIllumination ? ` · ${esc(c.moonIllumination)} lit` : ''}`));
+  }
+  if (c.popPct != null) {
+    out.push(row('Rain chance', `${c.popPct}%`
+      + '<span class="cond-sub"> — first forecast period.</span>'));
   }
   if (c.gaugeOutOfService) {
     out.push(row('Gauge', `<b>OUT OF SERVICE</b>`
