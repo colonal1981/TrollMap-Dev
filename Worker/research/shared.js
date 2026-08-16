@@ -188,23 +188,40 @@ const LAKE_CATALOG = (() => {
 })();
 
 // Tag sections with lake slugs by deterministic name matching
-function tagSectionsWithLakes(sections) {
-  const allNames = [];
+// COMPILED ONCE, AT MODULE LOAD. LAKE_CATALOG is static: 27 lakes, 84 names with aliases.
+//
+// This list used to be rebuilt per call and, worse, `new RegExp(...)` ran INSIDE the
+// per-section loop -- so a document that segments into three hundred sections compiled
+// 25,200 regexes and ran 50,400 tests to tag it. On the Cloudflare FREE plan the whole
+// request gets 10 ms of CPU and that number is not raisable. From wrangler tail, 2026-08-16:
+// "POST /research/shared/store - Exceeded CPU Limit".
+//
+// Nothing about the matching changes. The regexes are the same regexes; they are built 84
+// times for the life of the isolate instead of 84 times per section.
+const LAKE_NAME_MATCHERS = (() => {
+  const out = [];
   for (const [slug, entry] of Object.entries(LAKE_CATALOG)) {
-    allNames.push({ slug, name: entry.canonical, isAlias: false });
-    for (const alias of entry.aliases) {
-      allNames.push({ slug, name: alias, isAlias: true });
+    for (const [name, isAlias] of [[entry.canonical, false], ...entry.aliases.map((a) => [a, true])]) {
+      out.push({
+        slug, name, isAlias,
+        rx: new RegExp(`\\b${String(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i'),
+      });
     }
   }
+  return out;
+})();
 
+function tagSectionsWithLakes(sections) {
   return sections.map(sec => {
     const lakeMatches = [];
     const searchText = [sec.heading, sec.chunks?.[0]?.text?.slice(0, 1500) || ''].join(' ');
 
-    for (const { slug, name, isAlias } of allNames) {
-      const rx = new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
-      const headingMatch = rx.test(sec.heading);
+    for (const { slug, name, isAlias, rx } of LAKE_NAME_MATCHERS) {
+      // searchText already CONTAINS the heading, so a miss here is a miss on both and the
+      // heading test can be skipped entirely -- which is the common case, once per name.
       const bodyMatch = rx.test(searchText);
+      if (!bodyMatch) continue;
+      const headingMatch = rx.test(sec.heading);
       if (headingMatch || bodyMatch) {
         const existing = lakeMatches.find(m => m.lakeSlug === slug);
         const confidence = headingMatch ? 1.0 : isAlias ? 0.7 : 0.85;
