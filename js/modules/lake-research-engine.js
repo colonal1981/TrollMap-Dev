@@ -29,6 +29,7 @@ import { workerHeaders } from '../utils/worker-auth.js';
 
 import { boundsOf } from '../utils/geojson-coords.js';
 import { lakeRecordFor } from '../data/lake-registry.js';
+import { capHumps, HUMP_MARKER_CAP, LEDGE_MARKER_CAP } from '../utils/structure-markers.js';
 
 // Setup global caches and references
 window.TROLLMAP_RESEARCHED_CACHE = window.TROLLMAP_RESEARCHED_CACHE || {};
@@ -463,8 +464,8 @@ function minDistToRingDeg(lon, lat, ring) {
 // ~0.003° ≈ 300m — humps/ledges must be at least this far from the shoreline
 const MIN_OFFSHORE_DEG = 0.003;
 
-// Wateree carries 6,915 ledges. Only the steepest earn a marker and a stop candidate.
-const LEDGE_MARKER_CAP = 200;
+// Caps live in js/utils/structure-markers.js so they can be tested without a DOM.
+// See that file for the byte counts that made a cap necessary.
 
 function structuresFromPack(structGeo) {
   // READS structure.geojson. It used to be deriveContourStructures(), which grid-bucketed
@@ -535,11 +536,11 @@ function structuresFromPack(structGeo) {
   const num = v => (Number.isFinite(Number(v)) ? Number(v) : null);
   const placed = r => Number.isFinite(r.lat) && Number.isFinite(r.lon);
 
-  out.humpCoordinates = humps.filter(placed).map(h => ({
-    id: h.id, lat: h.lat, lon: h.lon,
-    depth: num(h.depth_ft), areaAcres: num(h.area_acres),
-    reliefFt: num(h.relief_ft), levels: num(h.levels),
-  }));
+  const capped = capHumps(humps.filter(placed));
+  out.humpCoordinates = capped.coordinates;
+  out.humpCount = capped.total;
+  // Never silently.
+  if (capped.note) out.humpCoordinatesNote = capped.note;
 
   out.ledgeCoordinates = ledges.filter(placed)
     .sort((a, b) => (num(b.slope_ft_per_100ft) ?? 0) - (num(a.slope_ft_per_100ft) ?? 0))
