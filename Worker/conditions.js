@@ -1376,6 +1376,91 @@ async function waterProbe(b, lat, lon, seededTemp) {
 }
 
 /**
+ * PICKING THE CORPS' POOL ELEVATION SERIES OUT OF FORTY-TWO CANDIDATES.
+ *
+ * `/cwms-data/catalog/TIMESERIES?office=SAS&like=^Hartwell\.Elev` returns 42 entries for one
+ * lake. Read live 2026-08-16. Only one of them is "how high is the water":
+ *
+ *   Hartwell.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS        <- the reading
+ *   Hartwell.Elev-GC / Elev-Guide-Curve / Elev-Head     <- guide curve and head, not the pool
+ *   Hartwell.Elev-L1 / L2 / L3, Elev-Level1..3          <- drought levels, already read elsewhere
+ *   Hartwell.Elev-Pool_Avg / _Max / _Min / _p02.._p40   <- STATISTICS over the record
+ *
+ * `Elev-Pool_p10` is a tenth-percentile statistic and `Elev-Pool` is today's water, and they
+ * differ by one underscore. The match is anchored on `.Elev-Pool.` with the trailing dot for
+ * exactly that reason.
+ *
+ * UNITS ARE METRES AND THAT IS THE TRAP. Every entry carries `"units": "m"`. Hartwell's full
+ * pool is 660 FEET, which is 201.2 m. Reading the number without converting would put Hartwell
+ * forty feet below its own bottom of conservation — a catastrophic drawdown rendered on a lake
+ * sitting at normal pool. The conversion is explicit, gated on the declared unit, and anything
+ * that is neither m nor ft is REFUSED rather than assumed.
+ *
+ * THE ID IS DISCOVERED, NEVER HARDCODED. The version suffix is district-specific — Savannah
+ * writes `Raw-SHEF_SAS` and `HISTORIAN_SAS` — so a name that works for Hartwell says nothing
+ * about Jordan Lake in Wilmington. That is the `dukeBasinId` lesson: a foreign key that nobody
+ * checked, sitting in a table, being wrong quietly.
+ */
+export function pickElevSeries(catalog) {
+  const entries = (catalog && Array.isArray(catalog.entries)) ? catalog.entries : [];
+  const pool = entries.filter((e) => /\.Elev-Pool\./i.test(String(e && e.name || '')));
+  if (!pool.length) return null;
+
+  const rank = (e) => {
+    const iv = String(e.interval || '');
+    // An irregular interval (~1Day) is not a reading cadence; a real one is. Shorter is better.
+    if (/^~/.test(iv)) return 0;
+    if (/^\d+Minute/i.test(iv)) return 4;
+    if (/^\d+Hour/i.test(iv)) return 3;
+    if (/^\d+Day/i.test(iv)) return 2;
+    return 1;
+  };
+  const latestOf = (e) => {
+    const ex = Array.isArray(e.extents) ? e.extents : [];
+    let best = 0;
+    for (const x of ex) {
+      const t = Date.parse(x && x['latest-time']);
+      if (Number.isFinite(t) && t > best) best = t;
+    }
+    return best;
+  };
+
+  let best = null;
+  for (const e of pool) {
+    const cand = { entry: e, rank: rank(e), latest: latestOf(e) };
+    if (!best
+        || cand.rank > best.rank
+        || (cand.rank === best.rank && cand.latest > best.latest)) best = cand;
+  }
+  if (!best) return null;
+  const e = best.entry;
+  return {
+    name: e.name,
+    office: e.office || null,
+    units: e.units || null,
+    interval: e.interval || null,
+    latest_time: best.latest ? new Date(best.latest).toISOString() : null,
+    time_zone: e['time-zone'] || null,
+    candidates: pool.length,
+    of_total: Number.isFinite(catalog.total) ? catalog.total : entries.length,
+  };
+}
+
+/**
+ * A CWMS value in the unit CWMS declared, as feet — or null.
+ *
+ * Refuses anything it does not recognise. A silent pass-through of an unknown unit is how 201.2
+ * becomes a lake level.
+ */
+export function cwmsToFeet(value, units) {
+  if (!Number.isFinite(value)) return null;
+  const u = String(units || '').trim().toLowerCase();
+  if (u === 'ft' || u === 'feet') return Math.round(value * 100) / 100;
+  if (u === 'm' || u === 'meters' || u === 'metres') return Math.round(value * 3.28084 * 100) / 100;
+  return null;
+}
+
+/**
  * WHICH WAY THE WATER HAS BEEN GOING, from `/gauges/{lid}/stageflow`.
  *
  * A level is a point and a trip is a decision. Two feet below full pool and steady is a
