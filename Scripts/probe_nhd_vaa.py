@@ -40,7 +40,6 @@ import sys
 from pathlib import Path
 
 DEFAULT_GDB = r'F:\TrollMapPipeline\NHD\NHDPLUS_H_0303_HU4_GDB.zip'
-FTYPE_RESERVOIR = 436
 
 
 def main():
@@ -107,50 +106,62 @@ def main():
           f'({100.0 * grew / max(1, len(m)):.1f}%)')
     print('   Anything below about 95% means the join or the direction is wrong, not the river.')
 
-    # ---- 3. the biggest reservoirs, in the derived order ---------------------------------
+    # ---- 3. the biggest waterbodies, in the derived order ---------------------------------
+    #
+    # NO FType FILTER. The first version filtered FType == 436 "Reservoir", which in NHD means
+    # engineered water -- tailings ponds, farm ponds, treatment basins. Every big Duke
+    # impoundment is FType 390 Lake/Pond, so that filter excluded every lake we care about and
+    # then returned the largest of what was left, none over half a square kilometre. FType and
+    # FCode are PRINTED here instead of filtered on, so the codes come from the data.
     wb = pyogrio.read_dataframe(
         src, layer='NHDWaterbody', read_geometry=False,
-        columns=['Permanent_Identifier', 'GNIS_Name', 'AreaSqKm', 'FType'])
-    res = wb[(wb['FType'] == FTYPE_RESERVOIR) & wb['GNIS_Name'].notna()]
-    res = res.sort_values('AreaSqKm', ascending=False).head(args.top)
-    print(f'\n== 3. the {len(res)} largest named reservoirs in this GDB')
+        columns=['Permanent_Identifier', 'GNIS_Name', 'AreaSqKm', 'FType', 'FCode'])
+    res = wb[wb['GNIS_Name'].notna()].sort_values('AreaSqKm', ascending=False).head(args.top)
+    print(f'\n== 3a. the {len(res)} largest NAMED waterbodies in this GDB, any FType')
     if res.empty:
         print('   none — nothing more to check here.')
         return 0
+    print(res[['GNIS_Name', 'FType', 'FCode', 'AreaSqKm']].to_string(index=False))
 
     fl = pyogrio.read_dataframe(
         src, layer='NHDFlowline', read_geometry=False,
         columns=['NHDPlusID', 'WBArea_Permanent_Identifier'])
     linked = fl[fl['WBArea_Permanent_Identifier'].isin(set(res['Permanent_Identifier']))]
     j = linked.merge(vaa, on='NHDPlusID', how='inner').merge(
-        res[['Permanent_Identifier', 'GNIS_Name', 'AreaSqKm']],
+        res[['Permanent_Identifier', 'GNIS_Name', 'AreaSqKm', 'FType', 'FCode']],
         left_on='WBArea_Permanent_Identifier', right_on='Permanent_Identifier', how='left')
-    print(f'   flowlines inside them: {len(linked)}   joined to VAA: {len(j)}')
+    print(f'\n== 3b. flowlines inside them: {len(linked)}   joined to VAA: {len(j)}')
     if j.empty:
         print('   the waterbody-to-flowline join produced nothing — paste this back.')
         return 1
 
+    # HydroSeq DECREASES downstream (section 1), so the outlet is the MINIMUM and DESCENDING
+    # order reads upstream-to-downstream. The first version sorted ascending, which printed the
+    # chain backwards from what section 1 had just concluded.
     outlet = 'min' if decreasing is not False else 'max'
     g = (j.groupby('GNIS_Name')
            .agg(outlet_hydroseq=('HydroSeq', outlet),
-                levelpath=('LevelPathI', lambda s: s.mode().iat[0] if len(s.mode()) else None),
+                levelpath=('LevelPathI', lambda s: s.mode().iat[0] if len(s.mode()) else 0),
                 drainage_km2=('TotDASqKm', 'max'),
                 stream_order=('StreamOrde', 'max'),
+                ftype=('FType', 'max'),
                 flowlines=('NHDPlusID', 'count'),
                 area_km2=('AreaSqKm', 'max'))
            .reset_index()
-           .sort_values('outlet_hydroseq', ascending=bool(decreasing is not False)))
-    pd.set_option('display.width', 220)
+           .sort_values('outlet_hydroseq', ascending=(decreasing is False)))
+    # HydroSeq and LevelPathI are 14-digit ids. As floats pandas prints them 1.500150e+13 and
+    # every row looks identical, which is how the first version hid the ordering it got wrong.
+    for c in ('outlet_hydroseq', 'levelpath'):
+        g[c] = g[c].astype('int64')
+    pd.set_option('display.width', 240)
     print()
     print(g.to_string(index=False))
 
-    print('\n   Read down the list: it should be upstream to downstream, and DRAINAGE_KM2')
-    print('   should climb wherever two rows share a LEVELPATH. Where it does not, those two')
-    print('   are on different arms of the basin and are not above or below each other at all —')
-    print('   which is itself a thing the real script has to get right.')
+    print('\n   Read DOWN the list: upstream to downstream. Where two rows share a LEVELPATH they')
+    print('   are on the same river and DRAINAGE_KM2 must climb between them. Where the levelpath')
+    print('   differs they are on different arms and are not above or below each other at all.')
     print('\n   Paste the whole block back.')
     return 0
-
 
 if __name__ == '__main__':
     sys.exit(main())
