@@ -114,6 +114,52 @@ def outlet_of(hydroseqs, decreasing=True):
     return min(hydroseqs) if decreasing else max(hydroseqs)
 
 
+def finite_int_map(keys, vals):
+    """Build {int: int} from two float columns, skipping rows where either is not finite.
+    Returns (mapping, dropped).
+
+    NHDPlus HR stores HydroSeq, DnHydroSeq and LevelPathI as float64 and puts NaN on every
+    flowline that is not in the routed network (InNetwork = 0). Casting the whole column with
+    .astype('int64') raises IntCastingNaNError. The direction check upstream of this never saw
+    the problem because NaN > 0 is False, so those rows were already excluded there -- which is
+    exactly how this reached the graph build instead of failing somewhere obvious. A NaN here is
+    not a number to coerce, it is a flowline that is not routed. Skip it and say how many."""
+    import numpy as np
+    k = np.asarray(keys, dtype='float64')
+    v = np.asarray(vals, dtype='float64')
+    ok = np.isfinite(k) & np.isfinite(v)
+    dropped = int((~ok).sum())
+    return dict(zip(k[ok].astype('int64').tolist(),
+                    v[ok].astype('int64').tolist())), dropped
+
+
+def finite_ints(values):
+    """[int] from a float column, skipping non-finite. Returns (ints, dropped)."""
+    import numpy as np
+    a = np.asarray(values, dtype='float64')
+    ok = np.isfinite(a)
+    return a[ok].astype('int64').tolist(), int((~ok).sum())
+
+
+def safe_int(v, default=0):
+    """int() of something that may be NaN, None, inf or a numpy float."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return default
+    if f != f or f in (float('inf'), float('-inf')):
+        return default
+    return int(f)
+
+
+def safe_float(v, default=0.0):
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return default
+    return default if (f != f or f in (float('inf'), float('-inf'))) else f
+
+
 def walk_downstream(start_hs, dn_of, water_of, exclude, max_steps=200000):
     """Follow DnHydroSeq from a flowline until landing on one belonging to a water other
     than `exclude`. Returns (water_id_or_None, steps). Never assumes a direction; it only
@@ -203,9 +249,17 @@ def process_vpu(vpu, src, want_gnis, args):
     if j.empty:
         return {}, f'{vpu}: flowlines found but none joined to VAA'
 
-    dn_of = dict(zip(vaa['HydroSeq'].astype('int64').tolist(),
-                     vaa['DnHydroSeq'].astype('int64').tolist()))
-    water_of = dict(zip(j['HydroSeq'].astype('int64').tolist(), j['slug'].tolist()))
+    dn_of, dropped = finite_int_map(vaa['HydroSeq'].to_numpy(),
+                                    vaa['DnHydroSeq'].to_numpy())
+    if dropped:
+        print(f'   {dropped} of {len(vaa)} flowlines are not routed (NaN hydrosequence)'
+              f' and take no part in the graph')
+
+    j = j[j['HydroSeq'].notna()]
+    if j.empty:
+        return {}, f'{vpu}: matched waterbodies but none of their flowlines are routed'
+    jhs, _ = finite_ints(j['HydroSeq'].to_numpy())
+    water_of = dict(zip(jhs, j['slug'].tolist()))
 
     meta = hit.groupby('gnis_n').agg(nhd_name=('GNIS_Name', 'first'),
                                      nhd_area_km2=('AreaSqKm', 'sum'),
@@ -213,10 +267,12 @@ def process_vpu(vpu, src, want_gnis, args):
 
     rows = {}
     for slug, grp in j.groupby('slug'):
-        hss = grp['HydroSeq'].astype('int64').tolist()
+        hss, _ = finite_ints(grp['HydroSeq'].to_numpy())
         out_hs = outlet_of(hss, True)
+        if out_hs is None:
+            continue
         nxt, steps = walk_downstream(out_hs, dn_of, water_of, exclude=slug)
-        g = grp.loc[grp['HydroSeq'].astype('int64') == out_hs].iloc[0]
+        g = grp.loc[grp['HydroSeq'] == out_hs].iloc[0]
         gn = next((k for k, v in want_gnis.items() if slug in v), None)
         m = meta.get(gn, {})
         rows[slug] = {
@@ -224,12 +280,12 @@ def process_vpu(vpu, src, want_gnis, args):
             'gnis': gn,
             'vpu': vpu,
             'nhd_name': m.get('nhd_name'),
-            'nhd_area_km2': round(float(m.get('nhd_area_km2') or 0), 4),
-            'nhd_ftype': int(m.get('ftype') or 0),
+            'nhd_area_km2': round(safe_float(m.get('nhd_area_km2')), 4),
+            'nhd_ftype': safe_int(m.get('ftype')),
             'outlet_hydroseq': int(out_hs),
-            'levelpath': int(g['LevelPathI']),
-            'drainage_km2': round(float(grp['TotDASqKm'].max()), 4),
-            'stream_order': int(grp['StreamOrde'].max()),
+            'levelpath': safe_int(g['LevelPathI']),
+            'drainage_km2': round(safe_float(grp['TotDASqKm'].max()), 4),
+            'stream_order': safe_int(grp['StreamOrde'].max()),
             'flowlines': int(len(grp)),
             'downstream': nxt,
             'downstream_steps': int(steps),

@@ -105,3 +105,47 @@ with tempfile.TemporaryDirectory() as t:
     finally:
         os.chdir(cwd)
 print('find_repo_root assertions pass')
+
+
+# --- the NaN that crashed the 0305 run -------------------------------------------------
+# NHDPlus HR stores hydrosequences as float64 with NaN on flowlines that are not routed
+# (InNetwork = 0). The old code did .astype('int64') on the whole column and raised
+# IntCastingNaNError. These assertions are the regression guard.
+import math
+import numpy as np
+
+nan = float('nan')
+m, dropped = bwc.finite_int_map([900.0, nan, 800.0, 700.0], [800.0, 700.0, nan, 0.0])
+eq(dropped, 2, 'two rows have a NaN on one side or the other')
+eq(m, {900: 800, 700: 0}, 'only the fully finite rows survive, as ints not floats')
+assert all(isinstance(k, int) and isinstance(v, int) for k, v in m.items()), 'ints, not floats'
+
+m2, d2 = bwc.finite_int_map([nan, nan], [nan, nan])
+eq((m2, d2), ({}, 2), 'all NaN -> empty map, not a crash')
+eq(bwc.finite_int_map([], []), ({}, 0), 'empty input')
+m3, d3 = bwc.finite_int_map([1.0, float('inf')], [2.0, 3.0])
+eq((m3, d3), ({1: 2}, 1), 'inf is dropped too, not cast')
+
+ints, d = bwc.finite_ints([905.0, nan, 900.0])
+eq((ints, d), ([905, 900], 1), 'finite_ints skips NaN')
+eq(bwc.finite_ints([nan]), ([], 1), 'all NaN -> empty list')
+eq(bwc.outlet_of(bwc.finite_ints([905.0, nan, 900.0])[0], True), 900, 'outlet ignores NaN')
+eq(bwc.outlet_of(bwc.finite_ints([nan])[0], True), None, 'no routed flowline -> no outlet')
+
+eq(bwc.safe_int(nan), 0, 'safe_int(NaN)')
+eq(bwc.safe_int(None), 0, 'safe_int(None)')
+eq(bwc.safe_int(float('inf')), 0, 'safe_int(inf)')
+eq(bwc.safe_int(np.float64(8.0)), 8, 'safe_int(numpy float)')
+eq(bwc.safe_int(15001500005823.0), 15001500005823, 'safe_int keeps 14-digit precision')
+eq(bwc.safe_int('nope', -1), -1, 'safe_int non numeric uses default')
+eq(bwc.safe_float(nan), 0.0, 'safe_float(NaN)')
+eq(bwc.safe_float(np.float64(12256.6175)), 12256.6175, 'safe_float(numpy)')
+
+# a graph half built of unrouted flowlines still walks correctly through the routed part
+water_of = {900: 'norman', 700: 'wylie', 600: 'wateree'}
+dn_of, _ = bwc.finite_int_map([900.0, 850.0, nan, 800.0, 700.0, 650.0],
+                              [850.0, 800.0, 750.0, 700.0, 650.0, 600.0])
+eq(bwc.walk_downstream(900, dn_of, water_of, 'norman')[0], 'wylie', 'walk crosses the gap')
+eq(bwc.walk_downstream(700, dn_of, water_of, 'wylie')[0], 'wateree', 'and keeps going')
+
+print('NaN regression assertions pass')
