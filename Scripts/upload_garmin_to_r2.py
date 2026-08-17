@@ -560,13 +560,12 @@ def main():
         # release stays unlabelled, which is exactly how it looked before any of this was built.
         wc = regdir / "water_chain.json"
         if wc.exists():
-            slim = slim_chain(json.load(open(wc, encoding="utf-8")))
-            tmpc = TMP / "water_chain.slim.json"
-            tmpc.parent.mkdir(parents=True, exist_ok=True)
-            tmpc.write_text(json.dumps(slim, separators=(",", ":")), encoding="utf-8")
+            chain_slim = slim_chain(json.load(open(wc, encoding="utf-8")))
+            tmpc = Path(tempfile.gettempdir()) / "trollmap_water_chain_slim.json"
+            tmpc.write_text(json.dumps(chain_slim, separators=(",", ":")), encoding="utf-8")
             reg_jobs.append((str(tmpc), f"{args.prefix}_registry/water_chain.json",
                              "_registry", "water_chain"))
-            print(f"chain:    {len(slim['waters']):,} waters -> "
+            print(f"chain:    {len(chain_slim['waters']):,} waters -> "
                   f"{args.prefix}_registry/water_chain.json "
                   f"({tmpc.stat().st_size/1024:.0f} KB before gzip, "
                   f"{wc.stat().st_size/1024:.0f} KB full)")
