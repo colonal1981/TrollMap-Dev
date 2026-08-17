@@ -79,12 +79,18 @@ def name_aliases(name):
     USACE writes one structure name where Duke publishes per powerhouse: "Rocky Creek-Cedar
     Creek" is where Duke says "Cedar Creek" or "Rocky Creek". Splitting on the separators that
     join powerhouse names recovers both without a lookup table."""
+    def usable(k):
+        # "Graham City Lake Dam #1" reduces to "1" once the noise words go, and three such dams
+        # in different basins collided on the keys "1", "2" and "3". A bare number, or a single
+        # letter, is not a name any operator publishes a release under.
+        return bool(k) and not k.isdigit() and len(k) > 2
+
     out, full = [], dam_key(name)
-    if full:
+    if usable(full):
         out.append(full)
     for part in re.split(r'\s*(?:-|/|\band\b|\+|&)\s*', str(name or '')):
         k = dam_key(part)
-        if k and k not in out:
+        if usable(k) and k not in out:
             out.append(k)
     return out
 
@@ -237,6 +243,14 @@ def main():
     for a in clash:
         table.pop(a, None)
     print(f'\n== {len(table)} dam name(s) resolve to a water; {len(clash)} dropped for claiming two')
+    if clash:
+        print('   A dropped name is not a failure -- it is the tool refusing to pick. The Great')
+        print('   Falls-Dearborn structures are the honest case: the dam, its saddle dike, its')
+        print('   diversion dam and its spillways all report 4,140 sq mi, which sits inside')
+        print('   tolerance of BOTH great_falls_reservoir (4,095) and cedar_creek_reservoir_2')
+        print('   (4,347), and they are spread along a reach where different structures are')
+        print('   nearest different pools. Geometry cannot separate them; registry/_duke_dams.json')
+        print('   can, because Duke\'s own plant map names which powerhouse belongs to which.')
     for a, s in sorted(clash.items()):
         print(f'   {a}: {", ".join(sorted(s))}')
 

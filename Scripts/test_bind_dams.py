@@ -21,6 +21,17 @@ eq(bdw.name_aliases('Dam'), [], 'a name that is only noise is not a name')
 assert 'saddle' not in ' '.join(bdw.name_aliases('Great Falls-Dearborn Saddle Dike')), \
     'structure words are noise, or a dike becomes a powerhouse'
 
+# "Graham City Lake Dam #1" reduces to "1" once noise goes, and three such dams in different
+# basins collided on the keys "1", "2" and "3" against Jordan Lake and Lanier.
+eq(bdw.name_aliases('Dam #2'), [], 'a bare number is not a name any operator publishes')
+eq(bdw.name_aliases('Dam A'), [], 'nor a single letter')
+# the full name keeps its ordinal, which is harmless -- what must never happen is the ordinal
+# escaping ALONE, which is how "1", "2" and "3" collided across three basins.
+eq(bdw.name_aliases('Graham City Lake Dam #1'), ['graham city 1'], 'full name keeps the ordinal')
+for n in ('Graham City Lake Dam #1', 'Kings Mountain Lake Dam #1', 'Fairfield Dam A'):
+    for a in bdw.name_aliases(n):
+        assert not a.isdigit() and len(a) > 2, f'{n} emitted a junk key: {a!r}'
+
 # aliases must be spelled the way Worker/conditions.js:normalizeDamName() spells them
 eq(bdw.dam_key('CEDAR CREEK DAM'), 'cedar creek', 'duke spelling')
 eq(bdw.dam_key('Lake Wateree Dam'), 'wateree', 'gauge spelling')
