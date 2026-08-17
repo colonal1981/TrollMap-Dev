@@ -69,6 +69,14 @@ CLAIMS = [
     # Creek Reservoir in Chester SC, another in Hall GA, and a Cedar Creek in Richland SC.
     ('Cedar Creek Reservoir', 'Rocky Creek', 'cedar_creek_reservoir_2'),
     ('Cedar Creek Reservoir', 'Cedar Creek', 'cedar_creek_reservoir_2'),
+    # THE SAME SHAPE ONE STEP UP. Ryan, 2026-08-17: "great falls / dearborn are above that one
+    # then fishing creek hydro above that" -- which is the order NHDPlus derived on its own:
+    # fishing_creek_reservoir -> great_falls_reservoir -> cedar_creek_reservoir_2 ->
+    # wateree_lake. So Dearborn is the second powerhouse on the Great Falls development, and
+    # the gauge bound to that water already says so: "Great Falls Reservoir/Great
+    # Falls-Dearborn Dams". Without this row a release posted as "Dearborn" resolves to nothing
+    # and reads as neither inflow nor outflow for anyone.
+    ('Great Falls Reservoir', 'Dearborn', 'great_falls_reservoir'),
 ]
 NOISE = {'dam', 'dams', 'hydro', 'powerhouse', 'project', 'lake', 'reservoir'}
 
