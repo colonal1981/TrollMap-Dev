@@ -136,7 +136,11 @@ def fetch(url, timeout):
 
 def count_of(obj) -> str:
     if isinstance(obj, dict):
-        for k in ('bindings', 'lakes', 'dams'):
+        # 'waters' ADDED 2026-08-17 with water_chain.json. Without it the chain reported
+        # "2 keys" -- _meta and waters -- for a file holding 283 of them, so a truncated chain
+        # would have matched a truncated chain and read as fine. A count that does not count
+        # the thing is worse than no count.
+        for k in ('bindings', 'lakes', 'dams', 'waters'):
             if isinstance(obj.get(k), (dict, list)):
                 return '%d %s' % (len(obj[k]), k)
         return '%d keys' % len(obj)
@@ -217,7 +221,10 @@ def main() -> int:
 
     print()
     if not bad:
-        print('All three registry objects are published and match the local files.')
+        # COUNTED, NOT SPELLED OUT. This said "All three" while checking four, one commit
+        # after the fourth was added -- the same drift the module docstring warns about, in the
+        # summary line of the script that warns about it.
+        print('All %d registry objects are published and match the local files.' % len(FILES))
         return 0
 
     print('%d PROBLEM(S):' % len(bad))
