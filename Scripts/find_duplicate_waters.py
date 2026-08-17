@@ -198,7 +198,8 @@ def main():
         big = reg[a if ar_a >= ar_b else b].get('bounds_wsen') or [0, 0, 1, 1]
         diag = (((big[2] - big[0]) ** 2 + (big[3] - big[1]) ** 2) ** 0.5) or 1.0
         sep_frac = None if sep is None else sep / diag
-        v = geomcore.verdict(a_in_b, b_in_a, ratio, sep_frac)
+        same_type = reg[a].get('feature_type') == reg[b].get('feature_type')
+        v, is_dupe = geomcore.verdict(a_in_b, b_in_a, ratio, sep_frac, same_type)
         if v == 'touching only, probably distinct':
             continue
         findings.append({
@@ -212,12 +213,17 @@ def main():
             'a_county': reg[a].get('county'), 'b_county': reg[b].get('county'),
             'a_type': reg[a].get('feature_type'), 'b_type': reg[b].get('feature_type'),
             'verdict': v,
+            'likely_duplicate': is_dupe,
         })
 
-    findings.sort(key=lambda f: -(f['a_in_b_pct'] + f['b_in_a_pct']))
-    print(f'\n== 3. {len(findings)} pair(s) worth your eye  '
+    findings.sort(key=lambda f: (not f['likely_duplicate'],
+                                 -(f['a_in_b_pct'] + f['b_in_a_pct'])))
+    dupes = [f for f in findings if f['likely_duplicate']]
+    rels = [f for f in findings if not f['likely_duplicate']]
+    print(f'\n== 3. {len(dupes)} pair(s) that look like ONE WATER UNDER TWO SLUGS  '
           f'({time.time() - t0:.0f}s of measuring)\n')
-    for f in findings:
+
+    def show(f):
         print(f'   {f["verdict"]}')
         print(f'     {f["a"]:<30} {str(f["a_acres"]):>10} ac  {str(f["a_gnis"]):<28}'
               f' charted {f["a_charted"]}  {f["a_county"]}  {f["a_type"]}')
@@ -225,7 +231,16 @@ def main():
               f' charted {f["b_charted"]}  {f["b_county"]}  {f["b_type"]}')
         print(f'     they share {f["a_in_b_pct"]}% of the first and {f["b_in_a_pct"]}%'
               f' of the second; areas agree {100 * f["area_ratio"]:.1f}%\n')
-    if not findings:
+
+    for f in dupes:
+        show(f)
+    if not dupes:
+        print('   none')
+    print(f'\n== 4. {len(rels)} pair(s) that overlap but are NOT the same water'
+          f' -- listed so you can see they were considered, not silently dropped\n')
+    for f in rels:
+        show(f)
+    if not rels:
         print('   none')
 
     if args.json:

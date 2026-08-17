@@ -41,19 +41,23 @@ with tempfile.TemporaryDirectory() as t:
     root=Path(t); (root/'registry'/'boundaries').mkdir(parents=True)
     def geo(p,ring): (root/'registry'/'boundaries'/f'{p}.geojson').write_text(
         json.dumps({'type':'Feature','properties':{},'geometry':{'type':'Polygon','coordinates':[ring]}}))
-    outer=[[0,0],[0,10],[10,10],[10,0],[0,0]]; innr=[[1,1],[1,4],[4,4],[4,1],[1,1]]
+    outer=[[0,0],[0,10],[10,10],[10,0],[0,0]]; innr=[[1,1],[1,8],[8,8],[8,1],[1,1]]
     far=[[50,50],[50,55],[55,55],[55,50],[50,50]]
     reg={
       'lookout_shoals_lake':{'bounds_wsen':[0,0,10,10],'area_acres':1551.8,'gnis':'slug:lookout_shoals_lake','charted':0.792,'county':'Catawba','feature_type':'lake'},
-      'lake_lookout':{'bounds_wsen':[1,1,4,4],'area_acres':772.2,'gnis':'gnis:999363','charted':0.985,'county':'Iredell','feature_type':'lake'},
+      'lake_lookout':{'bounds_wsen':[1,1,8,8],'area_acres':772.2,'gnis':'gnis:999363','charted':0.985,'county':'Iredell','feature_type':'lake'},
       'john_h_moss_lake':{'bounds_wsen':[50,50,55,55],'area_acres':1283.7,'gnis':'gnis:988007.0','charted':0.9625,'county':'Cleveland','feature_type':'lake'},
       'kings_mountain_reservoir':{'bounds_wsen':[50,50,55,55],'area_acres':1283.7,'gnis':'gnis:988007','charted':0.9625,'county':'Cleveland','feature_type':'lake'},
+      'coast_big_sc':{'bounds_wsen':[100,100,140,140],'area_acres':500000.0,'gnis':'slug:coast_big_sc','charted':0.13,'county':'Charleston','feature_type':'coastal'},
+      'greenfield_lake':{'bounds_wsen':[110,110,111,111],'area_acres':75.4,'gnis':'gnis:998086','charted':0.92,'county':'New Hanover','feature_type':'lake'},
       'somewhere_else':{'bounds_wsen':[200,200,201,201],'area_acres':5.0,'gnis':'gnis:111111','charted':0.5,'county':'X','feature_type':'lake'},
     }
     (root/'registry'/'lake_index.json').write_text(json.dumps(reg))
     geo('lookout_shoals_lake',outer); geo('lake_lookout',innr)
     geo('john_h_moss_lake',far); geo('kings_mountain_reservoir',far)
     geo('somewhere_else',[[200,200],[200,201],[201,201],[201,200],[200,200]])
+    geo('coast_big_sc',[[100,100],[100,140],[140,140],[140,100],[100,100]])
+    geo('greenfield_lake',[[110,110],[110,111],[111,111],[111,110],[110,110]])
     out=root/'dupes.json'
     sys.argv=['x','--registry',str(root/'registry'/'lake_index.json'),'--json',str(out),'--engine',ENGINE]
     eq(fdw.main(),0,'runs clean')
@@ -64,16 +68,21 @@ with tempfile.TemporaryDirectory() as t:
 
     assert ('lake_lookout','lookout_shoals_lake') in pairs, 'GEOMETRY FOUND THE PAIR GNIS MISSED'
     lp=pairs[('lake_lookout','lookout_shoals_lake')]
-    assert 'PARTIAL TRACE' in lp['verdict'], lp['verdict']
-    keep = lp['b'] if lp['verdict'].endswith('keep B') else lp['a']
-    eq(keep,'lookout_shoals_lake','names the FULLER polygon as the keeper')
+    assert lp['likely_duplicate'], f'must be flagged as one water: {lp["verdict"]}'
+    assert 'WHOLLY INSIDE' in lp['verdict'], lp['verdict']
+    small = lp['a'] if lp['a_acres'] < lp['b_acres'] else lp['b']
+    eq(small,'lake_lookout','the smaller polygon is the partial one')
 
     assert ('john_h_moss_lake','kings_mountain_reservoir') in pairs, 'and still finds the easy one'
-    eq(pairs[('john_h_moss_lake','kings_mountain_reservoir')]['verdict'],
-       'SAME POLYGON TWICE','identical outlines, the case vertex sampling could not see')
+    mk=pairs[('john_h_moss_lake','kings_mountain_reservoir')]
+    assert mk['likely_duplicate'] and 'SAME OUTLINE TWICE' in mk['verdict'], mk['verdict']
 
     assert not any('somewhere_else' in (f['a'],f['b']) for f in got['geometry_overlaps']), \
         'a lake on its own must not be paired with anything'
+    gp=pairs[('coast_big_sc','greenfield_lake')]
+    assert not gp['likely_duplicate'], \
+        'A 75-ACRE LAKE INSIDE A COASTAL REGION IS NOT A DUPLICATE -- the label that would have deleted it'
+    assert 'containment, not identity' in gp['verdict'], gp['verdict']
     assert json.loads((root/'registry'/'lake_index.json').read_text())==reg, \
         'THE REGISTRY MUST BE BYTE IDENTICAL AFTERWARDS -- this tool never edits'
 print('ALL find_duplicate_waters assertions pass')

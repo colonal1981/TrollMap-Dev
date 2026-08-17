@@ -225,18 +225,33 @@ def measure(engine, pa, pb, sample=400):
     return overlap_numpy(pa, pb, sample)
 
 
-def verdict(a_in_b, b_in_a, area_ratio=None, centroid_sep_frac=None):
-    """centroid_sep_frac is the centroid distance as a fraction of the larger bbox diagonal."""
-    if a_in_b >= 90 and b_in_a >= 90:
-        return 'SAME POLYGON TWICE'
-    same_size = area_ratio is not None and area_ratio >= 0.97
-    same_place = centroid_sep_frac is not None and centroid_sep_frac <= 0.02
-    if same_size and same_place:
-        return 'SAME POLYGON TWICE'
-    if a_in_b >= 70 and b_in_a < 40:
-        return 'A IS A PARTIAL TRACE OF B -- keep B'
-    if b_in_a >= 70 and a_in_b < 40:
-        return 'B IS A PARTIAL TRACE OF A -- keep A'
-    if a_in_b >= 40 and b_in_a >= 40:
-        return 'heavy overlap, look at it'
-    return 'touching only, probably distinct'
+def verdict(a_in_b, b_in_a, area_ratio=None, centroid_sep_frac=None, same_type=True):
+    """Name the RELATIONSHIP between two outlines, and say separately whether it looks like one
+    water under two slugs. Returns (label, likely_duplicate).
+
+    The first cut said "B IS A PARTIAL TRACE OF A -- keep A" for greenfield_lake inside
+    coast_cape_fear_nc: a 75-acre lake wholly inside a 195,000-acre coastal region. Containment
+    was true and the conclusion was garbage. Acting on that label deletes a real water.
+
+    Containment only implies identity when the two are COMPARABLE IN SIZE and of the SAME KIND.
+    A small lake inside a big coastal box is a lake in a region. A river 97% inside a lake is a
+    river running through it. Both are real spatial facts and neither is a duplicate, so they are
+    reported as relationships and excluded from the duplicate list rather than silently dropped.
+
+    a_in_b and b_in_a are percentages of each polygon's OWN area that the two share."""
+    both_high = a_in_b >= 90 and b_in_a >= 90
+    tight = (area_ratio is not None and area_ratio >= 0.97
+             and centroid_sep_frac is not None and centroid_sep_frac <= 0.02)
+    if both_high or tight:
+        return 'SAME OUTLINE TWICE -- one water, two slugs', True
+
+    contained = max(a_in_b, b_in_a) >= 90
+    if contained and (area_ratio is None or area_ratio < 0.25):
+        return 'ONE SITS WHOLLY INSIDE THE OTHER at very different sizes -- containment, not identity', False
+    if not same_type:
+        return 'OVERLAP BETWEEN DIFFERENT FEATURE TYPES -- a river meeting a lake, not identity', False
+    if contained:
+        return 'ONE SITS WHOLLY INSIDE THE OTHER at comparable size -- probably one water', True
+    if min(a_in_b, b_in_a) >= 40:
+        return 'HEAVY PARTIAL OVERLAP -- look at it', True
+    return 'touching only, probably distinct', False
