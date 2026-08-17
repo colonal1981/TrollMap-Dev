@@ -308,6 +308,33 @@ def main():
             if best is None:
                 continue
             _inter, i, pct_reg, pct_nhd, ratio = best
+
+            # NHD splits a big reservoir across several waterbody polygons, and the dissolve
+            # above only merges the ones sharing a GNIS id -- arms with no id, or a different
+            # one, stay separate. Binding to the single best group then UNDERSTATES the lake:
+            # hartwell_lake measured 33,596 acres against a registry 54,072 and a real ~56,000,
+            # so the registry was right and the measurement was wrong. Report the union of every
+            # NHD polygon lying almost entirely inside the registry outline, as a SECOND number.
+            #
+            # Deliberately not used for the binding itself. cheoah_lake's outline covers
+            # Calderwood completely, so unioning on containment alone would swallow the next
+            # lake downstream -- the very confusion that took two runs to clear.
+            # Summed from the SAME source as nhd_acres -- NHD's declared AreaSqKm -- not from
+            # raw geometry. Mixing a declared area with a geometric one makes the two numbers
+            # incomparable, which is how the first cut reported a union SMALLER than the single
+            # group it contains. NHD polygons do not overlap, so summing is safe.
+            union_pieces, union_acres = 0, None
+            try:
+                inside_idx = [k for k in idx
+                              if nhd[k].area > 0
+                              and g.intersection(nhd[k]).area >= 0.9 * nhd[k].area]
+                if inside_idx:
+                    union_pieces = len(inside_idx)
+                    union_acres = round(sum(
+                        float(cols['AreaSqKm'][j] or 0)
+                        for k in inside_idx for j in midx[k]) * 247.105, 1)
+            except Exception:
+                pass
             src_rows = midx[i]
             j0 = src_rows[0]
 
@@ -332,6 +359,8 @@ def main():
                 'pct_of_registry_polygon': round(pct_reg, 1),
                 'pct_of_nhd_polygon': round(pct_nhd, 1),
                 'area_ratio': round(ratio, 4),
+                'nhd_union_pieces': union_pieces,
+                'nhd_union_acres': union_acres,
             }
             prev = bindings.get(slug)
             if prev is None or pct_reg > prev['pct_of_registry_polygon']:

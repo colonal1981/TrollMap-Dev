@@ -45,13 +45,15 @@ def build(root, spell=str):
     # A RIVER lives in NHDArea, split into pieces that share one GNIS id. Reading only
     # NHDWaterbody left 59 of 90 rivers and all 16 coastal waters unbound on the real data.
     riv = [Polygon([(0,20),(0,21),(6,21),(6,20)]), Polygon([(6,20),(6,21),(12,21),(12,20)]),
-           Polygon([(12,20),(12,21),(18,21),(18,20)])]
+           Polygon([(12,20),(12,21),(18,21),(18,20)]),
+           # a second lobe of the big lake, carrying NO GNIS id, so the dissolve cannot find it
+           Polygon([(11,1),(11,9),(14,9),(14,1)])]
     write(str(root/'nhd'/'NHDPLUS_H_0602_HU4_20220418_GDB.gpkg'),
           geometry=shapely.to_wkb(np.array(riv, dtype=object)),
-          field_data=[np.array(['ar1','ar2','ar3'],dtype=object),
-                      np.array(['1234567','1234567','1234567'],dtype=object),
-                      np.array(['Little Pee Dee River']*3,dtype=object),
-                      np.array([2.0,2.0,2.0]), np.array([460,460,460])],
+          field_data=[np.array(['ar1','ar2','ar3','lobe2'],dtype=object),
+                      np.array(['1234567','1234567','1234567',''],dtype=object),
+                      np.array(['Little Pee Dee River']*3+[''],dtype=object),
+                      np.array([2.0,2.0,2.0,16.0]), np.array([460,460,460,390])],
           fields=[spell('Permanent_Identifier'), spell('GNIS_ID'), spell('GNIS_Name'),
                   spell('AreaSqKm'), spell('FType')],
           layer='NHDArea', geometry_type='Polygon', crs='EPSG:4326', driver='GPKG',
@@ -62,7 +64,7 @@ def build(root, spell=str):
                   open(root/'registry'/'boundaries'/f'{slug}.geojson','w'))
     reg = {
       'persimmon_lake': {'gnis':'gnis:1016964','area_acres':5914.5,'bounds_wsen':[0,0,10,10]},
-      'hiwassee_lake':  {'gnis':'slug:hiwassee_lake','area_acres':6755.8,'bounds_wsen':[-1,-1,11,11]},
+      'hiwassee_lake':  {'gnis':'slug:hiwassee_lake','area_acres':6755.8,'bounds_wsen':[-1,-1,15,11]},
       'chatuge_lake':   {'gnis':'gnis:1012001','area_acres':6364.4,'bounds_wsen':[0,12,4,16]},
       'wrong_id_water': {'gnis':'gnis:777','area_acres':4.0,'bounds_wsen':[50,50,52,52]},
       'a_speck':        {'gnis':'slug:a_speck','area_acres':0.1,'bounds_wsen':[3,3,3.2,3.2]},
@@ -71,7 +73,7 @@ def build(root, spell=str):
                                'bounds_wsen':[0,20,18,21]},
     }
     geo('persimmon_lake', hiw)
-    geo('hiwassee_lake', Polygon([(-0.5,-0.5),(-0.5,10.5),(10.5,10.5),(10.5,-0.5)]))
+    geo('hiwassee_lake', Polygon([(-0.5,-0.5),(-0.5,10.5),(14.5,10.5),(14.5,-0.5)]))
     geo('chatuge_lake', chat)
     geo('wrong_id_water', far)
     geo('a_speck', tiny)
@@ -125,6 +127,18 @@ for label, spell in (('exact', str), ('upper', str.upper), ('lower', str.lower))
         eq(_r['nhd_gnis_name'], 'Little Pee Dee River', f'[{label}] name carried through')
         assert _r['pct_of_registry_polygon'] > 90, f'[{label}] dissolved cover: {_r}'
         eq(_r['nhd_ftype'], 460, f'[{label}] FType 460 StreamRiver')
+
+        # NHD splits a big lake across polygons that do not share a GNIS id, so the single best
+        # group understates it. hartwell_lake measured 33,596 ac against a registry 54,072 and a
+        # real ~56,000: the registry was right and the measurement was wrong.
+        _h = got['bindings']['hiwassee_lake']
+        assert _h['nhd_union_pieces'] >= 2, \
+            f'[{label}] both lobes should union: {_h["nhd_union_pieces"]}'
+        assert _h['nhd_union_acres'] > _h['nhd_acres'], \
+            f'[{label}] union must exceed the single best group: {_h}'
+        # ...but the union must NOT drive the binding, or a lake whose outline covers the next
+        # lake downstream swallows it -- the cheoah/calderwood confusion.
+        eq(_h['nhd_pieces'], 1, f'[{label}] binding still the single best group')
 
         # A 0.1-acre speck lying WHOLLY INSIDE the reservoir is 100% contained and is not it.
         # Same lesson as greenfield_lake inside the Cape Fear coastal region.
