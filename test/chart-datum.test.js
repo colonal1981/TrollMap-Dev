@@ -467,3 +467,111 @@ test('BW is Bridgewater and nothing in the payload says so', () => {
                  'OLD CATAWBA R BL CATAWBA DAM NEAR BRIDGEWATER, NC'];
   assert.equal(arrivalsForWater(RAW_BASIN_1, 'Lake James (Burke Co, NC)', james, BASIN_1).length, 0);
 });
+
+// ── the dam's own schedule, which is the only Duke release fact a reservoir has ───────────────
+import { parseDukeRunTime, parseActiveRun, activeRunForWater } from '../Worker/conditions.js';
+
+// Verbatim rows off /rivers/active-run, pasted by Ryan 2026-08-17.
+const ACTIVE_RUN = [
+  { riverId: 1, riverName: 'Bridgewater', Releases: [
+    { StartDateTime: '08/16/2026 04:00:00 PM', EndDateTime: '08/16/2026 08:00:00 PM', Units: '2' }] },
+  { riverId: 1, riverName: 'Oxford', Releases: [
+    { StartDateTime: '08/16/2026 02:00:00 PM', EndDateTime: '08/16/2026 11:00:00 PM', Units: '' }] },
+  { riverId: 1, riverName: 'Wylie', Releases: [
+    { StartDateTime: '08/16/2026 04:00:00 PM', EndDateTime: '08/16/2026 10:00:00 PM', Units: '' }] },
+  { riverId: 1, riverName: 'Wateree', Releases: [
+    { StartDateTime: '08/17/26 No Flow Release', EndDateTime: '08/17/26 No Flow Release', Units: 'N/A' },
+    { StartDateTime: '08/18/26 No Flow Release', EndDateTime: '08/18/26 No Flow Release', Units: 'N/A' },
+    { StartDateTime: '08/19/26 No Flow Release', EndDateTime: '08/19/26 No Flow Release', Units: 'N/A' }] },
+  { riverId: 2, riverName: 'Nantahala', Releases: [
+    { StartDateTime: '08/16/2026 08:00:00 AM', EndDateTime: '08/16/2026 08:00:00 PM', Units: '' }] },
+  { riverId: 3, riverName: 'Tillery', Releases: [
+    { StartDateTime: '08/16/2026 06:00:00 PM', EndDateTime: '08/16/2026 09:00:00 PM', Units: '' }] },
+];
+
+test('"No Flow Release" is a sentence inside a datetime field', () => {
+  // Date.parse returns NaN on it, so a parser that only kept finite dates would drop the row and
+  // turn "Duke has explicitly scheduled no release" into "we have no information".
+  const no = parseDukeRunTime('08/19/26 No Flow Release');
+  assert.equal(no.noRelease, true);
+  assert.equal(no.date, '2026-08-19', 'and the year loses two digits when it happens');
+  assert.equal(no.epoch, null);
+
+  const yes = parseDukeRunTime('08/16/2026 04:00:00 PM');
+  assert.equal(yes.noRelease, false);
+  assert.equal(yes.date, '2026-08-16');
+  assert.equal(yes.iso, '2026-08-16T16:00:00-04:00', 'PM, and Eastern assumed as elsewhere');
+  assert.equal(parseDukeRunTime('08/16/2026 12:00:00 AM').iso, '2026-08-16T00:00:00-04:00');
+  assert.equal(parseDukeRunTime('08/16/2026 12:00:00 PM').iso, '2026-08-16T12:00:00-04:00');
+  assert.equal(parseDukeRunTime(''), null);
+  assert.equal(parseDukeRunTime(null), null);
+  assert.equal(parseDukeRunTime('not a date at all'), null);
+});
+
+test('Units is empty on most dams and empty is not zero', () => {
+  const rows = parseActiveRun(ACTIVE_RUN);
+  const bw = rows.find((r) => r.dam === 'Bridgewater');
+  const ox = rows.find((r) => r.dam === 'Oxford');
+  const wa = rows.find((r) => r.dam === 'Wateree');
+  assert.equal(bw.generators, 2, 'the only dam publishing a unit count');
+  assert.equal(ox.generators, null, '"" is published-without-a-count, not zero');
+  assert.equal(wa.generators, null, '"N/A" rides along with a no-release');
+  assert.equal(wa.no_release, true);
+});
+
+test('THE WATEREE, and the answer is a stated zero', () => {
+  // /flow-arrivals had nothing for this lake at all. /active-run says: no release, three days
+  // running. That is worth more to a trip than most of what is on the card.
+  const rows = parseActiveRun(ACTIVE_RUN);
+  const wateree = activeRunForWater(rows, 1, 'Wateree Lake (Kershaw Co, SC)', WATEREE_GAUGES, BASIN_1);
+  assert.equal(wateree.length, 3);
+  assert.ok(wateree.every((r) => r.no_release));
+  assert.deepEqual(wateree.map((r) => r.date), ['2026-08-17', '2026-08-18', '2026-08-19']);
+});
+
+test('the powerhouse is named in the gauge, never in the lake', () => {
+  const rows = parseActiveRun(ACTIVE_RUN);
+  // Lake Hickory's dam is "Oxford" and its own name says nothing about it.
+  const hickory = ['Catawba River at Lake Hickory/Oxford Dam'];
+  assert.equal(activeRunForWater(rows, 1, 'Lake Hickory (Catawba Co, NC)', hickory, BASIN_1)
+    .map((r) => r.dam).join(), 'Oxford');
+  assert.equal(activeRunForWater(rows, 1, 'Lake Hickory (Catawba Co, NC)', [], BASIN_1).length, 0);
+
+  // Lake James' dam is "Bridgewater", which /flow-arrivals abbreviated to "BW 2 Units" and this
+  // endpoint spells out.
+  const james = ['OLD CATAWBA R BL CATAWBA DAM NEAR BRIDGEWATER, NC'];
+  assert.equal(activeRunForWater(rows, 1, 'Lake James (Burke Co, NC)', james, BASIN_1)
+    .map((r) => r.dam).join(), 'Bridgewater');
+});
+
+test('a dam name cannot reach across basins', () => {
+  const rows = parseActiveRun(ACTIVE_RUN);
+  // Nantahala is basin 2. Asking basin 1 for it returns nothing even though the name matches.
+  assert.equal(activeRunForWater(rows, 1, 'Nantahala Lake', ['Nantahala River at Aquone'], BASIN_1).length, 0);
+  assert.equal(activeRunForWater(rows, 2, 'Nantahala Lake', ['Nantahala River at Aquone'],
+    { RiverId: 2, RiverName: 'Nantahala', riverDescription: 'Nantahala/Tuckasegee Area' }).length, 1,
+    'and a water named after its own river keeps its name');
+});
+
+test('nothing published is an empty list, not a throw', () => {
+  assert.deepEqual(parseActiveRun(null), []);
+  assert.deepEqual(parseActiveRun([]), []);
+  assert.deepEqual(parseActiveRun([{ riverId: 1 }]), [], 'a dam with no name is not a dam');
+  assert.deepEqual(activeRunForWater([], 1, 'Wateree Lake', WATEREE_GAUGES, BASIN_1), []);
+  assert.deepEqual(activeRunForWater(parseActiveRun(ACTIVE_RUN), 1, '', [], BASIN_1), []);
+});
+
+test('releaseShape renders a no-release schedule instead of dropping it', () => {
+  const rows = activeRunForWater(parseActiveRun(ACTIVE_RUN), 1,
+    'Wateree Lake (Kershaw Co, SC)', WATEREE_GAUGES, BASIN_1);
+  const shaped = releaseShape({ dukeRun: rows });
+  assert.equal(shaped.kind, 'scheduled');
+  assert.equal(shaped.operator, 'Duke Energy');
+  assert.equal(shaped.basin, 'Wateree', 'the dam, which is what this endpoint keys on');
+  assert.equal(shaped.all_no_release, true);
+  assert.equal(shaped.items.length, 3);
+  // An arrival, where one exists, still outranks the powerhouse schedule: it says when the water
+  // reaches YOU.
+  const both = releaseShape({ duke: { arrivals: [{ damName: 'Wateree', arrival: 'x' }] }, dukeRun: rows });
+  assert.equal(both.kind, 'projected');
+});

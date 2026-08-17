@@ -62,7 +62,8 @@
 import { CORS, JSON_HEADERS, r2Text } from './worker-core.js';
 // RIVERS and lakeKeyFromName came out with dukeBasinFor: the basin is resolved from Duke's own
 // /rivers/get-rivers roster now, so this file no longer reads the six-entry hand table at all.
-import { dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchUsgs, getLakeClarity }
+import { dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun,
+         fetchUsgs, getLakeClarity }
   from './worker-data.js';
 import { parseCubeLevels, parseSouthernCoLevels, parseBrookfieldFacility } from './operators.js';
 import { reportTokens } from './reports.js';
@@ -1159,7 +1160,7 @@ async function operatorLevel(b) {
  * number that says what it IS doing are not interchangeable, and collapsing them is how a
  * person launches into a surge that already passed.
  */
-export function releaseShape({ duke, tva, operator } = {}) {
+export function releaseShape({ duke, dukeRun, tva, operator } = {}) {
   if (duke && Array.isArray(duke.arrivals) && duke.arrivals.length) {
     return {
       kind: 'projected',
@@ -1169,6 +1170,26 @@ export function releaseShape({ duke, tva, operator } = {}) {
       next: duke.arrivals[0] || null,
       items: duke.arrivals.slice(0, 6),
       source: duke.source || null,
+    };
+  }
+  // THE DAM'S OWN SCHEDULE, which is the only Duke release fact a reservoir ever has. Ranked
+  // below arrivals because on a river an arrival says when the water reaches YOU, which is
+  // strictly more useful than when it leaves the powerhouse — but on a lake arrivals are refused
+  // by kind, so this is what there is.
+  //
+  // A NO-RELEASE DAY IS AN ITEM, NOT AN ABSENCE. Duke says "08/19/26 No Flow Release" in the
+  // datetime field itself, and dropping those rows would turn a stated zero into silence. Today
+  // that is Lake Wateree's entire answer, three days running.
+  if (Array.isArray(dukeRun) && dukeRun.length) {
+    return {
+      kind: 'scheduled',
+      operator: 'Duke Energy',
+      basin: (dukeRun[0] && dukeRun[0].dam) || null,
+      last_updated: null,
+      next: dukeRun.find((r) => !r.no_release) || dukeRun[0] || null,
+      items: dukeRun.slice(0, 6),
+      all_no_release: dukeRun.every((r) => r.no_release),
+      source: 'https://api.hydro-derived.duke-energy.app/rivers/active-run',
     };
   }
   if (tva && (Array.isArray(tva.generation) ? tva.generation.length : false)) {
@@ -1421,6 +1442,120 @@ export function arrivalsForWater(sched, waterName, gaugeNames = [], basinRow = n
     return false;
   };
   return arrivals.filter((a) => hits(a.damName) || hits(a.mileMarkerName));
+}
+
+/**
+ * A Duke release datetime, or a stated no-release.
+ *
+ * "08/16/2026 04:00:00 PM" is a time. "08/19/26 No Flow Release" is the SAME FIELD carrying a
+ * sentence instead, with `Units: "N/A"` beside it — and the year loses two digits when it does.
+ * Date.parse returns NaN on it, so a parser that only kept finite dates would drop the row and
+ * turn "Duke has explicitly scheduled no release that day" into "we have no information", which
+ * is the single most common failure in this whole app.
+ *
+ * A STATED ZERO IS AN ANSWER. It is the answer Lake Wateree gets today, three days running, and
+ * it is worth more to a trip than most of what is on the card.
+ *
+ * Duke publishes local time with no offset. Eastern is assumed, the same assumption
+ * fetchDukeFlowArrivals already makes, and the offset travels so nothing downstream has to guess.
+ */
+export function parseDukeRunTime(v, offset = '-04:00') {
+  const raw = String(v == null ? '' : v).trim();
+  if (!raw) return null;
+  if (/no\s*flow\s*release/i.test(raw)) {
+    const d = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+    if (!d) return { noRelease: true, date: null, epoch: null, raw };
+    const yr = d[3].length === 2 ? `20${d[3]}` : d[3];
+    return { noRelease: true, date: `${yr}-${d[1].padStart(2, '0')}-${d[2].padStart(2, '0')}`,
+             epoch: null, raw };
+  }
+  const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s+(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)?$/i);
+  if (!m) return null;
+  const yr = m[3].length === 2 ? `20${m[3]}` : m[3];
+  let hh = Number(m[4]);
+  const ap = (m[7] || '').toUpperCase();
+  if (ap === 'PM' && hh !== 12) hh += 12;
+  if (ap === 'AM' && hh === 12) hh = 0;
+  const iso = `${yr}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`
+            + `T${String(hh).padStart(2, '0')}:${m[5]}:${m[6]}${offset}`;
+  const t = Date.parse(iso);
+  return Number.isFinite(t)
+    ? { noRelease: false, date: iso.slice(0, 10), epoch: t, iso, raw }
+    : null;
+}
+
+/**
+ * /rivers/active-run, flattened to one row per scheduled window.
+ *
+ * `Units` is the generator count and is EMPTY on most dams — "" is "published without a count",
+ * not zero, and "N/A" rides along with a no-release. Number('') is 0 and this is the eighth time
+ * that has mattered this week, so absence is checked before the conversion.
+ */
+export function parseActiveRun(json) {
+  const out = [];
+  for (const row of Array.isArray(json) ? json : []) {
+    if (!row) continue;
+    const basinId = Number(row.riverId ?? row.RiverId);
+    // riverName IS THE DAM on this endpoint. Named `dam` here so nothing downstream repeats the
+    // mistake of reading it as a river.
+    const dam = row.riverName || row.RiverName || null;
+    if (!dam) continue;
+    for (const rel of row.Releases || row.releases || []) {
+      if (!rel) continue;
+      const start = parseDukeRunTime(rel.StartDateTime);
+      const end = parseDukeRunTime(rel.EndDateTime);
+      if (!start) continue;
+      const u = rel.Units;
+      const units = (typeof u === 'string' && u.trim() !== '' && u.trim().toUpperCase() !== 'N/A')
+        ? (Number.isFinite(Number(u)) ? Number(u) : null)
+        : (typeof u === 'number' && Number.isFinite(u) ? u : null);
+      out.push({
+        dam,
+        basin_id: Number.isFinite(basinId) ? basinId : null,
+        no_release: !!start.noRelease,
+        date: start.date,
+        start: start.iso || null,
+        end: (end && end.iso) || null,
+        start_epoch: start.epoch,
+        end_epoch: (end && end.epoch) || null,
+        generators: units,
+      });
+    }
+  }
+  out.sort((a, b) => (a.start_epoch ?? Number.MAX_SAFE_INTEGER) - (b.start_epoch ?? Number.MAX_SAFE_INTEGER));
+  return out;
+}
+
+/**
+ * The dam schedule that belongs to this water.
+ *
+ * UNLIKE A FLOW ARRIVAL, THIS APPLIES TO A LAKE. The release from a reservoir's own dam is what
+ * draws it down and what makes the current at the dam; on the river below it is the surge. Both
+ * are the same fact read from different banks, and Duke publishes it per powerhouse.
+ *
+ * The dam names match through the SAME evidence the basin match uses. Lake Hickory is bound to
+ * "Catawba River at Lake Hickory/Oxford Dam" and Duke's dam is "Oxford"; Lake James is bound to
+ * "OLD CATAWBA R BL CATAWBA DAM NEAR BRIDGEWATER, NC" and Duke's dam is "Bridgewater". Neither
+ * lake's own name contains its powerhouse. The gauge names carry it, again.
+ *
+ * SCOPED TO THE BASIN FIRST, so a dam name cannot reach across river systems.
+ */
+export function activeRunForWater(runs, basinId, waterName, gaugeNames = [], basinRow = null) {
+  const rows = (runs || []).filter((r) => r && (basinId == null || r.basin_id === basinId));
+  if (!rows.length) return [];
+
+  const mine = distinctive(waterName);
+  const shared = new Set();
+  for (const t of distinctive(basinRow && basinRow.RiverName)) if (!mine.has(t)) shared.add(t);
+
+  const want = new Set(mine);
+  for (const n of gaugeNames || []) for (const t of distinctive(n)) want.add(t);
+  if (!want.size) return [];
+
+  return rows.filter((r) => {
+    for (const t of distinctive(r.dam)) if (want.has(t) && !shared.has(t)) return true;
+    return false;
+  });
 }
 
 /** The dams a schedule actually carries, for a refusal that names them. */
@@ -2041,6 +2176,13 @@ async function waterBlock(b, lat, lon) {
   const basin = dukeBasinFor(roster, b.display_name || b.slug, gaugeNames);
   const basinRow = (roster || []).find((r) => Number(r.RiverId ?? r.riverId) === basin) || null;
   const dukeSched = basin ? await fetchDukeFlowArrivals(basin).catch(() => null) : null;
+  // THE DAM SCHEDULE APPLIES TO A LAKE and the arrival schedule does not, so it is fetched for
+  // any water that resolved a basin. Duke publishes eleven dams across four basins; Wateree is
+  // one of them and had nothing to say through /flow-arrivals at all.
+  const dukeRun = basin
+    ? activeRunForWater(parseActiveRun(await fetchDukeActiveRun().catch(() => null)),
+                        basin, b.display_name || b.slug, gaugeNames, basinRow)
+    : [];
 
   // A hand-typed basin id has to prove itself before it is allowed to describe this river.
   // Refused rather than dropped: a projection that was rejected and one that was never
@@ -2111,7 +2253,7 @@ async function waterBlock(b, lat, lon) {
          + `name with ${b.display_name || b.slug} or with the gauges bound to it.`,
     };
   }
-  out.releases = releaseShape({ duke, tva: out.tva, operator: out.operator });
+  out.releases = releaseShape({ duke, dukeRun, tva: out.tva, operator: out.operator });
 
   // One resolved temperature rather than three places a caller has to look. Seeded with whatever
   // a gauge read already produced, so the common case costs no extra request.

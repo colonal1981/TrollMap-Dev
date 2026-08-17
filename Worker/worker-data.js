@@ -414,6 +414,42 @@ async function fetchDukeRivers() {
     return null;
   }
 }
+/**
+ * Duke's release SCHEDULE, per dam, and the endpoint that finally answers for a reservoir.
+ *
+ * Ryan pasted it on 2026-08-17. `/rivers/flow-arrivals/{basin}` is a paddler's product — when a
+ * surge reaches a river access point — and had nothing for Lake Wateree. This one does:
+ *
+ *   {"riverId":1,"riverName":"Wateree","Releases":[
+ *      {"StartDateTime":"08/17/26 No Flow Release", ... ,"Units":"N/A"}, ... ]}
+ *
+ * Eleven dams across four basins, three days each, and Wateree is one of them.
+ *
+ * `riverName` HERE IS THE DAM, NOT THE RIVER. On /rivers/get-rivers the same field name means
+ * the basin ("Catawba"); here it means the powerhouse (Bridgewater, Oxford, Wylie, GF Long
+ * Bypass, Wateree, Tillery, Walters, Nantahala, East Fork, West Fork). Two endpoints from the
+ * same service, one field name, two different things.
+ *
+ * `riverId` IS THE BASIN, and it is what ties a dam back to /rivers/get-rivers.
+ */
+async function fetchDukeActiveRun() {
+  try {
+    const r = await fetch(`${DUKE_API_BASE}/rivers/active-run`, {
+      cf: { cacheTtl: 300, cacheEverything: true },
+      headers: {
+        "User-Agent": "TrollMap/12 Worker",
+        "Origin": "https://lakes.hydro-derived.duke-energy.app",
+        "Referer": "https://lakes.hydro-derived.duke-energy.app/",
+        "Accept": "application/json"
+      }
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return Array.isArray(j) && j.length ? j : null;
+  } catch (_) {
+    return null;
+  }
+}
 async function fetchDukeFlowArrivals(basinId) {
   try {
     const r = await fetch(`${DUKE_API_BASE}/rivers/flow-arrivals/${basinId}`, {
@@ -1782,4 +1818,4 @@ var RIVERS = {
   }
 };
 
-export { normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard };
+export { normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard };

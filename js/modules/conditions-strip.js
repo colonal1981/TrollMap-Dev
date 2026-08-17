@@ -403,11 +403,23 @@ function cardHtml(rec, c) {
   if (c.releases) {
     const r = c.releases;
     const kind = r.kind === 'projected' ? 'projected arrivals'
-               : r.kind === 'scheduled' ? 'published schedule'
+               : r.kind === 'scheduled'
+                 ? (r.all_no_release
+                    ? 'published schedule — NO RELEASE on every day published'
+                    : 'published schedule')
                : 'observed right now — NOT a forecast';
     const items = (r.items || []).slice(0, 4).map((it) => {
       if (it.cfs != null) return `${Math.round(it.cfs).toLocaleString()} ft³/s ${esc(it.into || '')}`;
       if (it.arrival) return `${esc(it.arrival)} → ${esc(it.mileMarkerName || it.damName || '')}`;
+      // A DUKE DAM SCHEDULE ROW. `no_release` is a STATED zero — Duke writes "No Flow Release"
+      // into the datetime field itself — and a row that says so must render, or three days of
+      // "they are not generating" reads as three days of no information.
+      if (it.no_release) return `${esc(it.date || '')} — no flow release scheduled`;
+      if (it.start) {
+        const t = (v) => (v ? String(v).slice(11, 16) : '');
+        return `${esc(it.date || '')} ${esc(t(it.start))}${it.end ? `–${esc(t(it.end))}` : ''}`
+             + `${it.generators != null ? ` · ${it.generators} unit${it.generators === 1 ? '' : 's'}` : ''}`;
+      }
       if (it.generators != null) return `${it.generators} generator${it.generators === 1 ? '' : 's'}`;
       return null;
     }).filter(Boolean);
