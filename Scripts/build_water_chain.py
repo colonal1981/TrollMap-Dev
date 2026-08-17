@@ -327,8 +327,15 @@ def process_vpu(vpu, src, want_gnis, args):
             'nhd_ftype': safe_int(m.get('ftype')),
             'outlet_hydroseq': int(out_hs),
             'levelpath': safe_int(g['LevelPathI']),
-            'drainage_km2': round(safe_float(grp['TotDASqKm'].max()), 4),
-            'stream_order': safe_int(grp['StreamOrde'].max()),
+            # Drainage is what accumulates AT THE OUTLET, not the largest number found anywhere
+            # inside the polygon. Taking the max let a mainstem flowline that merely clips the
+            # polygon donate its whole basin: russ_lake came back as stream order 3 -- a small
+            # tributary -- carrying 7,858 km2, two numbers from one waterbody that cannot both
+            # be true. max_drainage_km2 is kept alongside precisely so that gap stays visible.
+            'drainage_km2': round(safe_float(g['TotDASqKm']), 4),
+            'max_drainage_km2': round(safe_float(grp['TotDASqKm'].max()), 4),
+            'stream_order': safe_int(g['StreamOrde']),
+            'max_stream_order': safe_int(grp['StreamOrde'].max()),
             'flowlines': int(len(grp)),
             'downstream': nxt,
             'downstream_steps': int(steps),
@@ -429,6 +436,12 @@ def main():
             else:
                 rows[slug] = r
 
+    # A polygon holding flowlines that drain far more than its own outlet has almost certainly
+    # clipped a river it is not on. Flag it rather than quietly reporting the bigger number.
+    for r in rows.values():
+        own, mx = r['drainage_km2'], r['max_drainage_km2']
+        r['foreign_flowline_suspected'] = bool(own > 0 and mx > own * 2)
+
     # upstream is the inverse of downstream -- derived, never walked twice
     for r in rows.values():
         r['upstream'] = []
@@ -447,7 +460,16 @@ def main():
         unmatched[slug] = ('no gnis id in registry' if g is None
                            else f'gnis {g} not found in any geodatabase read')
 
+    suspect = [s2 for s2, r in rows.items() if r.get('foreign_flowline_suspected')]
     print(f'\n== placed {len(rows)} of {len(reg)} waters; {len(unmatched)} unplaced')
+    if suspect:
+        print(f'   {len(suspect)} polygon(s) contain flowlines draining more than twice what')
+        print('   their own outlet does -- they have probably clipped a river they are not on:')
+        for s2 in sorted(suspect, key=lambda x: -rows[x]['max_drainage_km2'])[:15]:
+            r = rows[s2]
+            print(f'     {s2:<30} outlet {r["drainage_km2"]:>10.1f} km2,'
+                  f' largest inside {r["max_drainage_km2"]:>10.1f} km2,'
+                  f' order {r["stream_order"]} vs {r["max_stream_order"]}')
     terminal = [s for s, r in rows.items() if not r['downstream']]
     print(f'   with a downstream neighbour: {len(rows) - len(terminal)}')
     print(f'   terminal within their VPU:   {len(terminal)}')

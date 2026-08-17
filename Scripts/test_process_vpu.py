@@ -119,6 +119,26 @@ for i, s in enumerate(order):
 assert rows['cedar_creek_reservoir_2']['downstream'] == 'wateree_lake', 'CEDAR CREEK = INFLOW'
 assert rows['wateree_lake']['downstream'] is None, 'WATEREE = OUTFLOW'
 
+# --- drainage must come from the OUTLET, not from the largest flowline in the polygon.
+# Give Wateree an extra flowline belonging to a much bigger river that merely clips it.
+_extra = pd.DataFrame([{'NHDPlusID': 9001, 'HydroSeq': 15001500000399.0,
+                        'DnHydroSeq': 15001500000398.0, 'LevelPathI': 9999.0,
+                        'TotDASqKm': 99999.0, 'StreamOrde': 9.0}])
+_vaa2 = pd.concat([VAA, _extra], ignore_index=True)
+_fl2 = pd.concat([FL, pd.DataFrame([{'NHDPlusID': 9001,
+                  'WBArea_Permanent_Identifier': 'wb_1227425'}])], ignore_index=True)
+_saveV, _saveF = VAA, FL
+globals()['VAA'], globals()['FL'] = _vaa2, _fl2
+_rows2, _ = bwc.process_vpu('0305', 'fake.gdb', want, None)
+globals()['VAA'], globals()['FL'] = _saveV, _saveF
+_w = _rows2['wateree_lake']
+assert _w['drainage_km2'] < 50000, \
+    f'OUTLET drainage must ignore the foreign flowline, got {_w["drainage_km2"]}'
+assert _w['max_drainage_km2'] == 99999.0, 'the foreign flowline is still recorded'
+assert _w['stream_order'] < 9, 'outlet order, not the foreign one'
+assert _w['max_stream_order'] == 9, 'foreign order kept for comparison'
+print('outlet-vs-max drainage assertions pass')
+
 da = [rows[s]['drainage_km2'] for s in order]
 assert all(b > a for a, b in zip(da, da[1:])), f'drainage must climb downstream: {da}'
 assert rows['lake_norman']['flowlines'] == 2, 'both arm polygons fold into ONE lake'
