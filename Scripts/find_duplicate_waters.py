@@ -4,33 +4,37 @@ find_duplicate_waters.py -- find registry waters that are the same water under t
 
 WHY
     build_water_chain.py caught john_h_moss_lake / kings_mountain_reservoir because they share
-    a GNIS id. It completely missed lake_lookout / lookout_shoals_lake, which Ryan settled with
-    one search: Lookout Shoals Lake is the official name and "Lake Lookout" is what locals call
-    it. That pair had nothing to collide on, because one of them carries a slug: fallback
-    instead of an id -- and 150 of the 454 waters are in that state.
+    GNIS 988007. It was structurally blind to lake_lookout / lookout_shoals_lake, which Ryan
+    settled with one search: Lookout Shoals Lake is the official name and "Lake Lookout" is the
+    local nickname for the same reservoir, sitting exactly where the derived chain placed it,
+    between Lake Hickory and Lake Norman.
 
-    So a GNIS collision check finds only the easy half. Geometry finds both, because two slugs
-    describing one water necessarily describe overlapping ground.
+    That pair had nothing to collide on, because lookout_shoals_lake carries a slug: fallback
+    instead of an id -- and 150 of the 454 waters are in that state. An id check cannot see a
+    third of the registry. Two slugs describing one water always describe overlapping ground.
 
-HOW
-    1. Pre-filter on bounds_wsen straight out of lake_index.json -- cheap, no file reads, and it
-       throws away almost all of the 102,831 possible pairs.
-    2. For survivors, load the two boundary polygons and measure containment BOTH WAYS by
-       ray-casting each ring's vertices against the other. Direction matters: a partial trace
-       sits mostly inside the full one while the full one sits mostly outside it, which is
-       exactly the lake_lookout signature and tells you WHICH ENTRY TO KEEP.
-    3. Report. Never edit. This writes no registry change and deletes nothing.
+SPEED
+    The measurement lives in geomcore.py, which uses shapely when it is installed (exact polygon
+    intersection in C) and falls back to grid sampling in numpy. registry/boundaries holds 275 MB
+    of geojson and the largest single water is 8.3 MB, over 200,000 edges; the first version of
+    this ray-cast that in pure Python and was unusable. Pass --engine numpy to force the fallback.
 
-WHAT THE NUMBERS MEAN
-    a_in_b near 100 and b_in_a near 100  -> the same polygon twice
-    a_in_b high, b_in_a low              -> a is a PARTIAL trace of b; keep b, move a's gnis id
-    both middling                        -> neighbours sharing a shoreline, probably NOT dupes
-    Reads only. Add --json <path> to save the findings for the deletion tab.
+HOW TO READ THE OUTPUT
+    a_in_b / b_in_a are percentages OF EACH POLYGON'S OWN AREA that the two share.
+      both near 100                -> the same outline twice
+      one near 100, the other low  -> the first is a PARTIAL trace of the second; keep the second
+      both middling                -> neighbours sharing a shoreline, probably distinct
+
+    Reads only. It never edits lake_index.json. --json saves the findings for the deletion tab.
 """
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import geomcore  # noqa: E402
 
 REGISTRY_REL = 'registry/lake_index.json'
 BOUNDS_REL = 'registry/boundaries'
@@ -75,8 +79,7 @@ def normalize_gnis(v):
 
 
 def boxes_overlap(a, b, pad=0.0):
-    """bounds_wsen = [west, south, east, north]. Returns overlap area as a fraction of the
-    smaller box, or 0.0. pad widens both boxes to catch traces that just miss touching."""
+    """bounds_wsen = [west, south, east, north]. Overlap as a fraction of the smaller box."""
     if not a or not b or len(a) != 4 or len(b) != 4:
         return 0.0
     aw, as_, ae, an = a[0] - pad, a[1] - pad, a[2] + pad, a[3] + pad
@@ -89,7 +92,6 @@ def boxes_overlap(a, b, pad=0.0):
 
 
 def rings_of(path):
-    """Outer rings and holes from a geojson of any shape. Returns [[outer, *holes], ...]."""
     g = json.loads(Path(path).read_text(encoding='utf-8'))
     polys = []
 
@@ -116,105 +118,21 @@ def rings_of(path):
     return polys
 
 
-def point_in_ring(x, y, ring):
-    inside = False
-    n = len(ring)
-    j = n - 1
-    for i in range(n):
-        xi, yi = ring[i][0], ring[i][1]
-        xj, yj = ring[j][0], ring[j][1]
-        if (yi > y) != (yj > y):
-            dy = yj - yi
-            if dy and x < (xj - xi) * (y - yi) / dy + xi:
-                inside = not inside
-        j = i
-    return inside
-
-
-def point_in_polys(x, y, polys):
-    for p in polys:
-        if not p:
-            continue
-        if point_in_ring(x, y, p[0]) and not any(point_in_ring(x, y, h) for h in p[1:]):
-            return True
-    return False
-
-
-def containment(a_polys, b_polys, sample=1200):
-    """Percentage of a's outer vertices lying inside b. Sampled evenly when a ring is huge --
-    Lake Marion has tens of thousands of vertices and every one is a full ray cast."""
-    pts = [pt for p in a_polys for pt in p[0]]
-    if not pts:
-        return 0.0, 0
-    # len // sample gives step 1 for anything under twice the cap, which is no sampling at all.
-    # Pick exactly `sample` evenly spaced indices instead.
-    n = len(pts)
-    use = pts if n <= sample else [pts[i * n // sample] for i in range(sample)]
-    hits = sum(1 for x, y, *_ in use if point_in_polys(x, y, b_polys))
-    return 100.0 * hits / len(use), len(use)
-
-
-def area_centroid(polys):
-    """Shoelace area and area-weighted centroid, holes subtracted. Degrees squared -- fine for
-    ratios and for a centroid, which is all this is used for."""
-    total = 0.0
-    cx = cy = 0.0
-    for poly in polys:
-        for k, ring in enumerate(poly):
-            a2 = 0.0
-            rx = ry = 0.0
-            n = len(ring)
-            for i in range(n):
-                x1, y1 = ring[i][0], ring[i][1]
-                x2, y2 = ring[(i + 1) % n][0], ring[(i + 1) % n][1]
-                cross = x1 * y2 - x2 * y1
-                a2 += cross
-                rx += (x1 + x2) * cross
-                ry += (y1 + y2) * cross
-            a = a2 / 2.0
-            if a == 0:
-                continue
-            sign = -1.0 if k else 1.0        # ring 0 is the outer boundary, the rest are holes
-            total += sign * abs(a)
-            cx += sign * abs(a) * (rx / (3.0 * a2))
-            cy += sign * abs(a) * (ry / (3.0 * a2))
-    if total == 0:
-        return 0.0, None, None
-    return abs(total), cx / total, cy / total
-
-
-def verdict(a_in_b, b_in_a, area_ratio=None, centroid_sep=None):
-    """area_ratio: smaller polygon area / larger, from the geometry itself, 1.0 when equal.
-    centroid_sep: distance between centroids as a fraction of the larger polygon's diameter.
-
-    Containment alone CANNOT recognise two copies of the same outline. Every vertex of one lies
-    exactly on the other's boundary, where a ray cast is a coin toss, so identical polygons score
-    near 50/50 rather than 100/100 -- which is what the real john_h_moss / kings_mountain pair
-    scored (48.7 and 50.5) and why an earlier threshold called a certain duplicate 'distinct'.
-    Area and centroid are unambiguous there, so they decide that case and containment decides the
-    partial-trace case, where the two shapes genuinely differ."""
-    same_size = area_ratio is not None and area_ratio >= 0.97
-    same_place = centroid_sep is not None and centroid_sep <= 0.02
-    if same_size and same_place:
-        return 'SAME POLYGON TWICE'
-    if a_in_b >= 70 and b_in_a < 40:
-        return 'A IS A PARTIAL TRACE OF B -- keep B'
-    if b_in_a >= 70 and a_in_b < 40:
-        return 'B IS A PARTIAL TRACE OF A -- keep A'
-    if a_in_b >= 40 and b_in_a >= 40:
-        return 'heavy overlap, look at it'
-    return 'touching only, probably distinct'
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--registry', default=None)
     ap.add_argument('--pad', type=float, default=0.0,
-                    help='degrees to widen each bbox before pairing (default 0)')
+                    help='degrees to widen each bbox before pairing')
     ap.add_argument('--min-box', type=float, default=0.25,
                     help='bbox overlap fraction needed to bother loading geometry')
+    ap.add_argument('--engine', choices=['shapely', 'numpy', 'python'], default=None)
     ap.add_argument('--json', default=None, help='write findings here')
     args = ap.parse_args()
+
+    engine, _ = geomcore.pick_engine(args.engine)
+    print(f'geometry engine: {engine}'
+          + ('' if engine == 'shapely' else
+             '   (install shapely for an exact, much faster run)'))
 
     root = find_repo_root(args.registry)
     reg_path = Path(args.registry) if args.registry else root / REGISTRY_REL
@@ -223,10 +141,9 @@ def main():
         return 2
     reg = json.loads(reg_path.read_text(encoding='utf-8'))
     bounds_dir = root / BOUNDS_REL
-    print(f'registry: {reg_path}')
-    print(f'waters: {len(reg)}')
+    print(f'registry: {reg_path}\nwaters: {len(reg)}')
 
-    # ---- 1. GNIS collisions: the easy half, the half build_water_chain already found -------
+    # ---- 1. GNIS collisions: the half an id check can see ---------------------------------
     by_gnis = {}
     for slug, row in reg.items():
         g = normalize_gnis(row.get('gnis'))
@@ -239,10 +156,10 @@ def main():
     if not gnis_dupes:
         print('   none')
 
-    # ---- 2. geometry: the half a GNIS check cannot see ------------------------------------
+    # ---- 2. geometry: the half it cannot -------------------------------------------------
     slugs = [s for s in reg if reg[s].get('bounds_wsen')]
-    print(f'\n== 2. pairing {len(slugs)} waters that have a bbox '
-          f'({len(slugs) * (len(slugs) - 1) // 2} possible pairs)')
+    total_pairs = len(slugs) * (len(slugs) - 1) // 2
+    print(f'\n== 2. pairing {len(slugs)} waters with a bbox ({total_pairs} possible pairs)')
     cand = []
     for i in range(len(slugs)):
         bi = reg[slugs[i]]['bounds_wsen']
@@ -251,7 +168,11 @@ def main():
             if f >= args.min_box:
                 cand.append((f, slugs[i], slugs[k]))
     cand.sort(reverse=True)
-    print(f'   bbox overlap >= {args.min_box}: {len(cand)} pairs to measure')
+    need = sorted({s for _, a, b in cand for s in (a, b)})
+    mb = sum((bounds_dir / f'{s}.geojson').stat().st_size
+             for s in need if (bounds_dir / f'{s}.geojson').exists()) / 1048576
+    print(f'   bbox overlap >= {args.min_box}: {len(cand)} pairs, '
+          f'{len(need)} distinct waters, {mb:.0f} MB of geometry to read')
 
     cache = {}
 
@@ -262,54 +183,55 @@ def main():
         return cache[slug]
 
     findings = []
-    for frac, a, b in cand:
+    t0 = time.time()
+    for idx, (frac, a, b) in enumerate(cand, 1):
+        if idx % 25 == 0 or idx == len(cand):
+            el = time.time() - t0
+            rate = idx / el if el > 0 else 0
+            left = (len(cand) - idx) / rate if rate > 0 else 0
+            print(f'   ...{idx}/{len(cand)} pairs, {el:.0f}s elapsed, ~{left:.0f}s left',
+                  flush=True)
         pa, pb = polys(a), polys(b)
         if not pa or not pb:
             continue
-        a_in_b, na = containment(pa, pb)
-        b_in_a, nb = containment(pb, pa)
-        ar_a, ax, ay = area_centroid(pa)
-        ar_b, bx, by = area_centroid(pb)
-        ratio = (min(ar_a, ar_b) / max(ar_a, ar_b)) if max(ar_a, ar_b) > 0 else 0.0
-        sep = None
-        if None not in (ax, ay, bx, by):
-            big = reg[a if ar_a >= ar_b else b].get('bounds_wsen') or [0, 0, 1, 1]
-            diag = (((big[2] - big[0]) ** 2 + (big[3] - big[1]) ** 2) ** 0.5) or 1.0
-            sep = (((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5) / diag
-        v = verdict(a_in_b, b_in_a, ratio, sep)
-        if v == 'touching only, probably distinct' and max(a_in_b, b_in_a) < 40:
+        a_in_b, b_in_a, ratio, sep, ar_a, ar_b = geomcore.measure(engine, pa, pb)
+        big = reg[a if ar_a >= ar_b else b].get('bounds_wsen') or [0, 0, 1, 1]
+        diag = (((big[2] - big[0]) ** 2 + (big[3] - big[1]) ** 2) ** 0.5) or 1.0
+        sep_frac = None if sep is None else sep / diag
+        v = geomcore.verdict(a_in_b, b_in_a, ratio, sep_frac)
+        if v == 'touching only, probably distinct':
             continue
         findings.append({
             'a': a, 'b': b, 'bbox_overlap': round(frac, 3),
             'a_in_b_pct': round(a_in_b, 1), 'b_in_a_pct': round(b_in_a, 1),
+            'area_ratio': round(ratio, 4),
+            'centroid_sep': None if sep_frac is None else round(sep_frac, 4),
             'a_acres': reg[a].get('area_acres'), 'b_acres': reg[b].get('area_acres'),
             'a_gnis': reg[a].get('gnis'), 'b_gnis': reg[b].get('gnis'),
             'a_charted': reg[a].get('charted'), 'b_charted': reg[b].get('charted'),
             'a_county': reg[a].get('county'), 'b_county': reg[b].get('county'),
-            'area_ratio': round(ratio, 4),
-            'centroid_sep': None if sep is None else round(sep, 4),
+            'a_type': reg[a].get('feature_type'), 'b_type': reg[b].get('feature_type'),
             'verdict': v,
         })
 
     findings.sort(key=lambda f: -(f['a_in_b_pct'] + f['b_in_a_pct']))
-    print(f'\n== 3. {len(findings)} pair(s) overlap enough to be worth your eye\n')
+    print(f'\n== 3. {len(findings)} pair(s) worth your eye  '
+          f'({time.time() - t0:.0f}s of measuring)\n')
     for f in findings:
         print(f'   {f["verdict"]}')
         print(f'     {f["a"]:<30} {str(f["a_acres"]):>10} ac  {str(f["a_gnis"]):<28}'
-              f' charted {f["a_charted"]}  {f["a_county"]}')
+              f' charted {f["a_charted"]}  {f["a_county"]}  {f["a_type"]}')
         print(f'     {f["b"]:<30} {str(f["b_acres"]):>10} ac  {str(f["b_gnis"]):<28}'
-              f' charted {f["b_charted"]}  {f["b_county"]}')
-        print(f'     {f["a_in_b_pct"]}% of the first sits inside the second;'
-              f' {f["b_in_a_pct"]}% the other way')
-        print(f'     areas agree {100 * f["area_ratio"]:.1f}%; centroids'
-              f' {"n/a" if f["centroid_sep"] is None else format(100 * f["centroid_sep"], ".2f") + "% of the span apart"}\n')
+              f' charted {f["b_charted"]}  {f["b_county"]}  {f["b_type"]}')
+        print(f'     they share {f["a_in_b_pct"]}% of the first and {f["b_in_a_pct"]}%'
+              f' of the second; areas agree {100 * f["area_ratio"]:.1f}%\n')
     if not findings:
         print('   none')
 
     if args.json:
         Path(args.json).write_text(json.dumps(
-            {'gnis_collisions': gnis_dupes, 'geometry_overlaps': findings}, indent=1),
-            encoding='utf-8')
+            {'engine': engine, 'gnis_collisions': gnis_dupes, 'geometry_overlaps': findings},
+            indent=1), encoding='utf-8')
         print(f'wrote {args.json}')
     print('\nNothing was edited. Every call above is a read.')
     return 0
