@@ -27,15 +27,20 @@ import { r2Text } from './worker-core.js';
 
 export const LAKE_INDEX_KEY = '_registry/lake_index.json';
 export const WATER_CHAIN_KEY = '_registry/water_chain.json';
+export const DAM_TABLE_KEY = '_registry/dam_table.json';
 export const INDEX_TTL_S = 3600;
 
 let _index = null;
 let _indexAt = 0;
 let _chain = null;
 let _chainAt = 0;
+let _dams = null;
+let _damsAt = 0;
 
 /** Exposed for tests. Nothing in the Worker should need to call this. */
-export function _resetIndexCache() { _index = null; _indexAt = 0; _chain = null; _chainAt = 0; }
+export function _resetIndexCache() {
+  _index = null; _indexAt = 0; _chain = null; _chainAt = 0; _dams = null; _damsAt = 0;
+}
 
 /**
  * The index, cached per isolate for an hour.
@@ -103,6 +108,43 @@ export async function waterChain(env, opts = {}) {
   }
   _chain = rows;
   _chainAt = now;
+  return rows;
+}
+
+/**
+ * Which water each dam impounds.
+ *
+ * THE CHAIN SAYS WHICH WATER IS UPSTREAM. THIS SAYS WHICH WATER A DAM BELONGS TO.
+ * `releaseDirection()` in conditions.js needs both: without the chain it cannot tell above from
+ * below, and without this it cannot tell what "Cedar Creek" refers to. Duke publishes one row
+ * per powerhouse and never says which lake it sits on.
+ *
+ * MERGED FROM TWO SOURCES THAT COVER DIFFERENT GROUND. The derived half binds every USACE dam
+ * to a registry water by POSITION and makes it agree with the chain's drainage before it counts
+ * -- an independent survey and a network derivation landing on the same number. The hand half
+ * is read off Duke's own plant map and wins on conflict, because the survey genuinely cannot
+ * separate the Great Falls-Dearborn structures: they all report 4,140 sq mi, which is inside
+ * tolerance of two pools at once.
+ *
+ * Keys are spelled by normalizeDamName(), so a lookup here and a Duke payload agree.
+ */
+export async function damTable(env, opts = {}) {
+  const now = Number.isFinite(opts.now) ? opts.now : Date.now();
+  if (!opts.fresh && _dams && now - _damsAt < INDEX_TTL_S * 1000) return _dams;
+  const bucket = (env && env.R2_TROLLMAP_CHARTPACKS) || opts.bucket;
+  if (!bucket) throw new Error('R2_TROLLMAP_CHARTPACKS is not bound to this Worker');
+  const obj = await bucket.get(DAM_TABLE_KEY);
+  if (!obj) {
+    throw new Error(`${DAM_TABLE_KEY} is not in the bucket — run build_duke_dam_table.py and `
+                  + 'bind_dams_to_waters.py, then upload_garmin_to_r2.py');
+  }
+  const parsed = JSON.parse(await r2Text(obj));
+  const rows = parsed && (parsed.dams || parsed);
+  if (!rows || typeof rows !== 'object' || Array.isArray(rows)) {
+    throw new Error(`${DAM_TABLE_KEY} is not an object keyed by dam name`);
+  }
+  _dams = rows;
+  _damsAt = now;
   return rows;
 }
 

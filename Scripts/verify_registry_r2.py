@@ -87,6 +87,13 @@ FILES = [
     ("water_chain.json", "water_chain.json", "chain",
      "Worker/conditions.js:releaseDirection() labels a Duke release inflow or outflow off this "
      "-- without it every release is unlabelled and a dam above a lake reads the same as its own"),
+    # The chain says which water is upstream; this says which water a DAM belongs to.
+    # releaseDirection() needs both, so a checker that knows one and not the other is half a
+    # checker. Built by merging the hand table with the position-derived one, so it has no
+    # single local file to compare against and is checked for presence and shape only.
+    ("dam_table.json", None, "presence",
+     "Worker/conditions.js:releaseDirection() resolves a Duke dam name to a water off this "
+     "-- without it 'Cedar Creek' means nothing and no release can be placed above or below"),
 ]
 
 
@@ -188,9 +195,11 @@ def main() -> int:
         url = '%s/chartpacks/%s' % (a.worker.rstrip('/'), key)
         served, nbytes, err = fetch(url, a.timeout)
 
-        lp = os.path.join(a.registry, local_name)
+        lp = os.path.join(a.registry, local_name) if local_name else None
         local = None
-        if os.path.exists(lp):
+        if lp is None:
+            local = None
+        elif os.path.exists(lp):
             try:
                 local = json.load(open(lp, encoding='utf-8'))
             except Exception as exc:

@@ -310,6 +310,33 @@ def slim_chain(full):
             "waters": out}
 
 
+def slim_dams(hand, derived):
+    """The two dam tables, merged into the object the Worker reads.
+
+    NEITHER SOURCE IS COMPLETE AND NEITHER REPLACES THE OTHER.
+
+    _dam_bindings.json is derived: every USACE dam bound to a registry water by POSITION and
+    then made to agree with water_chain.json's drainage before it counts. 158 names, and it
+    covers operators nobody has hand-checked. But it cannot resolve a structure whose drainage
+    sits inside tolerance of two pools at once -- the Great Falls-Dearborn dam, saddle dike,
+    diversion dam and spillways all report 4,140 sq mi, which is 1.1% from great_falls_reservoir
+    and 4.8% from cedar_creek_reservoir_2, and they are strung along a reach where different
+    structures are nearest different pools. It correctly declines rather than guessing.
+
+    _duke_dams.json is hand-assembled from Duke's own plant map and checked row by row, so it
+    knows which powerhouse belongs to which pool exactly where the survey is ambiguous. Which
+    happens to be the Wateree inflow path.
+
+    So the HAND TABLE WINS on conflict, and the derived one fills everything it never covered.
+    """
+    out = dict((derived or {}).get("dams") or {})
+    taken = dict((hand or {}).get("dams") or {})
+    overridden = [k for k in taken if k in out and out[k] != taken[k]]
+    out.update(taken)
+    return {"dams": out, "_hand_rows": len(taken), "_derived_rows": len(
+        (derived or {}).get("dams") or {}), "_overridden": sorted(overridden)}
+
+
 def put(local, key, gz, dry, timeout):
     """One wrangler put. Returns (ok, bytes_sent, message)."""
     try:
@@ -572,6 +599,27 @@ def main():
         else:
             print(f"!! {wc} not found -- every Duke release stays unlabelled as inflow or "
                   f"outflow; build it with build_water_chain.py --write")
+
+        # The chain says which water is upstream. This says which water a DAM belongs to.
+        # Worker/conditions.js:releaseDirection() needs both or it labels nothing.
+        hd = regdir / "_duke_dams.json"
+        dd = regdir / "_dam_bindings.json"
+        if hd.exists() or dd.exists():
+            _hand = json.load(open(hd, encoding="utf-8")) if hd.exists() else {}
+            _der = json.load(open(dd, encoding="utf-8")) if dd.exists() else {}
+            merged = slim_dams(_hand, _der)
+            tmpd = Path(tempfile.gettempdir()) / "trollmap_dams_slim.json"
+            tmpd.write_text(json.dumps(merged, separators=(",", ":")), encoding="utf-8")
+            reg_jobs.append((str(tmpd), f"{args.prefix}_registry/dam_table.json",
+                             "_registry", "dam_table"))
+            print(f"dams:     {len(merged['dams']):,} dam names -> "
+                  f"{args.prefix}_registry/dam_table.json "
+                  f"({merged['_hand_rows']} hand-checked, {merged['_derived_rows']} derived, "
+                  f"{len(merged['_overridden'])} overridden by hand)")
+        else:
+            print(f"!! neither {hd.name} nor {dd.name} found -- a Duke release cannot be told "
+                  f"from inflow to outflow; build them with build_duke_dam_table.py and "
+                  f"bind_dams_to_waters.py")
 
     # ── ONLY WHAT THE APP CAN ASK FOR ────────────────────────────────────────────────────────
     #
