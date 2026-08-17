@@ -68,9 +68,16 @@ fake = types.ModuleType('pyogrio')
 def _frame(layer):
     return {'NHDPlusFlowlineVAA': VAA, 'NHDFlowline': FL, 'NHDWaterbody': WB}[layer]
 def read_info(src, layer=None):
-    if CASE == 'missing' and layer == 'NHDPlusFlowlineVAA':
-        return {'fields': [_spell(c) for c in _frame(layer).columns if c != 'DnHydroSeq']}
-    return {'fields': [_spell(c) for c in _frame(layer).columns]}
+    # REAL pyogrio returns 'fields' as a NUMPY ARRAY, not a list. The previous fake returned a
+    # list, so `info.get('fields') or []` worked here and raised ValueError on the real 0602:
+    # "truth value of an array with more than one element is ambiguous". A fake that is easier
+    # to satisfy than the real thing tests nothing.
+    import numpy as _np
+    cols = [c for c in _frame(layer).columns
+            if not (CASE == 'missing' and layer == 'NHDPlusFlowlineVAA' and c == 'DnHydroSeq')]
+    return {'fields': _np.array([_spell(c) for c in cols], dtype=object),
+            'dtypes': _np.array(['object'] * len(cols), dtype=object),
+            'features': len(_frame(layer))}
 def read_dataframe(src, layer=None, read_geometry=None, columns=None):
     df = _frame(layer).rename(columns={c: _spell(c) for c in _frame(layer).columns})
     # pyogrio's real behaviour: a column that is not there is simply absent from the result

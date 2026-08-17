@@ -217,7 +217,10 @@ def read_layer(src, layer, wanted):
     rather than another guess. Returns (dataframe, missing, available)."""
     import pyogrio
     info = pyogrio.read_info(src, layer=layer)
-    available = [str(f) for f in (info.get('fields') or [])]
+    # pyogrio returns 'fields' as a NUMPY ARRAY. `arr or []` asks for the truth value of a
+    # multi-element array, which raises ValueError -- so never fall back with `or` here.
+    fields = info.get('fields')
+    available = [] if fields is None else [str(f) for f in fields]
     by_lower = {f.lower(): f for f in available}
     actual, missing = {}, []
     for w in wanted:
@@ -399,7 +402,9 @@ def main():
             for lyr in pyogrio.list_layers(str(src))[:, 0]:
                 if 'VAA' in lyr or lyr in ('NHDFlowline', 'NHDWaterbody'):
                     info = pyogrio.read_info(str(src), layer=lyr)
-                    print(f'   {lyr}: {", ".join(str(f) for f in (info.get("fields") or []))}')
+                    fl_fields = info.get('fields')
+                    fl_fields = [] if fl_fields is None else [str(f) for f in fl_fields]
+                    print(f'   {lyr}: {", ".join(fl_fields)}')
         return 0
 
     rows, notes = {}, []
