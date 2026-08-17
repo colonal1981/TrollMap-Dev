@@ -27,24 +27,27 @@ for slug, gnis in CHAIN:
     for i in range(2):
         vaa_rows.append({'NHDPlusID': npid, 'HydroSeq': float(hs), 'DnHydroSeq': float(hs-5),
                          'LevelPathI': 5823.0, 'TotDASqKm': float(1000 + (1000-hs)*3),
-                         'StreamOrde': 8.0})
+                         'StreamOrde': 8.0, 'Divergence': 0.0,
+                         'DivDASqKm': float(1000 + (1000-hs)*3)})
         fl_rows.append({'NHDPlusID': npid, 'WBArea_Permanent_Identifier': pids[i % len(pids)]})
         npid += 1; hs -= 5
     # a connector flowline between lakes, in the network but in no waterbody
     vaa_rows.append({'NHDPlusID': npid, 'HydroSeq': float(hs), 'DnHydroSeq': float(hs-5),
                      'LevelPathI': 5823.0, 'TotDASqKm': float(1000 + (1000-hs)*3),
-                     'StreamOrde': 8.0})
+                     'StreamOrde': 8.0, 'Divergence': 0.0,
+                     'DivDASqKm': float(1000 + (1000-hs)*3)})
     fl_rows.append({'NHDPlusID': npid, 'WBArea_Permanent_Identifier': None}); npid += 1; hs -= 5
 vaa_rows[-1]['DnHydroSeq'] = 0.0                                  # terminal below Wateree
 
 # THE ROWS THAT CRASHED IT: unrouted flowlines carry NaN hydrosequences.
 for i in range(400):
     vaa_rows.append({'NHDPlusID': npid, 'HydroSeq': nan, 'DnHydroSeq': nan,
-                     'LevelPathI': nan, 'TotDASqKm': nan, 'StreamOrde': nan})
+                     'LevelPathI': nan, 'TotDASqKm': nan, 'StreamOrde': nan,
+                     'Divergence': nan, 'DivDASqKm': nan})
     fl_rows.append({'NHDPlusID': npid, 'WBArea_Permanent_Identifier': None}); npid += 1
 # one NaN flowline sitting INSIDE a matched lake -- the nastier case
 vaa_rows.append({'NHDPlusID': npid, 'HydroSeq': nan, 'DnHydroSeq': nan, 'LevelPathI': nan,
-                 'TotDASqKm': nan, 'StreamOrde': nan})
+                 'TotDASqKm': nan, 'StreamOrde': nan, 'Divergence': nan, 'DivDASqKm': nan})
 fl_rows.append({'NHDPlusID': npid, 'WBArea_Permanent_Identifier': 'wb_1227425'}); npid += 1
 # the two-Lake-Marion trap: same GNIS_Name, different polygons, neither in the registry
 for nm in ('wb_marion_a', 'wb_marion_b'):
@@ -123,7 +126,8 @@ assert rows['wateree_lake']['downstream'] is None, 'WATEREE = OUTFLOW'
 # Give Wateree an extra flowline belonging to a much bigger river that merely clips it.
 _extra = pd.DataFrame([{'NHDPlusID': 9001, 'HydroSeq': 15001500000399.0,
                         'DnHydroSeq': 15001500000398.0, 'LevelPathI': 9999.0,
-                        'TotDASqKm': 99999.0, 'StreamOrde': 9.0}])
+                        'TotDASqKm': 99999.0, 'StreamOrde': 9.0, 'Divergence': 0.0,
+                        'DivDASqKm': 99999.0}])
 _vaa2 = pd.concat([VAA, _extra], ignore_index=True)
 _fl2 = pd.concat([FL, pd.DataFrame([{'NHDPlusID': 9001,
                   'WBArea_Permanent_Identifier': 'wb_1227425'}])], ignore_index=True)
@@ -178,3 +182,32 @@ assert text.index('lake_james') == first, 'the most upstream water must print fi
 assert text.index('lake_james') < text.index('wateree_lake'), 'james above wateree'
 assert 'fed directly by' in text, 'upstream links not shown'
 print('dry-run report assertions pass')
+
+
+# --- a side channel: low stream order carrying a big upstream basin ----------------------
+# russ_lake came back as stream order 1 with 7,858 km2. TotDASqKm counts everything that
+# passed upstream; DivDASqKm is what actually flows through a divergent path.
+_side = pd.DataFrame([{'NHDPlusID': 9100, 'HydroSeq': 15001500000450.0,
+                       'DnHydroSeq': 15001500000449.0, 'LevelPathI': 7777.0,
+                       'TotDASqKm': 38671.5, 'StreamOrde': 1.0, 'Divergence': 2.0,
+                       'DivDASqKm': 12.3}])
+_wb = pd.DataFrame([{'Permanent_Identifier': 'wb_side', 'GNIS_ID': '424242',
+                     'GNIS_Name': 'Wittee Lake', 'AreaSqKm': 0.46, 'FType': 390}])
+_sv, _sf, _sw = VAA, FL, WB
+globals()['VAA'] = pd.concat([VAA, _side], ignore_index=True)
+globals()['FL'] = pd.concat([FL, pd.DataFrame([{'NHDPlusID': 9100,
+                             'WBArea_Permanent_Identifier': 'wb_side'}])], ignore_index=True)
+globals()['WB'] = pd.concat([WB, _wb], ignore_index=True)
+_want = dict(want); _want['424242'] = ['wittee_lake']
+_r3, _ = bwc.process_vpu('0305', 'fake.gdb', _want, None)
+globals()['VAA'], globals()['FL'], globals()['WB'] = _sv, _sf, _sw
+_wl = _r3['wittee_lake']
+assert _wl['stream_order'] == 1, _wl['stream_order']
+assert _wl['drainage_km2'] == 38671.5, 'TotDASqKm still reported as upstream total'
+assert _wl['div_drainage_km2'] == 12.3, 'DivDASqKm is what flows THROUGH the side channel'
+assert _wl['divergence'] == 2, 'divergence recorded'
+assert _wl['on_divergent_path'] is True, 'flagged as a side channel'
+assert _wl['side_channel'] is True, 'an oxbow: order 1 carrying 38,671 km2'
+assert _r3['wateree_lake']['side_channel'] is False, 'a main-stem reservoir is not an oxbow'
+assert _r3['wateree_lake']['on_divergent_path'] is False, 'and is not divergent'
+print('divergent side-channel assertions pass')

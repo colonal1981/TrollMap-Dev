@@ -246,7 +246,8 @@ def process_vpu(vpu, src, want_gnis, args):
 
     vaa, missing, have = read_layer(
         src, 'NHDPlusFlowlineVAA',
-        ['NHDPlusID', 'HydroSeq', 'DnHydroSeq', 'LevelPathI', 'TotDASqKm', 'StreamOrde'])
+        ['NHDPlusID', 'HydroSeq', 'DnHydroSeq', 'LevelPathI', 'TotDASqKm', 'StreamOrde',
+         'Divergence', 'DivDASqKm'])
     if missing:
         print(f'   NHDPlusFlowlineVAA in this vintage has no {", ".join(missing)}.')
         print(f'   It does have: {", ".join(have)}')
@@ -336,10 +337,32 @@ def process_vpu(vpu, src, want_gnis, args):
             'max_drainage_km2': round(safe_float(grp['TotDASqKm'].max()), 4),
             'stream_order': safe_int(g['StreamOrde']),
             'max_stream_order': safe_int(grp['StreamOrde'].max()),
+            # TotDASqKm is everything that passed UPSTREAM of this flowline. On a divergent
+            # side channel that is not what flows THROUGH it -- DivDASqKm is. russ_lake came
+            # back as stream order 1 carrying 7,858 km2 and lowthers_lake as order 2 carrying
+            # 21,302; an order-1 flowline is a headwater, so those two numbers describe
+            # different things and only one of them answers "how much water arrives here".
+            'divergence': safe_int(g['Divergence']),
+            'div_drainage_km2': round(safe_float(g['DivDASqKm']), 4),
             'flowlines': int(len(grp)),
             'downstream': nxt,
             'downstream_steps': int(steps),
         }
+        # Derived per row, here where the values live, rather than in main() -- calling
+        # process_vpu directly must return the same row the full run does.
+        _r = rows[slug]
+        _own = _r['drainage_km2']
+        _r['foreign_flowline_suspected'] = bool(
+            _own > 0 and _r['max_drainage_km2'] > _own * 2)
+        # An OXBOW is a cut-off river bend still tied to its river, so NHD routes a flowline
+        # through it carrying the river's whole upstream basin at a low stream order. Ryan
+        # confirmed both of the big ones: lowthers_lake is off the Big Pee Dee and wittee_lake
+        # off the Santee, and both are oxbows. This is a water CLASS, not a defect -- an oxbow's
+        # level follows the river gauge, not a pool elevation, which is the opposite of how a
+        # storage reservoir behaves and matters to anything reading conditions for it.
+        _r['side_channel'] = bool(
+            _r['stream_order'] and _r['stream_order'] <= 4 and _own > 1000)
+        _r['on_divergent_path'] = bool(_r['divergence'])
     return rows, f'{vpu}: {len(rows)} waters placed'
 
 
@@ -438,10 +461,6 @@ def main():
 
     # A polygon holding flowlines that drain far more than its own outlet has almost certainly
     # clipped a river it is not on. Flag it rather than quietly reporting the bigger number.
-    for r in rows.values():
-        own, mx = r['drainage_km2'], r['max_drainage_km2']
-        r['foreign_flowline_suspected'] = bool(own > 0 and mx > own * 2)
-
     # upstream is the inverse of downstream -- derived, never walked twice
     for r in rows.values():
         r['upstream'] = []
@@ -460,6 +479,16 @@ def main():
         unmatched[slug] = ('no gnis id in registry' if g is None
                            else f'gnis {g} not found in any geodatabase read')
 
+    odd = [s2 for s2, r in rows.items() if r.get('side_channel')]
+    if odd:
+        print('\n   OXBOWS AND SIDE CHANNELS -- a low stream order carrying a large basin. These')
+        print('   are tied to a big river, so their level follows its gauge, not a pool level.')
+        print('   TotDASqKm counts what passed upstream; DivDASqKm is what flows through:')
+        for s2 in sorted(odd, key=lambda x: -rows[x]['drainage_km2']):
+            r = rows[s2]
+            print(f'     {s2:<30} order {r["stream_order"]}, upstream {r["drainage_km2"]:>10.1f}'
+                  f' km2, divergence-adjusted {r["div_drainage_km2"]:>10.1f} km2,'
+                  f' Divergence={r["divergence"]}')
     suspect = [s2 for s2, r in rows.items() if r.get('foreign_flowline_suspected')]
     print(f'\n== placed {len(rows)} of {len(reg)} waters; {len(unmatched)} unplaced')
     if suspect:
