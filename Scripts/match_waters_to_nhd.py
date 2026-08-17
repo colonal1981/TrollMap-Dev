@@ -97,13 +97,15 @@ def find_gdbs(nhd_dir, only=None):
     return dict(sorted(out.items()))
 
 
-def read_waterbodies(src, wanted, bbox=None):
-    """Return (wkb_array, {canonical_column: values}). Resolves column names case-insensitively
-    because the 0601/0602 vintage need not spell fields like the 03xx one, and pyogrio SILENTLY
-    DROPS a requested column the layer does not have -- so asking blind fails later and blind."""
+def read_polys(src, layer, wanted, bbox=None):
+    """Return (wkb_array, {canonical_column: values}, missing, available) for one polygon layer.
+
+    Resolves column names case-insensitively because the 0601/0602 vintage need not spell fields
+    like the 03xx one, and pyogrio SILENTLY DROPS a requested column the layer does not have --
+    so asking blind fails later and blind."""
     import pyogrio
     from pyogrio.raw import read as rawread
-    info = pyogrio.read_info(str(src), layer='NHDWaterbody')
+    info = pyogrio.read_info(str(src), layer=layer)
     fields = info.get('fields')
     # pyogrio returns 'fields' as a numpy array; `arr or []` raises on a multi-element array.
     available = [] if fields is None else [str(f) for f in fields]
@@ -115,7 +117,7 @@ def read_waterbodies(src, wanted, bbox=None):
     if missing:
         return None, None, missing, available
     meta, _fids, geom, field_data = rawread(
-        str(src), layer='NHDWaterbody', columns=list(actual.values()),
+        str(src), layer=layer, columns=list(actual.values()),
         read_geometry=True, bbox=bbox)
     # field_data is ordered to match meta['fields'], NOT the columns list that was requested.
     got = [str(f) for f in (meta.get('fields') if meta.get('fields') is not None else [])]
@@ -204,30 +206,77 @@ def main():
     for vpu, src in gdbs.items():
         t0 = time.time()
         print(f'\n-- {vpu}  {Path(src).name}', flush=True)
-        try:
-            geom, cols, missing, have = read_waterbodies(
-                src, ['Permanent_Identifier', 'GNIS_ID', 'GNIS_Name', 'AreaSqKm', 'FType'],
-                bbox=world)
-        except Exception as e:
-            notes.append(f'{vpu}: FAILED, {type(e).__name__}: {e}')
-            print('   ' + notes[-1])
-            continue
-        if missing:
-            notes.append(f'{vpu}: REFUSED, NHDWaterbody is missing {", ".join(missing)}')
-            print('   ' + notes[-1])
-            print(f'   it does have: {", ".join(have)}')
-            continue
-        if geom is None or len(geom) == 0:
-            notes.append(f'{vpu}: no waterbodies inside the registry extent')
-            print('   ' + notes[-1])
+        # A LAKE lives in NHDWaterbody. A large RIVER's open water lives in NHDArea, FType 460
+        # StreamRiver, and estuaries live there too. Reading only NHDWaterbody bound 329 of 348
+        # lakes and just 31 of 90 rivers, with all 16 coastal waters unbound -- not a threshold
+        # problem, a layer problem.
+        WANT = ['Permanent_Identifier', 'GNIS_ID', 'GNIS_Name', 'AreaSqKm', 'FType']
+        parts, failed = [], False
+        for layer in ('NHDWaterbody', 'NHDArea'):
+            try:
+                geom, cols, missing, have = read_polys(src, layer, WANT, bbox=world)
+            except Exception as e:
+                if layer == 'NHDWaterbody':
+                    notes.append(f'{vpu}: FAILED on {layer}, {type(e).__name__}: {e}')
+                    print('   ' + notes[-1])
+                    failed = True
+                else:
+                    print(f'   {layer} not readable here ({type(e).__name__}) -- skipped')
+                continue
+            if missing:
+                msg = (f'{vpu}: REFUSED, {layer} is missing {", ".join(missing)}'
+                       if layer == 'NHDWaterbody'
+                       else f'{vpu}: {layer} is missing {", ".join(missing)}, skipped')
+                notes.append(msg)
+                print('   ' + msg)
+                print(f'   it does have: {", ".join(have)}')
+                if layer == 'NHDWaterbody':
+                    failed = True
+                continue
+            if geom is None or len(geom) == 0:
+                continue
+            parts.append((layer, geom, cols))
+        if failed or not parts:
+            if not failed:
+                notes.append(f'{vpu}: nothing inside the registry extent')
+                print('   ' + notes[-1])
             continue
 
-        nhd = from_wkb(geom)
-        keep = np.array([g is not None and not g.is_empty for g in nhd])
-        nhd = nhd[keep]
-        for k in cols:
-            cols[k] = np.asarray(cols[k])[keep]
-        print(f'   {len(nhd)} waterbodies in extent, read in {time.time() - t0:.0f}s', flush=True)
+        geoms, cols, layers = [], {k: [] for k in WANT}, []
+        for layer, geom, c in parts:
+            g = from_wkb(geom)
+            keep = np.array([x is not None and not x.is_empty for x in g])
+            g = g[keep]
+            geoms.append(g)
+            layers.extend([layer] * len(g))
+            for k in WANT:
+                cols[k].extend(list(np.asarray(c[k])[keep]))
+        nhd = np.concatenate(geoms) if len(geoms) > 1 else geoms[0]
+        cols = {k: np.asarray(v, dtype=object) for k, v in cols.items()}
+        layers = np.asarray(layers, dtype=object)
+        counts = {lay: int((layers == lay).sum()) for lay in set(layers.tolist())}
+        print(f'   {len(nhd)} polygons in extent ({counts}), read in'
+              f' {time.time() - t0:.0f}s', flush=True)
+
+        # A river is split into many NHDArea pieces and a lake's arms can be separate polygons,
+        # so one water is often several rows sharing a GNIS id. Dissolve those before matching:
+        # otherwise the best single piece is compared against the whole registry outline and the
+        # size gate throws away a correct match.
+        groups = {}
+        for i, gid in enumerate(cols['GNIS_ID']):
+            key = normalize_gnis(gid)
+            groups.setdefault(key if key else f'_row{i}', []).append(i)
+        merged, midx = [], []
+        for key, idxs in groups.items():
+            if len(idxs) == 1:
+                merged.append(nhd[idxs[0]])
+            else:
+                merged.append(shapely.union_all(nhd[idxs]))
+            midx.append(idxs)
+        dissolved = int(sum(1 for i in midx if len(i) > 1))
+        if dissolved:
+            print(f'   dissolved {dissolved} multi-polygon water(s) sharing a GNIS id')
+        nhd = np.asarray(merged, dtype=object)
         tree = STRtree(nhd)
 
         placed = 0
@@ -259,15 +308,25 @@ def main():
             if best is None:
                 continue
             _inter, i, pct_reg, pct_nhd, ratio = best
+            src_rows = midx[i]
+            j0 = src_rows[0]
+
+            def _first(col):
+                for j in src_rows:
+                    v = cols[col][j]
+                    if v is not None and str(v).strip():
+                        return str(v).strip()
+                return None
             row = {
                 'slug': slug, 'vpu': vpu,
-                'permanent_identifier': str(cols['Permanent_Identifier'][i]),
-                'nhd_gnis_id': (None if cols['GNIS_ID'][i] is None
-                                else str(cols['GNIS_ID'][i]).strip() or None),
-                'nhd_gnis_name': (None if cols['GNIS_Name'][i] is None
-                                  else str(cols['GNIS_Name'][i]).strip() or None),
-                'nhd_acres': round(float(cols['AreaSqKm'][i]) * 247.105, 1),
-                'nhd_ftype': int(cols['FType'][i]) if cols['FType'][i] is not None else 0,
+                'permanent_identifier': str(cols['Permanent_Identifier'][j0]),
+                'nhd_layer': str(layers[j0]),
+                'nhd_pieces': len(src_rows),
+                'nhd_gnis_id': _first('GNIS_ID'),
+                'nhd_gnis_name': _first('GNIS_Name'),
+                'nhd_acres': round(sum(float(cols['AreaSqKm'][j] or 0)
+                                       for j in src_rows) * 247.105, 1),
+                'nhd_ftype': int(cols['FType'][j0] or 0),
                 'registry_acres': reg[slug].get('area_acres'),
                 'registry_gnis': reg[slug].get('gnis'),
                 'pct_of_registry_polygon': round(pct_reg, 1),
