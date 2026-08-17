@@ -63,7 +63,7 @@ import { CORS, JSON_HEADERS, r2Text } from './worker-core.js';
 // RIVERS and lakeKeyFromName came out with dukeBasinFor: the basin is resolved from Duke's own
 // /rivers/get-rivers roster now, so this file no longer reads the six-entry hand table at all.
 import { dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun,
-         fetchDukeAccessAlerts, fetchUsgs, getLakeClarity }
+         fetchDukeAccessAlerts, fetchDukeOperatingRange, fetchUsgs, getLakeClarity }
   from './worker-data.js';
 import { parseCubeLevels, parseSouthernCoLevels, parseBrookfieldFacility } from './operators.js';
 import { reportTokens } from './reports.js';
@@ -1677,6 +1677,11 @@ export function parseAccessAlerts(json) {
         basin_id: Number.isFinite(basinId) && basinId >= 0 ? basinId : null,
         basin_name: group.riverName || null,
         water: a.lakepondDesc || null,
+        // THE KEY TO /lakes/operating-range/{id}. Ryan found that endpoint on 2026-08-17 and the
+        // 24 in it is this field for Lake Wateree. A foreign key that cannot be derived and did
+        // not have to be typed either — it is published here, for every Duke lake.
+        water_location_id: Number.isFinite(Number(a.lakepondLocationId))
+          ? Number(a.lakepondLocationId) : null,
         place: a.locationDesc || a.locationName || null,
         kind: a.locationType || null,
         text: alertText(a.alertText),
@@ -1710,6 +1715,173 @@ export function alertsForWater(alerts, waterName, gaugeNames = []) {
     return false;
   };
   return (alerts || []).filter((a) => a.kind !== 'RIVERBASIN' && (hit(a.water) || hit(a.place)));
+}
+
+/**
+ * Duke's location id for a water, out of the alert feed rather than out of a table.
+ *
+ * `lakepondDesc` names the lake and `lakepondLocationId` is the key /lakes/operating-range wants.
+ * Both are already on the wire. Matched with the same whole-token test everything else uses, and
+ * an ambiguous name returns nothing rather than the first id that looked close.
+ */
+export function dukeLocationIdFor(alerts, waterName, gaugeNames = []) {
+  const want = new Set(distinctive(waterName));
+  for (const n of gaugeNames || []) for (const t of distinctive(n)) want.add(t);
+  if (!want.size) return null;
+  const found = new Set();
+  for (const a of alerts || []) {
+    if (!a || a.water_location_id == null || !a.water) continue;
+    for (const t of distinctive(a.water)) {
+      if (want.has(t)) { found.add(a.water_location_id); break; }
+    }
+  }
+  return found.size === 1 ? [...found][0] : null;
+}
+
+/**
+ * THE GUIDE CURVE, THE DROUGHT STAGE AND FIVE YEARS OF THIS DATE.
+ *
+ * Everything in this payload is on Duke's 100-ft index, where 100 is full pond and one unit is
+ * one foot — the same scale normalizeDukeRow decodes for the current level. So `average - target`
+ * is feet above or below the guide curve directly, with no conversion, and the card can say it
+ * the same way it already says TVA's.
+ *
+ * `droughtStage` IS THE LOW INFLOW PROTOCOL AS A NUMBER, and -1 IS NOT A STAGE. It means none
+ * declared. Reading it as a level would put every lake in the country at "stage minus one", which
+ * is the -999 family again: a sentinel in a field that otherwise holds a measurement.
+ *
+ * THE DATE IT CHANGED IS IN THE ROW BEFORE IT. The access-alerts endpoint says "the Catawba
+ * Wateree River Basin entered Stage 2 on May 1, 2026" in a paragraph of HTML; the history says it
+ * by changing from 1 to 2 between 2026-05-01 and 2026-05-02. Two sources, one fact, and now they
+ * can be checked against each other.
+ */
+export function parseOperatingRange(json, nowIso = null) {
+  if (!json) return null;
+  const rows = (json.history || [])
+    .map((r) => ({
+      date: String(r.date || '').slice(0, 10),
+      level: numOrNull(r.average),
+      target: numOrNull(r.target),
+      min: numOrNull(r.min),
+      max: numOrNull(r.max),
+      // -1 is "no drought declared", not stage minus one.
+      stage: Number.isFinite(Number(r.droughtStage)) && Number(r.droughtStage) >= 0
+        ? Number(r.droughtStage) : null,
+      stage_raw: Number.isFinite(Number(r.droughtStage)) ? Number(r.droughtStage) : null,
+    }))
+    .filter((r) => r.date);
+  rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  if (!rows.length) return null;
+
+  const last = rows[rows.length - 1];
+  // When the current stage began: walk back while the raw value is unchanged.
+  let since = last.date;
+  for (let i = rows.length - 1; i > 0; i -= 1) {
+    if (rows[i - 1].stage_raw !== last.stage_raw) break;
+    since = rows[i - 1].date;
+  }
+
+  const monthly = (json.operatingRange || [])
+    .map((r) => ({ month: Number(r.Month ?? r.month), day: Number(r.Day ?? r.day),
+                   min: numOrNull(r.Min ?? r.min), max: numOrNull(r.Max ?? r.max),
+                   target: numOrNull(r.Target ?? r.target) }))
+    .filter((r) => Number.isFinite(r.month));
+  monthly.sort((a, b) => a.month - b.month);
+
+  const forecast = (json.forecast || [])
+    .map((r) => ({ date: String(r.date || '').slice(0, 10), min: numOrNull(r.min),
+                   max: numOrNull(r.max), target: numOrNull(r.target) }))
+    .filter((r) => r.date);
+
+  const lake = (json.lakeDetails || {});
+  // "225.5 ft (AMSL, NGVD 29 datum" — the parenthesis is never closed in the live payload. The
+  // number is taken with a regex for that reason, not for tidiness.
+  const fullPondFt = (() => {
+    const m = String(lake.Elevation || '').match(/([0-9]+(?:\.[0-9]+)?)/);
+    return m ? Number(m[1]) : null;
+  })();
+
+  return {
+    name: lake.LakeName || null,
+    full_pond_ft: fullPondFt,
+    last_updated: lake.lastUpdated || null,
+    today: last,
+    // FEET ABOVE OR BELOW DUKE'S OWN GUIDE CURVE. The index is a hundred-foot band under full
+    // pond, so this subtraction is already in feet.
+    vs_target_ft: (last.level != null && last.target != null)
+      ? Math.round((last.level - last.target) * 100) / 100 : null,
+    drought_stage: last.stage,
+    drought_since: last.stage == null ? null : since,
+    monthly,
+    forecast,
+    days: rows.length,
+    first_date: rows[0].date,
+  };
+}
+
+/** Number, but an empty string and a null are absence rather than zero. Eighth time this week. */
+function numOrNull(v) {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v !== 'string' || v.trim() === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * WHERE TODAY SITS AGAINST THE SAME DAY IN EVERY OTHER YEAR.
+ *
+ * "97.9" means nothing on its own and neither does "2.1 ft below full pond": Wateree runs a
+ * three-foot summer band and spends most of August within a foot of target. The question worth
+ * answering is the one USGS daily statistics answer for flow — is this normal for the seventeenth
+ * of August on THIS lake — and five years of daily history is enough to say it as a rank rather
+ * than as an invented percentile.
+ *
+ * A WINDOW, NOT AN EXACT DATE. One reading per year is four other numbers; a plus-or-minus three
+ * day window around the same calendar date gives about thirty-five, which is enough to place a
+ * value without pretending to a distribution.
+ */
+export function levelVsSameDate(json, isoDate, windowDays = 3) {
+  const rows = (json && json.history) || [];
+  const d = String(isoDate || '').slice(0, 10);
+  const m = d.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m || !rows.length) return null;
+  const target = new Date(Date.UTC(2000, Number(m[2]) - 1, Number(m[3])));
+
+  const sameWindow = [];
+  let todayLevel = null;
+  for (const r of rows) {
+    const rd = String(r.date || '').slice(0, 10);
+    const rm = rd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!rm) continue;
+    const lvl = numOrNull(r.average);
+    if (lvl == null) continue;
+    if (rd === d) { todayLevel = lvl; continue; }
+    const day = new Date(Date.UTC(2000, Number(rm[2]) - 1, Number(rm[3])));
+    let diff = Math.abs(day - target) / 86400000;
+    if (diff > 182) diff = 365 - diff;               // the window wraps the new year
+    if (diff <= windowDays) sameWindow.push({ year: rm[1], level: lvl });
+  }
+  if (todayLevel == null || sameWindow.length < 5) return null;
+
+  const below = sameWindow.filter((x) => x.level < todayLevel).length;
+  const years = [...new Set(sameWindow.map((x) => x.year))].sort();
+  return {
+    level: todayLevel,
+    n: sameWindow.length,
+    years: years.length,
+    from: years[0] || null,
+    to: years[years.length - 1] || null,
+    // A RANK, NOT A PERCENTILE. Thirty-five readings do not support a percentile and saying one
+    // would be inventing precision, which is the objection this app already raises to
+    // interpolated flow percentiles.
+    higher_than: below,
+    window_days: windowDays,
+    band: below >= sameWindow.length * 0.9 ? 'higher than almost every other year'
+        : below >= sameWindow.length * 0.66 ? 'on the high side'
+        : below <= sameWindow.length * 0.1 ? 'lower than almost every other year'
+        : below <= sameWindow.length * 0.34 ? 'on the low side'
+        : 'about normal',
+  };
 }
 
 /** The dams a schedule actually carries, for a refusal that names them. */
@@ -2424,6 +2596,37 @@ async function waterBlock(b, lat, lon) {
   out.access_alerts = mineAlerts.length ? mineAlerts : null;
   const drought = basinRow ? droughtNoticeFor(alertsRaw, basinRow) : null;
   out.operator_drought = drought;
+
+  // DUKE'S GUIDE CURVE, AND WHERE THIS DATE USUALLY SITS.
+  //
+  // The card can say how far below full pond the lake is and nothing about whether that is where
+  // it is supposed to be. TVA lakes have had a guide curve since 2026-08-15; Duke lakes had no
+  // equivalent until Ryan found /lakes/operating-range on 2026-08-17. The id it wants is
+  // published in the alert feed, so nothing is hand-typed to reach it.
+  const dukeLocId = dukeLocationIdFor(alertsRaw, b.display_name || b.slug, gaugeNames);
+  const opRange = dukeLocId != null
+    ? await fetchDukeOperatingRange(dukeLocId).catch(() => null) : null;
+  const guide = parseOperatingRange(opRange);
+  out.duke_guide = guide ? {
+    ...guide,
+    // The rank against the same week in every year on file. Five years of daily history is
+    // enough to place a number and not enough to claim a percentile.
+    vs_same_date: levelVsSameDate(opRange, guide.today && guide.today.date),
+    location_id: dukeLocId,
+    source: `https://api.hydro-derived.duke-energy.app/lakes/operating-range/${dukeLocId}`,
+  } : null;
+
+  // TWO SOURCES, ONE FACT, AND NOW THEY CAN DISAGREE OUT LOUD. access-alerts says the stage in a
+  // paragraph of prose; operating-range says it in a field. A mismatch means one of them is stale.
+  if (guide && drought && guide.drought_stage != null && drought.stage != null
+      && guide.drought_stage !== drought.stage) {
+    out.duke_guide.stage_disagrees = {
+      from_alert_text: drought.stage,
+      from_operating_range: guide.drought_stage,
+      why: 'Duke publishes the Low Inflow Protocol stage in two places and they do not match. '
+         + 'The operating-range field is dated; the alert paragraph may not have been rewritten.',
+    };
+  }
   // Attached to the schedule as well, so a consumer reading `releases` alone cannot show the zero
   // without the reason. The number and its explanation must not be reachable by different paths.
   if (out.releases && drought) out.releases.suspended_by = drought;

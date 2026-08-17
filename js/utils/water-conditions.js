@@ -132,6 +132,7 @@ export function readConditions(j) {
     // is the reason behind a number already on the card.
     accessAlerts: [],
     droughtNotice: null,
+    dukeGuide: null,
     currentKn: null,
     currentType: null,
     currentAt: null,
@@ -428,6 +429,7 @@ export function readConditions(j) {
 
   out.releases = w.releases || null;
   out.accessAlerts = Array.isArray(w.access_alerts) ? w.access_alerts : [];
+  out.dukeGuide = w.duke_guide || null;
   // Either path. The Worker attaches it to the schedule too so a consumer reading `releases`
   // alone cannot show a zero without its cause; here they are one field again.
   out.droughtNotice = w.operator_drought

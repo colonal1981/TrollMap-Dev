@@ -449,6 +449,45 @@ async function fetchDukeRivers() {
  * such as Colonels Creek or White Oak Creek." The app offers ramps; Duke says one of them is shut
  * for a year and names the alternates.
  */
+/**
+ * Duke's operating range for one lake: the guide curve, five years of daily level, and a
+ * NUMERIC drought stage.
+ *
+ * Ryan found it 2026-08-17 while looking for something else. `/lakes/operating-range/24` — and 24
+ * is Lake Wateree's `lakepondLocationId`, which /access-alerts already publishes for every Duke
+ * lake. A foreign key that cannot be derived and did not have to be typed.
+ *
+ * WHAT IS IN IT, all on the 100-ft index scale where 100 is full pond:
+ *
+ *   lakeDetails     LakeName, Elevation "225.5 ft (AMSL, NGVD 29 datum", lastUpdated
+ *   history         one row per DAY since 2021: average, target, min, max, droughtStage
+ *   forecast        31 days ahead of target/min/max — the published guide, not the drought one
+ *   operatingRange  twelve rows, the guide curve by month
+ *
+ * `droughtStage` IS THE LOW INFLOW PROTOCOL AS A NUMBER. -1 is none declared, then 0, 1, 2. The
+ * access-alerts endpoint says the same thing in a paragraph of HTML prose; this says it in a
+ * field, with the date it changed sitting in the row before.
+ */
+async function fetchDukeOperatingRange(locationId) {
+  const id = Number(locationId);
+  if (!Number.isFinite(id)) return null;
+  try {
+    const r = await fetch(`${DUKE_API_BASE}/lakes/operating-range/${id}`, {
+      cf: { cacheTtl: 3600, cacheEverything: true },
+      headers: {
+        "User-Agent": "TrollMap/12 Worker",
+        "Origin": "https://lakes.hydro-derived.duke-energy.app",
+        "Referer": "https://lakes.hydro-derived.duke-energy.app/",
+        "Accept": "application/json"
+      }
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j && (j.history || j.operatingRange) ? j : null;
+  } catch (_) {
+    return null;
+  }
+}
 async function fetchDukeAccessAlerts() {
   try {
     const r = await fetch(`${DUKE_API_BASE}/access-alerts`, {
@@ -1853,4 +1892,4 @@ var RIVERS = {
   }
 };
 
-export { normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard };
+export { normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, fetchDukeOperatingRange, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard };

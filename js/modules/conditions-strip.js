@@ -429,6 +429,44 @@ function cardHtml(rec, c) {
       + (items.length ? `<br>${items.map(esc).join('<br>')}` : '')));
   }
 
+  // WHERE THE LAKE IS SUPPOSED TO BE, and where it usually is on this date.
+  //
+  // "2.1 ft below full pond" is a fact with no context. Wateree runs a three-foot summer band and
+  // spends most of August within a foot of target, so the number that decides anything is how it
+  // sits against Duke's own guide curve and against the same week in previous years.
+  if (c.dukeGuide) {
+    const g = c.dukeGuide;
+    const v = g.vs_target_ft;
+    const bits = [];
+    if (v != null) {
+      bits.push(`${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1)} ft`
+        + `<span class="cond-sub"> against a guide curve of ${g.today?.target} on a scale where `
+        + `100 is full pond${g.full_pond_ft ? ` (${g.full_pond_ft} ft AMSL)` : ''}</span>`);
+    }
+    if (g.today && g.today.min != null && g.today.max != null) {
+      bits.push(`<span class="cond-sub">operating band ${g.today.min}–${g.today.max} today</span>`);
+    }
+    const h = g.vs_same_date;
+    if (h) {
+      // A RANK, NOT A PERCENTILE. Thirty-odd readings do not support one.
+      bits.push(`<span class="cond-sub">${esc(h.band)} for this week — higher than `
+        + `${h.higher_than} of ${h.n} readings within ${h.window_days} days of this date, `
+        + `${esc(String(h.from))}–${esc(String(h.to))}</span>`);
+    }
+    if (bits.length) out.push(row('Vs Duke guide', bits.join('<br>')));
+
+    if (g.drought_stage != null) {
+      out.push(row('Duke drought stage', `<b>Stage ${g.drought_stage}</b>`
+        + `<span class="cond-sub"> — Low Inflow Protocol`
+        + `${g.drought_since ? `, since ${esc(g.drought_since)}` : ''}. `
+        + `The operating floor drops with the stage: today's minimum is ${g.today?.min}.</span>`
+        + (g.stage_disagrees
+          ? `<br><span class="cond-sub">Duke's own alert text says Stage `
+            + `${g.stage_disagrees.from_alert_text}. One of the two is stale.</span>`
+          : '')));
+    }
+  }
+
   // WHY THE WATER IS WHERE IT IS, immediately under the schedule it explains. Lake Wateree reads
   // "No Flow Release" three days running because the basin is in Stage 2 of the Low Inflow
   // Protocol and recreation flows are suspended under Stage 2. The zero without the reason is a
