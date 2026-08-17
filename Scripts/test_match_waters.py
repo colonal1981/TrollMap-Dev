@@ -1,0 +1,133 @@
+"""Drives match_waters_to_nhd.py against a REAL geodatabase read by REAL pyogrio.
+
+Three bugs in build_water_chain.py reached Ryan's machine because its fake pyogrio was easier to
+satisfy than the real one -- it returned lists where pyogrio returns numpy arrays, and always
+returned the columns asked for where pyogrio drops missing ones silently. So this suite fakes
+nothing: it writes an actual GeoPackage and reads it back through pyogrio.
+"""
+import importlib.util, sys, json, tempfile, io, contextlib
+from pathlib import Path
+import numpy as np, shapely
+from shapely.geometry import Polygon
+from pyogrio.raw import write
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+spec = importlib.util.spec_from_file_location('mwn', HERE / 'match_waters_to_nhd.py')
+mwn = importlib.util.module_from_spec(spec); spec.loader.exec_module(mwn)
+def eq(g, w, m): assert g == w, f'{m}: got {g!r} want {w!r}'
+
+# --- gnis normalisation must agree with the other two tools
+eq(mwn.normalize_gnis('gnis:988007.0'), mwn.normalize_gnis('gnis:988007'), 'float twin')
+eq(mwn.normalize_gnis('slug:hiwassee_lake'), None, 'slug fallback')
+eq(mwn.normalize_gnis('   '), None, 'whitespace')
+
+hiw  = Polygon([(0,0),(0,10),(10,10),(10,0)])
+chat = Polygon([(0,12),(0,16),(4,16),(4,12)])
+far  = Polygon([(50,50),(50,52),(52,52),(52,50)])
+tiny = Polygon([(3,3),(3,3.2),(3.2,3.2),(3.2,3)])      # too small a share to bind
+
+def build(root, spell=str):
+    (root/'registry'/'boundaries').mkdir(parents=True)
+    (root/'nhd').mkdir()
+    polys  = [hiw, chat, far]
+    pids   = ['wb_hiwassee','wb_chatuge','wb_far']
+    gnisid = ['1016964','1012001','999']        # 1016964 "Persimmon Lake" ON THE BIG BODY
+    gnisnm = ['Persimmon Lake','Chatuge Lake','Somewhere Else']
+    write(str(root/'nhd'/'NHDPLUS_H_0602_HU4_20220418_GDB.gpkg'),
+          geometry=shapely.to_wkb(np.array(polys, dtype=object)),
+          field_data=[np.array(pids,dtype=object), np.array(gnisid,dtype=object),
+                      np.array(gnisnm,dtype=object), np.array([40.0,16.0,4.0]),
+                      np.array([390,390,390])],
+          fields=[spell('Permanent_Identifier'), spell('GNIS_ID'), spell('GNIS_Name'),
+                  spell('AreaSqKm'), spell('FType')],
+          layer='NHDWaterbody', geometry_type='Polygon', crs='EPSG:4326', driver='GPKG')
+    def geo(slug, poly):
+        json.dump({'type':'Feature','properties':{},
+                   'geometry':{'type':'Polygon','coordinates':[list(poly.exterior.coords)]}},
+                  open(root/'registry'/'boundaries'/f'{slug}.geojson','w'))
+    reg = {
+      'persimmon_lake': {'gnis':'gnis:1016964','area_acres':5914.5,'bounds_wsen':[0,0,10,10]},
+      'hiwassee_lake':  {'gnis':'slug:hiwassee_lake','area_acres':6755.8,'bounds_wsen':[-1,-1,11,11]},
+      'chatuge_lake':   {'gnis':'gnis:1012001','area_acres':6364.4,'bounds_wsen':[0,12,4,16]},
+      'wrong_id_water': {'gnis':'gnis:777','area_acres':4.0,'bounds_wsen':[50,50,52,52]},
+      'a_speck':        {'gnis':'slug:a_speck','area_acres':0.1,'bounds_wsen':[3,3,3.2,3.2]},
+      'no_polygon':     {'gnis':'gnis:5','area_acres':1.0,'bounds_wsen':[0,0,1,1]},
+    }
+    geo('persimmon_lake', hiw)
+    geo('hiwassee_lake', Polygon([(-0.5,-0.5),(-0.5,10.5),(10.5,10.5),(10.5,-0.5)]))
+    geo('chatuge_lake', chat)
+    geo('wrong_id_water', far)
+    geo('a_speck', tiny)
+    json.dump(reg, open(root/'registry'/'lake_index.json','w'))
+    return reg
+
+def run(root, extra=()):
+    out = root/'bindings.json'
+    sys.argv = ['x', '--registry', str(root/'registry'/'lake_index.json'),
+                '--gdb', str(root/'nhd'/'NHDPLUS_H_0602_HU4_20220418_GDB.gpkg'),
+                '--json', str(out), *extra]
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = mwn.main()
+    return rc, json.loads(out.read_text()), buf.getvalue()
+
+for label, spell in (('exact', str), ('upper', str.upper), ('lower', str.lower)):
+    with tempfile.TemporaryDirectory() as t:
+        root = Path(t); reg = build(root, spell)
+        rc, got, text = run(root)
+        eq(rc, 0, f'[{label}] runs clean')
+
+        # THE HEADLINE: two registry slugs on one NHD waterbody. This is the duplicate detector
+        # that needs neither a name nor an id, and it is what the GNIS check could not see.
+        key = '0602/wb_hiwassee'
+        assert key in got['conflicts'], f'[{label}] conflict not found: {got["conflicts"]}'
+        eq(sorted(got['conflicts'][key]), ['hiwassee_lake','persimmon_lake'],
+           f'[{label}] both slugs claim the Hiwassee body')
+
+        # a water with NO gnis id gets placed on geometry alone -- the 150-water gap
+        assert 'hiwassee_lake' in got['bindings'], f'[{label}] id-less water not bound'
+        eq(got['bindings']['hiwassee_lake']['permanent_identifier'], 'wb_hiwassee', 'bound right')
+        eq(got['bindings']['hiwassee_lake']['registry_gnis'], 'slug:hiwassee_lake', 'still id-less')
+
+        # NHD's own name and id travel with the binding, so a wrong name is visible
+        eq(got['bindings']['persimmon_lake']['nhd_gnis_name'], 'Persimmon Lake', 'nhd name kept')
+        eq(got['bindings']['persimmon_lake']['nhd_gnis_id'], '1016964', 'nhd id kept')
+
+        # id says one waterbody, ground says another
+        eq(got['id_disputes'], ['wrong_id_water'], f'[{label}] id dispute')
+
+        # A 0.1-acre speck lying WHOLLY INSIDE the reservoir is 100% contained and is not it.
+        # Same lesson as greenfield_lake inside the Cape Fear coastal region.
+        assert 'a_speck' not in got['bindings'], \
+            f'[{label}] CONTAINMENT IS NOT IDENTITY: {got["bindings"].get("a_speck")}'
+        assert 'a_speck' in got['unbound'] and 'no_polygon' in got['unbound'], 'unbound listed'
+
+        # never edits
+        assert json.loads((root/'registry'/'lake_index.json').read_text()) == reg, \
+            'lake_index.json MUST be byte identical afterwards'
+    print(f'[{label}] assertions pass')
+
+# --- a genuinely missing column refuses and says what the layer has, rather than KeyError
+with tempfile.TemporaryDirectory() as t:
+    root = Path(t); build(root)
+    write(str(root/'nhd'/'NHDPLUS_H_0602_HU4_20220418_GDB.gpkg'),
+          geometry=shapely.to_wkb(np.array([hiw], dtype=object)),
+          field_data=[np.array(['wb_hiwassee'],dtype=object)],
+          fields=['Permanent_Identifier'], layer='NHDWaterbody',
+          geometry_type='Polygon', crs='EPSG:4326', driver='GPKG', append=False)
+    rc, got, text = run(root)
+    eq(rc, 0, 'a bad layer must not crash the run')
+    assert 'REFUSED' in text and 'GNIS_ID' in text, text[-400:]
+    assert 'it does have' in text, 'must say what the layer actually holds'
+    eq(got['bindings'], {}, 'nothing bound from a refused layer')
+print('missing-column refusal assertions pass')
+
+# --- min-overlap is honoured
+with tempfile.TemporaryDirectory() as t:
+    root = Path(t); build(root)
+    rc, got, _ = run(root, extra=('--min-overlap', '99.9', '--min-area-ratio', '0.1'))
+    assert 'hiwassee_lake' not in got['bindings'], 'a 99.9% floor must reject the loose match'
+    assert 'persimmon_lake' in got['bindings'], 'an exact match still clears 99.9%'
+print('min-overlap assertions pass')
+print('ALL match_waters_to_nhd assertions pass')
