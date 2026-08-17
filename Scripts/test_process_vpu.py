@@ -206,8 +206,32 @@ assert _wl['stream_order'] == 1, _wl['stream_order']
 assert _wl['drainage_km2'] == 38671.5, 'TotDASqKm still reported as upstream total'
 assert _wl['div_drainage_km2'] == 12.3, 'DivDASqKm is what flows THROUGH the side channel'
 assert _wl['divergence'] == 2, 'divergence recorded'
-assert _wl['on_divergent_path'] is True, 'flagged as a side channel'
-assert _wl['side_channel'] is True, 'an oxbow: order 1 carrying 38,671 km2'
+assert _wl['side_channel'] is True, \
+    'an oxbow: 38,671 km2 upstream but only 12.3 routed through it'
+assert _wl['local_drainage_km2'] == 12.3, 'local inflow is DivDASqKm for a side channel'
+assert _wl['on_divergent_path'] is True, 'Divergence recorded (2 in this fixture)'
 assert _r3['wateree_lake']['side_channel'] is False, 'a main-stem reservoir is not an oxbow'
+assert _r3['wateree_lake']['local_drainage_km2'] == _r3['wateree_lake']['drainage_km2'], \
+    'a normal water reports its own drainage unchanged'
+# the real data has Divergence=0 on all three oxbows, so the FLAG must not be the test
+_flat = pd.DataFrame([{'NHDPlusID': 9200, 'HydroSeq': 15001500000440.0,
+                       'DnHydroSeq': 15001500000439.0, 'LevelPathI': 6666.0,
+                       'TotDASqKm': 21302.2, 'StreamOrde': 2.0, 'Divergence': 0.0,
+                       'DivDASqKm': 25.2}])
+_wb2 = pd.DataFrame([{'Permanent_Identifier': 'wb_ox', 'GNIS_ID': '515151',
+                      'GNIS_Name': 'Lowthers Lake', 'AreaSqKm': 0.53, 'FType': 390}])
+_sv, _sf, _sw = VAA, FL, WB
+globals()['VAA'] = pd.concat([VAA, _flat], ignore_index=True)
+globals()['FL'] = pd.concat([FL, pd.DataFrame([{'NHDPlusID': 9200,
+                             'WBArea_Permanent_Identifier': 'wb_ox'}])], ignore_index=True)
+globals()['WB'] = pd.concat([WB, _wb2], ignore_index=True)
+_w4 = dict(want); _w4['515151'] = ['lowthers_lake']
+_r4, _ = bwc.process_vpu('0305', 'fake.gdb', _w4, None)
+globals()['VAA'], globals()['FL'], globals()['WB'] = _sv, _sf, _sw
+_lo = _r4['lowthers_lake']
+assert _lo['divergence'] == 0, 'the real oxbows all have Divergence 0'
+assert _lo['on_divergent_path'] is False, 'so that flag cannot be what identifies them'
+assert _lo['side_channel'] is True, 'THE RATIO identifies it: 21,302 upstream vs 25.2 through'
+assert _lo['local_drainage_km2'] == 25.2, 'its own catchment'
 assert _r3['wateree_lake']['on_divergent_path'] is False, 'and is not divergent'
 print('divergent side-channel assertions pass')

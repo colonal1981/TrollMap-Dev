@@ -353,16 +353,28 @@ def process_vpu(vpu, src, want_gnis, args):
         _r = rows[slug]
         _own = _r['drainage_km2']
         _r['foreign_flowline_suspected'] = bool(
-            _own > 0 and _r['max_drainage_km2'] > _own * 2)
-        # An OXBOW is a cut-off river bend still tied to its river, so NHD routes a flowline
-        # through it carrying the river's whole upstream basin at a low stream order. Ryan
-        # confirmed both of the big ones: lowthers_lake is off the Big Pee Dee and wittee_lake
-        # off the Santee, and both are oxbows. This is a water CLASS, not a defect -- an oxbow's
-        # level follows the river gauge, not a pool elevation, which is the opposite of how a
-        # storage reservoir behaves and matters to anything reading conditions for it.
-        _r['side_channel'] = bool(
-            _r['stream_order'] and _r['stream_order'] <= 4 and _own > 1000)
+            _own > 1 and _r['max_drainage_km2'] > _own * 2)
+        # An OXBOW is a cut-off river bend still tied to its river. Ryan confirmed both of the
+        # big ones from having fished them: lowthers_lake is off the Big Pee Dee and
+        # wittee_lake off the Santee. NHD routes a flowline through such a water carrying the
+        # river's ENTIRE upstream basin in TotDASqKm, while DivDASqKm holds what is actually
+        # routed down that path -- 21,302 km2 against 25.2 for Lowthers, 38,671 against 139.4
+        # for Wittee. Divergence is 0 on all of them, so the flag is no use; the ratio is.
+        #
+        # An earlier version guessed at stream order <= 4 with a big basin, which happened to
+        # catch these three and would have missed a large oxbow or flagged a genuine low-order
+        # reservoir. This asks the data instead.
+        #
+        # Both numbers are real and answer different questions, which is why both are kept:
+        # DivDASqKm is the water's own local inflow, TotDASqKm is the river it hangs off. For
+        # Lowthers, Ryan watches the Great Pee Dee gauge UPSTREAM to know the lake level during
+        # high water -- the river's stage sets the level, not the 25 km2 of local catchment. So
+        # a side_channel water wants a river gauge, where a storage reservoir wants a pool
+        # elevation. Getting that backwards shows the wrong reading entirely.
+        _div = _r['div_drainage_km2']
+        _r['side_channel'] = bool(_div > 0 and _own > _div * 10)
         _r['on_divergent_path'] = bool(_r['divergence'])
+        _r['local_drainage_km2'] = _div if _r['side_channel'] else _own
     return rows, f'{vpu}: {len(rows)} waters placed'
 
 
@@ -486,9 +498,10 @@ def main():
         print('   TotDASqKm counts what passed upstream; DivDASqKm is what flows through:')
         for s2 in sorted(odd, key=lambda x: -rows[x]['drainage_km2']):
             r = rows[s2]
-            print(f'     {s2:<30} order {r["stream_order"]}, upstream {r["drainage_km2"]:>10.1f}'
-                  f' km2, divergence-adjusted {r["div_drainage_km2"]:>10.1f} km2,'
-                  f' Divergence={r["divergence"]}')
+            print(f'     {s2:<30} river upstream {r["drainage_km2"]:>10.1f} km2,'
+                  f' its own catchment {r["div_drainage_km2"]:>8.1f} km2'
+                  f'  ({r["drainage_km2"] / max(r["div_drainage_km2"], 1e-9):.0f}x)'
+                  f'  order {r["stream_order"]}')
     suspect = [s2 for s2, r in rows.items() if r.get('foreign_flowline_suspected')]
     print(f'\n== placed {len(rows)} of {len(reg)} waters; {len(unmatched)} unplaced')
     if suspect:
