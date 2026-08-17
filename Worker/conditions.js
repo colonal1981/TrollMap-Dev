@@ -60,7 +60,9 @@
  * client-side JavaScript. This is the authoritative source and it is a different agency.
  */
 import { CORS, JSON_HEADERS, r2Text } from './worker-core.js';
-import { dukeRowForNames, fetchDukeFlowArrivals, fetchUsgs, getLakeClarity, RIVERS, lakeKeyFromName }
+// RIVERS and lakeKeyFromName came out with dukeBasinFor: the basin is resolved from Duke's own
+// /rivers/get-rivers roster now, so this file no longer reads the six-entry hand table at all.
+import { dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchUsgs, getLakeClarity }
   from './worker-data.js';
 import { parseCubeLevels, parseSouthernCoLevels, parseBrookfieldFacility } from './operators.js';
 import { reportTokens } from './reports.js';
@@ -1205,48 +1207,134 @@ export function releaseShape({ duke, tva, operator } = {}) {
  * oversight.
  */
 /**
- * DOES THE BASIN DUKE RETURNED ACTUALLY NAME THIS RIVER?
+ * WHICH DUKE BASIN THIS WATER IS ON, ANSWERED FROM DUKE'S OWN LIST.
  *
- * Ryan, 2026-08-16: *"broad river has nothing to do with duke so that dukeBasinId doesn't make
- * sense but ok"* — and the entry agrees with him against itself. `RIVERS.broad` reads
- * `operator: "SCE&G / Dominion (Parr Shoals)"`, `damName: "Parr Shoals Dam"`, and then carries
- * `dukeBasinId: 10` with a comment asserting it is Duke's Broad River basin. Nobody checked.
- * The id was typed, not measured.
+ * `RIVERS.dukeBasinId` was hand-typed on two of six rivers and this function read it. Ryan,
+ * 2026-08-17, on the Wateree being refused: *"this is for wateree... which is part of the
+ * catawba chain... doesn't duke have releases on their api"* — and pasted `/rivers/get-rivers`,
+ * which is the index that makes the typing unnecessary. Seven basins, published, versus two ids
+ * somebody entered.
  *
- * It cannot be derived — a foreign key never can. But it CAN BE VERIFIED, and that is the same
- * move `agencyPageAgrees` made this morning after TWRA region 1's "Davy Crockett Lake" bound to
- * a Davy Crockett Lake 300 km away: do not trust the id, check that what came back names the
- * thing you asked about.
+ * THE FIELD THAT NAMES THE WATERS IS `riverDescription`, NOT `RiverName`. Basin 1 is RiverName
+ * "Catawba" and riverDescription "Catawba - Wateree". The refusal Ryan hit compared "Catawba"
+ * against "Wateree Lake", found nothing in common, and called a correct id unverified — while
+ * the field that says "Wateree" in so many words was sitting beside it, unread. Same shape as
+ * the CWMS catalogue saying metres while the data endpoint said feet.
  *
- * `/rivers/flow-arrivals/{id}` returns `RiverBasinName` and every arrival carries `DamName` and
- * `MileMarkerName`. If none of them shares a distinctive token with the river, the id is wrong
- * or the basin was renumbered, and a release projection on the wrong river is worse than none.
+ * AND `RiverName` IS CONCATENATED ON TWO OF THEM. "BroadRiver" and "PigeonRiver" are ONE token
+ * to any splitter that breaks on non-word characters, so "Broad River" would never have matched
+ * basin 10 either. Split on the case boundary before tokenising, or the index is unusable.
  *
- * FLOWING WORDS ARE NOT DISTINCTIVE. "river" is in every one of these names on both sides, so it
- * is dropped before comparing — otherwise every basin agrees with every river.
+ * BASIN 4 IS "Other Lakes and Rivers" AND MUST NEVER AGREE WITH ANYTHING. A catch-all that
+ * matches on the word "lakes" would put a release projection on every water in the app.
  */
-export function dukeBasinAgrees(sched, waterName) {
-  const distinctive = (s) => {
-    const out = new Set();
-    for (const t of reportTokens(s)) {
-      if (!/^(river|creek|canal|branch|run|fork|basin|dam|hydro|project)$/.test(t)) out.add(t);
+const BASIN_CATCH_ALL = /^others?$/i;
+
+/** "BroadRiver" -> "Broad River". Leaves "Keowee Toxaway" alone. */
+export function splitCamel(s) {
+  return String(s || '').replace(/([a-z0-9])([A-Z])/g, '$1 $2');
+}
+
+/**
+ * Words every one of these names carries, on both sides, so they distinguish nothing. Dropping
+ * them is what stops every basin agreeing with every river.
+ */
+function distinctive(s) {
+  const out = new Set();
+  for (const t of reportTokens(splitCamel(s))) {
+    if (!/^(river|creek|canal|branch|run|fork|basin|dam|hydro|project|area|tailwater|tailrace|other|others)$/.test(t)) {
+      out.add(t);
     }
-    return out;
-  };
-  const want = distinctive(waterName);
+  }
+  return out;
+}
+
+/**
+ * The river a gauge sits on: the part of its name BEFORE the locative.
+ *
+ * Agencies name gauges "<RIVER> at <PLACE>", and the place half is a minefield — "Long Creek at
+ * PAW CREEK", "McDowell Creek at Beatties Ford Rd.", "CATAWBA RIVER BL LAKE WYLIE DAM FEWELL
+ * ISLAND, SC". Tokenising the whole string would let a town or a road agree with a basin. The
+ * river is the part in front, and that is the only part read.
+ */
+export function gaugeRiverPart(name) {
+  return String(name || '').split(/\s+(?:at|near|nr|below|bl|above|ab|blw|abv|on|to)\s+/i)[0];
+}
+
+/**
+ * Everything this water is allowed to be called, for basin matching.
+ *
+ * THE BINDING ALREADY CARRIES THE RIVER SYSTEM and nothing was reading it. Wateree Lake's pool
+ * gauge is "Catawba River at Cedar Creek Reservoir/Rocky Ck-Cedar Ck Dam"; Lake Wylie's is
+ * "Catawba River at Lake Wylie Dam"; every one of the seven Catawba-chain lakes in the registry
+ * is bound to a gauge whose name begins "Catawba River". NWS names a gauge for the river it is
+ * on, so the river system travels with every binding for free.
+ *
+ * That matters because the lake's own name usually does NOT contain its river. "Catawba -
+ * Wateree" happens to name Wateree; it does not name Wylie, Norman, James, Hickory, Rhodhiss or
+ * Mountain Island, and all six are on that basin.
+ */
+export function waterBasinEvidence(waterName, gaugeNames = []) {
+  const out = distinctive(waterName);
+  for (const n of gaugeNames || []) for (const t of distinctive(gaugeRiverPart(n))) out.add(t);
+  return out;
+}
+
+/**
+ * The basin id for a water, or null. `roster` is `/rivers/get-rivers`; null roster, null answer —
+ * a release projection is not worth guessing an id for.
+ */
+export function dukeBasinFor(roster, waterName, gaugeNames = []) {
+  if (!Array.isArray(roster) || !roster.length) return null;
+  const want = waterBasinEvidence(waterName, gaugeNames);
+  if (!want.size) return null;
+  let best = null;
+  for (const row of roster) {
+    const id = Number(row && (row.RiverId ?? row.riverId));
+    if (!Number.isFinite(id)) continue;
+    if (BASIN_CATCH_ALL.test(String(row.RiverName || '').trim())) continue;
+    const have = new Set([...distinctive(row.RiverName), ...distinctive(row.riverDescription)]);
+    const hits = [...have].filter((t) => want.has(t));
+    // MOST SPECIFIC WINS. "Catawba - Wateree" shares two tokens with the Wateree and one with
+    // Lake Norman; both are right, and preferring the stronger overlap keeps a one-word
+    // coincidence from outranking a real one.
+    if (hits.length && (!best || hits.length > best.hits.length)) {
+      best = { id, name: row.RiverName || null, description: row.riverDescription || null, hits };
+    }
+  }
+  return best ? best.id : null;
+}
+
+/** The same match, with its working shown, for the refusal message. */
+export function dukeBasinWhy(roster, waterName, gaugeNames = []) {
+  const id = dukeBasinFor(roster, waterName, gaugeNames);
+  if (id == null) return null;
+  const row = roster.find((r) => Number(r.RiverId ?? r.riverId) === id) || {};
+  const want = waterBasinEvidence(waterName, gaugeNames);
+  const have = new Set([...distinctive(row.RiverName), ...distinctive(row.riverDescription)]);
+  return { id, name: row.RiverName || null, description: row.riverDescription || null,
+           matched: [...have].filter((t) => want.has(t)) };
+}
+
+/**
+ * DOES THE SCHEDULE THAT CAME BACK ACTUALLY NAME THIS WATER'S RIVER?
+ *
+ * Still a verifier, and still worth having now that the id is resolved rather than typed: Duke
+ * can renumber a basin, and a release projection on the wrong river is worse than none. What
+ * changed is what counts as agreement. It used to compare the basin name against the LAKE name
+ * only, which is the wrong kind of name — a basin names a river system and a lake is a water on
+ * it. Now the water's evidence includes the rivers its bound gauges are named for.
+ */
+export function dukeBasinAgrees(sched, waterName, gaugeNames = []) {
+  const want = waterBasinEvidence(waterName, gaugeNames);
   if (!want.size || !sched) return false;
-  const haystacks = [sched.basinName];
+  if (BASIN_CATCH_ALL.test(String(sched.basinName || '').trim())) return false;
+  const haystacks = [sched.basinName, sched.basinDescription];
   for (const a of sched.arrivals || []) haystacks.push(a.damName, a.mileMarkerName);
   for (const h of haystacks) {
     for (const t of distinctive(h)) if (want.has(t)) return true;
   }
   return false;
-}
-
-export function dukeBasinFor(name) {
-  const key = lakeKeyFromName(String(name || ''));
-  const row = key && RIVERS[key];
-  return row && row.dukeBasinId ? row.dukeBasinId : null;
 }
 
 /**
@@ -1828,7 +1916,13 @@ async function waterBlock(b, lat, lon) {
 
   // Release schedules. The Duke call only happens for a water that has a basin, so the common
   // case costs nothing.
-  const basin = dukeBasinFor(b.display_name || b.slug);
+  // THE RIVER SYSTEM TRAVELS WITH THE BINDING and nothing was reading it. Every Catawba-chain
+  // lake in the registry is bound to a gauge named "Catawba River at ...", because NWS names a
+  // gauge for the river it sits on. The lake's own name almost never contains its river.
+  const gaugeNames = [b.pool, b.tailwater, ...(b.gauges || [])]
+    .filter((g) => g && g.name).map((g) => g.name);
+  const roster = await fetchDukeRivers().catch(() => null);
+  const basin = dukeBasinFor(roster, b.display_name || b.slug, gaugeNames);
   const dukeSched = basin ? await fetchDukeFlowArrivals(basin).catch(() => null) : null;
 
   // A hand-typed basin id has to prove itself before it is allowed to describe this river.
@@ -1836,14 +1930,23 @@ async function waterBlock(b, lat, lon) {
   // available are different facts, and only the first one names a table that needs fixing.
   out.releases_refused = null;
   let duke = dukeSched;
-  if (dukeSched && !dukeBasinAgrees(dukeSched, b.display_name || b.slug)) {
+  if (dukeSched && !dukeBasinAgrees(dukeSched, b.display_name || b.slug, gaugeNames)) {
     duke = null;
+    const why = dukeBasinWhy(roster, b.display_name || b.slug, gaugeNames);
     out.releases_refused = {
       operator: 'Duke Energy',
       basin_id: basin,
       basin_name: dukeSched.basinName || null,
-      why: `RIVERS.dukeBasinId ${basin} returned "${dukeSched.basinName || 'an unnamed basin'}", `
-         + `which does not name ${b.display_name || b.slug}. The id is hand-typed and unverified.`,
+      // THE OLD MESSAGE BLAMED THE WRONG THING. It said "the id is hand-typed and unverified" —
+      // and on the Wateree the id was RIGHT and the comparison was wrong, because it held a basin
+      // name up against a LAKE name. The id is Duke's own now, so if this fires it means the
+      // schedule that came back does not name the river any of this water's gauges are on, which
+      // is a renumbering or a bad binding, and the message says which evidence was used.
+      matched_on: why ? why.matched : [],
+      rivers_considered: gaugeNames.map(gaugeRiverPart),
+      why: `Duke basin ${basin}${why && why.description ? ` ("${why.description}")` : ''} returned a `
+         + `schedule named "${dukeSched.basinName || 'an unnamed basin'}", which shares no river `
+         + `name with ${b.display_name || b.slug} or with the gauges bound to it.`,
     };
   }
   out.releases = releaseShape({ duke, tva: out.tva, operator: out.operator });

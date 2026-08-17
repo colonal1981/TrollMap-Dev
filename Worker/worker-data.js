@@ -378,6 +378,42 @@ function normalizeDukeRow(row) {
 // already lives in this file; it had to move so /conditions could call it without importing
 // the router. Behaviour is unchanged.
 var DUKE_API_BASE = "https://api.hydro-derived.duke-energy.app";
+
+/**
+ * Duke's own list of the basins it publishes flow arrivals for.
+ *
+ * Ryan pasted it on 2026-08-17 after `RIVERS.dukeBasinId 1` was refused for Wateree Lake:
+ *
+ *   RiverId  1   RiverName "Catawba"        riverDescription "Catawba - Wateree"
+ *   RiverId  2   RiverName "Nantahala"      riverDescription "Nantahala/Tuckasegee Area"
+ *   RiverId  3   RiverName "Yadkin"         riverDescription "Yadkin-Pee Dee"
+ *   RiverId 10   RiverName "BroadRiver"     riverDescription "Broad River Basin"
+ *   RiverId  6   RiverName "Keowee Toxaway" riverDescription "Keowee - Toxaway"
+ *   RiverId 11   RiverName "PigeonRiver"    riverDescription "Pigeon River"
+ *   RiverId  4   RiverName "Others"         riverDescription "Other Lakes and Rivers"
+ *
+ * SEVEN BASINS, PUBLISHED, AGAINST TWO HAND-TYPED IDS IN `RIVERS`. The id was never derivable
+ * and it never had to be typed either — this endpoint is the index, and reading it is the same
+ * move that replaced the TWRA and SCDNR seed lists with the agencies' own region pages.
+ */
+async function fetchDukeRivers() {
+  try {
+    const r = await fetch(`${DUKE_API_BASE}/rivers/get-rivers`, {
+      cf: { cacheTtl: 21600, cacheEverything: true },
+      headers: {
+        "User-Agent": "TrollMap/12 Worker",
+        "Origin": "https://lakes.hydro-derived.duke-energy.app",
+        "Referer": "https://lakes.hydro-derived.duke-energy.app/",
+        "Accept": "application/json"
+      }
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return Array.isArray(j) && j.length ? j : null;
+  } catch (_) {
+    return null;
+  }
+}
 async function fetchDukeFlowArrivals(basinId) {
   try {
     const r = await fetch(`${DUKE_API_BASE}/rivers/flow-arrivals/${basinId}`, {
@@ -1746,4 +1782,4 @@ var RIVERS = {
   }
 };
 
-export { normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard };
+export { normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard };

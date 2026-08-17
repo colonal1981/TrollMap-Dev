@@ -95,7 +95,20 @@ test('a binding with no display name says so rather than matching everything', (
 });
 
 // ── release schedules: one shape, three operators that mean different things ─────────────────
-import { releaseShape, dukeBasinFor } from '../Worker/conditions.js';
+import { releaseShape, dukeBasinFor, splitCamel, gaugeRiverPart, waterBasinEvidence }
+  from '../Worker/conditions.js';
+
+// Duke's own /rivers/get-rivers, verbatim, pasted by Ryan on 2026-08-17. Seven basins, against
+// the two ids that were hand-typed into RIVERS.
+const DUKE_RIVERS = [
+  { RiverId: 1,  RiverName: 'Catawba',        riverDescription: 'Catawba - Wateree' },
+  { RiverId: 2,  RiverName: 'Nantahala',      riverDescription: 'Nantahala/Tuckasegee Area' },
+  { RiverId: 3,  RiverName: 'Yadkin',         riverDescription: 'Yadkin-Pee Dee' },
+  { RiverId: 10, RiverName: 'BroadRiver',     riverDescription: 'Broad River Basin' },
+  { RiverId: 6,  RiverName: 'Keowee Toxaway', riverDescription: 'Keowee - Toxaway' },
+  { RiverId: 11, RiverName: 'PigeonRiver',    riverDescription: 'Pigeon River' },
+  { RiverId: 4,  RiverName: 'Others',         riverDescription: 'Other Lakes and Rivers' },
+];
 
 test('a Duke arrival is a PROJECTION and says so', () => {
   const r = releaseShape({ duke: { basinName: 'Catawba-Wateree', lastUpdated: 'x',
@@ -132,15 +145,88 @@ test('nothing publishing a release is null, not an empty schedule', () => {
   assert.equal(releaseShape(), null);
 });
 
-test('only the two rivers with a measured centerline have a Duke basin', () => {
-  // RIVERS is six hand-written entries and two carry a dukeBasinId. That is not an oversight to
-  // fix by guessing: the surge model needs river-mile geometry that exists nowhere else.
-  assert.equal(dukeBasinFor('Wateree River'), 1);
-  assert.equal(dukeBasinFor('Broad River'), 10);
-  assert.equal(dukeBasinFor('Congaree River'), null);
-  assert.equal(dukeBasinFor('Lake Murray (Lexington Co, SC)'), null);
-  assert.equal(dukeBasinFor(''), null);
-  assert.equal(dukeBasinFor(null), null);
+test('the basin comes from Duke\'s published roster, not from two typed ids', () => {
+  // Was: RIVERS[key].dukeBasinId, hand-typed on two of six rivers. Now: match the water against
+  // /rivers/get-rivers. The two the table had still resolve, and so does everything else.
+  assert.equal(dukeBasinFor(DUKE_RIVERS, 'Wateree River'), 1);
+  assert.equal(dukeBasinFor(DUKE_RIVERS, 'Broad River'), 10);
+  assert.equal(dukeBasinFor(DUKE_RIVERS, 'Yadkin River'), 3);
+  assert.equal(dukeBasinFor(DUKE_RIVERS, 'Keowee River'), 6);
+  assert.equal(dukeBasinFor(DUKE_RIVERS, 'Pigeon River'), 11);
+  assert.equal(dukeBasinFor(DUKE_RIVERS, 'Nantahala River'), 2);
+  assert.equal(dukeBasinFor(DUKE_RIVERS, 'Tuckasegee River'), 2, 'the description names it, not RiverName');
+  assert.equal(dukeBasinFor(DUKE_RIVERS, 'Congaree River'), null);
+  assert.equal(dukeBasinFor(DUKE_RIVERS, ''), null);
+  assert.equal(dukeBasinFor(DUKE_RIVERS, null), null);
+  // No roster, no guess. A release projection is not worth inventing an id for.
+  assert.equal(dukeBasinFor(null, 'Wateree River'), null);
+  assert.equal(dukeBasinFor([], 'Wateree River'), null);
+});
+
+test('RiverName is concatenated on two rows and would never have matched', () => {
+  // "BroadRiver" and "PigeonRiver" are ONE token to any splitter that breaks on non-word
+  // characters, so "Broad River" could not match basin 10 through RiverName at all.
+  assert.equal(splitCamel('BroadRiver'), 'Broad River');
+  assert.equal(splitCamel('PigeonRiver'), 'Pigeon River');
+  assert.equal(splitCamel('Keowee Toxaway'), 'Keowee Toxaway', 'a real space is left alone');
+  assert.equal(splitCamel('Catawba'), 'Catawba');
+});
+
+test('the catch-all basin agrees with nothing', () => {
+  // RiverId 4 is "Other Lakes and Rivers". A basin matching on the word "lakes" would put a
+  // release projection on every water in the app.
+  assert.equal(dukeBasinFor(DUKE_RIVERS, 'Other Lake'), null);
+  assert.equal(dukeBasinFor([{ RiverId: 4, RiverName: 'Others', riverDescription: 'Other Lakes and Rivers' }],
+                            'Lake Murray'), null);
+});
+
+test('THE WATEREE, which is what started this', () => {
+  // Ryan, 2026-08-17: "this is for wateree... which is part of the catawba chain". The card said
+  // 'refused - RIVERS.dukeBasinId 1 returned "Catawba", which does not name Wateree Lake'. The id
+  // was right; the comparison held a BASIN name against a LAKE name.
+  //
+  // riverDescription is "Catawba - Wateree" and names it outright.
+  assert.equal(dukeBasinFor(DUKE_RIVERS, 'Wateree Lake (Kershaw Co, SC)'), 1);
+
+  // And the six Catawba lakes whose own names contain no river at all. Every one of them is
+  // bound to a gauge named "Catawba River at ...", because NWS names a gauge for its river.
+  const chain = [
+    ['Lake Wylie (York Co, NC/SC)',       ['Catawba River at Lake Wylie Dam']],
+    ['Lake Norman (Catawba Co, NC)',      ['Catawba River at Lake Norman/Cowans Ford Dam']],
+    ['Lake James (Burke Co, NC)',         ['Catawba River at Lake James/Linville Dam',
+                                           'Linville River near Nebo']],
+    ['Lake Hickory (Catawba Co, NC)',     ['Catawba River at Lake Hickory/Oxford Dam']],
+    ['Rhodhiss Lake (Burke Co, NC)',      ['Catawba River at Lake Rhodhiss Dam']],
+    ['Mountain Island Lake (Gaston Co, NC)', ['Catawba River at Mountain Island Lake and Dam',
+                                              'McDowell Creek at Beatties Ford Rd.',
+                                              'Long Creek at PAW CREEK']],
+  ];
+  for (const [name, gauges] of chain) {
+    assert.equal(dukeBasinFor(DUKE_RIVERS, name, gauges), 1, name);
+    // and without the gauges, the lake's own name says nothing about its river
+    assert.equal(dukeBasinFor(DUKE_RIVERS, name), null, `${name} unaided`);
+  }
+});
+
+test('only the river half of a gauge name is read', () => {
+  // "<RIVER> at <PLACE>" — the place half is a minefield of towns, roads and other creeks.
+  assert.equal(gaugeRiverPart('Catawba River at Cedar Creek Reservoir/Rocky Ck-Cedar Ck Dam'),
+               'Catawba River');
+  assert.equal(gaugeRiverPart('CATAWBA RIVER BL LAKE WYLIE DAM FEWELL ISLAND, SC'), 'CATAWBA RIVER');
+  assert.equal(gaugeRiverPart('Long Creek at PAW CREEK'), 'Long Creek');
+  assert.equal(gaugeRiverPart('LAKE WATEREE TAILRACE ABOVE CAMDEN, SC'), 'LAKE WATEREE TAILRACE');
+  assert.equal(gaugeRiverPart(''), '');
+  // A place called after another river must not drag a basin in with it.
+  const ev = waterBasinEvidence('Some Pond', ['Mill Creek at Yadkin Road']);
+  assert.equal(ev.has('yadkin'), false, 'a road named Yadkin is not the Yadkin');
+  assert.equal(dukeBasinFor(DUKE_RIVERS, 'Some Pond', ['Mill Creek at Yadkin Road']), null);
+});
+
+test('the most specific basin wins', () => {
+  // "Catawba - Wateree" shares two tokens with the Wateree and one with Lake Norman. Both are
+  // right; preferring the stronger overlap stops a one-word coincidence outranking a real match.
+  const rival = [...DUKE_RIVERS, { RiverId: 99, RiverName: 'Wateree', riverDescription: 'Wateree only' }];
+  assert.equal(dukeBasinFor(rival, 'Wateree Lake', ['Catawba River at Wateree Dam']), 1);
 });
 
 // ── which USGS sites a water can ask for a temperature ──────────────────────────────────────
@@ -193,6 +279,22 @@ import { dukeBasinAgrees } from '../Worker/conditions.js';
 test('a basin that names the river agrees', () => {
   assert.equal(dukeBasinAgrees({ basinName: 'Catawba-Wateree', arrivals: [] }, 'Wateree River'), true);
   assert.equal(dukeBasinAgrees({ basinName: 'Broad River', arrivals: [] }, 'Broad River'), true);
+});
+
+test('a lake agrees through the river its gauges are named for', () => {
+  // THE BUG RYAN HIT. The schedule for basin 1 comes back named "Catawba" and the water is
+  // "Wateree Lake" — no shared word, refused, and the refusal called a correct id unverified.
+  const sched = { basinName: 'Catawba', arrivals: [] };
+  assert.equal(dukeBasinAgrees(sched, 'Lake Wylie (York Co, NC/SC)'), false, 'unaided, still no');
+  assert.equal(dukeBasinAgrees(sched, 'Lake Wylie (York Co, NC/SC)',
+                               ['Catawba River at Lake Wylie Dam']), true);
+  assert.equal(dukeBasinAgrees({ basinName: 'Yadkin-Pee Dee', arrivals: [] },
+                               'Lake Wylie', ['Catawba River at Lake Wylie Dam']), false);
+});
+
+test('a schedule from the catch-all basin is refused whatever it carries', () => {
+  assert.equal(dukeBasinAgrees({ basinName: 'Others', arrivals: [] },
+                               'Lake Murray', ['Saluda River at Lake Murray Dam']), false);
 });
 
 test('a basin that names a DIFFERENT river is refused', () => {
