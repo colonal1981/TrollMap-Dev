@@ -130,3 +130,31 @@ for s, r in rows.items():
 assert '999999' not in str(rows), 'the unregistered Lake Marion must not appear'
 
 print('process_vpu end-to-end assertions pass:', len(rows), 'waters, order correct')
+
+
+# --- the dry-run report must show whatever basin actually placed, not a hard-coded sample.
+#     0602 placed three waters and printed none of them, because the sample list was Catawba.
+import argparse, io, contextlib, json as _json, tempfile as _tf
+from pathlib import Path as _P
+with _tf.TemporaryDirectory() as _t:
+    _root = _P(_t); (_root/'registry').mkdir()
+    _reg = {slug: {'gnis': 'gnis:' + g} for slug, g in CHAIN}
+    (_root/'registry'/'lake_index.json').write_text(_json.dumps(_reg))
+    _nhd = _root/'nhd'; _nhd.mkdir()
+    (_nhd/'NHDPLUS_H_0305_HU4_GDB.zip').write_text('x')
+    sys.argv = ['x', '--registry', str(_root/'registry'/'lake_index.json'),
+                '--nhd', str(_nhd), '--only', '0305']
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = bwc.main()
+    text = buf.getvalue()
+assert rc == 0, text[-500:]
+for slug, _ in CHAIN:
+    assert slug in text, f'{slug} placed but never printed'
+assert 'upstream to downstream' in text, 'no ordering header'
+assert 'DRY RUN' in text and 'wrote' not in text, 'dry run must not write'
+first = min(text.index(s) for s, _ in CHAIN if s in text)
+assert text.index('lake_james') == first, 'the most upstream water must print first'
+assert text.index('lake_james') < text.index('wateree_lake'), 'james above wateree'
+assert 'fed directly by' in text, 'upstream links not shown'
+print('dry-run report assertions pass')

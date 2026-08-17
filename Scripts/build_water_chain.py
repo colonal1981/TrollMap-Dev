@@ -343,6 +343,8 @@ def main():
     ap.add_argument('--out', default=None, help='defaults to <repo>/' + OUT_REL)
     ap.add_argument('--only', nargs='*', help='VPU codes, e.g. --only 0305 0304')
     ap.add_argument('--write', action='store_true', help='actually write the json')
+    ap.add_argument('--show', type=int, default=40,
+                    help='how many placed waters to print; 0 for all')
     ap.add_argument('--layers', action='store_true',
                     help='list each geodatabase\'s layers and fields, then stop')
     args = ap.parse_args()
@@ -459,18 +461,28 @@ def main():
         Path(args.out).write_text(json.dumps(out, indent=1), encoding='utf-8')
         print(f'\nwrote {args.out}')
     else:
-        print('\nDRY RUN -- nothing written. Add --write to write '
-              f'{args.out}.')
-        sample = [s for s in ('lake_james', 'rhodhiss_lake', 'lake_hickory',
-                              'lookout_shoals_lake', 'lake_norman', 'mountain_island_lake',
-                              'lake_wylie', 'fishing_creek_reservoir', 'great_falls_reservoir',
-                              'cedar_creek_reservoir_2', 'wateree_lake') if s in rows]
-        if sample:
-            print('\n== the Catawba chain as derived (each line: water -> next water down)')
-            for s in sorted(sample, key=lambda x: -rows[x]['outlet_hydroseq']):
-                r = rows[s]
-                print(f'   {s:<26} {r["outlet_hydroseq"]}  da {r["drainage_km2"]:>10.1f}'
-                      f'  -> {r["downstream"] or "(leaves the VPU)"}')
+        print(f'\nDRY RUN -- nothing written. Add --write to write {args.out}.')
+
+    # Show what was actually placed. The first version printed a hard-coded Catawba sample, so
+    # every other basin printed a blank and you could not see your own result -- 0602 placed
+    # three waters and showed none of them. Sorted by outlet hydrosequence DESCENDING, which is
+    # upstream to downstream.
+    if rows:
+        shown = sorted(rows.values(), key=lambda r: -r['outlet_hydroseq'])
+        cap = args.show if args.show > 0 else len(shown)
+        print(f'\n== placed waters, upstream to downstream'
+              + (f' (first {cap} of {len(shown)})' if cap < len(shown) else '') + '\n')
+        print(f'   {"water":<30} {"outlet hydroseq":>16} {"drainage km2":>13} '
+              f'{"nhd acres":>10}  -> next water down')
+        for r in shown[:cap]:
+            acres = r['nhd_area_km2'] * 247.105
+            print(f'   {r["slug"]:<30} {r["outlet_hydroseq"]:>16} {r["drainage_km2"]:>13.1f} '
+                  f'{acres:>10.1f}  -> {r["downstream"] or "(leaves these basins)"}')
+        multi = [r for r in shown if r['upstream']]
+        if multi:
+            print('\n   fed directly by:')
+            for r in multi:
+                print(f'     {r["slug"]:<30} <- {", ".join(r["upstream"])}')
     return 0
 
 
