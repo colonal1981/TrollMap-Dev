@@ -53,6 +53,22 @@ CLAIMS = [
     ('Bear Creek Lake', 'Bear Creek'), ('Cedar Cliff Lake', 'Cedar Cliff'),
     ('Wolf Creek Lake', 'Wolf Creek'), ('Tanasee Creek Lake', 'Tanasee Creek'),
     ('Waterville Lake', 'Waterville'),
+    # ONE DAM, TWO POWERHOUSES, and Duke can post a release under either name. Its own
+    # Power Plants map (duke-energy.com/our-company/about-us/power-plants-map, read by Ryan
+    # 2026-08-17) labels the structure "Rocky Creek / Cedar Creek Dam" and puts BOTH the Rocky
+    # Creek Hydro Station (28 MW, 1909, Fairfield and Lancaster Counties) and the Cedar Creek
+    # Hydro Station on it. Ryan, asked which name Duke uses: "both is the right answer".
+    #
+    # dam -> slug is many-to-one on purpose, so two powerhouses on one impoundment are two rows
+    # pointing at one water, and a release under either spelling lands on the same side of
+    # Wateree. Without these the chain knows cedar_creek_reservoir_2 is Wateree's upstream and
+    # no dam name resolves to it, so WATEREE HAS NO INFLOW LABEL AT ALL -- the exact fact this
+    # whole table exists to produce.
+    #
+    # The slug is given explicitly because the name is ambiguous: the registry holds a Cedar
+    # Creek Reservoir in Chester SC, another in Hall GA, and a Cedar Creek in Richland SC.
+    ('Cedar Creek Reservoir', 'Rocky Creek', 'cedar_creek_reservoir_2'),
+    ('Cedar Creek Reservoir', 'Cedar Creek', 'cedar_creek_reservoir_2'),
 ]
 NOISE = {'dam', 'dams', 'hydro', 'powerhouse', 'project', 'lake', 'reservoir'}
 
@@ -129,8 +145,11 @@ def main():
                 by_name.setdefault(name_key(cand), slug)
 
     dams, rows = {}, []
-    for lake, dam in CLAIMS:
-        slug = by_name.get(name_key(lake))
+    for claim in CLAIMS:
+        lake, dam = claim[0], claim[1]
+        # A claim may name its slug outright, for when the water's NAME is ambiguous.
+        explicit = claim[2] if len(claim) > 2 else None
+        slug = explicit if (explicit and explicit in reg) else by_name.get(name_key(lake))
         ev = []
         if slug:
             head = dam.split()[0].lower()
@@ -148,6 +167,7 @@ def main():
         else:
             verdict = 'UNSUPPORTED locally'
         rows.append({'claimed_water': lake, 'dam': dam, 'slug': slug,
+                     'slug_given_explicitly': bool(explicit),
                      'in_chain': bool(slug and slug in chain),
                      'verdict': verdict, 'evidence': ev[:2]})
         if slug and verdict != 'NO SUCH WATER':
