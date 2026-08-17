@@ -11,20 +11,39 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { releaseDirection, normalizeDamName, releaseShape } from '../Worker/conditions.js';
 
-// water_chain.json, upstream lists verbatim.
+// water_chain.json, both directions verbatim, as PUBLISHED TODAY -- the 283-water chain built
+// on GNIS ids alone. Every Catawba reservoir appears adjacent to the next here.
 const CHAIN = {
-  lake_james:              { upstream: [] },
-  rhodhiss_lake:           { upstream: ['lake_james'] },
-  lake_hickory:            { upstream: ['old_millpond', 'rhodhiss_lake', 'shuford_pond'] },
-  lookout_shoals_lake:     { upstream: ['lake_hickory'] },
-  lake_norman:             { upstream: ['lookout_shoals_lake'] },
-  mountain_island_lake:    { upstream: ['lake_norman'] },
-  lake_wylie:              { upstream: ['mountain_island_lake', 'rankin_lake', 'robinwood_lake'] },
-  fishing_creek_reservoir: { upstream: ['lake_haigler', 'lake_wylie'] },
-  great_falls_reservoir:   { upstream: ['fishing_creek_reservoir', 'fishing_creek_wcd_site_number_two'] },
-  cedar_creek_reservoir_2: { upstream: ['great_falls_reservoir'] },
-  wateree_lake:            { upstream: ['cedar_creek_reservoir_2'] },
-  lake_marion:             { upstream: ['wateree_lake', 'lake_murray', 'parr_shoals_reservoir'] },
+  lake_james:              { upstream: [], downstream: 'rhodhiss_lake' },
+  rhodhiss_lake:           { upstream: ['lake_james'], downstream: 'lake_hickory' },
+  lake_hickory:            { upstream: ['old_millpond', 'rhodhiss_lake', 'shuford_pond'], downstream: 'lookout_shoals_lake' },
+  lookout_shoals_lake:     { upstream: ['lake_hickory'], downstream: 'lake_norman' },
+  lake_norman:             { upstream: ['lookout_shoals_lake'], downstream: 'mountain_island_lake' },
+  mountain_island_lake:    { upstream: ['lake_norman'], downstream: 'lake_wylie' },
+  lake_wylie:              { upstream: ['mountain_island_lake', 'rankin_lake', 'robinwood_lake'], downstream: 'fishing_creek_reservoir' },
+  fishing_creek_reservoir: { upstream: ['lake_haigler', 'lake_wylie'], downstream: 'great_falls_reservoir' },
+  great_falls_reservoir:   { upstream: ['fishing_creek_reservoir', 'fishing_creek_wcd_site_number_two'], downstream: 'cedar_creek_reservoir_2' },
+  cedar_creek_reservoir_2: { upstream: ['great_falls_reservoir'], downstream: 'wateree_lake' },
+  wateree_lake:            { upstream: ['cedar_creek_reservoir_2'], downstream: 'lake_marion' },
+  lake_marion:             { upstream: ['wateree_lake', 'lake_murray', 'parr_shoals_reservoir'], downstream: null },
+  old_millpond:            { upstream: [], downstream: 'lake_hickory' },
+  shuford_pond:            { upstream: [], downstream: 'lake_hickory' },
+};
+
+// THE SAME WATER, once the chain stops omitting the rivers. Reading _nhd_bindings.json adds 140
+// waters that have no GNIS id, 47 of them river reaches, and wateree_river is one:
+//
+//     before   wateree_lake -> lake_marion
+//     after    wateree_lake -> wateree_river -> lake_marion
+//
+// Nothing physical changed. If a fuller, more correct map makes the answer WORSE, the rule was
+// wrong -- which is why releaseDirection walks instead of testing adjacency.
+const CHAIN_WITH_RIVERS = {
+  ...CHAIN,
+  wateree_lake:  { upstream: ['cedar_creek_reservoir_2'], downstream: 'wateree_river' },
+  wateree_river: { upstream: ['wateree_lake'], downstream: 'lake_marion' },
+  lake_marion:   { upstream: ['wateree_river', 'congaree_river'], downstream: 'santee_river' },
+  santee_river:  { upstream: ['lake_marion'], downstream: null },
 };
 
 // Duke's dam name -> the slug it impounds. NONE of Bridgewater, Oxford or Cowans Ford appears in
@@ -164,4 +183,130 @@ test('a river reach gets neither, because a lake is not a river', () => {
   assert.equal(shape.inflow.length, 1);
   assert.equal(shape.inflow[0].dam, 'wateree');
   assert.equal(shape.outflow, null, 'Marion\'s own dam is not Duke\'s and is not in the table');
+});
+
+
+// ── the chain grew, and the answers must not ─────────────────────────────────────────────────
+// Adding 140 waters is only safe if it changes nothing about what a lake is told. These run the
+// SAME assertions against the fuller chain, and one of them is the reason the rule was rewritten.
+const labelIn = (chain, slug, owner = OWNER) => {
+  const out = {};
+  for (const r of releaseDirection(DAMS, { slug, chain, damOwner: owner })) {
+    if (r.direction) out[r.dam] = `${r.direction}:${r.from}`;
+  }
+  return out;
+};
+
+test('a river reach between two reservoirs is TRANSPARENT', () => {
+  // Under the old adjacency test this was the regression: lake_marion's upstream list stops
+  // holding wateree_lake the moment wateree_river appears between them, and Marion goes from
+  // correctly labelling the Wateree release to labelling nothing.
+  assert.equal(labelIn(CHAIN, 'lake_marion')['wateree'], 'inflow:wateree_lake');
+  assert.equal(labelIn(CHAIN_WITH_RIVERS, 'lake_marion')['wateree'], 'inflow:wateree_lake');
+  assert.equal(CHAIN_WITH_RIVERS.lake_marion.upstream.includes('wateree_lake'), false,
+    'the fixture must actually pose the problem -- Wateree is NOT adjacent here');
+});
+
+test('a reservoir between two reservoirs is OPAQUE, river or no river', () => {
+  // Cedar Creek -> wateree_lake -> (wateree_river) -> lake_marion. Wateree impounds a dam, so
+  // the walk stops there. What reaches Marion is whatever Wateree passes on, which is Wateree's
+  // release and not Cedar Creek's. This is the case adjacency was introduced to refuse and it
+  // must still be refused now that adjacency is gone.
+  for (const chain of [CHAIN, CHAIN_WITH_RIVERS]) {
+    const got = labelIn(chain, 'lake_marion');
+    assert.equal(got['cedar creek'], undefined);
+    assert.equal(got['great falls'], undefined);
+    assert.equal(got['fishing creek'], undefined);
+  }
+});
+
+test('every Catawba answer is identical on both chains', () => {
+  // So this can deploy before OR after the fuller chain is published, in either order.
+  for (const slug of Object.keys(CHAIN)) {
+    assert.deepEqual(labelIn(CHAIN_WITH_RIVERS, slug), labelIn(CHAIN, slug), slug);
+  }
+});
+
+
+// ── 0304, the run that found this ────────────────────────────────────────────────────────────
+// Verbatim from `build_water_chain.py --only 0304` on 2026-08-17, the run that first placed
+// blewett_falls_lake. Lake Tillery's dam releases into the Pee Dee, which IS Blewett Falls
+// Lake's headwater -- one reservoir up, two chain hops.
+const PEE_DEE = {
+  lake_tillery:        { upstream: ['badin_lake', 'uwharrie_river'], downstream: 'pee_dee_river_2' },
+  pee_dee_river_2:     { upstream: ['lake_tillery'], downstream: 'blewett_falls_lake' },
+  blewett_falls_lake:  { upstream: ['pee_dee_river_2'], downstream: 'great_pee_dee_river' },
+  great_pee_dee_river: { upstream: ['blewett_falls_lake'], downstream: null },
+  badin_lake:          { upstream: [], downstream: 'lake_tillery' },
+};
+const PEE_DEE_OWNER = {
+  'tillery': 'lake_tillery',
+  'blewett falls': 'blewett_falls_lake',
+  'narrows': 'badin_lake',
+};
+const PEE_DEE_DAMS = Object.keys(PEE_DEE_OWNER).map((d) => ({ dam: d, date: '08/19/26' }));
+const peeDee = (slug) => {
+  const out = {};
+  for (const r of releaseDirection(PEE_DEE_DAMS, { slug, chain: PEE_DEE, damOwner: PEE_DEE_OWNER })) {
+    if (r.direction) out[r.dam] = `${r.direction}:${r.from}`;
+  }
+  return out;
+};
+
+test('Blewett Falls, the lake this whole thread started on', () => {
+  // Duke publishes it in /lakes/current-level and it had NO CHAIN NODE AT ALL until the binding
+  // table was read, so releaseDirection returned null for every row on it. It ran and did
+  // nothing, and nothing said so.
+  assert.deepEqual(peeDee('blewett_falls_lake'), {
+    'tillery': 'inflow:lake_tillery',
+    'blewett falls': 'outflow:blewett_falls_lake',
+  });
+});
+
+test('Narrows is two reservoirs above Blewett and stays unlabelled', () => {
+  assert.equal(peeDee('blewett_falls_lake')['narrows'], undefined,
+    'badin_lake -> lake_tillery stops the walk: Tillery impounds a dam');
+  assert.equal(peeDee('lake_tillery')['narrows'], 'inflow:badin_lake');
+});
+
+test('Tillery sees its own dam as outflow and Blewett\'s not at all', () => {
+  const got = peeDee('lake_tillery');
+  assert.equal(got['tillery'], 'outflow:lake_tillery');
+  assert.equal(got['blewett falls'], undefined, 'a dam BELOW you is not your inflow');
+});
+
+
+// ── the guards ───────────────────────────────────────────────────────────────────────────────
+test('a dam bound to a river reach makes that reach opaque', () => {
+  // bind_dams_to_waters.py binds by position and drainage. With rivers now in the chain, a
+  // structure ON a river could bind to the river slug rather than the reservoir it impounds --
+  // which is exactly why that table gets re-run as a dry run and DIFFED before it is rewritten.
+  // Recording the consequence here so it is a known behaviour and not a surprise.
+  const owner = { ...OWNER, 'some diversion': 'wateree_river' };
+  const rows = [{ dam: 'wateree', date: '08/19/26' }];
+  const got = releaseDirection(rows, { slug: 'lake_marion', chain: CHAIN_WITH_RIVERS, damOwner: owner });
+  assert.equal(got[0].direction, null,
+    'a dam on wateree_river stops the walk from wateree_lake to lake_marion');
+});
+
+test('a cyclic or runaway chain terminates instead of hanging', () => {
+  const loop = {
+    a: { downstream: 'b' }, b: { downstream: 'c' }, c: { downstream: 'a' },
+  };
+  const got = releaseDirection([{ dam: 'x' }], { slug: 'z', chain: loop, damOwner: { x: 'a' } });
+  assert.equal(got[0].direction, null);
+});
+
+test('a long unbroken run of river reaches still connects', () => {
+  const chain = { src: { downstream: 'r0' } };
+  for (let i = 0; i < 6; i += 1) chain[`r${i}`] = { downstream: i === 5 ? 'dst' : `r${i + 1}` };
+  const got = releaseDirection([{ dam: 'd' }], { slug: 'dst', chain, damOwner: { d: 'src' } });
+  assert.equal(got[0].direction, 'inflow');
+  assert.equal(got[0].from, 'src');
+});
+
+test('a chain node with no downstream field labels nothing and does not throw', () => {
+  const got = releaseDirection([{ dam: 'wateree' }],
+    { slug: 'lake_marion', chain: { wateree_lake: {} }, damOwner: OWNER });
+  assert.equal(got[0].direction, null);
 });

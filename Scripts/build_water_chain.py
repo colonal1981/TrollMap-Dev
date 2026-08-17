@@ -24,6 +24,22 @@ HOW WATERS ARE MATCHED
     Registry ids need normalising first: it holds both 'gnis:988007' and 'gnis:988007.0',
     and 'gnis:981723.0', where an id went through a float somewhere upstream.
 
+    AND ON THE GEOMETRIC BINDING, added 2026-08-17. The GNIS join alone placed 283 of 450
+    waters and left 167 unmatched, 149 of them for the single reason "no gnis id in registry"
+    -- their registry id is a synthetic 'slug:<slug>' placeholder, so there is nothing to join
+    on. blewett_falls_lake is one of them: Duke publishes it in the current-level feed, it has
+    a Duke dam, and releaseDirection() returned null for every release on it because the chain
+    had no node. Meanwhile match_waters_to_nhd.py had ALREADY solved that water by measured
+    polygon overlap and written registry/_nhd_bindings.json, which holds a
+    Permanent_Identifier for 423 of the 450 -- including 140 of the 167 this script gave up
+    on. Two matchers, and the stronger one's answer was sitting on disk unread. A capability
+    that exists and is never reached is the same as no capability.
+
+    Order is deliberate and one-directional: the GNIS join runs FIRST and claims its slugs,
+    then binding pids fill in only slugs GNIS did not place. No water that placed before this
+    change can move because of it -- the 283 were validated against USACE surveyed drainage
+    (median disagreement 0.2%) and that validation must still mean something afterwards.
+
 WHAT IT WRITES
     registry/water_chain.json -- per water: outlet hydrosequence, level path, drainage area,
     the next registry water downstream, and the registry waters immediately upstream.
@@ -36,6 +52,10 @@ USAGE
     py scripts\\build_water_chain.py                          # dry run, every NHDPLUS_H_* found
     py scripts\\build_water_chain.py --only 0305              # one VPU, fast
     py scripts\\build_water_chain.py --write                  # actually write the json
+    py scripts\\build_water_chain.py --no-bindings            # GNIS join only, to diff against
+
+    The binding table is picked up automatically from registry/_nhd_bindings.json. It is not
+    required -- without it the run says so out loud and places the GNIS waters alone.
 """
 import argparse
 import json
@@ -91,6 +111,46 @@ def normalize_gnis(v):
         return None
     s = s.lstrip('0') or '0'
     return s if s != '0' else None
+
+
+def norm_pid(v):
+    """Normalise an NHD Permanent_Identifier so it can be used as a JOIN KEY.
+
+    NHD writes this field two ways in the same vintage: as bare digits ('110970920') and as a
+    braced GUID. The GUIDs come back in BOTH casings -- _nhd_bindings.json holds
+    '{45FC7FCA-11AA-40B6-AA56-96D3F51400F0}' and '{d7218688-637b-48bc-87e8-6485082d8569}',
+    read from the same geodatabases by the same code. A dict keyed on the raw string is one
+    casing away from finding nothing and reporting that as "this lake has no flowlines",
+    which is the Number('') family wearing a different hat: a key has to be normalised on BOTH
+    sides of a join or it is not a key.
+
+    Case-folding could in principle weld two distinct pids together. process_vpu counts that
+    rather than assuming it cannot happen, and prints the count if it is ever non-zero.
+    """
+    s = '' if v is None else str(v).strip()
+    if len(s) > 1 and s[0] == '{' and s[-1] == '}':
+        s = s[1:-1]
+    return s.lower() or None
+
+
+def prefer_row(a, b):
+    """One water, placed in two VPUs. Which row survives.
+
+    A GNIS match BEATS a geometric one, always, even when the geometric side found more
+    flowlines. process_vpu's "did the GNIS join already claim this slug" guard is per-VPU, so a
+    water placed on its id in one basin can still be offered as a binding in the next. The 283
+    waters placed before the binding table existed were validated against USACE surveyed
+    drainage at a median disagreement of 0.2%; they have to win that tie every time or the
+    validation stops describing what actually ships.
+
+    Between two rows found the same way, more flowlines means more of the water is in that VPU.
+
+    Returns (winner, reason) so the caller can say why rather than assert it.
+    """
+    va, vb = a.get('match_via'), b.get('match_via')
+    if va != vb and 'gnis' in (va, vb):
+        return (a, 'GNIS beats geometry') if va == 'gnis' else (b, 'GNIS beats geometry')
+    return (a if a['flowlines'] >= b['flowlines'] else b), 'more flowlines'
 
 
 def direction_is_decreasing(pairs):
@@ -239,8 +299,13 @@ def read_layer(src, layer, wanted):
     return df, [], available
 
 
-def process_vpu(vpu, src, want_gnis, args):
-    """Return (rows_by_slug, note). Reads three layers, writes nothing."""
+def process_vpu(vpu, src, want_gnis, args, want_pid=None):
+    """Return (rows_by_slug, note). Reads three layers, writes nothing.
+
+    want_pid, when given, is {normalised Permanent_Identifier: (slug, binding record)} for
+    THIS VPU only, carrying waters the GNIS join cannot reach. Optional and keyword-defaulted
+    so the GNIS-only behaviour, and every existing caller, is untouched.
+    """
     import pyogrio
     import pandas as pd
 
@@ -270,25 +335,55 @@ def process_vpu(vpu, src, want_gnis, args):
         return {}, f'{vpu}: REFUSED, NHDWaterbody is missing {", ".join(missing)}'
     wb['gnis_n'] = wb['GNIS_ID'].map(normalize_gnis)
     hit = wb[wb['gnis_n'].isin(want_gnis)]
-    if hit.empty:
-        return {}, f'{vpu}: no registry water matched, skipped'
 
     # One GNIS id can carry several polygons (arms split into separate waterbodies).
     # Keep them all and let the flowline join union them -- that is one lake, not several.
-    pid_to_slug = {}
+    #
+    # THE GNIS JOIN GOES FIRST AND KEEPS WHAT IT CLAIMS. Everything below only fills gaps.
+    pid_to_slug, slug_via = {}, {}
+    welded = 0
     for _, r in hit.iterrows():
+        p = norm_pid(r['Permanent_Identifier'])
+        if p is None:
+            continue
         for slug in want_gnis[r['gnis_n']]:
-            pid_to_slug.setdefault(r['Permanent_Identifier'], slug)
+            if p in pid_to_slug and pid_to_slug[p] != slug:
+                welded += 1
+            pid_to_slug.setdefault(p, slug)
+            slug_via.setdefault(slug, 'gnis')
+    if welded:
+        print(f'   {welded} polygon(s) claimed by more than one slug after normalising the'
+              f' identifier; the first claim was kept')
+
+    # Waters with no usable GNIS id, placed by the polygon overlap match_waters_to_nhd.py
+    # already measured. `slug in slug_via` is the guard that makes this strictly additive: a
+    # water the GNIS join placed keeps exactly the polygons the GNIS join gave it, so its
+    # outlet, drainage and downstream neighbour cannot shift underneath it.
+    bind_meta, added = {}, 0
+    for p, (slug, rec) in (want_pid or {}).items():
+        if slug in slug_via or p in pid_to_slug:
+            continue
+        pid_to_slug[p] = slug
+        slug_via[slug] = 'geometry'
+        bind_meta[slug] = rec
+        added += 1
+    if added:
+        print(f'   + {added} water(s) offered by the geometric binding table that have no'
+              f' GNIS id to join on')
+
+    if not pid_to_slug:
+        return {}, f'{vpu}: no registry water matched, skipped'
 
     fl, missing, have = read_layer(
         src, 'NHDFlowline', ['NHDPlusID', 'WBArea_Permanent_Identifier'])
     if missing:
         print(f'   NHDFlowline has no {", ".join(missing)}. It does have: {", ".join(have)}')
         return {}, f'{vpu}: REFUSED, NHDFlowline is missing {", ".join(missing)}'
-    fl = fl[fl['WBArea_Permanent_Identifier'].isin(pid_to_slug)]
+    fl = fl.assign(pid_n=fl['WBArea_Permanent_Identifier'].map(norm_pid))
+    fl = fl[fl['pid_n'].isin(pid_to_slug)]
     if fl.empty:
         return {}, f'{vpu}: matched waterbodies but no flowlines inside them'
-    fl = fl.assign(slug=fl['WBArea_Permanent_Identifier'].map(pid_to_slug))
+    fl = fl.assign(slug=fl['pid_n'].map(pid_to_slug))
     j = fl.merge(vaa, on='NHDPlusID', how='inner')
     if j.empty:
         return {}, f'{vpu}: flowlines found but none joined to VAA'
@@ -305,9 +400,37 @@ def process_vpu(vpu, src, want_gnis, args):
     jhs, _ = finite_ints(j['HydroSeq'].to_numpy())
     water_of = dict(zip(jhs, j['slug'].tolist()))
 
-    meta = hit.groupby('gnis_n').agg(nhd_name=('GNIS_Name', 'first'),
-                                     nhd_area_km2=('AreaSqKm', 'sum'),
-                                     ftype=('FType', 'max')).to_dict('index')
+    # KEYED BY SLUG, NOT BY GNIS ID. The old version keyed this on gnis_n and then, per row,
+    # reverse-looked-up the id with next((k for k, v in want_gnis.items() if slug in v), None).
+    # That returns None for any water placed WITHOUT a GNIS id -- which is every water the
+    # binding table rescues -- so the row would have reported nhd_name null and
+    # nhd_area_km2 0.0 while the polygon it was joined on knew all three. Grouping on the slug
+    # that pid_to_slug actually assigned also sums the right polygons by construction instead
+    # of by coincidence.
+    meta = {}
+    if not hit.empty:
+        h = hit.assign(pid_n=hit['Permanent_Identifier'].map(norm_pid))
+        h = h[h['pid_n'].isin(pid_to_slug)]
+        if not h.empty:
+            meta = h.assign(slug=h['pid_n'].map(pid_to_slug)).groupby('slug').agg(
+                nhd_name=('GNIS_Name', 'first'),
+                nhd_area_km2=('AreaSqKm', 'sum'),
+                ftype=('FType', 'max')).to_dict('index')
+
+    # 47 of the waters the binding table rescues are rivers bound to NHDArea, which this
+    # script does not read -- it wants their flowlines, not their polygon, and NHDFlowline's
+    # WBArea_Permanent_Identifier references either layer. Their name, area and FType travel
+    # ON THE BINDING RECORD that made the match, so they are read from there rather than
+    # looked up in a layer that does not hold them. Read the field that travels with the
+    # value, never the field that describes it from somewhere else.
+    for slug, rec in bind_meta.items():
+        if slug in meta:
+            continue
+        meta[slug] = {'nhd_name': rec.get('nhd_gnis_name'),
+                      'nhd_area_km2': safe_float(rec.get('nhd_acres')) / 247.105,
+                      'ftype': safe_int(rec.get('nhd_ftype'))}
+
+    slug_to_gnis = {s: g for g, ss in want_gnis.items() for s in ss}
 
     rows = {}
     for slug, grp in j.groupby('slug'):
@@ -317,11 +440,16 @@ def process_vpu(vpu, src, want_gnis, args):
             continue
         nxt, steps = walk_downstream(out_hs, dn_of, water_of, exclude=slug)
         g = grp.loc[grp['HydroSeq'] == out_hs].iloc[0]
-        gn = next((k for k, v in want_gnis.items() if slug in v), None)
-        m = meta.get(gn, {})
+        gn = slug_to_gnis.get(slug)
+        m = meta.get(slug, {})
         rows[slug] = {
             'slug': slug,
             'gnis': gn,
+            # HOW this water was found, travelling with the row rather than inferred later
+            # from whether `gnis` happens to be null. 'gnis' = joined on the registry's GNIS
+            # id; 'geometry' = joined on the Permanent_Identifier that match_waters_to_nhd.py
+            # measured by polygon overlap.
+            'match_via': slug_via.get(slug, 'gnis'),
             'vpu': vpu,
             'nhd_name': m.get('nhd_name'),
             'nhd_area_km2': round(safe_float(m.get('nhd_area_km2')), 4),
@@ -383,6 +511,12 @@ def main():
     ap.add_argument('--nhd', default=str(DEFAULT_NHD))
     ap.add_argument('--registry', default=None, help='defaults to <repo>/' + REGISTRY_REL)
     ap.add_argument('--out', default=None, help='defaults to <repo>/' + OUT_REL)
+    ap.add_argument('--bindings', default=None,
+                    help='registry/_nhd_bindings.json from match_waters_to_nhd.py; defaults to'
+                         ' the file beside the registry. Absent is not an error -- the run'
+                         ' falls back to the GNIS join alone and says so.')
+    ap.add_argument('--no-bindings', action='store_true',
+                    help='ignore the binding table entirely (the pre-2026-08-17 behaviour)')
     ap.add_argument('--only', nargs='*', help='VPU codes, e.g. --only 0305 0304')
     ap.add_argument('--write', action='store_true', help='actually write the json')
     ap.add_argument('--show', type=int, default=40,
@@ -426,6 +560,49 @@ def main():
         for g, s in sorted(dupes.items()):
             print(f'    {g}: {", ".join(s)}')
 
+    # --- the geometric binding table, for the waters GNIS cannot reach --------------------
+    have_gnis = {s for ss in want_gnis.values() for s in ss}
+    want_pid, bound_slugs = {}, {}
+    bpath = Path(args.bindings) if args.bindings else reg_path.parent / '_nhd_bindings.json'
+    if args.no_bindings:
+        print('  --no-bindings: GNIS join only')
+    elif not bpath.exists():
+        # NOT fatal. Falling back is correct; falling back SILENTLY is how you end up with a
+        # 283-water chain that reads as complete.
+        print(f'  NO BINDING TABLE at {bpath} -- GNIS join only, so waters whose registry id'
+              f' is a slug: placeholder cannot be placed at all.')
+        print('  Build it with:  py .\\scripts\\match_waters_to_nhd.py --write')
+    else:
+        try:
+            bnd = json.loads(bpath.read_text(encoding='utf-8')).get('bindings') or {}
+        except Exception as exc:
+            print(f'  binding table unreadable ({type(exc).__name__}: {exc}) -- GNIS join only')
+            bnd = {}
+        # NOT filtered by `slug in have_gnis`. An earlier version was, and it silently dropped
+        # the 18 waters that DO carry a registry GNIS id which simply is not in any geodatabase
+        # ("gnis 1303469 not found in any geodatabase read") but DO have a measured binding.
+        # Having an id that resolves to nothing is not the same as being placed, and the guard
+        # that matters is the precise one in process_vpu: skip a slug the GNIS join ACTUALLY
+        # PLACED, not one that merely holds a number.
+        skipped_pid = 0
+        for slug, rec in bnd.items():
+            if slug not in reg:
+                continue
+            p = norm_pid(rec.get('permanent_identifier'))
+            v = str(rec.get('vpu') or '').strip()
+            if not p or not v:
+                skipped_pid += 1
+                continue
+            want_pid.setdefault(v, {})[p] = (slug, rec)
+            bound_slugs[slug] = rec
+        no_id_bound = sum(1 for s in bound_slugs if s not in have_gnis)
+        print(f'  binding table: {len(bnd)} bound, {len(bound_slugs)} of them offered as a'
+              f' fallback ({no_id_bound} have no GNIS id at all), across VPUs'
+              f' {", ".join(sorted(want_pid))}')
+        if skipped_pid:
+            print(f'  {skipped_pid} binding(s) carry no usable identifier or VPU and were'
+                  f' left out')
+
     nhd_dir = Path(args.nhd)
     if not nhd_dir.exists():
         print(f'nhd dir not found: {nhd_dir}')
@@ -455,16 +632,16 @@ def main():
     for vpu, src in gdbs.items():
         print(f'\n-- {vpu}  {Path(src).name}')
         try:
-            got, note = process_vpu(vpu, str(src), want_gnis, args)
+            got, note = process_vpu(vpu, str(src), want_gnis, args, want_pid.get(vpu))
         except Exception as e:                      # a bad VPU must not lose the good ones
             got, note = {}, f'{vpu}: FAILED, {type(e).__name__}: {e}'
         notes.append(note)
         print('   ' + note)
         for slug, r in got.items():
             if slug in rows:                        # a water straddling two VPUs
-                keep = max(rows[slug], r, key=lambda x: x['flowlines'])
+                keep, why = prefer_row(rows[slug], r)
                 note2 = (f'{slug} appears in {rows[slug]["vpu"]} and {r["vpu"]},'
-                         f' kept {keep["vpu"]} (more flowlines)')
+                         f' kept {keep["vpu"]} ({why})')
                 notes.append(note2)
                 print('   ' + note2)
                 rows[slug] = keep
@@ -483,13 +660,27 @@ def main():
     for r in rows.values():
         r['upstream'].sort()
 
+    # WHY A WATER DID NOT PLACE, distinguishing the three cases rather than collapsing them.
+    # Before the binding table, 149 of 167 said "no gnis id in registry", which was true and
+    # useless -- it named the join that failed, not the water's actual situation, and read the
+    # same for a coastal composite that SHOULD never place as for blewett_falls_lake, which
+    # had a perfectly good binding nobody looked at. The third reason below is the one that
+    # earns its keep: it means the polygon was found and none of its flowlines are routed.
     unmatched = {}
     for slug in reg:
         if slug in rows:
             continue
         g = normalize_gnis(reg[slug].get('gnis'))
-        unmatched[slug] = ('no gnis id in registry' if g is None
-                           else f'gnis {g} not found in any geodatabase read')
+        if g is not None:
+            unmatched[slug] = f'gnis {g} not found in any geodatabase read'
+        elif slug in bound_slugs:
+            b = bound_slugs[slug]
+            unmatched[slug] = (
+                f'no gnis id; bound geometrically to {b.get("nhd_layer")}'
+                f' {b.get("permanent_identifier")} in {b.get("vpu")}, but no ROUTED flowline'
+                f' references it')
+        else:
+            unmatched[slug] = 'no gnis id in registry and no geometric binding'
 
     odd = [s2 for s2, r in rows.items() if r.get('side_channel')]
     if odd:
@@ -503,7 +694,25 @@ def main():
                   f'  ({r["drainage_km2"] / max(r["div_drainage_km2"], 1e-9):.0f}x)'
                   f'  order {r["stream_order"]}')
     suspect = [s2 for s2, r in rows.items() if r.get('foreign_flowline_suspected')]
+    via_geom = [s for s, r in rows.items() if r.get('match_via') == 'geometry']
     print(f'\n== placed {len(rows)} of {len(reg)} waters; {len(unmatched)} unplaced')
+    print(f'   on the registry GNIS id:      {len(rows) - len(via_geom)}')
+    print(f'   on the geometric binding:     {len(via_geom)}')
+    # The gap between "offered" and "placed" is the whole answer to whether NHDFlowline's
+    # WBArea_Permanent_Identifier reaches NHDArea features. Printed rather than assumed.
+    #
+    # SCOPED TO THE VPUs ACTUALLY READ. Under --only 0304 the unscoped version reported
+    # "offered 122, of which 105 had no routed flowline", and 105 of those were simply filed
+    # under basins this run never opened. A count that includes what was not looked at is not a
+    # measurement, and reading it as one would have condemned the NHDArea join on no evidence.
+    in_scope = {s: b for s, b in bound_slugs.items() if str(b.get('vpu') or '') in gdbs}
+    if in_scope:
+        stuck = [s for s in in_scope if s not in rows]
+        print(f'   offered by the binding table: {len(in_scope)} in the VPU(s) read,'
+              f' of which {len(stuck)} had no routed flowline')
+        if len(bound_slugs) != len(in_scope):
+            print(f'   ({len(bound_slugs) - len(in_scope)} more are filed under basins this run'
+                  f' did not open and are NOT counted above)')
     if suspect:
         print(f'   {len(suspect)} polygon(s) contain flowlines draining more than twice what')
         print('   their own outlet does -- they have probably clipped a river they are not on:')
@@ -517,7 +726,14 @@ def main():
     print(f'   terminal within their VPU:   {len(terminal)}')
 
     out = {'_meta': {'source': 'NHDPlus HR', 'direction': 'HydroSeq decreases downstream',
-                     'vpus': list(gdbs), 'notes': notes},
+                     'vpus': list(gdbs),
+                     # So a consumer can tell a 283-water chain built without the binding
+                     # table from a 283-water chain that is genuinely all there is.
+                     'matched_on': ('gnis id, then geometric binding' if bound_slugs
+                                    else 'gnis id only'),
+                     'placed_via_gnis': len(rows) - len(via_geom),
+                     'placed_via_geometry': len(via_geom),
+                     'notes': notes},
            'waters': rows, 'unmatched': unmatched}
 
     if args.write:

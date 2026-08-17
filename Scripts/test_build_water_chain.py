@@ -149,3 +149,47 @@ eq(bwc.walk_downstream(900, dn_of, water_of, 'norman')[0], 'wylie', 'walk crosse
 eq(bwc.walk_downstream(700, dn_of, water_of, 'wylie')[0], 'wateree', 'and keeps going')
 
 print('NaN regression assertions pass')
+
+
+# --- prefer_row: one water placed in two VPUs -------------------------------------------------
+# process_vpu's "the GNIS join already claimed this slug" guard is PER-VPU. A water placed on its
+# id in one basin can still be offered as a binding in the next, and the 283 waters validated
+# against USACE surveyed drainage have to win that tie whatever the flowline counts say.
+_g = {'match_via': 'gnis', 'flowlines': 2, 'vpu': '0305'}
+_b = {'match_via': 'geometry', 'flowlines': 99, 'vpu': '0304'}
+assert bwc.prefer_row(_g, _b) == (_g, 'GNIS beats geometry'), 'GNIS must win with FEWER flowlines'
+assert bwc.prefer_row(_b, _g) == (_g, 'GNIS beats geometry'), 'and win from either argument side'
+_b2 = dict(_b, flowlines=1)
+assert bwc.prefer_row(_g, _b2) == (_g, 'GNIS beats geometry'), 'and win with more, too'
+
+# same provenance on both sides: more flowlines means more of the water is in that VPU
+_g2 = {'match_via': 'gnis', 'flowlines': 7, 'vpu': '0301'}
+assert bwc.prefer_row(_g, _g2) == (_g2, 'more flowlines')
+assert bwc.prefer_row(_g2, _g) == (_g2, 'more flowlines')
+_bb = {'match_via': 'geometry', 'flowlines': 3, 'vpu': '0303'}
+assert bwc.prefer_row(_b, _bb) == (_b, 'more flowlines')
+
+# a tie keeps the row already held, so the merge is stable rather than order-dependent
+_t1 = {'match_via': 'gnis', 'flowlines': 4, 'vpu': '0305'}
+_t2 = {'match_via': 'gnis', 'flowlines': 4, 'vpu': '0304'}
+assert bwc.prefer_row(_t1, _t2)[0] is _t1, 'an exact tie must not flip'
+print('prefer_row assertions pass')
+
+
+# --- norm_pid: the join key, normalised on both sides -----------------------------------------
+# _nhd_bindings.json holds {45FC7FCA-...} and {d7218688-...} in opposite casings, read from the
+# same geodatabases by the same code. A dict keyed on the raw string is one casing away from
+# reporting "this lake has no flowlines" about a lake with plenty.
+assert bwc.norm_pid('{D7218688-637B-48BC-87E8-6485082D8569}') == \
+       bwc.norm_pid('{d7218688-637b-48bc-87e8-6485082d8569}')
+assert bwc.norm_pid('{ABC}') == bwc.norm_pid('abc'), 'braces are packaging, not identity'
+assert bwc.norm_pid('110970920') == '110970920', 'a digit id is left alone'
+assert bwc.norm_pid('  110970920  ') == '110970920'
+assert bwc.norm_pid(None) is None
+assert bwc.norm_pid('') is None
+assert bwc.norm_pid('   ') is None, 'whitespace is not an identifier -- the Number("") family'
+assert bwc.norm_pid('{}') is None, \
+    'an empty GUID is not an identifier, and two of them must not join to each other'
+assert bwc.norm_pid('{') == '{', 'a lone brace is not a wrapper'
+assert bwc.norm_pid(110970920) == '110970920', 'a numeric id from the GDB still keys correctly'
+print('norm_pid assertions pass')

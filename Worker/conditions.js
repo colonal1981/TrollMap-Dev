@@ -1601,22 +1601,69 @@ export function activeRunForWater(runs, basinId, waterName, gaugeNames = [], bas
  * Marion and is not adjacent to it at all. Bridgewater, Oxford and Cowans Ford appear in no lake
  * name, so guessing was never going to work.
  *
- * ADJACENCY IS THE WHOLE POINT. Only the waters in chain[slug].upstream count as inflow, so a
- * release two dams up is left unlabelled rather than credited to a neighbour it did not come from.
- * A row that matches nothing stays null; Lake Hickory's upstream list includes old_millpond and
- * shuford_pond, which have no powerhouse.
+ * WHAT COUNTS AS "ABOVE" -- and why this is a WALK and not chain[slug].upstream.
+ *
+ * The first working version read chain[slug].upstream directly, and it was right for the wrong
+ * reason. water_chain.json held 283 of 450 waters because it matched on GNIS id alone, and
+ * almost every river was among the 167 it missed. With the rivers absent, two reservoirs with a
+ * river between them appeared ADJACENT, so an adjacency test happened to give the right answer.
+ *
+ * Reading _nhd_bindings.json added 140 waters, 47 of them river reaches, and the accident ended:
+ *
+ *     before   wateree_lake -> lake_marion
+ *     after    wateree_lake -> wateree_river -> lake_marion
+ *
+ * Nothing about the water moved; the chain merely stopped omitting the river it runs through.
+ * Under an adjacency test Lake Marion would have gone from correctly labelling a Wateree release
+ * as inflow to labelling nothing at all -- a fuller map making the answer worse, which is the
+ * surest sign the rule was wrong rather than the data.
+ *
+ * THE RULE, stated the way Ryan states it: a release is inflow if the water it comes from drains
+ * INTO this one WITHOUT BEING CAUGHT BY ANOTHER IMPOUNDMENT ON THE WAY. So walk `downstream`
+ * from the releasing water and stop at the first water that owns a dam of its own. A river reach
+ * has no dam, so it is transparent; a reservoir has one, so it is opaque.
+ *
+ * That subsumes the adjacency rule instead of bolting onto it, and it still refuses the case
+ * adjacency was introduced to refuse: Cedar Creek -> wateree_lake -> lake_marion stops dead at
+ * Wateree, because Wateree impounds a dam. Cedar Creek is two dams above Marion and a release
+ * there reaches Marion only as whatever Wateree chooses to pass on, which is Wateree's release,
+ * not Cedar Creek's. It is also correct against the OLD published chain, where the walk finds
+ * lake_marion in one hop -- so this can deploy before or after the fuller chain.
+ *
+ * A row that matches no dam stays null. Lake Hickory's feeders include old_millpond and
+ * shuford_pond, which have no powerhouse and never appear in a release payload at all.
  */
+
+// A reservoir and the next one down are separated by a handful of river reaches at most. The cap
+// is a runaway guard for a malformed or cyclic chain, not a tuning knob -- the real stop is
+// hitting a water that impounds a dam.
+const RELEASE_WALK_MAX_HOPS = 12;
+
 export function releaseDirection(rows, { slug, chain, damOwner } = {}) {
   const list = Array.isArray(rows) ? rows : [];
   const owner = damOwner || {};
-  const node = (chain && chain[slug]) || null;
-  const above = new Set((node && Array.isArray(node.upstream)) ? node.upstream : []);
+  const nodes = chain || {};
+  // Every water that impounds a dam anyone publishes. These are what stop the walk, and the set
+  // comes from the dam table rather than from a feature type: "does something dam this water" is
+  // the question, and the dam table is the only thing that actually answers it.
+  const impounds = new Set(Object.values(owner).filter(Boolean));
+
+  const drainsInto = (from) => {
+    let at = nodes[from] && nodes[from].downstream;
+    for (let hop = 0; at && hop < RELEASE_WALK_MAX_HOPS; hop += 1) {
+      if (at === slug) return true;         // arrived, uninterrupted
+      if (impounds.has(at)) return false;   // caught by another dam first
+      at = nodes[at] && nodes[at].downstream;
+    }
+    return false;
+  };
+
   return list.map((r) => {
     const key = normalizeDamName(r && r.dam);
     const who = key ? owner[key] : null;
     if (!who) return { ...r, direction: null, from: null };
     if (who === slug) return { ...r, direction: 'outflow', from: slug };
-    if (above.has(who)) return { ...r, direction: 'inflow', from: who };
+    if (drainsInto(who)) return { ...r, direction: 'inflow', from: who };
     return { ...r, direction: null, from: null };
   });
 }

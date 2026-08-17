@@ -235,3 +235,248 @@ assert _lo['side_channel'] is True, 'THE RATIO identifies it: 21,302 upstream vs
 assert _lo['local_drainage_km2'] == 25.2, 'its own catchment'
 assert _r3['wateree_lake']['on_divergent_path'] is False, 'and is not divergent'
 print('divergent side-channel assertions pass')
+
+
+# ==========================================================================================
+# THE GEOMETRIC BINDING PATH, added 2026-08-17.
+#
+# The GNIS join placed 283 of 450 waters. 149 of the 167 it gave up on said "no gnis id in
+# registry" -- their registry id is a synthetic 'slug:<slug>'. blewett_falls_lake was one:
+# Duke publishes it, it has a Duke dam, and releaseDirection() returned null for every release
+# because the chain had no node. _nhd_bindings.json already held its Permanent_Identifier.
+#
+# THE RISK THIS SECTION EXISTS TO RULE OUT is not "does the new path work" -- it is "did the
+# new path move a water that already worked". The 283 were validated against USACE surveyed
+# drainage at a median disagreement of 0.2%; if a binding can steal a polygon from a
+# GNIS-placed water, that validation stops meaning anything. So the FIRST test is equality.
+# ==========================================================================================
+import copy as _copy
+
+_BASE, _ = bwc.process_vpu('0305', 'fake.gdb', want, None)
+_BASE = _copy.deepcopy(_BASE)
+
+# every water the GNIS join places must report how it was placed
+for _s, _r in _BASE.items():
+    assert _r['match_via'] == 'gnis', f'{_s} placed on GNIS but says {_r["match_via"]}'
+    assert _r['gnis'], f'{_s} placed on GNIS but carries no id'
+
+# --- three waters that GNIS cannot reach, each routing into lake_james -------------------
+#  * blewett  -- a real NHDWaterbody row whose GNIS_ID is null, exactly like the real Blewett
+#  * area_riv -- NO waterbody row at all, only a flowline. This is the NHDArea case: 47 of the
+#                140 rescued waters are rivers bound to NHDArea, a layer this script never
+#                reads, and NHDFlowline.WBArea_Permanent_Identifier references either layer.
+#  * braced   -- the identifier is a GUID, braced, and the two sides DISAGREE ON CASE, which
+#                _nhd_bindings.json genuinely does within one file.
+_EXTRA_FL = [(1105.0, 'wb_blewett_nogniis'), (1110.0, 'area_120006810'),
+             (1115.0, '{D7218688-637B-48BC-87E8-6485082D8569}')]
+_bind_vaa, _bind_fl = [], []
+_nid = 9500
+for _hs, _pid in _EXTRA_FL:
+    _bind_vaa.append({'NHDPlusID': _nid, 'HydroSeq': _hs, 'DnHydroSeq': 1000.0,
+                      'LevelPathI': 5823.0, 'TotDASqKm': 42.0, 'StreamOrde': 3.0,
+                      'Divergence': 0.0, 'DivDASqKm': 42.0})
+    _bind_fl.append({'NHDPlusID': _nid, 'WBArea_Permanent_Identifier': _pid})
+    _nid += 1
+# the waterbody row for blewett only -- with a NULL GNIS id, which is why GNIS cannot see it
+_bind_wb = [{'Permanent_Identifier': 'wb_blewett_nogniis', 'GNIS_ID': None,
+             'GNIS_Name': None, 'AreaSqKm': 8.78, 'FType': 390}]
+# a polygon that would drag lake_norman's outlet a long way downstream if a binding were ever
+# allowed to claim a slug the GNIS join already placed
+_bind_vaa.append({'NHDPlusID': _nid, 'HydroSeq': 800.0, 'DnHydroSeq': 795.0,
+                  'LevelPathI': 1.0, 'TotDASqKm': 88888.0, 'StreamOrde': 9.0,
+                  'Divergence': 0.0, 'DivDASqKm': 88888.0})
+_bind_fl.append({'NHDPlusID': _nid, 'WBArea_Permanent_Identifier': 'wb_intruder'})
+
+_WANT_PID = {
+    'wb_blewett_nogniis': ('blewett_falls_lake', {
+        'nhd_layer': 'NHDWaterbody', 'nhd_gnis_name': None, 'nhd_acres': 2170.6,
+        'nhd_ftype': 390, 'permanent_identifier': 'wb_blewett_nogniis', 'vpu': '0305'}),
+    'area_120006810': ('catawba_river', {
+        'nhd_layer': 'NHDArea', 'nhd_gnis_name': 'Catawba River', 'nhd_acres': 2650.0,
+        'nhd_ftype': 460, 'permanent_identifier': 'area_120006810', 'vpu': '0305'}),
+    # the binding's casing is LOWER, the geodatabase's is UPPER. Same feature.
+    '{d7218688-637b-48bc-87e8-6485082d8569}': ('catawba_river_2', {
+        'nhd_layer': 'NHDArea', 'nhd_gnis_name': 'Catawba River', 'nhd_acres': 643.0,
+        'nhd_ftype': 460, 'permanent_identifier': '{d7218688-637b-48bc-87e8-6485082d8569}',
+        'vpu': '0305'}),
+    # THE ONE THAT MUST BE REFUSED: lake_norman is already placed on its GNIS id.
+    'wb_intruder': ('lake_norman', {
+        'nhd_layer': 'NHDWaterbody', 'nhd_gnis_name': 'Impostor', 'nhd_acres': 1.0,
+        'nhd_ftype': 390, 'permanent_identifier': 'wb_intruder', 'vpu': '0305'}),
+}
+# main() normalises the binding keys before handing them over; do the same here.
+_WANT_PID = {bwc.norm_pid(k): v for k, v in _WANT_PID.items()}
+
+_sv, _sf, _sw = VAA, FL, WB
+globals()['VAA'] = pd.concat([VAA, pd.DataFrame(_bind_vaa)], ignore_index=True)
+globals()['FL'] = pd.concat([FL, pd.DataFrame(_bind_fl)], ignore_index=True)
+globals()['WB'] = pd.concat([WB, pd.DataFrame(_bind_wb)], ignore_index=True)
+_RB, _note_b = bwc.process_vpu('0305', 'fake.gdb', want, None, _WANT_PID)
+globals()['VAA'], globals()['FL'], globals()['WB'] = _sv, _sf, _sw
+print('[bindings] note:', _note_b)
+
+# --- 1. NOTHING THAT ALREADY PLACED MOVED ------------------------------------------------
+for _s in _BASE:
+    assert _s in _RB, f'{_s} placed without bindings and vanished with them'
+    assert _RB[_s] == _BASE[_s], (
+        f'{_s} CHANGED when the binding table was added:\n'
+        f'  before {_BASE[_s]}\n  after  {_RB[_s]}')
+print('the GNIS-placed waters are byte-identical with the binding table on:', len(_BASE))
+
+# --- 2. a binding may NOT claim a slug the GNIS join already placed ----------------------
+assert _RB['lake_norman']['drainage_km2'] < 80000, \
+    'wb_intruder was allowed to claim lake_norman -- the slug guard is not holding'
+assert _RB['lake_norman']['flowlines'] == 2, 'lake_norman kept only its own two polygons'
+assert _RB['lake_norman']['match_via'] == 'gnis'
+
+# --- 3. blewett: a real waterbody row whose GNIS_ID is null ------------------------------
+_bl = _RB['blewett_falls_lake']
+assert _bl['match_via'] == 'geometry', _bl['match_via']
+assert _bl['gnis'] is None, 'a water placed geometrically has no GNIS id to report'
+assert _bl['downstream'] == 'lake_james', _bl['downstream']
+assert _bl['nhd_ftype'] == 390, _bl['nhd_ftype']
+# meta comes off the BINDING RECORD, because a null GNIS_ID means the polygon never lands in
+# `hit` -- which is the whole reason GNIS could not place it in the first place. The fixture's
+# waterbody row says AreaSqKm 8.78 and the record says 2170.6 acres = 8.7841 km2, which round
+# differently at four places ON PURPOSE, so this asserts WHICH SOURCE was read and not merely
+# that some number arrived.
+assert _bl['nhd_area_km2'] == round(2170.6 / 247.105, 4), _bl['nhd_area_km2']
+assert _bl['nhd_area_km2'] != 8.78, 'that is the polygon column, not the binding record'
+
+# --- 4. NHDArea: a pid with no waterbody row at all --------------------------------------
+_cr = _RB['catawba_river']
+assert _cr['match_via'] == 'geometry'
+assert _cr['downstream'] == 'lake_james', _cr['downstream']
+assert _cr['nhd_ftype'] == 460, 'the FType travels on the binding record, not the wb layer'
+assert _cr['nhd_name'] == 'Catawba River', _cr['nhd_name']
+assert _cr['nhd_area_km2'] == round(2650.0 / 247.105, 4), _cr['nhd_area_km2']
+
+# --- 5. the identifier is a GUID and the two sides disagree on case ----------------------
+assert 'catawba_river_2' in _RB, (
+    'a braced GUID in UPPER case in the geodatabase did not join a binding written in lower '
+    'case -- norm_pid is not being applied on both sides')
+assert _RB['catawba_river_2']['downstream'] == 'lake_james'
+
+# --- 6. and with no binding table at all, the old behaviour is exactly the old behaviour --
+_sv, _sf, _sw = VAA, FL, WB
+globals()['VAA'] = pd.concat([VAA, pd.DataFrame(_bind_vaa)], ignore_index=True)
+globals()['FL'] = pd.concat([FL, pd.DataFrame(_bind_fl)], ignore_index=True)
+globals()['WB'] = pd.concat([WB, pd.DataFrame(_bind_wb)], ignore_index=True)
+_RN, _ = bwc.process_vpu('0305', 'fake.gdb', want, None, None)
+globals()['VAA'], globals()['FL'], globals()['WB'] = _sv, _sf, _sw
+assert set(_RN) == set(_BASE), 'want_pid=None must place exactly the GNIS set'
+for _s in _BASE:
+    assert _RN[_s] == _BASE[_s], f'{_s} differs with want_pid=None'
+print('want_pid=None reproduces the GNIS-only run exactly')
+
+print('binding-path assertions pass:', len(_RB), 'waters,',
+      sum(1 for r in _RB.values() if r['match_via'] == 'geometry'), 'of them geometric')
+
+
+# --- main() with a binding table ON DISK, which is the path Ryan actually runs -------------
+# Exercising process_vpu directly proves the join. It does NOT prove that main() finds
+# _nhd_bindings.json, filters it to the right VPU, normalises the keys, or reports honestly --
+# and the last command handed over untested blew up on a NameError in exactly that gap.
+_REG = {slug: {'gnis': 'gnis:' + g} for slug, g in CHAIN}
+_REG['blewett_falls_lake'] = {'gnis': 'slug:blewett_falls_lake'}
+_REG['catawba_river'] = {'gnis': 'slug:catawba_river'}
+_REG['catawba_river_2'] = {'gnis': 'slug:catawba_river_2'}
+_REG['coast_savannah_ga'] = {'gnis': 'slug:coast_savannah_ga'}   # bound by nothing, by design
+_BINDINGS = {'bindings': {
+    'blewett_falls_lake': {'slug': 'blewett_falls_lake', 'vpu': '0305',
+                           'permanent_identifier': 'wb_blewett_nogniis',
+                           'nhd_layer': 'NHDWaterbody', 'nhd_gnis_name': None,
+                           'nhd_acres': 2170.6, 'nhd_ftype': 390},
+    'catawba_river': {'slug': 'catawba_river', 'vpu': '0305',
+                      'permanent_identifier': 'area_120006810', 'nhd_layer': 'NHDArea',
+                      'nhd_gnis_name': 'Catawba River', 'nhd_acres': 2650.0,
+                      'nhd_ftype': 460},
+    'catawba_river_2': {'slug': 'catawba_river_2', 'vpu': '0305',
+                        'permanent_identifier': '{d7218688-637b-48bc-87e8-6485082d8569}',
+                        'nhd_layer': 'NHDArea', 'nhd_gnis_name': 'Catawba River',
+                        'nhd_acres': 643.0, 'nhd_ftype': 460},
+    # a binding for a DIFFERENT VPU must not be offered to 0305
+    'lake_somewhere_else': {'slug': 'lake_somewhere_else', 'vpu': '0601',
+                            'permanent_identifier': 'wb_blewett_nogniis',
+                            'nhd_layer': 'NHDWaterbody', 'nhd_acres': 5.0, 'nhd_ftype': 390},
+    # a binding with no identifier at all must be counted and dropped, not crash
+    'lake_no_pid': {'slug': 'lake_no_pid', 'vpu': '0305', 'permanent_identifier': None,
+                    'nhd_layer': 'NHDWaterbody', 'nhd_acres': 5.0, 'nhd_ftype': 390},
+    # a binding for a water that is not in the registry at all must be ignored
+    'lake_not_in_registry': {'slug': 'lake_not_in_registry', 'vpu': '0305',
+                             'permanent_identifier': 'wb_ghost',
+                             'nhd_layer': 'NHDWaterbody', 'nhd_acres': 5.0, 'nhd_ftype': 390},
+}}
+_REG['lake_somewhere_else'] = {'gnis': 'slug:lake_somewhere_else'}
+_REG['lake_no_pid'] = {'gnis': 'slug:lake_no_pid'}
+
+
+def _run_main(with_bindings=True, extra_argv=()):
+    _sv2, _sf2, _sw2 = VAA, FL, WB
+    globals()['VAA'] = pd.concat([VAA, pd.DataFrame(_bind_vaa)], ignore_index=True)
+    globals()['FL'] = pd.concat([FL, pd.DataFrame(_bind_fl)], ignore_index=True)
+    globals()['WB'] = pd.concat([WB, pd.DataFrame(_bind_wb)], ignore_index=True)
+    try:
+        with _tf.TemporaryDirectory() as t:
+            root = _P(t); (root / 'registry').mkdir()
+            (root / 'registry' / 'lake_index.json').write_text(_json.dumps(_REG))
+            if with_bindings:
+                (root / 'registry' / '_nhd_bindings.json').write_text(_json.dumps(_BINDINGS))
+            nhd = root / 'nhd'; nhd.mkdir()
+            (nhd / 'NHDPLUS_H_0305_HU4_GDB.zip').write_text('x')
+            out = root / 'registry' / 'water_chain.json'
+            sys.argv = ['x', '--registry', str(root / 'registry' / 'lake_index.json'),
+                        '--nhd', str(nhd), '--only', '0305', '--write', '--out', str(out),
+                        *extra_argv]
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = bwc.main()
+            return rc, buf.getvalue(), _json.loads(out.read_text())
+    finally:
+        globals()['VAA'], globals()['FL'], globals()['WB'] = _sv2, _sf2, _sw2
+
+
+_rc, _txt, _doc = _run_main()
+assert _rc == 0, _txt[-800:]
+_w = _doc['waters']
+assert 'blewett_falls_lake' in _w, 'main() did not reach the binding table\n' + _txt[-800:]
+assert _w['blewett_falls_lake']['downstream'] == 'lake_james'
+assert _w['blewett_falls_lake']['match_via'] == 'geometry'
+assert _w['catawba_river']['match_via'] == 'geometry'
+assert _w['catawba_river_2']['match_via'] == 'geometry', 'the braced GUID did not survive main()'
+for _s, _g in CHAIN:
+    assert _w[_s]['match_via'] == 'gnis', _s
+assert 'blewett_falls_lake' in _w['lake_james']['upstream'], _w['lake_james']['upstream']
+
+# a binding filed under 0601 must not be handed to the 0305 reader even though its identifier
+# would have matched -- a pid is only unique within its own VPU
+assert 'lake_somewhere_else' not in _w, 'a 0601 binding leaked into the 0305 run'
+assert 'lake_somewhere_else' in _doc['unmatched']
+
+# the three kinds of "did not place" must read differently
+_u = _doc['unmatched']
+assert _u['coast_savannah_ga'] == 'no gnis id in registry and no geometric binding', \
+    _u['coast_savannah_ga']
+assert _u['lake_no_pid'] == 'no gnis id in registry and no geometric binding', _u['lake_no_pid']
+assert 'lake_not_in_registry' not in _u and 'lake_not_in_registry' not in _w
+
+assert _doc['_meta']['matched_on'] == 'gnis id, then geometric binding', _doc['_meta']
+assert _doc['_meta']['placed_via_gnis'] == len(CHAIN), _doc['_meta']
+assert _doc['_meta']['placed_via_geometry'] == 3, _doc['_meta']
+assert 'carry no usable identifier' in _txt, 'the dropped binding was not reported'
+print('main() with a binding table on disk: assertions pass')
+
+# --- and the two fallbacks, which must be loud rather than silent --------------------------
+_rc2, _txt2, _doc2 = _run_main(with_bindings=False)
+assert _rc2 == 0, _txt2[-500:]
+assert set(_doc2['waters']) == {s for s, _ in CHAIN}, 'no binding file must mean GNIS only'
+assert 'NO BINDING TABLE' in _txt2, 'a missing binding table must say so'
+assert _doc2['_meta']['matched_on'] == 'gnis id only', _doc2['_meta']
+assert _doc2['unmatched']['blewett_falls_lake'] == \
+    'no gnis id in registry and no geometric binding'
+
+_rc3, _txt3, _doc3 = _run_main(extra_argv=('--no-bindings',))
+assert _rc3 == 0, _txt3[-500:]
+assert set(_doc3['waters']) == {s for s, _ in CHAIN}, '--no-bindings must mean GNIS only'
+assert _doc3['waters'] == _doc2['waters'], '--no-bindings and no file must agree exactly'
+print('both fallbacks assertions pass')
