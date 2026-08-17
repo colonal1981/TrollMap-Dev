@@ -60,6 +60,7 @@
  * client-side JavaScript. This is the authoritative source and it is a different agency.
  */
 import { CORS, JSON_HEADERS, r2Text } from './worker-core.js';
+import { waterChain, damTable } from './registry.js';
 // RIVERS and lakeKeyFromName came out with dukeBasinFor: the basin is resolved from Duke's own
 // /rivers/get-rivers roster now, so this file no longer reads the six-entry hand table at all.
 import { dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun,
@@ -1193,6 +1194,11 @@ export function releaseShape({ duke, dukeRun, tva, operator } = {}) {
   // datetime field itself, and dropping those rows would turn a stated zero into silence. Today
   // that is Lake Wateree's entire answer, three days running.
   if (Array.isArray(dukeRun) && dukeRun.length) {
+    // INFLOW IS THE ONE WORTH FISHING. The dam above pushes water and bait onto the upper end;
+    // the lake's own dam draws the pool down and, on a body this size, may not be noticeable.
+    // Split rather than ranked, because which one matters depends on which end you are on.
+    const inflow = dukeRun.filter((r) => r.direction === 'inflow');
+    const outflow = dukeRun.filter((r) => r.direction === 'outflow');
     return {
       kind: 'scheduled',
       operator: 'Duke Energy',
@@ -1200,6 +1206,9 @@ export function releaseShape({ duke, dukeRun, tva, operator } = {}) {
       last_updated: null,
       next: dukeRun.find((r) => !r.no_release) || dukeRun[0] || null,
       items: dukeRun.slice(0, 6),
+      inflow: inflow.length ? inflow.slice(0, 6) : null,
+      outflow: outflow.length ? outflow.slice(0, 6) : null,
+      inflow_from: (inflow[0] && inflow[0].from) || null,
       all_no_release: dukeRun.every((r) => r.no_release),
       source: 'https://api.hydro-derived.duke-energy.app/rivers/active-run',
     };
@@ -2728,6 +2737,29 @@ async function waterBlock(b, lat, lon, env) {
                         basin, b.display_name || b.slug, gaugeNames, basinRow)
     : [];
 
+  // WHICH SIDE OF THIS LAKE EACH RELEASE CAME FROM.
+  //
+  // activeRunForWater already returns BOTH dams that matter to a reservoir -- the gauge bindings
+  // carry both, so wateree_lake arrives holding Cedar Creek's dam and its own. Until now nothing
+  // said which was which, and releaseShape's own note admitted it.
+  //
+  // Ryan: "for wateree if fishing north end then cedar creek dam release would flow down into
+  // the lake... for the south end water leaving the wateree dam may cause a slight current".
+  //
+  // Both lookups are per-isolate cached for an hour, so this costs one R2 read per hour, not
+  // one per request. FAILURE IS NOT FATAL: an unpublished chain or dam table leaves every row
+  // unlabelled, which is exactly what the app showed yesterday, rather than losing the schedule
+  // altogether. A release with no direction is still a release.
+  let dukeRunLabelled = dukeRun;
+  if (dukeRun.length && b.slug) {
+    try {
+      const [chain, dams] = await Promise.all([waterChain(env), damTable(env)]);
+      dukeRunLabelled = releaseDirection(dukeRun, { slug: b.slug, chain, damOwner: dams });
+    } catch (err) {
+      out.releases_direction_unavailable = String((err && err.message) || err);
+    }
+  }
+
   // A hand-typed basin id has to prove itself before it is allowed to describe this river.
   // Refused rather than dropped: a projection that was rejected and one that was never
   // available are different facts, and only the first one names a table that needs fixing.
@@ -2797,7 +2829,8 @@ async function waterBlock(b, lat, lon, env) {
          + `name with ${b.display_name || b.slug} or with the gauges bound to it.`,
     };
   }
-  out.releases = releaseShape({ duke, dukeRun, tva: out.tva, operator: out.operator });
+  out.releases = releaseShape({ duke, dukeRun: dukeRunLabelled, tva: out.tva,
+                               operator: out.operator });
 
   // WHAT IS SHUT, AND WHY THE WATER IS WHERE IT IS.
   //

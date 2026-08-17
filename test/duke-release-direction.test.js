@@ -9,7 +9,7 @@
 // ones bound to each water in registry/water_bindings.json.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { releaseDirection, normalizeDamName } from '../Worker/conditions.js';
+import { releaseDirection, normalizeDamName, releaseShape } from '../Worker/conditions.js';
 
 // water_chain.json, upstream lists verbatim.
 const CHAIN = {
@@ -120,4 +120,48 @@ test('Duke spellings all resolve through the table', () => {
   for (const d of Object.keys(OWNER)) {
     assert.ok(OWNER[normalizeDamName(d)], `${d} must normalise onto its own key`);
   }
+});
+
+
+// ── what the app actually receives ───────────────────────────────────────────────────────────
+const labelled = (slug) => releaseDirection(
+  [{ dam: 'cedar creek', date: '08/19/26', no_release: false, units: 2 },
+   { dam: 'wateree', date: '08/19/26', no_release: true }],
+  { slug, chain: CHAIN, damOwner: OWNER });
+
+test('releaseShape splits a reservoir\'s two dams rather than ranking them', () => {
+  const shape = releaseShape({ dukeRun: labelled('wateree_lake') });
+  assert.equal(shape.kind, 'scheduled');
+  assert.equal(shape.inflow.length, 1);
+  assert.equal(shape.inflow[0].dam, 'cedar creek');
+  assert.equal(shape.inflow_from, 'cedar_creek_reservoir_2');
+  assert.equal(shape.outflow.length, 1);
+  assert.equal(shape.outflow[0].dam, 'wateree');
+  // Which one matters depends on which end you are fishing, so both survive whole.
+  assert.equal(shape.items.length, 2, 'the full schedule is still there');
+});
+
+test('a no-release day keeps its direction', () => {
+  const shape = releaseShape({ dukeRun: labelled('wateree_lake') });
+  assert.equal(shape.outflow[0].no_release, true,
+    'Duke saying "no flow release" is a stated zero, and it is still the lake\'s own dam');
+});
+
+test('an unlabelled row still yields a schedule', () => {
+  // The chain or the dam table may be unpublished. That must degrade to what the app showed
+  // before any of this existed -- a release with no direction -- not to no release at all.
+  const shape = releaseShape({ dukeRun: [{ dam: 'Some Dam Nobody Bound', date: '08/19/26' }] });
+  assert.equal(shape.kind, 'scheduled');
+  assert.equal(shape.items.length, 1);
+  assert.equal(shape.inflow, null);
+  assert.equal(shape.outflow, null);
+  assert.equal(shape.inflow_from, null);
+});
+
+test('a river reach gets neither, because a lake is not a river', () => {
+  // lake_marion is two dams below Cedar Creek; only Wateree is adjacent to it.
+  const shape = releaseShape({ dukeRun: labelled('lake_marion') });
+  assert.equal(shape.inflow.length, 1);
+  assert.equal(shape.inflow[0].dam, 'wateree');
+  assert.equal(shape.outflow, null, 'Marion\'s own dam is not Duke\'s and is not in the table');
 });
