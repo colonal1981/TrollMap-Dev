@@ -428,6 +428,36 @@ function cardHtml(rec, c) {
       + (items.length ? `<br>${items.map(esc).join('<br>')}` : '')));
   }
 
+  // WHY THE WATER IS WHERE IT IS, immediately under the schedule it explains. Lake Wateree reads
+  // "No Flow Release" three days running because the basin is in Stage 2 of the Low Inflow
+  // Protocol and recreation flows are suspended under Stage 2. The zero without the reason is a
+  // number nobody can act on.
+  if (c.droughtNotice) {
+    const d = c.droughtNotice;
+    out.push(row('Drought status',
+      `<b>${d.stage != null ? `Low Inflow Protocol — Stage ${d.stage}` : 'Low Inflow Protocol'}</b>`
+      + (d.suspends_recreation_flows
+        ? '<span class="cond-sub"> — recreation flow releases are SUSPENDED under this stage, '
+          + 'which is why the schedule reads no release.</span>'
+        : '')
+      + `<br><span class="cond-sub">${esc(d.text).replace(/\n/g, '<br>')}</span>`
+      + (d.last_updated ? `<span class="cond-sub"><br>Duke, updated ${esc(String(d.last_updated).slice(0, 10))}</span>` : '')));
+  }
+
+  // A CLOSED RAMP IS A TRIP THAT DOES NOT HAPPEN. Duke names the alternates when it shuts one:
+  // "Buck Hill Access Area will close ... Please use alternate sites, such as Colonels Creek or
+  // White Oak Creek."
+  if (c.accessAlerts && c.accessAlerts.length) {
+    const lines = c.accessAlerts.slice(0, 6).map((a) => {
+      const link = (a.links || [])[0];
+      return `<b>${esc(a.place || a.water || 'Access area')}</b>`
+           + `<br><span class="cond-sub">${esc(a.text).replace(/\n/g, '<br>')}</span>`
+           + (link ? `<br><span class="cond-sub"><a href="${esc(link)}" target="_blank" rel="noopener">source</a></span>` : '');
+    }).join('<br>');
+    out.push(row(`Access (${c.accessAlerts.length})`, lines
+      + '<span class="cond-sub"><br>Duke Energy access alerts. Applies only to areas Duke manages.</span>'));
+  }
+
   if (c.releasesRefused) {
     const r = c.releasesRefused;
     out.push(row('Releases', `<span class="cond-sub">refused — ${esc(r.why || '')}</span>`));

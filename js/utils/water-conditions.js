@@ -128,6 +128,10 @@ export function readConditions(j) {
     clarityNote: null,
     releases: null,
     releasesRefused: null,
+    // WHAT IS SHUT AND WHY THE WATER IS LOW. Both come off Duke's access-alerts, and the second
+    // is the reason behind a number already on the card.
+    accessAlerts: [],
+    droughtNotice: null,
     currentKn: null,
     currentType: null,
     currentAt: null,
@@ -423,6 +427,11 @@ export function readConditions(j) {
     ? w.unpublished_parameters : null;
 
   out.releases = w.releases || null;
+  out.accessAlerts = Array.isArray(w.access_alerts) ? w.access_alerts : [];
+  // Either path. The Worker attaches it to the schedule too so a consumer reading `releases`
+  // alone cannot show a zero without its cause; here they are one field again.
+  out.droughtNotice = w.operator_drought
+    || (w.releases && w.releases.suspended_by) || null;
   // A projection that was REJECTED and one that was never available are different facts, and
   // only the first one names a table entry that needs fixing. It reaches the card so a wrong
   // hand-typed basin id is visible rather than looking like a river Duke does not publish.

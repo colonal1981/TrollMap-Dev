@@ -63,7 +63,7 @@ import { CORS, JSON_HEADERS, r2Text } from './worker-core.js';
 // RIVERS and lakeKeyFromName came out with dukeBasinFor: the basin is resolved from Duke's own
 // /rivers/get-rivers roster now, so this file no longer reads the six-entry hand table at all.
 import { dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun,
-         fetchUsgs, getLakeClarity }
+         fetchDukeAccessAlerts, fetchUsgs, getLakeClarity }
   from './worker-data.js';
 import { parseCubeLevels, parseSouthernCoLevels, parseBrookfieldFacility } from './operators.js';
 import { reportTokens } from './reports.js';
@@ -1172,10 +1172,22 @@ export function releaseShape({ duke, dukeRun, tva, operator } = {}) {
       source: duke.source || null,
     };
   }
-  // THE DAM'S OWN SCHEDULE, which is the only Duke release fact a reservoir ever has. Ranked
-  // below arrivals because on a river an arrival says when the water reaches YOU, which is
-  // strictly more useful than when it leaves the powerhouse — but on a lake arrivals are refused
-  // by kind, so this is what there is.
+  // THE DAM'S OWN SCHEDULE. Ranked below arrivals, and the reason is narrower than I first
+  // wrote it: on a RIVER an arrival says when the water reaches you, which beats knowing when it
+  // left the powerhouse. On a lake there is no competition at all, because an arrival is a river
+  // product and never applies.
+  //
+  // RYAN'S MODEL OF A RESERVOIR, 2026-08-17, correcting mine: *"releases mean flow out as well...
+  // so for wateree if fishing north end then cedar creek dam release would flow down into the
+  // lake... but it would not have an arrival because it is not a river. for the south end water
+  // leaving the wateree dam may cause a slight current but probably not noticeable"*.
+  //
+  // So a lake has TWO dams that matter and they matter differently. The one ABOVE is inflow —
+  // it pushes water and bait down onto the upper end, and it is the one worth fishing. The
+  // lake's OWN dam is outflow — it draws the pool down over hours and makes some current at that
+  // end, and on a body this size it may not be noticeable at all. Neither is an arrival, and
+  // saying which of the two a row is remains open: Duke publishes one row per powerhouse and
+  // nothing in the payload says which side of a given lake it sits on.
   //
   // A NO-RELEASE DAY IS AN ITEM, NOT AN ABSENCE. Duke says "08/19/26 No Flow Release" in the
   // datetime field itself, and dropping those rows would turn a stated zero into silence. Today
@@ -1556,6 +1568,148 @@ export function activeRunForWater(runs, basinId, waterName, gaugeNames = [], bas
     for (const t of distinctive(r.dam)) if (want.has(t) && !shared.has(t)) return true;
     return false;
   });
+}
+
+/**
+ * Duke's alert HTML as sentences.
+ *
+ * Every space in this payload is a `&nbsp;` entity — "On&nbsp;May&nbsp;1,&nbsp;2026,&nbsp;the..." —
+ * so a naive tag strip yields one unbroken word. Entities are decoded FIRST, then tags, and the
+ * block-level ones become breaks so a bulleted safety list does not run into a paragraph.
+ *
+ * LINKS ARE KEPT SEPARATELY. Several alerts are nothing but a pointer at the county that actually
+ * runs the ramp — Gaston County for South Point, York County for Ebenezer and Allison Creek — and
+ * dropping the href turns "here is who to ask" into "there is a notice".
+ */
+const HTML_ENTITY = {
+  nbsp: ' ', amp: '&', quot: '"', apos: "'", lt: '<', gt: '>', ndash: '–', mdash: '—',
+  rsquo: '’', lsquo: '‘', ldquo: '“', rdquo: '”', hellip: '…',
+};
+export function decodeEntities(v) {
+  return String(v == null ? '' : v)
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&([a-z]+);/gi, (m, name) => {
+      const k = HTML_ENTITY[name.toLowerCase()];
+      return k === undefined ? m : k;
+    });
+}
+
+export function alertText(html) {
+  const withBreaks = String(html == null ? '' : html)
+    .replace(/<\s*(br|\/p|\/li|\/ul|\/div)\s*\/?>/gi, '\n')
+    .replace(/<\s*li[^>]*>/gi, '• ')
+    .replace(/<[^>]+>/g, '');
+  return decodeEntities(withBreaks)
+    .split('\n').map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n');
+}
+
+export function alertLinks(html) {
+  const out = [];
+  for (const m of String(html == null ? '' : html).matchAll(/href\s*=\s*"([^"]+)"/gi)) {
+    const u = decodeEntities(m[1]);
+    if (/^https?:/i.test(u) && !out.includes(u)) out.push(u);
+  }
+  return out;
+}
+
+/**
+ * The "All Projects" notice is SEVERAL notices in one field.
+ *
+ * `riverbasinId: 0` carries the Keowee-Toxaway LIP, the Catawba-Wateree LIP, the Helene debris
+ * warning and a recreation-safety list, concatenated and separated by a paragraph containing
+ * nothing but a hyphen. Shown whole it is a wall of text about two river systems on every Duke
+ * water in the app. Split, and only the part naming this basin has to travel.
+ */
+export function splitNotices(text) {
+  return String(text || '').split('\n')
+    .reduce((acc, line) => {
+      if (/^[-–—\s]+$/.test(line)) { acc.push([]); return acc; }
+      acc[acc.length - 1].push(line);
+      return acc;
+    }, [[]])
+    .map((lines) => lines.join('\n').trim())
+    .filter(Boolean);
+}
+
+/**
+ * The drought / Low Inflow Protocol notice for a basin, if there is one.
+ *
+ * THIS IS THE REASON BEHIND THE ZERO. Lake Wateree reads "No Flow Release" three days running,
+ * and the cause is one sentence in a different endpoint: the Catawba-Wateree basin went to Stage 2
+ * of the LIP on 2026-05-01 and recreation flows are suspended under Stage 2. A stated zero with
+ * its cause beside it is a different fact from a stated zero on its own.
+ */
+export function droughtNoticeFor(alerts, basinRow) {
+  const want = new Set([...distinctive(basinRow && basinRow.RiverName),
+                        ...distinctive(basinRow && basinRow.riverDescription)]);
+  if (!want.size) return null;
+  for (const a of alerts || []) {
+    for (const notice of splitNotices(a.text)) {
+      if (!/low\s*inflow\s*protocol|\bLIP\b|drought/i.test(notice)) continue;
+      let hit = false;
+      for (const t of distinctive(notice)) if (want.has(t)) { hit = true; break; }
+      if (!hit) continue;
+      const stage = notice.match(/Stage\s+(\d+)/i);
+      return {
+        stage: stage ? Number(stage[1]) : null,
+        suspends_recreation_flows: /recreation\s+flow[^.]*suspend/i.test(notice),
+        text: notice,
+        last_updated: a.last_updated || null,
+        source: 'https://api.hydro-derived.duke-energy.app/access-alerts',
+      };
+    }
+  }
+  return null;
+}
+
+/** access-alerts, flattened. `locationType` is RIVERBASIN | LAKEPOND | POI. */
+export function parseAccessAlerts(json) {
+  const out = [];
+  for (const group of Array.isArray(json) ? json : []) {
+    for (const a of (group && group.alerts) || []) {
+      if (!a) continue;
+      const basinId = Number(a.riverbasinId ?? a.riverBasinId);
+      out.push({
+        id: a.alertId ?? null,
+        // -1 is Duke's "Unknown" basin and it carries an Ohio River notice. Not everything a
+        // service publishes is about you.
+        basin_id: Number.isFinite(basinId) && basinId >= 0 ? basinId : null,
+        basin_name: group.riverName || null,
+        water: a.lakepondDesc || null,
+        place: a.locationDesc || a.locationName || null,
+        kind: a.locationType || null,
+        text: alertText(a.alertText),
+        links: alertLinks(a.alertText),
+        last_updated: a.lastUpdated || null,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * The alerts about this water.
+ *
+ * MATCHED ON THE PLACE, NOT THE BASIN. A basin-level notice is about a quarter of a state and
+ * would sit on every water in it; those are handled by droughtNoticeFor, which extracts the one
+ * sentence that explains a number the card is already showing. What comes back here is specific:
+ * a ramp that is shut, a fishing area that is posted, a county that runs the park instead.
+ *
+ * `lakepondDesc` is the field that names the water — "Lake Wateree", "Lake Hickory", "Mountain
+ * Island Lake" — and it matches the registry through the same whole-token test everything else
+ * uses. The POI name is also read, because "Mountain Island Tailrace Fishing Area" is filed under
+ * Lake WYLIE and names a different lake in its own title.
+ */
+export function alertsForWater(alerts, waterName, gaugeNames = []) {
+  const want = new Set(distinctive(waterName));
+  for (const n of gaugeNames || []) for (const t of distinctive(n)) want.add(t);
+  if (!want.size) return [];
+  const hit = (v) => {
+    for (const t of distinctive(v)) if (want.has(t)) return true;
+    return false;
+  };
+  return (alerts || []).filter((a) => a.kind !== 'RIVERBASIN' && (hit(a.water) || hit(a.place)));
 }
 
 /** The dams a schedule actually carries, for a refusal that names them. */
@@ -2254,6 +2408,25 @@ async function waterBlock(b, lat, lon) {
     };
   }
   out.releases = releaseShape({ duke, dukeRun, tva: out.tva, operator: out.operator });
+
+  // WHAT IS SHUT, AND WHY THE WATER IS WHERE IT IS.
+  //
+  // Duke's access-alerts carries both, and the second half is the reason behind a number the card
+  // is already showing: Lake Wateree reads "No Flow Release" three days running because the
+  // Catawba-Wateree basin went to Stage 2 of the Low Inflow Protocol on 2026-05-01 and recreation
+  // flows are suspended under Stage 2. A stated zero with its cause beside it is a different fact
+  // from a stated zero on its own.
+  //
+  // Fetched for any Duke water, not only one that resolved a basin, because a closed ramp is a
+  // closed ramp whether or not anybody is releasing.
+  const alertsRaw = parseAccessAlerts(await fetchDukeAccessAlerts().catch(() => null));
+  const mineAlerts = alertsForWater(alertsRaw, b.display_name || b.slug, gaugeNames);
+  out.access_alerts = mineAlerts.length ? mineAlerts : null;
+  const drought = basinRow ? droughtNoticeFor(alertsRaw, basinRow) : null;
+  out.operator_drought = drought;
+  // Attached to the schedule as well, so a consumer reading `releases` alone cannot show the zero
+  // without the reason. The number and its explanation must not be reachable by different paths.
+  if (out.releases && drought) out.releases.suspended_by = drought;
 
   // One resolved temperature rather than three places a caller has to look. Seeded with whatever
   // a gauge read already produced, so the common case costs no extra request.

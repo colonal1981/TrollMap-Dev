@@ -432,6 +432,41 @@ async function fetchDukeRivers() {
  *
  * `riverId` IS THE BASIN, and it is what ties a dam back to /rivers/get-rivers.
  */
+/**
+ * Duke's access-area alerts: what is closed, and why the water is where it is.
+ *
+ * Ryan pasted it 2026-08-17 and it carries the reason behind the number the last commit added.
+ * Basin-wide, under "All Projects":
+ *
+ *   "On May 1, 2026, the Catawba Wateree River Basin entered Stage 2 of the Low Inflow Protocol
+ *    (LIP) ... recreation flow schedules have been suspended as required under Stage 2 of the LIP."
+ *
+ * That is WHY Lake Wateree reads "No Flow Release" three days running, and a stated zero with its
+ * cause beside it is a different thing from a stated zero on its own.
+ *
+ * And on the lake itself: "Buck Hill Access Area will close on March 2, 2026 for approximately
+ * one year due to construction work at the Wateree hydro facility. Please use alternate sites,
+ * such as Colonels Creek or White Oak Creek." The app offers ramps; Duke says one of them is shut
+ * for a year and names the alternates.
+ */
+async function fetchDukeAccessAlerts() {
+  try {
+    const r = await fetch(`${DUKE_API_BASE}/access-alerts`, {
+      cf: { cacheTtl: 3600, cacheEverything: true },
+      headers: {
+        "User-Agent": "TrollMap/12 Worker",
+        "Origin": "https://lakes.hydro-derived.duke-energy.app",
+        "Referer": "https://lakes.hydro-derived.duke-energy.app/",
+        "Accept": "application/json"
+      }
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return Array.isArray(j) && j.length ? j : null;
+  } catch (_) {
+    return null;
+  }
+}
 async function fetchDukeActiveRun() {
   try {
     const r = await fetch(`${DUKE_API_BASE}/rivers/active-run`, {
@@ -1818,4 +1853,4 @@ var RIVERS = {
   }
 };
 
-export { normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard };
+export { normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard };
