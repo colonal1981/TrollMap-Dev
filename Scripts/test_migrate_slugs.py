@@ -25,9 +25,28 @@ acts=[]
 both={'falls_lake':{'gauge':'A'},'brinkley_lake':{'gauge':'B','extra':1}}   # water_bindings shape
 mms.migrate_obj(both,pairs,'bindings',acts)
 eq(both,{'falls_lake':{'gauge':'A'}},'COLLISION keeps the keeper')
-eq(acts[0]['action'],'kept keeper, retired entry dropped','and says so')
-assert 'gauge' in acts[0]['dropped'] and 'extra' in acts[0]['dropped'], \
-    f'the dropped content MUST be reported, not silently lost: {acts[0]["dropped"]}'
+assert not acts[0]['covered'], 'a retired entry with an extra key LOSES something'
+eq(acts[0]['extra'],['extra'],'and names exactly which key')
+
+# 55 of 56 real collisions carried nothing new. Those must be QUIET, or the one that
+# mattered -- charted.json oversized_lines_dropped -- stays buried in the noise.
+acts=[]
+same={'falls_lake':{'g':1},'brinkley_lake':{'g':2}}
+mms.migrate_obj(same,pairs,'bindings',acts)
+assert acts[0]['covered'], 'same keys, differing values: the keeper covers it'
+eq(same,{'falls_lake':{'g':1}},'keeper kept')
+acts=[]
+ident={'falls_lake':{'g':1},'brinkley_lake':{'g':1}}
+mms.migrate_obj(ident,pairs,'bindings',acts)
+assert acts[0]['covered'], 'identical entries are a non-event'
+
+# --fold copies across only what the keeper lacks or holds empty
+acts=[]
+f1={'falls_lake':{'g':1,'blank':None},'brinkley_lake':{'g':9,'extra':7,'blank':'x'}}
+mms.migrate_obj(f1,pairs,'bindings',acts,fold=True)
+eq(f1['falls_lake'],{'g':1,'blank':'x','extra':7},
+   'fold adds the missing key and fills the empty one, but does NOT overwrite g')
+assert acts[0]['folded'] is True
 
 # --- one level of nesting, which is where lakes.* / by_lake.* / slug_to_r2_key.* live
 acts=[]

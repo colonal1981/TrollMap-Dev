@@ -56,19 +56,38 @@ def skip(name):
             or 'before_split' in name)
 
 
-def migrate_obj(obj, pairs, path, actions):
+def migrate_obj(obj, pairs, path, actions, fold=False):
     """Rewrite one dict's keys in place at this level. pairs is {retired: keeper}."""
     for retired, keeper in pairs.items():
         if retired not in obj:
             continue
         if keeper in obj:
+            a, b = obj[keeper], obj[retired]
+            extra, filled = set(), set()
+            if isinstance(a, dict) and isinstance(b, dict):
+                extra = set(b) - set(a)
+                filled = {k for k in set(b) & set(a)
+                          if a.get(k) in (None, '', [], {}) and b.get(k) not in (None, '', [], {})}
+            covered = (a == b
+                       or (hasattr(b, '__len__') and len(b) == 0)
+                       or (isinstance(a, dict) and isinstance(b, dict)
+                           and not extra and not filled))
+            if fold and (extra or filled):
+                for k in sorted(extra | filled):
+                    a[k] = b[k]
             actions.append({'path': path, 'retired': retired, 'keeper': keeper,
-                            'action': 'kept keeper, retired entry dropped',
-                            'dropped': summarize(obj[retired])})
+                            'covered': covered,
+                            'extra': sorted(extra), 'filled': sorted(filled),
+                            'folded': bool(fold and (extra or filled)),
+                            'action': ('nothing the keeper lacks' if covered else
+                                       ('folded into the keeper' if fold
+                                        else 'KEEPER KEPT, THIS CONTENT DROPPED')),
+                            'dropped': None if covered else summarize(b)})
             del obj[retired]
         else:
             obj[keeper] = obj.pop(retired)
             actions.append({'path': path, 'retired': retired, 'keeper': keeper,
+                            'covered': True, 'extra': [], 'filled': [], 'folded': False,
                             'action': 'renamed onto the keeper', 'dropped': None})
 
 
@@ -80,15 +99,15 @@ def summarize(v):
     return repr(v)[:120]
 
 
-def walk(data, pairs, actions, prefix=''):
+def walk(data, pairs, actions, prefix='', fold=False):
     """Top level, then one level of nesting -- which is where every real case lives
     (lakes.*, bindings.*, packs.*, by_lake.*, slug_to_r2_key.*)."""
     if not isinstance(data, dict):
         return
-    migrate_obj(data, pairs, prefix or '<top>', actions)
+    migrate_obj(data, pairs, prefix or '<top>', actions, fold)
     for k, v in list(data.items()):
         if isinstance(v, dict):
-            migrate_obj(v, pairs, f'{prefix}{k}', actions)
+            migrate_obj(v, pairs, f'{prefix}{k}', actions, fold)
 
 
 def main():
@@ -97,6 +116,8 @@ def main():
     ap.add_argument('--decisions', required=True)
     ap.add_argument('--include-derived', action='store_true',
                     help='also patch files a build script regenerates')
+    ap.add_argument('--fold', action='store_true',
+                    help='on a collision, copy across keys the keeper lacks or has empty')
     ap.add_argument('--write', action='store_true')
     args = ap.parse_args()
 
@@ -125,27 +146,41 @@ def main():
             print(f'   {p.name}: unreadable ({type(e).__name__}), skipped')
             continue
         actions = []
-        walk(data, pairs, actions)
+        walk(data, pairs, actions, fold=args.fold)
         if not actions:
             continue
         touched += 1
-        print(f'\n== {p.name}')
-        for a in actions:
-            print(f'   {a["path"]}.{a["retired"]} -> {a["keeper"]}: {a["action"]}')
-            if a['dropped']:
-                print(f'      DROPPED: {a["dropped"]}')
+        loud = [a for a in actions if not a['covered']]
+        if loud:
+            print(f'\n== {p.name}')
+            for a in loud:
+                print(f'   {a["path"]}.{a["retired"]} -> {a["keeper"]}: {a["action"]}')
+                if a['extra']:
+                    print(f'      keeper lacks these keys: {a["extra"]}')
+                if a['filled']:
+                    print(f'      keeper has these empty : {a["filled"]}')
+                if a['dropped'] and not a['folded']:
+                    print(f'      DROPPED: {a["dropped"]}')
         total.extend([dict(a, file=p.name) for a in actions])
         if args.write:
             shutil.copy2(p, p.with_suffix('.json.bak'))
             p.write_text(json.dumps(data, indent=1), encoding='utf-8')
 
-    renamed = sum(1 for a in total if a['dropped'] is None)
-    dropped = len(total) - renamed
-    print(f'\n== {touched} file(s), {renamed} renamed onto the keeper,'
-          f' {dropped} collision(s) where the keeper was kept')
-    if dropped:
-        print('   Every dropped entry is printed above. If any of them held something the')
-        print('   keeper lacks, fold it in by hand before this is called done.')
+    renamed = sum(1 for a in total if a['action'] == 'renamed onto the keeper')
+    quiet = sum(1 for a in total if a['covered'] and a['action'] != 'renamed onto the keeper')
+    folded = sum(1 for a in total if a['folded'])
+    lost = sum(1 for a in total if not a['covered'] and not a['folded'])
+    print(f'\n== {touched} file(s) affected')
+    print(f'   {renamed:>4} renamed onto the keeper (the keeper had no entry)')
+    print(f'   {quiet:>4} collision(s) carrying nothing the keeper lacks -- no action needed')
+    if folded:
+        print(f'   {folded:>4} collision(s) FOLDED into the keeper')
+    if lost:
+        print(f'   {lost:>4} collision(s) holding content the keeper lacks, listed above.')
+        print('        Re-run with --fold to copy those keys across, or leave them if the')
+        print('        retired entry describes something being deleted anyway.')
+    else:
+        print('      0 collisions would lose anything.')
     if args.write:
         print(f'\nwrote {touched} file(s), each with a .bak beside it')
     else:
