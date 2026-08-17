@@ -1,6 +1,6 @@
 """End-to-end test of process_vpu with a fake pyogrio, so the function that actually
 crashed on 0305 is exercised, not just the helpers around it."""
-import importlib.util, sys, types
+import importlib.util, sys, types, os
 from pathlib import Path
 import numpy as np, pandas as pd
 
@@ -53,11 +53,35 @@ for nm in ('wb_marion_a', 'wb_marion_b'):
 
 VAA = pd.DataFrame(vaa_rows); FL = pd.DataFrame(fl_rows); WB = pd.DataFrame(wb_rows)
 
+# 0602 (vintage 20220418) failed with KeyError: 'DnHydroSeq'. pyogrio DROPS a requested column
+# the layer does not have, silently, so the read succeeds and the failure lands later and blind.
+# CASE is the fake's variable: this stand-in spells its fields differently on purpose.
+CASE = os.environ.get('VPU_CASE', 'exact')
+def _spell(c):
+    if CASE == 'lower':  return c.lower()
+    if CASE == 'upper':  return c.upper()
+    if CASE == 'mixed':  return {'DnHydroSeq': 'DnHydroseq', 'LevelPathI': 'LevelPathi',
+                                 'TotDASqKm': 'TotDASqKM'}.get(c, c)
+    return c
+
 fake = types.ModuleType('pyogrio')
+def _frame(layer):
+    return {'NHDPlusFlowlineVAA': VAA, 'NHDFlowline': FL, 'NHDWaterbody': WB}[layer]
+def read_info(src, layer=None):
+    if CASE == 'missing' and layer == 'NHDPlusFlowlineVAA':
+        return {'fields': [_spell(c) for c in _frame(layer).columns if c != 'DnHydroSeq']}
+    return {'fields': [_spell(c) for c in _frame(layer).columns]}
 def read_dataframe(src, layer=None, read_geometry=None, columns=None):
-    df = {'NHDPlusFlowlineVAA': VAA, 'NHDFlowline': FL, 'NHDWaterbody': WB}[layer]
+    df = _frame(layer).rename(columns={c: _spell(c) for c in _frame(layer).columns})
+    # pyogrio's real behaviour: a column that is not there is simply absent from the result
     return df[[c for c in columns if c in df.columns]].copy()
+def list_layers(src):
+    import numpy as _np
+    return _np.array([['NHDPlusFlowlineVAA', 'Table'], ['NHDFlowline', 'MultiLineString'],
+                      ['NHDWaterbody', 'MultiPolygon']], dtype=object)
+fake.read_info = read_info
 fake.read_dataframe = read_dataframe
+fake.list_layers = list_layers
 sys.modules['pyogrio'] = fake
 
 spec = importlib.util.spec_from_file_location('bwc', HERE / 'build_water_chain.py')
@@ -68,7 +92,15 @@ for slug, gnis in CHAIN:
     want.setdefault(bwc.normalize_gnis('gnis:' + gnis), []).append(slug)
 
 rows, note = bwc.process_vpu('0305', 'fake.gdb', want, None)
-print('note:', note)
+print(f'[case={CASE}] note:', note)
+
+if CASE == 'missing':
+    # a vintage genuinely lacking the column must REFUSE and say what it does have,
+    # not raise KeyError from somewhere downstream
+    assert rows == {}, 'a VAA with no DnHydroSeq must place nothing'
+    assert 'REFUSED' in note and 'DnHydroSeq' in note, note
+    print('missing-column refusal is clean:', note)
+    raise SystemExit(0)
 
 order = [s for s,_ in CHAIN]
 assert set(rows) == set(order), f'missing: {set(order) - set(rows)}'

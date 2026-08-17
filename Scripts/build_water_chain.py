@@ -204,15 +204,50 @@ def find_gdbs(nhd_dir, only=None):
     return dict(sorted(out.items()))
 
 
+def read_layer(src, layer, wanted):
+    """Read a layer by asking it what columns it HAS, instead of demanding exact spellings.
+
+    0602 failed with KeyError: 'DnHydroSeq'. pyogrio silently drops any requested column a layer
+    does not have, so the read succeeded and the failure surfaced later, blind, at the first use.
+    The 0601/0602 products are an older vintage (20220418) than the 03xx ones and do not have to
+    spell their fields the same way.
+
+    Resolves case-insensitively, renames to the canonical spelling the rest of this file uses,
+    and on a genuine miss returns what the layer actually holds so the next run is informed
+    rather than another guess. Returns (dataframe, missing, available)."""
+    import pyogrio
+    info = pyogrio.read_info(src, layer=layer)
+    available = [str(f) for f in (info.get('fields') or [])]
+    by_lower = {f.lower(): f for f in available}
+    actual, missing = {}, []
+    for w in wanted:
+        f = by_lower.get(w.lower())
+        if f is None:
+            missing.append(w)
+        else:
+            actual[w] = f
+    if missing:
+        return None, missing, available
+    df = pyogrio.read_dataframe(src, layer=layer, read_geometry=False,
+                                columns=list(actual.values()))
+    rename = {v: k for k, v in actual.items() if v != k}
+    if rename:
+        df = df.rename(columns=rename)
+    return df, [], available
+
+
 def process_vpu(vpu, src, want_gnis, args):
     """Return (rows_by_slug, note). Reads three layers, writes nothing."""
     import pyogrio
     import pandas as pd
 
-    vaa = pyogrio.read_dataframe(
-        src, layer='NHDPlusFlowlineVAA', read_geometry=False,
-        columns=['NHDPlusID', 'HydroSeq', 'DnHydroSeq', 'LevelPathI', 'TotDASqKm',
-                 'StreamOrde'])
+    vaa, missing, have = read_layer(
+        src, 'NHDPlusFlowlineVAA',
+        ['NHDPlusID', 'HydroSeq', 'DnHydroSeq', 'LevelPathI', 'TotDASqKm', 'StreamOrde'])
+    if missing:
+        print(f'   NHDPlusFlowlineVAA in this vintage has no {", ".join(missing)}.')
+        print(f'   It does have: {", ".join(have)}')
+        return {}, f'{vpu}: REFUSED, VAA layer is missing {", ".join(missing)}'
 
     # --- re-measure the direction here rather than trusting 0305 -----------------------
     d = vaa[(vaa['DnHydroSeq'] > 0) & (vaa['HydroSeq'] > 0)]
@@ -223,9 +258,12 @@ def process_vpu(vpu, src, want_gnis, args):
     if not decreasing:
         return {}, f'{vpu}: REFUSED, HydroSeq increases downstream here but decreases in 0305'
 
-    wb = pyogrio.read_dataframe(
-        src, layer='NHDWaterbody', read_geometry=False,
-        columns=['Permanent_Identifier', 'GNIS_ID', 'GNIS_Name', 'AreaSqKm', 'FType'])
+    wb, missing, have = read_layer(
+        src, 'NHDWaterbody',
+        ['Permanent_Identifier', 'GNIS_ID', 'GNIS_Name', 'AreaSqKm', 'FType'])
+    if missing:
+        print(f'   NHDWaterbody has no {", ".join(missing)}. It does have: {", ".join(have)}')
+        return {}, f'{vpu}: REFUSED, NHDWaterbody is missing {", ".join(missing)}'
     wb['gnis_n'] = wb['GNIS_ID'].map(normalize_gnis)
     hit = wb[wb['gnis_n'].isin(want_gnis)]
     if hit.empty:
@@ -238,9 +276,11 @@ def process_vpu(vpu, src, want_gnis, args):
         for slug in want_gnis[r['gnis_n']]:
             pid_to_slug.setdefault(r['Permanent_Identifier'], slug)
 
-    fl = pyogrio.read_dataframe(
-        src, layer='NHDFlowline', read_geometry=False,
-        columns=['NHDPlusID', 'WBArea_Permanent_Identifier'])
+    fl, missing, have = read_layer(
+        src, 'NHDFlowline', ['NHDPlusID', 'WBArea_Permanent_Identifier'])
+    if missing:
+        print(f'   NHDFlowline has no {", ".join(missing)}. It does have: {", ".join(have)}')
+        return {}, f'{vpu}: REFUSED, NHDFlowline is missing {", ".join(missing)}'
     fl = fl[fl['WBArea_Permanent_Identifier'].isin(pid_to_slug)]
     if fl.empty:
         return {}, f'{vpu}: matched waterbodies but no flowlines inside them'
@@ -300,6 +340,8 @@ def main():
     ap.add_argument('--out', default=None, help='defaults to <repo>/' + OUT_REL)
     ap.add_argument('--only', nargs='*', help='VPU codes, e.g. --only 0305 0304')
     ap.add_argument('--write', action='store_true', help='actually write the json')
+    ap.add_argument('--layers', action='store_true',
+                    help='list each geodatabase\'s layers and fields, then stop')
     args = ap.parse_args()
 
     try:
@@ -349,6 +391,16 @@ def main():
     for k, v in gdbs.items():
         listed.append(k + (' (zip, slower)' if str(v).endswith('.zip') else ''))
     print('\ngeodatabases: ' + ', '.join(listed))
+
+    if args.layers:
+        import pyogrio
+        for vpu, src in gdbs.items():
+            print(f'\n== {vpu}  {Path(src).name}')
+            for lyr in pyogrio.list_layers(str(src))[:, 0]:
+                if 'VAA' in lyr or lyr in ('NHDFlowline', 'NHDWaterbody'):
+                    info = pyogrio.read_info(str(src), layer=lyr)
+                    print(f'   {lyr}: {", ".join(str(f) for f in (info.get("fields") or []))}')
+        return 0
 
     rows, notes = {}, []
     for vpu, src in gdbs.items():
