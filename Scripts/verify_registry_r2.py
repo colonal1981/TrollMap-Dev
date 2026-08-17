@@ -80,6 +80,13 @@ FILES = [
      "lake-registry.js fetches this on load -- no index, no lake list"),
     ("water_bindings.json", "water_bindings.json", "raw",
      "Worker/conditions.js answers level/flow/tide off this -- without it every one is pending"),
+    # ADDED 2026-08-17. The uploader learned to ship this the same day; a checker that does not
+    # know about a file agrees that everything is fine while the app is missing it, which is the
+    # exact failure this script exists to catch and the reason `slim_chain` is imported rather
+    # than restated below.
+    ("water_chain.json", "water_chain.json", "chain",
+     "Worker/conditions.js:releaseDirection() labels a Duke release inflow or outflow off this "
+     "-- without it every release is unlabelled and a dam above a lake reads the same as its own"),
 ]
 
 
@@ -158,11 +165,13 @@ def main() -> int:
     try:
         import upload_garmin_to_r2 as ug
         slim_registry = ug.slim_registry
+        slim_chain = getattr(ug, 'slim_chain', None)
     except Exception as exc:
         print('!! could not import slim_registry from upload_garmin_to_r2.py (%s: %s)'
               % (type(exc).__name__, exc))
         print('!! lakes.json will be checked for PRESENCE only, not for currency.')
         slim_registry = None
+        slim_chain = None
 
     print('worker   %s' % a.worker)
     print('registry %s\n' % os.path.abspath(a.registry))
@@ -185,6 +194,8 @@ def main() -> int:
                 print('%-22s local file is unreadable: %s' % (name, exc))
         if local is not None and kind == 'slim':
             local = slim_registry(local) if slim_registry else None
+        if local is not None and kind == 'chain':
+            local = slim_chain(local) if slim_chain else None
 
         if err:
             print('%-22s %-9s %-11s %-22s %s'
