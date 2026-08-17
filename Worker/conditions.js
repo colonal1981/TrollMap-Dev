@@ -1317,40 +1317,88 @@ export function dukeBasinWhy(roster, waterName, gaugeNames = []) {
 }
 
 /**
- * WHICH OF A BASIN'S ARRIVALS ARE ABOUT THIS WATER.
+ * WHICH OF A BASIN'S ARRIVALS ARE ABOUT THIS WATER — AND WHETHER ANY OF THEM CAN BE.
  *
  * Ryan, 2026-08-17, on the Wateree card the moment the basin started resolving: *"all of these
- * are north of wateree so why would they be projected releases for lake wateree"* —
+ * are north of wateree so why would they be projected releases for lake wateree"*. Morganton is
+ * at the TOP of the Catawba below Lake James; Rock Hill is at Wylie; Lake Wateree is the last
+ * impoundment on the chain. Basin 1 is a quarter of a state and eleven dams.
  *
- *   18:24  Watermill Road Access Area
- *   19:00  Catawba River Water Intake
- *   19:18  Morganton Greenway
- *   19:57  Rock Hill River Park
+ * THEN HE PASTED THE RAW PAYLOAD, and it answers the question I had left open.
  *
- * Morganton is at the TOP of the Catawba, below Lake James. Rock Hill is at Wylie. Lake Wateree
- * is the last impoundment on the chain, 150 miles downstream of the first. Basin 1 is a quarter
- * of a state and eleven dams, and every water on it was being handed the whole basin's schedule.
+ * `/rivers/flow-arrivals/1`, 2026-08-16, in full: two dams publishing — "BW 2 Units"
+ * (Bridgewater, at Lake James) and "Wylie" — nine entries each, which are three mile markers
+ * repeated across three days. Every entry carries `DamName`, `MileMarkerName`, `Arrival`,
+ * `Recedes` and a `RiverSection` that is null on all eighteen. The `Dams[]` wrapper carries a
+ * name and nothing else.
  *
- * I TRADED A FALSE NEGATIVE FOR A FALSE POSITIVE. Before the basin resolved, Wateree showed a
- * refusal; after, it showed four releases for other people's dams. Resolving the basin is
- * necessary and it is not sufficient: a basin is a river system, and the release that matters is
- * the one arriving HERE.
+ * SO THERE IS NO GEOMETRY IN IT. No river mile, no coordinates, no ordering field. "Downstream
+ * of this dam" cannot be computed from this endpoint, and the name test is not a stopgap for
+ * something better — it is what the payload supports.
  *
- * THE RIVER TOKEN CANNOT DO THE FILTERING. Every gauge on this chain is named "Catawba River
- * at ...", and one of the four arrivals above is "Catawba River Water Intake" — so matching on
- * the basin's own river name keeps exactly the wrong one. The basin's tokens are subtracted
- * first, and what is left is PLACE: cedar, rocky, wateree, camden against watermill, morganton,
- * rock hill, intake.
+ * AND THE MILE MARKERS SAY WHAT THIS PRODUCT IS FOR:
  *
- * Nothing survives for the Wateree today, and that is the right answer. It is reported as a
- * refusal with the count, not as an empty list — "Duke published four and none was here" and
- * "Duke published nothing" are different facts.
+ *   Watermill Road Access Area      Rock Hill River Park
+ *   Catawba River Water Intake      Catawba Indian Reservation
+ *   Morganton Greenway              Lansford Canal State Park
  *
- * A NAME TEST IS NOT A RIVER MILE. Duke's payload may carry ordering or coordinates that would
- * let this be done properly, downstream-of rather than named-like; the endpoint 403s to
- * everything except a browser, so that is an open question and this is the honest filter until
- * it is answered. Over-filtering is the safe direction: showing nothing beats showing a release
- * 150 miles upstream as though it were arriving at your ramp.
+ * Every one is a RIVER ACCESS POINT below a dam. Duke publishes these so somebody standing in
+ * the river knows when the surge reaches them. They are not lake facts and they never were: a
+ * release from the dam above a reservoir raises it imperceptibly, and a release from its own dam
+ * lowers it. The endpoint is `/rivers/`.
+ *
+ * So a lake is refused outright, with the reason, rather than filtered and found wanting. That
+ * is the rule that would have prevented this bug instead of catching it, and it makes the name
+ * matching below a river-only concern.
+ */
+export function arrivalsAppliesTo(featureType) {
+  return String(featureType || '').toLowerCase() === 'river';
+}
+
+/**
+ * The same schedule with the repeats collapsed.
+ *
+ * Duke publishes each dam-and-marker pair once per day for the next three days — eighteen
+ * entries for six real places. The card shows four, sorted by time, so three days of Bridgewater
+ * filled it and Wylie never appeared. One row per place, the next one due.
+ */
+export function nextArrivalPerMarker(arrivals, nowMs) {
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const best = new Map();
+  for (const a of arrivals || []) {
+    if (!a) continue;
+    const key = `${a.damName || ''}|${a.mileMarkerName || ''}`;
+    const t = Number.isFinite(a.arrivalEpoch) ? a.arrivalEpoch : Date.parse(a.arrival || '');
+    // An arrival already past is not a projection. Keep it only if nothing later exists for
+    // this place, so a marker never disappears entirely mid-surge.
+    const prev = best.get(key);
+    if (!prev) { best.set(key, { a, t }); continue; }
+    const prevFuture = Number.isFinite(prev.t) && prev.t >= now;
+    const thisFuture = Number.isFinite(t) && t >= now;
+    if (thisFuture && (!prevFuture || t < prev.t)) best.set(key, { a, t });
+    else if (!prevFuture && !thisFuture && Number.isFinite(t) && t > (prev.t || -Infinity)) {
+      best.set(key, { a, t });
+    }
+  }
+  return [...best.values()]
+    .sort((x, y) => (x.t || 0) - (y.t || 0))
+    .map((v) => v.a);
+}
+
+/**
+ * The arrivals that name this water or one of its gauges.
+ *
+ * THE BASIN'S OWN RIVER NAME CANNOT DO THE FILTERING. Every gauge on this chain is named
+ * "Catawba River at ...", and one of the markers is "Catawba River Water Intake" — so a match on
+ * "catawba" keeps exactly the wrong one. The river token is excluded and PLACE is what is left.
+ *
+ * `RiverName` ONLY, NOT `riverDescription`. Basin 1's description is "Catawba - Wateree", and
+ * "wateree" is not basin-wide — it is the downstream half. Excluding it would throw away the one
+ * word that identifies that water, and the first run of the test caught exactly that.
+ *
+ * AND A WATER NAMED AFTER ITS RIVER KEEPS ITS NAME. Basin 6 is "Keowee Toxaway"; on the Keowee
+ * "keowee" is both river and water, and excluding it would leave it unable to match its own dam.
+ * Anything the water's own name carries is never excluded.
  */
 export function arrivalsForWater(sched, waterName, gaugeNames = [], basinRow = null) {
   const arrivals = (sched && sched.arrivals) || [];
@@ -1358,26 +1406,12 @@ export function arrivalsForWater(sched, waterName, gaugeNames = [], basinRow = n
 
   const mine = distinctive(waterName);
 
-  // THE TOKEN THAT DISTINGUISHES NOTHING IS THE BASIN'S RIVER. Every gauge on this chain is
-  // named "Catawba River at ...", and one of Ryan's four arrivals is "Catawba River Water
-  // Intake" — so a match on "catawba" keeps exactly the wrong one.
-  //
-  // `RiverName` ONLY, NOT `riverDescription`. Basin 1's description is "Catawba - Wateree", and
-  // "wateree" is not basin-wide, it is the downstream half — excluding it would throw away the
-  // one word that identifies this lake. The river is the shared thing; the description lists the
-  // parts.
-  //
-  // AND A WATER NAMED AFTER ITS RIVER KEEPS ITS NAME. Basin 6 is "Keowee Toxaway"; on Lake
-  // Keowee "keowee" is both the river and the lake, and excluding it would leave that lake unable
-  // to match its own dam. Anything the water's own name carries is never excluded.
   const shared = new Set();
   for (const t of [...distinctive(basinRow && basinRow.RiverName),
                    ...distinctive(sched && sched.basinName)]) {
     if (!mine.has(t)) shared.add(t);
   }
 
-  // The PLACE half of a gauge name is what names the impoundment: "Catawba River at Cedar Creek
-  // Reservoir/Rocky Ck-Cedar Ck Dam" gives cedar and rocky, which the lake's own name does not.
   const want = new Set(mine);
   for (const n of gaugeNames || []) for (const t of distinctive(n)) want.add(t);
   if (!want.size) return [];
@@ -1387,6 +1421,15 @@ export function arrivalsForWater(sched, waterName, gaugeNames = [], basinRow = n
     return false;
   };
   return arrivals.filter((a) => hits(a.damName) || hits(a.mileMarkerName));
+}
+
+/** The dams a schedule actually carries, for a refusal that names them. */
+export function arrivalDams(sched) {
+  const out = [];
+  for (const a of (sched && sched.arrivals) || []) {
+    if (a && a.damName && !out.includes(a.damName)) out.push(a.damName);
+  }
+  return out;
 }
 
 /**
@@ -2005,23 +2048,48 @@ async function waterBlock(b, lat, lon) {
   out.releases_refused = null;
   let duke = dukeSched;
 
-  // A BASIN IS NOT A WATER. Keep only the arrivals that name this water or one of its gauges.
-  if (dukeSched && dukeBasinAgrees(dukeSched, b.display_name || b.slug, gaugeNames)) {
-    const mine = arrivalsForWater(dukeSched, b.display_name || b.slug, gaugeNames, basinRow);
+  const basinLabel = (basinRow && basinRow.riverDescription) || `basin ${basin}`;
+
+  // A FLOW ARRIVAL IS A RIVER FACT. Every mile marker Duke publishes on this basin is a river
+  // access point below a dam - Watermill Road Access Area, Morganton Greenway, Rock Hill River
+  // Park, Lansford Canal State Park - and the endpoint is /rivers/. A release from the dam above
+  // a reservoir raises it imperceptibly and a release from its own dam lowers it; neither is an
+  // arrival. Refused by KIND, before any name matching, because that is the rule that would have
+  // prevented this rather than caught it.
+  if (dukeSched && !arrivalsAppliesTo(b.feature_type)) {
+    duke = null;
+    out.releases_refused = {
+      operator: 'Duke Energy',
+      basin_id: basin,
+      basin_name: dukeSched.basinName || null,
+      dams_publishing: arrivalDams(dukeSched),
+      why: `Duke publishes flow arrivals for river access points below its dams - this water is `
+         + `a ${b.feature_type || 'still water'}, not a river reach. The ${basinLabel} schedule `
+         + `is real and it is not about this water.`,
+    };
+  } else if (dukeSched && dukeBasinAgrees(dukeSched, b.display_name || b.slug, gaugeNames)) {
+    // A BASIN IS NOT A REACH. Keep only the arrivals that name this water or one of its gauges,
+    // and collapse Duke's three-day repeat to the next one due per place.
+    const mine = nextArrivalPerMarker(
+      arrivalsForWater(dukeSched, b.display_name || b.slug, gaugeNames, basinRow), Date.now());
     if (mine.length) {
       duke = { ...dukeSched, arrivals: mine, arrivals_in_basin: dukeSched.arrivals.length };
     } else {
       duke = null;
+      const dams = arrivalDams(dukeSched);
       out.releases_refused = {
         operator: 'Duke Energy',
         basin_id: basin,
         basin_name: dukeSched.basinName || null,
         arrivals_in_basin: dukeSched.arrivals.length,
-        why: `Duke published ${dukeSched.arrivals.length} flow arrival`
-           + `${dukeSched.arrivals.length === 1 ? '' : 's'} for the `
-           + `${basinRow && basinRow.riverDescription ? basinRow.riverDescription : `basin ${basin}`} `
-           + `basin and none of them names ${b.display_name || b.slug} or any gauge bound to it. `
-           + `A basin is a river system with many dams on it; those arrivals are for other dams.`,
+        dams_publishing: dams,
+        // NAMING THE DAMS IS THE USEFUL PART. On 2026-08-16 the whole Catawba basin had exactly
+        // two dams publishing, Bridgewater at the top and Wylie in the middle, and neither is
+        // adjacent to most of the chain. "Nothing for you" and "nothing for you because only
+        // these two are releasing" are different answers.
+        why: `Duke published arrivals for ${dams.length} dam${dams.length === 1 ? '' : 's'} on the `
+           + `${basinLabel} basin${dams.length ? ` - ${dams.join(', ')}` : ''} - and none of them `
+           + `reaches ${b.display_name || b.slug} or any gauge bound to it.`,
       };
     }
   } else if (dukeSched) {

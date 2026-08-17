@@ -322,7 +322,8 @@ test('nothing to check is not agreement', () => {
 });
 
 // ── a basin is not a water ───────────────────────────────────────────────────────────────────
-import { arrivalsForWater } from '../Worker/conditions.js';
+import { arrivalsForWater, arrivalsAppliesTo, nextArrivalPerMarker, arrivalDams }
+  from '../Worker/conditions.js';
 
 // Verbatim off Ryan's Wateree card, 2026-08-17, the moment the basin started resolving:
 // "all of these are north of wateree so why would they be projected releases for lake wateree".
@@ -389,4 +390,80 @@ test('nothing to filter is an empty list, not a throw', () => {
   assert.deepEqual(arrivalsForWater(null, 'Wateree Lake', WATEREE_GAUGES, BASIN_1), []);
   assert.deepEqual(arrivalsForWater({ arrivals: [] }, 'Wateree Lake', WATEREE_GAUGES, BASIN_1), []);
   assert.deepEqual(arrivalsForWater(CATAWBA_ARRIVALS, '', [], BASIN_1), []);
+});
+
+
+// The real /rivers/flow-arrivals/1 payload, pasted by Ryan 2026-08-17. Two dams publishing on the
+// whole Catawba basin, three mile markers each, repeated across three days: eighteen entries for
+// six real places, and `RiverSection` null on every one.
+const RAW_BASIN_1 = { basinName: 'Catawba', basinId: 1, arrivals: [] };
+for (const [dam, markers] of [
+  ['BW 2 Units', ['Watermill Road Access Area', 'Catawba River Water Intake', 'Morganton Greenway']],
+  ['Wylie', ['Rock Hill River Park', 'Catawba Indian Reservation', 'Lansford Canal State Park']],
+]) {
+  for (const day of ['16', '17', '18']) {
+    for (const m of markers) {
+      const iso = `2026-08-${day}T19:00:00Z`;
+      RAW_BASIN_1.arrivals.push({ damName: dam, mileMarkerName: m, arrival: iso,
+                                  arrivalEpoch: Date.parse(iso), riverSection: null });
+    }
+  }
+}
+
+test('a flow arrival is a river fact, refused for a lake before any name matching', () => {
+  // Every mile marker Duke publishes on this basin is a river access point below a dam, and the
+  // endpoint is /rivers/. A release from the dam above a reservoir raises it imperceptibly and a
+  // release from its own dam lowers it. Neither is an arrival.
+  assert.equal(arrivalsAppliesTo('river'), true);
+  assert.equal(arrivalsAppliesTo('lake'), false);
+  assert.equal(arrivalsAppliesTo('coastal'), false);
+  assert.equal(arrivalsAppliesTo(null), false);
+  assert.equal(arrivalsAppliesTo(''), false);
+});
+
+test('the payload carries no geometry, so "downstream of" cannot be computed', () => {
+  // Stated as a test rather than a comment: every entry has DamName, MileMarkerName, Arrival,
+  // Recedes and a null RiverSection. No river mile, no coordinates, no ordering field. If Duke
+  // ever adds one, this fails and the name matching can be replaced with something better.
+  for (const a of RAW_BASIN_1.arrivals) {
+    assert.equal(a.riverSection, null);
+    assert.equal('riverMile' in a, false);
+    assert.equal('lat' in a, false);
+  }
+});
+
+test('eighteen entries are six places repeated over three days', () => {
+  assert.equal(RAW_BASIN_1.arrivals.length, 18);
+  const next = nextArrivalPerMarker(RAW_BASIN_1.arrivals, Date.parse('2026-08-16T12:00:00Z'));
+  assert.equal(next.length, 6, 'one row per place');
+  // The card slices to four. Sorted by raw time, three days of Bridgewater filled it and Wylie
+  // never appeared at all.
+  assert.equal(new Set(next.map((a) => a.damName)).size, 2, 'both dams survive the collapse');
+  assert.ok(next.every((a) => a.arrivalEpoch >= Date.parse('2026-08-16T12:00:00Z')),
+    'the next one due, not one from this morning');
+});
+
+test('a marker whose arrivals are all past keeps its most recent one', () => {
+  // Mid-surge, the marker must not vanish from the card entirely.
+  const past = nextArrivalPerMarker(RAW_BASIN_1.arrivals, Date.parse('2026-09-01T00:00:00Z'));
+  assert.equal(past.length, 6);
+});
+
+test('the refusal names the dams that are actually releasing', () => {
+  // On 2026-08-16 the whole Catawba basin had exactly two dams publishing, Bridgewater at the top
+  // and Wylie in the middle, and neither is adjacent to most of the chain. "Nothing for you" and
+  // "nothing for you because only these two are releasing" are different answers.
+  assert.deepEqual(arrivalDams(RAW_BASIN_1), ['BW 2 Units', 'Wylie']);
+  assert.deepEqual(arrivalDams({ arrivals: [] }), []);
+  assert.deepEqual(arrivalDams(null), []);
+});
+
+test('BW is Bridgewater and nothing in the payload says so', () => {
+  // A dam name that is an internal abbreviation plus a unit count cannot be matched to Lake
+  // James, whose own gauge is "OLD CATAWBA R BL CATAWBA DAM NEAR BRIDGEWATER, NC". Recorded so
+  // the limit is known rather than rediscovered: this is a false NEGATIVE the name test cannot
+  // fix, and it is the safe direction.
+  const james = ['Catawba River at Lake James/Linville Dam',
+                 'OLD CATAWBA R BL CATAWBA DAM NEAR BRIDGEWATER, NC'];
+  assert.equal(arrivalsForWater(RAW_BASIN_1, 'Lake James (Burke Co, NC)', james, BASIN_1).length, 0);
 });
