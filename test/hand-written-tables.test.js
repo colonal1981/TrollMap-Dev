@@ -72,9 +72,17 @@ const DECLARED = [
   ['js/data/species-intel.js', 'SPECIES_BEHAVIOR', 2, 'data',
    'TWO waters — Wateree and Murray. The smallest table in the app and it drives species '
    + 'behaviour text.'],
-  ['js/data/species-intel.js', 'REGULATIONS', 14, 'data',
-   '12 waters plus lastVerified/source. Regulations are in the research profile for every '
-   + 'lake that has been run.'],
+  // NINE, NOT FOURTEEN. The old scanner ran past the end of this literal and counted five
+  // `name:` pairs out of the code below it, so editing checkRegulations() moved the count of a
+  // table nobody had touched. Six waters plus Coastal SC Inshore plus lastVerified/source.
+  //
+  // Six waters gate checkRegulations() for all 454, and plan-preflight and smart-plan both call
+  // it before a plan is built. As of 2026-08-17 the statewide half comes from the live digest
+  // through /regulations; the closures — notPresent and closedSeason — are still only here,
+  // because a size and creel limit is not a closure.
+  ['js/data/species-intel.js', 'REGULATIONS', 9, 'data',
+   'six waters plus Coastal SC Inshore. The digest now supplies statewide limits for all 454; '
+   + 'this table is the only source of CLOSURES.'],
   ['js/modules/contour-data.js', 'CHAIN_DESCRIPTIONS', 30, 'data',
    'prose for 30 named reservoir chains.'],
   ['js/modules/fishing-index.js', 'FISHING_SYSTEMS', 5, 'data',
@@ -97,7 +105,10 @@ const DECLARED = [
    'profile keys written before the storage-id rules settled. Read-only compatibility.'],
   ['Worker/research/extract.js', 'DOCUMENT_ALIASES', 11, 'alias',
    'names as they appear inside fetched documents, which is not how the registry spells them.'],
-  ['js/data/lake-keys.js', 'LAKE_NAME_TO_R2_KEY', 67, 'alias',
+  // ONE HUNDRED AND TWENTY-ONE, NOT SIXTY-SEVEN. The old scanner stopped early on a brace inside
+  // a nested string and undercounted this by fifty-four. It is the second-largest hand-written
+  // table in the app and every audit that quoted 67 was quoting a parser bug.
+  ['js/data/lake-keys.js', 'LAKE_NAME_TO_R2_KEY', 121, 'alias',
    'display name to R2 key. Superseded in most paths by the registry, still the fallback.'],
   ['js/data/water-aliases.js', 'WATER_TO_R2_KEY', 142, 'alias',
    'the biggest of them and the least worrying: 142 water names mapped to R2 keys, which '
@@ -106,17 +117,40 @@ const DECLARED = [
 
 /** Top-level keys of the object literal that starts at `i`. Brace depth, not regex. */
 function topLevelKeys(src, i) {
+  // STRINGS AND COMMENTS AT EVERY DEPTH, NOT JUST THE FIRST.
+  //
+  // This skipped quotes only at depth 1, so a brace inside a nested string or a comment threw the
+  // depth count off and the scan ran straight out of the literal and on through the rest of the
+  // file, counting whatever `name:` pairs it met. REGULATIONS was pinned at 14 while the object
+  // actually has 9 keys — the extra five were from code below it, and editing that code changed
+  // the count of a table nobody had touched. A pin that moves when an unrelated function is
+  // rewritten is not a pin.
+  //
+  // Template literals matter too: `${x}` is a brace pair inside a string.
   let d = 0; const keys = []; let j = i;
+  const skipString = (k, q) => {
+    k += 1;
+    while (k < src.length) {
+      if (src[k] === '\\') { k += 2; continue; }
+      if (src[k] === q) return k;
+      k += 1;
+    }
+    return src.length;
+  };
   while (j < src.length) {
     const ch = src[j];
-    if (ch === '{') d += 1;
+    if (ch === '/' && src[j + 1] === '/') { j = src.indexOf('\n', j); if (j < 0) break; }
+    else if (ch === '/' && src[j + 1] === '*') { j = src.indexOf('*/', j); if (j < 0) break; j += 1; }
+    else if (ch === '"' || ch === "'" || ch === '`') {
+      const close = skipString(j, ch);
+      if (d === 1 && ch !== '`' && /^\s*:/.test(src.slice(close + 1))) {
+        keys.push(src.slice(j + 1, close));
+      }
+      j = close;
+    }
+    else if (ch === '{') d += 1;
     else if (ch === '}') { d -= 1; if (d === 0) break; }
-    else if (d === 1 && (ch === '"' || ch === "'")) {
-      let k = j + 1;
-      while (k < src.length && src[k] !== ch) k += src[k] === '\\' ? 2 : 1;
-      if (/^\s*:/.test(src.slice(k + 1))) keys.push(src.slice(j + 1, k));
-      j = k;
-    } else if (d === 1 && /[A-Za-z_$]/.test(ch)) {
+    else if (d === 1 && /[A-Za-z_$]/.test(ch)) {
       const m = /^([A-Za-z_$][\w$]*)\s*:/.exec(src.slice(j));
       if (m) { keys.push(m[1]); j += m[0].length - 1; }
     }

@@ -24,6 +24,7 @@ import { lakeRecordFor } from '../data/lake-registry.js';
 import { fetchWaterConditions, conditionsStrip, levelSentence } from '../utils/water-conditions.js';
 import { camerasForWater, camerasOnWater, nearestSite, cameraFrame, ageLabel, MAX_RAMP_KM }
   from '../utils/cameras.js';
+import { primeRegulations } from '../data/regulations-live.js';
 
 const CACHE_MS = 5 * 60 * 1000;
 const cache = new Map();          // slug -> { at, c }
@@ -528,6 +529,12 @@ export async function showConditionsFor(rec, opts = {}) {
 
   paint(rec, { ok: true, pending: 'reading…' });
   const worker = CF_WORKER_URL || window.CF_WORKER_URL;
+  // WARM THE REGULATION DIGEST FOR THIS WATER. checkRegulations() is called synchronously deep in
+  // the plan path and cannot await anything, so the read happens here, where the water is chosen
+  // and its state is already in hand. Fire-and-forget on purpose: a failed prime leaves the cache
+  // cold, and a cold cache is the unknown branch, which warns. Nothing here can turn a network
+  // problem into permission.
+  if (rec.state) primeRegulations(rec.state, rec.displayName || rec.name, { worker });
   const c = await fetchWaterConditions(worker, rec, { date: opts.date, point: activeRamp });
   // A slower answer for a lake you already moved off must not overwrite the newer one.
   if (mine !== seq || lastSlug !== rec.slug) return c;

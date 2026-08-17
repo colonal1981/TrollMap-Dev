@@ -13,6 +13,7 @@ import { handleWaterRoute } from './water.js';
 import { handleConditions } from './conditions.js';
 import { handleCameras } from './cameras.js';
 import { handleReports } from './reports.js';
+import { fetchStateRegulations, getLakeRegulations } from './research/clients.js';
 import { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
 
 
@@ -1570,6 +1571,48 @@ var trollmap_worker_default = {
         const r = await fetch(`https://waterservices.usgs.gov/nwis/iv/?sites=${site}&parameterCd=${params}&format=json&period=P2D`);
         const t = await r.text();
         return new Response(t, { headers: JSON_HEADERS, status: r.status });
+      }
+      // THE REGULATIONS DIGEST, WHICH THE CLIENT HAD NO PATH TO.
+      //
+      // fetchStateRegulations parses the official state digest PDFs and caches the result keyed
+      // to the digest identity, so a digest swap busts its own cache. The research agents have
+      // read it since 2026-08-03. The browser could not: js/data/species-intel.js gates
+      // checkRegulations() on a table of SIX named waters, and on the other 448 it returned
+      // "no specific regulation data available" - which neither of its two callers read.
+      //
+      // A STATEWIDE LIMIT APPLIES TO EVERY WATER IN THE STATE. That is the whole gain here: 454
+      // waters get the general table instead of 6 getting a hand-typed one.
+      //
+      // `hasExceptions` says whether the lake-specific half found anything, so a caller can tell
+      // "this lake has its own rule" from "the statewide rule applies", which are different
+      // sentences to put in front of somebody about to keep a fish.
+      if (path === "/regulations") {
+        const st = (url.searchParams.get("state") || "").trim().toUpperCase();
+        const lake = url.searchParams.get("lake") || "";
+        if (!st) {
+          return new Response(JSON.stringify({ error: "missing state" }), { headers: JSON_HEADERS, status: 400 });
+        }
+        try {
+          const stateRegs = await fetchStateRegulations(st, env);
+          const forLake = lake ? getLakeRegulations(stateRegs, lake) : null;
+          return new Response(JSON.stringify({
+            state: st,
+            lake: lake || null,
+            // `failed` travels. A parse that broke and a state that publishes no lake-specific
+            // rules both look like an empty object, and only one of them is a bug.
+            parse_failed: !!stateRegs.failed,
+            parse_error: stateRegs.error || null,
+            general: stateRegs.general || {},
+            lake_specific: forLake ? forLake.lakeSpecificRegulations : null,
+            has_exceptions: forLake ? forLake.hasExceptions : null,
+            note: "Parsed from the state digest PDF. Limits are published text, not a legality "
+                + "ruling: a size and creel limit is not a closure, and this route cannot tell "
+                + "you a season is shut. Verify before you keep one.",
+          }, null, 2), { headers: { ...JSON_HEADERS, "Cache-Control": "public, max-age=3600" } });
+        } catch (err) {
+          return new Response(JSON.stringify({ error: String(err && err.message || err), state: st }),
+            { headers: JSON_HEADERS, status: 502 });
+        }
       }
       if (path === "/lake-clarity") {
         const name = url.searchParams.get("lake") || url.searchParams.get("waterbody") || "";

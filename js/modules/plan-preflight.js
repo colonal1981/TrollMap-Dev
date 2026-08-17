@@ -42,9 +42,14 @@ export function detectCoastalZone(lakeName) {
 export function checkPlanLegality(lakeName, species, date) {
   const zoneKey = detectCoastalZone(lakeName);
   const st = zoneKey ? (COASTAL_ZONES[zoneKey] || {}).state : null;
+  // THE STATE IS WHAT UNLOCKS THE DIGEST. Inland it comes off the registry row, which this file
+  // already reads for other reasons; on the coast the zone carries it. Without a state,
+  // checkRegulations falls to its unknown branch — which now warns instead of saying nothing.
+  const inlandState = st || (lakeDbEntryFor(lakeName) || {}).state || null;
   let r;
   try {
-    r = st ? checkCoastalRegulations(st, species, date) : checkRegulations(lakeName, species, date);
+    r = st ? checkCoastalRegulations(st, species, date)
+           : checkRegulations(lakeName, species, date, inlandState);
   } catch (e) {
     // A THROWN LOOKUP IS NOT PERMISSION. But it is also not a refusal — blocking every plan
     // because a table has a bad row would be worse than the thing it guards against. Say so
@@ -57,6 +62,9 @@ export function checkPlanLegality(lakeName, species, date) {
     legal: r ? r.legal !== false : true,
     reason: (r && r.reason) || '',
     warnings: (r && r.warnings) || [],
+    // The published limits, when the digest answered. A caller that shows nothing else should
+    // still be able to show these.
+    limits: (r && r.limits) || null,
     coastal: !!zoneKey,
   };
 }

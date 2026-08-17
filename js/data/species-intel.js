@@ -1,3 +1,4 @@
+import { livePolicyFor } from './regulations-live.js';
 /**
  * species-intel.js — TrollMap Unified Species behavior + regulations knowledge base.
  * Sourced from SCDNR regulations, Carolina Sportsman, and Angler's Headquarters.
@@ -96,16 +97,51 @@ export function resolveLakeKey(lakeName, table) {
   return found || null;
 }
 
-export function checkRegulations(lakeName, species, date) {
+/**
+ * WARNINGS, NOT A NOTE. The old unknown branch returned `note`, and NEITHER CALLER READS IT:
+ * checkPlanLegality maps `reason` and `warnings`; smart-plan reads `legal` and `warnings`. So on
+ * 448 of 454 waters this ran, said "we do not know", and displayed nothing — indistinguishable
+ * from "checked, you are fine". The throw path in checkPlanLegality directly above DOES warn, so
+ * a failed check spoke and an empty one did not.
+ *
+ * `state` is optional and only used to read the live digest, which the caller primes when a water
+ * is selected. A cold cache is the unknown branch, which warns. Nothing here turns a network
+ * problem into permission.
+ *
+ * A LIMIT IS NOT A CLOSURE. The digest publishes size and creel limits; it does not say a season
+ * is shut, which is what `legal: false` means. Legality still comes from the curated table's
+ * notPresent / closedSeason rows, and the returned `limits` says which book it came out of.
+ */
+export function checkRegulations(lakeName, species, date, state = null) {
   const key = resolveLakeKey(lakeName, REGULATIONS);
   const lakeRegs = key ? REGULATIONS[key] : null;
+  const live = state ? livePolicyFor(state, lakeName, species) : null;
+  const limits = live && live.scope !== 'none'
+    ? { sizeLimit: live.sizeLimit, creelLimit: live.creelLimit, scope: live.scope,
+        species: live.species, state: live.state,
+        source: `${live.state || 'state'} regulations digest` }
+    : null;
+
   if (!lakeRegs || !lakeRegs[species]) {
-    return { legal: true, reason: null, regInfo: null, note: 'No specific regulation data available — verify locally before fishing.' };
+    const warnings = [];
+    if (limits) {
+      warnings.push(`${species} on ${lakeName}: ${limits.scope === 'lake' ? 'lake-specific' : 'statewide'} `
+        + `limits are ${limits.sizeLimit || 'no stated size limit'} / `
+        + `${limits.creelLimit || 'no stated creel limit'} (${limits.source}). `
+        + `No closure information for this water — verify before you keep one.`);
+    } else if (live) {
+      warnings.push(`The ${live.state || 'state'} digest was read and lists nothing for ${species} `
+        + `on ${lakeName}. Verify before you keep one.`);
+    } else {
+      warnings.push(`No regulation data for ${lakeName} — verify with the state before you keep one.`);
+    }
+    return { legal: true, reason: null, regInfo: null, limits, warnings,
+             note: warnings[0] };
   }
   const reg = lakeRegs[species];
 
   if (reg.notPresent) {
-    return { legal: false, reason: reg.note, regInfo: reg };
+    return { legal: false, reason: reg.note, regInfo: reg, limits, warnings: [] };
   }
 
   if (reg.closedSeason) {
@@ -120,11 +156,19 @@ export function checkRegulations(lakeName, species, date) {
       ? (mdVal >= startVal && mdVal <= endVal)
       : (mdVal >= startVal || mdVal <= endVal); // wraps year boundary
     if (inClosedWindow) {
-      return { legal: false, reason: `Closed season: ${reg.note}`, regInfo: reg };
+      return { legal: false, reason: `Closed season: ${reg.note}`, regInfo: reg, limits, warnings: [] };
     }
   }
 
-  return { legal: true, reason: null, regInfo: reg };
+  // A CURATED ROW AND THE DIGEST DISAGREEING IS WORTH SAYING OUT LOUD rather than silently
+  // preferring one. The curated table is hand-typed and dated; the digest is this year's book.
+  const warnings = [];
+  if (limits && reg.sizeLimit && reg.sizeLimit.min != null
+      && limits.sizeLimit && !String(limits.sizeLimit).includes(String(reg.sizeLimit.min))) {
+    warnings.push(`Built-in table says ${reg.sizeLimit.min}" minimum for ${species} here; the `
+      + `${limits.source} says "${limits.sizeLimit}". Verify before you keep one.`);
+  }
+  return { legal: true, reason: null, regInfo: reg, limits, warnings };
 }
 
 // ── Legacy Species behavior (v1) ───────────────────────────────────────────
