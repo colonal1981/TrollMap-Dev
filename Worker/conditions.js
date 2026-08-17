@@ -1884,6 +1884,94 @@ export function levelVsSameDate(json, isoDate, windowDays = 3) {
   };
 }
 
+/**
+ * KEEP THE ALERTS, BECAUSE THE FEED IS A SNAPSHOT AND THE EFFECT OUTLIVES THE EXPLANATION.
+ *
+ * Ryan, 2026-08-17, on the card reporting Lake Wateree higher than 24 of 30 readings for this
+ * week while the basin sits in Stage 2 drought:
+ *
+ *   *"i can tell you why it is high... and if we were reading their alert messages last week you
+ *    would know too... they had to bring it to 99ft to float a barge that is working near the dam
+ *    which is why buckhill landing is closed"*
+ *
+ * That notice is NOT in today's `/access-alerts`. What survives is the consequence — "Buck Hill
+ * Access Area will close on March 2, 2026 for approximately one year due to construction work at
+ * the Wateree hydro facility" — with the reason for the level gone. The lake is still high. The
+ * sentence explaining it has rotated out.
+ *
+ * SO THE STATISTIC OUTLIVED ITS CAUSE, and a rank that reads "higher than almost every other year"
+ * invites exactly one inference — that it has been wet — when the actual answer is a barge. This
+ * app has spent a week on numbers that render as facts about the world when they are facts about
+ * a field; this is a number that renders as a fact about the weather when it is a fact about an
+ * operating decision.
+ *
+ * There is nothing clever to do about that except STOP THROWING THE NOTICES AWAY. One object per
+ * day, written the first time an isolate reads the feed on a date it has not seen. It costs one
+ * HEAD and, once a day, one PUT. From today forward an explanation posted in March is still
+ * readable in August.
+ *
+ * A FAILED WRITE IS NOT A FAILED READ. The archive is a convenience; the live feed is the answer.
+ * Nothing here may make /conditions fail.
+ */
+export const ALERT_ARCHIVE_PREFIX = '_duke/access_alerts/';
+
+export async function archiveAlerts(env, alerts, isoDate) {
+  const bucket = env && env.R2_TROLLMAP_CHARTPACKS;
+  const day = String(isoDate || '').slice(0, 10);
+  if (!bucket || !day || !Array.isArray(alerts) || !alerts.length) return false;
+  const key = `${ALERT_ARCHIVE_PREFIX}${day}.json`;
+  try {
+    if (await bucket.head(key)) return false;          // already have today
+    await bucket.put(key, JSON.stringify({ captured: day, alerts }), {
+      httpMetadata: { contentType: 'application/json' },
+    });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Alerts about this water that Duke has since taken down.
+ *
+ * An expired notice is not a live one and must never read as one — it is labelled with the date
+ * it was captured and the date it was last seen, and it is offered as HISTORY. Its whole value is
+ * that it may be the reason for a number the card is showing today.
+ *
+ * Read newest-first and stopped at `limit` objects, because the point is the recent past. An
+ * archive that has to be read whole to answer a question is one nobody will keep reading.
+ */
+export async function expiredAlertsFor(env, liveAlerts, waterName, gaugeNames = [], limit = 45) {
+  const bucket = env && env.R2_TROLLMAP_CHARTPACKS;
+  if (!bucket) return [];
+  const liveIds = new Set((liveAlerts || []).map((a) => a.id).filter((v) => v != null));
+  let listed;
+  try {
+    listed = await bucket.list({ prefix: ALERT_ARCHIVE_PREFIX, limit: 400 });
+  } catch (_) {
+    return [];
+  }
+  const keys = (listed && listed.objects ? listed.objects : [])
+    .map((o) => o.key).sort().reverse().slice(0, limit);
+
+  const seen = new Set();
+  const out = [];
+  for (const key of keys) {
+    let snap;
+    try {
+      const obj = await bucket.get(key);
+      if (!obj) continue;
+      snap = JSON.parse(await r2Text(obj));
+    } catch (_) { continue; }
+    for (const a of alertsForWater(snap && snap.alerts, waterName, gaugeNames)) {
+      if (a.id == null || liveIds.has(a.id) || seen.has(a.id)) continue;
+      seen.add(a.id);
+      out.push({ ...a, no_longer_posted: true, last_seen: (snap && snap.captured) || null });
+    }
+  }
+  return out;
+}
+
 /** The dams a schedule actually carries, for a refusal that names them. */
 export function arrivalDams(sched) {
   const out = [];
@@ -2429,7 +2517,11 @@ async function flowVsHistory(site, flow, nowMs) {
   return st ? { ...statBand(flow, st), flow_cfs: flow, usgs_site: site } : null;
 }
 
-async function waterBlock(b, lat, lon) {
+// `env` IS A PARAMETER BECAUSE THE ALERT ARCHIVE NEEDS THE BUCKET. It was used here without
+// being passed and every bound water's `water` block failed with "env is not defined" - caught
+// by conditions-bindings.test.js on the first run, which is the whole reason that harness
+// stubs R2 and the upstreams instead of asserting shapes.
+async function waterBlock(b, lat, lon, env) {
   const picks = [];
   if (gaugeId(b.pool)) picks.push(['pool', b.pool]);
   if (gaugeId(b.tailwater)) picks.push(['tailwater', b.tailwater]);
@@ -2592,8 +2684,16 @@ async function waterBlock(b, lat, lon) {
   // Fetched for any Duke water, not only one that resolved a basin, because a closed ramp is a
   // closed ramp whether or not anybody is releasing.
   const alertsRaw = parseAccessAlerts(await fetchDukeAccessAlerts().catch(() => null));
+  // KEEP THEM. The feed is a snapshot and the effect outlives the explanation - see
+  // archiveAlerts. A failed write is not a failed read.
+  await archiveAlerts(env, alertsRaw, new Date().toISOString().slice(0, 10)).catch(() => false);
   const mineAlerts = alertsForWater(alertsRaw, b.display_name || b.slug, gaugeNames);
   out.access_alerts = mineAlerts.length ? mineAlerts : null;
+  // Notices Duke has since taken down, offered as HISTORY and labelled as such. The one that
+  // explains why Wateree is high this week is already gone from the live feed.
+  const expired = await expiredAlertsFor(env, mineAlerts, b.display_name || b.slug, gaugeNames)
+    .catch(() => []);
+  out.access_alerts_expired = expired.length ? expired : null;
   const drought = basinRow ? droughtNoticeFor(alertsRaw, basinRow) : null;
   out.operator_drought = drought;
 
@@ -2614,6 +2714,13 @@ async function waterBlock(b, lat, lon) {
     vs_same_date: levelVsSameDate(opRange, guide.today && guide.today.date),
     location_id: dukeLocId,
     source: `https://api.hydro-derived.duke-energy.app/lakes/operating-range/${dukeLocId}`,
+    // A RESERVOIR LEVEL IS AN OPERATING DECISION, NOT A WEATHER READING, and a rank that says
+    // "higher than almost every other year" invites exactly one wrong inference. Ryan, 2026-08-17,
+    // on this very lake and this very week: they raised it to 99 to float a barge working near the
+    // dam, which is also why Buck Hill is shut. Nothing in any feed says that today.
+    caveat: 'A reservoir level is set by its operator. A reading above or below the usual for this '
+          + 'date is as likely to be a drawdown, a refill or construction as it is to be weather - '
+          + 'check the access notices before reading anything into it.',
   } : null;
 
   // TWO SOURCES, ONE FACT, AND NOW THEY CAN DISAGREE OUT LOUD. access-alerts says the stage in a
@@ -2775,6 +2882,28 @@ export function chartDatumShape(b, sources = {}) {
     out.source = 'Duke Energy — api.hydro-derived.duke-energy.app/lakes/current-level; `Actual` '
                + 'is feet inside a 100 ft band under full pond, so the drawdown is 100 minus it';
     if (d.duke_feed_name) out.feed_name = d.duke_feed_name;
+    // THE OPERATOR'S OWN SENTENCE ABOUT THE LEVEL, WHICH WAS FETCHED AND DROPPED.
+    //
+    // normalizeDukeRow has parsed SpecialMessage since it was written, and picks the NEWEST of the
+    // array rather than the first because Duke does not sort it. `/lake` and `/duke` carried it;
+    // /conditions - the route the card actually uses - never did. Fetched on every request and
+    // thrown away, which is the fifth instance of that family this week.
+    //
+    // Ryan pasted the message on 2026-08-17, after the card told him the lake was higher than 24
+    // of 30 readings for this week and could not say why:
+    //
+    //   "Due to planned maintenance at the Wateree Hydro Station the week of August 17, 2026,
+    //    Lake Wateree water levels are expected to rise over the weekend and remain near 99.0 feet
+    //    (local datum) during the week. The higher water level is needed to support barge
+    //    operations related to maintenance activities."
+    //
+    // 99.0 "local datum" is the same 100-is-full-pond index everything else on this feed uses, and
+    // it is the entire answer to a question five years of history could only pose. It also names
+    // the reason Buck Hill Access Area is shut. One sentence, on the wire the whole time.
+    if (d.specialMessage) out.operator_message = d.specialMessage;
+    if (Array.isArray(d.specialMessages) && d.specialMessages.length) {
+      out.operator_messages = d.specialMessages;
+    }
     return out;
   }
 
@@ -3032,7 +3161,7 @@ export async function handleConditions(request, env, url) {
     ['water', bindingsP.then(({ all, err }) => {
       if (err) throw new Error(err);
       const b = all[slug];
-      return b ? waterBlock(b, lat, lon) : null;
+      return b ? waterBlock(b, lat, lon, env) : null;
     })],
     ['tide', bindingsP.then(({ all, err }) => {
       if (err) throw new Error(err);

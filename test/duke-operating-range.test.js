@@ -136,5 +136,75 @@ console.log('\n== the id is published, not typed ==');
   check('two ids for one name is nothing', dukeLocationIdFor(ambiguous, 'Lake Robinson') === null);
 }
 
+
+// ── the sentence that was on the wire the whole time ─────────────────────────────────────────
+import { chartDatumShape, archiveAlerts, expiredAlertsFor, ALERT_ARCHIVE_PREFIX }
+  from '../Worker/conditions.js';
+
+// Verbatim, pasted by Ryan 2026-08-17 after the card said the lake was higher than 24 of 30
+// readings for the week and could not say why.
+const WATEREE_NOTICE =
+  'Due to planned maintenance at the Wateree Hydro Station the week of August 17, 2026, Lake '
+  + 'Wateree water levels are expected to rise over the weekend and remain near 99.0 feet (local '
+  + 'datum) during the week. The higher water level is needed to support barge operations related '
+  + 'to maintenance activities.';
+
+console.log('\n== fetched on every request and never shown ==');
+{
+  // normalizeDukeRow has parsed SpecialMessage since it was written and /lake and /duke carried
+  // it. /conditions - the route the card uses - dropped it.
+  const cd = chartDatumShape({ slug: 'wateree_lake', display_name: 'Wateree Lake (Kershaw Co, SC)' },
+    { duke: { ft: 223.4, fullPool: 225.5, belowFullPoolFt: 2.1, duke_feed_name: 'Lake Wateree',
+              specialMessage: WATEREE_NOTICE,
+              specialMessages: [{ text: WATEREE_NOTICE, eventDate: '2026-08-14T00:00:00' },
+                                { text: 'An older notice.', eventDate: '2026-03-01T00:00:00' }] } });
+  check('the level still comes through', cd.below_full_pool_ft === 2.1);
+  check('and so does the sentence explaining it', cd.operator_message === WATEREE_NOTICE);
+  check('99.0 local datum is in it', /99\.0 feet \(local datum\)/.test(cd.operator_message));
+  check('so is the barge', /barge operations/.test(cd.operator_message));
+  check('the whole array travels, dated', cd.operator_messages.length === 2);
+
+  // A lake with no notice must not grow an empty one.
+  const quiet = chartDatumShape({ slug: 'x', display_name: 'X' },
+    { duke: { ft: 1, fullPool: 2, belowFullPoolFt: 1 } });
+  check('no message is no key', !('operator_message' in quiet));
+}
+
+console.log('\n== keep them, because the effect outlives the explanation ==');
+{
+  // Ryan: "if we were reading their alert messages last week you would know too". Duke takes
+  // notices down; the thing they describe can outlast them.
+  const store = new Map();
+  const bucket = {
+    head: async (k) => (store.has(k) ? { key: k } : null),
+    put: async (k, body) => { store.set(k, body); },
+    get: async (k) => (store.has(k) ? { text: async () => store.get(k) } : null),
+    list: async ({ prefix }) => ({ objects: [...store.keys()].filter((k) => k.startsWith(prefix)).map((key) => ({ key })) }),
+  };
+  const env = { R2_TROLLMAP_CHARTPACKS: bucket };
+
+  const OLD = [{ id: 999, basin_id: 1, water: 'Lake Wateree', water_location_id: 24,
+                 place: 'Lake Wateree', kind: 'LAKEPOND', text: WATEREE_NOTICE, links: [],
+                 last_updated: '2026-08-14T00:00:00' }];
+  check('first write of the day lands', await archiveAlerts(env, OLD, '2026-08-14') === true);
+  check('the same day twice is one object', await archiveAlerts(env, OLD, '2026-08-14') === false);
+  check('the key is dated', store.has(`${ALERT_ARCHIVE_PREFIX}2026-08-14.json`));
+  check('nothing to archive writes nothing', await archiveAlerts(env, [], '2026-08-15') === false);
+  check('no bucket is not a throw', await archiveAlerts({}, OLD, '2026-08-15') === false);
+
+  // A week later the notice is gone from the live feed and the lake is still high.
+  const gone = await expiredAlertsFor(env, [], 'Wateree Lake (Kershaw Co, SC)',
+    ['Wateree River at Lake Wateree Dam']);
+  check('the taken-down notice comes back', gone.length === 1, gone.map((a) => a.id));
+  check('LABELLED as no longer posted, never as live', gone[0].no_longer_posted === true);
+  check('with the day it was last seen', gone[0].last_seen === '2026-08-14');
+
+  // AND A NOTICE THAT IS STILL LIVE IS NOT ALSO HISTORY.
+  const stillUp = await expiredAlertsFor(env, OLD, 'Wateree Lake', ['Wateree River at Lake Wateree Dam']);
+  check('a live notice is not duplicated into the archive row', stillUp.length === 0, stillUp);
+  check('another lake gets nothing', (await expiredAlertsFor(env, [], 'Lake Murray', [])).length === 0);
+  check('no bucket is an empty list', (await expiredAlertsFor({}, [], 'Wateree Lake', [])).length === 0);
+}
+
 console.log(`\n${fails === 0 ? 'ALL PASS' : fails + ' FAILURES'}`);
 process.exit(fails ? 1 : 0);

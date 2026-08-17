@@ -131,6 +131,9 @@ export function readConditions(j) {
     // WHAT IS SHUT AND WHY THE WATER IS LOW. Both come off Duke's access-alerts, and the second
     // is the reason behind a number already on the card.
     accessAlerts: [],
+    accessAlertsExpired: [],
+    operatorMessage: null,
+    operatorMessages: [],
     droughtNotice: null,
     dukeGuide: null,
     currentKn: null,
@@ -215,6 +218,12 @@ export function readConditions(j) {
     // fallback prints the same name twice.
     out.feedName = cd.feed_name || null;
     out.pending = cd.pending || null;
+    // THE OPERATOR'S OWN SENTENCE ABOUT THE LEVEL. Parsed by normalizeDukeRow since it was
+    // written, carried by /lake and /duke, and never surfaced by /conditions - which is the route
+    // the card uses. On 2026-08-17 it was the only thing anywhere that explained why Lake Wateree
+    // was running higher than 24 of 30 readings for the week: a barge, and planned maintenance.
+    out.operatorMessage = cd.operator_message || null;
+    out.operatorMessages = Array.isArray(cd.operator_messages) ? cd.operator_messages : [];
   }
   if (w.operator) {
     if (w.operator.observed_at) out.observedAt = w.operator.observed_at;
@@ -430,6 +439,7 @@ export function readConditions(j) {
   out.releases = w.releases || null;
   out.accessAlerts = Array.isArray(w.access_alerts) ? w.access_alerts : [];
   out.dukeGuide = w.duke_guide || null;
+  out.accessAlertsExpired = Array.isArray(w.access_alerts_expired) ? w.access_alerts_expired : [];
   // Either path. The Worker attaches it to the schedule too so a consumer reading `releases`
   // alone cannot show a zero without its cause; here they are one field again.
   out.droughtNotice = w.operator_drought

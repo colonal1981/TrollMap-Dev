@@ -429,6 +429,25 @@ function cardHtml(rec, c) {
       + (items.length ? `<br>${items.map(esc).join('<br>')}` : '')));
   }
 
+  // THE OPERATOR'S OWN SENTENCE, ABOVE EVERY NUMBER IT EXPLAINS.
+  //
+  // Duke's SpecialMessage was parsed on every request and never shown by the route this card
+  // uses. On 2026-08-17 it was the only thing anywhere that answered why Lake Wateree was running
+  // higher than 24 of 30 readings for the week - planned maintenance at the hydro station, held
+  // near 99.0 to float a barge - and it is also why Buck Hill is shut. Ryan had to paste it in.
+  if (c.operatorMessage) {
+    const extra = (c.operatorMessages || []).filter((m) => m && m.text && m.text !== c.operatorMessage);
+    out.push(row('Operator notice', `${esc(c.operatorMessage)}`
+      + '<span class="cond-sub"> — the operator\u2019s own words. A reservoir level is a decision '
+      + 'somebody made, and this is usually where the reason is.</span>'
+      + (extra.length
+        ? `<br><span class="cond-sub">${extra.length} older notice${extra.length === 1 ? '' : 's'} `
+          + `on this water:<br>${extra.slice(0, 3).map((m) =>
+              `${m.eventDate ? `${esc(String(m.eventDate).slice(0, 10))} — ` : ''}${esc(m.text)}`)
+              .join('<br>')}</span>`
+        : '')));
+  }
+
   // WHERE THE LAKE IS SUPPOSED TO BE, and where it usually is on this date.
   //
   // "2.1 ft below full pond" is a fact with no context. Wateree runs a three-foot summer band and
@@ -453,6 +472,10 @@ function cardHtml(rec, c) {
         + `${h.higher_than} of ${h.n} readings within ${h.window_days} days of this date, `
         + `${esc(String(h.from))}–${esc(String(h.to))}</span>`);
     }
+    // A RESERVOIR LEVEL IS AN OPERATING DECISION. Ryan, on this lake this week: they took it to
+    // 99 to float a barge near the dam, and that is why Buck Hill is shut. Nothing in any live
+    // feed says so, and a rank without this caveat reads as a fact about rainfall.
+    if (g.caveat) bits.push(`<span class="cond-sub">${esc(g.caveat)}</span>`);
     if (bits.length) out.push(row('Vs Duke guide', bits.join('<br>')));
 
     if (g.drought_stage != null) {
@@ -495,6 +518,18 @@ function cardHtml(rec, c) {
     }).join('<br>');
     out.push(row(`Access (${c.accessAlerts.length})`, lines
       + '<span class="cond-sub"><br>Duke Energy access alerts. Applies only to areas Duke manages.</span>'));
+  }
+
+  // NOTICES DUKE HAS TAKEN DOWN, offered as history and never as a live one. Their whole value is
+  // that one of them may be the reason for a number on this card.
+  if (c.accessAlertsExpired && c.accessAlertsExpired.length) {
+    const lines = c.accessAlertsExpired.slice(0, 4).map((a) =>
+      `<span class="cond-sub"><b>${esc(a.place || a.water || 'Notice')}</b>`
+      + `${a.last_seen ? ` — last posted ${esc(a.last_seen)}` : ''}<br>`
+      + `${esc(a.text).replace(/\n/g, '<br>')}</span>`).join('<br>');
+    out.push(row('No longer posted', lines
+      + '<span class="cond-sub"><br>Duke takes notices down; the thing they describe can outlast '
+      + 'them. Kept because the explanation for a level often disappears before the level does.</span>'));
   }
 
   if (c.releasesRefused) {
