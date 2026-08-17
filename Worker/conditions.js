@@ -1317,6 +1317,79 @@ export function dukeBasinWhy(roster, waterName, gaugeNames = []) {
 }
 
 /**
+ * WHICH OF A BASIN'S ARRIVALS ARE ABOUT THIS WATER.
+ *
+ * Ryan, 2026-08-17, on the Wateree card the moment the basin started resolving: *"all of these
+ * are north of wateree so why would they be projected releases for lake wateree"* —
+ *
+ *   18:24  Watermill Road Access Area
+ *   19:00  Catawba River Water Intake
+ *   19:18  Morganton Greenway
+ *   19:57  Rock Hill River Park
+ *
+ * Morganton is at the TOP of the Catawba, below Lake James. Rock Hill is at Wylie. Lake Wateree
+ * is the last impoundment on the chain, 150 miles downstream of the first. Basin 1 is a quarter
+ * of a state and eleven dams, and every water on it was being handed the whole basin's schedule.
+ *
+ * I TRADED A FALSE NEGATIVE FOR A FALSE POSITIVE. Before the basin resolved, Wateree showed a
+ * refusal; after, it showed four releases for other people's dams. Resolving the basin is
+ * necessary and it is not sufficient: a basin is a river system, and the release that matters is
+ * the one arriving HERE.
+ *
+ * THE RIVER TOKEN CANNOT DO THE FILTERING. Every gauge on this chain is named "Catawba River
+ * at ...", and one of the four arrivals above is "Catawba River Water Intake" — so matching on
+ * the basin's own river name keeps exactly the wrong one. The basin's tokens are subtracted
+ * first, and what is left is PLACE: cedar, rocky, wateree, camden against watermill, morganton,
+ * rock hill, intake.
+ *
+ * Nothing survives for the Wateree today, and that is the right answer. It is reported as a
+ * refusal with the count, not as an empty list — "Duke published four and none was here" and
+ * "Duke published nothing" are different facts.
+ *
+ * A NAME TEST IS NOT A RIVER MILE. Duke's payload may carry ordering or coordinates that would
+ * let this be done properly, downstream-of rather than named-like; the endpoint 403s to
+ * everything except a browser, so that is an open question and this is the honest filter until
+ * it is answered. Over-filtering is the safe direction: showing nothing beats showing a release
+ * 150 miles upstream as though it were arriving at your ramp.
+ */
+export function arrivalsForWater(sched, waterName, gaugeNames = [], basinRow = null) {
+  const arrivals = (sched && sched.arrivals) || [];
+  if (!arrivals.length) return [];
+
+  const mine = distinctive(waterName);
+
+  // THE TOKEN THAT DISTINGUISHES NOTHING IS THE BASIN'S RIVER. Every gauge on this chain is
+  // named "Catawba River at ...", and one of Ryan's four arrivals is "Catawba River Water
+  // Intake" — so a match on "catawba" keeps exactly the wrong one.
+  //
+  // `RiverName` ONLY, NOT `riverDescription`. Basin 1's description is "Catawba - Wateree", and
+  // "wateree" is not basin-wide, it is the downstream half — excluding it would throw away the
+  // one word that identifies this lake. The river is the shared thing; the description lists the
+  // parts.
+  //
+  // AND A WATER NAMED AFTER ITS RIVER KEEPS ITS NAME. Basin 6 is "Keowee Toxaway"; on Lake
+  // Keowee "keowee" is both the river and the lake, and excluding it would leave that lake unable
+  // to match its own dam. Anything the water's own name carries is never excluded.
+  const shared = new Set();
+  for (const t of [...distinctive(basinRow && basinRow.RiverName),
+                   ...distinctive(sched && sched.basinName)]) {
+    if (!mine.has(t)) shared.add(t);
+  }
+
+  // The PLACE half of a gauge name is what names the impoundment: "Catawba River at Cedar Creek
+  // Reservoir/Rocky Ck-Cedar Ck Dam" gives cedar and rocky, which the lake's own name does not.
+  const want = new Set(mine);
+  for (const n of gaugeNames || []) for (const t of distinctive(n)) want.add(t);
+  if (!want.size) return [];
+
+  const hits = (s2) => {
+    for (const t of distinctive(s2)) if (want.has(t) && !shared.has(t)) return true;
+    return false;
+  };
+  return arrivals.filter((a) => hits(a.damName) || hits(a.mileMarkerName));
+}
+
+/**
  * DOES THE SCHEDULE THAT CAME BACK ACTUALLY NAME THIS WATER'S RIVER?
  *
  * Still a verifier, and still worth having now that the id is resolved rather than typed: Duke
@@ -1923,6 +1996,7 @@ async function waterBlock(b, lat, lon) {
     .filter((g) => g && g.name).map((g) => g.name);
   const roster = await fetchDukeRivers().catch(() => null);
   const basin = dukeBasinFor(roster, b.display_name || b.slug, gaugeNames);
+  const basinRow = (roster || []).find((r) => Number(r.RiverId ?? r.riverId) === basin) || null;
   const dukeSched = basin ? await fetchDukeFlowArrivals(basin).catch(() => null) : null;
 
   // A hand-typed basin id has to prove itself before it is allowed to describe this river.
@@ -1930,7 +2004,27 @@ async function waterBlock(b, lat, lon) {
   // available are different facts, and only the first one names a table that needs fixing.
   out.releases_refused = null;
   let duke = dukeSched;
-  if (dukeSched && !dukeBasinAgrees(dukeSched, b.display_name || b.slug, gaugeNames)) {
+
+  // A BASIN IS NOT A WATER. Keep only the arrivals that name this water or one of its gauges.
+  if (dukeSched && dukeBasinAgrees(dukeSched, b.display_name || b.slug, gaugeNames)) {
+    const mine = arrivalsForWater(dukeSched, b.display_name || b.slug, gaugeNames, basinRow);
+    if (mine.length) {
+      duke = { ...dukeSched, arrivals: mine, arrivals_in_basin: dukeSched.arrivals.length };
+    } else {
+      duke = null;
+      out.releases_refused = {
+        operator: 'Duke Energy',
+        basin_id: basin,
+        basin_name: dukeSched.basinName || null,
+        arrivals_in_basin: dukeSched.arrivals.length,
+        why: `Duke published ${dukeSched.arrivals.length} flow arrival`
+           + `${dukeSched.arrivals.length === 1 ? '' : 's'} for the `
+           + `${basinRow && basinRow.riverDescription ? basinRow.riverDescription : `basin ${basin}`} `
+           + `basin and none of them names ${b.display_name || b.slug} or any gauge bound to it. `
+           + `A basin is a river system with many dams on it; those arrivals are for other dams.`,
+      };
+    }
+  } else if (dukeSched) {
     duke = null;
     const why = dukeBasinWhy(roster, b.display_name || b.slug, gaugeNames);
     out.releases_refused = {

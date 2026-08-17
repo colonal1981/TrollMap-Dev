@@ -320,3 +320,73 @@ test('nothing to check is not agreement', () => {
   assert.equal(dukeBasinAgrees({ basinName: null, arrivals: [] }, 'Broad River'), false);
   assert.equal(dukeBasinAgrees({ basinName: 'Broad River', arrivals: [] }, ''), false);
 });
+
+// ── a basin is not a water ───────────────────────────────────────────────────────────────────
+import { arrivalsForWater } from '../Worker/conditions.js';
+
+// Verbatim off Ryan's Wateree card, 2026-08-17, the moment the basin started resolving:
+// "all of these are north of wateree so why would they be projected releases for lake wateree".
+const CATAWBA_ARRIVALS = {
+  basinName: 'Catawba',
+  arrivals: [
+    { damName: 'Wylie', mileMarkerName: 'Watermill Road Access Area', arrival: '2026-08-16T18:24:00' },
+    { damName: 'Wylie', mileMarkerName: 'Catawba River Water Intake', arrival: '2026-08-16T19:00:00' },
+    { damName: 'Bridgewater', mileMarkerName: 'Morganton Greenway', arrival: '2026-08-16T19:18:00' },
+    { damName: 'Wylie', mileMarkerName: 'Rock Hill River Park', arrival: '2026-08-16T19:57:00' },
+  ],
+};
+const BASIN_1 = { RiverId: 1, RiverName: 'Catawba', riverDescription: 'Catawba - Wateree' };
+
+// The gauges the registry actually binds to wateree_lake.
+const WATEREE_GAUGES = [
+  'Catawba River at Cedar Creek Reservoir/Rocky Ck-Cedar Ck Dam',
+  'Wateree River at Lake Wateree Dam',
+  'LAKE WATEREE TAILRACE ABOVE CAMDEN, SC',
+];
+
+test('a basin-wide schedule is not this lake’s release schedule', () => {
+  // Morganton is at the TOP of the Catawba below Lake James; Rock Hill is at Wylie. Lake Wateree
+  // is the last impoundment on the chain, 150 miles down.
+  const mine = arrivalsForWater(CATAWBA_ARRIVALS, 'Wateree Lake (Kershaw Co, SC)',
+                                WATEREE_GAUGES, BASIN_1);
+  assert.deepEqual(mine, [], 'none of the four is at Wateree');
+});
+
+test('the basin’s own river name cannot do the filtering', () => {
+  // Every gauge on this chain is named "Catawba River at ...", and one of the four arrivals is
+  // "Catawba River Water Intake". Matching on the river keeps exactly the wrong one.
+  const naive = CATAWBA_ARRIVALS.arrivals.filter((a) => /catawba/i.test(a.mileMarkerName));
+  assert.equal(naive.length, 1, 'the trap this test exists for');
+  const mine = arrivalsForWater(CATAWBA_ARRIVALS, 'Wateree Lake', WATEREE_GAUGES, BASIN_1);
+  assert.equal(mine.length, 0);
+});
+
+test('an arrival that names this water survives', () => {
+  const sched = { basinName: 'Catawba', arrivals: [
+    ...CATAWBA_ARRIVALS.arrivals,
+    { damName: 'Wateree', mileMarkerName: 'Lake Wateree Dam Tailrace', arrival: '2026-08-16T21:00:00' },
+  ] };
+  const mine = arrivalsForWater(sched, 'Wateree Lake (Kershaw Co, SC)', WATEREE_GAUGES, BASIN_1);
+  assert.equal(mine.length, 1);
+  assert.equal(mine[0].mileMarkerName, 'Lake Wateree Dam Tailrace');
+});
+
+test('a place named in a gauge, not in the lake name, still carries it', () => {
+  // "Camden" appears only in the tailrace gauge's name, never in "Wateree Lake".
+  const sched = { basinName: 'Catawba', arrivals: [
+    { damName: 'Wateree', mileMarkerName: 'Camden Boat Ramp', arrival: '2026-08-16T22:00:00' },
+  ] };
+  assert.equal(arrivalsForWater(sched, 'Wateree Lake', WATEREE_GAUGES, BASIN_1).length, 1);
+  // and without the gauges there is nothing to match on
+  assert.equal(arrivalsForWater(sched, 'Wateree Lake', [], BASIN_1).length, 1,
+    'the dam name still says Wateree');
+  assert.equal(arrivalsForWater({ basinName: 'Catawba', arrivals: [
+    { damName: 'Bridgewater', mileMarkerName: 'Camden Boat Ramp' }] }, 'Wateree Lake', [], BASIN_1).length,
+    0, 'neither the dam nor the marker names this lake');
+});
+
+test('nothing to filter is an empty list, not a throw', () => {
+  assert.deepEqual(arrivalsForWater(null, 'Wateree Lake', WATEREE_GAUGES, BASIN_1), []);
+  assert.deepEqual(arrivalsForWater({ arrivals: [] }, 'Wateree Lake', WATEREE_GAUGES, BASIN_1), []);
+  assert.deepEqual(arrivalsForWater(CATAWBA_ARRIVALS, '', [], BASIN_1), []);
+});
