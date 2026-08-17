@@ -1571,6 +1571,65 @@ export function activeRunForWater(runs, basinId, waterName, gaugeNames = [], bas
 }
 
 /**
+ * Which side of this lake a dam sits on.
+ *
+ * `activeRunForWater` already returns BOTH dams that matter to a reservoir, because the gauge
+ * bindings carry both: wateree_lake is bound to "Catawba River at Cedar Creek Reservoir/Rocky Ck-
+ * Cedar Ck Dam" AND "Wateree River at Lake Wateree Dam". Lake Hickory carries Rhodhiss's dam
+ * alongside its own Oxford. What the payload cannot say is WHICH IS WHICH, and until now neither
+ * could this file -- the note on releaseShape said exactly that.
+ *
+ * RYAN'S MODEL, which this implements: *"for wateree if fishing north end then cedar creek dam
+ * release would flow down into the lake... for the south end water leaving the wateree dam may
+ * cause a slight current but probably not noticeable"*. The dam ABOVE is INFLOW and is the one
+ * worth fishing; the lake's OWN dam is OUTFLOW.
+ *
+ * A LOOKUP, NOT A MATCH. `damOwner` maps a Duke dam name to the slug it impounds, built offline
+ * from the gauge bindings, where one string names both -- "Catawba River at Lake Hickory/Oxford
+ * Dam". The first version of this compared tokens here instead, and Lake Marion called a Cedar
+ * Creek release "inflow from wateree_lake": Cedar Creek's dam appears in Wateree's gauge list, so
+ * a token test cannot tell a lake's own dam from the one feeding it. Cedar Creek is two dams above
+ * Marion and is not adjacent to it at all. Bridgewater, Oxford and Cowans Ford appear in no lake
+ * name, so guessing was never going to work.
+ *
+ * ADJACENCY IS THE WHOLE POINT. Only the waters in chain[slug].upstream count as inflow, so a
+ * release two dams up is left unlabelled rather than credited to a neighbour it did not come from.
+ * A row that matches nothing stays null; Lake Hickory's upstream list includes old_millpond and
+ * shuford_pond, which have no powerhouse.
+ */
+export function releaseDirection(rows, { slug, chain, damOwner } = {}) {
+  const list = Array.isArray(rows) ? rows : [];
+  const owner = damOwner || {};
+  const node = (chain && chain[slug]) || null;
+  const above = new Set((node && Array.isArray(node.upstream)) ? node.upstream : []);
+  return list.map((r) => {
+    const key = normalizeDamName(r && r.dam);
+    const who = key ? owner[key] : null;
+    if (!who) return { ...r, direction: null, from: null };
+    if (who === slug) return { ...r, direction: 'outflow', from: slug };
+    if (above.has(who)) return { ...r, direction: 'inflow', from: who };
+    return { ...r, direction: null, from: null };
+  });
+}
+
+/**
+ * One spelling for a dam name, so the offline table and the live payload meet.
+ *
+ * Duke says "Cedar Creek"; the gauge says "Rocky Ck-Cedar Ck Dam". Case, punctuation and a
+ * trailing "Dam" or "Dams" are noise, and matching on them is how a table stops working the day
+ * an operator adds a hyphen.
+ */
+export function normalizeDamName(v) {
+  const NOISE = new Set(['dam', 'dams', 'hydro', 'powerhouse', 'project', 'lake', 'reservoir']);
+  return String(v == null ? '' : v).toLowerCase()
+    .replace(/&[a-z]+;/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(' ')
+    .filter((t) => t && !NOISE.has(t))
+    .join(' ') || null;
+}
+
+/**
  * Duke's alert HTML as sentences.
  *
  * Every space in this payload is a `&nbsp;` entity — "On&nbsp;May&nbsp;1,&nbsp;2026,&nbsp;the..." —
