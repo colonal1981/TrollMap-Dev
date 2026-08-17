@@ -1,6 +1,7 @@
 // research/agents.js — split from worker-research.js (behavior-preserving) 
 import { JSON_HEADERS, callLLM, extractLLMText } from '../worker-core.js';
-import { dukeRowForNames } from '../worker-data.js';
+import { dukeRowForNames, fetchDukeAccessAlerts, fetchDukeOperatingRange } from '../worker-data.js';
+import { parseAccessAlerts, dukeLocationIdFor, dukePoolManagement } from '../conditions.js';
 import { lakeIndex, resolveRegistryRow, identityBaseline } from '../registry.js';
 import { fetchStateRegulations, getLakeRegulations,
          fetchSaltwaterRegulations, fetchLiveRegsAmendments } from './clients.js';
@@ -140,12 +141,30 @@ var RESEARCH_AGENTS = {
       const ownerText = (facts.find(f => f.category === 'reservoirOwner')?.fact || '').toLowerCase();
       const isDuke = /duke/i.test(ownerText);
 
-      const dukePoolSection = isDuke ? `
+      // THE POOL TABLE IS DATA NOW, NOT A DOCUMENT TO READ. When the baseline carries it, it came
+      // out of /lakes/operating-range as JSON and there is nothing to extract; the old instruction
+      // stays only for a Duke lake with no location id.
+      //
+      // The retired instruction also said "normalPoolFt to the Maximum column value", which is 100
+      // on a Duke lake — the top of the local index, not an elevation. That is why the authoritative
+      // block below states both scales.
+      const baselinePool = prev?._knownBaseline?.poolManagement || null;
+      const dukePoolSection = baselinePool ? `
+
+DUKE POOL MANAGEMENT (AUTHORITATIVE — from Duke's own operating-range API, do NOT re-derive from documents):
+${JSON.stringify({
+  normalPoolFt: prev._knownBaseline.normalPoolFt,
+  normalPoolDatum: prev._knownBaseline.normalPoolDatum,
+  drawdownType: prev._knownBaseline.drawdownType,
+  seasonalDrawdownFt: prev._knownBaseline.seasonalDrawdownFt,
+  poolManagement: baselinePool,
+}, null, 1)}
+Use these values EXACTLY. normalPoolFt is feet AMSL and is NOT the "Maximum" column — that column is 100, the top of Duke's local index. If a document disagrees, the API wins.` : (isDuke ? `
 
 DUKE ENERGY CRA POOL LEVEL TABLE — IF PRESENT IN DOCUMENTS:
 The CRA agreement PDF has a table: Month(s) | Guide Curve (target ft) | Minimum ft | Maximum ft (local datum, typically 93-100 range).
 Extract into poolManagement: guideCurveFt by month, minimumFt, maximumFt, drawdownSchedule [{months, targetFt}].
-Set drawdownType: "scheduled" and normalPoolFt to the Maximum column value.` : '';
+normalPoolFt must be feet NGVD/NAVD, NOT the Maximum column — on a Duke lake that column is 100, the top of the local index.` : '');
 
       // Bathymetry authority section — when geometry-derived depth values exist,
       // inject them as authoritative so the LLM doesn't replace them with
@@ -924,7 +943,19 @@ async function identityGrounding(lakeName, env) {
     ? { ft: duke.fullPool,
         source: `Duke Energy live lake-levels feed (${duke.duke_feed_name || 'matched row'})` }
     : null;
-  return identityBaseline(row, pool);
+
+  // THE DRAWDOWN SCHEDULE OUT OF THE API RATHER THAN OUT OF A PDF. Ryan, 2026-08-17: "for draw
+  // down schedule research should point at that api instead of scraping the webpages that it has
+  // been doing for duke". The location id is published in the alert feed, so nothing is typed.
+  let poolMgmt = null;
+  if (duke) {
+    const alerts = parseAccessAlerts(await fetchDukeAccessAlerts().catch(() => null));
+    const locId = dukeLocationIdFor(alerts, row.display_name || row.name, names);
+    if (locId != null) {
+      poolMgmt = dukePoolManagement(await fetchDukeOperatingRange(locId).catch(() => null));
+    }
+  }
+  return identityBaseline(row, pool, poolMgmt);
 }
 
 async function handleResearchAgent(request, env) {

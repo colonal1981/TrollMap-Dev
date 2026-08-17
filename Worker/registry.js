@@ -144,7 +144,7 @@ export function resolveRegistryRow(index, lakeName) {
  * the only acceptable pool number here is one a live feed published today. The constant it
  * replaces was hand-typed and identical to what Duke was already serving.
  */
-export function identityBaseline(row, pool = null) {
+export function identityBaseline(row, pool = null, poolManagement = null) {
   if (!row || typeof row !== 'object') return null;
   // Number(null) IS 0, AND SO IS Number(''). This function had `Number.isFinite(Number(v))` for
   // about ten minutes and my own test caught it: a row with area_acres null reported a lake of
@@ -184,6 +184,25 @@ export function identityBaseline(row, pool = null) {
   if (ft !== null) {
     out.normalPoolFt = ft;
     out.normalPoolSource = pool.source || null;
+  }
+
+  // THE DRAWDOWN SCHEDULE, WHEN THE OPERATOR PUBLISHES IT AS DATA.
+  //
+  // The identity agent's prompt tells it to find a Duke CRA pool table inside a PDF and extract
+  // "Month | Guide Curve | Minimum | Maximum" out of it. /lakes/operating-range returns exactly
+  // that table as JSON for every Duke lake with a location id. Handed over here, the agent has
+  // nothing to extract and nothing to get wrong.
+  //
+  // IT ALSO CORRECTS A DATUM BUG IN THAT PROMPT. "normalPoolFt to the Maximum column value" is
+  // 100 on a Duke lake — the top of the local index — where the field wants feet NGVD/NAVD.
+  // Wateree's full pond is 225.5. Both scales are published here and each is labelled.
+  if (poolManagement && poolManagement.poolManagement) {
+    out.normalPoolFt = n(poolManagement.normalPoolFt) ?? out.normalPoolFt;
+    out.normalPoolDatum = poolManagement.normalPoolDatum || null;
+    out.normalPoolSource = poolManagement.source || out.normalPoolSource;
+    out.drawdownType = poolManagement.drawdownType || null;
+    out.seasonalDrawdownFt = n(poolManagement.seasonalDrawdownFt);
+    out.poolManagement = poolManagement.poolManagement;
   }
   return out;
 }

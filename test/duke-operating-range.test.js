@@ -206,5 +206,72 @@ console.log('\n== keep them, because the effect outlives the explanation ==');
   check('no bucket is an empty list', (await expiredAlertsFor({}, [], 'Wateree Lake', [])).length === 0);
 }
 
+
+// ── the drawdown schedule is data, not a PDF to read ────────────────────────────────────────
+import { dukePoolManagement } from '../Worker/conditions.js';
+import { identityBaseline as baseline } from '../Worker/registry.js';
+
+// The real twelve rows, off the lake page Ryan pasted: Jan 93/94.5/100, Feb 93/95/100,
+// Mar–Oct 94/97/100, Nov 93/97/100, Dec 93/95/100.
+const TWELVE = [
+  [1, 93, 94.5], [2, 93, 95], [3, 94, 97], [4, 94, 97], [5, 94, 97], [6, 94, 97],
+  [7, 94, 97], [8, 94, 97], [9, 94, 97], [10, 94, 97], [11, 93, 97], [12, 93, 95],
+].map(([Month, Min, Target]) => ({ lakepond_id: 16, Day: 1, Month, Min, Max: 100.0, Target }));
+
+const FULL_PAYLOAD = { ...PAYLOAD, operatingRange: TWELVE };
+
+console.log('\n== the CRA pool table, as JSON ==');
+{
+  // The identity prompt describes this table and tells an LLM to find it in a PDF:
+  // "Month(s) | Guide Curve (target ft) | Minimum ft | Maximum ft (local datum, typically 93-100)".
+  const pm = dukePoolManagement(FULL_PAYLOAD);
+  check('all twelve months', pm.poolManagement.byMonth.length === 12);
+  const aug = pm.poolManagement.byMonth.find((m) => m.month === 8);
+  check('August target 97 on the index', aug.targetIndex === 97 && aug.minIndex === 94);
+  check('and named', aug.monthName === 'Aug');
+
+  // THE DATUM BUG THE PROMPT HAD. "normalPoolFt to the Maximum column value" is 100 — the top of
+  // the local index — where the field wants feet NGVD/NAVD.
+  check('normalPoolFt is the real elevation, not 100', pm.normalPoolFt === 225.5, pm.normalPoolFt);
+  check('and says which datum it is in', /AMSL/.test(pm.normalPoolDatum));
+  check('the index top is published separately', pm.fullPondIndex === 100);
+  // amsl = fullPond - (100 - index). August target 97 -> 225.5 - 3 = 222.5.
+  check('August target converts to 222.5 ft AMSL', aug.targetFt === 222.5, aug.targetFt);
+  check('and its floor to 219.5', aug.minFt === 219.5, aug.minFt);
+  check('the max converts back to full pond', aug.maxFt === 225.5, aug.maxFt);
+
+  // The drawdown is the swing in the TARGET across the year: 97 in summer, 94.5 in January.
+  check('seasonal drawdown is 2.5 ft', pm.seasonalDrawdownFt === 2.5, pm.seasonalDrawdownFt);
+  check('and it is a scheduled one', pm.drawdownType === 'scheduled');
+
+  // A LAKE HELD FLAT ALL YEAR HAS NO DRAWDOWN, and saying zero is the answer rather than omitting.
+  const flat = dukePoolManagement({ ...FULL_PAYLOAD,
+    operatingRange: TWELVE.map((r) => ({ ...r, Target: 97 })) });
+  check('a flat lake draws down zero feet', flat.seasonalDrawdownFt === 0, flat.seasonalDrawdownFt);
+  check('and is typed "none", not left null', flat.drawdownType === 'none');
+
+  check('no operating range is null', dukePoolManagement(null) === null);
+  check('an empty one is null', dukePoolManagement({ history: HISTORY, operatingRange: [] }) === null);
+}
+
+console.log('\n== and it reaches the identity agent as a baseline ==');
+{
+  const row = { slug: 'wateree_lake', name: 'Wateree Lake', state: 'SC',
+                display_name: 'Wateree Lake (Kershaw Co, SC)', county: 'Kershaw',
+                gnis: 'gnis:1227425', area_acres: 11756.3, feature_type: 'lake' };
+  const b = baseline(row, { ft: 225.5, source: 'Duke live feed' }, dukePoolManagement(FULL_PAYLOAD));
+  check('the schedule rides along', b.poolManagement.byMonth.length === 12);
+  check('drawdownType travels', b.drawdownType === 'scheduled');
+  check('so does the swing', b.seasonalDrawdownFt === 2.5);
+  check('normalPoolFt is the elevation', b.normalPoolFt === 225.5);
+  check('with its datum stated', /AMSL/.test(b.normalPoolDatum));
+  check('and the source is the API, not a PDF', /operating-range/.test(b.normalPoolSource));
+
+  // A lake with no operating range keeps the plain baseline and grows no empty schedule.
+  const plain = baseline(row, { ft: 225.5, source: 'Duke live feed' }, null);
+  check('no schedule is no key', !('poolManagement' in plain));
+  check('but the live pool still stands', plain.normalPoolFt === 225.5);
+}
+
 console.log(`\n${fails === 0 ? 'ALL PASS' : fails + ' FAILURES'}`);
 process.exit(fails ? 1 : 0);

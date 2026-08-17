@@ -1972,6 +1972,73 @@ export async function expiredAlertsFor(env, liveAlerts, waterName, gaugeNames = 
   return out;
 }
 
+/**
+ * THE DRAWDOWN SCHEDULE, FROM THE API INSTEAD OF OUT OF A PDF.
+ *
+ * Ryan, 2026-08-17: *"so the operating range should show the operating range for every duke lake
+ * right... so for draw down schedule research should point at that api instead of scraping the
+ * webpages that it has been doing for duke"*. Yes, and the research prompt says so itself:
+ *
+ *   "DUKE ENERGY CRA POOL LEVEL TABLE — IF PRESENT IN DOCUMENTS: The CRA agreement PDF has a
+ *    table: Month(s) | Guide Curve (target ft) | Minimum ft | Maximum ft (local datum, typically
+ *    93-100 range). Extract into poolManagement... Set drawdownType 'scheduled' and normalPoolFt
+ *    to the Maximum column value."
+ *
+ * That is a description of `operatingRange`, which this endpoint returns as JSON for every Duke
+ * lake that has a location id. The pipeline has been paying an LLM to read it out of a PDF, on
+ * the lakes where the PDF was found at all.
+ *
+ * AND THE PROMPT HAS A DATUM BUG IN IT. "normalPoolFt to the Maximum column value" gives 100 on a
+ * Duke lake — the top of the index — when normalPoolFt is meant to be feet NGVD/NAVD. Wateree's
+ * full pond is 225.5. The prompt even half-notices, allowing "2-digit numbers representing local
+ * datum (e.g. 97 for Duke Energy lakes)", which means the field has been holding two different
+ * quantities depending on which document a run happened to read.
+ *
+ * `lakeDetails.Elevation` settles it: full pond in feet AMSL, on the same object as the index. So
+ * both are published here, each labelled, and neither has to be guessed:
+ *
+ *     amsl = fullPondFt - (100 - index)
+ */
+export function dukePoolManagement(opRange) {
+  const g = parseOperatingRange(opRange);
+  if (!g || !g.monthly.length) return null;
+  const full = g.full_pond_ft;
+  const toAmsl = (v) => (full != null && v != null ? Math.round((full - (100 - v)) * 100) / 100 : null);
+  const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  const byMonth = g.monthly.map((m) => ({
+    month: m.month,
+    monthName: MONTHS[m.month] || String(m.month),
+    targetIndex: m.target, minIndex: m.min, maxIndex: m.max,
+    targetFt: toAmsl(m.target), minFt: toAmsl(m.min), maxFt: toAmsl(m.max),
+  }));
+
+  // The drawdown is the swing in the TARGET across the year. A lake Duke holds flat all year has
+  // no seasonal drawdown, and saying "0 ft" is the honest answer rather than omitting the field.
+  const targets = byMonth.map((m) => m.targetIndex).filter((v) => v != null);
+  const swing = targets.length ? Math.round((Math.max(...targets) - Math.min(...targets)) * 100) / 100 : null;
+
+  return {
+    // NOT the Maximum column. That is 100, the top of the index, and it is not an elevation.
+    normalPoolFt: full,
+    normalPoolDatum: 'ft AMSL, NGVD 29, from lakeDetails.Elevation',
+    fullPondIndex: 100,
+    drawdownType: swing != null && swing > 0 ? 'scheduled' : (swing === 0 ? 'none' : null),
+    seasonalDrawdownFt: swing,
+    poolManagement: {
+      scale: 'Duke local index — 100 is full pond, one unit is one foot',
+      byMonth,
+      // What it is doing today, which the PDF could never say.
+      todayIndex: g.today ? g.today.level : null,
+      todayTargetIndex: g.today ? g.today.target : null,
+      droughtStage: g.drought_stage,
+      droughtSince: g.drought_since,
+    },
+    source: 'https://api.hydro-derived.duke-energy.app/lakes/operating-range',
+  };
+}
+
 /** The dams a schedule actually carries, for a refusal that names them. */
 export function arrivalDams(sched) {
   const out = [];
