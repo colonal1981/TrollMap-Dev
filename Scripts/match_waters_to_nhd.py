@@ -323,16 +323,30 @@ def main():
             # raw geometry. Mixing a declared area with a geometric one makes the two numbers
             # incomparable, which is how the first cut reported a union SMALLER than the single
             # group it contains. NHD polygons do not overlap, so summing is safe.
+            # THE BEST-MATCHING POLYGON IS ALWAYS IN THE UNION. The first cut admitted a
+            # polygon only if 90% of it lay inside the registry outline, which throws the main
+            # body out whenever NHD's polygon is LARGER than the registry's -- exactly the
+            # "registry is too small" case this is meant to find. lake_marion came back with a
+            # union of 2,677 acres against a single best polygon of 91,472.
             union_pieces, union_acres = 0, None
+            union_covers_reg = reg_covers_union = None
             try:
-                inside_idx = [k for k in idx
-                              if nhd[k].area > 0
-                              and g.intersection(nhd[k]).area >= 0.9 * nhd[k].area]
-                if inside_idx:
-                    union_pieces = len(inside_idx)
-                    union_acres = round(sum(
-                        float(cols['AreaSqKm'][j] or 0)
-                        for k in inside_idx for j in midx[k]) * 247.105, 1)
+                inside_idx = [i] + [k for k in idx
+                                    if k != i and nhd[k].area > 0
+                                    and g.intersection(nhd[k]).area >= 0.9 * nhd[k].area]
+                union_pieces = len(inside_idx)
+                union_acres = round(sum(
+                    float(cols['AreaSqKm'][j] or 0)
+                    for k in inside_idx for j in midx[k]) * 247.105, 1)
+                # Geometric, both sides, so no declared-area basis can creep in. Comparing NHD's
+                # AreaSqKm against the registry's area_acres had fort_loudoun_lake fitting
+                # 18,372 acres of NHD polygon inside a 13,770-acre outline.
+                u = shapely.union_all([nhd[k] for k in inside_idx])
+                inter_u = g.intersection(u).area
+                if g.area > 0:
+                    union_covers_reg = round(100.0 * inter_u / g.area, 1)
+                if u.area > 0:
+                    reg_covers_union = round(100.0 * inter_u / u.area, 1)
             except Exception:
                 pass
             src_rows = midx[i]
@@ -361,6 +375,8 @@ def main():
                 'area_ratio': round(ratio, 4),
                 'nhd_union_pieces': union_pieces,
                 'nhd_union_acres': union_acres,
+                'union_covers_pct_of_registry': union_covers_reg,
+                'registry_covers_pct_of_union': reg_covers_union,
             }
             prev = bindings.get(slug)
             if prev is None or pct_reg > prev['pct_of_registry_polygon']:

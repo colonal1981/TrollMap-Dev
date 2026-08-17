@@ -30,15 +30,16 @@ tiny = Polygon([(3,3),(3,3.2),(3.2,3.2),(3.2,3)])      # too small a share to bi
 def build(root, spell=str):
     (root/'registry'/'boundaries').mkdir(parents=True)
     (root/'nhd').mkdir()
-    polys  = [hiw, chat, far]
-    pids   = ['wb_hiwassee','wb_chatuge','wb_far']
-    gnisid = ['1016964','1012001','999']        # 1016964 "Persimmon Lake" ON THE BIG BODY
-    gnisnm = ['Persimmon Lake','Chatuge Lake','Somewhere Else']
+    bigger = Polygon([(30,30),(30,40),(38,40),(38,30)])   # larger than the registry outline
+    polys  = [hiw, chat, far, bigger]
+    pids   = ['wb_hiwassee','wb_chatuge','wb_far','wb_bigger']
+    gnisid = ['1016964','1012001','999','888']  # 1016964 "Persimmon Lake" ON THE BIG BODY
+    gnisnm = ['Persimmon Lake','Chatuge Lake','Somewhere Else','Big Lake']
     write(str(root/'nhd'/'NHDPLUS_H_0602_HU4_20220418_GDB.gpkg'),
           geometry=shapely.to_wkb(np.array(polys, dtype=object)),
           field_data=[np.array(pids,dtype=object), np.array(gnisid,dtype=object),
-                      np.array(gnisnm,dtype=object), np.array([40.0,16.0,4.0]),
-                      np.array([390,390,390])],
+                      np.array(gnisnm,dtype=object), np.array([40.0,16.0,4.0,80.0]),
+                      np.array([390,390,390,390])],
           fields=[spell('Permanent_Identifier'), spell('GNIS_ID'), spell('GNIS_Name'),
                   spell('AreaSqKm'), spell('FType')],
           layer='NHDWaterbody', geometry_type='Polygon', crs='EPSG:4326', driver='GPKG')
@@ -68,6 +69,8 @@ def build(root, spell=str):
       'chatuge_lake':   {'gnis':'gnis:1012001','area_acres':6364.4,'bounds_wsen':[0,12,4,16]},
       'wrong_id_water': {'gnis':'gnis:777','area_acres':4.0,'bounds_wsen':[50,50,52,52]},
       'a_speck':        {'gnis':'slug:a_speck','area_acres':0.1,'bounds_wsen':[3,3,3.2,3.2]},
+      'small_outline_big_lake': {'gnis':'slug:small_outline_big_lake','area_acres':9529.6,
+                                 'bounds_wsen':[30,30,36,40]},
       'no_polygon':     {'gnis':'gnis:5','area_acres':1.0,'bounds_wsen':[0,0,1,1]},
       'little_pee_dee_river': {'gnis':'slug:little_pee_dee_river','area_acres':1740.6,
                                'bounds_wsen':[0,20,18,21]},
@@ -77,6 +80,8 @@ def build(root, spell=str):
     geo('chatuge_lake', chat)
     geo('wrong_id_water', far)
     geo('a_speck', tiny)
+    # registry outline covers only part of the NHD polygon -- NHD is the bigger one here
+    geo('small_outline_big_lake', Polygon([(30,30),(30,40),(36,40),(36,30)]))
     # the registry river spans all three NHDArea pieces; no single piece would clear the gate
     geo('little_pee_dee_river', Polygon([(0,20),(0,21),(18,21),(18,20)]))
     json.dump(reg, open(root/'registry'/'lake_index.json','w'))
@@ -139,6 +144,21 @@ for label, spell in (('exact', str), ('upper', str.upper), ('lower', str.lower))
         # ...but the union must NOT drive the binding, or a lake whose outline covers the next
         # lake downstream swallows it -- the cheoah/calderwood confusion.
         eq(_h['nhd_pieces'], 1, f'[{label}] binding still the single best group')
+        # both coverage figures are geometric, so no declared-area basis can creep in
+        assert _h['union_covers_pct_of_registry'] is not None, 'coverage reported'
+        assert _h['registry_covers_pct_of_union'] > 90, \
+            f'[{label}] both lobes lie inside the outline: {_h}'
+
+        # A polygon LARGER than the registry outline must still be in its own union. The first
+        # cut required 90% containment, so lake_marion's main body was excluded and the union
+        # came back 2,677 acres against a single best polygon of 91,472.
+        _big = got['bindings']['small_outline_big_lake']
+        assert _big['nhd_union_acres'] >= _big['nhd_acres'], \
+            f'[{label}] UNION MUST CONTAIN ITS OWN BEST MATCH: {_big}'
+        assert _big['union_covers_pct_of_registry'] > 95, \
+            f'[{label}] the outline is entirely water: {_big}'
+        assert _big['registry_covers_pct_of_union'] < 80, \
+            f'[{label}] and it misses a fifth of the lake: {_big}'
 
         # A 0.1-acre speck lying WHOLLY INSIDE the reservoir is 100% contained and is not it.
         # Same lesson as greenfield_lake inside the Cape Fear coastal region.
