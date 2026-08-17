@@ -215,3 +215,110 @@ describe('the markup a module writes into is markup that exists', () => {
     expect(strip).toContain("querySelectorAll('.cond-cam-img')");
   });
 });
+
+
+/**
+ * THE SAME TEST, POINTED AT THE FILE THAT HAS 57 ROUTES IN IT.
+ *
+ * The block above covers water.js, conditions.js and cameras.js — the three modules that export a
+ * route inventory. `trollmap-worker.js` exports none and was never checked, and it is where the
+ * app's original API lives. Ryan, 2026-08-17: *"whats next on the list of hard coded things that
+ * never got expanded when the app grew."* Measuring `LAKES` to answer that found its only public
+ * door, `/lake`, has no caller at all — the route `resolveLake()` exists to serve.
+ *
+ * THE MATCHER IS THE WHOLE TEST, and three separate things fooled a loose one:
+ *
+ *   /lake-intel, /lakes/     a substring match says /lake is called. It is not.
+ *   /\/lakes\/[^/]+\/regs/   a regex literal in lake-research-engine.js is not a fetch.
+ *   "a `/lake` call"         a COMMENT in utility-sync.js describing what it used to do.
+ *
+ * So: comments are stripped first, the route must be preceded by a quote, a backtick or the `}`
+ * that closes `${worker}`, and followed by something that is not a word character. That admits
+ * both `fetch(`${worker}/lake-clarity?...`)` and the `{ path: '/ramps' }` table in
+ * access-index.js, and refuses prose and regexes.
+ *
+ * A route with no caller is not automatically a bug — some are curled by hand and some are
+ * reached through internal functions rather than over HTTP. But it must be SAID, with a reason,
+ * which is what UNCALLED_OK is. The list below is the running tab; nothing here is deleted until
+ * Ryan does the deletion pass.
+ */
+describe('every route in trollmap-worker.js has a caller', () => {
+  const WORKER = readFileSync(path.join(ROOT, 'Worker/trollmap-worker.js'), 'utf8');
+
+  const stripComments = (src) => src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
+
+  const CLIENT = SOURCES
+    .filter((f) => f.includes(`${path.sep}js${path.sep}`))
+    .map((f) => [path.relative(ROOT, f), stripComments(readFileSync(f, 'utf8'))]);
+
+  const routes = [...new Set([
+    ...[...WORKER.matchAll(/path\s*===\s*["'](\/[A-Za-z0-9_\-/]+)["']/g)].map((m) => m[1]),
+    ...[...WORKER.matchAll(/path\.startsWith\(\s*["'](\/[A-Za-z0-9_\-/]+)["']/g)].map((m) => m[1]),
+  ])].sort();
+
+  // Reached over HTTP by something that is not the browser, or reached internally.
+  const UNCALLED_OK = {
+    '/build': 'curled by hand — it is how the deployed version gets checked. AUDIT_FINDINGS_2026-08-06.',
+    '/dominion-saluda': 'the ROUTE is unreferenced but assessKayakSafety() calls the function behind it. '
+                      + 'AUDIT_FINDINGS_2026-08-06.',
+    '/duke-flow-arrivals': 'same — internal caller, not an HTTP one. conditions.js imports '
+                         + 'fetchDukeFlowArrivals directly.',
+    '/debug/regs-cache': 'a debug route, curled by hand when the regulations digest looks wrong.',
+
+    // ── no caller, no internal use found. THE RUNNING TAB. ────────────────────────────────────
+    '/lake': 'DEAD. The only public door to resolveLake(), and so to LAKES.normalPool. Nothing in '
+           + 'js/ builds this URL; /conditions/{slug} does the same job for 228 bound waters '
+           + 'instead of 15. Deletion tab, 2026-08-17.',
+    '/lake-research': 'no caller. Superseded by /research/get, which three modules do call.',
+    '/lake-intel-sources': 'no caller. Goes with LAKE_INTEL_SOURCE_REGISTRY, already on the tab.',
+    '/lakes/': 'no caller. A shortcut alias for /research/get.',
+    '/lakes/list': 'no caller. Alias of /research/list, which research-ids.js does call.',
+    '/chartpacks/list': 'no caller. The client lists packs from the registry index instead.',
+    '/rivers': 'no caller. Would return Object.keys(RIVERS) — the 6-of-90 menu.',
+    '/sync/migrate': 'no caller. A one-shot schema migration.',
+    '/usgs': 'no caller. Every USGS read now goes through /conditions or the research engine.',
+
+    // ── research routes with no BROWSER caller; some may be operator-curled during a run ──────
+    '/research/approve': 'no client caller — may be curled during a research run. Needs a decision.',
+    '/research/dataset-hunt': 'no client caller. Needs a decision.',
+    '/research/gap-analysis': 'no client caller. Needs a decision.',
+    '/research/gap-search': 'no client caller. Needs a decision.',
+    '/research/map-facts': 'no client caller. Needs a decision.',
+    '/research/shared/publish': 'no client caller. The shared store is written through /shared/store.',
+    '/research/shared/quarantine': 'no client caller. Needs a decision.',
+    '/research/shared/status': 'no client caller. Needs a decision.',
+    '/research/thermocline-search': 'no client caller. /research/limnology-data is the one that runs.',
+  };
+
+  const callersOf = (route) => {
+    const re = new RegExp(`(?<=['"\`}])${route.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}(?![A-Za-z0-9_-])`);
+    return CLIENT.filter(([, src]) => re.test(src)).map(([f]) => f);
+  };
+
+  for (const route of routes) {
+    it(`something calls ${route}`, () => {
+      const callers = callersOf(route);
+      if (callers.length) return;
+      expect(UNCALLED_OK[route]
+        ? `allowed: ${UNCALLED_OK[route]}`
+        : `${route} is served by Worker/trollmap-worker.js and no file in js/ calls it. The Worker `
+        + `is doing work nobody asked for. Wire it, or add it to UNCALLED_OK with a reason.`)
+        .toBe(UNCALLED_OK[route] ? `allowed: ${UNCALLED_OK[route]}` : 'a caller');
+    });
+  }
+
+  // AN ALLOWLIST THAT OUTLIVES ITS ROUTE IS A LIE THAT READS AS DUE DILIGENCE. When a route is
+  // finally deleted, its excuse has to go with it.
+  it('no allowlist entry names a route that no longer exists', () => {
+    const gone = Object.keys(UNCALLED_OK).filter((r) => !routes.includes(r));
+    expect(gone).toEqual([]);
+  });
+
+  // And an entry that stops being needed must not sit there implying the route is dead.
+  it('no allowlist entry covers a route that IS called', () => {
+    const stale = Object.keys(UNCALLED_OK).filter((r) => callersOf(r).length);
+    expect(stale).toEqual([]);
+  });
+});
