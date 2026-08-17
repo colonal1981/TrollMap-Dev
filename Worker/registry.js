@@ -26,13 +26,16 @@
 import { r2Text } from './worker-core.js';
 
 export const LAKE_INDEX_KEY = '_registry/lake_index.json';
+export const WATER_CHAIN_KEY = '_registry/water_chain.json';
 export const INDEX_TTL_S = 3600;
 
 let _index = null;
 let _indexAt = 0;
+let _chain = null;
+let _chainAt = 0;
 
 /** Exposed for tests. Nothing in the Worker should need to call this. */
-export function _resetIndexCache() { _index = null; _indexAt = 0; }
+export function _resetIndexCache() { _index = null; _indexAt = 0; _chain = null; _chainAt = 0; }
 
 /**
  * The index, cached per isolate for an hour.
@@ -58,6 +61,48 @@ export async function lakeIndex(env, opts = {}) {
   }
   _index = rows;
   _indexAt = now;
+  return rows;
+}
+
+/**
+ * Which waters sit immediately above and below each one.
+ *
+ * WHAT THIS IS FOR. Duke publishes one release row per powerhouse and nothing in the payload says
+ * which side of a lake a given dam is on. Ryan: *"for wateree if fishing north end then cedar
+ * creek dam release would flow down into the lake"*. The dam above is inflow, the lake's own is
+ * outflow, and telling them apart needs the river network. `releaseDirection()` in conditions.js
+ * reads `upstream` from here.
+ *
+ * DERIVED, NOT TYPED. build_water_chain.py walks NHDPlus HR: HydroSeq decreases downstream, so a
+ * lake's outlet is its minimum, and following DnHydroSeq to the next registry water gives the
+ * neighbour. It re-measures that direction per basin and refuses one that is not clean.
+ *
+ * `side_channel` marks an oxbow -- a water whose upstream basin dwarfs its own catchment, like
+ * lowthers_lake off the Big Pee Dee at 21,302 km2 against 25.2. Its level follows the river's
+ * gauge, not a pool elevation, which is the opposite of how a storage reservoir behaves.
+ *
+ * MISSING IS NOT EMPTY. Same rule as lakeIndex: a bucket without the object throws and names the
+ * script that writes it, because an unpublished chain and a chain that places nothing look
+ * identical from here and mean completely different things.
+ */
+export async function waterChain(env, opts = {}) {
+  const now = Number.isFinite(opts.now) ? opts.now : Date.now();
+  if (!opts.fresh && _chain && now - _chainAt < INDEX_TTL_S * 1000) return _chain;
+  const bucket = (env && env.R2_TROLLMAP_CHARTPACKS) || opts.bucket;
+  if (!bucket) throw new Error('R2_TROLLMAP_CHARTPACKS is not bound to this Worker');
+  const obj = await bucket.get(WATER_CHAIN_KEY);
+  if (!obj) {
+    throw new Error(`${WATER_CHAIN_KEY} is not in the bucket — run build_water_chain.py --write, `
+                  + 'then upload_garmin_to_r2.py --registry');
+  }
+  // r2Text, NOT obj.text(). test/r2-gzip.test.js asserts no Worker file calls text() directly.
+  const parsed = JSON.parse(await r2Text(obj));
+  const rows = parsed && (parsed.waters || parsed);
+  if (!rows || typeof rows !== 'object' || Array.isArray(rows)) {
+    throw new Error(`${WATER_CHAIN_KEY} is not an object keyed by slug`);
+  }
+  _chain = rows;
+  _chainAt = now;
   return rows;
 }
 

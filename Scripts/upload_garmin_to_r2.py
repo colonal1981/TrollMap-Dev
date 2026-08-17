@@ -276,6 +276,40 @@ def slim_registry(full):
                       for r in full.get("lakes", [])]}
 
 
+def slim_chain(full):
+    """registry/water_chain.json -> the object published at _registry/water_chain.json.
+
+    Module level for the same reason as slim_registry: a checker that restates the rule drifts
+    from it, then agrees with itself while both are wrong.
+
+    ONLY WHAT THE WORKER READS. The full file carries the outlet hydrosequence, level path,
+    NHD name, ftype, piece counts and the divergence figures -- all of it evidence for how the
+    chain was derived, none of it needed at request time. releaseDirection() reads `upstream`;
+    the conditions strip reads `side_channel` to know an oxbow wants a river gauge rather than a
+    pool elevation, and `local_drainage_km2` because for an oxbow that is its own catchment
+    rather than the river it hangs off.
+    """
+    waters = full.get("waters") if isinstance(full, dict) else None
+    if not isinstance(waters, dict):
+        waters = full if isinstance(full, dict) else {}
+    out = {}
+    for slug, r in waters.items():
+        if not isinstance(r, dict):
+            continue
+        out[slug] = {
+            "upstream": r.get("upstream") or [],
+            "downstream": r.get("downstream"),
+            "side_channel": bool(r.get("side_channel")),
+            "drainage_km2": r.get("drainage_km2"),
+            "local_drainage_km2": r.get("local_drainage_km2", r.get("drainage_km2")),
+        }
+    meta = full.get("_meta") if isinstance(full, dict) else None
+    return {"_meta": {"source": (meta or {}).get("source", "NHDPlus HR"),
+                      "direction": (meta or {}).get("direction"),
+                      "vpus": (meta or {}).get("vpus")},
+            "waters": out}
+
+
 def put(local, key, gz, dry, timeout):
     """One wrangler put. Returns (ok, bytes_sent, message)."""
     try:
@@ -514,6 +548,31 @@ def main():
         else:
             print(f"!! {wb} not found -- gauges, pool level and tide stay pending in the Worker; "
                   f"build it with build_water_bindings.py")
+
+        # THE THIRD FILE TO LEARN THE SAME LESSON, after lake_index.json and water_bindings.json:
+        # a registry file the app needs and the uploader does not ship is indistinguishable from
+        # work that was never done.
+        #
+        # Worker/registry.js:waterChain() reads this, and Worker/conditions.js:releaseDirection()
+        # needs it to say whether a Duke release is INFLOW or OUTFLOW for the water being asked
+        # about. Duke publishes one row per powerhouse and nothing in the payload says which side
+        # of a lake a dam sits on; `upstream` is what settles it. Without this object every
+        # release stays unlabelled, which is exactly how it looked before any of this was built.
+        wc = regdir / "water_chain.json"
+        if wc.exists():
+            slim = slim_chain(json.load(open(wc, encoding="utf-8")))
+            tmpc = TMP / "water_chain.slim.json"
+            tmpc.parent.mkdir(parents=True, exist_ok=True)
+            tmpc.write_text(json.dumps(slim, separators=(",", ":")), encoding="utf-8")
+            reg_jobs.append((str(tmpc), f"{args.prefix}_registry/water_chain.json",
+                             "_registry", "water_chain"))
+            print(f"chain:    {len(slim['waters']):,} waters -> "
+                  f"{args.prefix}_registry/water_chain.json "
+                  f"({tmpc.stat().st_size/1024:.0f} KB before gzip, "
+                  f"{wc.stat().st_size/1024:.0f} KB full)")
+        else:
+            print(f"!! {wc} not found -- every Duke release stays unlabelled as inflow or "
+                  f"outflow; build it with build_water_chain.py --write")
 
     # ── ONLY WHAT THE APP CAN ASK FOR ────────────────────────────────────────────────────────
     #
