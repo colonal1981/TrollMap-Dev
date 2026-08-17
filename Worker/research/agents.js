@@ -1,6 +1,7 @@
 // research/agents.js — split from worker-research.js (behavior-preserving) 
 import { JSON_HEADERS, callLLM, extractLLMText } from '../worker-core.js';
-import { LAKES, lakeKeyFromName } from '../worker-data.js';
+import { dukeRowForNames } from '../worker-data.js';
+import { lakeIndex, resolveRegistryRow, identityBaseline } from '../registry.js';
 import { fetchStateRegulations, getLakeRegulations,
          fetchSaltwaterRegulations, fetchLiveRegsAmendments } from './clients.js';
 import { extractJsonPossibly } from './keys.js';
@@ -893,6 +894,39 @@ function gateOverallConfidence(rawOverall, profile, fieldStatus = {}) {
   return { percent: Math.max(30, Math.min(99, conf)), penalties };
 }
 
+/**
+ * Registry identity for any of the 454, plus a pool elevation only if a live feed published one.
+ *
+ * THE POOL NUMBER IS THE PART THAT HAD TO CHANGE. `LAKES.normalPool` carried nine Duke lakes whose
+ * values are byte-identical to what `normalizeDukeRow()` already parses out of Duke's own
+ * `Elevation` string — checked against the live feed on 2026-08-17: Wateree 225.5, Wylie 569.4,
+ * Norman 760, Keowee 800, Jocassee 1110, Hickory 935, James 1200, Rhodhiss 995.1, Mountain Island
+ * 647.5. The feed carries 35 lakes; the table carried nine of them. A hand-typed copy of a live
+ * field is a copy that can go stale without anything reporting it.
+ *
+ * `dukeRowForNames` is used rather than `getDukeLake`, because getDukeLake matches on a bare
+ * substring — the family of bug that put Mountain Island Lake's row on Mountain Lake. The names
+ * offered are the registry's own, and the matcher runs with sourceMayBeBroader:false.
+ *
+ * Murray, Marion and Moultrie lose a hand-typed pool constant here and gain county, acres, GNIS
+ * and centroid, which the table never had. Dominion and Santee Cooper publish a current elevation
+ * and no full pond, so there is no live number to offer for those three and none is invented.
+ */
+async function identityGrounding(lakeName, env) {
+  const index = await lakeIndex(env);
+  const row = resolveRegistryRow(index, lakeName);
+  if (!row) return null;
+  const names = [row.display_name, row.name, row.legacy_display_name,
+                 ...(Array.isArray(row.legacy_display_names) ? row.legacy_display_names : [])]
+    .filter(Boolean);
+  const duke = await dukeRowForNames(names).catch(() => null);
+  const pool = duke && Number.isFinite(duke.fullPool)
+    ? { ft: duke.fullPool,
+        source: `Duke Energy live lake-levels feed (${duke.duke_feed_name || 'matched row'})` }
+    : null;
+  return identityBaseline(row, pool);
+}
+
 async function handleResearchAgent(request, env) {
   let body;
   try { body = await request.json(); } catch { return new Response(JSON.stringify({success:false, error:"invalid JSON body"}), {status:400, headers:JSON_HEADERS}); }
@@ -904,14 +938,23 @@ async function handleResearchAgent(request, env) {
   const agent = RESEARCH_AGENTS[agentKey];
   if (!agent) return new Response(JSON.stringify({success:false, error:`unknown agent ${agentKey}. Valid: ${Object.keys(RESEARCH_AGENTS).join(', ')}`}), {status:400, headers:JSON_HEADERS});
 
-  // Ground identity agent with known LAKES constant to reduce hallucination
+  // GROUND THE IDENTITY AGENT FROM THE REGISTRY, NOT FROM A FIFTEEN-LAKE TABLE.
+  //
+  // This read `LAKES[lakeKeyFromName(lakeName)]` — fifteen waters of 454. Every other lake got a
+  // baseline of `undefined` on the one agent whose entire job is to say what the water IS, while
+  // its own system prompt tells it "Never invent values". Ryan, 2026-08-17, choosing the fix:
+  // ground all 454 from the registry.
+  //
+  // The old baseline also spread the whole row, which handed the model `duke: "wateree"`,
+  // `river: "02148000"` and `ahq: "lake-wateree"` — foreign keys for three other services,
+  // presented as curated facts about the lake.
+  //
+  // A FAILED LOOKUP MUST NOT FAIL THE AGENT. R2 being unreachable is a reason to run ungrounded,
+  // which is exactly what 439 lakes did before this. Caught, not thrown.
   let groundedPrev = previousResults;
   if (agentKey === 'identity') {
-    const lookupKey = lakeKeyFromName(lakeName);
-    const known = LAKES[lookupKey];
-    if (known) {
-      groundedPrev = {...previousResults, _knownBaseline: {lakeKey: lookupKey, ...known, note:"This is TrollMap curated baseline — verify against official sources, don't trust blindly"}};
-    }
+    const baseline = await identityGrounding(lakeName, env).catch(() => null);
+    if (baseline) groundedPrev = { ...previousResults, _knownBaseline: baseline };
   }
 
   // Regulations use the approved R2 digest through the shared parser. This avoids
