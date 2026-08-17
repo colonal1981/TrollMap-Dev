@@ -22,13 +22,53 @@
 import { CF_WORKER_URL } from '../core/state.js';
 import { lakeRecordFor } from '../data/lake-registry.js';
 import { fetchWaterConditions, conditionsStrip, levelSentence } from '../utils/water-conditions.js';
-import { camerasForWater, cameraFrame, ageLabel } from '../utils/cameras.js';
+import { camerasForWater, camerasOnWater, nearestSite, cameraFrame, ageLabel, MAX_RAMP_KM }
+  from '../utils/cameras.js';
 
 const CACHE_MS = 5 * 60 * 1000;
 const cache = new Map();          // slug -> { at, c }
 let openState = false;
 let lastSlug = null;
 let seq = 0;                      // guards against an out-of-order response
+let activeRamp = null;            // the launch the numbers are about, or null for the whole water
+
+/**
+ * The selected launch, as a point.
+ *
+ * lake-ramp-select.js writes `dataset.coords = "lat,lon"` onto every option it builds, so the
+ * ramp's position is already in the DOM and needs no second trip through the access index — a
+ * second lookup is a second thing that can disagree about where a ramp is.
+ */
+function selectedRamp() {
+  const sel = document.getElementById('rampSelect');
+  const opt = sel && sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex] : null;
+  if (!opt || !opt.value || !opt.dataset || !opt.dataset.coords) return null;
+  const [lat, lon] = String(opt.dataset.coords).split(',').map(Number);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return { name: opt.value, lat, lon };
+}
+
+/**
+ * The cameras that answer the question actually being asked.
+ *
+ * A RAMP IS A POINT AND A WATER IS NOT — the same split utils/cameras.js is built around. With
+ * no launch selected the card shows every camera bound to the water; with one selected it shows
+ * the nearest camera SITE and every view that site has. Ryan, 2026-08-17, seeing four Congaree
+ * views after picking one landing: *"it would be nice to get the gauge and camera just for the
+ * ramp that is selected."*
+ *
+ * Returns the count of what was dropped rather than dropping it silently. A launch 25 km from
+ * every camera on its own river would otherwise show nothing, which reads as "this water has no
+ * cameras" — and that is a different fact.
+ */
+function camerasFor(rec, ramp) {
+  const all = camerasForWater(rec && rec.slug, rec && (rec.displayName || rec.name));
+  if (!ramp) return { cams: all, scope: 'water', hidden: 0 };
+  const near = nearestSite(
+    camerasOnWater({ slug: rec && rec.slug, name: rec && (rec.displayName || rec.name) }),
+    ramp.lat, ramp.lon);
+  return { cams: near, scope: 'ramp', hidden: all.length - near.length };
+}
 
 function esc(v) {
   return String(v == null ? '' : v).replace(/[&<>"']/g, (m) => (
@@ -42,6 +82,18 @@ function els() {
     caret: document.getElementById('condCaret'),
     card: document.getElementById('condCard'),
   };
+}
+
+/**
+ * How far the number was measured from, once there is a launch to measure from.
+ *
+ * Silent with no ramp selected: the distance would be from the water's centroid, which is a
+ * point nobody is standing at and a figure that would read as meaningful.
+ */
+function farLabel(km) {
+  if (!activeRamp || !Number.isFinite(km)) return '';
+  return km < 0.2 ? ' — at this launch'
+       : ` — ${km < 10 ? km.toFixed(1) : Math.round(km)} km from this launch`;
 }
 
 function row(label, value) {
@@ -65,14 +117,26 @@ function row(label, value) {
  * per toggle would be a request storm against a picture that changes every 15 minutes; the ids
  * ride in a data attribute and `fillCameras` reads them once the markup is in the document.
  */
-function cameraRow(rec) {
-  const cams = camerasForWater(rec && rec.slug, rec && (rec.displayName || rec.name));
-  if (!cams.length) return '';
+function cameraRow(rec, ramp) {
+  const { cams, scope, hidden } = camerasFor(rec, ramp);
+  if (!cams.length) {
+    // Nothing near the launch, but something on the water. Say so; do not render an absence.
+    if (ramp && hidden > 0) {
+      return row('Cameras', `<span class="cond-sub">none within ${MAX_RAMP_KM} km of `
+        + `${esc(ramp.name)}. ${hidden} elsewhere on this water — clear the launch to see them.`
+        + `</span>`);
+    }
+    return '';
+  }
   const ids = cams.map((c) => c.camId).join(',');
+  const where = scope === 'ramp' ? ` nearest ${esc(ramp.name)}` : '';
   return row('Cameras',
     `<div class="cond-cams" data-cams="${esc(ids)}">`
-    + `<span class="cond-sub">reading ${cams.length} live view${cams.length === 1 ? '' : 's'}…</span>`
-    + `</div>`);
+    + `<span class="cond-sub">reading ${cams.length} live view${cams.length === 1 ? '' : 's'}`
+    + `${where}…</span></div>`
+    + (hidden > 0
+      ? `<span class="cond-sub">${hidden} more on this water, away from this launch.</span>`
+      : ''));
 }
 
 /**
@@ -139,12 +203,12 @@ function cardHtml(rec, c) {
     // THE CAMERA IS NOT DOWNSTREAM OF THE GAUGE. NIMS is a different agency on a different
     // endpoint, and a water whose conditions could not be read is exactly when a picture of it
     // is worth the most.
-    return cameraRow(rec)
+    return cameraRow(rec, activeRamp)
          + `<div class="cond-row"><span class="cond-v">`
          + `Live conditions could not be read${c && c.error ? `: ${esc(c.error)}` : ''}.`
          + `</span></div>`;
   }
-  const out = [cameraRow(rec)];
+  const out = [cameraRow(rec, activeRamp)];
 
   if (c.belowFullPoolFt != null || c.levelFt != null) {
     const lines = [esc(levelSentence(c))];
@@ -192,7 +256,7 @@ function cardHtml(rec, c) {
   }
   if (c.flowCfs != null) {
     out.push(row('Flow', `${Math.round(c.flowCfs).toLocaleString()} ft³/s`
-      + (c.flowGauge ? `<span class="cond-sub"> (${esc(c.flowGauge)})</span>` : '')));
+      + (c.flowGauge ? `<span class="cond-sub"> (${esc(c.flowGauge)})${farLabel(c.flowGaugeKm)}</span>` : '')));
   }
   if (c.stageFt != null) {
     const vs = c.stageVsActionFt != null
@@ -203,7 +267,7 @@ function cardHtml(rec, c) {
       ? '<span class="cond-sub"> — elevation above datum, not gage height</span>'
       : c.stageBasis === 'gage_height' ? '<span class="cond-sub"> — gage height</span>' : '';
     out.push(row('Stage', `${c.stageFt.toFixed(2)} ft${vs}${basis}`
-      + `${c.stageGauge ? `<span class="cond-sub"> (${esc(c.stageGauge)})</span>` : ''}`));
+      + `${c.stageGauge ? `<span class="cond-sub"> (${esc(c.stageGauge)})${farLabel(c.stageGaugeKm)}</span>` : ''}`));
   }
   if (c.floodCategory) {
     out.push(row('Flood status', `${esc(String(c.floodCategory).replace(/_/g, ' '))}`
@@ -386,9 +450,12 @@ function paint(rec, c) {
   // THE BADGE IS BUILT HERE, NOT IN conditionsStrip(). That function is pure and tested and
   // knows nothing about cameras; teaching it would couple the sentence to the roster for one
   // glyph. The line is the only place both facts are already in hand.
-  const nCam = camerasForWater(rec.slug, name).length;
+  const nCam = camerasFor(rec, activeRamp).cams.length;
   const badge = nCam ? ` · \u{1F4F7}${nCam > 1 ? nCam : ''}` : '';
-  if (e.line) e.line.innerHTML = `<b>${esc(name)}</b> · ${esc(s.text)}${badge}`;
+  // WHOSE NUMBERS THESE ARE. Without this the same strip means two different things depending
+  // on a dropdown somewhere else on the page.
+  const at = activeRamp ? ` <span class="cond-sub">@ ${esc(activeRamp.name)}</span>` : '';
+  if (e.line) e.line.innerHTML = `<b>${esc(name)}</b>${at} · ${esc(s.text)}${badge}`;
   e.bar.dataset.tone = s.tone;
   if (e.caret) e.caret.textContent = openState ? '▴' : '▾';
   // Leaflet sizes itself once and does not watch its container. Shrinking #main by 26px without
@@ -406,18 +473,23 @@ function paint(rec, c) {
 
 /** Read (or reuse) the conditions for a record and paint. */
 export async function showConditionsFor(rec, opts = {}) {
-  if (!rec || !rec.slug) { paint(null, null); return null; }
+  if (!rec || !rec.slug) { activeRamp = null; paint(null, null); return null; }
   lastSlug = rec.slug;
+  activeRamp = opts.ramp !== undefined ? opts.ramp : selectedRamp();
   const mine = ++seq;
-  const hit = cache.get(rec.slug);
+  // KEYED ON THE LAUNCH TOO. The response now depends on the point it was asked about, so a
+  // cache keyed on the slug alone would hand Bates Bridge the numbers for a landing 40 km up
+  // the same river and look like it worked.
+  const key = `${rec.slug}|${activeRamp ? activeRamp.name : ''}`;
+  const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS && !opts.force) { paint(rec, hit.c); return hit.c; }
 
   paint(rec, { ok: true, pending: 'reading…' });
   const worker = CF_WORKER_URL || window.CF_WORKER_URL;
-  const c = await fetchWaterConditions(worker, rec, { date: opts.date });
+  const c = await fetchWaterConditions(worker, rec, { date: opts.date, point: activeRamp });
   // A slower answer for a lake you already moved off must not overwrite the newer one.
   if (mine !== seq || lastSlug !== rec.slug) return c;
-  cache.set(rec.slug, { at: Date.now(), c });
+  cache.set(key, { at: Date.now(), c });
   paint(rec, c);
   return c;
 }
@@ -427,9 +499,10 @@ export function refreshConditions(opts = {}) {
   const v = document.getElementById('lakeSelect')?.value
          || document.getElementById('planLake')?.value
          || '';
-  if (!v) { paint(null, null); return Promise.resolve(null); }
+  if (!v) { activeRamp = null; paint(null, null); return Promise.resolve(null); }
   const rec = lakeRecordFor(v) || lakeRecordFor(v.split(',')[0].trim());
   if (!rec) {
+    activeRamp = null;
     // A NAME THE PICKER OFFERS AND THE REGISTRY DOES NOT KNOW is a real defect, not a reason to
     // show nothing. Hiding the strip here would make a registry gap look like a working app.
     paint({ slug: null, displayName: v, name: v },
@@ -449,8 +522,16 @@ function wire() {
     openState = !openState;
     refreshConditions();
   });
-  document.getElementById('lakeSelect')?.addEventListener('change', () => refreshConditions());
-  document.getElementById('planLake')?.addEventListener('change', () => refreshConditions());
+  // PICKING A NEW WATER CLEARS THE LAUNCH, PASSED EXPLICITLY. lake-ramp-select.js rebuilds
+  // #rampSelect asynchronously on the same event, so reading the dropdown here is a race whose
+  // outcome is listener registration order — and the losing side shows the previous lake's ramp
+  // against the new lake's numbers, which looks exactly like a working app.
+  document.getElementById('lakeSelect')?.addEventListener('change', () => refreshConditions({ ramp: null }));
+  // The launch changes which gauge and which camera answer, so it changes the strip. This event
+  // only fires on a user choice, by which time the list is the current water's.
+  document.getElementById('rampSelect')?.addEventListener('change', () => refreshConditions());
+  document.getElementById('planRamp')?.addEventListener('change', () => refreshConditions());
+  document.getElementById('planLake')?.addEventListener('change', () => refreshConditions({ ramp: null }));
   document.getElementById('planDate')?.addEventListener('change', () => refreshConditions({ force: true }));
   refreshConditions();
 }

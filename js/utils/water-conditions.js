@@ -45,10 +45,24 @@ export function cToF(c) {
  * lat and lon are REQUIRED by the route and the reason is written into its 400: the Worker has
  * no lake registry, and the client already knows the centroid it selected.
  */
+/**
+ * `lat`/`lon` ARE NOT DECORATION ON THIS ROUTE — they choose the gauge.
+ *
+ * waterBlock() picks `water.gauge` as the nearest bound gauge to the point it was given, and
+ * the point has always been the water's CENTROID. On the Congaree that centroid sits 46 km from
+ * Bates Bridge, up toward Columbia, so a trip to Fort Motte was reading the upper river. The
+ * gauge at the launch — CFMS1, 113 m from the ramp — was bound, fetched, and never chosen.
+ *
+ * Ryan, 2026-08-17: *"it would be nice to get the gauge and camera just for the ramp that is
+ * selected."* So `opts.point` overrides the centroid. Nothing else changes: the Worker was
+ * always answering the question "nearest to here", it was just being asked about the wrong here.
+ */
 export function conditionsUrl(worker, rec, opts = {}) {
   if (!worker || !rec || !rec.slug) return null;
-  const lat = Number(rec.lat);
-  const lon = Number(rec.lon);
+  const pt = opts.point && Number.isFinite(Number(opts.point.lat))
+          && Number.isFinite(Number(opts.point.lon)) ? opts.point : rec;
+  const lat = Number(pt.lat);
+  const lon = Number(pt.lon);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
   const p = new URLSearchParams({ lat: String(lat), lon: String(lon) });
   if (opts.date) p.set('date', opts.date);
@@ -98,9 +112,12 @@ export function readConditions(j) {
     usaceProject: null,
     flowCfs: null,
     flowGauge: null,
+    flowGaugeKm: null,
     stageFt: null,
     stageBasis: null,
     stageGauge: null,
+    stageGaugeKm: null,
+    stageGaugeRole: null,
     clarity: null,
     turbidityFnu: null,
     turbidityGauge: null,
@@ -239,15 +256,40 @@ export function readConditions(j) {
   // A reservoir elevation above NAVD88 and a stage above a local gage datum are both feet and
   // mean different things; subtracting one from the other produces a number that looks like
   // feet and is not.
+  //
+  // AND A LAKE HAS ONE SURFACE WHILE A RIVER DOES NOT.
+  //
+  // Once the point can be a ramp (see conditionsUrl), `gauge` is the nearest bound gauge to
+  // where you are launching — which is what you want on a river and is a trap on a lake. Of the
+  // 49 lakes carrying a pool gauge, 39 also carry gauges that are not the lake: Thurmond has
+  // "Savannah River near Clarks Hill" and "Stevens Creek", Lake Murray has "Little Saluda River
+  // near Saluda". Pick a ramp near the dam and nearest-to-you is the TAILRACE. Ryan, asked
+  // directly, 2026-08-17: the pool stays the lake's number.
+  //
+  // So the order is by what the water IS, not by what is closest. The "x ft down from full
+  // pool" line never came through here — that is the operator feed — so this only decides the
+  // Stage and Flow rows, which is exactly the surface where the tailrace could have got in.
   let stageGauge = null;
-  for (const role of ['gauge', 'tailwater', 'pool']) {
+  const order = out.featureType === 'lake'
+    ? ['pool', 'tailwater', 'gauge']
+    : ['gauge', 'tailwater', 'pool'];
+  for (const role of order) {
     const g = w[role];
     if (!g) continue;
-    if (out.flowCfs == null && Number.isFinite(g.flow)) { out.flowCfs = g.flow; out.flowGauge = g.name || null; }
+    if (out.flowCfs == null && Number.isFinite(g.flow)) {
+      out.flowCfs = g.flow;
+      out.flowGauge = g.name || null;
+      out.flowGaugeKm = Number.isFinite(g.km_from_point) ? g.km_from_point : null;
+    }
     if (out.stageFt == null && Number.isFinite(g.stage)) {
       out.stageFt = g.stage;
       out.stageBasis = g.stage_basis || null;
       out.stageGauge = g.name || null;
+      // HOW FAR THE NUMBER WAS MEASURED FROM. The Worker has always returned this and nothing
+      // read it. With a ramp as the point it is the distance from the launch, which is the
+      // difference between "the river here" and "the river somewhere on this river".
+      out.stageGaugeKm = Number.isFinite(g.km_from_point) ? g.km_from_point : null;
+      out.stageGaugeRole = role;
       stageGauge = g;
     }
   }
