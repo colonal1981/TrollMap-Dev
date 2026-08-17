@@ -43,8 +43,28 @@ import sys
 from pathlib import Path
 
 DEFAULT_NHD = Path(r'F:\TrollMapPipeline\NHD')
-DEFAULT_REGISTRY = Path('registry/lake_index.json')
-DEFAULT_OUT = Path('registry/water_chain.json')
+REGISTRY_REL = 'registry/lake_index.json'
+OUT_REL = 'registry/water_chain.json'
+
+
+def find_repo_root(explicit=None):
+    """Locate the folder that holds registry/. Tries, in order: an explicit path, the current
+    working directory, then each parent of THIS FILE. A bare relative default resolves against
+    cwd, so running from scripts/ instead of the repo root looked for the registry one folder
+    too high -- the same mistake this script's own test made."""
+    if explicit:
+        p = Path(explicit)
+        return p.parent.parent if p.name.endswith('.json') else p
+    here = Path.cwd().resolve()
+    mine = Path(__file__).resolve().parent
+    seen = set()
+    for cand in ([here] + list(here.parents) + [mine] + list(mine.parents)):
+        if cand in seen:
+            continue
+        seen.add(cand)
+        if (cand / REGISTRY_REL).exists():
+            return cand
+    return here
 
 
 # --------------------------------------------------------------------------------------
@@ -220,8 +240,8 @@ def process_vpu(vpu, src, want_gnis, args):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--nhd', default=str(DEFAULT_NHD))
-    ap.add_argument('--registry', default=str(DEFAULT_REGISTRY))
-    ap.add_argument('--out', default=str(DEFAULT_OUT))
+    ap.add_argument('--registry', default=None, help='defaults to <repo>/' + REGISTRY_REL)
+    ap.add_argument('--out', default=None, help='defaults to <repo>/' + OUT_REL)
     ap.add_argument('--only', nargs='*', help='VPU codes, e.g. --only 0305 0304')
     ap.add_argument('--write', action='store_true', help='actually write the json')
     args = ap.parse_args()
@@ -232,10 +252,15 @@ def main():
         print('pyogrio is not installed. geopandas pulls it in.')
         return 2
 
-    reg_path = Path(args.registry)
+    root = find_repo_root(args.registry)
+    reg_path = Path(args.registry) if args.registry else root / REGISTRY_REL
+    args.out = args.out or str(root / OUT_REL)
     if not reg_path.exists():
         print(f'registry not found: {reg_path}')
+        print(f'  (looked from cwd {Path.cwd()} and from {Path(__file__).resolve().parent})')
+        print('  pass --registry <path to lake_index.json> if it lives somewhere else')
         return 2
+    print(f'registry: {reg_path}')
     reg = json.loads(reg_path.read_text(encoding='utf-8'))
     print(f'registry waters: {len(reg)}')
 

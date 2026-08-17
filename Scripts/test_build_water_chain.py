@@ -1,7 +1,18 @@
 """Exercise build_water_chain's real functions -- imported from the shipped file, not copies."""
 import importlib.util, sys, json, types
-spec = importlib.util.spec_from_file_location('bwc', 'build_water_chain.py')
+from pathlib import Path
+
+# Load the script that sits NEXT TO THIS TEST, not next to the shell's working directory.
+# A bare relative path here resolves against cwd, so running the test from the repo root
+# instead of from scripts/ made it look for the module one folder too high.
+HERE = Path(__file__).resolve().parent
+TARGET = HERE / 'build_water_chain.py'
+if not TARGET.exists():
+    print(f'cannot find build_water_chain.py beside this test ({HERE})')
+    sys.exit(2)
+spec = importlib.util.spec_from_file_location('bwc', TARGET)
 bwc = importlib.util.module_from_spec(spec); spec.loader.exec_module(bwc)
+print(f'testing {TARGET}')
 
 def eq(g, w, m): assert g == w, f'{m}: got {g!r} want {w!r}'
 
@@ -70,3 +81,27 @@ eq(rows['wateree_lake']['downstream'], None, 'wateree is the bottom')
 assert sum(len(r['upstream']) for r in rows.values()) == len(chain)-1, 'one inbound edge per link'
 
 print('ALL build_water_chain assertions pass')
+
+# --- find_repo_root: the bug that made this very test fail for Ryan, now guarded
+import tempfile, os
+from pathlib import Path as _P
+with tempfile.TemporaryDirectory() as t:
+    root = _P(t) / 'TrollMapPipeline'
+    (root / 'registry').mkdir(parents=True)
+    (root / 'registry' / 'lake_index.json').write_text('{}')
+    (root / 'scripts').mkdir()
+    cwd = os.getcwd()
+    try:
+        os.chdir(root)
+        eq(bwc.find_repo_root(None), root, 'found from repo root')
+        os.chdir(root / 'scripts')
+        eq(bwc.find_repo_root(None), root, 'CLIMBS OUT OF scripts/ -- the case that broke')
+        (root / 'a' / 'b').mkdir(parents=True)
+        os.chdir(root / 'a' / 'b')
+        eq(bwc.find_repo_root(None), root, 'climbs from any depth inside the repo')
+        os.chdir(t)
+        eq(bwc.find_repo_root(str(root / 'registry' / 'lake_index.json')), root,
+           'explicit --registry path yields its repo root')
+    finally:
+        os.chdir(cwd)
+print('find_repo_root assertions pass')
