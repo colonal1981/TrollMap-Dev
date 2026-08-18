@@ -219,6 +219,38 @@ def _slug_list(src):
     return {x.strip() for x in src.replace('\n', ',').split(',') if x.strip()}
 
 
+def owned_inside(slug, meta, registry, _cache={}):
+    """Ring sets of every water that owns a boundary and sits inside this COASTAL zone.
+
+    Returns () for a lake, which is the whole point: a lake does not swallow anything, and a
+    lake inside a lake is a merge question rather than a masking one.
+
+    Bounding boxes decide who is even a candidate, off lakes.json, so a zone does not read 432
+    boundary files to discover that 429 of them are three states away. Only the survivors are
+    loaded, and they are cached because the same reservoir can fall inside two zones -- the
+    Cooper is inside both coast_charleston_sc and coast_cape_romain_sc.
+    """
+    if not slug.startswith('coast_'):
+        return ()
+    zb = (meta.get(slug) or {}).get('bounds_wsen')
+    if not (isinstance(zb, (list, tuple)) and len(zb) == 4):
+        return ()
+    out = []
+    for s, rec in meta.items():
+        if s == slug or s.startswith('coast_'):
+            continue
+        b = rec.get('bounds_wsen')
+        if not (isinstance(b, (list, tuple)) and len(b) == 4):
+            continue
+        if b[2] < zb[0] or zb[2] < b[0] or b[3] < zb[1] or zb[3] < b[1]:
+            continue
+        if s not in _cache:
+            _cache[s] = load_boundary(registry, s)
+        if _cache[s]:
+            out.append(_cache[s])
+    return out
+
+
 def load_boundary(registry, slug):
     fp = os.path.join(registry, 'boundaries', slug + '.geojson')
     if not os.path.exists(fp):
@@ -418,7 +450,19 @@ def main():
                 # build_mask picks BboxMask for a coastal zone rectangle -- see
                 # build_chartpack._is_rectangle. Pamlico Sound would otherwise rasterise
                 # 19.5 M cells, about 1.2 GB, for a shape that is a comparison.
-                masks[s] = build_mask(rings, deg)
+                #
+                # A COASTAL ZONE GIVES UP EVERY WATER THAT OWNS ITS OWN BOUNDARY. Ryan,
+                # 2026-08-18: "coastal water shouldn't have any freshwater in it at all
+                # period". A zone boundary is an envelope over land and water together and it
+                # swallows whole lakes -- Goose Creek Reservoir sits 100% inside
+                # coast_charleston_sc and had 469 contours and 459 depth areas shipped in the
+                # Charleston pack as well as its own. Passing the exclusion here rather than
+                # clipping the zone's boundary file is deliberate: the boundary is a coarse
+                # 973-vertex envelope whose acreage is mostly land, and the question that
+                # matters is which FEATURES ship, which is a per-feature test the mask already
+                # performs. Excluding an owned water does not delete it -- it is in its own
+                # pack, at its own resolution, with its own soundings.
+                masks[s] = build_mask(rings, deg, exclude=owned_inside(s, meta, a.registry))
             live.append(s)
 
         # ONE LAYER AT A TIME, and this is not a style choice.

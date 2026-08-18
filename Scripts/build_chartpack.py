@@ -192,8 +192,14 @@ class BboxMask:
         return self.w <= x <= self.e and self.s <= y <= self.n
 
 
-def build_mask(rings, buffer_deg):
-    """Pick the cheap mask when the boundary is a box, the real one otherwise."""
+def build_mask(rings, buffer_deg, exclude=()):
+    """Pick the cheap mask when the boundary is a box, the real one otherwise.
+
+    A BboxMask is four numbers and a comparison. It cannot hold a hole, so an exclusion forces
+    the rasterised mask however rectangular the boundary is -- see LakeMask's `exclude`.
+    """
+    if exclude:
+        return LakeMask(rings, buffer_deg, exclude=exclude)
     return (BboxMask if _is_rectangle(rings) else LakeMask)(rings, buffer_deg)
 
 
@@ -225,7 +231,7 @@ class LakeMask:
     """
     CELL = 0.0002
 
-    def __init__(self, rings, buffer_deg):
+    def __init__(self, rings, buffer_deg, exclude=()):
         self.cell = self.CELL
         xs = [p[0] for r in rings for p in r]
         ys = [p[1] for r in rings for p in r]
@@ -290,6 +296,64 @@ class LakeMask:
         else:
             self.core = set(inside)
         self.cells = inside
+
+        # A COASTAL ZONE MUST NOT CONTAIN FRESHWATER. Ryan, 2026-08-18: "coastal water
+        # shouldn't have any freshwater in it at all period".
+        #
+        # A zone boundary is a coarse envelope over land, marsh and water together --
+        # coast_charleston_sc is 973 vertices and no holes over 526,313 acres, against 26,405
+        # vertices and 80 holes for the 4,655-acre Cooper. So it swallows whole waters that
+        # have a pack of their own: measured that day, the Charleston pack shipped 469 contours
+        # and 459 depth areas inside Goose Creek Reservoir, 573 acres with its own chartpack.
+        # The same water, twice, in two packs, with two sets of soundings.
+        #
+        # AFTER the dilate, deliberately. Excluding first and then growing the buffer would put
+        # 250 m of the zone straight back into the water it just gave up. And `core` is cleared
+        # too, because `core` is the denominator of the charted fraction: leaving the reservoir
+        # in it would go on measuring the zone's coverage against water the zone no longer has.
+        if exclude:
+            gone = set()
+            for ex in exclude:
+                gone |= self._raster(ex)
+            self.cells = self.cells - gone
+            self.core = self.core - gone
+            self.excluded_cells = len(gone)
+        else:
+            self.excluded_cells = 0
+
+    def _raster(self, rings):
+        """The cells this ring set covers, in THIS mask's grid.
+
+        The same scanline the constructor runs, called rather than copied. A second
+        rasteriser that drifts from the first would subtract a slightly different shape than
+        the one it filled, and the seam would be invisible until it showed up on a chart.
+        """
+        got = set()
+        for j in range(self.ny):
+            y = self.s + (j + 0.5) * self.cell
+            xsat = []
+            for r in rings:
+                for i in range(len(r) - 1):
+                    y1, y2 = r[i][1], r[i + 1][1]
+                    if (y1 > y) == (y2 > y):
+                        continue
+                    x1, x2 = r[i][0], r[i + 1][0]
+                    xsat.append(x1 + (y - y1) * (x2 - x1) / (y2 - y1))
+            if not xsat:
+                continue
+            xsat.sort()
+            for k in range(0, len(xsat) - 1, 2):
+                a = int((xsat[k] - self.w) / self.cell)
+                b = int((xsat[k + 1] - self.w) / self.cell)
+                for i in range(max(0, a), min(self.nx - 1, b) + 1):
+                    got.add((i, j))
+        # The boundary cells too, in the same spirit as the fill's step 2 -- and here it errs
+        # toward removing a cell rather than keeping one, which is the safe direction when the
+        # rule is "none at all".
+        for r in rings:
+            for px, py in r:
+                got.add((int((px - self.w) / self.cell), int((py - self.s) / self.cell)))
+        return got
 
     def cell_of(self, x, y):
         return (int((x - self.w) / self.cell), int((y - self.s) / self.cell))
