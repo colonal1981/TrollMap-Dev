@@ -260,20 +260,67 @@ def wrangler_error(out):
     return msg[:400]
 
 
-def slim_registry(full):
+def retired_slugs(registry_dir):
+    """Slugs a merge has already retired, read from registry/_deletion_tab.json.
+
+    Returns (slugs, note). Module level and SHARED with verify_registry_r2.py for the same
+    reason slim_registry() is: a checker that restates the rule drifts from it, and then agrees
+    with itself while both are wrong. The note is returned rather than printed, because a
+    missing tab is worth saying out loud in both tools and neither wants a helper writing into
+    its output.
+
+    A missing tab is not fatal, but it is not silent either. Silently skipping this filter is
+    the failure it exists to prevent.
+    """
+    fp = Path(registry_dir) / "_deletion_tab.json"
+    if not fp.exists():
+        return set(), f"no {fp.name} beside the registry -- retired slugs are NOT being filtered"
+    try:
+        tab = json.loads(fp.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return set(), (f"{fp.name} is unreadable ({type(exc).__name__}) -- retired slugs are "
+                       f"NOT being filtered")
+    rows = tab.get("retired") if isinstance(tab, dict) else tab
+    out = set()
+    for e in (rows or []):
+        s = e.get("slug") if isinstance(e, dict) else e
+        if s:
+            out.add(s)
+    return out, None
+
+
+def slim_registry(full, retired):
     """registry/lakes.json -> the trimmed object published at _registry/lakes.json.
 
     Module level, and NOT inlined in main(), so `verify_registry_r2.py` can import it and
     compare what is in the bucket against what this uploader WOULD build. r2_audit.py already
     imports its delete rules from here for the same reason: a checker that restates the rule
     drifts from it, and then agrees with itself while both are wrong.
+
+    A RETIRED SLUG DOES NOT SHIP. registry/lakes.json deliberately keeps a record for every
+    water 3DHP knows about, the seven a merge folded into a keeper included -- it is the record
+    of what EXISTS, and consolidate_lake_index.py:drop_retired() spells out why nothing edits it
+    to say otherwise. What SHIPS is a different question, and this published all 3,399 rows, so
+    the bucket carried a record for tail_race_canal sitting beside the cooper_river that
+    replaced it. consolidate applies that gate to the index; this is the same gate for the slim
+    list. Only merge-retired slugs are cut: a water dropped as out of region or as unbuildable
+    still EXISTS, and this list is the inventory the DNR side queries by extent.
+
+    `retired` is required rather than defaulted because a caller that quietly passes nothing
+    builds a different projection, and a checker doing that reports the object stale forever
+    while the uploader keeps saying it just wrote it.
     """
-    return {"count": full.get("count"), "bbox_wsen": full.get("bbox_wsen"),
+    gone = set(retired or ())
+    lakes = [{"slug": r["slug"], "lake_id": r["lake_id"], "name": r["name"],
+              "area_km2": r["area_km2"], "bounds_wsen": r["bounds_wsen"],
+              "centroid": r["centroid"]}
+             for r in full.get("lakes", []) if r.get("slug") not in gone]
+    # count is the length of the list this object actually carries. Passing lakes.json's own
+    # count through would publish an object whose count disagreed with its own rows by however
+    # many the filter removed.
+    return {"count": len(lakes), "bbox_wsen": full.get("bbox_wsen"),
             "generated_from": full.get("generated_from"),
-            "lakes": [{"slug": r["slug"], "lake_id": r["lake_id"], "name": r["name"],
-                       "area_km2": r["area_km2"], "bounds_wsen": r["bounds_wsen"],
-                       "centroid": r["centroid"]}
-                      for r in full.get("lakes", [])]}
+            "lakes": lakes}
 
 
 def slim_chain(full):
@@ -534,7 +581,14 @@ def main():
         if not rp.exists():
             sys.exit(f"registry dir {regdir} has no lakes.json")
         full = json.load(open(rp))
-        slim = slim_registry(full)
+        gone, gone_note = retired_slugs(regdir)
+        if gone_note:
+            print(f"!! {gone_note}")
+        slim = slim_registry(full, gone)
+        if gone:
+            _cut = len(full.get("lakes", [])) - len(slim["lakes"])
+            print(f"registry: {_cut} retired row(s) held back from the slim list "
+                  f"({', '.join(sorted(gone)[:4])}{'...' if len(gone) > 4 else ''})")
         tmp = Path(tempfile.gettempdir()) / "trollmap_registry_slim.json"
         tmp.write_text(json.dumps(slim, separators=(",", ":")))
         reg_jobs.append((str(tmp), f"{args.prefix}_registry/lakes.json",

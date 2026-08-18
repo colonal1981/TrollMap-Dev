@@ -177,12 +177,28 @@ def main() -> int:
         import upload_garmin_to_r2 as ug
         slim_registry = ug.slim_registry
         slim_chain = getattr(ug, 'slim_chain', None)
+        # The retired set comes from the uploader too, not from a second reader of the deletion
+        # tab written here. slim_registry() filters on it, so a checker that computed its own
+        # would report lakes.json stale forever while the uploader kept saying it just wrote it.
+        retired_slugs = getattr(ug, 'retired_slugs', None)
     except Exception as exc:
         print('!! could not import slim_registry from upload_garmin_to_r2.py (%s: %s)'
               % (type(exc).__name__, exc))
         print('!! lakes.json will be checked for PRESENCE only, not for currency.')
         slim_registry = None
         slim_chain = None
+        retired_slugs = None
+
+    gone = set()
+    if retired_slugs:
+        gone, gone_note = retired_slugs(a.registry)
+        if gone_note:
+            print('!! %s' % gone_note)
+    elif slim_registry:
+        # An uploader old enough to lack retired_slugs also publishes every row, so an empty
+        # set is what it built with. Say so rather than guessing silently.
+        print('!! upload_garmin_to_r2.py has no retired_slugs() -- comparing against an '
+              'unfiltered slim list, which is what that version publishes')
 
     print('worker   %s' % a.worker)
     print('registry %s\n' % os.path.abspath(a.registry))
@@ -206,7 +222,7 @@ def main() -> int:
                 local = None
                 print('%-22s local file is unreadable: %s' % (name, exc))
         if local is not None and kind == 'slim':
-            local = slim_registry(local) if slim_registry else None
+            local = slim_registry(local, gone) if slim_registry else None
         if local is not None and kind == 'chain':
             local = slim_chain(local) if slim_chain else None
 
