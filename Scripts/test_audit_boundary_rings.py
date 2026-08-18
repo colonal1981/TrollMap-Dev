@@ -407,7 +407,11 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         'the BINDING is fresh -- it measured the polygon that is on disk'
     assert 'index_is_old' in txt.split('lake_index.json disagrees')[1], \
         'but the INDEX is out of date and that is its own finding'
-    assert 'consolidate_lake_index' in txt, 'and it names the script that recomputes area_acres'
+    # AND IT MUST NOT PRESCRIBE A CURE IT DOES NOT HAVE. area_acres comes from lakes.json's
+    # area_km2 and consolidate_lake_index.py copies it, so "re-run consolidate" was advice that
+    # could never work -- the second wrong remedy printed by this one check.
+    assert 'consolidate_lake_index.py copies it' in txt, txt
+    assert 'is a judgement' in txt, 'it reports which two numbers disagree and stops there'
     assert 'does NOT invalidate the coverage' in txt, \
         'and says outright that the percentages above are still good'
     assert '1 index disagreement' in txt, 'the closing line counts them separately'

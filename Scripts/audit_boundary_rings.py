@@ -43,8 +43,13 @@ disagrees with the file the coverage is NOT reported at all -- a stale number is
 number, because it looks like an answer. A binding carrying no stamp is reported as UNKNOWN,
 never as clean.
 
-lake_index disagreeing with the boundary is a real fault too, and a different one with a
-different remedy, so it has its own section and does not suppress anything.
+lake_index disagreeing with the boundary is a real fault too, and a different one, so it has
+its own section and does not suppress anything. It does NOT have a single remedy, and saying it
+did was wrong twice over: area_acres comes from lakes.json's area_km2 -- the 3DHP inventory --
+and consolidate_lake_index.py copies that number rather than deriving it, so running consolidate
+changes nothing. The boundary and the inventory are two different statements about the same
+water and either can be the wrong one, which is why this section names both and prescribes
+nothing.
 
 AREA IS NOT COVERAGE, AND MEASURING IT AS AREA WAS WRONG UNTIL 2026-08-18
 
@@ -470,8 +475,14 @@ def main() -> int:
         for slug, now, was, pct in sorted(index_off, key=lambda r: -abs(r[3])):
             print('   %-26s %12.1f %12.1f %7.1f%%' % (slug, now, was, pct))
         print('   This does NOT invalidate the coverage above -- those are measured from the')
-        print('   polygon, not from the index. It is area_acres that is out of date, and')
-        print('   consolidate_lake_index.py is what recomputes it.')
+        print('   polygon, not from the index.')
+        print('   AND THE FIX IS NOT ONE COMMAND. area_acres comes from lakes.json area_km2,')
+        print('   the 3DHP inventory; consolidate_lake_index.py copies it and cannot change it.')
+        print('   So the two numbers describe different things and either can be the wrong one:')
+        print('   where NHD agrees with the BOUNDARY the inventory is stale and lakes.json needs')
+        print('   rebuilding, and where a boundary was deliberately re-cut or adopted from')
+        print('   another slug the inventory is simply describing the feature it always did.')
+        print('   Which is which is a judgement, so this reports and does not prescribe.')
     else:
         print('   none -- every index acreage matches the boundary it describes')
 
