@@ -291,6 +291,11 @@ def main() -> int:
     p = os.path.join(reg, '_nhd_bindings.json')
     if os.path.exists(p):
         nhd = (json.loads(open(p, encoding='utf-8').read()) or {}).get('bindings') or {}
+    merges = []
+    p = os.path.join(reg, '_merge_decisions.json')
+    if os.path.exists(p):
+        _d = json.loads(open(p, encoding='utf-8').read()) or {}
+        merges = _d.get('merges', _d) if isinstance(_d, dict) else _d
     print('boundaries %s' % bdir)
     print('index %d water(s); NHD bindings %d\n' % (len(idx), len(nhd)))
 
@@ -300,6 +305,7 @@ def main() -> int:
         names = [f for f in names if f[:-8] in want]
 
     flat, short, over, legacy, unread, fixed = [], [], [], [], [], 0
+    kept_acres = {}
     for fn in names:
         slug = fn[:-8]
         fp = os.path.join(bdir, fn)
@@ -316,6 +322,9 @@ def main() -> int:
         as_written = acres_of(polys)
         renested, moved = renest(polys)
         corrected = acres_of(renested)
+        # Every file, not only the ones in the index -- a retired slug is not in the index and
+        # its polygon is exactly what the merge section below has to compare against.
+        kept_acres[slug] = corrected
         if moved:
             flat.append((slug, len(polys), moved, as_written, corrected))
             if a.fix:
@@ -381,6 +390,44 @@ def main() -> int:
         print('   Re-run match_waters_to_nhd.py; area against ONE NHD piece is not coverage.')
         for slug, cor, ref, pct in sorted(legacy, key=lambda r: -abs(r[3]))[:10]:
             print('   %-26s %12.1f %12.1f %7.1f%%' % (slug, cor, ref, pct))
+
+    # A MERGE MOVES THE NAME AND LEAVES THE GEOMETRY BEHIND.
+    #
+    # migrate_merged_slugs.py carries a merge through everything KEYED by slug -- and a boundary
+    # is a FILE named for a slug, in a directory that tool never opens. So the merge renamed
+    # falls_lake and left it tracing 9,529.6 acres while brinkley_lake, the slug it retired, sat
+    # beside it holding 12,958. The retired file contains 99.8% of the keeper and adds 3,443
+    # acres: the upper arms of Falls Lake, which the app has never drawn.
+    #
+    # The merge decision SAYS SO in its own reason field -- "the registry's falls_lake polygon
+    # at 9,529.6 is a partial trace and brinkley_lake holds the full one". It was recorded and
+    # then not carried out.
+    #
+    # Reported, never swapped. Which polygon is the water is the same judgement as re-tracing,
+    # and this tool does not have an opinion about that -- see --fix, which only ever re-nests.
+    better = []
+    for m in (merges or []):
+        keep, retire = (m or {}).get('keep'), (m or {}).get('retire')
+        if not keep or not retire:
+            continue
+        ka, ra = kept_acres.get(keep), kept_acres.get(retire)
+        if ka is None or ra is None or ka <= 0:
+            continue
+        if ra > ka * 1.02:                     # 2%, so a rounding difference is not a finding
+            better.append((keep, retire, ka, ra, (nhd.get(keep) or {}).get('nhd_union_acres')))
+    print('\n== the slug a merge RETIRED holds a bigger polygon than the keeper (%d)'
+          % len(better))
+    if better:
+        print('   %-24s %-24s %10s %10s %10s' % ('keeper', 'retired', 'keeper', 'retired',
+                                                 'NHD union'))
+        for keep, retire, ka, ra, un in sorted(better, key=lambda r: r[2] - r[3]):
+            print('   %-24s %-24s %10.1f %10.1f %10s'
+                  % (keep, retire, ka, ra, ('%.1f' % un) if un else '-'))
+        print('   The merge moved the NAME. A boundary is a file, not a key, so nothing carried')
+        print('   it. Nothing is swapped here -- which polygon is the water is the same')
+        print('   judgement as re-tracing, and the retired file is on the deletion tab.')
+    else:
+        print('   none -- every keeper traces at least as much water as the slug it retired')
 
     if unread:
         print('\n== unreadable (%d)' % len(unread))

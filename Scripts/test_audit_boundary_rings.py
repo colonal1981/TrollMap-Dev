@@ -24,6 +24,10 @@ abr = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(abr)
 
 
+def eq(g, w, m):
+    assert g == w, '%s: got %r want %r' % (m, g, w)
+
+
 def sq(x, y, s):
     return [[x, y], [x + s, y], [x + s, y + s], [x, y + s], [x, y]]
 
@@ -232,3 +236,74 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
     assert 'old_binding' not in txt.split('MISSES WATER')[1].split('CLAIMS WATER')[0], \
         'it must NOT be mixed into the coverage list it has no numbers for'
 print('an old binding is measured the old way, under its own heading, and says what to re-run')
+
+
+# ============================================================================================
+# A MERGE MOVES THE NAME AND LEAVES THE GEOMETRY BEHIND.
+#
+# migrate_merged_slugs.py carries a merge through everything KEYED by slug. A boundary is a
+# FILE named for a slug, in a directory that tool never opens -- so falls_lake kept its name
+# and its 9,529.6-acre partial trace while brinkley_lake, the slug it retired, sat beside it
+# holding 12,958. The retired polygon contains 99.8% of the keeper and adds 3,443 acres: the
+# upper arms of Falls Lake, which the app has never drawn.
+#
+# The merge decision says so in its own reason field. It was recorded and then not carried out.
+# ============================================================================================
+with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
+    reg = os.path.join(td, 'registry')
+    bdir = os.path.join(reg, 'boundaries')
+    os.makedirs(bdir)
+    small = sq(-78.70, 36.00, 0.05)
+    big = sq(-78.70, 36.00, 0.06)          # ~44% more water, same corner
+    write(bdir, 'keeper_lake', [[small]])
+    write(bdir, 'retired_lake', [[big]])
+    write(bdir, 'fat_keeper', [[big]])
+    write(bdir, 'thin_retiree', [[small]])
+    write(bdir, 'same_keeper', [[small]])
+    write(bdir, 'same_retiree', [[small]])
+    json.dump({'merges': [
+        {'keep': 'keeper_lake', 'retire': 'retired_lake'},
+        {'keep': 'fat_keeper', 'retire': 'thin_retiree'},
+        {'keep': 'same_keeper', 'retire': 'same_retiree'},
+        {'keep': 'no_file_keeper', 'retire': 'no_file_retiree'},
+        {'retire': 'half_a_row'},
+    ]}, open(os.path.join(reg, '_merge_decisions.json'), 'w'))
+    json.dump({'bindings': {}}, open(os.path.join(reg, '_nhd_bindings.json'), 'w'))
+    json.dump({'keeper_lake': {}, 'fat_keeper': {}, 'same_keeper': {}},
+              open(os.path.join(reg, 'lake_index.json'), 'w'))
+
+    rc, txt = run(['x', '--registry', reg])
+    eq(rc, 0, txt)
+    blk = txt.split('RETIRED holds a bigger polygon')[1]
+    assert 'keeper_lake' in blk and 'retired_lake' in blk, \
+        'the falls_lake case: the retiree holds more water and must be named'
+    assert 'fat_keeper' not in blk, 'a keeper that is already the bigger one is not a finding'
+    assert 'same_keeper' not in blk, 'and neither is a pair that agrees'
+    assert 'no_file_keeper' not in blk, 'a pair with no boundary on disk is skipped, not crashed'
+    assert 'half_a_row' not in blk, 'a decision missing keep or retire does not throw'
+
+    # A RETIRED SLUG IS NOT IN THE INDEX, and its polygon is exactly what this compares against.
+    # Measuring only indexed boundaries would make every one of these invisible.
+    assert 'retired_lake' not in txt.split('MISSES WATER')[0].split('flattened')[1], \
+        'the retiree is measured for this comparison, not reported as a fault of its own'
+
+    # nothing is written -- swapping a boundary is the same judgement as re-tracing
+    after = json.load(open(os.path.join(bdir, 'keeper_lake.geojson')))
+    eq(after['features'][0]['geometry']['coordinates'], [[list(p) for p in small]],
+       'REPORTED, NEVER SWAPPED -- the keeper file is untouched')
+    rc, txt = run(['x', '--registry', reg, '--fix'])
+    after = json.load(open(os.path.join(bdir, 'keeper_lake.geojson')))
+    eq(after['features'][0]['geometry']['coordinates'], [[list(p) for p in small]],
+       'and --fix does not swap it either; --fix only ever re-nests')
+print('a merge that left the better polygon behind is found, named, and not acted on')
+
+with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
+    reg = os.path.join(td, 'registry')
+    os.makedirs(os.path.join(reg, 'boundaries'))
+    write(os.path.join(reg, 'boundaries'), 'lonely', [[sq(-78.7, 36.0, 0.05)]])
+    json.dump({'bindings': {}}, open(os.path.join(reg, '_nhd_bindings.json'), 'w'))
+    json.dump({'lonely': {}}, open(os.path.join(reg, 'lake_index.json'), 'w'))
+    rc, txt = run(['x', '--registry', reg])
+    eq(rc, 0, 'no _merge_decisions.json is not an error')
+    assert 'none -- every keeper traces at least as much water' in txt, txt
+print('no merge decisions on disk is a clean pass, not a crash')
