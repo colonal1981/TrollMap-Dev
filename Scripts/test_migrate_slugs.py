@@ -282,7 +282,7 @@ mms.retarget(_o, _P, _h, rewrite=True)
 eq(_o['lakes'][0]['slug'], 'santee_river', 'no keeper in the list -- carry the record over')
 eq(_o['lakes'][0]['lake_id'], 'slug:santee_river', 'the prefixed id travels with it')
 
-# --- OBSERVED: _r2_listing.json is what the BUCKET holds. Rewriting it would hide the retired
+# --- LEAVE_ALONE: _r2_listing.json is what the BUCKET holds. Rewriting it would hide the retired
 #     objects from prune_r2_keys.py, the one tool that would have deleted them.
 import io as _io, contextlib as _ctx, tempfile as _tf
 with _tf.TemporaryDirectory() as _t:
@@ -324,7 +324,7 @@ with _tf.TemporaryDirectory() as _t:
     eq(json.loads((_r/'registry'/'_r2_listing.json').read_text())['chartpacks'],
        ['cooper_river', 'wadboo_creek'],
        'THE BUCKET LISTING IS AN OBSERVATION -- it still holds what it holds')
-    assert 'records what R2 or a run actually held' in txt, 'and it says why it left it'
+    assert 'records what the R2 bucket actually holds' in txt, 'and it says why it left it'
     assert not (_r/'registry'/'_r2_listing.json.bak').exists(), \
         'a file nothing was written to gets no .bak'
 
@@ -417,3 +417,43 @@ with _tf.TemporaryDirectory() as _t:
     assert '1 more had a slug value that was reported and not rewritten' in _txt, _txt[-400:]
     assert not (_r/'registry'/'_r2_listing.json.bak').exists(), 'and it really has no .bak'
 print('the closing count is files written, not files looked at')
+
+# ============================================================================================
+# lakes.json IS NOT AN ORDINARY SIDECAR.
+#
+# consolidate_lake_index.py:drop_retired() says it out loud: lakes.json is the record of what
+# EXISTS and a merge is a statement about what the app OFFERS. That is why consolidate carries
+# a gate to keep merged slugs OUT of the index it builds FROM lakes.json, rather than editing
+# lakes.json -- and why merge_duplicate_waters.py and this tool both leave it alone.
+#
+# On 2026-08-18 --values rewrote its by_state lists anyway. Seven records were left in lakes[]
+# belonging to no state list at all: the inventory disagreeing with its own index. Restored
+# from the .bak the same run wrote.
+# ============================================================================================
+assert 'lakes.json' in mms.LEAVE_ALONE, 'lakes.json must never be rewritten by this tool'
+for _f in ('_r2_listing.json', '_registry_state.json', '_water_bindings_review.json'):
+    assert _f in mms.LEAVE_ALONE, _f
+assert 'tile_lake_map.json' not in mms.LEAVE_ALONE, \
+    'tile_lake_map IS migrated -- check_registry_invariants REACHABLE reads it'
+
+with _tf.TemporaryDirectory() as _t:
+    _r = Path(_t); (_r/'registry').mkdir()
+    (_r/'registry'/'lake_index.json').write_text(json.dumps({'cooper_river': {}}))
+    _inv = {'by_state': {'SC': ['cooper_river', 'wadboo_creek']},
+            'lakes': [{'slug': 'cooper_river'}, {'slug': 'wadboo_creek'}]}
+    (_r/'registry'/'lakes.json').write_text(json.dumps(_inv))
+    _d = _r/'dec.json'
+    _d.write_text(json.dumps({'merges': [{'keep': 'cooper_river', 'retire': 'wadboo_creek'}]}))
+    sys.argv = ['x', '--registry', str(_r/'registry'/'lake_index.json'), '--decisions', str(_d),
+                '--values', '--write']
+    _b = _io.StringIO()
+    with _ctx.redirect_stdout(_b):
+        mms.main()
+    _txt = _b.getvalue()
+    eq(json.loads((_r/'registry'/'lakes.json').read_text()), _inv,
+       'lakes.json must come out of a --write byte-for-byte unchanged')
+    assert not (_r/'registry'/'lakes.json.bak').exists(), 'and get no .bak, because nothing wrote'
+    assert 'inventory of what EXISTS' in _txt, 'and the report must say why'
+    assert 'ZOMBIE ROWS' not in _txt, \
+        'its rows are not deletion-tab material -- consolidate gates them already'
+print('lakes.json is reported and never rewritten')
