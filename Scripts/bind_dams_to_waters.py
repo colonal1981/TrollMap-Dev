@@ -182,7 +182,22 @@ def main():
                 km = km_between(np_.x, np_.y, lon, lat)
             if km > args.max_km:
                 continue
-            ch = chain.get(slug, {}).get('drainage_km2')
+            # ROUTED FIRST, TOPOGRAPHIC SECOND. NHDPlus accumulates drainage topographically --
+            # the land that drains to a point -- and that is what `drainage_km2` holds. A NID
+            # figure at a DAM is what actually arrives there, which on the Santee Cooper system
+            # includes water moved through canals dug in the 1940s. Lake Moultrie's own
+            # catchment is 111 sq mi against USACE's 15,000 at both its outlets; the Cooper's is
+            # 789 against 15,000 at Pinopolis. Comparing NID against the topographic figure
+            # refuses a correct binding at 19x, which is what it did until 2026-08-17.
+            #
+            # `routed_drainage_km2` is written by build_water_chain.py from the hand-asserted
+            # edges in registry/_chain_links.json, and equals drainage_km2 everywhere no
+            # transfer applies -- which is everywhere but here. Falls back cleanly on a chain
+            # built before that field existed.
+            _node = chain.get(slug, {})
+            ch = _node.get('routed_drainage_km2')
+            if not ch:
+                ch = _node.get('drainage_km2')
             ch_sqmi = (ch * SQ_MI_PER_SQ_KM) if ch else None
             if nid_sqmi and ch_sqmi and nid_sqmi > 0:
                 diff = abs(ch_sqmi - nid_sqmi) / nid_sqmi

@@ -108,3 +108,51 @@ with tempfile.TemporaryDirectory() as t:
     eq(got['dams']['rocky creek cedar creek'], 'lower_lake', 'and the full structure name too')
     assert 'wrong water' not in got['dams'], 'a refused binding contributes no name'
 print('ALL bind_dams_to_waters assertions pass')
+
+
+# --- routed drainage beats topographic when a canal carries the water ------------------------
+# NHDPlus accumulates drainage TOPOGRAPHICALLY. NID measures what arrives AT THE DAM. On the
+# Santee Cooper system those differ by 19x, because the water is moved through canals dug in
+# the 1940s: Lake Moultrie's own catchment is 111 sq mi and USACE surveyed 15,000 at both its
+# outlets. Until 2026-08-17 the binder compared NID against the topographic figure and refused
+# Cooper Dev - Pinopolis Dam at 0.082 km -- a correct binding, thrown out at 1,800%.
+_CHAIN_ROUTED = {
+    'cooper_river':  {'drainage_km2': 2044.7, 'routed_drainage_km2': 40165.9},
+    'lake_moultrie': {'drainage_km2': 286.5,  'routed_drainage_km2': 38121.2},
+    'santee_river':  {'drainage_km2': 39615.2},          # no transfer; no routed field at all
+}
+_SQ = bdw.SQ_MI_PER_SQ_KM
+
+
+def _pick(node):
+    """What the binder now reads for a water: routed if present, else topographic."""
+    ch = node.get('routed_drainage_km2')
+    if not ch:
+        ch = node.get('drainage_km2')
+    return ch * _SQ
+
+
+_c = _pick(_CHAIN_ROUTED['cooper_river'])
+assert abs(_c - 15508) < 5, _c
+assert abs(_c - 15000) / 15000 < 0.15, 'Pinopolis at NID 15,000 must now be inside tolerance'
+_topo = _CHAIN_ROUTED['cooper_river']['drainage_km2'] * _SQ
+assert abs(_topo - 15000) / 15000 > 0.9, 'and the topographic figure would still be refused'
+print('cooper_river: routed %.0f sq mi passes, topographic %.0f would be refused'
+      % (_c, _topo))
+
+_m = _pick(_CHAIN_ROUTED['lake_moultrie'])
+assert abs(_m - 15000) / 15000 < 0.05, _m
+print('lake_moultrie: routed %.0f sq mi, 1.9%% from the NID 15,000 at both its dams' % _m)
+
+# a water with no transfer must be completely unaffected
+_s = _pick(_CHAIN_ROUTED['santee_river'])
+assert abs(_s - 39615.2 * _SQ) < 1e-6, 'no routed field means the topographic figure, unchanged'
+print('santee_river: no transfer, no change')
+
+# and a routed value of 0 or None must fall back rather than zeroing the comparison -- the
+# Number('') family, which has cost this project eleven bugs
+for bad in (None, 0, 0.0):
+    assert _pick({'drainage_km2': 100.0, 'routed_drainage_km2': bad}) == 100.0 * _SQ, bad
+print('a null or zero routed value falls back to topographic, it does not zero the check')
+
+print('routed-drainage assertions pass')
