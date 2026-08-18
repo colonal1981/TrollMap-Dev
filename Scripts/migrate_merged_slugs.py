@@ -561,8 +561,11 @@ def main():
         bres, bnote = carry_boundaries(reg_dir, pairs, args.adopt_min_cover, args.write)
         print('\n== boundary files -- neither a key nor a value')
         if bnote:
+            # AND NOTHING ELSE. "We looked and found nothing" printed under "we could not look"
+            # is the same contradiction as the closing count that said nine files written when
+            # six were, two commits ago in this same file.
             print('   !! %s' % bnote)
-        if not bres:
+        elif not bres:
             print('   nothing to carry: every keeper already traces at least as much water')
         for r in bres:
             verb = 'ADOPTED' if r['adopted'] else ('would adopt' if 'adds' in r.get('why', '')

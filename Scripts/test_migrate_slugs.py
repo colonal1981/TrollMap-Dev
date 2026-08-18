@@ -532,3 +532,30 @@ with _tf.TemporaryDirectory() as _t:
     eq(res, [], 'no boundaries directory yields nothing')
     assert note and 'no boundaries directory' in note, 'and says why rather than passing quietly'
 print('a missing boundaries directory is reported, not silently skipped')
+
+# A SUMMARY MUST NOT CONTRADICT THE LINE ABOVE IT. With shapely absent the boundary pass cannot
+# test containment and returns nothing -- and the report printed "nothing to carry: every keeper
+# already traces at least as much water" directly under the warning saying it had not looked.
+# Same shape as the closing count that claimed nine files written when six were.
+with _tf.TemporaryDirectory() as _t:
+    _r = Path(_t); (_r / 'registry' / 'boundaries').mkdir(parents=True)
+    (_r / 'registry' / 'lake_index.json').write_text(json.dumps({'keeper': {}}))
+    (_r / 'registry' / 'lake_access.json').write_text(json.dumps({'keeper': {}}))
+    _d = _r / 'dec.json'
+    _d.write_text(json.dumps({'merges': [{'keep': 'keeper', 'retire': 'retiree'}]}))
+    _real = mms.carry_boundaries
+    mms.carry_boundaries = lambda *a, **k: (
+        [], 'shapely is absent, so containment cannot be tested')
+    try:
+        sys.argv = ['x', '--registry', str(_r / 'registry' / 'lake_index.json'),
+                    '--decisions', str(_d), '--boundaries']
+        _b = _io.StringIO()
+        with _ctx.redirect_stdout(_b):
+            mms.main()
+        _t2 = _b.getvalue()
+    finally:
+        mms.carry_boundaries = _real
+    assert 'shapely is absent' in _t2, _t2
+    assert 'nothing to carry' not in _t2, \
+        'a "we found nothing" line must not print under a "we could not look" warning'
+print('a boundary pass that could not run does not also claim it found nothing')
