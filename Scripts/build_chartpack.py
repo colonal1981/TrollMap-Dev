@@ -318,8 +318,12 @@ class LakeMask:
             self.cells = self.cells - gone
             self.core = self.core - gone
             self.excluded_cells = len(gone)
+            self.excluded = gone
+            self.exclude_rings = [list(r) for r in exclude]
         else:
             self.excluded_cells = 0
+            self.excluded = frozenset()
+            self.exclude_rings = []
 
     def _raster(self, rings):
         """The cells this ring set covers, in THIS mask's grid.
@@ -508,6 +512,127 @@ def redp(g, dp=DP):
         if isinstance(c[0], (int, float)): return [round(c[0], dp), round(c[1], dp)]
         return [r(x) for x in c]
     return {'type': g['type'], 'coordinates': r(g['coordinates'])}
+
+
+def _allpts(coords):
+    """Every (x, y) at any nesting depth.
+
+    verts() is deliberately shallow -- it returns a Polygon's OUTER ring and a MultiPolygon's
+    list of polygons -- which is right for its callers and wrong here, where a MultiPolygon
+    would arrive as a list of rings and be read as a coordinate pair.
+    """
+    if isinstance(coords, (list, tuple)) and coords and isinstance(coords[0], (int, float)):
+        yield coords
+        return
+    if isinstance(coords, (list, tuple)):
+        for c in coords:
+            for p in _allpts(c):
+                yield p
+
+
+def _bbox(pts):
+    xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
+    return (min(xs), min(ys), max(xs), max(ys)) if xs else None
+
+
+def clip_excluded(feats, mask):
+    """Cut the excluded water OUT of each feature, instead of keeping or dropping it whole.
+
+    SELECTION CANNOT SATISFY "NONE AT ALL". The core filter keeps a feature if ANY vertex lands
+    in the lake, which is right for a lake and wrong for a zone that has given a water up.
+    Measured on coast_charleston_sc after the first exclusion run: 83 contours still carried
+    Goose Creek Reservoir, and EVERY ONE of them was kept by a handful of vertices at the far
+    end -- 238 of 239 inside, one outside; 565 of 574 inside, nine outside. Not one survivor had
+    zero vertices outside. The mask was doing what it was told; the rule was the problem.
+
+    A CANDIDATE IS DECIDED BY BOUNDING BOX, NOT BY VERTICES. The first version of this asked
+    whether any vertex fell in an excluded cell, and a depth-area polygon large enough to
+    ENCLOSE the reservoir has no vertex anywhere near it -- it spans the water between two
+    corners and would have sailed through untouched. A box overlap costs four comparisons and
+    cannot miss that.
+
+    Geometry is cut with a real difference. The raster is a 22 m approximation and good enough
+    to decide WHO gets cut; it is not good enough to decide WHERE, because a polygon cannot be
+    cut by deleting vertices at all -- walking the boundary past them draws a straight line
+    across the lobe that was supposed to go and quietly claims the water back.
+
+    WITHOUT SHAPELY there is still an honest answer, and it is not the same answer for both:
+    a line is split at its excluded vertices, which is exact wherever the vertices are dense
+    and silently keeps a long segment that spans the water; a polygon is DROPPED whole. Under a
+    rule that says none at all, erring toward removing water is the right direction, and the
+    run says how many went that way so it is never mistaken for a clean cut.
+    """
+    if not feats or not getattr(mask, 'excluded', None):
+        return feats, {}
+    ex_rings = [r for rl in getattr(mask, 'exclude_rings', []) for r in rl]
+    ex_box = _bbox([p for r in ex_rings for p in r]) if ex_rings else None
+    try:
+        from shapely.geometry import shape as _shape, mapping as _mapping
+        from shapely.ops import unary_union as _uu
+        cutter = _uu([_shape({'type': 'Polygon', 'coordinates': [list(r)]}).buffer(0)
+                      for r in ex_rings]) if ex_rings else None
+    except Exception:
+        _shape = _mapping = cutter = None
+
+    out, stat = [], {'untouched': 0, 'trimmed': 0, 'emptied': 0, 'dropped_no_shapely': 0}
+    for f in feats:
+        g = f.get('geometry') or {}
+        pts = list(_allpts(g.get('coordinates')))
+        fb = _bbox(pts)
+        near = bool(ex_box and fb and not (fb[2] < ex_box[0] or ex_box[2] < fb[0]
+                                           or fb[3] < ex_box[1] or ex_box[3] < fb[1]))
+        if not near and not any(mask.cell_of(x, y) in mask.excluded for x, y in pts):
+            stat['untouched'] += 1
+            out.append(f)
+            continue
+        if cutter is not None:
+            try:
+                left = _shape(g).buffer(0).difference(cutter)
+            except Exception:
+                left = None
+            if left is None:
+                stat['emptied'] += 1
+                continue
+            if left.is_empty:
+                stat['emptied'] += 1
+                continue
+            if left.equals(_shape(g).buffer(0)):
+                stat['untouched'] += 1
+                out.append(f)
+                continue
+            stat['trimmed'] += 1
+            out.append(dict(f, geometry=_mapping(left)))
+            continue
+        # ---- no shapely ----
+        t = g.get('type') or ''
+        if t not in ('LineString', 'MultiLineString'):
+            stat['dropped_no_shapely'] += 1
+            continue
+        parts = [g.get('coordinates')] if t == 'LineString' else list(g.get('coordinates') or [])
+        runs = []
+        for part in parts:
+            run = []
+            for x, y in part:
+                if mask.cell_of(x, y) in mask.excluded:
+                    if len(run) >= 2:
+                        runs.append(run)
+                    run = []
+                else:
+                    run.append([x, y])
+            if len(run) >= 2:
+                runs.append(run)
+        if not runs:
+            stat['emptied'] += 1
+            continue
+        if len(runs) == 1 and len(runs[0]) == sum(len(p) for p in parts):
+            stat['untouched'] += 1
+            out.append(f)
+            continue
+        stat['trimmed'] += 1
+        out.append(dict(f, geometry=({'type': 'LineString', 'coordinates': runs[0]}
+                                     if len(runs) == 1
+                                     else {'type': 'MultiLineString', 'coordinates': runs})))
+    return out, stat
 
 
 def verts(g):

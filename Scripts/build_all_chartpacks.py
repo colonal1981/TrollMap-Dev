@@ -38,7 +38,8 @@ from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from build_chartpack import (LakeMask, BboxMask, build_mask, read_fc, verts, SHIP, NOTE,
-                             DROP, redp, _rings, collapse_ramps)   # noqa: E402
+                             DROP, redp, _rings, collapse_ramps,
+                             clip_excluded)   # noqa: E402
 
 # Which layers decide "is this lake charted". DEPTH AREAS, not contours -- see
 # LakeMask.charted_fraction for why counting contour vertices reported 0.66 for a fully
@@ -709,6 +710,34 @@ def _flush(slug, layers, mask, meta, a, report):
         print('   %s: dropped %d feature(s) with no vertex in the lake itself'
               % (slug, core_dropped))
         rec['off_lake_dropped'] = core_dropped
+
+    # AND THEN CUT THE EXCLUDED WATER OUT OF WHAT SURVIVED. The filter above keeps a feature
+    # for ONE vertex in the lake, which is right for a lake and wrong for a zone that has given
+    # a water up: a contour 238/239 of the way inside Goose Creek Reservoir was kept by its last
+    # point. Selecting cannot express "none at all"; see build_chartpack.clip_excluded.
+    #
+    # Every layer, not just the core-only two. A dock or a structure inside the reservoir is
+    # the reservoir's, and the buffer is what would otherwise reach in and take it.
+    if getattr(mask, 'excluded', None):
+        _cl = {}
+        for _layer, _feats in list(layers.items()):
+            if not _feats:
+                continue
+            layers[_layer], _st = clip_excluded(_feats, mask)
+            for _k, _v in _st.items():
+                if _v:
+                    _cl[_k] = _cl.get(_k, 0) + _v
+        if _cl.get('trimmed') or _cl.get('emptied') or _cl.get('dropped_no_shapely'):
+            print('   %s: gave up water that owns its own boundary -- %d feature(s) trimmed, '
+                  '%d removed entirely' % (slug, _cl.get('trimmed', 0),
+                                           _cl.get('emptied', 0) + _cl.get('dropped_no_shapely', 0)))
+            rec['excluded_trimmed'] = _cl.get('trimmed', 0)
+            rec['excluded_removed'] = _cl.get('emptied', 0) + _cl.get('dropped_no_shapely', 0)
+        if _cl.get('dropped_no_shapely'):
+            print('   %s: !! shapely is absent, so %d polygon(s) that straddle an excluded '
+                  'water were DROPPED rather than cut. Install shapely and rebuild to keep '
+                  'their saltwater half.' % (slug, _cl['dropped_no_shapely']))
+            rec['excluded_polygons_dropped_whole'] = _cl['dropped_no_shapely']
 
     span_dropped = 0
     bounds = meta.get('bounds_wsen')

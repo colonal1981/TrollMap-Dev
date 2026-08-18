@@ -112,3 +112,129 @@ finally:
 
 print('ALL coastal-exclusion assertions pass')
 print('a zone gives up every water that owns its own boundary, buffer and core included')
+
+
+# ============================================================================================
+# SELECTION CANNOT SATISFY "NONE AT ALL".
+#
+# After the first exclusion run, coast_charleston_sc still carried 83 contours over Goose Creek
+# Reservoir -- and every single one was kept by a handful of vertices at the far end:
+#
+#     238 of 239 vertices inside the excluded water, 1 outside
+#     565 of 574 inside, 9 outside
+#     178 of 179 inside, 1 outside
+#
+# ZERO survivors had no vertex outside. The mask was doing exactly what it was told; keeping a
+# feature for one vertex is the right rule for a lake and the wrong one for a zone that has
+# given a water up. So the excluded part comes out of the geometry.
+# ============================================================================================
+class _FakeMask:
+    """Just enough mask to drive clip_excluded: a grid and a set of excluded cells."""
+    def __init__(self, cells, w=0.0, s=0.0, cell=0.001):
+        self.w, self.s, self.cell = w, s, cell
+        self.excluded = set(cells)
+        self.exclude_rings = []
+
+    def cell_of(self, x, y):
+        return (int((x - self.w) / self.cell), int((y - self.s) / self.cell))
+
+
+def _line(pts):
+    return {'type': 'Feature', 'properties': {'d': 1},
+            'geometry': {'type': 'LineString', 'coordinates': [list(p) for p in pts]}}
+
+
+# cells 5..9 on the x axis of row 0 are the excluded water
+EX = _FakeMask([(i, 0) for i in range(5, 10)])
+
+# a contour 8 points long with only its LAST point outside -- the 238-of-239 case
+f = _line([(0.0055, 0.0005), (0.0056, 0.0005), (0.0057, 0.0005), (0.0058, 0.0005),
+           (0.0059, 0.0005), (0.0091, 0.0005), (0.0092, 0.0005), (0.0105, 0.0005)])
+out, st = bc.clip_excluded([f], EX)
+eq(out, [], 'a line that is one point short of wholly inside must not survive on that point')
+eq(st['emptied'], 1, 'and it is counted as removed, not as untouched')
+
+# a line that genuinely crosses: outside, through the water, outside again -> two runs
+f = _line([(0.0005, 0.0005), (0.0015, 0.0005), (0.0055, 0.0005), (0.0075, 0.0005),
+           (0.0105, 0.0005), (0.0115, 0.0005)])
+out, st = bc.clip_excluded([f], EX)
+eq(len(out), 1, 'one feature back')
+eq(out[0]['geometry']['type'], 'MultiLineString', 'cut into the pieces that survive')
+eq([len(r) for r in out[0]['geometry']['coordinates']], [2, 2], 'two vertices each side')
+eq(st['trimmed'], 1, 'reported as trimmed')
+eq(out[0]['properties'], {'d': 1}, 'and the properties travel with it')
+
+# a line nowhere near the water is not touched, and is not copied
+f = _line([(0.0005, 0.0005), (0.0015, 0.0005)])
+out, st = bc.clip_excluded([f], EX)
+assert out[0] is f, 'the fast path must return the SAME object, not a rebuilt one'
+eq(st['untouched'], 1, 'and say it did nothing')
+
+# a mask with no exclusion at all short-circuits
+plainmask = _FakeMask([])
+out, st = bc.clip_excluded([f], plainmask)
+assert out[0] is f and st == {}, 'no exclusion, no work'
+
+# --- a ring is not a line, and must never be cut by deleting vertices ------------------------
+# Walking a polygon's boundary past the deleted vertices draws a straight line across the lobe
+# that was supposed to go, and silently claims the water back.
+ring = [[0.0005, 0.0005], [0.0105, 0.0005], [0.0105, 0.0015], [0.0005, 0.0015], [0.0005, 0.0005]]
+poly = {'type': 'Feature', 'properties': {'depth_max_dm': 30},
+        'geometry': {'type': 'Polygon', 'coordinates': [ring]}}
+EXP = _FakeMask([(i, j) for i in range(5, 10) for j in (0, 1)])
+EXP.exclude_rings = [[[[0.0049, 0.0000], [0.0099, 0.0000], [0.0099, 0.0020],
+                       [0.0049, 0.0020], [0.0049, 0.0000]]]]
+try:
+    import shapely  # noqa: F401
+    HAVE_SHAPELY = True
+except ImportError:
+    HAVE_SHAPELY = False
+
+out, st = bc.clip_excluded([poly], EXP)
+if HAVE_SHAPELY:
+    assert st['trimmed'] == 1 and len(out) == 1, st
+    cut = out[0]['geometry']
+    assert cut['type'] in ('Polygon', 'MultiPolygon'), cut['type']
+    xs = [p[0] for p in bc._allpts(cut['coordinates'])]
+    assert not any(0.0050 < x < 0.0098 for x in xs), \
+        'the excluded span must be gone from the ring, not bridged across: %r' % (sorted(set(xs)),)
+    eq(out[0]['properties'], {'depth_max_dm': 30}, 'properties survive the cut')
+else:
+    # THE FALLBACK IS ALSO A PROMISE. Without shapely a ring cannot be cut, so it is dropped
+    # whole and counted under its own name -- never trimmed by deleting vertices, which would
+    # bridge the boundary across the lobe and claim the water back. Erring toward removing
+    # water is the right direction under a rule that says none at all.
+    eq(out, [], 'no shapely: the straddling polygon is dropped whole, not bridged')
+    eq(st['dropped_no_shapely'], 1, 'and counted where the run can report it')
+    eq(st['trimmed'], 0, 'never silently trimmed')
+
+print('a feature keeps only its part outside the water the zone gave up')
+
+# A polygon large enough to ENCLOSE the excluded water has no vertex anywhere near it. The
+# first version of the candidate test asked about vertices and this sailed straight through.
+big = {'type': 'Feature', 'properties': {},
+       'geometry': {'type': 'Polygon', 'coordinates': [
+           [[0.0000, 0.0000], [0.0200, 0.0000], [0.0200, 0.0030],
+            [0.0000, 0.0030], [0.0000, 0.0000]]]}}
+out, st = bc.clip_excluded([big], EXP)
+if HAVE_SHAPELY:
+    eq(st['trimmed'], 1, 'a polygon that merely CONTAINS the excluded water must still be cut')
+    xs = sorted({round(p[0], 4) for p in bc._allpts(out[0]['geometry']['coordinates'])})
+    assert 0.0049 in xs and 0.0099 in xs, 'and the cut lands on the excluded water: %r' % (xs,)
+else:
+    eq(st['dropped_no_shapely'], 1,
+       'even with no shapely it must be RECOGNISED as a candidate -- the bug this guards is '
+       'the box test being skipped, not the cut')
+    eq(st['untouched'], 0, 'it must never pass through as untouched')
+
+# verts() is shallow by design, so a MultiPolygon reaches this code as a list of RINGS. Reading
+# that as coordinate pairs is how a bbox comes back as a comparison between a float and a list.
+mp = {'type': 'MultiPolygon', 'coordinates': [
+    [[[0.0, 0.0], [0.001, 0.0], [0.001, 0.001], [0.0, 0.0]]],
+    [[[0.02, 0.02], [0.021, 0.02], [0.021, 0.021], [0.02, 0.02]]]]}
+eq(bc._bbox(list(bc._allpts(mp['coordinates']))), (0.0, 0.0, 0.021, 0.021),
+   'every ring of every part counts toward the box')
+eq(len(list(bc._allpts([[1.0, 2.0]]))), 1, 'a single pair is one point, not two')
+eq(list(bc._allpts([3.0, 4.0])), [[3.0, 4.0]], 'a bare pair is itself')
+
+print('a polygon that encloses the excluded water is cut, and MultiPolygon nesting is read right')
