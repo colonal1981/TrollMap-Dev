@@ -514,6 +514,33 @@ def redp(g, dp=DP):
     return {'type': g['type'], 'coordinates': r(g['coordinates'])}
 
 
+def _singles(geom):
+    """One single-part GeoJSON geometry per part.
+
+    ONE FEATURE, ONE GEOMETRY -- and never a Multi one. verts() is shallow on purpose: for a
+    MultiLineString it returns the list of LINES, so `for x, y in verts(g)` unpacks a line into
+    a coordinate pair and cell_of() is handed a list. That crashed the 2026-08-18 rebuild in
+    _flush() the moment a clipped contour came back as two runs. Turning one contour into two
+    contours is also the truer statement: they are two separate stretches of water now.
+    """
+    parts = list(geom.geoms) if hasattr(geom, 'geoms') else [geom]
+    out = []
+    for p in parts:
+        if p.is_empty:
+            continue
+        gt = p.geom_type
+        if gt in ('Point', 'LineString', 'Polygon'):
+            out.append(_gj(p))
+        elif gt == 'GeometryCollection':
+            out.extend(_singles(p))
+    return out
+
+
+def _gj(p):
+    from shapely.geometry import mapping as _m
+    return _m(p)
+
+
 def _allpts(coords):
     """Every (x, y) at any nesting depth.
 
@@ -567,14 +594,15 @@ def clip_excluded(feats, mask):
     ex_rings = [r for rl in getattr(mask, 'exclude_rings', []) for r in rl]
     ex_box = _bbox([p for r in ex_rings for p in r]) if ex_rings else None
     try:
-        from shapely.geometry import shape as _shape, mapping as _mapping
+        from shapely.geometry import shape as _shape
         from shapely.ops import unary_union as _uu
         cutter = _uu([_shape({'type': 'Polygon', 'coordinates': [list(r)]}).buffer(0)
                       for r in ex_rings]) if ex_rings else None
     except Exception:
-        _shape = _mapping = cutter = None
+        _shape = cutter = None
 
-    out, stat = [], {'untouched': 0, 'trimmed': 0, 'emptied': 0, 'dropped_no_shapely': 0}
+    out, stat = [], {'untouched': 0, 'trimmed': 0, 'emptied': 0,
+                     'dropped_no_shapely': 0, 'failed': 0}
     for f in feats:
         g = f.get('geometry') or {}
         pts = list(_allpts(g.get('coordinates')))
@@ -587,21 +615,29 @@ def clip_excluded(feats, mask):
             continue
         if cutter is not None:
             try:
-                left = _shape(g).buffer(0).difference(cutter)
+                whole = _shape(g)
+                # buffer(0) IS THE STANDARD REPAIR FOR A RING AND A DESTROYER OF A LINE. On a
+                # Polygon it heals self-intersections; on a LineString it returns an EMPTY
+                # polygon, because a line has no area to buffer to. Applied to everything it
+                # silently emptied every contour that touched an exclusion -- the layer this
+                # whole change exists to fix -- and reported them as water correctly removed.
+                if whole.geom_type in ('Polygon', 'MultiPolygon'):
+                    whole = whole.buffer(0)
+                left = whole.difference(cutter)
             except Exception:
-                left = None
-            if left is None:
-                stat['emptied'] += 1
+                # "shapely could not compute this" is NOT "this was inside the water", and
+                # counting them together would let a geometry bug read as a clean exclusion.
+                stat['failed'] += 1
                 continue
             if left.is_empty:
                 stat['emptied'] += 1
                 continue
-            if left.equals(_shape(g).buffer(0)):
+            if left.equals(whole):
                 stat['untouched'] += 1
                 out.append(f)
                 continue
             stat['trimmed'] += 1
-            out.append(dict(f, geometry=_mapping(left)))
+            out.extend(dict(f, geometry=part) for part in _singles(left))
             continue
         # ---- no shapely ----
         t = g.get('type') or ''
@@ -629,9 +665,7 @@ def clip_excluded(feats, mask):
             out.append(f)
             continue
         stat['trimmed'] += 1
-        out.append(dict(f, geometry=({'type': 'LineString', 'coordinates': runs[0]}
-                                     if len(runs) == 1
-                                     else {'type': 'MultiLineString', 'coordinates': runs})))
+        out.extend(dict(f, geometry={'type': 'LineString', 'coordinates': r}) for r in runs)
     return out, stat
 
 

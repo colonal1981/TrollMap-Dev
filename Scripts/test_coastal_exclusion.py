@@ -158,10 +158,10 @@ eq(st['emptied'], 1, 'and it is counted as removed, not as untouched')
 f = _line([(0.0005, 0.0005), (0.0015, 0.0005), (0.0055, 0.0005), (0.0075, 0.0005),
            (0.0105, 0.0005), (0.0115, 0.0005)])
 out, st = bc.clip_excluded([f], EX)
-eq(len(out), 1, 'one feature back')
-eq(out[0]['geometry']['type'], 'MultiLineString', 'cut into the pieces that survive')
-eq([len(r) for r in out[0]['geometry']['coordinates']], [2, 2], 'two vertices each side')
-eq(st['trimmed'], 1, 'reported as trimmed')
+eq(len(out), 2, 'cut into the pieces that survive, one FEATURE each -- see the multi-part note')
+eq([o['geometry']['type'] for o in out], ['LineString', 'LineString'], 'never a Multi geometry')
+eq([len(o['geometry']['coordinates']) for o in out], [2, 2], 'two vertices each side')
+eq(st['trimmed'], 1, 'one feature was trimmed, however many pieces came out of it')
 eq(out[0]['properties'], {'d': 1}, 'and the properties travel with it')
 
 # a line nowhere near the water is not touched, and is not copied
@@ -192,10 +192,11 @@ except ImportError:
 
 out, st = bc.clip_excluded([poly], EXP)
 if HAVE_SHAPELY:
-    assert st['trimmed'] == 1 and len(out) == 1, st
-    cut = out[0]['geometry']
-    assert cut['type'] in ('Polygon', 'MultiPolygon'), cut['type']
-    xs = [p[0] for p in bc._allpts(cut['coordinates'])]
+    eq(st['trimmed'], 1, 'one feature trimmed')
+    assert len(out) >= 1, out
+    for _o in out:
+        eq(_o['geometry']['type'], 'Polygon', 'single-part only, never a MultiPolygon')
+    xs = [p[0] for o in out for p in bc._allpts(o['geometry']['coordinates'])]
     assert not any(0.0050 < x < 0.0098 for x in xs), \
         'the excluded span must be gone from the ring, not bridged across: %r' % (sorted(set(xs)),)
     eq(out[0]['properties'], {'depth_max_dm': 30}, 'properties survive the cut')
@@ -219,7 +220,7 @@ big = {'type': 'Feature', 'properties': {},
 out, st = bc.clip_excluded([big], EXP)
 if HAVE_SHAPELY:
     eq(st['trimmed'], 1, 'a polygon that merely CONTAINS the excluded water must still be cut')
-    xs = sorted({round(p[0], 4) for p in bc._allpts(out[0]['geometry']['coordinates'])})
+    xs = sorted({round(p[0], 4) for o in out for p in bc._allpts(o['geometry']['coordinates'])})
     assert 0.0049 in xs and 0.0099 in xs, 'and the cut lands on the excluded water: %r' % (xs,)
 else:
     eq(st['dropped_no_shapely'], 1,
@@ -238,3 +239,79 @@ eq(len(list(bc._allpts([[1.0, 2.0]]))), 1, 'a single pair is one point, not two'
 eq(list(bc._allpts([3.0, 4.0])), [[3.0, 4.0]], 'a bare pair is itself')
 
 print('a polygon that encloses the excluded water is cut, and MultiPolygon nesting is read right')
+
+# ============================================================================================
+# ONE FEATURE, ONE GEOMETRY -- AND NEVER A MULTI ONE.
+#
+# verts() is shallow on purpose: for a MultiLineString it returns the list of LINES, so
+# `for x, y in verts(g)` unpacks a whole line into a coordinate pair and hands cell_of() a
+# list. Returning a clipped contour as a MultiLineString crashed the 2026-08-18 rebuild inside
+# _flush() the moment coast_winyah_bay_sc produced one:
+#
+#     TypeError: unsupported operand type(s) for -: 'list' and 'float'
+#
+# A contour cut in two IS two contours. Emit them as two features.
+# ============================================================================================
+f = _line([(0.0005, 0.0005), (0.0015, 0.0005), (0.0055, 0.0005), (0.0075, 0.0005),
+           (0.0105, 0.0005), (0.0115, 0.0005)])
+out, st = bc.clip_excluded([f], EX)
+eq(len(out), 2, 'a line cut in two comes back as TWO features')
+for o in out:
+    eq(o['geometry']['type'], 'LineString', 'and never as a MultiLineString')
+    eq(o['properties'], {'d': 1}, 'each carrying the original properties')
+    # the thing that actually crashed: verts() must yield coordinate PAIRS for this geometry
+    for x, y in bc.verts(o['geometry']):
+        assert isinstance(x, float) and isinstance(y, float), (x, y)
+
+if HAVE_SHAPELY:
+    # a polygon cut into two lobes must do the same
+    # the cutter has to span the polygon completely, or the difference is one C shape
+    SPLIT = _FakeMask([(i, j) for i in range(5, 10) for j in range(0, 5)])
+    SPLIT.exclude_rings = [[[[0.0049, -0.0010], [0.0099, -0.0010], [0.0099, 0.0040],
+                             [0.0049, 0.0040], [0.0049, -0.0010]]]]
+    dumb = {'type': 'Feature', 'properties': {'z': 1}, 'geometry': {'type': 'Polygon',
+            'coordinates': [[[0.0000, 0.0000], [0.0200, 0.0000], [0.0200, 0.0030],
+                             [0.0000, 0.0030], [0.0000, 0.0000]]]}}
+    out, st = bc.clip_excluded([dumb], SPLIT)
+    eq(len(out), 2, 'a polygon cut in two comes back as two features')
+    for o in out:
+        eq(o['geometry']['type'], 'Polygon', 'and never as a MultiPolygon')
+        for x, y in bc.verts(o['geometry']):
+            assert isinstance(x, float) and isinstance(y, float), (x, y)
+
+    # A GEOMETRY SHAPELY REFUSES IS NOT WATER THAT WAS EXCLUDED. Counting them together would
+    # let a geometry bug read as a clean exclusion.
+    bad = {'type': 'Feature', 'properties': {}, 'geometry': {'type': 'Polygon',
+           'coordinates': [[[0.0050, 0.0005], [0.0060, 0.0005]]]}}   # two points, not a ring
+    out, st = bc.clip_excluded([bad], EXP)
+    eq(st['emptied'], 0, 'a geometry that could not be read is not "it was inside"')
+    eq(st['failed'], 1, 'it has its own name')
+
+print('a cut feature stays single-part, and an uncuttable one is counted apart')
+
+if HAVE_SHAPELY:
+    # buffer(0) IS THE STANDARD REPAIR FOR A RING AND A DESTROYER OF A LINE.
+    # shape(LineString).buffer(0) returns an EMPTY POLYGON -- a line has no area to buffer to.
+    # Applied to every geometry it emptied every contour that touched an exclusion, which is
+    # the exact layer this change exists to fix, and counted them as water correctly removed.
+    LINEMASK = _FakeMask([(i, j) for i in range(5, 10) for j in range(0, 5)])
+    LINEMASK.exclude_rings = [[[[0.0049, -0.0010], [0.0099, -0.0010], [0.0099, 0.0040],
+                                [0.0049, 0.0040], [0.0049, -0.0010]]]]
+    crossing = _line([(0.0005, 0.0005), (0.0055, 0.0005), (0.0105, 0.0005), (0.0115, 0.0005)])
+    out, st = bc.clip_excluded([crossing], LINEMASK)
+    eq(st['emptied'], 0, 'a line that crosses the water still has two ends -- it is not empty')
+    eq(st['trimmed'], 1, 'it is trimmed')
+    eq(len(out), 2, 'into the two stretches that survive')
+    for o in out:
+        eq(o['geometry']['type'], 'LineString', 'each a plain LineString')
+    xs = [p[0] for o in out for p in bc._allpts(o['geometry']['coordinates'])]
+    assert not any(0.0050 < x < 0.0098 for x in xs), 'and neither reaches into the water'
+
+    mls = {'type': 'Feature', 'properties': {}, 'geometry': {'type': 'MultiLineString',
+           'coordinates': [[[0.0005, 0.0005], [0.0115, 0.0005]],
+                           [[0.0005, 0.0025], [0.0115, 0.0025]]]}}
+    out, st = bc.clip_excluded([mls], LINEMASK)
+    eq(st['emptied'], 0, 'the same for a MultiLineString')
+    eq(len(out), 4, 'two lines, each cut in two, four features')
+
+print('a line is cut, not annihilated -- buffer(0) is only for rings')

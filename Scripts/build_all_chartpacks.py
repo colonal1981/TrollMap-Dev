@@ -727,17 +727,25 @@ def _flush(slug, layers, mask, meta, a, report):
             for _k, _v in _st.items():
                 if _v:
                     _cl[_k] = _cl.get(_k, 0) + _v
-        if _cl.get('trimmed') or _cl.get('emptied') or _cl.get('dropped_no_shapely'):
+        if _cl.get('trimmed') or _cl.get('emptied') or _cl.get('dropped_no_shapely') \
+                or _cl.get('failed'):
+            _gone = _cl.get('emptied', 0) + _cl.get('dropped_no_shapely', 0)
             print('   %s: gave up water that owns its own boundary -- %d feature(s) trimmed, '
-                  '%d removed entirely' % (slug, _cl.get('trimmed', 0),
-                                           _cl.get('emptied', 0) + _cl.get('dropped_no_shapely', 0)))
+                  '%d removed entirely' % (slug, _cl.get('trimmed', 0), _gone))
             rec['excluded_trimmed'] = _cl.get('trimmed', 0)
-            rec['excluded_removed'] = _cl.get('emptied', 0) + _cl.get('dropped_no_shapely', 0)
+            rec['excluded_removed'] = _gone
         if _cl.get('dropped_no_shapely'):
             print('   %s: !! shapely is absent, so %d polygon(s) that straddle an excluded '
                   'water were DROPPED rather than cut. Install shapely and rebuild to keep '
                   'their saltwater half.' % (slug, _cl['dropped_no_shapely']))
             rec['excluded_polygons_dropped_whole'] = _cl['dropped_no_shapely']
+        if _cl.get('failed'):
+            # Its own line, because "shapely could not compute this" is not "this was inside
+            # the water" and the two must never be added together.
+            print('   %s: !! %d feature(s) could not be cut and were dropped -- a geometry '
+                  'shapely refused, not water that was excluded'
+                  % (slug, _cl['failed']))
+            rec['excluded_uncuttable'] = _cl['failed']
 
     span_dropped = 0
     bounds = meta.get('bounds_wsen')
