@@ -431,3 +431,26 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         'a binding with no boundary_acres cannot be called fresh: %s' % txt
     assert 'nothing' in txt.split('computed against a DIFFERENT boundary')[1][:400]
 print('a binding with no stamp is reported as unknown, never as clean')
+
+# A BOUNDARY FILE WITH NO BINDING AT ALL IS NOT "A BINDING WITH NO STAMP". There are 3,397
+# boundaries and 423 bindings on the live registry; without this guard the unknown count came
+# back 2,974 -- every unbound file -- immediately after the matcher had stamped all 423.
+with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
+    reg = os.path.join(td, 'registry')
+    bdir = os.path.join(reg, 'boundaries')
+    os.makedirs(bdir)
+    write(bdir, 'has_binding', [[sq(-79.70, 35.00, 0.05)]])
+    write(bdir, 'never_bound', [[sq(-77.00, 34.00, 0.05)]])
+    a_ = abr.acres_of([[sq(-79.70, 35.00, 0.05)]])
+    json.dump({'bindings': {'has_binding': {
+        'boundary_acres': a_, 'registry_acres': a_, 'nhd_union_acres': a_,
+        'nhd_union_pieces': 1, 'nhd_layer': 'NHDWaterbody',
+        'registry_covers_pct_of_union': 100.0, 'union_covers_pct_of_registry': 100.0,
+    }}}, open(os.path.join(reg, '_nhd_bindings.json'), 'w'))
+    json.dump({'has_binding': {}, 'never_bound': {}},
+              open(os.path.join(reg, 'lake_index.json'), 'w'))
+    rc, txt = run(['x', '--registry', reg])
+    assert 'unknown for' not in txt, \
+        'an unbound boundary must not be counted as an unstamped binding: %s' % txt
+    assert 'every binding was computed against the boundary that is there now' in txt, txt
+print('an unbound boundary file is not mistaken for a binding that was never stamped')

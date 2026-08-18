@@ -397,7 +397,10 @@ def main() -> int:
         ra = b.get('registry_acres')
         if ra and abs(corrected - ra) / ra * 100.0 >= a.max_drift:
             index_off.append((slug, corrected, ra, 100.0 * (corrected - ra) / ra))
-        if ba is None:
+        if ba is None and b:
+            # `and b` matters. A boundary file with NO binding at all is not "a binding with no
+            # stamp" -- there are 3,397 boundaries and 423 bindings, and without that guard this
+            # counted the 2,974 unbound files and told you to re-run a matcher that had just run.
             no_stamp.append(slug)
         cov = b.get('registry_covers_pct_of_union')
         mine = b.get('union_covers_pct_of_registry')
