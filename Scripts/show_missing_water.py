@@ -288,6 +288,49 @@ def main():
         print('   ... and %d more, together %.1f acres'
               % (len(scored) - a.top, sum(s for s, _ in scored[a.top:])))
 
+    # DOES THE APP ALREADY DRAW IT? That is the only question that matters, and it is not the
+    # same question as whether the boundary covers it.
+    #
+    # lake_marion, 2026-08-18. The audit called it 11,580 acres short and the difference came
+    # back as one 11,125-acre piece over Sparkleberry Swamp. Ryan, looking at TrollMap: "that
+    # section shows contours and depth areas for most of it... the boundary wouldn't add
+    # anything because the swamp is mostly unsounded by garmin anyways". Counted: the pack
+    # already carries 2,155 contours and 2,111 depth areas inside that swamp.
+    #
+    # A boundary can be short while the app is complete, and it can be complete while the app
+    # is empty. Re-tracing only earns its keep where Garmin sounded water we are not shipping,
+    # so this counts what the pack already holds inside the very area it is said to be missing.
+    pack = os.path.join(root, 'chartpack', a.slug)
+    already = {}
+    if os.path.isdir(pack) and scored:
+        big_pieces = [p for acr, p in scored if acr >= 1.0]
+        if big_pieces:
+            hull = unary_union(big_pieces)
+            hb = hull.bounds
+            for layer in ('contours.geojson', 'depth_areas.geojson'):
+                fp = os.path.join(pack, layer)
+                if not os.path.exists(fp):
+                    continue
+                n = 0
+                try:
+                    for ft in (json.load(open(fp, encoding='utf-8')).get('features') or []):
+                        c = ft.get('geometry', {}).get('coordinates')
+                        while isinstance(c, list) and c and isinstance(c[0], list):
+                            c = c[0]
+                        if not (isinstance(c, list) and len(c) >= 2):
+                            continue
+                        if hb[0] <= c[0] <= hb[2] and hb[1] <= c[1] <= hb[3]:
+                            n += 1
+                except Exception as exc:
+                    print('   could not read %s (%s)' % (layer, type(exc).__name__))
+                    continue
+                already[layer.split('.')[0]] = n
+    if already:
+        print('\n   the pack ALREADY carries, inside the area said to be missing: %s'
+              % ', '.join('%d %s' % (v, k) for k, v in sorted(already.items())))
+        if sum(already.values()) > 0:
+            print('   so re-tracing this boundary would add outline, not soundings.')
+
     lobes = [s for s, p in scored if shape_of(p)[1] == 'lobe' and s >= 1.0]
     if lobes:
         verdict = ('<b>%d piece(s) of 1 acre or more are lobes</b>, together %.0f ac. That is '

@@ -129,3 +129,17 @@ _chk = _src[_src.index('drift = stored'):]
 assert 'declared - stored' in _chk, 'the self-check compares like with like'
 assert "len(keep) != b.get('nhd_union_pieces')" in _chk, 'and the piece count too'
 print('the union dissolves by GNIS id and checks declared against declared')
+
+# --- "is it missing" and "does the app draw it" are different questions ----------------------
+# lake_marion, 2026-08-18: the audit called it 11,580 acres short, the difference came back as
+# one 11,125-acre piece over Sparkleberry Swamp, and Ryan said the app already draws contours
+# and depth areas there. Counted afterwards: 2,155 contours and 2,111 depth areas in that
+# swamp, already in the pack. The boundary was short and nothing was missing from the app.
+assert 'chartpack' in _src and 'already' in _src, \
+    'the tool must count what the pack ALREADY holds inside the area said to be missing'
+_blk = _src[_src.index('pack = os.path.join(root'):]
+assert "acr >= 1.0" in _blk, 'only the pieces big enough to matter set the search box'
+assert 'add outline, not soundings' in _blk, \
+    'and it must say what re-tracing would actually buy'
+assert 'os.path.isdir(pack)' in _blk, 'a water with no pack yet is not an error'
+print('it counts what the pack already draws inside the gap, not just the size of the gap')
