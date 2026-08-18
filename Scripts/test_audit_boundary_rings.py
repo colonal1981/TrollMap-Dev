@@ -307,3 +307,60 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
     eq(rc, 0, 'no _merge_decisions.json is not an error')
     assert 'none -- every keeper traces at least as much water' in txt, txt
 print('no merge decisions on disk is a clean pass, not a crash')
+
+
+# ============================================================================================
+# IS THIS BINDING STILL ABOUT THIS POLYGON?
+#
+# Every percentage in the coverage report was computed by match_waters_to_nhd.py against the
+# boundary as it stood THEN. Nothing re-checked that. falls_lake adopted brinkley_lake's
+# polygon on 2026-08-18 -- 9,529.6 acres to 12,956, a 36% change -- and the audit went on
+# reporting "79.4% covers, 99.8% of mine" to the acre, against a shape no longer on disk.
+#
+# The check costs nothing: the file's acreage is already measured, and the binding carries the
+# acreage it was computed against. A stale number is worse than no number: it looks like an
+# answer.
+# ============================================================================================
+with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
+    reg = os.path.join(td, 'registry')
+    bdir = os.path.join(reg, 'boundaries')
+    os.makedirs(bdir)
+    grew = sq(-78.70, 36.00, 0.06)
+    write(bdir, 'moved_on', [[grew]])
+    write(bdir, 'still_true', [[sq(-79.70, 35.00, 0.05)]])
+    truth = abr.acres_of([[sq(-79.70, 35.00, 0.05)]])
+    json.dump({'bindings': {
+        # the falls_lake case: the file grew and the binding still describes the old one
+        'moved_on': {'registry_acres': abr.acres_of([[sq(-78.70, 36.00, 0.05)]]),
+                     'nhd_union_acres': 999.0, 'nhd_union_pieces': 1,
+                     'nhd_layer': 'NHDWaterbody',
+                     'registry_covers_pct_of_union': 12.0,
+                     'union_covers_pct_of_registry': 12.0},
+        # measured against what is actually there
+        'still_true': {'registry_acres': truth, 'nhd_union_acres': truth * 2,
+                       'nhd_union_pieces': 1, 'nhd_layer': 'NHDWaterbody',
+                       'registry_covers_pct_of_union': 50.0,
+                       'union_covers_pct_of_registry': 100.0},
+    }}, open(os.path.join(reg, '_nhd_bindings.json'), 'w'))
+    json.dump({'moved_on': {}, 'still_true': {}}, open(os.path.join(reg, 'lake_index.json'), 'w'))
+
+    rc, txt = run(['x', '--registry', reg])
+    eq(rc, 0, txt)
+    blk = txt.split('no longer describes the boundary on disk')[1]
+    assert 'moved_on' in blk, 'a boundary that changed since the binding must be named'
+    assert 'still_true' not in blk, 'and one that did not must not be'
+    assert 'match_waters_to_nhd' in blk, 'and it says what to re-run'
+
+    # THE POINT: its coverage is not reported at all, rather than reported wrongly.
+    cov = txt.split('MISSES WATER')[1].split('CLAIMS WATER')[0]
+    assert 'moved_on' not in cov, \
+        'a stale binding must NOT contribute a coverage row -- 12% would have been printed as '\
+        'fact about a polygon that no longer exists'
+    assert 'still_true' in cov, 'a fresh binding still reports normally'
+    assert '1 stale binding' in txt, 'and the closing line counts them'
+
+    # --max-drift is the tolerance, not a fixed rule
+    rc, txt2 = run(['x', '--registry', reg, '--max-drift', '99'])
+    assert 'moved_on' in txt2.split('MISSES WATER')[1].split('CLAIMS WATER')[0], \
+        'raise the tolerance far enough and it is trusted again'
+print('a binding measured against a polygon that has since changed is not reported as fact')
