@@ -335,7 +335,7 @@ def main():
             print(f'\nskipping {len(skipped)} regenerated file(s): {", ".join(skipped)}')
             print('   re-run their build script instead, or pass --include-derived')
 
-    total, touched, vhits = [], 0, []
+    total, touched, written, vhits = [], 0, 0, []
     for p in files:
         try:
             data = json.loads(p.read_text(encoding='utf-8'))
@@ -391,6 +391,7 @@ def main():
         if args.write and (actions or any(h['wrote'] for h in hits)):
             shutil.copy2(p, p.with_suffix('.json.bak'))
             p.write_text(json.dumps(data, indent=1), encoding='utf-8')
+            written += 1
 
     renamed = sum(1 for a in total if a['action'] == 'renamed onto the keeper')
     quiet = sum(1 for a in total if a['covered'] and a['action'] != 'renamed onto the keeper')
@@ -444,7 +445,14 @@ def main():
         print('   field inside an already-renamed record -- are not looked at without --values.')
 
     if args.write:
-        print(f'\nwrote {touched} file(s), each with a .bak beside it')
+        # `touched` counts files that HAD a hit; the OBSERVED ones are reported and left alone.
+        # Printing it here claimed nine files were written when six were, on the same run whose
+        # block above says three were left alone. A closing count that contradicts the report
+        # is the line someone quotes later.
+        print(f'\nwrote {written} file(s), each with a .bak beside it')
+        if touched > written:
+            print(f'   {touched - written} more had a slug value that was reported and not '
+                  f'rewritten -- nothing was written to those, and they have no .bak')
     else:
         print('\nDRY RUN -- nothing written. Add --write.')
     return 0

@@ -395,3 +395,25 @@ for _rw in (False, True):
        'writable must be the same on a dry run as on a write: %r' % (_w,))
     assert all(h['wrote'] == (_rw and h['writable']) for h in _h), [h for h in _h]
 print('writable says what --write would do; wrote says what this run did')
+
+# The closing count must be files WRITTEN, not files that had a hit. On the real registry those
+# differ by three -- the OBSERVED files are reported and left alone -- and the old line claimed
+# nine written on the same run whose report said three were left alone.
+with _tf.TemporaryDirectory() as _t:
+    _r = Path(_t); (_r/'registry').mkdir()
+    (_r/'registry'/'lake_index.json').write_text(json.dumps({'cooper_river': {}}))
+    (_r/'registry'/'_r2_listing.json').write_text(json.dumps({'chartpacks': ['wadboo_creek']}))
+    (_r/'registry'/'tile_lake_map.json').write_text(
+        json.dumps({'by_tile': {'T': ['wadboo_creek']}}))
+    _d = _r/'dec.json'
+    _d.write_text(json.dumps({'merges': [{'keep': 'cooper_river', 'retire': 'wadboo_creek'}]}))
+    sys.argv = ['x', '--registry', str(_r/'registry'/'lake_index.json'), '--decisions', str(_d),
+                '--values', '--write']
+    _b = _io.StringIO()
+    with _ctx.redirect_stdout(_b):
+        mms.main()
+    _txt = _b.getvalue()
+    assert 'wrote 1 file(s)' in _txt, _txt[-400:]
+    assert '1 more had a slug value that was reported and not rewritten' in _txt, _txt[-400:]
+    assert not (_r/'registry'/'_r2_listing.json.bak').exists(), 'and it really has no .bak'
+print('the closing count is files written, not files looked at')
