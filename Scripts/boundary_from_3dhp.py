@@ -94,9 +94,18 @@ def gpkg_wkb(blob):
     return blob[8 + {0: 0, 1: 32, 2: 48, 3: 48, 4: 64}[env]:]
 
 
-def wkb_rings(b, off=0):
+def wkb_polygons(b, off=0):
     """
-    WKB -> list of rings in lon/lat.
+    WKB -> [[outer, hole, hole, ...], ...] in lon/lat, RINGS GROUPED BY POLYGON.
+
+    THE GROUPING IS THE POINT AND LOSING IT IS SILENT. WKB already says which rings are holes:
+    inside a Polygon, ring 0 is the outer boundary and every ring after it is a hole. The
+    previous reader returned one flat list and the boundary writer turned each ring into its own
+    outer ring, so every ISLAND BECAME WATER. On a lake with no islands that is invisible, which
+    is why it survived from Lake Robinson until the Cooper: 221 rings, 220 of them nested,
+    written as 28,742 acres of solid water against 3DHP's 17,071. Subtracting the islands gives
+    17,104 -- 0.2% from the source -- so the rings were always right and only the nesting was
+    thrown away.
 
     THE DIMENSION MATTERS AND GETTING IT WRONG IS SILENT. 3DHP is 3D hydrography, so geometry
     carries Z and the type code is 1000+. Reading two doubles per point out of a stream that holds
@@ -123,22 +132,36 @@ def wkb_rings(b, off=0):
             pts.append(to_wgs84(v[0], v[1]))
         return pts, off
 
-    if t == 3:                                   # Polygon
+    if t == 3:                                   # Polygon: ring 0 outer, the rest are holes
         (nr,) = struct.unpack_from(order + 'I', b, off)
         off += 4
+        rings = []
         for _ in range(nr):
             r, off = ring(off)
-            out.append(r)
+            rings.append(r)
+        if rings:
+            out.append(rings)
     elif t in (4, 5, 6, 7):                      # Multi* / GeometryCollection
         (ng,) = struct.unpack_from(order + 'I', b, off)
         off += 4
         for _ in range(ng):
-            g, off = wkb_rings(b, off)
+            g, off = wkb_polygons(b, off)
             out += g
-    elif t == 2:                                 # LineString
+    elif t == 2:                                 # LineString -- no hierarchy to keep
         r, off = ring(off)
-        out.append(r)
+        out.append([r])
     return out, off
+
+
+def wkb_rings(b, off=0):
+    """Every ring, flat, hierarchy discarded.
+
+    KEPT ON PURPOSE. missing_waterbodies.py reads this to count vertices and test cell coverage,
+    and for that a hole and an outer ring are the same thing. A BOUNDARY is the caller that
+    cannot use it, so the boundary writer takes wkb_polygons() instead. One reader, two views.
+    """
+    polys, off = wkb_polygons(b, off)
+    return [r for p in polys for r in p], off
 
 
 def main() -> int:
@@ -173,6 +196,13 @@ def main() -> int:
     cur.execute('SELECT id3dhp, gnisid, gnisidlabel, featuretype, areasqkm, %s '
                 'FROM hydro_3dhp_all_waterbody WHERE id3dhp = ?' % geom, (a.id,))
     rows = cur.fetchall()
+    # CLOSED HERE, not left to interpreter exit. fetchall has already materialised everything
+    # including the geometry blob, so nothing below needs the connection -- and on Windows an
+    # open handle means the file cannot be deleted or moved by anyone else. The end-to-end test
+    # caught this the first time it ran on Ryan's machine: every assertion passed and then
+    # TemporaryDirectory could not clean up its own fixture. Harmless against a 60 GB read-only
+    # GeoPackage the process is about to exit from; not harmless as a habit.
+    con.close()
     if not rows:
         print('no waterbody with id3dhp = %s' % a.id)
         print('check it is a WATERBODY id and not a flowline id — a flowline has no polygon at all,')
@@ -183,11 +213,15 @@ def main() -> int:
         rows.sort(key=lambda r: -(r[4] or 0))
 
     r = rows[0]
-    parts, _ = wkb_rings(gpkg_wkb(r[5]))
-    parts = [p for p in parts if len(p) >= 4]
-    if not parts:
+    # wkb_polygons, NOT wkb_rings: a boundary that flattens the hierarchy charts its own islands.
+    polys, _ = wkb_polygons(gpkg_wkb(r[5]))
+    polys = [[ring for ring in p if len(ring) >= 4] for p in polys]
+    polys = [p for p in polys if p]
+    if not polys:
         print('the row has no usable ring')
         return 1
+    parts = [ring for p in polys for ring in p]
+    holes = sum(len(p) - 1 for p in polys)
 
     xs = [q[0] for p in parts for q in p]
     ys = [q[1] for p in parts for q in p]
@@ -196,6 +230,7 @@ def main() -> int:
     print('  name        %s' % (r[2] or '(unnamed in 3DHP)'))
     print('  gnisid      %s' % r[1])
     print('  area        %.1f acres' % acres)
+    print('  polygons    %d, with %d hole(s)' % (len(polys), holes))
     print('  rings       %d, %d vertices' % (len(parts), len(xs)))
     print('  bounds      %.6f, %.6f  ..  %.6f, %.6f' % (min(xs), min(ys), max(xs), max(ys)))
     print('  centre      %.6f, %.6f' % (sum(xs) / len(xs), sum(ys) / len(ys)))
@@ -213,8 +248,11 @@ def main() -> int:
                 'gnis': ('gnis:%s' % r[1]) if r[1] else None,
                 'area_acres': round(acres, 1),
             },
-            'geometry': ({'type': 'Polygon', 'coordinates': parts} if len(parts) == 1
-                         else {'type': 'MultiPolygon', 'coordinates': [[p] for p in parts]}),
+            # Each entry of `polys` is already [outer, hole, hole, ...] -- exactly the shape
+            # GeoJSON wants. The old form was [[p] for p in parts], which promoted every hole
+            # to an outer ring and charted 11,637 acres of Cooper River islands as water.
+            'geometry': ({'type': 'Polygon', 'coordinates': polys[0]} if len(polys) == 1
+                         else {'type': 'MultiPolygon', 'coordinates': polys}),
         }],
     }
 
