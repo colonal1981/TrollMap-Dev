@@ -60,10 +60,17 @@ def sphere_acres(geom):
 
 
 def shape_of(part):
-    """'sliver' or 'lobe', by how much area a piece carries for its perimeter.
+    """(mean width in metres, 'sliver'|'lobe'), by how much area a piece carries per unit edge.
 
-    4*pi*A/P^2 is 1 for a circle and tends to 0 for a long thin ribbon. A shoreline
-    disagreement is a ribbon; a missing creek arm is not.
+    THE RATIO ALONE WAS USELESS ON THE ONE THAT MATTERED. Marion's difference came back as a
+    single connected piece of 11,125 acres and the report labelled it "sliver", which is true
+    of its 4*pi*A/P^2 and tells nobody anything: a rim traced all the way around a lake is one
+    enormous ring, and a ring has the arithmetic of a ribbon at any size.
+
+    So the number that gets printed is 2A/P -- the mean width of the band. A rim is tens of
+    metres wide however many acres it adds up to; a creek arm is hundreds. That is a fact about
+    the water rather than about the arithmetic, and it is the one a person can check by looking
+    at the map.
     """
     try:
         import pyproj
@@ -76,8 +83,9 @@ def shape_of(part):
         m = part
     if not m.length:
         return 0.0, 'point'
+    width = 2.0 * m.area / m.length
     r = (4 * math.pi * m.area) / (m.length ** 2)
-    return r, ('sliver' if r < 0.05 else 'lobe')
+    return width, ('sliver' if r < 0.05 else 'lobe')
 
 
 HTML = '''<!doctype html>
@@ -115,13 +123,16 @@ const map = L.map('map');
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
   {maxZoom:17, attribution:'&copy; OpenStreetMap'}).addTo(map);
 const reg = L.geoJSON(D.registry, {style:{color:'#2f6fb2',weight:1,fillOpacity:.18}}).addTo(map);
+// THE VIEW FIRST. Leaflet with no view set draws nothing at all, so a heavy layer added before
+// fitBounds means a blank page rather than a slow one -- which is exactly what 16,750 polygons
+// produced.
+map.fitBounds(reg.getBounds().pad(0.05));
 L.geoJSON(D.union, {style:{color:'#e0a30b',weight:1,fill:false,dashArray:'5 4'}}).addTo(map);
 L.geoJSON(D.missing, {style:{color:'#c0392b',weight:1,fillOpacity:.75}}).addTo(map);
 for (const m of D.marks) {
   L.circleMarker([m[1], m[0]], {radius:5, color:'#c0392b', weight:2, fillOpacity:.9})
     .addTo(map).bindTooltip(m[2] + ' ac \\u2014 ' + m[3], {permanent:false, sticky:true});
 }
-map.fitBounds(reg.getBounds().pad(0.05));
 </script>
 '''
 
@@ -134,6 +145,8 @@ def main():
     ap.add_argument('--nhd', default=None, help='default <repo>/NHD')
     ap.add_argument('--out', default=None, help='where the html goes; default <repo>/_scratch')
     ap.add_argument('--top', type=int, default=15, help='how many pieces to list (default 15)')
+    ap.add_argument('--min-draw', type=float, default=0.25,
+                    help='acres below which a piece is counted but not drawn (default 0.25)')
     a = ap.parse_args()
 
     try:
@@ -200,34 +213,60 @@ def main():
         for i in range(len(geom)):
             if geom[i] is None or geom[i].is_empty:
                 continue
-            cand.append((geom[i], str(cols['Permanent_Identifier'][i]),
-                         cols['GNIS_Name'][i], float(cols['AreaSqKm'][i] or 0), layer))
+            cand.append({'geom': geom[i],
+                         'pid': str(cols['Permanent_Identifier'][i]),
+                         'gnis': cols['GNIS_ID'][i],
+                         'name': cols['GNIS_Name'][i],
+                         'km2': float(cols['AreaSqKm'][i] or 0),
+                         'layer': layer})
     if not cand:
         print('   nothing in that geodatabase near this water')
         return 2
 
     # THE UNION RULE, restated from match_waters_to_nhd.main() and checked below.
+    #
+    # DISSOLVE BY GNIS ID FIRST. The matcher does this before anything else -- a river is split
+    # into many NHDArea pieces and a lake's arms can be separate rows sharing one id -- and
+    # skipping it made this report 10 pieces where the binding says 6.
+    groups = {}
+    for n, c in enumerate(cand):
+        key = mw.normalize_gnis(c['gnis'])
+        groups.setdefault(key or '_row%d' % n, []).append(n)
+    merged = []
+    for key, ns in groups.items():
+        geo = cand[ns[0]]['geom'] if len(ns) == 1 \
+            else unary_union([cand[k]['geom'] for k in ns])
+        merged.append({'geom': geo,
+                       'pids': {cand[k]['pid'] for k in ns},
+                       'km2': sum(cand[k]['km2'] for k in ns),
+                       'name': next((cand[k]['name'] for k in ns if cand[k]['name']), None)})
     pid = str(b.get('permanent_identifier'))
-    best = [c for c in cand if c[1] == pid]
+    best = [m for m in merged if pid in m['pids']]
     if not best:
         print('   the bound Permanent_Identifier %s is not in this geodatabase' % pid)
         return 2
-    keep = list(best)
-    for c in cand:
-        if c[1] == pid or c[0].area <= 0:
+    keep = [best[0]]
+    for m in merged:
+        if m is best[0] or m['geom'].area <= 0:
             continue
-        if g.intersection(c[0]).area >= 0.9 * c[0].area:
-            keep.append(c)
-    union = unary_union([c[0].buffer(0) for c in keep])
+        if g.intersection(m['geom']).area >= 0.9 * m['geom'].area:
+            keep.append(m)
+    union = unary_union([m['geom'].buffer(0) for m in keep])
     u_ac = sphere_acres(union)
+    declared = sum(m['km2'] for m in keep) * 247.105
 
     stored = b.get('nhd_union_acres')
-    print('   union: %d piece(s), %.1f acres   (binding stored %s across %s piece(s))'
-          % (len(keep), u_ac, stored, b.get('nhd_union_pieces')))
-    if stored and abs(u_ac - stored) / stored > 0.02:
-        print('   !! THIS DISAGREES WITH THE BINDING BY MORE THAN 2%. The union rule restated')
-        print('      here has drifted from match_waters_to_nhd.py, so the picture below would')
-        print('      be of the wrong thing. Fix that before believing any of it.')
+    print('   union: %d piece(s)   declared %.1f ac   measured %.1f ac' % (len(keep), declared,
+                                                                          u_ac))
+    print('   binding stored: %s ac across %s piece(s)' % (stored, b.get('nhd_union_pieces')))
+    # DECLARED AGAINST DECLARED. nhd_union_acres is the sum of the source rows' AreaSqKm, not
+    # the area of the dissolved geometry, and the two differ by whatever the rows overlap. This
+    # compared a measured figure against a declared one and called the gap drift.
+    drift = stored and abs(declared - stored) / stored > 0.02
+    if drift or (stored and len(keep) != b.get('nhd_union_pieces')):
+        print('   !! THIS DISAGREES WITH THE BINDING. The union rule restated here has drifted')
+        print('      from match_waters_to_nhd.py, so the picture below is of the wrong thing.')
+        print('      Fix that before believing any of it.')
 
     miss = union.difference(g)
     parts = [p for p in (list(miss.geoms) if hasattr(miss, 'geoms') else [miss])
@@ -235,14 +274,16 @@ def main():
     scored = sorted(((sphere_acres(p), p) for p in parts), key=lambda t: -t[0])
     total = sum(s for s, _ in scored)
     print('\n   in NHD and not in the boundary: %.1f acres in %d piece(s)' % (total, len(scored)))
-    print('   %4s %10s %9s   %s' % ('#', 'acres', 'shape', 'centre'))
+    print('   %4s %10s %9s %9s   %s' % ('#', 'acres', 'mean wide', 'shape', 'centre'))
     rows, marks = [], []
     for n, (acr, p) in enumerate(scored[:a.top], 1):
-        r, kind = shape_of(p)
+        width, kind = shape_of(p)
         c = p.representative_point()
-        print('   %4d %10.1f %9s   %.5f, %.5f' % (n, acr, kind, c.x, c.y))
-        rows.append('<tr><td>%.0f ac</td><td>%s</td></tr>' % (acr, kind))
-        marks.append([round(c.x, 6), round(c.y, 6), round(acr, 1), kind])
+        print('   %4d %10.1f %8.0f m %9s   %.5f, %.5f' % (n, acr, width, kind, c.x, c.y))
+        rows.append('<tr><td>%.0f ac</td><td>%.0f m wide</td><td>%s</td></tr>'
+                    % (acr, width, kind))
+        marks.append([round(c.x, 6), round(c.y, 6), round(acr, 1),
+                      '%s, %.0f m wide' % (kind, width)])
     if len(scored) > a.top:
         print('   ... and %d more, together %.1f acres'
               % (len(scored) - a.top, sum(s for s, _ in scored[a.top:])))
@@ -257,12 +298,24 @@ def main():
     print('\n   %s' % verdict.replace('<b>', '').replace('</b>', ''))
 
     from shapely.geometry import mapping
+    from shapely.ops import unary_union as _uu
+    # 16,750 polygons is not a map. Leaflet builds a Path per part, stalls before fitBounds
+    # ever runs, and the page comes up blank with no view set and nothing drawn at all -- which
+    # is what Ryan got. Draw the pieces a person could see and say how many were left out.
+    shown = [p for acr, p in scored if acr >= a.min_draw]
+    hidden = len(scored) - len(shown)
+    miss_draw = _uu(shown) if shown else miss
+    if hidden:
+        print('   drawing %d piece(s) of %.2f acres or more; %d smaller one(s) omitted from the'
+              ' map, together %.1f acres'
+              % (len(shown), a.min_draw, hidden,
+                 sum(acr for acr, _ in scored if acr < a.min_draw)))
     out_dir = a.out or os.path.join(root, '_scratch')
     os.makedirs(out_dir, exist_ok=True)
     fp = os.path.join(out_dir, '%s_missing_water.html' % a.slug)
     data = {'registry': mapping(g.simplify(0.00008, preserve_topology=True)),
             'union': mapping(union.simplify(0.00008, preserve_topology=True)),
-            'missing': mapping(miss.simplify(0.00002, preserve_topology=True)),
+            'missing': mapping(miss_draw.simplify(0.00002, preserve_topology=True)),
             'marks': marks}
     open(fp, 'w', encoding='utf-8').write(HTML % {
         'title': '%s -- what NHD has and the boundary does not' % a.slug,
