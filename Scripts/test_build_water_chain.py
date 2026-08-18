@@ -193,3 +193,96 @@ assert bwc.norm_pid('{}') is None, \
 assert bwc.norm_pid('{') == '{', 'a lone brace is not a wrapper'
 assert bwc.norm_pid(110970920) == '110970920', 'a numeric id from the GDB still keys correctly'
 print('norm_pid assertions pass')
+
+
+# --- apply_chain_links: flow NHD cannot derive ------------------------------------------------
+# Santee Cooper MOVES water through canals dug in the 1940s. NHDPlus accumulates drainage
+# topographically -- the land that drains to a point -- which is correct and is why Lake
+# Moultrie comes back as a headwater pond with 111 sq mi. The 14,600 that actually arrives got
+# there through the Diversion Canal. No terrain analysis produces an edge for an excavation.
+def _row(slug, drain, down=None, up=None):
+    return {'slug': slug, 'drainage_km2': drain, 'downstream': down, 'upstream': list(up or [])}
+
+
+_ROWS = {
+    'lake_marion':   _row('lake_marion', 37834.7, 'santee_river'),
+    'lake_moultrie': _row('lake_moultrie', 286.5, 'santee_river'),
+    'cooper_river':  _row('cooper_river', 2044.7, None, ['goose_creek_reservoir']),
+    'santee_river':  _row('santee_river', 39615.2, None, ['lake_marion', 'lake_moultrie']),
+    'goose_creek_reservoir': _row('goose_creek_reservoir', 12.0, 'cooper_river'),
+}
+_LINKS = [
+    {'from': 'lake_marion', 'to': 'lake_moultrie', 'via': 'Diversion Canal',
+     'carries_drainage': True},
+    {'from': 'lake_moultrie', 'to': 'cooper_river', 'via': 'Pinopolis / Tail Race Canal',
+     'carries_drainage': True},
+]
+import copy as _c
+_rows = _c.deepcopy(_ROWS)
+_applied, _notes = bwc.apply_chain_links(_rows, _LINKS)
+assert len(_applied) == 2, _applied
+
+# the derived outlet is kept and the asserted one is ADDED -- Moultrie has two
+assert _rows['lake_moultrie']['downstream'] == 'santee_river', 'the derived primary must not move'
+assert _rows['lake_moultrie']['outlets'] == ['santee_river', 'cooper_river'], \
+    _rows['lake_moultrie']['outlets']
+assert _rows['lake_marion']['outlets'] == ['santee_river', 'lake_moultrie'], \
+    _rows['lake_marion']['outlets']
+assert 'lake_marion' in _rows['lake_moultrie']['upstream'], 'the target must gain the source'
+assert 'lake_moultrie' in _rows['cooper_river']['upstream']
+print('two outlets held, derived primary unmoved')
+
+# topographic drainage is UNTOUCHED; the routed figure lands beside it
+assert _rows['lake_moultrie']['drainage_km2'] == 286.5, 'topographic must not be overwritten'
+assert _rows['cooper_river']['drainage_km2'] == 2044.7
+_m = _rows['lake_moultrie']['routed_drainage_km2']
+_c2 = _rows['cooper_river']['routed_drainage_km2']
+assert abs(_m - (286.5 + 37834.7)) < 1e-6, _m
+assert abs(_c2 - (2044.7 + _m)) < 1e-6, 'a chain of transfers must accumulate, not stop at one hop'
+print('routed drainage accumulates across two hops: %.0f then %.0f sq mi'
+      % (_m / 2.58999, _c2 / 2.58999))
+
+# and the point of the whole exercise: both now agree with what USACE surveyed at the dams
+for slug, nid in (('lake_moultrie', 15000.0), ('cooper_river', 15000.0)):
+    sqmi = _rows[slug]['routed_drainage_km2'] / 2.58999
+    assert abs(sqmi - nid) / nid < 0.15, '%s %.0f vs NID %.0f' % (slug, sqmi, nid)
+print('both inside the dam binder tolerance of NID 15,000 sq mi')
+
+# a water with no links keeps exactly what it had
+assert _rows['santee_river']['routed_drainage_km2'] == 39615.2
+assert _rows['santee_river']['outlets'] == []
+
+# refusing rather than inventing
+_r2 = _c.deepcopy(_ROWS)
+_a2, _n2 = bwc.apply_chain_links(_r2, [{'from': 'lake_marion', 'to': 'not_a_water'}])
+assert _a2 == [] and any('REFUSED' in n for n in _n2), _n2
+assert 'not_a_water' not in _r2, 'a missing end must not be invented'
+_a3, _n3 = bwc.apply_chain_links(_c.deepcopy(_ROWS), [{'from': None, 'to': 'x'}, {}])
+assert _a3 == [] and len(_n3) == 2
+print('a link to a water that is not in the chain is refused, not invented')
+
+# an edge NHD already derived is a no-op, not a duplicate
+_r4 = _c.deepcopy(_ROWS)
+_a4, _n4 = bwc.apply_chain_links(_r4, [{'from': 'lake_marion', 'to': 'santee_river'}])
+assert _a4 == [] and any('already derived' in n for n in _n4), _n4
+assert _r4['lake_marion']['outlets'] == ['santee_river']
+assert _r4['santee_river']['upstream'].count('lake_marion') == 1, 'no duplicate upstream entry'
+print('an edge NHD already has is a no-op')
+
+# idempotent: running twice changes nothing
+_r5 = _c.deepcopy(_ROWS)
+bwc.apply_chain_links(_r5, _LINKS)
+_snap = _c.deepcopy(_r5)
+bwc.apply_chain_links(_r5, _LINKS)
+assert _r5 == _snap, 'a second application must be a no-op'
+print('idempotent')
+
+# carries_drainage false: the edge exists, the water does not follow it
+_r6 = _c.deepcopy(_ROWS)
+bwc.apply_chain_links(_r6, [{'from': 'lake_marion', 'to': 'lake_moultrie', 'via': 'x',
+                             'carries_drainage': False}])
+assert 'lake_moultrie' in _r6['lake_marion']['outlets']
+assert _r6['lake_moultrie']['routed_drainage_km2'] == 286.5, 'no drainage without the flag'
+print('carries_drainage=false adds the edge without the water')
+
+print('apply_chain_links assertions pass')

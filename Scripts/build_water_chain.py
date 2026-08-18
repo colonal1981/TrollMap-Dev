@@ -506,6 +506,63 @@ def process_vpu(vpu, src, want_gnis, args, want_pid=None):
     return rows, f'{vpu}: {len(rows)} waters placed'
 
 
+def apply_chain_links(rows, links):
+    """Add flow edges NHD cannot derive, and carry drainage across them.
+
+    NHDPlus accumulates drainage TOPOGRAPHICALLY -- the land that drains to a point. That is
+    correct, and it is why every other water in this chain is right. It is also why Lake
+    Moultrie comes back as a headwater pond with 111 sq mi: the 14,600 sq mi that actually
+    arrives there was dug a channel in the 1940s, and no terrain analysis will ever produce an
+    edge for a canal.
+
+    BOTH NUMBERS STAY. `drainage_km2` remains untouched and topographic; the routed figure is
+    written to `routed_drainage_km2` beside it. That is the TotDASqKm/DivDASqKm lesson again --
+    two real numbers answering different questions, and the bug is always using one to answer
+    the other's.
+
+    A WATER MAY HAVE MORE THAN ONE OUTLET. Moultrie has two: St Stephen to the Santee, which
+    NHD routes, and Pinopolis to the Cooper, which it does not. `downstream` keeps the derived
+    primary so nothing reading it changes; `outlets` lists all of them.
+
+    Returns (applied, notes). Refuses any link whose ends are not both in the chain rather than
+    inventing a node.
+    """
+    for r in rows.values():
+        r.setdefault('outlets', [r['downstream']] if r.get('downstream') else [])
+        r.setdefault('routed_drainage_km2', r.get('drainage_km2'))
+    applied, notes = [], []
+    for ln in links or []:
+        a, b = (ln or {}).get('from'), (ln or {}).get('to')
+        if not a or not b:
+            notes.append('link with no from/to, skipped')
+            continue
+        if a not in rows or b not in rows:
+            notes.append('%s -> %s REFUSED: %s is not in the chain'
+                         % (a, b, a if a not in rows else b))
+            continue
+        if b in rows[a]['outlets']:
+            notes.append('%s -> %s already derived, no link needed' % (a, b))
+            continue
+        rows[a]['outlets'].append(b)
+        if a not in rows[b]['upstream']:
+            rows[b]['upstream'].append(b if False else a)
+            rows[b]['upstream'].sort()
+        applied.append((a, b, ln.get('via')))
+    # Drainage is carried AFTER every edge exists, and in outlet order, so a chain of transfers
+    # (Marion -> Moultrie -> Cooper) accumulates rather than each hop seeing a stale figure.
+    for _ in range(len(applied) + 1):
+        for ln in links or []:
+            a, b = (ln or {}).get('from'), (ln or {}).get('to')
+            if not (a in rows and b in rows and ln.get('carries_drainage')):
+                continue
+            if b not in rows[a]['outlets']:
+                continue
+            want = round(rows[b]['drainage_km2'] + rows[a]['routed_drainage_km2'], 4)
+            if want > rows[b]['routed_drainage_km2']:
+                rows[b]['routed_drainage_km2'] = want
+    return applied, notes
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--nhd', default=str(DEFAULT_NHD))
@@ -517,6 +574,11 @@ def main():
                          ' falls back to the GNIS join alone and says so.')
     ap.add_argument('--no-bindings', action='store_true',
                     help='ignore the binding table entirely (the pre-2026-08-17 behaviour)')
+    ap.add_argument('--links', default=None,
+                    help='registry/_chain_links.json -- flow NHD cannot derive (canals, '
+                         'inter-basin transfers). Defaults to the file beside the registry.')
+    ap.add_argument('--no-links', action='store_true',
+                    help='derived edges only; ignore the asserted ones')
     ap.add_argument('--only', nargs='*', help='VPU codes, e.g. --only 0305 0304')
     ap.add_argument('--write', action='store_true', help='actually write the json')
     ap.add_argument('--show', type=int, default=40,
@@ -666,6 +728,34 @@ def main():
     # same for a coastal composite that SHOULD never place as for blewett_falls_lake, which
     # had a perfectly good binding nobody looked at. The third reason below is the one that
     # earns its keep: it means the polygon was found and none of its flowlines are routed.
+    # ── flow NHD cannot derive ──────────────────────────────────────────────────────────
+    links_path = Path(args.links) if args.links else reg_path.parent / '_chain_links.json'
+    linked, link_notes = [], []
+    if args.no_links:
+        print('\n--no-links: derived edges only')
+    elif links_path.exists():
+        try:
+            doc = json.loads(links_path.read_text(encoding='utf-8'))
+            links = doc.get('links') if isinstance(doc, dict) else doc
+        except Exception as exc:
+            links = []
+            print('\n!! %s unreadable (%s: %s) -- man-made channels are NOT in the chain'
+                  % (links_path, type(exc).__name__, exc))
+        linked, link_notes = apply_chain_links(rows, links or [])
+        if linked or link_notes:
+            print('\n   ASSERTED FLOW -- canals and transfers NHD does not route:')
+            for a, b, via in linked:
+                print('     %-22s -> %-22s via %s' % (a, b, via))
+                print('       %s routed drainage %.1f km2 (%.0f sq mi), topographic %.1f'
+                      % (' ' * 22, rows[b]['routed_drainage_km2'],
+                         rows[b]['routed_drainage_km2'] / 2.58999, rows[b]['drainage_km2']))
+            for n in link_notes:
+                print('     %s' % n)
+            notes.extend('link %s -> %s via %s' % (a, b, via) for a, b, via in linked)
+    else:
+        # Not an error -- but silence here is how Lake Moultrie sat as a headwater pond.
+        print('\n   no %s -- man-made channels are not in the chain' % links_path.name)
+
     unmatched = {}
     for slug in reg:
         if slug in rows:

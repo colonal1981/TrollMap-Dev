@@ -299,8 +299,19 @@ def slim_chain(full):
         out[slug] = {
             "upstream": r.get("upstream") or [],
             "downstream": r.get("downstream"),
+            # A WATER MAY HAVE MORE THAN ONE OUTLET and `downstream` holds the NHD-derived one.
+            # Lake Moultrie drains to the Santee through St Stephen AND to the Cooper through
+            # Pinopolis; publishing only `downstream` loses the second, and releaseDirection's
+            # walk would never reach the Cooper. Defaults to [downstream] so a chain built
+            # before _chain_links.json existed still serves a usable list.
+            "outlets": (r.get("outlets")
+                        or ([r["downstream"]] if r.get("downstream") else [])),
             "side_channel": bool(r.get("side_channel")),
             "drainage_km2": r.get("drainage_km2"),
+            # Topographic and routed are DIFFERENT NUMBERS and both are real. Lake Moultrie's
+            # own catchment is 111 sq mi; 14,718 arrives through a canal dug in the 1940s.
+            # USACE surveyed 15,000 at both its dams. Ship both rather than choosing.
+            "routed_drainage_km2": r.get("routed_drainage_km2", r.get("drainage_km2")),
             "local_drainage_km2": r.get("local_drainage_km2", r.get("drainage_km2")),
         }
     meta = full.get("_meta") if isinstance(full, dict) else None
