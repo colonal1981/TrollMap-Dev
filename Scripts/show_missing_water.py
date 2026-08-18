@@ -182,16 +182,24 @@ def main():
     WANT = ['Permanent_Identifier', 'GNIS_ID', 'GNIS_Name', 'AreaSqKm', 'FType']
     wb = g.bounds
     world = (wb[0] - 0.05, wb[1] - 0.05, wb[2] + 0.05, wb[3] + 0.05)
+    # read_polys returns raw WKB, not geometry -- its own docstring says so, and
+    # match_waters_to_nhd.main() calls from_wkb on the array before touching it. Reading the
+    # name of a function instead of its docstring is how `bytes` object has no attribute 'area'
+    # happens.
+    from shapely import from_wkb
     cand = []
     for layer in ('NHDWaterbody', 'NHDArea'):
         try:
-            geom, cols, missing, _have = mw.read_polys(src, layer, WANT, bbox=world)
+            wkb, cols, missing, _have = mw.read_polys(src, layer, WANT, bbox=world)
         except Exception as exc:
             print('   %s not readable (%s)' % (layer, type(exc).__name__))
             continue
-        if missing or geom is None or len(geom) == 0:
+        if missing or wkb is None or len(wkb) == 0:
             continue
+        geom = from_wkb(wkb)
         for i in range(len(geom)):
+            if geom[i] is None or geom[i].is_empty:
+                continue
             cand.append((geom[i], str(cols['Permanent_Identifier'][i]),
                          cols['GNIS_Name'][i], float(cols['AreaSqKm'][i] or 0), layer))
     if not cand:

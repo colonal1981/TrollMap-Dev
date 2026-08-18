@@ -73,3 +73,20 @@ assert '<script src=' in _html and '<script>' in _html, 'leaflet and the inline 
 assert 'height:100%;' in _html, "the doubled %% in the CSS must come out as one"
 assert '-80.0' in _html and '12.3' in _html, 'the marks reach the page'
 print('the page renders with no unfilled placeholder and the CSS percent survives')
+
+# --- read_polys hands back WKB, not geometry ------------------------------------------------
+# Its docstring says "Return (wkb_array, ...)" and match_waters_to_nhd.main() calls from_wkb on
+# it before touching it. Reading the NAME of a function instead of its docstring is how
+# "'bytes' object has no attribute 'area'" reached Ryan's terminal.
+import re as _re
+_src = (HERE / 'show_missing_water.py').read_text(encoding='utf-8')
+_call = _src[_src.index('mw.read_polys'):]
+assert 'from_wkb' in _src, 'the WKB must be converted before it is used as geometry'
+assert _re.search(r'wkb, cols, missing', _src), \
+    'name it wkb so the next reader cannot mistake it for geometry'
+assert _src.index('from shapely import from_wkb') < _src.index('mw.read_polys'), \
+    'the import has to be in scope before the read'
+_after = _src[_src.index('geom = from_wkb(wkb)'):]
+assert 'geom[i] is None or geom[i].is_empty' in _after, \
+    'from_wkb yields None for an unreadable row -- skip it rather than crash on it later'
+print('the WKB coming out of read_polys is converted, and empty rows are skipped')
