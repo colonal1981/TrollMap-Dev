@@ -7,18 +7,40 @@ const { COASTAL_ZONES, COASTAL_SLUGS } = await import('../js/data/coastal-zones.
 
 /**
  * The search box called Nominatim, so the one thing it could not find was TrollMap's own
- * water. "Cooper River" is in water-aliases.js pointing at coast_charleston_sc and typing it
- * returned nothing.
+ * water: a name that is only a coastal pointer has no dropdown row, and typing it returned
+ * nothing.
+ *
+ * THE EXAMPLE USED TO BE "Cooper River" AND IT GRADUATED. On 2026-08-18 the Cooper got its own
+ * 4,658-acre freshwater pack, cut at the SC Code 50-5-80 dividing line, so
+ * gen_water_aliases_js.py dropped the name from water-aliases.js -- "something earlier already
+ * answers them" -- and it now resolves out of lake_index.json as a water rather than a pointer.
+ * Verified with the registry loaded: searchWaters('Cooper River') returns
+ * "Cooper River (Berkeley Co, SC)".
+ *
+ * So the example moved rather than the rule. Any name still in the pointer table will do; if
+ * this one graduates too, move it again and say so here.
  */
+const POINTER_EXAMPLE = 'Ashley River';
 
 describe('search covers the sources the dropdown does not', () => {
   it('finds a coastal pointer that has no dropdown row', () => {
     invalidateWaterIndex();
-    const hits = searchWaters('Cooper River');
-    const p = hits.find((h) => h.kind === 'pointer' && h.label === 'Cooper River');
-    expect(p, 'Cooper River should be findable').toBeTruthy();
+    expect(WATER_TO_R2_KEY[POINTER_EXAMPLE], `${POINTER_EXAMPLE} is no longer a pointer -- pick `
+      + 'another name from water-aliases.js and update the note above').toBeTruthy();
+    const hits = searchWaters(POINTER_EXAMPLE);
+    const p = hits.find((h) => h.kind === 'pointer' && h.label === POINTER_EXAMPLE);
+    expect(p, `${POINTER_EXAMPLE} should be findable`).toBeTruthy();
     // and it must select the ZONE, because that is what holds the contours
-    expect(p.selectName).toBe(COASTAL_ZONES[WATER_TO_R2_KEY['Cooper River']].name);
+    expect(p.selectName).toBe(COASTAL_ZONES[WATER_TO_R2_KEY[POINTER_EXAMPLE]].name);
+  });
+
+  // A name that graduated to its own pack must NOT still be sitting in the pointer table --
+  // that is two answers for one water, and the generator drops it precisely to avoid that.
+  it('a water with its own pack is not also a coastal pointer', () => {
+    for (const n of ['Cooper River', 'Lake Wylie', 'Norris Reservoir', 'Lake Mayer']) {
+      expect(WATER_TO_R2_KEY[n], `${n} has its own registry row and must not also point at a `
+        + 'coastal zone -- re-run Scripts/gen_water_aliases_js.py').toBeFalsy();
+    }
   });
 
   it('every coastal zone is findable by its own name', () => {

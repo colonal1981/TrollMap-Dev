@@ -110,9 +110,14 @@ const DECLARED = [
   // table in the app and every audit that quoted 67 was quoting a parser bug.
   ['js/data/lake-keys.js', 'LAKE_NAME_TO_R2_KEY', 121, 'alias',
    'display name to R2 key. Superseded in most paths by the registry, still the fallback.'],
-  ['js/data/water-aliases.js', 'WATER_TO_R2_KEY', 142, 'alias',
-   'the biggest of them and the least worrying: 142 water names mapped to R2 keys, which '
-   + 'is exactly the job an alias table should have.'],
+  // 141 since 2026-08-18, down one from 142. gen_water_aliases_js.py drops a name the registry
+  // now answers directly, and "Cooper River" graduated the night the Cooper got its own 4,658-acre
+  // freshwater pack: it used to point at coast_charleston_sc and now resolves to cooper_river out
+  // of lake_index.json. A table that shrinks because the registry grew is this table working.
+  ['js/data/water-aliases.js', 'WATER_TO_R2_KEY', 141, 'alias',
+   'the biggest of them and the least worrying: 141 water names mapped to R2 keys, which '
+   + 'is exactly the job an alias table should have. GENERATED -- do not hand-edit; run '
+   + 'Scripts/gen_water_aliases_js.py and update the count here.'],
 ];
 
 /** Top-level keys of the object literal that starts at `i`. Brace depth, not regex. */
