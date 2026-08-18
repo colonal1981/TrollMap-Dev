@@ -310,3 +310,86 @@ test('a chain node with no downstream field labels nothing and does not throw', 
     { slug: 'lake_marion', chain: { wateree_lake: {} }, damOwner: OWNER });
   assert.equal(got[0].direction, null);
 });
+
+
+// ── a water with TWO outlets ─────────────────────────────────────────────────────────────────
+// Lake Moultrie drains to the Santee through St Stephen and to the Cooper through Pinopolis.
+// NHD routes the first and cannot route the second -- the Tail Race Canal was dug in the 1940s
+// and drainage is a topographic quantity. registry/_chain_links.json asserts it, the chain
+// publishes `outlets`, and this is the walk following both.
+//
+// The whole lower Santee, from the 2026-08-17 chain plus the two asserted links.
+const SANTEE = {
+  lake_marion:   { upstream: ['wateree_river'], downstream: 'santee_river',
+                   outlets: ['santee_river', 'lake_moultrie'] },
+  lake_moultrie: { upstream: ['lake_marion'], downstream: 'santee_river',
+                   outlets: ['santee_river', 'cooper_river'] },
+  cooper_river:  { upstream: ['lake_moultrie', 'goose_creek_reservoir'], downstream: null,
+                   outlets: [] },
+  santee_river:  { upstream: ['lake_marion', 'lake_moultrie'], downstream: null, outlets: [] },
+  wateree_lake:  { upstream: [], downstream: 'wateree_river', outlets: ['wateree_river'] },
+  wateree_river: { upstream: ['wateree_lake'], downstream: 'lake_marion',
+                   outlets: ['lake_marion'] },
+};
+const SANTEE_OWNER = {
+  'santee': 'lake_marion',          // Wilson Dam, which impounds Marion
+  'pinopolis': 'lake_moultrie',
+  'st stephen': 'lake_moultrie',
+  'wateree': 'wateree_lake',
+};
+const SANTEE_DAMS = Object.keys(SANTEE_OWNER).map((d) => ({ dam: d }));
+const santee = (slug) => {
+  const out = {};
+  for (const r of releaseDirection(SANTEE_DAMS, { slug, chain: SANTEE, damOwner: SANTEE_OWNER })) {
+    if (r.direction) out[r.dam] = `${r.direction}:${r.from}`;
+  }
+  return out;
+};
+
+test('Moultrie reaches the Cooper down the outlet NHD cannot route', () => {
+  // Without `outlets` the walk follows downstream === santee_river and never arrives.
+  assert.equal(santee('cooper_river')['pinopolis'], 'inflow:lake_moultrie');
+  assert.equal(santee('cooper_river')['st stephen'], 'inflow:lake_moultrie');
+});
+
+test('and still reaches the Santee down the outlet it can', () => {
+  const got = santee('santee_river');
+  assert.equal(got['st stephen'], 'inflow:lake_moultrie');
+  assert.equal(got['santee'], 'inflow:lake_marion');
+});
+
+test('Marion feeds Moultrie through the Diversion Canal', () => {
+  assert.equal(santee('lake_moultrie')['santee'], 'inflow:lake_marion');
+  assert.equal(santee('lake_moultrie')['pinopolis'], 'outflow:lake_moultrie');
+});
+
+test('an impoundment on ONE branch does not block the other', () => {
+  // Wateree -> wateree_river -> lake_marion -> {santee_river, lake_moultrie}. Marion impounds
+  // the Santee dam, so a Wateree release stops there and reaches neither the Santee nor the
+  // Cooper -- but it must still be inflow to Marion itself.
+  assert.equal(santee('lake_marion')['wateree'], 'inflow:wateree_lake');
+  assert.equal(santee('santee_river')['wateree'], undefined);
+  assert.equal(santee('cooper_river')['wateree'], undefined);
+});
+
+test('a braided chain that rejoins itself terminates', () => {
+  // The lower Santee genuinely rejoins: Marion and Moultrie both reach the Santee River, and
+  // Moultrie is below Marion. A depth-first walk revisits waters; `seen` is what stops it.
+  const braid = {
+    a: { outlets: ['b', 'c'] }, b: { outlets: ['d'] }, c: { outlets: ['d'] },
+    d: { outlets: ['a'] },      // and back to the start
+  };
+  const got = releaseDirection([{ dam: 'x' }], { slug: 'z', chain: braid, damOwner: { x: 'a' } });
+  assert.equal(got[0].direction, null);
+  const hit = releaseDirection([{ dam: 'x' }], { slug: 'd', chain: braid, damOwner: { x: 'a' } });
+  assert.equal(hit[0].direction, 'inflow');
+});
+
+test('a chain with no outlets field falls back to downstream', () => {
+  // Everything published before _chain_links.json existed. Must behave exactly as it did.
+  for (const slug of Object.keys(CHAIN)) {
+    assert.deepEqual(labelIn(CHAIN, slug), labelIn(CHAIN, slug), slug);
+  }
+  assert.equal(labelIn(CHAIN, 'lake_marion')['wateree'], 'inflow:wateree_lake');
+  assert.equal(labelIn(CHAIN_WITH_RIVERS, 'lake_marion')['wateree'], 'inflow:wateree_lake');
+});

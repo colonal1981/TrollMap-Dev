@@ -1648,12 +1648,34 @@ export function releaseDirection(rows, { slug, chain, damOwner } = {}) {
   // the question, and the dam table is the only thing that actually answers it.
   const impounds = new Set(Object.values(owner).filter(Boolean));
 
+  // A WATER MAY DRAIN TO MORE THAN ONE PLACE, so this follows every outlet rather than the
+  // single `downstream`. Lake Moultrie has two: St Stephen to the Santee, which NHD routes,
+  // and Pinopolis to the Cooper, which it does not and which registry/_chain_links.json
+  // asserts. A one-value walk reaches whichever NHD happened to pick and never labels a
+  // release on the other. Falls back to [downstream] so a chain published before `outlets`
+  // existed behaves exactly as it did.
+  const outletsOf = (s) => {
+    const n = nodes[s];
+    if (!n) return [];
+    if (Array.isArray(n.outlets) && n.outlets.length) return n.outlets;
+    return n.downstream ? [n.downstream] : [];
+  };
+
   const drainsInto = (from) => {
-    let at = nodes[from] && nodes[from].downstream;
-    for (let hop = 0; at && hop < RELEASE_WALK_MAX_HOPS; hop += 1) {
-      if (at === slug) return true;         // arrived, uninterrupted
-      if (impounds.has(at)) return false;   // caught by another dam first
-      at = nodes[at] && nodes[at].downstream;
+    // Breadth-first, and `seen` is what makes a braided system terminate -- the lower Santee
+    // rejoins itself, so a depth-first walk down two outlets can revisit the same water.
+    let front = outletsOf(from);
+    const seen = new Set([from]);
+    for (let hop = 0; front.length && hop < RELEASE_WALK_MAX_HOPS; hop += 1) {
+      const next = [];
+      for (const at of front) {
+        if (at === slug) return true;       // arrived, uninterrupted
+        if (seen.has(at)) continue;
+        seen.add(at);
+        if (impounds.has(at)) continue;     // caught by another dam; other branches carry on
+        next.push(...outletsOf(at));
+      }
+      front = next;
     }
     return false;
   };
