@@ -14,6 +14,13 @@ TWO SITUATIONS, AND THEY ARE NOT THE SAME
              one is REPORTED, never silently dropped, because picking a winner between two
              populated records is not a decision a script should make quietly.
 
+A BOUNDARY IS A FILE, WHICH IS NEITHER A KEY NOR A VALUE
+    A key moves. A value is repointed. registry/boundaries/<slug>.geojson is a third thing
+    and this tool never opened that directory, so a merge moved falls_lake's NAME and left
+    it tracing 9,529.6 acres while brinkley_lake, the slug it retired, held 12,958 beside
+    it. --boundaries is that third pass, and it adopts on CONTAINMENT rather than on size.
+    See carry_boundaries().
+
 A SLUG IS ALSO A VALUE, AND UNTIL --values THIS TOOL COULD NOT SEE THAT
     Everything above rewrites KEYS. A slug travels as a VALUE too -- an element of
     tile_lake_map's by_tile[], an `alias_of` in _river_aliases.json, the R2 key a slug maps to
@@ -307,6 +314,91 @@ def walk(data, pairs, actions, prefix='', fold=False):
             migrate_obj(v, pairs, f'{prefix}{k}', actions, fold)
 
 
+def carry_boundaries(reg_dir, pairs, min_cover, write):
+    """The third namespace: a boundary is a FILE named for a slug.
+
+    migrate_obj moves a KEY. retarget() repoints a VALUE. A boundary is neither -- it is
+    registry/boundaries/<slug>.geojson, and nothing in this tool ever opened that directory.
+    So a merge moved the name and left the geometry where it was.
+
+    falls_lake is the case. It kept its name and its 9,529.6-acre partial trace while
+    brinkley_lake, the slug it retired, sat beside it holding 12,958: the 3DHP body INLB3
+    "Brinkley Lake" at 11,983.6, plus arm LJFWM at 975 acres, whose bounding box sits ENTIRELY
+    inside the main body's. A creek arm of the same reservoir, which attach_arms.py had already
+    judged part of it. The keeper was missing 2,454 acres of the named body before the arm is
+    even counted, and the merge note said so at the time and was not acted on.
+
+    ADOPTED ONLY WHEN THE RETIREE ALL BUT CONTAINS THE KEEPER, and never on size alone. A
+    bigger polygon is not automatically the better one -- it can be bigger because it is wrong.
+    What makes this safe is containment: brinkley holds 99.84% of falls_lake, so adopting it
+    discards 0.16% and gains 36%. Anything below --adopt-min-cover is REPORTED and left, because
+    two polygons that disagree about where the water is are a re-tracing decision and this tool
+    does not have an opinion about those.
+
+    The residual is always printed, adopted or not. "We kept 99.84% of the old trace" and "we
+    kept all of it" are different facts.
+    """
+    bdir = Path(reg_dir) / 'boundaries'
+    if not bdir.is_dir():
+        return [], 'no boundaries directory at %s' % bdir
+    try:
+        from shapely.geometry import shape
+        from shapely.ops import unary_union
+    except ImportError:
+        return [], ('shapely is absent, so containment cannot be tested -- boundaries are '
+                    'REPORTED and never adopted. py -m pip install shapely')
+
+    def poly(fp):
+        d = json.loads(fp.read_text(encoding='utf-8'))
+        feats = d.get('features') if d.get('type') == 'FeatureCollection' else [d]
+        gs = [shape(f['geometry']) for f in (feats or [])
+              if isinstance(f, dict) and f.get('geometry')]
+        return unary_union([g.buffer(0) for g in gs]) if gs else None
+
+    out = []
+    for retired, keeper in pairs.items():
+        kf, rf = bdir / (keeper + '.geojson'), bdir / (retired + '.geojson')
+        if not kf.exists() or not rf.exists():
+            continue
+        try:
+            kp, rp = poly(kf), poly(rf)
+        except Exception as exc:
+            out.append({'keeper': keeper, 'retired': retired, 'adopted': False,
+                        'why': 'unreadable (%s)' % type(exc).__name__})
+            continue
+        if kp is None or rp is None or kp.is_empty or rp.is_empty:
+            continue
+        if rp.area <= kp.area * 1.02:
+            continue                       # the keeper is already at least as big; nothing to do
+        cover = 100.0 * kp.intersection(rp).area / kp.area if kp.area else 0.0
+        lost = kp.difference(rp).area / kp.area * 100.0 if kp.area else 0.0
+        rec = {'keeper': keeper, 'retired': retired, 'cover': cover, 'lost_pct': lost,
+               'gain_pct': 100.0 * (rp.area - kp.area) / kp.area, 'adopted': False}
+        if cover < min_cover:
+            rec['why'] = ('the retiree holds only %.2f%% of the keeper -- they disagree about '
+                          'WHERE the water is, which is a re-tracing decision' % cover)
+            out.append(rec)
+            continue
+        rec['why'] = 'the retiree holds %.2f%% of the keeper and adds %.1f%%' % (cover,
+                                                                                 rec['gain_pct'])
+        if write:
+            shutil.copy2(kf, str(kf) + '.bak')
+            doc = json.loads(rf.read_text(encoding='utf-8'))
+            feats = doc.get('features') if doc.get('type') == 'FeatureCollection' else [doc]
+            geom = (feats[0] or {}).get('geometry') if feats else None
+            props = dict(((feats[0] or {}).get('properties') or {}) if feats else {})
+            props['slug'] = keeper
+            # WHERE THIS SHAPE CAME FROM TRAVELS WITH IT. audit_boundary_rings.py reads
+            # `source` to tell a deliberate cut from an unfinished trace, and a boundary that
+            # arrived from a retired slug is neither.
+            props['source'] = 'adopted from %s.geojson by migrate_merged_slugs.py' % retired
+            kf.write_text(json.dumps({'type': 'FeatureCollection', 'features': [
+                {'type': 'Feature', 'properties': props, 'geometry': geom}]}), encoding='utf-8')
+            rec['adopted'] = True
+        out.append(rec)
+    return out, None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--registry', default=None)
@@ -318,6 +410,11 @@ def main():
     ap.add_argument('--values', action='store_true',
                     help='also repoint slug VALUES -- list items, alias_of, slug_to_r2_key, and '
                          'the slug field inside a record whose key was already renamed')
+    ap.add_argument('--boundaries', action='store_true',
+                    help='also carry the BOUNDARY FILE, which is neither a key nor a value')
+    ap.add_argument('--adopt-min-cover', type=float, default=99.0,
+                    help='adopt the retiree only if it holds this percent of the keeper '
+                         '(default 99)')
     ap.add_argument('--write', action='store_true')
     args = ap.parse_args()
 
@@ -459,6 +556,25 @@ def main():
     elif not args.values:
         print('\n   note: KEYS only. Slug VALUES -- list items, alias_of, slug_to_r2_key, the slug')
         print('   field inside an already-renamed record -- are not looked at without --values.')
+
+    if args.boundaries:
+        bres, bnote = carry_boundaries(reg_dir, pairs, args.adopt_min_cover, args.write)
+        print('\n== boundary files -- neither a key nor a value')
+        if bnote:
+            print('   !! %s' % bnote)
+        if not bres:
+            print('   nothing to carry: every keeper already traces at least as much water')
+        for r in bres:
+            verb = 'ADOPTED' if r['adopted'] else ('would adopt' if 'adds' in r.get('why', '')
+                                                   else 'left alone')
+            print('   %-9s %-24s <- %-24s' % (verb, r['keeper'], r['retired']))
+            print('      %s' % r.get('why', ''))
+            if 'lost_pct' in r:
+                print('      %.2f%% of the old trace is outside the new one and is being dropped'
+                      % r['lost_pct'])
+        if any(r['adopted'] for r in bres):
+            print('   THE CHARTPACK WAS CUT TO THE OLD BOUNDARY. Rebuild every adopted slug '
+                  'before publishing.')
 
     if args.write:
         # `touched` counts files that HAD a hit; the LEAVE_ALONE ones are only reported.

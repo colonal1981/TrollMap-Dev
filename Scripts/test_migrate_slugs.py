@@ -457,3 +457,78 @@ with _tf.TemporaryDirectory() as _t:
     assert 'ZOMBIE ROWS' not in _txt, \
         'its rows are not deletion-tab material -- consolidate gates them already'
 print('lakes.json is reported and never rewritten')
+
+
+# ============================================================================================
+# THE THIRD NAMESPACE: A BOUNDARY IS A FILE.
+#
+# migrate_obj moves a KEY. retarget() repoints a VALUE. registry/boundaries/<slug>.geojson is
+# neither, and this tool never opened that directory -- so the merge moved falls_lake's name
+# and left it tracing 9,529.6 acres while brinkley_lake, the slug it retired, held 12,958:
+# the 3DHP body INLB3 at 11,983.6 plus arm LJFWM at 975, whose bounding box sits ENTIRELY
+# inside the main body's.
+#
+# ADOPTED ONLY ON CONTAINMENT, NEVER ON SIZE. A bigger polygon can be bigger because it is
+# wrong. brinkley holds 99.84% of falls_lake: adopting discards 0.16% and gains 36%.
+# ============================================================================================
+try:
+    import shapely  # noqa: F401
+    _HAVE_SHAPELY = True
+except ImportError:
+    _HAVE_SHAPELY = False
+
+
+def _box(w, s_, e, n):
+    return {'type': 'FeatureCollection', 'features': [{'type': 'Feature', 'properties': {},
+            'geometry': {'type': 'Polygon', 'coordinates': [[[w, s_], [e, s_], [e, n],
+                                                             [w, n], [w, s_]]]}}]}
+
+
+if _HAVE_SHAPELY:
+    with _tf.TemporaryDirectory() as _t:
+        _r = Path(_t); (_r / 'boundaries').mkdir(parents=True)
+        B = _r / 'boundaries'
+        # the falls_lake shape: the retiree contains the keeper and adds a third again
+        (B / 'keeper.geojson').write_text(json.dumps(_box(0.0, 0.0, 1.0, 1.0)))
+        (B / 'retiree.geojson').write_text(json.dumps(_box(0.0, 0.0, 1.0, 1.4)))
+        # two traces that DISAGREE about where the water is -- barely overlapping
+        (B / 'k2.geojson').write_text(json.dumps(_box(0.0, 0.0, 1.0, 1.0)))
+        (B / 'r2.geojson').write_text(json.dumps(_box(0.9, 0.0, 3.0, 1.0)))
+        # a keeper already bigger than what it retired
+        (B / 'k3.geojson').write_text(json.dumps(_box(0.0, 0.0, 2.0, 2.0)))
+        (B / 'r3.geojson').write_text(json.dumps(_box(0.0, 0.0, 1.0, 1.0)))
+        PAIRS = {'retiree': 'keeper', 'r2': 'k2', 'r3': 'k3'}
+
+        res, note = mms.carry_boundaries(_r, PAIRS, 99.0, False)
+        eq(note, None, 'shapely is here, so containment can be tested')
+        by = {r['keeper']: r for r in res}
+        assert 'k3' not in by, 'a keeper already bigger than its retiree is not a finding'
+        eq(round(by['keeper']['cover'], 1), 100.0, 'the retiree contains the keeper entirely')
+        eq(by['keeper']['adopted'], False, 'A DRY RUN MUST CHANGE NOTHING')
+        eq(json.loads((B / 'keeper.geojson').read_text())['features'][0]['geometry'
+           ]['coordinates'][0][2], [1.0, 1.0], 'and the file still has its old corner')
+        assert by['k2']['cover'] < 99.0 and 're-tracing decision' in by['k2']['why'], by['k2']
+        eq(by['k2']['adopted'], False, 'two traces that disagree are never adopted')
+
+        res, note = mms.carry_boundaries(_r, PAIRS, 99.0, True)
+        by = {r['keeper']: r for r in res}
+        eq(by['keeper']['adopted'], True, 'the falls_lake case is adopted on a write')
+        eq(by['k2']['adopted'], False, 'the disagreeing pair still is not')
+        got = json.loads((B / 'keeper.geojson').read_text())['features'][0]
+        eq(got['geometry']['coordinates'][0][2], [1.0, 1.4],
+           'the keeper now holds the retiree geometry')
+        eq(got['properties']['slug'], 'keeper', 'filed under the KEEPER slug, not the retiree')
+        assert 'adopted from retiree.geojson' in got['properties']['source'], got['properties']
+        assert (B / 'keeper.geojson.bak').exists(), 'a backup MUST be written'
+        eq(json.loads((B / 'keeper.geojson.bak').read_text())['features'][0]['geometry'
+           ]['coordinates'][0][2], [1.0, 1.0], 'and the backup is the original')
+        eq(json.loads((B / 'k2.geojson').read_text())['features'][0]['geometry'
+           ]['coordinates'][0][2], [1.0, 1.0], 'the refused one is untouched on disk')
+    print('a boundary is carried only when the retiree all but contains the keeper')
+
+with _tf.TemporaryDirectory() as _t:
+    _r = Path(_t)
+    res, note = mms.carry_boundaries(_r, {'a': 'b'}, 99.0, False)
+    eq(res, [], 'no boundaries directory yields nothing')
+    assert note and 'no boundaries directory' in note, 'and says why rather than passing quietly'
+print('a missing boundaries directory is reported, not silently skipped')
