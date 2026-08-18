@@ -296,6 +296,44 @@ def _sibling_region(path):
     return mod.Region.load(path, required=False)
 
 
+def drop_retired(idx, registry_dir):
+    """Remove every slug a merge has already retired. Returns (removed, note).
+
+    A MERGED-AWAY SLUG MUST NOT COME BACK, and until 2026-08-17 it always did.
+    merge_duplicate_waters.py removes the slug from lake_index.json and
+    migrate_merged_slugs.py repairs the slug-keyed sidecars, but NEITHER touches lakes.json --
+    deliberately, for the reason given at the unbuildable gate below: lakes.json is the record
+    of what EXISTS and a merge is a statement about what the app OFFERS. So this script, which
+    rebuilds the index FROM lakes.json, resurrected all five on the next run:
+    brinkley_lake, persimmon_lake, kings_mountain_reservoir, lake_lookout and wilson_dam were
+    back in the index at 455 rows, each one a water Ryan had already decided was the same water
+    as its keeper under a different name. The merges looked like they worked. They lasted until
+    the next consolidate.
+
+    registry/_deletion_tab.json is where merge_duplicate_waters.py writes them, so it is the
+    authoritative list and this needs no second copy of the decision.
+
+    A missing or unreadable tab is NOT fatal -- but it is said out loud, because silently
+    skipping this gate is the failure it exists to prevent.
+    """
+    fp = os.path.join(registry_dir, '_deletion_tab.json')
+    if not os.path.exists(fp):
+        return [], 'no _deletion_tab.json -- merged slugs are NOT being filtered'
+    try:
+        tab = (json.load(open(fp, encoding='utf-8')) or {}).get('retired') or []
+    except Exception as exc:
+        return [], '_deletion_tab.json unreadable (%s: %s) -- merged slugs are NOT being filtered' % (
+            type(exc).__name__, exc)
+    removed = []
+    for e in tab:
+        slug = (e or {}).get('slug')
+        if slug and slug in idx:
+            removed.append({'slug': slug, 'merged_into': e.get('merged_into'),
+                            'name': idx[slug].get('name')})
+            del idx[slug]
+    return removed, None
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -764,6 +802,15 @@ def main():
     #
     # The key is the build's own verdict, not a guess and not an acreage proxy: charted == 0 AND
     # a recorded `skipped` reason. `build_chartpack.py` refused each of these and wrote down why.
+    # ── the merge gate: nothing that was merged away comes back ─────────────────────────
+    retired, why = drop_retired(idx, R)
+    if why:
+        print('!! %s' % why)
+    if retired:
+        print('merged away, kept out of the index: %d' % len(retired))
+        for e in retired:
+            print('   %-28s -> %s' % (e['slug'], e['merged_into']))
+
     dropped = []
     if not a.keep_unbuildable and charted:
         for slug in list(idx):
