@@ -329,15 +329,17 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
     write(bdir, 'moved_on', [[grew]])
     write(bdir, 'still_true', [[sq(-79.70, 35.00, 0.05)]])
     truth = abr.acres_of([[sq(-79.70, 35.00, 0.05)]])
+    small = abr.acres_of([[sq(-78.70, 36.00, 0.05)]])
     json.dump({'bindings': {
-        # the falls_lake case: the file grew and the binding still describes the old one
-        'moved_on': {'registry_acres': abr.acres_of([[sq(-78.70, 36.00, 0.05)]]),
+        # the falls_lake case: the file grew after the binding measured it
+        'moved_on': {'boundary_acres': small, 'registry_acres': small,
                      'nhd_union_acres': 999.0, 'nhd_union_pieces': 1,
                      'nhd_layer': 'NHDWaterbody',
                      'registry_covers_pct_of_union': 12.0,
                      'union_covers_pct_of_registry': 12.0},
         # measured against what is actually there
-        'still_true': {'registry_acres': truth, 'nhd_union_acres': truth * 2,
+        'still_true': {'boundary_acres': truth, 'registry_acres': truth,
+                       'nhd_union_acres': truth * 2,
                        'nhd_union_pieces': 1, 'nhd_layer': 'NHDWaterbody',
                        'registry_covers_pct_of_union': 50.0,
                        'union_covers_pct_of_registry': 100.0},
@@ -346,7 +348,7 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
 
     rc, txt = run(['x', '--registry', reg])
     eq(rc, 0, txt)
-    blk = txt.split('no longer describes the boundary on disk')[1]
+    blk = txt.split('computed against a DIFFERENT boundary')[1]
     assert 'moved_on' in blk, 'a boundary that changed since the binding must be named'
     assert 'still_true' not in blk, 'and one that did not must not be'
     assert 'match_waters_to_nhd' in blk, 'and it says what to re-run'
@@ -358,9 +360,74 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         'fact about a polygon that no longer exists'
     assert 'still_true' in cov, 'a fresh binding still reports normally'
     assert '1 stale binding' in txt, 'and the closing line counts them'
+    # AND THE OTHER DISAGREEMENT IS NOT THE SAME ONE. registry_acres is lake_index's number
+    # about a different file; it cannot say whether a binding is fresh, and treating it as if
+    # it could is what flagged two waters whose coverage was 100/100 and told them to re-run
+    # the wrong script.
+    idx_blk = txt.split('lake_index.json disagrees')[1]
+    assert 'moved_on' not in idx_blk, 'its index matches its own binding; only the file moved'
 
     # --max-drift is the tolerance, not a fixed rule
     rc, txt2 = run(['x', '--registry', reg, '--max-drift', '99'])
     assert 'moved_on' in txt2.split('MISSES WATER')[1].split('CLAIMS WATER')[0], \
         'raise the tolerance far enough and it is trusted again'
 print('a binding measured against a polygon that has since changed is not reported as fact')
+
+
+# ============================================================================================
+# TWO DISAGREEMENTS, AND ONLY ONE OF THEM INVALIDATES THE COVERAGE.
+#
+# boundary_acres is what match_waters_to_nhd.py measured from THIS polygon when it computed the
+# percentages. registry_acres is lake_index.json's area_acres -- a different number about a
+# different file, which goes stale when the index is rebuilt and does not move when the
+# boundary changes.
+#
+# Asking registry_acres whether a binding was fresh flagged lockwoods_folly_river and
+# water_l4551 on 2026-08-18. Both had coverage of 100/100, measured from the polygon and
+# perfectly valid, and both were told to re-run the wrong script.
+# ============================================================================================
+with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
+    reg = os.path.join(td, 'registry')
+    bdir = os.path.join(reg, 'boundaries')
+    os.makedirs(bdir)
+    write(bdir, 'index_is_old', [[sq(-79.70, 35.00, 0.05)]])
+    on_disk = abr.acres_of([[sq(-79.70, 35.00, 0.05)]])
+    json.dump({'bindings': {'index_is_old': {
+        'boundary_acres': on_disk,        # the binding measured what is really there
+        'registry_acres': on_disk * 1.4,  # the index did not
+        'nhd_union_acres': on_disk, 'nhd_union_pieces': 1, 'nhd_layer': 'NHDWaterbody',
+        'registry_covers_pct_of_union': 100.0, 'union_covers_pct_of_registry': 100.0,
+    }}}, open(os.path.join(reg, '_nhd_bindings.json'), 'w'))
+    json.dump({'index_is_old': {}}, open(os.path.join(reg, 'lake_index.json'), 'w'))
+
+    rc, txt = run(['x', '--registry', reg])
+    eq(rc, 0, txt)
+    assert 'index_is_old' not in txt.split('computed against a DIFFERENT boundary')[1
+        ].split('lake_index.json disagrees')[0], \
+        'the BINDING is fresh -- it measured the polygon that is on disk'
+    assert 'index_is_old' in txt.split('lake_index.json disagrees')[1], \
+        'but the INDEX is out of date and that is its own finding'
+    assert 'consolidate_lake_index' in txt, 'and it names the script that recomputes area_acres'
+    assert 'does NOT invalidate the coverage' in txt, \
+        'and says outright that the percentages above are still good'
+    assert '1 index disagreement' in txt, 'the closing line counts them separately'
+print('an out-of-date index is its own finding and does not suppress a valid measurement')
+
+# A BINDING WITH NO STAMP CANNOT BE CHECKED, and saying "none" would claim otherwise.
+with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
+    reg = os.path.join(td, 'registry')
+    bdir = os.path.join(reg, 'boundaries')
+    os.makedirs(bdir)
+    write(bdir, 'no_stamp', [[sq(-79.70, 35.00, 0.05)]])
+    a_ = abr.acres_of([[sq(-79.70, 35.00, 0.05)]])
+    json.dump({'bindings': {'no_stamp': {
+        'registry_acres': a_, 'nhd_union_acres': a_, 'nhd_union_pieces': 1,
+        'nhd_layer': 'NHDWaterbody',
+        'registry_covers_pct_of_union': 100.0, 'union_covers_pct_of_registry': 100.0,
+    }}}, open(os.path.join(reg, '_nhd_bindings.json'), 'w'))
+    json.dump({'no_stamp': {}}, open(os.path.join(reg, 'lake_index.json'), 'w'))
+    rc, txt = run(['x', '--registry', reg])
+    assert 'unknown for 1 binding' in txt, \
+        'a binding with no boundary_acres cannot be called fresh: %s' % txt
+    assert 'nothing' in txt.split('computed against a DIFFERENT boundary')[1][:400]
+print('a binding with no stamp is reported as unknown, never as clean')

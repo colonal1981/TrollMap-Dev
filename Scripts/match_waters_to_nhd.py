@@ -43,6 +43,39 @@ BOUNDS_REL = 'registry/boundaries'
 DEFAULT_NHD = Path(r'F:\TrollMapPipeline\NHD')
 
 
+SQM_PER_ACRE = 4046.8564224
+EARTH_R_M = 6371008.8
+
+
+def _sphere_acres(geom):
+    """Acres of a lon/lat shapely polygon, by spherical excess.
+
+    Shapely's .area on lon/lat is degrees squared and means nothing. The same formula
+    audit_boundary_rings.py uses, so the number this records and the number that audit measures
+    are comparable -- which is the entire point of recording it.
+    """
+    import math
+    def ring(coords):
+        pts = list(coords)
+        if len(pts) < 4:
+            return 0.0
+        t = 0.0
+        for k in range(len(pts) - 1):
+            x1, y1 = math.radians(pts[k][0]), math.radians(pts[k][1])
+            x2, y2 = math.radians(pts[k + 1][0]), math.radians(pts[k + 1][1])
+            t += (x2 - x1) * (2 + math.sin(y1) + math.sin(y2))
+        return abs(t * EARTH_R_M * EARTH_R_M / 2.0)
+    total = 0.0
+    parts = list(geom.geoms) if hasattr(geom, 'geoms') else [geom]
+    for part in parts:
+        if not hasattr(part, 'exterior'):
+            continue
+        total += ring(part.exterior.coords)
+        for h in part.interiors:
+            total -= ring(h.coords)
+    return round(total / SQM_PER_ACRE, 1)
+
+
 def find_repo_root(explicit=None):
     if explicit:
         p = Path(explicit)
@@ -368,6 +401,15 @@ def main():
                 'nhd_acres': round(sum(float(cols['AreaSqKm'][j] or 0)
                                        for j in src_rows) * 247.105, 1),
                 'nhd_ftype': int(cols['FType'][j0] or 0),
+                # THE ACREAGE OF THE BOUNDARY THIS BINDING WAS COMPUTED AGAINST, measured
+                # here, spherically, from the same polygon the percentages above came from.
+                #
+                # `registry_acres` below is lake_index.json's number and is NOT that. It goes
+                # stale when the index is rebuilt and it does not move when the boundary
+                # changes -- so it cannot answer "is this binding still about this polygon".
+                # audit_boundary_rings.py asked it anyway on 2026-08-18 and reported
+                # falls_lake's coverage to the acre after the boundary had grown 36%.
+                'boundary_acres': _sphere_acres(g),
                 'registry_acres': reg[slug].get('area_acres'),
                 'registry_gnis': reg[slug].get('gnis'),
                 'pct_of_registry_polygon': round(pct_reg, 1),

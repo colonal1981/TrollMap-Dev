@@ -22,7 +22,7 @@ Two different faults produce a wrong boundary and NOTHING on the drive looked fo
                           prestwood_lake 193 against 454; rhodes_pond 91 against 274. Nobody
                           drew the whole water. These need re-tracing, not re-nesting.
 
-A STORED PERCENTAGE IS ABOUT THE POLYGON IT WAS COMPUTED AGAINST
+A STORED PERCENTAGE IS ABOUT THE POLYGON IT WAS COMPUTED AGAINST, AND ONLY ONE FIELD KNOWS WHICH
 
 Every number in the coverage report comes from registry/_nhd_bindings.json, measured by
 match_waters_to_nhd.py against the boundary as it stood at the time. Nothing re-checked that
@@ -31,9 +31,20 @@ a 36% change -- and this audit went on reporting "79.4% covers, 99.8% of mine" t
 about a shape that was no longer on disk. Two others had been stale for longer:
 lockwoods_folly_river by -23.8% and water_l4551 by -11.1%.
 
-The check costs nothing. This tool already measures each file's acreage, and the binding
-carries the acreage it was computed against. Where they disagree, the coverage is NOT reported
-at all -- a stale number is worse than no number, because it looks like an answer.
+The first version of this check asked `registry_acres`, and that is lake_index.json's number
+about a different file. It goes stale when the index is rebuilt and it does not move when the
+boundary changes, so it cannot answer the question at all -- it happened to catch falls_lake
+only because the index was ALSO out of date, and it wrongly condemned lockwoods_folly_river and
+water_l4551, whose coverage was 100/100 and measured from the polygon.
+
+So match_waters_to_nhd.py now stamps `boundary_acres`: what it measured, from this polygon,
+when it computed these percentages. That is the field that can answer it, and where it
+disagrees with the file the coverage is NOT reported at all -- a stale number is worse than no
+number, because it looks like an answer. A binding carrying no stamp is reported as UNKNOWN,
+never as clean.
+
+lake_index disagreeing with the boundary is a real fault too, and a different one with a
+different remedy, so it has its own section and does not suppress anything.
 
 AREA IS NOT COVERAGE, AND MEASURING IT AS AREA WAS WRONG UNTIL 2026-08-18
 
@@ -322,6 +333,7 @@ def main() -> int:
         names = [f for f in names if f[:-8] in want]
 
     flat, short, over, legacy, stale, unread, fixed = [], [], [], [], [], [], 0
+    index_off, no_stamp = [], []
     kept_acres = {}
     for fn in names:
         slug = fn[:-8]
@@ -367,10 +379,26 @@ def main() -> int:
         # The check is free: `corrected` is this file's acreage, measured a few lines up, and
         # the binding carries the acreage it was computed against. If they disagree the binding
         # is stale, and a stale number is worse than no number because it looks like an answer.
+        # TWO DIFFERENT DISAGREEMENTS, AND ONLY ONE OF THEM INVALIDATES THE COVERAGE.
+        #
+        # `boundary_acres` is what match_waters_to_nhd.py measured from THIS polygon when it
+        # computed the percentages. If the file has changed since, those percentages describe a
+        # shape that is gone, and printing them is worse than printing nothing.
+        #
+        # `registry_acres` is lake_index.json's area_acres, which is a different number about a
+        # different file. It goes stale when the index is rebuilt and does not move when the
+        # boundary changes. Asking IT whether a binding is fresh is the mistake this pair of
+        # checks replaced: it flagged lockwoods_folly_river and water_l4551, whose coverage was
+        # 100/100 and perfectly valid, and told them to re-run the wrong script.
+        ba = b.get('boundary_acres')
+        if ba and abs(corrected - ba) / ba * 100.0 >= a.max_drift:
+            stale.append((slug, corrected, ba, 100.0 * (corrected - ba) / ba))
+            continue
         ra = b.get('registry_acres')
         if ra and abs(corrected - ra) / ra * 100.0 >= a.max_drift:
-            stale.append((slug, corrected, ra, 100.0 * (corrected - ra) / ra))
-            continue
+            index_off.append((slug, corrected, ra, 100.0 * (corrected - ra) / ra))
+        if ba is None:
+            no_stamp.append(slug)
         cov = b.get('registry_covers_pct_of_union')
         mine = b.get('union_covers_pct_of_registry')
         if cov is not None:
@@ -417,16 +445,32 @@ def main() -> int:
                       % (slug, cov, mine or 0.0, ref or 0.0, pieces, src))
             print('   %s' % note)
 
-    print('\n== the binding no longer describes the boundary on disk (%d)' % len(stale))
+    print('\n== the binding was computed against a DIFFERENT boundary than the one on disk (%d)'
+          % len(stale))
     if stale:
-        print('   %-26s %12s %12s %8s' % ('slug', 'file now', 'binding says', 'drift'))
+        print('   %-26s %12s %12s %8s' % ('slug', 'file now', 'measured then', 'drift'))
         for slug, now, was, pct in sorted(stale, key=lambda r: -abs(r[3])):
             print('   %-26s %12.1f %12.1f %7.1f%%' % (slug, now, was, pct))
-        print('   Their coverage is NOT reported: every percentage in this audit was computed')
-        print('   against the boundary as it stood then, and a stale number is worse than no')
-        print('   number because it looks like an answer. Re-run match_waters_to_nhd.py.')
+        print('   Their coverage is NOT reported. Those percentages describe a shape that is')
+        print('   gone, and a stale number is worse than no number because it looks like an')
+        print('   answer. Re-run match_waters_to_nhd.py.')
+    elif no_stamp:
+        print('   unknown for %d binding(s): they carry no boundary_acres, so there is nothing'
+              % len(no_stamp))
+        print('   to compare against. Re-run match_waters_to_nhd.py once to stamp them.')
     else:
         print('   none -- every binding was computed against the boundary that is there now')
+
+    print('\n== lake_index.json disagrees with the boundary on disk (%d)' % len(index_off))
+    if index_off:
+        print('   %-26s %12s %12s %8s' % ('slug', 'boundary', 'index says', 'drift'))
+        for slug, now, was, pct in sorted(index_off, key=lambda r: -abs(r[3])):
+            print('   %-26s %12.1f %12.1f %7.1f%%' % (slug, now, was, pct))
+        print('   This does NOT invalidate the coverage above -- those are measured from the')
+        print('   polygon, not from the index. It is area_acres that is out of date, and')
+        print('   consolidate_lake_index.py is what recomputes it.')
+    else:
+        print('   none -- every index acreage matches the boundary it describes')
 
     if legacy:
         print('\n== %d binding(s) predate the union fields, measured the old way' % len(legacy))
@@ -478,8 +522,9 @@ def main() -> int:
             print('   %-28s %s' % (slug, why))
 
     print('\n%d boundary file(s) read; %d flattened; %d missing water; %d displaced; '
-          '%d stale binding(s)'
-          % (len(names) - len(unread), len(flat), len(short), len(over), len(stale)))
+          '%d stale binding(s); %d index disagreement(s)'
+          % (len(names) - len(unread), len(flat), len(short), len(over), len(stale),
+             len(index_off)))
     if a.fix:
         print('%d rewritten, each with a .bak beside it' % fixed)
         if fixed:
