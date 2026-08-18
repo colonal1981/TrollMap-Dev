@@ -22,6 +22,33 @@ Two different faults produce a wrong boundary and NOTHING on the drive looked fo
                           prestwood_lake 193 against 454; rhodes_pond 91 against 274. Nobody
                           drew the whole water. These need re-tracing, not re-nesting.
 
+AREA IS NOT COVERAGE, AND MEASURING IT AS AREA WAS WRONG UNTIL 2026-08-18
+
+The second test compared this polygon's acres against `nhd_acres` -- ONE NHD piece -- and read
+the sign of the difference. Both halves of that are wrong and the registry showed it:
+
+    40 FALSE POSITIVES. NHDArea splits a river into pieces where the registry keeps it whole;
+    altamaha_river matched a 1,834-acre piece of a 4,203-acre union, so a polygon covering
+    100% of its water was reported 204% too large. Every one of the 40 "LARGER than NHD" rows
+    was that, and the corrected list is EMPTY.
+
+    ONE MISS THAT MATTERED. neuse_river is 6,066 acres against an NHD union of 6,623 -- 1.4%
+    large by area, so it never appeared. It covers 70.6% of its water and only 77% of its own
+    polygon IS that water. The area test passed a boundary that is substantially in the wrong
+    place, which is the one thing this audit exists to catch.
+
+registry/_nhd_bindings.json already carried the right numbers and nothing read them:
+
+    registry_covers_pct_of_union   how much of the WATER this polygon covers -- it MISSES
+    union_covers_pct_of_registry   how much of this POLYGON is water   -- it is DISPLACED
+
+Two numbers, two different faults, and a water can be on both lists at once.
+
+A CUT IS NOT A DEFECT. cooper_river covers 27% of its NHD union because the NHD Cooper runs to
+the ocean and the registry keeps the freshwater half; santee_river and combahee_river are the
+same. So the report prints the `source` each boundary carries -- a `_river` cut says who made
+it and why it is short -- and leaves the judgement to whoever reads it.
+
 Both are "this polygon is not that water", so they are one audit and not two.
 
 HOW EACH IS DETECTED, AND WHY THE FIRST NEEDS NO REFERENCE DATA
@@ -215,6 +242,22 @@ def acres_of(polys):
     return total / SQM_PER_ACRE
 
 
+def source_of(doc):
+    """The `source` property the cutter stamps on a boundary, or '(none)'.
+
+    A boundary that was CUT ON PURPOSE reads short and is not wrong: cooper_river covers 27% of
+    its NHD union because the NHD Cooper runs to the ocean and the registry keeps only the
+    freshwater half. Printing where the file came from is what lets that be told apart from
+    falls_lake, which is simply not finished. Read the field that travels with the value.
+    """
+    feats = doc.get('features') if doc.get('type') == 'FeatureCollection' else [doc]
+    for f in (feats or []):
+        src = ((f or {}).get('properties') or {}).get('source')
+        if src:
+            return src
+    return '(none)'
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -222,8 +265,14 @@ def main() -> int:
     ap.add_argument('--boundaries', default=None, help='default <registry>/boundaries')
     ap.add_argument('--fix', action='store_true',
                     help='rewrite files whose rings are flattened (.bak first). Never re-traces.')
+    ap.add_argument('--min-cover', type=float, default=95.0,
+                    help='flag a boundary covering less than this percent of the NHD union '
+                         '(default 95)')
+    ap.add_argument('--min-mine', type=float, default=60.0,
+                    help='flag a boundary less than this percent of which is NHD water '
+                         '(default 60)')
     ap.add_argument('--min-pct', type=float, default=2.0,
-                    help='report an NHD disagreement only above this percent (default 2)')
+                    help='only used for bindings too old to carry the union fields')
     ap.add_argument('--only', nargs='*', help='slugs, for checking one water')
     a = ap.parse_args()
 
@@ -250,7 +299,7 @@ def main() -> int:
         want = set(a.only)
         names = [f for f in names if f[:-8] in want]
 
-    flat, short, over, unread, fixed = [], [], [], [], 0
+    flat, short, over, legacy, unread, fixed = [], [], [], [], [], 0
     for fn in names:
         slug = fn[:-8]
         fp = os.path.join(bdir, fn)
@@ -281,12 +330,20 @@ def main() -> int:
                 fixed += 1
 
         b = nhd.get(slug) or {}
-        ref = b.get('nhd_acres')
-        if ref:
-            pct = 100.0 * (corrected - ref) / ref
-            if abs(pct) >= a.min_pct:
-                (short if pct < 0 else over).append((slug, corrected, ref, pct,
-                                                     b.get('nhd_layer')))
+        cov = b.get('registry_covers_pct_of_union')
+        mine = b.get('union_covers_pct_of_registry')
+        if cov is not None:
+            ref = b.get('nhd_union_acres') or b.get('nhd_acres')
+            if cov < a.min_cover:
+                short.append((slug, corrected, ref, cov, mine, b.get('nhd_layer'),
+                              b.get('nhd_union_pieces'), source_of(doc)))
+            if mine is not None and mine < a.min_mine:
+                over.append((slug, corrected, ref, cov, mine, b.get('nhd_layer'),
+                             b.get('nhd_union_pieces'), source_of(doc)))
+        else:
+            ref = b.get('nhd_acres')
+            if ref:
+                legacy.append((slug, corrected, ref, 100.0 * (corrected - ref) / ref))
 
     print('== rings flattened -- islands written as water (%d)' % len(flat))
     if flat:
@@ -300,27 +357,37 @@ def main() -> int:
     else:
         print('   none -- every multi-part boundary declares its own holes')
 
-    for label, rows, note in (
-            ('boundary STOPS SHORT of the NHD polygon', short,
-             'the trace is smaller than the water. Re-tracing is a decision, not a repair.'),
-            ('boundary is LARGER than the NHD polygon', over,
-             'either the trace overreaches, or NHD splits what the registry keeps whole.')):
-        print('\n== %s, over %.0f%% (%d)' % (label, a.min_pct, len(rows)))
+    for label, rows, gate, note in (
+            ('boundary MISSES WATER -- it covers less than %.0f%% of the NHD union' % a.min_cover,
+             short, 'covers',
+             'everything it traces may be right; it simply stops. Re-tracing is a decision, '
+             'not a repair, so nothing here is fixed automatically.'),
+            ('boundary CLAIMS WATER THAT IS NOT THIS WATER -- under %.0f%% of it is NHD water'
+             % a.min_mine, over, 'of mine',
+             'the polygon is in the wrong place, not merely the wrong size. A water can be on '
+             'both lists at once, and that one is displaced rather than short.')):
+        print('\n== %s (%d)' % (label, len(rows)))
         if rows:
-            print('   %-28s %12s %12s %8s  %s' % ('slug', 'boundary', 'NHD', 'diff', 'layer'))
-            for slug, cor, ref, pct, layer in sorted(rows, key=lambda r: abs(r[3]),
-                                                     reverse=True)[:40]:
-                print('   %-28s %12.1f %12.1f %7.1f%%  %s' % (slug, cor, ref, pct, layer))
-            if len(rows) > 40:
-                print('   ... and %d more' % (len(rows) - 40))
+            print('   %-26s %8s %8s %11s %6s  %s'
+                  % ('slug', 'covers', 'of mine', 'union ac', 'pieces', 'source'))
+            for slug, cor, ref, cov, mine, layer, pieces, src in sorted(
+                    rows, key=lambda r: (r[3] if gate == 'covers' else (r[4] or 0))):
+                print('   %-26s %7.1f%% %7.1f%% %11.1f %6s  %s'
+                      % (slug, cov, mine or 0.0, ref or 0.0, pieces, src))
             print('   %s' % note)
+
+    if legacy:
+        print('\n== %d binding(s) predate the union fields, measured the old way' % len(legacy))
+        print('   Re-run match_waters_to_nhd.py; area against ONE NHD piece is not coverage.')
+        for slug, cor, ref, pct in sorted(legacy, key=lambda r: -abs(r[3]))[:10]:
+            print('   %-26s %12.1f %12.1f %7.1f%%' % (slug, cor, ref, pct))
 
     if unread:
         print('\n== unreadable (%d)' % len(unread))
         for slug, why in unread[:20]:
             print('   %-28s %s' % (slug, why))
 
-    print('\n%d boundary file(s) read; %d flattened; %d short; %d large'
+    print('\n%d boundary file(s) read; %d flattened; %d missing water; %d displaced'
           % (len(names) - len(unread), len(flat), len(short), len(over)))
     if a.fix:
         print('%d rewritten, each with a .bak beside it' % fixed)

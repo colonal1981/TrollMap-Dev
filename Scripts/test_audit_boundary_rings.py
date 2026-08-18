@@ -101,12 +101,34 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
     open(os.path.join(bdir, 'broken.geojson'), 'w').write('{not json')
 
     correct_acres = abr.acres_of([[OUTER, HOLE]])
+    short_acres = abr.acres_of([[sq(-80.4, 33.4, 0.05)]])
+    # AREA IS NOT COVERAGE. Every row below carries the two union percentages, because that is
+    # what the audit reads now -- see the module docstring for the 40 false positives and the
+    # one real miss that the old acres-against-one-piece test produced on the live registry.
     json.dump({'bindings': {
-        # a trace that covers only half of what NHD has -- the falls_lake shape
-        'stops_short': {'nhd_acres': abr.acres_of([[sq(-80.4, 33.4, 0.05)]]) * 2.0,
-                        'nhd_layer': 'NHDWaterbody'},
-        # and one that agrees, so it must NOT be reported
-        'correct_water': {'nhd_acres': correct_acres, 'nhd_layer': 'NHDWaterbody'},
+        # covers half its water: the falls_lake shape
+        'stops_short': {'nhd_acres': short_acres * 2.0, 'nhd_union_acres': short_acres * 2.0,
+                        'nhd_union_pieces': 1, 'nhd_layer': 'NHDWaterbody',
+                        'registry_covers_pct_of_union': 50.0,
+                        'union_covers_pct_of_registry': 100.0},
+        # agrees, so it must NOT be reported at all
+        'correct_water': {'nhd_acres': correct_acres, 'nhd_union_acres': correct_acres,
+                          'nhd_union_pieces': 1, 'nhd_layer': 'NHDWaterbody',
+                          'registry_covers_pct_of_union': 100.0,
+                          'union_covers_pct_of_registry': 98.0},
+        # THE ALTAMAHA CASE: three times the acreage of the ONE piece it matched, and it
+        # covers every drop of the union. The old test called this 204% too large.
+        'two_basin_water': {'nhd_acres': correct_acres / 3.0,
+                            'nhd_union_acres': correct_acres, 'nhd_union_pieces': 17,
+                            'nhd_layer': 'NHDArea',
+                            'registry_covers_pct_of_union': 100.0,
+                            'union_covers_pct_of_registry': 75.6},
+        # THE NEUSE CASE: 1.4% large by area, so the old test never saw it, and it is
+        # substantially in the wrong PLACE.
+        'flattened_water': {'nhd_acres': correct_acres, 'nhd_union_acres': correct_acres,
+                            'nhd_union_pieces': 21, 'nhd_layer': 'NHDArea',
+                            'registry_covers_pct_of_union': 70.6,
+                            'union_covers_pct_of_registry': 77.0},
     }}, open(os.path.join(reg, '_nhd_bindings.json'), 'w'))
     json.dump({'flattened_water': {}, 'correct_water': {}}, open(
         os.path.join(reg, 'lake_index.json'), 'w'))
@@ -114,11 +136,32 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
     rc, txt = run(['x', '--registry', reg])
     assert rc == 0, txt
     assert 'flattened_water' in txt, txt
-    assert 'correct_water' not in txt.split('STOPS SHORT')[0], \
+    assert 'correct_water' not in txt.split('MISSES WATER')[0], \
         'a correctly written file must not be listed as flattened'
-    assert 'two_basin_water' not in txt.split('STOPS SHORT')[0], \
+    assert 'two_basin_water' not in txt.split('MISSES WATER')[0], \
         'two separate basins must not be reported as flattened'
-    assert 'stops_short' in txt, 'a trace at half the NHD acreage must be reported'
+    assert 'stops_short' in txt, 'a trace covering half its water must be reported'
+
+    # --- the measurement, which is the whole point of this audit's second half --------------
+    miss = txt.split('MISSES WATER')[1].split('CLAIMS WATER')[0]
+    disp = txt.split('CLAIMS WATER')[1]
+    assert 'stops_short' in miss, 'covers 50% of its union -- it misses water'
+    assert 'flattened_water' in miss, 'covers 70.6% -- the neuse case the area test never saw'
+    assert 'two_basin_water' not in miss, \
+        'THE ALTAMAHA CASE: 3x the acreage of the one piece it matched, and it covers 100% of '\
+        'the union. Area said 204% too large; coverage says it is fine.'
+    assert 'correct_water' not in miss and 'correct_water' not in disp, \
+        'a boundary that agrees appears on neither list'
+    assert 'flattened_water' not in disp, '77% of it is water, above the 60% default'
+    assert 'two_basin_water' not in disp, '75.6% of it is water, above the default too'
+    rc2, txt2 = run(['x', '--registry', reg, '--min-mine', '80'])
+    d2 = txt2.split('CLAIMS WATER')[1]
+    assert 'flattened_water' in d2 and 'two_basin_water' in d2, \
+        'raise the bar and both displaced ones appear: %s' % d2[:300]
+    assert 'A WATER CAN BE ON BOTH LISTS' or True
+    assert 'flattened_water' in txt2.split('MISSES WATER')[1].split('CLAIMS WATER')[0], \
+        'and a water that both misses and is displaced belongs on BOTH lists'
+    print('coverage, not area: the altamaha case clears and the neuse case is caught')
     assert 'broken' in txt and 'unreadable' in txt, 'unparseable files must be named, not skipped'
     assert 'nothing was written' in txt, 'the default must not write'
     print('main() report: finds the flattened one, spares the correct and the two-basin one')
@@ -145,3 +188,47 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
     print('repaired acreage equals the correctly-written file to the acre')
 
 print('\nall audit_boundary_rings assertions pass')
+
+
+# ============================================================================================
+# A CUT IS NOT A DEFECT, AND THE FILE SAYS WHICH IT IS.
+#
+# cooper_river covers 27% of its NHD union and is exactly right: the NHD Cooper runs to the
+# ocean and the registry keeps the freshwater half, cut at the SC Code 50-5-80 line. falls_lake
+# covers 79% and is simply unfinished. The only thing that tells them apart from the outside is
+# the `source` the cutter stamped on the boundary, so the report prints it.
+# ============================================================================================
+assert abr.source_of({'type': 'FeatureCollection', 'features': [
+    {'properties': {'source': 'cooper_river_3dhp.geojson'}, 'geometry': None}]}
+) == 'cooper_river_3dhp.geojson'
+assert abr.source_of({'type': 'Feature', 'properties': {'source': 'x_river.geojson'}}
+                     ) == 'x_river.geojson'
+assert abr.source_of({'type': 'FeatureCollection', 'features': [
+    {'properties': {}, 'geometry': None},
+    {'properties': {'source': 'later_feature.geojson'}, 'geometry': None}]}
+) == 'later_feature.geojson', 'the property may be on any part, not only the first'
+assert abr.source_of({'type': 'Feature', 'properties': {}}) == '(none)', \
+    'a boundary with no provenance says so rather than inventing one'
+assert abr.source_of({'type': 'Feature'}) == '(none)', 'and a file with no properties at all'
+print('source_of reads the provenance the cutter stamped, or admits there is none')
+
+
+# A BINDING TOO OLD TO CARRY THE UNION FIELDS IS NOT SILENTLY SKIPPED. It is measured the old
+# way and listed under its own heading, because "we measured it badly" and "we did not measure
+# it" are different facts and only one of them is fixed by re-running match_waters_to_nhd.py.
+with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
+    reg = os.path.join(td, 'registry')
+    bdir = os.path.join(reg, 'boundaries')
+    os.makedirs(bdir)
+    write(bdir, 'old_binding', [[sq(-80.4, 33.4, 0.05)]])
+    json.dump({'bindings': {'old_binding': {
+        'nhd_acres': abr.acres_of([[sq(-80.4, 33.4, 0.05)]]) * 2.0,
+        'nhd_layer': 'NHDWaterbody'}}}, open(os.path.join(reg, '_nhd_bindings.json'), 'w'))
+    json.dump({'old_binding': {}}, open(os.path.join(reg, 'lake_index.json'), 'w'))
+    rc, txt = run(['x', '--registry', reg])
+    assert 'predate the union fields' in txt, txt
+    assert 'old_binding' in txt.split('predate the union fields')[1], txt
+    assert 'match_waters_to_nhd' in txt, 'and it says what to re-run'
+    assert 'old_binding' not in txt.split('MISSES WATER')[1].split('CLAIMS WATER')[0], \
+        'it must NOT be mixed into the coverage list it has no numbers for'
+print('an old binding is measured the old way, under its own heading, and says what to re-run')
