@@ -549,29 +549,49 @@ def main():
         print('\nblown-out line features dropped (>%.0f m segment): %s'
               % (a.max_segment_m, dict(dropped)))
     json.dump(report, open(a.report, 'w', encoding='utf-8'), indent=1)
-    shipped = [r for r in report.values() if r.get('shipped')]
-    print('\n%d lakes examined' % len(report))
+
+    # THE SUMMARY DESCRIBES THIS RUN, NOT THE FILE IT MERGED INTO.
+    #
+    # `report` is deliberately loaded from disk and updated in place, so a partial run does not
+    # replace a full report -- see the comment where it is loaded. The consequence was that the
+    # closing summary counted the MERGED dict: `--only-lakes waccamaw_river` rebuilt one water
+    # and then printed "452 lakes examined / shipped 450", numbers about 451 lakes it never
+    # opened. A closing number that describes something other than what the run did is the
+    # failure this repo keeps finding -- charted measured against a boundary fragment, "1,314
+    # unchanged" after a run that rewrote every pack.
+    #
+    # So: scope every line to the slugs this run actually wrote, and print the merged total on
+    # its own line, labelled, because that number is still worth having.
+    this_run = {s: r for s, r in report.items() if s in todo}
+    rows = list(this_run.values())
+    shipped = [r for r in rows if r.get('shipped')]
+    print('\n%d lake(s) built this run' % len(rows))
     print('  shipped (has contours)      %4d' % len(shipped))
     skips = defaultdict(int)
-    for r in report.values():
+    for r in rows:
         if r.get('skipped'):
             skips[r['skipped']] += 1
     for reason, n in sorted(skips.items(), key=lambda kv: -kv[1]):
         if reason == 'no boundary polygon':
             continue
         print('  skipped, %-34s %4d' % (reason, n))
-    have = [r for r in report.values()
+    have = [r for r in rows
             if not r.get('shipped') and (r.get('counts_core') or {}).get('contours')]
     if have:
         print('  ^ of those, %d have contours INSIDE the lake and were dropped anyway '
               '-- these are the ones the ship rule is really about' % len(have))
-    print('  skipped, no boundary        %4d' % sum(1 for r in report.values()
+    print('  skipped, no boundary        %4d' % sum(1 for r in rows
                                                     if r.get('skipped') == 'no boundary polygon'))
     if shipped:
         fr = sorted(r['charted'] for r in shipped if r.get('charted') is not None)
         if fr:
             print('  charted fraction  median %.2f  p10 %.2f  p90 %.2f'
                   % (fr[len(fr)//2], fr[int(.1*len(fr))], fr[int(.9*len(fr))]))
+    if len(rows) != len(report):
+        allship = sum(1 for r in report.values() if r.get('shipped'))
+        print('\n%d lake(s) in the report overall, %d shipped -- the other %d were merged in from'
+              % (len(report), allship, len(report) - len(rows)))
+        print('   earlier runs and were NOT opened by this one.')
     print('-> %s' % a.report)
 
 

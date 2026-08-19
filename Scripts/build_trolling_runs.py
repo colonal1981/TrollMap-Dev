@@ -923,8 +923,12 @@ def main():
             # it re-derived by distance the very edges Garmin states in ADJ and the boundary clip
             # deleted, and at --max-m 75 it welded water above a dam to water below it on 178
             # lakes. See WATER_GRAPHS_WERE_SEVERED_BY_THE_CLIP_2026-08-07.md.
-            print('   !! more than 5%% unreachable. That is the water GRAPH, not these runs.')
-            print('      Lakes sit near 5.6%% and are fine. Rivers run ~38%% because a river')
+            # SINGLE %, NOT DOUBLE. These are plain print() calls with no % formatting, so
+            # the doubling that escapes a literal percent inside a format string does nothing
+            # here except put it on screen: "more than 5%% unreachable". The line above at :906
+            # is the one that formats, and it is right to double there.
+            print('   !! more than 5% unreachable. That is the water GRAPH, not these runs.')
+            print('      Lakes sit near 5.6% and are fine. Rivers run ~38% because a river')
             print('      boundary is a ribbon and the routing mesh does not know it exists --')
             print('      the fix is cutting those boundaries wider, NOT widening the halo.')
     rp = a.report or os.path.join(os.path.dirname(a.packs.rstrip('\\/')), 'registry',

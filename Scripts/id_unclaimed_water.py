@@ -673,7 +673,7 @@ def main() -> int:
     if weak:
         print('!! %d of %d cluster(s) carry no `pts`, so cover was scored against the BOUNDING '
               'BOX, not the water.' % (weak, len(out)))
-        print('   The median cluster fills 54%% of its box, so a perfect match scores about 0.54 '
+        print('   The median cluster fills 54% of its box, so a perfect match scores about 0.54 '
               'there and a real one scores 0.1. Re-run sweep_unclaimed.py --report to write '
               '`pts` and these numbers become readable.')
     print('-> %s' % a.out)
