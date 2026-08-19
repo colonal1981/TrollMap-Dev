@@ -17,11 +17,12 @@ Usage:
 Requires: geopandas, pyproj, fiona, lake_catalog.py in same directory
 NHD GDBs: F:\\TrollMapPipeline\\NHD\\
 
-HUC4 reference for SE US:
-  0302 = Neuse (Falls Lake, Jordan, Kerr/Gaston, Buckhorn, Michie, Mayo, Hyco)
-  0303 = Santee (Catawba/Wateree/SC lakes)
-  0304 = Pee Dee/Yadkin (NC Piedmont west, upstate SC)
-  0305 = Cape Fear
+HUC4 reference for SE US -- USGS, checked 2026-08-18 against registry/_nhd_bindings.json:
+  0301 = Roanoke (Belews, Hyco, Kerr/Gaston)
+  0302 = Neuse (Falls Lake, Buckhorn, Michie)
+  0303 = Cape Fear (Jordan, Shearon Harris, Randleman, Brandt, Townsend)
+  0304 = Pee Dee/Yadkin (High Rock, Blewett Falls, Kerr Scott, Prestwood)
+  0305 = Santee (Catawba/Wateree/Murray/Marion/Moultrie/Wylie/James -- and Lake Lure)
   0313 = Upper Coosa (NW GA — Allatoona, Blue Ridge, Nottely, Chatuge)
   0315 = Ocmulgee (Juliette, Tobesofkee)
   0316 = Oconee/Altamaha (Oconee, Sinclair, Blackshear)
@@ -34,6 +35,7 @@ Download: https://prd-tnm.s3.amazonaws.com/StagedProducts/Hydrography/NHDPlusHR/
 """
 import sys
 import re
+import json
 import argparse
 from pathlib import Path
 
@@ -60,7 +62,10 @@ except ImportError:
     sys.exit(1)
 
 NHD_DIR = Path(r'F:\TrollMapPipeline\NHD')
-OUT_DIR  = Path(r'F:\TrollMapPipeline\lake_boundaries')
+# 2026-08-12: this wrote into lake_boundaries/, the tray that is being deleted. Output now
+# goes to its own folder so a staging directory is never shared between three cutters and a
+# reader again -- install_registry_boundary.py takes --boundaries and does not care which.
+OUT_DIR  = Path(r'F:\TrollMapPipeline\lake_boundaries_nhd')
 LAYER    = 'NHDWaterbody'
 FTYPES   = {390, 436}  # Lake/Pond + Reservoir
 
@@ -75,14 +80,19 @@ FTYPES   = {390, 436}  # Lake/Pond + Reservoir
 #
 # A missing entry here does not raise. It silently disables a whole basin and the failure
 # surfaces three fallbacks later as a bad polygon, so the map is the complete download list.
+# THIS DICT STATED THE BASINS WRONG AND CONTRADICTED THE DOCSTRING ABOVE IT: 0303 was
+# labelled Cape Fear here and Santee there, 0305 was labelled Cape Fear in both. The real
+# USGS assignment is in the docstring now and repeated here, and SLUG_HUCS below is no longer
+# the authority for which one a lake is in -- hucs_for() asks the binding.
 HUC4_GDB = {
+    '0301': NHD_DIR / 'NHDPLUS_H_0301_HU4_GDB.zip',   # Roanoke
     '0302': NHD_DIR / 'NHDPLUS_H_0302_HU4_GDB.zip',   # Neuse
-    '0303': NHD_DIR / 'NHDPLUS_H_0303_HU4_GDB.zip',   # Cape Fear / lower NC
+    '0303': NHD_DIR / 'NHDPLUS_H_0303_HU4_GDB.zip',   # Cape Fear
     '0304': NHD_DIR / 'NHDPLUS_H_0304_HU4_GDB.zip',   # Pee Dee / Yadkin
-    '0305': NHD_DIR / 'NHDPLUS_H_0305_HU4_GDB.zip',   # Cape Fear
-    '0306': NHD_DIR / 'NHDPLUS_H_0306_HU4_GDB.zip',   # Santee -- Catawba, Wateree, Congaree
-    '0307': NHD_DIR / 'NHDPLUS_H_0307_HU4_GDB.zip',   # Edisto / Savannah
-    '0308': NHD_DIR / 'NHDPLUS_H_0308_HU4_GDB.zip',   # Ogeechee
+    '0305': NHD_DIR / 'NHDPLUS_H_0305_HU4_GDB.zip',   # Santee -- Catawba, Wateree, Congaree
+    '0306': NHD_DIR / 'NHDPLUS_H_0306_HU4_GDB.zip',   # Ogeechee / Savannah
+    '0307': NHD_DIR / 'NHDPLUS_H_0307_HU4_GDB.zip',   # Altamaha / Oconee / Ocmulgee
+    '0308': NHD_DIR / 'NHDPLUS_H_0308_HU4_GDB.zip',   # St Marys / Satilla
     '0313': NHD_DIR / 'NHDPLUS_H_0313_HU4_GDB.zip',   # Upper Coosa
     '0315': NHD_DIR / 'NHDPLUS_H_0315_HU4_GDB.zip',   # Ocmulgee
     '0316': NHD_DIR / 'NHDPLUS_H_0316_HU4_GDB.zip',   # Oconee / Altamaha
@@ -427,6 +437,55 @@ JOIN_TOL_DEG = 0.0005          # ~55 m
 SEED_MAX_DIST_DEG = 0.02       # ~2 km; further than this and the seed is not on the lake
 
 
+
+# ---------------------------------------------------------------------------------------
+# WHICH BASIN A LAKE IS IN IS A MEASUREMENT, NOT A TYPED TABLE
+#
+# SLUG_HUCS below was hand-written and, checked on 2026-08-18 against
+# registry/_nhd_bindings.json -- which records the VPU each polygon was actually FOUND in --
+# it disagreed on 27 of the 46 slugs it covers, agreed on 19, and did not list the other 377
+# bound slugs at all. Every Santee lake in it (Murray, Marion, Moultrie, Wylie, James,
+# Wateree) pointed at 0306, which is the Ogeechee/Savannah; prestwood_lake pointed at 0306
+# when Black Creek is Pee Dee 0304. The file also stated three mutually inconsistent versions
+# of which code is which basin.
+#
+# Nothing was visibly broken by that, because these boundaries came from the 3DHP cutters.
+# It would have broken the next lake that reached for this one -- silently, as
+# "0 features in bbox", which is also what a correct search of the wrong basin looks like.
+#
+# The binding travels with the polygon. The table describes it from somewhere else. So the
+# binding wins, and the table survives only for slugs that have no binding.
+_BINDINGS = None
+
+
+def _bindings():
+    global _BINDINGS
+    if _BINDINGS is None:
+        fp = NHD_DIR.parent / 'registry' / '_nhd_bindings.json'
+        try:
+            _BINDINGS = json.load(open(fp, encoding='utf-8')).get('bindings') or {}
+        except Exception as exc:
+            print(f'  (no NHD bindings at {fp}: {type(exc).__name__}) -- falling back to'
+                  f' the SLUG_HUCS table, which has been wrong before')
+            _BINDINGS = {}
+    return _BINDINGS
+
+
+def hucs_for(slug):
+    """(hucs, where it came from). The binding first, the hand table only if there is none."""
+    b = _bindings().get(slug) or {}
+    vpu = b.get('vpu')
+    if vpu:
+        table = SLUG_HUCS.get(slug)
+        if table and vpu not in table:
+            # Say it out loud rather than silently preferring one. A disagreement here means
+            # the table needs a line deleted, not that the run should stop.
+            print(f'    NOTE: the binding puts {slug} in {vpu}; SLUG_HUCS says'
+                  f' {",".join(table)}. Using {vpu} -- it is where the polygon was found.')
+        return [vpu], 'binding'
+    return (SLUG_HUCS.get(slug) or []), 'SLUG_HUCS'
+
+
 def _seed_and_grow(unnamed, seed_lat, seed_lon, label=""):
     """Return the connected group of unnamed polygons anchored on the seed point.
 
@@ -549,9 +608,9 @@ def extract_slug(slug, overwrite=False, dump_names=False):
         print(f"  {slug}: not in catalog")
         return False
 
-    hucs = SLUG_HUCS.get(slug)
+    hucs, whence = hucs_for(slug)
     if not hucs:
-        print(f"  {slug}: no HUC mapping defined — skipping")
+        print(f"  {slug}: no NHD binding and no HUC mapping — skipping")
         return False
 
     filters = NAME_FILTERS.get(slug)
@@ -584,7 +643,7 @@ def extract_slug(slug, overwrite=False, dump_names=False):
     print(f"  {slug}: {catalog['name']}")
     print(f"    bbox: S{s} N{n} W{w} E{e}")
     print(f"    filters: {filters}")
-    print(f"    HUCs: {hucs}")
+    print(f"    HUCs: {hucs}  (from {whence})")
 
     all_matches = []
 
@@ -829,7 +888,7 @@ def main():
         for slug, data in LAKE_CATALOG.items():
             nhd  = OUT_DIR / f"{slug}_nhd.geojson"
             dhp  = OUT_DIR / f"{slug}_3dhp.geojson"
-            hucs = SLUG_HUCS.get(slug, [])
+            hucs = hucs_for(slug)[0]
             avail = [h for h in hucs if HUC4_GDB.get(h, Path('')).exists()]
             missing_gdbs = [h for h in hucs if not HUC4_GDB.get(h, Path('')).exists()]
             if slug in SKIP_SLUGS:
@@ -851,6 +910,8 @@ def main():
             print(f"  {status:6} {huc_str:12} {slug:45} {data['name']}{gdb_note}")
         return
 
+    # The work list is still the table -- it is the only thing that enumerates slugs for this
+    # cutter -- but which BASIN each one is searched in no longer comes from it.
     slugs = args.lake if args.lake else [s for s in SLUG_HUCS if s not in SKIP_SLUGS]
     unknown = [s for s in slugs if s not in LAKE_CATALOG]
     if unknown:
