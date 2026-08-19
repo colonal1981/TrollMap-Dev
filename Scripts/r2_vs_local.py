@@ -301,6 +301,71 @@ def walk_local(packs):
     return out
 
 
+def _say(quiet, msg):
+    if not quiet:
+        print(msg)
+
+
+def local_index(root, packs, quiet=False):
+    """<slug>/<file> -> bytes for everything on the drive that R2 could hold.
+
+    LIFTED OUT OF main() 2026-08-19 so r2_audit.py can ask this question instead of a person.
+
+    Ryan that day: "if it belongs to water that is in the app or it doesn't have a copy on my
+    drive it can stay in r2... if the water is no longer offered in the app and we have a
+    backup for it then it can be removed from r2... the end".
+
+    One rule, two halves, and they lived in two programs. r2_audit.py knew which water the app
+    offers. This file knew which objects have a backup. The delete list was written by the
+    first one alone -- so it could name an object that exists nowhere else, which is precisely
+    what the rule forbids, and the only thing standing in the way was a person reading two
+    reports side by side and noticing.
+
+    This repo already wrote up that shape: "a guard that has to be written twice will only be
+    written once". So it is written once, here, and imported there.
+    """
+    local = walk_local(packs)
+    # Fold in every key whose local home is somewhere other than the pack directory.
+    for key_file, places in sorted(SOURCE_MAP.items()):
+        for subdir, pattern in places:
+            # TWO LAYOUTS, ONE TABLE. A flat directory carries the slug in the FILE name
+            # (osm_out/<slug>.geojson). A per-pack tree carries it in the DIRECTORY name
+            # (.../supplemental/<slug>/shoreline.geojson), which is the layout chartpack/ uses
+            # and the layout the i-Boating output tree uses. A trailing '/%s' in the subdir is
+            # what says which. One table rather than two, because a second table is a second
+            # place to forget to add a row -- and a forgotten row here does not read as a gap,
+            # it reads as data that only exists in R2.
+            if subdir.endswith('/%s'):
+                parent = os.path.join(root, *subdir[:-len('/%s')].split('/'))
+                if not os.path.isdir(parent):
+                    continue
+                n = 0
+                for slug in os.listdir(parent):
+                    fp = os.path.join(parent, slug, pattern)
+                    if not os.path.isfile(fp):
+                        continue
+                    k = '%s/%s' % (slug, key_file)
+                    if k not in local:                 # first place named wins
+                        local[k] = os.path.getsize(fp)
+                        n += 1
+                _say(quiet, '   %-24s <- %s  (%s file(s))'
+                      % (key_file, os.path.join(parent, '<slug>', pattern), format(n, ',')))
+                continue
+            d = os.path.join(root, *subdir.split('/'))
+            if not os.path.isdir(d):
+                continue
+            suffix = pattern % ''
+            n = 0
+            for fn in os.listdir(d):
+                if fn.endswith(suffix) and len(fn) > len(suffix):
+                    k = '%s/%s' % (fn[:-len(suffix)], key_file)
+                    if k not in local:                 # first place named wins
+                        local[k] = os.path.getsize(os.path.join(d, fn))
+                        n += 1
+            _say(quiet, '   %-24s <- %s  (%s file(s))' % (key_file, d, format(n, ',')))
+    return local
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -357,46 +422,7 @@ def main():
         tgt = r2 if AU.is_pack(name) else nonpack
         for f in (pack.get('files') or []):
             tgt['%s/%s' % (name, f.get('name'))] = f.get('bytes')
-    local = walk_local(packs)
-
-    # Fold in every key whose local home is somewhere other than the pack directory.
-    for key_file, places in sorted(SOURCE_MAP.items()):
-        for subdir, pattern in places:
-            # TWO LAYOUTS, ONE TABLE. A flat directory carries the slug in the FILE name
-            # (osm_out/<slug>.geojson). A per-pack tree carries it in the DIRECTORY name
-            # (.../supplemental/<slug>/shoreline.geojson), which is the layout chartpack/ uses
-            # and the layout the i-Boating output tree uses. A trailing '/%s' in the subdir is
-            # what says which. One table rather than two, because a second table is a second
-            # place to forget to add a row -- and a forgotten row here does not read as a gap,
-            # it reads as data that only exists in R2.
-            if subdir.endswith('/%s'):
-                parent = os.path.join(root, *subdir[:-len('/%s')].split('/'))
-                if not os.path.isdir(parent):
-                    continue
-                n = 0
-                for slug in os.listdir(parent):
-                    fp = os.path.join(parent, slug, pattern)
-                    if not os.path.isfile(fp):
-                        continue
-                    k = '%s/%s' % (slug, key_file)
-                    if k not in local:                 # first place named wins
-                        local[k] = os.path.getsize(fp)
-                        n += 1
-                print('   %-24s <- %s  (%s file(s))'
-                      % (key_file, os.path.join(parent, '<slug>', pattern), format(n, ',')))
-                continue
-            d = os.path.join(root, *subdir.split('/'))
-            if not os.path.isdir(d):
-                continue
-            suffix = pattern % ''
-            n = 0
-            for fn in os.listdir(d):
-                if fn.endswith(suffix) and len(fn) > len(suffix):
-                    k = '%s/%s' % (fn[:-len(suffix)], key_file)
-                    if k not in local:                 # first place named wins
-                        local[k] = os.path.getsize(os.path.join(d, fn))
-                        n += 1
-            print('   %-24s <- %s  (%s file(s))' % (key_file, d, format(n, ',')))
+    local = local_index(root, packs)
 
     both = set(r2) & set(local)
     r2only_all = set(r2) - set(local)

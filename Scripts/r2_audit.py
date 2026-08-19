@@ -206,7 +206,8 @@ def is_pack(name: str) -> bool:
     return name not in NON_PACK_PREFIXES
 
 
-def deletable(name: str, fname: str, offered: set | None = None) -> str | None:
+def deletable(name: str, fname: str, offered: set | None = None,
+              backed_up: set | None = None) -> str | None:
     """Reason this exact object should not be in R2, or None to keep it.
 
     `offered` is the set of slugs lake_index.json serves, or None to skip that rule entirely.
@@ -218,8 +219,28 @@ def deletable(name: str, fname: str, offered: set | None = None) -> str | None:
     if name in SKIP_SLUGS:
         return "skip-slug"
     # BEFORE the offered rule and therefore before the app veto -- see RETIRED_PACK_FILES.
+    # Also before the backup gate below, deliberately: these three filenames were condemned by
+    # name rather than by the water they sit on, and two of the three have no local copy. That
+    # is the one place this function proposes something with no way back, and the run prints
+    # them separately so the exception is read rather than assumed.
     if fname in RETIRED_PACK_FILES:
         return "retired-layer"
+    # THE SECOND HALF OF THE RULE, and it used to live in another program.
+    #
+    # Ryan, 2026-08-19: "if it belongs to water that is in the app or it doesn't have a copy on
+    # my drive it can stay in r2... if the water is no longer offered in the app and we have a
+    # backup for it then it can be removed from r2... the end".
+    #
+    # Not offered is only half a reason. An object with no local copy cannot be put back by any
+    # upload, so being unoffered does not make it disposable -- it makes it the only copy of
+    # something the app happens not to serve today. r2_vs_local.py has always known which those
+    # are; this script wrote the delete list without asking it.
+    #
+    # None means the caller did not supply a drive index, and it must behave like "no opinion"
+    # rather than "nothing is backed up" -- the same shape as `offered` above, for the same
+    # reason: a failed read must not turn into a proposal.
+    if backed_up is not None and "%s/%s" % (name, fname) not in backed_up:
+        return None
     if offered and name not in offered:
         # Only for files this script already recognises -- the check below still applies, so an
         # index.json or a vectors/ object inside an unoffered pack is still not ours to judge.
@@ -321,6 +342,10 @@ def main() -> int:
                     help="ALSO propose every pack prefix the registry does not offer. Off by "
                          "default: it is the largest rule this script has and the one most "
                          "able to remove a lake the app still shows. Needs --registry.")
+    ap.add_argument("--packs", help="the local chartpack root. With --propose-unoffered, an "
+                    "object with no copy on the drive is never proposed -- it cannot be put "
+                    "back by an upload, so unoffered does not make it disposable. Without this "
+                    "the run says out loud that the backup half of the rule was NOT checked.")
     ap.add_argument("--js", help="the app js/ tree. With --propose-unoffered, any slug still "
                                  "NAMED under it is held back from the proposal and listed "
                                  "separately. Without it the app is not checked and the run "
@@ -353,6 +378,10 @@ def main() -> int:
         raise SystemExit("that listing has no per-object sizes -- fetch it with ?detail=1 "
                          "(the Worker must be at worker-2026-08-05a or later)")
 
+    # None, not an empty set: "was not checked" and "nothing is backed up" must not be the
+    # same value, or a run without --packs proposes the whole bucket.
+    backed_up = None
+
     # THE APP GETS A VETO, and it needs the slug list, which only exists now.
     #
     # 23 of the 39 orphan slugs known on 2026-08-14 were still named in js/, and deleting one of
@@ -362,6 +391,18 @@ def main() -> int:
     if offered is not None:
         candidates = {p["name"] for p in packs
                       if is_pack(p["name"]) and p["name"] not in offered}
+        if a.packs:
+            from r2_vs_local import local_index
+            # This module has no `os` -- it is pathlib throughout. The drive root is the
+            # chartpack folder's parent, which is what r2_vs_local resolves SOURCE_MAP against.
+            packs_dir = Path(a.packs).resolve()
+            backed_up = set(local_index(str(packs_dir.parent), str(packs_dir), quiet=True))
+            print("drive     %s local object(s) under %s and its named sources"
+                  % (format(len(backed_up), ","), a.packs))
+        else:
+            print("!! no --packs given -- the BACKUP half of the rule was NOT checked. Every "
+                  "proposal below\n   assumes a local copy exists. Ryan's rule needs both halves: "
+                  "unoffered AND backed up.")
         if a.js:
             held_back, js_note = named_in_app(a.js, candidates)
             if js_note:
@@ -380,6 +421,7 @@ def main() -> int:
     unjudged: dict[str, list[int]] = defaultdict(lambda: [0, 0])     # bytes, objects
     unjudged_where: dict[str, set] = defaultdict(set)
     by_reason: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+    no_backup: dict[str, list[int]] = defaultdict(lambda: [0, 0])   # bytes, objects
 
     for pack in packs:
         name = pack["name"]
@@ -404,7 +446,14 @@ def main() -> int:
                     unjudged[fname][0] += nbytes
                     unjudged[fname][1] += 1
                     unjudged_where[fname].add(name)
-                why = deletable(name, fname, offered)
+                why = deletable(name, fname, offered, backed_up)
+                # NO SILENT HOLD-BACKS. Asking the same function twice, once without the drive
+                # index, is what makes this count exact instead of a second copy of the rule --
+                # if the gate ever changes, this changes with it. Silence here would read as
+                # "nothing was held back", which is the same failure the --js note exists for.
+                if backed_up is not None and not why and deletable(name, fname, offered):
+                    no_backup[fname][0] += nbytes
+                    no_backup[fname][1] += 1
                 if why:
                     delete.append((f"{name}/{fname}", nbytes, why))
                     by_reason[why][0] += nbytes
@@ -505,6 +554,19 @@ def main() -> int:
             print(f"  {human(b):>10}  {n:>6,} obj  {k}   ({tail})")
     else:
         print("\nevery object kind inside a pack prefix has a rule")
+
+    if no_backup:
+        nb = sum(v[1] for v in no_backup.values())
+        nbb = sum(v[0] for v in no_backup.values())
+        print("\nheld back -- unoffered, but NO LOCAL COPY: %s obj, %s" % (format(nb, ","), human(nbb)))
+        print("  Ryan's rule, 2026-08-19: \"if it belongs to water that is in the app or it does not")
+        print("  have a copy on my drive it can stay in r2\". Unoffered is only half a reason -- no")
+        print("  upload can put back a file that is not on the drive, so each of these is the only")
+        print("  copy of something the app happens not to serve today.")
+        for k, (b, n) in sorted(no_backup.items(), key=lambda kv: -kv[1][0]):
+            print("  %10s  %6s obj  %s" % (human(b), format(n, ","), k))
+        print("  To release any of them, put the file on the drive -- or if it already IS on the")
+        print("  drive somewhere this does not look, add a SOURCE_MAP row in r2_vs_local.py.")
 
     if a.delete_list:
         out = Path(a.delete_list)
