@@ -104,6 +104,30 @@ SIDECAR_PACK_FILES = {
     "oyster_beds.geojson",        # extract_coastal_habitat.py -- SC coastal habitat
 }
 
+# DEAD BY NAME, NOT BY WHICH PACK THEY SIT ON.
+#
+# Everything else in this file judges an object by the pack around it: an unoffered slug, a
+# secondary coastal zone, a pipeline-only layer. These two are garbage wherever they appear,
+# because the script that wrote them is archived and nothing has ever read them back.
+#
+# That difference is the whole reason this set exists instead of another entry in
+# NON_PACK_PREFIXES. `lake_wateree_fishing_creek` is a LIVE lake -- it is still named in js/, so
+# the app veto adds it straight back into `offered` and the not-offered rule can never reach
+# inside it. Without a by-name rule these 7.7 MB are unreachable by design.
+#
+# Provenance, checked 2026-08-19: both are written by
+# scripts/_archive_2026-08-04/build_wateree_zones.py, which was archived the day it ran. No live
+# script writes either name, nothing under js/ or Worker/ fetches them, and neither has a local
+# copy anywhere on the pipeline. Ryan: "these are garbage zones.json and zones_spines.json".
+#
+# A name added here is proposed for deletion on EVERY pack, including offered ones. That is the
+# point and it is also the risk, so the bar is a named dead producer plus a measured absence of
+# readers -- not "I could not find a use for it".
+RETIRED_PACK_FILES = {
+    "zones.json",           # 4.4 MB, lake_wateree_fishing_creek
+    "zones_spines.json",    # 3.3 MB, lake_wateree_fishing_creek
+}
+
 KNOWN_PACK_FILES = (set(LAYERS.values()) | set(COASTAL_SECONDARY_FILES)
                     | set(COASTAL_HEAVY_FILES) | SIDECAR_PACK_FILES)
 
@@ -183,6 +207,9 @@ def deletable(name: str, fname: str, offered: set | None = None) -> str | None:
     """
     if name in SKIP_SLUGS:
         return "skip-slug"
+    # BEFORE the offered rule and therefore before the app veto -- see RETIRED_PACK_FILES.
+    if fname in RETIRED_PACK_FILES:
+        return "retired-layer"
     if offered and name not in offered:
         # Only for files this script already recognises -- the check below still applies, so an
         # index.json or a vectors/ object inside an unoffered pack is still not ours to judge.
@@ -363,7 +390,7 @@ def main() -> int:
                 layer = FILE_TO_LAYER.get(fname, fname)
                 by_layer[layer][0] += nbytes
                 by_layer[layer][1] += 1
-                if fname not in KNOWN_PACK_FILES:
+                if fname not in KNOWN_PACK_FILES and fname not in RETIRED_PACK_FILES:
                     unjudged[fname][0] += nbytes
                     unjudged[fname][1] += 1
                     unjudged_where[fname].add(name)
