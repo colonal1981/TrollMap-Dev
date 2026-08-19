@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -75,7 +76,36 @@ FILE_TO_LAYER = {fname: layer for layer, fname in LAYERS.items()}
 # Everything this script is willing to have an opinion about. index.json, meta.json and
 # vectors/contours.geojson are not in here and are never proposed for deletion -- an audit that
 # guesses at files it does not recognise is how a delete list eats something load-bearing.
-KNOWN_PACK_FILES = set(LAYERS.values()) | set(COASTAL_SECONDARY_FILES) | set(COASTAL_HEAVY_FILES)
+# LAYERS THAT REACH R2 WITHOUT PASSING THROUGH upload_garmin_to_r2.LAYERS.
+#
+# Written by their own scripts -- fetch_osm_structures.py and extract_coastal_habitat.py -- so
+# they are in no uploader's layer table, and KNOWN_PACK_FILES is built from those tables. The
+# effect was that a pack could be proposed for deletion and STILL LEAVE THESE BEHIND: the first
+# real proposal emptied 78 prefixes and left 1,188 holding an orphaned osm-structures.geojson.
+#
+# Ryan, 2026-08-19: "why would i continue when we are leaving unused and unneeded objects
+# behind... this is how stuff gets missed."
+#
+# The unjudged-kinds report at the end of main() exists so the NEXT one of these announces
+# itself instead of waiting for someone to read a listing by hand.
+# THESE ARE SC COASTAL HABITAT AND THEY STAY. Ryan, 2026-08-19: "they need to stay."
+#
+# Being here does not put them at risk and that is worth spelling out, because the instinct is
+# that a name on a KNOWN list is a name that can be deleted. It is the opposite: an object with
+# no rule can never be proposed AND can never be cleaned up after, so it is orphaned by any
+# prune of its own pack. Measured the same day: all 37 marsh_edges/oyster_beds objects sit on
+# coastal zones, and every SC zone holding them is OFFERED by lake_index.json --
+# coast_beaufort_sc, st_helena, hilton_head, charleston, winyah_bay, santee_delta, ace_basin,
+# murrells_inlet. The `not-offered` rule cannot reach an offered pack. The only ones it can
+# reach are the twelve on the six NC/GA zones the deletion tab already says go whole.
+SIDECAR_PACK_FILES = {
+    "osm-structures.geojson",     # fetch_osm_structures.py
+    "marsh_edges.geojson",        # extract_coastal_habitat.py -- SC coastal habitat
+    "oyster_beds.geojson",        # extract_coastal_habitat.py -- SC coastal habitat
+}
+
+KNOWN_PACK_FILES = (set(LAYERS.values()) | set(COASTAL_SECONDARY_FILES)
+                    | set(COASTAL_HEAVY_FILES) | SIDECAR_PACK_FILES)
 
 # What a coastal zone outside the Edisto-to-Murrells band is allowed to keep: structure from
 # either uploader's vocabulary, bathymetry from neither.
@@ -85,8 +115,14 @@ KEEP_ON_SECONDARY_COAST = (
 
 # Top-level prefixes that are not lake/coastal packs. Sized and reported, never proposed for
 # deletion: research is 1,616 documents that cost real API calls to fetch.
+# The second half of the same omission. These are top-level prefixes holding state-keyed feed
+# caches and one stray, and is_pack() called every one of them a lake -- so their objects reached
+# deletable() and were only spared by not matching a known layer name. Named here so they are
+# spared on purpose rather than by accident.
 NON_PACK_PREFIXES = ("research", "lake_packages", "lakes", "regulations", "boundaries",
-                     "supplemental", "_registry", "_all")
+                     "supplemental", "_registry", "_all", "_duke",
+                     "attractors", "ramps", "bankpier", "paddle", "clarity-cache",
+                     "garmin")
 
 
 def fetch_listing(worker: str) -> dict:
@@ -136,10 +172,22 @@ def is_pack(name: str) -> bool:
     return name not in NON_PACK_PREFIXES
 
 
-def deletable(name: str, fname: str) -> str | None:
-    """Reason this exact object should not be in R2, or None to keep it."""
+def deletable(name: str, fname: str, offered: set | None = None) -> str | None:
+    """Reason this exact object should not be in R2, or None to keep it.
+
+    `offered` is the set of slugs lake_index.json serves, or None to skip that rule entirely.
+    NONE AND EMPTY MUST BEHAVE THE SAME WAY HERE. An index that failed to parse yields an empty
+    set, and an empty set makes every slug in the bucket unoffered -- which is a 12,000-object
+    delete proposal built out of a read error. The caller guards it too; this is the second
+    lock on the same door.
+    """
     if name in SKIP_SLUGS:
         return "skip-slug"
+    if offered and name not in offered:
+        # Only for files this script already recognises -- the check below still applies, so an
+        # index.json or a vectors/ object inside an unoffered pack is still not ours to judge.
+        if fname in KNOWN_PACK_FILES:
+            return "not-offered"
     if fname not in KNOWN_PACK_FILES:
         return None                      # index.json, meta.json, vectors/... -- not ours to judge
     if FILE_TO_LAYER.get(fname) in PIPELINE_ONLY:
@@ -167,6 +215,63 @@ def deletable(name: str, fname: str) -> str | None:
     return None
 
 
+
+def read_offered(path: str):
+    """(slugs lake_index.json offers, note). An empty set means DO NOT USE IT.
+
+    Lifted out of the orphan report so the delete loop can see it too. The two shapes are both
+    handled for the reason the old inline copy gave: lake_index.json is a dict keyed by slug,
+    lakes.json is {"lakes": [...]}, and reading one as the other yields an empty set -- which
+    would make every slug in the bucket look unoffered.
+    """
+    try:
+        idx = json.loads(Path(path).read_text(encoding="utf-8"))
+    except Exception as exc:
+        return set(), f"could not read {path}: {type(exc).__name__}: {exc}"
+    if isinstance(idx, dict) and "lakes" not in idx:
+        known = {k for k in idx if isinstance(k, str)}
+    else:
+        rows = idx if isinstance(idx, list) else idx.get("lakes", [])
+        known = {r.get("slug") or r.get("key") for r in rows if isinstance(r, dict)}
+    known.discard(None)
+    if not known:
+        return set(), f"{path} parsed but yielded no slugs"
+    return known, None
+
+
+def named_in_app(js_dir: str, slugs):
+    """Slugs whose name appears anywhere under `js_dir`. Empty set if the tree is not there.
+
+    23 of the 39 orphan slugs known on 2026-08-14 were still named in js/, and deleting one of
+    those removes the lake from the app. A grep is cheap and the alternative is asking a person
+    to hand-audit a thousand-line list.
+    """
+    root = Path(js_dir)
+    if not root.is_dir():
+        return set(), f"{js_dir} is not a directory -- the app was NOT checked"
+    blob = []
+    for fp in root.rglob("*"):
+        if fp.suffix.lower() in (".js", ".mjs", ".json", ".html") and fp.is_file():
+            try:
+                blob.append(fp.read_text(encoding="utf-8", errors="ignore"))
+            except Exception:
+                pass
+    text = "\n".join(blob)
+    # A WHOLE TOKEN, NOT A SUBSTRING.
+    #
+    # `slug in text` is the bidirectional-substring failure this repo already carries five
+    # instances of: a short name claims any longer one containing it. `lake_hartwell` was held
+    # back by `'lake_hartwell_sc_ga': 'lake_hartwell_sc'` in research-ids.js -- two identifiers
+    # that are not that slug. It errs safe, which is the right direction for a delete guard, but
+    # it inflates the hold-back list with names the app does not use, and an inflated list is
+    # one a person stops reading.
+    hits = set()
+    for sl in slugs:
+        if sl and re.search(r"(?<![A-Za-z0-9_])" + re.escape(sl) + r"(?![A-Za-z0-9_])", text):
+            hits.add(sl)
+    return hits, None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -175,7 +280,31 @@ def main() -> int:
     ap.add_argument("--save", help="write the raw listing here (re-run offline with --from)")
     ap.add_argument("--delete-list", help="write the proposed delete keys here, one per line")
     ap.add_argument("--registry", help="registry/lake_index.json, to name orphan slugs")
+    ap.add_argument("--propose-unoffered", action="store_true",
+                    help="ALSO propose every pack prefix the registry does not offer. Off by "
+                         "default: it is the largest rule this script has and the one most "
+                         "able to remove a lake the app still shows. Needs --registry.")
+    ap.add_argument("--js", help="the app js/ tree. With --propose-unoffered, any slug still "
+                                 "NAMED under it is held back from the proposal and listed "
+                                 "separately. Without it the app is not checked and the run "
+                                 "says so.")
     a = ap.parse_args()
+
+    # THE INDEX IS READ BEFORE THE LOOP NOW, because the loop needs it. Everything below is a
+    # refusal: the rule does not fire unless it was asked for, the registry was given, and the
+    # registry actually yielded slugs. Any one of those missing and `offered` stays None, which
+    # deletable() treats exactly like empty.
+    offered = None
+    held_back = set()
+    js_note = None
+    if a.propose_unoffered:
+        if not a.registry:
+            raise SystemExit("--propose-unoffered needs --registry; without the index there is "
+                             "nothing to compare the bucket against, and proposing on no "
+                             "evidence is how a delete list eats a lake")
+        offered, why = read_offered(a.registry)
+        if why:
+            raise SystemExit(f"!! {why} -- refusing to propose anything on that basis")
 
     data = json.loads(Path(a.src).read_text(encoding="utf-8")) if a.src else fetch_listing(a.worker)
     if a.save:
@@ -187,11 +316,32 @@ def main() -> int:
         raise SystemExit("that listing has no per-object sizes -- fetch it with ?detail=1 "
                          "(the Worker must be at worker-2026-08-05a or later)")
 
+    # THE APP GETS A VETO, and it needs the slug list, which only exists now.
+    #
+    # 23 of the 39 orphan slugs known on 2026-08-14 were still named in js/, and deleting one of
+    # those removes the lake from the app. So a slug the app still mentions is held back from
+    # the proposal and reported on its own. Without --js nothing is held back, and the run says
+    # that out loud rather than letting silence read as "checked, none found".
+    if offered is not None:
+        candidates = {p["name"] for p in packs
+                      if is_pack(p["name"]) and p["name"] not in offered}
+        if a.js:
+            held_back, js_note = named_in_app(a.js, candidates)
+            if js_note:
+                print(f"!! {js_note}")
+        else:
+            js_note = "no --js given -- the app was NOT checked for these slugs"
+            print(f"!! {js_note}")
+        if held_back:
+            offered = set(offered) | held_back
+
     total_bytes = total_objs = 0
     gz_bytes = raw_bytes = gz_objs = raw_objs = 0
     by_prefix: dict[str, list[int]] = defaultdict(lambda: [0, 0])   # bytes, objects
     by_layer: dict[str, list[int]] = defaultdict(lambda: [0, 0])
     delete: list[tuple[str, int, str]] = []                          # key, bytes, reason
+    unjudged: dict[str, list[int]] = defaultdict(lambda: [0, 0])     # bytes, objects
+    unjudged_where: dict[str, set] = defaultdict(set)
     by_reason: dict[str, list[int]] = defaultdict(lambda: [0, 0])
 
     for pack in packs:
@@ -213,7 +363,11 @@ def main() -> int:
                 layer = FILE_TO_LAYER.get(fname, fname)
                 by_layer[layer][0] += nbytes
                 by_layer[layer][1] += 1
-                why = deletable(name, fname)
+                if fname not in KNOWN_PACK_FILES:
+                    unjudged[fname][0] += nbytes
+                    unjudged[fname][1] += 1
+                    unjudged_where[fname].add(name)
+                why = deletable(name, fname, offered)
                 if why:
                     delete.append((f"{name}/{fname}", nbytes, why))
                     by_reason[why][0] += nbytes
@@ -272,12 +426,44 @@ def main() -> int:
                        and p["name"] not in SKIP_SLUGS]
             ob = sum(b for _, b in orphans)
             print(f"\norphan slugs (in R2, not in the registry): {len(orphans)}, {human(ob)}")
-            print("  NOT on the delete list. Some of these are still named in js/, and deleting")
-            print("  one of those removes the lake from the app. Decide per slug.")
+            if a.propose_unoffered:
+                print("  ON the delete list, under `not-offered`, EXCEPT any held back below.")
+            else:
+                print("  NOT on the delete list -- pass --propose-unoffered to include them.")
+            print("  Some of these are still named in js/, and deleting one of those removes")
+            print("  the lake from the app. Decide per slug.")
+            if held_back:
+                print(f"\n  held back because the app still names them: {len(held_back)}")
+                for n in sorted(held_back)[:40]:
+                    print(f"    {n}")
+                if len(held_back) > 40:
+                    print(f"    ... and {len(held_back) - 40} more")
+            elif a.propose_unoffered and js_note:
+                print(f"\n  !! {js_note}")
             for n, b in sorted(orphans, key=lambda x: -x[1])[:40]:
                 print(f"  {human(b):>10}  {n}")
             if len(orphans) > 40:
                 print(f"  ... and {len(orphans) - 40} more")
+
+    # EVERY OBJECT KIND THIS SCRIPT HAS NO RULE FOR, ALWAYS PRINTED.
+    #
+    # A pack layer missing from KNOWN_PACK_FILES is invisible twice over: it is never proposed,
+    # and its absence looks identical to there being none of it. That is how 1,602 orphaned
+    # osm-structures.geojson objects survived a prune that emptied their packs of everything
+    # else. Silence is not the same as nothing, so the silence is now printed.
+    if unjudged:
+        ub = sum(b for b, _ in unjudged.values())
+        un = sum(n for _, n in unjudged.values())
+        print(f"\nobject kinds inside pack prefixes with NO RULE: "
+              f"{len(unjudged)} kind(s), {un:,} obj, {human(ub)}")
+        print("  never proposed, never spared on purpose -- decide whether each belongs in")
+        print("  KNOWN_PACK_FILES (a pack layer) or NON_PACK_PREFIXES (not a pack at all).")
+        for k, (b, n) in sorted(unjudged.items(), key=lambda kv: -kv[1][0]):
+            where = sorted(unjudged_where[k])
+            tail = f"{where[0]}" if len(where) == 1 else f"{len(where)} prefixes"
+            print(f"  {human(b):>10}  {n:>6,} obj  {k}   ({tail})")
+    else:
+        print("\nevery object kind inside a pack prefix has a rule")
 
     if a.delete_list:
         out = Path(a.delete_list)
