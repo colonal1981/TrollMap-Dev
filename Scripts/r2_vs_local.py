@@ -63,6 +63,24 @@ SOURCE_MAP = {
                          ('_to_delete/lake_boundaries', '%s_3dhp.geojson'),
                          ('_to_delete/lake_boundaries', '%s.geojson')],
     'osm-structures.geojson': [('osm_out',              '%s.geojson')],
+    # THE I-BOATING TREE IS A SOURCE, and leaving it out of this table is what made 101 of the
+    # 333 "R2 ONLY" alarms -- 81 shoreline + 20 depth_soundings -- read as unrecoverable data.
+    #
+    # Both layers come from the retired i-Boating coastal pipeline, which is why they are not
+    # under chartpack/: upload_to_r2_coastal.py pushed them from its own output tree and that
+    # tree is still on the drive. Checked on the six NC/GA zones 2026-08-19 and every one is a
+    # BYTE-FOR-BYTE match against the R2 listing -- coast_pamlico_sound_nc/shoreline.geojson is
+    # 9,032,342 in both places, depth_soundings 5,146,511 in both.
+    #
+    # Ryan, on being handed a hand-rolled version of this check: "we already have a script that
+    # does this check". It is this one, and the reason it under-reported is a missing row here
+    # rather than anything about the objects. This file's own advice, printed under the R2-ONLY
+    # list: "it has a local home this script does not know about -- add it to SOURCE_MAP and it
+    # stops being an alarm, the way osm_out/ did."
+    'shoreline.geojson': [
+        ('I-Boating Contours and supplemental data/supplemental/%s', 'shoreline.geojson')],
+    'depth_soundings.geojson': [
+        ('I-Boating Contours and supplemental data/supplemental/%s', 'depth_soundings.geojson')],
 }
 
 # ── objects that live in R2 and NOWHERE else, on purpose ────────────────────────────────────
@@ -330,6 +348,29 @@ def main():
     # Fold in every key whose local home is somewhere other than the pack directory.
     for key_file, places in sorted(SOURCE_MAP.items()):
         for subdir, pattern in places:
+            # TWO LAYOUTS, ONE TABLE. A flat directory carries the slug in the FILE name
+            # (osm_out/<slug>.geojson). A per-pack tree carries it in the DIRECTORY name
+            # (.../supplemental/<slug>/shoreline.geojson), which is the layout chartpack/ uses
+            # and the layout the i-Boating output tree uses. A trailing '/%s' in the subdir is
+            # what says which. One table rather than two, because a second table is a second
+            # place to forget to add a row -- and a forgotten row here does not read as a gap,
+            # it reads as data that only exists in R2.
+            if subdir.endswith('/%s'):
+                parent = os.path.join(root, *subdir[:-len('/%s')].split('/'))
+                if not os.path.isdir(parent):
+                    continue
+                n = 0
+                for slug in os.listdir(parent):
+                    fp = os.path.join(parent, slug, pattern)
+                    if not os.path.isfile(fp):
+                        continue
+                    k = '%s/%s' % (slug, key_file)
+                    if k not in local:                 # first place named wins
+                        local[k] = os.path.getsize(fp)
+                        n += 1
+                print('   %-24s <- %s  (%s file(s))'
+                      % (key_file, os.path.join(parent, '<slug>', pattern), format(n, ',')))
+                continue
             d = os.path.join(root, *subdir.split('/'))
             if not os.path.isdir(d):
                 continue
