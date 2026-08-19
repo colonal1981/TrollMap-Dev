@@ -252,7 +252,33 @@ def main() -> int:
     if gone:
         print('%d baseline key(s) no longer measured: %s' % (len(gone), ', '.join(gone)))
 
+    # A NEW CHECK COULD NEVER ACQUIRE A BASELINE ON ITS OWN.
+    #
+    # This returned here whenever nothing had DRIFTED, which is before the --bless block below.
+    # So adding a check to a file that was otherwise in sync printed "N new check(s) with no
+    # baseline" and --bless silently did nothing about it -- the only way to record a new fact
+    # was for some unrelated fact to move in the same run.
+    #
+    # That is worse than noise. A key with no baseline is not compared against anything, so the
+    # check does not fail when its subject changes. Found 2026-08-19 by adding
+    # absent_upload_boundaries_to_r2.py: it reported "new", --bless reported "all match", and the
+    # assertion that a retired second-writer must stay retired was inert from the moment it was
+    # written. A permanent "N new check(s)" line is also how a report stops being read.
+    if a.bless and (drift or errs or new or gone):
+        json.dump(now, open(facts_fp, 'w', encoding='utf-8'), indent=1, sort_keys=True)
+        print('\nblessed -> %s' % facts_fp)
+        if new:
+            print('%d new check(s) now have a baseline and will fail on change: %s'
+                  % (len(new), ', '.join(new)))
+        return 0
+
     if not drift and not errs:
+        if new or gone:
+            # Not "all match": some of what was measured is not being compared to anything.
+            print('%d fact(s) match, but %d have NO BASELINE and are therefore NOT ENFORCED.'
+                  % (len(now) - len(new), len(new)))
+            print('Run --bless to record them. Until then they cannot fail.')
+            return 1
         print('%d facts checked, all match %s' % (len(now), os.path.basename(facts_fp)))
         return 0
 
