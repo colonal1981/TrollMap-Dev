@@ -74,7 +74,10 @@ describe('both waterbody dropdowns offer coastal zones', () => {
   // What still has to hold is the thing the duplication was actually risking: every dropdown
   // gets its zones from the SAME SOURCE, so none of them can quietly go stale. So the picker is
   // required to call `coastalNamesByState` and the other two to call the helper -- and the count
-  // check below still pins all 22 zones reaching a dropdown.
+  // check below still pins EVERY zone reaching a dropdown -- against COASTAL_SLUGS.length
+  // rather than a literal, because the count is data and hardcoding it means three tests to
+  // edit every time a zone is added or cut. It was 22 until the six out-of-region zones went
+  // on 2026-08-19.
   const HELPER_CALLERS = [
     ['plan-builder', planBuilderSrc],
     ['lake-research-ui', researchUiSrc],
@@ -99,7 +102,7 @@ describe('both waterbody dropdowns offer coastal zones', () => {
   it('the shared helper groups coastal zones by state', () => {
     const select = makeSelect();
     const added = appendCoastalOptgroups(select);
-    expect(added).toBe(22);
+    expect(added).toBe(COASTAL_SLUGS.length);   // every zone, whatever that count is
     const labels = select.children.map((c) => c.label);
     expect(labels).toEqual(['SC Coast', 'GA Coast', 'NC Coast']);
   });
@@ -116,11 +119,11 @@ describe('both waterbody dropdowns offer coastal zones', () => {
     expect(resolveR2Key(winyah.value)).toBe('coast_winyah_bay_sc');
   });
 
-  it('the grouping covers all 22 zones exactly once', () => {
+  it('the grouping covers every zone exactly once', () => {
     const g = coastalNamesByState();
     const all = [...g.SC, ...g.GA, ...g.NC];
-    expect(all).toHaveLength(22);
-    expect(new Set(all).size).toBe(22);
+    expect(all).toHaveLength(COASTAL_SLUGS.length);
+    expect(new Set(all).size).toBe(COASTAL_SLUGS.length);
   });
 });
 

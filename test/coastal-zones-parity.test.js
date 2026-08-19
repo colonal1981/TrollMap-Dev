@@ -37,8 +37,15 @@ describe('coastal-zones.js — generated catalog stays in sync with coastal_cata
     expect(['ok', 'skipped']).toContain(result);
   });
 
-  it('has all 22 coastal zones', () => {
-    expect(COASTAL_SLUGS).toHaveLength(22);
+  // 16, not 22. The six NC sounds and the Georgia-Florida corner were cut from
+  // Scripts/coastal_catalog.py on 2026-08-19: they are outside the region polygon, so
+  // consolidate_lake_index.py had been dropping them from lake_index.json on every run while
+  // coastal-zones.js went on offering them in the picker. Ryan: "those names are just there so
+  // they can select water i dont want them to select". Measured before cutting: no river in the
+  // index has a ramp within 25 km of any of the six, so nothing depends on them for the NC/GA
+  // salt test in make_river_boundaries.py.
+  it('has all 16 coastal zones', () => {
+    expect(COASTAL_SLUGS).toHaveLength(16);
   });
 
   it('every slug is prefixed coast_ so isCoastalKey() detection is reliable', () => {
@@ -146,10 +153,10 @@ describe('coastal-zones.js — generated catalog stays in sync with coastal_cata
     expect(getCoastalZone(undefined)).toBeNull();
   });
 
-  it('state grouping covers all 22 zones with no leaks', () => {
+  it('state grouping covers every zone with no leaks', () => {
     const grouped = coastalNamesByState();
     const total = grouped.SC.length + grouped.GA.length + grouped.NC.length;
-    expect(total).toBe(22);
+    expect(total).toBe(COASTAL_SLUGS.length);
     expect(coastalZonesByState('SC')).toHaveLength(grouped.SC.length);
     expect(coastalZonesByState('ga')).toHaveLength(grouped.GA.length);
     expect(coastalZonesByState('XX')).toHaveLength(0);

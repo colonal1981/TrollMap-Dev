@@ -1,8 +1,8 @@
 import { describe, it, expect } from './expect-shim.mjs';
 import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../js/data/lake-keys.js';
 
-describe('LAKE_NAME_TO_R2_KEY — single source of truth (102 entries)', () => {
-  it('has 102 entries (full map, not truncated worker copy)', () => {
+describe('LAKE_NAME_TO_R2_KEY — single source of truth (115 entries)', () => {
+  it('has 115 entries (full map, not truncated worker copy)', () => {
     // 97 freshwater + 21 coastal zones. Was 101 before the coastal expansion
     // split the single `sc_ga_coastal` key into 21 per-zone `coast_*` keys.
         // 102 after the 2026-08-04 rebind to lake_index.json. Fewer names than before:
@@ -35,7 +35,11 @@ describe('LAKE_NAME_TO_R2_KEY — single source of truth (102 entries)', () => {
     // two registry rows for the same water registered first — the one with the pack, or the
     // packless duplicate `congaree_river_to_sc_601`. Bates Old River now shares that pack, so the
     // Congaree resolving by load order would have taken Bates down with it.
-    expect(Object.keys(LAKE_NAME_TO_R2_KEY).length).toBe(121)  // +Lake Robinson (Greenville Co, SC) 2026-08-14 -- two SC Lake Robinsons, 190 km apart;
+    // 115 as of 2026-08-19, down six from 121. The display names of the six out-of-region
+    // coastal zones went with the zones themselves when Scripts/coastal_catalog.py was cut from
+    // 22 to 16. They had been pointing at slugs consolidate_lake_index.py drops on every run, so
+    // each was a name the picker offered and the loader could not answer.
+    expect(Object.keys(LAKE_NAME_TO_R2_KEY).length).toBe(115)  // was 121 with +Lake Robinson (Greenville Co, SC) 2026-08-14 -- two SC Lake Robinsons, 190 km apart;
   });
 
   it('contains critical keys that were missing in old worker copy', () => {
@@ -59,11 +63,14 @@ describe('LAKE_NAME_TO_R2_KEY — single source of truth (102 entries)', () => {
     // marsh_edges / depth_soundings under `chartpacks/{slug}/`.
     expect(LAKE_NAME_TO_R2_KEY['ACE Basin / Edisto, SC']).toBe('coast_ace_basin_sc');
     expect(LAKE_NAME_TO_R2_KEY['Charleston Harbor, SC']).toBe('coast_charleston_sc');
-    expect(LAKE_NAME_TO_R2_KEY['Pamlico Sound / Neuse River, NC']).toBe('coast_pamlico_sound_nc');
+    // Was 'Pamlico Sound / Neuse River, NC' until 2026-08-19. This line has to name a zone the
+    // app still offers or it stops being a sample of anything -- Cape Fear is the NC zone that
+    // ships, and one sample per state is the point of the four.
+    expect(LAKE_NAME_TO_R2_KEY['Cape Fear River / Wilmington, NC']).toBe('coast_cape_fear_nc');
     expect(LAKE_NAME_TO_R2_KEY['Savannah River / Savannah, GA']).toBe('coast_savannah_ga');
 
     const coastal = Object.values(LAKE_NAME_TO_R2_KEY).filter((k) => k.startsWith('coast_'));
-    expect(new Set(coastal).size).toBe(22);
+    expect(new Set(coastal).size).toBe(16);   // 22 until the six out-of-region zones went, 2026-08-19
   });
 
   it('contains Wateree chain and Russell chain aliases', () => {

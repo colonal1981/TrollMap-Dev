@@ -5,7 +5,8 @@
 #   .\install_coastal_and_rivers.ps1            # dry run, writes nothing
 #   .\install_coastal_and_rivers.ps1 -Go        # writes
 #
-# Step 1 makes the 22 coastal zone rectangles. Step 2 puts them AND the 76 river
+# Step 1 makes the 16 coastal zone rectangles. It was 22 until 2026-08-19, when the six
+# out-of-region zones were cut from coastal_catalog.py. Step 2 puts them AND the 76 river
 # boundaries into the registry so build_all_chartpacks.py will actually build them --
 # without a row in lakes.json and an entry in tile_lake_map.json a boundary file is
 # invisible to the builder.
@@ -32,21 +33,15 @@ if ($LASTEXITCODE -ne 0) { throw "make_coastal_boundaries failed" }
 
 $coastal = @(
   'coast_ace_basin_sc=SC',
-  'coast_albemarle_sound_nc=NC',
   'coast_beaufort_sc=SC',
-  'coast_bogue_sound_nc=NC',
   'coast_brunswick_nc=NC',
   'coast_brunswick_st_simons_ga=GA',
   'coast_cape_fear_nc=NC',
   'coast_cape_romain_sc=SC',
   'coast_charleston_sc=SC',
-  'coast_core_sound_nc=NC',
-  'coast_cumberland_st_marys_ga=GA',
   'coast_hilton_head_sc=SC',
   'coast_murrells_inlet_sc=SC',
   'coast_ossabaw_st_catherines_ga=GA',
-  'coast_outer_banks_nc=NC',
-  'coast_pamlico_sound_nc=NC',
   'coast_santee_delta_sc=SC',
   'coast_sapelo_altamaha_ga=GA',
   'coast_savannah_ga=GA',

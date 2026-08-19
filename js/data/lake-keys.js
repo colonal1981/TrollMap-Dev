@@ -204,17 +204,11 @@ export const LAKE_NAME_TO_R2_KEY = {
   'Ossabaw / St. Catherines Sound, GA':       'coast_ossabaw_st_catherines_ga',
   'Sapelo Sound / Altamaha River, GA':        'coast_sapelo_altamaha_ga',
   'Brunswick / St. Simons Sound, GA':         'coast_brunswick_st_simons_ga',
-  'Cumberland Island / St. Marys, GA':        'coast_cumberland_st_marys_ga',
 
   // ── NC Coastal ──────────────────────────────────────────────────────────────
   'Brunswick County / Shallotte Inlet, NC':   'coast_brunswick_nc',
   'Cape Fear River / Wilmington, NC':         'coast_cape_fear_nc',
   'Topsail Island / New River Inlet, NC':     'coast_topsail_new_river_nc',
-  'Bogue Sound / Morehead City, NC':          'coast_bogue_sound_nc',
-  'Core Sound / Cape Lookout, NC':            'coast_core_sound_nc',
-  'Pamlico Sound / Neuse River, NC':          'coast_pamlico_sound_nc',
-  'Outer Banks / Oregon Inlet, NC':           'coast_outer_banks_nc',
-  'Albemarle Sound / Elizabeth City, NC':     'coast_albemarle_sound_nc',
 };
 
 // Build lowercase lookup once at module load for case-insensitive exact matching.

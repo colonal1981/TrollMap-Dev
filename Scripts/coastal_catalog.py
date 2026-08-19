@@ -208,19 +208,6 @@ COASTAL_CATALOG = {
             'Schnell Landing':             [31.090, -81.450],
         }
     },
-    'coast_cumberland_st_marys_ga': {
-        'name': 'Cumberland Island / St. Marys, GA',
-        'bbox': (30.60, 30.98, -81.65, -81.30),
-        'center': (30.80, -81.48),
-        'priority': 8,
-        'coastal': True,
-        'tide_station': '8720357',  # Fernandina Beach (closest)
-        'state': 'GA',
-        'ramps': {
-            'St. Marys Boat Ramp':    [30.735, -81.550],
-            'Lang Marina St. Marys':  [30.728, -81.546],
-        }
-    },
 
     # ── North Carolina Coastal Zones ─────────────────────────────────────────
     'coast_brunswick_nc': {
@@ -264,75 +251,6 @@ COASTAL_CATALOG = {
             'Sneads Ferry Ramp':       [34.557, -77.398],
             'Topsail Beach Access':    [34.388, -77.647],
             'New River Inlet Ramp':    [34.527, -77.338],
-        }
-    },
-    'coast_bogue_sound_nc': {
-        'name': 'Bogue Sound / Morehead City, NC',
-        'bbox': (34.60, 34.80, -77.10, -76.60),
-        'center': (34.70, -76.85),
-        'priority': 8,
-        'coastal': True,
-        'tide_station': '8656483',  # Beaufort NC
-        'state': 'NC',
-        'ramps': {
-            'Morehead City Ramp':      [34.724, -76.731],
-            'Beaufort Town Ramp':      [34.718, -76.664],
-            'Atlantic Beach Ramp':     [34.699, -76.741],
-        }
-    },
-    'coast_core_sound_nc': {
-        'name': 'Core Sound / Cape Lookout, NC',
-        'bbox': (34.55, 34.80, -76.60, -76.10),
-        'center': (34.68, -76.35),
-        'priority': 8,
-        'coastal': True,
-        'tide_station': '8656483',  # Beaufort NC
-        'state': 'NC',
-        'ramps': {
-            'Harkers Island Ramp':  [34.692, -76.558],
-            'Davis Shore Ramp':     [34.782, -76.457],
-        }
-    },
-    'coast_pamlico_sound_nc': {
-        'name': 'Pamlico Sound / Neuse River, NC',
-        'bbox': (34.80, 35.40, -77.10, -75.80),
-        'center': (35.10, -76.45),
-        'priority': 8,
-        'coastal': True,
-        'tide_station': '8654467',  # USCG Station Hatteras
-        'state': 'NC',
-        'ramps': {
-            'New Bern Ramp':         [35.108, -77.044],
-            'Oriental Ramp':         [35.024, -76.694],
-            'Bay River Ramp':        [35.138, -76.778],
-        }
-    },
-    'coast_outer_banks_nc': {
-        'name': 'Outer Banks / Oregon Inlet, NC',
-        'bbox': (35.40, 36.00, -75.90, -75.40),
-        'center': (35.70, -75.65),
-        'priority': 8,
-        'coastal': True,
-        'tide_station': '8654467',  # USCG Station Hatteras
-        'state': 'NC',
-        'ramps': {
-            'Oregon Inlet Ramp':        [35.779, -75.531],
-            'Manteo Waterfront Ramp':   [35.908, -75.667],
-            'Nags Head Fishing Pier':   [35.953, -75.621],
-        }
-    },
-    'coast_albemarle_sound_nc': {
-        'name': 'Albemarle Sound / Elizabeth City, NC',
-        'bbox': (35.90, 36.55, -76.80, -75.80),
-        'center': (36.20, -76.30),
-        'priority': 8,
-        'coastal': True,
-        'tide_station': '8651370',  # Duck NC
-        'state': 'NC',
-        'ramps': {
-            'Elizabeth City Ramp':   [36.295, -76.222],
-            'Edenton Ramp':          [36.058, -76.607],
-            'Columbia Ramp':         [35.916, -76.251],
         }
     },
 }

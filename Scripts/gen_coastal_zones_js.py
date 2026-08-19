@@ -36,7 +36,6 @@ USGS_GAUGES = {
     'coast_ossabaw_st_catherines_ga': ['02198500'],        # Savannah
     'coast_cape_fear_nc':       ['02105769'],              # Cape Fear
     'coast_brunswick_nc':       ['02105769'],              # Cape Fear
-    'coast_pamlico_sound_nc':   ['02091814'],              # Neuse
 }
 
 # Rivers named per gauge, for human-readable SmartPlan warnings.
@@ -46,7 +45,6 @@ GAUGE_NAMES = {
     '02171700': 'Santee River',
     '02198500': 'Savannah River',
     '02105769': 'Cape Fear River',
-    '02091814': 'Neuse River',
 }
 
 

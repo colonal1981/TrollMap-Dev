@@ -3,7 +3,7 @@ import { LAKE_NAME_TO_R2_KEY as frontendMap, resolveR2Key } from '../js/data/lak
 import { SUPPLEMENTAL_KEY_MAP, resolveSupplementalKeyWorker } from '../Worker/research/limnology.js';
 
 describe('lake-keys parity — frontend and worker must stay identical (P1 dedupe guard)', () => {
-  it('frontend map size == worker map size == 102', () => {
+  it('frontend map size == worker map size == 115', () => {
     // Both copies must move together — this is the guard that caught the original
     // 101 vs 74 drift.
     // 102 after the 2026-08-04 rebind to lake_index.json. Fewer names than before:
@@ -45,8 +45,12 @@ describe('lake-keys parity — frontend and worker must stay identical (P1 dedup
     // "Lake Robinson, SC" -- so Pass 4 had no way to prefer either and answered Darlington for
     // both. Same shape as the Congaree entry above: a water he can pick should not resolve by
     // which row registered its slug first.
-    expect(Object.keys(frontendMap).length).toBe(121);
-    expect(Object.keys(SUPPLEMENTAL_KEY_MAP).length).toBe(121);
+    // 115 as of 2026-08-19: the six out-of-region coastal zones were cut from
+    // Scripts/coastal_catalog.py and their display names left lake-keys.js with them. This
+    // literal did its job again -- it is the reason the cut was checked against the worker copy
+    // at all, and the deep-equal below is what proved the worker map is derived, not duplicated.
+    expect(Object.keys(frontendMap).length).toBe(115);
+    expect(Object.keys(SUPPLEMENTAL_KEY_MAP).length).toBe(115);
   });
 
   it('maps are deep equal', () => {

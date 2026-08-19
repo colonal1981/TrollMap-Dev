@@ -88,7 +88,9 @@ describe('water-aliases.js — every placed waterbody name resolves to a real ch
     // Each of these resolved to a different body of water before the table existed.
     const cases = [
       ['May River', 'coast_hilton_head_sc'],       // was mayo_lake, NC
-      ['South Creek', 'coast_pamlico_sound_nc'],   // was south_holston_lake, TN
+      // 'South Creek' -> coast_pamlico_sound_nc was here until 2026-08-19. The zone was cut,
+      // so the case could never fire again -- and the `continue` guard below meant it would
+      // have gone on passing while testing nothing rather than failing.
       ['Black Creek', 'great_pee_dee_river'],      // was lake_blackshear, GA
       ['Russ Creek', 'little_pee_dee_river'],      // was lake_thurmond_russell
       ['Shem Creek', 'coast_charleston_sc'],       // was nothing

@@ -83,12 +83,18 @@ const DECLARED = [
   ['js/data/species-intel.js', 'REGULATIONS', 9, 'data',
    'six waters plus Coastal SC Inshore. The digest now supplies statewide limits for all 454; '
    + 'this table is the only source of CLOSURES.'],
-  ['js/modules/contour-data.js', 'CHAIN_DESCRIPTIONS', 30, 'data',
-   'prose for 30 named reservoir chains.'],
+  // 24 since 2026-08-19, down six. The map is slug -> label and the six out-of-region zones
+  // no longer have slugs: cutting them from coastal_catalog.py without cutting them here would
+  // leave six labels for water the picker cannot offer.
+  ['js/modules/contour-data.js', 'CHAIN_DESCRIPTIONS', 24, 'data',
+   'prose for 24 named reservoir chains and coastal zones.'],
   ['js/modules/fishing-index.js', 'FISHING_SYSTEMS', 5, 'data',
    'five named systems that group ramps across waters.'],
-  ['js/data/coastal-zones.js', 'COASTAL_ZONES', 22, 'data',
-   '22 declared, 16 shipped. The 6 extras are out of the region mask.'],
+  // 16 since 2026-08-19. This row used to read "22 declared, 16 shipped" -- it had been
+  // recording the discrepancy rather than closing it. The six extras are gone from
+  // Scripts/coastal_catalog.py, so declared and shipped are now the same number.
+  ['js/data/coastal-zones.js', 'COASTAL_ZONES', 16, 'data',
+   '16 declared, 16 shipped. Every zone in the table is a zone the picker offers.'],
 
   // ── discovery seeds: superseded by the live agency indexes ────────────────────────────────
   ['Worker/research/discover.js', 'TWRA_LAKE_PAGES', 10, 'data',
@@ -108,7 +114,10 @@ const DECLARED = [
   // ONE HUNDRED AND TWENTY-ONE, NOT SIXTY-SEVEN. The old scanner stopped early on a brace inside
   // a nested string and undercounted this by fifty-four. It is the second-largest hand-written
   // table in the app and every audit that quoted 67 was quoting a parser bug.
-  ['js/data/lake-keys.js', 'LAKE_NAME_TO_R2_KEY', 121, 'alias',
+  // 115 since 2026-08-19, down six: the display names of the six cut coastal zones. A name
+  // here that resolves to a slug the picker will not offer is a lake that appears in the list
+  // and then fails to load, which is the exact failure LAKE_NAMES_WITHOUT_PACK exists to prevent.
+  ['js/data/lake-keys.js', 'LAKE_NAME_TO_R2_KEY', 115, 'alias',
    'display name to R2 key. Superseded in most paths by the registry, still the fallback.'],
   // 141 since 2026-08-18, down one from 142. gen_water_aliases_js.py drops a name the registry
   // now answers directly, and "Cooper River" graduated the night the Cooper got its own 4,658-acre
