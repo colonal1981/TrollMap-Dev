@@ -122,7 +122,6 @@ export const LAKE_NAME_TO_R2_KEY = {
   'Lake Townsend, NC':                  'lake_townsend',
   // 'Lake Michie / Little River, NC': 'lake_michie',   // not in lake_index.json -- no pack; unmapped on purpose
   // 'Lake Reidsville, NC': 'lake_reidsville',   // not in lake_index.json -- no pack; unmapped on purpose
-  'North Fork Reservoir, NC':           'north_fork_reservoir',
   'Belews Lake, NC':                    'belews_lake',
   'Hyco Lake, NC':                      'hyco_lake',
   'Mayo Lake, NC':                      'mayo_reservoir',

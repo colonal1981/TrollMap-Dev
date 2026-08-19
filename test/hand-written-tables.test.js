@@ -117,7 +117,7 @@ const DECLARED = [
   // 115 since 2026-08-19, down six: the display names of the six cut coastal zones. A name
   // here that resolves to a slug the picker will not offer is a lake that appears in the list
   // and then fails to load, which is the exact failure LAKE_NAMES_WITHOUT_PACK exists to prevent.
-  ['js/data/lake-keys.js', 'LAKE_NAME_TO_R2_KEY', 115, 'alias',
+  ['js/data/lake-keys.js', 'LAKE_NAME_TO_R2_KEY', 114, 'alias',
    'display name to R2 key. Superseded in most paths by the registry, still the fallback.'],
   // 141 since 2026-08-18, down one from 142. gen_water_aliases_js.py drops a name the registry
   // now answers directly, and "Cooper River" graduated the night the Cooper got its own 4,658-acre

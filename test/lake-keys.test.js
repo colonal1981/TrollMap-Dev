@@ -1,8 +1,8 @@
 import { describe, it, expect } from './expect-shim.mjs';
 import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../js/data/lake-keys.js';
 
-describe('LAKE_NAME_TO_R2_KEY — single source of truth (115 entries)', () => {
-  it('has 115 entries (full map, not truncated worker copy)', () => {
+describe('LAKE_NAME_TO_R2_KEY — single source of truth (114 entries)', () => {
+  it('has 114 entries (full map, not truncated worker copy)', () => {
     // 97 freshwater + 21 coastal zones. Was 101 before the coastal expansion
     // split the single `sc_ga_coastal` key into 21 per-zone `coast_*` keys.
         // 102 after the 2026-08-04 rebind to lake_index.json. Fewer names than before:
@@ -39,7 +39,15 @@ describe('LAKE_NAME_TO_R2_KEY — single source of truth (115 entries)', () => {
     // coastal zones went with the zones themselves when Scripts/coastal_catalog.py was cut from
     // 22 to 16. They had been pointing at slugs consolidate_lake_index.py drops on every run, so
     // each was a name the picker offered and the loader could not answer.
-    expect(Object.keys(LAKE_NAME_TO_R2_KEY).length).toBe(115)  // was 121 with +Lake Robinson (Greenville Co, SC) 2026-08-14 -- two SC Lake Robinsons, 190 km apart;
+    // 114 as of 2026-08-19, down one more: 'North Fork Reservoir, NC'. It is INSIDE the
+    // region -- 336.7 ac, Buncombe Co NC, 35.66920/-82.33913 -- and Garmin never surveyed it.
+    // Zero coverage cells inside its bbox out of 2,707,096 gridded, and zero within ~25 km, so
+    // the gap is regional rather than lake-shaped. Its R2 pack is i-BOATING: shoreline,
+    // fishing_lines, fishing_points, and none of garmin_shoreline/docks/structure/
+    // trolling_runs/water_graph. "i-Boating is dead for contours and depth areas" is standing,
+    // so the index dropped it correctly and this name was the only thing still reaching it.
+    // Ryan: "it is not water i can fish... i do not care about it".
+    expect(Object.keys(LAKE_NAME_TO_R2_KEY).length).toBe(114)  // was 121 with +Lake Robinson (Greenville Co, SC) 2026-08-14 -- two SC Lake Robinsons, 190 km apart;
   });
 
   it('contains critical keys that were missing in old worker copy', () => {
