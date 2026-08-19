@@ -72,7 +72,7 @@ trim_pack_strays.py make_osm_ramps_by_lake.py fetch_dnr_paddle.py suggest_name_a
 check_pipeline_parity.py verify_river_boundaries.py recompute_charted.py make_key_map.py
 prune_r2_keys.py classify_salt_fresh.py lake_catalog.py coastal_catalog.py zone_coverage.py
 make_coastal_boundaries.py extract_coastal_habitat.py trollmap_pipeline_coastal.py
-upload_to_r2_coastal.py trollmap_nhd_boundaries.py osm_ramps.py
+trollmap_nhd_boundaries.py osm_ramps.py
 gen_coastal_zones_js.py gen_water_aliases_js.py audit_scripts.py
 """.split()
 
@@ -105,9 +105,10 @@ GROUPS = [
      lambda f: f.startswith('qdc_') or f == 'check_quickdraw.py'),
 
     ('superseded_uploader',
-     'superseded by upload_garmin_to_r2.py, which is the one the pipeline calls. It was '
-     'three: upload_boundaries_to_r2.py was retired 2026-08-19 and upload_to_r2_coastal.py '
-     'is on the deletion tab as urgent -- it reads split_output3, gone for weeks',
+     'superseded by upload_garmin_to_r2.py, the one uploader left. It was three: '
+     'upload_boundaries_to_r2.py and upload_to_r2_coastal.py were both retired 2026-08-19 -- '
+     'one a second writer for <slug>/boundary.geojson, the other reading split_output3, a '
+     'directory gone for weeks',
      lambda f: f in ('upload_to_r2.py', 'upload_contours_to_r2.py',
                      'upload_supplemental_to_r2.py')),
 

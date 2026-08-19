@@ -142,7 +142,13 @@ def collect(root, repo):
                 'js/modules/route-builder.js', 'js/modules/pinch-point-finder.js',
                 'Worker/research/vision.js', 'js/data/lakes.js',
                 'Scripts/upload_boundaries_to_r2.py',
-                'Scripts/test_upload_boundaries_manifest.py'):
+                'Scripts/test_upload_boundaries_manifest.py',
+                # Retired the same day and for a sharper reason: its OUTPUT_DIR named
+                # split_output3, gone for weeks, so it could not run -- and its own comment
+                # called it an ungated second road to R2 pushing ~124 MB per zone across the
+                # sixteen zones the tier filter existed to exclude. Plausible, unrunnable, and
+                # expensive if someone ran it. 00_START_HERE carried a DO NOT RUN warning for it.
+                'Scripts/upload_to_r2_coastal.py'):
         safe('absent_' + rel.split('/')[-1],
              (lambda r: (lambda: not os.path.exists(Q(*r.split('/')))))(rel))
     safe('absent_lake_boundaries_dir', lambda: not os.path.isdir(R('lake_boundaries')))

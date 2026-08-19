@@ -60,15 +60,30 @@ from pathlib import Path
 # The rules live in the uploader. Importing them means "what R2 should hold" has exactly one
 # definition; a copy here would be correct today and wrong the first time either file moved.
 from upload_garmin_to_r2 import (
-    LAYERS, PIPELINE_ONLY, COASTAL_PRIMARY, COASTAL_SECONDARY_LAYERS, SKIP_SLUGS,
+    LAYERS, PIPELINE_ONLY, SKIP_SLUGS,
 )
-# The coastal pipeline writes *.geojson filenames where the Garmin uploader names layers, so
-# it keeps its own spelling of the same tier. Both are imported: a secondary zone is allowed
-# whatever EITHER uploader would legitimately ship it, and nothing else.
-from upload_to_r2_coastal import (
-    COASTAL_SECONDARY_LAYERS as COASTAL_SECONDARY_FILES,
-    HEAVY_LAYERS as COASTAL_HEAVY_FILES,
-)
+
+# LAYERS A RETIRED PIPELINE PUT IN THE BUCKET, and the reason this is a literal set rather than
+# an import.
+#
+# These four names were reached by importing upload_to_r2_coastal.py, which was deleted
+# 2026-08-19: its OUTPUT_DIR named split_output3, a directory gone for weeks, so it could not
+# run; upload_garmin_to_r2.py covers every coastal zone; and its own comment called it an
+# ungated second road to R2. The header above says rules are imported so they cannot drift from
+# what the uploader believes -- but once the uploader is gone there is nothing left to drift
+# from, and these stop being a rule about what to WRITE and become a fact about what the bucket
+# already HOLDS. That fact belongs here, where the bucket is judged.
+#
+# They are not optional. Without them these objects fall out of KNOWN_PACK_FILES, and an object
+# with no rule is invisible twice over: never proposed, and its absence reads like there being
+# none. Measured on the live listing: shoreline 81 objects, depth_soundings 20,
+# fishing_lines 15, fishing_points 15.
+RETIRED_PIPELINE_FILES = {
+    "shoreline.geojson",
+    "depth_soundings.geojson",
+    "fishing_lines.geojson",
+    "fishing_points.geojson",
+}
 
 WORKER = "https://trollmap-worker.colonal1981.workers.dev"
 FILE_TO_LAYER = {fname: layer for layer, fname in LAYERS.items()}
@@ -138,14 +153,7 @@ RETIRED_PACK_FILES = {
     "chartpack.json",
 }
 
-KNOWN_PACK_FILES = (set(LAYERS.values()) | set(COASTAL_SECONDARY_FILES)
-                    | set(COASTAL_HEAVY_FILES) | SIDECAR_PACK_FILES)
-
-# What a coastal zone outside the Edisto-to-Murrells band is allowed to keep: structure from
-# either uploader's vocabulary, bathymetry from neither.
-KEEP_ON_SECONDARY_COAST = (
-    {LAYERS[l] for l in COASTAL_SECONDARY_LAYERS if l in LAYERS} | set(COASTAL_SECONDARY_FILES)
-)
+KNOWN_PACK_FILES = (set(LAYERS.values()) | RETIRED_PIPELINE_FILES | SIDECAR_PACK_FILES)
 
 # Top-level prefixes that are not lake/coastal packs. Sized and reported, never proposed for
 # deletion: research is 1,616 documents that cost real API calls to fetch.
@@ -263,26 +271,27 @@ def deletable(name: str, fname: str, offered: set | None = None,
         return None                      # index.json, meta.json, vectors/... -- not ours to judge
     if FILE_TO_LAYER.get(fname) in PIPELINE_ONLY:
         return "pipeline-only"
-    # THE TIER-OFF GUARD, and it is the uploader's own guard, copied verbatim in meaning.
-    # COASTAL_PRIMARY IS EMPTY BY DEFAULT AND EMPTY MEANS THE TIER IS OFF -- every zone is
-    # primary and ships every layer. Without the leading `COASTAL_PRIMARY and`, an empty set
-    # makes every coastal zone `not in COASTAL_PRIMARY` and therefore secondary, which is the
-    # exact inversion of what the constant means.
+    # THE COASTAL PRIMARY/SECONDARY TIER IS GONE, 2026-08-19, and the branch that read it with it.
     #
-    # Measured against the live bucket 2026-08-16, minutes after a clean upload that printed
-    # "coastal tier OFF -- every coastal zone ships every layer": the delete list held 127
-    # objects, 338.6 MB, across 16 coastal zones the app was serving that same minute --
-    # boundary.geojson among them, which is the file the map draws. Only 45 of the 172 keys
-    # were genuinely orphaned.
+    # Ryan, 2026-08-14: "there is no coastal zones primary anymore... and i will be pruning the
+    # coastal zones along with the lakes that are now outside my zone." The tier existed to hold
+    # heavy layers back from zones that shipped but were not worth full weight. The region polygon
+    # now removes a zone entirely or keeps it entirely -- 16 zones on disk, 16 in the index, every
+    # one in his water -- so there is no secondary band left for a tier to describe.
     #
-    # upload_garmin_to_r2.py:198 already carried this guard and already said why: "the old
-    # behaviour was one absent name away from silently stripping a zone." This module's own
-    # docstring says the coastal rule "is imported from upload_garmin_to_r2.py rather than
-    # restated, so it cannot drift from what the uploader believes" -- and then restated it.
-    # The constant was imported; the CONDITION was not.
-    if COASTAL_PRIMARY and name.startswith("coast_") and name not in COASTAL_PRIMARY:
-        if fname not in KEEP_ON_SECONDARY_COAST:
-            return "coastal-secondary"
+    # It was already unreachable: COASTAL_PRIMARY has been an empty set by default, and the guard
+    # read `if COASTAL_PRIMARY and ...`, so the branch could not fire. Deleting an if that never
+    # runs changes no behaviour, and the delete proposal was byte-identical before and after --
+    # checked, not assumed.
+    #
+    # WHAT IT COST WHILE IT DID RUN is why the removal is written down rather than done quietly.
+    # Measured against the live bucket 2026-08-16, minutes after an upload that printed "coastal
+    # tier OFF": the delete list held 127 objects, 338.6 MB, across 16 coastal zones the app was
+    # serving that same minute -- boundary.geojson among them, the file the map draws. Only 45 of
+    # 172 keys were genuinely orphaned. The constant had been imported so it could not drift; the
+    # CONDITION had been restated, and the restatement is what inverted.
+    #
+    # The lesson outlives the code: importing a constant is not importing a rule.
     return None
 
 
