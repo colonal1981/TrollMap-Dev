@@ -143,10 +143,38 @@ def collect(root, repo):
     # ── claims already proven wrong once ──────────────────────────────────────────────────
     # "Coastal boundaries are rectangles" cost five repetitions and one wasted code branch.
     def coastal():
+        # ZONES COME FROM THE CATALOG, NOT FROM FILES ON DISK.
+        #
+        # This counted glob('registry/boundaries/coast_*.geojson') and so reported 22 on
+        # 2026-08-19, hours after the catalog went to 16 -- because the six cut zones still
+        # have boundary files sitting there. It was measuring leftovers.
+        #
+        # 00_START_HERE's own list of checks that each cost a session opens with "Count the
+        # RIGHT thing. Presence is not size", and the worked example it gives is coastal zones
+        # judged by file presence. This checker exists to keep that page honest and was
+        # committing the page's headline mistake, on the page's own example.
+        #
+        # `zones` is now what the app can offer. `orphan_boundary_files` is the leftovers,
+        # reported rather than folded in, so deleting them moves a number that says what it is.
         import glob
+        cat = set()
+        try:
+            import importlib.util
+            _sp = importlib.util.spec_from_file_location(
+                '_cc', os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    'coastal_catalog.py'))
+            _m = importlib.util.module_from_spec(_sp); _sp.loader.exec_module(_m)
+            cat = set(_m.COASTAL_CATALOG)
+        except Exception:
+            cat = set()
+        files = glob.glob(R('registry', 'boundaries', 'coast_*.geojson'))
+        orphans = sum(1 for fp in files
+                      if os.path.basename(fp)[:-len('.geojson')] not in cat) if cat else 0
         n = mn = mx = 0
         heavy = 0
-        for fp in glob.glob(R('registry', 'boundaries', 'coast_*.geojson')):
+        for fp in files:
+            if cat and os.path.basename(fp)[:-len('.geojson')] not in cat:
+                continue
             d = _j(fp)
             fs = d.get('features') if d.get('type') == 'FeatureCollection' else [d]
             v = 0
@@ -164,7 +192,9 @@ def collect(root, repo):
             if (os.path.getsize(R('chartpack', slug, 'contours.geojson'))
                     if os.path.exists(R('chartpack', slug, 'contours.geojson')) else 0) > 200:
                 heavy += 1
-        return {'zones': n, 'min_vertices': mn, 'max_vertices': mx, 'with_contours': heavy}
+        return {'zones': len(cat) if cat else n, 'boundaries_for_live_zones': n,
+                'orphan_boundary_files': orphans,
+                'min_vertices': mn, 'max_vertices': mx, 'with_contours': heavy}
     safe('coastal', coastal)
 
     safe('test_files', lambda: sum(1 for f in os.listdir(Q('test')) if f.endswith('.test.js')))

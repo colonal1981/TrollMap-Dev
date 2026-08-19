@@ -11,8 +11,14 @@ Personal use only, not for distribution or resale; not for navigation.
        --gpkg  "F:\TrollMapPipeline\3dhp_all_CONUS_20260112_GPKG\3dhp_all_CONUS_20260112_GPKG.gpkg" `
        --feeds "F:\TrollMapPipeline\registry" `
        --index "F:\TrollMapPipeline\registry\lake_index.json" `
-       --out   "F:\TrollMapPipeline\lake_boundaries"
+       --out   "F:\TrollMapPipeline\lake_boundaries_3dhp"
        # sidecars land in registry/ -- see the --sidecars note in main()
+       #
+       # NOT lake_boundaries/. That tray was retired to _to_delete/ on 2026-08-12 and this
+       # usage block put it back: a river re-cut on 2026-08-17 followed the line above and
+       # recreated the directory with one file in it, which is what flipped
+       # check_start_here.py's `absent_lake_boundaries_dir` from true to false. 00_START_HERE
+       # warns that a command in a docstring is a dependency, and this is the instance.
     # ... reports what it would cut, writes nothing. Then --go.
 
 WHY THIS EXISTS
