@@ -114,8 +114,6 @@ export const LAKE_NAME_TO_R2_KEY = {
   'Falls Lake, NC':                     'falls_lake',   // shipped 2026-08-04
   'W. Kerr Scott Reservoir, NC':        'w_kerr_scott_reservoir',
   // Explicit: "kerr" alone matches "w kerr scott" without this
-  'Kerr Lake, NC':                      'kerr_lake',   // shipped 2026-08-04
-  'John H. Kerr Reservoir, NC':         'kerr_lake',   // shipped 2026-08-04
   'Shearon Harris Reservoir, NC':       'shearon_harris_reservoir',
   'Randleman Lake, NC':                 'randleman_lake',   // shipped 2026-08-04
   // 'Lake Mackintosh, NC': 'lake_mackintosh',   // not in lake_index.json -- no pack; unmapped on purpose
@@ -152,13 +150,8 @@ export const LAKE_NAME_TO_R2_KEY = {
   'Lake Lanier, GA':                    'lake_sidney_lanier',
   // Explicit: "jackson" alone matches "lake jackson" → juliette chain without this
   'Lake Jackson, GA':                   'jackson_lake',
-  'High Falls Lake, GA':                'high_falls_lake',
   // 'Lake Juliette / High Falls, GA' split 2026-08-04 -- one display name cannot point at two packs
-  'Lake Blackshear, GA':                'lake_blackshear',
-  'Lake Allatoona, GA':                 'allatoona_lake',
-  'Tobesofkee Reservoir, GA':           'lake_tobesofkee',
   'Kornbow Lake, GA':                   'kornbow_lake',
-  'Lake Blue Ridge, GA':                'blue_ridge_lake',
   'Lake Nottely, GA':                   'nottely_lake',
   'Lake Burton, GA':                    'lake_burton',
   'Lake Chatuge, GA/NC':                'chatuge_lake',
@@ -174,18 +167,12 @@ export const LAKE_NAME_TO_R2_KEY = {
   'Fort Loudoun Reservoir, TN':         'fort_loudoun_lake',
   'Tellico Lake, TN':                   'tellico_lake',
   'Tellico Reservoir, TN':              'tellico_lake',
-  'Melton Hill Lake, TN':               'melton_hill_lake',
-  'Melton Hill Reservoir, TN':          'melton_hill_lake',
-  'South Holston Lake, TN':             'south_holston_lake',
-  'South Holston Reservoir, TN':        'south_holston_lake',
   'Lake Chilhowee, TN':                 'chilhowee_lake',
   'Lake Cheoah, TN/NC':                 'cheoah_lake',   // shipped 2026-08-04
   'Watauga Lake, TN':                   'watauga_lake',
   'Boone Lake, TN':                     'boone_lake',
   'Boone Reservoir, TN':                'boone_lake',
   // 'Watauga / Boone Chain, TN/NC': removed 2026-08-04 -- both halves now have their own entries
-  'Watts Bar Lake, TN':                 'watts_bar_lake',
-  'Watts Bar Reservoir, TN':            'watts_bar_lake',
 
   // ── SC Coastal ──────────────────────────────────────────────────────────────
   'Winyah Bay / Georgetown, SC':              'coast_winyah_bay_sc',
@@ -313,6 +300,36 @@ export const LAKE_NAMES_WITHOUT_PACK = new Set([
   'Lake Mackintosh, NC',
   'Lake Michie / Little River, NC',
   'Lake Reidsville, NC',
+  // OUT OF REGION, cut 2026-08-19. Ryan: "if they are outside the boundary then they are cut".
+  //
+  // These are NOT here because the water does not exist -- all nine are real, several are big
+  // (Kerr ~41,940 ac, Watts Bar ~33,441). They are outside the region polygon, so consolidate
+  // drops them and lake_index.json never offered them. What kept them reachable was this file:
+  // contour-data.js resolves a display name here and fetches chartpacks/<key>/contours.geojson
+  // straight from R2, consulting no registry row.
+  //
+  // THEY ARE REFUSED RATHER THAN DELETED, and the difference is not bookkeeping. Cutting the
+  // mapping alone does not stop a name answering -- it re-points it. Measured before making
+  // this change: with its mapping simply removed, 'High Falls Lake, GA' resolved to
+  // `falls_lake`, which is Falls Lake in NORTH CAROLINA and does ship. That is the
+  // 'Kerr Lake, NC' -> w_kerr_scott_reservoir failure this file already documents, with a new
+  // pair. hasNoPack() runs BEFORE any matching, so a name in this set is refused outright.
+  'Lake Allatoona, GA',
+  'Lake Blue Ridge, GA',
+  'High Falls Lake, GA',
+  'Kerr Lake, NC',
+  'John H. Kerr Reservoir, NC',
+  'Lake Blackshear, GA',
+  'Tobesofkee Reservoir, GA',
+  'Melton Hill Lake, TN',
+  'Melton Hill Reservoir, TN',
+  'South Holston Lake, TN',
+  'South Holston Reservoir, TN',
+  'Watts Bar Lake, TN',
+  'Watts Bar Reservoir, TN',
+  // North Fork Reservoir, NC is IN the region -- Garmin simply never surveyed it, and its R2
+  // pack is i-Boating. Same refusal, different reason.
+  'North Fork Reservoir, NC',
 ]);
 
 /** Normalised membership test — the set is keyed by display name, users are not. */

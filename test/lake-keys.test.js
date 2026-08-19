@@ -1,8 +1,8 @@
 import { describe, it, expect } from './expect-shim.mjs';
-import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../js/data/lake-keys.js';
+import { LAKE_NAME_TO_R2_KEY, LAKE_NAMES_WITHOUT_PACK, resolveR2Key } from '../js/data/lake-keys.js';
 
-describe('LAKE_NAME_TO_R2_KEY — single source of truth (114 entries)', () => {
-  it('has 114 entries (full map, not truncated worker copy)', () => {
+describe('LAKE_NAME_TO_R2_KEY — single source of truth (101 entries)', () => {
+  it('has 101 entries (full map, not truncated worker copy)', () => {
     // 97 freshwater + 21 coastal zones. Was 101 before the coastal expansion
     // split the single `sc_ga_coastal` key into 21 per-zone `coast_*` keys.
         // 102 after the 2026-08-04 rebind to lake_index.json. Fewer names than before:
@@ -47,7 +47,42 @@ describe('LAKE_NAME_TO_R2_KEY — single source of truth (114 entries)', () => {
     // trolling_runs/water_graph. "i-Boating is dead for contours and depth areas" is standing,
     // so the index dropped it correctly and this name was the only thing still reaching it.
     // Ryan: "it is not water i can fish... i do not care about it".
-    expect(Object.keys(LAKE_NAME_TO_R2_KEY).length).toBe(114)  // was 121 with +Lake Robinson (Greenville Co, SC) 2026-08-14 -- two SC Lake Robinsons, 190 km apart;
+    // 101 as of 2026-08-19, down thirteen more: nine waters outside the region polygon, some
+    // of them large -- Kerr ~41,940 ac, Watts Bar ~33,441 -- carrying thirteen display names
+    // between them. Ryan: "if they are outside the boundary then they are cut".
+    //
+    // THEY MOVED TO LAKE_NAMES_WITHOUT_PACK RATHER THAN BEING DELETED. Measured first: with its
+    // mapping merely removed, 'High Falls Lake, GA' resolved to `falls_lake` -- Falls Lake in
+    // NORTH CAROLINA, which ships. Deleting a mapping does not stop a name answering, it
+    // re-points it, which is the failure this file already documents for Kerr.
+    expect(Object.keys(LAKE_NAME_TO_R2_KEY).length).toBe(101)  // was 121 with +Lake Robinson (Greenville Co, SC) 2026-08-14 -- two SC Lake Robinsons, 190 km apart;
+  });
+
+  it('LAKE_NAMES_WITHOUT_PACK holds 20 names, and every one of them refuses', () => {
+    // PINNED HERE BECAUSE THE LEDGER CANNOT SEE IT. hand-written-tables.test.js finds tables with
+    // /(?:const|var|let)\s+([A-Z][A-Z0-9_]{3,})\s*=\s*\{/ -- an object literal. This is a
+    // `new Set([...])`, so both the size ledger AND the "a NEW table keyed by water names must be
+    // declared here" guard are blind to it. Ninety-six UPPER_SNAKE Set/Array tables across
+    // Worker/ and js/ are invisible the same way; widening that scanner is on the deletion tab.
+    //
+    // It went 6 -> 20 on 2026-08-19: thirteen names for nine waters outside the region polygon,
+    // plus North Fork Reservoir, which is inside it but was never charted by Garmin.
+    expect(LAKE_NAMES_WITHOUT_PACK.size).toBe(20);
+    // The set is only worth anything if membership actually refuses. hasNoPack() runs before any
+    // matching, so this is the assertion that says the fuzzy pass cannot answer for them.
+    for (const name of LAKE_NAMES_WITHOUT_PACK) {
+      expect(resolveR2Key(name)).toBe(null);
+    }
+  });
+
+  it('cutting a name must not hand it to a different lake', () => {
+    // 'High Falls Lake, GA' resolved to `falls_lake` -- Falls Lake, NORTH CAROLINA, which ships --
+    // when its mapping was deleted without being refused. Measured before the cut, not after.
+    // Same shape as 'Kerr Lake, NC' -> w_kerr_scott_reservoir, 1,280 ac for ~50,000.
+    expect(resolveR2Key('High Falls Lake, GA')).toBe(null);
+    expect(resolveR2Key('Falls Lake, NC')).toBe('falls_lake');
+    expect(resolveR2Key('Kerr Lake, NC')).toBe(null);
+    expect(resolveR2Key('W. Kerr Scott Reservoir, NC')).toBe('w_kerr_scott_reservoir');
   });
 
   it('contains critical keys that were missing in old worker copy', () => {
