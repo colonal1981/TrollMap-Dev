@@ -37,17 +37,60 @@ It reports how many lakes gain a real ramp, how many lose a fictional one, and w
 in total, because "your access badge is now correct" is only trustworthy with the number of
 badges that were wrong beside it.
 """
-import argparse, json, math, os
+import argparse, json, math, os, sys
 
 
-def load_boxes(bdir):
+def retired_of(registry):
+    """(slugs a merge has retired, note). From the ONE file that records them.
+
+    A RETIRED SLUG IS STILL A FILE IN registry/boundaries/, AND THIS SCRIPT AWARDS A RAMP TO
+    THE SMALLEST CLAIMANT. A merge retires the near-duplicate of a lake, so the retired
+    boundary is almost the same shape as the keeper's and is frequently the SMALLER of the
+    two -- which means it wins, and the ramps land on a slug `lake_index.json` does not offer.
+
+    Measured 2026-08-19, straight after a --go run:
+
+        brinkley_lake      17 ramps   falls_lake got 0
+        persimmon_lake     10          hiwassee_lake got 1
+        tail_race_canal     3          cooper_river got 9
+        wilson_dam          1          santee_river got 4
+
+    falls_lake is a shipped lake that came out of that run with no OSM ramps at all.
+
+    Imported by NAME off sys.path rather than restated here, and for the reason
+    verify_registry_r2.py gives at its own copy of this import: a second reader of the
+    deletion tab drifts from the first, and then both agree with themselves while one is
+    wrong. upload_garmin_to_r2 does `from r2_gzip import prepared` at module level, so the
+    script's own directory has to be on sys.path before the import.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    try:
+        import upload_garmin_to_r2 as ug
+        fn = getattr(ug, 'retired_slugs', None)
+        if fn is None:
+            return set(), ('upload_garmin_to_r2.py has no retired_slugs() -- retired slugs are '
+                           'NOT being filtered, and a merged-away slug can take ramps off its '
+                           'keeper')
+        return fn(registry)
+    except Exception as exc:
+        return set(), ('could not import retired_slugs from upload_garmin_to_r2.py (%s: %s) -- '
+                       'retired slugs are NOT being filtered, and a merged-away slug can take '
+                       'ramps off its keeper' % (type(exc).__name__, exc))
+
+
+def load_boxes(bdir, skip=()):
     """slug -> (W, S, E, N, area_deg2). Read from the boundary, not the index, because the
     index is what this file feeds and reading your own output back is how errors persist."""
     out = {}
+    skip = set(skip or ())
     for fn in os.listdir(bdir):
         if not fn.endswith('.geojson'):
             continue
         slug = fn[:-len('.geojson')]
+        if slug in skip:
+            continue
         try:
             gj = json.load(open(os.path.join(bdir, fn), encoding='utf-8'))
         except Exception:
@@ -87,8 +130,12 @@ def main():
 
     print('MODE: %s' % ('WRITING' if a.go else 'DRY RUN -- nothing will be changed'))
     bdir = os.path.join(a.registry, 'boundaries')
-    boxes = load_boxes(bdir)
-    print('%d registry boundaries' % len(boxes))
+    gone, gone_note = retired_of(a.registry)
+    if gone_note:
+        print('!! %s' % gone_note)
+    boxes = load_boxes(bdir, skip=gone)
+    print('%d registry boundaries (%d retired slug(s) skipped, so a merged-away boundary '
+          'cannot outbid its keeper)' % (len(boxes), len(gone)))
 
     gj = json.load(open(a.ramps, encoding='utf-8'))
     feats = gj.get('features') or []
