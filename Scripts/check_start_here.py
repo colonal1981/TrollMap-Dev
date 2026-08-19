@@ -133,9 +133,16 @@ def collect(root, repo):
     # ── files that must be ABSENT ─────────────────────────────────────────────────────────
     # A deleted module reappearing means a revert or a bad merge went unnoticed. Cheap to check,
     # and it is the class of thing nobody looks for.
+    # Scripts/upload_boundaries_to_r2.py joined this list 2026-08-19. It is not merely unused:
+    # it is a SECOND WRITER for <slug>/boundary.geojson with its own manifest, and the deletion
+    # tab's own caution is that two writers for one key is what put upload_to_r2_coastal.py there.
+    # A revert bringing it back would not fail anything -- it would just quietly re-create the
+    # split that cost the index gate a day and shipped 1,250 out-of-scope packs.
     for rel in ('js/modules/casting-rings.js', 'js/modules/route-debug.js',
                 'js/modules/route-builder.js', 'js/modules/pinch-point-finder.js',
-                'Worker/research/vision.js', 'js/data/lakes.js'):
+                'Worker/research/vision.js', 'js/data/lakes.js',
+                'Scripts/upload_boundaries_to_r2.py',
+                'Scripts/test_upload_boundaries_manifest.py'):
         safe('absent_' + rel.split('/')[-1],
              (lambda r: (lambda: not os.path.exists(Q(*r.split('/')))))(rel))
     safe('absent_lake_boundaries_dir', lambda: not os.path.isdir(R('lake_boundaries')))

@@ -55,9 +55,15 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # ── (1) asserted live, from claude/00_START_HERE.md ─────────────────────────────
+# upload_boundaries_to_r2.py left this list on 2026-08-19 with the script itself. Boundaries
+# ride along with upload_garmin_to_r2.py since 0bee3dc -- one writer per key -- and a name here
+# is a ROOT of the reachability walk, so leaving it would have kept a deleted file's dependencies
+# alive under "named in 00_START_HERE.md" while the page had already stopped naming it.
+# Checked before removing: the only local module it imported was r2_gzip.py, which
+# upload_garmin_to_r2.py imports too, so nothing was stranded.
 PIPELINE = """
 trollmap_extract_all.py tile_lake_map.py build_all_chartpacks.py build_chartpack.py
-consolidate_lake_index.py upload_garmin_to_r2.py upload_boundaries_to_r2.py
+consolidate_lake_index.py upload_garmin_to_r2.py
 fetch_osm_structures.py install_registry_boundary.py make_river_boundaries.py
 """.split()
 
@@ -99,8 +105,9 @@ GROUPS = [
      lambda f: f.startswith('qdc_') or f == 'check_quickdraw.py'),
 
     ('superseded_uploader',
-     'superseded by upload_garmin_to_r2.py / upload_boundaries_to_r2.py / '
-     'upload_to_r2_coastal.py, which are the three the pipeline actually calls',
+     'superseded by upload_garmin_to_r2.py, which is the one the pipeline calls. It was '
+     'three: upload_boundaries_to_r2.py was retired 2026-08-19 and upload_to_r2_coastal.py '
+     'is on the deletion tab as urgent -- it reads split_output3, gone for weeks',
      lambda f: f in ('upload_to_r2.py', 'upload_contours_to_r2.py',
                      'upload_supplemental_to_r2.py')),
 
