@@ -28,6 +28,7 @@ restated here -- and then the union acreage this script computes is compared aga
 says so instead of drawing a confident picture of the wrong thing.
 """
 import argparse
+import gzip
 import json
 import math
 import os
@@ -59,6 +60,32 @@ def sphere_acres(geom):
     return total / SQM_PER_ACRE
 
 
+def _albers(geom):
+    """The same equal-area projection shape_of uses, or None if pyproj is absent."""
+    try:
+        import pyproj
+        from shapely.ops import transform
+        return transform(pyproj.Transformer.from_crs(
+            'EPSG:4326', '+proj=aea +lat_1=29 +lat_2=45 +lat_0=37 +lon_0=-96 '
+            '+datum=WGS84 +units=m', always_xy=True).transform, geom)
+    except Exception:
+        return None
+
+
+def metres(geom):
+    """Length of a lon/lat geometry in metres.
+
+    NOT degrees times 111,000. A degree of longitude at 33 N is 93 km, not 111, so the flat
+    factor overstates every east-west run by 19% -- and the number this feeds is "how much
+    contour the app does not draw", which is the one line of the report a person would act on.
+    An invented number that looks like a measurement is worse than no number.
+    """
+    if geom is None or geom.is_empty:
+        return 0.0
+    m = _albers(geom)
+    return (m if m is not None else geom).length
+
+
 def shape_of(part):
     """(mean width in metres, 'sliver'|'lobe'), by how much area a piece carries per unit edge.
 
@@ -88,6 +115,194 @@ def shape_of(part):
     return width, ('sliver' if r < 0.05 else 'lobe')
 
 
+def _open_tile(path):
+    """A tile is <name>.geojson.gz, and sometimes <name>.geojson. Return features or []."""
+    for p in (path + '.gz', path):
+        if os.path.exists(p):
+            try:
+                op = gzip.open(p, 'rt', encoding='utf-8') if p.endswith('.gz') \
+                    else open(p, encoding='utf-8')
+                with op as fh:
+                    return (json.load(fh).get('features') or [])
+            except Exception:
+                return []
+    return []
+
+
+def tiles_for(root, slug):
+    """(B tiles, C tiles) for a slug, from tile_lake_map.json.
+
+    C TILES CARRY THE SOUNDINGS, B TILES CARRY EVERYTHING ELSE, AND THE MAP STORES B.
+    contours and depth_areas live under extract/contours/C4E0F4.geojson.gz; waterbody,
+    shoreline, pois, docks and labels live under B4E0F4. `by_lake` holds the B name, so the
+    sounding layers have to be asked for by the C name or they come back empty and the tool
+    reports that Garmin charts nothing here -- which is the same sentence it prints when
+    Garmin really charts nothing, and there is no way to tell the two apart from the output.
+    """
+    fp = os.path.join(root, 'registry', 'tile_lake_map.json')
+    if not os.path.exists(fp):
+        return [], []
+    try:
+        by_lake = (json.load(open(fp, encoding='utf-8')).get('by_lake') or {})
+    except Exception:
+        return [], []
+    b = [t for t in (by_lake.get(slug) or []) if t]
+    return b, [('C' + t[1:]) if len(t) > 1 else t for t in b]
+
+
+def garmin_evidence(root, slug, area, min_ac=0.02):
+    """What GARMIN charts inside `area`, and how much of it the pack does not carry.
+
+    THIS REPLACES A SHAPE TEST WITH THE QUESTION THE SHAPE TEST WAS A PROXY FOR.
+
+    The verdict used to come from 4*pi*A/P^2 -- sliver or lobe -- and on prestwood_lake it
+    called the entire upper half of the lake, 262 acres and 129 m of mean width, a sliver, and
+    concluded "shoreline disagreement between two traces of the same water, not missing lake".
+    Ryan had already looked at that lake in the app: "its definitely cut short on most banks".
+
+    Mean width does not separate them either, and the test file says so without noticing: the
+    lake-sized rim it builds to prove a rim is a sliver is about 100 m wide, and Prestwood's
+    missing arm is 129 m. There is no shape threshold with a rim on one side and a creek arm
+    on the other, because the difference between them is not a shape -- it is whether there is
+    water there.
+
+    Garmin already answered that. extract/waterbody says where it drew water, and
+    extract/contours and extract/depth_areas say where it sounded. So this counts:
+
+        water_ac        acres Garmin draws as water inside the gap
+        contours        Garmin's zoom-0 contours whose geometry meets the gap
+        depth_areas     the same for depth areas
+        pack_*          how many of those the pack ALREADY carries
+
+    and re-tracing earns its keep only where Garmin sounded water the pack is not shipping.
+    That is the lake_marion answer and the prestwood_lake answer from one measurement instead
+    of two opposite guesses.
+
+    ZOOM 0 ON BOTH SIDES. Contours ship at six zooms that are generalised copies of one line,
+    and the pack keeps zoom 0. Counting every zoom in the tile against a zoom-0 pack reports a
+    gap that is six renderings of a contour the pack already has.
+    """
+    ev = {'tiles': 0, 'water_ac': 0.0, 'contours': 0, 'depth_areas': 0,
+          'pack_contours': 0, 'pack_depth_areas': 0, 'read': False, 'water': None,
+          'unshipped_m': {}, 'unshipped': {}}
+    if area is None or area.is_empty:
+        return ev
+    from shapely.geometry import shape as _shape
+    from shapely.ops import unary_union as _uu, unary_union
+    btiles, ctiles = tiles_for(root, slug)
+    if not btiles:
+        return ev
+    ev['tiles'] = len(btiles)
+    ex = os.path.join(root, 'extract')
+
+    # ONE POLYGON PER DISTINCT `raw`. Garmin emits the same water at several display modes and
+    # the duplicates are byte-identical in `raw`, so counting rows counts renderings.
+    seen, water = set(), []
+    for t in btiles:
+        for f in _open_tile(os.path.join(ex, 'waterbody', t + '.geojson')):
+            p = f.get('properties') or {}
+            k = (t, p.get('raw'))
+            if p.get('raw') is not None and k in seen:
+                continue
+            seen.add(k)
+            try:
+                g = _shape(f['geometry'])
+            except Exception:
+                continue
+            if g.is_empty or not g.intersects(area):
+                continue
+            try:
+                water.append(g.buffer(0))
+            except Exception:
+                continue
+    if water:
+        ev['read'] = True
+        try:
+            ev['water'] = _uu(water)
+            ev['water_ac'] = sphere_acres(ev['water'].intersection(area))
+        except Exception:
+            ev['water'], ev['water_ac'] = None, 0.0
+
+    pack = os.path.join(root, 'chartpack', slug)
+    for key, layer in (('contours', 'contours'), ('depth_areas', 'depth_areas')):
+        hits = []
+        for t in ctiles:
+            for f in _open_tile(os.path.join(ex, layer, t + '.geojson')):
+                p = f.get('properties') or {}
+                if p.get('zoom') not in (0, None):
+                    continue
+                try:
+                    g = _shape(f['geometry'])
+                except Exception:
+                    continue
+                if g.is_empty or not g.intersects(area):
+                    continue
+                ev['read'] = True
+                hits.append(g)
+        ev[key] = len(hits)
+        if not hits:
+            continue
+
+        # WHAT THE PACK HOLDS IS MATCHED BY GEOMETRY. Two earlier versions of this got it
+        # wrong in opposite directions and both were confident.
+        #
+        # The first drew a bounding box around the gap and counted every pack feature whose
+        # first coordinate landed in it. The box around a gap contains the lake beside it, so
+        # prestwood_lake came back "42 contours already drawn" for a gap the pack was assumed
+        # not to reach.
+        #
+        # The second matched on the tile's `raw` field. THE PACK DOES NOT CARRY `raw` -- its
+        # properties are layer, mode, zoom, depth_* and tile -- so the comparison ran against
+        # an empty set and reported 0 shipped for every water, on every layer, always. It was
+        # tested against a fixture invented with a `raw` on it, which is how a match key that
+        # does not exist in the real file passed a test.
+        #
+        # AND THE ASSUMPTION UNDER BOTH WAS FALSE: a pack is NOT clipped to its boundary.
+        # build_chartpack dilates the mask, so Prestwood's 193-acre ring ships contours out to
+        # -80.1024, well into a gap that starts at -80.0917. Ryan saw that immediately -- "the
+        # green area is present" -- because the app was drawing it.
+        #
+        # So the only honest question is how much of Garmin's line the app does not draw
+        # ANYWHERE, and the answer is metres, not features: a feature the mask cut in half is
+        # half shipped, and counting it as missing or as present is wrong either way.
+        pk = []
+        fp = os.path.join(pack, layer + '.geojson')
+        if os.path.exists(fp):
+            try:
+                for ft in (json.load(open(fp, encoding='utf-8')).get('features') or []):
+                    try:
+                        pg = _shape(ft['geometry'])
+                    except Exception:
+                        continue
+                    if pg.is_empty:
+                        continue
+                    pk.append(pg.buffer(0) if pg.geom_type.endswith('Polygon') else pg)
+            except Exception:
+                pk = []
+        if not pk:
+            ev['unshipped_m'][key] = sum(metres(g) for g in hits)
+            continue
+        # EPS is float noise, not a tolerance. The pack's coordinates come out of the same
+        # tile decode as the tile's, so a shipped feature is the SAME geometry; ~2 m of buffer
+        # absorbs the round trip through JSON and nothing else.
+        cover = unary_union(pk).buffer(2e-5)
+        short, left = 0, []
+        for g in hits:
+            d = g.difference(cover)
+            if d.is_empty or (g.length and d.length / g.length < 0.10):
+                short += 1
+            if not d.is_empty:
+                left.append(d)
+        ev['pack_' + key] = short
+        if left:
+            try:
+                ev['unshipped_m'][key] = metres(unary_union(left))
+                ev['unshipped'][key] = unary_union(left)
+            except Exception:
+                pass
+    return ev
+
+
 HTML = '''<!doctype html>
 <meta charset="utf-8"><title>%(title)s</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css"/>
@@ -114,6 +329,10 @@ HTML = '''<!doctype html>
    &mdash; <span class="n">%(union)s ac</span></div>
  <div class="k"><span class="sw" style="background:#c0392b"></span>in NHD, not in the boundary
    &mdash; <span class="n">%(miss)s ac</span></div>
+ <div class="k"><span class="sw" style="background:#1f8a4c"></span>what GARMIN charts as water
+   in there &mdash; <span class="n">%(wet)s ac</span></div>
+ <div class="k"><span class="sw" style="background:#8e44ad"></span>Garmin line NO pack draws
+   &mdash; <span class="n">%(unm)s m</span></div>
  <div class="note">%(verdict)s
  <table>%(rows)s</table></div>
 </div>
@@ -129,6 +348,14 @@ const reg = L.geoJSON(D.registry, {style:{color:'#2f6fb2',weight:1,fillOpacity:.
 map.fitBounds(reg.getBounds().pad(0.05));
 L.geoJSON(D.union, {style:{color:'#e0a30b',weight:1,fill:false,dashArray:'5 4'}}).addTo(map);
 L.geoJSON(D.missing, {style:{color:'#c0392b',weight:1,fillOpacity:.75}}).addTo(map);
+// GARMIN LAST AND ON TOP. The red is what NHD says is missing; the green is the part of it a
+// depth sounder actually went over, and that is the layer the decision turns on.
+if (D.garmin) L.geoJSON(D.garmin,
+  {style:{color:'#1f8a4c',weight:1,fillOpacity:.55}}).addTo(map);
+// AND THE ONE LINE THAT IS ACTUALLY ABSENT. Not the gap, not the water -- the contour Garmin
+// drew that no pack ships. Everything else on this page is context for it.
+if (D.unshipped) L.geoJSON(D.unshipped,
+  {style:{color:'#8e44ad',weight:3,opacity:.95,fill:false}}).addTo(map);
 for (const m of D.marks) {
   L.circleMarker([m[1], m[0]], {radius:5, color:'#c0392b', weight:2, fillOpacity:.9})
     .addTo(map).bindTooltip(m[2] + ' ac \\u2014 ' + m[3], {permanent:false, sticky:true});
@@ -274,19 +501,46 @@ def main():
     scored = sorted(((sphere_acres(p), p) for p in parts), key=lambda t: -t[0])
     total = sum(s for s, _ in scored)
     print('\n   in NHD and not in the boundary: %.1f acres in %d piece(s)' % (total, len(scored)))
-    print('   %4s %10s %9s %9s   %s' % ('#', 'acres', 'mean wide', 'shape', 'centre'))
+
+    # ASK GARMIN BEFORE PRINTING A WORD ABOUT ANY OF THESE PIECES.
+    #
+    # `shape_of` describes the arithmetic of a piece and nothing else, and on prestwood_lake it
+    # described 262 acres of open water -- the whole upper half of the lake, 16 km of sinuous
+    # bank around a 129 m wide arm -- as a sliver, which is true of its 4*pi*A/P^2 and reads as
+    # "not water". A flooded creek arm has the perimeter of a ribbon. So the shape stays in the
+    # table as a shape, and whether the piece is WATER is answered by the tile that charts it.
+    ev = garmin_evidence(root, a.slug, unary_union([p for acr, p in scored if acr >= 0.02])
+                         if scored else None)
+    gw = ev.get('water')
+
+    # THE TABLE LISTS WHAT A PERSON COULD FIND. `union.difference(boundary)` leaves a crumb of
+    # topology at every vertex where the two traces cross -- prestwood_lake came back as 1 real
+    # arm and 105 pieces of 0.00 acres -- and fifteen rows of zeroes under one real row reads as
+    # fifteen findings. The remainder is reported as a total below, not hidden.
+    listed = [t for t in scored if t[0] >= a.min_draw][:a.top]
+    print('   %4s %10s %9s %9s %8s   %s'
+          % ('#', 'acres', 'mean wide', 'shape', 'garmin', 'centre'))
     rows, marks = [], []
-    for n, (acr, p) in enumerate(scored[:a.top], 1):
+    for n, (acr, p) in enumerate(listed, 1):
         width, kind = shape_of(p)
+        wet = ''
+        if gw is not None:
+            try:
+                wet = '%.0f ac' % sphere_acres(gw.intersection(p))
+            except Exception:
+                wet = '?'
         c = p.representative_point()
-        print('   %4d %10.1f %8.0f m %9s   %.5f, %.5f' % (n, acr, width, kind, c.x, c.y))
-        rows.append('<tr><td>%.0f ac</td><td>%.0f m wide</td><td>%s</td></tr>'
-                    % (acr, width, kind))
+        print('   %4d %10.1f %8.0f m %9s %8s   %.5f, %.5f'
+              % (n, acr, width, kind, wet or '-', c.x, c.y))
+        rows.append('<tr><td>%.0f ac</td><td>%.0f m wide</td><td>%s</td><td>%s water</td></tr>'
+                    % (acr, width, kind, wet or 'no garmin'))
         marks.append([round(c.x, 6), round(c.y, 6), round(acr, 1),
-                      '%s, %.0f m wide' % (kind, width)])
-    if len(scored) > a.top:
-        print('   ... and %d more, together %.1f acres'
-              % (len(scored) - a.top, sum(s for s, _ in scored[a.top:])))
+                      '%s, %.0f m wide, garmin charts %s' % (kind, width, wet or 'nothing')])
+    if len(listed) < len(scored):
+        rest = [t for t in scored if t not in listed]
+        print('   ... and %d more, none over %.2f ac unless the list was cut at --top %d,'
+              ' together %.1f acres'
+              % (len(rest), a.min_draw, a.top, sum(s for s, _ in rest)))
 
     # DOES THE APP ALREADY DRAW IT? That is the only question that matters, and it is not the
     # same question as whether the boundary covers it.
@@ -294,51 +548,50 @@ def main():
     # lake_marion, 2026-08-18. The audit called it 11,580 acres short and the difference came
     # back as one 11,125-acre piece over Sparkleberry Swamp. Ryan, looking at TrollMap: "that
     # section shows contours and depth areas for most of it... the boundary wouldn't add
-    # anything because the swamp is mostly unsounded by garmin anyways". Counted: the pack
-    # already carries 2,155 contours and 2,111 depth areas inside that swamp.
+    # anything because the swamp is mostly unsounded by garmin anyways".
     #
-    # A boundary can be short while the app is complete, and it can be complete while the app
-    # is empty. Re-tracing only earns its keep where Garmin sounded water we are not shipping,
-    # so this counts what the pack already holds inside the very area it is said to be missing.
-    pack = os.path.join(root, 'chartpack', a.slug)
-    already = {}
-    if os.path.isdir(pack) and scored:
-        big_pieces = [p for acr, p in scored if acr >= 1.0]
-        if big_pieces:
-            hull = unary_union(big_pieces)
-            hb = hull.bounds
-            for layer in ('contours.geojson', 'depth_areas.geojson'):
-                fp = os.path.join(pack, layer)
-                if not os.path.exists(fp):
-                    continue
-                n = 0
-                try:
-                    for ft in (json.load(open(fp, encoding='utf-8')).get('features') or []):
-                        c = ft.get('geometry', {}).get('coordinates')
-                        while isinstance(c, list) and c and isinstance(c[0], list):
-                            c = c[0]
-                        if not (isinstance(c, list) and len(c) >= 2):
-                            continue
-                        if hb[0] <= c[0] <= hb[2] and hb[1] <= c[1] <= hb[3]:
-                            n += 1
-                except Exception as exc:
-                    print('   could not read %s (%s)' % (layer, type(exc).__name__))
-                    continue
-                already[layer.split('.')[0]] = n
-    if already:
-        print('\n   the pack ALREADY carries, inside the area said to be missing: %s'
-              % ', '.join('%d %s' % (v, k) for k, v in sorted(already.items())))
-        if sum(already.values()) > 0:
-            print('   so re-tracing this boundary would add outline, not soundings.')
-
-    lobes = [s for s, p in scored if shape_of(p)[1] == 'lobe' and s >= 1.0]
-    if lobes:
-        verdict = ('<b>%d piece(s) of 1 acre or more are lobes</b>, together %.0f ac. That is '
-                   'water, not a trace disagreement.' % (len(lobes), sum(lobes)))
+    # prestwood_lake, the same day, is the other half of the lesson. Ryan: "its definitely cut
+    # short on most banks... the boundary doesn't line up with the shoreline pretty much at
+    # all". Same audit, same shape of gap, opposite answer -- and the two versions of this
+    # block that ran before both got Prestwood backwards. The bounding box around the gap
+    # includes the lake beside it, so it counted the pack's own soundings and said the app
+    # already drew a gap the pack cannot reach; and the sliver-versus-lobe call read 262 acres
+    # of open water as a trace disagreement.
+    #
+    # Both were proxies. garmin_evidence() asks the source instead.
+    gained_c = ev['contours'] - ev['pack_contours']
+    gained_d = ev['depth_areas'] - ev['pack_depth_areas']
+    un_c = ev['unshipped_m'].get('contours', 0.0)
+    un_d = ev['unshipped_m'].get('depth_areas', 0.0)
+    if not ev['tiles']:
+        verdict = ('<b>%s is not in tile_lake_map.json</b>, so there is no Garmin tile to ask '
+                   'whether this gap is water.' % a.slug)
+    elif not ev['read']:
+        verdict = ('<b>Garmin charts nothing inside this gap</b> across %d tile(s) &mdash; no '
+                   'water, no soundings. Re-tracing would add outline and nothing to display.'
+                   % ev['tiles'])
     else:
-        verdict = ('<b>No piece of 1 acre or more is a lobe.</b> This is shoreline disagreement '
-                   'between two traces of the same water, not missing lake.')
-    print('\n   %s' % verdict.replace('<b>', '').replace('</b>', ''))
+        print('\n   inside the gap Garmin charts %.1f acres of water, %d contour(s) and %d '
+              'depth area(s) at zoom 0' % (ev['water_ac'], ev['contours'], ev['depth_areas']))
+        print('   the pack already draws %d of those contour(s) and %d of those depth area(s)'
+              ' -- a pack is NOT clipped to its boundary, the mask is dilated'
+              % (ev['pack_contours'], ev['pack_depth_areas']))
+        print('   Garmin line the app does not draw anywhere: %.0f m of contour, %.0f m of'
+              ' depth-area edge' % (un_c, un_d))
+        if un_c >= 500 or un_d >= 500:
+            verdict = ('<b>Garmin sounded this and the app is not drawing all of it:</b> %.0f ac '
+                       'of charted water in the gap, and %.0f m of contour and %.0f m of '
+                       'depth-area edge that appear in no pack. Re-tracing adds soundings.'
+                       % (ev['water_ac'], un_c, un_d))
+        elif ev['contours'] or ev['depth_areas']:
+            verdict = ('<b>The app already draws this.</b> Garmin has %d contour(s) and %d '
+                       'depth area(s) inside the gap and the pack reaches essentially all of '
+                       'them, so re-tracing would add outline, not soundings.'
+                       % (ev['contours'], ev['depth_areas']))
+        else:
+            verdict = ('<b>Garmin draws %.0f ac of water here and never sounded it.</b> '
+                       'Re-tracing adds outline, not soundings.' % ev['water_ac'])
+    print('\n   %s' % verdict.replace('<b>', '').replace('</b>', '').replace('&mdash;', '--'))
 
     from shapely.geometry import mapping
     from shapely.ops import unary_union as _uu
@@ -356,14 +609,26 @@ def main():
     out_dir = a.out or os.path.join(root, '_scratch')
     os.makedirs(out_dir, exist_ok=True)
     fp = os.path.join(out_dir, '%s_missing_water.html' % a.slug)
+    wet_draw = None
+    if gw is not None:
+        try:
+            wet_draw = gw.intersection(miss_draw)
+        except Exception:
+            wet_draw = None
     data = {'registry': mapping(g.simplify(0.00008, preserve_topology=True)),
             'union': mapping(union.simplify(0.00008, preserve_topology=True)),
             'missing': mapping(miss_draw.simplify(0.00002, preserve_topology=True)),
+            'garmin': (mapping(wet_draw.simplify(0.00002, preserve_topology=True))
+                       if wet_draw is not None and not wet_draw.is_empty else None),
+            'unshipped': (mapping(_uu([v for v in ev['unshipped'].values() if v is not None]))
+                          if ev.get('unshipped') else None),
             'marks': marks}
     open(fp, 'w', encoding='utf-8').write(HTML % {
         'title': '%s -- what NHD has and the boundary does not' % a.slug,
         'reg': format(int(sphere_acres(g)), ','), 'union': format(int(u_ac), ','),
         'miss': format(int(total), ','), 'pieces': len(keep),
+        'wet': format(int(ev.get('water_ac') or 0), ','),
+        'unm': format(int(sum(ev['unshipped_m'].values())), ','),
         'verdict': verdict, 'rows': ''.join(rows),
         'data': json.dumps(data, separators=(',', ':'))})
     print('\n   -> %s' % fp)
