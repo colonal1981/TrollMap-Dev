@@ -58,18 +58,17 @@ describe('LAKE_NAME_TO_R2_KEY — single source of truth (101 entries)', () => {
     expect(Object.keys(LAKE_NAME_TO_R2_KEY).length).toBe(101)  // was 121 with +Lake Robinson (Greenville Co, SC) 2026-08-14 -- two SC Lake Robinsons, 190 km apart;
   });
 
-  it('LAKE_NAMES_WITHOUT_PACK holds 20 names, and every one of them refuses', () => {
-    // PINNED HERE BECAUSE THE LEDGER CANNOT SEE IT. hand-written-tables.test.js finds tables with
-    // /(?:const|var|let)\s+([A-Z][A-Z0-9_]{3,})\s*=\s*\{/ -- an object literal. This is a
-    // `new Set([...])`, so both the size ledger AND the "a NEW table keyed by water names must be
-    // declared here" guard are blind to it. Ninety-six UPPER_SNAKE Set/Array tables across
-    // Worker/ and js/ are invisible the same way; widening that scanner is on the deletion tab.
+  it('every name in LAKE_NAMES_WITHOUT_PACK actually refuses', () => {
+    // THE SIZE IS NOT PINNED HERE ANY MORE. hand-written-tables.test.js owns every table count,
+    // and on 2026-08-19 its parser was widened to see `new Set([...])` and `[...]` -- it had only
+    // ever opened on `{`, which is why this set grew 6 -> 20 without the ledger moving. Two
+    // places pinning one number is the "a guard written twice will only be written once" shape,
+    // so the count lives there and the BEHAVIOUR lives here.
     //
-    // It went 6 -> 20 on 2026-08-19: thirteen names for nine waters outside the region polygon,
-    // plus North Fork Reservoir, which is inside it but was never charted by Garmin.
-    expect(LAKE_NAMES_WITHOUT_PACK.size).toBe(20);
-    // The set is only worth anything if membership actually refuses. hasNoPack() runs before any
-    // matching, so this is the assertion that says the fuzzy pass cannot answer for them.
+    // Behaviour is the part that matters anyway: a set is worth exactly its membership test.
+    // hasNoPack() runs before any matching, so this is the assertion saying the fuzzy pass
+    // cannot answer for a refused name.
+    expect(LAKE_NAMES_WITHOUT_PACK.size).toBeGreaterThan(0);
     for (const name of LAKE_NAMES_WITHOUT_PACK) {
       expect(resolveR2Key(name)).toBe(null);
     }

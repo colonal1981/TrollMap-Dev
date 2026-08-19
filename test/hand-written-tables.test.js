@@ -134,9 +134,45 @@ const DECLARED = [
    'the biggest of them and the least worrying: 141 water names mapped to R2 keys, which '
    + 'is exactly the job an alias table should have. GENERATED -- do not hand-edit; run '
    + 'Scripts/gen_water_aliases_js.py and update the count here.'],
+
+  // ── the two the parser could not see until 2026-08-19 ─────────────────────────────────────
+  //
+  // Both are Set/Array literals, so `tablesIn` skipped them entirely. LAKE_NAMES_WITHOUT_PACK
+  // went 6 -> 20 in one change with nothing here moving, which is what exposed the gap.
+  //
+  // NOT 'gate' -- and the distinction matters, because the gate test is a ratchet that treats
+  // growth as a bug. This one is SUPPOSED to grow: a name enters when its water leaves the app
+  // and leaves when a pack is built for it. It is part of the name-resolution surface, and it
+  // exists because deleting a mapping does not stop a name answering, it re-points it.
+  ['js/data/lake-keys.js', 'LAKE_NAMES_WITHOUT_PACK', 20, 'alias',
+   'names refused before any matching runs. 13 of the 20 arrived 2026-08-19 with nine waters '
+   + 'outside the region polygon; one more is North Fork Reservoir, which is inside it and was '
+   + 'never charted by Garmin. lake-keys.test.js asserts every member resolves to null.'],
+  // Also not a gate: a preset hiding water is the bug, and this is the list that catches it.
+  // Ryan adding a home water here is the table doing its job, not a regression.
+  ['js/data/water-filter.js', 'KEEP_ALWAYS', 11, 'data',
+   'water that must never be hidden whatever a map preset says -- its own docstring calls it '
+   + '"the test that a preset has not eaten the water the app exists for". The first cut of that '
+   + 'filter hid Wittee and Ferry, the two lakes it was built for. Eleven of Ryan\'s home waters, '
+   + 'and no registry field says "never hide this", so it is legitimately hand-written.'],
 ];
 
-/** Top-level keys of the object literal that starts at `i`. Brace depth, not regex. */
+/**
+ * Top-level keys of the object, array or Set literal that starts at `i`. Depth, not regex.
+ *
+ * IT USED TO OPEN ONLY ON `{`, and that made a whole SHAPE of table invisible. `tablesIn` matched
+ * `= {`, so a per-water list written as `new Set([...])` or `[...]` was seen by neither the size
+ * ledger nor the "a NEW table keyed by water names must be declared here" guard below -- the one
+ * check whose entire job is noticing a new per-water table appearing.
+ *
+ * Found 2026-08-19 by growing one: LAKE_NAMES_WITHOUT_PACK went 6 -> 20 entries in a single
+ * change and nothing here moved. Ninety-six UPPER_SNAKE Set/Array tables across Worker/ and js/
+ * were invisible the same way, and one of them -- KEEP_ALWAYS in js/data/water-filter.js -- is a
+ * hand-written list of eleven of Ryan's home waters the guard had never once looked at.
+ *
+ * A guard that cannot see a shape does not report that shape as unchecked. It reports nothing,
+ * which reads exactly like a clean pass.
+ */
 function topLevelKeys(src, i) {
   // STRINGS AND COMMENTS AT EVERY DEPTH, NOT JUST THE FIRST.
   //
@@ -148,6 +184,10 @@ function topLevelKeys(src, i) {
   // rewritten is not a pin.
   //
   // Template literals matter too: `${x}` is a brace pair inside a string.
+  // '{' -> object: a depth-1 string FOLLOWED BY ':' is a key.
+  // '[' -> array or Set: a depth-1 string IS an entry, and one followed by ':' is not -- that is
+  //        an object nested in the array, whose keys belong to it rather than to this table.
+  const isArray = src[i] === '[';
   let d = 0; const keys = []; let j = i;
   const skipString = (k, q) => {
     k += 1;
@@ -164,14 +204,15 @@ function topLevelKeys(src, i) {
     else if (ch === '/' && src[j + 1] === '*') { j = src.indexOf('*/', j); if (j < 0) break; j += 1; }
     else if (ch === '"' || ch === "'" || ch === '`') {
       const close = skipString(j, ch);
-      if (d === 1 && ch !== '`' && /^\s*:/.test(src.slice(close + 1))) {
-        keys.push(src.slice(j + 1, close));
+      if (d === 1 && ch !== '`') {
+        const looksLikeKey = /^\s*:/.test(src.slice(close + 1));
+        if (isArray ? !looksLikeKey : looksLikeKey) keys.push(src.slice(j + 1, close));
       }
       j = close;
     }
-    else if (ch === '{') d += 1;
-    else if (ch === '}') { d -= 1; if (d === 0) break; }
-    else if (d === 1 && /[A-Za-z_$]/.test(ch)) {
+    else if (ch === '{' || ch === '[') d += 1;
+    else if (ch === '}' || ch === ']') { d -= 1; if (d === 0) break; }
+    else if (!isArray && d === 1 && /[A-Za-z_$]/.test(ch)) {
       const m = /^([A-Za-z_$][\w$]*)\s*:/.exec(src.slice(j));
       if (m) { keys.push(m[1]); j += m[0].length - 1; }
     }
@@ -183,8 +224,9 @@ function topLevelKeys(src, i) {
 function tablesIn(rel) {
   const src = readFileSync(path.join(ROOT, rel), 'utf8');
   const out = new Map();
-  for (const m of src.matchAll(/(?:const|var|let)\s+([A-Z][A-Z0-9_]{3,})\s*=\s*\{/g)) {
-    const i = src.indexOf('{', m.index);
+  // `= {`, `= [` and `= new Set([` -- see topLevelKeys for why the last two were missing.
+  for (const m of src.matchAll(/(?:const|var|let)\s+([A-Z][A-Z0-9_]{3,})\s*=\s*(?:new Set\(\s*)?[{[]/g)) {
+    const i = m.index + m[0].length - 1;
     out.set(m[1], topLevelKeys(src, i));
   }
   return out;
