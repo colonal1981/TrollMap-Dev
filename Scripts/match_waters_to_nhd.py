@@ -473,12 +473,56 @@ def main():
 
     if args.json:
         Path(args.json).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.json).write_text(json.dumps({
+        out = {
             'bindings': bindings,
             'conflicts': {f'{v}/{p}': s for (v, p), s in conflicts.items()},
             'id_disputes': [r['slug'] for r in disputes],
-            'unbound': unbound, 'notes': notes}, indent=1), encoding='utf-8')
-        print(f'\nwrote {args.json}')
+            'unbound': unbound, 'notes': notes}
+
+        # A PARTIAL RUN MUST NOT WRITE A WHOLE FILE.
+        #
+        # --only narrows which geodatabases are read, so `bindings` holds ONLY that VPU's waters.
+        # Writing that dict straight out at the live path replaced 423 bindings with 62 and
+        # reported "wrote ..." exactly as a full run does. Nothing failed; the other 361 simply
+        # stopped existing, and the next reader would have found the registry two thirds unbound.
+        #
+        # This project has solved the same problem twice already and both fixes say why:
+        # build_all_chartpacks.py loads its report and updates in place, because "a partial run
+        # must not silently replace a full report with 30 lakes in it, and asking for a merge step
+        # afterwards is a step someone forgets"; make_river_boundaries.py merge-writes its
+        # sidecars on any --only run. This was the third instance and the only one still open.
+        #
+        # Merge only when the run WAS partial. A full run is authoritative and must be able to
+        # drop a binding that no longer holds -- a merge there would make stale rows immortal.
+        if args.only:
+            prior = {}
+            try:
+                prior = json.loads(Path(args.json).read_text(encoding='utf-8'))
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                sys.exit(f'\n{args.json} exists and could not be read ({str(e)[:60]}).\n'
+                         f'      REFUSING to write, because --only produced only '
+                         f'{len(bindings)} binding(s) and overwriting would lose the rest.\n'
+                         f'      Move that file aside and re-run, or run without --only.')
+            kept = {k: v for k, v in (prior.get('bindings') or {}).items() if k not in bindings}
+            print(f'\n--only run: merging {len(bindings)} freshly matched binding(s) into '
+                  f'{len(kept)} kept from {args.json}')
+            # A slug this run examined and did NOT bind has genuinely lost its binding; it is
+            # absent from `bindings`, so leaving the old row would resurrect it. Only slugs this
+            # run never looked at are carried forward, which is what `kept` is.
+            out['bindings'] = {**kept, **bindings}
+            for key in ('conflicts', 'id_disputes', 'unbound'):
+                pv = prior.get(key)
+                if isinstance(pv, dict):
+                    out[key] = {**{k: v for k, v in pv.items() if k not in out[key]}, **out[key]}
+                elif isinstance(pv, list):
+                    fresh = set(out[key])
+                    out[key] = sorted(set(x for x in pv if x not in bindings) | fresh)
+            out['notes'] = (notes if isinstance(notes, str) else notes)
+
+        Path(args.json).write_text(json.dumps(out, indent=1), encoding='utf-8')
+        print(f'\nwrote {args.json}  ({len(out["bindings"])} binding(s))')
     print('\nNothing was edited. lake_index.json was read and not written.')
     return 0
 
