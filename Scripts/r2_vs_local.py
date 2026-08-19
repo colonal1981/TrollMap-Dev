@@ -81,6 +81,20 @@ SOURCE_MAP = {
         ('I-Boating Contours and supplemental data/supplemental/%s', 'shoreline.geojson')],
     'depth_soundings.geojson': [
         ('I-Boating Contours and supplemental data/supplemental/%s', 'depth_soundings.geojson')],
+    # AND THE OTHER TWO i-BOATING LAYERS ARE IN THE SAME TREE, 70 files each. They had been on
+    # the PROTECTED list since 2026-08-13 as "R2-only BY DESIGN" -- 175 objects nothing was
+    # allowed to touch because no source was known for them. The source is this directory, and
+    # it was found only because shoreline and depth_soundings led here.
+    #
+    # PROTECTED is a stronger claim than SOURCE_MAP and it was carrying names that only needed a
+    # row here. A name on both lists is not a contradiction: SOURCE_MAP says where it can be got
+    # back from, PROTECTED says do not propose it. Ryan's reason for the second still stands --
+    # "there is no pipeline replacement for them" -- so nothing here proposes them. What changes
+    # is that they stop being counted as data that exists nowhere else, which they never were.
+    'fishing_lines.geojson': [
+        ('I-Boating Contours and supplemental data/supplemental/%s', 'fishing_lines.geojson')],
+    'fishing_points.geojson': [
+        ('I-Boating Contours and supplemental data/supplemental/%s', 'fishing_points.geojson')],
 }
 
 # ── objects that live in R2 and NOWHERE else, on purpose ────────────────────────────────────
