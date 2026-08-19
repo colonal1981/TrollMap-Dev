@@ -230,10 +230,45 @@ for fname in ("_coastal_pointers.json", "_river_aliases.json"):
     pairs = [((v.get("name") if isinstance(v, dict) else k) or k, target(v))
              for k, v in (data.items() if isinstance(data, dict) else enumerate(data))]
     pairs = [(n, t) for n, t in pairs if t]
-    bad = {n: s for n, s in pairs if s not in idx_all}
-    if bad:
-        check(f"{fname}: {len(bad)} name(s) point at a slug that does not exist",
-              fmt([f"{n} -> {s}" for n, s in bad.items()], 6))
+
+    # TWO DIFFERENT THINGS, AND LUMPING THEM IS WHY THIS NUMBER DRIFTED UNWATCHED.
+    #
+    # MORNING_RUNBOOK_2026-08-07 §4 records the expected state as "one failure, the four river
+    # aliases" and calls it safe to ship past. By 2026-08-19 the same check said SEVENTEEN, and
+    # nobody had acted, because the extra thirteen are not the same kind of thing:
+    #
+    #   target absent from lakes.json          a real defect. The slug does not exist at all,
+    #                                          so the row can never resolve. Four of these, and
+    #                                          they are the four the runbook named.
+    #   target present, index does not offer   the REGION FILTER working. lakes.json is the 3DHP
+    #                                          superset across fifteen states; lake_index.json is
+    #                                          the four Ryan fishes. An alias naming water outside
+    #                                          the line is out of scope, not broken.
+    #
+    # Reported separately so the failing number is stable and means one thing. A gate whose count
+    # moves for a benign reason is a gate people stop reading -- and this one had moved from 4 to
+    # 17 with nobody looking.
+    superset = set()
+    try:
+        _lk = json.loads((ROOT / "registry" / "lakes.json").read_text(encoding="utf-8"))
+        _rows = _lk.get("lakes") if isinstance(_lk, dict) and "lakes" in _lk else _lk
+        superset = (set(_rows) if isinstance(_rows, dict)
+                    else {r.get("slug") for r in _rows if isinstance(r, dict) and r.get("slug")})
+    except Exception as e:
+        print(f"  !! could not read registry/lakes.json ({str(e)[:40]}) -- every unresolved "
+              f"pointer below is reported as a defect, which OVERSTATES it")
+
+    unresolved = [(n, t) for n, t in pairs if t not in idx_all]
+    gone   = {n: t for n, t in unresolved if superset and t not in superset}
+    scoped = {n: t for n, t in unresolved if not superset or t in superset}
+    if scoped:
+        print(f"  note: {fname} has {len(scoped)} name(s) whose water exists but sits outside "
+              f"the region — the filter working, not a defect")
+    if gone:
+        check(f"{fname}: {len(gone)} name(s) point at a slug that does not exist ANYWHERE",
+              fmt([f"{n} -> {s}" for n, s in gone.items()], 6)
+              + "\n        Not merely unoffered -- absent from registry/lakes.json, so the row"
+                "\n        can never resolve. Repair the target or delete the row.")
 
 # ── report ───────────────────────────────────────────────────────────────────
 if FAILURES:

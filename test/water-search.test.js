@@ -19,8 +19,19 @@ const { COASTAL_ZONES, COASTAL_SLUGS } = await import('../js/data/coastal-zones.
  *
  * So the example moved rather than the rule. Any name still in the pointer table will do; if
  * this one graduates too, move it again and say so here.
+ *
+ * IT GRADUATED AGAIN, 2026-08-19. The Ashley got its own 406-acre freshwater pack the same week,
+ * trimmed at the same 50-5-80 line, and the Sampit and Waccamaw went with it -- so all three
+ * dropped out of water-aliases.js on the next regeneration and this test failed within the hour.
+ * That is the check working; it is the only thing that notices a pointer becoming a water.
+ *
+ * PICKING ONE THAT CANNOT GRADUATE THIS TIME. Shem Creek is in classify_salt_fresh.py's
+ * NAME_OVERRIDE as 'salt' -- SC Code 50-5-80 declares it saltwater along its ENTIRE length, so
+ * trim_at_salt_line.py can never leave it a freshwater remnant and it can never be cut a
+ * boundary of its own. Cooper and Ashley were both rivers with a fresh upper reach, which is
+ * exactly why they graduated. A name the statute puts wholly on the salt side cannot.
  */
-const POINTER_EXAMPLE = 'Ashley River';
+const POINTER_EXAMPLE = 'Shem Creek';
 
 describe('search covers the sources the dropdown does not', () => {
   it('finds a coastal pointer that has no dropdown row', () => {

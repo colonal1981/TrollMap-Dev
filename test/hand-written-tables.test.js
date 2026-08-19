@@ -123,7 +123,14 @@ const DECLARED = [
   // now answers directly, and "Cooper River" graduated the night the Cooper got its own 4,658-acre
   // freshwater pack: it used to point at coast_charleston_sc and now resolves to cooper_river out
   // of lake_index.json. A table that shrinks because the registry grew is this table working.
-  ['js/data/water-aliases.js', 'WATER_TO_R2_KEY', 141, 'alias',
+  // 138 since 2026-08-19, down three. The Ashley, the Sampit and the Waccamaw were cut as
+  // freshwater boundaries this week and now carry their own packs, so the rows pointing
+  // them at coastal zones are superseded -- the same graduation the Cooper made above.
+  // They were already inert: resolveR2Key's registry pass runs first and THE REGISTRY SLUG
+  // WINS, so the alias could not have answered for water lake_index.json offers. Checked
+  // before regenerating rather than assumed, because a stale alias that CAN answer is a
+  // lake loading the wrong water and this file has that failure recorded twice already.
+  ['js/data/water-aliases.js', 'WATER_TO_R2_KEY', 138, 'alias',
    'the biggest of them and the least worrying: 141 water names mapped to R2 keys, which '
    + 'is exactly the job an alias table should have. GENERATED -- do not hand-edit; run '
    + 'Scripts/gen_water_aliases_js.py and update the count here.'],
