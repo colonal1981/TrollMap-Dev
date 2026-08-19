@@ -91,7 +91,15 @@ def _norm(s):
     return re.sub(r'[^a-z0-9]', '', (s or '').lower())
 
 
-SEAWARD = None   # set in main(); the unit vector pointing out to sea, in scaled xy
+# The unit vector pointing out to sea, in scaled xy. On this coast that is broadly south-east.
+#
+# THIS WAS `None`, SET IN main(). Every importer of classify() therefore got
+# "'NoneType' object is not subscriptable" on its first call unless it knew to assign
+# CSF.SEAWARD itself first -- make_river_boundaries.py does, in a line whose reason is not
+# obvious at the call site, and two later importers did not and crashed. A module constant
+# that only one entry point initialises is a constant the module does not actually have.
+# main() still assigns it, which is now a no-op, so nothing that already sets it changes.
+SEAWARD = (math.cos(math.radians(-45.0)), math.sin(math.radians(-45.0)))
 
 # Waterbodies the geometric side test cannot answer, and the answer instead.
 #
