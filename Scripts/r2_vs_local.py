@@ -129,6 +129,27 @@ PROTECTED = {
 REGENERABLE = {
     'osm-structures.geojson': ('fetch_osm_structures.py --out-dir osm_out',
                                'osm_pbf/ on this drive'),
+    # SAME SHAPE, AND THEY SHOULD HAVE BEEN HERE ALL ALONG.
+    #
+    # extract_coastal_habitat.py writes per-zone marsh and oyster and UPLOADS them; it keeps a
+    # local copy only under --skip-upload, which is why habitat_output/ holds exactly one zone.
+    # So the outputs are R2-only and the INPUTS are on the drive -- oyster_marsh/ holds all
+    # five, 1.86 GB: SCDNROyster2015Live.geojson, the NC DMF Reef Guide, and the NOAA ESI
+    # geodatabases for SC, NC and GA.
+    #
+    # Ryan set this exact test himself on 2026-08-13, for osm-structures: "as long as the OSM
+    # script and the OSM pbfs are on my drive that is all that actually matters". Marsh and
+    # oyster meet it and were filed under PROTECTED instead, which says the opposite -- that
+    # there is no way back at all. Ryan, 2026-08-19, on finding 11 of them held out of the
+    # prune: "why are these staying back they are on my drive correct?"
+    #
+    # ONE CAVEAT worth carrying: a re-run needs the zone in Scripts/coastal_catalog.py, and the
+    # six out-of-region zones were cut from it on 2026-08-19. Restoring an entry from 4a71bfd is
+    # the first step of regenerating any of theirs.
+    'marsh_edges.geojson':  ('extract_coastal_habitat.py --zone <slug>',
+                             'oyster_marsh/ NOAA ESI GDBs on this drive'),
+    'oyster_beds.geojson':  ('extract_coastal_habitat.py --zone <slug>',
+                             'oyster_marsh/ SCDNR oyster + NC DMF reef guide on this drive'),
     # clarity-cache/<slug>.json is 225 bytes of Worker-side cache, rebuilt on demand.
     'clarity-cache': ('the Worker, on the next request', 'nothing -- it is a cache'),
     'attractors.json':        ('the Worker DNR routes', 'the state agency, live'),

@@ -239,8 +239,21 @@ def deletable(name: str, fname: str, offered: set | None = None,
     # None means the caller did not supply a drive index, and it must behave like "no opinion"
     # rather than "nothing is backed up" -- the same shape as `offered` above, for the same
     # reason: a failed read must not turn into a proposal.
+    # REGENERABLE COUNTS AS BACKED UP, and leaving it out was this gate's first bug.
+    #
+    # "On the drive" is not the same question as "on the drive as this exact file". Ryan settled
+    # that on 2026-08-13 for osm-structures -- "as long as the OSM script and the OSM pbfs are on
+    # my drive that is all that actually matters" -- and r2_vs_local has carried a REGENERABLE
+    # table ever since saying so. The gate consulted only the file index, so it held back 59
+    # osm-structures objects against a ruling that already existed, plus every marsh and oyster
+    # bed whose 1.86 GB of NOAA/SCDNR inputs sit in oyster_marsh/.
+    #
+    # Imported rather than restated, for the reason the header gives about every other rule in
+    # this file: a copy here would be correct today and wrong the first time that table moved.
     if backed_up is not None and "%s/%s" % (name, fname) not in backed_up:
-        return None
+        from r2_vs_local import REGENERABLE
+        if fname not in REGENERABLE:
+            return None
     if offered and name not in offered:
         # Only for files this script already recognises -- the check below still applies, so an
         # index.json or a vectors/ object inside an unoffered pack is still not ours to judge.
@@ -558,7 +571,8 @@ def main() -> int:
     if no_backup:
         nb = sum(v[1] for v in no_backup.values())
         nbb = sum(v[0] for v in no_backup.values())
-        print("\nheld back -- unoffered, but NO LOCAL COPY: %s obj, %s" % (format(nb, ","), human(nbb)))
+        print("\nheld back -- unoffered, but NO LOCAL COPY and no way to rebuild: %s obj, %s"
+              % (format(nb, ","), human(nbb)))
         print("  Ryan's rule, 2026-08-19: \"if it belongs to water that is in the app or it does not")
         print("  have a copy on my drive it can stay in r2\". Unoffered is only half a reason -- no")
         print("  upload can put back a file that is not on the drive, so each of these is the only")

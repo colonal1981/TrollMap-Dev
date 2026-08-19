@@ -105,4 +105,26 @@ for pfx in ('research', 'lakes', 'lake_packages'):
     assert ra.is_pack(pfx) is False, pfx
 print('research, lakes and lake_packages are not packs -- unreachable by every rule above')
 
+# --- REGENERABLE COUNTS AS BACKED UP ----------------------------------------------------------
+# "On the drive" is not "on the drive as this exact file". Ryan set that test on 2026-08-13 for
+# osm-structures and r2_vs_local has carried the table since; the gate ignored it and held back
+# 59 osm-structures plus every marsh and oyster bed, against a ruling that already existed.
+from r2_vs_local import REGENERABLE
+for fn in ('osm-structures.geojson', 'marsh_edges.geojson', 'oyster_beds.geojson'):
+    assert fn in REGENERABLE, '%s regenerates from inputs on the drive' % fn
+    assert ra.deletable('orphan_lake', fn, {'falls_lake'}, set()) == 'not-offered', \
+        '%s has no local FILE and does not need one -- its input is on the drive' % fn
+print('a regenerable layer is not held back for having no file of its own')
+
+# and it is still gated on the app: regenerable does not override "the app offers this water"
+for fn in ('osm-structures.geojson', 'marsh_edges.geojson', 'oyster_beds.geojson'):
+    assert ra.deletable('falls_lake', fn, {'falls_lake'}, set()) is None, fn
+print('regenerable still loses to the app -- offered water keeps every layer')
+
+# a NON-regenerable layer with no local copy is still held back. This is the half of the gate
+# that matters, and it must not be widened by the exemption above.
+assert ra.deletable('orphan_lake', 'depth_areas.geojson', {'falls_lake'}, set()) is None, \
+    'a layer with neither a local copy nor a way to rebuild is the only copy of something'
+print('a layer with no copy and no way back is still held')
+
 print('\nOK')
