@@ -412,10 +412,18 @@ function shortestPath(g, ai, bi, minDepth) {
   return { distance_m: Math.round(dist[bi]), coordinates: path };
 }
 
+// THE HINT USED TO NAME A SCRIPT THAT NO LONGER EXISTS AND SHOULD NOT BE RUN.
+// It said "run restitch_water_graphs.py if this pack predates that repair".
+// restitch was retracted on 2026-08-07 and deleted: it closed graph components by joining
+// them within a distance tolerance, and at 75 m, 178 lakes needed joins over 50 m -- a join
+// that long welds water above a dam to water below it and routes a trolling run through the
+// dam. The diagnosis behind it was wrong. Components are severed by the BOUNDARY CLIP in
+// build_water_graphs.py, so the fix is a wider boundary, never a wider join.
 const UNREACHABLE = {
   error: 'no route over water between those points',
-  hint: 'the two points are in different connected components of the water graph — '
-      + 'run restitch_water_graphs.py if this pack predates that repair',
+  hint: 'the two points are in different connected components of the water graph — the '
+      + 'boundary clip severed them, so the fix is a wider boundary for this water, not a '
+      + 'wider join',
 };
 
 /**
