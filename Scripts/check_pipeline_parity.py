@@ -122,8 +122,31 @@ if dead:
     for slug, names in sorted(dead.items())[:20]:
         lines.append(f"{slug:<34} <- {'; '.join(names[:3])}")
     extra = f"\n        ... (+{len(dead) - 20} more slugs)" if len(dead) > 20 else ""
+    # WHAT THIS FAILURE MEANS, because it was read two different wrong ways on 2026-08-19.
+    #
+    # NOT "these names are dead". lake-keys.js is a SECOND FETCH PATH: contour-data.js:126
+    # resolves a display name through it and then fetches chartpacks/<key>/contours.geojson
+    # straight from R2, consulting no registry row. A slug named here and absent from the index
+    # LOADS. Four of the ten found that day also reach the picker through the live DNR ramp
+    # feeds. So deleting their R2 objects breaks water you can currently select, and r2_audit's
+    # app veto is right to hold that population back.
+    #
+    # NOR "so leave them alone". Measured the same day, all ten: nine are in
+    # _index_out_of_region.json -- outside the region polygon Ryan drew -- and the tenth,
+    # north_fork_reservoir, is inside it but its R2 pack is i-BOATING, not Garmin (shoreline,
+    # fishing_lines, fishing_points, and none of garmin_shoreline/docks/structure/
+    # trolling_runs/water_graph). "i-Boating is dead for contours and depth areas" is a standing
+    # rule, so the index dropped it correctly. NONE of the ten belongs to the ~452.
+    #
+    # So the names are the defect, exactly as the six coastal zones were, and THE ORDER MATTERS:
+    # cut the names first, and the R2 objects fall out of the veto on the next audit. Deleting
+    # the objects first breaks a name that still resolves.
+    # See LAKE_KEYS_IS_A_LIVE_FETCH_PATH_2026-08-19.md.
     check(f"lake-keys.js references {len(dead)} slug(s) that are not in lake_index.json",
-          "\n        ".join(lines) + extra)
+          "\n        ".join(lines) + extra
+          + "\n        These names still LOAD -- contour-data.js fetches by key straight from R2."
+            "\n        Cut the name before the R2 object, never the other way round."
+            "\n        LAKE_KEYS_IS_A_LIVE_FETCH_PATH_2026-08-19.md")
 
 # ── 3. every index entry that CAN be built HAS been built ────────────────────
 # Split deliberately into two questions the old reporting ran together:
