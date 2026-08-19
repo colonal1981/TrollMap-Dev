@@ -16,11 +16,14 @@ HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location('ra', HERE / 'r2_audit.py')
 ra = importlib.util.module_from_spec(spec); spec.loader.exec_module(ra)
 
-RETIRED = {'zones.json', 'zones_spines.json'}
+RETIRED = {'zones.json', 'zones_spines.json', 'chartpack.json'}
 assert ra.RETIRED_PACK_FILES == RETIRED, ra.RETIRED_PACK_FILES
 
 # --- the whole point: an OFFERED pack does not protect a retired file ------------------------
+# lake_marion is the same shape for chartpack.json: an offered pack holding a dead manifest.
 for fn in sorted(RETIRED):
+    for slug in ('lake_wateree_fishing_creek', 'lake_marion'):
+        assert ra.deletable(slug, fn, {slug}) == 'retired-layer', (slug, fn)
     assert ra.deletable('lake_wateree_fishing_creek', fn,
                         {'lake_wateree_fishing_creek'}) == 'retired-layer', \
         '%s must be proposed even when the lake is offered -- the app veto works by adding the ' \
@@ -55,6 +58,12 @@ else:
 src = (HERE / 'r2_audit.py').read_text(encoding='utf-8')
 assert 'fname not in KNOWN_PACK_FILES and fname not in RETIRED_PACK_FILES' in src, \
     'the unjudged-kinds report must exclude retired files, or it goes on reporting what it fixed'
+# THE REPORT MUST NAME EVERY DESTINATION IT HAS. It offered two while three existed, which is
+# how a kind with a third answer available goes on being re-asked in prose instead of recorded.
+for dest in ('KNOWN_PACK_FILES', 'NON_PACK_PREFIXES', 'RETIRED_PACK_FILES'):
+    assert src.count('print("     %s' % dest) == 1, \
+        'the unjudged report must route to %s -- a category the report does not name is a ' \
+        'category nobody puts an answer in' % dest
 assert src.index('if fname in RETIRED_PACK_FILES') < src.index('if offered and name not in offered'), \
     'the by-name rule must be tested BEFORE the offered rule'
 print('the unjudged report excludes them, and the rule is ordered ahead of the offered check')

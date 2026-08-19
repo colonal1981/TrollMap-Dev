@@ -126,6 +126,16 @@ SIDECAR_PACK_FILES = {
 RETIRED_PACK_FILES = {
     "zones.json",           # 4.4 MB, lake_wateree_fishing_creek
     "zones_spines.json",    # 3.3 MB, lake_wateree_fishing_creek
+    # 616 B across lake_marion, lake_moultrie, lake_murray, lake_monticello_parr -- the four
+    # COMBINED packs, and a per-pack manifest from that era. The combined keys were pruned
+    # 2026-08-03 (16 keys, 192 objects); this is what the prune did not know to look for.
+    #
+    # Ryan, 2026-08-19: "we already declared them dead... why do we keep having the same
+    # conversations". They had been read and judged in an earlier session and the answer lived
+    # only in prose, so the report went on asking and the next session went on re-deriving it.
+    # THAT is why the name is here rather than in a document: the question is asked by this
+    # file, so the answer has to be in this file.
+    "chartpack.json",
 }
 
 KNOWN_PACK_FILES = (set(LAYERS.values()) | set(COASTAL_SECONDARY_FILES)
@@ -483,8 +493,12 @@ def main() -> int:
         un = sum(n for _, n in unjudged.values())
         print(f"\nobject kinds inside pack prefixes with NO RULE: "
               f"{len(unjudged)} kind(s), {un:,} obj, {human(ub)}")
-        print("  never proposed, never spared on purpose -- decide whether each belongs in")
-        print("  KNOWN_PACK_FILES (a pack layer) or NON_PACK_PREFIXES (not a pack at all).")
+        print("  never proposed, never spared on purpose. Three places a decision can go, and it")
+        print("  belongs in ONE OF THEM RATHER THAN IN A NOTE -- this report is what asks, so this")
+        print("  file is where the answer has to live or the next run asks again:")
+        print("     KNOWN_PACK_FILES     a pack layer the app fetches -- spared on every pack")
+        print("     NON_PACK_PREFIXES    not a pack at all -- sized and reported, never proposed")
+        print("     RETIRED_PACK_FILES   dead by name -- proposed on EVERY pack, offered or not")
         for k, (b, n) in sorted(unjudged.items(), key=lambda kv: -kv[1][0]):
             where = sorted(unjudged_where[k])
             tail = f"{where[0]}" if len(where) == 1 else f"{len(where)} prefixes"
