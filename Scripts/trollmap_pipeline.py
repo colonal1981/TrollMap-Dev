@@ -74,7 +74,10 @@ except ImportError:
     sys.exit(1)
 
 # ── Config ────────────────────────────────────────────────────────────────────
-PBF_CACHE   = Path(r'F:\TrollMapPipeline\pbf_cache')
+# pbf_cache/ was renamed iboating_pbf_cache/ on 2026-08-20 -- see
+# trollmap_pipeline_coastal.py for the reasoning. This script is repo-only and classed
+# superseded_pipeline_driver; the path is corrected so it is not a false 'directory gone'.
+PBF_CACHE   = Path(r'F:\TrollMapPipeline\iboating_pbf_cache')
 OUTPUT_DIR  = Path(r'F:\TrollMapPipeline\split_output3')
 DEFAULT_ZOOMS = None  # scan all available zooms
 MIN_CONTOUR_FEATURES = 10

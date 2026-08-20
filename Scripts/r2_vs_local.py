@@ -97,15 +97,37 @@ SOURCE_MAP = {
         ('I-Boating Contours and supplemental data/supplemental/%s', 'fishing_points.geojson')],
 }
 
-# ── objects that live in R2 and NOWHERE else, on purpose ────────────────────────────────────
+# ── objects nothing proposes for deletion ───────────────────────────────────────────────────
 #
 # Ryan, 2026-08-13: "fishing lines, fishing points marsh edges and oyster beds need to stay...
 # they are not part of the pipeline but there is no pipeline replacement for them".
 #
 # These are reported separately and never counted as a loss, because an earlier draft of this
-# file told him deleting them "is the point". That advice was wrong and would have destroyed
-# data no script here can rebuild. r2_audit.deletable() already returns None for all four, so
-# nothing proposes them for deletion -- this is the second lock, not the first.
+# file told him deleting them "is the point". That advice was wrong. r2_audit.deletable()
+# already returns None for all four, so nothing proposes them for deletion -- this is the
+# second lock, not the first, and none of what follows unlocks either one.
+#
+# THE HEADING USED TO READ "objects that live in R2 and NOWHERE else, on purpose". That is no
+# longer true of any of the four, and saying it while SOURCE_MAP above says otherwise is the
+# split_output3 mistake in miniature -- two facts about one thing, in one file, neither
+# correcting the other. Measured 2026-08-20 against registry/_r2_listing.json:
+#
+#     fishing_lines.geojson    69 objects in R2, 69 with a local copy, 0 without
+#     fishing_points.geojson   69 objects in R2, 69 with a local copy, 0 without
+#
+# Every one resolves through SOURCE_MAP into the i-Boating tree. 68 of the 69 are LAKE slugs;
+# only coast_cape_fear_nc is coastal. 39 of the 69 are water the app offers, so those stay by
+# the first half of the prune rule no matter what this set says.
+#
+# And "no pipeline replacement" has an answer now. Ryan, 2026-08-20: "the fishing lines and
+# points... we have those in pbf files" -> F:\TrollMapPipeline\iboating_pbf_cache (renamed from
+# pbf_cache the same day), 0.57 GB of i-Boating vector tiles across seven regions.
+# trollmap_pipeline_coastal.py emits both layers from it for zones; trollmap_pipeline.py does
+# the lakes. This is the same test Ryan set for osm-structures on 08-13 -- the script and the
+# source on the drive -- and these now pass it.
+#
+# The set is UNCHANGED anyway, because whether to unprotect them is Ryan's call and not a
+# consequence of a measurement. What changed is that the reason written here is true.
 PROTECTED = {
     'fishing_lines.geojson',
     'fishing_points.geojson',

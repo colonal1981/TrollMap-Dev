@@ -81,7 +81,15 @@ except ImportError:
 # So this script is a writer sitting on top of a backup. A run that produces anything different
 # from what is there -- a changed pbf_cache, a changed threshold, one zone instead of all --
 # overwrites the only copy of data the prune already counted. Copy the tree aside first.
-PBF_CACHE   = Path(r'F:\TrollMapPipeline\pbf_cache')
+# RENAMED 2026-08-20. Ryan: "we probably need to rename that folder... that is the
+# i-boating pbf cache". It sat beside osm_pbf/ wearing the generic name, which is how a
+# 0.57 GB tile cache of i-Boating vector tiles reads as scratch. 71,400 .pbf tiles in
+# {region}/{z}/{x}/{y}.pbf across seven regions; PBF_FOLDERS below names four of them.
+#
+# This rename was done the other way round from split_output3: the readers were repointed
+# first, then the directory moved, and both are recorded here so a future grep that comes
+# up empty on 'pbf_cache' finds the reason instead of concluding the data is gone.
+PBF_CACHE   = Path(r'F:\TrollMapPipeline\iboating_pbf_cache')
 OUTPUT_DIR  = Path(r'F:\TrollMapPipeline\I-Boating Contours and supplemental data')
 DEFAULT_ZOOMS = None  # scan all available zooms
 MIN_CONTOUR_FEATURES = 5  # lower threshold for coastal — zones may be sparse
