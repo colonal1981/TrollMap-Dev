@@ -223,6 +223,22 @@ def collect(root, repo):
     return out
 
 
+# ── some facts have only one acceptable value ───────────────────────────────────────────────
+#
+# --bless records what it MEASURES, which is right for a count and wrong for an assertion.
+# `absent_lake_boundaries_dir` was blessed False on 2026-08-19 -- the folder existed at the
+# moment of blessing -- so the check that a retired directory must stay gone was frozen into
+# expecting it to be THERE, and reported "all facts match" for a day while the thing it was
+# written to catch sat on the drive. It would have fired the day the folder was finally deleted.
+#
+# An absence assertion has a correct answer that does not depend on today. Blessing it False
+# does not record a fact, it records a defect. So these are refused rather than baselined --
+# the run fails, says which, and says what to do about it.
+def one_way(now):
+    """[(key, value)] for facts whose only acceptable value is True."""
+    return [(k, v) for k, v in sorted(now.items())
+            if k.startswith('absent_') and v is not True]
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -241,7 +257,17 @@ def main() -> int:
             print('%-34s %s' % (k, json.dumps(now[k])))
         return 0
 
+    wrong = one_way(now)
+    if wrong:
+        print('!! %d absence assertion(s) are FALSE right now. These are never blessed --' % len(wrong))
+        print('   an absent_* fact has one correct answer and it does not depend on today:')
+        for k, v in wrong:
+            print('   %-34s is %s, must be true' % (k, json.dumps(v)))
+        print('   Delete the thing (or drop the assertion), then re-run.')
+
     if not os.path.exists(facts_fp):
+        if wrong:
+            return 1
         json.dump(now, open(facts_fp, 'w', encoding='utf-8'), indent=1, sort_keys=True)
         print('no baseline -- wrote %d facts to %s' % (len(now), facts_fp))
         print('Everything measured is now the expected value. Re-run after any pipeline change.')
@@ -279,6 +305,10 @@ def main() -> int:
     # absent_upload_boundaries_to_r2.py: it reported "new", --bless reported "all match", and the
     # assertion that a retired second-writer must stay retired was inert from the moment it was
     # written. A permanent "N new check(s)" line is also how a report stops being read.
+    if a.bless and wrong:
+        print('\nREFUSING TO BLESS while an absence assertion is false. Nothing was written.')
+        return 1
+
     if a.bless and (drift or errs or new or gone):
         json.dump(now, open(facts_fp, 'w', encoding='utf-8'), indent=1, sort_keys=True)
         print('\nblessed -> %s' % facts_fp)
@@ -294,6 +324,10 @@ def main() -> int:
                   % (len(now) - len(new), len(new)))
             print('Run --bless to record them. Until then they cannot fail.')
             return 1
+        if wrong:
+            print('%d facts match the baseline -- but the baseline itself is wrong above.'
+                  % len(now))
+            return 1
         print('%d facts checked, all match %s' % (len(now), os.path.basename(facts_fp)))
         return 0
 
@@ -305,6 +339,9 @@ def main() -> int:
         print('\nIf these changes are correct, run --bless AND THEN UPDATE THE PAGE.')
         print('Blessing without updating the page is how nine things got rebuilt on 2026-08-12.')
     if a.bless:
+        if wrong:
+            print('\nREFUSING TO BLESS while an absence assertion is false. Nothing was written.')
+            return 1
         json.dump(now, open(facts_fp, 'w', encoding='utf-8'), indent=1, sort_keys=True)
         print('\nblessed -> %s' % facts_fp)
         return 0
