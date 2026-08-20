@@ -134,8 +134,35 @@ describe('the research pipeline reaches the planner', () => {
   });
 
   it('the profile reaches the prompt, not just the depth filter', () => {
+    // THIS ASSERTION USED TO PASS BY ACCIDENT, and the way it did is worth keeping.
+    //
+    // It ran `/intel/` against codeOnly(plan-prompt.js), and codeOnly() STRIPS TEMPLATE
+    // LITERALS -- which is where the entire prompt lives. `intel` only survived the strip
+    // because the old code nested a backtick inside the outer template literal, which
+    // terminated the stripper's non-greedy match early and left the rest of the file exposed.
+    // Flattening that nesting on 2026-08-20 made the test fail against code that was MORE
+    // correct, not less.
+    //
+    // So it reads the RAW source for the prompt file: the prompt is text, and stripping the
+    // text before looking for it is asking the wrong question.
     expect(/researchIntel/.test(codeOnly(read('js/modules/smart-plan-v2-wiring.js')))).toBe(true);
-    expect(/intel/.test(codeOnly(read('js/modules/plan-prompt.js')))).toBe(true);
+    const prompt = read('js/modules/plan-prompt.js');
+    expect(prompt).toContain('WHAT IS ALREADY KNOWN');
+    expect(prompt).toContain('o.intel');
+  });
+
+  it('an ABSENT profile is stated, not silently omitted', () => {
+    // The block used to render only `${o.intel ? ... : ''}`, so a water with no research
+    // produced a prompt with no mention of research at all -- and the model cannot tell
+    // "nobody has studied this water" from "it was studied and nothing was found".
+    const prompt = read('js/modules/plan-prompt.js');
+    expect(prompt).toMatch(/No researched profile exists for this water/);
+  });
+
+  it('and the prompt says how old the research is', () => {
+    // metadata.lastUpdated is on every profile and three places in the UI already show it to a
+    // person. The one place that hands the research to a MODEL never read it.
+    expect(read('js/modules/plan-inputs.js')).toContain('ageSentence');
   });
 
   it('every field the research agents produce is used or explicitly excused', () => {

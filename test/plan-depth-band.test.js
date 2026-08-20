@@ -1,5 +1,5 @@
 import { describe, it, expect } from './expect-shim.mjs';
-import { depthBandFor, usableAhFrom, researchedBand, researchIntel } from '../js/modules/plan-inputs.js';
+import { depthBandFor, usableAhFrom, researchedBand, researchIntel, ageSentence } from '../js/modules/plan-inputs.js';
 import { SPECIES_BEHAVIOR_V2, getSeason } from '../js/data/species-intel.js';
 
 // ---------------------------------------------------------------------------
@@ -132,6 +132,39 @@ describe('usableAhFrom — the reserve comes off before anyone sees the number',
     expect(usableAhFrom('')).toBe(80);
     expect(usableAhFrom(null)).toBe(80);
     expect(usableAhFrom('some motor')).toBe(80);
+  });
+});
+
+describe('how old the research is reaches the model', () => {
+  // metadata.lastUpdated has been on every profile since storage.js was built, and THREE places
+  // in the UI already show it to a person. The plan path — the one place that hands the research
+  // to a model — read the profile and never read its date, so a profile researched in March and
+  // one from last week produced a byte-identical prompt.
+  const AT = Date.parse('2026-08-20T12:00:00Z');
+  const aged = (days) => ({ metadata: { lastUpdated: new Date(AT - days * 86400000).toISOString() } });
+
+  it('says the age in days when it is recent', () => {
+    expect(ageSentence(aged(0), AT)).toBe(', researched 0 days ago');
+    expect(ageSentence(aged(1), AT)).toBe(', researched 1 day ago');
+    expect(ageSentence(aged(20), AT)).toMatch(/20 days ago/);
+  });
+
+  it('warns once it is old enough for "current" to be a lie', () => {
+    // The pipeline bounds its current-fisheries-report search to 45 days AT RESEARCH TIME, so
+    // that section is handed over as current however long ago research actually ran.
+    expect(ageSentence(aged(45), AT)).toMatch(/possibly out of date/);
+    expect(ageSentence(aged(190), AT)).toMatch(/a different season/);
+  });
+
+  it('undated is not fresh, and says so', () => {
+    expect(ageSentence({ metadata: {} }, AT)).toMatch(/unknown age/);
+    expect(ageSentence({}, AT)).toMatch(/unknown age/);
+    expect(ageSentence({ metadata: { lastUpdated: 'not a date' } }, AT)).toMatch(/unknown age/);
+  });
+
+  it('and it rides on the intel block the prompt actually carries', () => {
+    const profile = { identity: { maxDepthFt: 60 }, metadata: { lastUpdated: new Date(AT - 190 * 86400000).toISOString() } };
+    expect(researchIntel(profile, 'Striped Bass', 'summer', AT)).toMatch(/6 months ago/);
   });
 });
 

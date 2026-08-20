@@ -413,7 +413,7 @@ export function structureWeights(base, baseRelief, structures) {
  * anything the pipeline marks unverified. A field the research could not establish is absent
  * rather than empty — the model must not read a blank as a zero.
  */
-export function researchIntel(profile, species, season) {
+export function researchIntel(profile, species, season, now = Date.now()) {
   if (!profile) return null;
   const out = [];
   const s = String(season || '').toLowerCase();
@@ -488,6 +488,35 @@ export function researchIntel(profile, species, season) {
 
   if (!out.length) return null;
   const verified = profile.metadata?.status === 'verified' || profile.metadata?.verified;
-  return `Researched profile for this lake${verified ? ' (verified)' : ' (NOT yet verified — weigh accordingly)'}:\n`
+  return `Researched profile for this lake${verified ? ' (verified)' : ' (NOT yet verified — weigh accordingly)'}`
+       + `${ageSentence(profile, now)}:\n`
        + out.map((l) => `- ${l}`).join('\n');
+}
+
+/**
+ * HOW OLD THE RESEARCH IS, in the one place that hands it to a model.
+ *
+ * `metadata.lastUpdated` has been written on every profile since storage.js was built, and THREE
+ * places in the UI already show it to a person — lake-intel.js and two in lake-research-ui.js.
+ * The plan path read the profile and never read its date, so a profile researched in March and
+ * one from last week produced a byte-identical prompt.
+ *
+ * That matters more than it looks. The research pipeline bounds its current-fisheries-report
+ * search to 45 days AT RESEARCH TIME, so that section is handed over as "current" however long
+ * ago research actually ran. A model told the age writes a different, more honest plan; a model
+ * told nothing cannot know to.
+ *
+ * A profile with no date gets said so too. Undated is not fresh.
+ */
+export function ageSentence(profile, now = Date.now()) {
+  const raw = profile && profile.metadata && profile.metadata.lastUpdated;
+  const t = raw ? Date.parse(raw) : NaN;
+  if (!Number.isFinite(t)) return ', of unknown age — it carries no research date';
+  const days = Math.max(0, Math.round((now - t) / 86400000));
+  if (days <= 30) return `, researched ${days} day${days === 1 ? '' : 's'} ago`;
+  const months = Math.round(days / 30);
+  // THE SEASON IS THE THING THAT WENT STALE, not the calendar. Six-month-old research describes
+  // a different water temperature, a different thermocline and different fish.
+  return `, researched about ${months} month${months === 1 ? '' : 's'} ago (${days} days) — `
+       + `treat anything it calls "current" as ${days > 120 ? 'a different season' : 'possibly out of date'}`;
 }

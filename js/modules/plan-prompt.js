@@ -472,7 +472,13 @@ SAFETY — judge it honestly for a 12.5 ft kayak
 Sustained wind over 15 mph, or gusts over 20, is a no-go. Judge ${o.ramp || 'the ramp'} against the
 wind direction: is it a dangerous windward launch?${o.hazards && o.hazards.length
   ? `\nThere are ${o.hazards.length} marked hazard zones on this water; keep clear of them.` : ''}
-${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState)}${o.intel ? `\nWHAT IS ALREADY KNOWN\n${o.intel}\n` : ''}
+${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState)}
+WHAT IS ALREADY KNOWN
+${o.intel || 'NOTHING. No researched profile exists for this water, so everything else here rests '
+  + 'on the chart, the gauges and general species knowledge. Say so in the plan rather than '
+  + 'writing as though this water had been studied — an absent profile is not a profile that '
+  + 'looked and found nothing.'}
+
 RETURN EXACTLY THIS SHAPE
 {
   "safety": { "isGo": true, "warning": "", "rampEvaluation": "one sentence on wind exposure at this ramp" },
