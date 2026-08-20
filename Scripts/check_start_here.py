@@ -141,6 +141,11 @@ def collect(root, repo):
     for rel in ('js/modules/casting-rings.js', 'js/modules/route-debug.js',
                 'js/modules/route-builder.js', 'js/modules/pinch-point-finder.js',
                 'Worker/research/vision.js', 'js/data/lakes.js',
+                # SmartPlan v1 and the Groq coach, cut 2026-08-20. v1 had been unreachable
+                # since v2 shipped and seven tests were green against its source text, so
+                # a revert would restore code nothing calls AND re-hide two coastal gaps.
+                'js/modules/smart-plan.js', 'js/modules/smart-plan-context.js',
+                'js/modules/groq-coach.js',
                 'Scripts/upload_boundaries_to_r2.py',
                 'Scripts/test_upload_boundaries_manifest.py',
                 # Retired the same day, and the reason is SHARPER than the one first written
