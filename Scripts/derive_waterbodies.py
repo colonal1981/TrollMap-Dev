@@ -11,7 +11,7 @@ all for many small ponds. But the contours themselves say where the water is:
 
 No boundary files, no state list, works on ponds, and stitches lakes that span tiles.
 
-    python derive_waterbodies.py --tiles "F:\\TrollMapPipeline\\contours\\all" ^
+    python derive_waterbodies.py --tiles "F:\\TrollMapPipeline\\extract\\contours" ^
                                  --out   "F:\\TrollMapPipeline\\waterbodies" --jobs 15
 
 Memory: cells are held sparse and keyed by a packed int, so usage scales with WATER AREA,
@@ -21,7 +21,7 @@ Personal use only, not for distribution or resale. NOT FOR NAVIGATION.
 """
 from __future__ import annotations
 
-import argparse, json, math, os, sys, time
+import argparse, gzip, json, math, os, sys, time
 from collections import deque
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -34,10 +34,18 @@ def _scan(job):
     """Worker: rasterise one tile. Returns {packed_cell: max_depth_ft} and the tile id."""
     path, cx, cy, per_feature = job
     try:
-        fc = json.load(open(path))
+        # THE PIPELINE WRITES .geojson.gz NOW. trollmap_extract_all.py --gzip has been the
+        # normal mode for the card extract since August; every tile in extract/contours and
+        # extract_new_C/contours is gzipped. This read used a bare open() and the glob below
+        # matched only *.geojson, so pointing this script at the pipeline's own output found
+        # zero tiles -- 2026-08-20.
+        opener = gzip.open if str(path).endswith(".gz") else open
+        with opener(path, "rt", encoding="utf-8") as fh:
+            fc = json.load(fh)
     except Exception:
         return None, {}, 0
-    tile = (fc.get("properties") or {}).get("tile", Path(path).stem)
+    tile = (fc.get("properties") or {}).get("tile",
+                                            Path(path).name.split(".")[0])
     cells = {}
     n = 0
     for f in fc.get("features") or []:
@@ -67,14 +75,22 @@ def main():
                     help="reference latitude for the grid (CONUS mid by default)")
     ap.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) - 1))
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--force", action="store_true",
+                    help="allow an empty result to replace a non-empty waterbodies.json")
     args = ap.parse_args()
 
-    files = [str(p) for p in sorted(Path(args.tiles).glob("*.geojson"))
-             if p.name != "MERGED.geojson" and not p.name.startswith("_")]
+    tdir = Path(args.tiles)
+    files = [str(p) for p in sorted(set(tdir.glob("*.geojson")) | set(tdir.glob("*.geojson.gz")))
+             if not p.name.startswith("MERGED.geojson") and not p.name.startswith("_")]
     if args.limit:
         files = files[:args.limit]
     if not files:
-        sys.exit("no tiles")
+        # "no tiles" on its own sent the last reader looking for a missing directory when the
+        # directory was full and the SUFFIX had changed. Say which, and say where.
+        sys.exit("no tiles matching *.geojson or *.geojson.gz in %s\n"
+                 "  (the directory %s)"
+                 % (tdir, "does not exist" if not tdir.is_dir()
+                    else "exists and holds %d entries" % len(list(tdir.iterdir()))))
 
     cy = args.cell_m / 110540.0
     cx = args.cell_m / (111320.0 * math.cos(math.radians(args.lat_ref)))
@@ -141,6 +157,18 @@ def main():
 
     odir = Path(args.out)
     odir.mkdir(parents=True, exist_ok=True)
+
+    # AN EMPTY RUN MUST NOT REPLACE A FULL FILE. Zero components is a legitimate answer for a
+    # tile set with no water in it, and it is also what a decode change, a bad --cell-m or a
+    # wrong --tiles produces. The two are indistinguishable from here, so the destructive one
+    # is refused: a 18 MB waterbodies.json is not overwritten by [] without --force.
+    prior = odir / "waterbodies.json"
+    if not out and prior.exists() and prior.stat().st_size > 2 and not args.force:
+        sys.exit("REFUSING to write 0 waterbodies over %s (%.1f MB).\n"
+                 "  Zero components can mean no water OR a wrong --tiles / --cell-m, and this\n"
+                 "  cannot tell which. Re-run with --force if the empty result is the answer."
+                 % (prior, prior.stat().st_size / 1e6))
+
     json.dump(out, open(odir / "waterbodies.json", "w"), indent=1)
     json.dump({"type": "FeatureCollection", "features": [
         {"type": "Feature",
