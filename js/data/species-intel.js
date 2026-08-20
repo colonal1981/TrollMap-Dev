@@ -47,20 +47,22 @@ export const REGULATIONS = {
     },
   },
 
-  // NOTE: saltwater rules now live in js/data/coastal-regulations.js, keyed by
-  // STATE rather than by waterbody, and are applied through
-  // checkCoastalRegulations(). This entry is retained only so any legacy
-  // caller passing the literal string 'Coastal SC Inshore' still resolves.
+  // 'Coastal SC Inshore' WAS HERE AND IS GONE — 2026-08-20.
   //
-  // Do not add coastal zones here: resolveLakeKey() never matched the real
-  // zone names ('Charleston Harbor, SC' etc.) against this key, so coastal
-  // trips silently returned legal:true. The red drum numbers below are also
-  // superseded — SC moved to an 18-25" slot at 1/day on 2026-07-01.
-  'Coastal SC Inshore': {
-    'Red Drum (Redfish)': { creelLimit: 1, sizeLimit: { min: 18, max: 25 }, note: 'SUPERSEDED — see coastal-regulations.js. SC slot 18-25", 1/day, 2/boat as of 2026-07-01.' },
-    'Speckled Trout (Spotted Seatrout)': { creelLimit: 10, sizeLimit: { min: 14 }, note: 'See coastal-regulations.js. 14" TL min, 10/day – verify cold-stun closures.' },
-    'Flounder': { creelLimit: 5, sizeLimit: { min: 16 }, note: 'See coastal-regulations.js. SC 16" TL min, 5/day, 10/boat.' },
-  }
+  // It was kept "only so any legacy caller passing the literal string still resolves", and
+  // measured rather than assumed: every display name, legacy name and slug in lake_index.json
+  // — 1,363 strings — was run through resolveLakeKey() against this table. SIX resolve, and
+  // they are the six waters above. ZERO reached this key, and no caller passes the literal.
+  //
+  // Saltwater is keyed by STATE in js/data/coastal-regulations.js and reached through
+  // checkCoastalRegulations(), which since 2026-08-20 reads the live digest first. This entry
+  // held three species of numbers, one of which its own note called SUPERSEDED, under a
+  // 'Flounder' key that canonicalCoastalSpecies() never produces.
+  //
+  // DO NOT ADD COASTAL ZONES HERE. resolveLakeKey() has never matched a real zone name
+  // ('Charleston Harbor, SC' and the other fifteen) against anything in this table, so a row
+  // added here does not gate a coastal trip — it just sits where somebody will later read it as
+  // though it did.
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────

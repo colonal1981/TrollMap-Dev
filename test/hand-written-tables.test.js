@@ -73,16 +73,21 @@ const DECLARED = [
   // was smart-plan.js, which was v1 and unreachable. Deleted with v1. depthBandFor() in
   // plan-inputs.js is the expandable path: researched profile first, V2 table second, generic
   // third, and it says in `source` which one answered.
-  // NINE, NOT FOURTEEN. The old scanner ran past the end of this literal and counted five
-  // `name:` pairs out of the code below it, so editing checkRegulations() moved the count of a
-  // table nobody had touched. Six waters plus Coastal SC Inshore plus lastVerified/source.
+  // EIGHT SINCE 2026-08-20, down one: 'Coastal SC Inshore' is gone. Every display name, legacy
+  // name and slug in lake_index.json — 1,363 strings — was run through resolveLakeKey() against
+  // this table; six resolve and they are the six waters, and zero ever reached that key. It held
+  // three species of numbers, one of which its own note called SUPERSEDED.
   //
-  // Six waters gate checkRegulations() for all 454, and plan-preflight and smart-plan both call
-  // it before a plan is built. As of 2026-08-17 the statewide half comes from the live digest
-  // through /regulations; the closures — notPresent and closedSeason — are still only here,
-  // because a size and creel limit is not a closure.
-  ['js/data/species-intel.js', 'REGULATIONS', 9, 'data',
-   'six waters plus Coastal SC Inshore. The digest now supplies statewide limits for all 454; '
+  // (NINE, NOT FOURTEEN, was the earlier correction: the old scanner ran past the end of this
+  // literal and counted five `name:` pairs out of the code below it, so editing
+  // checkRegulations() moved the count of a table nobody had touched.)
+  //
+  // Six waters gate checkRegulations() for all 452, and plan-preflight.js calls it before a plan
+  // is built. As of 2026-08-17 the statewide half comes from the live digest through
+  // /regulations; the closures — notPresent and closedSeason — are still only here, because a
+  // size and creel limit is not a closure. THAT is what keeps this table alive.
+  ['js/data/species-intel.js', 'REGULATIONS', 8, 'data',
+   'six waters plus lastVerified/source. The digest supplies statewide limits for all 452; '
    + 'this table is the only source of CLOSURES.'],
   // 24 since 2026-08-19, down six. The map is slug -> label and the six out-of-region zones
   // no longer have slugs: cutting them from coastal_catalog.py without cutting them here would

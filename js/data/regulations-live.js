@@ -4,8 +4,9 @@
  * Personal use only, not for distribution or resale; not for navigation.
  *
  * WHAT WAS WRONG. `checkRegulations()` in species-intel.js is gated on a hand-written table of
- * SIX named waters plus Coastal SC Inshore. It is live — plan-preflight.js and smart-plan.js both
- * call it before a plan is built — and on the other 448 waters it returned
+ * SIX named waters. (A seventh key, `Coastal SC Inshore`, sat there until 2026-08-20; zero of the
+ * 1,363 names the app can offer ever resolved to it.) It is live — plan-preflight.js calls it
+ * before a plan is built — and on the other 448 waters it returned
  *
  *     { legal: true, note: 'No specific regulation data available — verify locally before fishing.' }
  *
