@@ -58,6 +58,7 @@ def wrangler(*args, capture=True):
     return p.returncode, out.decode("utf-8", errors="replace")
 
 
+SUFFIX = '.failed.txt'
 NOISE = ('wrangler', 'Resource location:', 'Deleting object', 'update available')
 
 
@@ -88,7 +89,12 @@ def write_report(list_path, failures, done, skipped):
     Comments carry the counts so the file explains itself a week later; prune_r2_objects.py
     skips '#' lines on read, so the same file is both a report and an input.
     """
-    out = list_path + '.failed.txt'
+    # Retrying a failed list must not mint _r2_delete.txt.failed.txt.failed.txt. The suffix is
+    # replaced, not stacked, so the report for a list is always one predictable path -- and a
+    # retry rewrites the same file, which is correct: what is still failing IS the new list.
+    # Safe because main() reads every key into memory before the first delete.
+    base = list_path[:-len(SUFFIX)] if list_path.endswith(SUFFIX) else list_path
+    out = base + SUFFIX
     lines = ['# %d failed, %d deleted, %d already gone -- from %s'
              % (len(failures), done, skipped, os.path.basename(list_path)),
              '# re-run with:  py .\\prune_r2_objects.py --list "%s" --go' % out]

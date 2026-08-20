@@ -60,6 +60,13 @@ class ReportTest(unittest.TestCase):
     def test_terse_never_returns_empty_even_if_all_lines_look_like_noise(self):
         self.assertTrue(pro.terse('Deleting object "a/b" from bucket\n'))
 
+    def test_retrying_a_failed_list_does_not_stack_the_suffix(self):
+        """Ryan's retry wrote ...txt.failed.txt.failed.txt. One list, one report path."""
+        first = pro.write_report(self.lst, [("a/b.json", "err")], 0, 0)
+        second = pro.write_report(first, [], 1, 0)
+        self.assertEqual(second, first)
+        self.assertFalse(second.endswith(".failed.txt.failed.txt"))
+
     def test_report_sits_beside_the_list_it_came_from(self):
         out = pro.write_report(self.lst, [], 0, 0)
         self.assertEqual(os.path.dirname(out), os.path.dirname(self.lst))
