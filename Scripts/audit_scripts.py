@@ -309,16 +309,33 @@ def main():
     # exactly how index_waterbodies.py was lost. Same shape of question as `missing`,
     # so it is answered in the same place, and both are fatal: a warning that returns 0
     # is not a check.
+    #
+    # AND IT ASKS BOTH TREES, because REVIEW_NOTE describes the PROJECT and the drive keeps two
+    # copies of every script -- `scripts/` is what Ryan runs, `Scripts/` is what goes to GitHub.
+    # Asked of one tree alone this fired on every single run against `Scripts/`: the whole
+    # `fish_sorter*` catch-photo strand lives in `scripts/_review_2026-08-04/` and has never been
+    # in the GitHub copy. That is not a judgement overruled silently, it is a check whose scope
+    # was narrower than its table -- and a warning printed every run is one you stop reading,
+    # which is the opposite of what this is for.
+    #
+    # A key still strands when it is gone from BOTH, which is the loss this was built to catch.
+    trees = [d]
+    for sib in (os.path.join(d, os.pardir, os.pardir, 'scripts'),
+                os.path.join(d, os.pardir, 'TrollMap-Dev', 'Scripts')):
+        sib = os.path.normpath(sib)
+        if os.path.isdir(sib) and os.path.normcase(sib) != os.path.normcase(os.path.normpath(d)):
+            trees.append(sib)
     here = set()
-    for r, dirs, fs in os.walk(d):
-        dirs[:] = [x for x in dirs if x not in ('__pycache__', '.wrangler', '_to_delete')]
-        here.update(fs)
+    for t in trees:
+        for r, dirs, fs in os.walk(t):
+            dirs[:] = [x for x in dirs if x not in ('__pycache__', '.wrangler', '_to_delete')]
+            here.update(fs)
     stranded = [k for k in REVIEW_NOTE
                 if not (k in here or (not k.endswith('.py')
                                       and any(f.startswith(k) for f in here)))]
     if stranded:
         print('\n  !! flagged "your call" in REVIEW_NOTE but no longer anywhere under %s:'
-              % os.path.basename(d.rstrip(os.sep)))
+              % ' or '.join(os.path.basename(t.rstrip(os.sep)) for t in trees))
         for k in sorted(stranded):
             print('       %-32s %s' % (k, REVIEW_NOTE[k].split('.')[0]))
     print()
