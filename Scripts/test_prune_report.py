@@ -44,6 +44,22 @@ class ReportTest(unittest.TestCase):
         with open(out, encoding="utf-8") as fh:
             self.assertIn("0 failed, 5 deleted, 2 already gone", fh.read())
 
+    def test_terse_keeps_the_error_and_drops_the_banner(self):
+        """Ryan's ten failures printed the banner and hid the error -- the cut was head-first."""
+        out = ('\u26c5\ufe0f wrangler 4.112.0 (update available 4.124.0)\n'
+               '\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n'
+               'Resource location: remote\n'
+               'Deleting object "blair_pond/osm-structures.geojson" from bucket "x"...\n\n'
+               '\u2718 [ERROR] Internal Server Error [code: 10001]\n')
+        t = pro.terse(out)
+        self.assertIn('10001', t)                      # the part that names the cause
+        self.assertNotIn('wrangler 4.112.0', t)        # not the version banner
+        self.assertNotIn('Resource location', t)
+        self.assertNotIn('Deleting object', t)
+
+    def test_terse_never_returns_empty_even_if_all_lines_look_like_noise(self):
+        self.assertTrue(pro.terse('Deleting object "a/b" from bucket\n'))
+
     def test_report_sits_beside_the_list_it_came_from(self):
         out = pro.write_report(self.lst, [], 0, 0)
         self.assertEqual(os.path.dirname(out), os.path.dirname(self.lst))

@@ -58,6 +58,30 @@ def wrangler(*args, capture=True):
     return p.returncode, out.decode("utf-8", errors="replace")
 
 
+NOISE = ('wrangler', 'Resource location:', 'Deleting object', 'update available')
+
+
+def terse(out, limit=300):
+    """The part of a wrangler failure that says what went wrong.
+
+    Ryan's 2026-08-20 run printed ten failures and every one of them read:
+
+        ⛅️ wrangler 4.112.0 (update available 4.124.0)
+        ────────────
+        Resource location: remote
+        Deleting object "blair_pond/osm-structures.geojson" from
+
+    -- cut at 180 characters, which is the banner and none of the error, because the error comes
+    LAST. Truncating the head of a tool's output is truncating the wrong end. Drop the furniture,
+    then keep the tail rather than the head.
+    """
+    kept = [ln.strip() for ln in out.splitlines()
+            if ln.strip() and not ln.strip('\u2500- ') == ''
+            and not any(n in ln for n in NOISE)]
+    body = ' | '.join(kept) if kept else ' '.join(out.split())
+    return body[-limit:] if len(body) > limit else body
+
+
 def write_report(list_path, failures, done, skipped):
     """Write the failed keys beside the list, as a file --list can read straight back.
 
@@ -116,8 +140,8 @@ def main():
                 skipped += 1
                 print('  [%4d/%d] gone already  %s' % (i, len(keys), k))
             else:
-                failures.append((k, out))
-                print('  [%4d/%d] FAILED   %s\n      %s' % (i, len(keys), k, out.strip()[:180]))
+                failures.append((k, terse(out)))
+                print('  [%4d/%d] FAILED   %s\n      %s' % (i, len(keys), k, terse(out)))
                 if a.stop_on_error:
                     break
     finally:
