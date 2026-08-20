@@ -171,61 +171,17 @@ export function checkRegulations(lakeName, species, date, state = null) {
   return { legal: true, reason: null, regInfo: reg, limits, warnings };
 }
 
-// ── Legacy Species behavior (v1) ───────────────────────────────────────────
-export const SPECIES_BEHAVIOR = {
-  'Lake Wateree': {
-    'Striped Bass': {
-      summer: {
-        depthBand: (tempF) => (tempF && tempF > 84 ? [18, 24] : [14, 22]),
-        timeOfDay: {
-          [TOD.DAWN]: { depthShift: -6, lures: ['Choppo 90', 'Rattling Spook', 'Bucktail'], speed: 1.8, notes: 'Early AM stripers run 12-15ft. Topwater schooling.' },
-          [TOD.DAY]: { depthShift: 0, lures: ['A-Rig Medium', 'Umbrella Rig 3/4oz', 'Flutter Spoon 2oz'], speed: 2.0, notes: 'Ledges/channels. Trolling 1.5-2.5mph.' },
-          [TOD.DUSK]: { depthShift: -4, lures: ['Choppo 90', 'Bucktail'], speed: 1.8, notes: 'Schooling action returns.' },
-        }
-      },
-      fall: {
-        depthBand: [10, 20],
-        timeOfDay: {
-          [TOD.DAWN]: { depthShift: -4, lures: ['Topwater', 'Bucktail'], speed: 1.8, notes: 'Push shallower.' },
-          [TOD.DAY]: { depthShift: 0, lures: ['Crankbait', 'A-Rig Medium'], speed: 2.0, notes: 'Ledges and channel edges.' },
-          [TOD.DUSK]: { depthShift: -3, lures: ['Topwater'], speed: 1.8 },
-        }
-      },
-      winter: {
-        depthBand: [15, 30],
-        timeOfDay: {
-          [TOD.DAWN]: { depthShift: 0, lures: ['Jigging spoon'], speed: 1.0 },
-          [TOD.DAY]: { depthShift: 5, lures: ['Jigging spoon', 'Bucktail'], speed: 1.0 },
-          [TOD.DUSK]: { depthShift: 0, lures: ['Live bait'], speed: 1.0 },
-        }
-      },
-      spring: {
-        depthBand: [5, 15],
-        timeOfDay: {
-          [TOD.DAWN]: { depthShift: -3, lures: ['Topwater', 'Live herring'], speed: 1.5 },
-          [TOD.DAY]: { depthShift: 0, lures: ['Crankbait'], speed: 1.8 },
-          [TOD.DUSK]: { depthShift: -3, lures: ['Topwater'], speed: 1.5 },
-        }
-      }
-    }
-  },
-  'Lake Murray': {
-    'Striped Bass': {
-      summer: {
-        depthBand: (tempF) => [28, 36],
-        timeOfDay: {
-          [TOD.DAWN]: { depthShift: -4, lures: ['Live herring', 'Choppo 90'], speed: 1.0 },
-          [TOD.DAY]: { depthShift: 0, lures: ['Live herring', 'Umbrella rig'], speed: 1.5 },
-          [TOD.DUSK]: { depthShift: -4, lures: ['Live herring'], speed: 1.0 }
-        }
-      },
-      fall: { depthBand: [10, 25], timeOfDay: { [TOD.DAWN]: { depthShift: -3, lures: ['Topwater'], speed: 1.5 }, [TOD.DAY]: { depthShift: 0, lures: ['A-Rig'], speed: 1.8 }, [TOD.DUSK]: { depthShift: -3, lures: ['Topwater'], speed: 1.5 } } },
-      winter: { depthBand: [15, 30], timeOfDay: { [TOD.DAWN]: { depthShift: 0, lures: ['Live bait'], speed: 1.0 }, [TOD.DAY]: { depthShift: 0, lures: ['Live bait'], speed: 1.0 }, [TOD.DUSK]: { depthShift: 0, lures: ['Live bait'], speed: 1.0 } } },
-      spring: { depthBand: [3, 15], timeOfDay: { [TOD.DAWN]: { depthShift: -2, lures: ['Plugs', 'Free-line'], speed: 1.5 }, [TOD.DAY]: { depthShift: 0, lures: ['A-Rig Light'], speed: 1.8 }, [TOD.DUSK]: { depthShift: -2, lures: ['Topwater'], speed: 1.5 } } }
-    }
-  }
-};
-
+// SPECIES_BEHAVIOR and getBehaviorV1Compat were deleted 2026-08-20.
+//
+// The table was TWO waters, Wateree and Murray, hand-written, and its only consumer was
+// smart-plan.js -- v1, unreachable since v2 shipped and deleted the same day. V2 below is
+// keyed by SPECIES, and plan-inputs.js depthBandFor() already reads the lake's own
+// researched profile first and falls back to it, labelling which answer it used in
+// `source`. That cascade is the expandable mechanism; the hand-written floor beneath it
+// does not need a second, smaller, staler copy.
+//
+// getBehaviorV1Compat() was written to unify the two and had zero callers from the day
+// it was written.
 // ── SPECIES BEHAVIOR V2 ──────────────────────────────────
 const baseSCReservoir = (overrides = {}) => ({
   preferredMethod: 'trolling',
@@ -619,24 +575,5 @@ export const SPECIES_BEHAVIOR_V2 = {
     },
   }
 };
-
-// ── Adapter: expose v1-compatible lookup so smart-plan.js keeps working
-export function getBehaviorV1Compat(species, lake, season, timeOfDay) {
-  const sp = SPECIES_BEHAVIOR_V2[species];
-  if (!sp) return null;
-  const lakeData = sp[lake] || sp['default_SC_reservoir'] || sp['Coastal SC Inshore'];
-  if (!lakeData) return null;
-  const s = lakeData[season];
-  if (!s) return null;
-  const depth = Array.isArray(s.preferredDepth) ? s.preferredDepth : [5, 15];
-  const speed = Array.isArray(s.preferredSpeed) ? s.preferredSpeed[0] : (s.preferredSpeed || 2.0);
-  return {
-    depthBand: depth,
-    lures: s.preferredPresentation || [],
-    speed,
-    notes: (s.notes || []).join(' · '),
-    _v2: s
-  };
-}
 
 console.log('[species-intel] Unified Trolling-First Multi-Species Brain loaded');

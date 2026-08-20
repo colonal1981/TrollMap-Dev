@@ -69,9 +69,10 @@ const DECLARED = [
   ['Worker/worker-data.js', 'LAKE_CLARITY_PROFILES', 6, 'data',
    'SPATIAL and not replaceable by the profile schema: per-zone clarity within one lake. '
    + 'The research profile carries one clarity value for the whole water.'],
-  ['js/data/species-intel.js', 'SPECIES_BEHAVIOR', 2, 'data',
-   'TWO waters — Wateree and Murray. The smallest table in the app and it drives species '
-   + 'behaviour text.'],
+  // SPECIES_BEHAVIOR was here until 2026-08-20 — two waters, hand-written, and its only reader
+  // was smart-plan.js, which was v1 and unreachable. Deleted with v1. depthBandFor() in
+  // plan-inputs.js is the expandable path: researched profile first, V2 table second, generic
+  // third, and it says in `source` which one answered.
   // NINE, NOT FOURTEEN. The old scanner ran past the end of this literal and counted five
   // `name:` pairs out of the code below it, so editing checkRegulations() moved the count of a
   // table nobody had touched. Six waters plus Coastal SC Inshore plus lastVerified/source.
