@@ -114,7 +114,7 @@ GROUPS = [
 
     ('superseded_registry_builder',
      'superseded by consolidate_lake_index.py, which is the one the pipeline names',
-     lambda f: f in ('build_lake_index.py', 'build_lake_registry.py', 'merge_lakes.py')),
+     lambda f: f in ('build_lake_index.py', 'merge_lakes.py')),
 
     ('superseded_boundary_builder',
      'hand-typed bounding boxes. 00_START_HERE: "when a boundary is wrong, reach for the '
@@ -184,6 +184,11 @@ REVIEW_NOTE = {
     'garmin_lake_inventory.py': 'reads the card\'s own waterbody list — useful for the '
                                 'undecoded-tile work still open.',
     'garmin_access_scan.py': 'same vintage as garmin_lake_inventory.py.',
+    'build_lake_registry.py': 'the only writer of a nationwide registry -- run with a CONUS '
+                              '--bbox it produced registry_conus/ (36,613 rows). Archived as '
+                              '"superseded by consolidate_lake_index.py" on 2026-08-04, which is '
+                              'true for the REGIONAL registry and false for the national cut. '
+                              'Restored 2026-08-20 so that cut stays reproducible.',
     'derive_waterbodies.py': 'finds water from where GARMIN put contours, not from what '
                              '3DHP names. Nothing else on the drive does that. It is the '
                              'source of max_depth_ft.',
