@@ -65,7 +65,38 @@ def main() -> int:
     bak = a.backup_dir or os.path.join(os.path.dirname(os.path.abspath(a.packs)),
                                        '_to_delete', 'pre_fit_runs')
     if not os.path.isdir(bak):
-        print('no backup folder at %s -- nothing has been fitted, nothing to restore' % bak)
+        # "NOTHING HAS BEEN FITTED" IS A GUESS, and after 2026-08-20 it is the wrong one.
+        # An absent backup folder has two causes that look identical from here: nothing was
+        # ever fitted, or the backups were deleted. Ryan emptied _to_delete on 08-20, which
+        # took pre_fit_runs with it, so from now on the second cause is the likely one -- and
+        # this used to report it as the first, in a cheerful sentence, and exit 0.
+        #
+        # The packs themselves can tell the two apart: fit_trolling_runs.py stamps
+        # "fitted": true on every run it touches. So ask them.
+        fitted = 0
+        try:
+            for d in sorted(os.listdir(a.packs))[:400]:
+                fp = os.path.join(a.packs, d, 'trolling_runs.geojson')
+                if not os.path.isfile(fp):
+                    continue
+                with open(fp, encoding='utf-8') as fh:
+                    head = fh.read(200000)
+                if '"fitted"' in head and 'true' in head:
+                    fitted += 1
+                    if fitted >= 3:
+                        break
+        except OSError:
+            pass
+        if fitted:
+            print('!! no backup folder at %s -- BUT packs ARE fitted.' % bak)
+            print('   The originals are GONE, not absent-because-unused, so there is no undo.')
+            print('   To get un-fitted runs back:')
+            print('     py .\\scripts\\build_trolling_runs.py --packs "%s"' % a.packs)
+            print('   and fit again afterwards. fit_trolling_runs.py --refit now refuses '
+                  'without originals.')
+            return 1
+        print('no backup folder at %s -- and no pack carries a fitted flag, so nothing has '
+              'been fitted and there is nothing to restore' % bak)
         return 0
 
     slugs = sorted(os.listdir(bak))

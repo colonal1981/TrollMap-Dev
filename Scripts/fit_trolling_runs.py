@@ -1400,6 +1400,27 @@ def main():
         a.backup_dir = os.path.join(os.path.dirname(a.packs.rstrip('/\\')),
                                     '_to_delete', 'pre_fit_runs')
 
+    # --refit WITHOUT ORIGINALS SMOOTHS ITS OWN OUTPUT, and says nothing about it. The flag's
+    # own help text has always carried the warning -- "Restore the original from
+    # _to_delete/pre_fit_runs first" -- and a warning in help is not a guard. Ryan is emptying
+    # _to_delete on 2026-08-20, which takes those originals with it, so the warning becomes a
+    # trap the first time anyone refits after tonight.
+    #
+    # Refusing is right rather than merely noisy: a second fit trims already-trimmed passes and
+    # the summary reports it as a normal run, so the damage is invisible and cumulative. The
+    # recovery path once the backups are gone is build_trolling_runs.py, then fit -- not refit.
+    if a.refit and not a.dry_run:
+        have = (os.path.isdir(a.backup_dir)
+                and any(os.scandir(a.backup_dir)) if os.path.isdir(a.backup_dir) else False)
+        if not have:
+            raise SystemExit(
+                'REFUSING to --refit: no originals at %s\n'
+                '  A refit without them smooths already-smoothed runs and trims already-trimmed\n'
+                '  passes, and the summary will not say so.\n'
+                '  Rebuild instead:  py .\\scripts\\build_trolling_runs.py --packs "%s"\n'
+                '  then fit normally. Use --dry-run to see what a refit would touch.'
+                % (a.backup_dir, a.packs))
+
     if a.only:
         slugs = [a.only]
     else:

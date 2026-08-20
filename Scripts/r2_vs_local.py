@@ -58,10 +58,22 @@ import argparse, importlib.util, json, os, sys, time
 #
 # Same story for boundaries. Anything added to this table stops being a false alarm.
 SOURCE_MAP = {
-    'boundary.geojson': [('registry/boundaries',        '%s.geojson'),
-                         ('lake_boundaries_3dhp',       '%s_3dhp.geojson'),
-                         ('_to_delete/lake_boundaries', '%s_3dhp.geojson'),
-                         ('_to_delete/lake_boundaries', '%s.geojson')],
+    # THE _to_delete ROWS BECAME A GATE ON EMPTYING _to_delete, which is the opposite of what a
+    # staging folder is for. Measured 2026-08-20 against the 08-19 listing: of 1,750
+    # <slug>/boundary.geojson objects, 32 resolved ONLY into _to_delete/lake_boundaries/, and 23
+    # of those 32 were also on the 6,827-key prune list -- so R2's copy was already gone and the
+    # parked file was the last one anywhere. Four have no live equivalent under any slug:
+    # catawba_narrows, chickamauga_lake, lake_toxaway, oak_hollow_higgins.
+    #
+    # All 32 were copied to registry/_reference/retired_boundaries/ (59.7 MB) and that folder is
+    # listed FIRST here, so this table keeps answering after _to_delete is emptied. The
+    # _to_delete rows stay until the folder is actually gone -- a source that exists is a source.
+    'boundary.geojson': [('registry/boundaries',                    '%s.geojson'),
+                         ('registry/_reference/retired_boundaries', '%s_3dhp.geojson'),
+                         ('registry/_reference/retired_boundaries', '%s.geojson'),
+                         ('lake_boundaries_3dhp',                   '%s_3dhp.geojson'),
+                         ('_to_delete/lake_boundaries',             '%s_3dhp.geojson'),
+                         ('_to_delete/lake_boundaries',             '%s.geojson')],
     'osm-structures.geojson': [('osm_out',              '%s.geojson')],
     # THE I-BOATING TREE IS A SOURCE, and leaving it out of this table is what made 101 of the
     # 333 "R2 ONLY" alarms -- 81 shoreline + 20 depth_soundings -- read as unrecoverable data.
