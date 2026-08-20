@@ -36,8 +36,23 @@
 const CACHE_MS = 12 * 60 * 60 * 1000;   // the digest changes once a year; twelve hours is generous
 const _cache = new Map();               // 'SC|lake murray' -> { at, payload }
 
+/**
+ * THE SALTWATER HALF IS STATEWIDE, SO IT IS STORED STATEWIDE.
+ *
+ * The freshwater cache is keyed `state|water` because a lake can carry its own rule -- "Lake
+ * Wateree striped bass" is a real row in the digest. Saltwater has no such thing: SCDNR sets red
+ * drum for South Carolina, not for Charleston Harbor. Keying it by water would file sixteen
+ * identical copies AND miss on a zone that had not itself been primed while the state's book was
+ * already sitting in memory.
+ *
+ * Every /regulations response carries it, off the same download that answers for freshwater. So
+ * selecting ANY South Carolina water -- Lake Marion included -- warms the SC saltwater table.
+ * One fetch, both halves, no second endpoint and no second prime.
+ */
+const _saltwater = new Map();           // 'SC' -> { at, table, source, state }
+
 /** Exposed for tests. */
-export function _resetRegulationsCache() { _cache.clear(); }
+export function _resetRegulationsCache() { _cache.clear(); _saltwater.clear(); }
 
 export function normalizeWaterName(v) {
   return String(v == null ? '' : v)
@@ -78,10 +93,43 @@ export async function primeRegulations(state, lakeName, opts = {}) {
     // LLM hiccup and a state with no lake-specific rules both produce an empty object.
     if (payload && payload.parse_failed) return null;
     _cache.set(key, { at: now, payload });
+
+    // ONLY A GOOD SALTWATER ANSWER GETS FILED, for the same reason parse_failed is checked
+    // above. `saltwater_source` is set by the Worker only when the section was located AND
+    // parsed; an empty table beside a present source is a parse that found nothing, which is a
+    // different sentence from "the book has no rule for this fish". Both leave the coastal
+    // cache COLD, and a cold cache is the unknown branch, which warns. Nothing here can turn a
+    // failed parse into permission.
+    const salt = payload && payload.saltwater;
+    if (payload && payload.saltwater_source && salt && Object.keys(salt).length) {
+      _saltwater.set(st, { at: now, table: salt, source: payload.saltwater_source, state: st });
+    }
     return payload;
   } catch (_) {
     return null;
   }
+}
+
+/**
+ * The names one species answers to. A PARENTHETICAL IS A SECOND NAME, NOT A NOTE:
+ * `Red Drum (Redfish)` -> ['red drum', 'redfish'].
+ *
+ * Exported because the failure it prevents is invisible. The digest writes "Spotted Seatrout
+ * (Speckled Trout)" and the species picker says "Speckled Trout (Spotted Seatrout)" -- the same
+ * fish, and NEITHER STRING CONTAINS THE OTHER, so the substring pass below misses and the angler
+ * is told the book says nothing about seatrout while the book is open at the seatrout row.
+ */
+export function nameForms(v) {
+  const s = String(v == null ? '' : v).trim().toLowerCase();
+  if (!s) return [];
+  const forms = new Set();
+  const outside = s.replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
+  if (outside) forms.add(outside);
+  for (const m of s.matchAll(/\(([^)]*)\)/g)) {
+    const inner = String(m[1] || '').replace(/\s+/g, ' ').trim();
+    if (inner) forms.add(inner);
+  }
+  return [...forms];
 }
 
 /** Loose species matching, because a digest writes "Largemouth bass" and the picker says "Largemouth Bass". */
@@ -95,6 +143,14 @@ function findSpecies(table, species) {
     // WHOLE PHRASE, EITHER DIRECTION, and never a bare substring of a word: "bass" must not
     // match "Largemouth Bass" and hand somebody a black bass limit for a striper.
     if (kl === want) return { key: k, entry: table[k] };
+  }
+  // Alias forms, WHOLE-FORM EQUALITY ONLY. 'Trout' does not become 'Speckled Trout' here --
+  // that would be the bare-substring mistake the pass above exists to avoid.
+  const wantForms = nameForms(want);
+  if (wantForms.length) {
+    for (const k of Object.keys(table)) {
+      if (nameForms(k).some(f => wantForms.includes(f))) return { key: k, entry: table[k] };
+    }
   }
   for (const k of Object.keys(table)) {
     const kl = k.trim().toLowerCase();
@@ -133,4 +189,38 @@ export function livePolicyFor(state, lakeName, species) {
 /** Whether the digest has been read for this water at all. */
 export function regulationsPrimed(state, lakeName) {
   return _cache.has(keyFor(state, lakeName));
+}
+
+/**
+ * The published saltwater limits for this species in this state, if the digest has been primed.
+ *
+ * THE SIBLING OF livePolicyFor(), and deliberately the same shape, because coastal-regulations.js
+ * consults it exactly the way species-intel.js consults that one. There is no `scope: 'lake'`
+ * branch: saltwater limits are set per state, so 'state' and 'none' are the only two answers the
+ * book can give.
+ *
+ * `null` means NOT PRIMED -- nobody has read the book. `scope: 'none'` means the book was read
+ * and says nothing about this fish. Those are different sentences and only one of them is about
+ * the fish.
+ */
+export function liveCoastalPolicyFor(state, species) {
+  const st = String(state || '').trim().toUpperCase();
+  const hit = _saltwater.get(st);
+  if (!hit) return null;
+  const found = findSpecies(hit.table, species);
+  const source = hit.source || null;
+  if (found) {
+    return { scope: 'state', species: found.key, state: st,
+             sizeLimit: found.entry.sizeLimit ?? null,
+             creelLimit: found.entry.creelLimit ?? null,
+             specialRules: Array.isArray(found.entry.specialRules) ? found.entry.specialRules : [],
+             source };
+  }
+  return { scope: 'none', species: null, state: st, sizeLimit: null, creelLimit: null,
+           specialRules: [], source };
+}
+
+/** Whether the saltwater half of the digest has been read for this state at all. */
+export function coastalRegulationsPrimed(state) {
+  return _saltwater.has(String(state || '').trim().toUpperCase());
 }

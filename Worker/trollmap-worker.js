@@ -1462,6 +1462,17 @@ var trollmap_worker_default = {
             general: stateRegs.general || {},
             lake_specific: forLake ? forLake.lakeSpecificRegulations : null,
             has_exceptions: forLake ? forLake.hasExceptions : null,
+            // THE SAME DIGEST, THE SALTWATER HALF. fetchStateRegulations() parses pages 21-29 of
+            // the book it already downloaded for the freshwater half. Statewide only -- there is
+            // no saltwater equivalent of "Lake Wateree striped bass", so there is no
+            // saltwater_lake_specific to return.
+            //
+            // ABSENT AND EMPTY ARE DIFFERENT ANSWERS and both are honest ones. `{}` means the
+            // state has saltwater and the parse produced no rows; a state with no coast returns
+            // `{}` too and `saltwater_source` stays null, which is what tells them apart. A
+            // caller must not read either as permission.
+            saltwater: stateRegs.saltwater || {},
+            saltwater_source: stateRegs.saltwaterSource || null,
             note: "Parsed from the state digest PDF. Limits are published text, not a legality "
                 + "ruling: a size and creel limit is not a closure, and this route cannot tell "
                 + "you a season is shut. Verify before you keep one.",

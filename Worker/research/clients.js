@@ -467,15 +467,61 @@ async function parseNCRegulationsWithLLM(text, env) {
 }
 
 
-async function parseRegulationsWithLLM(state, text, pageHint, env) {
-  const systemPrompt = `You are an expert freshwater fishing regulation parser for ${state}.
+// THE SALTWATER HALF OF THE SAME BOOK.
+//
+// Ryan, 2026-08-20: "why would we hard code regulations... i want it to match freshwater
+// exactly... its the same exact files as freshwater". It is. The SC digest is 29 pages: 1-18
+// freshwater, 19-20 boating, 21-29 saltwater. GA's is 1-20 / 21-29. Both are already downloaded
+// on every cold /regulations call, and freshwaterRegionOf() then cuts the saltwater half off
+// before the parser sees it.
+//
+// So this takes a `kind` instead of gaining a twin. Three things differ and nothing else does:
+// the noun in the prompt, the species vocabulary, and the anchor the 35k window starts from --
+// searching for "largemouth bass" in a saltwater table finds nothing and falls back to 20% in,
+// which is the middle of a licence page.
+//
+// Saltwater returns `general` only. These limits are set per STATE, not per waterbody: there is
+// no saltwater equivalent of "Lake Wateree striped bass". lakeSpecific stays empty by design
+// rather than by accident.
+const REG_VOCAB = {
+  freshwater: {
+    noun: 'freshwater',
+    anchor: /largemouth bass|warmwater game fish|daily (bag|creel|limit)|size limit/i,
+    species: "'Largemouth Bass', 'Smallmouth Bass', 'Spotted Bass', 'Striped Bass / Hybrid', "
+           + "'White Bass', 'Crappie', 'Black Crappie', 'White Crappie', 'Bluegill', 'Catfish', "
+           + "'Blue Catfish', 'Channel Catfish', 'Flathead Catfish', 'Walleye', 'Yellow Perch', "
+           + "'Chain Pickerel', 'Muskellunge', 'Trout', 'Kokanee Salmon', 'Sauger'",
+    extra: '- For lake/waterbody-specific exceptions: key them by the exact waterbody name as written.',
+  },
+  saltwater: {
+    noun: 'saltwater / inshore',
+    anchor: /red drum|spotted seatrout|sheepshead|size & catch limits|inshore finfish/i,
+    // THESE EXACT STRINGS ARE THE APP'S KEYS -- js/data/coastal-regulations.js
+    // COASTAL_SPECIES_LIST. "Spotted Seatrout (Speckled Trout)" and "Speckled Trout (Spotted
+    // Seatrout)" are the same fish and neither string contains the other, so a lookup by
+    // substring misses and the angler is told the book says nothing about seatrout.
+    species: "'Red Drum (Redfish)', 'Speckled Trout (Spotted Seatrout)', 'Southern Flounder', "
+           + "'Black Drum', 'Sheepshead', 'Tripletail', 'Bluefish', 'Cobia', 'Spanish Mackerel', "
+           + "'King Mackerel', 'Striped Bass'",
+    extra: "- A SLOT has both ends: \"18-25 inch TL\" is a minimum of 18 AND a maximum of 25. Never\n"
+         + "  collapse a slot to its minimum -- keeping a 30 inch fish out of an 18-25 slot is illegal\n"
+         + "  and a lost maximum reads as permission.\n"
+         + "- A CLOSED SEASON is not a limit. Put closures in specialRules verbatim, including dates.\n"
+         + "- Vessel limits (\"not to exceed 10 per boat\") belong in specialRules, not creelLimit.\n"
+         + "- lakeSpecific MUST be empty: saltwater limits here are statewide.",
+  },
+};
+
+async function parseRegulationsWithLLM(state, text, pageHint, env, kind = 'freshwater') {
+  const V = REG_VOCAB[kind] || REG_VOCAB.freshwater;
+  const systemPrompt = `You are an expert ${V.noun} fishing regulation parser for ${state}.
 The input is text extracted from the official state fishing regulations digest.
 Extract ALL statewide creel and size limits, and ALL lake-specific or waterbody-specific exceptions.
 
 Rules:
 - For statewide/general rules: extract the default that applies to ALL public waters.
-- For lake/waterbody-specific exceptions: key them by the exact waterbody name as written.
-- Species names to use: 'Largemouth Bass', 'Smallmouth Bass', 'Spotted Bass', 'Striped Bass / Hybrid', 'White Bass', 'Crappie', 'Black Crappie', 'White Crappie', 'Bluegill', 'Catfish', 'Blue Catfish', 'Channel Catfish', 'Flathead Catfish', 'Walleye', 'Yellow Perch', 'Chain Pickerel', 'Muskellunge', 'Trout', 'Kokanee Salmon', 'Sauger'.
+${V.extra}
+- Species names to use: ${V.species}.
 - Include special rules like slot limits, closed seasons, or combination limits as specialRules strings.
 - Focus on: ${pageHint}
 
@@ -491,8 +537,8 @@ Return ONLY valid JSON:
   }
 }`;
 
-  // Find the warmwater/game fish section — skip hunting and intro pages
-  let start = text.search(/largemouth bass|warmwater game fish|daily (bag|creel|limit)|size limit/i);
+  // Find the limits table — skip licence, gear and intro pages.
+  let start = text.search(V.anchor);
   if (start < 0) start = Math.min(10000, Math.floor(text.length * 0.2));
   const regsText = text.slice(start, start + 35000);
   const userPrompt = `${state} fishing regulations digest (${pageHint}):\n\n${regsText}`;
@@ -513,7 +559,7 @@ Return ONLY valid JSON:
     }
     return normalized;
   } catch (e) {
-    console.error(`parseRegulationsWithLLM(${state}) failed:`, e.message);
+    console.error(`parseRegulationsWithLLM(${state}, ${kind}) failed:`, e.message);
     // `failed: true` so the caller can tell "the parse broke" from "this state
     // publishes no lake-specific rules". Before 2026-08-03 both returned an empty
     // object and the empty one got cached for 90 days -- a single LLM hiccup
@@ -554,13 +600,19 @@ async function fetchStateRegulations(state, env) {
   // Fetch all pages via TinyFish (R2 public URLs are fetchable, free)
   const result = await tinyfishFetch({ urls, format: 'markdown' }, env);
 
-  const parsed = { general: {}, lakeSpecific: {} };
+  const parsed = { general: {}, lakeSpecific: {}, saltwater: {} };
   let anyPageFailed = false;
 
   // All states now use LLM-based extraction from R2 digest PDFs
+  const digestText = [];
   for (let i = 0; i < pages.length; i++) {
     const page = pages[i];
-    const text = freshwaterRegionOf(result.results?.[i]?.text || '');
+    const full = result.results?.[i]?.text || '';
+    // Keep the WHOLE page even when its freshwater region is too short to parse. The saltwater
+    // pass below reads `digestText`, and a digest whose freshwater half failed to extract still
+    // carries a perfectly good saltwater half.
+    if (full) digestText.push(full);
+    const text = freshwaterRegionOf(full);
     if (text.length < 500) {
       console.warn(`fetchStateRegulations(${state}): page ${i} returned insufficient text (${text.length} chars)`);
       continue;
@@ -575,11 +627,45 @@ async function fetchStateRegulations(state, env) {
       parsed.lakeSpecific[lake] = { ...(parsed.lakeSpecific[lake] || {}), ...speciesMap };
     }
   }
+
+  // THE OTHER HALF OF THE SAME DOWNLOAD. freshwaterRegionOf() above cut the saltwater section
+  // off each page before the freshwater parser saw it. Parsing that section costs one more LLM
+  // call and NO extra fetch -- the bytes are already in `digestText`. Without this the saltwater
+  // table is downloaded on every cold call and thrown away, and the app falls back to a
+  // hand-typed table that a person has to re-read off a PDF every August.
+  //
+  // ONCE, not once per page. Every state ships a single digest page today, but a second page
+  // would otherwise re-locate and re-parse the same saltwater section and bill for it twice.
+  //
+  // A saltwater failure does NOT set anyPageFailed. States differ: SC and GA carry saltwater in
+  // the same book, TN has no coast at all, and treating "this state has no saltwater section"
+  // as a broken parse would drop every freshwater answer to a 1-hour TTL.
+  if (SALTWATER_DIGEST[state] && digestText.length) {
+    const ext = extractSaltwaterDigest(state, digestText.join('\n'));
+    if (ext.located && (ext.text || '').length >= 500) {
+      const saltParsed = await parseRegulationsWithLLM(
+        state, ext.text, `${state} saltwater / inshore finfish size and catch limits`,
+        env, 'saltwater');
+      if (saltParsed.failed) {
+        console.warn(`fetchStateRegulations(${state}): saltwater parse failed -- ` +
+                     `freshwater is unaffected: ${saltParsed.error}`);
+      } else {
+        parsed.saltwater = { ...(parsed.saltwater || {}), ...(saltParsed.general || {}) };
+        parsed.saltwaterSource = { anchor: ext.anchor || null,
+                                   published: SALTWATER_DIGEST[state].published || null };
+      }
+    } else {
+      console.warn(`fetchStateRegulations(${state}): no saltwater section located in the digest`);
+    }
+  }
   
   // CACHE ONLY A GOOD RESULT.
   // Empty-because-it-broke must not be cacheable. A failed parse, or a parse that
   // yielded nothing at all, gets a 1-hour TTL so the next request retries instead
   // of serving "this state has no regulations" until November.
+  // Saltwater deliberately does NOT count here. This gate exists to stop an empty freshwater
+  // parse being cached for 90 days; a state with saltwater rows and no freshwater ones is still
+  // a broken freshwater parse, and TN having no saltwater at all is not a failure of anything.
   const isEmpty = !Object.keys(parsed.general).length && !Object.keys(parsed.lakeSpecific).length;
   const ttl = (anyPageFailed || isEmpty) ? 60 * 60 : 90 * 24 * 60 * 60;
   if (anyPageFailed || isEmpty) {

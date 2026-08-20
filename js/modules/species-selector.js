@@ -206,7 +206,11 @@ export function refreshSpeciesChecks() {
       }
 
       const reg = checkCoastalRegulations(stateCode, spec.value, date);
-      const limit = formatCoastalLimit(reg.regInfo);
+      // THE DIGEST WINS THE LABEL. `limits` is this year's book, read off the same fetch the
+      // conditions strip already made; `regInfo` is the hand-typed floor and only answers when
+      // nobody has primed the digest yet. Showing the floor while the book is in memory is how
+      // the app displays a number it has already been told is out of date.
+      const limit = formatCoastalLimit(reg.limits || reg.regInfo);
       const closed = !reg.legal;
       const keep = modeChanged ? spec.checked : previouslyChecked.has(spec.value);
 
