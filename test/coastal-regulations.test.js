@@ -14,7 +14,12 @@ import { checkRegulations } from '../js/data/species-intel.js';
 import { COASTAL_ZONES, COASTAL_SLUGS } from '../js/data/coastal-zones.js';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const planSrc = readFileSync(path.join(REPO, 'js/modules/smart-plan.js'), 'utf8');
+// The regulation gate moved out of the planner into its own module. smart-plan.js held these
+// assertions until v1 was deleted on 2026-08-20; plan-preflight.js and smart-plan-v2-wiring.js
+// are where the same guarantees live now, and they are the ones that actually run.
+const preflightSrc = readFileSync(path.join(REPO, 'js/modules/plan-preflight.js'), 'utf8');
+const wiringSrc    = readFileSync(path.join(REPO, 'js/modules/smart-plan-v2-wiring.js'), 'utf8');
+const selectorSrc  = readFileSync(path.join(REPO, 'js/modules/species-selector.js'), 'utf8');
 const selSrc = readFileSync(path.join(REPO, 'js/modules/species-selector.js'), 'utf8');
 const html = readFileSync(path.join(REPO, 'index.html'), 'utf8');
 
@@ -172,20 +177,23 @@ describe('formatCoastalLimit', () => {
   });
 });
 
-describe('SmartPlan integration', () => {
+describe('SmartPlan v2 integration', () => {
   it('routes coastal zones to the saltwater check', () => {
-    expect(planSrc).toContain('checkCoastalRegulations');
-    expect(planSrc).toMatch(/_coastalState\s*\n?\s*\?\s*checkCoastalRegulations/);
+    expect(preflightSrc).toContain('checkCoastalRegulations');
+    // v1 spelled the branch `_coastalState ? checkCoastalRegulations`; preflight uses a state
+    // code it resolved itself. The guarantee is the branch existing, not its variable name.
+    expect(preflightSrc).toMatch(/\?\s*checkCoastalRegulations/);
   });
 
-  it('keeps the existing hard block for both paths', () => {
-    expect(planSrc).toContain('if (!regCheck.legal)');
-    expect(planSrc).toContain('REGULATION BLOCK');
+  it('keeps the hard block — a block stops the plan, it does not warn', () => {
+    expect(preflightSrc).toContain('legal: false');
+    expect(wiringSrc).toContain('REGULATION BLOCK');
+    // and the caller must actually stop: a null plan, not a plan with a note attached
+    expect(wiringSrc).toMatch(/plan:\s*null/);
   });
 
-  it('surfaces limits and advisories in the Groq prompt', () => {
-    expect(planSrc).toContain('formatCoastalLimit');
-    expect(planSrc).toContain('Harvest limit');
+  it('surfaces limits where the angler picks the species', () => {
+    expect(selectorSrc).toContain('formatCoastalLimit');
   });
 
   it('every coastal zone maps to a state with a regulation table', () => {

@@ -62,7 +62,6 @@ import './modules/conditions-strip.js';
 import './modules/utility-sync.js';
 import './modules/lake-intel.js';
 import './modules/plan-builder.js';
-import './modules/smart-plan.js';
 import './modules/edit.js';
 import './modules/track-reverse.js';
 import './modules/contour-data.js';
@@ -87,10 +86,12 @@ import './modules/sw-register.js';
 import './modules/supplemental-layers.js';
 import './modules/coastal-layers.js';
 import './modules/species-selector.js';
-import './modules/groq-coach.js';
 import './modules/notifications.js';
 import './modules/plan-tab-wiring.js';
-// SmartPlan v2 — wires its own button; v1 above is untouched until this has been fished.
+// SmartPlan v2. v1 was deleted 2026-08-20 -- it had been unreachable since v2 shipped
+// (smart-plan.js checked window.__smartPlanV2Owns and never bound Generate), and the
+// Groq coach went with it: startCoachSession was called from v1 and nowhere else.
+// Ryan, 2026-08-20: "Cut v1, let the coach go".
 import './modules/smart-plan-v2-wiring.js';
 // Pick Water — the tab where the fisherman chooses the water before the model sees anything.
 // AFTER smart-plan-v2-wiring, which it imports readInputs/rampCoords from so there is one form

@@ -10,7 +10,7 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const planBuilderSrc = readFileSync(path.join(REPO, 'js/modules/plan-builder.js'), 'utf8');
 const rampSelectSrc = readFileSync(path.join(REPO, 'js/modules/lake-ramp-select.js'), 'utf8');
 const researchUiSrc = readFileSync(path.join(REPO, 'js/modules/lake-research-ui.js'), 'utf8');
-const smartPlanSrc = readFileSync(path.join(REPO, 'js/modules/smart-plan.js'), 'utf8');
+const wiringSrc = readFileSync(path.join(REPO, 'js/modules/smart-plan-v2-wiring.js'), 'utf8');
 
 /**
  * The smallest DOM that appendCoastalOptgroups touches: createElement, appendChild and the
@@ -160,14 +160,23 @@ describe('coastal ramps are wired everywhere a launch point is needed', () => {
     expect(rampSelectSrc).toMatch(/zone[\s\S]{0,200}ramps/);
   });
 
-  it('smart-plan sources coastal ramps from the catalog, not the access index', () => {
-    expect(smartPlanSrc).toContain('_coastalZoneForRamp');
-  });
-
-  it('the launch fallback is no longer inland Columbia for coastal zones', () => {
-    // 34.0/-81.0 is ~100 miles inland; using it for an estuary would produce
-    // a plan on dry land.
-    expect(smartPlanSrc).toMatch(/_coastalZoneForRamp\?\.center/);
+  // ── A GAP, RECORDED RATHER THAN DELETED ─────────────────────────────────────────────────
+  //
+  // These two assertions read smart-plan.js and passed. smart-plan.js was v1, unreachable since
+  // v2 shipped -- so they were green against code that never ran, and the fix they guard has
+  // never been in the running app.
+  //
+  // v1 had `_coastalZoneForRamp`, so a coastal plan launched from the ZONE CATALOG. v2's
+  // rampCoords() reads getLoadedAccessIndex().byLake, falls back to points[0], then to an
+  // <option> dataset, then to null. For a coastal zone with nothing in the access index, that
+  // is the inland-Columbia problem the second assertion existed to prevent.
+  //
+  // A TRIPWIRE, not a deletion: if the catalog lookup is ported into v2 this fails and forces
+  // these back into real contracts. Silence is not evidence either way.
+  it('RECORDS A GAP: v2 sources ramps from the access index, not the zone catalog', () => {
+    expect(wiringSrc).toContain('getLoadedAccessIndex');
+    expect(wiringSrc.includes('_coastalZoneForRamp'),
+      'v2 has the catalog lookup now -- rewrite this as a real assertion').toBe(false);
   });
 
   it('every zone has at least one ramp with usable coordinates', () => {

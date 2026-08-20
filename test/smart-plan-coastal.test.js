@@ -16,44 +16,51 @@ function walkJs(dir, out = []) {
 }
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const src = readFileSync(path.join(REPO, 'js/modules/smart-plan.js'), 'utf8');
+// smart-plan.js was v1 and was deleted 2026-08-20. Everything the block below asserted lived
+// ONLY in that file, so these were green against code that had not run since v2 shipped.
+const V2 = ['js/modules/smart-plan-v2.js', 'js/modules/smart-plan-v2-wiring.js',
+            'js/modules/plan-preflight.js', 'js/modules/plan-prompt.js',
+            'js/modules/plan-assemble.js', 'js/modules/plan-inputs.js']
+  .map((f) => readFileSync(path.join(REPO, f), 'utf8')).join('\n');
 
 // smart-plan.js imports Leaflet-bound modules at load time, so we assert the
 // integration contract statically plus the data-level invariants that the
 // coastal branch depends on.
 
-describe('smart-plan coastal mode — integration contract', () => {
-  it('detects coastal zones from the resolved R2 key', () => {
-    expect(src).toContain('detectCoastalZone');
-    expect(src).toContain('isCoastalKey');
-  });
+describe('coastal mode — what v1 had and v2 does not', () => {
+  // NOT DELETED, RECORDED. Six behaviours were asserted here against smart-plan.js and passed
+  // for as long as v2 has been the planner that actually runs. Grepped across js/ on
+  // 2026-08-20, every one of these names appears NOWHERE outside the deleted file:
+  //
+  //     buildCoastalContext        tide + salinity gathered for the prompt
+  //     buildCoastalPromptBlock    that context injected into the model prompt
+  //     coastalSafetyBlock         the inshore-kayak constraints
+  //     COASTAL KAYAK RESTRICTION  the restriction text itself
+  //     STRICT SAFETY CONSTRAINT   the same, stronger wording
+  //     coastalCenter              prefer the zone centre for the forecast call
+  //
+  // The pieces they were built from are all still here -- getTideStateForZone in tide-engine.js,
+  // assessZoneIntrusion in usgs-gauges.js, detectCoastalZone in plan-preflight.js -- so this is
+  // a wiring gap, not lost knowledge. It is Ryan's call whether v2 gets them.
+  //
+  // TRIPWIRES: each fails the moment the name reappears, which forces a real contract to be
+  // written instead of this note.
+  const MISSING = ['buildCoastalContext', 'buildCoastalPromptBlock', 'coastalSafetyBlock',
+                   'COASTAL KAYAK RESTRICTION', 'STRICT SAFETY CONSTRAINT', 'coastalCenter'];
+  for (const name of MISSING) {
+    it(`RECORDS A GAP: v2 has no ${name}`, () => {
+      expect(V2.includes(name),
+        `${name} is in v2 now — replace this tripwire with a real assertion`).toBe(false);
+    });
+  }
 
-  it('builds tide + salinity context and injects it into the Groq prompt', () => {
-    expect(src).toContain('buildCoastalContext');
-    expect(src).toContain('buildCoastalPromptBlock');
-    expect(src).toMatch(/\$\{coastalBlock\}/);
-  });
-
-  it('pulls tide state and river gauges from the shared modules', () => {
-    expect(src).toContain('getTideStateForZone');
-    expect(src).toContain('assessZoneIntrusion');
-  });
-
-  it('treats coastal enrichment as non-fatal', () => {
-    // A dead NOAA/USGS endpoint must cost precision, not the whole plan.
-    const block = src.slice(src.indexOf('let coastalCtx'), src.indexOf('${coastalBlock}'));
-    expect(block).toContain('try');
-    expect(block).toContain('catch');
-  });
-
-  it('re-labels soundings with the launch-time tide height', () => {
-    expect(src).toContain('refreshSoundingLabels');
-  });
-
-  it('enforces strict inshore kayak safety constraints for coastal zones', () => {
-    expect(src).toContain('coastalSafetyBlock');
-    expect(src).toContain('COASTAL KAYAK RESTRICTION');
-    expect(src).toContain('STRICT SAFETY CONSTRAINT');
+  it('the parts those were built from are still available to v2', () => {
+    // If these go too, the gap stops being a wiring job and becomes a rebuild.
+    for (const [f, sym] of [['js/modules/tide-engine.js', 'getTideStateForZone'],
+                            ['js/modules/usgs-gauges.js', 'assessZoneIntrusion'],
+                            ['js/modules/plan-preflight.js', 'detectCoastalZone']]) {
+      expect(readFileSync(path.join(REPO, f), 'utf8').includes(sym), `${sym} in ${f}`).toBe(true);
+    }
   });
 });
 
@@ -67,9 +74,11 @@ describe('coastal weather lookup gap', () => {
     }
   });
 
-  it('smart-plan prefers the coastal centre over any curated centre', () => {
-    expect(src).toContain('coastalCenter');
-    expect(src).toMatch(/coastalCenter\s*\|\|/);
+  it('RECORDS A GAP: v2 does not prefer the coastal centre for the forecast call', () => {
+    // Same story as the block above — `coastalCenter` was v1 only. The catalog centres asserted
+    // in the test above it are present and finite, so the data half of the fix is ready.
+    expect(V2.includes('coastalCenter'),
+      'v2 prefers the coastal centre now — write the real assertion').toBe(false);
   });
 
   it('nothing in the app imports js/data/lakes.js — the file is gone', () => {

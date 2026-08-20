@@ -33,7 +33,7 @@ import { handleResearchThermoclineSearch, handleResearchLimnologyData, handleRes
  * forgetting is exactly what happened. One gate, one list, and the list is the thing to review.
  *
  * NOT deny-by-default on method, deliberately: several POST routes are read-shaped LLM and
- * search proxies the app calls with no token (/groq-query, /coach-plan, /identify-catch,
+ * search proxies the app calls with no token (/groq-query, /identify-catch,
  * /research/discover), and blanket-gating them would break the app in ways only clicking every
  * button would reveal. Deny-by-default becomes safe once every client call goes through one
  * helper -- see utils/worker-auth.js. This list is precise instead.
@@ -956,150 +956,10 @@ async function handleIdentifyCatchV2(request, env) {
     timestamp: (new Date()).toISOString()
   }), { headers: JSON_HEADERS });
 }
-var COACH_SYSTEM_PROMPT = `You are an expert kayak fishing guide and tactical advisor for TrollMap.
-
-Your job is to review a trolling plan and find EXACTLY ONE improvement \u2014 the single change most likely to increase catch rate given the conditions, fish behavior, and angler equipment.
-
-ANGLER CONSTRAINTS (never violate these):
-- Spinning rods only \u2014 no conventional reels, no downriggers
-- No freshwater live bait
-- Maximum 2 rods in the water at once (port + starboard)
-- Equipment list is fixed \u2014 only suggest lures the angler owns
-- Kayak platform: Native Watersports Slayer Propel Max 12.5 + NK180 24V stern-mount electric outboard motor
-  Faster speeds drain battery faster; speed suggestions must be realistic for a full-day kayak session
-- Depth control: lead length only (no downriggers, no planer boards)
-- If the plan includes a planMeta.speedRationale, the speed was deliberately chosen by the primary AI guide. Do NOT suggest changing speed unless you have a specific safety concern or strong catch-rate evidence that directly contradicts the rationale.
-
-LURE-SPECIFIC HARD CONSTRAINTS (non-negotiable):
-- Flutter Spoon: angler owns exactly ONE system \u2014 3/4oz Nichols 4" Shattered Glass Silver + 2oz torpedo
-  inline weight (2.75oz total). Color is ALWAYS Shattered Glass Silver \u2014 no other color exists.
-  This is a TROLLING presentation at 1.6-2.4mph, NOT a vertical jigging lure.
-  Only ONE rod can run the flutter spoon at any time.
-- A-Rig (umbrella rig): comes in Light/Medium/Heavy sizes. Port and Starboard CAN both run
-  A-rigs simultaneously at different sizes/leads to cover different depth zones.
-- Port and Starboard rods are COMPLEMENTARY \u2014 they should cover different depth zones or
-  presentations simultaneously, not the same lure on both rods.
-
-ROD PAIRING LOGIC:
-- A valid spread has two DIFFERENT presentations covering different water column zones
-- Flutter Spoon + A-Rig is a valid pairing (different action profiles, different depths)
-- A-Rig Light + A-Rig Medium is a valid pairing (same family, different depths)
-- Flutter Spoon + Flutter Spoon is INVALID \u2014 only one spoon system exists
-- Do NOT swap lures between port and starboard if it creates an invalid pairing
-- Do NOT suggest flutter_spoon_color changes \u2014 color is always Shattered Glass Silver
-
-YOU MAY ONLY SUGGEST CHANGES TO THESE FIELDS:
-lure, lure_size, lead_length, trolling_speed, target_depth,
-phase_timing, rod_assignment, inline_weight, route_pattern, casting_stop_suggestion
-
-YOU MUST NEVER SUGGEST CHANGES TO:
-lure_color for flutter spoon, species, lake, launch_ramp, weather, safety_limits,
-battery_limits, gear_not_owned, live_bait, conventional_reels
-
-CHARTED STRUCTURE — how to place a casting stop on a real feature:
-The plan may include a \`chartedStructure\` block decoded from the Garmin chart. It lists what is
-actually on this water — dock clusters, flooded timber, submerged road beds, creek beds, bridge
-pilings, shallow areas, obstructions — each with an \`id\`.
-
-- CHOOSE BY SPECIES, using the researched habitat and biology in the plan. Do not assume every
-  structure type suits the target species. Catfish and sunfish stack on bridge pilings; largemouth
-  work dock lines and flooded timber; crappie hold on brush piles and standing timber; a creek
-  channel bend matters in cold water. The research profile is the authority, not a general rule.
-- \`dockClusters\` carry \`count\`, \`run_m\` and \`bearing\`. A long run is a shoreline to TROLL along;
-  a short run with a high count is a pocket to STOP and work systematically.
-- To place a casting stop on one of these, set \`suggestion.structure_id\` to that entry's \`id\`.
-  DO NOT invent or copy lat/lon — the app resolves the position from the id. A suggestion with a
-  made-up coordinate will be discarded.
-- If nothing in \`chartedStructure\` fits the species and conditions, say so and suggest something
-  else. An honest "no good structure on this route" beats a stop on the wrong cover.
-
-RESPONSE FORMAT \u2014 return ONLY this JSON object, no other text:
-{
-  "has_suggestion": true,
-  "suggestion": {
-    "field": "the field being changed",
-    "phase": 1,
-    "rod": "Port",
-    "current_value": "what it is now",
-    "recommended_value": "what to change it to",
-    "confidence": 0.87,
-    "reasons": ["reason 1", "reason 2", "reason 3"],
-    "warnings": ["any cautions"],
-    "evidence_sources": ["catch_history", "water_temp", "clarity", "solunar", "structure", "community_spots", "general_knowledge"]
-  },
-  "no_suggestion_reason": "only populate if has_suggestion is false"
-}
-
-If you cannot find a meaningful improvement, set has_suggestion to false.
-Never invent lures the angler does not own. Never suggest live bait.`;
-async function handleCoachPlan(request, env) {
-  try {
-    const body = await request.json();
-    const { payload, previousSuggestions = [] } = body;
-    if (!payload) {
-      return new Response(JSON.stringify({ success: false, error: "Missing payload" }), { status: 400, headers: JSON_HEADERS });
-    }
-    let userMessage = `Review this trolling plan and find ONE improvement.
-
-PLAN:
-${JSON.stringify(payload, null, 2)}`;
-    if (previousSuggestions.length > 0) {
-      const accepted = previousSuggestions.filter((s) => s.status === "accepted" || !s.status);
-      const skipped = previousSuggestions.filter((s) => s.status === "skipped");
-      if (accepted.length > 0) {
-        userMessage += `
-
-ACCEPTED CHANGES \u2014 these are now LIVE in the plan, do not reverse or re-suggest:
-`;
-        accepted.forEach((s, i) => {
-          userMessage += `${i + 1}. [ACCEPTED] ${s.field}${s.phase ? ` Phase ${s.phase}` : ""}${s.rod ? ` ${s.rod}` : ""}: "${s.current_value}" \u2192 "${s.recommended_value}"
-`;
-        });
-      }
-      if (skipped.length > 0) {
-        userMessage += `
-SKIPPED SUGGESTIONS \u2014 angler passed on these, do not re-suggest:
-`;
-        skipped.forEach((s, i) => {
-          userMessage += `${i + 1}. [SKIPPED] ${s.field}${s.phase ? ` Phase ${s.phase}` : ""}${s.rod ? ` ${s.rod}` : ""}: "${s.current_value}" \u2192 "${s.recommended_value}"
-`;
-        });
-      }
-      userMessage += `
-CURRENT SPREAD STATE (after accepted changes):
-- Check accepted changes above to understand what each rod is currently running
-- Do not suggest a change that would undo an accepted change or create an invalid rod pairing
-`;
-    }
-    userMessage += `
-
-Return ONLY the JSON object. Find the single highest-confidence improvement, or set has_suggestion to false if the plan is already well-optimized.`;
-    const llmPayload = {
-      model: "openai/gpt-oss-120b",
-      messages: [
-        { role: "system", content: COACH_SYSTEM_PROMPT },
-        { role: "user", content: userMessage }
-      ],
-      temperature: 0.15,
-      max_tokens: 800,
-      response_format: { type: "json_object" }
-    };
-    const { data } = await callLLM(env, llmPayload);
-    let suggestion = {};
-    try {
-      suggestion = JSON.parse(data.choices?.[0]?.message?.content || "{}");
-    } catch (err) {
-      // "Parse error" with no detail is indistinguishable from the model genuinely having
-      // no suggestion, which is the answer the UI renders. Carry the reason so a coach that
-      // has started returning prose can be told apart from one that is simply satisfied.
-      console.warn('[coach] suggestion JSON did not parse:', err && err.message);
-      suggestion = { has_suggestion: false, no_suggestion_reason: `Parse error: ${err && err.message}` };
-    }
-    return new Response(JSON.stringify({ success: true, ...suggestion }), { headers: JSON_HEADERS });
-  } catch (e) {
-    return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers: JSON_HEADERS });
-  }
-}
+// The Groq coach was deleted 2026-08-20 with SmartPlan v1. COACH_SYSTEM_PROMPT and
+// handleCoachPlan lived here and were reached only through /coach-plan, whose only caller
+// was js/modules/groq-coach.js, which was imported only by js/modules/smart-plan.js --
+// unreachable since v2 shipped. Ryan, 2026-08-20: "Cut v1, let the coach go".
 // ─── LAKE RESEARCH MODULE ─────────────────────────────────────────────────
 // Implements spec v1.0: Lake Research permanent intelligence profiles
 
@@ -1142,9 +1002,6 @@ var trollmap_worker_default = {
         } catch (err) {
           return new Response(JSON.stringify({ success: false, error: err.message }), { status: 500, headers: JSON_HEADERS });
         }
-      }
-      if (path === "/coach-plan" && request.method === "POST") {
-        return handleCoachPlan(request, env);
       }
       if (path === "/groq-query" && request.method === "POST") {
         try {

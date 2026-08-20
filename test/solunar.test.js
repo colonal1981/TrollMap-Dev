@@ -7,7 +7,7 @@
  *
  * TrollMap shipped two solunar implementations that disagreed by up to eleven hours for the
  * same lake on the same date. `plan-builder.js` wrote `window._trollmapSolunar`, which
- * `notifications.js` reads to fire bite-window alerts. `smart-plan.js` wrote
+ * `notifications.js` reads to fire bite-window alerts. `smart-plan.js` (deleted with v1, 2026-08-20) wrote
  * `window._smartPlanSolunar`, which nothing read. So the timeline on screen and the alert on
  * your phone were computed by different maths, and the Smart Plan number was discarded.
  *
@@ -32,8 +32,8 @@ const LAT = 34.44, LON = -80.82;                 // Wateree
 const DATES = ['2026-08-02', '2026-08-10', '2026-08-17', '2026-01-01', '2026-12-31'];
 
 describe('solunar — there is exactly one implementation', () => {
-  it('smart-plan.js no longer defines its own', () => {
-    expect(/function\s+computeSolunar\s*\(/.test(src('js/modules/smart-plan.js'))).toBe(false);
+  it('the planner no longer defines its own', () => {
+    expect(/function\s+computeSolunar\s*\(/.test(src('js/modules/smart-plan-v2-wiring.js'))).toBe(false);
   });
 
   it('plan-builder.js no longer defines its own', () => {
@@ -41,7 +41,7 @@ describe('solunar — there is exactly one implementation', () => {
   });
 
   it('both import the shared model', () => {
-    for (const f of ['js/modules/smart-plan.js', 'js/modules/plan-builder.js']) {
+    for (const f of ['js/modules/smart-plan-v2-wiring.js', 'js/modules/plan-builder.js']) {
       expect(/from ['"]\.\.\/utils\/solunar\.js['"]/.test(src(f))).toBe(true);
     }
   });
@@ -49,7 +49,7 @@ describe('solunar — there is exactly one implementation', () => {
   it('nothing writes the global that nothing reads', () => {
     // _smartPlanSolunar was computed, assigned, and never consulted. If it comes back, the
     // second implementation has probably come back with it.
-    for (const f of ['js/modules/smart-plan.js', 'js/modules/plan-builder.js',
+    for (const f of ['js/modules/smart-plan-v2-wiring.js', 'js/modules/plan-builder.js',
                      'js/modules/notifications.js']) {
       expect(src(f).includes('window._smartPlanSolunar =')).toBe(false);
     }

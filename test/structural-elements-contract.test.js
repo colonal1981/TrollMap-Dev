@@ -17,7 +17,7 @@ const PACK_ADAPTER = path.join(REPO, 'js/utils/structure-markers.js');
 // and dropped `humpCoordinates` / `ledgeCoordinates`, which are what
 //
 //     supplemental-layers.js  renderStructureMarkers()  -> map markers
-//     smart-plan.js           stop candidates           -> casting stops
+//     plan-candidates.js      stop candidates           -> casting stops
 //
 // actually read. Nothing errored. Both consumers use `|| []` and simply drew
 // nothing. The bug was invisible for a further reason: the map kept showing the
@@ -104,7 +104,8 @@ describe('structuralElements: every key read is a key the engine writes', () => 
     expect(/export function humpsFromPack/.test(adapter)).toBe(true);
     expect(/export function ledgesFromPack/.test(adapter)).toBe(true);
     // and both consumers must go through it rather than reading the profile directly
-    for (const rel of ['js/modules/supplemental-layers.js', 'js/modules/smart-plan.js']) {
+    // smart-plan.js was the second consumer; it was deleted with v1 on 2026-08-20.
+    for (const rel of ['js/modules/supplemental-layers.js']) {
       const src = readFileSync(path.join(REPO, rel), 'utf8');
       expect(/structure-markers\.js/.test(src) ? 'ok' : `${rel} does not use the adapter`).toBe('ok');
     }

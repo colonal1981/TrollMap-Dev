@@ -1,11 +1,20 @@
 import { describe, it, expect } from './expect-shim.mjs';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = readFileSync(path.join(ROOT, 'js/modules/smart-plan-route.js'), 'utf8');
-const PLAN = readFileSync(path.join(ROOT, 'js/modules/smart-plan.js'), 'utf8');
+// smart-plan.js carried these assertions until v1 was deleted on 2026-08-20. Scanning the whole
+// js/ tree instead of one file is strictly stronger: the walker cannot come back ANYWHERE.
+const JS_SRC = (function walk(dir, out = []) {
+  for (const e of readdirSync(dir)) {
+    const q = path.join(dir, e);
+    if (statSync(q).isDirectory()) walk(q, out);
+    else if (e.endsWith('.js')) out.push([path.relative(ROOT, q), readFileSync(q, 'utf8')]);
+  }
+  return out;
+})(path.join(ROOT, 'js'));
 
 /**
  * SmartPlan sends INTENT and receives GEOMETRY.
@@ -23,7 +32,8 @@ describe('SmartPlan asks for a route instead of building one', () => {
     // records reachability the browser could never know.
     for (const gone of ['function stitchContourFragments', 'function walkContourForWaypoints',
                         'function buildScoutRoutes']) {
-      expect(PLAN.includes(gone), gone).toBe(false);
+      const where = JS_SRC.filter(([, code]) => code.includes(gone)).map(([f]) => f);
+      expect(where.join(',') || 'none', `${gone} defined in ${where.join(', ')}`).toBe('none');
     }
   });
 
@@ -35,7 +45,11 @@ describe('SmartPlan asks for a route instead of building one', () => {
   it('there is NO fallback to a locally-built route', () => {
     // Falling back would keep the thing being removed alive forever, and a plan drawn over land
     // is worse than no plan. Failure must reach the user as a reason.
-    expect(PLAN.includes('_smartPlanRouteError')).toBe(true);
+    // v1 surfaced this through window._smartPlanRouteError, which went with v1 on 2026-08-20.
+    // v2 carries the same guarantee as a VALUE rather than a global: the fetcher returns a
+    // reason and the wiring renders it, so a failure still reaches the user as words.
+    const wiring = readFileSync(path.join(ROOT, 'js/modules/smart-plan-v2-wiring.js'), 'utf8');
+    expect(/problems/.test(wiring)).toBe(true);
     expect(/return \{ ok: false, reason:/.test(SRC)).toBe(true);
   });
 
