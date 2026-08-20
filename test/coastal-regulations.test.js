@@ -117,16 +117,46 @@ describe('current limits match the agencies', () => {
   });
 });
 
-describe('staleness signalling (digests lapse mid-August)', () => {
+// DATES COME OFF THE TABLE, NOT OUT OF THE TEST. These two used to hardcode 2026-07-24 and
+// 2026-09-01 around an SC verifyBy of 2026-08-15. Renewing the digest on 2026-08-20 -- a
+// legitimate data refresh that changed no limit -- turned the "flags stale" case red, because
+// 2026-09-01 stopped being after the review date. A test that fails when the data is correctly
+// updated teaches people to edit the test, which is the opposite of what it is for.
+describe('staleness signalling (verifyBy is the review date, whatever it currently is)', () => {
+  const scVerify = new Date(COASTAL_REGULATIONS.SC._meta.verifyBy);
+  const dayBefore = new Date(scVerify.getTime() - 24 * 3600 * 1000);
+  const dayAfter  = new Date(scVerify.getTime() + 24 * 3600 * 1000);
+
   it('is not stale before the review date', () => {
-    const r = checkCoastalRegulations('SC', 'Red Drum (Redfish)', AUG, new Date('2026-07-24T12:00:00'));
+    const r = checkCoastalRegulations('SC', 'Red Drum (Redfish)', AUG, dayBefore);
     expect(r.stale).toBe(false);
   });
 
   it('flags stale and warns once the review date passes', () => {
-    const r = checkCoastalRegulations('SC', 'Red Drum (Redfish)', AUG, new Date('2026-09-01T12:00:00'));
+    const r = checkCoastalRegulations('SC', 'Red Drum (Redfish)', AUG, dayAfter);
     expect(r.stale).toBe(true);
     expect(r.warnings.join(' ')).toMatch(/passed their review date/i);
+  });
+
+  it('a caution the agency prints itself does not wait for verifyBy', () => {
+    // GA DNR flags red drum as subject to change in its own 2026-2027 table.
+    //
+    // GA'S OWN DATE, NOT SC'S. Written first with SC's dayBefore and it failed: the GA book is
+    // a fiscal year (ends 2027-06-30) and the SC one runs to 2027-08-14, so a date inside SC's
+    // window is six weeks past GA's. Two states, two calendars, and one shared variable is a
+    // wrong answer waiting for whichever renews first.
+    const gaBefore = new Date(new Date(COASTAL_REGULATIONS.GA._meta.verifyBy).getTime()
+                              - 24 * 3600 * 1000);
+    const r = checkCoastalRegulations('GA', 'Red Drum (Redfish)', AUG, gaBefore);
+    expect(r.stale).toBe(false);
+    expect(r.warnings.join(' ')).toMatch(/CoastalGaDNR\.org/i);
+  });
+
+  it('every state review date is still ahead of us', () => {
+    for (const st of ['SC', 'GA', 'NC']) {
+      const vb = new Date(COASTAL_REGULATIONS[st]._meta.verifyBy);
+      expect(vb.getTime()).toBeGreaterThan(Date.now());
+    }
   });
 
   it('every state declares an agency, url and review date', () => {

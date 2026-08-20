@@ -22,10 +22,19 @@
  * (Worker/research/coastal-agents.js), which reconciles the R2 digest against
  * a recency-bounded amendment search. When a researched profile exists it wins.
  *
- * Sources: SCDNR 2025-26 digest (R2) + 2026-07-01 red drum rule change;
- * GA DNR CRD 2025-26 digest (R2); NCDMF proclamations FF-12-2026 and the
- * NC Marine Fisheries Commission southern flounder decision.
- * Last reviewed: 2026-07-24.
+ * Sources: SCDNR 2026-2027 digest, SALTWATER FISHING / SIZE & CATCH LIMITS
+ * (the "FINFISH: INSHORE & OFFSHORE" table), effective 2026-08-14 through
+ * 2027-08-14; GA DNR CRD 2026-2027 digest, "Finfish Seasons, Limits, Sizes",
+ * effective 2026-07-01 through 2027-06-30; NCDMF proclamations FF-12-2026 and
+ * the NC Marine Fisheries Commission southern flounder decision.
+ *
+ * Last reviewed: 2026-08-20, against the 2026-2027 PDFs in R2 `regulations/`
+ * rather than against a search. EVERY SC AND GA VALUE BELOW WAS UNCHANGED by
+ * the new books -- five species each, size, creel, vessel limit and both SC gig
+ * closures. The table was not stale; only its `verifyBy` and its citation were,
+ * and an expired `verifyBy` on correct numbers reads to the angler exactly like
+ * an expired one on wrong numbers. That is the cost of dating the review rather
+ * than the data.
  */
 
 export const COASTAL_SPECIES_LIST = [
@@ -47,9 +56,17 @@ export const COASTAL_REGULATIONS = {
   SC: {
     _meta: {
       agency: 'SCDNR Marine Resources',
-      digest: '2025-2026',
-      // SC and GA digests lapse mid-August; force re-verification then.
-      verifyBy: '2026-08-15',
+      digest: '2026-2027',
+      // The digest's own validity window, not a guessed cadence: the SC book is
+      // stamped 2026-08-14 through 2027-08-14, so that is the date on which it
+      // stops claiming to be current. Verified against it 2026-08-20.
+      //
+      // A statute or proclamation can still supersede this mid-year -- SC red drum
+      // moved on 2026-07-01 that way -- which is what `effectiveFrom` on a species
+      // row is for, and what the saltwater_regulations research agent exists to
+      // catch. verifyBy is the backstop, not the mechanism.
+      effectiveFrom: '2026-08-14',
+      verifyBy: '2027-08-14',
       url: 'https://saltwaterfishing.sc.gov',
     },
     'Red Drum (Redfish)': {
@@ -82,14 +99,25 @@ export const COASTAL_REGULATIONS = {
   GA: {
     _meta: {
       agency: 'GA DNR Coastal Resources Division',
-      digest: '2025-2026',
-      verifyBy: '2026-08-15',
+      digest: '2026-2027',
+      // GA runs a fiscal-year book: "effective for the period of July 1, 2026
+      // through June 30, 2027". Verified against it 2026-08-20.
+      //
+      // The GA table prints its own caution beside red drum -- "These limits and
+      // sizes may have changed. Please check CoastalGaDNR.org/Limits for the most
+      // up-to-date regulations" -- so the state does not warrant its own book for
+      // that species. Carried onto the row below rather than left in a PDF.
+      effectiveFrom: '2026-07-01',
+      verifyBy: '2027-06-30',
       url: 'https://coastalgadnr.org',
     },
     'Red Drum (Redfish)': {
       sizeLimit: { min: 14, max: 23 },
       creelLimit: 5,
       measurement: 'TL',
+      // GA DNR prints this warning against red drum in its own 2026-2027 table.
+      verifyAlways: 'Georgia flags red drum limits as subject to change — confirm at '
+                  + 'CoastalGaDNR.org/Limits before harvesting.',
       note: 'GA slot 14–23" TL, 5/person/day.',
     },
     'Speckled Trout (Spotted Seatrout)': {
@@ -215,6 +243,12 @@ export function checkCoastalRegulations(stateCode, species, date, now = new Date
 
   const reg = table[key];
   const d = date instanceof Date ? date : new Date(date);
+
+  // A CAUTION THE AGENCY PRINTS ITSELF OUTRANKS verifyBy, and does not expire with it.
+  // GA DNR's own 2026-2027 finfish table says red drum limits "may have changed" and points at
+  // CoastalGaDNR.org/Limits. When the state declines to warrant its own book for a species, a
+  // date on OUR side cannot make it current, so this fires whether or not the digest is stale.
+  if (reg.verifyAlways) warnings.push(reg.verifyAlways);
 
   // Indefinite closure (no scheduled reopen).
   if (reg.harvestClosed) {
