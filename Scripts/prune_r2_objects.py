@@ -22,6 +22,17 @@ key that will be deleted is a line you can look at first.
 
 A key that is already gone is reported and skipped, not treated as an error — re-running after
 a partial failure is safe and is the intended recovery.
+
+AND THE FAILURES ARE WRITTEN DOWN. Ryan, 2026-08-20, after a 6,827-key run: "deleted 6817,
+already gone 0, failed 10". Those ten keys existed only in his terminal scrollback, because
+this script printed them and kept no file — so "re-running is the intended recovery" meant
+re-running all 6,827 to retry ten. Every run now writes `<list>.failed.txt` beside the list,
+which is itself a valid --list, so recovery is:
+
+    py .\\prune_r2_objects.py --list "...\\_r2_delete.txt.failed.txt" --go
+
+The file is written even when nothing failed (holding a "# 0 failed" header), because an absent
+file cannot be told apart from a run that never got to the end.
 """
 import argparse
 import os
@@ -45,6 +56,24 @@ def wrangler(*args, capture=True):
     if capture:
         out = (p.stdout or b"") + (p.stderr or b"")
     return p.returncode, out.decode("utf-8", errors="replace")
+
+
+def write_report(list_path, failures, done, skipped):
+    """Write the failed keys beside the list, as a file --list can read straight back.
+
+    Comments carry the counts so the file explains itself a week later; prune_r2_objects.py
+    skips '#' lines on read, so the same file is both a report and an input.
+    """
+    out = list_path + '.failed.txt'
+    lines = ['# %d failed, %d deleted, %d already gone -- from %s'
+             % (len(failures), done, skipped, os.path.basename(list_path)),
+             '# re-run with:  py .\\prune_r2_objects.py --list "%s" --go' % out]
+    for key, err in failures:
+        lines.append('# %s' % err.strip().replace('\n', ' ')[:200])
+        lines.append(key)
+    with open(out, 'w', encoding='utf-8', newline='') as fh:
+        fh.write('\n'.join(lines) + '\n')
+    return out
 
 
 def main():
@@ -75,22 +104,31 @@ def main():
         print('\n%d objects would be deleted. Add --go.' % len(keys))
         return 0
 
-    done = skipped = failed = 0
-    for i, k in enumerate(keys, 1):
-        rc, out = wrangler('delete', '%s/%s' % (BUCKET, k))
-        if rc == 0:
-            done += 1
-            print('  [%4d/%d] deleted  %s' % (i, len(keys), k))
-        elif 'not found' in out.lower() or '404' in out:
-            skipped += 1
-            print('  [%4d/%d] gone already  %s' % (i, len(keys), k))
-        else:
-            failed += 1
-            print('  [%4d/%d] FAILED   %s\n      %s' % (i, len(keys), k, out.strip()[:180]))
-            if a.stop_on_error:
-                break
-    print('\ndeleted %d, already gone %d, failed %d' % (done, skipped, failed))
-    return 1 if failed else 0
+    done = skipped = 0
+    failures = []
+    try:
+        for i, k in enumerate(keys, 1):
+            rc, out = wrangler('delete', '%s/%s' % (BUCKET, k))
+            if rc == 0:
+                done += 1
+                print('  [%4d/%d] deleted  %s' % (i, len(keys), k))
+            elif 'not found' in out.lower() or '404' in out:
+                skipped += 1
+                print('  [%4d/%d] gone already  %s' % (i, len(keys), k))
+            else:
+                failures.append((k, out))
+                print('  [%4d/%d] FAILED   %s\n      %s' % (i, len(keys), k, out.strip()[:180]))
+                if a.stop_on_error:
+                    break
+    finally:
+        # A run this long gets interrupted. The report is written on the way out either way,
+        # so a Ctrl-C at key 4,000 still leaves a record of what failed before it.
+        report = write_report(a.list, failures, done, skipped)
+    print('\ndeleted %d, already gone %d, failed %d' % (done, skipped, len(failures)))
+    print('report -> %s' % report)
+    if failures:
+        print('re-run just those:  py .\\prune_r2_objects.py --list "%s" --go' % report)
+    return 1 if failures else 0
 
 
 if __name__ == '__main__':
