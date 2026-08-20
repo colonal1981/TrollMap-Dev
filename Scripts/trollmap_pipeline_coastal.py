@@ -72,15 +72,34 @@ except ImportError:
 # wrote "gone for weeks" into three checkers as a retirement reason. Missing is not renamed,
 # the same way missing is not stale.
 #
-# READ THIS BEFORE RUNNING. That tree stopped being scratch output the moment r2_vs_local.py
-# named it in SOURCE_MAP: it is the local home of 131 R2 objects -- 81 shoreline,
-# 20 depth_soundings, 15 fishing_lines, 15 fishing_points -- and their R2 copies are judged
-# recoverable BECAUSE these files exist. Nothing else regenerates them; the uploader that
-# pushed them, upload_to_r2_coastal.py, was retired 2026-08-19 as an ungated second road to R2.
+# WHAT THIS SCRIPT IS, because I got it wrong on 2026-08-20 and Ryan caught it.
 #
-# So this script is a writer sitting on top of a backup. A run that produces anything different
-# from what is there -- a changed pbf_cache, a changed threshold, one zone instead of all --
-# overwrites the only copy of data the prune already counted. Copy the tree aside first.
+# I called it "the third rival coastal path" and asked whether it should be retired. It is not
+# a path to R2 at all -- there is no wrangler call, no upload, no subprocess in this file. It
+# READS iboating_pbf_cache and WRITES geojson to disk. Ryan: "i dont think you meant this
+# script... that script is the one to create the files... i think you meant the coastal r2
+# upload script". He is right. The ungated-second-road indictment belongs to
+# upload_to_r2_coastal.py, which was retired 2026-08-19. This one was never a candidate.
+#
+# It is the opposite of retirable: it is the REGENERATOR. r2_vs_local.py's PROTECTED set used
+# to say fishing_lines and fishing_points "live in R2 and nowhere else... there is no pipeline
+# replacement for them". This script and its lakes counterpart, trollmap_pipeline.py, are the
+# replacement, and iboating_pbf_cache is the source. That is the whole reason those layers now
+# pass the test Ryan set for osm-structures on 08-13: the script and the source on the drive.
+#
+# THE ACTUAL GAP IS THE OTHER END, and it is not this file's problem to fix. Nothing uploads
+# these four layers any more. upload_garmin_to_r2.py's LAYERS does not contain shoreline,
+# depth_soundings, fishing_lines or fishing_points -- checked 2026-08-20 -- so a regenerated
+# tree has no route to R2 today. The 131 objects already in the bucket got there through the
+# retired uploader. If those layers ever need re-pushing, that is a decision about an UPLOADER.
+#
+# READ THIS BEFORE RUNNING, which is a separate matter and still true. That tree stopped being
+# scratch output the moment SOURCE_MAP named it: it is the local home of 131 R2 objects --
+# 81 shoreline, 20 depth_soundings, 15 fishing_lines, 15 fishing_points -- whose R2 copies are
+# judged recoverable BECAUSE these files exist. So this script is a writer sitting on top of a
+# backup. A run that produces anything different from what is there -- a changed cache, a
+# changed threshold, one zone instead of all -- overwrites the copy the prune already counted.
+# Copy the tree aside first.
 # RENAMED 2026-08-20. Ryan: "we probably need to rename that folder... that is the
 # i-boating pbf cache". It sat beside osm_pbf/ wearing the generic name, which is how a
 # 0.57 GB tile cache of i-Boating vector tiles reads as scratch. 71,400 .pbf tiles in
