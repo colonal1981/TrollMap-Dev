@@ -2,8 +2,8 @@
  * water-aliases.js — DNR waterbody name → chartpack key.
  *
  * GENERATED FILE — DO NOT EDIT BY HAND.
- * Source of truth: lake_boundaries/_coastal_pointers.json + _river_aliases.json,
- *                  written by scripts/make_river_boundaries.py
+ * Source of truth: registry/_coastal_pointers.json + registry/_river_aliases.json,
+ *                  written by scripts/make_river_boundaries.py --sidecars
  * Regenerate:      python3 Scripts/gen_water_aliases_js.py
  * Guarded by:      test/water-aliases.test.js
  *
