@@ -52,14 +52,98 @@ async function tinyfishFetch({ urls, format = 'markdown', include_selectors, exc
 }
 
 // ─── FIRECRAWL CREDIT GUARD ───
-// Tracks remaining Firecrawl credits in KV. Hard stop at 50 remaining to prevent
-// auto-upgrade to paid tier when free credits hit 0.
-// Initialize KV with current balance: await env.KV.put('firecrawl:credits_remaining', '269')
+//
+// FIRECRAWL IS ASKED WHAT IS LEFT. IT IS NOT TOLD.
+//
+// This used to be a hand-typed number in KV, seeded by pasting the balance off the dashboard --
+// `env.KV.put('firecrawl:credits_remaining', '269')` -- and decremented locally from there. That
+// is a restated fact, and a restated fact is stale the moment the thing it describes changes.
+// It went stale in the worst possible direction on 2026-08-20: Ryan topped up to 1,764 credits
+// and the counter, still counting down from 269, had nothing to do with reality.
+//
+// Worse, the read was `parseInt(await env.KV.get(KEY) || '0', 10)`. A MISSING KEY READ AS ZERO,
+// which is below the hard stop, which disables Firecrawl entirely -- silently, and looking
+// exactly like "you are out of credits". An absent number and a number that is zero are not the
+// same fact and only one of them means stop.
+//
+// So the balance now comes from Firecrawl: GET /v2/team/credit-usage -> data.remainingCredits.
+// It is cached for FIRECRAWL_TTL_MS so a research run costs a couple of balance checks an hour
+// rather than one per page, and `recordFirecrawlUsage` decrements the cache between refreshes so
+// a burst inside one window cannot overshoot the floor.
+//
+// A BALANCE WE COULD NOT READ IS NOT A BALANCE OF ZERO. When the account endpoint cannot be
+// reached and nothing is cached, this refuses AND SAYS THE BALANCE IS UNKNOWN, so the log
+// distinguishes "out of credits" from "could not ask" -- which is the distinction the old `|| '0'`
+// threw away.
 const FIRECRAWL_HARD_STOP = 50;  // Never go below this — avoids auto-upgrade to paid tier
-const FIRECRAWL_KV_KEY = 'firecrawl:credits_remaining';
+const FIRECRAWL_KV_KEY = 'firecrawl:credits_remaining';   // cache: {"remaining":N,"at":epochMs}
+const FIRECRAWL_TTL_MS = 30 * 60 * 1000;
+
+/** The account balance, straight from Firecrawl. null when it could not be asked. */
+async function fetchFirecrawlBalance(env) {
+  const key = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
+  if (!key) return null;
+  try {
+    const res = await fetch('https://api.firecrawl.dev/v2/team/credit-usage', {
+      headers: { 'Authorization': `Bearer ${key}` },
+    });
+    if (!res.ok) {
+      console.warn(`[firecrawl] credit-usage HTTP ${res.status} — balance not refreshed`);
+      return null;
+    }
+    const j = await res.json();
+    const n = j && j.data && j.data.remainingCredits;
+    // A balance endpoint that answers 200 with no number is a shape change, not a zero balance.
+    if (!Number.isFinite(n)) {
+      console.warn('[firecrawl] credit-usage returned no remainingCredits — balance not refreshed');
+      return null;
+    }
+    return n;
+  } catch (e) {
+    console.warn(`[firecrawl] credit-usage error: ${e && e.message} — balance not refreshed`);
+    return null;
+  }
+}
+
+/** The cached balance and its age, or null when nothing has ever been cached. */
+async function readFirecrawlCache(env) {
+  const raw = await env.KV.get(FIRECRAWL_KV_KEY);
+  if (!raw) return null;
+  try {
+    const o = JSON.parse(raw);
+    if (Number.isFinite(o && o.remaining)) return { remaining: o.remaining, at: Number(o.at) || 0 };
+  } catch (_) {
+    // The old format was a bare number. Read it rather than throwing the balance away, but treat
+    // it as infinitely old so the next check refreshes from the account.
+    const n = parseInt(raw, 10);
+    if (Number.isFinite(n)) return { remaining: n, at: 0 };
+  }
+  return null;
+}
+
+async function writeFirecrawlCache(env, remaining, at) {
+  await env.KV.put(FIRECRAWL_KV_KEY, JSON.stringify({ remaining, at }));
+}
 
 async function checkFirecrawlBudget(env, estimatedCredits = 1) {
-  const remaining = parseInt(await env.KV.get(FIRECRAWL_KV_KEY) || '0', 10);
+  const now = Date.now();
+  let cache = await readFirecrawlCache(env);
+  if (!cache || now - cache.at > FIRECRAWL_TTL_MS) {
+    const live = await fetchFirecrawlBalance(env);
+    if (live !== null) {
+      cache = { remaining: live, at: now };
+      await writeFirecrawlCache(env, live, now);
+      console.log(`[firecrawl] balance refreshed from account: ${live} credit(s)`);
+    }
+  }
+
+  if (!cache) {
+    // Never "0 remaining". Nobody said zero; nobody could be asked.
+    return { allowed: false, remaining: null,
+             reason: 'Firecrawl balance UNKNOWN — the account endpoint could not be reached and '
+                   + 'nothing is cached. This is not the same as being out of credits.' };
+  }
+  const remaining = cache.remaining;
   if (remaining <= FIRECRAWL_HARD_STOP) {
     return { allowed: false, remaining, reason: `Firecrawl hard stop (${remaining} remaining, limit ${FIRECRAWL_HARD_STOP})` };
   }
@@ -69,11 +153,25 @@ async function checkFirecrawlBudget(env, estimatedCredits = 1) {
   return { allowed: true, remaining, useTinyFishOnly: false };
 }
 
+/**
+ * Decrement the cached balance after a spend.
+ *
+ * This is the guard BETWEEN refreshes, not the source of truth -- the next refresh overwrites it
+ * with whatever Firecrawl says. It exists so that a burst of twenty pages inside one TTL window
+ * cannot spend past the floor on a balance read once at the start of it.
+ *
+ * It never CREATES a cache entry. Inventing a balance from a spend would put a number in KV that
+ * no one measured, which is the whole thing this rewrite removes.
+ */
 async function recordFirecrawlUsage(env, credits = 1) {
-  const remaining = parseInt(await env.KV.get(FIRECRAWL_KV_KEY) || '0', 10);
-  const newRemaining = Math.max(0, remaining - credits);
-  await env.KV.put(FIRECRAWL_KV_KEY, String(newRemaining));
-  console.log(`[firecrawl] used ${credits} credit(s) — ${newRemaining} remaining`);
+  const cache = await readFirecrawlCache(env);
+  if (!cache) {
+    console.log(`[firecrawl] used ${credits} credit(s) — no cached balance to decrement`);
+    return;
+  }
+  const newRemaining = Math.max(0, cache.remaining - credits);
+  await writeFirecrawlCache(env, newRemaining, cache.at);
+  console.log(`[firecrawl] used ${credits} credit(s) — ${newRemaining} remaining (cached)`);
 }
 
 // ── Scrape.do Fetch ──────────────────────────────────────────────────────────
@@ -970,4 +1068,4 @@ async function fetchLiveRegsAmendments(state, env) {
   return out;
 }
 
-export { TINYFISH_BASE, TINYFISH_FETCH_BASE, tinyfishSearch, tinyfishFetch, FIRECRAWL_HARD_STOP, FIRECRAWL_KV_KEY, checkFirecrawlBudget, recordFirecrawlUsage, scrapeDoFetch, REGS_R2_BASE, REGS_2026_EFFECTIVE, REGS_EFFECTIVE, REGS_DATE_VERIFIED, useDigest2026, USE_2026, STATE_REGULATIONS_CONFIG, SALTWATER_DIGEST, SALTWATER_HEAD, FRESHWATER_ONLY, sliceSaltwaterSection, freshwaterRegionOf, extractSaltwaterDigest, DIGEST_BUDGET, fetchSaltwaterRegulations, fetchLiveRegsAmendments, extractMarkdownTables, parseSCTable, parseNCTable, parseGATable, parseTNStatewide, parseTNExceptions, parseTNRegion, PARSERS, normalizeLakeName, parseNCRegulationsWithLLM, parseRegulationsWithLLM, fetchStateRegulations, getLakeRegulations };
+export { TINYFISH_BASE, TINYFISH_FETCH_BASE, tinyfishSearch, tinyfishFetch, FIRECRAWL_HARD_STOP, FIRECRAWL_KV_KEY, FIRECRAWL_TTL_MS, fetchFirecrawlBalance, checkFirecrawlBudget, recordFirecrawlUsage, scrapeDoFetch, REGS_R2_BASE, REGS_2026_EFFECTIVE, REGS_EFFECTIVE, REGS_DATE_VERIFIED, useDigest2026, USE_2026, STATE_REGULATIONS_CONFIG, SALTWATER_DIGEST, SALTWATER_HEAD, FRESHWATER_ONLY, sliceSaltwaterSection, freshwaterRegionOf, extractSaltwaterDigest, DIGEST_BUDGET, fetchSaltwaterRegulations, fetchLiveRegsAmendments, extractMarkdownTables, parseSCTable, parseNCTable, parseGATable, parseTNStatewide, parseTNExceptions, parseTNRegion, PARSERS, normalizeLakeName, parseNCRegulationsWithLLM, parseRegulationsWithLLM, fetchStateRegulations, getLakeRegulations };

@@ -410,26 +410,17 @@ async function handleResearchProxyDownload(request, env) {
 
     // Jina Reader — last resort before basic fetch (HTML only)
     if (isHtml) try {
-      const jinaUrl = `https://r.jina.ai/${target}`;
-      const jinaHeaders = {
-        'Accept': 'text/plain',
-        'X-Return-Format': 'markdown',
-        'X-No-Cache': 'false',
-        'X-Remove-Selector': 'nav, footer, .sidebar, #ads, .advertisement, .cookie-banner',
-      };
-      if (jinaKey) jinaHeaders['Authorization'] = `Bearer ${jinaKey}`;
-      const jinaRes = await fetch(jinaUrl, { headers: jinaHeaders });
-      if (jinaRes.ok) {
-        const markdown = await jinaRes.text();
-        if (markdown && markdown.length > 200) {
-          const headers = exposeHeaders(new Headers({
-            'Content-Type': 'text/plain; charset=utf-8',
-            'X-Source': 'jina'
-          }));
-          return new Response(markdown, { headers });
-        }
+      const jina = await jinaRead(target, jinaKey);
+      if (jina.markdown && jina.markdown.length > 200) {
+        const headers = exposeHeaders(new Headers({
+          'Content-Type': 'text/plain; charset=utf-8',
+          // WHICH ONE ANSWERED travels, so `wrangler tail` says the day the key runs dry
+          // instead of it being noticed as a mystery quality drop months later.
+          'X-Source': jina.keyless ? 'jina-keyless' : 'jina'
+        }));
+        return new Response(jina.markdown, { headers });
       }
-      console.warn(`Jina Reader failed for ${target}: HTTP ${jinaRes.status} — falling back to basic fetch`);
+      console.warn(`Jina Reader failed for ${target}: ${jina.why} — falling back to basic fetch`);
     } catch (e) {
       console.warn(`Jina Reader error for ${target}: ${e.message} — falling back to basic fetch`);
     }
@@ -631,4 +622,61 @@ async function handleResearchProxyDownloadBatch(request, env) {
 // a generation pointer controls which index is active. Kill switch:
 // SHARED_RESEARCH_ENABLED=false falls back to current per-lake behavior.
 
-export { handleResearchProxyDownload, handleResearchProxyDownloadBatch };
+/**
+ * Read a page through Jina Reader — with the key while the key still has tokens, and WITHOUT it
+ * when it does not.
+ *
+ * THE 10M TOKENS ARE A ONE-TIME GRANT ON A NEW KEY, NOT A MONTHLY ALLOWANCE. Ryan, 2026-08-20:
+ * *"jina.ai does not replenish credits monthly... apparently the 10M credits were just a 1 time
+ * trial"*. So this path has a cliff in it, and the naive shape of the old code walked off it:
+ * it sent `Authorization: Bearer <key>` whenever a key existed, so the day the balance hits zero
+ * every call starts failing — while THE SAME REQUEST WITH NO HEADER STILL WORKS. An exhausted key
+ * is worse than no key at all.
+ *
+ * Keyless r.jina.ai is free and rate-limited rather than metered. Ryan ran it against
+ * dnr.sc.gov/lakes the same day and it returned the page as markdown, which is why this is built
+ * on a measurement rather than on a pricing page — my own attempt to check it came back 403 from
+ * a proxy and proved nothing.
+ *
+ * So there is no swap-out day and nobody has to remember one. The key is used while it pays for
+ * itself; a 401/402/403/429 against it means "the key is the problem", and the same fetch is
+ * retried once with the header removed. `X-Source` says which answered, so `wrangler tail` names
+ * the day the balance ran out instead of it showing up later as an unexplained drop in quality.
+ *
+ * @returns {{markdown: string, keyless: boolean, why: string}} markdown is '' on failure.
+ */
+async function jinaRead(target, jinaKey) {
+  const url = `https://r.jina.ai/${target}`;
+  const base = {
+    'Accept': 'text/plain',
+    'X-Return-Format': 'markdown',
+    'X-No-Cache': 'false',
+    'X-Remove-Selector': 'nav, footer, .sidebar, #ads, .advertisement, .cookie-banner',
+  };
+  // 401 unauthorized, 402 out of tokens, 403 refused, 429 throttled. Every one of them is a
+  // statement about the KEY, not about the page, so every one is worth one keyless retry.
+  const KEY_IS_THE_PROBLEM = new Set([401, 402, 403, 429]);
+
+  const attempt = async (withKey) => {
+    const headers = withKey ? { ...base, 'Authorization': `Bearer ${jinaKey}` } : { ...base };
+    const res = await fetch(url, { headers });
+    const text = res.ok ? await res.text() : '';
+    return { ok: res.ok, status: res.status, text };
+  };
+
+  if (jinaKey) {
+    const keyed = await attempt(true);
+    if (keyed.ok && keyed.text.length > 200) return { markdown: keyed.text, keyless: false, why: '' };
+    if (!KEY_IS_THE_PROBLEM.has(keyed.status)) {
+      return { markdown: keyed.text, keyless: false, why: `HTTP ${keyed.status}` };
+    }
+    console.warn(`[jina] keyed request returned HTTP ${keyed.status} — retrying WITHOUT the key. `
+               + `If this repeats, the 10M-token grant is spent and JINA_API_KEY can be removed.`);
+  }
+
+  const bare = await attempt(false);
+  if (bare.ok && bare.text.length > 200) return { markdown: bare.text, keyless: true, why: '' };
+  return { markdown: bare.text, keyless: true, why: `HTTP ${bare.status} (keyless)` };
+}
+
+export { handleResearchProxyDownload, handleResearchProxyDownloadBatch, jinaRead };
