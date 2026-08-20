@@ -19,7 +19,7 @@ import { depthBandFor, usableAhFrom, researchIntel, structureWeights } from './p
 import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS } from './plan-candidates.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { solunarFor } from '../utils/solunar.js';
-import { checkPlanLegality, fetchForecast } from './plan-preflight.js';
+import { checkPlanLegality, fetchForecast, fetchWaterState } from './plan-preflight.js';
 import { buildSmartPlanV2, packFetcher, modelAsker, waterRouter } from './smart-plan-v2.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
@@ -137,6 +137,23 @@ export async function runSmartPlanV2() {
     if (wEl) wEl.value = forecast.summary;
   }
 
+  // WHAT THE WATER IS DOING TODAY — tide on the coast, flow and generation on a river.
+  //
+  // Ryan: "yes v2 gets them... it should never have not had them... are there any river specifics
+  // that are missing as well... if so fix that too". Until now v2 planned every trip on clarity,
+  // temperature, pool level and wind, and the conditions strip above the map was showing the flow
+  // and the tide the whole time off the SAME Worker route. The planner was asking a smaller
+  // question of the same endpoint.
+  //
+  // Fire-and-degrade like the forecast: a null water state is a poorer prompt, never a cancelled
+  // plan, and the coastal block says out loud when the tide could not be read.
+  const waterState = await fetchWaterState(inp.lakeName, inp.dateStr, {
+    worker: CF_WORKER_URL, launchTime: inp.launchTime, species,
+    // THE LAUNCH CHOOSES THE GAUGE. The Worker picks the nearest bound gauge to the point it is
+    // given, and the centroid of the Congaree sits 46 km from Bates Bridge — see conditionsUrl().
+    point: ramp ? { lat: ramp[1], lon: ramp[0] } : undefined,
+  });
+
   // THE RESEARCH PROFILE IS THE POINT OF THE RESEARCH PIPELINE. The first version of this file
   // ignored it entirely and used the four-lake built-in table — worse than v1, which at least put
   // the research prose in its prompt. Try the in-memory cache the research tab fills, then ask
@@ -217,6 +234,7 @@ export async function runSmartPlanV2() {
               + `right if they are on the bottom. Treat the depths as less certain than usual.`,
         },
       },
+      waterState,
       catches: state.CATCHES || [],
       // What the research pipeline actually found about this water — thermocline, oxygen,
       // forage, habitat, the lot. v2 was sending none of it.

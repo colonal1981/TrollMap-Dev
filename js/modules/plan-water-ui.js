@@ -36,7 +36,7 @@ import { resolveR2Key } from '../data/lake-keys.js';
 import { getSeason } from '../data/species-intel.js';
 import { depthBandFor, usableAhFrom } from './plan-inputs.js';
 import { packFetcher } from './smart-plan-v2.js';
-import { fetchForecast } from './plan-preflight.js';
+import { fetchForecast, fetchWaterState } from './plan-preflight.js';
 import { depthSampler, shorelineIndex } from './plan-water-index.js';
 import { offerWater, dayCost, priceSpots, searchOrder, optionality, TROLL_MPH } from './plan-water.js';
 import { planFromWater } from './plan-from-water.js';
@@ -700,6 +700,18 @@ export async function buildFromPicked() {
   if (!picked.length) return say('Tick some water first — this builds the day around what you pick.', true);
 
   const castable = TACKLE_INVENTORY.filter((l) => l.trollable || l.castable);
+
+  // SAME PROMPT AS THE SMART PLAN TAB, because there is no reason a plan should carry less just
+  // for having been chosen off the map. Without this, picking water inside a coastal zone got a
+  // prompt that had never been told this is a 12.5 ft kayak on an estuary — two plans behaving
+  // differently on the same boat on the same water, which is the divergence this file's own
+  // header warns about.
+  say('Reading the water…');
+  const waterState = await fetchWaterState(T.lake, T.dateStr, {
+    worker: CF_WORKER_URL, launchTime: T.launchTime, species: T.species,
+    point: T.ramp ? { lat: T.ramp[1], lon: T.ramp[0] } : undefined,
+  });
+
   say('Asking the model for baits and speeds…');
   let r;
   try {
@@ -730,6 +742,7 @@ export async function buildFromPicked() {
         tackle: castable.map((l) => l.name),
         conditions: { depthBand: { ft: T.band, holding: T.holding || 'unknown',
                                    meaning: 'where the fish are, not the depth of the water' } },
+        waterState,
       },
       askModel: modelAsker(CF_WORKER_URL),
       // FOR planArgsFrom(), which validates the model's answer before the assembler sees it.

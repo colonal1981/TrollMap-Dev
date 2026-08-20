@@ -49,6 +49,7 @@ export const CANDIDATE_LIMIT = 12;
  *                                  POST /water/<slug>/route. Without it every transit is a
  *                                  straight line between two leg ends, which can cross land.
  * @param {function} [o.transit]    a synchronous transit function, for tests. Wins over routeWater.
+ * @param {object}   [o.waterState] fetchWaterState() output — {featureType, river, tidal}
  */
 export async function buildSmartPlanV2(o) {
   const base = o.chartpackBase || '';
@@ -121,6 +122,9 @@ export async function buildSmartPlanV2(o) {
     species: o.species ? [].concat(o.species) : [],
     conditions: o.conditions, tackle: o.tackle, snapEligible,
     usableAh: o.usableAh, hazards: o.hazards, intel: o.intel,
+    // WHAT THE WATER IS DOING TODAY -- tide on the coast, flow and generation on a river.
+    // Absent on a reservoir, and absent is the prompt this file has always built.
+    waterState: o.waterState,
   });
 
   let res;

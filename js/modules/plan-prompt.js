@@ -154,6 +154,135 @@ export function resolveTackleName(raw, inventoryNames) {
 }
 
 /**
+ * THE COASTAL BLOCK, and the one rule in this whole prompt that is about staying alive.
+ *
+ * v1 carried it twice — `buildCoastalPromptBlock()` and a second `coastalSafetyBlock` spliced
+ * into the rod constraints — and v2 carried it nowhere. So between v1's deletion and now, asking
+ * for a plan on Charleston Harbour got a prompt that had never been told this is a 12.5 ft pedal
+ * kayak on an estuary, and nothing stopped a route out past the jetties.
+ *
+ * THE TIDE IS NOT WEATHER. On a reservoir the water is where it was yesterday; on a flat it is
+ * four feet somewhere else, and the same structure is a target or dry ground depending on the
+ * hour. That is why the stage drives the depth band rather than the species table alone.
+ *
+ * Returns '' when there is nothing tidal, so a lake prompt is byte-for-byte what it was.
+ */
+export function coastalPromptBlock(ws) {
+  const t = ws && ws.tidal;
+  if (!t) return '';
+  const L = [];
+  L.push(`\n\u{1F30A} COASTAL / TIDAL WATER${t.zone ? ` — ${t.zone}` : ''}`);
+  L.push('STRICT SAFETY CONSTRAINT: you are restricted to INSHORE water — marsh edges, tidal '
+    + 'creeks, estuary mouths, oyster bars and shallow flats. NEVER route past the jetties, into '
+    + 'the open ocean, or into open-water surf. This is a 12.5 ft pedal kayak, not an offshore '
+    + 'boat, and there is no version of a good day that starts by going outside.');
+  L.push('CHARTED DEPTHS ARE MLLW MINIMUMS — the least water that will be there. Add the tide '
+    + 'height to get the water actually under the hull, and when the tide is falling, plan the '
+    + 'way back out before the way in.');
+
+  if (t.stage) {
+    const h = t.heightFtAboveMllw != null ? ` · ${t.heightFtAboveMllw} ft above MLLW` : '';
+    L.push(`Tide at launch: ${t.stageLabel || t.stage}${h}`
+      + (t.dailyRangeFt != null ? ` · ${t.dailyRangeFt} ft range today` : ''));
+  } else {
+    L.push('THE TIDE STAGE IS UNKNOWN — no station answered. Treat every charted depth as the '
+      + 'MLLW minimum, stay off the skinny water, and say in the plan that the tide was not read.');
+  }
+  if (t.nextEvent) {
+    L.push(`Next turn: ${String(t.nextEvent.type).toUpperCase()}`
+      + `${t.nextEvent.at ? ` at ${t.nextEvent.at}` : ''}`
+      + `${t.nextEvent.heightFt != null ? ` (${t.nextEvent.heightFt} ft)` : ''}`
+      + ' — the day has a shape around that, and the plan should say what changes when it turns.');
+  }
+  if (t.currentType || t.currentKn != null) {
+    L.push(`Current: ${[t.currentType, t.currentKn != null ? `${Math.abs(t.currentKn).toFixed(1)} kn` : '']
+      .filter(Boolean).join(' ')}. THE TIDE IS THE CURRENT here — there is no spot-lock, so every `
+      + 'stop is pedal work against moving water and you must say which way it is running.');
+  }
+  if (t.surgeVsPredictedFt != null) {
+    L.push(`Observed water is ${t.surgeVsPredictedFt > 0 ? '+' : '−'}`
+      + `${Math.abs(t.surgeVsPredictedFt).toFixed(1)} ft against the prediction. A foot of surge `
+      + 'is not a rounding error on a two-foot tide.');
+  }
+  if (t.salinityPpt != null) L.push(`Salinity ${t.salinityPpt} ppt at the gauge.`);
+  else if (t.conductanceUsCm != null) L.push(`Conductance ${t.conductanceUsCm} µS/cm at the gauge.`);
+  if (t.depthBandFt) {
+    L.push(`Working depth for this species at this stage: ${t.depthBandFt[0]}–${t.depthBandFt[1]} ft, `
+      + 'TIDE-CORRECTED — that is water under the boat, not a charted number.');
+  }
+  if (t.tactic) L.push(`Stage tactic: ${t.tactic}`);
+  if (t.freshwaterIntrusion) {
+    L.push(`⚠ FRESHWATER INTRUSION${t.freshwaterIntrusion.rivers ? ` (${t.freshwaterIntrusion.rivers})` : ''}`
+      + `: ${t.freshwaterIntrusion.message || 'river discharge is well above normal'}. `
+      + 'Penalise the upper creeks and favour inlet-adjacent structure — the fish have moved '
+      + 'toward the salt.');
+  }
+  return L.join('\n') + '\n';
+}
+
+/**
+ * THE RIVER BLOCK. v2 has never had one, and v1 did not either.
+ *
+ * Ryan, on what he wants to know before planning: *"if it is a river current flow rate and
+ * projected releases if applicable."* A river at a normal stage pushing 8,000 cfs is a different
+ * trip from the same stage at 400, and the stage alone does not say which — which is why the flow
+ * leads and the percentile band goes next to it. A number with no band is not a fact you can act
+ * on.
+ *
+ * GENERATION IS THE CURRENT on a tailwater, and `false` is as useful as `true`: "not generating"
+ * is the reason nothing is moving and nothing is feeding.
+ */
+export function riverPromptBlock(ws) {
+  const r = ws && ws.river;
+  if (!r) return '';
+  const L = [];
+  L.push('\n\u{1F3DE} RIVER — THE FLOW IS THE DAY');
+  if (r.flowCfs != null) {
+    L.push(`Discharge ${Math.round(r.flowCfs).toLocaleString()} ft³/s`
+      + `${r.flowIsTidallyFiltered ? ' (tidally filtered net flow — the raw gauge reverses twice a day here)' : ''}`
+      + `${r.flowVsNormal ? ` · ${r.flowVsNormal}` : ''}`
+      + `${r.flowMedianCfs != null ? ` · median for the date ${Math.round(r.flowMedianCfs).toLocaleString()} ft³/s` : ''}`
+      + `${r.flowGauge ? ` · ${r.flowGauge}` : ''}`);
+    L.push('Say what this flow does to the day: where the seams and eddies set up, which side of '
+      + 'a bend holds fish at this water, how much of the trolling speed is the river rather than '
+      + 'the motor, and whether a leg is worth running upstream at all.');
+  } else if (r.gaugeOutOfService) {
+    L.push('The gauge is OUT OF SERVICE — there is no flow reading today. Do not infer one from '
+      + 'the stage, and say in the plan that the river was not measured.');
+  }
+  if (r.stageFt != null) L.push(`Stage ${Number(r.stageFt).toFixed(1)} ft`
+    + `${r.stageBasis ? ` (${r.stageBasis})` : ''}.`);
+  if (r.floodCategory) {
+    L.push(`⚠ FLOOD STAGE: ${r.floodCategory}. Debris, no visibility and a bank that is not where `
+      + 'it was. Judge this against a 12.5 ft kayak the same way you judge wind, and say so in '
+      + '`safety`.');
+  } else if (r.ftBelowFloodAction != null && r.ftBelowFloodAction <= 3) {
+    L.push(`The river is ${Number(r.ftBelowFloodAction).toFixed(1)} ft below its flood-action stage — `
+      + 'close enough that rain upstream matters today.');
+  }
+  if (r.generatingNow === true) {
+    L.push('THE DAM IS GENERATING. That is the current: the water is rising, moving and colder, '
+      + 'bait is being pushed through, and the tailrace fishes completely differently from slack '
+      + 'water. Plan around it and say where the boat can safely hold.');
+  } else if (r.generatingNow === false) {
+    L.push('THE DAM IS NOT GENERATING — that is why nothing is moving. Slack tailrace water is a '
+      + 'different fishery from a pulse, and if generation starts mid-trip the river changes under '
+      + 'him. Say what he should do when it does.');
+  }
+  if (r.generationNext) L.push(`Next scheduled generation: ${typeof r.generationNext === 'string'
+    ? r.generationNext : JSON.stringify(r.generationNext)}.`);
+  if (r.projectedRelease) {
+    const n = r.projectedRelease;
+    L.push(`Projected release → ${n.mileMarkerName || n.damName || 'downstream'}`
+      + `${n.at ? ` at ${String(n.at).slice(11, 16)}` : ''}`
+      + `${n.cfs != null ? ` (${Math.round(n.cfs).toLocaleString()} ft³/s)` : ''}. `
+      + 'A release is a change to the water he is sitting on, not a forecast — work it into the '
+      + 'order of the day.');
+  }
+  return L.join('\n') + '\n';
+}
+
+/**
  * Build the two messages for POST /groq-query.
  *
  * @param {object}   o
@@ -170,6 +299,8 @@ export function resolveTackleName(raw, inventoryNames) {
  * @param {number}   [o.usableAh]
  * @param {object[]} [o.hazards]     for the safety note; stops are refused by id regardless
  * @param {string}   [o.intel]       species / research / catch-history prose the app already has
+ * @param {object}   [o.waterState]  fetchWaterState() output — {featureType, river, tidal}. Absent
+ *                                   on a reservoir, and absent is the same prompt as before.
  */
 export function buildPlanRequest(o) {
   const day = {
@@ -341,7 +472,7 @@ SAFETY — judge it honestly for a 12.5 ft kayak
 Sustained wind over 15 mph, or gusts over 20, is a no-go. Judge ${o.ramp || 'the ramp'} against the
 wind direction: is it a dangerous windward launch?${o.hazards && o.hazards.length
   ? `\nThere are ${o.hazards.length} marked hazard zones on this water; keep clear of them.` : ''}
-${o.intel ? `\nWHAT IS ALREADY KNOWN\n${o.intel}\n` : ''}
+${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState)}${o.intel ? `\nWHAT IS ALREADY KNOWN\n${o.intel}\n` : ''}
 RETURN EXACTLY THIS SHAPE
 {
   "safety": { "isGo": true, "warning": "", "rampEvaluation": "one sentence on wind exposure at this ramp" },

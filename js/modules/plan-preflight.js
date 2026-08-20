@@ -16,6 +16,13 @@
  * applies, and leaving it in v1 would have meant v2 importing from the module it replaces —
  * which would make deleting v1 a refactor instead of a delete.
  *
+ * A THIRD JOINED THEM ON 2026-08-20, and the header above was wrong to say two. Ryan: "yes v2
+ * gets them... it should never have not had them... are there any river specifics that are
+ * missing as well... if so fix that too". `fetchWaterState()` is what the water is DOING today —
+ * tide on the coast, flow and generation on a river. It belongs beside these because it has the
+ * same shape as the other two: fetched once, before a model call is spent, and a failure is a
+ * poorer plan rather than a cancelled one.
+ *
  * A REGULATION BLOCK IS NOT A WARNING. It returns `legal: false` and the caller stops. The point
  * of asking is to not spend a model call, a battery budget and a morning planning a species that
  * cannot be kept, or water that is closed on the day. It is the one check in the whole path that
@@ -26,7 +33,11 @@ import { getSeason, checkRegulations } from '../data/species-intel.js';
 import { checkCoastalRegulations } from '../data/coastal-regulations.js';
 import { COASTAL_ZONES, isCoastalKey } from '../data/coastal-zones.js';
 import { resolveR2Key } from '../data/lake-keys.js';
-import { lakeDbEntryFor } from '../data/lake-registry.js';
+import { lakeDbEntryFor, lakeRecordFor } from '../data/lake-registry.js';
+import { fetchWaterConditions } from '../utils/water-conditions.js';
+import { getTideStateForZone } from './tide-engine.js';
+import { assessZoneIntrusion } from './usgs-gauges.js';
+import { DEPTH_BANDS, normalizeCoastalSpecies, tacticalNote } from './coastal-scoring.js';
 
 /** The coastal zone this water is, or null for everything inland. */
 export function detectCoastalZone(lakeName) {
@@ -138,6 +149,173 @@ export async function fetchForecast(lakeName, dateStr, o = {}) {
     console.warn('[preflight] forecast fetch failed:', e && e.message);
     return null;
   }
+}
+
+/** Drop keys that nobody answered, so an absent field means "not answered" and never "zero". */
+function prune(o) {
+  const out = {};
+  for (const [k, v] of Object.entries(o)) if (v !== null && v !== undefined && v !== '') out[k] = v;
+  return Object.keys(out).length ? out : null;
+}
+
+const settled = (r) => (r.status === 'fulfilled' ? r.value : null);
+
+/** The launch instant, because a tide stage at noon is not the tide stage at 06:00. */
+export function launchMoment(dateStr, launchTime) {
+  const day = String(dateStr || '').slice(0, 10) || new Date().toISOString().slice(0, 10);
+  const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)?/i.exec(String(launchTime || ''));
+  if (!m) return new Date(`${day}T12:00:00`);
+  let h = parseInt(m[1], 10);
+  const ap = (m[3] || '').toUpperCase();
+  if (ap === 'PM' && h < 12) h += 12;
+  if (ap === 'AM' && h === 12) h = 0;
+  const d = new Date(`${day}T00:00:00`);
+  d.setHours(h, parseInt(m[2], 10), 0, 0);
+  return d;
+}
+
+/** 06:41 out of a Date, for a prompt that should not carry ISO strings. */
+const hhmm = (d) => (d instanceof Date && !isNaN(d)
+  ? `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : null);
+
+/**
+ * WHAT THE WATER IS DOING TODAY. The third precondition — see the header.
+ *
+ * v2 planned every trip on clarity, temperature, pool level and wind. On a RIVER that leaves out
+ * the number that decides the day: a river at a normal stage pushing 8,000 cfs is a different
+ * trip from the same stage at 400, and the stage alone does not say which — that is Ryan's own
+ * reasoning, already written into conditionsStrip(). On the COAST it leaves out the tide, which
+ * is the only thing that moves at all.
+ *
+ * ALMOST NONE OF THIS IS NEW DATA. /conditions/<slug> has returned flow, flood category, dam
+ * generation, projected releases, tidal current, surge and salinity since it was written, and
+ * conditions-strip.js has painted them above the map the whole time. The planner was asking a
+ * different, smaller question of the same Worker. This asks the one the strip asks.
+ *
+ * THE TIDE STAGE IS THE ONE THING /conditions CANNOT GIVE. It returns the next event, and "next
+ * event is high" cannot separate a flooding tide from slack high water — opposite days on a
+ * grass flat, and the key DEPTH_BANDS and tacticalNote() are indexed by. classifyStage() reads
+ * the whole hi/lo series, so a coastal zone costs one NOAA call on top.
+ *
+ * EVERY SOURCE FAILS TO NULL, SEPARATELY. A dead NOAA station must not cost the river its flow
+ * and a missing USGS gauge must not cost the coast its tide, so this is allSettled per source
+ * rather than one try/catch over the lot.
+ *
+ * @param {string} lakeName
+ * @param {string} dateStr    YYYY-MM-DD
+ * @param {object} [o]
+ * @param {string} [o.worker]      CF worker base; without it the /conditions half is skipped
+ * @param {string} [o.launchTime]  'HH:MM' — the instant the tide stage is read at
+ * @param {string} [o.species]     the target, for the tide-stage depth band and tactic
+ * @param {{lat:number,lon:number}} [o.point] the launch, which CHOOSES THE GAUGE — see conditionsUrl
+ * @param {function} [o.fetchConditions] injected for tests; also stands in for a missing registry
+ *                                    record, since a test has no loaded registry to look one up in
+ * @param {function} [o.fetchTide]       injected for tests
+ * @param {function} [o.fetchIntrusion]  injected for tests
+ * @returns {Promise<null|{featureType:string|null, river:object|null, tidal:object|null}>}
+ *          null when nothing answered at all — which is different from a river with no gauge.
+ */
+export async function fetchWaterState(lakeName, dateStr, o = {}) {
+  const zoneKey = detectCoastalZone(lakeName);
+  const rec = lakeRecordFor(lakeName);
+  const when = launchMoment(dateStr, o.launchTime);
+
+  const getCond = o.fetchConditions
+    || ((w, r) => fetchWaterConditions(w, r, { date: dateStr, point: o.point || undefined }));
+  const getTide = o.fetchTide || ((k) => getTideStateForZone(k, { dateStr, when }));
+  const getIntr = o.fetchIntrusion || ((k) => assessZoneIntrusion(k));
+
+  const [condR, tideR, intrR] = await Promise.allSettled([
+    (o.worker && (rec || o.fetchConditions)) ? getCond(o.worker, rec) : Promise.resolve(null),
+    zoneKey ? getTide(zoneKey) : Promise.resolve(null),
+    zoneKey ? getIntr(zoneKey) : Promise.resolve(null),
+  ]);
+  for (const [what, r] of [['conditions', condR], ['tide', tideR], ['intrusion', intrR]]) {
+    if (r.status === 'rejected') console.warn(`[preflight] ${what} unavailable:`, r.reason?.message);
+  }
+
+  // A FAILED /conditions RETURNS A FULL OBJECT OF NULLS plus `error`, which reads exactly like
+  // "this water has no gauge" if you only look at the fields. Drop it rather than describe a
+  // river as flowless because the request timed out.
+  const raw = settled(condR);
+  if (raw && raw.error) console.warn(`[preflight] conditions for ${lakeName}: ${raw.error}`);
+  const c = raw && !raw.error ? raw : null;
+  const tide = settled(tideR);
+  const intr = settled(intrR);
+  // NOT `if (!c && !tide) return null`. THE INSHORE RESTRICTION IS A FACT ABOUT THE WATER, not
+  // about whether a station answered. A coastal zone where NOTHING answered is MORE dangerous
+  // than one where the tide came back, and returning null here would drop the strongest safety
+  // rule in the prompt exactly when it matters most — a network failure quietly deleting a
+  // constraint. So a zone always yields a tidal marker; the block says the stage was not read.
+  if (!c && !tide && !zoneKey) return null;
+
+  const featureType = (c && c.featureType) || (rec && rec.featureType) || (zoneKey ? 'coastal' : null);
+  const isRiver = featureType === 'river';
+
+  // A TIDAL RIVER'S RAW DISCHARGE REVERSES TWICE A DAY, so its instantaneous value is not the
+  // river's flow. The filtered figure wins where it exists and SAYS it is the filtered one —
+  // conditionsStrip() made the same choice for the same reason.
+  const net = c && c.tidalFlowCfs != null;
+  const river = c && (isRiver || c.flowCfs != null || c.generatingNow != null) ? prune({
+    flowCfs: net ? c.tidalFlowCfs : c.flowCfs,
+    flowIsTidallyFiltered: net ? true : null,
+    flowVsNormal: c.flowBand || null,
+    flowMedianCfs: c.flowMedian ?? null,
+    flowGauge: c.flowGauge || null,
+    stageFt: c.stageFt ?? null,
+    stageBasis: c.stageBasis || null,
+    // "no_flooding" is the normal state; naming it every day trains you to stop reading the line.
+    floodCategory: c.floodCategory && !/^no[_ ]?flood/i.test(c.floodCategory)
+      ? String(c.floodCategory).replace(/_/g, ' ') : null,
+    ftBelowFloodAction: Number.isFinite(c.stageVsActionFt) ? -c.stageVsActionFt : null,
+    // GENERATING IS THE CURRENT on a tailwater, and `false` is as useful as `true` — "not
+    // generating" is why nothing is moving.
+    generatingNow: typeof c.generatingNow === 'boolean' ? c.generatingNow : null,
+    generationNext: c.generationNext || null,
+    // Only a PROJECTION. An observed discharge is already `flowCfs` above, and printing it again
+    // as though it were a schedule is the mistake `kind` exists to prevent.
+    projectedRelease: c.releases && c.releases.kind === 'projected' ? c.releases.next : null,
+    gaugeOutOfService: c.gaugeOutOfService || null,
+  }) : null;
+
+  const primary = normalizeCoastalSpecies(o.species);
+  const stage = (tide && tide.stage) || null;
+  const hasTideSignal = !!(zoneKey || tide || (c && (c.nextTide || c.currentKn != null || c.tideStation)));
+  const next = tide && tide.nextEvent
+    ? prune({ type: tide.nextEvent.type, at: hhmm(tide.nextEvent.at),
+              heightFt: round1(tide.nextEvent.heightFt) })
+    : (c && c.nextTide
+        ? prune({ type: c.nextTide.type, at: String(c.nextTide.at || '').slice(11, 16) || null })
+        : null);
+
+  const tidal = hasTideSignal ? prune({
+    zone: zoneKey ? (COASTAL_ZONES[zoneKey] || {}).name || null : null,
+    station: (tide && tide.station) || (c && c.tideStation) || null,
+    stage,
+    stageLabel: (tide && tide.stageLabel) || null,
+    heightFtAboveMllw: tide ? round1(tide.heightFt) : null,
+    dailyRangeFt: tide ? round1(tide.rangeFt) : null,
+    nextEvent: next,
+    currentKn: c && Number.isFinite(c.currentKn) ? c.currentKn : null,
+    currentType: (c && c.currentType) || null,
+    surgeVsPredictedFt: c && Number.isFinite(c.surgeFt) && Math.abs(c.surgeFt) >= 0.3 ? c.surgeFt : null,
+    salinityPpt: c && Number.isFinite(c.salinityPpt) ? c.salinityPpt : null,
+    conductanceUsCm: c && Number.isFinite(c.conductanceUsCm) ? c.conductanceUsCm : null,
+    // The tide-stage band and tactic, which only exist for the three species coastal-scoring.js
+    // was built around. A fourth species gets the rules and no band, which is honest.
+    depthBandFt: (primary && stage && DEPTH_BANDS[primary]) ? DEPTH_BANDS[primary][stage] || null : null,
+    tactic: (primary && stage) ? tacticalNote(primary, stage) || null : null,
+    freshwaterIntrusion: intr && intr.active
+      ? prune({ message: intr.message, rivers: (intr.rivers || []).join(', ') || null })
+      : null,
+  }) : null;
+
+  if (!river && !tidal) return null;
+  return { featureType, river, tidal };
+}
+
+function round1(v) {
+  return Number.isFinite(v) ? Math.round(v * 10) / 10 : null;
 }
 
 /** '2026-08-10T06:41' → '06:41'. Open-Meteo returns local time when timezone=auto. */

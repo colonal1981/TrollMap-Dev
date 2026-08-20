@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { COASTAL_ZONES, COASTAL_SLUGS } from '../js/data/coastal-zones.js';
 import { resolveR2Key } from '../js/data/lake-keys.js';
+import { coastalPromptBlock } from '../js/modules/plan-prompt.js';
 
 const JS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'js');
 function walkJs(dir, out = []) {
@@ -16,57 +17,126 @@ function walkJs(dir, out = []) {
 }
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-// smart-plan.js was v1 and was deleted 2026-08-20. Everything the block below asserted lived
-// ONLY in that file, so these were green against code that had not run since v2 shipped.
 const V2 = ['js/modules/smart-plan-v2.js', 'js/modules/smart-plan-v2-wiring.js',
             'js/modules/plan-preflight.js', 'js/modules/plan-prompt.js',
             'js/modules/plan-assemble.js', 'js/modules/plan-inputs.js']
   .map((f) => readFileSync(path.join(REPO, f), 'utf8')).join('\n');
 
-// smart-plan.js imports Leaflet-bound modules at load time, so we assert the
-// integration contract statically plus the data-level invariants that the
-// coastal branch depends on.
+// ─────────────────────────────────────────────────────────────────────────────
+// THE TRIPWIRES FIRED, WHICH IS WHAT THEY WERE FOR.
+//
+// This block used to hold six `RECORDS A GAP: v2 has no <name>` assertions — greps that would
+// fail the moment a v1 name reappeared in v2, forcing a real contract to be written instead of a
+// note. Ryan, 2026-08-20: *"yes v2 gets them... it should never have not had them... are there
+// any river specifics that are missing as well... if so fix that too"*. So the gap is closed and
+// the tripwires are replaced by the contracts they were holding a place for.
+//
+// TWO OF THE SIX WERE NEVER TRUE, AND THAT IS THE LESSON WORTH KEEPING: a grep for a NAME is not
+// a check on a BEHAVIOUR.
+//
+//   `coastalCenter` — v1's variable name. fetchForecast() in plan-preflight.js has preferred
+//   `COASTAL_ZONES[zoneKey].center` over the lake centroid since it was written; it just spells
+//   the variable `centre`. The tripwire said the behaviour was missing and it was there, green
+//   the whole time, because the string was not.
+//
+//   `COASTAL KAYAK RESTRICTION` — v1's weaker wording for the same rule v2 now writes as
+//   STRICT SAFETY CONSTRAINT. Absence of that phrase never meant absence of the restriction.
+//
+// So the assertions below test what the prompt SAYS and what the code DOES, not what it is
+// called.
+// ─────────────────────────────────────────────────────────────────────────────
 
-describe('coastal mode — what v1 had and v2 does not', () => {
-  // NOT DELETED, RECORDED. Six behaviours were asserted here against smart-plan.js and passed
-  // for as long as v2 has been the planner that actually runs. Grepped across js/ on
-  // 2026-08-20, every one of these names appears NOWHERE outside the deleted file:
-  //
-  //     buildCoastalContext        tide + salinity gathered for the prompt
-  //     buildCoastalPromptBlock    that context injected into the model prompt
-  //     coastalSafetyBlock         the inshore-kayak constraints
-  //     COASTAL KAYAK RESTRICTION  the restriction text itself
-  //     STRICT SAFETY CONSTRAINT   the same, stronger wording
-  //     coastalCenter              prefer the zone centre for the forecast call
-  //
-  // The pieces they were built from are all still here -- getTideStateForZone in tide-engine.js,
-  // assessZoneIntrusion in usgs-gauges.js, detectCoastalZone in plan-preflight.js -- so this is
-  // a wiring gap, not lost knowledge. It is Ryan's call whether v2 gets them.
-  //
-  // TRIPWIRES: each fails the moment the name reappears, which forces a real contract to be
-  // written instead of this note.
-  const MISSING = ['buildCoastalContext', 'buildCoastalPromptBlock', 'coastalSafetyBlock',
-                   'COASTAL KAYAK RESTRICTION', 'STRICT SAFETY CONSTRAINT', 'coastalCenter'];
-  for (const name of MISSING) {
-    it(`RECORDS A GAP: v2 has no ${name}`, () => {
-      expect(V2.includes(name),
-        `${name} is in v2 now — replace this tripwire with a real assertion`).toBe(false);
-    });
-  }
+/** A tide state shaped the way fetchWaterState() emits one. */
+const TIDAL = {
+  featureType: 'coastal',
+  tidal: {
+    zone: 'Charleston Harbor, SC', station: '8665530',
+    stage: 'ebb', stageLabel: 'Falling (ebb)',
+    heightFtAboveMllw: 3.2, dailyRangeFt: 5.4,
+    nextEvent: { type: 'low', at: '11:42', heightFt: 0.3 },
+    currentKn: 1.4, currentType: 'ebb', surgeVsPredictedFt: 0.6, salinityPpt: 22.4,
+    depthBandFt: [4, 8],
+    tactic: 'Falling water — set up on oyster points and creek mouths as bait flushes out.',
+    freshwaterIntrusion: { message: 'Santee discharge is 2.1x its 30-day mean', rivers: 'Santee River' },
+  },
+};
 
-  it('the parts those were built from are still available to v2', () => {
-    // If these go too, the gap stops being a wiring job and becomes a rebuild.
+describe('coastal mode — what v2 has now', () => {
+  it('the inshore restriction reaches the prompt, in the strong wording', () => {
+    // THE ONE RULE IN THE WHOLE PROMPT THAT IS ABOUT STAYING ALIVE. Between v1's deletion and
+    // 2026-08-20, a plan on Charleston Harbour was built by a prompt that had never been told
+    // this is a 12.5 ft pedal kayak on an estuary.
+    const b = coastalPromptBlock(TIDAL);
+    expect(b).toContain('STRICT SAFETY CONSTRAINT');
+    expect(b).toContain('INSHORE');
+    expect(b).toMatch(/never route past the jetties/i);
+    expect(b).toMatch(/12\.5 ft pedal kayak/i);
+  });
+
+  it('and the constraint is in the module the model actually reads', () => {
+    expect(V2).toContain('STRICT SAFETY CONSTRAINT');
+    expect(V2).toContain('coastalPromptBlock(o.waterState)');
+  });
+
+  it('the tide is gathered before the model call', () => {
+    // v1 spelled this buildCoastalContext(); v2 spells it fetchWaterState() and gathers the
+    // river with it, because a planner that reads one and not the other is the same gap twice.
+    expect(V2).toContain('fetchWaterState');
+    expect(V2).toContain('getTideStateForZone');
+    expect(V2).toContain('assessZoneIntrusion');
+    const wiring = readFileSync(path.join(REPO, 'js/modules/smart-plan-v2-wiring.js'), 'utf8');
+    expect(wiring).toContain('await fetchWaterState(');
+    expect(wiring).toContain('waterState,');
+  });
+
+  it('the same prompt is built when the water was picked off the map', () => {
+    // Two plans behaving differently on the same boat on the same water is the divergence
+    // plan-water-ui.js' own header warns about.
+    const ui = readFileSync(path.join(REPO, 'js/modules/plan-water-ui.js'), 'utf8');
+    expect(ui).toContain('await fetchWaterState(');
+    expect(ui).toContain('waterState,');
+  });
+
+  it('the tide-stage depth band and tactic are carried, not just the numbers', () => {
+    const b = coastalPromptBlock(TIDAL);
+    expect(b).toContain('4–8 ft');
+    expect(b).toMatch(/TIDE-CORRECTED/);
+    expect(b).toContain('oyster points and creek mouths');
+  });
+
+  it('freshwater intrusion names the rivers and says what to do about it', () => {
+    const b = coastalPromptBlock(TIDAL);
+    expect(b).toContain('FRESHWATER INTRUSION');
+    expect(b).toContain('Santee River');
+    expect(b).toMatch(/penalise the upper creeks/i);
+  });
+
+  it('an unread tide says so instead of going quiet', () => {
+    // A COLD SOURCE IS NOT CALM WATER. The safety rule has to survive the station being down.
+    const b = coastalPromptBlock({ featureType: 'coastal', tidal: { zone: 'Winyah Bay, SC' } });
+    expect(b).toContain('STRICT SAFETY CONSTRAINT');
+    expect(b).toMatch(/TIDE STAGE IS UNKNOWN/);
+    expect(b).toMatch(/say in the plan that the tide was not read/i);
+  });
+
+  it('a reservoir prompt is unchanged — the block is empty, not blank-lined', () => {
+    expect(coastalPromptBlock(null)).toBe('');
+    expect(coastalPromptBlock({ featureType: 'lake', river: {}, tidal: null })).toBe('');
+  });
+
+  it('the parts it is built from are still where v2 reaches for them', () => {
     for (const [f, sym] of [['js/modules/tide-engine.js', 'getTideStateForZone'],
                             ['js/modules/usgs-gauges.js', 'assessZoneIntrusion'],
+                            ['js/modules/coastal-scoring.js', 'DEPTH_BANDS'],
+                            ['js/modules/coastal-scoring.js', 'tacticalNote'],
                             ['js/modules/plan-preflight.js', 'detectCoastalZone']]) {
       expect(readFileSync(path.join(REPO, f), 'utf8').includes(sym), `${sym} in ${f}`).toBe(true);
     }
   });
 });
 
-describe('coastal weather lookup gap', () => {
+describe('coastal weather lookup', () => {
   it('every coastal zone has a centre for the forecast call', () => {
-    // COASTAL_ZONES is the fallback that closes the gap.
     for (const slug of COASTAL_SLUGS) {
       const [lat, lon] = COASTAL_ZONES[slug].center;
       expect(Number.isFinite(lat), `${slug} lat`).toBe(true);
@@ -74,11 +144,16 @@ describe('coastal weather lookup gap', () => {
     }
   });
 
-  it('RECORDS A GAP: v2 does not prefer the coastal centre for the forecast call', () => {
-    // Same story as the block above — `coastalCenter` was v1 only. The catalog centres asserted
-    // in the test above it are present and finite, so the data half of the fix is ready.
-    expect(V2.includes('coastalCenter'),
-      'v2 prefers the coastal centre now — write the real assertion').toBe(false);
+  it('the forecast prefers the zone centre over the lake centroid', () => {
+    // The behaviour the `coastalCenter` tripwire claimed was missing. It reads the COASTAL_ZONES
+    // centre FIRST and falls back to lakeDbEntryFor — assert the order, since a fallback that
+    // ran first would be the bug.
+    const src = readFileSync(path.join(REPO, 'js/modules/plan-preflight.js'), 'utf8');
+    const zoneAt = src.indexOf('COASTAL_ZONES[zoneKey] || {}).center');
+    const lakeAt = src.indexOf('lakeDbEntryFor(lakeName) || {}).center');
+    expect(zoneAt > 0, 'zone centre not read').toBe(true);
+    expect(lakeAt > 0, 'lake centroid fallback not read').toBe(true);
+    expect(zoneAt < lakeAt, 'the lake centroid is being preferred over the zone centre').toBe(true);
   });
 
   it('nothing in the app imports js/data/lakes.js — the file is gone', () => {
