@@ -49,11 +49,18 @@ async function handleResearchProxyDownload(request, env) {
     return new Response(JSON.stringify({ success: false, error: `Blocked known-bad NEPIS document: ${nepisIdMatch[1]}` }), { status: 403, headers: JSON_HEADERS });
   }
 
-  // Route HTML sources through Firecrawl ONLY for JS-rendered SPAs and NEPIS pages.
-  // CREDIT BUDGET:
-  // - NEPIS/eRegulations/Grokipedia → Firecrawl (custom logic, SPA rendering, NEPIS two-step)
-  // - All other HTML → Jina Reader (r.jina.ai) — free 10M token pool, 0 Firecrawl credits
-  // - PDFs → basic fetch → browser PDF.js (unchanged)
+  // THE FETCH LADDER, IN COST ORDER. Both free rungs come first.
+  //
+  //   1. tinyfish   free
+  //   2. jina       r.jina.ai, FREE WITHOUT A KEY. See jinaRead() -- reading never spends the
+  //                 token pool, because s.jina.ai search is the only thing that pool can buy.
+  //   3. scrape.do  1 credit (5 rendered), 0 on failure. The Cloudflare-bypass rung, not a
+  //                 cheaper Jina -- it earns its credit on exactly what Jina gets blocked by.
+  //   4. firecrawl  1 credit, budget-guarded against the real account balance.
+  //   5. basic fetch
+  //
+  // NEPIS / eRegulations / Grokipedia keep their own Firecrawl path above: SPA rendering and the
+  // NEPIS two-step are custom, not a generic scrape. PDFs go to basic fetch → browser PDF.js.
   const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
   const jinaKey = env.JINA_API_KEY || null;
   // THE URL WINS OVER THE type PARAM WHEN THE URL IS A PDF.
@@ -350,10 +357,42 @@ async function handleResearchProxyDownload(request, env) {
       console.warn(`TinyFish error for ${target}: ${tfErr.message} — trying Firecrawl`);
     }
 
-    // Scrape.do fallback — Cloudflare bypass, residential proxies, 1 credit/page
-    // Only fires when TinyFish returned insufficient content. Failed requests cost 0.
-    let scrapeDoSucceeded = false;
+    // ── Jina Reader — SECOND, because it is FREE and the two below it are not ────────────
+    //
+    // THE FREE OPTION WAS LAST. Until 2026-08-20 this chain read TinyFish -> scrape.do (1 credit)
+    // -> Firecrawl (1 credit) -> Jina -> basic fetch, so every fallback spent two credits before
+    // reaching the rung that costs nothing. The comment at the top of this file had described the
+    // intended policy correctly the whole time -- "All other HTML -> Jina Reader ... 0 Firecrawl
+    // credits" -- and the code did not implement it.
+    //
+    // r.jina.ai is free WITHOUT a key (Ryan proved it against dnr.sc.gov/lakes), so this rung
+    // costs nothing and belongs above anything metered. scrape.do keeps its place below: it is
+    // not a cheaper Jina, it is the Cloudflare-bypass-and-render rung, which is a different
+    // capability and worth its credit when Jina is what got blocked.
+    let jinaSucceeded = false;
     if (!tfSucceeded && isHtml) {
+      try {
+        const jina = await jinaRead(target, jinaKey);
+        if (jina.markdown && jina.markdown.length > 200) {
+          jinaSucceeded = true;
+          const headers = exposeHeaders(new Headers({
+            'Content-Type': 'text/plain; charset=utf-8',
+            // WHICH ONE ANSWERED travels, so `wrangler tail` says the day the key runs dry
+            // instead of it being noticed as a mystery quality drop months later.
+            'X-Source': jina.keyed ? 'jina-keyed' : 'jina'
+          }));
+          return new Response(jina.markdown, { headers });
+        }
+        console.warn(`Jina Reader insufficient for ${target}: ${jina.why} — trying Scrape.do`);
+      } catch (e) {
+        console.warn(`Jina Reader error for ${target}: ${e.message} — trying Scrape.do`);
+      }
+    }
+
+    // Scrape.do fallback — Cloudflare bypass, residential proxies, 1 credit/page
+    // Only fires when TinyFish and the free Jina rung both came up short. Failed requests cost 0.
+    let scrapeDoSucceeded = false;
+    if (!tfSucceeded && !jinaSucceeded && isHtml) {
       try {
         // Use render=true for known JS-heavy domains, plain fetch for everything else
         const needsRender = /anglersheadquarters|majorleaguefishing|omniafishing|carolinasportsman|gameandfishmag/i.test(target);
@@ -373,7 +412,7 @@ async function handleResearchProxyDownload(request, env) {
     }
 
     // Firecrawl fallback — only when both TinyFish and Scrape.do failed and budget allows
-    if (isHtml && !tfSucceeded && !scrapeDoSucceeded && firecrawlKey) {
+    if (isHtml && !tfSucceeded && !jinaSucceeded && !scrapeDoSucceeded && firecrawlKey) {
       try {
         const budget = await checkFirecrawlBudget(env, 1);
         if (budget.allowed) {
@@ -399,31 +438,15 @@ async function handleResearchProxyDownload(request, env) {
               return new Response(markdown, { headers });
             }
           }
-          console.warn(`Firecrawl fallback also failed for ${target} — trying Jina`);
+          console.warn(`Firecrawl fallback also failed for ${target} — falling back to basic fetch`);
         } else {
-          console.warn(`Firecrawl budget exhausted — skipping fallback for ${target}, trying Jina`);
+          console.warn(`Firecrawl budget exhausted — skipping fallback for ${target}: ${budget.reason}`);
         }
       } catch (fcErr) {
-        console.warn(`Firecrawl fallback error for ${target}: ${fcErr.message} — trying Jina`);
+        console.warn(`Firecrawl fallback error for ${target}: ${fcErr.message} — falling back to basic fetch`);
       }
     }
 
-    // Jina Reader — last resort before basic fetch (HTML only)
-    if (isHtml) try {
-      const jina = await jinaRead(target, jinaKey);
-      if (jina.markdown && jina.markdown.length > 200) {
-        const headers = exposeHeaders(new Headers({
-          'Content-Type': 'text/plain; charset=utf-8',
-          // WHICH ONE ANSWERED travels, so `wrangler tail` says the day the key runs dry
-          // instead of it being noticed as a mystery quality drop months later.
-          'X-Source': jina.keyless ? 'jina-keyless' : 'jina'
-        }));
-        return new Response(jina.markdown, { headers });
-      }
-      console.warn(`Jina Reader failed for ${target}: ${jina.why} — falling back to basic fetch`);
-    } catch (e) {
-      console.warn(`Jina Reader error for ${target}: ${e.message} — falling back to basic fetch`);
-    }
   }
 
   // ── USACE-specific Scrape.do PDF fallback ───────────────────────────────────
@@ -623,27 +646,31 @@ async function handleResearchProxyDownloadBatch(request, env) {
 // SHARED_RESEARCH_ENABLED=false falls back to current per-lake behavior.
 
 /**
- * Read a page through Jina Reader — with the key while the key still has tokens, and WITHOUT it
- * when it does not.
+ * Read a page through Jina Reader — KEYLESS BY DEFAULT, with the key only for throughput.
  *
- * THE 10M TOKENS ARE A ONE-TIME GRANT ON A NEW KEY, NOT A MONTHLY ALLOWANCE. Ryan, 2026-08-20:
- * *"jina.ai does not replenish credits monthly... apparently the 10M credits were just a 1 time
- * trial"*. So this path has a cliff in it, and the naive shape of the old code walked off it:
- * it sent `Authorization: Bearer <key>` whenever a key existed, so the day the balance hits zero
- * every call starts failing — while THE SAME REQUEST WITH NO HEADER STILL WORKS. An exhausted key
- * is worse than no key at all.
+ * THE POOL IS WORTH MORE AS SEARCH THAN AS READING, which is the whole reason this is shaped the
+ * way it is. Jina sells two things off one balance:
  *
- * Keyless r.jina.ai is free and rate-limited rather than metered. Ryan ran it against
- * dnr.sc.gov/lakes the same day and it returned the page as markdown, which is why this is built
- * on a measurement rather than on a pricing page — my own attempt to check it came back 403 from
- * a proxy and proved nothing.
+ *   r.jina.ai   reading a URL.  FREE with no key at 20 rpm; a key buys 500 rpm.
+ *   s.jina.ai   searching.      NO keyless tier at all, and a flat 10,000 tokens per search.
  *
- * So there is no swap-out day and nobody has to remember one. The key is used while it pays for
- * itself; a 401/402/403/429 against it means "the key is the problem", and the same fetch is
- * retried once with the header removed. `X-Source` says which answered, so `wrangler tail` names
- * the day the balance ran out instead of it showing up later as an unexplained drop in quality.
+ * So every token spent reading buys nothing but rate, while the same tokens spent searching buy
+ * the only thing the pool can buy at all — roughly 200 searches out of what is left, on a grant
+ * that DOES NOT REFILL. Ryan, 2026-08-20: *"jina.ai does not replenish credits monthly...
+ * apparently the 10M credits were just a 1 time trial"*.
  *
- * @returns {{markdown: string, keyless: boolean, why: string}} markdown is '' on failure.
+ * Hence: read keyless, and reach for the key ONLY on a 429, which is the one failure a key
+ * actually fixes (20 rpm → 500 rpm). Any other failure is about the page or the block, and
+ * paying tokens would not change it.
+ *
+ * Keyless was proved by Ryan running it against dnr.sc.gov/lakes and getting the page back as
+ * markdown — not taken off a pricing page. My own check came back 403 through a proxy and proved
+ * nothing, after I had stated the rate limit more confidently than the evidence supported.
+ *
+ * `keyed` says which one answered, so `wrangler tail` shows how often throughput is costing
+ * tokens rather than it being invisible until the pool is gone.
+ *
+ * @returns {{markdown: string, keyed: boolean, why: string}} markdown is '' on failure.
  */
 async function jinaRead(target, jinaKey) {
   const url = `https://r.jina.ai/${target}`;
@@ -653,30 +680,28 @@ async function jinaRead(target, jinaKey) {
     'X-No-Cache': 'false',
     'X-Remove-Selector': 'nav, footer, .sidebar, #ads, .advertisement, .cookie-banner',
   };
-  // 401 unauthorized, 402 out of tokens, 403 refused, 429 throttled. Every one of them is a
-  // statement about the KEY, not about the page, so every one is worth one keyless retry.
-  const KEY_IS_THE_PROBLEM = new Set([401, 402, 403, 429]);
 
   const attempt = async (withKey) => {
     const headers = withKey ? { ...base, 'Authorization': `Bearer ${jinaKey}` } : { ...base };
     const res = await fetch(url, { headers });
-    const text = res.ok ? await res.text() : '';
-    return { ok: res.ok, status: res.status, text };
+    return { ok: res.ok, status: res.status, text: res.ok ? await res.text() : '' };
   };
 
-  if (jinaKey) {
+  const bare = await attempt(false);
+  if (bare.ok && bare.text.length > 200) return { markdown: bare.text, keyed: false, why: '' };
+
+  // 429 IS THE ONLY FAILURE A KEY FIXES. It means the free 20 rpm ceiling was hit, and the key
+  // raises it to 500. A 403, a 404 or a block is about the page, and spending tokens on it would
+  // buy the same answer at a price.
+  if (bare.status === 429 && jinaKey) {
+    console.warn('[jina] keyless hit the 20 rpm ceiling — spending tokens for throughput. '
+               + 'These are finite and do not refill.');
     const keyed = await attempt(true);
-    if (keyed.ok && keyed.text.length > 200) return { markdown: keyed.text, keyless: false, why: '' };
-    if (!KEY_IS_THE_PROBLEM.has(keyed.status)) {
-      return { markdown: keyed.text, keyless: false, why: `HTTP ${keyed.status}` };
-    }
-    console.warn(`[jina] keyed request returned HTTP ${keyed.status} — retrying WITHOUT the key. `
-               + `If this repeats, the 10M-token grant is spent and JINA_API_KEY can be removed.`);
+    if (keyed.ok && keyed.text.length > 200) return { markdown: keyed.text, keyed: true, why: '' };
+    return { markdown: keyed.text, keyed: true, why: `HTTP ${keyed.status} (keyed)` };
   }
 
-  const bare = await attempt(false);
-  if (bare.ok && bare.text.length > 200) return { markdown: bare.text, keyless: true, why: '' };
-  return { markdown: bare.text, keyless: true, why: `HTTP ${bare.status} (keyless)` };
+  return { markdown: bare.text, keyed: false, why: `HTTP ${bare.status} (keyless)` };
 }
 
 export { handleResearchProxyDownload, handleResearchProxyDownloadBatch, jinaRead };

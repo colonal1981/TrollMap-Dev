@@ -51,6 +51,226 @@ async function tinyfishFetch({ urls, format = 'markdown', include_selectors, exc
   return res.json();
 }
 
+// ─── ONE SEARCH, FOUR PROVIDERS, IN COST ORDER ───
+//
+// Ryan, 2026-08-20: *"these are the tools i have tinyfish, jina.ai, tavily, firecrawl, and
+// scrape.do -- wire them in as appropriate for the skills that they all have"*.
+//
+// WHAT WAS WRONG. Six places in the research engine ran a web search and FIVE of them called
+// tinyfishSearch() bare: if TinyFish returned nothing, that was the end of the question. The
+// sixth -- handleResearchGapSearch() -- had a full TinyFish -> Tavily -> Firecrawl cascade
+// written inline, so the capability existed, was paid for, and one caller in six could reach it.
+// This is that cascade lifted out, not a new one invented.
+//
+// THE ORDER IS THE COST, AND JINA IS LAST HERE FOR A REASON WORTH WRITING DOWN.
+//
+//   tinyfish   free
+//   tavily     1 credit (basic). 1,000 in hand. The ONLY fallback that can express this app's
+//              date filters exactly -- see the recency note below.
+//   firecrawl  1 credit. 1,764 in hand, and the balance is now read from the account.
+//   jina       s.jina.ai. NOT available without a key, and a fixed 10,000 tokens per search
+//              whatever it returns -- about 200 searches out of the ~2M left on a pool that
+//              DOES NOT REFILL. It is last because it is the only finite one.
+//
+// And note the asymmetry with readUrl(): r.jina.ai is FREE keyless, so Jina is near the top of
+// the fetch chain and at the bottom of this one. Same vendor, opposite ends, because the two
+// halves of it are priced completely differently.
+//
+// A FALLBACK MUST NOT SILENTLY ANSWER A DIFFERENT QUESTION. Callers pass `recency_minutes`,
+// `after_date` and `before_date`, and a provider that cannot express them would return results
+// from outside the window while looking like it worked -- a filter that quietly does nothing.
+// Tavily takes start_date/end_date/time_range and can express all three exactly. Firecrawl's
+// search takes `tbs`, which only has day/week/month/year buckets, so it is given one ONLY when
+// the requested window rounds to a bucket without widening; otherwise that rung is skipped and
+// the reason is logged. Jina's search takes no date filter at all, so it is skipped outright
+// whenever a window was asked for.
+
+/** Whole days back, rounded UP so the window can only narrow, never widen. */
+function daysFromRecency(recencyMinutes) {
+  if (!Number.isFinite(recencyMinutes) || recencyMinutes <= 0) return null;
+  return Math.max(1, Math.ceil(recencyMinutes / 1440));
+}
+
+/**
+ * Firecrawl `tbs` for a window, or null when no bucket fits.
+ *
+ * THE BUCKET MUST NEVER BE WIDER THAN THE WINDOW. The first version of this read
+ * `days <= 31 ? 'qdr:m' : days <= 365 ? 'qdr:y'`, which turned a 45-day request into "the past
+ * YEAR" -- results eight months too old, returned as though they answered the question. Caught by
+ * its own test before it ran anywhere.
+ *
+ * So it picks the largest bucket whose span is at or under the request. That NARROWS: a 45-day
+ * window is served by the past month, which may miss two weeks of valid results but cannot
+ * return an invalid one. Missing something and inventing something are not the same error, and
+ * only one of them is silent.
+ */
+function tbsForDays(days) {
+  if (!Number.isFinite(days) || days < 1) return null;
+  if (days >= 365) return 'qdr:y';
+  if (days >= 31) return 'qdr:m';
+  if (days >= 7) return 'qdr:w';
+  return 'qdr:d';
+}
+
+/** `YYYY-MM-DD`, `days` before now. Exact — no bucketing, so nothing is widened. */
+function startDateForDays(days, now = Date.now()) {
+  if (!Number.isFinite(days) || days < 1) return null;
+  return new Date(now - days * 86400000).toISOString().slice(0, 10);
+}
+
+/** Normalise any provider's row into the shape the existing callers already read. */
+function normaliseHit(r, provider) {
+  const content = r.markdown || r.content || r.snippet || r.description || r.raw_content || '';
+  return {
+    url: r.url || r.link || null,
+    title: r.title || r.url || null,
+    content,
+    // Callers variously read .markdown/.snippet/.description. Carry all of them so switching
+    // provider cannot silently empty a field one call site happens to use.
+    markdown: content,
+    snippet: content,
+    description: content,
+    provider,
+  };
+}
+
+/**
+ * Search the web, falling down the cost ladder until something answers.
+ *
+ * Drop-in for tinyfishSearch(): same parameter names, and `.results` in the same shape.
+ * Additionally returns `provider` (who answered) and `skipped` (who was not asked, and why),
+ * so a run that quietly fell through to the expensive rung says so in the log.
+ */
+async function searchWeb(params, env) {
+  const { query, recency_minutes, after_date, before_date } = params || {};
+  const wantsWindow = !!(recency_minutes || after_date || before_date);
+  const days = daysFromRecency(recency_minutes);
+  const skipped = [];
+  const enough = (rows) => Array.isArray(rows) && rows.length > 0;
+
+  // 1. TINYFISH — free, and the only one that takes every parameter natively.
+  try {
+    const tf = await tinyfishSearch(params, env);
+    if (enough(tf && tf.results)) {
+      return { results: tf.results.map((r) => normaliseHit(r, 'tinyfish')), provider: 'tinyfish', skipped };
+    }
+  } catch (e) {
+    console.warn(`[search] tinyfish failed for "${String(query).slice(0, 60)}": ${e.message}`);
+  }
+
+  // 2. TAVILY — 1 credit, and it can express the window exactly, so nothing is lost by falling here.
+  if (env.TAVILY_API_KEY) {
+    try {
+      const body = { query, search_depth: 'basic', include_answer: false, max_results: 5 };
+      if (after_date) body.start_date = after_date;
+      if (before_date) body.end_date = before_date;
+      // EXACT, not bucketed. `time_range` only has day/week/month/year, so a 45-day window
+      // would have to become "year" -- the same widening bug tbsForDays() carries a note about.
+      // start_date states the actual boundary, so falling to Tavily loses nothing at all.
+      if (days != null && !after_date && !before_date) body.start_date = startDateForDays(days);
+      const res = await fetch('https://api.tavily.com/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${env.TAVILY_API_KEY}` },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        const j = await res.json();
+        if (enough(j && j.results)) {
+          console.log(`[search] tavily answered "${String(query).slice(0, 60)}" (${j.results.length} results)`);
+          return { results: j.results.map((r) => normaliseHit(r, 'tavily')), provider: 'tavily', skipped };
+        }
+      } else {
+        console.warn(`[search] tavily HTTP ${res.status}`);
+      }
+    } catch (e) {
+      console.warn(`[search] tavily error: ${e.message}`);
+    }
+  } else {
+    skipped.push('tavily: no TAVILY_API_KEY');
+  }
+
+  // 3. FIRECRAWL — 1 credit, budget-guarded, and only when the window survives the bucketing.
+  // `tbs` is a relative bucket. It cannot express "after 2026-08-14" at all, so an absolute
+  // window skips this rung outright rather than being approximated into something else.
+  const absoluteWindow = !!(after_date || before_date);
+  const tbs = absoluteWindow ? null : tbsForDays(days);
+  const windowLost = wantsWindow && !tbs;
+  if (windowLost) {
+    // Refusing beats answering a different question.
+    skipped.push(`firecrawl: cannot express the requested date window (${after_date || ''}${before_date ? '..' + before_date : ''}${days ? days + 'd' : ''}) without widening it`);
+  }
+  const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
+  if (firecrawlKey && !windowLost) {
+    const budget = await checkFirecrawlBudget(env, 1);
+    if (budget.allowed) {
+      try {
+        const body = { query, limit: 5 };
+        if (tbs) body.tbs = tbs;
+        const res = await fetch('https://api.firecrawl.dev/v2/search', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (res.ok) {
+          const j = await res.json();
+          const rows = (j.data && (j.data.web || j.data)) || [];
+          if (enough(rows)) {
+            await recordFirecrawlUsage(env, 1);
+            console.log(`[search] firecrawl answered "${String(query).slice(0, 60)}" (${rows.length} results)`);
+            return { results: rows.map((r) => normaliseHit(r, 'firecrawl')), provider: 'firecrawl', skipped };
+          }
+        } else {
+          console.warn(`[search] firecrawl HTTP ${res.status}`);
+        }
+      } catch (e) {
+        console.warn(`[search] firecrawl error: ${e.message}`);
+      }
+    } else {
+      skipped.push(`firecrawl: ${budget.reason}`);
+    }
+  } else if (!firecrawlKey) {
+    skipped.push('firecrawl: no FIRECRAWL_API_KEY');
+  }
+
+  // 4. JINA s.jina.ai — LAST, and only when no date window was asked for.
+  //
+  // 10,000 tokens flat per search out of a pool that does not refill, and its search endpoint
+  // takes no date filter at all, so a windowed query cannot be honoured here even approximately.
+  if (wantsWindow) {
+    skipped.push('jina: s.jina.ai takes no date filter, and the query asked for one');
+  } else if (env.JINA_API_KEY) {
+    try {
+      const res = await fetch(`https://s.jina.ai/${encodeURIComponent(query)}`, {
+        headers: {
+          'Authorization': `Bearer ${env.JINA_API_KEY}`,
+          'Accept': 'application/json',
+          'X-Return-Format': 'markdown',
+        },
+      });
+      if (res.ok) {
+        const j = await res.json();
+        const rows = (j && (j.data || j.results)) || [];
+        if (enough(rows)) {
+          console.warn(`[search] JINA answered "${String(query).slice(0, 60)}" — that is ~10,000 tokens `
+                     + `off a pool that does not refill. Everything cheaper had already failed.`);
+          return { results: rows.map((r) => normaliseHit(r, 'jina')), provider: 'jina', skipped };
+        }
+      } else {
+        console.warn(`[search] jina HTTP ${res.status}`);
+      }
+    } catch (e) {
+      console.warn(`[search] jina error: ${e.message}`);
+    }
+  } else {
+    skipped.push('jina: no JINA_API_KEY (s.jina.ai has no keyless tier, unlike r.jina.ai)');
+  }
+
+  // NOBODY ANSWERED IS AN ANSWER, and it is not the same as "there is nothing out there".
+  console.warn(`[search] no provider answered "${String(query).slice(0, 80)}"`
+             + (skipped.length ? ` — skipped: ${skipped.join('; ')}` : ''));
+  return { results: [], provider: null, skipped };
+}
+
 // ─── FIRECRAWL CREDIT GUARD ───
 //
 // FIRECRAWL IS ASKED WHAT IS LEFT. IT IS NOT TOLD.
@@ -1043,7 +1263,9 @@ async function fetchLiveRegsAmendments(state, env) {
   const after = since.toISOString().slice(0, 10);
   let out;
   try {
-    const res = await tinyfishSearch({
+    // after_date is a HARD constraint here -- an amendment from before the digest took effect
+    // is not an amendment. searchWeb() only falls to a provider that can express it.
+    const res = await searchWeb({
       query, domain_type: 'web', location: 'US', language: 'en', after_date: after,
       purpose: `Find regulation amendments or proclamations issued after ${after} that change saltwater size, slot or creel limits in ${state}.`
     }, env);
@@ -1068,4 +1290,4 @@ async function fetchLiveRegsAmendments(state, env) {
   return out;
 }
 
-export { TINYFISH_BASE, TINYFISH_FETCH_BASE, tinyfishSearch, tinyfishFetch, FIRECRAWL_HARD_STOP, FIRECRAWL_KV_KEY, FIRECRAWL_TTL_MS, fetchFirecrawlBalance, checkFirecrawlBudget, recordFirecrawlUsage, scrapeDoFetch, REGS_R2_BASE, REGS_2026_EFFECTIVE, REGS_EFFECTIVE, REGS_DATE_VERIFIED, useDigest2026, USE_2026, STATE_REGULATIONS_CONFIG, SALTWATER_DIGEST, SALTWATER_HEAD, FRESHWATER_ONLY, sliceSaltwaterSection, freshwaterRegionOf, extractSaltwaterDigest, DIGEST_BUDGET, fetchSaltwaterRegulations, fetchLiveRegsAmendments, extractMarkdownTables, parseSCTable, parseNCTable, parseGATable, parseTNStatewide, parseTNExceptions, parseTNRegion, PARSERS, normalizeLakeName, parseNCRegulationsWithLLM, parseRegulationsWithLLM, fetchStateRegulations, getLakeRegulations };
+export { TINYFISH_BASE, TINYFISH_FETCH_BASE, tinyfishSearch, tinyfishFetch, searchWeb, daysFromRecency, tbsForDays, startDateForDays, normaliseHit, FIRECRAWL_HARD_STOP, FIRECRAWL_KV_KEY, FIRECRAWL_TTL_MS, fetchFirecrawlBalance, checkFirecrawlBudget, recordFirecrawlUsage, scrapeDoFetch, REGS_R2_BASE, REGS_2026_EFFECTIVE, REGS_EFFECTIVE, REGS_DATE_VERIFIED, useDigest2026, USE_2026, STATE_REGULATIONS_CONFIG, SALTWATER_DIGEST, SALTWATER_HEAD, FRESHWATER_ONLY, sliceSaltwaterSection, freshwaterRegionOf, extractSaltwaterDigest, DIGEST_BUDGET, fetchSaltwaterRegulations, fetchLiveRegsAmendments, extractMarkdownTables, parseSCTable, parseNCTable, parseGATable, parseTNStatewide, parseTNExceptions, parseTNRegion, PARSERS, normalizeLakeName, parseNCRegulationsWithLLM, parseRegulationsWithLLM, fetchStateRegulations, getLakeRegulations };

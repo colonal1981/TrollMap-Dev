@@ -1,7 +1,7 @@
 // research/storage.js — split from worker-research.js (behavior-preserving)
 import { CORS, JSON_HEADERS, callLLM, extractLLMText, r2Text, r2Body } from '../worker-core.js';
 import { getLakeIntel, lakeKeyFromName } from '../worker-data.js';
-import { tinyfishSearch } from './clients.js';
+import { searchWeb } from './clients.js';
 import { extractJsonPossibly, researchStorageId, resolveResearchStorageId } from './keys.js';
 import { calculateSectionConfidence, gateOverallConfidence } from './agents.js';
 
@@ -480,7 +480,7 @@ async function handleResearchThermoclineSearch(request, env) {
   for (const q of queries) {
     try {
       console.log(`[thermocline-search] Query: ${q}`);
-      const tfResult = await tinyfishSearch({
+      const tfResult = await searchWeb({
         query: q,
         domain_type: 'web',
         purpose: `Find thermocline depth and summer fishing depth information for ${queryLake}`,

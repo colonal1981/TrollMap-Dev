@@ -759,7 +759,7 @@ async function handleResearchGapAnalysis(request, env) {
   }), { headers: JSON_HEADERS });
 }
 
-// ── GAP SEARCH — targeted Tavily search + extract + fact extraction for one null field ──
+// ── GAP SEARCH — one search down the shared cost ladder, for one null field ──
 async function handleResearchGapSearch(request, env) {
   let body;
   try { body = await request.json(); } catch { body = {}; }
@@ -770,87 +770,24 @@ async function handleResearchGapSearch(request, env) {
 
   if (!lakeName || !query) return new Response(JSON.stringify({ success: false, error: "Missing lakeName or query", extracted_facts: [], rawText: '' }), { status: 400, headers: JSON_HEADERS });
 
-  // CREDIT POLICY: TinyFish primary (free), Tavily backup, Firecrawl last resort (low credits)
-  // Previous version used Firecrawl /v2/search directly (3 credits). Now TinyFish first.
+  // THE CASCADE THAT USED TO LIVE HERE IS NOW searchWeb() IN clients.js.
+  //
+  // This handler was the ONLY one of six search call sites that could reach Tavily or Firecrawl;
+  // the other five called tinyfishSearch() bare and stopped dead when TinyFish came up empty.
+  // Rather than copy this block four more times, it moved -- so every search in the research
+  // engine now falls down the same cost ladder, and there is one place to change the order.
   try {
-    let results = [];
-    let urls = [];
-    let rawText = '';
-
-    // 1. TinyFish primary
-    try {
-      const { tinyfishSearch } = await import('./clients.js');
-      const tfRes = await tinyfishSearch({ query, domain_type: 'web', purpose: `Find ${field} for ${lakeName}` }, env);
-      const tfResults = tfRes.results || [];
-      if (tfResults.length) {
-        results = tfResults;
-        urls = tfResults.map(r => r.url).filter(Boolean);
-        rawText = tfResults.map(r => {
-          const content = r.markdown || r.content || r.snippet || r.description || '';
-          return content ? `## ${r.title || r.url}\n${content}` : '';
-        }).filter(Boolean).join('\n\n').slice(0, 8000);
-      }
-    } catch (tfErr) {
-      console.warn(`Gap search TinyFish failed: ${tfErr.message} — trying Tavily backup`);
-    }
-
-    // 2. Tavily backup if TinyFish insufficient
-    if (!rawText || results.length < 2) {
-      const tavilyKey = env.TAVILY_API_KEY;
-      if (tavilyKey) {
-        try {
-          const tvRes = await fetch('https://api.tavily.com/search', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ api_key: tavilyKey, query, search_depth: 'basic', include_answer: false, max_results: 3 })
-          });
-          if (tvRes.ok) {
-            const tvData = await tvRes.json();
-            const tvResults = tvData.results || [];
-            if (tvResults.length) {
-              results = tvResults;
-              urls = tvResults.map(r => r.url).filter(Boolean);
-              rawText = tvResults.map(r => `## ${r.title || r.url}\n${r.content || ''}`).join('\n\n').slice(0, 8000);
-              console.log(`Gap search Tavily backup got ${tvResults.length} results for ${query.slice(0,60)}`);
-            }
-          }
-        } catch (tvErr) {
-          console.warn(`Gap search Tavily backup failed: ${tvErr.message}`);
-        }
-      }
-    }
-
-    // 3. Firecrawl last resort (low credits) — only if still insufficient
-    if ((!rawText || results.length === 0)) {
-      const firecrawlKey = env.FIRECRAWL_API_KEY || env.FIRECRAWL_KEY;
-      if (firecrawlKey) {
-        const { checkFirecrawlBudget, recordFirecrawlUsage } = await import('./clients.js');
-        const budget = await checkFirecrawlBudget(env, 1);
-        if (budget.allowed) {
-          try {
-            const searchRes = await fetch('https://api.firecrawl.dev/v2/search', {
-              method: 'POST',
-              headers: { 'Authorization': `Bearer ${firecrawlKey}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ query, limit: 3 })
-            });
-            if (searchRes.ok) {
-              const searchData = await searchRes.json();
-              const fcResults = searchData.data?.web || searchData.data || [];
-              if (fcResults.length) {
-                await recordFirecrawlUsage(env, 1);
-                results = fcResults;
-                urls = fcResults.map(r => r.url).filter(Boolean);
-                rawText = fcResults.map(r => `## ${r.title || r.url}\n${r.markdown || r.content || ''}`).join('\n\n').slice(0, 8000);
-                console.log(`Gap search Firecrawl last resort got ${fcResults.length} results`);
-              }
-            }
-          } catch (fcErr) {
-            console.warn(`Gap search Firecrawl fallback failed: ${fcErr.message}`);
-          }
-        } else {
-          console.warn(`Gap search Firecrawl budget blocked: ${budget.reason}`);
-        }
-      }
+    const { searchWeb } = await import('./clients.js');
+    const found = await searchWeb({
+      query, domain_type: 'web', purpose: `Find ${field} for ${lakeName}`,
+    }, env);
+    const results = found.results || [];
+    const urls = results.map((r) => r.url).filter(Boolean);
+    const rawText = results
+      .map((r) => (r.content ? `## ${r.title || r.url}\n${r.content}` : ''))
+      .filter(Boolean).join('\n\n').slice(0, 8000);
+    if (found.provider && found.provider !== 'tinyfish') {
+      console.log(`Gap search answered by ${found.provider} for ${query.slice(0, 60)}`);
     }
 
     if (!results.length) return new Response(JSON.stringify({ success: true, extracted_facts: [], rawText: '', note: "No results found" }), { headers: JSON_HEADERS });

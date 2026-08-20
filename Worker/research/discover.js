@@ -1,6 +1,6 @@
 // research/discover.js — split from worker-research.js (behavior-preserving)
 import { JSON_HEADERS } from '../worker-core.js';
-import { STATE_REGULATIONS_CONFIG, tinyfishFetch, tinyfishSearch } from './clients.js';
+import { STATE_REGULATIONS_CONFIG, tinyfishFetch, searchWeb } from './clients.js';
 import { KNOWN_BAD_NEPIS_IDS, buildNepisSearchUrl } from './dataset.js';
 import { parseLakeBaseName } from './keys.js';
 import { resolveAgencyPage } from './agency-pages.js';
@@ -758,7 +758,7 @@ const AGENT_TO_TAGS = {
     try {
       // Build Wikipedia search query — use "Lake X" to avoid person-name collisions
       const wikiQuery = `site:wikipedia.org "Lake ${baseName}"`;
-      const wikiSearch = await tinyfishSearch({
+      const wikiSearch = await searchWeb({
         query: wikiQuery,
         domain_type: 'web',
         purpose: `Find Wikipedia page for ${lakeName} to extract agency citation links`,
@@ -890,14 +890,17 @@ const AGENT_TO_TAGS = {
             language: 'en',
           };
           if (recencyMinutes) tfParams.recency_minutes = recencyMinutes;
-          const tfResult = await tinyfishSearch(tfParams, env);
+          const tfResult = await searchWeb(tfParams, env);
           rawResults = tfResult.results || [];
-          queryLog.push(`[${agentKey}${domainType !== 'web' ? ':' + domainType : ''}${recencyMinutes ? ':' + recencyMinutes + 'm' : ''}] TinyFish: ${q.slice(0,80)} → ${rawResults.length} results`);
+          // WHICH PROVIDER ANSWERED goes in the query log. A run that quietly fell through to
+          // the metered rungs used to look identical to one TinyFish answered for free.
+          queryLog.push(`[${agentKey}${domainType !== 'web' ? ':' + domainType : ''}${recencyMinutes ? ':' + recencyMinutes + 'm' : ''}] ${tfResult.provider || 'no provider'}: ${q.slice(0,80)} → ${rawResults.length} results`
+            + ((tfResult.skipped || []).length ? ` (skipped: ${tfResult.skipped.join('; ')})` : ''));
 
           // Fisheries current-report fallback: if < 3 results at 45d, retry at 180d
           if (agentKey === 'fisheries' && qIndex === 0 && rawResults.length < 3 && recencyMinutes === 64800) {
             try {
-              const tfFallback = await tinyfishSearch({ ...tfParams, recency_minutes: 259200 }, env);
+              const tfFallback = await searchWeb({ ...tfParams, recency_minutes: 259200 }, env);
               const fallbackResults = tfFallback.results || [];
               queryLog.push(`[fisheries] recency fallback 180d: ${fallbackResults.length} additional results`);
               const existingUrls = new Set(rawResults.map(r => String(r.url||'').toLowerCase()));

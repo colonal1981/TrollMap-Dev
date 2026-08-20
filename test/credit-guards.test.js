@@ -153,52 +153,53 @@ describe('the hard stop still holds', () => {
   });
 });
 
-describe('Jina: an exhausted key is worse than no key', () => {
+describe('Jina reading never spends the token pool', () => {
   const PAGE = 'x'.repeat(400);
 
-  it('uses the key while the key still works', async () => {
-    let auth;
+  it('reads KEYLESS by default, even when a key exists', async () => {
+    // The pool's only real value is s.jina.ai search, which has no keyless tier at all. Tokens
+    // spent reading buy nothing but rate, so reading does not spend them.
+    let sawAuth = 'unset';
     const r = await withFetch(async (_u, init) => {
-      auth = init.headers.Authorization;
+      sawAuth = 'Authorization' in init.headers;
       return { ok: true, status: 200, text: async () => PAGE };
     }, () => jinaRead('https://example.com', 'k'));
-    expect(auth).toBe('Bearer k');
-    expect(r.keyless).toBe(false);
+    expect(sawAuth).toBe(false);
+    expect(r.keyed).toBe(false);
     expect(r.markdown.length).toBe(400);
   });
 
-  for (const status of [401, 402, 403, 429]) {
-    it(`retries WITHOUT the key on HTTP ${status}`, async () => {
-      // Every one of these is a statement about the KEY, not about the page.
-      const seen = [];
-      const r = await withFetch(async (_u, init) => {
-        seen.push(init.headers.Authorization || null);
-        return seen.length === 1
-          ? { ok: false, status, text: async () => '' }
-          : { ok: true, status: 200, text: async () => PAGE };
-      }, () => jinaRead('https://example.com', 'k'));
-      expect(seen).toEqual(['Bearer k', null]);
-      expect(r.keyless).toBe(true);
-      expect(r.markdown.length).toBe(400);
+  it('spends a token only on 429 — the one failure a key actually fixes', async () => {
+    // Keyless is 20 rpm, keyed is 500. That is the only thing paying changes.
+    const seen = [];
+    const r = await withFetch(async (_u, init) => {
+      seen.push('Authorization' in init.headers);
+      return seen.length === 1
+        ? { ok: false, status: 429, text: async () => '' }
+        : { ok: true, status: 200, text: async () => PAGE };
+    }, () => jinaRead('https://example.com', 'k'));
+    expect(seen).toEqual([false, true]);
+    expect(r.keyed).toBe(true);
+  });
+
+  for (const status of [401, 403, 404, 500]) {
+    it(`does NOT pay to retry an HTTP ${status}`, async () => {
+      // These are about the page or the block. The same answer at a price is still the same
+      // answer, and the pool does not refill.
+      let calls = 0;
+      const r = await withFetch(async () => { calls++; return { ok: false, status, text: async () => '' }; },
+        () => jinaRead('https://example.com', 'k'));
+      expect(calls).toBe(1);
+      expect(r.keyed).toBe(false);
+      expect(r.why).toBe(`HTTP ${status} (keyless)`);
     });
   }
 
-  it('does NOT retry on a status that is about the page', async () => {
-    // A 404 is the page's answer. Retrying keyless would just 404 again, slower.
+  it('does not reach for a key it does not have', async () => {
     let calls = 0;
-    const r = await withFetch(async () => { calls++; return { ok: false, status: 404, text: async () => '' }; },
-      () => jinaRead('https://example.com/gone', 'k'));
+    await withFetch(async () => { calls++; return { ok: false, status: 429, text: async () => '' }; },
+      () => jinaRead('https://example.com', null));
     expect(calls).toBe(1);
-    expect(r.why).toBe('HTTP 404');
-  });
-
-  it('sends no Authorization at all when there is no key', async () => {
-    let sawAuth = 'unset';
-    await withFetch(async (_u, init) => {
-      sawAuth = 'Authorization' in init.headers;
-      return { ok: true, status: 200, text: async () => PAGE };
-    }, () => jinaRead('https://example.com', null));
-    expect(sawAuth).toBe(false);
   });
 
   it('a short body is a failure, not a page', async () => {
@@ -209,12 +210,11 @@ describe('Jina: an exhausted key is worse than no key', () => {
     expect(r.why).toBeTruthy();
   });
 
-  it('the source label distinguishes keyed from keyless', () => {
-    // X-Source is how `wrangler tail` names the day the 10M grant ran out, rather than it
-    // surfacing months later as an unexplained drop in research quality.
+  it('the source label distinguishes paid from free', () => {
+    // X-Source is how `wrangler tail` shows how often throughput is costing tokens, rather than
+    // it being invisible until the pool is gone.
     const src = readSrc();
-    expect(src).toContain("'jina-keyless'");
-    expect(src).toContain("jina.keyless ?");
+    expect(src).toContain("jina.keyed ? 'jina-keyed' : 'jina'");
   });
 });
 
