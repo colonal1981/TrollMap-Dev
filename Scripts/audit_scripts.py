@@ -107,8 +107,11 @@ GROUPS = [
     ('superseded_uploader',
      'superseded by upload_garmin_to_r2.py, the one uploader left. It was three: '
      'upload_boundaries_to_r2.py and upload_to_r2_coastal.py were both retired 2026-08-19 -- '
-     'one a second writer for <slug>/boundary.geojson, the other reading split_output3, a '
-     'directory gone for weeks',
+     'one a second writer for <slug>/boundary.geojson, the other an ungated second road to '
+     'R2 across the sixteen zones the tier filter existed to exclude. I also wrote that the '
+     'second one read split_output3, "a directory gone for weeks". Ryan, 2026-08-20: he '
+     'RENAMED it to "I-Boating Contours and supplemental data". The data never left; only '
+     'the path went stale, and that tree is now SOURCE_MAP for four R2 layers',
      lambda f: f in ('upload_to_r2.py', 'upload_contours_to_r2.py',
                      'upload_supplemental_to_r2.py')),
 

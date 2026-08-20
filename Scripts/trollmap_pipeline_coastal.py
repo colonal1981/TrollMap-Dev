@@ -6,7 +6,7 @@ Extracts depth contours + supplemental layers for SC/GA coastal zones from
 the murray_marion_moultrie i-Boating PBF cache (which covers the coast).
 
 Output structure matches upload_to_r2.py expectations:
-  split_output3/
+  I-Boating Contours and supplemental data/       (renamed by Ryan from split_output3)
     {zone_key}.geojson                      ← contours (uploaded as {zone_key}/contours.geojson)
     supplemental/
       {zone_key}/
@@ -65,8 +65,24 @@ except ImportError:
     sys.exit(1)
 
 # ── Config ────────────────────────────────────────────────────────────────────
+#
+# OUTPUT_DIR SAID split_output3 UNTIL 2026-08-20 AND THAT DIRECTORY WAS NEVER DELETED.
+# Ryan renamed it: "i renamed split_output3 to its current name which is I-Boating Contours
+# and supplemental data". On 2026-08-19 I read the missing name as a missing directory and
+# wrote "gone for weeks" into three checkers as a retirement reason. Missing is not renamed,
+# the same way missing is not stale.
+#
+# READ THIS BEFORE RUNNING. That tree stopped being scratch output the moment r2_vs_local.py
+# named it in SOURCE_MAP: it is the local home of 131 R2 objects -- 81 shoreline,
+# 20 depth_soundings, 15 fishing_lines, 15 fishing_points -- and their R2 copies are judged
+# recoverable BECAUSE these files exist. Nothing else regenerates them; the uploader that
+# pushed them, upload_to_r2_coastal.py, was retired 2026-08-19 as an ungated second road to R2.
+#
+# So this script is a writer sitting on top of a backup. A run that produces anything different
+# from what is there -- a changed pbf_cache, a changed threshold, one zone instead of all --
+# overwrites the only copy of data the prune already counted. Copy the tree aside first.
 PBF_CACHE   = Path(r'F:\TrollMapPipeline\pbf_cache')
-OUTPUT_DIR  = Path(r'F:\TrollMapPipeline\split_output3')
+OUTPUT_DIR  = Path(r'F:\TrollMapPipeline\I-Boating Contours and supplemental data')
 DEFAULT_ZOOMS = None  # scan all available zooms
 MIN_CONTOUR_FEATURES = 5  # lower threshold for coastal — zones may be sparse
 

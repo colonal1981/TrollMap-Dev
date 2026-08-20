@@ -66,10 +66,13 @@ from upload_garmin_to_r2 import (
 # LAYERS A RETIRED PIPELINE PUT IN THE BUCKET, and the reason this is a literal set rather than
 # an import.
 #
-# These four names were reached by importing upload_to_r2_coastal.py, which was deleted
-# 2026-08-19: its OUTPUT_DIR named split_output3, a directory gone for weeks, so it could not
-# run; upload_garmin_to_r2.py covers every coastal zone; and its own comment called it an
-# ungated second road to R2. The header above says rules are imported so they cannot drift from
+# These four names were reached by importing upload_to_r2_coastal.py, which was retired
+# 2026-08-19: upload_garmin_to_r2.py covers every coastal zone, and its own comment called it
+# an ungated second road to R2. The third reason given that day -- that its OUTPUT_DIR named
+# split_output3, "a directory gone for weeks" -- was wrong. Ryan renamed that directory to
+# "I-Boating Contours and supplemental data"; it is on the drive, and SOURCE_MAP below names
+# it as the local home of the very four layers listed here. The path went stale, the data did
+# not move, and the retirement stands on the two reasons that survive. The header above says rules are imported so they cannot drift from
 # what the uploader believes -- but once the uploader is gone there is nothing left to drift
 # from, and these stop being a rule about what to WRITE and become a fact about what the bucket
 # already HOLDS. That fact belongs here, where the bucket is judged.

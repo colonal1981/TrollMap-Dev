@@ -143,11 +143,20 @@ def collect(root, repo):
                 'Worker/research/vision.js', 'js/data/lakes.js',
                 'Scripts/upload_boundaries_to_r2.py',
                 'Scripts/test_upload_boundaries_manifest.py',
-                # Retired the same day and for a sharper reason: its OUTPUT_DIR named
-                # split_output3, gone for weeks, so it could not run -- and its own comment
-                # called it an ungated second road to R2 pushing ~124 MB per zone across the
-                # sixteen zones the tier filter existed to exclude. Plausible, unrunnable, and
-                # expensive if someone ran it. 00_START_HERE carried a DO NOT RUN warning for it.
+                # Retired the same day, and the reason is SHARPER than the one first written
+                # here. Its own comment called it an ungated second road to R2 pushing ~124 MB
+                # per zone across the sixteen zones the tier filter existed to exclude, and
+                # 00_START_HERE carried a DO NOT RUN warning for it.
+                #
+                # What was wrong: I called its OUTPUT_DIR, split_output3, "a directory gone for
+                # weeks" and concluded it could not run. Ryan, 2026-08-20: "i renamed
+                # split_output3 to its current name which is I-Boating Contours and
+                # supplemental data". The tree is on the drive with the exact shape the
+                # docstring describes -- coast_ace_basin_sc.geojson at the top,
+                # supplemental/<zone>/ underneath -- and r2_vs_local.py's SOURCE_MAP has
+                # pointed at it since 2026-08-19 as the local home of 131 R2 objects.
+                # "Absent" was a stale string, not a missing directory. Repoint one line and
+                # it runs -- which makes DO NOT RUN a stronger warning, not a weaker one.
                 'Scripts/upload_to_r2_coastal.py'):
         safe('absent_' + rel.split('/')[-1],
              (lambda r: (lambda: not os.path.exists(Q(*r.split('/')))))(rel))
