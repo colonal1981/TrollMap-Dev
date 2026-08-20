@@ -114,8 +114,7 @@ GROUPS = [
 
     ('superseded_registry_builder',
      'superseded by consolidate_lake_index.py, which is the one the pipeline names',
-     lambda f: f in ('build_lake_index.py', 'build_lake_registry.py', 'merge_lakes.py',
-                     'index_waterbodies.py')),
+     lambda f: f in ('build_lake_index.py', 'build_lake_registry.py', 'merge_lakes.py')),
 
     ('superseded_boundary_builder',
      'hand-typed bounding boxes. 00_START_HERE: "when a boundary is wrong, reach for the '
@@ -185,6 +184,14 @@ REVIEW_NOTE = {
     'garmin_lake_inventory.py': 'reads the card\'s own waterbody list — useful for the '
                                 'undecoded-tile work still open.',
     'garmin_access_scan.py': 'same vintage as garmin_lake_inventory.py.',
+    'derive_waterbodies.py': 'finds water from where GARMIN put contours, not from what '
+                             '3DHP names. Nothing else on the drive does that. It is the '
+                             'source of max_depth_ft.',
+    'name_waterbodies.py': 'names derived bodies against the GPKG by bbox; falls back to '
+                           'garmin_NNNNNN when 3DHP has no name for the water.',
+    'index_waterbodies.py': 'reduces waterbodies_named/ to the 10 MB index. Classed a '
+                            'registry builder on 2026-08-04 and swept; it is not one, and '
+                            'the sweep took the only copy. Restored 2026-08-19.',
     'trollmap_qa2.py': 'contour QA with a crossing metric — worth keeping if you ever '
                        're-check decode quality.',
     'trollmap_r2_clean.py': 'wipes R2. Dangerous and rarely wanted, but not stale.',
@@ -288,6 +295,24 @@ def main():
     missing = [f for f in set(PIPELINE) | set(SUPPORT) if f not in g]
     if missing:
         print('\n  !! named as live but NOT in this folder: %s' % ', '.join(sorted(missing)))
+
+    # REVIEW_NOTE is this tool's own list of "not debris -- Ryan's call". A sweep that
+    # carries one of them off the tree has overruled that judgement silently, which is
+    # exactly how index_waterbodies.py was lost. Same shape of question as `missing`,
+    # so it is answered in the same place, and both are fatal: a warning that returns 0
+    # is not a check.
+    here = set()
+    for r, dirs, fs in os.walk(d):
+        dirs[:] = [x for x in dirs if x not in ('__pycache__', '.wrangler', '_to_delete')]
+        here.update(fs)
+    stranded = [k for k in REVIEW_NOTE
+                if not (k in here or (not k.endswith('.py')
+                                      and any(f.startswith(k) for f in here)))]
+    if stranded:
+        print('\n  !! flagged "your call" in REVIEW_NOTE but no longer anywhere under %s:'
+              % os.path.basename(d.rstrip(os.sep)))
+        for k in sorted(stranded):
+            print('       %-32s %s' % (k, REVIEW_NOTE[k].split('.')[0]))
     print()
     for name, v in groups.items():
         print('  %-28s %3d files  %5.1f MB' % (name, len(v['files']), mb(v['files'])))
@@ -449,7 +474,7 @@ def main():
         else:
             print('\n%d entries would move. Add --go.' % len(moves))
 
-    return 0
+    return 2 if (missing or stranded) else 0
 
 
 if __name__ == '__main__':
