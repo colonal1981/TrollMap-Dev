@@ -251,64 +251,18 @@ function mergeMissing(target, source) {
  * merge produced `a`.
  */
 /**
- * A TARGETED RERUN MUST NOT WIPE THE FACT LEDGER OF THE AGENTS IT DID NOT RUN.
+ * FACTS AND EVIDENCE ARE PROPERTIES OF THE LAKE'S DOCUMENT CACHE, NOT OF THE AGENTS THAT RAN.
  *
- * Every agent but `summary` starts `uniqueFacts` empty in runAgent and extracts from its own
- * documents, so flattening `agentResults` yields ONLY the facts of the agents that ran -- and the
- * Worker stores `_extractedFacts` by replacement, not by merge. Running identity and limnology on
- * Lake Norman would have cut its ledger from 54 facts across seventeen categories to the handful
- * those two produce, taking hazard, ramp, stocking, speciesAbundance, primaryForage and
- * seasonalPattern with it.
- *
- * The ledger is not a record of past work, it is an INPUT. `validateExistingFacts` refuses to run
- * without it, `recoverSmartPlanFacts` scores cached documents against it, and the fact-backed
- * identity override in assembleAndSaveProfile is gated on its length.
- *
- * ONE RULE: a stored fact survives unless the agent that produced it has just produced facts
- * again, or a fresh fact states the same thing. An agent that ran and returned NOTHING has not
- * replaced anything -- the same reason the summary patch refuses to let an empty section wipe a
- * populated one.
- *
- * Which agent a fact came from is stamped on it from now on. Facts stored before that stamp
- * existed cannot be attributed, so they fall to the second half of the rule and are kept unless
- * restated. That over-keeps slightly on profiles written before 2026-08-21 and stops the first
- * time each one is rerun.
- *
- * Fresh facts come first, because the fact-backed identity override takes the FIRST match per
- * category and the newly extracted one is the one to believe.
+ * Read the note above `allFacts` in assembleAndSaveProfile before changing either merge. On
+ * 2026-08-21 both were "fixed" to seed from the saved profile, on the reading that a targeted
+ * rerun discards the work of the agents it did not run. It does not, and the seeding was reverted.
  */
-function mergeFactLedger(savedFacts, agentResults) {
-  const key = (f) => `${String(f?.category || '').toLowerCase().trim()}`
-    + `|${String(f?.fact || '').toLowerCase().replace(/\s+/g, ' ').trim()}`;
-  const fresh = (agentResults || []).flatMap(
-    r => (r?.data?._extractedFacts || []).map(f => ({ ...f, _agent: r.agent })));
-  const spoke = new Set((agentResults || [])
-    .filter(r => (r?.data?._extractedFacts || []).length).map(r => r.agent));
-  const freshKeys = new Set(fresh.map(key));
-  const carried = (savedFacts || []).filter(
-    f => (f && f._agent) ? !spoke.has(f._agent) : !freshKeys.has(key(f)));
-  return { facts: [...fresh, ...carried], carried: carried.length };
-}
-
-function evidenceEntryKey(e) {
-  if (!e || typeof e !== 'object') return `raw:${JSON.stringify(e ?? null)}`;
-  return [e.sourceType, e.sourceLabel, e.sourceUrl, e.method, e.quote]
-    .map(v => String(v ?? '')).join('|');
-}
-
 function mergeEvidenceMaps(a = {}, b = {}) {
   const out = cloneJson(a) || {};
   for (const [section, fields] of Object.entries(b || {})) {
     out[section] = out[section] || {};
     for (const [field, entries] of Object.entries(fields || {})) {
-      const merged = [];
-      const seenAt = new Map();
-      for (const entry of [...(out[section][field] || []), ...(cloneJson(entries) || [])]) {
-        const key = evidenceEntryKey(entry);
-        if (seenAt.has(key)) merged[seenAt.get(key)] = entry;
-        else { seenAt.set(key, merged.length); merged.push(entry); }
-      }
-      out[section][field] = merged;
+      out[section][field] = (out[section][field] || []).concat(cloneJson(entries) || []);
     }
   }
   return out;
@@ -2805,20 +2759,13 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     saltwaterRegulations: cloneJson(existingSavedProfile.saltwaterRegulations || existingSavedProfile.saltwater_regulations || {}),
   };
 
-  // A TARGETED RERUN MUST NOT DISCARD THE EVIDENCE OF THE AGENTS IT DID NOT RUN.
-  //
-  // `sources` a few dozen lines below has been seeded from the saved profile for exactly this
-  // reason since resume runs were added -- its comment says so. `evidence` was left on the
-  // replace path, so rebuilding it from the deterministic pass and WQP alone dropped everything
-  // else the stored profile held. Lake Norman's map carries eleven habitat sub-keys, one for
-  // navigation and one for summary; nothing deterministic regenerates the last two.
-  //
-  // The seed goes first so the fresh entries land on top of it and, where they describe the same
-  // claim by the same method, replace it.
-  const evidence = mergeEvidenceMaps(
-    mergeEvidenceMaps(existingSavedProfile.evidence || {}, det.evidence || {}),
-    buildWqpEvidence(wqp)
-  );
+  // Rebuilt every save from the deterministic pass and WQP, and that is correct: NO agent result
+  // contributes an evidence entry anywhere in this function, and the deterministic pass
+  // regenerates habitat, identity, navigation and summary evidence on every run. Measured on Lake
+  // Norman across a rerun of two agents, 2026-08-21: habitat 11 sub-keys, identity 3, limnology 2,
+  // navigation 1, summary 1 -- identical before and after. Seeding this from the saved profile
+  // adds nothing, and would force a deduplicating merge to stop the map growing on every save.
+  const evidence = mergeEvidenceMaps(det.evidence || {}, buildWqpEvidence(wqp));
   // Defensive: ensure biology arrays are real arrays. A malformed value (e.g. a
   // string from an earlier LLM run or a partial save) previously caused profile
   // assembly to throw "biology.knownStockings.map is not a function" — most often
@@ -2940,11 +2887,30 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   const contradictions = agentResults.flatMap(r => r.data?.contradictions || []);
   const agentsRan = new Set(agentResults.map(r => r.agent));
 
-  const factLedger = mergeFactLedger(existingSavedProfile._extractedFacts, agentResults);
-  if (factLedger.carried) {
-    log(`  Carried ${factLedger.carried} saved fact(s) from agents that did not speak this pass.`);
-  }
-  const allFacts = factLedger.facts;
+  // FACTS ARE A PROPERTY OF THE LAKE'S DOCUMENT CACHE, NOT OF THE AGENTS THAT RAN.
+  //
+  // This line looks like it discards the facts of every agent that did not run, and on 2026-08-21
+  // it was rewritten to seed from the saved profile on exactly that reading. THAT WAS WRONG and
+  // the rewrite was reverted. Do not repeat it.
+  //
+  // `runAgent` loads the LAKE-WIDE normalized document cache -- `/research/get-normalized?lake=`,
+  // unfiltered in full mode, falling back to all docs in resume mode when nothing carries this
+  // agent's tag -- and `/research/analyze-facts` carries NO AGENT KEY. Its request body is
+  // {lakeName, baseName, state, zoneKey, docIndex, documents} and its prompt extracts one fixed
+  // 35-category list covering every section: surfaceArea and maxDepthFt through stocking,
+  // speciesAbundance, ramp, hazard and summary. Whichever agents run, they re-derive the whole
+  // ledger from the same corpus.
+  //
+  // MEASURED, Lake Norman, 2026-08-21. Ryan watched the run: TWO agents, identity and limnology.
+  // The saved v12.0 profile kept 54 facts across the same seventeen categories as v11 -- biology's
+  // stocking, speciesAbundance and primaryForage among them -- with only re-extraction drift
+  // (summary 16 -> 14, oxygen 3 -> 2, secchi 3 -> 2).
+  //
+  // Stamping each fact with an agent and keeping the ones whose agent "did not speak" is strictly
+  // worse than this line: it pins a stale fact to an agent that never owned it and lets it survive
+  // a pass that legitimately re-derived the same category. `A_PARTIAL_RERUN_KEPT_ONLY_WHAT_IT_RAN_
+  // 2026-08-21.md` has the whole trail.
+  const allFacts = agentResults.flatMap(r => r.data?._extractedFacts || []);
 
   // ── Fact-backed identity override ──────────────────────────────────────
   // The LLM sometimes overrides pre-extracted numeric identity values with
