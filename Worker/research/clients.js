@@ -8,18 +8,49 @@ import { callLLM, extractLLMText } from '../worker-core.js';
 const TINYFISH_BASE = 'https://api.search.tinyfish.ai';
 const TINYFISH_FETCH_BASE = 'https://api.fetch.tinyfish.ai';
 
-async function tinyfishSearch({ query, domain_type = 'web', purpose, location, language, recency_minutes, after_date, before_date }, env) {
+/** Comma-separated, the way TinyFish wants domain lists. Arrays or a string both work in. */
+function csvDomains(v) {
+  const list = Array.isArray(v) ? v : String(v || '').split(',');
+  const out = list.map((d) => String(d || '').trim()).filter(Boolean);
+  return out.length ? out.join(',') : null;
+}
+
+async function tinyfishSearch({ query, domain_type = 'web', purpose, location, language, recency_minutes, after_date, before_date, include_domains, exclude_domains, pub_year_min, pub_year_max }, env) {
   const key = env.TINYFISH_API_KEY;
   if (!key) throw new Error('TINYFISH_API_KEY not configured');
-  
+
   const params = new URLSearchParams({ query });
   if (domain_type) params.set('domain_type', domain_type);
   if (purpose) params.set('purpose', purpose);
   if (location) params.set('location', location);
   if (language) params.set('language', language);
-  if (recency_minutes) params.set('recency_minutes', String(recency_minutes));
-  if (after_date) params.set('after_date', after_date);
-  if (before_date) params.set('before_date', before_date);
+
+  // DOMAIN FILTERING BY PARAMETER, NOT BY OPERATOR. TinyFish still accepts `site:`/`-site:`
+  // inside the query but documents them as DEPRECATED, and says why: the dedicated params
+  // "don't collide with other query syntax". Ours collide constantly -- 52 of the 76 operator
+  // uses in discover.js sit next to a quoted phrase in the same string.
+  const inc = csvDomains(include_domains);
+  const exc = csvDomains(exclude_domains);
+  if (inc) params.set('include_domains', inc);
+  if (exc) params.set('exclude_domains', exc);
+
+  // RESEARCH PAPERS DO NOT TAKE A DATE WINDOW. TinyFish: recency_minutes / after_date /
+  // before_date "are not supported for domain_type=research_paper" -- pub_year_min/max replace
+  // them. Passing both is an invalid request, and `biology` query 3 is a research_paper search
+  // sitting one config change away from acquiring a recency window it cannot use.
+  const isPaper = domain_type === 'research_paper';
+  if (isPaper) {
+    if (recency_minutes || after_date || before_date) {
+      console.warn('[tinyfish] dropping the date window on a research_paper search — '
+                 + 'that endpoint takes pub_year_min/pub_year_max instead');
+    }
+    if (Number.isFinite(pub_year_min)) params.set('pub_year_min', String(pub_year_min));
+    if (Number.isFinite(pub_year_max)) params.set('pub_year_max', String(pub_year_max));
+  } else {
+    if (recency_minutes) params.set('recency_minutes', String(recency_minutes));
+    if (after_date) params.set('after_date', after_date);
+    if (before_date) params.set('before_date', before_date);
+  }
   
   const res = await fetch(`${TINYFISH_BASE}?${params.toString()}`, {
     headers: { 'X-API-Key': key }
@@ -118,18 +149,39 @@ function startDateForDays(days, now = Date.now()) {
   return new Date(now - days * 86400000).toISOString().slice(0, 10);
 }
 
-/** Normalise any provider's row into the shape the existing callers already read. */
+/**
+ * Normalise any provider's row WITHOUT throwing away what it sent.
+ *
+ * THE FIRST VERSION OF THIS RETURNED A FIXED SHAPE and that was a regression, committed the same
+ * day. discover.js reads more off a result than the four obvious fields:
+ *
+ *     r.site_name / r.siteName      -> candidate.siteName
+ *     r.date / r.published_date     -> candidate.publishedDate
+ *     r.score                       -> candidate.searchScore
+ *     r.pdf_url                     -> a DIRECT PDF LINK on research_paper results
+ *
+ * publishedDate and searchScore both feed scoreCandidateRelevance(), so a shape that dropped them
+ * quietly degraded the ranking of every result while every test stayed green. Normalising to a
+ * shape without reading the consumer first is the same mistake as counting the wrong thing.
+ *
+ * So: spread the original row, then FILL what is missing. Never overwrite what a provider
+ * actually said -- a real snippet is better than markdown truncated to snippet length.
+ */
 function normaliseHit(r, provider) {
   const content = r.markdown || r.content || r.snippet || r.description || r.raw_content || '';
   return {
+    ...r,
     url: r.url || r.link || null,
     title: r.title || r.url || null,
     content,
-    // Callers variously read .markdown/.snippet/.description. Carry all of them so switching
-    // provider cannot silently empty a field one call site happens to use.
-    markdown: content,
-    snippet: content,
-    description: content,
+    // Callers variously read .markdown/.snippet/.description. Fill the ones the provider did not
+    // send so switching provider cannot silently empty a field one call site happens to use.
+    markdown: r.markdown || content,
+    snippet: r.snippet || content,
+    description: r.description || content,
+    // Tavily and Firecrawl spell the date differently; carry both spellings so the consumer's
+    // `r.date || r.published_date` finds it whoever answered.
+    published_date: r.published_date || r.publishedDate || r.date || undefined,
     provider,
   };
 }
@@ -142,7 +194,20 @@ function normaliseHit(r, provider) {
  * so a run that quietly fell through to the expensive rung says so in the log.
  */
 async function searchWeb(params, env) {
-  const { query, recency_minutes, after_date, before_date } = params || {};
+  const { query, recency_minutes, after_date, before_date,
+          include_domains, exclude_domains } = params || {};
+  const incList = (Array.isArray(include_domains) ? include_domains
+                  : String(include_domains || '').split(',')).map((d) => String(d).trim()).filter(Boolean);
+  const excList = (Array.isArray(exclude_domains) ? exclude_domains
+                  : String(exclude_domains || '').split(',')).map((d) => String(d).trim()).filter(Boolean);
+  // Firecrawl and Jina publish no domain parameter, so for those two the restriction goes back
+  // into the query as operators -- which is what every provider was being given before today.
+  // Not a regression for them; TinyFish and Tavily are the two that get upgraded to real params.
+  const operatorSuffix = [
+    incList.length ? `(${incList.map((d) => `site:${d}`).join(' OR ')})` : '',
+    ...excList.map((d) => `-site:${d}`),
+  ].filter(Boolean).join(' ');
+  const queryWithOperators = operatorSuffix ? `${query} ${operatorSuffix}` : query;
   const wantsWindow = !!(recency_minutes || after_date || before_date);
   const days = daysFromRecency(recency_minutes);
   const skipped = [];
@@ -162,6 +227,9 @@ async function searchWeb(params, env) {
   if (env.TAVILY_API_KEY) {
     try {
       const body = { query, search_depth: 'basic', include_answer: false, max_results: 5 };
+      // Tavily takes real arrays: 300 include, 150 exclude.
+      if (incList.length) body.include_domains = incList.slice(0, 300);
+      if (excList.length) body.exclude_domains = excList.slice(0, 150);
       if (after_date) body.start_date = after_date;
       if (before_date) body.end_date = before_date;
       // EXACT, not bucketed. `time_range` only has day/week/month/year, so a 45-day window
@@ -204,7 +272,7 @@ async function searchWeb(params, env) {
     const budget = await checkFirecrawlBudget(env, 1);
     if (budget.allowed) {
       try {
-        const body = { query, limit: 5 };
+        const body = { query: queryWithOperators, limit: 5 };
         if (tbs) body.tbs = tbs;
         const res = await fetch('https://api.firecrawl.dev/v2/search', {
           method: 'POST',
@@ -240,7 +308,7 @@ async function searchWeb(params, env) {
     skipped.push('jina: s.jina.ai takes no date filter, and the query asked for one');
   } else if (env.JINA_API_KEY) {
     try {
-      const res = await fetch(`https://s.jina.ai/${encodeURIComponent(query)}`, {
+      const res = await fetch(`https://s.jina.ai/${encodeURIComponent(queryWithOperators)}`, {
         headers: {
           'Authorization': `Bearer ${env.JINA_API_KEY}`,
           'Accept': 'application/json',
@@ -1290,4 +1358,4 @@ async function fetchLiveRegsAmendments(state, env) {
   return out;
 }
 
-export { TINYFISH_BASE, TINYFISH_FETCH_BASE, tinyfishSearch, tinyfishFetch, searchWeb, daysFromRecency, tbsForDays, startDateForDays, normaliseHit, FIRECRAWL_HARD_STOP, FIRECRAWL_KV_KEY, FIRECRAWL_TTL_MS, fetchFirecrawlBalance, checkFirecrawlBudget, recordFirecrawlUsage, scrapeDoFetch, REGS_R2_BASE, REGS_2026_EFFECTIVE, REGS_EFFECTIVE, REGS_DATE_VERIFIED, useDigest2026, USE_2026, STATE_REGULATIONS_CONFIG, SALTWATER_DIGEST, SALTWATER_HEAD, FRESHWATER_ONLY, sliceSaltwaterSection, freshwaterRegionOf, extractSaltwaterDigest, DIGEST_BUDGET, fetchSaltwaterRegulations, fetchLiveRegsAmendments, extractMarkdownTables, parseSCTable, parseNCTable, parseGATable, parseTNStatewide, parseTNExceptions, parseTNRegion, PARSERS, normalizeLakeName, parseNCRegulationsWithLLM, parseRegulationsWithLLM, fetchStateRegulations, getLakeRegulations };
+export { TINYFISH_BASE, TINYFISH_FETCH_BASE, tinyfishSearch, tinyfishFetch, searchWeb, daysFromRecency, tbsForDays, startDateForDays, normaliseHit, csvDomains, FIRECRAWL_HARD_STOP, FIRECRAWL_KV_KEY, FIRECRAWL_TTL_MS, fetchFirecrawlBalance, checkFirecrawlBudget, recordFirecrawlUsage, scrapeDoFetch, REGS_R2_BASE, REGS_2026_EFFECTIVE, REGS_EFFECTIVE, REGS_DATE_VERIFIED, useDigest2026, USE_2026, STATE_REGULATIONS_CONFIG, SALTWATER_DIGEST, SALTWATER_HEAD, FRESHWATER_ONLY, sliceSaltwaterSection, freshwaterRegionOf, extractSaltwaterDigest, DIGEST_BUDGET, fetchSaltwaterRegulations, fetchLiveRegsAmendments, extractMarkdownTables, parseSCTable, parseNCTable, parseGATable, parseTNStatewide, parseTNExceptions, parseTNRegion, PARSERS, normalizeLakeName, parseNCRegulationsWithLLM, parseRegulationsWithLLM, fetchStateRegulations, getLakeRegulations };

@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
-  searchWeb, daysFromRecency, tbsForDays, startDateForDays, normaliseHit,
+  searchWeb, daysFromRecency, tbsForDays, startDateForDays, normaliseHit, csvDomains,
 } from '../Worker/research/clients.js';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -176,7 +176,86 @@ describe('a fallback must not silently answer a different question', () => {
   });
 });
 
+describe('domain filtering goes in as a PARAMETER where the API has one', () => {
+  // TinyFish still accepts site:/-site: inside the query but documents them as DEPRECATED, and
+  // says exactly why: the dedicated params "don't collide with other query syntax". Ours collide
+  // constantly — 52 of the 76 operator uses in discover.js sit beside a quoted phrase.
+
+  it('Tavily gets real arrays', async () => {
+    const { calls } = await withProviders({ tinyfish: 'empty', tavily: hits(2) },
+      () => searchWeb({ query: 'q', include_domains: ['dnr.sc.gov'], exclude_domains: ['facebook.com', 'youtube.com'] }, ENV()));
+    const body = calls.find((c) => c.who === 'tavily').body;
+    expect(body.include_domains).toEqual(['dnr.sc.gov']);
+    expect(body.exclude_domains).toEqual(['facebook.com', 'youtube.com']);
+  });
+
+  it('the query itself is left alone for the providers that take parameters', async () => {
+    const { calls } = await withProviders({ tinyfish: 'empty', tavily: hits(1) },
+      () => searchWeb({ query: '"Lake Murray" fisheries survey', include_domains: ['dnr.sc.gov'] }, ENV()));
+    expect(calls.find((c) => c.who === 'tavily').body.query).toBe('"Lake Murray" fisheries survey');
+  });
+
+  it('Firecrawl and Jina publish no domain parameter, so they get the operator form', async () => {
+    // Not a regression for those two — it is what EVERY provider was given before today.
+    const { calls } = await withProviders({ tinyfish: 'empty', tavily: 'empty', firecrawl: hits(1, 'data') },
+      () => searchWeb({ query: 'q', include_domains: ['a.gov', 'b.gov'], exclude_domains: ['x.com'] }, ENV()));
+    const q = calls.find((c) => c.who === 'firecrawl').body.query;
+    expect(q).toContain('(site:a.gov OR site:b.gov)');
+    expect(q).toContain('-site:x.com');
+  });
+
+  it('accepts a comma-separated string as readily as an array', async () => {
+    const { calls } = await withProviders({ tinyfish: 'empty', tavily: hits(1) },
+      () => searchWeb({ query: 'q', include_domains: 'a.gov, b.gov' }, ENV()));
+    expect(calls.find((c) => c.who === 'tavily').body.include_domains).toEqual(['a.gov', 'b.gov']);
+  });
+
+  it('no domains means no suffix and no parameter', async () => {
+    const { calls } = await withProviders({ tinyfish: 'empty', tavily: hits(1) },
+      () => searchWeb({ query: 'q' }, ENV()));
+    const body = calls.find((c) => c.who === 'tavily').body;
+    expect(body.include_domains).toBeUndefined();
+    expect(body.query).toBe('q');
+  });
+});
+
+describe('csvDomains', () => {
+  it('is what TinyFish asks for: comma-separated, no spaces', () => {
+    expect(csvDomains(['a.gov', 'b.gov'])).toBe('a.gov,b.gov');
+    expect(csvDomains(' a.gov , b.gov ')).toBe('a.gov,b.gov');
+    expect(csvDomains([])).toBeNull();
+    expect(csvDomains('')).toBeNull();
+    expect(csvDomains(null)).toBeNull();
+  });
+});
+
 describe('one result shape, whoever answered', () => {
+  it('does not THROW AWAY what the provider sent — the regression this shape caused', () => {
+    // The first version returned a fixed {url,title,content,...} object, and discover.js reads
+    // more than that off a result: r.site_name -> candidate.siteName, r.date/r.published_date
+    // -> publishedDate, r.score -> searchScore, and r.pdf_url, a DIRECT PDF LINK on
+    // research_paper results. publishedDate and searchScore both feed scoreCandidateRelevance(),
+    // so the fixed shape quietly degraded the ranking of every result with every test green.
+    const raw = { url: 'https://x', title: 't', snippet: 's', site_name: 'dnr.sc.gov',
+                  date: '2026-08-01', score: 0.91, pdf_url: 'https://x.pdf', position: 3 };
+    const h = normaliseHit(raw, 'tinyfish');
+    expect(h.site_name).toBe('dnr.sc.gov');
+    expect(h.score).toBe(0.91);
+    expect(h.pdf_url).toBe('https://x.pdf');
+    expect(h.position).toBe(3);
+  });
+
+  it('never overwrites a real snippet with the full body', () => {
+    const h = normaliseHit({ url: 'u', snippet: 'the short one', markdown: 'the very long one' }, 'tinyfish');
+    expect(h.snippet).toBe('the short one');
+    expect(h.content).toBe('the very long one');
+  });
+
+  it('carries the date under the spelling the consumer reads', () => {
+    expect(normaliseHit({ url: 'u', date: '2026-08-01' }, 'tinyfish').published_date).toBe('2026-08-01');
+    expect(normaliseHit({ url: 'u', published_date: '2026-08-01' }, 'tavily').published_date).toBe('2026-08-01');
+  });
+
   it('carries content under every field the existing callers read', () => {
     // Callers variously read .markdown / .content / .snippet / .description. Switching provider
     // must not silently empty the one a given call site happens to use.
