@@ -18,10 +18,18 @@ forms and the three shallow ones carry NONE of them:
 
 So a full re-extract is not needed, and 226 tiles at 2.0 GB is worth not doing twice.
 
-HOW A TILE IS IDENTIFIED. An affected tile's existing extract is capped: its deepest contour is
-exactly 83.0 ft, the last 3 dm rung that fits in one byte. That is the ceiling, and no honest
-lake tops out there by coincidence -- the value is a fingerprint, not a depth. The scan stops the
-moment it sees one, so deep tiles cost a fraction of a file each.
+HOW A TILE IS IDENTIFIED, AND THE TRAP THIS WALKED INTO ONCE.
+
+A capped tile's deepest contour is exactly 83.0 ft, the last 3 dm rung that fits in one byte.
+**That is a statement about the MAXIMUM, not about the presence of the value.** The first version
+of this script searched for `"depth_ft": 83` and stopped at the first hit -- which was correct
+only while 83.0 WAS the maximum. The moment the decoder was fixed, every deep tile legitimately
+contained contours at 83 ft on its way down to 348, and the scan reported 121 of 238 tiles capped
+on a run that had worked perfectly.
+
+So: read until a depth GREATER than 83 appears -- that tile is fine, stop there -- and only call a
+tile capped if the whole file went by without one. Deep tiles still exit early, because they hit
+something past 83 quickly. Shallow tiles read through, and they are the small ones.
 
 The QA footer's `arc_missing` is carried as a cross-check: on every tile measured it is non-zero
 if and only if the tile was capped, because a record framed at the wrong offset points its arc
@@ -32,13 +40,16 @@ Writes outputs/affected_tiles.txt and outputs/affected_lakes.txt. The lake list 
 """
 import argparse, glob, gzip, json, os, re, sys
 
-CEILING = re.compile(rb'"depth_ft":\s*83(?:\.0)?\s*[,}]')
+DEPTH   = re.compile(rb'"depth_ft":\s*([0-9.]+)')
 ARCMISS = re.compile(rb'"arc_missing":\s*(\d+)')
+CEILING_FT = 83.0
 
 
 def scan(path, chunk=1 << 22):
-    """(capped, arc_missing). Stops early the moment the ceiling value appears."""
+    """(capped, arc_missing, max_depth_ft). Stops as soon as anything deeper than the ceiling
+    appears -- that tile decoded past one byte and is fine."""
     arc = None
+    mx = -1.0
     tail = b''
     with gzip.open(path, 'rb') as fh:
         while True:
@@ -46,13 +57,20 @@ def scan(path, chunk=1 << 22):
             if not ch:
                 break
             buf = tail + ch
-            if CEILING.search(buf):
-                return True, arc
+            for m in DEPTH.finditer(buf):
+                try:
+                    v = float(m.group(1))
+                except ValueError:
+                    continue
+                if v > mx:
+                    mx = v
+                if v > CEILING_FT:
+                    return False, arc, mx
             m = ARCMISS.search(buf)
             if m:
                 arc = int(m.group(1))
             tail = buf[-64:]
-    return False, arc
+    return (mx == CEILING_FT), arc, mx
 
 
 def main():
@@ -74,7 +92,7 @@ def main():
     for i, p in enumerate(files, 1):
         tid = os.path.basename(p).split('.')[0]
         try:
-            capped, arc = scan(p)
+            capped, arc, mx = scan(p)
         except Exception as ex:
             unreadable.append((tid, str(ex)))
             print('  [%3d/%d] %-8s UNREADABLE: %s' % (i, len(files), tid, ex))
@@ -83,9 +101,9 @@ def main():
             affected.append(tid)
         else:
             clean.append(tid)
-        print('  [%3d/%d] %-8s %s%s' % (i, len(files), tid,
+        print('  [%3d/%d] %-8s %-20s max %7.1f ft%s' % (i, len(files), tid,
               'CAPPED - re-extract' if capped else 'clean',
-              '' if arc is None else '   arc_missing=%d' % arc))
+              mx, '' if arc is None else '   arc_missing=%d' % arc))
 
     # Tiles are stored as C<id> for contours/depth_areas and B<id> for the rest; the
     # tile->lake map is keyed on the B form. Ask for both, because a lake reached through
