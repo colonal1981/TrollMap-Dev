@@ -685,6 +685,7 @@ function deriveDepthStatistics(contourGeo, depthGeo, boundaryRing) {
   let volumeAcFt = 0;
   let polyMaxDepth = 0;
   let openBanded = false; // true if any polygon is missing depth_max_ft (i.e. "≥ X ft")
+  let openBandArea = 0;   // acres carried by those open bands -- see the branch below
   let bandCount = 0;
   if (depthGeo?.features?.length) {
     for (const f of depthGeo.features) {
@@ -703,8 +704,20 @@ function deriveDepthStatistics(contourGeo, depthGeo, boundaryRing) {
           zEffective = (zMin + zMax) / 2;
           if (zMax > polyMaxDepth) polyMaxDepth = zMax;
         } else if (isFinite(zMin)) {
+          // AN OPEN BAND HAS A FLOOR AND NO CEILING, and zMin is the only honest number for it.
+          // Garmin stops banding at 83 ft and marks everything below that `be <lo> 00` --
+          // "deeper than". On Lake Jocassee the open polygons are the deep basin: measured
+          // 2026-08-21, they sit a mean 2,791 m from the lake centre against 3,240 m for the
+          // fine bands, and the deepest rung is the most central of all.
+          //
+          // So this term is a LOWER BOUND, not a midpoint, and the average built from it is a
+          // lower bound too. The area is tracked so the caller can say so instead of printing a
+          // floor as though it were a mean -- inventing a ceiling here would cap every deep lake
+          // at its shallowest possible reading, which is the mistake the one-byte contour depth
+          // already made once today.
           zEffective = zMin;
           openBanded = true;
+          openBandArea += acres;
           if (zMin > polyMaxDepth) polyMaxDepth = zMin;
         } else {
           continue; // no usable depth on this polygon
@@ -730,6 +743,8 @@ function deriveDepthStatistics(contourGeo, depthGeo, boundaryRing) {
   out.contourMaxDepthFt = isFinite(contourMaxDepth) && contourMaxDepth > 0 ? contourMaxDepth : null;
   out.polyMaxDepthFt = isFinite(polyMaxDepth) && polyMaxDepth > 0 ? polyMaxDepth : null;
   out.openBanded = openBanded;
+  out.openBandAreaAcres = Math.round(openBandArea * 10) / 10;
+  out.openBandAreaShare = totalBandArea > 0 ? Math.round(openBandArea / totalBandArea * 1000) / 1000 : 0;
 
   // 3. Compute surface area from boundary and coverage ratio
   const boundaryArea = boundaryRing ? polygonAreaAcresLonLat(boundaryRing) : 0;
@@ -775,6 +790,9 @@ function deriveDepthStatistics(contourGeo, depthGeo, boundaryRing) {
     const avg = volumeAcFt / totalBandArea;
     if (isFinite(avg) && avg > 0) {
       out.averageDepthFt = Math.round(avg * 10) / 10;
+      // Every open band contributed its FLOOR to the volume, so the mean cannot be too high and
+      // may be well too low. A consumer that prints this number has to be able to say "at least".
+      out.averageDepthIsLowerBound = openBanded;
       out.ok = true;
     }
   } else if (totalBandArea > 0 && out.maxDepthFt) {
@@ -902,6 +920,12 @@ async function deriveGeospatialStructureFacts(lakeName) {
     geoMeta.bathymetryCoverage = depthStats.coverage;
     geoMeta.bathymetryBandCount = depthStats.bandCount;
     geoMeta.bathymetryOpenBanded = !!depthStats.openBanded;
+    // How much of the lake is "deeper than X" with no ceiling, and therefore how much of the
+    // average is a floor rather than a midpoint. Travels with the number so a reader downstream
+    // is not left guessing which kind of average this is.
+    geoMeta.bathymetryOpenBandAreaAcres = depthStats.openBandAreaAcres ?? null;
+    geoMeta.bathymetryOpenBandShare = depthStats.openBandAreaShare ?? null;
+    geoMeta.averageDepthIsLowerBound = !!depthStats.averageDepthIsLowerBound;
     const bathyEntry = buildEvidenceEntry(
       'internal_geospatial_layer',
       'TrollMap bathymetric contour/depth-area polygons',

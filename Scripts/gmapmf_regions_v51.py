@@ -255,9 +255,20 @@ def decode_areas(path, zoom0_only=False):
                     out.append({"pts": pts, "props": pr}); continue
                 if r["band"]:
                     lo, hi = r["band"]
-                    pr.update(depth_min_dm=lo, depth_max_dm=hi,
-                              depth_min_ft=round(lo / 3.048), depth_max_ft=round(hi / 3.048),
-                              band="%d-%d ft" % (round(lo / 3.048), round(hi / 3.048)))
+                    # AN OPEN BAND HAS A FLOOR AND NO CEILING. `be <lo> 00` is Garmin's "deeper
+                    # than <lo>", and it is the deepest thing on the card -- there is no band
+                    # below 83 ft, only this. Writing `depth_max_dm = lo` would turn a lower
+                    # bound into a measurement and cap every deep lake at its shallowest possible
+                    # reading, which is the mistake the one-byte contour depth already made once.
+                    if hi is None:
+                        pr.update(depth_min_dm=lo, depth_max_dm=None,
+                                  depth_min_ft=round(lo / 3.048), depth_max_ft=None,
+                                  open_band=True,
+                                  band="deeper than %d ft" % round(lo / 3.048))
+                    else:
+                        pr.update(depth_min_dm=lo, depth_max_dm=hi,
+                                  depth_min_ft=round(lo / 3.048), depth_max_ft=round(hi / 3.048),
+                                  band="%d-%d ft" % (round(lo / 3.048), round(hi / 3.048)))
                     pr["layer"] = "depth_areas"; st["depth_areas"] += 1
                 elif len(at) >= 6 and at[:4] == b"\x12\x10\x07\x0f":
                     # B2: the u16 at +4 of a `12 10 07 0f` attribute is a WATER-BODY ID.

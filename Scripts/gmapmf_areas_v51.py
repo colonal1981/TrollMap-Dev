@@ -46,7 +46,27 @@ blob offset +4, plus a small tail. The 2-byte code does NOT resolve as a pool-1 
 landing on a string start by coincidence -- the exact false positive Session A warned
 about. The codes are class identifiers and still need a mapping.
 """
-BAND_TAG = 0xbc
+BAND_TAG = 0xbc          # fine band, rides directly after the selectors
+# TWO MORE BAND TAGS, AND THEY RIDE INSIDE THE ATTRIBUTE BLOCK.
+#
+# `bc` is the fine ladder and it is the only one this walker recognised, so every polygon using
+# the other two was framed correctly, had its depth left inside an opaque `attr` blob, and was
+# filed by regions_v51 as a generic "area" instead of bathymetry. On C4E0CE that is 5,699 depth
+# polygons -- 4,935 coarse and 764 open -- routed away from the depth_areas layer.
+#
+#   bf <lo> <hi>    coarse band ladder, 0..238 dm. 35 distinct pairs, all ascending.
+#   be <lo> 00      OPEN band: "deeper than <lo>", no upper bound. Second byte is always 0.
+#
+# `be` carries only three values ever -- 219, 238 and 253 dm (71.9, 78.1, 83.0 ft) -- the top
+# three rungs of the ladder. GARMIN DOES NOT BAND BELOW 83 FT. It stops and marks the rest open,
+# which is why no depth-area byte anywhere on the card exceeds one byte, and why hunting for a
+# wider field here was hunting for something that does not exist.
+#
+# MEASURED, C4E0CE, within 6 km of Lake Jocassee's centroid: mean distance from the centre is
+# 2,791 m for `be`, 3,051 m for `bf`, 3,240 m for `bc`, and the deepest `be` rung (253 dm) is the
+# most central of all at 2,616 m. Deeper is more central. These are the deep-basin polygons.
+BAND_COARSE = 0xbf
+BAND_OPEN   = 0xbe
 
 def walk(b, win=40):
     """Yield (record, end) for one area sub-block payload. Returns (records, consumed)."""
@@ -77,6 +97,11 @@ def walk(b, win=40):
                 r += 1
             if hit < 0: break
             attr = b[a:hit]; e = hit + 5
+            # A depth band inside the attribute block is still a depth band. `hi` is None for an
+            # open band -- the polygon has a floor and no ceiling, and inventing one would turn a
+            # bound into a measurement.
+            if len(attr) >= 3 and attr[0] in (BAND_COARSE, BAND_OPEN):
+                band = (attr[1], None if attr[0] == BAND_OPEN else attr[2])
         ref = None
         if op & 1:
             if e+3 <= n: ref = b[e] | b[e+1] << 8 | b[e+2] << 16
