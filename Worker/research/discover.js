@@ -149,6 +149,29 @@ async function handleResearchDiscover(request, env) {
   // Fisheries Investigation / Statewide Research reports rather than a simple
   // per-lake page. Keep this as a function so the biology query list can call it
   // safely for each lake name.
+  // `filetype:pdf` WORKS, AND IT MATCHES CONTENT TYPE RATHER THAN EXTENSION. Do not remove it.
+  // Measured in TinyFish's own playground, 2026-08-21, after a session had talked itself into
+  // deleting it from all sixteen templates that carry it:
+  //
+  //   annual report site:dnr.sc.gov filetype:pdf          10 results, 10 of 10 .pdf
+  //   annual report site:dnr.sc.gov                       10 results,  7 of 10 .pdf
+  //
+  //   dissolved oxygen site:ncwildlife.gov filetype:pdf   10 of 10 PDFs, NONE ending in .pdf --
+  //                                                       every one a /media/<n>/download?attachment
+  //   dissolved oxygen site:ncwildlife.gov                3 of 10 are HTML: an erosion-control
+  //                                                       page, a species page, a blog post
+  //
+  // THE NC ARM IS THE ONE THAT MATTERS. NCWRC serves every report extensionless, so an operator
+  // filtering on `.pdf` would return nothing there. It returns ten, which is what proves it
+  // reads the content type -- and it displaces three HTML results with three more real surveys.
+  //
+  // THE TRAP: an SC-only sample cannot tell "matches extension" from "matches content type",
+  // because every SC PDF happens to end in .pdf. Both hypotheses predict identical output, so
+  // that test has no power to separate them. Ask NC.
+  //
+  // (Separately: a query that returns ZERO against a site with thousands of PDFs is a broken
+  // instrument, not a finding. The 0-result run that started this was a malformed query with a
+  // literal `query=` inside it.)
   const SC_FWFI_QUERY = (lake) => `"${lake}" "Fisheries Investigations" site:dnr.sc.gov filetype:pdf`;
 
   // ─── CANONICAL URL NORMALIZER ─────────────────────────────────────────────
