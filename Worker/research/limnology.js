@@ -319,14 +319,33 @@ async function handleResearchLimnologyData(request, env, opts = {}) {
     };
   })() : null;
 
+  // EACH CHARACTERISTIC CARRIES ITS OWN SAMPLE DATE.
+  //
+  // `lastObserved` below is the NEWEST of temperature, DO and turbidity and it stays, because
+  // consumers read it. But it is the wrong date to print beside any one of them: on a lake where
+  // DO was sampled this summer and temperature last December, the group's date makes the
+  // temperature look eight months fresher than it is.
+  //
+  // These are grab samples of whatever age WQP last recorded, and nothing refreshes them. Lake
+  // Norman's temperature is 43.88F from 2025-12-16, and it was reaching an August Smart Plan
+  // prompt as "recent surface water about 43.88F" -- undated, in the same prompt as a live 85.5F
+  // reading off USGS 00010 at 0214264790. The prose that hands these to a model has to be able
+  // to date them, and it could not, because `summarizeType` already computes the per-type date
+  // and it was being thrown away on write.
+  const swTemp = summarizeType('temperature');
+  const swDO = summarizeType('do');
+  const swTurbidity = summarizeType('turbidity');
   const surfaceWater = {
-    recentTempF: summarizeType('temperature')?.value ?? null,
-    recentDissolvedOxygenMgL: summarizeType('do')?.value ?? null,
-    recentTurbidityNTU: summarizeType('turbidity')?.value ?? null,
+    recentTempF: swTemp?.value ?? null,
+    recentTempLastObserved: swTemp?.lastObserved ?? null,
+    recentDissolvedOxygenMgL: swDO?.value ?? null,
+    recentDissolvedOxygenLastObserved: swDO?.lastObserved ?? null,
+    recentTurbidityNTU: swTurbidity?.value ?? null,
+    recentTurbidityLastObserved: swTurbidity?.lastObserved ?? null,
     recentConductivity: summarizeType('conductivity')?.value ?? null,
     recentAlkalinityMgL: summarizeType('alkalinity')?.value ?? null,
     recentHardnessMgL: summarizeType('hardness')?.value ?? null,
-    lastObserved: [summarizeType('temperature')?.lastObserved, summarizeType('do')?.lastObserved, summarizeType('turbidity')?.lastObserved].filter(Boolean).sort().slice(-1)[0] || null,
+    lastObserved: [swTemp?.lastObserved, swDO?.lastObserved, swTurbidity?.lastObserved].filter(Boolean).sort().slice(-1)[0] || null,
     programs: [...new Set(records.map(r => r.project).filter(Boolean))],
     note: 'Summary reflects the most recent available surface/grab samples by characteristic from WQP/SCDES monitoring sites within the lake boundary.'
   };

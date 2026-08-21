@@ -244,6 +244,27 @@ function mergeEvidenceMaps(a = {}, b = {}) {
   return out;
 }
 
+/**
+ * A GRAB SAMPLE IS DATED OR IT IS NOT A FACT ABOUT TODAY.
+ *
+ * The reasoning lives in full above `sampleDated` in Worker/research/facts-util.js. The short
+ * version: `limnology.surfaceWater` holds WQP grab samples of whatever age WQP last recorded and
+ * nothing refreshes them, while the live water temperature comes from a bound USGS 00010 gauge
+ * through /conditions. Both reach the same Smart Plan prompt, so an undated archival number
+ * called "recent" reads as today's water and contradicts the gauge.
+ *
+ * `ownDate` is the number's own sample date. `groupDate` is `surfaceWater.lastObserved`, the
+ * newest of temperature, DO and turbidity, which is all that profiles written before per-
+ * characteristic dates carry -- it belongs to the group, so it is said as the group's.
+ *
+ * Mirrored from Worker/research/facts-util.js, which the client cannot import. Change both.
+ */
+function sampleDated(ownDate, groupDate) {
+  if (ownDate) return ` when last sampled ${ownDate}`;
+  if (groupDate) return ` (grab sample; newest surface sample here ${groupDate})`;
+  return ' (grab sample, date not recorded)';
+}
+
 function buildDeterministicSummary(profile) {
   const identity = profile?.identity || {};
   const biology = profile?.biology || {};
@@ -264,8 +285,9 @@ function buildDeterministicSummary(profile) {
   }
   const limBits = [];
   if (lim.waterClarity?.secchiFt) limBits.push(`Secchi clarity around ${lim.waterClarity.secchiFt} ft`);
-  if (lim.surfaceWater?.recentTempF != null) limBits.push(`recent surface water near ${lim.surfaceWater.recentTempF}°F`);
-  if (lim.surfaceWater?.recentDissolvedOxygenMgL != null) limBits.push(`recent surface dissolved oxygen near ${lim.surfaceWater.recentDissolvedOxygenMgL} mg/L`);
+  const swDated = (own) => sampleDated(own, lim.surfaceWater?.lastObserved);
+  if (lim.surfaceWater?.recentTempF != null) limBits.push(`surface water near ${lim.surfaceWater.recentTempF}°F${swDated(lim.surfaceWater.recentTempLastObserved)}`);
+  if (lim.surfaceWater?.recentDissolvedOxygenMgL != null) limBits.push(`surface dissolved oxygen near ${lim.surfaceWater.recentDissolvedOxygenMgL} mg/L${swDated(lim.surfaceWater.recentDissolvedOxygenLastObserved)}`);
   if (Array.isArray(lim.thermocline?.summerDepthFt) ? lim.thermocline.summerDepthFt.length : lim.thermocline?.summerDepthFt != null) {
     const depthText = Array.isArray(lim.thermocline.summerDepthFt) ? lim.thermocline.summerDepthFt.join('-') : lim.thermocline.summerDepthFt;
     limBits.push(`summer thermocline near ${depthText} ft`);
@@ -2296,7 +2318,8 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
           if (wqpData.ok && wqpData.recordCount > 0) {
             _state.wqpLimnology = wqpData;
             const tc   = wqpData.thermocline ? `${wqpData.thermocline.depthFt}ft (${wqpData.thermocline.method})` : 'not derived';
-            const surf = wqpData.surfaceWater?.recentTempF != null ? `surface ${wqpData.surfaceWater.recentTempF}°F / DO ${wqpData.surfaceWater.recentDissolvedOxygenMgL ?? '?'} mg/L` : '';
+            const surfWhen = wqpData.surfaceWater?.recentTempLastObserved || wqpData.surfaceWater?.lastObserved || null;
+            const surf = wqpData.surfaceWater?.recentTempF != null ? `surface ${wqpData.surfaceWater.recentTempF}°F${surfWhen ? ` sampled ${surfWhen}` : ' (sample date not recorded)'} / DO ${wqpData.surfaceWater.recentDissolvedOxygenMgL ?? '?'} mg/L` : '';
             const sec  = wqpData.secchi ? `secchi avg ${wqpData.secchi.avgSecchiDepthFt}ft (n=${wqpData.secchi.sampleCount})` : '';
             log(`✔ WQP: ${wqpData.recordCount} records — thermocline ${tc}${surf ? '; ' + surf : ''}${sec ? '; ' + sec : ''}`);
           } else {
@@ -2583,7 +2606,8 @@ async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
             if (wqpData.ok && wqpData.recordCount > 0) {
               _state.wqpLimnology = wqpData;
               const tc   = wqpData.thermocline ? `${wqpData.thermocline.depthFt}ft (${wqpData.thermocline.method})` : 'not derived';
-              const surf = wqpData.surfaceWater?.recentTempF != null ? `surface ${wqpData.surfaceWater.recentTempF}°F / DO ${wqpData.surfaceWater.recentDissolvedOxygenMgL ?? '?'} mg/L` : '';
+              const surfWhen = wqpData.surfaceWater?.recentTempLastObserved || wqpData.surfaceWater?.lastObserved || null;
+              const surf = wqpData.surfaceWater?.recentTempF != null ? `surface ${wqpData.surfaceWater.recentTempF}°F${surfWhen ? ` sampled ${surfWhen}` : ' (sample date not recorded)'} / DO ${wqpData.surfaceWater.recentDissolvedOxygenMgL ?? '?'} mg/L` : '';
               const sec  = wqpData.secchi ? `secchi avg ${wqpData.secchi.avgSecchiDepthFt}ft (n=${wqpData.secchi.sampleCount})` : '';
               log(`✔ WQP: ${wqpData.recordCount} records — thermocline ${tc}${surf ? '; ' + surf : ''}${sec ? '; ' + sec : ''}`);
             } else {
