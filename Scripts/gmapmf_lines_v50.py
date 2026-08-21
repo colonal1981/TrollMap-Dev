@@ -51,6 +51,32 @@ FH = 15                                  # sub-block header length
 TAG  = bytes.fromhex("910506")           # final depth tag,  + 5-byte trailer `09` + u32
 TAG2 = bytes.fromhex("110506")           # non-final depth tag, 4 bytes, no trailer
 
+# DEPTH IS NOT ALWAYS ONE BYTE, AND EVERY LAKE DEEPER THAN 83 FT PAID FOR THAT ASSUMPTION.
+#
+# `91 05 06 <u8>` holds 0-255 dm. On the 3 dm contour ladder the last rung that fits is 253 dm
+# = 83.0 ft, and that was the maximum depth in EVERY extracted tile: Jocassee, Keowee, Hartwell
+# and Murray all capped at exactly 83.0 while the real water runs to 350, 155, 185 and 200 ft.
+# The deep contours were not missing from the card. They use a second record form:
+#
+#     91 05 06 <u8>          09 <varint> 00 00 00     0 - 255 dm
+#     91 07 0e <u16 little>  09 <varint> 00 00 00     256 dm and deeper
+#
+# `rec_end` matched the first as a fixed literal, failed on the second, and fell through to
+# "find the next parsable head" -- which lands INSIDE the unmatched tag and splits one record
+# into two fragments. That is why 8,090 of 146,520 records in C4E0CE carried no depth at all:
+# 1,797 whole records plus ~2,960 split pairs, and those fragments are the sprawling deep-basin
+# lines that rendered as untyped white spaghetti across the middle of every deep lake.
+#
+# MEASURED 2026-08-21, C4E0CE + C4E0CB + C4E0C9: the ladder is continuous across the boundary --
+# one-byte ... 244, 247, 250, 253 | two-byte 256, 259, 262, 265, 268, 271, 274 ... -- with the
+# same 3 dm step and no overlap. The two-byte values run 256 to 1061 dm (84.0 to 348.1 ft), and
+# Lake Jocassee is a 350 ft lake. 10,332 occurrences of `91 07 0e` against 484 of `91 05 06`
+# inside the undecoded payloads.
+#
+# `11 07 0e` is NOT added. It appears 136 times against 10,332, and what follows it is geometry
+# deltas rather than an `09` trailer -- it is a coincidental byte sequence, not a fourth form.
+TAG_WIDE = bytes.fromhex("91070e")       # final depth tag, TWO-byte depth, same `09` trailer
+
 def chain(row, bw):
     """Split a TRE7 row into sub-blocks. Returns [(header, payload)] or None if it does
     not close exactly on the end of the row."""
@@ -94,6 +120,10 @@ def rec_end(b, q, n, win=16):
     record and the walk desyncs. That single ordering choice is the difference between 11.8%
     and 99.99% tag alignment on B4E0F1."""
     for r in range(q, min(n, q+win)):
+        # Widest form first. The tags share a lead byte and differ from byte 1, so no position
+        # can match two of them -- the order is for reading, not for correctness.
+        if b[r:r+3] == TAG_WIDE and r+10 <= n and b[r+5] == 9:
+            return r+10, int.from_bytes(b[r+3:r+5], "little"), r-q
         if b[r:r+3] == TAG and r+9 <= n and b[r+4] == 9: return r+9, b[r+3], r-q
         if b[r:r+3] == TAG2 and r+4 <= n:                return r+4, b[r+3], r-q
     for r in range(q, min(n, q+win)):
@@ -118,8 +148,12 @@ def tag_alignment(rows, bw, win=16):
         sbs = chain(row, bw)
         if sbs is None: continue
         for _hdr, b in sbs:
+            # TAG_WIDE COUNTS. Leaving it out is how the one-byte assumption survived: this
+            # check reported 99.97% closure on C4E0F1 by measuring the parser against the only
+            # two tags the parser knew, and the deep-water form was invisible to both.
             tags = {m.start() for m in re.finditer(re.escape(TAG), b)} | \
-                   {m.start() for m in re.finditer(re.escape(TAG2), b)}
+                   {m.start() for m in re.finditer(re.escape(TAG2), b)} | \
+                   {m.start() for m in re.finditer(re.escape(TAG_WIDE), b)}
             raw += len(tags)
             recs, _ = walk_payload(b, win)
             hit += len(tags & {h["gend"] + al for h, _d, al, _e in recs})
