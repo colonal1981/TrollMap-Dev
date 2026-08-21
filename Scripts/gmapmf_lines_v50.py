@@ -73,9 +73,23 @@ TAG2 = bytes.fromhex("110506")           # non-final depth tag, 4 bytes, no trai
 # Lake Jocassee is a 350 ft lake. 10,332 occurrences of `91 07 0e` against 484 of `91 05 06`
 # inside the undecoded payloads.
 #
-# `11 07 0e` is NOT added. It appears 136 times against 10,332, and what follows it is geometry
-# deltas rather than an `09` trailer -- it is a coincidental byte sequence, not a fourth form.
-TAG_WIDE = bytes.fromhex("91070e")       # final depth tag, TWO-byte depth, same `09` trailer
+# `11 07 0e` was rejected here on 2026-08-21 for precisely the wrong reason. The note read: it
+# appears 136 times against 10,332, and what follows it is geometry deltas rather than an `09`
+# trailer, so it is a coincidental byte sequence. But `11 05 06` has no trailer either -- the
+# absence of a trailer is the DEFINITION of the non-final form, not evidence against it -- and
+# the census that dismissed it counted a LAKE tile, where the wide non-final form is rare.
+TAG_WIDE  = bytes.fromhex("91070e")      # final depth tag, TWO-byte depth, same `09` trailer
+# AND THE NON-FINAL TWO-BYTE FORM, WHICH IS WHAT THE OCEAN TILES ARE MADE OF.
+#
+#     11 05 06 <u8>          (4 bytes, no trailer)     0 - 255 dm
+#     11 07 0e <u16 little>  (5 bytes, no trailer)     256 dm and deeper
+#
+# On an ocean tile it is the dominant record. C4E19A: 24,037 occurrences, and 5,340 of that
+# tile's 7,897 contours carried no depth at all while the tile reported a 253 dm maximum. The
+# values it holds are 658, 951, 5304 and 5669 dm -- 216 to 1,860 ft, which is the Atlantic
+# shelf, not a lake. With it decoded C4E19A reads 35,159 contours, zero undepthed, a 9,600 ft
+# maximum, 100.00% line coverage and zero arc_missing, and C4E0CE is unchanged to the byte.
+TAG2_WIDE = bytes.fromhex("11070e")      # non-final depth tag, TWO-byte depth, no trailer
 
 def chain(row, bw):
     """Split a TRE7 row into sub-blocks. Returns [(header, payload)] or None if it does
@@ -124,6 +138,8 @@ def rec_end(b, q, n, win=16):
         # can match two of them -- the order is for reading, not for correctness.
         if b[r:r+3] == TAG_WIDE and r+10 <= n and b[r+5] == 9:
             return r+10, int.from_bytes(b[r+3:r+5], "little"), r-q
+        if b[r:r+3] == TAG2_WIDE and r+5 <= n:
+            return r+5, int.from_bytes(b[r+3:r+5], "little"), r-q
         if b[r:r+3] == TAG and r+9 <= n and b[r+4] == 9: return r+9, b[r+3], r-q
         if b[r:r+3] == TAG2 and r+4 <= n:                return r+4, b[r+3], r-q
     for r in range(q, min(n, q+win)):
@@ -153,7 +169,8 @@ def tag_alignment(rows, bw, win=16):
             # two tags the parser knew, and the deep-water form was invisible to both.
             tags = {m.start() for m in re.finditer(re.escape(TAG), b)} | \
                    {m.start() for m in re.finditer(re.escape(TAG2), b)} | \
-                   {m.start() for m in re.finditer(re.escape(TAG_WIDE), b)}
+                   {m.start() for m in re.finditer(re.escape(TAG_WIDE), b)} | \
+                   {m.start() for m in re.finditer(re.escape(TAG2_WIDE), b)}
             raw += len(tags)
             recs, _ = walk_payload(b, win)
             hit += len(tags & {h["gend"] + al for h, _d, al, _e in recs})
