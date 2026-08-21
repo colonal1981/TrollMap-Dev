@@ -545,8 +545,16 @@ def main():
     if fails:
         print("   failures: %d" % len(fails))
         for t, e in fails[:15]: print("     %-10s %s" % (t, e))
-        with open(os.path.join(a.out, "_failures.json"), "w", encoding="utf-8") as f:
-            json.dump(fails, f, indent=1)
+    # WRITE IT EVEN WHEN IT IS EMPTY, OR A CLEAN RUN LEAVES THE LAST RUN'S FAILURES STANDING.
+    #
+    # This was guarded by `if fails:`, so a run with nothing to report simply did not touch the
+    # file -- and _failures.json kept naming C4E09B and its zstd error for eight days after the
+    # 21Aug26 ActiveCaptain pull decoded that tile perfectly. On 2026-08-21 the extract printed
+    # "failures 0" and the file on disk still said otherwise, dated 08-13. A leftover that reads
+    # as current is the exact trap 00_START_HERE opens with, and an empty list says "asked, none"
+    # where an absent file says nothing at all.
+    with open(os.path.join(a.out, "_failures.json"), "w", encoding="utf-8") as f:
+        json.dump(fails, f, indent=1)
 
 if __name__ == "__main__":
     main()
