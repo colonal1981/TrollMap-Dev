@@ -233,12 +233,82 @@ function mergeMissing(target, source) {
   return out;
 }
 
+/**
+ * AN EVIDENCE MAP MERGED INTO ITSELF MUST NOT GROW.
+ *
+ * This concatenated blindly, which was harmless while every input was built fresh each run. The
+ * moment the SAVED map is seeded -- and it now is, so a targeted rerun stops discarding the
+ * evidence of agents it did not run -- a blind concat would append another copy of the same
+ * bathymetry entry on every pass, forever.
+ *
+ * An entry is identified by where it came from and how: source type, label, url, method and
+ * quote. A later entry with the same identity REPLACES the earlier one in place -- it is the same
+ * claim measured again, and the newer measurement is the one to keep, which also lets a coverage
+ * or band count that shifted between runs update rather than accumulate. Position is the first
+ * sighting, so the order a reader sees does not shuffle from one run to the next.
+ *
+ * Only fields present in `b` are rebuilt. A field only `a` holds was deduplicated by whatever
+ * merge produced `a`.
+ */
+/**
+ * A TARGETED RERUN MUST NOT WIPE THE FACT LEDGER OF THE AGENTS IT DID NOT RUN.
+ *
+ * Every agent but `summary` starts `uniqueFacts` empty in runAgent and extracts from its own
+ * documents, so flattening `agentResults` yields ONLY the facts of the agents that ran -- and the
+ * Worker stores `_extractedFacts` by replacement, not by merge. Running identity and limnology on
+ * Lake Norman would have cut its ledger from 54 facts across seventeen categories to the handful
+ * those two produce, taking hazard, ramp, stocking, speciesAbundance, primaryForage and
+ * seasonalPattern with it.
+ *
+ * The ledger is not a record of past work, it is an INPUT. `validateExistingFacts` refuses to run
+ * without it, `recoverSmartPlanFacts` scores cached documents against it, and the fact-backed
+ * identity override in assembleAndSaveProfile is gated on its length.
+ *
+ * ONE RULE: a stored fact survives unless the agent that produced it has just produced facts
+ * again, or a fresh fact states the same thing. An agent that ran and returned NOTHING has not
+ * replaced anything -- the same reason the summary patch refuses to let an empty section wipe a
+ * populated one.
+ *
+ * Which agent a fact came from is stamped on it from now on. Facts stored before that stamp
+ * existed cannot be attributed, so they fall to the second half of the rule and are kept unless
+ * restated. That over-keeps slightly on profiles written before 2026-08-21 and stops the first
+ * time each one is rerun.
+ *
+ * Fresh facts come first, because the fact-backed identity override takes the FIRST match per
+ * category and the newly extracted one is the one to believe.
+ */
+function mergeFactLedger(savedFacts, agentResults) {
+  const key = (f) => `${String(f?.category || '').toLowerCase().trim()}`
+    + `|${String(f?.fact || '').toLowerCase().replace(/\s+/g, ' ').trim()}`;
+  const fresh = (agentResults || []).flatMap(
+    r => (r?.data?._extractedFacts || []).map(f => ({ ...f, _agent: r.agent })));
+  const spoke = new Set((agentResults || [])
+    .filter(r => (r?.data?._extractedFacts || []).length).map(r => r.agent));
+  const freshKeys = new Set(fresh.map(key));
+  const carried = (savedFacts || []).filter(
+    f => (f && f._agent) ? !spoke.has(f._agent) : !freshKeys.has(key(f)));
+  return { facts: [...fresh, ...carried], carried: carried.length };
+}
+
+function evidenceEntryKey(e) {
+  if (!e || typeof e !== 'object') return `raw:${JSON.stringify(e ?? null)}`;
+  return [e.sourceType, e.sourceLabel, e.sourceUrl, e.method, e.quote]
+    .map(v => String(v ?? '')).join('|');
+}
+
 function mergeEvidenceMaps(a = {}, b = {}) {
   const out = cloneJson(a) || {};
   for (const [section, fields] of Object.entries(b || {})) {
     out[section] = out[section] || {};
     for (const [field, entries] of Object.entries(fields || {})) {
-      out[section][field] = (out[section][field] || []).concat(cloneJson(entries) || []);
+      const merged = [];
+      const seenAt = new Map();
+      for (const entry of [...(out[section][field] || []), ...(cloneJson(entries) || [])]) {
+        const key = evidenceEntryKey(entry);
+        if (seenAt.has(key)) merged[seenAt.get(key)] = entry;
+        else { seenAt.set(key, merged.length); merged.push(entry); }
+      }
+      out[section][field] = merged;
     }
   }
   return out;
@@ -1243,9 +1313,35 @@ function normalizeMasterForRecovery(profile) {
   return profile;
 }
 
+/**
+ * A DEPTH NOBODY MEASURED IS NOT A DEPTH OF ZERO.
+ *
+ * `Number(null)` is 0 and `Number.isFinite(0)` is true, so a lake whose profile had no recorded
+ * maximum depth passed the "ten feet or less" test and had four limnology fields stamped
+ * `not_applicable` and stripped from the target list before a single query was issued. It is
+ * self-sealing: `gateOverallConfidence` exempts `not_applicable` from the null-field penalties,
+ * so the confidence score never registered the loss.
+ *
+ * MEASURED IN R2 ON 2026-08-21, this had already happened. 26 of 61 stored profiles carry
+ * `maxDepthFt: null`, and six carry the stamp -- high_rock_lake_nc, lake_blalock_sc,
+ * melton_hill_reservoir_tn, lake_hickory_nc and lake_norman_nc all reading "Maximum depth 0 ft
+ * and average depth 0 ft", on Norman's part over a 130 ft basin. parr_reservoir_sc caught it
+ * through the other operand: a real 15 ft maximum with NO recorded average, where
+ * `Number(null) <= 8` closed the second clause.
+ *
+ * The geometry-derived bathymetry override is what fills this properly -- `deriveDepthStatistics`
+ * takes max depth from the contour lines even when polygon coverage is too low to trust an
+ * average, so any water with a chartpack has one. This guard is not a substitute for that. It is
+ * here because the stamp is written from the SAVED profile, and a profile only has to store null
+ * ONCE -- a pack that failed to fetch, a profile written before the override existed -- for four
+ * fields to go quietly dead.
+ *
+ * Same idiom as tide-engine.js: empty string, null and undefined are all "not recorded".
+ */
 function applyShallowLakeApplicability(profile, fields) {
-  const max = Number(profile.identity?.maxDepthFt);
-  const avg = Number(profile.identity?.averageDepthFt);
+  const depth = (v) => (v === null || v === undefined || v === '' ? NaN : Number(v));
+  const max = depth(profile.identity?.maxDepthFt);
+  const avg = depth(profile.identity?.averageDepthFt);
   const noPersistentThermocline = (Number.isFinite(max) && max <= 10)
     || (Number.isFinite(max) && max <= 15 && Number.isFinite(avg) && avg <= 8);
   if (!noPersistentThermocline) return fields;
@@ -2709,7 +2805,20 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     saltwaterRegulations: cloneJson(existingSavedProfile.saltwaterRegulations || existingSavedProfile.saltwater_regulations || {}),
   };
 
-  const evidence = mergeEvidenceMaps(det.evidence || {}, buildWqpEvidence(wqp));
+  // A TARGETED RERUN MUST NOT DISCARD THE EVIDENCE OF THE AGENTS IT DID NOT RUN.
+  //
+  // `sources` a few dozen lines below has been seeded from the saved profile for exactly this
+  // reason since resume runs were added -- its comment says so. `evidence` was left on the
+  // replace path, so rebuilding it from the deterministic pass and WQP alone dropped everything
+  // else the stored profile held. Lake Norman's map carries eleven habitat sub-keys, one for
+  // navigation and one for summary; nothing deterministic regenerates the last two.
+  //
+  // The seed goes first so the fresh entries land on top of it and, where they describe the same
+  // claim by the same method, replace it.
+  const evidence = mergeEvidenceMaps(
+    mergeEvidenceMaps(existingSavedProfile.evidence || {}, det.evidence || {}),
+    buildWqpEvidence(wqp)
+  );
   // Defensive: ensure biology arrays are real arrays. A malformed value (e.g. a
   // string from an earlier LLM run or a partial save) previously caused profile
   // assembly to throw "biology.knownStockings.map is not a function" — most often
@@ -2828,10 +2937,14 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     }
   }
 
-  // Collect all facts from agent responses for validation + source map
-  const allFacts = agentResults.flatMap(r => r.data?._extractedFacts || []);
   const contradictions = agentResults.flatMap(r => r.data?.contradictions || []);
   const agentsRan = new Set(agentResults.map(r => r.agent));
+
+  const factLedger = mergeFactLedger(existingSavedProfile._extractedFacts, agentResults);
+  if (factLedger.carried) {
+    log(`  Carried ${factLedger.carried} saved fact(s) from agents that did not speak this pass.`);
+  }
+  const allFacts = factLedger.facts;
 
   // ── Fact-backed identity override ──────────────────────────────────────
   // The LLM sometimes overrides pre-extracted numeric identity values with
