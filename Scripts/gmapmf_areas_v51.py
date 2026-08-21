@@ -68,6 +68,22 @@ BAND_TAG = 0xbc          # fine band, rides directly after the selectors
 BAND_COARSE = 0xbf
 BAND_OPEN   = 0xbe
 
+# THE OTHER FOUR TAGS, WHICH THE MARINE TILES ARE FULL OF AND THE LAKES BARELY USE.
+#
+# `dc` was already known: real polygons, a half-read attribute, kept in their own layer. `de` and
+# `df` are the same four-byte shape and were never named, and `f8` is a one-byte tag that runs to
+# the ordinary `09` + u32 trailer. Measured across nine tiles, every one of them appears only in
+# mode 3/17: dc 8,560 records, f8 1,343, df 949, de 120.
+#
+# Byte `a` of `dc|de|df <a> <b> <c>` sits on the band ladder measured from `bf` and `be` lower
+# bounds -- 0, 3, 6, 9, 12, 15, 18, 27, 37, 46, 55, 64, 73, 82, 91, 101, 110, 128, 146, 165, 183,
+# 201, 219, 238, 253 dm -- for 84.4% of `dc` and 100% of `de`. Every value that misses is exactly
+# one rung plus one (19, 74, 92, 111, 147, 184, 202, 220), so `a` is a ladder position and the
+# +1 means something still unread. `df` lands on a rung only 29.4% of the time and is the weakest
+# of the three. None of them is mixed into the bathymetry.
+UNRESOLVED_TAGS   = (0xdc, 0xde, 0xdf)
+TRAILER_ONLY_TAG  = 0xf8
+
 def walk(b, win=40, tail=0):
     """Yield (record, end) for one area sub-block payload. Returns (records, consumed)."""
     out = []; q = 0; n = len(b)
@@ -80,40 +96,57 @@ def walk(b, win=40, tail=0):
         if cnt == 0: break
         a = q + need + cnt*sw
         e = a; band = None; attr = b""
+        # AN ATTRIBUTE IS FOUND BY ITS TAG. `op & 2` DOES NOT PREDICT ONE.
+        #
         # The band tag is THREE bytes, `bc <lo> <hi>`.  `02 10` is a separate optional
         # attribute that follows it on the B tiles and is absent on C's coarse zooms.
         # Reading it as a 5-byte `bc lo hi 02 10` loses every record whose band has no
         # `02 10` -- 26% of mode 3/17's payload, which is the whole z2-z5 overview
         # shading on the C tiles.  See B2_AREA_3BYTE_BAND_2026-08-01.md.
-        banded = a+3 <= n and b[a] == BAND_TAG
-        if banded:
-            band = (b[a+1], b[a+2]); e = a + 3
-            if e+2 <= n and b[e] == 0x02 and b[e+1] == 0x10: e += 2
-            if e+5 <= n and b[e] == 0x09: e += 5
-        elif op & 2:
+        #
+        # `bc` was tested here unconditionally and the other five tags only inside `elif op & 2`.
+        # That split is why mode 3/17 stalled on the marine tiles: a record with bit 1 clear and a
+        # `bf`, `be`, `dc`, `de`, `df` or `f8` attribute left that attribute unconsumed, the next
+        # pass read the tag byte as an opcode, and every record after it framed against the wrong
+        # offset. Half of C4E19A's area region went unread that way -- 365,429 of 733,857 bytes,
+        # and with them every depth area in Pamlico Sound.
+        #
+        # Each tag below is self-delimiting, so the opcode bit is not needed to find one. Bit 1
+        # still selects the fallback: an untagged block that runs to a `09` + u32 trailer.
+        #
+        # MEASURED 2026-08-21 across nine tiles: 100.00% byte coverage on all nine, stalls
+        # 151 -> 0 on C4E19A and 57 -> 0 on C4E0FD, and the three lake tiles that already closed
+        # at 100% decode identically, record for record, attribute for attribute.
+        tag = b[a] if a < n else None
+        if a+3 <= n and tag in (BAND_TAG, BAND_COARSE, BAND_OPEN):
             # A BAND BYTE CAN BE 0x09, AND 0x09 IS ALSO THE TRAILER MARKER.
             #
             # `bf 06 09` is a legitimate 2-3 ft band whose `hi` is 9 dm. Scanning the attribute
             # block for the first 0x09 finds THAT byte, ends the record three bytes early, and
             # every record after it in the sub-block is framed against the wrong offset -- which
-            # is the whole of mode 3/17's 179 stalls and 214,326 abandoned bytes on C4E0CE. The
-            # band is self-delimiting, so read it first and start the trailer scan after it,
-            # exactly as the `bc` branch above has always done.
+            # was the whole of mode 3/17's 179 stalls and 214,326 abandoned bytes on C4E0CE. The
+            # band is self-delimiting, so read it first and start the trailer scan after it.
             #
             # Measured on C4E0CE: byte coverage 94.40% -> 100.00%, stalls 179 -> 0, and the
             # depth_areas layer 102,637 -> 115,641 polygons.
-            if a+3 <= n and b[a] in (BAND_COARSE, BAND_OPEN):
-                band = (b[a+1], None if b[a] == BAND_OPEN else b[a+2])
-                attr = b[a:a+3]; e = a + 3
-                if e+2 <= n and b[e] == 0x02 and b[e+1] == 0x10: e += 2
-                if e+5 <= n and b[e] == 0x09: e += 5
-            else:
-                r = a; hit = -1
-                while r < min(n, a+win):
-                    if b[r] == 0x09 and r+5 <= n: hit = r; break
-                    r += 1
-                if hit < 0: break
-                attr = b[a:hit]; e = hit + 5
+            band = (b[a+1], None if tag == BAND_OPEN else b[a+2]); e = a + 3
+            # `bc` has never carried its own bytes into `attr` and 115,641 polygons a tile is the
+            # reason to keep it that way; `bf` and `be` always have.
+            if tag != BAND_TAG: attr = b[a:a+3]
+            if e+2 <= n and b[e] == 0x02 and b[e+1] == 0x10: e += 2
+            if e+5 <= n and b[e] == 0x09: e += 5
+        elif a+4 <= n and tag in UNRESOLVED_TAGS:
+            e = a + 4
+            if e+2 <= n and b[e] == 0x02 and b[e+1] == 0x10: e += 2
+            attr = b[a:e]
+            if e+5 <= n and b[e] == 0x09: e += 5
+        elif tag == TRAILER_ONLY_TAG or op & 2:
+            r = a; hit = -1
+            while r < min(n, a+win):
+                if b[r] == 0x09 and r+5 <= n: hit = r; break
+                r += 1
+            if hit < 0: break
+            attr = b[a:hit]; e = hit + 5
         ref = None
         if op & 1:
             if e+3 <= n: ref = b[e] | b[e+1] << 8 | b[e+2] << 16
