@@ -46,8 +46,8 @@ if HERE not in sys.path: sys.path.insert(0, HERE)
 LAYERS = ("contours", "shoreline", "hydrography", "roads", "boundaries", "lines_other",
           "depth_areas", "waterbody", "docks", "land_fill", "tile_background",
           "areas", "areas_other", "pois", "labels")
-AREA_LAYERS = ("depth_areas", "waterbody", "docks", "land_fill", "tile_background",
-               "areas", "areas_other")
+AREA_LAYERS = ("depth_areas", "depth_areas_unresolved", "waterbody", "docks", "land_fill",
+               "tile_background", "areas", "areas_other")
 
 # decode_lines / decode_areas return a per-feature `layer`; roads_* collapse to one file.
 def _layer_file(name):

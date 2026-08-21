@@ -158,38 +158,15 @@ def decode_lines(path, zoom0_only=False):
 
 
 def _walk_tail(b, tail):
-    """AR.walk with `tail` extra bytes per record."""
-    out = []; q = 0; n = len(b)
-    while q < n:
-        op = b[q]
-        cw = (op >> 6) + 1; sw = ((op >> 4) & 3) + 1; nw = ((op >> 3) & 1) + 1
-        need = 1 + 2*cw + nw
-        if q + need > n: break
-        cnt = int.from_bytes(b[q+1+2*cw:q+need], "little")
-        if cnt == 0: break
-        a = q + need + cnt*sw; e = a; band = None; attr = b""
-        if a+3 <= n and b[a] == 0xbc:                 # 3-byte band; see AR.walk
-            band = (b[a+1], b[a+2]); e = a + 3
-            if e+2 <= n and b[e] == 0x02 and b[e+1] == 0x10: e += 2
-            if e+5 <= n and b[e] == 0x09: e += 5
-        elif op & 2:
-            r = a; hit = -1
-            while r < min(n, a+40):
-                if b[r] == 0x09 and r+5 <= n: hit = r; break
-                r += 1
-            if hit < 0: break
-            attr = b[a:hit]; e = hit + 5
-        ref = None
-        if op & 1:
-            if e+3 <= n: ref = b[e] | b[e+1] << 8 | b[e+2] << 16
-            e += 3
-        e += tail
-        if e > n or e <= q: break
-        out.append(dict(op=op, cw=cw, sw=sw, cnt=cnt, start=q, gstart=q+need, gend=a,
-                        band=band, attr=attr, ref=ref, end=e))
-        q = e
-    return out, q
+    """AR.walk with `tail` extra bytes per record.
 
+    THIS WAS A HAND COPY OF AR.walk AND IT DRIFTED. When the area walker learned the `bf` and
+    `be` band tags on 2026-08-21, the first attempt learned them and this retry path did not --
+    so any sub-block that needed a tail was still framed by the one-tag grammar, and the fix
+    reached 94% of the work and quietly skipped the rest. The tail is a parameter now and there
+    is one walker.
+    """
+    return AR.walk(b, tail=tail)
 
 def _inbox(b, rec, s, q):
     cw = rec["cw"]; nw = ((rec["op"] >> 3) & 1) + 1
@@ -270,6 +247,25 @@ def decode_areas(path, zoom0_only=False):
                                   depth_min_ft=round(lo / 3.048), depth_max_ft=round(hi / 3.048),
                                   band="%d-%d ft" % (round(lo / 3.048), round(hi / 3.048)))
                     pr["layer"] = "depth_areas"; st["depth_areas"] += 1
+                elif len(at) == 6 and at[0] == 0xdc:
+                    # TAG 0xdc: REAL POLYGONS, HALF-READ ATTRIBUTE. Do not guess, do not discard.
+                    #
+                    # 3,704 records on C4E0CE, attribute always exactly `dc <a> <b> <c> 02 10`.
+                    # Byte `a` lands on the SAME 15-rung ladder as the `bf` band's lower bound --
+                    # 0, 18, 37, 55, 73, 92, 110, 128, 146, 165, 183, 201, 219, 220, 238 dm -- so
+                    # it is almost certainly a depth. Bytes `b` and `c` are not: `b` is not the
+                    # next rung up (238,1 / 183,1 / 110,2) and `c` clusters in 32..50 across 28
+                    # values. Whether `a` is the floor or the ceiling is undetermined.
+                    #
+                    # The GEOMETRY is certain: 3,699 distinct rings, and 0% of them coincide with
+                    # any `bc` or `bf` polygon -- this is ground no other band covers. So the
+                    # polygons are kept and labelled, and they are deliberately NOT mixed into
+                    # depth_areas: feeding an unread depth into the hypsometry would move every
+                    # average silently, and feeding area without volume would drag it down. A
+                    # visible gap can be closed; a silently averaged one cannot.
+                    pr.update(depth_ladder_dm=at[1], depth_ladder_ft=round(at[1] / 3.048),
+                              attr_unread=at[2:4].hex(" "), band_unresolved=True)
+                    pr["layer"] = "depth_areas_unresolved"; st["depth_areas_unresolved"] += 1
                 elif len(at) >= 6 and at[:4] == b"\x12\x10\x07\x0f":
                     # B2: the u16 at +4 of a `12 10 07 0f` attribute is a WATER-BODY ID.
                     # Gate on the prefix, never on length -- a short attribute is not an id.

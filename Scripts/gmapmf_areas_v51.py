@@ -68,7 +68,7 @@ BAND_TAG = 0xbc          # fine band, rides directly after the selectors
 BAND_COARSE = 0xbf
 BAND_OPEN   = 0xbe
 
-def walk(b, win=40):
+def walk(b, win=40, tail=0):
     """Yield (record, end) for one area sub-block payload. Returns (records, consumed)."""
     out = []; q = 0; n = len(b)
     while q < n:
@@ -91,21 +91,37 @@ def walk(b, win=40):
             if e+2 <= n and b[e] == 0x02 and b[e+1] == 0x10: e += 2
             if e+5 <= n and b[e] == 0x09: e += 5
         elif op & 2:
-            r = a; hit = -1
-            while r < min(n, a+win):
-                if b[r] == 0x09 and r+5 <= n: hit = r; break
-                r += 1
-            if hit < 0: break
-            attr = b[a:hit]; e = hit + 5
-            # A depth band inside the attribute block is still a depth band. `hi` is None for an
-            # open band -- the polygon has a floor and no ceiling, and inventing one would turn a
-            # bound into a measurement.
-            if len(attr) >= 3 and attr[0] in (BAND_COARSE, BAND_OPEN):
-                band = (attr[1], None if attr[0] == BAND_OPEN else attr[2])
+            # A BAND BYTE CAN BE 0x09, AND 0x09 IS ALSO THE TRAILER MARKER.
+            #
+            # `bf 06 09` is a legitimate 2-3 ft band whose `hi` is 9 dm. Scanning the attribute
+            # block for the first 0x09 finds THAT byte, ends the record three bytes early, and
+            # every record after it in the sub-block is framed against the wrong offset -- which
+            # is the whole of mode 3/17's 179 stalls and 214,326 abandoned bytes on C4E0CE. The
+            # band is self-delimiting, so read it first and start the trailer scan after it,
+            # exactly as the `bc` branch above has always done.
+            #
+            # Measured on C4E0CE: byte coverage 94.40% -> 100.00%, stalls 179 -> 0, and the
+            # depth_areas layer 102,637 -> 115,641 polygons.
+            if a+3 <= n and b[a] in (BAND_COARSE, BAND_OPEN):
+                band = (b[a+1], None if b[a] == BAND_OPEN else b[a+2])
+                attr = b[a:a+3]; e = a + 3
+                if e+2 <= n and b[e] == 0x02 and b[e+1] == 0x10: e += 2
+                if e+5 <= n and b[e] == 0x09: e += 5
+            else:
+                r = a; hit = -1
+                while r < min(n, a+win):
+                    if b[r] == 0x09 and r+5 <= n: hit = r; break
+                    r += 1
+                if hit < 0: break
+                attr = b[a:hit]; e = hit + 5
         ref = None
         if op & 1:
             if e+3 <= n: ref = b[e] | b[e+1] << 8 | b[e+2] << 16
             e += 3
+        # `tail` exists so regions_v51 can retry a sub-block that will not close. It used to
+        # live in a COPY of this function, which is how the bf/be bands above reached the first
+        # attempt and not the retry -- the retry silently kept the one-tag grammar. One walker.
+        e += tail
         if e > n or e <= q: break
         out.append(dict(op=op, cw=cw, sw=sw, cnt=cnt, start=q, gstart=q+need, gend=a,
                         band=band, attr=attr, ref=ref, end=e))
