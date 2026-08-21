@@ -585,7 +585,9 @@ const GAP_QUERIES = {
   "limnology.oxygen.depletionDepthFt":     (lake, dnr) => `"${lake}" dissolved oxygen depletion depth summer fish floor`,
   "biology.predatorSpecies":               (lake, dnr) => `"${lake}" fish species gamefish bass crappie catfish striped`,
   "biology.primaryForage":                 (lake, dnr) => `"${lake}" forage fish shad herring baitfish`,
-  "regulations.lakeSpecificRegulations":   (lake, dnr) => `"${lake}" fishing regulations specific creel limit size limit site:${dnr}`,
+  // `dnr` is a COMPLETE site: filter from siteFilter(), not a bare domain — see the note where
+  // it is built. Interpolating `site:${dnr}` here is what silently un-scoped the OR.
+  "regulations.lakeSpecificRegulations":   (lake, dnr) => `"${lake}" fishing regulations specific creel limit size limit ${dnr}`,
 };
 
 // ── MAPPING AGENT — maps extracted facts to profile schema, nulls everything else ──
@@ -720,7 +722,18 @@ async function handleResearchGapAnalysis(request, env) {
   const profile = body.profile || {};
   const state = String(body.state || 'SC').toUpperCase();
 
-  const dnrDomain = state === 'NC' ? 'ncwildlife.org OR eregulations.com' : state === 'GA' ? 'georgiawildlife.com OR eregulations.com' : 'dnr.sc.gov OR eregulations.com'; // Fix 2026-07-12: dnr.sc.gov/fishregs 404s -> eRegulations
+  // ONE TABLE, NOT A SECOND TERNARY. This line used to hard-code the agencies itself and had
+  // gone stale on the one that moved: it still said `ncwildlife.org`, which 302s to
+  // `ncwildlife.gov`. Measured on Lake Norman, 2026-08-21 -- the old host returns Wikipedia and
+  // a lake survey from TEXAS; the current one returns seven NCWRC documents, one dated 2026.
+  //
+  // It was also malformed. `site:${dnr}` with dnr = 'a OR b' renders `site:a OR b`, which does
+  // not scope the OR -- eRegulations was being asked for as a loose keyword, not a domain.
+  // siteFilter() gives every term its own `site:` and uses the WHOLE list, so a domain added to
+  // the table is a domain that gets searched.
+  const { STATE_FISH_AGENCY_DOMAINS, siteFilter } = await import('./discover.js');
+  const dnrDomain = siteFilter([...(STATE_FISH_AGENCY_DOMAINS[state] || STATE_FISH_AGENCY_DOMAINS.SC),
+                                'eregulations.com']);
   const baseName = lakeName.replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i,'').trim();
 
   // Only check fields that directly affect Smart Plan quality

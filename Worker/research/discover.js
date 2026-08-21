@@ -45,6 +45,50 @@ function authorityForUrl(urlStr, baseLower) {
   return 'Web';
 }
 
+/**
+ * THE AGENCIES, BY STATE. Module scope and exported since 2026-08-21, because a second copy had
+ * drifted: handleResearchGapAnalysis() in extract.js carried its own hard-coded ternary that
+ * still named `ncwildlife.org`, and NC has moved to `ncwildlife.gov`. The old host 302s, and a
+ * `site:` filter against a redirecting host finds nothing. Measured the same day, Lake Norman:
+ *
+ *   site:ncwildlife.org   Wikipedia, and a lake survey from TEXAS
+ *   site:ncwildlife.gov   seven NCWRC documents, one of them dated 2026
+ *
+ * One table, one place to change when an agency moves.
+ */
+const STATE_FISH_AGENCY_DOMAINS = {
+  SC: ['dnr.sc.gov', 'des.sc.gov'],
+  NC: ['ncwildlife.gov', 'ncwildlife.org', 'deq.nc.gov', 'files.nc.gov'],
+  GA: ['georgiawildlife.com', 'georgiawildlife.blog'],
+  TN: ['tn.gov/twra', 'tn.gov/environment'],
+};
+const STATE_ENVIRONMENT_DOMAINS = {
+  SC: ['des.sc.gov', 'dnr.sc.gov'],
+  NC: ['deq.nc.gov', 'ncwildlife.gov'],
+  GA: ['epd.georgia.gov', 'georgiawildlife.com'],
+  TN: ['tn.gov/environment'],
+};
+
+/**
+ * A `site:` filter over EVERY domain in the list, not just the first.
+ *
+ * The tables above hold ten domains across four states and the code read four of them -- `[0]`
+ * and nothing else. `ncwildlife.org`, `deq.nc.gov`, `files.nc.gov`, `des.sc.gov`,
+ * `georgiawildlife.blog` and `tn.gov/environment` were all written down and never queried, so
+ * adding a domain to the table did nothing whatsoever. That is the opposite of expandable: it
+ * looks like a knob and is not connected to anything.
+ *
+ * EVERY TERM CARRIES ITS OWN `site:`. `site:a OR b` does not scope the OR -- it reads as
+ * "site:a, or the loose word b", which is exactly how extract.js had been asking for
+ * `eregulations.com`.
+ */
+function siteFilter(domains) {
+  const list = (Array.isArray(domains) ? domains : [domains]).filter(Boolean);
+  if (!list.length) return '';
+  if (list.length === 1) return `site:${list[0]}`;
+  return `(${list.map((d) => `site:${d}`).join(' OR ')})`;
+}
+
 async function handleResearchDiscover(request, env) {
   let body;
   try { body = await request.json(); } catch { body = {}; }
@@ -98,18 +142,6 @@ async function handleResearchDiscover(request, env) {
   // Grokipedia is an allowed source, but use generic page candidates instead of
   // maintaining lake-by-lake slugs or companion-page seeds.
 
-  const STATE_FISH_AGENCY_DOMAINS = {
-    SC: ['dnr.sc.gov', 'des.sc.gov'],
-    NC: ['ncwildlife.gov', 'ncwildlife.org', 'deq.nc.gov', 'files.nc.gov'],
-    GA: ['georgiawildlife.com', 'georgiawildlife.blog'],
-    TN: ['tn.gov/twra', 'tn.gov/environment'],
-  };
-  const STATE_ENVIRONMENT_DOMAINS = {
-    SC: ['des.sc.gov', 'dnr.sc.gov'],
-    NC: ['deq.nc.gov', 'ncwildlife.gov'],
-    GA: ['epd.georgia.gov', 'georgiawildlife.com'],
-    TN: ['tn.gov/environment'],
-  };
   const stateFishDomain = (STATE_FISH_AGENCY_DOMAINS[state] || [])[0] || '';
   const stateEnvDomain = (STATE_ENVIRONMENT_DOMAINS[state] || [])[0] || '';
 
@@ -1034,4 +1066,5 @@ const AGENT_TO_TAGS = {
   return new Response(JSON.stringify({ success: true, sources: finalList, baseName, filteredCount: 0, queryLog }), { headers: JSON_HEADERS });
 }
 
+export { STATE_FISH_AGENCY_DOMAINS, STATE_ENVIRONMENT_DOMAINS, siteFilter };
 export { handleResearchDiscover, authorityForUrl };
