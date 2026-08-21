@@ -46,8 +46,33 @@ CEILING_FT = 83.0
 
 
 def scan(path, chunk=1 << 22):
-    """(capped, arc_missing, max_depth_ft). Stops as soon as anything deeper than the ceiling
-    appears -- that tile decoded past one byte and is fine."""
+    """(state, arc_missing, max_depth_ft) for one extracted contour file.
+
+    READS THE WHOLE FILE. THE EARLY EXIT WAS A THIRD WAY FOR THIS SCRIPT TO LIE.
+
+    Version two stopped the moment it saw a depth past the ceiling, on the reasoning that such a
+    tile had decoded past one byte and needed no further reading. True -- but it then RETURNED
+    the running maximum, which at that instant is the first value over 83 ft that happened to
+    appear in the file, not the tile maximum. So the 2026-08-21 re-extract printed "max 96.1 ft"
+    for Lake Jocassee, whose deepest contour is 348.1 ft, and "max 168.0 ft" for a Cape Hatteras
+    tile that reaches 9,600. Ryan read a page of 84.0 and 96.1 and had every reason to think the
+    fix had failed. It had not: reading the same files to the end gives 348.1 and 9,600.1.
+
+    The early return also skipped the QA footer, so every deep tile printed no arc_missing at
+    all -- the one number that says whether the decode actually framed. The optimisation saved
+    about forty seconds across 241 tiles and cost the only two figures worth printing.
+
+    Read every depth. Read the footer. Forty seconds is not worth a wrong number.
+
+    EXACTLY 83.0 IS NOT THE SAME CLAIM AS CAPPED. 253 dm is a real rung on the contour ladder,
+    so a tile whose deepest water is genuinely 83 ft looks identical to a truncated one by the
+    maximum alone. What separates them is framing: a record the decoder could not frame points
+    its arc selectors at nothing, so a capped tile carries arc_missing > 0 and a real 83 ft tile
+    carries zero. MEASURED 2026-08-21: C4E080 and C4E261 are the only two of 241 tiles that top
+    out at exactly 83.0, and both decode IDENTICALLY with and without the two-byte and ocean
+    fixes -- every property, every coordinate. Their water really does stop at 83 ft. Calling
+    them capped would send a clean run back through a 20-minute re-extract for nothing.
+    """
     arc = None
     mx = -1.0
     tail = b''
@@ -64,13 +89,13 @@ def scan(path, chunk=1 << 22):
                     continue
                 if v > mx:
                     mx = v
-                if v > CEILING_FT:
-                    return False, arc, mx
             m = ARCMISS.search(buf)
             if m:
                 arc = int(m.group(1))
             tail = buf[-64:]
-    return (mx == CEILING_FT), arc, mx
+    if mx != CEILING_FT:
+        return 'clean', arc, mx
+    return ('capped' if arc else 'exactly_83'), arc, mx
 
 
 def main():
@@ -88,21 +113,25 @@ def main():
         print('no contour extracts under %s' % a.extract)
         return 2
 
-    affected, clean, unreadable = [], [], []
+    affected, clean, unreadable, at_ceiling = [], [], [], []
     for i, p in enumerate(files, 1):
         tid = os.path.basename(p).split('.')[0]
         try:
-            capped, arc, mx = scan(p)
+            state, arc, mx = scan(p)
         except Exception as ex:
             unreadable.append((tid, str(ex)))
             print('  [%3d/%d] %-8s UNREADABLE: %s' % (i, len(files), tid, ex))
             continue
-        if capped:
+        if state == 'capped':
             affected.append(tid)
+        elif state == 'exactly_83':
+            at_ceiling.append(tid)
         else:
             clean.append(tid)
-        print('  [%3d/%d] %-8s %-20s max %7.1f ft%s' % (i, len(files), tid,
-              'CAPPED - re-extract' if capped else 'clean',
+        label = {'capped': 'CAPPED - re-extract',
+                 'exactly_83': '83 ft exactly, framed ok',
+                 'clean': 'clean'}[state]
+        print('  [%3d/%d] %-8s %-24s max %8.1f ft%s' % (i, len(files), tid, label,
               mx, '' if arc is None else '   arc_missing=%d' % arc))
 
     # Tiles are stored as C<id> for contours/depth_areas and B<id> for the rest; the
@@ -129,7 +158,10 @@ def main():
     open(lf, 'w').write('\n'.join(sorted(lakes)) + ('\n' if lakes else ''))
 
     print('\n%d tiles scanned: %d capped, %d clean, %d unreadable'
-          % (len(files), len(affected), len(clean), len(unreadable)))
+          % (len(files), len(affected), len(clean) + len(at_ceiling), len(unreadable)))
+    if at_ceiling:
+        print('%d tile(s) top out at exactly 83.0 ft with arc_missing 0 -- real 83 ft '
+              'water, not a ceiling: %s' % (len(at_ceiling), ', '.join(at_ceiling)))
     for tid, ex in unreadable:
         print('   UNREADABLE %s: %s' % (tid, ex))
     print('%d lakes need their pack rebuilt' % len(lakes))

@@ -4,8 +4,23 @@ pulls out every layer we know how to decode.
 
 Personal use only, not for distribution or resale; NOT FOR NAVIGATION.
 
-    python trollmap_extract_all.py F:\\TrollMapPipeline\\garmin\\charts\\Tiles --out F:\\TrollMapPipeline\\extract --jobs 12
+    python trollmap_extract_all.py F:\\TrollMapPipeline\\garmin\\charts\\Tiles --out F:\\TrollMapPipeline\\extract --jobs 4
     python trollmap_extract_all.py B4E0F1.GMP --out ./out
+
+--JOBS IS A NUMBER ABOUT THE MACHINE, AND THIS LINE USED TO SAY 12.
+
+The argparse default is 1. The 12 in this usage line was copied into the re-extract runbook as
+though it were a setting, and on 2026-08-21 it thrashed Ryan's computer badly enough to take the
+Cowork bridge VM down mid-run. He watched it finish anyway: "jobs --12 not a good idea... this is
+thrashing my computer but i will let it run."
+
+THE CEILING IS RAM, NOT CORES. --jobs feeds ProcessPoolExecutor(max_workers=N), so each job is a
+full Python process holding one entire decoded tile in memory -- C4E0CE alone is 155,252 contours.
+Twelve of those at once, alongside whatever else the machine is doing, is the problem.
+
+4 is a back-off, not a measurement. Time a fixed --tiles list at 2, 4 and 6 on the actual machine
+and put the winner here. A command in a docstring is a dependency: 00_START_HERE.md says so, and
+this line is what it was talking about.
 
 Layers produced, one GeoJSON per tile per layer, named the way TrollMap's R2 layout expects:
 
