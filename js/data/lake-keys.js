@@ -342,45 +342,30 @@ function hasNoPack(name) {
   return false;
 }
 
-/**
- * WATER WHOSE BATHYMETRY SHIPS INSIDE ANOTHER WATER'S PACK.
+/*
+ * BATES OLD RIVER HAS ITS OWN PACK NOW, AND THE TABLE THAT SENT IT TO THE CONGAREE IS GONE.
  *
- * This is NOT an alias table. An alias says two names are one water. These entries say the
- * opposite: they are separate waters, and one of them has no pack of its own, so the only place
- * its soundings exist is inside a neighbour's.
+ * What stood here was `PACK_SHARED_WITH`, a one-row map from `'bates old river'` to
+ * `congaree_river`, consulted BEFORE the registry-slug pass so that a curated answer could
+ * outrank the registry. It existed because 3DHP has no waterbody polygon for Bates at all --
+ * gnisid 1220360 is eleven flowlines and zero polygons, seven of them filed under the
+ * Congaree's own river polygon OH8SM -- so the only place Garmin's soundings for it existed
+ * was inside `chartpack/congaree_river/`.
  *
- * Bates Old River is the case that forced it. Ryan, when I called it part of the Congaree:
+ * Ryan was right about the water the whole time: *"bates river is an oxbow off of the congaree
+ * completely separate water... that is like saying lake wateree isn't its own water because the
+ * wateree river connects to it"*. On 2026-08-22 it got a boundary of its own, cut from the
+ * 3DHP centreline rather than from a polygon that does not exist, and a registry row to go with
+ * it: `bates_old_river`, 66.5 acres, 77.1% of the centreline, holding 8,478 of the 10,508
+ * Quickdraw soundings, charted 0.293. The pack is in R2.
  *
- *   > bates river is an oxbow off of the congaree completely separate water... that is like
- *   > saying lake wateree isn't its own water because the wateree river connects to it
+ * So the registry answers for it now, like every other water, and a curated row that outranks
+ * the registry would be actively wrong -- it would keep sending Bates to a pack that no longer
+ * has to carry it. The mechanism went with the row: an empty table and the function that read
+ * it are two objects nobody uses, and this repo has been bitten by leftovers often enough.
  *
- * He is right on the water and 3DHP disagrees with him: gnisid 1220360 is eleven FLOWLINES
- * totalling 6.09 km and no waterbody polygon at all, seven of them filed under the Congaree's own
- * river polygon OH8SM. `registry/boundaries/congaree_river.geojson` IS OH8SM, so when the pipeline
- * clipped, 0.73 km of Bates — a full ladder from 0-1 ft to 22-23 ft — landed inside
- * `chartpack/congaree_river/`. See BATES_IS_A_FLOWLINE_2026-08-11.md.
- *
- * So: "bates old river is part of congaree river boundary so both the congaree and bates
- * selectors need to select both." Picking either name loads the one pack that holds both.
- *
- * It is consulted BEFORE the registry-slug pass, which is the point. `bates_old_river_sc` is a
- * real registry row with no pack in R2, and Pass 0 treats a slug as authoritative — so selecting
- * Bates resolved to that slug and fetched a 404. This is the one case where a curated answer must
- * outrank the registry.
+ * `BATES_HAS_ITS_OWN_ROW_2026-08-22.md`, `A_LINE_IS_ENOUGH_TO_CUT_A_BOUNDARY_2026-08-22.md`.
  */
-export const PACK_SHARED_WITH = {
-  'bates old river': 'congaree_river',
-};
-
-/** Loose enough for a state suffix or a parenthetical, tight enough not to merge two waters. */
-function sharedPackFor(name) {
-  const n = String(name || '').toLowerCase()
-    .replace(/\([^)]*\)/g, ' ')
-    .replace(/,\s*[a-z]{2}(\/[a-z]{2})*\s*$/, ' ')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
-  return PACK_SHARED_WITH[n] || null;
-}
 
 export function resolveR2Key(displayName) {
   if (!displayName || typeof displayName !== 'string') return null;
@@ -389,10 +374,6 @@ export function resolveR2Key(displayName) {
 
   // Refused before any matching runs. See LAKE_NAMES_WITHOUT_PACK above.
   if (hasNoPack(trimmed)) return null;
-
-  // Before the registry slug, and only for the handful of waters above.
-  const shared = sharedPackFor(trimmed);
-  if (shared) return shared;
 
   // Pass 0 — the 3DHP registry slug, which is authoritative when it exists.
   //
