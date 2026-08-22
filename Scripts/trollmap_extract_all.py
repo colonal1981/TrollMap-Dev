@@ -470,9 +470,11 @@ def main():
     ap.add_argument("--jobs", type=int, default=1)
     ap.add_argument("--limit", type=int)
     ap.add_argument("--tiles",
-                    help="tile ids: comma-separated (4E0F1,4E0F0) or @path to a file with one "
-                         "per line. A leading tile letter is stripped, so B4E0F1, C4E0F1 and "
-                         "4E0F1 all mean the same tile.")
+                    help="tile ids: comma-separated (4E0F1,4E0F0), or a path to a file with one "
+                         "per line, with or without a leading @. A leading tile letter is "
+                         "stripped, so B4E0F1, C4E0F1 and 4E0F1 all mean the same tile. "
+                         "outputs/ship_tiles.txt is the list the shipped lakes actually touch; "
+                         "consolidate_lake_index.py writes it.")
     ap.add_argument("--zoom0-only", action="store_true", help="most detailed level only")
     ap.add_argument("--min-area", type=float, default=0.0, help="drop polygons below this m2")
     ap.add_argument("--force", action="store_true", help="re-do tiles that already have output")
@@ -494,9 +496,18 @@ def main():
         # run exited cleanly having done nothing. That is the silent-zero failure the guide
         # already records twice. Strip a leading letter from whatever is supplied so
         # B4E0FC, C4E0FC and 4E0FC all name the same tile, which they do.
+        # A BARE PATH, WITH OR WITHOUT THE @.
+        #
+        # `@` is a PowerShell landmine -- `@"` opens a here-string, so `--tiles @"F:\x.txt"`
+        # dies with "No characters are allowed after a here-string header", and a bare `@F:\...`
+        # reads as the splat operator. build_all_chartpacks._slug_list took the bare path for
+        # exactly this reason on 2026-08-03 and this flag never did, so the only spelling that
+        # worked here was one nobody would guess.
         src = a.tiles
         if src.startswith("@"):
-            with open(src[1:], encoding="utf-8") as f:
+            src = src[1:]
+        if os.path.exists(src):
+            with open(src, encoding="utf-8") as f:
                 src = ",".join(ln.strip() for ln in f if ln.strip())
         keep = set()
         for t in src.replace("\n", ",").split(","):

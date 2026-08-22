@@ -530,6 +530,10 @@ def main():
                          'script you are looking at. Written here rather than kept by hand '
                          'because it is not a separate fact: it IS the index, less the waters '
                          'nobody has named. Pass an empty string to skip.')
+    ap.add_argument('--tile-list', default=os.path.join('outputs', 'ship_tiles.txt'),
+                    help='where to write the tiles the build list actually touches, for '
+                         'trollmap_extract_all.py --tiles. Derived from tile_lake_map.json, '
+                         'so it shrinks when the index does. Pass an empty string to skip.')
     ap.add_argument('--dropped-report', default=None,
                     help='write the dropped slugs here (default <registry>/_index_dropped.json)')
     ap.add_argument('--names', help='JSON of slug -> display name, for water 3DHP named '
@@ -1351,6 +1355,50 @@ def main():
         if unnamed:
             print('            %d unnamed water(s) held back; they have packs on disk and '
                   'would reach the picker if built' % unnamed)
+
+        # AND THE TILES THAT BUILD LIST ACTUALLY TOUCHES.
+        #
+        # Ryan, twice: *"why are you having me extract from tiles that we no longer need...
+        # this should be capable of being limited to just the tiles that we need for the lakes
+        # that we ship now"*. Measured 2026-08-22: the 375 named rows touch 92 tiles, and the
+        # extract on disk holds 241. **149 of them, 62%, are decode work nothing ships.**
+        #
+        # `tile_lake_map.json` already knows which tiles each water sits on -- it is the HARD
+        # GATE the pack build clips against -- so this is not a new fact either, it is that
+        # file restricted to the build list. Written beside the build list because the two
+        # answer the same question at two stages, and a tile list kept anywhere else would go
+        # stale the moment the index moved, which is exactly what happened to ship_lakes.txt.
+        if a.tile_list:
+            tlp = os.path.join(R, 'tile_lake_map.json')
+            try:
+                _tm = json.load(open(tlp, encoding='utf-8')).get('by_lake') or {}
+            except (OSError, ValueError) as e:
+                _tm = None
+                print('            tile list SKIPPED: cannot read %s (%s)'
+                      % (tlp, type(e).__name__))
+            if _tm is not None:
+                _ids = set()
+                _notile = 0
+                for _s in ship:
+                    _ts = _tm.get(_s)
+                    if not _ts:
+                        _notile += 1
+                        continue
+                    for _t in _ts:
+                        _t = _t.strip().upper()
+                        _ids.add(_t[1:] if _t[:1].isalpha() and len(_t) > 1 else _t)
+                d2 = os.path.dirname(a.tile_list)
+                if d2:
+                    os.makedirs(d2, exist_ok=True)
+                with open(a.tile_list, 'w', encoding='utf-8') as fh:
+                    fh.write('\n'.join(sorted(_ids)) + '\n')
+                print('tile list:  %d tile(s) carry those %d water(s) -> %s'
+                      % (len(_ids), len(ship), a.tile_list))
+                if _notile:
+                    # Never silent. A water with no tile row is one the pack build cannot
+                    # clip either -- tile_lake_map is the hard gate.
+                    print('            %d of them have NO row in tile_lake_map.json and were '
+                          'not counted; the pack build cannot clip those either' % _notile)
 
     if packless:
         rp3 = os.path.join(R, '_index_packless.json')
