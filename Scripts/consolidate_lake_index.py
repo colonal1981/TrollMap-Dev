@@ -265,6 +265,51 @@ def boundary_feature_type(regdir, slug):
     return val
 
 
+# NHD FType, the one source in this registry that actually separates moving water from still.
+#
+# 3DHP DOES NOT. Its waterbody table is 13,718 "Lake" against a single "River" across the whole
+# checkpoint, so it can say "this is a waterbody polygon" and nothing more -- Cooper River, Black
+# River and the Waccamaw are all "Lake" to it. NHD carries FType on the binding
+# match_waters_to_nhd.py already computed: 460 StreamRiver in NHDArea, 390 LakePond and 436
+# Reservoir in NHDWaterbody.
+#
+# Measured 2026-08-22 over the 452 offered rows: 303 carry a 3DHP classification, 422 carry an
+# NHD FType, and where both exist they disagree on ZERO rows. Two independent sources, no
+# conflict. Together they answer 436 of 452 and leave 16 with no source at all.
+#
+# 466 SwampMarsh is deliberately NOT mapped. It is neither, and inventing a side for it is the
+# kind of arbitrary call this file exists to stop making; those rows fall through and are
+# counted as guesses like any other.
+NHD_FTYPE_TO_FEATURE = {390: 'lake', 436: 'lake', 460: 'river', 493: 'coastal', 445: 'coastal'}
+
+
+def load_nhd_ftypes(regdir):
+    """slug -> feature_type off NHD FType. Returns (mapping, one line saying what it loaded).
+
+    It says what it loaded because an optional input that changes the output and stays silent is
+    the --aliases bug this file already paid for once.
+    """
+    p = os.path.join(regdir, '_nhd_bindings.json')
+    try:
+        with io.open(p, encoding='utf-8') as fh:
+            binds = (json.load(fh) or {}).get('bindings') or {}
+    except (OSError, ValueError) as exc:
+        return {}, 'NHD FTypes: could NOT read %s (%s) -- every row falls back a tier' % (p, exc)
+    out = {}
+    unmapped = {}
+    for slug, row in binds.items():
+        ft = (row or {}).get('nhd_ftype')
+        got = NHD_FTYPE_TO_FEATURE.get(ft)
+        if got:
+            out[slug] = got
+        elif ft is not None:
+            unmapped[ft] = unmapped.get(ft, 0) + 1
+    note = 'NHD FTypes: %d of %d bindings classified' % (len(out), len(binds))
+    if unmapped:
+        note += ' (unmapped FType %s)' % ', '.join('%s x%d' % kv for kv in sorted(unmapped.items()))
+    return out, note
+
+
 def load_name_overrides(path):
     """slug -> the name this water is actually called.
 
@@ -838,8 +883,10 @@ def main():
     # A NAME IS THE LAST RESORT, NOT THE FIRST. 00_START_HERE has said "plain substring matching
     # cannot be made safe" through five instances; this was the sixth.
     RIVERISH = re.compile(r'\b(river|creek|run|branch|fork|stream|canal|slough|bayou)\b', re.I)
+    nhd_ft, nhd_note = load_nhd_ftypes(R)
+    print(nhd_note)
     ft_counts = {}
-    ft_src = {'record': 0, 'boundary': 0, 'slug_prefix': 0, 'name': 0}
+    ft_src = {'record': 0, 'boundary': 0, 'slug_prefix': 0, 'nhd': 0, 'name': 0}
     ft_named = []
     for slug, rec in idx.items():
         if rec.get('feature_type'):
@@ -852,6 +899,9 @@ def main():
             elif slug.startswith('coast_'):
                 rec['feature_type'] = 'coastal'
                 ft_src['slug_prefix'] += 1
+            elif nhd_ft.get(slug):
+                rec['feature_type'] = nhd_ft[slug]
+                ft_src['nhd'] += 1
             else:
                 riverish = (RIVERISH.search(rec.get('name') or '')
                             or RIVERISH.search(slug.replace('_', ' ')))
@@ -1210,8 +1260,10 @@ def main():
     print('%d registry lakes in %s' % (len(lakes), ','.join(sorted(want))))
     print('%d records written' % len(idx))
     print('feature_type: ' + ', '.join('%s %d' % kv for kv in sorted(ft_counts.items())))
-    print('   decided by: record %d, 3DHP boundary %d, coast_ prefix %d, GUESSED FROM NAME %d'
-          % (ft_src['record'], ft_src['boundary'], ft_src['slug_prefix'], ft_src['name']))
+    print('   decided by: record %d, 3DHP boundary %d, coast_ prefix %d, NHD FType %d, '
+          'GUESSED FROM NAME %d'
+          % (ft_src['record'], ft_src['boundary'], ft_src['slug_prefix'], ft_src['nhd'],
+             ft_src['name']))
     if ft_named:
         print('   guessed rows carry "feature_type_guessed": true -- %s%s'
               % (', '.join(sorted(ft_named)[:6]), ' ...' if len(ft_named) > 6 else ''))
