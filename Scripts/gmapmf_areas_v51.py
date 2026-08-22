@@ -5,7 +5,8 @@ Personal use only, not for distribution or resale; not for navigation.
 
 GRAMMAR, in precedence order after the selectors:
 
-  1. depth band `bc <lo> <hi> 02 10`      self-delimiting, 5 bytes,
+  1. depth band `bc|bd|be|bf <lo8> <hi8>` or `dc|dd|de|df <a> <b> <c>`
+                                          self-delimiting, 3 or 4 bytes, + `02 10` and
                                           + `09` + u32 trailer when present
   2. opcode bit 1 -> attribute block      variable, TERMINATED by `09` + u32
   3. opcode bit 0 -> 3-byte label ref     (present in the format; effectively unused
@@ -46,43 +47,67 @@ blob offset +4, plus a small tail. The 2-byte code does NOT resolve as a pool-1 
 landing on a string start by coincidence -- the exact false positive Session A warned
 about. The codes are class identifiers and still need a mapping.
 """
-BAND_TAG = 0xbc          # fine band, rides directly after the selectors
-# TWO MORE BAND TAGS, AND THEY RIDE INSIDE THE ATTRIBUTE BLOCK.
+# THE DEPTH-BAND TAGS ARE A FAMILY, AND THE TWO LOW BITS ARE THE PAGE.
 #
-# `bc` is the fine ladder and it is the only one this walker recognised, so every polygon using
-# the other two was framed correctly, had its depth left inside an opaque `attr` blob, and was
-# filed by regions_v51 as a generic "area" instead of bathymetry. On C4E0CE that is 5,699 depth
-# polygons -- 4,935 coarse and 764 open -- routed away from the depth_areas layer.
+# A band is two depths, a floor and a ceiling, and the tag says how wide each field is and
+# whether it has rolled over. `bc` and `bf` are not "fine" and "coarse" -- they are the SAME
+# ladder with different page bits, which is why both of them carry (0,3) and (0,37) and
+# (73,110). MEASURED 2026-08-22 by matching each ring's vertices to the contour vertices they
+# are drawn from, on C4E0CC (North Saluda), C4E0C9 (Fontana) and C4E19A (Pamlico + offshore):
 #
-#   bf <lo> <hi>    coarse band ladder, 0..238 dm. 35 distinct pairs, all ascending.
-#   be <lo> 00      OPEN band: "deeper than <lo>", no upper bound. Second byte is always 0.
+#                      floor+ceiling as written      with the page bits
+#     bc   45,000 rings          99.5%                     99.5%
+#     be    1,742 rings          25.7%                     97.0%
+#     bf   23,725 rings           0.00%                    99.9%
 #
-# `be` carries only three values ever -- 219, 238 and 253 dm (71.9, 78.1, 83.0 ft) -- the top
-# three rungs of the ladder. GARMIN DOES NOT BAND BELOW 83 FT. It stops and marks the rest open,
-# which is why no depth-area byte anywhere on the card exceeds one byte, and why hunting for a
-# wider field here was hunting for something that does not exist.
+# `bf` was wrong on every single record it ever produced. Two byte-identical families:
 #
-# MEASURED, C4E0CE, within 6 km of Lake Jocassee's centroid: mean distance from the centre is
-# 2,791 m for `be`, 3,051 m for `bf`, 3,240 m for `bc`, and the deepest `be` rung (253 dm) is the
-# most central of all at 2,616 m. Deeper is more central. These are the deep-basin polygons.
-BAND_COARSE = 0xbf
-BAND_OPEN   = 0xbe
+#     bc bd be bf  <lo8> <hi8>        floor = lo8 + 256*(tag&1),  ceiling = hi8 + 256*(tag>>1&1)
+#     dc dd de df  <a> <b> <c>        two 12-bit fields nibble-packed into three bytes:
+#                                       floor12   = a | (b & 0x0f) << 8
+#                                       ceiling12 = (b >> 4) | c << 4
+#                                     floor = floor12 + 4096*(tag&1)
+#                                     ceiling = ceiling12 + 4096*(tag>>1&1)
+#
+# So bit 0 says the floor has rolled into the next page and bit 1 says the ceiling has. Which
+# is why `bd` and `dd` do not exist anywhere on the card and never can: they would mean a floor
+# one page above its own ceiling. Their absence is the proof the scheme is read right.
+#
+# THE THREE THINGS THIS REPLACES, ALL OF THEM WRONG:
+#
+#   * "`be <lo> 00` is an OPEN band, deeper than <lo>, no ceiling." It is not open. It is the
+#     one band that straddles a page line, so its ceiling reads 0 because 256 mod 256 is 0.
+#     `be 253 00` is 253-256 dm, a one-foot band. And the second byte is NOT always zero --
+#     `be 219 37` is 21.9 m to 29.3 m and appears 288 times across these three tiles, with its
+#     ceiling byte thrown away.
+#   * "`be` carries only 219, 238 and 253, so Garmin does not band below 83 ft." Garmin bands
+#     all the way down. Those three are simply the rungs that sit just under 256 dm.
+#   * "The band is one byte and there is no wider field to find." 00_START_HERE.md said that,
+#     and it was measured while the contour decoder was still capped at one byte too, so
+#     nothing in the data was able to contradict it. The ceiling was confirming itself.
+#
+# RANGE. Eight-bit fields reach 511 dm (167.7 ft) and twelve-bit fields reach 8,191 dm
+# (2,687 ft), which covers everything on this card -- the deepest contour anywhere in the
+# freshwater set is Fontana at 1,280 dm and the offshore tiles top out under 8,000.
+BAND_TAGS_8  = (0xbc, 0xbd, 0xbe, 0xbf)   # <lo8> <hi8>,      page = 256
+BAND_TAGS_12 = (0xdc, 0xdd, 0xde, 0xdf)   # <a> <b> <c>,      page = 4096
+BAND_TAG     = 0xbc                        # the one form that carries no bytes into `attr`
 
-# THE OTHER FOUR TAGS, WHICH THE MARINE TILES ARE FULL OF AND THE LAKES BARELY USE.
-#
-# `dc` was already known: real polygons, a half-read attribute, kept in their own layer. `de` and
-# `df` are the same four-byte shape and were never named, and `f8` is a one-byte tag that runs to
-# the ordinary `09` + u32 trailer. Measured across nine tiles, every one of them appears only in
-# mode 3/17: dc 8,560 records, f8 1,343, df 949, de 120.
-#
-# Byte `a` of `dc|de|df <a> <b> <c>` sits on the band ladder measured from `bf` and `be` lower
-# bounds -- 0, 3, 6, 9, 12, 15, 18, 27, 37, 46, 55, 64, 73, 82, 91, 101, 110, 128, 146, 165, 183,
-# 201, 219, 238, 253 dm -- for 84.4% of `dc` and 100% of `de`. Every value that misses is exactly
-# one rung plus one (19, 74, 92, 111, 147, 184, 202, 220), so `a` is a ladder position and the
-# +1 means something still unread. `df` lands on a rung only 29.4% of the time and is the weakest
-# of the three. None of them is mixed into the bathymetry.
-UNRESOLVED_TAGS   = (0xdc, 0xde, 0xdf)
+# `f8` is a one-byte tag that runs to the ordinary `09` + u32 trailer. It is not a band.
+# Measured across nine tiles it appears only in mode 3/17: 1,343 records.
 TRAILER_ONLY_TAG  = 0xf8
+
+def _band(b, a, tag):
+    """(floor_dm, ceiling_dm, bytes_consumed) for one band tag, or None if it is not one."""
+    if tag in BAND_TAGS_8:
+        return (b[a+1] + (256 if tag & 1 else 0),
+                b[a+2] + (256 if tag & 2 else 0), 3)
+    if tag in BAND_TAGS_12:
+        lo = b[a+1] | ((b[a+2] & 0x0f) << 8)
+        hi = (b[a+2] >> 4) | (b[a+3] << 4)
+        return (lo + (4096 if tag & 1 else 0),
+                hi + (4096 if tag & 2 else 0), 4)
+    return None
 
 def walk(b, win=40, tail=0):
     """Yield (record, end) for one area sub-block payload. Returns (records, consumed)."""
@@ -118,27 +143,24 @@ def walk(b, win=40, tail=0):
         # 151 -> 0 on C4E19A and 57 -> 0 on C4E0FD, and the three lake tiles that already closed
         # at 100% decode identically, record for record, attribute for attribute.
         tag = b[a] if a < n else None
-        if a+3 <= n and tag in (BAND_TAG, BAND_COARSE, BAND_OPEN):
-            # A BAND BYTE CAN BE 0x09, AND 0x09 IS ALSO THE TRAILER MARKER.
-            #
-            # `bf 06 09` is a legitimate 2-3 ft band whose `hi` is 9 dm. Scanning the attribute
-            # block for the first 0x09 finds THAT byte, ends the record three bytes early, and
-            # every record after it in the sub-block is framed against the wrong offset -- which
-            # was the whole of mode 3/17's 179 stalls and 214,326 abandoned bytes on C4E0CE. The
-            # band is self-delimiting, so read it first and start the trailer scan after it.
-            #
-            # Measured on C4E0CE: byte coverage 94.40% -> 100.00%, stalls 179 -> 0, and the
-            # depth_areas layer 102,637 -> 115,641 polygons.
-            band = (b[a+1], None if tag == BAND_OPEN else b[a+2]); e = a + 3
-            # `bc` has never carried its own bytes into `attr` and 115,641 polygons a tile is the
-            # reason to keep it that way; `bf` and `be` always have.
-            if tag != BAND_TAG: attr = b[a:a+3]
+        # A BAND BYTE CAN BE 0x09, AND 0x09 IS ALSO THE TRAILER MARKER.
+        #
+        # `bf 06 09` is a legitimate band whose ceiling byte is 9. Scanning the attribute block
+        # for the first 0x09 finds THAT byte, ends the record three bytes early, and every
+        # record after it in the sub-block is framed against the wrong offset -- which was the
+        # whole of mode 3/17's 179 stalls and 214,326 abandoned bytes on C4E0CE. Both band forms
+        # are self-delimiting, so read the band first and start the trailer scan after it.
+        #
+        # Measured on C4E0CE: byte coverage 94.40% -> 100.00%, stalls 179 -> 0, and the
+        # depth_areas layer 102,637 -> 115,641 polygons.
+        width = 3 if tag in BAND_TAGS_8 else (4 if tag in BAND_TAGS_12 else 0)
+        if width and a + width <= n:
+            lo, hi, width = _band(b, a, tag)
+            band = (lo, hi); e = a + width
+            # `bc` has never carried its own bytes into `attr` and 115,641 polygons a tile is
+            # the reason to keep it that way; every other band tag always has.
+            if tag != BAND_TAG: attr = b[a:e]
             if e+2 <= n and b[e] == 0x02 and b[e+1] == 0x10: e += 2
-            if e+5 <= n and b[e] == 0x09: e += 5
-        elif a+4 <= n and tag in UNRESOLVED_TAGS:
-            e = a + 4
-            if e+2 <= n and b[e] == 0x02 and b[e+1] == 0x10: e += 2
-            attr = b[a:e]
             if e+5 <= n and b[e] == 0x09: e += 5
         elif tag == TRAILER_ONLY_TAG or op & 2:
             r = a; hit = -1

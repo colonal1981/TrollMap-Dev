@@ -232,51 +232,22 @@ def decode_areas(path, zoom0_only=False):
                     out.append({"pts": pts, "props": pr}); continue
                 if r["band"]:
                     lo, hi = r["band"]
-                    # AN OPEN BAND HAS A FLOOR AND NO CEILING. `be <lo> 00` is Garmin's "deeper
-                    # than <lo>", and it is the deepest thing on the card -- there is no band
-                    # below 83 ft, only this. Writing `depth_max_dm = lo` would turn a lower
-                    # bound into a measurement and cap every deep lake at its shallowest possible
-                    # reading, which is the mistake the one-byte contour depth already made once.
-                    if hi is None:
-                        pr.update(depth_min_dm=lo, depth_max_dm=None,
-                                  depth_min_ft=round(lo / 3.048), depth_max_ft=None,
-                                  open_band=True,
-                                  band="deeper than %d ft" % round(lo / 3.048))
-                    else:
-                        pr.update(depth_min_dm=lo, depth_max_dm=hi,
-                                  depth_min_ft=round(lo / 3.048), depth_max_ft=round(hi / 3.048),
-                                  band="%d-%d ft" % (round(lo / 3.048), round(hi / 3.048)))
+                    # EVERY BAND HAS A CEILING. The tag's two low bits are page carries -- see
+                    # the family table in gmapmf_areas_v51. There is no such thing as an open
+                    # band: what used to be read as "deeper than <lo>" was `be`, the one band
+                    # that straddles 256 dm, and its ceiling byte was being thrown away.
+                    #
+                    # This is also where `dc`, `de` and `df` come home. They were filed in a
+                    # depth_areas_unresolved layer with an unread attribute and no depth,
+                    # because their three payload bytes were being read as three numbers
+                    # instead of two nibble-packed 12-bit ones. On C4E19A that is 4,945
+                    # polygons -- the whole of the Pamlico Sound and offshore shelf hypsometry
+                    # -- and on C4E0C9 it is the 720 polygons that carry Fontana below 168 ft.
+                    if lo >= hi: st["band_floor_above_ceiling"] += 1
+                    pr.update(depth_min_dm=lo, depth_max_dm=hi,
+                              depth_min_ft=round(lo / 3.048), depth_max_ft=round(hi / 3.048),
+                              band="%d-%d ft" % (round(lo / 3.048), round(hi / 3.048)))
                     pr["layer"] = "depth_areas"; st["depth_areas"] += 1
-                elif len(at) in (4, 6) and at[0] in AR.UNRESOLVED_TAGS:
-                    # TAGS 0xdc, 0xde, 0xdf: REAL POLYGONS, HALF-READ ATTRIBUTE. Do not guess,
-                    # do not discard.
-                    #
-                    # 3,704 records on C4E0CE, attribute always exactly `dc <a> <b> <c> 02 10`.
-                    # The four-byte form without the `02 10` is the marine one and it was
-                    # unreachable until the walker stopped requiring `op & 2` to look for a tag:
-                    # across nine tiles it is 3,876 of the 8,560 `dc` records, plus 949 `df` and
-                    # 120 `de` that no version of this ever saw.
-                    #
-                    # Byte `a` lands on the band ladder measured from `bf` and `be` lower bounds
-                    # -- 0, 3, 6, 9, 12, 15, 18, 27, 37, 46, 55, 64, 73, 82, 91, 101, 110, 128,
-                    # 146, 165, 183, 201, 219, 238, 253 dm -- for 84.4% of `dc` and 100% of `de`,
-                    # and every value that misses is exactly one rung plus one. So `a` is a
-                    # ladder position and the +1 carries something still unread. `df` hits a rung
-                    # only 29.4% of the time. Bytes `b` and `c` are not depths: `b` is not the
-                    # next rung up (238,1 / 183,1 / 110,2) and `c` clusters in 32..50 across 28
-                    # values. Whether `a` is the floor or the ceiling is undetermined.
-                    #
-                    # The GEOMETRY is certain: 3,699 distinct rings on C4E0CE, and 0% of them
-                    # coincide with any `bc` or `bf` polygon -- this is ground no other band
-                    # covers. So the polygons are kept and labelled, and they are deliberately
-                    # NOT mixed into depth_areas: feeding an unread depth into the hypsometry
-                    # would move every average silently, and feeding area without volume would
-                    # drag it down. A visible gap can be closed; a silently averaged one cannot.
-                    # `attr_tag` is written so the three tags stay separable downstream.
-                    pr.update(attr_tag="%02x" % at[0],
-                              depth_ladder_dm=at[1], depth_ladder_ft=round(at[1] / 3.048),
-                              attr_unread=at[2:4].hex(" "), band_unresolved=True)
-                    pr["layer"] = "depth_areas_unresolved"; st["depth_areas_unresolved"] += 1
                 elif len(at) >= 6 and at[:4] == b"\x12\x10\x07\x0f":
                     # B2: the u16 at +4 of a `12 10 07 0f` attribute is a WATER-BODY ID.
                     # Gate on the prefix, never on length -- a short attribute is not an id.
