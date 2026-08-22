@@ -283,6 +283,37 @@ def boundary_feature_type(regdir, slug):
 NHD_FTYPE_TO_FEATURE = {390: 'lake', 436: 'lake', 460: 'river', 493: 'coastal', 445: 'coastal'}
 
 
+def load_3dhp_feature_types(regdir):
+    """slug -> feature_type off 3DHP's NUMERIC featuretype. (mapping, one line about it).
+
+    THE NUMERIC COLUMN IS THE CLASSIFICATION AND THE TEXT LABEL IS NOT A SUBSTITUTE FOR IT.
+
+    `hydro_3dhp_all_waterbody` carries 1 River 61,797 / 2 Canal 9,019 / 3 Lake 5,676,466 /
+    4 Ocean 684. This project read `featuretypelabel` out of the registry CHECKPOINT instead,
+    saw 13,718 Lake against one River, and concluded 3DHP could not separate moving water from
+    still -- but the checkpoint is written with `--types`, so it only ever held lakes. A filtered
+    cache was measured and the claim was made about the source. Ryan had already written the
+    real vocabulary into 00_START_HERE: "3 lakes, 1 and 2 rivers and canals, 4 ocean."
+
+    `resolve_feature_types.py` does the joins and writes <registry>/_feature_types.json. It is a
+    separate file because the geopackage is 60 GB and the id3dhp column is unindexed -- a 20 s
+    scan belongs in a tool that runs when boundaries change, not in every consolidate.
+    """
+    p = os.path.join(regdir, '_feature_types.json')
+    try:
+        with io.open(p, encoding='utf-8') as fh:
+            raw = json.load(fh) or {}
+    except (OSError, ValueError) as exc:
+        return {}, ('3DHP featuretype: NOT LOADED (%s: %s) -- run resolve_feature_types.py; '
+                    'every row falls back a tier' % (os.path.basename(p), exc))
+    out = {}
+    for slug, row in raw.items():
+        ft = (row or {}).get('feature_type')
+        if ft in ('lake', 'river', 'coastal'):
+            out[slug] = ft
+    return out, '3DHP featuretype: %d of %d rows classified' % (len(out), len(raw))
+
+
 def load_nhd_ftypes(regdir):
     """slug -> feature_type off NHD FType. Returns (mapping, one line saying what it loaded).
 
@@ -883,15 +914,22 @@ def main():
     # A NAME IS THE LAST RESORT, NOT THE FIRST. 00_START_HERE has said "plain substring matching
     # cannot be made safe" through five instances; this was the sixth.
     RIVERISH = re.compile(r'\b(river|creek|run|branch|fork|stream|canal|slough|bayou)\b', re.I)
+    tdhp_ft, tdhp_note = load_3dhp_feature_types(R)
+    print(tdhp_note)
     nhd_ft, nhd_note = load_nhd_ftypes(R)
     print(nhd_note)
     ft_counts = {}
-    ft_src = {'record': 0, 'boundary': 0, 'slug_prefix': 0, 'nhd': 0, 'name': 0}
+    ft_src = {'record': 0, '3dhp_type': 0, 'boundary': 0, 'slug_prefix': 0, 'nhd': 0, 'name': 0}
     ft_named = []
     for slug, rec in idx.items():
         if rec.get('feature_type'):
             ft_src['record'] += 1
         else:
+            if tdhp_ft.get(slug):
+                rec['feature_type'] = tdhp_ft[slug]
+                ft_src['3dhp_type'] += 1
+                ft_counts[rec['feature_type']] = ft_counts.get(rec['feature_type'], 0) + 1
+                continue
             src = boundary_feature_type(R, slug)
             if src:
                 rec['feature_type'] = src
@@ -1260,10 +1298,10 @@ def main():
     print('%d registry lakes in %s' % (len(lakes), ','.join(sorted(want))))
     print('%d records written' % len(idx))
     print('feature_type: ' + ', '.join('%s %d' % kv for kv in sorted(ft_counts.items())))
-    print('   decided by: record %d, 3DHP boundary %d, coast_ prefix %d, NHD FType %d, '
-          'GUESSED FROM NAME %d'
-          % (ft_src['record'], ft_src['boundary'], ft_src['slug_prefix'], ft_src['nhd'],
-             ft_src['name']))
+    print('   decided by: record %d, 3DHP featuretype %d, 3DHP boundary %d, coast_ prefix %d, '
+          'NHD FType %d, GUESSED FROM NAME %d'
+          % (ft_src['record'], ft_src['3dhp_type'], ft_src['boundary'], ft_src['slug_prefix'],
+             ft_src['nhd'], ft_src['name']))
     if ft_named:
         print('   guessed rows carry "feature_type_guessed": true -- %s%s'
               % (', '.join(sorted(ft_named)[:6]), ' ...' if len(ft_named) > 6 else ''))
