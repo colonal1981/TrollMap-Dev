@@ -521,6 +521,15 @@ def main():
                          '<registry>/_ship_keep.txt.')
     ap.add_argument('--no-region', action='store_true',
                     help='skip the scope gate entirely and index every buildable lake')
+    ap.add_argument('--ship-list', default=os.path.join('outputs', 'ship_lakes.txt'),
+                    help='where to write the build list -- the index rows that have a NAME. '
+                         'The five builders take it as --only-lakes, and chart_currency.py '
+                         'reads the same file under the same flag name. NOT the same thing as '
+                         'build_all_chartpacks.py --ship-list, which is the "or on a DNR list" '
+                         'half of the ship rule -- one flag name, two meanings, so check which '
+                         'script you are looking at. Written here rather than kept by hand '
+                         'because it is not a separate fact: it IS the index, less the waters '
+                         'nobody has named. Pass an empty string to skip.')
     ap.add_argument('--dropped-report', default=None,
                     help='write the dropped slugs here (default <registry>/_index_dropped.json)')
     ap.add_argument('--names', help='JSON of slug -> display name, for water 3DHP named '
@@ -1316,6 +1325,33 @@ def main():
         print('\n!! %s not beside the registry -- no gauges promoted. Run the gauge chain.' % wbp)
 
     json.dump(idx, open(a.out, 'w', encoding='utf-8'), indent=1)
+
+    # THE BUILD LIST IS THE INDEX, LESS THE WATERS NOBODY HAS NAMED.
+    #
+    # `outputs/ship_lakes.txt` was a hand-kept file of 374 slugs, written against a 452-row
+    # index. The index went to 401 on 2026-08-22 and the file did not, so the next rebuild
+    # would have silently skipped `bates_old_river` -- the row that pass existed to create.
+    # A list of what to build is not a fact of its own; it is this index with one rule applied.
+    #
+    # THE RULE: a row whose `name` is its own slug is a 3DHP polygon that no feed has ever
+    # named -- `water_imlm3 (Berkeley Co, SC)`, 52 acres, real water and a real pack on disk.
+    # Ryan, 2026-08-22: *"just remove the unnamed lakes from registry"*. They stay in the index
+    # because `shipped` is what the picker filters on and they have never been built, but
+    # building them is what would put a machine name in front of him.
+    if a.ship_list:
+        ship = sorted(k for k, v in idx.items() if (v.get('name') or k) != k)
+        d = os.path.dirname(a.ship_list)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        with open(a.ship_list, 'w', encoding='utf-8') as fh:
+            fh.write('\n'.join(ship) + '\n')
+        print('\nbuild list: %d of %d rows are named -> %s'
+              % (len(ship), len(idx), a.ship_list))
+        unnamed = len(idx) - len(ship)
+        if unnamed:
+            print('            %d unnamed water(s) held back; they have packs on disk and '
+                  'would reach the picker if built' % unnamed)
+
     if packless:
         rp3 = os.path.join(R, '_index_packless.json')
         json.dump(packless, open(rp3, 'w', encoding='utf-8'), indent=1)
