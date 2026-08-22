@@ -36,7 +36,7 @@ def _scan(job):
     try:
         # THE PIPELINE WRITES .geojson.gz NOW. trollmap_extract_all.py --gzip has been the
         # normal mode for the card extract since August; every tile in extract/contours and
-        # extract_new_C/contours is gzipped. This read used a bare open() and the glob below
+        # The contour output is gzipped. This read used a bare open() and the glob below
         # matched only *.geojson, so pointing this script at the pipeline's own output found
         # zero tiles -- 2026-08-20.
         opener = gzip.open if str(path).endswith(".gz") else open
