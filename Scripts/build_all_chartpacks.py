@@ -39,7 +39,7 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from build_chartpack import (LakeMask, BboxMask, build_mask, read_fc, verts, SHIP, NOTE,
                              DROP, redp, _rings, collapse_ramps,
-                             clip_excluded)   # noqa: E402
+                             clip_excluded, trim_geometry)   # noqa: E402
 
 # Which layers decide "is this lake charted". DEPTH AREAS, not contours -- see
 # LakeMask.charted_fraction for why counting contour vertices reported 0.66 for a fully
@@ -425,6 +425,7 @@ def main():
 
     masks, acc, remaining = {}, defaultdict(dict), {}
     dropped = defaultdict(int)
+    trimmed = defaultdict(int)
     for s in todo:
         remaining[s] = len([t for t in by_lake[s] if t in tiles])
 
@@ -502,14 +503,45 @@ def main():
                 feats, nlong = drop_long_segments(feats, a.max_segment_m)
                 if nlong:
                     dropped[layer] += nlong
+            # CUT THE FEATURE TO THE MASK. DO NOT KEEP IT WHOLE BECAUSE IT TOUCHED.
+            #
+            # This loop used to be `for x, y in verts(...): if (x, y) in m: keep(f); break`,
+            # which is the exact `any(inbox(v) for v in verts(f))` that `trim_geometry` was
+            # written to replace on 2026-08-08. The replacement went into build_chartpack.py,
+            # which builds ONE lake, and never reached this file, which builds every pack --
+            # so nothing shipped has ever been trimmed. Same shape as the AREA_LAYERS drift
+            # this repo's own header warns about: two implementations of one rule, and the
+            # copy that runs is the one that did not get fixed.
+            #
+            # What it costs, measured 2026-08-22 on the shipped packs. Ferry Lake: 31.3% of
+            # its 5,937 contour vertices sit outside its own dilated mask, because a Santee
+            # River contour grazes the oxbow and comes in at full length -- Ryan: *"ferry lake
+            # actually zooms to the santee river and shows bathymetry for both the santee
+            # river and ferry lake... it for sure is carrying santee river in its pack i could
+            # see the contours lol"*. Across a 120-pack sample, 35 hold a contour vertex more
+            # than a kilometre outside their own bbox plus buffer, the worst 4.3 km out, and
+            # the rivers are worst of all: chauga_river 34.9% of vertices, diversion_canal
+            # 22.9%, dan_river 22.3%, black_mingo_creek 16.2%.
+            #
+            # `--max-segment-m` above cannot catch these and never could -- it looks for one
+            # long jump between consecutive vertices, and a stray contour is densely sampled.
+            #
+            # The feature is COPIED before its geometry is replaced. `feats` is the tile's
+            # list and every live lake reads it, so trimming in place would hand the second
+            # lake the first lake's cut.
             for s in live:
                 m = masks[s]
                 keep = acc[s].setdefault(layer, [])
+                hit = lambda x, y, _m=m: (x, y) in _m
                 for f in feats:
-                    for x, y in verts(f['geometry']):
-                        if (x, y) in m:
-                            keep.append(f)
-                            break
+                    ng, verdict = trim_geometry(f['geometry'], hit)
+                    if verdict == 'drop':
+                        continue
+                    if verdict == 'trim':
+                        trimmed[layer] += 1
+                        f = dict(f)
+                        f['geometry'] = ng
+                    keep.append(f)
             feats = None
 
         for s in live:
@@ -548,6 +580,10 @@ def main():
     if dropped:
         print('\nblown-out line features dropped (>%.0f m segment): %s'
               % (a.max_segment_m, dict(dropped)))
+    if trimmed:
+        # Say it out loud. A cut that prints nothing reads as "nothing was cut".
+        print('\nfeatures cut back to the mask instead of kept whole: %s'
+              % dict(trimmed))
     json.dump(report, open(a.report, 'w', encoding='utf-8'), indent=1)
 
     # THE SUMMARY DESCRIBES THIS RUN, NOT THE FILE IT MERGED INTO.
