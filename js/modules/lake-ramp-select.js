@@ -351,30 +351,52 @@ async function onLakeChange(selLakeName) {
   // for those the zone box is the wrong frame: picking "Shem Creek" and being shown the whole
   // of Charleston Harbour is not an answer to the question. Those get their own landings,
   // which is exactly where the creek is.
+  // FRAME THE WATER, NOT THE LAUNCHES — 2026-08-22.
+  //
+  // This used to fit the ACCESS POINTS and fall back to the registry bounds only when a lake
+  // had none. That is backwards, and it produced two separate complaints on the same day:
+  //
+  //   ONE ramp   -> setView(ramp, 15). Ferry Lake's only landing is "Lenuds (US17 Bridge)",
+  //                 201 m outside its bounds and on the SANTEE. Selecting Ferry Lake put you
+  //                 on the river. Ryan: "ferry lake actually zooms to the santee river".
+  //   TWO+ ramps -> fitBounds(coords). The five-bucket merge keeps the same physical launch
+  //                 once per feed, so 57 lakes have every ramp inside 60 m of each other and
+  //                 14 have them at IDENTICAL coordinates. A zero-area box makes Leaflet
+  //                 clamp to `maxZoom`, which map-init.js sets to 22. broad_river_3 is 1,629
+  //                 acres and mayo_reservoir 2,573, both framed at zoom 22 on load.
+  //
+  // The right code was already in this file, on the branch that almost never ran. It moves
+  // first. A ramp that falls outside the frame is not a bug to hide: Ferry Lake's really is on
+  // the Santee, and the nearest published launch to Bates Old River is 1,379 m away on the
+  // Congaree. The marker stays on the map; the map just stops chasing it.
   const zoneItself = zone && zone.name === selLakeName;
+  const rec = registryRecordFor(selLakeName);
+  const b = rec && rec.boundsWSEN;
+  const haveBounds = Array.isArray(b) && b.length === 4
+    && b.every((v) => typeof v === 'number' && isFinite(v))
+    && b[2] > b[0] && b[3] > b[1];
+
   if (state.MAP_OK && zone && (zoneItself || !accessPoints.length)) {
     landOnCoastalZone(state.MAP, zone);
+  } else if (state.MAP_OK && haveBounds) {
+    // The registry bounds are the water. 401 of 401 index rows carry a usable box — checked
+    // 2026-08-22: none null, none inverted, none under 40 m on a side.
+    state.MAP.fitBounds([[b[1], b[0]], [b[3], b[2]]], { padding: [40, 40] });
   } else if (state.MAP_OK && accessPoints.length) {
+    // No registry box: a DNR waterbody name 3DHP never matched, or a coastal name. The ramps
+    // are all there is. `maxZoom` is NOT an invented number — it is the 15 the single-ramp
+    // branch below has always used, so one launch and two launches at the same spot now frame
+    // the same way instead of differing by seven zoom levels.
     const coords = accessPoints.map((p) => [p.lat, p.lon]);
     if (coords.length === 1) {
       state.MAP.setView(coords[0], 15);
     } else {
-      state.MAP.fitBounds(coords, { padding: [40, 40] });
+      state.MAP.fitBounds(coords, { padding: [40, 40], maxZoom: 15 });
     }
-  } else if (state.MAP_OK) {
-    // No access point at all. That is not an error, it is 141 of the 322 accessible lakes —
-    // public land on the bank and nobody has mapped a launch. Without this the map sits
-    // wherever it was and selecting the lake looks broken. Fit the registry bounds when we
-    // have them so a 5-mile reservoir is not framed at zoom 14 on its centroid.
-    const rec = registryRecordFor(selLakeName);
-    if (rec) {
-      const b = rec.boundsWSEN;
-      if (Array.isArray(b) && b.length === 4) {
-        state.MAP.fitBounds([[b[1], b[0]], [b[3], b[2]]], { padding: [40, 40] });
-      } else {
-        state.MAP.setView([rec.lat, rec.lon], 14);
-      }
-    }
+  } else if (state.MAP_OK && rec) {
+    // Neither a box nor a launch. 141 of the 322 accessible lakes have no mapped launch at
+    // all; without this the map sits wherever it was and selecting the lake looks broken.
+    state.MAP.setView([rec.lat, rec.lon], 14);
   }
 
   // Sync planLake if not already set

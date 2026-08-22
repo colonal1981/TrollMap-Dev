@@ -342,10 +342,21 @@ function coordKey(lat, lon) {
 }
 
 function accessDedupeKey(item) {
+  // POSITION ALONE WHEN WE HAVE ONE — 2026-08-22.
+  //
+  // This used to key on `coords|name`, so two entries collapsed only when BOTH matched. The
+  // feeds do not agree on names: the same launch is "Amity Recreation Area" to the national
+  // feed and "Amity RA" to SCDNR, "Elijah Clark State Park (Campground 1)" and "Elijah Clark
+  // SP (Campground 1)", and OSM contributes slipways with no name at all. Measured across the
+  // index on 2026-08-22: 575 duplicate positions already collapsed because the names happened
+  // to match, and **156 did not** — Parksville on Thurmond was one launch listed six times,
+  // once from `natl`, once from `dnr` and four times from OSM.
+  //
+  // `coordKey` rounds to 4 decimals, about 11 m, chosen so two genuinely separate ramps in one
+  // park stay separate. Two boat ramps cannot occupy the same 11 m square, so within one cell
+  // the name is a spelling difference and nothing else.
   const cKey = coordKey(item.lat, item.lon);
-  const nKey = normalizeNameKey(item.name);
-  if (cKey && nKey) return `${cKey}|${nKey}`;
-  return cKey || nKey;
+  return cKey || normalizeNameKey(item.name);
 }
 
 function formatAccessLabel(item) {
@@ -367,6 +378,12 @@ function addAccessItem(index, lakeName, item) {
     const labels = new Set([...(existing.sourceLabels || [existing.typeLabel]), item.typeLabel].filter(Boolean));
     existing.sourceLabels = [...labels];
     existing.typeLabel = existing.sourceLabels.join(' / ');
+    // KEEP THE FULLER NAME, so the surviving entry does not depend on which feed loaded
+    // first. "Amity Recreation Area" reads better in a dropdown than "Amity RA", and an OSM
+    // slipway with no name at all must never win over a named one. Load order deciding what a
+    // thing is called is the same failure as a water resolving by which row registered its
+    // slug first.
+    if ((item.name || '').length > (existing.name || '').length) existing.name = item.name;
     return;
   }
 
