@@ -1084,9 +1084,26 @@ def main():
             # "no contours should never have made it to this point... they shouldn't even be on
             # the registry".
             #
-            # Contours OR depth areas, because the ship rule is bathymetry from either. 51 of
-            # the 52 in-scope packs with no contours carry depth areas and are legitimate --
-            # Kannapolis Lake is 90% charted on depth areas alone. Only one has neither.
+            # Contours OR depth areas, because the ship rule is bathymetry from either.
+            #
+            # THIS TEST IS PRESENCE, NOT SOUNDINGS, AND THE TWO WERE CONFLATED HERE.
+            #
+            # It used to say "51 of the 52 in-scope packs with no contours carry depth areas and
+            # are legitimate -- Kannapolis Lake is 90% charted on depth areas alone." That was
+            # wrong about Kannapolis and wrong in kind. Measured 2026-08-22 from the card tile,
+            # the 21Aug26 tile and the pack written on 08-06 -- all three agree: its only depth
+            # areas are five polygons banded 0-1 ft, the shoreline outline Garmin draws around
+            # every piece of water whether it sounded it or not, and no contour has a vertex
+            # inside the polygon. charted is 0.0 and always was.
+            #
+            # It read as shipped because build_all_chartpacks carries the previous verdict
+            # forward on runs that do not read the layers the verdict is made from, so a stale
+            # `shipped: true` rode along until a full pass re-made it. 53 offered rows came out
+            # the same way; Ryan checked five by hand and confirmed 0-3 ft bands and no
+            # contours: "let them be removed."
+            #
+            # A pack DIRECTORY holding depth_areas.geojson says only that a file exists. Whether
+            # anything was sounded is charted_fraction's question, and it is asked upstream.
             DRAWABLE = ('contours.geojson', 'depth_areas.geojson')
             have = {d for d in os.listdir(pdir)
                     if os.path.isdir(os.path.join(pdir, d))
