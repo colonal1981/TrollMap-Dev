@@ -3,12 +3,17 @@
 
 Personal use only, not for distribution or resale; not for navigation.
 
-    node .\\dump_js_lists.mjs > js_lists.json          (run from js\\data\\)
+    py .\\build_water_names.py --registry "F:\\TrollMapPipeline\\registry" --go
     py .\\consolidate_lake_index.py `
        --registry "F:\\TrollMapPipeline\\registry" `
-       --js-lists "F:\\TrollMapPipeline\\registry\\js_lists.json" `
        --charted  "F:\\TrollMapPipeline\\registry\\charted.json" `
        --out      "F:\\TrollMapPipeline\\registry\\lake_index.json"
+
+THERE IS NO `--js-lists` ANY MORE, 2026-08-22. `dump_js_lists.mjs`, `js_lists.json` and the
+two lists behind them are in `_to_delete/`. Their names come from `registry/_feed_names.json`,
+which `build_water_names.py` harvests from the live ramp feeds. A command in a docstring is a
+dependency -- this block once put `lake_boundaries/` back after it was retired -- so the line
+that ran the dumper is gone rather than commented out.
 
 `--aliases`, `--names` and `--counties` are NOT in that command because all three now default
 to their file in `--registry`. THAT IS THE FIX FOR A BUG THIS DOCSTRING CAUSED, 2026-08-12.
@@ -495,7 +500,6 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--registry', required=True)
-    ap.add_argument('--js-lists', required=True, help='output of dump_js_lists.mjs')
     ap.add_argument('--charted', help='charted.json from build_all_chartpacks.py')
     ap.add_argument('--out', required=True)
     ap.add_argument('--states', default='SC,NC,GA,TN')
@@ -551,7 +555,7 @@ def main():
         print('!! build it with:  node make_counties.mjs > '
               '"%s"' % os.path.join(R, 'counties_500k.geojson'))
     npath = a.names or os.path.join(R, 'lake_display_names.json')
-    fnpath = os.path.join(reg, '_feed_names.json')
+    fnpath = os.path.join(R, '_feed_names.json')
     feed_names = {}
     if os.path.exists(fnpath):
         try:
@@ -617,7 +621,10 @@ def main():
     # redirect it arrives as UTF-16LE with a BOM and plain utf-8 dies on byte 0xff at
     # position 0. Sniff the BOM and decode accordingly rather than making the caller
     # remember which shell wrote the file.
-    js = json.load(open_text(a.js_lists))
+    # No hardcoded list is read any more. `js` survives as the dict `lake_db` is loaded into
+    # just below, because curated_lakes.json is the last of the three and has not been retired
+    # yet.
+    js = {}
 
     # LAKE_DB used to arrive here inside js_lists.json, dumped out of js/data/lakes.js by
     # dump_js_lists.mjs. It has moved to registry/curated_lakes.json, because a data file
@@ -642,17 +649,13 @@ def main():
         doc = json.load(open_text(cur_fp))
         js['lake_db'] = doc.get('lakes') or doc
         print('curated lakes: %d from registry/curated_lakes.json' % len(js['lake_db']))
-    elif js.get('lake_db'):
-        print('curated lakes: %d from js_lists.json (LEGACY -- migrate to '
-              'registry/curated_lakes.json)' % len(js['lake_db']))
     else:
         raise SystemExit(
             'FATAL: no curated lake names found.\n'
-            '  Looked for registry/curated_lakes.json and for a "lake_db" key in %s.\n'
-            '  Without them the index builds fine and silently loses the LEGACY DISPLAY\n'
+            '  Looked for registry/curated_lakes.json.\n'
+            '  Without it the index builds fine and silently loses the LEGACY DISPLAY\n'
             '  NAMES, so a lake saved in an old plan or catch stops resolving. Gauges, pool\n'
-            '  elevations and ramps no longer come from here. Refusing to run.'
-            % a.js_lists)
+            '  elevations and ramps no longer come from here. Refusing to run.')
     # --charted HAS A DEFAULT, AND THE WARNING LIVES OUT HERE.
     #
     # It did not, and that cost the registry shrink a whole run on 2026-08-12. `--charted` was

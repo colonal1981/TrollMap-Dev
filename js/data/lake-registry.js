@@ -3,10 +3,17 @@
  *
  * WHAT THIS REPLACES
  *
- * TrollMap's lake picker has been fed by access-index.js, which builds its list from the
- * worker's /ramps route plus two hardcoded files (scdnr-state-lakes.js, 18 lakes;
- * user-known-lakes.js, 5). That means the app can only show a lake if a state wildlife
- * agency happens to list a ramp on it — 213 lakes have chartpacks in R2.
+ * TrollMap's lake picker used to be fed by access-index.js, which built its list from the
+ * worker's /ramps route plus two hardcoded files, scdnr-state-lakes.js and user-known-lakes.js.
+ * That meant the app could only show a lake if a state wildlife agency happened to list a ramp
+ * on it.
+ *
+ * BOTH FILES ARE GONE — 2026-08-22. They are in `_to_delete/` and `check_start_here.py` asserts
+ * their absence. Between them they contributed 40 extra names, 5 notes and not one water: every
+ * index row they tagged already carried `3dhp`. The names they supplied now come from
+ * `registry/_feed_names.json`, harvested from the live ramp feeds by `build_water_names.py`.
+ * Measured before deleting anything, by running consolidate with and without them and diffing:
+ * 401 rows both ways, zero names lost, zero added.
  *
  * The registry is built offline from USGS 3DHP grouped by GNIS id and joined against
  * PAD-US, the national boat-ramp CSV and OSM slipways (see build_lake_index.py). In the

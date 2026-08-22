@@ -26,8 +26,6 @@
  */
 
 import { state } from '../core/state.js';
-import { SCDNR_STATE_LAKES } from './scdnr-state-lakes.js';
-import { USER_KNOWN_LAKES } from './user-known-lakes.js';
 import { COASTAL_ZONES } from './coastal-zones.js';
 import { loadLakeRegistry, filterLakes, accessPointsFor, getLoadedRegistry } from './lake-registry.js';
 import { registerR2Key } from './lake-keys.js';
@@ -468,41 +466,27 @@ async function buildAccessIndex() {
     list.sort((a, b) => formatAccessLabel(a).localeCompare(formatAccessLabel(b)));
   }
 
-  // Merge in the SCDNR State Lakes Program supplement — small DNR-owned
-  // fishing lakes that the worker's boat-ramp ArcGIS feeds don't cover (see
-  // scdnr-state-lakes.js header). County kept in the display name to avoid
-  // silently colliding with an unrelated same-named waterbody elsewhere.
-  for (const lake of SCDNR_STATE_LAKES) {
-    const existingKey = findExistingLakeKey(index, lake.name, lake.lat, lake.lon);
-    const lakeName = existingKey || `${lake.name} (${lake.county} Co, ${lake.state})`;
-    addAccessItem(index, lakeName, {
-      name: lake.name,
-      lat: lake.lat,
-      lon: lake.lon,
-      typeLabel: 'SCDNR State Lake',
-      sourcePath: 'scdnr-state-lakes',
-      sourceState: lake.state,
-      marker: '🎣',
-      meta: { acres: lake.acres, county: lake.county },
-    });
-  }
-
-  // Merge in angler-flagged lakes not covered by any official feed — see
-  // user-known-lakes.js header for per-lake sourcing.
-  for (const lake of USER_KNOWN_LAKES) {
-    const existingKey = findExistingLakeKey(index, lake.name, lake.lat, lake.lon);
-    const lakeName = existingKey || `${lake.name} (${lake.county} Co, ${lake.state})`;
-    addAccessItem(index, lakeName, {
-      name: lake.name,
-      lat: lake.lat,
-      lon: lake.lon,
-      typeLabel: 'User-known lake',
-      sourcePath: 'user-known-lakes',
-      sourceState: lake.state,
-      marker: '📍',
-      meta: { county: lake.county, note: lake.note },
-    });
-  }
+  // THE TWO HARDCODED SUPPLEMENTS ARE GONE -- 2026-08-22.
+  //
+  // `scdnr-state-lakes.js` (16 entries) and `user-known-lakes.js` (4) were merged in here as
+  // access points, and in `consolidate_lake_index.py` as names and notes. Between them they
+  // contributed NOT ONE WATER: every index row they tagged already carried `3dhp`, and the
+  // five SCDNR entries that bound to nothing were never in `lake_index.json` at all.
+  //
+  // The names they supplied now come from `registry/_feed_names.json`, harvested by
+  // `build_water_names.py` out of the `wb` field every ramp record already carries -- the name
+  // the AGENCY uses for the water it put that ramp on. Proven before deleting anything, by
+  // running consolidate with and without `--js-lists` and diffing: 401 rows both ways, zero
+  // names lost, zero added.
+  //
+  // Ryan, on being offered a fourth hand-written file to replace the three: "i don't want them
+  // to die by extracting the info and moving it somewhere else... it needs to be an automated
+  // process that can grow or shrink on its own... not hand written."
+  //
+  // Two waters lost their only access pin with them -- `lake_edwin_johnson` and
+  // `second_millpond` -- because NO feed lists a ramp on either. That is the honest state and
+  // not a gap to paper over: the registry still offers both lakes, they just have no launch
+  // anybody publishes. See REMOVING_THE_TWO_HARDCODED_LISTS_2026-08-22.md.
 
   index.lakeNames = [...index.byLake.keys()].sort((a, b) => {
     const diff = lakeStatePriority(a) - lakeStatePriority(b);

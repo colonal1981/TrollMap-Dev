@@ -162,7 +162,25 @@ def collect(root, repo):
                 # pointed at it since 2026-08-19 as the local home of 131 R2 objects.
                 # "Absent" was a stale string, not a missing directory. Repoint one line and
                 # it runs -- which makes DO NOT RUN a stronger warning, not a weaker one.
-                'Scripts/upload_to_r2_coastal.py'):
+                'Scripts/upload_to_r2_coastal.py',
+                # THE THREE HARDCODED WATER LISTS -- retired 2026-08-22.
+                #
+                # Between them they contributed 40 extra names, 5 notes and NOT ONE WATER:
+                # every index row they tagged already carried `3dhp`. The names come from
+                # registry/_feed_names.json now, harvested by build_water_names.py out of the
+                # `wb` field every ramp record already carries. Proven before deleting, by
+                # running consolidate with and without --js-lists: 401 rows both ways, zero
+                # names lost.
+                #
+                # These are asserted absent because a list like this comes BACK. lake_boundaries/
+                # came back through a docstring on 2026-08-17 and that is the reason this whole
+                # block exists. dump_js_lists.mjs is here too: it is the only thing that wrote
+                # js_lists.json, and that file was a CACHE that went stale -- on 2026-08-22 it
+                # still held HB Robinson Lake, removed from user-known-lakes.js eleven days
+                # earlier, and was still feeding that row's name and note into the index.
+                'js/data/scdnr-state-lakes.js',
+                'js/data/user-known-lakes.js',
+                'js/data/dump_js_lists.mjs'):
         safe('absent_' + rel.split('/')[-1],
              (lambda r: (lambda: not os.path.exists(Q(*r.split('/')))))(rel))
     safe('absent_lake_boundaries_dir', lambda: not os.path.isdir(R('lake_boundaries')))
