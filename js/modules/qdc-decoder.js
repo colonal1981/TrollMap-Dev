@@ -58,85 +58,126 @@ export async function parseQDCFolder(files, layer = 1, onProgress = null) {
   const validSizes = [params.f_size1, params.f_size2, params.f_size3, params.f_size4]
     .filter((s) => s > 0);
 
-  const matched = [];
-  for (const file of files) {
-    if (validSizes.includes(file.size)) {
-      const buf = await file.arrayBuffer();
-      matched.push({ file, dv: new DataView(buf) });
-    }
-  }
-  if (matched.length === 0) {
+  const sized = files.filter((f) => validSizes.includes(f.size));
+  if (sized.length === 0) {
     throw new Error('No valid QDC files found for this layer (file sizes did not match).');
   }
 
-  // Boundary scan — sentinels fixed to true int16 range (issue #3 fix)
-  let x_min = 32767, y_min = 32767;
-  let x_max = -32768, y_max = -32768;
-  for (const { dv } of matched) {
-    const xVal = _qdcInt16(dv, 164);
-    x_min = Math.min(xVal, x_min);
-    x_max = Math.max(xVal, x_max);
-    const yVal = _qdcInt16(dv, 160);
-    y_min = Math.min(yVal, y_min);
-    y_max = Math.max(yVal, y_max);
+  // ONE GRID PER TILE, NOT ONE ARRAY OVER THE WHOLE FOLDER.
+  //
+  // A .qdc file carries one tile, and the block it writes starts at that tile's own index.
+  // The old code still allocated a single Int16Array spanning the bounding rectangle of every
+  // tile in the folder and let each file fill its own corner of it. That rectangle is nearly
+  // all air: Ryan's C folder holds 2,959 tiles inside a 311 x 344 rectangle, so 97% of it is
+  // empty before a byte is read. At the default layer 1 the array asked for 1.75e9 cells --
+  // 3.5 GB, past what a browser hands out in one ArrayBuffer -- and threw `Array buffer
+  // allocation failed` at the allocation, before any depth was decoded. Layer 0 asks four
+  // times that, 14 GB. A 400-file subfolder spans 44 x 31 tiles and wants 45 MB, which is why
+  // only the whole-folder load ever failed. Measured 2026-08-22 over all 2,959 files.
+  //
+  // Working a tile at a time caps the grid at l_size2^2 cells no matter how many files arrive
+  // -- 32 KB at layer 1, 128 KB at layer 0 -- and the header pass reads 168 bytes per file
+  // instead of the whole file, so the folder is never resident either: 2,959 files held as
+  // DataViews was a second gigabyte waiting to happen. It is also about five times faster,
+  // because emitting points no longer means walking 1.75e9 mostly-empty cells.
+  //
+  // Layers 4 and 5 need the general form: there l_size is 4x l_size2, so a file's block covers
+  // four tiles in each direction and neighbouring files genuinely overlap. `span` is that
+  // ratio, a tile pulls in every file whose block reaches it, and the files are replayed in
+  // folder order so a later file's blanks leave an earlier file's depths standing -- the same
+  // rule the single array gave. Verified point-for-point against the old code on all six
+  // layers: on the 21-file Bates set, which carries tiles held by both the C (community) and
+  // U (own recordings) trees, and on a synthetic stand-in for all 2,959 files.
+  const HDR = 168;                    // tile index lives at 160 (y) and 164 (x)
+  const L2 = params.l_size2;          // cells along one tile edge
+  const span = Math.max(1, Math.round(params.l_size / L2));
+  const degPerTile = params.a_step * L2;
+
+  const byTile = new Map();           // "x:y" -> [{ order, file }] in folder order
+  for (let n = 0; n < sized.length; n++) {
+    const file = sized[n];
+    const head = new DataView(await file.slice(0, HDR).arrayBuffer());
+    const key = `${_qdcInt16(head, 164)}:${_qdcInt16(head, 160)}`;
+    let a = byTile.get(key); if (!a) byTile.set(key, a = []);
+    a.push({ order: n, file });
   }
-  if (x_min === 32767 || y_min === 32767 || x_max === -32768 || y_max === -32768) {
-    throw new Error('No valid QDC files found!');
+  if (byTile.size === 0) throw new Error('No valid QDC files found!');
+
+  // Every tile any file can write into, not just the tiles files sit on (span > 1 only).
+  const outTiles = new Set();
+  for (const key of byTile.keys()) {
+    const [tx, ty] = key.split(':').map(Number);
+    for (let i = 0; i < span; i++) {
+      for (let j = 0; j < span; j++) outTiles.add(`${tx + i}:${ty + j}`);
+    }
   }
 
-  const x_size = (x_max - x_min + 1) * params.l_size;
-  const y_size = (y_max - y_min + 1) * params.l_size;
-  const arrDepth = new Int16Array(x_size * y_size);
-
+  const arrDepth = new Int16Array(L2 * L2);   // reused, one tile at a time
+  const pts = [];
   let processed = 0;
-  for (const { file, dv } of matched) {
-    const xVal = _qdcInt16(dv, 164);
-    const x_orig = (xVal - x_min) * params.l_size2;
-    const yVal = _qdcInt16(dv, 160);
-    const y_orig = (yVal - y_min) * params.l_size2;
 
-    let i;
-    if (file.size === params.f_size1) i = params.f_offset1;
-    else if (file.size === params.f_size2) i = params.f_offset2;
-    else if (file.size === params.f_size3) i = params.f_offset3;
-    else if (file.size === params.f_size4) i = params.f_offset4;
+  for (const key of outTiles) {
+    const [ox, oy] = key.split(':').map(Number);
 
-    for (let yy = 0; yy <= params.n_sectors; yy++) {
-      for (let xx = 0; xx <= params.n_sectors; xx++) {
-        for (let y = 0; y < 32; y++) {
-          for (let x = 0; x < 32; x++) {
-            const x_abs = xx * 32 + x + x_orig;
-            const y_abs = yy * 32 + y + y_orig;
-            if (i + 2 < dv.byteLength && i - 1 >= 0) {
-              const valCode = _qdcInt16(dv, i + 1);
-              if (valCode !== 0) {
-                const valDepth = _qdcInt16(dv, i - 1);
-                arrDepth[x_abs * y_size + y_abs] = valDepth;
-              }
-            }
-            i += 4;
-          }
+    const contributors = [];
+    for (let i = 0; i < span; i++) {
+      for (let j = 0; j < span; j++) {
+        for (const c of byTile.get(`${ox - i}:${oy - j}`) || []) {
+          contributors.push({ ...c, dx: -i * L2, dy: -j * L2 });
         }
       }
     }
-    processed++;
-    if (onProgress) onProgress(processed, matched.length, 'decoding');
-  }
+    if (!contributors.length) continue;
+    contributors.sort((a, b) => a.order - b.order);
 
-  const x_orig_global = x_min * 90 / 2 ** 14;
-  const y_orig_global = y_min * 90 / 2 ** 14;
+    arrDepth.fill(0);
+    for (const { file, dx, dy } of contributors) {
+      const dv = new DataView(await file.arrayBuffer());
 
-  const pts = [];
-  for (let ix = 0; ix < x_size; ix++) {
-    for (let iy = 0; iy < y_size; iy++) {
-      const raw = arrDepth[ix * y_size + iy];
-      if (raw <= 0) continue;
-      const lon = x_orig_global + params.a_step / 2 + ix * params.a_step;
-      const lat = y_orig_global + params.a_step / 2 + iy * params.a_step;
-      pts.push({ lat, lon, depth: (raw / 100) * 3.28084 }); // cm -> m -> ft
+      let i;
+      if (file.size === params.f_size1) i = params.f_offset1;
+      else if (file.size === params.f_size2) i = params.f_offset2;
+      else if (file.size === params.f_size3) i = params.f_offset3;
+      else if (file.size === params.f_size4) i = params.f_offset4;
+
+      for (let yy = 0; yy <= params.n_sectors; yy++) {
+        for (let xx = 0; xx <= params.n_sectors; xx++) {
+          for (let y = 0; y < 32; y++) {
+            for (let x = 0; x < 32; x++) {
+              const gx = xx * 32 + x + dx;
+              const gy = yy * 32 + y + dy;
+              if (gx >= 0 && gx < L2 && gy >= 0 && gy < L2
+                  && i + 2 < dv.byteLength && i - 1 >= 0) {
+                const valCode = _qdcInt16(dv, i + 1);
+                if (valCode !== 0) arrDepth[gx * L2 + gy] = _qdcInt16(dv, i - 1);
+              }
+              i += 4;
+            }
+          }
+        }
+      }
+      if (span === 1) {
+        processed++;
+        if (onProgress) onProgress(processed, sized.length, 'decoding');
+      }
+    }
+
+    const lonOrig = ox * degPerTile;
+    const latOrig = oy * degPerTile;
+    for (let ix = 0; ix < L2; ix++) {
+      for (let iy = 0; iy < L2; iy++) {
+        const raw = arrDepth[ix * L2 + iy];
+        if (raw <= 0) continue;
+        pts.push({
+          lat: latOrig + params.a_step / 2 + iy * params.a_step,
+          lon: lonOrig + params.a_step / 2 + ix * params.a_step,
+          depth: (raw / 100) * 3.28084,          // cm -> m -> ft
+        });
+      }
     }
   }
-  if (onProgress) onProgress(matched.length, matched.length, 'done');
+
+  if (onProgress) onProgress(sized.length, sized.length, 'done');
   return pts;
 }
 
