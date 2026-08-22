@@ -529,6 +529,33 @@ def main():
             # The feature is COPIED before its geometry is replaced. `feats` is the tile's
             # list and every live lake reads it, so trimming in place would hand the second
             # lake the first lake's cut.
+            # WHAT THE TRIM COSTS, AND THE OPTIMISATION THAT DOES NOT PAY.
+            #
+            # Measured 2026-08-22 on C4E0CC -- 5,164 depth areas, 503,740 vertices, one lake:
+            # the trim is 0.11 s against 0.05 s for the any-vertex scan it replaces, so **2.4x**.
+            # Not more, because the old scan had no early exit either on a feature it did NOT
+            # match; the only features that got cheaper were the ones it kept, and it kept them
+            # wrong. Budget the accumulation phase at 2.4x and the whole build at under 2x.
+            #
+            # The obvious fix is a per-feature bbox computed once per tile-layer and tested
+            # against the mask box in O(1) per lake. **It was built and measured and it does not
+            # pay**: 69% of the tile's features are skipped, but the 31% that survive are the
+            # long ones that cost the most, so it is 0.7x for a single lake (the precompute is
+            # pure loss), 1.2x at four lakes and 1.4x at twelve. Do not spend an evening on it.
+            #
+            # ONE FEATURE, ONE SINGLE-PART GEOMETRY -- AND THIS REPO HAS PAID FOR IT TWICE.
+            #
+            # A trimmed line comes back as a MultiLineString when the mask cut it into more
+            # than one run, and `verts()` is shallow ON PURPOSE: for a MultiLineString it
+            # returns the list of LINES, so `for _x, _y in verts(g)` unpacks a whole line into
+            # a coordinate pair. That is `ValueError: too many values to unpack (expected 2,
+            # got 14)` in _flush's core test. It crashed the 2026-08-18 rebuild the first time
+            # and it crashed this one at the first flush -- norris_lake, tile 8 of 92.
+            #
+            # `build_chartpack._singles` already settled the answer and its docstring says why:
+            # *"Turning one contour into two contours is also the truer statement: they are two
+            # separate stretches of water now."* Widening verts() would be the wrong fix; its
+            # other callers rely on it being shallow.
             for s in live:
                 m = masks[s]
                 keep = acc[s].setdefault(layer, [])
@@ -539,8 +566,26 @@ def main():
                         continue
                     if verdict == 'trim':
                         trimmed[layer] += 1
+                        if ng.get('type') == 'MultiLineString':
+                            for _line in ng['coordinates']:
+                                if len(_line) < 2:
+                                    continue
+                                _f2 = dict(f)
+                                _f2['geometry'] = {'type': 'LineString', 'coordinates': _line}
+                                keep.append(_f2)
+                            continue
                         f = dict(f)
                         f['geometry'] = ng
+                    elif f['geometry'].get('type') == 'MultiLineString':
+                        # Untouched, but still multi-part: the extract has never produced one,
+                        # and if it ever does the crash above is what it would look like.
+                        for _line in f['geometry']['coordinates']:
+                            if len(_line) < 2:
+                                continue
+                            _f2 = dict(f)
+                            _f2['geometry'] = {'type': 'LineString', 'coordinates': _line}
+                            keep.append(_f2)
+                        continue
                     keep.append(f)
             feats = None
 
