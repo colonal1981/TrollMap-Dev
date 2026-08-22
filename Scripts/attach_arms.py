@@ -224,10 +224,27 @@ def main() -> int:
             props = ((feats[0] or {}).get('properties') or {}) if feats else {}
             props = dict(props)
             props['arms_attached'] = [x['id3dhp'] for x in by[slug]]
-            json.dump({'type': 'FeatureCollection', 'features': [{
+            # CARRY THE COLLECTION-LEVEL BLOCK. ATTACHING A LIMB USED TO ERASE THE RECORD.
+            #
+            # `build_lake_registry.py` writes 3DHP's own record at the TOP of the file --
+            # `{"type": "FeatureCollection", "properties": rec, "features": [...]}` -- holding
+            # lake_id, area_km2, states and feature_type, which is `featuretypelabel` straight
+            # out of the geopackage. This rebuilt the file from `feats[0]['properties']` alone,
+            # so every boundary that ever gained an arm lost that block: Lake Marion, Hartwell,
+            # Norris, Norman, Cherokee, Wylie. 301 of 3,402 boundary files are blank and this is
+            # one of the two reasons why.
+            #
+            # It surfaced through consolidate_lake_index.py, which fell back to guessing
+            # feature_type from the NAME and served 17 reservoirs as rivers. Every blank left
+            # here is a row that has to be guessed there.
+            doc_props = doc.get('properties') if isinstance(doc, dict) else None
+            out = {'type': 'FeatureCollection'}
+            if doc_props:
+                out['properties'] = doc_props
+            out['features'] = [{
                 'type': 'Feature', 'properties': props,
-                'geometry': {'type': 'MultiPolygon', 'coordinates': base + add}}]},
-                open(fp, 'w', encoding='utf-8'))
+                'geometry': {'type': 'MultiPolygon', 'coordinates': base + add}}]
+            json.dump(out, open(fp, 'w', encoding='utf-8'))
 
     print('\n%s%d boundaries would gain a limb, %d piece(s) refused as already covered'
           % ('' if a.go else '[DRY RUN] ', len(done), len(refused)))

@@ -77,7 +77,7 @@ WHAT DOES NOT MATCH IS THE POINT. Bates Old River and HB Robinson are real lakes
 that 3DHP never named; they are ADDED to the index as first-class records with
 `source: curated`, not discarded as unmatched noise.
 """
-import argparse, json, math, os, re, sys
+import argparse, io, json, math, os, re, sys
 from collections import defaultdict
 
 # Parameter codes worth asking the USGS OGC API for, in the order they go into `usgs.params`.
@@ -211,6 +211,58 @@ def state_suffix(x):
     if len(sts) > 1:
         return '/'.join(sts)
     return x.get('state') or (sts[0] if sts else '')
+
+
+_BOUNDARY_FT = re.compile(r'"feature_type"\s*:\s*"([^"]+)"')
+_BOUNDARY_FT_CACHE = {}
+
+
+def boundary_feature_type(regdir, slug):
+    """3DHP's own classification for this water, read from the boundary file we already wrote.
+
+    THE ANSWER WAS ALWAYS ON DISK. `build_lake_registry.py` copies `featuretypelabel` out of the
+    geopackage into the boundary file's collection-level `properties`, and across 3,402 boundary
+    files the whole vocabulary is three words: Lake 3,083, Coastal 17, River 1.
+
+    Nothing read it. The classifier below re-derived the field from a regex on the NAME instead,
+    so `Fishing Creek Reservoir` -- gnis:1247757, feature_type Lake, an 8.76 km2 impoundment on
+    the Catawba -- came out `river` because the word "Creek" is in its name, while `Wateree Lake`,
+    the next impoundment down the same river, came out `lake` because it is not. Ryan found it by
+    looking for a lake and finding it filed under rivers, then killed the excuse in one line:
+    "lake wateree is a catawba river lake and it shows up under lakes like it is supposed."
+
+    Measured 2026-08-22 over the 452 offered rows: 271 lake/lake and 14 coastal/coastal agreed,
+    exactly ONE row is genuinely a river to 3DHP, and 17 rows 3DHP calls Lake were being served
+    as rivers -- Bear Creek Lake, Wolf Creek Lake, Tanasee Creek Lake, Cedar Creek Reservoir,
+    Goose Creek Reservoir, Stony Creek Reservoir, Beaver Creek Pond, Quaker Creek Reservoir,
+    Thicketty Creek WCD Lake Number 26, and `hughes_old_river`, which is an OXBOW -- water cut
+    off from the river, the same argument Ryan already had to make about Bates Old River.
+
+    That matters beyond a label: `water-filter.js` reads feature_type into `isRiver`, and rivers
+    are off by default in the research picker. All 17 were hidden rather than misfiled.
+
+    Only the first 8 KB is read because `build_lake_registry.py` writes `properties` before
+    `features`, and the geometry after it can run to megabytes.
+
+    Returns None when the file has no classification -- see the counter at the call site, which
+    prints how many rows fell through to the name. That number is the size of the remaining gap,
+    and it must never be silent.
+    """
+    if slug in _BOUNDARY_FT_CACHE:
+        return _BOUNDARY_FT_CACHE[slug]
+    val = None
+    try:
+        with io.open(os.path.join(regdir, 'boundaries', slug + '.geojson'),
+                     encoding='utf-8', errors='replace') as fh:
+            m = _BOUNDARY_FT.search(fh.read(8192))
+        if m:
+            val = m.group(1).strip().lower()
+    except OSError:
+        pass
+    if val not in ('lake', 'river', 'coastal'):
+        val = None
+    _BOUNDARY_FT_CACHE[slug] = val
+    return val
 
 
 def load_name_overrides(path):
@@ -773,16 +825,40 @@ def main():
     #
     # An explicit value already on the record always wins — the lake_db branch knows
     # things the slug does not.
+    # THE SOURCE OUTRANKS THE NAME. See boundary_feature_type() for what this cost.
+    #
+    # The regex below stays because 301 of 3,402 boundary files carry no classification at all,
+    # and 149 of those are offered rows -- Lake Marion, Hartwell, Norris, Norman, Cherokee,
+    # Wylie, Savannah River. They are blank because two writers drop the block:
+    # `attach_arms.py` rebuilds the file from `feats[0]['properties']` and
+    # `install_registry_boundary.py` writes its own `{slug, source}` in its place. Both now
+    # carry the classification through, so this fallback's territory shrinks as boundaries are
+    # recut rather than growing.
+    #
+    # A NAME IS THE LAST RESORT, NOT THE FIRST. 00_START_HERE has said "plain substring matching
+    # cannot be made safe" through five instances; this was the sixth.
     RIVERISH = re.compile(r'\b(river|creek|run|branch|fork|stream|canal|slough|bayou)\b', re.I)
     ft_counts = {}
+    ft_src = {'record': 0, 'boundary': 0, 'slug_prefix': 0, 'name': 0}
+    ft_named = []
     for slug, rec in idx.items():
-        if not rec.get('feature_type'):
-            if slug.startswith('coast_'):
+        if rec.get('feature_type'):
+            ft_src['record'] += 1
+        else:
+            src = boundary_feature_type(R, slug)
+            if src:
+                rec['feature_type'] = src
+                ft_src['boundary'] += 1
+            elif slug.startswith('coast_'):
                 rec['feature_type'] = 'coastal'
-            elif RIVERISH.search(rec.get('name') or '') or RIVERISH.search(slug.replace('_', ' ')):
-                rec['feature_type'] = 'river'
+                ft_src['slug_prefix'] += 1
             else:
-                rec['feature_type'] = 'lake'
+                riverish = (RIVERISH.search(rec.get('name') or '')
+                            or RIVERISH.search(slug.replace('_', ' ')))
+                rec['feature_type'] = 'river' if riverish else 'lake'
+                rec['feature_type_guessed'] = True
+                ft_src['name'] += 1
+                ft_named.append(slug)
         ft_counts[rec['feature_type']] = ft_counts.get(rec['feature_type'], 0) + 1
 
     # ── DROP WHAT THE BUILD ALREADY REFUSED ───────────────────────────────────────────────
@@ -1133,7 +1209,13 @@ def main():
 
     print('%d registry lakes in %s' % (len(lakes), ','.join(sorted(want))))
     print('%d records written' % len(idx))
-    print('feature_type: ' + ', '.join('%s %d' % kv for kv in sorted(ft_counts.items())) + '\n')
+    print('feature_type: ' + ', '.join('%s %d' % kv for kv in sorted(ft_counts.items())))
+    print('   decided by: record %d, 3DHP boundary %d, coast_ prefix %d, GUESSED FROM NAME %d'
+          % (ft_src['record'], ft_src['boundary'], ft_src['slug_prefix'], ft_src['name']))
+    if ft_named:
+        print('   guessed rows carry "feature_type_guessed": true -- %s%s'
+              % (', '.join(sorted(ft_named)[:6]), ' ...' if len(ft_named) > 6 else ''))
+    print('')
 
     # Display names must be unique or the picker shows rows nobody can tell apart. This is
     # the check that would have caught it the first time, so it runs on every build.

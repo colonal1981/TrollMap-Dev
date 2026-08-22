@@ -44,7 +44,7 @@ attributes, because `lakes.json` areas came from 3DHP and NHD's `AreaSqKm` is co
 different footprint. Two areas from two authorities in one column is how a sort order stops
 meaning anything. At these latitudes the formula is within ~0.05% of a geodesic area.
 """
-import argparse, json, math, os, shutil, sys
+import io, argparse, json, math, os, shutil, sys
 
 
 # --------------------------------------------------------------------------- geometry
@@ -426,11 +426,28 @@ def main():
 
     for slug, row, src, feats, tiles, acres in plan:
         # boundary: every part, as a FeatureCollection. load_boundary() takes all features.
-        out = {'type': 'FeatureCollection',
-               'features': [{'type': 'Feature',
-                             'properties': {'slug': slug, 'source': os.path.basename(src)},
-                             'geometry': flatten2d(f.get('geometry'))}
-                            for f in feats if f.get('geometry')]}
+        # CARRY 3DHP'S CLASSIFICATION IF THE SOURCE HAS ONE. See attach_arms.py for the cost.
+        #
+        # `build_lake_registry.py` and `boundary_from_3dhp.py` write the geopackage record --
+        # lake_id, area_km2, feature_type -- as the collection's own `properties`. Writing
+        # `{slug, source}` at the FEATURE level in its place left the record nowhere, and
+        # consolidate_lake_index.py then guessed feature_type from the name. A source with no
+        # such block still produces no block; nothing is invented here.
+        out = {'type': 'FeatureCollection'}
+        src_props = None
+        try:
+            with io.open(src, encoding='utf-8', errors='replace') as _fh:
+                _doc = json.load(_fh)
+            if isinstance(_doc, dict) and isinstance(_doc.get('properties'), dict):
+                src_props = _doc['properties']
+        except (OSError, ValueError):
+            pass
+        if src_props:
+            out['properties'] = src_props
+        out['features'] = [{'type': 'Feature',
+                            'properties': {'slug': slug, 'source': os.path.basename(src)},
+                            'geometry': flatten2d(f.get('geometry'))}
+                           for f in feats if f.get('geometry')]
         dst = os.path.join(bdir_out, slug + '.geojson')
         json.dump(out, open(dst, 'w', encoding='utf-8'))
         print('boundary -> %s (%d features)' % (dst, len(out['features'])))
