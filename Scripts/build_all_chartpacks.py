@@ -430,6 +430,7 @@ def main():
         remaining[s] = len([t for t in by_lake[s] if t in tiles])
 
     t0 = time.time()
+    flushed = 0
     for ti, tid in enumerate(tiles, 1):
         base = tid[1:]
         lakes = [s for s in by_tile.get(tid, []) if s in todo]
@@ -593,9 +594,18 @@ def main():
             remaining[s] -= 1
             if remaining[s] <= 0:
                 _flush(s, acc.pop(s, {}), masks.pop(s), meta[s], a, report)
+                flushed += 1
         if ti % 10 == 0 or ti == len(tiles):
-            print('   tile %d/%d  %.0fs elapsed  %d lakes written' % (ti, len(tiles),
-                                                                      time.time() - t0, len(report)))
+            # COUNT WHAT THIS RUN WROTE, NOT WHAT THE REPORT HOLDS.
+            #
+            # This printed `len(report)`, and `report` is deliberately loaded from disk and
+            # merged into so a partial run cannot replace a full one -- so a 375-lake run
+            # reported "1842 lakes written" on tile 10 and again on tile 92, a number about
+            # 1,467 lakes it never opened. The CLOSING summary was fixed for exactly this on
+            # 2026-08-19 and carries a long comment about it; the progress line two feet above
+            # it was not. Same bug, same file, one fix short.
+            print('   tile %d/%d  %.0fs elapsed  %d of %d lakes written'
+                  % (ti, len(tiles), time.time() - t0, flushed, len(todo)))
 
     for s in list(acc):                       # anything whose tile set was incomplete
         _flush(s, acc.pop(s), masks.pop(s, None), meta[s], a, report)
