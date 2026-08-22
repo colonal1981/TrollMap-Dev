@@ -327,6 +327,20 @@ export function buildDepthGrid(pts, n, doSmooth = true, doFringe = true, minPts 
     grid = smooth;
   }
 
+  // THE MASK THE CONTOURS GET CLIPPED TO, TAKEN BEFORE THE FRINGE WIDENS IT.
+  //
+  // doFringe dilates has_data by one cell and fills the ring from the nearest real value, which
+  // is what lets marching squares CLOSE a contour at the edge of coverage instead of leaving it
+  // hanging. That is a numerical device for the surface; it is not ground anyone drove over. Left
+  // in the output it puts contour line up to 24.3 m past the last sounding -- 24.5% of vertices
+  // on the Bates oxbow, measured 2026-08-22, against 4.8% and 7.1 m with the fringe off, which is
+  // just cell rounding. On water 75 m wide that is a third of the width bleeding onto each bank,
+  // and it is why TrollMap drew lines over dry land where ActiveCaptain did not.
+  //
+  // So: keep the fringe for the surface, hand the pre-dilation mask to contourGrid, and cut the
+  // lines back to it. Costs nothing structurally -- 70 lines become 72 pieces.
+  const has_real = has_data.map((row) => row.slice());
+
   if (doFringe) {
     const dilated = has_data.map((row) => row.slice());
     for (let y = 0; y < n; y++) {
@@ -365,14 +379,14 @@ export function buildDepthGrid(pts, n, doSmooth = true, doFringe = true, minPts 
   const BORDER = 2;
   for (let x = 0; x < n; x++) {
     for (let b = 0; b < BORDER; b++) {
-      grid[b][x] = NaN; has_data[b][x] = false;
-      grid[n - 1 - b][x] = NaN; has_data[n - 1 - b][x] = false;
+      grid[b][x] = NaN; has_data[b][x] = false; has_real[b][x] = false;
+      grid[n - 1 - b][x] = NaN; has_data[n - 1 - b][x] = false; has_real[n - 1 - b][x] = false;
     }
   }
   for (let y = 0; y < n; y++) {
     for (let b = 0; b < BORDER; b++) {
-      grid[y][b] = NaN; has_data[y][b] = false;
-      grid[y][n - 1 - b] = NaN; has_data[y][n - 1 - b] = false;
+      grid[y][b] = NaN; has_data[y][b] = false; has_real[y][b] = false;
+      grid[y][n - 1 - b] = NaN; has_data[y][n - 1 - b] = false; has_real[y][n - 1 - b] = false;
     }
   }
 
@@ -390,7 +404,7 @@ export function buildDepthGrid(pts, n, doSmooth = true, doFringe = true, minPts 
       });
     }
   }
-  return { type: 'FeatureCollection', features, meta: { minLat, maxLat, minLon, maxLon, n, grid, has_data } };
+  return { type: 'FeatureCollection', features, meta: { minLat, maxLat, minLon, maxLon, n, grid, has_data, has_real } };
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -461,8 +475,15 @@ function marchingSquares(grid, level) {
 }
 
 export function contourGrid(gridObj, interval, minD, maxD) {
-  const { grid, minLon, maxLon, minLat, maxLat, n } = gridObj.meta;
+  const { grid, minLon, maxLon, minLat, maxLat, n, has_real } = gridObj.meta;
   const g2 = grid.slice().reverse();
+  // Same flip marching squares works in, so a chain point indexes straight into it.
+  const r2 = has_real ? has_real.slice().reverse() : null;
+  const onRealGround = (col, row) => {
+    if (!r2) return true;
+    const y = Math.round(row), x = Math.round(col);
+    return y >= 0 && y < n && x >= 0 && x < n && r2[y][x];
+  };
   let maxVal = -Infinity;
   g2.forEach((row) => row.forEach((v) => { if (!isNaN(v)) maxVal = Math.max(maxVal, v); }));
   const maxDepth = Math.min(maxD, isFinite(maxVal) ? maxVal : maxD);
@@ -470,19 +491,28 @@ export function contourGrid(gridObj, interval, minD, maxD) {
   for (let level = minD; level <= maxDepth + 1e-6; level += interval) {
     const chains = marchingSquares(g2, level);
     chains.forEach((chain) => {
-      const coords = chain.map((pt) => {
+      // CUT THE CHAIN WHERE IT LEAVES THE SOUNDED GROUND, rather than drawing the whole of it.
+      // A contour past the last sounding is the fringe-fill's invention, not a depth anyone
+      // measured, and on a narrow water it lands on the bank. See buildDepthGrid.
+      let run = [];
+      const flush = () => {
+        if (run.length >= 2) {
+          features.push({
+            type: 'Feature',
+            geometry: { type: 'LineString', coordinates: run },
+            properties: { depth: Math.round(level), depth_ft: Math.round(level), label: Math.round(level) + 'ft' },
+          });
+        }
+        run = [];
+      };
+      for (const pt of chain) {
         const [col, row] = pt;
+        if (!onRealGround(col, row)) { flush(); continue; }
         const lon = minLon + (col / (n - 1)) * (maxLon - minLon);
         const lat = minLat + (row / (n - 1)) * (maxLat - minLat);
-        return [parseFloat(lon.toFixed(7)), parseFloat(lat.toFixed(7))];
-      });
-      if (coords.length >= 2) {
-        features.push({
-          type: 'Feature',
-          geometry: { type: 'LineString', coordinates: coords },
-          properties: { depth: Math.round(level), depth_ft: Math.round(level), label: Math.round(level) + 'ft' },
-        });
+        run.push([parseFloat(lon.toFixed(7)), parseFloat(lat.toFixed(7))]);
       }
+      flush();
     });
   }
   return { type: 'FeatureCollection', features };
