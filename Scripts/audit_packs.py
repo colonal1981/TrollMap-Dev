@@ -48,6 +48,13 @@ WHAT IT CHECKS
                    file is derived from that raster, so if it is wrong nothing downstream is
                    trustworthy.
 
+  depth reach      Deepest depth-area CEILING against the deepest contour. Garmin bands the
+                   whole water column, so the ceiling closes a rung past the deepest sounding
+                   and never short of it -- the test is the sign of the gap, not a threshold.
+                   Added 2026-08-22, after a band decoded without its page bit capped every
+                   depth zone at 83 ft through a whole extract, rebuild and upload while the
+                   contours beside it read 420. Nothing here compared the two layers.
+
   layer presence   A pack that had a layer yesterday and does not today.
 
 REGRESSION, NOT ABSOLUTE
@@ -290,6 +297,51 @@ def audit_one(pack, acres=None, a_min_samples=200, a_min_off=3):
                 out['issues'].append('%s is %.1f%% on land (budget %.1f%%) -- %d of %d points'
                                      % (name, pct, budget, dry, tot))
 
+    # THE DEPTH AREAS MUST REACH THE DEEPEST SOUNDING.
+    #
+    # Nothing in this pipeline compared the two depth layers to each other, and that is how the
+    # band bug lived through a whole extract, rebuild and upload. On 2026-08-21 the contour
+    # decoder learned the two-byte record and contours went to 348 ft on Jocassee and 420 on
+    # Fontana; the depth-area band stayed capped at 83 ft, because `bf` was being read without
+    # its page bit. Every zone below 84 ft on 50 of the 373 shipped packs was 256 dm too
+    # shallow, and Ryan found it by looking at a tooltip.
+    #
+    # `find_affected_tiles.py` could not see it -- it asks whether a tile still carries the 83 ft
+    # CONTOUR ceiling, and the contours were fine. The land check in this file could not see it
+    # either: a wrapped band is drawn in exactly the right place, it is only labelled wrong.
+    #
+    # THE INVARIANT IS NOT A THRESHOLD. Garmin bands the whole water column, so the deepest band
+    # CEILING closes one ladder rung past the deepest sounding -- never short of it. Measured on
+    # the 2026-08-22 extract, across shallow, medium and deep tiles, the margin is a rung every
+    # time and always the same sign:
+    #
+    #     C4E06F    contour  34.1 ft   band ceiling  48.0 ft   gap -13.9
+    #     C4E080    contour  83.0 ft   band ceiling  96.0 ft   gap -13.0
+    #     C4E0CC    contour 107.9 ft   band ceiling 120.0 ft   gap -12.1
+    #     C4E0CE    contour 348.1 ft   band ceiling 360.0 ft   gap -11.9
+    #
+    # So the test is the SIGN, not a number somebody picked: a positive gap means the depth
+    # areas stop short of the water the contours found. Under the old decode Jocassee's gap was
+    # +265 ft and it would have fired the moment the contour fix landed.
+    #
+    # An open band scores as `depth_max_ft` missing, which is why the fallback is the FLOOR --
+    # it must not read as zero and quietly pass.
+    cts = load(pack, 'contours.geojson')
+    if cts and da:
+        deep_ct = max((float((f.get('properties') or {}).get('depth_ft') or 0) for f in cts),
+                      default=0.0)
+        deep_band = max((float((f.get('properties') or {}).get('depth_max_ft')
+                               or (f.get('properties') or {}).get('depth_min_ft') or 0)
+                         for f in da), default=0.0)
+        out['depth'] = {'deepest_contour_ft': round(deep_ct, 1),
+                        'deepest_band_ft': round(deep_band, 1),
+                        'gap_ft': round(deep_ct - deep_band, 1)}
+        if deep_ct - deep_band > 0:
+            out['issues'].append(
+                'depth areas stop %.0f ft short of the contours -- deepest band ceiling %.0f ft '
+                'against a %.0f ft sounding. A band decoded without its page bit looks exactly '
+                'like this' % (deep_ct - deep_band, deep_band, deep_ct))
+
     g = graph_health(pack)
     if g:
         out['graph'] = g
@@ -332,6 +384,17 @@ def compare(old, new, tol):
                 reg.append('%s %s became zoom-stacked' % (slug, name))
             elif ol.get('zoom_stacked') and not nl.get('zoom_stacked'):
                 imp.append('%s %s zoom stacking cleared' % (slug, name))
+        od, nd = o.get('depth') or {}, n.get('depth') or {}
+        if 'gap_ft' in od and 'gap_ft' in nd:
+            # A gap that GROWS is the regression, and any gap above zero is an issue on its own
+            # -- the tolerance is in percentage points and does not apply to a depth in feet.
+            if nd['gap_ft'] > od['gap_ft']:
+                reg.append('%s depth areas fell further behind the contours: %.0f ft -> %.0f ft'
+                           % (slug, od['gap_ft'], nd['gap_ft']))
+            elif nd['gap_ft'] < od['gap_ft']:
+                imp.append('%s depth areas caught up with the contours: %.0f ft -> %.0f ft'
+                           % (slug, od['gap_ft'], nd['gap_ft']))
+
         og, ng = o.get('graph') or {}, n.get('graph') or {}
         if 'orphan_pct' in og and 'orphan_pct' in ng:
             d = ng['orphan_pct'] - og['orphan_pct']
