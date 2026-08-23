@@ -711,6 +711,12 @@ def runs_inside(pts, hit):
     return out
 
 
+def mask_w(m): return getattr(m, 'w', float('-inf'))
+def mask_e(m): return getattr(m, 'e', float('inf'))
+def mask_s(m): return getattr(m, 's', float('-inf'))
+def mask_n(m): return getattr(m, 'n', float('inf'))
+
+
 def _keep_geom(mask):
     """The lake plus its buffer as ONE shapely geometry, built once and cached on the mask.
 
@@ -822,6 +828,19 @@ def trim_geometry(geom, hit, mask=None):
         # That is an argument against DISCARDING VERTICES, which is not what an intersection
         # does. The expensive path runs only on polygons that were being dropped -- a handful
         # per lake -- so the hot loop is untouched.
+        # A CANDIDATE IS DECIDED BY BOUNDING BOX, NOT BY VERTICES -- clip_excluded says exactly
+        # this and the first cut of this branch ignored it. Without the box test EVERY polygon
+        # on the tile with no vertex inside pays for a shapely intersection to be told it is
+        # nowhere near: 10,958 of Great Falls' 10,997. Measured 2026-08-23, that took the
+        # rebuild from 345 s at tile 10 to 979 s, a three-hour run.
+        #
+        # The box is also the only thing that catches a polygon large enough to ENCLOSE the
+        # lake, which has no vertex anywhere near it and would sail through a vertex test --
+        # the same failure clip_excluded records. Four comparisons, and it cannot miss that.
+        fb = _bbox(pts)
+        if fb and (fb[2] < mask_w(mask) or mask_e(mask) < fb[0]
+                   or fb[3] < mask_s(mask) or mask_n(mask) < fb[1]):
+            return (None, 'drop')
         keep = _keep_geom(mask) if mask is not None else None
         if keep is None:
             return (None, 'drop')          # no shapely: the old rule, unchanged
