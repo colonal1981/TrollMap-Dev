@@ -228,11 +228,140 @@ def _slug_list(src):
     return {x.strip() for x in src.replace('\n', ',').split(',') if x.strip()}
 
 
-def owned_inside(slug, meta, registry, _cache={}):
-    """Ring sets of every water that owns a boundary and sits inside this COASTAL zone.
+# A WATER THAT SITS INSIDE ANOTHER WATER IS CUT OUT OF IT, the same way a lake is cut out of a
+# coastal zone. Ryan set that rule for the coast -- "coastal water shouldn't have any freshwater
+# in it at all period" -- and it was wired only for `coast_` zones, so a river got nothing.
+#
+# The Congaree River's polygon covers 72% of Bates Old River. Both cores therefore hold every
+# contour in the oxbow, the contest is decided by a cell or two, and Bates loses 24 features of
+# its own lake to a river 83 times its size -- 137 of 143 points against 140.
+#
+# NESTED_MIN IS NOT A TUNED NUMBER. Measured across the whole registry (250 candidate pairs,
+# scripts/census_nested.py, 2026-08-23) the overlaps fall into two populations with an empty band
+# between them. The largest overlap that is NOT a nesting is the Oconee inside the Ocmulgee at
+# 3.9%; the smallest that IS one is the South Yadkin inside the Yadkin at 22.5%. Six pairs sit
+# above the band, 244 below it, and nothing at all lands between 0.04 and 0.22 -- any value in
+# there selects the same six. If the registry's boundaries change, re-run the census rather than
+# nudging this.
+NESTED_MIN = 0.10
 
-    Returns () for a lake, which is the whole point: a lake does not swallow anything, and a
-    lake inside a lake is a merge question rather than a masking one.
+
+_NESTED = {}
+
+
+def nested_inside(meta, registry, _c={}):
+    """{outer slug: [inner slugs]} for waters that are NOT coastal zones. Computed once.
+
+    MEASURED BY geomcore, NOT BY ANYTHING NEW HERE. The first version of this function carried
+    its own latitude-bucketed ray caster, which is the thing geomcore's own docstring records as
+    having been written once already and thrown away: "the first cut ray-cast 1,200 sample points
+    against every edge of the other polygon in pure Python... Ryan called it painfully slow and he
+    was being polite." geomcore picks shapely if it is installed -- exact polygon intersection in
+    C, no sampling and no boundary ambiguity -- numpy if it is not, and the Python loop last.
+
+    THIS IS A DIFFERENT QUESTION FROM find_duplicate_waters.py AND BOTH ARE NEEDED.
+    That tool asks "are these one water under two slugs" and its verdict() deliberately answers NO
+    for a small water wholly inside a big one, because saying yes there deletes a real lake:
+    Greenfield Lake is 75 acres inside a 195,000-acre coastal region and it is still Greenfield
+    Lake. This asks the masking question instead -- does my outline cover another named water's,
+    so that my core must not claim that water's bathymetry. Bates Old River is exactly the case
+    the duplicate tool is right to ignore and this one must not.
+
+    DIRECTION IS MEASURED, AND SYMMETRY WOULD BE FATAL. Calderwood is 100% inside Cheoah while 46%
+    of Cheoah is inside Calderwood -- because the part of Cheoah inside Calderwood IS Calderwood.
+    Cutting both ways empties Calderwood's core completely. Only the more-contained water is cut
+    out of the other, and every qualifying pair is lopsided enough that there is no tie to break.
+
+    NESTED_MIN IS NOT A TUNED NUMBER. Measured across the registry, the overlaps fall into two
+    populations with an empty band between them: the largest overlap that is NOT a nesting is the
+    Oconee inside the Ocmulgee at 3.9%, the smallest that IS one is the South Yadkin inside the
+    Yadkin at 22.5%, and nothing lands in between. Any value from 0.04 to 0.22 selects the same
+    six pairs. If the boundaries change, re-measure rather than nudging this.
+    """
+    if _NESTED:
+        return _NESTED.get('map', {})
+
+    import geomcore                                        # noqa: E402
+    from find_duplicate_waters import rings_of             # noqa: E402
+    engine, _ = geomcore.pick_engine()
+
+    slugs = [s for s in meta if not s.startswith('coast_')]
+
+    def box(s):
+        b = (meta.get(s) or {}).get('bounds_wsen')
+        return b if (isinstance(b, (list, tuple)) and len(b) == 4) else None
+
+    def deg2(slug, bx):
+        """The water's own area in the same square degrees the boxes are measured in."""
+        acres = (meta.get(slug) or {}).get('area_acres') or 0.0
+        lat = (bx[1] + bx[3]) / 2.0
+        k = 111320.0 * 111320.0 * math.cos(math.radians(lat))
+        return (acres * 4046.856) / k if k else 0.0
+
+    # PREFILTER WITH A REAL BOUND, NOT A GUESS. The shared area can never exceed the boxes'
+    # intersection, so a water whose own area is more than 1/NESTED_MIN times that intersection
+    # cannot possibly be NESTED_MIN contained. Measuring every box-overlapping pair instead --
+    # thousands of them, each re-reading a boundary file up to 8 MB -- is what killed the first
+    # run of this. Nothing that could qualify is dropped.
+    pairs = []
+    for i, a in enumerate(slugs):
+        ba = box(a)
+        if not ba:
+            continue
+        for b_ in slugs[i + 1:]:
+            bb = box(b_)
+            if not bb:
+                continue
+            iw = min(ba[2], bb[2]) - max(ba[0], bb[0])
+            ih = min(ba[3], bb[3]) - max(ba[1], bb[1])
+            if iw <= 0 or ih <= 0:
+                continue
+            inter = iw * ih
+            sa, sb = deg2(a, ba), deg2(b_, bb)
+            small = min(x for x in (sa, sb) if x > 0) if (sa > 0 or sb > 0) else 0.0
+            if small and inter < NESTED_MIN * small:
+                continue
+            # ordered so the same boundary is reused across consecutive pairs
+            pairs.append((b_, a) if sa < sb else (a, b_))
+    pairs.sort()
+
+    # Bounded cache: holding every boundary's coordinates at once is 275 MB of geojson and it
+    # kills the process with no traceback on a small box.
+    order = []
+
+    def polys(s):
+        if s not in _c:
+            fp = os.path.join(registry, 'boundaries', s + '.geojson')
+            _c[s] = rings_of(fp) if os.path.exists(fp) else []
+            order.append(s)
+            while len(order) > 24:
+                _c.pop(order.pop(0), None)
+        return _c[s]
+
+    out = defaultdict(list)
+    for a, b_ in pairs:
+        pa, pb = polys(a), polys(b_)
+        if not pa or not pb:
+            continue
+        a_in_b, b_in_a = geomcore.measure(engine, pa, pb)[:2]
+        if max(a_in_b, b_in_a) < NESTED_MIN * 100.0:
+            continue
+        if a_in_b > b_in_a:
+            out[b_].append(a)
+        elif b_in_a > a_in_b:
+            out[a].append(b_)
+    _c.clear()
+    _NESTED['map'] = {k: sorted(v) for k, v in out.items()}
+    return _NESTED['map']
+
+
+def owned_inside(slug, meta, registry, _cache={}):
+    """Ring sets of every water that owns a boundary and sits inside this one.
+
+    For a COASTAL zone that is every non-coastal water whose box overlaps: zones swallow lakes
+    wholesale and the rasteriser removes whatever is really inside. For any other water it is the
+    measured nesting from nested_inside() -- which used to return () here, on the reasoning that
+    "a lake does not swallow anything". Six pairs in the registry say otherwise.
 
     Bounding boxes decide who is even a candidate, off lakes.json, so a zone does not read 432
     boundary files to discover that 429 of them are three states away. Only the survivors are
@@ -240,7 +369,16 @@ def owned_inside(slug, meta, registry, _cache={}):
     Cooper is inside both coast_charleston_sc and coast_cape_romain_sc.
     """
     if not slug.startswith('coast_'):
-        return ()
+        # A LAKE CUTS OUT WHAT SITS INSIDE IT TOO, which this used to refuse to consider. See
+        # nested_inside(): six pairs in the registry qualify and every one was already showing up
+        # as both-sides-lose in the ownership dry run.
+        out = []
+        for s in nested_inside(meta, registry).get(slug, ()):
+            if s not in _cache:
+                _cache[s] = load_boundary(registry, s)
+            if _cache[s]:
+                out.append(_cache[s])
+        return out
     zb = (meta.get(slug) or {}).get('bounds_wsen')
     if not (isinstance(zb, (list, tuple)) and len(zb) == 4):
         return ()

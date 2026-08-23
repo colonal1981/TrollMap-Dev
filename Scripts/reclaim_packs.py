@@ -242,12 +242,19 @@ def main():
                 # A FEATURE ENTIRELY INSIDE MY OWN WATER CANNOT BE TAKEN: a rival can at best
                 # tie, and a tie stays where it is. This is the only safe short-circuit here.
                 #
-                # A "majority" version was tried and REVERTED the same minute -- if I hold more
-                # than half the vertices then no rival can hold more, UNLESS two cores contain
-                # the same cell. They do: Ferry Lake is an oxbow of the Santee and their
-                # boundaries overlap, so the shortcut changed Ferry's verdict from 27 contours
-                # lost to 24. Cheaper and wrong. The test case caught it because it was still
-                # being run.
+                # A "majority" version was tried and REVERTED: holding more than half a
+                # feature's vertices does NOT mean no rival holds more, because a vertex can lie
+                # in two cores at once. Ferry Lake is an oxbow of the Santee and the boundaries
+                # overlap, so the shortcut changed Ferry's verdict from 27 contours lost to 24.
+                #
+                # The three it spared are 3, 4 and 5 points long: Santee lines already clipped
+                # to Ferry's mask, so the surviving stub does sit in Ferry's core while the
+                # Santee still holds all of it. THAT is the reason. The first version of this
+                # comment gave a different one -- that the two cores "share a cell" -- and it
+                # was an artefact of a bad measurement, not a fact. cell_of() numbers cells from
+                # each mask's OWN bbox corner, so an id from one mask names a different piece of
+                # water in another and the two core sets are never comparable. Never intersect
+                # them. Only ever ask a mask about its own cells, the way every line here does.
                 if n_me < len(pts):
                     for k in rivals:
                         m = masks.get(k)
