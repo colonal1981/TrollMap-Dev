@@ -44,10 +44,14 @@ const DECLARED = [
   ['Worker/worker-data.js', 'LAKES', 15, 'gate',
    'normalPool/usgs/duke/ahq for 15 waters. The duke arm is already bypassed by '
    + 'dukeRowForNames() reading the live 34-lake feed; the rest still gates.'],
-  ['js/modules/duke-energy.js', 'STATE_NAME_MAP', 9, 'gate',
-   'THE FIFTH COPY of the nine-lake Duke list, found by this test on the day it was written. '
-   + 'duke-energy.js has had no importer since main.js switched to conditions-strip.js and the '
-   + 'file has no side effects. Deletion tab.'],
+  // STATE_NAME_MAP was here until 2026-08-23 -- the FIFTH copy of the nine-lake Duke list,
+  // found by this test on the day it was written. The whole file is gone. Nothing in js/,
+  // Worker/, test/ or index.html imported it; its exports `parseDukeText` and `fetchDamLevels`
+  // were named only inside comments describing what they used to do, one of which called it
+  // "Vestigial"; and STATE_NAME_MAP was reached by nothing but this row. `audit.json` said
+  // three files imported it and audit.json was written 2026-08-14, before main.js moved to
+  // conditions-strip.js -- a dependency graph is a measurement with a date on it.
+  // check_start_here.py asserts the file's absence now, because a list like this comes back.
   ['Worker/worker-data.js', 'RIVERS', 6, 'gate',
    'gauges, kayak thresholds and dam bindings for 6 rivers of 90 shipped. The river-mile '
    + 'centerline in each entry genuinely exists nowhere else, so this one cannot simply '

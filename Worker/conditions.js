@@ -3059,7 +3059,7 @@ async function waterBlock(b, lat, lon, env) {
  * A water the feed does not name returns a null offset saying so, the same way an unbound water
  * returns `pending`. A gap that is visible is a gap that can be closed.
  *
- * (Vestigial, noted not fixed: fetchDamLevels() in js/modules/duke-energy.js loops basins 1, 2
+ * (Vestigial, noted not fixed: fetchDamLevels() in the deleted js/modules/duke-energy.js looped basins 1, 2
  * and 3 and the /duke route forwards a `basin` parameter, but fetchDukeApi ignores it and every
  * one of those calls returns the identical full list. Three requests for one answer.)
  */

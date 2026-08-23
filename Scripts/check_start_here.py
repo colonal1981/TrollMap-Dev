@@ -180,7 +180,22 @@ def collect(root, repo):
                 # earlier, and was still feeding that row's name and note into the index.
                 'js/data/scdnr-state-lakes.js',
                 'js/data/user-known-lakes.js',
-                'js/data/dump_js_lists.mjs'):
+                'js/data/dump_js_lists.mjs',
+                # THE FIFTH COPY OF THE DUKE NINE-LAKE LIST -- deleted 2026-08-23.
+                #
+                # `hand-written-tables.test.js` found it on the day it was written, and it sat
+                # for a week because "probably dead" is not a measurement. It is dead, and the
+                # proof is three separate reads: nothing in js/, Worker/, test/ or index.html
+                # imports the file; its two exports, `parseDukeText` and `fetchDamLevels`, are
+                # named ONLY inside comments describing what they used to do -- Worker's own
+                # says "Vestigial"; and `STATE_NAME_MAP` was reached by nothing but the ledger
+                # test that declared it.
+                #
+                # `audit.json` DISAGREED and was wrong: it records main.js, plan-builder.js and
+                # utility-sync.js importing it, and it was written 2026-08-14, before main.js
+                # moved to conditions-strip.js. A dependency graph is a measurement with a date
+                # on it.
+                'js/modules/duke-energy.js'):
         safe('absent_' + rel.split('/')[-1],
              (lambda r: (lambda: not os.path.exists(Q(*r.split('/')))))(rel))
     safe('absent_lake_boundaries_dir', lambda: not os.path.isdir(R('lake_boundaries')))
