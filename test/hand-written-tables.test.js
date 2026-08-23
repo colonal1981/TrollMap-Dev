@@ -107,8 +107,15 @@ const DECLARED = [
    '16 declared, 16 shipped. Every zone in the table is a zone the picker offers.'],
 
   // ── discovery seeds: superseded by the live agency indexes ────────────────────────────────
+  // NOT DEAD, and this note said it was. Corrected 2026-08-23 while auditing the ledger for
+  // things that could be cut: what agency-pages.js replaced on 2026-08-16 is the PRIMARY path,
+  // not the table. discover.js still reads it twice -- `agencyTableHit(TWRA_LAKE_PAGES)` and
+  // again as `staticHit` -- so it is the fallback underneath the live index, which is a
+  // different thing from superseded. A row that reads "replaced" invites a deletion.
   ['Worker/research/discover.js', 'TWRA_LAKE_PAGES', 10, 'data',
-   'replaced 2026-08-16 by agency-pages.js reading the live TWRA region indexes.'],
+   'the FALLBACK under agency-pages.js, which reads the live TWRA region indexes since '
+   + '2026-08-16. Still read twice in discover.js. Do not cut it on the strength of the word '
+   + '"replaced" -- what was replaced is the path that runs first.'],
   ['Worker/research/discover.js', 'GADNR_LAKE_PAGES', 31, 'data',
    'Georgia is deliberately absent from AGENCY_INDEXES, so this is still the GA seed list.'],
 
