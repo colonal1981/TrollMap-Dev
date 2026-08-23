@@ -91,14 +91,44 @@ function researchStorageId(lakeName) {
  * name is the one with the research in it, and it must win over a key that only exists
  * because the display name changed.
  */
+/** The county parenthetical `consolidate_lake_index.py` added, and nothing else. */
+const COUNTY_PAREN = /\s*\([^)]*\bCo\b[^)]*\)\s*/i;
+
+/**
+ * The name this lake was called BEFORE the index started naming by county: "Lake Murray, SC".
+ *
+ * NOT `stripLakeQualifiers`, which removes every parenthetical. "Saluda River (2) (Newberry Co,
+ * SC)" has to come back as "Saluda River (2), SC" and not as "Saluda River" -- there are four
+ * Saluda Rivers in the registry and the "(2)" is the only thing telling them apart. So only the
+ * parenthetical containing "Co" is removed, and the state it carried is put back on the end.
+ */
+function legacyStorageName(name) {
+  const s = String(name || '');
+  const m = COUNTY_PAREN.exec(s);
+  if (!m) return s;
+  const st = /,\s*((?:SC|NC|GA|TN)(?:\/(?:SC|NC|GA|TN))*)\s*\)?\s*$/i.exec(m[0]);
+  const base = s.replace(COUNTY_PAREN, ' ').replace(/\s+/g, ' ').trim();
+  return st ? `${base}, ${st[1].toUpperCase()}` : base;
+}
+
 function researchStorageIdCandidates(lakeName) {
   const raw = sanitizeLakeId(lakeName);
   const bare = sanitizeLakeId(stripLakeQualifiers(lakeName));
+  // THE FORM 59 OF THE 62 PROFILES ARE ACTUALLY FILED UNDER, and it was missing until
+  // 2026-08-23. The Thurmond fix above added `bare` and `raw` and stopped there, so it rescued
+  // exactly the lakes whose stored id happens to be one of those two -- Thurmond's own id IS
+  // the county form, which is why it looked fixed. Measured against the live bucket:
+  //   /research/get?lake=Lake Murray (Newberry Co, SC)  -> 404
+  //   /research/get?lake=Lake Murray, SC                -> ok, v76.0
+  // Every profile written before August is under the second spelling.
+  const legacy = sanitizeLakeId(legacyStorageName(lakeName));
   const out = [];
   const push = (x) => { if (x && !out.includes(x)) out.push(x); };
   push(RESEARCH_CANONICAL_IDS[bare]);
+  push(RESEARCH_CANONICAL_IDS[legacy]);
   push(RESEARCH_CANONICAL_IDS[raw]);
   push(bare);
+  push(legacy);
   push(raw);
   return out;
 }
@@ -147,4 +177,4 @@ function extractJsonPossibly(txt) {
   return null;
 }
 
-export { sanitizeLakeId, expandLakeAbbrev, stripLakeQualifiers, parseLakeBaseName, RESEARCH_CANONICAL_IDS, researchStorageId, researchStorageIdCandidates, resolveResearchStorageId, lakeResearchMasterKey, lakePackageKey, extractJsonPossibly };
+export { sanitizeLakeId, expandLakeAbbrev, stripLakeQualifiers, legacyStorageName, parseLakeBaseName, RESEARCH_CANONICAL_IDS, researchStorageId, researchStorageIdCandidates, resolveResearchStorageId, lakeResearchMasterKey, lakePackageKey, extractJsonPossibly };

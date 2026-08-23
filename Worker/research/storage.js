@@ -72,7 +72,20 @@ async function handleResearchSave(request, env) {
   try { body = await request.json(); } catch { return new Response(JSON.stringify({ok:false, error:"invalid JSON"}), {status:400, headers:JSON_HEADERS}); }
   const lakeName = String(body.lakeName || body.profile?.lakeName || body.profile?.identity?.lakeName || '').trim();
   if (!lakeName) return new Response(JSON.stringify({ok:false, error:"missing lakeName"}), {status:400, headers:JSON_HEADERS});
-  const safe = researchStorageId(lakeName);
+  // SAVE UNDER THE KEY THIS LAKE ALREADY HAS, NOT THE ONE ITS CURRENT NAME SPELLS.
+  //
+  // This was the only path in the Worker that did not resolve first, and that is why the store
+  // gains a new key every time a display name changes. handleResearchGet resolves, so the app
+  // reads the old profile and then writes the merge to a NEW id -- leaving two profiles for one
+  // lake and a picker that can only ever match one of them. Lake Robinson has exactly that:
+  // `lake_robinson_sc` from before the county rename and `hb_robinson_lake_darlington_co_sc`
+  // from a run after it. Measured 2026-08-23: 59 of the 62 profiles in the bucket are under the
+  // pre-county spelling.
+  //
+  // A NEW lake still gets researchStorageId(), so nothing changes for a first save.
+  const foundKey = await resolveResearchStorageId(lakeName,
+    (id) => env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${id}.json`).catch(() => null));
+  const safe = foundKey ? foundKey.id : researchStorageId(lakeName);
   const incomingProfile = body.profile || body;
   const packageParts = body.packageParts || body.parts || {};
   const notes = body.notes || incomingProfile.notes || "";
@@ -81,7 +94,7 @@ async function handleResearchSave(request, env) {
   let nextVersion = 1;
   let existingMeta = null;
   try {
-    const existingObj = await env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${safe}.json`);
+    const existingObj = foundKey ? foundKey.hit : await env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${safe}.json`);
     if (existingObj) {
       const txt = await r2Text(existingObj);
       const existing = JSON.parse(txt);

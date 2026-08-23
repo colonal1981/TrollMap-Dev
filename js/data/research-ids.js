@@ -55,6 +55,43 @@ export function researchStorageId(lakeName) {
   return RESEARCH_CANONICAL_IDS[safe] || safe;
 }
 
+/** Mirror of `stripLakeQualifiers` in worker/research/keys.js. */
+export function stripLakeQualifiers(name) {
+  return String(name || '')
+    .replace(/\s*\([^)]*\)\s*/g, ' ')
+    .replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const COUNTY_PAREN = /\s*\([^)]*\bCo\b[^)]*\)\s*/i;
+
+/** Mirror of `legacyStorageName` in worker/research/keys.js. */
+export function legacyStorageName(name) {
+  const s = String(name || '');
+  const m = COUNTY_PAREN.exec(s);
+  if (!m) return s;
+  const st = /,\s*((?:SC|NC|GA|TN)(?:\/(?:SC|NC|GA|TN))*)\s*\)?\s*$/i.exec(m[0]);
+  const base = s.replace(COUNTY_PAREN, ' ').replace(/\s+/g, ' ').trim();
+  return st ? `${base}, ${st[1].toUpperCase()}` : base;
+}
+
+/** Mirror of `researchStorageIdCandidates` in worker/research/keys.js. */
+export function researchStorageIdCandidates(lakeName) {
+  const raw = sanitizeLakeId(lakeName);
+  const bare = sanitizeLakeId(stripLakeQualifiers(lakeName));
+  const legacy = sanitizeLakeId(legacyStorageName(lakeName));
+  const out = [];
+  const push = (x) => { if (x && !out.includes(x)) out.push(x); };
+  push(RESEARCH_CANONICAL_IDS[bare]);
+  push(RESEARCH_CANONICAL_IDS[legacy]);
+  push(RESEARCH_CANONICAL_IDS[raw]);
+  push(bare);
+  push(legacy);
+  push(raw);
+  return out;
+}
+
 /**
  * Which of these display names already have a profile.
  *
@@ -62,14 +99,22 @@ export function researchStorageId(lakeName) {
  * Set of the DISPLAY NAMES that resolve onto one of them, so the caller never has to hold the id
  * mapping itself.
  *
- * Matching is by exact storage id and nothing looser. A fuzzy match here would mark a water
- * researched that is not, and the failure is invisible: the lake simply stops being offered.
+ * IT MATCHES THE SAME CANDIDATE SET THE WORKER'S READ PATH TRIES, and until 2026-08-23 it matched
+ * only `researchStorageId` — the WRITE rule. That is the wrong question. "Do I have a profile for
+ * this water" is answered by whether `/research/get` would find one, and that call tries the bare
+ * name, the pre-county "Name, ST" name and the literal name in turn. Asking with one spelling
+ * reported North Saluda and both Lake Robinsons as unresearched while their profiles sat in the
+ * bucket, and sent Ryan to re-run a pipeline that spends Firecrawl credits.
+ *
+ * This is NOT a fuzzy match. It is the exact set of keys the Worker will look under; a name that
+ * matches here is a name `/research/get` will resolve. A fuzzy match would mark a water researched
+ * that is not, and the failure would be invisible — the lake simply stops being offered.
  */
 export function researchedNames(displayNames, ids) {
   const have = new Set((ids || []).map((x) => (typeof x === 'string' ? x : x && x.id)).filter(Boolean));
   const out = new Set();
   for (const name of displayNames || []) {
-    if (have.has(researchStorageId(name))) out.add(name);
+    if (researchStorageIdCandidates(name).some((id) => have.has(id))) out.add(name);
   }
   return out;
 }

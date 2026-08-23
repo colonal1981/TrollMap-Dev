@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from './expect-shim.mjs';
-import { sanitizeLakeId, researchStorageId, researchedNames, RESEARCH_CANONICAL_IDS }
+import { sanitizeLakeId, researchStorageId, researchStorageIdCandidates, legacyStorageName,
+         researchedNames, RESEARCH_CANONICAL_IDS }
   from '../js/data/research-ids.js';
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -74,5 +75,65 @@ describe('researchedNames — what is already done', () => {
 
   it('accepts bare id strings as well as objects', () => {
     expect(researchedNames(['Lake Wateree, SC'], ['lake_wateree_sc']).size).toBe(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// THE PRE-COUNTY SPELLING — added 2026-08-23
+//
+// `consolidate_lake_index.py` started naming lakes by county in August. Every profile written
+// before that is filed under the old "Name, ST" id, and measured against the live bucket that is
+// 59 of the 62 profiles in it. The read path had `bare` and `raw` and neither is that spelling,
+// so `/research/get?lake=Lake Murray (Newberry Co, SC)` returned 404 while
+// `/research/get?lake=Lake Murray, SC` returned a v76 profile.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+describe('the pre-county spelling resolves', () => {
+  it('legacyStorageName agrees with the Worker, character for character', () => {
+    const body = /function legacyStorageName\(name\)\s*\{([\s\S]*?)\n\}/.exec(WORKER);
+    expect(Boolean(body)).toBe(true);
+    const paren = /const COUNTY_PAREN = (\/.*\/i);/.exec(WORKER);
+    expect(Boolean(paren)).toBe(true);
+    // eslint-disable-next-line no-new-func
+    const theirs = new Function('name', `const COUNTY_PAREN = ${paren[1]};` + body[1]);
+    for (const name of ['Lake Murray (Newberry Co, SC)', 'Saluda River (2) (Newberry Co, SC)',
+                        'J. Strom Thurmond Reservoir (Lincoln Co, GA/SC)', 'Lake Wateree, SC',
+                        'Calderwood Lake (Monroe Co, TN/NC)', 'Bates Old River (Richland Co, SC)',
+                        '', null]) {
+      expect(legacyStorageName(name)).toBe(theirs(name));
+    }
+  });
+
+  it('candidates agree with the Worker, in the same order', () => {
+    const body = /function researchStorageIdCandidates\(lakeName\)\s*\{([\s\S]*?)\n\}/.exec(WORKER);
+    expect(Boolean(body)).toBe(true);
+    for (const name of ['Lake Murray (Newberry Co, SC)', 'Lake Thurmond, SC',
+                        'North Saluda Reservoir (Greenville Co, SC)', 'Lake Wateree, SC']) {
+      // The Worker's own body cannot be eval'd here without its helpers, so the contract is
+      // asserted on the OUTPUT instead: the mirror must produce the pre-county id in the middle.
+      const got = researchStorageIdCandidates(name);
+      expect(got.includes(sanitizeLakeId(legacyStorageName(name)))).toBe(true);
+      expect(got.includes(sanitizeLakeId(name))).toBe(true);
+    }
+  });
+
+  it('a county display name finds a profile filed under the old name', () => {
+    // The live case. 59 of 62 profiles are filed this way.
+    const LIVE = [{ id: 'lake_murray_sc' }, { id: 'north_saluda_reservoir_greenville_co_sc' }];
+    const done = researchedNames(['Lake Murray (Newberry Co, SC)',
+                                  'North Saluda Reservoir (Greenville Co, SC)'], LIVE);
+    expect(done.size).toBe(2);
+  });
+
+  it('keeps the number that tells four Saluda Rivers apart', () => {
+    // stripLakeQualifiers would leave "Saluda River" and match whichever profile came first.
+    // Only the parenthetical carrying "Co" is removed.
+    expect(legacyStorageName('Saluda River (2) (Newberry Co, SC)')).toBe('Saluda River (2), SC');
+    expect(researchStorageIdCandidates('Saluda River (2) (Newberry Co, SC)'))
+      .toContain('saluda_river_2_sc');
+  });
+
+  it('still refuses a lake with no profile under ANY spelling', () => {
+    expect(researchedNames(['Lake Wateree (Kershaw Co, SC)'], [{ id: 'lake_murray_sc' }]).size).toBe(0);
   });
 });
