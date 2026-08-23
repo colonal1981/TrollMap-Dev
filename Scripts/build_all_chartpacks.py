@@ -633,6 +633,15 @@ def main():
                     for s, a0, b0 in rows:
                         if s == best_s:
                             continue
+                        # A ZONE DOES NOT CONTEST A ZONE. Ryan drew the coastal zones to
+                        # overlap -- ACE Basin, Beaufort, Hilton Head and St Helena share water
+                        # on purpose -- which is exactly why owned_inside() refuses to cut one
+                        # out of another. A feature in the overlap belongs to both by
+                        # construction and there is nothing to win. Measured before this line
+                        # existed: the zones traded 800 features each way and every one of them
+                        # came out worse.
+                        if s.startswith('coast_') and best_s.startswith('coast_'):
+                            continue
                         lst = acc[s][layer]
                         for i in range(a0, b0):
                             lst[i] = None

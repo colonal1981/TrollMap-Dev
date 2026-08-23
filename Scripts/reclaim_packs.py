@@ -73,6 +73,7 @@ from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from build_chartpack import build_mask, _rings, verts  # noqa: E402
+from build_all_chartpacks import owned_inside  # noqa: E402
 
 BUFFER_M = 250.0
 DEG = BUFFER_M / 111320.0
@@ -108,10 +109,23 @@ def neighbour_graph(idx, tile_map):
 
 
 class Masks:
-    """Built once per lake and kept. A river with 31 neighbours would otherwise rebuild them all."""
+    """Built once per lake and kept. A river with 31 neighbours would otherwise rebuild them all.
 
-    def __init__(self, registry):
+    BUILT THE WAY THE BUILD BUILDS THEM, which is the whole reason this class exists rather
+    than two lines inline. build_all_chartpacks.py passes
+    `exclude=owned_inside(slug, meta, registry)` into every mask: a COASTAL zone has every
+    water that owns its own boundary cut out of it, so Charleston Harbour's core does not
+    contain the Ashley or the Cooper.
+
+    The first version of this file called build_mask(rings, DEG) with no exclude, rebuilt
+    naive zone masks, and let Charleston swallow both rivers back -- 376 contours off the
+    Ashley, 2,730 off the Cooper, charted 0.7747 -> 0.4858 on the Cooper alone. The dry run
+    caught it before a single byte was written, which is what the dry run is for.
+    """
+
+    def __init__(self, registry, meta):
         self.registry = registry
+        self.meta = meta
         self._c = {}
 
     def get(self, slug):
@@ -125,7 +139,8 @@ class Masks:
                     [gj.get('geometry') or gj]
             rings = [r for g in geoms if g for r in _rings(g)]
             if rings:
-                m = build_mask(rings, DEG)
+                m = build_mask(rings, DEG,
+                               exclude=owned_inside(slug, self.meta, self.registry))
         self._c[slug] = m
         return m
 
@@ -179,7 +194,7 @@ def main():
         print('--only-lakes: %d of %d requested slugs are in the index' % (len(todo), len(want)))
 
     nb = neighbour_graph(idx, tile_map)
-    masks = Masks(reg)
+    masks = Masks(reg, idx)
     print('%d lakes; %d of them can be contested by a neighbour' % (len(todo), len(nb)))
 
     changed = {}
@@ -207,7 +222,13 @@ def main():
         # a lake whose every feature sits inside its own water never needs a single rival. The
         # first calibration run spent its whole budget building 32 river masks and judged
         # nothing.
-        rivals = sorted(nb.get(slug, ()))
+        # A ZONE DOES NOT CONTEST A ZONE. Ryan drew the coastal zones to overlap -- ACE Basin,
+        # Beaufort, Hilton Head and St Helena share water on purpose -- and owned_inside()
+        # refuses to cut one out of another for exactly that reason. A feature in the overlap
+        # belongs to both by construction, so there is nothing to win: the first dry run had
+        # them trading 800 features each way and every one of them came out worse.
+        rivals = [k for k in sorted(nb.get(slug, ()))
+                  if not (slug.startswith('coast_') and k.startswith('coast_'))]
         lost = defaultdict(int)
         lost_to = defaultdict(int)
         for layer, gj in layers.items():
