@@ -39,7 +39,7 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from build_chartpack import (LakeMask, BboxMask, build_mask, read_fc, verts, SHIP, NOTE,
                              DROP, redp, _rings, collapse_ramps,
-                             clip_excluded, trim_geometry)   # noqa: E402
+                             clip_excluded, trim_geometry, split_multi)   # noqa: E402
 
 # Which layers decide "is this lake charted". DEPTH AREAS, not contours -- see
 # LakeMask.charted_fraction for why counting contour vertices reported 0.66 for a fully
@@ -562,32 +562,25 @@ def main():
                 keep = acc[s].setdefault(layer, [])
                 hit = lambda x, y, _m=m: (x, y) in _m
                 for f in feats:
-                    ng, verdict = trim_geometry(f['geometry'], hit)
+                    ng, verdict = trim_geometry(f['geometry'], hit, m)
                     if verdict == 'drop':
                         continue
                     if verdict == 'trim':
                         trimmed[layer] += 1
-                        if ng.get('type') == 'MultiLineString':
-                            for _line in ng['coordinates']:
-                                if len(_line) < 2:
-                                    continue
-                                _f2 = dict(f)
-                                _f2['geometry'] = {'type': 'LineString', 'coordinates': _line}
-                                keep.append(_f2)
-                            continue
-                        f = dict(f)
-                        f['geometry'] = ng
-                    elif f['geometry'].get('type') == 'MultiLineString':
-                        # Untouched, but still multi-part: the extract has never produced one,
-                        # and if it ever does the crash above is what it would look like.
-                        for _line in f['geometry']['coordinates']:
-                            if len(_line) < 2:
-                                continue
-                            _f2 = dict(f)
-                            _f2['geometry'] = {'type': 'LineString', 'coordinates': _line}
-                            keep.append(_f2)
+                    else:
+                        ng = f['geometry']
+                    # split_multi ALWAYS, not only on the trim branch. A clipped polygon comes
+                    # back as a MultiPolygon just as a cut line comes back as a MultiLineString,
+                    # and the untouched branch has to be safe too -- an extract that ever emits
+                    # a Multi would crash _flush exactly the same way.
+                    parts = split_multi(ng)
+                    if len(parts) == 1 and parts[0] is ng and verdict != 'trim':
+                        keep.append(f)
                         continue
-                    keep.append(f)
+                    for _p in parts:
+                        _f2 = dict(f)
+                        _f2['geometry'] = _p
+                        keep.append(_f2)
             feats = None
 
         for s in live:

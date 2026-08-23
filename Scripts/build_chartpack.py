@@ -148,6 +148,8 @@ class BboxMask:
     """
 
     def __init__(self, rings, buffer_deg):
+        self.rings = [list(x) for x in rings]
+        self.buffer_deg = buffer_deg
         r = rings[0]
         w0, e0 = min(p[0] for p in r), max(p[0] for p in r)
         s0, n0 = min(p[1] for p in r), max(p[1] for p in r)
@@ -232,6 +234,11 @@ class LakeMask:
     CELL = 0.0002
 
     def __init__(self, rings, buffer_deg, exclude=()):
+        # KEPT so a polygon can be CUT rather than kept or dropped whole -- see _keep_geom().
+        # The raster is a 22 m approximation and good enough to decide WHO gets cut; it is not
+        # good enough to decide WHERE, which is the same distinction clip_excluded() draws.
+        self.rings = [list(r) for r in rings]
+        self.buffer_deg = buffer_deg
         self.cell = self.CELL
         xs = [p[0] for r in rings for p in r]
         ys = [p[1] for r in rings for p in r]
@@ -704,7 +711,51 @@ def runs_inside(pts, hit):
     return out
 
 
-def trim_geometry(geom, hit):
+def _keep_geom(mask):
+    """The lake plus its buffer as ONE shapely geometry, built once and cached on the mask.
+
+    `None` when shapely is missing or the rings will not heal, and the caller then falls back to
+    the whole-or-nothing rule -- which is what this replaces, so the fallback is the OLD
+    behaviour rather than a new one.
+    """
+    g = getattr(mask, '_keepg', 'unset')
+    if g != 'unset':
+        return g
+    g = None
+    rings = getattr(mask, 'rings', None)
+    if rings:
+        try:
+            from shapely.geometry import Polygon as _P
+            from shapely.ops import unary_union as _uu
+            parts = [_P(list(r)).buffer(0) for r in rings if len(r) >= 4]
+            g = _uu([x for x in parts if not x.is_empty]) if parts else None
+            if g is not None and getattr(mask, 'buffer_deg', 0):
+                g = g.buffer(mask.buffer_deg)
+            if g is not None and g.is_empty:
+                g = None
+        except Exception:
+            g = None
+    try:
+        mask._keepg = g
+    except Exception:
+        pass
+    return g
+
+
+def split_multi(geom):
+    """One single-part geometry per part. See _singles for why Multi must never leave here."""
+    t = (geom or {}).get('type') or ''
+    c = geom.get('coordinates')
+    if t == 'MultiLineString':
+        return [{'type': 'LineString', 'coordinates': p} for p in (c or []) if len(p) >= 2]
+    if t == 'MultiPolygon':
+        return [{'type': 'Polygon', 'coordinates': p} for p in (c or []) if p]
+    if t == 'MultiPoint':
+        return [{'type': 'Point', 'coordinates': p} for p in (c or [])]
+    return [geom]
+
+
+def trim_geometry(geom, hit, mask=None):
     """(geometry_or_None, 'keep' | 'trim' | 'drop').
 
     REPLACES `any(inbox(v) for v in verts(f))`, which kept a feature WHOLE if a single vertex
@@ -741,7 +792,47 @@ def trim_geometry(geom, hit):
         if not pts:
             return None, 'drop'
         ins = sum(1 for x, y in pts if hit(x, y))
-        return (geom, 'keep') if ins >= len(pts) * 0.5 else (None, 'drop')
+        if ins >= len(pts) * 0.5:
+            return (geom, 'keep')
+        # A POLYGON MOSTLY OUTSIDE IS NOT A POLYGON THAT BELONGS TO SOMEBODY ELSE.
+        #
+        # Dropping it was this function's rule and it was measured wrong on 2026-08-23.
+        # GARMIN DRAWS ONE POLYGON PER DEPTH BAND FOR A WHOLE RIVER CHAIN, not per lake. Great
+        # Falls Reservoir is 213 acres on the Catawba-Wateree, and every band covering it is a
+        # 2,000-to-2,800-vertex polygon running for miles, so 2% of its vertices land inside:
+        #
+        #     inside   n_in   n_pts   band
+        #      13.1%     49     373   31-32 ft
+        #       3.2%     47   1,454   20-21 ft
+        #       2.0%     57   2,820   5-6 ft
+        #       1.8%     50   2,756   7-8 ft      ... 37 of 39 dropped
+        #
+        # Keeping them whole gave the reservoir a charted of 0.9399 off water that is mostly
+        # somebody else's; dropping them gave it 0.1113 and no shading at all. Across the 375
+        # shipped packs the drop rule cost 97 of them coverage, 25 by more than a point.
+        #
+        # AND A THRESHOLD CANNOT SEPARATE THE TWO CASES. On Ferry Lake the seven polygons this
+        # rule dropped really were the Santee's and `charted` did not move by a thousandth.
+        # Same rule, opposite answers, because the question is WHERE the polygon is, not how
+        # much of it is elsewhere.
+        #
+        # So cut it, the way clip_excluded() cuts. Its docstring has the reason this branch used
+        # to refuse: *"a polygon cannot be cut by deleting vertices at all -- walking the
+        # boundary past them draws a straight line across the lobe that was supposed to go"*.
+        # That is an argument against DISCARDING VERTICES, which is not what an intersection
+        # does. The expensive path runs only on polygons that were being dropped -- a handful
+        # per lake -- so the hot loop is untouched.
+        keep = _keep_geom(mask) if mask is not None else None
+        if keep is None:
+            return (None, 'drop')          # no shapely: the old rule, unchanged
+        try:
+            from shapely.geometry import shape as _shape
+            left = _shape(geom).buffer(0).intersection(keep)
+        except Exception:
+            return (None, 'drop')
+        if left.is_empty:
+            return (None, 'drop')
+        return ({'type': left.geom_type, 'coordinates': _gj(left)['coordinates']}, 'trim')
 
     if t == 'LineString':
         kept = runs_inside(c, hit)
@@ -991,13 +1082,19 @@ def main():
             if not fs: continue
             ntile += 1
             for f in fs:
-                ng, verdict = trim_geometry(f['geometry'], inbox)
+                # `mask` goes in so a sprawling polygon is CUT rather than dropped -- the same
+                # rule the batch builder uses. Without it this builder would quietly disagree
+                # with build_all_chartpacks about what a pack contains, which is how two copies
+                # of one rule drift.
+                ng, verdict = trim_geometry(f['geometry'], inbox, mask)
                 if verdict == 'drop':
                     n_drop += 1
                     continue
                 if verdict == 'trim':
                     n_trim += 1
-                    f = dict(f); f['geometry'] = ng
+                    for part in split_multi(ng):
+                        feats.append(dict(f, geometry=part))
+                    continue
                 feats.append(f)
         if n_trim or n_drop:
             print('   %-14s trimmed %d feature(s) to the boundary, dropped %d that only grazed it'
