@@ -6,6 +6,7 @@
 
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
+import { coerceList, coerceLabels } from '../utils/coerce.js';
 
 /* Lake Intel: species, forage, habitat, hazards, seasonal patterns */
 export async function syncLakeIntelData() {
@@ -48,16 +49,17 @@ export async function syncLakeIntelData() {
       // Biology agent outputs predatorSpecies; fallback to primaryGameFish for backward compat.
       // Coerce to arrays defensively — a malformed string value (e.g. from a prior
       // run) would otherwise crash .join()/.map(); the assembly path now repairs it.
-      const gameFish = Array.isArray(bio.predatorSpecies) ? bio.predatorSpecies
-        : (Array.isArray(bio.primaryGameFish) ? bio.primaryGameFish : []);
+      const gameFish = [bio.predatorSpecies, bio.primaryGameFish].map(coerceList).find((l) => l.length) || [];
       if(gameFish.length) lines.push(`Primary sport fish: ${gameFish.join(', ')}`);
-      if(Array.isArray(bio.primaryForage) && bio.primaryForage.length) lines.push(`Known forage: ${bio.primaryForage.map(f => typeof f === 'string' ? f : f.species).filter(Boolean).join(', ')}`);
-      if(Array.isArray(bio.knownStockings) && bio.knownStockings.length) {
-        lines.push(`Stocking / management: ${bio.knownStockings.map(s => `${s.species}${s.note ? ` (${s.note})` : ''}`).join('; ')}`);
+      const forage = coerceList(bio.primaryForage).map(f => typeof f === 'string' ? f : f?.species).filter(Boolean);
+      if(forage.length) lines.push(`Known forage: ${forage.join(', ')}`);
+      const stockings = coerceList(bio.knownStockings);
+      if(stockings.length) {
+        lines.push(`Stocking / management: ${stockings.map(s => typeof s === 'string' ? s : `${s.species}${s.note ? ` (${s.note})` : ''}`).join('; ')}`);
       } else if(bio.stocking) lines.push(`Stocking / management: ${bio.stocking}`);
     } else {
-      lines.push(`Primary sport fish: ${(p.primarySportFish||[]).join(', ') || 'Unknown / verify locally'}`);
-      lines.push(`Known forage: ${(p.forage||[]).join(', ') || 'Unknown'}`);
+      lines.push(`Primary sport fish: ${coerceList(p.primarySportFish).join(', ') || 'Unknown / verify locally'}`);
+      lines.push(`Known forage: ${coerceList(p.forage).join(', ') || 'Unknown'}`);
       if(p.stocking) lines.push(`Stocking / management: ${p.stocking}`);
       if(p.spottedBass) lines.push(`Spotted bass / invasive pressure: ${p.spottedBass}`);
     }
@@ -115,7 +117,8 @@ export async function syncLakeIntelData() {
         return String(v);
       };
 
-      if(h.cover?.length) lines.push(`Habitat / cover: ${h.cover.join(', ')}`);
+      const cover = coerceList(h.cover).map(c => typeof c === 'string' ? c : fmtStructVal(c)).filter(Boolean);
+      if(cover.length) lines.push(`Habitat / cover: ${cover.join(', ')}`);
       if(h.structuralElements && typeof h.structuralElements === 'object') {
         const structParts = Object.entries(h.structuralElements)
           .map(([k, v]) => {
@@ -157,7 +160,8 @@ export async function syncLakeIntelData() {
     if(rp?.navigation) {
       const nav = rp.navigation;
       const hazards = [];
-      if(nav.navigationHazards?.length) hazards.push(nav.navigationHazards.join('; '));
+      const navHazards = coerceList(nav.navigationHazards);
+      if(navHazards.length) hazards.push(navHazards.join('; '));
       if(nav.drawdownNotes) hazards.push(nav.drawdownNotes);
       if(hazards.length) lines.push(`Navigation hazards: ${hazards.join(' \u00B7 ')}`);
     } else {
@@ -180,7 +184,8 @@ export async function syncLakeIntelData() {
       }
     } else {
       if(p.seasonalPattern) lines.push(`Seasonal pattern: ${p.seasonalPattern}`);
-      if(p.tacticalNotes?.length){ lines.push('Tactical notes:'); p.tacticalNotes.forEach(x=>lines.push(`\u2022 ${x}`)); }
+      const tacticalNotes = coerceList(p.tacticalNotes);
+      if(tacticalNotes.length){ lines.push('Tactical notes:'); tacticalNotes.forEach(x=>lines.push(`\u2022 ${x}`)); }
     }
 
     // Regulations
@@ -195,10 +200,14 @@ export async function syncLakeIntelData() {
       lines.push('Source Trust Stack:');
       const sr=d.sourceRegistry;
       if(sr.summary) lines.push(`\u2022 ${sr.summary.trustModel}`);
-      if(sr.official?.length) lines.push(`\u2022 OFFICIAL sources: ${sr.official.map(x=>x.label).join('; ')}`);
-      if(sr.habitat?.length) lines.push(`\u2022 OFFICIAL GIS / habitat sources: ${sr.habitat.map(x=>x.label).join('; ')}`);
-      if(sr.reports?.length) lines.push(`\u2022 VERIFY fishing-report sources: ${sr.reports.map(x=>x.label).join('; ')}`);
-      if(sr.model?.length) lines.push(`\u2022 VERIFY model/aggregate sources: ${sr.model.map(x=>x.label).join('; ')}`);
+      const srList_official = coerceLabels(sr.official);
+      if(srList_official.length) lines.push(`\u2022 OFFICIAL sources: ${srList_official.join('; ')}`);
+      const srList_habitat = coerceLabels(sr.habitat);
+      if(srList_habitat.length) lines.push(`\u2022 OFFICIAL GIS / habitat sources: ${srList_habitat.join('; ')}`);
+      const srList_reports = coerceLabels(sr.reports);
+      if(srList_reports.length) lines.push(`\u2022 VERIFY fishing-report sources: ${srList_reports.join('; ')}`);
+      const srList_model = coerceLabels(sr.model);
+      if(srList_model.length) lines.push(`\u2022 VERIFY model/aggregate sources: ${srList_model.join('; ')}`);
     }
     if(d.lakeMonster){
       lines.push('LakeMonster supplemental context (VERIFY \u2014 third-party/model source, not official):');
@@ -220,9 +229,8 @@ export async function syncLakeIntelData() {
     if(summary){
       summary.style.display='block';
       const verifiedBadge = rp ? `<br><span style="color:var(--accent2);font-weight:700">\uD83E\uDDE0 Verified Research v${rp.metadata?.version||'?'} \u00B7 ${rp.confidence?.overall?.percent||'?'}% confidence</span>` : (d.confidence&&String(d.confidence).includes('generic')?`<br><span style="color:var(--warn);font-weight:700">\u26A0 VERIFY: generic/unconfirmed profile</span>`:'');
-      const spList = Array.isArray(rp?.biology?.predatorSpecies) && rp.biology.predatorSpecies.length ? rp.biology.predatorSpecies
-        : (Array.isArray(rp?.biology?.primaryGameFish) && rp.biology.primaryGameFish.length ? rp.biology.primaryGameFish
-        : (Array.isArray(p.primarySportFish) ? p.primarySportFish : []));
+      const spList = [rp?.biology?.predatorSpecies, rp?.biology?.primaryGameFish, p.primarySportFish]
+        .map(coerceList).find((l) => l.length) || [];
       const speciesDisplay = spList.join(', ') || 'Profile generated';
       summary.innerHTML = `<b style="color:var(--accent)">\uD83E\uDDE0 ${esc(d.lake||label)}</b><br><span>${esc(speciesDisplay)}</span>${verifiedBadge}${d.latestReport?.source?`<br><span class="muted">Latest scraped report source \u2014 verify before relying: ${esc(d.latestReport.source)}</span>`:''}`;
     }
@@ -263,10 +271,10 @@ export async function syncClarityIntelData() {
     lines.push(`${d.summary}`);
     lines.push(`Confidence: ${d.confidence}. ${d.verify}`);
     if(d.rain){ lines.push(`Rain/runoff signal: ${d.rain.weighted72_in}" weighted 72h rain \u00B7 trip-day rain ${Math.round((d.rain.precipTrip_mm||0)/25.4*100)/100}" \u00B7 wind max ${d.rain.windMax_mph||'\u2014'} mph`); }
-    if(d.overall){ lines.push(`Overall predicted clarity: ${d.overall.clarity} (score ${d.overall.score}/100)`); lines.push(`Recommended colors: ${d.overall.lureColors.join(', ')}`); lines.push(`Tactics: ${d.overall.tactics.join('; ')}`); }
-    if(d.bestZones?.length){ lines.push('Best clarity / safer starting zones:'); d.bestZones.forEach(z=>lines.push(`\u2022 ${z.name}: ${z.clarity} \u2014 ${z.likely}`)); }
-    if(d.dirtyZones?.length){ lines.push('Likeliest dirty/muddy zones:'); d.dirtyZones.forEach(z=>lines.push(`\u2022 ${z.name}: ${z.clarity} \u2014 ${z.likely}`)); }
-    if(d.rampRecommendations?.length){ lines.push('Ramp / zone recommendations:'); d.rampRecommendations.forEach(r=>lines.push(`\u2022 ${r.zone}${r.ramps?.length?` (${r.ramps.join(', ')})`:''}: score ${r.score}/100 \u2014 ${r.why}`)); }
+    if(d.overall){ lines.push(`Overall predicted clarity: ${d.overall.clarity} (score ${d.overall.score}/100)`); lines.push(`Recommended colors: ${coerceList(d.overall.lureColors).join(', ')}`); lines.push(`Tactics: ${coerceList(d.overall.tactics).join('; ')}`); }
+    if(coerceList(d.bestZones).length){ lines.push('Best clarity / safer starting zones:'); coerceList(d.bestZones).forEach(z=>lines.push(`\u2022 ${z.name}: ${z.clarity} \u2014 ${z.likely}`)); }
+    if(coerceList(d.dirtyZones).length){ lines.push('Likeliest dirty/muddy zones:'); coerceList(d.dirtyZones).forEach(z=>lines.push(`\u2022 ${z.name}: ${z.clarity} \u2014 ${z.likely}`)); }
+    if(coerceList(d.rampRecommendations).length){ lines.push('Ramp / zone recommendations:'); coerceList(d.rampRecommendations).forEach(r=>lines.push(`\u2022 ${r.zone}${coerceList(r.ramps).length?` (${coerceList(r.ramps).join(', ')})`:''}: score ${r.score}/100 \u2014 ${r.why}`)); }
     if(d.note) lines.push(`Lake profile note: ${d.note}`);
     if(out) out.value = lines.join('\n');
     // Drive existing lure-color engine by updating Water Clarity select.

@@ -106,3 +106,39 @@ export function hasResearchValue(v) {
   if (typeof v === 'object') return Object.keys(v).length > 0;
   return true;
 }
+
+/**
+ * Anything a model emitted, as a list.
+ *
+ * `coerceSpeciesArray` above parses a species list -- it splits on commas, semicolons, slashes
+ * and the word "and", because that is what a model writes when asked for species. Most fields
+ * are not that. `cover`, `navigationHazards`, `lureColors`, `tactics`, the source-registry rows:
+ * a display list, where splitting a string would invent structure that was never in the answer.
+ *
+ * So this one normalizes the CONTAINER and touches nothing inside it. A string is one item, an
+ * object is its values, an array is itself with the holes removed, and nothing is `[]`.
+ *
+ * WHY IT EXISTS. `if (v?.length)` is true for a string, and a string has no `.join`. That crash
+ * has now happened three times on three different fields -- `knownStockings`, then
+ * `predatorSpecies`, then `h.cover` on 2026-08-23, which took the whole Lake Intelligence
+ * briefing down and replaced it with the manual checklist. The first two were each repaired in
+ * place with an `Array.isArray` ladder that taught the next field nothing. This is the ladder,
+ * written once.
+ */
+export function coerceList(v) {
+  if (v == null || v === '') return [];
+  if (Array.isArray(v)) return v.filter((x) => x != null && x !== '');
+  if (typeof v === 'object') return Object.values(v).filter((x) => x != null && x !== '');
+  return [v];
+}
+
+/**
+ * A list of labels, from rows that are `{label, url}` objects when the agent behaves and bare
+ * strings when it does not. Both render as a label; a row with neither drops out rather than
+ * printing "[object Object]" into a briefing.
+ */
+export function coerceLabels(v) {
+  return coerceList(v)
+    .map((x) => (x && typeof x === 'object') ? (x.label || x.name || '') : x)
+    .filter(Boolean);
+}

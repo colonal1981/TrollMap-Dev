@@ -1,5 +1,5 @@
 import { describe, it, expect } from './expect-shim.mjs';
-import { coerceStockingsArray, coerceSpeciesArray } from '../js/utils/coerce.js';
+import { coerceStockingsArray, coerceSpeciesArray, coerceList, coerceLabels } from '../js/utils/coerce.js';
 
 // Regression coverage for the "biology.knownStockings.map is not a function"
 // crash during profile assembly (e.g. resuming the Species Intelligence agent
@@ -76,5 +76,65 @@ describe('coerceSpeciesArray', () => {
       expect(Array.isArray(out)).toBe(true);
       expect(() => out.join(', ')).not.toThrow();
     }
+  });
+});
+
+// Regression coverage for "h.cover.join is not a function" -- Lake Jocassee, 2026-08-23.
+// The habitat agent returned `cover: "none"`. A non-empty string passes `if (v?.length)` and
+// then has no `.join`, so syncLakeIntelData() threw and the whole briefing was replaced by the
+// manual checklist. Same shape as the two crashes above it; third field, same lesson.
+describe('coerceList', () => {
+  it('turns a bare string into a one-item list (the exact crash scenario)', () => {
+    expect(coerceList('none')).toEqual(['none']);
+    expect(coerceList('none').join(', ')).toBe('none');
+  });
+
+  it('does NOT split a string on commas -- that would invent structure', () => {
+    // coerceSpeciesArray splits, on purpose, because a species list is written that way.
+    // A display field is not a list just because it contains a comma.
+    expect(coerceList('brush, laydowns')).toEqual(['brush, laydowns']);
+    expect(coerceSpeciesArray('brush, laydowns')).toEqual(['brush', 'laydowns']);
+  });
+
+  it('returns [] for null, undefined and empty string', () => {
+    expect(coerceList(null)).toEqual([]);
+    expect(coerceList(undefined)).toEqual([]);
+    expect(coerceList('')).toEqual([]);
+  });
+
+  it('passes an array through and drops the holes', () => {
+    expect(coerceList(['brush', null, '', 'timber'])).toEqual(['brush', 'timber']);
+    expect(coerceList([])).toEqual([]);
+  });
+
+  it('takes an object\'s values', () => {
+    expect(coerceList({ a: 'ledges', b: 'humps' })).toEqual(['ledges', 'humps']);
+    expect(coerceList({})).toEqual([]);
+  });
+
+  it('keeps objects intact so a caller can still format them', () => {
+    const pt = { lat: 34.9, lon: -82.9 };
+    expect(coerceList([pt])).toEqual([pt]);
+  });
+
+  it('result always has .join -- which is the whole point', () => {
+    for (const v of [null, undefined, '', 'none', ['a'], { k: 'v' }, 0, false]) {
+      expect(typeof coerceList(v).join).toBe('function');
+    }
+  });
+});
+
+describe('coerceLabels', () => {
+  it('reads .label off well-formed source rows', () => {
+    expect(coerceLabels([{ label: 'SCDNR', url: 'x' }, { label: 'USGS' }])).toEqual(['SCDNR', 'USGS']);
+  });
+
+  it('accepts bare strings from a run that did not build objects', () => {
+    expect(coerceLabels('SCDNR')).toEqual(['SCDNR']);
+    expect(coerceLabels(['SCDNR', { name: 'USGS' }])).toEqual(['SCDNR', 'USGS']);
+  });
+
+  it('drops a row with no label rather than printing [object Object]', () => {
+    expect(coerceLabels([{ url: 'https://example.gov' }, { label: 'SCDNR' }])).toEqual(['SCDNR']);
   });
 });
