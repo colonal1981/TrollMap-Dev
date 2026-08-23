@@ -28,7 +28,7 @@ import { coerceStockingsArray, coerceSpeciesArray, coerceNum, hasResearchValue,
 import { isCoastalKey, COASTAL_ZONES } from '../data/coastal-zones.js';
 import { workerHeaders } from '../utils/worker-auth.js';
 
-import { boundsOf } from '../utils/geojson-coords.js';
+import { boundsOf, paddedBox } from '../utils/geojson-coords.js';
 import { lakeRecordFor } from '../data/lake-registry.js';
 import { prepareNormalizedDocuments } from '../utils/doc-relevance.js';
 
@@ -215,6 +215,75 @@ function cleanLakeBaseName(lakeName) {
 
 
 
+
+// WQP LIMNOLOGY NEEDS A BOUNDING BOX, AND THE REGISTRY HAS ALREADY LOADED ONE.
+//
+// This asked R2 for `<key>/garmin_shoreline.geojson` and read its bounds. On 2026-08-23 North
+// Saluda Reservoir logged "could not derive bbox — skipping"; the pack has no shoreline file.
+// Counted rather than guessed: 157 of the 373 shipped packs have no garmin_shoreline.geojson,
+// so 42% of the lakes were silently skipping WQP entirely.
+//
+// That is the second time this exact failure has happened here. The comment this replaces
+// records the first: `shoreline.geojson` was the old i-Boating supplemental, was never in the
+// uploader's LAYERS, 404'd, and "a 404 here reads exactly like 'this lake has no boundary',
+// which silently drops the bbox and takes WQP limnology down with it." Switching to the Garmin
+// file fixed the lakes that have one and left the same trapdoor open for the ones that do not.
+//
+// So stop fetching a file to learn something already in hand. lake_index.json carries
+// `bounds_wsen` on every row, it is fetched `cache: 'no-store'` on every load, and all 373
+// rows have one whose own centroid falls inside it. No request, no 404, no lake left out.
+//
+// The fetch chain stays underneath for a label with no registry row — a river, or a water the
+// picker knows and the index does not.
+const WQP_BBOX_PAD = 0.01;   // ~0.7 mi, so a station just off the shoreline still counts
+
+async function wqpBboxFor(lakeName) {
+  const wire = (b) => b && ({ bboxWest: b.west, bboxSouth: b.south, bboxEast: b.east, bboxNorth: b.north });
+
+  // The loader camelCases the row: `bounds_wsen` in lake_index.json is `boundsWSEN` here.
+  const fromRegistry = paddedBox(lakeRecordFor(lakeName)?.boundsWSEN, WQP_BBOX_PAD);
+  if (fromRegistry) return { bbox: wire(fromRegistry), from: 'registry' };
+
+  const boundaryKey = resolveBoundaryKey(lakeName);
+  const urls = [];
+  if (boundaryKey) urls.push([`${CF_WORKER_URL}/chartpacks/${boundaryKey}/garmin_shoreline.geojson`, 'garmin_shoreline.geojson']);
+  urls.push([`${CF_WORKER_URL}/chartpacks/lake-boundary?lake=${encodeURIComponent(lakeName)}`, 'boundary.geojson']);
+  for (const [url, label] of urls) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const b = boundsOf(await res.json());
+      const padded = b && paddedBox([b.west, b.south, b.east, b.north], WQP_BBOX_PAD);
+      if (padded) return { bbox: wire(padded), from: label };
+    } catch (_) { /* try the next one; the caller reports having found nothing */ }
+  }
+  return { bbox: null, from: null };
+}
+
+// One WQP call, used by the full pipeline and by a resume run. These were two byte-identical
+// fifty-line blocks; a fix to one of them was a fix to half the lakes.
+async function fetchWqpLimnology(lakeName) {
+  try {
+    const { bbox, from } = await wqpBboxFor(lakeName);
+    if (!bbox) { log('⚠️ WQP: no bounding box for this water — skipping'); return; }
+    if (from !== 'registry') log(`  WQP bbox from ${from} (no registry row for this water)`);
+    const wqpRes = await fetch(`${CF_WORKER_URL}/research/limnology-data`, {
+      method: 'POST', headers: workerHeaders(),
+      body: JSON.stringify({ lakeName, ...bbox })
+    });
+    if (!wqpRes.ok) { log(`⚠️ WQP: HTTP ${wqpRes.status}`); return; }
+    const wqpData = await wqpRes.json();
+    if (!(wqpData.ok && wqpData.recordCount > 0)) { log(`⚠️ WQP: ${wqpData.note || 'no data found'}`); return; }
+    _state.wqpLimnology = wqpData;
+    const tc = wqpData.thermocline ? `${wqpData.thermocline.depthFt}ft (${wqpData.thermocline.method})` : 'not derived';
+    const surfWhen = wqpData.surfaceWater?.recentTempLastObserved || wqpData.surfaceWater?.lastObserved || null;
+    const surf = wqpData.surfaceWater?.recentTempF != null
+      ? `surface ${wqpData.surfaceWater.recentTempF}°F${surfWhen ? ` sampled ${surfWhen}` : ' (sample date not recorded)'} / DO ${wqpData.surfaceWater.recentDissolvedOxygenMgL ?? '?'} mg/L`
+      : '';
+    const sec = wqpData.secchi ? `secchi avg ${wqpData.secchi.avgSecchiDepthFt}ft (n=${wqpData.secchi.sampleCount})` : '';
+    log(`✔ WQP: ${wqpData.recordCount} records — thermocline ${tc}${surf ? '; ' + surf : ''}${sec ? '; ' + sec : ''}`);
+  } catch (e) { log(`⚠️ WQP fetch failed: ${e.message}`); }
+}
 
 function cloneJson(v) {
   return v == null ? v : JSON.parse(JSON.stringify(v));
@@ -2352,59 +2421,7 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
   // runFullPipeline also runs this in Step 1d; runAgents handles the resume case.
   if (mode === 'resume' && agentKeys.includes('limnology')) {
     setProgress('WQP limnology data...', 5);
-    try {
-      // GARMIN'S SHORELINE, NOT I-BOATING'S.
-      //
-      // `shoreline.geojson` is the old i-Boating supplemental and is not in the uploader's
-      // LAYERS, so this fetch 404s — and a 404 here reads exactly like "this lake has no
-      // boundary", which silently drops the bbox and takes WQP limnology down with it.
-      // `garmin_shoreline.geojson` is deliberately spelled differently because the bucket holds
-      // both, and it is the one we actually ship, keyed by the chartpack key rather than the
-      // supplemental one. Ryan, 2026-08-08: "we do not want to add shoreline.geojson to the
-      // uploads.. those are the old i-boating shoreline files... we need to change the app to
-      // use the garmin ones that we already uploaded."
-      const boundaryKey = resolveBoundaryKey(lakeName);
-      const shorelineUrl = boundaryKey
-        ? `${CF_WORKER_URL}/chartpacks/${boundaryKey}/garmin_shoreline.geojson?v=${Date.now()}`
-        : `${CF_WORKER_URL}/chartpacks/lake-boundary?lake=${encodeURIComponent(lakeName)}`;
-      const geoRes = await fetch(shorelineUrl);
-      let bbox = null;
-      if (geoRes.ok) {
-        const geo = await geoRes.json();
-        const b = boundsOf(geo);
-        if (b) {
-          // 0.01° padding (~0.7mi) ensures monitoring stations near the shoreline edge are captured
-          const PAD = 0.01;
-          bbox = {
-            bboxNorth: b.north + PAD,
-            bboxSouth: b.south - PAD,
-            bboxEast:  b.east  + PAD,
-            bboxWest:  b.west  - PAD,
-          };
-        }
-      }
-      if (bbox) {
-        const wqpRes = await fetch(`${CF_WORKER_URL}/research/limnology-data`, {
-          method: 'POST', headers: workerHeaders(),
-          body: JSON.stringify({ lakeName, ...bbox })
-        });
-        if (wqpRes.ok) {
-          const wqpData = await wqpRes.json();
-          if (wqpData.ok && wqpData.recordCount > 0) {
-            _state.wqpLimnology = wqpData;
-            const tc   = wqpData.thermocline ? `${wqpData.thermocline.depthFt}ft (${wqpData.thermocline.method})` : 'not derived';
-            const surfWhen = wqpData.surfaceWater?.recentTempLastObserved || wqpData.surfaceWater?.lastObserved || null;
-            const surf = wqpData.surfaceWater?.recentTempF != null ? `surface ${wqpData.surfaceWater.recentTempF}°F${surfWhen ? ` sampled ${surfWhen}` : ' (sample date not recorded)'} / DO ${wqpData.surfaceWater.recentDissolvedOxygenMgL ?? '?'} mg/L` : '';
-            const sec  = wqpData.secchi ? `secchi avg ${wqpData.secchi.avgSecchiDepthFt}ft (n=${wqpData.secchi.sampleCount})` : '';
-            log(`✔ WQP: ${wqpData.recordCount} records — thermocline ${tc}${surf ? '; ' + surf : ''}${sec ? '; ' + sec : ''}`);
-          } else {
-            log(`⚠️ WQP: ${wqpData.note || 'no data found'}`);
-          }
-        }
-      } else {
-        log('⚠️ WQP: could not derive bbox — skipping');
-      }
-    } catch (e) { log(`⚠️ WQP fetch failed: ${e.message}`); }
+    await fetchWqpLimnology(lakeName);
   }
 
   // ── Dynamic order / waves based on freshwater vs coastal ─────────────────
@@ -2640,59 +2657,7 @@ async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
     // STEP 1d: WQP limnology (only when limnology agent is in the run)
     if (!selectedAgents || selectedAgents.includes('limnology')) {
       setProgress('Step 1d: WQP limnology data...', 20);
-      try {
-        // GARMIN'S SHORELINE, NOT I-BOATING'S.
-        //
-        // `shoreline.geojson` is the old i-Boating supplemental and is not in the uploader's
-        // LAYERS, so this fetch 404s — and a 404 here reads exactly like "this lake has no
-        // boundary", which silently drops the bbox and takes WQP limnology down with it.
-        // `garmin_shoreline.geojson` is deliberately spelled differently because the bucket holds
-        // both, and it is the one we actually ship, keyed by the chartpack key rather than the
-        // supplemental one. Ryan, 2026-08-08: "we do not want to add shoreline.geojson to the
-        // uploads.. those are the old i-boating shoreline files... we need to change the app to
-        // use the garmin ones that we already uploaded."
-        const boundaryKey = resolveBoundaryKey(lakeName);
-        const shorelineUrl = boundaryKey
-          ? `${CF_WORKER_URL}/chartpacks/${boundaryKey}/garmin_shoreline.geojson?v=${Date.now()}`
-          : `${CF_WORKER_URL}/chartpacks/lake-boundary?lake=${encodeURIComponent(lakeName)}`;
-        const geoRes = await fetch(shorelineUrl);
-        let bbox = null;
-        if (geoRes.ok) {
-          const geo = await geoRes.json();
-          const b = boundsOf(geo);
-          if (b) {
-            // 0.01° padding (~0.7mi) ensures monitoring stations near the shoreline edge are captured
-            const PAD = 0.01;
-            bbox = {
-              bboxNorth: b.north + PAD,
-              bboxSouth: b.south - PAD,
-              bboxEast:  b.east  + PAD,
-              bboxWest:  b.west  - PAD,
-            };
-          }
-        }
-        if (bbox) {
-          const wqpRes = await fetch(`${CF_WORKER_URL}/research/limnology-data`, {
-            method: 'POST', headers: workerHeaders(),
-            body: JSON.stringify({ lakeName, ...bbox })
-          });
-          if (wqpRes.ok) {
-            const wqpData = await wqpRes.json();
-            if (wqpData.ok && wqpData.recordCount > 0) {
-              _state.wqpLimnology = wqpData;
-              const tc   = wqpData.thermocline ? `${wqpData.thermocline.depthFt}ft (${wqpData.thermocline.method})` : 'not derived';
-              const surfWhen = wqpData.surfaceWater?.recentTempLastObserved || wqpData.surfaceWater?.lastObserved || null;
-              const surf = wqpData.surfaceWater?.recentTempF != null ? `surface ${wqpData.surfaceWater.recentTempF}°F${surfWhen ? ` sampled ${surfWhen}` : ' (sample date not recorded)'} / DO ${wqpData.surfaceWater.recentDissolvedOxygenMgL ?? '?'} mg/L` : '';
-              const sec  = wqpData.secchi ? `secchi avg ${wqpData.secchi.avgSecchiDepthFt}ft (n=${wqpData.secchi.sampleCount})` : '';
-              log(`✔ WQP: ${wqpData.recordCount} records — thermocline ${tc}${surf ? '; ' + surf : ''}${sec ? '; ' + sec : ''}`);
-            } else {
-              log(`⚠️ WQP: ${wqpData.note || 'no data found'}`);
-            }
-          }
-        } else {
-          log('⚠️ WQP: could not derive bbox — skipping');
-        }
-      } catch (e) { log(`⚠️ WQP fetch failed: ${e.message}`); }
+      await fetchWqpLimnology(lakeName);
     }
 
     // Delegate to runAgents — each agent does per-agent discover→cache-check→fetch→extract→LLM

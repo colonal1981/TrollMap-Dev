@@ -101,3 +101,27 @@ export function boundsOf(geojson) {
   });
   return seen ? { west, south, east, north } : null;
 }
+
+/**
+ * A [west, south, east, north] row, padded, as a box — or null if the row is not one.
+ *
+ * `lake_index.json` carries `bounds_wsen` on every registry row, which is the same box
+ * `boundsOf` computes but already measured by the pipeline against the real boundary. A caller
+ * that has a registry record does not need to fetch a geometry to find out where a lake is.
+ *
+ * Null rather than a partly-filled box: a row with three numbers in it, or a string where a
+ * number should be, is a row nobody should be building a query out of. WQP answers a bad box
+ * with someone else's lake rather than with an error.
+ *
+ * @param {*} wsen  [west, south, east, north]
+ * @param {number} pad degrees added on every side
+ * @returns {{west:number, south:number, east:number, north:number}|null}
+ */
+export function paddedBox(wsen, pad = 0) {
+  if (!Array.isArray(wsen) || wsen.length !== 4) return null;
+  const n = wsen.map(Number);
+  if (!n.every(Number.isFinite)) return null;
+  const [west, south, east, north] = n;
+  if (west > east || south > north) return null;
+  return { west: west - pad, south: south - pad, east: east + pad, north: north + pad };
+}
