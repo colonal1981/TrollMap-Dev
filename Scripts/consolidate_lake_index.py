@@ -510,6 +510,12 @@ def main():
     ap.add_argument('--packs', default=None,
                     help='chartpack root. A row with no pack directory cannot draw anything, so '
                          'it is dropped. Defaults to <registry>/../chartpack.')
+    ap.add_argument('--min-charted', type=float, default=0.02,
+                    help='drop a row with a NON-ZERO charted fraction below this. 0.02 is not '
+                         'a number invented here: it is the threshold this script has been '
+                         'printing "say the word and they go" against for weeks, and Ryan said '
+                         'the word on 2026-08-23. Pass 0 to keep everything. A literal zero is '
+                         'already handled by the unbuildable gate.')
     ap.add_argument('--keep-unnamed', action='store_true',
                     help='keep the 3DHP polygons no feed has ever named -- rows whose name IS '
                          'their own slug, like water_imlm3. Dropped by default: building one '
@@ -1166,6 +1172,32 @@ def main():
                             'why': 'no feed has ever named this water'})
             del idx[slug]
 
+    # BARELY-SURVEYED WATER IS A PICKER ROW NOBODY WANTS.
+    #
+    # This block used to only REPORT, under "say the word and they go", because whether 0.04%
+    # of a river is worth a row was Ryan's call and not this script's. He said the word on
+    # 2026-08-23 -- *"all of this can go"* -- naming the two it had been printing:
+    #
+    #     south_river          charted 0.0004    400 ac
+    #     ogeechee_river_2     charted 0.0038    254 ac
+    #
+    # The 2% comes from the line that was already printing it, so it is a threshold with
+    # provenance rather than one picked tonight. `--min-charted 0` keeps everything.
+    #
+    # A LITERAL ZERO IS NOT THIS GATE'S JOB -- the unbuildable filter above already drops those,
+    # because `if C.get('charted'): continue` treats 0.0 as falsy. This one exists for the
+    # non-zero sliver that slips past it, which is why the test is `0 < v < min`.
+    thin = []
+    if charted and a.min_charted > 0:
+        for slug in [s_ for s_ in idx]:
+            v = (charted.get(slug) or {}).get('charted')
+            if isinstance(v, (int, float)) and 0 < v < a.min_charted:
+                rec = idx[slug]
+                thin.append({'slug': slug, 'name': rec.get('name'), 'state': rec.get('state'),
+                             'area_acres': rec.get('area_acres'), 'charted': v,
+                             'why': 'under %.1f%% of the water is charted' % (100 * a.min_charted)})
+                del idx[slug]
+
     packless = []
     if not a.keep_packless:
         pdir = a.packs or os.path.join(os.path.dirname(R.rstrip('\\/')), 'chartpack')
@@ -1450,23 +1482,15 @@ def main():
                                             d.get('state') or '',
                                             format(int(d.get('area_acres') or 0), ',')))
         print('   -> %s   (--keep-packless to retain them)' % rp3)
-    # Not dropped, but said out loud. `--min-charted` on build_all_chartpacks.py defaults to
-    # 0.0, so it refuses only a literal zero -- South River ships at 0.0004, four ten-thousandths
-    # of it charted. The unbuildable filter keeps them because `if C.get('charted'): continue`
-    # and any non-zero float is truthy. Whether 0.04% is worth a picker row is Ryan's call, so
-    # this reports rather than decides.
-    thin = []
-    if charted:
-        for slug in idx:
-            v = (charted.get(slug) or {}).get('charted')
-            if isinstance(v, (int, float)) and 0 < v < 0.02:
-                thin.append((v, slug, idx[slug].get('area_acres') or 0))
     if thin:
-        thin.sort()
-        print('\n%d row(s) kept with under 2%% of the water charted -- say the word and they go:'
-              % len(thin))
-        for v, slug, ac in thin[:10]:
-            print('   %-32s charted %.4f  %s ac' % (slug[:32], v, format(int(ac), ',')))
+        rpt = os.path.join(R, '_index_thin.json')
+        json.dump(thin, open(rpt, 'w', encoding='utf-8'), indent=1)
+        print('\ndropped %d row(s) with under %.1f%% of the water charted:'
+              % (len(thin), 100 * a.min_charted))
+        for d in sorted(thin, key=lambda d: d['charted'])[:10]:
+            print('   %-32s charted %.4f  %s ac'
+                  % (d['slug'][:32], d['charted'], format(int(d.get('area_acres') or 0), ',')))
+        print('   -> %s   (--min-charted 0 to keep them)' % rpt)
 
     if out_of_region:
         rp2 = os.path.join(R, '_index_out_of_region.json')
