@@ -313,7 +313,13 @@ async function handleResearchDelete(request, env) {
   try { body = await request.json(); } catch { body = {}; }
   const lakeName = String(body.lakeName || body.lake || '').trim();
   if (!lakeName) return new Response(JSON.stringify({ ok:false, error:'missing lakeName' }), { status:400, headers:JSON_HEADERS });
-  const safe = researchStorageId(lakeName);
+  // DELETE WHAT THE READ WOULD SHOW, or the button lies. handleResearchGet resolves through the
+  // candidate list, so the panel can be displaying `lake_robinson_sc` while this deleted
+  // `lake_robinson_chesterfield_co_sc` -- a key that does not exist -- and reported a clean run.
+  // Nothing was removed and the UI said "Deleted research for ...".
+  const foundKey = await resolveResearchStorageId(lakeName,
+    (id) => env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${id}.json`).catch(() => null));
+  const safe = foundKey ? foundKey.id : researchStorageId(lakeName);
   const keys = [`lakes/${safe}.json`];
   try {
     const pkg = await env.R2_TROLLMAP_CHARTPACKS.list({ prefix: `lake_packages/${safe}/` });
