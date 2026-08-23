@@ -23,7 +23,8 @@ import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from './contour-data.js';
 import { resolveSupplementalKey, resolveBoundaryKey } from './supplemental-layers.js';
 import { geoDistanceFt } from '../utils/geo.js';
-import { coerceStockingsArray, coerceSpeciesArray, coerceNum, hasResearchValue } from '../utils/coerce.js';
+import { coerceStockingsArray, coerceSpeciesArray, coerceNum, hasResearchValue,
+         numberFromText, IDENTITY_MEASURES } from '../utils/coerce.js';
 import { isCoastalKey, COASTAL_ZONES } from '../data/coastal-zones.js';
 import { workerHeaders } from '../utils/worker-auth.js';
 
@@ -2810,17 +2811,32 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   const detFacts = det._extractedFacts || [];
   if (detFacts.length) {
     const getFactVal = (cats) => { for (const c of cats) { const f = detFacts.find(f => String(f.category||'').toLowerCase() === c.toLowerCase()); if (f) return f.fact; } return null; };
-    const parseNum  = (s) => { const n = parseFloat(String(s||'').replace(/[^0-9.]/g,'')); return isFinite(n) ? n : null; };
+    // ONE CATEGORY, FIVE SENTENCES, AND ONLY ONE OF THEM STATES THE NUMBER.
+    // Lake Jocassee's run extracted five poolLevel facts; the first is a storage capacity in
+    // acre-feet and states two elevations, so it answers nothing. Reading only the first fact
+    // per category -- which getFactVal above does, correctly, for prose -- would throw the
+    // other four away. numberFromText refuses an ambiguous sentence on purpose, and refusing
+    // is only useful if the next sentence still gets its turn.
+    const factNumber = (cats, measure) => {
+      for (const c of cats) {
+        for (const f of detFacts) {
+          if (String(f.category||'').toLowerCase() !== c.toLowerCase()) continue;
+          const v = numberFromText(f.fact, measure);
+          if (v != null) return v;
+        }
+      }
+      return null;
+    };
     const id = agentSections.identity;
-    if (id.surfaceAreaAcres == null) id.surfaceAreaAcres = parseNum(getFactVal(['surfaceArea','surfaceAreaAcres']));
-    if (id.maxDepthFt == null)       id.maxDepthFt       = parseNum(getFactVal(['maxDepthFt','maxDepth']));
-    if (id.averageDepthFt == null)   id.averageDepthFt   = parseNum(getFactVal(['averageDepthFt','averageDepth']));
+    if (id.surfaceAreaAcres == null) id.surfaceAreaAcres = factNumber(['surfaceArea','surfaceAreaAcres'], IDENTITY_MEASURES.surfaceAreaAcres);
+    if (id.maxDepthFt == null)       id.maxDepthFt       = factNumber(['maxDepthFt','maxDepth'], IDENTITY_MEASURES.maxDepthFt);
+    if (id.averageDepthFt == null)   id.averageDepthFt   = factNumber(['averageDepthFt','averageDepth'], IDENTITY_MEASURES.averageDepthFt);
     if (!id.archetype)               id.archetype        = getFactVal(['archetype']);
     if (!id.damName)                 id.damName          = getFactVal(['damName']);
-    if (id.yearImpounded == null)    id.yearImpounded    = parseNum(getFactVal(['yearImpounded']));
+    if (id.yearImpounded == null)    id.yearImpounded    = factNumber(['yearImpounded'], IDENTITY_MEASURES.yearImpounded);
     if (!id.reservoirOwner)          id.reservoirOwner   = getFactVal(['reservoirOwner']);
     if (!id.riverSystem)             id.riverSystem      = getFactVal(['riverSystem']);
-    if (id.normalPoolFt == null)     id.normalPoolFt     = parseNum(getFactVal(['poolLevel','normalPoolFt']));
+    if (id.normalPoolFt == null)     id.normalPoolFt     = factNumber(['poolLevel','normalPoolFt'], IDENTITY_MEASURES.normalPoolFt);
     const lim = agentSections.limnology;
     if (!lim.thermocline) lim.thermocline = {};
     if (lim.thermocline.summerDepthFt == null) { const tv = getFactVal(['thermocline']); if (tv) lim.thermocline.note = (lim.thermocline.note ? lim.thermocline.note + ' ' : '') + tv; }
@@ -2946,40 +2962,40 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   // so bathymetry values (direct measurements from our chart data) always take
   // final precedence over both LLM training data and document-extracted facts.
   if (allFacts.length > 0) {
-    const factBackfill = (cats, parseFn) => {
+    const factBackfill = (cats, measure) => {
       for (const c of cats) {
-        const f = allFacts.find(f => String(f.category||'').toLowerCase() === c.toLowerCase());
-        if (!f) continue;
-        const parsed = parseFn(f.fact);
-        if (parsed != null) return { value: parsed, quote: f.quote, source: f.source, confidence: f.confidence };
+        for (const f of allFacts) {
+          if (String(f.category||'').toLowerCase() !== c.toLowerCase()) continue;
+          const parsed = numberFromText(f.fact, measure);
+          if (parsed != null) return { value: parsed, quote: f.quote, source: f.source, confidence: f.confidence };
+        }
       }
       return null;
     };
-    const parseNum = (s) => { const n = parseFloat(String(s||'').replace(/[^0-9.]/g,'')); return isFinite(n) ? n : null; };
     const id = agentSections.identity;
     // Only override if the fact value differs from the current value
     // (if they match, no need; if current is null, validation pass handles it)
-    const surfaceFact = factBackfill(['surfaceArea','surfaceAreaAcres'], parseNum);
+    const surfaceFact = factBackfill(['surfaceArea','surfaceAreaAcres'], IDENTITY_MEASURES.surfaceAreaAcres);
     if (surfaceFact && id.surfaceAreaAcres != null && id.surfaceAreaAcres !== surfaceFact.value) {
       log(`  🔄 identity.surfaceAreaAcres: LLM ${id.surfaceAreaAcres} → fact ${surfaceFact.value} (quote: "${surfaceFact.quote?.slice(0,60)}")`);
       id.surfaceAreaAcres = surfaceFact.value;
     }
-    const depthFact = factBackfill(['maxDepthFt','maxDepth'], parseNum);
+    const depthFact = factBackfill(['maxDepthFt','maxDepth'], IDENTITY_MEASURES.maxDepthFt);
     if (depthFact && id.maxDepthFt != null && id.maxDepthFt !== depthFact.value) {
       log(`  🔄 identity.maxDepthFt: LLM ${id.maxDepthFt} → fact ${depthFact.value} (quote: "${depthFact.quote?.slice(0,60)}")`);
       id.maxDepthFt = depthFact.value;
     }
-    const avgFact = factBackfill(['averageDepthFt','averageDepth'], parseNum);
+    const avgFact = factBackfill(['averageDepthFt','averageDepth'], IDENTITY_MEASURES.averageDepthFt);
     if (avgFact && id.averageDepthFt != null && id.averageDepthFt !== avgFact.value) {
       log(`  🔄 identity.averageDepthFt: LLM ${id.averageDepthFt} → fact ${avgFact.value} (quote: "${avgFact.quote?.slice(0,60)}")`);
       id.averageDepthFt = avgFact.value;
     }
-    const yearFact = factBackfill(['yearImpounded'], parseNum);
+    const yearFact = factBackfill(['yearImpounded'], IDENTITY_MEASURES.yearImpounded);
     if (yearFact && id.yearImpounded != null && id.yearImpounded !== yearFact.value) {
       log(`  🔄 identity.yearImpounded: LLM ${id.yearImpounded} → fact ${yearFact.value} (quote: "${yearFact.quote?.slice(0,60)}")`);
       id.yearImpounded = yearFact.value;
     }
-    const poolFact = factBackfill(['poolLevel','normalPoolFt'], parseNum);
+    const poolFact = factBackfill(['poolLevel','normalPoolFt'], IDENTITY_MEASURES.normalPoolFt);
     if (poolFact && id.normalPoolFt != null && id.normalPoolFt !== poolFact.value) {
       log(`  🔄 identity.normalPoolFt: LLM ${id.normalPoolFt} → fact ${poolFact.value} (quote: "${poolFact.quote?.slice(0,60)}")`);
       id.normalPoolFt = poolFact.value;
@@ -3054,8 +3070,9 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     };
     const firstNum = (facts) => {
       for (const f of facts) {
-        const m = String(f.fact || '').match(/-?\d+(?:\.\d+)?/);
-        if (m) { const n = parseFloat(m[0]); if (isFinite(n)) return { value: n, fact: f }; }
+        // "7,980" used to read as 7 here: the pattern stopped at the comma.
+        const m = String(f.fact || '').match(/-?\d[\d,]*(?:\.\d+)?/);
+        if (m) { const n = parseFloat(m[0].replace(/,/g, '')); if (isFinite(n)) return { value: n, fact: f }; }
       }
       return null;
     };

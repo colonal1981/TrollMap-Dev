@@ -1,5 +1,6 @@
 import { describe, it, expect } from './expect-shim.mjs';
-import { coerceStockingsArray, coerceSpeciesArray, coerceList, coerceLabels } from '../js/utils/coerce.js';
+import { coerceStockingsArray, coerceSpeciesArray, coerceList, coerceLabels,
+         numberFromText, IDENTITY_MEASURES } from '../js/utils/coerce.js';
 
 // Regression coverage for the "biology.knownStockings.map is not a function"
 // crash during profile assembly (e.g. resuming the Species Intelligence agent
@@ -136,5 +137,89 @@ describe('coerceLabels', () => {
 
   it('drops a row with no label rather than printing [object Object]', () => {
     expect(coerceLabels([{ url: 'https://example.gov' }, { label: 'SCDNR' }])).toEqual(['SCDNR']);
+  });
+});
+
+// Every sentence below is verbatim from Lake Jocassee's own research run on 2026-08-23 --
+// _extractedFacts in lake_jocassee_sc_research.json, quoted out of a FERC licence and two
+// Federal Register notices. The profile that run shipped carried
+// surfaceAreaAcres 92.47980111 and normalPoolFt 22538711101080, because the old parseNum
+// deleted every non-digit and read the remains as one number.
+const M = IDENTITY_MEASURES;
+
+describe('numberFromText — the sentences that produced the bad profile', () => {
+  it('reads acres past a shoreline length in the same sentence', () => {
+    const fact = 'Lake Jocassee has a shoreline length of 92.4 miles and a surface area of '
+               + '7,980 acres at full pool elevation of 1,110 feet.';
+    expect(numberFromText(fact, M.surfaceAreaAcres)).toBe(7980);   // was 92.47980111
+  });
+
+  it('reads a hyphenated acreage', () => {
+    const fact = 'All water utilized for generation originates from the 7,980-acre lower reservoir (Lake Jocassee)';
+    expect(numberFromText(fact, M.surfaceAreaAcres)).toBe(7980);
+  });
+
+  it('refuses a storage capacity in acre-feet that names two elevations', () => {
+    const fact = 'The usable storage capacity is 225,387 acre-feet between elevations 1,110 and 1,080 feet.';
+    expect(numberFromText(fact, M.normalPoolFt)).toBe(null);       // was 22538711101080
+  });
+
+  it('refuses an operating range rather than picking an end of it', () => {
+    expect(numberFromText('Lake Jocassee is licensed to operate between 1,080 and 1,110 feet', M.normalPoolFt)).toBe(null);
+    expect(numberFromText('the project boundary generally follows the 1,110- to 1,120-foot contour elevation around Lake Jocassee', M.normalPoolFt)).toBe(null);
+  });
+
+  it('refuses a minimum elevation when asked for the normal pool', () => {
+    const fact = 'For periods of normal inflow, Duke Energy will operate Lake Jocassee at a normal minimum elevation of 1,096 feet.';
+    expect(numberFromText(fact, M.normalPoolFt)).toBe(null);
+  });
+
+  it('takes the normal maximum when a sentence states both ends by name', () => {
+    const fact = 'which has a normal maximum elevation of 1,110 feet msl and normal minimum elevation of 1,080 feet msl.';
+    expect(numberFromText(fact, M.normalPoolFt)).toBe(1110);
+  });
+});
+
+describe('numberFromText — the rules that make those answers repeatable', () => {
+  it('never concatenates: no output is longer than any number in the input', () => {
+    const fact = 'capacity 225,387 acre-feet between 1,110 and 1,080 feet';
+    for (const measure of Object.values(M)) {
+      const v = numberFromText(fact, measure);
+      if (v != null) expect(String(v).replace('.', '').length <= 6).toBe(true);
+    }
+  });
+
+  it('reads thousands separators', () => {
+    expect(numberFromText('a surface area of 7,980 acres', M.surfaceAreaAcres)).toBe(7980);
+    expect(numberFromText('a surface area of 12,345 acres', M.surfaceAreaAcres)).toBe(12345);
+  });
+
+  it('does not read acre-feet as feet', () => {
+    expect(numberFromText('storage of 225,387 acre-feet', M.normalPoolFt)).toBe(null);
+    expect(numberFromText('storage of 225,387 acre-feet', M.maxDepthFt)).toBe(null);
+  });
+
+  it('carries a unit backwards across a range but not across prose', () => {
+    // "1,110 and 1,080 feet" states two elevations -> ambiguous.
+    expect(numberFromText('elevations 1,110 and 1,080 feet', M.normalPoolFt)).toBe(null);
+    // "92.4 miles and a surface area of 7,980 acres" does not make 92.4 an acreage.
+    expect(numberFromText('92.4 miles and a surface area of 7,980 acres', M.surfaceAreaAcres)).toBe(7980);
+  });
+
+  it('prefers the number its own field introduces', () => {
+    const fact = 'average depth of 156 feet and a maximum depth of 300 feet';
+    expect(numberFromText(fact, M.averageDepthFt)).toBe(156);
+    expect(numberFromText(fact, M.maxDepthFt)).toBe(300);
+  });
+
+  it('returns null for a sentence with no number, and for junk', () => {
+    expect(numberFromText('the reservoir is deep', M.maxDepthFt)).toBe(null);
+    expect(numberFromText('', M.maxDepthFt)).toBe(null);
+    expect(numberFromText(null, M.maxDepthFt)).toBe(null);
+    expect(numberFromText(undefined, M.surfaceAreaAcres)).toBe(null);
+  });
+
+  it('reads a year', () => {
+    expect(numberFromText('The reservoir was impounded in 1973.', M.yearImpounded)).toBe(1973);
   });
 });

@@ -142,3 +142,107 @@ export function coerceLabels(v) {
     .map((x) => (x && typeof x === 'object') ? (x.label || x.name || '') : x)
     .filter(Boolean);
 }
+
+/**
+ * The number a sentence states about ONE quantity.
+ *
+ * WHAT THIS REPLACES, AND WHY IT IS NOT A STYLE PREFERENCE.
+ *
+ * lake-research-engine.js defined this twice, identically:
+ *
+ *     const parseNum = (s) => parseFloat(String(s||'').replace(/[^0-9.]/g,''));
+ *
+ * That deletes every character which is not a digit or a dot and reads what is left as one
+ * number. It does not parse a number out of a sentence; it collects the sentence's digits.
+ * Given the two facts Lake Jocassee's own research run extracted from a FERC licence:
+ *
+ *   "shoreline length of 92.4 miles and a surface area of 7,980 acres at full pool
+ *    elevation of 1,110 feet."          ->  92.47980111        (should be 7980)
+ *   "usable storage capacity is 225,387 acre-feet between elevations 1,110 and
+ *    1,080 feet."                        ->  22538711101080     (should be 1110, or nothing)
+ *
+ * Both landed in the shipped profile. The second one is worse than wrong: 92.4798 acres then
+ * made the geometry override reject a correctly measured 7,680 acres as "83x the fact value,
+ * polygon overlap detected", so a real measurement was thrown away to protect a corrupt one.
+ *
+ * HOW THIS ONE WORKS. It pairs each number in the text with the word that follows it, keeps
+ * the pairs whose unit the caller asked for, and then:
+ *
+ *   - if a `prefer` pattern is given, keeps only numbers introduced by it
+ *     ("full pool elevation of 1,110 feet" -> 1110);
+ *   - returns the value only when exactly ONE distinct candidate survives.
+ *
+ * AMBIGUOUS MEANS NULL. "between elevations 1,110 and 1,080 feet" states two elevations and
+ * therefore states no normal pool; the caller's job is to try the next fact, not to average
+ * them or take the first. Refusing is the whole point -- every value this used to invent was
+ * a number no source ever wrote down.
+ *
+ * @param {string} text     the sentence to read
+ * @param {object} spec     {unit, exclude, prefer} -- all optional RegExps, all case-insensitive
+ * @returns {number|null}
+ */
+export function numberFromText(text, spec = {}) {
+  const s = String(text == null ? '' : text);
+  if (!s) return null;
+  const { unit = null, exclude = null, prefer = null, reject = null } = spec;
+
+  // Every number in the sentence, with the word it is attached to and where it sat:
+  // "7,980 acres", "225,387 acre-feet", "1,110-foot contour".
+  const re = /(\d[\d,]*(?:\.\d+)?)[\s-]*([A-Za-z][A-Za-z-]*)?/g;
+  const hits = [];
+  let m;
+  while ((m = re.exec(s)) !== null) {
+    const value = parseFloat(m[1].replace(/,/g, ''));
+    if (!isFinite(value)) continue;
+    hits.push({ value, word: m[2] || '', at: m.index, numEnd: m.index + m[1].length });
+  }
+  if (!hits.length) return null;
+
+  // A RANGE SHARES ITS UNIT WITH ITS OWN FIRST HALF. "between elevations 1,110 and 1,080
+  // feet" attaches "feet" to 1,080 and the word "and" to 1,110 -- so a rule that only reads
+  // the word immediately after each number sees exactly one elevation in a sentence that
+  // states two, and confidently returns the wrong one. The gap between the pair has to be
+  // nothing but a conjunction or a dash for the unit to carry backwards; " miles and a
+  // surface area of " is not that, which is what keeps 92.4 from being read as acres.
+  const bridge = /^[\s,\-–]*(?:and|to|or|through)?[\s,\-–]*$/i;
+  for (let i = hits.length - 2; i >= 0; i--) {
+    const gap = s.slice(hits[i].numEnd, hits[i + 1].at);
+    if (bridge.test(gap)) hits[i].word = hits[i + 1].word;
+  }
+
+  const kept = hits.filter((h) => {
+    // "225,387 acre-feet" must not read as feet, and the unit word alone decides that.
+    if (exclude && exclude.test(h.word)) return false;
+    if (unit && !unit.test(h.word)) return false;
+    return true;
+  }).map((h) => ({ ...h, lead: s.slice(Math.max(0, h.at - 48), h.at) }));
+  if (!kept.length) return null;
+
+  const pick = (rows) => {
+    const distinct = [...new Set(rows.map((r) => r.value))];
+    return distinct.length === 1 ? distinct[0] : null;
+  };
+
+  // A normal pool is by definition not the minimum one, so a sentence that introduces its
+  // number as a minimum or a drought floor is answering a different question.
+  const usable = reject ? kept.filter((h) => !reject.test(h.lead)) : kept;
+  if (!usable.length) return null;
+
+  if (prefer) {
+    const led = usable.filter((h) => prefer.test(h.lead));
+    if (led.length) return pick(led);
+  }
+  return pick(usable);
+}
+
+export const IDENTITY_MEASURES = {
+  surfaceAreaAcres: { unit: /^acres?$/i,            exclude: /acre-?feet/i },
+  maxDepthFt:       { unit: /^(?:feet|ft|foot)$/i,  exclude: /acre-?feet/i,
+                      prefer: /(?:max(?:imum)?|deepest|deep)[^.]{0,40}$/i },
+  averageDepthFt:   { unit: /^(?:feet|ft|foot)$/i,  exclude: /acre-?feet/i,
+                      prefer: /(?:average|mean)[^.]{0,40}$/i },
+  normalPoolFt:     { unit: /^(?:feet|ft|foot)$/i,  exclude: /acre-?feet/i,
+                      prefer: /(?:full[\s-]?pool|normal\s+(?:maximum|pool))[^.]{0,40}$/i,
+                      reject: /(?:minimum|drought|lowest|low\s+inflow)[^.]{0,40}$/i },
+  yearImpounded:    { unit: /^$|^[a-z-]+$/i },
+};
