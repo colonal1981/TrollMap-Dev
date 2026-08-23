@@ -429,14 +429,11 @@ export function researchIntel(profile, species, season, now = Date.now()) {
 
   put('Lake type', id.archetype || id.bodyType);
   put('Max depth', id.maxDepthFt, ' ft');
-  // AN AVERAGE BUILT OVER OPEN BANDS IS A FLOOR. Garmin stops banding at 83 ft and marks the rest
-  // "deeper than", so on a deep lake every one of those polygons contributed its floor to the
-  // hypsometry. Saying "29.4 ft" when the honest answer is "at least 29.4 ft" is the same failure
-  // as calling a December water temperature "recent" -- the number is fine, the tense is wrong.
-  const avgIsFloor = !!profile.identity?._bathymetryMeta?.averageDepthIsLowerBound;
-  if (id.averageDepthFt !== null && id.averageDepthFt !== undefined && id.averageDepthFt !== '') {
-    out.push(`Average depth: ${avgIsFloor ? 'at least ' : ''}${id.averageDepthFt} ft`);
-  }
+  // This said "at least 29.4 ft" whenever the profile carried `averageDepthIsLowerBound`, which
+  // existed because `be` was read as a band with no ceiling. It is not one -- it straddles a
+  // 256 dm page line, so its ceiling byte reads 0. Every polygon has both ends, the mean is a
+  // mean, and the hedge is gone with the flag. See the depth grammar in 00_START_HERE.md.
+  put('Average depth', id.averageDepthFt, ' ft');
 
   // The two that decide where the fish can physically be.
   if (lim.thermocline?.summerDepthFt) {
