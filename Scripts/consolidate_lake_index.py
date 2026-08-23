@@ -510,6 +510,10 @@ def main():
     ap.add_argument('--packs', default=None,
                     help='chartpack root. A row with no pack directory cannot draw anything, so '
                          'it is dropped. Defaults to <registry>/../chartpack.')
+    ap.add_argument('--keep-unnamed', action='store_true',
+                    help='keep the 3DHP polygons no feed has ever named -- rows whose name IS '
+                         'their own slug, like water_imlm3. Dropped by default: building one '
+                         'puts a machine name in the picker. A FILTER, never a delete.')
     ap.add_argument('--keep-packless', action='store_true',
                     help='keep index rows that have no chartpack directory')
     ap.add_argument('--region-mask', default=None,
@@ -1138,6 +1142,30 @@ def main():
         except (OSError, ValueError):
             pass
 
+    # A WATER NOBODY HAS NAMED IS NOT A PICKER ROW.
+    #
+    # `water_imlm3 (Berkeley Co, SC)` is a real 3DHP polygon, 52 acres, with a real pack on
+    # disk -- and a name that is its own slug, because no feed has ever spelled it. Ryan,
+    # 2026-08-22: *"just remove the unnamed lakes from registry"*, and again on 08-23 when the
+    # count came back as 26: *"all of this can go"*.
+    #
+    # They survived every existing filter. They have tiles and no `charted` row, so the packless
+    # gate below files them under "mapped to tiles and NEVER BUILT -- kept, not dropped; it is
+    # owed a build". That is the right rule for a named water and exactly the wrong one here:
+    # building them is what would put a machine name in front of him.
+    #
+    # A FILTER, NEVER A DELETE, like the two gates below it. `lakes.json` keeps all 3,405, the
+    # boundaries stay, the packs on disk are untouched -- so the day a feed learns a name for
+    # one of these, it comes back on its own with no work.
+    unnamed = []
+    if not a.keep_unnamed:
+        for slug in [s_ for s_ in idx if (idx[s_].get('name') or s_) == s_]:
+            rec = idx[slug]
+            unnamed.append({'slug': slug, 'name': rec.get('name'), 'state': rec.get('state'),
+                            'area_acres': rec.get('area_acres'), 'county': rec.get('county'),
+                            'why': 'no feed has ever named this water'})
+            del idx[slug]
+
     packless = []
     if not a.keep_packless:
         pdir = a.packs or os.path.join(os.path.dirname(R.rstrip('\\/')), 'chartpack')
@@ -1400,6 +1428,19 @@ def main():
                     print('            %d of them have NO row in tile_lake_map.json and were '
                           'not counted; the pack build cannot clip those either' % _notile)
 
+    if unnamed:
+        rpu = os.path.join(R, '_index_unnamed.json')
+        json.dump(unnamed, open(rpu, 'w', encoding='utf-8'), indent=1)
+        print('\ndropped %d row(s) no feed has ever named:' % len(unnamed))
+        for d in sorted(unnamed, key=lambda d: -(d.get('area_acres') or 0))[:6]:
+            print('   %-34s %-3s %8s ac' % ((d.get('slug') or '')[:34],
+                                            d.get('state') or '',
+                                            ('%.0f' % d['area_acres']) if d.get('area_acres')
+                                            else '?'))
+        print('   -> %s   (--keep-unnamed to retain them)' % rpu)
+        print('   lakes.json, the boundaries and the chartpack dirs are UNTOUCHED. A feed that')
+        print('   learns a name for one of these puts it back with no work.')
+
     if packless:
         rp3 = os.path.join(R, '_index_packless.json')
         json.dump(packless, open(rp3, 'w', encoding='utf-8'), indent=1)
@@ -1515,19 +1556,48 @@ def main():
     # by 2026-08-11 match nothing this script reads -- they were aimed at name lists that have
     # since moved -- and there was no way to see that from the output.
     if aliases:
-        cold = sorted(k for k in aliases if k not in alias_hit)
-        print('\nalias file: %d of %d keys matched a curated name'
-              % (len(alias_hit), len(aliases)))
+        # A KEY THAT DID NOT MATCH HERE IS NOT EVIDENCE OF ANYTHING -- 2026-08-23.
+        #
+        # This used to print every unmatched key, thirty-two of them, under "stale, or for a
+        # list this script no longer reads". That reads like thirty-two dead rows and it is
+        # not: `lake_aliases.json` is read by SIX scripts and only the curated-entry pass in
+        # this one went quiet, when the two hardcoded JS lists were deleted on 2026-08-22.
+        # Measured that night against the live files:
+        #
+        #     42 keys, 0 broken -- every one points at a real registry slug
+        #     32 point at a water the app offers, 10 at a real water it does not
+        #     35 of the 42 are spelled by an actual ramp feed, so they are firing
+        #
+        # The ten that point at a non-offered water are FINE. The ramp and name binders work
+        # over `lakes.json`, the 3,405-water superset across fifteen states, not this 401-row
+        # index -- so "not in the index" is the wrong question to ask of them.
+        #
+        # THE REAL DEFECT CLASS IS A TARGET THAT IS NOT A SLUG AT ALL, and it is checked here
+        # for every key rather than only for the ones a curated name happened to hit. That
+        # gating was the bug: an alias nobody matched could point at nothing and never be seen.
+        all_slugs = {x['slug'] for x in reg['lakes'] if isinstance(x, dict) and x.get('slug')}
+        broken = sorted((k, v) for k, v in aliases.items() if v not in all_slugs)
+        offered = sum(1 for v in aliases.values() if v in idx)
+        print('\nalias file: %d key(s), %d matched a curated name in THIS run'
+              % (len(aliases), len(alias_hit)))
+        if broken:
+            print('   %d point at a slug that DOES NOT EXIST -- these bind to nothing and '
+                  'suppress the positional matcher too:' % len(broken))
+            for k, v in broken:
+                print('      %-34s -> %s' % (k[:34], v))
+        else:
+            print('   0 broken: every target is a real registry slug (%d offered by the app, '
+                  '%d real waters it does not offer)' % (offered, len(aliases) - offered))
         if alias_dead:
-            print('   %d point at a slug that is NOT in this index -- these bind to NOTHING '
-                  'and suppress the positional matcher too:' % len(alias_dead))
+            print('   %d matched a curated name but resolved outside the index, so the '
+                  'positional matcher was suppressed for nothing:' % len(alias_dead))
             for k, v in sorted(alias_dead.items()):
                 print('      %-34s -> %s' % (k[:34], v))
-        if cold:
-            print('   %d matched no curated name in this run (stale, or for a list this '
-                  'script no longer reads):' % len(cold))
-            for k in cold:
-                print('      %-34s -> %s' % (k[:34], aliases[k]))
+        if len(alias_hit) < len(aliases):
+            print('   %d matched nothing HERE, which is expected -- build_dnr_ramps_by_lake, '
+                  'build_water_names, remove_registry_water, suggest_name_aliases and '
+                  'uncharted_report read this same file. Do not cut a row on this line.'
+                  % (len(aliases) - len(alias_hit)))
 
     if charted:
         sh = [v for v in idx.values() if v.get('shipped')]
