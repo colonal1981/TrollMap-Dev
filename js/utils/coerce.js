@@ -246,3 +246,46 @@ export const IDENTITY_MEASURES = {
                       reject: /(?:minimum|drought|lowest|low\s+inflow)[^.]{0,40}$/i },
   yearImpounded:    { unit: /^$|^[a-z-]+$/i },
 };
+
+// A SAVED PROFILE KEEPS EVERY KEY IT HAS EVER HELD.
+//
+// That is deliberate. mergeMissing() and the agent merge both preserve anything an agent did
+// not return, so omitting a field keeps the deterministic value instead of wiping it -- which
+// is what test/agent-prompt-echo.test.js exists to protect. The cost is that a field whose
+// PRODUCER was deleted lives in the document for ever, and nothing in a re-run can reach it,
+// because there is nothing left to overwrite it WITH.
+//
+// structuresFromPack() stopped emitting humpCoordinates and ledgeCoordinates when the
+// coordinates moved into the pack; they were 549 KB of Thurmond's 810 KB profile. Lake
+// Jocassee's profile still carried the eight humps and eight ledges the old browser adapter
+// had derived from depth areas: 400-500 "acre" humps sitting in 3-7 ft of water, seven of the
+// eight outside the lake, one of them 27 km away in Lake Glenville. Re-running habitat on
+// 2026-08-23 returned them byte for byte, which is what sent us looking.
+//
+// Dropping them costs nothing measurable: structureFor() reads these arrays only when a pack
+// has no structure.geojson, and all 373 shipped packs have one as of 2026-08-23. The fallback
+// stays for a pack that legitimately lacks structure -- it just has nothing stale left to
+// serve.
+//
+// A row goes in here when a producer is deleted. It comes out when every saved profile has
+// been through one assembly since.
+export const RETIRED_PROFILE_FIELDS = [
+  ['habitat', 'structuralElements', 'humpCoordinates'],
+  ['habitat', 'structuralElements', 'ledgeCoordinates'],
+];
+
+export function pruneRetiredFields(profile) {
+  const dropped = [];
+  if (!profile || typeof profile !== 'object') return dropped;
+  for (const path of RETIRED_PROFILE_FIELDS) {
+    let node = profile;
+    for (let i = 0; i < path.length - 1 && node && typeof node === 'object'; i++) node = node[path[i]];
+    const leaf = path[path.length - 1];
+    if (node && typeof node === 'object' && Object.prototype.hasOwnProperty.call(node, leaf)) {
+      const v = node[leaf];
+      dropped.push(path.join('.') + (Array.isArray(v) ? ' (' + v.length + ')' : ''));
+      delete node[leaf];
+    }
+  }
+  return dropped;
+}

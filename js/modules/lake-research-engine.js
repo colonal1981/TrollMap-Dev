@@ -24,7 +24,7 @@ import { resolveR2Key } from './contour-data.js';
 import { resolveSupplementalKey, resolveBoundaryKey } from './supplemental-layers.js';
 import { geoDistanceFt } from '../utils/geo.js';
 import { coerceStockingsArray, coerceSpeciesArray, coerceNum, hasResearchValue,
-         numberFromText, IDENTITY_MEASURES } from '../utils/coerce.js';
+         numberFromText, IDENTITY_MEASURES, pruneRetiredFields } from '../utils/coerce.js';
 import { isCoastalKey, COASTAL_ZONES } from '../data/coastal-zones.js';
 import { workerHeaders } from '../utils/worker-auth.js';
 
@@ -2731,6 +2731,11 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     console.warn(`[research] existing-profile check failed:`, e && e.message);
     /* non-fatal */
   }
+
+  // Retired fields are dropped before anything reads this profile, so a re-run of any agent
+  // clears them rather than carrying them forward one more time.
+  const droppedRetired = pruneRetiredFields(existingSavedProfile);
+  if (droppedRetired.length) log('  \uD83E\uDDF9 dropped retired field(s): ' + droppedRetired.join(', '));
 
   // Saved profiles now include a nested identity section (with _geometryDerived
   // flag and _bathymetryMeta). For older profiles that only have flat fields,

@@ -1,6 +1,7 @@
 import { describe, it, expect } from './expect-shim.mjs';
 import { coerceStockingsArray, coerceSpeciesArray, coerceList, coerceLabels,
-         numberFromText, IDENTITY_MEASURES } from '../js/utils/coerce.js';
+         numberFromText, IDENTITY_MEASURES,
+         pruneRetiredFields, RETIRED_PROFILE_FIELDS } from '../js/utils/coerce.js';
 
 // Regression coverage for the "biology.knownStockings.map is not a function"
 // crash during profile assembly (e.g. resuming the Species Intelligence agent
@@ -221,5 +222,76 @@ describe('numberFromText — the rules that make those answers repeatable', () =
 
   it('reads a year', () => {
     expect(numberFromText('The reservoir was impounded in 1973.', M.yearImpounded)).toBe(1973);
+  });
+});
+
+// Lake Jocassee, 2026-08-23. Re-running the habitat agent returned the same eight humps and
+// eight ledges byte for byte -- 400-500 "acre" humps in 3-7 ft of water, seven of the eight
+// outside the lake, one 27 km away in Lake Glenville. Nothing has produced humpCoordinates
+// since the coordinates moved into the pack, and the merge preserves any key an agent did not
+// return, so there was nothing left to overwrite them WITH.
+describe('pruneRetiredFields', () => {
+  const jocassee = () => ({
+    habitat: {
+      structuralElements: {
+        channelLedges: 'mid-depth contour density indicates multiple ledges',
+        humps: 'multiple closed contour loops suggest several offshore humps',
+        humpCoordinates: [{ id: 'hump_1', lat: 35.24383, lon: -83.0828, areaAcres: 498.4, depth: 4 }],
+        ledgeCoordinates: [{ id: 'ledge_1', lat: 35.23683, lon: -82.9888 }],
+        flats: 'shallow flats near the headwaters',
+      },
+      cover: 'none',
+    },
+    identity: { maxDepthFt: 360 },
+  });
+
+  it('drops the coordinate arrays a re-run cannot reach', () => {
+    const p = jocassee();
+    pruneRetiredFields(p);
+    expect('humpCoordinates' in p.habitat.structuralElements).toBe(false);
+    expect('ledgeCoordinates' in p.habitat.structuralElements).toBe(false);
+  });
+
+  it('reports what it dropped, with the count', () => {
+    const dropped = pruneRetiredFields(jocassee());
+    expect(dropped).toEqual([
+      'habitat.structuralElements.humpCoordinates (1)',
+      'habitat.structuralElements.ledgeCoordinates (1)',
+    ]);
+  });
+
+  it('leaves every other field alone', () => {
+    const p = jocassee();
+    pruneRetiredFields(p);
+    expect(p.habitat.structuralElements.channelLedges).toBe('mid-depth contour density indicates multiple ledges');
+    expect(p.habitat.structuralElements.flats).toBe('shallow flats near the headwaters');
+    expect(p.habitat.cover).toBe('none');
+    expect(p.identity.maxDepthFt).toBe(360);
+  });
+
+  it('is silent on a profile that never had them', () => {
+    expect(pruneRetiredFields({ habitat: { cover: [] } })).toEqual([]);
+    expect(pruneRetiredFields({})).toEqual([]);
+    expect(pruneRetiredFields(null)).toEqual([]);
+    expect(pruneRetiredFields('not a profile')).toEqual([]);
+  });
+
+  it('does not walk into a missing branch', () => {
+    expect(pruneRetiredFields({ habitat: null })).toEqual([]);
+    expect(pruneRetiredFields({ habitat: { structuralElements: null } })).toEqual([]);
+  });
+
+  it('drops a key that is present but empty, so it stops being carried forward', () => {
+    const p = { habitat: { structuralElements: { humpCoordinates: [] } } };
+    expect(pruneRetiredFields(p)).toEqual(['habitat.structuralElements.humpCoordinates (0)']);
+    expect('humpCoordinates' in p.habitat.structuralElements).toBe(false);
+  });
+
+  it('the list stays short on purpose', () => {
+    // A row goes in when a producer is deleted and comes out once every saved profile has been
+    // through one assembly. If this ever needs raising, the reason belongs in the comment
+    // above the list, not in the number.
+    expect(RETIRED_PROFILE_FIELDS.length <= 4).toBe(true);
+    for (const path of RETIRED_PROFILE_FIELDS) expect(Array.isArray(path)).toBe(true);
   });
 });

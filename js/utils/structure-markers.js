@@ -81,9 +81,12 @@ export function ledgesFromPack(structGeo) {
  * The structure a consumer should use: the pack when it has one, the profile's own arrays when
  * it does not.
  *
- * The fallback is not decoration. 43 of the 454 shipped packs carry no structure.geojson, and
- * profiles researched before this change still hold coordinates. Returning `source` means a
- * caller — or a person reading a plan — can tell which it got.
+ * The fallback is not decoration, but it is now idle. It was written when 43 of 454 shipped
+ * packs had no structure.geojson; after the 2026-08-22 build ran build_structure.py over the
+ * whole ship list, 0 of 373 lack one, so every shipped lake reads `source: 'pack'`. It stays
+ * for a pack that legitimately has no structure — what it no longer does is serve stale
+ * coordinates, because assembly drops those now (RETIRED_PROFILE_FIELDS in utils/coerce.js).
+ * Returning `source` means a caller — or a person reading a plan — can still tell which it got.
  */
 export function structureFor(packGeo, profileStructuralElements) {
   const humps = humpsFromPack(packGeo);
