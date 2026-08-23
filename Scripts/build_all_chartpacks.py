@@ -46,6 +46,14 @@ from build_chartpack import (LakeMask, BboxMask, build_mask, read_fc, verts, SHI
 # surveyed Wateree and never exceeded 0.95 on any lake.
 CHARTED_LAYERS = ('depth_areas',)
 
+# THE LAYERS A FEATURE CAN ONLY BELONG TO ONE OF.
+#
+# Bathymetry describes a specific body of water, so a contour that two lakes both claim is one
+# lake's line lying in the other's 250 m collar. Points are the opposite: a ramp or a dock
+# genuinely sits just off the bank and the collar is there to catch it, so `pois`, `docks` and
+# `shoreline` stay shared and are not resolved.
+OWNED_LAYERS = ('contours', 'depth_areas')
+
 # Line layers that get the blown-out-segment test. Polygons are exempt: a subdivision-sized
 # ring is legitimately kilometres around, and the extractor's A1/A2 filters already cover them.
 LINE_LAYERS = ('contours', 'hydrography', 'shoreline')
@@ -426,6 +434,7 @@ def main():
     masks, acc, remaining = {}, defaultdict(dict), {}
     dropped = defaultdict(int)
     trimmed = defaultdict(int)
+    stolen = defaultdict(int)   # features a neighbouring lake's water held more of
     for s in todo:
         remaining[s] = len([t for t in by_lake[s] if t in tiles])
 
@@ -557,11 +566,33 @@ def main():
             # *"Turning one contour into two contours is also the truer statement: they are two
             # separate stretches of water now."* Widening verts() would be the wrong fix; its
             # other callers rely on it being shallow.
+            # ONE FEATURE, ONE LAKE -- 2026-08-23.
+            #
+            # A source feature used to be handed to EVERY live lake whose dilated mask it
+            # touched, and each one kept its own cut of it. That is how Ferry Lake, 25 acres,
+            # shipped 30 Santee River contours running a full 1-16 ft ladder 200 m outside its
+            # own boundary, and how Great Falls Reservoir shipped four contours that are the
+            # southern tails of Fishing Creek lines 936 points long. Ryan found both by looking.
+            #
+            # THE TEST IS NOT "IS IT INSIDE MY BOUNDARY". That was the first fix proposed and it
+            # would have deleted the only deep data Great Falls has: its polygon stops 700 m
+            # short of the dam, so its own water reads as outside itself. A boundary is not
+            # trustworthy enough to be the sole judge of what a lake owns.
+            #
+            # THE TEST IS WHOSE WATER HOLDS MORE OF IT. Whichever live lake's core -- the
+            # boundary before the 250 m collar -- contains the most of a contested feature's
+            # vertices takes it, and nobody else gets a copy. If no lake's core holds any of it,
+            # every claimant keeps its trimmed cut exactly as before: that is the short-boundary
+            # case and it has to fail towards keeping data.
+            #
+            # Only CONTESTED features pay for this. A feature one lake kept is left alone, which
+            # is nearly all of them, so the cost is not per-vertex-per-lake across the tile.
+            claims = {}
             for s in live:
                 m = masks[s]
                 keep = acc[s].setdefault(layer, [])
                 hit = lambda x, y, _m=m: (x, y) in _m
-                for f in feats:
+                for fi, f in enumerate(feats):
                     ng, verdict = trim_geometry(f['geometry'], hit, m)
                     if verdict == 'drop':
                         continue
@@ -573,14 +604,43 @@ def main():
                     # back as a MultiPolygon just as a cut line comes back as a MultiLineString,
                     # and the untouched branch has to be safe too -- an extract that ever emits
                     # a Multi would crash _flush exactly the same way.
+                    at = len(keep)
                     parts = split_multi(ng)
                     if len(parts) == 1 and parts[0] is ng and verdict != 'trim':
                         keep.append(f)
+                    else:
+                        for _p in parts:
+                            _f2 = dict(f)
+                            _f2['geometry'] = _p
+                            keep.append(_f2)
+                    if layer in OWNED_LAYERS:
+                        claims.setdefault(fi, []).append((s, at, len(keep)))
+            if layer in OWNED_LAYERS:
+                for fi, rows in claims.items():
+                    if len(rows) < 2:
                         continue
-                    for _p in parts:
-                        _f2 = dict(f)
-                        _f2['geometry'] = _p
-                        keep.append(_f2)
+                    best_s, best_n = None, 0
+                    for s, _a, _b in rows:
+                        mk = masks[s]
+                        n = 0
+                        for _x, _y in verts(feats[fi]['geometry']):
+                            if mk.cell_of(_x, _y) in mk.core:
+                                n += 1
+                        if n > best_n:
+                            best_s, best_n = s, n
+                    if best_s is None:
+                        continue          # nobody's water holds it -- everyone keeps their cut
+                    for s, a0, b0 in rows:
+                        if s == best_s:
+                            continue
+                        lst = acc[s][layer]
+                        for i in range(a0, b0):
+                            lst[i] = None
+                        stolen[layer] += 1
+                for s in live:
+                    lst = acc[s].get(layer)
+                    if lst and None in lst:
+                        acc[s][layer] = [x for x in lst if x is not None]
             feats = None
 
         for s in live:
@@ -632,6 +692,11 @@ def main():
         # Say it out loud. A cut that prints nothing reads as "nothing was cut".
         print('\nfeatures cut back to the mask instead of kept whole: %s'
               % dict(trimmed))
+    if stolen:
+        # Same reason. A feature given to the water that holds more of it has LEFT a pack, and
+        # a silent removal is indistinguishable from never having built it.
+        print('features handed to the lake whose water holds more of them: %s'
+              % dict(stolen))
     json.dump(report, open(a.report, 'w', encoding='utf-8'), indent=1)
 
     # THE SUMMARY DESCRIBES THIS RUN, NOT THE FILE IT MERGED INTO.
@@ -814,6 +879,46 @@ def _flush(slug, layers, mask, meta, a, report):
         print('   %s: dropped %d feature(s) with no vertex in the lake itself'
               % (slug, core_dropped))
         rec['off_lake_dropped'] = core_dropped
+
+    # A CONTOUR AT N FEET NEEDS A DEPTH-AREA BAND THAT CONTAINS N FEET -- 2026-08-23.
+    #
+    # Garmin draws both layers over the same survey, so they have to agree. Orton Pond's
+    # deepest band is 1 ft and it carries contours at 12, 24, 36 and 48; White Oak Slash's
+    # deepest band is 1 ft and every contour it has reads 12.1. Ryan, looking at both: *"weird
+    # contours going on land"*. A 24 ft isobath with no 24 ft water anywhere in the pack is not
+    # an isobath.
+    #
+    # This is not a threshold. It is the two layers being asked whether they describe the same
+    # water, and the ONE FOOT of slack is the ladder's own step, not a tolerance to tune.
+    #
+    # CONTROLLED BEFORE IT SHIPPED, because a control the rule does not fire on is not a
+    # control -- the drop rule that cost 97 packs their coverage on 2026-08-22 had two. Run
+    # against the waters Ryan had just confirmed by eye: ferry_lake 0 of 163, cypress_lake_3
+    # 0 of 20, lake_sequoyah 0 of 5 and atkinson_lake 0 of 11 -- the last two sounded in one
+    # arm only and still clean -- against orton_pond 20 of 20 and white_oak_slash_lake 12 of 12.
+    #
+    # It runs after the core filter and after ownership, so the bands it judges against are the
+    # ones this lake actually owns.
+    _bands = []
+    for _f in (layers.get('depth_areas') or []):
+        _p = _f.get('properties') or {}
+        _lo, _hi = _p.get('depth_min_ft'), _p.get('depth_max_ft')
+        if isinstance(_lo, (int, float)) and isinstance(_hi, (int, float)):
+            _bands.append((_lo, _hi))
+    unbanded = 0
+    if _bands and layers.get('contours'):
+        _keep = []
+        for _f in layers['contours']:
+            _d = (_f.get('properties') or {}).get('depth_ft')
+            if _d is None or any(_lo - 1.0 <= _d <= _hi + 1.0 for _lo, _hi in _bands):
+                _keep.append(_f)
+            else:
+                unbanded += 1
+        layers['contours'] = _keep
+    if unbanded:
+        print('   %s: dropped %d contour(s) at a depth no band in this pack covers'
+              % (slug, unbanded))
+        rec['unbanded_contours_dropped'] = unbanded
 
     # AND THEN CUT THE EXCLUDED WATER OUT OF WHAT SURVIVED. The filter above keeps a feature
     # for ONE vertex in the lake, which is right for a lake and wrong for a zone that has given
