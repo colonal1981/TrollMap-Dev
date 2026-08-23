@@ -510,6 +510,8 @@ def main():
     ap.add_argument('--packs', default=None,
                     help='chartpack root. A row with no pack directory cannot draw anything, so '
                          'it is dropped. Defaults to <registry>/../chartpack.')
+    ap.add_argument('--keep-closed', action='store_true',
+                    help='keep waters registry/_water_notes.json records as closed to fishing')
     ap.add_argument('--min-charted', type=float, default=0.02,
                     help='drop a row with a NON-ZERO charted fraction below this. 0.02 is not '
                          'a number invented here: it is the threshold this script has been '
@@ -1126,6 +1128,51 @@ def main():
                                       'why': 'outside %s' % '+'.join(region.states)})
                 del idx[slug]
 
+    # ── closed to fishing ───────────────────────────────────────────────────────────────────
+    #
+    # Ryan, 2026-08-23: *"need to get the lakes that are closed to fishing removed from the
+    # pickers"*, and earlier the same day, on finding North Saluda in the research list: *"why is
+    # it in the app... how many other lakes am i wasting time extracting, building chartpacks for
+    # uploading to r2 then running a research profile on that i can never fish"*.
+    #
+    # THE VERDICT COMES FROM `_water_notes.json`, WHICH UNTIL NOW NOTHING READ. That file is the
+    # settled-facts store -- each water with how it was settled -- and it has carried
+    # `fishable: false` on seven waters since 08-23 while the research button went on spending
+    # Gemini credits on all of them. A fact nobody reads is a fact nobody has.
+    #
+    # ACCESS IS NOT INFERRED HERE. Three proxies were tried on 08-23 and all three were wrong on
+    # the first case Ryan checked by hand -- PAD-US access (203 of 373 rows carry none), "no ramp
+    # in any feed" (90 lakes, and the largest has two public ramps), and Garmin's dock layer
+    # (Lake Reidsville charts zero docks and has paved ramps). Only a recorded verdict counts, and
+    # every one of these seven has a source written beside it: the Savannah River Site ponds, a
+    # Greenville watershed reservoir, a Spartanburg water-supply reservoir, two private waters.
+    closed = []
+    if not a.keep_closed:
+        npath_notes = os.path.join(R, '_water_notes.json')
+        notes = {}
+        if os.path.exists(npath_notes):
+            try:
+                notes = json.load(open(npath_notes, encoding='utf-8')) or {}
+            except (OSError, ValueError) as exc:
+                print('!! could not read _water_notes.json (%s) -- NOTHING was gated on it'
+                      % exc.__class__.__name__)
+        for slug, note in notes.items():
+            if slug == '_README' or not isinstance(note, dict):
+                continue
+            if note.get('fishable') is not False:
+                continue                 # True, or never settled -- unmeasured is not closed
+            rec = idx.pop(slug, None)
+            if rec is None:
+                continue
+            why = ''
+            for f in (note.get('facts') or []):
+                if 'clos' in f.lower() or 'no fishing' in f.lower() or 'not open' in f.lower():
+                    why = f
+                    break
+            closed.append({'slug': slug, 'name': rec.get('name'), 'state': rec.get('state'),
+                           'area_acres': rec.get('area_acres'),
+                           'why': why or 'recorded fishable: false in _water_notes.json'})
+
     # ── no pack, no row ─────────────────────────────────────────────────────────────────────
     #
     # Ryan, 2026-08-13: "the SC_dnr lakes if they do not have a chartpack they need to be
@@ -1491,6 +1538,18 @@ def main():
             print('   %-32s charted %.4f  %s ac'
                   % (d['slug'][:32], d['charted'], format(int(d.get('area_acres') or 0), ',')))
         print('   -> %s   (--min-charted 0 to keep them)' % rpt)
+
+    if closed:
+        rpc = os.path.join(R, '_index_closed.json')
+        json.dump(closed, open(rpc, 'w', encoding='utf-8'), indent=1)
+        print('\ndropped %d row(s) recorded as closed to fishing:' % len(closed))
+        for d in sorted(closed, key=lambda d: -(d.get('area_acres') or 0)):
+            print('   %-38s %-3s %8s ac' % ((d.get('name') or d['slug'])[:38],
+                                            d.get('state') or '',
+                                            format(int(d.get('area_acres') or 0), ',')))
+        print('   -> %s   (--keep-closed to retain them)' % rpc)
+        print('   the verdicts are in registry/_water_notes.json, each with how it was settled.')
+        print('   lakes.json, the boundaries and the chartpack dirs are UNTOUCHED.')
 
     if out_of_region:
         rp2 = os.path.join(R, '_index_out_of_region.json')
