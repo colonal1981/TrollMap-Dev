@@ -67,6 +67,30 @@ export const TYPE_ORDER = [['lake', 'Lakes'], ['river', 'Rivers'], ['coastal', '
 const RIVERISH = /\b(river|creek|branch|run|fork|canal|slough|bayou|prong|swamp)\b/i;
 
 /** SC / NC / GA / TN for any picker entry, registry-backed or not. */
+/**
+ * What a row READS as, once the heading has said everything it already says.
+ *
+ * The group is "SC — Coast", so "Winyah Bay / Georgetown, SC (Georgetown Co, SC)" says SC three
+ * times. This used to strip only a trailing ", SC", which the county parenthetical defeats --
+ * so registry rows kept their county while DNR rows did not, and the same group held two shapes.
+ *
+ * ONLY THE PARENTHETICAL CARRYING "Co" IS REMOVED, and that is the whole trick. Four Saluda
+ * Rivers are told apart by "(2)" and "(Lower Saluda)", the two Lake Robinsons by "(Greer)", and
+ * a Cane Creek Lake by "(Union County)" -- none of which is a county abbreviation, and all of
+ * which survive. Checked across the whole index: exactly one pair would render identically
+ * inside one state group, and it is the Robinson pair that lake_display_names.json renames.
+ *
+ * This is display only. `opt.value` stays the full name, because that is the key every other
+ * module looks the water up by.
+ */
+export function pickerLabel(name) {
+  return String(name || '')
+    .replace(/\s*\([^)]*\bCo\b[^)]*\)\s*/i, ' ')
+    .replace(/,\s*[A-Z]{2}(?:\/[A-Z]{2})*\s*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function stateOf(lakeName, rec) {
   if (rec?.state) return rec.state;
   // Every DNR name gets a ", SC" suffix from displayLakeName(), and coastal zone names carry
@@ -217,14 +241,39 @@ async function populateLakeSelect() {
     buckets.get(k).push(name);
   };
 
+  const emittedCoastal = new Set();
   idx.lakeNames.forEach((lakeName) => {
     if (!passesFilters(lakeName)) return;
     const rec = registryRecordFor(lakeName);
+    const slug = rec?.slug || resolveR2Key(lakeName);
+    if (slug && isCoastalKey(slug)) emittedCoastal.add(slug);
     put(stateOf(lakeName, rec), typeOf(lakeName, rec), lakeName);
   });
 
-  // Coastal zones are not in the access index — the worker only covers inland DNR ramps — so
-  // without this the tide, oyster and marsh layers are unreachable from the picker.
+  // ── COASTAL ZONES, ONCE EACH ────────────────────────────────────────────────────────────
+  //
+  // The comment that stood here said "coastal zones are not in the access index — the worker
+  // only covers inland DNR ramps". That was true when it was written and has not been true for
+  // a while: `lake_index.json` carries all 16 `coast_` rows, so the registry merge puts every
+  // one of them into `byLake`, and COASTAL_MANUAL_RAMPS adds zone names there directly too.
+  //
+  // So this loop was adding a SECOND row for every zone, under a different spelling of the same
+  // water. Ryan, 2026-08-23: *"A whole bunch of coastal areas are in the picker twice but they
+  // all seem to have bathymetry"* -- both rows resolve, because both are the same zone.
+  //
+  //   registry:      "Winyah Bay / Georgetown, SC (Georgetown Co, SC)"
+  //   COASTAL_ZONES: "Winyah Bay / Georgetown, SC"
+  //
+  // Murrells Inlet and St. Helena Sound have no county in their registry name, so those two
+  // were being added twice under a string identical to itself. Matching on the SLUG catches
+  // both shapes; matching on the name would have caught only one.
+  //
+  // The loop stays, because a zone the registry has not shipped still has to be reachable --
+  // the tide, oyster and marsh layers hang off it.
+  const zoneSlugByName = new Map();
+  for (const [slug, z] of Object.entries(COASTAL_ZONES || {})) {
+    if (z && z.name) zoneSlugByName.set(z.name, slug);
+  }
   const coastal = coastalNamesByState();
   for (const [stateCode, names] of Object.entries(coastal || {})) {
     for (const name of (names || [])) {
@@ -232,6 +281,8 @@ async function populateLakeSelect() {
       // name does — and must not vanish just because the state box is set to its own state.
       if (filters.state && filters.state !== stateCode) continue;
       if (filters.size || filters.wellCharted) continue;
+      const slug = zoneSlugByName.get(name);
+      if (slug && emittedCoastal.has(slug)) continue;   // already offered under its registry name
       put(stateCode, 'coastal', name);
     }
   }
@@ -246,8 +297,8 @@ async function populateLakeSelect() {
       for (const name of names) {
         const opt = document.createElement('option');
         opt.value = name;
-        // The group heading already says the state, so the suffix is noise on every row.
-        opt.textContent = name.replace(/,\s*[A-Z]{2}$/, '') + lakeBadge(name);
+        // The group heading already says the state and the county, so both are noise on the row.
+        opt.textContent = pickerLabel(name) + lakeBadge(name);
         grp.appendChild(opt);
       }
       lakeSelect.appendChild(grp);

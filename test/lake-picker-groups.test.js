@@ -157,3 +157,50 @@ describe('the registry lookup tolerates the names the picker actually offers', (
     expect(norm('Norris Lake') === norm('Norris Reservoir')).toBe(false);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// WHAT A ROW READS AS — added 2026-08-24
+//
+// The group heading already says the state, and for a registry row the name also carries the
+// county, so "Winyah Bay / Georgetown, SC (Georgetown Co, SC)" said SC three times while the DNR
+// row beside it said it none. Ryan: "make it look the same as the others".
+//
+// The danger is stripping a qualifier that is doing real work. Four Saluda Rivers are told apart
+// by "(2)" and "(Lower Saluda)", the two Lake Robinsons by "(Greer)", a Cane Creek Lake by
+// "(Union County)". Only a parenthetical carrying the abbreviation "Co" is removed, which is why
+// all of those survive -- and this test is what keeps that true.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+describe('pickerLabel — the county and the state come off, the qualifier does not', () => {
+  const body = /export function pickerLabel\(name\)\s*\{([\s\S]*?)\n\}/.exec(SRC);
+  // eslint-disable-next-line no-new-func
+  const pickerLabel = new Function('name', body ? body[1] : 'return name;');
+
+  it('is present in the source', () => {
+    expect(Boolean(body)).toBe(true);
+  });
+
+  it('takes the county and the state off a registry row', () => {
+    expect(pickerLabel('Winyah Bay / Georgetown, SC (Georgetown Co, SC)')).toBe('Winyah Bay / Georgetown');
+    expect(pickerLabel('Davy Crockett Lake (Greene Co, TN)')).toBe('Davy Crockett Lake');
+    expect(pickerLabel('Hartwell Lake (Anderson Co, SC/GA)')).toBe('Hartwell Lake');
+  });
+
+  it('takes the state off a DNR row, as it always did', () => {
+    expect(pickerLabel('Lake Hartwell, SC')).toBe('Lake Hartwell');
+    expect(pickerLabel('St. Helena Sound, SC')).toBe('St. Helena Sound');
+  });
+
+  it('KEEPS a qualifier that tells two waters apart', () => {
+    expect(pickerLabel('Saluda River (2) (Newberry Co, SC)')).toBe('Saluda River (2)');
+    expect(pickerLabel('Saluda River (Lower Saluda) (Lexington Co, SC)')).toBe('Saluda River (Lower Saluda)');
+    expect(pickerLabel('Lake Robinson (Greer) (Greenville Co, SC)')).toBe('Lake Robinson (Greer)');
+    // "County" is not "Co" -- the word boundary is what saves it.
+    expect(pickerLabel('Cane Creek Lake (Union County) (Union Co, NC)')).toBe('Cane Creek Lake (Union County)');
+  });
+
+  it('leaves a name with nothing to strip alone', () => {
+    expect(pickerLabel('Wittee Lake')).toBe('Wittee Lake');
+    expect(pickerLabel('')).toBe('');
+  });
+});

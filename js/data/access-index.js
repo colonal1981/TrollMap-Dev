@@ -483,6 +483,61 @@ async function buildAccessIndex() {
     list.sort((a, b) => formatAccessLabel(a).localeCompare(formatAccessLabel(b)));
   }
 
+  // ── ONE WATER, TWO FEED NAMES ───────────────────────────────────────────────────────────
+  //
+  // findExistingLakeKey() folds a REGISTRY lake into a feed entry. Nothing ever folded one feed
+  // entry into another, so a water two agencies both list appeared twice and a water one agency
+  // spelled two ways appeared twice. Measured on Ryan's live index 2026-08-24: 907 pickable
+  // names, 34 groups sharing a dedupe key. Four of them are pure capitalisation --
+  // "Kentucky Reservoir, TN" beside "Kentucky reservoir, TN", the same for the Cumberland,
+  // Reelfoot and White Oak Canal -- and about ten are one river listed by two states, Hartwell
+  // and Russell and the Savannah and the Chattooga among them.
+  //
+  // THE SAME TWO SIGNALS AS THE REGISTRY FOLD, and the second one is what makes it safe: exact
+  // dedupe key AND a point in common within `maxMiles`. Ryan has TWO Davy Crockett Lakes, one
+  // at the Birthplace in Greene County and one in west Tennessee, 340 miles apart and sharing a
+  // name exactly. They must stay two rows, and distance is the only thing that knows it.
+  //
+  // The surviving key is the one with the most access points -- the most evidence -- and an
+  // all-capitals name loses a tie, because the NC feed shouts and the others do not.
+  function foldFeedDuplicates(idx, maxMiles = 15) {
+    const groups = new Map();
+    for (const name of idx.byLake.keys()) {
+      const k = lakeNameDedupKey(name);
+      if (!k) continue;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(name);
+    }
+    let folded = 0;
+    for (const names of groups.values()) {
+      if (names.length < 2) continue;
+      const rank = (n) => {
+        const pts = idx.byLake.get(n) || [];
+        return [pts.length, n === n.toUpperCase() ? 0 : 1, n];
+      };
+      const sorted = [...names].sort((a, b) => {
+        const ra = rank(a), rb = rank(b);
+        return (rb[0] - ra[0]) || (rb[1] - ra[1]) || String(ra[2]).localeCompare(String(rb[2]));
+      });
+      const keep = sorted[0];
+      for (const other of sorted.slice(1)) {
+        const a = idx.byLake.get(keep) || [];
+        const b = idx.byLake.get(other) || [];
+        const near = a.some(p => b.some(q =>
+          Number.isFinite(p.lat) && Number.isFinite(q.lat) &&
+          approxMiles(p.lat, p.lon, q.lat, q.lon) <= maxMiles));
+        if (!near) continue;             // same name, different water -- two Davy Crocketts
+        for (const q of b) addAccessItem(idx, keep, q);
+        idx.byLake.delete(other);
+        folded += 1;
+      }
+    }
+    if (folded) console.info(`[access-index] folded ${folded} feed name(s) onto the water they `
+                           + `share a name and a launch with`);
+    return folded;
+  }
+  foldFeedDuplicates(index);
+
   // THE TWO HARDCODED SUPPLEMENTS ARE GONE -- 2026-08-22.
   //
   // `scdnr-state-lakes.js` (16 entries) and `user-known-lakes.js` (4) were merged in here as
@@ -690,7 +745,33 @@ export function registryRecordFor(lakeName) {
   const direct = accessIndex.registryByName?.get(lakeName);
   if (direct) return direct;
   const norm = registryNameIndex();
-  return norm ? norm.get(normalizeRegistryKey(lakeName)) || null : null;
+  if (!norm) return null;
+  const cands = norm.get(normalizeRegistryKey(lakeName));
+  if (!cands || !cands.length) return null;
+  if (cands.length === 1) return cands[0];
+
+  // AMBIGUOUS, SO CORROBORATE OR DECLINE -- 2026-08-24.
+  //
+  // normalizeRegistryKey() strips the county parenthetical and the state suffix, which are the
+  // only two things telling two same-named waters apart, and this used to return the first
+  // record filed under that key. Ryan's picker showed "Davy Crockett Lake, TN" -- a west
+  // Tennessee water with no registry row -- carrying 204 acres, 1 ramp and 95% charted, which
+  // are the numbers for the Davy Crockett Lake at the Birthplace 340 miles away.
+  //
+  // The row's own access points decide it. Nearest candidate within 15 miles wins; if the row
+  // has no points, or none of them is near any candidate, there is no second signal and this
+  // declines rather than guessing -- the same rule findExistingLakeKey() already follows.
+  const pts = accessIndex.byLake?.get(lakeName) || [];
+  let best = null, bestDist = Infinity;
+  for (const rec of cands) {
+    if (!Number.isFinite(rec.lat) || !Number.isFinite(rec.lon)) continue;
+    for (const p of pts) {
+      if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) continue;
+      const d = approxMiles(rec.lat, rec.lon, p.lat, p.lon);
+      if (d < bestDist) { bestDist = d; best = rec; }
+    }
+  }
+  return bestDist <= 15 ? best : null;
 }
 
 /** Case, punctuation and a trailing state suffix. Nothing that could merge two real waters. */
@@ -712,9 +793,14 @@ function registryNameIndex() {
   const m = new Map();
   for (const [name, rec] of accessIndex.registryByName) {
     const k = normalizeRegistryKey(name);
-    // First writer wins. registryByName is populated shipped-first, largest-first, so a small
-    // namesake cannot displace the big lake it shares a normalised key with.
-    if (k && !m.has(k)) m.set(k, rec);
+    if (!k) continue;
+    // EVERY candidate, not the first. registryByName is populated shipped-first, largest-first,
+    // and keeping only the first meant an ambiguous name silently resolved to the biggest water
+    // that shares it. registryRecordFor() now breaks the tie on position, which it cannot do
+    // if the other candidates were thrown away here.
+    if (!m.has(k)) m.set(k, []);
+    const list = m.get(k);
+    if (!list.includes(rec)) list.push(rec);
   }
   _normIndex = m;
   _normFor = accessIndex.registryByName;
