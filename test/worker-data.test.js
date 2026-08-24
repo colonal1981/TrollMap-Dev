@@ -45,7 +45,10 @@ describe('getLakeIntel and getLakeClarity for coastal/saltwater zones', () => {
     expect(res.profile.primarySportFish).toContain('Red Drum (Redfish)');
     expect(res.profile.forage).toContain('Shrimp');
     expect(res.profile.habitat).toContain('Salt marsh edges (Spartina)');
-    expect(res.sources[0].label).toBe('SCDNR Saltwater Finfish Regulations');
+    // 2026-08-24: dnr.sc.gov/regs/saltwaterfinfish.html now 404s. The citation moved to
+    // eRegulations, which is where this file already sends freshwater, and the label
+    // gained the same '(eRegulations)' suffix that convention uses.
+    expect(res.sources[0].label).toBe('SCDNR Saltwater Fishing Regulations (eRegulations)');
   });
 
   it('returns saltwater specific zones and notes in getLakeClarity', async () => {
