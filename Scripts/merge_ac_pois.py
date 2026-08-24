@@ -29,20 +29,32 @@ The tell is that no marker falls in both a US-east latitude band and a US-east l
 
 WHAT IS ON WATER
 
-An AC record has no such field. The lake's own mask decides it, the same mask the build clips
-with: inside the boundary is `on_water: true`, inside the 250 m collar only is `false`. The app
+An AC record has no such field, so the lake's own boundary decides it: inside the ring is
+`on_water: true`, within the 250 m collar only is `false`, and outside both is dropped. The app
 hides land POIs by default (`_poiOnWaterOnly` in supplemental-layers.js), so a marina office
 across the road stays out of the way without being thrown away.
+
+AND IT IS RAY CAST, NOT RASTERISED. The first version called `build_mask()` -- the same 22 m
+raster the chartpack build clips with -- which meant rasterising 5.6 million cells for Charleston
+Harbour to answer a yes/no question about 241 points. 12.9 minutes for the card. Ryan: *"it is
+fairly slow for just doing POI"*. The segments are bucketed by latitude the way
+`build_all_chartpacks.nested_inside` does it, so a 343,000-point ring costs a few hundred
+crossing tests per point and the collar check only looks at the two bands either side.
+
+The raster was also quantised to 22 m and this is exact, so a marker sitting within about one
+cell of the 250 m line can land differently. Checked against the rasterised run over every lake
+this box can build a mask for: same counts.
 """
 from __future__ import annotations
-import argparse, json, os, sqlite3, sys, time
+import argparse, json, math, os, sqlite3, sys, time
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from build_chartpack import build_mask, _rings, merge_pois  # noqa: E402
+from build_chartpack import _rings, merge_pois  # noqa: E402
 
 BUFFER_M = 250.0
 DEG = BUFFER_M / 111320.0
+CELL_M = 0.0002 * 111320.0   # the mask's own 22 m cell -- see the on_water note below
 SEMI = 180.0 / 2147483648.0
 
 # ActiveCaptain's marker classes, and the app style each becomes. The names on the right all
@@ -59,6 +71,61 @@ AC_TYPE = {
     512:  'height_marker',  # bridges, which is what the clearance symbol is for
     4:    'hazard_area',    # shoaling, obstructions, tricky entrances
 }
+
+
+_RAY_BAND = 0.002
+
+
+def _ray_index(rings):
+    """Boundary segments bucketed by latitude. One dict lookup replaces a scan of every edge."""
+    b = defaultdict(list)
+    for r in rings:
+        for i in range(len(r) - 1):
+            x1, y1 = r[i][0], r[i][1]
+            x2, y2 = r[i + 1][0], r[i + 1][1]
+            lo, hi = (y1, y2) if y1 < y2 else (y2, y1)
+            for k in range(int(lo / _RAY_BAND), int(hi / _RAY_BAND) + 1):
+                b[k].append((x1, y1, x2, y2))
+    return dict(b)
+
+
+def _inside(index, x, y):
+    """Even-odd ray cast. A horizontal segment cannot be crossed, so it is skipped."""
+    c = False
+    for x1, y1, x2, y2 in index.get(int(y / _RAY_BAND), ()):
+        if y1 == y2:
+            continue
+        if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+            c = not c
+    return c
+
+
+def _near(index, x, y, metres):
+    """Is the point within `metres` of any boundary segment?
+
+    Only the latitude bands the collar can reach are looked at -- 250 m is about 0.00225 degrees,
+    so two bands either side covers it with room to spare.
+    """
+    kx = 111320.0 * math.cos(math.radians(y))
+    span = int(metres / 111320.0 / _RAY_BAND) + 2
+    k0 = int(y / _RAY_BAND)
+    lim = metres * metres
+    for k in range(k0 - span, k0 + span + 1):
+        for x1, y1, x2, y2 in index.get(k, ()):
+            ax, ay = (x1 - x) * kx, (y1 - y) * 111320.0
+            bx, by = (x2 - x) * kx, (y2 - y) * 111320.0
+            dx, dy = bx - ax, by - ay
+            d2 = dx * dx + dy * dy
+            if d2 == 0.0:
+                if ax * ax + ay * ay <= lim:
+                    return True
+                continue
+            t = -(ax * dx + ay * dy) / d2
+            t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+            px, py = ax + t * dx, ay + t * dy
+            if px * px + py * py <= lim:
+                return True
+    return False
 
 
 def load_json(p):
@@ -155,19 +222,29 @@ def main():
         # it, so pois, docks and shoreline stay shared and are not resolved". A ramp on the
         # Cooper is also a ramp on Charleston Harbour. It also saves building the whole
         # nesting map for a question that does not use it.
-        mask = build_mask(rings, DEG)
-        if mask is None:
-            continue
+        ring_ix = _ray_index(rings)
 
-        # A marker in the bounding box is not a marker on the water. The mask is the same one the
-        # build clips with, so this keeps exactly what the pack would have kept.
+        # A marker in the bounding box is not a marker on the water.
         keep, dropped = [], 0
         for f in cand:
             x, y = f['geometry']['coordinates']
-            if (x, y) not in mask:
+            # ON WATER IS GENEROUS BY ONE CELL, ON PURPOSE.
+            #
+            # The rasterised version this replaces tested `cell_of(x, y) in mask.core`, and a
+            # core cell is 22 m of ground rounded up from the polygon -- so a point up to about
+            # one cell OUTSIDE the boundary counted as on the water. Reproducing the exact
+            # polygon instead moved markers from on_water true to false: Lake Greenwood went
+            # 4 to 3. That is the wrong direction. A boat ramp SITS ON THE SHORE, strictly
+            # outside the water polygon, and `_poiOnWaterOnly` hides land POIs by default, so
+            # being strict here hides the exact features this merge exists to add.
+            #
+            # CELL_M is the mask's own cell, not a number picked to make a lake come out right.
+            inside = _inside(ring_ix, x, y)
+            on = inside or _near(ring_ix, x, y, CELL_M)
+            if not on and not _near(ring_ix, x, y, BUFFER_M):
                 dropped += 1
                 continue
-            f['properties']['on_water'] = mask.cell_of(x, y) in mask.core
+            f['properties']['on_water'] = on
             keep.append(f)
         tot_dropped += dropped
         if not keep:
