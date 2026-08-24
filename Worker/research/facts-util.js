@@ -684,26 +684,51 @@ function buildFactualSummary(profile) {
   const bio = profile.biology || {};
   const lim = profile.limnology || {};
   const hab = profile.habitat || {};
+  // WORD FOR WORD WITH buildDeterministicSummary IN js/modules/lake-research-engine.js, and
+  // test/summary-builders-agree.test.js holds them there. The browser cannot import a Worker
+  // module, so this rule exists twice for the same reason research-ids.js does; what it must
+  // never do is exist twice in two different wordings, because handleResearchSave now rebuilds
+  // the stored sentence and the app builds the one it shows before saving.
   if (id.archetype || id.surfaceAreaAcres || id.maxDepthFt) {
-    parts.push(`${profile.lakeName} ${id.archetype ? `is a ${String(id.archetype).toLowerCase()}` : 'is a reservoir/lake'}${id.surfaceAreaAcres ? ` with about ${Number(id.surfaceAreaAcres).toLocaleString()} surface acres` : ''}${id.maxDepthFt ? ` and a maximum depth near ${id.maxDepthFt} feet` : ''}.`);
+    let s = profile.lakeName || 'This lake';
+    if (id.archetype) s += ` is a ${String(id.archetype).toLowerCase()}`;
+    if (id.surfaceAreaAcres) s += `${id.archetype ? '' : ' has'} about ${Number(id.surfaceAreaAcres).toLocaleString()} surface acres`;
+    if (id.maxDepthFt) s += `${id.surfaceAreaAcres ? ',' : ''} with a maximum depth near ${id.maxDepthFt} feet`;
+    parts.push(`${s}.`);
   }
   if (Array.isArray(bio.predatorSpecies) && bio.predatorSpecies.length) {
-    parts.push(`Confirmed sport fish documented for this waterbody include ${bio.predatorSpecies.join(', ')}${Array.isArray(bio.knownStockings) && bio.knownStockings.length ? `; documented stocking notes include ${bio.knownStockings.map(s => s.species).join(', ')}` : ''}.`);
+    parts.push(`Confirmed sport fish include ${bio.predatorSpecies.join(', ')}${Array.isArray(bio.knownStockings) && bio.knownStockings.length ? `; documented stocking notes include ${bio.knownStockings.map(s => s.species).join(', ')}` : ''}.`);
   }
   if (hasResearchValue(lim.surfaceWater) || lim.waterClarity?.secchiFt || lim.thermocline?.summerDepthFt) {
     const limBits = [];
-    if (lim.waterClarity?.secchiFt) limBits.push(`Secchi clarity around ${lim.waterClarity.secchiFt} ft when observed`);
+    if (lim.waterClarity?.secchiFt) limBits.push(`Secchi clarity around ${lim.waterClarity.secchiFt} ft`);
     const swDated = (own) => sampleDated(own, lim.surfaceWater?.lastObserved);
-    if (lim.surfaceWater?.recentTempF != null) limBits.push(`surface water about ${lim.surfaceWater.recentTempF}°F${swDated(lim.surfaceWater.recentTempLastObserved)}`);
-    if (lim.surfaceWater?.recentDissolvedOxygenMgL != null) limBits.push(`surface dissolved oxygen about ${lim.surfaceWater.recentDissolvedOxygenMgL} mg/L${swDated(lim.surfaceWater.recentDissolvedOxygenLastObserved)}`);
+    if (lim.surfaceWater?.recentTempF != null) limBits.push(`surface water near ${lim.surfaceWater.recentTempF}°F${swDated(lim.surfaceWater.recentTempLastObserved)}`);
+    if (lim.surfaceWater?.recentDissolvedOxygenMgL != null) limBits.push(`surface dissolved oxygen near ${lim.surfaceWater.recentDissolvedOxygenMgL} mg/L${swDated(lim.surfaceWater.recentDissolvedOxygenLastObserved)}`);
     if (lim.thermocline?.summerDepthFt) limBits.push(`summer thermocline near ${Array.isArray(lim.thermocline.summerDepthFt) ? lim.thermocline.summerDepthFt.join('-') : lim.thermocline.summerDepthFt} ft`);
     if (limBits.length) parts.push(`Available limnology data indicate ${limBits.join('; ')}.`);
   }
   const attrCount = hab.artificialHabitatDetails?.attractorCount;
-  if (attrCount || hab.cover?.length || hab.notes) {
+  // A STRING HAS `.length` AND NO `.join`. `habitat.cover` is a STRING on every profile the
+  // deterministic path writes -- Fishing Creek Reservoir (Lancaster Co, SC) carries
+  // "fish attractors, logjams" -- so `hab.cover.slice(0, 4).join(', ')` threw a TypeError and
+  // took the whole summary with it. Fourth field in this family after knownStockings,
+  // predatorSpecies and habitat.cover in the client; `js/utils/coerce.js` is the client's one
+  // ladder and the Worker cannot import it, so the coercion is spelled out here.
+  const coverList = Array.isArray(hab.cover)
+    ? hab.cover
+    : String(hab.cover || '').split(/[,;]/).map((x) => x.trim()).filter(Boolean);
+  // The structure clause is NOT decoration -- it is the only part of this sentence that says
+  // what the CHART holds, and buildDeterministicSummary in lake-research-engine.js has emitted
+  // it since it was written. Leaving it out here made this builder strictly weaker than the
+  // client's, which mattered the moment handleResearchSave started rebuilding with it.
+  const structKeys = Object.keys(hab.structuralElements || {})
+    .filter((k) => hasResearchValue(hab.structuralElements[k]));
+  if (attrCount || coverList.length || structKeys.length) {
     const habBits = [];
     if (attrCount) habBits.push(`${attrCount} mapped fish attractors`);
-    if (hab.cover?.length) habBits.push(`cover includes ${hab.cover.slice(0, 4).join(', ')}`);
+    if (coverList.length) habBits.push(`cover includes ${coverList.slice(0, 4).join(', ')}`);
+    if (structKeys.length) habBits.push(`mapped structure includes ${structKeys.slice(0, 4).join(', ')}`);
     if (habBits.length) parts.push(`Habitat facts currently confirm ${habBits.join('; ')}.`);
   }
   return parts.join(' ').trim() || null;

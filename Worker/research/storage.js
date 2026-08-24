@@ -4,6 +4,7 @@ import { getLakeIntel, lakeKeyFromName } from '../worker-data.js';
 import { searchWeb } from './clients.js';
 import { extractJsonPossibly, researchStorageId, resolveResearchStorageId } from './keys.js';
 import { calculateSectionConfidence, gateOverallConfidence } from './agents.js';
+import { buildFactualSummary } from './facts-util.js';
 
 async function handleResearchList(env) {
   const prefix = "lakes/";
@@ -215,6 +216,38 @@ async function handleResearchSave(request, env) {
     master.metadata.status = 'verified';
     master.metadata.verified = true;
     master.metadata.verifiedAt = now;
+  }
+
+  // THE SENTENCE MUST NOT OUTLIVE THE NUMBERS IT STATES.
+  //
+  // `summary.text` is a deterministic restatement of identity + biology + limnology + habitat,
+  // and `researchIntel()` hands it to the model -- so it is the copy of these numbers that
+  // actually reaches a plan. Only one client path rebuilt it: `assembleAndSaveProfile`, at the
+  // end of an agent run. Every other path -- Smart Plan targeted recovery, the geometry
+  // re-derive, the validation pass, the editor -- rewrote `identity` and posted the OLD
+  // sentence back.
+  //
+  // Measured 2026-08-24 on Fishing Creek Reservoir (Lancaster Co, SC) v7.0, saved with zero
+  // agents: identity read `maxDepthFt: 39` and `surfaceAreaAcres: 2170` from the rebuilt pack
+  // while summary.text still read "about 3,431 surface acres, with a maximum depth near 100
+  // feet". One file, both numbers, and the wrong one is the one the planner reads.
+  //
+  // Rebuilt HERE because this is the single door all twelve client save paths go through --
+  // the same reason the storage id is resolved here rather than in each of them. Ryan,
+  // 2026-08-24: *"why would i run all 8 agents for an identity problem that doesn't even need
+  // an agent at all to solve"*. It does not, and now it does not have to.
+  //
+  // Only replaces a sentence the builder can actually produce, and never touches keywords.
+  try {
+    const rebuilt = buildFactualSummary(master);
+    if (rebuilt && rebuilt !== master.summary?.text) {
+      master.summary = { ...(master.summary || {}), text: rebuilt };
+    }
+  } catch (err) {
+    // A profile that cannot be summarised must still SAVE. Losing the run because one
+    // habitat field is a shape this builder did not expect is a worse failure than a
+    // sentence that stays stale, and the log names the lake so it is not silent.
+    console.error(`[storage] summary rebuild failed for ${safe}:`, err && err.message);
   }
 
   const masterJson = JSON.stringify(master);
