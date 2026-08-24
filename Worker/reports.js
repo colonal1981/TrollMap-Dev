@@ -74,10 +74,17 @@ export const REPORT_SOURCES = {
 // AHQ also covers NC and GA lakes. Those two states already have a dated feed, so AHQ is the
 // SC path here -- but the hub pattern is stated so a future NC/GA lake with no feed coverage
 // can reach it without inventing a new mechanism.
+//
+// NC AND GA NO LONGER HAVE A HUB. Measured 2026-08-24 by capture_upstreams.py: the SC hub
+// returns 200 while `/pages/north-carolina-fishing-reports` and `/pages/georgia-fishing-reports`
+// both return 404. AHQ reorganised and kept only the SC index. They are NULL rather than deleted
+// so the shape of the fallback survives and a reader gets "no hub" instead of a dead fetch --
+// the per-lake pages (`/pages/lake-hartwell-fishing-report`) are all still live, so a future
+// NC/GA lake reaches AHQ by lake slug, not by state hub.
 export const AHQ_HUBS = {
   SC: 'https://www.anglersheadquarters.com/pages/south-carolina-fishing-reports',
-  NC: 'https://www.anglersheadquarters.com/pages/north-carolina-fishing-reports',
-  GA: 'https://www.anglersheadquarters.com/pages/georgia-fishing-reports',
+  NC: null,
+  GA: null,
 };
 
 // ── name matching ───────────────────────────────────────────────────────────────────────────

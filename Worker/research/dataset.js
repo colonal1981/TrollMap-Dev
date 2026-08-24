@@ -5,7 +5,7 @@ const DATASET_HUNT_TARGETS = {
   SC: [
     { label: 'SCDNR Fisheries',        url: 'https://www.dnr.sc.gov/fish/',         depth: 3 },
     { label: 'SCDNR Lakes',            url: 'https://www.dnr.sc.gov/lakes/',         depth: 2 },
-    { label: 'SCDNR Publications',     url: 'https://www.dnr.sc.gov/publications/',  depth: 2 },
+    { label: 'SCDNR Publications',     url: 'https://www.dnr.sc.gov/publications.html',  depth: 2 },
     // EPA NSCEP / NEPI S — "Report on Lake …" water-quality series + other SC lake reports
     { label: 'EPA NSCEP / NEPI S',      url: 'https://nepis.epa.gov/',               depth: 1, isNepis: true },
   ],

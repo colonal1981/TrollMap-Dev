@@ -628,26 +628,38 @@ async function fetchDukeDashboard(basin = "1") {
   }).filter(Boolean);
   return { url: "https://api.hydro-derived.duke-energy.app/lakes/current-level", text: lines.join("\n"), json: arr };
 }
+// SANTEE COOPER NO LONGER PUBLISHES A LEVEL PAGE, AND ITS REPLACEMENT PAGE POINTS AT USGS.
+//
+// This used to regex two numbers out of santeecooper.com/community/lakes-and-recreation/
+// lake-levels[.aspx]. Both of those returned 404 on 2026-08-24. The page that replaced them --
+// /community/lakes/lake-data/ -- publishes no levels at all; it links to USGS monitoring
+// locations 02171000, 02169921 and 02172000. So the fallback was scraping a page whose successor
+// tells you to go to USGS, which is where the chain above already started.
+//
+// This is a SECOND SITE, not a second source. `LAKES.marion.pool` is 02169921 (Elloree) and the
+// caller only reaches here when that returned nothing. 02171000 is LAKE MARION NEAR PINEVILLE,
+// site type LK, publishing 00062 continuously since 2007-10-01 -- 6,902 values -- plus 62615
+// since 2023. Verified against the series catalogue 2026-08-24.
+//
+// MOULTRIE GETS NOTHING HERE ON PURPOSE. The only USGS site Santee Cooper names for it is
+// 02172000, which IS `LAKES.moultrie.pool` and has already been tried by the time this runs.
+// Inventing a fallback that repeats the call above would look like resilience and be a retry.
+//
+// NOT TEMPERATURE. 02171000 also serves 00010, 00300, 00400 and 00095 -- but its catalogue marks
+// every one of them `Bottom`. A bottom reading on a stratified lake in August is not the water a
+// kayak sits on, and returning it as `water_temperature_F` would be wrong by a wide margin in
+// exactly the season it matters. Elevation only.
+const SANTEE_MARION_BACKUP_SITE = "02171000";
 async function fetchSanteeCooper() {
-  const urls = [
-    "https://www.santeecooper.com/community/lakes-and-recreation/lake-levels.aspx",
-    "https://www.santeecooper.com/community/lakes-and-recreation/lake-levels"
-  ];
-  for (const u of urls) {
-    const r = await fetchText(u);
-    if (r.ok && r.text) {
-      const marion = r.text.match(/Marion[^0-9]{0,40}([0-9]{2}\.[0-9]{1,2})/i);
-      const moultrie = r.text.match(/Moultrie[^0-9]{0,40}([0-9]{2}\.[0-9]{1,2})/i);
-      if (marion || moultrie) {
-        return {
-          marion: marion ? parseFloat(marion[1]) : null,
-          moultrie: moultrie ? parseFloat(moultrie[1]) : null,
-          source: u
-        };
-      }
-    }
-  }
-  return null;
+  const u = await fetchUsgs(SANTEE_MARION_BACKUP_SITE, "00062,62615");
+  const ft = u?.elevation != null ? u.elevation
+           : u?.elevationNavd88 != null ? u.elevationNavd88 : null;
+  if (ft == null) return null;
+  return {
+    marion: ft,
+    moultrie: null,
+    source: `USGS ${SANTEE_MARION_BACKUP_SITE} (Lake Marion near Pineville, reservoir elevation)`
+  };
 }
 async function fetchUsaceSavannah(lakeKey) {
   const urls = [
@@ -870,7 +882,7 @@ var LAKE_INTEL_SOURCE_REGISTRY = {
       },
       {
         "label": "Dominion Energy Lake Murray Management",
-        "url": "https://www.dominionenergy.com/projects-and-facilities/hydroelectric-power/lake-murray",
+        "url": "https://www.dominionenergy.com/en/About/Lakes-and-Recreation/Lake-Murray-SC",
         "trust": "OFFICIAL_UTILITY",
         "use": "lake management / drawdown notices"
       },
@@ -1613,9 +1625,9 @@ async function getLakeIntel(lakeName) {
   );
 
   const sources = isCoastal ? [
-    stateCode === 'SC' ? { label: "SCDNR Saltwater Finfish Regulations", url: "https://www.dnr.sc.gov/regs/saltwaterfinfish.html" } :
-    stateCode === 'GA' ? { label: "Georgia DNR Coastal Resources Division", url: "https://coastalgadnr.org/commercial-recreational-fishing-regulations" } :
-    { label: "NC DMF Saltwater Fishing Regulations", url: "https://deq.nc.gov/about/divisions/marine-fisheries/recreational-rules-limits" }
+    stateCode === 'SC' ? { label: "SCDNR Saltwater Fishing Regulations (eRegulations)", url: "https://www.eregulations.com/southcarolina/fishing/general-information" } :
+    stateCode === 'GA' ? { label: "Georgia DNR Coastal Resources Division", url: "https://coastalgadnr.org/fishing" } :
+    { label: "NC DMF Saltwater Fishing Regulations", url: "https://deq.nc.gov/about/divisions/marine-fisheries" }
   ] : [
     { label: "State fisheries / regulations", url: "https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits" }
   ];
