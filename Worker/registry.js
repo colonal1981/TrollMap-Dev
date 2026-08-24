@@ -28,6 +28,7 @@ import { r2Text } from './worker-core.js';
 export const LAKE_INDEX_KEY = '_registry/lake_index.json';
 export const WATER_CHAIN_KEY = '_registry/water_chain.json';
 export const DAM_TABLE_KEY = '_registry/dam_table.json';
+export const NC_SPECIES_KEY = '_registry/nc_species_by_lake.json';
 export const INDEX_TTL_S = 3600;
 
 let _index = null;
@@ -36,10 +37,13 @@ let _chain = null;
 let _chainAt = 0;
 let _dams = null;
 let _damsAt = 0;
+let _ncSpecies = null;
+let _ncSpeciesAt = 0;
 
 /** Exposed for tests. Nothing in the Worker should need to call this. */
 export function _resetIndexCache() {
   _index = null; _indexAt = 0; _chain = null; _chainAt = 0; _dams = null; _damsAt = 0;
+  _ncSpecies = null; _ncSpeciesAt = 0;
 }
 
 /**
@@ -145,6 +149,48 @@ export async function damTable(env, opts = {}) {
   }
   _dams = rows;
   _damsAt = now;
+  return rows;
+}
+
+/**
+ * Fish species per North Carolina water, keyed by registry slug.
+ *
+ * WHY NORTH CAROLINA HAS ITS OWN FILE. `RESEARCH_RAMP_SOURCES` reads a species list off each
+ * state's ramp feed, and NC is the one state that publishes none: the NC WRC Boating Access
+ * Areas layer carries 42 fields and no species among them, so `getRampSpeciesFacts` returns
+ * nothing for every NC water. NC is also the one state absent from `AGENCY_INDEXES` -- SC has
+ * SCDNR lake pages, TN has TWRA reservoir pages, GA has its StoryMaps, and NC WRC publishes a
+ * map instead of pages. So North Carolina had neither source, and biology fell entirely to
+ * whatever the web agents could find. Lake Glenville (Jackson Co, NC) came back on 2026-08-24
+ * with zero predator species and biology gated at 35% while carrying the word "walleye" in its
+ * own summary keywords.
+ *
+ * The map's own backend answers it. `build_nc_species_by_lake.py` joins ncpaws.org's location
+ * list to the registry and writes this file; the uploader publishes it beside lake_index.json.
+ *
+ * Cached per isolate for an hour, same cadence and same failure mode as the three above: the
+ * object changes when the PIPELINE uploads, not when the Worker deploys, and a missing object
+ * is an error naming the script that writes it rather than a silent empty map. The caller in
+ * research/deterministic.js catches, because a lake with no species file must still produce a
+ * profile.
+ */
+export async function ncSpeciesByLake(env, opts = {}) {
+  const now = Number.isFinite(opts.now) ? opts.now : Date.now();
+  if (!opts.fresh && _ncSpecies && now - _ncSpeciesAt < INDEX_TTL_S * 1000) return _ncSpecies;
+  const bucket = (env && env.R2_TROLLMAP_CHARTPACKS) || opts.bucket;
+  if (!bucket) throw new Error('R2_TROLLMAP_CHARTPACKS is not bound to this Worker');
+  const obj = await bucket.get(NC_SPECIES_KEY);
+  if (!obj) {
+    throw new Error(`${NC_SPECIES_KEY} is not in the bucket -- run build_nc_species_by_lake.py, `
+                  + 'then upload_garmin_to_r2.py');
+  }
+  const parsed = JSON.parse(await r2Text(obj));
+  const rows = parsed && parsed.lakes;
+  if (!rows || typeof rows !== 'object' || Array.isArray(rows)) {
+    throw new Error(`${NC_SPECIES_KEY} has no "lakes" object keyed by registry slug`);
+  }
+  _ncSpecies = rows;
+  _ncSpeciesAt = now;
   return rows;
 }
 

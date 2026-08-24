@@ -2,6 +2,7 @@
 import { JSON_HEADERS, r2Text } from '../worker-core.js';
 import { researchStorageId, resolveResearchStorageId } from './keys.js';
 import { buildEvidence, buildFactualSummary, getAttractorFacts, getRampSpeciesFacts, uniqueResearchSpecies, splitSpeciesText } from './facts-util.js';
+import { lakeIndex, ncSpeciesByLake, resolveRegistryRow } from '../registry.js';
 
 async function handleResearchDeterministicFacts(request, env) {
   let body;
@@ -80,6 +81,49 @@ async function handleResearchDeterministicFacts(request, env) {
     }
   } catch (e) {
     console.warn(`deterministic ramps fetch failed for ${lakeName}: ${e.message}`);
+  }
+
+  // NORTH CAROLINA'S SPECIES COME FROM A FILE, BECAUSE NC PUBLISHES THEM NOWHERE ELSE.
+  //
+  // The block above reads `species` off the state ramp feed and works for SC and GA, whose
+  // feeds carry `SpeciesList`. NC's feed has no such field and NC has no entry in
+  // AGENCY_INDEXES either, so before this, every North Carolina water reached the agents with
+  // an empty roster. See ncSpeciesByLake() in ../registry.js for the whole shape of that hole.
+  //
+  // Keyed by registry SLUG, not by name -- `resolveRegistryRow` is the one resolver that
+  // refuses an ambiguous name rather than guessing, and two waters sharing a name is exactly
+  // the case that made it that way.
+  //
+  // `wild` and `stocked` are separate booleans at the source, so a stocked species lands in
+  // knownStockings as well as in the roster rather than being inferred from prose.
+  if (state === 'NC') {
+    try {
+      const row = resolveRegistryRow(await lakeIndex(env), lakeName);
+      const slug = row && row.slug;
+      const entry = slug ? (await ncSpeciesByLake(env))[slug] : null;
+      if (entry && entry.predatorSpecies && entry.predatorSpecies.length) {
+        profile.biology.predatorSpecies = uniqueResearchSpecies(
+          [...(profile.biology.predatorSpecies || []), ...entry.predatorSpecies]);
+        const stocked = uniqueResearchSpecies(entry.knownStockings || []);
+        if (stocked.length) {
+          const already = new Set((profile.biology.knownStockings || [])
+            .map((x) => String(x && x.species || '').toLowerCase()));
+          profile.biology.knownStockings = [
+            ...(profile.biology.knownStockings || []),
+            ...stocked.filter((sp) => !already.has(sp.toLowerCase()))
+              .map((sp) => ({ species: sp, source: 'NC WRC public fishing areas' })),
+          ];
+        }
+        const label = 'NC WRC public fishing areas';
+        const url = 'registry:nc_species_by_lake.json';
+        mergeEvidence('biology', 'predatorSpecies', [buildEvidence('official_structured', label, url, null,
+          'structured_species_aggregation',
+          { speciesCount: entry.predatorSpecies.length, locations: (entry.locations || []).length })]);
+        profile.sources.push({ label, url, trust: 'OFFICIAL_GIS', sourceType: 'official_structured' });
+      }
+    } catch (e) {
+      console.warn(`deterministic NC species lookup failed for ${lakeName}: ${e.message}`);
+    }
   }
 
   // Structured attractors

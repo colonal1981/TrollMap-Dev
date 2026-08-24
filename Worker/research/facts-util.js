@@ -48,7 +48,20 @@ const RESEARCH_SPECIES_CANON = {
   'brown trout': 'Brown Trout',
   'walleye': 'Walleye',
   'gar': 'Gar',
-  'longnose gar': 'Longnose Gar'
+  'longnose gar': 'Longnose Gar',
+  // NC WRC NAMES SOME SPECIES BY TAXONOMIC GROUP, and those spellings arrive through
+  // registry/nc_species_by_lake.json. Measured 2026-08-24 across all 77 waters that file
+  // covers: 34 distinct labels, of which these five did not already canonicalise. Two of them
+  // are the most common labels in the whole file -- "Crappie (Unspecified)" on 52 waters and
+  // "North American Freshwater Catfishes" on 50 -- so without these rows half of North
+  // Carolina would carry a species name that matches nothing downstream. `sunfish` is listed
+  // even though title-casing already produced it, so the value is a decision rather than an
+  // accident of the fallback.
+  'crappie unspecified': 'Crappie',
+  'north american freshwater catfishes': 'Catfish',
+  'sunfish': 'Sunfish',
+  'bodie bass striped bass hybrid': 'White Bass / Hybrid',
+  'bullhead sp': 'Bullhead'
 };
 
 function canonicalizeResearchSpecies(raw) {
@@ -63,6 +76,9 @@ const NON_GAME_SPECIES = new Set([
   'shortnose sturgeon', 'atlantic sturgeon', 'lake sturgeon', 'pallid sturgeon',
   'paddlefish', 'american eel', 'lamprey', 'sea lamprey',
   'threadfin shad', 'gizzard shad', 'blueback herring', 'american shad', 'alewife',
+  // `hickory shad` was the one shad this set did not name, and NC WRC lists it. A set of
+  // examples is not a rule: American Shad was dropped and its sibling was not.
+  'hickory shad',
   'carp', 'common carp', 'bighead carp', 'silver carp', 'grass carp',
   'corbicula', 'asian clam', 'zebra mussel',
   'gar', 'longnose gar', 'spotted gar', 'alligator gar',

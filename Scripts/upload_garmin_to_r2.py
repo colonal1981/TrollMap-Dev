@@ -686,6 +686,27 @@ def main():
                   f"from inflow to outflow; build them with build_duke_dam_table.py and "
                   f"bind_dams_to_waters.py")
 
+        # NORTH CAROLINA'S SPECIES. Not slimmed -- the file is already only what it needs to be,
+        # a species list and a stocking list per registry slug.
+        #
+        # This is the one state whose ramp feed publishes no species and which has no agency
+        # profile page in AGENCY_INDEXES, so without this object every NC water reaches the
+        # research agents with an empty roster. Its absence is a warning rather than a failure
+        # for the same reason the four above are: the app still works, one section is thinner,
+        # and the line names the script that fixes it.
+        ns = regdir / "nc_species_by_lake.json"
+        if ns.exists():
+            _ns = json.load(open(ns, encoding="utf-8"))
+            reg_jobs.append((str(ns), f"{args.prefix}_registry/nc_species_by_lake.json",
+                             "_registry", "nc_species"))
+            _sp = sum(len(v.get("predatorSpecies") or []) for v in (_ns.get("lakes") or {}).values())
+            print(f"species:  {len(_ns.get('lakes') or {}):,} NC waters, {_sp:,} species rows -> "
+                  f"{args.prefix}_registry/nc_species_by_lake.json "
+                  f"({ns.stat().st_size/1024:.0f} KB before gzip)")
+        else:
+            print(f"!! {ns.name} not found -- every NC water researches with an empty species "
+                  f"list; build it with build_nc_species_by_lake.py --go")
+
     # ── ONLY WHAT THE APP CAN ASK FOR ────────────────────────────────────────────────────────
     #
     # `lake_index.json`, NOT "a chartpack directory exists". The unbuildable filter and the
