@@ -748,19 +748,24 @@ export function registryRecordFor(lakeName) {
   if (!norm) return null;
   const cands = norm.get(normalizeRegistryKey(lakeName));
   if (!cands || !cands.length) return null;
-  if (cands.length === 1) return cands[0];
 
-  // AMBIGUOUS, SO CORROBORATE OR DECLINE -- 2026-08-24.
+  // A FALLBACK MATCH ALWAYS NEEDS A SECOND SIGNAL -- 2026-08-24, corrected the same night.
+  //
+  // The first cut of this asked for corroboration only when the normalised key was AMBIGUOUS,
+  // and took a shortcut when exactly one record shared it. That left the bug standing for every
+  // name with a single namesake: "Goose Creek, TN" and "Silver Lake, GA" each match exactly one
+  // registry record -- the SC one, hundreds of miles away -- so they skipped the check and kept
+  // borrowing it. Ryan, after the deploy: "i still see 2 silvers and 2 goose creeks... the
+  // second hartwell is gone". The fold was working; this was not.
   //
   // normalizeRegistryKey() strips the county parenthetical and the state suffix, which are the
-  // only two things telling two same-named waters apart, and this used to return the first
-  // record filed under that key. Ryan's picker showed "Davy Crockett Lake, TN" -- a west
-  // Tennessee water with no registry row -- carrying 204 acres, 1 ramp and 95% charted, which
-  // are the numbers for the Davy Crockett Lake at the Birthplace 340 miles away.
+  // only two things telling two same-named waters apart. A DIRECT key hit above is authoritative
+  // because it is the whole name. Anything reached by stripping is a guess until the row's own
+  // access points agree with it -- and a row with no points at all has nothing to agree with, so
+  // it declines. That is the same two-signal rule findExistingLakeKey() already follows.
   //
-  // The row's own access points decide it. Nearest candidate within 15 miles wins; if the row
-  // has no points, or none of them is near any candidate, there is no second signal and this
-  // declines rather than guessing -- the same rule findExistingLakeKey() already follows.
+  // A registry lake with no ramp is not affected: pass 2 files it in registryByName under its
+  // own display name, so it hits `direct` and never reaches here.
   const pts = accessIndex.byLake?.get(lakeName) || [];
   let best = null, bestDist = Infinity;
   for (const rec of cands) {
