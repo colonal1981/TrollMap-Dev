@@ -16,7 +16,9 @@ and hoping -- which is how a slug survives in one of them and comes back on the 
 
 WHAT IT TOUCHES, AND WHAT IT DELIBERATELY DOES NOT
 
-    registry/lakes.json           the by_state slug lists -- the source the build walks
+    registry/lakes.json           the `lakes[]` RECORD -- what consolidate walks. by_state,
+                                  state_order and count are VIEWS and are rebuilt from it;
+                                  editing the view alone removes the water from nothing
     registry/boundaries/<slug>    moved to _to_delete/, never unlinked
     registry/tile_lake_map.json   by_lake and by_tile
     registry/charted.json         the build's own report row
@@ -105,14 +107,42 @@ def main():
     trash = os.path.join('_to_delete', 'registry_removed_' + stamp)
     hit = {'lakes.json': 0, 'boundaries': 0, 'tile_lake_map': 0, 'charted': 0}
 
+    # lakes.json's RECORD is `lakes[]`. `by_state`, `state_order` and `count` are VIEWS of it --
+    # install_registry_boundary.py rebuilds all three from `lakes[]` every time it writes, and
+    # consolidate_lake_index.py:627 walks `lakes[]` and never reads by_state at all. SO EDITING
+    # THE VIEW REMOVES A WATER FROM NOTHING.
+    #
+    # 2026-08-24: this script did exactly that. The seven waters Ryan retired on 08-23 -- their
+    # boundary files moved to _to_delete, their tile_lake_map rows and charted verdicts gone --
+    # came straight back into lake_index.json on the next consolidate, because their rows were
+    # still in `lakes[]`. 365 rows where 358 were expected, each one carrying a chartpack dir
+    # this script deliberately leaves behind, so the packless gate saw a drawable pack and kept
+    # it.
+    #
+    # It is the same failure migrate_merged_slugs.py already records at its LEAVE_ALONE block
+    # and test_migrate_slugs.py already tripwires: "Rewriting its by_state lists on 2026-08-18
+    # left seven records in lakes[] belonging to no state list at all: the inventory disagreeing
+    # with its own index." Seven records, both times, eleven days apart.
+    #
+    # Drop from the record, then REBUILD the views from it -- so a run repairs drift an earlier
+    # run left behind rather than adding to it.
     p = os.path.join(R, 'lakes.json')
     lakes = load(p)
-    for st, lst in (lakes.get('by_state') or {}).items():
-        keep = [s for s in lst if s not in want]
-        hit['lakes.json'] += len(lst) - len(keep)
-        lakes['by_state'][st] = keep
-    if 'count' in lakes:
-        lakes['count'] = sum(len(v) for v in lakes['by_state'].values())
+    src = lakes.get('lakes') or []
+    rows = [r for r in src if (r.get('slug') if isinstance(r, dict) else r) not in want]
+    hit['lakes.json'] = len(src) - len(rows)
+    lakes['lakes'] = rows
+    bs = {}
+    for r in rows:
+        if isinstance(r, dict) and r.get('slug'):
+            bs.setdefault(r.get('state') or '??', []).append(r['slug'])
+    order = [st for st in (lakes.get('state_order') or []) if st in bs]
+    for st in sorted(bs):
+        if st not in order:
+            order.append(st)
+    lakes['state_order'] = order
+    lakes['by_state'] = {st: sorted(bs[st]) for st in order}
+    lakes['count'] = len(rows)
     save(p, lakes, a.go)
 
     p = os.path.join(R, 'tile_lake_map.json')
