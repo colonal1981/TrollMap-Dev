@@ -669,18 +669,6 @@ def main():
     # by-lake buckets. The file supplies exactly one thing: the LEGACY DISPLAY NAME, so a lake
     # saved in an old plan or catch still resolves. Worth refusing to run without, and a much
     # smaller claim than this comment used to make.
-    cur_fp = os.path.join(R, 'curated_lakes.json')
-    if os.path.exists(cur_fp):
-        doc = json.load(open_text(cur_fp))
-        js['lake_db'] = doc.get('lakes') or doc
-        print('curated lakes: %d from registry/curated_lakes.json' % len(js['lake_db']))
-    else:
-        raise SystemExit(
-            'FATAL: no curated lake names found.\n'
-            '  Looked for registry/curated_lakes.json.\n'
-            '  Without it the index builds fine and silently loses the LEGACY DISPLAY\n'
-            '  NAMES, so a lake saved in an old plan or catch stops resolving. Gauges, pool\n'
-            '  elevations and ramps no longer come from here. Refusing to run.')
     # --charted HAS A DEFAULT, AND THE WARNING LIVES OUT HERE.
     #
     # It did not, and that cost the registry shrink a whole run on 2026-08-12. `--charted` was
@@ -850,122 +838,25 @@ def main():
     added, unbound = [], []
     RIVERS = re.compile(r'\briver\b', re.I)
 
-    # --- LAKE_DB: the only source of gauges, basins and pool curves -------------
-    for disp, v in (js.get('lake_db') or {}).items():
-        c = v.get('center') or []
-        if len(c) < 2:
-            continue
-        if v.get('coastal'):
-            # LAKE_DB flags 9 tidal zones with `coastal: true` -- ACE Basin, Charleston
-            # Harbor, Winyah Bay and the rest. Those belong to coastal-zones.js and there is
-            # no registry lake to bind them to. Reporting them as unmatched made the failure
-            # list twice as long as the real problem.
-            stats['coastal_skipped'] += 1
-            continue
-        st = (re.search(r',\s*([A-Z]{2})', disp) or [None, None])[1]
-        if st and st.upper() not in want:
-            continue
-        s = bind(disp, c[0], c[1])
-        if not s:
-            # A river is not a lake and 3DHP's waterbody layer will never hold one -- but
-            # Congaree and Wateree River are fishable and already in the app, so they are
-            # carried as first-class records rather than dropped for failing a lake match.
-            if RIVERS.search(disp):
-                slug = slugify(re.sub(r',.*$', '', disp), st)
-                idx[slug] = {'slug': slug, 'name': re.sub(r',.*$', '', disp), 'state': st,
-                             'display_name': disp, 'gnis': None, 'source': ['lake_db'],
-                             'feature_type': 'river',
-                             'area_acres': None, 'centroid': [c[1], c[0]],
-                             'bounds_wsen': None, 'access': None, 'access_for_me': None,
-                             'access_via': None, 'access_units': [], 'proclamation': [],
-                             'ramps': {}, 'ramp_sources': 0, 'charted': None,
-                             'shipped': False, 'pack_mb': None, 'needs_boundary': True,
-                             'legacy_display_name': disp}
-                for f in ('usgs', 'duke', 'dominion', 'normalPool', 'minPool'):
-                    if v.get(f) is not None:
-                        idx[slug][f] = v[f]
-                added.append(('lake_db_river', disp, st))
-                continue
-            unbound.append(('lake_db', disp))
-            continue
-        rec = idx[s]
-        rec['source'].append('lake_db')
-        # NOTHING IS CARRIED FROM CURATED ANY MORE. This copied usgs, duke, dominion,
-        # normalPool, minPool, tideStation and a ramp list. Ryan, 2026-08-15: "and currated
-        # lakes is dead and will never be brought back", and on the pool numbers: "why are
-        # those not in the same place every other pool elevation is... nothing curated no new
-        # anything use what is already working for other lakes." Measured before removing:
-        #
-        #   usgs         0 rows survived -- every one is overwritten by water_bindings.json
-        #                below, and has been since f0f0a9c
-        #   normalPool   3 rows (Norman 760, Keowee 800, Wylie 569.4). ALL THREE ARE ALREADY
-        #                IN Worker/worker-data.js's LAKES table, which carries normalPool for
-        #                sixteen lakes and is what the Worker serves as full_pool_ft; Duke
-        #                publishes the same number on every reading. plan-builder.js reads
-        #                that now.
-        #   minPool      3 rows, read by NOTHING -- lake-registry.js carries the field through
-        #                and no module ever asks for it
-        #   duke         4 rows, read by NOTHING. The Worker's `cfg.duke` is worker-data.js's
-        #                own LAKES table, not this field.
-        #   dominion     2 rows, same
-        #   tideStation  0 rows -- the nine curated entries are coastal zones that never bind
-        #                to a registry lake, and the readers take it off coastal-zones.js
-        #   ramps        34 rows, and ZERO depend on it: every one also carries dnr, natl or
-        #                osm. The five-bucket merge above is the live path.
-        #
-        # The file is still read for ONE thing: the legacy display name appended below, which
-        # is how a lake saved in an old plan or catch still resolves.
-        # ADD the curated key, do not replace what is already there -- the pre-county
-        # "Name, ST" string is just as likely to be the one in a saved plan.
-        lg = rec.setdefault('legacy_display_names', [])
-        if disp not in lg:
-            lg.append(disp)
-        rec['legacy_display_name'] = lg[0]
-        stats['lake_db_bound'] += 1
-
-    # --- the two hardcoded supplements ----------------------------------------
-    for key, tag in (('scdnr_state_lakes', 'scdnr_state_lake'),
-                     ('user_known_lakes', 'user_known')):
-        for v in (js.get(key) or []):
-            if (v.get('state') or '').upper() not in want:
-                continue
-            s = bind(v['name'], v['lat'], v['lon'])
-            if s:
-                idx[s]['source'].append(tag)
-                if v.get('note'):
-                    idx[s]['note'] = v['note']
-                if v.get('county'):
-                    idx[s]['county'] = v['county']
-                # REMEMBER THE CURATED NAME. Without this, binding a supplement DELETES the
-                # only name the user knows the water by: 'HB Robinson Lake' folded into
-                # lake_robinson and then appeared nowhere in the index, so searching for it
-                # found nothing at all -- strictly worse than the duplicate row it replaced.
-                # The lake_db branch above has always done this; these two never did, and it
-                # only became visible once lake_aliases.json started binding them.
-                lg = idx[s].setdefault('legacy_display_names', [])
-                for cand in (v['name'],
-                             '%s, %s' % (v['name'], v['state']) if v.get('state') else None):
-                    if cand and cand not in lg:
-                        lg.append(cand)
-                idx[s]['legacy_display_name'] = lg[0]
-                stats[tag + '_bound'] += 1
-                continue
-            # NOT a failure. 3DHP never named it, and it is still a lake Ryan fishes.
-            slug = slugify(v['name'], v.get('state'))
-            idx[slug] = {
-                'slug': slug, 'name': v['name'], 'state': v['state'],
-                'display_name': '%s (%s Co, %s)' % (v['name'], v.get('county', '?'), v['state']),
-                'gnis': None, 'source': [tag],
-                'area_acres': v.get('acres'),
-                'centroid': [v['lon'], v['lat']], 'bounds_wsen': None,
-                'access': None, 'access_for_me': None, 'access_via': None,
-                'access_units': [], 'proclamation': [], 'ramps': {}, 'ramp_sources': 0,
-                'charted': None, 'shipped': False, 'pack_mb': None,
-                'county': v.get('county'), 'note': v.get('note'),
-                'needs_boundary': True,     # cut one from Garmin mode 6/20 before it can ship
-            }
-            added.append((tag, v['name'], v.get('state')))
-
+    # --- THE THREE HARDCODED WATER LISTS ARE GONE -----------------------------
+    #
+    # `scdnr-state-lakes.js` and `user-known-lakes.js` went on 2026-08-22; their loop stayed
+    # behind and iterated an empty dict on every run since. `curated_lakes.json` went on
+    # 2026-08-24, and it was the last of the three. Ryan: *"i don't want them to die by
+    # extracting the info and moving it somewhere else... it needs to be an automated process
+    # that can grow or shrink on its own... not hand written."*
+    #
+    # WHAT REPLACED IT: the names come from `registry/_feed_names.json`, harvested by
+    # build_water_names.py out of the `wb` field every ramp record already carries -- the name
+    # the AGENCY uses for the water it hung that ramp on. Add a ramp to the feed and the name
+    # appears; drop it and the name goes.
+    #
+    # HOW IT WAS PROVED SAFE, 2026-08-24: the index was built twice with only this file
+    # different and both handed to compare_index_names.py. 358 rows either way, ONE name lost
+    # -- "Lake Rhodhiss, NC", which Duke and the ramp signage use and no feed carries. It is
+    # an `also` on `rhodhiss_lake` in lake_display_names.json now, which is hand-held on
+    # purpose and documented for exactly that, and the rebuilt comparison reports NOTHING
+    # LOST. Prove the replacement is complete while the old thing is still in place.
     # ── feature_type, in ONE place ───────────────────────────────────────────
     #
     # Measured 2026-08-04 on the shipped index: 1,661 of 1,663 rows carried
@@ -1611,15 +1502,9 @@ def main():
     print()
     # Labelled by its FILE, not by the dead JS symbol. `LAKE_DB` here sent a reader looking
     # for js/data/lakes.js, which has not existed since 2026-08-04.
-    print('curated_lakes %2d of %d bound to a registry lake'
-          % (stats['lake_db_bound'], len(js.get('lake_db') or {})))
-    print('SCDNR lakes  %2d bound' % stats['scdnr_state_lake_bound'])
-    print('user-known   %2d bound' % stats['user_known_bound'])
     # The "curated fields carried over" report is gone with the fields. It printed
     # `usgs 5 lakes / duke 4 / dominion 2 / normalPool 3 / minPool 3` on every run, which read
     # as five live dependencies and was, by 2026-08-15, five dead ones and no live one.
-    print('curated fields carried over: NONE -- gauges come from water_bindings.json, pool '
-          'elevations from Worker/worker-data.js, ramps from the five by-lake buckets')
 
     if added:
         print('\n%d lakes ADDED that 3DHP never named -- these need a boundary cut from '

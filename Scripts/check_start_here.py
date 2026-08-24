@@ -198,6 +198,15 @@ def collect(root, repo):
                 'js/modules/duke-energy.js'):
         safe('absent_' + rel.split('/')[-1],
              (lambda r: (lambda: not os.path.exists(Q(*r.split('/')))))(rel))
+    # THE THIRD AND LAST HARDCODED WATER LIST -- retired 2026-08-24.
+    #
+    # 50 entries, and by the end it supplied exactly one thing no rule could generate:
+    # the name "Lake Rhodhiss, NC" against an index that says "Rhodhiss Lake". Measured
+    # by building the index with and without it and handing both to
+    # compare_index_names.py -- 358 rows either way, that one name, now an `also` on
+    # rhodhiss_lake in lake_display_names.json. A list like this COMES BACK: lake_boundaries/
+    # returned through a docstring on 08-17, which is why the line below exists.
+    safe('absent_curated_lakes.json', lambda: not os.path.exists(R('curated_lakes.json')))
     safe('absent_lake_boundaries_dir', lambda: not os.path.isdir(R('lake_boundaries')))
 
     # ── claims already proven wrong once ──────────────────────────────────────────────────

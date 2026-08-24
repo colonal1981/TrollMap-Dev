@@ -17,7 +17,9 @@
  * WHAT CHANGED, 2026-08-14, AND WHY IT TOOK THREE ASKS
  *
  * This lint used to get its coordinates from the 50 hand-placed centres in
- * `registry/curated_lakes.json`, and that dependency is the only reason that file still exists.
+ * `registry/curated_lakes.json`, and that dependency was the only reason that file still
+ * existed. It was retired on 2026-08-24 -- the last of the three hardcoded water lists -- once
+ * this lint no longer needed it and the index built without it lost nothing.
  * Ryan has tried to delete it three times. Each time the answer was "not until this lint is
  * repointed", and each time the repointing did not happen:
  *
