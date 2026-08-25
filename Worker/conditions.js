@@ -60,6 +60,7 @@
  * client-side JavaScript. This is the authoritative source and it is a different agency.
  */
 import { CORS, JSON_HEADERS, r2Text } from './worker-core.js';
+import { ndbcReadings } from './ndbc.js';
 import { waterChain, damTable } from './registry.js';
 // RIVERS and lakeKeyFromName came out with dukeBasinFor: the basin is resolved from Duke's own
 // /rivers/get-rivers roster now, so this file no longer reads the six-entry hand table at all.
@@ -81,6 +82,10 @@ const UA = 'TrollMap/1.0 (personal fishing app)';
 // week and will be correct next week. `level` is a MEASURED water level, which is weather.
 const TTL = {
   usno: 6 * 3600, point: 1800, wwa: 300, nwm: 900,
+  // TEN MINUTES, WHICH IS THE FASTEST STATION'S OWN CLOCK. LMFS1 on Lake Murray writes every
+  // ten; the NERRS sondes every fifteen. Caching longer than the station reports would show a
+  // reading as current that the station had already replaced.
+  ndbc: 600,
   bindings: 3600, gauge: 900, tide: 6 * 3600, level: 600,
 };
 
@@ -4019,6 +4024,35 @@ async function waterBlock(b, lat, lon, env) {
   // Measured by a bound site and still empty -- a gauge to go read, not a registry gap.
   out.silent_parameters = (probe.silent && probe.silent.length) ? probe.silent : null;
   out.sites_catalogued = probe.catalogued || 0;
+
+  // ── MEASURED WEATHER AND MEASURED WATER, WHERE AN INSTRUMENT EXISTS ──────────────────────
+  //
+  // Every wind number this app has ever shown came from NWS MapClick, which is a MODEL. NDBC
+  // station LMFS1 sits ON Lake Murray and reports wind and gust every ten minutes; the NERRS
+  // reserve sondes on the coast report water temperature, salinity, oxygen and turbidity every
+  // fifteen. `bind_ndbc_stations.py` binds them; this reads them.
+  //
+  // Nothing here decides what wins. It reports what was measured, with the station, its
+  // distance and its age, and lets the client prefer a measurement over a model knowing both.
+  out.ndbc = await ndbcReadings(b.ndbc, (u) => cached(`ndbc:${u}`, TTL.ndbc, () => getText(u)))
+    .catch(() => null);
+
+  // THE COASTAL CARDS HAVE NEVER HAD A WATER TEMPERATURE. `waterProbe` looks at USGS sites, and
+  // on a tidal creek there frequently is not one -- which is exactly the "catalogued but silent"
+  // and "nobody publishes it" state this response learned to explain earlier today. A NERRS
+  // sonde answers it outright, so where USGS gave nothing and a sonde gave a number, the number
+  // wins over the explanation. It carries its own provenance and never borrows the USGS shape:
+  // there is no `usgs_site` on it because there is no USGS site behind it.
+  if (!out.water_temp && out.ndbc && out.ndbc.ocean && Number.isFinite(out.ndbc.ocean.water_c)) {
+    const o = out.ndbc.ocean;
+    out.water_temp = {
+      ndbc_station: o.station, name: o.name,
+      km_from_point: o.km_from_water,
+      c: o.water_c, f: o.water_f,
+      observed_at: o.observed_at, age_minutes: o.age_minutes, stale: o.stale,
+      source: 'NDBC — realtime2 ocean, OTMP',
+    };
+  }
   // Whether `tide: null` on this response is a FACT or a GAP. An inland lake has no tide and
   // that is the right answer; a coastal zone with no station bound is a hole in the registry.
   out.tidal = !!(b.tides || []).length;

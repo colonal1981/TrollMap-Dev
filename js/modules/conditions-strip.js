@@ -360,7 +360,13 @@ function cardHtml(rec, c) {
 
   if (c.waterTempF != null) {
     out.push(row('Water temp', `${c.waterTempF} °F`
-      + (c.waterTempFrom === 'tide_station'
+      + (c.waterTempFrom === 'ndbc'
+        // A NERRS reserve sonde, not a river gauge. It is IN the water on a 15-minute clock,
+        // and on most of these coastal waters there is no USGS site to ask at all.
+        ? `<span class="cond-sub"> — measured by NDBC sonde${c.waterTempStation ? ` ${esc(c.waterTempStation)}` : ''}`
+          + `${c.waterTempGauge ? ` (${esc(c.waterTempGauge)})` : ''}`
+          + `${c.waterTempAgeMin != null ? `, ${c.waterTempAgeMin} min old` : ''}.</span>`
+        : c.waterTempFrom === 'tide_station'
         ? `<span class="cond-sub"> — NOAA CO-OPS tide station${c.waterTempGauge ? ` (${esc(c.waterTempGauge)})` : ''}. No USGS site on this water.</span>`
         : c.waterTempFrom === 'tailwater'
         ? `<span class="cond-sub"> — TAILWATER gauge${c.waterTempGauge ? ` (${esc(c.waterTempGauge)})` : ''}, below the dam, not the lake</span>`
@@ -368,11 +374,34 @@ function cardHtml(rec, c) {
   }
 
   if (c.windMph != null) {
+    // MEASURED OR MODELLED, AND THE CARD SAYS WHICH. An anemometer on the water and a forecast
+    // grid point are not the same claim, and until 2026-08-25 every wind on this card was the
+    // second one while three of these waters had the first.
+    const measured = c.windFrom === 'ndbc';
     out.push(row('Wind', `${Math.round(c.windMph)} mph`
       + `${c.gustMph != null ? ` gusting ${Math.round(c.gustMph)}` : ''}`
       + `${c.windDirDeg != null ? ` from ${Math.round(c.windDirDeg)}°` : ''}`
-      + `<span class="cond-sub"> — observed at ${esc(c.obsStation || 'the nearest station')}`
-      + `${c.obsKmAway != null ? `, ${c.obsKmAway} km from this water` : ''}.</span>`));
+      + (measured
+        ? `<span class="cond-sub"> — MEASURED at NDBC ${esc(c.windStation || 'station')}`
+          + `${c.windAgeMin != null ? `, ${c.windAgeMin} min old` : ''}`
+          // A station that does not measure gust must not read as one reporting no gust.
+          + `${c.gustMph == null ? '. This station reports no gust.' : '.'}</span>`
+        : `<span class="cond-sub"> — modelled, from ${esc(c.obsStation || 'the nearest station')}`
+          + `${c.obsKmAway != null ? `, ${c.obsKmAway} km from this water` : ''}.</span>`)));
+  }
+
+  // SALINITY, WHERE A SONDE MEASURES IT. On a tidal creek this is a fishing fact, not a
+  // water-quality one: at Oyster Landing on 2026-08-25 it ran 32.4 to 36.7 psu across four
+  // hours as the tide flooded. The rest of the sonde -- conductance, pH, chlorophyll, oxygen
+  // percent -- stays in the payload for SmartPlan and off this card, per Ryan's rule: what a
+  // fisherman needs to see is shown, what only makes the planner smarter is only passed to it.
+  const oc = c.ndbc && c.ndbc.ocean;
+  if (oc && Number.isFinite(oc.salinity_psu)) {
+    out.push(row('Salinity', `${oc.salinity_psu} psu`
+      + (Number.isFinite(oc.oxygen_ppm) ? ` · ${oc.oxygen_ppm} ppm O₂` : '')
+      + `<span class="cond-sub"> — NDBC sonde ${esc(oc.station || '')}`
+      + `${oc.age_minutes != null ? `, ${oc.age_minutes} min old` : ''}.`
+      + ` psu, which is not the ppt USGS publishes.</span>`));
   }
   if (c.pressureMb != null) {
     const d = (v) => v == null ? '—' : `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1)}`;

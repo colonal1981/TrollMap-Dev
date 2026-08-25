@@ -108,6 +108,12 @@ export function readConditions(j) {
     waterTempFrom: null,
     waterTempGauge: null,
     waterTempSite: null,
+    waterTempStation: null,
+    waterTempAgeMin: null,
+    windFrom: null,
+    windStation: null,
+    windAgeMin: null,
+    ndbc: null,
     usaceTargetFt: null,
     usaceProject: null,
     flowCfs: null,
@@ -240,9 +246,14 @@ export function readConditions(j) {
   const wt = w.water_temp || null;
   if (wt && Number.isFinite(wt.f)) {
     out.waterTempF = wt.f;
-    out.waterTempFrom = wt.below_dam ? 'tailwater' : (wt.role || 'gauge');
+    // A SONDE IS NOT A GAUGE ROLE. An NDBC reading carries no `role` and no `below_dam`, and
+    // falling through to 'gauge' would label a NERRS water-quality sonde as a river gauge.
+    out.waterTempFrom = wt.ndbc_station ? 'ndbc'
+      : (wt.below_dam ? 'tailwater' : (wt.role || 'gauge'));
     out.waterTempGauge = wt.name || null;
     out.waterTempSite = wt.usgs_site || null;
+    out.waterTempStation = wt.ndbc_station || null;
+    out.waterTempAgeMin = Number.isFinite(wt.age_minutes) ? wt.age_minutes : null;
   } else {
     const t = pickWaterTemp(w);
     out.waterTempF = t.f;
@@ -552,6 +563,34 @@ export function readConditions(j) {
       // direction from a single reading is not a trend.
     }
   }
+  // ── A MEASUREMENT BEATS A MODEL, AND THE WHOLE READING COMES FROM ONE INSTRUMENT ─────────
+  //
+  // Every wind number this app has ever shown came from NWS MapClick, which is a forecast model.
+  // NDBC station LMFS1 sits ON Lake Murray and measures wind and gust every ten minutes.
+  // Ryan, 2026-08-25: "live data replacing model where available makes sense to me."
+  //
+  // ONE SOURCE FOR ONE LINE. The gust is taken from the same station as the sustained wind even
+  // when that station publishes none -- NIWS1 at Oyster Landing reports WDIR and WSPD with GST
+  // missing on every row. Showing a measured 9 mph beside a MODELLED gust of 14 would put two
+  // sources in one string with no way to tell which was which, and "9g14" reads as one reading.
+  // A null gust says the instrument does not measure it; the model's guess is not a substitute.
+  //
+  // THIS DOES NOT TOUCH THE FORECAST. An anemometer reports what the wind IS; it cannot report
+  // what it will be at eight tomorrow, and plan-preflight is asking about a trip that has not
+  // happened. Observed is replaced here; forecast stays forecast.
+  const nd = (w && w.ndbc) || null;
+  out.ndbc = nd;
+  if (nd && nd.met && nd.met.stale !== true && Number.isFinite(nd.met.wind_mph)) {
+    out.windMph = nd.met.wind_mph;
+    out.windDirDeg = Number.isFinite(nd.met.wind_dir_deg) ? nd.met.wind_dir_deg : null;
+    out.gustMph = Number.isFinite(nd.met.gust_mph) ? nd.met.gust_mph : null;
+    out.windFrom = 'ndbc';
+    out.windStation = nd.met.station || null;
+    out.windAgeMin = Number.isFinite(nd.met.age_minutes) ? nd.met.age_minutes : null;
+  } else if (out.windMph != null) {
+    out.windFrom = 'model';
+  }
+
   if (out.pressureMb != null && out.pressureFrom == null) out.pressureFrom = 'tide_station';
 
   // ── ACTIVE WATCHES, WARNINGS AND ADVISORIES, AND THE LIGHTNING OUTLOOK ───────────────────

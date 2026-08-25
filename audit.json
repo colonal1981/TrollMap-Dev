@@ -1,14 +1,14 @@
 {
   "generatedFrom": "tools/audit.mjs",
   "summary": {
-    "files": 459,
-    "jsModules": 290,
-    "pyScripts": 163,
+    "files": 462,
+    "jsModules": 292,
+    "pyScripts": 164,
     "routes": 57,
     "routesUncalled": 0,
     "routesMutatingUngated": 18,
     "feeds": 107,
-    "deadExports": 210,
+    "deadExports": 211,
     "orphanModules": 4,
     "duplicateFnNames": 42,
     "crossModuleGlobals": 39,
@@ -981,7 +981,7 @@
     },
     "Worker/conditions.js": {
       "purpose": "Worker/conditions.js — one call that answers \"what is this water doing right now\".",
-      "lines": 4515,
+      "lines": 4549,
       "exports": [
         "obsBearing",
         "wwaText",
@@ -1056,6 +1056,13 @@
             "r2Text"
           ],
           "resolved": "Worker/worker-core.js"
+        },
+        {
+          "from": "./ndbc.js",
+          "names": [
+            "ndbcReadings"
+          ],
+          "resolved": "Worker/ndbc.js"
         },
         {
           "from": "./registry.js",
@@ -1409,6 +1416,42 @@
       "deadExports": [
         "fetchArcGisAllFeatures",
         "getCachedGis"
+      ],
+      "globalsWritten": [],
+      "globalsRead": []
+    },
+    "Worker/ndbc.js": {
+      "purpose": "NDBC realtime2 — the measured half of the weather this app shows.",
+      "lines": 236,
+      "exports": [
+        "parseRealtime2",
+        "shapeMet",
+        "shapeOcean",
+        "NDBC_BASE",
+        "ndbcUrl",
+        "ndbcReadings"
+      ],
+      "imports": [],
+      "importedBy": [
+        {
+          "file": "Worker/conditions.js",
+          "names": [
+            "ndbcReadings"
+          ]
+        },
+        {
+          "file": "test/ndbc-realtime2.test.js",
+          "names": [
+            "parseRealtime2",
+            "shapeMet",
+            "shapeOcean",
+            "ndbcUrl",
+            "ndbcReadings"
+          ]
+        }
+      ],
+      "deadExports": [
+        "NDBC_BASE"
       ],
       "globalsWritten": [],
       "globalsRead": []
@@ -6663,7 +6706,7 @@
     },
     "js/modules/conditions-strip.js": {
       "purpose": "The state of the water, above the map, before you plan anything.",
-      "lines": 695,
+      "lines": 724,
       "exports": [
         "showConditionsFor",
         "refreshConditions"
@@ -11828,7 +11871,7 @@
     },
     "js/utils/water-conditions.js": {
       "purpose": "ONE READ FOR THE STATE OF THE WATER.",
-      "lines": 803,
+      "lines": 842,
       "exports": [
         "cToF",
         "conditionsUrl",
@@ -14965,6 +15008,40 @@
           ],
           "dynamic": true,
           "resolved": "js/data/lake-registry.js"
+        }
+      ],
+      "importedBy": [],
+      "deadExports": [],
+      "globalsWritten": [],
+      "globalsRead": []
+    },
+    "test/ndbc-realtime2.test.js": {
+      "purpose": "NDBC realtime2, against rows transcribed from the LIVE files on 2026-08-25.",
+      "lines": 161,
+      "exports": [],
+      "imports": [
+        {
+          "from": "node:test",
+          "names": [
+            "test"
+          ]
+        },
+        {
+          "from": "node:assert",
+          "names": [
+            "assert"
+          ]
+        },
+        {
+          "from": "../Worker/ndbc.js",
+          "names": [
+            "parseRealtime2",
+            "shapeMet",
+            "shapeOcean",
+            "ndbcUrl",
+            "ndbcReadings"
+          ],
+          "resolved": "Worker/ndbc.js"
         }
       ],
       "importedBy": [],
@@ -18310,12 +18387,31 @@
         "browser"
       ]
     },
+    "www.ndbc.noaa.gov": {
+      "host": "www.ndbc.noaa.gov",
+      "hits": 8,
+      "files": [
+        "Scripts/bind_ndbc_stations.py:23",
+        "Scripts/bind_ndbc_stations.py:24",
+        "Scripts/bind_ndbc_stations.py:62",
+        "Scripts/probe_ndbc_stations.py:36",
+        "Scripts/probe_ndbc_stations.py:65",
+        "Worker/ndbc.js:193",
+        "test/ndbc-realtime2.test.js:121",
+        "test/ndbc-realtime2.test.js:122"
+      ],
+      "side": [
+        "pipeline",
+        "worker",
+        "browser"
+      ]
+    },
     "ww4.cubecarolinas.com": {
       "host": "ww4.cubecarolinas.com",
       "hits": 2,
       "files": [
         "Scripts/bind_operator_lakes.py:192",
-        "Worker/conditions.js:1514"
+        "Worker/conditions.js:1519"
       ],
       "side": [
         "pipeline",
@@ -18327,7 +18423,7 @@
       "hits": 2,
       "files": [
         "Scripts/bind_operator_lakes.py:194",
-        "Worker/conditions.js:1518"
+        "Worker/conditions.js:1523"
       ],
       "side": [
         "pipeline",
@@ -18466,8 +18562,8 @@
       "hits": 3,
       "files": [
         "Scripts/build_lake_drainage.py:152",
-        "Worker/conditions.js:399",
-        "Worker/conditions.js:507"
+        "Worker/conditions.js:404",
+        "Worker/conditions.js:512"
       ],
       "side": [
         "pipeline",
@@ -18505,7 +18601,7 @@
         "Scripts/capture_upstreams.py:368",
         "Scripts/capture_upstreams.py:382",
         "Scripts/capture_upstreams.py:383",
-        "Worker/conditions.js:1017",
+        "Worker/conditions.js:1022",
         "test/discover-authority.test.js:33"
       ],
       "side": [
@@ -18521,7 +18617,7 @@
         "Scripts/build_water_bindings.py:119",
         "Scripts/capture_upstreams.py:143",
         "Scripts/probe_cwms_catalog.py:80",
-        "Worker/conditions.js:1329"
+        "Worker/conditions.js:1334"
       ],
       "side": [
         "pipeline",
@@ -18536,7 +18632,7 @@
         "Scripts/capture_upstreams.py:120",
         "Scripts/capture_upstreams.py:366",
         "Scripts/capture_upstreams.py:386",
-        "Worker/conditions.js:4193",
+        "Worker/conditions.js:4227",
         "js/modules/tide-engine.js:22"
       ],
       "side": [
@@ -18555,8 +18651,8 @@
         "Scripts/capture_upstreams.py:367",
         "Scripts/capture_upstreams.py:379",
         "Scripts/capture_upstreams.py:384",
-        "Worker/conditions.js:2974",
-        "Worker/conditions.js:3682",
+        "Worker/conditions.js:2979",
+        "Worker/conditions.js:3687",
         "Worker/trollmap-worker.js:336",
         "Worker/trollmap-worker.js:1422",
         "Worker/worker-data.js:286",
@@ -18588,7 +18684,7 @@
       "files": [
         "Scripts/capture_upstreams.py:21",
         "Scripts/capture_upstreams.py:129",
-        "Worker/conditions.js:159",
+        "Worker/conditions.js:164",
         "js/modules/plan-builder.js:1431"
       ],
       "side": [
@@ -18647,7 +18743,7 @@
         "Scripts/capture_upstreams.py:152",
         "Scripts/pull_usgs_current_conditions.py:80",
         "Scripts/pull_usgs_dashboard.py:85",
-        "Worker/conditions.js:1141"
+        "Worker/conditions.js:1146"
       ],
       "side": [
         "pipeline",
@@ -18744,17 +18840,6 @@
         "pipeline"
       ]
     },
-    "www.ndbc.noaa.gov": {
-      "host": "www.ndbc.noaa.gov",
-      "hits": 2,
-      "files": [
-        "Scripts/probe_ndbc_stations.py:36",
-        "Scripts/probe_ndbc_stations.py:65"
-      ],
-      "side": [
-        "pipeline"
-      ]
-    },
     "cdnjs.cloudflare.com": {
       "host": "cdnjs.cloudflare.com",
       "hits": 4,
@@ -18816,7 +18901,7 @@
       "host": "forecast.weather.gov",
       "hits": 1,
       "files": [
-        "Worker/conditions.js:233"
+        "Worker/conditions.js:238"
       ],
       "side": [
         "worker"
@@ -18826,8 +18911,8 @@
       "host": "api.water.noaa.gov",
       "hits": 2,
       "files": [
-        "Worker/conditions.js:804",
-        "Worker/conditions.js:3582"
+        "Worker/conditions.js:809",
+        "Worker/conditions.js:3587"
       ],
       "side": [
         "worker"
@@ -18837,7 +18922,7 @@
       "host": "azapp-lakespublic-prd-001.azurewebsites.net",
       "hits": 2,
       "files": [
-        "Worker/conditions.js:1526",
+        "Worker/conditions.js:1531",
         "Worker/operators.js:327"
       ],
       "side": [
@@ -18848,7 +18933,7 @@
       "host": "publicservice.dominionenergyse.com",
       "hits": 1,
       "files": [
-        "Worker/conditions.js:1536"
+        "Worker/conditions.js:1541"
       ],
       "side": [
         "worker"
@@ -18858,10 +18943,10 @@
       "host": "api.hydro-derived.duke-energy.app",
       "hits": 6,
       "files": [
-        "Worker/conditions.js:1763",
-        "Worker/conditions.js:2370",
-        "Worker/conditions.js:2806",
-        "Worker/conditions.js:3945",
+        "Worker/conditions.js:1768",
+        "Worker/conditions.js:2375",
+        "Worker/conditions.js:2811",
+        "Worker/conditions.js:3950",
         "Worker/worker-data.js:463",
         "Worker/worker-data.js:597"
       ],
@@ -20486,6 +20571,17 @@
         "--tolerance",
         "--owner",
         "--json"
+      ],
+      "reads": []
+    },
+    {
+      "file": "Scripts/bind_ndbc_stations.py",
+      "purpose": "bind_ndbc_stations.py -- attach NDBC weather and water-quality stations to registry slugs.",
+      "flags": [
+        "--registry",
+        "--active",
+        "--margin-km",
+        "--write"
       ],
       "reads": []
     },
@@ -22494,7 +22590,7 @@
     {
       "name": "wire",
       "at": [
-        "js/modules/conditions-strip.js:669",
+        "js/modules/conditions-strip.js:698",
         "js/modules/lake-ramp-select.js:593",
         "js/modules/noaa-tides.js:64"
       ]
@@ -22525,28 +22621,28 @@
     {
       "name": "cached",
       "at": [
-        "Worker/conditions.js:87",
+        "Worker/conditions.js:92",
         "Worker/reports.js:471"
       ]
     },
     {
       "name": "getJson",
       "at": [
-        "Worker/conditions.js:98",
+        "Worker/conditions.js:103",
         "js/modules/usgs-gauges.js:84"
       ]
     },
     {
       "name": "getText",
       "at": [
-        "Worker/conditions.js:104",
+        "Worker/conditions.js:109",
         "Worker/research/agency-pages.js:164"
       ]
     },
     {
       "name": "kmBetween",
       "at": [
-        "Worker/conditions.js:591",
+        "Worker/conditions.js:596",
         "js/utils/cameras.js:40"
       ]
     },
@@ -22658,7 +22754,7 @@
     {
       "name": "paint",
       "at": [
-        "js/modules/conditions-strip.js:587",
+        "js/modules/conditions-strip.js:616",
         "js/modules/plan-water-ui.js:464"
       ]
     },
