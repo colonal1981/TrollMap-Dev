@@ -344,6 +344,16 @@ export function wwaText(v) {
 const VTEC_SIGNIFICANCE = { W: 'Warning', A: 'Watch', Y: 'Advisory', S: 'Statement',
                             F: 'Forecast', O: 'Outlook', N: 'Synopsis' };
 
+/**
+ * WORDS THAT MEAN A STATEMENT IS ABOUT A STORM.
+ *
+ * Deliberately narrow. A Special Weather Statement is issued for dense fog, patchy frost, blowing
+ * dust and a dozen other things, and escalating all of them would train someone to ignore the one
+ * that matters. `lightning` and `thunderstorm` are the words NWS actually uses in the ones that
+ * do — "frequent cloud to ground lightning" is close to boilerplate in a strong-storm SPS.
+ */
+const STORM_TEXT = /\b(thunderstorm|thunderstorms|lightning|cloud[-\s]to[-\s]ground|waterspout)\b/i;
+
 /** `sig` when the product carries one; the product's own trailing noun when it does not. */
 export function wwaSeverity(sig, prodType) {
   const s = wwaText(sig);
@@ -397,11 +407,7 @@ async function hazards(lat, lon) {
             + 'wfo,cap_id,event,url&returnGeometry=false&f=json';
   const j = await cached(`wwa:${lat.toFixed(3)},${lon.toFixed(3)}`, TTL.wwa, () => getJson(url));
   const feats = (j && j.features) || [];
-  return {
-    active: feats.length,
-    // Empty means clear, and the field says so rather than leaving a caller to infer it.
-    all_clear: feats.length === 0,
-    items: feats.map((f) => {
+  const items = feats.map((f) => {
       const a = f.attributes || {};
       return {
         type: wwaText(a.prod_type),
@@ -418,7 +424,47 @@ async function hazards(lat, lon) {
         id: wwaText(a.cap_id),
         url: wwaText(a.url),
       };
-    }),
+    });
+
+  // A STATEMENT CAN BE A THUNDERSTORM OR IT CAN BE FOG, AND `prod_type` SAYS "Special Weather
+  // Statement" FOR BOTH.
+  //
+  // This is the gap between the two signals this app already has. The hourly forecast's thunder
+  // flag is a prediction made this morning; a Severe Thunderstorm Warning is live but requires
+  // 58 mph winds or one-inch hail. A storm that throws lightning and clears neither bar earns an
+  // SPS and nothing else — and that is most thunderstorms, and where most lightning deaths are.
+  // 30 were active nationally when this was written.
+  //
+  // Lightning DETECTION was the other route and it is closed: NWS publishes none (their own API
+  // discussion says so), and NOAA's nowCOAST GOES strike-density service was retired in 2023
+  // without a REST replacement. The forecaster's own words are what is actually available.
+  //
+  // SO THE TEXT IS READ, ONCE, AND ONLY FOR STATEMENTS. Warnings, Watches and Advisories already
+  // carry a usable severity in `sig`; a Statement does not, so it is the only product worth
+  // spending a request on. `url` is already `api.weather.gov/alerts/{cap_id}` and needs no
+  // building.
+  //
+  // `storm` IS A MEASUREMENT, NOT A SEVERITY. `severity` stays what VTEC says it is. A caller
+  // that wants to escalate a thunderstorm statement has a fact to do it with, and a NULL means
+  // the text could not be read — which is not the same as a statement about fog and must never
+  // be rendered as one.
+  await Promise.all(items.map(async (it) => {
+    if (it.severity !== 'Statement' || !it.url) return;
+    try {
+      const cap = await cached(`cap:${it.id}`, TTL.wwa, () => getJson(it.url));
+      const p = (cap && cap.properties) || {};
+      const text = [p.event, p.headline, p.description].filter(Boolean).join(' ');
+      it.storm = text ? STORM_TEXT.test(text) : null;
+    } catch (e) {
+      it.storm = null;                       // unreadable, and saying so beats guessing quiet
+    }
+  }));
+
+  return {
+    active: items.length,
+    // Empty means clear, and the field says so rather than leaving a caller to infer it.
+    all_clear: items.length === 0,
+    items,
   };
 }
 

@@ -176,3 +176,62 @@ describe('the empty and broken cases', () => {
     expect(cues([H({ begins: '2026-08-25T18:00:00-04:00' })])[0].kind).toBe('hazard');
   });
 });
+
+describe('a Special Weather Statement, which is the only lightning signal there is', () => {
+  // NWS publishes no strike data -- their own API discussion says so -- and NOAA's GOES
+  // strike-density service was retired in 2023 with no REST replacement. What is left is the
+  // forecaster writing "frequent cloud to ground lightning" into an SPS, which is issued for
+  // exactly the storm that throws lightning without clearing the severe bar. 30 were active
+  // nationally when this was written.
+  const SPS = (storm) => ({ type: 'Special Weather Statement', severity: 'Statement',
+                            begins: '2026-08-25T15:00:00-04:00', ends: null, storm });
+
+  it('escalates to a stop when the text names a thunderstorm', () => {
+    expect(cues([SPS(true)])[0].severity).toBe('stop');
+  });
+
+  it('stays a note when the text is about something else', () => {
+    // Dense fog and patchy frost are SPS too. Escalating those trains someone to ignore the one
+    // that matters.
+    expect(cues([SPS(false)])[0].severity).toBe('note');
+  });
+
+  it('does not claim the text was unreadable when it was read', () => {
+    expect(cues([SPS(false)])[0].what.includes('could not be read')).toBe(false);
+    expect(cues([SPS(true)])[0].what.includes('could not be read')).toBe(false);
+  });
+
+  it('NULL is not FALSE — an unread statement says so on the alert itself', () => {
+    const c = cues([SPS(null)])[0];
+    expect(c.severity).toBe('note');
+    expect(c.what.includes('could not be read')).toBe(true);
+  });
+
+  it('a missing field is treated as unread, not as fog', () => {
+    const c = cues([{ type: 'Special Weather Statement', severity: 'Statement',
+                      begins: '2026-08-25T15:00:00-04:00' }])[0];
+    expect(c.severity).toBe('note');
+    expect(c.what.includes('could not be read')).toBe(true);
+  });
+});
+
+describe('the storm flag only ever decides a Statement', () => {
+  it('a Warning is a stop whatever the flag says', () => {
+    expect(cues([H({ severity: 'Warning', begins: '2026-08-25T15:00:00-04:00',
+                     storm: false })])[0].severity).toBe('stop');
+  });
+
+  it('an Advisory stays a note even when the text mentions a storm', () => {
+    // An Advisory already carries a real VTEC significance. It does not need the text read for
+    // it, and second-guessing the forecaster's own grading is not this code's job.
+    const c = cues([H({ type: 'Small Craft Advisory', severity: 'Advisory',
+                        begins: '2026-08-25T15:00:00-04:00', storm: true })])[0];
+    expect(c.severity).toBe('note');
+    expect(c.what.includes('could not be read')).toBe(false);
+  });
+
+  it('a Watch is unaffected', () => {
+    expect(cues([H({ severity: 'Watch', begins: '2026-08-25T18:00:00-04:00',
+                     storm: null })])[0].severity).toBe('stop');
+  });
+});

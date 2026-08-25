@@ -569,6 +569,10 @@ export function readConditions(j) {
       begins: h.begins || null,              // when the HAZARD starts, not when the message was cut
       ends: h.ends || null,
       messageType: h.message_type || null,
+      // TRUE if the statement's own text names a thunderstorm, FALSE if it names something else,
+      // NULL if the text could not be read. Only ever set on a Statement -- every other product
+      // says what it is in `severity`.
+      storm: (h.storm === true || h.storm === false) ? h.storm : null,
       office: h.office || null,
       id: h.id || null,
       url: h.url || null,

@@ -768,12 +768,28 @@ export function weatherCues(plan, weatherByHour, o = {}) {
     const begun = begins.getTime() <= nowMs;
     if (!begun && dayKey(begins) !== today) continue;   // a future day is not today's cue
 
-    const sev = SEVERITY[h.severity] || 'note';
+    // A STATEMENT IS A NOTE UNTIL ITS OWN TEXT SAYS THUNDERSTORM.
+    //
+    // This is the only lightning signal available to this app. NWS publishes no strike data and
+    // NOAA's GOES strike-density service was retired in 2023, so what is left is the forecaster
+    // saying so in a Special Weather Statement -- issued for exactly the storm that throws
+    // lightning without clearing the severe bar. `storm` is read from the CAP text in the Worker.
+    //
+    // NULL IS NOT FALSE. An unreadable statement stays a note rather than being escalated on a
+    // guess or dismissed as fog; the label says the text could not be read, so the silence is
+    // visible instead of being mistaken for an all-clear.
+    let sev = SEVERITY[h.severity] || 'note';
+    let unread = false;
+    if (h.severity === 'Statement') {
+      if (h.storm === true) sev = 'stop';
+      else if (h.storm !== false) unread = true;
+    }
     const startH = begins.getHours() + begins.getMinutes() / 60;
     // In effect already -> its own hour, which is behind us, so the next tick fires it.
     // Still coming -> back it off by the run home, the same arithmetic the thunder cue uses.
     const atHour = begun ? startH : Math.max(0, startH - homeMin / 60);
-    const label = h.type || `${h.severity || 'Weather'} in effect`;
+    const label = (h.type || `${h.severity || 'Weather'} in effect`)
+      + (unread ? ' (statement text could not be read — check it)' : '');
     out.push({
       atHour, kind: 'hazard', severity: sev, code: h.id || null,
       what: begun
