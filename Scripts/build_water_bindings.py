@@ -37,7 +37,11 @@ to be shipped. See TVA_SOLVED_VIA_NWPS_2026-08-06.md.
 
 TRAPS ENCODED HERE, EACH ONE PAID FOR
 
-  * `srid=EPSG_4326` is REQUIRED on the NWPS bbox call. Without it the request succeeds and
+  * The NWPS bbox call is GONE as of 2026-08-25 -- one bulk CSV replaced 65 tiles and 306
+    per-gauge documents. Its `srid=EPSG_4326` trap is recorded in
+    THREE_HUNDRED_AND_SIX_REQUESTS_FOR_ONE_INTEGER_2026-08-25.md rather than here, because a
+    warning about a request nobody makes is a warning nobody needs.
+  * Without that srid the old request succeeded and
     returns `{"gauges": []}` -- a well-formed empty answer that reads exactly like "no gauges
     in this box". It cost a wrong conclusion once already.
 
@@ -79,7 +83,8 @@ successor first, falls back to NWIS `seriesCatalogOutput=true`, and RECORDS WHIC
 in the report under `usgs_catalogue_source`. Read that field before trusting the period-of-
 record filtering.
 """
-import argparse, json, math, os, re, sys, time, urllib.error, urllib.parse, urllib.request
+import argparse
+import csv, io, json, math, os, re, sys, time, urllib.error, urllib.parse, urllib.request
 from collections import Counter, defaultdict
 
 UA = 'TrollMap/1.0 (personal fishing app; contact via github.com/colonal1981)'
@@ -110,7 +115,6 @@ BBOX_FLOOR = (-90.6, 30.2, -75.2, 36.9)
 BBOX = BBOX_FLOOR
 TILE_DEG = 1.5
 
-NWPS = 'https://api.water.noaa.gov/nwps/v1'
 TVA_LOCATIONS = 'https://www.tva.com/RestApi/locations?format=json'
 CWMS = 'https://cwms-data.usace.army.mil/cwms-data'
 CWMS_OFFICES = ('SAS', 'SAW', 'LRN', 'SAM')      # NOT SAC -- it reports nothing
@@ -600,58 +604,177 @@ def km_outside_box(lon, lat, wsen):
     return math.hypot(dx * 111.32 * math.cos(math.radians(lat)), dy * 110.57)
 
 
+# ── the NWPS roster, in one request ─────────────────────────────────────────────────────────
+
+NWPS_BULK = 'https://water.noaa.gov/resources/downloads/reports/nwps_all_gauges_report.csv'
+
+# The six fields the bind actually reads off a gauge, and where each lives in the bulk file.
+# Measured 2026-08-25 by probe_nwps_bulk.py against the 65 cached tiles: lid, latitude,
+# longitude, wfo, rfc and pedts agree on all 1,443 shared gauges, and `reach id` agrees with
+# all 306 answers the per-gauge calls had already given.
+_BULK_BLANK = ('', ' ')
+
+
+def _bulk_text(v):
+    """A blank NWPS field is a single space, not empty and not null."""
+    s = '' if v is None else str(v).strip()
+    return s or None
+
+
+def _bulk_num(v):
+    """A float, or None. -9999 is this file's way of saying a threshold is not set."""
+    t = _bulk_text(v)
+    if t is None:
+        return None
+    try:
+        f = float(t)
+    except ValueError:
+        return None
+    return None if f <= -9990 else f
+
+
+def _bulk_bool(v):
+    """The file spells booleans two ways -- bare `false` and quoted `"TRUE"`."""
+    t = _bulk_text(v)
+    if t is None:
+        return None
+    low = t.lower()
+    if low in ('true', 't', 'yes', '1'):
+        return True
+    if low in ('false', 'f', 'no', '0'):
+        return False
+    return None
+
+
+def nwps_roster(cache, force):
+    """Every NWPS gauge in the country, keyed by lid, from ONE download.
+
+    WHAT THIS REPLACES, AND WHY THE COUNT MATTERS. This script used to make 371 NWPS requests
+    for one rebind: 65 tile sweeps of `/gauges?bbox=` at 1.5 degrees, plus 306 calls to
+    `/gauges/{lid}` -- one per bound water -- each fetching a whole gauge document to read ONE
+    field off it, `reachId`. That is where Ryan's 429s came from, and it is why this script
+    carries a `RateLimited` abort at all.
+
+    NOAA publishes the whole roster as a single 5.4 MB CSV, 44 columns, 12,904 gauges. It
+    carries every field the bind reads AND the reach id AND eight more nothing here could see:
+
+        usgs id            the USGS join, STATED. 46 bound gauges gain one -- including MURS1,
+                           "Saluda River below Lake Murray Dam", whose USGS half was invisible,
+                           which is why the Lower Saluda card had no water temperature.
+        action / flood / moderate / major flood stage, and the unit
+        low water threshold value / units      LOW water. On a kayak that outranks flood stage.
+        nrldb / navd88 / ngvd29 / msl vertical datum, and the datum's NAME
+        in service         a dead gauge currently reads as a live one with no data
+        forecast status    whether this point is forecast at all
+        state, county      the county every water is supposed to be named with
+
+    The only things a tile carries that this file does not are `status` -- the live readings --
+    and `pedts.forecast`, and the bind reads neither. Checked, not assumed.
+
+    THE SHAPE IS THE TILE'S SHAPE. `wfo`, `rfc` and `state` are returned as `{abbreviation: ...}`
+    and `pedts` as `{observed: ...}` so that every reader downstream is untouched by this change.
+    A rewrite that also moved the goalposts would make the diff unreadable, and the diff is the
+    only proof that 371 requests and 1 request agree.
+    """
+    tag = 'nwps_bulk_all_gauges'
+    p = _cache_path(cache, tag).replace('.json', '.csv')
+    raw = None
+    if os.path.exists(p) and not force:
+        with io.open(p, encoding='utf-8-sig', newline='') as fh:
+            raw = fh.read()
+        note = 'cached'
+    if raw is None:
+        req = urllib.request.Request(NWPS_BULK, headers={'User-Agent': UA})
+        with urllib.request.urlopen(req, timeout=300) as r:
+            raw = r.read().decode('utf-8-sig', 'replace')
+        with io.open(p, 'w', encoding='utf-8', newline='') as fh:
+            fh.write(raw)
+        note = '%d bytes' % len(raw)
+
+    out = {}
+    for row in csv.DictReader(io.StringIO(raw)):
+        lid = _bulk_text(row.get('nws shef id'))
+        lat, lon = _bulk_num(row.get('latitude')), _bulk_num(row.get('longitude'))
+        if not lid or lat is None or lon is None:
+            continue
+        out[lid] = {
+            'lid': lid,
+            'name': _bulk_text(row.get('location name')),
+            'latitude': lat,
+            'longitude': lon,
+            'wfo': {'abbreviation': _bulk_text(row.get('wfo'))},
+            'rfc': {'abbreviation': _bulk_text(row.get('rfc'))},
+            'state': {'abbreviation': _bulk_text(row.get('state'))},
+            'pedts': {'observed': _bulk_text(row.get('pedts'))},
+            # Everything below is new. None of it was reachable before.
+            'usgs_site': _bulk_text(row.get('usgs id')),
+            'reach_id': _bulk_text(row.get('reach id')),
+            'in_service': _bulk_bool(row.get('in service')),
+            'county': _bulk_text(row.get('county')),
+            'flood': {
+                'action': _bulk_num(row.get('action stage')),
+                'minor': _bulk_num(row.get('flood stage')),
+                'moderate': _bulk_num(row.get('moderate flood stage')),
+                'major': _bulk_num(row.get('major flood stage')),
+                'units': _bulk_text(row.get('flood stage unit')),
+                # "0 ft" is a PLACEHOLDER wearing a value's clothes on this field -- the same
+                # family as -9999 -- so the raw string travels and nothing here parses a number
+                # out of it. A caller that wants it can see what it actually said.
+                'low_water_raw': _bulk_text(row.get('low water threshold value / units')),
+            },
+            'datum': {
+                'name': _bulk_text(row.get('nrldb vertical datum name')),
+                'nrldb': _bulk_num(row.get('nrldb vertical datum')),
+                'navd88': _bulk_num(row.get('navd88 vertical datum')),
+                'ngvd29': _bulk_num(row.get('ngvd29 vertical datum')),
+                'msl': _bulk_num(row.get('msl vertical datum')),
+            },
+            'forecast_status': _bulk_text(row.get('forecast status')),
+        }
+    return out, note
+
+
 # ── fetch stage ─────────────────────────────────────────────────────────────────────────────
 
 class RateLimited(Exception):
-    """The upstream is refusing us and no amount of continuing will help."""
+    """The upstream is refusing us and no amount of continuing will help.
+
+    KEPT THOUGH THE TILE SWEEP IS GONE. CWMS, TVA, CO-OPS and USGS are still fetched a request
+    at a time and can still refuse; the NWPS half simply cannot reach this any more.
+    """
 
 
 def fetch_all(cache, force, report):
     src = {}
-    # A 429 that survives every retry used to fall through as `0 gauges` and the loop carried
-    # on, so a rate-limited run finished with a full-looking report and a hole in it -- the
-    # 2026-08-07 run got 36 tiles and then wrote zero for all 45 that followed. An empty answer
-    # and a refused answer are not the same thing and must not print the same way. Three in a
-    # row means stop: everything already fetched is on disk, so a re-run costs nothing but the
-    # tiles that genuinely have not been asked for yet.
-    _consecutive_429 = 0
+    # THE PARAGRAPH THAT USED TO BE HERE described a 429 counter guarding a 65-tile NWPS sweep:
+    # "the 2026-08-07 run got 36 tiles and then wrote zero for all 45 that followed". Both the
+    # sweep and the counter are gone -- one request cannot be rate-limited into a partial roster.
+    # Kept as a note because the LESSON outlives the loop: an empty answer and a refused answer
+    # are not the same thing and must never print the same way. That is why nwps_roster's
+    # short-roster check exists.
 
     # NWPS is the backbone: NWS ingests TVA, Corps and USGS alike, so one enumeration covers
-    # every operator at once. Tiled so a silent cap cannot masquerade as an empty region.
-    gauges, per_tile = {}, []
-    for (x0, y0, x1, y1) in tiles(BBOX, TILE_DEG):
-        url = ('%s/gauges?bbox.xmin=%s&bbox.ymin=%s&bbox.xmax=%s&bbox.ymax=%s&srid=EPSG_4326'
-               % (NWPS, x0, y0, x1, y1))          # srid is REQUIRED -- see module docstring
-        d, note = fetch(url, cache, 'nwps_%s_%s_%s_%s' % (x0, y0, x1, y1), force)
-        if isinstance(note, str) and note.startswith('STALE'):
-            print('  nwps %7.2f %6.2f  %4d gauges  (%s)'
-                  % (x0, y0, len(((d or {}).get('gauges') or {}).get('gages') or []), note))
-        if note == 'HTTP 429':
-            _consecutive_429 += 1
-            print('  nwps %7.2f %6.2f  REFUSED (429) -- not recorded' % (x0, y0))
-            if _consecutive_429 >= 3:
-                report['nwps_tiles'] = per_tile
-                raise RateLimited(
-                    'NWPS refused %d tiles in a row. %d of %d tiles are cached; nothing is '
-                    'lost. Wait for the limit to clear and re-run --stage fetch: cached tiles '
-                    'are skipped, so it picks up where this stopped.'
-                    % (_consecutive_429, len(per_tile), len(tiles(BBOX, TILE_DEG))))
-            continue
-        _consecutive_429 = 0
-        got = (d or {}).get('gauges') or []
-        per_tile.append({'bbox': [x0, y0, x1, y1], 'n': len(got), 'note': note})
-        for g in got:
-            if g.get('lid'):
-                gauges[g['lid']] = g
-        print('  nwps %7.2f %6.2f  %5d gauges  (%s)' % (x0, y0, len(got), note))
-    src['nwps'] = gauges
-    report['nwps_tiles'] = per_tile
-    report['nwps_gauges_deduped'] = len(gauges)
-    # If any tile is suspiciously round, a cap is likelier than a coincidence. Say so.
-    caps = sorted({t['n'] for t in per_tile if t['n'] in (100, 250, 500, 1000, 2000)})
-    if caps:
-        report['nwps_possible_page_cap'] = caps
-        print('  !! tile counts landed exactly on %s -- check for a server-side cap' % caps)
+    # every operator at once. ONE REQUEST, not 65 tiles -- see nwps_roster().
+    #
+    # THE TILE SWEEP IS GONE AND THE MEASUREMENT THAT KILLED IT IS probe_nwps_bulk.py. It
+    # compared the bulk file against the 65 cached tile responses on 2026-08-25: every gauge the
+    # tiles found inside the box is in the file, five gauges are in the file that the tiles
+    # MISSED, and lid / latitude / longitude / wfo / rfc / pedts agree on all 1,443 shared.
+    # Nothing was traded away for the request count.
+    gauges, note = nwps_roster(cache, force)
+    in_box = {lid: g for lid, g in gauges.items()
+              if BBOX[0] <= g['longitude'] <= BBOX[2] and BBOX[1] <= g['latitude'] <= BBOX[3]}
+    src['nwps'] = in_box
+    report['nwps'] = {'national': len(gauges), 'in_box': len(in_box), 'requests': 1, 'note': note}
+    report['nwps_gauges_deduped'] = len(in_box)
+    print('  nwps %d gauges nationally, %d inside the box, ONE request (%s)'
+          % (len(gauges), len(in_box), note))
+    # A ROSTER THAT SUDDENLY SHRINKS IS A BAD DOWNLOAD, NOT A QUIET COUNTRY. The tiled version
+    # had a page-cap check for the same reason; this is its replacement.
+    if len(gauges) < 5000:
+        report['nwps_suspicious_total'] = len(gauges)
+        print('  !! only %d gauges nationally -- expected roughly 13,000. Treat this run as '
+              'incomplete.' % len(gauges))
 
     d, note = fetch(TVA_LOCATIONS, cache, 'tva_locations', force)
     tva = d if isinstance(d, list) else (d or {}).get('Locations') or []
@@ -1078,6 +1201,22 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
                      'km_outside': round(d_km, 1),
                      'wfo': (g.get('wfo') or {}).get('abbreviation'),
                      'rfc': (g.get('rfc') or {}).get('abbreviation')}
+            # EVERYTHING THE BULK ROSTER ADDED. None of this was reachable while the tile sweep
+            # was the source: a tile carries nine keys and none of them is a USGS site number.
+            #
+            # `usgs_site` is the one that pays for the change on its own. 46 bound gauges gain
+            # one, MURS1 among them -- "Saluda River below Lake Murray Dam" is USGS 02168504,
+            # which has 38 years of water temperature and was invisible to this app because the
+            # two halves of the same instrument had never been joined.
+            for k in ('usgs_site', 'reach_id', 'in_service', 'county', 'forecast_status'):
+                if g.get(k) is not None:
+                    entry[k] = g[k]
+            fl = g.get('flood') or {}
+            if any(v is not None for v in fl.values()):
+                entry['flood'] = {k: v for k, v in fl.items() if v is not None}
+            dt = g.get('datum') or {}
+            if any(v is not None for v in dt.values()):
+                entry['datum'] = {k: v for k, v in dt.items() if v is not None}
             entry['_own'] = bool(tok_own)
             entry['_pe'] = pe
             entry['_inside'] = inside
@@ -1528,9 +1667,15 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
         tally['bound_pool'] += 1 if pool else 0
         tally['bound_tailwater'] += 1 if tail else 0
 
-    # reachId only for waters we actually bound -- one call each, not 1,722.
-    print('\nharvesting NWM reach ids for %d bound waters' % len(bindings))
-    done = 0
+    # THE 306 CALLS THAT READ ONE INTEGER APIECE ARE GONE. This loop used to fetch
+    # `/nwps/v1/gauges/{lid}` once per bound water and take `reachId` off it -- a whole gauge
+    # document for one field, 306 of them, on top of the 65 tiles. `reach id` is a column in the
+    # bulk roster, and probe_nwps_bulk.py checked it against all 306 answers NWPS had already
+    # given: 306 agree, none disagree, none blank where a document had one.
+    #
+    # No network here at all now. The roster is already in memory.
+    print('\nreading NWM reach ids for %d bound waters (no requests)' % len(bindings))
+    roster = src.get('nwps') or {}
     for slug, b in bindings.items():
         # THE FIRST ENTRY IS NOT NECESSARILY AN NWPS ENTRY. Once USGS sites can win `pool`,
         # taking `pool.lid` and giving up on a miss would drop the reach for exactly the waters
@@ -1545,17 +1690,13 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
                 break
         if not lid:
             continue                                # the "WL" case -- bad input, not a 404
-        d, _ = fetch('%s/gauges/%s' % (NWPS, lid), cache, 'nwps_gauge_%s' % lid, force)
-        rid = str(((d or {}).get('reachId') or '')).strip()
+        rid = ((roster.get(lid) or {}).get('reach_id') or '').strip()
         if rid:
             b['reach'] = {'comid': rid, 'from_lid': lid}
             tally['reach_bound'] += 1
         else:
             # Dam tailwaters are not NWM reaches -- NRTT1 returns "". Expected, not an error.
             tally['reach_empty'] += 1
-        done += 1
-        if done % 100 == 0:
-            print('  %d/%d' % (done, len(bindings)))
 
     # A FETCHED SOURCE THAT NOTHING READS MUST NOT BE SILENT. `src['usgs']` was populated,
     # counted into the report, printed at the end of every run, and never consulted -- for two
