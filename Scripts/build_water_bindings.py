@@ -705,6 +705,27 @@ def fetch_all(cache, force, report):
     return src
 
 
+def written_parms(parms_uv, parms_all, level_parms):
+    """What a bound site RECORDS about itself: everything it publishes live, plus whatever
+    level code it was already recorded with.
+
+    Two failure modes this exists to hold still, both measured against the real four-state
+    catalogue on 2026-08-25:
+
+      TAKING THE UNION OF ALL DATA TYPES writes grab samples as though they were instruments.
+      `hasDataTypeCd=iv` selects SITES, not series, so the catalogue hands back every `qw` row
+      those sites have -- 19,643 of them in South Carolina against 944 `uv`, carrying 2,172
+      distinct parameter codes. That is how 689 sites come to "publish 00010" when 256 do.
+
+      TAKING THE uv SET ALONE drops a level code that exists only as a daily-values series.
+      That silently loses 00060 on 14 bound sites, including 02171000, Lake Marion near
+      Pineville.
+
+    So: union, never a swap. This can only ever add to what was written before.
+    """
+    return sorted(set(parms_uv or ()) | (set(parms_all or ()) & set(level_parms or ())))
+
+
 def parse_rdb(text):
     """USGS RDB: '#' comments, a header line, a type line, then tab-separated rows."""
     hdr, out = None, []
@@ -850,9 +871,27 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
             g = usgs_sites.setdefault(no, {'site': no, 'name': (r.get('station_nm') or '').strip(),
                                            'lat': slat, 'lon': slon, 'state': st,
                                            'site_type': (r.get('site_tp_cd') or '').strip(),
-                                           'parms': set(), 'end': ''})
+                                           'parms': set(), 'parms_uv': set(), 'parms_dv': set(),
+                                           'end': ''})
             if r.get('parm_cd'):
-                g['parms'].add(str(r['parm_cd']).strip())
+                _pc = str(r['parm_cd']).strip()
+                g['parms'].add(_pc)
+                # `hasDataTypeCd=iv` SELECTS SITES, IT DOES NOT FILTER SERIES. The catalogue then
+                # returns every series those sites have, and in South Carolina alone that is
+                # 19,643 `qw` rows against 944 `uv` -- discrete grab samples carrying 2,172
+                # distinct parameter codes. Unioning them all is how a site whose only water
+                # temperature is a lab sample comes to look like it has a thermistor. Measured
+                # 2026-08-25: 689 sites "publish 00010" that way; 256 actually do.
+                #
+                # `parms` stays the union so the selection filter and the pool grading below are
+                # byte-identical to before -- measured, only ONE site in 1,092 passes the level
+                # filter on a grab sample and NONE of the 699 bound sites do, so there is nothing
+                # to fix there. What changes is only what gets WRITTEN, further down.
+                _dt = str(r.get('data_type_cd') or '').strip()
+                if _dt == 'uv':
+                    g['parms_uv'].add(_pc)
+                elif _dt == 'dv':
+                    g['parms_dv'].add(_pc)
             end = (r.get('end_date') or '').strip()
             if end > g['end']:
                 g['end'] = end
@@ -1103,7 +1142,24 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
 
         for g in sorted(gcand, key=_grade):
             glon, glat, gname = g['lon'], g['lat'], g['name']
-            g_level = sorted(g['parms'] & LEVEL_PARMS)
+            # WRITE WHAT THE SITE PUBLISHES, NOT ONLY THE PART WE CAME FOR.
+            #
+            # This used to be `sorted(g['parms'] & LEVEL_PARMS)`, which threw away 00010 and
+            # 63680 one line before writing -- codes `USGS_PARMS` had just gone and fetched. The
+            # Worker then re-fetched a series catalogue per site, up to four per water block, at
+            # runtime, to relearn what was already on disk (conditions.js:siteParameters).
+            #
+            # It is the `uv` set, not the union: `parms` includes grab samples, and a lab result
+            # from 2013 is not something a live request can return.
+            #
+            # The SELECTION rule above is untouched -- a site still has to carry a level or flow
+            # parameter to be bound at all, for the reason stated there.
+            # UNION, NEVER A SWAP. Taking the uv set ALONE drops a level code that only
+            # exists as a daily-values series -- measured 2026-08-25, that loses 00060 on
+            # 14 bound sites including 02171000, Lake Marion near Pineville. Whatever was
+            # written before is still written; this only ever adds.
+            g_level = written_parms(g['parms_uv'], g['parms'], LEVEL_PARMS)
+            g_hist = sorted(g['parms_dv'])
             g_is_lake = g['site_type'].startswith(('LK', 'ES'))
             # A LAKE SITE CARRYING A LEVEL PARAMETER IS A POOL GAUGE. `00062` is elevation above
             # datum and `00065` is stage on a local datum -- North Saluda, Table Rock and
@@ -1129,6 +1185,8 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
                 hit['usgs_site'] = g['site']
                 hit['usgs_name'] = gname
                 hit['usgs_parms'] = g_level
+                if g_hist:
+                    hit['usgs_parms_dv'] = g_hist
                 hit['usgs_site_type'] = g['site_type']
                 tally['usgs_merged_into_nwps'] += 1
                 # Promote only into an EMPTY pool slot, and never at the expense of a tailwater:
@@ -1169,7 +1227,8 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
                 geom_only.append({'usgs_site': g['site'], 'name': gname, 'lat': glat,
                                   'lon': glon, 'confidence': 'geom_only_inside',
                                   'km_outside': 0.0, 'source': 'usgs',
-                                  'site_type': g['site_type'], 'parms': g_level})
+                                  'site_type': g['site_type'], 'parms': g_level,
+                                  'parms_dv': g_hist})
                 tally['geom_only_accepted'] += 1
                 continue
             else:
@@ -1180,7 +1239,7 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
             entry = {'usgs_site': g['site'], 'name': gname, 'lat': glat, 'lon': glon,
                      'confidence': conf, 'km_outside': round(d_km, 1), 'source': 'usgs',
                      'site_type': g['site_type'], 'state': g['state'],
-                     'parms': g_level, 'last_value': g['end']}
+                     'parms': g_level, 'parms_dv': g_hist, 'last_value': g['end']}
 
             # POOL ONLY FROM A GAUGE THAT MEASURES POOL. A stream gauge with a lake's name on it
             # is the inflow or the tailrace, and calling it `pool` would put a creek stage in
