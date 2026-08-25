@@ -981,7 +981,7 @@
     },
     "Worker/conditions.js": {
       "purpose": "Worker/conditions.js — one call that answers \"what is this water doing right now\".",
-      "lines": 4495,
+      "lines": 4520,
       "exports": [
         "obsBearing",
         "wwaText",
@@ -16644,7 +16644,7 @@
     },
     "test/silent-parameters.test.js": {
       "purpose": "THE THIRD STATE: a parameter a bound site PUBLISHES and did not answer with.",
-      "lines": 132,
+      "lines": 171,
       "exports": [],
       "imports": [
         {
@@ -18537,7 +18537,7 @@
         "Scripts/capture_upstreams.py:120",
         "Scripts/capture_upstreams.py:366",
         "Scripts/capture_upstreams.py:386",
-        "Worker/conditions.js:4172",
+        "Worker/conditions.js:4197",
         "js/modules/tide-engine.js:22"
       ],
       "side": [
@@ -18557,7 +18557,7 @@
         "Scripts/capture_upstreams.py:379",
         "Scripts/capture_upstreams.py:384",
         "Worker/conditions.js:2978",
-        "Worker/conditions.js:3661",
+        "Worker/conditions.js:3686",
         "Worker/trollmap-worker.js:336",
         "Worker/trollmap-worker.js:1422",
         "Worker/worker-data.js:286",
@@ -18703,7 +18703,7 @@
         "test/search-cascade.test.js:82",
         "test/search-cascade.test.js:239",
         "test/search-cascade.test.js:262",
-        "test/silent-parameters.test.js:79"
+        "test/silent-parameters.test.js:106"
       ],
       "side": [
         "pipeline",
@@ -18828,7 +18828,7 @@
       "hits": 2,
       "files": [
         "Worker/conditions.js:808",
-        "Worker/conditions.js:3561"
+        "Worker/conditions.js:3586"
       ],
       "side": [
         "worker"
@@ -18862,7 +18862,7 @@
         "Worker/conditions.js:1767",
         "Worker/conditions.js:2374",
         "Worker/conditions.js:2810",
-        "Worker/conditions.js:3924",
+        "Worker/conditions.js:3949",
         "Worker/worker-data.js:463",
         "Worker/worker-data.js:597"
       ],
@@ -22435,7 +22435,7 @@
         "test/conditions-bindings.test.js:235",
         "test/plan-weights.test.js:103",
         "test/plan-weights.test.js:155",
-        "test/silent-parameters.test.js:76",
+        "test/silent-parameters.test.js:103",
         "test/smart-plan-v2.test.js:19"
       ]
     },

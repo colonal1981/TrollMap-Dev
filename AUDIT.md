@@ -340,7 +340,7 @@ _none_
 |---|---|---|---|---|---|
 | `Scripts/make_counties.mjs` | 49 | 0 | 0 | 0 | make_counties.mjs -- flatten us-atlas counties-10m TopoJSON into a GeoJSON the Python |
 | `Worker/cameras.js` | 176 | 5 | 1 | **4** | Worker/cameras.js — the current frame from a USGS NIMS camera. |
-| `Worker/conditions.js` | 4495 | 63 | 32 | **2** | Worker/conditions.js — one call that answers "what is this water doing right now". |
+| `Worker/conditions.js` | 4520 | 63 | 32 | **2** | Worker/conditions.js — one call that answers "what is this water doing right now". |
 | `Worker/core/arcgis.js` | 401 | 7 | 2 | **2** | Worker/core/arcgis.js — shared ArcGIS helper for ramps/paddle/bank-pier/attractors |
 | `Worker/operators.js` | 331 | 6 | 3 | 0 | operators.js — the three utility operators that publish HTML tables instead of JSON. |
 | `Worker/registry.js` | 342 | 12 | 6 | **3** | The lake index, read by the Worker. |
@@ -584,7 +584,7 @@ _none_
 | `test/shared-latest-pointer.test.js` | 214 | 0 | 0 | 0 | shared-latest-pointer.test.js — latest.json stopped being a second copy of the document. |
 | `test/shared-pack.test.js` | 67 | 0 | 0 | 0 |  |
 | `test/shared-store-cpu.test.js` | 88 | 0 | 0 | 0 | Tagging a document's sections, on a 10 ms CPU budget. |
-| `test/silent-parameters.test.js` | 132 | 0 | 0 | 0 | THE THIRD STATE: a parameter a bound site PUBLISHES and did not answer with. |
+| `test/silent-parameters.test.js` | 171 | 0 | 0 | 0 | THE THIRD STATE: a parameter a bound site PUBLISHES and did not answer with. |
 | `test/site-catalog.test.js` | 75 | 0 | 0 | 0 | Which parameters a site actually publishes, instead of asking for twelve and seeing what |
 | `test/smart-plan-coastal.test.js` | 200 | 0 | 0 | 0 |  |
 | `test/smart-plan-route.test.js` | 92 | 0 | 0 | 0 |  |
@@ -703,7 +703,7 @@ _none_
 - `walk()` — js/utils/viewport-cull.js:20, test/check-imports.mjs:48, test/data-reaches-the-app.test.js:34, test/hand-written-tables.test.js:257, test/persistence.test.js:27, test/worker-auth.test.js:29, test/worker-external-imports.test.js:43, tools/audit.mjs:56, tools/audit_duplication.mjs:73, tools/audit_silent_catches.mjs:189
 - `wireButtons()` — js/modules/catch-journal.js:1378, js/modules/chart-mosaic.js:390, js/modules/chart-overlay.js:387, js/modules/edit.js:236, js/modules/file-io.js:51, js/modules/ramps.js:137, js/modules/saved-spreads.js:73, js/modules/spread-builder.js:335, js/modules/topbar.js:9
 - `init()` — js/modules/coastal-layers.js:300, js/modules/gis-toggles.js:263, js/modules/layers-panel.js:70, js/modules/routes-panel.js:131, js/modules/species-selector.js:278, js/modules/supplemental-layers.js:1395
-- `run()` — test/conditions-bindings.test.js:235, test/plan-weights.test.js:103, test/plan-weights.test.js:155, test/silent-parameters.test.js:76, test/smart-plan-v2.test.js:19
+- `run()` — test/conditions-bindings.test.js:235, test/plan-weights.test.js:103, test/plan-weights.test.js:155, test/silent-parameters.test.js:103, test/smart-plan-v2.test.js:19
 - `cacheGet()` — Worker/water.js:47, js/modules/tide-engine.js:27, js/modules/usgs-gauges.js:28, js/utils/db.js:273
 - `cacheSet()` — Worker/water.js:55, js/modules/tide-engine.js:37, js/modules/usgs-gauges.js:35, js/utils/db.js:288
 - `getMap()` — js/modules/coastal-layers.js:36, js/modules/gis-toggles.js:16, js/modules/osm-structure.js:40, js/modules/supplemental-layers.js:173

@@ -3004,7 +3004,32 @@ async function waterProbe(b, lat, lon, seededTemp) {
   // and this one sensor is not" are different problems and only one of them is worth a drive.
   // fetchUsgs swallows its own transport errors and returns {}, so a throw is not the test.
   const siteSilent = new Set();
-  for (const s of usgsSitesFor(b, lat, lon).slice(0, 4)) {
+  // WHICH FOUR SITES ARE WORTH THE REQUEST BUDGET.
+  //
+  // `usgsSitesFor` orders by distance and deliberately DEMOTES anything below the dam, because
+  // on a lake a mid-lake sonde beats a tailrace gauge. On the Lower Saluda that rule is exactly
+  // backwards -- the water IS the tailrace -- and the demotion plus `slice(0, 4)` put the gauge
+  // below the Murray dam last of ten. Site 02168504 was live and publishing 15.4 degC on
+  // 2026-08-25 and was never going to be asked, no matter how the binding was fixed. Four
+  // requests were being spent on four gauges that measure nothing but stage.
+  //
+  // So rank by what the registry ALREADY SAYS each site publishes. Distance and the
+  // lake-beats-tailrace rule still decide the order inside each tier; nothing is reordered on a
+  // guess. This changes only WHICH sites the budget buys, never what a reading means.
+  const rank = (s) => {
+    const p = s.parms || [];
+    if (p.some((c) => WANT[c])) return 0;
+    // Level and flow alone is what the OLD builder wrote for EVERY site, so it means "not
+    // recorded", not "publishes nothing else" -- same reasoning as registryCatalog. An unknown
+    // site therefore outranks one whose full catalogue is known and holds nothing wanted.
+    if (!p.length || !p.some((c) => !LEVEL_ONLY.has(c))) return 1;
+    return 2;
+  };
+  const candidates = usgsSitesFor(b, lat, lon)
+    .map((s, i) => ({ s, i, r: rank(s) }))
+    .sort((a, z) => (a.r - z.r) || (a.i - z.i))
+    .slice(0, 4).map((x) => x.s);
+  for (const s of candidates) {
     if (out.temp && out.oxygen && out.turbidity && out.salt && out.tidalFlow) break;
 
     // Ask the catalog first. A site that publishes none of what is still missing is not worth a

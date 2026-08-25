@@ -14,7 +14,7 @@ const BINDINGS = { _note: 'test fixture', bindings: {
   silent_lake: {
     slug: 'silent_lake', display_name: 'Silent Lake (Lexington Co, SC)', state: 'SC',
     feature_type: 'lake', centroid: [-81.22, 34.05], ramps: [],
-    pool: { usgs_site: '02168504', name: 'Saluda River below Lake Murray Dam',
+    pool: { usgs_site: '02168500', name: 'Saluda River at Lake Murray Dam near Irmo',
             lat: 34.05, lon: -81.22, usgs_parms: ['00060', '00065', '00010', '00300'] },
   },
   // Asked and did not answer at all. A dead gauge and a live gauge with one quiet sensor are
@@ -32,6 +32,28 @@ const BINDINGS = { _note: 'test fixture', bindings: {
     feature_type: 'lake', centroid: [-80.7, 34.3], ramps: [],
     pool: { usgs_site: '11111111', name: 'the retired sonde', lat: 34.3, lon: -80.7 },
     gauges: [{ usgs_site: '22222222', name: 'the live sonde', lat: 34.31, lon: -80.71 }],
+  },
+  // THE LOWER SALUDA, IN THE SHAPE THAT BROKE IT. Four stage-only gauges sit closer to the
+  // launch than the one gauge that measures temperature, and that one is below the dam -- which
+  // `usgsSitesFor` demotes to LAST, because on a lake a mid-lake sonde should beat a tailrace.
+  // This water is the tailrace. Four requests bought four stage gauges and the card showed no
+  // temperature at all.
+  lower_saluda: {
+    slug: 'lower_saluda', display_name: 'Saluda River (Lower Saluda) (Lexington Co, SC)',
+    state: 'SC', feature_type: 'river', centroid: [-81.1, 34.0], ramps: [],
+    pool: { usgs_site: '02168900', name: 'Saluda River at I-20 near Columbia',
+            lat: 34.0, lon: -81.1, usgs_parms: ['00060', '00065'] },
+    tailwater: { usgs_site: '02168504', name: 'Saluda River below Lake Murray Dam',
+                 lat: 34.0539, lon: -81.2559,
+                 usgs_parms: ['00060', '00065', '00010'] },
+    gauges: [
+      { usgs_site: '02168985', name: 'SALUDA R ABOVE I-26, #5', lat: 34.001, lon: -81.101,
+        usgs_parms: ['00060', '00065'] },
+      { usgs_site: '02168995', name: 'SALUDA RIVER AT I-26 BL SHOAL 6', lat: 34.002,
+        lon: -81.102, usgs_parms: ['00060', '00065'] },
+      { usgs_site: '02168780', name: 'SALUDA RIVER AT GE PLANT 1', lat: 34.003, lon: -81.103,
+        usgs_parms: ['00060', '00065'] },
+    ],
   },
 } };
 
@@ -70,6 +92,11 @@ globalThis.fetch = async (url) => {
   }
   if (u.includes('waterservices.usgs.gov/nwis/iv')) {
     if (u.includes('99999999')) return { ok: false, status: 503, json: async () => ({}), text: async () => '' };
+    // The reading Ryan was looking at on 2026-08-25 at 16:30 EDT.
+    if (u.includes('02168504')) return ok({ value: { timeSeries: [{
+      variable: { variableCode: [{ value: '00010' }] },
+      values: [{ method: [{ methodDescription: '' }],
+                 value: [{ value: '15.4', dateTime: '2026-08-25T16:30:00-04:00' }] }] }] } });
     return ok(FLOW_ONLY);
   }
   return { ok: false, status: 503, json: async () => ({}), text: async () => '' };
@@ -93,8 +120,9 @@ console.log('== a published parameter that returned nothing says so ==');
   const s = r.water?.silent_parameters;
   const temp = find(s, '00010');
   check('water temperature is reported silent, not absent', !!temp, s);
-  check('and it names the site to go look at', temp?.usgs_site === '02168504', temp?.usgs_site);
-  check('and the gauge by name', temp?.name === 'Saluda River below Lake Murray Dam', temp?.name);
+  check('and it names the site to go look at', temp?.usgs_site === '02168500', temp?.usgs_site);
+  check('and the gauge by name',
+    temp?.name === 'Saluda River at Lake Murray Dam near Irmo', temp?.name);
   check('the registry has no period of record, so none is claimed', temp?.last === null, temp?.last);
   check('the reason is a quiet sensor, not a dead site', temp?.reason === 'no_reading', temp?.reason);
   check('dissolved oxygen is silent too', !!find(s, '00300'), s);
@@ -125,6 +153,17 @@ console.log('\n== two sites publish it; the LIVE one is the one worth chasing ==
   check('and carries USGS\'s own end date', temp?.last === '2026-08-22', temp?.last);
   check('and its observation count', temp?.count === 2280, temp?.count);
   check('flow answered, so flow is not silent', !find(r.water?.silent_parameters, '00060'), r.water?.silent_parameters);
+}
+
+console.log('\n== the request budget goes to sites that publish what is wanted ==');
+{
+  const r = await run('lower_saluda', 34.0, -81.1);
+  const t = r.water?.water_temp;
+  check('the Lower Saluda gets a water temperature', !!t, r.water?.silent_parameters);
+  check('from the gauge below the dam', t?.usgs_site === '02168504', t?.usgs_site);
+  check('15.4 degC comes out as 59.7 degF', t?.f === 59.7, t?.f);
+  check('and it is not reported silent', !find(r.water?.silent_parameters, '00010'),
+    r.water?.silent_parameters);
 }
 
 console.log(`\n${fails === 0 ? 'ALL PASS' : fails + ' FAILURES'}`);
