@@ -140,6 +140,102 @@ async function fetchText(url, opts = {}) {
   });
   return { ok: res.ok, status: res.status, text: await res.text() };
 }
+// WHICH SENSOR, WHEN A SITE HAS TWO.
+//
+// Ten of the sites this app binds publish MORE THAN ONE live series on a parameter code it
+// maps, and until now the winner was decided by arrival order -- the JSON loop below kept the
+// LAST series it saw and the RDB loop below that kept the FIRST, so the two paths disagreed
+// with each other and neither one chose on any principle. Measured 2026-08-25 against the
+// state series catalogues already cached for the binder, and confirmed against USGS's own
+// monitoring-location payload for the two waters where it costs something today:
+//
+//   Lake Murray (Lexington Co, SC)      02168500   00010, 00300   'TOP' and 'BOTTOM'
+//   Lake Marion (Clarendon Co, SC)      02169921   00062          '[NAVD88]' and '[NGVD29]'
+//   Charleston Harbor, SC               021720712  00065          '' and 'AUX'
+//   Rediversion Canal nr St Stephen SC  02171637   00010, 00300   'TOP' and 'BOTTOM'
+//   Cooper R at Hwy 17 / Pier K / Wando / Savannah R at Garden City -- same shape.
+//
+// Two live consequences. On Lake Marion the coin flip is between two VERTICAL DATUMS about a
+// foot apart, on the pool number itself. And the parameter selection was just widened, so a
+// bound site carrying a TOP and a BOTTOM thermistor was about to start answering "what is the
+// surface temperature" with a bottom reading, half the time, with nothing on screen to say so.
+//
+// USGS states which sensor a series came from, in the same words in both formats: the JSON
+// carries it at values[].method[].methodDescription, and the RDB carries it in the
+// "TS_ID Parameter Description" comment block this file used to discard with the rest of the
+// '#' lines. Both are the `loc_web_ds` string from the site catalogue.
+const SUBLOC_TOP = /\b(TOP|SURFACE|SURF)\b/i;
+const SUBLOC_MIDDLE = /\bMID(DLE)?\b/i;
+const SUBLOC_BOTTOM = /\bBOT(TOM)?\b/i;
+const SUBLOC_NAVD88 = /NAVD\s*-?\s*88/i;
+const SUBLOC_AUX = /\bAUX(ILIARY)?\b/i;
+// Codes measured through the water column, where the sensor's depth changes the answer.
+const COLUMN_PARMS = new Set(["00010", "00300", "00095", "00480", "63680"]);
+// Codes that are a water-surface elevation, where the descriptor names a vertical datum.
+const ELEV_PARMS = new Set(["00062", "62614", "62615"]);
+
+/**
+ * Lower is preferred. A site with one series always scores 0 and is unaffected.
+ *
+ * Column parameters rank surface-first, because the question this app asks is what the fish
+ * are in, and that is the top of the column. Bottom is kept rather than discarded -- it is a
+ * real reading and on a shallow tidal river it may be the only one -- but it never beats a
+ * surface sensor that is also reporting.
+ *
+ * Elevation prefers the series WITHOUT a NAVD88 tag. That is a continuity decision, not a
+ * geodetic one: Lake Marion's legacy series has fed this app's pool comparison since the app
+ * existed, `normalPool` is stated against it, and NAVD88 sits about a foot below NGVD29 in the
+ * lower Santee. Silently switching datum would move the displayed pool by a foot with no code
+ * change to point at. The NAVD88 series is not thrown away -- fetchUsgs routes it to
+ * `elevationNavd88`, which already has readers.
+ *
+ * An AUX gage-height sensor is a backup for the primary and loses to it.
+ */
+function seriesRank(code, desc) {
+  const d = String(desc || "").trim();
+  if (COLUMN_PARMS.has(code)) {
+    if (SUBLOC_TOP.test(d)) return 0;
+    if (!d) return 1;
+    if (SUBLOC_BOTTOM.test(d)) return 4;
+    if (SUBLOC_MIDDLE.test(d)) return 3;
+    return 2;
+  }
+  if (ELEV_PARMS.has(code)) {
+    // Untagged first. An untagged elevation series is the site's plain pool reading; a tagged
+    // one is a named structure -- Lake Murray publishes an "Emergency Spillway (ES)" series on
+    // 00062 -- and a spillway is not the lake.
+    if (!d) return 0;
+    return SUBLOC_NAVD88.test(d) ? 2 : 1;
+  }
+  if (SUBLOC_AUX.test(d)) return 2;
+  return d ? 1 : 0;
+}
+
+/** The newer of two USGS timestamps, either of which may be missing or unparseable. */
+function newerStamp(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  const ta = Date.parse(a);
+  const tb = Date.parse(b);
+  if (!isFinite(ta)) return b;
+  if (!isFinite(tb)) return a;
+  return tb > ta ? b : a;
+}
+
+/**
+ * TS_ID -> description, read from the RDB comment block. The RDB names its value columns
+ * `<ts_id>_<parm_cd>`, so this is the only way that format can tell a TOP thermistor from a
+ * BOTTOM one, and the lines it lives on were being filtered out before anything looked at them.
+ */
+function rdbSeriesDescriptions(text) {
+  const map = {};
+  for (const line of String(text || "").split("\n")) {
+    if (!line.startsWith("#")) continue;
+    const m = line.match(/^#\s+(\d+)\s+(\d{5})\s+(.*)$/);
+    if (m) map[m[1]] = m[3].trim();
+  }
+  return map;
+}
 async function fetchUsgs(site, paramCd, periodDays = 2) {
   const out = {};
   const jsonUrl = `https://waterservices.usgs.gov/nwis/iv/?sites=${site}&parameterCd=${paramCd}&format=json&period=P${periodDays}D`;
@@ -147,13 +243,43 @@ async function fetchUsgs(site, paramCd, periodDays = 2) {
     const r = await fetch(jsonUrl, { cf: { cacheTtl: 900 } });
     if (r.ok) {
       const j = await r.json();
+      // Collect first, choose second. Assigning inside the loop is what let arrival order pick
+      // the sensor; a site with one series per code lands here unchanged.
+      const best = new Map();
+      let navd88Elev = null;
       for (const ts of j?.value?.timeSeries || []) {
         const code = ts?.variable?.variableCode?.[0]?.value;
-        const vals = ts?.values?.[0]?.values || [];
-        const good = vals.filter((v) => v.value !== "" && v.value !== "-999999" && v.value != null);
+        // ONE LETTER, AND THIS WHOLE BRANCH HAS NEVER RETURNED A READING.
+        //
+        // WaterML nests the points at values[0].VALUE -- an array of {value, dateTime,
+        // qualifiers} -- and this line asked for values[0].values, which does not exist. `vals`
+        // was [] on every series of every site, `good` was empty, every iteration hit the
+        // `continue`, and the gate below fell through to the RDB fallback. That has been true
+        // since Worker/worker-data.js was first committed on 2026-07-13, which means every USGS
+        // number this app has ever shown came from RDB and the JSON request in front of it was
+        // a wasted round-trip on every gauge, on every refresh, for six weeks.
+        //
+        // Found 2026-08-25 only because a stubbed-fetch test asked the JSON path for a value
+        // and got undefined. js/modules/usgs-gauges.js has had the shape written down in a
+        // comment the entire time -- `value.timeSeries[].values[].value[]` -- and iterates it
+        // correctly. Two readers of the same feed, one right, one silently dead.
+        const vals = ts?.values?.[0]?.value || [];
+        const good = vals.filter((v) => v.value !== "" && v.value != null);
         if (!good.length) continue;
         const latest = parseFloat(good[good.length - 1].value);
-        if (!isFinite(latest)) continue;
+        // -999999 is USGS's no-data sentinel and it arrives spelled several ways -- "-999999",
+        // "-999999.0", and with a trailing 0 count on some series. Comparing the STRING caught
+        // exactly one of those. The client-side reader has always tested the number.
+        if (!isFinite(latest) || latest <= -999999) continue;
+        const desc = ts?.values?.[0]?.method?.[0]?.methodDescription || "";
+        if (ELEV_PARMS.has(code) && SUBLOC_NAVD88.test(desc)) navd88Elev = latest;
+        const rank = seriesRank(code, desc);
+        const prev = best.get(code);
+        if (prev && prev.rank <= rank) continue;
+        best.set(code, { value: latest, when: good[good.length - 1].dateTime, rank, desc });
+      }
+      for (const [code, pick] of best) {
+        const latest = pick.value;
         if (code === "00010") out.tempC = latest;
         if (code === "00065") out.gageHeight = latest;
         if (code === "00062") out.elevation = latest;
@@ -184,8 +310,12 @@ async function fetchUsgs(site, paramCd, periodDays = 2) {
         // separate services and because a mapped-but-unrequested code is the bug this file just
         // had with 63160 -- but nothing should present its absence as fresh water.
         if (code === "00480") out.salinityPpt = latest;
-        out.timestamp = good[good.length - 1].dateTime;
+        out.timestamp = newerStamp(out.timestamp, pick.when);
       }
+      // A NAVD88 elevation series that lost the `elevation` contest above is still a reading
+      // this app already has a field and readers for. 63160 fills it when the site publishes
+      // one; this is the same number from a site that states its datum in the descriptor.
+      if (out.elevationNavd88 == null && navd88Elev != null) out.elevationNavd88 = navd88Elev;
     }
   } catch (_) {
     // Intentionally silent: this is the JSON attempt, and the RDB request immediately below
@@ -204,20 +334,35 @@ async function fetchUsgs(site, paramCd, periodDays = 2) {
     const r = await fetch(rdbUrl, { cf: { cacheTtl: 900 } });
     if (!r.ok) return out;
     const text = await r.text();
+    const seriesDesc = rdbSeriesDescriptions(text);
     const lines = text.split("\n").filter((l) => l && !l.startsWith("#"));
     if (lines.length < 3) return out;
     const header = lines[0].split("	");
     const dataLines = lines.slice(2).filter((l) => l.startsWith("USGS"));
     if (!dataLines.length) return out;
     const last = dataLines[dataLines.length - 1].split("	");
+    // Same choice as the JSON path, made the same way, so the fallback cannot disagree with
+    // the primary about which thermistor a lake's temperature came from. Column order used to
+    // decide it here and arrival order decided it above.
+    const best = new Map();
+    let navd88Elev = null;
     for (let i = 4; i < header.length; i++) {
       const h = header[i];
       if (!h || h.endsWith("_cd")) continue;
-      const m = h.match(/_(\d{5})(?:_|$)/);
+      const m = h.match(/^(\d+)_(\d{5})(?:_|$)/) || h.match(/_(\d{5})(?:_|$)/);
       if (!m) continue;
-      const code = m[1];
+      const code = m.length > 2 ? m[2] : m[1];
       const v = parseFloat(last[i]);
       if (!isFinite(v)) continue;
+      const desc = m.length > 2 ? (seriesDesc[m[1]] || "") : "";
+      if (ELEV_PARMS.has(code) && SUBLOC_NAVD88.test(desc)) navd88Elev = v;
+      const rank = seriesRank(code, desc);
+      const prev = best.get(code);
+      if (prev && prev.rank <= rank) continue;
+      best.set(code, { value: v, rank });
+    }
+    for (const [code, pick] of best) {
+      const v = pick.value;
       if (code === "00010" && out.tempC == null) out.tempC = v;
       if (code === "00065" && out.gageHeight == null) out.gageHeight = v;
       if (code === "00062" && out.elevation == null) out.elevation = v;
@@ -231,6 +376,7 @@ async function fetchUsgs(site, paramCd, periodDays = 2) {
       if (code === "00095" && out.spCond == null) out.spCond = v;
       if (code === "00480" && out.salinityPpt == null) out.salinityPpt = v;
     }
+    if (out.elevationNavd88 == null && navd88Elev != null) out.elevationNavd88 = navd88Elev;
     if (!out.timestamp && last[2]) out.timestamp = `${last[2]} ${last[3] || ""}`.trim();
   } catch (err) {
     // Unlike the JSON attempt above, this one has nothing after it. Whatever `out` holds at
@@ -1904,4 +2050,4 @@ var RIVERS = {
   }
 };
 
-export { normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, fetchDukeOperatingRange, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard };
+export { normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, fetchDukeOperatingRange, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, seriesRank, rdbSeriesDescriptions, newerStamp, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard };
