@@ -204,6 +204,30 @@ function obsNum(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * A COMPASS BEARING, OR NULL. 999 IS NOT A DIRECTION.
+ *
+ * Reported by Ryan 2026-08-25, off a live card: **"Wind 5 mph from 999°"**.
+ *
+ * `obsNum` catches this feed's STRING sentinels -- the literal characters "NA" -- and 999 is a
+ * NUMERIC one. It is the positive member of the -999 / -9999 / -999999 family this file already
+ * filters in four other places, and `NO_DATA` cannot catch it precisely because it is positive:
+ * a set of negative sentinels has nothing to say about 999.
+ *
+ * SO THE TEST IS THE DOMAIN, NOT THE SENTINEL. A bearing is 0 to 360 and there is no reading
+ * outside that range which means anything. Listing 999 would leave the next one through;
+ * bounding the field cannot.
+ *
+ * THE SPEED IS KEPT. 5 mph with a missing direction is what a light and variable wind looks
+ * like on this feed, and dropping a real speed because its direction is absent would trade one
+ * wrong field for one missing one.
+ */
+export function obsBearing(v) {
+  const n = obsNum(v);
+  if (n === null) return null;
+  return (n >= 0 && n <= 360) ? n : null;
+}
+
 async function pointForecast(lat, lon) {
   const url = `https://forecast.weather.gov/MapClick.php?lat=${lat}&lon=${lon}&FcstType=json`;
   const j = await cached(`mapclick:${lat},${lon}`, TTL.point, () => getJson(url));
@@ -252,7 +276,7 @@ async function pointForecast(lat, lon) {
       dewpoint_f: obsNum(co.Dewp),
       humidity_pct: obsNum(co.Relh),
       wind_mph: obsNum(co.Winds),
-      wind_dir_deg: obsNum(co.Windd),
+      wind_dir_deg: obsBearing(co.Windd),
       gust_mph: obsNum(co.Gust),
       visibility_mi: obsNum(co.Visibility),
       // Altimeter is millibars and SLP is inches of mercury on this feed. Both are carried
