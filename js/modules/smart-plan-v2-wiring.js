@@ -320,6 +320,12 @@ export async function runSmartPlanV2() {
   loadSessionFromPlan(r.plan, {
     weatherByHour: forecast ? forecast.weatherByHour : null,
     hazards: (waterState && waterState.hazards) || null,
+    // The live poll needs somewhere to ask and somewhere to ask ABOUT until the boat reports a
+    // position of its own. Ryan's case is weather that was not forecast, which no snapshot taken
+    // at load can ever contain.
+    worker: CF_WORKER_URL,
+    launch: (ramp && Number.isFinite(ramp.lat) && Number.isFinite(ramp.lon))
+      ? { lat: ramp.lat, lon: ramp.lon } : null,
   });
   try { renderAll(); } catch (e) { console.warn('[plan-v2] map redraw failed:', e.message); }
 

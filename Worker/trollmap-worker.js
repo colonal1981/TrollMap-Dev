@@ -10,7 +10,7 @@ import { fetchDukeFlowArrivals, dukeRowForNames, LAKES, LAKE_INTEL, LAKE_INTEL_S
 import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality } from './worker-species.js';
 import { handleGisRoute, flagIsYes, hasText, ARCGIS_BUILD } from './core/arcgis.js';
 import { handleWaterRoute } from './water.js';
-import { handleConditions } from './conditions.js';
+import { handleConditions, handleHazards } from './conditions.js';
 import { handleCameras } from './cameras.js';
 import { handleReports } from './reports.js';
 import { fetchStateRegulations, getLakeRegulations } from './research/clients.js';
@@ -1410,6 +1410,11 @@ var trollmap_worker_default = {
       // trigger, `url.searchParams.has("duke")`, answered ANY path carrying that parameter with
       // a raw dump instead of the route asked for. The normalised Duke reading reaches the app
       // through /conditions, which is where the client looks.
+      // THE ON-WATER ALERT. One ArcGIS query, five-minute cache, no fan-out -- see handleHazards.
+      if (path === "/hazards") {
+        const r = await handleHazards(request, env, url);
+        if (r) return r;
+      }
       if (path === "/usgs") {
         const site = url.searchParams.get("site");
         const params = url.searchParams.get("params") || "00010,00065";

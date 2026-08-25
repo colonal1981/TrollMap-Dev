@@ -4,7 +4,7 @@
     "files": 457,
     "jsModules": 288,
     "pyScripts": 163,
-    "routes": 56,
+    "routes": 57,
     "routesUncalled": 0,
     "routesMutatingUngated": 18,
     "feeds": 105,
@@ -69,7 +69,7 @@
     {
       "route": "/chartpacks/lake-boundary",
       "file": "Worker/trollmap-worker.js",
-      "line": 1614,
+      "line": 1619,
       "method": "GET",
       "auth": "open",
       "fetches": [],
@@ -88,7 +88,7 @@
     {
       "route": "/chartpacks/list",
       "file": "Worker/trollmap-worker.js",
-      "line": 1636,
+      "line": 1641,
       "method": "ANY",
       "auth": "open",
       "fetches": [],
@@ -120,7 +120,7 @@
     {
       "route": "/dominion-saluda",
       "file": "Worker/trollmap-worker.js",
-      "line": 1534,
+      "line": 1539,
       "method": "ANY",
       "auth": "REQUIRED (inline)",
       "fetches": [],
@@ -133,7 +133,7 @@
     {
       "route": "/duke-flow-arrivals",
       "file": "Worker/trollmap-worker.js",
-      "line": 1528,
+      "line": 1533,
       "method": "ANY",
       "auth": "REQUIRED (inline)",
       "fetches": [],
@@ -155,6 +155,23 @@
         "js/modules/smart-plan-v2.js"
       ],
       "calledFromTooling": []
+    },
+    {
+      "route": "/hazards",
+      "file": "Worker/trollmap-worker.js",
+      "line": 1414,
+      "method": "ANY",
+      "auth": "open",
+      "fetches": [
+        "waterservices.usgs.gov"
+      ],
+      "r2": [],
+      "calledFrom": [
+        "js/modules/notifications.js"
+      ],
+      "calledFromTooling": [
+        "test/agent-prompt-echo.test.js"
+      ]
     },
     {
       "route": "/identify-catch",
@@ -187,7 +204,7 @@
     {
       "route": "/lake-clarity",
       "file": "Worker/trollmap-worker.js",
-      "line": 1474,
+      "line": 1479,
       "method": "ANY",
       "auth": "open",
       "fetches": [],
@@ -200,7 +217,7 @@
     {
       "route": "/lake-intel",
       "file": "Worker/trollmap-worker.js",
-      "line": 1489,
+      "line": 1494,
       "method": "ANY",
       "auth": "open",
       "fetches": [],
@@ -214,7 +231,7 @@
     {
       "route": "/lake-intel-sources",
       "file": "Worker/trollmap-worker.js",
-      "line": 1481,
+      "line": 1486,
       "method": "ANY",
       "auth": "open",
       "fetches": [],
@@ -324,7 +341,7 @@
     {
       "route": "/regulations",
       "file": "Worker/trollmap-worker.js",
-      "line": 1435,
+      "line": 1440,
       "method": "ANY",
       "auth": "open",
       "fetches": [],
@@ -796,7 +813,7 @@
     {
       "route": "/river",
       "file": "Worker/trollmap-worker.js",
-      "line": 1507,
+      "line": 1512,
       "method": "ANY",
       "auth": "REQUIRED (inline)",
       "fetches": [],
@@ -812,7 +829,7 @@
     {
       "route": "/rivers",
       "file": "Worker/trollmap-worker.js",
-      "line": 1539,
+      "line": 1544,
       "method": "ANY",
       "auth": "REQUIRED (inline)",
       "fetches": [],
@@ -827,7 +844,7 @@
     {
       "route": "/sync",
       "file": "Worker/trollmap-worker.js",
-      "line": 1549,
+      "line": 1554,
       "method": "ANY",
       "auth": "REQUIRED (prefix)",
       "fetches": [],
@@ -844,7 +861,7 @@
     {
       "route": "/sync/list-updates",
       "file": "Worker/trollmap-worker.js",
-      "line": 1565,
+      "line": 1570,
       "method": "GET",
       "auth": "REQUIRED (prefix)",
       "fetches": [],
@@ -857,7 +874,7 @@
     {
       "route": "/sync/migrate",
       "file": "Worker/trollmap-worker.js",
-      "line": 1555,
+      "line": 1560,
       "method": "POST",
       "auth": "REQUIRED (prefix)",
       "fetches": [],
@@ -870,7 +887,7 @@
     {
       "route": "/usgs",
       "file": "Worker/trollmap-worker.js",
-      "line": 1413,
+      "line": 1418,
       "method": "ANY",
       "auth": "open",
       "fetches": [
@@ -964,7 +981,7 @@
     },
     "Worker/conditions.js": {
       "purpose": "Worker/conditions.js — one call that answers \"what is this water doing right now\".",
-      "lines": 4265,
+      "lines": 4310,
       "exports": [
         "obsBearing",
         "wwaText",
@@ -1026,6 +1043,7 @@
         "statBand",
         "chartDatumShape",
         "pressureTrend",
+        "handleHazards",
         "handleConditions",
         "CONDITIONS_ROUTES"
       ],
@@ -1090,7 +1108,8 @@
         {
           "file": "Worker/trollmap-worker.js",
           "names": [
-            "handleConditions"
+            "handleConditions",
+            "handleHazards"
           ]
         },
         {
@@ -2866,7 +2885,7 @@
     },
     "Worker/trollmap-worker.js": {
       "purpose": "r2Text is used by /chartpacks/lake-boundary (line ~1711). It was added to worker-core.js",
-      "lines": 1780,
+      "lines": 1785,
       "exports": [
         "default"
       ],
@@ -2946,7 +2965,8 @@
         {
           "from": "./conditions.js",
           "names": [
-            "handleConditions"
+            "handleConditions",
+            "handleHazards"
           ],
           "resolved": "Worker/conditions.js"
         },
@@ -7792,7 +7812,7 @@
     },
     "js/modules/notifications.js": {
       "purpose": "notifications.js — On-water alerts for TrollMap",
-      "lines": 459,
+      "lines": 548,
       "exports": [
         "requestNotificationPermission",
         "loadSessionFromPlan",
@@ -9702,7 +9722,7 @@
     },
     "js/modules/smart-plan-v2-wiring.js": {
       "purpose": "smart-plan-v2-wiring.js — the DOM end of SmartPlan v2.",
-      "lines": 418,
+      "lines": 424,
       "exports": [
         "readInputs",
         "rampCoords",
@@ -18478,7 +18498,7 @@
         "Worker/conditions.js:2842",
         "Worker/conditions.js:3478",
         "Worker/trollmap-worker.js:336",
-        "Worker/trollmap-worker.js:1417",
+        "Worker/trollmap-worker.js:1422",
         "Worker/worker-data.js:286",
         "Worker/worker-data.js:402"
       ],
@@ -20064,28 +20084,28 @@
     },
     {
       "file": "Worker/trollmap-worker.js",
-      "line": 1628,
+      "line": 1633,
       "binding": "R2_TROLLMAP_CHARTPACKS",
       "op": "get",
       "key": "key"
     },
     {
       "file": "Worker/trollmap-worker.js",
-      "line": 1649,
+      "line": 1654,
       "binding": "R2_TROLLMAP_CHARTPACKS",
       "op": "list",
       "key": "{ prefix }"
     },
     {
       "file": "Worker/trollmap-worker.js",
-      "line": 1678,
+      "line": 1683,
       "binding": "R2_TROLLMAP_CHARTPACKS",
       "op": "get",
       "key": "key"
     },
     {
       "file": "Worker/trollmap-worker.js",
-      "line": 1714,
+      "line": 1719,
       "binding": "R2_TROLLMAP_CHARTPACKS",
       "op": "put",
       "key": "key"
@@ -22488,7 +22508,7 @@
       "name": "isEnabled",
       "at": [
         "js/core/layer-registry.js:97",
-        "js/modules/notifications.js:371"
+        "js/modules/notifications.js:460"
       ]
     },
     {

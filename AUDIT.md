@@ -15,7 +15,7 @@ Python side will read as dead here and may not be. See the `lakes.js` near miss 
 | files | 457 |
 | jsModules | 288 |
 | pyScripts | 163 |
-| routes | 56 |
+| routes | 57 |
 | routesUncalled | 0 |
 | routesMutatingUngated | 18 |
 | feeds | 105 |
@@ -38,6 +38,7 @@ Python side will read as dead here and may not be. See the `lakes.js` near miss 
 | `/dominion-saluda` | ANY | **REQUIRED (inline)** | — | — | **nothing** |
 | `/duke-flow-arrivals` | ANY | **REQUIRED (inline)** | — | — | **nothing** |
 | `/groq-query` | POST | open | — | — | smart-plan-v2.js |
+| `/hazards` | ANY | open | waterservices.usgs.gov | — | notifications.js |
 | `/identify-catch` | POST | open | — | — | catch-journal.js |
 | `/identify-catch-v2` | POST | open | — | — | catch-journal.js |
 | `/lake-clarity` | ANY | open | — | — | lake-intel.js |
@@ -285,10 +286,10 @@ _none_
 | get | ``lakes/${safeKey}.json`` | Worker/research/storage.js:428 |
 | get | `key` | Worker/trollmap-worker.js:641 |
 | put | `key` | Worker/trollmap-worker.js:656 |
-| get | `key` | Worker/trollmap-worker.js:1628 |
-| list | `{ prefix }` | Worker/trollmap-worker.js:1649 |
-| get | `key` | Worker/trollmap-worker.js:1678 |
-| put | `key` | Worker/trollmap-worker.js:1714 |
+| get | `key` | Worker/trollmap-worker.js:1633 |
+| list | `{ prefix }` | Worker/trollmap-worker.js:1654 |
+| get | `key` | Worker/trollmap-worker.js:1683 |
+| put | `key` | Worker/trollmap-worker.js:1719 |
 | get | `chartpackKey(slug` | Worker/water.js:76 |
 | get | `chartpackKey(slug` | Worker/water.js:87 |
 | list | `{ cursor` | Worker/worker-core.js:342 |
@@ -337,7 +338,7 @@ _none_
 |---|---|---|---|---|---|
 | `Scripts/make_counties.mjs` | 49 | 0 | 0 | 0 | make_counties.mjs -- flatten us-atlas counties-10m TopoJSON into a GeoJSON the Python |
 | `Worker/cameras.js` | 176 | 5 | 1 | **4** | Worker/cameras.js — the current frame from a USGS NIMS camera. |
-| `Worker/conditions.js` | 4265 | 62 | 31 | **2** | Worker/conditions.js — one call that answers "what is this water doing right now". |
+| `Worker/conditions.js` | 4310 | 63 | 31 | **2** | Worker/conditions.js — one call that answers "what is this water doing right now". |
 | `Worker/core/arcgis.js` | 401 | 7 | 2 | **2** | Worker/core/arcgis.js — shared ArcGIS helper for ramps/paddle/bank-pier/attractors |
 | `Worker/operators.js` | 169 | 3 | 2 | 0 | operators.js — the three utility operators that publish HTML tables instead of JSON. |
 | `Worker/registry.js` | 342 | 12 | 6 | **3** | The lake index, read by the Worker. |
@@ -357,7 +358,7 @@ _none_
 | `Worker/research/limnology.js` | 513 | 4 | 4 | 0 | research/limnology.js — split from worker-research.js (behavior-preserving) |
 | `Worker/research/shared.js` | 714 | 29 | 3 | **13** | research/shared.js — split from worker-research.js (behavior-preserving) |
 | `Worker/research/storage.js` | 639 | 11 | 2 | 0 | research/storage.js — split from worker-research.js (behavior-preserving) |
-| `Worker/trollmap-worker.js` | 1780 | 1 | 0 | 0 | r2Text is used by /chartpacks/lake-boundary (line ~1711). It was added to worker-core.js |
+| `Worker/trollmap-worker.js` | 1785 | 1 | 0 | 0 | r2Text is used by /chartpacks/lake-boundary (line ~1711). It was added to worker-core.js |
 | `Worker/water.js` | 925 | 2 | 2 | **1** | Worker/water.js — the compute plane over the static pack layers. |
 | `Worker/worker-core.js` | 433 | 10 | 22 | 0 | worker-core.js — Shared infrastructure: CORS headers, LLM provider chain, fetchText |
 | `Worker/worker-data.js` | 1995 | 27 | 7 | 0 | worker-data.js — Static lake/river data extracted from trollmap-worker.js |
@@ -417,7 +418,7 @@ _none_
 | `js/modules/layers-panel.js` | 105 | 4 | 1 | **2** | layers-panel.js — the one place every map overlay is turned on and off. |
 | `js/modules/measure-tool.js` | 106 | 0 | 1 | 0 | Distance & Bearing Measurement Tool — click two points on the |
 | `js/modules/noaa-tides.js` | 228 | 1 | 1 | **1** | NOAA Coastal Tides — Plan-tab tide panel. |
-| `js/modules/notifications.js` | 459 | 7 | 3 | **5** | notifications.js — On-water alerts for TrollMap |
+| `js/modules/notifications.js` | 548 | 7 | 3 | **5** | notifications.js — On-water alerts for TrollMap |
 | `js/modules/osm-structure.js` | 145 | 0 | 1 | 0 | osm-structure.js — OSM Structure Layer Toggle |
 | `js/modules/plan-assemble.js` | 856 | 8 | 10 | 0 | plan-assemble.js — ordered candidates + the model's judgement → a plan v2 object. |
 | `js/modules/plan-builder.js` | 2547 | 10 | 7 | 0 | Plan Builder — the Plan tab form, save/load, preview rendering, |
@@ -443,7 +444,7 @@ _none_
 | `js/modules/saved-spreads.js` | 82 | 1 | 2 | 0 | Saved rod spreads — name a rod configuration and persist it |
 | `js/modules/smart-plan-route.js` | 190 | 3 | 0 | **3** | smart-plan-route.js — turn SmartPlan's intent into geometry the Worker built. |
 | `js/modules/smart-plan-ui.js` | 911 | 5 | 2 | **3** | smart-plan-ui.js — Unified Trip Timeline (Trolling + Stop-and-Cast interleaved) |
-| `js/modules/smart-plan-v2-wiring.js` | 418 | 7 | 2 | **4** | smart-plan-v2-wiring.js — the DOM end of SmartPlan v2. |
+| `js/modules/smart-plan-v2-wiring.js` | 424 | 7 | 2 | **4** | smart-plan-v2-wiring.js — the DOM end of SmartPlan v2. |
 | `js/modules/smart-plan-v2.js` | 295 | 6 | 5 | 0 | smart-plan-v2.js — the whole plan, one path. |
 | `js/modules/species-selector.js` | 298 | 3 | 2 | **1** | species-selector.js — swap the Plan tab's target-species checkboxes between |
 | `js/modules/spot-repositioning.js` | 33 | 0 | 1 | 0 | Spot Repositioning — drag a marker (GIS spot, ramp, attractor) |
@@ -720,7 +721,7 @@ _none_
 - `legacyStorageName()` — Worker/research/keys.js:95, js/data/research-ids.js:67
 - `researchStorageIdCandidates()` — Worker/research/keys.js:112, js/data/research-ids.js:77
 - `resolveLakeKey()` — Worker/trollmap-worker.js:428, js/data/species-intel.js:87
-- `isEnabled()` — js/core/layer-registry.js:97, js/modules/notifications.js:371
+- `isEnabled()` — js/core/layer-registry.js:97, js/modules/notifications.js:460
 - `toggle()` — js/core/layer-registry.js:167, js/modules/layers-panel.js:68
 - `getWorkerBase()` — js/data/access-index.js:73, js/modules/gis-toggles.js:51
 - `formatAccessLabel()` — js/data/access-index.js:360, js/modules/lake-ramp-select.js:328

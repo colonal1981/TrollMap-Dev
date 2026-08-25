@@ -28,6 +28,10 @@ const PROXIMITY_CHECK_MS  = 15000; // check position every 15 seconds
 const SOLUNAR_WARN_MIN    = 15;    // notify 15 min before major/minor
 const RETURN_WARN_MIN     = 30;    // notify 30 min before return time
 const WIND_THRESHOLD_MPH  = 15;    // alert when wind crosses this value
+// FIVE MINUTES IS THE SERVICE'S OWN CADENCE, not a number picked here. The NWS WWA MapServer
+// republishes every five minutes and the Worker's `TTL.wwa` is 300 s to match, so a phone polling
+// faster is reading a cache and spending battery to do it.
+const HAZARD_POLL_MS      = 5 * 60 * 1000;
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let _enabled = false;
@@ -42,6 +46,15 @@ let _session = {
   lastWindMph: 0,
 };
 let _proximityWatcher = null;
+let _hazardPoll = null;
+// THE BOAT'S LAST KNOWN POSITION, filled by the proximity watcher that is already running. A
+// second geolocation subscription for the hazard poll would double the GPS cost for a fix the
+// app already has.
+let _lastPos = null;
+// cap_id of every product already announced this session. NWS reissues and updates a warning
+// under the same id, and being told about the same storm every five minutes is how someone turns
+// notifications off on the day they matter.
+let _seenHazards = new Set();
 let _tickInterval = null;
 let _firedPins = new Set(); // pin IDs already notified this session
 // The day's plan, as things to say when he gets near them. Empty until loadSessionFromPlan().
@@ -152,9 +165,70 @@ function startProximityWatch() {
   _proximityWatcher = setInterval(() => {
     navigator.geolocation.getCurrentPosition(pos => {
       const { latitude: lat, longitude: lon } = pos.coords;
+      _lastPos = { lat, lon };
       checkProximity(lat, lon);
     }, null, { enableHighAccuracy: true, timeout: 5000 });
   }, PROXIMITY_CHECK_MS);
+}
+
+/**
+ * WEATHER THAT WAS NOT FORECAST, WHILE HE IS ALREADY ON THE WATER.
+ *
+ * Ryan, 2026-08-25: *"if there is a forecast that is going to drive a watch or warning i am not
+ * going to plan to be on the water... now if weather creeps on while i am on the water that
+ * wasn't forecasted then that is where the alert to my phone would be absolutely beneficial."*
+ *
+ * THE FIRST VERSION OF THIS COULD NOT DO THAT AND LOOKED LIKE IT COULD. It built the cue list
+ * once, from a hazards snapshot taken when the plan loaded, so a warning ISSUED AFTER LAUNCH --
+ * the only case he asked for -- never arrived. A feature that covers the forecast case and
+ * silently misses the unforecast one is worse than no feature, because it earns trust it cannot
+ * honour.
+ *
+ * So the hazards are asked for again, from the BOAT'S position, on the service's own cadence.
+ * Position matters: a warning polygon has an edge, and being told you have drifted under one is
+ * the whole point.
+ *
+ * A FAILED POLL IS NOT AN ALL-CLEAR. Nothing is announced on an error and nothing is marked seen,
+ * so the next poll re-asks. Silence here must never be mistaken for good news.
+ */
+async function pollHazards() {
+  if (!_enabled || !_session.hazardWorker) return;
+  const at = _lastPos || _session.launchPos;
+  if (!at) return;
+  let j;
+  try {
+    const u = `${_session.hazardWorker}/hazards?lat=${at.lat.toFixed(4)}&lon=${at.lon.toFixed(4)}`
+            + `&_=${Date.now()}`;
+    const r = await fetch(u, { cache: 'no-store' });
+    if (!r.ok) return;
+    j = await r.json();
+  } catch (e) {
+    console.warn('[notifications] hazard poll failed:', e && e.message);
+    return;
+  }
+  if (!j || j.error || !Array.isArray(j.items)) return;
+
+  const fresh = j.items.filter((h) => h && h.id && !_seenHazards.has(h.id));
+  if (!fresh.length) return;
+  for (const h of fresh) _seenHazards.add(h.id);
+
+  // Through the SAME cue builder the plan uses, so a watch issued at noon still gets the leave-by
+  // computed from this plan's furthest point rather than a bare "a watch exists".
+  for (const c of (_session.makeHazardCues ? _session.makeHazardCues(fresh) : [])) {
+    _session.weatherCues.push({ h: c.atHour, label: c.what, severity: c.severity,
+                                fired: false, kind: 'hazard' });
+  }
+}
+
+function startHazardPoll() {
+  if (_hazardPoll) return;
+  pollHazards();                                   // ask once at launch, then on the cadence
+  _hazardPoll = setInterval(pollHazards, HAZARD_POLL_MS);
+}
+
+function stopHazardPoll() {
+  if (_hazardPoll) { clearInterval(_hazardPoll); _hazardPoll = null; }
+  _seenHazards = new Set();
 }
 
 function stopProximityWatch() {
@@ -216,6 +290,18 @@ export function loadSessionFromPlan(plan, o = {}) {
       { transitMph: o.transitMph, hazards: o.hazards }) || [])
       .map((c) => ({ h: c.atHour, label: c.what, severity: c.severity, fired: false,
                      kind: c.kind || 'weather' }));
+
+    // WHAT THE LIVE POLL NEEDS, kept on the session so pollHazards() does not have to rebuild the
+    // plan's geometry every five minutes. `makeHazardCues` closes over THIS plan, so a warning
+    // issued at noon gets the leave-by from this trip's furthest point rather than a bare notice.
+    _session.hazardWorker = o.worker ? String(o.worker).replace(/\/+$/, '') : null;
+    _session.launchPos = (o.launch && Number.isFinite(o.launch.lat) && Number.isFinite(o.launch.lon))
+      ? { lat: o.launch.lat, lon: o.launch.lon } : null;
+    _session.makeHazardCues = (hazards) =>
+      weatherCues(plan, null, { transitMph: o.transitMph, hazards }) || [];
+    // Anything already in effect at load has been announced by the cue list above; the poll must
+    // not say it again five minutes later.
+    for (const h of (o.hazards || [])) if (h && h.id) _seenHazards.add(h.id);
     console.log('[notifications] plan loaded:', _planPins.length, 'position cues,',
                 _session.weatherCues.length, 'weather cues');
   } catch (e) {
@@ -357,6 +443,8 @@ export async function enableNotifications() {
   loadSessionFromSmartPlan();
   _tickInterval = setInterval(tick, 30000);
   startProximityWatch();
+  // The unforecast case. Runs whether or not a plan was loaded -- weather does not wait for one.
+  startHazardPoll();
   fire('🎣 TrollMap Alerts On', 'You\'ll get notified for solunar windows, band changes, and nearby structure.', 'startup');
   updateUI();
   return true;
@@ -367,6 +455,7 @@ export function disableNotifications() {
   clearInterval(_tickInterval);
   _tickInterval = null;
   stopProximityWatch();
+  stopHazardPoll();
   updateUI();
 }
 

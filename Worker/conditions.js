@@ -4153,6 +4153,51 @@ async function tideBlock(b, lat, lon, date) {
 
 function nowIso() { return new Date().toISOString(); }
 
+/**
+ * `/hazards?lat=&lon=` -- the NWS watches, warnings and advisories over one point, and nothing else.
+ *
+ * WHY A ROUTE OF ITS OWN, WHEN /conditions ALREADY RETURNS THIS.
+ *
+ * Ryan, 2026-08-25: *"if there is a forecast that is going to drive a watch or warning i am not
+ * going to plan to be on the water... now if weather creeps on while i am on the water that
+ * wasn't forecasted then that is where the alert to my phone would be absolutely beneficial."*
+ *
+ * That is a LIVE question, asked repeatedly from a boat, and `/conditions` is the wrong shape for
+ * it: it fans out to USGS, CWMS, NWPS, the Corps, the tide tables and the clarity model to answer
+ * one that costs a single ArcGIS query. Polling it every five minutes on a phone would spend the
+ * whole payload to re-read one field.
+ *
+ * FIVE MINUTES IS THE SERVICE'S OWN CADENCE. `TTL.wwa` is 300 s because the WWA MapServer
+ * republishes on that interval, so a caller polling faster is reading its own cache.
+ *
+ * The point is the BOAT'S, not the launch's. A warning polygon has an edge, and the whole value
+ * of this is being told when you have drifted under one.
+ */
+export async function handleHazards(request, env, url) {
+  if (url.pathname !== '/hazards') return null;
+  if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
+  if (request.method !== 'GET') {
+    return new Response('{"error":"method not allowed"}',
+      { status: 405, headers: { ...CORS, ...JSON_HEADERS } });
+  }
+  const lat = Number(url.searchParams.get('lat'));
+  const lon = Number(url.searchParams.get('lon'));
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+    return new Response(JSON.stringify({ error: 'lat and lon are required' }),
+      { status: 400, headers: { ...CORS, ...JSON_HEADERS } });
+  }
+  try {
+    const out = await hazards(lat, lon);
+    return new Response(JSON.stringify({ ...out, at: [lon, lat], asked_at: nowIso() }),
+      { headers: { ...CORS, ...JSON_HEADERS } });
+  } catch (e) {
+    // A FAILED LOOKUP IS NOT AN ALL-CLEAR, and this is the one route where that distinction can
+    // put someone under a storm. `all_clear` is absent on an error, never false.
+    return new Response(JSON.stringify({ error: String((e && e.message) || e) }),
+      { status: 502, headers: { ...CORS, ...JSON_HEADERS } });
+  }
+}
+
 export async function handleConditions(request, env, url) {
   const mm = url.pathname.match(/^\/conditions\/([^/]+)$/);
   if (!mm) return null;
