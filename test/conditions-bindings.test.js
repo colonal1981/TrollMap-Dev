@@ -41,6 +41,17 @@ const BINDINGS = {
       gauges: [{ lid: 'BOOMS1', name: 'gauge that 500s', lat: 33, lon: -83 }],
       ramps: [],
     },
+    // A WATER WITH NO NWS LID ANYWHERE. 34 of the 204 bound waters look like this -- Monticello
+    // Reservoir, Hyco Lake, Randleman, John H. Moss -- and until 2026-08-25 every one of them
+    // got `trend: null`, because the only trend this app had came from NWPS /stageflow and that
+    // needs a handbook-5 id. All 34 have a USGS site number.
+    no_lid_lake: {
+      slug: 'no_lid_lake', display_name: 'Monticello-shaped Reservoir (Fairfield Co, SC)',
+      state: 'SC', feature_type: 'lake', centroid: [-81.32, 34.31],
+      pool: { usgs_site: '02160900', name: 'Reservoir near Jenkinsville', lat: 34.31,
+              lon: -81.32, confidence: 'name+geom', usgs_parms: ['00062'] },
+      ramps: [],
+    },
   },
 };
 
@@ -140,6 +151,28 @@ globalThis.fetch = async (url) => {
     if (u.includes('product=currents_predictions')) return ok(CURRENTS);
     if (u.includes('product=water_level')) return ok(WATER_LEVEL);
     if (u.includes('product=predictions')) return ok(TIDE_HILO);
+  }
+  // THE NATIONAL WATER DASHBOARD, for the no-lid water. Two rows transcribed from a live read
+  // of site 02160900 on 2026-08-25: 00062 = 422.77 falling 0.3 ft/h, and the 62615 companion
+  // 0.17 ft below it on a different datum.
+  if (u.includes('dashboard.waterdata.usgs.gov')) {
+    return ok({ value: [
+      { SiteNumber: '02160900', ParameterCode: '00062', TimeLocal: '2026-08-24T22:00:00Z',
+        TimeZoneCode: 'EDT', Value: 422.77, ValueFlagCode: null,
+        RateOfChangeUnitPerHour: -0.3, FloodStageStatusCode: 'NOFLOOD' },
+      { SiteNumber: '02160900', ParameterCode: '62615', TimeLocal: '2026-08-24T22:00:00Z',
+        TimeZoneCode: 'EDT', Value: 422.6, ValueFlagCode: null,
+        RateOfChangeUnitPerHour: -0.3, FloodStageStatusCode: null },
+    ] });
+  }
+  // The gauge read itself, so the site resolves to a reading and not to a failure.
+  if (u.includes('waterservices.usgs.gov/nwis/iv') && u.includes('02160900')) {
+    return ok({ value: { timeSeries: [{
+      variable: { variableCode: [{ value: '00062' }] },
+      values: [{ method: [{ methodDescription: '' }],
+                 value: [{ value: '422.77', dateTime: '2026-08-24T18:00:00-04:00',
+                           qualifiers: ['P'] }] }],
+    }] } });
   }
   // everything else (USNO, MapClick, SPC, WWA, NWM) — make it fail so the harness proves
   // the water/tide fields survive dead neighbours.
@@ -245,7 +278,7 @@ console.log('\n== unbound slug ==');
 r = await run('some_pond_nobody_bound', 34, -81, env);
 check('water null', r.water === null);
 check('pending names the slug and the count',
-  /some_pond_nobody_bound/.test(r.pending?.water || '') && /3 waters are bound/.test(r.pending?.water || ''),
+  /some_pond_nobody_bound/.test(r.pending?.water || '') && /4 waters are bound/.test(r.pending?.water || ''),
   r.pending);
 check('pending has no tide key for an inland miss', !('tide' in (r.pending || {})), r.pending);
 
@@ -259,6 +292,43 @@ check('warm cache still answers after the object goes away', r.water?.pool?.stag
   const rf = JSON.parse(await res.text());
   check('fresh=1 bypasses the cache and reports the truth', rf.water === null, rf.water);
   check('fresh=1 pending names the fix', /upload_garmin_to_r2/.test(rf.pending?.water || ''), rf.pending);
+}
+
+console.log('\n== a water with no NWS lid still gets a trend and a flood category ==');
+{
+  const rn = await run('no_lid_lake', 34.31, -81.32, env);
+  const w = rn.water || {};
+  // THE WIRING, not the shaper. The shapers are unit-tested in usgs-dashboard.test.js; this
+  // proves waterBlock actually calls them and puts the result where a caller will find it.
+  check('the pool reads from its USGS site', w.pool?.stage === 422.77, w.pool?.stage);
+  check('and says the reading is an elevation above a datum, not a gage height',
+    w.pool?.stage_basis === 'elevation_above_datum', w.pool?.stage_basis);
+  check('trend is not null on a water NWPS cannot answer for', !!w.trend, w.trend);
+  check('and it says where it came from, because NWPS answers the same field',
+    w.trend?.source === 'USGS National Water Dashboard — CurrentConditions', w.trend?.source);
+  check('it carries the hourly rate', w.trend?.rate_per_hour === -0.3, w.trend);
+  check('and does NOT invent a 24-hour change out of it',
+    w.trend?.change_24h === null && w.trend?.change_7d === null, w.trend);
+  check('the datum is named, because 00062 and 62615 are different measurements',
+    w.trend?.measures === 'Reservoir elevation above datum', w.trend?.measures);
+  check('flood category reaches a USGS-only gauge',
+    w.pool?.flood_category === 'NOFLOOD', w.pool?.flood_category);
+  check('and says which agency said so',
+    w.pool?.flood_category_source === 'USGS National Water Dashboard',
+    w.pool?.flood_category_source);
+}
+
+console.log('\n== an NWPS water still prefers NWPS for its trend ==');
+{
+  // A month of observations beats a single rate, and a second opinion on one fact is how two
+  // numbers start disagreeing on a card. The dashboard is only consulted where NWPS gave null.
+  const rm = await run('lake_murray', 34.0857, -81.4533, env);
+  check('murray trend is not the dashboard',
+    rm.water?.trend == null
+      || rm.water.trend.source !== 'USGS National Water Dashboard — CurrentConditions',
+    rm.water?.trend?.source);
+  check('an NWPS gauge keeps its own flood category, not a second opinion',
+    rm.water?.pool?.flood_category_source === undefined, rm.water?.pool?.flood_category_source);
 }
 
 console.log(`\n${fails === 0 ? 'ALL PASS' : fails + ' FAILURES'}`);
